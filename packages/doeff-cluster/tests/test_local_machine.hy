@@ -15,6 +15,10 @@
 ;;; その repo を worker の版の木(CODE_REPO_URL)にする。Redeclare で宣言した service が手元の worker の上で起きて Ready になり、Crash で
 ;;; job を落とすと worker が起こし直し(pid が替わる)、もう一度 Ready になる。失敗ケース: Redeclare に宣言を送らずに答える壊した答え手を
 ;;; 挟むと、5 秒後も Service は Missing のまま。
+;;;
+;;; 宣言の remote を手元の checkout から読む(git-sources): 実行環境の宣言の url を配備と同じ remote の綴り(届かない名)のまま置き、
+;;; git-sources でその url を検の bare の repo へ向けると、worker は remote へ取りに行かずに repo を取り込む(mirror が 1 つ)。失敗ケース:
+;;; git-sources を置かないと、worker は届かない remote を取りに行って repo-unreachable を名乗り、mirror は無い。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "entry"})
@@ -41,7 +45,7 @@
 (import tests.fixtures.machine_app [pings machine-foundation])
 (import doeff_cluster.sim.machine :as machine-module)
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
-(import doeff_cluster.sim.machine [LocalMachine MachineCell MachineCannotAnswer local-machine-cluster machine-answers machine-run
+(import doeff_cluster.sim.machine [LocalMachine MachineCell MachineCannotAnswer GitSource local-machine-cluster machine-answers machine-run
                                    coordinator-url])
 
 (val WORKER "w-local")
@@ -459,6 +463,47 @@
   (.setattr monkeypatch machine-module "repo_allowlist" no-allowlist)
   (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
   (assert (= seen.failure-kind "repo-denied") "許可表を組まない壊した形でも worker が repo を受けた — 検が許可表を見ていない")
+  (<- mirrors tuple (mirrors-of tmp-path))
+  (assert (= mirrors #()) mirrors)
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+;; 実行環境の宣言に書く remote の綴り(届かない名 — 手元の 1 台の worker は remote へ取りに行かない)。
+(val REMOTE-URL "https://example.invalid/proboscis/machine-app.git")
+
+
+(defk remote-runtime-machine-of [tmp-path repo sources]
+  {:pre [(: tmp-path Path) (: repo AppRepo) (: sources (get tuple #(GitSource ...)))] :post [(: % LocalMachine)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "実行環境の宣言の url を配備と同じ remote の綴り REMOTE-URL にした手元の 1 台を組むため(sources = その url を手元の checkout から
+   読ませる組 — 空なら置かない)。"
+  (<- machine LocalMachine (runtime-machine-of tmp-path repo))
+  (val env (replace machine.runtime-env :repos #((RepoCheckout :name "app" :url REMOTE-URL :commit repo.sha))))
+  (replace machine :runtime-env env :git-sources sources))
+
+
+(deftest test-a-local-machine-reads-the-declared-remote-from-the-local-checkout [tmp-path]
+  (<- repo AppRepo (app-repo tmp-path))
+  (<- machine LocalMachine (remote-runtime-machine-of tmp-path repo #((GitSource :remote REMOTE-URL :path repo.url))))
+  (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
+  (assert (= seen.declared #(JOB)) seen)
+  ;; 取り込み(mirror)の段を越えた — 断り(repo-denied)も届かない(repo-unreachable)も commit の欠け(commit-missing)も名乗らない。後の段の名乗り(検の小さな偽の lock の
+  ;; lock-stale など)は取り込みの外。
+  (assert (not-in seen.failure-kind #("repo-denied" "repo-unreachable" "commit-missing")) seen)
+  (<- mirrors tuple (mirrors-of tmp-path))
+  (assert (= (len mirrors) 1) mirrors)
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+(deftest test-a-counterexample-without-git-sources-fetches-the-unreachable-remote-and-fails [tmp-path]
+  (<- repo AppRepo (app-repo tmp-path))
+  (<- machine LocalMachine (remote-runtime-machine-of tmp-path repo #()))
+  (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
+  (assert (= seen.failure-kind "repo-unreachable")
+          (.format "git-sources を置かない形で、届かない remote を名乗らなかった({!r})— 検が手元の checkout からの読みを見ていない"
+                   seen))
   (<- mirrors tuple (mirrors-of tmp-path))
   (assert (= mirrors #()) mirrors)
   (<- left tuple (leftover tmp-path))

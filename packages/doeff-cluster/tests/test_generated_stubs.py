@@ -70,6 +70,8 @@ USED = (
         "coordinator.intent.cluster_model",
         ("ClusterJob", "ClusterNaming", "ClusterState", "RolloutSpec", "RolloutStatus", "TargetView"),
     ),
+    # 手元の 1 台の cluster の入口と置き方(#3033 の 2b — 使い手の日次の検が同じ Program を手元の 1 台で走らせる)。
+    UsedModule("sim.machine", ("GitSource", "LocalMachine", "local-machine-cluster")),
 )
 
 
