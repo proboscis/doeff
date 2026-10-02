@@ -273,7 +273,7 @@
   {:pre [(: state ClusterState) (: name str) (: node str) (: now int)] :post [(: % ClusterState)]}
   "worker name が node の上から company-machine を名乗る heartbeat を 1 つ受けた後の状態。"
   (<- body dict (named name node))
-  (register-heartbeat state (heartbeat-of body) now))
+  (register-heartbeat state (! (heartbeat-of body)) now))
 
 (defk company-state [now]
   {:pre [(: now int)] :post [(: % ClusterState)]}

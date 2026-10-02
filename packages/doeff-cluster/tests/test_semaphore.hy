@@ -10,7 +10,7 @@
 ;; 死んだ worker の lease の期限の後の引き取り・失った lease の知らせ・書きの柵・lease の立場。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff [with_handlers Program])
+(import doeff [with_handlers Program run])
 (import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -250,9 +250,9 @@
 
 (defhandler cut-off-at [#^ SimClock clock #^ int at]
   ;; この worker から共有の保存へ届かなくなる(tailnet の途絶・coordinator の停止)。書き先への書きの道は生きている。
-  (ReadShared [prefix] :when (>= (clock-ms clock) at) (raise (ConnectionError "保存へ届かない")))
-  (WriteShared [key value expect ttl-seconds] :when (>= (clock-ms clock) at) (raise (ConnectionError "保存へ届かない")))
-  (LeaseOp [name op token permits ttl-ms] :when (>= (clock-ms clock) at) (raise (ConnectionError "保存へ届かない"))))
+  (ReadShared [prefix] :when (>= (run (clock-ms clock)) at) (raise (ConnectionError "保存へ届かない")))
+  (WriteShared [key value expect ttl-seconds] :when (>= (run (clock-ms clock)) at) (raise (ConnectionError "保存へ届かない")))
+  (LeaseOp [name op token permits ttl-ms] :when (>= (run (clock-ms clock)) at) (raise (ConnectionError "保存へ届かない"))))
 
 (defk lease-writer [who attempts every until [acquire True]]
   {:pre [(: who str) (: attempts list) (: every (| int float)) (: until int) (: acquire bool)] :post [(: % (type None))]}
@@ -339,9 +339,9 @@
 
 (defhandler cut-between [#^ SimClock clock #^ int start #^ int end]
   ;; 仮想の時計が start〜end の間、保存(盤・lease)へ届かない。
-  (ReadShared [prefix] :when (<= start (clock-ms clock) end) (raise (ConnectionError "保存へ届かない")))
-  (WriteShared [key value expect ttl-seconds] :when (<= start (clock-ms clock) end) (raise (ConnectionError "保存へ届かない")))
-  (LeaseOp [name op token permits ttl-ms] :when (<= start (clock-ms clock) end) (raise (ConnectionError "保存へ届かない"))))
+  (ReadShared [prefix] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
+  (WriteShared [key value expect ttl-seconds] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
+  (LeaseOp [name op token permits ttl-ms] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない"))))
 
 
 (deftest test-renewal-survives-a-short-cut-and-keeps-the-lease
@@ -378,7 +378,7 @@
   None)
 
 (deftest test-lease-standing-is-standby-until-held-and-lost-after
-  (setv log [] store {} clock (clock-at 1000))
+  (setv log [] store {} clock (! (clock-at 1000)))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (cluster-semaphore (SemaphoreSession "w"))]
         (standing-story log)))
   (assert (= log [STANDBY HELD LOST]) log))

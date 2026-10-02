@@ -16,6 +16,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view job-from-json identity-hash] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
+(import doeff [run])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states durable-load durable-persist])
@@ -164,7 +165,7 @@
   (defn #^ None __init__ [self #^ list requests #^ (| int None) [fail-at None]]
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。要求を待つ 1 回ごとに 500 ms 進む(台本の NextRequests が時間を使った形)。
     (setv self.requests (list requests) self.replies [] self.saved [] self.clock (SimClock) self.fail-at fail-at))
-  (defn [property] #^ int now [self] (clock-ms self.clock))
+  (defn [property] #^ int now [self] (run (clock-ms self.clock)))
   (defn #^ None wait-a-little [self]
     (.set-time self.clock (+ self.clock.current-time (timedelta :milliseconds 500)))
     None))
