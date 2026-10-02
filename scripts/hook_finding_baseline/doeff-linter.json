@@ -49,7 +49,6 @@
       "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/event_log.py": 10,
       "packages/doeff-agentic/src/doeff_agentic/state.py": 2,
-      "packages/doeff-agents/conformance/conformance_agent.py": 15,
       "packages/doeff-agents/conformance/harness.py": 5,
       "packages/doeff-agents/conformance/scripted_judge.py": 4,
       "packages/doeff-agents/conformance/test_s14_identity_persistence_expected_red.py": 1,
@@ -443,5 +442,5 @@
       "tests/cli_assets/__init__.py": 1
     }
   },
-  "version": "doeff-linter の source の木 06560cac5be1ba9d496f35f1263e7e86caf6353a"
+  "version": "doeff-linter の source の木 ed360afa481bbc9e6c3a3d4b03e985214ea8ed4e"
 }

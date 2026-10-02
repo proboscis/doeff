@@ -12,7 +12,6 @@ macro は展開のたびに木の expansions.log へ 1 行書く(展開をやり
 from __future__ import annotations
 
 import marshal
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -64,14 +63,21 @@ def _write_counting_package(root: Path) -> Path:
 
 
 def _python(script: str, root: Path) -> str:
-    env = {key: value for key, value in os.environ.items() if key not in _ENV_NOT_PASSED}
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["DOEFF_HY_CODE_STORE"] = str(root / "code-store")
+    # 子はこの process の環境を継ぐ — _ENV_NOT_PASSED の名だけ外し(`env -u`)、2 つの名を足す。
+    unset = [flag for name in _ENV_NOT_PASSED for flag in ("-u", name)]
     completed = subprocess.run(
-        [sys.executable, "-c", script, str(root)],
+        [
+            "env",
+            *unset,
+            "PYTHONDONTWRITEBYTECODE=1",
+            f"DOEFF_HY_CODE_STORE={root / 'code-store'}",
+            sys.executable,
+            "-c",
+            script,
+            str(root),
+        ],
         capture_output=True,
         text=True,
-        env=env,
         cwd=root,
         timeout=120,
         check=False,
