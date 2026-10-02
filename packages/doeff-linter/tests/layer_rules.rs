@@ -5313,7 +5313,7 @@ fn exempt_repo(declaration: Option<&str>) -> tempfile::TempDir {
     let mut files: Vec<(&str, &str)> = vec![
         ("pyproject.toml", "[tool.doeff-linter]\nenable = [\"DOEFF110\"]\n[tool.doeff-linter.definitions]\npaths = [\"pkg/src/app\"]\n"),
         ("pkg/src/app/__init__.py", ""),
-        ("pkg/src/app/expand.hy", "(val MODULE-TAGS {:context \"app\" :role \"macro\"})\n(defn helper [form] form)\n"),
+        ("pkg/src/app/expand.hy", EXPAND_HY),
         ("pkg/src/app/runtime.hy", "(val MODULE-TAGS {:context \"app\" :role \"judgment\"})\n(defn decide [x] x)\n"),
     ];
     if let Some(text) = declaration {
@@ -5326,6 +5326,9 @@ fn exempt_repo(declaration: Option<&str>) -> tempfile::TempDir {
     }
     dir
 }
+
+/// 外す module: macro の本体が展開の時点に呼ぶ defn(helper)を持つ。
+const EXPAND_HY: &str = "(val MODULE-TAGS {:context \"app\" :role \"macro\"})\n(defn helper [form] form)\n(defmacro m [form] (helper form))\n";
 
 /// macro の展開の時点の module を名指して DOEFF110 を理由つきで外す宣言。REASON を置き換えて理由の無い宣言も作る。
 const EXEMPT_DECLARATION: &str = "(defarchitecture pkg\n  :root \"app\"\n  :layers [(layer macro\n             :summary \"macro の展開の時点に呼ばれる\"\n             :knows \"Hy の form\"\n             :does-not-know \"doeff の Program\"\n             :modules [app.expand]\n             :exempt [(rule DOEFF110 \"REASON\")])])\n";
@@ -5343,6 +5346,37 @@ fn a_layer_exemption_drops_the_definition_rule_only_for_the_named_module() {
         run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "pkg/src/app/expand.hy"], Some(&source));
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
     assert!(keys(&single, "DOEFF110").is_empty(), "{}", single);
+}
+
+#[test]
+fn an_exempted_module_still_names_a_defn_that_no_macro_reaches() {
+    // 失敗ケース(#2877 の決め 2 の見張り): 外した module に、package のどの defmacro からも届かない実行の時点の defn を足すと、
+    // 外していても鳴る(理由の文つき)。1 file の実行でも同じ。
+    let declared = EXEMPT_DECLARATION.replace("REASON", "macro の展開の時点に Python の関数として呼ばれる — Program を返せない");
+    let dir = exempt_repo(Some(&declared));
+    let with_runtime = format!("{}(defn thaw [x] x)\n", EXPAND_HY);
+    std::fs::write(dir.path().join("pkg/src/app/expand.hy"), &with_runtime).unwrap();
+    let (_, whole) = editor(dir.path());
+    assert_eq!(
+        keys(&whole, "DOEFF110"),
+        vec!["pkg/src/app/expand.hy::DOEFF110::thaw", "pkg/src/app/runtime.hy::DOEFF110::decide"],
+        "{}",
+        whole
+    );
+    let thaw = violation(&whole, "pkg/src/app/expand.hy::DOEFF110::thaw");
+    assert!(thaw["message"].as_str().unwrap_or("").contains("どの defmacro からも届かない"), "{}", thaw);
+    let (_, stdout, stderr) =
+        run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "pkg/src/app/expand.hy"], Some(&with_runtime));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&single, "DOEFF110"), vec!["pkg/src/app/expand.hy::DOEFF110::thaw"], "{}", single);
+    // 展開した code(別の file の macro の quasiquote の中)が呼ぶ部品も「macro の持ち主の関数」として届く — 外れる。
+    std::fs::write(
+        dir.path().join("pkg/src/app/guards.hy"),
+        "(val MODULE-TAGS {:context \"app\" :role \"macro\"})\n(defmacro g [] `(thaw 1))\n",
+    )
+    .unwrap();
+    let (_, reached) = editor(dir.path());
+    assert_eq!(keys(&reached, "DOEFF110"), vec!["pkg/src/app/runtime.hy::DOEFF110::decide"], "{}", reached);
 }
 
 #[test]

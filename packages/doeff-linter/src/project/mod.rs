@@ -12,6 +12,7 @@ pub mod explain;
 pub mod facts_cache;
 pub mod facts;
 pub mod hy_files;
+pub mod macro_reach;
 pub mod names;
 pub mod param_calls;
 pub mod registry;
@@ -65,6 +66,7 @@ pub mod python_reach;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use doeff_indexer::hy_index::{self, Definition, DefinitionKind, HyFileIndex, RawCatalog, RawCategory, RawSettings, RawStrength};
 use rayon::prelude::*;
@@ -605,9 +607,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                                         found.extend(judge_effect_mismatches(file, &source, definitions, effect_world.as_ref()));
                                     }
-                                    let exempt = layer_exempted_rules(&file.path);
-                                    found.retain(|draft| !exempt.contains(&draft.rule));
-                                    found
+                                    without_exempted(found, &layer_exemption(&file.path))
                                 })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
                         })
@@ -750,9 +750,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         found.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
                     }
                     // 全体の実行と同じ 1 点で、層の宣言が名指しの module から外した定義の書き方の規則を落とす(#2913)。
-                    let exempt = layer_exempted_rules(&file.path);
-                    found.retain(|draft| !exempt.contains(&draft.rule));
-                    drafts.extend(found);
+                    drafts.extend(without_exempted(found, &layer_exemption(&file.path)));
                 }
             }
             if let (Some(architecture), Some(rel), Some(language)) = (&settings.architecture, &rel, language_of(&path)) {
@@ -4164,17 +4162,49 @@ fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> 
 }
 
 /// 層の宣言(file から上へ最も近い architecture.hy)の `:exempt` が、この file の module を名指しで外した定義の書き方の規則
-/// (ProjectRule::exemptible_by_layer の物だけ・agora-redesign #2913)。Python の文ごとの規則と同じ 1 点(crate::population)で決める。
-/// 宣言を読めない時は何も外さない — 黙って緑にしない(読めない宣言は同じ package の Python の file の DOEFF032 が名指す)。
-fn layer_exempted_rules(path: &Path) -> BTreeSet<ProjectRule> {
+/// (ProjectRule::exemptible_by_layer の物だけ・agora-redesign #2913)と、DOEFF110 を外す時に限って要る「package のどれかの
+/// defmacro から届く名」(macro_reach)。Python の文ごとの規則と同じ 1 点(crate::population)で決める。宣言を読めない時は何も
+/// 外さない — 黙って緑にしない(読めない宣言は同じ package の Python の file の DOEFF032 が名指す)。
+struct LayerExemption {
+    rules: BTreeSet<ProjectRule>,
+    reached: Option<Arc<BTreeSet<String>>>,
+}
+
+fn layer_exemption(path: &Path) -> LayerExemption {
     match crate::population::population_of(path) {
-        Ok(crate::population::FilePopulation::Exempt { rules, .. }) => rules
-            .iter()
-            .filter_map(|id| ProjectRule::parse(id))
-            .filter(|rule| rule.exemptible_by_layer())
-            .collect(),
-        Ok(crate::population::FilePopulation::Plain) | Err(_) => BTreeSet::new(),
+        Ok(crate::population::FilePopulation::Exempt { rules, declaration, .. }) => {
+            let rules: BTreeSet<ProjectRule> =
+                rules.iter().filter_map(|id| ProjectRule::parse(id)).filter(|rule| rule.exemptible_by_layer()).collect();
+            let reached = rules
+                .contains(&ProjectRule::DefnForbidden)
+                .then(|| declaration.parent().map(macro_reach::reached_in_package))
+                .flatten();
+            LayerExemption { rules, reached }
+        }
+        Ok(crate::population::FilePopulation::Plain) | Err(_) => LayerExemption { rules: BTreeSet::new(), reached: None },
     }
+}
+
+/// 外した規則の当たりを落とす。DOEFF110 は package のどれかの defmacro から届く defn だけを落とし、届かない defn(実行の時点の
+/// 定義 — #2877 の決め 2 の見張り)は理由を足して残す。
+fn without_exempted(found: Vec<Draft>, exemption: &LayerExemption) -> Vec<Draft> {
+    found
+        .into_iter()
+        .filter_map(|draft| {
+            if !exemption.rules.contains(&draft.rule) {
+                return Some(draft);
+            }
+            let reached = draft.rule != ProjectRule::DefnForbidden
+                || matches!((&exemption.reached, &draft.detail), (Some(reached), Some(name)) if reached.contains(name));
+            (!reached).then(|| Draft {
+                message: format!(
+                    "{} — 層の宣言が DOEFF110 から外した module だが、package のどの defmacro からも届かない(実行の時点の定義)",
+                    draft.message
+                ),
+                ..draft
+            })
+        })
+        .collect()
 }
 
 /// architecture.hy が宣言した、素の関数を許す理由の種類(無ければ空)。
