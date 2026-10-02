@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import UsedModule, stale_in, unknown_in_users
+from doeff_hy.static_stub import UsedModule, stale_in, strict_errors, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
@@ -56,6 +56,32 @@ USED = (
 @pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 def test_names_the_users_import_are_not_unknown(tmp_path: Path) -> None:
     assert unknown_in_users(tmp_path, "doeff_records", USED) == ()
+
+
+# records-connected の答えは本体の答え(契約の :tp [T] — #2893)。ANSWER = 呼び手が答えを受ける型。
+FLOW = """\
+(require doeff-hy.macros [defk <-])
+(import doeff [Pure])
+(import doeff_records.main [RecordsSettings records-connected])
+
+(defk answer-of [settings]
+  {:pre [(: settings RecordsSettings)] :post [(: % ANSWER)]}
+  "本体の答えを呼び手の型で受けるため。"
+  (<- answer ANSWER (records-connected settings (Pure 1)))
+  answer)
+"""
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_the_body_answer_type_reaches_the_caller(tmp_path: Path) -> None:
+    assert strict_errors(tmp_path, FLOW.replace("ANSWER", "int")) == ()
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_taking_the_body_answer_as_another_type_is_red(tmp_path: Path) -> None:
+    # 失敗ケース: 答えが Incomplete だった時(#2893 の前)は、int の答えを str で受けても赤にならなかった。
+    errors = strict_errors(tmp_path, FLOW.replace("ANSWER", "str"))
+    assert [e for e in errors if '"int"' in e and '"str"' in e]
 
 
 def test_generated_stubs_are_what_the_tool_makes() -> None:
