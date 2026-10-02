@@ -144,12 +144,14 @@
 ;; --- 送り手 → coordinator → heartbeat の返事 → worker の子の環境 -------------------------------------------------
 
 (deftest test-the-sender-bodies-carry-the-environ-only-when-given
-  (val with-env (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {URL-NAME URL}))
+  (<- with-env dict (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {URL-NAME URL}))
   (assert (= (get with-env "environ") {URL-NAME URL}) with-env)
-  (assert (not-in "environ" (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {})))
-  (val detached (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {URL-NAME URL}))
+  (<- without-env dict (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {}))
+  (assert (not-in "environ" without-env) without-env)
+  (<- detached dict (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {URL-NAME URL}))
   (assert (= (get detached "environ") {URL-NAME URL}) detached)
-  (assert (not-in "environ" (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {}))))
+  (<- detached-bare dict (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {}))
+  (assert (not-in "environ" detached-bare) detached-bare))
 
 
 (deftest test-the-coordinator-carries-the-environ-to-the-worker-child-like-a-service [tmp-path]

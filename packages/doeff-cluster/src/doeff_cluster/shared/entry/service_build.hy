@@ -18,8 +18,9 @@
 (import doeff_cluster.shared.intent.service_model [UPDATE-FORMS CallShape Job System Declaration])
 
 
+;; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
 (deff job [#^ str name program * #^ CallShape call needs #^ (| dict None) [readiness None] #^ str [update "recreate"]
-           #^ (| dict None) [environ None]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+           #^ (| dict None) [environ None]]
   {:pre [(: name str) (: program (| Program int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: readiness (| dict None)) (: update str) (: environ (| dict None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "main" :reads "env"}}
   "job 1 つを検めて作る(defsystem の展開が呼ぶ)。旧い引数(:env・:config・:env-config・:requires)はこの関数に無いので TypeError。"

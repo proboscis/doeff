@@ -326,10 +326,11 @@
   (val endpoint (get cell.route.urls cell.route.active))
   ;; 今持っている印 = 最後に届いた返事の job の印(#2804 — coordinator はこれで印の約束を外す)。
   (<- kept tuple (keep-marks-held state.last-jobs))
-  (val body (| (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
-                               :capacity state.capacity :versions state.versions :statuses sending
-                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
-                               :stopping stopping)
+  (<- base dict (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
+                                :capacity state.capacity :versions state.versions :statuses sending
+                                :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
+                                :stopping stopping))
+  (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
                    (env-heartbeat-part state.env-report (current-platform)))))

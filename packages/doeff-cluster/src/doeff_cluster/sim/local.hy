@@ -977,8 +977,8 @@
   (val sha (program-sha blob))
   (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
   (answered-body put "task の Program を置けない")
-  (<- sent tuple (send-request link "POST" "/tasks" {}
-                               (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ)))
+  (<- body dict (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ))
+  (<- sent tuple (send-request link "POST" "/tasks" {} body))
   (val id (get (answered-object sent "task を出せない") "task"))
   (var outcome None)
   (try
@@ -1016,8 +1016,8 @@
       (submit-unreachable (unreached-reason put))
       (do (refused-or-body put "task の Program を置けない")
           (<- declared (| dict None) (declared-env link.runtime-env))
-          (<- sent tuple (send-resent link "PUT" (detached-path key "") {}
-                                      (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ)))
+          (<- body dict (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ))
+          (<- sent tuple (send-resent link "PUT" (detached-path key "") {} body))
           (if (is (get sent 0) None)
               (submit-unreachable (unreached-reason sent))
               (DetachedSubmitted key (get (refused-or-object sent "task を出せない") "created"))))))
@@ -1434,11 +1434,11 @@
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
   ;; 今持っている印(#2804 — 本番の coordinator への口の beat と同じ判断)。印を知らない古い worker の代役は欄を載せない。
   (<- kept tuple (keep-marks-held before.last-desired))
-  (val full (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
-                               :node worker.node :capacity worker.capacity :versions (or worker.versions plan.versions)
-                               :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
-                               :boot-at before.boot-at :tools {} :kept kept :stopping stopping)
-               (env-heartbeat-part (env-report views "ok") (current-platform))))
+  (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
+                                :node worker.node :capacity worker.capacity :versions (or worker.versions plan.versions)
+                                :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
+                                :boot-at before.boot-at :tools {} :kept kept :stopping stopping))
+  (val full (| base (env-heartbeat-part (env-report views "ok") (current-platform))))
   (val body (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))

@@ -36,8 +36,8 @@ PROBE = """\
   {:pre [] :post [(: % int)] :tags {:context "probe" :role "protocol"}}
   "状態の行の組・返事の job と task の組の型が読める。"
   (<- rows (get tuple #((get dict #(str object)) ...)) (status-rows-json #()))
-  (val body (heartbeat-body :name "w" :provides #("probe") :exclusive #() :node "n" :capacity 1 :versions {} :statuses (list rows)
-                            :endpoint "probe://w" :boot "b" :boot-at 0 :tools {} :kept #()))
+  (<- body (get dict #(str object)) (heartbeat-body :name "w" :provides #("probe") :exclusive #() :node "n" :capacity 1 :versions {}
+                                                    :statuses (list rows) :endpoint "probe://w" :boot "b" :boot-at 0 :tools {} :kept #()))
   (<- desired (get tuple #(JobSpec ...)) (declared-job-specs [{"name" "web" "entry" "probe" "revision" "r"}]))
   (<- tasks (get tuple #(JobSpec ...)) (task-specs [] (Path "tasks")))
   (+ (len body) (len desired) (len tasks)))
