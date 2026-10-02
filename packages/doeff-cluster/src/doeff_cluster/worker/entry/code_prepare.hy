@@ -17,7 +17,7 @@
 ;;; 道具は worker 自身のコードから file の path で起動する(準備する版の木から -m で起動すると、道具を持たない
 ;;; 古い版では道具が見つからない — 2026-09-23 に atlas の版 8d7181f が bytecode 0 のまま完成品になった原因)。
 ;;;
-;;;   PYTHONDONTWRITEBYTECODE=1 hy <worker のコード>/doeff_cluster/code_prepare.hy <新しい木> --revision <版>
+;;;   PYTHONDONTWRITEBYTECODE=1 hy <worker のコード>/doeff_cluster/worker/entry/code_prepare.hy <新しい木> --revision <版>
 ;;;       [--from <前の木> --changed <変わった path の一覧 file>] [--import-roots .,sub/dir]
 ;;;
 ;;; import の根(木の中の dir・`,` で並べる・既定 `.`)は業務の repo の形で、worker の CodeLayout(worker_model)が渡す。
@@ -25,6 +25,8 @@
 ;;; 焼く範囲(2026-09-26・#664 の実測): --entries <module,…> を渡すと、その module たちの import の閉包(Hy の import / require と
 ;;; Python の import を静的に辿る)だけを焼く。閉包の外の module は子が import した時に作られる(焼く物が減るだけで正しさは変わらない)。
 ;;; 並列数の既定は cgroup の CPU の上限(pod の limits)— node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import math)
 (import os)
@@ -70,7 +72,7 @@
   (setv tree (str (.resolve (Path args.tree))))
   ;; 焼く途中の import(Hy の require 等)が timestamp 方式の .pyc を書かないようにする。
   (setv sys.dont-write-bytecode True)
-  ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster)が sys.path の先頭に入る。
+  ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster/worker/entry)が sys.path の先頭に入る。
   ;; 焼く木の module 名がそこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))

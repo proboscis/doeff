@@ -170,27 +170,6 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
-      "reason": "path 起動の道具 — 案 C で layer を足すまで(agora-redesign #1695: worker が業務の環境で path 起動するので doeff_cluster の module を import できない)",
-      "rule": "read-model-in-controller",
-      "subject": "carry_pairs"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
-      "reason": "path 起動の道具 — 案 C で layer を足すまで(agora-redesign #1695: worker が業務の環境で path 起動するので doeff_cluster の module を import できない)",
-      "rule": "read-model-in-controller",
-      "subject": "compilable"
-    },
-    {
-      "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy",
-      "reason": "path 起動の道具 — 案 C で layer を足すまで(agora-redesign #1695: worker が業務の環境で path 起動するので doeff_cluster の module を import できない)",
-      "rule": "read-model-in-controller",
-      "subject": "compile_plan"
-    },
-    {
-      "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy",
       "reason": "registered-with-legacy",
       "rule": "transitive-io-dependency",

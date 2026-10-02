@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 #: 準備の道具(本番の準備の処理ステージが起こす script と同じ file)。
-TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "code_prepare.hy"
+TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "worker" / "entry" / "code_prepare.hy"
 
 #: 読む側 — 子の job と同じく、準備した木を import する。
 _IMPORT = """\

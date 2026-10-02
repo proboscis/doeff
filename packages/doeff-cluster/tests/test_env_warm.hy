@@ -42,7 +42,7 @@
                                     EnvDisk] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys])
 (import doeff_cluster.worker.protocol.declared [task-spec])
-(import doeff_cluster.code_prepare [cpu-limit-of])
+(import doeff_cluster.worker.entry.code_prepare [cpu-limit-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])

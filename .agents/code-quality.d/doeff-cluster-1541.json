@@ -206,10 +206,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-code-prepare",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/code_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
       ],
       "responsibility": "展開したコードの木の bytecode を、木の中だけに「実行時に source の hash を検める」方式で用意する。",
       "typed": true

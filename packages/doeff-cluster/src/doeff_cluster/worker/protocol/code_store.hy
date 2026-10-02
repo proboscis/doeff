@@ -28,7 +28,7 @@
 
 
 ;; 焼く道具の file(worker 自身のコードの code_prepare.hy — 版の木から -m で起動すると、道具を持たない古い版で見つからないので path で起動する)。
-(val PREPARE-TOOL (str (/ (. (Path __file__) (resolve) parent parent parent) "code_prepare.hy")))
+(val PREPARE-TOOL (str (/ (. (Path __file__) (resolve) parent parent) "entry" "code_prepare.hy")))
 
 
 (defrecord CodeSettings
