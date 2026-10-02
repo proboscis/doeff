@@ -1,13 +1,8 @@
-"""random_effects.hy の公開面の型(型検査のための宣言 — 実行時は random_effects.hy を読む・agora-redesign #2323)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = random_effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- defeffect は位置でも渡せる frozen の dataclass で、`EffectBase[答えの型]` の下位の型。`(<- x (RandomBytes n))` の x は bytes。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
 
-from dataclasses import dataclass
-
-from doeff_vm import EffectBase
-
-@dataclass(frozen=True)
-class RandomBytes(EffectBase[bytes]):
+@_doeff_dataclass(frozen=True)
+class RandomBytes(_doeff_effect_base[bytes]):
     count: int

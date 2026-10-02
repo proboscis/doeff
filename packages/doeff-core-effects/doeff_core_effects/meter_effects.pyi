@@ -1,35 +1,25 @@
-"""meter_effects.hy の公開面の型(計器の effect と値 — 型検査のための宣言・実行時は meter_effects.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = meter_effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-meter_effects.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、計器の答え手(memory_meter.pyi)の引数
-MeterSettings も、使う側が作る `(MeterSettings)` も Unknown になる。ここで型を宣言する。
-
-- defrecord は frozen で keyword だけの dataclass。
-- defeffect は位置でも渡せる frozen の dataclass で、`EffectBase[答えの型]` の下位の型。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
-
-from dataclasses import dataclass
-from typing import Any
-
-from doeff_hy.frozen import FrozenMap
-from doeff_vm import EffectBase
-
-from doeff import Program
-
-# --- 値 ---
+from doeff import Program as _Program
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
+from dataclasses import dataclass as dataclass
+from doeff_hy.frozen import FrozenMap as FrozenMap
+import doeff_hy.record
 
 @dataclass(frozen=True, kw_only=True)
 class SecondsTotal:
     total: float
     count: int
 
+    def __post_init__(self) -> None:
+        ...
+
 @dataclass(frozen=True, kw_only=True)
 class MeterSnapshot:
     counters: FrozenMap[float]
     gauges: FrozenMap[float]
     durations: FrozenMap[SecondsTotal]
-
 EMPTY_METER: MeterSnapshot
 
 @dataclass(frozen=True, kw_only=True)
@@ -39,34 +29,34 @@ class MeterBucket:
 
 @dataclass(frozen=True, kw_only=True)
 class MeterSettings:
-    buckets: tuple[MeterBucket, ...] = ()
-    inf_label: str = "le_inf"
+    buckets: tuple[MeterBucket, ...] = ...
+    inf_label: str = 'le_inf'
     gc_pause_name: str | None = None
 
-# --- effect ---
-
-@dataclass(frozen=True)
-class CountMetric(EffectBase[None]):
+@_doeff_dataclass(frozen=True)
+class CountMetric(_doeff_effect_base[None]):
     name: str
     amount: float = 1.0
 
-@dataclass(frozen=True)
-class ObserveSeconds(EffectBase[None]):
+@_doeff_dataclass(frozen=True)
+class ObserveSeconds(_doeff_effect_base[None]):
     name: str
     seconds: float
 
-@dataclass(frozen=True)
-class SetGauge(EffectBase[None]):
+@_doeff_dataclass(frozen=True)
+class SetGauge(_doeff_effect_base[None]):
     name: str
     value: float
 
-@dataclass(frozen=True)
-class ReadMeter(EffectBase[MeterSnapshot]): ...
+@_doeff_dataclass(frozen=True)
+class ReadMeter(_doeff_effect_base[MeterSnapshot]):
+    ...
 
-# --- 断面の計算(純関数) ---
+def counted(snapshot: MeterSnapshot, name: str, amount: float) -> _Program[MeterSnapshot, object]:
+    ...
 
-def counted(snapshot: MeterSnapshot, name: str, amount: float) -> Program[MeterSnapshot, Any]: ...
-def gauged(snapshot: MeterSnapshot, name: str, value: float) -> Program[MeterSnapshot, Any]: ...
-def observed(
-    snapshot: MeterSnapshot, settings: MeterSettings, name: str, seconds: float
-) -> Program[MeterSnapshot, Any]: ...
+def gauged(snapshot: MeterSnapshot, name: str, value: float) -> _Program[MeterSnapshot, object]:
+    ...
+
+def observed(snapshot: MeterSnapshot, settings: MeterSettings, name: str, seconds: float) -> _Program[MeterSnapshot, object]:
+    ...

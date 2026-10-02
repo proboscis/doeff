@@ -1,29 +1,21 @@
-"""stack_dump_effects.hy の公開面の型(全 thread の stack を書く見張りの effect と台帳 — 型検査のための宣言・実行時は stack_dump_effects.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = stack_dump_effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- defrecord は frozen で keyword だけの dataclass。
-- defeffect は位置でも渡せる frozen の dataclass で、`EffectBase[答えの型]` の下位の型。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
+from doeff import Program as _Program
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
+from dataclasses import dataclass as dataclass
 
-from dataclasses import dataclass
-from typing import Any
-
-from doeff_vm import EffectBase
-
-from doeff import Program
-
-@dataclass(frozen=True)
-class ArmStackDump(EffectBase[None]):
+@_doeff_dataclass(frozen=True)
+class ArmStackDump(_doeff_effect_base[None]):
     at: float
     seconds: float
 
-@dataclass(frozen=True)
-class DisarmStackDump(EffectBase[None]):
+@_doeff_dataclass(frozen=True)
+class DisarmStackDump(_doeff_effect_base[None]):
     at: float
 
-@dataclass(frozen=True)
-class ReadStackDumps(EffectBase[tuple[float, ...]]):
+@_doeff_dataclass(frozen=True)
+class ReadStackDumps(_doeff_effect_base[tuple[float, ...]]):
     at: float
 
 @dataclass(frozen=True, kw_only=True)
@@ -31,4 +23,5 @@ class StackDumpLedger:
     deadline: float | None
     written: tuple[float, ...]
 
-def stack_dumps_at(ledger: StackDumpLedger, at: float) -> Program[StackDumpLedger, Any]: ...
+def stack_dumps_at(ledger: StackDumpLedger, at: float) -> _Program[StackDumpLedger, object]:
+    ...
