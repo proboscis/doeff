@@ -5,6 +5,11 @@
 ;;; 残る。判断は記録(止める前に読めた行と、作り直した後に読めた行)を受けて破りの列を返す純関数 1 つ。記録を集めるのは検
 ;;; (tests/test_local.hy の coordinator の止まりの検)。
 ;;;
+;;; 条 C15 acknowledged-values-survive・条 C16 declared-services-survive(#1976 の写しの C1 の残り): C1 は盤の行の鍵が残るかだけを見る。
+;;; C15 = 書き手の止まった盤の行は、作り直した後も止める前と同じ値(置き場が古い値を読み直さない)。C16 = 受け付けた Service の宣言は、
+;;; 作り直した後も在る。判断はどちらも記録(止める前と作り直した後の読み)を受けて破りの列を返す純関数 1 つ。記録を集めるのは検
+;;; (tests/test_local.hy の止まりの検)。
+;;;
 ;;; 条 C2 one-place-per-job(#2804): 入れ替え(handoff)を宣言しない job の process は、同時に 2 つ生きていない(違う worker の上でも、
 ;;; 同じ名の worker の新しい世代の上でも)— 担い手が途絶(処理の止まり・網の途絶)しても、途絶の間に能力の合う worker が加わっても、
 ;;; 宣言の needs が変わっても、置ける worker が退いても、分断の最中に k8s が同じ名の新しい世代を作っても。
@@ -78,6 +83,21 @@
   "条 C1: 止める前に読めた盤の行(返事を返した書き)が、作り直した後の盤に無ければ破り — 消えた行の鍵の列(空なら緑)。
    coordinator の置き場が返事の前の書きを落とさないことを、止まりの筋書きの記録から判じるため。"
   (tuple (sorted (gfor key before :if (not-in key after) key))))
+
+
+(defk acknowledged-values-survive [before after]
+  {:pre [(: before dict) (: after dict)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C15: 書き手の止まった盤を止める前に読めた行が、作り直した後に別の値になっていれば破り — その鍵の列(空なら緑)。C1 は鍵が残るか
+   だけを見るので、置き場が最後に返事を返した値でなく古い値を読み直していないことを、止まりの筋書きの記録から判じるため。作り直した
+   後に無い鍵は C1 が名指すので判じない。"
+  (tuple (sorted (gfor key before :if (and (in key after) (!= (get after key) (get before key))) key))))
+
+
+(defk declared-services-survive [before after]
+  {:pre [(: before (get tuple #(str ...))) (: after (get tuple #(str ...)))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C16: 止める前に GET /state で読めた Service の名(受け付けた宣言)が、作り直した後の読みに無ければ破り — その名の列(空なら緑)。
+   coordinator の置き場が受け付けた宣言を落とさず、作り直しの後も同じ job を置き続けることを、止まりの筋書きの記録から判じるため。"
+  (tuple (sorted (gfor name (set before) :if (not-in name after) name))))
 
 
 (defrecord ProcessSpan

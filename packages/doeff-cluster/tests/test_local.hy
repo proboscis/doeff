@@ -28,6 +28,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
+                                                                 acknowledged-values-survive declared-services-survive
                                                                  ServiceVersionRead service-versions-never-go-back
                                                                  WorkerProbe alive-only-while-reachable
                                                                  PlacementSeen WorkerGone places-only-on-reachable
@@ -566,6 +567,80 @@
   (assert seen.before seen)
   (<- lost tuple (acknowledged-writes-survive seen.before seen.after.rows))
   (assert (in "beacon/a" lost) #(lost seen.after.rows)))
+
+
+(defrecord QuietOutage
+  "条 C15・C16 の検の読み: 書き手の止まった盤と Service の名を、止める前(rows-before・services-before)と作り直した後(rows-after・
+   services-after)に読んだ物。"
+  (#^ dict rows-before)
+  (#^ dict rows-after)
+  (#^ tuple services-before)
+  (#^ tuple services-after))
+
+
+(defk quiet-board-across-a-stop []
+  {:pre [] :post [(: % QuietOutage)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C15・C16 の記録を集めるため: beacon を版 2(盤の行の step = 2)へ宣言し直し、その後 beacon の居ない系(relay)へ宣言し直して
+   beacon/ の行の書き手を止める。盤と Service の名を読み、coordinator を 10 秒止め、作り直しの後に 25 秒待ってもう 1 度読む。"
+  (<- (Delay 8.0))
+  (<- _v2 tuple (Redeclare (beacons-v2 sim-foundation)))
+  (<- (Delay 10.0))
+  (<- _quiet tuple (Redeclare (relay sim-foundation)))
+  (<- (Delay 10.0))
+  (<- rows-before dict (SharedRows "beacon/"))
+  (<- state-before dict (ReadCoordinator "/state"))
+  (<- (StopCoordinator 10.0))
+  (<- (Delay 35.0))
+  (<- rows-after dict (SharedRows "beacon/"))
+  (<- state-after dict (ReadCoordinator "/state"))
+  (QuietOutage :rows-before rows-before :rows-after rows-after
+               :services-before (tuple (gfor j (get state-before "jobs") (get j "name")))
+               :services-after (tuple (gfor j (get state-after "jobs") (get j "name")))))
+
+
+(deftest test-a-quiet-board-and-the-declared-services-survive-a-stop
+  ;; 条 C15・C16(architecture.hy の :invariants): 書き手の止まった盤の行は、作り直した後も止める前と同じ値(版 2 の step = 2)で、
+  ;; 受け付けた Service(relay の 2 つ)も在る。
+  (<- seen QuietOutage (sim-cluster (beacons sim-foundation) (quiet-board-across-a-stop)))
+  (assert (= (get seen.rows-before "beacon/a" "step") "2") seen.rows-before)
+  (assert seen.services-before seen)
+  (<- changed tuple (acknowledged-values-survive seen.rows-before seen.rows-after))
+  (assert (= changed #()) #(changed seen))
+  (<- missing tuple (declared-services-survive seen.services-before seen.services-after))
+  (assert (= missing #()) #(missing seen)))
+
+
+(defclass KeepsFirstValue [MemoryWalStore]
+  "壊れた置き場(条 C15 の反例・#1976 の写しの C1 の残り): 盤の行は最初に書いた値だけを残し、後の書きを受けた(返事は返る)のに
+   置き場の値を変えない — 作り直しで古い値を読み直す。"
+  (defn #^ None persist [self #^ (get dict #(str object)) delta]
+    (.persist (super) (dfor #(k v) (.items delta) :if (or (not (.startswith k "board/")) (not-in k self.kv)) k v))))
+
+
+(deftest test-a-counterexample-store-that-keeps-the-first-value-breaks-c15
+  ;; 条 C15 の失敗ケース: 置き場の差し替えの口(#989)に盤の行の最初の値だけを残す置き場を差すと、作り直した coordinator の盤の行が
+  ;; 止める前の値(step = 2)でなく最初の値になり、条 C15 がその行を名指す(C1 は鍵が残るので緑のまま)。
+  (<- seen QuietOutage (sim-cluster (beacons sim-foundation) (quiet-board-across-a-stop) :store KeepsFirstValue))
+  (<- lost tuple (acknowledged-writes-survive seen.rows-before seen.rows-after))
+  (assert (= lost #()) #(lost seen))
+  (<- changed tuple (acknowledged-values-survive seen.rows-before seen.rows-after))
+  (assert (in "beacon/a" changed) #(changed seen)))
+
+
+(defclass ForgetsServices [MemoryWalStore]
+  "壊れた置き場(条 C16 の反例・#1976 の写しの C1 の残り): 書きは受けるが、作り直しの読み直しで Service の宣言(service/ の鍵)を
+   渡さない — coordinator は盤を残したまま宣言を失って起き直す。"
+  (defn #^ (get dict #(str object)) table [self]
+    (dfor #(k v) (.items self.kv) :if (not (.startswith k "service/")) k v))
+  (defn #^ dict load [self] (.table self)))
+
+
+(deftest test-a-counterexample-store-that-forgets-services-breaks-c16
+  ;; 条 C16 の失敗ケース: 置き場の差し替えの口(#989)に読み直しで Service の宣言を渡さない置き場を差すと、作り直した coordinator の
+  ;; GET /state に止める前の Service が無く、条 C16 がその名を名指す。
+  (<- seen QuietOutage (sim-cluster (beacons sim-foundation) (quiet-board-across-a-stop) :store ForgetsServices))
+  (<- missing tuple (declared-services-survive seen.services-before seen.services-after))
+  (assert missing seen))
 
 
 (defk revision-across-a-stop [seconds]
