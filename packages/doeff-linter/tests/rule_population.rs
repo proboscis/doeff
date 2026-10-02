@@ -363,3 +363,57 @@ fn business_code_in_a_named_bare_module_is_red() {
         );
     }
 }
+
+/// hash で封をした記録の file を :files で path ごとに名指して外す宣言(agora-redesign #2934)— doeff の repo の宣言をそのまま
+/// 一時の repo に置いて確かめる: 宣言を書き換えると、ここが赤になる。
+const SEALED_DECLARATIONS: [(&str, &str); 2] = [
+    ("docs/architecture.hy", include_str!("../../../docs/architecture.hy")),
+    (
+        "docs/design/seat-home-common-instructions-AJ8C0B/model/architecture.hy",
+        include_str!("../../../docs/design/seat-home-common-instructions-AJ8C0B/model/architecture.hy"),
+    ),
+];
+
+/// 宣言が名指す封の file(doeff の repo の記録と同じ path)。
+const SEALED_FILES: [&str; 4] = [
+    "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py",
+    "docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/race_b_probe.py",
+    "docs/design/seat-home-common-instructions-AJ8C0B/model/chain.py",
+    "docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py",
+];
+
+/// 同じ dir に置いた、名指していない file(封の表が控えていない file)。
+const UNSEALED_SIBLINGS: [&str; 3] = [
+    "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/unsealed.py",
+    "docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/unsealed.py",
+    "docs/design/seat-home-common-instructions-AJ8C0B/model/unsealed.py",
+];
+
+/// 名指した封の file は外れ、同じ dir の名指していない file は今どおり DOEFF004 に当たる(dir ごと外れない)。宣言は読めて
+/// DOEFF032 も出ない。
+#[test]
+fn only_the_named_sealed_files_are_out_of_the_rule_population() {
+    let mut files: Vec<(&str, &str)> = SEALED_DECLARATIONS.to_vec();
+    files.extend(SEALED_FILES.iter().map(|path| (*path, ENV_READ)));
+    files.extend(UNSEALED_SIBLINGS.iter().map(|path| (*path, ENV_READ)));
+    let dir = repo(&files);
+    let mut expected: Vec<(String, String)> = UNSEALED_SIBLINGS
+        .iter()
+        .map(|path| ("DOEFF004".to_string(), path.to_string()))
+        .collect();
+    expected.sort();
+    assert_eq!(hits(dir.path()), expected);
+}
+
+/// 宣言が無ければ、封の file も今どおり当たる(除外は宣言の :files の名指しからだけ来る)。
+#[test]
+fn without_the_declarations_sealed_files_are_in_the_rule_population() {
+    let files: Vec<(&str, &str)> = SEALED_FILES.iter().map(|path| (*path, ENV_READ)).collect();
+    let dir = repo(&files);
+    let mut expected: Vec<(String, String)> = SEALED_FILES
+        .iter()
+        .map(|path| ("DOEFF004".to_string(), path.to_string()))
+        .collect();
+    expected.sort();
+    assert_eq!(hits(dir.path()), expected);
+}

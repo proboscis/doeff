@@ -1,7 +1,6 @@
 {
   "counts": {
     "DOEFF002": {
-      "docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/race_b_probe.py": 1,
       "packages/doeff-agentic/examples/test_mock_workflow.py": 2,
       "packages/doeff-agentic/src/doeff_agentic/api.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/handlers/opencode.py": 5,
@@ -41,8 +40,6 @@
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
     "DOEFF004": {
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py": 1,
-      "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/event_log.py": 3,
       "packages/doeff-agentic/src/doeff_agentic/state.py": 1,
       "packages/doeff-agents/conformance/harness.py": 3,
@@ -100,9 +97,6 @@
       "tests/test_rust_build_target_outside_package.py": 2
     },
     "DOEFF007": {
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/chain.py": 5,
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py": 1,
-      "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/tui/widgets.py": 7,
       "packages/doeff-agents/src/doeff_agents/handlers/daemon.py": 4,
       "packages/doeff-conductor/src/doeff_conductor/cli.py": 1,
@@ -415,5 +409,5 @@
       "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
     }
   },
-  "version": "doeff-linter の組み立ての入力 d556180b6ec587bcf7d78951cb66dbd9581f79c8"
+  "version": "doeff-linter の組み立ての入力 b13a2ed33e6a1a7aa6a3ae79ffacf4ddb518c5cf"
 }
