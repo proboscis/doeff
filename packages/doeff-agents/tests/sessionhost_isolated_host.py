@@ -32,6 +32,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import environment_mapping
+
 #: 宿の本物の CLI の名前。隔離した PATH の先頭に同名の「罠」を置き、呼ばれたら記録して非 0 で落ちる。
 REAL_AGENT_CLIS: tuple[str, ...] = ("claude", "codex")
 
@@ -145,8 +149,14 @@ class IsolatedHost:
 
 
 def isolated_host(root: Path, *, base_env: Mapping[str, str] | None = None) -> IsolatedHost:
-    """`root` の下に隔離した宿を作る。daemon とその tmux server・pane・判定の子はこの env を継ぐ。"""
-    source = dict(os.environ if base_env is None else base_env)
+    """`root` の下に隔離した宿を作る。daemon とその tmux server・pane・判定の子はこの env を継ぐ。
+
+    base_env を渡さない時の元 = この process の環境(os.environ を直に読まず、foundation の handler の
+    subprocess_handler が答える ReadEnvironment の写像 — agora-redesign #3012)。"""
+    process_env: Mapping[str, str] = (
+        run(with_handlers([subprocess_handler], environment_mapping())) if base_env is None else base_env
+    )
+    source = dict(process_env)
     home = root / "home"
     claude_config_dir = root / "claude-config"
     codex_home = root / "codex-home"

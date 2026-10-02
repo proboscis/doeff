@@ -158,6 +158,15 @@
   (+ named prefixed))
 
 
+(defk environment-mapping []
+  {:pre [] :post [(: % (get dict #(str str)))] :tags {:context "process" :role "program"}}
+  "この process の環境変数の全部を 名 → 値 の写像で受けるため(子 process の env の元・設定の解決に環境を丸ごと渡す呼び手 —
+   agora-redesign #3012)。os.environ を直に読まず ReadEnvironment の接頭辞 \"\"(全部の名に当たる)で問う — 答えるのは外側の
+   foundation の handler(本物 = os_process の subprocess-handler・台本 = scripted_process の scripted-process-handler)。"
+  (<- entries (get tuple #(EnvEntry ...)) (ReadEnvironment #() #("")))
+  (dfor entry entries entry.name entry.value))
+
+
 (defclass [(dataclass :frozen True)] WorkingDirectory [EffectBase]
   "自分の process の作業 dir(頭の註)。")
 

@@ -20,6 +20,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import environment_mapping
+
 Wire = Literal["direct", "gateway"]
 
 DIRECT_URL = "https://api.typesafe.ai/v1/systemone"
@@ -113,5 +117,9 @@ def read_text_from_disk(path: str) -> str | None:
 
 
 def target_from_process_environment(*, wire: str | None = None) -> JevTarget:
-    """組み立て点(CLI・hook の入口)だけが呼ぶ: この process の環境と home の file から宛先を解く。"""
-    return resolve_target(os.environ, read_text_from_disk, wire=wire)
+    """組み立て点(CLI・hook の入口)だけが呼ぶ: この process の環境と home の file から宛先を解く。
+
+    環境は os.environ を直に読まず、foundation の handler(subprocess_handler)が答える ReadEnvironment の写像で受ける
+    (agora-redesign #3012・doeff-linter DOEFF004)。"""
+    environ: dict[str, str] = run(with_handlers([subprocess_handler], environment_mapping()))
+    return resolve_target(environ, read_text_from_disk, wire=wire)

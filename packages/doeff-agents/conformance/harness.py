@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conformance_env import agentd_bin_setting, herdr_socket_setting, sessionhost_backend_setting
+from conformance_env import agentd_bin_setting, herdr_socket_setting, process_environment, sessionhost_backend_setting
 from doeff_agents.agentd_client import AgentdClient
 
 CONFORMANCE_DIR = Path(__file__).resolve().parent
@@ -727,7 +727,7 @@ class AgentdHarness:
             # deliberately does not — agora-redesign #3026).
             start_new_session=True,
             env={
-                **os.environ,
+                **process_environment(),
                 # Out-of-band lifetime boundary (S28): the daemon watches THIS
                 # process and, once it vanishes without `__exit__` (SIGKILLed
                 # pytest, hard crash), reaps its launched sessions and exits.

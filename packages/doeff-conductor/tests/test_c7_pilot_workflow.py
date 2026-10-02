@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
+from doeff import run, with_handlers
 from doeff_conductor.verbs import plan_workflow, validate_workflow
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import environment_mapping
 from doeff_conductor.workflow_loader import load_workflow_spec
 
 
@@ -90,7 +92,8 @@ def test_c7_scratch_repo_has_build_test_lint_gate_shape(tmp_path: Path) -> None:
     tests = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
         cwd=repo_path,
-        env={**os.environ, "PYTHONPATH": "src"},
+        # 親の環境(os.environ を直に読まず ReadEnvironment の写像 — #3012)に PYTHONPATH を足す。
+        env={**run(with_handlers([subprocess_handler], environment_mapping())), "PYTHONPATH": "src"},
         check=False,
         capture_output=True,
         text=True,

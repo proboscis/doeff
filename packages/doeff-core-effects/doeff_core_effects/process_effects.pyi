@@ -52,6 +52,9 @@ class ReadEnvironment(EffectBase):
 def environment_answer(present: tuple[tuple[str, str], ...], names: tuple[str, ...], prefixes: tuple[str, ...]) -> _Program[tuple[EnvEntry, ...], object]:
     ...
 
+def environment_mapping() -> _Program[dict[str, str], object]:
+    ...
+
 @dataclass(frozen=True)
 class WorkingDirectory(EffectBase):
     ...
