@@ -15,13 +15,25 @@ import yaml
 ROOT: Path = Path(__file__).resolve().parents[1]
 
 
-def _tool(directory: Path, name: str, exit_code: int) -> None:
+FAKE_VERSIONS: dict[str, str] = {"semgrep": "0.0.0-fake", "doeff-linter": "doeff-linter 0.0.0 (fake)"}
+# 基点と比べる道(scripts/hook_finding_baseline.py)が読む JSON の答え — 所見の無い報告。
+FAKE_REPORTS: dict[str, str] = {"semgrep": '{"results": [], "errors": []}', "doeff-linter": "[]"}
+
+
+def _tool(directory: Path, name: str, exit_code: int, *, report: str | None = None) -> None:
+    """呼ばれた引数を記録し、--version には偽の版を、JSON を求める呼びには偽の報告(report か所見の無い報告)を答える偽の道具。"""
+    answer: str = report if report is not None else FAKE_REPORTS.get(name, "")
     path: Path = directory / name
     path.write_text(
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
         "with open(os.environ['LINT_CALLS'], 'a') as output:\n"
         "    output.write(json.dumps([os.path.basename(sys.argv[0]), *sys.argv[1:]]) + '\\n')\n"
+        "if '--version' in sys.argv:\n"
+        f"    print({FAKE_VERSIONS.get(name, '0')!r})\n"
+        "    raise SystemExit(0)\n"
+        "if '--json' in sys.argv or 'json' in sys.argv:\n"
+        f"    print({answer!r})\n"
         f"raise SystemExit({exit_code})\n",
         encoding="utf-8",
     )
@@ -76,6 +88,13 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
     shutil.copyfile(ROOT / ".pre-commit-config.yaml", repository / ".pre-commit-config.yaml")
+    # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
+    (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
+    shutil.copyfile(ROOT / "scripts" / "hook_finding_baseline.py", repository / "scripts" / "hook_finding_baseline.py")
+    for tool, version in FAKE_VERSIONS.items():
+        (repository / "scripts" / "hook_finding_baseline" / f"{tool}.json").write_text(
+            json.dumps({"version": version, "counts": {}}), encoding="utf-8",
+        )
     changed_path: Path = repository / changed
     changed_path.parent.mkdir(parents=True, exist_ok=True)
     changed_path.write_text(source)
@@ -84,15 +103,22 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
 
 
 def _pre_commit(
-    directory: Path, changed: str, *, semgrep_status: int | None = 0,
+    directory: Path, changed: str, *, semgrep_status: int | None = 0, linter_report: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
-    _tool(directory, "doeff-linter", 0)
+    _tool(directory, "doeff-linter", 0, report=linter_report)
     if semgrep_status is not None:
         _tool(directory, "semgrep", semgrep_status)
     repository: Path = _repository(directory, changed, "value = 1\n")
+    environment: dict[str, str] = _environment(directory)
+    uv: str | None = shutil.which("uv")
+    assert uv is not None, "uv が要る(基点と比べる script を走らせる)"
+    environment["PATH"] = f"{directory}:{Path(uv).parent}:/usr/bin:/bin"
+    # 外側の `uv run pytest` の venv を子へ継がせない — 継ぐと hook の `uv run` がその venv の bin を探し道の先頭に置き、
+    # 本物の semgrep が偽の道具を隠す。
+    environment.pop("VIRTUAL_ENV", None)
     result: subprocess.CompletedProcess[str] = subprocess.run(
         [sys.executable, "-m", "pre_commit", "run", "--files", changed],
-        cwd=repository, env=_environment(directory), capture_output=True, text=True, check=False,
+        cwd=repository, env=environment, capture_output=True, text=True, check=False,
     )
     calls_path: Path = directory / "calls.jsonl"
     calls: list[list[str]] = (
@@ -110,14 +136,23 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
 ) -> None:
     result, calls = _pre_commit(tmp_path, changed)
     assert result.returncode == 0, result.stdout + result.stderr
-    semgrep_calls: list[list[str]] = [call for call in calls if call[0] == "semgrep"]
+    semgrep_calls: list[list[str]] = [call for call in calls if call[0] == "semgrep" and "--version" not in call]
     assert len(semgrep_calls) == 1, result.stdout + result.stderr
     assert semgrep_calls[0][-1] == changed
-    assert "--error" in semgrep_calls[0]
+    # Python は基点と比べる script が JSON で数える(#2848)・Hy は semgrep が所見 1 つで止める(--error)。
+    assert ("--json" if changed.endswith(".py") else "--error") in semgrep_calls[0]
     assert "doeff/" not in semgrep_calls[0]
     assert "packages/" not in semgrep_calls[0]
-    python_calls: list[list[str]] = [call for call in calls if call[0] == "doeff-linter"]
+    python_calls: list[list[str]] = [call for call in calls if call[0] == "doeff-linter" and "--version" not in call]
     assert len(python_calls) == int(changed.endswith(".py"))
+
+
+def test_python_change_with_a_linter_error_not_in_the_baseline_is_stopped(tmp_path: Path) -> None:
+    # 基点(空)に無い error が変えた file に 1 つ在る → 止まる(#2848 の失敗ケース — 前からの所見だけなら通る、は script の検)。
+    report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
+    result, _ = _pre_commit(tmp_path, "doeff/example.py", linter_report=report)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("tool_status", [None, 1, 2])

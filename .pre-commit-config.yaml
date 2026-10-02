@@ -1,13 +1,17 @@
 repos:
   - repo: local
     hooks:
+      # Python の semgrep と doeff-linter は、hook を据え付ける前からの所見(2026-10-02 に semgrep 74 件・linter の error 約 1,170 件)を
+      # 規則 × file の基点(scripts/hook_finding_baseline/)と比べ、増えた所見と基点の下げ忘れだけを止める(agora-redesign #2848)。
+      # 道具の版が基点の版と違う時は「測れない」と名指して通す — verbose で、通った時もその 1 行を見せる。
       - id: semgrep
-        name: semgrep architectural rules
-        entry: &semgrep-entry semgrep --metrics=off --disable-version-check --config .semgrep.yaml --error
+        name: semgrep architectural rules(Python・基点に無い所見だけ止める)
+        entry: uv run --no-project python scripts/hook_finding_baseline.py check semgrep
         language: system
         types: [python]
         # 変更fileだけを検査する。全体走査は既存の日次lint/pytest側が担う。
         pass_filenames: true
+        verbose: true
         # 規則の検体(違反をわざと書いた file)は tests/semgrep の検体の検が極性つきで
         # 検める。ここで検めると、発火すべき検体を足す commit が毎回止まる(2026-09-26)。
         exclude: &semgrep-fixtures '^tests/semgrep/fixtures/'
@@ -15,7 +19,7 @@ repos:
       # identifyにHyのtype tagは無い。Python専用linterへ渡さず、既存generic規則で検査する。
       - id: semgrep-hy
         name: semgrep Hy architectural rules
-        entry: *semgrep-entry
+        entry: &semgrep-entry semgrep --metrics=off --disable-version-check --config .semgrep.yaml --error
         language: system
         types: [file]
         files: '\.hy[pk]?$'
@@ -32,11 +36,12 @@ repos:
         pass_filenames: true
 
       - id: doeff-linter
-        name: doeff-linter
-        entry: doeff-linter --no-log
+        name: doeff-linter(Python・基点に無い error だけ止める)
+        entry: uv run --no-project python scripts/hook_finding_baseline.py check doeff-linter
         language: system
         types: [python]
         pass_filenames: true
+        verbose: true
 
       # packages/doeff-cluster は自分の設定(pyproject.toml の [tool.doeff-linter])と service・不変条件の宣言(architecture.hy)を
       # 持つ。根で走る上の doeff-linter はそれを読まないので、package の dir に入って当てる(Hy の file も渡す)。script が
