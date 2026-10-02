@@ -61,10 +61,11 @@
 
 (defrecord Measured
   "送った task の読み: waited = 送ってから task の process が起きるまでの仮想の秒・cold-starts = coordinator の冷たい起動の計器・
-   preparations = worker が起こした実行環境の root の準備(SimPreparation の列)。"
+   preparations = worker が起こした実行環境の root の準備(SimPreparation の列)・code-preparations = worker が起こしたコードの木の準備。"
   (#^ float waited)
   (#^ float cold-starts)
-  (#^ tuple preparations))
+  (#^ tuple preparations)
+  (#^ tuple code-preparations))
 
 
 (defk metric-value [text name]
@@ -78,8 +79,9 @@
 
 
 (defk send-and-measure [env key n]
-  {:pre [(: env RuntimeEnv) (: key str) (: n int)] :post [(: % Measured)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "env の送り手として 1 本送って答えを待ち、「送ってから task の process が起きるまで」の仮想の秒・冷たい起動の計器・準備の列を読むため。"
+  {:pre [(: env (| RuntimeEnv None)) (: key str) (: n int)] :post [(: % Measured)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "env の送り手(None = 実行環境の宣言を持たない送り手 — 送り手の版のコードだけ)として 1 本送って答えを待ち、「送ってから task の
+   process が起きるまで」の仮想の秒・冷たい起動の計器・準備の列を読むため。"
   (<- link SimLink (ClientLink))
   (<- sent int (now-epoch-ms))
   (<- outcome (with-handlers [(coordinator-answers (replace link :runtime-env env))]
@@ -94,7 +96,8 @@
   (<- cold float (metric-value metrics.text COLD-STARTS-METRIC))
   (<- preparations tuple (PreparationsOf "w1"))
   (Measured :waited (/ (- (. (get processes 0) started-ms) sent) 1000.0) :cold-starts cold
-            :preparations (tuple (gfor p preparations :if p.env p))))
+            :preparations (tuple (gfor p preparations :if p.env p))
+            :code-preparations (tuple (gfor p preparations :if (not p.env) p))))
 
 
 (defk scenario-8 []
@@ -134,6 +137,44 @@
   (assert (> seen.waited 2.0) (.format "温めない送りは準備を待つ: {}" seen.waited))
   (assert (= seen.cold-starts 1.0) seen.cold-starts)
   (assert (= (lfor p seen.preparations p.warm) [False]) seen.preparations))
+
+
+;; --- 準備の秒はコードの木と実行環境の root で別(#2879) ----------------------------------------------
+;; 本番の worker はコードの木の準備(PrepareCode)と実行環境の root の準備(PrepareEnv)を別の操作として行い、それぞれに別の時間が
+;; かかる。sim の worker もコードの木は prepare-seconds・実行環境の root は env-prepare-seconds の後に揃う。新しい版(実行環境の宣言を
+;; 持つ送り手)の root の準備だけが遅い筋書きで、旧い版(宣言を持たない送り手)の task はその準備を待たずに起きる — 1 つの秒を両方に
+;; 掛けると、旧い版の起動に新しい版の準備の秒の空きが出る(#2840 の置く係の入れ替えの筋書きの起点 150 秒・10 秒)。
+
+(val SPLIT-ENV-SECONDS 30.0)
+(val SPLIT-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds 0.0
+                                :env-prepare-seconds SPLIT-ENV-SECONDS)))
+
+
+(defrecord SplitMeasured
+  "旧い版と新しい版を続けて送った読み: old = 実行環境の宣言を持たない送り手の task・new = 宣言を持つ送り手の task。"
+  (#^ Measured old)
+  (#^ Measured new))
+
+
+(defk split-scenario []
+  {:pre [] :post [(: % SplitMeasured)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "旧い版の送り手(実行環境の宣言なし)で 1 本、続けて新しい版の送り手(宣言あり)で 1 本送り、それぞれの待ちと準備を読む。"
+  (<- old Measured (send-and-measure None "old-1" 1))
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- new Measured (send-and-measure env "new-1" 2))
+  (SplitMeasured :old old :new new))
+
+
+(deftest test-an-old-version-task-does-not-wait-for-the-new-version-env-root-preparation
+  (<- seen SplitMeasured (sim-cluster NO-JOBS (split-scenario) :workers SPLIT-WORKERS))
+  ;; 旧い版: コードの木の準備は prepare-seconds(0 秒)で揃い、実行環境の root は準備せず、待ちは worker の拍と置き先の拍だけ(2 秒以内)。
+  (assert (<= seen.old.waited 2.0) (.format "旧い版は実行環境の root の準備を待たない: {}" seen.old.waited))
+  (assert (= seen.old.preparations #()) seen.old.preparations)
+  (assert (and seen.old.code-preparations (all (gfor p seen.old.code-preparations (= p.ready-ms p.started-ms))))
+          seen.old.code-preparations)
+  ;; 新しい版: 実行環境の root の準備は env-prepare-seconds(30 秒)かかり、待ちはそれを含む。
+  (assert (= (lfor p seen.new.preparations (- p.ready-ms p.started-ms)) [(int (* 1000 SPLIT-ENV-SECONDS))]) seen.new.preparations)
+  (assert (>= seen.new.waited SPLIT-ENV-SECONDS) (.format "新しい版は実行環境の root の準備を待つ: {}" seen.new.waited)))
 
 
 ;; --- 筋書き 9(掃除の選び — 純粋な関数) --------------------------------------------------------

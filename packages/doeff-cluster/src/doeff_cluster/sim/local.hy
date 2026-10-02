@@ -21,7 +21,8 @@
 ;;;   - worker = 本物の run-worker を、worker ごとの偽の宿(sim-host)の上で回す(worker-keeper が node の一生を持つ — 死んだ・止めた
 ;;;     worker は StartWorker で新しい世代として起き直す)。heartbeat・状態の報告・lease を返す要求・温める表の行の読み・root の名乗りは
 ;;;     本番の coordinator への口 と同じ形(handlers.heartbeat-body・status-report・desired-when-unreachable・env-report・env-heartbeat-part・
-;;;     warm-env-of-row)。コードの木と実行環境の root の準備は SimWorker の prepare-seconds の後に揃う(既定 0 = 即座)・env-failure を
+;;;     warm-env-of-row)。コードの木の準備は SimWorker の prepare-seconds・実行環境の root の準備は env-prepare-seconds(None なら
+;;;     prepare-seconds)の後に揃う(既定 0 = 即座・#2879)・env-failure を
 ;;;     持つ worker の実行環境の準備はその失敗で終わる。入口の検めは通る(準備の層そのものは env_world と丁寧な模擬の検が持つ)。
 ;;;   - 偽の宿の StartJob は、coordinator の /programs/<sha> から取った詰めた文字列を decode し(検の物と object を共有しない・運べる値か
 ;;;     を検める)、「柵(fence)→ クラスタの約束の答え(coordinator-answers)→ 宿の答え(host-answers)→ Program」の順に包んで、宿の
@@ -90,7 +91,7 @@
 ;;;   - sim の土台は scheduler と時計を含まないので、本番の土台に scheduler を入れ忘れてもここでは見つからない(計画 7)。
 ;;;   - coordinator に届かない・断られた時の例外の型は RemoteJobFailed(本番は httpx の例外)。書きの要求は 1 回だけ送る(本番の
 ;;;     宛先の部品の routed-request は接続の段の失敗だけを間を置いて 4 回まで送り直す)。
-;;;   - 実行環境の root は準備の中身(git・uv・disk)を模擬しない(prepare-seconds の後に揃うか env-failure で終わる)。disk は常に ok。
+;;;   - 実行環境の root は準備の中身(git・uv・disk)を模擬しない(env-prepare-seconds の後に揃うか env-failure で終わる)。disk は常に ok。
 ;;;   - process の中で Spawn した task は 1 段の包み(tracked-child)の task として起きる(Program が受ける把手は包みの物 — 取り消し・待ち・
 ;;;     答えは同じ)。
 ;;;   - AwaitProcessEnded は筋書きにだけ答える(世界の真実で答える — 本番の答えは coordinator の信念で、heartbeat の分だけ遅れる)。
@@ -202,7 +203,10 @@
   "sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・node に当たる)。provides = 提供する能力の名・
    exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・node = 置かれた k8s の node の名(空 = k8s の外)・
    versions = 名乗る版(None = 送り手と同じ筋の versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
-   実行環境の root の準備にかかる仮想の秒・env-failure = 実行環境の root の準備がこの失敗で終わる worker(None = 揃う)・
+   実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
+   かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
+   実行環境の宣言を持たない job の準備は env-prepare-seconds を待たない・#2879)・env-failure = 実行環境の root の準備がこの失敗で終わる
+   worker(None = 揃う)・
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
    (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
    壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)・retire-stops = 反例の
@@ -217,6 +221,7 @@
   (setv #^ str node "")
   (setv #^ (| dict None) versions None)
   (setv #^ float prepare-seconds 0.0)
+  (setv #^ (| float None) env-prepare-seconds None)
   (setv #^ (| EnvFailure None) env-failure None)
   (setv #^ bool starts-down False)
   (setv #^ bool ignores-fence False)
@@ -1502,9 +1507,11 @@
 (defk begin-preparation [worker truth key env warm now]
   {:pre [(: worker SimWorker) (: truth HostTruth) (: key str) (: env bool) (: warm bool) (: now int)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "準備 1 つを始めて宿の真実と世界の記録に書くため(揃う時刻 = now + prepare-seconds・実行環境の root は worker の env-failure で終わる)。"
+  "準備 1 つを始めて宿の真実と世界の記録に書くため(揃う時刻 = now + 準備の秒 — コードの木は prepare-seconds・実行環境の root は
+   env-prepare-seconds(None なら prepare-seconds)・実行環境の root は worker の env-failure で終わる)。"
+  (val seconds (if (and env (is-not worker.env-prepare-seconds None)) worker.env-prepare-seconds worker.prepare-seconds))
   (val preparation (SimPreparation :worker worker.name :key key :env env :warm warm :started-ms now
-                                   :ready-ms (+ now (int (* 1000 worker.prepare-seconds)))
+                                   :ready-ms (+ now (int (* 1000 seconds)))
                                    :failure (if env worker.env-failure None)))
   (<- (PutHostTruth worker.name (replace truth :codes (| truth.codes {key preparation}))))
   (<- (NotePreparation preparation))
