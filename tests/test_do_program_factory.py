@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import dis
 import functools
+import importlib
 import inspect
+import itertools
 from collections.abc import Callable, Generator
 
 import pytest
+from doeff_vm import Call
 
 from doeff import Pure, do, run
 from doeff.do import _is_generator_function, program_factory
@@ -113,6 +116,34 @@ def test_decorating_a_plain_function_does_not_unwrap_through_inspect(
     assert calls[0] == 0
     do(functools.partial(_generator))
     assert calls[0] == 1
+
+
+def test_calling_a_decorated_function_builds_its_call_without_the_call_constructor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """失敗ケースの対(数の検): ``@do`` の関数の 1 回の呼びは ``Call`` の型を呼ばない — 定義の ``make_call``
+    (vectorcall の method)が同じ ``Call`` を作る。型を呼ぶと、引数の tuple・``tp_new`` の振り分け・pyo3 の
+    constructor の引数の読みが呼びごとに掛かった(agora-redesign #2817)。直しを外すと 1 回数える。
+    """
+    do_module = importlib.import_module("doeff.do")
+    constructed = itertools.count()
+    original = Call
+
+    def counting(*args: object, **kwargs: object) -> object:
+        next(constructed)
+        return original(*args, **kwargs)
+
+    # wrapper が呼びごとに module の名 Call を引いて型を呼ぶ形なら、ここで差し込んだ物が数える(直した後の do.py は Call を import しない)
+    monkeypatch.setattr(do_module, "Call", counting, raising=False)
+    decorated = do(_generator)
+    program = decorated(1)
+    keyword_program = decorated(x=1)
+    assert isinstance(program, original)
+    assert (program.args, program.kwargs) == ((1,), {})
+    assert (keyword_program.args, keyword_program.kwargs) == ((), {"x": 1})
+    assert program.function is keyword_program.function
+    assert (run(program), run(keyword_program)) == (2, 2)
+    assert next(constructed) == 0
 
 
 def test_program_factory_does_not_import_per_decoration() -> None:
