@@ -24,7 +24,7 @@
 (import doeff_cluster.shared.entry.service_build [job system-of system-declaration])
 (import doeff_cluster.shared.intent.service_model [Job System CallShape Declaration])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json identity-hash])
-(import doeff_cluster.foundation.host_contract [host-reader])
+(import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])

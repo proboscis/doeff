@@ -9,7 +9,7 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.protocol.task_result [delivered-task-result])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteOptions])
 (import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])

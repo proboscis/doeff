@@ -1,0 +1,17 @@
+{
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-run-context",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/run_context.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/run_context.hy"
+      ],
+      "responsibility": "実行先の子 process の文脈の型 RunContext(worker が環境変数で渡す — #2981 で根の job_context から移した)。",
+      "typed": true
+    }
+  ]
+}

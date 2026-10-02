@@ -1,4 +1,4 @@
-;; 境目の記録係(record_handlers.boundary-recorder)と再生の道具(replay_main)の検(ADR-DOE-CLUSTER-001 R5・R5b)。
+;; 境目の記録係(shared/entry/boundary_recorder の boundary-recorder)と再生の道具(replay_main)の検(ADR-DOE-CLUSTER-001 R5・R5b)。
 ;;
 ;;   1. boundary-recorder が Ask RECORD-MODE-KEY の答えで記録係を選ぶ: off = 空の組・record = 記録係 1 つ(置き場に届かなくても業務は
 ;;      止まらない)・replay = 外から渡した状態の effect-replayer・知らない mode = ValueError・mode(と replay の状態)の Ask に答えが無い
@@ -31,7 +31,7 @@
 (import doeff_core_effects.handlers [reader await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.foundation.process_versions [process-versions])
@@ -40,7 +40,8 @@
 (import tests.board_fake [board-handlers])
 (import doeff_cluster.foundation.record_log [read-recording])
 (import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState replay-report
-                                       boundary-recorder recording-header RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
+                                       RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
+(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder recording-header])
 (import tests.fixtures.recorded_programs [ledger-program world-foundation ledger-translation-layer drifting-translation-layer])
 
 (val ROOT (str (. (Path __file__) (resolve) parent parent)))   ; この package の根(見本の module は tests.* の名)

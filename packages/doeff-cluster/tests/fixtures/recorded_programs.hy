@@ -1,6 +1,6 @@
 ;;; 境目の記録係と再生の道具の検(test_boundary_recorder.hy)の業務の Program の見本(ADR-DOE-CLUSTER-001 R5・R5b)。
 ;;;
-;;; Program は自分の with-handlers で、外側から 土台(外の世界の fake)→ 境目の記録係(record_handlers.boundary-recorder)→ 翻訳の
+;;; Program は自分の with-handlers で、外側から 土台(外の世界の fake)→ 境目の記録係(shared/entry/boundary_recorder の boundary-recorder)→ 翻訳の
 ;;; handler → 業務の本体 の順に並べる。記録係は翻訳の handler が出した汎用の effect(Ask・ReadShared・WriteShared)だけを見る。
 ;;; scheduler は土台(本体を包む module の最上位の関数 — 計画 10.1)が並べる(実行先 — job_entry・replay_main — は何も足さない)。
 ;;;
@@ -14,12 +14,13 @@
 (import doeff_core_effects.handlers [state await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT host-reader environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.foundation.record_handlers [boundary-recorder])
+(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
 
 
 ;; --- 業務の effect と翻訳 ------------------------------------------------------------------------------

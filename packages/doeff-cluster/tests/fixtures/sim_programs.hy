@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.remote_rules [remote-job])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 

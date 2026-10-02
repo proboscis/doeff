@@ -6,7 +6,7 @@
 ;;;                 (environ-reader 値の表)(子の spec.environ)
 ;;;
 ;;; 契約の世界は解釈器ごとに同じ形で用意する:
-;;;   * 宿の文脈 CONTEXT と Program の path PROGRAM-PATH: 本物 = worker が子へ渡す環境変数の名(job_context.context-from-env が読む名)に
+;;;   * 宿の文脈 CONTEXT と Program の path PROGRAM-PATH: 本物 = worker が子へ渡す環境変数の名(shared/entry/run_context_env の context-from-env が読む名)に
 ;;;     置く・fake = SimChild の ctx と program-path
 ;;;   * 宣言の :environ DECLARED: 本物 = os.environ に置く・fake = 値の表
 ;;;   * 置かない名(MISSING・OUTER-NAME): 本物 = 走る間だけ os.environ から外す・fake = 表に無い
@@ -19,9 +19,10 @@
 (import os)
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [reader state])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader host-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.foundation.process_versions [process-versions])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.sim.local [SimChild SimLink host-answers])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
 

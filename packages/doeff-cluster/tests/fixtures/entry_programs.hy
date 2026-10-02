@@ -10,7 +10,8 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader state env-var-ask])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT host-reader environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.shared.entry.host_reader [host-reader])
 (import tests.fixtures.envs [scheduler-foundation])
 ;; 子の中で入口 doeff_cluster.worker.entry.job_entry は __main__ として読まれる(送る名 JOB-ENTRY — #2112)ので、ここで同じ file を
 ;; import するともう 1 回読まれる。業務の module が入口の module から文脈の読みを import しても、文脈の型が 1 つのままであること

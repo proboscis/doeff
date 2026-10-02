@@ -11,7 +11,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff [with-handlers])
 (import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_time [SimClock sim-time-handler])

@@ -15,7 +15,7 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 
@@ -59,7 +59,7 @@
 
 (defk service-report-of [ctx pid]
   {:pre [(: ctx RunContext) (: pid int)] :post [(: % ServiceReport)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
-  "worker の子 process の文脈(job_context.RunContext)と process の pid から、世代つきの報告の送り手を作るため(送るのは上の
+  "worker の子 process の文脈(shared/intent/run_context の RunContext)と process の pid から、世代つきの報告の送り手を作るため(送るのは上の
    sent-report)。pid は組み立てる側(cluster_foundation)が渡す — 前は foundation/report_client.hy が os.getpid を読んでいたが、層
    foundation は protocol の ServiceReport を読めないので、ここに寄せた(#2566)。"
   (ServiceReport ctx.job (| {"worker" ctx.worker "pid" pid "revision" ctx.revision} (.identity ctx))))

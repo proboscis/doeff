@@ -3,7 +3,7 @@
 ;; 子は `hy -m doeff_cluster.job_entry` で起きるので job_entry は __main__ として読まれる。業務の module が job_entry から
 ;; runtime-env-of-context を import すると、同じ file が doeff_cluster.job_entry としてもう 1 回読まれ、__main__ の RunContext を渡された
 ;; :pre の型の検めが「ctx expected RunContext, got RunContext」で必ず落ちた(実験用の namespace で再現)。文脈の型と読みは入口でない
-;; module(job_context)に置く。job は Program の値 1 つで、文脈は土台の handler host-reader が Ask "doeff.cluster.run-context" に答える
+;; module(型 = shared/intent/run_context・読み = shared/core/run_context_rules)に置く。job は Program の値 1 つで、文脈は土台の handler host-reader が Ask "doeff.cluster.run-context" に答える
 ;; (入口は handler を足さない — ADR-DOE-CLUSTER-001 R2)。この検は本物の入口を subprocess で起こし、Program が自分の並べた host-reader で
 ;; 文脈と自分の Program の path を読み、job_entry から import した runtime-env-of-context がそれを受けることを確かめる。
 (require doeff-hy.macros [deftest defk <- val var])
@@ -51,12 +51,13 @@
 
 
 ;; --- 本番の worker と sim の宿が子へ渡す文脈は同じ(2026-09-29)------------------------------------------------------
-;; 本番の子 process の言い換え(process-host — 起こし方は worker/core/launch の job-launch)は子の環境変数(job_context.worker-context-environ・process-context-environ)を置き、子は context-from-env
+;; 本番の子 process の言い換え(process-host — 起こし方は worker/core/launch の job-launch)は子の環境変数(shared/core/run_context_rules の worker-context-environ・process-context-environ)を置き、子は context-from-env
 ;; で読む。sim の宿(local.run-context-of)は同じ関数で作った dict を同じ読み(context-of-environ)で読む。実行環境の job の子は宣言と
 ;; キー(DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY)を受け、そうでない job の子は空で受ける(以前の sim の宿は env の job でも空で渡した)。
 
 (import tests.host_rig [host-settings launched])
-(import doeff_cluster.job_context [RunContext worker-context-environ context-of-environ])
+(import doeff_cluster.shared.intent.run_context [RunContext])
+(import doeff_cluster.shared.core.run_context_rules [worker-context-environ context-of-environ])
 (import doeff_cluster.sim.local [run-context-of SIM-URL])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 

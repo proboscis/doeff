@@ -23,9 +23,10 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.foundation.record_log [Recording read-recording ReplayDiverged])
-(import doeff_cluster.foundation.record_handlers [boundary-recorder ReplayState replay-report
+(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
+(import doeff_cluster.foundation.record_handlers [ReplayState replay-report
                                                   RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
 
 ;; 置き場の代役の宛先(名前だけ — 誰も待ち受けない。送りは代役の handler が受ける)。

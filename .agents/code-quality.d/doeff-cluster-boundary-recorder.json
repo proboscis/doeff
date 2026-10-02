@@ -1,0 +1,24 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/shared/entry/boundary_recorder.hy"
+  ],
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-host-contract",
+        "doeff-cluster-record-handlers",
+        "doeff-cluster-run-context"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-boundary-recorder",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/boundary_recorder.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/boundary_recorder.hy"
+      ],
+      "responsibility": "境目の記録係の組と記録の頭書き(宿の契約の run-context を読む所 — #2981 で foundation/record_handlers から入口の側へ移した)。",
+      "typed": true
+    }
+  ]
+}
