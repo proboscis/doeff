@@ -44,12 +44,17 @@ fn hits(root: &Path) -> Vec<(String, String)> {
 
 /// 根から設定なしで `target`(根からの相対 path)だけに走らせ、(規則, file の相対 path) の組を返す。
 fn hits_of(root: &Path, target: &str) -> Vec<(String, String)> {
+    hits_of_rules(root, target, "DOEFF004,DOEFF032")
+}
+
+/// hits_of の、走らせる規則 `rules`(--enable の並び)を名指す形。
+fn hits_of_rules(root: &Path, target: &str, rules: &str) -> Vec<(String, String)> {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args([
             "--no-config",
             "--no-log",
             "--enable",
-            "DOEFF004,DOEFF032",
+            rules,
             "--output-format",
             "json",
             target,
@@ -297,13 +302,7 @@ fn business_code_in_the_environment_module_is_red() {
 
 /// 名指しの module が `__init__.py` の無い dir に在る package(module の名 = file の名・agora-redesign #2861)— doeff の repo の宣言を
 /// そのまま一時の repo に置いて確かめる。(宣言の path・宣言・名指しの module の path・同じ dir のほかの module の path)
-const BARE_MODULE_PACKAGES: [(&str, &str, &str, &str); 3] = [
-    (
-        "packages/doeff-agents/architecture.hy",
-        include_str!("../../doeff-agents/architecture.hy"),
-        "packages/doeff-agents/conformance/conformance_agent.py",
-        "packages/doeff-agents/conformance/harness.py",
-    ),
+const BARE_MODULE_PACKAGES: [(&str, &str, &str, &str); 2] = [
     (
         "packages/doeff-agents/architecture.hy",
         include_str!("../../doeff-agents/architecture.hy"),
@@ -378,31 +377,45 @@ const UNSEALED_SIBLINGS: [&str; 3] = [
     "docs/design/seat-home-common-instructions-AJ8C0B/model/unsealed.py",
 ];
 
-/// 名指した封の file は外れ、同じ dir の名指していない file は今どおり DOEFF004 に当たる(dir ごと外れない)。宣言は読めて
-/// DOEFF032 も出ない。
+/// 封の file と同じ dir の file に置く中身: 環境変数の直の読み(DOEFF004 — 宣言は外さない)と引数の書き換え(DOEFF007 — 宣言 2 つが
+/// 外す)を 1 つずつ。
+const ENV_READ_AND_ARGUMENT_MUTATION: &str = "import os\n\n\ndef store_dir() -> str:\n    return os.environ.get(\"STORE\", \"\")\n\n\ndef add(items: list) -> None:\n    items.append(1)\n";
+
+/// 封の検で走らせる規則。
+const SEALED_RULES: &str = "DOEFF004,DOEFF007,DOEFF032";
+
+/// file `path` の (規則, path) の組を、規則 `rules` の分だけ並べる。
+fn expected_hits(paths: &[&str], rules: &[&str]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = paths
+        .iter()
+        .flat_map(|path| rules.iter().map(move |rule| (rule.to_string(), path.to_string())))
+        .collect();
+    out.sort();
+    out
+}
+
+/// 名指した封の file は外した規則(DOEFF007)から外れ、同じ dir の名指していない file は今どおり当たる(dir ごと外れない)。宣言が
+/// 外さない規則(DOEFF004 — 封の file の環境変数の直の読みは agora-redesign #3012 で直して外すのをやめた)は、封の file にも当たる。
+/// 宣言は読めて DOEFF032 も出ない。
 #[test]
 fn only_the_named_sealed_files_are_out_of_the_rule_population() {
     let mut files: Vec<(&str, &str)> = SEALED_DECLARATIONS.to_vec();
-    files.extend(SEALED_FILES.iter().map(|path| (*path, ENV_READ)));
-    files.extend(UNSEALED_SIBLINGS.iter().map(|path| (*path, ENV_READ)));
+    files.extend(SEALED_FILES.iter().map(|path| (*path, ENV_READ_AND_ARGUMENT_MUTATION)));
+    files.extend(UNSEALED_SIBLINGS.iter().map(|path| (*path, ENV_READ_AND_ARGUMENT_MUTATION)));
     let dir = repo(&files);
-    let mut expected: Vec<(String, String)> = UNSEALED_SIBLINGS
-        .iter()
-        .map(|path| ("DOEFF004".to_string(), path.to_string()))
-        .collect();
+    let mut expected = expected_hits(&SEALED_FILES, &["DOEFF004"]);
+    expected.extend(expected_hits(&UNSEALED_SIBLINGS, &["DOEFF004", "DOEFF007"]));
     expected.sort();
-    assert_eq!(hits(dir.path()), expected);
+    assert_eq!(hits_of_rules(dir.path(), ".", SEALED_RULES), expected);
 }
 
 /// 宣言が無ければ、封の file も今どおり当たる(除外は宣言の :files の名指しからだけ来る)。
 #[test]
 fn without_the_declarations_sealed_files_are_in_the_rule_population() {
-    let files: Vec<(&str, &str)> = SEALED_FILES.iter().map(|path| (*path, ENV_READ)).collect();
+    let files: Vec<(&str, &str)> = SEALED_FILES.iter().map(|path| (*path, ENV_READ_AND_ARGUMENT_MUTATION)).collect();
     let dir = repo(&files);
-    let mut expected: Vec<(String, String)> = SEALED_FILES
-        .iter()
-        .map(|path| ("DOEFF004".to_string(), path.to_string()))
-        .collect();
-    expected.sort();
-    assert_eq!(hits(dir.path()), expected);
+    assert_eq!(
+        hits_of_rules(dir.path(), ".", SEALED_RULES),
+        expected_hits(&SEALED_FILES, &["DOEFF004", "DOEFF007"])
+    );
 }
