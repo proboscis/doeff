@@ -149,11 +149,89 @@ fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
     static TENDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     TENDED.get_or_init(|| {
         record_root(root_dir, root);
+        mark_used(root_dir);
         // 時計が 1970 年より前を指す機体では間隔を測れないので走査しない
         if let Ok(now) = std::time::SystemTime::now().duration_since(UNIX_EPOCH) {
-            sweep_vanished_roots(base, now.as_secs());
+            if sweep_vanished_roots(base, now.as_secs()) {
+                sweep_over_cap(base, root_dir, cache_cap_bytes(), now.as_secs());
+            }
         }
     });
+}
+
+/// 根の dir の、最後に使われた時刻の印(中身は空 — file の更新時刻が印)。上限を超えた時に古い順を決める(agora-redesign #2725)。
+const USED_RECORD: &str = "used";
+/// 置き場の全体の上限を変える環境変数(byte)。
+const CAP_ENV: &str = "DOEFF_LINTER_CACHE_MAX_BYTES";
+/// 置き場の全体の上限の既定(10 GiB)— 作業木 1 つの根の dir は約 65MB なので、約 150 の根を持てる。
+const DEFAULT_CAP_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+/// 置き場の全体の上限(環境変数が読めない値なら既定)。
+fn cache_cap_bytes() -> u64 {
+    std::env::var(CAP_ENV).ok().and_then(|text| text.trim().parse::<u64>().ok()).unwrap_or(DEFAULT_CAP_BYTES)
+}
+
+/// この実行が根の dir を使った印を付ける(1 つの実行で 1 度)。
+fn mark_used(root_dir: &Path) {
+    if std::fs::create_dir_all(root_dir).is_ok() {
+        let _ = std::fs::write(root_dir.join(USED_RECORD), b"");
+    }
+}
+
+/// 根の dir の中の file の大きさの合計(byte — 根の dir の直下と `<種類>.<形>.d/` の塊)。
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            Ok(meta) if meta.is_dir() => dir_bytes(&entry.path()),
+            Ok(meta) => meta.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+/// 根の dir の、最後に使われた時刻(UNIX 秒)— 印 `used` の更新時刻。印の無い dir(この仕組みより前に作られた dir)は dir の更新時刻。
+fn last_used(dir: &Path) -> u64 {
+    std::fs::metadata(dir.join(USED_RECORD))
+        .or_else(|_| std::fs::metadata(dir))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
+/// 置き場の全体が上限 cap を超えていれば、最後に使われた時刻の古い dir から消して上限の内へ戻す(agora-redesign #2725)。根が在り続ける
+/// 作業木の dir は sweep_vanished_roots では消えず、根の数だけ増え続けた(zeus で 62G・1 時間に約 4G)。この実行の根の dir と、前の走査の
+/// 間隔の内に使われた dir(並走する実行が使っている根)は消さない — 上限を一時に超えても、使っている根を消して作り直させない。消しても
+/// 答えは変わらない(読めない塊は作り直す — 頭の註)。
+fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64) {
+    let Ok(entries) = std::fs::read_dir(base) else { return };
+    let mut dirs: Vec<(u64, u64, PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| {
+            let dir = entry.path();
+            (last_used(&dir), dir_bytes(&dir), dir)
+        })
+        .collect();
+    let mut total: u64 = dirs.iter().map(|(_, bytes, _)| bytes).sum();
+    if total <= cap {
+        return;
+    }
+    dirs.sort_by_key(|(used, _, _)| *used);
+    for (used, bytes, dir) in dirs {
+        if total <= cap {
+            break;
+        }
+        if dir == root_dir || now.saturating_sub(used) < SWEEP_INTERVAL_SECONDS {
+            continue;
+        }
+        // 消せなければ次の走査でもう一度試す(答えには関わらない)
+        if std::fs::remove_dir_all(&dir).is_ok() {
+            total = total.saturating_sub(bytes);
+        }
+    }
 }
 
 /// 根の dir に根の絶対 path を記録する(同じ記録が既に在れば書かない)。
@@ -175,16 +253,17 @@ fn record_root(root_dir: &Path, root: &Path) {
 
 /// 前の走査から間隔が過ぎていれば、置き場の根の dir のうち、記録した根の path が無い(NotFound)dir を消す。記録の無い dir・記録を
 /// 読めない dir・根の有無を確かめられない dir は残す。時刻の記録を先に書き換えるので、並走する実行は同じ間隔の中で重ねて走査しない。
-fn sweep_vanished_roots(base: &Path, now: u64) {
+/// 走査した時に真を返す(間隔の内・時刻の記録を書けない時は偽 — 上限の片づけ sweep_over_cap も同じ間隔で走らせるため)。
+fn sweep_vanished_roots(base: &Path, now: u64) -> bool {
     let stamp = base.join(SWEEP_RECORD);
     let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
     if last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
-        return;
+        return false;
     }
     if std::fs::create_dir_all(base).is_err() || std::fs::write(&stamp, now.to_string()).is_err() {
-        return;
+        return false;
     }
-    let Ok(entries) = std::fs::read_dir(base) else { return };
+    let Ok(entries) = std::fs::read_dir(base) else { return true };
     for entry in entries.flatten() {
         let dir = entry.path();
         let Ok(recorded) = std::fs::read_to_string(dir.join(ROOT_RECORD)) else { continue };
@@ -194,6 +273,7 @@ fn sweep_vanished_roots(base: &Path, now: u64) {
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
+    true
 }
 
 fn load<T: DeserializeOwned + Send>(file: &Path, identity: &str, format: Format) -> HashMap<String, Entry<T>> {
