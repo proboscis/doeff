@@ -11,7 +11,7 @@
 ;;;
 ;;; Both keep their state in the session, so a state handler (doeff_core_effects.handlers.state) must be outside them.
 
-(require doeff-hy.macros [defhandler <- val])
+(require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "stop-signal" :role "foundation"})
 
 (import signal)
@@ -56,10 +56,11 @@
     None))
 
 
-(defn #^ StopBox install-stop-box []
+(defk install-stop-box []
+  {:pre [] :post [(: % StopBox)] :tags {:context "stop-signal" :role "foundation"}}
   "Install SIGINT / SIGTERM receivers that record the first signal into a fresh StopBox.
    The previous receivers are not restored (a service keeps them for its whole life; a test restores them itself)."
-  (setv box (StopBox))
+  (val box (StopBox))
   (for [signum STOP-SIGNALS]
     (signal.signal signum box.receive))
   box)
@@ -67,7 +68,7 @@
 
 (defhandler os-signal-stop-handler
   "Answer StopRequested from the process's real SIGINT / SIGTERM."
-  (session val box (install-stop-box))
+  (session val box (! (install-stop-box)))
   (StopRequested []
     (resume box.reason))
   (AwaitStop []

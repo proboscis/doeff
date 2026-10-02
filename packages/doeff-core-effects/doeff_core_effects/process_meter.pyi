@@ -30,10 +30,10 @@ PLACES: Incomplete
 SNAPSHOTS: Incomplete
 PLACES_LOCK: Incomplete
 
-def gc_pause_watch(pauses: Incomplete) -> Incomplete:
+def gc_pause_watch(pauses: deque) -> _Program[Callable, object]:
     ...
 
-def meter_place(name: Incomplete, settings: Incomplete) -> Incomplete:
+def meter_place(name: str, settings: MeterSettings) -> _Program[MeterPlace, object]:
     ...
 
 def with_pauses(snapshot: MeterSnapshot, settings: MeterSettings, pauses: tuple) -> _Program[MeterSnapshot, object]:

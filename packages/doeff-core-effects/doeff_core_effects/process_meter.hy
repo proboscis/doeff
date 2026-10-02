@@ -44,9 +44,11 @@
 (val PLACES-LOCK (threading.Lock))
 
 
-(defn gc-pause-watch [pauses]  ; defk にできない: gc.callbacks に繋ぐ callback を返す(回収の最中に VM の外から呼ばれる)
-  "回収 1 回の start → stop の秒を pauses へ積む callback を作る(lock を取らない — 頭の註)。"
-  (setv started [None])
+(defk gc-pause-watch [pauses]
+  {:pre [(: pauses deque)] :post [(: % Callable)] :tags {:context "meter" :role "foundation"}}
+  "回収 1 回の start → stop の秒を pauses へ積む callback を作るため(lock を取らない — 頭の註)。作った callback は gc.callbacks に繋がり、
+   回収の最中に VM の外から素の関数として呼ばれる。"
+  (val started [None])
   (fn [phase info]
     (setv now (time.monotonic))
     (if (= phase "start")
@@ -58,16 +60,18 @@
             (.append pauses (- now began)))))))
 
 
-(defn meter-place [name settings]  ; defk にできない: 答え手を入れる時(session val)に 1 度だけ置き場を作る・引く(VM の外の process の置き場)
-  "name の置き場を引く(無ければ作り、設定に gc-pause-name があれば GC の callback を繋ぐ)。同じ名前で違う設定なら断る。"
+(defk meter-place [name settings]
+  {:pre [(: name str) (: settings MeterSettings)] :post [(: % MeterPlace)] :tags {:context "meter" :role "foundation"}}
+  "答え手を入れる時に、name の置き場を引くため(無ければ作り、設定に gc-pause-name があれば GC の callback を繋ぐ)。同じ名前で違う設定なら断る。"
   (with [PLACES-LOCK]
-    (setv place (.get PLACES name))
+    (var place (.get PLACES name))
     (when (is place None)
-      (setv place (MeterPlace :settings settings :lock (threading.Lock) :pauses (deque)))
+      (:= place (MeterPlace :settings settings :lock (threading.Lock) :pauses (deque)))
       (setv (get PLACES name) place)
       (setv (get SNAPSHOTS name) EMPTY-METER)
       (when (is-not settings.gc-pause-name None)
-        (.append gc.callbacks (gc-pause-watch place.pauses))))
+        (<- watch Callable (gc-pause-watch place.pauses))
+        (.append gc.callbacks watch)))
     (when (!= place.settings settings)
       (raise (ValueError (.format "計器の置き場 {!r} は別の設定で入れてある: {!r}(今の設定 {!r})" name place.settings settings))))
     place))
@@ -101,7 +105,7 @@
   "CountMetric・ObserveSeconds・SetGauge・ReadMeter に、process に 1 つの置き場 place-name で答える(頭の註)。"
   ;; 引数に残す理由: place-name は別の run と同じ置き場を共有する鍵、settings は置き場を作る時の桁の表と GC の停止の名 — どちらも入れる所ごとに
   ;; 決まる値で、Ask では区別できない(1 つの組に名前の違う計器を並べられる)。
-  (session val place (meter-place place-name settings))
+  (session val place (! (meter-place place-name settings)))
   (CountMetric [name amount]
     (<- (rewritten place-name place (fn [snapshot] (counted snapshot name amount))))
     (resume None))

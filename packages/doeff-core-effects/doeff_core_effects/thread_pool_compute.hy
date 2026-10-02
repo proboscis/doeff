@@ -6,16 +6,18 @@
 ;;; 始まっていない仕事は pool から外す(始まった仕事は止めない — 答えは捨てられる)。
 ;;; ⚠ Python の thread なので、純 Python の重い計算は GIL を分け合う。得られるのは「処理のループが計算の間も他の出来事に答え続ける」ことで、
 ;;; CPU の本数ぶんの速さではない。
-(require doeff-hy.macros [defhandler <- val])
+(require doeff-hy.macros [defhandler deff <- val])
 (val MODULE-TAGS {:context "compute" :role "foundation"})
-(import concurrent.futures [Executor])
+(import concurrent.futures [Executor Future])
+(import doeff [Program])
 (import doeff_vm [PyVM])
-(import doeff_core_effects.scheduler [CreateExternalPromise Wait])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait])
 (import doeff_core_effects.compute_effects [Compute])
 (import doeff_core_effects.inline_compute [computed])
 
 
-(defn settle [promise future]  ; defk にできない: pool の thread から呼ばれる完了の callback(VM の外)
+(deff settle [promise future]  ; defk にできない: pool の thread から呼ばれる完了の callback(add-done-callback に渡す関数の本体・VM の外)
+  {:pre [(: promise ExternalPromise) (: future Future)] :post [(: % None)]}
   "pool の仕事の終わりを promise へ渡す(computed は例外を値にするので、ここで落ちるのは BaseException だけ)。"
   (cond
     (.cancelled future) None
@@ -23,7 +25,8 @@
     True (.complete promise (.result future))))
 
 
-(defn run-computed [program]  ; defk にできない: pool の thread で回す入口(VM の外から新しい VM を起こす)
+(deff run-computed [program]  ; defk にできない: pool の thread で回す入口(pool.submit に渡す・VM の外から新しい VM を起こす)
+  {:pre [(: program Program)] :post [(: % "program の答え(computed が例外を値にした物)")]}
   "pool の thread で program の答えを値にする。"
   (.run (PyVM) (computed program)))
 
