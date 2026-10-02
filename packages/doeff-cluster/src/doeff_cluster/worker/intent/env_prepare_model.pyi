@@ -1,5 +1,8 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = env_prepare_model.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
+from typing import ClassVar as _doeff_ClassVar
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
@@ -102,7 +105,8 @@ class PrepareNote(EffectBase):
 class DiskFree(EffectBase):
     path: str
 
-class RepoAllowed(_doeff_effect_base):
+@_doeff_dataclass(frozen=True)
+class RepoAllowed(_doeff_effect_base[bool]):
     __doeff_answer__: _doeff_ClassVar[object] = ...
     url: str
 
