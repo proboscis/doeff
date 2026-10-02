@@ -25,6 +25,7 @@ import json
 import posixpath
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -153,3 +154,30 @@ def locate(top: Path, key: str) -> Located | None:
 def searched() -> str:
     """名指しの文に載せる、探した置き場。"""
     return f"land-arm の開発版 {dev_dir()}・断面の置き場 {snapshot_dir()}"
+
+
+def dev_key(top: Path) -> str | None:
+    """land-arm の開発版の鍵(開発版が無い・記録の commit を git が知らない時は None)— 「取り込めば測れる」を言うため。"""
+    found: list[Candidate] = _dev_candidate()
+    return input_key(top, found[0].commit) if found else None
+
+
+def main(argv: list[str]) -> int:
+    """`which [<commit>]` — commit(既定 HEAD)の組み立ての入力の鍵の binary の path を 1 行出す(shell の hook が呼ぶ —
+    scripts/lint-doeff-cluster.sh)。無ければ理由を出して 3(呼び手が「測れない」と名指す)。repo の根で呼ぶ。"""
+    if argv[:1] != ["which"] or len(argv) > 2:
+        print("使い方: doeff_linter_locked.py which [<commit>]", file=sys.stderr)
+        return 2
+    top: Path = Path.cwd()
+    commit: str = argv[1] if len(argv) == 2 else "HEAD"
+    key: str | None = input_key(top, commit)
+    located: Located | None = locate(top, key) if key is not None else None
+    if located is None:
+        print(f"{commit} の linter の組み立ての入力({key})の binary が {searched()} に無い", file=sys.stderr)
+        return 3
+    print(located.binary)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

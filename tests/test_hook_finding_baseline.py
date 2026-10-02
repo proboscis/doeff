@@ -244,6 +244,8 @@ def test_a_baseline_whose_linter_is_not_built_is_named_as_unmeasured_and_passes(
     assert other.returncode == 0
     assert "測れない" in other.stderr
     assert built_for in other.stderr
+    # 開発版は基点と別の鍵で在る — main を取り込めば測れる、と添える。
+    assert "main を取り込めば" in other.stderr
 
 
 def test_the_snapshot_store_answers_when_the_dev_build_is_newer(tmp_path: Path) -> None:

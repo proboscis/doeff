@@ -33,7 +33,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff_linter_locked import binary_key, input_key, locate, searched
+from doeff_linter_locked import binary_key, dev_key, input_key, locate, searched
 from semgrep_locked import locked_command, locked_version
 
 BASELINE_DIR: str = "scripts/hook_finding_baseline"
@@ -241,6 +241,14 @@ def _write(file: Path, baseline: Baseline) -> None:
     file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _unmeasured_hint(top: Path, baseline: Baseline) -> str:
+    """「測れない」の時にどうすれば測れるか: land-arm の開発版が基点と別の鍵で在れば、main を取り込めば(基点がその鍵に揃い)測れる。"""
+    dev: str | None = dev_key(top)
+    if dev is not None and dev != baseline.version:
+        return "main を取り込めば land-arm の開発版で測れる"
+    return "land-arm が main の linter を組み直すのを待つ"
+
+
 USAGE: str = (
     "使い方: hook_finding_baseline.py [--root <dir>] [--linter <組んだ doeff-linter>] check|lower|init doeff-linter|semgrep [path …]"
 )
@@ -311,9 +319,10 @@ def _check(top: Path, tool: str, baseline: Baseline, paths: list[str]) -> int:
     """check の入口: 基点と同じ版の道具で、測った file の数を基点と比べる(赤 = 1・通す = 0)。"""
     instrument: Instrument | None = semgrep_instrument(top) if tool == "semgrep" else linter_for_checking(top, baseline)
     if instrument is None:
-        # doeff-linter: 基点の鍵の binary が置き場に無い(linter を変えた便の commit の間・land-arm が組み直すまでの数分)。
+        # doeff-linter: 基点の鍵の binary が置き場に無い(少し前の main から切った作業木・linter を変えた便の commit の間・
+        # land-arm が組み直すまでの数分)。止めずに通す — 通した commit は日次の全体の測りが同じ基点の形で測る(#2906)。
         print(f"doeff-linter: 測れない(基点の版 {baseline.version} の binary が {searched()} のどちらにも無い — hook の中では"
-              "組まない)。land-arm が main の linter を組み直すのを待つか、linter を変えた便は自分の build を "
+              f"組まない)。{_unmeasured_hint(top, baseline)}。linter を変えた便は自分の build を "
               "`uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` で渡して基点を数え直す",
               file=sys.stderr)
         return 0
