@@ -13,7 +13,7 @@ runtime_env_model.pyi と同じ形)。
 - 検の effect(DeclareRollout … ClientLink)は凍った dataclass の EffectBase[答えの型]。答えの型は defeffect の :answer に、tuple の要素の型を
   足した物(ProcessesOf = SimProcess の tuple ほか)。契約の effect(Crash・Redeclare・ReadinessOf・KillWorker・StopWorker・
   StopCoordinator・CrashCoordinator)と答えの型 ServiceReadiness は shared/intent/cluster_control(道具の .pyi)から読む — local.hy が
-  そこから import して答えるので、ここでは同じ名で読み直すだけ(#3029)。SimReadiness は ServiceReadiness の旧い名(1 版だけ)。
+  そこから import して答えるので、ここでは同じ名で読み直すだけ(#3029)。
 - 入口 sim-cluster・wall-sim-cluster は筋書きの答えの型をそのまま返す(defk は呼ぶと Program を返す)。
 - 仕組みの名のうち、他の module(doeff-cluster の検・業務の側の模擬)が import する物(SimChild・SimParts・SimExit・HostTruth・
   PartsOf・HostTruthOf・EndProcess と、coordinator-answers・host-answers・run-context-of・send-request・sim-process・
@@ -38,7 +38,6 @@ from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
 from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
 from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
-from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as SimReadiness
 from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
 from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
 from doeff_cluster.shared.intent.job_model import JobSpec

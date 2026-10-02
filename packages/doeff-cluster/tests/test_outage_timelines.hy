@@ -26,7 +26,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.remote_rules [remote-job])
 (import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess SimReadiness ProcessesOf ReadinessOf ReportsOf ReadCoordinator
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess ServiceReadiness ProcessesOf ReadinessOf ReportsOf ReadCoordinator
                              CoordinatorRuns CutWorker StallWorker StartWorker StopCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses solo-pulses add-task sim-task-foundation])
@@ -184,7 +184,7 @@
 (defrecord Moment
   "job 1 つの、ある時刻の読み: processes = その job の process の列(SimProcess・起こした順)・ready = coordinator の Service の ready。"
   (#^ tuple processes)
-  (#^ SimReadiness ready))
+  (#^ ServiceReadiness ready))
 
 
 (defrecord HostSeen
@@ -221,7 +221,7 @@
   (var read #())
   (for [job jobs]
     (<- processes tuple (ProcessesOf job))
-    (<- ready SimReadiness (ReadinessOf job))
+    (<- ready ServiceReadiness (ReadinessOf job))
     (:= read #(#* read (Moment :processes processes :ready ready))))
   read)
 
