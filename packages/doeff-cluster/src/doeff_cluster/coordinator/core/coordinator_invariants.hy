@@ -49,6 +49,10 @@
 ;;; 判断は記録(本当に動いた process の列・job ごとの needs・worker ごとの本当の能力と専用の能力)を受けて、資格の無い worker で動いた
 ;;; process の列を返す純関数 1 つ。
 ;;;
+;;; 条 C14 runs-within-their-limit: 入れ替え(handoff)を宣言した job は同時に 2 つ(旧と新)まで、task は同時に 1 つまでしか動かない
+;;; (C2 は入れ替えを宣言しない job だけを見る — #1976 の写しの C5 の残り)。判断は記録(本当に動いた process の列と、名ごとの上限)を
+;;; 受けて、起きた瞬間に上限を越えていた process の列を返す純関数 1 つ。
+;;;
 ;;; 条 C11 no-new-place-while-draining: drain を頼まれた worker には、drain の期限の内に新しい置き先を置かない(drain は worker を空けるための
 ;;; 頼み)。判断は記録(読めた置き先と、worker ごとの drain を頼んだ刻と期限)を受けて、drain の窓の内に置いた置き先の列を返す純関数 1 つ。
 ;;;
@@ -365,6 +369,27 @@
                :if (= n.job p.job)
                :if (or (any (gfor a abilities (and (= a.worker p.worker) (not (<= n.needs a.provides)))))
                        (any (gfor x exclusives (and (= x.worker p.worker) x.exclusive (not (& n.needs x.exclusive))))))
+               p)))
+
+
+(defrecord RunLimit
+  "条 C14 の記録 1 つ = 名 1 つ(job か task/<id>)の、同時に生きてよい process の数(入れ替えを宣言した job は 2・task は 1)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ int limit))
+
+
+(defk runs-within-their-limit [processes limits]
+  {:pre [(: processes (get tuple #(JobProcess ...))) (: limits (get tuple #(RunLimit ...)))]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C14: 本当に動いた process の列から、起きた瞬間に同じ名で生きていた process の数がその名の上限を越えた process を返す(空なら緑)。
+   入れ替え(handoff)の job は旧と新の 2 つまで・task は 1 つまでしか同時に動かない(C2 は入れ替えを宣言しない job だけを見る)ことを、
+   筋書きの記録から判じるため。上限の記録が無い名は判じない。区間は [起きた時刻, 終わった時刻)。"
+  (val alive-at (fn [p t] (and (<= p.started-ms t) (or (is p.ended-ms None) (< t p.ended-ms)))))
+  (tuple (gfor p processes
+               r limits
+               :if (= r.job p.job)
+               :if (> (len (lfor q processes :if (and (= q.job p.job) (alive-at q p.started-ms)) q)) r.limit)
                p)))
 
 
