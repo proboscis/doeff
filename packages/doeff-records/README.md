@@ -144,8 +144,8 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)、`meter` = 計器の
   答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。
 
-client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
-答える。`401` / `403`(口は出さない — 前に立つ口が出した時)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
+client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, writer=…))` は、同じ公開 effect に口越しで
+答える(書き手の名 `writer` を平文の見出し `X-Records-Writer`(綴りは `doeff_records.wire` の `WRITER-HEADER`)で送る。欄 `token` は移行の間だけ残り、在れば `Authorization` で送る)。`401` / `403`(口は出さない — 前に立つ口が出した時)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
 時間を置いても晴れないので `Unreachable`(撃ち直してよい届かなさ)にも `Refused`(宣言がその書きを断った)にもしない。`404` は `UndeclaredTable` を上げる
 (欄 = 要求が名指した名のうち断りの理由に載った物 — 断りの本文の形は変えない。理由の綴りは `wire.hy` の `undeclared-reason` と
 `undeclared-refusal` の 1 か所)。
