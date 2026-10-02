@@ -50,6 +50,11 @@ impl PyVM {
             self.vm.var_store.cells.len(),
         )
     }
+
+    /// Steps this VM has taken since it was built (diagnostic — [issue]).
+    fn step_count(&self) -> u64 {
+        self.vm.steps
+    }
 }
 
 impl PyVM {
