@@ -25,13 +25,13 @@
   (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED)) (cut s.name 5 None) None))
 
 
-(deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
-  {:pre [(: silent-ms int) (: fence-ms int) (: last tuple) (: warm tuple) (: reason str)] :post [(: % (| DesiredJobs DesiredUnreadable))]
-   :tags {:context "worker" :role "judgment"}}
+(deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ int keep-fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
+  {:pre [(: silent-ms int) (: fence-ms int) (: keep-fence-ms int) (: last tuple) (: warm tuple) (: reason str)]
+   :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "worker" :role "judgment"}}
   "coordinator に届かなかった拍の宣言を決めるため。連絡が fence を超えて途絶えたら、lease を持たない job と task を止める(coordinator は
    後で他へ移す)。書き手(入れ替えを宣言した job)と切り離した task は動かし続ける — 書きは lease の柵だけが守り、切り離した task の
-   lease はこの worker の heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。fence の内なら「読めない」(直前の宣言を
-   使い続ける)。"
+   lease はこの worker の heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。途絶しても動かし続けてよい印の在る job は、
+   途絶が長い方の柵 keep-fence-ms を越えるまで動かし続ける(#2804)。fence の内なら「読めない」(直前の宣言を使い続ける)。"
   (if (> silent-ms fence-ms)
-      (DesiredJobs (kept-when-cut-off last) :warm warm)
+      (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm)
       (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {reason}")))

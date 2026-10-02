@@ -59,7 +59,8 @@
      ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
      (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})
      ;; 途絶しても動かし続けてよい印の在る job だけ(#2804 — cluster_policy.keep-marked): worker は coordinator に届かない間もこの job を
-     ;; 止めない。欄を読まない古い worker は今までどおり fence で止める。
+     ;; 止めない(長い方の柵 keep-fence-ms まで)。欄を読まない古い worker は今までどおり fence で止める — 旧い worker(e06b01411 の
+     ;; handlers.declared-job-spec)は知っている鍵だけを .get で読むので、この欄は捨てられる。
      (if spec.keep-when-cut-off {"keepWhenCutOff" True} {})))
 
 

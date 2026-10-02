@@ -1,6 +1,7 @@
 ;; 移せる先の無い job を担い手の途絶でも外さず、返事の印で worker が止めない(#2804)。本番の Service はどれも置ける worker が 1 台しか
 ;; なく、担い手の途絶(処理の止まり 47 秒・網の途絶 2 分 — 2026-10-02 13:26・13:53)で置き先を外しても他へ移らず、止めて起こし直す
-;; 損だけが残った。
+;; 損だけが残った。印の在る job も、途絶が長い方の柵(ClusterTiming.keep-fence-ms・240 秒)を越えたら止める — 分断の最中に k8s が作る
+;; 同じ名の worker の新しい世代(早くても約 350 秒後)と重ならないため。
 ;;
 ;; 前半 = 本体の判断を直に呼ぶ検(置き先・返事の印・約束の外し方・readiness・保存・worker の fence の判断・返事の読み)。
 ;; 後半 = 模擬の世界(本物の coordinator と本物の worker を仮想の時計で回す sim-cluster)の途絶の筋書きと、条 C2 one-place-per-job
@@ -26,7 +27,7 @@
 (import doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess SimReadiness ProcessesOf ReadinessOf CutWorker StallWorker StartWorker
-                             DrainWorker Redeclare])
+                             DrainWorker Redeclare KillWorker])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
 (import tests.program_rows [SAMPLE-RUN])
@@ -192,7 +193,9 @@
   (assert (= (get (running-process plain "a" 60000 T) "state") "NotReady"))
   (val kept (running-process (replace plain :keep-marks {"a" mark}) "a" 60000 T))
   (assert (= (get kept "state") "Unknown") kept)
-  (assert (in "印" (get kept "reason")) kept))
+  (assert (in "印" (get kept "reason")) kept)
+  ;; 印の在る job も、担い手は途絶が長い方の柵(keep-fence-ms 240 秒)を越えたら止めるので、その後は NotReady。
+  (assert (= (get (running-process (replace plain :keep-marks {"a" mark}) "a" 241000 T) "state") "NotReady")))
 
 
 (deftest test-promises-survive-a-coordinator-restart
@@ -210,9 +213,9 @@
   (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True}))
   (<- plain JobSpec (declared-job-spec {"name" "b" "entry" "m" "revision" "r"}))
   (assert (and marked.keep-when-cut-off (not plain.keep-when-cut-off)))
-  (assert (= (kept-when-cut-off #(marked plain)) #(marked)))
-  (assert (= (desired-when-unreachable 120000 20000 #(marked plain) #() "cut") (DesiredJobs #(marked))))
-  (assert (= (desired-when-unreachable 20001 20000 #(plain) #() "cut") (DesiredJobs #())))
+  (assert (= (kept-when-cut-off #(marked plain) 120000 T.keep-fence-ms) #(marked)))
+  (assert (= (desired-when-unreachable 120000 T.fence-ms T.keep-fence-ms #(marked plain) #() "cut") (DesiredJobs #(marked))))
+  (assert (= (desired-when-unreachable 20001 T.fence-ms T.keep-fence-ms #(plain) #() "cut") (DesiredJobs #())))
   ;; 今持っている印の知らせ(heartbeat の keptWhenCutOff)と、返事の綴り(印の無い行は欄を書かない — 古い worker が見る行は今までと同じ)。
   (<- held tuple (keep-marks-held #(marked plain)))
   (assert (= held #("a")))
@@ -220,6 +223,17 @@
   (<- plain-row dict (spec-json plain))
   (assert (= (get marked-row "keepWhenCutOff") True))
   (assert (not-in "keepWhenCutOff" plain-row) plain-row))
+
+
+(deftest test-a-marked-job-is-stopped-once-the-cut-outlasts-the-long-fence
+  ;; 長い方の柵(査読の決め): 印の在る job も、途絶が keep-fence-ms(240 秒)を越えたら止める — 2 分の途絶では止めず、241 秒の途絶では
+  ;; 止める(同じ名の worker の新しい世代が来る約 350 秒後より先)。長い方の柵は fence より長くなければ時間の設定として受けない。
+  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True}))
+  (assert (= (desired-when-unreachable 120000 T.fence-ms T.keep-fence-ms #(marked) #() "cut") (DesiredJobs #(marked))))
+  (assert (= (desired-when-unreachable 241000 T.fence-ms T.keep-fence-ms #(marked) #() "cut") (DesiredJobs #())))
+  (assert (= T.keep-fence-ms 240000))
+  (with [(pytest.raises ValueError)]
+    (ClusterTiming :fence-ms 20000 :keep-fence-ms 20000)))
 
 
 ;; --- 模擬の世界の途絶の筋書き ------------------------------------------------------------------------------------------
@@ -290,6 +304,69 @@
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= broken #()) broken))
+
+
+(deftest test-a-lone-job-is-stopped-by-the-long-fence-and-restarted-in-place-after-a-250-second-cut
+  ;; 長い方の柵: 置ける worker が 1 台の job も、担い手の網が keep-fence-ms(240 秒)を越えて切れていれば止まる(止めの合図 -15)。
+  ;; coordinator は置き先を保つので、明けた後は同じ worker で起き直す — 2 か所では走らない。
+  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 250.0)))
+  (<- spans tuple (spans-of seen.after))
+  (<- broken tuple (one-place-per-job spans))
+  (assert (= broken #()) broken)
+  (val stopped (get seen.after 0))
+  (val again (get seen.after -1))
+  (assert (= #(stopped.worker stopped.exit-code again.worker again.exit-code) #(seen.host -15 seen.host None)) seen.after)
+  ;; 止まったのは途絶(8 秒後から)が 240 秒を越えた後で、網が戻る(258 秒後)より前。
+  (val lived (- stopped.ended-ms stopped.started-ms))
+  (assert (< T.keep-fence-ms lived (+ 8000 250000)) #(lived stopped)))
+
+
+(defrecord PartitionSeen
+  "分断の筋書きの読み: host = 分断した worker・evicted = 追い出しで node ごと落とした時に動いていた process の数・after = 新しい世代が
+   起きた後の process の列。"
+  (#^ str host)
+  (#^ int evicted)
+  (#^ tuple after))
+
+
+(defk partition-then-recreate []
+  {:pre [] :post [(: % PartitionSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(分断の最中の同じ名の新しい世代): 8 秒待って pulse の担い手の網を 352 秒切る(分断 — 担い手の process は動き続けうる)。
+   k8s が届かない node の Pod を追い出して同じ名の新しい世代を作るのは早くても約 350 秒後なので、切って 351 秒後に担い手を node ごと
+   落とし(追い出し)、網が戻った後に同じ名の新しい世代を起こして 30 秒後に読む。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf "pulse"))
+  (val host (. (get before 0) worker))
+  (<- (CutWorker host 352.0))
+  (<- (Delay 351.0))
+  (<- evicted int (KillWorker host))
+  (<- (Delay 2.0))
+  (<- (StartWorker host))
+  (<- (Delay 30.0))
+  (<- after tuple (ProcessesOf "pulse"))
+  (PartitionSeen :host host :evicted evicted :after after))
+
+
+(defk partitioned-spans [processes]
+  {:pre [(: processes tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "分断の読み替えをした条 C2 の区間の列を作るため: 模擬の世界の追い出し(KillWorker)は担い手の process を -9 で止めるが、本物の分断では
+   k8s の追い出しは届かない node の上の process を止めない — 追い出しで -9 で終わった process は走り続けていたと読む(終わり = None)。"
+  (tuple (gfor p processes (ProcessSpan :worker p.worker :started-ms p.started-ms :ended-ms (if (= p.exit-code -9) None p.ended-ms)))))
+
+
+(deftest test-a-same-name-generation-after-a-partition-does-not-overlap-the-old-process
+  ;; 長い方の柵(査読の決め): 分断の最中に k8s が同じ名の worker の新しい世代を作っても(早くても約 350 秒後)、印の在る job の古い
+  ;; process は keep-fence-ms(240 秒)で既に止まっていて、新しい世代の process と重ならない(条 C2)。新しい世代は印を持たないと知らせる
+  ;; ので約束が外れ、置き先を引き継いで起こす。
+  (<- seen PartitionSeen (sim-cluster (pulses sim-foundation) (partition-then-recreate)))
+  (<- spans tuple (partitioned-spans seen.after))
+  (<- broken tuple (one-place-per-job spans))
+  (assert (= broken #()) broken)
+  (assert (= seen.evicted 0) seen)
+  (val old (get seen.after 0))
+  (val new (get seen.after -1))
+  (assert (= #(old.exit-code new.worker new.exit-code) #(-15 seen.host None)) seen.after)
+  (assert (< old.ended-ms new.started-ms) seen.after))
 
 
 (defk cut-then-join []

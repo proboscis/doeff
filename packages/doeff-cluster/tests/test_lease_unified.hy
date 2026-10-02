@@ -117,7 +117,7 @@
   (setv writer (JobSpec "writer-a" "m" #() "r" :handoff True)
         runner (JobSpec "turn-runner" "m" #() "r")
         task (JobSpec "task/t1" "m" #() "r" :once True :handoff True))
-  (assert (= (kept-when-cut-off #(writer runner task)) #(writer))))
+  (assert (= (kept-when-cut-off #(writer runner task) 60000 240000) #(writer))))
 
 
 (defn #^ None test-a-cut-off-worker-keeps-its-writers-and-stops-the-rest []

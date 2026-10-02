@@ -28,20 +28,22 @@
 ;; 途絶しても動かし続けてよい印(#2804): coordinator が「他に置ける worker が無い」と判じて返事の job に付けた印(JobSpec.keep-when-cut-off)
 ;; の在る job も止めない。coordinator は印を渡した担い手から、担い手が印を持たないと知らせる(heartbeat の keptWhenCutOff — keep-marks-held)
 ;; か Worker が消されるまで job を他へ移さないので、2 か所で走らない保証は時間の競争(fence < 移し替え)ではなく「移さない」で持つ。
+;; 印の在る job も長い方の柵(ClusterTiming.keep-fence-ms・既定 240 秒)を越えた途絶では止める — 同じ名の worker の新しい世代(k8s が届かない
+;; node の Pod を追い出して作り直した物・早くても約 350 秒後)と重ならないため(数の前提は ClusterTiming.keep-fence-ms の註)。
 ;; 止めるかどうかの判断はこの述語 1 つ(fence の判断 desired-when-unreachable と、時間で周期ごとに判ずる側が同じ述語を呼ぶ)。
-(defk kept-when-cut-off? [job]
-  {:pre [(: job JobSpec)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
-  "coordinator に届かない間も job を動かし続けるかを 1 か所で決めるため: 入れ替えを宣言した書き手(lease の柵が書きを守る)・切り離した
-   task(担い手の heartbeat が lease を延ばす)・途絶しても動かし続けてよい印の在る service の job(coordinator が他へ移さない)。RemoteJob の
-   task は含まない(呼び手が lease を持つ)。"
+(defk kept-when-cut-off? [job silent-ms keep-fence-ms]
+  {:pre [(: job JobSpec) (: silent-ms int) (: keep-fence-ms int)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "coordinator に届かない間(最後に届いた返事から silent-ms)も job を動かし続けるかを 1 か所で決めるため: 入れ替えを宣言した書き手(lease の
+   柵が書きを守る)・切り離した task(担い手の heartbeat が lease を延ばす)・途絶しても動かし続けてよい印の在る service の job(coordinator が
+   他へ移さない — ただし途絶が keep-fence-ms を越えるまで)。RemoteJob の task は含まない(呼び手が lease を持つ)。"
   (or (and job.handoff (not job.once))
       (and job.once job.detached)
-      (and job.keep-when-cut-off (not job.once))))
+      (and job.keep-when-cut-off (not job.once) (<= silent-ms keep-fence-ms))))
 
 
-(defn #^ tuple kept-when-cut-off [#^ tuple jobs]
-  "純粋: coordinator に届かない間も動かし続ける job の列を、最後に受け取った宣言から選ぶため(判断は kept-when-cut-off? 1 つ)。"
-  (tuple (gfor job jobs :if (run (kept-when-cut-off? job)) job)))
+(defn #^ tuple kept-when-cut-off [#^ tuple jobs #^ int silent-ms #^ int keep-fence-ms]
+  "純粋: coordinator に届かない間(silent-ms)も動かし続ける job の列を、最後に受け取った宣言から選ぶため(判断は kept-when-cut-off? 1 つ)。"
+  (tuple (gfor job jobs :if (run (kept-when-cut-off? job silent-ms keep-fence-ms)) job)))
 
 
 (defk keep-marks-held [jobs]
