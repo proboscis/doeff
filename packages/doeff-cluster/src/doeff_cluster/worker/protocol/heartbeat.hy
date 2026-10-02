@@ -1,6 +1,6 @@
 ;;; worker が coordinator へ送る heartbeat の本文の形 — 実行環境の root の名乗り・生存と能力と版・状態の行と結果(本番の coordinator への口 と
 ;;; 手元の sim-cluster の宿 sim/local が同じ関数で作る — 本文を写さない)。handlers.hy から分けた(#2026)。判断は worker/core/heartbeat_rules。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.worker.intent.worker_model [CodeState JobStatus])
@@ -42,19 +42,31 @@
    "tools" tools})
 
 
-(deff status-report [#^ tuple statuses #^ dict task-echo #^ dict results]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
+(defk status-report [statuses task-echo results]
   {:pre [(: statuses tuple) (: task-echo dict) (: results dict)] :post [(: % list)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "状態の行の列を heartbeat の statuses にするため。終わった task には結果(results の task の id → 詰めた結果の文字列 か None =
    結果なし)を、切り離した task には置かれた時の返事の行(task-echo の id → 行 — 欄 task)を添える。"
-  (lfor s statuses
-    :setv row (status-row s)
+  (<- rows tuple (status-rows-json statuses))
+  (lfor #(s row) (zip statuses rows)
     :setv echo (if (.startswith s.name "task/") (.get task-echo (cut s.name 5 None)) None)
     :setv row (if (is echo None) row (| row {"task" echo}))
     :setv done (finished-task-id s)
     (if (is done None) row (| row {"result" (.get results done)}))))
 
 
-(defn #^ dict status-row [#^ JobStatus s]
+(defk status-rows-json [statuses]
+  {:pre [(: statuses tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "状態の行の列を、行ごとの JSON の形(status-row)の列に綴るため(heartbeat の statuses と状態の file の jobs が同じ綴りを使う)。"
+  (var rows #())
+  (for [s statuses]
+    (<- row dict (status-row s))
+    (:= rows (+ rows #(row))))
+  rows)
+
+
+(defk status-row [s]
+  {:pre [(: s JobStatus)] :post [(: % dict)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "状態の行 1 つを、heartbeat と状態の file が載せる JSON の形に綴るため。"
   {"name" s.name "phase" s.phase.value "desiredRevision" s.desired-revision
    "runningRevision" s.running-revision "pid" s.pid "attempts" s.attempts "detail" s.detail
    ;; 動いている process の世代(coordinator の readiness と計器はこれと一致する報告だけを数える)。

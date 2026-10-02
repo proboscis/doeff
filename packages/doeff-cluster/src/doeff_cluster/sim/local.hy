@@ -109,7 +109,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [state :as session-store await-handler])
+(import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task
                                       TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
@@ -137,7 +137,7 @@
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec task-spec] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
+(import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
@@ -1383,8 +1383,8 @@
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
       (do (val reply (get answer 1))
-          (val jobs (tuple (gfor j (get reply "jobs") (declared-job-spec j))))
-          (val tasks (tuple (gfor t (.get reply "tasks" []) (task-spec t (Path "/sim/tasks" worker.name)))))
+          (<- jobs tuple (declared-job-specs (get reply "jobs")))
+          (<- tasks tuple (task-specs (.get reply "tasks" []) (Path "/sim/tasks" worker.name)))
           (val warm (tuple (gfor row (.get reply "warm" []) (warm-env-of-row row (current-platform)))))
           (val ids (sfor t (.get reply "tasks" []) (get t "id")))
           (<- known HostTruth (live-truth worker.name boot))
@@ -1573,7 +1573,11 @@
     (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name) job instance))
     (resume None))
   (PublishStatus [statuses note]
-    (<- (change-live-truth worker.name boot (fn [truth] (replace truth :statuses (status-report statuses truth.task-echo truth.results)))))
+    ;; 宿の真実の結果と写しで状態の報告を綴り、報告だけを置き直す。綴り(status-report)は何の効果も待たないので、読みと書きの間に
+    ;; 他の task は宿の真実を書かない。
+    (<- truth HostTruth (live-truth worker.name boot))
+    (<- rows list (status-report statuses truth.task-echo truth.results))
+    (<- (change-live-truth worker.name boot (fn [latest] (replace latest :statuses rows))))
     (resume None))
   (WorkerStopRequested []
     (<- truth HostTruth (live-truth worker.name boot))
@@ -1768,9 +1772,12 @@
   "coordinator の Pod の一生 1 つ: 置き場から読み直して(無ければ新しい状態で)本物の調停ループを emulated-handlers の上で回し、止まる
    (止めの合図)か落ちる(Persist の失敗)まで。答え = 止まり方。"
   (<- now int (now-epoch-ms))
-  (val state (if (.exists parts.store)
-                 (load-state NO-STATE-FILE parts.store now)
-                 (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
+  ;; 読み直しの 1 行の報告(本番の入口と同じ slog)は、ここで stderr へ出す。
+  (var state None)
+  (if (.exists parts.store)
+      (do (<- loaded ClusterState (with-handlers [slog-handler] (load-state NO-STATE-FILE parts.store now)))
+          (:= state loaded))
+      (:= state (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
@@ -1851,11 +1858,14 @@
   (for [row declaration.rows]
     (val path (+ "/resources/Service/" (url-quote (get row "name") :safe "")))
     (<- current tuple (send-request link "GET" path {} None))
-    (<- written tuple (if (= (get current 0) 404)
-                          (send-request link "POST" "/resources/Service" {} (create-body row None))
-                          (send-request link "PUT" path {}
-                                        (let [body (answered-object current (+ "Service " (get row "name")))]
-                                          {"resourceVersion" (get body "resourceVersion") "spec" (spec-for-update row (get body "spec") None)}))))
+    (var written None)
+    (if (= (get current 0) 404)
+        (do (<- created tuple (send-request link "POST" "/resources/Service" {} (create-body row None)))
+            (:= written created))
+        (do (val body (answered-object current (+ "Service " (get row "name"))))
+            (<- spec dict (spec-for-update row (get body "spec") None))
+            (<- updated tuple (send-request link "PUT" path {} {"resourceVersion" (get body "resourceVersion") "spec" spec}))
+            (:= written updated)))
     (answered-body written (+ "Service " (get row "name"))))
   (tuple (gfor row declaration.rows (get row "name"))))
 

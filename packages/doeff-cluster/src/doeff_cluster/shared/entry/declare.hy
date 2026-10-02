@@ -19,13 +19,18 @@
 ;;;
 ;;; 置き場(#2346): CLI と apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
 ;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import argparse)
+(import collections.abc [Mapping])
 (import json)
 (import sys)
 (import urllib.parse [quote :as url-quote])
 (import doeff [run with_handlers])
+(import doeff_core_effects.effects [slog])
+(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.foundation.process_versions [current-versions])
@@ -37,32 +42,60 @@
 (import doeff_cluster.shared.intent.service_model [System Declaration])
 
 
-(defn #^ None apply-declaration [#^ str url #^ Declaration declaration #^ str actor #^ (| int None) [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O
-  "詰めた Program を置いてから、宣言の行を資源の口で書く(どれかが失敗したら 1 で終わる)。"
-  (import httpx)
-  (setv client (httpx.Client :base-url (.rstrip url "/") :headers {"X-Actor" actor} :trust-env False :timeout 30))
-  (setv failed False)
+;; 要求 1 つの上限(秒)。書きは送り直さない(返事を読む前に切れた書きは相手に届いたか分からない)。
+(val DECLARE-REPLY-SECONDS 30.0)
+
+
+(defk declare-request [method url actor body]
+  {:pre [(: method str) (: url str) (: actor str) (: body (| dict None))] :post [(: % HttpResponse)]
+   :tags {:context "doeff-cluster" :role "main" :spells "http"}}
+  "宣言の書きの要求 1 つを、送り手(header X-Actor — coordinator は出来事の記録に残す)を付けて送り直さずに送るため。4xx・5xx も返事として
+   返し、届かなければ汎用の HTTP の答え手の例外のまま上げる。"
+  (<- response HttpResponse (HttpRequest method url :headers {"X-Actor" actor} :body body
+                                         :timeout-seconds DECLARE-REPLY-SECONDS :max-retries 0))
+  response)
+
+
+(defk service-written [base actor row replicas]
+  {:pre [(: base str) (: actor str) (: row Mapping) (: replicas (| int None))] :post [(: % HttpResponse)]
+   :tags {:context "doeff-cluster" :role "main" :reads "json"}}
+  "Service の行 1 つを資源の口へ書くため: 無ければ POST /resources/Service で作り(所有者 = 送り手)、在れば GET で読んだ resourceVersion を
+   付けて PUT する(読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。答え = 書きの返事。"
+  (val url (+ base "/resources/Service/" (url-quote (get row "name") :safe "")))
+  (<- current HttpResponse (declare-request "GET" url actor None))
+  (when (= current.status 404)
+    (<- created HttpResponse (declare-request "POST" (+ base "/resources/Service") actor (create-body row replicas)))
+    (return created))
+  (.raise-for-status current)
+  (val body (json.loads current.text))
+  (<- spec dict (spec-for-update row (get body "spec") replicas))
+  (<- updated HttpResponse (declare-request "PUT" url actor {"resourceVersion" (get body "resourceVersion") "spec" spec}))
+  updated)
+
+
+(defk apply-declaration [url declaration actor [replicas None]]
+  {:pre [(: url str) (: declaration Declaration) (: actor str) (: replicas (| int None))] :post [(: % bool)]
+   :tags {:context "doeff-cluster" :role "main" :spells "json"}}
+  "詰めた Program を置いてから、宣言の行を資源の口で書くため。HTTP は汎用の effect(HttpRequest)で送り、要求ごとの返事を 1 行出す(slog)。
+   答え = 全部が通ったか(Program の置きが 1 つでも落ちれば行は書かずに偽 — 入口が 1 で終わる)。"
+  (val base (.rstrip url "/"))
+  (val versions (get (get (get declaration.rows 0) "run") "versions"))
+  (var programs-placed True)
   (for [#(sha blob) (sorted (.items declaration.programs))]
-    (setv response (.put client (+ "/programs/" sha)
-                         :json {"blob" blob
-                                "versions" (get (get (get declaration.rows 0) "run") "versions")}))
-    (print (.format "program {}: {}" (cut sha 0 12) response.status-code))
-    (when (>= response.status-code 300) (setv failed True)))
-  (when failed (sys.exit 1))
+    (<- placed HttpResponse (declare-request "PUT" (+ base "/programs/" sha) actor {"blob" blob "versions" versions}))
+    (<- (slog (.format "program {}: {}" (cut sha 0 12) placed.status)))
+    (when (>= placed.status 300)
+      (:= programs-placed False)))
+  (when (not programs-placed)
+    (return False))
+  (var rows-written True)
   (for [row declaration.rows]
-    (setv name (get row "name") path (+ "/resources/Service/" (url-quote name :safe "")))
-    (setv current (.get client path))
-    (cond
-      (= current.status-code 404)
-        (setv response (.post client "/resources/Service" :json (create-body row replicas)))
-      True
-        (do (.raise-for-status current)
-            (setv body (.json current))
-            (setv response (.put client path :json {"resourceVersion" (get body "resourceVersion")
-                                                    "spec" (spec-for-update row (get body "spec") replicas)}))))
-    (print (.format "{}: {} {}" name response.status-code (cut response.text 0 300)))
-    (when (>= response.status-code 300) (setv failed True)))
-  (when failed (sys.exit 1)))
+    (val name (get row "name"))
+    (<- written HttpResponse (service-written base actor row replicas))
+    (<- (slog (.format "{}: {} {}" name written.status (cut written.text 0 300))))
+    (when (>= written.status 300)
+      (:= rows-written False)))
+  rows-written)
 
 
 (deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.shared.entry.declare` の __main__ が素の関数として呼ぶ)
@@ -106,7 +139,10 @@
   (cond
     args.apply
       (do (when (not args.actor) (.error parser "--apply には --actor(送り手)が要る"))
-          (apply-declaration args.apply declaration args.actor args.replicas))
+          ;; 書きの HTTP は汎用の答え手(http-production-handler)・1 行の報告は slog の答え手(stderr)が持つ。どれかが落ちれば 1 で終わる。
+          (when (not (run (scheduled (with_handlers [(await-handler) (http-production-handler) slog-handler]
+                                       (apply-declaration args.apply declaration args.actor args.replicas)))))
+            (sys.exit 1)))
     True (do (for [row rows]
                (print (.format "{}: {}" (get row "name") (get (get row "run") "describe")) :file sys.stderr))
              (print (json.dumps {"jobs" rows} :ensure-ascii False :indent 1)))))

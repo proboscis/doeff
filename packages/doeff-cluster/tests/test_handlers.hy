@@ -36,7 +36,7 @@
   (val specs (.accept-tasks link [task]))
   (val spec (get specs 0))
   ;; 名前と引数は task の id で決まる(毎拍同じ形 = 起動し直さない)。詰めた Program は置き場のキーで持つ(引数に載せない)。
-  (assert (= spec (task-spec task tasks)))
+  (assert (= spec (! (task-spec task tasks))))
   (assert spec.once)
   (assert (= spec.program sha) spec)
   (assert (= spec.args #("task" "--result" (str (/ tasks "t7.result")))) spec.args)
