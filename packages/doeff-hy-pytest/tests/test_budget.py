@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from doeff_hy_pytest.budget import (
     Budgets,
+    DEFAULT_CALL_BUDGET_STEPS,
     CompileCounter,
     CompileTally,
     ImportTally,
@@ -30,6 +31,7 @@ from doeff_hy_pytest.budget import (
     load_registries,
     load_registry,
     parse_marker_budgets,
+    parse_positive_steps,
     registry_file_name,
 )
 
@@ -690,6 +692,21 @@ def test_judge_steps_uses_the_steps_not_the_cpu_seconds() -> None:
     stale = judge_steps(_steps_measurement(400), 1000, {"t.hy::test": "既存"})
     assert isinstance(stale, RegisteredWithinBudget) and stale.stale
     assert not judge_steps(_steps_measurement(800), 1000, {"t.hy::test": "既存"}).stale
+
+
+def test_default_steps_budget_is_the_documented_number_and_judges_at_its_edge(pytester: pytest.Pytester) -> None:
+    """`default` は既定の上限 DEFAULT_CALL_BUDGET_STEPS(10 万歩)— 上限ちょうどは緑・1 歩でも越えれば赤(#2670 の 2)。"""
+    assert parse_positive_steps("default") == DEFAULT_CALL_BUDGET_STEPS == 100_000
+    edge = (
+        "(require doeff-hy.macros [deftest])\n(import fake_work)\n"
+        "(deftest test-at-the-edge\n  (fake_work.add 100000)\n  (assert True))\n"
+        "(deftest test-one-over\n  (fake_work.add 100001)\n  (assert True))\n"
+    )
+    ini = 'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "default"\n'
+    _steps_project(pytester, ini, {"test_edge": edge})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(["*test_edge.hy::test_one_over*歩数 100001*上限 歩数 100000*"])
 
 
 def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps(pytester: pytest.Pytester) -> None:
