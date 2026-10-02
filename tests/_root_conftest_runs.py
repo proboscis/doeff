@@ -29,7 +29,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Settings of the outer run that would change the inner run's deadlines.
-_OUTER_SETTINGS = frozenset({"PYTEST_ADDOPTS", "PYTEST_TIMEOUT", "PYTEST_DEADLINE_SCALE_CAP"})
+_OUTER_SETTINGS = frozenset({"PYTEST_ADDOPTS", "PYTEST_TIMEOUT"})
 
 
 def run_under_root_conftest(

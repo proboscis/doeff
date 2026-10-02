@@ -69,10 +69,26 @@ _turn_vm_oracle_on(_VM_INVARIANT_CHECKS == "1")
 # watchdog still used SIGKILL: PYTEST_TIMEOUT=600 turned a red test into a
 # dead process at 45% of the battery).
 #
-#   PYTEST_DEADLINE_SCALE=off   disable scaling (CI, where load is controlled)
-#   PYTEST_DEADLINE_SCALE_CAP   max factor (default 8)
+# The settings are pytest's own ini values (registered in pytest_addoption,
+# overridden by whoever starts the run with ``-o <name>=<value>``) — not
+# environment variables, which only a foundation handler reads (DOEFF004・
+# agora-redesign #3012):
+#
+#   deadline_scale = off        disable scaling (CI, where load is controlled)
+#   deadline_scale_cap = 8      max factor
+#   watchdog_timeout = 90       the watchdog's unscaled base, in seconds
 # ---------------------------------------------------------------------------
-_DEADLINE_SCALE_CAP = max(1.0, float(os.environ.get("PYTEST_DEADLINE_SCALE_CAP", "8")))  # noqa: DOEFF004 - a deadline setting given by whoever starts the run (pre-existing)
+_DEADLINE_INI = (
+    ("deadline_scale", "auto", "off = hold every wall-clock deadline fixed (ADR-DOE-ENFORCE-001 R6)"),
+    ("deadline_scale_cap", "8", "the largest factor the load scaling may stretch a deadline by (R6)"),
+    ("watchdog_timeout", "90", "the hard watchdog's unscaled base deadline, in seconds (R6)"),
+)
+
+
+def pytest_addoption(parser):
+    """Register the deadline settings as ini values (``-o deadline_scale=off`` and the like)."""
+    for name, default, help_text in _DEADLINE_INI:
+        parser.addini(name, help_text, default=default)
 
 
 def _oversubscription() -> float:
@@ -84,11 +100,11 @@ def _oversubscription() -> float:
     return max(1.0, load1 / (os.cpu_count() or 1))
 
 
-def deadline_scale() -> float:
-    """The factor every wall-clock test deadline is multiplied by."""
-    if os.environ.get("PYTEST_DEADLINE_SCALE", "").strip().lower() == "off":  # noqa: DOEFF004 - a deadline setting given by whoever starts the run (pre-existing)
+def deadline_scale(setting: str, cap: float) -> float:
+    """The factor every wall-clock test deadline is multiplied by (setting = the ``deadline_scale`` ini value)."""
+    if setting.strip().lower() == "off":
         return 1.0
-    return min(_oversubscription(), _DEADLINE_SCALE_CAP)
+    return min(_oversubscription(), max(1.0, cap))
 
 
 def scaled_watchdog_timeout(base: float, per_test_timeout: float, scale: float) -> int:
@@ -129,8 +145,9 @@ with suppress(OSError, ValueError):
 # The watchdog resets at the start and at the teardown of each test (via the
 # pytest hooks), so it measures one test's setup-call-teardown at a time.
 # ---------------------------------------------------------------------------
-_WATCHDOG_BASE = float(os.environ.get("PYTEST_WATCHDOG_TIMEOUT", "90"))  # noqa: DOEFF004 - a deadline setting given by whoever starts the run (pre-existing)
-_DEADLINE_SCALE = deadline_scale()
+# Provisional until pytest_configure reads the deadline ini values (pytest_addoption).
+_WATCHDOG_BASE = 90.0
+_DEADLINE_SCALE = 1.0
 # Provisional until pytest_configure reads the real per-test deadline out of
 # the ini — there is exactly one home for that number and it is pyproject.toml.
 _WATCHDOG_TIMEOUT = int(_WATCHDOG_BASE * _DEADLINE_SCALE)
@@ -208,8 +225,10 @@ def pytest_configure(config):
     timeout`` — so it is read from there rather than mirrored here, and the
     watchdog is derived from the scaled value so the two can never cross.
     """
-    global _WATCHDOG_TIMEOUT  # noqa: PLW0603
+    global _WATCHDOG_TIMEOUT, _WATCHDOG_BASE, _DEADLINE_SCALE  # noqa: PLW0603
 
+    _WATCHDOG_BASE = float(config.getini("watchdog_timeout"))
+    _DEADLINE_SCALE = deadline_scale(config.getini("deadline_scale"), float(config.getini("deadline_scale_cap")))
     per_test_base = _per_test_base_seconds(config)
     scaled_per_test = per_test_base * _DEADLINE_SCALE
     if per_test_base > 0:

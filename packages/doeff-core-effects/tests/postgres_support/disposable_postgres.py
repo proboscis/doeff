@@ -27,11 +27,15 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
+from doeff_core_effects.scheduler import scheduled
 
 SUPPORT_DIR = Path(__file__).resolve().parent
 # binary の置き場を教える外皮(uv の分けた Python 3.12 の環境で走る)。
@@ -109,15 +113,18 @@ class DisposablePostgres:
 
 @dataclass(frozen=True)
 class PostgresFromEnvironment:
-    """必要な env が全部既に在った — 何も立てていない。"""
+    """必要な env が全部既に在った — 何も立てていない(dsns = env の名と、外から渡された DSN)。"""
+
+    dsns: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)
 class PostgresStarted:
-    """使い捨ての PostgreSQL を立て、無かった env をその database の DSN にした。"""
+    """使い捨ての PostgreSQL を立て、無かった env の分をその database の DSN にした(dsns = 外から渡された分も含む全部)。"""
 
     server: DisposablePostgres
     bound: tuple[DsnBinding, ...]
+    dsns: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)
@@ -337,16 +344,23 @@ def start_guard(server: DisposablePostgres) -> None:
     )
 
 
+def read_given_dsns(variables: tuple[str, ...]) -> dict[str, str]:
+    """外から渡された DSN の env を、process の環境変数の効果 ReadEnvironment と本物の答え手 subprocess-handler で 1 度読む(#3012)。"""
+    entries = run(scheduled(with_handlers([subprocess_handler], ReadEnvironment(names=variables))))
+    return {entry.name: entry.value for entry in entries if entry.value}
+
+
 def provide_postgres(
     bindings: tuple[DsnBinding, ...],
-    environ: MutableMapping[str, str],
+    given: Mapping[str, str],
     add_cleanup: Callable[[Callable[[], None]], None],
     source: BinarySource = DEFAULT_SOURCE,
 ) -> PostgresProvision:
-    """無い env があれば使い捨ての PostgreSQL を立てて env をその DSN にする(止める仕事は add_cleanup に渡す)。"""
-    missing = tuple(binding for binding in bindings if not environ.get(binding.variable))
+    """given(外から渡された DSN)に無い env の分があれば使い捨ての PostgreSQL を立て、DSN を結果に持たせる(止める仕事は add_cleanup に渡す)。"""
+    missing = tuple(binding for binding in bindings if not given.get(binding.variable))
+    passed = tuple((binding.variable, given[binding.variable]) for binding in bindings if given.get(binding.variable))
     if not missing:
-        return PostgresFromEnvironment()
+        return PostgresFromEnvironment(dsns=passed)
     try:
         server = start_disposable_postgres(source)
     except DisposablePostgresError as failed:
@@ -357,16 +371,22 @@ def provide_postgres(
     except DisposablePostgresError as failed:
         stop_disposable_postgres(server)
         return PostgresUnavailable(reason=one_line(str(failed)))
-    for binding, dsn in dsns:
-        environ[binding.variable] = dsn
-    return PostgresStarted(server=server, bound=missing)
+    started = tuple((binding.variable, dsn) for binding, dsn in dsns)
+    return PostgresStarted(server=server, bound=missing, dsns=passed + started)
 
 
-def postgres_skip_reason(
-    variable: str, provision: PostgresProvision | None, environ: MutableMapping[str, str]
-) -> str:
-    """env が在れば ""(走らせる)。無ければ skip の理由の文(用意できなかった理由を名指す)。"""
-    if environ.get(variable):
+def provision_dsn(provision: PostgresProvision | None, variable: str) -> str | None:
+    """用意の結果が持つ、env の名 variable の DSN(無ければ None)。"""
+    match provision:
+        case PostgresFromEnvironment(dsns=dsns) | PostgresStarted(dsns=dsns):
+            return dict(dsns).get(variable)
+        case _:
+            return None
+
+
+def postgres_skip_reason(variable: str, provision: PostgresProvision | None) -> str:
+    """DSN が在れば ""(走らせる)。無ければ skip の理由の文(用意できなかった理由を名指す)。"""
+    if provision_dsn(provision, variable):
         return ""
     match provision:
         case PostgresUnavailable(reason=reason):
@@ -401,7 +421,8 @@ def provide_session_postgres(config: pytest.Config) -> PostgresProvision:
     if is_xdist_controller(config):
         provision: PostgresProvision = PostgresLeftToWorkers()
     else:
-        provision = provide_postgres(SESSION_BINDINGS, os.environ, config.add_cleanup)  # noqa: DOEFF004 - 検の module が import の時に読む DSN の env を置く(#2830)
+        given = read_given_dsns(tuple(binding.variable for binding in SESSION_BINDINGS))
+        provision = provide_postgres(SESSION_BINDINGS, given, config.add_cleanup)
         if isinstance(provision, PostgresStarted):
             start_guard(provision.server)
     _SESSION.provision = provision
@@ -413,6 +434,11 @@ def session_provision() -> PostgresProvision | None:
     return _SESSION.provision
 
 
+def session_dsn(variable: str) -> str | None:
+    """検の module が接続に使う DSN(env の名 variable の分・無ければ None)— env からでなく、この process の用意の結果から。"""
+    return provision_dsn(_SESSION.provision, variable)
+
+
 def session_postgres_skip_reason(variable: str) -> str:
-    """検の module が skip の理由に使う: env が在れば ""・無ければ用意できなかった理由。"""
-    return postgres_skip_reason(variable, _SESSION.provision, os.environ)  # noqa: DOEFF004 - 検の module が読む DSN の env の有無(#2830)
+    """検の module が skip の理由に使う: DSN が在れば ""・無ければ用意できなかった理由。"""
+    return postgres_skip_reason(variable, _SESSION.provision)

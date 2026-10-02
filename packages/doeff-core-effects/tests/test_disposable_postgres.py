@@ -14,9 +14,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
 from disposable_postgres import (
     CLIENT_SECONDS,
     DEFAULT_SOURCE,
@@ -32,6 +29,7 @@ from disposable_postgres import (
     postgres_bin_dir,
     postgres_skip_reason,
     provide_postgres,
+    session_dsn,
     session_provision,
 )
 
@@ -50,7 +48,7 @@ def select_one(psql: Path, dsn: str) -> str:
 
 
 def test_session_environment_points_at_a_live_postgres() -> None:
-    """conftest の用意の後、2 つの env が在り、どちらも ``select 1`` に答える PostgreSQL を指す。"""
+    """conftest の用意の後、2 つの DSN が在り、どちらも ``select 1`` に答える PostgreSQL を指す。"""
     provision = session_provision()
     if isinstance(provision, PostgresUnavailable):
         pytest.skip(f"{UNAVAILABLE_PREFIX}: {provision.reason}")
@@ -61,21 +59,17 @@ def test_session_environment_points_at_a_live_postgres() -> None:
             psql = postgres_bin_dir(DEFAULT_SOURCE) / "psql"
         except DisposablePostgresError as failed:
             pytest.skip(f"{UNAVAILABLE_PREFIX}: {failed}")
-    # 検の module が読む DSN の env そのものを確かめる(#2830)。env は os.environ を直に読まず、doeff の foundation の
-    # handler(subprocess_handler が ReadEnvironment に答える)で問う(agora-redesign #3012)。
-    asked = run(with_handlers([subprocess_handler], ReadEnvironment((SQL_EFFECTS_VARIABLE, RECORDS_VARIABLE))))
-    session_env = {entry.name: entry.value for entry in asked}
+    # 検の module が受ける DSN(用意の結果の dsns — env には書かない・agora-redesign #3012)。
     for variable in (SQL_EFFECTS_VARIABLE, RECORDS_VARIABLE):
-        dsn = session_env.get(variable)
-        assert dsn, f"env {variable} が無い(conftest が使い捨ての PostgreSQL を用意していない)"
+        dsn = session_dsn(variable)
+        assert dsn, f"{variable} の DSN が無い(conftest が使い捨ての PostgreSQL を用意していない)"
         assert select_one(psql, dsn) == "1"
 
 
 def test_without_environment_a_started_postgres_answers_select_one_and_is_removed() -> None:
-    """env が無ければ立てて env を置き、どの database も ``select 1`` に答え、後始末で止まって一時の dir が消える。"""
-    environ: dict[str, str] = {}
+    """外から DSN が渡されなければ立てて結果に DSN を持たせ、どの database も ``select 1`` に答え、後始末で止まって一時の dir が消える。"""
     cleanups: list[Callable[[], None]] = []
-    provision = provide_postgres(SESSION_BINDINGS, environ, cleanups.append)
+    provision = provide_postgres(SESSION_BINDINGS, {}, cleanups.append)
     if isinstance(provision, PostgresUnavailable):
         pytest.skip(f"{UNAVAILABLE_PREFIX}: {provision.reason}")
     try:
@@ -87,8 +81,9 @@ def test_without_environment_a_started_postgres_answers_select_one_and_is_remove
             RECORDS_VARIABLE,
         }
         for binding in SESSION_BINDINGS:
-            assert binding.database in environ[binding.variable]
-            assert select_one(provision.server.tool("psql"), environ[binding.variable]) == "1"
+            dsn = dict(provision.dsns)[binding.variable]
+            assert binding.database in dsn
+            assert select_one(provision.server.tool("psql"), dsn) == "1"
     finally:
         for cleanup in cleanups:
             cleanup()
@@ -96,13 +91,14 @@ def test_without_environment_a_started_postgres_answers_select_one_and_is_remove
 
 
 def test_existing_environment_is_used_and_nothing_is_started() -> None:
-    """env が全部在れば何も立てず、後始末も積まない。"""
-    environ = {binding.variable: "postgresql://someone@/mine" for binding in SESSION_BINDINGS}
+    """DSN が全部外から渡されていれば何も立てず、後始末も積まず、渡された DSN をそのまま持つ。"""
+    given = {binding.variable: "postgresql://someone@/mine" for binding in SESSION_BINDINGS}
     cleanups: list[Callable[[], None]] = []
-    provision = provide_postgres(SESSION_BINDINGS, environ, cleanups.append)
+    provision = provide_postgres(SESSION_BINDINGS, given, cleanups.append)
     assert not isinstance(provision, PostgresStarted | PostgresUnavailable), provision
     assert cleanups == []
-    assert postgres_skip_reason(SQL_EFFECTS_VARIABLE, provision, environ) == ""
+    assert dict(provision.dsns) == given
+    assert postgres_skip_reason(SQL_EFFECTS_VARIABLE, provision) == ""
 
 
 def failing_shim(tmp: Path) -> Path:
@@ -128,15 +124,13 @@ def failing_shim(tmp: Path) -> Path:
 def test_unpreparable_binaries_skip_with_the_named_reason(
     tmp_path: Path, source_of: Callable[[Path], BinarySource], detail: str
 ) -> None:
-    """binary を用意できなければ env を置かず、skip の理由に「使い捨ての PostgreSQL を用意できない: <理由>」が出る。"""
-    environ: dict[str, str] = {}
+    """binary を用意できなければ DSN を持たず、skip の理由に「使い捨ての PostgreSQL を用意できない: <理由>」が出る。"""
     cleanups: list[Callable[[], None]] = []
-    provision = provide_postgres(SESSION_BINDINGS, environ, cleanups.append, source_of(tmp_path))
+    provision = provide_postgres(SESSION_BINDINGS, {}, cleanups.append, source_of(tmp_path))
     assert isinstance(provision, PostgresUnavailable), provision
-    assert environ == {}
     assert cleanups == []
     for binding in SESSION_BINDINGS:
-        reason = postgres_skip_reason(binding.variable, provision, environ)
+        reason = postgres_skip_reason(binding.variable, provision)
         assert reason.startswith(f"{UNAVAILABLE_PREFIX}: "), reason
         assert detail in reason, reason
         assert "\n" not in reason, reason

@@ -33,10 +33,10 @@
 (import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
                                                 clickhouse-insert-request clickhouse-rows clickhouse-written-rows clickhouse-failure
                                                 clickhouse-schema-statements ClickHouseDatabase ClickHouseResponse ClickHouseParam])
-(import disposable_postgres [session-postgres-skip-reason])
+(import disposable_postgres [session-dsn session-postgres-skip-reason])
 
 (val DB "store")
-(val POSTGRES-DSN (os.environ.get "DOEFF_SQL_TEST_POSTGRES_DSN"))
+(val POSTGRES-DSN (session-dsn "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val CLICKHOUSE-URL (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_URL"))
 ;; 実 PG の検の skip(DSN か psycopg が無い)。DSN は env が無ければ conftest が立てた使い捨ての PostgreSQL の物
 ;; (postgres_support/disposable_postgres.py — agora-redesign #2830)。立てられなかった時は、その理由を名指す。
