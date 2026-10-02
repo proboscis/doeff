@@ -811,6 +811,7 @@ class TestExternalPromise:
 class TestPrioritySurvivesSuspension:
     """Regressions for #493/#504: wake paths must respect stored task priority."""
 
+    @pytest.mark.realtime
     def test_completer_not_demoted_behind_pending_external_wait(self):
         """Regression for #493: CompletePromise re-queues the completer at its
         own task priority, not unconditionally at IDLE.
