@@ -29,6 +29,7 @@ pub mod doeff023_pipeline_marker;
 pub mod doeff024_no_recover_ask;
 pub mod doeff030_ask_result_type_annotation;
 pub mod doeff031_no_redundant_do_wrapper_entrypoint;
+pub mod doeff032_rule_population_declaration;
 
 use base::LintRule;
 use std::collections::HashMap;
@@ -64,6 +65,7 @@ pub fn get_all_rules() -> Vec<Box<dyn LintRule>> {
         Box::new(
             doeff031_no_redundant_do_wrapper_entrypoint::NoRedundantDoWrapperEntrypointRule::new(),
         ),
+        Box::new(doeff032_rule_population_declaration::RulePopulationDeclarationRule::new()),
     ]
 }
 
@@ -98,7 +100,7 @@ mod tests {
     #[test]
     fn test_all_rules_loaded() {
         let rules = get_all_rules();
-        assert_eq!(rules.len(), 26);
+        assert_eq!(rules.len(), 27);
 
         let rule_ids: Vec<_> = rules.iter().map(|r| r.rule_id()).collect();
         assert!(rule_ids.contains(&"DOEFF001"));
