@@ -36,7 +36,8 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import dataclasses [replace])
-(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView])
+(import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView
+                                                       DeploymentSeen DeploymentUnreadable])
 
 (setv TERMINAL-PHASES #{"Complete" "RolledBack"})
 ;; 秒の欄の既定の値(欄が無い本文・この欄が無かった頃に作った Rollout の保存の行)。
@@ -327,10 +328,13 @@
   (dfor #(k v) (.items best) k #((get v 0) (get v 1))))
 
 
-(defn #^ RolloutStatus drift-status [#^ RolloutStatus status #^ str deployment #^ int expected #^ (| dict None) observation #^ int now]
+(defn #^ RolloutStatus drift-status [#^ RolloutStatus status #^ str deployment #^ int expected
+                                     #^ (| DeploymentSeen DeploymentUnreadable None) observation #^ int now]
   "完了した Rollout が台数を持つ Deployment の、宣言の台数と期待の食い違い(本番の配備の流れが replicas を当て直した等)。
-   直さない(配備の流れと取り合わない)— status に出すだけ。"
-  (setv observed (if (and observation (not-in "error" observation)) (.get observation "specReplicas") None)
+   直さない(配備の流れと取り合わない)— status に出すだけ。読めていない観測(無い・読めなかった)では食い違いを判じない。"
+  (setv observed (match observation
+                   (DeploymentSeen :reading reading) reading.spec-replicas
+                   _ None)
         current status.drift)
   (cond
     (is observed None) status

@@ -13,8 +13,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadDeployment [EffectBase]
-  "結果は dict: specReplicas(宣言の台数)・replicas / readyReplicas / availableReplicas / updatedReplicas(status)・
-   generation・observedGeneration・annotations。読めなければ KubeUnavailable。"
+  "結果は cluster_model.DeploymentReading(宣言の台数・status の台数・generation・observedGeneration・annotations — k8s の JSON を型へ
+   解くのは答え手 coordinator/protocol/kube の 1 点・#2728)。読めなければ・答えの形が違えば KubeUnavailable。"
   (#^ str namespace)
   (#^ str name))
 
@@ -38,6 +38,6 @@
 
 (defclass [(dataclass :frozen True)] ReadNodeLabels [EffectBase]
   "k8s の Node の label を読む(worker の置かれた node から能力を導くため — ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。
-   結果は dict(label の鍵 → 値)。読めなければ KubeUnavailable。権限は coordinator の ServiceAccount に nodes の get を与える
-   ClusterRole(配備する側の manifest)。"
+   結果は doeff_hy.table の Table(label の鍵 → 値 — 写像は答え手 coordinator/protocol/kube が表へ写す・#2728)。読めなければ
+   KubeUnavailable。権限は coordinator の ServiceAccount に nodes の get を与える ClusterRole(配備する側の manifest)。"
   (#^ str node))

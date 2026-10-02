@@ -15,7 +15,7 @@
 (import json)
 (import typing [NoReturn])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of])
@@ -559,9 +559,11 @@
           (WorkerObserved :silent-ms (- now w.last-seen-ms) :alive (alive now w timing.lease-ms)))
     (= kind "Task") (TaskObserved :task (get state.tasks name))
     (= kind "Rollout")
-      (RolloutObserved :observed (dfor t (rollout-targets (. (get state.rollouts name) spec))
-                                       :if (= t.kind "Deployment")
-                                       (target-key t) (.get state.deployments (+ t.namespace "/" t.name))))
+      (RolloutObserved :observed (tuple (gfor t (rollout-targets (. (get state.rollouts name) spec))
+                                              :if (= t.kind "Deployment")
+                                              (ObservedDeployment :key (target-key t)
+                                                                  :seen (.row state.observations.deployments
+                                                                              (+ t.namespace "/" t.name))))))
     True None))
 
 

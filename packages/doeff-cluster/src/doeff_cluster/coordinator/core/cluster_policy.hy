@@ -13,6 +13,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen])
+(import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -1263,15 +1265,16 @@
   {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
   "label を読み直す node の名(整列)— node を名乗る worker の node のうち、観測が無いか古い物。能力の導出の材料を揃えるため。"
   (sorted (sfor w (.values state.workers)
-                :if (and w.node (> (- now (.get (.get state.nodes w.node {}) "at" (- now NODE-LABELS-TTL-MS 1)))
-                                   NODE-LABELS-TTL-MS))
+                :if w.node
+                :setv seen (.row state.observations.nodes w.node)
+                :if (or (is seen None) (> (- now seen.at) NODE-LABELS-TTL-MS))
                 w.node)))
 
 
-(deff derived-capabilities [#^ dict labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
-  {:pre [(: labels dict) (: table tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff derived-capabilities [#^ (get Table str) labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+  {:pre [(: labels (get Table str)) (: table tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "node の label → その node の worker に足す能力(名の順)。table = ClusterNaming の node-capabilities #(#(鍵 値 能力) …)。"
-  (tuple (sorted (sfor #(key value capability) table :if (= (.get labels key) value) capability))))
+  (tuple (sorted (sfor #(key value capability) table :if (= (.row labels key) value) capability))))
 
 
 (deff with-derived-capabilities [#^ ClusterState state #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
@@ -1280,12 +1283,13 @@
    (届かない間に会社の機体の能力を外したり足したりしない — 次に読めた時に直る)。node を名乗らない worker は空。"
   (setv workers {})
   (for [#(name w) (.items state.workers)]
-    (setv seen (.get state.nodes w.node))
     (setv derived
-      (cond
-        (not w.node) #()
-        (or (is seen None) (in "error" seen)) w.derived
-        True (derived-capabilities (get seen "labels") table)))
+      (if (not w.node)
+          #()
+          (match (.row state.observations.nodes w.node)
+            (NodeLabelsSeen :labels labels) (derived-capabilities labels table)
+            ;; まだ読んでいない・読めなかった node の worker は前の値を保つ。
+            _ w.derived)))
     ;; 能力の計算と検査は毎回行い、値が等しい時だけ既存の object を返す。
     (setv (get workers name) (if (= derived w.derived) w (replace w :derived derived))))
   (if (= workers state.workers) state (replace state :workers workers)))

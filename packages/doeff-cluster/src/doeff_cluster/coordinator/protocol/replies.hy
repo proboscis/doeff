@@ -2,18 +2,19 @@
 ;;; にする。返事の型にまだしていない道の本文(JSON の object のまま)は、そのまま通す。
 ;;;   reply-json    返事の本文 → JSON の形(byte にするのは shared/protocol/inbox の encoded-reply)
 ;;;   reply-bodies  Reply の答え手: 本文を reply-json で綴って Reply を出し直す(本番と模擬の組のいちばん内側に置く)
-(require doeff-hy.macros [defhandler deff <- val])
+(require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff_cluster.shared.intent.protocol [Reply PlainText])
 (import dataclasses [asdict])
 (import json)
+(import collections.abc [Mapping])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                                                        DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
-                                                       ProgramRow ProgramStored])
+                                                       ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable])
 (import doeff_cluster.shared.intent.warm_model [WarmState])
 (import doeff_cluster.shared.core.warm_rules [warm-state->json])
 (import doeff [run])
@@ -117,6 +118,23 @@
    "running" (lfor p live {"revision" p.revision "retired" p.retired})})
 
 
+(defk deployment-observation-json [seen]
+  {:pre [(: seen (| DeploymentSeen DeploymentUnreadable None))] :post [(: % (| (get Mapping #(str object)) None))]
+   :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "Rollout の相手の Deployment 1 つの最後の観測を、資源の画面の status.observed の値の JSON にするため(#2728 の前に状態の deployments の
+   行をそのまま写していた形と同じ — 読めた観測は specReplicas … annotations の 8 欄と at・読めなかった観測は {at error}・まだ読んで
+   いなければ null)。"
+  (match seen
+    (DeploymentSeen :reading reading :at at)
+      (do (<- reading-json (dump reading))
+          ;; dump は defwire の値を JSON の object(欄の順は型の欄の順)に綴る — object でない答えは dump の欠陥なので黙って通さない。
+          (match reading-json
+            (dict) (| reading-json {"at" at})
+            _ (raise (TypeError (.format "DeploymentReading の dump が JSON の object でない: {!r}" reading-json)))))
+    (DeploymentUnreadable :error error :at at) {"at" at "error" error}
+    _ None))
+
+
 (deff observed-json [#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed]  ; defk にできない: 返事の綴り reply-json の中で呼ぶ純粋な綴り(返事の答え手 reply-bodies と検の入口 responded は Program の外)
   {:pre [(: observed (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の種類ごとの観測 → status に足す JSON の欄(#2595 の前に resource_policy.resource-json が足していた欄と同じ)。"
@@ -128,7 +146,9 @@
        "version" (version-json observed.version observed.running)}
     (isinstance observed WorkerObserved) {"silentMs" observed.silent-ms "alive" observed.alive}
     (isinstance observed TaskObserved) (task-summary observed.task)
-    (isinstance observed RolloutObserved) {"observed" (dict observed.observed)}
+    ;; Rollout の相手の Deployment ごとの最後の観測(鍵 = 相手の鍵・値の形は deployment-observation-json)。
+    (isinstance observed RolloutObserved)
+      {"observed" (dfor row observed.observed row.key (run (deployment-observation-json row.seen)))}
     True {}))
 
 

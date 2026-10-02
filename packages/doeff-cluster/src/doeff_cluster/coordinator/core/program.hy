@@ -37,7 +37,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request RequestDoor])
 (import doeff_cluster.coordinator.core.read_door_policy [read-door-refusal])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
+(import doeff_hy.table [Table TableWrite])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
+                                                       DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
@@ -49,27 +51,46 @@
 
 ;; --- 調停ループ(Program) -------------------------------------------------------------
 
+(defk deployment-observation [key now]
+  {:pre [(: key str) (: now int)] :post [(: % (| DeploymentSeen DeploymentUnreadable))] :tags {:context "coordinator" :role "program"}}
+  "Rollout の相手の Deployment 1 つ(鍵「ns/名」)を読み、観測の表(ClusterObservations.deployments)に置く観測にするため。
+   届かなければ DeploymentUnreadable(Rollout は Unknown と扱い、台数を変えない)。"
+  (val parts (.split key "/" 1))
+  (try
+    (<- reading DeploymentReading (ReadDeployment (get parts 0) (get parts 1)))
+    (DeploymentSeen :reading reading :at now)
+    (except [error KubeUnavailable]
+      (DeploymentUnreadable :error (str error) :at now))))
+
+
+(defk node-labels-observation [node now]
+  {:pre [(: node str) (: now int)] :post [(: % (| NodeLabelsSeen NodeLabelsUnreadable))] :tags {:context "coordinator" :role "program"}}
+  "worker の置かれた node 1 つの label を読み、観測の表(ClusterObservations.nodes)に置く観測にするため。届かなければ
+   NodeLabelsUnreadable(その node の worker は前に導いた能力を保つ)。"
+  (try
+    (<- labels (get Table str) (ReadNodeLabels node))
+    (NodeLabelsSeen :labels labels :at now)
+    (except [error KubeUnavailable]
+      (NodeLabelsUnreadable :error (str error) :at now))))
+
+
 (defk rollout-tick [state timing naming now]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: now int)] :post [(: % ClusterState)]}
-  ;; 1. Rollout の相手の Deployment を読む(届かなければ観測に error を置く = Unknown。台数は変えない)。
-  (setv observed (dict state.deployments))
+  ;; 1. Rollout の相手の Deployment を読む(届かなければ観測を DeploymentUnreadable にする = Unknown。台数は変えない)。
+  (var deployment-writes #())
   (for [key (deployments-to-observe state now)]
-    (setv #(ns name) (.split key "/" 1))
-    (try
-      (<- row dict (ReadDeployment ns name))
-      (setv (get observed key) (| row {"at" now}))
-      (except [error KubeUnavailable]
-        (setv (get observed key) {"at" now "error" (str error)}))))
-  (val observed-state (replace state :deployments observed))
+    (<- deployment-seen (| DeploymentSeen DeploymentUnreadable) (deployment-observation key now))
+    (:= deployment-writes (+ deployment-writes #((TableWrite key deployment-seen)))))
   ;; 1b. 能力の導出(改訂 1 の I): worker の置かれた node の label を読み(古い観測だけ)、node-capabilities の表から derived を作り直す。
-  (setv nodes (dict observed-state.nodes))
-  (for [node (nodes-to-read observed-state now)]
-    (try
-      (<- labels dict (ReadNodeLabels node))
-      (setv (get nodes node) {"labels" labels "at" now})
-      (except [error KubeUnavailable]
-        (setv (get nodes node) {"error" (str error) "at" now}))))
-  (val before (with-derived-capabilities (replace observed-state :nodes nodes) naming.node-capabilities))
+  (var node-writes #())
+  (for [node (nodes-to-read state now)]
+    (<- node-seen (| NodeLabelsSeen NodeLabelsUnreadable) (node-labels-observation node now))
+    (:= node-writes (+ node-writes #((TableWrite node node-seen)))))
+  ;; 観測は ClusterState.observations の表へ書く(版の比べと保存の差分の外 — #2728)。
+  (val seen state.observations)
+  (val observed (replace seen :deployments (.with-writes seen.deployments deployment-writes)
+                              :nodes (.with-writes seen.nodes node-writes)))
+  (val before (with-derived-capabilities (replace state :observations observed) naming.node-capabilities))
   ;; 2. 純粋な判断で段を進め、action を出す。
   (setv #(planned actions) (plan-rollouts before now timing naming))
   (var current (stamp before planned ROLLOUT-ACTOR now timing))

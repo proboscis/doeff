@@ -7,6 +7,8 @@ cluster_model.hy は Hy の module なので、pyright は中を読めず、名�
 - dataclass の class(ClusterJob・WorkerInfo ほか)は凍った dataclass。defrecord(ProgramRow・RolloutSpec ほか)は凍った・
   キーワード引数だけの dataclass。欄の型は cluster_model.hy の注記。
 - defenum(GenerationOrder ほか)は StrEnum。値は defenum の綴り(名の小文字と - か、明示の値)。
+- defwire(DeploymentReading)は凍った・キーワード引数だけの dataclass(実行時は defwire の展開が __doeff_wire__ を持たせる —
+  その class の属性は dataclass の欄ではないので、欄の名と順を照らす検に合わせてここには書かない)。
 - effect(CoordinatorFault・Persist)は凍った dataclass の EffectBase[None]。
 - 型の宣言がまだ無い Hy の module の型(shared/intent/protocol の ClusterTiming・Request・NextRequests と、coordinator/intent/
   request_bodies の StatusRow)は object と書く。IdleNextRequests は実行時は NextRequests の子 class だが、ここでは idle の欄だけを
@@ -18,6 +20,8 @@ from enum import StrEnum
 from typing import NamedTuple
 
 from doeff import EffectBase
+from doeff_hy.json_value import OpaqueJson
+from doeff_hy.table import Table
 
 from doeff_cluster.shared.intent.job_model import JobSpec
 
@@ -353,6 +357,47 @@ class LiveProcess:
     retired: bool
 
 @dataclass(frozen=True, kw_only=True)
+class DeploymentReading:
+    spec_replicas: int
+    replicas: int
+    ready_replicas: int
+    available_replicas: int
+    updated_replicas: int
+    generation: int
+    observed_generation: int
+    annotations: OpaqueJson
+
+@dataclass(frozen=True, kw_only=True)
+class DeploymentSeen:
+    reading: DeploymentReading
+    at: int
+
+@dataclass(frozen=True, kw_only=True)
+class DeploymentUnreadable:
+    error: str
+    at: int
+
+@dataclass(frozen=True, kw_only=True)
+class NodeLabelsSeen:
+    labels: Table[str]
+    at: int
+
+@dataclass(frozen=True, kw_only=True)
+class NodeLabelsUnreadable:
+    error: str
+    at: int
+
+@dataclass(frozen=True, kw_only=True)
+class ClusterObservations:
+    deployments: Table[DeploymentSeen | DeploymentUnreadable] = ...
+    nodes: Table[NodeLabelsSeen | NodeLabelsUnreadable] = ...
+
+@dataclass(frozen=True, kw_only=True)
+class ObservedDeployment:
+    key: str
+    seen: DeploymentSeen | DeploymentUnreadable | None
+
+@dataclass(frozen=True, kw_only=True)
 class ServiceObserved:
     ready_reason: str
     last_readiness: dict[str, object] | None
@@ -371,7 +416,7 @@ class TaskObserved:
 
 @dataclass(frozen=True, kw_only=True)
 class RolloutObserved:
-    observed: dict[str, dict[str, object] | None]
+    observed: tuple[ObservedDeployment, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class ResourceView:
@@ -563,8 +608,6 @@ class ClusterState:
     rollouts: dict[str, RolloutRow] = ...
     readiness: dict[str, object] = ...
     metrics: dict[str, object] = ...
-    deployments: dict[str, dict[str, object]] = ...
-    nodes: dict[str, dict[str, object]] = ...
     derivable: frozenset[str] = frozenset()
     refused: dict[str, RefusedJob] = ...
     programs: dict[str, ProgramRow] = ...
@@ -578,6 +621,7 @@ class ClusterState:
     env_cold_starts: int = 0
     handoffs: dict[str, HandoffWatch] = ...
     silent: frozenset[str] = frozenset()
+    observations: ClusterObservations = ...
 
 @dataclass(frozen=True)
 class Fault:

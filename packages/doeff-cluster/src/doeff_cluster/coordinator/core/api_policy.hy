@@ -34,7 +34,8 @@
 (import traceback [extract-tb])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply
+                                                       DeploymentSeen DeploymentUnreadable])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
@@ -118,22 +119,28 @@
                 stopped (service-stopped state name now timing))
           (TargetView :ready (get verdict "state") :stopped stopped :spec-replicas (if job job.replicas None)
                       :reason (if stopped "止まっている" (get verdict "reason"))))
-      (do (setv key (+ target.namespace "/" target.name)
-                obs (.get state.deployments key))
-          (when (or (is obs None) (in "error" obs) (> (- now (.get obs "at" 0)) OBSERVATION-STALE-MS))
+      (do (setv obs (.row state.observations.deployments (+ target.namespace "/" target.name))
+                ;; 新しい読めた観測だけを判じに使う。無い・読めなかった・古い観測は Unknown(台数を変えない)。
+                fresh (match obs
+                        (DeploymentSeen :reading reading :at at) :if (<= (- now at) OBSERVATION-STALE-MS) reading
+                        _ None))
+          (when (is fresh None)
             (return (TargetView :ready "Unknown" :stopped None :spec-replicas None
-                                :reason (if obs (.get obs "error" "観測が古い") "まだ観測していない"))))
+                                :reason (match obs
+                                          None "まだ観測していない"
+                                          (DeploymentUnreadable :error error) error
+                                          _ "観測が古い"))))
           (setv dry target.dry-run
                 simulated (.get (or status.simulated {}) (target-key target))
-                want (if (and dry (is-not simulated None)) simulated (get obs "specReplicas"))
-                ready-n (get obs "readyReplicas")
-                settled (or dry (and (>= (get obs "observedGeneration") (get obs "generation"))
-                                     (>= (get obs "updatedReplicas") want)))
+                want (if (and dry (is-not simulated None)) simulated fresh.spec-replicas)
+                ready-n fresh.ready-replicas
+                settled (or dry (and (>= fresh.observed-generation fresh.generation)
+                                     (>= fresh.updated-replicas want)))
                 ready (and (> want 0) (>= ready-n want) settled)
-                stopped (and (= want 0) (or dry (= (get obs "replicas") 0))))
+                stopped (and (= want 0) (or dry (= fresh.replicas 0))))
           (TargetView :ready (if ready "Ready" "NotReady") :stopped stopped :spec-replicas want
                       :reason (.format "宣言 {}{}・Pod {}・ready {}" want (if (and dry (is-not simulated None)) "(dry-run の値)" "")
-                                       (get obs "replicas") ready-n)))))
+                                       fresh.replicas ready-n)))))
 
 
 (defn #^ dict ready-instances [#^ ClusterState state #^ str worker #^ int now #^ ClusterTiming timing]
@@ -163,7 +170,8 @@
         (when (= t.kind "Deployment")
           (.append keys (+ t.namespace "/" t.name))))))
   (for [key (deployment-owners state.rollouts)]
-    (when (> (- now (.get (.get state.deployments key {}) "at" 0)) 10000)
+    (setv seen (.row state.observations.deployments key))
+    (when (> (- now (if (is seen None) 0 seen.at)) 10000)
       (.append keys key)))
   (list (dict.fromkeys keys)))
 
@@ -195,7 +203,7 @@
       (setv (get rollouts name) (replace r :status (replace r.status :drift None :drift-resolved-ms now)))))
   (for [#(key #(name expected)) (.items owners)]
     (setv r (get rollouts name) status r.status)
-    (setv status (drift-status status key expected (.get state.deployments key) now))
+    (setv status (drift-status status key expected (.row state.observations.deployments key) now))
     (setv (get rollouts name) (replace r :status status))
     (when (and r.spec.mark-deployment (!= status.marked-deployment key))
       (setv #(ns dep) (.split key "/" 1))

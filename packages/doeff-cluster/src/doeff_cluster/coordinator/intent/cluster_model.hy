@@ -13,12 +13,15 @@
 ;;; 書きは資源 1 つずつの compare-and-set。誰が・いつ・何を・前後の版は出来事の記録(audit)に残る。
 ;;; 版と記録は「前の状態と後の状態の差」から 1 か所(resource_policy.stamp)で付けるので、どの経路の変化も漏れない。
 (require doeff-hy.macros [val])
-(require doeff-hy.record [defenum defrecord])
+(require doeff-hy.record [defenum defrecord defwire])
 (val MODULE-TAGS {:context "coordinator" :role "intent"})
 (import dataclasses [dataclass field])
 (import enum [StrEnum])
+(import functools [partial])
 (import typing [NamedTuple])
 (import doeff [EffectBase])
+(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy.table [Table table-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request NextRequests])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
@@ -499,6 +502,66 @@
   (#^ bool retired))
 
 
+;; --- 保存しない k8s の観測(#2728 J1)---------------------------------------------------------------------------------------
+;;
+;; Rollout の調停の拍(core/program.rollout-tick)が k8s から読んだ物。ClusterState.observations(ClusterObservations)の表に置き、
+;; 版の比べ(resource_policy.stamp の dirty-keys)と保存の差分(protocol/durable_kv の SOURCE-GROUPS)の外に在る — 観測を書いても
+;; 資源の版も保存の行も動かない。k8s の JSON を型へ解くのは答え手(coordinator/protocol/kube)の 1 点で、core は型の値だけを読む。
+
+(defwire DeploymentReading
+  "k8s の Deployment を読んだ答え 1 つ(ReadDeployment の答え — Rollout が見る欄だけ): spec-replicas = 宣言の台数・replicas /
+   ready-replicas / available-replicas / updated-replicas = status の台数・generation = 宣言の世代・observed-generation = controller が
+   見た世代・annotations = metadata.annotations(中を読まない — 資源の画面へそのまま写すだけ)。欄の名と順は GET /resources/Rollout の
+   status.observed の行の形と同じ(coordinator/protocol/replies が dump で綴る)ので、既定値を持たせない(dump は既定値の欄を省く)。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
+  (#^ int spec-replicas)
+  (#^ int replicas)
+  (#^ int ready-replicas)
+  (#^ int available-replicas)
+  (#^ int updated-replicas)
+  (#^ int generation)
+  (#^ int observed-generation)
+  (#^ OpaqueJson annotations))
+
+
+(defrecord DeploymentSeen
+  "読めた Deployment の観測(Rollout の相手の Ready / 止まったの判じと、台数の食い違いの材料): reading = k8s の答え・at = 読んだ時刻(epoch ms)。"
+  (#^ DeploymentReading reading)
+  (#^ int at))
+
+
+(defrecord DeploymentUnreadable
+  "読めなかった Deployment の観測(Rollout はこの相手を Unknown と扱い、台数を変えない): error = 理由・at = 試した時刻(epoch ms)。"
+  (#^ str error)
+  (#^ int at))
+
+
+(defrecord NodeLabelsSeen
+  "読めた node の label(worker の能力の導出の材料 — cluster_policy.with-derived-capabilities): labels = label の鍵 → 値・
+   at = 読んだ時刻(epoch ms)。"
+  (#^ (get Table str) labels)
+  (#^ int at))
+
+
+(defrecord NodeLabelsUnreadable
+  "読めなかった node の label(その node の worker は前に導いた能力を保つ): error = 理由・at = 試した時刻(epoch ms)。"
+  (#^ str error)
+  (#^ int at))
+
+
+(defrecord ClusterObservations
+  "coordinator が外から読んだ、保存しない観測の置き場(ClusterState.observations — 上の註)。deployments = 「ns/名」→ Deployment の
+   最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)。"
+  (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
+  (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #()))))
+
+
+(defrecord ObservedDeployment
+  "資源の画面の Rollout の相手の Deployment 1 つ: key = 相手の鍵(rollout_policy.target-key)・seen = 最後の観測(まだ読んでいなければ None)。"
+  (#^ str key)
+  (#^ (| DeploymentSeen DeploymentUnreadable None) seen))
+
+
 (defrecord ServiceObserved
   "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後の準備の報告
    (状態の readiness の行のまま)・process = 置き先の worker の最後の報告の行・version = 版の判定・running = 生きている process の版の列。"
@@ -521,8 +584,9 @@
 
 
 (defrecord RolloutObserved
-  "資源の画面の Rollout の観測: observed = 相手の Deployment の鍵 → 最後に見た Deployment の観測(状態の deployments の行のまま・無ければ None)。"
-  (#^ (get dict #(str (| dict None))) observed))
+  "資源の画面の Rollout の観測: observed = 相手の Deployment ごとの最後の観測(spec の from → to の順・Deployment の相手だけ)。
+   JSON の形(鍵 → 観測の object か null)は coordinator/protocol/replies が綴る。"
+  (#^ (get tuple #(ObservedDeployment ...)) observed))
 
 
 (defrecord ResourceView
@@ -797,9 +861,7 @@
   (setv #^ dict readiness (field :default-factory dict))
   ;; Service の名 → 直近の ReportMetrics の報告(同じ形・ready と reason の代わりに metrics)。GET /metrics が今の process の分だけ出す
   (setv #^ dict metrics (field :default-factory dict))
-  (setv #^ dict deployments (field :default-factory dict)) ; "ns/名" → k8s の Deployment の最後の観測
-  ;; node の名 → その node の label の最後の観測 {"labels" {…} "at" ms} か {"error" "at"}(能力の導出の cache・保存しない)
-  (setv #^ dict nodes (field :default-factory dict))
+  ;; k8s の Deployment と node の label の最後の観測は最後の欄 observations(ClusterObservations — #2728)。
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
   ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
   (setv #^ frozenset derivable (frozenset))
@@ -834,7 +896,10 @@
   ;; 求め直し、変わった拍だけ新しい値にする — Worker の資源の status の live と版は、この欄の変化で進む(時刻そのものを版の比べに
   ;; 入れると、何も変わらない拍の早い戻り(resource_policy.stamp)で切り替わりを取りこぼす)。保存しない(読み直しの後の最初の拍で
   ;; 求め直す)。位置の引数で作る呼び手を崩さないよう最後の欄に置く。
-  (setv #^ frozenset silent (frozenset)))
+  (setv #^ frozenset silent (frozenset))
+  ;; 外から読んだ保存しない観測(k8s の Deployment と node の label — #2728 J1。Service と worker の観測も順に移す)。版の比べ
+  ;; (resource_policy.dirty-keys)と保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。位置の引数の呼び手のため最後に置く。
+  (setv #^ ClusterObservations observations (field :default-factory ClusterObservations)))
 
 
 (defclass [(dataclass :frozen True)] Fault []
