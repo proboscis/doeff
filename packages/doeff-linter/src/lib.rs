@@ -198,65 +198,65 @@ fn check_stmt_recursive(
     }
 
     // Recursively check nested statements
-    match stmt {
-        Stmt::ClassDef(class_def) => {
-            for s in &class_def.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
+    for body in nested_bodies(stmt) {
+        for s in body {
+            check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
         }
-        Stmt::FunctionDef(func) => {
-            for s in &func.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        Stmt::AsyncFunctionDef(func) => {
-            for s in &func.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        Stmt::If(if_stmt) => {
-            for s in &if_stmt.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-            for s in &if_stmt.orelse {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        Stmt::While(while_stmt) => {
-            for s in &while_stmt.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        Stmt::For(for_stmt) => {
-            for s in &for_stmt.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        Stmt::With(with_stmt) => {
-            for s in &with_stmt.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        Stmt::Try(try_stmt) => {
-            for s in &try_stmt.body {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-            for handler in &try_stmt.handlers {
-                if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
-                    for s in &h.body {
-                        check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-                    }
-                }
-            }
-            for s in &try_stmt.orelse {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-            for s in &try_stmt.finalbody {
-                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
-            }
-        }
-        _ => {}
     }
+}
+
+/// 文の入れ子の本体(規則に 1 つずつ渡す文の列)。文の種類を網羅する(`_ =>` を使わない)— 降りない本体が在ると、
+/// そこの code にはどの規則も当たらない(for / while の else・async for・async with・match の case・try* を
+/// 落としていた — agora-redesign #2834)。
+fn nested_bodies(stmt: &Stmt) -> Vec<&[Stmt]> {
+    match stmt {
+        Stmt::FunctionDef(func) => vec![func.body.as_slice()],
+        Stmt::AsyncFunctionDef(func) => vec![func.body.as_slice()],
+        Stmt::ClassDef(class_def) => vec![class_def.body.as_slice()],
+        Stmt::For(for_stmt) => vec![for_stmt.body.as_slice(), for_stmt.orelse.as_slice()],
+        Stmt::AsyncFor(for_stmt) => vec![for_stmt.body.as_slice(), for_stmt.orelse.as_slice()],
+        Stmt::While(while_stmt) => vec![while_stmt.body.as_slice(), while_stmt.orelse.as_slice()],
+        Stmt::If(if_stmt) => vec![if_stmt.body.as_slice(), if_stmt.orelse.as_slice()],
+        Stmt::With(with_stmt) => vec![with_stmt.body.as_slice()],
+        Stmt::AsyncWith(with_stmt) => vec![with_stmt.body.as_slice()],
+        Stmt::Match(match_stmt) => match_stmt.cases.iter().map(|case| case.body.as_slice()).collect(),
+        Stmt::Try(try_stmt) => try_bodies(&try_stmt.body, &try_stmt.handlers, &try_stmt.orelse, &try_stmt.finalbody),
+        Stmt::TryStar(try_stmt) => {
+            try_bodies(&try_stmt.body, &try_stmt.handlers, &try_stmt.orelse, &try_stmt.finalbody)
+        }
+        Stmt::Return(_)
+        | Stmt::Delete(_)
+        | Stmt::Assign(_)
+        | Stmt::TypeAlias(_)
+        | Stmt::AugAssign(_)
+        | Stmt::AnnAssign(_)
+        | Stmt::Raise(_)
+        | Stmt::Assert(_)
+        | Stmt::Import(_)
+        | Stmt::ImportFrom(_)
+        | Stmt::Global(_)
+        | Stmt::Nonlocal(_)
+        | Stmt::Expr(_)
+        | Stmt::Pass(_)
+        | Stmt::Break(_)
+        | Stmt::Continue(_) => Vec::new(),
+    }
+}
+
+/// try と try* の本体・各 handler の本体・else・finally。
+fn try_bodies<'a>(
+    body: &'a [Stmt],
+    handlers: &'a [rustpython_ast::ExceptHandler],
+    orelse: &'a [Stmt],
+    finalbody: &'a [Stmt],
+) -> Vec<&'a [Stmt]> {
+    let handler_bodies = handlers
+        .iter()
+        .map(|rustpython_ast::ExceptHandler::ExceptHandler(handler)| handler.body.as_slice());
+    std::iter::once(body)
+        .chain(handler_bodies)
+        .chain([orelse, finalbody])
+        .collect()
 }
 
 /// Collect Python files from paths
