@@ -62,7 +62,7 @@
 
 (defn pg-skip-reason []
   "PostgreSQL の検の skip の理由(env が在れば "")。env が無ければ conftest が使い捨ての PostgreSQL を立てて置くので、無いのは
-   立てられなかった時 — その理由を名指す(agora-redesign #2830)。"
+   立てられなかった時 — その理由を名指す(#2830)。"
   (session-postgres-skip-reason PG-DSN-VARIABLE))
 
 
