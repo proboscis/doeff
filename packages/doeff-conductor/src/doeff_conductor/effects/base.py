@@ -24,6 +24,3 @@ class ConductorEffectBase(EffectBase):
     ) -> E:
         """Conductor effects have no nested programs, returns self unchanged."""
         return self
-
-
-__all__ = ["ConductorEffectBase"]

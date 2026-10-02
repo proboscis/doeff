@@ -329,7 +329,6 @@ class TestModuleExports:
             "MergePR",
         }
 
-        assert expected_names.issubset(set(effects_module.__all__))
         for name in expected_names:
             assert hasattr(effects_module, name)
 

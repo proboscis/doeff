@@ -158,6 +158,3 @@ class GitHandler:
             self._github_handler.handle_merge_pr(git_effect)
         except DomainGitCommandError as error:
             raise self._translate_error(error) from error
-
-
-__all__ = ["GitHandler"]

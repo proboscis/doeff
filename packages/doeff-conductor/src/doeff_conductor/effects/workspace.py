@@ -14,7 +14,7 @@ site-local worktree across process restarts.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .base import ConductorEffectBase
+from doeff_conductor.effects.base import ConductorEffectBase
 
 if TYPE_CHECKING:
     from doeff_conductor.types import Issue, MergeStrategy, Workspace

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import ConductorEffectBase
+from doeff_conductor.effects.base import ConductorEffectBase
 
 if TYPE_CHECKING:
     from doeff_conductor.types import Workspace
@@ -21,4 +21,3 @@ class Exec(ConductorEffectBase):
     workdir: Path | None = None
     workspace: "Workspace | None" = None
     timeout: float | None = None
-

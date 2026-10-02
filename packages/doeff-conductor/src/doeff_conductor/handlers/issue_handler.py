@@ -317,6 +317,3 @@ class IssueHandler:
             pr_url=effect.pr_url or effect.issue.pr_url,
             metadata=frontmatter,
         )
-
-
-__all__ = ["IssueHandler"]

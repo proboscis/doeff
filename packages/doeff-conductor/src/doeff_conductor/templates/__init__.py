@@ -13,10 +13,10 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from .basic_pr import basic_pr
-from .enforced_pr import enforced_pr
-from .multi_agent import multi_agent
-from .reviewed_pr import reviewed_pr
+from doeff_conductor.templates.basic_pr import basic_pr
+from doeff_conductor.templates.enforced_pr import enforced_pr
+from doeff_conductor.templates.multi_agent import multi_agent
+from doeff_conductor.templates.reviewed_pr import reviewed_pr
 
 # Template registry
 TEMPLATES: dict[str, tuple[Callable[..., Any], str]] = {
@@ -62,16 +62,3 @@ def get_template_source(name: str) -> str:
         raise KeyError(f"Unknown template: {name}")
     func = TEMPLATES[name][0]
     return inspect.getsource(func)
-
-
-__all__ = [
-    "TEMPLATES",
-    "basic_pr",
-    "enforced_pr",
-    "get_available_templates",
-    "get_template",
-    "get_template_source",
-    "is_template",
-    "multi_agent",
-    "reviewed_pr",
-]
