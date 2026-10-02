@@ -110,12 +110,14 @@
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
-(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task
+(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task Future
                                       TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleTaken]
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleTaken ProvisionalBeat]
+        doeff_cluster.coordinator.intent.request_bodies [HeartbeatBody]
+        doeff_cluster.coordinator.protocol.request_bodies [body-of]
         doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
@@ -126,7 +128,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_cluster.coordinator.protocol.store [Persist])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch
+                                                          deposit-beats withdraw-beats drop-beats BEAT RestBell ring-bell])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 (import doeff_cluster.shared.protocol.declaration_requests [create-body spec-for-update])
@@ -142,7 +145,9 @@
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+;; 拍の間の待ち(AwaitNextTick)は宿が答える: 旗が偽なら本番と同じ tick-pause、真なら静かな拍を quiet-beats で試して一度に眠る(#2790)。
+(import doeff_cluster.worker.core.program [tick-pause])
+(import doeff_cluster.worker.core.quiet_policy [quiet-beats])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import doeff_cluster.worker.entry.job_entry [decoded-program])
@@ -171,7 +176,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
-                       ReleaseLeases EnvReport] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+                       ReleaseLeases EnvReport AwaitNextTick] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 
 ;; load-state は置き場がまだ無い時だけ以前の形の file を探す。sim は置き場(MemoryWalStore)が在る時だけ load-state を呼ぶので読まれない。
 (val NO-STATE-FILE "/nonexistent/doeff-sim/coordinator/state.json")
@@ -191,6 +196,9 @@
 (val PAUSE-CRASH "crash")                    ;                         Persist の失敗(返事をせずに落ちる)
 (val CUT-REASON "網が切れている(sim — 送り手の居る worker の網)")
 (val FAULT-REASON "sim: 注入した故障(FailRoute — coordinator の口がこの状態で答える)")
+(val ROUSED "roused")                        ; 静かな拍を眠る宿の呼び鈴の答え: 宿の真実が書き換わった(世界の出来事 — #2790)
+(val QUIET-BEATS-LIMIT 360)                  ; 宿が一度に眠る拍の上限(拍 10 秒なら仮想の 1 時間 — coordinator の区間の上限と同じ長さ)
+(val FIRST-REST-BEATS 4)                     ; 宿が一度に眠る拍の最初の上限(最後まで眠れるたびに倍 — 宿の真実の rest-reach)
 
 
 ;; --- 公開の値 --------------------------------------------------------------------------------------------
@@ -533,7 +541,9 @@
    heartbeat が届いた時に鳴らす呼び鈴(起こした後の待ちが次の版を待つ)・watch-failure = 待ちの task が思わぬ例外で止まった理由
    (在れば拍ごとの heartbeat に戻る — 本番の coordinator への口の watching? が thread の死に気づくのと同じ)・tick-bell = 拍の間の
    眠りを起こす呼び鈴(#2692 — 待ちが「変わった」と答えた時に鳴らして手放し、次の宣言の読みが新しく掛ける。鳴るまでは拍をまたいで
-   同じ物を渡す)。"
+   同じ物を渡す)・rest-bell = 静かな拍を一度に眠っている宿の呼び鈴(#2790 — 宿の真実を誰かが書き換えると世界が鳴らして手放す。
+   列が預けた仮の拍を静かでないと判じた時・coordinator が止まった時は列が鳴らす)・rest-reach = 次に一度に眠る拍の上限(最後まで
+   眠れるたびに倍・起こされたら FIRST-REST-BEATS へ戻す)。"
   (#^ str boot)
   (#^ int boot-at)
   (#^ tuple processes)
@@ -559,7 +569,9 @@
   (setv #^ bool woken False)
   (setv #^ tuple beat-bells #())
   (setv #^ (| str None) watch-failure None)
-  (setv #^ (| Promise None) tick-bell None))
+  (setv #^ (| Promise None) tick-bell None)
+  (setv #^ (| RestBell None) rest-bell None)
+  (setv #^ int rest-reach FIRST-REST-BEATS))
 
 
 (defrecord HostTruthChange
@@ -688,6 +700,11 @@
 (defeffect TakeReplayedWrite
   "次の Persist が、まとめて保存する区間の歩の書きか(真なら覚えた数を 1 減らす)。"
   {:answer bool :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect RestHost
+  "静かな拍を一度に眠る宿 name が、読んだ宿の真実 seen のままなら眠りの呼び鈴 bell を掛ける(#2790)。答え = 掛けたか(読んだ後に真実が
+   書き換わっていれば掛けない — 宿は眠りを延ばさず普通の拍の待ちに戻る)。掛けた鈴は、宿の真実を誰かが書き換えると世界が鳴らす。"
+  {:fields [(: name str) (: seen HostTruth) (: bell RestBell)] :answer bool :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect CoordinatorStarted
   "coordinator の Pod が起きた(時刻 ms)。"
@@ -1382,6 +1399,19 @@
   fetched)
 
 
+(defk beat-body [worker truth sent-at]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: sent-at int)] :post [(: % dict)]
+   :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "宿の真実 truth から、刻 sent-at に送る heartbeat の本文(本番の coordinator への口の polled と同じ heartbeat-body・env-heartbeat-part)を
+   綴るため — 本物の heartbeat と、静かな拍を眠る宿が預ける仮の拍(#2790)が同じ綴りを使う。"
+  (<- views tuple (codes-view truth.codes sent-at))
+  (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
+                     :node worker.node :capacity worker.capacity :versions (or worker.versions (current-versions))
+                     :statuses truth.statuses :endpoint (+ "sim://" worker.name) :boot truth.boot
+                     :boot-at truth.boot-at :tools {})
+     (env-heartbeat-part (env-report views "ok") (current-platform))))
+
+
 (defk heartbeat [worker boot]
   {:pre [(: worker SimWorker) (: boot str)] :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "doeff-cluster" :role "protocol"}}
   "本番の coordinator への口の polled の代役: 生存・能力・版・状態・root の名乗りを同じ本文(heartbeat-body・env-heartbeat-part)で送り、返事の
@@ -1393,13 +1423,8 @@
   (<- marked HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :woken False))))
   (val before marked.before)
   (<- sent-at int (now-epoch-ms))
-  (<- views tuple (codes-view before.codes sent-at))
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name))
-  (val body (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
-                               :node worker.node :capacity worker.capacity :versions (or worker.versions (current-versions))
-                               :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
-                               :boot-at before.boot-at :tools {})
-               (env-heartbeat-part (env-report views "ok") (current-platform))))
+  (<- body dict (beat-body worker before sent-at))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
@@ -1499,6 +1524,162 @@
     True (do (<- bell Promise (CreatePromise))
              (<- (change-live-truth name boot (fn [t] (replace t :tick-bell bell))))
              bell)))
+
+
+;; --- 静かな拍を一度に眠る宿(模擬の時計の下だけ — #2790)---------------------------------------------------------
+;; 拍の間の待ち(AwaitNextTick)に宿が答える。旗(SimPlan.skip-idle)が真なら、先の拍を本番の判断(quiet_policy.quiet-beats)で試し、action も
+;; 状態の報告の変化も無い拍の heartbeat を「仮の拍」として coordinator の列に預け、その分だけ眠りを延ばす。列は仮の拍を本番の受けの判断で
+;; 試して積み(idle_policy.heard-beats)、静かでない拍の刻に宿を起こす(BEAT — 宿はその拍を本物で打つ)。宿の真実が誰かに書き換わると
+;; (process の終わり・Kill・Stop・網の切れ・待ちの答え)世界が宿を起こし(ROUSED)、宿は 1 拍ずつの走りの次の拍の刻へ戻る。
+
+(defk rouses [before after]
+  {:pre [(: before HostTruth) (: after HostTruth)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宿の真実の書き換え before → after が、静かな拍を眠っている宿を起こすべき変化か(宿の先の拍の判断 — 観測・heartbeat を送るか・本文・
+   止めの頼み — に効く欄が変わったか)を知るため。効かない記帳(待ちの鈴 beat-bells・拍の鈴 tick-bell・眠りの鈴と長さ・両方在る時の
+   watch-after — 本物の heartbeat の直後に待ちの task が書く)だけの違いでは起こさない(起こすと眠りが毎拍 最初の長さへ戻る)。"
+  (val after-watch (if (and (is-not before.watch-after None) (is-not after.watch-after None)) before.watch-after after.watch-after))
+  (!= (replace after :beat-bells before.beat-bells :tick-bell before.tick-bell :rest-bell before.rest-bell
+               :rest-reach before.rest-reach :watch-after after-watch)
+      before))
+
+
+(defk provisional-beats [worker truth now tick-ms count]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: now int) (: tick-ms int) (: count int)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "now の拍の後の静かな拍 count 個(1 拍ずつの走りで worker が打つ拍)のうち heartbeat を送る拍の heartbeat を、仮の拍(ProvisionalBeat の
+   tuple — 刻の順)にするため。送るかは本物の拍と同じ判断(heartbeat-due — 前の仮の拍は届いたものとして数える)、本文は本物と同じ綴り
+   (beat-body)と同じ解き(body-of)。本文が刻に依るのは準備の見え方(codes-view)だけなので、見え方が前の拍と同じなら綴りと解きを
+   使い回す(静かな拍は本文が同じ — 拍ごとに綴って解く費用を払わない)。"
+  (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None) (is truth.watch-failure None)))
+  (val interval (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))
+  (var fresh truth.fresh)
+  (var woken truth.woken)
+  (var sent truth.sent-statuses)
+  (var last-ok truth.last-ok-ms)
+  (var beats #())
+  (var seen-views None)
+  (var heard None)
+  (for [k (range 1 (+ count 1))]
+    (val at (+ now (* k tick-ms)))
+    (when (heartbeat-due watching fresh woken (!= truth.statuses sent) (- at last-ok) interval)
+      (<- views tuple (codes-view truth.codes at))
+      (when (or (is heard None) (!= views seen-views))
+        (<- body dict (beat-body worker truth at))
+        (val request (http-request "POST" "/heartbeat" {} body :actor worker.name :peer worker.name))
+        (<- parsed (body-of request))
+        (match parsed
+          (HeartbeatBody) (:= heard (ProvisionalBeat :at at :request request :body parsed :name worker.name))
+          _ (:= heard None))
+        (:= seen-views views))
+      (when (is-not heard None)
+        (:= beats (+ beats #((replace heard :at at)))))
+      (:= fresh True)
+      (:= woken False)
+      (:= sent truth.statuses)
+      (:= last-ok at)))
+  beats)
+
+
+(defk settle-rest [worker boot sent reach]
+  {:pre [(: worker SimWorker) (: boot str) (: sent tuple) (: reach int)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "静かな拍を眠った宿が起きた時に、起きた刻より前の仮の拍 sent(1 拍ずつの走りで届いていた heartbeat — 列が静かと判じたので返事は前の
+   返事と同じ)を宿の真実へ写すため: 最後に届いた時刻・届いた数・届いた印と送った報告。眠りの呼び鈴を外し、次の眠りの長さ reach を置く。"
+  (<- (change-live-truth worker.name boot
+                         (fn [truth]
+                           (if sent
+                               (replace truth :rest-bell None :rest-reach reach :last-ok-ms (. (get sent -1) at)
+                                        :beats (+ truth.beats (len sent)) :fresh True :sent-statuses truth.statuses)
+                               (replace truth :rest-bell None :rest-reach reach)))))
+  None)
+
+
+(defk rest-of-pause [policy changed slept-at]
+  {:pre [(: policy WorkerPolicy) (: changed (| Future None)) (: slept-at int)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "拍 slept-at の後の眠りの残り(拍の終わり slept-at + tick-seconds まで)を、本番の拍の間の待ち(core/program.tick-pause)と同じ形で
+   眠るため — 宣言の変化の呼び鈴 changed と競わせ、鳴れば slept-at から wake-gap-seconds が経つまで眠り足す。静かな拍を眠った宿が
+   世界の出来事で起きた後に、1 拍ずつの走りの次の拍の刻へ戻るため。"
+  (<- now int (now-epoch-ms))
+  (val left (/ (- (+ slept-at (int (* 1000 policy.tick-seconds))) now) 1000.0))
+  (when (> left 0)
+    (match changed
+      None (<- (Delay left))
+      _ (do (<- rung (promise-or-timeout changed left))
+            (when (is-not rung None)
+              (<- woke-at int (now-epoch-ms))
+              (val gap (min policy.wake-gap-seconds policy.tick-seconds))
+              (val rest (min gap (- gap (/ (- woke-at slept-at) 1000.0))))
+              (when (> rest 0)
+                (<- (Delay rest)))))))
+  None)
+
+
+(defk rest-quietly [worker boot policy changed state]
+  {:pre [(: worker SimWorker) (: boot str) (: policy WorkerPolicy) (: changed (| Future None)) (: state WorkerState)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "模擬の時計の下(旗 skip-idle)で、worker の拍と拍の間の眠りを静かな拍の分だけ一度に取るため。先の拍を本番の判断(quiet-beats — 観測は
+   宿の真実をその刻で読む view-of)で試し、静かな拍の heartbeat を仮の拍として列に預けて(deposit-beats)、次に何かが変わる拍まで眠る。
+   起き方: その拍の刻(本物の拍を打つ)・列が静かでないと判じた拍の刻(BEAT — その拍を本物で打つ)・宿の真実の書き換え(ROUSED)・
+   coordinator の止まり(DOWN)。起きた刻より前の仮の拍は届いたものとして写し(settle-rest)、後の拍は取り下げる。拍の刻でなく起きたら、
+   1 拍ずつの走りの次の拍の刻まで本番と同じ待ちで眠る(rest-of-pause)。coordinator が止まっている・網が切れている・heartbeat の口が
+   故障している間は預けない(本番と同じ拍の待ち)。"
+  (<- parts SimParts (PartsOf))
+  (<- truth HostTruth (live-truth worker.name boot))
+  (<- faults RouteFaults (RouteFaultsNow))
+  (<- now int (now-epoch-ms))
+  (val tick-ms (int (* 1000 policy.tick-seconds)))
+  ;; 一度に眠る拍の上限は、最後まで眠れた眠りごとに倍にし(上限 QUIET-BEATS-LIMIT)、途中で起こされたら最初の長さへ戻す — 出来事の多い
+  ;; 間は先の拍を試して預ける費用を小さく保つ。
+  (val reach (max 1 (min truth.rest-reach QUIET-BEATS-LIMIT)))
+  (var ahead 1)
+  ;; 待ちが既に「変わった」と答えていれば(woken — 拍の間の呼び鈴は鳴り済み)、眠りを延ばさない: 本番の拍の待ちは呼び鈴ですぐ起き、
+  ;; wake-gap の後に拍を打つ(1 拍ずつの走りの、拍の直後の変化に気づく拍 — #2850 の 20.1 秒の w1)。
+  (when (and parts.queue.up (not truth.woken) (not-in worker.name faults.cut) (not-in #("POST" "/heartbeat") faults.failing))
+    (<- quiet int (quiet-beats state policy (fn [at] (view-of truth at)) now reach))
+    (:= ahead quiet))
+  (var resting False)
+  (var beats #())
+  (when (> ahead 1)
+    (<- offered tuple (provisional-beats worker truth now tick-ms (- ahead 1)))
+    (<- promise Promise (CreatePromise))
+    (val bell (RestBell promise))
+    (<- held bool (RestHost worker.name truth bell))
+    (when held
+      (:= resting True)
+      (:= beats offered)
+      (<- (deposit-beats parts.queue worker.name offered bell))
+      ;; 拍ごとに眠り直す: 静かな拍の timer も 1 拍ずつの走りと同じく前の拍の刻に登録する(起きても何もしない — 仕事も heartbeat も
+      ;; coordinator の歩も無い)。同じ刻の出来事(待ちの答え・process の終わり)と拍のどちらが先かは、timer を登録した刻で決まる
+      ;; ので、登録の刻を揃えて前後を 1 拍ずつの走りと同じにする(#2850 の Rollout の筋書きの 16.5 秒の w1)。passed = 通った最後の拍。
+      (var passed now)
+      (var reason None)
+      (var going True)
+      (while going
+        (<- current int (now-epoch-ms))
+        (val target (+ passed tick-ms))
+        (<- answer (| str None) (promise-or-timeout promise.future (/ (max 0 (- target current)) 1000.0)))
+        (if (is answer None)
+            (do (:= passed target)
+                (when (>= passed (+ now (* ahead tick-ms)))
+                  (:= going False)))
+            (do (:= reason answer)
+                (:= going False))))
+      (<- woke int (now-epoch-ms))
+      ;; 列が静かでないと判じた拍(BEAT)は届いていない — 今その拍を本物で打つ。それ以外は通った拍までが届いた拍。
+      (val sent-until (if (= reason BEAT) (- woke 1) passed))
+      (<- (withdraw-beats parts.queue worker.name (+ sent-until 1)))
+      (val next-reach (cond (is-not reason None) FIRST-REST-BEATS
+                            (= ahead reach) (min (* 2 reach) QUIET-BEATS-LIMIT)
+                            True reach))
+      (<- (settle-rest worker boot (tuple (gfor beat beats :if (<= beat.at sent-until) beat)) next-reach))
+      ;; 起きた後: BEAT・眠りの終わり・次の拍の刻ちょうどでその拍の timer より先の出来事なら、今その拍を打つ。それ以外(通った拍の後の
+      ;; 出来事)は、1 拍ずつの走りの今の拍の間の待ちの残りを本番と同じ形で眠る。
+      (val due-now (or (is reason None) (= reason BEAT) (= woke (+ passed tick-ms))))
+      (when (not due-now)
+        (<- (rest-of-pause policy changed passed)))))
+  (when (not resting)
+    (<- (tick-pause policy changed)))
+  None)
 
 
 (defhandler sim-host [#^ SimWorker worker #^ str boot]
@@ -1604,6 +1785,14 @@
     (resume (or stopping truth.stopping)))
   (EnvReport []
     ;; sim の宿は heartbeat の root の名乗りを世界の root から自分で作る(env-heartbeat-part)ので、拍の Program の問いには None で答える。
+    (resume None))
+  (AwaitNextTick [policy changed state]
+    ;; 拍の間の待ち(#2790): 模擬の時計の下(旗 skip-idle)は静かな拍を一度に眠る(rest-quietly)。旗が偽なら本番の答え手
+    ;; (worker/protocol/tick_pauses)と同じ tick-pause。
+    (<- plan SimPlan (PlanOf))
+    (if plan.skip-idle
+        (<- (rest-quietly worker boot policy changed state))
+        (<- (tick-pause policy changed)))
     (resume None)))
 
 
@@ -1693,8 +1882,8 @@
   {:pre [(: worker SimWorker) (: policy WorkerPolicy) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
   "worker の世代 1 つ: 本物の run-worker を、本番の入口と同じ組み立て(worker-on)で偽の宿の組の上で回す(止まれの合図で全 job を
    止めの手順で回収して終わる)。"
-  ;; 拍の間の眠り(AwaitNextTick)は本番と同じ答え手 tick-pauses(偽の宿の外側)。
-  (<- (worker-on [tick-pauses (sim-host worker boot)] policy))
+  ;; 拍の間の眠り(AwaitNextTick)は偽の宿が答える(旗が偽なら本番の答え手と同じ tick-pause・真なら静かな拍を一度に眠る — #2790)。
+  (<- (worker-on [(sim-host worker boot)] policy))
   boot)
 
 
@@ -1833,6 +2022,8 @@
     (setattr parts.queue "up" False)
     (<- held tuple (TakeHeldRequests))
     (<- (fail-open-requests parts.queue held "coordinator が止まった・落ちた(返事なし)"))
+    ;; 預けた仮の拍は止まった coordinator には届かない — 捨てて宿を起こす(宿は次の拍から本物の heartbeat を送る — #2790)。
+    (<- (drop-beats parts.queue))
     (<- ended int (now-epoch-ms))
     (<- (CoordinatorEnded ended outcome))
     (:= lives (+ lives 1))
@@ -1984,7 +2175,15 @@
   (HostTruthOf [name]
     (resume (get hosts name)))
   (PutHostTruth [name truth]
-    (:= hosts (| hosts {name truth}))
+    ;; 静かな拍を眠っている宿の真実の、先の拍に効く欄が書き換わったら、その宿を起こす(#2790 — 宿は預けた先の拍を取り下げ、次の拍で
+    ;; 観測し直す)。眠りの鈴は書き手の写しではなく今の物を残す。
+    (val before (get hosts name))
+    (val resting before.rest-bell)
+    (<- moved bool (rouses before truth))
+    (val roused (and (is-not resting None) moved))
+    (:= hosts (| hosts {name (replace truth :rest-bell (if roused None resting))}))
+    (when roused
+      (<- (ring-bell resting ROUSED)))
     (resume None))
   (ChangeHostTruth [name boot live change]
     (val truth (get hosts name))
@@ -1998,8 +2197,23 @@
             (when (isinstance produced Program)
               (<- ran HostTruth produced)
               (:= changed ran))
+            ;; 静かな拍を眠っている宿の真実の、先の拍に効く欄が書き換わったら、その宿を起こす(PutHostTruth と同じ)。
+            (val resting truth.rest-bell)
+            (<- moved bool (rouses truth changed))
+            (val roused (and (is-not resting None) moved))
+            (when roused
+              (:= changed (replace changed :rest-bell None)))
             (:= hosts (| hosts {name changed}))
+            (when roused
+              (<- (ring-bell resting ROUSED)))
             (resume (HostTruthChange :before truth :after changed)))))
+  (RestHost [name seen bell]
+    ;; 読んだ真実のままなら眠りの呼び鈴を掛ける(読んだ後に書き換わっていれば掛けない — 宿は普通の拍の待ちに戻る)。
+    (val truth (get hosts name))
+    (if (and (is truth seen) (not truth.down))
+        (do (:= hosts (| hosts {name (replace truth :rest-bell bell)}))
+            (resume True))
+        (resume False)))
   (NextPid []
     (:= next-pid (+ next-pid 1))
     (resume next-pid))
@@ -2031,11 +2245,14 @@
     (val view (next (gfor p truth.processes :if (= p.pid pid) p) None))
     (val task-id (if (and (is-not view None) view.spec.once) (cut view.spec.name 5 None) None))
     (val spawned (.get children pid #()))
+    ;; 静かな拍を眠っている宿を起こす(#2790 — process の終わりは宿が次の拍で観測する出来事)。
+    (val resting truth.rest-bell)
     (:= hosts (| hosts {worker (replace truth
                                         :processes (tuple (gfor p truth.processes (if (= p.pid pid) (replace p :exit-code ended.code) p)))
                                         :results (if (and task-id (is-not ended.result None))
                                                      (| truth.results {task-id ended.result})
-                                                     truth.results))}))
+                                                     truth.results)
+                                        :rest-bell None)}))
     (:= log (tuple (gfor r log (if (= r.pid pid) (replace r :ended-ms now :exit-code ended.code :detail ended.detail :value ended.value) r))))
     (:= handles (dfor #(k v) (.items handles) :if (!= k pid) k v))
     (:= children (dfor #(k v) (.items children) :if (!= k pid) k v))
@@ -2048,6 +2265,8 @@
       (<- (Cancel task)))
     (for [#(promise answer) woken.due]
       (<- (CompletePromise promise answer)))
+    (when (is-not resting None)
+      (<- (ring-bell resting ROUSED)))
     (resume None))
   (NoteWatchFailure [failure]
     (:= watch-failures (+ watch-failures #(failure)))
@@ -2069,10 +2288,15 @@
     (resume stopping))
   (StopWorkers []
     (val waiting (list (.values revivals)))
+    ;; 静かな拍を眠っている宿も起こす(止まれの合図は宿が次の拍で読む — #2790)。
+    (val resting (tuple (gfor truth (.values hosts) :if (is-not truth.rest-bell None) truth.rest-bell)))
+    (:= hosts (dfor #(key truth) (.items hosts) key (replace truth :rest-bell None)))
     (:= stopping True)
     (:= revivals {})
     (for [promise waiting]
       (<- (CompletePromise promise None)))
+    (for [bell resting]
+      (<- (ring-bell bell ROUSED)))
     (resume None))
   (WorkerEnded [name boot]
     (val truth (get hosts name))
@@ -2146,7 +2370,9 @@
     (val victims (if truth.down [] (lfor r log :if (and (= r.worker name) (is r.ended-ms None)) r.pid)))
     (val killed (SimExit :code KILLED-CODE :result None :detail "worker が死んだ(node ごと止まった)"))
     (:= kills (| kills (dfor pid victims pid killed)))
-    (:= hosts (| hosts {name (replace truth :down True)}))
+    ;; 静かな拍を眠っている宿を起こす(#2790 — 宿は死んだ刻より後の預けた拍を取り下げて終わる)。
+    (val resting truth.rest-bell)
+    (:= hosts (| hosts {name (replace truth :down True :rest-bell None)}))
     ;; 記録の終わりはここで書く(走り出す前に取り消された process は EndProcess を書かない — 動いているように見せない)。
     (:= log (tuple (gfor r log (if (in r.pid victims) (replace r :ended-ms now :exit-code killed.code :detail killed.detail) r))))
     (<- woken DueWaiters (due-end-waiters log end-waiters))
@@ -2157,14 +2383,20 @@
         (<- (Cancel (get handles pid)))))
     (for [#(promise answer) woken.due]
       (<- (CompletePromise promise answer)))
+    (when (is-not resting None)
+      (<- (ring-bell resting ROUSED)))
     (resume (len victims)))
   (StopWorker [name]
     (val truth (get hosts name))
     (if truth.down
         (resume None)
         (do (<- promise Promise (CreatePromise))
-            (:= hosts (| hosts {name (replace truth :stopping True)}))
+            ;; 静かな拍を眠っている宿を起こす(止めの頼みは宿が次の拍で読む)。
+            (val resting truth.rest-bell)
+            (:= hosts (| hosts {name (replace truth :stopping True :rest-bell None)}))
             (:= stop-waiters (| stop-waiters {name (+ (.get stop-waiters name #()) #(promise))}))
+            (when (is-not resting None)
+              (<- (ring-bell resting ROUSED)))
             (<- (Wait promise.future))
             (resume None))))
   (StartWorker [name]
@@ -2184,10 +2416,20 @@
   (CutWorker [name seconds]
     (<- now int (now-epoch-ms))
     (:= cuts (| cuts {name (+ now (int (* 1000 seconds)))}))
+    ;; 静かな拍を眠っている宿を起こす(#2790 — 網の切れた worker の heartbeat は届かない。預けた拍は取り下げ、本物の拍で送り直す)。
+    (val resting (. (get hosts name) rest-bell))
+    (:= hosts (| hosts {name (replace (get hosts name) :rest-bell None)}))
+    (when (is-not resting None)
+      (<- (ring-bell resting ROUSED)))
     (resume None))
   (FailRoute [method path status seconds]
     (<- now int (now-epoch-ms))
     (:= failing (| failing {#(method path) #(status (+ now (int (* 1000 seconds))))}))
+    ;; 静かな拍を眠っている宿を全部起こす(口の故障の間の heartbeat は本物で送る — 預けた拍は列が篩わない)。
+    (val resting (tuple (gfor truth (.values hosts) :if (is-not truth.rest-bell None) truth.rest-bell)))
+    (:= hosts (dfor #(key truth) (.items hosts) key (replace truth :rest-bell None)))
+    (for [bell resting]
+      (<- (ring-bell bell ROUSED)))
     (resume None))
   (DrainWorker [name ttl-seconds]
     (val request (drain-request name ttl-seconds (. (get hosts name) boot)))
