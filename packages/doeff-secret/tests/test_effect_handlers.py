@@ -1,7 +1,6 @@
 """Tests for doeff-secret effects and built-in handlers."""
 
 
-import os
 import sys
 from pathlib import Path
 
@@ -99,6 +98,7 @@ def test_env_var_handler_uses_raw_secret_id_when_enabled() -> None:
 def test_env_var_handler_can_read_process_environment(monkeypatch) -> None:
     monkeypatch.setenv("DB_PASSWORD", "from-process-env")
 
-    result = run(env_var_handler(environ=os.environ)(_read_secret("db-password")))
+    # environ を渡さない既定の道 = handler(foundation)の中で process の環境を読む(#3012 — 検が os.environ を渡さない)。
+    result = run(env_var_handler()(_read_secret("db-password")))
 
     assert result == "from-process-env"

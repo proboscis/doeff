@@ -12,7 +12,13 @@ module was exempted from the rule before, #2954).
 
 from doeff import run, with_handlers
 from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import EnvEntry, ReadEnvironment
+from doeff_core_effects.process_effects import EnvEntry, ReadEnvironment, environment_mapping
+
+
+def process_environment() -> dict[str, str]:
+    """The whole environment of this process, as the base the harness hands to the daemons it starts (they
+    inherit it plus the suite's own variables) — read through ReadEnvironment, not os.environ (#3012)."""
+    return run(with_handlers([subprocess_handler], environment_mapping()))
 
 
 def _setting(name: str) -> str | None:
