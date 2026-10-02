@@ -1,6 +1,7 @@
 ;;; 汎用の file system の effect(file_effects.hy)の本物の答え手 os-file-handler(agora-redesign #802 便 1)。os・shutil・fcntl を呼んで値を
 ;;; 詰め替えるだけで、判断を持たない。失敗(OSError)は FileFailed の値で答える。
 (require doeff-hy.macros [defhandler defk <- val])
+(val MODULE-TAGS {:context "file" :role "foundation"})
 (import fcntl)
 (import collections.abc [Callable])
 (import os)

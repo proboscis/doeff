@@ -21,6 +21,7 @@ from pathlib import Path
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import hy
 import pytest
+from doeff_hy.static_stub import hidden_name
 
 PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 
@@ -99,7 +100,7 @@ def _hy_defined_names(module: str) -> tuple[str, ...]:
     """.hy の module の直下で定義した公開の名(書いた順)。"""
     forms = hy.read_many((PACKAGE / f"{module}.hy").read_text(encoding="utf-8"))
     names = (_defined_name(form) for form in forms)
-    return tuple(n for n in names if n is not None and not n.startswith("_"))
+    return tuple(n for n in names if n is not None and not n.startswith("_") and not hidden_name(n))
 
 
 def _stub_tree(module: str) -> ast.Module:
@@ -122,9 +123,10 @@ def _declared_name(node: ast.stmt) -> str | None:
 
 
 def _stub_declared_names(tree: ast.Module) -> tuple[str, ...]:
-    """宣言の module の直下で宣言した公開の名(_ で始まる宣言の中だけの型は除く)。"""
+    """宣言の module の直下で宣言した公開の名(_ で始まる宣言の中だけの型は除く)。module の印(MODULE_TAGS)など型の面に出さない名は、
+    生成の道具 doeff_hy.static_stub と同じ判定 hidden_name で両側から外す(#2909)。"""
     names = (_declared_name(node) for node in tree.body)
-    return tuple(n for n in names if n is not None and not n.startswith("_"))
+    return tuple(n for n in names if n is not None and not n.startswith("_") and not hidden_name(n))
 
 
 def _stub_fields(node: ast.ClassDef) -> tuple[StubField, ...]:
@@ -284,3 +286,18 @@ def test_a_dropped_handler_parameter_is_found() -> None:
         for m in _mismatches("scripted_http_server", broken)
         if m.startswith("scripted_http_server の引数が違う")
     ]
+
+
+def test_a_module_mark_is_not_a_public_name_but_a_dropped_function_still_is() -> None:
+    # 頭のタグ MODULE-TAGS(doeff-linter の印)は、生成の道具 static_stub と同じく型の面の名に数えない(#2909)。memory_file.hy は
+    # MODULE-TAGS を定義し、宣言に MODULE_TAGS は無いが食い違いにならない。宣言から公開の関数を 1 つ消すと、今どおり見つかる。
+    forms = hy.read_many((PACKAGE / "memory_file.hy").read_text(encoding="utf-8"))
+    assert "MODULE_TAGS" in {_defined_name(form) for form in forms}
+    assert "MODULE_TAGS" not in _hy_defined_names("memory_file")
+    assert _mismatches("memory_file", _stub_tree("memory_file")) == ()
+    broken = copy.deepcopy(_stub_tree("memory_file"))
+    dropped = next(
+        node.name for node in broken.body if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
+    )
+    broken.body = [node for node in broken.body if not (isinstance(node, ast.FunctionDef) and node.name == dropped)]
+    assert f"宣言に無い公開の名: {dropped}" in _mismatches("memory_file", broken)

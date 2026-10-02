@@ -11,6 +11,7 @@
 ;;;          DirEntry の name は dir からの名か相対 path なので変えない。
 ;;; path を持たない effect(ReadMemoryFiles など)は触らずに外側へ通す。
 (require doeff-hy.macros [defhandler defk <- val])
+(val MODULE-TAGS {:context "file" :role "foundation"})
 (import posixpath)
 (import dataclasses [replace])
 (import doeff [EffectBase])

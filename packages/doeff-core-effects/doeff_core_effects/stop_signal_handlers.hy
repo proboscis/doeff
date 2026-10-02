@@ -11,7 +11,8 @@
 ;;;
 ;;; Both keep their state in the session, so a state handler (doeff_core_effects.handlers.state) must be outside them.
 
-(require doeff-hy.macros [defhandler <-])
+(require doeff-hy.macros [defhandler <- val])
+(val MODULE-TAGS {:context "stop-signal" :role "foundation"})
 
 (import signal)
 (import types)

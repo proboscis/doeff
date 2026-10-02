@@ -5,6 +5,7 @@
 ;;; 純関数(meter_effects.hy の counted・observed・gauged)で、違うのは置き場だけ(process に 1 つ → この run の中)。GC の停止は見ない
 ;;; (設定の gc-pause-name は読まない)。別の run とは共有しない。外側に state の handler が要る。
 (require doeff-hy.macros [defhandler <- val var])
+(val MODULE-TAGS {:context "meter" :role "foundation"})
 (import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ObserveSeconds ReadMeter SetGauge
                                          counted gauged observed])
 

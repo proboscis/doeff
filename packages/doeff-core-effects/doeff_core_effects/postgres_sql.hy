@@ -25,6 +25,7 @@
 ;;;     いる間に取り消された要求は、許可が取れても文を流さずにすぐ返す(DB が止まった間に取り消された読みが、DB が戻った時にまとめて流れ、
 ;;;     後から来た要求を待たせない)。走り出した文は止めない。
 (require doeff-hy.macros [defhandler defk deff <- val var])
+(val MODULE-TAGS {:context "sql" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import queue [Queue Empty])
 (import threading)

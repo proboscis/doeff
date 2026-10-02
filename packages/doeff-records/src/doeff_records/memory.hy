@@ -19,6 +19,7 @@
 ;;; handler の各節は「保持の刈り(purge-expired)と操作」の組を錠の内で 1 つずつ行う(guarded)。WatchChanges と WatchEvents の待ち(呼び鈴で眠る間)は
 ;;; 錠を持たない — 走査と呼び鈴を掛けるのを同じ錠の内で 1 回にする(間に積まれた変更を取りこぼさない・持ったまま眠ると他の書きが止まる)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
+(val MODULE-TAGS {:context "records" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import bisect)
 (import heapq)

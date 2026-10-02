@@ -3,7 +3,8 @@
 ;;; 名簿の形は {version: 1, principals: [{name, tokenSha256}]}(token そのものは持たず sha256 だけ — 呼び手の系の既存の名簿をそのまま読める)。
 ;;; 引いた名がそのまま記録の handler の書き手の名になる(書き手の身元は effect の引数にせず、HTTP の口が要求ごとに handler を組む時に渡す)。
 ;;; 名簿に在っても表の宣言の書き手でなければ、書きは記録の判断(admission)が Refused にする — 名簿は「誰か」、宣言は「何を書けるか」。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "records" :role "judgment"})
 (import dataclasses [dataclass field])
 (import hashlib)
 (import hmac)

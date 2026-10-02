@@ -8,6 +8,7 @@
 ;;;     thread の中で別の資源(接続の許可)を待っても、その資源を持つ側の次の呼びが thread の空きを待って詰まらないため。同時の数の上限は
 ;;;     呼びが待つ資源の側(PostgresConnections の許可)が持つ。thread は daemon — 止まらない呼び(長い文)が process の終わりを止めない。
 (require doeff-hy.macros [defk deff <- val])
+(val MODULE-TAGS {:context "sql" :role "foundation"})
 (import concurrent.futures [Executor Future])
 (import threading)
 (import doeff_vm [PyVM])

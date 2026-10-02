@@ -31,6 +31,7 @@
 ;;; 要求は service の計器に出ないので、client の側でだけ数えられる。meter の無い endpoint は計器の effect を出さない(答え手を持たない
 ;;; 使い手が壊れない)。書き手の job は、拍ごとに断面を送る計器と同じ答え手を渡す。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import json)

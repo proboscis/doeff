@@ -8,6 +8,7 @@
 ;;; path は絶対 path だけを受ける(相対 path は呼び手の誤り — ValueError)。業務を知らない: 初めの中身は呼び手が渡す。
 ;;; ReadMemoryFiles で今の中身を読める(検と筋書きが置き場を覗く口)。session の値の置き場(doeff_core_effects の state)は外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "file" :role "foundation"})
 (import posixpath)
 (import dataclasses [replace :as with-fields])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])

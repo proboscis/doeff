@@ -11,6 +11,7 @@
 ;;; 呼び手の刻(time.monotonic と同じ物差し)で数える。faulthandler に渡す残りの秒は at + seconds - いまの time.monotonic(過ぎていれば
 ;;; 最小の秒 — すぐ書く)。外側に state の handler が要る。
 (require doeff-hy.macros [defhandler <- val var])
+(val MODULE-TAGS {:context "stack-dump" :role "foundation"})
 (import faulthandler)
 (import sys)
 (import time)

@@ -37,6 +37,7 @@
 ;;; 相手の close なら相手の状態符と理由)。契約テストは tests/test_http_server_contract.hy。
 ;;; 並び: 組の外側に await-handler が要る。
 (require doeff-hy.macros [defhandler <- val])
+(val MODULE-TAGS {:context "http-server" :role "foundation"})
 (import asyncio)
 (import collections [deque])
 (import collections.abc [Coroutine])

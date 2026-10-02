@@ -9,6 +9,7 @@
 ;;; free-threaded の Python でも割れない)。置き場を作る時だけ lock を取る。置き場は process の終わりまで残る。
 ;;; thread に触るのはこの module だけ(memory の答え手 memory_latest.hy は触らない)。
 (require doeff-hy.macros [defhandler val])
+(val MODULE-TAGS {:context "latest" :role "foundation"})
 (import threading)
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest])
 
