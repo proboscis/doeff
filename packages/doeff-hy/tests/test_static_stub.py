@@ -28,6 +28,7 @@ MODULE = """\
 (val GREETING "hi")
 (val HERE (os.path.dirname (os.path.abspath __file__)))
 (val MAX-BYTES (* 32 1024 1024))
+(val STOPPED-CODE -15)
 (val Stamp (| datetime None))
 (val LIMITS #(1 2 3))
 (val NAMES (+ #("a") #("b")))
@@ -113,6 +114,7 @@ def _lines(tmp_path: Path) -> list[str]:
         "answering_one: _Handler",
         "HERE: str",
         "MAX_BYTES: int",
+        "STOPPED_CODE: int",
         "Stamp: TypeAlias = datetime | None",
         "SENTINEL: _Sentinel",
         "def passed_through(body: Program) -> _Program[Incomplete, object]:",

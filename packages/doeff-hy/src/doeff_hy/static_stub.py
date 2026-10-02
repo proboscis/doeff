@@ -252,6 +252,11 @@ def _value_type(node: ast.expr, scan: _Scan) -> ast.expr | None:
             return _name("str")
         case ast.Constant(value=bytes()):
             return _name("bytes")
+        case ast.UnaryOp(op=ast.USub() | ast.UAdd(), operand=ast.Constant(value=int() | float()) as operand) if not isinstance(
+            operand.value, bool
+        ):
+            # 符号つきの数の literal(`(val STOPPED-CODE -15)` は展開で `-15` = 単項の演算 — 数の型は符号を付けても同じ・#2887)
+            return _value_type(operand, scan)
         case ast.Name(id=name) if (kind := scan.kind_of(name)) is not None:
             return kind
         case ast.Tuple(elts=[]):
