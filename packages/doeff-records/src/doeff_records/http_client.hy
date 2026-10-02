@@ -1,19 +1,19 @@
 ;;; 記録の service の HTTP の口に公開 effect 8 つで答える client の handler — 別の process の Hy / Python の Program が、
 ;;; memory や PostgreSQL の handler と同じ effect のまま記録の service を読み書きするため。
 ;;;
-;;; 書き手の身元は effect の引数ではなく endpoint の token(handler を組む時に渡す)。service がその token を身元の名簿で書き手の名へ引く。
+;;; 書き手の名は endpoint の writer を平文の見出し X-Records-Writer で送る(service は確かめずに書き手の名に使う — 自分の program
+;;; どうしの呼び出しに token の認証を入れない・#2986・#2988・#3007)。endpoint の token は移行の間だけ、在れば Authorization で送る
+;;; (今の呼び手のため — 呼び手が writer を渡すようになった後の版で消す)。
 ;;; 綴りは wire.hy(service と同じ 1 か所)。
 ;;;
 ;;; 答えの写し方:
 ;;;   200                    wire の本文の答え(Row・Page・Written・Conflict・Refused・Changes・WrittenRows・RowsConflict・RowsRefused …)
 ;;;   503 / 届かない          Unreachable(読みは撃ち直してよい・書きは期待つきなら撃ち直してよい)
-;;;   401 / 403              RecordsUnauthorized を上げる(操作を問わない — 組み立ての誤り): handler を組んだ token が記録の service の
-;;;                          身元の名簿に無い(401)・前に立つ口が名乗りを断った(403)。時間を置いて撃ち直しても晴れないので
-;;;                          Unreachable(時間で晴れる届かなさ)と読ませない — 読みを Unreachable に写していた時は、token を誤った
-;;;                          呼び手が落ちずに「届かなかった」として読みを撃ち直し続け、設定の誤りが見えなかった。
-;;;                          書きを Refused にもしない — Refused は宣言がその書きを断った答えで、名簿に在る書き手が宣言の書き手で
-;;;                          ない時は今も 200 の本文の Refused で返る(memory の handler と同じ)。身元が引けないのは宣言の判断ではない。
-;;;                          status だけで決める(前に立つ口の 403 の本文は JSON の断りとは限らない)
+;;;   401 / 403              RecordsUnauthorized を上げる(操作を問わない — 組み立ての誤り): 前に立つ口が要求を断った。
+;;;                          時間を置いて撃ち直しても晴れないので Unreachable(時間で晴れる届かなさ)と読ませない — 読みを
+;;;                          Unreachable に写していた時は、呼び手が落ちずに「届かなかった」として読みを撃ち直し続け、設定の誤りが
+;;;                          見えなかった。書きを Refused にもしない — Refused は宣言がその書きを断った答え(200 の本文・memory の
+;;;                          handler と同じ)。status だけで決める(前に立つ口の 403 の本文は JSON の断りとは限らない)
 ;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)。欄 tables・streams は、撃った要求が
 ;;;                          名指した名のうち断りの理由に載った物(wire.hy の undeclared-refusal — 本文の形は変えない)
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
@@ -42,7 +42,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.watching [wait-for-changes moved-of])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal
-                            CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome])
+                            CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome WRITER-HEADER])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 (setv DEFAULT-POLL-SECONDS 0.2)
@@ -53,9 +53,8 @@
 
 
 (defclass RecordsUnauthorized [Exception]
-  "記録の service が、handler を組んだ endpoint の token の身元を認めない(401 / 403 — 組み立ての誤り。値の失敗ではない)。
-   token の file と記録の service の身元の名簿の食い違いで、時間を置いて撃ち直しても晴れないので、答えの値(Unreachable・Refused)に
-   せず上げる — 読み手は撃ち直しを続けずに名指しで落ちる(file の頭の註)。Exception を直に継ぐ: 読み手が ValueError・RuntimeError・
+  "記録の service の前に立つ口が要求を断った(401 / 403 — 組み立ての誤り。値の失敗ではない)。時間を置いて撃ち直しても
+   晴れないので、答えの値(Unreachable・Refused)にせず上げる — 読み手は撃ち直しを続けずに名指しで落ちる(file の頭の註)。Exception を直に継ぐ: 読み手が ValueError・RuntimeError・
    OSError を受ける所(値の検め・file の読み)で黙って呑まれないため。")
 
 ;; 身元の断りの status(file の頭の表)。
@@ -65,14 +64,17 @@
 
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
-  "記録の service 1 つへの接続の組: base-url = http://host:port / token = 呼び手の身元の token(Bearer)/
+  "記録の service 1 つへの接続の組: base-url = http://host:port / token = 移行の間だけ(在れば Authorization で送る — 今の呼び手が
+   位置の引数で渡すので残す。呼び手が writer を渡すようになった後の版で消す・#3007)/
    request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。要求は常に HttpRequest の effect で出す(file の頭の註)。
-   meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)。"
+   meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
+   writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)。"
   (#^ str base-url)
-  (#^ str token)
+  (setv #^ (| str None) token None)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
   (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
-  (setv #^ (| (get Callable #(... object)) None) meter None))
+  (setv #^ (| (get Callable #(... object)) None) meter None)
+  (setv #^ (| str None) writer None))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
@@ -90,9 +92,10 @@
 
 (defk request-headers [endpoint]
   {:pre [(: endpoint RecordsEndpoint)] :post [(: % (get dict #(str str)))]}
-  "要求の header(本文の型と身元の token)。"
-  {"Content-Type" "application/json; charset=utf-8"
-   "Authorization" (+ "Bearer " endpoint.token)})
+  "要求の header(本文の型・在れば書き手の名と、移行の間の token)。"
+  (| {"Content-Type" "application/json; charset=utf-8"}
+     (if (is endpoint.writer None) {} {WRITER-HEADER endpoint.writer})
+     (if (is endpoint.token None) {} {"Authorization" (+ "Bearer " endpoint.token)})))
 
 
 (defk request-bytes [body]
@@ -150,11 +153,10 @@
 (defk identity-refused [endpoint operation reply]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: reply RawReply)] :post [(: % RecordsUnauthorized)]
    :tags {:context "records" :role "foundation"}}
-  "身元の断り(401 / 403)を、読み手が名指しで落ちる例外にする — 口・status・操作・理由と、確かめる所(token の file と身元の名簿)を
-   文に置く(token そのものは文に写さない)。"
+  "前に立つ口の断り(401 / 403)を、読み手が名指しで落ちる例外にする — 口・status・操作・理由を文に置く。"
   (<- reason str (refused-reason reply.payload))
   (RecordsUnauthorized
-    (.format "記録の service {} が token の身元を認めない({} {}): {} — handler を組んだ token(token の file)と記録の service の身元の名簿を確かめる"
+    (.format "記録の service {} の前に立つ口が要求を断った({} {}): {}"
              endpoint.base-url reply.status operation reason)))
 
 
