@@ -2,13 +2,6 @@
   "entries": [
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/tests/test_handler_static_stubs.py",
-      "reason": "registered-with-legacy",
-      "rule": "dependency-uncontracted",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_check.py"
-    },
-    {
-      "count": 1,
       "path": "packages/doeff-core-effects/doeff_core_effects/__init__.py",
       "reason": "registered-with-legacy",
       "rule": "dynamic-boundary",
