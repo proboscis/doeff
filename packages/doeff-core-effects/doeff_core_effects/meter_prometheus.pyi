@@ -1,17 +1,11 @@
-"""meter_prometheus.hy の公開面の型(計器の断面の Prometheus の text の描き手 — 型検査のための宣言・実行時は meter_prometheus.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = meter_prometheus.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- helps は名 → # HELP の説明(在る名だけ説明の行を描く)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
-
-from typing import Any
-
-from doeff_hy.frozen import FrozenMap
-
-from doeff import Program
-from doeff_core_effects.meter_effects import MeterSnapshot
-
+from _typeshed import Incomplete
+from doeff import Program as _Program
+from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_core_effects.meter_effects import MeterSnapshot as MeterSnapshot
 CONTENT_TYPE: str
+_HELP_ESCAPES: Incomplete
 
-def render_prometheus(snapshot: MeterSnapshot, helps: FrozenMap[str]) -> Program[str, Any]: ...
+def render_prometheus(snapshot: MeterSnapshot, helps: FrozenMap[str]) -> _Program[str, object]:
+    ...
