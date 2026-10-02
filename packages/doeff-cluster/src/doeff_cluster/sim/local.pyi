@@ -127,6 +127,7 @@ class SimWorker:
     node: str = ""
     versions: dict[str, str] | None = None
     prepare_seconds: float = 0.0
+    env_prepare_seconds: float | None = None
     env_failure: EnvFailure | None = None
     starts_down: bool = False
     ignores_fence: bool = False
