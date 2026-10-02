@@ -97,11 +97,37 @@ def refusal_status(request: web.Request) -> int:
     ...
 
 class WsPeer:
+    ticket: str
+    request: web.Request
+    ws: web.WebSocketResponse
+    outbox: Incomplete
+    pending: Incomplete
+    closed: Incomplete
+    cut: Incomplete
+    sent: WsCloseFrame | None
+    received: WsCloseFrame | None
+    wake: Incomplete
+    writer: Incomplete
 
     def __init__(self, ticket: str, request: web.Request, ws: web.WebSocketResponse) -> None:
         ...
 
 class WebEdge:
+    address: Incomplete
+    ws_max_bytes: Incomplete
+    ws_send_max_bytes: Incomplete
+    queue: Incomplete
+    client: Incomplete
+    runner: Incomplete
+    waiting: Incomplete
+    unread: Incomplete
+    oversized: Incomplete
+    peers: Incomplete
+    shut: Incomplete
+    ws_send_drain: Incomplete
+    probes: Incomplete
+    count: Incomplete
+    dropped_answers: Incomplete
 
     def __init__(self) -> None:
         ...

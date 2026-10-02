@@ -1,5 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = kube.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
@@ -64,6 +65,13 @@ class KubeReadFailed:
     error: str
 
 class KubeReadBatch:
+    deployments: tuple[str, ...]
+    nodes: tuple[str, ...]
+    started_ms: int
+    named: Incomplete
+    done: Incomplete
+    deployment_results: tuple[KubeBodyRead | KubeReadFailed, ...]
+    node_results: tuple[KubeBodyRead | KubeReadFailed, ...]
 
     def __init__(self, deployments: tuple[str, ...], nodes: tuple[str, ...], started_ms: int) -> None:
         ...
@@ -75,6 +83,7 @@ class KubeReadBatch:
         ...
 
 class KubeReadBatches:
+    current: KubeReadBatch | None
 
     def __init__(self) -> None:
         ...
@@ -101,6 +110,12 @@ def kube_unavailable(reason: str, batches: KubeReadBatches) -> _Handler:
     ...
 
 class KubeMemory:
+    deployments: dict
+    calls: Incomplete
+    down: Incomplete
+    nodes: Incomplete
+    batches: Incomplete
+    stalled_until_ms: Incomplete
 
     def __init__(self, deployments: dict, nodes: dict | None=None) -> None:
         ...
