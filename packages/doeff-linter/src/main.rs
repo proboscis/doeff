@@ -5,7 +5,7 @@ use colored::*;
 use doeff_linter::{
     collect_python_files_with_options, config,
     editor::{self, EditorInput},
-    lint_files_parallel, lint_source,
+    lint_files_parallel, lint_source_at,
     logging::{LintLogEntry, LintLogger},
     models::{LintResult, Severity, Violation},
     position::offset_of,
@@ -812,7 +812,7 @@ fn run_editor(args: &Args) -> ExitCode {
         let path = editor::normalize_path(path);
         let is_python = path.extension().is_some_and(|e| e == "py");
         let python_results = if is_python && !python_rules.is_empty() && !should_exclude(&path, &setup.exclude_patterns) {
-            vec![lint_source(&path.to_string_lossy(), &source, &python_rules)]
+            vec![lint_source_at(&path.to_string_lossy(), &source, &python_rules)]
         } else {
             Vec::new()
         };
