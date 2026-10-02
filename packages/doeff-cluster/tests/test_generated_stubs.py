@@ -56,6 +56,13 @@ USED = (
     UsedModule("worker.protocol.declared", ("declared-job-specs",)),
     UsedModule("worker.protocol.heartbeat", ("status-rows-json",)),
     UsedModule("shared.entry.declare", ("apply-declaration",)),
+    # coordinator と worker の判断・入口(#2841 の残り — 並走の便 #2804・#2819・#2760 の着地の後に道具で作った)。
+    UsedModule("coordinator.core.api_policy", ("ALIVE-MARK-MS", "tick")),
+    UsedModule("worker.core.policy", ("plan", "records-after", "statuses")),
+    UsedModule("coordinator.core.cluster_policy", ("IMAGE-FOLLOW-KEYS", "spec-of-declaration")),
+    UsedModule("coordinator.entry.main", ("load-state",)),
+    UsedModule("coordinator.protocol.cluster_json", ("naming-from-json",)),
+    UsedModule("coordinator.core.program", ("run-coordinator",)),
 )
 
 
