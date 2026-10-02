@@ -85,15 +85,25 @@ class WaitWithinEffect(EffectBase, Generic[_T]):
     owns the deadline (``sim_time_handler`` puts it on its virtual time queue and
     drops it when the future wins — no task is spawned), which keeps a timed wait
     as cheap as a Delay (agora-redesign #2618).
+
+    ``park`` is for an *external* promise that in-run code completes (doeff-records'
+    memory-store bell, rung by a synchronous write): the race against the deadline
+    parks like ``Wait(future, priority=PRIORITY_IDLE)`` instead of shielding the sim
+    clock, so virtual time can reach the deadline while the promise is pending. With
+    the default (``False``) a pending external promise holds the clock, and the
+    deadline cannot pass before it completes (agora-redesign #3054).
     """
 
     future: "Future[_T]"
     seconds: float
+    park: bool = False
 
     def __post_init__(self) -> None:
         seconds = _coerce_finite_float(self.seconds, name="seconds")
         if seconds < 0.0:
             raise ValueError("seconds must be >= 0.0")
+        if not isinstance(self.park, bool):
+            raise TypeError(f"park must be bool, got {type(self.park).__name__}")
         object.__setattr__(self, "seconds", seconds)
 
 
@@ -131,8 +141,8 @@ def set_time(time: datetime) -> SetTimeEffect:
     return SetTimeEffect(time=time)
 
 
-def wait_within(future: "Future[_T]", seconds: float) -> "WaitWithinEffect[_T]":
-    return WaitWithinEffect(future=future, seconds=seconds)
+def wait_within(future: "Future[_T]", seconds: float, *, park: bool = False) -> "WaitWithinEffect[_T]":
+    return WaitWithinEffect(future=future, seconds=seconds, park=park)
 
 
 def Delay(seconds: float) -> EffectBase:  # noqa: N802
@@ -159,6 +169,6 @@ def SetTime(time: datetime) -> EffectBase:  # noqa: N802
     return SetTimeEffect(time=time)
 
 
-def WaitWithin(future: "Future[_T]", seconds: float) -> EffectBase:  # noqa: N802
-    return WaitWithinEffect(future=future, seconds=seconds)
+def WaitWithin(future: "Future[_T]", seconds: float, *, park: bool = False) -> EffectBase:  # noqa: N802
+    return WaitWithinEffect(future=future, seconds=seconds, park=park)
 

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Cancel, Race, Spawn
+from doeff_core_effects.scheduler import PRIORITY_IDLE, Cancel, Race, Spawn
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
@@ -80,7 +80,7 @@ class AsyncTimeRuntime:
             # cancelled afterwards (daemon: abandoning it at root return is its lifecycle — #501).
             timer = yield Spawn(self._expire_after(effect.seconds), daemon=True)
             try:
-                first = yield Race(effect.future, timer)
+                first = yield Race(effect.future, timer, priority=PRIORITY_IDLE if effect.park else None)
             finally:
                 yield Cancel(timer)
             return (yield Transfer(k, first))
