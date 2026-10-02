@@ -70,7 +70,7 @@
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]
   "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
    expect = ExpectAbsent | ExpectVersion | ExpectAny。答え = Written | Conflict | Refused | Unreachable。
-   書き手の名は欄に無い — handler を組む時に身元から入る(operator の宣言の欄の許可もその名で判じる)。"
+   書き手の名は欄に無い — handler を組む時に身元から入り、行と出来事に記録される(書きの判断には使わない・#2994)。"
   (#^ str table)
   (#^ tuple key)
   (#^ FrozenMap value)

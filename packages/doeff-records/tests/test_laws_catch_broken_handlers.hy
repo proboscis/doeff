@@ -7,13 +7,12 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
-(import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict RowsConflict RowsRefused
+(import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadStreamEnd])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
-                            law-epoch-change-resets law-undeclared-writes-are-refused law-operator-paths-need-an-operator
-                            law-founders-write-only-at-birth law-transient-rows-expire
+                            law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence])
@@ -73,6 +72,15 @@
     (<- answer (put-each-row writes))
     (resume answer)))
 
+(defhandler refuse-the-stranger [writer]
+  ;; 書き手の名で断る handler の顔: 欄の書き手の宣言に無い stranger の PutRow を断る。
+  ;; 引数に残す理由: 書き手の名は LawHarness の呼びごとに違い、置き場の effect の欄には無い。
+  (PutRow [table key value expect]
+    (if (= writer "stranger")
+        (resume (Refused "書き手の名で断る置き場"))
+        (do (<- answer (PutRow table key value expect))
+            (resume answer)))))
+
 (defhandler forget-idempotency []
   (AppendEvent [stream idempotency-key body]
     (<- answer (AppendEvent stream (. (uuid.uuid4) hex) body))
@@ -119,25 +127,11 @@
                       #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
                       #(law-stream-end-is-the-last-sequence (end-of-every-stream))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
-  ;; 書き手を問わない handler(誰の書きも maker として通す)。
-  (assert (breaks? law-undeclared-writes-are-refused (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "maker"))))
-  ;; operator の主体を問わない置き場: agent(maker)も operator の一覧に入れた宣言 = agent が operator の欄を書ける。
-  (assert (breaks? law-operator-paths-need-an-operator
-                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :operators #("overseer" "maker"))) None)))
-  ;; 誰の書きも operator の主体として通す handler(身元を operator にすり替える)。
-  (assert (breaks? law-operator-paths-need-an-operator (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "overseer"))))
-  ;; 誕生の書き手を知らない置き場(founders を読まない)— 据え付けの係が既定の行を生めない。
-  (setv charters (get LAW-SCHEMA.tables "charters")
-        unfounded (dataclasses.replace charters :fields (tuple (gfor f charters.fields (dataclasses.replace f :founders #())))))
-  (assert (breaks? law-founders-write-only-at-birth
-                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :tables (| (dict LAW-SCHEMA.tables) {"charters" unfounded})))
-                                   None)))
-  ;; 誕生の後も founders を書き手として扱う置き場(誕生の書き手を欄の書き手かつ operator の主体に上げた宣言)— 生まれた行を書き換えられる。
-  (setv promoted (dataclasses.replace charters :fields (tuple (gfor f charters.fields (dataclasses.replace f :writers (+ f.writers f.founders))))))
-  (assert (breaks? law-founders-write-only-at-birth
-                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :tables (| (dict LAW-SCHEMA.tables) {"charters" promoted})
-                                                                     :operators #("overseer" "maker")))
-                                   None)))
+  ;; 書き手の名で断る置き場(欄の書き手でない stranger の書きを断る)— #2994 の前の置き場の形。
+  (setv strict-store (MemoryStore LAW-SCHEMA))
+  (assert (breaks? law-undeclared-writes-are-refused
+                   (LawHarness (fn [writer program]
+                                 (with_handlers [(memory-records-handler strict-store writer) (refuse-the-stranger writer)] program)))))
   ;; 時計の進まない handler(保持の期限が来ない)— memory の handler の GetTime だけを止め、法の Delay は仮想の時計が進める。
   (setv store (MemoryStore LAW-SCHEMA))
   (assert (breaks? law-transient-rows-expire
