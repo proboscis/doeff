@@ -2887,15 +2887,26 @@ impl<'a> Parser<'a> {
     }
 
     /// `:exempt [(rule 規則 ID "理由") …]` を読む(agora-redesign #2811)。理由の無い除外・知らない規則 ID・同じ規則の 2 度の宣言は
-    /// 読みの誤り(位置つきの理由を積む)。外せるのは Python の文ごとの規則(crate::rules::get_all_rules)だけ — 母集団を外す 1 点
-    /// (crate::population)は file ごとの Python の規則の当たりに効くので、層の規則の ID を書くと黙って効かない形になる。
+    /// 読みの誤り(位置つきの理由を積む)。外せるのは Python の文ごとの規則(crate::rules::get_all_rules — 母集団を外す 1 点
+    /// crate::population が file ごとの Python の規則の当たりに効く)と、定義の file ごとに判じる定義の書き方の規則
+    /// (ProjectRule::exemptible_by_layer — 定義の判定の直後に同じ 1 点で外す・#2913)だけ。それ以外の ID を書くと黙って効かない形に
+    /// なるので読みの誤りにする。
     fn rule_exemptions(&mut self, value: &Form, layer: &str) -> Vec<RuleExemption> {
         let entries = self.bracket(value).unwrap_or_else(|| {
             self.problem(value, &format!("layer {} の :exempt は (rule 規則 ID \"理由\") の列", layer));
             Vec::new()
         });
         use crate::rules::base::LintRule as _;
-        let known: Vec<String> = crate::rules::get_all_rules().iter().map(|rule| rule.rule_id().to_string()).collect();
+        let known: Vec<String> = crate::rules::get_all_rules()
+            .iter()
+            .map(|rule| rule.rule_id().to_string())
+            .chain(
+                crate::project::rule::ProjectRule::ALL
+                    .iter()
+                    .filter(|rule| rule.exemptible_by_layer())
+                    .map(|rule| rule.id().to_string()),
+            )
+            .collect();
         let mut out: Vec<RuleExemption> = Vec::new();
         for entry in entries {
             let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("rule"));
@@ -2912,7 +2923,7 @@ impl<'a> Parser<'a> {
                 self.problem(entry, &format!("layer {} の :exempt の {} に余計な値がある — (rule 規則 ID \"理由\") の 2 つだけ", layer, rule));
             }
             if !known.iter().any(|id| *id == rule) {
-                self.problem(entry, &format!("layer {} の :exempt の {} は、外せる規則(Python の文ごとの規則)の ID ではない", layer, rule));
+                self.problem(entry, &format!("layer {} の :exempt の {} は、外せる規則(Python の文ごとの規則と、定義の書き方の規則 DOEFF110・111・112・118・119)の ID ではない", layer, rule));
                 continue;
             }
             if reason.trim().is_empty() {
@@ -3231,10 +3242,27 @@ mod tests {
         );
         let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
         assert!(problems.contains("DOEFF004 に理由が無い"), "空の理由を通した:\n{}", problems);
-        assert!(problems.contains("DOEFF106 は、外せる規則(Python の文ごとの規則)の ID ではない"), "層の規則の ID を通した:\n{}", problems);
+        assert!(problems.contains("DOEFF106 は、外せる規則(Python の文ごとの規則と、定義の書き方の規則 DOEFF110・111・112・118・119)の ID ではない"), "層の規則の ID を通した:\n{}", problems);
         assert!(problems.contains("DOEFF999 は、外せる規則"), "知らない ID を通した:\n{}", problems);
         assert!(problems.contains("DOEFF001 が 2 度宣言されている"), "同じ規則の 2 度を通した:\n{}", problems);
         assert!(problems.contains("layer loose の :exempt は :modules か :files の名指しにだけ効く"), "名指しの無い除外を通した:\n{}", problems);
+
+        // 定義の書き方の規則(DOEFF110 ほか)は外せる。critical の DOEFF126(素の defk 呼び)は外せない(#2913)。
+        let definition = GOOD.replace(
+            "(layer foundation)",
+            "(layer foundation) (layer macro :modules [expand] :exempt [(rule DOEFF110 \"macro の展開の時点に呼ばれる\")])",
+        );
+        let arch = Architecture::parse(&definition, Path::new("architecture.hy")).unwrap();
+        assert_eq!(
+            arch.exempt_layer_of("expand").map(|l| l.exempt.clone()),
+            Some(vec![RuleExemption { rule: "DOEFF110".into(), reason: "macro の展開の時点に呼ばれる".into() }])
+        );
+        let critical = GOOD.replace(
+            "(layer foundation)",
+            "(layer foundation) (layer macro :modules [expand] :exempt [(rule DOEFF126 \"素の呼び\")])",
+        );
+        let problems = Architecture::parse(&critical, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains("DOEFF126 は、外せる規則"), "critical の規則の除外を通した:\n{}", problems);
     }
 
     #[test]

@@ -693,6 +693,20 @@ impl ProjectRule {
         ProjectRule::ALL.iter().copied().find(|rule| rule.id() == upper)
     }
 
+    /// 層の宣言の `:exempt [(rule 規則 ID "理由")]` で、名指しの module を理由つきで母集団から外せる規則か(agora-redesign #2913)。
+    /// 定義の file ごとに判じる定義の書き方の規則だけ — critical(DOEFF126 素の defk 呼び)と、file ごとに判じない規則(service・層・
+    /// Jev)は外せない(外す 1 点は定義の file の判定の直後なので、それ以外の ID を書くと黙って効かない形になる)。
+    pub fn exemptible_by_layer(self) -> bool {
+        matches!(
+            self,
+            ProjectRule::DefnForbidden
+                | ProjectRule::DeffNeedsReason
+                | ProjectRule::DefinitionTagsRequired
+                | ProjectRule::TestIsDeftest
+                | ProjectRule::ClassWithBehaviour
+        )
+    }
+
     /// 層ごとに判じる規則か(law の layers が効く規則)。DOEFF108 は業務の file 全体に当たり、層を持たない。
     pub fn is_layered(self) -> bool {
         match self {
