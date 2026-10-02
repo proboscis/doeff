@@ -1,7 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = rooted_file.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
-from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import replace as replace
@@ -32,8 +31,8 @@ from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-PATH_EFFECTS: Incomplete
-MOVE_EFFECTS: Incomplete
+PATH_EFFECTS: tuple[type, ...]
+MOVE_EFFECTS: tuple[type, ...]
 ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | DiskUsage | str | bytes | tuple | int | None
 
 def outer_path(root: str, path: str) -> _Program[str, object]:
