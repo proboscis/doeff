@@ -105,6 +105,12 @@
 ;;;   通す)と tests/test_task_result_window.hy の task の検(上限 1)。失敗ケースは test_local.hy の
 ;;;   test-a-counterexample-worker-that-hides-retired-processes-breaks-c14(入れ替えで名から外した旧を観測に載せない壊れた worker —
 ;;;   SimWorker の hides-retired — では、worker の判断が退いた process が無いと読んで次の新を並べ、beacon が 3 つ動いて C14 が名指す)。
+;;;   C15 acknowledged-values-survive・C16 declared-services-survive(doeff_cluster.coordinator.core.coordinator_invariants — #1976 の写しの
+;;;   C1 の残り)— 書き手の止まった盤の行は作り直した後も止める前と同じ値(C15)・受け付けた Service の宣言は作り直した後も在る(C16)。
+;;;   確かめるのは tests/test_local.hy の test-a-quiet-board-and-the-declared-services-survive-a-stop(beacon を版 2 へ、その後 beacon の
+;;;   居ない系へ宣言し直して盤を止め、coordinator を止めて作り直す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-store-that-keeps-the-first-value-breaks-c15(盤の行の最初の値だけを残す置き場 KeepsFirstValue — C1 は緑のまま
+;;;   C15 が名指す)と test-a-counterexample-store-that-forgets-services-breaks-c16(読み直しで Service の宣言を渡さない置き場 ForgetsServices)。
 ;;;   C8 moves-to-a-live-worker(doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
 ;;;   job を本当に受けられる生きた worker が他に在るなら、死から移し替えの期限 + 余裕のうちに他で動き始める。確かめるのは tests/test_local.hy の
 ;;;   test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time(2 台のうち担い手を死なせ、process の区間と死の刻を判断に渡す — 期限は
@@ -178,7 +184,9 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"
                 "doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining"
                 "doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible"
-                "doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit"
+                "doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-values-survive"
+                "doeff_cluster.coordinator.core.coordinator_invariants:declared-services-survive"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
