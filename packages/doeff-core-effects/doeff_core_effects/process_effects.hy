@@ -3,7 +3,8 @@
 ;;;   subprocess-handler            本物の子 process と os.environ(os_process.hy)。doeff-agents の driver-io-handler も同じ実装を呼ぶ
 ;;;   offloaded-subprocess-handler  本物と同じ実装を、呼び 1 つに thread 1 本で回す(os_process.hy・agora-redesign #2184)— 子を待つ間も
 ;;;                                 scheduler の他の task が回る(並べた RunProcess を Spawn / Gather で同時に走らせる・子の間も拍を回す)。
-;;;                                 外側に scheduled が要る
+;;;                                 外側に scheduled が要る。待っている task が取り消されたら走っている子を止める(#2847 — 下の stop-grace)。
+;;;                                 止めた子を計器で数える形が metered-offloaded-subprocess-handler(計器の答え手を渡す)
 ;;;   scripted-process-handler      I/O なし — 命令の名ごとの台本と、決めた環境変数・job ごとの作業 dir(scripted_process.hy)
 ;;;
 ;;; RunProcess・ExecutableAt・ProcessOutcome は doeff-agents の io_effects から移した(定義は 1 つ — io_effects は同じ型を re-export する)。移す時に
@@ -22,7 +23,8 @@
 ;;;     process-group  True = 子を新しい session(自分の process group)で走らせる。時間切れでは group へ SIGTERM → stop-grace 秒待つ →
 ;;;                    SIGKILL(子が起こした孫も止まる)。時間内に終わった後も、group に残った子(背景に回った孫)へ SIGTERM を送る。
 ;;;                    既定 False = 前からの振る舞い(時間切れで子だけを止める)
-;;;     stop-grace     process-group の止め方の猶予の秒(既定 10.0)
+;;;     stop-grace     子を止める時の SIGTERM から SIGKILL までの猶予の秒(既定 10.0): process-group の時間切れと、offloaded-subprocess-handler
+;;;                    で待っている task が取り消された時(process-group を問わない — group なら group へ、そうでなければ子へ送る・#2847)
 ;;;     stream-output  True = 子の出力を、届いた順に output-path へ書きながら走らせる(時間切れで止めた子の出力も file に残る — 走者の log が
 ;;;                    指す赤の証拠)。既定 False = 子が終わってから stdout・stderr の順に足す(前からの振る舞い)。output-path が None なら読まない
 ;;;   待ち方はどれも subprocess の communicate と同じ = 子の終了に加えて出力の EOF(背景の孫が出力を抱えたままなら期限まで待つ)。

@@ -3,18 +3,25 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
+from dataclasses import dataclass as dataclass
+from enum import StrEnum as StrEnum
+from collections.abc import Callable as Callable
 import contextlib as contextlib
 import fnmatch as fnmatch
 import io as io
+import logging as logging
 import os as os
 import signal as signal
 import subprocess as subprocess
 import sys as sys
 import threading as threading
 import time as time
+from doeff import with_handlers as with_handlers
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import PathStat as PathStat
+from doeff_core_effects.handlers import state as state
+from doeff_core_effects.meter_effects import CountMetric as CountMetric
 from doeff_core_effects.os_file import stat_path as stat_path
 from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
@@ -51,6 +58,33 @@ from doeff_core_effects.process_effects import environment_answer as environment
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 PROCESS_THREADS: ThreadPerCall
+CANCEL_TERMINATED_METRIC: str
+CANCEL_KILLED_METRIC: str
+GROUP_POLL: float
+
+class CancelStop(StrEnum):
+    NOT_RUNNING = 'not-running'
+    TERMINATED = 'terminated'
+    KILLED = 'killed'
+
+@dataclass(frozen=True, kw_only=True)
+class WatchedChild:
+    child: subprocess.Popen
+    process_group: bool
+
+class ChildWatch:
+
+    def __init__(self: ChildWatch, stop_grace: float, meter: Callable | None) -> None:
+        ...
+
+    def attach(self: ChildWatch, child: subprocess.Popen, process_group: bool) -> bool:
+        ...
+
+    def release(self: ChildWatch) -> None:
+        ...
+
+    def cancel(self: ChildWatch) -> WatchedChild | None:
+        ...
 
 class StartedChildren:
 
@@ -91,6 +125,27 @@ def child_environment(env: tuple | None, env_mode: EnvMode, env_drop: tuple) -> 
 def signal_group(pgid: int, sig: int) -> _Program[None, object]:
     ...
 
+def group_alive(pgid: int) -> _Program[bool, object]:
+    ...
+
+def group_gone_by(child: subprocess.Popen, deadline: float) -> _Program[bool, object]:
+    ...
+
+def stop_for_cancel(child: subprocess.Popen, process_group: bool, stop_grace: float) -> _Program[CancelStop, object]:
+    ...
+
+def reported_stop(child: subprocess.Popen, how: str, metric: str, meter: Callable | None) -> _Program[None, object]:
+    ...
+
+def stop_cancelled_child(child: subprocess.Popen, process_group: bool, watch: ChildWatch) -> _Program[None, object]:
+    ...
+
+def watched_child(watch: ChildWatch, child: subprocess.Popen, process_group: bool) -> _Program[None, object]:
+    ...
+
+def stop_on_cancel(watch: ChildWatch) -> _Program[None, object]:
+    ...
+
 class ChildPipes:
 
     def __init__(self, child: Incomplete, sink: Incomplete) -> None:
@@ -114,10 +169,13 @@ class ChildPipes:
 def stop_child(child: subprocess.Popen, pipes: ChildPipes, process_group: bool, stop_grace: float) -> _Program[None, object]:
     ...
 
-def run_watched(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, child_env: dict | None, output_path: str | None, process_group: bool, stop_grace: float, stream_output: bool) -> _Program[ProcessOutcome, object]:
+def run_watched(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, child_env: dict | None, output_path: str | None, process_group: bool, stop_grace: float, stream_output: bool, watch: ChildWatch) -> _Program[ProcessOutcome, object]:
     ...
 
-def run_subprocess(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, env: tuple | None, env_mode: EnvMode, output_path: str | None, env_drop: tuple, process_group: bool, stop_grace: int | float, stream_output: bool) -> _Program[ProcessOutcome, object]:
+def run_communicated(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, child_env: dict | None, watch: ChildWatch) -> _Program[ProcessOutcome, object]:
+    ...
+
+def run_subprocess(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, env: tuple | None, env_mode: EnvMode, output_path: str | None, env_drop: tuple, process_group: bool, stop_grace: int | float, stream_output: bool, watch: ChildWatch | None=None) -> _Program[ProcessOutcome, object]:
     ...
 
 def start_child_process(argv: tuple, cwd: str | None, env: tuple | None, env_mode: EnvMode, env_drop: tuple, stdout_path: str | None, stderr_path: str | None, process_group: bool, hold_stdin: bool=False, reap_group: bool=False) -> _Program[ProcessStarted | ProcessNotStarted, object]:
@@ -132,4 +190,10 @@ def stop_child_process(pid: int, stop_grace: float) -> _Program[ProcessExited | 
 def signal_child_process(pid: int, sent: ProcessSignal) -> _Program[ProcessSignalled | ProcessNotChild, object]:
     ...
 subprocess_handler: _Handler
+
+def offloaded_run(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, env: tuple | None, env_mode: EnvMode, output_path: str | None, env_drop: tuple, process_group: bool, stop_grace: int | float, stream_output: bool, meter: Callable | None) -> _Program[ProcessOutcome, object]:
+    ...
+
+def metered_offloaded_subprocess_handler(meter: Callable[..., object] | None) -> _Handler:
+    ...
 offloaded_subprocess_handler: _Handler
