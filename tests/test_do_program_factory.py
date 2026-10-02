@@ -20,7 +20,7 @@ import itertools
 from collections.abc import Callable, Generator
 
 import pytest
-from doeff_vm import Call
+from doeff_vm import Call, DoFunction
 
 from doeff import Pure, do, run
 from doeff.do import _is_generator_function, program_factory
@@ -127,18 +127,21 @@ def test_calling_a_decorated_function_builds_its_call_without_the_call_construct
     """
     do_module = importlib.import_module("doeff.do")
     constructed = itertools.count()
-    original = Call
 
-    def counting(*args: object, **kwargs: object) -> object:
+    def counting(
+        function: DoFunction, args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> Call[object, object]:
         next(constructed)
-        return original(*args, **kwargs)
+        return Call(function, args, kwargs)
 
-    # wrapper が呼びごとに module の名 Call を引いて型を呼ぶ形なら、ここで差し込んだ物が数える(直した後の do.py は Call を import しない)
+    # wrapper が呼びごとに module の名 Call を引いて型を呼ぶ形なら、ここで差し込んだ物が数える
+    # (直した後の do.py は Call を import しない)
     monkeypatch.setattr(do_module, "Call", counting, raising=False)
     decorated = do(_generator)
     program = decorated(1)
     keyword_program = decorated(x=1)
-    assert isinstance(program, original)
+    assert isinstance(program, Call)
+    assert isinstance(keyword_program, Call)
     assert (program.args, program.kwargs) == ((1,), {})
     assert (keyword_program.args, keyword_program.kwargs) == ((), {"x": 1})
     assert program.function is keyword_program.function
