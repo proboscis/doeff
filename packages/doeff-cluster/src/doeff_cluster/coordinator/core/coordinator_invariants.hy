@@ -32,6 +32,10 @@
 ;;; 越えない。判断は記録(job の process ごとの生きていた区間と、worker ごとの本当の capacity)を受けて、越えた瞬間の列を返す純関数 1 つ。
 ;;; 記録を集めるのは検(tests/test_local.hy の容量の検)。
 ;;;
+;;; 条 C7 placed-only-where-eligible: 置き先の worker は、job の needs を本当に提供する。判断は記録(読めた置き先・job ごとの needs・worker
+;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力(exclusive)の決まりと、drain の
+;;; 期限の中の worker へ置かない事は、別の条として後から足す(今の検は tests/test_local.hy の gpu-only と tests/test_drain.hy)。
+;;;
 ;;; 条 L1 places-only-on-reachable: 新しい置き先は、lease-ms(+ 余裕)のうちに coordinator へ届き得た worker にだけ置く — coordinator が
 ;;; 止まり置き場から作り直された後も。判断は記録(読めた置き先の列と、worker ごとの届かなくなった時刻)を受けて、届かなくなってから
 ;;; lease-ms + 余裕を過ぎた後に置いた置き先の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
@@ -190,6 +194,32 @@
   (#^ str job)
   (#^ str worker)
   (#^ int since-ms))
+
+
+(defrecord JobNeeds
+  "条 C7 の記録 1 つ = job 1 つが要る能力(宣言の needs)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ frozenset needs))
+
+
+(defrecord WorkerAbility
+  "条 C7 の記録 1 つ = worker 1 台が本当に提供する能力(provides)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ frozenset provides))
+
+
+(defk placed-only-where-eligible [placements needs abilities]
+  {:pre [(: placements (get tuple #(PlacementSeen ...))) (: needs (get tuple #(JobNeeds ...))) (: abilities (get tuple #(WorkerAbility ...)))]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C7: 読めた置き先の列から、置いた worker が job の needs を本当に提供していない置き先を返す(空なら緑)。coordinator が能力の合わない
+   worker へ job を置かないことを、筋書きの記録から判じるため。needs か能力の記録が無い置き先は判じない。"
+  (tuple (gfor p placements
+               n needs
+               a abilities
+               :if (and (= n.job p.job) (= a.worker p.worker) (not (<= n.needs a.provides)))
+               p)))
 
 
 (defrecord WorkerGone

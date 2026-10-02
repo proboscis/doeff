@@ -136,6 +136,7 @@ class SimWorker:
     ignores_keep_marks: bool = False
     silent_stop: bool = False
     overstates_capacity: int | None = None
+    claims_provides: AbstractSet[str] | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
