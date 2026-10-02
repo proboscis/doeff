@@ -8,11 +8,12 @@
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
+(import hashlib)
 (import json)
 (import collections.abc [Mapping])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
-                              ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused])
+                              RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused])
 
 
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
@@ -229,9 +230,23 @@
   (#^ int sequence))
 
 
-(defn #^ (| AppendNew AppendReplay Refused) judge-append [#^ StreamDecl decl #^ object body #^ (| Event None) earlier]
-  "積んでよいか: 冪等キーの再送(同じ本文なら前の番号・違えば Refused)→ 上限。書き手の名では断らない。"
+(defn #^ str body-digest [#^ object body]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
+  "本文の指紋 = 正規の綴り(canonical-json)の UTF-8 の sha256(16 進 64 字)。保持の期限で本文を消した鍵の覚え(RetiredKey)に残し、
+   消した後の再送の本文と比べる — 綴りが等しい ⇔ 指紋が等しい(sha256 の衝突を除く)ので、生きた出来事の比べと同じ規則になる。"
+  (.hexdigest (hashlib.sha256 (.encode (canonical-json body) "utf-8"))))
+
+
+(defn #^ (| AppendNew AppendReplay Refused) judge-append [#^ StreamDecl decl #^ object body #^ (| Event RetiredKey None) earlier]
+  "積んでよいか: 冪等キーの再送(同じ本文なら前の番号・違えば Refused)→ 上限。書き手の名では断らない。
+   earlier = 同じ冪等キーの前の使い: 生きた出来事(Event)か、保持の期限で出来事を消した鍵の覚え(RetiredKey — 本文は指紋だけが残る)か
+   None(初めての鍵)。消した鍵にも同じ規則を当てる(指紋が同じなら前の番号・違えば Refused — #3022)。断りの文はどちらも「冪等キー」を
+   含む(使い手は断りの文のこの語で「同じ鍵の別の本文」を読み分ける)。"
   (cond
+    (isinstance earlier RetiredKey)
+      (if (= earlier.body-digest (body-digest body))
+          (AppendReplay earlier.sequence)
+          (Refused (.format "追記の列 {} の冪等キー {!r} は別の本文で既に使われた(保持の期限で本文を消した鍵・番号 {})"
+                            decl.name earlier.idempotency-key earlier.sequence)))
     (is-not earlier None)
       (if (= (canonical-json earlier.body) (canonical-json body))
           (AppendReplay earlier.sequence)

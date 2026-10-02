@@ -503,7 +503,7 @@
 (defk law-grouped-events-expire-together [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "保持の組(ByKeySuffix)の法: 組の後の出来事が残る間は前の出来事も残り(同じ本文の再送は前の番号)、組の最後の出来事から保持の秒で
-   組ごと消える。区切りを含まないキーと、後の出来事の無い組は、出来事ごとに消える。"
+   組ごと消える。区切りを含まないキーと、後の出来事の無い組は、出来事ごとに消える。消えた組の鍵の再送は法 14 が見る(鍵は忘れない — #3022)。"
   (val law "組で数える列の出来事は組の最後の出来事から数えて同時に消える")
   (<- ask-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
   (<- ask-b (as-writer harness MAKER (AppendEvent "pairs" "ask:b" {"n" 2})))
@@ -517,18 +517,15 @@
                (.format "組の後の出来事が残る間に前の出来事が消えた・組の無い出来事が残る: {!r}" read)))
   (<- again-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
   (<- (require-law (= again-a ask-a) law (.format "組が残る間の再送が前の番号でない: {!r} {!r}" again-a ask-a)))
-  (<- fresh-b (as-writer harness MAKER (AppendEvent "pairs" "ask:b" {"n" 2})))
-  (<- (require-law (and (isinstance fresh-b Appended) (> fresh-b.sequence done-a.sequence)) law
-               (.format "消えた組の再送が新しい出来事でない: {!r}" fresh-b)))
+  (<- fresh-c (as-writer harness MAKER (AppendEvent "pairs" "ask:c" {"n" 5})))
+  (<- (require-law (and (isinstance fresh-c Appended) (> fresh-c.sequence done-a.sequence)) law
+               (.format "新しい組の出来事が新しい出来事でない: {!r}" fresh-c)))
   (<- (Delay 30))
-  ;; 組 a の最後の出来事(done:a)から保持の秒を過ぎた: 組ごと消えた。
+  ;; 組 a の最後の出来事(done:a)から保持の秒を過ぎた: 組ごと消えた。後から積んだ組 c は残る。
   (<- later (as-writer harness MAKER (ReadEvents "pairs")))
-  (<- (require-law (and (isinstance later Events) (= (lfor e later.items e.idempotency-key) ["ask:b"])) law
+  (<- (require-law (and (isinstance later Events) (= (lfor e later.items e.idempotency-key) ["ask:c"])) law
                (.format "組の最後の出来事から保持の秒を過ぎた組が残る: {!r}" later)))
-  (<- fresh-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
-  (<- (require-law (and (isinstance fresh-a Appended) (> fresh-a.sequence fresh-b.sequence)) law
-               (.format "消えた組の再送が新しい出来事でない: {!r}" fresh-a)))
-  [ask-a ask-b solo done-a read again-a fresh-b later fresh-a])
+  [ask-a ask-b solo done-a read again-a fresh-c later])
 
 
 ;; --- 法 13: 列の末尾の番号は 1 回の読みで答え、空の列は空と答える ----------------------------------------------------
@@ -567,6 +564,42 @@
   [empty first second other tail replay replayed other-end young partial gone kept])
 
 
+;; --- 法 14: 保持の期限で出来事を消しても冪等キーは忘れない ------------------------------------------------------------------
+
+(defk law-expired-keys-are-remembered [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "保持の期限で消した出来事の冪等キーの法(#3022): 追記の列の「同じ冪等キーは 1 回だけ」は出来事を消した後も続く — 消した鍵の再送は、
+   同じ本文なら前の番号を返して列の出来事を増やさず、別の本文なら断る(生きた出来事と同じ規則)。出来事ごとに数える鍵(区切りを含まない)
+   と組で数える鍵の両方で、どの置き場の handler も同じ答えを返すことを確かめるため。初めての鍵は今までどおり新しい出来事になる。"
+  (val law "保持の期限で出来事を消しても冪等キーは忘れない(同じ本文は前の番号・別の本文は断る)")
+  (<- solo (as-writer harness MAKER (AppendEvent "pairs" "keep-solo" {"n" 1})))
+  (<- ask (as-writer harness MAKER (AppendEvent "pairs" "ask:keep" {"n" 2})))
+  (<- done (as-writer harness MAKER (AppendEvent "pairs" "done:keep" {"n" 3})))
+  (<- (Delay (+ PAIR-KEEP-SECONDS 1)))
+  (<- gone (as-writer harness MAKER (ReadEvents "pairs")))
+  (<- (require-law (and (isinstance gone Events) (= gone.items #())) law (.format "保持の期限を過ぎた出来事が残る: {!r}" gone)))
+  ;; 別の本文の再送は断る(断りの文は生きた鍵と同じく「冪等キー」を含む)。
+  (<- other-solo (as-writer harness MAKER (AppendEvent "pairs" "keep-solo" {"n" 9})))
+  (<- other-done (as-writer harness MAKER (AppendEvent "pairs" "done:keep" {"n" 9})))
+  (<- (require-law (all (gfor answer [other-solo other-done] (and (isinstance answer Refused) (in "冪等キー" answer.reason)))) law
+               (.format "消した鍵の別の本文が断られない: {!r} {!r}" other-solo other-done)))
+  ;; 同じ本文の再送は前の番号(新しい出来事にならない)。
+  (<- again-solo (as-writer harness MAKER (AppendEvent "pairs" "keep-solo" {"n" 1})))
+  (<- again-ask (as-writer harness MAKER (AppendEvent "pairs" "ask:keep" {"n" 2})))
+  (<- (require-law (and (= again-solo solo) (= again-ask ask)) law
+               (.format "消した鍵の同じ本文の再送が前の番号でない: {!r} {!r} / {!r} {!r}" again-solo solo again-ask ask)))
+  (<- after (as-writer harness MAKER (ReadEvents "pairs")))
+  (<- end (as-writer harness MAKER (ReadStreamEnd "pairs")))
+  (<- (require-law (and (isinstance after Events) (= after.items #()) (= end (StreamEmpty))) law
+               (.format "消した鍵の再送で列の出来事が増えた: {!r} {!r}" after end)))
+  ;; 初めての鍵は新しい出来事(消した鍵の覚えは他の鍵を断らない)。
+  (<- fresh (as-writer harness MAKER (AppendEvent "pairs" "keep-fresh" {"n" 1})))
+  (<- (require-law (and (isinstance fresh Appended) (> fresh.sequence done.sequence)) law
+               (.format "初めての鍵が新しい出来事でない: {!r}" fresh)))
+  [solo ask done gone other-solo other-done again-solo again-ask after end fresh])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -583,6 +616,7 @@
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing
             "grouped-events-expire-together" law-grouped-events-expire-together
-            "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence})
+            "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence
+            "expired-keys-are-remembered" law-expired-keys-are-remembered})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

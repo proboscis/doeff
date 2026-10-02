@@ -183,6 +183,12 @@ class Event:
     writer: str
     at: int
 
+@dataclass(frozen=True, kw_only=True)
+class RetiredKey:
+    idempotency_key: str
+    sequence: int
+    body_digest: str
+
 @dataclass(frozen=True)
 class Events:
     items: tuple[Event, ...]

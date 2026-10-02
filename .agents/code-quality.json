@@ -738,7 +738,9 @@
       "public": [
         "packages/doeff-records/src/doeff_records/values.hy"
       ],
-      "allow": [],
+      "allow": [
+        "doeff-hy-frozen"
+      ],
       "typed": true
     },
     {
@@ -835,7 +837,8 @@
         "records-maintenance",
         "records-admission",
         "records-watching",
-        "records-pg-sql"
+        "records-pg-sql",
+        "doeff-hy-frozen"
       ],
       "typed": true
     },

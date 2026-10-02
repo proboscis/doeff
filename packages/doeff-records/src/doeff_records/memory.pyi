@@ -18,6 +18,7 @@ from typing import Protocol, TypeVar
 from doeff_vm import WithHandler
 
 from doeff import Program
+from doeff_records.values import RetiredKey
 from doeff_records.effects import (
     AppendEvent,
     ListRows,
@@ -104,6 +105,7 @@ class MemoryStore:
     event_head: int
     events: list[Event]
     by_idempotency: dict[tuple[str, str], Event]
+    retired_keys: dict[tuple[str, str], RetiredKey]
     outage: SetStoreOutage | None
     faults: tuple[StoreFault, ...]
     purge_due_ms: int | None
