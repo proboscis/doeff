@@ -56,7 +56,7 @@ import warnings
 import weakref
 from typing import Annotated, Any, NamedTuple, Union, get_args, get_origin
 
-from doeff_vm.doeff_vm import EffectBase
+from doeff_vm.doeff_vm import EffectBase, HandlerSpec
 
 EffectTypes = tuple[type, ...] | None
 
@@ -83,24 +83,9 @@ class PassedEffects(NamedTuple):
     keeps: tuple[type, ...]
 
 
-class HandlerSpec(NamedTuple):
-    """What the VM captures once when it installs a handler (WithHandler).
-
-    ``effect_types``: the runtime filter (``handler_effect_types``).
-    ``generator_function`` / ``tail_resume_lines``: for a ``@do`` handler, the
-    undecorated generator function. The VM calls it directly and runs the
-    generator as the handler's stream, instead of evaluating the ``Expand`` the
-    ``@do`` wrapper would build for every effect (same end state).
-    ``passed``: the effects the handler passes on untouched (``PassedEffects``),
-    or None.
-    """
-
-    effect_types: EffectTypes
-    generator_function: object
-    tail_resume_lines: tuple[int, ...]
-    passed: "PassedEffects | None"
-
-
+# Where handler_spec keeps a plain function's HandlerSpec. HandlerSpec (effect_types,
+# generator_function, tail_resume_lines, passed) is the VM's own type, so the VM reads
+# the kept spec here in place, without calling handler_spec (agora-redesign #2927).
 _SPEC_ATTR = "__doeff_handler_spec__"
 _PASSES_ATTR = "__doeff_passes__"
 
