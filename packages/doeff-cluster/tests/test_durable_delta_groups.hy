@@ -6,7 +6,9 @@
 ;;;   - 全部の欄が同じ object の歩は、差分が空で、どの組の鍵も作らない。
 ;;;   - 失敗ケース: 欄が別の object で中身が違えば、差分に入る(丸ごとの直列化の差分と 1 字も違わない)— 同じ object の判定が中身の変化を
 ;;;     見逃さない。別の object で中身が同じなら、差分に入らない(直列化して比べる側へ回る)。
-;;;   - 失敗ケース(#2767): durable-delta は defk — 素で呼ぶと差分でなく Program が返り、差分の読みで名指して落ちる。
+;;;   - (#2767 の失敗ケース「durable-delta を素で呼ぶと差分でなく Program が返り、差分の読みで名指して落ちる」は、#2821 の案 A-1 から
+;;;     linter の DOEFF126(素の defk 呼び・critical)が検の dir でも静的に名指すので、実行時の検から外した — 呼び手は下のとおり `!` で
+;;;     答えを受ける。linter の側の失敗ケースは packages/doeff-linter/tests/out_of_scope.rs。)
 ;;;   - resource_policy.moved-names は、写像が同じ object なら空・別の写像は値が同じ物でない鍵だけ。
 ;;; 前提: 状態は replace で作り直し、欄の写像をその場で書き換えない(durable_kv・resource_policy の頭の註と同じ前提 — 以前の鍵ごとの
 ;;;   同一性の比べも同じ前提に立つ)。
@@ -66,18 +68,6 @@
   (val rebuilt (replace s :workers (dict s.workers)))
   (assert (is-not rebuilt.workers s.workers))
   (assert (= (! (dk.durable-delta s rebuilt)) {})))
-
-
-(deftest test-counterexample-a-plain-call-of-the-delta-fails-by-name
-  ;; 失敗ケース(#2767): durable-delta は defk(doeff ADR-DOE-HY-004 R10 — 呼び手は <- / !)。以前の形のまま素で呼ぶ所は差分の写像でなく
-  ;; Program を受け、差分の読み(.items)で名指して落ちる — 黙って空の差分として進まない。
-  (import pytest)
-  (val s (get (responded (ClusterState) (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "statuses" []}
-                                                       :actor "c-test") 1000 T) 0))
-  (val plain (dk.durable-delta s (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1))))))
-  (assert (not (isinstance plain dict)) plain)
-  (with [(pytest.raises AttributeError :match "items")]
-    (.items plain)))
 
 
 (deftest test-moved-names-skips-the-same-mapping-and-names-replaced-values
