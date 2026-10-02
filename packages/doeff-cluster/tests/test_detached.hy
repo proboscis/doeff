@@ -1051,7 +1051,7 @@
         remote (JobSpec "task/t2" "doeff_cluster.job_entry" #() "r" :once True)
         writer (JobSpec "svc" "doeff_cluster.job_entry" #() "r" :handoff True)
         plain (JobSpec "plain" "doeff_cluster.job_entry" #() "r"))
-  (assert (= (kept-when-cut-off #(detached remote writer plain)) #(detached writer)))
+  (assert (= (kept-when-cut-off #(detached remote writer plain) 60000 240000) #(detached writer)))
   ;; coordinator への口: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
   (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000))
   (setv link.state.last-tasks #(detached remote) link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))

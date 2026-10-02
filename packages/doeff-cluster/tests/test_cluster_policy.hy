@@ -30,7 +30,8 @@
   (assert (= (get (place-jobs 5000 state T) "a") (Placement "a" "new" 3 0))))
 
 (deftest test-silent-worker-keeps-job-until-reassign-deadline
-  ;; new の最後の heartbeat は 0。fence(T の 10 秒)で new は自分で止めている。移すのは 30 秒後から。
+  ;; new の最後の heartbeat は 0。fence(T の 10 秒)で new は自分で止めている。移すのは 30 秒後から。他に置ける worker(mac)が在る
+  ;; 場合の形 — 置ける worker が無い job は沈黙しても置き先を外さない(#2804 — tests/test_keep_when_cut_off.hy)。
   (setv state (ClusterState #((job "a")) {"mac" (worker "mac" 40000) "new" (worker "new" 0)}
                             {"a" (Placement "a" "new" 1 0)}))
   (assert (= (. (get (place-jobs 30000 state T) "a") worker) "new"))

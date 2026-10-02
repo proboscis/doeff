@@ -610,7 +610,8 @@
 
 (deftest test-a-cut-off-worker-keeps-its-process-until-the-fence-and-the-job-moves
   ;; 網の切断: heartbeat が届かない間も子 process は動き続け(10 秒後)、fence(20 秒)を越えると本物の worker_policy の判断で lease を
-  ;; 持たない job を止める(-15)。coordinator は移し替えの時間の後に、網のつながった worker へ置く。
+  ;; 持たない job を止める(-15)。coordinator は移し替えの時間の後に、網のつながった worker へ置く。他に置ける worker が在る job の形 —
+  ;; 置ける worker が 1 台の job は印で止めず置き先も外さない(#2804 — tests/test_keep_when_cut_off.hy)。
   (<- seen Moved (sim-cluster (pulses sim-foundation) (cut-host) :workers TWO-WORKERS))
   (val first (get seen.mid 0))
   (assert (is first.exit-code None) seen.mid)
