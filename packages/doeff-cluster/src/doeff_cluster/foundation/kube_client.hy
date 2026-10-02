@@ -1,7 +1,9 @@
 ;;; k8s の API の client(Pod の中から ServiceAccount の token で叩く汎用の I/O)。HTTP の client はこの module の中に閉じる。
 ;;; coordinator の kube_model の effect に答える handler は coordinator/protocol/kube.hy — この module は intent の型を読まない
 ;;; (層 foundation が読めるのは foundation だけ)ので、届かない・断られた時に投げる例外の型は組み立てる側(entry)が :fail で渡す。
-(require doeff-hy.macros [deff val])
+;;; Deployment の読みは API の JSON の本文を返すだけ — 観測の欄の読みは答え手の側(coordinator/protocol/kube.hy の deployment-view・
+;;; agora-redesign #2764)。
+(require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import pathlib [Path])
@@ -11,20 +13,6 @@
 
 (setv SA-DIR "/var/run/secrets/kubernetes.io/serviceaccount")
 (setv API-URL "https://kubernetes.default.svc")
-
-
-(deff deployment-view [#^ dict body]  ; defk にできない: KubeClient の method(Program の外の I/O)が呼ぶ純粋な読み
-  {:pre [(: body dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
-  "Deployment の object → 観測の dict(Rollout が見る欄だけ)。"
-  (setv spec (.get body "spec" {}) status (.get body "status" {}) meta (.get body "metadata" {}))
-  {"specReplicas" (.get spec "replicas" 1)
-   "replicas" (.get status "replicas" 0)
-   "readyReplicas" (.get status "readyReplicas" 0)
-   "availableReplicas" (.get status "availableReplicas" 0)
-   "updatedReplicas" (.get status "updatedReplicas" 0)
-   "generation" (.get meta "generation" 0)
-   "observedGeneration" (.get status "observedGeneration" 0)
-   "annotations" (or (.get meta "annotations") {})})
 
 
 (defclass KubeClient []
@@ -65,7 +53,8 @@
     (or (get (get (.call self "GET" (.format "{}/api/v1/nodes/{}" self.base node)) "metadata") "labels") {}))
 
   (defn #^ dict read [self #^ str namespace #^ str name]
-    (deployment-view (.call self "GET" (.path self namespace name))))
+    "Deployment の object(API の JSON の本文のまま)。"
+    (.call self "GET" (.path self namespace name)))
 
   (defn #^ int scale [self #^ str namespace #^ str name #^ int replicas #^ bool dry-run]
     (setv body (.call self "PATCH" (.path self namespace name "/scale")
