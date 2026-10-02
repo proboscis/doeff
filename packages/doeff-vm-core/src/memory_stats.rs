@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VmLiveObjectCounts {
@@ -55,4 +55,37 @@ pub(crate) fn record_in_place_reentry() {
 
 pub(crate) fn record_abandoned_transfer_branch_free() {
     ABANDONED_TRANSFER_BRANCH_FREES.fetch_add(1, Ordering::Relaxed);
+}
+
+// ── 積み上げの仕事の量(agora-redesign #2851・#2670)───────────────────────────────────
+// 上の「今生きている数」と違い、process の全部の VM が進めた歩数と handler を呼んだ回数を、減らさずに積み上げる。
+// 検の時間の予算を、機体の負荷で揺れない決まった数で判じるため(doeff-hy-pytest の budget.py が区間の前後の差を取る)。
+// 加算は Relaxed の 1 回で、常時の費用はほぼ 0。
+
+static VM_STEPS: AtomicU64 = AtomicU64::new(0);
+static HANDLER_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// process の全部の VM の積み上げの仕事の量 — 区間の前後で読み、差をその区間の仕事にするため。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmWorkCounts {
+    pub steps: u64,
+    pub handler_calls: u64,
+}
+
+/// 今の積み上げの数を読む。
+pub fn work_counts() -> VmWorkCounts {
+    VmWorkCounts {
+        steps: VM_STEPS.load(Ordering::Relaxed),
+        handler_calls: HANDLER_CALLS.load(Ordering::Relaxed),
+    }
+}
+
+/// VM が 1 歩進めた(`VM::step` の入口)。
+pub(crate) fn record_step() {
+    VM_STEPS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// VM が handler を 1 回呼んだ(`call_handler` の呼び出しごと)。
+pub(crate) fn record_handler_call() {
+    HANDLER_CALLS.fetch_add(1, Ordering::Relaxed);
 }

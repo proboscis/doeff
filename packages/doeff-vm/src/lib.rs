@@ -39,6 +39,18 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         (c.live_segments, c.live_continuations, c.live_ir_streams)
     }
 
+    /// Return (steps, handler_calls) taken by every VM in this process so far —
+    /// cumulative, never decreasing. doeff-hy-pytest's budget plugin reads it
+    /// before and after a test to judge the test by a load-independent count
+    /// (agora-redesign #2670 / #2851). Deliberately NOT re-exported from
+    /// `doeff_vm/__init__.py` for the same reason as `gc_traverse_zeroed_visits`
+    /// below: callers import it from `doeff_vm.doeff_vm`.
+    #[pyfn(m)]
+    fn vm_work_counts() -> (u64, u64) {
+        let c = doeff_vm_core::memory_stats::work_counts();
+        (c.steps, c.handler_calls)
+    }
+
     /// True when the per-step runtime conformance oracle is on in this
     /// process. Every build carries the checks; they run only when turned on
     /// (`DOEFF_VM_INVARIANT_CHECKS=1` or `set_invariant_checks(True)`).
