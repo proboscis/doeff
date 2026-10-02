@@ -25,7 +25,7 @@
 (import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))
-(val WORKERS #("workers" "seen_marks"))
+(val WORKERS #("workers"))
 
 
 (deftest test-a-step-that-writes-one-field-builds-only-that-group [monkeypatch]
