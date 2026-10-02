@@ -33,7 +33,7 @@
 (val JsonField (| dict list str int float bool None))
 
 
-(defclass [(dataclass :frozen True)] ReportReady [EffectBase]
+(defclass [(dataclass :frozen True)] ReportReady [(get EffectBase None)]
   "結果は None。ready = 準備できた(真)/できていない(偽)。reason = 人が読む理由(短く)。報告が届かなくても業務は止めない。
    role(2026-09-24)= active(本当に仕事をしている)か standby(名前付きの lease を他が持つ間、書きを捨てて拍を回している待機)。
    coordinator は standby の Ready も Service の Ready に数える(入れ替えで旧を止める合図)が、書き手の計器
