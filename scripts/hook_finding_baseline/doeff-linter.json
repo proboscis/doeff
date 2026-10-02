@@ -38,10 +38,7 @@
       "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/client.py": 3,
       "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/handlers/production.py": 1,
       "packages/doeff-linter/tests/fixtures/test_sample.py": 2,
-      "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1,
-      "tests/conftest.py": 1,
-      "tests/public_api/test_do_bang_defp_defpp.py": 1,
-      "tests/test_handle_macro.py": 3
+      "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
     "DOEFF004": {
       "conftest.py": 2,
@@ -67,18 +64,7 @@
       "packages/doeff-linter/tests/fixtures/test_noqa.py": 4,
       "packages/doeff-linter/tests/fixtures/test_sample.py": 2,
       "packages/doeff-openai/tests/e2e/test_effect_handlers_e2e.py": 1,
-      "packages/doeff-openai/tests/e2e/test_openai_api.py": 1,
-      "tests/cli/test_cli_c_flag.py": 3,
-      "tests/cli/test_cli_deprecations.py": 3,
-      "tests/cli/test_cli_error_traces.py": 3,
-      "tests/cli/test_cli_hy_error_messages.py": 3,
-      "tests/cli/test_cli_hy_flag.py": 3,
-      "tests/cli/test_cli_run.py": 5,
-      "tests/cli/test_cli_runbox_e2e.py": 6,
-      "tests/cli/test_cli_runner.py": 3,
-      "tests/cli/test_doeff_run_context.py": 5,
-      "tests/core/test_import_state_mutation.py": 2,
-      "tests/effects/test_lazy_ask_env_var_fallback.py": 3
+      "packages/doeff-openai/tests/e2e/test_openai_api.py": 1
     },
     "DOEFF006": {
       "packages/doeff-adr/src/doeff_adr/pytest_plugin.py": 1,
@@ -114,12 +100,6 @@
       "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py": 1,
       "publications/zenn-use-cases-v0/render_preview.py": 1,
       "scripts/doeff_cluster_warning_baseline.py": 1,
-      "tests/conftest.py": 2,
-      "tests/effects/test_memo_lazy_storage.py": 1,
-      "tests/test_core_handlers_effect_type_filter.py": 1,
-      "tests/test_doeff_cluster_warning_baseline.py": 1,
-      "tests/test_lint_entrypoint_wiring.py": 1,
-      "tests/test_machine_premise.py": 3,
       "tests/test_rust_build_target_outside_package.py": 2
     },
     "DOEFF007": {
@@ -438,8 +418,7 @@
       "packages/doeff-test-target/src/doeff_test_target/helpers/__init__.py": 1,
       "packages/doeff-test-target/src/doeff_test_target/scenarios/__init__.py": 1,
       "packages/doeff-time/src/doeff_time/_internals/__init__.py": 1,
-      "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1,
-      "tests/cli_assets/__init__.py": 1
+      "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
     }
   },
   "version": "doeff-linter の source の木 ed360afa481bbc9e6c3a3d4b03e985214ea8ed4e"

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.cli.cli_child import with_settings
 
 pytestmark = [
     pytest.mark.cli,
@@ -25,29 +26,16 @@ def run_cli(
     env_overrides: dict[str, str | None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = ["uv", "run", "python", "-m", "doeff", "run", "--no-runbox", *args]
-    env = {
+    settings: dict[str, str | None] = {
         "PYTHONPATH": str(PROJECT_ROOT),
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
         "DOEFF_DISABLE_PROFILE": "1",
     }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
-    if env_overrides:
-        for key, value in env_overrides.items():
-            if value is None:
-                env.pop(key, None)
-            else:
-                env[key] = value
     return subprocess.run(
-        command,
+        with_settings(command, settings | (env_overrides or {})),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        env=env,
         check=False,
         input=input_text,
     )
