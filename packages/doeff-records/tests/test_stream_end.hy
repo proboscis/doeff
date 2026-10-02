@@ -15,9 +15,9 @@
 (import doeff_records.faults [SetStoreOutage StoreFault StoreOperation AddStoreFault])
 (import doeff_records.laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServerConfig start-records-server])
+(import doeff_records.http_server [records-server-config start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
-(import tests.interpreters [LawSetup law-roster sim-request-handlers])
+(import tests.interpreters [LawSetup sim-request-handlers])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
 (val EVENT-COUNT 40)
@@ -60,8 +60,8 @@
   (val store (MemoryStore LAW-SCHEMA))
   (val sequences (in-store store (append-journal EVENT-COUNT)))
   (val clock (SimClock))
-  (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
-                                                         :request-handlers (sim-request-handlers clock))))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers clock)))))
   (val sent [])
   (try
     (val endpoint (RecordsEndpoint server.url :writer MAKER))
@@ -93,8 +93,8 @@
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (SetStoreOutage DETAIL))
   (val clock (SimClock))
-  (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
-                                                         :request-handlers (sim-request-handlers clock))))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers clock)))))
   (try
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
                                                 (http-records-handler (RecordsEndpoint server.url :writer MAKER))]

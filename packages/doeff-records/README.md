@@ -138,7 +138,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   表の名 → 表の宣言の `repr` を utf-8 にした sha256)を答える。要約の評価は `doeff_records.schema_digest.schema_digests` の 1 か所で、
   使い手の木の data(使い手の repo が木ごとに書く表の要約の file)も同じ関数で書く。身元を引く前・表の用意を問う前に答えるので、
   置き場に届かない間も読める。計器の種は `other`。`TableDecl` の形が doeff の版で変わると、全部の表の要約が一度に変わる。
-- 検と模擬の殻は `doeff_records.http_server.start_records_server(RecordsServerConfig(schema, roster, handler_for, request_handlers=…))`:
+- 検と模擬の殻は `doeff_records.http_server.start_records_server(run(records_server_config(schema, handler_for, request_handlers=…)))`:
   入口の Program を別の thread の run で回し、`url` と `close()` を持つ `RunningServer` を返す。`handler_for` = 書き手の名 → 用意し終えた
   置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)、`meter` = 計器の
   答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。

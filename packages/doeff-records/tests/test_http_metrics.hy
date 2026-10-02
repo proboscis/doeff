@@ -10,7 +10,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
-(import doeff [with_handlers])
+(import doeff [run with_handlers])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
@@ -20,8 +20,8 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.wire [STATUS-OF-ERROR])
-(import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import tests.interpreters [law-roster sim-request-handlers])
+(import doeff_records.http_server [records-server-config start-records-server])
+(import tests.interpreters [sim-request-handlers])
 
 ;; 届かない時間枠に送る書きの数(筋書き meter-scenario の q1〜q3)と、届かない状態の理由。
 (val OUTAGE-WRITES 3)
@@ -113,8 +113,8 @@
   {:pre [(: meter (| (get Callable #(... object)) None))] :post [(: % MeterRun)] :tags {:context "records" :role "foundation"}}
   "計器 meter(None = 既定の memory-meter-handler)で共有の memory の置き場の上に口(検の殻)を開き、筋書きを 1 回走らせて閉じるため。"
   (val store (MemoryStore LAW-SCHEMA))
-  (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
-                                                         :request-handlers (sim-request-handlers (SimClock)) :meter meter)))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers (SimClock)) :meter meter))))
   (try
     (<- seen MeterRun (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
                                       (memory-records-handler store MAKER)]
@@ -226,8 +226,8 @@
 (deftest test-metrics-answers-without-identity-even-with-a-bad-token
   ;; 終わりの条件 4 の念押し: /metrics は身元を引かない — 名簿に無い token を付けても 401 にならず 200(/readyz と同じ扱い)。
   (val store (MemoryStore LAW-SCHEMA))
-  (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
-                                                         :request-handlers (sim-request-handlers (SimClock)))))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers (SimClock))))))
   (try
     (<- response (with_handlers [(await-handler) (http-production-handler)]
                                 (HttpRequest "GET" (+ server.url "/metrics") :headers {"Authorization" "Bearer not-in-roster"}
