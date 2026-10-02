@@ -284,6 +284,22 @@
   (setv #^ str outcome ""))
 
 
+(defrecord RouteFaults
+  "調停ループの 1 歩が取った要求を篩うための、網と口の故障の今(RouteFaultsNow の答え — 世界へ 1 度だけ聞く・#2668)。cut = 今網の
+   切れている worker の名・failing = 今故障を入れている coordinator の口 #(method path) → 答える status(欄に写像を持つ理由: 筋書きの
+   FailRoute が口ごとに置く表をそのまま運ぶ — 引く側は口で引くだけ)・now-ms = 世界が答えた刻(epoch ms)。"
+  (#^ frozenset cut)
+  (#^ dict failing)
+  (#^ int now-ms))
+
+
+(defrecord SimPauses
+  "筋書きが頼んだ coordinator の止まり(世界の session の値 1 つ — PauseDue が 1 度の読みで判じる・#2668)。queued = 頼まれた止まりの
+   #(kind 秒) の列・downtime = 最後に効いた止まりの止まっている秒(DowntimeOf が取り出す — None = 作り直さない)。"
+  (#^ tuple queued)
+  (setv #^ (| float None) downtime None))
+
+
 (defrecord SimLink
   "coordinator へ話す送り手の口 1 つ(クラスタの約束の答え coordinator-answers の引数)。queue = coordinator の受け口(要求の列)・
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
@@ -621,13 +637,10 @@
   "worker name が止まっていれば、StartWorker で完了する Promise(動いていれば None — すぐ次の世代を起こす)。"
   {:fields [(: name str)] :answer (| Promise None) :tags {:context "doeff-cluster" :role "intent"}})
 
-(defeffect CutPeers
-  "今網の切れている worker の名。"
-  {:answer frozenset :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect FailedRoutes
-  "今故障を入れている coordinator の口(#(method path) → 答える status)。"
-  {:answer dict :tags {:context "doeff-cluster" :role "intent"}})
+(defeffect RouteFaultsNow
+  "今の網の切れと口の故障と刻(調停ループの 1 歩が取った要求を篩う 1 度の問い — 切れと故障と時計を別々に聞くと 1 歩ごとに世界を
+   2 度・時計を 3 度通る・#2668)。"
+  {:answer RouteFaults :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect HoldRequests
   "coordinator が取った要求(返事の前に落ちたら接続の失敗を返す相手)を覚える。"
@@ -1654,18 +1667,19 @@
   ;; 止まり(止めの合図)と落ち(Persist の失敗 — 返事をせずに落ちる)を注入する。効果はそのまま外側(本物の組)へ出し直す。
   (NextRequests [timeout-seconds limit]
     (<- batch list effect)
-    (<- cut frozenset (CutPeers))
-    (<- failing dict (FailedRoutes))
-    (val kept (lfor r batch :if (and (not-in r.peer cut) (not-in #(r.method r.path) failing)) r))
-    (<- now int (now-epoch-ms))
-    (<- reports tuple (reports-in kept now))
+    (<- faults RouteFaults (RouteFaultsNow))
+    (val kept (lfor r batch :if (and (not-in r.peer faults.cut) (not-in #(r.method r.path) faults.failing)) r))
+    (<- reports tuple (reports-in kept faults.now-ms))
     (when reports
       (<- (NoteReports reports)))
-    (<- (HoldRequests (tuple kept)))
+    ;; 何も取らなかった歩(静かな拍)は覚えを変えない — 世界へ聞かない。
+    (when kept
+      (<- (HoldRequests (tuple kept))))
     (for [r batch]
       (cond
-        (in r.peer cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
-        (in #(r.method r.path) failing) (<- (CompletePromise r.slot #((get failing #(r.method r.path)) {"error" FAULT-REASON})))))
+        (in r.peer faults.cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
+        (in #(r.method r.path) faults.failing)
+          (<- (CompletePromise r.slot #((get faults.failing #(r.method r.path)) {"error" FAULT-REASON})))))
     (resume kept))
   (Reply [request status body]
     (<- (ReleaseRequest request))
@@ -1864,8 +1878,7 @@
   (session var cuts {})
   (session var failing {})
   (session var held #())
-  (session var pauses #())
-  (session var downtime None)
+  (session var pausing (SimPauses :queued #()))
   (session var runs #())
   (session var end-waiters {})
   (session var watch-failures #())
@@ -1969,12 +1982,11 @@
             (:= revivals (| revivals {name promise}))
             (resume promise))
         (resume None)))
-  (CutPeers []
+  (RouteFaultsNow []
     (<- now int (now-epoch-ms))
-    (resume (frozenset (gfor #(name until) (.items cuts) :if (> until now) name))))
-  (FailedRoutes []
-    (<- now int (now-epoch-ms))
-    (resume (dfor #(route #(status until)) (.items failing) :if (> until now) route status)))
+    (resume (RouteFaults :cut (frozenset (gfor #(name until) (.items cuts) :if (> until now) name))
+                         :failing (dfor #(route #(status until)) (.items failing) :if (> until now) route status)
+                         :now-ms now)))
   (HoldRequests [batch]
     (:= held (+ held batch))
     (resume None))
@@ -1986,15 +1998,14 @@
     (:= held #())
     (resume taken))
   (PauseDue [kind]
-    (val due (next (gfor p pauses :if (= (get p 0) kind) p) None))
+    (val due (next (gfor p pausing.queued :if (= (get p 0) kind) p) None))
     (if (is due None)
         (resume False)
-        (do (:= pauses (tuple (gfor p pauses :if (is-not p due) p)))
-            (:= downtime (get due 1))
+        (do (:= pausing (SimPauses :queued (tuple (gfor p pausing.queued :if (is-not p due) p)) :downtime (get due 1)))
             (resume True))))
   (DowntimeOf []
-    (val taken downtime)
-    (:= downtime None)
+    (val taken pausing.downtime)
+    (:= pausing (replace pausing :downtime None))
     (resume taken))
   (CoordinatorStarted [ms]
     (:= runs (+ runs #((SimCoordinatorRun :started-ms ms))))
@@ -2068,12 +2079,12 @@
   (PreparationsOf [name]
     (resume (tuple (gfor p preparations :if (= p.worker name) p))))
   (StopCoordinator [seconds]
-    (:= pauses (+ pauses #(#(PAUSE-STOP (float seconds)))))
+    (:= pausing (replace pausing :queued (+ pausing.queued #(#(PAUSE-STOP (float seconds))))))
     ;; 眠っている coordinator に知らせる(要求の無い拍を飛ばす列は、本番の 1 秒の拍が止めに気づく刻まで眠り直す — nudge-takers)。
     (<- (nudge-takers parts.queue))
     (resume None))
   (CrashCoordinator [seconds]
-    (:= pauses (+ pauses #(#(PAUSE-CRASH (float seconds)))))
+    (:= pausing (replace pausing :queued (+ pausing.queued #(#(PAUSE-CRASH (float seconds))))))
     (resume None))
   (CoordinatorRuns []
     (resume runs))
