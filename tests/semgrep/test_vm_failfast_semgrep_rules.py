@@ -422,3 +422,29 @@ def test_gc_traverse_null_guard_rule_reaches_nested_src_directories() -> None:
         "packages/doeff-vm/src/gc_traverse_unguarded.rs",
         "packages/doeff-vm-core/src/vm/gc_traverse_unguarded.rs",
     }
+
+
+def test_application_vocabulary_rule_fires_on_the_words_and_spares_the_records_field() -> None:
+    # agora-redesign #2875: 3 package の tests/test_no_application_vocabulary.hy の写しを 1 つの規則にした。語は大文字小文字を
+    # 区別せず、前が英字でない時だけ当たる(_acp は当たり xacp は当たらない)。size-budget(doeff-records の宣言の欄の名)は外す。
+    # 2026-10-02 に doeff の main を 2 度赤にした形(註の「agora-redesign #2830」)も当たる。
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-records/vocabulary/vocabulary_forbidden.md",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-packages-have-no-application-vocabulary") == {3, 4, 5, 6, 7}
+
+
+def test_application_vocabulary_rule_reads_type_stubs_too() -> None:
+    # 写しのうち doeff-cluster の検は .pyi を見なかった — 規則は 3 package の .pyi も見る(型の宣言の名も業務の語を持たない)。
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/vocabulary/vocabulary_forbidden.pyi",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-packages-have-no-application-vocabulary") == {4}
