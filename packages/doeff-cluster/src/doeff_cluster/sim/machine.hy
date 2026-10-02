@@ -71,6 +71,13 @@
   "手元の 1 台の cluster が答えない effect(網を切る・固める・5xx を返させる — sim だけが答える)を筋書きが出した。")
 
 
+(defrecord GitSource
+  "宣言の repo の url(配備と同じ remote の綴り)を、この機体の checkout の path から読ませる組: remote = 宣言に書く url・path = 同じ
+   commit を持つ手元の checkout(bare でも作業木でもよい)。"
+  (#^ str remote)
+  (#^ str path))
+
+
 (defrecord LocalMachine
   "手元の 1 台の cluster の置き方。work-dir = 作業の dir の親(coordinator は coordinator/・worker は workers/<名>/ — 出力の log も
    その下)・port = coordinator の受け口(127.0.0.1)・workers = worker の顔ぶれ(sim と同じ SimWorker — name・provides・exclusive・
@@ -78,7 +85,10 @@
    SIGKILL までの猶予の秒。job の code の道(#3040): code-repo = 版の木の git(worker の CODE_REPO_URL — 配備と同じ名。空 = 版の木を
    持たない worker)・revision = Redeclare が宣言に書く版(code-repo の commit — sim-cluster の revision と同じ役)・runtime-env =
    Redeclare が宣言に載せる実行環境(repo と commit と uv の lock — sim-cluster の runtime-env と同じ役。None = 版の木の道。#3042):
-   worker は配備と同じく、その repo を許可表(WORKER_REPOS)で受け、root を用意して job を動かす。"
+   worker は配備と同じく、その repo を許可表(WORKER_REPOS)で受け、root を用意して job を動かす。git-sources = 宣言の remote の url を
+   手元の checkout から読ませる組(GitSource の列 — 空 = 宣言の url をそのまま読む): 宣言は配備と同じ remote の綴りのまま置き(送り手の
+   宣言の組み立てを手元用に分けない)、この機体の worker の git にだけ url.<path>.insteadOf を環境変数で渡す — 手元の 1 台の worker は
+   配備の鍵を持たないので、remote へは取りに行かない。"
   (#^ str work-dir)
   (#^ int port)
   (#^ (get tuple #(SimWorker ...)) workers)
@@ -86,7 +96,8 @@
   (setv #^ float stop-grace 30.0)
   (setv #^ str code-repo "")
   (setv #^ str revision "")
-  (setv #^ (| RuntimeEnv None) runtime-env None))
+  (setv #^ (| RuntimeEnv None) runtime-env None)
+  (setv #^ (get tuple #(GitSource ...)) git-sources #()))
 
 
 (defrecord MachineProcess
@@ -110,7 +121,7 @@
   "起こした役の今の顔ぶれの入れ物(作り直した coordinator で入れ替わる — 終わりの止めはこの今の顔ぶれを止める)。宛先の部品の
    RouteCell と同じく、組み立て(local-machine-cluster)が作って handler と本体に渡し、書き換えるのは本体と handler の節だけ。"
   (defn #^ None __init__ [self]
-    (setv self.roles #())))
+    (setv #^ (get tuple #(MachineProcess ...)) self.roles #())))
 
 
 (defk coordinator-url [machine]
@@ -136,6 +147,20 @@
       (.join " " (lfor repo machine.runtime-env.repos (+ repo.url "=")))))
 
 
+(defk git-source-env [sources]
+  {:pre [(: sources (get tuple #(GitSource ...)))] :post [(: % (get tuple #(EnvEntry ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宣言の remote の url を手元の checkout から読ませるため、git の環境変数の設定(GIT_CONFIG_COUNT と KEY_n・VALUE_n — git の設定の file より
+   強い)で url.<path>.insteadOf = <remote> を並べる(空なら何も足さない)。boot.sh が鍵つきの repo に書く insteadOf と同じ仕組みで、
+   worker の git の子は環境を継ぐ。"
+  (if (not sources)
+      #()
+      (+ #((EnvEntry :name "GIT_CONFIG_COUNT" :value (str (len sources))))
+         (tuple (gfor [i source] (enumerate sources)
+                      entry #((EnvEntry :name (.format "GIT_CONFIG_KEY_{}" i) :value (.format "url.{}.insteadOf" source.path))
+                              (EnvEntry :name (.format "GIT_CONFIG_VALUE_{}" i) :value source.remote))
+                      entry)))))
+
+
 (defk worker-env [machine worker url]
   {:pre [(: machine LocalMachine) (: worker SimWorker) (: url str)] :post [(: % (get tuple #(EnvEntry ...)))]
    :tags {:context "doeff-cluster" :role "judgment"}}
@@ -144,6 +169,15 @@
    $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の許可表と重なり、上書きする(#3042)。"
   (val home (/ (Path machine.work-dir) "workers" worker.name))
   (<- repos str (repo-allowlist machine))
+  (<- sources (get tuple #(EnvEntry ...)) (git-source-env machine.git-sources))
+  (<- boot (get tuple #(EnvEntry ...)) (worker-boot-env machine worker url home repos))
+  (+ boot sources))
+
+
+(defk worker-boot-env [machine worker url home repos]
+  {:pre [(: machine LocalMachine) (: worker SimWorker) (: url str) (: home Path) (: repos str)] :post [(: % (get tuple #(EnvEntry ...)))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "boot.sh の ROLE=worker に渡す、配備の worker と同じ名の環境変数を並べるため(worker-env の本体)。"
   #((EnvEntry :name "ROLE" :value "worker")
     (EnvEntry :name "COORDINATOR_URL" :value url)
     (EnvEntry :name "WORKER_NAME" :value worker.name)
