@@ -30,10 +30,10 @@ doeff-time = { workspace = true }
 
 # doeff-linter の設定 — この dir で linter を走らせた時だけ読む(linter は今の dir から上へ [tool.doeff-linter] を探す。
 # doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読む)。service と不変条件の宣言は同じ dir の architecture.hy。
-# DOEFF013 は根の設定と同じ理由で外す(Optional / None を意図して使う)。この package は層の dir を持たず src/doeff_cluster/ に平たく
-# 置いてきたので、層の置き場の規則 DOEFF114・115 は対象外 — #1988 で service → 層(core / intent / protocol / entry)と
-# shared・foundation に分けると決めた(移し方 = #2021・#1976)。移しの子(#2022〜#2030・#2105〜#2113)が終わった後、#2095 で外す
-# (critical を登録簿に載せて通す形にはしない)。移した file の検出が 0 である事は CLI の --enable DOEFF114,DOEFF115 で確かめる。
+# DOEFF013 は根の設定と同じ理由で外す(Optional / None を意図して使う)。層の置き場の規則 DOEFF114・115 は、src/doeff_cluster/ の
+# 直下に平たく在った module を service → 層(core / intent / protocol / entry)と shared・foundation へ移す間(#1988・#2021・#1976)
+# 対象外にしていた。最後の 3 file(新しい置き場を読み直すだけの旧い入口 cluster_foundation・job_context・job_entry)を消した変更で
+# 効かせた(利用者 2026-10-03 00:1x "delete immediately. correctness is prioritized over 'working' somehow"・#2095・#2167)。
 # root = "src": module の名を import の名(doeff_cluster.x)に揃える(この dir を根にすると src.doeff_cluster.x になる)。
 # include = ["tests"]: 根の外の検の dir も歩く範囲に入れ、下の [tool.doeff-linter.definitions] の定義の書き方の規則で判じる
 # (#2821 の案 A-1 — 以前は tests/ の .hy は linter の対象の外で、hook でも手元でも測られていなかった)。層の規則は
@@ -44,13 +44,11 @@ doeff-time = { workspace = true }
 # 1 つなので、DOEFF110 は tests と src の defn が両方 0 になった変更で外す。minor(123・124・125)は今は扱わない。
 # DOEFF111 は src と tests の理由の無い deff が 0 になった変更(#2941 — http-request を defk に)で外した。
 # DOEFF119 は情報の規則として当たりを直す作業を止めている(利用者 2026-10-01 の決め・#2912)ので disable に置いたまま。
-# DOEFF114 の残り 3 件(旧い入口 — 配備してある worker が名で読むために 1 版残している job_entry など・#2112)は、配備を止めている間は
-# 残すので disable のまま(cisco-c8 2026-10-02 の決め — 配備を再開して旧い入口を消した変更で外す)。
 [tool.doeff-linter]
 root = "src"
 architecture = "architecture.hy"
 include = ["tests"]
-disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
+disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
 
 # 生の副作用(環境変数・時刻・乱数・file・process・http・signal)に直に触ってよい層は foundation だけ(DOEFF106 — 書かないと
 # DOEFF106 は何も出さずに走らない)。利用者の決め(2026-10-02 22:2x "reading env var from outside foundation handler is clear

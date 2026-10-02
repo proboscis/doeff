@@ -1,7 +1,7 @@
 ;; 子 process の文脈の型(RunContext)が 1 つだけであること(2026-09-26)と、宿の契約(HOST-CONTRACT — 2026-09-27)。
 ;;
-;; 子は `hy -m doeff_cluster.job_entry` で起きるので job_entry は __main__ として読まれる。業務の module が job_entry から
-;; runtime-env-of-context を import すると、同じ file が doeff_cluster.job_entry としてもう 1 回読まれ、__main__ の RunContext を渡された
+;; 子は `hy -m doeff_cluster.worker.entry.job_entry` で起きるので job_entry は __main__ として読まれる。業務の module が job_entry から
+;; runtime-env-of-context を import すると、同じ file が module の名でもう 1 回読まれ、__main__ の RunContext を渡された
 ;; :pre の型の検めが「ctx expected RunContext, got RunContext」で必ず落ちた(実験用の namespace で再現)。文脈の型と読みは入口でない
 ;; module(型 = shared/intent/run_context・読み = shared/core/run_context_rules)に置く。job は Program の値 1 つで、文脈は土台の handler host-reader が Ask "doeff.cluster.run-context" に答える
 ;; (入口は handler を足さない — ADR-DOE-CLUSTER-001 R2)。この検は本物の入口を subprocess で起こし、Program が自分の並べた host-reader で

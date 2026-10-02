@@ -1,29 +1,28 @@
-"""job_context.hy の型の宣言(job_context.pyi)の失敗ケース。
+"""子の文脈(RunContext)の型の宣言を、使い手の strict が読めることの失敗ケース。
 
-job_context.hy は Hy の module で型の宣言が無かったので、宿の run-context(RunContext)を模擬の土台で組む使い手の strict に、
-書き手に直せない Unknown の赤(Type of "RunContext" is unknown・Argument type is unknown ほか)が出ていた。
-→ job_context.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目が赤になる。
+もとは根の job_context.hy(新しい置き場を import し直すだけの旧い入口)の型の宣言 job_context.pyi の検だった。job_context.hy は Hy の
+module で型の宣言が無かったので、宿の run-context(RunContext)を模擬の土台で組む使い手の strict に、書き手に直せない Unknown の赤
+(Type of "RunContext" is unknown・Argument type is unknown ほか)が出ていた。
+
+旧い入口は 2026-10-03 に消した(利用者の決め・#2167)。型と読みの置き場は shared/intent/run_context と
+shared/core/run_context_rules で、どちらの .pyi も doeff_hy.static_stub が作り、作り直しとの食い違いは test_generated_stubs.py が
+赤にする。ここに残すのは、使い手が新しい置き場から読んだ時に Unknown の赤が出ないことの 1 本(宣言を外すと赤になる)。
 """
 
-import ast
-import inspect
 import json
 import shutil
 import subprocess
 import sys
-from dataclasses import fields
 from pathlib import Path
 
 import pytest
-
-import hy  # noqa: F401  # .hy の module(job_context)を読む import hook を有効にする
-from doeff_cluster import job_context
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.job_context [RunContext context-of-environ])
+(import doeff_cluster.shared.intent.run_context [RunContext])
+(import doeff_cluster.shared.core.run_context_rules [context-of-environ])
 
 (defk probe-context [root]
   {:pre [(: root str)] :post [(: % RunContext)] :tags {:context "probe" :role "judgment"}}
@@ -62,23 +61,3 @@ def test_users_of_run_context_get_no_unknown_types(tmp_path: Path) -> None:
     errors = _errors(tmp_path)
     assert not [e for e in errors if e[0] == "hy-compile"], errors
     assert not [e for e in errors if "unknown" in e[2].lower()], errors
-
-
-def test_the_stub_matches_job_context_hy() -> None:
-    # 宣言の名は job_context.hy に在り、関数の引数の名と順・record の欄は実装と同じ(宣言だけが先へ行かない)。
-    stub = ast.parse(Path(job_context.__file__).with_suffix(".pyi").read_text(encoding="utf-8"))
-    functions = [node for node in stub.body if isinstance(node, ast.FunctionDef)]
-    classes = {node.name: node for node in stub.body if isinstance(node, ast.ClassDef)}
-    declared = [f.name for f in functions] + list(classes)
-    assert [name for name in declared if not hasattr(job_context, name)] == []
-    for function in functions:
-        assert [a.arg for a in function.args.args] == list(
-            inspect.signature(getattr(job_context, function.name)).parameters
-        ), function.name
-    for name, node in classes.items():
-        stub_fields = [
-            item.target.id
-            for item in node.body
-            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
-        ]
-        assert stub_fields == [f.name for f in fields(getattr(job_context, name))], name

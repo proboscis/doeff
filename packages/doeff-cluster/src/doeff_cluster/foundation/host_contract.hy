@@ -38,9 +38,6 @@
 (import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect])
-;; 下の旧い host-reader だけが読む(旧い入口 job_context — 層の外の module。この層は intent・core・入口を読めない)。
-(import doeff_cluster.job_context [RunContext context-from-env])
-(import doeff_cluster.foundation.process_versions [process-versions])
 
 
 (defrecord HostContract
@@ -64,24 +61,6 @@
 (val SIM-PASSABLE #(Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise CreateExternalPromise
                     CreateSemaphore AcquireSemaphore ReleaseSemaphore
                     DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect))
-
-
-;; 旧い入口 — 使い手の付け替えが入った次の pin の後に、上の job_context の import と一緒に消す(#2981 の 2 段目)。本体は
-;; shared/entry/host_reader の host-reader(同じ名・同じ答え)。ここからあちらを名で指せない(この層は入口を読めず、あちらは鍵を読むために
-;; この module を import する — 指すと輪になる)ので、同じ読みを 1 版だけここに残す。新しい使い手はあちらを並べる。
-(defhandler host-reader
-  {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 本番の宿の答え(worker が子へ渡した環境変数を読む)。土台の handler なので os.environ を直に読む(ADR-DOE-CLUSTER-001 R5b —
-  ;; 記録係の下に置く)。環境変数は process の間で変わらないので session で 1 回だけ読む。
-  (session val context (context-from-env))
-  (session val program-path (os.environ.get HOST-CONTRACT.program-env ""))
-  ;; 版の識別は env のキー(DOEFF_RUNTIME_ENV_KEY)を毎回読む(process-versions の註 — 版そのものは 1 度だけ読んで持つ)。
-  (Ask [key]
-    :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key HOST-CONTRACT.versions-key))
-    (resume (match key
-              HOST-CONTRACT.run-context-key context
-              HOST-CONTRACT.program-key program-path
-              _ (! (process-versions os.environ))))))
 
 
 (defk this-program-path []

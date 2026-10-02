@@ -121,29 +121,28 @@
     },
     {
       "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-coordinator-route",
         "doeff-cluster-detached",
         "doeff-cluster-host-contract",
-        "doeff-cluster-job-context",
         "doeff-cluster-lease-rules",
         "doeff-cluster-metrics-handlers",
         "doeff-cluster-readiness-handlers",
         "doeff-cluster-remote",
+        "doeff-cluster-run-context",
+        "doeff-cluster-run-context-rules",
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-semaphore-handlers",
-        "doeff-cluster-shared-handlers",
-        "doeff-cluster-clock",
-        "doeff-cluster-coordinator-route",
-        "doeff-cluster-coordinator-http",
-        "doeff-cluster-service-report"
+        "doeff-cluster-service-report",
+        "doeff-cluster-shared-handlers"
       ],
       "layer": "io",
       "name": "doeff-cluster-cluster-foundation",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy",
         "packages/doeff-cluster/src/doeff_cluster/shared/entry/cluster_foundation.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy",
         "packages/doeff-cluster/src/doeff_cluster/shared/entry/cluster_foundation.hy"
       ],
       "responsibility": "本番の土台が並べる「coordinator に話す handler の組」(ADR-DOE-CLUSTER-001・計画 2.3)。",
@@ -579,7 +578,6 @@
         "doeff-cluster-env-prepare",
         "doeff-cluster-env-upkeep",
         "doeff-cluster-host-contract",
-        "doeff-cluster-job-context",
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
         "doeff-cluster-lease-rules",
@@ -637,7 +635,6 @@
     },
     {
       "allow": [
-        "doeff-cluster-job-context",
         "doeff-cluster-process-versions"
       ],
       "layer": "io",
@@ -697,23 +694,6 @@
         "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy"
       ],
       "responsibility": "土台だけの image の約束(設計 worker-runtime-env.md 節 3.5・E13)を Dockerfile の字面で検める純粋な規則。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-run-context",
-        "doeff-cluster-run-context-rules",
-        "doeff-cluster-run-context-env"
-      ],
-      "layer": "io",
-      "name": "doeff-cluster-job-context",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/job_context.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/job_context.hy"
-      ],
-      "responsibility": "旧い入口 — 子 process の文脈の型と読みの名を新しい置き場(run-context・run-context-rules・run-context-env)から同じ名で出すだけ(#2981 の 2 段目で消す)。",
       "typed": true
     },
     {
@@ -1410,7 +1390,6 @@
         "doeff-cluster-idle-policy",
         "doeff-cluster-image-contract",
         "doeff-cluster-image-rules",
-        "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
@@ -2605,21 +2584,6 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/entry/env_tool.hy"
       ],
       "responsibility": "実行環境(root)1 つの準備の process の入口(worker が別の process として起こす)。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-job-entry"
-      ],
-      "layer": "runtime",
-      "name": "doeff-cluster-job-entry-legacy-path",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/job_entry.hy"
-      ],
-      "responsibility": "旧い path の子 process の入口(新しい入口 worker/entry/job_entry へ渡すだけ・#2028 の 1 段目・消すのは #2113)。",
       "typed": true
     },
     {
