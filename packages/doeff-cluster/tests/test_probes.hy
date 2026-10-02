@@ -8,19 +8,19 @@
 (import doeff_cluster.foundation.coordinator_inbox [probe-verdict RequestInbox READY-STALL-SECONDS LIVE-STALL-SECONDS])
 
 
-(defn #^ None test-probe-verdict-before-the-loop-starts []
+(deftest test-probe-verdict-before-the-loop-starts
   ;; 起動中: liveness は通す(起動の遅さは startupProbe が見る)・readiness は通さない。
   (assert (= (get (probe-verdict "/livez" None) 0) 200))
   (assert (= (get (probe-verdict "/readyz" None) 0) 503)))
 
 
-(defn #^ None test-a-slow-fsync-does-not-make-the-coordinator-unready []
+(deftest test-a-slow-fsync-does-not-make-the-coordinator-unready
   ;; 実測の最長の詰まり(fsync 10.4 秒 + 返事 13 秒)は readiness の閾値より短い。
   (assert (= (get (probe-verdict "/readyz" 13.0) 0) 200))
   (assert (= (get (probe-verdict "/livez" 13.0) 0) 200)))
 
 
-(defn #^ None test-a-stalled-loop-is-unready-then-dead []
+(deftest test-a-stalled-loop-is-unready-then-dead
   (assert (= (get (probe-verdict "/readyz" (+ READY-STALL-SECONDS 1)) 0) 503))
   (assert (= (get (probe-verdict "/livez" (+ READY-STALL-SECONDS 1)) 0) 200))
   (assert (= (get (probe-verdict "/livez" (+ LIVE-STALL-SECONDS 1)) 0) 503)))

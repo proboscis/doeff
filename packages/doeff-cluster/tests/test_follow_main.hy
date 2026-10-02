@@ -198,27 +198,27 @@
   (assert (= (get later "writer-a") sim.lease) later))
 
 
-(defn #^ None test-a-retired-process-still-counts-as-live []
+(deftest test-a-retired-process-still-counts-as-live
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
-  (setv state (ClusterState :workers {} :statuses {}))
+  (val empty (ClusterState :workers {} :statuses {}))
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
   (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-  (setv state (replace state :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000)}
-                             :statuses {"zeus" (WorkerReport :at 1000 :endpoint None
-                                                             :jobs #((StatusRow :name "a#retired-1-x" :phase "running" :retired-from "a")))}))
+  (val state (replace empty :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000)}
+                            :statuses {"zeus" (WorkerReport :at 1000 :endpoint None
+                                                            :jobs #((StatusRow :name "a#retired-1-x" :phase "running" :retired-from "a")))}))
   (assert (still-live-somewhere 1000 state "a" T))
   (assert (not (still-live-somewhere 1000 state "b" T))))
 
 
-(defn #^ None test-heartbeat-age-per-worker-is-exposed []
+(deftest test-heartbeat-age-per-worker-is-exposed
   ;; coordinator 自身の alert(DoeffWorkerHeartbeatStale)の材料: worker ごとの最後の heartbeat の古さ(label は worker の名だけ —
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
-  (setv state (replace (ClusterState)
-                       :workers {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000)
-                                 "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli"))}))
-  (setv text (metrics-text state 91000 T))
+  (val state (replace (ClusterState)
+                      :workers {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000)
+                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli"))}))
+  (val text (metrics-text state 91000 T))
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"zeus\"} 90.0" text) text)
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"proboscis-mbp\"} 30.0" text) text)
-  (setv forgotten (replace state :workers {"zeus" (get state.workers "zeus")}))
+  (val forgotten (replace state :workers {"zeus" (get state.workers "zeus")}))
   (assert (not-in "proboscis-mbp" (metrics-text forgotten 91000 T))))

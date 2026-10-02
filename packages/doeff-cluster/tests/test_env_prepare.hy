@@ -15,7 +15,7 @@
 (import json)
 (import pytest)
 (import pathlib [Path])
-(import doeff [Program run with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.protocol.env_translation [editable-dirs repo-identity])
 (import doeff_core_effects.handlers [state])
@@ -175,10 +175,11 @@
   True)
 
 
-(defn #^ None test-the-editable-dirs-are-read-from-the-venv-pth-files [#^ Path tmp-path]
+(deftest test-the-editable-dirs-are-read-from-the-venv-pth-files [#^ Path tmp-path]
   ;; 本物の handler の読み: uv が editable の package ごとに置く .pth(dir の絶対 path 1 行)のうち root の中の dir だけ・import の根の
   ;; .pth と import の行と root の外の dir は除く。
-  (setv root (/ tmp-path "root") site (/ root "app" ".venv" "lib" "python3.14" "site-packages"))
+  (val root (/ tmp-path "root"))
+  (val site (/ root "app" ".venv" "lib" "python3.14" "site-packages"))
   (for [d ["lib" "lib/packages/core/src" "app"]] (.mkdir (/ root d) :parents True :exist-ok True))
   (.mkdir site :parents True)
   (.mkdir (/ tmp-path "outside"))
@@ -186,7 +187,8 @@
   (.write-text (/ site "_editable_impl_lib_core.pth") (+ (str (/ root "lib/packages/core/src")) "\n"))
   (.write-text (/ site "_other.pth") (+ "import sys\n# note\n" (str (/ tmp-path "outside")) "\n"))
   (.write-text (/ site ROOTS-PTH) (str (/ root "app")))
-  (assert (= (run (with-handlers [os-file-handler] (editable-dirs (str site) (str root)))) #("lib" "lib/packages/core/src"))))
+  (<- dirs tuple (with-handlers [os-file-handler] (editable-dirs (str site) (str root))))
+  (assert (= dirs #("lib" "lib/packages/core/src"))))
 
 
 ;; 反例(構成レビュー 2026-09-27): editable で入るだけの依存の repo の bytecode は最適化で、焼けなくても env は作れる(子は import の時に

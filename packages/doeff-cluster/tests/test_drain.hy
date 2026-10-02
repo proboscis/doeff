@@ -519,10 +519,10 @@
   (assert late))
 
 
-(defn #^ None test-the-worker-writes-its-boot-where-the-readiness-probe-reads-it [#^ Path tmp-path]
+(deftest test-the-worker-writes-its-boot-where-the-readiness-probe-reads-it [#^ Path tmp-path]
   ;; worker の世代は起動の時に Pod の中の file(DOEFF_WORKER_BOOT_FILE)へ書かれ、readinessProbe の入口(drain_main.read-boot)が
   ;; 同じ値を読む — 書く口と読む口の綴りが割れると probe は永久に NotReady になる。
-  (setv path (/ tmp-path "doeff-worker-boot"))
+  (val path (/ tmp-path "doeff-worker-boot"))
   (assert (is (read-boot (str path)) None) "起動の前(file が無い)は世代を知らない")
   ;; 書く口は worker の入口 main の write-boot-file(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した)。
   (import doeff_cluster.worker.entry.main [write-boot-file])
@@ -540,22 +540,31 @@
   (assert (is (get during "draining") True) during))
 
 
-(defn #^ None test-the-readiness-probe-reads-the-file-the-worker-writes [#^ Path tmp-path #^ pytest.MonkeyPatch monkeypatch]
+(defk ready-probe-exit [boot-sh path [extra None]]
+  {:pre [(: boot-sh str) (: path str) (: extra (| dict None))] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "boot.sh の読む口(ROLE=ready — sh だけ・hy を起こさない)を ready の file の path で 1 回走らせ、終了コードを返すため(extra は足す環境変数)。"
+  (. (subprocess.run ["sh" boot-sh] :env (| {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" path}
+                                            (or extra {}))
+                     :capture-output True) returncode))
+
+
+(defk write-ready-file [draining]
+  {:pre [(: draining bool)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "書く口(coordinator への口の ready-file-written)を本物の file の答え手(os-file-handler)の下で 1 回走らせるため。"
+  (<- (with-handlers [os-file-handler] (ready-file-written draining)))
+  None)
+
+
+(deftest test-the-readiness-probe-reads-the-file-the-worker-writes [#^ Path tmp-path #^ pytest.MonkeyPatch monkeypatch]
   ;; 書く口(coordinator への口の ready-file-written — 本物の file の答え手の下)と読む口(boot.sh の ROLE=ready — sh だけ・hy を起こさない)の往復。
-  (setv path (str (/ tmp-path "doeff-worker-ready"))
-        boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
-  (defn #^ int probe [#^ (| dict None) [extra None]]
-    (. (subprocess.run ["sh" boot-sh] :env (| {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" path}
-                                              (or extra {}))
-                       :capture-output True) returncode))
+  (val path (str (/ tmp-path "doeff-worker-ready")))
+  (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
   (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" path)
-  (defn #^ None write-ready-file [#^ str _path #^ bool draining]
-    (run (with-handlers [os-file-handler] (ready-file-written draining))))
-  (assert (= (probe) 1) "worker がまだ書いていない(lock 待ち)は NotReady")
-  (write-ready-file path False)
-  (assert (= (probe) 0))
-  (write-ready-file path True)
-  (assert (= (probe) 1) "drain 中は NotReady")
-  (write-ready-file path False)
+  (assert (= (! (ready-probe-exit boot-sh path)) 1) "worker がまだ書いていない(lock 待ち)は NotReady")
+  (<- (write-ready-file False))
+  (assert (= (! (ready-probe-exit boot-sh path)) 0))
+  (<- (write-ready-file True))
+  (assert (= (! (ready-probe-exit boot-sh path)) 1) "drain 中は NotReady")
+  (<- (write-ready-file False))
   (os.utime path #(1 1))
-  (assert (= (probe {"READY_MAX_AGE" "30"}) 1) "heartbeat が途絶えた(file が古い)は NotReady"))
+  (assert (= (! (ready-probe-exit boot-sh path {"READY_MAX_AGE" "30"})) 1) "heartbeat が途絶えた(file が古い)は NotReady"))

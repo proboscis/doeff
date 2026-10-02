@@ -46,7 +46,7 @@ doeff-time = { workspace = true }
 root = "src"
 architecture = "architecture.hy"
 include = ["tests"]
-disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF111", "DOEFF118", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
+disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF111", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
 
 [tool.doeff-linter.definitions]
 paths = ["doeff_cluster", "../tests"]
