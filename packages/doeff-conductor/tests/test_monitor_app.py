@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from doeff_conductor.api import ConductorAPI
@@ -20,7 +21,12 @@ from doeff_conductor.types import WorkflowHandle, WorkflowStatus
 from textual.widgets import DataTable, Tree
 
 
-def _fixture(tmp_path: Path) -> tuple[Path, str]:
+class _MonitorFixture(NamedTuple):
+    state: Path
+    run: str
+
+
+def _fixture(tmp_path: Path) -> _MonitorFixture:
     state = tmp_path / "state"
     run = "demo"
     now = datetime.now(timezone.utc)
@@ -46,7 +52,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, str]:
         generation=1, entry_index=0, cache_key="k", resolved_identity_fingerprint="f",
         node_identity="ib", result_artifact={"summary": "ok"}, terminal_kind=TERMINAL_KIND_SUCCEEDED,
     ))
-    return state, run
+    return _MonitorFixture(state, run)
 
 
 @pytest.mark.asyncio

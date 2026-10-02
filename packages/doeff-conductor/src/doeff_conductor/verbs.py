@@ -3,7 +3,7 @@
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 from doeff_conductor.dsl import ExpandedWorkflow, WorkflowSpec
 from doeff_conductor.effects.dsl import AgentCall
@@ -231,31 +231,38 @@ def plan_workflow(
     )
 
 
+class ResolvedAgentProfile(NamedTuple):
+    """The profile chosen by the D7 cascade and which cascade step chose it."""
+
+    profile: str
+    source: str
+
+
 def resolve_agent_profile(
     effect: AgentCall,
     *,
     roles: Mapping[str, Mapping[str, Any]],
     registry: ProfileRegistry,
-) -> tuple[str, str]:
+) -> ResolvedAgentProfile:
     """Resolve the fixed D7 profile cascade in one place."""
 
     if effect.profile is not None:
         registry.resolve(effect.profile)
-        return effect.profile, "explicit"
+        return ResolvedAgentProfile(effect.profile, "explicit")
 
     role_spec: Mapping[str, Any] = roles[effect.role]
     role_profile: object | None = role_spec.get("profile")
     if isinstance(role_profile, str) and role_profile:
         registry.resolve(role_profile)
-        return role_profile, "role"
+        return ResolvedAgentProfile(role_profile, "role")
 
     routed_profile: str | None = DEFAULT_ROUTER_POLICY.get(effect.verification_class)
     if routed_profile is not None:
         registry.resolve(routed_profile)
-        return routed_profile, "router"
+        return ResolvedAgentProfile(routed_profile, "router")
 
     registry.resolve(registry.default_profile)
-    return registry.default_profile, "interpreter-env"
+    return ResolvedAgentProfile(registry.default_profile, "interpreter-env")
 
 
 def validate_workflow(

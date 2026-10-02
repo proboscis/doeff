@@ -387,21 +387,40 @@ def agent_bang(
     **extra: Any,
 ) -> AgentSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    role = _pop_kw(kwargs, "role", role)
-    verification_class = _pop_kw(kwargs, "verification_class", verification_class)
-    prompt = _pop_kw(kwargs, "prompt", prompt)
-    schema = _pop_kw(kwargs, "schema", schema)
-    workspace = _pop_kw(kwargs, "workspace", workspace)
-    files = _pop_kw(kwargs, "files", files)
-    profile = _pop_kw(kwargs, "profile", profile)
-    persona = _pop_kw(kwargs, "persona", persona)
-    retry = _pop_kw(kwargs, "retry", retry)
-    budget = _pop_kw(kwargs, "budget", budget)
-    deadline_seconds = _pop_kw(kwargs, "deadline_seconds", deadline_seconds)
-    label = _pop_kw(kwargs, "label", label)
-    phase = _pop_kw(kwargs, "phase", phase)
-    class_ = _pop_kw(kwargs, "class_", class_)
-    _reject_unknown_kwargs(kwargs, "agent!")
+    role = _kw_or(kwargs, "role", role)
+    verification_class = _kw_or(kwargs, "verification_class", verification_class)
+    prompt = _kw_or(kwargs, "prompt", prompt)
+    schema = _kw_or(kwargs, "schema", schema)
+    workspace = _kw_or(kwargs, "workspace", workspace)
+    files = _kw_or(kwargs, "files", files)
+    profile = _kw_or(kwargs, "profile", profile)
+    persona = _kw_or(kwargs, "persona", persona)
+    retry = _kw_or(kwargs, "retry", retry)
+    budget = _kw_or(kwargs, "budget", budget)
+    deadline_seconds = _kw_or(kwargs, "deadline_seconds", deadline_seconds)
+    label = _kw_or(kwargs, "label", label)
+    phase = _kw_or(kwargs, "phase", phase)
+    class_ = _kw_or(kwargs, "class_", class_)
+    _reject_unknown_kwargs(
+        kwargs,
+        (
+            "role",
+            "verification_class",
+            "prompt",
+            "schema",
+            "workspace",
+            "files",
+            "profile",
+            "persona",
+            "retry",
+            "budget",
+            "deadline_seconds",
+            "label",
+            "phase",
+            "class_",
+        ),
+        "agent!",
+    )
     resolved_class = verification_class
     if resolved_class is None:
         resolved_class = class_
@@ -432,12 +451,12 @@ def gate_bang(
     **extra: Any,
 ) -> GateSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    cmd = _pop_kw(kwargs, "cmd", cmd)
-    workspace = _pop_kw(kwargs, "workspace", workspace)
-    timeout = _pop_kw(kwargs, "timeout", timeout)
-    budget = _pop_kw(kwargs, "budget", budget)
-    phase = _pop_kw(kwargs, "phase", phase)
-    _reject_unknown_kwargs(kwargs, "gate!")
+    cmd = _kw_or(kwargs, "cmd", cmd)
+    workspace = _kw_or(kwargs, "workspace", workspace)
+    timeout = _kw_or(kwargs, "timeout", timeout)
+    budget = _kw_or(kwargs, "budget", budget)
+    phase = _kw_or(kwargs, "phase", phase)
+    _reject_unknown_kwargs(kwargs, ("cmd", "workspace", "timeout", "budget", "phase"), "gate!")
     if cmd is None:
         raise WorkflowExpansionError("gate! requires :cmd")
     return GateSpec(cmd=cmd, workspace=workspace, timeout=timeout, budget=budget, phase=phase)
@@ -450,9 +469,9 @@ def workspace_bang(
     **extra: Any,
 ) -> WorkspaceSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    repo = _pop_kw(kwargs, "repo", repo)
-    from_ = _pop_kw(kwargs, "from_", from_)
-    _reject_unknown_kwargs(kwargs, "workspace!")
+    repo = _kw_or(kwargs, "repo", repo)
+    from_ = _kw_or(kwargs, "from_", from_)
+    _reject_unknown_kwargs(kwargs, ("repo", "from_"), "workspace!")
     return WorkspaceSpec(repo=repo, from_ref=from_)
 
 
@@ -465,11 +484,11 @@ def merge_bang(
     **extra: Any,
 ) -> MergeSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    workspaces = _pop_kw(kwargs, "workspaces", workspaces)
-    strategy = _pop_kw(kwargs, "strategy", strategy)
-    budget = _pop_kw(kwargs, "budget", budget)
-    phase = _pop_kw(kwargs, "phase", phase)
-    _reject_unknown_kwargs(kwargs, "merge!")
+    workspaces = _kw_or(kwargs, "workspaces", workspaces)
+    strategy = _kw_or(kwargs, "strategy", strategy)
+    budget = _kw_or(kwargs, "budget", budget)
+    phase = _kw_or(kwargs, "phase", phase)
+    _reject_unknown_kwargs(kwargs, ("workspaces", "strategy", "budget", "phase"), "merge!")
     if workspaces is None:
         raise WorkflowExpansionError("merge! requires :workspaces")
     return MergeSpec(workspaces=tuple(workspaces), strategy=strategy, budget=budget, phase=phase)
@@ -482,9 +501,9 @@ def time_bang(
     **extra: Any,
 ) -> TimeSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    label = _pop_kw(kwargs, "label", label)
-    budget = _pop_kw(kwargs, "budget", budget)
-    _reject_unknown_kwargs(kwargs, "time!")
+    label = _kw_or(kwargs, "label", label)
+    budget = _kw_or(kwargs, "budget", budget)
+    _reject_unknown_kwargs(kwargs, ("label", "budget"), "time!")
     return TimeSpec(label=label, budget=budget)
 
 
@@ -496,10 +515,10 @@ def random_bang(
     **extra: Any,
 ) -> RandomSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    spec = _pop_kw(kwargs, "spec", spec)
-    label = _pop_kw(kwargs, "label", label)
-    budget = _pop_kw(kwargs, "budget", budget)
-    _reject_unknown_kwargs(kwargs, "random!")
+    spec = _kw_or(kwargs, "spec", spec)
+    label = _kw_or(kwargs, "label", label)
+    budget = _kw_or(kwargs, "budget", budget)
+    _reject_unknown_kwargs(kwargs, ("spec", "label", "budget"), "random!")
     return RandomSpec(spec=spec, label=label, budget=budget)
 
 
@@ -510,9 +529,9 @@ def parallel(
     **extra: Any,
 ) -> ParallelSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    quorum = _pop_kw(kwargs, "quorum", quorum)
-    budget = _pop_kw(kwargs, "budget", budget)
-    _reject_unknown_kwargs(kwargs, "parallel")
+    quorum = _kw_or(kwargs, "quorum", quorum)
+    budget = _kw_or(kwargs, "budget", budget)
+    _reject_unknown_kwargs(kwargs, ("quorum", "budget"), "parallel")
     return ParallelSpec(branches=tuple(branches), quorum=quorum, budget=budget)
 
 
@@ -525,8 +544,8 @@ def parallel_for(
     **extra: Any,
 ) -> ParallelForSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    budget = _pop_kw(kwargs, "budget", budget)
-    _reject_unknown_kwargs(kwargs, "parallel-for")
+    budget = _kw_or(kwargs, "budget", budget)
+    _reject_unknown_kwargs(kwargs, ("budget",), "parallel-for")
     if isinstance(values, (str, bytes)):
         raise WorkflowExpansionError("parallel-for requires a literal sequence, not a string")
     branches = tuple(body(value) for value in values)
@@ -547,11 +566,11 @@ def loop(
     **extra: Any,
 ) -> LoopSpec:
     kwargs = _normalize_hy_kwargs(extra)
-    max_iterations = _pop_kw(kwargs, "max", max_iterations)
-    until = _pop_kw(kwargs, "until", until)
-    body = _pop_kw(kwargs, "body", body)
-    budget = _pop_kw(kwargs, "budget", budget)
-    _reject_unknown_kwargs(kwargs, "loop")
+    max_iterations = _kw_or(kwargs, "max", max_iterations)
+    until = _kw_or(kwargs, "until", until)
+    body = _kw_or(kwargs, "body", body)
+    budget = _kw_or(kwargs, "budget", budget)
+    _reject_unknown_kwargs(kwargs, ("max", "until", "body", "budget"), "loop")
     if max_iterations is None:
         raise WorkflowExpansionError("loop requires :max")
     if until is None:
@@ -1189,10 +1208,9 @@ def _bind_name(
 
 
 def _validate_expr_refs(expr: Any, state: _ExpansionState, *, allow_try_ref: bool) -> set[str]:
-    dependencies: set[str] = set()
-    if expr is not None:
-        _collect_expr_refs(expr, state, allow_try_ref=allow_try_ref, dependencies=dependencies)
-    return dependencies
+    if expr is None:
+        return set()
+    return _collect_expr_refs(expr, state, allow_try_ref=allow_try_ref)
 
 
 def _collect_expr_refs(
@@ -1200,12 +1218,11 @@ def _collect_expr_refs(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     for expr_type, collector in _EXPR_REF_COLLECTORS:
         if isinstance(expr, expr_type):
-            collector(expr, state, allow_try_ref=allow_try_ref, dependencies=dependencies)
-            return
+            return collector(expr, state, allow_try_ref=allow_try_ref)
+    return set()
 
 
 def _collect_ref_expr(
@@ -1213,8 +1230,7 @@ def _collect_ref_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, Ref):
         raise TypeError("_collect_ref_expr requires Ref")
     if expr.name not in state.bindings:
@@ -1225,7 +1241,7 @@ def _collect_ref_expr(
             f"Try-typed binding {expr.name!r} must be handled explicitly before use"
         )
     binding.consumed = True
-    dependencies.add(binding.node_id)
+    return {binding.node_id}
 
 
 def _collect_field_ref_expr(
@@ -1233,8 +1249,7 @@ def _collect_field_ref_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, FieldRef):
         raise TypeError("_collect_field_ref_expr requires FieldRef")
     if isinstance(expr.source, Ref):
@@ -1245,7 +1260,7 @@ def _collect_field_ref_expr(
             raise WorkflowExpansionError(
                 f"Try-typed binding {source_name!r} cannot be dereferenced directly"
             )
-    dependencies.update(_validate_expr_refs(expr.source, state, allow_try_ref=allow_try_ref))
+    return _validate_expr_refs(expr.source, state, allow_try_ref=allow_try_ref)
 
 
 def _collect_oks_expr(
@@ -1253,12 +1268,11 @@ def _collect_oks_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, OksProjection):
         raise TypeError("_collect_oks_expr requires OksProjection")
     _ = allow_try_ref
-    dependencies.update(_validate_expr_refs(expr.source, state, allow_try_ref=True))
+    return _validate_expr_refs(expr.source, state, allow_try_ref=True)
 
 
 def _collect_prompt_expr(
@@ -1266,12 +1280,12 @@ def _collect_prompt_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, PromptExpr):
         raise TypeError("_collect_prompt_expr requires PromptExpr")
-    for part in expr.parts:
-        dependencies.update(_validate_expr_refs(part, state, allow_try_ref=allow_try_ref))
+    return set().union(
+        *(_validate_expr_refs(part, state, allow_try_ref=allow_try_ref) for part in expr.parts)
+    )
 
 
 def _collect_workspace_expr(
@@ -1279,11 +1293,10 @@ def _collect_workspace_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, WorkspaceSpec):
         raise TypeError("_collect_workspace_expr requires WorkspaceSpec")
-    dependencies.update(_validate_expr_refs(expr.from_ref, state, allow_try_ref=allow_try_ref))
+    return _validate_expr_refs(expr.from_ref, state, allow_try_ref=allow_try_ref)
 
 
 def _collect_merge_expr(
@@ -1291,12 +1304,15 @@ def _collect_merge_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, MergeSpec):
         raise TypeError("_collect_merge_expr requires MergeSpec")
-    for workspace_value in expr.workspaces:
-        dependencies.update(_validate_expr_refs(workspace_value, state, allow_try_ref=allow_try_ref))
+    return set().union(
+        *(
+            _validate_expr_refs(workspace_value, state, allow_try_ref=allow_try_ref)
+            for workspace_value in expr.workspaces
+        )
+    )
 
 
 def _collect_agent_expr(
@@ -1304,12 +1320,12 @@ def _collect_agent_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, AgentSpec):
         raise TypeError("_collect_agent_expr requires AgentSpec")
-    dependencies.update(_validate_expr_refs(expr.prompt, state, allow_try_ref=allow_try_ref))
-    dependencies.update(_validate_expr_refs(expr.workspace, state, allow_try_ref=allow_try_ref))
+    return _validate_expr_refs(
+        expr.prompt, state, allow_try_ref=allow_try_ref
+    ) | _validate_expr_refs(expr.workspace, state, allow_try_ref=allow_try_ref)
 
 
 def _collect_gate_expr(
@@ -1317,11 +1333,10 @@ def _collect_gate_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, GateSpec):
         raise TypeError("_collect_gate_expr requires GateSpec")
-    dependencies.update(_validate_expr_refs(expr.workspace, state, allow_try_ref=allow_try_ref))
+    return _validate_expr_refs(expr.workspace, state, allow_try_ref=allow_try_ref)
 
 
 def _collect_random_expr(
@@ -1329,11 +1344,10 @@ def _collect_random_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, RandomSpec):
         raise TypeError("_collect_random_expr requires RandomSpec")
-    dependencies.update(_validate_expr_refs(expr.spec, state, allow_try_ref=allow_try_ref))
+    return _validate_expr_refs(expr.spec, state, allow_try_ref=allow_try_ref)
 
 
 def _collect_mapping_expr(
@@ -1341,12 +1355,12 @@ def _collect_mapping_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, Mapping):
         raise TypeError("_collect_mapping_expr requires Mapping")
-    for value in expr.values():
-        dependencies.update(_validate_expr_refs(value, state, allow_try_ref=allow_try_ref))
+    return set().union(
+        *(_validate_expr_refs(value, state, allow_try_ref=allow_try_ref) for value in expr.values())
+    )
 
 
 def _collect_iterable_expr(
@@ -1354,12 +1368,12 @@ def _collect_iterable_expr(
     state: _ExpansionState,
     *,
     allow_try_ref: bool,
-    dependencies: set[str],
-) -> None:
+) -> set[str]:
     if not isinstance(expr, (list, tuple, set, frozenset)):
         raise TypeError("_collect_iterable_expr requires an iterable container")
-    for item in expr:
-        dependencies.update(_validate_expr_refs(item, state, allow_try_ref=allow_try_ref))
+    return set().union(
+        *(_validate_expr_refs(item, state, allow_try_ref=allow_try_ref) for item in expr)
+    )
 
 
 _EXPR_REF_COLLECTORS = (
@@ -1553,14 +1567,15 @@ def _normalize_hy_kwargs(extra: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _pop_kw(kwargs: dict[str, Any], name: str, current: Any) -> Any:
+def _kw_or(kwargs: Mapping[str, Any], name: str, current: Any) -> Any:
     if name not in kwargs:
         return current
-    value = kwargs[name]
-    del kwargs[name]
-    return value
+    return kwargs[name]
 
 
-def _reject_unknown_kwargs(kwargs: Mapping[str, Any], context: str) -> None:
-    if kwargs:
-        raise WorkflowExpansionError(f"{context} got unknown keyword arguments: {sorted(kwargs)}")
+def _reject_unknown_kwargs(
+    kwargs: Mapping[str, Any], known: tuple[str, ...], context: str
+) -> None:
+    unknown = sorted(set(kwargs) - set(known))
+    if unknown:
+        raise WorkflowExpansionError(f"{context} got unknown keyword arguments: {unknown}")

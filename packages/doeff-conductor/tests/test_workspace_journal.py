@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 from doeff_conductor.effects.workspace import CreateWorkspace
@@ -199,10 +200,15 @@ class TestWorkspaceJournal:
 # =============================================================================
 
 
+class _StubDelegate(NamedTuple):
+    delegate: Callable[[CreateWorkspace], Workspace]
+    resolve_path: Callable[[Workspace], Path]
+
+
 def _make_stub_delegate(
     tracker: list[str],
-) -> tuple[Any, Any]:
-    """Return (delegate_fn, resolve_path_fn) that track workspace creation."""
+) -> _StubDelegate:
+    """Return a _StubDelegate (delegate, resolve_path) that tracks workspace creation."""
 
     workspaces: dict[str, Workspace] = {}
 
@@ -218,7 +224,7 @@ def _make_stub_delegate(
     def resolve_path(workspace: Workspace) -> Path:
         return Path(f"/tmp/mock/{workspace.id}")
 
-    return delegate, resolve_path
+    return _StubDelegate(delegate, resolve_path)
 
 
 class TestJournaledWorkspaceHandler:
