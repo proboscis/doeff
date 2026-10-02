@@ -381,6 +381,8 @@ class HostTruth:
     beat_bells: tuple[Promise[object], ...] = ()
     watch_failure: str | None = None
     tick_bell: Promise[object] | None = None
+    stalled_until_ms: int = 0
+    keep_fence_ms: int = ...
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:

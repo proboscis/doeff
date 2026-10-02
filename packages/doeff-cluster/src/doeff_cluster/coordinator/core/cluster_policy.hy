@@ -448,8 +448,9 @@
 ;;     持つ。約束が外れるのは、担い手の今の世代の heartbeat が印を持たないと知らせた時(released-keep-marks — 印の無い返事が届いた後なので、
 ;;     その後は fence が効く)か、Worker が消された時(sweep-keep-marks)だけ。返事が届かない担い手からは移さない。
 ;;   - 他に置ける worker が在る job は今までどおり: 印を付けず、担い手が期限を過ぎて沈黙したら外して移す(worker は fence で先に止まる)。
-;; 前提: 同じ名の worker の新しい世代(Pod の作り直し)は旧い世代の process が消えた後に来る(k8s の Recreate と ReadWriteOnce の volume)—
-;; 新しい世代の知らせ(印を持たない)で約束を外す。これは同じ名の置き先を新しい世代へ引き継ぐ今までの前提と同じ。
+;; 同じ名の worker の新しい世代(Pod の作り直し)の知らせ(印を持たない)では約束を外す(同じ名の置き先を新しい世代へ引き継ぐ今までの
+;; 前提と同じ)。届かない node の上の旧い世代は、印の在る job も長い方の柵(ClusterTiming.keep-fence-ms・240 秒)で止めるので、k8s が
+;; 作り直した新しい世代(早くても約 350 秒後 — 数の前提は ClusterTiming.keep-fence-ms の註)とは重ならない。
 
 
 (defk movable? [now state job holder load timing draining]
