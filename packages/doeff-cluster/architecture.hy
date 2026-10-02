@@ -24,6 +24,13 @@
 ;;;   確かめるのは tests/test_keep_when_cut_off.hy の途絶の筋書き(job の process ごとの生きていた区間を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-ignores-the-fence-breaks-c2(sim の宿の fence の判断を使わない壊れた worker — SimWorker の
 ;;;   ignores-fence — で、移せる先の在る job が移し替えの後に 2 か所で走り、C2 が重なりを名指す)。
+;;;   C3 stopped-generation-gets-no-new-task(doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task)—
+;;;   止まり始めた worker の世代(drain の頼みを通らない止め — sigterm・機体の終了・手の kill)へ、止まり始めの後に新しい task を置かない
+;;;   (その世代は task を始めずに抜け、切り離した task は新しい世代へ渡らず lease まで止まる — #2819)。確かめるのは
+;;;   tests/test_detached_runners.hy の test-a-runner-stopped-without-a-drain-gets-no-new-task-until-its-next-generation(止めた世代と、
+;;;   止めた後・戻す前に読めた task の置き先を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-does-not-announce-its-stop-breaks-c3(止まり始めを heartbeat で名乗らない worker — sim の SimWorker の
+;;;   silent-stop — で、同じ筋書きに C3 の破りが出る)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -73,7 +80,8 @@
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.coordinator.entry.main"]
    :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"
-                "doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job"
+                "doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh が起こす旧い名 doeff_cluster.main は渡すだけの入口)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。

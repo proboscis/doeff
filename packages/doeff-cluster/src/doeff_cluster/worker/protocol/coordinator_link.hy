@@ -79,7 +79,10 @@
           ;; heartbeat の切り離し(#1933): last-desired = 前の heartbeat の返事の desired(届かなかったら None — 次の拍で必ず送る)・
           ;; sent-statuses = 前に届けた状態の報告・beat-interval-ms = 送る間隔。
           self.watch-enabled watch self.watch (WatchCell)
-          self.last-desired None self.sent-statuses None self.beat-interval-ms (beat-interval-ms None {}))))
+          self.last-desired None self.sent-statuses None self.beat-interval-ms (beat-interval-ms None {})
+          ;; 止まり始め(#2819): stopping = 拍の Program が渡した止まり・sent-stopping = 前に届けた heartbeat に載せた止まり(違えば
+          ;; 送る間隔を待たずに送る — 状態の報告の違いと同じ扱い)。
+          self.stopping False self.sent-stopping False)))
 
 
 
@@ -316,6 +319,7 @@
    :tags {:context "worker" :role "protocol" :spells "json" :reads "json"}}
   "heartbeat を 1 回送り、返事の job・task・温める表を desired にするため。届かなければ desired-when-unreachable(fence の判断)。"
   (val sending state.statuses)
+  (val stopping state.stopping)
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
   (setv state.watch.woken False)
   (val endpoint (get cell.route.urls cell.route.active))
@@ -323,7 +327,8 @@
   (<- kept tuple (keep-marks-held state.last-jobs))
   (val body (| (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
                                :capacity state.capacity :versions state.versions :statuses sending
-                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept)
+                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
+                               :stopping stopping)
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
                    (env-heartbeat-part state.env-report (current-platform)))))
@@ -353,6 +358,7 @@
     (<- (told-once state "" (.format "worker: coordinator {} に名乗りました" endpoint)))
     ;; 次の拍の判断の材料(#1933): 届けた状態の報告・送る間隔・待ちの after(返事の版 — 無ければ旧い coordinator)。
     (setv state.sent-statuses sending
+          state.sent-stopping stopping
           state.beat-interval-ms (beat-interval-ms timing state.task-echo)
           state.last-desired (DesiredJobs (+ state.last-jobs state.last-tasks) :warm state.last-warm))
     (setv state.watch.after (reply-revision answered))
@@ -375,7 +381,9 @@
   (<- now-ms int (now-epoch-ms))
   (<- watching bool (watching? state))
   (var desired state.last-desired)
-  (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken (!= state.statuses state.sent-statuses)
+  ;; 止まり始めは状態の報告の違いと同じく、送る間隔を待たずに名乗る(#2819)。
+  (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken
+                       (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping))
                        (- now-ms state.last-ok-ms) state.beat-interval-ms)
     (<- beaten (beat state cell options))
     (:= desired beaten))
@@ -403,10 +411,12 @@
 
 (defhandler coordinator-link [#^ LinkState state #^ RouteCell cell #^ RouteOptions options #^ RouteCell watch-cell]
   ;; 引数に残す理由: 拍から拍へ持ち越す値(state)と宛先の状態(cell・待ちの watch-cell)は組み立てが作る入れ物・送り方は worker の process の値。
-  (ReadDesired [env-report]
-    ;; heartbeat に載せる root の名乗りは、拍の Program が root の言い換えに問うて欄で渡す(#2467・#2427)。
+  (ReadDesired [env-report stopping]
+    ;; heartbeat に載せる root の名乗りは、拍の Program が root の言い換えに問うて欄で渡す(#2467・#2427)。止まり始めも同じく欄で
+    ;; 渡し、heartbeat で名乗る(#2819)。
     (when state.handles-envs
       (setv state.env-report env-report))
+    (setv state.stopping stopping)
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))

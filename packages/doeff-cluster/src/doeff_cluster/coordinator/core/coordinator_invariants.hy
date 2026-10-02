@@ -13,6 +13,11 @@
 ;;; 新しい世代とは長い方の柵(印の在る job も keep-fence-ms で止める — 数の前提は ClusterTiming.keep-fence-ms の註)。
 ;;; 判断は記録(job の process ごとの生きていた区間)を受けて重なりの列を返す純関数 1 つ。記録を集めるのは検(tests/test_keep_when_cut_off.hy
 ;;; の途絶の筋書き — 模擬の世界の ProcessesOf の process の始まりと終わり)。
+;;;
+;;; 条 C3 stopped-generation-gets-no-new-task: 止まり始めた worker の世代(drain の頼みを通らない止め — sigterm・機体の終了・手の kill)へ、
+;;; 止まり始めの後に新しい task を置かない。その世代は task を始めずに抜け、切り離した task は同じ名の新しい世代へ渡らないので、置かれた
+;;; task は lease まで止まる(#2819)。判断は記録(止めた世代の列と、止めた後・戻す前に読めた task の置き先の列)を受けて破りの列を返す
+;;; 純関数 1 つ。記録を集めるのは検(tests/test_detached_runners.hy の drain を頼まない止めの検)。
 
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
@@ -56,3 +61,27 @@
                :setv b (get ordered j)
                :if (and (< b.started-ms (ending a)) (< a.started-ms (ending b)))
                (SpanOverlap :first a :second b))))
+
+
+(defrecord StoppedGeneration
+  "条 C3 の記録: 止まり始めた worker の世代 1 つ(worker = 名・boot = その process の世代)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ str boot))
+
+
+(defrecord TaskPlacementSeen
+  "条 C3 の記録: 読めた task の置き先 1 つ(key = task の鍵・worker = 置かれた worker の名・boot = 読んだ時のその worker の世代)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str key)
+  (#^ str worker)
+  (#^ str boot))
+
+
+(defk stopped-generation-gets-no-new-task [stopped placed]
+  {:pre [(: stopped (get tuple #(StoppedGeneration ...))) (: placed (get tuple #(TaskPlacementSeen ...)))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 C3: 止めた後に読めた task の置き先のうち、止まり始めた世代(同じ worker の名と世代)に置かれた物を破りとする — その task の鍵の列
+   (空なら緑)。coordinator が止まる途中の世代へ task を置かず、lease まで止まる task を作らないことを、止めの筋書きの記録から判じるため。"
+  (val gone (frozenset (gfor g stopped #(g.worker g.boot))))
+  (tuple (sorted (gfor p placed :if (in #(p.worker p.boot) gone) p.key))))
