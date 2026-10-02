@@ -7,31 +7,40 @@
 鍵(sha256)= 次のどれかが変われば別の鍵になる:
 - 展開する source の中身・その module 名・根からの相対 path(診断の path と import の解決に効く)。
 - doeff-hy の macro と型検査の展開の source(doeff_hy の .hy / .py 全部 — macro が変われば展開が変わる)。
-- source が `require` する根の下の macro の module の中身(推移的に)。
+- source が `require` する根の下の macro の module の中身(推移的に)。名は Hy の compiler が require に渡すのと同じ
+  名で拾う — 点つきの `a.b.c`(reader は `(. a b c)` の式に読む)・1 つの require に並べた 2 つ目からの module・
+  相対の `.x`(source の package から解く)も。点つきの名を拾わず、macro を変えても古い展開が当たっていた
+  (agora-redesign #2696)。
 - この file の版(CACHE_VERSION — 保存の形を変えたら上げる)。
 
 鍵を作るには source が `require` する module の名が要り、それを知るには source を Hy の reader で読む。読みは展開の
 次に重く、cache が温かくても検める file の依存の全部(agora の controllers/agora_sim/screen.hy で 350 個)を毎回読み直して
 いた(1 file の測りの約 29 秒のほとんど — agora-redesign #2675)。だから読みの結果(require する名の列)も source の中身の
-指紋ごとに保存して引く(<cache dir>/requires/<頭 2 字>/<指紋>.txt — 1 行 1 名)。指紋 = Hy の版と source の中身
-(reader の答えはこの 2 つだけで決まる)。展開の保存と別の拡張子にして、展開の数え(*.json)に混ぜない。
+指紋ごとに保存して引く(<cache dir>/requires/<頭 2 字>/<指紋>.txt — 1 行 1 名)。指紋 = 読みの版(REQUIRES_VERSION)・
+Hy の版・source の中身(reader の答えは後の 2 つだけで決まる)。読みの答えの意味を変えたら REQUIRES_VERSION を上げ、
+古い版の保存(点つきの名を欠いた答え)を読まない。展開の保存と別の拡張子にして、展開の数え(*.json)に混ぜない。
 
 保存の形は 1 鍵 1 file の JSON(<cache dir>/<鍵の頭 2 字>/<鍵>.json)。壊れた file は読めない物として捨てて展開し直す。
 """
 
 import hashlib
+import importlib.util
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
 import hy
 from hy.errors import HyLanguageError
-from hy.models import Expression, Symbol
+from hy.models import Expression, Keyword, Symbol
 
 import doeff_hy
 
 CACHE_VERSION = 1
+# require の読みの保存の版(上の docstring)。1 = 一番外の require の 1 つ目の点なしの名だけ。
+# 2 = Hy の compiler が require に渡す名を全部(点つき・2 つ目からの module・相対)— agora-redesign #2696。
+REQUIRES_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -84,9 +93,9 @@ def _doeff_hy_digest() -> str:
 
 
 def _requires_entry(cache_dir: Path, text: str) -> Path:
-    """require する名の列の保存先(Hy の版と source の中身の指紋 — 上の docstring)。"""
+    """require する名の列の保存先(読みの版・Hy の版・source の中身の指紋 — 上の docstring)。"""
     digest = hashlib.sha256()
-    for part in ("requires", str(CACHE_VERSION), hy.__version__, text):
+    for part in ("requires", str(REQUIRES_VERSION), hy.__version__, text):
         digest.update(part.encode())
         digest.update(b"\0")
     key = digest.hexdigest()
@@ -94,7 +103,7 @@ def _requires_entry(cache_dir: Path, text: str) -> Path:
 
 
 def _required_modules(text: str, cache_dir: Path | None = None) -> tuple[str, ...]:
-    """source の一番外の `(require M ...)` の M の名(macro の展開が依る module を鍵に入れるため)。cache_dir があれば
+    """source の一番外の `(require …)` が require する module の名(macro の展開が依る module を鍵に入れるため)。cache_dir があれば
     読みの結果を source の中身の指紋ごとに引き、無ければ読んで保存する(上の docstring — 毎回の reader の読みを省くため)。"""
     if cache_dir is None:
         return _read_required_modules(text)
@@ -115,40 +124,121 @@ def _required_modules(text: str, cache_dir: Path | None = None) -> tuple[str, ..
 
 
 def _read_required_modules(text: str) -> tuple[str, ...]:
-    """source を Hy の reader で読み、一番外の `(require M ...)` の M の名を並べる(保存しない読みの 1 か所)。"""
+    """source を Hy の reader で読み、一番外の `(require …)` が require する module の名を並べる(保存しない読みの 1 か所)。"""
     try:
         forms = hy.read_many(text)
         return tuple(
-            str(form[1])
+            name
             for form in forms
-            if isinstance(form, Expression)
-            and len(form) >= 2
-            and form[0] == Symbol("require")
-            and isinstance(form[1], Symbol)
+            if isinstance(form, Expression) and len(form) >= 2 and form[0] == Symbol("require")
+            for name in _require_entries(form[1:])
         )
     except HyLanguageError:  # 読めない source は展開も失敗する(CompileFailure)— 鍵は source の中身だけで決まる
         return ()
 
 
-def _macro_sources(
-    roots: tuple[Path, ...], text: str, seen: frozenset[Path] = frozenset(), cache_dir: Path | None = None
-) -> tuple[Path, ...]:
-    """source が require する根の下の .hy を推移的に集める(根の外 = doeff-hy などは _doeff_hy_digest が持つ)。"""
-    found = tuple(
+def _require_entries(arguments: Sequence[object]) -> tuple[str, ...]:
+    """`(require …)` の引数のうち module の名の物を並べる。Hy の文法では module の名の後に `[名 …]`・`*`・
+    `:as 別名`・`:macros …`・`:readers …` が 0〜2 つ続き、その後に次の module の名が来てよい。名でない物 =
+    括弧・`*`・keyword・`:as` の次の別名。"""
+    return tuple(
+        name
+        for previous, argument in zip((None, *arguments), arguments)
+        if not (isinstance(previous, Keyword) and previous == Keyword("as"))
+        and (name := _module_name(argument)) is not None
+    )
+
+
+def _module_name(argument: object) -> str | None:
+    """require の 1 つの引数が module の名なら、Hy の compiler が require に渡すのと同じ名(hy.core.result_macros の
+    module_name_str と compile_require の規則 — 部分ごとに mangle・相対は先頭の点を残す)。名でなければ None。
+    reader は `a.b.c` を `(. a b c)`、相対の `.x` を `(. None x)`・`..x.y` を `(.. None x y)` の式に読む。"""
+    match argument:
+        case Symbol() if argument == Symbol("*"):
+            return None
+        case Symbol() if not argument.strip("."):
+            return str(argument)  # `.` だけ = その source の package(相対)
+        case Symbol():
+            return hy.mangle(argument)
+        case Expression():
+            return _dotted_module_name(tuple(argument))
+        case _:
+            return None
+
+
+def _dotted_module_name(parts: tuple[object, ...]) -> str | None:
+    """`(. a b c)`・`(. None x)`・`(.. None x y)` の式の module の名(頭が点だけの記号で、残りが全部記号の時だけ)。"""
+    symbols = tuple(part for part in parts if isinstance(part, Symbol))
+    if len(symbols) != len(parts) or len(symbols) < 2 or symbols[0].strip("."):
+        return None
+    head, *rest = symbols
+    relative = rest[0] == Symbol("None")
+    dotted = ".".join(hy.mangle(part) for part in (rest[1:] if relative else rest))
+    return f"{head}{dotted}" if relative else dotted
+
+
+@dataclass(frozen=True)
+class _MacroSource:
+    """require で読む根の下の macro の module の file と、その file の相対の require(`.x`)を解く package。"""
+
+    path: Path
+    package: str
+
+
+def _package_of(module: str, path: Path) -> str:
+    """module の相対の require を解く package(__init__.hy なら module 自身・他は親の package)。"""
+    return module if path.name == "__init__.hy" else module.rpartition(".")[0]
+
+
+def _absolute_module(name: str, package: str) -> str | None:
+    """require の名を絶対の module 名にする。相対の名は package から解き、解けなければ None(Hy の require も失敗する)。"""
+    if not name.startswith("."):
+        return name
+    try:
+        return importlib.util.resolve_name(name, package)
+    except (ImportError, ValueError):
+        return None
+
+
+def _module_files(roots: tuple[Path, ...], module: str) -> tuple[Path, ...]:
+    """module の名が根の下で当たりうる file(根ごとに <名>.hy と <名>/__init__.hy)。"""
+    return tuple(
         candidate
-        for name in _required_modules(text, cache_dir)
         for root in roots
         for candidate in (
-            root.joinpath(*hy.mangle(name).split(".")).with_suffix(".hy"),
-            root.joinpath(*hy.mangle(name).split(".")) / "__init__.hy",
+            root.joinpath(*module.split(".")).with_suffix(".hy"),
+            root.joinpath(*module.split(".")) / "__init__.hy",
         )
+    )
+
+
+def _macro_sources(
+    roots: tuple[Path, ...],
+    text: str,
+    package: str,
+    seen: frozenset[Path] = frozenset(),
+    cache_dir: Path | None = None,
+) -> tuple[Path, ...]:
+    """source が require する根の下の .hy を推移的に集める(根の外 = doeff-hy などは _doeff_hy_digest が持つ)。
+    package = source の相対の require を解く package。"""
+    modules = tuple(
+        absolute
+        for name in _required_modules(text, cache_dir)
+        if (absolute := _absolute_module(name, package)) is not None
+    )
+    found = tuple(
+        _MacroSource(candidate, _package_of(module, candidate))
+        for module in modules
+        for candidate in _module_files(roots, module)
         if candidate.is_file() and candidate not in seen
     )
-    known = seen | frozenset(found)
-    return found + tuple(
+    known = seen | frozenset(macro.path for macro in found)
+    return tuple(macro.path for macro in found) + tuple(
         deeper
-        for path in found
-        for deeper in _macro_sources(roots, path.read_text(encoding="utf-8"), known, cache_dir)
+        for macro in found
+        for deeper in _macro_sources(
+            roots, macro.path.read_text(encoding="utf-8"), macro.package, known, cache_dir
+        )
     )
 
 
@@ -161,7 +251,8 @@ def cache_key(
     for part in (str(CACHE_VERSION), _doeff_hy_digest(), module, relative, text):
         digest.update(part.encode())
         digest.update(b"\0")
-    for macro in sorted(set(_macro_sources(roots, text, cache_dir=cache_dir))):
+    package = _package_of(module, source)
+    for macro in sorted(set(_macro_sources(roots, text, package, cache_dir=cache_dir))):
         digest.update(macro.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
