@@ -11,7 +11,7 @@
 ;; 検めの間(走っている・同じ木の検めの終わりを待っている)は starting ではなく probing と出し、状態の行の probe に経過の秒・回数・
 ;; 直前の失敗の理由を載せる(2026-09-27 — 以前は 17 分 starting のままで、理由は FAILED から撃ち直すまでの 30 秒しか見えなかった)。
 ;; 同じ木の検めを 1 本にまとめる・時間切れで process group ごと止めるのは検めの process の持ち主(handlers.ProbeStore)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [replace])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
@@ -250,6 +250,19 @@
                           action (plan-job now name desired world (.get records name (JobRecord name)) policy)
                           action)))
   (+ jobs (warm-actions now warm world jobs policy) (sweep-actions desired world warm) (forget-probe-actions desired world)))
+
+(defk ready-followups [now desired before after records policy]
+  {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy)]
+   :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "拍の action の後の観測(after)で木が揃った job を、次の拍を待たずに同じ判断(plan-job)で進める action を求めるため(#2719)。
+   対象は拍の頭の観測(before)で木が READY でなく、after で READY になった宣言の job だけ — 準備がその拍のうちに揃う宿(模擬の
+   prepare-seconds = 0・cache に完成品の在る版)で、最初の task の起動が拍 1 つ遅れる形をやめる。揃っていなければ空(今までどおり後の拍で
+   揃いを観測してから起こす)。records = 拍の action を数えた後の記憶。"
+  (tuple (gfor spec desired
+               :if (and (is (ready-path (code-of before (code-key spec))) None)
+                        (is-not (ready-path (code-of after (code-key spec))) None))
+               action (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy)
+               action)))
 
 (defn #^ JobRecord record-after [#^ int now #^ JobRecord record #^ Action action #^ WorkerPolicy [policy (WorkerPolicy)]]
   (cond
