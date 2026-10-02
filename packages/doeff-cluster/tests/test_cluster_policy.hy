@@ -1,4 +1,4 @@
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -135,15 +135,58 @@
 
 (deftest test-a-queued-task-fails-when-no-registered-worker-can-ever-run-it
   ;; 待っても晴れない理由は今どおり失敗: 能力の合う worker が 1 台も登録されていない(上の test-task-follows-the-same-dedicated-rule と
-  ;; 同じ)・登録された worker の版が違う・切り離した task の lease の期限を過ぎた。
+  ;; 同じ)・登録された worker の版が違う・合う worker が待ちの期限(ClusterTiming.silent-worker-wait-ms)より長く live でない。
   (setv other (replace (worker "atlas" 0 10 "cluster-net") :versions #((ComponentVersion "python" "3"))))
   (setv none (get (place-tasks 15000 (ClusterState #() {"atlas" other} {} {"t1" (task "t1" #("verify"))}) {} T) "t1"))
   (assert (= none.phase "failed") none.phase)
   (setv old (replace (worker "verify-1" 0 1 "verify") :versions #((ComponentVersion "python" "2")) :exclusive #("verify")))
   (setv mismatch (get (place-tasks 15000 (ClusterState #() {"verify-1" old} {} {"t1" (task "t1" #("verify"))}) {} T) "t1"))
   (assert (= mismatch.phase "failed") mismatch.phase)
-  (setv expired (get (place-tasks 25000 (silent-verify-state 0 True) {} T) "t1"))
+  (setv expired (get (place-tasks (+ T.silent-worker-wait-ms 1) (silent-verify-state 0 True) {} T) "t1"))
   (assert (= expired.phase "failed") expired.phase))
+
+
+;; --- 待ちの上限は task の lease ではなく明示の期限(#2753)-------------------------------------------------------------------
+;; 2026-10-02 唯一の能力の合う worker の入れ替え(古い Pod の drain → 新しい Pod の名乗り)の間に、待ち行列の切り離した task 2 本が
+;; 「版と能力が合う worker が無い」で failed になった。切り離した task の lease は積んだ時の 60 秒しかなく、#2440 の待ちはその lease までだった。
+;; 待つ長さは、能力と版の合う登録された worker の最後の連絡から ClusterTiming.silent-worker-wait-ms まで(lease とは別)。
+
+(deftest test-a-queued-detached-task-waits-past-its-lease-while-the-capable-worker-is-away
+  ;; 失敗ケース(直す前の版では「版と能力(専用の能力を含む)が合う worker が無い」で failed): task の lease の期限(20000)を過ぎ、唯一の
+  ;; 能力の合う worker が 120 秒 live でない(drain に入ってから 60 秒より長い)。
+  (val waiting (get (place-tasks 120000 (silent-verify-state 0 True) {} T) "t1"))
+  (assert (= waiting.phase "queued") #(waiting.phase waiting.detail))
+  (assert (in "verify-1 がいま連絡していない" waiting.detail) waiting.detail)
+  (assert (in (.format "待ちの期限 = 最後の連絡から {} 秒" (// T.silent-worker-wait-ms 1000)) waiting.detail) waiting.detail)
+  ;; 待っている間の記録は拍ごとに変わらない(detail に経った秒を書かない — 変われば調停が拍ごとに保存し、版を進める)。
+  (assert (= (get (place-tasks 121000 (silent-verify-state 0 True) {} T) "t1") waiting))
+  ;; worker が名乗り直すと置かれる(lease の期限を過ぎていても)。
+  (val placed (get (place-tasks 120000 (silent-verify-state 119000 True) {} T) "t1"))
+  (assert (= #(placed.phase placed.worker) #("assigned" "verify-1")) #(placed.phase placed.detail)))
+
+(deftest test-a-queued-task-fails-by-name-when-the-capable-worker-stays-away-past-the-deadline
+  ;; 期限ちょうどまでは待ち、過ぎた拍に、待った長さと期限を名指して失敗にする(切り離した task も、呼び手が問い合わせを続ける
+  ;; — lease が延びている — 切り離していない task も)。
+  (val limit T.silent-worker-wait-ms)
+  (val named (.format "verify-1 が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)" (+ (// limit 1000) 1) (// limit 1000)))
+  (for [detached [False True]]
+    (val silent (silent-verify-state 0 detached))
+    (val state (replace silent :tasks (dfor #(k t) (.items silent.tasks) k (replace t :lease-until-ms (* 2 limit)))))
+    (assert (= (. (get (place-tasks limit state {} T) "t1") phase) "queued") detached)
+    (val failed (get (place-tasks (+ limit 1000) state {} T) "t1"))
+    (assert (= #(failed.phase failed.finished-ms) #("failed" (+ limit 1000))) #(detached failed.phase))
+    (assert (in named failed.detail) failed.detail)))
+
+(deftest test-the-wait-counts-from-the-most-recent-capable-worker
+  ;; 能力の合う worker が 2 台登録されている時は、最後の連絡が新しい方から数える(古い方が期限より長く黙っていても、新しい方が期限の内なら待つ)。
+  (val limit T.silent-worker-wait-ms)
+  (val old (replace (worker "verify-old" 0 1 "verify") :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  ;; verify-new も生存の窓(10 秒)の外(61 秒 live でない)— 置けないが、期限の内なので待つ。
+  (val new (replace (worker "verify-new" (- limit 60000) 1 "verify") :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (val state (ClusterState #() {"verify-old" old "verify-new" new} {} {"t1" (replace (task "t1" #("verify")) :detached True)}))
+  (val waiting (get (place-tasks (+ limit 1000) state {} T) "t1"))
+  (assert (= waiting.phase "queued") #(waiting.phase waiting.detail))
+  (assert (in "verify-new・verify-old がいま連絡していない" waiting.detail) waiting.detail))
 
 
 ;; --- 能力の名乗りの形(ADR-DOE-CLUSTER-001 R4b)-----------------------------------------------------

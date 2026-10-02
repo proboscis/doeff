@@ -20,6 +20,7 @@
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
@@ -43,6 +44,13 @@
 (val POLL 0.5)
 ;; coordinator の名簿の lease(ClusterTiming.lease-ms = 10 秒)より長く待てば、死んだ担い手は名簿で live でなくなる。
 (val AFTER-LEASE 15.0)
+;; 2 つの組の coordinator の時間の設定: 能力の合う担い手が live でない間に待っている task を待たせる上限だけを 180 秒に縮める
+;; (本番の既定は 5 時間 — 期限を過ぎる筋書きを短い仮想の時間で回すため)。ほかは本番の既定。
+(val TIMING (ClusterTiming :silent-worker-wait-ms 180000))
+(val WAIT-LIMIT-SECONDS (// TIMING.silent-worker-wait-ms 1000))
+;; 切り離した task を積んだ時の lease(本番の定期の task と同じ 60 秒)と、担い手が名簿で live でない長さ(lease より長く、上限より短い)。
+(val QUEUED-LEASE 60.0)
+(val AWAY 90.0)
 
 ;; --- 組 -----------------------------------------------------------------------------------------------------
 
@@ -118,7 +126,7 @@
   {:pre [(: tmp-path Path)] :post [(: % RunnersRig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator の組を開くため(担い手 a・b の RigWorker と、本物の detached-cluster・operator の口)。"
   (let [clock (SimClock)
-        coordinator (MemoryCoordinator clock)
+        coordinator (MemoryCoordinator clock TIMING)
         transport (httpx.MockTransport coordinator.handle)
         runners (CoordinatorRunners tmp-path transport)
         operator (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"})]
@@ -155,7 +163,7 @@
   {:pre [(: rig RunnersRig) (: scenario Program)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きを組の上で回すため(sim の組は sim-cluster の中で・担い手 a・b は sim の worker)。"
   (if (= rig.kind "sim")
-      (<- (sim-cluster NO-JOBS scenario :workers SIM-RUNNERS))
+      (<- (sim-cluster NO-JOBS scenario :workers SIM-RUNNERS :timing TIMING))
       (<- (with-handlers rig.handlers (rig-body rig scenario))))
   True)
 
@@ -258,6 +266,67 @@
   (assert (isinstance rig-name str) rig-name)
   (<- rig RunnersRig (open-named rig-name tmp-path))
   (<- ok (run-on rig (no-runner-with-the-capability)))
+  (assert ok))
+
+
+;; --- 唯一の担い手の入れ替えの間の待ち(#2753)---------------------------------------------------------------------------
+;; 2026-10-02 唯一の能力の合う担い手の入れ替え(古い Pod の drain → 抜ける → 新しい Pod の名乗り)の間に、待ち行列の切り離した task が
+;; 積んだ時の lease(60 秒)を過ぎた拍に「版と能力が合う worker が無い」で落ちた。待ちの上限は task の lease ではなく coordinator の明示の
+;; 期限(ClusterTiming.silent-worker-wait-ms — この file の組では TIMING の 180 秒)。
+
+(defk away-longer-than-the-lease-then-return []
+  {:pre [] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: a を drain してから x-tool を要る task を積み、a を止めて task の lease(60 秒)より長く(90 秒)戻さない。task は待ちのまま
+   (失敗にしない)で、a が新しい世代で名乗り直すと置かれて終わる(直す前の版では lease を過ぎた拍に DetachedUnrunnable)。"
+  (<- asked dict (DrainWorker "a"))
+  (assert (= (get asked "status") 200) asked)
+  (<- (Delay POLL))
+  (<- (submit-detached-task (slow-add SLOW 7) :key "k-away" :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- (StopWorker "a"))
+  (<- (Delay AWAY))
+  (<- waiting (AwaitDetached "k-away" :timeout-seconds 0.0))
+  (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
+  (<- started bool (StartWorker "a"))
+  (assert started)
+  (<- done (AwaitDetached "k-away"))
+  (assert (= done (DetachedSucceeded 107)) done)
+  True)
+
+(deftest test-a-queued-task-waits-past-its-lease-while-the-only-runner-is-replaced [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (away-longer-than-the-lease-then-return)))
+  (assert ok))
+
+
+(defk away-past-the-wait-limit []
+  {:pre [] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: a を drain して止めてから(本番の入れ替えと同じ順 — drain の無い止めの直後は、名簿の生存の窓の内に積んだ task が止めた担い手に
+   置かれる)x-tool を要る task を積み、待ちの期限(180 秒)より長く戻さない。task は、能力の合う担い手の名と live でない長さと期限を名指して
+   DetachedUnrunnable で終わり、その後に a が戻っても走らない(終わった task は変わらない)。"
+  (<- asked dict (DrainWorker "a"))
+  (assert (= (get asked "status") 200) asked)
+  (<- (Delay POLL))
+  (<- (StopWorker "a"))
+  (<- (submit-detached-task (slow-add SLOW 8) :key "k-gone" :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- outcome (AwaitDetached "k-gone"))
+  (assert (isinstance outcome DetachedUnrunnable) outcome)
+  (assert (in (.format "の worker a が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)" (+ WAIT-LIMIT-SECONDS 1) WAIT-LIMIT-SECONDS)
+              outcome.detail)
+          outcome.detail)
+  (<- started bool (StartWorker "a"))
+  (assert started)
+  (<- (Delay AFTER-LEASE))
+  (<- still (AwaitDetached "k-gone" :timeout-seconds 0.0))
+  (assert (= still outcome) still)
+  True)
+
+(deftest test-a-queued-task-fails-by-name-when-the-only-runner-stays-away-past-the-limit [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (away-past-the-wait-limit)))
   (assert ok))
 
 

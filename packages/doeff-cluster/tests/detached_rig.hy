@@ -130,8 +130,8 @@
 (defclass MemoryCoordinator []
   "本物の api_policy.respond / tick を httpx の MockTransport の後ろに置く。時刻は仮想の時計。要求の前に tick する(本物の調停
    ループは要求の無い拍に tick する)。"
-  (defn #^ None __init__ [self #^ SimClock clock]
-    (setv self.clock clock self.state (ClusterState) self.timing (ClusterTiming)))
+  (defn #^ None __init__ [self #^ SimClock clock #^ ClusterTiming [timing (ClusterTiming)]]
+    (setv self.clock clock self.state (ClusterState) self.timing timing))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (setv now (clock-ms self.clock)
