@@ -1,5 +1,5 @@
-;;; 手元の 1 台の cluster(#3031・ADR-DOE-CLUSTER-001 R8 と追補): coordinator 1 つと worker を、この機体の子 process として起こし、
-;;; 筋書き(scenario の Program)を走らせ、終わりに全部止める。
+;;; 手元の 1 台の cluster(#3031・#3032・ADR-DOE-CLUSTER-001 R8 と追補): coordinator 1 つと worker を、この機体の子 process として
+;;; 起こし、筋書き(scenario の Program)を走らせ、終わりに全部止める。
 ;;;
 ;;;   (local-machine-cluster scenario :machine (LocalMachine :work-dir "/tmp/x" :port 18080 :workers #((SimWorker :name "w1" :provides #{"a"}))))
 ;;;
@@ -8,11 +8,22 @@
 ;;; WORK_DIR・COORDINATOR_URL・WORKER_NAME・WORKER_PROVIDES ほか)で起こす — 2 つ目の起こし方を作らない。worker の顔ぶれは sim と同じ値
 ;;; (SimWorker の name・provides・exclusive・capacity・node)で渡し、命令の引数を足さない。
 ;;;
-;;; 筋書きが今ここで出せる effect は ReadCoordinator(coordinator の口の GET)だけ。契約の effect(shared/intent/cluster_control)に
-;;; この handler が答えるのは #3032 で足す。
+;;; 筋書きが出せる effect(machine-answers が答える):
+;;;   ReadCoordinator path        coordinator の口の GET の本文(sim と同じ)。
+;;;   ReadinessOf 名              GET /resources/Service/<名> の status の ready(無ければ Missing — sim と同じ答え)。
+;;;   KillWorker 名               worker の process を SIGKILL で落とす(答え = 落とした数 — もう居なければ 0)。
+;;;   StopWorker 名               worker を優雅に止める(SIGTERM → stop-grace 秒 → SIGKILL・抜けるまで待つ)。
+;;;   StopCoordinator 秒          coordinator を優雅に止め、秒の間止めてから同じ置き場で作り直し、起き上がるまで待って答える。
+;;;   CrashCoordinator 秒         coordinator を SIGKILL で落とし(返事をせずに落ちる)、秒の後に同じ置き場で作り直して答える。
+;;;   CutWorker・StallWorker・FailRoute は答えない — MachineCannotAnswer で、その effect の名と訳を出して止める(網を切る・固める・5xx を
+;;;   返させるのは sim だけ・ADR の追補 (3) の残り)。系の宣言(Redeclare)と job を落とす(Crash)は、手元の worker が job の code を
+;;;   手に入れる道と一緒に #3032 の子で足す。
+;;; sim との違い: sim の StopCoordinator / CrashCoordinator は次の拍で止まり、筋書きと並んで秒の後に作り直す。ここでは作り直して起き上がる
+;;; まで答えを返さない(止まっている間の要求を筋書きが出すことは無い)。
 ;;;
 ;;; 止め方: 筋書きが値で終わっても例外で終わっても、worker を先に、coordinator を後に StopProcess で止める(SIGTERM → stop-grace 秒 →
-;;; SIGKILL・process の group ごと)。この module はテストの環境で、本番の code は読まない(sim の dir の決まり — architecture.hy)。
+;;; SIGKILL・process の group ごと)。止めるのは今の顔ぶれ(作り直した coordinator を含む — MachineCell)。この module はテストの環境で、
+;;; 本番の code は読まない(sim の dir の決まり — architecture.hy)。
 (require doeff-hy.macros [defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "entry"})
@@ -20,6 +31,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import pathlib [Path])
+(import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers Program EffectBase])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -27,17 +39,23 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.file_effects [MakeDirectory FileFailed])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_core_effects.process_effects [StartProcess StopProcess PollProcess ProcessStarted ProcessNotStarted ProcessRunning
-                                            ProcessExited ProcessNotChild EnvMode EnvEntry])
+(import doeff_core_effects.process_effects [StartProcess StopProcess PollProcess SignalProcess ProcessSignal ProcessSignalled ProcessStarted
+                                            ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild EnvMode EnvEntry])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster.sim.local [SimWorker ReadCoordinator])
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
+                                                     CrashCoordinator])
+(import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 
 ;; 配備と同じ起動の script(packages/doeff-cluster/deploy/boot.sh — この file は src/doeff_cluster/sim/ に在る)。
 (val BOOT-SCRIPT (str (/ (get (. (Path __file__) parents) 3) "deploy" "boot.sh")))
-;; 起き上がりを問い直す間隔(秒)。
+;; 起き上がりを問い直す間隔・SIGKILL の後に回収を問い直す間隔(秒)。
 (val PROBE-SECONDS 0.2)
+
+
+(defclass MachineCannotAnswer [Exception]
+  "手元の 1 台の cluster が答えない effect(網を切る・固める・5xx を返させる — sim だけが答える)を筋書きが出した。")
 
 
 (defrecord LocalMachine
@@ -53,10 +71,20 @@
 
 
 (defrecord MachineProcess
-  "起こした役 1 つ(name = coordinator か worker の名・pid = StartProcess の答え・log = 出力の file)。"
+  "起こした役 1 つ(name = coordinator か worker の名・pid = StartProcess の答え・log = 出力の file・home = 作業の dir・env = boot.sh に
+   渡した環境変数 — 作り直す時に同じ物で起こす)。"
   (#^ str name)
   (#^ int pid)
-  (#^ str log))
+  (#^ str log)
+  (#^ str home)
+  (#^ (get tuple #(EnvEntry ...)) env))
+
+
+(defclass MachineCell []
+  "起こした役の今の顔ぶれの入れ物(作り直した coordinator で入れ替わる — 終わりの止めはこの今の顔ぶれを止める)。宛先の部品の
+   RouteCell と同じく、組み立て(local-machine-cluster)が作って handler と本体に渡し、書き換えるのは本体と handler の節だけ。"
+  (defn #^ None __init__ [self]
+    (setv self.roles #())))
 
 
 (defk coordinator-url [machine]
@@ -102,7 +130,7 @@
   (<- started (StartProcess :argv #("sh" BOOT-SCRIPT) :env env :env-mode EnvMode.EXTEND :stdout-path log :stderr-path log
                             :process-group True :reap-group True))
   (match started
-    (ProcessStarted :pid pid) (MachineProcess :name name :pid pid :log log)
+    (ProcessStarted :pid pid) (MachineProcess :name name :pid pid :log log :home home :env env)
     (ProcessNotStarted :detail detail) (raise (RuntimeError (+ name " を起こせない: " detail)))))
 
 
@@ -145,45 +173,116 @@
 (defk stopped [roles stop-grace]
   {:pre [(: roles (get tuple #(MachineProcess ...))) (: stop-grace float)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "program"}}
-  "起こした役を並べた順に止めて回収するため(SIGTERM → stop-grace 秒 → SIGKILL・group ごと)。"
+  "起こした役を並べた順に止めて回収するため(SIGTERM → stop-grace 秒 → SIGKILL・group ごと — もう回収した役は ProcessNotChild で何もしない)。"
   (for [role roles]
     (<- (StopProcess :pid role.pid :stop-grace stop-grace)))
   None)
 
 
-;; 引数に残す理由: 宛先の URL は、この handler を積む組み立て(local-machine-cluster)が LocalMachine の port から決める値で、
-;; 読む Ask の鍵が無い(本番の宛先の部品は RouteCell を引数で受ける — detached-cluster と同じ)。
-(defhandler machine-answers [#^ str url]
+(defk killed [role]
+  {:pre [(: role MachineProcess)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
+  "役の process を SIGKILL で落として回収するため(答え = 落とした数 — もう終わっていた・回収済みなら 0)。"
+  (<- sent (SignalProcess :pid role.pid :signal ProcessSignal.KILL))
+  (if (and (isinstance sent ProcessSignalled) sent.delivered)
+      (do (var gone False)
+          (while (not gone)
+            (<- polled (PollProcess role.pid))
+            (if (isinstance polled ProcessRunning)
+                (<- (Delay PROBE-SECONDS))
+                (:= gone True)))
+          1)
+      0))
+
+
+(defk role-named [cell name]
+  {:pre [(: cell MachineCell) (: name str)] :post [(: % MachineProcess)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "今の顔ぶれから名前の役を引くため(居なければ名前を出して止める — 筋書きの名前の誤り)。"
+  (val found (lfor role cell.roles :if (= role.name name) role))
+  (when (not found)
+    (raise (KeyError (+ "手元の 1 台に " name " という役は居ない(居るのは "
+                        (.join "・" (lfor role cell.roles role.name)) ")"))))
+  (get found 0))
+
+
+(defk coordinator-remade [url cell machine down-seconds]
+  {:pre [(: url str) (: cell MachineCell) (: machine LocalMachine) (: down-seconds float)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "止めた(落とした)coordinator を down-seconds の後に同じ置き場・同じ環境変数で作り直し、起き上がるまで待って今の顔ぶれを入れ替えるため。"
+  (<- old MachineProcess (role-named cell "coordinator"))
+  (<- (Delay down-seconds))
+  (<- fresh MachineProcess (started-role old.name old.home old.env))
+  (setv cell.roles (tuple (lfor role cell.roles (if (= role.name old.name) fresh role))))
+  (<- (await-up url fresh (fn [_state] True) machine.boot-seconds))
+  None)
+
+
+;; 引数に残す理由: 宛先の URL・役の入れ物・置き方は、この handler を積む組み立て(local-machine-cluster)が LocalMachine から作る
+;; 値で、読む Ask の鍵が無い(本番の宛先の部品は RouteCell を引数で受ける — detached-cluster と同じ)。
+(defhandler machine-answers [#^ str url #^ MachineCell cell #^ LocalMachine machine]
   (ReadCoordinator [path]
     (<- answer (HttpRequest "GET" (+ url path) :timeout-seconds 10.0 :max-retries 0 :failures-as-values True))
     (when (not (isinstance answer HttpResponse))
       (raise (RuntimeError (+ "coordinator に届かない: " path " — " (repr answer)))))
     (resume (if (.startswith (.get answer.headers "content-type" "") "application/json")
                 (json.loads answer.text)
-                (PlainText answer.text)))))
+                (PlainText answer.text))))
+  (ReadinessOf [name]
+    (<- answer (HttpRequest "GET" (+ url "/resources/Service/" (url-quote name :safe "")) :timeout-seconds 10.0 :max-retries 0
+                            :failures-as-values True))
+    (when (not (isinstance answer HttpResponse))
+      (raise (RuntimeError (+ "coordinator に届かない: Service " name " — " (repr answer)))))
+    (resume (if (= answer.status 200)
+                (do (val status (get (json.loads answer.text) "status"))
+                    (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
+                (ServiceReadiness :state "Missing" :reason answer.text))))
+  (KillWorker [name]
+    (<- role MachineProcess (role-named cell name))
+    (<- count int (killed role))
+    (resume count))
+  (StopWorker [name]
+    (<- role MachineProcess (role-named cell name))
+    (<- (StopProcess :pid role.pid :stop-grace machine.stop-grace))
+    (resume None))
+  (StopCoordinator [seconds]
+    (<- role MachineProcess (role-named cell "coordinator"))
+    (<- (StopProcess :pid role.pid :stop-grace machine.stop-grace))
+    (<- (coordinator-remade url cell machine (float seconds)))
+    (resume None))
+  (CrashCoordinator [seconds]
+    (<- role MachineProcess (role-named cell "coordinator"))
+    (<- _count int (killed role))
+    (<- (coordinator-remade url cell machine (float seconds)))
+    (resume None))
+  (CutWorker [name seconds]
+    (raise (MachineCannotAnswer (+ "CutWorker(" name ")— 手元の 1 台は網を切らない(sim だけが答える)"))))
+  (StallWorker [name seconds]
+    (raise (MachineCannotAnswer (+ "StallWorker(" name ")— 手元の 1 台は worker を固めない(sim だけが答える)"))))
+  (FailRoute [method path status seconds]
+    (raise (MachineCannotAnswer (+ "FailRoute(" method " " path ")— 手元の 1 台は 5xx を返させない(sim だけが答える)")))))
 
 
-(defk machine-run [scenario machine]
-  {:pre [(: scenario (| Program EffectBase)) (: machine LocalMachine)] :post [(: % "scenario の答え(型は筋書きごと)")]
+(defk machine-run [scenario cell machine]
+  {:pre [(: scenario (| Program EffectBase)) (: cell MachineCell) (: machine LocalMachine)]
+   :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
-  "coordinator と worker を起こし、全部が名乗るまで待ってから筋書きを走らせ、終わりに worker・coordinator の順で止めるため。"
+  "coordinator と worker を起こし、全部が名乗るまで待ってから筋書きを走らせ、終わりに今の顔ぶれを worker・coordinator の順で止めるため。"
   (<- url str (coordinator-url machine))
   (<- env tuple (coordinator-env machine))
   (<- coordinator MachineProcess (started-role "coordinator" (str (/ (Path machine.work-dir) "coordinator")) env))
-  (var workers #())
+  (setv cell.roles #(coordinator))
   (try
     (<- (await-up url coordinator (fn [_state] True) machine.boot-seconds))
     (for [worker machine.workers]
       (<- worker-vars tuple (worker-env machine worker url))
       (<- role MachineProcess (started-role worker.name (str (/ (Path machine.work-dir) "workers" worker.name)) worker-vars))
-      (:= workers (+ workers #(role))))
-    (for [role workers]
+      (setv cell.roles (+ cell.roles #(role))))
+    (for [role (cut cell.roles 1 None)]
       (<- (await-up url role (fn [state] (in role.name (.get state "workers" {}))) machine.boot-seconds)))
     (<- answer scenario)
     answer
     (finally
-      (<- (stopped workers machine.stop-grace))
-      (<- (stopped #(coordinator) machine.stop-grace)))))
+      (<- (stopped (tuple (lfor role cell.roles :if (!= role.name "coordinator") role)) machine.stop-grace))
+      (<- (stopped (tuple (lfor role cell.roles :if (= role.name "coordinator") role)) machine.stop-grace)))))
 
 
 (defk local-machine-cluster [scenario * machine]
@@ -191,7 +290,8 @@
    :tags {:context "doeff-cluster" :role "entry"}}
   "手元の 1 台の cluster の上で筋書きを走らせる入口(sim-cluster と同じ形 — 違いは土台の handler の組だけ)。答え = 筋書きの答え。"
   (<- url str (coordinator-url machine))
+  (val cell (MachineCell))
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler) (http-production-handler) subprocess-handler
-                                        os-file-handler (machine-answers url)]
-                          (machine-run scenario machine))))
+                                        os-file-handler (machine-answers url cell machine)]
+                          (machine-run scenario cell machine))))
   answer)

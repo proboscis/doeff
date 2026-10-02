@@ -2,6 +2,7 @@
   "modules": [
     {
       "allow": [
+        "doeff-cluster-cluster-control",
         "doeff-cluster-local",
         "doeff-cluster-shared-protocol"
       ],
@@ -13,7 +14,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/sim/machine.hy"
       ],
-      "responsibility": "手元の 1 台の cluster: coordinator と worker を deploy/boot.sh でこの機体の子 process として起こし、筋書きを走らせ、終わりに全部止める(ADR-DOE-CLUSTER-001 R8・#3031)。",
+      "responsibility": "手元の 1 台の cluster: coordinator と worker を deploy/boot.sh でこの機体の子 process として起こし、筋書きを走らせ、契約の effect(準備の状態・worker と coordinator を止める・落とす)に答え、終わりに全部止める(ADR-DOE-CLUSTER-001 R8・#3031・#3032)。",
       "typed": true
     }
   ]
