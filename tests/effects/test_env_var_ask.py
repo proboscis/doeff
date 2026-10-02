@@ -71,8 +71,7 @@ class TestEnvVarAskPlain:
         def prog():
             first = yield Ask("LOG_LEVEL")
             # Simulate runtime env change between Asks.
-            import os
-            os.environ["DOEFF_LOG_LEVEL"] = "debug"
+            monkeypatch.setenv("DOEFF_LOG_LEVEL", "debug")
             second = yield Ask("LOG_LEVEL")
             return (first, second)
 
@@ -180,9 +179,8 @@ class TestEnvVarAskLazyImport:
         def prog():
             first = yield Ask("COUNTER")
             # Mutate raw by toggling whitespace — same symbol, different raw.
-            import os
-            os.environ["DOEFF_COUNTER"] = (
-                "{ tests.effects.test_env_var_ask._lazy_program_counts }"
+            monkeypatch.setenv(
+                "DOEFF_COUNTER", "{ tests.effects.test_env_var_ask._lazy_program_counts }"
             )
             second = yield Ask("COUNTER")
             return (first, second)

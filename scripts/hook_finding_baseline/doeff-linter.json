@@ -113,7 +113,6 @@
       "packages/doeff-seedream/src/doeff_seedream/structured_llm.py": 1,
       "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py": 1,
       "publications/zenn-use-cases-v0/render_preview.py": 1,
-      "scripts/doeff_cluster_warning_baseline.py": 1,
       "tests/conftest.py": 2,
       "tests/effects/test_memo_lazy_storage.py": 1,
       "tests/test_core_handlers_effect_type_filter.py": 1,
