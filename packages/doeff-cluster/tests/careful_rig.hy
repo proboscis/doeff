@@ -240,7 +240,7 @@
   (val blob (encode-program (report)))
   (val sha (program-sha blob))
   (write-program-file (Path rig.host.program-dir) sha blob (or versions (current-versions)))
-  (val spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "program" sha
+  (<- spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "program" sha
                         "runtimeEnv" declared}
                        tasks))
   (<- key str (env-key env (current-platform)))

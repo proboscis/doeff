@@ -12,10 +12,9 @@
 ;; 以前この file は、image の版を追う係(本番の Deployment の image の LABEL を読んで Service の土台の commit を進める)の筋書きだった。
 ;; 係は 2026-09-28 に消した(Program の job は宣言した commit でだけ解く — ADR-DOE-CLUSTER-001・計画 2.2 の E)ので、版を変えるのは
 ;; 宣言し直しだけ。image の版を追う欄(baseFrom・base・overlay)を持つ宣言を断る検は test_old_declarations.hy。
-(require doeff-hy.macros [deftest val])
+(require doeff-hy.macros [deftest defk <- val])
 (import dataclasses [replace])
-(import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff [with_handlers])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -23,7 +22,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
-(import doeff_cluster.worker.protocol.heartbeat [status-row])
+(import doeff_cluster.worker.protocol.heartbeat [status-rows-json])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [still-live-somewhere])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
@@ -93,17 +92,6 @@
       (isinstance action ReapJob) (setv self.processes (lfor p self.processes :if (!= p.pid action.pid) p))
       (isinstance action ReleaseLeases) (when (= self.lease action.instance) (setv self.lease None))))
 
-  (defn #^ None worker-tick [self]
-    (setv world (self.world) actions (plan self.now self.desired world self.records self.policy))
-    (for [a actions] (self.apply a))
-    (setv self.records (records-after self.now self.records actions self.policy))
-    (setv rows (lfor s (statuses self.now self.desired (self.world) self.records self.policy) (status-row s)))
-    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" rows} :actor None))
-    (setv self.desired (tuple (gfor j (get reply "jobs")
-                                    (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
-                                             :placement (.get j "placement")
-                                             :handoff (bool (.get j "handoff")) :ready-instance (.get j "readyInstance"))))))
-
   (defn #^ None processes-tick [self]
     ;; 空いた lease は待機の process が取る(取りに行く係が 0.5 秒ごとに読み直す)。
     (setv live (lfor p self.processes :if (is p.exit-code None) p))
@@ -114,22 +102,44 @@
         (self.call "POST" "/resources/Service/writer-a/readiness"
                    {"worker" "zeus" "pid" p.pid "revision" p.spec.revision "instance" p.instance "attempt" (str p.attempt)
                     "specHash" (spec-hash p.spec) "placement" p.spec.placement "ready" True "reason" "拍を終えた"
-                    "role" (if (= self.lease p.instance) "active" "standby")} :actor None))))
+                    "role" (if (= self.lease p.instance) "active" "standby")} :actor None)))))
 
-  (defn #^ None step [self]
-    (+= self.now 1000)
-    (self.worker-tick)
-    (self.processes-tick)
-    (setv self.state (run (scheduled (with_handlers [(kube-memory self.kube)] (rollout-tick self.state T N self.now)))))
-    (setv live (lfor p self.processes :if (is p.exit-code None) p))
-    (.append self.log #(self.now self.lease (len live)
-                        (get (self.call "GET" "/resources/Service/writer-a") "status" "ready")))))
+
+(defk worker-tick [sim]
+  {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker の本物の判断で模擬の世界を 1 拍進め、状態を本物の綴り(status-rows-json)の heartbeat で送り、返事の job を宣言にするため。"
+  (val world (sim.world))
+  (val actions (plan sim.now sim.desired world sim.records sim.policy))
+  (for [a actions] (sim.apply a))
+  (setv sim.records (records-after sim.now sim.records actions sim.policy))
+  (<- rows tuple (status-rows-json (tuple (statuses sim.now sim.desired (sim.world) sim.records sim.policy))))
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" (list rows)}
+                       :actor None))
+  (setv sim.desired (tuple (gfor j (get reply "jobs")
+                                 (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
+                                          :placement (.get j "placement")
+                                          :handoff (bool (.get j "handoff")) :ready-instance (.get j "readyInstance")))))
+  None)
+
+
+(defk step [sim]
+  {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "模擬の世界を 1 秒進めるため(worker の拍 → 子 process の報告 → coordinator の Rollout の拍)。"
+  (+= sim.now 1000)
+  (<- (worker-tick sim))
+  (sim.processes-tick)
+  (<- ticked ClusterState (with_handlers [(kube-memory sim.kube)] (rollout-tick sim.state T N sim.now)))
+  (setv sim.state ticked)
+  (val live (lfor p sim.processes :if (is p.exit-code None) p))
+  (.append sim.log #(sim.now sim.lease (len live)
+                     (get (sim.call "GET" "/resources/Service/writer-a") "status" "ready")))
+  None)
 
 
 (deftest test-a-redeclared-service-hands-off-without-a-gap
   (val sim (Sim))
   ;; 1. 最初の版(WRAP1)の process が起きて lease を取る。
-  (for [_ (range 15)] (sim.step))
+  (for [_ (range 15)] (<- (step sim)))
   (val first-instance sim.lease)
   (assert first-instance sim.log)
   ;; 2. 宣言し直して版を WRAP2 へ。出来事の記録に送り手と前後の版。
@@ -141,7 +151,7 @@
   (var old-stopped None)
   (var new-first-ready None)
   (for [_ (range 40)]
-    (sim.step)
+    (<- (step sim))
     (val old (next (gfor p sim.processes :if (= p.instance first-instance) p) None))
     (when (and (is old-stopped None) (or (is old None) (is-not old.exit-code None))) (:= old-stopped sim.now))
     (val new (next (gfor p sim.processes :if (and (!= p.instance first-instance) (= p.spec.revision WRAP2)) p) None))
@@ -167,9 +177,9 @@
 (deftest test-a-standby-only-service-is-ready-but-has-no-ready-replica
   ;; lease を他が持ち続ける(書き手が居ない)Service は、Rollout と入れ替えの意味では Ready だが、書き手の計器では ready_replicas 0。
   (setv sim (Sim))
-  (for [_ (range 15)] (sim.step))
+  (for [_ (range 15)] (<- (step sim)))
   (setv sim.lease "someone-else")
-  (for [_ (range 3)] (sim.step))
+  (for [_ (range 3)] (<- (step sim)))
   (setv text (metrics-text sim.state sim.now T))
   (assert (in "doeff_worker_service_ready{service=\"writer-a\"} 1.0" text) text)
   (assert (in "doeff_worker_service_ready_replicas{service=\"writer-a\"} 0.0" text) text)
@@ -179,10 +189,10 @@
 
 (deftest test-ready-instance-is-sent-only-once-the-new-process-reports
   (setv sim (Sim))
-  (for [_ (range 3)] (sim.step))
+  (for [_ (range 3)] (<- (step sim)))
   ;; process は起きたが最初の報告(JOB-START)の前 → Ready の世代の名はまだ無い。
   (setv early (ready-instances sim.state "zeus" sim.now T))
-  (for [_ (range 10)] (sim.step))
+  (for [_ (range 10)] (<- (step sim)))
   (setv later (ready-instances sim.state "zeus" sim.now T))
   (assert (is (get early "writer-a") None) early)
   (assert (= (get later "writer-a") sim.lease) later))

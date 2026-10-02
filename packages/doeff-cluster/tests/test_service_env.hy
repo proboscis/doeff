@@ -114,14 +114,14 @@
   (<- key str (env-key declared-env (current-platform)))
   (val wire {"name" "quiet" "entry" "doeff_cluster.job_entry" "args" ["service"] "revision" "rev-1" "once" False
              "runtimeEnv" env-json})
-  (val spec (declared-job-spec wire))
+  (<- spec (declared-job-spec wire))
   ;; 版は宣言のまま(coordinator の版と同じ)・root の置き場の鍵は worker が計算した env のキー。
   (assert (= spec.revision "rev-1") spec)
   (assert (= spec.env-key key) spec)
   (assert (= (code-key spec) (+ ENV-KEY-PREFIX key)) spec)
   (assert (is-not spec.runtime-env None) spec)
   (assert (= (json.loads spec.runtime-env) env-json) spec)
-  (val plain (declared-job-spec (| wire {"runtimeEnv" None})))
+  (<- plain (declared-job-spec (| wire {"runtimeEnv" None})))
   (assert (and (= plain.revision "rev-1") (is plain.runtime-env None)) plain))
 
 
@@ -133,7 +133,7 @@
   (<- handoff System (quiet-system "handoff" {"windowSeconds" 30} {"POLL" "5.0"}))
   (val row (get (. (system-declaration handoff "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
   (val coordinator-spec (. (job-from-json row) spec))
-  (val worker-spec (declared-job-spec (! (spec-json coordinator-spec))))
+  (<- worker-spec (declared-job-spec (! (spec-json coordinator-spec))))
   (assert (= worker-spec.revision coordinator-spec.revision) #(worker-spec coordinator-spec))
   (assert (= (spec-hash worker-spec) (spec-hash coordinator-spec)) "指紋が同じ(coordinator が worker の報告を今の宣言の物と数える)")
   (assert (= worker-spec coordinator-spec) "比べる欄が同じ(worker が同じ宣言で process を起こし直さない)"))
@@ -211,7 +211,7 @@
                      :needs #{"net"}))
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
   (val row (get declaration.rows 0))
-  (val spec (declared-job-spec (! (spec-json (. (job-from-json row) spec)))))
+  (<- spec (declared-job-spec (! (spec-json (. (job-from-json row) spec)))))
   ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。
   (assert (is-not spec.program None) spec)
   (val cached (program-file (Path rig.host.program-dir) spec.program))

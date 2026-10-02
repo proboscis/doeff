@@ -10,7 +10,6 @@
     "src/doeff_cluster/coordinator/core/resource_policy.hy": 18,
     "src/doeff_cluster/coordinator/core/rollout_policy.hy": 8,
     "src/doeff_cluster/coordinator/core/warm_policy.hy": 1,
-    "src/doeff_cluster/coordinator/entry/main.hy": 1,
     "src/doeff_cluster/coordinator/intent/cluster_model.hy": 38,
     "src/doeff_cluster/coordinator/intent/kube_model.hy": 1,
     "src/doeff_cluster/foundation/foundation_check.hy": 1,
@@ -22,12 +21,10 @@
     "src/doeff_cluster/shared/core/runtime_env_rules.hy": 1,
     "src/doeff_cluster/shared/core/service_rules.hy": 1,
     "src/doeff_cluster/shared/core/warm_rules.hy": 1,
-    "src/doeff_cluster/shared/entry/declare.hy": 1,
     "src/doeff_cluster/shared/intent/metrics_model.hy": 1,
     "src/doeff_cluster/shared/intent/protocol.hy": 1,
     "src/doeff_cluster/shared/intent/remote_model.hy": 1,
     "src/doeff_cluster/shared/intent/service_model.hy": 3,
-    "src/doeff_cluster/shared/protocol/declaration_requests.hy": 1,
     "src/doeff_cluster/shared/protocol/detached.hy": 1,
     "src/doeff_cluster/shared/protocol/remote.hy": 1,
     "src/doeff_cluster/worker/core/beat_policy.hy": 1,
@@ -42,8 +39,6 @@
     "src/doeff_cluster/worker/intent/code_model.hy": 1,
     "src/doeff_cluster/worker/intent/drain_model.hy": 1,
     "src/doeff_cluster/worker/intent/worker_model.hy": 2,
-    "src/doeff_cluster/worker/protocol/declared.hy": 2,
-    "src/doeff_cluster/worker/protocol/env_store.hy": 2,
-    "src/doeff_cluster/worker/protocol/heartbeat.hy": 1
+    "src/doeff_cluster/worker/protocol/env_store.hy": 2
   }
 }
