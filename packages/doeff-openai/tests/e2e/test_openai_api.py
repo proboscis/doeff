@@ -7,14 +7,12 @@ Only a small subset remains true E2E and is gated by environment flags.
 
 
 import json
-import os  # noqa: PINJ050 - Required for true E2E environment detection
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from _runner import (
-    doeff_py_has_openai_key,
     openai_api_key_from_doeff_py_handler,
     run_program,
 )
@@ -515,14 +513,9 @@ async def test_graph_tracking():
     assert any(call.get("operation") == "structured_llm" for call in api_calls)
 
 
-_run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"  # noqa: PINJ050
-_skip_real_e2e = not (_run_real_e2e and doeff_py_has_openai_key())
 
 
-@pytest.mark.skipif(
-    _skip_real_e2e,
-    reason="True E2E requires OPENAI_API_KEY and RUN_OPENAI_E2E=1",
-)
+@pytest.mark.real_openai
 @pytest.mark.asyncio
 async def test_real_api_unstructured_response():
     """True E2E smoke test with the real OpenAI API."""
@@ -546,10 +539,7 @@ async def test_real_api_unstructured_response():
     assert "four" in result.value.lower() or "4" in result.value.lower()
 
 
-@pytest.mark.skipif(
-    _skip_real_e2e,
-    reason="True E2E requires OPENAI_API_KEY and RUN_OPENAI_E2E=1",
-)
+@pytest.mark.real_openai
 @pytest.mark.asyncio
 async def test_real_api_structured_response():
     """True E2E structured output smoke test."""
