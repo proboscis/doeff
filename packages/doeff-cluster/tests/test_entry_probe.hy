@@ -13,7 +13,6 @@
  WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probed-job probe-args probe-refusal])
 (import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.policy [plan statuses])
-(import doeff [run])
 (import doeff_cluster.worker.protocol.heartbeat [status-row] doeff_cluster.worker.core.probe_rules [probe-reason])
 (import tests.probe_rig [probe-settings observed run-probes])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
@@ -25,13 +24,33 @@
       READY1 (CodeView "rev1" CodeState.READY "/c/rev1")
       READY2 (CodeView "rev2" CodeState.READY "/c/rev2"))
 
-(defn #^ WorldView world [#^ ProcessView #* processes #^ tuple [codes #(READY1)] #^ tuple [probes #()]] (WorldView codes processes probes))
-(defn #^ ProcessView running [#^ JobSpec spec #^ int [pid 10]] (ProcessView spec.name spec 1 pid 0 :instance (.format "1-{}" pid)))
-(defn #^ ProbeView passed [#^ JobSpec spec] (ProbeView (spec-hash spec) ProbeState.PASSED))
-(defn #^ ProbeView failed [#^ JobSpec spec #^ int [at 1000]] (ProbeView (spec-hash spec) ProbeState.FAILED :detail "ImportError: cannot import name 'GetMonotonic'" :failed-ms at))
+
+(defk world [[processes #()] [codes #(READY1)] [probes #()]]
+  {:pre [(: processes (get tuple #(ProcessView ...))) (: codes (get tuple #(CodeView ...))) (: probes (get tuple #(ProbeView ...)))]
+   :post [(: % WorldView)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker の観測(動いている process・揃った木・検めの答え)を、判断 plan・statuses に渡す形で組むため。"
+  (WorldView codes processes probes))
 
 
-(defn #^ None test-only-service-jobs-are-probed []
+(defk running [spec [pid 10]]
+  {:pre [(: spec JobSpec) (: pid int)] :post [(: % ProcessView)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "spec の job が pid で動いている観測。"
+  (ProcessView spec.name spec 1 pid 0 :instance (.format "1-{}" pid)))
+
+
+(defk passed [spec]
+  {:pre [(: spec JobSpec)] :post [(: % ProbeView)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "spec の入口の検めが通った答え。"
+  (ProbeView (spec-hash spec) ProbeState.PASSED))
+
+
+(defk failed [spec [at 1000]]
+  {:pre [(: spec JobSpec) (: at int)] :post [(: % ProbeView)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "spec の入口の検めが at に失敗した答え(読み込めない理由つき)。"
+  (ProbeView (spec-hash spec) ProbeState.FAILED :detail "ImportError: cannot import name 'GetMonotonic'" :failed-ms at))
+
+
+(deftest test-only-service-jobs-are-probed
   (assert (probed-job S1))
   (assert (= (probe-args S1) #("probe")))
   (assert (not (probed-job (JobSpec "a" "jobs.a" #() "rev1"))))
@@ -40,15 +59,15 @@
 
 (deftest test-a-service-starts-only-after-the-probe-passes
   ;; 木が揃う → 検めを撃つ → 走っている間は待つ → PASSED で起こす。
-  (assert (= (plan 0 #(S1) (world :codes #()) {} POLICY) #((PrepareCode "rev1"))))
-  (assert (= (plan 0 #(S1) (world) {} POLICY) #((ProbeEntry S1 "/c/rev1"))))
-  (assert (= (plan 0 #(S1) (world :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING))) {} POLICY) #()))
-  (assert (= (. (get (statuses 0 #(S1) (world) {} POLICY) 0) phase) JobPhase.STARTING))
-  (assert (= (plan 0 #(S1) (world :probes #((passed S1))) {} POLICY) #((StartJob S1 1 "/c/rev1")))))
+  (assert (= (plan 0 #(S1) (! (world :codes #())) {} POLICY) #((PrepareCode "rev1"))))
+  (assert (= (plan 0 #(S1) (! (world)) {} POLICY) #((ProbeEntry S1 "/c/rev1"))))
+  (assert (= (plan 0 #(S1) (! (world :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING)))) {} POLICY) #()))
+  (assert (= (. (get (statuses 0 #(S1) (! (world)) {} POLICY) 0) phase) JobPhase.STARTING))
+  (assert (= (plan 0 #(S1) (! (world :probes #((! (passed S1))))) {} POLICY) #((StartJob S1 1 "/c/rev1")))))
 
 
 (deftest test-a-failed-probe-is-shown-and-fired-again-after-the-retry-wait
-  (setv w (world :probes #((failed S1 1000))))
+  (setv w (! (world :probes #((! (failed S1 1000))))))
   (assert (= (plan 30999 #(S1) w {} POLICY) #()))
   (setv #(status) (statuses 30999 #(S1) w {} POLICY))
   (assert (= status.phase JobPhase.PROBE-FAILED))
@@ -59,9 +78,12 @@
 (deftest test-handoff-keeps-the-old-writer-until-the-new-entry-probes
   (setv codes #(READY1 READY2))
   ;; 新の木が揃っても、検めの前・走っている間・FAILED の間は旧を名から外さない(止めもしない)。
-  (assert (= (plan 0 #(S2) (world (running S1) :codes codes) {} POLICY) #((ProbeEntry S2 "/c/rev2"))))
-  (assert (= (plan 0 #(S2) (world (running S1) :codes codes :probes #((ProbeView (spec-hash S2) ProbeState.RUNNING))) {} POLICY) #()))
-  (setv broken (world (running S1) :codes codes :probes #((failed S2 1000))))
+  (assert (= (plan 0 #(S2) (! (world :processes #((! (running S1))) :codes codes)) {} POLICY) #((ProbeEntry S2 "/c/rev2"))))
+  (assert (= (plan 0 #(S2) (! (world :processes #((! (running S1))) :codes codes
+                                     :probes #((ProbeView (spec-hash S2) ProbeState.RUNNING))))
+                   {} POLICY)
+             #()))
+  (setv broken (! (world :processes #((! (running S1))) :codes codes :probes #((! (failed S2 1000))))))
   (assert (= (plan 5000 #(S2) broken {} POLICY) #()))
   (setv #(status) (statuses 5000 #(S2) broken {} POLICY))
   (assert (= status.phase JobPhase.RUNNING))
@@ -70,7 +92,7 @@
   ;; 撃ち直しの間を過ぎたら撃ち直す(旧はそのまま)。
   (assert (= (plan 31000 #(S2) broken {} POLICY) #((ProbeEntry S2 "/c/rev2"))))
   ;; PASSED になったら旧を名から外す(次の拍で新を起こす)。
-  (setv ok (world (running S1) :codes codes :probes #((passed S2))))
+  (setv ok (! (world :processes #((! (running S1))) :codes codes :probes #((! (passed S2))))))
   (assert (= (plan 31000 #(S2) ok {} POLICY) #((RetireJob "w" 10 "w#retired-1-10")))))
 
 
@@ -80,7 +102,8 @@
 (setv HY (str (/ (. (Path sys.executable) parent) "hy")))
 
 
-(defn #^ str probe-tree [#^ Path tmp]
+(defk probe-tree [tmp]
+  {:pre [(: tmp Path)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "検めの木: 読める module・ImportError を起こす module・読むのに時間の掛かる module を置く(入口の job_entry は実行環境の物)。"
   (.write-text (/ tmp "probe_ok.hy") "(defn program [] None)\n(defn handlers [config ctx] [])\n" :encoding "utf-8")
   (.write-text (/ tmp "probe_broken.hy") "(import doeff_time [NoSuchClockName])\n(defn program [] None)\n" :encoding "utf-8")
@@ -88,9 +111,9 @@
   (str tmp))
 
 
-(defn #^ JobSpec service-spec [#^ str target]
-  "Program の job の service の spec。検めの対象は入口(spec.entry)だけなので、検めたい import path を入口に置く。"
-  (JobSpec "w" target #("service" "--identity" (* "0" 16)) "rev1" :program SAMPLE-PROGRAM))
+;; Program の job の service の spec の雛形。検めの対象は入口(spec.entry)だけなので、検めたい import path を (replace SERVICE :entry …)
+;; で入口に置く(名を変える時は :name も)。
+(val SERVICE (JobSpec "w" "probe_ok:program" #("service" "--identity" (* "0" 16)) "rev1" :program SAMPLE-PROGRAM))
 
 
 (defk entry-probe-scene [tree good broken missing]
@@ -104,12 +127,16 @@
   #(first g b m))
 
 
-(defn #^ None test-probe-store-runs-the-entry-probe-in-the-tree [#^ Path tmp-path]
-  (setv tree (probe-tree tmp-path)
-        good (service-spec "probe_ok:program")
-        broken (service-spec "probe_broken:program")
-        missing (service-spec "probe_ok:no_such_attr"))
-  (setv #(first g b m) (run-probes (run (probe-settings tmp-path)) (entry-probe-scene tree good broken missing)))
+(deftest test-probe-store-runs-the-entry-probe-in-the-tree [tmp-path]
+  (val tree (! (probe-tree tmp-path)))
+  (val good (replace SERVICE :entry "probe_ok:program"))
+  (val broken (replace SERVICE :entry "probe_broken:program"))
+  (val missing (replace SERVICE :entry "probe_ok:no_such_attr"))
+  (val got (run-probes (! (probe-settings tmp-path)) (entry-probe-scene tree good broken missing)))
+  (val first (get got 0))
+  (val g (get got 1))
+  (val b (get got 2))
+  (val m (get got 3))
   ;; 走っている間は RUNNING として観測に載る。
   (assert (any (gfor v first (= v.state ProbeState.RUNNING))))
   (assert (= g.state ProbeState.PASSED))
@@ -128,29 +155,29 @@
   view)
 
 
-(defn #^ None test-probe-store-stops-a-probe-that-runs-too-long [#^ Path tmp-path]
-  (setv tree (probe-tree tmp-path) slow (service-spec "probe_slow:program"))
-  (setv v (run-probes (run (probe-settings tmp-path :timeout-seconds 1)) (probed-once slow tree)))
+(deftest test-probe-store-stops-a-probe-that-runs-too-long [tmp-path]
+  (val tree (! (probe-tree tmp-path)))
+  (val slow (replace SERVICE :entry "probe_slow:program"))
+  (val v (run-probes (! (probe-settings tmp-path :timeout-seconds 1)) (probed-once slow tree)))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail))
 
 
 ;; --- 反例(2026-09-27 の本番: 同じ worker に 7 つの service を新しい root で宣言し直し、17 分 starting のまま起きなかった)------
 
-(defn #^ bool process-alive [#^ int pid]
-  "pid の process が生きているか(終わって回収を待つだけの zombie は生きていない)。"
-  (setv stat (Path (.format "/proc/{}/stat" pid)))
-  (try
-    (setv text (.read-text stat))
-    (except [OSError] (return False)))
+(defk process-alive [pid]
+  {:pre [(: pid int)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "pid の process が生きているか(終わって回収を待つだけの zombie は生きていない)— 検めの子や孫が残っていないかを見るため。"
+  (val text (try (.read-text (Path (.format "/proc/{}/stat" pid))) (except [OSError] None)))
   ;; 「pid (名前) 状態 …」— 名前に空白と括弧が入りうるので、最後の「)」の後を読む。
-  (!= (get (.split (.strip (cut text (+ (.rindex text ")") 1) None))) 0) "Z"))
+  (and (is-not text None)
+       (!= (get (.split (.strip (cut text (+ (.rindex text ")") 1) None))) 0) "Z")))
 
 
-(defn #^ None test-a-timed-out-probe-leaves-no-child-process [#^ Path tmp-path]
+(deftest test-a-timed-out-probe-leaves-no-child-process [tmp-path]
   ;; 反例 (a): 時間切れで止めた検めの子(import の途中で起こした孫 process)が残らない。以前は Popen の直の子だけを kill し、
   ;; 孫(実行環境の job では uv の下の hy)が孤児として CPU を使い続け、撃ち直しのたびに積み上がった(最大 47 本)。
-  (probe-tree tmp-path)
+  (! (probe-tree tmp-path))
   (.write-text (/ tmp-path "probe_forks.hy")
                (.join "\n" ["(import subprocess time pathlib [Path])"
                             "(setv child (subprocess.Popen [\"sleep\" \"60\"]))"
@@ -158,17 +185,19 @@
                             "(time.sleep 60)"
                             "(defn program [] None)"])
                :encoding "utf-8")
-  (setv forks (service-spec "probe_forks:program") pid-file (/ tmp-path "child.pid"))
-  (setv v (run-probes (run (probe-settings tmp-path :timeout-seconds 3)) (probed-once forks (str tmp-path))))
+  (val forks (replace SERVICE :entry "probe_forks:program"))
+  (val pid-file (/ tmp-path "child.pid"))
+  (val v (run-probes (! (probe-settings tmp-path :timeout-seconds 3)) (probed-once forks (str tmp-path))))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail)
   (assert (.exists pid-file) "検めが孫を起こす前に時間切れになった(検の前提が崩れた)")
-  (setv child (int (.read-text pid-file)) deadline (+ (time.monotonic) 5))
+  (val child (int (.read-text pid-file)))
+  (val deadline (+ (time.monotonic) 5))
   (try
-    (while (and (process-alive child) (< (time.monotonic) deadline)) (time.sleep 0.05))
-    (assert (not (process-alive child)) (.format "時間切れの検めの孫 {} が生き残った" child))
+    (while (and (! (process-alive child)) (< (time.monotonic) deadline)) (time.sleep 0.05))
+    (assert (not (! (process-alive child))) (.format "時間切れの検めの孫 {} が生き残った" child))
     (finally
-      (when (process-alive child)
+      (when (! (process-alive child))
         (os.kill child 9)))))
 
 
@@ -183,11 +212,11 @@
   views)
 
 
-(defn #^ None test-probes-on-the-same-tree-run-as-one-process [#^ Path tmp-path]
+(deftest test-probes-on-the-same-tree-run-as-one-process [tmp-path]
   ;; 反例 (c): 同じ木に 7 つの service が同時に来ても、検めの process を 7 本並べない(同じ木の検めは 1 本にまとめる)。
   ;; 以前は spec ごとに 1 本ずつ起こし、同じ import の閉包を 7 本が同時に compile して CPU の上限 4 の Pod を締め付けた。
   ;; まとめても、読み込めない入口の理由はその入口の spec にだけ付く。
-  (probe-tree tmp-path)
+  (! (probe-tree tmp-path))
   (for [i (range 6)]
     (.write-text (/ tmp-path (.format "probe_m{}.hy" i))
                  (.join "\n" ["(import os time pathlib [Path])"
@@ -195,49 +224,52 @@
                               "(time.sleep 0.3)"
                               "(defn program [] None)"])
                  :encoding "utf-8"))
-  (setv specs (+ (lfor i (range 6) (replace (service-spec (.format "probe_m{}:program" i)) :name (.format "w{}" i)))
-                 [(replace (service-spec "probe_broken:program") :name "w6")]))
-  (setv views (run-probes (run (probe-settings tmp-path)) (probed-all specs (str tmp-path))))
+  (val specs (+ (lfor i (range 6) (replace SERVICE :entry (.format "probe_m{}:program" i) :name (.format "w{}" i)))
+                [(replace SERVICE :entry "probe_broken:program" :name "w6")]))
+  (val views (run-probes (! (probe-settings tmp-path)) (probed-all specs (str tmp-path))))
   (assert (= (lfor v (cut views 0 6) v.state) (* [ProbeState.PASSED] 6)) views)
   (assert (= (. (get views 6) state) ProbeState.FAILED) views)
   (assert (in "NoSuchClockName" (. (get views 6) detail)) (. (get views 6) detail))
-  (setv pids (set (.split (.read-text (/ tmp-path "pids.txt")))))
+  (val pids (set (.split (.read-text (/ tmp-path "pids.txt")))))
   (assert (= (len pids) 1) (.format "同じ木の検めが {} 本の process で走った" (len pids))))
 
 
-(defn #^ int wait-pid [#^ Path path]
-  "検めの子が書いた pid の file を待って読む(上限 30 秒)。"
-  (setv deadline (+ (time.monotonic) 30))
-  (while (< (time.monotonic) deadline)
-    (when (and (.exists path) (.strip (.read-text path)))
-      (return (int (.read-text path))))
+(defk wait-pid [path]
+  {:pre [(: path Path)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "検めの子が書いた pid の file を待って読む(上限 30 秒)— 子の process を名指して確かめるため。"
+  (val deadline (+ (time.monotonic) 30))
+  (while (and (not (and (.exists path) (.strip (.read-text path)))) (< (time.monotonic) deadline))
     (time.sleep 0.05))
-  (raise (AssertionError (.format "{} が書かれない" path))))
+  (when (not (and (.exists path) (.strip (.read-text path))))
+    (raise (AssertionError (.format "{} が書かれない" path))))
+  (int (.read-text path)))
 
 
-(defn #^ None assert-gone [#^ int pid #^ str what]
+(defk assert-gone [pid what]
+  {:pre [(: pid int) (: what str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "pid の process が 5 秒の内に消えることを確かめる(残っていれば止めてから赤にする)。"
-  (setv deadline (+ (time.monotonic) 5))
-  (while (and (process-alive pid) (< (time.monotonic) deadline)) (time.sleep 0.05))
-  (when (process-alive pid)
+  (val deadline (+ (time.monotonic) 5))
+  (while (and (! (process-alive pid)) (< (time.monotonic) deadline)) (time.sleep 0.05))
+  (when (! (process-alive pid))
     (os.kill pid 9)
-    (raise (AssertionError (.format "{} {} が生き残った" what pid)))))
+    (raise (AssertionError (.format "{} {} が生き残った" what pid))))
+  None)
 
 
-(defn #^ None test-a-passed-probe-leaves-no-child-process [#^ Path tmp-path]
+(deftest test-a-passed-probe-leaves-no-child-process [tmp-path]
   ;; 反例(構成レビュー 2026-09-27 の必須 2 (a)): import の途中で孫を起こして返った検め(通る)の後にも、孫が残らない。
   ;; 以前は process group を止めるのが時間切れの時だけで、通った検め・失敗した検めの孫は孤児として残った。
-  (probe-tree tmp-path)
+  (! (probe-tree tmp-path))
   (.write-text (/ tmp-path "probe_spawns.hy")
                (.join "\n" ["(import subprocess pathlib [Path])"
                             "(setv child (subprocess.Popen [\"sleep\" \"60\"]))"
                             "(.write-text (Path \"spawned.pid\") (str child.pid))"
                             "(defn program [] None)"])
                :encoding "utf-8")
-  (setv spawns (service-spec "probe_spawns:program"))
-  (setv v (run-probes (run (probe-settings tmp-path :timeout-seconds 30)) (probed-once spawns (str tmp-path))))
+  (val spawns (replace SERVICE :entry "probe_spawns:program"))
+  (val v (run-probes (! (probe-settings tmp-path :timeout-seconds 30)) (probed-once spawns (str tmp-path))))
   (assert (= v.state ProbeState.PASSED))
-  (assert-gone (wait-pid (/ tmp-path "spawned.pid")) "通った検めの孫"))
+  (! (assert-gone (! (wait-pid (/ tmp-path "spawned.pid"))) "通った検めの孫")))
 
 
 (defk shim-killed-scene [spec tree pid-file]
@@ -245,26 +277,26 @@
   "検めを起こし、本体が pid を書いたら group の先頭(shim — 本体の process group の番号)を kill -9 し、答えと本体の pid を返すため。"
   (<- (ProbeEntry spec tree))
   (<- (ObserveProbes))
-  (val sleeper (wait-pid pid-file))
+  (val sleeper (! (wait-pid pid-file)))
   (os.kill (os.getpgid sleeper) 9)
   (<- view ProbeView (observed spec))
   #(view sleeper))
 
 
-(defn #^ None test-a-probe-whose-shim-dies-first-leaves-no-child-process [#^ Path tmp-path]
+(deftest test-a-probe-whose-shim-dies-first-leaves-no-child-process [tmp-path]
   ;; 反例(必須 2 (b)): 検めの group の先頭(shim)だけが先に kill -9 で死んでも、検めの本体(hy)が残らない。
-  (probe-tree tmp-path)
+  (! (probe-tree tmp-path))
   (.write-text (/ tmp-path "probe_sleeps.hy")
                (.join "\n" ["(import os time pathlib [Path])"
                             "(.write-text (Path \"sleeper.pid\") (str (os.getpid)))"
                             "(time.sleep 20)"
                             "(defn program [] None)"])
                :encoding "utf-8")
-  (setv sleeps (service-spec "probe_sleeps:program"))
-  (setv #(v sleeper) (run-probes (run (probe-settings tmp-path :timeout-seconds 30))
-                                 (shim-killed-scene sleeps (str tmp-path) (/ tmp-path "sleeper.pid"))))
-  (assert (= v.state ProbeState.FAILED))
-  (assert-gone sleeper "shim の死んだ検めの本体"))
+  (val sleeps (replace SERVICE :entry "probe_sleeps:program"))
+  (val got (run-probes (! (probe-settings tmp-path :timeout-seconds 30))
+                       (shim-killed-scene sleeps (str tmp-path) (/ tmp-path "sleeper.pid"))))
+  (assert (= (. (get got 0) state) ProbeState.FAILED))
+  (! (assert-gone (get got 1) "shim の死んだ検めの本体")))
 
 
 (defk hanging-scene [specs hang ok-specs tree]
@@ -285,24 +317,27 @@
   #(hung oks refired))
 
 
-(defn #^ None test-a-hanging-entry-does-not-take-down-its-batch [#^ Path tmp-path]
+(deftest test-a-hanging-entry-does-not-take-down-its-batch [tmp-path]
   ;; 反例(必須 1): 同じ木の束に固まる入口が 1 つあっても、ほかの入口は結果どおり(PASSED)になり、時間切れで FAILED になるのは固まった
   ;; 入口を持つ spec だけ。撃ち直しでは、直前に時間切れになった spec を束に混ぜず単独で起こす(同じ束で全部が道連れを繰り返さない)。
-  (probe-tree tmp-path)
-  (setv ok-specs (lfor i (range 6) (replace (service-spec (.format "probe_ok:program{}" i)) :name (.format "w{}" i)))
-        hang (replace (service-spec "probe_slow:program") :name "hang")
-        ;; 固まる入口を束の中ほどに置く(前の対象は結果が出ている・後の対象は結果が出ていない)。
-        specs (+ (cut ok-specs 0 3) [hang] (cut ok-specs 3 None)))
+  (! (probe-tree tmp-path))
+  (val ok-specs (lfor i (range 6) (replace SERVICE :entry (.format "probe_ok:program{}" i) :name (.format "w{}" i))))
+  (val hang (replace SERVICE :entry "probe_slow:program" :name "hang"))
+  ;; 固まる入口を束の中ほどに置く(前の対象は結果が出ている・後の対象は結果が出ていない)。
+  (val specs (+ (cut ok-specs 0 3) [hang] (cut ok-specs 3 None)))
   (for [i (range 6)]
     (.write-text (/ tmp-path "probe_ok.hy")
                  (+ (.read-text (/ tmp-path "probe_ok.hy")) (.format "(defn program{} [] None)\n" i))))
-  (setv #(hung oks refired) (run-probes (run (probe-settings tmp-path :timeout-seconds 3)) (hanging-scene specs hang ok-specs (str tmp-path))))
+  (val got (run-probes (! (probe-settings tmp-path :timeout-seconds 3)) (hanging-scene specs hang ok-specs (str tmp-path))))
+  (val hung (get got 0))
+  (val oks (get got 1))
+  (val refired (get got 2))
   (assert (= hung.state ProbeState.FAILED) hung)
   (assert (in "終わらない" hung.detail) hung.detail)
   (for [#(spec v) (zip ok-specs oks)]
     (assert (= v.state ProbeState.PASSED) (.format "{} が固まった入口の道連れになった: {}" spec.name v))
     (assert (= v.attempts 1) v))
-  (setv states (dfor v refired v.spec-hash v.state))
+  (val states (dfor v refired v.spec-hash v.state))
   (assert (= (get states (spec-hash hang)) ProbeState.RUNNING) states)
   (assert (= (get states (spec-hash (get ok-specs 0))) ProbeState.QUEUED) states))
 
@@ -310,13 +345,13 @@
 (deftest test-a-running-probe-is-shown-as-probing-with-its-reason
   ;; 反例 (d): 検めの間の状態が starting ではなく検めの段(probing)で、経過の秒・回数・直前の失敗の理由を持つ。
   ;; 以前は検めの間を starting と出し、理由(probe-failed)は FAILED から撃ち直すまでの 30 秒しか見えなかった。
-  (val plain (world :codes #(READY1) :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING))))
+  (val plain (! (world :codes #(READY1) :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING)))))
   (val first (get (statuses 0 #(S1) plain {} POLICY) 0))
   (assert (= first.phase JobPhase.PROBING) first.phase)
   ;; 撃ち直しの間: 直前の失敗の理由・回数・経過の秒が状態に残る。
-  (val again (world :codes #(READY1)
-                     :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING :started-ms 1000 :attempts 2
-                                          :last-failure "ImportError: cannot import name 'GetMonotonic'"))))
+  (val again (! (world :codes #(READY1)
+                       :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING :started-ms 1000 :attempts 2
+                                            :last-failure "ImportError: cannot import name 'GetMonotonic'")))))
   (val status (get (statuses 46000 #(S1) again {} POLICY) 0))
   (assert (= status.phase JobPhase.PROBING))
   (assert (= status.probe (ProbeStatus :state "running" :elapsed-seconds 45 :attempts 2
@@ -344,19 +379,24 @@
   #(first views second))
 
 
-(defn #^ None test-a-refired-probe-keeps-the-last-failure [#^ Path tmp-path]
+(deftest test-a-refired-probe-keeps-the-last-failure [tmp-path]
   ;; 反例 (d) の観測の側: FAILED の後に撃ち直した検めの観測は、走っている間も直前の失敗の理由と回数を持つ。
-  (setv tree (probe-tree tmp-path) broken (service-spec "probe_broken:program"))
-  (setv #(first views second) (run-probes (run (probe-settings tmp-path)) (refired-scene broken tree)))
+  (val tree (! (probe-tree tmp-path)))
+  (val broken (replace SERVICE :entry "probe_broken:program"))
+  (val got (run-probes (! (probe-settings tmp-path)) (refired-scene broken tree)))
+  (val first (get got 0))
+  (val second (get got 2))
   (assert (= first.state ProbeState.FAILED))
-  (setv #(running) (lfor v views :if (= v.spec-hash (spec-hash broken)) v))
-  (assert (in running.state #(ProbeState.QUEUED ProbeState.RUNNING)) running)
-  (assert (= running.attempts 2) running)
-  (assert (= running.last-failure first.detail) running)
+  (val matching (lfor v (get got 1) :if (= v.spec-hash (spec-hash broken)) v))
+  (assert (= (len matching) 1) matching)
+  (val refiring (get matching 0))
+  (assert (in refiring.state #(ProbeState.QUEUED ProbeState.RUNNING)) refiring)
+  (assert (= refiring.attempts 2) refiring)
+  (assert (= refiring.last-failure first.detail) refiring)
   (assert (= second.attempts 2) second))
 
 
-(defn #^ None test-probe-reason-is-the-last-line []
+(deftest test-probe-reason-is-the-last-line
   (assert (= (probe-reason 1 "Traceback\n  File x\nImportError: nope\n\n") "ImportError: nope"))
   (assert (in "終了 3" (probe-reason 3 ""))))
 
@@ -366,10 +406,10 @@
 ;; 落とさなかった(版を上げるたびに増え続ける)。plan が今の宣言の spec の指紋を渡し(ForgetProbes)、持ち主が集合に無い分を落とす。
 
 (deftest test-the-plan-hands-the-declared-spec-hashes-when-a-stale-probe-record-is-observed
-  (val stale (plan 0 #(S2) (world :codes #(READY2) :probes #((passed S2) (failed S1))) {} POLICY))
+  (val stale (plan 0 #(S2) (! (world :codes #(READY2) :probes #((! (passed S2)) (! (failed S1))))) {} POLICY))
   (assert (in (ForgetProbes (frozenset [(spec-hash S2)])) stale) stale)
   ;; 宣言の spec の記録だけなら撃たない。
-  (val clean (plan 0 #(S2) (world :codes #(READY2) :probes #((passed S2))) {} POLICY))
+  (val clean (plan 0 #(S2) (! (world :codes #(READY2) :probes #((! (passed S2))))) {} POLICY))
   (assert (not (any (gfor a clean (isinstance a ForgetProbes)))) clean))
 
 
@@ -399,24 +439,29 @@
   #(first after napped last again))
 
 
-(defn #^ None test-probe-store-forgets-the-records-of-specs-no-longer-declared [#^ Path tmp-path]
-  (setv tree (probe-tree tmp-path))
+(deftest test-probe-store-forgets-the-records-of-specs-no-longer-declared [tmp-path]
+  (val tree (! (probe-tree tmp-path)))
   (.write-text (/ tmp-path "probe_nap.hy") "(import time)\n(time.sleep 1)\n(defn program [] None)\n" :encoding "utf-8")
-  (setv kept (replace (service-spec "probe_broken:program") :name "kept")
-        gone (replace (service-spec "probe_broken:program") :name "gone")
-        nap (replace (service-spec "probe_nap:program") :name "nap"))
-  (setv #(first after napped last again) (run-probes (run (probe-settings tmp-path :timeout-seconds 30)) (forget-scene kept gone nap tree)))
-  (setv views (dfor v after v.spec-hash v))
+  (val kept (replace SERVICE :entry "probe_broken:program" :name "kept"))
+  (val gone (replace SERVICE :entry "probe_broken:program" :name "gone"))
+  (val nap (replace SERVICE :entry "probe_nap:program" :name "nap"))
+  (val got (run-probes (! (probe-settings tmp-path :timeout-seconds 30)) (forget-scene kept gone nap tree)))
+  (val first (get got 0))
+  (val napped (get got 2))
+  (val last (get got 3))
+  (val again (get got 4))
+  (val views (dfor v (get got 1) v.spec-hash v))
   (assert (not-in (spec-hash gone) views) views)
   ;; 宣言に残る spec の失敗の理由と回数は残る。
-  (setv k (get views (spec-hash kept)))
+  (val k (get views (spec-hash kept)))
   (assert (= #(k.state k.attempts k.last-failure) #(ProbeState.FAILED 2 first.detail)) k)
   ;; 走っている検めの process は落とさない(終わった後の答えを次の片づけで落とす)。
   (assert (= (. (get views (spec-hash nap)) state) ProbeState.RUNNING) views)
   (assert (= napped.state ProbeState.PASSED))
   (assert (= (sfor v last v.spec-hash) #{(spec-hash kept)}) last)
-  (setv #(re) (lfor v again :if (= v.spec-hash (spec-hash gone)) v))
-  (assert (= #(re.attempts re.last-failure) #(1 "")) re))
+  (val regone (lfor v again :if (= v.spec-hash (spec-hash gone)) v))
+  (assert (= (len regone) 1) regone)
+  (assert (= #((. (get regone 0) attempts) (. (get regone 0) last-failure)) #(1 "")) regone))
 
 
 ;; --- 旧い形の service の spec(計画 2.8 の入口 15 — 2026-09-27)---------------------------------------------------
@@ -449,17 +494,19 @@
   #(views again))
 
 
-(defn #^ None test-the-probe-store-fails-an-old-service-spec-without-a-process [#^ Path tmp-path]
-  (setv #(views again) (run-probes (run (probe-settings tmp-path)) (old-spec-scene)))
+(deftest test-the-probe-store-fails-an-old-service-spec-without-a-process [tmp-path]
+  (val got (run-probes (! (probe-settings tmp-path)) (old-spec-scene)))
+  (val views (get got 0))
+  (val again (get got 1))
   ;; process を起こさない: 待ちにも走りにも載らず、すぐ FAILED の答えになる(無い木で起こせば OSError で落ちる)。
   (assert (= (len views) 1) views)
-  (setv view (get views 0))
+  (val view (get views 0))
   (assert (= view.state ProbeState.FAILED) view)
   (assert (in "旧い service の spec の引数" view.detail) view.detail)
   (assert (= again views) again)
   ;; worker の状態の報告では probe-failed と理由(起こさない)。
-  (setv w (world :probes #(view)))
+  (val w (! (world :probes #(view))))
   (assert (= (plan (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) #()))
-  (setv status (get (statuses (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) 0))
+  (val status (get (statuses (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) 0))
   (assert (= status.phase JobPhase.PROBE-FAILED) status)
   (assert (in "旧い service の spec の引数" status.detail) status.detail))
