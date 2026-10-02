@@ -1,11 +1,9 @@
 """E2E smoke tests for doeff-openai domain effect handlers."""
 
 
-import os  # noqa: PINJ050 — only for the RUN_OPENAI_E2E gate; the API key itself flows through a handler below
 
 import pytest
 from _runner import (
-    doeff_py_has_openai_key,
     openai_api_key_from_doeff_py_handler,
     run_program,
 )
@@ -23,8 +21,6 @@ class ArithmeticResult(BaseModel):
     value: int
 
 
-_run_real_e2e = os.environ.get("RUN_OPENAI_E2E") == "1"
-_skip_real_e2e = not (_run_real_e2e and doeff_py_has_openai_key())
 
 
 async def _async_run_with_handler(program, handler):
@@ -41,10 +37,7 @@ async def _async_run_with_handler(program, handler):
     )
 
 
-@pytest.mark.skipif(
-    _skip_real_e2e,
-    reason="True E2E requires OPENAI_API_KEY and RUN_OPENAI_E2E=1",
-)
+@pytest.mark.real_openai
 @pytest.mark.asyncio
 async def test_chat_completion_effect_with_production_handler() -> None:
     """Run ChatCompletion effect against the real OpenAI API via production handlers."""
@@ -66,10 +59,7 @@ async def test_chat_completion_effect_with_production_handler() -> None:
     assert "doeff" in result.value.lower()
 
 
-@pytest.mark.skipif(
-    _skip_real_e2e,
-    reason="True E2E requires OPENAI_API_KEY and RUN_OPENAI_E2E=1",
-)
+@pytest.mark.real_openai
 @pytest.mark.asyncio
 async def test_structured_output_effect_with_production_handler() -> None:
     """Run StructuredOutput effect against the real OpenAI API via production handlers."""

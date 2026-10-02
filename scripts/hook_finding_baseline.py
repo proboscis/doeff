@@ -233,7 +233,9 @@ def measure(top: Path, tool: str, instrument: Instrument, paths: list[str]) -> C
         return {}
     if tool == "doeff-linter":
         completed: subprocess.CompletedProcess[str] = subprocess.run(
-            [*instrument.command, "--no-log", "--output-format", "json", *paths],
+            # --force-exclude: 名指した file にも根の設定の exclude(規則の対象の外 — pyproject.toml の [tool.doeff-linter] の註)を
+            # 当てる。無いと、file を名指して測るこの入口では exclude が効かない(agora-redesign #3012)。
+            [*instrument.command, "--no-log", "--force-exclude", "--output-format", "json", *paths],
             cwd=top, capture_output=True, text=True, check=False,
         )
         if completed.returncode not in (0, 1):
