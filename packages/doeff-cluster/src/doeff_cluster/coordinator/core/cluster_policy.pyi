@@ -42,6 +42,7 @@ from doeff_cluster.coordinator.intent.cluster_model import PLACED_PHASES as PLAC
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_hy.table import Table as Table
+from doeff_hy.table import TableWrite as TableWrite
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
 from doeff_cluster.coordinator.intent.request_bodies import LeaseBody as LeaseBody
