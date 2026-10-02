@@ -757,9 +757,12 @@
                     _ (raise (TypeError (.format "記録の失敗の答えが例外でない: {!r}" value))))))))))
 
 
-(defn #^ dict replay-report [#^ ReplayState state #^ str end]
-  (summarize state.rec state.counts state.decisions state.outputs state.divergence end state.cursor
-             :from-ms state.from-ms :to-ms state.to-ms))
+(defk replay-report [#^ ReplayState state #^ str end]
+  {:pre [(: state ReplayState) (: end str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "再生を終えた状態と終わり方 end → 再生の報告(一致・判断の違い・分岐を 1 つの dict)— 再生の道具と検が同じ報告を読むため。"
+  (<- report dict (summarize state.rec state.counts state.decisions state.outputs state.divergence end state.cursor
+                             :from-ms state.from-ms :to-ms state.to-ms))
+  report)
 
 
 ;; --- 組み立て(worker の子 process の composition root が使う) ------------------------------------
