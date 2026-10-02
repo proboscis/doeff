@@ -44,7 +44,7 @@
   (:= s (get reply-3 0))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
-  (var second (state-from-json (state-to-json s) 5000))
+  (var second (! (state-from-json (state-to-json s) 5000)))
   (val reply-4 (beat second "a" 5000))
   (:= second (get reply-4 0)) ; b はまだ名乗っていない
   (assert (= (dfor #(k v) (.items second.placements) k v.worker) before)))
@@ -315,7 +315,7 @@
   (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
                         (req "PUT" "/board/k" {"value" 1})]))
   (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
-  (setv back (state-from-kv (.load (WalStore d)) 99999))
+  (setv back (! (state-from-kv (.load (WalStore d)) 99999)))
   (assert (= (durable-kv back) (durable-kv final)))
   (assert (= (. back revision) (. final revision)))
   (assert (= (dfor #(k row) (.items back.board) k row.value) {"k" 1})))
@@ -374,22 +374,22 @@
   (setv kv {(+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "old" "generation" 1 "since_ms" 0}
             (+ PLACEMENT "a") {"job" "a" "worker" "new" "generation" 2 "since_ms" 10}
             (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}})
-  (assert (= (. (get (. (state-from-kv kv 0) placements) "a") worker) "new"))
-  (assert (= (. (get (. (state-from-kv kv 0) placements) "b") worker) "zeus"))
+  (assert (= (. (get (. (! (state-from-kv kv 0)) placements) "a") worker) "new"))
+  (assert (= (. (get (. (! (state-from-kv kv 0)) placements) "b") worker) "zeus"))
   ;; 新しい鍵が在る a は書かず、無い b だけを書く。消すのは両方の旧い鍵
-  (assert (= (legacy-key-moves kv)
+  (assert (= (! (legacy-key-moves kv))
              [{(+ PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}}
               {(+ LEGACY-PLACEMENT "a") None (+ LEGACY-PLACEMENT "b") None}]))
-  (assert (= (legacy-key-moves {(+ PLACEMENT "a") {}}) [])))
+  (assert (= (! (legacy-key-moves {(+ PLACEMENT "a") {}})) [])))
 
 
 (deftest test-a-state-file-written-before-the-rename-keeps-its-placements
   ;; 追記の log の置き場より前の形(state.json)も、改名の前の欄の名で置き先を持っている。
   (setv data {"formatVersion" 2 "jobs" [] "workers" [] "tasks" [] "nextTask" 1
               "assignments" {"a" {"job" "a" "worker" "atlas" "generation" 4 "since_ms" 0}}})
-  (assert (= (. (get (. (state-from-json data 0) placements) "a") generation) 4))
-  (assert (in "placements" (state-to-json (state-from-json data 0))))
-  (assert (not-in "assignments" (state-to-json (state-from-json data 0)))))
+  (assert (= (. (get (. (! (state-from-json data 0)) placements) "a") generation) 4))
+  (assert (in "placements" (state-to-json (! (state-from-json data 0)))))
+  (assert (not-in "assignments" (state-to-json (! (state-from-json data 0))))))
 
 
 (deftest test-the-http-intake-splits-the-path-and-undoes-the-percent-code-per-part

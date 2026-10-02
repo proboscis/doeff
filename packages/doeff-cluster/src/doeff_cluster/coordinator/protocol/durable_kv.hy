@@ -16,7 +16,7 @@
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
 ;;; 旧い接頭辞(LEGACY-PLACEMENT)の鍵が残っているので、読みは両方を読み(同じ名なら新しい鍵が勝つ)、起動時に
 ;;; legacy-key-moves の 2 つの書きで新しい鍵へ移す — 新しい鍵を書き終えてから旧い鍵を消す。
-(require doeff-hy.macros [deff defk val])
+(require doeff-hy.macros [deff defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict dataclass replace])
@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes value-size
-] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json])
+] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
@@ -176,41 +176,47 @@
   (| written removed board))
 
 
-(deff full-kv [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(defk full-kv [state]
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を含む全部のキーの表(まとめ直しと移しの時だけ)。"
   (| (durable-kv state)
      (dfor k state.board (+ BOARD k) (board-entry state k))))
 
 
-(deff state-from-kv [#^ dict kv #^ int now]  ; defk にできない: 起動の読み直し(Program の外)が呼ぶ純粋な読み
+(defk state-from-kv [kv now]
   {:pre [(: kv dict) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "キーの表から状態を作り直す。worker の最後の連絡の時刻は保存した lastSeenMs(止まる前の最後の印の拍の値)。呼び手は
    api_policy.resume-after-downtime で止まっていた長さだけずらしてから使う。lastSeenMs の無い鍵(2026-09-25 より前の置き場・
    最後の印より後に加わった worker)は、最後の印の時刻(alive-ms)に連絡があったとみなす(ずらすと「いま」になる = 以前の形と同じ。
    生存を捨てると、最初に heartbeat を送った worker へ全 job が移り、元の担い手がまだ動いていれば二重に動く — 実測 2026-09-23)。
    印の時刻も無い置き場は now。"
-  (defn #^ list part [#^ str prefix] (sorted (gfor #(k v) (.items kv) :if (.startswith k prefix) #((cut k (len prefix) None) v))))
-  (setv counter (.get kv "counter" {}))
-  (setv alive-ms (.get counter "aliveMs" 0) unknown-seen (if (> alive-ms 0) alive-ms now))
+  ;; 鍵の接頭辞 prefix の行を #(接頭辞を外した鍵 値) の並び(鍵の順)にする。
+  (val part (fn [prefix] (sorted (gfor #(k v) (.items kv) :if (.startswith k prefix) #((cut k (len prefix) None) v)))))
+  (val counter (.get kv "counter" {}))
+  (val alive-ms (.get counter "aliveMs" 0))
+  (val unknown-seen (if (> alive-ms 0) alive-ms now))
   ;; 読めない Service の行(旧い宣言の形)は落とさず RefusedJob にする(改訂 1 の C)。
-  (setv #(jobs refused) (read-service-rows (lfor #(_ v) (part "service/") v)))
+  (val service-rows (read-service-rows (lfor #(_ v) (part "service/") v)))
+  ;; 旧い形(labels だけ)の worker の行は読まない(state_json.state-from-json と同じ — 次の heartbeat で作り直す)。
+  (val stored-workers (tuple (gfor #(k w) (part "worker/") :if (in "provides" w) #(k w))))
+  (<- generations tuple (read-each worker-generations-from-json stored-workers))
+  (<- tasks tuple (read-each task-record-from-json (tuple (part "task/"))))
+  (<- warms tuple (read-each warm-entry-from-json (tuple (part WARM))))
+  (<- programs tuple (read-each program-row-from-json (tuple (part PROGRAM))))
+  (<- audit tuple (read-each audit-event-from-json (tuple (part "audit/"))))
   (ClusterState
-    :jobs jobs
-    :refused refused
+    :jobs (get service-rows 0)
+    :refused (get service-rows 1)
     :placements (dfor #(k v) (+ (part LEGACY-PLACEMENT) (part PLACEMENT)) k (Placement #** v)) ; 後に並ぶ新しい鍵が勝つ
-    ;; 旧い形(labels だけ)の worker の行は読まない(cluster_policy.state-from-json と同じ — 次の heartbeat で作り直す)。
-    :workers (dfor #(k w) (part "worker/")
-                   :if (in "provides" w)
+    :workers (dfor #(#(k w) #(_ generation)) (zip stored-workers generations)
                    :setv caps (worker-capabilities-of w (.format "保存の worker {}" (get w "name")))
                    k (WorkerInfo (get w "name") (get caps 0) (get w "capacity")
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
                                  :exclusive (get caps 1) :node (.get w "node" "")
-                                 #** (worker-generations-from-json w)))
+                                 #** generation))
     :seen-marks (dfor #(k w) (part "worker/") :if (in "lastSeenMs" w) k (get w "lastSeenMs"))
-    :tasks (dfor #(k t) (part "task/")
-                 k (task-record-from-json t))
+    :tasks (dict tasks)
     :next-task (.get counter "nextTask" 1)
     :task-prefix (.get counter "taskPrefix" "t")
     :revision (.get counter "revision" 0)
@@ -220,16 +226,17 @@
     :rollouts (dfor #(k v) (part "rollout/") k (rollout-row-from-json v))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
-    :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
-    :programs (dfor #(k v) (part PROGRAM) k (program-row-from-json v))
+    ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
+    :warms (dfor #(k entry) warms :if (is-not entry None) k entry)
+    :programs (dict programs)
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
-    :audit (tuple (gfor #(_ e) (part "audit/") (audit-event-from-json e)))
+    :audit (tuple (gfor #(_ event) audit event))
     :board (dfor #(k v) (part BOARD) k (BoardRow :value (get v "value") :version (get v "resourceVersion")
                                                  :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))
     :started-ms now))
 
 
-(deff resume-writes [#^ dict kv #^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(defk resume-writes [kv state]
   {:pre [(: kv dict) (: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "起動の時に書く分: 読み直した置き場(kv)と、止まっていた長さだけ時計をずらした状態(api_policy.resume-after-downtime)の、
    値の違う鍵(盤を除く)。ずらした値(worker の lastSeenMs・task の lease・Rollout の段の起点)と生きていた時刻(counter の aliveMs)を
@@ -238,15 +245,15 @@
   (dfor #(k v) (.items (durable-kv state)) :if (!= (.get kv k) v) k v))
 
 
-(deff legacy-key-moves [#^ dict kv]  ; defk にできない: 起動の読み直し(Program の外)が呼ぶ純粋な読み
+(defk legacy-key-moves [kv]
   {:pre [(: kv dict)] :post [(: % list)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "改名の前の置き先の鍵を新しい鍵へ移す書きの列(順に Persist する)。1 つめ = 新しい鍵がまだ無い分を新しい鍵で書く・
    2 つめ = 旧い鍵を消す。旧い鍵を消すのは、新しい鍵を書き終えた後だけ。同じ名の新しい鍵が既に在れば、そちらを残す。
    旧い鍵が無ければ空(2 回目以降の起動は何も書かない)。"
-  (setv legacy (sorted (gfor k kv :if (.startswith k LEGACY-PLACEMENT) k)))
+  (val legacy (sorted (gfor k kv :if (.startswith k LEGACY-PLACEMENT) k)))
   (when (not legacy)
     (return []))
-  (setv writes (dfor k legacy
+  (val writes (dfor k legacy
                      :setv new (+ PLACEMENT (cut k (len LEGACY-PLACEMENT) None))
                      :if (not-in new kv)
                      new (get kv k)))
