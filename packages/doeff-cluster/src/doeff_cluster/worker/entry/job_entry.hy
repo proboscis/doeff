@@ -39,7 +39,7 @@
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed VersionMismatch RemoteJobFailed])
 (import doeff_cluster.shared.core.remote_rules [version-diffs diffs-text failed-from])
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.foundation.process_versions [this-process-versions])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(shared/intent/run_context の頭の註 — ここは import して、今の名を引けるように残す)。
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [runtime-env-of-context])
@@ -79,7 +79,7 @@
     (if (isinstance row RemoteJobFailed)
         #(None row)
         (let [expected (.get row "versions" {})
-              actual (run (process-versions os.environ))
+              actual (run (this-process-versions))
               diffs (version-diffs expected actual)]
           (if diffs
               #(None (VersionMismatch (+ "版が違うので Program を解かない: " (diffs-text diffs)

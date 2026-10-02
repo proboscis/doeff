@@ -19,6 +19,7 @@
 (import pathlib [Path])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree file-done])
+(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise])
 (import doeff_time [Delay])
@@ -205,10 +206,11 @@
 (defk ready-file-written [draining]
   {:pre [(: draining bool)] :post [(: % None)]}
   "readinessProbe が sh で読む file(DOEFF_WORKER_READY_FILE — 無ければ書かない)へ、heartbeat が届いた拍ごとに「ready」か「draining」を
-   書くため(mtime = 最後に届いた時刻 — probe は中身が ready で新しい時だけ Ready)。"
-  (val path (os.environ.get "DOEFF_WORKER_READY_FILE"))
-  (when path
-    (<- (file-done (WriteText path (if draining "draining\n" "ready\n") :replace True))))
+   書くため(mtime = 最後に届いた時刻 — probe は中身が ready で新しい時だけ Ready)。環境変数は ReadEnvironment で読む(在る名の分だけ
+   答えが返る — 本物 = 入口の subprocess-handler が os.environ から・sim = 台本の process の handler。protocol の層は os.environ に触らない・#3014)。"
+  (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment #("DOEFF_WORKER_READY_FILE")))
+  (when found
+    (<- (file-done (WriteText (. (get found 0) value) (if draining "draining\n" "ready\n") :replace True))))
   None)
 
 
