@@ -361,15 +361,15 @@
       ;; 止まり始めを名乗る heartbeat(#2819)は、写した後にその世代の drain の頼みとして通す — drain が増えた heartbeat は
       ;; quiet-heartbeat の比べ(drains も見る)で静かでなくなり、同じ歩で調停が置き先を外す。
       (do (setv name body.name
-                heard (absorb-stopping (register-heartbeat state body now) name body.boot body.stopping now))
+                heard (absorb-stopping (! (register-heartbeat state body now)) name body.boot body.stopping now))
           (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (! (settle state heard name now timing)))
-                reply (heartbeat-reply after name timing (ready-instances after name now timing) :now now
-                                       :boot body.boot :statuses body.statuses))
+                reply (! (heartbeat-reply after name timing (ready-instances after name now timing) :now now
+                                          :boot body.boot :statuses body.statuses)))
           ;; 返事で付けた「途絶しても動かし続けてよい」印を、印を渡した担い手との約束として残す(#2804 — 返事の前に状態と一緒に保存され、
           ;; 担い手が印を持たないと知らせるまで job を他へ移さない)。
           #((! (remember-keep-marks after name body.boot body.kept-when-cut-off reply now)) 200 reply))
     (and (= method "GET") (= parts ["state"]))
-      #(state 200 (StateReply :view (state-view state now timing) :audit (tuple (cut state.audit -30 None))
+      #(state 200 (StateReply :view (! (state-view state now timing)) :audit (tuple (cut state.audit -30 None))
                               :drains (drains-view state now timing)))
     True (unknown-request state request)))
 
@@ -398,7 +398,9 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-board [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
+(defk respond-board [state request body parts now timing]
+  {:pre [(: state ClusterState) (: request Request) (: body (| RequestBody ServiceBody LegacyJobs)) (: parts list) (: now int) (: timing ClusterTiming)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "盤の読み書き(/board)と lease の書き(/leases)に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -409,9 +411,9 @@
                                                        (BoardEntryView :key k :value row.value :version row.version)))
                                  :with-versions (bool (.get request.query "withVersions")))))
     (and (= method "POST") (= head "leases") (= (len parts) 2))
-      (lease-write state (get parts 1) body now)
+      (! (lease-write state (get parts 1) body now))
     (and (= method "PUT") (= head "board") (> (len parts) 1))
-      (board-write state (.join "/" (cut parts 1 None)) body now)
+      (! (board-write state (.join "/" (cut parts 1 None)) body now))
     True (unknown-request state request)))
 
 
@@ -423,13 +425,13 @@
         head (get parts 0))
   (cond
     (and (= method "POST") (= parts ["tasks"]))
-      (do (setv #(after status reply) (submit-task state body now))
+      (do (setv #(after status reply) (! (submit-task state body now)))
           ;; 断った本文(400・429)は状態を変えない — 調停も通さず同じ状態を返す。
           #((if (is after state) state (! (settle state after (loose-actor request) now timing))) status reply))
-    (and (= method "GET") (= head "tasks") (= (len parts) 2)) (poll-task state (get parts 1) now)
+    (and (= method "GET") (= head "tasks") (= (len parts) 2)) (! (poll-task state (get parts 1) now))
     ;; task の子 process が終わる前に直に届ける結果(#1387 — cluster_policy.absorb-task-result)。
     (and (= method "POST") (= head "tasks") (= (len parts) 3) (= (get parts 2) "result"))
-      (do (setv #(after status reply) (absorb-task-result state (get parts 1) body now))
+      (do (setv #(after status reply) (! (absorb-task-result state (get parts 1) body now)))
           #((if (is after state) state (! (settle state after (loose-actor request) now timing))) status reply))
     (and (= method "DELETE") (= head "tasks") (= (len parts) 2))
       #((! (settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
@@ -490,7 +492,7 @@
       (| "metrics" "events") (respond-observations state request body parts now timing)
       (| "jobs" "heartbeat" "state") (! (respond-legacy state request body parts now timing :settled settled))
       "workers" (! (respond-workers state request body parts now timing))
-      (| "board" "leases") (respond-board state request body parts now timing)
+      (| "board" "leases") (! (respond-board state request body parts now timing))
       "tasks" (! (respond-tasks state request body parts now timing))
       (| "warm" "programs" "detached") (! (respond-stores state request body parts now timing))
       _ (unknown-request state request))
