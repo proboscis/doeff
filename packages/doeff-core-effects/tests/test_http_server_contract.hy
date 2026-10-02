@@ -12,6 +12,8 @@
 ;;;   * 送りの上限を超える 1 通は接続をその場で切る(WsClosed 1006 と切りの理由・切りの数)
 ;;;   * HttpShutdown は開いている ws へ close 1000 と理由を送り、以後の HttpNextRequest は何度でも HttpServerClosed(その理由)
 ;;;   * HttpReadBody は上限ちょうどまで読み、超えれば HttpBodyTooLarge(宣言の長さ・宣言なしは None)・札ごとに 1 度だけ・命令の後は読めない
+;;;   * HttpListen の probes に当たる要求(GET・HEAD と path)は答え手が answer で答え、本体の出来事にならない。answer は答え手の自分の run で
+;;;     走る(本体の run の handler を読む answer は 500)
 ;;; 答え手だけの性質は test_http_server.hy(本物: 結んだ port・HTTP の中継の本文と X-Forwarded-Proto・ws の中継・received-at。fake: 中継先の
 ;;; 最長の一致・読まない相手の箱・台本の後足し・読みの途中の失敗)。
 (require doeff-hy.macros [defk deftest <- val var])
@@ -21,7 +23,7 @@
                                                 HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody
                                                 HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport
                                                 WsAccept WsBinaryArrived WsClose WsClosed WsOpened WsSendReport WsSendText WsTextArrived
-                                                WS-CUT-REASON WS-REFUSAL-TEXT])
+                                                WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
 (val SHUTDOWN-REASON "検が閉じた")
@@ -326,3 +328,71 @@
   (val late (. (get served.reads 0) first))
   (assert (isinstance late HttpBodyFailed) late)
   (assert (= (. (get served.answers 0) status) 204) served.answers))
+
+
+;; --- 答え手が自分で答える probe の口(agora-redesign #2776)-----------------------------------------------------------------------
+
+(val PROBE-FAILED "/peek の probe は答えを出せなかった")
+
+
+(defk fixed-probe-answer [status text]
+  {:pre [(: status int) (: text str)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
+  "probe の口の答えの Program(閉じている — 何の effect も使わない)。"
+  (HttpProbeAnswer :status status :headers #((HttpHeader :name "Content-Type" :value "text/plain; charset=utf-8"))
+                   :body (.encode text "utf-8")))
+
+
+(defk peek-world []
+  {:pre [] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
+  "本体の run の handler(契約の世界)を読もうとする probe の答え — answer は答え手の自分の run で走るので届かず、答えは 500。"
+  (<- world World (ContractWorld))
+  (HttpProbeAnswer :status 200 :headers #() :body (.encode world.site "utf-8")))
+
+
+(defk serve-probed [requests probes reaching]
+  {:pre [(: requests tuple) (: probes tuple) (: reaching int)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
+  "probe の口つきの契約の Program: 待ち受けを開き、相手に requests を送らせ、本体へ届いた要求には 200 \"program\" で答え、reaching 個が
+   届いたら閉じる。閉じた後にもう 1 度受け、相手が受け取った物を読む。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :probes probes))
+  (<- (PeerSend :address bound :requests requests))
+  (var events #())
+  (var reached 0)
+  (var open True)
+  (while open
+    (<- event HttpEvent (HttpNextRequest))
+    (<- shape tuple (event-shape event))
+    (:= events (+ events #(shape)))
+    (match event
+      (HttpServerClosed) (:= open False)
+      (HttpRequestArrived :ticket t) (do (<- (respond t 200 #() (HttpBodyBytes :data b"program")))
+                                         (:= reached (+ reached 1))
+                                         (when (= reached reaching)
+                                           (<- (HttpShutdown :reason SHUTDOWN-REASON :drain-seconds 0.5))))
+      _ None))
+  (<- again HttpEvent (HttpNextRequest))
+  (<- again-shape tuple (event-shape again))
+  (<- answers tuple (PeerAnswers))
+  (<- report WsSendReport (TakeWsSendReport))
+  (Served :events events :again again-shape :answers answers :reads #() :report report))
+
+
+(deftest test-a-probe-is-answered-by-the-server-and-never-reaches-the-program
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  ;; GET・HEAD で path が当たる要求は答え手が answer で答え、本体の出来事にならない(札は数える)。POST と他の path は本体へ届く。
+  ;; answer は答え手の自分の run で走る — 本体の run の handler(契約の世界)を読む answer は 500 と理由。
+  (val probes #((HttpProbe :path "/healthz" :answer (fixed-probe-answer 200 "alive"))
+                (HttpProbe :path "/readyz" :answer (fixed-probe-answer 503 "not ready"))
+                (HttpProbe :path "/peek" :answer (peek-world))))
+  (val requests #((PeerRequest :method "GET" :target "/healthz") (PeerRequest :method "HEAD" :target "/healthz")
+                  (PeerRequest :method "GET" :target "/readyz?verbose=1") (PeerRequest :method "GET" :target "/peek")
+                  (PeerRequest :method "POST" :target "/healthz") (PeerRequest :method "GET" :target "/text")))
+  (<- served Served (serve-probed requests probes 2))
+  (assert (= served.events (+ #(#("request" "5" "POST" "/healthz" "/healthz" False) #("request" "6" "GET" "/text" "/text" False))
+                              CLOSED))
+          served.events)
+  (assert (= (lfor a (cut served.answers 3) #(a.status a.body)) [#(200 b"alive") #(200 b"") #(503 b"not ready")]) served.answers)
+  (assert (= (! (header-values (get served.answers 0) "Content-Type")) ["text/plain; charset=utf-8"]) served.answers)
+  (val peeked (get served.answers 3))
+  (assert (= peeked.status 500) peeked)
+  (assert (.startswith (.decode peeked.body "utf-8") PROBE-FAILED) peeked)
+  (assert (= (lfor a (cut served.answers 4 None) #(a.status a.body)) [#(200 b"program") #(200 b"program")]) served.answers))

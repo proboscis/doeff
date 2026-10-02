@@ -5,15 +5,24 @@
 ;;;     溜まって切られる勘定・走っている台本への後足し・読みの途中で相手が切った本文。
 ;;;   - 本物の答え手(aiohttp-http-server): HTTP の中継の本文と X-Forwarded-Proto・ws の中継(frame の往復と close の状態符)・相手が先に
 ;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
-;;;     結んだ port・出来事の received-at(aiohttp の無い venv では skip)。
-(require doeff-hy.macros [deftest defk <- val var with-handler])
+;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)
+;;;     (aiohttp の無い venv では skip)。
+(require doeff-hy.macros [deftest defk deff <- val var with-handler])
+(require doeff-hy.record [defrecord])
 (import asyncio)
 (import collections.abc [Callable])
+(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import http.client)
+(import queue)
 (import socket)
 (import threading)
+(import time)
 (import pytest)
 (import doeff [run with_handlers Program])
+(import doeff_core_effects.effects [Await])
 (import doeff_core_effects.handlers [state await-handler])
+(import doeff_core_effects.latest_effects [PublishLatest ReadLatest])
+(import doeff_core_effects.process_latest [process-latest-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.file_effects [MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
@@ -22,7 +31,7 @@
                                                 ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText
                                                 HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed
                                                 WsCloseSent AppendHttpScript HttpReadBody HttpBodyFailed HttpBodyOutcome ScriptedBody
-                                                WS-CUT-REASON])
+                                                WS-CUT-REASON HttpProbe HttpProbeAnswer])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
 
 
@@ -325,3 +334,154 @@
   (assert (in "GET /late への答え(status 200)" err) err)
   (assert (in "この待ち受けで 1 件目" err) err)
   (assert (in "届かなかった答えは合わせて 1 件" err) err))
+
+
+;; --- probe の口は本体の流れの止まりに巻き込まれない(agora-redesign #2776)-------------------------------------------------------------
+;; 2026-10-02 の record の job: 待ち受け・timer・Await の全部が process に 1 つの共有の event loop に乗り、loop が 30 秒止まった間 /healthz も
+;; 答えなかった(#2734)。probe の口は待ち受けの loop の上で、answer を別の thread の自分の run で答えるので、本体の流れ(共有の loop か
+;; scheduler)を塞いでも /healthz は答え、/readyz は answer の判じ(拍の古さ)に従う。本体へ届く要求は塞がれている間は答えない(対照)。
+
+;; probe の答えを待つ上限・/readyz が 503 と名乗る拍の古さ・相手が古さを越えるまで待つ秒・本体へ届く要求を待つ上限・塞ぐ上限(相手が放す
+;; までの保険)— どれも秒。
+(val PROBE-SECONDS 0.5)
+(val READY-STALE-SECONDS 0.1)
+(val STALE-WAIT-SECONDS 0.15)
+(val WORK-SECONDS 0.2)
+(val HOLD-SECONDS 2.0)
+
+
+(defrecord Beat
+  "本体の流れの最後の拍(単調時計の秒)— 最新の値の置き場に置き、/readyz の answer が別の run で読む。"
+  {:tags {:context "http-server-test" :role "type"}}
+  (#^ float at))
+
+
+(defrecord Fetched
+  "相手の要求 1 つの答え: status(時間の内に答えが無ければ None)と本文。"
+  {:tags {:context "http-server-test" :role "type"}}
+  (#^ (| int None) status)
+  (#^ str body))
+
+
+(defrecord HeldAnswers
+  "本体の流れを塞いだ間に相手が受け取った物: health・ready = probe の口の答え・work = 本体へ届く要求の答え。"
+  {:tags {:context "http-server-test" :role "type"}}
+  (#^ Fetched health)
+  (#^ Fetched ready)
+  (#^ Fetched work))
+
+
+(defk alive []
+  {:pre [] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
+  "/healthz の answer: process が居れば 200(本体の流れを見ない)。"
+  (HttpProbeAnswer :status 200 :headers #() :body b"alive"))
+
+
+(defk readiness [stale-seconds]
+  {:pre [(: stale-seconds float)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
+  "/readyz の answer: 置き場の最後の拍が stale-seconds より古い(まだ無い)なら 503 と名乗り、新しければ 200。"
+  (<- beat (| Beat None) (ReadLatest Beat))
+  (val stalled (if (is beat None) None (- (time.monotonic) beat.at)))
+  (if (and (is-not stalled None) (<= stalled stale-seconds))
+      (HttpProbeAnswer :status 200 :headers #() :body b"ready")
+      (HttpProbeAnswer :status 503 :headers #() :body (.encode (.format "本体の流れが {} 秒 拍を刻んでいない" stalled) "utf-8"))))
+
+
+(defk fetch [address path seconds]
+  {:pre [(: address HttpAddress) (: path str) (: seconds float)] :post [(: % Fetched)] :tags {:context "http-server-test" :role "foundation"}}
+  "相手の要求 1 つ: GET を送り、seconds 秒の内の答えを読む(来なければ status None)。"
+  (val connection (http.client.HTTPConnection address.host address.port :timeout seconds))
+  (try
+    (.request connection "GET" path)
+    (val response (.getresponse connection))
+    (Fetched :status response.status :body (.decode (.read response) "utf-8"))
+    (except [TimeoutError]
+      (Fetched :status None :body ""))
+    (finally
+      (.close connection))))
+
+
+(deff ask-while-held [address held release box]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: address HttpAddress) (: held threading.Event) (: release threading.Event) (: box queue.Queue)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "本体の流れが塞がれてから拍が古くなるまで待ち、probe の口 2 つと本体へ届く要求 1 つを送って答えを box へ置き、流れを放す(失敗なら例外を置く)。"
+  (try
+    (.wait held HOLD-SECONDS)
+    (time.sleep STALE-WAIT-SECONDS)
+    (.put box (HeldAnswers :health (run (fetch address "/healthz" PROBE-SECONDS)) :ready (run (fetch address "/readyz" PROBE-SECONDS))
+                           :work (run (fetch address "/work" WORK-SECONDS))))
+    (except [error Exception]
+      (.put box error))
+    (finally
+      (.set release)))
+  None)
+
+
+(defk hold-the-loop [held release]
+  {:pre [(: held threading.Event) (: release threading.Event)] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
+  "本体の流れを塞ぐ形 1: await-handler の共有の event loop の thread を、相手が放すまで止める(loop の上で同期に待つ coroutine)。"
+  (<- (Await ((fn :async [] (.set held) (.wait release HOLD-SECONDS)))))
+  None)
+
+
+(defk hold-the-scheduler [held release]
+  {:pre [(: held threading.Event) (: release threading.Event)] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
+  "本体の流れを塞ぐ形 2: 協調型の scheduler の thread(本体の run)を、相手が放すまで止める。"
+  (.set held)
+  (.wait release HOLD-SECONDS)
+  None)
+
+
+(defk probe-while-held [hold]
+  {:pre [(: hold Callable)] :post [(: % HeldAnswers)] :tags {:context "http-server-test" :role "program"}}
+  "probe の口つきで待ち受けを開き、拍を 1 つ置いてから hold で本体の流れを塞ぎ、その間に相手が受け取った物を返す。/readyz の answer は
+   置き場と state を自分の中に被せた閉じた Program。"
+  (val board (.format "test-http-probe-{}" (time.monotonic-ns)))
+  (val held (threading.Event))
+  (val release (threading.Event))
+  (val box (queue.Queue))
+  (val probes #((HttpProbe :path "/healthz" :answer (alive))
+                (HttpProbe :path "/readyz" :answer (with_handlers [(state) (process-latest-handler board)] (readiness READY-STALE-SECONDS)))))
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :probes probes))
+  (<- (with_handlers [(state) (process-latest-handler board)] (PublishLatest (Beat :at (time.monotonic)))))
+  (.start (threading.Thread :target ask-while-held :args #(bound held release box) :daemon True))
+  (<- (hold held release))
+  ;; 塞いでいた間に本体へ届いた要求(相手はもう去った)に /work まで答えてから閉じる — 答えの無い要求が残ると aiohttp は閉じる時に待つ。
+  ;; probe の口が列を通る形(直す前)では /healthz・/readyz もここへ届く。
+  (var answering True)
+  (while answering
+    (<- arrived HttpRequestArrived (HttpNextRequest))
+    (<- (HttpRespond :ticket arrived.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"late")))
+    (:= answering (!= arrived.path "/work")))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.2))
+  (val got (.get box :timeout HOLD-SECONDS))
+  (when (isinstance got Exception)
+    (raise got))
+  got)
+
+
+(defk held-answers [hold]
+  {:pre [(: hold Callable)] :post [(: % HeldAnswers)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で probe-while-held を走らせるため(aiohttp の無い venv では skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (<- got HeldAnswers (with-handler [(await-handler) (state) aiohttp-http-server] (probe-while-held hold)))
+  got)
+
+
+(deftest test-a-probe-answers-while-the-shared-loop-is-held
+  ;; 共有の event loop の thread を止めても、/healthz は 200・/readyz は拍の古さで 503 と名乗る。本体へ届く要求は答えない(対照)。
+  (<- got HeldAnswers (held-answers hold-the-loop))
+  (assert (= got.health (Fetched :status 200 :body "alive")) got)
+  (assert (= got.ready.status 503) got)
+  (assert (in "拍を刻んでいない" got.ready.body) got)
+  (assert (is got.work.status None) got))
+
+
+(deftest test-a-probe-answers-while-the-scheduler-is-held
+  ;; 協調型の scheduler の thread(本体の run)を止めても同じ。
+  (<- got HeldAnswers (held-answers hold-the-scheduler))
+  (assert (= got.health (Fetched :status 200 :body "alive")) got)
+  (assert (= got.ready.status 503) got)
+  (assert (in "拍を刻んでいない" got.ready.body) got)
+  (assert (is got.work.status None) got))

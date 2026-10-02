@@ -8,6 +8,7 @@ scripted_http_server.hy を読む・agora-redesign #2233)。
 - 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
 """
 
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
 
 from doeff_vm import WithHandler
@@ -18,12 +19,18 @@ from doeff_core_effects.http_server_effects import (
     HttpBodyOutcome,
     HttpCommand,
     HttpHeader,
+    HttpProbe,
+    HttpProbeAnswer,
     HttpRequestArrived,
     HttpScript,
     HttpServed,
     ScriptedBody,
     ScriptedUpstream,
+    WsBinaryArrived,
+    WsClosed,
+    WsOpened,
     WsSendReport,
+    WsTextArrived,
 )
 
 _A = TypeVar("_A")
@@ -46,6 +53,16 @@ def scripted_body_outcome(
     declared: int | None, body: ScriptedBody | None, max_bytes: int
 ) -> Program[HttpBodyOutcome, Any]: ...
 def bodies_by_ticket(bodies: tuple[ScriptedBody, ...]) -> Program[dict[str, ScriptedBody], Any]: ...
+@dataclass(frozen=True, kw_only=True)
+class ProbeHit:
+    arrival: HttpRequestArrived
+    probe: HttpProbe
+
+def probe_hit(
+    probes: tuple[HttpProbe, ...],
+    event: HttpRequestArrived | WsTextArrived | WsBinaryArrived | WsClosed | WsOpened,
+) -> Program[ProbeHit | None, Any]: ...
+def probe_served(arrival: HttpRequestArrived, answer: HttpProbeAnswer) -> Program[HttpServed, Any]: ...
 
 class _ScriptedHttpServer(Protocol):
     """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""

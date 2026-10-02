@@ -2,7 +2,13 @@
 ;;; webapp の受け口の土台 #767 / #795 から移した)。aiohttp の待ち受け・応答の送出・HTTP と ws の中継の実 I/O で、判断を持たない
 ;;; (何をどう送るかは呼び手の Program が HttpRespond の値で決める)。aiohttp は extra `http-server` の依存。
 ;;;
-;;;   待ち受け      aiohttp の server を await-handler の共有の event loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
+;;;   待ち受けの loop aiohttp の server とこの module の実 I/O の全部は、process に 1 つの待ち受けの loop(edge-loop — await-handler の
+;;;                 共有の event loop とは別の daemon thread で回る)の上で走る。答え手の節は Await で共有の loop に入り、そこから待ち受けの
+;;;                 loop の coroutine の完了を待つ(across)。共有の loop か協調型の scheduler が止まっても、待ち受けの loop は接続を受け続ける
+;;;                 (agora-redesign #2776 — 2026-10-02 の record の job は共有の loop が 30 秒止まり、/healthz も答えなかった)
+;;;   probe の口    HttpListen の probes に当たる要求(probe-for — GET・HEAD と path)は列にも scheduler にも渡さず、待ち受けの loop が
+;;;                 answer の Program を別の thread(asyncio.to_thread)の自分の run で走らせて答える(probe-answer)。札は 1 つ数える
+;;;   待ち受け      aiohttp の server を待ち受けの loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
 ;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
 ;;;                 長い中継が他の要求を止めない
 ;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
@@ -33,8 +39,11 @@
 (require doeff-hy.macros [defhandler <- val])
 (import asyncio)
 (import collections [deque])
+(import collections.abc [Coroutine])
 (import sys)
+(import threading)
 (import time)
+(import typing [TypeVar])
 (import pathlib [Path])
 (import aiohttp)
 (import aiohttp [web WSMsgType])
@@ -45,7 +54,7 @@
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS WS-CLOSE-NORMAL
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
-                                                send-overflows closing-of])
+                                                send-overflows closing-of HttpProbe probe-for probe-answer])
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
@@ -67,6 +76,13 @@
 (val ABNORMAL-CLOSE-CODES (frozenset #(1006 1015)))
 (val NORMAL-CLOSE 1000)
 (val RELAY-FAILED-CLOSE 1011)
+
+;; process に 1 つの待ち受けの loop の置き場(鍵 EDGE-KEY → loop)と、作る時の lock(頭の註 — 待ち受けの数だけ thread を増やさない)。
+(val EDGE-LOOPS {})
+(val EDGE-LOOP-LOCK (threading.Lock))
+(val EDGE-KEY "edge")
+;; across が待ち受けの loop から運ぶ答えの型。
+(val Carried (TypeVar "Carried"))
 
 
 (defn #^ bool upgrade-asked [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
@@ -134,7 +150,7 @@
 
 
 (defclass WsPeer []
-  "ws に上げた接続 1 本と、その送りの箱(await-handler の共有の event loop の上だけで触る)。outbox = 積んだ物の列(#(\"text\" 文 積んだ拍)
+  "ws に上げた接続 1 本と、その送りの箱(待ち受けの loop の上だけで触る)。outbox = 積んだ物の列(#(\"text\" 文 積んだ拍)
    か #(\"close\" #(状態符 理由) 積んだ拍))・pending = 箱の文の byte の合計・closed = 以後は積まない(閉じを積んだ・切った・終わった)・
    cut = 送りの上限で切った理由(None = 切っていない)・sent = こちらが積んだ閉じ(WsCloseFrame)・received = 相手から受けた閉じ・
    wake = 書き手を起こす印・writer = 書き手の task。"
@@ -155,8 +171,8 @@
 
 
 (defclass WebEdge []
-  "aiohttp の待ち受けと、札ごとの命令の待ちと、ws に上げた接続(await-handler の共有の event loop の上だけで触る)。待ち受けの handler の
-   session の値。"
+  "aiohttp の待ち受けと、札ごとの命令の待ちと、ws に上げた接続(待ち受けの loop — 頭の註 — の上だけで触る。答え手の節は across で
+   渡す)。待ち受けの handler の session の値。"
 
   (defn #^ None __init__ [self]
     (setv self.address None
@@ -171,6 +187,8 @@
           self.peers {}
           self.shut None
           self.ws-send-drain None
+          ;; 答え手が自分で答える probe の口(HttpListen の probes)。
+          self.probes #()
           self.count 0
           ;; 相手が先に切って届かなかった答えの数(この待ち受けの起動から — 0 に戻さない)。
           self.dropped-answers 0)
@@ -187,17 +205,34 @@
           self.cuts 0)
     None)
 
-  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes]
-    "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求はすべて列へ並ぶ)。"
+  (defn #^ asyncio.AbstractEventLoop edge-loop [self]
+    "待ち受けを共有の event loop と scheduler の止まりから切り離すため、process に 1 つの待ち受けの loop を引く(無い・閉じていれば作り、
+     自分の daemon thread で回す — 頭の註)。"
+    (with [EDGE-LOOP-LOCK]
+      (setv loop (.get EDGE-LOOPS EDGE-KEY))
+      (when (or (is loop None) (.is-closed loop))
+        (setv loop (asyncio.new-event-loop))
+        (.start (threading.Thread :target loop.run-forever :name "doeff-http-edge" :daemon True))
+        (setv (get EDGE-LOOPS EDGE-KEY) loop))
+      loop))
+
+  (defn :async #^ Carried across [self #^ (get Coroutine #(object object Carried)) coroutine]
+    "答え手の節(Await — 共有の event loop)から待ち受けの loop で coroutine を走らせ、その答えを待つため。待ちが取り消されれば待ち受けの
+     loop の task も取り消す。"
+    (await (asyncio.wrap-future (asyncio.run-coroutine-threadsafe coroutine (self.edge-loop)))))
+
+  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes #^ tuple probes]
+    "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求は、probe の口に当たる物を除いてすべて列へ並ぶ)。"
     (setv self.address address
           self.ws-max-bytes ws-max-bytes
-          self.ws-send-max-bytes ws-send-max-bytes)
+          self.ws-send-max-bytes ws-send-max-bytes
+          self.probes probes)
     (setv self.queue (asyncio.Queue)
           self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
                                                                              :sock-read HTTP-READ-SECONDS)))
     (setv app (web.Application))
-    (.add-route app.router "*" "/{tail:.*}" self.receive)
+    (.add-route app.router "*" "/{tail:.*}" self.dispatch)
     (setv self.runner (web.AppRunner app :access-log None))
     (await (.setup self.runner))
     (await (.start (web.TCPSite self.runner self.address.host self.address.port)))
@@ -212,6 +247,20 @@
     (if (and (is-not self.shut None) (not (isinstance event HttpServerClosed)))
         (HttpServerClosed :reason self.shut)
         event))
+
+  (defn :async #^ web.StreamResponse dispatch [self #^ web.Request request]
+    "aiohttp の要求 1 つを、probe の口に当たれば待ち受けの loop の上で自分で答え、他は列へ並べる(receive)ため。"
+    (setv probe (run (probe-for self.probes request.method request.path)))
+    (if (is probe None)
+        (await (self.receive request))
+        (await (self.answer-probe probe))))
+
+  (defn :async #^ web.Response answer-probe [self #^ HttpProbe probe]
+    "probe の口の要求 1 つに、列も scheduler も通さずに答えるため(頭の註)。answer は別の thread の自分の run で走らせ、待ち受けの loop を
+     塞がない。札は他の要求と同じ数えで 1 つ使う。"
+    (setv self.count (+ self.count 1))
+    (setv answer (await (asyncio.to-thread probe-answer probe)))
+    (web.Response :status answer.status :body answer.body :headers (lfor header answer.headers #(header.name header.value))))
 
   (defn :async #^ None settle [self #^ str ticket #^ HttpCommand command]
     "本体の命令を札の要求へ渡すため(同じ札へ 2 度渡すと KeyError — 判断は要求ごとに 1 つ)。"
@@ -503,39 +552,39 @@
 
 
 (defhandler aiohttp-http-server
-  ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。effect の中の coroutine は await-handler の共有の
-  ;; event loop で走る(組の外側に await-handler が要る)。
+  ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
+  ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
   (session val edge (WebEdge))
-  (HttpListen [address ws-max-bytes ws-send-max-bytes]
-    (<- bound HttpAddress (Await (.start edge address ws-max-bytes ws-send-max-bytes)))
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes]
+    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes))))
     (resume bound))
   (HttpNextRequest []
-    (<- arrival (Await (.next-arrival edge)))
+    (<- arrival (Await (.across edge (.next-arrival edge))))
     (resume arrival))
   (HttpReadBody [ticket max-bytes]
-    (<- outcome HttpBodyOutcome (Await (.read-body edge ticket max-bytes)))
+    (<- outcome HttpBodyOutcome (Await (.across edge (.read-body edge ticket max-bytes))))
     (resume outcome))
   (HttpRespond [ticket status headers body]
-    (<- (Await (.settle edge ticket effect)))
+    (<- (Await (.across edge (.settle edge ticket effect))))
     (resume None))
   (HttpForward [ticket url]
-    (<- (Await (.settle edge ticket effect)))
+    (<- (Await (.across edge (.settle edge ticket effect))))
     (resume None))
   (WsForward [ticket url]
-    (<- (Await (.settle edge ticket effect)))
+    (<- (Await (.across edge (.settle edge ticket effect))))
     (resume None))
   (WsAccept [ticket]
-    (<- (Await (.settle edge ticket effect)))
+    (<- (Await (.across edge (.settle edge ticket effect))))
     (resume None))
   (WsSendText [ticket text]
-    (<- (Await (.send-text edge ticket text)))
+    (<- (Await (.across edge (.send-text edge ticket text))))
     (resume None))
   (WsClose [ticket code reason]
-    (<- (Await (.close-ws edge ticket code reason)))
+    (<- (Await (.across edge (.close-ws edge ticket code reason))))
     (resume None))
   (HttpShutdown [reason drain-seconds]
-    (<- (Await (.shutdown edge reason drain-seconds)))
+    (<- (Await (.across edge (.shutdown edge reason drain-seconds))))
     (resume None))
   (TakeWsSendReport []
-    (<- report WsSendReport (Await (.take-report edge)))
+    (<- report WsSendReport (Await (.across edge (.take-report edge))))
     (resume report)))

@@ -2,10 +2,13 @@
 ;;; #811 変更 3a)。本物の socket を開かず、台本(HttpScript — 届く出来事の列と中継先ごとの答えと読まない相手の札)で答える。業務を知らない:
 ;;; 台本の中身は呼び手が渡す。
 ;;;
-;;;   HttpListen       何もしない(開いた扱い)。答え = 渡された宛先のまま(port 0 は 0 のまま — 台本は port を結ばない)。送りの上限を控える
+;;;   HttpListen       何もしない(開いた扱い)。答え = 渡された宛先のまま(port 0 は 0 のまま — 台本は port を結ばない)。送りの上限と
+;;;                    probe の口を控える
 ;;;   HttpNextRequest  台本の出来事を順に渡し、尽きたら HttpServerClosed。WsAccept で上げた札の WsOpened と、WsClose・送りの上限の切りで
 ;;;                    終わった札の WsClosed は、その拍に列の頭へ差す(本物の待ち受けが直ぐに出す出来事と同じ並び)。HttpShutdown の後は
-;;;                    列に何が残っていても HttpServerClosed(その理由)
+;;;                    列に何が残っていても HttpServerClosed(その理由)。probe の口に当たる要求(probe-for)は渡さず、ここで本物と同じ
+;;;                    probe-answer(answer を自分の run で — 本体の run の handler と状態に触れない)で答えて記録し、次の出来事へ進む。
+;;;                    台本に thread は無いので、本体の流れが probe を待たせない形は「本体へ届かず、本体の命令を待たずに答える」で表す
 ;;;   HttpReadBody     台本の本文(ScriptedBody)で答える: 宣言の長さ(要求の頭の Content-Length)が上限を超えれば読まずに HttpBodyTooLarge、
 ;;;                    本文が上限を超えれば HttpBodyTooLarge(宣言が無ければ None)、failed が在れば HttpBodyFailed、他は HttpBodyRead(台本に
 ;;;                    本文の無い札は b"")。札ごとに 1 度だけ — 読み終えた札・命令を受けた札・知らない札は HttpBodyFailed(本物と同じ)
@@ -28,13 +31,16 @@
 ;;; 命令は届けた要求の札へ撃つ(届けていない札への命令は KeyError — 本物の答え手と同じ)。
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose
                                                 HttpShutdown TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
                                                 WS-CLOSE-NORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
                                                 HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
-                                                carries-content ws-refusal-status send-overflows closing-of])
+                                                carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
+                                                probe-for probe-answer WsTextArrived WsBinaryArrived])
 (import doeff_core_effects.file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
@@ -141,11 +147,39 @@
   (dfor b bodies b.ticket b))
 
 
+(defrecord ProbeHit
+  "台本の次の出来事のうち、待ち受けが自分で答える probe の口に当たった要求と、当たった口。"
+  (#^ HttpRequestArrived arrival)
+  (#^ HttpProbe probe))
+
+
+(defk probe-hit [probes event]
+  {:pre [(: probes tuple) (: event (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened))] :post [(: % (| ProbeHit None))]
+   :tags {:context "http-server" :role "judgment"}}
+  "台本の次の出来事が、待ち受けが自分で答える probe の口の要求か決めるため(当たらなければ None — ws の出来事も本体へ渡す)。"
+  (if (isinstance event HttpRequestArrived)
+      (do (<- probe (| HttpProbe None) (probe-for probes event.method event.path))
+          (if (is probe None) None (ProbeHit :arrival event :probe probe)))
+      None))
+
+
+(defk probe-served [arrival answer]
+  {:pre [(: arrival HttpRequestArrived) (: answer HttpProbeAnswer)] :post [(: % HttpServed)] :tags {:context "http-server" :role "judgment"}}
+  "probe の口の答えを、端末が受け取る答えの記録にするため(本物と同じく HEAD の答えの本文は空 — carries-content)。"
+  (<- carried bool (carries-content arrival.method answer.status))
+  (HttpServed :ticket arrival.ticket
+              :command (HttpRespond :ticket arrival.ticket :status answer.status :headers answer.headers
+                                    :body (HttpBodyBytes :data answer.body))
+              :status answer.status
+              :body (if carried (.decode answer.body "utf-8" :errors "replace") "")))
+
+
 (defhandler scripted-http-server [#^ HttpScript script]
   ;; 台本の待ち受け(頭の註)。pending = まだ届けていない出来事・served = 受けた命令と送った ws の記録の列・opened = ws に上げて開いている札・
   ;; backlog = 読まない相手の札の箱の溜まり(byte)・limit = 送りの上限(HttpListen が控える)・tally = 送りの勘定・closed = HttpShutdown の理由
   ;; (None = 開いている)・body-table = 札 → 本文の台本・readable = 本文をまだ読める札 → 宣言の長さ(届けた要求の札を入れ、読んだ・命令を
-  ;; 受けた札を外す)・arrived = 届けた要求(札 → HttpRequestArrived — 命令の答えの形を要求の method と Upgrade で決める)(どれも session の値)。
+  ;; 受けた札を外す)・arrived = 届けた要求(札 → HttpRequestArrived — 命令の答えの形を要求の method と Upgrade で決める)・mouths = 自分で
+  ;; 答える probe の口(HttpListen が控える)(どれも session の値)。
   ;; 引数に残す理由: script は呼び手が組んだ凍った台本(出来事の列と中継先の答えと読まない相手)で、組の外で差し替える相手がいない。
   (session var pending script.arrivals)
   (session var body-table (dfor b script.bodies b.ticket b))
@@ -157,10 +191,21 @@
   (session var limit DEFAULT-WS-SEND-MAX-BYTES)
   (session var tally EMPTY-REPORT)
   (session var closed None)
-  (HttpListen [address ws-max-bytes ws-send-max-bytes]
+  (session var mouths #())
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes]
     (:= limit ws-send-max-bytes)
+    (:= mouths probes)
     (resume address))
   (HttpNextRequest []
+    ;; probe の口に当たる要求は本体へ渡さず、ここで答えて記録する(頭の註)— 列の頭が probe でなくなるまで。
+    (var answering True)
+    (while (and answering (is closed None) pending)
+      (<- hit (| ProbeHit None) (probe-hit mouths (get pending 0)))
+      (if (is hit None)
+          (:= answering False)
+          (do (<- answer HttpServed (probe-served hit.arrival (probe-answer hit.probe)))
+              (:= served (+ served #(answer)))
+              (:= pending (cut pending 1 None)))))
     (cond
       (is-not closed None) (resume (HttpServerClosed :reason closed))
       pending

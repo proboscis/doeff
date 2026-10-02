@@ -42,17 +42,31 @@
 ;;;                    答え手はその答えを送った後に接続を閉じる(残りの本文を読み捨てない)。HttpForward に渡す札では撃たない(中継は本文を
 ;;;                    streaming で写すので、先に読むと写す本文が無くなる)。
 ;;; file の状態は file_effects.hy の StatPath で読む(ここに持たない)。
+;;; 答え手が自分で答える probe の口(agora-redesign #2776 — 本体の流れが止まっても生存の問いに答える):
+;;;   HttpListen の probes = HttpProbe の列。GET か HEAD で path(query を除く)が probe の path と同じ要求は、出来事にせず(HttpNextRequest に
+;;;   届かない)、答え手がその HttpProbe の answer(答えが HttpProbeAnswer の Program)を自分の run で走らせて答える。札は他の要求と同じ
+;;;   数えで 1 つ使う(届いた順の札の並びを本物と台本でそろえる)。
+;;;   answer は閉じた Program にする: 答え手は handler を足さずに走らせるので、要る handler(state・最新の値の置き場・時計 …)は answer の
+;;;   中に被せる。本体の run の状態(session の値)も Await の共有の event loop も使わない。answer が例外で落ちれば 500 と理由の文
+;;;   (probe-failure)。
+;;;   本物の答え手は、待ち受けを await-handler の共有の event loop とは別の thread の loop に立て、answer をさらに別の thread で走らせる —
+;;;   共有の loop と協調型の scheduler が止まっても probe は答える。台本の答え手は、出来事の列でその要求に来た HttpNextRequest の中で answer を
+;;;   走らせて答え、記録(HttpServed)に残す。
+;;;   何を答えるか(生存 = process が居る・仕事ができる = 本体の流れが動いている、の分け方や閾値)は呼び手が answer に書く — ここは業務の語を
+;;;   持たない。
 ;;; 2 つの答え手が同じに決める物は、ここの判断の defk を両方が呼ぶ: carries-content(本文を運ぶ答えか — HEAD・1xx・204・304 は送らない)・
-;;; ws-refusal-status(WsAccept の断りの status)・send-overflows(送りの上限で切るか)・closing-of(WsClosed で名乗る状態符と理由)。
+;;; ws-refusal-status(WsAccept の断りの status)・send-overflows(送りの上限で切るか)・closing-of(WsClosed で名乗る状態符と理由)・
+;;; probe-for(要求が probe の口に当たるか)・probe-failure(answer が落ちた probe の答え)。probe の answer を走らせるのも両方が同じ
+;;; probe-answer(Program の外から呼ぶ入口)。
 ;;; 2 つが同じ性質を持つことは tests/test_http_server_contract.hy の契約テストが両方の答え手で確かめる。
 ;;;
 ;;; 台本の語彙(本物の待ち受けには無い): HttpScript・ScriptedUpstream・ScriptedBody = 台本・HttpServed = 受けた命令と端末が受け取る答え・
 ;;; WsTextSent / WsCloseSent = ws の接続へ送った 1 通と閉じ・ReadHttpServed = 記録を読む effect(検と筋書きが覗くため)・
 ;;; AppendHttpScript = 走っている台本の後ろへ出来事を足す effect(筋書きの相手役が時刻の来た拍に届ける — scripted-http-server だけが答える)。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk deff val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import doeff [EffectBase])
+(import doeff [EffectBase Program run])
 
 ;; ws の 1 通(中継では 1 frame)の上限の既定(byte)。
 (val DEFAULT-WS-MAX-BYTES (* 1024 1024))
@@ -187,11 +201,26 @@
 (val HttpBodyOutcome (| HttpBodyRead HttpBodyTooLarge HttpBodyFailed))
 
 
+(defrecord HttpProbeAnswer
+  "probe の口の答え(頭の註): status・頭・本文の byte 列(HEAD の答えは本文を送らない — carries-content)。"
+  (#^ int status)
+  (#^ (get tuple #(HttpHeader ...)) headers)
+  (#^ bytes body))
+
+
+(defrecord HttpProbe
+  "答え手が自分で答える probe の口 1 つ(頭の註): path = 当たる path(query を除く — GET と HEAD だけ当たる)・answer = 答えが
+   HttpProbeAnswer の閉じた Program(要求ごとに答え手が自分の run で走らせる)。"
+  (#^ str path)
+  (#^ Program answer))
+
+
 (defclass [(dataclass :frozen True)] HttpListen [EffectBase]
-  "待ち受けを開く(頭の註)。答え = 結んだ宛先 HttpAddress。"
+  "待ち受けを開く(頭の註)。probes = 答え手が自分で答える probe の口の列。答え = 結んだ宛先 HttpAddress。"
   (#^ HttpAddress address)
   (setv #^ int ws-max-bytes DEFAULT-WS-MAX-BYTES
-        #^ int ws-send-max-bytes DEFAULT-WS-SEND-MAX-BYTES))
+        #^ int ws-send-max-bytes DEFAULT-WS-SEND-MAX-BYTES
+        #^ (get tuple #(HttpProbe ...)) probes #()))
 
 
 (defclass [(dataclass :frozen True)] HttpNextRequest [EffectBase]
@@ -299,6 +328,35 @@
     (is-not sent None) sent
     (is-not received None) received
     True (WsCloseFrame :code (if (is lost None) WS-CLOSE-ABNORMAL lost) :reason "")))
+
+
+(defk probe-for [probes method path]
+  {:pre [(: probes tuple) (: method str) (: path str)] :post [(: % (| HttpProbe None))] :tags {:context "http-server" :role "judgment"}}
+  "要求を答え手が自分で答えるか決めるため(頭の註の probe の口): GET か HEAD で、path(query を除く)が probes のどれかの path と同じなら
+   その HttpProbe、他は None(出来事として本体へ渡す)。"
+  (if (in method #("GET" "HEAD"))
+      (next (gfor probe probes :if (= probe.path path) probe) None)
+      None))
+
+
+(defk probe-failure [path reason]
+  {:pre [(: path str) (: reason str)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server" :role "judgment"}}
+  "probe の answer が落ちた時の答えを決めるため(500 と理由の文 — 答えを出せない probe を健康と読ませない)。"
+  (HttpProbeAnswer :status 500 :headers #((HttpHeader :name "Content-Type" :value "text/plain; charset=utf-8"))
+                   :body (.encode (.format "{} の probe は答えを出せなかった: {}" path reason) "utf-8")))
+
+
+(deff probe-answer [probe]  ; defk にできない: 答え手が本体の Program の外(本物 = 待ち受けの loop の外の thread・台本 = handler の節)で呼び、閉じた answer を自分の run で走らせる入口
+  {:pre [(: probe HttpProbe)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server" :role "foundation"}}
+  "probe の口の要求 1 つの答えを、本体の run(scheduler・session の値・Await の共有の event loop)に触れずに出すため(頭の註): answer を
+   自分の run で走らせ、落ちた・答えの型が違う時は probe-failure の 500。2 つの答え手が同じこの関数で答える。"
+  (try
+    (setv answer (run probe.answer))
+    (except [error Exception]
+      (setv answer error)))
+  (if (isinstance answer HttpProbeAnswer)
+      answer
+      (run (probe-failure probe.path (repr answer)))))
 
 
 ;; --- 台本の語彙(scripted-http-server) -----------------------------------------------------------------------------------

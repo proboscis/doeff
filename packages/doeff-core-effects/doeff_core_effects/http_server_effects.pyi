@@ -124,6 +124,19 @@ class HttpBodyFailed:
 #: HttpReadBody の答えの union。
 HttpBodyOutcome: TypeAlias = HttpBodyRead | HttpBodyTooLarge | HttpBodyFailed
 
+@dataclass(frozen=True, kw_only=True)
+class HttpProbeAnswer:
+    status: int
+    headers: tuple[HttpHeader, ...]
+    body: bytes
+
+@dataclass(frozen=True, kw_only=True)
+class HttpProbe:
+    """答え手が自分で答える probe の口(answer = 答えが HttpProbeAnswer の閉じた Program)。"""
+
+    path: str
+    answer: Program[HttpProbeAnswer, Any]
+
 # --- effect ---
 
 @dataclass(frozen=True)
@@ -131,6 +144,7 @@ class HttpListen(EffectBase[HttpAddress]):
     address: HttpAddress
     ws_max_bytes: int = ...
     ws_send_max_bytes: int = ...
+    probes: tuple[HttpProbe, ...] = ()
 
 @dataclass(frozen=True)
 class HttpNextRequest(EffectBase[HttpEvent]): ...
@@ -197,6 +211,12 @@ class WsCloseFrame:
 def closing_of(
     cut: str | None, sent: WsCloseFrame | None, received: WsCloseFrame | None, lost: int | None
 ) -> Program[WsCloseFrame, Any]: ...
+def probe_for(
+    probes: tuple[HttpProbe, ...], method: str, path: str
+) -> Program[HttpProbe | None, Any]: ...
+def probe_failure(path: str, reason: str) -> Program[HttpProbeAnswer, Any]: ...
+def probe_answer(probe: HttpProbe) -> HttpProbeAnswer:
+    """Program の外から呼ぶ入口(deff — 答えは値そのもの)。"""
 
 # --- 台本の語彙(scripted-http-server) ---
 
