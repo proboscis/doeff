@@ -12,7 +12,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 import pytest
-from doeff_vm import PyVM
+from doeff_vm import K, PyVM
 
 from doeff import EffectBase, Resume, do, run, with_handlers
 
@@ -41,7 +41,7 @@ def raises_at(n: int) -> Generator[object, int, int]:
 
 
 @do
-def answer_probe(effect: Probe, k: object) -> Generator[object, object, object]:
+def answer_probe(effect: Probe, k: K) -> Generator[object, object, object]:
     return (yield Resume(k, 100))
 
 
@@ -123,11 +123,11 @@ def test_an_exception_after_an_effect_keeps_the_frames_in_call_order() -> None:
         raise BoomError("late")
 
     @do
-    def child() -> Generator[object, object, None]:
+    def child() -> Generator[object, object, object]:
         return (yield grandchild())
 
     @do
-    def parent() -> Generator[object, object, None]:
+    def parent() -> Generator[object, object, object]:
         return (yield child())
 
     with pytest.raises(BoomError) as info:
