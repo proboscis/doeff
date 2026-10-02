@@ -3,7 +3,7 @@
 ;;; 実行環境の root = worker/protocol/env_store(#2467)・job の子 process = worker/protocol/process_host(#2464)・入口の検め =
 ;;; worker/protocol/probes(#2465)。I/O を持たない。
 (require doeff-hy.macros [defhandler <- val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk 
 ])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes])

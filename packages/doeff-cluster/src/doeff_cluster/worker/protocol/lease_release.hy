@@ -6,7 +6,7 @@
 ;;; <job>/<世代の名>/)。外すのは coordinator(POST /leases/<名> の drop — 2026-09-25)。drop の口を持たない旧い coordinator(404)には、
 ;;; 盤の行の compare-and-set で外す(以前の形 — 競合は 3 回まで読み直す)。届かない・競合が続く時はあきらめる(期限で切れる)。
 (require doeff-hy.macros [defhandler defk <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects [slog])

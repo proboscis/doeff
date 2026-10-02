@@ -2,7 +2,7 @@
 ;;; (走査の列・完成の印の text・import の閉包)。code_prepare.hy から分けた(#2027)。起動される道具の script(main)は
 ;;; doeff_cluster/code_prepare.hy に残る(worker 自身のコードから file の path で起動する)。
 (require doeff-hy.macros [defk <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "program"})
+(val MODULE-TAGS {:context "worker" :role "program"})
 (import json)
 (import collections.abc [Callable])
 (import pathlib [PurePosixPath])
@@ -55,7 +55,7 @@
 
 
 (defk tree-listing [rels]
-  {:pre [(: rels (| list tuple))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: rels (| list tuple))] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "木の中の file の相対 path(posix)の列を、走査の答え #(source の列 .pyc の列)(名の順)にするため。隠し file と隠し dir の下は
    数えない・.pyc は __pycache__ の直下の物だけ・source は __pycache__ の外の .py / .hy。"
   (val sources [])
@@ -71,14 +71,14 @@
 
 
 (defk marker-text [content]
-  {:pre [(: content dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: content dict)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "完成の印の中身を file の text にするため。"
   (json.dumps content :ensure-ascii False :indent 1))
 
 
 (defk closure-of [sources entries roots read]
   {:pre [(: sources (| list tuple)) (: entries tuple) (: roots tuple) (: read Callable)] :post [(: % frozenset)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "worker" :role "judgment"}}
   "entries(module 名)から import を静的に辿った閉包に入る source の相対 path を求めるため(焼く範囲を task が読む module に絞る)。
    package の module を読むと、その上の package の __init__ も読む。木の外の module(標準・第三者)は辿らない。
    read = 相対 path → source の text(本物は木の file を読み、fake は置き場の中身を渡す)。"

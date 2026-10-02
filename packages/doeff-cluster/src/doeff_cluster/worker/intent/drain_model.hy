@@ -1,6 +1,6 @@
 ;;; worker の drain(preStop)の問いの effect — coordinator への 1 回の呼び出し CoordinatorCall(#2025 の 3 本目で drain_client から分けた)。
 (require doeff-hy.macros [defk deff <- val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
+(val MODULE-TAGS {:context "worker" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 

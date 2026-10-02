@@ -1,7 +1,7 @@
 ;;; effect の記録の置き場(record-store)の effect — 置き場の Program(record_store.core.program の store-loop)が出し、file の I/O の
 ;;; 言い換え(record_store.protocol.record_files の record-files)が答える(record_store.hy から分けた・#2030)。
 (require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
+(val MODULE-TAGS {:context "record-store" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 

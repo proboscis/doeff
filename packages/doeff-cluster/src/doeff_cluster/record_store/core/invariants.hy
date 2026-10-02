@@ -9,7 +9,7 @@
 
 
 (defk prune-keeps-runs-whole [before after]
-  {:pre [(: before dict) (: after dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: before dict) (: after dict)] :post [(: % tuple)] :tags {:context "record-store" :role "judgment"}}
   "条 R1: 消す前の run の鍵 → 記録の text と、消した後の同じ鍵 → text(消えた run は None か鍵が無い)から、丸ごと残ってもおらず丸ごと
    消えてもいない run の鍵の列を返す(空なら緑)。保持の handler が run の一部の区切りだけを消して再生できない run を残さないことを、
    保持の筋書きの記録から判じるため。"

@@ -2,7 +2,7 @@
 ;;; 掃除の下限(handlers.hy の EnvStore から分けた・#2467)。I/O は呼び手(worker/protocol/env_store の env-host)が行う。
 ;;; 期限そのもの・掃除の選び・disk の条件は env_upkeep。
 (require doeff-hy.macros [defk <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.core.env_upkeep [PrepareLimits SWEEP-FLOOR-RATIO])
 

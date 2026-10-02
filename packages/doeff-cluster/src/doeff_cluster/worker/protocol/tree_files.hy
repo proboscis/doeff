@@ -7,7 +7,7 @@
 ;;; (本物は process の pool・memory は逐次)。答え手による違い: memory の LinkFile は中身の写し・memory は Hy の source を焼けない
 ;;; (doeff-hy は disk に在る file かで Hy の source を見分ける — 契約テスト test_tree_contract.hy の頭の註)。
 (require doeff-hy.macros [defhandler defk <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import os)
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadText WriteText MakeDirectory WalkTree LinkFile CompilePythonSources

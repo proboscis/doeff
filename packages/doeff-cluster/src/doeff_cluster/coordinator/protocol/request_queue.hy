@@ -2,7 +2,7 @@
 ;;; Reply・CoordinatorFault に答える(本番の答え手は shared/protocol/inbox.hy の http-requests と coordinator/protocol/faults.hy の coordinator-faults)。handler の組
 ;;; (coordinator/entry/handler_sets.hy の emulated-handlers)が並べる。entry の層から移した(DOEFF105)。
 (require doeff-hy.macros [defhandler defk <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_time [Delay])
 ;; 模擬の列は、要求の無い間に眠る長さを本番の判断の関数で試す(idle_policy)。
@@ -31,7 +31,7 @@
 
 
 (defk enqueue-request [queue request]
-  {:pre [(: queue RequestQueue) (: request Request)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: queue RequestQueue) (: request Request)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "要求を列の後ろに積み、列が空の間に待っていた取り手の呼び鈴を全部鳴らして外すため(取り手は積んだのと同じ仮想の刻で起きる)。
    積む順 = 取る順(列は先頭から取る)。鳴らすのは積んだ後 — 起きた取り手は必ず積んだ要求を見る。"
   (.append queue.pending request)
@@ -43,7 +43,7 @@
 
 
 (defk nudge-takers [queue]
-  {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "要求ではない外の出来事(止めの合図・止まりの注入)を、眠っている取り手に知らせるため。起きた取り手は、要求が無ければ本番の拍の
    刻(眠り始め + 整数秒)まで眠り直してから拍を回す(本番のループがその出来事に気づくのと同じ刻 — await-idle)。skip-idle でない
    列の取り手は起こさない(1 秒ごとの拍が、本番と同じ刻でその出来事に気づく — 起こすと本番より早く気づく)。"
@@ -57,7 +57,7 @@
 
 (defk await-first-request [queue timeout-seconds]
   {:pre [(: queue RequestQueue) (: timeout-seconds (| float int))] :post [(: % (| bool None))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "coordinator" :role "protocol"}}
   "列が空なら、送り手が積む(enqueue-request が呼び鈴を鳴らす)か timeout 秒が過ぎるまで 1 回だけ眠るため(読み直さない)。列に何か
    在れば眠らない。起きた時(時間切れ・取り消しを含む)は自分の呼び鈴を取り手の list から外す。答え = True(積まれた)・False
    (nudge-takers — 要求ではない出来事)・None(時間切れか、眠らなかった)。"
@@ -80,7 +80,7 @@
 
 
 (defk await-idle [queue probe]
-  {:pre [(: queue RequestQueue) (: probe IdleProbe)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: queue RequestQueue) (: probe IdleProbe)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "要求の無い間の眠りを、調停が何も変えない拍の数(idle_policy.quiet-ticks — 本番の判断の関数で試した数)だけ一度に取るため。
    要求が積まれればすぐ起きる(本番と同じ刻)。要求ではない出来事で起こされたら、本番の 1 秒の拍がそれに気づく刻(眠り始めから
    整数秒 — 1 秒以上)まで眠り直す。飛ばした拍は本番でも何も変えないので、起きる刻とそこでの判断は 1 秒ごとの拍と同じ。
@@ -111,7 +111,7 @@
 
 (defk take-requests [queue timeout-seconds limit idle]
   {:pre [(: queue RequestQueue) (: timeout-seconds float) (: limit int) (: idle (| IdleProbe None))] :post [(: % list)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "coordinator" :role "protocol"}}
   "本番の http-requests と同じ意味で列から要求を取るため: 最初の 1 件を timeout 秒まで待ち、その時点で並んでいる要求を limit 件まで
    一緒に取る。待ちは列への書き(enqueue-request)で起きる — 本番の受付が要求の届いた瞬間に起きるのと同じ刻。skip-idle の列(模擬の
    時計の下)は、idle の材料があれば、要求が無い間の何も変えない拍を一度に眠る(await-idle)。

@@ -22,7 +22,7 @@
 
 (deff program-write [#^ ClusterState state #^ str sha #^ ProgramBody body #^ int now]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: sha str) (: body ProgramBody) (: now int)] :post [(: % tuple) (= (len %) 3)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "coordinator" :role "judgment"}}
   "PUT /programs/<sha>: キーの形と大きさと中身の sha256 を確かめて置き、#(次の状態 status 本文) を返す。同じキーを置き直すと期限だけ
    延びる。本文の欄の型は解く所(coordinator/protocol/request_bodies — #2445)が検めた。"
   (setv blob body.blob versions (or body.versions {}))
@@ -36,7 +36,7 @@
 
 
 (deff program-read [#^ ClusterState state #^ str sha]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple) (= (len %) 3)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple) (= (len %) 3)] :tags {:context "coordinator" :role "judgment"}}
   "GET /programs/<sha>: 置いた Program(無ければ 404)。"
   (setv row (.get state.programs sha))
   (if (is row None)
@@ -46,7 +46,7 @@
 
 
 (deff program-refs [#^ ClusterState state]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: state ClusterState)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState)] :post [(: % frozenset)] :tags {:context "coordinator" :role "judgment"}}
   "置き場の Program を今参照している物のキーの集合 — 掃除で残す物を決めるため。受け付けた Service の行と、task の行(待ち・走っている・
    終わって結果を保持している物の全部 — 行が消えるまで参照は続く)。参照の定義点はここ 1 つ。"
   (frozenset (+ (lfor j state.jobs :if j.spec.program j.spec.program)
@@ -54,7 +54,7 @@
 
 
 (deff sweep-programs [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "受け付けた Service と task の行のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
   (let [used (program-refs state)
         kept (dfor #(sha row) (.items state.programs)

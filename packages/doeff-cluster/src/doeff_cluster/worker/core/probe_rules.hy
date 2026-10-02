@@ -2,7 +2,7 @@
 ;;; (handlers.hy の ProbeStore から分けた・#2465)。I/O は呼び手(ProbeStore — 後に worker/protocol の言い換え)が行う。
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])
 (import enum [Enum])
 (import json)
@@ -121,7 +121,7 @@
 (defk probe-command [code-path runtime-env targets * hy-command uv layout allowed-env probe-dir]
   {:pre [(: code-path str) (: runtime-env (| str None)) (: targets tuple) (: hy-command str) (: uv str) (: layout CodeLayout)
          (: allowed-env dict) (: probe-dir str)]
-   :post [(: % JobLaunch)] :tags {:context "doeff-cluster" :role "judgment"}}
+   :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "検めの子(shim の下で起こす本体)の起こし方を、渡された値だけから決めるため。実行環境の job は子と同じ root の venv の
    `uv run --no-sync --frozen --project <root の project> hy -c …`・環境変数は子と同じ許可表(allowed-env = worker の環境のうち許可表の名と
    LC_* の分)と宣言の env-vars・PYTHONPATH を置かない・cwd = probe-dir(REPLACE)。それ以外は worker の hy と木の PYTHONPATH を worker の環境の

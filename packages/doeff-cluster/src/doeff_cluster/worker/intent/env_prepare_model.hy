@@ -1,6 +1,6 @@
 ;;; 実行環境の root の準備(env_prepare)の型・effect・定数 — 準備の Program(worker/core/env_prepare)が出し、worker の準備の係が答える(#2025 の 3 本目で分けた)。
 (require doeff-hy.macros [defk defeffect <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
+(val MODULE-TAGS {:context "worker" :role "intent"})
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass])
 (import enum [StrEnum])  ; defenum の展開が使う
@@ -131,7 +131,7 @@
    答え = bool。断る判断(repo-denied)は prepare-env が持つ。"
   {:fields [(: url str)]
    :answer bool
-   :tags {:context "runtime-env" :role "intent"}})
+   :tags {:context "worker" :role "intent"}})
 
 
 (defclass [(dataclass :frozen True)] EnsureMirror [EffectBase]

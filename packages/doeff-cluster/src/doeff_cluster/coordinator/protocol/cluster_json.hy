@@ -97,7 +97,7 @@
 ;; BodyInvalid とは別)。無い欄は既定値で読む(既定値が None の欄は必須)。
 
 (deff stored-str [#^ dict data #^ str key #^ (| str None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の文字列の欄を str として読むため(無ければ default・default が None なら必須)。"
   (when (and (not-in key data) (is default None))
     (raise (ValueError (.format "保存の task の行に {} が無い" key))))
@@ -108,7 +108,7 @@
 
 
 (deff stored-optional-str [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の、無くてよい文字列の欄を str か None として読むため。"
   (setv value (.get data key None))
   (when (not (isinstance value #(str (type None))))
@@ -117,7 +117,7 @@
 
 
 (deff stored-int [#^ dict data #^ str key #^ (| int None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の整数の欄を int として読むため(無ければ default・default が None なら必須。真偽値は整数と数えない)。"
   (when (and (not-in key data) (is default None))
     (raise (ValueError (.format "保存の task の行に {} が無い" key))))
@@ -128,7 +128,7 @@
 
 
 (deff stored-optional-int [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の、無くてよい整数の欄を int か None として読むため。"
   (setv value (.get data key None))
   (when (or (isinstance value bool) (not (isinstance value #(int (type None)))))
@@ -137,7 +137,7 @@
 
 
 (deff stored-bool [#^ dict data #^ str key #^ bool default]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の真偽値の欄を bool として読むため。"
   (setv value (.get data key default))
   (when (not (isinstance value bool))
@@ -146,7 +146,7 @@
 
 
 (deff stored-optional-dict [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の、無くてよい object の欄を dict か None として読むため。"
   (setv value (.get data key None))
   (when (not (isinstance value #(dict (type None))))
@@ -155,7 +155,7 @@
 
 
 (deff stored-items [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
-  {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の配列の欄を tuple として読むため(無ければ空)。JSON を通った行は list、JSON を通らずに渡る行(asdict のまま)は tuple で来る。"
   (setv value (.get data key #()))
   (when (not (isinstance value #(list tuple)))
@@ -164,7 +164,7 @@
 
 
 (deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
-  {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値・
    extra = 今の TaskRecord に無い欄の名(requires・blob・env ほか)。"
   (cond

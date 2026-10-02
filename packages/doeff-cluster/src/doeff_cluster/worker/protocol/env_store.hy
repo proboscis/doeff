@@ -14,7 +14,7 @@
 ;;; 記録(待ち・準備中・失敗・固定の集合・掃除と prune の時刻・最後の観測)は handler の session の値で持つ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass replace])
 (import json)
 (import re)

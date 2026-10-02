@@ -14,7 +14,7 @@
 ;;; 記録(待ち・走っている束・答え・回数・前の回の失敗・時間切れの印)は handler の session の値で持つ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import doeff_core_effects.file_effects [MakeDirectory ReadText RemoveTree file-done])
 (import doeff_core_effects.process_effects [ReadEnvironment StartProcess PollProcess StopProcess ProcessNotStarted ProcessExited])
@@ -65,7 +65,7 @@
 
 (defk launch-probe [settings batch specs n]
   {:pre [(: settings ProbeSettings) (: batch tuple) (: specs tuple) (: n int)] :post [(: % ProbeRun)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "worker" :role "protocol"}}
   "束 1 本を起こすため: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。n = 出力の file の名の番号。"
   (val code-path (get batch 0))
   (val runtime-env (get batch 1))
@@ -91,7 +91,7 @@
 
 (defk finish-probe [settings run code]
   {:pre [(: settings ProbeSettings) (: run ProbeRun) (: code (| int None))] :post [(: % tuple)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "worker" :role "protocol"}}
   "束を片づけて spec ごとの行き先(ProbeOutcome の tuple)を返すため。code = 終了の番号(None = 時間切れ — 止めて回収する)。終わった束は
    回収の時に group の残りを止めている(reap-group)。出力の file を読んで消す。"
   (when (is code None)

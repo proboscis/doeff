@@ -13,7 +13,7 @@
 
 
 (deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
-  {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の Service の行の列 → #(受け付けた ClusterJob の tuple  名 → RefusedJob)。読めない行(旧い宣言の形・壊れた行)は落とさずに
    RefusedJob にして理由を持つ — 新しい coordinator が旧い置き場を読んで落ちないため(改訂 1 の C)。"
   (setv jobs [] refused {})
@@ -190,7 +190,7 @@
 
 
 (deff worker-capabilities-of [#^ dict body #^ str what]  ; defk にできない: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "protocol"}}
   "保存の worker の行(JSON)の名乗り → #(provides exclusive)。規則は heartbeat の本文と同じ named-capabilities(旧い labels・exclusive は
    provides の一部 — ADR-DOE-CLUSTER-001 R4b)。"
   (named-capabilities (.get body "provides") (.get body "exclusive") (in "labels" body) what))

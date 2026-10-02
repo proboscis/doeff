@@ -1,7 +1,7 @@
 ;;; worker が coordinator へ送る heartbeat の本文の形 — 実行環境の root の名乗り・生存と能力と版・状態の行と結果(本番の coordinator への口 と
 ;;; 手元の sim-cluster の宿 sim/local が同じ関数で作る — 本文を写さない)。handlers.hy から分けた(#2026)。判断は worker/core/heartbeat_rules。
 (require doeff-hy.macros [deff val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.worker.intent.worker_model [CodeState JobStatus])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
@@ -9,7 +9,7 @@
 
 
 (deff env-report [#^ tuple views #^ str capacity]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: views tuple) (: capacity str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: views tuple) (: capacity str)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
   "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
    失敗のキーを env- を外して・disk の条件)にするため。"
   (let [roots (lfor v views :if (.startswith v.revision ENV-KEY-PREFIX) v)
@@ -23,7 +23,7 @@
 
 
 (deff env-heartbeat-part [#^ dict report #^ str platform]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: report dict) (: platform str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: report dict) (: platform str)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
   "root の姿(env-report)を heartbeat の本文に足す欄(platform・envs・envCapacity)にするため。"
   {"platform" platform
    "envs" {"ready" (get report "ready") "preparing" (get report "preparing") "failed" (get report "failed")}
@@ -34,7 +34,7 @@
                       #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: name str) (: provides tuple) (: exclusive tuple) (: node str) (: capacity int) (: versions dict) (: statuses list)
          (: endpoint str) (: boot str) (: boot-at int) (: tools dict)] :post [(: % dict)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代)を作るため。実行環境の root の名乗り(env-body)は本番の worker だけが足す。"
   {"name" name "provides" (list provides) "exclusive" (list exclusive) "node" node "capacity" capacity "versions" versions
    "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at
@@ -43,7 +43,7 @@
 
 
 (deff status-report [#^ tuple statuses #^ dict task-echo #^ dict results]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: statuses tuple) (: task-echo dict) (: results dict)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: statuses tuple) (: task-echo dict) (: results dict)] :post [(: % list)] :tags {:context "worker" :role "protocol"}}
   "状態の行の列を heartbeat の statuses にするため。終わった task には結果(results の task の id → 詰めた結果の文字列 か None =
    結果なし)を、切り離した task には置かれた時の返事の行(task-echo の id → 行 — 欄 task)を添える。"
   (lfor s statuses

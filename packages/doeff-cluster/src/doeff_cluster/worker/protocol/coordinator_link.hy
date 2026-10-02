@@ -11,7 +11,7 @@
 ;;;   * 届かなければ desired-when-unreachable(途絶が fence を越えたら lease を持たない job と task を止める)。
 ;;;   * 名指しの待ち(#1933)は背景の task(Spawn の daemon)で送り続け、「変わった」と答えたら次の拍で heartbeat を送らせる。
 (require doeff-hy.macros [defhandler defk deff <- val var])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import dataclasses [replace])
 (import os)
@@ -80,7 +80,7 @@
 
 
 (deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol)
-  {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
    確かめるまで毎拍の heartbeat を続ける)、その後は上限まで待つ。"
   {"after" (str after) "timeoutSeconds" (str (if confirmed WATCH-MAX-SECONDS 0.0)) "worker" worker "boot" boot})

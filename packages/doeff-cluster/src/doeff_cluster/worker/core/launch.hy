@@ -3,7 +3,7 @@
 ;;; worker/protocol の言い換え)が行い、ここは渡された値だけから決める。
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])
 (import json)
 (import pathlib [Path])
@@ -63,7 +63,7 @@
 (defk job-launch [spec code-path instance attempt * python hy-command uv extra-env layout allowed-env worker-pid program-path program-env work-dir]
   {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: python str) (: hy-command str) (: uv str)
          (: extra-env dict) (: layout CodeLayout) (: allowed-env dict) (: worker-pid int) (: program-path (| str None)) (: program-env str) (: work-dir str)]
-   :post [(: % JobLaunch)] :tags {:context "doeff-cluster" :role "judgment"}}
+   :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "job の子 process の起こし方を、渡された値だけから決めるため(ProcessHost と、後の言い換えの handler が同じ形で起こす)。
    子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが DOEFF_RUNTIME_ENV・
    DOEFF_RUNTIME_ENV_KEY を受ける)。Program の job(改訂 1 の F・H)は詰めた Program の file(program-path)を引数と環境変数(宿の契約

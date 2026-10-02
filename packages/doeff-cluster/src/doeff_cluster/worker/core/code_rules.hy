@@ -1,14 +1,14 @@
 ;;; worker の版ごとのコードの木の準備の判断 — 展開・bytecode の準備・完成の印の確かめ・rename を 1 本の sh の script に組む
 ;;; (handlers.hy の CodeStore.script から分けた・#2466)。I/O は呼び手(worker/protocol/code_store の code-host)が行う。
 (require doeff-hy.macros [defk val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
 (import doeff_cluster.worker.core.code_plan [MARKER MARKER-FORMAT])
 
 
 (defk prepare-script [repo revision previous * hy-command tool layout]
   {:pre [(: repo str) (: revision str) (: previous (| str None)) (: hy-command (| str None)) (: tool str) (: layout CodeLayout)]
-   :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+   :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "版 1 つの木を準備する sh の script を組むため: 展開 → bytecode の準備(木の中だけ・実行時に検める方式・前の版から引き継ぐ・検めて完成の
    印を置く)→ rename。previous = 引き継ぎ元の木の path(None = 引き継がない)・hy-command = 焼きの hy(None = bytecode を省き、印だけを置く)・
    tool = 焼く道具の file(worker 自身のコードの code_prepare.hy)。script は環境変数 T(作る木)・F(完成品の置き場)・B(脇へ退けた木 — 空なら無し)を読む。

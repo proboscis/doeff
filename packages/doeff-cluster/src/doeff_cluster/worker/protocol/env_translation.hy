@@ -23,7 +23,7 @@
 ;;; 展開は git archive と tar、同じ commit の root からの複製は cp -al(hardlink)の後に持ち越さない物(.venv・__pycache__・完成マーカー)を消す。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import hashlib)
 (import json)

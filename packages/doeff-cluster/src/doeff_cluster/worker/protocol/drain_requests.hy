@@ -2,7 +2,7 @@
 ;;; 答え手 coordinator-calls(drain_main.hy から移した)。要求の形はここだけが知る(worker/core/drain_client.hy から移した — core が HTTP の形を組んでいた・
 ;;; DOEFF105)。並べるのは入口(drain_main.hy)。
 (require doeff-hy.macros [defhandler defk deff <- val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request])
@@ -12,14 +12,14 @@
 
 (deff drain-request [#^ str name #^ float ttl-seconds #^ (| str None) own-boot]  ; defk にできない: 答え手 drain-requests と手元の sim-cluster の宿(local.hy)が同じ形を作る純粋な言い換え
   {:pre [(: name str) (: ttl-seconds float) (: own-boot (| str None))] :post [(: % tuple) (= (len %) 4)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "worker" :role "protocol"}}
   "drain の頼みを要求 #(method path query 本文) にするため。ttl-seconds = drain の期限・own-boot = 頼み手の worker の process の世代
    (在れば、同じ名の別の世代には drain を付けない — drain_policy.request-drain)。"
   #("POST" (+ (worker-path name) "/drain") {} (| {"ttlSeconds" ttl-seconds} (if own-boot {"boot" own-boot} {}))))
 
 
 (defk call-answer [answer]
-  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
   "要求の答えを drain の Program が読む形にするため: 返事 = {\"status\" 番号 \"body\" 本文の JSON の dict(dict でなければ空)}・
    届かない = {\"error\" 理由}。"
   (match answer

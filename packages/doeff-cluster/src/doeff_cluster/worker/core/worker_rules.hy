@@ -1,7 +1,7 @@
 ;;; worker の job の判断の小さな関数 — 木の鍵(code-key)・READY の木の path(ready-path)・退いた process の名(retired-name)・
 ;;; 入口の検めの対象と断り(probed-job・probe-args・probe-refusal)。型は worker/intent/worker_model(#2025 で分けた)。
 (require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeView])
 

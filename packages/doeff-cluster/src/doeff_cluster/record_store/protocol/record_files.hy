@@ -25,13 +25,13 @@
 
 
 (defk chunk-stem [chunk]
-  {:pre [(: chunk int)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: chunk int)] :post [(: % str)] :tags {:context "record-store" :role "protocol"}}
   "区切りの番号を file の名の頭(6 桁)にするため。"
   (.format "{:06d}" chunk))
 
 
 (defk chunk-files [run-dir]
-  {:pre [(: run-dir str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: run-dir str)] :post [(: % dict)] :tags {:context "record-store" :role "protocol"}}
   "run の dir の中身を、区切りの番号 → その区切りの file の path の list(.jsonl.gz を先に)にするため。"
   (<- entries tuple (file-done (ListDirectory run-dir)))
   (val out {})
@@ -45,14 +45,14 @@
 
 
 (defk chunk-text [path]
-  {:pre [(: path str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: path str)] :post [(: % str)] :tags {:context "record-store" :role "protocol"}}
   "区切りの file 1 つの中身を text で読むため(.gz は戻す — 遅れて足した member も続けて 1 つとして)。"
   (<- content bytes (file-done (ReadBytes path)))
   (.decode (if (.endswith path ".gz") (gzip.decompress content) content) "utf-8"))
 
 
 (defk head-line [path]
-  {:pre [(: path str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: path str)] :post [(: % (| str None))] :tags {:context "record-store" :role "protocol"}}
   "区切りの file の先頭の 1 行(行の終わりを含む・無ければ file の全部)を、file を丸ごと読まずに取るため(区切りは数百 MB に
    なりうる)。.gz は読んだ頭だけを戻す。読めない・戻せない file は None(一覧の頭の行が無いだけ — 一覧は止めない)。"
   (var limit HEAD-READ-BYTES)
@@ -72,7 +72,7 @@
 
 
 (defk run-header [line]
-  {:pre [(: line (| str None))] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: line (| str None))] :post [(: % (| dict None))] :tags {:context "record-store" :role "protocol"}}
   "区切りの頭の行を JSON の object として読むため(読めなければ None)。"
   (try
     (val parsed (if (is line None) None (json.loads line)))
@@ -82,7 +82,7 @@
 
 
 (defk run-view [run-dir service run]
-  {:pre [(: run-dir str) (: service str) (: run str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: run-dir str) (: service str) (: run str)] :post [(: % dict)] :tags {:context "record-store" :role "protocol"}}
   "run 1 つの一覧の行(区切りの数・disk の byte・圧縮した区切りの数・最後の書きの時刻・頭の行)を作るため。"
   (<- chunks dict (chunk-files run-dir))
   (val files (lfor fs (.values chunks) f fs f))
@@ -104,21 +104,21 @@
 
 
 (defk dir-names [path]
-  {:pre [(: path str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: path str)] :post [(: % list)] :tags {:context "record-store" :role "protocol"}}
   "dir の直下の dir の名を名の順に並べるため。"
   (<- entries tuple (file-done (ListDirectory path)))
   (lfor e entries :if (= e.kind PathKind.DIRECTORY) e.name))
 
 
 (defk root-exists [root]
-  {:pre [(: root str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: root str)] :post [(: % bool)] :tags {:context "record-store" :role "protocol"}}
   "置き場の根が在るかを読むため(まだ 1 行も書いていない置き場は空として答える)。"
   (<- found PathStat (file-done (StatPath root)))
   (!= found.kind PathKind.MISSING))
 
 
 (defk append-lines [root service run chunk lines]
-  {:pre [(: root str) (: service str) (: run str) (: chunk int) (: lines list)] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: root str) (: service str) (: run str) (: chunk int) (: lines list)] :post [(: % int)] :tags {:context "record-store" :role "protocol"}}
   "行を区切りの .jsonl の末尾へ足し、disk へ落としてから足した行の数を返すため。"
   (val run-dir (os.path.join root service run))
   (<- (file-done (MakeDirectory run-dir)))
@@ -128,7 +128,7 @@
 
 
 (defk list-runs [root service]
-  {:pre [(: root str) (: service (| str None))] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: root str) (: service (| str None))] :post [(: % list)] :tags {:context "record-store" :role "protocol"}}
   "置き場の run の一覧(service = None なら全部)を作るため。"
   (val out [])
   (<- exists bool (root-exists root))
@@ -145,7 +145,7 @@
 
 (defk read-run [root service run from-chunk to-chunk]
   {:pre [(: root str) (: service str) (: run str) (: from-chunk (| int None)) (: to-chunk (| int None))] :post [(: % (| str None))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "record-store" :role "protocol"}}
   "run の記録の行を区切りの順につないだ JSONL の text を作るため(無い run は None)。"
   (val run-dir (os.path.join root service run))
   (<- found PathStat (file-done (StatPath run-dir)))
@@ -162,7 +162,7 @@
 
 
 (defk gzip-member [gz-path content]
-  {:pre [(: gz-path str) (: content bytes)] :post [(: % bytes)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: gz-path str) (: content bytes)] :post [(: % bytes)] :tags {:context "record-store" :role "protocol"}}
   "区切りの中身を、gzip.open(gz-path, \"ab\") が足すのと同じ 1 つの gzip の member(頭に元の file の名と今の時刻)にするため。"
   (val buffer (io.BytesIO))
   (with [out (gzip.GzipFile :filename gz-path :mode "wb" :fileobj buffer)]
@@ -171,7 +171,7 @@
 
 
 (defk compact-chunk [path]
-  {:pre [(: path str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: path str)] :post [(: % None)] :tags {:context "record-store" :role "protocol"}}
   "書き終わった .jsonl 1 つを .jsonl.gz の末尾の member にし(既に在れば足す — gzip は複数の member をつないで 1 つとして読める)、
    disk へ落としてから .jsonl を消すため。"
   (val gz (+ path ".gz"))
@@ -188,7 +188,7 @@
 
 
 (defk compact [root now-ms idle-ms]
-  {:pre [(: root str) (: now-ms int) (: idle-ms int)] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: root str) (: now-ms int) (: idle-ms int)] :post [(: % int)] :tags {:context "record-store" :role "protocol"}}
   "idle-ms の間書かれていない区切りの .jsonl を圧縮し、圧縮した数を返すため。"
   (var n 0)
   (<- exists bool (root-exists root))
@@ -210,7 +210,7 @@
 
 
 (defk prune [root now-ms retention-ms]
-  {:pre [(: root str) (: now-ms int) (: retention-ms int)] :post [(: % list)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: root str) (: now-ms int) (: retention-ms int)] :post [(: % list)] :tags {:context "record-store" :role "protocol"}}
   "最後の書きが now-ms - retention-ms より古い run を丸ごと消し、消した [service run] の list を返すため。"
   (val removed [])
   (<- exists bool (root-exists root))

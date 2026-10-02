@@ -3,7 +3,7 @@
 ;;; 子 process・入口の検め・コードの木・実行環境の root の言い換えへ問う。intent の層から移した(#2031 — 言い換えの handler が intent を
 ;;; 出さない・DOEFF130)。
 (require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 

@@ -9,7 +9,7 @@
 ;;; doeff_cluster.shared.core.job_rules に在る(#2025)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
+(val MODULE-TAGS {:context "worker" :role "intent"})
 (import dataclasses [dataclass field])
 (import enum [Enum])
 (import doeff [EffectBase])

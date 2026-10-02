@@ -11,7 +11,7 @@
 ;;; (前の uuid4 の頭 12 桁と同じ形 — 乱数の効果を使わず、再起動した worker でも pid が違うので重ならない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass replace])
 (import hashlib)
 (import pathlib [Path])
@@ -42,20 +42,20 @@
 
 
 (defk job-work-dir [settings name]
-  {:pre [(: settings HostSettings) (: name str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: settings HostSettings) (: name str)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "実行環境の job の子の cwd(job の名ごとの空の dir)を、起こす時と回収する時が同じ綴りで作るため。"
   (+ settings.jobs-dir "/" (.replace name "/" "_")))
 
 
 (defk process-instance [attempt worker-pid started-ms name]
-  {:pre [(: attempt int) (: worker-pid int) (: started-ms int) (: name str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: attempt int) (: worker-pid int) (: started-ms int) (: name str)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "process の世代の名(頭の註)を、起こすたびに新しく・worker を起こし直しても重ならない形で振るため。"
   (val digest (.hexdigest (hashlib.sha256 (.encode (.format "{}:{}:{}:{}" worker-pid started-ms name attempt) "utf-8"))))
   (.format "{}-{}" attempt (cut digest 0 12)))
 
 
 (defk start-job [settings action]
-  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % ProcessView)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % ProcessView)] :tags {:context "worker" :role "protocol"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから、shim の下の子を専用の group に起こす。起こした子の観測(ProcessView)を返す。起こせなければ OSError(前の Popen と同じ)。"
   (val spec action.spec)

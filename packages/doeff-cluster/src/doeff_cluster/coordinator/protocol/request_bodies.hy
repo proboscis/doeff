@@ -1,7 +1,7 @@
 ;;; coordinator の受け口の要求の本文を道ごとの型に解く 1 点(#2445)。どの道がどの型か(body-type-of)をここだけが知り、core の判断は
 ;;; 解いた値だけを受ける。本番の調停ループは ReadBody の答え手 request-bodies で、判断を直に呼ぶ検と模擬の世界は responded で同じ解きを通る。
 (require doeff-hy.macros [defhandler defk deff <- val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff [run])
 (import doeff_hy.wire [parse Malformed])
 (import doeff_cluster.shared.intent.protocol [Request ClusterTiming BodyInvalid])

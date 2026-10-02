@@ -1,7 +1,7 @@
 ;;; 展開したコードの木の bytecode の準備の純粋な判断 — module 名・引き継ぐ .pyc の組・焼く物・完成の印の中身と検め・import の静的な辿り
 ;;; (code_prepare.hy から分けた・#2027)。effect は worker/intent/code_model、焼きの Program は worker/core/code_prepare。
 (require doeff-hy.macros [val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(val MODULE-TAGS {:context "worker" :role "judgment"})
 (import ast)
 (import pathlib [PurePosixPath])
 (import json)
