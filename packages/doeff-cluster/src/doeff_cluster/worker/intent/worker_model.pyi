@@ -273,3 +273,11 @@ class WorkerState:
     desired: tuple[JobSpec, ...] = ()
     records: dict[str, JobRecord] = ...
     warm: tuple[WarmEnv, ...] = ()
+
+# --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
+
+@dataclass(frozen=True)
+class AwaitNextTick(EffectBase[None]):
+    policy: WorkerPolicy
+    changed: Future[bool] | None
+    state: WorkerState

@@ -24,6 +24,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView DesiredJobs ReadDesired ObserveWorld WorkerStopRequested
                                                   PublishStatus EnvReport])
 (import doeff_cluster.worker.core.program [run-worker])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons slow-task sim-task-foundation NET])
 
@@ -61,7 +62,7 @@
   (when rung
     (<- (CompletePromise bell True)))
   (val log (TickLog (SimClock)))
-  (<- ((sim-time-handler :clock log.clock) ((bell-host log bell stop-ms) (run-worker POLICY))))
+  (<- ((sim-time-handler :clock log.clock) (tick-pauses ((bell-host log bell stop-ms) (run-worker POLICY)))))
   log.reads)
 
 
