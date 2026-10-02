@@ -234,7 +234,9 @@
    代わりにこの数を名乗る — None = capacity。本当に置ける数は capacity のまま — 条 C6 の反例・#1976)・claims-provides = 反例の世界だけの
    壊れた worker(heartbeat で provides の代わりにこの能力を名乗る — None = provides。本当に提供する能力は provides のまま — 条 C7 の反例・#1976)・
    claims-exclusive = 反例の世界だけの壊れた worker(heartbeat で exclusive の代わりにこの専用の能力を名乗る — None = exclusive。本当の
-   専用の能力は exclusive のまま — 条 C10 の反例・#1976)。"
+   専用の能力は exclusive のまま — 条 C10 の反例・#1976)・fresh-boot-every-beat = 反例の世界だけの壊れた worker(heartbeat ごとに新しい
+   世代を名乗る — 本当の process の世代は変わらない。coordinator は別の世代の heartbeat で drain を解くので、drain が効かない — 条 C11 の
+   反例・#1976)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -252,7 +254,8 @@
   (setv #^ bool silent-stop False)
   (setv #^ (| int None) overstates-capacity None)
   (setv #^ (| frozenset None) claims-provides None)
-  (setv #^ (| frozenset None) claims-exclusive None))
+  (setv #^ (| frozenset None) claims-exclusive None)
+  (setv #^ bool fresh-boot-every-beat False))
 
 
 (defrecord SimProcess
@@ -1415,7 +1418,8 @@
                                 :node worker.node
                                 :capacity (if (is worker.overstates-capacity None) worker.capacity worker.overstates-capacity)
                                 :versions (or worker.versions plan.versions)
-                                :statuses truth.statuses :endpoint (+ "sim://" worker.name) :boot truth.boot
+                                :statuses truth.statuses :endpoint (+ "sim://" worker.name)
+                                :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping))
   (val full (| base (env-heartbeat-part (env-report views "ok") (current-platform))))
   (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
