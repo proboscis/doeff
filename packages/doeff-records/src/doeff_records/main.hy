@@ -177,10 +177,11 @@
 
 
 (defk records-connected [settings body]
-  {:pre [(: settings RecordsSettings) (: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "records" :role "entry"}}
+  {:tp [T] :pre [(: settings RecordsSettings) (: body (| (get Program #(T object)) (get EffectBase T)))] :post [(: % T)]
+   :tags {:context "records" :role "entry"}}
   "土台の口(頭の註 — 待ち受けと置き場)の下で本体を走らせるため: PostgreSQL の接続の貸し出しと pool を開き、待ち受け → 名乗り →
    PostgreSQL の並び(外側が先)で本体を走らせ、終われば(例外でも)接続と pool を閉じる。外側(scheduler・Await の橋・session の値の
-   置き場・時計・止めの合図)は呼び手が置く。"
+   置き場・時計・止めの合図)は呼び手が置く。答えは本体の答え(型の引数 T — 呼び手の型検査へ本体の答えの型を運ぶ・#2893)。"
   ;; 要求に貸す pool-size 本と、手入れの係の 1 本。pool の worker の数 = 宣言した接続の数(pooled-postgres-sql-handler の契約)。
   ;; 接続の貸し出しは借りた時に初めて開く(作るだけでは繋がない)。
   (val connections (PostgresConnections #((PostgresDatabase :name DATABASE :dsn settings.dsn)) :size (+ settings.pool-size 1)))
