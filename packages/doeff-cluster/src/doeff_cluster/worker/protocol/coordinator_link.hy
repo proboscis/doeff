@@ -31,7 +31,7 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec task-spec])
+(import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 
 
@@ -125,7 +125,8 @@
       (when (and (in (get parts 1) #(".blob" ".result")) (not-in (get parts 0) ids))
         (<- (RemoveTree (os.path.join state.task-dir entry.name))))))
   (setv state.task-echo (dfor task tasks :if (.get task "detached") (get task "id") (dict task)))
-  (tuple (gfor task tasks (task-spec task (Path state.task-dir)))))
+  (<- specs tuple (task-specs tasks (Path state.task-dir)))
+  specs)
 
 
 (defk fetched-program [cell options program-dir sha]
@@ -332,7 +333,8 @@
     (val timing (.get answered "timing"))
     (when (and timing (in "fence_ms" timing))
       (setv state.fence-ms (int (get timing "fence_ms"))))
-    (setv state.last-jobs (tuple (gfor job (get answered "jobs") (declared-job-spec job))))
+    (<- jobs tuple (declared-job-specs (get answered "jobs")))
+    (setv state.last-jobs jobs)
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
     (setv state.last-tasks tasks)
     (<- (fetched-programs state cell options (+ state.last-jobs state.last-tasks)))
@@ -386,7 +388,8 @@
     (when task-id
       (<- text (ReadText (os.path.join state.task-dir (+ task-id ".result"))))
       (setv (get results task-id) (if (isinstance text str) text None))))
-  (status-report statuses state.task-echo results))
+  (<- rows list (status-report statuses state.task-echo results))
+  rows)
 
 
 (defhandler coordinator-link [#^ LinkState state #^ RouteCell cell #^ RouteOptions options #^ RouteCell watch-cell]

@@ -343,7 +343,7 @@
   (assert (is-not view.path None) view)
   ;; task が来た最初の拍で子を起こす(PrepareEnv を挟まない = 準備が task の待ちに入らない)
   (val tasks (/ rig.state "tasks"))
-  (val spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared}
+  (<- spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared}
                        tasks))
   (val first (plan 1 #(spec) (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
   (assert (= first #((StartJob spec 1 view.path))) first)
@@ -355,7 +355,7 @@
   (<- a2 str (push-commit rig.app files-a2 "app 2"))
   (<- cold RuntimeEnv (declare rig a2 l1 LOCK))
   (<- cold-declared dict (runtime-env->json cold))
-  (val cold-spec (task-spec {"id" "t9" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM
+  (<- cold-spec (task-spec {"id" "t9" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM
                              "runtimeEnv" cold-declared}
                             tasks))
   (assert (is-not cold-spec.runtime-env None) cold-spec)
