@@ -198,11 +198,11 @@
    "why": "上の再輸出の綴り"
   },
   {
-   "handler": "doeff_cluster.foundation.host_contract:host-reader",
+   "handler": "doeff_cluster.shared.entry.host_reader:host-reader",
    "touches": [
     "env"
    ],
-   "why": "os.environ の DOEFF_WORKER_PROGRAM"
+   "why": "os.environ の DOEFF_WORKER_PROGRAM と子の文脈(foundation の読みを通す — 古い置き場 foundation/host_contract の host-reader は 2026-10-03 に消した)"
   },
   {
    "handler": "doeff_cluster.foundation.record_handlers:recording-handler",
@@ -276,20 +276,6 @@
     "file"
    ],
    "why": "fsync・rename"
-  },
-  {
-   "handler": "doeff_cluster.cluster_foundation:with-cluster-handlers",
-   "touches": [
-    "cluster"
-   ],
-   "why": "旧い path の入口(本体 = doeff_cluster.shared.entry.cluster_foundation)— #2980: 使い手の repo の名指しを付け替えた次の pin で消す"
-  },
-  {
-   "handler": "doeff_cluster.cluster_foundation:cluster-handlers",
-   "touches": [
-    "cluster"
-   ],
-   "why": "旧い path の入口(本体 = doeff_cluster.shared.entry.cluster_foundation)— #2980: 使い手の repo の名指しを付け替えた次の pin で消す"
   },
   {
    "handler": "doeff_cluster.shared.entry.cluster_foundation:with-cluster-handlers",

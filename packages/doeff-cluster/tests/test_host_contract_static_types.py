@@ -1,13 +1,12 @@
 """宿の契約の型の宣言(doeff_cluster/foundation/host_contract.pyi)の失敗ケース(#2197)。
 
-host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に host-reader・environ-reader を並べる使い手の strict に、
-書き手に直せない Unknown の赤(Type of "host_reader" is unknown・Argument type is partially unknown)が出ていた。
+host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に environ-reader を並べる使い手の strict に Unknown の赤が出ていた
+(host-reader は shared/entry/host_reader に在る — ここに 1 版残した古い host-reader は 2026-10-03 に消した・#2167)。
 → host_contract.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目・3 本目が赤になる。
 """
 
 import ast
 import dataclasses
-import importlib
 import inspect
 import json
 import shutil
@@ -15,18 +14,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 # host_contract は .hy の module — 先に hy を読んで import hook を有効にしてから読む(検だけを単独で走らせても読めるように)。
-importlib.import_module("hy")
-host_contract = importlib.import_module("doeff_cluster.foundation.host_contract")
+import hy  # noqa: F401
+import pytest
+from doeff_cluster.foundation import host_contract
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_cluster.foundation.host_contract [host-reader environ-reader HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [environ-reader HOST-CONTRACT])
+(import doeff_cluster.shared.entry.host_reader [host-reader])
 
 (defk probe-host [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % int)] :tags {:context "probe" :role "foundation"}}
@@ -116,7 +115,7 @@ def test_the_stub_matches_host_contract_hy() -> None:
         for node in stub.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     } | {node.name for node in stub.body if isinstance(node, ast.FunctionDef | ast.ClassDef) and not node.name.startswith("_")}
-    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "host_reader", "environ_reader"}
+    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "environ_reader"}
 
 
 def test_a_dropped_record_field_is_found() -> None:

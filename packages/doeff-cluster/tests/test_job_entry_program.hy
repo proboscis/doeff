@@ -80,10 +80,6 @@
   (<- ok (entry "doeff_cluster.worker.entry.job_entry" "probe" "--program" path))
   (assert (= ok.returncode 0) ok.stderr)
   (assert (in "を解けた" ok.stderr) ok.stderr)
-  ;; 旧い入口 doeff_cluster.job_entry は、配備してある worker と旧い宣言の Service が名で読むので最後の配備まで残す(#2112)— 同じ入口へ渡す。
-  (<- old-name (entry "doeff_cluster.job_entry" "probe" "--program" path))
-  (assert (= old-name.returncode 0) old-name.stderr)
-  (assert (in "を解けた" old-name.stderr) old-name.stderr)
   (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (! (process-versions os.environ)) {"doeff" "0.0.0"})))
   (<- refused (entry "doeff_cluster.worker.entry.job_entry" "probe" "--program" other))
   (assert (= refused.returncode 1) refused.stderr)

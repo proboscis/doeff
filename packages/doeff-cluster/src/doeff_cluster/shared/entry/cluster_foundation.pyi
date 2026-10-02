@@ -8,8 +8,8 @@ from doeff import EffectBase as EffectBase
 from doeff import with_handlers as with_handlers
 from doeff_core_effects.effects import Ask as Ask
 from doeff_cluster.foundation.host_contract import HOST_CONTRACT as HOST_CONTRACT
-from doeff_cluster.job_context import RunContext as RunContext
-from doeff_cluster.job_context import runtime_env_of_context as runtime_env_of_context
+from doeff_cluster.shared.intent.run_context import RunContext as RunContext
+from doeff_cluster.shared.core.run_context_rules import runtime_env_of_context as runtime_env_of_context
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.protocol.service_report import ServiceReport as ServiceReport
 from doeff_cluster.shared.protocol.service_report import service_report_of as service_report_of
