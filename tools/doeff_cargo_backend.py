@@ -23,7 +23,8 @@ CARGO_TARGET_DIR が config の build.target-dir(と CARGO_BUILD_TARGET_DIR)に�
 wheel は source の中身の hash で引く(agora-redesign #2364): 一時の target では毎回すべてを組み直す(doeff-linter で 8〜10 分)。
 uv は path の依存を file の時刻(tool.uv.cache-keys)で見るので、pin を上げて作業木を作り直す・checkout し直すと、中身の同じ
 source でも口を呼ぶ。口は build を始める前に、組みに効く物(tool.uv.cache-keys の file の中身と相対 path・rustc と maturin の版・
-機体・build の設定)の hash で `$XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/` を見て、在ればその wheel を写して返す
+機体・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定)の hash で
+`$XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/` を見て、在ればその wheel を写して返す
 (cargo を撃たない)。無ければ組んで置く。どちらも stderr に 1 行(使った / 組んだ秒)。置き場は env DOEFF_WHEEL_CACHE で替えられる。
 editable と sdist は引かない(editable は作業木を指すので中身で共有できない)。
 """
@@ -37,6 +38,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import tomllib
@@ -52,6 +54,13 @@ TEMP_PREFIX = "doeff-cargo-target-"
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
 # tool.uv.cache-keys の file を宣言しない package の、組みに効く file の既定(package の dir からの glob)。
 DEFAULT_SOURCE_GLOBS = ("pyproject.toml", "Cargo.toml", "Cargo.lock", "build.rs", "src/**/*")
+# wheel の中身を変える環境変数(置き場の鍵に名と値を入れる・agora-redesign #2969): rustc の旗・cargo の profile と build の設定・
+# maturin と PyO3 の設定。
+BUILD_ENV_NAMES = frozenset({"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "MACOSX_DEPLOYMENT_TARGET"})
+BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_BUILD_", "MATURIN_", "PYO3_")
+# 上の接頭辞に当たるが、組む場所と並べる数だけを変えて中身を変えない名 — 鍵に入れると作業木や機体の混み方ごとに置き場が割れて
+# 共有が効かなくなる。
+PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_JOBS"})
 
 # PEP 517 の config_settings: frontend が渡す「設定の名 → 文字列か文字列の list」。口は中を読まず maturin へ渡す。
 ConfigSettings: TypeAlias = Mapping[str, str | list[str]]
@@ -148,10 +157,30 @@ def _tool_versions() -> str:
     return f"rustc={rustc} maturin={getattr(maturin, '__version__', '?')}"
 
 
+def _build_environment() -> str:
+    """組みを変える環境変数(BUILD_ENV_NAMES と BUILD_ENV_PREFIXES に当たる名、置き場だけの名を除く)の名と値を並べるため
+    (agora-redesign #2969 — 同じ source でも RUSTFLAGS・CARGO_PROFILE_RELEASE_STRIP などを変えて組んだ wheel を、既定の build が
+    引かないように)。値は鍵の hash に入るだけで、どこにも出さない。"""
+    chosen = sorted(
+        (name, value)
+        for name, value in os.environ.items()
+        if (name in BUILD_ENV_NAMES or name.startswith(BUILD_ENV_PREFIXES)) and name not in PLACE_ONLY_ENV_NAMES
+    )
+    return repr(chosen)
+
+
+def _python_abi() -> str:
+    """組む Python の版・ABI・機体(拡張 module の名の末尾 — 例 `.cpython-314t-x86_64-linux-gnu.so`)— free-threading の cp314t と
+    cp313 のように ABI の違う環境で同じ source を組んでも、置き場の wheel を取り違えないため(agora-redesign #2969)。"""
+    return f"{sys.implementation.cache_tag} {sysconfig.get_config_var('EXT_SUFFIX')}"
+
+
 def _wheel_slot(package: Path, config_settings: ConfigSettings | None) -> Path:
-    """source の中身・道具の版・機体・build の設定の hash で、wheel を置く dir を決めるため(file の時刻と作業木の path に依らない)。"""
+    """source の中身・道具の版・機体・組む Python の ABI・組みを変える環境変数・build の設定の hash で、wheel を置く dir を決めるため
+    (file の時刻と作業木の path に依らない — 置き場だけを変える CARGO_TARGET_DIR なども入れない)。"""
     digest = hashlib.sha256()
-    for line in (_tool_versions(), sys.platform, platform.machine(), repr(sorted((config_settings or {}).items()))):
+    lines = (_tool_versions(), sys.platform, platform.machine(), _python_abi(), _build_environment(), repr(sorted((config_settings or {}).items())))
+    for line in lines:
         digest.update(line.encode("utf-8") + b"\0")
     for path in _source_files(package):
         digest.update(os.path.relpath(path, package).encode("utf-8") + b"\0")
