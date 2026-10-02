@@ -7,7 +7,7 @@ import secrets
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
@@ -53,23 +53,28 @@ def _warn_corrupt_issue_file(path: Path, reason: object) -> None:
     )
 
 
+class _Frontmatter(NamedTuple):
+    fields: dict[str, Any]
+    body: str
+
+
 def _parse_frontmatter(
     content: str,
     *,
     path: Path | None = None,
-) -> tuple[dict[str, Any], str]:
+) -> _Frontmatter:
     """Parse YAML frontmatter from markdown content.
 
     Returns:
-        Tuple of (frontmatter dict, body string)
+        _Frontmatter of (fields dict, body string)
     """
     if not content.startswith("---"):
-        return {}, content
+        return _Frontmatter({}, content)
 
     # Find end of frontmatter
     end_match = re.search(r"\n---\n", content[3:])
     if not end_match:
-        return {}, content
+        return _Frontmatter({}, content)
 
     frontmatter_str = content[3 : end_match.start() + 3]
     body = content[end_match.end() + 3 :].strip()
@@ -88,7 +93,7 @@ def _parse_frontmatter(
             raw_value=frontmatter,
         )
 
-    return frontmatter, body
+    return _Frontmatter(frontmatter, body)
 
 
 def _parse_created_at(frontmatter: dict[str, Any], *, path: Path) -> datetime:

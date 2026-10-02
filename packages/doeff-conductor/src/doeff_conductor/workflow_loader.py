@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from hy.compiler import hy_compile
 from hy.errors import HyError
@@ -288,7 +288,7 @@ class _WorkflowNondeterminismVisitor(ast.NodeVisitor):
             local_name: str = alias.asname or _root_module(module_name)
             resolved_name: str = module_name if alias.asname else _root_module(module_name)
             self.aliases[local_name] = resolved_name
-            replacement: tuple[str, str] | None = _classify_import(module_name)
+            replacement: _ImportClass | None = _classify_import(module_name)
             if replacement is not None:
                 token, suggestion = replacement
                 self._add(node, f"import `{module_name}`", token, suggestion)
@@ -296,7 +296,7 @@ class _WorkflowNondeterminismVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module_name: str = node.module or "<relative>"
-        replacement: tuple[str, str] | None = _classify_import(module_name)
+        replacement: _ImportClass | None = _classify_import(module_name)
         if replacement is not None:
             token, suggestion = replacement
             self._add(node, f"import from `{module_name}`", token, suggestion)
@@ -388,16 +388,21 @@ class _WorkflowNondeterminismVisitor(ast.NodeVisitor):
         )
 
 
-def _classify_import(module_name: str) -> tuple[str, str] | None:
+class _ImportClass(NamedTuple):
+    token: str
+    suggestion: str
+
+
+def _classify_import(module_name: str) -> _ImportClass | None:
     root_name: str = _root_module(module_name)
     if root_name == "subprocess" or root_name in _NETWORK_IMPORT_ROOTS:
-        return (
+        return _ImportClass(
             "gate!",
             "move subprocess or network work behind a deterministic `gate!` step",
         )
     if root_name in _ALLOWLISTED_IMPORT_ROOTS:
         return None
-    return (
+    return _ImportClass(
         ":params",
         "pass external inputs through a workflow `:params` entry",
     )
