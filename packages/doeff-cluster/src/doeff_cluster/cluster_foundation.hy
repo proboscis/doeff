@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.protocol.service_report [ServiceReport service-report-of])
 (import doeff_cluster.shared.protocol.readiness_handlers [readiness-http])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-http])
-(import .shared_handlers [shared-http])
+(import doeff_cluster.shared.protocol.shared_handlers [shared-http])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
 (import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])

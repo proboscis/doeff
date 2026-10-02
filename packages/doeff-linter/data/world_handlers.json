@@ -233,7 +233,7 @@
    "why": "coordinator へ httpx で POST"
   },
   {
-   "handler": "doeff_cluster.shared_handlers:shared-http",
+   "handler": "doeff_cluster.shared.protocol.shared_handlers:shared-http",
    "touches": [
     "cluster",
     "clock"
