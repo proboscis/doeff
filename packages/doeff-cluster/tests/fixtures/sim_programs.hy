@@ -298,6 +298,14 @@
           :environ {"STEP" "2"}))
 
 
+(defsystem beacons-plus [foundation]
+  "beacons に service beacon-b を足した系(宣言し直すと新しい job の置き先が要る — 条 L1 の検)"
+  (beacon (beacon-program foundation "beacon/a" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+          :environ {"STEP" "1"})
+  (beacon-b (beacon-program foundation "beacon/b" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+            :environ {"STEP" "1"}))
+
+
 (defsystem handoff-beacons [foundation]
   "見本の系: handoff で入れ替える beacon(版 1)"
   (beacon (beacon-program foundation "beacon/h" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
