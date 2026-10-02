@@ -12,6 +12,7 @@
 (import dataclasses [dataclass])
 (import pathlib [Path])
 (import abc [ABC])
+(import types [NotImplementedType])
 (import doeff [EffectBase])
 (import doeff_hy.table [TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
@@ -37,7 +38,14 @@
 ;; 静的な形(使い手の型検査が読む)は store.pyi の Protocol。kv / recovered はどちらの置き場も持つ(kv = 耐久になった全部のキー・
 ;; recovered = 読み直しで捨てた最後の行の記録)。
 
-(defclass ByteLog [ABC]
+(defclass MethodShape [ABC]
+  "method の名(METHODS)を全部持つ型をその形と見なす基底 — ByteLog と DeltaStore が 1 つの判じ方を共有するため。"
+  (setv METHODS #())
+  (defn [classmethod] #^ (| bool NotImplementedType) __subclasshook__ [cls #^ type other]
+    (if (and cls.METHODS (all (gfor name cls.METHODS (callable (getattr other name None))))) True NotImplemented)))
+
+
+(defclass ByteLog [MethodShape]
   "file の置き場の形(foundation/wal_store の WalStore)— 読み書きの口が写しと log の byte を受け渡す相手。"
   (#^ dict kv)
   (#^ int seq)
@@ -45,8 +53,6 @@
   (#^ Path snapshot)
   (#^ Path log)
   (setv METHODS #("exists" "check_place" "read_snapshot_bytes" "read_log_lines" "drop_tail" "append_line" "write_snapshot"))
-  (defn [classmethod] __subclasshook__ [cls other]
-    (if (all (gfor name cls.METHODS (callable (getattr other name None)))) True NotImplemented))
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ None check-place [self] (raise NotImplementedError))
   (defn #^ (| bytes None) read-snapshot-bytes [self] (raise NotImplementedError))
@@ -56,12 +62,10 @@
   (defn #^ None write-snapshot [self #^ bytes data] (raise NotImplementedError)))
 
 
-(defclass DeltaStore [ABC]
+(defclass DeltaStore [MethodShape]
   "memory の置き場の形(entry の MemoryWalStore)— 読み書きの口が差分と表をそのまま受け渡す相手。"
   (#^ dict kv)
   (setv METHODS #("exists" "load" "persist" "checkpoint"))
-  (defn [classmethod] __subclasshook__ [cls other]
-    (if (all (gfor name cls.METHODS (callable (getattr other name None)))) True NotImplemented))
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ dict load [self] (raise NotImplementedError))
   (defn #^ None persist [self #^ dict delta] (raise NotImplementedError))
