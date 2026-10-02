@@ -223,7 +223,8 @@
    世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob の handler が、外すと同時に旧を止める — 条 W1 の反例)・ignores-keep-marks =
    途絶しても動かし続けてよい印(#2804)を知らない古い版の worker の代役(heartbeat に keptWhenCutOff を載せず、返事の keepWhenCutOff を
    読み捨てる — 新しい coordinator と古い worker の組を確かめるため)・silent-stop = 反例の世界だけの壊れた worker(宣言の読みの handler が
-   止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)。"
+   止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)・overstates-capacity = 反例の世界だけの壊れた worker(heartbeat で capacity の
+   代わりにこの数を名乗る — None = capacity。本当に置ける数は capacity のまま — 条 C6 の反例・#1976)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -238,7 +239,8 @@
   (setv #^ (| int None) beat-every-ms None)
   (setv #^ bool retire-stops False)
   (setv #^ bool ignores-keep-marks False)
-  (setv #^ bool silent-stop False))
+  (setv #^ bool silent-stop False)
+  (setv #^ (| int None) overstates-capacity None))
 
 
 (defrecord SimProcess
@@ -1448,7 +1450,9 @@
   ;; 今持っている印(#2804 — 本番の coordinator への口の beat と同じ判断)。印を知らない古い worker の代役は欄を載せない。
   (<- kept tuple (keep-marks-held truth.last-desired))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
-                                :node worker.node :capacity worker.capacity :versions (or worker.versions plan.versions)
+                                :node worker.node
+                                :capacity (if (is worker.overstates-capacity None) worker.capacity worker.overstates-capacity)
+                                :versions (or worker.versions plan.versions)
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name) :boot truth.boot
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping))
   (val full (| base (env-heartbeat-part (env-report views "ok") (current-platform))))

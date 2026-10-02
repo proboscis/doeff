@@ -135,6 +135,7 @@ class SimWorker:
     retire_stops: bool = False
     ignores_keep_marks: bool = False
     silent_stop: bool = False
+    overstates_capacity: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
