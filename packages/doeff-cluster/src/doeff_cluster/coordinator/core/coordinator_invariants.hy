@@ -22,6 +22,11 @@
 ;;; 条 C5 revision-never-goes-back: GET /state の coordinator の版(revision)は、読んだ順に減らない — coordinator が止まり置き場から
 ;;; 作り直されても(読み直せない置き場で空から起き直すと版が 0 へ戻り、worker と使い手が古い版の答えを新しいと取り違える)。判断は記録
 ;;; (読んだ順の版の列)を受けて、それまでの最大より小さい読みの組の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
+;;;
+;;; 条 L2 alive-only-while-reachable: GET /workers/<名> が alive = true と答えるのは、その worker が lease-ms(+ 余裕)のうちに coordinator へ
+;;; 届き得た時だけ — coordinator が止まり置き場から作り直された後も(最後の連絡の時刻を置き場から読み直せないと、死んだ worker を生きている
+;;; と答え、置き先にも選ぶ — 本番 2026-09-25 の欠陥・L643)。判断は記録(生存の読みと、その worker が届かなくなった時刻)を受けて、届かなく
+;;; なってから lease-ms + 余裕を過ぎて alive と答えた読みの列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
@@ -116,3 +121,26 @@
                :setv read (get reads i)
                :if (< read.revision prior.revision)
                (RevisionDrop :earlier prior :later read))))
+
+
+(defrecord WorkerProbe
+  "条 L2 の記録 1 つ = GET /workers/<名> の 1 回の読み(at-ms = 読んだ時刻・worker = 名・alive = 生きていると答えたか)と、その worker が
+   coordinator へ届かなくなった時刻(unreachable-since-ms — 死・網の切断。届いていれば None)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ int at-ms)
+  (#^ str worker)
+  (#^ bool alive)
+  (#^ (| int None) unreachable-since-ms))
+
+
+(defk alive-only-while-reachable [probes lease-ms slack-ms]
+  {:pre [(: probes (get tuple #(WorkerProbe ...))) (: lease-ms int) (: slack-ms int)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 L2: 生存の読みの列から、届かなくなってから lease-ms + slack-ms を過ぎた後に alive と答えた読みを返す(空なら緑)。coordinator が
+   作り直しの後も最後の連絡の時刻を読み直し、死んだ worker を生きていると答えない(置き先にも選ばない)ことを、筋書きの記録から判じるため。
+   slack-ms = heartbeat の間隔と読みの拍の差の分の余裕。"
+  (tuple (gfor p probes
+               :if (and p.alive
+                        (is-not p.unreachable-since-ms None)
+                        (> p.at-ms (+ p.unreachable-since-ms lease-ms slack-ms)))
+               p)))
