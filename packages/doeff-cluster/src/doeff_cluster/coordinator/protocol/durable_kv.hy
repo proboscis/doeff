@@ -16,7 +16,7 @@
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
 ;;; 旧い接頭辞(LEGACY-PLACEMENT)の鍵が残っているので、読みは両方を読み(同じ名なら新しい鍵が勝つ)、起動時に
 ;;; legacy-key-moves の 2 つの書きで新しい鍵へ移す — 新しい鍵を書き終えてから旧い鍵を消す。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict replace])
 (import functools [partial])
@@ -34,21 +34,24 @@
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
 
-(defn #^ dict board-entry [#^ ClusterState state #^ str key]
+(deff board-entry [#^ ClusterState state #^ str key]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: state ClusterState) (: key str)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤の行 1 つの耐久の形 {value resourceVersion [expiresMs]}。期限の無い行は expiresMs を持たない(2026-09-25 より前の形と同じ)。"
   (setv row (get state.board key))
   (| {"value" row.value "resourceVersion" row.version}
      (if (is row.expires-ms None) {} {"expiresMs" row.expires-ms})))
 
 
-(defn #^ dict counter-json [#^ ClusterState state]
+(deff counter-json [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "鍵 counter の値。"
   (| {"nextTask" state.next-task "revision" state.revision "auditSeq" state.audit-seq "aliveMs" state.alive-ms}
      ;; task の id の頭(以前からの "t" は書かない — 以前の形と同じ)。
      (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
 
 
-(defn #^ dict worker-json [#^ WorkerInfo w #^ (| int None) seen]
+(deff worker-json [#^ WorkerInfo w #^ (| int None) seen]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: w WorkerInfo) (: seen (| int None))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "鍵 worker/<名> の値。"
   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
       "versions" (dict w.versions)}
@@ -61,7 +64,8 @@
   value)
 
 
-(defn #^ dict durable-sources [#^ ClusterState state]
+(deff durable-sources [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を除いた耐久の状態の鍵 → #(元の値の tuple 直列化の関数)。鍵と値の形の定義はここ 1 か所(durable-kv も durable-delta もここから作る)。
   元の値 = 鍵の値を決める状態の部品(dataclass・dict・数)。状態は replace で作り直すので、前と後で同じ物の部品は変わっていない。
   同じ鍵を 2 度書く所(service/ — 宣言の行の後に断った行)は、後の書きが勝つ(以前の形と同じ順)。"
@@ -84,7 +88,8 @@
   out)
 
 
-(defn #^ dict durable-kv [#^ ClusterState state]
+(deff durable-kv [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を除いた耐久の状態のキーの表。"
   (dfor #(k #(_ encode)) (.items (durable-sources state)) k (encode)))
 
@@ -95,7 +100,8 @@
        (all (gfor #(x y) (zip before after) (is x y)))))
 
 
-(defn #^ dict durable-delta [#^ ClusterState before #^ ClusterState after]
+(deff durable-delta [#^ ClusterState before #^ ClusterState after]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
   元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
   前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は同一性で比べる(cluster_policy.board-changes)。"
@@ -118,13 +124,15 @@
   delta)
 
 
-(defn #^ dict full-kv [#^ ClusterState state]
+(deff full-kv [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を含む全部のキーの表(まとめ直しと移しの時だけ)。"
   (| (durable-kv state)
      (dfor k state.board (+ BOARD k) (board-entry state k))))
 
 
-(defn #^ ClusterState state-from-kv [#^ dict kv #^ int now]
+(deff state-from-kv [#^ dict kv #^ int now]  ; defk にできない: 起動の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: kv dict) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "キーの表から状態を作り直す。worker の最後の連絡の時刻は保存した lastSeenMs(止まる前の最後の印の拍の値)。呼び手は
    api_policy.resume-after-downtime で止まっていた長さだけずらしてから使う。lastSeenMs の無い鍵(2026-09-25 より前の置き場・
    最後の印より後に加わった worker)は、最後の印の時刻(alive-ms)に連絡があったとみなす(ずらすと「いま」になる = 以前の形と同じ。
@@ -169,7 +177,8 @@
     :started-ms now))
 
 
-(defn #^ dict resume-writes [#^ dict kv #^ ClusterState state]
+(deff resume-writes [#^ dict kv #^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: kv dict) (: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "起動の時に書く分: 読み直した置き場(kv)と、止まっていた長さだけ時計をずらした状態(api_policy.resume-after-downtime)の、
    値の違う鍵(盤を除く)。ずらした値(worker の lastSeenMs・task の lease・Rollout の段の起点)と生きていた時刻(counter の aliveMs)を
    同じ 1 行で耐久にする。書かないと、ずらした値は次にその鍵が変わるまで置き場に載らず(沈黙している worker の鍵は二度と変わらない)、
@@ -177,7 +186,8 @@
   (dfor #(k v) (.items (durable-kv state)) :if (!= (.get kv k) v) k v))
 
 
-(defn #^ list legacy-key-moves [#^ dict kv]
+(deff legacy-key-moves [#^ dict kv]  ; defk にできない: 起動の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: kv dict)] :post [(: % list)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "改名の前の置き先の鍵を新しい鍵へ移す書きの列(順に Persist する)。1 つめ = 新しい鍵がまだ無い分を新しい鍵で書く・
    2 つめ = 旧い鍵を消す。旧い鍵を消すのは、新しい鍵を書き終えた後だけ。同じ名の新しい鍵が既に在れば、そちらを残す。
    旧い鍵が無ければ空(2 回目以降の起動は何も書かない)。"

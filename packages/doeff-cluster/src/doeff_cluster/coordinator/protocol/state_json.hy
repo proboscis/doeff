@@ -13,7 +13,7 @@
 
 
 (deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
-  {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
   "保存の Service の行の列 → #(受け付けた ClusterJob の tuple  名 → RefusedJob)。読めない行(旧い宣言の形・壊れた行)は落とさずに
    RefusedJob にして理由を持つ — 新しい coordinator が旧い置き場を読んで落ちないため(改訂 1 の C)。"
   (setv jobs [] refused {})
@@ -26,7 +26,8 @@
   #((tuple jobs) refused))
 
 
-(defn #^ dict state-to-json [#^ ClusterState state]
+(deff state-to-json [#^ ClusterState state]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の状態の保存の形。盤は入れない(盤は行ごとに別の file — SaveBoardRow)。"
   {"formatVersion" 2
    "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.values state.refused) r.row))
@@ -50,7 +51,8 @@
    "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))})
 
 
-(defn #^ dict worker-generations-json [#^ WorkerInfo worker]
+(deff worker-generations-json [#^ WorkerInfo worker]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: worker WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "worker の世代の順(今の世代と退いた世代)を保存の形へ写すため(state file と durable の KV が使う)。読み直した後も、退いた世代の
    heartbeat を新しい世代と取り違えない。世代を知らない worker は欄を持たない(2026-09-27 より前の形と同じ)。
    bootAt = 今の世代の起動時刻(知る時だけ — generation-order)。"
@@ -59,12 +61,14 @@
      (if (is worker.boot-at None) {} {"bootAt" worker.boot-at})))
 
 
-(defn #^ dict worker-generations-from-json [#^ dict data]
+(deff worker-generations-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代・起動時刻を知らない。"
   {"boot" (.get data "boot") "retired" (tuple (.get data "retired" [])) "boot_at" (boot-at-of data)})
 
 
-(defn #^ dict resource-meta-to-json [#^ ResourceMeta meta]
+(deff resource-meta-to-json [#^ ResourceMeta meta]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: meta ResourceMeta)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の版の記録 → 保存の JSON の形(state file と durable の KV が使う — #2447 の前の形と同じ)。"
   {"resourceVersion" meta.resource-version "generation" meta.generation "createdBy" meta.created-by "createdMs" meta.created-ms
    "updatedBy" meta.updated-by "updatedMs" meta.updated-ms})
@@ -77,7 +81,8 @@
                 :updated-by (str (.get data "updatedBy" "")) :updated-ms (int (.get data "updatedMs" 0))))
 
 
-(defn #^ dict rollout-row-to-json [#^ RolloutRow row]
+(deff rollout-row-to-json [#^ RolloutRow row]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: row RolloutRow)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "Rollout 1 つ → 保存の JSON の形 {spec status}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
   {"spec" (rollout-spec-to-json row.spec) "status" (rollout-status-to-json row.status)})
 
@@ -87,13 +92,15 @@
   (RolloutRow :spec (validate-rollout-spec (get data "spec")) :status (rollout-status-from-json (get data "status"))))
 
 
-(defn #^ dict audit-event-to-json [#^ AuditEvent event]
+(deff audit-event-to-json [#^ AuditEvent event]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: event AuditEvent)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "出来事の記録 1 件 → 保存と見せる JSON の形(state file・durable の KV・GET /events と /state — #2447 の前の形と同じ)。"
   {"seq" event.seq "at" event.at "actor" event.actor "verb" event.verb "kind" event.kind "name" event.name
    "fromVersion" event.from-version "toVersion" event.to-version "generation" event.generation "changes" event.changes})
 
 
-(defn #^ AuditEvent audit-event-from-json [#^ dict data]
+(deff audit-event-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict)] :post [(: % AuditEvent)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 出来事の記録 1 件(audit-event-to-json の逆)。"
   (AuditEvent :seq (int (get data "seq")) :at (int (get data "at")) :actor (str (get data "actor")) :verb (str (get data "verb"))
               :kind (str (get data "kind")) :name (str (get data "name"))
@@ -101,22 +108,26 @@
               :changes (dict (.get data "changes" {}))))
 
 
-(defn #^ dict program-row-to-json [#^ ProgramRow row]
+(deff program-row-to-json [#^ ProgramRow row]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: row ProgramRow)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "置き場の Program の行 → 保存の JSON の形 {blob versions putMs}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
   {"blob" row.blob "versions" row.versions "putMs" row.put-ms})
 
 
-(defn #^ ProgramRow program-row-from-json [#^ dict data]
+(deff program-row-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict)] :post [(: % ProgramRow)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 置き場の Program の行(program-row-to-json の逆)。"
   (ProgramRow :blob (get data "blob") :versions (dict (.get data "versions" {})) :put-ms (int (get data "putMs"))))
 
 
-(defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
+(deff warm-entry-to-json [#^ WarmEntry entry]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: entry WarmEntry)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "温める表の行 → 保存の JSON の形(state file と durable の KV が使う)。"
   (| (asdict entry) {"needs" (list entry.needs)}))
 
 
-(defn #^ (| WarmEntry None) warm-entry-from-json [#^ dict data]
+(deff warm-entry-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict)] :post [(: % (| WarmEntry None))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 温める表の行(warm-entry-to-json の逆)。旧い形(requires の object)の行は None(読み直しで捨てる — 期限つきの
    頼みなので、頼み手が新しい形で頼み直す)。"
   (when (in "requires" data)
@@ -127,12 +138,15 @@
   (WarmEntry #** fields))
 
 
-(defn #^ dict board-rows-of [#^ dict values #^ dict versions]
+(deff board-rows-of [#^ dict values #^ dict versions]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: values dict) (: versions dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "読み直した盤の値(鍵 → 値)と版(鍵 → 版・無い鍵は 1)→ 盤の行の表(期限なし・大きさは測り直す)。"
   (dfor #(k v) (.items values) k (BoardRow :value v :version (.get versions k 1) :expires-ms None :size (value-size v))))
 
 
-(defn #^ ClusterState state-from-json [#^ dict data #^ int now #^ (| dict None) [board None] #^ (| dict None) [board-versions None]]
+(deff state-from-json [#^ dict data #^ int now #^ (| dict None) [board None] #^ (| dict None) [board-versions None]]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict) (: now int) (: board (| dict None)) (: board-versions (| dict None))] :post [(: % ClusterState)]
+   :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存した状態から作り直す。知っていた worker は全員「いま生きていた」とみなす。生存を捨てると、最初に heartbeat を
    送った worker へ全 job が移り、元の担い手がまだ動いていれば二重に動く(実測 2026-09-23)。戻らない worker の job は、
    この時点から移し替えの期限が過ぎた後に移る(その頃には自分で止まっている)。
