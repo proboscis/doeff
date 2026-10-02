@@ -140,8 +140,8 @@
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
     (setv self.state (run (tick self.state now self.timing)))
-    (setv #(state status reply) (responded self.state (http-request request.method split.path (dict (parse-qsl split.query)) body
-                                                             :actor (.get request.headers "x-actor"))
+    (setv #(state status reply) (responded self.state (run (http-request request.method split.path (dict (parse-qsl split.query)) body
+                                                             :actor (.get request.headers "x-actor")))
                                          now self.timing))
     (setv self.state state)
     (httpx.Response status :json reply)))

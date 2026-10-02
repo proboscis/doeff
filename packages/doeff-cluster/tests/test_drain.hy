@@ -47,7 +47,7 @@
   (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]
             #^ (| int None) [expect 200]]
     "答えの本文は JSON の object(dict)と確かめてから返す — 読む側が添字で引く。"
-    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (run (http-request method path {} body :actor actor)) self.now T))
     (when (is-not expect None) (assert (= status expect) #(method path status reply)))
     (setv self.state state)
     (assert (isinstance reply dict) #(method path status reply))
@@ -471,11 +471,11 @@
 (defhandler coordinator-of [#^ Coord coord]
   ;; 読みの要求を Coord の純粋な判断へそのまま渡す(状態は変えない)。
   (CoordinatorCall [method path body]
-    (setv #(_ status reply) (responded coord.state (http-request method path {} body :actor "drain@atlas") coord.now T))
+    (setv #(_ status reply) (responded coord.state (! (http-request method path {} body :actor "drain@atlas")) coord.now T))
     (resume {"status" status "body" reply}))
   (AskDrain [name ttl-seconds own-boot]
     (val request (drain-request name ttl-seconds own-boot))
-    (setv #(_ status reply) (responded coord.state (http-request (get request 0) (get request 1) {} (get request 3) :actor "drain@atlas")
+    (setv #(_ status reply) (responded coord.state (! (http-request (get request 0) (get request 1) {} (get request 3) :actor "drain@atlas"))
                                        coord.now T))
     (resume {"status" status "body" reply})))
 

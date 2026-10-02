@@ -9,6 +9,7 @@
 ;; status に段と理由(ReportReady の reason を含む)— coordinator を作り直しても諦めは保たれる・(c) 宣言を変えると諦めが解けて
 ;; 新しい spec の入れ替えが始まる・(d) recreate の Service は今と同じ。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff [run])
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -59,7 +60,7 @@
 
   (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]  ; defk にできない: 模擬の世界の method(coordinator の口へ要求を送る)
     "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、状態を進めて本文を返す。"
-    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (run (http-request method path {} body :actor actor)) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)
