@@ -292,7 +292,7 @@
    "why": "組み立て — 上の列そのもの"
   },
   {
-   "handler": "doeff_cluster.client_foundation:with-detached-client",
+   "handler": "doeff_cluster.shared.entry.client_foundation:with-detached-client",
    "touches": [
     "cluster",
     "env"

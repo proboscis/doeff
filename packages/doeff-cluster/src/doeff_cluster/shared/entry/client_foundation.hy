@@ -25,7 +25,7 @@
 
 (defk with-detached-client [coordinator revision runtime-env body]
   {:pre [(: coordinator str) (: revision str) (: runtime-env (| RuntimeEnv None)) (: body (| Program EffectBase))]
-   :post [(: % "body の答え")] :tags {:context "doeff-cluster" :role "foundation"}}
+   :post [(: % "body の答え")] :tags {:context "doeff-cluster" :role "process"}}
   "手元の道具の本体の切り離した task の送りと待ちを、値で渡した名乗り(revision・runtime-env)で coordinator へ話す口の下で走らせるため
    (頭の註 — 宛先の状態は 1 つの入れ物で要求から要求へ持ち越す)。"
   (<- options RouteOptions (coordinator-route-options))
