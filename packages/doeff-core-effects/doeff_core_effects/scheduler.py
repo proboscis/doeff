@@ -585,11 +585,31 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
 
     @do
     def root_close_out(prog):
-        """Report work the run abandons when the root body returns (#501)."""
-        result = yield prog
-        abandoned, parked = core.close_out_report()
-        _warn_abandoned_work(abandoned, parked)
+        """Unwind, then report, work the run abandons when the root body returns.
+
+        Same meaning as the Python scheduler (agora-redesign #2684 / #2690):
+        live non-daemon tasks are cancelled and their unwinding (finally
+        blocks) is awaited up to ROOT_CLOSE_OUT_GRACE_SECONDS — on the error
+        path too — and whatever is still live afterwards is dropped, but
+        loudly (#501). The return value and the body's exception are unchanged.
+        """
+        try:
+            result = yield prog
+        except BaseException:
+            yield close_out()
+            raise
+        yield close_out()
         return result
+
+    @do
+    def close_out():
+        """Cancel and await (bounded) the unawaited work, then warn (#501/#2684)."""
+        abandoned, parked = core.close_out_report()
+        to_cancel, to_wait = core.close_out_live_tasks()
+        yield _unwind_abandoned(list(to_cancel), list(to_wait))
+        left_abandoned, left_parked = core.close_out_report()
+        _warn_abandoned_work(abandoned, parked, left_abandoned + left_parked)
+        return None
 
     return _WithHandlerRaw(core.prompt(), root_close_out(body_program))
 
@@ -675,19 +695,15 @@ def _unwind_abandoned(to_cancel: list[int], to_wait: list[int]):
     return None
 
 
-def _warn_abandoned_work(
-    abandoned: list[str], parked: list[str], left_live: list[str] | None = None
-) -> None:
+def _warn_abandoned_work(abandoned: list[str], parked: list[str], left_live: list[str]) -> None:
     """The #501 close-out warning shared by both implementations.
 
     ``left_live`` (#2684) names what was still live after the root close-out
-    cancelled the unawaited work and waited for it to unwind; ``None`` means
-    the implementation does not unwind (the work was dropped as found).
+    cancelled the unawaited work and waited for it to unwind (both
+    implementations unwind since #2690).
     """
     if abandoned or parked:
         match left_live:
-            case None:
-                unwound = ""
             case []:
                 unwound = " — cancelled at root return and unwound (#2684)"
             case _:
