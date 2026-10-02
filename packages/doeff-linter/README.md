@@ -78,7 +78,7 @@ skip_test_functions = true
 | DOEFF007 | No Mutable Argument Mutations | Functions should not mutate dict/list/set arguments |
 | DOEFF008 | No Dataclass Attribute Mutation | Dataclass instances should be immutable |
 | DOEFF009 | Missing Return Type Annotation | Functions should have return type annotations |
-| DOEFF010 | Test File Placement | Test files must be under `tests/` directory |
+| DOEFF010 | Test File Placement | Test files inside an importable package (`__init__.py`) must be under a `tests/` directory |
 | DOEFF011 | No Flag/Mode Arguments | Use callbacks or protocol objects instead of flag/mode arguments |
 | DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
 | DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
