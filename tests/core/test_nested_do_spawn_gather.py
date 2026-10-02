@@ -62,7 +62,7 @@ def make_handler():
     def _handler(effect: Effect, k):
         if not isinstance(effect, FetchEffect):
             yield Pass(effect, k)
-            return
+            return None
         svc = yield Ask("service")
         data = yield svc.fetch(effect.key)
         return (yield Resume(k, data))

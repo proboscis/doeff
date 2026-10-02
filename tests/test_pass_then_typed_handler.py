@@ -63,7 +63,7 @@ def slog_interceptor(effect: Effect):
 def memo_rewriter(effect: Effect, k):
     if not isinstance(effect, AnalyzeFx):
         yield doeff_vm.Pass(effect, k)
-        return
+        return None
     return (yield doeff_vm.Resume(k, f"memo:{effect.query}"))
 
 
@@ -71,7 +71,7 @@ def memo_rewriter(effect: Effect, k):
 def replace_handler(effect: Effect, k):
     if not isinstance(effect, ReplaceFx):
         yield doeff_vm.Pass(effect, k)
-        return
+        return None
     label = "ducked" if effect.duck_original else "replaced"
     return (yield doeff_vm.Resume(k, f"{label}:{effect.target}"))
 

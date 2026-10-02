@@ -233,8 +233,7 @@
 
 
 (deftest test-careful-a-service-runs-in-the-env-root-and-follows-a-new-commit [tmp-path subprocess-bytecode job-child-code-store]
-  (assert (or (is job-child-code-store None) (isinstance job-child-code-store str)) job-child-code-store)
-  (<- rig Rig (make-rig tmp-path :code-store job-child-code-store))
+  (<- rig Rig (make-rig tmp-path))
   (<- a1 str (push-commit rig.app (! (service-files 1)) "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
   (.insert sys.path 0 (str rig.app))

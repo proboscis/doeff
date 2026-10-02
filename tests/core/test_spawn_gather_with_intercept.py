@@ -108,7 +108,7 @@ def make_handler():
     def _handler(effect: Effect, k):
         if not isinstance(effect, FetchEffect):
             yield Pass(effect, k)
-            return
+            return None
         svc = yield Ask("price_service")
         data = yield svc.fetch(effect.ticker, effect.start, effect.end)
         return (yield Resume(k, data))
@@ -128,9 +128,14 @@ def fetch_series(
     return result.value
 
 
+# The fetch window is only passed through to the fake service; a fixed instant keeps the
+# @do pipeline free of wall-clock reads (semgrep doeff-no-datetime-now-in-do).
+FETCH_INSTANT = datetime(2026, 1, 5, 9, 0)
+
+
 @do
 def compute_movement(ticker: str) -> EffectGenerator[Any]:
-    now = datetime.now()  # noqa: DTZ005 - existing local wall-clock behavior is intentionally unchanged
+    now = FETCH_INSTANT
     df_result = yield Try(fetch_series(ticker, now, now))
     if df_result.is_err():
         raise RuntimeError(f"compute failed: {df_result.error}")

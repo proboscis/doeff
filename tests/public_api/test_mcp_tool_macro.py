@@ -9,8 +9,7 @@ import hy.macros
 import pytest
 from doeff_vm import Expand
 
-from doeff import do, run
-from doeff.mcp import McpToolDef
+from doeff import McpToolDef, do, run
 
 
 def _eval_mcp(code: str, **extra_globals):

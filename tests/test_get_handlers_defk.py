@@ -48,7 +48,7 @@ def fetch_handler(effect, k):
     """Resolves FetchData effects."""
     if not isinstance(effect, FetchData):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, f"data({effect.key})"))
 
 
@@ -57,7 +57,7 @@ def marker_handler(effect, k):
     """Handler that we check is visible via GetHandlers."""
     if not isinstance(effect, MarkerEffect):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, "marked"))
 
 

@@ -22,16 +22,11 @@ from doeff import handler as _install_raw_handler
 from tests._run_helpers import run_with_defaults
 
 
-def _rust_ok_err_classes() -> tuple[type, type]:
+def test_rust_ok_err_pyclass_constructors() -> None:
     rust_ok = doeff_vm.Ok
     rust_err = doeff_vm.Err
     assert rust_ok is not None
     assert rust_err is not None
-    return rust_ok, rust_err
-
-
-def test_rust_ok_err_pyclass_constructors() -> None:
-    rust_ok, rust_err = _rust_ok_err_classes()
     ok = rust_ok(1)
     err = rust_err(ValueError("x"))
 
@@ -75,7 +70,7 @@ def test_try_wraps_handler_raised_error_as_result_value() -> None:
     def handler(effect: Effect, k: object):
         if not isinstance(effect, HandlerBoom):
             yield Pass(effect, k)
-            return
+            return None
         raise ValueError("boom-from-handler")
 
     @do
@@ -149,7 +144,7 @@ def _yield_site_apply_boom_callback():
 def _yield_site_raise_after_helper_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
         yield Pass(effect, k)
-        return
+        return None
     _ = yield _yield_site_helper_ok()
     raise ValueError("after-helper-boom")
 
@@ -158,7 +153,7 @@ def _yield_site_raise_after_helper_handler(effect: Effect, k: object):
 def _yield_site_helper_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
         yield Pass(effect, k)
-        return
+        return None
     _ = yield _yield_site_helper_boom()
     return (yield Resume(k, "unreachable"))
 
@@ -167,7 +162,7 @@ def _yield_site_helper_boom_handler(effect: Effect, k: object):
 def _yield_site_expand_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
         yield Pass(effect, k)
-        return
+        return None
     _ = yield doeff_vm.Expand(
         doeff_vm.Pure(_yield_site_expand_boom_factory),
         [],
@@ -181,7 +176,7 @@ def _yield_site_expand_boom_handler(effect: Effect, k: object):
 def _yield_site_apply_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, YieldSiteProbe):
         yield Pass(effect, k)
-        return
+        return None
     _ = yield doeff_vm.Apply(
         doeff_vm.Pure(_yield_site_apply_boom_callback),
         [],

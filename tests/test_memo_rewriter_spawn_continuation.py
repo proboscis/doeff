@@ -54,7 +54,7 @@ def spawn_fetch_handler(effect, k):
     """
     if not isinstance(effect, FetchOHLC):
         yield Pass(effect, k)
-        return
+        return None
 
     # Simulate the Spawn/Wait pattern from ohlc_cached_handler.update()
     @do
@@ -78,7 +78,7 @@ def simple_fetch_handler(effect, k):
     """Handler that resolves FetchOHLC synchronously (no Spawn)."""
     if not isinstance(effect, FetchOHLC):
         yield Pass(effect, k)
-        return
+        return None
     value = {"close": 1234.5, "ticker": effect.ticker, "date": effect.date}
     return (yield Resume(k, value))
 
