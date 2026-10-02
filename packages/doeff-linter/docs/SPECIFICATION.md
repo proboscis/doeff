@@ -28,8 +28,39 @@
 | 0 | error の違反が無い(warning と info はあってもよい) |
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
 | 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
-| 3 | error の違反は無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった — Jev に届かない・鍵が無い・較正が撃てない。緑ではない・agora-redesign #1160) |
+| 3 | error の違反は無いが、測れなかった物がある(緑ではない): 意味の規則で問うはずだった定義に答えを得られなかった(Jev に届かない・鍵が無い・較正が撃てない — agora-redesign #1160)か、名指した Hy の file が linter の歩く範囲の外(下の「名指しの範囲の外」・#2821) |
 | 4 | `--baseline-report` の時だけ: 基点に無い critical がある(新しい critical)。1・3 より先に判じる(2 は常に最優先) |
+
+### 名指しの範囲の外(agora-redesign #2821)
+
+層の規則は、repo の根(`root`)の下を歩いた Hy の file だけを判じる。根の外の Hy の file(例: 根を `src` にした package の `tests/`)を
+名指しても何も判じられず、以前は終了コード 0 で黙った — 「測って通った」と読める。今は、名指した path(file か dir — dir はその下の
+Hy の file に開く)のうち歩く範囲の外の Hy の file を名指し、error の違反が無ければ終了コード 3 にする。
+
+- **text / json の出力**: 1 file 1 行を stderr に「`doeff-linter: 対象の外 — <path>(linter が歩く範囲 = 根 <root> の下の Hy の file の外 — …)`」。
+  `<path>` は正規化した絶対の path(違反の path と同じ形)。
+- **editor-json の出力**: 一番上の欄 `out_of_scope`(正規化した絶対の path の辞書順の列 — 違反の `path` と同じ形)。名指しの無い実行(`.`)と `--stdin` は `null`。
+  版は上げない(欄の追加)。commit の hook(`--commit-hook`)はこの欄を読んで 1 行ずつ名指す(止めはしない — 測っていない事を名指す)。
+- **数えない物**: Hy でない file(Python の規則は名指しの path から file を集めて当てるので、範囲の外でも測る)・在らない path・
+  `--modified`(名指しではない)・読んだ service と層の宣言の file(設定の `architecture` か根の `architecture.hy` — 根の外に置いても
+  宣言の規則が判じる。doeff-cluster の commit の hook は path を渡す時に必ずこの file を足す)。
+- **歩く範囲の中でも判じる規則の無い file は数えない**(今の版の限り): 層の置き場の外の file や、`:exclude` に当たる段(既定 `tests`)の
+  下の file は、根の下でも層の規則が判じないが、ここでは名指さない。判定を「どれかの規則が判じるか」(`project::is_judged_file`)に
+  広げるのは今は入れない(#2821 の決め 2 — 根の下の判じられない file を触る commit が止まるため。数は案 A-2 の表に)。
+- 戻し方: この欄・`project::hy_files::outside_walk` と 3 つの呼び手(通常の入口・editor-json・commit の hook)を消す。
+
+### 歩く範囲に足す dir(設定の `include`・agora-redesign #2821 の案 A-1)
+
+`[tool.doeff-linter] include = ["tests"]`(設定 file の dir からの相対)— 根の外の dir を歩く範囲に足す。歩く範囲 = 根の下 + `include` の
+dir の下(1 か所の定義 = `project::hy_files::walked`)。
+
+- **入る所**: 定義の書き方の規則の母集団(全体の実行と 1 file の実行 — `[tool.doeff-linter.definitions]` の `paths`・`test_paths` で選ぶ)・
+  読めない file(DOEFF128)・上の「名指しの範囲の外」の判定。**層の規則には入らない**(層の置き場は architecture の `:root` の下だけ)。
+  素の defk 呼び(DOEFF126)が比べる defk の名の集合は根の下から集める(`include` の dir の defk は数えない)。
+- **名乗り**: 根の外の file は根から `..` を含む相対(`../tests/x.hy` — 宣言の file の鍵と同じ `paths::declared_rel`)。違反の鍵・
+  `definitions.paths`(例 `"../tests"`)・`test_paths`(例 `"../tests/**/test_*.hy"`)はこの名乗りに当てる。
+- **無い dir** は設定の誤り(黙って何も歩かない形にしない)。
+- 戻し方: 設定の行を消す(package の設定)。機能ごと戻すなら `include`・`walked`・`walked_rel` と呼び手を消す。
 
 ### 基点との比べ(`--baseline-report`・agora-redesign #1803)
 
@@ -107,7 +138,8 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   ],
   "judged_rules": ["DOEFF016", "DOEFF101", "NOQA001"],  // この実行で判じた規則の ID(辞書順・契約の更新 8)— 下の説明
   "errors": [],                              // 読めなかった file・登録簿・目録の理由
-  "new_critical": null                       // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
+  "new_critical": null,                      // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
+  "out_of_scope": null                       // path を名指した実行の時だけ: 名指した Hy の file のうち歩く範囲の外の物(1 節「名指しの範囲の外」)
 }
 ```
 

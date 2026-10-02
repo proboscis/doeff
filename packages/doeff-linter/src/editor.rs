@@ -154,6 +154,10 @@ pub struct EditorReport {
     /// `--baseline-report` の時: 基点に無い critical の識別子(`<path>::<規則>::<名>`・辞書順)。基点と比べない時は null
     /// (仕様 1 節「基点との比べ」— 版は上げない欄の追加・agora-redesign #1803)。
     pub new_critical: Option<Vec<String>>,
+    /// path を名指した全体の実行の時: 名指した Hy の file のうち linter が歩く範囲(根の下と設定の include)の外の物(正規化した絶対の
+    /// path — 違反の path と同じ形・辞書順)。
+    /// 名指しの無い実行と `--stdin` は null(仕様 1 節「名指しの範囲の外」— 版は上げない欄の追加・agora-redesign #2821)。
+    pub out_of_scope: Option<Vec<String>>,
 }
 
 impl EditorReport {
@@ -290,6 +294,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         judged_rules: judged_rule_ids(input),
         errors,
         new_critical: None,
+        out_of_scope: None,
     }
 }
 

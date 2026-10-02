@@ -87,6 +87,12 @@ pub struct Config {
     #[serde(default)]
     pub root: Option<String>,
 
+    /// 根の外で歩く dir(設定 file の dir からの相対)— その下の Hy の file は定義の書き方の規則の母集団と「対象の外」の判定に入る
+    /// (層の規則は根の下の層の置き場だけを判じるので入らない)。名乗りは根から `..` を含む相対(`../tests/x.hy` — 宣言の file の鍵と
+    /// 同じ形)。root = "src" の package の `tests/` を判じるため(agora-redesign #2821 の案 A-1)。
+    #[serde(default)]
+    pub include: Vec<String>,
+
     /// 意味の規則(DOEFF201・202 — Jev)の層と閾値 — `[tool.doeff-linter.semantic]`
     #[serde(default)]
     pub semantic: Option<crate::project::semantic::SemanticSection>,
