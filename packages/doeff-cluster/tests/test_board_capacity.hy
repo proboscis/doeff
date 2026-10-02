@@ -132,7 +132,7 @@
   (:= s (get reply-11 0))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (in "j" s.placements))
-  (setv later (tick s (+ WORKER-FORGET-MS 1) T))
+  (setv later (! (tick s (+ WORKER-FORGET-MS 1) T)))
   (assert (not-in "newmac" later.workers))
   (assert (in "atlas" later.workers)))
 

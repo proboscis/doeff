@@ -109,5 +109,5 @@
    返事の答え手 reply-bodies と同じ解きと綴り。読みの中で上がった例外は、調停ループ(program.readable-body)と同じく値 BodyUnreadable にして
    判断に渡す(#2796)。"
   (setv read (try (run (body-of request)) (except [error Exception] (BodyUnreadable :error error))))
-  (setv #(after status body) (respond state request now timing read))
+  (setv #(after status body) (run (respond state request now timing read)))
   #(after status (run (reply-json body))))
