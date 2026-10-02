@@ -363,14 +363,14 @@
 (deftest test-drains-and-surges-survive-a-restart-and-an-old-store-reads-as-empty
   (setv c (running-writer))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (setv kv (full-kv c.state))
+  (setv kv (! (full-kv c.state)))
   (assert (in (+ DRAIN "atlas") kv))
   (assert (in (+ SURGE "w") kv))
-  (setv again (state-from-kv kv c.now))
+  (setv again (! (state-from-kv kv c.now)))
   (assert (= again.drains c.state.drains))
   (assert (= again.surges c.state.surges))
   ;; drain の鍵を知らない置き場(2026-09-25 より前)は空として読む。
-  (setv old (state-from-kv (dfor #(k v) (.items kv) :if (not (or (.startswith k DRAIN) (.startswith k SURGE))) k v) c.now))
+  (setv old (! (state-from-kv (dfor #(k v) (.items kv) :if (not (or (.startswith k DRAIN) (.startswith k SURGE))) k v) c.now)))
   (assert (= #(old.drains old.surges) #({} {})))
   (assert (= (. (get old.placements "w") worker) "atlas"))
   ;; GET /state に drain の進みと並べた置き先が載る。

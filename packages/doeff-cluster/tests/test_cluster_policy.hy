@@ -393,11 +393,11 @@
   (for [#(k v) (.items (get data "warms"))]
     (<- warm-row dict (to-old-needs v))
     (setv (get warms k) warm-row))
-  (<- ok bool (check-old-read (state-from-json (| data {"workers" workers "tasks" tasks "warms" warms}) 5000)))
+  (<- ok bool (check-old-read (! (state-from-json (| data {"workers" workers "tasks" tasks "warms" warms}) 5000))))
   (assert ok))
 
 (deftest test-old-saved-rows-in-the-durable-kv-are-read-without-crashing
-  (setv kv (full-kv SAVED))
+  (setv kv (! (full-kv SAVED)))
   (assert (in "warm/k1" kv) (sorted kv))
   (setv old (dict kv))
   (<- worker-row dict (to-old-worker (get kv "worker/old")))
@@ -405,7 +405,7 @@
   (for [k (lfor k kv :if (or (.startswith k "task/") (.startswith k "warm/")) k)]
     (<- row dict (to-old-needs (get kv k)))
     (setv (get old k) row))
-  (<- ok bool (check-old-read (state-from-kv old 5000)))
+  (<- ok bool (check-old-read (! (state-from-kv old 5000))))
   (assert ok))
 
 
