@@ -24,7 +24,7 @@
 (import doeff_hy.table [Table table-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request NextRequests])
-(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -549,11 +549,56 @@
   (#^ int at))
 
 
+;; --- 保存しない Service の process の報告(#2756 J2)-----------------------------------------------------------------------
+;;
+;; service の process が拍ごとに送る準備の報告(ReportReady)と計器の報告(ReportMetrics)。POST /resources/Service/<名>/readiness・
+;; …/metrics の本文の JSON を道の型(coordinator/intent/request_bodies の ReadinessBody・MetricsBody)へ解くのは受け口の 1 点
+;; (coordinator/protocol/request_bodies.body-of)で、core の受け取り(resource_policy.record-readiness・metrics_policy.record-metrics)は
+;; 型の値に受けた時刻を添えてこの記録にする。ClusterState.observations の readiness・metrics の表に Service の名ごとに置く(process の
+;; 世代ごとに最新 1 つ・直近の数世代 — 古い順の tuple)。保存の差分(durable_kv の SOURCE-GROUPS)の外。readiness の表だけは Service の
+;; status.ready の材料なので、版の比べ(resource_policy.dirty-keys)が読む(計器の表は読まない — 計器は資源の状態を変えない)。
+
+(defrecord ReportOrigin
+  "報告を送った process の世代と受けた時刻(準備の報告と計器の報告で同じ欄 — 数えるのは今の process の報告だけ・resource_policy.
+   report-matches): worker = 担い手の worker・pid = process の番号・revision = 版・instance = 世代の名・attempt = 試行の番号(送られた型の
+   まま — 資源の画面の status.lastReadiness が JSON へそのまま返す)・spec-hash = 起こした spec の指紋・placement = 割り当ての世代・
+   at = coordinator が受けた時刻(epoch ms)。旧い process が欠いた欄は None。"
+  (#^ str worker)
+  (#^ (| int None) pid)
+  (#^ str revision)
+  (#^ (| str None) instance)
+  (#^ (| str int None) attempt)
+  (#^ (| str None) spec-hash)
+  (#^ (| int None) placement)
+  (#^ int at))
+
+
+(defrecord ReadinessReport
+  "準備の報告(ReportReady)1 つ: origin = 送り手の世代と受けた時刻・ready = 準備できたか・reason = 理由・role = active(仕事をしている)か
+   standby(lease を他が持つ間の待機)。ready・reason・role の揃え方は shared/core/readiness_report.reported-readiness(fake と同じ)。"
+  (#^ ReportOrigin origin)
+  (#^ bool ready)
+  (#^ str reason)
+  (#^ str role))
+
+
+(defrecord MetricsReport
+  "計器の報告(ReportMetrics)1 つ(名と値の検めを通った物 — metrics_policy.metrics-refusal): origin = 送り手の世代と受けた時刻・
+   counters / gauges = 計器の名 → 値・durations = 名 → 合計の秒と回数。報告に無い族は空の表。GET /metrics が名の順に綴る。"
+  (#^ ReportOrigin origin)
+  (#^ (get Table (| int float)) counters)
+  (#^ (get Table (| int float)) gauges)
+  (#^ (get Table DurationRow) durations))
+
+
 (defrecord ClusterObservations
-  "coordinator が外から読んだ、保存しない観測の置き場(ClusterState.observations — 上の註)。deployments = 「ns/名」→ Deployment の
-   最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)。"
+  "coordinator が外から読んだ・受けた、保存しない観測の置き場(ClusterState.observations — 上の 2 つの註)。deployments = 「ns/名」→
+   Deployment の最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)・readiness = Service の名 →
+   準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
-  (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
+  (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
+  (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #()))))
 
 
 (defrecord ObservedDeployment
@@ -563,10 +608,11 @@
 
 
 (defrecord ServiceObserved
-  "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後の準備の報告
-   (状態の readiness の行のまま)・process = 置き先の worker の最後の報告の行・version = 版の判定・running = 生きている process の版の列。"
+  "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後に受けた準備の
+   報告(無ければ None — JSON の形は coordinator/protocol/replies が綴る)・process = 置き先の worker の最後の報告の行・version = 版の判定・
+   running = 生きている process の版の列。"
   (#^ str ready-reason)
-  (#^ (| dict None) last-readiness)
+  (#^ (| ReadinessReport None) last-readiness)
   (#^ (| StatusRow None) process)
   (#^ VersionVerdict version)
   (#^ (get tuple #(LiveProcess ...)) running))
@@ -856,12 +902,8 @@
   (setv #^ int audit-seq 0)
   (setv #^ dict rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
   ;; --- 保存しない観測 ---
-  ;; Service の名 → 直近の ReportReady の報告(process の世代ごとに最新 1 つ・古い順の tuple)
-  ;; {worker pid revision instance attempt specHash placement ready reason at}
-  (setv #^ dict readiness (field :default-factory dict))
-  ;; Service の名 → 直近の ReportMetrics の報告(同じ形・ready と reason の代わりに metrics)。GET /metrics が今の process の分だけ出す
-  (setv #^ dict metrics (field :default-factory dict))
-  ;; k8s の Deployment と node の label の最後の観測は最後の欄 observations(ClusterObservations — #2728)。
+  ;; Service の process の準備と計器の報告(#2756)、k8s の Deployment と node の label の最後の観測(#2728)は最後の欄 observations
+  ;; (ClusterObservations)。
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
   ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
   (setv #^ frozenset derivable (frozenset))
@@ -897,8 +939,9 @@
   ;; 入れると、何も変わらない拍の早い戻り(resource_policy.stamp)で切り替わりを取りこぼす)。保存しない(読み直しの後の最初の拍で
   ;; 求め直す)。位置の引数で作る呼び手を崩さないよう最後の欄に置く。
   (setv #^ frozenset silent (frozenset))
-  ;; 外から読んだ保存しない観測(k8s の Deployment と node の label — #2728 J1。Service と worker の観測も順に移す)。版の比べ
-  ;; (resource_policy.dirty-keys)と保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。位置の引数の呼び手のため最後に置く。
+  ;; 外から読んだ・受けた保存しない観測(k8s の Deployment と node の label — #2728 J1・Service の process の準備と計器の報告 — #2756 J2。
+  ;; worker の観測も順に移す)。保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。版の比べ(resource_policy.dirty-keys)が読むのは
+  ;; Service の status.ready の材料の readiness の表だけ。位置の引数の呼び手のため最後に置く。
   (setv #^ ClusterObservations observations (field :default-factory ClusterObservations)))
 
 
