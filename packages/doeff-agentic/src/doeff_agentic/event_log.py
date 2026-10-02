@@ -55,6 +55,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from doeff_agentic.state import get_default_state_dir
 from .types import (
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,
@@ -144,10 +145,7 @@ class EventLogWriter:
             state_dir: Directory for state files (defaults to XDG state dir)
         """
         if state_dir is None:
-            xdg_state = os.environ.get(
-                "XDG_STATE_HOME", str(Path.home() / ".local" / "state")
-            )
-            self.state_dir = Path(xdg_state) / "doeff-agentic"
+            self.state_dir = get_default_state_dir()
         else:
             self.state_dir = Path(state_dir)
 
@@ -466,10 +464,7 @@ class EventLogReader:
             state_dir: Directory for state files (defaults to XDG state dir)
         """
         if state_dir is None:
-            xdg_state = os.environ.get(
-                "XDG_STATE_HOME", str(Path.home() / ".local" / "state")
-            )
-            self.state_dir = Path(xdg_state) / "doeff-agentic"
+            self.state_dir = get_default_state_dir()
         else:
             self.state_dir = Path(state_dir)
 
@@ -684,11 +679,6 @@ class EventLogReader:
 # Workflow Index Management
 # =============================================================================
 
-
-def get_default_state_dir() -> Path:
-    """Get the default state directory following XDG Base Directory Specification."""
-    xdg_state = os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
-    return Path(xdg_state) / "doeff-agentic"
 
 
 class WorkflowIndex:
