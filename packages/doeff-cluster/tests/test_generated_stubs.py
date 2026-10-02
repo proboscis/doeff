@@ -63,6 +63,11 @@ USED = (
     UsedModule("coordinator.entry.main", ("load-state",)),
     UsedModule("coordinator.protocol.cluster_json", ("naming-from-json",)),
     UsedModule("coordinator.core.program", ("run-coordinator",)),
+    # coordinator の状態と Rollout の宣言の型(#2907 — 手書きの cluster_model.pyi を道具の出力へ置き換えた)。
+    UsedModule(
+        "coordinator.intent.cluster_model",
+        ("ClusterJob", "ClusterNaming", "ClusterState", "RolloutSpec", "RolloutStatus", "TargetView"),
+    ),
 )
 
 

@@ -1,32 +1,21 @@
-"""coordinator/intent/cluster_model.hy の公開面の型(型検査のための宣言 — 実行時は cluster_model.hy を読む・#2447)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = cluster_model.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-cluster_model.hy は Hy の module なので、pyright は中を読めず、名が全部 Unknown になる。coordinator の状態と Rollout の宣言の型
-(ClusterState・RolloutSpec ほか)を名指す使い手(使い手の repo の模擬の世界の検)の strict に、書き手に直せない赤
-(Type of "RolloutSpec" is unknown ほか)が出た。ここで型を宣言する(worker_model.pyi・request_bodies.pyi と同じ形)。
-
-- dataclass の class(ClusterJob・WorkerInfo ほか)は凍った dataclass。defrecord(ProgramRow・RolloutSpec ほか)は凍った・
-  キーワード引数だけの dataclass。欄の型は cluster_model.hy の注記。
-- defenum(GenerationOrder ほか)は StrEnum。値は defenum の綴り(名の小文字と - か、明示の値)。
-- defwire(DeploymentReading)は凍った・キーワード引数だけの dataclass(実行時は defwire の展開が __doeff_wire__ を持たせる —
-  その class の属性は dataclass の欄ではないので、欄の名と順を照らす検に合わせてここには書かない)。
-- effect(CoordinatorFault・Persist)は凍った dataclass の EffectBase[None]。
-- 型の宣言がまだ無い Hy の module の型(shared/intent/protocol の ClusterTiming・Request・NextRequests と、coordinator/intent/
-  request_bodies の StatusRow)は object と書く。IdleNextRequests は実行時は NextRequests の子 class なので、親の欄
-  (timeout_seconds・limit)も同じ順で並べる(#2790 — 並べないと (IdleNextRequests 1.0 :idle …) の 1.0 が idle に当たる赤になった)。
-  それらの module に宣言を置いたら実物の型へ置き換える。
-"""
-
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import NamedTuple
-
-from doeff import EffectBase
-from doeff_hy.json_value import OpaqueJson
-from doeff_hy.table import Table
-
-from doeff_cluster.shared.intent.job_model import JobSpec
-
-MODULE_TAGS: dict[str, str]
+from dataclasses import dataclass as dataclass
+from dataclasses import field as field
+from enum import StrEnum as StrEnum
+from functools import partial as partial
+from typing import NamedTuple as NamedTuple
+from doeff import EffectBase as EffectBase
+from doeff_hy.json_value import OpaqueJson as OpaqueJson
+from doeff_hy.table import Table as Table
+from doeff_hy.table import table_of as table_of
+from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
+from doeff_cluster.shared.intent.protocol import Request as Request
+from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
+from doeff_cluster.coordinator.intent.request_bodies import StatusRow as StatusRow
+from doeff_cluster.coordinator.intent.request_bodies import DurationRow as DurationRow
+from doeff_cluster.coordinator.intent.request_bodies import HeartbeatBody as HeartbeatBody
 
 class ComponentVersion(NamedTuple):
     component: str
@@ -35,18 +24,18 @@ class ComponentVersion(NamedTuple):
 @dataclass(frozen=True)
 class ClusterJob:
     spec: JobSpec
-    needs: tuple[str, ...] = ()
+    needs: tuple[str, ...] = ...
     pin: str | None = None
     run: dict[str, object] | None = None
     replicas: int = 1
     readiness: dict[str, object] | None = None
     owner: str | None = None
-    update: str = "recreate"
+    update: str = 'recreate'
 
 class GenerationOrder(StrEnum):
-    CURRENT = "current"
-    OLDER = "older"
-    NEWER = "newer"
+    CURRENT = 'current'
+    OLDER = 'older'
+    NEWER = 'newer'
 
 @dataclass(frozen=True)
 class WorkerInfo:
@@ -54,19 +43,19 @@ class WorkerInfo:
     provides: tuple[str, ...]
     capacity: int
     last_seen_ms: int
-    versions: tuple[ComponentVersion, ...] = ()
+    versions: tuple[ComponentVersion, ...] = ...
     boot: str | None = None
-    tools: tuple[ComponentVersion, ...] = ()
-    platform: str = ""
-    env_ready: frozenset[str] = frozenset()
-    env_preparing: frozenset[str] = frozenset()
-    env_failed: tuple[EnvFailed, ...] = ()
-    env_capacity: str = "ok"
-    retired: tuple[str, ...] = ()
+    tools: tuple[ComponentVersion, ...] = ...
+    platform: str = ''
+    env_ready: frozenset[str] = ...
+    env_preparing: frozenset[str] = ...
+    env_failed: tuple[EnvFailed, ...] = ...
+    env_capacity: str = 'ok'
+    retired: tuple[str, ...] = ...
     boot_at: int | None = None
-    exclusive: tuple[str, ...] = ()
-    node: str = ""
-    derived: tuple[str, ...] = ()
+    exclusive: tuple[str, ...] = ...
+    node: str = ''
+    derived: tuple[str, ...] = ...
     seen_mark: int | None = None
 
 @dataclass(frozen=True)
@@ -149,10 +138,10 @@ class RolloutDrift:
 
 @dataclass(frozen=True, kw_only=True)
 class RolloutStatus:
-    phase: str = "Pending"
+    phase: str = 'Pending'
     phase_since_ms: int | None = None
     reason: str | None = None
-    history: tuple[RolloutHistory, ...] = ()
+    history: tuple[RolloutHistory, ...] = ...
     created_ms: int | None = None
     started_ms: int | None = None
     from_replicas: int | None = None
@@ -213,6 +202,13 @@ class StatusView:
     stale: bool
 
 @dataclass(frozen=True, kw_only=True)
+class KeepMark:
+    job: str
+    worker: str
+    boot: str | None
+    since_ms: int
+
+@dataclass(frozen=True, kw_only=True)
 class StateView:
     now: int
     services: tuple[ServiceView, ...]
@@ -228,9 +224,9 @@ class StateView:
     keep_marks: tuple[KeepMark, ...]
 
 class DrainPhase(StrEnum):
-    DRAINING = "Draining"
-    DRAINED = "Drained"
-    BLOCKED = "Blocked"
+    DRAINING = 'Draining'
+    DRAINED = 'Drained'
+    BLOCKED = 'Blocked'
 
 @dataclass(frozen=True, kw_only=True)
 class DrainProgress:
@@ -265,7 +261,7 @@ class StateReply:
 class WorkerReport:
     at: int
     endpoint: str | None
-    jobs: tuple[object, ...]
+    jobs: tuple[StatusRow, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class ServiceBody:
@@ -307,54 +303,51 @@ class Drain:
     since_ms: int
     until_ms: int
     boot: str | None = None
-    actor: str = ""
-
-@dataclass(frozen=True, kw_only=True)
-class KeepMark:
-    job: str
-    worker: str
-    boot: str | None
-    since_ms: int
+    actor: str = ''
 
 class HandoffPhase(StrEnum):
-    WAITING = "WaitingReady"
-    ABANDONED = "Abandoned"
+    WAITING = 'WaitingReady'
+    ABANDONED = 'Abandoned'
 
 @dataclass(frozen=True, kw_only=True)
 class HandoffWatch:
     declaration: str
     since_ms: int
-    phase: HandoffPhase = HandoffPhase.WAITING
+    phase: HandoffPhase = ...
     abandoned_ms: int | None = None
-    reason: str = ""
+    reason: str = ''
     last_report: str | None = None
-    def to_json(self) -> dict[str, object]: ...
-    def status_json(self, timeout_ms: int) -> dict[str, object]: ...
+
+    def to_json(self) -> dict[str, object]:
+        ...
+
+    def status_json(self, timeout_ms: int) -> dict[str, object]:
+        ...
 
 class UnplacedKind(StrEnum):
-    WAITING_PREVIOUS_HOLDER = "waiting-previous-holder"
-    NO_ELIGIBLE_WORKER = "no-eligible-worker"
-    NO_ROOM = "no-room"
+    WAITING_PREVIOUS_HOLDER = 'waiting-previous-holder'
+    NO_ELIGIBLE_WORKER = 'no-eligible-worker'
+    NO_ROOM = 'no-room'
 
 class NotReadyKind(StrEnum):
-    NO_DECLARATION = "no-declaration"
-    NO_REPLICAS = "no-replicas"
-    WAITING_PREVIOUS_HOLDER = "waiting-previous-holder"
-    NO_ELIGIBLE_WORKER = "no-eligible-worker"
-    NO_ROOM = "no-room"
-    CARRIER_SILENT = "carrier-silent"
-    NOT_RUNNING = "not-running"
-    REVISION_MISMATCH = "revision-mismatch"
-    NO_INSTANCE = "no-instance"
-    SPEC_MISMATCH = "spec-mismatch"
-    PLACEMENT_MISMATCH = "placement-mismatch"
+    NO_DECLARATION = 'no-declaration'
+    NO_REPLICAS = 'no-replicas'
+    WAITING_PREVIOUS_HOLDER = 'waiting-previous-holder'
+    NO_ELIGIBLE_WORKER = 'no-eligible-worker'
+    NO_ROOM = 'no-room'
+    CARRIER_SILENT = 'carrier-silent'
+    NOT_RUNNING = 'not-running'
+    REVISION_MISMATCH = 'revision-mismatch'
+    NO_INSTANCE = 'no-instance'
+    SPEC_MISMATCH = 'spec-mismatch'
+    PLACEMENT_MISMATCH = 'placement-mismatch'
 
 class VersionState(StrEnum):
-    CURRENT = "Current"
-    UPDATING = "Updating"
-    BLOCKED = "Blocked"
-    STOPPED = "Stopped"
-    UNKNOWN = "Unknown"
+    CURRENT = 'Current'
+    UPDATING = 'Updating'
+    BLOCKED = 'Blocked'
+    STOPPED = 'Stopped'
+    UNKNOWN = 'Unknown'
 
 @dataclass(frozen=True, kw_only=True)
 class VersionVerdict:
@@ -420,7 +413,7 @@ class MetricsReport:
     origin: ReportOrigin
     counters: Table[int | float]
     gauges: Table[int | float]
-    durations: Table[object]
+    durations: Table[DurationRow]
 
 @dataclass(frozen=True, kw_only=True)
 class ClusterObservations:
@@ -438,7 +431,7 @@ class ObservedDeployment:
 class ServiceObserved:
     ready_reason: str
     last_readiness: ReadinessReport | None
-    process: object | None
+    process: StatusRow | None
     version: VersionVerdict
     running: tuple[LiveProcess, ...]
 
@@ -580,6 +573,13 @@ class DetachedCancelled:
     phase: str
 
 @dataclass(frozen=True, kw_only=True)
+class TargetView:
+    ready: str
+    stopped: bool | None
+    spec_replicas: int | None
+    reason: str
+
+@dataclass(frozen=True, kw_only=True)
 class ProgramStored:
     sha: str
 
@@ -590,10 +590,9 @@ class DetachedReleased:
 
 @dataclass(frozen=True)
 class ClusterNaming:
-    owner_annotation: str = "doeff-cluster/replicas-owned-by"
-    owner_scope: str = "doeff-cluster"
+    owner_annotation: str = 'doeff-cluster/replicas-owned-by'
+    owner_scope: str = 'doeff-cluster'
     node_capabilities: tuple[tuple[str, str, str], ...] = ...
-
 ACCEPTED_FORMATS: tuple[int, ...]
 
 @dataclass(frozen=True)
@@ -607,10 +606,10 @@ class TaskRecord:
     lease_ms: int
     lease_until_ms: int
     submitted_ms: int
-    phase: str = "queued"
+    phase: str = 'queued'
     worker: str | None = None
     result: str | None = None
-    detail: str = ""
+    detail: str = ''
     started_ms: int | None = None
     finished_ms: int | None = None
     detached: bool = False
@@ -619,31 +618,30 @@ class TaskRecord:
     retain_ms: int = 0
     runtime_env: dict[str, object] | None = None
     env_attempts: int = 0
-    avoid: tuple[str, ...] = ()
-    failure_kind: str = ""
+    avoid: tuple[str, ...] = ...
+    failure_kind: str = ''
     retryable: bool = False
-    environ: tuple[tuple[str, str], ...] = ()
-
+    environ: tuple[tuple[str, str], ...] = ...
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
 @dataclass(frozen=True)
 class ClusterState:
-    jobs: tuple[ClusterJob, ...] = ()
+    jobs: tuple[ClusterJob, ...] = ...
     workers: dict[str, WorkerInfo] = ...
     placements: dict[str, Placement] = ...
     tasks: dict[str, TaskRecord] = ...
     next_task: int = 1
-    task_prefix: str = "t"
+    task_prefix: str = 't'
     board: dict[str, BoardRow] = ...
     statuses: dict[str, WorkerReport] = ...
-    events: tuple[object, ...] = ()
+    events: tuple[object, ...] = ...
     meta: dict[str, ResourceMeta] = ...
     revision: int = 0
-    audit: tuple[AuditEvent, ...] = ()
+    audit: tuple[AuditEvent, ...] = ...
     audit_seq: int = 0
     rollouts: dict[str, RolloutRow] = ...
-    derivable: frozenset[str] = frozenset()
+    derivable: frozenset[str] = ...
     refused: dict[str, RefusedJob] = ...
     programs: dict[str, ProgramRow] = ...
     started_ms: int = 0
@@ -654,9 +652,9 @@ class ClusterState:
     warms: dict[str, WarmEntry] = ...
     env_cold_starts: int = 0
     handoffs: dict[str, HandoffWatch] = ...
-    silent: frozenset[str] = frozenset()
+    silent: frozenset[str] = ...
     observations: ClusterObservations = ...
-    keep_marks: tuple[KeepMark, ...] = ()
+    keep_marks: tuple[KeepMark, ...] = ...
 
 @dataclass(frozen=True)
 class Fault:
@@ -691,7 +689,7 @@ class HeartbeatReply:
     jobs: tuple[JobSpec, ...]
     tasks: tuple[TaskOffer, ...]
     warm: tuple[WarmOffer, ...]
-    timing: object
+    timing: ClusterTiming
     draining: bool
     superseded: bool
     formats: tuple[int, ...]
@@ -699,7 +697,7 @@ class HeartbeatReply:
 
 @dataclass(frozen=True)
 class Watcher:
-    request: object
+    request: Request
     after: int
     deadline_ms: int
     worker: str | None = None
@@ -710,7 +708,7 @@ class Watcher:
 
 @dataclass(frozen=True)
 class WatchRefusal:
-    request: object
+    request: Request
     reason: str
 
 @dataclass(frozen=True)
@@ -726,17 +724,17 @@ class WatchStep:
 @dataclass(frozen=True, kw_only=True)
 class ProvisionalBeat:
     at: int
-    request: object
-    body: object
+    request: Request
+    body: HeartbeatBody
     name: str
 
 @dataclass(frozen=True)
 class IdleProbe:
     state: ClusterState
-    timing: object
+    timing: ClusterTiming
     naming: ClusterNaming
-    watchers: tuple[Watcher, ...] = ()
-    beats: tuple[ProvisionalBeat, ...] = ()
+    watchers: tuple[Watcher, ...] = ...
+    beats: tuple[ProvisionalBeat, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class QuietStep:
@@ -744,7 +742,7 @@ class QuietStep:
     state: ClusterState
     watchers: tuple[Watcher, ...]
     marked: bool
-    beats: tuple[ProvisionalBeat, ...] = ()
+    beats: tuple[ProvisionalBeat, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class QuietStretch:
@@ -757,23 +755,14 @@ class IdleTaken:
     batch: list[object]
 
 @dataclass(frozen=True)
-class IdleNextRequests:
-    timeout_seconds: float
-    limit: int = 256
+class IdleNextRequests(NextRequests):
     idle: IdleProbe | None = None
 
 @dataclass(frozen=True)
-class CoordinatorFault(EffectBase[None]):
+class CoordinatorFault(EffectBase):
     fault: Fault
 
 @dataclass(frozen=True)
-class SaveState(EffectBase[None]):
+class SaveState(EffectBase):
     before: ClusterState
     after: ClusterState
-
-@dataclass(frozen=True, kw_only=True)
-class TargetView:
-    ready: str
-    stopped: bool | None
-    spec_replicas: int | None
-    reason: str
