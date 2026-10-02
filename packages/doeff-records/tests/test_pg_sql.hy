@@ -1,7 +1,8 @@
 ;; doeff の汎用の SQL の effect に載せ替えた PostgreSQL の置き場が、旧い版(自前の psycopg の host — #880 の前)と
 ;; 同じ表の形と同じ錠を使うこと。旧い版と新しい版が同じ置き場に重なっても(入れ替えの途中)壊れないための約束:
 ;;   - 表の用意の DDL は旧い版と同じ字面(tests/pg_ddl_before_880.json = 旧い版の schema-statements の "records_" の答えの写し)。
-;;     答え手の方言への書き換え(postgres-statement)を通した後の、driver に渡る字面で比べる。
+;;     答え手の方言への書き換え(postgres-statement)を通した後の、driver に渡る字面で比べる。旧い版より後に足した表の文
+;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022)は旧い版の文の後ろにだけ並び、旧い版の文の字面と順を変えない。
 ;;   - 書きの錠と移行の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / "records-migrate" — 区切りなし)で、
 ;;     PostgreSQL の hashtext が同じ整数を返す(= 同じ advisory lock の番号)。
 ;;   - 旧い版の錠の文(`SELECT pg_advisory_xact_lock(hashtext(%s))`)を別の接続で取っている間、新しい版の書きは待つ
@@ -32,6 +33,11 @@
 ;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
 (val PG-SKIP-REASON (pg-skip-reason))
 (val BEFORE-880-DDL (json.loads (.read-text (/ (. (Path __file__) parent) "pg_ddl_before_880.json") :encoding "utf-8")))
+;; 旧い版より後に足した表の文("records_" の答え・旧い版の文の後ろに足した順)。
+(val ADDED-AFTER-880
+  ["CREATE TABLE IF NOT EXISTS records_retired_keys (
+           ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
+           PRIMARY KEY (ledger, idempotency_key))"])
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
 (val BEFORE-880-WRITER-KEY (fn [prefix] (+ prefix "records-writer")))
@@ -44,7 +50,8 @@
   (for [statement statements]
     (<- bound (postgres-statement statement.text statement.params))
     (.append texts bound.text))
-  (assert (= texts BEFORE-880-DDL) (repr texts)))
+  (assert (= (cut texts (len BEFORE-880-DDL)) BEFORE-880-DDL) (repr texts))
+  (assert (= (cut texts (len BEFORE-880-DDL) None) ADDED-AFTER-880) (repr texts)))
 
 
 (deftest test-the-lock-keys-have-the-text-of-the-version-before-880

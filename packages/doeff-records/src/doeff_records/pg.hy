@@ -24,20 +24,21 @@
 (import doeff_time [GetTime])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlRows SqlFailed SqlUnreachable])
 (import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Conflict NotIndexed EventsMoved EventsQuiet StreamEnd StreamEmpty
+                              Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
-(import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal listed-row
-                                 key-text key-from-text canonical-json next-watch-sequence epoch-ms])
+(import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal
+                                 listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-changes moved-of])
 (import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key schema-statements drop-statements
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
                               insert-event-statement read-events-statement stream-end-statement expire-events-statement
-                              expire-event-groups-statement])
+                              expire-event-groups-statement expiring-events-statement retire-keys-statement
+                              find-retired-key-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (val DEFAULT-POLL-SECONDS 0.2)
@@ -45,7 +46,7 @@
 
 (defclass RecordsSqlFailed [RuntimeError]
   "engine が答えた失敗(SqlFailed)— 文か表の形の食い違いで、実装の誤り。sqlstate = SQLSTATE(5 文字か None)。"
-  (defn __init__ [self sqlstate reason]  ; defk にできない: 例外の class の初期化
+  (defn #^ None __init__ [self #^ (| str None) sqlstate #^ str reason]  ; defk にできない: 例外の class の初期化
     (.__init__ (super) (.format "PostgreSQL が断った({}): {}" sqlstate reason))
     (setv self.sqlstate sqlstate)))
 
@@ -238,11 +239,32 @@
   removed)
 
 
+(defk retire-expired-events [store stream before-at separator]
+  {:pre [(: store PreparedStore) (: stream str) (: before-at int) (: separator (| str None))] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "書きの錠の transaction の中で、保持の期限を過ぎた出来事を捨て、捨てた出来事の冪等キーの覚え(番号と本文の指紋)を同じ transaction で
+   鍵だけの表へ入れるため(#3022 — 消した後の同じ鍵の追記も append-locked が同じ規則で判じる。出来事だけ消えて覚えが無い断面を作らない)。
+   separator = None は出来事ごとに数える列・str は組で数える列の区切り。答え = 捨てた出来事の数。"
+  (<- delete (if (is separator None)
+                 (expire-events-statement store.prefix stream before-at)
+                 (expire-event-groups-statement store.prefix stream before-at separator)))
+  (<- removed (query-rows store.database delete))
+  (var kept #())
+  (for [record removed]
+    (<- event (event-of stream record))
+    (:= kept (+ kept #((RetiredKey :idempotency-key event.idempotency-key :sequence event.sequence
+                                   :body-digest (body-digest event.body))))))
+  (when kept
+    (<- retire (retire-keys-statement store.prefix stream kept))
+    (<- (query-rows store.database retire)))
+  (len removed))
+
+
 (defk purge-expired [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てるため。候補が無ければ錠を取らない。
-   答え = 消した行の数。"
+  "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため。候補が無ければ錠を取らない
+   (行も出来事も、候補の読み 1 文の後に、候補が在る時だけ書きの錠の transaction を開く)。答え = 消した行の数。"
   (<- candidates (expired-rows store now-ms))
   (var removed 0)
   (when candidates
@@ -251,10 +273,13 @@
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (when (isinstance decl.retention KeepFor)
       (val before-at (- now-ms (int (* 1000 decl.retention.seconds))))
-      (<- statement (match decl.retention-group
-                      (ByKeySuffix :separator separator) (expire-event-groups-statement store.prefix name before-at separator)
-                      _ (expire-events-statement store.prefix name before-at)))
-      (<- (query-rows store.database statement))))
+      (val separator (match decl.retention-group
+                       (ByKeySuffix :separator text) text
+                       _ None))
+      (<- probe (expiring-events-statement store.prefix name before-at separator))
+      (<- due (query-rows store.database probe))
+      (when due
+        (<- (writing store (retire-expired-events store name before-at separator))))))
   removed)
 
 
@@ -390,16 +415,32 @@
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
 
+(defk earlier-use [store stream idempotency-key]
+  {:pre [(: store PreparedStore) (: stream str) (: idempotency-key str)] :post [(: % (| Event RetiredKey None))]
+   :tags {:context "records" :role "foundation"}}
+  "冪等キーの前の使いを引くため(追記の書きの錠の中で呼ぶ): 生きた出来事が在ればそれ・無ければ保持の期限で出来事を消した鍵の覚え
+   (鍵だけの表を主鍵で 1 行 — #3022)・どちらも無ければ None。出来事を消して覚えを入れる刈りも同じ書きの錠の transaction なので、
+   2 つの引きの間に刈りは挟まらない。"
+  (<- find (find-event-statement store.prefix stream idempotency-key))
+  (<- found (query-rows store.database find))
+  (when found
+    (<- event (event-of stream (get found 0)))
+    (return event))
+  (<- lookup (find-retired-key-statement store.prefix stream idempotency-key))
+  (<- kept (query-rows store.database lookup))
+  (if kept
+      (RetiredKey :idempotency-key idempotency-key :sequence (int (get kept 0 0)) :body-digest (get kept 0 1))
+      None))
+
+
 (defk append-locked [store origin-host writer ask now-ms]
   {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask AppendEvent) (: now-ms int)]
    :post [(: % (| Appended Refused))]
    :tags {:context "records" :role "foundation"}}
-  "AppendEvent の書きの錠の中の手順(冪等キーで引き、判定し、新しければ積む)を流すため。"
+  "AppendEvent の書きの錠の中の手順(冪等キーの前の使いを引き、判定し、新しければ積む)を流すため。"
   (val decl (store.schema.stream ask.stream))
   (<- head (store-head store))
-  (<- find (find-event-statement store.prefix ask.stream ask.idempotency-key))
-  (<- found (query-rows store.database find))
-  (val previous (if found (! (event-of ask.stream (get found 0))) None))
+  (<- previous (earlier-use store ask.stream ask.idempotency-key))
   (val verdict (judge-append decl ask.body previous))
   (when (isinstance verdict Refused) (return verdict))
   (when (isinstance verdict AppendReplay) (return (Appended verdict.sequence)))

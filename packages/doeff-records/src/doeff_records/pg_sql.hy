@@ -9,6 +9,9 @@
 ;;;   row_changes  変更の列(WatchChanges が読む)— seq = bigserial・payload NULL = 行が消えた
 ;;;   store_epoch  置き場の版と、変更の列を忘れた位置(floor)の 1 行
 ;;;   冪等キーの一意の索引(append_rows の ledger × payload の idempotencyKey)と、宣言した索引の欄の式の索引
+;;;   retired_keys 保持の期限で出来事を消した冪等キーの覚え — PK = (ledger, idempotency_key)・seq = 消した出来事の番号・
+;;;                body_digest = 本文の指紋(admission.body-digest)。出来事を消す transaction が同じ transaction で入れ、消さない(#3022)。
+;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。
 ;;; 表の名は接頭辞つき(既定 records_)— 同じ database に在る別の置き場の同名の表と混ざらない。
 ;;; DDL は SqlEnsureTables の宣言に書き換えない(式の索引と bigserial を宣言で表せない)— 旧い版と同じ字面のまま流す
 ;;; (検 test_pg_sql.hy が旧い版の字面と比べる)。どれも IF NOT EXISTS / ON CONFLICT DO NOTHING なので、字面が変わっても
@@ -27,9 +30,10 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import hashlib)
+(import json)
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
-(import doeff_records.values [RecordsSchema])
+(import doeff_records.values [RecordsSchema RetiredKey])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
@@ -130,14 +134,18 @@
     (.append statements (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows (ledger, ((payload::jsonb) -> '{f}'))"
                                                   :i index :p p :f name)
                                    :params #())))
-  (tuple statements))
+  ;; 旧い版より後に足した表は旧い版の文の後ろに並べる(旧い版の文の字面と順はそのまま — 検 test_pg_sql.hy)。
+  (+ (tuple statements)
+     #((Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
+           ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
+           PRIMARY KEY (ledger, idempotency_key))" :p p) :params #()))))
 
 
 (defk drop-statements [prefix]
   {:pre [(: prefix str)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
   "検の後片付けの文(この接頭辞の表を消す)を作るため。"
-  (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch"]
+  (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys"]
                (Statement :text (.format "DROP TABLE IF EXISTS {}{}" prefix table) :params #()))))
 
 
@@ -310,12 +318,73 @@
              :params (! (params-of #(#("ledger" stream))))))
 
 
+(defk find-retired-key-statement [prefix stream idempotency-key]
+  {:pre [(: prefix str) (: stream str) (: idempotency-key str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "保持の期限で出来事を消した冪等キーの覚え(番号と本文の指紋)を主鍵で 1 行引く文を作るため(#3022)。"
+  (Statement :text (.format "SELECT seq, body_digest FROM {p}retired_keys WHERE ledger = :ledger AND idempotency_key = :idempotency_key"
+                            :p prefix)
+             :params (! (params-of #(#("ledger" stream) #("idempotency_key" idempotency-key))))))
+
+
+(defk retire-keys-statement [prefix stream keys]
+  {:pre [(: prefix str) (: stream str) (: keys tuple) (> (len keys) 0) (all (gfor key keys (isinstance key RetiredKey)))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "保持の期限で消した出来事の冪等キーの覚え keys(values.RetiredKey の組)を鍵だけの表へ入れる文を作るため(#3022)。配列の引数は
+   持たないので、覚えを JSON の配列の引数 1 つ(要素 = idempotency_key・seq・body_digest の object)で運び、jsonb_to_recordset で行に展げる
+   (消した出来事の数に依らず文 1 つ)。覚えが既に在る鍵は書き換えない(ON CONFLICT DO NOTHING — memory の drop-events と同じ)。
+   空の組は文にしない(呼び手が枝で避ける)。"
+  (val retired (json.dumps (lfor key keys {"idempotency_key" key.idempotency-key "seq" key.sequence "body_digest" key.body-digest})
+                           :separators #("," ":") :ensure-ascii False))
+  (Statement :text (.format "INSERT INTO {p}retired_keys (ledger, idempotency_key, seq, body_digest)
+                       SELECT CAST(:ledger AS text), kept.idempotency_key, kept.seq, kept.body_digest
+                         FROM jsonb_to_recordset(CAST(:retired AS jsonb)) AS kept(idempotency_key text, seq bigint, body_digest text)
+                       ON CONFLICT (ledger, idempotency_key) DO NOTHING" :p prefix)
+             :params (! (params-of #(#("ledger" stream) #("retired" retired))))))
+
+
+(defk expiring-where [prefix separator]
+  {:pre [(: prefix str) (: separator (| str None))] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "保持の期限を過ぎた出来事 old の条件の文を作るため(引数 :ledger・:before_at・組で数える列は :separator)。separator = None は出来事ごとに
+   数える列・str は組で数える列(ByKeySuffix)の区切りで、組の出来事が全部 before-at 以下に積まれた組だけ(= 組の最後の出来事から保持の秒)。
+   刈りの候補の読み(expiring-events-statement)と刈り(expire-events-statement・expire-event-groups-statement)が同じ条件を使う。"
+  (if (is separator None)
+      "old.ledger = :ledger AND old.at <= :before_at"
+      (.format "old.ledger = :ledger AND old.at <= :before_at AND NOT EXISTS (
+                         SELECT 1 FROM {p}append_rows AS young
+                          WHERE young.ledger = old.ledger AND young.at > :before_at AND {young} = {old})"
+               :p prefix :young (! (key-suffix-expression "young")) :old (! (key-suffix-expression "old")))))
+
+
+(defk expiring-params [stream before-at separator]
+  {:pre [(: stream str) (: before-at int) (: separator (| str None))] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "expiring-where の条件の引数を作るため。"
+  (! (params-of (+ #(#("ledger" stream) #("before_at" before-at)) (if (is separator None) #() #(#("separator" separator)))))))
+
+
+(defk expiring-events-statement [prefix stream before-at separator]
+  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None))] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "保持の期限を過ぎた出来事が在るかを読む文を作るため(在れば 1 行)— 刈りの transaction(書きの錠)は、候補が在る時だけ開く
+   (行の刈りの expired-rows と同じ形・候補の無い要求は今までどおり文 1 つ)。"
+  (<- where (expiring-where prefix separator))
+  (<- params (expiring-params stream before-at separator))
+  (Statement :text (.format "SELECT 1 FROM {p}append_rows AS old WHERE {w} LIMIT 1" :p prefix :w where) :params params))
+
+
 (defk expire-events-statement [prefix stream before-at]
   {:pre [(: prefix str) (: stream str) (: before-at int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "積んだ刻が before-at 以下の出来事を捨てる文を作るため(before-at = 今 − 保持の秒 — admission.event-expired? と同じ境界)。"
-  (Statement :text (.format "DELETE FROM {p}append_rows WHERE ledger = :ledger AND at <= :before_at" :p prefix)
-             :params (! (params-of #(#("ledger" stream) #("before_at" before-at))))))
+  "積んだ刻が before-at 以下の出来事を捨て、捨てた出来事(番号・刻・payload — read-events-statement と同じ列の並び)を返す文を
+   作るため(before-at = 今 − 保持の秒 — admission.event-expired? と同じ境界)。返した行から鍵の覚えを作り、同じ transaction で
+   retire-keys-statement が入れる(#3022)。"
+  (<- where (expiring-where prefix None))
+  (<- params (expiring-params stream before-at None))
+  (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE {w} RETURNING old.seq, old.at, old.payload" :p prefix :w where)
+             :params params))
 
 
 (defk key-suffix-expression [alias]
@@ -332,10 +401,10 @@
 (defk expire-event-groups-statement [prefix stream before-at separator]
   {:pre [(: prefix str) (: stream str) (: before-at int) (: separator str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "組で数える列(ByKeySuffix)の刈り: 組の出来事が全部 before-at 以下に積まれた組を捨てる文を作るため(= 組の最後の出来事から保持の秒 —
-   admission.event-expired? と retention-group-of と同じ境界)。"
-  (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE old.ledger = :ledger AND old.at <= :before_at AND NOT EXISTS (
-                         SELECT 1 FROM {p}append_rows AS young
-                          WHERE young.ledger = old.ledger AND young.at > :before_at AND {young} = {old})"
-                            :p prefix :young (! (key-suffix-expression "young")) :old (! (key-suffix-expression "old")))
-             :params (! (params-of #(#("ledger" stream) #("before_at" before-at) #("separator" separator))))))
+  "組で数える列(ByKeySuffix)の刈り: 組の出来事が全部 before-at 以下に積まれた組を捨て、捨てた出来事(番号・刻・payload)を返す
+   文を作るため(= 組の最後の出来事から保持の秒 — admission.event-expired? と retention-group-of と同じ境界。返した行は
+   expire-events-statement と同じく鍵の覚えになる — #3022)。"
+  (<- where (expiring-where prefix separator))
+  (<- params (expiring-params stream before-at separator))
+  (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE {w} RETURNING old.seq, old.at, old.payload" :p prefix :w where)
+             :params params))

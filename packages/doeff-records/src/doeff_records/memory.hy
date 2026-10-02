@@ -32,7 +32,7 @@
 (import doeff_time [GetTime ScheduleAt])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Event Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
+                              Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
@@ -41,7 +41,7 @@
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
                                  retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
-                                 epoch-ms terminal-row?])
+                                 epoch-ms terminal-row? body-digest])
 
 (defclass StoredRow []
   "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
@@ -98,6 +98,9 @@
           self.event-head 0
           self.events []
           self.by-idempotency {}
+          ;; 保持の期限で出来事を消した冪等キーの覚え(#(列 冪等キー) → values.RetiredKey — 番号と本文の指紋だけ)。消した後の同じ鍵の
+          ;; 追記を生きた出来事と同じ規則で判じるため(#3022)。覚えは消さない(育ち続けてよい)。
+          self.retired-keys {}
           ;; 届かない状態(検の口 faults.SetStoreOutage の値 — None = 届く)。
           self.outage None
           ;; 置いた故障の列(検の口 faults.AddStoreFault の値 — 置いた順・空 = 故障なし)。
@@ -125,6 +128,9 @@
     ;; 故障の列を持つ前に pickle した置き場は故障なし。
     (when (not-in "faults" state)
       (setv self.faults #()))
+    ;; 消した鍵の覚えを持つ前に pickle した置き場は、覚えが空(それより前に消した鍵は戻せない)。
+    (when (not-in "retired_keys" state)
+      (setv self.retired-keys {}))
     (setv self.lock (threading.RLock)
           self.bells {})
     ;; 期限の索引を持つ前に pickle した置き場は、行と出来事から 1 度だけ索引を作り直す。
@@ -278,10 +284,16 @@
 
 
 (defn #^ None drop-events [#^ MemoryStore store #^ list events]  ; defk にできない: purge-expired-scan が錠の内で同期に呼ぶ置き場の書き
-  "期限の来た出来事を冪等キーの引きと出来事の列から外す。列は番号の順なので、1 つずつ番号で二分探索して外す。列は差し替える
+  "期限の来た出来事を冪等キーの引きと出来事の列から外し、鍵の覚え(retired-keys)へ番号と本文の指紋だけを移す(#3022 — 消した後の
+   同じ鍵の追記も memory-append が同じ規則で判じる)。覚えが既に在る鍵は書き換えない(PostgreSQL の鍵だけの表の ON CONFLICT DO NOTHING と
+   同じ)。列は番号の順なので、1 つずつ番号で二分探索して外す。列は差し替える
    (写しは 1 回の C の複写 — 錠の外で前の列を読んでいる読み手の走査を壊さないため。前の形も差し替えていた)。"
   (for [event events]
-    (.pop store.by-idempotency #(event.stream event.idempotency-key) None))
+    (setv slot #(event.stream event.idempotency-key))
+    (.pop store.by-idempotency slot None)
+    (when (not-in slot store.retired-keys)
+      (setv (get store.retired-keys slot) (RetiredKey :idempotency-key event.idempotency-key :sequence event.sequence
+                                                       :body-digest (body-digest event.body)))))
   (setv kept (list store.events))
   (for [sequence (sorted (gfor event events event.sequence) :reverse True)]
     (setv at (bisect.bisect-left kept sequence :key (fn [event] event.sequence)))
@@ -519,9 +531,11 @@
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
 
 (defn #^ object memory-append [#^ MemoryStore store #^ str writer #^ AppendEvent ask #^ int now-ms]
+  "AppendEvent に答えるため: 冪等キーの前の使い(生きた出来事・無ければ保持の期限で消した鍵の覚え)を引いて判じ、新しければ積む。"
   (setv decl (store.schema.stream ask.stream)
         slot #(ask.stream ask.idempotency-key)
-        verdict (judge-append decl ask.body (.get store.by-idempotency slot)))
+        earlier (.get store.by-idempotency slot)
+        verdict (judge-append decl ask.body (if (is earlier None) (.get store.retired-keys slot) earlier)))
   (cond
     (isinstance verdict Refused) verdict
     (isinstance verdict AppendReplay) (Appended verdict.sequence)

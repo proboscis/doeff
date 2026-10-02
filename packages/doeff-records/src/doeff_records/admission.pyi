@@ -18,6 +18,7 @@ from doeff_records.values import Conflict as Conflict
 from doeff_records.values import Refused as Refused
 from doeff_records.values import NotIndexed as NotIndexed
 from doeff_records.values import Event as Event
+from doeff_records.values import RetiredKey as RetiredKey
 from doeff_records.values import ExpectAbsent as ExpectAbsent
 from doeff_records.values import ExpectVersion as ExpectVersion
 from doeff_records.values import ExpectAny as ExpectAny
@@ -108,5 +109,8 @@ class AppendNew:
 class AppendReplay:
     sequence: int
 
-def judge_append(decl: StreamDecl, body: object, earlier: Event | None) -> AppendNew | AppendReplay | Refused:
+def body_digest(body: object) -> str:
+    ...
+
+def judge_append(decl: StreamDecl, body: object, earlier: Event | RetiredKey | None) -> AppendNew | AppendReplay | Refused:
     ...

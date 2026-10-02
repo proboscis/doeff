@@ -10,6 +10,7 @@
 ;;; 静的な検査は呼び手に FrozenMap / frozen-json-object で包ませる)。JSON へ書く境界は thaw-json で戻す。
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が typed.hy に在る — 業務の呼び手はそちらを使う。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field])
 (import re)
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
@@ -342,6 +343,16 @@
   (#^ str writer)
   (#^ int at)
   (defn #^ None __post_init__ [self] (object.__setattr__ self "body" (freeze-json self.body))))
+
+
+(defrecord RetiredKey
+  "保持の期限で出来事を消した冪等キーの覚え(#3022): idempotency-key = 冪等キー / sequence = 消した出来事の番号 /
+   body-digest = その本文の指紋(admission.body-digest)。置き場(memory・PG)は出来事を消しても鍵の覚えは消さない — 消した後の
+   同じ鍵の追記を、生きた出来事と同じ規則(admission.judge-append)で判じるため(覚えは育ち続けてよい — 消す仕組みは持たない)。
+   置き場の判断(admission)と SQL の文(pg_sql)の両方が読む値なので、この値の module に置く。"
+  #^ str idempotency-key
+  #^ int sequence
+  #^ str body-digest)
 
 (defclass [(dataclass :frozen True)] Events []
   "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。"
