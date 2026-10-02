@@ -81,7 +81,7 @@
 
 
 (deff raw-entry-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: item dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: item dict)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "run の無い宣言の行(worker に module と引数を直に起こさせる生の entry の job)を断る理由の文 — 書きの口の 400・保存の読み直しの
    RefusedJob の理由に同じ文を出すため。宣言の job は Program の値 1 つだけ(ADR-DOE-CLUSTER-001 R1・R7)。"
   (.format "生の entry の job(entry {!r}・args {!r}・run が無い)は受け付けない — job は Program の値 1 つで宣言する(defsystem と declare・ADR-DOE-CLUSTER-001 R1)"
@@ -89,7 +89,7 @@
 
 
 (deff identity-hash [#^ dict run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: run dict)] :post [(: % str) (= (len %) 16)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: run dict)] :post [(: % str) (= (len %) 16)] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の同一性の指紋 = identity(関数の参照と引数の正規 JSON)と versions の sha256 の頭 16 桁。job の引数に載り、
    spec-hash(revision・environ と一緒)の材料になる。詰めた Program の中身(program の sha)は入れない — 揺れるため(改訂 1 の A)。"
   (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps {"identity" (get run "identity") "versions" (.get run "versions" {})}
@@ -99,7 +99,7 @@
 
 
 (deff program-row-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
    image の版を追う欄(baseFrom・base・overlay — Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
    environ の名(child-environ-refusal の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
@@ -123,7 +123,7 @@
 
 
 (deff environ-refusal [#^ dict environ #^ list declared]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
-  {:pre [(: environ dict) (: declared list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: environ dict) (: declared list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "宣言の行・task の本文の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_rules.child-environ-refusal —
    EnvVar の名の形・worker の予約・秘密の中身の名)で、env-vars と同じ名は断る(子の環境変数の足し口を 1 つにする — 改訂 1 の G)。"
   (setv problem (child-environ-refusal environ))
@@ -135,7 +135,7 @@
 
 
 (deff task-environ-refusal [#^ (| dict list tuple str int float bool None) environ #^ (| dict list tuple str int float bool None) runtime]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: environ (| dict list tuple str int float bool None)) (: runtime (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: environ (| dict list tuple str int float bool None)) (: runtime (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文の environ(子の環境変数 — 無ければ空)が受けられない理由。規則は service の宣言の行と同じ
    environ-refusal 1 つ(2026-09-28)。runtimeEnv の形の誤りは runtime-env-refusal が断るので、ここでは object の時だけ
    env-vars の名と比べる。"
@@ -213,7 +213,7 @@
 
 
 (deff note-liveness [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: 調停の純粋な判断(api_policy.settle — Program の外)が呼ぶ
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "生きていないと数える worker の名(ClusterState.silent)を今の時刻で求め直すため(#1934)。変わらなければ同じ値を返す(版を進めない)。
    変われば新しい値 — Worker の資源の status の live が変わり、stamp が版を進めて出来事を 1 行残す(死んだ拍と戻った拍だけ)。"
   (let [silent (frozenset (gfor w (.values state.workers) :if (not (alive now w timing.lease-ms)) w.name))]
@@ -221,7 +221,7 @@
 
 
 (deff placeable [#^ tuple needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):
    needs ⊆ provides ∪ derived(node の label から coordinator が導いた能力)、かつ worker が専用の能力(exclusive)を持てば、そのどれかを needs に持つ(一般の仕事を専用の担い手に置かない)。"
   (and (<= (set needs) (| (set worker.provides) (set worker.derived)))
@@ -229,7 +229,7 @@
 
 
 (deff named-capabilities [#^ (| tuple list None) provides #^ (| tuple list None) exclusive #^ bool old-labels #^ str what]  ; defk にできない: heartbeat の本文と保存の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: provides (| tuple list None)) (: exclusive (| tuple list None)) (: old-labels bool) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: provides (| tuple list None)) (: exclusive (| tuple list None)) (: old-labels bool) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "judgment"}}
   "worker の能力の名乗り(provides・exclusive の名の列 — None = 欄が無い)→ #(provides exclusive)。exclusive は provides の一部でなければ
    ならない。旧い形(labels だけで provides の無い名乗り — old-labels)は BodyInvalid(ADR-DOE-CLUSTER-001 R4b)。heartbeat の本文の型
    (#2445)と保存の行(worker-capabilities-of)が同じ規則で読む。"
@@ -243,14 +243,14 @@
 
 
 (deff request-needs [#^ dict body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: body dict) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: body dict) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は BodyInvalid(理由つき・ValueError の子)—
    旧い宣言は受け付けない(operator 2026-09-27)・要る能力は必ず書く(改訂 1 の I)。"
   (needs-named (.get body "needs") (.get body "requires") what))
 
 
 (deff needs-named [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
-  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None)) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "要る能力の名乗り(needs と旧い形の requires の値 — None = 欄が無い)→ 名の順の tuple。宣言の行(request-needs)と本文の型(#2445)が
    同じ規則で読む: requires は BodyInvalid・空の needs は BodyInvalid。"
   (when (is-not requires None)
@@ -263,7 +263,7 @@
 
 
 (deff task-body-refusal [#^ ClusterState state #^ TaskBody body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: state ClusterState) (: body TaskBody)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: body TaskBody)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
    Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
    中で並べ(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)、詰めた Program は service の宣言と同じく先に /programs/<sha> に置いて
@@ -289,14 +289,14 @@
 
 
 (deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
    運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
   (component-versions-of (. (get state.programs sha) versions)))
 
 
 (deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "本文の needs(と旧い形の requires)が受けられない理由(受けられれば None)— 400 の理由の文を 1 か所で作るため。"
   (try
     (needs-named needs requires "needs")
@@ -912,7 +912,7 @@
 ;; --- HTTP の要求への返事(判断の部品。要求の振り分けは api_policy) -----------------------------------
 
 (deff text-map? [value]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: value (| dict list str int float bool None))] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: value (| dict list str int float bool None))] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "JSON の値が「名 → 文字列」の object か — heartbeat の versions・tools(component-versions-of が名の順に並べる)を写す前に確かめるため。"
   (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
 
@@ -1262,7 +1262,7 @@
 
 
 (deff nodes-to-read [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
-  {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "coordinator" :role "judgment"}}
   "label を読み直す node の名(整列)— node を名乗る worker の node のうち、観測が無いか古い物。能力の導出の材料を揃えるため。"
   (sorted (sfor w (.values state.workers)
                 :if w.node
@@ -1272,13 +1272,13 @@
 
 
 (deff derived-capabilities [#^ (get Table str) labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
-  {:pre [(: labels (get Table str)) (: table tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: labels (get Table str)) (: table tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "node の label → その node の worker に足す能力(名の順)。table = ClusterNaming の node-capabilities #(#(鍵 値 能力) …)。"
   (tuple (sorted (sfor #(key value capability) table :if (= (.row labels key) value) capability))))
 
 
 (deff with-derived-capabilities [#^ ClusterState state #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
-  {:pre [(: state ClusterState) (: table tuple)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: state ClusterState) (: table tuple)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "node の label の観測から、各 worker の derived(導いた能力)を作り直す。label を読めなかった node(error)の worker は前の値を保つ
    (届かない間に会社の機体の能力を外したり足したりしない — 次に読めた時に直る)。node を名乗らない worker は空。"
   (setv workers {})
