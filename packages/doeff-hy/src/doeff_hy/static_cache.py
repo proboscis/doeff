@@ -10,6 +10,12 @@
 - source が `require` する根の下の macro の module の中身(推移的に)。
 - この file の版(CACHE_VERSION — 保存の形を変えたら上げる)。
 
+鍵を作るには source が `require` する module の名が要り、それを知るには source を Hy の reader で読む。読みは展開の
+次に重く、cache が温かくても検める file の依存の全部(agora の controllers/agora_sim/screen.hy で 350 個)を毎回読み直して
+いた(1 file の測りの約 29 秒のほとんど — agora-redesign #2675)。だから読みの結果(require する名の列)も source の中身の
+指紋ごとに保存して引く(<cache dir>/requires/<頭 2 字>/<指紋>.txt — 1 行 1 名)。指紋 = Hy の版と source の中身
+(reader の答えはこの 2 つだけで決まる)。展開の保存と別の拡張子にして、展開の数え(*.json)に混ぜない。
+
 保存の形は 1 鍵 1 file の JSON(<cache dir>/<鍵の頭 2 字>/<鍵>.json)。壊れた file は読めない物として捨てて展開し直す。
 """
 
@@ -77,8 +83,39 @@ def _doeff_hy_digest() -> str:
     return digest.hexdigest()
 
 
-def _required_modules(text: str) -> tuple[str, ...]:
-    """source の一番外の `(require M ...)` の M の名(macro の展開が依る module を鍵に入れるため)。"""
+def _requires_entry(cache_dir: Path, text: str) -> Path:
+    """require する名の列の保存先(Hy の版と source の中身の指紋 — 上の docstring)。"""
+    digest = hashlib.sha256()
+    for part in ("requires", str(CACHE_VERSION), hy.__version__, text):
+        digest.update(part.encode())
+        digest.update(b"\0")
+    key = digest.hexdigest()
+    return cache_dir / "requires" / key[:2] / f"{key}.txt"
+
+
+def _required_modules(text: str, cache_dir: Path | None = None) -> tuple[str, ...]:
+    """source の一番外の `(require M ...)` の M の名(macro の展開が依る module を鍵に入れるため)。cache_dir があれば
+    読みの結果を source の中身の指紋ごとに引き、無ければ読んで保存する(上の docstring — 毎回の reader の読みを省くため)。"""
+    if cache_dir is None:
+        return _read_required_modules(text)
+    entry = _requires_entry(cache_dir, text)
+    try:
+        return tuple(name for name in entry.read_text(encoding="utf-8").split("\n") if name)
+    except OSError:
+        pass
+    names = _read_required_modules(text)
+    try:
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        temporary = entry.with_suffix(".tmp")
+        temporary.write_text("\n".join(names), encoding="utf-8")
+        temporary.replace(entry)
+    except OSError:
+        pass
+    return names
+
+
+def _read_required_modules(text: str) -> tuple[str, ...]:
+    """source を Hy の reader で読み、一番外の `(require M ...)` の M の名を並べる(保存しない読みの 1 か所)。"""
     try:
         forms = hy.read_many(text)
         return tuple(
@@ -93,11 +130,13 @@ def _required_modules(text: str) -> tuple[str, ...]:
         return ()
 
 
-def _macro_sources(roots: tuple[Path, ...], text: str, seen: frozenset[Path] = frozenset()) -> tuple[Path, ...]:
+def _macro_sources(
+    roots: tuple[Path, ...], text: str, seen: frozenset[Path] = frozenset(), cache_dir: Path | None = None
+) -> tuple[Path, ...]:
     """source が require する根の下の .hy を推移的に集める(根の外 = doeff-hy などは _doeff_hy_digest が持つ)。"""
     found = tuple(
         candidate
-        for name in _required_modules(text)
+        for name in _required_modules(text, cache_dir)
         for root in roots
         for candidate in (
             root.joinpath(*hy.mangle(name).split(".")).with_suffix(".hy"),
@@ -109,18 +148,20 @@ def _macro_sources(roots: tuple[Path, ...], text: str, seen: frozenset[Path] = f
     return found + tuple(
         deeper
         for path in found
-        for deeper in _macro_sources(roots, path.read_text(encoding="utf-8"), known)
+        for deeper in _macro_sources(roots, path.read_text(encoding="utf-8"), known, cache_dir)
     )
 
 
-def cache_key(roots: tuple[Path, ...], source: Path, module: str, relative: str) -> str:
-    """展開を引く鍵(上の docstring の 4 つが同じなら同じ展開になる)。"""
+def cache_key(
+    roots: tuple[Path, ...], source: Path, module: str, relative: str, cache_dir: Path | None = None
+) -> str:
+    """展開を引く鍵(上の docstring の 4 つが同じなら同じ展開になる)。cache_dir があれば require の読みもそこで引く。"""
     text = source.read_text(encoding="utf-8")
     digest = hashlib.sha256()
     for part in (str(CACHE_VERSION), _doeff_hy_digest(), module, relative, text):
         digest.update(part.encode())
         digest.update(b"\0")
-    for macro in sorted(set(_macro_sources(roots, text))):
+    for macro in sorted(set(_macro_sources(roots, text, cache_dir=cache_dir))):
         digest.update(macro.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
