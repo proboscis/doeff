@@ -17,7 +17,8 @@ from tests._run_helpers import run_with_defaults
 def test_sa008_sync_await_runs_in_default_handlers() -> None:
     @do
     def prog():
-        _ = yield Await(asyncio.sleep(0.001))
+        # 主張は「既定の handler で coroutine を 1 つ待てる」— loop に 1 度譲る coroutine で足りる(実時間は待たない・#2957)
+        _ = yield Await(asyncio.sleep(0))
         return "ok"
 
     result = run_with_defaults(prog())

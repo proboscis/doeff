@@ -378,6 +378,7 @@ class TestGatherEnvironmentInheritanceLaw:
 class TestGatherStoreSharingLaw:
     """Tests for Law 8: Gather store sharing (runtime-dependent)."""
 
+    @pytest.mark.realtime
     def test_async_gather_parallel_execution(self) -> None:
         """Law 8b: Gather executes spawned tasks in parallel."""
 
