@@ -28,61 +28,61 @@
 ;;; (api_policy.respond / tick / plan-rollouts)で 1 件ずつ次の状態と返事を導き、まとまりの変化を 1 回で永続化してから
 ;;; (SaveState — 答え手の protocol が KV の差分に綴り、追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
 ;;; coordinator が落ちても消えない。永続化に失敗したら返事をせずに落ちる(送り手には失敗として見える)。
-;;; k8s の Deployment の読みと台数の変更(ReadDeployment / ScaleDeployment)も effect。I/O は handler の中だけ。
+;;; k8s の Deployment と node の読み(StartKubeReads / CollectKubeReads — 読みは調停ループの外で走り、ループは待たない・#2807)と台数の変更
+;;; (ScaleDeployment)も effect。I/O は handler の中だけ。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "program"})
 (import dataclasses [replace])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
-(import doeff_hy.table [Table TableWrite])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
-                                                       DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable])
-(import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
+(import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable StartKubeReads CollectKubeReads
+                                                     KubeReadsIdle KubeReadsRunning KubeReadsDone])
+(import doeff_core_effects.effects [slog])
 
 
 
 ;; --- 調停ループ(Program) -------------------------------------------------------------
 
-(defk deployment-observation [key now]
-  {:pre [(: key str) (: now int)] :post [(: % (| DeploymentSeen DeploymentUnreadable))] :tags {:context "coordinator" :role "program"}}
-  "Rollout の相手の Deployment 1 つ(鍵「ns/名」)を読み、観測の表(ClusterObservations.deployments)に置く観測にするため。
-   届かなければ DeploymentUnreadable(Rollout は Unknown と扱い、台数を変えない)。"
-  (val parts (.split key "/" 1))
-  (try
-    (<- reading DeploymentReading (ReadDeployment (get parts 0) (get parts 1)))
-    (DeploymentSeen :reading reading :at now)
-    (except [error KubeUnavailable]
-      (DeploymentUnreadable :error (str error) :at now))))
+;; k8s の読みが始めてからこの ms 終わらなければ、名指しの 1 行を出す(1 つの読みにつき 1 度 — #2807)。観測が Rollout の判断で古いと
+;; 読まれる 15 秒(api_policy.OBSERVATION-STALE-MS)より前に名指す。
+(val KUBE-READS-NAMED-MS 10000)
 
 
-(defk node-labels-observation [node now]
-  {:pre [(: node str) (: now int)] :post [(: % (| NodeLabelsSeen NodeLabelsUnreadable))] :tags {:context "coordinator" :role "program"}}
-  "worker の置かれた node 1 つの label を読み、観測の表(ClusterObservations.nodes)に置く観測にするため。届かなければ
-   NodeLabelsUnreadable(その node の worker は前に導いた能力を保つ)。"
-  (try
-    (<- labels (get Table str) (ReadNodeLabels node))
-    (NodeLabelsSeen :labels labels :at now)
-    (except [error KubeUnavailable]
-      (NodeLabelsUnreadable :error (str error) :at now))))
+(defk kube-observations [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % KubeReadsDone)] :tags {:context "coordinator" :role "program"}}
+  "Rollout の相手の Deployment と worker の置かれた node の label の読みを、調停ループを止めずに進めるため(#2807): 走っていなければ
+   次に読む物(進行中の Rollout の相手は毎拍・台数を持つ相手と node の label は古い観測だけ)の読みを始め、待たずに受け取る。終わった
+   読みは観測の表への書きにし、まだなら空の書き(最後に読めた観測のまま — 古くなれば Rollout の判断が Unknown と名指す)。読みが
+   KUBE-READS-NAMED-MS を超えた初回は名指しの 1 行を出す。届かない・読めない観測は読めなかった観測になる(Rollout は Unknown・その
+   node の worker は前に導いた能力を保つ)。読む物が無い拍は k8s に触らない(以前の同期の読みと同じ — k8s の答え手を持たない組でも
+   調停ループは回る)。読みの途中の鍵は観測が古いままなので次の拍も読む物に残り、受け取りは途切れない。"
+  (val deployments (tuple (deployments-to-observe state now)))
+  (val nodes (tuple (nodes-to-read state now)))
+  (if (or deployments nodes)
+      (do (<- _started bool (StartKubeReads :deployments deployments :nodes nodes :started-ms now))
+          (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone)
+              (CollectKubeReads :now-ms now :name-after-ms KUBE-READS-NAMED-MS))
+          (when (and (isinstance collected KubeReadsRunning) collected.overdue)
+            (<- (slog (.format "coordinator: k8s の読みが {} 秒答えない — 最後に読めた観測で判断する(古い観測は Unknown)"
+                               (// (- now collected.started-ms) 1000)))))
+          (if (isinstance collected KubeReadsDone)
+              collected
+              (KubeReadsDone :deployments #() :nodes #())))
+      (KubeReadsDone :deployments #() :nodes #())))
 
 
 (defk rollout-tick [state timing naming now]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: now int)] :post [(: % ClusterState)]}
-  ;; 1. Rollout の相手の Deployment を読む(届かなければ観測を DeploymentUnreadable にする = Unknown。台数は変えない)。
-  (var deployment-writes #())
-  (for [key (deployments-to-observe state now)]
-    (<- deployment-seen (| DeploymentSeen DeploymentUnreadable) (deployment-observation key now))
-    (:= deployment-writes (+ deployment-writes #((TableWrite key deployment-seen)))))
-  ;; 1b. 能力の導出(改訂 1 の I): worker の置かれた node の label を読み(古い観測だけ)、node-capabilities の表から derived を作り直す。
-  (var node-writes #())
-  (for [node (nodes-to-read state now)]
-    (<- node-seen (| NodeLabelsSeen NodeLabelsUnreadable) (node-labels-observation node now))
-    (:= node-writes (+ node-writes #((TableWrite node node-seen)))))
+  ;; 1. k8s の観測(Rollout の相手の Deployment・能力の導出の node の label — 改訂 1 の I)を、調停ループを止めずに受け取る(#2807)。
+  (<- observations KubeReadsDone (kube-observations state now))
+  (val deployment-writes observations.deployments)
+  (val node-writes observations.nodes)
   ;; 観測は ClusterState.observations の表へ書く(版の比べと保存の差分の外 — #2728)。
   (val seen state.observations)
   (val observed (replace seen :deployments (.with-writes seen.deployments deployment-writes)
