@@ -6,12 +6,14 @@ strict に、書き手に直せない赤(Type of "SimWorker" is unknown ほか)�
 runtime_env_model.pyi と同じ形)。
 
 宣言する範囲:
-- 公開の値(defrecord SimWorker・SimProcess・SimReport・SimReadiness・SimPreparation・SimWatchFailure・SimCoordinatorRun・SimLink・
+- 公開の値(defrecord SimWorker・SimProcess・SimReport・SimPreparation・SimWatchFailure・SimCoordinatorRun・SimLink・
   SimOutside・ProcessOutside)は凍った・キーワード引数だけの dataclass。欄の型は local.hy の注記と、構成子・世界が実際に入れる要素の型。
   SimWorker の provides / exclusive は実装が読むのが包含だけなので集合一般(AbstractSet — 使い手は set も frozenset も渡す)、
   DeclareRollout の spec は資源の本文へそのまま運ぶので読みだけの Mapping と書く。
-- 検の effect(Crash … ClientLink)は凍った dataclass の EffectBase[答えの型]。答えの型は defeffect の :answer に、tuple の要素の型を
-  足した物(ProcessesOf = SimProcess の tuple ほか)。
+- 検の effect(DeclareRollout … ClientLink)は凍った dataclass の EffectBase[答えの型]。答えの型は defeffect の :answer に、tuple の要素の型を
+  足した物(ProcessesOf = SimProcess の tuple ほか)。契約の effect(Crash・Redeclare・ReadinessOf・KillWorker・StopWorker・
+  StopCoordinator・CrashCoordinator)と答えの型 ServiceReadiness は shared/intent/cluster_control(道具の .pyi)から読む — local.hy が
+  そこから import して答えるので、ここでは同じ名で読み直すだけ(#3029)。SimReadiness は ServiceReadiness の旧い名(1 版だけ)。
 - 入口 sim-cluster・wall-sim-cluster は筋書きの答えの型をそのまま返す(defk は呼ぶと Program を返す)。
 - 仕組みの名のうち、他の module(doeff-cluster の検・業務の側の模擬)が import する物(SimChild・SimParts・SimExit・HostTruth・
   PartsOf・HostTruthOf・EndProcess と、coordinator-answers・host-answers・run-context-of・send-request・sim-process・
@@ -30,6 +32,15 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
+from doeff_cluster.shared.intent.cluster_control import Crash as Crash
+from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
+from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
+from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
+from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
+from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
+from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as SimReadiness
+from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
+from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
 from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
@@ -167,12 +178,6 @@ class SimReport:
     role: str
     metrics: dict[str, JsonValue] | None
 
-@dataclass(frozen=True, kw_only=True)
-class SimReadiness:
-    """coordinator の Service の status の ready(ReadinessOf の答え)。"""
-
-    state: str
-    reason: str
 
 @dataclass(frozen=True, kw_only=True)
 class SimPreparation:
@@ -234,14 +239,6 @@ class SimOutside:
 # --- 検の effect(sim の世界が答える)---------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class Crash(EffectBase[int]):
-    name: str
-
-@dataclass(frozen=True)
-class Redeclare(EffectBase[tuple[str, ...]]):
-    system: System
-
-@dataclass(frozen=True)
 class DeclareRollout(EffectBase[dict[str, JsonValue]]):
     name: str
     spec: Mapping[str, object]
@@ -257,10 +254,6 @@ class SettleDeployment(EffectBase[None]):
 
 @dataclass(frozen=True)
 class ReportsOf(EffectBase[tuple[SimReport, ...]]):
-    name: str
-
-@dataclass(frozen=True)
-class ReadinessOf(EffectBase[SimReadiness]):
     name: str
 
 @dataclass(frozen=True)
@@ -280,14 +273,6 @@ class ReadCoordinator(EffectBase[dict[str, JsonValue] | _PlainTextView]):
     path: str
 
 @dataclass(frozen=True)
-class StopCoordinator(EffectBase[None]):
-    seconds: float
-
-@dataclass(frozen=True)
-class CrashCoordinator(EffectBase[None]):
-    seconds: float
-
-@dataclass(frozen=True)
 class FailRoute(EffectBase[None]):
     method: str
     path: str
@@ -296,14 +281,6 @@ class FailRoute(EffectBase[None]):
 
 @dataclass(frozen=True)
 class CoordinatorRuns(EffectBase[tuple[SimCoordinatorRun, ...]]): ...
-
-@dataclass(frozen=True)
-class KillWorker(EffectBase[int]):
-    name: str
-
-@dataclass(frozen=True)
-class StopWorker(EffectBase[None]):
-    name: str
 
 @dataclass(frozen=True)
 class StartWorker(EffectBase[bool]):
