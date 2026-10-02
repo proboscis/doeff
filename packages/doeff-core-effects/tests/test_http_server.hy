@@ -3,7 +3,8 @@
 ;;; の契約テストが両方の答え手で回す。
 ;;;   - 台本の答え手(scripted-http-server): 中継先の最長の一致と ws を受けない先の 502・読めない file の範囲の理由・読まない相手の箱が
 ;;;     溜まって切られる勘定・走っている台本への後足し・読みの途中で相手が切った本文。
-;;;   - 本物の答え手(aiohttp-http-server): HTTP の中継の本文と X-Forwarded-Proto・ws の中継(frame の往復と close の状態符)・port 0 で
+;;;   - 本物の答え手(aiohttp-http-server): HTTP の中継の本文と X-Forwarded-Proto・ws の中継(frame の往復と close の状態符)・相手が先に
+;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
 ;;;     結んだ port・出来事の received-at(aiohttp の無い venv では skip)。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import asyncio)
@@ -271,3 +272,56 @@
   (assert (= (lfor e events :if (isinstance e HttpRequestArrived) e.remote) ["127.0.0.1"]) events)
   (assert (= (. (get events -1) reason) "検が閉じた"))
   (assert (>= report.flushed-bytes (len "echo:hi"))))
+
+
+(defn test-the-aiohttp-server-names-an-answer-the-peer-left-in-one-line-and-counts-it [capfd caplog]
+  ;; 相手が先に切った要求への答え(agora-redesign #2757): aiohttp の traceback(Error handling request)を出さず、1 行の名乗りと
+  ;; 待ち受けの数え(閉じる時の合計)を残す。次の要求には今までどおり答える。
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import queue)
+  (import struct)
+  (import time)
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (setv bound (queue.Queue) left (threading.Event) result (queue.Queue))
+  (defk answer-after-the-peer-left []
+    {:pre [] :post [(: % int)]}
+    "検の Program: 結んだ宛先を渡し、1 つ目の要求には相手が去った後に答え、2 つ目には普通に答えて閉じる(答え = 答えた数)。"
+    (<- address HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+    (.put bound address)
+    (<- late HttpRequestArrived (HttpNextRequest))
+    (.wait left 10)
+    (<- (HttpRespond :ticket late.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"too late")))
+    (<- on-time HttpRequestArrived (HttpNextRequest))
+    (<- (HttpRespond :ticket on-time.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"on time")))
+    (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
+    (<- (HttpNextRequest))
+    2)
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+                                                                                       (answer-after-the-peer-left))))))
+                            :daemon True))
+  (setv port (. (.get bound :timeout 30) port))
+  ;; 1 つ目: 送ってすぐ RST で切る(答えが遅れ、相手の上限が先に来た形 — 本番の curl -m 2)。aiohttp が切りを受け取ってから答えさせる。
+  (with [peer (socket.create-connection #("127.0.0.1" port))]
+    (.sendall peer b"GET /late HTTP/1.1\r\nHost: test\r\n\r\n")
+    (.setsockopt peer socket.SOL-SOCKET socket.SO-LINGER (struct.pack "ii" 1 0)))
+  (time.sleep 0.3)
+  (.set left)
+  ;; 2 つ目: 普通に答える。
+  (setv reply b"")
+  (with [peer (socket.create-connection #("127.0.0.1" port) :timeout 10)]
+    (.sendall peer b"GET /on-time HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n")
+    (while True
+      (setv chunk (.recv peer 4096))
+      (when (not chunk) (break))
+      (setv reply (+ reply chunk))))
+  (assert (= (.get result :timeout 30) 2))
+  (assert (.endswith reply b"on time") reply)
+  (setv err (. (.readouterr capfd) err))
+  ;; aiohttp の traceback は logger aiohttp.server の記録に出る(pytest の logging の捕まえ口が受ける)。
+  (assert (= (lfor record caplog.records :if (.startswith record.name "aiohttp") (.getMessage record)) []) caplog.text)
+  (assert (not-in "Error handling request" err) err)
+  (assert (not-in "Traceback" err) err)
+  (assert (= (.count err "相手が先に切ったので届かなかった") 1) err)
+  (assert (in "GET /late への答え(status 200)" err) err)
+  (assert (in "この待ち受けで 1 件目" err) err)
+  (assert (in "届かなかった答えは合わせて 1 件" err) err))
