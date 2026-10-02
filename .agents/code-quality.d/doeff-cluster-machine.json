@@ -6,6 +6,7 @@
         "doeff-cluster-declare",
         "doeff-cluster-local",
         "doeff-cluster-process-versions",
+        "doeff-cluster-runtime-env-model",
         "doeff-cluster-service-build",
         "doeff-cluster-shared-protocol"
       ],
@@ -17,7 +18,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/sim/machine.hy"
       ],
-      "responsibility": "手元の 1 台の cluster: coordinator と worker を deploy/boot.sh でこの機体の子 process として起こし、筋書きを走らせ、契約の effect(準備の状態・worker と coordinator を止める・落とす・系の宣言・job を落とす)に答え、終わりに全部止める(ADR-DOE-CLUSTER-001 R8・#3031・#3032・#3040)。宣言は宣言の CLI と同じ system-declaration と apply-declaration で書き、版の識別は this-process-versions で読む。",
+      "responsibility": "手元の 1 台の cluster: coordinator と worker を deploy/boot.sh でこの機体の子 process として起こし、筋書きを走らせ、契約の effect(準備の状態・worker と coordinator を止める・落とす・系の宣言・job を落とす)に答え、終わりに全部止める(ADR-DOE-CLUSTER-001 R8・#3031・#3032・#3040)。宣言は宣言の CLI と同じ system-declaration と apply-declaration で書き、版の識別は this-process-versions で読む。実行環境(RuntimeEnv)を宣言に載せ、worker の許可表とその置き場は配備と同じ環境変数(WORKER_REPOS・WORKER_ACCESS_DIR)で worker ごとに渡す(#3042)。",
       "typed": true
     }
   ]

@@ -19,6 +19,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "entry"})
 (import os)
+(import hashlib)
 (import subprocess)
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
@@ -36,7 +37,9 @@
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash])
 (import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import tests.fixtures.machine_app [pings machine-foundation])
+(import doeff_cluster.sim.machine :as machine-module)
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 (import doeff_cluster.sim.machine [LocalMachine MachineCell MachineCannotAnswer local-machine-cluster machine-answers machine-run
                                    coordinator-url])
@@ -205,6 +208,9 @@
 (val TESTS-DIR (. (Path __file__) parent))
 (val APP-FILES #("tests/__init__.py" "tests/fixtures/__init__.py" "tests/fixtures/machine_app.hy"))
 (val JOB "ping")
+;; 実行環境の宣言(#3042)が名指す uv の project の 2 file(lock の sha256 を宣言に載せ、worker が取り出した木の lock と照らす)。
+(val APP-PYPROJECT "[project]\nname = \"machine-app\"\nversion = \"0\"\nrequires-python = \">=3.14\"\n")
+(val APP-LOCK "version = 1\nrequires-python = \">=3.14\"\n")
 
 
 (defrecord AppRepo
@@ -234,6 +240,8 @@
     (val target (/ work rel))
     (.mkdir target.parent :parents True :exist-ok True)
     (.write-text target (.read-text (/ TESTS-DIR.parent rel) :encoding "utf-8") :encoding "utf-8"))
+  (.write-text (/ work "pyproject.toml") APP-PYPROJECT :encoding "utf-8")
+  (.write-text (/ work "uv.lock") APP-LOCK :encoding "utf-8")
   (<- (git work #("add" "-A")))
   (<- (git work #("commit" "-q" "-m" "machine app")))
   (<- (git work #("push" "-q" "origin" "HEAD:main")))
@@ -246,6 +254,17 @@
   "worker 1 つの手元の 1 台に、job の code の道(版の木の repo と宣言の版)を足すため。"
   (<- machine LocalMachine (machine-of tmp-path))
   (replace machine :code-repo repo.url :revision repo.sha))
+
+
+(defk runtime-machine-of [tmp-path repo]
+  {:pre [(: tmp-path Path) (: repo AppRepo)] :post [(: % LocalMachine)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker 1 つの手元の 1 台に、実行環境の宣言(app の repo とその commit と uv の lock — 配備と同じ道)を足すため(#3042)。"
+  (<- machine LocalMachine (machine-of tmp-path))
+  (val env (RuntimeEnv :repos #((RepoCheckout :name "app" :url repo.url :commit repo.sha))
+                       :project (PythonProject :repo "app" :path "." :lock-sha256 (.hexdigest (hashlib.sha256 (.encode APP-LOCK)))
+                                               :python "3.14")
+                       :import-roots #("app/.")))
+  (replace machine :revision repo.sha :runtime-env env))
 
 
 (defk ready-within [name seconds]
@@ -356,5 +375,91 @@
   (<- answers DeclaredReadiness (run-with-broken (declared-then-readiness system) machine redeclare-ignored))
   (assert (= answers.declared #()) answers)
   (assert (= answers.state "Missing") "宣言を送らない壊した答え手でも Service が在る — 検が宣言を見ていない")
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+;; --- 実行環境の宣言(#3042)— 配備と同じ道: 宣言に実行環境を載せ、worker が許可表でその repo を受けて取り込む ---
+;; root の準備から Ready までの本物の道(空の uv の cache で uv sync が 36 秒前後 — 60 秒に入らない)は日次の側(#3033)で通す。ここは
+;; 宣言と許可表と取り込み(uv の前の段)までを見る。
+
+(defrecord PrepareSeen
+  "筋書き declared-and-preparing の答え: declared = Redeclare の答え・failure-kind = worker が job の準備で名乗った失敗の種類(空 = 時間内に
+   名乗り無し — まだ準備の途中)。"
+  (#^ (get tuple #(str ...)) declared)
+  (#^ str failure-kind))
+
+
+(defk failure-kind-within [name seconds]
+  {:pre [(: name str) (: seconds float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: worker が名乗る job name の行に失敗の種類が出るまで問い直すため(seconds を過ぎたら空 — まだ準備の途中)。"
+  (var kind "")
+  (var waited 0.0)
+  (while (and (not kind) (< waited seconds))
+    (<- state (ReadCoordinator "/state"))
+    (:= kind (next (gfor status (.values (.get state "statuses" {}))
+                         row (.get status "jobs" [])
+                         :if (= (.get row "name") name)
+                         (str (.get row "failureKind" "")))
+                   ""))
+    (when (not kind)
+      (<- (Delay 0.5))
+      (:= waited (+ waited 0.5))))
+  kind)
+
+
+(defk declared-and-preparing [system]
+  {:pre [(: system System)] :post [(: % PrepareSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 実行環境を載せて系を宣言し、worker が準備で失敗を名乗るか 15 秒経つまで見るため(許可表の断りは取り込みの段で直ぐ名乗る)。"
+  (<- declared tuple (Redeclare system))
+  (<- kind str (failure-kind-within JOB 15.0))
+  (PrepareSeen :declared declared :failure-kind kind))
+
+
+;; 壊した許可表: 実行環境の repo を許可表に載せない(許可表を組むのを忘れた手元の 1 台の代役 — repo-allowlist の差し替え)。
+(defk no-allowlist [machine]
+  {:pre [(: machine LocalMachine)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "失敗ケースの許可表: どの repo も載せない(空 = どの url も断る)。"
+  "")
+
+
+(defk home-access-mtime []
+  {:pre [] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "利用者の HOME の worker の許可表(boot.sh の既定の置き場)の書いた刻を読むため(無ければ None — 手元の 1 台が書き換えないことを見る)。"
+  (val home-file (/ (Path.home) ".doeff-worker-repos" "repo-keys.json"))
+  (if (.exists home-file) (. (.stat home-file) st-mtime-ns) None))
+
+
+(defk mirrors-of [tmp-path]
+  {:pre [(: tmp-path Path)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker が実行環境の repo を取り込んだ mirror(state の下の mirrors/*.git)を並べるため。"
+  (tuple (sorted (gfor p (.rglob (/ tmp-path "workers" WORKER) "mirrors/*.git") (str p)))))
+
+
+(deftest test-a-local-machine-declares-the-runtime-env-and-its-worker-takes-in-the-repo [tmp-path]
+  (<- repo AppRepo (app-repo tmp-path))
+  (<- machine LocalMachine (runtime-machine-of tmp-path repo))
+  (<- before (| int None) (home-access-mtime))
+  (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
+  (assert (= seen.declared #(JOB)) seen)
+  (assert (!= seen.failure-kind "repo-denied") seen)
+  (<- mirrors tuple (mirrors-of tmp-path))
+  (assert (= (len mirrors) 1) mirrors)
+  (val keys (/ tmp-path "workers" WORKER "access" "repo-keys.json"))
+  (assert (in repo.url (.read-text keys :encoding "utf-8")) (.read-text keys :encoding "utf-8"))
+  (<- after (| int None) (home-access-mtime))
+  (assert (= before after) "手元の 1 台の worker が利用者の HOME の許可表を書き換えた")
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+(deftest test-a-counterexample-without-the-repo-allowlist-is-refused-with-repo-denied [tmp-path monkeypatch]
+  (<- repo AppRepo (app-repo tmp-path))
+  (<- machine LocalMachine (runtime-machine-of tmp-path repo))
+  (.setattr monkeypatch machine-module "repo_allowlist" no-allowlist)
+  (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
+  (assert (= seen.failure-kind "repo-denied") "許可表を組まない壊した形でも worker が repo を受けた — 検が許可表を見ていない")
+  (<- mirrors tuple (mirrors-of tmp-path))
+  (assert (= mirrors #()) mirrors)
   (<- left tuple (leftover tmp-path))
   (assert (= left #()) left))
