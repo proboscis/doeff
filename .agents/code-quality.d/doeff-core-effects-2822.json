@@ -1,16 +1,4 @@
 {
-  "exclude": [
-    "packages/doeff-core-effects/doeff_core_effects/sql_effects.hy",
-    "packages/doeff-core-effects/tests/test_compute_effects.hy",
-    "packages/doeff-core-effects/tests/test_http_failures.hy",
-    "packages/doeff-core-effects/tests/test_http_server.hy",
-    "packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy",
-    "packages/doeff-core-effects/tests/test_outcome_binds.hy",
-    "packages/doeff-core-effects/tests/test_outcomes.hy",
-    "packages/doeff-core-effects/tests/test_process_file_effects.hy",
-    "packages/doeff-core-effects/tests/test_sql_effects.hy",
-    "packages/doeff-core-effects/tests/test_sqlite_file_sql.hy"
-  ],
   "include": [
     "packages/doeff-core-effects/doeff_core_effects/*.hy",
     "packages/doeff-core-effects/doeff_core_effects/*.py",

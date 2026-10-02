@@ -4,17 +4,20 @@
 ;;;     受ける形・job ごとの作業 dir・台本から台本を走らせる)。
 ;;;   - 本物の file の答え手(os-file-handler)は一時 dir で、値の詰め替え(種類・mode・symlink を保つ写し)を確かめる。
 ;;;   - 同じ筋書きの Program を本物(一時 dir)と I/O なし(memory-file-handler)の両方で走らせ、答えが同じになることを確かめる(同じ所で断る)。
-;;;   - doeff-agents の io_effects は同じ型を re-export する(定義は 1 つ)。
+;;;   doeff-agents の io_effects が同じ型を re-export する(定義は 1 つ)ことの検は、doeff-agents の側
+;;;   (packages/doeff-agents/tests/test_io_effects_reexports.hy)に置く — 確かめるのは doeff-agents の性質で、この package の検が上の
+;;;   package を import すると層の向きが逆になる(agora-redesign #2837)。
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import os)
 (import stat)
 (import tempfile)
 (import dataclasses [dataclass])
-(import doeff [run with_handlers])
+(import typing [TypeVar])
+(import doeff [run with_handlers Program])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess ExecutableAt WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
@@ -26,7 +29,11 @@
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler run-scripted])
 
 
-(defn on [handlers program]
+;; on が回す program の答えの型(筋書きごとに違う)。
+(val T (TypeVar "T"))
+
+
+(defn #^ T on [#^ list handlers #^ (get Program T) program]
   "handler の列の下で program を 1 回回すため。"
   (run (scheduled (with_handlers handlers program))))
 
@@ -56,13 +63,6 @@
   (<- shown ProcessOutcome (with_handlers [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)]
                              (RunProcess :argv #("show"))))
   (assert (= shown.stdout "None") shown))
-
-
-(defn test-doeff-agents-re-exports-the-same-process-types []
-  (import doeff_agents.io_effects :as agents)
-  (assert (is agents.RunProcess RunProcess))
-  (assert (is agents.ProcessOutcome ProcessOutcome))
-  (assert (is agents.ExecutableAt ExecutableAt)))
 
 
 ;; --- file system: 本物と I/O なしで同じ答え -------------------------------------------------------------------------------
@@ -133,14 +133,15 @@
   (Journey :answers (tuple answers)))
 
 
-(defn test-the-real-and-memory-file-systems-answer-the-same-journey []
+(defn #^ None test-the-real-and-memory-file-systems-answer-the-same-journey []
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))
     (setv real (on [os-file-handler] (journey root)))
     (assert (= (stat.S_IMODE (. (os.stat (+ root "/a/b")) st_mode)) 0o700))
     (assert (= (stat.S_IMODE (. (os.stat (+ root "/a/b/config")) st_mode)) 0o600))
-    ;; 空き(#831): 無い path は在る親の file system で測る。
-    (assert (> (on [os-file-handler] (ReadDiskFree (+ root "/missing/deeper"))) 0)))
+    ;; 空き(#831): 無い path は在る親の file system で測る(答えは断りの FileFailed でなく空きの数)。
+    (setv free (on [os-file-handler] (ReadDiskFree (+ root "/missing/deeper"))))
+    (assert (and (isinstance free int) (> free 0)) free))
   (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/memory-root")))] (journey "/memory-root")))
   (for [#(i #(a b)) (enumerate (zip real.answers memory.answers))]
     (assert (= a b) #(i a b)))
@@ -158,7 +159,7 @@
   (assert (all (gfor a (cut answers 29 None) (isinstance a FileFailed))) (cut answers 29 None)))
 
 
-(defn test-copy-tree-keeps-symlinks-on-the-real-file-system []
+(defn #^ None test-copy-tree-keeps-symlinks-on-the-real-file-system []
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))
     (os.makedirs (+ root "/s"))
@@ -169,19 +170,22 @@
     (assert (= (on [os-file-handler] (ListDirectory (+ root "/d")))
                #((DirEntry :name "file" :kind PathKind.FILE) (DirEntry :name "link" :kind PathKind.SYMLINK))))
     (setv held (on [os-file-handler] (AcquireLock (+ root "/lock"))))
+    (assert (isinstance held LockHeld) held)
     (assert (is (on [os-file-handler] (ReleaseLock held)) None))))
 
 
-(defn test-stat-without-following-symlinks-sees-a-broken-link []
+(defn #^ None test-stat-without-following-symlinks-sees-a-broken-link []
   ;; 壊れた symlink: 辿らなければ SYMLINK・辿れば MISSING(#805 の消費者の頼み)。
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv link (os.path.join (os.path.realpath tmp) "broken"))
     (os.symlink "nowhere" link)
-    (assert (= (. (on [os-file-handler] (StatPath link :follow-symlinks False)) kind) PathKind.SYMLINK))
-    (assert (= (. (on [os-file-handler] (StatPath link)) kind) PathKind.MISSING))))
+    (setv unfollowed (on [os-file-handler] (StatPath link :follow-symlinks False)))
+    (assert (and (isinstance unfollowed PathStat) (= unfollowed.kind PathKind.SYMLINK)) unfollowed)
+    (setv followed (on [os-file-handler] (StatPath link)))
+    (assert (and (isinstance followed PathStat) (= followed.kind PathKind.MISSING)) followed)))
 
 
-(defn test-memory-files-can-be-read-back-and-locks-are-exclusive []
+(defn #^ None test-memory-files-can-be-read-back-and-locks-are-exclusive []
   (setv log [])
   (defk contender []
     {:pre [] :post [(: % None)] :tags {:context "file-system" :role "program"}}
@@ -262,7 +266,7 @@
   #(whole below (if (isinstance refused FileFailed) (FileFailed :path (.replace refused.path root "") :detail "") refused)))
 
 
-(defn test-disk-usage-and-tree-size-answer-the-same-on-the-real-and-memory-file-systems []
+(defn #^ None test-disk-usage-and-tree-size-answer-the-same-on-the-real-and-memory-file-systems []
   ;; #2504: ReadDiskUsage(総量と空き — 無い path は在る親で測る)と MeasureTree(dir の下の file の大きさの合計)。
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))
@@ -296,7 +300,7 @@
   #(linked read #* shown))
 
 
-(defn test-link-file-answers-the-same-on-the-real-and-memory-file-systems []
+(defn #^ None test-link-file-answers-the-same-on-the-real-and-memory-file-systems []
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))
     (setv real (on [os-file-handler] (link-journey root)))
@@ -325,7 +329,7 @@
   #((lfor f failures f.path) (lfor f failures (get (.split f.reason ":") 0)) pyc broken.kind))
 
 
-(defn test-compile-python-sources-answers-the-same-on-the-real-and-memory-file-systems []
+(defn #^ None test-compile-python-sources-answers-the-same-on-the-real-and-memory-file-systems []
   (import importlib.util)
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))

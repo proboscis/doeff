@@ -10,10 +10,13 @@ sql_effects.hy は Hy の module なので、型の宣言が無いと pyright �
 - 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が名・欄の名と順・既定値の有無・引数の名で検める。
 """
 
+import datetime
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Generic, TypeAlias, TypeVar
+from typing import Any, Generic, Never, TypeAlias, TypeVar
+from uuid import UUID
 
 from doeff_vm import EffectBase
 from hy.models import Keyword
@@ -30,6 +33,11 @@ PLAIN_VALUE_TYPES: frozenset[type]
 
 #: 引数と行の値の閉じた集合。
 SqlValue: TypeAlias = int | float | str | bytes | bool | None
+#: driver が答える値のうち、閉じた集合 SqlValue へ写す決まりの在る型(normalized_value が受ける型 — 外の型は normalized_rows が
+#: TypeError で断る)。
+DriverValue: TypeAlias = (
+    int | float | str | bytes | bool | None | memoryview | bytearray | Decimal | datetime.date | datetime.time | UUID
+)
 
 TOKEN: re.Pattern[str]
 IDENTIFIER: re.Pattern[str]
@@ -148,7 +156,8 @@ def checked_rows(
 
 # --- 行の値の正規化(driver の値は driver ごとに型が違う — 境界で検める)---
 
-def normalized_value(value: object) -> Program[SqlValue, Any]: ...
+#: 写しは effect を出さない(答えの Program は効果を持たない — Never)。
+def normalized_value(value: DriverValue) -> Program[SqlValue, Never]: ...
 def normalized_rows(
     rows: list[tuple[object, ...]] | tuple[tuple[object, ...], ...],
 ) -> Program[tuple[tuple[SqlValue, ...], ...], Any]: ...
