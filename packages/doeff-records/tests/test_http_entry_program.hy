@@ -25,6 +25,7 @@
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServing RecordsListening])
+(import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_records.main [records-process])
 (import tests.interpreters [LAW-TOKENS law-roster])
 
@@ -193,10 +194,10 @@
   True)
 
 
-(defk readyz-status [prepare readiness]
-  {:pre [(: prepare (| Program EffectBase)) (: readiness (| Callable None))] :post [(: % tuple)]
+(defk readyz-served [prepare readiness pressure]
+  {:pre [(: prepare (| Program EffectBase)) (: readiness (| Callable None)) (: pressure (| Callable None))] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "/readyz だけの台本を、readiness を渡した入口で走らせ、その札の答えを読むため。"
+  "/readyz と /healthz だけの台本を、readiness と pressure を渡した入口で走らせ、終わりの code と札ごとの答えを返すため。"
   (val script (HttpScript :arrivals #((! (arrival "t-ready" "GET" "/readyz" None None))
                                       (! (arrival "t-health" "GET" "/healthz" None None)))
                           :bodies #()))
@@ -204,13 +205,61 @@
   (val parts (ScriptedParts :script script :broken None :note (fn [c] (.append got c))))
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :roster (law-roster) :prepare prepare
                                :request-handlers #() :max-bytes MAX-BYTES :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0
-                               :readiness readiness))
+                               :readiness readiness :pressure pressure))
   (val code (run (records-process (fn [body] (scripted-foundation parts body)) serving)))
   (val by-ticket {})
   (for [served (if got (get got 0) #())]
     (.setdefault by-ticket served.ticket [])
     (.append (get by-ticket served.ticket) served))
-  #(code (! (status-of by-ticket "t-ready")) (! (status-of by-ticket "t-health"))))
+  #(code by-ticket))
+
+
+(defk readyz-status [prepare readiness]
+  {:pre [(: prepare (| Program EffectBase)) (: readiness (| Callable None))] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "/readyz だけの台本を、readiness を渡した入口で走らせ、その札の答えを読むため。"
+  (val ran (! (readyz-served prepare readiness None)))
+  #((get ran 0) (! (status-of (get ran 1) "t-ready")) (! (status-of (get ran 1) "t-health"))))
+
+
+(defk readyz-body [prepare readiness pressure]
+  {:pre [(: prepare (| Program EffectBase)) (: readiness (| Callable None)) (: pressure (| Callable None))] :post [(: % dict)]
+   :tags {:context "records" :role "foundation"}}
+  "/readyz の答えの本文(JSON)を読むため(#1858 — 錠を待つ本数と idle in transaction の最長の秒の欄を確かめる)。"
+  (val ran (! (readyz-served prepare readiness pressure)))
+  (val served (.get (get ran 1) "t-ready" []))
+  (assert (= (len served) 1) served)
+  (json.loads (. (get served 0) body)))
+
+
+(defk pressure-of [value]
+  {:pre [(: value (| StorePressure PressureUnread))] :post [(: % Callable)] :tags {:context "records" :role "foundation"}}
+  "直ぐに value(StorePressure | PressureUnread)を答える詰まりの読みの代役を作るため。"
+  (fn [] (answered-pressure value)))
+
+
+(defk answered-pressure [value]
+  {:pre [(: value (| StorePressure PressureUnread))] :post [(: % (| StorePressure PressureUnread))] :tags {:context "records" :role "foundation"}}
+  "詰まりの読みの代役の本体: value をそのまま答えるため。"
+  value)
+
+
+(deftest test-readyz-carries-the-lock-waiters-and-the-longest-idle-transaction
+  ;; #1858: 届く置き場の 200 の本文に、錠を待つ本数と idle in transaction の最長の秒を載せる。memory(問いも読みも無い)は 0。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val busy (! (readyz-body (handlers-at-once store) (! (answers-with True))
+                            (! (pressure-of (StorePressure :lock-waiters 2 :idle-in-transaction-max-seconds 7.5))))))
+  (assert (= busy {"status" "ready" "lockWaiters" 2 "idleInTransactionMaxSeconds" 7.5}) busy)
+  (val quiet (! (readyz-body (handlers-at-once store) None None)))
+  (assert (= quiet {"status" "ready" "lockWaiters" 0 "idleInTransactionMaxSeconds" 0.0}) quiet)
+  ;; 失敗ケース: 詰まりの読みが答えない時は数を 0 と名乗らず、理由を載せる(200 のまま — 置き場には届いている)。
+  (val unread (! (readyz-body (handlers-at-once store) (! (answers-with True)) (! (pressure-of (PressureUnread :reason "断られた"))))))
+  (assert (= unread {"status" "ready" "pressureUnread" "断られた"}) unread)
+  (assert (not (in "lockWaiters" unread)) unread)
+  ;; 届かない置き場は今までどおり 503 で、詰まりは読まない。
+  (val down (! (readyz-body (handlers-at-once store) (! (answers-with False))
+                            (! (pressure-of (StorePressure :lock-waiters 9 :idle-in-transaction-max-seconds 1.0))))))
+  (assert (= (.get down "error") "store-unavailable") down))
 
 
 (deftest test-readyz-asks-the-store-within-one-second

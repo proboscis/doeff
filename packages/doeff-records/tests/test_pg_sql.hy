@@ -11,6 +11,7 @@
 (require doeff-hy.macros [deftest val var <-])
 (import json)
 (import os)
+(import random)
 (import pathlib [Path])
 (import threading)
 (import time)
@@ -25,6 +26,8 @@
 (import doeff_records.pg [pg-records-handler drop-records-tables DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement])
 (import tests.interpreters [PG-DSN-VARIABLE DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
+(import doeff_records.main [store-pressure-pg])
+(import doeff_records.store_choice [StorePressure])
 
 (val PG-DSN (.get os.environ PG-DSN-VARIABLE))
 (val BEFORE-880-DDL (json.loads (.read-text (/ (. (Path __file__) parent) "pg_ddl_before_880.json") :encoding "utf-8")))
@@ -84,6 +87,43 @@
         (assert (= (get answer.rows 0 0) old-number) (repr #(new-key (get answer.rows 0 0) old-key old-number)))))
     (finally
       (.close connection)
+      (.close connections))))
+
+
+(deftest test-the-readyz-pressure-counts-a-connection-waiting-on-a-held-lock
+  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  ;; #1858: 1 つの接続が advisory lock を持ったまま transaction を開いて止まり(idle in transaction)、別の接続が同じ錠を待つ間、
+  ;; /readyz の詰まりの読み(store-pressure-pg)は錠を待つ本数 1 以上と idle in transaction の秒を答える。錠を放した後は待ちが 0。
+  (val connections (postgres-connections 2))
+  (val key (random.randint 1 2000000000))
+  (val holder (open-postgres))
+  (val waiter (open-postgres))
+  (defn wait-for-lock []  ; defk にできない: thread の target
+    (.execute waiter "BEGIN")
+    (.execute waiter "SELECT pg_advisory_xact_lock(%s)" #(key))
+    (.execute waiter "COMMIT"))
+  (try
+    (val quiet-before (run-sql connections (store-pressure-pg)))
+    (assert (= quiet-before.lock-waiters 0) quiet-before)
+    (.execute holder "BEGIN")
+    (.execute holder "SELECT pg_advisory_xact_lock(%s)" #(key))
+    (val blocked (threading.Thread :target wait-for-lock))
+    (.start blocked)
+    (var busy None)
+    (val deadline (+ (time.monotonic) 10))
+    (while (and (or (is busy None) (< busy.lock-waiters 1)) (< (time.monotonic) deadline))
+      (time.sleep 0.05)
+      (:= busy (run-sql connections (store-pressure-pg))))
+    (assert (isinstance busy StorePressure) busy)
+    (assert (>= busy.lock-waiters 1) busy)
+    (assert (> busy.idle-in-transaction-max-seconds 0.0) busy)
+    (.execute holder "COMMIT")
+    (.join blocked 10)
+    (val quiet-after (run-sql connections (store-pressure-pg)))
+    (assert (= quiet-after.lock-waiters 0) quiet-after)
+    (finally
+      (.close holder)
+      (.close waiter)
       (.close connections))))
 
 
