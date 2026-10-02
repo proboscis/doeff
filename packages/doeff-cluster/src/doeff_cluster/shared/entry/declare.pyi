@@ -12,8 +12,10 @@ from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
 from doeff_core_effects.os_process import subprocess_handler as subprocess_handler
+from doeff_core_effects.os_file import os_file_handler as os_file_handler
+from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.scheduler import scheduled as scheduled
-from doeff_cluster.foundation.process_versions import process_versions as process_versions
+from doeff_cluster.foundation.process_versions import this_process_versions as this_process_versions
 from doeff_cluster.shared.protocol.checkout_reads import checkout_reads as checkout_reads
 from doeff_cluster.shared.protocol.declaration_requests import spec_for_update as spec_for_update
 from doeff_cluster.shared.protocol.declaration_requests import create_body as create_body

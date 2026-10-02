@@ -12,10 +12,9 @@
 ;;; 名乗りを値で渡す。出す HttpRequest に答える本物の I/O の答え手(http-production-handler)と時計(GetTime・Delay の答え手)は、
 ;;; 呼び手の process の組み立ての根が外側に積む。使い手の型検査のための公開面の宣言は同じ dir の client_foundation.pyi。
 (require doeff-hy.macros [defk <- val])
-(import os)
 (import doeff [Program EffectBase with-handlers])
 (import doeff_cluster.shared.entry.cluster_foundation [coordinator-route-options])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -32,8 +31,8 @@
   (<- now int (now-epoch-ms))
   (<- route CoordinatorRoute (route-of coordinator now))
   ;; 版の識別: 宿の契約の versions-key を読む cluster の job と違い、手元の道具は宿を持たないので、この process の環境から作る
-  ;; (process の入口と同じく os.environ を渡す — Program の中で run を入れ子にしない)。
-  (<- versions (get dict #(str str)) (process-versions os.environ))
+  ;; (この process の環境変数の読みは foundation の this-process-versions — #3014)。
+  (<- versions (get dict #(str str)) (this-process-versions))
   (val sender (DetachedSender :revision revision :versions versions :runtime-env runtime-env
                               :deadline-seconds IDEMPOTENT-DEADLINE-SECONDS))
   (<- answer (with-handlers [(detached-cluster (RouteCell route) options sender)] body))
