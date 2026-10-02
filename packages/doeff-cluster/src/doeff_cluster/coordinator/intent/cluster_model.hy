@@ -418,6 +418,20 @@
   (setv #^ str actor ""))
 
 
+(defrecord KeepMark
+  "途絶しても動かし続けてよい印の約束 1 つ(#2804)= coordinator が worker へ「この job は途絶しても止めなくてよい」と返事で渡した事実。
+   印を渡した担い手は coordinator に届かない間も job を動かし続けうるので、coordinator はこの約束が在る間、job を他の worker へ置かない
+   (担い手の上の置き先を、沈黙・能力の変化・drain を問わず保つ — cluster_policy.place-jobs)。約束が外れるのは、担い手の今の世代の heartbeat が
+   その job の印を持たないと知らせた時(keptWhenCutOff — 印の無い返事が届いた後)か、Worker が消された時だけ。
+   job = job の名・worker = 印を渡した担い手の名・boot = 渡した時の担い手の process の世代(表示 — 世代が替わった担い手は新しい世代の
+   知らせで約束を外す)・since-ms = 初めて渡した時刻。保存する(durable_kv の keep/<名> — coordinator を作り直しても約束を忘れない)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ str worker)
+  (#^ (| str None) boot)
+  (#^ int since-ms))
+
+
 (defenum HandoffPhase
   (WAITING "WaitingReady")
   (ABANDONED "Abandoned"))
@@ -942,7 +956,11 @@
   ;; 外から読んだ・受けた保存しない観測(k8s の Deployment と node の label — #2728 J1・Service の process の準備と計器の報告 — #2756 J2。
   ;; worker の観測も順に移す)。保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。版の比べ(resource_policy.dirty-keys)が読むのは
   ;; Service の status.ready の材料の readiness の表だけ。位置の引数の呼び手のため最後に置く。
-  (setv #^ ClusterObservations observations (field :default-factory ClusterObservations)))
+  (setv #^ ClusterObservations observations (field :default-factory ClusterObservations))
+  ;; 途絶しても動かし続けてよい印の約束(#2804): KeepMark の列(job の名の順・job ごとに 1 つ — 引くのは cluster_policy.keep-mark-of)。
+  ;; 印を渡した担い手から job を他へ移さない約束で、担い手が印を持たないと知らせるか Worker が消されるまで残る(宣言から job が消えても
+  ;; 残す — 途絶した担い手が古い宣言のまま動かしているかもしれない)。保存する(durable_kv の keep/<名>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get tuple #(KeepMark ...)) keep-marks #()))
 
 
 (defclass [(dataclass :frozen True)] Fault []

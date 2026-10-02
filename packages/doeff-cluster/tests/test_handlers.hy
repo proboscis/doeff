@@ -15,7 +15,8 @@
   (assert (in "JSONDecodeError" result.reason) result.reason))
 
 (deftest test-unreachable-coordinator-is-unreadable-then-fences
-  ;; 閉じた port へ向ける。fence 前は「読めない」(直前の宣言を続ける)、fence を超えたら空(全部止める)。
+  ;; 閉じた port へ向ける。fence 前は「読めない」(直前の宣言を続ける)、fence を超えたら途絶でも残す job(入れ替えの書き手・切り離した
+  ;; task・途絶しても動かし続けてよい印の在る job — #2804)だけの宣言になる。ここは宣言を受け取っていないので空(全部止める)。
   (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
