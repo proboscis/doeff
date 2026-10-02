@@ -569,13 +569,16 @@
       (replace state :keep-marks (tuple (gfor mark state.keep-marks :if (in mark.worker state.workers) mark)))))
 
 
-(defn #^ dict place-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
+(defk place-jobs [now state timing]
+  {:pre [(: now int) (: state ClusterState) (: timing ClusterTiming)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "宣言された job の次の割り当て(job の名 → Placement)を決めるため: 続けてよい割り当てを残し、担い手の無い job を空きの多い生きた
+   worker へ置き、宣言から消えた job の割り当てを落とす。"
   (setv jobs (active-jobs state)
         names (sfor job jobs job.spec.name)
         draining (draining-workers state now))
   ;; 1. 続けてよい割り当てを残す(held-placements — 担い手が移し替えの期限内か、他へ移せないか、途絶しても動かし続けてよい印の約束を
   ;;    持つ。drain 中の担い手の上の入れ替えでない job は、他へ移せる時だけ外す)。
-  (setv kept (run (held-placements now state timing)))
+  (<- kept dict (held-placements now state timing))
   ;; 2. 担い手の無い job を、生きている worker のうち空きの多い順へ置く(同点は名前順)。
   ;;    どこかの生きた worker がまだその job を動かしている間は置かない(条件が変わって生きた担い手から外した job は、
   ;;    元の担い手が止め終えたと報告してから置く)。drain 中の worker には置かない。
@@ -594,7 +597,7 @@
       (setv (get result job.spec.name) surge)
       (continue))
     (when (still-live-somewhere now state job.spec.name timing) (continue))
-    (setv mark (run (keep-mark-of state.keep-marks job.spec.name))
+    (setv mark (! (keep-mark-of state.keep-marks job.spec.name))
           candidates (sorted
       (lfor w (.values state.workers)
             :if (and (can-take now state job w load timing draining)
@@ -751,7 +754,9 @@
       "failed"))
 
 
-(defn #^ dict place-tasks [#^ int now #^ ClusterState state #^ dict placements #^ ClusterTiming timing]
+(defk place-tasks [now state placements timing]
+  {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % dict)]
+   :tags {:context "coordinator" :role "judgment"}}
   "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。"
   (setv tasks {})
   (for [#(id task) (.items state.tasks)]
@@ -912,7 +917,9 @@
   tasks)
 
 
-(defn #^ tuple absorb-task-result [#^ ClusterState state #^ str id #^ TaskResultBody body #^ int now]
+(defk absorb-task-result [state id body now]
+  {:pre [(: state ClusterState) (: id str) (: body TaskResultBody) (: now int)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
   "POST /tasks/<id>/result: task の子 process が終わる前に直に届けた結果を task の記録へ写す(#1387 — 結果の運び手を worker の
    heartbeat だけにすると、子の exit 0 から次の heartbeat までに worker が死んだ時に結果が届かず、起き直した worker が同じ task を
    もう 1 度走らせた)。本文 = {worker instance result format}(shared/protocol/task_result の task-result-request)。返り値 #(次の状態 status 答え)。
@@ -953,7 +960,8 @@
 
 ;; --- 1 拍の調停 ------------------------------------------------------------------------
 
-(defn #^ ClusterState sweep-board [#^ ClusterState state #^ int now]
+(defk sweep-board [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 期限を過ぎた盤の行を消した状態(期限つきの行が無ければ同じ object)。"
   (setv gone (sfor #(k row) (.items state.board) :if (and (is-not row.expires-ms None) (<= row.expires-ms now)) k))
   (if (not gone)
@@ -961,7 +969,8 @@
       (replace state :board (dfor #(k row) (.items state.board) :if (not-in k gone) k row))))
 
 
-(defn #^ ClusterState forget-silent-workers [#^ ClusterState state #^ int now]
+(defk forget-silent-workers [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: WORKER-FORGET-MS より長く沈黙し、置き先も task も持たない worker を忘れた状態(忘れる物が無ければ同じ object)。"
   (setv busy (| (sfor a (+ (list (.values state.placements)) (list (.values state.surges))) a.worker)
                 ;; 終わって結果を持っているだけの切り離した task は worker を引き留めない。
@@ -974,21 +983,24 @@
                      :drains (dfor #(n d) (.items state.drains) :if (not-in n gone) n d))))
 
 
-(defn #^ ClusterState sweep-drains [#^ ClusterState state #^ int now]
+(defk sweep-drains [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 期限を過ぎた drain を消した状態(消す物が無ければ同じ object)。頼み手(worker の preStop)は期限の内に頼み直し続ける。"
   (if (all (gfor d (.values state.drains) (> d.until-ms now)))
       state
       (replace state :drains (dfor #(n d) (.items state.drains) :if (> d.until-ms now) n d))))
 
 
-(defn #^ ClusterState sweep-warms [#^ ClusterState state #^ int now]
+(defk sweep-warms [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 期限を過ぎた温める表の行を消した状態(消す物が無ければ同じ object)。"
   (if (all (gfor w (.values state.warms) (> w.until-ms now)))
       state
       (replace state :warms (dfor #(k w) (.items state.warms) :if (> w.until-ms now) k w))))
 
 
-(defn #^ int cold-starts [#^ dict before #^ dict after]
+(defk cold-starts [before after]
+  {:pre [(: before dict) (: after dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "待ちから preparing に置かれた task の数(準備済みの worker が無いまま置いた = 冷たい起動)。"
   (len (lfor #(id t) (.items after)
              :if (and (= t.phase "preparing") (in id before) (= (. (get before id) phase) "queued"))
@@ -1000,14 +1012,15 @@
   "1 拍の調停: 期限を過ぎた物(盤の行・drain・温める表の行・沈黙した worker・消えた Worker への約束)を掃いてから、job と task の
    置き先を決め直し、置き先の変化を出来事の列に足した状態を求めるため。何も変わらなければ掃いた後の状態そのものを返す。"
   ;; 消された・忘れた Worker への途絶しても動かし続けてよい印の約束は、置き先の判断の前に外す(#2804 — その job を他へ置ける)。
-  (<- state ClusterState (sweep-keep-marks (forget-silent-workers (sweep-warms (sweep-drains (sweep-board given now) now) now) now)))
+  (<- state ClusterState
+      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains (! (sweep-board given now)) now)) now)) now))))
   ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
   ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
   ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。
   (setv before state.placements
-        placed (place-jobs now state timing)
+        placed (! (place-jobs now state timing))
         after (if (= placed before) before placed)
-        placed-tasks (place-tasks now state after timing)
+        placed-tasks (! (place-tasks now state after timing))
         tasks (if (= placed-tasks state.tasks) state.tasks placed-tasks))
   (when (and (is after before) (is tasks state.tasks))
     (return state))
@@ -1019,7 +1032,7 @@
                        "from" (if old old.worker None) "to" (if new new.worker None)
                        "generation" (if new new.generation None)})))
   (replace state :placements after :tasks tasks :events (tuple (cut events (- MAX-EVENTS) None))
-                 :env-cold-starts (+ state.env-cold-starts (cold-starts state.tasks tasks))))
+                 :env-cold-starts (+ state.env-cold-starts (! (cold-starts state.tasks tasks)))))
 
 
 (defn #^ bool durable-changed [#^ ClusterState before #^ ClusterState after]
@@ -1058,27 +1071,28 @@
   (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
 
 
-(defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ HeartbeatBody body #^ int now]
+(defk register-heartbeat [given body now]
+  {:pre [(: given ClusterState) (: body HeartbeatBody) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "heartbeat の中身(worker の能力・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
    = coordinator として調停する)。古い世代の heartbeat(generation-order が OLDER)は名乗りとして受けず、その世代を退いた世代の
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
    知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。
    本文の形の誤りは本文を解く所(coordinator/protocol/request_bodies — #2445)が 400 で断る。"
   (setv name body.name boot body.boot boot-at body.boot-at statuses body.statuses
-        previous (.get state.workers name)
+        previous (.get given.workers name)
         order (generation-order previous boot boot-at)
-        state (adopt-running-detached state name boot statuses now))
+        adopted (adopt-running-detached given name boot statuses now))
   (when (= order GenerationOrder.OLDER)
     ;; OLDER は今の世代と boot の両方が在る時だけ(generation-order の最初の枝が、どちらかの無い時を CURRENT にする)。
     (when (or (is previous None) (is boot None))
       (raise (RuntimeError (.format "世代の比べが OLDER なのに今の世代か boot が無い: {}" name))))
     (return (absorb-superseded-heartbeat
-              (replace state :workers (| state.workers {name (replace previous :retired (retired-with previous.retired boot))}))
+              (replace adopted :workers (| adopted.workers {name (replace previous :retired (retired-with previous.retired boot))}))
               name boot statuses now)))
   (setv envs (or body.envs (EnvsReport))
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
         node body.node
-        info (WorkerInfo name (tuple (gfor c (get caps 0) :if (not-in c state.derivable) c))
+        info (WorkerInfo name (tuple (gfor c (get caps 0) :if (not-in c adopted.derivable) c))
                          body.capacity now
                          (component-versions-of (or body.versions {}))
                          boot
@@ -1102,15 +1116,15 @@
                          ;; heartbeat ごとに worker/<名> の行から lastSeenMs が消え、書きが印の拍ごとでなくなる・#2903)。世代を問わない
                          ;; (#2903 の前の ClusterState.seen-marks も名ごとで、heartbeat が触らなかった)。
                          :seen-mark (if (is previous None) None previous.seen-mark))
-        state (replace (absorb-boot state name boot)
-                :workers (| state.workers {name info})
-                :statuses (| state.statuses {name (WorkerReport :at now :endpoint body.endpoint
-                                                               :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
+        registered (replace (absorb-boot adopted name boot)
+                     :workers (| adopted.workers {name info})
+                     :statuses (| adopted.statuses {name (WorkerReport :at now :endpoint body.endpoint
+                                                                       :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。
-  (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
-                                         info)
-                 :keep-marks (run (released-keep-marks state.keep-marks name body.kept-when-cut-off))))
+  (replace registered :tasks (promote-prepared (renew-detached (absorb-task-reports registered name statuses now boot) name boot now)
+                                              info)
+                      :keep-marks (! (released-keep-marks registered.keep-marks name body.kept-when-cut-off))))
 
 
 (defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
@@ -1208,8 +1222,10 @@
                    (WarmOffer :key w.key :runtime-env w.runtime-env)))))
 
 
-(defn #^ HeartbeatReply heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing #^ (| dict None) [ready-instances None] #^ int [now 0]
-                               #^ (| str None) [boot None] #^ (| tuple None) [statuses None]]
+(defk heartbeat-reply [state name timing [ready-instances None] [now 0] [boot None] [statuses None]]
+  {:pre [(: state ClusterState) (: name str) (: timing ClusterTiming) (: ready-instances (| dict None)) (: now int) (: boot (| str None))
+         (: statuses (| tuple None))]
+   :post [(: % HeartbeatReply)] :tags {:context "coordinator" :role "judgment"}}
   "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
   (when (and (is-not boot None) (superseded-boot state name boot))
@@ -1221,7 +1237,7 @@
   ;; revision = この返事を作った時の coordinator の版(#1933): worker は次の変化を GET /watch?after=<この版> で待つ。
   ;; keepWhenCutOff = 他へ移せない job に付ける「途絶しても動かし続けてよい」印(#2804 — keep-marked)。印を渡した事実は呼び手が
   ;; remember-keep-marks で約束として状態に残す。
-  (setv marked (run (keep-marked now state name timing)))
+  (<- marked frozenset (keep-marked now state name timing))
   (HeartbeatReply :jobs (tuple (gfor spec (jobs-for state name ready-instances)
                                      (if (in spec.name marked) (replace spec :keep-when-cut-off True) spec)))
                   :tasks (tasks-for state name boot) :warm (warms-for state name now)
@@ -1254,7 +1270,8 @@
                   :revision state.revision))
 
 
-(defn #^ StateView state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
+(defk state-view [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % StateView)] :tags {:context "coordinator" :role "judgment"}}
   "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。"
   (setv draining (draining-workers state now))
   (StateView :now now
@@ -1288,7 +1305,9 @@
               (except [error RuntimeEnvInvalid] (.format "runtimeEnv が誤っている: {}" error)))))
 
 
-(defn #^ tuple submit-task [#^ ClusterState state #^ TaskBody body #^ int now #^ (| str None) [owner None]]
+(defk submit-task [state body now [owner None]]
+  {:pre [(: state ClusterState) (: body TaskBody) (: now int) (: owner (| str None))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
   (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
@@ -1314,18 +1333,20 @@
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
 
 
-(defn #^ tuple poll-task [#^ ClusterState state #^ str id #^ int now]
+(defk poll-task [state id now]
+  {:pre [(: state ClusterState) (: id str) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "呼び手の問い合わせ。lease を延ばし、いまの様子を返す。"
-  (setv task (.get state.tasks id))
-  (when (is task None)
+  (setv found (.get state.tasks id))
+  (when (is found None)
     (return #(state 200 (TaskMissing :id id))))
-  (setv task (replace task :lease-until-ms (+ now task.lease-ms)))
+  (setv task (replace found :lease-until-ms (+ now found.lease-ms)))
   #((replace state :tasks (| state.tasks {id task})) 200
     (TaskProgress :phase task.phase :worker task.worker :detail task.detail :result task.result
                   :failure-kind task.failure-kind :retryable task.retryable)))
 
 
-(defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ LeaseBody body #^ int now]
+(defk lease-write [state name body now]
+  {:pre [(: state ClusterState) (: name str) (: body LeaseBody) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(lease_rules.lease-op)。行が変われば盤へ書く
    (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
   ;; 本文の欄の欠け・型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る(#1024・#2445)。
@@ -1373,13 +1394,14 @@
   write.body.value)
 
 
-(defn #^ tuple board-write [#^ ClusterState state #^ str key #^ BoardWrite write #^ int [now 0]]
+(defk board-write [state key write [now 0]]
+  {:pre [(: state ClusterState) (: key str) (: write BoardWrite) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "盤の行 1 つの compare-and-set。expect = 値で比べる(従来)・expectVersion = 行の版で比べる(0 = 行が無い時だけ)。
    両方あれば両方を満たす時だけ書く。value が null で delete が真なら行を消す。返事に行の新しい版を載せる。
    ttlSeconds(2026-09-25)= 行の期限。期限を過ぎた行は調停が消す(sweep-board)。付けない書きは期限を外す(ずっと残す)。
    上限(board-capacity-refusal)を越える書きは 507 で断る。"
   (setv body write.body ttl write.body.ttl-seconds)
-  (setv ttl-refusal (run (board-ttl-refusal ttl)))
+  (<- ttl-refusal (board-ttl-refusal ttl))
   (when (is-not ttl-refusal None)
     (return #(state 400 (BoardRefused :reason ttl-refusal))))
   (setv entry (.get state.board key)
