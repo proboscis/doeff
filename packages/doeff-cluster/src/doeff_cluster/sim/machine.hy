@@ -17,7 +17,9 @@
 ;;;   CrashCoordinator 秒         coordinator を SIGKILL で落とし(返事をせずに落ちる)、秒の後に同じ置き場で作り直して答える。
 ;;;   Redeclare 系               宣言の CLI と同じ system-declaration と apply-declaration で、起こした coordinator へ宣言を書く(答え =
 ;;;                              宣言した Service の名 — sim と同じ)。版は LocalMachine の revision・job の code は worker が code-repo
-;;;                              (配備と同じ CODE_REPO_URL — 版の木)からその版で取り出す(#3040)。
+;;;                              (配備と同じ CODE_REPO_URL — 版の木)からその版で取り出す(#3040)。LocalMachine に実行環境
+;;;                              (runtime-env)が在れば宣言に載せ、worker は配備と同じく許可表(WORKER_REPOS)でその repo を受け、
+;;;                              root を用意して job を動かす(#3042 — 入口の検めを通る本番の土台の job はこの道でだけ起きる)。
 ;;;   Crash 名                   worker が動かしている job の process を group ごと SIGKILL で落とす(答え = 落とした数)。worker は 0 以外の
 ;;;                              終わりとして本物の判断で起こし直す(sim の Crash は exit 1・ここは signal の終わり — worker の数え方は同じ)。
 ;;;   CutWorker・StallWorker・FailRoute は答えない — MachineCannotAnswer で、その effect の名と訳を出して止める(網を切る・固める・5xx を
@@ -52,6 +54,7 @@
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.protocol [PlainText])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
                                                      CrashCoordinator Redeclare Crash])
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
@@ -73,14 +76,17 @@
    その下)・port = coordinator の受け口(127.0.0.1)・workers = worker の顔ぶれ(sim と同じ SimWorker — name・provides・exclusive・
    capacity・node を使う)・boot-seconds = coordinator と worker の起き上がりを待つ上限の秒・stop-grace = 止める時に SIGTERM から
    SIGKILL までの猶予の秒。job の code の道(#3040): code-repo = 版の木の git(worker の CODE_REPO_URL — 配備と同じ名。空 = 版の木を
-   持たない worker)・revision = Redeclare が宣言に書く版(code-repo の commit — sim-cluster の revision と同じ役)。"
+   持たない worker)・revision = Redeclare が宣言に書く版(code-repo の commit — sim-cluster の revision と同じ役)・runtime-env =
+   Redeclare が宣言に載せる実行環境(repo と commit と uv の lock — sim-cluster の runtime-env と同じ役。None = 版の木の道。#3042):
+   worker は配備と同じく、その repo を許可表(WORKER_REPOS)で受け、root を用意して job を動かす。"
   (#^ str work-dir)
   (#^ int port)
   (#^ (get tuple #(SimWorker ...)) workers)
   (setv #^ float boot-seconds 120.0)
   (setv #^ float stop-grace 30.0)
   (setv #^ str code-repo "")
-  (setv #^ str revision ""))
+  (setv #^ str revision "")
+  (setv #^ (| RuntimeEnv None) runtime-env None))
 
 
 (defrecord MachineProcess
@@ -121,12 +127,23 @@
     (EnvEntry :name "WORK_DIR" :value (str (/ (Path machine.work-dir) "coordinator")))))
 
 
+(defk repo-allowlist [machine]
+  {:pre [(: machine LocalMachine)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker の許可表(boot.sh の WORKER_REPOS — 空白で並べた「<url>=<鍵の名>」)を、実行環境の repo の url を鍵なしで並べて組むため
+   (手元の repo は鍵なしで読む。実行環境が無ければ空 = どの url も断る — 配備と同じ既定)。"
+  (if (is machine.runtime-env None)
+      ""
+      (.join " " (lfor repo machine.runtime-env.repos (+ repo.url "=")))))
+
+
 (defk worker-env [machine worker url]
   {:pre [(: machine LocalMachine) (: worker SimWorker) (: url str)] :post [(: % (get tuple #(EnvEntry ...)))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "boot.sh の ROLE=worker に渡す環境変数を組むため(配備の worker と同じ名。世代と準備の file は worker ごとの dir に置く — 既定の
-   /tmp の file は同じ機体の worker どうしで重なる)。"
+   /tmp の file は同じ機体の worker どうしで重なる)。許可表と git の設定の置き場 WORKER_ACCESS_DIR も worker ごとの dir に置く — 既定の
+   $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の許可表と重なり、上書きする(#3042)。"
   (val home (/ (Path machine.work-dir) "workers" worker.name))
+  (<- repos str (repo-allowlist machine))
   #((EnvEntry :name "ROLE" :value "worker")
     (EnvEntry :name "COORDINATOR_URL" :value url)
     (EnvEntry :name "WORKER_NAME" :value worker.name)
@@ -136,6 +153,8 @@
     (EnvEntry :name "NODE_NAME" :value worker.node)
     (EnvEntry :name "WORK_DIR" :value (str home))
     (EnvEntry :name "CODE_REPO_URL" :value machine.code-repo)
+    (EnvEntry :name "WORKER_REPOS" :value repos)
+    (EnvEntry :name "WORKER_ACCESS_DIR" :value (str (/ home "access")))
     (EnvEntry :name "DOEFF_WORKER_BOOT_FILE" :value (str (/ home "boot")))
     (EnvEntry :name "DOEFF_WORKER_READY_FILE" :value (str (/ home "ready")))))
 
@@ -283,7 +302,7 @@
                 (ServiceReadiness :state "Missing" :reason answer.text))))
   (Redeclare [system]
     (<- versions dict (this-process-versions))
-    (val declaration (system-declaration system machine.revision :versions versions))
+    (val declaration (system-declaration system machine.revision :runtime-env machine.runtime-env :versions versions))
     (<- placed bool (apply-declaration url declaration MACHINE-ACTOR))
     (when (not placed)
       (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))
