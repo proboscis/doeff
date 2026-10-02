@@ -337,25 +337,28 @@
   (:= s (report s (ready-report spec "1-atlas") 2000))
   (:= s (beat s "atlas" 2000 (running-row spec "1-atlas")))
   (assert (= (ready-of s 2000) "Ready"))
-  ;; atlas が沈黙(45 秒)→ zeus へ移る(割り当ての世代 2)
-  (:= s (beat s "zeus" 48000))
+  ;; atlas が移し替えの期限を越えて沈黙 → zeus へ移る(割り当ての世代 2)。時刻は期限から作る(値を写さない — #2806 で 45 秒から 60 秒にした)。
+  (val moved-at (+ 2000 T.reassign-after-ms 1000))
+  (:= s (beat s "zeus" moved-at))
   (assert (= #((. (get s.placements "w") worker) (. (get s.placements "w") generation)) #("zeus" 2)) s.placements)
-  (assert (= (ready-of s 48000) "NotReady"))
-  (:= s (beat s "zeus" 50000 (running-row spec "1-zeus" :placement 2)))
-  (assert (= (ready-of s 50000) "NotReady"))                           ; zeus の process はまだ報告していない
-  (:= s (report s (ready-report spec "1-atlas") 51000))              ; 凍っていた atlas の process の遅れた報告
-  (assert (= (ready-of s 51000) "NotReady"))
-  (:= s (report s (ready-report spec "1-zeus" :worker "zeus" :placement 2) 60000))
-  (:= s (beat s "zeus" 60000 (running-row spec "1-zeus" :placement 2)))
-  (assert (= (ready-of s 60000) "Ready"))
-  ;; zeus が沈黙し atlas へ戻る(割り当ての世代 3)。atlas の worker は起動し直して試行の番号が 1 に戻った — 名は新しい
-  (:= s (beat s "atlas" 106000))
+  (assert (= (ready-of s moved-at) "NotReady"))
+  (:= s (beat s "zeus" (+ moved-at 2000) (running-row spec "1-zeus" :placement 2)))
+  (assert (= (ready-of s (+ moved-at 2000)) "NotReady"))             ; zeus の process はまだ報告していない
+  (:= s (report s (ready-report spec "1-atlas") (+ moved-at 3000)))  ; 凍っていた atlas の process の遅れた報告
+  (assert (= (ready-of s (+ moved-at 3000)) "NotReady"))
+  (val zeus-last (+ moved-at 12000))
+  (:= s (report s (ready-report spec "1-zeus" :worker "zeus" :placement 2) zeus-last))
+  (:= s (beat s "zeus" zeus-last (running-row spec "1-zeus" :placement 2)))
+  (assert (= (ready-of s zeus-last) "Ready"))
+  ;; zeus が期限を越えて沈黙し atlas へ戻る(割り当ての世代 3)。atlas の worker は起動し直して試行の番号が 1 に戻った — 名は新しい
+  (val back-at (+ zeus-last T.reassign-after-ms 1000))
+  (:= s (beat s "atlas" back-at))
   (assert (= #((. (get s.placements "w") worker) (. (get s.placements "w") generation)) #("atlas" 3)) s.placements)
-  (:= s (beat s "atlas" 107000 (running-row spec "1-atlas-again" :placement 3)))
-  (:= s (report s (ready-report spec "1-atlas") 107500))             ; 最初の atlas の process の古い報告(同じ試行の番号 1)
-  (assert (= (ready-of s 107500) "NotReady"))
-  (:= s (report s (ready-report spec "1-atlas-again" :placement 3) 110000))
-  (assert (= (ready-of s 110000) "Ready")))
+  (:= s (beat s "atlas" (+ back-at 1000) (running-row spec "1-atlas-again" :placement 3)))
+  (:= s (report s (ready-report spec "1-atlas") (+ back-at 1500)))  ; 最初の atlas の process の古い報告(同じ試行の番号 1)
+  (assert (= (ready-of s (+ back-at 1500)) "NotReady"))
+  (:= s (report s (ready-report spec "1-atlas-again" :placement 3) (+ back-at 4000)))
+  (assert (= (ready-of s (+ back-at 4000)) "Ready")))
 
 
 (deftest test-metrics-are-exported-only-for-the-current-process-with-production-names
@@ -400,7 +403,7 @@
 
 
 (deftest test-a-silent-carrier-is-unknown-until-its-jobs-move-away
-  ;; 2026-09-25: 担い手の heartbeat が途絶えただけ(移し替えの 45 秒の内)は「分からない」— Rollout は失敗と数えない。
+  ;; 2026-09-25: 担い手の heartbeat が途絶えただけ(移し替えの期限の内)は「分からない」— Rollout は失敗と数えない。
   ;; 移し替えの期限を過ぎたら NotReady(job は他へ移る)。
   (setv spec (| SPEC {"readiness" {"windowSeconds" 10}}))
   (val reply-33 (call (ClusterState) "POST" "/resources/Service" {"name" "w" "spec" spec}))

@@ -8,12 +8,16 @@
 (defclass [(dataclass :frozen True)] ClusterTiming []
   (setv #^ int lease-ms 10000)          ; これより新しい heartbeat の worker にだけ新しく割り当てる
   ;; fence は tailnet の実測の途絶(最長 約 13 秒・2026-09-23 newmac)より長く、移し替えは fence より十分長く取る
-  ;; (止めた worker と新しい担い手が同時に動かない)。代償は障害時の移し替えが 45 秒になること。
+  ;; (止めた worker と新しい担い手が同時に動かない)。代償は障害時の移し替えが 60 秒になること。
   ;; worker は heartbeat の返事の timing から fence を受け取る(この値が唯一の定義点)。
   ;; worker が連絡の途絶から lease を持たない job と task を止めるまで。書き手(入れ替えを宣言した job)は止めない — 書きは lease の
   ;; 柵だけが守る(worker_policy.kept-when-cut-off・2026-09-25)。
   (setv #^ int fence-ms 20000)
-  (setv #^ int reassign-after-ms 45000) ; 連絡の途絶えた worker の job を他へ移すまで
+  ;; 連絡の途絶えた worker の job を他へ移すまで。条 C4 timing-outlasts-the-self-stop(architecture.hy・#2806): 移し替えは、worker が
+  ;; 自分で止まり切るまで(fence + heartbeat の返事の上限 + 接続の上限 + 子の停止の猶予 = 20 + 15 + 2 + 15 = 52 秒)より後。45 秒では
+  ;; 足りず(戻った worker が返事を待つ間に移し替えが来る)、60 秒にした(余白 8 秒 — 返事の上限を詰める案は /watch の上限を詰める版を
+  ;; またぐ変更と、coordinator の fsync の詰まりの間の heartbeat の落ちを招くので採らない・cisco-c8 の決め 2026-10-02)。
+  (setv #^ int reassign-after-ms 60000)
   ;; 能力と版の合う worker が登録されているが live でない間、待っている task を失敗にせず待つ上限(その worker の最後の連絡から数える —
   ;; task の lease とは別)。worker の Recreate の入れ替え(古い Pod の drain の最長 約 4 時間 + 新しい Pod の名乗り)を覆う 5 時間
   ;; (#2753 — 切り離した task の lease は積んだ時の 60 秒で、入れ替えの間に過ぎて「合う worker が無い」で落ちた)。

@@ -33,6 +33,14 @@
 ;;;   止めた後・戻す前に読めた task の置き先を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-does-not-announce-its-stop-breaks-c3(止まり始めを heartbeat で名乗らない worker — sim の SimWorker の
 ;;;   silent-stop — で、同じ筋書きに C3 の破りが出る)。
+;;;   C4 timing-outlasts-the-self-stop(doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop — #2806)— coordinator が
+;;;   連絡の途絶えた worker の印の無い job を他へ移す時刻(ClusterTiming.reassign-after-ms)は、その worker が自分で job を止め切る最悪の
+;;;   時刻(fence + heartbeat の返事の上限 + 接続の上限 + 子の停止の猶予 — 送った heartbeat が上限まで答えない間は worker の周期が止まって
+;;;   いて判じられない)より後(C2 の時間の柵の値の側)。値の定義は 3 か所(ClusterTiming・foundation/coordinator_http の REPLY-SECONDS と
+;;;   CONNECT-SECONDS・WorkerPolicy の停止の猶予)に分かれているので、判断は値を受け取る純関数で、値を集めるのは呼び手。確かめるのは
+;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の定数から内訳を作って判断に渡す — 数を検に
+;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
+;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -83,7 +91,8 @@
    :entry-modules ["doeff_cluster.coordinator.entry.main"]
    :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"
                 "doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job"
-                "doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"
+                "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh が起こす旧い名 doeff_cluster.main は渡すだけの入口)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
