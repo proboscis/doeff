@@ -15,6 +15,4 @@ Custom runners can ship in any Python package and are selected via
 * ``myapp.runners.tmux`` — spawn in a tmux pane for interactive debugging
 """
 
-from doeff.runners.local import run_local
-
-__all__ = ["run_local"]
+from doeff.runners.local import run_local as run_local
