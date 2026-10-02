@@ -68,7 +68,8 @@
             (<- entries tuple (WalkTree path))
             (<- listing tuple (tree-listing (lfor e entries e.name)))
             (:= pycs (len (get listing 1))))
-          (TreeCheck :name name :modified stat.modified :size stat.size :reason (marker-problem text name want-bytecode pycs)))))
+          (<- reason (| str None) (marker-problem text name want-bytecode pycs))
+          (TreeCheck :name name :modified stat.modified :size stat.size :reason reason))))
 
 
 (defk cache-checks [settings checked]

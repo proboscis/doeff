@@ -65,17 +65,17 @@
 
 
 (deftest test-tree-and-marker-checks-are-pure
-  (assert (in "source が 1 つも無い" (or (tree-problem [] (frozenset) (frozenset)) "")))
-  (setv marker (json.dumps (marker-content "rev1" True ["a/m.py"] (frozenset [(cache-rel "a/m.py")]) [])))
-  (assert (is (marker-problem marker "rev1" True 1) None))
-  (assert (in "印が無い" (or (marker-problem None "rev1" True 1) "")))
-  (assert (in "木の名前と違う" (or (marker-problem marker "rev2" True 1) "")))
-  (assert (in "1 file のはずが 0 file" (or (marker-problem marker "rev1" True 0) "")))
-  (assert (in "読めない" (or (marker-problem "{" "rev1" True 1) "")))
+  (assert (in "source が 1 つも無い" (or (! (tree-problem [] (frozenset) (frozenset))) "")))
+  (setv marker (json.dumps (! (marker-content "rev1" True ["a/m.py"] (frozenset [(cache-rel "a/m.py")]) []))))
+  (assert (is (! (marker-problem marker "rev1" True 1)) None))
+  (assert (in "印が無い" (or (! (marker-problem None "rev1" True 1)) "")))
+  (assert (in "木の名前と違う" (or (! (marker-problem marker "rev2" True 1)) "")))
+  (assert (in "1 file のはずが 0 file" (or (! (marker-problem marker "rev1" True 0)) "")))
+  (assert (in "読めない" (or (! (marker-problem "{" "rev1" True 1)) "")))
   ;; 焼かない worker(--no-warm)は bytecode の無い印でよい。焼く worker はそれを完成品と見ない。
   (setv plain (json.dumps {"format" 1 "revision" "rev1" "bytecode" False}))
-  (assert (is (marker-problem plain "rev1" False 0) None))
-  (assert (in "焼かずに" (or (marker-problem plain "rev1" True 0) ""))))
+  (assert (is (! (marker-problem plain "rev1" False 0)) None))
+  (assert (in "焼かずに" (or (! (marker-problem plain "rev1" True 0)) ""))))
 
 
 ;; --- code-host(手元の git repo と偽の焼きの道具)---------------------------------------

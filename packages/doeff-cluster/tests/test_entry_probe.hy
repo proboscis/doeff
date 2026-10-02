@@ -52,48 +52,48 @@
 
 (deftest test-only-service-jobs-are-probed
   (assert (probed-job S1))
-  (assert (= (probe-args S1) #("probe")))
+  (assert (= (! (probe-args S1)) #("probe")))
   (assert (not (probed-job (JobSpec "a" "jobs.a" #() "rev1"))))
   (assert (not (probed-job (JobSpec "task/1" JOB-ENTRY #("task" "--result" "r") "rev1" :once True)))))
 
 
 (deftest test-a-service-starts-only-after-the-probe-passes
   ;; 木が揃う → 検めを撃つ → 走っている間は待つ → PASSED で起こす。
-  (assert (= (plan 0 #(S1) (! (world :codes #())) {} POLICY) #((PrepareCode "rev1"))))
-  (assert (= (plan 0 #(S1) (! (world)) {} POLICY) #((ProbeEntry S1 "/c/rev1"))))
-  (assert (= (plan 0 #(S1) (! (world :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING)))) {} POLICY) #()))
-  (assert (= (. (get (statuses 0 #(S1) (! (world)) {} POLICY) 0) phase) JobPhase.STARTING))
-  (assert (= (plan 0 #(S1) (! (world :probes #((! (passed S1))))) {} POLICY) #((StartJob S1 1 "/c/rev1")))))
+  (assert (= (! (plan 0 #(S1) (! (world :codes #())) {} POLICY)) #((PrepareCode "rev1"))))
+  (assert (= (! (plan 0 #(S1) (! (world)) {} POLICY)) #((ProbeEntry S1 "/c/rev1"))))
+  (assert (= (! (plan 0 #(S1) (! (world :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING)))) {} POLICY)) #()))
+  (assert (= (. (get (! (statuses 0 #(S1) (! (world)) {} POLICY)) 0) phase) JobPhase.STARTING))
+  (assert (= (! (plan 0 #(S1) (! (world :probes #((! (passed S1))))) {} POLICY)) #((StartJob S1 1 "/c/rev1")))))
 
 
 (deftest test-a-failed-probe-is-shown-and-fired-again-after-the-retry-wait
   (setv w (! (world :probes #((! (failed S1 1000))))))
-  (assert (= (plan 30999 #(S1) w {} POLICY) #()))
-  (setv #(status) (statuses 30999 #(S1) w {} POLICY))
+  (assert (= (! (plan 30999 #(S1) w {} POLICY)) #()))
+  (setv #(status) (! (statuses 30999 #(S1) w {} POLICY)))
   (assert (= status.phase JobPhase.PROBE-FAILED))
   (assert (= status.detail "新の入口を読み込めない: ImportError: cannot import name 'GetMonotonic'") status.detail)
-  (assert (= (plan 31000 #(S1) w {} POLICY) #((ProbeEntry S1 "/c/rev1")))))
+  (assert (= (! (plan 31000 #(S1) w {} POLICY)) #((ProbeEntry S1 "/c/rev1")))))
 
 
 (deftest test-handoff-keeps-the-old-writer-until-the-new-entry-probes
   (setv codes #(READY1 READY2))
   ;; 新の木が揃っても、検めの前・走っている間・FAILED の間は旧を名から外さない(止めもしない)。
-  (assert (= (plan 0 #(S2) (! (world :processes #((! (running S1))) :codes codes)) {} POLICY) #((ProbeEntry S2 "/c/rev2"))))
-  (assert (= (plan 0 #(S2) (! (world :processes #((! (running S1))) :codes codes
+  (assert (= (! (plan 0 #(S2) (! (world :processes #((! (running S1))) :codes codes)) {} POLICY)) #((ProbeEntry S2 "/c/rev2"))))
+  (assert (= (! (plan 0 #(S2) (! (world :processes #((! (running S1))) :codes codes
                                      :probes #((ProbeView (spec-hash S2) ProbeState.RUNNING))))
-                   {} POLICY)
+                   {} POLICY))
              #()))
   (setv broken (! (world :processes #((! (running S1))) :codes codes :probes #((! (failed S2 1000))))))
-  (assert (= (plan 5000 #(S2) broken {} POLICY) #()))
-  (setv #(status) (statuses 5000 #(S2) broken {} POLICY))
+  (assert (= (! (plan 5000 #(S2) broken {} POLICY)) #()))
+  (setv #(status) (! (statuses 5000 #(S2) broken {} POLICY)))
   (assert (= status.phase JobPhase.RUNNING))
   (assert (= status.running-revision "rev1"))
   (assert (.startswith status.detail "入れ替えを待つ(旧は動かしたまま)— 新の入口を読み込めない: ImportError") status.detail)
   ;; 撃ち直しの間を過ぎたら撃ち直す(旧はそのまま)。
-  (assert (= (plan 31000 #(S2) broken {} POLICY) #((ProbeEntry S2 "/c/rev2"))))
+  (assert (= (! (plan 31000 #(S2) broken {} POLICY)) #((ProbeEntry S2 "/c/rev2"))))
   ;; PASSED になったら旧を名から外す(次の拍で新を起こす)。
   (setv ok (! (world :processes #((! (running S1))) :codes codes :probes #((! (passed S2))))))
-  (assert (= (plan 31000 #(S2) ok {} POLICY) #((RetireJob "w" 10 "w#retired-1-10")))))
+  (assert (= (! (plan 31000 #(S2) ok {} POLICY)) #((RetireJob "w" 10 "w#retired-1-10")))))
 
 
 ;; --- 実の子 process(検めの言い換え probe-host — #2465)と入口(job_entry probe)-------------------------------------------
@@ -346,13 +346,13 @@
   ;; 反例 (d): 検めの間の状態が starting ではなく検めの段(probing)で、経過の秒・回数・直前の失敗の理由を持つ。
   ;; 以前は検めの間を starting と出し、理由(probe-failed)は FAILED から撃ち直すまでの 30 秒しか見えなかった。
   (val plain (! (world :codes #(READY1) :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING)))))
-  (val first (get (statuses 0 #(S1) plain {} POLICY) 0))
+  (val first (get (! (statuses 0 #(S1) plain {} POLICY)) 0))
   (assert (= first.phase JobPhase.PROBING) first.phase)
   ;; 撃ち直しの間: 直前の失敗の理由・回数・経過の秒が状態に残る。
   (val again (! (world :codes #(READY1)
                        :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING :started-ms 1000 :attempts 2
                                             :last-failure "ImportError: cannot import name 'GetMonotonic'")))))
-  (val status (get (statuses 46000 #(S1) again {} POLICY) 0))
+  (val status (get (! (statuses 46000 #(S1) again {} POLICY)) 0))
   (assert (= status.phase JobPhase.PROBING))
   (assert (= status.probe (ProbeStatus :state "running" :elapsed-seconds 45 :attempts 2
                                        :last-failure "ImportError: cannot import name 'GetMonotonic'"))
@@ -397,8 +397,8 @@
 
 
 (deftest test-probe-reason-is-the-last-line
-  (assert (= (probe-reason 1 "Traceback\n  File x\nImportError: nope\n\n") "ImportError: nope"))
-  (assert (in "終了 3" (probe-reason 3 ""))))
+  (assert (= (! (probe-reason 1 "Traceback\n  File x\nImportError: nope\n\n")) "ImportError: nope"))
+  (assert (in "終了 3" (! (probe-reason 3 "")))))
 
 
 ;; --- 宣言から消えた spec の検めの記録(2026-09-27 — #757)--------------------------------------------------
@@ -406,10 +406,10 @@
 ;; 落とさなかった(版を上げるたびに増え続ける)。plan が今の宣言の spec の指紋を渡し(ForgetProbes)、持ち主が集合に無い分を落とす。
 
 (deftest test-the-plan-hands-the-declared-spec-hashes-when-a-stale-probe-record-is-observed
-  (val stale (plan 0 #(S2) (! (world :codes #(READY2) :probes #((! (passed S2)) (! (failed S1))))) {} POLICY))
+  (val stale (! (plan 0 #(S2) (! (world :codes #(READY2) :probes #((! (passed S2)) (! (failed S1))))) {} POLICY)))
   (assert (in (ForgetProbes (frozenset [(spec-hash S2)])) stale) stale)
   ;; 宣言の spec の記録だけなら撃たない。
-  (val clean (plan 0 #(S2) (! (world :codes #(READY2) :probes #((! (passed S2))))) {} POLICY))
+  (val clean (! (plan 0 #(S2) (! (world :codes #(READY2) :probes #((! (passed S2))))) {} POLICY)))
   (assert (not (any (gfor a clean (isinstance a ForgetProbes)))) clean))
 
 
@@ -472,17 +472,17 @@
 
 
 (deftest test-an-old-service-spec-is-refused-by-the-probe-with-its-reason
-  (val reason (probe-refusal OLD-SPEC))
+  (val reason (! (probe-refusal OLD-SPEC)))
   (assert (is-not reason None) "古い形の service は断る")
   (assert (in "--factory・--env・--config" reason) reason)
   ;; 新しい形でも置き場のキーが無ければ断る。
-  (val keyless (probe-refusal (replace S1 :program None)))
+  (val keyless (! (probe-refusal (replace S1 :program None))))
   (assert (is-not keyless None) "置き場のキーの無い service は断る")
   (assert (in "置き場のキー" keyless) keyless)
   ;; 新しい形の service・task・素の entry は断らない。
-  (assert (is (probe-refusal S1) None))
-  (assert (is (probe-refusal (JobSpec "task/1" JOB-ENTRY #("task" "--result" "r") "rev1" :once True)) None))
-  (assert (is (probe-refusal (JobSpec "a" "jobs.a" #() "rev1")) None)))
+  (assert (is (! (probe-refusal S1)) None))
+  (assert (is (! (probe-refusal (JobSpec "task/1" JOB-ENTRY #("task" "--result" "r") "rev1" :once True))) None))
+  (assert (is (! (probe-refusal (JobSpec "a" "jobs.a" #() "rev1"))) None)))
 
 
 (defk old-spec-scene []
@@ -506,7 +506,7 @@
   (assert (= again views) again)
   ;; worker の状態の報告では probe-failed と理由(起こさない)。
   (val w (! (world :probes #(view))))
-  (assert (= (plan (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) #()))
-  (val status (get (statuses (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY) 0))
+  (assert (= (! (plan (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY)) #()))
+  (val status (get (! (statuses (+ view.failed-ms 1) #(OLD-SPEC) w {} POLICY)) 0))
   (assert (= status.phase JobPhase.PROBE-FAILED) status)
   (assert (in "旧い service の spec の引数" status.detail) status.detail))

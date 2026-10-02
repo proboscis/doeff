@@ -192,12 +192,12 @@
    判断・温めていない env の task の最初の拍の判断を返すため。"
   (val policy (WorkerPolicy))
   (<- before tuple (ObserveEnvs))
-  (val warming (plan 0 #() (WorldView before #()) {} policy :warm #(warm)))
+  (val warming (! (plan 0 #() (WorldView before #()) {} policy :warm #(warm))))
   (<- (PrepareEnv warm.key warm.runtime-env :warm True))
   (setv runs.released True)
   (<- after tuple (ObserveEnvs))
-  (val first (plan 1 #(spec) (WorldView after #()) {} policy :warm #(warm)))
-  (val cold-first (plan 2 #(cold-spec) (WorldView after #()) {} policy :warm #(warm)))
+  (val first (! (plan 1 #(spec) (WorldView after #()) {} policy :warm #(warm))))
+  (val cold-first (! (plan 2 #(cold-spec) (WorldView after #()) {} policy :warm #(warm))))
   #(warming after first cold-first))
 
 

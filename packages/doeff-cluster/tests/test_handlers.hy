@@ -58,11 +58,11 @@
   (assert (= (module-name "vendor/hy/lib/core.hy") "vendor.hy.lib.core"))
   (assert (is (module-name "vendor/x.py" #("." "vendor/hy")) None))
   (setv tag (cut (cache-rel "a/m.py") (len "a/__pycache__/m") None))
-  (assert (= (carry-pairs [(+ "a/__pycache__/m" tag) (+ "a/__pycache__/n" tag)]
+  (assert (= (! (carry-pairs [(+ "a/__pycache__/m" tag) (+ "a/__pycache__/n" tag)]
                           (frozenset ["a/m.py" "a/n.hy"]) (frozenset ["a/m.py" "a/n.hy"]) (frozenset [])
-                          (frozenset ["a/n.hy"]))
+                          (frozenset ["a/n.hy"])))
              [(+ "a/__pycache__/m" tag)]))
-  (assert (= (compile-plan ["a/m.py" "vendor/x.py"] (frozenset [(cache-rel "a/m.py")]) #("." "vendor/hy")) [])))
+  (assert (= (! (compile-plan ["a/m.py" "vendor/x.py"] (frozenset [(cache-rel "a/m.py")]) #("." "vendor/hy"))) [])))
 
 (import json)
 (import threading)
