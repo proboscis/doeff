@@ -239,7 +239,7 @@ def create_session_out_of_band(name: str, *, cwd: str | None = None) -> str:
     dance is gone, and agent.start itself was reshaped into "start a managed
     agent in an existing pane" and cannot create named shell panes).
     """
-    workdir = cwd or os.environ.get("HOME", "/tmp")
+    workdir = cwd or str(Path.home())
     if SESSIONHOST_BACKEND != "herdr":
         created = subprocess.run(
             ["tmux", "new-session", "-d", "-s", name, "-c", workdir,
@@ -277,7 +277,7 @@ def create_externally_named_seat_out_of_band(name: str, *, cwd: str | None = Non
     """
     if SESSIONHOST_BACKEND != "herdr":
         raise RuntimeError("externally named seats exist on the herdr backend only")
-    workdir = cwd or os.environ.get("HOME", "/tmp")
+    workdir = cwd or str(Path.home())
     ws = _herdr_call(
         "workspace.create", {"label": f"{name}-ws", "cwd": workdir, "focus": False},
         timeout=30.0,
@@ -964,7 +964,7 @@ class Scenario:
         for rc_name in (".zshenv", ".zprofile", ".zshrc"):
             (zdotdir / rc_name).write_text(prepend, encoding="utf-8")
         session_env = {
-            "PATH": f"{shim_dir}:{os.environ['PATH']}",
+            "PATH": os.pathsep.join([str(shim_dir), *os.get_exec_path()]),
             "ZDOTDIR": str(zdotdir),
             "DOEFF_RESULT_SESSION_ID": self.session_id,
             "DOEFF_AGENTD_SOCKET": str(self.harness.socket_path),

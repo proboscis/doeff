@@ -17,9 +17,11 @@ import shutil
 import sys
 from pathlib import Path
 
+from runner_env import agentd_bin_setting
+
 
 def resolve_sessionhost_bin() -> Path:
-    if env_bin := os.environ.get("DOEFF_AGENTD_BIN"):
+    if env_bin := agentd_bin_setting():
         return Path(env_bin)
     sibling = Path(sys.executable).parent / "doeff-sessionhost"
     if sibling.exists() and os.access(sibling, os.X_OK):
