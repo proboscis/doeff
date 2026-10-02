@@ -96,8 +96,9 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
     assert passed.returncode == 0, passed.stderr
 
 
-def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, dict[str, int]]) -> tuple[Path, dict[str, str]]:
-    """置き場を任意の dir にした検体の木(偽の linter つき)を作るため — 基点の鍵が置き場に依らないことを、別々の場所の木で試す。"""
+def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, dict[str, int]]) -> dict[str, str]:
+    """置き場を任意の dir(root)にした検体の木(偽の linter つき)を作るため — 基点の鍵が置き場に依らないことを、別々の場所の木で試す。
+    答えは、偽の linter を先に引く子の process の環境。"""
     package: Path = root / "packages" / "doeff-cluster"
     package.mkdir(parents=True)
     (package / "lint-warning-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
@@ -106,7 +107,7 @@ def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, 
     linter: Path = tools / "doeff-linter"
     linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
     linter.chmod(0o755)
-    return root, {"PATH": f"{tools}:/usr/bin:/bin"}
+    return {"PATH": f"{tools}:/usr/bin:/bin"}
 
 
 def _absolute_report(root: Path, files: list[str]) -> list[dict[str, object]]:
@@ -120,18 +121,18 @@ def test_absolute_paths_from_another_tree_are_keyed_from_the_package(tmp_path: P
     # 基点どおりなら check は緑・path を渡す check も比べる(1 つ増やせば赤)・lower は基点を空にしない。
     for place in ("tree-a", "elsewhere/tree-b"):
         root: Path = tmp_path / place
-        repo, environment = _fake_repo(root, _absolute_report(root, ["src/a.hy", "src/a.hy", "src/b.hy"]), BASE)
-        ok = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check"], env=environment,
+        environment = _fake_repo(root, _absolute_report(root, ["src/a.hy", "src/a.hy", "src/b.hy"]), BASE)
+        ok = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root), "check"], env=environment,
                             capture_output=True, text=True, check=False)
         assert ok.returncode == 0, ok.stderr
-        lower = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "lower"], env=environment,
+        lower = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root), "lower"], env=environment,
                                capture_output=True, text=True, check=False)
         assert lower.returncode == 0, lower.stderr
-        kept = json.loads((repo / "packages" / "doeff-cluster" / "lint-warning-baseline.json").read_text(encoding="utf-8"))
+        kept = json.loads((root / "packages" / "doeff-cluster" / "lint-warning-baseline.json").read_text(encoding="utf-8"))
         assert kept == BASE, kept
     grown_root: Path = tmp_path / "tree-c"
-    repo, environment = _fake_repo(grown_root, _absolute_report(grown_root, ["src/a.hy"] * 3 + ["src/b.hy"]), BASE)
-    staged = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check", "packages/doeff-cluster/src/a.hy"],
+    environment = _fake_repo(grown_root, _absolute_report(grown_root, ["src/a.hy"] * 3 + ["src/b.hy"]), BASE)
+    staged = subprocess.run([sys.executable, str(SCRIPT), "--root", str(grown_root), "check", "packages/doeff-cluster/src/a.hy"],
                             env=environment, capture_output=True, text=True, check=False)
     assert staged.returncode == 1, staged.stderr
     assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in staged.stderr

@@ -8,6 +8,7 @@ do! returns a Program (generator). defp/defpp enforce return-type invariants:
 from __future__ import annotations
 
 import inspect
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -174,8 +175,9 @@ class TestImportInsideDefpDefk:
     expansion must emit them as-is, not wrap in (yield ...).
     """
 
-    @pytest.fixture(autouse=True)
-    def _import_repro(self) -> None:
+    @pytest.fixture
+    def mod(self) -> ModuleType:
+        """#388 の再現の .hy(fixtures/repro_388)を、検ごとに読み直した module。"""
         import os
         import sys
 
@@ -186,29 +188,29 @@ class TestImportInsideDefpDefk:
         sys.modules.pop("fixtures.repro_388", None)
         import fixtures.repro_388 as mod
 
-        self.mod = mod
+        return mod
 
-    def test_defp_import_inside(self) -> None:
+    def test_defp_import_inside(self, mod: ModuleType) -> None:
         """defp with (import json) before last expression."""
         result = run(
-            reader(env={"test": "hello"})(self.mod.import_inside_defp)
+            reader(env={"test": "hello"})(mod.import_inside_defp)
         )
         assert result == '{"a": "hello"}'
 
-    def test_defk_import_inside(self) -> None:
+    def test_defk_import_inside(self, mod: ModuleType) -> None:
         """defk with (import json) before last expression."""
-        result = run(self.mod.import_inside_defk("hello"))
+        result = run(mod.import_inside_defk("hello"))
         assert result == '{"a": "hello"}'
 
-    def test_defp_import_only(self) -> None:
+    def test_defp_import_only(self, mod: ModuleType) -> None:
         """defp with no effect bind — just import + expression."""
-        result = run(self.mod.import_only_defp)
+        result = run(mod.import_only_defp)
         assert result == '{"status": "ok"}'
 
-    def test_defp_multi_import(self) -> None:
+    def test_defp_multi_import(self, mod: ModuleType) -> None:
         """defp with multiple imports in body."""
         result = run(
-            reader(env={"key": "world"})(self.mod.multi_import_defp)
+            reader(env={"key": "world"})(mod.multi_import_defp)
         )
         assert result is not None
         import json

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from types import CodeType, FrameType
 
 import pytest
@@ -67,7 +68,15 @@ def test_each_handler_declares_the_types_it_answers(installed: object, types: tu
     assert handler_effect_types(_raw(installed)) == types
 
 
-def _entries(code: CodeType, run: Callable[[], object]) -> tuple[int, object]:
+@dataclass(frozen=True)
+class _Entries:
+    """run の間に code の関数が始まった回数(entered)と、run の答え(result)。"""
+
+    entered: int
+    result: object
+
+
+def _entries(code: CodeType, run: Callable[[], object]) -> _Entries:
     """run の間に code の関数が始まった回数と、run の答え。本体は generator なので再開ごとにも call の事象が出る — frame の同一性で数える。"""
     frames: dict[int, FrameType] = {}
 
@@ -80,7 +89,7 @@ def _entries(code: CodeType, run: Callable[[], object]) -> tuple[int, object]:
         result = run()
     finally:
         sys.setprofile(None)
-    return len(frames), result
+    return _Entries(entered=len(frames), result=result)
 
 
 @do
@@ -96,9 +105,9 @@ def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
     # 列の最後が一番内側: Ask は state を飛ばして外の reader に届く
     stack = [reader({"a": 1, "b": 2, "c": 3}), state()]
     body = _raw(stack[1]).__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
-    entered, result = _entries(body, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
-    assert result == 6
-    assert entered == 2, "state の本体に入るのは Put と Get の 2 回だけ(Ask 3 回は飛ばす)"
+    seen = _entries(body, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
+    assert seen.result == 6
+    assert seen.entered == 2, "state の本体に入るのは Put と Get の 2 回だけ(Ask 3 回は飛ばす)"
 
 
 def test_the_answers_and_the_types_it_answers_are_unchanged() -> None:
@@ -111,6 +120,6 @@ def test_the_answers_and_the_types_it_answers_are_unchanged() -> None:
 
     stack = [reader({"a": 1, "b": 2, "c": 3}), state(), passes_everything]
     code = passes_everything.__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
-    entered, result = _entries(code, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
-    assert result == 6
-    assert entered == 5, "型の註の無い handler は Ask 3・Put・Get の 5 回とも受ける"
+    seen = _entries(code, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
+    assert seen.result == 6
+    assert seen.entered == 5, "型の註の無い handler は Ask 3・Put・Get の 5 回とも受ける"

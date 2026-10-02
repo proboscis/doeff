@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.cli.cli_child import with_settings
 
 pytestmark = [
     pytest.mark.cli,
@@ -20,23 +21,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 def run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     command = ["uv", "run", "python", "-m", "doeff", "run", *args]
-    env = {
+    settings = {
         "PYTHONPATH": str(PROJECT_ROOT),
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
         "DOEFF_DISABLE_PROFILE": "1",
     }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
     return subprocess.run(
-        command,
+        with_settings(command, settings),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        env=env,
         check=False,
         input=input_text,
     )

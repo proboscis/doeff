@@ -79,7 +79,16 @@ class RuntimeAdapter:
         return run(wrapped)
 
 
-def _read_process_table() -> tuple[dict[int, list[int]], dict[int, int]]:
+@dataclass(frozen=True)
+class _ProcessTable:
+    """ps の 1 回の読み: 親の pid → 子の pid の列と、pid → 常駐の大きさ(KiB)。"""
+
+    children_by_parent: dict[int, list[int]]
+    rss_kib: dict[int, int]
+
+
+def _read_process_table() -> _ProcessTable:
+    """記憶の見張りが process の木の大きさを数えるため、ps の表を 1 回読む。"""
     result = subprocess.run(
         ["ps", "-axo", "pid=,ppid=,rss="],
         check=True,
@@ -103,11 +112,11 @@ def _read_process_table() -> tuple[dict[int, list[int]], dict[int, int]]:
             continue
         children_by_parent[ppid].append(pid)
         rss_kib[pid] = rss
-    return children_by_parent, rss_kib
+    return _ProcessTable(children_by_parent=children_by_parent, rss_kib=rss_kib)
 
 
-def _collect_process_tree(root_pid: int) -> tuple[set[int], dict[int, int]]:
-    children_by_parent, rss_kib = _read_process_table()
+def _collect_process_tree(root_pid: int, children_by_parent: dict[int, list[int]]) -> set[int]:
+    """root_pid とその子孫の pid の集合(記憶の見張りが数える範囲)。"""
     seen: set[int] = set()
     queue: deque[int] = deque([root_pid])
     while queue:
@@ -117,12 +126,13 @@ def _collect_process_tree(root_pid: int) -> tuple[set[int], dict[int, int]]:
         seen.add(pid)
         for child in children_by_parent.get(pid, []):
             queue.append(child)
-    return seen, rss_kib
+    return seen
 
 
 def _rss_tree_mib(root_pid: int) -> float:
-    process_tree, rss_kib = _collect_process_tree(root_pid)
-    total_kib = sum(rss_kib.get(pid, 0) for pid in process_tree)
+    table = _read_process_table()
+    process_tree = _collect_process_tree(root_pid, table.children_by_parent)
+    total_kib = sum(table.rss_kib.get(pid, 0) for pid in process_tree)
     return total_kib / 1024.0
 
 
@@ -174,18 +184,19 @@ class _SessionMemoryGuard:
     limit_mb: int
     poll_interval: float
     stop_event: threading.Event = field(default_factory=threading.Event)
-    thread: threading.Thread | None = None
+    # 見張りの thread(start で 1 度だけ作る — 生き死にを持つ欄なので可変の名 _mut_)。
+    _mut_thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if self.thread is not None:
+        if self._mut_thread is not None:
             return
-        self.thread = threading.Thread(target=self._watch_loop, daemon=True)
-        self.thread.start()
+        self._mut_thread = threading.Thread(target=self._watch_loop, daemon=True)
+        self._mut_thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
-        if self.thread is not None:
-            self.thread.join(timeout=1.0)
+        if self._mut_thread is not None:
+            self._mut_thread.join(timeout=1.0)
 
     def _watch_loop(self) -> None:
         while not self.stop_event.wait(max(self.poll_interval, 0.1)):
@@ -205,12 +216,14 @@ class _SessionMemoryGuard:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    # 既定値は定数。変える時は命令行の option で渡す(make は PYTEST_MEM_GUARD_* の変数から渡す・make を通さない時は
+    # pytest 自身が読む PYTEST_ADDOPTS)— この file は環境を読まない(#2896)。
     group = parser.getgroup("doeff-memory-guard")
     group.addoption(
         "--mem-guard-mb",
         action="store",
         type=int,
-        default=int(os.environ.get("PYTEST_MEM_GUARD_MB", "8192")),
+        default=8192,
         help=(
             "Max RSS (MiB) for the full pytest process tree before failing fast. "
             "Set 0 to disable."
@@ -220,14 +233,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--mem-guard-poll-interval",
         action="store",
         type=float,
-        default=float(os.environ.get("PYTEST_MEM_GUARD_POLL_INTERVAL", "1.0")),
+        default=1.0,
         help="Seconds between RSS checks for --mem-guard-mb.",
     )
     group.addoption(
         "--rlimit-as-mb",
         action="store",
         type=int,
-        default=int(os.environ.get("PYTEST_RLIMIT_AS_MB", "0")),
+        default=0,
         help=(
             "Apply OS RLIMIT_AS (MiB) at session start when supported. "
             "Set 0 to disable."

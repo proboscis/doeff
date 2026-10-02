@@ -25,8 +25,17 @@ import sys
 import time
 from pathlib import Path
 from types import ModuleType
+from typing import Protocol
 
 import pytest
+
+
+class _Declaration(Protocol):
+    """One not-executed line as the check layer parses it (the fields these tests read)."""
+
+    kind: str
+    reason: str
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_CONFTEST = REPO_ROOT / "conftest.py"
@@ -170,15 +179,17 @@ def _sample_machine(
     with_check_layer: bool,
     sample: str = SAMPLE_TEST,
     git: str | None = None,
-) -> tuple[pytest.RunResult, Path]:
-    """Run ``sample`` (by default two tests that need ``codex``) under the root conftest."""
+) -> pytest.RunResult:
+    """Run ``sample`` (by default two tests that need ``codex``) under the root conftest.
+
+    The child's HOME is ``tmp_path / "home"`` (read the stand-in's probes there with ``_probes``)."""
     project = tmp_path / "project"
     project.mkdir()
     (project / "conftest.py").write_text(ROOT_CONFTEST.read_text(encoding="utf-8"), "utf-8")
     (project / "test_premise.py").write_text(sample, encoding="utf-8")
     home = _home(tmp_path / "home", with_check_layer=with_check_layer)
     path_dir = _stand_in_bin(tmp_path / "bin", codex, git=git)
-    return _run_pytest(tmp_path, project, home, path_dir, "-q", "test_premise.py"), home
+    return _run_pytest(tmp_path, project, home, path_dir, "-q", "test_premise.py")
 
 
 def _checkout_sample(checkout: Path, commit: str) -> str:
@@ -191,8 +202,8 @@ def _checkout_sample(checkout: Path, commit: str) -> str:
     )
 
 
-def _git_checkout(directory: Path, git: str) -> tuple[Path, str]:
-    """A fresh git checkout with one commit; returns its path and the commit."""
+def _git_checkout(directory: Path, git: str) -> str:
+    """A fresh git checkout at ``directory`` with one commit; returns the commit."""
     directory.mkdir(parents=True)
     quiet = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
@@ -210,10 +221,10 @@ def _git_checkout(directory: Path, git: str) -> tuple[Path, str]:
     (directory / "contract.json").write_text("{}\n", encoding="utf-8")
     run("add", "contract.json")
     run("-c", "user.name=premise", "-c", "user.email=premise@example.invalid", "commit", "-qm", "c")
-    return directory, run("rev-parse", "HEAD")
+    return run("rev-parse", "HEAD")
 
 
-def _declarations(check_layer: ModuleType, result: pytest.RunResult) -> tuple:
+def _declarations(check_layer: ModuleType, result: pytest.RunResult) -> tuple[_Declaration, ...]:
     """The not-executed lines of a run, read by the check layer itself."""
     return check_layer.parse_unexecuted_all(result.stdout.str())
 
@@ -230,11 +241,11 @@ def test_tool_that_does_not_start_is_skipped_and_named_not_executed(
     tmp_path: Path, check_layer: ModuleType | None, codex: str | None, said: str
 ) -> None:
     """The daily pod's shape: both tests skipped, each named on its own not-executed line."""
-    result, home = _sample_machine(tmp_path, codex=codex, with_check_layer=True)
+    result = _sample_machine(tmp_path, codex=codex, with_check_layer=True)
 
     result.assert_outcomes(skipped=2)
     assert result.ret == 0
-    assert _probes(home) == (1 if codex is not None else 0)
+    assert _probes(tmp_path / "home") == (1 if codex is not None else 0)
     assert "looking for the binary" not in result.stdout.str()  # the last line, not the first
     if check_layer is None:
         result.stdout.fnmatch_lines(
@@ -283,10 +294,10 @@ def test_tool_that_starts_and_then_fails_is_red_and_not_declared(
     tmp_path: Path, check_layer: ModuleType | None
 ) -> None:
     """Only "does it start" is a premise: a wrong answer stays the test's own red."""
-    result, home = _sample_machine(tmp_path, codex=STARTS_THEN_ANSWERS_WRONG, with_check_layer=True)
+    result = _sample_machine(tmp_path, codex=STARTS_THEN_ANSWERS_WRONG, with_check_layer=True)
 
     result.assert_outcomes(failed=2)
-    assert _probes(home) == 1
+    assert _probes(tmp_path / "home") == 1
     assert SUMMARY_WITHOUT_CHECK_LAYER not in result.stdout.str()
     if check_layer is not None:
         assert _declarations(check_layer, result) == ()
@@ -294,10 +305,10 @@ def test_tool_that_starts_and_then_fails_is_red_and_not_declared(
 
 def test_tool_that_starts_runs_the_test(tmp_path: Path, check_layer: ModuleType | None) -> None:
     """A machine that has the tool runs the tests as usual and declares nothing."""
-    result, home = _sample_machine(tmp_path, codex=STARTS_AND_ANSWERS, with_check_layer=True)
+    result = _sample_machine(tmp_path, codex=STARTS_AND_ANSWERS, with_check_layer=True)
 
     result.assert_outcomes(passed=2)
-    assert _probes(home) == 1
+    assert _probes(tmp_path / "home") == 1
     assert SUMMARY_WITHOUT_CHECK_LAYER not in result.stdout.str()
     if check_layer is not None:
         assert _declarations(check_layer, result) == ()
@@ -307,7 +318,7 @@ def test_machine_without_the_check_layer_only_summarises_the_skip(
     tmp_path: Path, check_layer: ModuleType | None
 ) -> None:
     """A bare clone has no check layer: the skips are still named, in one plain line."""
-    result, _ = _sample_machine(tmp_path, codex=ROUTER_WITHOUT_BINARY, with_check_layer=False)
+    result = _sample_machine(tmp_path, codex=ROUTER_WITHOUT_BINARY, with_check_layer=False)
 
     result.assert_outcomes(skipped=2)
     assert result.ret == 0
@@ -390,7 +401,7 @@ def test_missing_checkout_is_skipped_and_named_premise_unmet(
 ) -> None:
     """zeus's shape: no custody checkout — skipped and named premise-unmet, not red."""
     missing = tmp_path / "no-checkout"
-    result, _ = _sample_machine(
+    result = _sample_machine(
         tmp_path,
         codex=None,
         with_check_layer=True,
@@ -408,8 +419,9 @@ def test_checkout_without_the_pinned_commit_is_premise_unmet(
 ) -> None:
     """A checkout that has not fetched the pinned commit is a machine premise, not red."""
     git = machine_tool("git")
-    checkout, _ = _git_checkout(tmp_path / "checkout", git)
-    result, _ = _sample_machine(
+    checkout = tmp_path / "checkout"
+    _git_checkout(checkout, git)
+    result = _sample_machine(
         tmp_path,
         codex=None,
         with_check_layer=True,
@@ -429,8 +441,9 @@ def test_checkout_holding_the_pinned_commit_runs_the_test(
 ) -> None:
     """When the premise holds the test runs (and whatever it finds is its own answer)."""
     git = machine_tool("git")
-    checkout, commit = _git_checkout(tmp_path / "checkout", git)
-    result, _ = _sample_machine(
+    checkout = tmp_path / "checkout"
+    commit = _git_checkout(checkout, git)
+    result = _sample_machine(
         tmp_path,
         codex=None,
         with_check_layer=True,
@@ -448,7 +461,7 @@ def test_checkout_premise_on_a_machine_without_git_names_the_tool(
     tmp_path: Path, check_layer: ModuleType | None
 ) -> None:
     """git itself is a tool premise: without it the checkout cannot be read (tool-absent)."""
-    result, _ = _sample_machine(
+    result = _sample_machine(
         tmp_path,
         codex=None,
         with_check_layer=True,
@@ -471,7 +484,7 @@ def test_each_unmet_premise_is_named_under_its_own_word(
             "from pathlib import Path\n\n\n", "from pathlib import Path\n"
         )
     )
-    result, _ = _sample_machine(
+    result = _sample_machine(
         tmp_path,
         codex=ROUTER_WITHOUT_BINARY,
         with_check_layer=True,

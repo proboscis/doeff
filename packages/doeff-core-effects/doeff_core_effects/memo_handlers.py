@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Set
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from doeff import UnhandledEffect, do
+from doeff import Program, UnhandledEffect, do
 from doeff import handler as _program_handler
 from doeff.program import Pass, Resume
 from doeff_core_effects.memo_effects import (
@@ -132,7 +132,7 @@ def _effect_cost(effect) -> RecomputeCost:
 
 
 def memo_handler(
-    storage: DurableStorage,
+    storage: DurableStorage | Program[DurableStorage],
     *,
     cost: RecomputeCost | str | None = None,
     name: str | None = None,
@@ -152,7 +152,8 @@ def memo_handler(
     the outermost handler's miss re-perform is unhandled → memo_rewriter treats as miss.
 
     Args:
-        storage: The storage backend for this handler.
+        storage: The storage backend for this handler, or a Program[DurableStorage]
+            resolved once on the first handled memo effect (lazy storage).
         cost: Only handle effects matching this cost tier. None = handle all.
         name: Label for log messages (defaults to storage class name).
     """

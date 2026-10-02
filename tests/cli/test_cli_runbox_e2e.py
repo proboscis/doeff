@@ -7,48 +7,39 @@ by running the doeff CLI as a subprocess and checking output.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.cli.cli_child import with_settings
+
 pytestmark = pytest.mark.cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# 子の CLI に足す設定: repo の根を import の道に・利用者の既定の env と profile を切る(出力の雑音を減らす)。
+CHILD_SETTINGS = {
+    "PYTHONPATH": str(PROJECT_ROOT),
+    "DOEFF_DISABLE_DEFAULT_ENV": "1",
+    "DOEFF_DISABLE_PROFILE": "1",
+}
+
+
+def _with_settings(command: list[str], env_override: dict[str, str] | None) -> list[str]:
+    """子の CLI の命令に、検が要る設定と検ごとの上書きを env で足すため(tests/cli/cli_child.py)。"""
+    return with_settings(command, CHILD_SETTINGS | (env_override or {}))
 
 
 def run_cli(
     *args: str, env_override: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run doeff CLI as subprocess with proper environment."""
-    command = ["uv", "run", "doeff", "run", *args]
-    pythonpath = str(PROJECT_ROOT)
-    if "PYTHONPATH" in os.environ:
-        pythonpath = f"{PROJECT_ROOT}{os.pathsep}{os.environ['PYTHONPATH']}"
-
-    env = {
-        "PYTHONPATH": pythonpath,
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "DOEFF_DISABLE_DEFAULT_ENV": "1",
-        # Disable profiling to reduce noise in output
-        "DOEFF_DISABLE_PROFILE": "1",
-    }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
-    if env_override:
-        env.update(env_override)
-
     return subprocess.run(
-        command,
+        _with_settings(["uv", "run", "doeff", "run", *args], env_override),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        env=env,
         check=False,
     )
 
@@ -57,31 +48,11 @@ def run_cli_module(
     *args: str, env_override: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run doeff CLI through `python -m doeff run`."""
-    command = ["uv", "run", "python", "-m", "doeff", "run", *args]
-    pythonpath = str(PROJECT_ROOT)
-    if "PYTHONPATH" in os.environ:
-        pythonpath = f"{PROJECT_ROOT}{os.pathsep}{os.environ['PYTHONPATH']}"
-
-    env = {
-        "PYTHONPATH": pythonpath,
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "DOEFF_DISABLE_DEFAULT_ENV": "1",
-        "DOEFF_DISABLE_PROFILE": "1",
-    }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
-    if env_override:
-        env.update(env_override)
-
     return subprocess.run(
-        command,
+        _with_settings(["uv", "run", "python", "-m", "doeff", "run", *args], env_override),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        env=env,
         check=False,
     )
 
