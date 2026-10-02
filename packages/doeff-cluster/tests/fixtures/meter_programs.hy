@@ -61,7 +61,7 @@
   "service: 始まりから outage-seconds 秒の届かない窓の上で、記録の client の書きを 1 秒ごとに writes 回撃ち、計器を bridge で
    coordinator へ送る。"
   (<- start int (now-epoch-ms))
-  (val endpoint (RecordsEndpoint "http://records.test" "token" :meter (memory-meter-handler (MeterSettings))))
+  (val endpoint (RecordsEndpoint "http://records.test" :meter (memory-meter-handler (MeterSettings))))
   (<- n int (foundation (with-handlers [(memory-meter-handler (MeterSettings))
                                         (records-outage-http (+ start (int (* 1000 outage-seconds))))
                                         (http-records-handler endpoint)]
