@@ -171,7 +171,8 @@
     {
       "allow": [
         "doeff-linter-cli",
-        "doeff-linter-rules"
+        "doeff-linter-rules",
+        "doeff-linter-utils"
       ],
       "layer": "io",
       "name": "doeff-linter-project",
