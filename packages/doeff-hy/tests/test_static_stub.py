@@ -269,6 +269,29 @@ def test_a_module_import_no_declaration_reads_is_not_copied(tmp_path: Path) -> N
     assert [line for line in _lines(tmp_path) if line.startswith("import os")] == []
 
 
+def test_a_field_annotated_then_given_its_default_keeps_the_default(tmp_path: Path) -> None:
+    # 失敗ケース(#2974): 欄を「#^ float timeout」と「(setv timeout 30.0)」の 2 文で書くと、道具は .pyi にも 2 文のまま写し
+    # (`timeout: float` と `timeout = 30.0`)、pyright は dataclass の作り手を注記の文の値から組むので既定値の無い欄と読んだ —
+    # 欄を省いた呼びが「timeout が無い」の赤(agora の 17 本目・ClickHouseDatabase)。実行時は既定値 30.0 の欄。
+    # L1377 で手の process_effects.pyi(`timeout: float | None = None`)を置き換えた時に RunProcess など 23 の欄が同じ形に後退した。
+    split = """\
+(import dataclasses [dataclass])
+
+(defclass [(dataclass :frozen True :kw-only True)] Database []
+  "置き場の宛先。"
+  #^ str host
+  #^ float timeout
+  (setv timeout 30.0)
+  #^ (| str None) user
+  (setv user None))
+"""
+    lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, split)).text.splitlines()
+    assert "    host: str" in lines
+    assert "    timeout: float = 30.0" in lines
+    assert "    user: str | None = None" in lines
+    assert [line for line in lines if line.strip().startswith(("timeout =", "user ="))] == []
+
+
 def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:
     # 失敗ケース(#2886): 使い手の `(<- n (Pong target))` の n は、生成された .pyi の基底が Unknown だったので Unknown に読まれ、
     # strict の型検査が「型が分からない」の赤を 7 件出した。答えの型 int が基底に載れば、n は int に読める。
