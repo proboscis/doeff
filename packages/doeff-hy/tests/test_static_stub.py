@@ -316,3 +316,77 @@ def test_the_users_probe_binds_each_name_on_its_own_line() -> None:
         "(setv used-1 make-thing)",
         "(setv used-2 LIMIT)",
     ]
+
+
+STORE = """\
+(import pathlib [Path])
+
+(defclass Store []
+  "置き場(__init__ で欄を置く class — #2972 の WalStore の形)。"
+  (defn #^ None __init__ [self #^ int start #^ str label]
+    (setv #^ Path self.where (Path label) self.start start #^ int self.seq start
+          self.loose (dict) self._hidden 0))
+
+  (defn #^ int next-seq [self]
+    "次の番号(欄を読む method)。"
+    (+ self.seq 1)))
+"""
+
+LOG_USER = """\
+(require doeff-hy.macros [defk <-])
+(import pathlib [Path])
+(import typing [Protocol])
+(import probe_pkg.probe_mod [Store])
+
+(defclass Log [Protocol]
+  "置き場の形(欄だけ — #2972 の ByteLog の形)。"
+  (#^ int seq)
+  (#^ Path where))
+
+(defk seq-of [log]
+  {:pre [(: log Log)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
+  "置き場の形の欄を読むため。"
+  log.seq)
+
+(defk seq-of-store [store]
+  {:pre [(: store Store)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
+  "Store を置き場の形として渡すため(欄が宣言に無いと形を満たさない)。"
+  (<- n (seq-of store))
+  n)
+"""
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # 注記つきの置き方は注記を写す。
+        "    where: Path",
+        "    seq: int",
+        # 引数をそのまま置く置き方は、その引数の注記を写す。
+        "    start: int",
+        # 型を読めない置き方は Incomplete(名を返す)。
+        "    loose: Incomplete",
+    ],
+)
+def test_the_fields_an_init_places_get_declarations(tmp_path: Path, line: str) -> None:
+    # 失敗ケース(#2972): 道具は __init__ の `(setv self.x …)` を読まず、method だけを宣言した。WalStore の .pyi に欄 seq・
+    # snapshot・log・max_log_bytes が無く、それらを求める ByteLog を満たさないので、使い手の正しい渡し方に型の赤が出た。
+    assert line in stub_of(tmp_path, [tmp_path], _module(tmp_path, STORE)).text.splitlines()
+
+
+def test_an_untyped_init_field_is_named_and_a_private_one_is_not_declared(tmp_path: Path) -> None:
+    made = stub_of(tmp_path, [tmp_path], _module(tmp_path, STORE))
+    assert "Store.loose" in made.incomplete
+    assert [line for line in made.text.splitlines() if "_hidden" in line] == []
+
+
+def test_a_class_whose_init_places_the_fields_satisfies_a_protocol_of_fields(tmp_path: Path) -> None:
+    # 失敗ケース(#2972): 欄の宣言が無いと `(seq-of store)` が「Store は Log の欄 seq・where を持たない」の赤になる。
+    source = _module(tmp_path, STORE)
+    source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
+    user = source.with_name("log_user.hy")
+    user.write_text(LOG_USER, encoding="utf-8")
+    command = [sys.executable, "-m", "doeff_hy.static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
+    done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
+    found = json.loads(done.stdout) if done.stdout.strip() else []
+    assert [f"{d['line']}: {d['rule']}: {d['message']}" for d in found if d["severity"] == "error"] == []

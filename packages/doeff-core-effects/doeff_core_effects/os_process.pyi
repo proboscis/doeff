@@ -64,6 +64,11 @@ class WatchedChild:
     process_group: bool
 
 class ChildWatch:
+    stop_grace: float
+    meter: Callable | None
+    lock: Incomplete
+    cancelled: Incomplete
+    running: Incomplete
 
     def __init__(self: ChildWatch, stop_grace: float, meter: Callable | None) -> None:
         ...
@@ -78,6 +83,8 @@ class ChildWatch:
         ...
 
 class StartedChildren:
+    lock: Incomplete
+    children: Incomplete
 
     def __init__(self) -> None:
         ...
@@ -138,6 +145,12 @@ def stop_on_cancel(watch: ChildWatch) -> _Program[None, object]:
     ...
 
 class ChildPipes:
+    child: Incomplete
+    sink: Incomplete
+    lock: Incomplete
+    out: Incomplete
+    err: Incomplete
+    readers: Incomplete
 
     def __init__(self, child: Incomplete, sink: Incomplete) -> None:
         ...
