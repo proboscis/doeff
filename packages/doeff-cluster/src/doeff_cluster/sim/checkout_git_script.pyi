@@ -2,7 +2,6 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-import fnmatch as fnmatch
 from functools import partial as partial
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
 from doeff_core_effects.process_effects import RunProcess as RunProcess

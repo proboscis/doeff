@@ -1,7 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = runtime_identity.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-import json as json
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key

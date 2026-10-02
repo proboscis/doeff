@@ -1,9 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = inbox.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff_hy.static_types import Handler as _Handler
-import json as json
-import sys as sys
-import time as time
 from typing import Protocol as Protocol
 from typing import runtime_checkable as runtime_checkable
 from urllib.parse import unquote as url_unquote

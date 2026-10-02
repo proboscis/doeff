@@ -3,15 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import contextlib as contextlib
-import fnmatch as fnmatch
-import io as io
-import os as os
-import signal as signal
 import subprocess as subprocess
-import sys as sys
-import threading as threading
-import time as time
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import PathStat as PathStat

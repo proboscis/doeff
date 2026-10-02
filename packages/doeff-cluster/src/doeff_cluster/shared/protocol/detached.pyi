@@ -4,7 +4,6 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from urllib.parse import quote as url_quote
-import json as json
 from doeff_time import Delay as Delay
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed

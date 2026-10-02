@@ -144,6 +144,17 @@ class _Scan:
         ]
         return kinds[-1] if kinds else None
 
+    def type_vars(self) -> frozenset[str]:
+        """先に読んだ型の引数の名(`T = TypeVar("T")` など — 後の class の答えの型がその名を読む時に型と読むため・#2925)。"""
+        return frozenset(
+            d.name
+            for d in self.declarations
+            if isinstance(d.node, ast.Assign)
+            and isinstance(d.node.value, ast.Call)
+            and isinstance(d.node.value.func, ast.Name | ast.Attribute)
+            and (d.node.value.func.id if isinstance(d.node.value.func, ast.Name) else d.node.value.func.attr) in _TYPE_MAKERS
+        )
+
 
 def _absolute(path: Path) -> Path:
     """根の比べと相対 path の表示のため、symlink を辿らずに絶対 path へ正規化する。"""
@@ -431,14 +442,15 @@ def _member(statement: ast.stmt) -> ast.stmt | None:
             return None
 
 
-def _declared_answer(statement: ast.stmt) -> ast.expr | None:
+def _declared_answer(statement: ast.stmt, type_vars: frozenset[str]) -> ast.expr | None:
     """defeffect の class の本体の文が答えの型の置き場(`__doeff_answer__ = _doeff_cast(object, (A, B, …))`)なら、その要素の和。
-    要素が型の式でない(`(type None)` のような実行時の値)なら None。"""
+    要素が型の式でない(`(type None)` のような実行時の値)なら None。module の型の引数の名(type_vars)は型と読む
+    (`:answer (| T SqlFailed SqlUnreachable)` — 名が 1 文字の大文字で class の名の形の判定に当たらない・#2925)。"""
     match statement:
         case ast.AnnAssign(
             target=ast.Name(id="__doeff_answer__"),
             value=ast.Call(func=ast.Name(id="_doeff_cast"), args=[_, ast.Tuple(elts=[_, *_] as elements)]),
-        ) if all(_type_like(element) for element in elements):
+        ) if all(_type_like(element) or (isinstance(element, ast.Name) and element.id in type_vars) for element in elements):
             return _union(elements)
         case _:
             return None
@@ -455,10 +467,12 @@ def _effect_base(base: ast.expr, answer: ast.expr | None) -> ast.expr:
             return base
 
 
-def _class(node: ast.ClassDef) -> ast.ClassDef:
-    """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。"""
+def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.ClassDef:
+    """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。type_vars = module の型の引数の名(答えの型を読むため)。"""
     body = [member for statement in node.body if (member := _member(statement)) is not None]
-    answer = next((found for statement in node.body if (found := _declared_answer(statement)) is not None), None)
+    answer = next(
+        (found for statement in node.body if (found := _declared_answer(statement, type_vars)) is not None), None
+    )
     return ast.ClassDef(
         name=node.name,
         bases=[_effect_base(base, answer) for base in node.bases],
@@ -517,7 +531,7 @@ def _step(state: _Scan, statement: ast.stmt) -> _Scan:
         case ast.FunctionDef() | ast.AsyncFunctionDef():
             return state.defined(statement.name, _function(statement, method=False), public=not hidden_name(statement.name))
         case ast.ClassDef() if not hidden_name(statement.name):
-            return state.declared(statement.name, _class(statement))
+            return state.declared(statement.name, _class(statement, state.type_vars()))
         case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation, value=value) if not hidden_name(name):
             kind = _annotation(annotation) or annotation
             alias = isinstance(kind, ast.Name) and kind.id == "TypeAlias"
@@ -559,13 +573,14 @@ def _bound(statement: ast.stmt) -> tuple[str, ...]:
             return ()
 
 
-def _unread_dotted(line: ast.stmt, reads: set[str]) -> bool:
-    """点つきの module の import(`import a.b`)で、宣言が頭の名 `a` を読まない物か — 写さないため。使い手に名を公開しない
-    import で、defrecord の展開が引く `doeff_hy.record` のように .pyi に依存だけを足していた(品質検査の module の依存の
-    契約に当たった — #2886)。宣言が `a.b.X` を読むなら残す。"""
+def _unread_module_import(line: ast.stmt, reads: set[str]) -> bool:
+    """module の import(`import a.b`・`import os as os`)で、宣言がその束ねる名を読まない物か — 写さないため。使い手は module を
+    `from m import os` と引かないので、公開し直す意味が無く、.pyi に依存だけを足していた: defrecord の展開が引く `doeff_hy.record`
+    は品質検査の module の依存の契約に(#2886)、`import os` は「純粋な層から IO の API へ依存」に当たった(#2925)。
+    宣言が `a.b.X`・`os.PathLike` を読むなら残す。名を引く import(`from m import X as X`)は公開し直すので外さない。"""
     match line:
-        case ast.Import(names=[ast.alias(name=name, asname=None)]) if "." in name:
-            return name.split(".")[0] not in reads
+        case ast.Import(names=[ast.alias(name=name, asname=asname)]):
+            return (asname or name.split(".")[0]) not in reads
         case _:
             return False
 
@@ -579,7 +594,7 @@ def _render(state: _Scan, source_name: str) -> StubText:
     imports = [
         line
         for index, line in enumerate(state.imports)
-        if keys[index] not in keys[:index] and not _unread_dotted(line, reads)
+        if keys[index] not in keys[:index] and not _unread_module_import(line, reads)
     ]
     bound = {name for line in imports for name in _bound(line)}
     head = [

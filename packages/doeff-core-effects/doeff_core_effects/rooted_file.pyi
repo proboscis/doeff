@@ -4,7 +4,6 @@ from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import posixpath as posixpath
 from dataclasses import replace as replace
 from doeff import EffectBase as EffectBase
 from doeff_core_effects.file_effects import FileFailed as FileFailed
