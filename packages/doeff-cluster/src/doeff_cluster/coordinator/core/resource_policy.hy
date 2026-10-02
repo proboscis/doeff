@@ -103,11 +103,19 @@
   ;; 担い手の報告が古い: 移し替えの期限(reassign-after-ms)の内なら「分からない」(Unknown — 途絶の間。Rollout は失敗と数えない)。
   ;; 期限を過ぎた担い手からは job を他へ移すので NotReady(2026-09-25: 以前は heartbeat が 10 秒途絶えただけで NotReady と言い、
   ;; 書き手が書き先へ書けているのに Rollout が戻しに入りえた)。
+  ;; 途絶しても動かし続けてよい印をこの担い手に渡してある job(#2804 — ClusterState.keep-marks)は、期限を過ぎても Unknown: 担い手は
+  ;; fence でも止めず、coordinator も他へ移さないので、process は動き続けている見込み(監視が止まりと読まない)。印の無い job は担い手が
+  ;; fence で止めているので、期限の後は NotReady のまま(他に置ける worker が無ければ置き先は保ち、担い手が戻ると起こし直す)。
   (when (or (is st None) (> (- now st.at) timing.lease-ms))
     (setv carrier (.get state.workers a.worker)
-          silent (and carrier (alive now carrier timing.reassign-after-ms)))
-    (return (no (if (or warming silent) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
-                (.format "担い手 {} の報告が無い・古い" a.worker))))
+          silent (and carrier (alive now carrier timing.reassign-after-ms))
+          mark (.get state.keep-marks name)
+          kept (and (is-not mark None) (= mark.worker a.worker)))
+    (return (no (if (or warming silent kept) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
+                (if kept
+                    (.format "担い手 {} の報告が無い・古い — 途絶しても動かし続けてよい印を渡してあるので、process は動き続けている見込み(担い手が戻るか Worker が消されるまで他へ移さない)"
+                             a.worker)
+                    (.format "担い手 {} の報告が無い・古い" a.worker)))))
   (setv row (job-status-row state a.worker name))
   (when (or (is row None) (!= row.phase "running"))
     (return (no "NotReady" NotReadyKind.NOT-RUNNING
@@ -284,7 +292,8 @@
     NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING
     NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED
     NotReadyKind.NO-ROOM VersionState.BLOCKED
-    ;; 担い手の報告が途絶えて移し替えの期限を過ぎた(次の調停で他へ移す)。
+    ;; 担い手の報告が途絶えて移し替えの期限を過ぎた(他に置ける worker が在れば次の調停で他へ移す・無ければ担い手が戻ると起こし直す
+    ;; — #2804。途絶しても動かし続けてよい印を渡した job は Unknown なのでここへ来ない)。
     NotReadyKind.CARRIER-SILENT VersionState.UPDATING
     NotReadyKind.NOT-RUNNING (if (is phase None) VersionState.UPDATING (phase-version phase retryable))
     NotReadyKind.REVISION-MISMATCH VersionState.UPDATING
@@ -457,14 +466,17 @@
   "before → after で行が変わりうる資源の鍵(snapshot の行の材料が変わった資源の上集合)と、版の記録の無い資源の鍵(adopt — 行が
    同じでも版を振る)。stamp はこの鍵の行だけを組んで比べる。行は同じ now で組むので、材料の値が同じ物のままの資源の行は前後で等しい
    (時刻だけで変わる観測は snapshot に入れない・生死は note-liveness が silent に写して材料にする)。材料:
-   - Service: 宣言・置き先・並べた置き先・入れ替えの見張り・準備の報告(観測の表 readiness)・受け付けない行(名ごと)/ 置き先か並べた置き先の
+   - Service: 宣言・置き先・並べた置き先・入れ替えの見張り・準備の報告(観測の表 readiness)・受け付けない行・途絶しても動かし続けてよい
+     印の約束(名ごと)/ 置き先か並べた置き先の
      worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 置き先の無い Service は全 worker の生存と
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
    - Worker: 記録・沈黙の集合の出入り・drain。Task・Rollout: 自分の行。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
                        (moved-names before.observations.readiness after.observations.readiness)
-                       (moved-names before.refused after.refused))
+                       (moved-names before.refused after.refused)
+                       ;; 途絶しても動かし続けてよい印の約束(#2804 — 担い手の沈黙の後の ready の材料)。
+                       (moved-names before.keep-marks after.keep-marks))
         workers-moved (| (moved-names before.workers after.workers) (moved-names before.statuses after.statuses))
         all-services (| (frozenset jobs-before) (frozenset jobs-after) (frozenset before.refused) (frozenset after.refused))
         global-moved (or (!= before.started-ms after.started-ms) (is-not before.drains after.drains))
