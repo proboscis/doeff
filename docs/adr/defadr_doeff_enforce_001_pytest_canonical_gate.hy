@@ -131,7 +131,7 @@
        (setv root (get (. (Path __file__) parents) 2))
        (setv conftest (.read-text (/ root "conftest.py")))
        (setv makefile (.read-text (/ root "Makefile")))
-       (assert (in "DOEFF_VM_INVARIANT_CHECKS" conftest)
+       (assert (in "\"vm_invariant_checks\"" conftest)
                "root の conftest.py が VM の oracle を有効にしていない — ADR-DOE-ENFORCE-001 R4")
        (assert (invariant_checks_enabled)
                "この pytest の走行で VM の oracle が無効 — ADR-DOE-ENFORCE-001 R4")

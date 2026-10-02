@@ -21,24 +21,27 @@ import pytest
 # when turned on. doeff's own test sessions turn them on here, so the oracle
 # no longer depends on which path last built the extension (`make sync` with
 # the old cargo feature vs `uv sync` without — the same venv ran 15x slower or
-# faster). Subprocesses inherit the variable. An explicit
-# DOEFF_VM_INVARIANT_CHECKS=0 is honoured, and then
-# tests/test_vm_invariant_checks_enabled.py goes red, as it should.
+# faster). The switch is pytest's own ini value ``vm_invariant_checks``
+# (default true — ``-o vm_invariant_checks=false`` turns it off, and then
+# tests/test_vm_invariant_checks_enabled.py goes red, as it should), not an
+# environment variable, which only a foundation handler reads (DOEFF004・
+# agora-redesign #3012). Child processes do not inherit it: the one place
+# tests start a child CLI (tests/cli/cli_child.with_settings) hands the child
+# this session's state as DOEFF_VM_INVARIANT_CHECKS explicitly.
 # ---------------------------------------------------------------------------
-_VM_INVARIANT_CHECKS = os.environ.setdefault("DOEFF_VM_INVARIANT_CHECKS", "1")  # noqa: DOEFF004 - turns the VM oracle on for doeff's own test sessions (R4)
+VM_INVARIANT_CHECKS_INI = "vm_invariant_checks"
 
 
 def _turn_vm_oracle_on(enabled: bool) -> None:
     """Make every VM run in this test session check its invariants after each step (R4)."""
-    # The extension reads the variable once, at its first step; set it directly
-    # too in case a plugin ran a program before this conftest was loaded.
     from doeff_vm.doeff_vm import set_invariant_checks
 
     set_invariant_checks(enabled)
 
 
-# The value setdefault left in the environment (an explicit 0 is honoured) — not read twice (#2901).
-_turn_vm_oracle_on(_VM_INVARIANT_CHECKS == "1")
+# On from the start, in case a plugin runs a program before pytest_configure
+# reads the ini value (which can only turn it off).
+_turn_vm_oracle_on(True)
 
 # ---------------------------------------------------------------------------
 # Load-scaled deadlines (ADR-DOE-ENFORCE-001 R6)
@@ -89,6 +92,12 @@ def pytest_addoption(parser):
     """Register the deadline settings as ini values (``-o deadline_scale=off`` and the like)."""
     for name, default, help_text in _DEADLINE_INI:
         parser.addini(name, help_text, default=default)
+    parser.addini(
+        VM_INVARIANT_CHECKS_INI,
+        "false = run the VM without its per-step invariant checks (ADR-DOE-ENFORCE-001 R4)",
+        type="bool",
+        default=True,
+    )
 
 
 def _oversubscription() -> float:
@@ -226,6 +235,8 @@ def pytest_configure(config):
     watchdog is derived from the scaled value so the two can never cross.
     """
     global _WATCHDOG_TIMEOUT, _WATCHDOG_BASE, _DEADLINE_SCALE  # noqa: PLW0603
+
+    _turn_vm_oracle_on(bool(config.getini(VM_INVARIANT_CHECKS_INI)))
 
     _WATCHDOG_BASE = float(config.getini("watchdog_timeout"))
     _DEADLINE_SCALE = deadline_scale(config.getini("deadline_scale"), float(config.getini("deadline_scale_cap")))
