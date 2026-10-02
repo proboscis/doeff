@@ -75,7 +75,32 @@ def Sequence(*programs: Program[T, E]) -> Program[tuple[T, ...], E]: ...
   Sequence 専用 handler が不要という意味であり、子の effect の handler まで不要という意味ではない。
 - 蓄積の追加計算量を O(n)、追加メモリを O(n) にする。child 自体の時間・メモリは別。
   参照実装はテスト内の list + 最後の tuple 化。production の可変蓄積の例外許可を既成事実にしない。
-  handler の継続を複製する場合の可変状態共有も、実装方式の決定後に別途検証する。
+
+### 既存の継続契約（再決定しない）
+
+doeff の継続は one-shot で複製不可。Sequence もこの既存契約に従う。
+「継続を複製する場合」を初版 API の未決定事項としていた記述は誤りであり、撤回する。
+ユーザーに継続複製の方針を選んでもらう必要はない。Program を最初から再実行することは、
+消費済みの継続を再開・複製することとは異なり、参照実装は実行ごとに蓄積を新しく作る。
+
+基点 `c025b722ac1508293c1b29cedc3cda4a0c78363a` での根拠:
+
+- [既存仕様 docs/22-capability-classes.md:40–56](https://github.com/proboscis/doeff/blob/c025b722ac1508293c1b29cedc3cda4a0c78363a/docs/22-capability-classes.md#L40):
+  同じ k の複数回 Resume は禁止。操作の再試行と継続の再実行を区別する。
+- [実装 packages/doeff-vm-core/src/continuation.rs:337–365](https://github.com/proboscis/doeff/blob/c025b722ac1508293c1b29cedc3cda4a0c78363a/packages/doeff-vm-core/src/continuation.rs#L337):
+  Continuation は Clone を持たず、Option::take による移動で1回の消費を保証する。
+- 既存の構造テスト `tests/core/test_vm_ocaml5_violations.py::test_v28_continuation_not_clone` と
+  `::test_v29_no_clone_for_dispatch` が複製の実装を禁止し、実行テスト
+  `tests/core/test_vm_architecture_ocaml5.py::test_continuation_is_one_shot` が二度目の再開を拒否する。
+
+採用後のレビューではこの既存契約を変更していないことを確認し、上記3件と
+`tests/design_sequence_2812/test_sequence_contract.py::test_rerun_gets_a_fresh_accumulator`
+を公開実装に対して確認する。継続複製の新しい仕様・テストは追加しない。
+今回の事実訂正では上記4件を実行し、4 passed。限定収集の ADR 警告に加え、
+既存の二度 Resume するテストで non-tail Resume 警告と、終了時の
+`generator ignored GeneratorExit` 警告を観測した（終了コード0）。
+実装や共有環境は変更せず、これらの警告を解消したとはしない。
+A の公開 API の採用自体は引き続き承認待ち。
 
 ## 再利用できる検証
 
