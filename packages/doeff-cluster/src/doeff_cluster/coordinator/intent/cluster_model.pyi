@@ -67,6 +67,7 @@ class WorkerInfo:
     exclusive: tuple[str, ...] = ()
     node: str = ""
     derived: tuple[str, ...] = ()
+    seen_mark: int | None = None
 
 @dataclass(frozen=True)
 class EnvFailed:
@@ -648,7 +649,6 @@ class ClusterState:
     started_ms: int = 0
     rollout_tick_ms: int = 0
     alive_ms: int = 0
-    seen_marks: dict[str, int] = ...
     drains: dict[str, Drain] = ...
     surges: dict[str, Placement] = ...
     warms: dict[str, WarmEntry] = ...
