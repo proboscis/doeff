@@ -262,3 +262,21 @@
   (assert (= (len (get every.answer 1)) 2) every.answer)
   (<- breaches list (same-decisions every skipped))
   (assert (= breaches []) breaches))
+
+
+(defk quiet-for-minutes [minutes]
+  {:pre [(: minutes int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 何も起きない仮想の minutes 分を待ち、終わりの一生を読むため。"
+  (<- (Delay (* 60.0 minutes)))
+  (<- runs tuple (CoordinatorRuns))
+  runs)
+
+
+(deftest test-a-quiet-stretch-costs-few-coordinator-steps
+  ;; worker 2 台・拍 10 秒・何も起きない仮想の 20 分: 一度に進める走りの coordinator の歩は、起動の分(1 分の走りの歩)を除いて
+  ;; 20 回より少ない(仮想の 1 分に 1 回より少ない)。反例 — worker の拍ごとの heartbeat と待ちの返事と、5 秒ごとの生存の印で歩くと、
+  ;; 静かな 19 分で約 570 回(2026-10-02 の実測 — 仮想の 1 時間あたり約 3.3 秒の根・#2769)。判断の刻が 1 拍ずつの走りと同じことは
+  ;; test-a-quiet-system-keeps-every-decision-at-the-same-tick が見る(ここで 1 拍ずつの 20 分を回すと、それだけで約 10 秒かかる)。
+  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 20) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- started Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 1) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (assert (< (- skipped.takes started.takes) 20) #(skipped.takes started.takes)))
