@@ -1,6 +1,5 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = sqlite_sql.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 import sqlite3 as sqlite3
@@ -34,7 +33,7 @@ from doeff_vm import WithHandler as WithHandler
 from doeff import Some as Some
 from doeff_core_effects.effects import Put as Put
 SQLITE_CLASS_SQLSTATES: dict[str, str]
-BIND_ERRORS: Incomplete
+BIND_ERRORS: tuple[type, ...]
 BIND_CLASS_SQLSTATES: dict[str, str]
 BUSY_SQLSTATE: str
 OPERATIONAL_SQLSTATE: str
