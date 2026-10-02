@@ -84,8 +84,8 @@ fn get_all_rule_info() -> Vec<RuleInfo> {
         RuleInfo {
             id: "DOEFF010",
             name: "Test File Placement",
-            description: "Test files should be in a tests/ directory, not mixed with source code.",
-            fix: "Move test files to a dedicated tests/ directory at the project root.",
+            description: "A test file sits inside an importable package (a directory with __init__.py) outside a tests/ directory, so it ships with the package.",
+            fix: "Move the test file under a tests/ directory, or rename the module if it is not a test.",
             severity: "warning",
         },
         RuleInfo {

@@ -113,47 +113,7 @@
       "packages/doeff-vm/tests/test_handler_spec_shared_by_code.py": 2
     },
     "DOEFF010": {
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/test_chain.py": 1,
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/test_counterexamples.py": 1,
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/test_scenario_checks.py": 1,
-      "docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py": 1,
-      "ide-plugins/pycharm/test_program_detection.py": 1,
-      "packages/doeff-agentic/examples/test_event_logging.py": 1,
-      "packages/doeff-agentic/examples/test_mock_workflow.py": 1,
-      "packages/doeff-agents/conformance/test_harness_resolution.py": 1,
-      "packages/doeff-agents/conformance/test_s10_payload_durability.py": 1,
-      "packages/doeff-agents/conformance/test_s11_auth_profile_gate.py": 1,
-      "packages/doeff-agents/conformance/test_s12_claude_trust_preseed.py": 1,
-      "packages/doeff-agents/conformance/test_s13_argv_wiring.py": 1,
-      "packages/doeff-agents/conformance/test_s14_identity_persistence_expected_red.py": 1,
-      "packages/doeff-agents/conformance/test_s15_counter_survives_restart.py": 1,
-      "packages/doeff-agents/conformance/test_s16_concurrency_isolation.py": 1,
-      "packages/doeff-agents/conformance/test_s17_endpoint_parity.py": 1,
-      "packages/doeff-agents/conformance/test_s18_dialog_fastpaths.py": 1,
-      "packages/doeff-agents/conformance/test_s19_watchdogs.py": 1,
-      "packages/doeff-agents/conformance/test_s1_golden_path.py": 1,
-      "packages/doeff-agents/conformance/test_s20_schema_vocabulary.py": 1,
-      "packages/doeff-agents/conformance/test_s21_resume_fork.py": 1,
-      "packages/doeff-agents/conformance/test_s22_registration_before_ready.py": 1,
-      "packages/doeff-agents/conformance/test_s23_adopt_ordering.py": 1,
-      "packages/doeff-agents/conformance/test_s24_opaque_id.py": 1,
-      "packages/doeff-agents/conformance/test_s25_turn_single_writer.py": 1,
-      "packages/doeff-agents/conformance/test_s26_interactive_not_reaped.py": 1,
-      "packages/doeff-agents/conformance/test_s27_mirror_principle.py": 1,
-      "packages/doeff-agents/conformance/test_s28_orphaned_host_boundary.py": 1,
-      "packages/doeff-agents/conformance/test_s28d_preexisting_orphan_reaper.py": 1,
-      "packages/doeff-agents/conformance/test_s29_external_seat_adopt.py": 1,
-      "packages/doeff-agents/conformance/test_s2_solicitation_then_report.py": 1,
-      "packages/doeff-agents/conformance/test_s3_solicitation_exhaustion.py": 1,
-      "packages/doeff-agents/conformance/test_s4_schema_invalid_then_fix.py": 1,
-      "packages/doeff-agents/conformance/test_s5_menu_judge.py": 1,
-      "packages/doeff-agents/conformance/test_s6_stall_judge.py": 1,
-      "packages/doeff-agents/conformance/test_s6b_judge_unavailable.py": 1,
-      "packages/doeff-agents/conformance/test_s7_failure_taxonomy.py": 1,
-      "packages/doeff-agents/conformance/test_s8_api_limit.py": 1,
-      "packages/doeff-agents/conformance/test_s9_out_of_band_kill.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": 1,
-      "tools/test_python_versions.py": 1
+      "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": 1
     },
     "DOEFF016": {
       "packages/doeff-agentic/src/doeff_agentic/__init__.py": 11,
@@ -352,5 +312,5 @@
       "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
     }
   },
-  "version": "doeff-linter の組み立ての入力 b13a2ed33e6a1a7aa6a3ae79ffacf4ddb518c5cf"
+  "version": "doeff-linter の組み立ての入力 91420c68b2984aa8610eeec70fecc966d19e678b"
 }

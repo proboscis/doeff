@@ -74,9 +74,9 @@ pub fn get_rule_info(rule_id: &str) -> RuleInfo {
         },
         "DOEFF010" => RuleInfo {
             name: "Test File Placement",
-            description: "Test files should be in a `tests/` directory, not mixed with source code.",
-            fix: "Move test files to a dedicated `tests/` directory at the project root.",
-            label: "テストが tests/ の外にある",
+            description: "A test file sits inside an importable package (a directory with `__init__.py`) outside a `tests/` directory, so it ships with the package.",
+            fix: "Move the test file under a `tests/` directory, or rename the module if it is not a test.",
+            label: "テストが package の中の tests/ の外にある",
         },
         "DOEFF011" => RuleInfo {
             name: "No Flag/Mode Arguments",

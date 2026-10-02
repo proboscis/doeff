@@ -574,24 +574,36 @@ p: Program = process()"#,
             .find(|r| r.rule_id() == rule_id)
     }
 
+    /// import できる package(`__init__.py` の在る一時の dir)。置き場を見る DOEFF010 が鳴る場所を作る(agora-redesign #2880)。
+    fn importable_package() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("一時の dir");
+        std::fs::write(dir.path().join("__init__.py"), "").expect("__init__.py を置く");
+        dir
+    }
+
+    /// noqa の検で規則に渡す file の path。DOEFF010 は package の中の `test_` の file でだけ鳴るので、その path を名指す。
+    fn noqa_case_path(rule_id: &str, package: &tempfile::TempDir) -> String {
+        if rule_id == "DOEFF010" {
+            package.path().join("test_example.py").to_string_lossy().into_owned()
+        } else {
+            "test.py".to_string()
+        }
+    }
+
     #[test]
     fn test_all_rules_respect_line_noqa() {
         let test_cases = get_noqa_test_cases();
+        let package = importable_package();
 
         for test_case in test_cases {
             let rule = get_rule_by_id(test_case.rule_id)
                 .unwrap_or_else(|| panic!("Rule {} not found", test_case.rule_id));
             let rules: Vec<Box<dyn LintRule>> = vec![rule];
 
-            // Determine file path (DOEFF010 needs a test_ prefixed file not in tests/)
-            let file_path = if test_case.rule_id == "DOEFF010" {
-                "src/test_example.py"
-            } else {
-                "test.py"
-            };
+            let file_path = noqa_case_path(test_case.rule_id, &package);
 
             // Test WITHOUT noqa - should have violations
-            let result_without_noqa = lint_source(file_path, test_case.triggering_code, &rules);
+            let result_without_noqa = lint_source(&file_path, test_case.triggering_code, &rules);
             assert!(
                 !result_without_noqa.violations.is_empty(),
                 "Rule {} should produce violations without noqa. Code:\n{}",
@@ -608,7 +620,7 @@ p: Program = process()"#,
 
             let rule = get_rule_by_id(test_case.rule_id).unwrap();
             let rules: Vec<Box<dyn LintRule>> = vec![rule];
-            let result_with_noqa = lint_source(file_path, &code_with_noqa, &rules);
+            let result_with_noqa = lint_source(&file_path, &code_with_noqa, &rules);
 
             assert!(
                 result_with_noqa.violations.is_empty(),
@@ -627,17 +639,14 @@ p: Program = process()"#,
     #[test]
     fn test_all_rules_respect_blanket_noqa() {
         let test_cases = get_noqa_test_cases();
+        let package = importable_package();
 
         for test_case in test_cases {
             let rule = get_rule_by_id(test_case.rule_id)
                 .unwrap_or_else(|| panic!("Rule {} not found", test_case.rule_id));
             let rules: Vec<Box<dyn LintRule>> = vec![rule];
 
-            let file_path = if test_case.rule_id == "DOEFF010" {
-                "src/test_example.py"
-            } else {
-                "test.py"
-            };
+            let file_path = noqa_case_path(test_case.rule_id, &package);
 
             // Test WITH blanket noqa (# noqa without rule ID) - should suppress
             let code_with_blanket_noqa = add_blanket_noqa_to_line(
@@ -645,7 +654,7 @@ p: Program = process()"#,
                 test_case.violation_line,
             );
 
-            let result = lint_source(file_path, &code_with_blanket_noqa, &rules);
+            let result = lint_source(&file_path, &code_with_blanket_noqa, &rules);
 
             assert!(
                 result.violations.is_empty(),
@@ -664,17 +673,14 @@ p: Program = process()"#,
     #[test]
     fn test_all_rules_respect_file_level_noqa() {
         let test_cases = get_noqa_test_cases();
+        let package = importable_package();
 
         for test_case in test_cases {
             let rule = get_rule_by_id(test_case.rule_id)
                 .unwrap_or_else(|| panic!("Rule {} not found", test_case.rule_id));
             let rules: Vec<Box<dyn LintRule>> = vec![rule];
 
-            let file_path = if test_case.rule_id == "DOEFF010" {
-                "src/test_example.py"
-            } else {
-                "test.py"
-            };
+            let file_path = noqa_case_path(test_case.rule_id, &package);
 
             // Test WITH file-level noqa - should suppress all violations
             let code_with_file_noqa = format!(
@@ -682,7 +688,7 @@ p: Program = process()"#,
                 test_case.rule_id, test_case.triggering_code
             );
 
-            let result = lint_source(file_path, &code_with_file_noqa, &rules);
+            let result = lint_source(&file_path, &code_with_file_noqa, &rules);
 
             assert!(
                 result.violations.is_empty(),
@@ -701,17 +707,14 @@ p: Program = process()"#,
     #[test]
     fn test_all_rules_respect_file_level_blanket_noqa() {
         let test_cases = get_noqa_test_cases();
+        let package = importable_package();
 
         for test_case in test_cases {
             let rule = get_rule_by_id(test_case.rule_id)
                 .unwrap_or_else(|| panic!("Rule {} not found", test_case.rule_id));
             let rules: Vec<Box<dyn LintRule>> = vec![rule];
 
-            let file_path = if test_case.rule_id == "DOEFF010" {
-                "src/test_example.py"
-            } else {
-                "test.py"
-            };
+            let file_path = noqa_case_path(test_case.rule_id, &package);
 
             // Test WITH file-level blanket noqa - should suppress all rules
             let code_with_file_noqa = format!(
@@ -719,7 +722,7 @@ p: Program = process()"#,
                 test_case.triggering_code
             );
 
-            let result = lint_source(file_path, &code_with_file_noqa, &rules);
+            let result = lint_source(&file_path, &code_with_file_noqa, &rules);
 
             assert!(
                 result.violations.is_empty(),
@@ -739,17 +742,14 @@ p: Program = process()"#,
     fn test_noqa_for_different_rule_does_not_suppress() {
         // Test that noqa for a different rule doesn't suppress the violation
         let test_cases = get_noqa_test_cases();
+        let package = importable_package();
 
         for test_case in test_cases {
             let rule = get_rule_by_id(test_case.rule_id)
                 .unwrap_or_else(|| panic!("Rule {} not found", test_case.rule_id));
             let rules: Vec<Box<dyn LintRule>> = vec![rule];
 
-            let file_path = if test_case.rule_id == "DOEFF010" {
-                "src/test_example.py"
-            } else {
-                "test.py"
-            };
+            let file_path = noqa_case_path(test_case.rule_id, &package);
 
             // Add noqa for a different rule (use DOEFF999 which doesn't exist)
             let code_with_wrong_noqa = add_noqa_to_line(
@@ -758,7 +758,7 @@ p: Program = process()"#,
                 "DOEFF999",
             );
 
-            let result = lint_source(file_path, &code_with_wrong_noqa, &rules);
+            let result = lint_source(&file_path, &code_with_wrong_noqa, &rules);
 
             assert!(
                 !result.violations.is_empty(),
@@ -875,7 +875,8 @@ p: Program = process()"#,
     fn a_module_rule_runs_once_per_file() {
         let code = "def test_a():\n    if True:\n        assert 1\n\ndef test_b():\n    assert 2\n";
         let rule = Box::new(crate::rules::doeff010_test_file_placement::TestFilePlacementRule::new());
-        assert_eq!(hits_of(rule, "src/test_example.py", code), 1);
+        let package = importable_package();
+        assert_eq!(hits_of(rule, &noqa_case_path("DOEFF010", &package), code), 1);
     }
 
     /// 本体の文ごとの再帰を通した DOEFF004 の当たりの数。規則 1 つ(自分では入れ子に降りない — agora-redesign #2832)を当てる。
