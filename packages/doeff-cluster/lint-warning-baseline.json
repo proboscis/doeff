@@ -1,4 +1,7 @@
 {
+  "DOEFF106": {
+    "src/doeff_cluster/coordinator/protocol/store.hy": 1
+  },
   "DOEFF172": {
     "src/doeff_cluster/coordinator/core/api_policy.hy": 9,
     "src/doeff_cluster/coordinator/core/cluster_policy.hy": 31,

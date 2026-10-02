@@ -85,6 +85,10 @@
 (defk durable-exists [store]
   {:pre [(: store DurableStore)] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
   "置き場に耐久の中身が在るか — 起動が置き場から読み直すか、以前の形の file から移すかを決めるため。"
+  ;; DOEFF106 の warning(この (.exists store) を pathlib の file の確かめと取る弱い証拠 — この file が Path を import しているため)は、
+  ;; linter の判定の側では小さく直せないので warning のまま置く(#2671): Path.exists も store.exists も引数 0 で、引数の数では分けられない。
+  ;; 受け手の型(:pre の DurableStore = ByteLog と DeltaStore の和)で分けるには file をまたいで型を解く仕組みが要り、証拠を見る範囲を
+  ;; 定義の中に絞ると、名に Path を書かずに受け取った値の .exists を見逃す側に倒れる。
   (.exists store))
 
 
