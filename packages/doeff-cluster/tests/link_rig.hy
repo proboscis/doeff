@@ -44,23 +44,23 @@
           self.transport (or transport (httpx.HTTPTransport))))
 
   (defn #^ object on-link [self #^ object program]
-    "program を口の handler と検の答え手の下で 1 回走らせる。"
-    (run (scheduled (with-handlers [(await-handler) (transport-http self.transport) os-file-handler slog-handler (sync-time-handler)
-                                    (coordinator-link self.state self.cell LINK-ROUTE self.watch-cell)]
-                                   program))))
+    "program を口の handler と検の答え手の下で 1 回走らせる(本体は run-on-link)。"
+    (run-on-link self program))
 
   (defn #^ object poll [self]
     "拍 1 つの ReadDesired(root の名乗りは今の state.env-report のまま)。"
     (.on-link self (ReadDesired :env-report self.state.env-report)))
 
+  ;; defk を呼んだ結果の Program は method の引数でなく run-on-link(Program を受けて走らせる関数)へ渡す — method の引数は答えとして
+  ;; 使う所と区別できない(DOEFF126・#2821 の案 A-1 で検の dir も判じるようになった)。
   (defn #^ tuple accept-tasks [self #^ list tasks]
-    (.on-link self (accepted-tasks self.state tasks)))
+    (run-on-link self (accepted-tasks self.state tasks)))
 
   (defn #^ None accept-programs [self #^ tuple specs]
-    (.on-link self (fetched-programs self.state self.cell LINK-ROUTE specs)))
+    (run-on-link self (fetched-programs self.state self.cell LINK-ROUTE specs)))
 
   (defn #^ list report [self #^ tuple statuses]
-    (.on-link self (status-rows self.state statuses)))
+    (run-on-link self (status-rows self.state statuses)))
 
   (defn #^ Path program-dir [self]
     (Path self.state.program-dir))
@@ -68,6 +68,13 @@
   (defn #^ str endpoint [self]
     "いま heartbeat を送る宛先。"
     (get self.cell.route.urls self.cell.route.active)))
+
+
+(defn #^ object run-on-link [#^ LinkRig rig #^ object program]
+  "program(defk を呼んだ結果の Program か effect)を rig の口の handler と検の答え手の下で 1 回走らせる。"
+  (run (scheduled (with-handlers [(await-handler) (transport-http rig.transport) os-file-handler slog-handler (sync-time-handler)
+                                  (coordinator-link rig.state rig.cell LINK-ROUTE rig.watch-cell)]
+                                 program))))
 
 
 (deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str typing.Any)) versions]  ; defk にできない: 検が Program の外で file を置く道具
