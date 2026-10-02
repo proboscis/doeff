@@ -941,7 +941,9 @@ impl PythonGeneratorStream {
     /// classify_python_object handles all cases:
     /// DoExpr (has tag), EffectBase (implicit Perform), or error.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
-        if is_tail_resume_candidate(obj) {
+        // A generator with no tail-resume line cannot be at one: skip reading its line
+        // (the frame object and the line table — agora-redesign #2985).
+        if !self.tail_resume_lines.is_empty() && is_tail_resume_candidate(obj) {
             if let Some(line) = generator_current_line(py, &self.generator) {
                 if self.tail_resume_lines.contains(&line) {
                     match classify_tail_resume(py, obj) {
@@ -1051,14 +1053,16 @@ fn is_tail_resume_candidate(obj: &Bound<'_, PyAny>) -> bool {
     obj.downcast::<PyResume>().is_ok() || obj.downcast::<PyResumeThrow>().is_ok()
 }
 
+/// The line the generator is suspended at. The attribute names are interned once
+/// (`getattr(&str)` built and hashed a new str on every read — agora-redesign #2985).
 fn generator_current_line(py: Python<'_>, generator: &PyShared) -> Option<u32> {
     let gen = generator.bind(py);
-    let frame = gen.getattr("gi_frame").ok()?;
+    let frame = gen.getattr(pyo3::intern!(py, "gi_frame")).ok()?;
     if frame.is_none() {
         return None;
     }
     frame
-        .getattr("f_lineno")
+        .getattr(pyo3::intern!(py, "f_lineno"))
         .ok()
         .and_then(|line| line.extract::<u32>().ok())
 }
