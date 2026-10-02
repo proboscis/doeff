@@ -8,6 +8,7 @@ import threading
 import time
 
 import pytest
+from doeff import Await
 
 
 def test_plain_sleep():
@@ -73,3 +74,27 @@ class TestInClass:
 
     def test_plain_method(self):
         time.sleep(0.1)  # 鳴る
+
+
+# await を付けずに渡す形(#2957)— doeff の検の yield Await(asyncio.sleep(…)) も実時間を待つ。
+
+
+def test_awaitless_sleep_in_a_program():
+    yield Await(asyncio.sleep(0.1))  # 鳴る
+
+
+def test_sleep_handed_to_a_runner():
+    asyncio.run(asyncio.sleep(0.1))  # 鳴る
+
+
+def test_awaitless_zero_sleep_yields_only():
+    yield Await(asyncio.sleep(0))
+
+
+@pytest.mark.realtime
+def test_declared_awaitless_sleep():
+    yield Await(asyncio.sleep(0.1))
+
+
+def test_zero_sleep_with_a_result_yields_only():
+    yield Await(asyncio.sleep(0, result="still scheduling"))

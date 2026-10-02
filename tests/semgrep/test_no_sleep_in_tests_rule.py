@@ -1,9 +1,10 @@
 """doeff-no-sleep-in-tests の極性の検(agora-redesign #2882)。
 
 検体(tests/semgrep/fixtures/python/tests/)で `# 鳴る` を付けた行だけが当たることを、規則の当たりの行で突き合わせる。
-鳴るべき形 = 宣言の無い検・宣言の無い検の入れ子の helper・別の marker だけの検・module の段の helper の sleep。
+鳴るべき形 = 宣言の無い検・宣言の無い検の入れ子の helper・別の marker だけの検・module の段の helper の sleep・await を付けずに渡す
+asyncio.sleep(…)(yield Await(…)・asyncio.run(…) — #2957)。
 鳴らないべき形 = 関数の @pytest.mark.realtime(async・入れ子の helper・ほかの marker と重ねた形・class の method を含む)・
-module の pytestmark = pytest.mark.realtime より後・sleep(0)。どちらの検体にも鳴る行を置き、規則が file に届いていることも見る。
+module の pytestmark = pytest.mark.realtime より後・sleep(0)(await の無い形も)。どちらの検体にも鳴る行を置き、規則が file に届いていることも見る。
 """
 
 from __future__ import annotations
