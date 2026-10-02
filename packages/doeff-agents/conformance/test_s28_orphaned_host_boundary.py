@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -256,7 +257,18 @@ print(json.dumps({"daemon_pid": proc.pid}), flush=True)
 """
 
 
-def _spawn_bare_daemon_via_dying_parent(knob: str) -> tuple[int, str]:
+@dataclass(frozen=True)
+class _BareDaemon:
+    """A daemon left behind by a parent that died: its pid and its runtime dir.
+
+    The caller removes the runtime dir.
+    """
+
+    daemon_pid: int
+    runtime_dir: str
+
+
+def _spawn_bare_daemon_via_dying_parent(knob: str) -> _BareDaemon:
     runtime_dir = tempfile.mkdtemp(prefix="agentd-conf-s28-", dir="/tmp")
     child = subprocess.run(
         [
@@ -286,14 +298,15 @@ def _spawn_bare_daemon_via_dying_parent(knob: str) -> tuple[int, str]:
             f"bare-daemon child failed: {info} rc={child.returncode}\n"
             f"stderr={child.stderr}\n{log_text}"
         )
-    return int(info["daemon_pid"]), runtime_dir
+    return _BareDaemon(daemon_pid=int(info["daemon_pid"]), runtime_dir=runtime_dir)
 
 
 def test_s28b_without_knob_daemon_survives_parent_death() -> None:
     """Production pin (acceptance 3): a daemon spawned WITHOUT the knob keeps
     running after its parent dies — launchd-owned hosts are reparented by
     construction and must never self-evict."""
-    daemon_pid, runtime_dir = _spawn_bare_daemon_via_dying_parent(knob="0")
+    bare = _spawn_bare_daemon_via_dying_parent(knob="0")
+    daemon_pid, runtime_dir = bare.daemon_pid, bare.runtime_dir
     try:
         settle_deadline = time.monotonic() + 4.0
         while time.monotonic() < settle_deadline:
@@ -310,7 +323,8 @@ def test_s28b_without_knob_daemon_survives_parent_death() -> None:
 def test_s28c_with_knob_daemon_self_evicts_after_parent_death() -> None:
     """Mechanism isolation: the knob alone (no harness, no sessions) makes
     serve exit within bounded time once its spawning parent is gone."""
-    daemon_pid, runtime_dir = _spawn_bare_daemon_via_dying_parent(knob="1")
+    bare = _spawn_bare_daemon_via_dying_parent(knob="1")
+    daemon_pid, runtime_dir = bare.daemon_pid, bare.runtime_dir
     try:
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:

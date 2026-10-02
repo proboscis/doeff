@@ -43,6 +43,7 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from doeff_agents.agentd_client import AgentdClient
@@ -158,11 +159,19 @@ def _spawn_orphan_daemon(agentd_bin: Path, runtime_dir: Path) -> int:
     return pid
 
 
-def _launch_parked_active_session(runtime_dir: Path) -> tuple[str, int]:
+@dataclass(frozen=True)
+class _ParkedSession:
+    """The parked conformance agent's session and the pid of the pane process that runs it."""
+
+    session_id: str
+    pane_pid: int
+
+
+def _launch_parked_active_session(runtime_dir: Path) -> _ParkedSession:
     """Launch the M2 conformance agent so it renders the ACTIVE frame after
     the prompt and parks — the synthetic twin of the leaked
     daemon+conformance_agent pairs (an active, never-terminating seat whose
-    pane process outlives any supervisor). Returns (session_id, pane_pid)."""
+    pane process outlives any supervisor). Returns its session id and pane pid."""
     script = [
         {"render": "F-idle-claude"},
         {"await_keys": {"expect": PROMPT, "timeout_s": 30}},
@@ -194,7 +203,7 @@ def _launch_parked_active_session(runtime_dir: Path) -> tuple[str, int]:
             check=True,
         ).stdout.strip().splitlines()[0]
     )
-    return session_id, pane_pid
+    return _ParkedSession(session_id=session_id, pane_pid=pane_pid)
 
 
 # -- the reconciler obligation (red before the reaper exists) -----------------
@@ -212,7 +221,8 @@ def test_s28d_preexisting_orphan_daemon_and_partner_agent_are_reaped() -> None:
     session_id: str | None = None
     try:
         daemon_pid = _spawn_orphan_daemon(agentd_bin, runtime_dir)
-        session_id, pane_pid = _launch_parked_active_session(runtime_dir)
+        parked = _launch_parked_active_session(runtime_dir)
+        session_id, pane_pid = parked.session_id, parked.pane_pid
         assert _pid_alive(daemon_pid), "synthetic orphan daemon must be running"
         assert _pid_alive(pane_pid), "parked conformance agent must be running"
         assert session_exists_out_of_band(session_id)
