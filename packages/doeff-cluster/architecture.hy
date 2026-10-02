@@ -23,7 +23,9 @@
 ;;;   実測 約 6.6 分)。keep-fence-ms 240 秒 + 停止の猶予 15 秒 = 255 秒 < 350 秒。tolerations を短くする manifest の変更はこの前提を崩す。
 ;;;   確かめるのは tests/test_keep_when_cut_off.hy の途絶の筋書き(job の process ごとの生きていた区間を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-ignores-the-fence-breaks-c2(sim の宿の fence の判断を使わない壊れた worker — SimWorker の
-;;;   ignores-fence — で、移せる先の在る job が移し替えの後に 2 か所で走り、C2 が重なりを名指す)。
+;;;   ignores-fence — で、移せる先の在る job が移し替えの後に 2 か所で走り、C2 が重なりを名指す)。2026-10-02 の本番の途絶 3 つ(処理の止まり
+;;;   47 秒・網の途絶 115 秒とその最中の coordinator の止まり 20.2 秒・途絶の 30 秒目の 2 台目)を実際の秒と順序で再現した筋書きは
+;;;   tests/test_outage_timelines.hy(#2805)。
 ;;;   C3 stopped-generation-gets-no-new-task(doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task)—
 ;;;   止まり始めた worker の世代(drain の頼みを通らない止め — sigterm・機体の終了・手の kill)へ、止まり始めの後に新しい task を置かない
 ;;;   (その世代は task を始めずに抜け、切り離した task は新しい世代へ渡らず lease まで止まる — #2819)。確かめるのは
