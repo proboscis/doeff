@@ -168,7 +168,7 @@
     (assert (= (. (get (. (get reply 0) tasks) id) environ) #(#(URL-NAME URL))))
     (assert (= (get rows id "environ") {URL-NAME URL}) (get rows id)))
   (assert (not-in "environ" (get rows (get plain 2 "task"))) rows)
-  (val spec (task-spec (get rows (get remote 2 "task")) (/ tmp-path "tasks")))
+  (<- spec (task-spec (get rows (get remote 2 "task")) (/ tmp-path "tasks")))
   (assert (= spec.environ #(#(URL-NAME URL))) spec)
   (<- settings (host-settings tmp-path))
   (<- plan tuple (launched settings spec (str tmp-path) "1-1" 1))

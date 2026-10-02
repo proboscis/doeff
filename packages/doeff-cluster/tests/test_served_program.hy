@@ -12,6 +12,9 @@
 (import time)
 (import pathlib [Path])
 (import httpx)
+(import doeff [with-handlers])
+(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
@@ -55,8 +58,10 @@
   (assert (isinstance served-coordinator str) served-coordinator)
   (<- declaration Declaration (declaration-for-this-test))
   (val sha (get (get declaration.rows 0) "run" "program"))
-  ;; declare: 置き場へ Program を置いてから Service を書く。
-  (apply-declaration served-coordinator declaration "c-served-test")
+  ;; declare: 置き場へ Program を置いてから Service を書く(書きの HTTP は declare の入口と同じ汎用の答え手が本物の coordinator へ送る)。
+  (<- applied bool (with-handlers [(await-handler) (http-production-handler) slog-handler]
+                     (apply-declaration served-coordinator declaration "c-served-test")))
+  (assert applied "宣言の書きのどれかが 300 以上を返した")
   (val stored (httpx.get (+ served-coordinator "/programs/" sha) :timeout 10))
   (assert (= stored.status-code 200) stored.text)
   (assert (= (get (.json stored) "blob") (get declaration.programs sha)))

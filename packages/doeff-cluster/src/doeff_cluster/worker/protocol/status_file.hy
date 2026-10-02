@@ -8,15 +8,16 @@
 (import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
 (import doeff_cluster.worker.intent.worker_model [PublishStatus])
 (import doeff_cluster.worker.protocol.observations [CodeTimings])
-(import doeff_cluster.worker.protocol.heartbeat [status-row])
+(import doeff_cluster.worker.protocol.heartbeat [status-rows-json])
 
 
 (defk status-json [statuses note timings]
   {:pre [(: statuses tuple) (: note str) (: timings dict)] :post [(: % dict)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "状態の行の列・注記・焼きの経過の秒を、外から覗ける状態の file の JSON の形に綴るため(答え手 status-file と検が同じ形を使う)。"
+  (<- rows tuple (status-rows-json statuses))
   {"note" note
    "codePrepareSeconds" timings
-   "jobs" (lfor s statuses (status-row s))})
+   "jobs" (list rows)})
 
 
 ;; 状態の file の mode(前の形の Path.write-text が umask 022 の下で作った物と同じ — 置き換えの書きの一時 file は 0600 なので明示する)。

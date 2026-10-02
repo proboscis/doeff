@@ -366,7 +366,7 @@
 
 (deftest test-the-worker-warms-after-its-jobs-and-retries-a-failed-warm-later
   (<- job-declared dict (declared-of "app-1"))
-  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
+  (<- spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
                        (Path "/tmp/tasks")))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val policy (WorkerPolicy))
@@ -384,7 +384,7 @@
 
 (deftest test-the-worker-pins-running-desired-warm-and-preparing-roots-for-the-sweep
   (<- job-declared dict (declared-of "app-1"))
-  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
+  (<- spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
                        (Path "/tmp/tasks")))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val world (WorldView #((CodeView "env-preparing" CodeState.PREPARING)) #() #()

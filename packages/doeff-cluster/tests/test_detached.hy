@@ -22,6 +22,7 @@
 (import doeff [with_handlers Program run])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader await-handler])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [Spawn Cancel Task TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
@@ -556,7 +557,7 @@
   (setv #(row) (get body "tasks"))
   (assert (get row "detached"))
   ;; worker の側: 途絶で止めない task の宣言になる
-  (assert (. (task-spec row (Path "/tmp")) detached)))
+  (assert (. (! (task-spec row (Path "/tmp"))) detached)))
 
 
 (deftest test-caller-reads-do-not-extend-the-lease-but-worker-heartbeats-do
@@ -897,7 +898,9 @@
   ;; 置き場の無いところから起きた coordinator が t1 から振り直すと、worker に残る前の t1 の blob で新しい t1 が走った
   ;; (以前の accept-tasks は blob の file が在れば書き直さなかった)。起動ごとに違う頭を振る。
   (setv #(_ id link _) (placed-echo tmp-path))
-  (var fresh (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456))
+  ;; 置き場も以前の形の file も無い — 以前の形の file を探す読みに os の file system が答える。
+  (<- loaded (with-handlers [os-file-handler] (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456)))
+  (var fresh loaded)
   (val reply-56 (beat fresh "other" 123500))
   (:= fresh (get reply-56 0))
   (val reply-57 (run (program-placed fresh V "TkVX" (+ 123500 T.lease-ms))))

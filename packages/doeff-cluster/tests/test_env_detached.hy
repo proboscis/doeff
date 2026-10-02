@@ -244,7 +244,7 @@
 (deftest test-the-worker-prepares-an-env-root-and-reports-its-failure
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM
+  (<- spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM
                         "runtimeEnv" declared}
                        (Path "/tmp/tasks")))
   (<- key str (env-key env (current-platform)))
@@ -258,7 +258,7 @@
   (val world (WorldView #((CodeView (code-key spec) CodeState.FAILED :detail "push していない" :failed-ms 0 :failure failure)) #()))
   (val status (get (statuses 1 #(spec) world {} policy) 0))
   (assert (= status.phase JobPhase.ENV-FAILED) status)
-  (val row (status-row status))
+  (<- row (status-row status))
   (assert (= #((get row "phase") (get row "failureKind") (get row "retryable")) #("env-failed" "commit-missing" False)) row)
   ;; 今の commit だけの task は今のまま木を展開する
   (val plain (replace spec :revision (* "a" 40) :runtime-env None))

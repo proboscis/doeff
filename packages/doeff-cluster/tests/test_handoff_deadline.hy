@@ -2,7 +2,7 @@
 ;; 諦め(新を止めて旧を残す)、Service の status に段と理由を出す。宣言が変われば諦めが解ける。
 ;;
 ;; 仮想の時計の上の小さな世界で、coordinator の本物の判断(api_policy.respond)と worker の本物の判断(worker_policy.plan /
-;; records-after / statuses)と本物の返事の読み(handlers.declared-job-spec)をつなぐ。process の中身だけを模す:
+;; records-after / statuses)と本物の返事の読み(worker/protocol/declared の declared-job-specs)をつなぐ。process の中身だけを模す:
 ;;   - 起きて JOB-START 後から毎拍 ReportReady を送る。壊れた版(broken)の process は ReportReady(偽)と理由を送る。
 ;;   - TERM を受けた process は次の拍で終わる(本番の書き手と同じく SIGTERM で即座に終わる)。
 ;; 筋書き: (a) 期限の内に Ready → 旧が止まる(今と同じ)・(b) 期限を越えて NotReady → 新が止まり起こし直されず、旧は動き続け、
@@ -18,7 +18,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
+(import doeff_cluster.worker.protocol.declared [declared-job-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json])
 (import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.entry.service_build [job])
@@ -92,16 +92,6 @@
         (setv self.processes (lfor p self.processes (if (= p.pid action.pid) (replace p :exit-code -15) p)))
       (isinstance action ReapJob) (setv self.processes (lfor p self.processes :if (!= p.pid action.pid) p))))
 
-  (defn #^ None worker-tick [self]  ; defk にできない: 模擬の世界の method(worker の 1 拍)
-    "worker の本物の判断で 1 拍進め、状態を heartbeat で送り、返事を本物の読み(declared-job-spec)で宣言にする。"
-    (setv world (self.world) actions (plan self.now self.desired world self.records self.policy))
-    (for [a actions] (self.apply a))
-    (setv self.records (records-after self.now self.records actions self.policy))
-    (setv rows (lfor s (statuses self.now self.desired (self.world) self.records self.policy) (status-row s)))
-    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" rows} :actor None))
-    (.append self.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
-    (setv self.desired (tuple (gfor j (get reply "jobs") (declared-job-spec j)))))
-
   (defn #^ None processes-tick [self]  ; defk にできない: 模擬の世界の method(子 process の拍)
     "動いている子 process が JOB-START の後から毎拍 ReportReady を送る(壊れた版は偽と理由)。"
     (for [p self.processes]
@@ -112,20 +102,9 @@
                     "specHash" (spec-hash p.spec) "placement" p.spec.placement "ready" healthy
                     "reason" (if healthy "拍を終えた" WARMING) "role" "active"} :actor None))))
 
-  (defn #^ None step [self]  ; defk にできない: 模擬の世界の method(1 秒進める)
-    "1 秒進める(worker の拍 → 子 process の報告)。"
-    (+= self.now 1000)
-    (self.worker-tick)
-    (self.processes-tick)
-    (.append self.log #(self.now (len (lfor p self.processes :if (is p.exit-code None) p)))))
-
   (defn #^ None mark-broken [self #^ str revision]  ; defk にできない: 模擬の世界の method
     "その版の process が ReportReady(偽)を送るようにする(準備できない新の世代を模す)。"
     (setv self.broken (| self.broken #{revision})))
-
-  (defn #^ None steps [self #^ int n]  ; defk にできない: 模擬の世界の method
-    "n 拍進める。"
-    (for [_ (range n)] (self.step)))
 
   (defn #^ dict redeclare [self #^ dict declaration]  ; defk にできない: 模擬の世界の method(宣言の書き換え — declare --apply と同じ口)
     "Service の宣言を書き換える(読んだ版を付けた PUT)。"
@@ -144,6 +123,40 @@
     "coordinator の作り直し: 耐久の置き場の形から読み直す(worker の報告・readiness は失う)。止まっていた時間は無い。"
     (setv #(state _) (resume-after-downtime (state-from-kv (durable-kv self.state) self.now) self.now))
     (setv self.state state)))
+
+
+(defk worker-tick [sim]
+  {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker の本物の判断で模擬の世界を 1 拍進め、状態を本物の綴り(status-rows-json)の heartbeat で送り、返事を本物の読み
+   (declared-job-specs)で宣言にするため。"
+  (val world (sim.world))
+  (val actions (plan sim.now sim.desired world sim.records sim.policy))
+  (for [a actions] (sim.apply a))
+  (setv sim.records (records-after sim.now sim.records actions sim.policy))
+  (<- rows tuple (status-rows-json (tuple (statuses sim.now sim.desired (sim.world) sim.records sim.policy))))
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" (list rows)}
+                       :actor None))
+  (.append sim.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
+  (<- desired tuple (declared-job-specs (get reply "jobs")))
+  (setv sim.desired desired)
+  None)
+
+
+(defk step [sim]
+  {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "模擬の世界を 1 秒進めるため(worker の拍 → 子 process の報告)。"
+  (+= sim.now 1000)
+  (<- (worker-tick sim))
+  (sim.processes-tick)
+  (.append sim.log #(sim.now (len (lfor p sim.processes :if (is p.exit-code None) p))))
+  None)
+
+
+(defk steps [sim n]
+  {:pre [(: sim Sim) (: n int)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "模擬の世界を n 拍進めるため。"
+  (for [_ (range n)] (<- (step sim)))
+  None)
 
 
 (defn #^ list handoff-changes [#^ Sim sim]  ; defk にできない: 検の読みの道具(出来事の記録の欄を拾う)
@@ -169,14 +182,15 @@
   (len (lfor s sim.starts :if (= (get s 1) revision) s)))
 
 
-(defn #^ Sim abandon-r2 []  ; defk にできない: 検の筋書きの組み立て(模擬の世界を (b) の諦めまで進める)
-  "r1 を起こし、Ready にならない r2 へ宣言を変え、期限を越えて諦めるまで進めた世界(筋書き (b) と (c) が使う)。"
-  (setv sim (Sim HANDOFF))
-  (sim.steps 12)
+(defk abandon-r2 []
+  {:pre [] :post [(: % Sim)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書き (b) と (c) の出発点を作るため: r1 を起こし、Ready にならない r2 へ宣言を変え、期限を越えて諦めるまで進めた世界。"
+  (val sim (Sim HANDOFF))
+  (<- (steps sim 12))
   (assert (= (get (sim.status) "ready") "Ready") sim.log)
   (sim.mark-broken "r2")
   (sim.redeclare (| HANDOFF {"revision" "r2"}))
-  (sim.steps (+ TIMEOUT-SECONDS 15))
+  (<- (steps sim (+ TIMEOUT-SECONDS 15)))
   sim)
 
 
@@ -218,10 +232,10 @@
 (deftest test-a-new-generation-ready-within-the-deadline-stops-the-old-as-before
   ;; (a) 期限の内に Ready → 旧が止まる(今と同じ)。見張りは Ready を待つ間だけ status.handoff に出て、Ready で消える。
   (val sim (Sim HANDOFF))
-  (sim.steps 12)
+  (<- (steps sim 12))
   (val first (get (sim.live "r1") 0))
   (sim.redeclare (| HANDOFF {"revision" "r2"}))
-  (sim.steps 20)
+  (<- (steps sim 20))
   (assert (= (sim.live "r1") []) sim.log)
   (assert (= (len (sim.live "r2")) 1) sim.processes)
   (assert (not-in first.pid (lfor p sim.processes p.pid)))
@@ -236,7 +250,7 @@
 
 (deftest test-a-new-generation-not-ready-past-the-deadline-is-stopped-and-the-old-keeps-running
   ;; (b) 期限を越えて NotReady → 新が止まり起こし直されず、旧は動き続け、status に段と理由(ReportReady の reason を含む)。
-  (val sim (abandon-r2))
+  (<- sim Sim (abandon-r2))
   (val handoff (get (sim.status) "handoff"))
   (assert (= (get handoff "phase") "Abandoned") handoff)
   (assert (= (get handoff "timeoutSeconds") TIMEOUT-SECONDS) handoff)
@@ -256,9 +270,9 @@
   (assert (= row.phase "handoff-abandoned") row)
   ;; 起こし直さない: 時間が経っても、coordinator を作り直しても(諦めは保存される)、r2 は起きない。
   (val starts-r2 (started sim "r2"))
-  (sim.steps 20)
+  (<- (steps sim 20))
   (sim.restart-coordinator)
-  (sim.steps 40)
+  (<- (steps sim 40))
   (assert (= (started sim "r2") starts-r2) sim.starts)
   (assert (= (sim.live "r2") []))
   (assert (= (len (sim.live "r1")) 1))
@@ -268,13 +282,13 @@
 
 (deftest test-changing-the-declaration-lifts-the-abandonment-and-hands-off-again
   ;; (c) 宣言を変えると諦めが解けて、新しい spec の入れ替えが始まる(Ready になった後に退いた旧が止まる)。
-  (val sim (abandon-r2))
+  (<- sim Sim (abandon-r2))
   (assert (= (get (get (sim.status) "handoff") "phase") "Abandoned"))
   (sim.redeclare (| HANDOFF {"revision" "r3"}))
   ;; 書き換えの後の最初の返事から諦めの印は消える。
-  (sim.step)
+  (<- (step sim))
   (assert (not (.get (get sim.replies -1) "handoffAbandoned" False)) (get sim.replies -1))
-  (sim.steps 20)
+  (<- (steps sim 20))
   (assert (= (sim.live "r1") []) sim.processes)
   (assert (= (len (sim.live "r3")) 1) sim.processes)
   (assert (= (get (sim.status) "ready") "Ready"))
@@ -287,10 +301,10 @@
 (deftest test-a-recreate-service-is-unchanged
   ;; (d) recreate の Service は期限を持たない: 旧を止めてから新を起こし、新が NotReady のままでも止めない・status に handoff を出さない。
   (val sim (Sim RECREATE))
-  (sim.steps 12)
+  (<- (steps sim 12))
   (sim.mark-broken "r2")
   (sim.redeclare (| RECREATE {"revision" "r2"}))
-  (sim.steps (+ TIMEOUT-SECONDS 60))
+  (<- (steps sim (+ TIMEOUT-SECONDS 60)))
   (assert (= (sim.live "r1") []))
   (assert (= (len (sim.live "r2")) 1) sim.processes)
   (assert (= (started sim "r2") 1) sim.starts)

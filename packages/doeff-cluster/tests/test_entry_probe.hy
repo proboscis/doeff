@@ -324,7 +324,7 @@
           status.probe)
   (assert (in "GetMonotonic" status.detail) status.detail)
   ;; 状態の JSON(heartbeat と status の file)にも載る。
-  (val row (status-row status))
+  (<- row (status-row status))
   (assert (= (get row "phase") "probing"))
   (assert (= (get row "probe") {"state" "running" "elapsedSeconds" 45 "attempts" 2
                                 "lastFailure" "ImportError: cannot import name 'GetMonotonic'"})
