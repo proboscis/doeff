@@ -254,6 +254,14 @@
   (#^ str reason))
 
 
+(defrecord BodyUnreadable
+  "道の本文の読み(ReadBody)の中で例外が上がった — 調停ループが値にして判断 respond へ渡し、respond が自分の欠陥の囲みの中で上げ直して、
+   送り手の誤り(BodyInvalid → 400)か coordinator の欠陥(→ 500 の Fault・上がった所つき)かを 1 か所で決める(#2796 — 本文の読みが判断の
+   外へ移った後、読みの中の例外が調停ループの外まで抜けて coordinator の process ごと落ちた)。error = 上がった例外。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ Exception error))
+
+
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
 (setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed dict))
 

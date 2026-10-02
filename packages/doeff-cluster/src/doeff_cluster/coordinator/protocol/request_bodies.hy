@@ -8,7 +8,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ServiceBody LegacyJobRow LegacyJobs])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed ReadBody RequestBody])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed BodyUnreadable ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
 (import doeff_cluster.coordinator.protocol.replies [reply-json])
 
@@ -106,6 +106,8 @@
 
 (defn #^ tuple responded [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]  ; defk にできない: 判断を直に呼ぶ検と模擬の世界(Program の外)が呼ぶ
   "要求 1 件の本文を道の型に解いてから判断(api_policy.respond)に答えさせ、返事の本文を JSON の形に綴る — 本番の調停ループの ReadBody と
-   返事の答え手 reply-bodies と同じ解きと綴り。"
-  (setv #(after status body) (respond state request now timing (run (body-of request))))
+   返事の答え手 reply-bodies と同じ解きと綴り。読みの中で上がった例外は、調停ループ(program.readable-body)と同じく値 BodyUnreadable にして
+   判断に渡す(#2796)。"
+  (setv read (try (run (body-of request)) (except [error Exception] (BodyUnreadable :error error))))
+  (setv #(after status body) (respond state request now timing read))
   #(after status (run (reply-json body))))

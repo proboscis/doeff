@@ -257,6 +257,41 @@
   (assert (not-in "w" final.workers)))
 
 
+(deftest test-a-declaration-with-an-empty-name-or-revision-is-400-and-the-loop-goes-on
+  ;; 失敗ケース(#2796 — #2788 の下見で見つけた後退): 名前の無い POST /resources/Service と revision が "" の PUT /resources/Service/<名> は
+  ;; 送り手の誤りで 400。直す前は宣言の JSON → JobSpec の不変条件の素の ValueError が、本文の読み(ReadBody — 判断の欠陥の囲みの外)から
+  ;; 調停ループの外まで抜け、coordinator の process ごと落ちた。後ろの要求(GET /state)にも答え、宣言は書かない。
+  (val faults [])
+  (val script (Script [(req "POST" "/resources/Service" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}})
+                       (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "" "needs" ["net"]}})
+                       (req "GET" "/state")]))
+  (<- final ClusterState ((scripted script) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (assert (= (lfor r script.replies #((get r 0) (get r 1)))
+             [#("/resources/Service" 400) #("/resources/Service/a" 400) #("/state" 200)])
+          script.replies)
+  (assert (in "名前" (get (get (get script.replies 0) 2) "error")) script.replies)
+  (assert (in "revision" (get (get (get script.replies 1) 2) "error")) script.replies)
+  (assert (= faults []) faults)
+  (assert (= final.jobs #()) final.jobs))
+
+
+(deftest test-a-fault-while-reading-a-body-is-500-and-the-loop-goes-on [monkeypatch]
+  ;; 失敗ケース(#2796): 本文の読みの中で予期しない例外が上がっても(Service の宣言の読みを壊す)、その要求 1 件を 500 の Fault で答え、
+  ;; log に 1 行(CoordinatorFault — 上がった所が出る)出して、調停ループは止まらない。直す前は例外が調停ループの外まで抜けた。
+  (import doeff_cluster.coordinator.protocol.request_bodies)
+  (monkeypatch.setattr doeff_cluster.coordinator.protocol.request_bodies "service_body_of"
+                       (fn [body parts] (raise (TypeError "宣言の本文の読みの欠陥(偽)"))))
+  (val faults [])
+  (val script (Script [(req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}})
+                       (req "GET" "/state")]))
+  (<- final ClusterState ((scripted script) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/resources/Service/a" 500) #("/state" 200)]) script.replies)
+  (assert (get (get (get script.replies 0) 2) "fault") script.replies)
+  (assert (= (lfor f faults #(f.method f.path f.error-type)) [#("PUT" "/resources/Service/a" "TypeError")]) faults)
+  (assert (in "test_coordinator.hy" (. (get faults 0) where)) faults)
+  (assert (= final.jobs #()) final.jobs))
+
+
 ;; --- shim(Python のまま残す見張り)-----------------------------------------------------------
 
 (defn #^ subprocess.Popen shim [#^ str #* command]

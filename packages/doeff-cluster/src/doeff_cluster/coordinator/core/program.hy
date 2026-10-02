@@ -41,7 +41,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.coordinator.intent.request_bodies [ReadBody])
+(import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable])
 (import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 
 
@@ -122,13 +122,25 @@
   (ErrorReply :message (.format "coordinator の中の欠陥: {}: {}({})" fault.error-type fault.message fault.where) :fault True))
 
 
+(defk readable-body [request]
+  {:pre [(: request Request)] :post [(: % "道の本文の型の値か BodyUnreadable")] :tags {:context "coordinator" :role "program"}}
+  "要求 1 件の本文を道の型に読むため(ReadBody)。読みの中で上がった例外は値 BodyUnreadable にして返し、判断 respond の欠陥の囲みで
+   400 か 500 かを決めさせる — 本文の読みは判断の囲みの外(#2445)なので、ここで値にしないと 1 件の要求の欠陥が調停ループの外まで抜け、
+   coordinator の process ごと落ちる(#2796)。"
+  (try
+    (<- body (ReadBody request))
+    body
+    (except [error Exception]
+      (BodyUnreadable :error error))))
+
+
 (defk request-reply [state request now timing [settled False]]
   {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming) (: settled bool)] :post [(: % tuple)]
    :tags {:context "coordinator" :role "program"}}
   ;; 版の変化を待つ読み(GET /watch)でない要求 1 件に答えるため: 判断(api_policy.respond)で次の状態と返事を導き、中の欠陥は log に
   ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文)。
   ;; 本文は道の型に解いてから判断に渡す(答え手 = coordinator/protocol/request_bodies — #2445)。
-  (<- read-body (ReadBody request))
+  (<- read-body (readable-body request))
   ;; settled = state が同じ now で調停済み(coordinator-step が拍の頭の tick の答えのままの時に渡す)— 静かな heartbeat の早道の前提(#2655)。
   (val result (respond state request now timing read-body :settled settled))
   (val body (get result 2))

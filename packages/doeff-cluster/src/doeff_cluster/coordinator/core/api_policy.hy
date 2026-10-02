@@ -32,7 +32,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import traceback [extract-tb])
-(import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed])
+(import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed BodyUnreadable])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply
                                                        DeploymentSeen DeploymentUnreadable])
@@ -436,14 +436,17 @@
 
 (defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing #^ object body #^ bool [settled False]]
   "要求 1 件と、その本文を道の型に解いた値(coordinator/protocol/request_bodies の body-of — 型の値・まだ型にしていない道は JSON の
-   object・形が合わなければ BodyMalformed)→ #(次の状態 status 本文)。settled = state を同じ now で調停済みと呼び手が保証する
-   (coordinator の 1 歩の中だけ — 静かな heartbeat の早道 quiet-heartbeat の前提・#2655)。"
+   object・形が合わなければ BodyMalformed・読みの中で例外が上がれば BodyUnreadable)→ #(次の状態 status 本文)。settled = state を同じ
+   now で調停済みと呼び手が保証する(coordinator の 1 歩の中だけ — 静かな heartbeat の早道 quiet-heartbeat の前提・#2655)。"
   (setv method request.method
         parts (list request.parts)
         head (get parts 0))
   (try
     (when (isinstance body BodyMalformed)
       (raise (BodyInvalid body.reason)))
+    ;; 本文の読みの中で上がった例外は、この囲みで上げ直して下の except で分ける — 1 件の要求の欠陥で調停ループを止めない(#2796)。
+    (when (isinstance body BodyUnreadable)
+      (raise body.error))
     (match head
       "resources" (respond-resources state request body parts now timing)
       (| "metrics" "events") (respond-observations state request body parts now timing)

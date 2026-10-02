@@ -56,15 +56,18 @@
   "宣言 1 行 → worker が起動する形(job_entry の service 入口と詰めた Program の置き場のキー)。宣言の job は Program の job だけ —
    run の無い行(生の entry と args を worker に直に起こさせる形)は理由つきで断る(ADR-DOE-CLUSTER-001 R1・R7 — 移行の期間は置かない)。
    runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
-  (setv run (.get item "run") revision (required-field item "revision") runtime (declared-runtime-env item))
+  (setv run (.get item "run") revision (required-field item "revision") runtime (declared-runtime-env item) name (.get item "name"))
+  ;; 名前と revision の空は送り手の誤り(400)— JobSpec の不変条件(name・entry・revision が要る)の素の ValueError まで運ばない(#2796:
+  ;; 本文の読みの中の ValueError が調停ループの外まで抜け、coordinator の process ごと落ちた)。
   (cond
+    (not (and (isinstance name str) name)) (raise (BodyInvalid (.format "Service の名前は空でない文字列: {!r}" name)))
     (is run None) (raise (BodyInvalid (raw-entry-refusal item)))
     (not (isinstance run dict)) (raise (BodyInvalid (.format "run は JSON の object: {!r}" run)))
-    (not (isinstance revision str)) (raise (BodyInvalid (.format "revision は文字列: {!r}" revision)))
+    (not (and (isinstance revision str) revision)) (raise (BodyInvalid (.format "revision は空でない文字列: {!r}" revision)))
     (= (.get run "kind") "service")
       (do (setv refusal (program-row-refusal item))
           (when refusal (raise (BodyInvalid refusal)))
-          (JobSpec (get item "name") JOB-ENTRY #("service" "--identity" (identity-hash run))
+          (JobSpec name JOB-ENTRY #("service" "--identity" (identity-hash run))
                    revision
                    :handoff (= (.get item "update") "handoff") :runtime-env runtime
                    :program (get run "program")
