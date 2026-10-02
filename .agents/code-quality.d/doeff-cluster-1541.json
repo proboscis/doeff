@@ -657,7 +657,8 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-resource-policy",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-watch-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-idle-policy",
@@ -667,7 +668,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy"
       ],
-      "responsibility": "要求の無い拍を何拍飛ばしても調停が何も変えないか(純粋な判断・I/O はしない)。",
+      "responsibility": "要求の無い間の静かな区間で、1 拍ずつの走りの調停の歩が何を変えるか(純粋な判断・I/O はしない — 生存の印と吸える待ちの期限だけが変わる歩を試す)。",
       "typed": true
     },
     {
@@ -826,7 +827,8 @@
         "doeff-cluster-warm-rules",
         "doeff-cluster-board-requests",
         "doeff-cluster-wal-store",
-        "doeff-cluster-main"
+        "doeff-cluster-main",
+        "doeff-cluster-worker-tick-pauses"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -863,7 +865,8 @@
         "doeff-cluster-coordinator-route",
         "doeff-cluster-worker-lease-release",
         "doeff-cluster-worker-coordinator-link",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-worker-tick-pauses"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1491,7 +1494,8 @@
         "doeff-cluster-coordinator-replies",
         "doeff-cluster-record-spec",
         "doeff-cluster-drain-policy",
-        "doeff-cluster-promise-wait"
+        "doeff-cluster-promise-wait",
+        "doeff-cluster-watch-policy"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2310,6 +2314,22 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/protocol/lease_release.hy"
       ],
       "responsibility": "終わった process の lease の返し(ReleaseLeases)を宛先の部品の上の HttpRequest へ言い換える(#2427)",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-cluster-worker",
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-worker-tick-pauses",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy"
+      ],
+      "responsibility": "worker の拍と拍の間の待ち(AwaitNextTick)の本番の答え手 — 拍の長さを宣言の変化の呼び鈴と競わせて眠る(#2789・#2790 で契約を足した)。",
       "typed": true
     },
     {

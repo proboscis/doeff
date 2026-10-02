@@ -11,8 +11,9 @@ cluster_model.hy は Hy の module なので、pyright は中を読めず、名�
   その class の属性は dataclass の欄ではないので、欄の名と順を照らす検に合わせてここには書かない)。
 - effect(CoordinatorFault・Persist)は凍った dataclass の EffectBase[None]。
 - 型の宣言がまだ無い Hy の module の型(shared/intent/protocol の ClusterTiming・Request・NextRequests と、coordinator/intent/
-  request_bodies の StatusRow)は object と書く。IdleNextRequests は実行時は NextRequests の子 class だが、ここでは idle の欄だけを
-  宣言する。それらの module に宣言を置いたら実物の型へ置き換える。
+  request_bodies の StatusRow)は object と書く。IdleNextRequests は実行時は NextRequests の子 class なので、親の欄
+  (timeout_seconds・limit)も同じ順で並べる(#2790 — 並べないと (IdleNextRequests 1.0 :idle …) の 1.0 が idle に当たる赤になった)。
+  それらの module に宣言を置いたら実物の型へ置き換える。
 """
 
 from dataclasses import dataclass
@@ -670,6 +671,8 @@ class Watcher:
     worker: str | None = None
     boot: str | None = None
     mark: HeartbeatReply | None = None
+    asked: int = 0
+    seconds: float = 0.0
 
 @dataclass(frozen=True)
 class WatchRefusal:
@@ -691,10 +694,29 @@ class IdleProbe:
     state: ClusterState
     timing: object
     naming: ClusterNaming
-    wake_ms: int | None = None
+    watchers: tuple[Watcher, ...] = ()
+
+@dataclass(frozen=True, kw_only=True)
+class QuietStep:
+    at: int
+    state: ClusterState
+    watchers: tuple[Watcher, ...]
+    marked: bool
+
+@dataclass(frozen=True, kw_only=True)
+class QuietStretch:
+    steps: tuple[QuietStep, ...]
+    end_at: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class IdleTaken:
+    steps: tuple[QuietStep, ...]
+    batch: list[object]
 
 @dataclass(frozen=True)
 class IdleNextRequests:
+    timeout_seconds: float
+    limit: int = 256
     idle: IdleProbe | None = None
 
 @dataclass(frozen=True)
