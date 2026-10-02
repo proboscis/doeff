@@ -3,18 +3,21 @@
 from _typeshed import Incomplete
 from doeff_hy.static_types import Handler as _Handler
 from concurrent.futures import Executor as Executor
+from concurrent.futures import Future as Future
+from doeff import Program as Program
 from doeff_vm import PyVM as PyVM
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.compute_effects import Compute as Compute
 from doeff_core_effects.inline_compute import computed as computed
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 
-def settle(promise: Incomplete, future: Incomplete) -> Incomplete:
+def settle(promise: ExternalPromise, future: Future) -> None:
     ...
 
-def run_computed(program: Incomplete) -> Incomplete:
+def run_computed(program: Program) -> Incomplete:
     ...
 
 def thread_pool_compute_handler(pool: Executor) -> _Handler:

@@ -202,10 +202,12 @@
    a value. log-each-request is left out (it only adds log lines). Added the fields after params / body for
    agora-redesign #1159 (the HttpRequest contract test found replay answering a header-only / retry-only /
    redirect-only difference with the other request's recording)."
+  (<- params (| (get list (get tuple #(str object))) None) (_sorted-mapping request.params))
+  (<- body-sha256 (| str None) (_body-sha256 request.body))
   (val payload {"method" request.method
                 "url" request.url
-                "params" (_sorted-mapping request.params)
-                "body_sha256" (_body-sha256 request.body)
+                "params" params
+                "body_sha256" body-sha256
                 "headers" (if (is request.headers None)
                               None
                               (sorted (gfor #(name value) (.items request.headers) #((.lower name) value))))
@@ -217,13 +219,18 @@
   (.hexdigest (hashlib.sha256 encoded)))
 
 
-(defn _sorted-mapping [mapping]
+(defk _sorted-mapping [mapping]
+  {:pre [(: mapping (| (get dict #(str object)) None))] :post [(: % (| (get list (get tuple #(str object))) None))]
+   :tags {:context "http" :role "foundation"}}
+  "Put the params into one order, so the same params name the same fixture whatever order they were written in."
   (if (is mapping None)
       None
       (sorted (.items mapping))))
 
 
-(defn _body-sha256 [body]
+(defk _body-sha256 [body]
+  {:pre [(: body (| bytes str (get dict #(str object)) None))] :post [(: % (| str None))] :tags {:context "http" :role "foundation"}}
+  "Name the request body by its sha256 in the fixture key (a JSON body by its sorted encoding)."
   (cond
     (is body None)
     None
@@ -245,10 +252,13 @@
         (pickle.load fixture-file))))
 
 
-(defn _write-fixtures [path fixtures]
+(defk _write-fixtures [path fixtures]
+  {:pre [(: path Path) (: fixtures dict)] :post [(: % None)] :tags {:context "http" :role "foundation"}}
+  "Keep every recorded answer in the fixture file, so a later replay finds what the production handler answered."
   (.mkdir path.parent :parents True :exist-ok True)
   (with [fixture-file (open path "wb")]
-    (pickle.dump fixtures fixture-file)))
+    (pickle.dump fixtures fixture-file))
+  None)
 
 
 ;; A fixture record is one of three answers, named by "answer" (agora-redesign #1159 — the fake answers what the
@@ -270,7 +280,7 @@
                                              "elapsed_seconds" answer.elapsed-seconds}
                              (HttpFailed) {"answer" "failed" "failed" answer}
                              (httpx.RequestError) {"answer" "raised" "error" answer}))
-  (_write-fixtures path fixtures)
+  (<- (_write-fixtures path fixtures))
   None)
 
 
@@ -282,13 +292,15 @@
     (raise (KeyError (+ "No recorded HTTP fixture for " (repr request)))))
   (val record (get fixtures key))
   (match (get record "answer")
-    "response" (_response-from-record record)
+    "response" (! (_response-from-record record))
     "failed" (get record "failed")
     "raised" (raise (get record "error"))
     other (raise (ValueError (+ "Unknown HTTP fixture answer " (repr other) " for " (repr request))))))
 
 
-(defn _response-from-record [record]
+(defk _response-from-record [record]
+  {:pre [(: record dict)] :post [(: % HttpResponse)] :tags {:context "http" :role "foundation"}}
+  "Answer a replayed request with the HttpResponse that was recorded for it."
   (HttpResponse :status (get record "status")
                 :headers (get record "headers")
                 :content (get record "content")

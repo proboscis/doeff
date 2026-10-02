@@ -8,7 +8,7 @@
 ;;; 書きは置き場の dict の 1 つの鍵の差し替え 1 回、読みは 1 つの鍵の参照 1 回で、どちらも lock を取らない(dict の 1 回の読み書きは
 ;;; free-threaded の Python でも割れない)。置き場を作る時だけ lock を取る。置き場は process の終わりまで残る。
 ;;; thread に触るのはこの module だけ(memory の答え手 memory_latest.hy は触らない)。
-(require doeff-hy.macros [defhandler val])
+(require doeff-hy.macros [defhandler defk val])
 (val MODULE-TAGS {:context "latest" :role "foundation"})
 (import threading)
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest])
@@ -19,8 +19,9 @@
 (val BOARDS-LOCK (threading.Lock))
 
 
-(defn latest-board [name]  ; defk にできない: 答え手を入れる時(session val)に 1 度だけ置き場を作る・引く(VM の外の process の置き場)
-  "name の置き場(型 → 最新の値)を引く(無ければ作る)。"
+(defk latest-board [name]
+  {:pre [(: name str)] :post [(: % dict)] :tags {:context "latest" :role "foundation"}}
+  "答え手を入れる時に、name の置き場(型 → 最新の値)を引くため(無ければ作る — 別の run と同じ置き場を共有する)。"
   (with [BOARDS-LOCK]
     (when (not-in name BOARDS)
       (setv (get BOARDS name) {}))
@@ -30,7 +31,7 @@
 (defhandler process-latest-handler [#^ str name]
   "PublishLatest・ReadLatest に、process に 1 つの置き場 name で答える(頭の註)。"
   ;; 引数に残す理由: name は別の run と同じ置き場を共有する鍵 — 入れる所ごとに決まる値で、Ask では区別できない。
-  (session val board (latest-board name))
+  (session val board (! (latest-board name)))
   (PublishLatest [value]
     (setv (get board (type value)) value)
     (resume None))

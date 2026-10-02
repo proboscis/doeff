@@ -6,7 +6,7 @@
 ;;;   pyc-path             source の path → 同じ dir の __pycache__ の .pyc の path
 ;;;   compile-python-sources  本物: 木の source を process の pool で並列に焼いて __pycache__ へ置く(fork — Hy の macro 展開が大半)
 ;;;   prepare-compile-path    焼く process の import の路に木の中の根を足す(焼く source の macro が木の中の別の module を require するため)
-(require doeff-hy.macros [defk <- val])
+(require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "bytecode" :role "foundation"})
 (import importlib.machinery)
 (import importlib.util)
@@ -86,14 +86,17 @@
   None)
 
 
-(defn #^ None prepare-compile-path [#^ str tree #^ tuple roots]  ; defk にできない: process の pool の初期化(Program の外)
+(deff prepare-compile-path [tree roots]  ; defk にできない: process の pool の initializer と console script の main(素の関数として呼ばれる入口)
+  {:pre [(: tree str) (: roots tuple)] :post [(: % None)]}
   "焼く process の import の路に木の中の根を足し(前が先)、焼く途中の import が timestamp 方式の .pyc を書かないようにする。"
   (setv sys.dont-write-bytecode True)
   (for [root (reversed roots)]
     (.insert sys.path 0 (posixpath.join tree root))))
 
 
-(defn #^ (| SourceNotCompiled None) _compile-item [#^ tuple item]  ; defk にできない: process の pool の子が呼ぶ
+(deff _compile-item [item]  ; defk にできない: process の pool の子が素の関数として呼ぶ(pool.map に渡す)
+  {:pre [(: item tuple)] :post [(: % (| SourceNotCompiled None))]}
+  "pool の子で #(木 相対 path module 名) の組 1 つを焼くため(焼けなければ SourceNotCompiled)。"
   (compile-one #* item))
 
 
