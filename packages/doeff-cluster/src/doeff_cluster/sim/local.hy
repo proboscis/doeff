@@ -154,7 +154,8 @@
 (import doeff_cluster.worker.core.program [tick-pause])
 (import doeff_cluster.worker.core.quiet_policy [quiet-beats])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
-(import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
+(import doeff_cluster.shared.intent.run_context [RunContext])
+(import doeff_cluster.shared.core.run_context_rules [worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import doeff_cluster.worker.entry.job_entry [decoded-program])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
@@ -860,7 +861,7 @@
 (defk run-context-of [worker spec attempt instance]
   {:pre [(: worker str) (: spec JobSpec) (: attempt int) (: instance str)] :post [(: % RunContext)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "起こす process の宿の契約の run-context を作るため: 本番の worker が子へ渡す環境変数を同じ関数(job_context の
+  "起こす process の宿の契約の run-context を作るため: 本番の worker が子へ渡す環境変数を同じ関数(shared/core/run_context_rules の
    worker-context-environ・process-context-environ — 本番の main と ProcessHost.launch が呼ぶ物)で作り、本番の子と同じ読み
    (context-of-environ)で読む(報告の世代が coordinator の report-matches と合い、実行環境の job の子は宣言とキーを受ける)。"
   (<- shared dict (worker-context-environ SIM-URL worker))

@@ -18,7 +18,7 @@ runtime_env_model.pyi と同じ形)。
   process-outside・ended-process・heartbeat・settle-beats・note-watch)も宣言する。外から使われない仕組み(SimPlan・PlanOf ほかの世界の effect と
   筋の組み立て)は宣言しない。
 
-型の宣言がまだ無い doeff-cluster の Hy の module(coordinator/entry/handler_sets の RequestQueue・MemoryWalStore・job_context の
+型の宣言がまだ無い doeff-cluster の Hy の module(coordinator/entry/handler_sets の RequestQueue・MemoryWalStore・shared/intent/run_context の
 RunContext・shared/intent/protocol の PlainText・ClusterTiming ほか)の型は、import すると Unknown に引きずられるので、この module が
 読む欄だけを Protocol(_RequestQueueView ほか)で書く — 実物はその欄の形でこれを満たす。それらの module に宣言を置いたら実物の型へ
 置き換える。読まずに運ぶだけの値(heartbeat の答え・HostTruth の process の観測など)は object と書く。
@@ -56,7 +56,7 @@ class _WalStoreView(Protocol):
     def load(self) -> dict[str, object]: ...
 
 class _RunContextView(Protocol):
-    """宿の契約の run-context(job_context.RunContext)の、sim が読む欄。"""
+    """宿の契約の run-context(shared/intent/run_context の RunContext)の、sim が読む欄。"""
 
     @property
     def job(self) -> str: ...

@@ -701,11 +701,9 @@
     },
     {
       "allow": [
-        "doeff-cluster-job-model",
-        "doeff-cluster-job-rules",
-        "doeff-cluster-runtime-env-model",
-        "doeff-cluster-worker-model",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-run-context",
+        "doeff-cluster-run-context-rules",
+        "doeff-cluster-run-context-env"
       ],
       "layer": "io",
       "name": "doeff-cluster-job-context",
@@ -715,12 +713,11 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/job_context.hy"
       ],
-      "responsibility": "実行先の子 process の文脈(worker が環境変数で渡す RunContext)と、その読み(2026-09-26)。",
+      "responsibility": "旧い入口 — 子 process の文脈の型と読みの名を新しい置き場(run-context・run-context-rules・run-context-env)から同じ名で出すだけ(#2981 の 2 段目で消す)。",
       "typed": true
     },
     {
       "allow": [
-        "doeff-cluster-job-context",
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
         "doeff-cluster-task-result",
@@ -728,7 +725,10 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-program-codec",
         "doeff-cluster-remote-rules",
-        "doeff-cluster-result-delivery"
+        "doeff-cluster-result-delivery",
+        "doeff-cluster-run-context",
+        "doeff-cluster-run-context-rules",
+        "doeff-cluster-run-context-env"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-job-entry",
@@ -793,7 +793,6 @@
         "doeff-cluster-drain-client",
         "doeff-cluster-handlers",
         "doeff-cluster-host-contract",
-        "doeff-cluster-job-context",
         "doeff-cluster-job-entry",
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
@@ -832,7 +831,9 @@
         "doeff-cluster-warm-rules",
         "doeff-cluster-board-requests",
         "doeff-cluster-wal-store",
-        "doeff-cluster-main"
+        "doeff-cluster-main",
+        "doeff-cluster-run-context",
+        "doeff-cluster-run-context-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -849,7 +850,6 @@
       "allow": [
         "doeff-cluster-cluster-model",
         "doeff-cluster-handlers",
-        "doeff-cluster-job-context",
         "doeff-cluster-process-versions",
         "doeff-cluster-remote-model",
         "doeff-cluster-shared-capabilities",
@@ -870,7 +870,8 @@
         "doeff-cluster-worker-lease-release",
         "doeff-cluster-worker-coordinator-link",
         "doeff-cluster-runtime-env-rules",
-        "doeff-cluster-worker-tick-pauses"
+        "doeff-cluster-worker-tick-pauses",
+        "doeff-cluster-run-context-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1034,8 +1035,6 @@
     {
       "allow": [
         "doeff-cluster-effect-codec",
-        "doeff-cluster-host-contract",
-        "doeff-cluster-job-context",
         "doeff-cluster-record-model",
         "doeff-cluster-remote-model"
       ],
@@ -1504,7 +1503,11 @@
         "doeff-cluster-kube-model",
         "doeff-cluster-worker-heartbeat-rules",
         "doeff-cluster-worker-quiet-policy",
-        "doeff-cluster-worker-tick-pauses"
+        "doeff-cluster-worker-tick-pauses",
+        "doeff-cluster-run-context",
+        "doeff-cluster-run-context-rules",
+        "doeff-cluster-host-reader",
+        "doeff-cluster-boundary-recorder"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1823,7 +1826,7 @@
     {
       "allow": [
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-job-context"
+        "doeff-cluster-run-context"
       ],
       "layer": "io",
       "name": "doeff-cluster-service-report",
@@ -2093,9 +2096,9 @@
     },
     {
       "allow": [
-        "doeff-cluster-job-context",
         "doeff-cluster-job-model",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-run-context-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-launch",
@@ -2620,10 +2623,10 @@
     },
     {
       "allow": [
-        "doeff-cluster-job-context",
         "doeff-cluster-task-result",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-coordinator-http"
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-run-context"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-result-delivery",

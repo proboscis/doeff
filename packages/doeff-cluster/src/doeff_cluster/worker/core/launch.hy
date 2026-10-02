@@ -9,7 +9,7 @@
 (import json)
 (import pathlib [Path])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
-(import doeff_cluster.job_context [process-context-environ])
+(import doeff_cluster.shared.core.run_context_rules [process-context-environ])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
 

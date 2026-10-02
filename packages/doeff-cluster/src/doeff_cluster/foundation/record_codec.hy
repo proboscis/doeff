@@ -601,7 +601,7 @@
 
 ;; --- 業務コードの effect ------------------------------------------------------------------------------
 ;; 業務の effect の型は、業務の側の module が import の時に register で足す(この package は業務の型を知らない)。
-;; 記録係と再生係は job の Program の中の境目に在り(record_handlers.boundary-recorder — ADR-DOE-CLUSTER-001 R5)、子の入口(job_entry)と
+;; 記録係と再生係は job の Program の中の境目に在り(shared/entry/boundary_recorder の boundary-recorder — ADR-DOE-CLUSTER-001 R5)、子の入口(job_entry)と
 ;; 再生の道具(replay_main)は詰めた Program を解く時に、Program が参照する業務の module を import する。その module(か、それが import
 ;; する module)で登録すれば、記録と再生の両方に届く。既定の形で足りる型は、登録の代わりに型の宣言(__record_spec__)を置けばよい。
 ;; 登録も宣言も無い型は UnrecordableEffect。

@@ -39,9 +39,6 @@
                                          codec-of mode-of args-of subject-of])
 (import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize
                                               entry-of queue-of recorded-args])
-(import doeff_core_effects.effects [Ask])
-(import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.foundation.host_contract [HostContract])
 
 
 ;; --- task の名(記録と再生で共通) ---------------------------------------------------------------
@@ -828,9 +825,10 @@
 ;; 記録と再生は job の Program の中の with-handlers に置く(runner は記録係を差し込まない)。置き場は翻訳の handler と土台の handler の
 ;; 間(外の世界との境目 — 汎用の effect だけを記録する)。記録係より内側の handler は決定的でなければならない(R5b)。
 ;; with-handlers の list は先が外側なので、記録係を翻訳の handler より先に書く(後に書くと記録係が翻訳より内側に入り、業務の effect を
-;; 受けてしまう)。
+;; 受けてしまう)。組(boundary-recorder)と記録の頭書き(recording-header)は宿の契約の run-context を読むので入口の側
+;; (doeff_cluster.shared.entry.boundary_recorder — #2981 でここから移した)。ここに残るのは記録係・再生係と、下の選びの鍵。
 ;;
-;;   (defk job-program [foundation]                     ; 土台 = 本体を受けて自分の handler の下で走らせる関数(計画 10.1)
+;;   (defk job-program [foundation]                  ; 土台 = 本体を受けて自分の handler の下で走らせる関数(計画 10.1)
 ;;     (<- answer (foundation (do! (<- recorder list (boundary-recorder HOST-CONTRACT))  ; off / record / replay を Ask で選ぶ
 ;;                                 (<- translation list (translation-handlers))
 ;;                                 (<- r (with-handlers [#* recorder #* translation] (loop)))
@@ -848,33 +846,3 @@
 (val RECORD-OTLP-KEY "EFFECT_RECORD_OTLP")
 (val REPLAY-STATE-KEY "doeff.record.replay-state")
 (val RECORD-MODES #("off" "record" "replay"))
-
-
-(defk recording-header [ctx program-path versions]
-  {:pre [(: ctx RunContext) (: program-path str) (: versions dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "記録の run の行に載せる欄 — 宿の契約の run-context(世代)と Program の置き場のキー(path の file の名)と版。再生の道具は
-   program のキーで同じ Program を /programs から取り直せる(R3b — 記録は Program の中身を持たない)。"
-  (val name (.rsplit program-path "/" 1))
-  (val sha (if program-path (.removesuffix (get name -1) ".json") ""))
-  {"worker" ctx.worker "instance" ctx.instance "attempt" ctx.attempt "specHash" ctx.spec-hash "placement" ctx.placement
-   "revision" ctx.revision "program" sha "versions" versions})
-
-
-(defk boundary-recorder [contract]
-  {:pre [(: contract HostContract)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
-  "境目の記録係の組(0 か 1 つ)を作る — Ask RECORD-MODE-KEY で off / record / replay を選ぶ。業務の Program が翻訳の handler と
-   土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。contract = 宿の契約の鍵(record の header の run-context・Program の path・版を
-   Ask で読む鍵)。record の枝は、記録係の設定(recording-handler が読む JSON の形 {\"otlp\": URL})を綴る。"
-  (<- mode str (Ask RECORD-MODE-KEY))
-  (match mode
-    "off" []
-    "record" (do (<- url str (Ask RECORD-OTLP-KEY))
-                 (<- ctx RunContext (Ask contract.run-context-key))
-                 (<- program-path str (Ask contract.program-key))
-                 (<- versions dict (Ask contract.versions-key))
-                 (<- header dict (recording-header ctx program-path versions))
-                 (<- installer RecordingInstaller (recording-handler {"otlp" url} ctx.job header))
-                 [installer])
-    "replay" (do (<- state ReplayState (Ask REPLAY-STATE-KEY))
-                 [(effect-replayer state)])
-    _ (raise (ValueError (.format "{} は {} のどれか: {!r}" RECORD-MODE-KEY (list RECORD-MODES) mode)))))

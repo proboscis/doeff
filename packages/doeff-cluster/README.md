@@ -52,12 +52,12 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | coordinator の状態と耐久 | `cluster_model`・`durable_kv`・`wal_store` |
 | worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`worker/entry/shim.py`(旧い path の `shim.py` は渡すだけ — #2028) |
 | 実行環境(runtime env)の宣言と準備 | `runtime_env_model`・`runtime_env`(送り手の checkout の読み)・`env_prepare`・`env_handlers`・`env_upkeep`・`env_world` |
-| 子 process の入口と実行先の契約 | `job_entry`・`job_context`・`host_contract` |
+| 子 process の入口と実行先の契約 | `job_entry`・`run_context`(型)・`run_context_rules`(綴りと読み)・`run_context_env`・`host_reader`・`host_contract` |
 | 宣言 | `service_model`(`Job`・`System`)・`service_build`(`system-declaration`)・`declare` |
 | 手元の runner と検め | `local`(`sim-cluster`)・`foundation_check` |
 | drain と readiness の口 | `drain_client`・`drain_main`・`readiness_*`・`report_client` |
 | effect と handler | `shared_*`(盤)・`semaphore_*`(lease)・`metrics_*`・`kube_*`・`remote*`(task)・`detached*`(切り離した task)・`warm_*` |
-| effect の記録と再生 | `record_codec`・`record_log`・`record_handlers`・`record_store*`・`replay_main` |
+| effect の記録と再生 | `record_codec`・`record_log`・`record_handlers`・`boundary_recorder`・`record_store*`・`replay_main` |
 | 時計の換算 | `clock`(epoch ミリ秒。時計の語彙は doeff-time ちょうど 1 つ) |
 | 配備の材料 | `deploy/boot.sh`・`deploy/Dockerfile`・`deploy/base/Dockerfile`(土台だけの image)・`image_contract`(土台の image の約束の検査) |
 
@@ -72,8 +72,9 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.foundation.host_contract [host-reader environ-reader])
-(import doeff_cluster.foundation.record_handlers [boundary-recorder])
+(import doeff_cluster.foundation.host_contract [environ-reader])
+(import doeff_cluster.shared.entry.host_reader [host-reader])
+(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
 
 ;; 本番の土台: scheduler・時計・実行先の読み・環境変数の読み・クラスタに話す handler を並べる。
 (defk production-foundation [body]
@@ -146,11 +147,11 @@ worker の子 process の入口は `hy -m doeff_cluster.worker.entry.job_entry s
 
 | 提供する物 | Program での読み方 |
 |---|---|
-| run-context(coordinator の URL・worker・job・process の世代) | `Ask HOST-CONTRACT.run-context-key`(`"doeff.cluster.run-context"`)→ `job_context.RunContext` |
+| run-context(coordinator の URL・worker・job・process の世代) | `Ask HOST-CONTRACT.run-context-key`(`"doeff.cluster.run-context"`)→ `shared.intent.run_context.RunContext` |
 | environ(宣言の `:environ`) | 子の環境変数。名の `Ask` に、値を字面どおりの文字列で答える(読みの定義 = `environ-reader` の 1 つ) |
 | Program の path(記録の header に載せる) | `Ask HOST-CONTRACT.program-key`(`"doeff.cluster.program"`) |
 
-本番では土台に並べる `host-reader` が 1 と 3 に、`(environ-reader)`(子の `os.environ` の上の読み)が 2 に答えます
+本番では土台に並べる `host-reader`(`shared.entry.host_reader`)が 1 と 3 に、`(environ-reader)`(子の `os.environ` の上の読み)が 2 に答えます
 (`host-reader` は session の値を使うので、その外側に `(state)` を置きます)。`sim-cluster` の偽の実行先は同じキーに同じ型で答え、
 environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
 
@@ -350,7 +351,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 
 ## effect の記録と再生(backtest)
 
-記録係は job の Program の中に置きます(実行先は差し込みません)。`record_handlers.boundary-recorder` を翻訳の handler と土台の間に
+記録係は job の Program の中に置きます(実行先は差し込みません)。`shared.entry.boundary_recorder` の `boundary-recorder` を翻訳の handler と土台の間に
 並べると、`Ask "EFFECT_RECORD_MODE"` の答え(本番は宣言の `:environ` を `(environ-reader)` が読む)で選びます:
 
 | mode | 置く物 |

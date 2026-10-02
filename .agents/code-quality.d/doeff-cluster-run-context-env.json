@@ -1,0 +1,23 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/shared/entry/run_context_env.hy"
+  ],
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-run-context",
+        "doeff-cluster-run-context-rules"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-run-context-env",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/run_context_env.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/run_context_env.hy"
+      ],
+      "responsibility": "この process の環境変数から RunContext を読む入口の読み(context-from-env)。",
+      "typed": true
+    }
+  ]
+}

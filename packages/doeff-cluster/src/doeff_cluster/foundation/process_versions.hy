@@ -47,7 +47,7 @@
      "doeff-do" (_source-fingerprint (get sys.modules "doeff.do"))}))
 
 
-;; env の root の中の子 process が自分の env のキーを受け取る環境変数の名(worker が子へ渡す — job_context の context-from-env と同じ名)。
+;; env の root の中の子 process が自分の env のキーを受け取る環境変数の名(worker が子へ渡す — shared/entry/run_context_env の context-from-env と同じ名)。
 (val RUNTIME-ENV-KEY-VAR "DOEFF_RUNTIME_ENV_KEY")
 
 

@@ -13,7 +13,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
-(import doeff_cluster.job_context [RunContext])
+(import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [decode-outcome])
 (import doeff_cluster.shared.intent.job_model [JobSpec])

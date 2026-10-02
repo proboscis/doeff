@@ -4,7 +4,7 @@
 ;;;
 ;;; --program = 記録した job の詰めた Program の file(coordinator の /programs/<sha> から取った JSON {"blob" "versions"} — 記録の
 ;;; header の program が同じキー)。版を検めて Program を解き、再生の mode で走らせるだけ: Program の中の境目の記録係
-;;; (record_handlers.boundary-recorder)が、Ask RECORD-MODE-KEY に replay と答えられると effect-replayer を置き、その状態は
+;;; (shared/entry/boundary_recorder の boundary-recorder)が、Ask RECORD-MODE-KEY に replay と答えられると effect-replayer を置き、その状態は
 ;;; Ask REPLAY-STATE-KEY の答え(この道具が記録から作った ReplayState)。この 2 つの Ask にだけ、この道具が Program の外から答える
 ;;; (Program の土台は、再生の process の環境にこの 2 つが無いので答えずに外へ通す)。業務の effect は境目で記録係が答えるので、
 ;;; 土台の本物の handler には届かない。記録係より内側の handler は決定的でなければならない(R5b — 破れは再生の分岐として出る)。

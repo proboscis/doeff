@@ -49,7 +49,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.job_context [worker-context-environ])
+(import doeff_cluster.shared.core.run_context_rules [worker-context-environ])
 
 
 (defn #^ None write-boot-file [#^ (| str None) path #^ str boot]

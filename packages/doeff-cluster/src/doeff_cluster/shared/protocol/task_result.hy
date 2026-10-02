@@ -43,7 +43,7 @@
    在り、worker の heartbeat が運ぶ(前からの路)。送りは宛先の部品の上の HttpRequest(#2427 — 前は httpx の client を持つ口)で、送り直しは
    接続の段の一巡し直し 1 回だけにして子の終わりを長く止めない: 送り直しの間に連絡の途絶が fence を越えると worker がこの process を
    止め、file の結果も終わった task の結果として運ばれなくなる。coordinator-url・job・worker・instance = 子 process の文脈
-   (job_context.RunContext の欄)・options = 送り方(入口が作る — 一巡し直しは 1 回)。"
+   (shared/intent/run_context の RunContext の欄)・options = 送り方(入口が作る — 一巡し直しは 1 回)。"
   (val task (task-id-of-job job))
   (when (is task None)
     (<- (slog (.format "task: job の名 {!r} が task/<id> の形でないので、結果を coordinator へ直には届けない(file の路だけ)" job)))

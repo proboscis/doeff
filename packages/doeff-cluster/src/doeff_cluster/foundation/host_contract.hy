@@ -3,13 +3,13 @@
 ;;; 宿は 2 つ: 本番の worker の子 process(job_entry)と、手元の sim-cluster の偽の宿。どちらも Program に提供するのは次の 3 つだけで、
 ;;; それ以外(scheduler・時計・記録係・業務の handler)は Program が自分の with-handlers で並べる(runner は handler を足さない — R2)。
 ;;;
-;;;   1. run-context  = Ask HOST-CONTRACT.run-context-key の答え(job_context.RunContext — coordinator の URL・worker・job・世代)
+;;;   1. run-context  = Ask HOST-CONTRACT.run-context-key の答え(shared/intent/run_context の RunContext — coordinator の URL・worker・job・世代)
 ;;;   2. environ      = 宣言の :environ(子の環境変数)。Program は名の Ask で読み、値は字面どおりの文字列(下の environ-reader)
 ;;;   3. program-path = Ask HOST-CONTRACT.program-key の答え(この job の詰めた Program の file の path — 記録係が header に載せる)
 ;;;
-;;; 本番では、この module の土台の handler host-reader が os.environ から 1 と 3 に答え、(environ-reader) が 2 に答える(業務の側が
-;;; 土台の組に並べる)。host-reader は session val を使うので、その外側に状態の handler(doeff_core_effects.handlers の state)が要る —
-;;; 土台の組の中で host-reader より外に置く。
+;;; 本番では、入口の側の土台の handler host-reader(shared/entry/host_reader — #2981 でここから移した)が os.environ から 1 と 3 に答え、
+;;; (environ-reader) が 2 に答える(業務の側が土台の組に並べる)。host-reader は session val を使うので、その外側に状態の handler
+;;; (doeff_core_effects.handlers の state)が要る — 土台の組の中で host-reader より外に置く。
 ;;; sim の偽の宿は同じ鍵に同じ型で答える。job_entry の文書・host-reader・sim の宿は、この値を参照する(写しを作らない)。
 ;;;
 ;;; environ の読みの定義は environ-reader の 1 つ(名 → 値の置き場を引数に取る): 本番の土台 = 引数なし(子の process の os.environ)・
@@ -38,6 +38,7 @@
 (import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect])
+;; 下の旧い host-reader だけが読む(旧い入口 job_context — 層の外の module。この層は intent・core・入口を読めない)。
 (import doeff_cluster.job_context [RunContext context-from-env])
 (import doeff_cluster.foundation.process_versions [process-versions])
 
@@ -65,6 +66,9 @@
                     DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect))
 
 
+;; 旧い入口 — 使い手の付け替えが入った次の pin の後に、上の job_context の import と一緒に消す(#2981 の 2 段目)。本体は
+;; shared/entry/host_reader の host-reader(同じ名・同じ答え)。ここからあちらを名で指せない(この層は入口を読めず、あちらは鍵を読むために
+;; この module を import する — 指すと輪になる)ので、同じ読みを 1 版だけここに残す。新しい使い手はあちらを並べる。
 (defhandler host-reader
   {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
   ;; 本番の宿の答え(worker が子へ渡した環境変数を読む)。土台の handler なので os.environ を直に読む(ADR-DOE-CLUSTER-001 R5b —
