@@ -11,6 +11,7 @@
 ;; coordinator: env の task は worker の版と比べずに置く・一時の失敗は試した worker を避けて 2 回まで置き直す・宣言と本文の形の版の誤りは 400。
 ;; worker: env の task は PrepareEnv で root を準備し、失敗は ENV-FAILED と kind を報告する。
 (require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])
 (import json)

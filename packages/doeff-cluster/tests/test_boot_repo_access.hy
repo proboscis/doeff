@@ -7,6 +7,7 @@
 ;;   - 鍵の file が無ければ起動を止める(黙って鍵なしで進まない)
 ;; あわせて、worker の許可表の鍵(env_handlers.git-environment)が worker の ssh の命令(ssh -F)を置き換えず足すことを確かめる。
 (require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import os)
 (import subprocess)

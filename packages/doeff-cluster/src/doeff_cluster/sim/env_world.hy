@@ -27,6 +27,7 @@
 ;;;   (<- handlers (env-world world)) (with-handlers handlers program) — env-world は handler の列を返す Program(外側が先): memory の置き場・台本の子 process・翻訳の設定・翻訳。
 ;;;   外側に状態の置き場(doeff_core_effects の state)と時計が要る。
 (require doeff-hy.macros [defk deff defhandler <- val var])
+(val MODULE-TAGS {:context "runtime-env" :role "foundation"})
 (require doeff-hy.record [defrecord defenum])
 (import dataclasses [dataclass asdict])
 (import enum [StrEnum])

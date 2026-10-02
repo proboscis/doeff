@@ -3,6 +3,7 @@
 ;;   入れ替えでない Service は止めて移す・drain 中の worker に新しい置き先を割り当てない・別の世代の heartbeat と期限で解ける・
 ;;   保存と読み直し。時刻は純粋な now の引数(Program の検は doeff-time の SimClock)。
 (require doeff-hy.macros [deftest defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

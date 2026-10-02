@@ -3,6 +3,7 @@
 ;;; 失敗ケース: 接続できない時だけ次の宛先へ回る(途中の時間切れでは回らない)・先頭の試し直し・全部に届かない時の一巡し直しの間・
 ;;; 何度送っても同じ要求の期限までの送り直し。
 (require doeff-hy.macros [deftest defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with-handlers])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_time [sim-time-handler])

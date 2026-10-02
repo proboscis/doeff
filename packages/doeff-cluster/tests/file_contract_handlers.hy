@@ -8,6 +8,7 @@
 ;;; 契約の Program は置き場の根を検の effect FilesRoot で読み、根からの相対で書く(本物と fake で根の path が違うため)。
 ;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
 (require doeff-hy.macros [defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])
 (import os)
 (import tempfile)

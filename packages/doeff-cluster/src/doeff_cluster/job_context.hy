@@ -5,7 +5,8 @@
 ;;; doeff_cluster.job_entry としてもう 1 回読まれて class が 2 つになり、__main__ の RunContext を渡された :pre の型の検めが必ず落ちた
 ;;; (実験用の namespace で再現)。入口でないこの module の class は 1 つだけ読まれる。job_entry はここから import し、今の名は
 ;;; job_entry からも引ける。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import collections.abc [Mapping])
 (import dataclasses [dataclass])
 (import json)

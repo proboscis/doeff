@@ -6,6 +6,7 @@
 ;; 前の形(返事を上限なしで待つ)は、2 本目で 20 秒後の 200 をそのまま受けて赤になる。上限なしの待ちは、拍の判断が落ち続ける
 ;; coordinator の前で worker の拍と止めの手順を止め、模擬が仮想の時計を回し続けた(使い手の検が 60 秒の上限に当たった・#2596)。
 (require doeff-hy.macros [deftest defk defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_core_effects.scheduler [Spawn Task Wait CompletePromise])
 (import doeff_core_effects.effects [Get Put])
 (import doeff_core_effects.handlers [state])

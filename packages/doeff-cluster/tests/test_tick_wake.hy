@@ -11,6 +11,7 @@
 ;;   回り続ける(この検は上限の拍の数で打ち切って赤)。
 ;; - 1 回の眠りの間に変化が何度来ても、鳴る呼び鈴は 1 つ(本番の coordinator への口 — 鳴るまで拍をまたいで同じ呼び鈴を渡す)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_time [Delay SimClock sim-time-handler])

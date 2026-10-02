@@ -9,6 +9,7 @@
 ;;   8 先読み: 温める表の env を job の前に準備し、task が来た最初の拍で子を起こす(準備を待たない)— 温めていない env は準備を起こす
 ;;   9 空きが下限を切る: 固定された root・project ごとの最新・worker が作っていない dir は残り、固定されていない古い root が消える
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import os)
 (import pathlib [Path])

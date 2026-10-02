@@ -6,6 +6,7 @@
 ;;   筋書き(死・作り直し・入れ替え・drain・置けない宣言・切り離した task)の settle の全部で、全部の鍵を比べる形(前の形と同じ —
 ;;   dirty-keys を両方の snapshot の鍵の全部に差し替えた stamp)と同じ版・出来事の記録になることを確かめる。
 (require doeff-hy.macros [deftest defk deff <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
