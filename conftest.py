@@ -709,3 +709,41 @@ def _bytecode_settings_pinned():
         f"(first: {written[:5]}) — a subprocess that needs bytecode gets a directory under "
         f"pytest's temporary directory (tmp_path_factory), never one inside the checkout"
     )
+
+
+# ---------------------------------------------------------------------------
+# A bytecode directory for the subprocesses of one test (opt-in).
+#
+# Under the pin above a subprocess writes no bytecode and looks for it only next
+# to the source, where nothing compiled the modules that only subprocesses import
+# (an entry point such as doeff_cluster.env_handlers), and where nothing is found
+# at all when the developer's PYTHONPYCACHEPREFIX took the collection's bytecode
+# elsewhere.  Each such subprocess compiled its Hy modules from source again:
+# 4-9 s per process on zeus, most of test_env_careful.hy's time (agora-redesign
+# #2818, measured 2026-10-02).  A deployed worker has its bytecode baked in, so
+# the time existed only under test.
+#
+# A test whose subprocesses need bytecode asks for ``subprocess_bytecode``: its
+# subprocesses then write and read bytecode in one directory of this run under
+# pytest's temporary directory (never the checkout, which the pin still checks).
+# Hy's compiled-code store is left as the environment sets it.  Opt-in rather
+# than the default, so a test that measures compiling (doeff-hy-pytest's budget
+# tests) still runs every subprocess cold and gives the same answer in every run.
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def _subprocess_bytecode_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("subprocess-bytecode")
+
+
+@pytest.fixture
+def subprocess_bytecode(_subprocess_bytecode_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Let the subprocesses this test starts write and reuse bytecode in this run's directory.
+
+    Sets ``PYTHONPYCACHEPREFIX`` to the directory and removes ``PYTHONDONTWRITEBYTECODE``
+    from the environment the subprocesses inherit, for this test only.  This process keeps
+    the pinned settings.  A subprocess started with an environment of its own (not
+    inherited) gets neither.
+    """
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(_subprocess_bytecode_dir))
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    return _subprocess_bytecode_dir
