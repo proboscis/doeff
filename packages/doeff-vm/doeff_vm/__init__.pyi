@@ -128,6 +128,9 @@ class DoFunction:
     def __init__(
         self, function: _CallableT[..., Any], tail_resume_lines: list[int], yields: bool
     ) -> None: ...
+    def make_call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Call[Any, Any]:
+        """The ``Call`` of this definition — what the ``@do`` wrapper builds per call."""
+        ...
     def __repr__(self) -> str: ...
 
 class Call(Expand[_T_co, _E_co]):

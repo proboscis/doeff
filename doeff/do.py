@@ -19,7 +19,7 @@ from textwrap import dedent
 from types import FunctionType
 from typing import Any, Never, ParamSpec, TypeVar, overload
 
-from doeff_vm import Call, DoFunction
+from doeff_vm import DoFunction
 
 from doeff.program import Expand
 
@@ -325,13 +325,16 @@ def program_factory(
     the arguments; the VM calls ``fn`` and runs the generator it returns (a non-generator
     result becomes the program's value). The definition (``DoFunction``) is built once
     here, so a call allocates a single node — not the ``Expand(Apply(Pure(Callable(thunk))))``
-    chain and its closure (agora-redesign #844).
+    chain and its closure (agora-redesign #844). The node is built by the definition's
+    ``make_call`` (a method called with vectorcall), not the ``Call`` constructor: no
+    argument tuple for the constructor and no ``tp_new`` dispatch per call (#2817).
     """
     definition = DoFunction(fn, list(tail_resume_lines), _is_generator_function(fn))
+    make_call = definition.make_call
 
     @wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:
-        return Call(definition, args, kwargs)
+        return make_call(args, kwargs)
 
     # Installed as a handler, the VM calls `fn` directly and runs the generator as
     # the handler's stream (same end state as evaluating the Expand above, without
