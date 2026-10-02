@@ -17,7 +17,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 
 
-(defrecord SelfStopBudget
+(defrecord SelfStopSpans
   "条 C4 の記録 = worker が連絡の途絶から自分の job を止め切るまでの時間の内訳(ms)。fence = 途絶で止め始めるまで・reply = heartbeat の
    返事を待つ上限・connect = 接続の上限・stop-grace = 子へ止めの合図を送ってから待つ時間・kill-grace = 強く止めてから終わりを待つ時間。"
   {:tags {:context "doeff-cluster" :role "type"}}
@@ -29,25 +29,25 @@
 
 
 (defrecord ReassignTooEarly
-  "条 C4 の破り 1 つ: 移し替え reassign-ms が、worker の止め切り needed-ms(budget の内訳の和)より前。"
+  "条 C4 の破り 1 つ: 移し替え reassign-ms が、worker の止め切り needed-ms(spans の内訳の和)より前。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ int reassign-ms)
   (#^ int needed-ms)
-  (#^ SelfStopBudget budget))
+  (#^ SelfStopSpans spans))
 
 
-(defk self-stop-ms [budget]
-  {:pre [(: budget SelfStopBudget)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk self-stop-ms [spans]
+  {:pre [(: spans SelfStopSpans)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
   "worker が連絡の途絶から自分の job を止め切るまでの最悪の時間(内訳の和)を、条 C4 の比べと破りの名指しの両方で同じ数にするため。"
-  (+ budget.fence-ms budget.reply-ms budget.connect-ms budget.stop-grace-ms budget.kill-grace-ms))
+  (+ spans.fence-ms spans.reply-ms spans.connect-ms spans.stop-grace-ms spans.kill-grace-ms))
 
 
-(defk timing-outlasts-the-self-stop [reassign-ms budget]
-  {:pre [(: reassign-ms int) (: budget SelfStopBudget)] :post [(: % (get tuple #(ReassignTooEarly ...)))]
+(defk timing-outlasts-the-self-stop [reassign-ms spans]
+  {:pre [(: reassign-ms int) (: spans SelfStopSpans)] :post [(: % (get tuple #(ReassignTooEarly ...)))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "条 C4: 移し替えが worker の止め切りより前なら、その破りを 1 つ返す(空なら緑)— coordinator が他へ置いた job と、まだ止まり切って
    いない古い process が重ならないことを、値の組から判じるため(頭の註の最悪の道)。"
-  (<- needed int (self-stop-ms budget))
+  (<- needed int (self-stop-ms spans))
   (if (< reassign-ms needed)
-      #((ReassignTooEarly :reassign-ms reassign-ms :needed-ms needed :budget budget))
+      #((ReassignTooEarly :reassign-ms reassign-ms :needed-ms needed :spans spans))
       #()))
