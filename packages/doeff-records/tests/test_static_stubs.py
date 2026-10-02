@@ -1,5 +1,5 @@
 """doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
-store_choice.pyi・typed.pyi・principals.pyi・service.pyi)の検。
+store_choice.pyi・typed.pyi・principals.pyi・service.pyi・http_server.pyi・schema_digest.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -13,6 +13,9 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - HTTP の口の層(service.pyi・principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
   respond の答えの `.status` が Unknown の赤になり、置くと消える。置いた側では答えの欄の取り違え(int の status に文字列を足す)が赤に
   なる(使い手の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形)。
+- 走っている木と表の要約(http_server.pyi・schema_digest.pyi)の失敗ケース: 2 つを外した写しでは、ServedBuild・RepoCommit・
+  schema-digests と、要約の答えを受けた変数が Unknown の赤になり、置くと消える。置いた側では欄の取り違え(str の repo に int を
+  足す)が赤になる(使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形・#2742)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
   型の並びが実装と同じ(宣言だけが先へ行かない)。
 """
@@ -33,12 +36,34 @@ import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 from doeff import EffectBase
-from doeff_records import effects, faults, memory, principals, service, store_choice, typed, values
+from doeff_records import (
+    effects,
+    faults,
+    http_server,
+    memory,
+    principals,
+    schema_digest,
+    service,
+    store_choice,
+    typed,
+    values,
+)
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 PACKAGE = Path(values.__file__).parent
-STUBBED: tuple[types.ModuleType, ...] = (values, effects, faults, memory, store_choice, typed, principals, service)
+STUBBED: tuple[types.ModuleType, ...] = (
+    values,
+    effects,
+    faults,
+    memory,
+    store_choice,
+    typed,
+    principals,
+    service,
+    http_server,
+    schema_digest,
+)
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
@@ -154,6 +179,41 @@ SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
     '"answer"',
 )
 
+#: 走っている木(http_server.pyi の ServedBuild・RepoCommit)と表の要約(schema_digest.pyi の schema-digests)を使う検体(#2742 —
+#: 使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形)。
+SERVED_MODULE = """(require doeff-hy.macros [defk <- val])
+(import doeff_records.http_server [ServedBuild RepoCommit])
+(import doeff_records.schema_digest [schema-digests])
+(import doeff_records.values [RecordsSchema])
+
+(defk instance-of [build]
+  {:pre [(: build ServedBuild)] :post [(: % (| str None))]}
+  build.instance)
+
+(defk first-repo [build]
+  {:pre [(: build ServedBuild)] :post [(: % str)]}
+  (val commits (or build.commits #((RepoCommit :repo "app" :commit "c"))))
+  (. (get commits 0) repo))
+
+(defk digest-count [schema]
+  {:pre [(: schema RecordsSchema)] :post [(: % int)]}
+  (<- digests (schema-digests schema))
+  (len digests))
+
+(defk wrong-repo [build]
+  {:pre [(: build ServedBuild)] :post [(: % int)]}
+  (val commits (or build.commits #((RepoCommit :repo "app" :commit "c"))))
+  (+ (. (get commits 0) repo) 1))
+"""
+
+#: http_server.pyi・schema_digest.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
+SERVED_UNKNOWN_NAMES: tuple[str, ...] = (
+    '"ServedBuild"',
+    '"RepoCommit"',
+    '"schema_digests"',
+    '"digests"',
+)
+
 
 @dataclass(frozen=True)
 class Run:
@@ -262,6 +322,26 @@ def test_with_the_service_stub_the_answer_is_an_http_answer(tmp_path: Path) -> N
     assert [e for e in run.errors() if e[1] in right] == [], run.errors()
     # int の status に文字列を足すと赤(stub が Program[HttpAnswer, …] を運ぶ)。
     wrong = _line_of('(+ answer.status "x")', SERVICE_MODULE)
+    assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
+
+
+@needs_pyright
+def test_without_the_served_stubs_the_build_and_the_digests_are_unknown(tmp_path: Path) -> None:
+    # 他の stub は置き、走っている木と表の要約の 2 つだけを外す — import した名と、要約の答えを受けた変数が Unknown になる。
+    omit = ("http_server.pyi", "schema_digest.pyi")
+    unknown = _check(tmp_path, with_stubs=True, module=SERVED_MODULE, omit=omit).unknown()
+    missing = [name for name in SERVED_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
+    assert missing == [], unknown
+
+
+@needs_pyright
+def test_with_the_served_stubs_the_build_and_the_digests_are_typed(tmp_path: Path) -> None:
+    run = _check(tmp_path, with_stubs=True, module=SERVED_MODULE)
+    # 正しい使い(検体の頭から wrong-repo の前まで)には赤が 1 つも無い — ServedBuild の欄と要約の答えが型を持つ。
+    right = range(1, _line_of("(defk wrong-repo", SERVED_MODULE))
+    assert [e for e in run.errors() if e[1] in right] == [], run.errors()
+    # str の repo に int を足すと赤(stub が tuple[RepoCommit, ...] を運び、repo が str と読める)。
+    wrong = _line_of("(+ (. (get commits 0) repo) 1)", SERVED_MODULE)
     assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
 
 
