@@ -1,0 +1,32 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/shared/core/timing_rules.hy"
+  ],
+  "module_extensions": {
+    "doeff-cluster-main": {
+      "allow": [
+        "doeff-cluster-timing-rules"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-timing-rules"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-timing-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/timing_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/timing_rules.hy"
+      ],
+      "responsibility": "時間の不変条件 C4(移し替えは worker の止め切りより後 — #2806)の判断。値は呼び手(worker の入口の組み立てと条の検)が集める純関数。",
+      "typed": true
+    }
+  ]
+}

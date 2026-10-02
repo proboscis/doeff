@@ -30,8 +30,10 @@
 (import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
 (import tests.program_rows [SAMPLE-RUN])
 
-;; 本番と同じ時間の設定(生存の窓 10 秒・fence 20 秒・移し替え 45 秒)。
+;; 本番と同じ時間の設定(生存の窓 10 秒・fence 20 秒・移し替え 60 秒)。
 (val T (ClusterTiming))
+;; 時刻 0 に最後の連絡をした担い手が、移し替えの期限を過ぎて沈黙している時刻(期限の値は写さず ClusterTiming から・#2806)。
+(val PAST-DEADLINE (+ T.reassign-after-ms 15000))
 
 
 ;; --- 本体の判断 ---------------------------------------------------------------------------------------------------
@@ -60,17 +62,19 @@
   (<- job ClusterJob (job-of "a" #("net")))
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (val state (ClusterState #(job) {"w1" w1} {"a" (Placement "a" "w1" 1 0)}))
-  (assert (= (get (place-jobs 60000 state T) "a") (Placement "a" "w1" 1 0))))
+  ;; 沈黙は移し替えの期限を 15 秒越えた所で見る(期限の値は写さない — #2806 で 45 秒から 60 秒にした)。
+  (assert (= (get (place-jobs (+ T.reassign-after-ms 15000) state T) "a") (Placement "a" "w1" 1 0))))
 
 
 (deftest test-a-job-with-another-place-still-moves-after-the-reassign-deadline
-  ;; 受入 2: 他に置ける worker が在る job は今までどおり 45 秒(移し替えの期限)で外して移す — 担い手は fence(20 秒)で先に止まっている。
+  ;; 受入 2: 他に置ける worker が在る job は今までどおり移し替えの期限(reassign-after-ms — 60 秒・#2806)で外して移す — 担い手は fence
+  ;; (20 秒)で先に止まっている。期限の値は写さず ClusterTiming から(2 台目は期限の 5 秒後まで連絡している)。
   (<- job ClusterJob (job-of "a" #("net")))
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
-  (<- w2 WorkerInfo (worker-of "w2" 50000 #("net")))
+  (<- w2 WorkerInfo (worker-of "w2" (+ T.reassign-after-ms 5000) #("net")))
   (val state (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)}))
-  (assert (= (. (get (place-jobs 45000 state T) "a") worker) "w1"))
-  (val moved (get (place-jobs 45001 state T) "a"))
+  (assert (= (. (get (place-jobs T.reassign-after-ms state T) "a") worker) "w1"))
+  (val moved (get (place-jobs (+ T.reassign-after-ms 1) state T) "a"))
   (assert (= #(moved.worker moved.generation) #("w2" 2)) moved))
 
 
@@ -79,16 +83,16 @@
   ;; 約束が外れた後(担い手が印の無い返事を受けたと知らせた後)は、今までどおり時間の柵で移す。
   (<- job ClusterJob (job-of "a" #("net")))
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
-  (<- w2 WorkerInfo (worker-of "w2" 60000 #("net")))
+  (<- w2 WorkerInfo (worker-of "w2" PAST-DEADLINE #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
-  (assert (= (. (get (place-jobs 60000 promised T) "a") worker) "w1"))
+  (assert (= (. (get (place-jobs PAST-DEADLINE promised T) "a") worker) "w1"))
   (val released (replace promised :keep-marks #()))
-  (assert (= (. (get (place-jobs 60000 released T) "a") worker) "w2"))
+  (assert (= (. (get (place-jobs PAST-DEADLINE released T) "a") worker) "w2"))
   ;; 宣言から消えて置き先を外した後に宣言し直した job も、約束の担い手にだけ置く(担い手が古い宣言の process を動かしているかもしれない)。
   (val unplaced (replace promised :placements {}))
-  (assert (not-in "a" (place-jobs 60000 unplaced T)))
-  (assert (in "前の担い手" (get (unplaced-jobs 60000 unplaced T) "a"))))
+  (assert (not-in "a" (place-jobs PAST-DEADLINE unplaced T)))
+  (assert (in "前の担い手" (get (unplaced-jobs PAST-DEADLINE unplaced T) "a"))))
 
 
 (deftest test-a-promised-job-stays-with-its-holder-when-its-needs-change
@@ -108,17 +112,17 @@
   ;; 消すと約束は外れ(消した Worker はもう動いていないという明示の宣言)、置き先は置ける worker へ移る。
   (<- job ClusterJob (job-of "a" #("net")))
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
-  (<- w2 WorkerInfo (worker-of "w2" 60000 #("net")))
+  (<- w2 WorkerInfo (worker-of "w2" PAST-DEADLINE #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
   (with [(pytest.raises Refused)]
     (delete-resource promised "Worker" "w1" {} "operator" 30000 T))
   ;; 読みの口(#2883): 消す前は約束が 1 件出て、Worker を消した後は消える。
-  (assert (= (lfor m (. (state-view promised 60000 T) keep-marks) #(m.job m.worker)) [#("a" "w1")]))
-  (val deleted (delete-resource promised "Worker" "w1" {} "operator" 60000 T))
-  (val after (reconcile 60000 deleted T))
+  (assert (= (lfor m (. (state-view promised PAST-DEADLINE T) keep-marks) #(m.job m.worker)) [#("a" "w1")]))
+  (val deleted (delete-resource promised "Worker" "w1" {} "operator" PAST-DEADLINE T))
+  (val after (reconcile PAST-DEADLINE deleted T))
   (assert (= after.keep-marks #()) after.keep-marks)
-  (assert (= (. (state-view after 60000 T) keep-marks) #()))
+  (assert (= (. (state-view after PAST-DEADLINE T) keep-marks) #()))
   (assert (= (. (get after.placements "a") worker) "w2") after.placements))
 
 
@@ -224,8 +228,8 @@
   (<- mark KeepMark (promise-to "a" "w1"))
   (val report (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
   (val plain (ClusterState #(job) {"w1" w1} {"a" (Placement "a" "w1" 1 0)} :statuses {"w1" report}))
-  (assert (= (get (running-process plain "a" 60000 T) "state") "NotReady"))
-  (val kept (running-process (replace plain :keep-marks #(mark)) "a" 60000 T))
+  (assert (= (get (running-process plain "a" PAST-DEADLINE T) "state") "NotReady"))
+  (val kept (running-process (replace plain :keep-marks #(mark)) "a" PAST-DEADLINE T))
   (assert (= (get kept "state") "Unknown") kept)
   (assert (in "印" (get kept "reason")) kept)
   ;; 印の在る job も、担い手は途絶が長い方の柵(keep-fence-ms 240 秒)を越えたら止めるので、その後は NotReady。
@@ -289,7 +293,7 @@
 
 (defk cut-for [seconds]
   {:pre [(: seconds float)] :post [(: % CutSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き(13:53 型): 8 秒待って pulse の担い手の網を seconds 秒切り、切って 60 秒後(移し替えの 45 秒の後)と明けて 30 秒後に読む。"
+  "筋書き(13:53 型): 8 秒待って pulse の担い手の網を seconds 秒切り、切って 60 秒後(移し替えの期限 60 秒に届いた後)と明けて 30 秒後に読む。"
   (<- (Delay 8.0))
   (<- before tuple (ProcessesOf "pulse"))
   (val host (. (get before 0) worker))
@@ -428,7 +432,7 @@
 (deftest test-a-capable-worker-joining-during-a-cut-does-not-run-the-job-twice
   ;; 受入 5・条件 2 の (a): 途絶の最中に能力の合う 2 台目が加わっても、印を渡した担い手から job を移さない(担い手は印で動き続けて
   ;; いる)。明けた後、担い手は印の無い返事を受けて印を持たないと知らせ、保証は時間の柵へ戻る — 次の途絶では fence(20 秒)で止まり、
-  ;; 移し替え(45 秒)の後に 2 台目へ移る。どの時点でも 2 か所で走らない(条 C2)。
+  ;; 移し替えの期限の後に 2 台目へ移る。どの時点でも 2 か所で走らない(条 C2)。
   (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-then-join) :workers JOINING))
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
