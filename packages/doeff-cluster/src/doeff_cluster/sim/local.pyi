@@ -374,6 +374,7 @@ class HostTruth:
     woken: bool = False
     beat_bells: tuple[Promise[object], ...] = ()
     watch_failure: str | None = None
+    tick_bell: Promise[object] | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:
