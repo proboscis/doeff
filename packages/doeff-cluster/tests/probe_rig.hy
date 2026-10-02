@@ -7,7 +7,7 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff [run with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -44,6 +44,9 @@
   found)
 
 
-(defn #^ object run-probes [#^ ProbeSettings settings #^ object program]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
-  "筋書きの Program を probe-host と本物の答え手の下で 1 回の run で回す(with-handlers の並びは先頭が外側 — 検めの記録は外側の state が持つ)。"
-  (run (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (probe-host settings)] program)))
+(defk run-probes [settings program]
+  {:pre [(: settings ProbeSettings) (: program Program)] :post [(: % (| tuple list ProbeView))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書きの Program を probe-host と本物の答え手の下で回し、その答えを返すため(with-handlers の並びは先頭が外側 — 検めの記録は外側の
+   state が持つ)。答えの型は筋書きで決まるので、呼び手は (<- 名 型 (run-probes …)) で型を書いて受ける。"
+  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (probe-host settings)] program))
+  answer)
