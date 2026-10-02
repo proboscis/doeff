@@ -110,7 +110,7 @@
   ;; 届かない時は偽を返し、結果は file と worker の heartbeat の路に任せる(子は落ちない)。
   (<- placed tuple (placed-task "w"))
   (val id (get placed 1))
-  (val coordinator (MemoryCoordinator (clock-at 300)))
+  (val coordinator (MemoryCoordinator (! (clock-at 300))))
   (setv coordinator.state (get placed 0))
   (val ctx (RunContext "http://coordinator" "w" "r" (+ "task/" id) :instance "w-p1"))
   (assert (! (delivered ctx (httpx.MockTransport coordinator.handle))))

@@ -3,7 +3,7 @@
 ;;; transport を client に直に渡していた)。本番の答え手 http-production-handler と同じく、届かない失敗は値(HttpFailed)で返す:
 ;;; 接続の段の失敗(ConnectError・ConnectTimeout)= CONNECT-FAILED・時間切れ = TIMED-OUT・ほかの通信の失敗 = OTHER。
 ;;; 使い手は答え手 (transport-http transport) を外側に、口の handler(宛先の入れ物 route-cell・送り方 TEST-ROUTE)を内側に並べる。
-(require doeff-hy.macros [defhandler deff val])
+(require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import httpx)
 (import doeff [run])
@@ -56,15 +56,16 @@
   (DetachedSender :revision revision :versions (run (process-versions os.environ)) :runtime-env runtime-env :deadline-seconds deadline-seconds))
 
 
-(defn #^ None released-through [#^ httpx.BaseTransport transport #^ str job #^ str instance]  ; defk にできない: 検が Program の外から 1 回走らせる入口
+(defk released-through [transport job instance]
+  {:pre [(: transport httpx.BaseTransport) (: job str) (: instance str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "終わった process の lease の返し(worker/protocol/lease_release の lease-release — #2427)を、transport の後ろの coordinator への検の
-   HTTP の答え手と模擬の時計の下で 1 回走らせる(行き先の 1 行は捨てる)。"
-  (import doeff [run with-handlers])
+   HTTP の答え手と模擬の時計の下で走らせるため(行き先の 1 行は捨てる)。"
+  (import doeff [with-handlers])
   (import doeff_core_effects.handlers [slog-discard-handler])
-  (import doeff_core_effects.scheduler [scheduled])
   (import doeff_time [SimClock sim-time-handler])
   (import doeff_cluster.worker.intent.worker_model [ReleaseLeases])
   (import doeff_cluster.worker.protocol.lease_release [lease-release])
-  (run (scheduled (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))
-                                  (lease-release (route-cell) TEST-ROUTE)]
-                                 (ReleaseLeases job instance)))))
+  (<- (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))
+                      (lease-release (route-cell) TEST-ROUTE)]
+                     (ReleaseLeases job instance)))
+  None)
