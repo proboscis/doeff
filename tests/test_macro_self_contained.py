@@ -17,7 +17,7 @@ from doeff_core_effects import Ask
 from doeff_core_effects.handlers import await_handler, lazy_ask
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, Expand, run
+from doeff import EffectBase, Expand, Pure, run
 
 
 @dataclass(frozen=True)
@@ -206,3 +206,22 @@ def test_error_guard_still_precedes_the_return_contract(source: str) -> None:
     assert isinstance(program, Expand)
     with pytest.raises(RuntimeError, match="last expression is an unperformed effect `Num`"):
         run(program)
+
+
+@pytest.mark.parametrize("program_kind", ["pure", "expand"])
+@pytest.mark.parametrize("source", [
+    "(defk kept [] {:pre [] :post [(: % (| Pure Expand))]} payload) (kept)",
+    "(defk kept [] {:pre [] :post [(: % (| Pure Expand))]} (<- x (do! 7)) payload) (kept)",
+    "(do! payload)",
+    "(do! {:post [(: % (| Pure Expand))]} payload)",
+    "(defclass Box [] (defk kept [self] {:pre [(: self Box)] "
+    ":post [(: % (| Pure Expand))]} payload)) (.kept (Box))",
+])
+def test_program_return_preserves_identity(source: str, program_kind: str) -> None:
+    """A Program is a return value here, not an unperformed Effect or an implicit bind."""
+    # This Expand raises if run: returning it must neither execute it nor wrap/copy it.
+    payload = Pure(7) if program_kind == "pure" else _eval_no_doeff_do("(do! (Num 7))")
+    assert isinstance(payload, (Pure, Expand))
+    program = _eval_no_doeff_do(source, payload=payload, Pure=Pure, Expand=Expand)
+    assert isinstance(program, Expand)
+    assert run(program) is payload
