@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
-from doeff import do
 
+from doeff import do
 from doeff_agents.effects import AgentSessionQuery, AgentSessionSnapshot
 from doeff_agents.io_effects import append_text, list_dir, make_dirs, read_text, write_text
 from doeff_agents.io_root import IoGenerator, IoRoot, as_optional_str, as_str_tuple
@@ -225,14 +225,3 @@ def _matches_query(
 
 def _safe_session_id(session_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", session_id)
-
-
-__all__ = [
-    "AgentSessionEvent",
-    "AgentSessionRepository",
-    "InMemoryAgentSessionRepository",
-    "JsonlAgentSessionRepository",
-    "list_snapshots_program",
-    "read_snapshot_program",
-    "record_snapshot_program",
-]

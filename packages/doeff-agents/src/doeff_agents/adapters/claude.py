@@ -5,8 +5,9 @@ import logging
 import posixpath
 
 import hy  # noqa: F401  # .hy import hook — the readiness physics home is a Hy module
-from doeff import Program, do
 
+from doeff import Program, do
+from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
 from doeff_agents.io_effects import (
     home_path,
     make_dirs,
@@ -16,8 +17,6 @@ from doeff_agents.io_effects import (
 )
 from doeff_agents.io_root import IoGenerator, as_bool, as_optional_str, as_str
 from doeff_agents.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
-
-from .base import AgentType, InjectionMethod, LaunchParams, cli_available
 
 MISSING_CLAUDE_JSON = (
     "{path} not found.\n"

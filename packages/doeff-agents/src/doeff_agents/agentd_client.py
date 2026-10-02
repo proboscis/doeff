@@ -18,9 +18,32 @@ from pathlib import Path
 from typing import Any
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
-from doeff import do
 
+from doeff import do
 from doeff_agents.adapters.base import AgentType
+from doeff_agents.effects import (
+    AgentSessionLifecycle,
+    AgentSessionQuery,
+    AgentSessionSnapshot,
+    AwaitOutcome,
+    AwaitStatus,
+)
+from doeff_agents.io_effects import (
+    env_value,
+    executable_at,
+    home_path,
+    make_dirs,
+    monotonic_time,
+    read_text,
+    run_process,
+    spawn_detached,
+    unix_connect_probe,
+    unix_line_request,
+    which_executable,
+)
+from doeff_agents.io_effects import (
+    sleep as io_sleep,
+)
 from doeff_agents.io_root import (
     IoGenerator,
     IoRoot,
@@ -31,28 +54,8 @@ from doeff_agents.io_root import (
     as_process_outcome,
     as_str,
 )
-from doeff_agents.io_effects import (
-    env_value,
-    home_path,
-    executable_at,
-    make_dirs,
-    monotonic_time,
-    read_text,
-    run_process,
-    sleep as io_sleep,
-    spawn_detached,
-    unix_connect_probe,
-    unix_line_request,
-    which_executable,
-)
-from doeff_agents.effects import (
-    AgentSessionLifecycle,
-    AgentSessionQuery,
-    AgentSessionSnapshot,
-    AwaitOutcome,
-    AwaitStatus,
-)
 from doeff_agents.monitor import SessionStatus
+
 
 def _default_io_root() -> IoRoot:
     """既定の composition root: 本番の I/O handler。"""
@@ -1457,23 +1460,3 @@ def _await_outcome_from_result(result: Mapping[str, Any]) -> AwaitOutcome:
 def _mapping_shape(mapping: Mapping[str, Any]) -> str:
     fields = ", ".join(f"{key}: {type(value).__name__}" for key, value in mapping.items())
     return f"{{{fields}}}"
-
-
-__all__ = [
-    "RPC_ERR_AWAIT_TIMEOUT",
-    "RPC_ERR_NO_SUCH_SESSION",
-    "AgentdClient",
-    "AgentdClientError",
-    "AgentdPaths",
-    "AgentdProtocolError",
-    "AgentdSessionList",
-    "AgentdSessionParseWarning",
-    "AgentdSupervisorConfigError",
-    "AgentdSupervisorDeclaration",
-    "AgentdUnavailableError",
-    "LazyAgentdClient",
-    "agentd_socket_is_supervised",
-    "default_agentd_paths",
-    "ensure_agentd",
-    "load_supervisor_declaration",
-]

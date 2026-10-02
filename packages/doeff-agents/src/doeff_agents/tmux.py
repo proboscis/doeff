@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
-from doeff import do
 
+from doeff import do
 from doeff_agents.io_effects import (
     ProcessOutcome,
     env_value,
@@ -32,7 +32,6 @@ from doeff_agents.io_effects import (
     temp_root,
     touch_file,
 )
-
 from doeff_agents.io_root import (
     IoGenerator,
     IoRoot,
@@ -43,9 +42,16 @@ from doeff_agents.io_root import (
     as_str,
     as_str_tuple,
 )
-
-from .session_backend import SessionBackend, SessionConfig, SessionInfo
-from .shell import assert_no_forbidden_agent_env
+from doeff_agents.session_backend import (
+    SessionBackend,
+)
+from doeff_agents.session_backend import (
+    SessionConfig as SessionConfig,
+)
+from doeff_agents.session_backend import (
+    SessionInfo as SessionInfo,
+)
+from doeff_agents.shell import assert_no_forbidden_agent_env
 
 
 class TmuxError(Exception):
@@ -529,7 +535,7 @@ class StableTmuxSessionBackend(TmuxSessionBackend):
 
 
 def _default_io_root() -> IoRoot:
-    from .io_handlers import run_driver_io
+    from doeff_agents.io_handlers import run_driver_io
 
     return run_driver_io
 
@@ -635,39 +641,3 @@ def attach_session(session: str) -> None:
 
 def list_sessions() -> list[str]:
     return get_default_backend().list_sessions()
-
-
-__all__ = [
-    "SessionAlreadyExistsError",
-    "SessionConfig",
-    "SessionInfo",
-    "SessionNotFoundError",
-    "StableTmuxSessionBackend",
-    "TmuxError",
-    "TmuxNotAvailableError",
-    "TmuxSessionBackend",
-    "attach_session",
-    "attach_session_program",
-    "capture_pane",
-    "capture_pane_program",
-    "capture_transcript_program",
-    "get_default_backend",
-    "has_session",
-    "has_session_program",
-    "inside_session_program",
-    "is_inside_tmux",
-    "is_tmux_available",
-    "kill_session",
-    "kill_session_program",
-    "list_sessions",
-    "list_sessions_program",
-    "new_session",
-    "new_session_program",
-    "output_has_unsubmitted_paste_input",
-    "parse_session_list",
-    "send_keys",
-    "send_keys_program",
-    "strip_ansi",
-    "tail_text_lines",
-    "tmux_available_program",
-]
