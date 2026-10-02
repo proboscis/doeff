@@ -919,7 +919,8 @@ def pytest_runtest_makereport(
 def pytest_terminal_summary(
     terminalreporter: pytest.TerminalReporter, config: pytest.Config
 ) -> None:
-    """終わりに、上限を超えた検・登録簿に載った超過・消せる登録を一覧にする。"""
+    """終わりに、上限を超えた検・登録簿に載った超過・消せる登録を一覧にし、歩数を測れた検の合計(-v なら検ごと)を出す —
+    歩数の上限を決める材料にするため(#2852・#2853)。"""
     verdicts = config.stash.get(_VERDICTS_KEY, None)
     if not verdicts:
         return
@@ -927,13 +928,22 @@ def pytest_terminal_summary(
     over = [v for v in verdicts if isinstance(v, OverBudget)]
     registered = [v for v in verdicts if isinstance(v, RegisteredOverBudget)]
     back_in_budget = sorted({v.measurement.key for v in verdicts if isinstance(v, RegisteredWithinBudget)})
-    if not (over or registered or back_in_budget):
+    worked = [v.measurement for v in verdicts if v.measurement.work is not None]
+    if not (over or registered or back_in_budget or worked):
         return
     terminalreporter.section("doeff の検の時間の上限")
     terminalreporter.line(vm_build_line(budgets.vm_build))
     terminalreporter.line(
         "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)" if budgets.judges_steps else "実行は CPU 秒で判じる"
     )
+    if worked:
+        terminalreporter.line(
+            f"歩数を測れた検 {len(worked)} 本・歩数の合計 {sum(m.work.steps for m in worked if m.work is not None)}"
+            "(検ごとは -v)"
+        )
+        if config.get_verbosity() >= 1:
+            for m in sorted(worked, key=lambda m: m.work.steps if m.work is not None else 0, reverse=True):
+                terminalreporter.line(f"  {m.key}: {_seconds_text(m)}")
     for verdict in over:
         m = verdict.measurement
         label = "赤" if budgets.fails_for(verdict.unit) else "報告のみ"

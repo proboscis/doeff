@@ -22,6 +22,11 @@ doeff-hy の pytest plugin(entry point `pytest11` の名 `doeff_hy`)だけを持
 | `doeff_test_collect_budget_seconds` | `.hy` の検の file 1 本の収集(import を含む)の上限の CPU 秒。file 単位で印を持たないので 1 つの値。キャッシュ無しの変換と、別の module の初回の import(共有の依存の一度きりの重さ — 並び順でどの file に乗るかが変わる)の CPU 秒は引いて判定する(実行の上限も同じ) |
 | `doeff_test_budget_mode` | `report`(既定 — 超えても赤にせず、警告と終わりの一覧だけ)か `fail`(超えた検を赤にする・登録簿に載った検が上限の半分以下で終われば古い登録として赤) |
 | `doeff_test_budget_registry` | 上限を超えてよい既存の検の登録簿の dir(list・1 行 = 1 dir・`"dir"` の 1 つの値の書き方もそのまま読める)。どの dir も 1 鍵 1 file・`<鍵の sha256 の先頭 12 字>.txt`・1 行目が鍵・2 行目から理由。載った鍵は上限を超えても赤にしない。`fail` の形では、載った検が上限の半分以下で終わると古い登録として赤にし、消す file を名指す(上限の半分から上限までは「消せる」と報告だけ・走らなかった検は判じない — agora-redesign #1726)。超えた時の文が足し先に挙げるのは 1 行目の dir |
+| `doeff_test_budget_judge` | 実行の判定に使う物。`seconds`(既定・CPU 秒)か `steps`(doeff-vm の歩数 — 機体の負荷で揺れない決まった数・agora-redesign #2670)。`steps` でも CPU 秒は測って報告に出す。数の口(`doeff_vm.doeff_vm.vm_work_counts`)が無い build か、歩数の上限が空の時は、名指しの警告を出して CPU 秒で判じる。印ごとの秒の上限に当たる検(本物の I/O を持つ検)は、歩数に重さが出ないので秒のまま。歩数は不変条件の検査の有無で変わらないので、検査つきの build でも `fail` の形なら歩数の超過は赤 |
+| `doeff_test_call_budget_steps` | 判定が `steps` の時の、検 1 本の実行の上限の歩数(正の整数)。数でない・0 以下は起動の時点で止まる |
+| `doeff_test_budget_steps_registry` | 歩数の上限を超えてよい既存の検の登録簿の dir(秒の登録簿と分ける・形は `doeff_test_budget_registry` と同じ・古い登録の決まりも同じ) |
+
+数の口がある時は、検 1 本ごとに歩数と handler の呼び出しの回数も測る。終わりの一覧に、測れた検の数と歩数の合計を 1 行出し、`-v` の時は検ごとに 1 行(歩数・handler の回数・CPU 秒)出す — 歩数の上限を決める材料。
 
 例(手元の検 1 秒・縁の検 10 秒・登録簿 2 つ):
 

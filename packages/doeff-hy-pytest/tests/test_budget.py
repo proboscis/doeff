@@ -748,3 +748,16 @@ def test_the_steps_registry_is_separate_and_a_stale_steps_row_fails(pytester: py
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(["*test_few_steps は登録簿に載っているが*上限 歩数 1000 の*"])
+
+
+def test_measured_steps_are_summed_and_listed_per_test_with_verbose(pytester: pytest.Pytester) -> None:
+    """上限の内の検も、歩数を測れた検は終わりの一覧に合計を出し、-v なら検ごとに 1 行出す — 歩数の上限を決める材料(#2853)。"""
+    _steps_project(
+        pytester,
+        'doeff_test_call_budget_seconds = 10\ndoeff_test_budget_judge = "steps"\ndoeff_test_call_budget_steps = "100000"\n',
+        {"test_steps": MANY_STEPS},
+    )
+    result = pytester.runpytest("-v")
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(["*歩数を測れた検 2 本・歩数の合計 10010*"])
+    result.stdout.fnmatch_lines(["*test_steps.hy::test_many_steps:*歩数 10000*", "*test_steps.hy::test_few_steps:*歩数 10*"])
