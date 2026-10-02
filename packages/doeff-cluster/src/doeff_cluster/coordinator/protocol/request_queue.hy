@@ -74,11 +74,15 @@
    (同じ刻の要求を送り手の名の順に取る)。planned = 今の区間の試しが静かと判じた仮の拍(list)・consumed = 調停ループへ渡した
    (届いた)仮の拍のうち宿がまだ写していない物(list)— 宿は眠りの拍ごとに、この 2 つに在る拍を届いたものとして宿の真実へ写す
    (#2850)。どちらも拍そのものを持ち、同じ拍かを is で比べる: id で覚えると、写されないまま残った覚え(世代の終わった宿の拍など)の
-   id が、その拍が消えた後に別の仮の拍に再び使われ、「届いた」と誤って判じる。"
+   id が、その拍が消えた後に別の仮の拍に再び使われ、「届いた」と誤って判じる。settled = worker の名 → その宿が宿の真実へ写し終えた
+   最後の仮の拍の刻(forget-heard が書く)。宿は預けの拍を刻の順に写し、写し終えた刻より後の拍だけを beat-heard で問う(新しい預けの
+   拍は今より後の刻)ので、consumed はその刻より後の拍だけを持つ: 調停ループへ渡した拍のうち、既に写した拍(今の区間の試し planned で
+   写した拍・起きた宿が残りをまとめて写した拍)は覚えない。宿が起きた(withdraw-beats)・預け直した(deposit-beats)時は、その宿の
+   覚えを外す(#2769 — 前は外す者の無い覚えが走りの長さに比例して伸び、宿の拍ごとの問いと外しの費用が窓の長さの 2 乗になった)。"
   (defn #^ None __init__ [self #^ bool [skip-idle False]]
     (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.skip-idle skip-idle self.takes 0
           self.absorbed {} self.ends-at-marks False self.beats [] self.replies {} self.arrivals {} self.planned []
-          self.consumed [])
+          self.consumed [] self.settled {})
     None))
 
 
@@ -125,10 +129,12 @@
   {:pre [(: queue RequestQueue) (: name str) (: beats tuple) (: bell RestBell)] :post [(: % None)]
    :tags {:context "coordinator" :role "protocol"}}
   "worker の宿が、静かな拍の heartbeat を仮の拍(ProvisionalBeat の tuple — 刻の順)として預けるため(#2790)。同じ worker の前の
-   預けは置き換える。取り手に区間を試し直させる。bell = 預けた拍のどれかを列が静かでないと判じた刻に鳴らす宿の呼び鈴。"
+   預けは置き換える。取り手に区間を試し直させる。bell = 預けた拍のどれかを列が静かでないと判じた刻に鳴らす宿の呼び鈴。
+   宿が前の預けについて問うことはもう無いので、その宿の届いた拍の覚え(consumed)も外す(起きずに終わった世代の残りを含む — #2769)。"
   (setv queue.beats (sorted (+ (lfor held queue.beats :if (!= held.beat.name name) held)
                                (lfor beat beats (DepositedBeat :beat beat :bell bell)))
                             :key (fn [held] held.beat.at)))
+  (setv queue.consumed (lfor held queue.consumed :if (!= held.name name) held))
   (<- (replan-takers queue))
   None)
 
@@ -136,7 +142,9 @@
 (defk withdraw-beats [queue name since]
   {:pre [(: queue RequestQueue) (: name str) (: since int)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "worker の宿が、起きた刻 since 以後の預けた仮の拍を取り下げるため(宿は起きた後の拍を自分で打つ)。取り下げた拍が在れば、取り手に
-   区間を試し直させる。since より前の拍は残す(1 拍ずつの走りでは届いていた heartbeat — 取り手が積む)。"
+   区間を試し直させる。since より前の拍は残す(1 拍ずつの走りでは届いていた heartbeat — 取り手が積む)。起きた宿は眠りの拍を
+   beat-heard で問わない(残りは起きた時にまとめて写す)ので、その宿の届いた拍の覚え(consumed)も外す(#2769)。"
+  (setv queue.consumed (lfor held queue.consumed :if (!= held.name name) held))
   (val kept (lfor held queue.beats :if (or (!= held.beat.name name) (< held.beat.at since)) held))
   (when (!= (len kept) (len queue.beats))
     (setv queue.beats kept)
@@ -147,7 +155,8 @@
 (defk drop-beats [queue]
   {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "coordinator が止まった・落ちた時に、預けた仮の拍を全部捨て、預けた宿を DOWN で起こすため(止まっている coordinator は heartbeat を
-   受けない — 宿は次の拍から本物の heartbeat を送り、届かないことを本番と同じに数える)。"
+   受けない — 宿は次の拍から本物の heartbeat を送り、届かないことを本番と同じに数える)。届いた拍の覚え(consumed)はここでは外さない:
+   起こした宿は起きた時に withdraw-beats で自分の覚えを外し、起きるまでの同じ刻に眠りの拍を写す(beat-heard で問う)ことがある。"
   (val held (tuple queue.beats))
   (setv queue.beats [])
   (for [deposit held]
@@ -327,11 +336,13 @@
                (:= horizon (min (+ horizon chunk) (+ started MAX-QUIET-MS)))))
     ;; 今の試しが静かと判じた仮の拍(宿が拍ごとに届いたものとして写す材料)。
     (setv queue.planned (lfor step steps beat step.beats beat)))
-  ;; 返す歩が受けた仮の拍は預けから外し、届いた物として宿が写すまで覚える(調停ループが歩ごとに保存する)。
+  ;; 返す歩が受けた仮の拍は預けから外し、届いた物として宿が写すまで覚える(調停ループが歩ごとに保存する)。覚えるのは宿がまだ写して
+  ;; いない刻の拍だけ — 既に写した拍(今の区間の試しで写した拍・起きた宿が残りとしてまとめて写した拍)を宿は二度と問わず、覚えると
+  ;; 外す者が無い(#2769)。
   (val heard-beats (tuple (gfor step taken beat step.beats beat)))
   (val heard (frozenset (gfor beat heard-beats (id beat))))
   (setv queue.beats (lfor held queue.beats :if (not-in (id held.beat) heard) held))
-  (.extend queue.consumed heard-beats)
+  (.extend queue.consumed (gfor beat heard-beats :if (or (not-in beat.name queue.settled) (> beat.at (get queue.settled beat.name))) beat))
   (setv queue.planned [])
   taken)
 
@@ -345,8 +356,14 @@
 
 (defk forget-heard [queue beats]
   {:pre [(: queue RequestQueue) (: beats tuple)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
-  "宿が宿の真実へ写した仮の拍の覚え(consumed)を外すため。"
-  (setv queue.consumed (lfor held queue.consumed :if (not (any (gfor beat beats (is beat held)))) held))
+  "宿が宿の真実へ写した仮の拍 beats を、その宿の写し終えた刻(settled)として覚え、届いた拍の覚え(consumed)からその刻までの拍を
+   外すため — 宿は預けの拍を刻の順に写し、写し終えた刻より後の拍だけを問うので、それまでの拍(写した拍と、同じ宿の前の預けの残り)は
+   もう問われない。"
+  ;; 写し終えた刻は遅い方を残す(初めて写した宿は、その拍の刻)。
+  (for [beat beats]
+    (setv (get queue.settled beat.name) (max beat.at (.get queue.settled beat.name beat.at))))
+  (when beats
+    (setv queue.consumed (lfor held queue.consumed :if (or (not-in held.name queue.settled) (> held.at (get queue.settled held.name))) held)))
   None)
 
 
