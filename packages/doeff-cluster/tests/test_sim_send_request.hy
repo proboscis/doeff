@@ -39,7 +39,7 @@
   "受け付けている(up)列に、reply-seconds 秒後に答える代役を並べて送り、送り手の読み #(返事 刻) を返すため。"
   (val queue (RequestQueue))
   (setv queue.up True)
-  (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1"))
+  (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1" :versions {}))
   (<- read tuple ((sim-time-handler :clock (clock-at 0)) (send-beside-answer link queue reply-seconds)))
   read)
 
@@ -60,7 +60,7 @@
   "send-against と同じ筋書きで、送り手(send-and-read)が起こす task だけを数えるため。答え = #(送り手の読み 起こした task の daemon の印の tuple)。"
   (val queue (RequestQueue))
   (setv queue.up True)
-  (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1"))
+  (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1" :versions {}))
   (<- counted tuple ((state {SPAWNS-KEY #()})
                      ((sim-time-handler :clock (clock-at 0)) (send-counted-beside-answer link queue reply-seconds))))
   counted)

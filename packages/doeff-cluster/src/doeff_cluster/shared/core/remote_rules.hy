@@ -26,7 +26,7 @@
   answer)
 
 
-;; この process の版の識別(current-versions)を読むのは io の層の process_versions.hy(#1630)。ここは突き合わせの判断だけ。
+;; この process の版の識別(process-versions)を綴るのは io の層の process_versions.hy(#1630)。ここは突き合わせの判断だけ。
 (defn #^ tuple version-diffs [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "送り手の版(expected)と受け側の版(actual)の食い違った欄(VersionDiff の tuple・欄の名の順)。env のキー(envKey)は両方が名乗る
    時だけ比べて先頭に置く(送り手が env の外 — 開発の checkout — で動く時は、残りの欄と宣言の組み立ての「汚れたツリーを断る」が
