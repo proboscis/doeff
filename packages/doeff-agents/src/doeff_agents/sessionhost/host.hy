@@ -203,10 +203,11 @@
   (setv backend "tmux")
   #^ str herdr-socket
   (setv herdr-socket DEFAULT-HERDR-SOCKET)
-  ;; out-of-band 寿命境界(opt-in): spawn 元の死で自己終了 + launch 済み
-  ;; session の reap。conformance harness が常時立てる(S28)。
-  #^ bool exit-when-orphaned
-  (setv exit-when-orphaned False))
+  ;; out-of-band 寿命境界(opt-in): spawn 元(supervisor)の pid。親がこの pid で
+  ;; なくなったら自己終了 + launch 済み session の reap。None = 境界なし。
+  ;; conformance harness が自分の pid を常時立てる(S28)。
+  #^ (| int None) orphan-supervisor
+  (setv orphan-supervisor None))
 
 
 ;; ---------------------------------------------------------------------------
@@ -344,8 +345,8 @@
 ;; flag を持たない env knob(usage は別枠で出す — 読みは parse-args の同じ 1 点)。
 (setv SERVE-ENV-ONLY-SPECS
   [#(ENV-EXIT-WHEN-ORPHANED
-     (+ "Set to 1 to make the host exit when its parent goes away "
-        "(opt-in lifetime boundary)."))])
+     (+ "Set to the pid of the spawning process to make the host exit "
+        "when its parent is no longer that process (opt-in lifetime boundary)."))])
 
 ;; `--help` / `-h` の usage(agora-redesign #668: 旧い入口の usage.py が agentd の join / 弁の説明と
 ;; 一緒に持っていた serve の部分を、表の持ち主のここへ移した)。flag の一覧は上の 2 つの表から導く —
@@ -447,9 +448,15 @@
   (setv herdr-socket (.get os.environ ENV-HERDR-SOCKET
                            DEFAULT-HERDR-SOCKET))
   ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
-  ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
-  (setv exit-when-orphaned
-        (= (.get os.environ ENV-EXIT-WHEN-ORPHANED "") "1"))
+  ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。値は spawn 元の pid:
+  ;; 起動の途中(serve の前)に spawn 元が死んでも、付け替え先(pid 1 とは限らない —
+  ;; user の systemd など)を spawn 元と取り違えない(agora-redesign #3026)。
+  (setv orphan-knob (.get os.environ ENV-EXIT-WHEN-ORPHANED ""))
+  (setv orphan-supervisor
+        (cond
+          (= orphan-knob "") None
+          (.isdigit orphan-knob) (int orphan-knob)
+          True (raise (ValueError f"{ENV-EXIT-WHEN-ORPHANED} must be the spawning process's pid, got {orphan-knob !r}"))))
   (setv command CMD-SERVE)
   (setv index 0)
   (while (< index (len args))
@@ -545,7 +552,7 @@
     :prompt-judge-cmd prompt-judge-cmd
     :backend backend
     :herdr-socket herdr-socket
-    :exit-when-orphaned exit-when-orphaned))
+    :orphan-supervisor orphan-supervisor))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1711,12 +1718,14 @@
                        (fn [] (run-hosted config actor (cleanup-program sid)))))))
 
 
-(defn orphan-watch-loop [config actor initial-ppid]
-  "out-of-band 寿命境界(env knob DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1 の
-   opt-in — conformance S28)。fixture teardown(__exit__)は正しいが pytest
+(defn orphan-watch-loop [config actor supervisor]
+  "out-of-band 寿命境界(env knob DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=<spawn 元の
+   pid> の opt-in — conformance S28)。fixture teardown(__exit__)は正しいが pytest
    ごと SIGKILL されると走らない — その穴を daemon 自身が塞ぐ: spawn 元 =
-   supervisor の死を getppid の変化(orphan は init/launchd へ reparent
-   される)で検出し、(1) launch 済み active session を reap(上)、
+   supervisor の死を「親が supervisor の pid でなくなった」で検出し(orphan は
+   init/launchd か子の付け替え先 — user の systemd など — へ reparent される。
+   比べる pid は knob が運ぶので、serve の前に spawn 元が死んでも付け替え先を
+   spawn 元と取り違えない・agora-redesign #3026)、(1) launch 済み active session を reap(上)、
    (2) SIGTERM を自送 — main の SIGTERM handler が SystemExit(0) に変換し、
    finally の lease 釈放を通る(issue #565 の graceful 経路と同一)。SIGTERM
    経路が万一 wedge しても backstop の os._exit(1) で有界に退場する(lease は
@@ -1724,9 +1733,9 @@
    で、この knob を立てて起動してはならない(立てれば即時退場 — それが契約)。"
   (while True
     (setv ppid (os.getppid))
-    (when (or (!= ppid initial-ppid) (= ppid 1))
+    (when (!= ppid supervisor)
       (print (+ "doeff-sessionhost supervisor vanished "
-                f"(ppid {initial-ppid} -> {ppid}); reaping launched sessions "
+                f"(spawner {supervisor}, parent now {ppid}); reaping launched sessions "
                 "and exiting")
              :file sys.stderr)
       (.flush sys.stderr)
@@ -1849,9 +1858,9 @@
                                     :name "sessionhost-heartbeat"))
   (.start heartbeat)
   ;; out-of-band 寿命境界(opt-in)— knob 未設定なら thread ごと不在。
-  (when config.exit-when-orphaned
+  (when (is-not config.orphan-supervisor None)
     (setv orphan-watch (threading.Thread :target orphan-watch-loop
-                                         :args #(config actor (os.getppid))
+                                         :args #(config actor config.orphan-supervisor)
                                          :daemon True
                                          :name "sessionhost-orphan-watch"))
     (.start orphan-watch))

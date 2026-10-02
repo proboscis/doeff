@@ -585,6 +585,14 @@ def reap_preexisting_orphan_daemons() -> None:
     _sweep_residual_runtime_dirs()
 
 
+def _signal_process_group(pgid: int, sig: signal.Signals) -> None:
+    """Signal a whole process group; a group that is already empty is fine."""
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        return
+
+
 @dataclass(frozen=True)
 class _AgentdPlaces:
     """Where one harness run's daemon lives: its binary and its isolated runtime dir.
@@ -654,6 +662,13 @@ class AgentdHarness:
             raise RuntimeError("AgentdHarness has not started its daemon")
         return self._mut_client
 
+    @property
+    def daemon_pid(self) -> int:
+        """Pid of the daemon started last — also its process group id."""
+        if self._mut_proc is None:
+            raise RuntimeError("AgentdHarness has not started its daemon")
+        return self._mut_proc.pid
+
     def __enter__(self) -> "AgentdHarness":
         require_binaries()
         # S28d: converge leaked state BEFORE creating this run's own runtime
@@ -704,6 +719,13 @@ class AgentdHarness:
             stdout=log,
             stderr=subprocess.STDOUT,
             text=True,
+            # The daemon leads its own process group (group id == daemon pid):
+            # teardown stops the whole group, and a SIGTERM aimed at the test
+            # run's group (`timeout`) does not land on the daemon directly —
+            # it goes through the orphan boundary below, which reaps the
+            # launched sessions before exiting (the graceful SIGTERM path
+            # deliberately does not — agora-redesign #3026).
+            start_new_session=True,
             env={
                 **os.environ,
                 # Out-of-band lifetime boundary (S28): the daemon watches THIS
@@ -711,13 +733,23 @@ class AgentdHarness:
                 # pytest, hard crash), reaps its launched sessions and exits.
                 # Teardown-side kills alone cannot close that hole — the hole
                 # IS "teardown never ran" (2026-07-30 host observation: 34
-                # leaked processes, 769MB RSS, oldest 4 days).
-                "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED": "1",
+                # leaked processes, 769MB RSS, oldest 4 days). The value is
+                # this process's pid: a supervisor that dies while the daemon
+                # is still starting (before serve) must not be mistaken for
+                # the reparenting target, which is not always pid 1 (a user
+                # systemd is a subreaper — #3026).
+                "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED": str(os.getpid()),
                 **self.extra_env,
             },
         )
         self._mut_client = AgentdClient(self.socket_path, timeout=5.0)
-        self._wait_ready()
+        try:
+            self._wait_ready()
+        except BaseException:
+            # `__exit__` never runs when `__enter__` raises: the daemon this
+            # start spawned is stopped here, where it was spawned (#3026).
+            self._terminate()
+            raise
 
     def restart(self) -> None:
         """Durability probe (S10/S15): bounce the daemon, keep db + sessions.
@@ -850,14 +882,18 @@ class AgentdHarness:
     # -- teardown ------------------------------------------------------------
 
     def _terminate(self) -> None:
-        if self._mut_proc is None or self._mut_proc.poll() is not None:
+        """Stop the daemon's whole process group (group id == daemon pid —
+        `start_new_session`). A daemon already reaped by an earlier call is
+        left alone so a recycled pid is never signalled."""
+        proc = self._mut_proc
+        if proc is None or proc.returncode is not None:
             return
-        self._mut_proc.terminate()
+        _signal_process_group(proc.pid, signal.SIGTERM)
         try:
-            self._mut_proc.wait(timeout=5.0)
+            proc.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
-            self._mut_proc.kill()
-            self._mut_proc.wait(timeout=5.0)
+            _signal_process_group(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=5.0)
 
     def __exit__(self, *exc: object) -> None:
         for session_id in self._sessions:
