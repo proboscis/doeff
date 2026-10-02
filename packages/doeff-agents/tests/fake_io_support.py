@@ -11,18 +11,12 @@ from collections.abc import Callable
 from subprocess import CompletedProcess
 
 import hy  # noqa: F401  # .hy import hook — the fake handler is a Hy module
-from doeff import Program, run
-from doeff_agents.io_effects import ProcessOutcome
-from doeff_agents.io_fake import FakeIoWorld, with_fake_io
+from doeff_agents.io_effects import ProcessOutcome as ProcessOutcome
+from doeff_agents.io_fake import FakeIoWorld as FakeIoWorld
+from doeff_agents.io_fake import with_fake_io
 from doeff_agents.io_root import IoRoot
 
-__all__ = [
-    "FakeIoWorld",
-    "ProcessOutcome",
-    "completed_process_script",
-    "fake_io_root",
-    "ok_outcome",
-]
+from doeff import Program, run
 
 
 def fake_io_root(world: FakeIoWorld) -> IoRoot:

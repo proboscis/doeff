@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import tmux
-from .adapters.base import (
+import hy  # noqa: F401 -- installs the .hy import hook (ready_physics.hy)
+
+from doeff_agents import tmux
+from doeff_agents.adapters.base import (
     AgentAdapter,
     AgentType,
     InjectionMethod,
@@ -19,10 +21,11 @@ from .adapters.base import (
     LaunchParams,
     PreLaunchAdapter,
 )
-from .adapters.claude import ClaudeAdapter
-from .adapters.codex import CodexAdapter
-from .adapters.gemini import GeminiAdapter
-from .monitor import (
+from doeff_agents.adapters.claude import ClaudeAdapter
+from doeff_agents.adapters.codex import CodexAdapter
+from doeff_agents.adapters.gemini import GeminiAdapter
+from doeff_agents.io_root import IoRoot
+from doeff_agents.monitor import (
     MonitorState,
     OnStatusChange,
     SessionStatus,
@@ -31,13 +34,9 @@ from .monitor import (
     hash_content,
     is_waiting_for_input,
 )
-from doeff_agents.io_root import IoRoot
-
-import hy  # noqa: F401 -- installs the .hy import hook (ready_physics.hy)
-
-from .session_backend import SessionBackend
-from .ready_physics import has_claude_screen_reader_trust_prompt
-from .shell import (
+from doeff_agents.ready_physics import has_claude_screen_reader_trust_prompt
+from doeff_agents.session_backend import SessionBackend
+from doeff_agents.shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,
     wrap_with_shell_exports,

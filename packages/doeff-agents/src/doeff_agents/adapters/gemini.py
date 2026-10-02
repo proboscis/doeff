@@ -1,8 +1,7 @@
 """Adapter for Gemini CLI."""
 
 from doeff import Program
-
-from .base import AgentType, InjectionMethod, LaunchParams, cli_available
+from doeff_agents.adapters.base import AgentType, InjectionMethod, LaunchParams, cli_available
 
 
 class GeminiAdapter:
