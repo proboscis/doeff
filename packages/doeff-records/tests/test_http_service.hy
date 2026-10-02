@@ -193,7 +193,9 @@
       (run-as server clock maker (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAny))
                                             (RowWrite "nothing" #("x") {} (ExpectAny)))))
       (assert False "宣言に無い表を名指す束が答えを返した")
-      (except [UndeclaredTable] None))
+      ;; 欄は束が名指した表のうち宣言に無い物だけ。
+      (except [refused UndeclaredTable]
+        (assert (= #(refused.tables refused.streams) #(#("nothing") #())) refused)))
     (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
     (finally (.close server))))
 
@@ -231,7 +233,9 @@
     (try
       (run-as server clock (get LAW-TOKENS "maker") (ReadRow "nothing" #("p1")))
       (assert False "宣言に無い表の読みが答えを返した")
-      (except [UndeclaredTable] None))
+      ;; client は断りの欄に宣言に無い表の名を入れる(memory の置き場と同じ — 使い手が欄で照らす)。
+      (except [refused UndeclaredTable]
+        (assert (= #(refused.tables refused.streams) #(#("nothing") #())) refused)))
     (finally (.close server))))
 
 
