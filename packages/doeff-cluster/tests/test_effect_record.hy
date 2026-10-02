@@ -174,7 +174,7 @@
       (val line {"k" "call" "e" 0 "t" "root" "at" 0 "ty" (type-name WriteShared) "m" "output" "sj" "row/a"
                  "a" {"key" "row/a" "value" (encode-value old) "expect" old-expect} "ok" True "v" True})
       (val rec (read-recording [{"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"} line]))
-      (val replayed (args-of (WriteShared "row/a" (OpaqueJson.of new) new-expect) (HandleTable)))
+      (val replayed (! (args-of (WriteShared "row/a" (OpaqueJson.of new) new-expect) (HandleTable))))
       (assert (= (. (get rec.entries 0) args-text) (canonical replayed)) #(old old-expect (. (get rec.entries 0) args-text) replayed)))))
 
 
@@ -245,14 +245,14 @@
   (val codec (codec-of (WriteShared "row/a" (OpaqueJson.of 1))))
   (assert (= #(codec.mode codec.unexecuted codec.binds) #(OUTPUT True None)) codec)
   ;; OpaqueJson の欄は中の JSON の値で綴る(包みの型の $c にしない)・期限(ttl-seconds)は問いを見分けない
-  (val args (args-of (WriteShared "row/a" (OpaqueJson.of {"n" [1 2]}) (OpaqueJson.of "old") 30) handles))
+  (val args (! (args-of (WriteShared "row/a" (OpaqueJson.of {"n" [1 2]}) (OpaqueJson.of "old") 30) handles)))
   (assert (= args {"key" "row/a" "value" {"n" [1 2]} "expect" "old"}) args)
   (assert (= (subject-of (WriteShared "row/a" (OpaqueJson.of 1)) args) "row/a"))
   ;; ANY は欄の無い値の型の汎用の綴り($c)で、record_log が旧い綴りを揃える先と同じ。復号すると ANY と等しい値。
-  (val any-args (args-of (WriteShared "row/a" (OpaqueJson.of 1)) handles))
+  (val any-args (! (args-of (WriteShared "row/a" (OpaqueJson.of 1)) handles)))
   (assert (= (get any-args "expect") (encode-value ANY) CURRENT-ANY) any-args)
   (assert (= (decode-value (get any-args "expect")) ANY))
-  (assert (is (get (args-of (WriteShared "row/a" (OpaqueJson.of 1) None) handles) "expect") None)))
+  (assert (is (get (! (args-of (WriteShared "row/a" (OpaqueJson.of 1) None) handles)) "expect") None)))
 
 
 ;; 本番の記録(effect_records.effect_logs・2026-09-26〜10-01 の 1 run)の形を写し、値は伏せた: run の頭・内容参照の中身(blob)2 行・
@@ -276,7 +276,7 @@
   (for [l calls]
     (val entry (get rec.entries (get l "e")))
     (val value (resolve-refs (get l "a" "value") blobs))
-    (val replayed (args-of (WriteShared (get l "a" "key") (OpaqueJson.of value)) (HandleTable)))
+    (val replayed (! (args-of (WriteShared (get l "a" "key") (OpaqueJson.of value)) (HandleTable))))
     (assert (= entry.args-text (canonical replayed)) #(entry.args-text replayed))
     (assert (= (get (recorded-args entry) "expect") CURRENT-ANY) entry.args-text)))
 
@@ -430,7 +430,7 @@
   (assert (can-record DeclaredWrite))
   (assert (= (mode-of effect handles) DECISION))
   ;; args は宣言の欄だけ(tries は載せない)・値は encode-value の綴り
-  (val args (args-of effect handles))
+  (val args (! (args-of effect handles)))
   (assert (= args {"key" "row/a" "value" {"$t" [1 "two"]}}) args)
   (assert (= (subject-of effect args) "row/a"))
   (val codec (codec-of effect))
@@ -454,7 +454,7 @@
 (deftest test-an-effect-without-a-registry-row-or-a-declaration-is-refused-by-name
   (assert (not (can-record UndeclaredProbe)))
   (var message None)
-  (try (args-of (UndeclaredProbe "k") (HandleTable))
+  (try (! (args-of (UndeclaredProbe "k") (HandleTable)))
        (except [e UnrecordableEffect] (:= message (str e))))
   (assert (is-not message None) "登録も宣言も無い型を黙って通さない")
   (assert (in (type-name UndeclaredProbe) message) message))
@@ -498,7 +498,7 @@
     ;; 登録表の行ではなく宣言から作った登録
     (assert (not-in (type-name (type effect)) (registered-types)) (type effect))
     (assert (can-record (type effect)))
-    (val args (args-of effect handles))
+    (val args (! (args-of effect handles)))
     (val old-args (if (is previous.args-fn None)
                       (dfor f (dataclasses.fields effect) f.name (encode-value (getattr effect f.name) handles))
                       (previous.args-fn effect handles)))

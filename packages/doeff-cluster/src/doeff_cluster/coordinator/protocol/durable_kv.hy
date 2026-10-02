@@ -16,7 +16,7 @@
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
 ;;; 旧い接頭辞(LEGACY-PLACEMENT)の鍵が残っているので、読みは両方を読み(同じ名なら新しい鍵が勝つ)、起動時に
 ;;; legacy-key-moves の 2 つの書きで新しい鍵へ移す — 新しい鍵を書き終えてから旧い鍵を消す。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [deff defk val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict dataclass replace])
@@ -151,7 +151,7 @@
        (all (gfor #(x y) (zip before after) (is x y)))))
 
 
-(deff durable-delta [#^ ClusterState before #^ ClusterState after]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(defk durable-delta [before after]
   {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
   元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は

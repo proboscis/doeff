@@ -15,7 +15,7 @@
 ;;;
 ;;; 並行: 出来事の番号は問いと答えの両方に振る(scheduler が task を切り替える順 = 答えが返った順も再生で同じにするため)。
 ;;; task の名は親の名 + 「.」+ 親の中で何番目に Spawn したか(scheduler の番号に依らないので記録と再生で同じ)。根は "root"。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [deff defk val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Callable])
@@ -108,7 +108,7 @@
   (if (< -1 e (len rec.entries)) (get rec.entries e) None))
 
 
-(deff queue-of [#^ Recording rec #^ str task]  ; defk にできない: 再生係(handler — Program の外の object の method)が問いごとに呼ぶ純粋な引き
+(defk queue-of [rec task]
   {:pre [(: rec Recording) (: task str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
   "task の問いの番号の列(問いの順)。記録に無い task は空 — 再生係が task の次の問いを突き合わせるため。"
   (or (.row rec.queues task) #()))
@@ -279,10 +279,10 @@
 
 ;; --- 結果 -------------------------------------------------------------------------------------
 
-(deff diff-row [#^ str kind #^ (| Entry None) entry #^ str type #^ (| str None) subject #^ str task #^ (| dict None) replayed-args #^ (| int None) [at None]]  ; defk にできない: 再生係(handler)と再生の道具が Program の外で呼ぶ報告の純粋な綴り
+(defk diff-row [kind entry type subject task replayed-args [at None]]
   {:pre [(: kind str) (: entry (| Entry None)) (: type str) (: subject (| str None)) (: task str) (: replayed-args (| dict None)) (: at (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "判断の違い 1 件。kind = changed / missing / extra。recorded = 記録の引数・replayed = 再生の引数・delta = 記録 → 再生の差分。"
-  (setv recorded (if (is entry None) None (recorded-args entry)))
+  (val recorded (if (is entry None) None (recorded-args entry)))
   {"kind" kind "type" type "subject" subject "task" task
    "at" (if (is-not entry None) entry.at at) "event" (if (is entry None) None entry.e)
    "recorded" recorded "replayed" replayed-args

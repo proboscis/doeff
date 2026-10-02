@@ -6,6 +6,7 @@
 ;;;   - 全部の欄が同じ object の歩は、差分が空で、どの組の鍵も作らない。
 ;;;   - 失敗ケース: 欄が別の object で中身が違えば、差分に入る(丸ごとの直列化の差分と 1 字も違わない)— 同じ object の判定が中身の変化を
 ;;;     見逃さない。別の object で中身が同じなら、差分に入らない(直列化して比べる側へ回る)。
+;;;   - 失敗ケース(#2767): durable-delta は defk — 素で呼ぶと差分でなく Program が返り、差分の読みで名指して落ちる。
 ;;;   - resource_policy.moved-names は、写像が同じ object なら空・別の写像は値が同じ物でない鍵だけ。
 ;;; 前提: 状態は replace で作り直し、欄の写像をその場で書き換えない(durable_kv・resource_policy の頭の註と同じ前提 — 以前の鍵ごとの
 ;;;   同一性の比べも同じ前提に立つ)。
@@ -33,7 +34,7 @@
   (val changed (replace served :workers (dfor #(k w) (.items served.workers) k (replace w :capacity (+ w.capacity 1)))))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
-  (val got (dk.durable-delta served changed))
+  (val got (! (dk.durable-delta served changed)))
   (val built (dfor #(fields spy) spies fields spy.call-count))
   (assert (= (get built WORKERS) 2) built)
   (assert (= (sum (gfor #(fields n) (.items built) :if (!= fields WORKERS) n)) 0) built)
@@ -46,7 +47,7 @@
                                                        :actor "c-test") 1000 T) 0))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
-  (assert (= (dk.durable-delta s (replace s)) {}))
+  (assert (= (! (dk.durable-delta s (replace s))) {}))
   (assert (= (sum (gfor #(_ spy) spies spy.call-count)) 0) spies))
 
 
@@ -59,12 +60,24 @@
   (val old (dk.durable-kv s))
   (val new (dk.durable-kv changed))
   (val by-full (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v) (dfor k old :if (not-in k new) k None)))
-  (val got (dk.durable-delta s changed))
+  (val got (! (dk.durable-delta s changed)))
   (assert (= got by-full) #(got by-full))
   (assert (= (sorted got) ["worker/atlas"]) got)
   (val rebuilt (replace s :workers (dict s.workers)))
   (assert (is-not rebuilt.workers s.workers))
-  (assert (= (dk.durable-delta s rebuilt) {})))
+  (assert (= (! (dk.durable-delta s rebuilt)) {})))
+
+
+(deftest test-counterexample-a-plain-call-of-the-delta-fails-by-name
+  ;; 失敗ケース(#2767): durable-delta は defk(doeff ADR-DOE-HY-004 R10 — 呼び手は <- / !)。以前の形のまま素で呼ぶ所は差分の写像でなく
+  ;; Program を受け、差分の読み(.items)で名指して落ちる — 黙って空の差分として進まない。
+  (import pytest)
+  (val s (get (responded (ClusterState) (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "statuses" []}
+                                                       :actor "c-test") 1000 T) 0))
+  (val plain (dk.durable-delta s (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1))))))
+  (assert (not (isinstance plain dict)) plain)
+  (with [(pytest.raises AttributeError :match "items")]
+    (.items plain)))
 
 
 (deftest test-moved-names-skips-the-same-mapping-and-names-replaced-values

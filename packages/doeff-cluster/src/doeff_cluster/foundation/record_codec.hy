@@ -33,7 +33,7 @@
 ;;;
 ;;; 大きな値の差分(delta-of / apply-delta): 形の版 1 の記録が使った(同じ問いの前の答えとの差)。版 1 の記録を読むためと、
 ;;; backtest の報告(記録 → 再生の差)のために残す。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [deff defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import base64)
 (import collections [OrderedDict])
@@ -447,14 +447,15 @@
           self.unexecuted unexecuted self.binds binds self.watch watch self.arg-names arg-names)))
 
 
-(deff _fields-args [effect handles]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
-  {:pre [(: effect EffectBase) (: handles HandleTable)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+(defk _fields-args [asked handles]
+  {:pre [(: asked EffectBase) (: handles HandleTable)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "登録に args の関数が無い型の effect asked について、記録の引数(欄の名 → 記録の形の値)を欄から綴るため。"
   ;; 欄の名は登録の arg-names(型の宣言の args)か、無ければ dataclass の全部の欄。
   ;; OpaqueJson の欄(形を書き手が決める JSON — 盤の書きの値など)は、包みの型の綴りでなく中の JSON の値で綴る(#2579)。
   ;; 比べる形が書き手の包み方に依らず、値が素の JSON の値だった旧い記録の行とも同じ綴りになる(旧い行の揃えは record_log.read-recording)。
-  (setv names (. (codec-of effect) arg-names))
-  (dfor name (if (is names None) (gfor f (dataclasses.fields effect) f.name) names)
-        :setv v (getattr effect name)
+  (val names (. (codec-of asked) arg-names))
+  (dfor name (if (is names None) (gfor f (dataclasses.fields asked) f.name) names)
+        :setv v (getattr asked name)
         name (encode-value (if (isinstance v OpaqueJson) (json.loads v.text) v) handles)))
 
 ;; v はどの値でもよい(encode-value と同じ理由で defn のまま — #2722)。
@@ -563,9 +564,12 @@
   (setv mode (. (codec-of effect) mode))
   (if (callable mode) (mode effect handles) mode))
 
-(defn #^ dict args-of [#^ object effect #^ HandleTable handles]
-  (setv codec (codec-of effect))
-  (if (is codec.args-fn None) (_fields-args effect handles) (codec.args-fn effect handles)))
+(defk args-of [asked handles]
+  {:pre [(: asked EffectBase) (: handles HandleTable)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "effect asked の記録の引数(名 → 記録の形の値)を綴るため — 記録の handler が問いの行に書き、再生の handler が記録の行と比べる。
+   登録に args の関数があればそれで、無ければ欄から(_fields-args)。"
+  (val codec (codec-of asked))
+  (if (is codec.args-fn None) (! (_fields-args asked handles)) (codec.args-fn asked handles)))
 
 (defn #^ (| str None) subject-of [#^ object effect #^ dict args]
   (setv codec (codec-of effect))

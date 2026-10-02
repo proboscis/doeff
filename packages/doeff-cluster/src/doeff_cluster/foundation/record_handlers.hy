@@ -457,7 +457,8 @@
             (val tried-codec (codec-of effect))
             (val tried-mode (mode-of effect log.handles))
             (val tried-child (if (isinstance effect Spawn) (.child-label log label) None))
-            (val tried-args (if (is tried-child None) (args-of effect log.handles) (| (args-of effect log.handles) {"child" tried-child})))
+            (<- effect-args dict (args-of effect log.handles))
+            (val tried-args (if (is tried-child None) effect-args (| effect-args {"child" tried-child})))
             (:= prepared #(tried-codec tried-mode tried-args (subject-of effect tried-args) tried-child))
             (except [e [UnrecordableEffect UnencodableValue]]
               (if log.strict (:= prepared e) (.break log (.format "{}: {}" (. (type e) __name__) e)))))
@@ -680,15 +681,17 @@
       (raise (ReplayDiverged "記録の登録に無い effect の型")))
     (setv mode (mode-of effect state.handles))
     (setv child (if (isinstance effect Spawn) (.child-label state label) None))
-    (setv args (if (is child None) (args-of effect state.handles) (| (args-of effect state.handles) {"child" child})))
-    (setv subject (subject-of effect args) queue (queue-of rec label) head (.get state.heads label 0))
+    (<- effect-args dict (args-of effect state.handles))
+    (setv args (if (is child None) effect-args (| effect-args {"child" child})))
+    (<- queue tuple (queue-of rec label))
+    (setv subject (subject-of effect args) head (.get state.heads label 0))
     ;; 引数の比べる形はこの問いにつき 1 度だけ作る(記録の側は read-recording が作った文字列 — #2727)。
     (setv #(verdict pos skipped) (match-step rec queue head codec.name (canonical args) mode subject (in label rec.ended)))
     ;; 記録に在って再生が出さなかった decision / output(missing)は、その出来事を済ませたことにして報告する。
     (for [e skipped]
       (setv missed (get rec.entries e))
-      (.append (if (= missed.mode DECISION) state.decisions state.outputs)
-               (diff-row "missing" missed missed.type missed.subject label None))
+      (<- missing dict (diff-row "missing" missed missed.type missed.subject label None))
+      (.append (if (= missed.mode DECISION) state.decisions state.outputs) missing)
       (<- (wake (.consume state missed.e)))
       (<- (wake (.consume state missed.ans-e))))
     (setv (get state.heads label) pos)
@@ -708,8 +711,8 @@
             (raise (ReplayFinished "記録の終わり")))
       (= verdict "extra")
         (do (setv current-entry (.current state))
-            (.append (if (= mode DECISION) state.decisions state.outputs)
-                     (diff-row "extra" None codec.name subject label args :at (if (is current-entry None) None (. (get rec.entries current-entry) at))))
+            (<- extra dict (diff-row "extra" None codec.name subject label args :at (if (is current-entry None) None (. (get rec.entries current-entry) at))))
+            (.append (if (= mode DECISION) state.decisions state.outputs) extra)
             (when (is codec.unexecuted DIVERGE)
               (val unpaired-divergence (.diverge state {"reason" "記録に対の無い書き込み(実行していない時の答えが決まっていない型)" "task" label
                                                 "actual" {"type" codec.name "args" args}}))
@@ -741,8 +744,8 @@
           (<- (consume-at-turn state entry.ans-e))
           ;; 引数だけが違う書き(changed): 違いを報告し、記録の答え(同じ前提への engine の答え)を返す。
           (when (= verdict "changed")
-            (.append (if (= mode DECISION) state.decisions state.outputs)
-                     (diff-row "changed" entry codec.name subject label args)))
+            (<- changed dict (diff-row "changed" entry codec.name subject label args))
+            (.append (if (= mode DECISION) state.decisions state.outputs) changed))
           (cond
             (= mode LIVE) (if (is error None) (resume answer) (raise error))
             True
@@ -766,23 +769,23 @@
   (.format "{}-{}-{}" (time.strftime "%Y%m%dT%H%M%SZ" (time.gmtime (/ started-ms 1000))) (or worker "local")
            (or instance (str (os.getpid)))))
 
-(deff recording-handler [#^ dict record #^ str service #^ dict header]  ; defk にできない: 記録係を作る入口(境目の記録係と、使い手の repo の記録係)が handler の組を作る時に呼ぶ — 答えは handler の値
+(defk recording-handler [record service header]
   {:pre [(: record dict) (: service str) (: header dict)] :post [(: % RecordingInstaller)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の置き場の設定 record → 記録係(境目の記録係 boundary-recorder の record の枝と、cluster の外の process が使う)。
    record = {\"otlp\": collector の URL(か \"store\": 旧い置き場の URL)・
    \"chunkSeconds\"・\"flushSeconds\"}。
    header = run の行に載せる欄(版・設定・process の世代 …)。置き場に届かなくても業務は止めない(HttpSink の説明)。
    置き場への送りは HttpRequest(send-records)— 答える handler(本番は http-production-handler)を記録係より外側に置く。"
-  (setv started (int (* 1000 (time.time))))
-  (setv run (run-name started (.get header "worker" "") (.get header "instance" "")))
-  (setv options {"flush_seconds" (float (.get record "flushSeconds" 2.0)) "max_buffer" (int (.get record "maxBufferLines" 200000))})
+  (val started (int (* 1000 (time.time))))
+  (val run (run-name started (.get header "worker" "") (.get header "instance" "")))
+  (val options {"flush_seconds" (float (.get record "flushSeconds" 2.0)) "max_buffer" (int (.get record "maxBufferLines" 200000))})
   ;; 置き場の口: otlp = OpenTelemetry の collector(2026-09-25 から)・store = 旧い置き場 effect-records(退役まで)。
-  (setv sink (if (in "otlp" record)
-                 (OtlpSink (get record "otlp") service run #** options)
-                 (HttpSink (get record "store") service run #** options)))
-  (setv log (EffectLog sink (| header {"service" service "run" run})
-                       :chunk-seconds (float (.get record "chunkSeconds" 3600.0))
-                       :wall-ms (fn [] (int (* 1000 (time.time))))))
+  (val sink (if (in "otlp" record)
+                (OtlpSink (get record "otlp") service run #** options)
+                (HttpSink (get record "store") service run #** options)))
+  (val log (EffectLog sink (| header {"service" service "run" run})
+                      :chunk-seconds (float (.get record "chunkSeconds" 3600.0))
+                      :wall-ms (fn [] (int (* 1000 (time.time))))))
   (print (.format "recorder: {} の effect を記録します(run {}・置き場 {})" service run (or (.get record "otlp") (.get record "store"))) :file sys.stderr :flush True)
   ;; 記録する Program の終わりに残りの行を送る(close-log の説明)。
   (RecordingInstaller log))
@@ -838,7 +841,8 @@
                  (<- program-path str (Ask contract.program-key))
                  (<- versions dict (Ask contract.versions-key))
                  (<- header dict (recording-header ctx program-path versions))
-                 [(recording-handler {"otlp" url} ctx.job header)])
+                 (<- installer RecordingInstaller (recording-handler {"otlp" url} ctx.job header))
+                 [installer])
     "replay" (do (<- state ReplayState (Ask REPLAY-STATE-KEY))
                  [(effect-replayer state)])
     _ (raise (ValueError (.format "{} は {} のどれか: {!r}" RECORD-MODE-KEY (list RECORD-MODES) mode)))))
