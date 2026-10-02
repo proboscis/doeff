@@ -111,12 +111,11 @@
     (when (= spec.name name) (return spec)))
   None)
 
-(defn #^ tuple job-names [#^ tuple desired #^ WorldView world]
-  ;; 宣言から消えた job も、process が残る限り扱う(止めるまで忘れない)。退いた process も同じ(名 = <元の名>#retired-<世代>)。
-  (setv names [])
-  (for [name (+ (lfor spec desired spec.name) (lfor p world.processes p.name))]
-    (when (not-in name names) (.append names name)))
-  (tuple names))
+(defk job-names [desired world]
+  {:pre [(: desired tuple) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "拍で扱う job の名の列(宣言の名 → process の名の順・同じ名は最初の 1 つ)を決めるため。宣言から消えた job も、process が残る限り扱う
+   (止めるまで忘れない)。退いた process も同じ(名 = <元の名>#retired-<世代>)。"
+  (tuple (dict.fromkeys (+ (lfor spec desired spec.name) (lfor p world.processes p.name)))))
 
 (defn #^ bool retired-exists [#^ WorldView world #^ str name]
   (any (gfor p world.processes (= p.retired-from name))))
@@ -226,10 +225,12 @@
     ;; 宣言から消えた・版や引数が変わった → 先に止める(旧新の同時稼働をしない)。
     True (stop-actions now process record policy)))
 
-(defn #^ tuple warm-actions [#^ int now #^ tuple warm #^ WorldView world #^ tuple job-actions #^ WorkerPolicy policy]
-  "先読み(2026-09-26): 温める表の env を、job の準備を撃った後に準備し始める(準備済み・準備中なら何もしない・失敗は code-retry-ms の後に
-   撃ち直す)。同じ拍に job が同じ root の準備を撃っていれば撃たない(job の準備が先に立つ)。"
-  (setv requested (sfor a job-actions :if (isinstance a PrepareEnv) a.key))
+(defk warm-actions [now warm world job-actions policy]
+  {:pre [(: now int) (: warm tuple) (: world WorldView) (: job-actions tuple) (: policy WorkerPolicy)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "先読み(2026-09-26)の action を求めるため: 温める表の env を、job の準備を撃った後に準備し始める(準備済み・準備中なら何もしない・
+   失敗は code-retry-ms の後に撃ち直す)。同じ拍に job が同じ root の準備を撃っていれば撃たない(job の準備が先に立つ)。"
+  (val requested (sfor a job-actions :if (isinstance a PrepareEnv) a.key))
   (tuple (gfor w warm
                :setv code (code-of world w.key)
                :if (and (not-in w.key requested)
@@ -238,34 +239,45 @@
                                  (>= (- now (or code.failed-ms 0)) policy.code-retry-ms))))
                (PrepareEnv w.key w.runtime-env :warm True))))
 
-(defn #^ frozenset pinned-env-keys [#^ tuple desired #^ WorldView world #^ tuple warm]
-  "掃除が消してはいけない root のキー(2026-09-26): 宣言の実行環境の job・走っている実行環境の process・温める表・準備中の root。
-   project ごとの最新の root は掃除の係が完成マーカーから守る(env_upkeep.sweep-choice)。"
+(defk pinned-env-keys [desired world warm]
+  {:pre [(: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "掃除が消してはいけない root のキー(2026-09-26)を決めるため: 宣言の実行環境の job・走っている実行環境の process・温める表・準備中の
+   root。project ごとの最新の root は掃除の係が完成マーカーから守る(env_upkeep.sweep-choice)。"
   (frozenset (+ (lfor spec desired :if spec.runtime-env (code-key spec))
                 (lfor p world.processes :if p.spec.runtime-env (code-key p.spec))
                 (lfor w warm w.key)
                 (lfor c world.codes :if (and (.startswith c.revision ENV-KEY-PREFIX) (= c.state CodeState.PREPARING)) c.revision))))
 
-(defn #^ tuple sweep-actions [#^ tuple desired #^ WorldView world #^ tuple warm]
-  "掃除の係へ固定の集合を渡す action(固定の集合が変わった時と、空きが下限を切った時だけ)。実行環境を扱わない worker は撃たない。"
-  (setv disk world.env-disk)
+(defk sweep-actions [desired world warm]
+  {:pre [(: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "掃除の係へ固定の集合を渡す action を求めるため(固定の集合が変わった時と、空きが下限を切った時だけ)。実行環境を扱わない worker は
+   撃たない。"
+  (val disk world.env-disk)
   (if (is disk None)
       #()
-      (do (setv pinned (pinned-env-keys desired world warm))
+      (do (<- pinned frozenset (pinned-env-keys desired world warm))
           (if (or (!= pinned disk.pinned) (< disk.free disk.floor)) #((SweepEnvs pinned)) #()))))
 
-(defn #^ tuple forget-probe-actions [#^ tuple desired #^ WorldView world]
-  "入口の検めの持ち主へ今の宣言の spec の指紋を渡す action(宣言に無い spec の検めの記録が観測に在る拍だけ — 2026-09-27)。
+(defk forget-probe-actions [desired world]
+  {:pre [(: desired tuple) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "入口の検めの持ち主へ今の宣言の spec の指紋を渡す action を求めるため(宣言に無い spec の検めの記録が観測に在る拍だけ — 2026-09-27)。
    宣言に残る spec の記録(失敗の理由・回数)は落とさない。"
-  (setv keep (frozenset (gfor spec desired (spec-hash spec))))
+  (val keep (frozenset (gfor spec desired (spec-hash spec))))
   (if (any (gfor probe world.probes (not-in probe.spec-hash keep))) #((ForgetProbes keep)) #()))
 
-(defn #^ tuple plan [#^ int now #^ tuple desired #^ WorldView world #^ dict records #^ WorkerPolicy policy #^ tuple [warm #()]]
-  "1 拍の action: job ごとの action → 温める表の準備(job より後)→ 掃除の係への固定の集合 → 検めの記録の片づけ。"
-  (setv jobs (tuple (gfor name (job-names desired world)
-                          action (plan-job now name desired world (.get records name (JobRecord name)) policy)
-                          action)))
-  (+ jobs (warm-actions now warm world jobs policy) (sweep-actions desired world warm) (forget-probe-actions desired world)))
+(defk plan [now desired world records policy [warm #()]]
+  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 掃除の係への固定の集合 → 検めの記録の
+   片づけ。job ごとの判断 plan-job は列の中で要素ごとに呼ぶので素の関数のまま(列を順に走らせる道具 #2812 を待つ)。"
+  (<- names tuple (job-names desired world))
+  (val jobs (tuple (gfor name names
+                         action (plan-job now name desired world (.get records name (JobRecord name)) policy)
+                         action)))
+  (<- warming tuple (warm-actions now warm world jobs policy))
+  (<- sweeping tuple (sweep-actions desired world warm))
+  (<- forgetting tuple (forget-probe-actions desired world))
+  (+ jobs warming sweeping forgetting))
 
 (defk ready-followups [now desired before after records policy]
   {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy)]
@@ -299,18 +311,21 @@
                  :failures (cond (or (not exited) (= action.exit-code 0)) 0 stable 1 True (+ record.failures 1))))
     True record))
 
-(defn #^ dict records-after [#^ int now #^ dict records #^ tuple actions #^ WorkerPolicy [policy (WorkerPolicy)]]
-  (setv result (dict records))
+(defk records-after [now records actions [policy (WorkerPolicy)]]
+  {:pre [(: now int) (: records dict) (: actions tuple) (: policy WorkerPolicy)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "撃った action を job ごとの記憶(起こした回数・止め始め・終わり方)に数えた後の記憶を求めるため。1 つずつの数えは record-after
+   (列の中で要素ごとに呼ぶので素の関数のまま — 列を順に走らせる道具 #2812 を待つ)。"
+  (var result (dict records))
   (for [action actions]
-    (setv name (cond
-      (isinstance action StartJob) action.spec.name
-      (isinstance action (| SignalJob ReapJob)) action.name
-      True None))
+    (val name (match action
+      (StartJob) action.spec.name
+      (| (SignalJob) (ReapJob)) action.name
+      _ None))
     (when (is-not name None)
-      (setv (get result name) (record-after now (.get result name (JobRecord name)) action policy)))
+      (:= result (| result {name (record-after now (.get result name (JobRecord name)) action policy)})))
     ;; 退いた process の記憶は、回収した時に捨てる(名は世代ごとに違うので、残すと入れ替えのたびに溜まる)。
     (when (and (isinstance action ReapJob) (in RETIRED-MARK action.name))
-      (.pop result action.name None)))
+      (:= result (dfor #(k v) (.items result) :if (!= k action.name) k v))))
   result)
 
 (defn #^ JobPhase phase-of [#^ int now #^ (| JobSpec None) want #^ (| ProcessView None) process
@@ -337,8 +352,13 @@
           (in-backoff now record policy) JobPhase.BACKOFF
           True JobPhase.STARTING))))
 
-(defn #^ tuple statuses [#^ int now #^ tuple desired #^ WorldView world #^ dict records #^ WorkerPolicy policy]
-  (tuple (gfor name (job-names desired world)
+(defk statuses [now desired world records policy]
+  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "worker の状態の報告(job ごとの JobStatus の列)を作るため。job ごとの判断(phase-of・probe-status ほか)は列の中で要素ごとに呼ぶので
+   素の関数のまま(列を順に走らせる道具 #2812 を待つ)。"
+  (<- names tuple (job-names desired world))
+  (tuple (gfor name names
     :setv want (desired-of desired name)
     :setv process (process-of world name)
     :setv record (.get records name (JobRecord name))

@@ -100,9 +100,9 @@
   (<- stderr (ReadText run.err))
   (<- (RemoveTree run.out))
   (<- (RemoveTree run.err))
-  (val results (probe-results (if (isinstance stdout str) stdout "")))
+  (<- results dict (probe-results (if (isinstance stdout str) stdout "")))
   (val stuck (next (gfor t run.targets :if (not-in t results) t) None))
-  (val crash (if (or (is code None) (= code 0)) None (probe-reason code (if (isinstance stderr str) stderr ""))))
+  (val crash (if (or (is code None) (= code 0)) None (! (probe-reason code (if (isinstance stderr str) stderr "")))))
   (<- now-ms int (now-epoch-ms))
   (val detail (.format "入口の検めが {} 秒で終わらない(process group ごと止めた): {} の読み込みの途中" settings.timeout-seconds stuck))
   (tuple (gfor spec run.specs
@@ -133,7 +133,7 @@
         (:= last-failure (| last-failure {key prior.detail})))
       (:= done (dfor #(k v) (.items done) :if (!= k key) k v))
       (:= attempts (| attempts {key (+ (.get attempts key 0) 1)}))
-      (val refusal (probe-refusal spec))
+      (<- refusal (| str None) (probe-refusal spec))
       (if (is-not refusal None)
           (do (<- now-ms int (now-epoch-ms))
               (:= done (| done {key (ProbeView key ProbeState.FAILED :detail refusal :failed-ms now-ms :started-ms now-ms
@@ -158,7 +158,8 @@
     (resume None))
   (ObserveProbes []
     ;; 待っている束を起こす(木ごとに 1 本 — 走っている木の束は、その終わりを待つ)。
-    (for [batch (probe-launches (list waiting) (frozenset runs))]
+    (<- batches tuple (probe-launches (list waiting) (frozenset runs)))
+    (for [batch batches]
       (val specs (get waiting batch))
       (:= waiting (dfor #(k v) (.items waiting) :if (!= k batch) k v))
       (:= launched (+ launched 1))

@@ -70,7 +70,7 @@ def probing_detail(probe: ProbeStatus) -> str:
 def desired_of(desired: tuple, name: str) -> JobSpec | None:
     ...
 
-def job_names(desired: tuple, world: WorldView) -> tuple:
+def job_names(desired: tuple, world: WorldView) -> _Program[tuple, object]:
     ...
 
 def retired_exists(world: WorldView, name: str) -> bool:
@@ -106,19 +106,19 @@ def retired_actions(now: int, process: ProcessView, origin: str, desired: tuple,
 def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> tuple:
     ...
 
-def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, policy: WorkerPolicy) -> tuple:
+def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
     ...
 
-def pinned_env_keys(desired: tuple, world: WorldView, warm: tuple) -> frozenset:
+def pinned_env_keys(desired: tuple, world: WorldView, warm: tuple) -> _Program[frozenset, object]:
     ...
 
-def sweep_actions(desired: tuple, world: WorldView, warm: tuple) -> tuple:
+def sweep_actions(desired: tuple, world: WorldView, warm: tuple) -> _Program[tuple, object]:
     ...
 
-def forget_probe_actions(desired: tuple, world: WorldView) -> tuple:
+def forget_probe_actions(desired: tuple, world: WorldView) -> _Program[tuple, object]:
     ...
 
-def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=...) -> tuple:
+def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=...) -> _Program[tuple, object]:
     ...
 
 def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
@@ -127,11 +127,11 @@ def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldVie
 def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPolicy=...) -> JobRecord:
     ...
 
-def records_after(now: int, records: dict, actions: tuple, policy: WorkerPolicy=...) -> dict:
+def records_after(now: int, records: dict, actions: tuple, policy: WorkerPolicy=...) -> _Program[dict, object]:
     ...
 
 def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> JobPhase:
     ...
 
-def statuses(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> tuple:
+def statuses(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
     ...

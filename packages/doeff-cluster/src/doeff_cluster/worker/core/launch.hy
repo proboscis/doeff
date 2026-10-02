@@ -4,6 +4,7 @@
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
+(import collections.abc [Mapping])
 (import dataclasses [dataclass])
 (import json)
 (import pathlib [Path])
@@ -21,16 +22,18 @@
 (setv CHILD-ENV-PREFIXES #("LC_"))
 
 
-(defn #^ dict child-environment [#^ dict base #^ dict extra #^ dict declared #^ dict worker]  ; defk にできない: ProcessHost(Program の外の I/O の道具)が呼ぶ
-  "実行環境の job の子の環境変数: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
+(defk child-environment [base extra declared worker]
+  {:pre [(: base dict) (: extra dict) (: declared dict) (: worker dict)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "実行環境の job の子の環境変数を組むため: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
    → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。"
   (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v)
      extra declared worker))
 
 
-(defn #^ str env-project-dir [#^ str root #^ dict declared]  ; defk にできない: ProcessHost・ProbeStore(Program の外の I/O の道具)が呼ぶ
-  "root と宣言の JSON → uv の --project に渡す project の dir(env_prepare.project-dir と同じ規則)。"
-  (setv project (get declared "project"))
+(defk env-project-dir [root declared]
+  {:pre [(: root str) (: declared dict)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "root と宣言の JSON から、uv の --project に渡す project の dir を決めるため(env_prepare.project-dir と同じ規則)。"
+  (val project (get declared "project"))
   (if (= (get project "path") ".")
       (.format "{}/{}" root (get project "repo"))
       (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
@@ -41,7 +44,7 @@
   (/ program-dir (+ sha ".json")))
 
 
-(defn #^ str program-file-text [#^ str blob #^ dict versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+(defn #^ str program-file-text [#^ str blob #^ (get Mapping #(str object)) versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
   "cache の file の中身(子の入口 job_entry の read-program が読む形 {\"blob\" \"versions\"} — service と task で同じ・定義点は 1 つ)。"
   (json.dumps {"blob" blob "versions" versions}))
 
@@ -78,9 +81,10 @@
   (val shim #(python "-B" "-m" "doeff_cluster.shim" "10" "--"))
   (if spec.runtime-env
       (do (val declared (json.loads spec.runtime-env))
-          (val child-env (child-environment allowed-env extra-env (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
-                                      worker-env))
-          (JobLaunch :argv (+ shim #(uv "run" "--no-sync" "--frozen" "--project" (env-project-dir code-path declared) "hy" "-m" spec.entry)
+          (<- child-env dict (child-environment allowed-env extra-env (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
+                                                worker-env))
+          (<- project-dir str (env-project-dir code-path declared))
+          (JobLaunch :argv (+ shim #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" "-m" spec.entry)
                               spec.args program-args)
                      :cwd work-dir
                      :env (tuple (gfor k (sorted child-env) (EnvEntry :name k :value (get child-env k))))

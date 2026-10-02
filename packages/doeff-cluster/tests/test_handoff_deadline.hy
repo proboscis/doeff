@@ -134,10 +134,10 @@
   "worker の本物の判断で模擬の世界を 1 拍進め、状態を本物の綴り(status-rows-json)の heartbeat で送り、返事を本物の読み
    (declared-job-specs)で宣言にするため。"
   (val world (sim.world))
-  (val actions (plan sim.now sim.desired world sim.records sim.policy))
+  (val actions (! (plan sim.now sim.desired world sim.records sim.policy)))
   (for [a actions] (sim.apply a))
-  (setv sim.records (records-after sim.now sim.records actions sim.policy))
-  (<- rows tuple (status-rows-json (tuple (statuses sim.now sim.desired (sim.world) sim.records sim.policy))))
+  (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
+  (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
   (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" (list rows)}
                        :actor None))
   (.append sim.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))

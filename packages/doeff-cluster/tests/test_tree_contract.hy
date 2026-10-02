@@ -59,7 +59,7 @@
   (val marker (json.loads text))
   (assert (= #((get marker "revision") (get marker "bytecode") (get marker "compilable") (get marker "pycs")) #("rev1" True 4 3)) marker)
   (assert (= (lfor f (get marker "failed") #((get f "path") (get (.split (get f "reason") ":") 0))) [#("pkg/bad.py" "SyntaxError")]) marker)
-  (assert (is (marker-problem text "rev1" True 3) None) text)
+  (assert (is (! (marker-problem text "rev1" True 3)) None) text)
   ;; .pyc は import が source の hash で検める方式(PEP 552 の flags = 3)で、頭に source の hash を持つ。
   (<- pyc bytes (ReadBytes (+ tree "/" (cache-rel "pkg/m.py"))))
   (assert (= (cut pyc 4 16) (+ b"\x03\x00\x00\x00" (importlib.util.source-hash b"X = 1\n"))) pyc))

@@ -26,9 +26,10 @@
 (setv PROBE-STOP-GRACE "5")
 
 
-(defn #^ str probe-reason [#^ int code #^ str stderr]
-  "検めの process の終了 → 理由の 1 行(stderr の最後の空でない行。無ければ終了の番号)。"
-  (setv lines (lfor line (.splitlines stderr) :if (.strip line) (.strip line)))
+(defk probe-reason [code stderr]
+  {:pre [(: code int) (: stderr str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "検めの process の終了から、状態に出す理由の 1 行を決めるため(stderr の最後の空でない行。無ければ終了の番号)。"
+  (val lines (lfor line (.splitlines stderr) :if (.strip line) (.strip line)))
   (cut (if lines (get lines -1) f"入口の検めが終了 {code} で終わった(理由の出力なし)") 0 PROBE-DETAIL-CHARS))
 
 
@@ -57,17 +58,15 @@
   [spec.entry])
 
 
-(defn #^ tuple probe-launches [#^ list waiting #^ frozenset busy]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
-  "純粋: 待っている検めの束の鍵(#(木 実行環境の宣言の JSON か None 単独の spec-hash か None) — 来た順)と、検めの process が走っている木
+(defk probe-launches [waiting busy]
+  {:pre [(: waiting list) (: busy frozenset)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "今起こす検めの束を選ぶため。待っている検めの束の鍵(#(木 実行環境の宣言の JSON か None 単独の spec-hash か None) — 来た順)と、検めの process が走っている木
    → 今起こす束の鍵(木ごとに 1 つ・来た順)。同じ木(root)の検めは import の閉包の大半が同じなので、並べると同じ compile を本数ぶん
    撃つ(2026-09-27 の本番: 7 本が並んで CPU の上限 4 の Pod を締め付けた)— 1 本ずつにし、同じ拍に来た物は 1 本の束にまとめる。
    単独の鍵(3 つ目が spec-hash)= 直前に時間切れになった spec(束に混ぜず 1 本で検める — 固まる入口が次の束を道連れにしない)。"
-  (setv chosen [] trees (set busy))
-  (for [key waiting]
-    (when (not-in (get key 0) trees)
-      (.append chosen key)
-      (.add trees (get key 0))))
-  (tuple chosen))
+  ;; 木ごとに来た順で最初の鍵(後ろから入れて、前の鍵が上書きで残る)。
+  (val first-of-tree (dfor key (reversed waiting) (get key 0) key))
+  (tuple (gfor key waiting :if (and (not-in (get key 0) busy) (= (get first-of-tree (get key 0)) key)) key)))
 
 
 (defclass ProbeSettle [Enum]
@@ -104,17 +103,17 @@
     True (ProbeSettled :kind ProbeSettle.DECIDED :reason (probe-verdict targets results))))
 
 
-(defn #^ dict probe-results [#^ str stdout]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ
-  "検めの process の標準出力 → 対象ごとの結果(PROBE-MARK で始まる行・途中で止めた束は、それまでに終わった対象だけ)。"
-  (setv results {})
+(defk probe-results [stdout]
+  {:pre [(: stdout str)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "検めの process の標準出力から対象ごとの結果を読むため(PROBE-MARK で始まる行・途中で止めた束は、それまでに終わった対象だけ)。"
+  (var results {})
   (for [line (.splitlines stdout)]
-    (setv body (.strip line))
+    (val body (.strip line))
     (when (.startswith body PROBE-MARK)
-      (try
-        (setv pair (json.loads (cut body (len PROBE-MARK) None)))
-        (except [ValueError] (continue)))
+      ;; 読めない行(途中で切れた JSON)は飛ばす。
+      (val pair (try (json.loads (cut body (len PROBE-MARK) None)) (except [ValueError] None)))
       (when (and (isinstance pair list) (= (len pair) 2) (isinstance (get pair 0) str))
-        (setv (get results (get pair 0)) (get pair 1)))))
+        (:= results (| results {(get pair 0) (get pair 1)})))))
   results)
 
 
@@ -128,8 +127,9 @@
    上に足す(EXTEND)・cwd = 木。shim の命令の並びは呼び手が前に足す。"
   (if runtime-env
       (do (val declared (json.loads runtime-env))
-          (val child-env (child-environment allowed-env {} (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) {}))
-          (JobLaunch :argv (+ #(uv "run" "--no-sync" "--frozen" "--project" (env-project-dir code-path declared) "hy" "-c" PROBE-PROGRAM) targets)
+          (<- child-env dict (child-environment allowed-env {} (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) {}))
+          (<- project-dir str (env-project-dir code-path declared))
+          (JobLaunch :argv (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" "-c" PROBE-PROGRAM) targets)
                      :cwd probe-dir
                      :env (tuple (gfor k (sorted child-env) (EnvEntry :name k :value (get child-env k))))
                      :env-mode EnvMode.REPLACE :work-dir None :last-used None))

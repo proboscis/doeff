@@ -1,6 +1,6 @@
 ;;; 展開したコードの木の bytecode の準備の純粋な判断 — module 名・引き継ぐ .pyc の組・焼く物・完成の印の中身と検め・import の静的な辿り
 ;;; (code_prepare.hy から分けた・#2027)。effect は worker/intent/code_model、焼きの Program は worker/core/code_prepare。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import ast)
 (import pathlib [PurePosixPath])
@@ -51,17 +51,19 @@
   None)
 
 
-(defn #^ list carry-pairs [#^ list old-pycs #^ frozenset old-sources #^ frozenset new-sources #^ frozenset new-pycs
-                           #^ frozenset changed]
-  "前の木の .pyc のうち、source が変わっておらず新しい木にも在り、新しい木にまだ .pyc の無い物(相対 path の列)。"
+(defk carry-pairs [old-pycs old-sources new-sources new-pycs changed]
+  {:pre [(: old-pycs list) (: old-sources frozenset) (: new-sources frozenset) (: new-pycs frozenset) (: changed frozenset)]
+   :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "前の木から引き継ぐ .pyc を選ぶため: source が変わっておらず新しい木にも在り、新しい木にまだ .pyc の無い物(相対 path の列)。"
   (lfor pyc old-pycs
         :setv source (source-of-pyc pyc old-sources)
         :if (and (is-not source None) (not-in source changed) (in source new-sources) (not-in pyc new-pycs))
         pyc))
 
 
-(defn #^ list compile-plan [#^ list sources #^ frozenset pycs #^ tuple [roots DEFAULT-IMPORT-ROOTS]]
-  "焼く物 = (相対 path module 名) の列。import の根の外の物と、.pyc が既に在る Python の source は除く。Hy の source は .pyc が在っても
+(defk compile-plan [sources pycs [roots DEFAULT-IMPORT-ROOTS]]
+  {:pre [(: sources list) (: pycs frozenset) (: roots tuple)] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "焼く物(相対 path module 名) の列を決めるため。import の根の外の物と、.pyc が既に在る Python の source は除く。Hy の source は .pyc が在っても
    焼く物に入れる — 前の木から引き継いだ .pyc の展開が依った macro は今の木で変わりうるので、焼く所(doeff-core-effects の
    compile-python-sources)が今の macro と照らし、合う物は焼き直さずに残し、合わない物を焼き直す(#2598 — ここで除くと、
    macro の変わった版の初回の import が引き継いだ Hy の module を全部 compile し直す)。"
@@ -77,21 +79,27 @@
                 (+ path.stem "." sys.implementation.cache-tag ".pyc"))))
 
 
-(defn #^ list compilable [#^ list sources #^ tuple [roots DEFAULT-IMPORT-ROOTS]]
-  "焼くべき source(import の根の中に在る物)の相対 path の列。"
+(defk compilable [sources [roots DEFAULT-IMPORT-ROOTS]]
+  {:pre [(: sources list) (: roots tuple)] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "焼くべき source(import の根の中に在る物)の相対 path の列を求めるため。"
   (lfor source sources :if (is-not (module-name source roots) None) source))
 
 
-(defn #^ list missing-pycs [#^ list sources #^ frozenset pycs #^ frozenset failed #^ tuple [roots DEFAULT-IMPORT-ROOTS]]
-  "焼くべき source のうち、.pyc が無く、焼けなかった物としても記録されていない物。空なら検めが通る。"
-  (lfor source (compilable sources roots)
+(defk missing-pycs [sources pycs failed [roots DEFAULT-IMPORT-ROOTS]]
+  {:pre [(: sources list) (: pycs frozenset) (: failed frozenset) (: roots tuple)] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "焼くべき source のうち、.pyc が無く、焼けなかった物としても記録されていない物を求めるため。空なら検めが通る。"
+  (<- wanted list (compilable sources roots))
+  (lfor source wanted
         :if (and (not-in (cache-rel source) pycs) (not-in source failed))
         source))
 
 
-(defn #^ (| str None) tree-problem [#^ list sources #^ frozenset pycs #^ frozenset failed #^ tuple [roots DEFAULT-IMPORT-ROOTS]]
-  "焼いた後の木の検め。通れば None、通らなければ理由。"
-  (setv wanted (compilable sources roots) missing (missing-pycs sources pycs failed roots))
+(defk tree-problem [sources pycs failed [roots DEFAULT-IMPORT-ROOTS]]
+  {:pre [(: sources list) (: pycs frozenset) (: failed frozenset) (: roots tuple)] :post [(: % (| str None))]
+   :tags {:context "worker" :role "judgment"}}
+  "焼いた後の木を検めるため。通れば None、通らなければ理由。"
+  (<- wanted list (compilable sources roots))
+  (<- missing list (missing-pycs sources pycs failed roots))
   (cond
     (not wanted) "木に焼くべき source が 1 つも無い(展開に失敗した木に見える)"
     (and failed (= (len failed) (len wanted))) f"焼くべき {(len wanted)} file が全部焼けなかった(道具か環境の失敗に見える)"
@@ -99,22 +107,28 @@
     True None))
 
 
-(defn #^ dict marker-content [#^ str revision #^ bool bytecode #^ list sources #^ frozenset pycs #^ list failures
-                             #^ tuple [roots DEFAULT-IMPORT-ROOTS]]
-  "完成の印の中身。failures = #(相対 path 理由) の列。"
+(defk marker-content [revision bytecode sources pycs failures [roots DEFAULT-IMPORT-ROOTS]]
+  {:pre [(: revision str) (: bytecode bool) (: sources list) (: pycs frozenset) (: failures list) (: roots tuple)] :post [(: % dict)]
+   :tags {:context "worker" :role "judgment"}}
+  "完成の印の file に書く中身(JSON の境界の値)を作るため。failures = #(相対 path 理由) の列。"
+  (<- wanted list (compilable sources roots))
   {"format" MARKER-FORMAT "revision" revision "bytecode" bytecode
-   "compilable" (len (compilable sources roots)) "pycs" (len pycs)
+   "compilable" (len wanted) "pycs" (len pycs)
    "failed" (lfor #(rel reason) failures {"path" rel "reason" reason})})
 
 
-(defn #^ (| str None) marker-problem [#^ (| str None) text #^ str revision #^ bool want-bytecode #^ int pycs-on-disk]
-  "読む時の完成の印の検め。text = 印の file の中身(無ければ None)。通れば None、通らなければ理由。"
+(defk marker-problem [text revision want-bytecode pycs-on-disk]
+  {:pre [(: text (| str None)) (: revision str) (: want-bytecode bool) (: pycs-on-disk int)] :post [(: % (| str None))]
+   :tags {:context "worker" :role "judgment"}}
+  "読む時に完成の印を検めるため。text = 印の file の中身(無ければ None)。通れば None、通らなければ理由。"
   (when (is text None) (return "完成の印が無い(印を置く前の形で作られた木か、途中で止まった木)"))
   (try
-    (setv marker (json.loads text))
+    (val marker (json.loads text))
     (except [error ValueError] (return f"完成の印を読めない: {(repr error)}")))
   (when (not (isinstance marker dict)) (return "完成の印の形が違う"))
-  (setv form (.get marker "format") named (.get marker "revision") pycs (.get marker "pycs" 0))
+  (val form (.get marker "format"))
+  (val named (.get marker "revision"))
+  (val pycs (.get marker "pycs" 0))
   (cond
     (!= form MARKER-FORMAT) f"完成の印の形の版が違う: {form}"
     (!= named revision) f"完成の印の版({named})が木の名前と違う"
