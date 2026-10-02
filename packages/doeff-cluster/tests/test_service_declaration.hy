@@ -4,9 +4,9 @@
 ;; - 宣言の行(system-declaration の rows)は詰めた Program の置き場のキー(sha)・identity(関数の参照と引数の正規 JSON)・版・
 ;;   describe・environ を運び、詰めた中身は programs に別に出る(改訂 1 の A・F)。
 ;; - 同一性(spec-hash)は identity・版・environ から作り、詰めた中身は比べない(cloudpickle の出力は揺れうる — 改訂 1 の A)。
-;; - 旧い宣言の形は受け付けない(計画 2.8 の入口 1・3・4 — 構成子の TypeError・旧い関数の不在・declare の CLI の error)。
-;; - declare は宣言の前に、系の関数の checkout が汚れておらず HEAD = --revision であることと、土台の :needs ⊆ job の :needs を
-;;   検め、外れれば理由つきの終了 2(計画 2.2 の E・9 節の P)。
+;; - 旧い宣言の形は受け付けない(計画 2.8 の入口 1・3・4 — 構成子の TypeError・旧い関数の不在・宣言の命令の不在)。
+;; - 宣言してよいかの検め declaring-refusal は、系の関数の checkout が汚れておらず HEAD = 宣言の版であることと、土台の :needs ⊆ job の
+;;   :needs を検め、外れれば理由の文を返す(計画 2.2 の E・9 節の P — 宣言の入口は利用側の道具が持つ・#3030)。
 ;; - 宣言した Program を実行先の入口(job_entry service)がそのまま走らせる(handler を足さない — Program が自分で並べる)。
 (require doeff-hy.macros [defk deftest <- val])
 (import collections.abc [Callable])
@@ -17,7 +17,9 @@
 (import sys)
 (import pathlib [Path])
 (import pytest)
+(import doeff [with-handlers])
 (import doeff_core_effects.handlers [reader])
+(import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_cluster.shared.intent.service_model :as service-model)
 (import doeff_cluster.shared.core.service_rules :as service-rules)
 (import doeff_cluster.shared.core.service_rules [identity-of describe-identity job-named])
@@ -28,10 +30,14 @@
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])
+(import doeff_cluster.shared.entry [declare :as declare-module])
+(import doeff_cluster.shared.core.declaring [declaring-refusal])
+(import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import tests.fixtures.services [lab lab-pair lab-record tally-program greeter-program holding-program tally-on PairFoundation
                                  LooseFoundation])
 (import tests.fixtures.envs [plain-foundation greeting-foundation])
+(import tests.fixtures [declared_system :as declared-fixture])
 
 (val PACKAGE-ROOT (. (Path (os.path.abspath __file__)) parent parent))   ; 子 process の cwd(tests.fixtures を import する)
 (val TALLY-CALL (CallShape :function tally-program :args [plain-foundation 2] :kwargs {}))
@@ -49,15 +55,6 @@
   (val rows (. (system-declaration system "rev1" :versions (! (process-versions os.environ))) rows))
   (assert (= (len rows) 1) rows)
   (get rows 0))
-
-
-(defk declare-cli [#* argv]
-  {:pre [(: argv tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "declare の CLI を子 process で撃つ(cwd = package の根 — tests.fixtures を import する)。"
-  (val words (lfor a argv :if (isinstance a str) a))
-  (assert (= (len words) (len argv)) #("子 process の引数は文字列だけ" argv))
-  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.shared.entry.declare" #* words]
-                  :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
 
 
 ;; --- 系の値 -------------------------------------------------------------------------------------
@@ -320,28 +317,20 @@
     (assert (not (hasattr service-model name)) name)))
 
 
-(deftest test-entry-4-the-declare-cli-refuses-the-old-arguments
-  ;; 入口 4: declare の CLI は --config・--pin・System の値を指す形を argparse の error(終了 2)で断り、理由を出す。
-  (val base ["tests.fixtures.services:lab" "--foundation" "tests.fixtures.envs:plain_foundation" "--revision" "r"])
-  (<- config subprocess.CompletedProcess (declare-cli #* base "--config" "{}"))
-  (assert (= config.returncode 2) config.stderr)
-  (assert (in "--config は受け付けない" config.stderr) config.stderr)
-  (<- pin subprocess.CompletedProcess (declare-cli #* base "--pin" "worker-1"))
-  (assert (= pin.returncode 2) pin.stderr)
-  (assert (in "--pin は受け付けない" pin.stderr) pin.stderr)
-  (<- value subprocess.CompletedProcess (declare-cli "tests.fixtures.system_values:LAB_VALUE" #* (cut base 1 None)))
-  (assert (= value.returncode 2) value.stderr)
-  (assert (in "defsystem の関数" value.stderr) value.stderr)
-  (<- bare subprocess.CompletedProcess (declare-cli "tests.fixtures.services:lab" "--revision" "r"))
-  (assert (= bare.returncode 2) bare.stderr)
-  (assert (in "--foundation" bare.stderr) bare.stderr))
+(deftest test-entry-4-the-declare-command-is-gone
+  ;; 入口 4: 宣言の命令(以前の `hy -m doeff_cluster.shared.entry.declare` — 系に渡す土台を引数 --foundation で選んでいた)は消えた
+  ;; (#3030 — 土台は利用側の「土台の型 → 本番の土台」の表で選び、宣言の入口は利用側の道具が持つ)。module に残るのは書きの
+  ;; apply-declaration とその下請けだけ。
+  (assert (not (hasattr declare-module "main")))
+  (assert (hasattr declare-module "apply_declaration")))
 
 
-;; --- declare の宣言の前の検め(計画 2.2 の E・9 節の P)----------------------------------------------
+;; --- 宣言の前の検め(計画 2.2 の E・9 節の P)----------------------------------------------------------
 ;;
 ;; 系の関数の module(tests/fixtures/declared_system.hy を写した declared_system.hy)を 1 commit 持ち、bare の remote へ push 済みの
-;; 一時の clone(本物の git)の中で declare を撃つ。汚れた checkout・HEAD と違う --revision・job の :needs に無い能力を名乗る土台は、
-;; どれも理由つきの終了 2 で断られ、宣言の行を印字しない。汚れておらず HEAD = --revision なら印字する。
+;; 一時の clone(本物の git)の file を見本の系の module の file として、利用側の宣言の道具と同じ形で declaring-refusal を撃つ(checkout の読みは
+;; checkout-reads と本物の子 process の答え手)。汚れた checkout・HEAD と違う版・job の :needs に無い能力を名乗る土台は、どれも
+;; 理由の文で断られる。汚れておらず HEAD = 版なら断らず、system-declaration が行を組む。
 
 (val DECLARED-SYSTEM-SOURCE (/ PACKAGE-ROOT "tests" "fixtures" "declared_system.hy"))
 
@@ -371,46 +360,51 @@
   work)
 
 
-(defk declare-in [work #* argv]
-  {:pre [(: work Path) (: argv tuple)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "work の checkout の中で declare の CLI を子 process で撃つため(import の路 = work — 系の関数の module はそこに在る)。"
-  (val words (lfor a argv :if (isinstance a str) a))
-  (assert (= (len words) (len argv)) #("子 process の引数は文字列だけ" argv))
-  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.shared.entry.declare" #* words]
-                  :cwd (str work) :capture-output True :text True :timeout 120
-                  :env (| (dict os.environ) {"PYTHONPATH" (str work)})))
+(defk declared-in [work monkeypatch]
+  {:pre [(: work Path) (: monkeypatch pytest.MonkeyPatch)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "見本の系の module(tests/fixtures/declared_system.hy)を、work の clone に写した同じ file から読み込んだ物として扱うため — 宣言の
+   検めは系の関数の module の file の在る checkout を読むので、検の間だけ module の __file__ を clone の file に向ける。"
+  (.setattr monkeypatch declared-fixture "__file__" (str (/ work "declared_system.hy")))
+  None)
 
 
-(deftest test-the-declare-cli-prints-the-rows-from-a-clean-checkout-at-the-revision [tmp-path]
-  ;; 汚れておらず push 済みの checkout で HEAD = --revision: 宣言の行を JSON で印字し、job ごとの describe(呼んだ関数と引数)を
-  ;; stderr に出す。--only で絞る。
+(defk refusal-at [build foundation revision]
+  {:pre [(: build Callable) (: foundation Callable) (: revision str)] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "利用側の宣言の道具と同じ形で、系 build に土台 foundation を渡した宣言を版 revision で出してよいかを検めるため(答え = 断る理由の文か
+   None — checkout の読みは checkout-reads と本物の子 process の答え手)。"
+  (<- refusal (| str None) (with-handlers [subprocess-handler checkout-reads]
+                             (declaring-refusal build foundation (build foundation) revision)))
+  refusal)
+
+
+(deftest test-a-clean-checkout-at-the-revision-is-not-refused-and-declares-the-rows [tmp-path monkeypatch]
+  ;; 汚れておらず push 済みの checkout で HEAD = 版: 断らず、宣言の行は版と job ごとの describe(呼んだ関数と引数)を運ぶ。
   (<- work Path (declared-checkout tmp-path))
   (<- head str (git-in work "rev-parse" "HEAD"))
-  (<- done subprocess.CompletedProcess
-      (declare-in work "declared_system:pair" "--foundation" "declared_system:net_foundation" "--revision" head "--only" "greeter"))
-  (assert (= done.returncode 0) done.stderr)
-  (val rows (get (json.loads done.stdout) "jobs"))
-  (assert (= (lfor r rows (get r "name")) ["greeter"]) rows)
-  (assert (= (get rows 0 "revision") head) rows)
-  (assert (= (get rows 0 "run" "identity" "function") "declared_system:greeter_program"))
-  (assert (in "greeter: declared_system:greeter_program(declared_system:net_foundation, 3)" done.stderr) done.stderr))
+  (<- (declared-in work monkeypatch))
+  (<- refusal (| str None) (refusal-at declared-fixture.pair declared-fixture.net-foundation head))
+  (assert (is refusal None) refusal)
+  (val rows (. (system-declaration (declared-fixture.pair declared-fixture.net-foundation) head :versions (! (process-versions os.environ))) rows))
+  (val greeter (next (gfor r rows :if (= (get r "name") "greeter") r)))
+  (assert (= (get greeter "revision") head) greeter)
+  (assert (= (get greeter "run" "identity" "function") "tests.fixtures.declared_system:greeter_program") greeter)
+  (assert (= (get greeter "run" "describe")
+             "tests.fixtures.declared_system:greeter_program(tests.fixtures.declared_system:net_foundation, 3)") greeter))
 
 
-(deftest test-the-declare-cli-refuses-a-checkout-with-uncommitted-changes [tmp-path]
-  ;; 系の関数の module に commit していない変更がある: 詰める Program の code が --revision の木と違いうるので宣言しない。
+(deftest test-a-checkout-with-uncommitted-changes-is-refused [tmp-path monkeypatch]
+  ;; 系の関数の module に commit していない変更がある: 詰める Program の code が版の木と違いうるので宣言しない。
   (<- work Path (declared-checkout tmp-path))
   (<- head str (git-in work "rev-parse" "HEAD"))
   (.write-text (/ work "declared_system.hy") (+ (.read-text (/ work "declared_system.hy") :encoding "utf-8") ";; 変更\n")
                :encoding "utf-8")
-  (<- done subprocess.CompletedProcess
-      (declare-in work "declared_system:pair" "--foundation" "declared_system:net_foundation" "--revision" head))
-  (assert (= done.returncode 2) done.stderr)
-  (assert (in "dirty-tree" done.stderr) done.stderr)
-  (assert (= done.stdout "") done.stdout))
+  (<- (declared-in work monkeypatch))
+  (<- refusal (| str None) (refusal-at declared-fixture.pair declared-fixture.net-foundation head))
+  (assert (and (is-not refusal None) (in "dirty-tree" refusal)) refusal))
 
 
-(deftest test-the-declare-cli-refuses-a-revision-other-than-the-head [tmp-path]
-  ;; --revision が checkout の HEAD と違う(1 つ前の commit): 実行先がその版で展開する code と、いま詰める code がずれるので宣言しない。
+(deftest test-a-revision-other-than-the-head-is-refused [tmp-path monkeypatch]
+  ;; 版が checkout の HEAD と違う(1 つ前の commit): 実行先がその版で展開する code と、いま詰める code がずれるので宣言しない。
   (<- work Path (declared-checkout tmp-path))
   (<- first str (git-in work "rev-parse" "HEAD"))
   (.write-text (/ work "extra.py") "X = 1\n" :encoding "utf-8")
@@ -418,25 +412,19 @@
   (<- (git-in work "commit" "-q" "-m" "second"))
   (<- (git-in work "push" "-q" "origin" "HEAD:main"))
   (<- (git-in work "fetch" "-q" "origin"))
-  (<- done subprocess.CompletedProcess
-      (declare-in work "declared_system:pair" "--foundation" "declared_system:net_foundation" "--revision" first))
-  (assert (= done.returncode 2) done.stderr)
-  (assert (in "revision-differs" done.stderr) done.stderr)
-  (assert (in first done.stderr) done.stderr)
-  (assert (= done.stdout "") done.stdout))
+  (<- (declared-in work monkeypatch))
+  (<- refusal (| str None) (refusal-at declared-fixture.pair declared-fixture.net-foundation first))
+  (assert (and (is-not refusal None) (in "revision-differs" refusal) (in first refusal)) refusal))
 
 
-(deftest test-the-declare-cli-refuses-a-foundation-whose-needs-exceed-a-job [tmp-path]
+(deftest test-a-foundation-whose-needs-exceed-a-job-is-refused [tmp-path monkeypatch]
   ;; 土台の頭の :needs(cluster-net・gpu)が job の :needs(cluster-net)の一部でない: job が要る能力を書き漏らしているので宣言しない
-  ;; (置かれた worker が土台の要る能力を持たないまま起きる)。checkout は汚れておらず HEAD = --revision(断る理由は needs だけ)。
+  ;; (置かれた worker が土台の要る能力を持たないまま起きる)。checkout は汚れておらず HEAD = 版(断る理由は needs だけ)。
   (<- work Path (declared-checkout tmp-path))
   (<- head str (git-in work "rev-parse" "HEAD"))
-  (<- done subprocess.CompletedProcess
-      (declare-in work "declared_system:pair" "--foundation" "declared_system:wide_foundation" "--revision" head))
-  (assert (= done.returncode 2) done.stderr)
-  (assert (in "の土台 declared_system:wide_foundation(足りない" done.stderr) done.stderr)
-  (assert (in "tally の土台 declared_system:wide_foundation(足りない ['gpu'])" done.stderr) done.stderr)
-  (assert (= done.stdout "") done.stdout))
+  (<- (declared-in work monkeypatch))
+  (<- refusal (| str None) (refusal-at declared-fixture.pair declared-fixture.wide-foundation head))
+  (assert (and (is-not refusal None) (in "tally の土台 tests.fixtures.declared_system:wide_foundation(足りない ['gpu'])" refusal)) refusal))
 
 
 ;; --- 宣言した Program を実行先の入口で走らせる ----------------------------------------------------
