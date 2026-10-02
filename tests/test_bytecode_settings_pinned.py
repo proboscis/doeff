@@ -8,6 +8,10 @@ A test can still give a subprocess a bytecode directory of its own inside the ch
 the settings do not see; the land tool keeps a checkout's ignored files from one candidate to
 the next, so that bytecode would be read by later runs.  The run therefore fails at its end
 when bytecode files were written under the checkout during it (agora-redesign#639).
+
+A test whose subprocesses need bytecode asks for the ``subprocess_bytecode`` fixture: its
+subprocesses write and reuse bytecode in one directory of the run under pytest's temporary
+directory, while the test body keeps the pinned settings (agora-redesign#2818).
 """
 
 from __future__ import annotations
@@ -53,6 +57,35 @@ def test_subprocesses_inherit_the_pinned_bytecode_settings() -> None:
         check=True,
     )
     assert child.stdout.split() == ["True", "None"]
+
+
+def test_a_test_that_asks_for_subprocess_bytecode_hands_its_subprocesses_this_runs_directory(
+    subprocess_bytecode: Path,
+) -> None:
+    child = subprocess.run(
+        [sys.executable, "-c", "import sys; print(sys.dont_write_bytecode, sys.pycache_prefix)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert child.stdout.split() == ["False", str(subprocess_bytecode)]
+    assert (sys.dont_write_bytecode, sys.pycache_prefix) == (True, None), (
+        "this process keeps the pin"
+    )
+
+
+def test_subprocess_bytecode_lands_in_the_runs_directory_and_not_beside_the_source(
+    subprocess_bytecode: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "probe_module.py").write_text("VALUE = 1\n")
+
+    subprocess.run([sys.executable, "-c", "import probe_module"], cwd=tmp_path, check=True)
+
+    assert list(tmp_path.rglob("*.pyc")) == []
+    assert [path.name for path in subprocess_bytecode.rglob("probe_module.*.pyc")] == [
+        f"probe_module.{sys.implementation.cache_tag}.pyc"
+    ]
 
 
 def test_bytecode_written_during_the_run_is_named_and_older_bytecode_is_not(

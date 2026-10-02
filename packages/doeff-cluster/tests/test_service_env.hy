@@ -232,8 +232,7 @@
   (.splitlines (.read-text out :encoding "utf-8")))
 
 
-(deftest test-careful-a-service-runs-in-the-env-root-and-follows-a-new-commit [tmp-path monkeypatch]
-  (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
+(deftest test-careful-a-service-runs-in-the-env-root-and-follows-a-new-commit [tmp-path subprocess-bytecode]
   (<- rig Rig (make-rig tmp-path))
   (<- a1 str (push-commit rig.app (! (service-files 1)) "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
