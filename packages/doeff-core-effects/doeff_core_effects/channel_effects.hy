@@ -13,13 +13,14 @@
 (import collections [deque])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
+(import doeff_core_effects.scheduler [Promise])
 
 
 (defclass [(dataclass :eq False)] Channel []
   "列の握り(値ではなく資源 — 中身の items と待ち手の waiters は答え手が書き換える。同一性で比べる)。scheduler の thread の中だけで触る。"
-  #^ deque items
+  #^ (get deque object) items
   (setv items (field :default-factory deque))
-  #^ list waiters
+  #^ (get list (get Promise None)) waiters
   (setv waiters (field :default-factory list)))
 
 

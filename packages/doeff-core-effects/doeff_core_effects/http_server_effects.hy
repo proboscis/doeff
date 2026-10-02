@@ -212,10 +212,10 @@
   "答え手が自分で答える probe の口 1 つ(頭の註): path = 当たる path(query を除く — GET と HEAD だけ当たる)・answer = 答えが
    HttpProbeAnswer の閉じた Program(要求ごとに答え手が自分の run で走らせる)。"
   (#^ str path)
-  (#^ Program answer))
+  (#^ (get Program #(HttpProbeAnswer object)) answer))
 
 
-(defclass [(dataclass :frozen True)] HttpListen [EffectBase]
+(defclass [(dataclass :frozen True)] HttpListen [(get EffectBase HttpAddress)]
   "待ち受けを開く(頭の註)。probes = 答え手が自分で答える probe の口の列。答え = 結んだ宛先 HttpAddress。"
   (#^ HttpAddress address)
   (setv #^ int ws-max-bytes DEFAULT-WS-MAX-BYTES
@@ -223,11 +223,11 @@
         #^ (get tuple #(HttpProbe ...)) probes #()))
 
 
-(defclass [(dataclass :frozen True)] HttpNextRequest [EffectBase]
+(defclass [(dataclass :frozen True)] HttpNextRequest [(get EffectBase HttpEvent)]
   "次の出来事を 1 つ受ける(頭の註)。")
 
 
-(defclass [(dataclass :frozen True)] HttpRespond [EffectBase]
+(defclass [(dataclass :frozen True)] HttpRespond [(get EffectBase None)]
   "札の要求へ status・頭・本文を送る(頭の註)。"
   (#^ str ticket)
   (#^ int status)
@@ -235,49 +235,49 @@
   (#^ HttpBody body))
 
 
-(defclass [(dataclass :frozen True)] HttpReadBody [EffectBase]
+(defclass [(dataclass :frozen True)] HttpReadBody [(get EffectBase HttpBodyOutcome)]
   "札の要求の本文を max-bytes まで読む(頭の註)。答え = HttpBodyOutcome。"
   (#^ str ticket)
   (#^ int max-bytes))
 
 
-(defclass [(dataclass :frozen True)] HttpForward [EffectBase]
+(defclass [(dataclass :frozen True)] HttpForward [(get EffectBase None)]
   "札の要求を url へ HTTP で中継する(頭の註)。"
   (#^ str ticket)
   (#^ str url))
 
 
-(defclass [(dataclass :frozen True)] WsForward [EffectBase]
+(defclass [(dataclass :frozen True)] WsForward [(get EffectBase None)]
   "札の要求を url へ ws で中継する(頭の註)。"
   (#^ str ticket)
   (#^ str url))
 
 
-(defclass [(dataclass :frozen True)] WsAccept [EffectBase]
+(defclass [(dataclass :frozen True)] WsAccept [(get EffectBase None)]
   "札の要求を ws に上げて、ここで終端する(頭の註)。"
   (#^ str ticket))
 
 
-(defclass [(dataclass :frozen True)] WsSendText [EffectBase]
+(defclass [(dataclass :frozen True)] WsSendText [(get EffectBase None)]
   "ws に上げた札の接続へ文字の 1 通を送る(頭の註)。"
   (#^ str ticket)
   (#^ str text))
 
 
-(defclass [(dataclass :frozen True)] WsClose [EffectBase]
+(defclass [(dataclass :frozen True)] WsClose [(get EffectBase None)]
   "ws に上げた札の接続を状態符と理由で閉じる(頭の註)。"
   (#^ str ticket)
   (#^ int code)
   (#^ str reason))
 
 
-(defclass [(dataclass :frozen True)] HttpShutdown [EffectBase]
+(defclass [(dataclass :frozen True)] HttpShutdown [(get EffectBase None)]
   "待ち受けを閉じる(頭の註)。reason = 以後の HttpServerClosed の理由・drain-seconds = 送りの箱を流し切るのを待つ上限の秒。"
   (#^ str reason)
   (setv #^ float drain-seconds DEFAULT-DRAIN-SECONDS))
 
 
-(defclass [(dataclass :frozen True)] TakeWsSendReport [EffectBase]
+(defclass [(dataclass :frozen True)] TakeWsSendReport [(get EffectBase WsSendReport)]
   "送りの箱の勘定を読んで 0 に戻す(頭の註)。答え = WsSendReport。")
 
 
@@ -331,7 +331,7 @@
 
 
 (defk probe-for [probes method path]
-  {:pre [(: probes tuple) (: method str) (: path str)] :post [(: % (| HttpProbe None))] :tags {:context "http-server" :role "judgment"}}
+  {:pre [(: probes (of tuple HttpProbe ...)) (: method str) (: path str)] :post [(: % (| HttpProbe None))] :tags {:context "http-server" :role "judgment"}}
   "要求を答え手が自分で答えるか決めるため(頭の註の probe の口): GET か HEAD で、path(query を除く)が probes のどれかの path と同じなら
    その HttpProbe、他は None(出来事として本体へ渡す)。"
   (if (in method #("GET" "HEAD"))
@@ -408,11 +408,11 @@
   (#^ str reason))
 
 
-(defclass [(dataclass :frozen True)] ReadHttpServed [EffectBase]
+(defclass [(dataclass :frozen True)] ReadHttpServed [(get EffectBase (get tuple #((| HttpServed WsTextSent WsCloseSent) ...)))]
   "台本の待ち受けが受けた命令と送った ws の記録(HttpServed・WsTextSent・WsCloseSent の受けた順の tuple)を読む(頭の註)。")
 
 
-(defclass [(dataclass :frozen True)] AppendHttpScript [EffectBase]
+(defclass [(dataclass :frozen True)] AppendHttpScript [(get EffectBase None)]
   "走っている台本の出来事の列の後ろへ arrivals を足す(頭の註)。bodies = 足す要求の本文の台本。答え = None。"
   (#^ (get tuple #((| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed) ...)) arrivals)
   (setv #^ (get tuple #(ScriptedBody ...)) bodies #()))
