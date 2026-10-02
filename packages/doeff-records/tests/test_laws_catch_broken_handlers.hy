@@ -15,7 +15,8 @@
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
-                            law-grouped-events-expire-together law-stream-end-is-the-last-sequence])
+                            law-grouped-events-expire-together law-stream-end-is-the-last-sequence
+                            law-expired-keys-are-remembered])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -101,6 +102,13 @@
     (resume answer)))
 
 
+(defclass Forgetful [dict]
+  "書いても覚えない dict — 保持の期限で消した冪等キーの覚え(MemoryStore.retired-keys)をこれにした置き場は、#3022 の前の置き場の形
+   (出来事を消すと鍵も忘れ、消した後の同じ鍵が新しい出来事になる)の代役になる。"
+  (defn __setitem__ [self key value]  ; defk にできない: dict の書きの口(置き場が錠の内で同期に呼ぶ)を塞ぐ
+    None))
+
+
 (defn broken-harness [store inner [writer-of None]]
   "writer-of = 書き手の名の替え方(None = そのまま)。inner = memory の handler の内側に被せる包み(None = 無し)。"
   (LawHarness (fn [writer program]
@@ -141,5 +149,10 @@
   (assert (breaks? law-grouped-events-expire-together
                    (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :streams (| (dict LAW-SCHEMA.streams) {"pairs" ungrouped})))
                                    None)))
+  ;; 保持の期限で消した冪等キーを覚えない置き場(#3022 の前の形)— 消した後の同じ鍵の別の本文が新しい出来事になる。
+  (setv forgetful (MemoryStore LAW-SCHEMA))
+  (setv forgetful.retired-keys (Forgetful))
+  (assert (breaks? law-expired-keys-are-remembered (broken-harness forgetful None)))
+  (assert (not (breaks? law-expired-keys-are-remembered (broken-harness (MemoryStore LAW-SCHEMA) None))))
   ;; 壊していない handler では同じ法が緑(反例の包みが無ければ通る — 比べの基準)。
   (assert (not (breaks? law-stale-put-conflicts (broken-harness (MemoryStore LAW-SCHEMA) None)))))

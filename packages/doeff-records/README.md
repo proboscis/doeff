@@ -53,7 +53,8 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 - `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に消し、変更の列に `RowRemoved` を出す)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
-追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に消す)。
+追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に消す。消した出来事の冪等キーは
+番号と本文の指紋だけを残して忘れない — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。
 置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
 operator の主体の名の tuple。`operator_paths` の欄の書き手に operator の主体が 1 人も居ない宣言は、作る時に `ValueError`)。
 
@@ -83,7 +84,8 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   読み分けは答え手が持ち、答え手の `SqlUnreachable` は公開 effect の答え `Unreachable` になる(engine の失敗 `SqlFailed` は実装の誤りとして
   `RecordsSqlFailed` を上げる)。`store` は `prepare_records_store(database, schema, prefix)`(Program)の答えで、表の用意(移行)は
   process ごとにこの 1 度だけ(移行専用の錠の transaction の中で流すので、複数の process が同時に用意しても UniqueViolation にならない)。
-  表は状態の行の表(`state_rows`)と追記の表(`append_rows`)と同じ列の形で、変更の列(`row_changes`)と置き場の版(`store_epoch`)を足す。
+  表は状態の行の表(`state_rows`)と追記の表(`append_rows`)と同じ列の形で、変更の列(`row_changes`)と置き場の版(`store_epoch`)と、
+  保持の期限で消した出来事の冪等キーの覚え(`retired_keys` — 出来事を消す transaction が同じ transaction で入れる)を足す。
   書きは置き場ごとの advisory lock(`SqlTransaction` の `lock_key` = 接頭辞 + `records-writer`)で直列にする(番号の順と commit の順を
   揃えるため — 理由は `pg_sql.hy` の頭の註)。
 
@@ -206,6 +208,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_none_removes_a_field` | 差分の値 None はその欄を消し、行の値は None を持たない |
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
 | `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
+| `law_expired_keys_are_remembered` | 保持の期限で出来事を消した後も冪等キーは忘れない: 同じ本文の再送は前の番号で列の出来事を増やさず、別の本文は `Refused` |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも

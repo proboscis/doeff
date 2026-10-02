@@ -138,5 +138,8 @@ def law_grouped_events_expire_together(harness: LawHarness) -> _Program[list[obj
 
 def law_stream_end_is_the_last_sequence(harness: LawHarness) -> _Program[list[object], object]:
     ...
+
+def law_expired_keys_are_remembered(harness: LawHarness) -> _Program[list[object], object]:
+    ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

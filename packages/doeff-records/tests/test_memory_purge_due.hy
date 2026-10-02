@@ -101,6 +101,21 @@
   (assert (is-not restored.purge-due-ms 0) restored.purge-due-ms))
 
 
+(defn test-a-store-pickled-before-retired-keys-existed-remembers-keys-from-the-next-purge []  ; defk にできない: 検の入口で Program を run する
+  ;; 消した冪等キーの覚え(retired-keys・#3022)を持たない古い pickle から戻した置き場は、覚えが空のまま動き、次に刈った鍵から覚える
+  ;; (覚えには番号と本文の指紋だけが残る)。
+  (setv store (MemoryStore SCHEMA))
+  (setv state (.__getstate__ store))
+  (del (get state "retired_keys"))
+  (setv restored (.__new__ MemoryStore MemoryStore))
+  (.__setstate__ restored state)
+  (assert (= restored.retired-keys {}))
+  (setv got (run-on restored (pulses-then-wait 1 (+ PULSE-KEEP-SECONDS 1))))
+  (assert (= got #(1 0)) got)
+  (assert (= (lfor #(slot kept) (.items restored.retired-keys) #(slot kept.sequence)) [#(#("pulses" "p0") 1)])
+          restored.retired-keys))
+
+
 ;; --- 期限の索引(2026-09-29・#907)--------------------------------------------------------------------------------------
 ;; 刈りは期限の索引(期限の刻で並ぶ heap)から期限の来た項だけを取り出す — 1 回の刈りの費用は行と出来事の数に比例しない。
 ;; 出自 = 手番の模擬の筋書き 1 つ(置く係の入れ替えが期限まで Ready にならない)が CPU 5.6 秒: 刈り 731 回がそれぞれ全部の出来事と

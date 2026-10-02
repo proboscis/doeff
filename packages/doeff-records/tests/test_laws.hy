@@ -7,7 +7,7 @@
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
-                            law-grouped-events-expire-together])
+                            law-grouped-events-expire-together law-expired-keys-are-remembered])
 (import tests.interpreters [LawSetup])
 
 
@@ -45,6 +45,13 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-grouped-events-expire-together harness))
+  (assert transcript))
+
+(deftest test-expired-keys-are-remembered
+  ;; #3022: 保持の期限で出来事を消した後の同じ冪等キー — 別の本文は断り、同じ本文は前の番号で列の出来事を増やさない(memory と PostgreSQL)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-expired-keys-are-remembered harness))
   (assert transcript))
 
 (deftest test-indexed-list-equals-filtered-scan
