@@ -897,8 +897,15 @@
     True task))
 
 
-(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]]
-  "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。"
+(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
+                                   #^ bool [stopping False]]
+  "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。
+   stopping = この報告は今の世代が止まり始めを名乗った heartbeat の物(#2819 — 呼び手は今の世代か新しい世代の heartbeat だけを
+   渡す)。その時は、その世代に置いて報告に task/<id> の行が無い task(その世代で一度も走っていない)を置き直しの待ち(queued)へ戻す
+   (#2976 の I-3 の赤 R5): 止まり始めた worker は新しい task を始めない(worker/core/program の worker-tick は止まりの拍で宣言を
+   空として扱う)ので、残すと lease まで止まる。積みと名乗りが同じ刻に届いた時に受ける順は決まっていない(本番の到着の順)ので、
+   名乗りを先に受けた時だけ塞ぐ drain(drain_policy.absorb-stopping)では足りない。避ける worker(avoid)には足さない — 同じ名の
+   次の世代には置いてよい。"
   (setv tasks (dict state.tasks))
   (for [status statuses]
     (setv name status.name)
@@ -914,6 +921,12 @@
           (= phase "code-failed")
             (setv (get tasks id) (replace task :phase "code-failed" :finished-ms now
                                           :detail status.detail))))))
+  (when stopping
+    (setv running (frozenset (gfor status statuses :if (.startswith status.name "task/") (cut status.name 5 None))))
+    (for [#(id task) (sorted (.items tasks))]
+      (when (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot) (not-in id running))
+        (setv (get tasks id) (replace task :phase "queued" :worker None :boot None :started-ms None
+                                      :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))
   tasks)
 
 
@@ -1121,8 +1134,11 @@
                      :statuses (| adopted.statuses {name (WorkerReport :at now :endpoint body.endpoint
                                                                        :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
-  ;; 上で抜けるので約束に触らない)。
-  (replace registered :tasks (promote-prepared (renew-detached (absorb-task-reports registered name statuses now boot) name boot now)
+  ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
+  ;; 置き直しの待ちへ戻す(absorb-task-reports・#2976 の I-3 の赤 R5)— 退いた世代の heartbeat はここへ来ないので戻さない。
+  (replace registered :tasks (promote-prepared (renew-detached (absorb-task-reports registered name statuses now boot
+                                                                                    :stopping body.stopping)
+                                                               name boot now)
                                               info)
                       :keep-marks (! (released-keep-marks registered.keep-marks name body.kept-when-cut-off))))
 

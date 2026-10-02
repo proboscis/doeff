@@ -449,6 +449,49 @@
   (assert (= breaches #(STOPPED-KEY)) seen))
 
 
+;; 名乗りの前に置いた task(#2976 の I-3 の赤 R5): 積みと止まり始めの名乗りが同じ刻に coordinator へ届くと、どちらを先に
+;; 受けるかは決まっていない(本番の到着の順も・#2850 の列の名の順も)。積みを先に受けると task は止まる途中の a の世代に置かれ、
+;; 名乗りの後もそこに残って lease まで止まっていた。a は止まり始めた後に新しい task を始めないので、名乗りの heartbeat の状態の報告に
+;; 無い task は、名乗りの報告を写す時に置き直しの待ちへ戻す(cluster_policy.absorb-task-reports)。
+
+(val RACED-KEY "k-placed-before-stop")
+
+
+(defk submit-then-stop-without-drain []
+  {:pre [] :post [(: % StopRecords)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの前半(競り合い): x-tool を要る task を積んで a の今の世代に置かせ、a がそれを始める前に drain を頼まずに止める(sim の
+   StopWorker = sigterm — 宿が止まりを立て、worker が抜けるまで待つ)。止めの前に a の世代に置かれていたこと(競り合いの形)を確かめてから
+   止め、止めた後・戻す前の置き先を読む。答え = 条 C3 の記録。"
+  (<- stopped-boot str (boot-of "a"))
+  (<- (submit-detached-task (slow-add SLOW 10) :key RACED-KEY :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- before tuple (placements-seen RACED-KEY))
+  (assert (= before #((TaskPlacementSeen :key RACED-KEY :worker "a" :boot stopped-boot))) before)
+  (<- (StopWorker "a"))
+  (<- (Delay (* 4 POLL)))
+  (<- placed tuple (placements-seen RACED-KEY))
+  (StopRecords :stopped #((StoppedGeneration :worker "a" :boot stopped-boot)) :placed placed))
+
+
+(defk submit-then-stop-then-return []
+  {:pre [] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 止める前に a の世代に置かれた task は、a が止まり始めを名乗った後その世代に残らず待ちへ戻り(条 C3 は緑)、a が新しい世代で
+   名乗り直すとそこで走って終わる(直す前は止まった世代に残り、新しい世代に渡らず lease の後に DetachedLost)。"
+  (<- seen StopRecords (submit-then-stop-without-drain))
+  (<- breaches tuple (stopped-generation-gets-no-new-task seen.stopped seen.placed))
+  (assert (= breaches #()) seen)
+  (<- waiting (AwaitDetached RACED-KEY :timeout-seconds 0.0))
+  (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
+  (<- started bool (StartWorker "a"))
+  (assert started)
+  (<- done (AwaitDetached RACED-KEY))
+  (assert (= done (DetachedSucceeded 110)) done)
+  True)
+
+(deftest test-a-task-placed-just-before-its-runner-stops-goes-back-to-waiting
+  (<- ok bool (sim-cluster NO-JOBS (submit-then-stop-then-return) :workers SIM-RUNNERS :timing TIMING))
+  (assert ok))
+
+
 ;; --- 本物の client: coordinator に届かない送りと待ちは値で答える -------------------------------------------------------------
 
 (deff cut-off [request]  ; defk にできない: httpx の MockTransport が呼ぶ callback
