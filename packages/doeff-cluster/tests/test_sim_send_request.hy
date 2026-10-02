@@ -41,7 +41,7 @@
   (val queue (RequestQueue))
   (setv queue.up True)
   (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1" :versions {}))
-  (<- read tuple ((sim-time-handler :clock (clock-at 0)) (send-beside-answer link queue reply-seconds)))
+  (<- read tuple ((sim-time-handler :clock (! (clock-at 0))) (send-beside-answer link queue reply-seconds)))
   read)
 
 
@@ -63,7 +63,7 @@
   (setv queue.up True)
   (val link (SimLink :queue queue :actor "worker-1" :revision "sim" :peer "worker-1" :versions {}))
   (<- counted tuple ((state {SPAWNS-KEY #()})
-                     ((sim-time-handler :clock (clock-at 0)) (send-counted-beside-answer link queue reply-seconds))))
+                     ((sim-time-handler :clock (! (clock-at 0))) (send-counted-beside-answer link queue reply-seconds))))
   counted)
 
 

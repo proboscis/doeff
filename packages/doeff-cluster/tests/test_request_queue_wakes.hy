@@ -106,7 +106,7 @@
   (val queue (RequestQueue))
   (val delays [])
   (<- takes tuple
-      ((sim-time-handler :clock (clock-at 0))
+      ((sim-time-handler :clock (! (clock-at 0)))
         ((count-delays delays)
           (do-both (with-handlers [(handler queue)] (take-times timeout-seconds limit times))
                    (write-later queue writes)))))

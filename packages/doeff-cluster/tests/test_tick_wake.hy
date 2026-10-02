@@ -46,10 +46,10 @@
   ;; 引数に残す理由: 検ごとに別の時計・呼び鈴・止める刻で並べる(Ask で区別できない)。
   ;; 宣言は空のまま、毎拍同じ呼び鈴(bell)を添えて答える。止める刻 stop-ms か読みの上限で止まれと答える。
   (ReadDesired [env-report]
-    (setv log.reads (+ log.reads #((clock-ms log.clock))))
+    (setv log.reads (+ log.reads #((! (clock-ms log.clock)))))
     (resume (DesiredJobs #() :changed bell.future)))
   (WorkerStopRequested []
-    (resume (or (>= (clock-ms log.clock) stop-ms) (>= (len log.reads) READ-LIMIT))))
+    (resume (or (>= (! (clock-ms log.clock)) stop-ms) (>= (len log.reads) READ-LIMIT))))
   (EnvReport [] (resume None))
   (ObserveWorld [] (resume (WorldView #() #())))
   (PublishStatus [statuses note] (resume None)))
