@@ -6,7 +6,7 @@
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.cluster_foundation [cluster-handlers lease-holder-of])
-(import doeff_cluster.foundation.foundation_check [foundation-closure closed?])
+(import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure closed?])
 (import tests.fixtures.cluster_foundation_programs [beacon-job production-foundation])
 
 
@@ -21,5 +21,5 @@
 
 
 (deftest test-a-service-under-the-production-foundation-with-the-cluster-handlers-is-closed
-  (val closure (foundation-closure beacon-job :foundation production-foundation))
+  (<- closure FoundationClosure (foundation-closure beacon-job :foundation production-foundation))
   (assert (closed? closure) closure))

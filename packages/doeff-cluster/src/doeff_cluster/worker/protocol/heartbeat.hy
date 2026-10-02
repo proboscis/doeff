@@ -30,9 +30,7 @@
    "envCapacity" (get report "capacity")})
 
 
-(deff heartbeat-body [* #^ str name #^ (get tuple #(str ...)) provides #^ (get tuple #(str ...)) exclusive #^ str node #^ int capacity
-                      #^ (get dict #(str str)) versions #^ (get list (get dict #(str object))) statuses #^ str endpoint #^ str boot #^ int boot-at
-                      #^ (get dict #(str object)) tools #^ (get tuple #(str ...)) kept #^ bool [stopping False]]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
+(defk heartbeat-body [* name provides exclusive node capacity versions statuses endpoint boot boot-at tools kept [stopping False]]
   {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str) (: capacity int)
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)] :post [(: % (get dict #(str object)))]

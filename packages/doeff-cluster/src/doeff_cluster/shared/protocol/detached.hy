@@ -92,8 +92,7 @@
   (+ "/detached/" (url-quote key :safe "") suffix))
 
 
-(deff detached-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds #^ float retain-seconds
-                            #^ (| dict None) runtime-env #^ dict environ]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(defk detached-submit-body [sha revision needs name lease-seconds retain-seconds runtime-env environ]
   {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
          (: runtime-env (| dict None)) (: environ dict)]
    :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
@@ -264,7 +263,7 @@
   (when (is-not sender.runtime-env None)
     (<- env-json dict (runtime-env->json sender.runtime-env))
     (:= declared env-json))
-  (val body (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
+  (<- body dict (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
   (<- sent (resent-answer cell options "PUT" (detached-path key "") None body sender.deadline-seconds))
   (when (isinstance sent HttpFailed)
     (return (submit-unreachable sent.detail)))
