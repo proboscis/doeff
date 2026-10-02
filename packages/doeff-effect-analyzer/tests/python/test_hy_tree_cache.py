@@ -2,12 +2,14 @@
 
 Expansion is most of an analysis' time and every process used to redo it for each
 Hy module it read. The cache key is the source, the module name and path, the
-macro modules the source requires, and the Hy / Python versions — so a changed
-source or macro module is expanded again, and an unreadable cache file only costs
-one expansion.
+macro modules the source requires, the Hy / Python versions and the reader's own
+source — so a changed source, macro module or reader is expanded again, and an
+unreadable cache file only costs one expansion.
 """
 
 import ast
+import pickle
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -209,6 +211,55 @@ def test_a_cached_tree_builds_only_the_definition_it_is_asked_for(cache_dir: Pat
     found_outer = read.find(function_at("second_one", line=outer.lineno, params=pe._definition_params(outer)))
     assert found_outer is not None and any(node is found_inside for node in ast.walk(found_outer))
     assert set(read._loaded) == {1} and read._tree is None
+
+
+REWRAPPED = """
+(defn clause [effect wrap]
+  (setv prog effect.program)
+  (setv prog (wrap prog))
+  prog)
+"""
+
+
+def as_the_older_reader_wrote(raw: bytes) -> bytes:
+    """A pickled chunk with the body facts in the shape the reader before #2973 stored them:
+    ``rewraps`` maps a local to its one first value (now a tuple of first values)."""
+    chunk = pickle.loads(raw)
+    older_facts = tuple(
+        (function, replace(facts, rewraps={name: seeds[0] for name, seeds in facts.rewraps.items()}))
+        for function, facts in chunk.body_facts
+    )
+    return pickle.dumps(replace(chunk, body_facts=older_facts), protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agora-redesign #2973: the body facts stored with a tree are built by the reader's code.
+    #2973 changed ``_BodyFacts.rewraps`` from one first value per local to a tuple of them and
+    kept the key, so the newer reader read the older reader's entries and raised
+    ``TypeError: 'Attribute' object is not iterable`` on ``prog = effect.program`` … ``prog =
+    wrap(prog)``. The key names the reader's source, so an entry the older reader wrote (the
+    older shape, stored under its own digest) is not read: the tree is expanded again and its
+    facts are this reader's."""
+    seen = expansions(monkeypatch)
+    reader = pe._reader_digest
+    monkeypatch.setattr(pe, "_reader_digest", lambda: "reader=an older reader")
+    pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
+    (entry,) = cache_dir.glob("*.pickle")
+    stored = pickle.loads(entry.read_bytes())
+    assert isinstance(stored, pe._CachedTree)
+    older_chunks = tuple(as_the_older_reader_wrote(raw) for raw in stored.chunks)
+    entry.write_bytes(pickle.dumps(replace(stored, chunks=older_chunks), protocol=pickle.HIGHEST_PROTOCOL))
+    a_new_process()
+    monkeypatch.setattr(pe, "_reader_digest", reader)
+    pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
+    assert seen == ["r", "r"]
+    path = pe._hy_cache_path(REWRAPPED, "/src/r.hy", "r")
+    assert path is not None
+    assert path != entry
+    written = pickle.loads(path.read_bytes())
+    rewraps = [facts.rewraps for raw in written.chunks for _, facts in pickle.loads(raw).body_facts]
+    assert rewraps == [{"prog": rewraps[0]["prog"]}], rewraps
+    assert isinstance(rewraps[0]["prog"], tuple), rewraps
 
 
 def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

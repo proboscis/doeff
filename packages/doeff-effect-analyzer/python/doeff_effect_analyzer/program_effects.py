@@ -509,8 +509,9 @@ def _expand_hy(source: str, filename: str, module_name: str) -> ast.Module:
 
 # Macro expansion is most of the analysis time: every process re-expands each Hy
 # module it reads (0.5–1 s per module). The expanded tree depends only on the
-# source, the macro modules it requires, and the Hy / Python versions, so it is
-# cached on disk under a key made of exactly those. DOEFF_EFFECT_ANALYZER_CACHE
+# source, the macro modules it requires, and the Hy / Python versions, and what is
+# stored with it on the reader's code, so it is cached on disk under a key made of
+# exactly those. DOEFF_EFFECT_ANALYZER_CACHE
 # names the directory; "off" disables the cache.
 _REQUIRE = re.compile(r"\(require\s+([A-Za-z_][\w.\-]*)")
 
@@ -553,9 +554,13 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
             # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
             # definitions that are built only when followed (_CachedTree — agora-redesign #1591).
             # v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
-            "v4",
+            # v5: the key names the reader's source (_reader_digest), so a change of what is
+            # derived no longer waits for this tag to be bumped by hand (#2973 changed the shape
+            # of _BodyFacts.rewraps and kept v4 — the newer reader read v4 entries and raised).
+            "v5",
             sys.version,
             hy.__version__,
+            _reader_digest(),
             module_name,
             filename,
             hashlib.sha256(source.encode("utf-8")).hexdigest(),
@@ -563,6 +568,14 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
         ]
     )
     return directory / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.pickle"
+
+
+@functools.cache
+def _reader_digest() -> str:
+    """The digest of this module's source. What is stored with a tree (the definition index, the
+    body nodes and the body facts — ``_derived``) is built by the code here, so an entry written by
+    another version of the reader — another shape of a fact — is never read by this one."""
+    return f"reader={hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}"
 
 
 @dataclass(frozen=True)
