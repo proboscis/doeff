@@ -1,9 +1,13 @@
 ;; coordinator との HTTP: coordinator が接続を使い回させること・heartbeat の途絶の数えが宛先の切り替えをまたぐこと(2026-09-23 の newmac の件)。
 ;; 宛先の切り替えと読みの送り直しの性質は宛先の部品の検(test_coordinator_route — #2427 で httpx の client を持つ口を退役させた)。
-(require doeff-hy.macros [deftest deff])
+(require doeff-hy.macros [deftest deff val])
+(import os)
+(import signal)
 (import threading)
 (import httpx)
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox json-reply])
+(import pytest)
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox json-reply StopState stop-on-signals])
+(import doeff_cluster.worker.protocol.stop [StopState :as WorkerStopState])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
@@ -106,3 +110,21 @@
   (assert (in "TypeError: 'NoneType' object is not subscriptable" (get lines 0)) lines)
   (assert (in "名乗りました" (get lines 1)) lines)
   (assert (in LAN (get lines 1)) lines))
+
+
+(deftest test-stop-on-signals-raises-both-stop-marks-and-refuses-other-values
+  "3 つの main が信号の登録を foundation の 1 か所(stop-on-signals)に任せても、coordinator と記録の置き場の StopState と worker の
+   StopState の両方が SIGTERM・SIGINT で立つ事(main の止まり方が変わらない)— requested を持たない値は登録の前に断る。"
+  (val saved #((signal.getsignal signal.SIGTERM) (signal.getsignal signal.SIGINT)))
+  (try
+    (for [[kind sig] [[StopState signal.SIGTERM] [WorkerStopState signal.SIGINT]]]
+      (setv mark (kind))
+      (! (stop-on-signals mark))
+      (assert (not mark.requested))
+      (os.kill (os.getpid) sig)
+      (assert mark.requested (.format "{} が {} で立たない" kind.__module__ sig)))
+    (with [(pytest.raises Exception)]
+      (! (stop-on-signals "印でない値")))
+    (finally
+      (signal.signal signal.SIGTERM (get saved 0))
+      (signal.signal signal.SIGINT (get saved 1)))))

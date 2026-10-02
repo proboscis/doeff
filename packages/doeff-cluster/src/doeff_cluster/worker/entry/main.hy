@@ -13,8 +13,6 @@
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import os)
-(import signal)
-(import types [FrameType])
 (import sys)
 (import time)
 (import uuid)
@@ -27,6 +25,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.worker.protocol.stop [stop-flag StopState])
+(import doeff_cluster.foundation.coordinator_inbox [stop-on-signals])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
@@ -191,9 +190,7 @@
         stop (StopState))
   ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
-  (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
-  (signal.signal signal.SIGTERM on-signal)
-  (signal.signal signal.SIGINT on-signal)
+  (run (stop-on-signals stop))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。

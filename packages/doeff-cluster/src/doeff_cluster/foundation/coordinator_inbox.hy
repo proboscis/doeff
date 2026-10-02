@@ -3,11 +3,12 @@
 ;;; 要求を Request に解く・返事の本文を byte にする・NextRequests / Reply / CoordinatorStopRequested に答える handler は
 ;;; shared/protocol/inbox.hy(層 foundation は intent の型を読まない — #2563・#2445 の「protocol の 1 点で解く」と同じ形)。
 ;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れる)。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import queue)
-(import typing [Callable])
+(import signal)
+(import typing [Callable Protocol runtime-checkable])
 (import threading)
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
@@ -131,3 +132,19 @@
 (defclass StopState []
   "停止の合図(SIGTERM の handler が requested を立て、shared/protocol/inbox.hy の stop-flag が読む)。"
   (defn #^ None __init__ [self] (setv self.requested False)))
+
+
+(defclass [runtime-checkable] StopMark [Protocol]
+  "信号で立てる止めの印の形(この module の StopState と worker/protocol/stop の StopState — 層の向きで 1 つの型に寄せられない)。"
+  (setv #^ bool requested False))
+
+
+(defk stop-on-signals [stop]
+  {:pre [(: stop StopMark)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "process の入口(coordinator・記録の置き場・worker の main)が SIGTERM と SIGINT を受けたら、渡された止めの印(この module の StopState か
+   worker/protocol/stop の StopState — どちらも requested を持つ)を立てるため。3 つの main が同じ signal.signal の 2 行と信号の関数を
+   入口の層で直に書いていた — 生の副作用(signal)は foundation に置く(DOEFF106)。signal の登録は main の thread からだけ通るので、
+   入口の main が run で 1 度だけ呼ぶ。"
+  (signal.signal signal.SIGTERM (fn [signum frame] (setv stop.requested True)))
+  (signal.signal signal.SIGINT (fn [signum frame] (setv stop.requested True)))
+  None)
