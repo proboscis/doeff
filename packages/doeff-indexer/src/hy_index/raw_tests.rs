@@ -288,3 +288,32 @@ fn catalog_extra_adds_names_and_reports_unknown_categories() {
     let after = judged(Some(serde_json::json!({ "http": ["my_http_lib"], "time": [".tick"] })));
     assert_eq!(direct(&after, "custom-program"), vec!["http my_http_lib.get", "time .tick?"]);
 }
+
+/// 目録の引数の上限(max_args)で、同じ名の別の型の method を数えない(agora-redesign #3014 — doeff-cluster の process_host.hy の
+/// 文字列の `(.replace name "/" "_")` が、pathlib を import した file の中で Path.replace の弱い証拠になっていた)。Path.replace は
+/// 引数 1 つ(target)・str.replace は 2 つ以上。呼びの頭でない参照は引数が分からないので今までどおり数える。cache を往復しても同じ。
+#[test]
+fn method_calls_over_the_catalog_argument_limit_are_not_evidence() {
+    let source = r#"(import pathlib [Path])
+(require doeff-hy.macros [defk])
+(defk string-replace [name] (.replace name "/" "_"))
+(defk string-replace-dotted [s] (s.replace "a" "b"))
+(defk path-replace [p t] (.replace p t))
+(defk path-replace-dotted [p t] (p.replace t))
+(defk path-replace-keyword [p t] (.replace p :target t))
+(defk path-exists [p] (.exists p))
+"#;
+    let fresh = index_source(Path::new("/r"), Path::new("/r/host.hy"), source);
+    let encoded = bincode::serialize(&super::CachedHyFile::of(fresh.clone())).unwrap();
+    let cached: super::CachedHyFile = bincode::deserialize(&encoded).unwrap();
+    for file in [fresh, cached.into_file().unwrap()] {
+        let mut files = vec![file];
+        annotate(&mut files, &RawCatalog::bundled().unwrap(), ViaTrace::Through { stops: &BTreeSet::new() });
+        assert!(direct(&files, "string-replace").is_empty(), "{:?}", direct(&files, "string-replace"));
+        assert!(direct(&files, "string-replace-dotted").is_empty(), "{:?}", direct(&files, "string-replace-dotted"));
+        assert_eq!(direct(&files, "path-replace"), vec!["file .replace?"]);
+        assert_eq!(direct(&files, "path-replace-dotted"), vec!["file .replace?"]);
+        assert_eq!(direct(&files, "path-replace-keyword"), vec!["file .replace?"], "keyword と値の組は引数 1 つ");
+        assert_eq!(direct(&files, "path-exists"), vec!["file .exists?"], "上限の無い method は今までどおり");
+    }
+}

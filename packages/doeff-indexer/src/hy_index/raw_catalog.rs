@@ -66,6 +66,11 @@ pub struct RawMethod {
     pub name: String,
     /// この module が file の import か定義の中の参照に見える時だけ数える。空なら常に数える。
     pub context: Vec<String>,
+    /// 呼びの受け手を除く引数がこの数より多い呼びは数えない(書かなければ上限なし)。同じ名の別の型の method と見分けるため —
+    /// `Path.replace(target)` は 1 つ・文字列の `(.replace s "/" "_")` は 2 つ(agora-redesign #3014)。呼びの頭でない参照
+    /// (`(. p replace)` を値として渡す等)は引数が分からないので、今までどおり数える。
+    #[serde(default)]
+    pub max_args: Option<usize>,
 }
 
 /// 分類 1 つの目録。
@@ -137,7 +142,7 @@ impl RawCatalog {
         for entry in &mut catalog.categories {
             for item in added.remove(&entry.category).unwrap_or_default() {
                 if let Some(method) = item.strip_prefix('.') {
-                    entry.methods.push(RawMethod { name: method.to_string(), context: Vec::new() });
+                    entry.methods.push(RawMethod { name: method.to_string(), context: Vec::new(), max_args: None });
                 } else if let Some(builtin) = item.strip_prefix("builtin:") {
                     entry.builtins.push(builtin.to_string());
                 } else {

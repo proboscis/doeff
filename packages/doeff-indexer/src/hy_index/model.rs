@@ -320,6 +320,11 @@ pub struct Reference {
     /// 他の定義へ渡さないので、届く辺(doeff-linter の定義の図)にしない(agora-redesign #1581)。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub inspected: bool,
+    /// method として呼ばれた時(`(.m 受け手 …)` の頭の `m`・`(x.m …)` の頭の `m`)の、受け手を除く引数の数(keyword と値の組は 1 つ)。
+    /// 呼びの頭でなければ None。生の副作用の method の証拠を、目録の引数の上限で同じ名の別の型の method と見分けるため
+    /// (文字列の `(.replace s "/" "_")` と `Path.replace(target)` — agora-redesign #3014)。索引の JSON の契約(版 1)には出さない。
+    #[serde(skip)]
+    pub call_arity: Option<usize>,
 }
 
 /// 呼び出しへ渡された値の構文上の形。式の評価結果は推測しない。

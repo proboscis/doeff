@@ -96,7 +96,8 @@ struct CompiledEntry {
     category: super::raw_catalog::RawCategory,
     patterns: Vec<CompiledPattern>,
     builtins: Vec<String>,
-    methods: Vec<(String, Vec<String>)>,
+    /// method の名・数える条件の module・受け手を除く引数の上限(目録の RawMethod)。
+    methods: Vec<(String, Vec<String>, Option<usize>)>,
 }
 
 /// 目録の全体を照合用の形にした物(file の走査の前に 1 度だけ作る)。
@@ -128,7 +129,7 @@ impl CompiledCatalog {
                     category: entry.category,
                     patterns: entry.patterns.iter().map(|p| CompiledPattern::new(p)).collect(),
                     builtins: entry.builtins.iter().map(|b| match_name(b)).collect(),
-                    methods: entry.methods.iter().map(|m| (match_name(&m.name), m.context.clone())).collect(),
+                    methods: entry.methods.iter().map(|m| (match_name(&m.name), m.context.clone(), m.max_args)).collect(),
                 })
                 .collect(),
             ignored: catalog.ignored.iter().map(|n| CompiledPattern::new(n)).collect(),
@@ -294,7 +295,7 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
                     continue;
                 }
             }
-            if let Some((found, context)) = match_entry(entry, &expanded, skip_import, at_call_head, &file.path, reference.range) {
+            if let Some((found, context)) = match_entry(entry, &expanded, skip_import, at_call_head, reference.call_arity, &file.path, reference.range) {
                 evidence.push(found);
                 method_contexts.push(context);
             }
@@ -309,6 +310,7 @@ fn match_entry(
     expanded: &Expanded,
     skip_import: bool,
     at_call_head: bool,
+    call_arity: Option<usize>,
     path: &str,
     range: Range,
 ) -> Option<(RawEvidence, Option<Vec<String>>)> {
@@ -327,15 +329,20 @@ fn match_entry(
         Expanded::Unbound(name) => (at_call_head && entry.builtins.iter().any(|b| b == name))
             .then(|| (evidence(name.clone(), RawEvidenceKind::Builtin, RawStrength::Strong), None)),
         Expanded::Local(_) => None,
-        Expanded::Member(name) => method_match(entry, name).map(|context| {
+        Expanded::Member(name) => method_match(entry, name, call_arity).map(|context| {
             (evidence(format!(".{}", name), RawEvidenceKind::Method, RawStrength::Weak), Some(context))
         }),
     }
 }
 
-/// method 名だけの一致と、それに要る context。
-fn method_match(entry: &CompiledEntry, name: &str) -> Option<Vec<String>> {
-    entry.methods.iter().find(|(m, _)| m == name).map(|(_, context)| context.clone())
+/// method 名の一致と、それに要る context。呼びの引数(受け手を除く)が目録の上限より多い呼びは同じ名の別の型の method
+/// として数えない(agora-redesign #3014 — 文字列の `.replace`)。引数の分からない参照(呼びの頭でない)は数える。
+fn method_match(entry: &CompiledEntry, name: &str, call_arity: Option<usize>) -> Option<Vec<String>> {
+    entry
+        .methods
+        .iter()
+        .find(|(m, _, max_args)| m == name && !matches!((call_arity, max_args), (Some(arity), Some(max)) if arity > *max))
+        .map(|(_, context, _)| context.clone())
 }
 
 /// 定義の範囲の中の直接の証拠(method の証拠は context の module が見える時だけ)。
