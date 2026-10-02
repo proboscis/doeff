@@ -9,12 +9,15 @@
 
   check <道具> [path …]  測った file について、数が基点より多ければ赤(新しい所見 — 直す)。少ないのに基点が下がっていなければ
                          赤(直した便が同じ commit で基点を下げる — 下げ忘れると次の新しい所見が黙って入る)。path が無ければ
-                         repo の全部の file。doeff-linter の版が基点の版と違う時は、赤でも緑でもなく「測れない」と名指して通す —
-                         doeff-linter(~/.cargo/bin の binary)は repo の main と別に版が動き、版が変わると同じ code で数が変わる
-                         (版の違いで全席の commit が止まる・黙って通る、のどちらも避ける)。semgrep の版は木の中の uv.lock だけで
-                         決まる(scripts/semgrep_locked.py・#2906)ので、基点と違えば「lock を上げたのに数え直していない」木として赤。
-  lower <道具>           repo の全部の file を今の道具で測り、基点を今の数まで下げ、版を今の版にする(上げない・新しい組を足さない)。
-                         直した便と、道具の版を入れ直した便が実行して stage する。今の版で基点より増えた組は下げられないので名指す。
+                         repo の全部の file。doeff-linter は、基点が名乗る組み立ての入力の鍵と同じ鍵の binary を land-arm の
+                         開発版 → 断面の置き場から探して呼ぶ(scripts/doeff_linter_locked.py・#2906 — 探し道の linter は見ない)。
+                         置き場に無ければ(linter を変えた便の commit の間・land-arm が組み直すまでの数分)、赤でも緑でもなく
+                         「測れない」と名指して通す — hook の中では組まない。semgrep の版は木の中の uv.lock だけで決まる
+                         (scripts/semgrep_locked.py・#2906)ので、基点と違えば「lock を上げたのに数え直していない」木として赤。
+  lower <道具>           repo の全部の file を測り、基点を今の数まで下げ、版をその道具の版にする(上げない・新しい組を足さない)。
+                         直した便と、道具の版を変えた便が実行して stage する。今の版で基点より増えた組は下げられないので名指す。
+                         doeff-linter は `--linter <binary>` で渡した物(linter を変えた便の自分の build)か、HEAD の組み立ての
+                         入力の鍵の binary(置き場に無ければ止めて名指す)。
   init <道具>            基点の file が無い時だけ、repo の全部の file を測って版と一緒に書く(在れば断る — 上げる道にしない)。
 
 道具 = doeff-linter(severity が error の物 — warning と info は hook を止めない)・semgrep(.semgrep.yaml・hook と同じく規則の
@@ -25,12 +28,12 @@ symlink を測れない)。semgrep は全部の file を測る時も core を 2 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from doeff_linter_locked import binary_key, input_key, locate, searched
 from semgrep_locked import locked_command, locked_version
 
 BASELINE_DIR: str = "scripts/hook_finding_baseline"
@@ -156,42 +159,38 @@ def population(top: Path, tool: str) -> list[str]:
     ]
 
 
-LINTER_SOURCE: str = "packages/doeff-linter"
+@dataclass(frozen=True)
+class Instrument:
+    """測りに使う道具: 呼ぶ命令と、その道具の版(基点に書く・基点と照らす鍵)。"""
+
+    command: tuple[str, ...]
+    version: str
 
 
-def tool_command(top: Path, tool: str) -> list[str]:
-    """道具を呼ぶ命令。semgrep は uv.lock が決める版を uv の道具の置き場から呼ぶ(scripts/semgrep_locked.py・#2906)— 探し道の
-    semgrep や作業木の環境の semgrep は、機体の入れ方と作業木の状態で版が割れ(2026-10-02 zeus: lock 1.169.0・共有の uv tool
-    1.161.0。`.venv` の無い作業木では `uv run --no-sync --project` が空の `.venv` を作って探し道の物を呼んだ)、基点と版が合わない
-    「測れない」に黙って倒れていた。doeff-linter は Rust の binary で、探し道(~/.cargo/bin)の物 — 版は tool_version が鍵にする。"""
-    if tool == "semgrep":
-        return locked_command(top)
-    return [tool]
+def semgrep_instrument(top: Path) -> Instrument:
+    """semgrep は uv.lock が決める版を uv の道具の置き場から呼ぶ(scripts/semgrep_locked.py・#2906)— 探し道や作業木の .venv の
+    semgrep は機体と作業木の状態で版が割れていた。版は lock から読み、`--version` を聞き直さない(1 回 約 2 秒)。"""
+    return Instrument(tuple(locked_command(top)), locked_version(top))
 
 
-def tool_version(top: Path, tool: str) -> str:
-    """hook が呼ぶ道具の版。semgrep = uv.lock の版(tool_command がその版を呼ぶので、`--version` を聞き直さない — 1 回 約 2 秒)。
-    doeff-linter = build した doeff の commit(`--version` が名乗る)の packages/doeff-linter の木の hash — linter の中身が同じなら、
-    branch で build しても着地の後に main から build し直しても同じ鍵になる(数を変える linter の便が、自分の build で基点を下げて
-    同じ便で出せるように)。その commit を手元の git が知らない時は、`--version` の 1 行目をそのまま鍵にする(基点と合わず
-    「測れない」になる — 黙って通さない)。"""
-    if tool == "semgrep":
-        return locked_version(top)
-    completed: subprocess.CompletedProcess[str] = subprocess.run(
-        [*tool_command(top, tool), "--version"], cwd=top, capture_output=True, text=True, check=False,
-    )
-    lines: list[str] = completed.stdout.strip().splitlines()
-    if completed.returncode != 0 or not lines:
-        raise SystemExit(f"{tool} の版を読めなかった(rc {completed.returncode}): {completed.stderr.strip()[:300]}")
-    named: str = lines[0].strip()
-    built = re.search(r"\(doeff ([0-9a-f]{7,40})\)", named) if tool == "doeff-linter" else None
-    if built is None:
-        return named
-    tree: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{built.group(1)}:{LINTER_SOURCE}"],
-        cwd=top, capture_output=True, text=True, check=False,
-    )
-    return f"doeff-linter の source の木 {tree.stdout.strip()}" if tree.returncode == 0 and tree.stdout.strip() else named
+def linter_for_writing(top: Path, linter: Path | None) -> Instrument:
+    """基点を書く(init・lower)linter: 渡された binary(linter を変えた便が自分の build を渡す)か、HEAD の組み立ての入力の鍵の
+    binary(land-arm の開発版 → 断面の置き場)。無ければ名指して止める(探し道の linter で数えて違う鍵を書かない)。"""
+    if linter is not None:
+        return Instrument((str(linter),), binary_key(top, linter))
+    head: str | None = input_key(top, "HEAD")
+    located = locate(top, head) if head is not None else None
+    if located is None:
+        raise SystemExit(f"HEAD の linter の組み立ての入力({head})の binary が {searched()} に無い — 組んだ binary を "
+                         "`--linter <path>` で渡す")
+    return Instrument((str(located.binary),), binary_key(top, located.binary))
+
+
+def linter_for_checking(top: Path, baseline: Baseline) -> Instrument | None:
+    """基点と比べる linter: 基点が名乗る鍵と同じ組み立ての入力の binary(scripts/doeff_linter_locked.py・#2906)。hook の中では
+    組まない — 置き場に無ければ None(呼び手が「測れない」と名指す)。"""
+    located = locate(top, baseline.version)
+    return Instrument((str(located.binary),), baseline.version) if located is not None else None
 
 
 def read_baseline(file: Path) -> Baseline:
@@ -202,13 +201,13 @@ def read_baseline(file: Path) -> Baseline:
     return Baseline(version=raw["version"], counts=raw["counts"])
 
 
-def measure(top: Path, tool: str, paths: list[str]) -> Counts:
+def measure(top: Path, tool: str, instrument: Instrument, paths: list[str]) -> Counts:
     """道具を repo の根で 1 回走らせて、規則 × file の数を得るため(測れなかった時は止める — 0 として通さない)。"""
     if not paths:
         return {}
     if tool == "doeff-linter":
         completed: subprocess.CompletedProcess[str] = subprocess.run(
-            [*tool_command(top, tool), "--no-log", "--output-format", "json", *paths],
+            [*instrument.command, "--no-log", "--output-format", "json", *paths],
             cwd=top, capture_output=True, text=True, check=False,
         )
         if completed.returncode not in (0, 1):
@@ -218,7 +217,7 @@ def measure(top: Path, tool: str, paths: list[str]) -> Counts:
             raise SystemExit("doeff-linter の JSON が組の列でない")
         return linter_error_counts(report, top)
     completed = subprocess.run(
-        [*tool_command(top, tool), "--metrics=off", "--disable-version-check", "--config", ".semgrep.yaml", "--json",
+        [*instrument.command, "--metrics=off", "--disable-version-check", "--config", ".semgrep.yaml", "--json",
          "--quiet", "-j", SEMGREP_JOBS, *paths],
         cwd=top, capture_output=True, text=True, check=False,
     )
@@ -242,59 +241,93 @@ def _write(file: Path, baseline: Baseline) -> None:
     file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+USAGE: str = (
+    "使い方: hook_finding_baseline.py [--root <dir>] [--linter <組んだ doeff-linter>] check|lower|init doeff-linter|semgrep [path …]"
+)
+
+
+@dataclass(frozen=True)
+class Request:
+    """入口の引数: 根(検が一時の repo で試すため)・lower と init で使う linter の binary(linter を変えた便の自分の build)・動詞・道具・file。"""
+
+    top: Path
+    linter: Path | None
+    command: str
+    tool: str
+    paths: list[str]
+
+
+def parse(argv: list[str]) -> Request | None:
+    """入口の引数を読むため(読めなければ None — 使い方を出して 2)。根の既定はこの script の在り処の 1 つ上。"""
+    top: Path = Path(__file__).resolve().parents[1]
+    linter: Path | None = None
+    rest: list[str] = argv
+    while rest[:1] in (["--root"], ["--linter"]) and len(rest) >= 2:
+        if rest[0] == "--root":
+            top = Path(rest[1])
+        else:
+            linter = Path(rest[1]).resolve()
+        rest = rest[2:]
+    if len(rest) < 2 or rest[0] not in ("check", "lower", "init") or rest[1] not in TOOLS:
+        return None
+    return Request(top=top, linter=linter, command=rest[0], tool=rest[1], paths=rest[2:])
+
+
 def main(argv: list[str]) -> int:
     """check(commit の hook)・lower(直した便)・init(基点が無い時の 1 回)の 3 つの入口。"""
-    # 根は呼び手が --root で渡せる(検が一時の repo で試すため)。無ければこの script の在り処の 1 つ上。
-    top: Path = Path(__file__).resolve().parents[1]
-    if argv[:1] == ["--root"] and len(argv) >= 2:
-        top, argv = Path(argv[1]), argv[2:]
-    if len(argv) < 2 or argv[0] not in ("check", "lower", "init") or argv[1] not in TOOLS:
-        print("使い方: hook_finding_baseline.py [--root <dir>] check|lower|init doeff-linter|semgrep [path …]", file=sys.stderr)
+    request: Request | None = parse(argv)
+    if request is None:
+        print(USAGE, file=sys.stderr)
         return 2
-    command, tool, paths = argv[0], argv[1], argv[2:]
+    top, tool = request.top, request.tool
     baseline_file: Path = top / BASELINE_DIR / f"{tool}.json"
-    version: str = tool_version(top, tool)
-    if command == "init":
+    if request.command != "init" and not baseline_file.is_file():
+        print(f"基点の file が無い: {baseline_file}(既定の 0 にしない)", file=sys.stderr)
+        return 2
+    if request.command == "check":
+        return _check(top, tool, read_baseline(baseline_file), request.paths)
+    instrument: Instrument = semgrep_instrument(top) if tool == "semgrep" else linter_for_writing(top, request.linter)
+    if request.command == "init":
         if baseline_file.exists():
             print(f"基点の file が在る: {baseline_file}(init は書き直さない — 下げるのは lower)", file=sys.stderr)
             return 2
         baseline_file.parent.mkdir(parents=True, exist_ok=True)
-        _write(baseline_file, Baseline(version=version, counts=measure(top, tool, population(top, tool))))
-        print(f"基点を書いた: {baseline_file}({version})")
+        _write(baseline_file, Baseline(version=instrument.version,
+                                       counts=measure(top, tool, instrument, population(top, tool))))
+        print(f"基点を書いた: {baseline_file}({instrument.version})")
         return 0
-    if not baseline_file.is_file():
-        print(f"基点の file が無い: {baseline_file}(既定の 0 にしない)", file=sys.stderr)
-        return 2
     baseline: Baseline = read_baseline(baseline_file)
-    if command == "lower":
-        current: Counts = measure(top, tool, population(top, tool))
-        grown_now: tuple[Finding, ...] = compare(baseline.counts, current, None).grown
-        _write(baseline_file, Baseline(version=version, counts=lowered(baseline.counts, current)))
-        print(f"基点を下げた: {baseline_file}({baseline.version} → {version})")
-        if grown_now:
-            print(f"{tool} の今の版で基点より多い組(下げる道では上げない — 直すか、規則の持ち主が扱いを決める):", file=sys.stderr)
-            print("\n".join(_line(f) for f in grown_now), file=sys.stderr)
+    current: Counts = measure(top, tool, instrument, population(top, tool))
+    grown_now: tuple[Finding, ...] = compare(baseline.counts, current, None).grown
+    _write(baseline_file, Baseline(version=instrument.version, counts=lowered(baseline.counts, current)))
+    print(f"基点を下げた: {baseline_file}({baseline.version} → {instrument.version})")
+    if grown_now:
+        print(f"{tool} の今の版で基点より多い組(下げる道では上げない — 直すか、規則の持ち主が扱いを決める):", file=sys.stderr)
+        print("\n".join(_line(f) for f in grown_now), file=sys.stderr)
+    return 0
+
+
+def _check(top: Path, tool: str, baseline: Baseline, paths: list[str]) -> int:
+    """check の入口: 基点と同じ版の道具で、測った file の数を基点と比べる(赤 = 1・通す = 0)。"""
+    instrument: Instrument | None = semgrep_instrument(top) if tool == "semgrep" else linter_for_checking(top, baseline)
+    if instrument is None:
+        # doeff-linter: 基点の鍵の binary が置き場に無い(linter を変えた便の commit の間・land-arm が組み直すまでの数分)。
+        print(f"doeff-linter: 測れない(基点の版 {baseline.version} の binary が {searched()} のどちらにも無い — hook の中では"
+              "組まない)。land-arm が main の linter を組み直すのを待つか、linter を変えた便は自分の build を "
+              "`uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` で渡して基点を数え直す",
+              file=sys.stderr)
         return 0
-    return _check(top, tool, version, baseline, paths)
-
-
-def _check(top: Path, tool: str, version: str, baseline: Baseline, paths: list[str]) -> int:
-    """check の入口: 道具の版を基点と照らし、同じ版なら測った file の数を基点と比べる(赤 = 1・通す = 0)。"""
-    if version != baseline.version and tool == "semgrep":
+    if instrument.version != baseline.version:
         # semgrep の版は木の中の uv.lock だけで決まる(機体に依らない)— 違うのは lock を上げたのに基点を数え直していない木だけ。
-        print(f"semgrep: 基点の版 {baseline.version} と uv.lock の版 {version} が違う — lock を上げた便が "
+        print(f"semgrep: 基点の版 {baseline.version} と uv.lock の版 {instrument.version} が違う — lock を上げた便が "
               "`uv run --no-project python scripts/hook_finding_baseline.py lower semgrep` で基点を数え直し、同じ commit に入れる",
               file=sys.stderr)
         return 1
-    if version != baseline.version:
-        print(f"{tool}: 測れない(道具の版 {version} ≠ 基点の版 {baseline.version})— 基点と同じ版の道具で測るか、"
-              f"版を入れ直した便が `uv run --no-project python scripts/hook_finding_baseline.py lower {tool}` で基点を数え直す",
-              file=sys.stderr)
-        return 0
     checked: list[str] = (
         [p for p in paths if not (tool == "semgrep" and p.startswith(SEMGREP_FIXTURES))] if paths else population(top, tool)
     )
-    comparison: Comparison = compare(baseline.counts, measure(top, tool, checked), frozenset(checked) if paths else None)
+    comparison: Comparison = compare(baseline.counts, measure(top, tool, instrument, checked),
+                                     frozenset(checked) if paths else None)
     if comparison.grown:
         print(f"{tool} の所見が基点より増えた(新しい所見は直す — 基点に足さない):", file=sys.stderr)
         print("\n".join(_line(f) for f in comparison.grown), file=sys.stderr)
