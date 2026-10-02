@@ -390,6 +390,7 @@
     "ADR-DOE-AGENTS-013 driver-io-goes-through-effects",
     "ADR-DOE-AGENTS-013 driver-io-has-one-production-home",
     "ADR-DOE-AGENTS-013 driver-io-is-drivable-by-a-fake-home",
+    "ADR-DOE-CLUSTER-001 every-cluster-is-tested-through-one-api",
     "ADR-DOE-CLUSTER-001 handlers-inside-the-recorder-are-deterministic",
     "ADR-DOE-CLUSTER-001 job-entry-adds-no-handler",
     "ADR-DOE-CLUSTER-001 old-declarations-are-refused",
