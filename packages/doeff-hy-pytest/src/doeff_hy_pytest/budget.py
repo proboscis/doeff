@@ -867,6 +867,18 @@ def pytest_runtest_makereport(
     return report
 
 
+def judging_line(budgets: Budgets) -> str:
+    """終わりの一覧に、この走行の実行を何で判じたかを 1 行で書く — 歩数の設定が在るのに秒で判じた時は、
+    その訳(数の口の無い build など)を名指し、黙って秒へ戻った事を読み手が見落とさないようにするため。"""
+    if budgets.judges_steps:
+        return "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)"
+    match budgets.work_source:
+        case NoWorkReader(reason=reason) if budgets.call_steps is not None:
+            return f"実行は CPU 秒で判じる({CALL_STEPS_INI} があるが歩数を測れない — {reason})"
+        case _:
+            return "実行は CPU 秒で判じる"
+
+
 def pytest_terminal_summary(
     terminalreporter: pytest.TerminalReporter, config: pytest.Config
 ) -> None:
@@ -884,9 +896,7 @@ def pytest_terminal_summary(
         return
     terminalreporter.section("doeff の検の時間の上限")
     terminalreporter.line(vm_build_line(budgets.vm_build))
-    terminalreporter.line(
-        "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)" if budgets.judges_steps else "実行は CPU 秒で判じる"
-    )
+    terminalreporter.line(judging_line(budgets))
     if worked:
         terminalreporter.line(
             f"歩数を測れた検 {len(worked)} 本・歩数の合計 {sum(m.work.steps for m in worked if m.work is not None)}"
