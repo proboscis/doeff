@@ -9,7 +9,7 @@
 (import hashlib)
 (import json)
 (import pathlib [Path])
-(import doeff [with_handlers])
+(import doeff [run with_handlers])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
@@ -19,7 +19,7 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.service [HttpRequest :as ServiceRequest])
-(import doeff_records.http_server [RecordsServerConfig RecordsServing ServedBuild RepoCommit PreparedHandlers REQUEST-MAX-BYTES
+(import doeff_records.http_server [records-server-config RecordsServing ServedBuild RepoCommit PreparedHandlers REQUEST-MAX-BYTES
                                    answer-with ready-handlers start-records-server])
 (import tests.interpreters [law-roster sim-request-handlers])
 
@@ -41,8 +41,8 @@
   {:pre [(: served (| ServedBuild None))] :post [(: % tuple)] :tags {:context "records" :role "foundation"}}
   "走っている木 served を渡した口を共有の memory の置き場の上に開き、GET /served を 1 回読んで閉じるため。"
   (val store (MemoryStore LAW-SCHEMA))
-  (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
-                                                         :request-handlers (sim-request-handlers (SimClock)) :served served)))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers (SimClock)) :served served))))
   (try
     (<- seen tuple (with_handlers [(await-handler) (http-production-handler)] (get-json server.url "/served")))
     (finally (.close server)))
@@ -75,8 +75,8 @@
 (deftest test-served-answers-while-the-store-is-down
   ;; 置き場が落ちている間: 記録の操作は 503・/served は 200(使い手は障害の間も動いている版を読める)。
   (val store (MemoryStore LAW-SCHEMA))
-  (val server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) (fn [writer] (memory-records-handler store writer))
-                                                         :request-handlers (sim-request-handlers (SimClock)) :served BUILD)))
+  (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
+                                                         :request-handlers (sim-request-handlers (SimClock)) :served BUILD))))
   (try
     (<- (with_handlers [(memory-records-handler store MAKER)] (SetStoreOutage OUTAGE-DETAIL)))
     (<- record-op (with_handlers [(await-handler) (http-production-handler)]

@@ -15,15 +15,15 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServerConfig RunningServer start-records-server])
+(import doeff_records.http_server [records-server-config RunningServer start-records-server])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
-(import tests.interpreters [law-roster sim-request-handlers])
+(import tests.interpreters [sim-request-handlers])
 
 
 (defn open-service [handler-for]
   "置き場の上に口を開く(検ごと)。handler-for = 書き手の名 → 置き場の handler。答え = #(開いた口 仮想の時計)。"
   (setv clock (SimClock))
-  #((start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) handler-for :request-handlers (sim-request-handlers clock)))
+  #((start-records-server (run (records-server-config LAW-SCHEMA handler-for :request-handlers (sim-request-handlers clock))))
     clock))
 
 

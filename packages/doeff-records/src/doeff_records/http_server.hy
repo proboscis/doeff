@@ -58,7 +58,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.principals [Roster])
 (import doeff_records.maintenance [maintenance-loop])
-(import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer json-answer])
+(import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric])
 (import doeff_records.wire [WRITER-HEADER])
 (import doeff_records.store_choice [StorePressure PressureUnread])
@@ -364,8 +364,9 @@
   (when (and (= request.method "GET") (= request.path PATH-READYZ))
     (return (! (with-handlers [#* serving.request-handlers] (readiness-answer serving prepared)))))
   (val handler-for (if (is prepared None) (fn [writer] store-not-prepared) prepared))
+  (<- service (records-service serving.schema handler-for))
   (<- answer (with-handlers [#* serving.request-handlers]
-                            (respond (RecordsService serving.schema serving.roster handler-for) request)))
+                            (respond service request)))
   answer)
 
 
@@ -566,6 +567,14 @@
   (setv #^ int port 0)
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| ServedBuild None) served None))
+
+
+(defk records-server-config [schema handler-for [request-handlers #()] [host "127.0.0.1"] [port 0] [meter None] [served None]]
+  {:pre [(: schema RecordsSchema) (: handler-for Callable) (: request-handlers tuple) (: host str) (: port int)
+         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None))] :post [(: % RecordsServerConfig)]}
+  "名簿を取らずに RecordsServerConfig を組む(中で空の Roster を入れる — 欄 roster は使われない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す・#3008)。
+   引数は RecordsServerConfig の欄から roster を除いた物を同じ順で。"
+  (RecordsServerConfig schema (Roster) handler-for request-handlers host port meter served))
 
 
 (defclass [(dataclass :frozen True)] RunningServer []

@@ -47,6 +47,12 @@
   (#^ Callable handler-for))
 
 
+(defk records-service [schema handler-for]
+  {:pre [(: schema RecordsSchema) (: handler-for Callable)] :post [(: % RecordsService)]}
+  "名簿を取らずに RecordsService を組む(中で空の Roster を入れる — 欄 roster は使われない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す・#3008)。"
+  (RecordsService schema (Roster) handler-for))
+
+
 (defk json-answer [status body]
   {:pre [(: status int) (: body dict)] :post [(: % HttpAnswer)]}
   "答えの本文を JSON の綴りにする(HTTP の境界の 1 か所)。"

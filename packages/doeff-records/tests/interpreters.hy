@@ -32,7 +32,7 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_records.principals [Roster])
-(import doeff_records.http_server [RecordsServerConfig start-records-server])
+(import doeff_records.http_server [records-server-config start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
@@ -132,8 +132,8 @@
    (検の口と手入れの effect に直に答える — client の外側に被せる)。client の要求は HttpRequest の effect なので、答え手
    await-handler と http-production-handler を組の最も外側に置く。"
   (setv clock (SimClock)
-        server (start-records-server (RecordsServerConfig LAW-SCHEMA (law-roster) handler-for
-                                                          :request-handlers (sim-request-handlers clock answerers)))
+        server (start-records-server (run (records-server-config LAW-SCHEMA handler-for
+                                                          :request-handlers (sim-request-handlers clock answerers))))
         harness (LawHarness (fn [writer program]
                               (with_handlers [(backing writer)
                                               (http-records-handler (RecordsEndpoint server.url :writer writer

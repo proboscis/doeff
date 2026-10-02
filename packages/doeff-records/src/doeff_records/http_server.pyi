@@ -84,6 +84,17 @@ class RecordsServerConfig:
     meter: Callable[..., object] | None = None
     served: ServedBuild | None = None
 
+# 名簿の欄 roster は使われていない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す(#3008)。
+def records_server_config(
+    schema: RecordsSchema,
+    handler_for: Callable[[str], object],
+    request_handlers: tuple[object, ...] = (),
+    host: str = "127.0.0.1",
+    port: int = 0,
+    meter: Callable[..., object] | None = None,
+    served: ServedBuild | None = None,
+) -> Program[RecordsServerConfig, object]: ...
+
 @dataclass(frozen=True)
 class RunningServer:
     url: str
