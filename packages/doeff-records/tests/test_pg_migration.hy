@@ -5,7 +5,6 @@
 ;; (「出ない」の判定が赤になる形 — 判定が何も確かめずに緑になる形を外す)。
 ;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [deftest val])
-(import os)
 (import threading)
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
@@ -16,10 +15,10 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store RecordsSqlFailed DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [schema-statements])
-(import tests.interpreters [PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
+(import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 
-(val PG-DSN (.get os.environ PG-DSN-VARIABLE))
+(val PG-DSN (session-dsn PG-DSN-VARIABLE))
 ;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
 (val PG-SKIP-REASON (pg-skip-reason))
 (val RACERS 4)

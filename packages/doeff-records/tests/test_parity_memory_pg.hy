@@ -2,11 +2,10 @@
 ;; 答えの列(transcript)が等しいことを確かめる(番号・版・epoch・時刻まで同じ — どの置き場を選んでも、口越しでも、Program に見える
 ;; 答えは変わらない)。
 (require doeff-hy.macros [deftest])
-(import os)
 (import doeff_records.laws [LAWS])
-(import tests.interpreters [build-interpreter PG-DSN-VARIABLE pg-skip-reason])
+(import tests.interpreters [session-dsn build-interpreter PG-DSN-VARIABLE pg-skip-reason])
 
-(setv PG-DSN (.get os.environ PG-DSN-VARIABLE))
+(setv PG-DSN (session-dsn PG-DSN-VARIABLE))
 
 
 (defn transcript-on [#^ str name law]
