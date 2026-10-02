@@ -24,6 +24,9 @@
 (setv COMPACT-RATIO 8)
 ;; 基が小さい間は差分の上限を下げすぎない(小さい表で毎回作り直さない)。
 (setv MIN-DELTA 64)
+;; 真偽と長さの読みを断る時の文(Table と TableDraft で同じ文 — 直し方を名指す)。
+(setv TABLE-TRUTH-REFUSAL "Table / TableDraft は真偽で読まない — 空かどうかは (= (.size t) 0) か (> (.size t) 0) で読む(agora-redesign #2755)")
+(setv TABLE-LEN-REFUSAL "Table / TableDraft は len で数えない — 行の数は (.size t) で読む(agora-redesign #2755)")
 
 
 (defclass [(dataclass :frozen True)] TableWrite [(get Generic V)]
@@ -87,6 +90,16 @@
 
   (defn #^ str __repr__ [self]
     (.format "Table(size={})" self._size))
+
+  ;; 真偽と長さの読みを断る(agora-redesign #2755・#2708 の I0b)— この 2 つが無いと Python は表を常に真と読み、`(not table)` は
+  ;; 空の表でも偽になる(空かどうかの早い戻りが黙って効かない)。断って、見落としを例外で見つける。読むのは size。
+  (defn #^ bool __bool__ [self]
+    "真偽で読ませない(上の註)。空かどうかは (= (.size t) 0) / (> (.size t) 0) で読む。"
+    (raise (TypeError TABLE-TRUTH-REFUSAL)))
+
+  (defn #^ int __len__ [self]
+    "len で数えさせない(上の註)。行の数は (.size t) で読む。"
+    (raise (TypeError TABLE-LEN-REFUSAL)))
 
   (defn #^ bool __eq__ [self #^ object other]
     "行の中身で比べる(鍵の集合が同じで、鍵ごとの行が等しい)— 表は値なので、写しと元の表は中身が同じなら等しい(基と差分の分け方は
@@ -195,6 +208,18 @@
     (if self._writes
         (_with-pending self._table self._writes)
         self._table))
+
+  (defn #^ int size [self]
+    "行の数(この下書きの書きを当てた後)— 下書きの空かどうかを真偽でなく数で読むため(agora-redesign #2755)。"
+    (len (.keys self)))
+
+  (defn #^ bool __bool__ [self]
+    "真偽で読ませない(Table と同じ — 空かどうかは (= (.size d) 0))。"
+    (raise (TypeError TABLE-TRUTH-REFUSAL)))
+
+  (defn #^ int __len__ [self]
+    "len で数えさせない(Table と同じ — 行の数は (.size d))。"
+    (raise (TypeError TABLE-LEN-REFUSAL)))
 
   (defn #^ str __repr__ [self]
     (.format "TableDraft(base={!r}, writes={})" self._table (len self._writes))))
