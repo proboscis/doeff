@@ -4,13 +4,26 @@
 
 use crate::models::{RuleContext, Severity, Violation};
 use crate::rules::base::LintRule;
-use rustpython_ast::{Expr, Stmt, StmtAsyncFunctionDef, StmtFunctionDef};
+use rustpython_ast::{Constant, Expr, Stmt, StmtAsyncFunctionDef, StmtFunctionDef};
 
 pub struct NoTupleReturnsRule;
 
 impl NoTupleReturnsRule {
     pub fn new() -> Self {
         Self
+    }
+
+    /// `tuple[X, ...]` の添字か — 同じ型の可変長の列(型のある列)で、複数の値を位置で返す組ではない
+    /// (agora-redesign #2031: packages/doeff-cluster の検の補助が `-> tuple[str, ...]` で名の列を返して誤って当たった。
+    /// DOEFF171 も同じ形を型のある列として受ける)。
+    fn is_homogeneous_sequence(slice: &Expr) -> bool {
+        match slice {
+            Expr::Tuple(tuple) => {
+                tuple.elts.len() == 2
+                    && matches!(&tuple.elts[1], Expr::Constant(c) if matches!(c.value, Constant::Ellipsis))
+            }
+            _ => false,
+        }
     }
 
     fn is_tuple_type(expr: &Expr) -> bool {
@@ -23,7 +36,7 @@ impl NoTupleReturnsRule {
                 if let Expr::Name(name) = &*subscript.value {
                     let name_str = name.id.as_str();
                     if name_str == "tuple" || name_str == "Tuple" {
-                        return true;
+                        return !Self::is_homogeneous_sequence(&subscript.slice);
                     }
                     if name_str == "Optional" || name_str == "Union" {
                         if let Expr::Tuple(tuple) = &*subscript.slice {
@@ -36,7 +49,7 @@ impl NoTupleReturnsRule {
                     if let Expr::Name(module) = &*attr.value {
                         if module.id.as_str() == "typing" {
                             if attr.attr.as_str() == "Tuple" {
-                                return true;
+                                return !Self::is_homogeneous_sequence(&subscript.slice);
                             }
                             if attr.attr.as_str() == "Optional" || attr.attr.as_str() == "Union" {
                                 if let Expr::Tuple(tuple) = &*subscript.slice {
@@ -180,6 +193,40 @@ def get_coords() -> tuple[float, float]:
 "#;
         let violations = check_code(code);
         assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn test_a_homogeneous_sequence_is_not_a_tuple_return() {
+        // agora-redesign #2031: `tuple[X, ...]` は同じ型の可変長の列 — 位置で複数の値を返す組ではない。
+        let code = r#"
+from typing import Tuple
+
+def names() -> tuple[str, ...]:
+    return ("a", "b")
+
+def rows() -> Tuple[int, ...]:
+    return (1, 2, 3)
+
+def maybe_names() -> tuple[str, ...] | None:
+    return None
+"#;
+        assert_eq!(check_code(code).len(), 0);
+    }
+
+    #[test]
+    fn test_a_fixed_pair_still_fires_beside_a_sequence() {
+        // 失敗ケース: 位置で値を返す組(2 つ・3 つ・入れ子)は今までどおり当たる — 省略記号の無い組だけを外していない。
+        let code = r#"
+def pair() -> tuple[str, int]:
+    return ("a", 1)
+
+def triple() -> tuple[str, str, str]:
+    return ("a", "b", "c")
+
+def nested() -> tuple[tuple[str, int], ...] | tuple[str, int]:
+    return ()
+"#;
+        assert_eq!(check_code(code).len(), 3);
     }
 
     #[test]
