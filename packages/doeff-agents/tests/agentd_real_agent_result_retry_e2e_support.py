@@ -19,6 +19,7 @@ from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
 from doeff_agents.io_handlers import run_driver_io
 from runner_env import (
+    codex_home_setting,
     personal_claude_config_dir_setting,
     real_claude_auth_email_setting,
     real_claude_config_dir_setting,
@@ -164,7 +165,7 @@ def _binding(agent_type: str, work_dir: Path) -> dict[str, str]:
         claude_config_dir = _prepare_real_claude_home(work_dir)
         return {"kind": "claude-code", "config_dir": str(claude_config_dir)}
     if agent_type == "codex":
-        codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))  # noqa: DOEFF004 - live e2e target is chosen by the runner's env (pre-existing)
+        codex_home = codex_home_setting() or str(Path.home() / ".codex")
         run_driver_io(trust_workspace_in_codex_home(codex_home, work_dir))
         return {"kind": "codex", "codex_home": codex_home}
     raise AssertionError(f"unsupported real agent type: {agent_type}")
