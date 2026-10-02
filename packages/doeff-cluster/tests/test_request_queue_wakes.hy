@@ -77,7 +77,7 @@
       (<- (Delay (- write.at-seconds at)))
       (:= at write.at-seconds))
     (for [path write.paths]
-      (<- (enqueue-request queue (http-request "GET" path {} None)))))
+      (<- (enqueue-request queue (! (http-request "GET" path {} None))))))
   None)
 
 
