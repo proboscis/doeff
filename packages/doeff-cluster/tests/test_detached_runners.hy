@@ -16,7 +16,6 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が名指す
 (import pathlib [Path])
-(import typing [NoReturn])
 (import httpx)
 (import pytest)
 (import doeff [run with_handlers Program])
@@ -173,7 +172,9 @@
   True)
 
 
-(defn #^ (get dict #(str RunnerFact)) by-name [#^ tuple facts]
+(defk by-name [facts]
+  {:pre [(: facts tuple)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "名簿の事実(RunnerFact)を担い手の名で引ける表にするため。"
   (dfor f facts f.name f))
 
 
@@ -183,7 +184,7 @@
   {:pre [] :post [(: % bool)]}
   ;; 名簿は 2 つとも生きていて drain でない。能力 y-tool を要る task は b に置かれ、走っている間の待ちは b を名指す。
   (<- roster tuple (ReadRunners))
-  (val facts (by-name roster))
+  (val facts (! (by-name roster)))
   (assert (= (sorted facts) ["a" "b"]) roster)
   (assert (all (gfor f (.values facts) (and f.live (not f.draining)))) roster)
   (assert (= #((. (get facts "a") provides) (. (get facts "a") exclusive)) #(#("x-tool") #())) roster)
@@ -218,7 +219,7 @@
   (assert (= on-y (DetachedSucceeded 103)) on-y)
   (<- (Delay AFTER-LEASE))
   (<- roster tuple (ReadRunners))
-  (val facts (by-name roster))
+  (val facts (! (by-name roster)))
   (assert (not (. (get facts "a") live)) roster)
   (assert (. (get facts "b") live) roster)
   True)
@@ -239,7 +240,7 @@
   (assert (= (get asked "status") 200) asked)
   (<- (Delay POLL))
   (<- roster tuple (ReadRunners))
-  (assert (. (get (by-name roster) "a") draining) roster)
+  (assert (. (get (! (by-name roster)) "a") draining) roster)
   (<- (submit-detached-task (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE))
   (<- (Delay (* 4 POLL)))
   (<- waiting (AwaitDetached "k-drain" :timeout-seconds 0.0))
@@ -450,8 +451,9 @@
 
 ;; --- 本物の client: coordinator に届かない送りと待ちは値で答える -------------------------------------------------------------
 
-(defn #^ NoReturn cut-off [#^ httpx.Request request]
-  "coordinator に届かない transport(接続が断られる)。"
+(deff cut-off [request]  ; defk にできない: httpx の MockTransport が呼ぶ callback
+  {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "coordinator に届かない transport(接続が断られる)として、要求ごとに接続の失敗を上げるため。"
   (raise (httpx.ConnectError "connection refused" :request request)))
 
 (deftest test-the-real-client-answers-unreachable-as-a-value

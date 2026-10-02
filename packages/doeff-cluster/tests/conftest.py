@@ -80,7 +80,7 @@ def served_coordinator(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
 
     from tests.served_fixtures import start_coordinator
 
-    url, process = start_coordinator(tmp_path_factory.mktemp("served"))
+    url, process = run(start_coordinator(tmp_path_factory.mktemp("served")))
     yield url
     process.terminate()
     process.wait(timeout=30)

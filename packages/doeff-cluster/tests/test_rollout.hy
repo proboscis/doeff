@@ -6,7 +6,7 @@
 ;;   - 「書き手が居る」= Deployment の Pod(終了中を含む)か、新の process のどちらかが動いている。
 ;; 確かめること: どの段の失敗でも旧を先に戻してから新を止める(書き手が 0 の拍が無い)・coordinator が落ちても続きから進む・
 ;; 配備の流れが Deployment の台数を戻したら Rollout の状態に出る・dry-run は k8s に保存しない。
-(require doeff-hy.macros [deftest defk <-])
+(require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -151,19 +151,23 @@
   None)
 
 
-(defn #^ None assert-old-restored-before-new-stopped [#^ Sim sim #^ str name]
-  "戻しの順: 新の Service を 0 にした出来事は、旧が Ready に戻った(restoredOldMs)後で、その時 k8s の Pod が ready だった。"
-  (setv status (. (get sim.state.rollouts name) status))
-  (setv stops (lfor e sim.state.audit
-                    :if (and (= e.kind "Service") (= (.get e.changes "spec.replicas") [1 0])) e))
+(defk assert-old-restored-before-new-stopped [sim name]
+  {:pre [(: sim Sim) (: name str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "戻しの順を確かめるため: 新の Service を 0 にした出来事は、旧が Ready に戻った(restoredOldMs)後で、その時 k8s の Pod が ready だった。"
+  (val status (. (get sim.state.rollouts name) status))
+  (val stops (lfor e sim.state.audit
+                   :if (and (= e.kind "Service") (= (.get e.changes "spec.replicas") [1 0])) e))
   (assert stops "新を止めていない")
   (for [e stops]
     (assert (>= e.at status.restored-old-ms) #(e status))
-    (setv pods-at (next (gfor #(at pods _) sim.log :if (= at e.at) pods)))
-    (assert (> pods-at 0) #(e sim.log))))
+    (val pods-at (next (gfor #(at pods _) sim.log :if (= at e.at) pods)))
+    (assert (> pods-at 0) #(e sim.log)))
+  None)
 
 
-(defn #^ list phases-of [#^ Sim sim #^ str name]
+(defk phases-of [sim name]
+  {:pre [(: sim Sim) (: name str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "rollout name の状態の履歴を、通った phase の名の列で読むため。"
   (lfor h (. (get sim.state.rollouts name) status history) h.phase))
 
 
@@ -171,7 +175,7 @@
   (setv sim (Sim))
   (sim.rollout "to-worker" FORWARD)
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "Complete"))
-  (assert (= (phases-of sim "to-worker") ["WaitingNewReady" "StoppingOld" "Observing" "Complete"]))
+  (assert (= (! (phases-of sim "to-worker")) ["WaitingNewReady" "StoppingOld" "Observing" "Complete"]))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 0))
   (assert (= (. (get sim.state.jobs 0) replicas) 1))
   (assert (= sim.gaps 0))
@@ -201,7 +205,7 @@
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "RolledBack"))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
   ;; 新を止めたのは、旧が Ready に戻った後(RollingBack の restoredOldMs の後に新の replicas が 0)
-  (assert-old-restored-before-new-stopped sim "to-worker")
+  (<- (assert-old-restored-before-new-stopped sim "to-worker"))
   (assert (= sim.gaps 0)))
 
 
@@ -216,7 +220,7 @@
   (assert (in "観察の間に" (. (get sim.state.rollouts "to-worker") status failure)))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
   (assert (= (. (get sim.state.jobs 0) replicas) 0))
-  (assert-old-restored-before-new-stopped sim "to-worker")
+  (<- (assert-old-restored-before-new-stopped sim "to-worker"))
   (assert (= sim.gaps 0)))
 
 
@@ -228,7 +232,7 @@
   (sim.call "PUT" "/resources/Rollout/to-worker" {"spec" (| FORWARD {"abort" True}) "resourceVersion" version})
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "RolledBack"))
   (assert (= (get sim.kube.deployments DEP "specReplicas") 1))
-  (assert-old-restored-before-new-stopped sim "to-worker")
+  (<- (assert-old-restored-before-new-stopped sim "to-worker"))
   ;; 中止の間も新は healthy のまま動き続け、旧が戻るまで止めなかった = 書き手が 0 の拍も、Ready の書き手が 0 の拍も無い
   (assert (= sim.gaps 0)))
 
@@ -243,7 +247,7 @@
   (sim.run-until "to-worker" #("Observing"))
   (<- (restart-coordinator sim))                     ; 観察の途中でもう一度(報告が揃うまで Unknown = 失敗と数えない)
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "Complete"))
-  (assert (= (phases-of sim "to-worker") ["WaitingNewReady" "StoppingOld" "Observing" "Complete"]))
+  (assert (= (! (phases-of sim "to-worker")) ["WaitingNewReady" "StoppingOld" "Observing" "Complete"]))
   (assert (= (lfor c sim.kube.calls (get c "replicas")) [0]))   ; 旧を止める命令は 1 度だけ(冪等・観測が 0 なら出さない)
   (assert (= sim.gaps 0)))
 

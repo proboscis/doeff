@@ -162,9 +162,10 @@
   None)
 
 
-(defn #^ list handoff-changes [#^ Sim sim]  ; defk にできない: 検の読みの道具(出来事の記録の欄を拾う)
-  "出来事の記録のうち、Service writer-a の status.handoff の移り変わり(前後の段)。記録は長い値を切った文字列にする
-   (resource_policy.short-value)ので、その時は段の名を文字列から拾う。"
+(defk handoff-changes [sim]
+  {:pre [(: sim Sim)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "出来事の記録のうち、Service writer-a の status.handoff の移り変わり(前後の phase)を読むため。記録は長い値を切った文字列にする
+   (resource_policy.short-value)ので、その時は phase の名を文字列から拾う。"
   (defn #^ (| str None) phase-of [#^ (| dict str None) v]  ; defk にできない: 内包表記の中の読みの道具
     (cond (is v None) None
           (isinstance v dict) (get v "phase")
@@ -174,14 +175,16 @@
         (tuple (gfor v (get e.changes "status.handoff") (phase-of v)))))
 
 
-(defn #^ bool gapless [#^ Sim sim]  ; defk にできない: 検の読みの道具
-  "書き手の空白が無いか: 最初の process が起きた後のどの拍も、1 つ以上の process が動いている。"
+(defk gapless [sim]
+  {:pre [(: sim Sim)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "書き手の空白が無いかを確かめるため: 最初の process が起きた後のどの拍も、1 つ以上の process が動いている。"
   (import itertools)
   (all (gfor row (itertools.dropwhile (fn [row] (= (get row 1) 0)) sim.log) (> (get row 1) 0))))
 
 
-(defn #^ int started [#^ Sim sim #^ str revision]  ; defk にできない: 検の読みの道具
-  "その版で起こした process の数。"
+(defk started [sim revision]
+  {:pre [(: sim Sim) (: revision str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "版 revision で起こした process の数を数えるため。"
   (len (lfor s sim.starts :if (= (get s 1) revision) s)))
 
 
@@ -245,10 +248,11 @@
   (assert (= (get (sim.status) "ready") "Ready"))
   (assert (not-in "handoff" (sim.status)) (sim.status))
   (assert (= sim.state.handoffs {}))
-  (assert (= (handoff-changes sim) [#(None "WaitingReady") #("WaitingReady" None)]) (handoff-changes sim))
+  (val changes (! (handoff-changes sim)))
+  (assert (= changes [#(None "WaitingReady") #("WaitingReady" None)]) changes)
   (assert (not (any (gfor j sim.replies (and j (.get j "handoffAbandoned"))))) "諦めの印は一度も載らない")
   ;; 書き手の空白は無い(どの拍も 1 つ以上の process が動いている)。
-  (assert (gapless sim) sim.log))
+  (assert (! (gapless sim)) sim.log))
 
 
 (deftest test-a-new-generation-not-ready-past-the-deadline-is-stopped-and-the-old-keeps-running
@@ -272,15 +276,15 @@
   (val row (next (gfor r (. (get sim.state.statuses "zeus") jobs) :if (= r.name "writer-a") r)))
   (assert (= row.phase "handoff-abandoned") row)
   ;; 起こし直さない: 時間が経っても、coordinator を作り直しても(諦めは保存される)、r2 は起きない。
-  (val starts-r2 (started sim "r2"))
+  (val starts-r2 (! (started sim "r2")))
   (<- (steps sim 20))
   (<- (restart-coordinator sim))
   (<- (steps sim 40))
-  (assert (= (started sim "r2") starts-r2) sim.starts)
+  (assert (= (! (started sim "r2")) starts-r2) sim.starts)
   (assert (= (sim.live "r2") []))
   (assert (= (len (sim.live "r1")) 1))
   (assert (= (get (get (sim.status) "handoff") "phase") "Abandoned"))
-  (assert (gapless sim) sim.log))
+  (assert (! (gapless sim)) sim.log))
 
 
 (deftest test-changing-the-declaration-lifts-the-abandonment-and-hands-off-again
@@ -296,9 +300,9 @@
   (assert (= (len (sim.live "r3")) 1) sim.processes)
   (assert (= (get (sim.status) "ready") "Ready"))
   (assert (not-in "handoff" (sim.status)))
-  (assert (= (lfor c (handoff-changes sim) (get c 1)) ["WaitingReady" "Abandoned" None "WaitingReady" None])
-          (handoff-changes sim))
-  (assert (gapless sim) sim.log))
+  (val changes (! (handoff-changes sim)))
+  (assert (= (lfor c changes (get c 1)) ["WaitingReady" "Abandoned" None "WaitingReady" None]) changes)
+  (assert (! (gapless sim)) sim.log))
 
 
 (deftest test-a-recreate-service-is-unchanged
@@ -310,9 +314,9 @@
   (<- (steps sim (+ TIMEOUT-SECONDS 60)))
   (assert (= (sim.live "r1") []))
   (assert (= (len (sim.live "r2")) 1) sim.processes)
-  (assert (= (started sim "r2") 1) sim.starts)
+  (assert (= (! (started sim "r2")) 1) sim.starts)
   (assert (= (get (sim.status) "ready") "NotReady"))
   (assert (not-in "handoff" (sim.status)))
   (assert (= sim.state.handoffs {}))
-  (assert (= (handoff-changes sim) []))
+  (assert (= (! (handoff-changes sim)) []))
   (assert (not (any (gfor j sim.replies (and j (in "handoffAbandoned" j)))))))
