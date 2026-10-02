@@ -13,7 +13,7 @@ class HostConfig:
     max_running: int | None
     backend: str
     herdr_socket: str
-    exit_when_orphaned: bool
+    orphan_supervisor: int | None
 
 #: `serve` が受け付ける flag の一覧 = `--help` の生成元(serve_usage_text が読む唯一の面)。
 #: 各項 = (flag, 値の見出し〔値を取らない旗は None〕, env の名〔無ければ None〕, 説明)。
