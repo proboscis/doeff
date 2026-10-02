@@ -1,6 +1,12 @@
 ;;; 汎用の file system の effect(file_effects.hy)の本物の答え手 os-file-handler(agora-redesign #802 便 1)。os・shutil・fcntl を呼んで値を
 ;;; 詰め替えるだけで、判断を持たない。失敗(OSError)は FileFailed の値で答える。
-(require doeff-hy.macros [defhandler defk <- val])
+;;;
+;;; 錠の取り(AcquireLock)は取れるまで待つ(fcntl.flock)。os-file-handler はその待ちを呼んだ thread で待つので、1 つの scheduler に task が
+;;; 並ぶ process では、錠を持った task が待ち(子 process・HTTP)へ移った間に別の task が同じ錠を取りに来ると scheduler の thread ごと
+;;; 塞がり、錠を持つ task が戻れず錠を返せない(agora-redesign #3051 — 着地の service の口を 1 つの scheduler の Program にする時に見つけた)。
+;;; offloaded-lock-handler は錠の取りだけを呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で待ち、他の task を回し続ける —
+;;; os-file-handler の内側に置き、外側に scheduled が要る。待つ task が取り消された後に取れた錠は、その場で返す(持ち主の無い錠を残さない)。
+(require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import fcntl)
 (import collections.abc [Callable])
@@ -14,6 +20,10 @@
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources])
 (import doeff_core_effects.python_bytecode [compile-python-sources])
+(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached])
+
+;; offloaded-lock-handler の thread(錠の取り 1 つに thread 1 本 — 同時の数の上限は錠を取りに来る task の数)。
+(val LOCK-THREADS (ThreadPerCall))
 
 
 (defk failed [path error]
@@ -280,4 +290,19 @@
     (resume answer))
   (MeasureTree [path]
     (<- answer (measure-tree path))
+    (resume answer)))
+
+
+(deff release-abandoned [answer]  ; defk にできない: Executor の thread で回す後始末の入口(offloaded の abandon — VM の外)
+  {:pre [(: answer (| LockHeld FileFailed))] :post [(: % None)]}
+  "待つ task が取り消された後に取れた錠を返すため(取れなかった答えは何も持たない)。"
+  (when (isinstance answer LockHeld)
+    (_release answer))
+  None)
+
+
+(defhandler offloaded-lock-handler
+  ;; 錠の取りだけを thread で待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。
+  (AcquireLock [path]
+    (<- answer (| LockHeld FileFailed) (offloaded LOCK-THREADS (fn [] (run-detached (acquire-lock path))) release-abandoned))
     (resume answer)))
