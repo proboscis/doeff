@@ -1,6 +1,6 @@
 ;; coordinator の資源の口: 資源ごとの compare-and-set・送り手と出来事の記録・所有者だけが消せる・旧い PUT /jobs の写し・
 ;; readiness・盤の行ごとの版。
-(require doeff-hy.macros [deftest val var])
+(require doeff-hy.macros [deftest defk <- val var])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.cluster_policy [board-changes job-from-json] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json board-rows-of])
@@ -412,3 +412,132 @@
   (assert (= (ready-of s 21000) "Ready"))
   (assert (= (ready-of s 40000) "Unknown"))                ; 20 秒 heartbeat が無い
   (assert (= (ready-of s (+ 20000 (. T reassign-after-ms) 1)) "NotReady")))
+
+
+;; --- 準備と計器の報告は観測の表に在る(#2756 J2)— 外の形は前と同じ・版も保存も動かさない ------------------------------------
+;; 報告は ClusterState.observations の readiness・metrics の表(記録 ReadinessReport・MetricsReport)に在る。GET /resources/Service の
+;; status.lastReadiness と GET /metrics の本文は前と同じ形で綴り、保存の差分(durable_kv.durable-delta)には何も出ない。
+
+(import json)
+(import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
+
+(defk last-readiness-json [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "GET /resources/Service/w の status.lastReadiness を、欄の順と値の型を保った JSON の文字列にするため(形を byte の単位で比べる)。"
+  (val answered (call state "GET" "/resources/Service/w" :now now))
+  (assert (= (get answered 1) 200) answered)
+  (json.dumps (get answered 2 "status" "lastReadiness") :ensure-ascii False))
+
+
+(deftest test-the-last-readiness-json-keeps-the-report-shape
+  ;; 欄の順は worker・pid・revision・instance・attempt・specHash・placement・at・ready・reason・role(#2756 の前に状態の readiness の行を
+  ;; そのまま写していた形)。attempt は送られた型のまま(文字列なら文字列・整数なら整数)・送らなかった欄は null・報告が無ければ null。
+  (val spec (| SPEC {"readiness" {"windowSeconds" 10}}))
+  (var s (get (call (ClusterState) "POST" "/resources/Service" {"name" "w" "spec" spec}) 0))
+  (<- unreported str (last-readiness-json s 1000))
+  (assert (= unreported "null") unreported)
+  (:= s (report s (ready-report spec "1-aaa" :attempt 2) 2000))
+  (<- sent-string str (last-readiness-json s 2000))
+  (assert (= sent-string
+             (+ "{\"worker\": \"atlas\", \"pid\": 7, \"revision\": \"r1\", \"instance\": \"1-aaa\", \"attempt\": \"2\", "
+                "\"specHash\": \"" (hash-of spec) "\", \"placement\": 1, \"at\": 2000, \"ready\": true, \"reason\": \"拍を終えた\", "
+                "\"role\": \"active\"}"))
+          sent-string)
+  ;; 整数の attempt・世代を持たない旧い process の報告(欠けた欄は null)・待機の役。
+  (:= s (report s {"worker" "atlas" "revision" "r1" "ready" False "attempt" 3 "role" "standby"} 3000))
+  (<- sent-int str (last-readiness-json s 3000))
+  (assert (= sent-int
+             (+ "{\"worker\": \"atlas\", \"pid\": null, \"revision\": \"r1\", \"instance\": null, \"attempt\": 3, "
+                "\"specHash\": null, \"placement\": null, \"at\": 3000, \"ready\": false, \"reason\": \"\", \"role\": \"standby\"}"))
+          sent-int))
+
+
+;; 下の検の状態の GET /metrics の本文(#2756 の前の coordinator — 計器の報告を写像で持っていた頃 — で取った物)。
+(val METRICS-TEXT
+  (.join "" (gfor line #("# TYPE aa_reads_total counter"
+                         "aa_reads_total{service=\"w\",worker=\"atlas\"} 2.5"
+                         "# TYPE doeff_worker_board_bytes gauge"
+                         "doeff_worker_board_bytes 0.0"
+                         "# TYPE doeff_worker_board_expiring_rows gauge"
+                         "doeff_worker_board_expiring_rows 0.0"
+                         "# TYPE doeff_worker_board_max_bytes gauge"
+                         "doeff_worker_board_max_bytes 67108864.0"
+                         "# TYPE doeff_worker_board_max_rows gauge"
+                         "doeff_worker_board_max_rows 20000.0"
+                         "# TYPE doeff_worker_board_rows gauge"
+                         "doeff_worker_board_rows 0.0"
+                         "# TYPE doeff_worker_env_cold_start_total counter"
+                         "doeff_worker_env_cold_start_total 0"
+                         "# TYPE doeff_worker_open_tasks gauge"
+                         "doeff_worker_open_tasks 0.0"
+                         "# TYPE doeff_worker_service_last_metrics_age_seconds gauge"
+                         "doeff_worker_service_last_metrics_age_seconds{service=\"w\"} 0.5"
+                         "# TYPE doeff_worker_service_metrics_age_seconds gauge"
+                         "doeff_worker_service_metrics_age_seconds{service=\"w\",worker=\"atlas\"} 0.5"
+                         "# TYPE doeff_worker_service_ready gauge"
+                         "doeff_worker_service_ready{service=\"w\"} 1.0"
+                         "# TYPE doeff_worker_service_ready_replicas gauge"
+                         "doeff_worker_service_ready_replicas{service=\"w\"} 1.0"
+                         "# TYPE doeff_worker_service_spec_replicas gauge"
+                         "doeff_worker_service_spec_replicas{service=\"w\"} 1.0"
+                         "# TYPE doeff_worker_service_standby gauge"
+                         "doeff_worker_service_standby{service=\"w\"} 0.0"
+                         "# TYPE doeff_worker_service_unplaced gauge"
+                         "doeff_worker_service_unplaced{service=\"w\"} 0.0"
+                         "# TYPE doeff_worker_worker_heartbeat_age_seconds gauge"
+                         "doeff_worker_worker_heartbeat_age_seconds{worker=\"atlas\"} 1.5"
+                         "# TYPE queue_depth gauge"
+                         "queue_depth{service=\"w\",worker=\"atlas\"} 2.0"
+                         "# TYPE reconcile_pass_seconds summary"
+                         "reconcile_pass_seconds_sum{service=\"w\",worker=\"atlas\"} 1.5"
+                         "reconcile_pass_seconds_count{service=\"w\",worker=\"atlas\"} 3"
+                         "# TYPE zz_writes_total counter"
+                         "zz_writes_total{service=\"w\",worker=\"atlas\"} 4.0")
+                  (+ line "\n"))))
+
+
+(deftest test-the-metrics-text-keeps-its-lines
+  ;; GET /metrics の本文は #2756 の前と 1 byte も違わない: 族の名の順・label の順・値の綴り(counter は _total と float・duration は
+  ;; _seconds_sum の float と _seconds_count の int・gauge は float)。計器の名は送った順に依らず名の順に並ぶ。
+  (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
+  (var s (get (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000) 0))
+  (:= s (beat s "atlas" 1000))
+  (:= s (beat s "atlas" 1500 (running-row spec "1-a")))
+  (:= s (report s (ready-report spec "1-a") 2000))
+  (:= s (report s (| (ready-report spec "1-a")
+                     {"metrics" {"counters" {"zz_writes" 4 "aa_reads" 2.5} "gauges" {"queue_depth" 2}
+                                 "durations" {"reconcile_pass" {"sum" 1.5 "count" 3}}}})
+                2500 :kind "metrics"))
+  (val answered (call s "GET" "/metrics" :now 3000))
+  (assert (= (get answered 1) 200) answered)
+  (assert (= (. (get answered 2) text) METRICS-TEXT) (. (get answered 2) text)))
+
+
+(deftest test-a-report-write-moves-neither-versions-nor-the-store-unless-the-verdict-moves
+  ;; 失敗の形: 報告を書いただけで資源の版・出来事の記録・保存の行が動く。計器の報告と、Service の判定(status.ready)を変えない準備の
+  ;; 報告は、観測の表の行を替えるだけ。
+  (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
+  (var s (get (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000) 0))
+  (:= s (beat s "atlas" 1000))
+  (:= s (beat s "atlas" 1500 (running-row spec "1-a")))
+  (:= s (report s (ready-report spec "1-a") 2000))
+  (assert (= (ready-of s 2000) "Ready"))
+  ;; 同じ process の 2 度目の Ready(判定は Ready のまま)— 表の行は新しい報告に替わるが、版も記録も保存も動かない。
+  (val again (report s (ready-report spec "1-a") 3000))
+  (assert (= (. (get (.row again.observations.readiness "w") -1) origin at) 3000) (.row again.observations.readiness "w"))
+  (assert (= #(again.revision again.audit-seq again.audit) #(s.revision s.audit-seq s.audit)))
+  (assert (= (durable-delta s again) {}) (durable-delta s again))
+  ;; 計器の報告も同じ(計器は資源の状態を変えない)。
+  (val metered (report again (| (ready-report spec "1-a") {"metrics" {"counters" {"writes" 1.0}}}) 3500 :kind "metrics"))
+  (assert (= (.size metered.observations.metrics) 1))
+  (assert (= #(metered.revision metered.audit-seq metered.audit) #(s.revision s.audit-seq s.audit)))
+  (assert (= (durable-delta again metered) {}) (durable-delta again metered))
+  ;; 反例の対照: 判定を変える準備の報告(Ready → NotReady)は、同じ比べが Service の版と出来事を進める — 版の比べ(dirty-keys)は観測の表
+  ;; readiness を読む(読まなければ status.ready の切り替わりを取りこぼす)。保存の差分に出るのは版の番号・版の記録・出来事だけ。
+  (val refused (report metered (ready-report spec "1-a" :ready False) 4000))
+  (assert (= (ready-of refused 4000) "NotReady"))
+  (assert (> (rv refused "Service" "w") (rv s "Service" "w")))
+  (assert (= (. (get refused.audit -1) changes) {"status.ready" ["Ready" "NotReady"]}) (get refused.audit -1))
+  (val stored (durable-delta metered refused))
+  (assert (in "counter" stored) stored)
+  (assert (all (gfor key stored (or (= key "counter") (.startswith key "meta/") (.startswith key "audit/")))) stored))

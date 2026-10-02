@@ -9,6 +9,7 @@
 ;;; 宣言の readiness の形の検め(readiness-refusal)・入れ替えの期限(handoff-timeout-ms)は doeff_cluster.shared.core.readiness_rules
 ;;; (宣言の側と coordinator の側が使う)・報告の揃え(reported-readiness)は doeff_cluster.shared.core.readiness_report。ここは型と定数だけ。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
@@ -31,6 +32,15 @@
 (val REASON-KEPT-CHARS 300)
 ;; 報告の本文の 1 つの欄の素の値(JSON の値)。
 (val JsonField (| dict list str int float bool None))
+
+
+(defrecord ReportedReadiness
+  "報告の ready・reason・role を coordinator が残す形に揃えた値(shared/core/readiness_report.reported-readiness の答え — #2756 の前は
+   同じ 3 欄の dict): ready = 準備できたか・reason = 理由の先頭 REASON-KEPT-CHARS 字・role = ROLE-ACTIVE か ROLE-STANDBY。coordinator の
+   準備の報告(coordinator/intent/cluster_model.ReadinessReport の 3 欄)と fake(readiness-memory の記録)が同じ値を持つ。"
+  (#^ bool ready)
+  (#^ str reason)
+  (#^ str role))
 
 
 (defclass [(dataclass :frozen True)] ReportReady [EffectBase]
