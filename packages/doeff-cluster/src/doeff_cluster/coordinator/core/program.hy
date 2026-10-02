@@ -115,7 +115,7 @@
 
 
 (defk fault-reply [fault]
-  {:pre [(: fault Fault)] :post [(: % ErrorReply)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: fault Fault)] :post [(: % ErrorReply)] :tags {:context "coordinator" :role "judgment"}}
   ;; coordinator の中の欠陥(api_policy.respond が 500 の Fault で返した例外)を log に 1 行出し、送り手に見せる本文を返す — 本文は
   ;; 送り手の誤りでないことを名乗る(#1024 — #1005 では中の TypeError が 400 に畳まれ、log にも出なかった)。
   (<- (CoordinatorFault fault))
@@ -124,7 +124,7 @@
 
 (defk request-reply [state request now timing [settled False]]
   {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming) (: settled bool)] :post [(: % tuple)]
-   :tags {:context "doeff-cluster" :role "program"}}
+   :tags {:context "coordinator" :role "program"}}
   ;; 版の変化を待つ読み(GET /watch)でない要求 1 件に答えるため: 判断(api_policy.respond)で次の状態と返事を導き、中の欠陥は log に
   ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文)。
   ;; 本文は道の型に解いてから判断に渡す(答え手 = coordinator/protocol/request_bodies — #2445)。
@@ -139,7 +139,7 @@
 
 
 (defk watch-answer-json [answer]
-  {:pre [(: answer WatchAnswer)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: answer WatchAnswer)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "GET /watch の答えを返事の本文(JSON の object)にするため。"
   {"revision" answer.revision "changed" answer.changed})
 
@@ -188,7 +188,7 @@
 
 
 (defk release-watchers [state watchers]
-  {:pre [(: state ClusterState) (: watchers tuple)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
+  {:pre [(: state ClusterState) (: watchers tuple)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
   ;; 止まる調停ループが、待たせている版の変化の待ちに「変わっていない」と今の版で返すため(送り手を受付の打ち切りまで待たせない)。
   ;; 答え = 返した数。
   (<- body dict (watch-answer-json (WatchAnswer state.revision False)))
