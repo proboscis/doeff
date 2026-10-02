@@ -59,9 +59,12 @@
   (<- text str (file-done (ReadText state-file)))
   (val data (json.loads text))
   (when (!= (.get data "formatVersion") 2)
-    (return (adopt-legacy (state-from-json data now) now (ClusterTiming))))
+    (<- old ClusterState (state-from-json data now))
+    (return (adopt-legacy old now (ClusterTiming))))
   (<- rows tuple (board-file-rows (os.path.join (os.path.dirname state-file) "board")))
-  (state-from-json data now (dfor row rows (get row "key") (get row "value")) (dfor row rows (get row "key") (get row "resourceVersion"))))
+  (<- state ClusterState (state-from-json data now (dfor row rows (get row "key") (get row "value"))
+                                          (dfor row rows (get row "key") (get row "resourceVersion"))))
+  state)
 
 
 (defk load-state [state-file store now]
@@ -73,17 +76,19 @@
   (when (! (durable-exists store))
     ;; 改名の前の置き先の鍵は、新しい鍵を書き終えてから消す(durable_kv.legacy-key-moves の 2 つの書きを順に fsync)。
     (<- loaded dict (durable-load store))
-    (val moves (legacy-key-moves loaded))
+    (<- moves list (legacy-key-moves loaded))
     (for [delta moves]
       (<- (durable-persist store delta)))
     (when moves
       (<- (slog (.format "coordinator: 置き先の鍵を新しい名へ移した({} 件)" (len (get moves -1))))))
-    (val resumed (resume-after-downtime (state-from-kv (.table store) now) now))
+    (<- stored ClusterState (state-from-kv (.table store) now))
+    (val resumed (resume-after-downtime stored now))
     (val state (get resumed 0))
     (val gap (get resumed 1))
     ;; ずらした時計(worker の最後の連絡・task の lease・Rollout の段の起点)と生きていた時刻を、受け付けを始める前に耐久にする
     ;; (durable_kv.resume-writes)。
-    (<- (durable-persist store (resume-writes (.table store) state)))
+    (<- writes dict (resume-writes (.table store) state))
+    (<- (durable-persist store writes))
     (when (> gap 0)
       (<- (slog (.format "coordinator: 止まっていた {:.1f} 秒を、進行中の Rollout の段と task の lease の時間に数えない" (/ gap 1000)))))
     (val recovery (.recovery store))
@@ -95,7 +100,8 @@
   ;; 置き場の無いところから起きた: task の id の頭を起動ごとに違う物にする(前の coordinator の id を振り直さない — #757)。
   (when (is legacy None)
     (return (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
-  (.replace-table store (full-kv legacy))
+  (<- kv dict (full-kv legacy))
+  (.replace-table store kv)
   (<- (durable-checkpoint store))
   (<- (slog (.format "coordinator: 以前の形の状態を追記の log の置き場へ移した(Service {}・盤 {} 行・版 {})"
                      (len legacy.jobs) (len legacy.board) legacy.revision)))

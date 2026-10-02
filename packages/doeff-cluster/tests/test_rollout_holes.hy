@@ -3,7 +3,7 @@
 ;;;   - 観察(Observing)の間の Unknown(担い手の heartbeat の途絶)は完了にも失敗にも数えない
 ;;;   - 失敗が続く action は間を空けて出す(毎秒の送り直しをしない)
 ;;;   - 戻し(RollingBack)が終わらない時は stuck の印を出し、新は止めない
-(require doeff-hy.macros [deftest val var])
+(require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView])
@@ -17,15 +17,18 @@
 (setv T (ClusterTiming))
 
 
-(defn #^ int restart-after [#^ Sim sim #^ int seconds]
-  "coordinator が seconds 秒止まってから、耐久の置き場(key の表)から起き直す。止まっている間も世界(Pod・worker の process)は進む。"
-  (setv kv (full-kv (mark-alive sim.state sim.now)))
+(defk restart-after [sim seconds]
+  {:pre [(: sim Sim) (: seconds int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "coordinator が seconds 秒止まってから、耐久の置き場(key の表)から起き直すため。止まっている間も世界(Pod・worker の process)は進む。
+   答え = ずらした止まっていた長さ(ms)。"
+  (<- kv dict (full-kv (mark-alive sim.state sim.now)))
   (for [_ (range seconds)]
     (+= sim.now 1000)
     (sim.advance-pods))
-  (setv #(state gap) (resume-after-downtime (state-from-kv kv sim.now) sim.now))
-  (setv sim.state state)
-  gap)
+  (<- stored ClusterState (state-from-kv kv sim.now))
+  (val resumed (resume-after-downtime stored sim.now))
+  (setv sim.state (get resumed 0))
+  (get resumed 1))
 
 
 (deftest test-downtime-in-the-middle-of-observing-is-not-counted
@@ -35,7 +38,7 @@
   (sim.run-until "to-worker" #("Observing"))
   (for [_ (range 30)] (sim.step))
   (setv since (. (get sim.state.rollouts "to-worker") status phase-since-ms))
-  (setv gap (restart-after sim 600))
+  (<- gap int (restart-after sim 600))
   (assert (>= gap 600000))
   (assert (= (. (get sim.state.rollouts "to-worker") status phase-since-ms) (+ since gap)))
   (sim.step)
