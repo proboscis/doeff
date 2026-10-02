@@ -40,7 +40,7 @@
   (#^ (get frozenset str) _removed)
   (#^ int _size)
 
-  (defn __init__ [self #^ (get dict #(str V)) base #^ (get dict #(str V)) delta #^ (get frozenset str) removed]
+  (defn #^ None __init__ [self #^ (get dict #(str V)) base #^ (get dict #(str V)) delta #^ (get frozenset str) removed]
     (object.__setattr__ self "_base" base)
     (object.__setattr__ self "_delta" delta)
     (object.__setattr__ self "_removed" removed)
@@ -105,7 +105,7 @@
     "写し(copy.copy・copy.deepcopy)と pickle のため — 欄の書きを断る表を、作る口(__init__)を通して作り直す。"
     #(Table #(self._base self._delta self._removed)))
 
-  (defn __setattr__ [self #^ str name #^ object value]
+  (defn #^ None __setattr__ [self #^ str name #^ object value]
     (raise (AttributeError (.format "Table は変えられない(欄 {!r} を書こうとした)" name)))))
 
 
@@ -162,7 +162,7 @@
   (#^ (get Table V) _table)
   (#^ (get dict #(str (| V None))) _writes)
 
-  (defn __init__ [self #^ (get Table V) table]
+  (defn #^ None __init__ [self #^ (get Table V) table]
     (setv self._table table
           self._writes {}))
 

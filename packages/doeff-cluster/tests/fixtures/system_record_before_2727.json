@@ -1,0 +1,758 @@
+[
+ {
+  "k": "run",
+  "format": 2,
+  "startedMs": 1000000,
+  "service": "system",
+  "run": "r1",
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 0,
+  "t": "root",
+  "at": 1000000,
+  "ty": "doeff_core_effects.scheduler:Spawn",
+  "m": "live",
+  "a": {
+   "priority": 10,
+   "daemon": false,
+   "child": "root.0"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 1,
+  "t": "root.0",
+  "at": 1000000,
+  "ty": "doeff_core_effects.effects:Ask",
+  "m": "read",
+  "a": {
+   "key": "box"
+  },
+  "ok": true,
+  "v": [],
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 3,
+  "t": "root.0",
+  "at": 1000000,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.3
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 4,
+  "s": 0,
+  "at": 1000000,
+  "ok": true,
+  "v": {
+   "$h": "task",
+   "id": "root.0"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 5,
+  "t": "root",
+  "at": 1000000,
+  "ty": "doeff_core_effects.scheduler:Spawn",
+  "m": "live",
+  "a": {
+   "priority": 10,
+   "daemon": false,
+   "child": "root.1"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 6,
+  "t": "root.1",
+  "at": 1000000,
+  "ty": "doeff_core_effects.effects:Ask",
+  "m": "read",
+  "a": {
+   "key": "box"
+  },
+  "ok": true,
+  "v": {
+   "$w": 1
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 8,
+  "t": "root.1",
+  "at": 1000000,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.5
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 9,
+  "s": 5,
+  "at": 1000000,
+  "ok": true,
+  "v": {
+   "$h": "task",
+   "id": "root.1"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 10,
+  "t": "root",
+  "at": 1000000,
+  "ty": "doeff_core_effects.scheduler:Spawn",
+  "m": "live",
+  "a": {
+   "priority": 10,
+   "daemon": false,
+   "child": "root.2"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 11,
+  "t": "root.2",
+  "at": 1000000,
+  "ty": "doeff_core_effects.effects:Ask",
+  "m": "read",
+  "a": {
+   "key": "box"
+  },
+  "ok": true,
+  "v": {
+   "$w": 1
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 13,
+  "t": "root.2",
+  "at": 1000000,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.7
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 14,
+  "s": 10,
+  "at": 1000000,
+  "ok": true,
+  "v": {
+   "$h": "task",
+   "id": "root.2"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 15,
+  "t": "root",
+  "at": 1000000,
+  "ty": "doeff_core_effects.scheduler:Gather",
+  "m": "live",
+  "a": {
+   "on": [
+    {
+     "$h": "task",
+     "id": "root.0"
+    },
+    {
+     "$h": "task",
+     "id": "root.1"
+    },
+    {
+     "$h": "task",
+     "id": "root.2"
+    }
+   ]
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 16,
+  "s": 3,
+  "at": 1000300,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 17,
+  "t": "root.0",
+  "at": 1000300,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:40.300000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 19,
+  "t": "root.0",
+  "at": 1000300,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/a",
+  "a": {
+   "key": "log/a",
+   "value": [
+    "a0@1000300"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 21,
+  "t": "root.0",
+  "at": 1000300,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.3
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 22,
+  "s": 8,
+  "at": 1000500,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 23,
+  "t": "root.1",
+  "at": 1000500,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:40.500000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 25,
+  "t": "root.1",
+  "at": 1000500,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/b",
+  "a": {
+   "key": "log/b",
+   "value": [
+    "a0@1000300",
+    "b0@1000500"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 27,
+  "t": "root.1",
+  "at": 1000500,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.5
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 28,
+  "s": 21,
+  "at": 1000600,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 29,
+  "t": "root.0",
+  "at": 1000600,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:40.600000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 31,
+  "t": "root.0",
+  "at": 1000600,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/a",
+  "a": {
+   "key": "log/a",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 33,
+  "t": "root.0",
+  "at": 1000600,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.3
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 34,
+  "s": 13,
+  "at": 1000700,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 35,
+  "t": "root.2",
+  "at": 1000700,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:40.700000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 37,
+  "t": "root.2",
+  "at": 1000700,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/c",
+  "a": {
+   "key": "log/c",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 39,
+  "t": "root.2",
+  "at": 1000700,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.7
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 40,
+  "s": 33,
+  "at": 1000900,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 41,
+  "t": "root.0",
+  "at": 1000900,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:40.900000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 43,
+  "t": "root.0",
+  "at": 1000900,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/a",
+  "a": {
+   "key": "log/a",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700",
+    "a2@1000900"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 45,
+  "t": "root.0",
+  "at": 1000900,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.3
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 46,
+  "s": 27,
+  "at": 1001000,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 47,
+  "t": "root.1",
+  "at": 1001000,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:41+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 49,
+  "t": "root.1",
+  "at": 1001000,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/b",
+  "a": {
+   "key": "log/b",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700",
+    "a2@1000900",
+    "b1@1001000"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "req",
+  "e": 51,
+  "t": "root.1",
+  "at": 1001000,
+  "ty": "doeff_time.effects.time:DelayEffect",
+  "m": "read",
+  "a": {
+   "seconds": 0.5
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 52,
+  "s": 45,
+  "at": 1001200,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 53,
+  "t": "root.0",
+  "at": 1001200,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:41.200000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 55,
+  "t": "root.0",
+  "at": 1001200,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/a",
+  "a": {
+   "key": "log/a",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700",
+    "a2@1000900",
+    "b1@1001000",
+    "a3@1001200"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 57,
+  "s": 39,
+  "at": 1001400,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 58,
+  "t": "root.2",
+  "at": 1001400,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:41.400000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 60,
+  "t": "root.2",
+  "at": 1001400,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/c",
+  "a": {
+   "key": "log/c",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700",
+    "a2@1000900",
+    "b1@1001000",
+    "a3@1001200",
+    "c1@1001400"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 62,
+  "s": 51,
+  "at": 1001500,
+  "ok": true,
+  "v": null,
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 63,
+  "t": "root.1",
+  "at": 1001500,
+  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "m": "read",
+  "ok": true,
+  "v": {
+   "$dt": "1970-01-01T00:16:41.500000+00:00"
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 65,
+  "t": "root.1",
+  "at": 1001500,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "log/b",
+  "a": {
+   "key": "log/b",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700",
+    "a2@1000900",
+    "b1@1001000",
+    "a3@1001200",
+    "c1@1001400",
+    "b2@1001500"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ },
+ {
+  "k": "ans",
+  "e": 67,
+  "s": 15,
+  "at": 1001500,
+  "ok": true,
+  "v": [
+   4,
+   3,
+   2
+  ],
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 68,
+  "t": "root",
+  "at": 1001500,
+  "ty": "doeff_core_effects.effects:Ask",
+  "m": "read",
+  "a": {
+   "key": "box"
+  },
+  "ok": true,
+  "v": {
+   "$w": 1
+  },
+  "_chunk": 0
+ },
+ {
+  "k": "call",
+  "e": 70,
+  "t": "root",
+  "at": 1001500,
+  "ty": "doeff_cluster.shared.intent.shared_model:WriteShared",
+  "m": "output",
+  "sj": "final",
+  "a": {
+   "key": "final",
+   "value": [
+    "a0@1000300",
+    "b0@1000500",
+    "a1@1000600",
+    "c0@1000700",
+    "a2@1000900",
+    "b1@1001000",
+    "a3@1001200",
+    "c1@1001400",
+    "b2@1001500"
+   ],
+   "expect": {
+    "$c": "doeff_cluster.shared.intent.shared_model:AnyExpect",
+    "f": {}
+   }
+  },
+  "ok": true,
+  "v": true,
+  "_chunk": 0
+ }
+]

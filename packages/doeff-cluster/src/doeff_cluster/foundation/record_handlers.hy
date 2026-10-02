@@ -36,7 +36,8 @@
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
-(import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize])
+(import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize
+                                              entry-of queue-of recorded-args])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.foundation.host_contract [HostContract])
@@ -569,12 +570,12 @@
     (setv e (.current self))
     (when (or (is e None) self.finished (is-not self.divergence None)) (return None))
     (setv #(_ kind owner extra) (get self.rec.events self.cursor))
-    (setv entry (.get self.rec.entries (if (= kind "req") e extra)))
+    (setv entry (entry-of self.rec (if (= kind "req") e extra)))
     (.diverge self {"reason" (if (in owner self.ended)
                                  "記録ではこの後も問いを出す task が、再生では先に終わった"
                                  "記録の出来事を再生の業務の Program が出さないまま止まった")
                     "event" e "kind" kind "task" owner
-                    "expected" (if (is entry None) None {"type" entry.type "args" entry.args})
+                    "expected" (if (is entry None) None {"type" entry.type "args" (recorded-args entry)})
                     "at" (if (is entry None) None entry.at)})
     ;; 分岐は self.divergence に残る。stall は印を付けるだけで、答えは返さない。
     None)
@@ -633,7 +634,7 @@
     ;; 失敗の答えは err の欄を持つ(read-recording が ok = 偽の答えの行から入れる)— 無ければ記録が壊れている。
     (when (is entry.error None)
       (raise (ValueError (.format "記録の失敗の答え(問い {})に err が無い" entry.e))))
-    (return #(False (decode-error entry.error))))
+    (return #(False (decode-error (json.loads entry.error.text)))))
   (match entry.value
     (WatchedRef :entry watched) #(True (get state.watched watched))
     ;; 渡すのは読んだ値の写し — 業務と再生の箱が書き換えても Entry.value(記録の読みの答え)は変わらない
@@ -658,8 +659,9 @@
     (setv mode (mode-of effect state.handles))
     (setv child (if (isinstance effect Spawn) (.child-label state label) None))
     (setv args (if (is child None) (args-of effect state.handles) (| (args-of effect state.handles) {"child" child})))
-    (setv subject (subject-of effect args) queue (.get rec.queues label []) head (.get state.heads label 0))
-    (setv #(verdict pos skipped) (match-step rec queue head codec.name args mode subject (in label rec.ended)))
+    (setv subject (subject-of effect args) queue (queue-of rec label) head (.get state.heads label 0))
+    ;; 引数の比べる形はこの問いにつき 1 度だけ作る(記録の側は read-recording が作った文字列 — #2727)。
+    (setv #(verdict pos skipped) (match-step rec queue head codec.name (canonical args) mode subject (in label rec.ended)))
     ;; 記録に在って再生が出さなかった decision / output(missing)は、その出来事を済ませたことにして報告する。
     (for [e skipped]
       (setv missed (get rec.entries e))
@@ -673,7 +675,7 @@
         (do (setv entry (if (< pos (len queue)) (get rec.entries (get queue pos)) None))
             (val divergence (.diverge state {"reason" (if (is entry None) "記録ではもう問いを出さない task が問いを出した" "問いが記録と食い違った")
                              "task" label "event" (if entry entry.e None) "at" (if entry entry.at None)
-                             "expected" (if entry {"type" entry.type "args" entry.args} None)
+                             "expected" (if entry {"type" entry.type "args" (recorded-args entry)} None)
                              "actual" {"type" codec.name "args" args}}))
             (<- (wake (.wakeable state)))
             (raise (ReplayDiverged (get divergence "reason"))))
