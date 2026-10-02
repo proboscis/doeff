@@ -115,7 +115,8 @@
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES] doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleTaken]
+        doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
@@ -125,7 +126,7 @@
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_cluster.coordinator.protocol.store [Persist])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 (import doeff_cluster.shared.protocol.declaration_requests [create-body spec-for-update])
@@ -678,6 +679,15 @@
   "止まっている秒(None = 作り直さない)を取り出して空にする。"
   {:answer (| float None) :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect NoteReplayedWrites
+  "調停ループが眠った静かな区間の歩をまとめて保存する Persist の数(生存の印を書く歩の数)を覚える(#2790 — その書きは 1 拍ずつの走りでは
+   起きる前の刻の書きなので、落ちの注入で落とさない)。"
+  {:fields [(: count int)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect TakeReplayedWrite
+  "次の Persist が、まとめて保存する区間の歩の書きか(真なら覚えた数を 1 減らす)。"
+  {:answer bool :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect CoordinatorStarted
   "coordinator の Pod が起きた(時刻 ms)。"
   {:fields [(: ms int)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
@@ -829,7 +839,8 @@
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
           (<- (enqueue-request link.queue (http-request method path query body :slot promise :actor link.actor :peer link.peer)))
-          (<- answer (| tuple None) (promise-or-timeout promise.future REPLY-SECONDS))
+          ;; 区間の中で吸った待ちは、送り直しの刻から打ち切りを数え直す(1 拍ずつの走りでは返事と送り直しがあり打ち切りは来ない — #2790)。
+          (<- answer (| tuple None) (await-answer link.queue promise REPLY-SECONDS))
           (if (is answer None)
               #(None {"error" (.format "coordinator の返事が {} 秒で来ない(途中で切れた)" REPLY-SECONDS)})
               answer))))
@@ -1723,7 +1734,14 @@
   ;; 報告(ReportReady・ReportMetrics)を世界へ記録し、返事の前に落ちた時に接続の失敗を返す相手として取った要求を覚える。筋書きの
   ;; 止まり(止めの合図)と落ち(Persist の失敗 — 返事をせずに落ちる)を注入する。効果はそのまま外側(本物の組)へ出し直す。
   (NextRequests [timeout-seconds limit]
-    (<- batch list effect)
+    ;; 模擬の列は、眠った静かな区間の歩を添えて返す(IdleTaken — #2790)。篩うのは取った要求だけ。区間の歩の書き(生存の印の歩)は
+    ;; 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
+    (<- taken (| list IdleTaken) effect)
+    (<- batch list (taken-batch taken))
+    (when (isinstance taken IdleTaken)
+      (val marks (len (lfor step taken.steps :if step.marked step)))
+      (when (> marks 0)
+        (<- (NoteReplayedWrites marks))))
     (<- faults RouteFaults (RouteFaultsNow))
     (val kept (lfor r batch :if (and (not-in r.peer faults.cut) (not-in #(r.method r.path) faults.failing)) r))
     (<- reports tuple (reports-in kept faults.now-ms))
@@ -1737,13 +1755,18 @@
         (in r.peer faults.cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
         (in #(r.method r.path) faults.failing)
           (<- (CompletePromise r.slot #((get faults.failing #(r.method r.path)) {"error" FAULT-REASON})))))
-    (resume kept))
+    (resume (if (isinstance taken IdleTaken) (replace taken :batch kept) kept)))
   (Reply [request status body]
     (<- (ReleaseRequest request))
     (<- effect)
     (resume None))
   (Persist [writes]
-    (<- crash bool (PauseDue PAUSE-CRASH))
+    ;; まとめて保存する区間の歩の書きは落とさない(落ちの注入より前の刻の書き — CrashCoordinator が区間を起こして切る)。
+    (<- replayed bool (TakeReplayedWrite))
+    (var crash False)
+    (when (not replayed)
+      (<- due bool (PauseDue PAUSE-CRASH))
+      (:= crash due))
     (when crash
       (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))
     (<- effect)
@@ -1942,6 +1965,7 @@
   (session var failing {})
   (session var held #())
   (session var pausing (SimPauses :queued #()))
+  (session var replayed-writes 0)
   (session var runs #())
   (session var end-waiters {})
   (session var watch-failures #())
@@ -2072,13 +2096,25 @@
     (if (is due None)
         (resume False)
         (do (:= pausing (SimPauses :queued (tuple (gfor p pausing.queued :if (is-not p due) p)) :downtime (get due 1)))
+            ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
+            (setattr parts.queue "ends-at-marks" (any (gfor p pausing.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
+  (NoteReplayedWrites [count]
+    (:= replayed-writes (+ replayed-writes count))
+    (resume None))
+  (TakeReplayedWrite []
+    (if (> replayed-writes 0)
+        (do (:= replayed-writes (- replayed-writes 1))
+            (resume True))
+        (resume False)))
   (DowntimeOf []
     (val taken pausing.downtime)
     (:= pausing (replace pausing :downtime None))
     (resume taken))
   (CoordinatorStarted [ms]
     (:= runs (+ runs #((SimCoordinatorRun :started-ms ms))))
+    ;; 前の一生が区間の歩を保存し終えずに落ちていても(置き場の失敗の注入)、その数を新しい一生の書きへ持ち越さない。
+    (:= replayed-writes 0)
     (resume None))
   (CoordinatorEnded [ms outcome]
     (:= runs (tuple (gfor #(i run) (enumerate runs) (if (= i (- (len runs) 1)) (replace run :ended-ms ms :outcome outcome) run))))
@@ -2155,6 +2191,10 @@
     (resume None))
   (CrashCoordinator [seconds]
     (:= pausing (replace pausing :queued (+ pausing.queued #(#(PAUSE-CRASH (float seconds))))))
+    ;; 落ちるのは次の Persist(1 拍ずつの走りでは、注入の後の最初の書き)。静かな区間を眠っている coordinator を起こし(注入の刻より前の
+    ;; 歩をまとめて保存し、その後の最初の歩を本物の歩にする)、落ちるまでは生存の印を書く最初の歩で区間を切る(#2790)。
+    (setattr parts.queue "ends-at-marks" True)
+    (<- (nudge-takers parts.queue))
     (resume None))
   (CoordinatorRuns []
     (resume runs))

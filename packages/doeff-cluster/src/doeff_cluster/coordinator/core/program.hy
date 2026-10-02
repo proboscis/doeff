@@ -35,9 +35,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
 (import doeff_hy.table [Table TableWrite])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
                                                        DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
-(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch earliest-deadline])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
@@ -150,16 +150,28 @@
   ;; watchers = 返事を待たせている版の変化の待ち(Watcher の tuple — watch_policy)。永続化の後に、前からの待ちとこのまとまりで
   ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の拍へ持ち越す。
   ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
-  (<- wake (| int None) (earliest-deadline watchers))
-  (<- batch list (IdleNextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :wake-ms wake)))
+  (<- taken (| list IdleTaken) (IdleNextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :watchers watchers)))
+  ;; 模擬の時計の下の受け口は、眠った静かな区間の歩(1 拍ずつの走りが下したはずの歩 — 生存の印と、吸った待ちの期限の引き直し)を
+  ;; 添えて返す(#2790)。歩ごとに保存して(置き場の書きの列は 1 拍ずつの走りと同じ)、その後の状態と待ちから本物の歩を回す。
+  ;; 本番の受け口は要求の list だけを返す。
+  (var base state)
+  (var held watchers)
+  (var batch [])
+  (match taken
+    (IdleTaken) (do (for [step taken.steps]
+                      (<- (SaveState base step.state))
+                      (:= base step.state)
+                      (:= held step.watchers))
+                    (:= batch taken.batch))
+    _ (:= batch taken))
   (<- now int (now-epoch-ms))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
   ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
-  (val tick-answer (tick state now timing))
+  (val tick-answer (tick base now timing))
   (var next tick-answer)
   (var replies #())
-  (var waiting watchers)
+  (var waiting held)
   (for [request batch]
     (<- watch (| Watcher WatchRefusal None) (watch-of request now))
     (match watch
@@ -173,7 +185,7 @@
     (<- ticked ClusterState (rollout-tick next timing naming now))
     (:= next ticked))
   (:= next (mark-alive next now))
-  (<- (SaveState state next))
+  (<- (SaveState base next))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。

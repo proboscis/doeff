@@ -965,13 +965,17 @@
 (defclass [(dataclass :frozen True)] Watcher []
   "GET /watch の待ち 1 件(調停ループが返事まで持つ)。request = 返事を返す相手の要求・after = 送り手が知っている版・deadline-ms =
    変わらなくても返す刻(epoch ms)・worker / boot = 名指した worker とその process の世代(None = coordinator 全体の版だけを見る)・
-   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)。"
+   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)。asked = 問いの after(送り手が
+   問いに書いた版 — after は版が進んでも見え方が変わらなければ進むが、asked は変わらない)・seconds = 問いの待つ秒(timeoutSeconds)。
+   asked と seconds は、模擬の時計の下の受け口が期限の来た待ちを区間の中で吸ってよいかを判じる材料(idle_policy.absorbable — #2790)。"
   (#^ Request request)
   (#^ int after)
   (#^ int deadline-ms)
   (setv #^ (| str None) worker None)
   (setv #^ (| str None) boot None)
-  (setv #^ (| HeartbeatReply None) mark None))
+  (setv #^ (| HeartbeatReply None) mark None)
+  (setv #^ int asked 0)
+  (setv #^ float seconds 0.0))
 
 
 (defclass [(dataclass :frozen True)] WatchRefusal []
@@ -996,13 +1000,39 @@
 ;; --- effect ----------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] IdleProbe []
-  "要求の無い拍を飛ばしてよい長さを、模擬の時計の下の受け口が本番と同じ判断の関数で試すための材料(idle_policy.quiet-ticks —
-   2026-09-30)。state = この拍の前の調停の状態・timing / naming = 調停ループの設定・wake-ms = 版の変化を待つ要求(GET /watch)の
-   いちばん早い期限(epoch ms — 無ければ None。その刻の後の最初の拍は、待ちに返事をするので飛ばさない)。本番の受け口は読まない。"
+  "要求の無い間の静かな区間を、模擬の時計の下の受け口が本番と同じ判断の関数で 1 歩ずつ試すための材料(idle_policy.quiet-stretch —
+   2026-09-30・#2790)。state = この歩の前の調停の状態・timing / naming = 調停ループの設定・watchers = 返事を待たせている版の変化の
+   待ち(Watcher の tuple — 区間の中で期限が来た待ちは、1 拍ずつの走りの「変わっていない」の返事と送り直しを吸って期限を引き直す)。
+   本番の受け口は読まない。"
   (#^ ClusterState state)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
-  (setv #^ (| int None) wake-ms None))
+  (setv #^ tuple watchers #()))
+
+
+(defrecord QuietStep
+  "模擬の時計の下で一度に進めた静かな区間の 1 歩(1 拍ずつの走りの coordinator-step 1 回に当たる — #2790)。at = 歩の刻(epoch ms)・
+   state = その歩の後の調停の状態(1 拍ずつの走りの SaveState の after と同じ値)・watchers = その歩の後の待ち(期限を引き直した物を含む)・
+   marked = その歩が生存の印を書いたか(静かな歩のうち置き場へ書くのは印の歩だけ — 落ちの注入の数え方が読む)。"
+  (#^ int at)
+  (#^ ClusterState state)
+  (#^ tuple watchers)
+  (#^ bool marked))
+
+
+(defrecord QuietStretch
+  "静かな区間を本番の判断で試した答え(idle_policy.quiet-stretch): steps = 試して静かだった歩(QuietStep の tuple — 刻の順)・end-at =
+   最初の静かでない歩の刻(区間の終わり — 調停ループが本物の歩を回す刻。試した上限までに無ければ None)。"
+  (#^ tuple steps)
+  (#^ (| int None) end-at))
+
+
+(defrecord IdleTaken
+  "模擬の時計の下の受け口が IdleNextRequests に返す答え(本番の受け口は要求の list を返す): steps = 眠った区間の中で 1 拍ずつの走りが
+   下したはずの歩(QuietStep の tuple — 刻の順。調停ループは歩ごとに SaveState してから本物の歩を回す)・batch = 起きた時に取った要求の
+   list(本番の答えと同じ意味)。"
+  (#^ tuple steps)
+  (#^ list batch))
 
 
 (defclass [(dataclass :frozen True)] IdleNextRequests [NextRequests]
