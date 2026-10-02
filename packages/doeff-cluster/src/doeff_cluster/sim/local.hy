@@ -141,6 +141,7 @@
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import doeff_cluster.worker.entry.job_entry [decoded-program])
@@ -1674,7 +1675,8 @@
   {:pre [(: worker SimWorker) (: policy WorkerPolicy) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
   "worker の世代 1 つ: 本物の run-worker を、本番の入口と同じ組み立て(worker-on)で偽の宿の組の上で回す(止まれの合図で全 job を
    止めの手順で回収して終わる)。"
-  (<- (worker-on [(sim-host worker boot)] policy))
+  ;; 拍の間の眠り(AwaitNextTick)は本番と同じ答え手 tick-pauses(偽の宿の外側)。
+  (<- (worker-on [tick-pauses (sim-host worker boot)] policy))
   boot)
 
 

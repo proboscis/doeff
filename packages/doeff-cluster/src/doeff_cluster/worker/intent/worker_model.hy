@@ -328,3 +328,14 @@
   (setv #^ dict records (field :default-factory dict))
   ;; 最後に読めた温める env の列(宣言が読めない拍もこれを使い続ける — desired と同じ)。
   (setv #^ tuple warm #()))
+
+
+;; --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
+
+(defclass [(dataclass :frozen True)] AwaitNextTick [EffectBase]
+  "結果は None。調整ループが拍の後に次の拍まで眠るため。答え手が眠り方を決める: 本番の組は worker/protocol/tick_pauses の tick-pauses
+   (core/program.tick-pause — tick-seconds を宣言の変化の呼び鈴 changed と競わせる)。state = この拍の後の記憶(模擬の時計の下の宿が、
+   先の拍を本番の判断で試す材料 — 本番の答え手は読まない)。"
+  (#^ WorkerPolicy policy)
+  (#^ (| Future None) changed)
+  (#^ WorkerState state))

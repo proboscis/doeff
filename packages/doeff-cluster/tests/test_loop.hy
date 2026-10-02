@@ -8,6 +8,7 @@
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
   WorkerStopRequested PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000
                            :tick-seconds 0.1)
@@ -62,8 +63,8 @@
   (ReapJob [name pid outcome exit-code] (.reap world (ReapJob name pid outcome exit-code)) (resume None)))
 
 (defn #^ Callable fake-host [#^ FakeWorld world #^ tuple script #^ int stop-at]
-  "台本の外側に仮想の時計(world の SimClock)を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
-  (fn [program] ((sim-time-handler :clock world.clock) ((fake-host-script world script stop-at) program))))
+  "台本の外側に仮想の時計(world の SimClock)と、拍の間の眠りの本番の答え手 tick-pauses を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
+  (fn [program] ((sim-time-handler :clock world.clock) (tick-pauses ((fake-host-script world script stop-at) program)))))
 
 (defn #^ list events-of [#^ FakeWorld world #^ str name]
   (lfor e world.events :if (= (get e 1) name) (cut e 0 3)))

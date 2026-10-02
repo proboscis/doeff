@@ -27,6 +27,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.worker.protocol.stop [stop-flag StopState])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
@@ -86,7 +87,7 @@
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-file-handler
    (session-store) (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (process-host host) local-host])
+   (probe-host probes) (process-host host) local-host tick-pauses])
 
 
 (defk worker-on [handlers policy]
