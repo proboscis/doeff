@@ -28,6 +28,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
+                                                                 ServiceVersionRead service-versions-never-go-back
                                                                  WorkerProbe alive-only-while-reachable
                                                                  PlacementSeen WorkerGone places-only-on-reachable
                                                                  ProcessSpan WorkerCapacity running-within-capacity
@@ -561,6 +562,51 @@
   (<- reads tuple (sim-cluster (beacons sim-foundation) (revision-across-a-stop 10.0) :store ForgetsOnReload))
   (<- drops tuple (revision-never-goes-back reads))
   (assert (= (len drops) 1) #(drops reads)))
+
+
+(defk service-versions-across-a-stop [seconds]
+  {:pre [(: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C12 の記録を集めるため: 8 秒待って GET /state の Service ごとの resourceVersion を読み、coordinator を seconds 秒止め、作り直しの後に
+   25 秒待ってもう 1 度読む(読んだ順の ServiceVersionRead の列・時刻は筋書きの予定の刻)。"
+  (<- (Delay 8.0))
+  (<- before dict (ReadCoordinator "/state"))
+  (<- (StopCoordinator seconds))
+  (<- (Delay (+ seconds 25.0)))
+  (<- after dict (ReadCoordinator "/state"))
+  (val read-of (fn [at-ms state] (tuple (gfor job (get state "jobs")
+                                             (ServiceVersionRead :at-ms at-ms :service (get job "name")
+                                                                 :version (get job "resourceVersion"))))))
+  (+ (read-of 8000 before) (read-of (int (* (+ 8.0 seconds 25.0) 1000)) after)))
+
+
+(deftest test-service-versions-never-go-back-across-a-stop
+  ;; 条 C12(architecture.hy の :invariants): 止まりの前に読んだ Service ごとの resourceVersion より、作り直しの後の版が小さくない(本物の
+  ;; 置き場は資源の版の記録を読み直す)。
+  (<- reads tuple (sim-cluster (beacons sim-foundation) (service-versions-across-a-stop 10.0)))
+  (assert (any (gfor r reads (> r.version 1))) reads)
+  (<- drops tuple (service-versions-never-go-back reads))
+  (assert (= drops #()) drops))
+
+
+(defclass ResetsServiceVersionsOnReload [MemoryWalStore]
+  "壊れた置き場(条 C12 の反例・#1976 の写しの C2 の残り): 書きは受けるが、作り直しの読み直しで資源の版の記録(meta/)の resourceVersion と、
+   版を配る数(counter の revision)を 1 に戻して渡す — coordinator は Service を残したまま版だけ古くして起き直す。"
+  (defn #^ (get dict #(str object)) table [self]
+    (dfor #(k v) (.items self.kv)
+          k (cond (.startswith k "meta/") (| v {"resourceVersion" 1})
+                  (= k "counter") (| v {"revision" 1})
+                  True v)))
+  (defn #^ dict load [self] (.table self)))
+
+
+(deftest test-a-counterexample-store-that-resets-service-versions-breaks-c12
+  ;; 条 C12 の失敗ケース: 置き場の差し替えの口(#989)に読み直しで Service の版を 1 に戻す置き場を差すと、作り直した coordinator の
+  ;; Service の resourceVersion が止まりの前より小さくなり、条 C12 がその読みの組を名指す(同じ筋書きの本物の置き場では空 — 上の
+  ;; test-service-versions-never-go-back-across-a-stop)。
+  (<- reads tuple (sim-cluster (beacons sim-foundation) (service-versions-across-a-stop 10.0) :store ResetsServiceVersionsOnReload))
+  (<- drops tuple (service-versions-never-go-back reads))
+  (assert drops reads)
+  (assert (all (gfor d drops (< d.later.version d.earlier.version))) drops))
 
 
 (val PROBE-SLACK-MS 1500)  ; 条 L2 の余裕: heartbeat の間隔と読みの拍の差
