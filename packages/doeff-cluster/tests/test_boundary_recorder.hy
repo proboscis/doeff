@@ -205,14 +205,14 @@
   (val sink (MemorySink))
   (val log (EffectLog sink {"service" "rows" "run" "r1"} :strict True))
   (<- recorded int (with-handlers [(sim-time-handler :clock (SimClock)) #* (board-handlers {"row/0" 1 "row/1" 2}) (effect-recorder log)] (read-rows 4)))
-  (val state (ReplayState (read-recording sink.lines)))
+  (val state (ReplayState (! (read-recording sink.lines))))
   (<- handlers list (with-handlers [(reader {RECORD-MODE-KEY "replay" REPLAY-STATE-KEY state})] (boundary-recorder HOST-CONTRACT)))
   (assert (= (len handlers) 1) handlers)
   ;; 外の世界(fake の盤)を置かずに、記録の答えだけで同じ答えになり、渡した状態の出来事を使い切る。
   (<- replayed int (with-handlers handlers (read-rows 4)))
   (assert (= replayed recorded) #(replayed recorded))
   (assert state.finished)
-  (val report (replay-report state "program-returned"))
+  (val report (! (replay-report state "program-returned")))
   (assert (= (get report "consumed") (get report "events") 8) report))
 
 

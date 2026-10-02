@@ -15,7 +15,7 @@
 ;;;
 ;;; 並行: 出来事の番号は問いと答えの両方に振る(scheduler が task を切り替える順 = 答えが返った順も再生で同じにするため)。
 ;;; task の名は親の名 + 「.」+ 親の中で何番目に Spawn したか(scheduler の番号に依らないので記録と再生で同じ)。根は "root"。
-(require doeff-hy.macros [deff defk val])
+(require doeff-hy.macros [defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Callable])
@@ -135,45 +135,54 @@
   value)
 
 
-(deff _expand-calls [#^ list lines]  ; defk にできない: 再生の道具と再生係(handler)が Program の外で呼ぶ純粋な読み
+(defk _expand-calls [#^ list lines]
   {:pre [(: lines list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "call の行(問いと答えの 1 行)を req と ans の 2 行に戻す。他の行はそのまま。"
-  (setv out [])
-  (for [l lines]
-    (if (!= (.get l "k") "call")
-        (.append out l)
-        (do (setv req (dfor #(k v) (.items l) :if (not-in k #("ok" "v" "err" "dt")) k v))
-            (setv (get req "k") "req")
-            (.append out req)
-            (.append out (| {"k" "ans" "e" (+ (get l "e") 1) "s" (get l "e") "at" (+ (get l "at") (.get l "dt" 0)) "ok" (get l "ok")}
-                            (if (get l "ok") {"v" (.get l "v")} {"err" (get l "err")}))))))
-  out)
+  (lfor l lines
+        row (if (!= (.get l "k") "call")
+                [l]
+                [(| (dfor #(k v) (.items l) :if (not-in k #("ok" "v" "err" "dt")) k v) {"k" "req"})
+                 (| {"k" "ans" "e" (+ (get l "e") 1) "s" (get l "e") "at" (+ (get l "at") (.get l "dt" 0)) "ok" (get l "ok")}
+                    (if (get l "ok") {"v" (.get l "v")} {"err" (get l "err")}))])
+        row))
 
 
-(deff read-recording [#^ list lines #^ (| int None) [until-ms None] #^ (| (get Callable #([str dict] str)) None) [mode-of-type None]]  ; defk にできない: 再生の道具と再生係(handler)が Program の外で呼ぶ純粋な読み
+(defk read-recording [#^ list lines #^ (| int None) [until-ms None] #^ (| (get Callable #([str dict] str)) None) [mode-of-type None]]
   {:pre [(: lines list) (: until-ms (| int None)) (: mode-of-type (| Callable None))] :post [(: % Recording)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の行(dict の列・順不同でよい)→ Recording。until-ms = この時刻より後の出来事を捨てる(範囲の終わり)。
    mode-of-type = 型の名 → 登録の mode(再生の側の record_codec から渡す。無ければ行の mode 欄)。"
-  (setv header None broken None events [] entries {} queues {} ended {} arg-bases {} val-bases {} muts [] blobs {} memo {})
-  (setv ordered (sorted (_expand-calls (lfor l lines :if (in "e" l) l)) :key (fn [l] (get l "e"))))
+  (var header None)
+  (var broken None)
+  (val events [])
+  (val entries {})
+  (val queues {})
+  (val ended {})
+  (val arg-bases {})
+  (val val-bases {})
+  (val muts [])
+  (val blobs {})
+  (val memo {})
+  (<- expanded list (_expand-calls (lfor l lines :if (in "e" l) l)))
+  (val ordered (sorted expanded :key (fn [l] (get l "e"))))
   (for [l lines]
-    (setv kind (.get l "k"))
-    (cond
-      (= kind "run") (setv header l)
+    (match (.get l "k")
+      "run" (:= header l)
       ;; 内容参照の中身は順に依らない(同じ h は同じ中身)ので先に全部集める。
-      (= kind "blob") (setv (get blobs (get l "h")) (get l "v"))))
+      "blob" (setv (get blobs (get l "h")) (get l "v"))
+      _ None))
   (when (is header None)
     (raise (ValueError "記録に run の行が無い")))
   (when (not-in (.get header "format") READABLE-FORMATS)
     (raise (ValueError (.format "記録の形の版が違う: {}(読めるのは {})" (.get header "format") READABLE-FORMATS))))
-  (defn #^ JsonValue refs [#^ JsonValue v] (if blobs (resolve-refs v blobs memo) v))
+  (val refs (fn [v] (if blobs (resolve-refs v blobs memo) v)))
   ;; 型の名 → その型の OpaqueJson の欄の名(型ごとに 1 度だけ引く — 型を import できない名は揃える欄を持たない)。
-  (setv opaque-fields {})
-  (setv seen {})
+  (val opaque-fields {})
+  (val seen {})
   (for [l ordered]
-    (setv e (get l "e") kind (get l "k"))
+    (val e (get l "e"))
+    (val kind (get l "k"))
     ;; 置き場へ送り直した行は同じ中身で 2 度在りうる(届いたか分からずに送り直した)。同じなら 1 つにし、違えば壊れた記録。
-    (setv body (canonical (dfor #(key v) (.items l) :if (not-in key #("_chunk")) key v)))
+    (val body (canonical (dfor #(key v) (.items l) :if (not-in key #("_chunk")) key v)))
     (when (in e seen)
       (if (= (get seen e) body)
           (continue)
@@ -182,38 +191,38 @@
     (when (and (is-not until-ms None) (> (.get l "at" 0) until-ms))
       (break))
     (cond
-      (= kind "broken") (do (setv broken l) (break))
+      (= kind "broken") (do (:= broken l) (break))
       (= kind "req")
-        (do (setv args (refs (if (or (in "a" l) (in "ad" l)) (_resolve l arg-bases "e" "a" "ad" "ab" "ak") {})))
+        (do (val args (refs (if (or (in "a" l) (in "ad" l)) (_resolve l arg-bases "e" "a" "ad" "ab" "ak") {})))
             ;; 問いの引数は名 → 値の表。記録が壊れて別の形なら、Entry に入れる前にここで名指して断る。
             (when (not (isinstance args dict))
               (raise (ValueError (.format "出来事 {} の引数が表でない: {}" e (type args)))))
-            (setv mode (if (is mode-of-type None) (get l "m") (mode-of-type (get l "ty") l)))
+            (val mode (if (is mode-of-type None) (get l "m") (mode-of-type (get l "ty") l)))
             ;; 旧い記録の行の引数を今の版の比べる形へ揃えて持つ(差分の元は揃える前の値)— 型ごとの関数を持たない汎用の正規化(#2579)。
             ;; 型の OpaqueJson の欄(形を書き手が決める JSON)は、今の codec が中の JSON の値で綴る。値が素の値だった旧い行
             ;; (tuple は $t・文字列でない鍵は $d)は JSON に運んだ値(list・文字列の鍵)に直して綴り直し、旧い ANY の綴りは今の綴りへ替える。
             ;; 欄が JSON でない値(ANY の $c)を持つ行はそのまま。今の形の行は同じ綴りに戻る。
-            (setv ty (get l "ty"))
+            (val ty (get l "ty"))
             (when (not-in ty opaque-fields)
-              (setv cls (resolve-type ty))
+              (val cls (resolve-type ty))
               (setv (get opaque-fields ty)
                     (if (and (is-not cls None) (dataclasses.is-dataclass cls))
                         (frozenset (gfor f (dataclasses.fields cls) :if (or (is f.type OpaqueJson) (in OpaqueJson (get-args f.type))) f.name))
                         (frozenset))))
-            (setv fields (get opaque-fields ty))
-            (setv current (if fields
-                              (dfor #(k v) (.items args)
-                                    k (cond (not-in k fields) v
-                                            (= v LEGACY-ANY) CURRENT-ANY
-                                            (and (isinstance v dict) (in "$c" v)) v
-                                            True (encode-value (json.loads (. (OpaqueJson.of (decode-value v)) text)))))
-                              args))
+            (val fields (get opaque-fields ty))
+            (val current (if fields
+                             (dfor #(k v) (.items args)
+                                   k (cond (not-in k fields) v
+                                           (= v LEGACY-ANY) CURRENT-ANY
+                                           (and (isinstance v dict) (in "$c" v)) v
+                                           True (encode-value (json.loads (. (OpaqueJson.of (decode-value v)) text)))))
+                             args))
             ;; 比べる形の文字列は、揃えた後の引数から 1 度だけ作る(鍵を並べるので、記録の行の鍵の順に依らない)。
             (setv (get entries e) (Entry e (get l "t") (get l "at") ty (canonical current) mode :subject (.get l "sj")))
             (.append (.setdefault queues (get l "t") []) e)
             (.append events #(e "req" (get l "t") e)))
       (= kind "ans")
-        (do (setv entry (.get entries (get l "s")))
+        (do (val entry (.get entries (get l "s")))
             (when (is entry None)
               (raise (ValueError (.format "答え {} の問い {} が無い" e (get l "s")))))
             (setv entry.ans-e e entry.ans-at (.get l "at") entry.ok (get l "ok"))
@@ -288,26 +297,27 @@
    "recorded" recorded "replayed" replayed-args
    "delta" (if (and (is-not recorded None) (is-not replayed-args None)) (delta-of recorded replayed-args) None)})
 
-(deff summarize [#^ Recording rec #^ dict counts #^ list decisions #^ list outputs #^ (| dict None) divergence #^ str end #^ int consumed
-                 #^ (| int None) [from-ms None] #^ (| int None) [to-ms None]]  ; defk にできない: 再生係(handler)と再生の道具が Program の外で呼ぶ報告の純粋な綴り
+(defk summarize [#^ Recording rec #^ dict counts #^ list decisions #^ list outputs #^ (| dict None) divergence #^ str end #^ int consumed
+                 #^ (| int None) [from-ms None] #^ (| int None) [to-ms None]]
   {:pre [(: rec Recording) (: counts dict) (: decisions list) (: outputs list) (: divergence (| dict None)) (: end str) (: consumed int) (: from-ms (| int None)) (: to-ms (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "再生の結果を 1 つの dict にまとめる。from-ms / to-ms = 報告の範囲(判断の違いを記録の時刻で絞る。再生そのものは run の始まりから)。"
-  (defn #^ bool in-range [#^ dict row]
-    (setv at (.get row "at"))
-    (or (is at None)
-        (and (or (is from-ms None) (>= at from-ms)) (or (is to-ms None) (<= at to-ms)))))
-  (setv ds (lfor d decisions :if (in-range d) d) os (lfor o outputs :if (in-range o) o))
+  ;; 範囲の内 = 時刻を持たないか、時刻が from-ms から to-ms の間(端を含む)。
+  (val in-range (fn [row] (match (.get row "at")
+                            None True
+                            at (and (or (is from-ms None) (>= at from-ms)) (or (is to-ms None) (<= at to-ms))))))
+  (val ds (lfor d decisions :if (in-range d) d))
+  (val os (lfor o outputs :if (in-range o) o))
   ;; 対の鍵ごとのまとめ: 書きが記録の世界に着かないので、新しい版は同じ行を拍ごとに書き直そうとする(extra が繰り返す)。
   ;; 人が読むのは「どの行の判断が変わったか」なので、行ごとに種類の数・最初と最後の時刻・最初の違いを 1 件にまとめる。
-  (setv by-subject {})
+  (val by-subject {})
   (for [d ds]
-    (setv k #((get d "type") (get d "subject")))
-    (when (not-in k by-subject)
-      (setv (get by-subject k) {"type" (get d "type") "subject" (get d "subject") "counts" {} "firstAt" (get d "at")
-                                "lastAt" (get d "at") "first" d}))
-    (setv s (get by-subject k))
-    (setv (get (get s "counts") (get d "kind")) (+ 1 (.get (get s "counts") (get d "kind") 0)))
-    (setv (get s "lastAt") (get d "at")))
+    (val subject-key #((get d "type") (get d "subject")))
+    (when (not-in subject-key by-subject)
+      (setv (get by-subject subject-key) {"type" (get d "type") "subject" (get d "subject") "counts" {} "firstAt" (get d "at")
+                                          "lastAt" (get d "at") "first" d}))
+    (val summary (get by-subject subject-key))
+    (setv (get (get summary "counts") (get d "kind")) (+ 1 (.get (get summary "counts") (get d "kind") 0)))
+    (setv (get summary "lastAt") (get d "at")))
   {"run" rec.header.run "service" rec.header.service
    "recordedRevision" rec.header.revision
    "events" (len rec.events) "consumed" consumed

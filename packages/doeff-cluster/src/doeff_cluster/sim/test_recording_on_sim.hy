@@ -23,7 +23,7 @@
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.foundation.record_log [read-recording ReplayDiverged])
+(import doeff_cluster.foundation.record_log [Recording read-recording ReplayDiverged])
 (import doeff_cluster.foundation.record_handlers [boundary-recorder ReplayState replay-report
                                                   RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
 
@@ -113,13 +113,15 @@
   {:pre [(: lines tuple)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "置き場に残った行を read-recording で読み、同じ Program を記録係の replay の枝で(外の世界の handler なしで)再生した報告。
    分岐で止まった再生も報告にする(end = diverged)。"
-  (val state (ReplayState (read-recording (list lines))))
+  (<- rec Recording (read-recording (list lines)))
+  (val state (ReplayState rec))
   (var end "program-returned")
   (try
     (<- (with-handlers [(reader {RECORD-MODE-KEY "replay" REPLAY-STATE-KEY state})] (recorded-inside ROWS)))
     (except [ReplayDiverged]
       (:= end "diverged")))
-  (replay-report state end))
+  (<- report dict (replay-report state end))
+  report)
 
 
 ;; --- 記録 → 置き場の代役 → 再生 ------------------------------------------------------------------------------
@@ -145,7 +147,7 @@
   (assert (= lines #()) (len lines))
   (var refused None)
   (try
-    (read-recording (list lines))
+    (<- (read-recording (list lines)))
     (except [error ValueError]
       (:= refused (str error))))
   (assert (= refused "記録に run の行が無い") refused))
