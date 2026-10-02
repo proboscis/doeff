@@ -89,7 +89,7 @@ class _Declared:
 
 @dataclass(frozen=True)
 class _Helper:
-    """宣言が読む時だけ .pyi の頭に置く補助の型の import 1 つ(Program・Handler・Incomplete・TypeAlias)。"""
+    """宣言が読む時だけ .pyi の頭に置く補助の型の import 1 つ(Program・Handler・Incomplete・TypeAlias・defeffect の補助)。"""
 
     reads: str
     module: str
@@ -97,13 +97,20 @@ class _Helper:
     asname: str | None
 
 
-#: 補助の型の import(宣言の中の名 reads を読む時だけ置く)。
+#: 補助の型の import(宣言の中の名 reads を読む時だけ置く)。後の 3 つは defeffect の展開が import する macro の補助の名で、
+#: 宣言の基底・飾り・欄の注記がそのまま読む — 隠す名(_doeff_)の import は公開し直さないので、ここで置かないと .pyi に
+#: 定義の無い名が残り、使い手には effect の基底が Unknown(答えの型も Unknown)になっていた(agora-redesign #2886)。
 _HELPERS = (
     _Helper("TypeAlias", "typing", "TypeAlias", None),
     _Helper("Incomplete", "_typeshed", "Incomplete", None),
     _Helper("_Program", "doeff", "Program", "_Program"),
     _Helper("_Handler", "doeff_hy.static_types", "Handler", "_Handler"),
+    _Helper("_doeff_effect_base", "doeff", "EffectBase", "_doeff_effect_base"),
+    _Helper("_doeff_dataclass", "dataclasses", "dataclass", "_doeff_dataclass"),
+    _Helper("_doeff_ClassVar", "typing", "ClassVar", "_doeff_ClassVar"),
 )
+#: 補助の import が .pyi の頭に置ける名(隠す名でも、宣言に残してよい)。
+_HELPER_NAMES = frozenset(helper.asname or helper.name for helper in _HELPERS)
 
 
 @dataclass(frozen=True)
@@ -337,8 +344,9 @@ def _keeps(decorator: ast.expr) -> bool:
 
 
 def _reads_hidden(node: ast.expr) -> bool:
-    """式が macro の補助の名を読むか(.pyi に写すと解けない名を残さないため)。"""
-    return any(isinstance(n, ast.Name) and _hidden(n.id) for n in ast.walk(node))
+    """式が、.pyi の頭に置けない macro の補助の名を読むか(.pyi に写すと解けない名を残さないため — 補助の import が
+    置ける名は解けるので数えない: defeffect の `@_doeff_dataclass(frozen=True)` は残す)。"""
+    return any(isinstance(n, ast.Name) and _hidden(n.id) and n.id not in _HELPER_NAMES for n in ast.walk(node))
 
 
 def _class_var(annotation: ast.expr) -> bool:
@@ -415,12 +423,37 @@ def _member(statement: ast.stmt) -> ast.stmt | None:
             return None
 
 
+def _declared_answer(statement: ast.stmt) -> ast.expr | None:
+    """defeffect の class の本体の文が答えの型の置き場(`__doeff_answer__ = _doeff_cast(object, (A, B, …))`)なら、その要素の和。
+    要素が型の式でない(`(type None)` のような実行時の値)なら None。"""
+    match statement:
+        case ast.AnnAssign(
+            target=ast.Name(id="__doeff_answer__"),
+            value=ast.Call(func=ast.Name(id="_doeff_cast"), args=[_, ast.Tuple(elts=[_, *_] as elements)]),
+        ) if all(_type_like(element) for element in elements):
+            return _union(elements)
+        case _:
+            return None
+
+
+def _effect_base(base: ast.expr, answer: ast.expr | None) -> ast.expr:
+    """defeffect の基底(素の EffectBase)に答えの型を載せるため — 使い手の `<-`(型検査の展開では `_doeff_perform(e)` = e の
+    Program[T] の T)が答えを読めるように(素のままだと使い手には答えが Unknown — agora-redesign #2886)。型検査の展開の
+    defeffect の基底は素のまま(定義する module の検に、素の総称の答えの赤を足さない — #2322)で、.pyi だけが答えを持つ。"""
+    match base:
+        case ast.Name(id="_doeff_effect_base") if answer is not None:
+            return _subscript("_doeff_effect_base", answer)
+        case _:
+            return base
+
+
 def _class(node: ast.ClassDef) -> ast.ClassDef:
     """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。"""
     body = [member for statement in node.body if (member := _member(statement)) is not None]
+    answer = next((found for statement in node.body if (found := _declared_answer(statement)) is not None), None)
     return ast.ClassDef(
         name=node.name,
-        bases=node.bases,
+        bases=[_effect_base(base, answer) for base in node.bases],
         keywords=node.keywords,
         body=body or [ast.Expr(value=ast.Constant(value=...))],
         decorator_list=[d for d in node.decorator_list if not _reads_hidden(d)],
