@@ -22,36 +22,23 @@ class ProcessOutcome:
     exit_code: int
     stdout: str
     stderr: str
-    timed_out: bool
-    timed_out = False
-    started: bool
-    started = True
-    start_error: str
-    start_error = ''
+    timed_out: bool = False
+    started: bool = True
+    start_error: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class RunProcess(EffectBase):
     argv: tuple[str, ...]
-    stdin: str | None
-    stdin = None
-    timeout: float | None
-    timeout = None
-    cwd: str | None
-    cwd = None
-    env: tuple[EnvEntry, ...] | None
-    env = None
-    env_mode: EnvMode
-    env_mode = ...
-    env_drop: tuple[str, ...]
-    env_drop = ...
-    output_path: str | None
-    output_path = None
-    process_group: bool
-    process_group = False
-    stop_grace: float
-    stop_grace = 10.0
-    stream_output: bool
-    stream_output = False
+    stdin: str | None = None
+    timeout: float | None = None
+    cwd: str | None = None
+    env: tuple[EnvEntry, ...] | None = None
+    env_mode: EnvMode = ...
+    env_drop: tuple[str, ...] = ...
+    output_path: str | None = None
+    process_group: bool = False
+    stop_grace: float = 10.0
+    stream_output: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class ExecutableAt(EffectBase):
@@ -99,24 +86,15 @@ class ModuleNotFound:
 @dataclass(frozen=True, kw_only=True)
 class StartProcess(EffectBase):
     argv: tuple[str, ...]
-    cwd: str | None
-    cwd = None
-    env: tuple[EnvEntry, ...] | None
-    env = None
-    env_mode: EnvMode
-    env_mode = ...
-    env_drop: tuple[str, ...]
-    env_drop = ...
-    stdout_path: str | None
-    stdout_path = None
-    stderr_path: str | None
-    stderr_path = None
-    process_group: bool
-    process_group = False
-    hold_stdin: bool
-    hold_stdin = False
-    reap_group: bool
-    reap_group = False
+    cwd: str | None = None
+    env: tuple[EnvEntry, ...] | None = None
+    env_mode: EnvMode = ...
+    env_drop: tuple[str, ...] = ...
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    process_group: bool = False
+    hold_stdin: bool = False
+    reap_group: bool = False
 
 @dataclass(frozen=True)
 class PollProcess(EffectBase):
@@ -125,8 +103,7 @@ class PollProcess(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class StopProcess(EffectBase):
     pid: int
-    stop_grace: float
-    stop_grace = 10.0
+    stop_grace: float = 10.0
 
 class ProcessSignal(StrEnum):
     TERM = 'term'

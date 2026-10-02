@@ -467,9 +467,30 @@ def _effect_base(base: ast.expr, answer: ast.expr | None) -> ast.expr:
             return base
 
 
+def _given_default(annotated: ast.stmt, following: ast.stmt | None) -> ast.AnnAssign | None:
+    """注記だけの文(`#^ float timeout`)の直後の文が同じ名への代入(`(setv timeout 30.0)`)なら、2 つを 1 文 `名: 型 = 値` に。"""
+    match annotated, following:
+        case (
+            ast.AnnAssign(target=ast.Name(id=name) as target, annotation=annotation, value=None),
+            ast.Assign(targets=[ast.Name(id=assigned)], value=value),
+        ) if assigned == name:
+            return ast.AnnAssign(target=target, annotation=annotation, value=value, simple=1)
+        case _:
+            return None
+
+
+def _with_defaults(statements: list[ast.stmt]) -> list[ast.stmt]:
+    """class の本体で、注記の文とその直後の既定値の代入を 1 文にまとめるため。実行時は dataclass も素の class も 2 文を
+    既定値つきの欄として読むが、.pyi に 2 文のまま写すと pyright は dataclass の作り手を注記の文の値から組むので既定値の無い欄と
+    読み、欄を省いた呼びが赤になった(#2974 — agora の 17 本目の ClickHouseDatabase・L1377 で後退した RunProcess など)。"""
+    given = [_given_default(statement, following) for statement, following in zip(statements, [*statements[1:], None])]
+    absorbed = {index + 1 for index, merged in enumerate(given) if merged is not None}
+    return [merged or statement for index, (statement, merged) in enumerate(zip(statements, given)) if index not in absorbed]
+
+
 def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.ClassDef:
     """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。type_vars = module の型の引数の名(答えの型を読むため)。"""
-    body = [member for statement in node.body if (member := _member(statement)) is not None]
+    body = [member for statement in _with_defaults(node.body) if (member := _member(statement)) is not None]
     answer = next(
         (found for statement in node.body if (found := _declared_answer(statement, type_vars)) is not None), None
     )
