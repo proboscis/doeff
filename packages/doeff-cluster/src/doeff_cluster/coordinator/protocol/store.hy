@@ -32,7 +32,7 @@
 (defhandler durable-states
   ;; 引数なし: 前後の状態だけから差分を綴る(置き場は外側の Persist の答え手が持つ)。
   (SaveState [before after]
-    (val delta (durable-delta before after))
+    (<- delta (durable-delta before after))
     (when delta
       (<- (Persist (tuple (gfor #(key value) (.items delta) (TableWrite key value))))))
     (resume None)))

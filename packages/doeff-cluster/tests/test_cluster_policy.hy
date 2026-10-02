@@ -489,7 +489,8 @@
   (assert (and (isinstance reread NodeLabelsSeen) (= reread.at later)) reread)
   (assert (and (isinstance first-read NodeLabelsSeen) (= first-read.at 1000)) first-read)
   (assert (= #(second.revision second.audit-seq second.audit) #(first.revision first.audit-seq first.audit)))
-  (assert (= (durable-delta first second) {}) (durable-delta first second))
+  (<- reread-delta dict (durable-delta first second))
+  (assert (= reread-delta {}) reread-delta)
   ;; Deployment の観測(読めた・読めなかった)を書いても同じ — 版を付ける stamp も保存の差分も動かない。検の状態は heartbeat の判断を
   ;; 直に呼んで作ったので資源に版の記録が無い(stamp は版の記録の無い資源に版を振る)— 先に版を振り揃えてから比べる。
   (val settled (stamp (ClusterState) second "c-test" later T))
@@ -503,8 +504,10 @@
   (assert (= (.size observed.observations.deployments) 2))
   (val stamped (stamp settled observed "rollout-controller" later T))
   (assert (= #(stamped.revision stamped.audit-seq stamped.meta) #(settled.revision settled.audit-seq settled.meta)))
-  (assert (= (durable-delta settled stamped) {}) (durable-delta settled stamped))
+  (<- observed-delta dict (durable-delta settled stamped))
+  (assert (= observed-delta {}) observed-delta)
   ;; 反例の対照: 保存する欄(worker の記録)を書けば、同じ比べが版と差分を出す(比べが何も見ていないのではない)。
   (val moved (replace observed :workers (| observed.workers {"at-home" (replace (get observed.workers "at-home") :capacity 3)})))
   (assert (> (. (stamp settled moved "c-test" later T) revision) settled.revision))
-  (assert (in "worker/at-home" (durable-delta settled moved)) (durable-delta settled moved)))
+  (<- moved-delta dict (durable-delta settled moved))
+  (assert (in "worker/at-home" moved-delta) moved-delta))

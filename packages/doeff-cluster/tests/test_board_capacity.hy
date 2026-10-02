@@ -45,7 +45,7 @@
   (assert (in "w/process/atlas/7" s1.board))
   (assert (not-in "w/process/atlas/7" s2.board))
   (assert (in "w/cycle" s2.board))
-  (setv delta (durable-delta s s2))
+  (setv delta (! (durable-delta s s2)))
   (assert (= (get delta "board/w/process/atlas/7") None)))
 
 
@@ -166,16 +166,16 @@
   (for [#(method path body now) steps]
     (val reply (call s method path body now))
     (val after (get reply 0))
-    (assert (= (without-board (durable-delta s after)) (delta-by-full-serialization s after)) #(method path))
+    (assert (= (without-board (! (durable-delta s after))) (delta-by-full-serialization s after)) #(method path))
     (:= compared (+ compared 1))
     (:= s after))
   (assert (= compared (len steps)))
   ;; 作り直したが中身の同じ部品(別の物で等しい)は、直列化して比べる側へ回り、差分に入らない。
   (val rebuilt (replace s :tasks (dfor #(k t) (.items s.tasks) k (replace t))
                           :workers (dfor #(k w) (.items s.workers) k (replace w))))
-  (assert (= (without-board (durable-delta s rebuilt)) {}))
+  (assert (= (without-board (! (durable-delta s rebuilt))) {}))
   ;; 中身の違う部品は差分に入る(同一性だけで黙って落とさない)。
   (val changed (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))
-  (val got (without-board (durable-delta s changed)))
+  (val got (without-board (! (durable-delta s changed))))
   (assert (= got (delta-by-full-serialization s changed)))
   (assert (and got (all (gfor k got (.startswith k "worker/"))))))
