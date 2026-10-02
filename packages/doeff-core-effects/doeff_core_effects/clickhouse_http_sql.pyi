@@ -3,8 +3,6 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import functools as functools
-import json as json
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery

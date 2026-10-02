@@ -2,8 +2,6 @@
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import hashlib as hashlib
-import os as os
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
 from doeff_core_effects.process_effects import RunProcess as RunProcess
 from doeff_core_effects.file_effects import PathKind as PathKind

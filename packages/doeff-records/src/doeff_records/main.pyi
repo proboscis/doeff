@@ -2,7 +2,6 @@
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import sys as sys
 from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from concurrent.futures import ThreadPoolExecutor as ThreadPoolExecutor

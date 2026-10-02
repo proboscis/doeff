@@ -1,9 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = program_codec.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
-import base64 as base64
-import collections as collections
-import io as io
 import cloudpickle as cloudpickle
 from types import NotImplementedType as NotImplementedType
 from doeff import Program as Program

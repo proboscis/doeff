@@ -169,7 +169,7 @@ def test_a_hand_written_stub_is_not_checked(tmp_path: Path) -> None:
 
 
 EFFECTS = """\
-(require doeff-hy.macros [defeffect])
+(require doeff-hy.macros [defeffect val])
 
 (defeffect Pong
   "答えは int。"
@@ -187,6 +187,16 @@ EFFECTS = """\
   "答えの式が型の形でない(実行時の値)— 基底は答えを載せない素の形のまま。"
   {:fields [(: target str)]
    :answer (type None)
+   :tags {:context "probe" :role "foundation"}})
+
+(import typing [TypeVar])
+(import doeff [Program])
+(val T (TypeVar "T"))
+
+(defeffect Wrapped
+  "答えは包んだ program の答え(型の引数 T)か None。"
+  {:fields [(: program (get Program #(T object)))]
+   :answer (| T None)
    :tags {:context "probe" :role "foundation"}})
 """
 
@@ -211,6 +221,9 @@ USER = """\
         "class Pong(_doeff_effect_base[int]):",
         "class MaybePong(_doeff_effect_base[int | None]):",
         "class NoneTypePong(_doeff_effect_base):",
+        # 答えに module の TypeVar を含む effect(sql_effects の SqlTransaction の形 — #2925)。
+        "class Wrapped(_doeff_effect_base[T | None]):",
+        "    program: Program[T, object]",
     ],
 )
 def test_a_defeffect_keeps_its_base_with_the_answer_and_its_dataclass(tmp_path: Path, line: str) -> None:
@@ -247,6 +260,13 @@ def test_a_dotted_module_import_no_declaration_reads_is_not_copied(tmp_path: Pat
     lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, checked)).text.splitlines()
     assert "class Amount:" in lines
     assert [line for line in lines if line.startswith("import doeff_hy.")] == []
+
+
+def test_a_module_import_no_declaration_reads_is_not_copied(tmp_path: Path) -> None:
+    # 失敗ケース(#2925): `(import os)` を `import os as os` と写すと、宣言はどれも os を読まないのに .pyi が os に依存する形になり、
+    # 品質検査の「純粋な層から IO の API へ依存」(pure-io-import)に当たった(process_effects の手の .pyi を置き換えた時)。
+    # module の import は使い手に名を公開する意味が無い(使い手は `from m import os` と書かない)ので、宣言が読まなければ写さない。
+    assert [line for line in _lines(tmp_path) if line.startswith("import os")] == []
 
 
 def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:

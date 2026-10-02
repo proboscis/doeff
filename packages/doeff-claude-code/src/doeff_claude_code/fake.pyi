@@ -6,7 +6,6 @@ from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from dataclasses import replace as replace
-import uuid as uuid
 from doeff_time import Delay as Delay
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime

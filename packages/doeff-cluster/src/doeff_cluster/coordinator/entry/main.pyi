@@ -1,13 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = main.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-import argparse as argparse
-import json as json
-import os as os
-import signal as signal
 from types import FrameType as FrameType
-import sys as sys
-import time as time
 from pathlib import Path as Path
 from doeff import run as run
 from doeff import with_handlers as with_handlers

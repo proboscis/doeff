@@ -5,7 +5,6 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from queue import Queue as Queue
 from queue import Empty as Empty
-import threading as threading
 from concurrent.futures import Executor as Executor
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field

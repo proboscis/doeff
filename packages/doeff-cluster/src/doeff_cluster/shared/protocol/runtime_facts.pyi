@@ -2,7 +2,6 @@
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import posixpath as posixpath
 from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
 from doeff_core_effects.process_effects import ResolveModule as ResolveModule
