@@ -36,6 +36,7 @@
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.shared.core.timing_rules [SelfStopBudget ReassignTooEarly timing-outlasts-the-self-stop])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState CodeLayout])
@@ -88,6 +89,22 @@
    (session-store) (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
    (probe-host probes) (process-host host) local-host tick-pauses])
+
+
+(defk timing-checked [fence-ms policy timing]
+  {:pre [(: fence-ms int) (: policy WorkerPolicy) (: timing ClusterTiming)] :post [(: % SelfStopBudget)]
+   :tags {:context "worker" :role "main"}}
+  "起動の組み立てが時間の不変条件 C4(shared/core/timing_rules・#2806)を破るなら名指しで断るため — 移し替え(timing の reassign-after-ms)が、
+   この worker の止め切り(fence + heartbeat の返事の上限 + 接続の上限 + 子の停止の猶予)より前になる起動(--fence や --stop-grace を長く
+   し過ぎた等)を、job を走らせる前に止める。答え = 判じた内訳。"
+  (val budget (SelfStopBudget :fence-ms fence-ms :reply-ms (int (* REPLY-SECONDS 1000)) :connect-ms (int (* CONNECT-SECONDS 1000))
+                              :stop-grace-ms policy.stop-grace-ms :kill-grace-ms policy.kill-grace-ms))
+  (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop timing.reassign-after-ms budget))
+  (when broken
+    (val b (get broken 0))
+    (raise (ValueError (.format "時間の不変条件 C4 を破る起動: 移し替え {} ms が worker の止め切り {} ms(fence {} + 返事の上限 {} + 接続の上限 {} + 停止の猶予 {} + {})より前"
+                                b.reassign-ms b.needed-ms budget.fence-ms budget.reply-ms budget.connect-ms budget.stop-grace-ms budget.kill-grace-ms))))
+  budget)
 
 
 (defk worker-on [handlers policy]
@@ -161,6 +178,8 @@
                               :probe-dir (str (/ state-dir "probe")))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         stop (StopState))
+  ;; 時間の不変条件 C4(#2806)を破る起動は、job を走らせる前に名指しで断る。
+  (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)

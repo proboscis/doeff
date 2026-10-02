@@ -14,8 +14,9 @@
 ;;   - 13:53:37〜57 の coordinator の 20.2 秒の止まりは、本番では処理の流れの詰まり(作り直しは無い)。模擬の世界には詰まりを入れる口が無い
 ;;     ので、Pod の止まり(StopCoordinator — 優雅に止め、20.2 秒の後に同じ置き場から読み直す)で表す。worker から見える事(その間の要求に
 ;;     返事が無い)は同じで、加えて約束(KeepMark)が置き場から読み直される事まで通る。読み直しは止まっていた長さだけ worker の沈黙をずらす
-;;     (api_policy.resume-after-downtime)ので、coordinator の数える沈黙が移し替えの 45 秒に届くのは途絶の 65.2 秒目(本番は戻った直後の 53 秒目)
-;;     — どちらも途絶の明ける 115 秒目より前で、移し替えの期限を越える事は変わらない。
+;;     (api_policy.resume-after-downtime)ので、coordinator の数える沈黙が移し替えの期限に届くのは途絶の「期限 + 20.2 秒」目(期限 60 秒 —
+;;     #2806 — で 80.2 秒目。本番の当時の期限 45 秒では戻った直後の 53 秒目)— どちらも途絶の明ける 115 秒目より前で、移し替えの期限を
+;;     越える事は変わらない。途絶の最中に読む秒(MID-AFTER-REASSIGN-SECONDS)は期限から作る。
 ;;   - 13:26 の処理の止まりは、本番では job の process も I/O で止まっていた見込み。模擬の StallWorker は worker の拍だけを止め、子は動き続ける。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -30,8 +31,11 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses solo-pulses add-task sim-task-foundation])
 
-;; 本番と同じ時間の設定(生存の窓 10 秒・fence 20 秒・移し替え 45 秒・長い方の柵 240 秒)。
+;; 本番と同じ時間の設定(生存の窓 10 秒・fence 20 秒・移し替え 60 秒・長い方の柵 240 秒)。
 (val T (ClusterTiming))
+;; 13:53 の網の途絶の最中に読む秒: coordinator の数える沈黙が移し替えの期限に届いた後(期限 + coordinator の止まり 20.2 秒 + 余白 5 秒)。
+;; 途絶の明ける 115 秒目より前でなければ筋書きが成り立たない(期限 60 秒で 85.2 秒目)。
+(val MID-AFTER-REASSIGN-SECONDS (+ (/ T.reassign-after-ms 1000) 20.2 5.0))
 
 
 ;; --- 筋書きの表(秒は担い手の最後の heartbeat から — #2803 の本文の表)---------------------------------------------------
@@ -87,6 +91,17 @@
             :steps #((Stall :host "w1" :until 47.0))
             :silent 47.0 :mid-at 46.0 :settle 30.0 :probe-needs (frozenset ["cluster-net"])))
 
+;; 13:26 の形(処理の止まり)で、止まりの長さを移し替えの期限 + 2 秒にした筋書き(今日の 47 秒は移し替え 45 秒を 2 秒越えた — #2806 で移し替えを
+;; 60 秒にしたので、今日の 47 秒は期限の内になった)。「移せる先の無い job は、沈黙が移し替えを越えても外さない」を、期限の値を写さずに見る。
+(val STALL-PAST-REASSIGN-SECONDS (+ (/ T.reassign-after-ms 1000) 2.0))
+(val STALL-PAST-REASSIGN
+  (Timeline :name "13:26 の形 処理の止まり 移し替え + 2 秒"
+            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+            :hosts #("w1") :standby #()
+            :steps #((Stall :host "w1" :until STALL-PAST-REASSIGN-SECONDS))
+            :silent STALL-PAST-REASSIGN-SECONDS :mid-at (- STALL-PAST-REASSIGN-SECONDS 1.0) :settle 30.0
+            :probe-needs (frozenset ["cluster-net"])))
+
 ;; 13:53(網の途絶): 13:53:03 頃の最後の heartbeat から約 115 秒(13:54:59〜13:55:01 に再びつながる)、担い手の網が切れる。その最中の
 ;; 13:53:37(34 秒目)から 20.2 秒、coordinator が止まる。置ける worker が 1 台ずつの service 4 つ(本番の 4 job の形)と、移せる先の在る
 ;; service 1 つ(途絶の前に加わる w-spare へ移れる)を並べる。
@@ -101,7 +116,7 @@
                        (SimWorker :name "w-spare" :provides (frozenset ["cluster-net"]) :starts-down True))
             :hosts CUT-HOSTS :standby #("w-spare")
             :steps #((Cut :hosts CUT-HOSTS :until 115.0) (PauseCoordinator :at 34.0 :seconds 20.2))
-            :silent 115.0 :mid-at 80.0 :settle 30.0 :probe-needs (frozenset ["solo-a"])))
+            :silent 115.0 :mid-at MID-AFTER-REASSIGN-SECONDS :settle 30.0 :probe-needs (frozenset ["solo-a"])))
 
 ;; 13:53 の秒のまま、途絶の 30 秒目(coordinator が止まる 4 秒前)に能力の合う 2 台目 w2 が登録される — 移せる先が「無い」から「在る」に
 ;; 変わる(本番では起きていない形)。
@@ -111,7 +126,7 @@
                        (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :starts-down True))
             :hosts #("w1") :standby #()
             :steps #((Cut :hosts #("w1") :until 115.0) (Join :at 30.0 :name "w2") (PauseCoordinator :at 34.0 :seconds 20.2))
-            :silent 115.0 :mid-at 80.0 :settle 30.0 :probe-needs (frozenset ["solo-a"])))
+            :silent 115.0 :mid-at MID-AFTER-REASSIGN-SECONDS :settle 30.0 :probe-needs (frozenset ["solo-a"])))
 
 
 ;; --- 表を進める -------------------------------------------------------------------------------------------------------
@@ -306,17 +321,33 @@
 
 ;; --- 筋書き ---------------------------------------------------------------------------------------------------------
 
-(deftest test-a-47-second-stall-of-the-holder-leaves-the-only-place-job-running-and-work-continues
-  ;; 13:26 型: 担い手の処理が止まり heartbeat が 47 秒送られない(移し替えの 45 秒を 2 秒越える)。置ける worker が 1 台の job は外されず、
-  ;; 起こし直さず(以前は 45 秒で外し、戻った担い手が止めて 67 秒かけて起こし直した)、明けた後は heartbeat・Ready・報告・task の置きが続く。
-  (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage STALL-1326 #("pulse")) :workers STALL-1326.workers))
+(deftest test-a-stall-past-the-reassign-deadline-leaves-the-only-place-job-running-and-work-continues
+  ;; 13:26 の形: 担い手の処理が止まり heartbeat が「移し替えの期限 + 2 秒」送られない(今日は 47 秒で、その時の期限 45 秒を 2 秒越えた)。
+  ;; 置ける worker が 1 台の job は外されず、起こし直さず(以前は期限で外し、戻った担い手が止めて 67 秒かけて起こし直した)、明けた後は
+  ;; heartbeat・Ready・報告・task の置きが続く。止まりの長さは期限から作る(値を写さない — 期限を動かしても主張が同じ所を見る)。
+  (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage STALL-PAST-REASSIGN #("pulse")) :workers STALL-PAST-REASSIGN.workers))
   (val pulse (get seen.jobs 0))
   (<- (in-one-place pulse))
   (<- (kept-running pulse))
-  (<- (back-in-touch seen STALL-1326.hosts))
-  ;; 止まりの最中は coordinator の見え方で生きていない(沈黙が 45 秒を越えている)— 外さなかったのは移し替えの期限の前だからではない。
+  (<- (back-in-touch seen STALL-PAST-REASSIGN.hosts))
+  ;; 止まりの最中は coordinator の見え方で生きていない(沈黙が移し替えの期限を越えている)— 外さなかったのは期限の前だからではない。
   (<- mid-host HostSeen (host-of seen.mid-hosts "w1"))
   (assert (and (not mid-host.alive) (> mid-host.silent-ms T.reassign-after-ms)) mid-host)
+  (assert (= (len seen.runs) 1) seen.runs))
+
+
+(deftest test-todays-47-second-stall-is-within-the-reassign-deadline-and-changes-nothing
+  ;; 今日の 13:26 の実際の 47 秒は、移し替えを 60 秒にした(#2806)後は期限の内 — coordinator の見え方の沈黙は期限に届かず、置ける worker が
+  ;; 1 台の job は(印の有無に関わらず)外されず、起こし直さず、明けた後も仕事が続く。印に頼る見え方(途絶の最中の ready の理由)は見ない。
+  (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage STALL-1326 #("pulse")) :workers STALL-1326.workers))
+  (val pulse (get seen.jobs 0))
+  (<- (in-one-place pulse))
+  (assert (= (len pulse.after.processes) 1) #("起こし直し" pulse.after.processes))
+  (assert (= pulse.mid.processes #(pulse.first)) pulse)
+  (assert (= pulse.after.ready.state "Ready") pulse.after.ready)
+  (<- (back-in-touch seen STALL-1326.hosts))
+  (<- mid-host HostSeen (host-of seen.mid-hosts "w1"))
+  (assert (< mid-host.silent-ms T.reassign-after-ms) mid-host)
   (assert (= (len seen.runs) 1) seen.runs))
 
 
@@ -324,7 +355,7 @@
   ;; 13:53 型: 担い手 4 台の網が 115 秒切れ、その 34 秒目から coordinator が 20.2 秒止まって置き場から読み直す。置ける worker が 1 台ずつの
   ;; service 4 つは、印で止められず、読み直した coordinator も約束を保って外さず、起こし直しが 0 回(以前は fence 20 秒で自己停止し、
   ;; 明けた後に起こし直した)。明けた後は 4 台とも heartbeat が届き直し、4 つとも Ready・報告が続き、task も置かれる。
-  ;; 同じ筋書きに混ぜた移せる先の在る service(roamer)は今までどおり: 担い手が fence(20 秒)で止め、coordinator が移し替えの 45 秒の後に
+  ;; 同じ筋書きに混ぜた移せる先の在る service(roamer)は今までどおり: 担い手が fence(20 秒)で止め、coordinator が移し替えの期限の後に
   ;; 途絶していない w-spare へ移す — fence が先なので 2 か所で走らない。
   (val jobs #("pulse-a" "pulse-b" "pulse-c" "pulse-d" "roamer"))
   (<- seen TimelineSeen (sim-cluster (solo-pulses sim-foundation) (outage CUT-1353 jobs) :workers CUT-1353.workers))
@@ -337,7 +368,7 @@
   (val stopped (get seen.runs 0))
   (assert (= stopped.outcome "stopped") seen.runs)
   (assert (<= (+ seen.zero-ms 34000) stopped.ended-ms (+ seen.zero-ms 35000)) #(seen.zero-ms seen.runs))
-  ;; 移せる先の在る service: 途絶した担い手の process は fence(20 秒)を越えて止まり(移し替えの 45 秒より前)、移った先の process は
+  ;; 移せる先の在る service: 途絶した担い手の process は fence(20 秒)を越えて止まり(移し替えの期限より前)、移った先の process は
   ;; 移し替えの期限の後、途絶の明ける前に w-spare で起きる。重なりは無い。
   (val roamer (get seen.jobs 4))
   (assert (in roamer.first.worker CUT-HOSTS) roamer.first)
