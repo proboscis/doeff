@@ -2,8 +2,24 @@
 that needs to capture and reinstall inner handlers from a continuation.
 """
 
+from typing import TypeVar
+
 from doeff.do import do
 from doeff.program import GetBoundaries, GetHandlers
+
+_Handler = TypeVar("_Handler")
+
+
+def inner_of(handlers: list[_Handler]) -> list[_Handler]:
+    """The inner handlers in what ``GetHandlers(k)`` answered: every entry but the
+    last, which is the handler that caught the effect (the caller itself).
+
+    The one place of this rule. A handler that reads the stack only when it needs
+    it (``doeff_traverse.handlers.sequential`` — once per Traverse, when the first
+    item runs) yields ``GetHandlers(k)`` itself and passes the answer here, without
+    the ``@do`` call of ``get_inner_handlers`` (agora-redesign #2958).
+    """
+    return handlers[:-1] if handlers else []
 
 
 @do
@@ -23,10 +39,7 @@ def get_inner_handlers(k):
         for h in inner_hs:
             prog = handler(h)(prog)
     """
-    all_hs = yield GetHandlers(k)
-    if all_hs:
-        return all_hs[:-1]
-    return []
+    return inner_of((yield GetHandlers(k)))
 
 
 @do
