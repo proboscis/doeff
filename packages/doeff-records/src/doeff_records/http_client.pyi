@@ -52,7 +52,6 @@ REASON_MAX_CHARS: int
 @dataclass(frozen=True)
 class RecordsEndpoint:
     base_url: str
-    token: str | None = None
     request_timeout: float = ...
     poll_seconds: float = ...
     meter: Callable[..., object] | None = None

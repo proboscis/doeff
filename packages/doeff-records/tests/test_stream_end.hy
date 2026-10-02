@@ -17,7 +17,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
-(import tests.interpreters [LAW-TOKENS LawSetup law-roster sim-request-handlers])
+(import tests.interpreters [LawSetup law-roster sim-request-handlers])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
 (val EVENT-COUNT 40)
@@ -64,7 +64,7 @@
                                                          :request-handlers (sim-request-handlers clock))))
   (val sent [])
   (try
-    (val endpoint (RecordsEndpoint server.url (get LAW-TOKENS MAKER)))
+    (val endpoint (RecordsEndpoint server.url :writer MAKER))
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (count-http-requests sent)
                                                 (sim-time-handler :clock clock) (http-records-handler endpoint)]
                                                (ReadStreamEnd "journal")))))
@@ -97,7 +97,7 @@
                                                          :request-handlers (sim-request-handlers clock))))
   (try
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
-                                                (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS MAKER)))]
+                                                (http-records-handler (RecordsEndpoint server.url :writer MAKER))]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (Unreachable DETAIL)) (repr answer))
     (finally (.close server))))
