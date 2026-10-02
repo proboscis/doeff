@@ -2,8 +2,9 @@
 
 VM は yield された ``Call`` を、生成器の定義ならその場で関数を呼んで stream にし(``Expand(Pure(stream))`` —
 ``@do`` の handler と同じ形)、生成器は C API の ``PyIter_Send`` で回す(StopIteration の例外を作らない)。
-答え(値・None・例外の捕まる所)は前と同じで、往復の VM の歩は 3 つ: 親へ送って ``Call`` を受ける・stream を積む・
-子へ送って終わる(前は ``Expand(Apply(Pure(thunk)))`` を通る 5 つ)。速さは負荷で揺れるので検で固定せず、歩の数で見る。
+答え(値・None・例外の捕まる所)は前と同じ。往復の VM の歩は 5 つ(``Expand(Apply(Pure(thunk)))``)から 3 つになり、
+#2816 からは、親の stream が yield された ``Call`` をその場で回すので、effect を出さずに返る呼びは VM の歩を使わない
+(tests/test_call_driven_in_place.py)。速さは負荷で揺れるので検で固定せず、歩の数で見る。
 """
 
 from collections.abc import Callable, Generator
@@ -59,11 +60,11 @@ def _counted_run(program: object) -> CountedRun:
     return CountedRun(steps=vm.step_count(), value=value)
 
 
-def test_a_call_of_a_generator_definition_round_trips_in_three_vm_steps() -> None:
+def test_a_call_of_a_generator_definition_that_returns_without_an_effect_takes_no_vm_step() -> None:
     ten = _counted_run(calls(10))
     twenty = _counted_run(calls(20))
     assert (ten.value, twenty.value) == (sum(range(1, 11)), sum(range(1, 21)))
-    assert (twenty.steps - ten.steps) / 10 == 3
+    assert twenty.steps == ten.steps
 
 
 def test_a_generator_definition_returning_none_answers_none() -> None:
