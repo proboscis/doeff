@@ -8,13 +8,21 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_time [Delay])
 ;; 模擬の列は、要求の無い間の静かな区間を本番の判断の関数で試す(idle_policy)。
-(import doeff_cluster.coordinator.core.idle_policy [quiet-stretch rest-to-tick MAX-QUIET-MS])
+(import doeff_cluster.coordinator.core.idle_policy [quiet-stretch next-step-at MAX-QUIET-MS])
 (import doeff_cluster.coordinator.core.api_policy [TICK-MS])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
-(import doeff_cluster.coordinator.intent.cluster_model [IdleProbe IdleNextRequests IdleTaken QuietStep QuietStretch CoordinatorFault]
+(import dataclasses [replace])
+(import doeff_cluster.coordinator.intent.cluster_model [IdleProbe IdleNextRequests IdleTaken QuietStep QuietStretch ProvisionalBeat
+                                                       HeartbeatReply CoordinatorFault]
         doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster.coordinator.protocol.replies [reply-json])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
+
+
+(val REPLAN "replan")   ; 取り手の呼び鈴の答え: 預けた仮の拍が変わった(区間を試し直す — 要求でも外の出来事でもない)
+(val BEAT "beat")       ; 預けた仮の拍の鈴の答え: その拍は静かでない(worker が本物の heartbeat を送る)
+(val DOWN "down")       ; 預けた仮の拍の鈴の答え: coordinator が止まった・落ちた(預けた拍は受けられない)
 
 
 (defrecord AbsorbedWatch
@@ -22,6 +30,30 @@
    走りで、送り手が「変わっていない」の返事を受けて同じ問いを送り直した刻)。送り手の返事の打ち切りはこの刻から数え直す(await-answer)。"
   (#^ Promise slot)
   (#^ int at))
+
+
+(defclass RestBell []
+  "静かな拍を眠る worker の宿の呼び鈴(#2790): promise = 宿が待つ Promise・rung = もう鳴らしたか。列(静かでない拍の刻・coordinator の
+   止まり)と世界(宿の真実の書き換え)の両方が鳴らすので、2 度目は鳴らさない(満たした Promise をもう一度満たすと RuntimeError)。"
+  (defn #^ None __init__ [self #^ Promise promise]
+    (setv self.promise promise self.rung False)
+    None))
+
+
+(defk ring-bell [bell reason]
+  {:pre [(: bell RestBell) (: reason str)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "宿の呼び鈴を reason で 1 度だけ鳴らすため(鳴らし済みなら何もしない — 確かめと満たしの間に他の task は割り込まない)。"
+  (when (not bell.rung)
+    (setv bell.rung True)
+    (<- (CompletePromise bell.promise reason)))
+  None)
+
+
+(defrecord DepositedBeat
+  "worker の宿が列に預けた仮の拍 1 つ(#2790): beat = 仮の拍(刻・要求・解いた本文・worker の名)・bell = 宿の眠りを起こす呼び鈴(列が
+   その拍を静かでないと判じた刻に BEAT で、coordinator が止まった時に DOWN で鳴らす — 同じ宿の預けは同じ鈴を持つ)。"
+  (#^ ProvisionalBeat beat)
+  (#^ RestBell bell))
 
 
 (defclass RequestQueue []
@@ -36,18 +68,28 @@
    skip-idle = 要求が無い間、静かな区間を一度に眠るか(idle_policy.quiet-stretch — 模擬の時計の下の入口だけが真にする・2026-09-30・
    #2790。偽なら本番と同じく timeout 秒ごとに起きる)。takes = 取り手が取った回数(coordinator の歩の数 — 検が読む)。
    absorbed = 区間の中で吸った名指しの待ち(返事の札の id → AbsorbedWatch — 送り手が打ち切りを数え直す)。ends-at-marks = 生存の印を
-   書く最初の歩で区間を切るか(落ちの注入が次の Persist を待つ間だけ真 — local.hy の CrashCoordinator が立て、落ちで下ろす)。"
+   書く最初の歩で区間を切るか(落ちの注入が次の Persist を待つ間だけ真 — local.hy の CrashCoordinator が立て、落ちで下ろす)。
+   beats = worker の宿が預けた仮の拍(DepositedBeat の list — 刻の順・#2790)。replies = worker の名 → その worker が最後に受けた
+   heartbeat の返事(JSON の本文 — 仮の拍の返事が同じかを比べる。返事の答え手 Reply が書く)。arrivals = 積んだ要求の id → 積んだ刻
+   (同じ刻の要求を送り手の名の順に取る)。planned = 今の区間の試しが静かと判じた仮の拍(list)・consumed = 調停ループへ渡した
+   (届いた)仮の拍のうち宿がまだ写していない物(list)— 宿は眠りの拍ごとに、この 2 つに在る拍を届いたものとして宿の真実へ写す
+   (#2850)。どちらも拍そのものを持ち、同じ拍かを is で比べる: id で覚えると、写されないまま残った覚え(世代の終わった宿の拍など)の
+   id が、その拍が消えた後に別の仮の拍に再び使われ、「届いた」と誤って判じる。"
   (defn #^ None __init__ [self #^ bool [skip-idle False]]
     (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.skip-idle skip-idle self.takes 0
-          self.absorbed {} self.ends-at-marks False)
+          self.absorbed {} self.ends-at-marks False self.beats [] self.replies {} self.arrivals {} self.planned []
+          self.consumed [])
     None))
 
 
 (defk enqueue-request [queue request]
   {:pre [(: queue RequestQueue) (: request Request)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "要求を列の後ろに積み、列が空の間に待っていた取り手の呼び鈴を全部鳴らして外すため(取り手は積んだのと同じ仮想の刻で起きる)。
-   積む順 = 取る順(列は先頭から取る)。鳴らすのは積んだ後 — 起きた取り手は必ず積んだ要求を見る。"
+   積む順 = 取る順(列は先頭から取る)— ただし同じ仮想の刻に届いた要求は、取る時に送り手の名の順に並べる(take-requests)。鳴らすのは
+   積んだ後 — 起きた取り手は必ず積んだ要求を見る。"
+  (<- now int (now-epoch-ms))
   (.append queue.pending request)
+  (setv (get queue.arrivals (id request)) now)
   (val waiting (tuple queue.takers))
   (.clear queue.takers)
   (for [bell waiting]
@@ -68,18 +110,72 @@
   None)
 
 
+(defk replan-takers [queue]
+  {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "預けた仮の拍が変わった(預けた・取り下げた)ことを、静かな区間を眠っている取り手に知らせるため(REPLAN — 取り手は起きた刻より前の
+   歩を残して区間を試し直す。要求ではないので本物の歩は回さない)。"
+  (val waiting (tuple queue.takers))
+  (.clear queue.takers)
+  (for [bell waiting]
+    (<- (CompletePromise bell REPLAN)))
+  None)
+
+
+(defk deposit-beats [queue name beats bell]
+  {:pre [(: queue RequestQueue) (: name str) (: beats tuple) (: bell RestBell)] :post [(: % None)]
+   :tags {:context "coordinator" :role "protocol"}}
+  "worker の宿が、静かな拍の heartbeat を仮の拍(ProvisionalBeat の tuple — 刻の順)として預けるため(#2790)。同じ worker の前の
+   預けは置き換える。取り手に区間を試し直させる。bell = 預けた拍のどれかを列が静かでないと判じた刻に鳴らす宿の呼び鈴。"
+  (setv queue.beats (sorted (+ (lfor held queue.beats :if (!= held.beat.name name) held)
+                               (lfor beat beats (DepositedBeat :beat beat :bell bell)))
+                            :key (fn [held] held.beat.at)))
+  (<- (replan-takers queue))
+  None)
+
+
+(defk withdraw-beats [queue name since]
+  {:pre [(: queue RequestQueue) (: name str) (: since int)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "worker の宿が、起きた刻 since 以後の預けた仮の拍を取り下げるため(宿は起きた後の拍を自分で打つ)。取り下げた拍が在れば、取り手に
+   区間を試し直させる。since より前の拍は残す(1 拍ずつの走りでは届いていた heartbeat — 取り手が積む)。"
+  (val kept (lfor held queue.beats :if (or (!= held.beat.name name) (< held.beat.at since)) held))
+  (when (!= (len kept) (len queue.beats))
+    (setv queue.beats kept)
+    (<- (replan-takers queue)))
+  None)
+
+
+(defk drop-beats [queue]
+  {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "coordinator が止まった・落ちた時に、預けた仮の拍を全部捨て、預けた宿を DOWN で起こすため(止まっている coordinator は heartbeat を
+   受けない — 宿は次の拍から本物の heartbeat を送り、届かないことを本番と同じに数える)。"
+  (val held (tuple queue.beats))
+  (setv queue.beats [])
+  (for [deposit held]
+    (<- (ring-bell deposit.bell DOWN)))
+  None)
+
+
+(defk same-reply [queue beat reply]
+  {:pre [(: queue RequestQueue) (: beat ProvisionalBeat) (: reply HeartbeatReply)] :post [(: % bool)]
+   :tags {:context "coordinator" :role "protocol"}}
+  "仮の拍への返事(判断の答えの本文)が、その worker が最後に受けた heartbeat の返事と同じ JSON かを知るため — 同じなら worker の
+   宿の真実は時刻の欄のほか変わらない(静かな拍)。返事の綴りは本番の返事の答え手 reply-bodies と同じ reply-json。"
+  (<- spelled (reply-json reply))
+  (= spelled (.get queue.replies beat.name)))
+
+
 (defk await-first-request [queue timeout-seconds]
-  {:pre [(: queue RequestQueue) (: timeout-seconds (| float int))] :post [(: % (| bool None))]
+  {:pre [(: queue RequestQueue) (: timeout-seconds (| float int))] :post [(: % (| bool str None))]
    :tags {:context "coordinator" :role "protocol"}}
   "列が空なら、送り手が積む(enqueue-request が呼び鈴を鳴らす)か timeout 秒が過ぎるまで 1 回だけ眠るため(読み直さない)。列に何か
    在れば眠らない。起きた時(時間切れ・取り消しを含む)は自分の呼び鈴を取り手の list から外す。答え = True(積まれた)・False
-   (nudge-takers — 要求ではない出来事)・None(時間切れか、眠らなかった)。"
+   (nudge-takers — 要求ではない出来事)・REPLAN(預けた仮の拍が変わった)・None(時間切れか、眠らなかった)。"
   (var woke None)
   (when (and (not queue.pending) (> timeout-seconds 0))
     (<- bell Promise (CreatePromise))
     (.append queue.takers bell)
     (try
-      (<- answer (| bool None) (promise-or-timeout bell.future timeout-seconds))
+      (<- answer (| bool str None) (promise-or-timeout bell.future timeout-seconds))
       (:= woke answer)
       ;; 積まれて起きたら、同じ刻に続けて積まれる残り(1 つの書き手が続けて積む要求)を待ってから取る — 0 秒の眠りは、同じ刻の
       ;; 書き手が手を止めるまで取り手を後ろへ回す(模擬の時計は普通の task が全部止まってから進む)。取りのまとまりが書きの途中で
@@ -90,22 +186,6 @@
         (when (in bell queue.takers)
           (.remove queue.takers bell)))))
   woke)
-
-
-(defk rest-to-first-tick [queue started]
-  {:pre [(: queue RequestQueue) (: started int)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
-  "最初の 1 拍のうちに要求ではない出来事(止めの注入など)で起こされた取り手が、本番の 1 秒の拍がそれに気づく刻(眠り始めの 1 拍後)まで
-   眠り直すため。要求が積まれればすぐ起きる。"
-  (var going True)
-  (while going
-    (<- now int (now-epoch-ms))
-    (<- rest int (rest-to-tick (- now started) TICK-MS))
-    (if (> rest 0)
-        (do (<- woke (| bool None) (await-first-request queue (/ rest 1000.0)))
-            (when (is-not woke False)
-              (:= going False)))
-        (:= going False)))
-  None)
 
 
 (defk note-absorbed [queue steps before]
@@ -135,63 +215,158 @@
               (QuietStretch :steps (tuple (gfor step stretch.steps :if (< step.at marked.at) step)) :end-at marked.at)))))
 
 
-(defk follow-stretch [queue probe started]
-  {:pre [(: queue RequestQueue) (: probe IdleProbe) (: started int)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
-  "要求の来ないまま最初の 1 拍が過ぎた取り手が、静かな区間を本番の判断(idle_policy.quiet-stretch)で試しながら一度に眠り、起きた刻より
-   前の歩(QuietStep の tuple — 1 拍ずつの走りが下したはずの歩)を返すため。区間は 1 拍・2 拍・4 拍…と倍に伸ばして試す(要求が早く来た
-   時に、来なかった先の歩を試す費用を払わない)。起き方: 要求が積まれた刻・最初の静かでない歩の刻(その歩は調停ループが本物の歩として
-   回す)・要求ではない出来事の後の最初の歩の刻(本番の 1 秒の拍がその出来事に気づく歩)・上限 MAX-QUIET-MS。"
-  (var last (QuietStep :at started :state probe.state :watchers probe.watchers :marked False))
+(defk pending-beats [queue steps]
+  {:pre [(: queue RequestQueue) (: steps tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
+  "預けた仮の拍のうち、試した歩 steps がまだ受けていない拍(ProvisionalBeat の tuple — 刻の順)を知るため(区間を試し直す起点の材料)。"
+  (val heard (frozenset (gfor step steps beat step.beats (id beat))))
+  (tuple (gfor held queue.beats :if (not-in (id held.beat) heard) held.beat)))
+
+
+(defk ring-beats-at [queue at]
+  {:pre [(: queue RequestQueue) (: at int)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
+  "区間の終わりの刻 at に届くはずだった仮の拍を、その worker に本物の heartbeat として送らせるため(その宿の預けを全部外して鈴を BEAT で
+   鳴らす — 宿はその刻に起きて拍を打ち、後の拍は起きた後に預け直す)。答え = 起こした worker の名。"
+  (val due (tuple (gfor held queue.beats :if (= held.beat.at at) held)))
+  (setv queue.beats (lfor held queue.beats :if (not (any (gfor other due (is other.bell held.bell)))) held))
+  (for [held due]
+    (<- (ring-bell held.bell BEAT)))
+  (tuple (gfor held due held.beat.name)))
+
+
+(defk await-peers [queue names seconds]
+  {:pre [(: queue RequestQueue) (: names tuple) (: seconds float)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "起こした worker の名 names の要求が全部 列に積まれるまで(上限 seconds 秒)待つため — 列に他の要求が在っても眠る(取り手の呼び鈴は
+   積まれるたびに鳴るので、積まれた刻に確かめ直す。預けの取り下げの REPLAN でも確かめ直す)。"
+  (<- started int (now-epoch-ms))
+  (var going True)
+  (while going
+    (if (all (gfor name names (any (gfor request queue.pending (= request.peer name)))))
+        (:= going False)
+        (do (<- now int (now-epoch-ms))
+            (val left (- (+ started (int (* 1000 seconds))) now))
+            (if (<= left 0)
+                (:= going False)
+                (do (<- bell Promise (CreatePromise))
+                    (.append queue.takers bell)
+                    (try
+                      (<- (promise-or-timeout bell.future (/ left 1000.0)))
+                      (finally
+                        (when (in bell queue.takers)
+                          (.remove queue.takers bell)))))))))
+  None)
+
+
+(defk heartbeats-at [queue at]
+  {:pre [(: queue RequestQueue) (: at int)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "区間が刻 at で終わる時(要求・外の出来事・静かでない歩・上限のどれでも)に、その刻に届くはずだった仮の拍をその worker に本物の
+   heartbeat として送らせ、積まれるのを待つため — 調停ループが 1 拍ずつの走りと同じく、同じ刻の要求と 1 つの歩で受ける(#2850)。"
+  (<- names tuple (ring-beats-at queue at))
+  (when names
+    (<- (await-peers queue names (/ TICK-MS 1000.0)))
+    ;; 要求で起きた取り手と同じく 0 秒の眠りをはさむ(await-first-request): 同じ刻に先に登録された timer(他の worker の拍)を先に
+    ;; 回し、その要求も同じ取りに入れる(1 拍ずつの走りの取りと同じまとまり — #2850 の系全体の静かな区間の 30.1 秒の w2)。
+    (<- (Delay 0.0)))
+  None)
+
+
+(defk follow-stretch [queue probe started cut-at]
+  {:pre [(: queue RequestQueue) (: probe IdleProbe) (: started int) (: cut-at (| int None))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "protocol"}}
+  "取り手が、静かな区間を本番の判断(idle_policy.quiet-stretch)で試しながら一度に眠り、起きた刻より前の歩(QuietStep の tuple — 1 拍
+   ずつの走りが下したはずの歩)を返すため。区間は 1 拍・2 拍・4 拍…と倍に伸ばして試す(要求が早く来た時に、来なかった先の歩を試す
+   費用を払わない)。worker の宿が預けた仮の拍は、その刻の歩で受けて試す(#2790)。起き方: 要求が積まれた刻・最初の静かでない歩の刻
+   (その歩は調停ループが本物の歩として回す — 仮の拍の刻なら、その worker を起こして本物の heartbeat を待つ)・要求ではない出来事の後の
+   最初の歩の刻(cut-at — 本番の 1 秒の拍がその出来事に気づく歩)・上限 MAX-QUIET-MS。預けた仮の拍が変わったら(REPLAN)、起きた刻より
+   前の歩を残して試し直す。"
+  (val origin (QuietStep :at started :state probe.state :watchers probe.watchers :marked False))
   (var steps #())
   (var end None)
+  (var until cut-at)
   (var chunk TICK-MS)
   (var horizon (+ started TICK-MS))
   (var taken None)
   (while (is taken None)
+    (val last (if steps (get steps -1) origin))
     (when (and (is end None) (< last.at horizon))
-      (<- tried QuietStretch (quiet-stretch probe last horizon))
+      (<- pending tuple (pending-beats queue steps))
+      (<- tried QuietStretch (quiet-stretch (replace probe :beats pending) last horizon (fn [beat reply] (same-reply queue beat reply))))
       (<- stretch QuietStretch (cut-at-marks queue last tried))
       (<- (note-absorbed queue stretch.steps last.watchers))
       (:= steps (+ steps stretch.steps))
-      (when stretch.steps
-        (:= last (get stretch.steps -1)))
       (:= end stretch.end-at))
+    ;; 要求ではない出来事の後: その刻以後の最初の歩(試した歩か、試した最後の歩の次の歩)を本物の歩にする。
+    (when (is-not until None)
+      (val later (next (gfor step steps :if (>= step.at until) step.at) None))
+      (<- unheard tuple (pending-beats queue steps))
+      (<- after int (next-step-at (if steps (get steps -1) origin) unheard))
+      (:= end (cond (is-not later None) later (is-not end None) end True after))
+      (:= steps (tuple (gfor step steps :if (< step.at end) step))))
     (<- now int (now-epoch-ms))
     (val target (if (is end None) horizon end))
     (var woke None)
     (when (> target now)
-      (<- answer (| bool None) (await-first-request queue (/ (- target now) 1000.0)))
+      (<- answer (| bool str None) (await-first-request queue (/ (- target now) 1000.0)))
       (:= woke answer))
     (<- at int (now-epoch-ms))
     (cond
-      (is woke True) (:= taken (tuple (gfor step steps :if (< step.at at) step)))
-      ;; 要求ではない出来事: その刻以後の最初の歩(試した歩か、試した最後の歩の次)を本物の歩にする。
-      (is woke False) (do (val later (next (gfor step steps :if (>= step.at at) step.at) None))
-                          (:= end (if (is later None) (+ last.at TICK-MS) later))
-                          (:= steps (tuple (gfor step steps :if (< step.at end) step))))
-      (and (is-not end None) (>= at end)) (:= taken steps)
+      ;; 要求が積まれた(区間を試している間に積まれた要求は呼び鈴を鳴らさない — 列に在れば眠らずに返す await-first-request の答えは
+      ;; None なので、列を見て要求で起きたと数える)。
+      (or (is woke True) queue.pending) (do (<- (heartbeats-at queue at))
+                                            (:= taken (tuple (gfor step steps :if (< step.at at) step))))
+      (is woke False) (:= until at)
+      ;; 預けた仮の拍が変わった: 起きた刻より前の歩を残して試し直す。
+      (= woke REPLAN) (do (:= steps (tuple (gfor step steps :if (< step.at at) step)))
+                          (:= end None))
+      (and (is-not end None) (>= at end))
+        (do (<- (heartbeats-at queue end))
+            (:= taken steps))
       ;; 上限の刻の歩は、静かでも本物の歩として回す。
       (>= (- horizon started) MAX-QUIET-MS) (do (:= end horizon)
                                                 (:= steps (tuple (gfor step steps :if (< step.at end) step))))
       True (do (:= chunk (* 2 chunk))
-               (:= horizon (min (+ horizon chunk) (+ started MAX-QUIET-MS))))))
+               (:= horizon (min (+ horizon chunk) (+ started MAX-QUIET-MS)))))
+    ;; 今の試しが静かと判じた仮の拍(宿が拍ごとに届いたものとして写す材料)。
+    (setv queue.planned (lfor step steps beat step.beats beat)))
+  ;; 返す歩が受けた仮の拍は預けから外し、届いた物として宿が写すまで覚える(調停ループが歩ごとに保存する)。
+  (val heard-beats (tuple (gfor step taken beat step.beats beat)))
+  (val heard (frozenset (gfor beat heard-beats (id beat))))
+  (setv queue.beats (lfor held queue.beats :if (not-in (id held.beat) heard) held))
+  (.extend queue.consumed heard-beats)
+  (setv queue.planned [])
   taken)
+
+
+(defk beat-heard [queue beat]
+  {:pre [(: queue RequestQueue) (: beat ProvisionalBeat)] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
+  "仮の拍 beat を列が静かと判じたか(今の区間の試しの歩に在るか、調停ループへ渡したか)を知るため — 宿が眠りの拍ごとに、届いたものと
+   して宿の真実へ写してよいかを判じる(静かでない拍は BEAT で起こされ、本物で打つ)。"
+  (or (any (gfor held queue.planned (is held beat))) (any (gfor held queue.consumed (is held beat)))))
+
+
+(defk forget-heard [queue beats]
+  {:pre [(: queue RequestQueue) (: beats tuple)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
+  "宿が宿の真実へ写した仮の拍の覚え(consumed)を外すため。"
+  (setv queue.consumed (lfor held queue.consumed :if (not (any (gfor beat beats (is beat held)))) held))
+  None)
 
 
 (defk await-idle [queue probe]
   {:pre [(: queue RequestQueue) (: probe IdleProbe)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
   "要求の無い間の眠りを、静かな区間(idle_policy.quiet-stretch — 本番の判断の関数で試した歩)の分だけ一度に取り、眠った間の歩を返すため
-   (#2790)。要求が積まれればすぐ起きる(本番と同じ刻)。区間を試すのは、要求の来ないまま最初の 1 拍が過ぎた時だけ(要求が 1 秒より
-   短い間隔で続く系では、飛ばせる歩が無いのに状態の大きい判断を歩ごとに試すことになり、1 秒ごとの歩より遅くなった — 使い手の模擬の
-   全体の検の実測 49.5 秒 → 60 秒超)。最初の 1 拍のうちに要求ではない出来事で起こされたら試さない(本番の 1 秒の拍が、その出来事に
-   気づく拍で返す)。"
+   (#2790)。要求が積まれればすぐ起きる(本番と同じ刻)。仮の拍が預けられていなければ、区間を試すのは要求の来ないまま最初の 1 拍が
+   過ぎた時だけ(要求が 1 秒より短い間隔で続く系では、飛ばせる歩が無いのに状態の大きい判断を歩ごとに試すことになり、1 秒ごとの歩より
+   遅くなった — 使い手の模擬の全体の検の実測 49.5 秒 → 60 秒超)。最初の 1 拍のうちに要求ではない出来事で起こされたら、その刻以後の
+   最初の歩を本物の歩にする(本番の 1 秒の拍がその出来事に気づく歩)。仮の拍が在れば、その刻の歩を逃さないよう最初から試す。"
   (<- started int (now-epoch-ms))
-  (<- woke (| bool None) (await-first-request queue (/ TICK-MS 1000.0)))
+  (var woke None)
+  (when (not queue.beats)
+    (<- answer (| bool str None) (await-first-request queue (/ TICK-MS 1000.0)))
+    (:= woke answer))
+  (<- now int (now-epoch-ms))
   (var steps #())
-  (cond
-    (is woke False) (<- (rest-to-first-tick queue started))
-    (and (is woke None) (not queue.pending)) (do (<- slept tuple (follow-stretch queue probe started))
-                                                 (:= steps slept)))
+  (when (and (is-not woke True) (not queue.pending))
+    (<- slept tuple (follow-stretch queue probe started (if (is woke False) now None)))
+    (:= steps slept))
   steps)
 
 
@@ -211,8 +386,13 @@
       (<- (await-first-request queue timeout-seconds)))
   (when (not queue.pending)
     (<- (Delay 0.0)))
-  (val batch (cut queue.pending 0 limit))
+  ;; 同じ仮想の刻に届いた要求は送り手の名の順に並べる(同じ送り手の中の順は保つ — 並べ替えは安定)。模擬の時計では、同じ刻に起きる
+  ;; task の順が timer を登録した順で決まり、静かな拍を一度に眠る宿(#2850)と 1 拍ずつ眠る宿で入れ替わる。本番の同じ刻の到着の順は
+  ;; 決まっておらず、名の順はその 1 つの並び。
+  (val batch (sorted (cut queue.pending 0 limit) :key (fn [request] #((.get queue.arrivals (id request) 0) request.peer))))
   (setv queue.pending (cut queue.pending limit None))
+  (for [request batch]
+    (.pop queue.arrivals (id request) None))
   (+= queue.takes 1)
   (if steps (IdleTaken :steps steps :batch batch) batch))
 
@@ -263,6 +443,9 @@
       (raise (TypeError (.format "返事の札が Promise でない({}): {} {}" (type request.slot) request.method request.path))))
     ;; 返事をした待ちは、もう吸っていない(送り手は返事を受ける)。
     (.pop queue.absorbed (id request.slot) None)
+    ;; worker が最後に受けた heartbeat の返事を覚える(仮の拍の返事が同じかを比べる — same-reply)。
+    (when (and (= status 200) (= request.path "/heartbeat") (isinstance request.actor str))
+      (setv (get queue.replies request.actor) body))
     (<- (CompletePromise request.slot #(status body)))
     (resume None))
   (CoordinatorFault [fault]
