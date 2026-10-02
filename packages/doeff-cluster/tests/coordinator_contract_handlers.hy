@@ -6,7 +6,6 @@
 ;;;   metrics-memory         fake: metrics-memory(list に記録)
 ;;;   metrics-http           本物: metrics-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/metrics)
 ;;;   readiness-claims       fake: readiness-claims(入れ物 ReadinessLog に揃えた報告 ReadinessClaim を積む — #3028)
-;;;   readiness-memory       fake: readiness-memory(list に 3 欄の dict を記録 — 旧い fake・#3028 の最後の手で消す)
 ;;;   readiness-http         本物: readiness-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/readiness)
 ;;;   remote-cluster         本物: remote-cluster(宛先の部品の HttpRequest → coordinator の /programs・/tasks)と担い手(RigWorker)
 ;;;   remote-cluster-env     同じ・送り手が実行環境を宣言する(TaskSender の runtime-env = CONTRACT-ENV)
@@ -54,7 +53,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-memory metrics-http])
-(import doeff_cluster.shared.protocol.readiness_handlers [ReadinessLog readiness-claims readiness-memory readiness-http])
+(import doeff_cluster.shared.protocol.readiness_handlers [ReadinessLog readiness-claims readiness-http])
 (import doeff_cluster.shared.intent.readiness_model [ReadinessClaim])
 (import doeff_cluster.shared.protocol.service_report [ServiceReport])
 (import doeff_core_effects.handlers [slog-handler])
@@ -157,24 +156,12 @@
   env)
 
 
-(defk old-readiness-claim [report]
-  {:pre [(: report (| dict None))] :post [(: % (| ReadinessClaim None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "旧い fake readiness-memory が積んだ 3 欄の dict を、契約が比べる形 ReadinessClaim に読むため(旧い fake と一緒に消す — #3028)。"
-  (if (is report None)
-      None
-      (ReadinessClaim :ready (get report "ready") :reason (get report "reason") :role (get report "role"))))
-
-
 (defhandler memory-side [#^ dict store #^ list reports]
   ;; 引数に残す理由: 真実は fake の handler と同じ dict / list そのもの(組み立てが 1 つ作って両方へ渡す — Ask で運ぶ設定ではない)。
-  ;; fake の側の真実: 共有の保存の dict と、報告の handler が積む list(1 つの解釈器の報告の族は 1 つ)。fake は網を持たない。
+  ;; fake の側の真実: 共有の保存の dict と、報告の handler が積む list(1 つの解釈器の報告の族は 1 つ — 計器の報告。準備の報告の
+  ;; fake は入れ物 ReadinessLog に積む claims-side の側)。fake は網を持たない。
   (BoardSeen [] (resume (dict store)))
-  (ReportSeen [kind]
-    (val last (if reports (get reports -1) None))
-    (if (= kind READINESS)
-        (do (<- claim (old-readiness-claim last))
-            (resume claim))
-        (resume last)))
+  (ReportSeen [kind] (resume (if reports (get reports -1) None)))
   (SetReachable [up] (resume None)))
 
 
@@ -408,7 +395,6 @@
    "metrics-memory" (partial under-memory (fn [store reports] [(metrics-memory reports)]))
    "metrics-http" (partial under-coordinator (fn [transport] [slog-handler (metrics-http (contract-route) CONTRACT-ROUTE (contract-report))]))
    "readiness-claims" under-claims
-   "readiness-memory" (partial under-memory (fn [store reports] [(readiness-memory reports)]))
    "readiness-http" (partial under-coordinator (fn [transport] [slog-handler (readiness-http (contract-route) CONTRACT-ROUTE (contract-report))]))
    "remote-cluster" (partial under-rig False)
    "remote-cluster-env" (partial under-rig True)
