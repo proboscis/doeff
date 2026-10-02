@@ -467,9 +467,73 @@ def _effect_base(base: ast.expr, answer: ast.expr | None) -> ast.expr:
             return base
 
 
+def _member_name(member: ast.stmt) -> str | None:
+    """class の本体の宣言 1 つが束ねる名(__init__ の欄を重ねて宣言しないため)。"""
+    match member:
+        case ast.AnnAssign(target=ast.Name(id=name)) | ast.Assign(targets=[ast.Name(id=name)]):
+            return name
+        case ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name) | ast.ClassDef(name=name):
+            return name
+        case _:
+            return None
+
+
+@dataclass(frozen=True)
+class _Placed:
+    """__init__ の中で self に置く欄 1 つ — 名と、読める型(読めなければ None)。"""
+
+    name: str
+    kind: ast.expr | None
+
+
+def _argument_type(init: ast.FunctionDef, name: str) -> ast.expr | None:
+    """__init__ の引数 name の注記(引数でない・注記が無いなら None)— 引数をそのまま欄に置く時の欄の型を読むため。"""
+    listed = [*init.args.posonlyargs, *init.args.args, *init.args.kwonlyargs]
+    found = next((a.annotation for a in listed if a.arg == name and a.annotation is not None), None)
+    return None if found is None else _annotation(found) or found
+
+
+def _placed(statement: ast.AST, init: ast.FunctionDef) -> _Placed | None:
+    """__init__ の中の文 1 つが self に置く欄(self の欄を置かない文は None)。注記つきの置き方は注記を、引数をそのまま置く
+    置き方はその引数の注記を型と読む。"""
+    match statement:
+        case ast.AnnAssign(target=ast.Attribute(value=ast.Name(id="self"), attr=attr), annotation=annotation):
+            return _Placed(attr, _annotation(annotation) or annotation)
+        case ast.Assign(targets=[ast.Attribute(value=ast.Name(id="self"), attr=attr)], value=ast.Name(id=name)):
+            return _Placed(attr, _argument_type(init, name))
+        case ast.Assign(targets=[ast.Attribute(value=ast.Name(id="self"), attr=attr)]):
+            return _Placed(attr, None)
+        case _:
+            return None
+
+
+def _init_attributes(node: ast.ClassDef, declared: frozenset[str]) -> list[ast.stmt]:
+    """__init__ の中で self に置く欄の宣言。型検査は .pyi に書かれていない欄を読めないので、method だけを宣言した class は欄を
+    求める Protocol を満たさなかった(WalStore と ByteLog — agora-redesign #2972)。型は注記つきの置き方(`(setv #^ T self.x …)`)の
+    T か、引数をそのまま置く時はその引数の注記。どちらでもない欄は型を推さず Incomplete にする(書き手が注記を足す先として
+    報告される)。class の本体で既に宣言した名と、`_` で始まる私的な欄(使い手が読む型の面ではない — 出すと型の分からない欄の
+    報告が増えるだけ)は足さない。"""
+    init = next((s for s in node.body if isinstance(s, ast.FunctionDef) and s.name == "__init__"), None)
+    if init is None:
+        return []
+    placed = [found for statement in ast.walk(init) if (found := _placed(statement, init)) is not None]
+    names = dict.fromkeys(p.name for p in placed if not p.name.startswith("_") and p.name not in declared)
+    return [
+        ast.AnnAssign(
+            target=_name(name),
+            annotation=next((p.kind for p in placed if p.name == name and p.kind is not None), _name(_INCOMPLETE)),
+            value=None,
+            simple=1,
+        )
+        for name in names
+    ]
+
+
 def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.ClassDef:
     """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。type_vars = module の型の引数の名(答えの型を読むため)。"""
-    body = [member for statement in node.body if (member := _member(statement)) is not None]
+    members = [member for statement in node.body if (member := _member(statement)) is not None]
+    declared = frozenset(name for member in members if (name := _member_name(member)) is not None)
+    body = [*_init_attributes(node, declared), *members]
     answer = next(
         (found for statement in node.body if (found := _declared_answer(statement, type_vars)) is not None), None
     )

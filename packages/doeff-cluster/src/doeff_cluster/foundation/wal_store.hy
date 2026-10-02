@@ -48,10 +48,13 @@
    行を捨てた時の記録(捨てた byte 数・理由・残した byte 数 — coordinator が起動の行と計器に出す・method recovery)。fsync-seconds =
    直近の fsync の時間(秒)の記録(log の遅さを測る)。"
   (defn #^ None __init__ [self #^ str directory #^ int [max-log-bytes MAX-LOG-BYTES] #^ Callable [fsync os.fsync]]
-    (setv self.dir (Path directory) self.max-log-bytes max-log-bytes self.fsync fsync
-          self.snapshot (/ self.dir "snapshot.json") self.log (/ self.dir "wal.jsonl")
-          self.kv {} self.seq 0 self.handle None self.fsync-seconds []
-          self.recovered None))
+    ;; 欄の注記は型の宣言(.pyi)が欄を読むため — 置き場の口の形 ByteLog(coordinator/protocol/store)が欄 seq・max-log-bytes・
+    ;; snapshot・log を求める(注記が無いと .pyi に欄の型が出ず、使い手の型検査で WalStore が ByteLog を満たさない — #2972)。
+    (setv #^ Path self.dir (Path directory) self.max-log-bytes max-log-bytes self.fsync fsync
+          #^ Path self.snapshot (/ self.dir "snapshot.json") #^ Path self.log (/ self.dir "wal.jsonl")
+          #^ (get dict #(str object)) self.kv {} #^ int self.seq 0 #^ (| BinaryIO None) self.handle None
+          #^ (get list float) self.fsync-seconds []
+          #^ (| (get dict #(str (| int str))) None) self.recovered None))
 
   (defn #^ bool exists [self] (or (.exists self.snapshot) (.exists self.log)))
 

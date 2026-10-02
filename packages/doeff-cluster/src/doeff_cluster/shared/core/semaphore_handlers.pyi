@@ -1,5 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = semaphore_handlers.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from doeff import EffectBase as EffectBase
@@ -30,6 +31,15 @@ def named_semaphore_local(names: dict) -> _Handler:
     ...
 
 class SemaphoreSession:
+    holder: str
+    ttl_seconds: float
+    poll_seconds: float
+    seq: Incomplete
+    held: Incomplete
+    lost: Incomplete
+    renewers: Incomplete
+    expires: Incomplete
+    ever_held: Incomplete
 
     def __init__(self, holder: str, ttl_seconds: float=15.0, poll_seconds: float=0.5) -> None:
         ...

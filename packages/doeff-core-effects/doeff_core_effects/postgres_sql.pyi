@@ -65,6 +65,11 @@ class PostgresStatement:
     params: tuple
 
 class PostgresConnections:
+    size: Incomplete
+    timeouts: Incomplete
+    databases: Incomplete
+    idle: Incomplete
+    permits: Incomplete
 
     def __init__(self, databases: tuple, *, size: Incomplete=..., timeouts: Incomplete=...) -> None:
         ...

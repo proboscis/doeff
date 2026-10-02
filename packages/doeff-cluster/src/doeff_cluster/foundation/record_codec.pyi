@@ -58,6 +58,8 @@ class _Diverge:
 DIVERGE: _Diverge
 
 class ReplayHandle:
+    kind: str
+    ref: str
 
     def __init__(self, kind: str, ref: str) -> None:
         ...
@@ -91,6 +93,8 @@ class DataclassValue(Protocol):
 RestoredValue: TypeAlias = None | bool | int | float | str | bytes | datetime | ReplayHandle | list | tuple | dict | BaseException | DataclassValue
 
 class RecordedError(Exception):
+    type_name: str
+    message: str
 
     def __init__(self, type_name: str, message: str) -> None:
         ...
@@ -104,6 +108,9 @@ def resolve_type(name: str) -> type | None:
     ...
 
 class HandleTable:
+    by_id: Incomplete
+    keep: Incomplete
+    promises: Incomplete
 
     def __init__(self) -> None:
         ...
@@ -148,6 +155,8 @@ def content_hash(text: str) -> str:
     ...
 
 class BlobMemory:
+    max_size: int
+    order: Incomplete
 
     def __init__(self, max_size: int=...) -> None:
         ...
@@ -168,6 +177,15 @@ def resolve_refs(j: JsonValue, blobs: dict, memo: dict | None=None) -> JsonValue
     ...
 
 class EffectCodec:
+    cls: type
+    name: Incomplete
+    mode: str | Callable
+    args_fn: Callable | None
+    subject_fn: Callable | None
+    unexecuted: _Diverge | bool | None
+    binds: str | None
+    watch: bool
+    arg_names: tuple | None
 
     def __init__(self, cls: type, mode: str | Callable, args: Callable | None=None, subject: Callable | None=None, unexecuted: _Diverge | bool | None=..., binds: str | None=None, watch: bool=False, arg_names: tuple | None=None) -> None:
         ...
