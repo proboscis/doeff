@@ -16,7 +16,8 @@
 (import doeff [Program])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
-                                        checked-identifier checked-identifiers checked-rows normalized-rows])
+                                        checked-identifier checked-identifiers checked-rows normalized-rows SqlTable SqlParam
+                                        SqlValue])
 (import doeff_core_effects.sql_transaction [run-in-transaction])
 
 ;; 例外の類 → SQLSTATE の類(psycopg が SQLSTATE から類を選ぶ表の逆 — agora-controllers services/record/handlers_wire.hy の
@@ -43,7 +44,7 @@
 (defrecord SqliteStatement
   "sqlite へ渡す形に書き換えた文(text = `?` の文・values = 引数の値を `?` の順に)。"
   (#^ str text)
-  (#^ tuple values))
+  (#^ (get tuple #(SqlValue ...)) values))
 
 
 (defrecord SqliteConnection
@@ -53,7 +54,7 @@
 
 
 (defk sqlite-statement [statement params]
-  {:pre [(: statement str) (: params tuple)] :post [(: % SqliteStatement)]
+  {:pre [(: statement str) (: params (of tuple SqlParam ...))] :post [(: % SqliteStatement)]
    :tags {:context "sql" :role "foundation"}}
   "中立の記法の文を sqlite の `?` の文へ書き換えるため(引数の名の食い違いは ValueError)。値は名から 1 度で引く表で `?` の順に並べる
    (checked-params の後なので、文の引数の名は全部 params に在る — 引数 1 つごとに param-value を呼ぶ費用を省く・agora-redesign #2423)。"
@@ -65,7 +66,7 @@
 
 
 (defk sqlite-failure [class-names message]
-  {:pre [(: class-names tuple) (: message str)] :post [(: % (| SqlFailed SqlUnreachable))]
+  {:pre [(: class-names (of tuple str ...)) (: message str)] :post [(: % (| SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "sqlite3 の例外(類の名の並び = MRO の名・文)を失敗の値へ写すため(頭の註の表)。"
   (val lowered (.lower message))
@@ -80,7 +81,7 @@
 
 
 (defk sqlite-schema-statements [tables]
-  {:pre [(: tables tuple)] :post [(: % tuple)]
+  {:pre [(: tables (of tuple SqlTable ...))] :post [(: % (of tuple str ...))]
    :tags {:context "sql" :role "foundation"}}
   "表の宣言を sqlite の DDL(CREATE TABLE / INDEX IF NOT EXISTS)に描くため。"
   (var statements [])
@@ -100,7 +101,7 @@
 
 
 (defk sqlite-run [connection text values]
-  {:pre [(: connection sqlite3.Connection) (: text str) (: values tuple)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+  {:pre [(: connection sqlite3.Connection) (: text str) (: values (of tuple SqlValue ...))] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "書き換えた文 1 つを流して答えの値にするため(行を返す文の rowcount は返した行の数)。"
   (try
@@ -140,7 +141,7 @@
 
 
 (defk sqlite-ensure-tables [connection tables]
-  {:pre [(: connection sqlite3.Connection) (: tables tuple)] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
+  {:pre [(: connection sqlite3.Connection) (: tables (of tuple SqlTable ...))] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "表の宣言を DDL に描いて順に流すため(最初の失敗で止める)。"
   (<- statements (sqlite-schema-statements tables))
@@ -168,7 +169,7 @@
 
 
 (defk with-connection [connections database]
-  {:pre [(: connections tuple) (: database str)] :post [(: % tuple)]
+  {:pre [(: connections (of tuple SqliteConnection ...)) (: database str)] :post [(: % (of tuple SqliteConnection ...))]
    :tags {:context "sql" :role "foundation"}}
   "database の memory の DB の接続が置き場に在ることを確かめ、無ければ開いて足した置き場を返すため。session の値は同じ答え手の全部で
    分け合う(鍵が module と答え手の名で決まる)ので、答え手ごとではなく database の名ごとに 1 本を持つ。"
@@ -178,14 +179,14 @@
 
 
 (defk connection-of [connections database]
-  {:pre [(: connections tuple) (: database str)] :post [(: % sqlite3.Connection)]
+  {:pre [(: connections (of tuple SqliteConnection ...)) (: database str)] :post [(: % sqlite3.Connection)]
    :tags {:context "sql" :role "foundation"}}
   "置き場から database の接続を引くため(with-connection の後に呼ぶ)。"
   (next (gfor c connections :if (= c.name database) c.connection)))
 
 
 (defk outage-marked [unreachable database down]
-  {:pre [(: unreachable tuple) (: database str) (: down bool)] :post [(: % tuple)]
+  {:pre [(: unreachable (of tuple str ...)) (: database str) (: down bool)] :post [(: % (of tuple str ...))]
    :tags {:context "sql" :role "foundation"}}
   "SetSqlOutage 1 つを不達の database の名の並びへ写すため(down = True で足し・False で外す)。"
   (if down
@@ -194,7 +195,7 @@
 
 
 (defk outage-of [unreachable database]
-  {:pre [(: unreachable tuple) (: database str)] :post [(: % (| SqlUnreachable None))]
+  {:pre [(: unreachable (of tuple str ...)) (: database str)] :post [(: % (| SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
   "不達の印のある database への effect の答え(SqlUnreachable)を作るため。印が無ければ None。"
   (if (in database unreachable) (SqlUnreachable :reason (.format "模擬の不達: {}" database)) None))
@@ -204,7 +205,7 @@
 ;; SqlUnreachable。effect ごとに分けるのは、答えの型を effect の答えの型のまま運ぶため。
 
 (defk sqlite-answer-query [connection unreachable request]
-  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+  {:pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "SqlQuery 1 つに答えるため(不達の印を見てから)。"
   (<- down (outage-of unreachable request.database))
@@ -215,7 +216,7 @@
 
 
 (defk sqlite-answer-insert [connection unreachable request]
-  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+  {:pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "SqlInsertRows 1 つに答えるため(不達の印を見てから)。"
   (<- down (outage-of unreachable request.database))
@@ -226,7 +227,7 @@
 
 
 (defk sqlite-answer-tables [connection unreachable database tables]
-  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: database str) (: tables tuple)]
+  {:pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: tables (of tuple SqlTable ...))]
    :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "SqlEnsureTables 1 つに答えるため(不達の印を見てから)。"
@@ -238,8 +239,9 @@
 
 
 (defk sqlite-answer-transaction [connection unreachable database program]
-  {:pre [(: connection sqlite3.Connection) (: unreachable tuple) (: database str) (: program Program)]
-   :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
+  {:tp [A]
+   :pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: program (of Program A object))]
+   :post [(: % (| A SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "SqlTransaction 1 つを接続 1 本の BEGIN IMMEDIATE … COMMIT / ROLLBACK で答えるため(不達の印を見てから・手順は sql_transaction.hy)。"
   (<- down (outage-of unreachable database))
@@ -254,7 +256,7 @@
   answer)
 
 
-(defhandler sqlite-sql-handler [#^ tuple databases]
+(defhandler sqlite-sql-handler [#^ (get tuple #(str ...)) databases]
   ;; 引数に残す理由: 答える database の名で PostgreSQL / ClickHouse の答え手と同じ組に並べ分ける(Ask では組の中の区別が付かない)。
   "I/O なしの SQL の答え手(頭の註)。databases = 答える database の名の tuple(他の名の effect は外側へ回す)。"
   {:tags {:context "sql" :role "foundation"}}

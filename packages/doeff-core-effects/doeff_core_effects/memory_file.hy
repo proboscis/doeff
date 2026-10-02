@@ -127,7 +127,8 @@
 
 
 (defk compile-in-store [store tree items]
-  {:pre [(: store MemoryFiles) (: tree str) (: items tuple)] :post [(: % tuple)]}
+  {:pre [(: store MemoryFiles) (: tree str) (: items (get tuple #((get tuple #(str str)) ...)))]
+   :post [(: % (get tuple #(MemoryFiles (get tuple #(SourceNotCompiled ...)))))]}
   "木の source を逐次に焼いて __pycache__ へ置いた置き場と、焼けなかった物の SourceNotCompiled の tuple を返すため(答え = #(置き場 失敗))。
    焼きの判断は本物と同じ kept-pyc(既に在る .pyc が今の source に合えば焼き直さない)と compiled-pyc。Hy の source は焼けない(doeff-hy は
    disk に在る file かで Hy の source を見分けるので、memory の source は Python として読まれ、SyntaxError の失敗になる)。"
@@ -181,7 +182,7 @@
 
 
 (defk entries-below [store path]
-  {:pre [(: store MemoryFiles) (: path str)] :post [(: % tuple)]}
+  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (get tuple #(DirEntry ...)))]}
   "dir の下の全部を相対 path の順に並べるため(呼び手が dir であることを確かめる)。"
   (val found (+ (lfor d store.dirs :if (and (!= d ROOT) (under? d path)) #(d PathKind.DIRECTORY))
                 (lfor f store.files :if (under? f.path path) #(f.path PathKind.FILE))))
@@ -189,7 +190,7 @@
 
 
 (defk list-in [store path]
-  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (| tuple FileFailed))]}
+  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (| (get tuple #(DirEntry ...)) FileFailed))]}
   "dir の直下を名の順に並べるため。"
   (<- refusal (dir-refusal store path))
   (when (is-not refusal None)

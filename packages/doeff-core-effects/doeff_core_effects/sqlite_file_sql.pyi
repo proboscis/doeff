@@ -1,22 +1,27 @@
-"""sqlite_file_sql.hy の公開面の型(既存の DB の file を開く SQL の答え手 — 型検査のための宣言・実行時は sqlite_file_sql.hy を読む・
-agora-redesign #2237 の前提)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = sqlite_file_sql.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- sqlite-file-sql-handler(Python の名 sqlite_file_sql_handler)は open-sqlite-files で開いた SqliteFiles を受け、本文の Program に被せる関数を
-  返す(defhandler の展開と同じ形: 本文の答えの型をそのまま運ぶ WithHandler)。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
-
-from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar
-
-from doeff_vm import WithHandler
-
-from doeff import Program
-from doeff_core_effects.sqlite_sql import SqliteConnection
-
-_A = TypeVar("_A")
-
+from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+import sqlite3 as sqlite3
+from pathlib import Path as Path
+from dataclasses import dataclass as dataclass
+from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
+from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
+from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
+from doeff_core_effects.sql_effects import SetSqlOutage as SetSqlOutage
+from doeff_core_effects.sqlite_sql import SqliteConnection as SqliteConnection
+from doeff_core_effects.sqlite_sql import sqlite_connection as sqlite_connection
+from doeff_core_effects.sqlite_sql import connection_of as connection_of
+from doeff_core_effects.sqlite_sql import outage_marked as outage_marked
+from doeff_core_effects.sqlite_sql import sqlite_answer_query as sqlite_answer_query
+from doeff_core_effects.sqlite_sql import sqlite_answer_insert as sqlite_answer_insert
+from doeff_core_effects.sqlite_sql import sqlite_answer_tables as sqlite_answer_tables
+from doeff_core_effects.sqlite_sql import sqlite_answer_transaction as sqlite_answer_transaction
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
+from doeff import Some as Some
+from doeff_core_effects.effects import Put as Put
 JOURNAL_MODE: str
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,13 +33,14 @@ class SqliteFile:
 class SqliteFiles:
     connections: tuple[SqliteConnection, ...]
 
-def sqlite_file_connection(file: SqliteFile) -> Program[SqliteConnection, Any]: ...
-def open_sqlite_files(files: tuple[SqliteFile, ...]) -> Program[SqliteFiles, Any]: ...
-def close_sqlite_files(files: SqliteFiles) -> Program[None, Any]: ...
+def sqlite_file_connection(file: SqliteFile) -> _Program[SqliteConnection, object]:
+    ...
 
-class _SqliteFileSqlHandler(Protocol):
-    """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
+def open_sqlite_files(files: tuple[SqliteFile, ...]) -> _Program[SqliteFiles, object]:
+    ...
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
+def close_sqlite_files(files: SqliteFiles) -> _Program[None, object]:
+    ...
 
-def sqlite_file_sql_handler(files: SqliteFiles) -> _SqliteFileSqlHandler: ...
+def sqlite_file_sql_handler(files: SqliteFiles) -> _Handler:
+    ...

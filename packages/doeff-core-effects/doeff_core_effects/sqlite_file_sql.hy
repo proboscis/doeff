@@ -48,7 +48,7 @@
 
 
 (defk open-sqlite-files [files]
-  {:pre [(: files tuple) (all (gfor f files (isinstance f SqliteFile)))
+  {:pre [(: files (of tuple SqliteFile ...)) (all (gfor f files (isinstance f SqliteFile)))
          (= (len files) (len (set (gfor f files f.name))))]
    :post [(: % SqliteFiles)]
    :tags {:context "sql" :role "foundation"}}
@@ -66,7 +66,7 @@
 
 
 (defk close-sqlite-files [files]
-  {:pre [(: files SqliteFiles)] :post [(: % "None")]
+  {:pre [(: files SqliteFiles)] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
   "開いた接続を全部閉じるため(組み立ての側が止める時に呼ぶ)。閉じた後の effect は SqlUnreachable を答える。"
   (for [c files.connections]

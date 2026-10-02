@@ -1,72 +1,105 @@
-"""scripted_http_server.hy の公開面の型(HTTP の待ち受けの effect の I/O なしの答え手 — 型検査のための宣言・実行時は
-scripted_http_server.hy を読む・agora-redesign #2233)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = scripted_http_server.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- scripted-http-server(Python の名 scripted_http_server)は台本 HttpScript を受け、本文の Program に被せる関数を返す
-  (defhandler の展開と同じ形: 本文の答えの型をそのまま運ぶ WithHandler)。台本の出来事 HttpRequestArrived は送り元の欄 remote を
-  運ぶ(型は http_server_effects.pyi の宣言)。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
-
-from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar
-
-from doeff_vm import WithHandler
-
-from doeff import Program
-from doeff_core_effects.http_server_effects import (
-    HttpBody,
-    HttpBodyOutcome,
-    HttpCommand,
-    HttpHeader,
-    HttpProbe,
-    HttpProbeAnswer,
-    HttpRequestArrived,
-    HttpScript,
-    HttpServed,
-    ScriptedBody,
-    ScriptedUpstream,
-    WsBinaryArrived,
-    WsClosed,
-    WsOpened,
-    WsSendReport,
-    WsTextArrived,
-)
-
-_A = TypeVar("_A")
-_V = TypeVar("_V")
-
+from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+from dataclasses import dataclass as dataclass
+from doeff_core_effects.http_server_effects import HttpListen as HttpListen
+from doeff_core_effects.http_server_effects import HttpNextRequest as HttpNextRequest
+from doeff_core_effects.http_server_effects import HttpRespond as HttpRespond
+from doeff_core_effects.http_server_effects import HttpForward as HttpForward
+from doeff_core_effects.http_server_effects import WsForward as WsForward
+from doeff_core_effects.http_server_effects import WsAccept as WsAccept
+from doeff_core_effects.http_server_effects import WsSendText as WsSendText
+from doeff_core_effects.http_server_effects import WsClose as WsClose
+from doeff_core_effects.http_server_effects import HttpShutdown as HttpShutdown
+from doeff_core_effects.http_server_effects import TakeWsSendReport as TakeWsSendReport
+from doeff_core_effects.http_server_effects import WsSendReport as WsSendReport
+from doeff_core_effects.http_server_effects import ReadHttpServed as ReadHttpServed
+from doeff_core_effects.http_server_effects import AppendHttpScript as AppendHttpScript
+from doeff_core_effects.http_server_effects import HttpServed as HttpServed
+from doeff_core_effects.http_server_effects import WsTextSent as WsTextSent
+from doeff_core_effects.http_server_effects import WsCloseSent as WsCloseSent
+from doeff_core_effects.http_server_effects import WsOpened as WsOpened
+from doeff_core_effects.http_server_effects import WsClosed as WsClosed
+from doeff_core_effects.http_server_effects import HttpServerClosed as HttpServerClosed
+from doeff_core_effects.http_server_effects import HttpScript as HttpScript
+from doeff_core_effects.http_server_effects import ScriptedUpstream as ScriptedUpstream
+from doeff_core_effects.http_server_effects import HttpBodyBytes as HttpBodyBytes
+from doeff_core_effects.http_server_effects import HttpBodyFileRange as HttpBodyFileRange
+from doeff_core_effects.http_server_effects import HttpNoBody as HttpNoBody
+from doeff_core_effects.http_server_effects import DEFAULT_WS_SEND_MAX_BYTES as DEFAULT_WS_SEND_MAX_BYTES
+from doeff_core_effects.http_server_effects import FLUSH_SAMPLES_LIMIT as FLUSH_SAMPLES_LIMIT
+from doeff_core_effects.http_server_effects import WS_CLOSE_NORMAL as WS_CLOSE_NORMAL
+from doeff_core_effects.http_server_effects import HttpReadBody as HttpReadBody
+from doeff_core_effects.http_server_effects import HttpBodyRead as HttpBodyRead
+from doeff_core_effects.http_server_effects import HttpBodyTooLarge as HttpBodyTooLarge
+from doeff_core_effects.http_server_effects import HttpBodyFailed as HttpBodyFailed
+from doeff_core_effects.http_server_effects import HttpBodyOutcome as HttpBodyOutcome
+from doeff_core_effects.http_server_effects import HttpRequestArrived as HttpRequestArrived
+from doeff_core_effects.http_server_effects import ScriptedBody as ScriptedBody
+from doeff_core_effects.http_server_effects import WS_CUT_REASON as WS_CUT_REASON
+from doeff_core_effects.http_server_effects import WS_REFUSAL_TEXT as WS_REFUSAL_TEXT
+from doeff_core_effects.http_server_effects import WsCloseFrame as WsCloseFrame
+from doeff_core_effects.http_server_effects import carries_content as carries_content
+from doeff_core_effects.http_server_effects import ws_refusal_status as ws_refusal_status
+from doeff_core_effects.http_server_effects import send_overflows as send_overflows
+from doeff_core_effects.http_server_effects import closing_of as closing_of
+from doeff_core_effects.http_server_effects import HttpProbe as HttpProbe
+from doeff_core_effects.http_server_effects import HttpProbeAnswer as HttpProbeAnswer
+from doeff_core_effects.http_server_effects import probe_for as probe_for
+from doeff_core_effects.http_server_effects import probe_answer as probe_answer
+from doeff_core_effects.http_server_effects import WsTextArrived as WsTextArrived
+from doeff_core_effects.http_server_effects import WsBinaryArrived as WsBinaryArrived
+from doeff_core_effects.http_server_effects import HttpHeader as HttpHeader
+from doeff_core_effects.file_effects import ReadBytes as ReadBytes
+from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
+from doeff import Some as Some
+from doeff_core_effects.effects import Put as Put
 CLOSED_REASON: str
 EMPTY_REPORT: WsSendReport
 
-def upstream_for(script: HttpScript, url: str) -> Program[ScriptedUpstream | None, Any]: ...
-def body_text(body: HttpBody) -> Program[str, Any]: ...
-def served_of(
-    script: HttpScript, command: HttpCommand, arrival: HttpRequestArrived
-) -> Program[HttpServed, Any]: ...
-def tally_queued(tally: WsSendReport, size: int) -> Program[WsSendReport, Any]: ...
-def tally_flushed(tally: WsSendReport, size: int) -> Program[WsSendReport, Any]: ...
-def tally_dropped(tally: WsSendReport, size: int, cut: bool) -> Program[WsSendReport, Any]: ...
-def without_ticket(backlog: dict[str, _V], ticket: str) -> Program[dict[str, _V], Any]: ...
-def declared_length(headers: tuple[HttpHeader, ...]) -> Program[int | None, Any]: ...
-def scripted_body_outcome(
-    declared: int | None, body: ScriptedBody | None, max_bytes: int
-) -> Program[HttpBodyOutcome, Any]: ...
-def bodies_by_ticket(bodies: tuple[ScriptedBody, ...]) -> Program[dict[str, ScriptedBody], Any]: ...
+def upstream_for(script: HttpScript, url: str) -> _Program[ScriptedUpstream | None, object]:
+    ...
+
+def body_text(body: HttpBodyBytes | HttpBodyFileRange | HttpNoBody) -> _Program[str, object]:
+    ...
+
+def served_of(script: HttpScript, command: HttpRespond | HttpForward | WsForward | WsAccept, arrival: HttpRequestArrived) -> _Program[HttpServed, object]:
+    ...
+
+def tally_queued(tally: WsSendReport, size: int) -> _Program[WsSendReport, object]:
+    ...
+
+def tally_flushed(tally: WsSendReport, size: int) -> _Program[WsSendReport, object]:
+    ...
+
+def tally_dropped(tally: WsSendReport, size: int, cut: bool) -> _Program[WsSendReport, object]:
+    ...
+
+def without_ticket[V](backlog: dict[str, V], ticket: str) -> _Program[dict[str, V], object]:
+    ...
+
+def declared_length(headers: tuple[HttpHeader, ...]) -> _Program[int | None, object]:
+    ...
+
+def scripted_body_outcome(declared: int | None, body: ScriptedBody | None, max_bytes: int) -> _Program[HttpBodyOutcome, object]:
+    ...
+
+def bodies_by_ticket(bodies: tuple[ScriptedBody, ...]) -> _Program[dict[str, ScriptedBody], object]:
+    ...
+
 @dataclass(frozen=True, kw_only=True)
 class ProbeHit:
     arrival: HttpRequestArrived
     probe: HttpProbe
 
-def probe_hit(
-    probes: tuple[HttpProbe, ...],
-    event: HttpRequestArrived | WsTextArrived | WsBinaryArrived | WsClosed | WsOpened,
-) -> Program[ProbeHit | None, Any]: ...
-def probe_served(arrival: HttpRequestArrived, answer: HttpProbeAnswer) -> Program[HttpServed, Any]: ...
+def probe_hit(probes: tuple[HttpProbe, ...], event: HttpRequestArrived | WsTextArrived | WsBinaryArrived | WsClosed | WsOpened) -> _Program[ProbeHit | None, object]:
+    ...
 
-class _ScriptedHttpServer(Protocol):
-    """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
+def probe_served(arrival: HttpRequestArrived, answer: HttpProbeAnswer) -> _Program[HttpServed, object]:
+    ...
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
-
-def scripted_http_server(script: HttpScript) -> _ScriptedHttpServer: ...
+def scripted_http_server(script: HttpScript) -> _Handler:
+    ...

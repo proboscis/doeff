@@ -1,42 +1,96 @@
-"""os_file.hy の公開面の型(file system の effect の本物の答え手 — 型検査のための宣言・実行時は os_file.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = os_file.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- os-file-handler(Python の名 os_file_handler)は引数の無い defhandler — 値そのものが本文の Program に被せる関数
-  (defhandler の展開と同じ形: 本文の答えの型をそのまま運ぶ WithHandler)。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
+from _typeshed import Incomplete
+from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+import fcntl as fcntl
+from collections.abc import Callable as Callable
+import os as os
+import shutil as shutil
+import stat as stat
+import tempfile as tempfile
+from pathlib import Path as Path
+from doeff_core_effects.file_effects import PathKind as PathKind
+from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff_core_effects.file_effects import PathStat as PathStat
+from doeff_core_effects.file_effects import DirEntry as DirEntry
+from doeff_core_effects.file_effects import LockHeld as LockHeld
+from doeff_core_effects.file_effects import DiskUsage as DiskUsage
+from doeff_core_effects.file_effects import StatPath as StatPath
+from doeff_core_effects.file_effects import ReadText as ReadText
+from doeff_core_effects.file_effects import ReadBytes as ReadBytes
+from doeff_core_effects.file_effects import WriteText as WriteText
+from doeff_core_effects.file_effects import WriteBytes as WriteBytes
+from doeff_core_effects.file_effects import AppendText as AppendText
+from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects.file_effects import ListDirectory as ListDirectory
+from doeff_core_effects.file_effects import WalkTree as WalkTree
+from doeff_core_effects.file_effects import CopyFile as CopyFile
+from doeff_core_effects.file_effects import CopyTree as CopyTree
+from doeff_core_effects.file_effects import RenamePath as RenamePath
+from doeff_core_effects.file_effects import RemoveTree as RemoveTree
+from doeff_core_effects.file_effects import AcquireLock as AcquireLock
+from doeff_core_effects.file_effects import ReleaseLock as ReleaseLock
+from doeff_core_effects.file_effects import ReadDiskFree as ReadDiskFree
+from doeff_core_effects.file_effects import ReadDiskUsage as ReadDiskUsage
+from doeff_core_effects.file_effects import MeasureTree as MeasureTree
+from doeff_core_effects.file_effects import LinkFile as LinkFile
+from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
+from doeff_core_effects.python_bytecode import compile_python_sources as compile_python_sources
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
 
-from collections.abc import Callable
-from typing import Any, Protocol, TypeVar
+def failed(path: str, error: OSError) -> _Program[FileFailed, object]:
+    ...
 
-from doeff_vm import WithHandler
+def kind_of_mode(mode: int) -> _Program[PathKind, object]:
+    ...
 
-from doeff import Program
-from doeff_core_effects.file_effects import DirEntry, DiskUsage, FileFailed, LockHeld, PathKind, PathStat
+def stat_path(path: str, follow_symlinks: bool) -> _Program[PathStat | FileFailed, object]:
+    ...
 
-_A = TypeVar("_A")
+def write_content(path: str, content: str | bytes, mode: int | None, replace: bool, sync: bool) -> _Program[FileFailed | None, object]:
+    ...
 
-def failed(path: str, error: OSError) -> Program[FileFailed, Any]: ...
-def kind_of_mode(mode: int) -> Program[PathKind, Any]: ...
-def stat_path(path: str, follow_symlinks: bool) -> Program[PathStat | FileFailed, Any]: ...
-def write_content(
-    path: str, content: str | bytes, mode: int | None, replace: bool, sync: bool
-) -> Program[FileFailed | None, Any]: ...
-def make_directory(path: str, mode: int | None) -> Program[FileFailed | None, Any]: ...
-def entry_of(path: str, name: str) -> Program[DirEntry, Any]: ...
-def list_directory(path: str) -> Program[tuple[DirEntry, ...] | FileFailed, Any]: ...
-def walk_tree(path: str) -> Program[tuple[DirEntry, ...] | FileFailed, Any]: ...
-def remove_tree(path: str) -> Program[FileFailed | None, Any]: ...
-def acquire_lock(path: str) -> Program[LockHeld | FileFailed, Any]: ...
-def guarded(path: str, action: Callable[[], object]) -> Program[FileFailed | None, Any]: ...
-def read_file(path: str, binary: bool, limit: int | None) -> Program[str | bytes | FileFailed, Any]: ...
-def disk_free(path: str) -> Program[int | FileFailed, Any]: ...
-def disk_usage(path: str) -> Program[DiskUsage | FileFailed, Any]: ...
-def measure_tree(path: str) -> Program[int | FileFailed, Any]: ...
+def make_directory(path: str, mode: int | None) -> _Program[FileFailed | None, object]:
+    ...
 
-class _OsFileHandler(Protocol):
-    """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
+def entry_of(path: str, name: str) -> _Program[DirEntry, object]:
+    ...
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
+def list_directory(path: str) -> _Program[tuple[DirEntry, ...] | FileFailed, object]:
+    ...
 
-os_file_handler: _OsFileHandler
+def walk_tree(path: str) -> _Program[tuple[DirEntry, ...] | FileFailed, object]:
+    ...
+
+def remove_tree(path: str) -> _Program[FileFailed | None, object]:
+    ...
+
+def acquire_lock(path: str) -> _Program[LockHeld | FileFailed, object]:
+    ...
+
+def guarded(path: str, action: Callable[[], object]) -> _Program[FileFailed | None, object]:
+    ...
+
+def read_file(path: str, binary: bool, limit: int | None) -> _Program[str | bytes | FileFailed, object]:
+    ...
+
+def _sync(handle: Incomplete) -> Incomplete:
+    ...
+
+def _append(path: Incomplete, text: Incomplete, sync: Incomplete) -> Incomplete:
+    ...
+
+def _release(held: Incomplete) -> Incomplete:
+    ...
+
+def disk_free(path: str) -> _Program[int | FileFailed, object]:
+    ...
+
+def disk_usage(path: str) -> _Program[DiskUsage | FileFailed, object]:
+    ...
+
+def measure_tree(path: str) -> _Program[int | FileFailed, object]:
+    ...
+os_file_handler: _Handler

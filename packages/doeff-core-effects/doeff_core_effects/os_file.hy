@@ -89,7 +89,7 @@
 
 
 (defk list-directory [path]
-  {:pre [(: path str)] :post [(: % (| tuple FileFailed))]}
+  {:pre [(: path str)] :post [(: % (| (get tuple #(DirEntry ...)) FileFailed))]}
   "dir の直下を名の順に並べるため。"
   (try
     (val names (sorted (os.listdir path)))
@@ -104,7 +104,7 @@
 
 
 (defk walk-tree [path]
-  {:pre [(: path str)] :post [(: % (| tuple FileFailed))]}
+  {:pre [(: path str)] :post [(: % (| (get tuple #(DirEntry ...)) FileFailed))]}
   "dir の下の全部を相対 path の順に並べるため(symlink の dir へは入らない)。"
   (try
     (when (not (os.path.isdir path))
@@ -147,7 +147,7 @@
 
 
 (defk guarded [path action]
-  {:pre [(: path str) (: action Callable)] :post [(: % (| FileFailed None))]}
+  {:pre [(: path str) (: action (get Callable #([] object)))] :post [(: % (| FileFailed None))]}
   "答えの無い操作 1 つを走らせ、OSError を FileFailed にするため。"
   (try
     (action)

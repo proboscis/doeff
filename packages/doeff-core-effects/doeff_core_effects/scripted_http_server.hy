@@ -40,7 +40,7 @@
                                                 WS-CLOSE-NORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
                                                 HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
-                                                probe-for probe-answer WsTextArrived WsBinaryArrived])
+                                                probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader])
 (import doeff_core_effects.file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
@@ -117,13 +117,13 @@
 
 
 (defk without-ticket [backlog ticket]
-  {:pre [(: backlog dict) (: ticket str)] :post [(: % dict)]}
+  {:tp [V] :pre [(: backlog (of dict str V)) (: ticket str)] :post [(: % (of dict str V))]}
   "札の箱の溜まりを表から外すため。"
   (dfor [t n] (.items backlog) :if (!= t ticket) t n))
 
 
 (defk declared-length [headers]
-  {:pre [(: headers tuple)] :post [(: % (| int None))]}
+  {:pre [(: headers (of tuple HttpHeader ...))] :post [(: % (| int None))]}
   "要求の頭から宣言された本文の長さ(Content-Length)を読むため(無い・数でなければ None — chunked と同じ宣言なし)。"
   (val said (next (gfor h headers :if (= (.lower h.name) "content-length") (.strip h.value)) None))
   (if (and (is-not said None) (.isdigit said)) (int said) None))
@@ -142,7 +142,7 @@
 
 
 (defk bodies-by-ticket [bodies]
-  {:pre [(: bodies tuple)] :post [(: % dict)]}
+  {:pre [(: bodies (of tuple ScriptedBody ...))] :post [(: % (of dict str ScriptedBody))]}
   "本文の台本を札で引ける表にするため。"
   (dfor b bodies b.ticket b))
 
@@ -154,7 +154,7 @@
 
 
 (defk probe-hit [probes event]
-  {:pre [(: probes tuple) (: event (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened))] :post [(: % (| ProbeHit None))]
+  {:pre [(: probes (of tuple HttpProbe ...)) (: event (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened))] :post [(: % (| ProbeHit None))]
    :tags {:context "http-server" :role "judgment"}}
   "台本の次の出来事が、待ち受けが自分で答える probe の口の要求か決めるため(当たらなければ None — ws の出来事も本体へ渡す)。"
   (if (isinstance event HttpRequestArrived)

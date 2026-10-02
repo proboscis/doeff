@@ -1,28 +1,50 @@
-"""memory_file.hy の公開面の型(file system の effect の I/O なしの答え手 — 型検査のための宣言・実行時は memory_file.hy を読む・
-agora-redesign #2323)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = memory_file.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-- memory-file-handler(Python の名 memory_file_handler)は初めの置き場 MemoryFiles を受け、本文の Program に被せる関数を返す
-  (defhandler の展開と同じ形: 本文の答えの型をそのまま運ぶ WithHandler)。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が検める。
-"""
-
-from typing import Any, Protocol, TypeVar
-
-from doeff_vm import WithHandler
-
-from doeff import Program
-from doeff_core_effects.file_effects import (
-    DirEntry,
-    FileFailed,
-    MemoryFiles,
-    PathKind,
-    PathStat,
-    SourceNotCompiled,
-)
-
-_A = TypeVar("_A")
-
+from _typeshed import Incomplete
+from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+import posixpath as posixpath
+from dataclasses import replace as with_fields
+from doeff_core_effects.scheduler import CreatePromise as CreatePromise
+from doeff_core_effects.scheduler import CompletePromise as CompletePromise
+from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects.file_effects import PathKind as PathKind
+from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff_core_effects.file_effects import PathStat as PathStat
+from doeff_core_effects.file_effects import DirEntry as DirEntry
+from doeff_core_effects.file_effects import LockHeld as LockHeld
+from doeff_core_effects.file_effects import MemoryFile as MemoryFile
+from doeff_core_effects.file_effects import MemoryFiles as MemoryFiles
+from doeff_core_effects.file_effects import ReadMemoryFiles as ReadMemoryFiles
+from doeff_core_effects.file_effects import StatPath as StatPath
+from doeff_core_effects.file_effects import ReadText as ReadText
+from doeff_core_effects.file_effects import ReadBytes as ReadBytes
+from doeff_core_effects.file_effects import WriteText as WriteText
+from doeff_core_effects.file_effects import WriteBytes as WriteBytes
+from doeff_core_effects.file_effects import AppendText as AppendText
+from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects.file_effects import ListDirectory as ListDirectory
+from doeff_core_effects.file_effects import WalkTree as WalkTree
+from doeff_core_effects.file_effects import CopyFile as CopyFile
+from doeff_core_effects.file_effects import CopyTree as CopyTree
+from doeff_core_effects.file_effects import RenamePath as RenamePath
+from doeff_core_effects.file_effects import RemoveTree as RemoveTree
+from doeff_core_effects.file_effects import AcquireLock as AcquireLock
+from doeff_core_effects.file_effects import ReleaseLock as ReleaseLock
+from doeff_core_effects.file_effects import ReadDiskFree as ReadDiskFree
+from doeff_core_effects.file_effects import DiskUsage as DiskUsage
+from doeff_core_effects.file_effects import ReadDiskUsage as ReadDiskUsage
+from doeff_core_effects.file_effects import MeasureTree as MeasureTree
+from doeff_core_effects.file_effects import LinkFile as LinkFile
+from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
+from doeff_core_effects.file_effects import SourceNotCompiled as SourceNotCompiled
+from doeff_core_effects.python_bytecode import compiled_pyc as compiled_pyc
+from doeff_core_effects.python_bytecode import kept_pyc as kept_pyc
+from doeff_core_effects.python_bytecode import pyc_path as pyc_path
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
+from doeff import Some as Some
+from doeff_core_effects.effects import Put as Put
 ROOT: str
 NO_ENTRY: str
 NOT_DIRECTORY: str
@@ -32,41 +54,71 @@ NOT_EMPTY: str
 INVALID: str
 NOT_PERMITTED: str
 
-def refused(reason: str, path: str) -> Program[FileFailed, Any]: ...
-def refused_move(reason: str, source: str, target: str) -> Program[FileFailed, Any]: ...
-def normal(path: str) -> Program[str, Any]: ...
-def kind_in(store: MemoryFiles, path: str) -> Program[PathKind, Any]: ...
-def parent_refusal(store: MemoryFiles, path: str) -> Program[FileFailed | None, Any]: ...
-def with_dirs(store: MemoryFiles, path: str) -> Program[MemoryFiles | FileFailed, Any]: ...
-def with_file(
-    store: MemoryFiles, path: str, content: bytes, mode: int | None
-) -> Program[MemoryFiles | FileFailed, Any]: ...
-def link_in(
-    store: MemoryFiles, source: str, target: str
-) -> Program[MemoryFiles | FileFailed, Any]: ...
-def compile_in_store(
-    store: MemoryFiles, tree: str, items: tuple[tuple[str, str], ...]
-) -> Program[tuple[MemoryFiles, tuple[SourceNotCompiled, ...]], Any]: ...
-def content_of(store: MemoryFiles, path: str) -> Program[bytes | FileFailed, Any]: ...
-def dir_refusal(store: MemoryFiles, path: str) -> Program[FileFailed | None, Any]: ...
-def entries_below(store: MemoryFiles, path: str) -> Program[tuple[DirEntry, ...], Any]: ...
-def list_in(store: MemoryFiles, path: str) -> Program[tuple[DirEntry, ...] | FileFailed, Any]: ...
-def without_tree(store: MemoryFiles, path: str) -> Program[MemoryFiles, Any]: ...
-def remove_in(store: MemoryFiles, path: str) -> Program[MemoryFiles | FileFailed, Any]: ...
-def copy_tree_in(
-    store: MemoryFiles, source: str, target: str
-) -> Program[MemoryFiles | FileFailed, Any]: ...
-def moved(path: str, source: str, target: str) -> Program[str, Any]: ...
-def rename_in(
-    store: MemoryFiles, source: str, target: str
-) -> Program[MemoryFiles | FileFailed, Any]: ...
-def return_path(path: str) -> Program[str, Any]: ...
-def stat_in(store: MemoryFiles, path: str) -> Program[PathStat, Any]: ...
+def refused(reason: str, path: str) -> _Program[FileFailed, object]:
+    ...
 
-class _MemoryFileHandler(Protocol):
-    """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
+def refused_move(reason: str, source: str, target: str) -> _Program[FileFailed, object]:
+    ...
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
+def normal(path: str) -> _Program[str, object]:
+    ...
 
-def memory_file_handler(initial: MemoryFiles) -> _MemoryFileHandler: ...
-def return_store(store: MemoryFiles) -> Program[MemoryFiles, Any]: ...
+def kind_in(store: MemoryFiles, path: str) -> _Program[PathKind, object]:
+    ...
+
+def hyx_underXquestion_markX(path: str, root: str) -> Incomplete:
+    ...
+
+def parent_refusal(store: MemoryFiles, path: str) -> _Program[FileFailed | None, object]:
+    ...
+
+def with_dirs(store: MemoryFiles, path: str) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def with_file(store: MemoryFiles, path: str, content: bytes, mode: int | None) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def link_in(store: MemoryFiles, source: str, target: str) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def compile_in_store(store: MemoryFiles, tree: str, items: tuple[tuple[str, str], ...]) -> _Program[tuple[MemoryFiles, tuple[SourceNotCompiled, ...]], object]:
+    ...
+
+def content_of(store: MemoryFiles, path: str) -> _Program[bytes | FileFailed, object]:
+    ...
+
+def dir_refusal(store: MemoryFiles, path: str) -> _Program[FileFailed | None, object]:
+    ...
+
+def entries_below(store: MemoryFiles, path: str) -> _Program[tuple[DirEntry, ...], object]:
+    ...
+
+def list_in(store: MemoryFiles, path: str) -> _Program[tuple[DirEntry, ...] | FileFailed, object]:
+    ...
+
+def without_tree(store: MemoryFiles, path: str) -> _Program[MemoryFiles, object]:
+    ...
+
+def remove_in(store: MemoryFiles, path: str) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def copy_tree_in(store: MemoryFiles, source: str, target: str) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def moved(path: str, source: str, target: str) -> _Program[str, object]:
+    ...
+
+def rename_in(store: MemoryFiles, source: str, target: str) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def return_path(path: str) -> _Program[str, object]:
+    ...
+
+def stat_in(store: MemoryFiles, path: str) -> _Program[PathStat, object]:
+    ...
+
+def memory_file_handler(initial: MemoryFiles) -> _Handler:
+    ...
+
+def return_store(store: MemoryFiles) -> _Program[MemoryFiles, object]:
+    ...

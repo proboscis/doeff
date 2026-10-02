@@ -35,6 +35,7 @@
 (import posixpath)
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
+(import doeff [Program])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
@@ -47,7 +48,8 @@
   "台本の命令 1 つ(name = argv[0] の basename・run = (run commands request) → ProcessOutcome を答える Program。commands は台本の表の全部 —
    timeout のように別の命令を走らせる台本が run-scripted で引く)。"
   (#^ str name)
-  (#^ Callable run))
+  ;; 自分(ScriptedCommand)を含む型なので文字列の注記(class を作る時に名がまだ無い)。
+  (#^ "Callable[[tuple[ScriptedCommand, ...], RunProcess], Program[ProcessOutcome, object]]" run))
 
 
 (defrecord ProcessScript
@@ -65,7 +67,8 @@
 
 
 (defk scripted-child-env [inherited env env-mode env-drop]
-  {:pre [(: inherited tuple) (: env (| tuple None)) (: env-mode EnvMode) (: env-drop tuple)] :post [(: % (| tuple None))]}
+  {:pre [(: inherited (of tuple EnvEntry ...)) (: env (| (of tuple EnvEntry ...) None)) (: env-mode EnvMode) (: env-drop (of tuple str ...))]
+   :post [(: % (| (of tuple EnvEntry ...) None))]}
   "台本に渡す子の環境を作るため: None と REPLACE は渡された env のまま(前からの振る舞い)、EXTEND は台本の世界の環境 inherited から env-drop の
    型に合う名を外して env を足した全部(同じ名は env が勝つ — 本物の subprocess-handler の child-environment と同じ規則)。"
   (match #(env env-mode)
@@ -79,7 +82,7 @@
 
 
 (defk run-scripted [commands request]
-  {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
+  {:pre [(: commands (of tuple ScriptedCommand ...)) (: request RunProcess)] :post [(: % ProcessOutcome)]}
   "命令 1 つを台本で走らせるため(無い cwd・名の無い命令は起こせない形)。台本から別の命令を走らせる時もこれを呼ぶ。
    本物の subprocess と同じ順で断る: 先に cwd(無ければ ENOENT・dir でなければ ENOTDIR)、次に命令(ENOENT)。"
   (when (is-not request.cwd None)
@@ -111,7 +114,7 @@
 
 
 (defk scripted-open-outputs [paths]
-  {:pre [(: paths tuple)] :post [(: % (| ProcessNotStarted None))] :tags {:context "process" :role "program"}}
+  {:pre [(: paths (of tuple (| str None) ...))] :post [(: % (| ProcessNotStarted None))] :tags {:context "process" :role "program"}}
   "StartProcess の出力の file を、子を立てる前に末尾へ足す形で開く(空を足す)ため — 本物は Popen の前に開き、開けなければ立てない。
    答え = 開けなかった最初の file の理由(本物の OSError と同じ文)か None。"
   (var refused None)
@@ -136,7 +139,7 @@
 
 
 (defk scripted-executable-at [commands path]
-  {:pre [(: commands tuple) (: path str)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
+  {:pre [(: commands (of tuple ScriptedCommand ...)) (: path str)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
   "ExecutableAt に台本の世界で答えるため: 種類は置き場(外側の file の答え手)の StatPath — 置き場に無い path は、台本に名(basename)が在れば
    実行できる file(台本がその命令の file の代役)、無ければ無い物。実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer。"
   (val named (any (gfor c commands (= c.name (posixpath.basename path)))))

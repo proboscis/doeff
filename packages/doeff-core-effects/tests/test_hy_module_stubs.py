@@ -56,6 +56,8 @@ DEFINING_HEADS = frozenset(
         "defclass",
         "defk",
         "deff",
+        # `defk にできない` 理由つきの defn(内包表記の中で呼ぶ述語など)も公開の名を定義する — 道具が作る .pyi は宣言する(#2887)。
+        "defn",
         "defhandler",
         "val",
         "var",
