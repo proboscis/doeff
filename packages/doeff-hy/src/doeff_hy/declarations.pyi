@@ -22,6 +22,7 @@ _Items = TypeVar("_Items", bound=tuple[object, ...])
 
 ROLES: tuple[str, ...]
 CONTRACT_KEYS: tuple[str, ...]
+FUNCTION_CONTRACT_KEYS: tuple[str, ...]
 DECLARATION_KEYS: tuple[str, ...]
 TAG_KEYS: tuple[str, ...]
 OPTIONAL_TAG_KEYS: tuple[str, ...]

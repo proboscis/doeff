@@ -31,7 +31,7 @@
 (import inspect)
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
 (import doeff [DoExpr EffectBase])
-(import doeff-hy.declarations [CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
+(import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.positions [locate-synthesized])
 
 ;; Re-export handle macros so users only need one require line.
@@ -384,6 +384,31 @@ defk {name}: :post must include a return type check (: % Type).
         (setv (get types (str (get check 1))) source))))
   types)
 
+(defn _type-params [body where]
+  "契約の辞書の `:tp [T …]` を記号の list で返す(無ければ空)。答えが引数の型で決まる関数(本体の答えをそのまま返す包みなど)の型を、
+   実行時に確かめられない総称のまま型検査と .pyi へ渡すため(agora-redesign #2893)。名の並びでない値・重なる名は SyntaxError。"
+  (setv contract (get (_find-contract body) 0)
+        value None)
+  (when (is-not contract None)
+    (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
+      (when (= (str k) ":tp")
+        (setv value v))))
+  (cond
+    (is value None) []
+    (and (isinstance value hy.models.List) (> (len value) 0)
+         (all (gfor p value (isinstance p hy.models.Symbol)))
+         (= (len (sfor p value (str p))) (len value)))
+      (list value)
+    True
+      (raise (SyntaxError (.format "{}: :tp は型の引数の名の並び(例 `:tp [T]`・重ならない名)— 受けたのは {}" where (hy.repr value))))))
+
+(defn _object-for [names form]
+  "型の式 form の中の names(型の引数の名)を object に写す(入れ子の式・組・和の中も)— 実行時の isinstance に型の引数を渡さないため。"
+  (match form
+    (hy.models.Symbol) (if (in (str form) names) (hy.models.Symbol "object") form)
+    (| (hy.models.Expression) (hy.models.List) (hy.models.Tuple)) ((type form) (lfor item form (_object-for names item)))
+    _ form))
+
 (defn _annotate-params [params types]
   "引数の並びの各引数に、契約の型の注記を付ける。書き手が既に `#^ T x` と書いた引数・
    `*`・`/`・`#* args` には触らない。"
@@ -408,11 +433,14 @@ defk {name}: :post must include a return type check (: % Type).
        (isinstance target hy.models.Symbol)
        (!= (str target) "%")))
 
-(defn _expand-check [check fn-name phase]
+(defn _expand-check [check fn-name phase [type-params #()]]
   "Expand a single contract check into an assert form.
    (: x T) → isinstance assert with clear type error message.
    (: x \"desc\") → no-op (documentation-only annotation).
-   Other  → generic condition assert."
+   Other  → generic condition assert.
+   type-params(契約の :tp)は isinstance に渡す型の中だけ object に消す — `(of Program T)` は今までどおり外側の型 Program へ
+   (_runtime-type)・素の `(: % T)` は常に真。実行時は外側の型だけを確かめる今までの決め(#1790)と同じ向きで、失敗の文と注記
+   (_contract-types)は書いた型のまま(agora-redesign #2893)。"
   (if (_is-type-check check)
       (let [target (get check 1)
             tp (get check 2)]
@@ -434,7 +462,7 @@ defk {name}: :post type annotation cannot be an empty string.
             '(do)
           True
             (let [target-label (if (= (str target) "%") "return value" (str target))]
-              `(assert (isinstance ~target ~(_runtime-type tp))
+              `(assert (isinstance ~target ~(_runtime-type (_object-for (sfor p type-params (str p)) tp)))
                        (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
                           (. (type ~target) __name__))))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
@@ -446,7 +474,7 @@ defk {name}: :post type annotation cannot be an empty string.
        (isinstance (get form 0) hy.models.Symbol)
        (= (str (get form 0)) "check")))
 
-(defn _contract-code [checks fn-name phase kleisli?]
+(defn _contract-code [checks fn-name phase kleisli? [type-params #()]]
   "契約(:pre / :post)の条件の列を、関数の中に置く文の列にする。
 
    - 型の (: x T) と真偽の式: 今までどおり 1 つずつ assert(最初の失敗で止まる — 既存の契約の意味を
@@ -456,7 +484,7 @@ defk {name}: :post type annotation cannot be an empty string.
      引数の (! …) はその場で実行する。defk / do!(生成器)だけが受ける。
    assert の後に check を置く: 型が合っていることを check の式が前提にできる。"
   (setv checks (or checks []))
-  (setv code (lfor c checks :if (not (_is-validation-check c)) (_expand-check c fn-name phase)))
+  (setv code (lfor c checks :if (not (_is-validation-check c)) (_expand-check c fn-name phase type-params)))
   (setv validation-checks (lfor c checks :if (_is-validation-check c) c))
   (when validation-checks
     (when (not kleisli?)
@@ -641,21 +669,27 @@ defk {name}: :post type annotation cannot be an empty string.
     (not kleisli?) True
     True (and (_static-view?) (not (any (gfor form body (_writes-yield? form)))))))
 
-(defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
+(defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body [type-params #()]]
   "Build a defn form with pre/post assertion wrappers.
    Works for both plain functions (deff) and generator/kleisli functions (defk).
    Kleisli functions (decorator `_doeff_do`) additionally guard against a bare
    unperformed effect as the last form (see `_guard-performed`).
    A leading docstring is emitted BEFORE the pre-condition asserts so it stays
    the first statement and becomes the function's __doc__ (a lone string body
-   is left in place — it is the return value, not a docstring)."
+   is left in place — it is the return value, not a docstring).
+   type-params = 契約の :tp の型の引数(_type-params)— 型検査の展開では PEP 695 の `def f[T]` の型の引数に置き、注記は T を
+   そのまま読む。実行時の確かめ(isinstance)では object に消す(_expand-check)。"
   (setv docstring-forms [])
   (when (and (> (len real-body) 1)
              (isinstance (get real-body 0) hy.models.String))
     (setv docstring-forms [(get real-body 0)])
     (setv real-body (cut real-body 1 None)))
   (setv kleisli? (any (gfor d decorators (= (str d) "_doeff_do"))))
-  (setv pre-code (_contract-code pre-checks name "pre-condition" kleisli?))
+  (setv pre-code (_contract-code pre-checks name "pre-condition" kleisli? type-params))
+  ;; 型の引数は型検査の展開だけに置く — 実行時の展開に PEP 695 の綴りを出さない(requires-python 3.10 の環境でも定義が読める)。
+  (setv type-param-head (if (and type-params (_static-view?))
+                            [(hy.models.Keyword "tp") (hy.models.List type-params)]
+                            []))
   ;; 契約の型を注記へ(引数・deff の戻り値)。defk は生成器なので戻り値そのものには
   ;; 注記せず、結果を入れる局所変数 `_contract_result` に T を注記する(`_result-binding`)
   ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、最後の式の型を T と
@@ -671,13 +705,13 @@ defk {name}: :post type annotation cannot be an empty string.
         `(_guard-performed _contract_result ~(str name))
         `(do)))
   (if post-checks
-      (let [post-asserts (_contract-code post-checks name "post-condition" kleisli?)
+      (let [post-asserts (_contract-code post-checks name "post-condition" kleisli? type-params)
             ;; ADR-DOE-HY-001: kleisli 本体の statement 位置を guard(最終式=返り値は対象外)
             init-forms (if kleisli?
                            (lfor f (cut real-body 0 -1) (_wrap-statement-guard f name))
                            (list (cut real-body 0 -1)))
             last-form (get real-body -1)]
-        `(defn ~decorators ~head ~params
+        `(defn ~decorators ~@type-param-head ~head ~params
            ~@docstring-forms
            ~@pre-code
            ~@init-forms
@@ -686,7 +720,7 @@ defk {name}: :post type annotation cannot be an empty string.
            (let [% _contract_result]
              ~@post-asserts)
            ~(_result-symbol last-form)))
-      `(defn ~decorators ~head ~params
+      `(defn ~decorators ~@type-param-head ~head ~params
          ~@docstring-forms
          ~@pre-code
          ~@real-body)))
@@ -847,7 +881,7 @@ defk {name}: :post type annotation cannot be an empty string.
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list."
   (_warn-defk-in-hyp _hy-compiler "deff" name)
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ "deff " (str name))))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body FUNCTION-CONTRACT-KEYS (+ "deff " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
 deff {name}: {{:pre [...]}} is required.
@@ -880,7 +914,7 @@ deff {name}: {{:post [...]}} is required.
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
   (locate-synthesized
-    `(do ~(_build-fn-with-contracts [] name params pre-checks post-checks real-body)
+    `(do ~(_build-fn-with-contracts [] name params pre-checks post-checks real-body (_type-params body (+ "deff " (str name))))
          ~@(declaration-setters name (get (_find-contract body) 0) (+ "deff " (str name))))))
 
 
@@ -924,7 +958,7 @@ deff {name}: {{:post [...]}} is required.
   (setv written-forms body
         body (lfor form body (mangle-match-fields form))
         params (mangle-match-fields params))
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ "defk " (str name))))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body FUNCTION-CONTRACT-KEYS (+ "defk " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
 defk {name}: {{:pre [...]}} is required.
@@ -968,7 +1002,8 @@ defk {name}: {{:post [...]}} is required.
   ;; Expand bangs in the real body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms
     (lfor form real-body (_expand-bangs form (+ "defk " (str name)) HELPERS-NAME)))
-  (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
+  (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms
+                                          (_type-params body (+ "defk " (str name)))))
   (locate-synthesized `(do
      ~(_helper-imports)
      ~fn-form
