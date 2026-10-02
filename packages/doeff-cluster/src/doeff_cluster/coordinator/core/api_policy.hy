@@ -28,19 +28,18 @@
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import traceback [extract-tb])
-(import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed BodyUnreadable])
+(import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed BodyUnreadable RequestBody])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply
-                                                       DeploymentSeen DeploymentUnreadable])
+                                                       DeploymentSeen DeploymentUnreadable ServiceBody LegacyJobs])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot alive remember-keep-marks])
-(import doeff [run])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
@@ -58,20 +57,26 @@
 (setv ROLLOUT-TICK-MS 1000)       ; Rollout の拍の間隔(coordinator.coordinator-step と idle_policy が読む)
 
 
-(defn #^ ClusterState settle [#^ ClusterState before #^ ClusterState after #^ str actor #^ int now #^ ClusterTiming timing]
+(defk settle [before after actor now timing]
+  {:pre [(: before ClusterState) (: after ClusterState) (: actor str) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)]
+   :tags {:context "coordinator" :role "judgment"}}
   "要求の変化に送り手の版を付け、調停し、調停の変化に coordinator の版を付ける。"
-  (setv changed (stamp before after actor now timing)
-        ;; drain(2026-09-25): 割り当ての後に、drain 中の worker の上の入れ替えの Service を並べる・付け替える(readiness を読む)。
-        ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
-        ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
-        ;; 生死の切り替わり(#1934): 最後に、生きていないと数える worker の名を今の時刻で求め直す(変われば Worker の status の live と版が進む)。
-        reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now (reconcile now changed timing) timing) timing) now) now timing))
+  (val changed (stamp before after actor now timing))
+  ;; drain(2026-09-25): 割り当ての後に、drain 中の worker の上の入れ替えの Service を並べる・付け替える(readiness を読む)。
+  ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
+  ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
+  ;; 生死の切り替わり(#1934): 最後に、生きていないと数える worker の名を今の時刻で求め直す(変われば Worker の status の live と版が進む)。
+  (<- placed ClusterState (reconcile now changed timing))
+  (val reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now placed timing) timing) now) now timing))
   (stamp changed reconciled COORDINATOR now timing))
 
 
-(defn #^ ClusterState tick [#^ ClusterState state #^ int now #^ ClusterTiming timing]
+(defk tick [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)]
+   :tags {:context "coordinator" :role "judgment"}}
   "要求の無い拍: 期限の経過だけで調停する(worker の沈黙・task の期限・readiness の window)。"
-  (settle state state COORDINATOR now timing))
+  (<- ticked ClusterState (settle state state COORDINATOR now timing))
+  ticked)
 
 
 ;; --- coordinator が止まっていた時間(2026-09-25) --------------------------------------------------
@@ -186,7 +191,9 @@
   (list (dict.fromkeys keys)))
 
 
-(defn #^ tuple plan-rollouts [#^ ClusterState state #^ int now #^ ClusterTiming timing #^ ClusterNaming [naming (ClusterNaming)]]
+(defk plan-rollouts [state now timing [naming (ClusterNaming)]]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
   "全 Rollout を 1 拍進める。返り値 #(次の状態 action の list)。action = rollout(名)・op(scale / annotate)・target・replicas の dict。
    台数の食い違い(配備の流れが Deployment の replicas を当て直した等)は直さず status.drift に出す。
    naming = 台数の持ち主の annotation の鍵と値の頭(配備する側が決める — cluster_model.ClusterNaming)。"
@@ -194,11 +201,11 @@
   (for [#(name r) (sorted (.items state.rollouts))]
     (setv spec r.spec status r.status)
     (when (not-in status.phase TERMINAL-PHASES)
-      (setv #(status acts) (rollout-step spec status (target-view state spec.from-target status now timing)
-                                         (target-view state spec.to-target status now timing) now))
-      (setv (get rollouts name) (replace r :status status))
+      (setv #(stepped acts) (rollout-step spec status (target-view state spec.from-target status now timing)
+                                          (target-view state spec.to-target status now timing) now))
+      (setv (get rollouts name) (replace r :status stepped))
       ;; 失敗が続く action は間を空けて出す(action-due — 1 秒から倍々・上限 60 秒)。
-      (.extend actions (gfor a acts :if (action-due status a now) (| a {"rollout" name})))))
+      (.extend actions (gfor a acts :if (action-due stepped a now) (| a {"rollout" name})))))
   ;; 台数の持ち主と食い違い。進行中の Rollout が扱っている Deployment は、台数が動くのが意図どおりなので数えない。
   ;; 持ち主でなくなった(後の Rollout へ移った・進行中の Rollout が扱い始めた)Rollout の食い違いは消す。
   ;; Observing の Rollout は旧を止め終えて台数を持つ側なので、ここでは「進行中」に数えない(2026-09-24 の実弾: 数えていたので
@@ -212,10 +219,10 @@
     (when (and r.status.drift (not-in name owning))
       (setv (get rollouts name) (replace r :status (replace r.status :drift None :drift-resolved-ms now)))))
   (for [#(key #(name expected)) (.items owners)]
-    (setv r (get rollouts name) status r.status)
-    (setv status (drift-status status key expected (.row state.observations.deployments key) now))
-    (setv (get rollouts name) (replace r :status status))
-    (when (and r.spec.mark-deployment (!= status.marked-deployment key))
+    (setv owned (get rollouts name)
+          drifted (drift-status owned.status key expected (.row state.observations.deployments key) now))
+    (setv (get rollouts name) (replace owned :status drifted))
+    (when (and owned.spec.mark-deployment (!= drifted.marked-deployment key))
       (setv #(ns dep) (.split key "/" 1))
       (.append actions {"rollout" name "op" "annotate" "namespace" ns "name" dep
                         "annotations" {naming.owner-annotation (.format "{}/Rollout/{} replicas={}" naming.owner-scope name expected)}})))
@@ -256,10 +263,12 @@
   (or (valid-actor request.actor) (+ "anonymous@" (or request.peer "?"))))
 
 
-(defn #^ tuple detached-reply [#^ ClusterState state #^ Reply reply #^ Request request #^ int now #^ ClusterTiming timing]
+(defk detached-reply [state reply request now timing]
+  {:pre [(: state ClusterState) (: reply Reply) (: request Request) (: now int) (: timing ClusterTiming)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
   "切り離した task の口の答え(detached_policy の Reply)→ respond の返り値 #(次の状態 status 本文)。状態を変えた答えだけ
    settle(版と出来事の記録)を通す。"
-  #((if (is reply.state state) state (settle state reply.state (loose-actor request) now timing)) reply.status reply.body))
+  #((if (is reply.state state) state (! (settle state reply.state (loose-actor request) now timing))) reply.status reply.body))
 
 
 (defn #^ tuple unknown-request [#^ ClusterState state #^ Request request]
@@ -267,7 +276,10 @@
   #(state 404 (ErrorReply :message (.format "知らない要求: {} {}" request.method request.path))))
 
 
-(defn #^ tuple respond-resources [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
+(defk respond-resources [state request body parts now timing]
+  {:pre [(: state ClusterState) (: request Request) (: body (| RequestBody ServiceBody LegacyJobs)) (: parts list) (: now int) (: timing ClusterTiming)]
+   :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
   "資源の口(/resources の下)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -279,20 +291,20 @@
       #(state 200 (get-resource state (get parts 1) (get parts 2) now timing))
     (and (= head "resources") (= (len parts) 2) (= method "POST"))
       (do (setv actor (require-actor request.actor))
-          (setv after (settle state (create-resource state (get parts 1) body actor now) actor now timing))
+          (setv after (! (settle state (create-resource state (get parts 1) body actor now) actor now timing)))
           #(after 201 (get-resource after (get parts 1) body.name now timing)))
     (and (= head "resources") (= (len parts) 3) (= method "PUT"))
       (do (setv actor (require-actor request.actor))
-          (setv after (settle state (update-resource state (get parts 1) (get parts 2) body actor) actor now timing))
+          (setv after (! (settle state (update-resource state (get parts 1) (get parts 2) body actor) actor now timing)))
           #(after 200 (get-resource after (get parts 1) (get parts 2) now timing)))
     (and (= head "resources") (= (len parts) 3) (= method "DELETE"))
       (do (setv actor (require-actor request.actor))
-          (setv after (settle state (delete-resource state (get parts 1) (get parts 2) request.query actor now timing)
-                              actor now timing))
+          (setv after (! (settle state (delete-resource state (get parts 1) (get parts 2) request.query actor now timing)
+                                 actor now timing)))
           #(after 200 {"deleted" (+ (get parts 1) "/" (get parts 2)) "revision" after.revision}))
     (and (= head "resources") (= (len parts) 4) (= (get parts 1) "Service") (= (get parts 3) "readiness") (= method "POST"))
       (do (setv actor (loose-actor request))
-          #((settle state (record-readiness state (get parts 2) body now) actor now timing) 200 {"ok" True}))
+          #((! (settle state (record-readiness state (get parts 2) body now) actor now timing)) 200 {"ok" True}))
     ;; 計器の報告は資源の状態を変えない(版も記録も進めない・永続化しない)ので settle を通さない。
     (and (= head "resources") (= (len parts) 4) (= (get parts 1) "Service") (= (get parts 3) "metrics") (= method "POST"))
       #((record-metrics state (get parts 2) body now) 200 {"ok" True})
@@ -328,8 +340,10 @@
        (= (replace heard :workers before.workers :statuses before.statuses :tasks before.tasks) before)))
 
 
-(defn #^ tuple respond-legacy [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing
-                               #^ bool [settled False]]
+(defk respond-legacy [state request body parts now timing [settled False]]
+  {:pre [(: state ClusterState) (: request Request) (: body (| RequestBody ServiceBody LegacyJobs)) (: parts list) (: now int) (: timing ClusterTiming)
+         (: settled bool)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "旧い口(/jobs・/heartbeat・/state)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -338,7 +352,7 @@
     (and (= method "PUT") (= parts ["jobs"]))
       (do (setv actor (require-actor (or request.actor body.actor)))
           (setv #(after status reply) (legacy-put-jobs state body.rows actor))
-          #((if (is after state) state (settle state after actor now timing)) status reply))
+          #((if (is after state) state (! (settle state after actor now timing))) status reply))
     (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-version-refusal body.format) None))
       #(state 400 (ErrorReply :message (format-version-refusal body.format)))
     (and (= method "POST") (= parts ["heartbeat"]))
@@ -348,19 +362,21 @@
       ;; quiet-heartbeat の比べ(drains も見る)で静かでなくなり、同じ歩で調停が置き先を外す。
       (do (setv name body.name
                 heard (absorb-stopping (register-heartbeat state body now) name body.boot body.stopping now))
-          (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (settle state heard name now timing))
+          (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (! (settle state heard name now timing)))
                 reply (heartbeat-reply after name timing (ready-instances after name now timing) :now now
                                        :boot body.boot :statuses body.statuses))
           ;; 返事で付けた「途絶しても動かし続けてよい」印を、印を渡した担い手との約束として残す(#2804 — 返事の前に状態と一緒に保存され、
           ;; 担い手が印を持たないと知らせるまで job を他へ移さない)。
-          #((run (remember-keep-marks after name body.boot body.kept-when-cut-off reply now)) 200 reply))
+          #((! (remember-keep-marks after name body.boot body.kept-when-cut-off reply now)) 200 reply))
     (and (= method "GET") (= parts ["state"]))
       #(state 200 (StateReply :view (state-view state now timing) :audit (tuple (cut state.audit -30 None))
                               :drains (drains-view state now timing)))
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-workers [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
+(defk respond-workers [state request body parts now timing]
+  {:pre [(: state ClusterState) (: request Request) (: body (| RequestBody ServiceBody LegacyJobs)) (: parts list) (: now int) (: timing ClusterTiming)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "worker の読みと drain の頼み(/workers の下・drain_policy)に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -370,14 +386,14 @@
       #(state 200 (worker-view state (get parts 1) now timing))
     (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "POST"))
       (do (setv actor (require-actor request.actor))
-          (setv after (settle state (request-drain state (get parts 1) body actor now) actor now timing))
+          (setv after (! (settle state (request-drain state (get parts 1) body actor now) actor now timing)))
           ;; 今の世代でない頼み(退いた世代・見ていない世代の preStop)には、その世代の待ちの答え(drain_policy.superseded-worker-view)。
           #(after 200 (if (other-generation-boot after (get parts 1) body.boot)
                           (superseded-worker-view after (get parts 1) body.boot now timing)
                           (worker-view after (get parts 1) now timing))))
     (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "DELETE"))
       (do (setv actor (require-actor request.actor))
-          (setv after (settle state (cancel-drain state (get parts 1)) actor now timing))
+          (setv after (! (settle state (cancel-drain state (get parts 1)) actor now timing)))
           #(after 200 (worker-view after (get parts 1) now timing)))
     True (unknown-request state request)))
 
@@ -399,7 +415,9 @@
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-tasks [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
+(defk respond-tasks [state request body parts now timing]
+  {:pre [(: state ClusterState) (: request Request) (: body (| RequestBody ServiceBody LegacyJobs)) (: parts list) (: now int) (: timing ClusterTiming)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "task の頼み・問い・結果・取り下げ(/tasks の下)に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -407,20 +425,22 @@
     (and (= method "POST") (= parts ["tasks"]))
       (do (setv #(after status reply) (submit-task state body now))
           ;; 断った本文(400・429)は状態を変えない — 調停も通さず同じ状態を返す。
-          #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
+          #((if (is after state) state (! (settle state after (loose-actor request) now timing))) status reply))
     (and (= method "GET") (= head "tasks") (= (len parts) 2)) (poll-task state (get parts 1) now)
     ;; task の子 process が終わる前に直に届ける結果(#1387 — cluster_policy.absorb-task-result)。
     (and (= method "POST") (= head "tasks") (= (len parts) 3) (= (get parts 2) "result"))
       (do (setv #(after status reply) (absorb-task-result state (get parts 1) body now))
-          #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
+          #((if (is after state) state (! (settle state after (loose-actor request) now timing))) status reply))
     (and (= method "DELETE") (= head "tasks") (= (len parts) 2))
-      #((settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
-                (loose-actor request) now timing)
+      #((! (settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
+                   (loose-actor request) now timing))
         200 (TaskDropped :id (get parts 1)))
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond-stores [#^ ClusterState state #^ Request request #^ object body #^ list parts #^ int now #^ ClusterTiming timing]
+(defk respond-stores [state request body parts now timing]
+  {:pre [(: state ClusterState) (: request Request) (: body (| RequestBody ServiceBody LegacyJobs)) (: parts list) (: now int) (: timing ClusterTiming)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "温める表(/warm)・詰めた Program の置き場(/programs)・切り離した task(/detached)の要求に答えるため。#(次の状態 status 本文) を返し、知らない形は 404(respond の振り分けの 1 群 — 1 つの cond では型検査が解析をあきらめた・#1690)。"
   (setv method request.method
         head (get parts 0))
@@ -429,27 +449,30 @@
     (and (= method "POST") (= parts ["warm"]))
       (do (setv actor (loose-actor request)
                 #(after status reply) (warm-write state body now actor timing))
-          #((if (is after state) state (settle state after actor now timing)) status reply))
+          #((if (is after state) state (! (settle state after actor now timing))) status reply))
     (and (= method "GET") (= head "warm") (= (len parts) 2)) (warm-read state (get parts 1) now timing)
     ;; --- 詰めた Program の置き場(2026-09-27 — program_policy・改訂 1 の F)---
     (and (= method "PUT") (= head "programs") (= (len parts) 2))
       (do (setv actor (loose-actor request)
                 #(after status reply) (program-write state (get parts 1) body now))
-          #((if (is after state) state (settle state after actor now timing)) status reply))
+          #((if (is after state) state (! (settle state after actor now timing))) status reply))
     (and (= method "GET") (= head "programs") (= (len parts) 2)) (program-read state (get parts 1))
     ;; --- 切り離した task(2026-09-25 — detached_policy)---
     (and (= method "PUT") (= head "detached") (= (len parts) 2))
-      (detached-reply state (submit-detached state (get parts 1) body now) request now timing)
+      (! (detached-reply state (submit-detached state (get parts 1) body now) request now timing))
     (and (= method "GET") (= head "detached") (= (len parts) 2))
-      (detached-reply state (detached-read state (get parts 1) now timing) request now timing)
+      (! (detached-reply state (detached-read state (get parts 1) now timing) request now timing))
     (and (= method "POST") (= head "detached") (= (len parts) 3) (= (get parts 2) "cancel"))
-      (detached-reply state (cancel-detached state (get parts 1) now) request now timing)
+      (! (detached-reply state (cancel-detached state (get parts 1) now) request now timing))
     (and (= method "DELETE") (= head "detached") (= (len parts) 2))
-      (detached-reply state (release-detached state (get parts 1)) request now timing)
+      (! (detached-reply state (release-detached state (get parts 1)) request now timing))
     True (unknown-request state request)))
 
 
-(defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing #^ object body #^ bool [settled False]]
+(defk respond [state request now timing body [settled False]]
+  {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming) (: body (| RequestBody ServiceBody LegacyJobs BodyUnreadable))
+         (: settled bool)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "要求 1 件と、その本文を道の型に解いた値(coordinator/protocol/request_bodies の body-of — 型の値・まだ型にしていない道は JSON の
    object・形が合わなければ BodyMalformed・読みの中で例外が上がれば BodyUnreadable)→ #(次の状態 status 本文)。settled = state を同じ
    now で調停済みと呼び手が保証する(coordinator の 1 歩の中だけ — 静かな heartbeat の早道 quiet-heartbeat の前提・#2655)。"
@@ -463,13 +486,13 @@
     (when (isinstance body BodyUnreadable)
       (raise body.error))
     (match head
-      "resources" (respond-resources state request body parts now timing)
+      "resources" (! (respond-resources state request body parts now timing))
       (| "metrics" "events") (respond-observations state request body parts now timing)
-      (| "jobs" "heartbeat" "state") (respond-legacy state request body parts now timing :settled settled)
-      "workers" (respond-workers state request body parts now timing)
+      (| "jobs" "heartbeat" "state") (! (respond-legacy state request body parts now timing :settled settled))
+      "workers" (! (respond-workers state request body parts now timing))
       (| "board" "leases") (respond-board state request body parts now timing)
-      "tasks" (respond-tasks state request body parts now timing)
-      (| "warm" "programs" "detached") (respond-stores state request body parts now timing)
+      "tasks" (! (respond-tasks state request body parts now timing))
+      (| "warm" "programs" "detached") (! (respond-stores state request body parts now timing))
       _ (unknown-request state request))
     (except [refused Refused]
       #(state refused.status refused.body))
