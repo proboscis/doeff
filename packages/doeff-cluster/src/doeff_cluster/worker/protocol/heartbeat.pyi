@@ -30,6 +30,7 @@ def heartbeat_body(
     boot: str,
     boot_at: int,
     tools: dict[str, object],
+    kept: tuple[str, ...],
 ) -> dict[str, object]: ...
 def status_report(
     statuses: tuple[JobStatus, ...], task_echo: dict[str, dict[str, object]], results: dict[str, str | None]

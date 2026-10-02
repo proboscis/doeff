@@ -23,6 +23,7 @@ class ClusterTiming:
     fence_ms: int = 20000
     reassign_after_ms: int = 45000
     silent_worker_wait_ms: int = ...
+    keep_fence_ms: int = 240000
 
 @dataclass(frozen=True, eq=False)
 class Request:

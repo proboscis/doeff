@@ -12,6 +12,18 @@
 ;;;   止まり置き場から作り直された後も残る。確かめるのは tests/test_local.hy の
 ;;;   test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime(止める前の行と作り直した後の行を判断に渡す)。
 ;;;   壊した置き場の反例を deftest で結ぶ形(DOEFF167)は別に足す。
+;;;   C2 one-place-per-job(doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job — #2804)— 入れ替えを宣言しない job は、
+;;;   担い手が途絶しても(処理の止まり・網の途絶)、その間に能力の合う worker が加わっても・宣言の needs が変わっても・置ける worker が
+;;;   退いても(drain・Worker の削除)、同時に 2 つ走らない(違う worker の上でも、同じ名の worker の新しい世代の上でも)。他へ移せる job は時間の柵(worker の fence が coordinator の
+;;;   移し替えより先)・他へ移せない job は「移さない」(途絶しても動かし続けてよい印を渡した担い手から、担い手が印を持たないと知らせるか
+;;;   Worker が消されるまで移さない)が守る。同じ名の worker の新しい世代(k8s が届かない node の Pod を追い出して作り直した物)とは、印の
+;;;   在る job も長い方の柵 ClusterTiming.keep-fence-ms(240 秒)で止まることで重ならない — 前提: 本番の worker の Deployment は
+;;;   strategy = Recreate で not-ready / unreachable の tolerations を manifest に足していない → admission の既定 tolerationSeconds 300 秒 +
+;;;   k8s v1.32 の node-monitor-grace-period の既定 50 秒 → 届かない node の Pod の新しい世代が来るのは早くても約 350 秒後(2026-10-02 14:24 の
+;;;   実測 約 6.6 分)。keep-fence-ms 240 秒 + 停止の猶予 15 秒 = 255 秒 < 350 秒。tolerations を短くする manifest の変更はこの前提を崩す。
+;;;   確かめるのは tests/test_keep_when_cut_off.hy の途絶の筋書き(job の process ごとの生きていた区間を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-ignores-the-fence-breaks-c2(sim の宿の fence の判断を使わない壊れた worker — SimWorker の
+;;;   ignores-fence — で、移せる先の在る job が移し替えの後に 2 か所で走り、C2 が重なりを名指す)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker_invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -60,7 +72,8 @@
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.coordinator.entry.main"]
-   :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"]})
+   :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"
+                "doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh が起こす旧い名 doeff_cluster.main は渡すだけの入口)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。

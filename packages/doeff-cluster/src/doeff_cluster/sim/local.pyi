@@ -132,6 +132,7 @@ class SimWorker:
     ignores_fence: bool = False
     beat_every_ms: int | None = None
     retire_stops: bool = False
+    ignores_keep_marks: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
@@ -310,6 +311,11 @@ class CutWorker(EffectBase[None]):
     seconds: float
 
 @dataclass(frozen=True)
+class StallWorker(EffectBase[None]):
+    name: str
+    seconds: float
+
+@dataclass(frozen=True)
 class DrainWorker(EffectBase[dict[str, JsonValue]]):
     name: str
     ttl_seconds: float = ...
@@ -376,6 +382,8 @@ class HostTruth:
     beat_bells: tuple[Promise[object], ...] = ()
     watch_failure: str | None = None
     tick_bell: Promise[object] | None = None
+    stalled_until_ms: int = 0
+    keep_fence_ms: int = ...
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:

@@ -39,7 +39,8 @@
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
-                         lease-write other-generation-boot alive])
+                         lease-write other-generation-boot alive remember-keep-marks])
+(import doeff [run])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
@@ -336,9 +337,12 @@
       ;; heartbeat は調停を繰り返さない(quiet-heartbeat・#2655)。
       (do (setv name body.name
                 heard (register-heartbeat state body now))
-          (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (settle state heard name now timing)))
-          #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
-                                       :boot body.boot :statuses body.statuses)))
+          (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (settle state heard name now timing))
+                reply (heartbeat-reply after name timing (ready-instances after name now timing) :now now
+                                       :boot body.boot :statuses body.statuses))
+          ;; 返事で付けた「途絶しても動かし続けてよい」印を、印を渡した担い手との約束として残す(#2804 — 返事の前に状態と一緒に保存され、
+          ;; 担い手が印を持たないと知らせるまで job を他へ移さない)。
+          #((run (remember-keep-marks after name body.boot body.kept-when-cut-off reply now)) 200 reply))
     (and (= method "GET") (= parts ["state"]))
       #(state 200 (StateReply :view (state-view state now timing) :audit (tuple (cut state.audit -30 None))
                               :drains (drains-view state now timing)))
