@@ -8,7 +8,6 @@ This module provides:
 """
 
 
-import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -16,7 +15,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_conductor.handlers import run_sync
+
+from tests.runner_env import e2e_flag, opencode_server_url
 
 if TYPE_CHECKING:
     from doeff_conductor.types import Issue
@@ -57,7 +57,7 @@ def is_opencode_available() -> bool:
     3. opencode binary in PATH
     """
     # Check if URL is explicitly provided
-    url = os.environ.get("CONDUCTOR_OPENCODE_URL")
+    url = opencode_server_url()
     if url:
         try:
             import httpx
@@ -87,7 +87,7 @@ def is_e2e_enabled() -> bool:
     - CONDUCTOR_E2E=1 environment variable is set
     - Running with -m e2e marker explicitly
     """
-    return os.environ.get("CONDUCTOR_E2E", "0") == "1"
+    return e2e_flag() == "1"
 
 
 def is_git_available() -> bool:
@@ -195,7 +195,7 @@ def issues_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def opencode_url() -> str | None:
     """Get OpenCode server URL if available."""
-    url = os.environ.get("CONDUCTOR_OPENCODE_URL")
+    url = opencode_server_url()
     if url:
         return url
 

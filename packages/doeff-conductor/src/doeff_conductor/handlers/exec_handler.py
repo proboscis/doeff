@@ -30,11 +30,11 @@ class ExecHandler:
         default_log_dir = Path(tempfile.gettempdir()) / "doeff-conductor-exec"
         self.log_dir = log_dir or default_log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self._counter = 0
+        self._mut_counter = 0
 
     def _next_log_path(self) -> Path:
-        self._counter += 1
-        return self.log_dir / f"exec-{os.getpid()}-{self._counter:04d}.log"
+        self._mut_counter += 1
+        return self.log_dir / f"exec-{os.getpid()}-{self._mut_counter:04d}.log"
 
     def _resolve_workdir(self, effect: "Exec") -> Path:
         if effect.workspace is not None:
