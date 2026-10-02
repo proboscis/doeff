@@ -21,7 +21,7 @@
 (import doeff_records.service [HttpRequest :as ServiceRequest])
 (import doeff_records.http_server [RecordsServerConfig RecordsServing ServedBuild RepoCommit PreparedHandlers REQUEST-MAX-BYTES
                                    answer-with ready-handlers start-records-server])
-(import tests.interpreters [LAW-TOKENS law-roster sim-request-handlers])
+(import tests.interpreters [law-roster sim-request-handlers])
 
 ;; 単体の GET /served の実物(下の BUILD を渡した口が LAW-SCHEMA で答えた本文 — 表の宣言の形が変われば要約も変わる)。
 (val FIXTURE (/ (. (Path __file__) parent) "served-answer.json"))
@@ -81,7 +81,7 @@
     (<- (with_handlers [(memory-records-handler store MAKER)] (SetStoreOutage OUTAGE-DETAIL)))
     (<- record-op (with_handlers [(await-handler) (http-production-handler)]
                                  (HttpRequest "POST" (+ server.url "/v1/records/put-row")
-                                              :headers {"Authorization" (+ "Bearer " (get LAW-TOKENS MAKER))}
+                                              :headers {"X-Records-Writer" MAKER}
                                               :body {"table" "parts" "key" ["k"] "value" {"label" "a"} "expect" {"kind" "any"}}
                                               :max-retries 0)))
     (<- served tuple (with_handlers [(await-handler) (http-production-handler)] (get-json server.url "/served")))
@@ -101,9 +101,9 @@
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :roster (law-roster)
                                :prepare (ready-handlers (fn [writer] None)) :request-handlers #() :max-bytes REQUEST-MAX-BYTES
                                :maintenance None :stop-poll-seconds 0.1 :drain-seconds 0.0 :served BUILD))
-  (<- answer (with_handlers [prepared-handlers-fail] (answer-with serving (ServiceRequest "GET" "/served" None b""))))
+  (<- answer (with_handlers [prepared-handlers-fail] (answer-with serving (ServiceRequest "GET" "/served" b""))))
   (assert (= answer.status 200) answer)
   (assert (= (get (json.loads answer.body) "instance") "3-0123456789ab") answer)
   (import pytest)
   (with [(pytest.raises RuntimeError)]
-    (<- _ (with_handlers [prepared-handlers-fail] (answer-with serving (ServiceRequest "GET" "/readyz" None b""))))))
+    (<- _ (with_handlers [prepared-handlers-fail] (answer-with serving (ServiceRequest "GET" "/readyz" b""))))))

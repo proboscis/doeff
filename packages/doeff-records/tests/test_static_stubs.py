@@ -166,12 +166,12 @@ SERVICE_MODULE = """\
 
 (defk status-of [service]
   {:pre [(: service RecordsService)] :post [(: % int)]}
-  (<- answer (respond service (HttpRequest "GET" "/healthz" None b"")))
+  (<- answer (respond service (HttpRequest "GET" "/healthz" b"")))
   answer.status)
 
 (defk wrong-status [service]
   {:pre [(: service RecordsService)] :post [(: % int)]}
-  (<- answer (respond service (HttpRequest "GET" "/healthz" None b"")))
+  (<- answer (respond service (HttpRequest "GET" "/healthz" b"")))
   (+ answer.status "x"))
 """
 

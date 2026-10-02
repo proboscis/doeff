@@ -44,7 +44,7 @@ class ServedBuild:
 class RecordsServing:
     address: HttpAddress
     schema: RecordsSchema
-    roster: Roster
+    roster: Roster = ...
     prepare: Program[object, object] | EffectBase[object]
     request_handlers: tuple[object, ...]
     max_bytes: int

@@ -21,7 +21,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 
 (setv PATH-PREFIX "/v1/records/")
-;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りを名簿より先に使う・#2988)。
+;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りをそのまま書き手の名に使う・#2988)。
 (setv WRITER-HEADER "X-Records-Writer")
 (setv OP-READ-ROW "read-row" OP-LIST-ROWS "list-rows" OP-PUT-ROW "put-row" OP-WATCH-CHANGES "watch-changes"
       OP-APPEND-EVENT "append-event" OP-READ-EVENTS "read-events")

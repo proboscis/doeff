@@ -23,15 +23,12 @@
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing REQUEST-MAX-BYTES])
 (import doeff_records.main [RecordsSettings records-settings records-serving records-connected records-process PG-STORE store-reachable
-                            ENV-PG-URL-FILE ENV-PRINCIPALS-FILE ENV-HOSTNAME ENV-HOST ENV-PORT ENV-POOL-SIZE DEFAULT-PORT
+                            ENV-PG-URL-FILE ENV-HOSTNAME ENV-HOST ENV-PORT ENV-POOL-SIZE DEFAULT-PORT
                             DEFAULT-POOL-SIZE DEFAULT-MAINTENANCE-SECONDS DEFAULT-KEEP-CHANGES-SECONDS])
 
 (val PG-URL-PATH "/secrets/pg-url")
-(val PRINCIPALS-PATH "/secrets/principals.json")
 (val DSN "postgresql://records@db/records")
-;; 名簿の綴り(64 hex の digest — 中身は検の値)。
-(val PRINCIPALS-JSON "{\"version\": 1, \"principals\": [{\"name\": \"maker\", \"tokenSha256\": \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}")
-(val FILES {PG-URL-PATH (+ DSN "\n") PRINCIPALS-PATH PRINCIPALS-JSON})
+(val FILES {PG-URL-PATH (+ DSN "\n")})
 
 
 (defhandler scripted-environment [#^ dict environ #^ dict files]
@@ -64,13 +61,12 @@
   settings)
 
 
-(val REQUIRED-ENV {ENV-PG-URL-FILE PG-URL-PATH ENV-PRINCIPALS-FILE PRINCIPALS-PATH ENV-HOSTNAME "records-0"})
+(val REQUIRED-ENV {ENV-PG-URL-FILE PG-URL-PATH ENV-HOSTNAME "records-0"})
 
 
 (deftest test-settings-are-read-from-the-environment-with-defaults
   (<- settings RecordsSettings (settings-under REQUIRED-ENV))
   (assert (= settings.dsn DSN) settings)
-  (assert (= (tuple (.keys settings.roster.digests)) #("maker")) settings.roster)
   (assert (= settings.prefix DEFAULT-PREFIX) settings)
   (assert (= settings.origin-host "records-0") settings)
   (assert (= settings.pool-size DEFAULT-POOL-SIZE) settings)
@@ -98,10 +94,10 @@
   (assert (in ENV-PG-URL-FILE (str refused)) refused))
 
 
-(deftest test-the-roster-is-not-required-to-start
-  ;; 呼び手を断らないので名簿は起動に要らない(#2988): env が無ければ空の名簿で読める。必須に戻ると SystemExit で赤。
+(deftest test-a-principals-env-is-not-read
+  ;; 名簿の file は読まない(#3008): env RECORDS_PRINCIPALS_FILE が在っても読まず(file の表に無い path でも落ちない)、残してある roster の欄は空。
   (val environ (dict REQUIRED-ENV))
-  (del (get environ ENV-PRINCIPALS-FILE))
+  (setv (get environ "RECORDS_PRINCIPALS_FILE") "/secrets/not-read.json")
   (<- settings RecordsSettings (settings-under environ))
   (assert (= (dict settings.roster.digests) {}) settings.roster)
   (assert (= settings.dsn DSN) settings))

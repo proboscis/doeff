@@ -1,10 +1,9 @@
-;;; 記録の service の呼び手の書き手の名 — `Authorization: Bearer <token>` を名簿(principals.json)で書き手の名へ引く(純粋)。
+;;; 記録の service の呼び手の書き手の名 — 呼び手が X-Records-Writer の見出しで名乗った名を、そのまま書き手の名にする(純粋)。
 ;;;
-;;; 名簿の形は {version: 1, principals: [{name, tokenSha256}]}(token そのものは持たず sha256 だけ — 呼び手の系の既存の名簿をそのまま読める)。
-;;; 引いた名がそのまま記録の handler の書き手の名になる(書き手の名は effect の引数にせず、HTTP の口が要求ごとに handler を組む時に渡す)。
-;;; 名簿は呼び手を断らない(#2988・利用者 2026-10-02「頼んでいない token の確かめを外す」): 見出しが無い・形が違う・
-;;; 名簿に無い token の呼び手は、名の無い書き手 ANONYMOUS として通す。書き手の名は呼び手が X-Records-Writer の見出しで名乗る(writer-of)。
-;;; 名簿は、呼び手が token をやめて名乗りに移るまでの間、名乗らない呼び手の書き手の名を引くためだけに読む。
+;;; 名乗らない呼び手(見出しが無い・空)は、名の無い書き手 ANONYMOUS として通す。service は名簿の file を読まず、Authorization の見出しも読まない
+;;; (#3008・利用者 2026-10-02「頼んでいない token・password・security を入れない」)。
+;;; 残してある物(次の変更で消す — 呼び手の系が付け替えた後): 型 Roster(service の設定の欄に既定値つきで在り、中身は使わない)・token-digest・
+;;; decode-roster・identify(名簿を自前で読む呼び手の系が import している間だけ残す。service の経路は呼ばない)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "judgment"})
 (import dataclasses [dataclass field])
@@ -22,7 +21,7 @@
 
 
 (defclass [(dataclass :frozen True)] Roster []
-  "身元の名簿: digests = 書き手の名 → token の sha256(小文字の 64 hex)の凍らせた写像。"
+  "身元の名簿(残してある型 — service は使わない・次の変更で消す): digests = 書き手の名 → token の sha256(小文字の 64 hex)の凍らせた写像。"
   (setv #^ (get FrozenMap str) digests (field :default-factory FrozenMap)))
 
 
@@ -82,12 +81,8 @@
   (Principal (if (is found None) ANONYMOUS found)))
 
 
-(defk writer-of [roster authorization declared]
-  {:pre [(: roster Roster) (: authorization (| str None)) (: declared (| str None))] :post [(: % Principal)]}
-  "要求の書き手の名を決めるため: 呼び手が X-Records-Writer で名乗った名(空でなければ確かめずに使う)→ 無ければ移行の間だけ
-   Authorization の token を名簿で引く(identify)。token をやめた呼び手は名乗りだけで書き手の名を運ぶ(#2988)。"
+(defk writer-of [declared]
+  {:pre [(: declared (| str None))] :post [(: % Principal)]}
+  "要求の書き手の名を決めるため: 呼び手が X-Records-Writer で名乗った名(空でなければ確かめずに使う)→ 無ければ ANONYMOUS。"
   (val named (if (is declared None) "" (.strip declared)))
-  (when named
-    (return (Principal named)))
-  (<- caller Principal (identify roster authorization))
-  caller)
+  (Principal (if named named ANONYMOUS)))
