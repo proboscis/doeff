@@ -201,12 +201,14 @@
 
 (deftest test-a-retired-process-still-counts-as-live
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
-  (val empty (ClusterState :workers {} :statuses {}))
-  (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
+  (val empty (ClusterState :workers {}))
+  (import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations WorkerInfo WorkerReport])
   (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
+  (import doeff_hy.table [TableWrite table-of])
   (val state (replace empty :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000)}
-                            :statuses {"zeus" (WorkerReport :at 1000 :endpoint None
-                                                            :jobs #((StatusRow :name "a#retired-1-x" :phase "running" :retired-from "a")))}))
+                            :observations (ClusterObservations
+                                            :statuses (table-of #((TableWrite "zeus" (WorkerReport :at 1000 :endpoint None
+                                                                                                  :jobs #((StatusRow :name "a#retired-1-x" :phase "running" :retired-from "a")))))))))
   (assert (still-live-somewhere 1000 state "a" T))
   (assert (not (still-live-somewhere 1000 state "b" T))))
 

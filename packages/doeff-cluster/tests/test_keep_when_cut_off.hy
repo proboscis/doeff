@@ -14,7 +14,8 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState KeepMark Drain])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState ClusterObservations KeepMark Drain])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.cluster_policy [place-jobs reconcile unplaced-jobs state-view])
 (import doeff_cluster.coordinator.core.resource_policy [running-process delete-resource Refused])
@@ -134,12 +135,16 @@
   (<- w2 WorkerInfo (worker-of "w2" 60000 #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val running (WorkerReport :at 60000 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
-  (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :statuses {"w1" running}
+  (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)}
+                              :observations (ClusterObservations :statuses (table-of #((TableWrite "w1" running))))
                               :drains {"w1" (Drain "w1" 0 999999)} :keep-marks #(mark)))
   (assert (= (. (get (place-jobs 60000 promised T) "a") worker) "w1"))
   (val released (replace promised :keep-marks #()))
   (assert (not-in "a" (place-jobs 60000 released T)))
-  (val stopped (replace released :statuses {"w1" (WorkerReport :at 60000 :endpoint None :jobs #((StatusRow :name "a" :phase "stopped")))}))
+  (val stopped (replace released
+                       :observations (ClusterObservations
+                                       :statuses (table-of #((TableWrite "w1" (WorkerReport :at 60000 :endpoint None
+                                                                                            :jobs #((StatusRow :name "a" :phase "stopped")))))))))
   (assert (= (. (get (place-jobs 60000 stopped T) "a") worker) "w2")))
 
 
@@ -227,7 +232,8 @@
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val report (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
-  (val plain (ClusterState #(job) {"w1" w1} {"a" (Placement "a" "w1" 1 0)} :statuses {"w1" report}))
+  (val plain (ClusterState #(job) {"w1" w1} {"a" (Placement "a" "w1" 1 0)}
+                           :observations (ClusterObservations :statuses (table-of #((TableWrite "w1" report))))))
   (assert (= (get (running-process plain "a" PAST-DEADLINE T) "state") "NotReady"))
   (val kept (running-process (replace plain :keep-marks #(mark)) "a" PAST-DEADLINE T))
   (assert (= (get kept "state") "Unknown") kept)

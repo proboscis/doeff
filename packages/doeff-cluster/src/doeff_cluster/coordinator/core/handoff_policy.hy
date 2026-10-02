@@ -42,7 +42,7 @@
   "Service name の担い手の worker が報告した job の行(報告が lease-ms より新しい時だけ)。置き先が無い・
    報告が無い・古い時は None(判じない — 作り直しの直後に「旧が居ない」と取り違えて諦めを捨てないため)。"
   (setv placed (.get state.placements name)
-        st (if (is placed None) None (.get state.statuses placed.worker)))
+        st (if (is placed None) None (.row state.observations.statuses placed.worker)))
   (if (or (is st None) (> (- now st.at) timing.lease-ms))
       None
       st.jobs))

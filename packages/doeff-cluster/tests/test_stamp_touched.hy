@@ -11,6 +11,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
+(import doeff_hy.table [TableWrite])
 (import doeff_cluster.coordinator.core.resource_policy :as resource-policy)
 (import doeff_cluster.coordinator.core.resource_policy [stamp snapshot])
 (import doeff_cluster.coordinator.core.api_policy :as api-policy)
@@ -146,11 +147,14 @@
   (val timing (get (get CAPTURED 0) 2))
   (val key "Service/copier")
   (val carrier (. (get state.placements "copier") worker))
-  (val report (get state.statuses carrier))
-  ;; 担い手の報告の copier の行だけを starting に戻した前の状態(他の材料は同じ物のまま)。
-  (val before (replace state :statuses (| state.statuses
-                                          {carrier (replace report :jobs (tuple (gfor r report.jobs
-                                                                                      (if (= r.name "copier") (replace r :phase "starting") r))))})))
+  (val report (.row state.observations.statuses carrier))
+  ;; 担い手の報告の copier の行だけを starting に戻した前の状態(他の材料は同じ物のまま — 報告は観測の表 #2904)。
+  (val before (replace state
+                       :observations (replace state.observations
+                                              :statuses (.with-writes state.observations.statuses
+                                                                      #((TableWrite carrier
+                                                                                    (replace report :jobs (tuple (gfor r report.jobs
+                                                                                                                       (if (= r.name "copier") (replace r :phase "starting") r))))))))))
   (val rows-before (snapshot before now timing))
   (val rows-after (snapshot state now timing))
   (assert (= (get rows-after key "status" "ready") "Ready") (get rows-after key))

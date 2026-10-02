@@ -15,7 +15,7 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark])
-(import doeff_hy.table [Table])
+(import doeff_hy.table [Table TableWrite])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -323,7 +323,7 @@
   "job name の process の行の母集団(worker の名の順): lease の内に報告した全部の worker の最新の報告のうち、名が一致する行と、
    入れ替えで退いた process の行(行の名は <名>#retired-<世代>・retiredFrom = 名)。「まだどこかで動いているか」(still-live-somewhere)と
    「どの版が動いているか」(resource_policy.live-processes)が同じ母集団を読むための定義点。"
-  (tuple (gfor #(wname st) (sorted (.items state.statuses))
+  (tuple (gfor #(wname st) (sorted (.items state.observations.statuses))
                :setv w (.get state.workers wname)
                :if (and (is-not w None) (alive now w timing.lease-ms))
                row st.jobs
@@ -970,7 +970,9 @@
   (if (not gone)
       state
       (replace state :workers (dfor #(n w) (.items state.workers) :if (not-in n gone) n w)
-                     :statuses (dfor #(n s) (.items state.statuses) :if (not-in n gone) n s)
+                     :observations (replace state.observations
+                                            :statuses (.with-writes state.observations.statuses
+                                                                    (tuple (gfor n gone (TableWrite n None)))))
                      :drains (dfor #(n d) (.items state.drains) :if (not-in n gone) n d))))
 
 
@@ -1104,8 +1106,11 @@
                          :seen-mark (if (is previous None) None previous.seen-mark))
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
-                :statuses (| state.statuses {name (WorkerReport :at now :endpoint body.endpoint
-                                                               :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
+                ;; 報告は観測の表(#2904)— absorb-boot は drain だけを変えるので、元の状態の観測の記録に書いてよい。
+                :observations (replace state.observations
+                                       :statuses (.with-writes state.observations.statuses
+                                                               #((TableWrite name (WorkerReport :at now :endpoint body.endpoint
+                                                                                                :jobs (tuple (gfor s statuses (replace s :result None :task None))))))))))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。
   (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
@@ -1264,7 +1269,7 @@
                                                :draining (in n draining))))
              :placements (dict state.placements)
              :unplaced (unplaced-jobs now state timing)
-             :statuses (dfor #(n st) (.items state.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
+             :statuses (dfor #(n st) (.items state.observations.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
              :tasks (tuple (sorted (.values state.tasks) :key (fn [t] t.id)))
              :board-keys (len state.board)
              :surges (dict state.surges)
