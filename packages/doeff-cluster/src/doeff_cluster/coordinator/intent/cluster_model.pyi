@@ -689,12 +689,20 @@ class WatchStep:
     answer: WatchAnswer | None
     watcher: Watcher
 
+@dataclass(frozen=True, kw_only=True)
+class ProvisionalBeat:
+    at: int
+    request: object
+    body: object
+    name: str
+
 @dataclass(frozen=True)
 class IdleProbe:
     state: ClusterState
     timing: object
     naming: ClusterNaming
     watchers: tuple[Watcher, ...] = ()
+    beats: tuple[ProvisionalBeat, ...] = ()
 
 @dataclass(frozen=True, kw_only=True)
 class QuietStep:
@@ -702,6 +710,7 @@ class QuietStep:
     state: ClusterState
     watchers: tuple[Watcher, ...]
     marked: bool
+    beats: tuple[ProvisionalBeat, ...] = ()
 
 @dataclass(frozen=True, kw_only=True)
 class QuietStretch:

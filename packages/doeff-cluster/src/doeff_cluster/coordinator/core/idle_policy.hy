@@ -13,13 +13,14 @@
 ;;; - 期限の来た名指しの待ちへの「変わっていない」の返事と、送り手(worker の宿の待ち)の送り直し — 同じ問いを同じ刻に送り直すので、
 ;;;   待ちの期限と見え方をその刻で引き直して吸う(同値の検 = tests/test_idle_skip.hy)。
 (require doeff-hy.macros [defk <- val var])
+(import collections.abc [Callable])
 (import dataclasses [replace])
-(import math [ceil])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe QuietStep QuietStretch Watcher WatchStep])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe QuietStep QuietStretch Watcher WatchStep
+                                                       HeartbeatReply])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
+(import doeff_cluster.coordinator.core.api_policy [tick respond plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.watch_policy [settle-watch])
 
 (val MAX-QUIET-MS 3600000)    ; 一度に眠る区間の上限(仮想の 1 時間 — その刻の歩は静かでも本物の歩として回す)
@@ -72,50 +73,104 @@
   (if quiet (+ kept again) None))
 
 
-(defk quiet-step [before at timing naming]
-  {:pre [(: before QuietStep) (: at int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| QuietStep None))]
-   :tags {:context "coordinator" :role "judgment"}}
-  "before の歩の後、at の刻の要求の無い歩(1 拍ずつの走りの coordinator-step と同じ順: tick → Rollout の拍 → mark-alive → 待ちの判じ)が
-   静かなら、その歩の後の状態と待ちを知るため。静かでなければ None。静か = tick が何も変えず、Rollout の拍(1 秒ごと)が k8s を読まず
-   action も出さず何も変えず、待ちが「変わった」と答えず期限の待ちを吸える歩(変わってよいのは生存の印と Rollout の拍の刻だけ)。"
+(defk heard-beats [state beats at timing same-reply]
+  {:pre [(: state ClusterState) (: beats tuple) (: at int) (: timing ClusterTiming) (: same-reply (| Callable None))]
+   :post [(: % (| ClusterState None))] :tags {:context "coordinator" :role "judgment"}}
+  "at の刻に届く仮の拍(worker の宿が預けた heartbeat)を、1 拍ずつの走りの歩と同じ受けの判断(api_policy.respond — 状態が拍の頭の tick の
+   答えのままなら静かな早道)で順に受けた後の状態を知るため。どれかが 200 でない・返事が worker の最後に受けた返事と違う(same-reply —
+   模擬の列が返事の JSON で比べる。無ければ違うと数える)なら None(その歩は静かでない — worker が本物の heartbeat を送る)。"
+  (var current state)
+  (var quiet True)
+  (for [beat beats]
+    (when quiet
+      (val answered (respond current beat.request at timing beat.body :settled (is current state)))
+      (val reply (get answered 2))
+      (if (or (!= (get answered 1) 200) (is same-reply None) (not (isinstance reply HeartbeatReply)))
+          (:= quiet False)
+          (do (<- same bool (same-reply beat reply))
+              (if same
+                  (:= current (get answered 0))
+                  (:= quiet False))))))
+  (if quiet current None))
+
+
+(defk only-times-moved [after before]
+  {:pre [(: after ClusterState) (: before ClusterState)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "仮の拍を受けた歩の後の状態 after が、歩の前の before から時刻の欄(生存の印・Rollout の拍の刻・worker の最後の連絡の時刻・状態の報告の
+   at)のほか何も変えていないかを知るため — 静かな歩の条件。task の lease の延長は静かでないに数える(#2781 の表 — 延長は保存が要る)。"
+  (and (= (set after.workers) (set before.workers))
+       (= (set after.statuses) (set before.statuses))
+       (all (gfor #(name info) (.items after.workers)
+                  (= (replace info :last-seen-ms (. (get before.workers name) last-seen-ms)) (get before.workers name))))
+       (all (gfor #(name report) (.items after.statuses)
+                  (= (replace report :at (. (get before.statuses name) at)) (get before.statuses name))))
+       (= (replace after :alive-ms before.alive-ms :seen-marks before.seen-marks :rollout-tick-ms before.rollout-tick-ms
+                   :workers before.workers :statuses before.statuses)
+          before)))
+
+
+(defk quiet-step [before at beats timing naming [same-reply None]]
+  {:pre [(: before QuietStep) (: at int) (: beats tuple) (: timing ClusterTiming) (: naming ClusterNaming) (: same-reply (| Callable None))]
+   :post [(: % (| QuietStep None))] :tags {:context "coordinator" :role "judgment"}}
+  "before の歩の後、at の刻の歩(1 拍ずつの走りの coordinator-step と同じ順: tick → 届いた仮の拍 beats の受け → Rollout の拍 → mark-alive →
+   待ちの判じ)が静かなら、その歩の後の状態と待ちを知るため。静かでなければ None。静か = tick が何も変えず、仮の拍の受けが時刻の欄の
+   ほか何も変えず返事も worker の最後の返事と同じで、Rollout の拍(1 秒ごと)が k8s を読まず action も出さず何も変えず、待ちが
+   「変わった」と答えず期限の待ちを吸える歩(変わってよいのは生存の印・Rollout の拍の刻・worker の最後の連絡と報告の at だけ)。"
   (val state before.state)
-  (var rolled None)
+  (var current None)
   (when (= (tick state at timing) state)
-    (if (>= (- at state.rollout-tick-ms) ROLLOUT-TICK-MS)
-        (do (<- after (| ClusterState None) (rollout-quiet state at timing naming))
-            (when (= after state)
-              (:= rolled (replace state :rollout-tick-ms at))))
-        (:= rolled state)))
-  (if (is rolled None)
-      None
-      (do (val marked (mark-alive rolled at))
-          (<- held (| tuple None) (renewed-watchers before.watchers marked at timing))
-          (if (is held None)
-              None
-              (QuietStep :at at :state marked :watchers held :marked (!= marked.alive-ms rolled.alive-ms))))))
+    (<- heard (| ClusterState None) (heard-beats state beats at timing same-reply))
+    (:= current heard))
+  (var rolled None)
+  (when (is-not current None)
+    (if (>= (- at current.rollout-tick-ms) ROLLOUT-TICK-MS)
+        (do (<- after (| ClusterState None) (rollout-quiet current at timing naming))
+            (when (= after current)
+              (:= rolled (replace current :rollout-tick-ms at))))
+        (:= rolled current)))
+  (var stepped None)
+  (when (is-not rolled None)
+    (val marked (mark-alive rolled at))
+    (var moved True)
+    (when beats
+      (<- only bool (only-times-moved marked state))
+      (:= moved only))
+    (when moved
+      (<- held (| tuple None) (renewed-watchers before.watchers marked at timing))
+      (when (is-not held None)
+        (:= stepped (QuietStep :at at :state marked :watchers held :marked (!= marked.alive-ms rolled.alive-ms) :beats beats)))))
+  stepped)
 
 
-(defk quiet-stretch [probe start horizon]
-  {:pre [(: probe IdleProbe) (: start QuietStep) (: horizon int)] :post [(: % QuietStretch)]
+(defk next-step-at [last pending]
+  {:pre [(: last QuietStep) (: pending tuple)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "歩 last の後の、1 拍ずつの走りの次の歩の刻(直前の歩 + 1 拍と、まだ受けていない仮の拍 pending の届く刻の早い方)を知るため。"
+  (min (+ last.at TICK-MS) (if pending (. (get pending 0) at) (+ last.at TICK-MS))))
+
+
+(defk quiet-stretch [probe start horizon [same-reply None]]
+  {:pre [(: probe IdleProbe) (: start QuietStep) (: horizon int) (: same-reply (| Callable None))] :post [(: % QuietStretch)]
    :tags {:context "coordinator" :role "judgment"}}
-  "start の歩の後から、1 拍ずつの走りと同じ刻(直前の歩 + 1 拍)の要求の無い歩を、horizon の刻まで本番の判断で 1 歩ずつ試すため。
-   答え = 静かだった歩の列と、最初の静かでない歩の刻(horizon までに無ければ None)。静かな歩は次の歩の起点になる(生存の印と
-   引き直した待ちを持ち越す)。"
+  "start の歩の後から、1 拍ずつの走りと同じ刻の歩(直前の歩 + 1 拍と、仮の拍の届く刻の早い方 — 同じ刻なら 1 つの歩で受ける)を、
+   horizon の刻まで本番の判断で 1 歩ずつ試すため。答え = 静かだった歩の列と、最初の静かでない歩の刻(horizon までに無ければ None)。
+   静かな歩は次の歩の起点になる(生存の印と引き直した待ちを持ち越す)。probe.beats = まだ受けていない仮の拍(刻の順 — start の刻と同じ
+   刻の拍は start の歩の後の歩で受ける)。same-reply = 仮の拍の返事を worker の最後の返事と比べる Program の関数(heard-beats)。"
   (var last start)
+  (var pending probe.beats)
   (var steps #())
   (var end None)
-  (while (and (is end None) (<= (+ last.at TICK-MS) horizon))
-    (val at (+ last.at TICK-MS))
-    (<- stepped (| QuietStep None) (quiet-step last at probe.timing probe.naming))
-    (if (is stepped None)
-        (:= end at)
-        (do (:= steps (+ steps #(stepped)))
-            (:= last stepped))))
+  (var going True)
+  (while going
+    (val grid (+ last.at TICK-MS))
+    (val at (if (and pending (<= (. (get pending 0) at) grid)) (. (get pending 0) at) grid))
+    (if (> at horizon)
+        (:= going False)
+        (do (val arriving (tuple (gfor beat pending :if (= beat.at at) beat)))
+            (<- stepped (| QuietStep None) (quiet-step last at arriving probe.timing probe.naming same-reply))
+            (if (is stepped None)
+                (do (:= end at)
+                    (:= going False))
+                (do (:= steps (+ steps #(stepped)))
+                    (:= pending (tuple (gfor beat pending :if (> beat.at at) beat)))
+                    (:= last stepped))))))
   (QuietStretch :steps steps :end-at end))
-
-
-(defk rest-to-tick [elapsed-ms quiet-ms]
-  {:pre [(: elapsed-ms int) (: quiet-ms int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "要求ではない出来事で起こされた取り手が、本番の 1 秒の拍がその出来事に気づく刻(眠り始めから整数秒・1 秒以上・飛ばしてよい長さ
-   まで)まで、あと何 ms 眠るかを知るため。"
-  (- (min quiet-ms (max TICK-MS (* TICK-MS (ceil (/ elapsed-ms TICK-MS))))) elapsed-ms))
