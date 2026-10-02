@@ -8,7 +8,6 @@
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.foundation.process_versions [current-versions])
 (import doeff [with-handlers])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.protocol.detached [runners-changed])

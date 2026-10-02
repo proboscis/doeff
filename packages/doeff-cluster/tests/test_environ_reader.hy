@@ -29,7 +29,7 @@
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster.sim.local [sim-cluster SimWorker])
@@ -68,7 +68,7 @@
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
   (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ base "state" "tasks"))
-                             :versions (current-versions) :transport transport))
+                             :versions (! (process-versions os.environ)) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
                   (detached-submitted (route-cell) TEST-ROUTE (detached-sender "r") key (encode-program program) LOCAL "env" 60.0 600.0

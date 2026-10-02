@@ -33,7 +33,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView PrepareEnv SweepEnvs StartJob WarmEnv WorkerPolicy WorldView])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 (val PLATFORM "linux-x86_64")
@@ -211,11 +211,11 @@
   (val warm (WarmEnv :key key :runtime-env text))
   (val tasks (/ tmp-path "tasks"))
   (<- declared-1 dict (runtime-env->json env))
-  (<- spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared-1}
+  (<- spec (task-spec {"id" "t8" "revision" "" "versions" (! (process-versions os.environ)) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared-1}
                       tasks))
   (<- cold RuntimeEnv (declared 2))
   (<- declared-2 dict (runtime-env->json cold))
-  (<- cold-spec (task-spec {"id" "t9" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared-2}
+  (<- cold-spec (task-spec {"id" "t9" "revision" "" "versions" (! (process-versions os.environ)) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared-2}
                            tasks))
   (<- seen tuple (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
                                  (env-host settings)]

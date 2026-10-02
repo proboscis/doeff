@@ -14,7 +14,7 @@
 (import pathlib [Path])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import tests.fixtures.entry_programs [context-program host-foundation])
@@ -33,7 +33,7 @@
 
 (deftest test-a-program-in-a-child-reads-its-own-context-through-the-host-reader [tmp-path]
   (val program-file (/ tmp-path "program.json"))
-  (.write-text program-file (json.dumps {"blob" (encode-program (context-program host-foundation)) "versions" (current-versions)}) :encoding "utf-8")
+  (.write-text program-file (json.dumps {"blob" (encode-program (context-program host-foundation)) "versions" (! (process-versions os.environ))}) :encoding "utf-8")
   (<- declared RuntimeEnv (sample-env))
   (<- declared-json dict (runtime-env->json declared))
   (val environment (| (dict os.environ)

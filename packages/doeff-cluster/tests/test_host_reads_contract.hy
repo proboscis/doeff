@@ -10,7 +10,8 @@
 (require doeff-hy.macros [deftest <-])
 (import doeff_core_effects.effects [Ask])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import os)
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.job_context [RunContext])
 (import tests.host_reads_contract_handlers [Outside CONTEXT PROGRAM-PATH JSON-NAME JSON-VALUE PLAIN-NAME PLAIN-VALUE EMPTY-NAME
                                             MISSING OUTER-NAME OUTSIDE-ANSWER])
@@ -52,11 +53,12 @@
 
 
 (deftest test-the-versions-key-answers-this-process-versions
-  ;; 失敗ケース(#2345): 版の識別は宿の契約の鍵 versions-key で答える(本物も sim の宿も同じ current-versions)。
+  ;; 失敗ケース(#2345): 版の識別は宿の契約の鍵 versions-key で答える(本物の宿は process-versions に os.environ を渡した物・sim の宿は
+  ;; 送り手の口の versions — この検の sim の宿は同じ物を口に載せる)。
   ;; protocol の層(記録係・送り手の client)は process の版を自分で読まず、この答えを受け取る。
   {:interpreters ["host-process" "sim-host"]}
   (<- versions dict (Ask HOST-CONTRACT.versions-key))
-  (assert (= versions (current-versions)) versions))
+  (assert (= versions (! (process-versions os.environ))) versions))
 
 
 (deftest test-an-effect-other-than-ask-goes-outward
