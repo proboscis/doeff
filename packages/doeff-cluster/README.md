@@ -124,7 +124,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   `warm-cluster`)は client を引数に取ります。土台は実行先の契約の run-context(下)から coordinator の URL と process の世代を読んで
   client を作ります。
 - 本番の土台で job が閉じているか(答えの無い effect が残らないか)は、実行せずに `foundation_check` で確かめます:
-  `(foundation-closure my-writer :foundation production-foundation)` → `FoundationClosure`(`gaps`・`unknown`・`unresolved`)。
+  `(<- closure FoundationClosure (foundation-closure my-writer :foundation production-foundation))`(defk — 検の deftest の中で受ける)→ `FoundationClosure`(`gaps`・`unknown`・`unresolved`)。
   3 つとも空の時だけ `closed?` が真です(sim の土台は scheduler を含まないので、本番の土台の入れ忘れは sim では見つかりません)。
 
 ### 置き場所(能力)

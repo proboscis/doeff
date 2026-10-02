@@ -22,15 +22,18 @@
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 
 
-(deff task-submit-body [#^ str sha #^ str revision #^ frozenset needs #^ str name #^ float lease-seconds
-                        #^ (| RuntimeEnv None) runtime-env #^ dict environ]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+(defk task-submit-body [sha revision needs name lease-seconds runtime-env environ]
   {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: runtime-env (| RuntimeEnv None)) (: environ dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "POST /tasks の本文を作るため(本番の remote-cluster と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
    sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。environ = 子の環境変数(RemoteJob.environ — 空なら欄を置かない)。"
+  (var declared {})
+  (when (is-not runtime-env None)
+    (<- env-json dict (runtime-env->json runtime-env))
+    (:= declared {"runtimeEnv" env-json}))
   (| {"program" sha "revision" revision
       "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
-     (if (is runtime-env None) {} {"runtimeEnv" (run (runtime-env->json runtime-env))})
+     declared
      (if environ {"environ" (dict environ)} {})))
 
 
@@ -67,7 +70,7 @@
   (<- put tuple (program-put cell options blob sender.versions options.resend-deadline-seconds))
   (setv #(sha stored) put)
   (<- _stored (answer-json stored))
-  (val body (task-submit-body sha sender.revision needs name lease-seconds sender.runtime-env environ))
+  (<- body dict (task-submit-body sha sender.revision needs name lease-seconds sender.runtime-env environ))
   (<- reply RoutedReply (routed-request cell.route "POST" "/tasks" options None body))
   (setv cell.route reply.route)
   (<- answer dict (answer-json reply.answer))

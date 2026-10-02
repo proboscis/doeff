@@ -14,7 +14,7 @@ def env_report(views: tuple[CodeView, ...], capacity: str) -> dict[str, object]:
 def env_heartbeat_part(report: dict[str, object], platform: str) -> dict[str, object]:
     ...
 
-def heartbeat_body(*, name: str, provides: tuple[str, ...], exclusive: tuple[str, ...], node: str, capacity: int, versions: dict[str, str], statuses: list[dict[str, object]], endpoint: str, boot: str, boot_at: int, tools: dict[str, object], kept: tuple[str, ...], stopping: bool=False) -> dict[str, object]:
+def heartbeat_body(*, name: str, provides: tuple[str, ...], exclusive: tuple[str, ...], node: str, capacity: int, versions: dict[str, str], statuses: list[dict[str, object]], endpoint: str, boot: str, boot_at: int, tools: dict[str, object], kept: tuple[str, ...], stopping: bool=False) -> _Program[dict[str, object], object]:
     ...
 
 def status_report(statuses: tuple[JobStatus, ...], task_echo: dict[str, dict[str, object]], results: dict[str, str | None]) -> _Program[list[dict[str, object]], object]:
