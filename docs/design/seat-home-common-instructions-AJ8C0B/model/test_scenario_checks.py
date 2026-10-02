@@ -82,7 +82,8 @@ def t_S2_positive_a_third_carried_kind_is_one_roster_line(tmp: str) -> str:
         "claude_skills_dir": canon["skills"],
         "claude_agents_dir": canon["agents"],       # 3 種目(宣言の 1 行)
     }
-    argv, log = grown.launch_beat(declaration, home, config_dir)
+    beat = grown.launch_beat(declaration, home, config_dir)
+    argv, log = beat.argv, beat.log
     link = os.path.join(config_dir, "agents")
     assert os.path.islink(link), "3 種目が家に据わっていない"
     assert os.readlink(link) == canon["agents"]

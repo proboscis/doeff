@@ -29,7 +29,7 @@ def t_A1_moving_the_canon_repoints_the_home_symlink(tmp):
     assert os.readlink(link).endswith("dotfiles/agent/skills")
 
     decl["claude_skills_dir"] = "~/opt/agent-canon/skills"          # 正本を移した日
-    _, log = chain.launch_beat(decl, home, cfg)
+    log = chain.launch_beat(decl, home, cfg).log
     assert os.readlink(link).endswith("opt/agent-canon/skills"), \
         f"張り替わっていない: {os.readlink(link)}"
     assert sorted(os.listdir(link)) == ["moved-skill"], "席が旧い正本を読んでいる"
@@ -100,12 +100,12 @@ def t_B_no_declaration_means_the_home_is_untouched_even_with_canon_on_disk(tmp):
     _decoys(home)
     decl.pop("claude_memory_file"); decl.pop("claude_skills_dir")
     os.environ["HOME"] = home                                        # 世界に HOME が在る
-    trace: list[tuple[str, str]] = []
-    _, log = chain.launch_beat(decl, home, cfg, trace=trace)
+    beat = chain.launch_beat(decl, home, cfg)
+    log, trace = beat.log, beat.touched
     assert not os.path.exists(os.path.join(cfg, "CLAUDE.md")), "宣言が無いのに条文が届いた"
     assert not os.path.exists(os.path.join(cfg, "skills")), "宣言が無いのに skills が届いた"
     assert not any("seat-instructions" in line for line in log), f"計器が成功を名乗った: {log}"
-    assert trace == [], f"宣言が無いのに正本を探した: {trace}"
+    assert trace == (), f"宣言が無いのに正本を探した: {trace}"
 
 
 def t_B_the_installer_reads_only_what_the_declaration_named(tmp):
@@ -123,8 +123,8 @@ def t_B_the_installer_reads_only_what_the_declaration_named(tmp):
     decl["claude_memory_file"] = "~/opt/agent-canon/CLAUDE.md"          # 名指しは別の正本
     decl["claude_skills_dir"] = "~/opt/agent-canon/skills"
     os.environ["HOME"] = home
-    trace: list[tuple[str, str]] = []
-    _, log = chain.launch_beat(decl, home, cfg, trace=trace)
+    beat = chain.launch_beat(decl, home, cfg)
+    log, trace = beat.log, beat.touched
     named = {os.path.join(home, "opt", "agent-canon", "CLAUDE.md"),
              os.path.join(home, "opt", "agent-canon", "skills")}
     touched = {path for _, path in trace}
@@ -138,7 +138,7 @@ def t_B_excludes_branch_is_observable_when_the_world_declares_home(tmp):
     検は HOME を据えて**出口の argv**で見る。"""
     import json
     home, decl, cfg = _fixture(tmp)
-    argv, _ = chain.launch_beat(decl, home, cfg)
+    argv = chain.launch_beat(decl, home, cfg).argv
     settings = json.loads(argv[argv.index("--settings") + 1])
     assert settings["claudeMdExcludes"] == [os.path.join(home, ".claude", "CLAUDE.md")]
 

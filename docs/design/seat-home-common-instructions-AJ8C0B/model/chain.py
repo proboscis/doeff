@@ -122,33 +122,48 @@ def join_env_of(declaration: dict, home: str) -> dict:
 # --------------------------------------------------------------------------
 # launch_readout — 起動の拍ごとの読み(env → params)。memoize しない。
 # --------------------------------------------------------------------------
-def instruction_sources(env: dict, agent_type: str, log: list[str],
-                        trace: list[tuple[str, str]] | None = None) -> dict:
+@dataclass(frozen=True)
+class SourceReading:
+    """起動の拍で正本を読んだ結果(席へ運ぶ params・名乗る不在の行・触った正本の path)。"""
+
+    params: dict[str, str]
+    absent: tuple[str, ...]                 # 名指しが在って正本が無い時に名乗る行
+    touched: tuple[tuple[str, str], ...]    # 読み(read)・在るかの確かめ(stat)で触った path
+
+
+@dataclass(frozen=True)
+class _SourceRead:
+    """正本 1 種の読み(運ぶ値か、不在なら None・触った path)。"""
+
+    touched: tuple[str, str]
+    value: str | None
+
+
+def _read_source(source: CarriedSource, path: str) -> _SourceRead:
+    """名指された正本 1 種を、運び方どおりに読むため(file は中身・dir は先の path)。"""
+    if source.kind == "file-text":
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                return _SourceRead(touched=("read", path), value=fh.read())
+        return _SourceRead(touched=("read", path), value=None)
+    if source.kind == "dir-link":
+        return _SourceRead(touched=("stat", path), value=path if os.path.isdir(path) else None)
+    raise RuntimeError(f"運び方 {source.kind!r} を知らない: {source.key}")
+
+
+def instruction_sources(env: dict, agent_type: str) -> SourceReading:
     """名指しが無い = 欄を出さない。名指しが在って file が無い = 欄を出さず 1 行名乗る。"""
     if agent_type != "claude":
-        return {}
-    params: dict[str, str] = {}
-    for source in CARRIED_INSTRUCTION_SOURCES:      # R5: 名簿を回る
-        path = env.get(source.env, "").strip()
-        if not path:
-            continue
-        if source.kind == "file-text":
-            if trace is not None:
-                trace.append(("read", path))
-            if os.path.isfile(path):
-                with open(path, encoding="utf-8") as fh:
-                    params[source.param] = fh.read()
-                continue
-        elif source.kind == "dir-link":
-            if trace is not None:
-                trace.append(("stat", path))
-            if os.path.isdir(path):
-                params[source.param] = path
-                continue
-        else:
-            raise RuntimeError(f"運び方 {source.kind!r} を知らない: {source.key}")
-        log.append(f"{absent_event_of(source)} {source.env}={path}")
-    return params
+        return SourceReading(params={}, absent=(), touched=())
+    named = [(source, env.get(source.env, "").strip())
+             for source in CARRIED_INSTRUCTION_SOURCES]    # R5: 名簿を回る
+    reads = [(source, path, _read_source(source, path)) for source, path in named if path]
+    return SourceReading(
+        params={source.param: read.value for source, _, read in reads if read.value is not None},
+        absent=tuple(f"{absent_event_of(source)} {source.env}={path}"
+                     for source, path, read in reads if read.value is None),
+        touched=tuple(read.touched for _, _, read in reads),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -181,35 +196,38 @@ def _write_atomic(path: str, text: str, tmp_suffix: str = ".agentd-tmp") -> None
         raise
 
 
-def install_into_home(config_dir: str, params: dict, log: list[str]) -> None:
-    """家へ据える。運ばれてきた物を実体化するだけ — 中身は判断しない。
+def _install_one(config_dir: str, source: CarriedSource, carried: str) -> str | None:
+    """運ばれてきた 1 種を家に実体化し、計器が名乗る行を返すため(名乗る結末が無ければ None)。"""
+    path = os.path.join(config_dir, source.home_name)
+    if source.kind == "file-text":
+        # ⚠ 実体 file(symlink/hardlink は本体が user 層で落とす — design.md §2.3)
+        _write_atomic(path, carried)
+        return f"seat-instructions-installed {source.label}={len(carried.encode())}"
+    if source.kind == "dir-link":
+        outcome = fs_ensure_symlink(carried, path)
+        if outcome == "occupied-by-real-entity":
+            raise RuntimeError(
+                f"{path} is a real file/dir where the seat's {source.label} symlink "
+                "belongs (erosion guard) — refusing to overwrite")
+        # R1(盲検 A-1 の修正): 計器は**結末**を名乗る。意図した先だけを印字すると、
+        # 起きなかった張り替えを log が肯定する(FsLinkArtifact の target-conflict の実測)。
+        if outcome == "unchanged":
+            return None
+        return f"seat-instructions-installed {source.label}={outcome} target={carried}"
+    raise RuntimeError(f"運び方 {source.kind!r} を知らない: {source.key}")
+
+
+def install_into_home(config_dir: str, params: dict) -> tuple[str, ...]:
+    """家へ据える。運ばれてきた物を実体化するだけ — 中身は判断しない。答えは計器が名乗る行。
 
     R5: 据え付けも名簿を回る。運び方は 2 種(`file-text` / `dir-link`)で、
     種を増やさない限り 1 種足しても**この関数は 1 行も変わらない**。
     """
     os.makedirs(config_dir, exist_ok=True)
-    for source in CARRIED_INSTRUCTION_SOURCES:
-        carried = params.get(source.param)
-        if not isinstance(carried, str):
-            continue
-        path = os.path.join(config_dir, source.home_name)
-        if source.kind == "file-text":
-            # ⚠ 実体 file(symlink/hardlink は本体が user 層で落とす — design.md §2.3)
-            _write_atomic(path, carried)
-            log.append(f"seat-instructions-installed {source.label}={len(carried.encode())}")
-        elif source.kind == "dir-link":
-            outcome = fs_ensure_symlink(carried, path)
-            # R1(盲検 A-1 の修正): 計器は**結末**を名乗る。意図した先だけを印字すると、
-            # 起きなかった張り替えを log が肯定する(FsLinkArtifact の target-conflict の実測)。
-            if outcome != "unchanged":
-                log.append(
-                    f"seat-instructions-installed {source.label}={outcome} target={carried}")
-            if outcome == "occupied-by-real-entity":
-                raise RuntimeError(
-                    f"{path} is a real file/dir where the seat's {source.label} symlink "
-                    "belongs (erosion guard) — refusing to overwrite")
-        else:
-            raise RuntimeError(f"運び方 {source.kind!r} を知らない: {source.key}")
+    lines = [_install_one(config_dir, source, params[source.param])
+             for source in CARRIED_INSTRUCTION_SOURCES
+             if isinstance(params.get(source.param), str)]
+    return tuple(line for line in lines if line is not None)
 
 
 def fs_ensure_symlink(target: str, link: str) -> str:
@@ -274,13 +292,21 @@ def build_argv(params: dict, home: str | None, session_hooks: str) -> list[str]:
 # --------------------------------------------------------------------------
 # 連鎖の 1 拍(起動の拍)
 # --------------------------------------------------------------------------
+@dataclass(frozen=True)
+class LaunchBeat:
+    """起動の 1 拍の結果(本体の argv・計器の行・触った正本の path)。"""
+
+    argv: list[str]
+    log: tuple[str, ...]
+    touched: tuple[tuple[str, str], ...]
+
+
 def launch_beat(declaration: dict, home: str, config_dir: str, agent_type: str = "claude",
-                session_hooks: str = "inherit", extra_params: dict | None = None,
-                trace: list[tuple[str, str]] | None = None):
-    log: list[str] = []
+                session_hooks: str = "inherit", extra_params: dict | None = None) -> LaunchBeat:
+    """宣言から席の家を据え、本体を起こす argv を作る 1 拍を、反例を試せる形で通すため。"""
     env = join_env_of(declaration, home)
-    params = dict(extra_params or {})
-    params.update(instruction_sources(env, agent_type, log, trace))
-    install_into_home(config_dir, params, log)
-    argv = build_argv(params, home, session_hooks)
-    return argv, log
+    reading = instruction_sources(env, agent_type)
+    params = {**(extra_params or {}), **reading.params}
+    installed = install_into_home(config_dir, params)
+    return LaunchBeat(argv=build_argv(params, home, session_hooks),
+                      log=reading.absent + installed, touched=reading.touched)

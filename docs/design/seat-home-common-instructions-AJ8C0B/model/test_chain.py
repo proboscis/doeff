@@ -38,7 +38,8 @@ def run(name, fn):
 
 def t_installs(tmp):
     home, decl, cfg = _fixture(tmp)
-    argv, log = chain.launch_beat(decl, home, cfg)
+    beat = chain.launch_beat(decl, home, cfg)
+    argv, log = beat.argv, beat.log
     md = os.path.join(cfg, "CLAUDE.md"); sk = os.path.join(cfg, "skills")
     assert os.path.isfile(md) and not os.path.islink(md), "user 記憶は実体 file"
     assert os.stat(md).st_nlink == 1, "hard link ではない"
@@ -54,7 +55,8 @@ def t_absent_is_not_fatal(tmp):
     home, decl, cfg = _fixture(tmp)
     os.remove(os.path.join(home, "dotfiles", "claude", "CLAUDE.md"))
     shutil.rmtree(os.path.join(home, "dotfiles", "agent", "skills"))
-    argv, log = chain.launch_beat(decl, home, cfg)
+    beat = chain.launch_beat(decl, home, cfg)
+    argv, log = beat.argv, beat.log
     assert not os.path.exists(os.path.join(cfg, "CLAUDE.md"))
     assert any("seat-memory-file-absent" in line for line in log)
     assert any("seat-skills-dir-absent" in line for line in log)
@@ -64,7 +66,8 @@ def t_absent_is_not_fatal(tmp):
 def t_unnamed_is_today(tmp):
     home, decl, cfg = _fixture(tmp)
     decl.pop("claude_memory_file"); decl.pop("claude_skills_dir")
-    argv, log = chain.launch_beat(decl, home, cfg)
+    beat = chain.launch_beat(decl, home, cfg)
+    argv, log = beat.argv, beat.log
     assert not os.path.exists(os.path.join(cfg, "CLAUDE.md"))
     assert not os.path.exists(os.path.join(cfg, "skills"))
     assert not any("seat-instructions" in line for line in log)
@@ -74,7 +77,7 @@ def t_idempotent_and_no_churn(tmp):
     home, decl, cfg = _fixture(tmp)
     chain.launch_beat(decl, home, cfg)
     sk = os.path.join(cfg, "skills"); before = os.lstat(sk).st_ino
-    _, log = chain.launch_beat(decl, home, cfg)
+    log = chain.launch_beat(decl, home, cfg).log
     assert os.lstat(sk).st_ino == before, "既に正しい symlink は張り替えない"
     assert not any("skills=" in line for line in log)
 

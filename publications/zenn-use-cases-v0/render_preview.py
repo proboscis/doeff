@@ -6,12 +6,21 @@ import argparse
 import base64
 import html
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from markdown_it import MarkdownIt
 
 
-def render_article(source: str, slug: str, filename: str, repo_root: Path) -> tuple[str, str]:
+@dataclass(frozen=True)
+class RenderedArticle:
+    """1本の記事を描いた結果(選択肢に出す題と、本文のsection)。"""
+
+    title: str
+    section: str
+
+
+def render_article(source: str, slug: str, filename: str, repo_root: Path) -> RenderedArticle:
     title_match = re.search(r'^title: "(.+)"$', source, re.MULTILINE)
     if title_match is None:
         raise ValueError(f"記事のtitleがありません: {filename}")
@@ -57,7 +66,7 @@ def render_article(source: str, slug: str, filename: str, repo_root: Path) -> tu
         "ダウンロード</a>"
         f"<textarea readonly>{html.escape(source)}</textarea></details></section>"
     )
-    return title, section
+    return RenderedArticle(title=title, section=section)
 
 
 def render_series(source_dir: Path) -> str:
@@ -65,13 +74,16 @@ def render_series(source_dir: Path) -> str:
     article_paths.sort(key=lambda path: (path.stem != "doeff-main", path.name))
     if not article_paths:
         raise ValueError("記事原稿がありません")
-    sections: list[str] = []
-    options: list[str] = []
-    for path in article_paths:
-        slug: str = path.stem.removeprefix("doeff-")
-        title, section = render_article(path.read_text(), slug, path.name, source_dir.parents[1])
-        sections.append(section)
-        options.append(f'<option value="{slug}">{html.escape(title)}</option>')
+    slugs: list[str] = [path.stem.removeprefix("doeff-") for path in article_paths]
+    articles: list[RenderedArticle] = [
+        render_article(path.read_text(), slug, path.name, source_dir.parents[1])
+        for path, slug in zip(article_paths, slugs, strict=True)
+    ]
+    sections: list[str] = [article.section for article in articles]
+    options: list[str] = [
+        f'<option value="{slug}">{html.escape(article.title)}</option>'
+        for slug, article in zip(slugs, articles, strict=True)
+    ]
     return (
         '<!doctype html><html lang="ja"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'

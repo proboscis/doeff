@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from dataclasses import dataclass
 
 import chain
 import test_counterexamples as ce
@@ -48,26 +49,45 @@ _FALLBACK_MEMORY = ["{home}/dotfiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.m
 _FALLBACK_SKILLS = ["{home}/dotfiles/agent/skills", "{home}/.claude/skills"]
 
 
-def _instruction_sources_with_fallbacks(env, agent_type, log, trace=None):
+@dataclass(frozen=True)
+class _Probe:
+    """候補を先頭から試した結果(試した path・最初に在った物の値か None)。"""
+
+    touched: tuple[tuple[str, str], ...]
+    value: str | None
+
+
+def _probe(declared: str, shapes: list[str], home: str, kind: str) -> _Probe:
+    """宣言の名指し・HOME からの戻り先の順に試し、最初に在った 1 つで止まる(盲検 B の探し方)。"""
+    candidates = ([declared.strip()] if declared.strip() else []) + (
+        [shape.format(home=home) for shape in shapes] if home else [])
+    found = [os.path.isfile(path) if kind == "read" else os.path.isdir(path) for path in candidates]
+    hit = found.index(True) if True in found else None
+    tried = candidates if hit is None else candidates[: hit + 1]
+    value = None
+    if hit is not None:
+        if kind == "read":
+            with open(candidates[hit], encoding="utf-8") as fh:
+                value = fh.read()
+        else:
+            value = candidates[hit]
+    return _Probe(touched=tuple((kind, path) for path in tried), value=value)
+
+
+def _instruction_sources_with_fallbacks(env, agent_type):
     if agent_type != "claude":
-        return {}
-    params = {}
+        return chain.SourceReading(params={}, absent=(), touched=())
     home = os.environ.get("HOME", "")
-    for declared, shapes, key, kind in (
+    ways = (
         (env.get(chain.CLAUDE_MEMORY_FILE_ENV, ""), _FALLBACK_MEMORY, "claude_memory_text", "read"),
         (env.get(chain.CLAUDE_SKILLS_DIR_ENV, ""), _FALLBACK_SKILLS, "claude_skills_dir", "stat"),
-    ):
-        candidates = [declared.strip()] if declared.strip() else []
-        if home:
-            candidates += [shape.format(home=home) for shape in shapes]
-        for path in candidates:
-            if trace is not None:
-                trace.append((kind, path))
-            if kind == "read" and os.path.isfile(path):
-                params[key] = open(path, encoding="utf-8").read(); break
-            if kind == "stat" and os.path.isdir(path):
-                params[key] = path; break
-    return params
+    )
+    probes = [(key, _probe(declared, shapes, home, kind)) for declared, shapes, key, kind in ways]
+    return chain.SourceReading(
+        params={key: probe.value for key, probe in probes if probe.value is not None},
+        absent=(),
+        touched=tuple(touched for _, probe in probes for touched in probe.touched),
+    )
 
 
 if __name__ == "__main__":

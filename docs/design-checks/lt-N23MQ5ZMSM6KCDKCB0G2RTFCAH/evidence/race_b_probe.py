@@ -17,12 +17,12 @@ class RacingAcp(FakeAcp):
     def __init__(self, births, other_status):
         super().__init__(births)
         self.other_status = other_status
-        self.raced = False
+        self._mut_raced = False
 
     def _running_turn_records(self):
         listed = super()._running_turn_records()
-        if not self.raced and t.record_key_of("j-2") in self.rows:
-            self.raced = True
+        if not self._mut_raced and t.record_key_of("j-2") in self.rows:
+            self._mut_raced = True
             self._put_status(self.rows[t.record_key_of("j-2")], self.other_status)
         return listed
 
