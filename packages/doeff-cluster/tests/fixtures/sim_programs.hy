@@ -354,6 +354,15 @@
   "見本の系: 準備できたと報告し続けるだけの service 1 つ"
   (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
+(defsystem solo-pulses [foundation]
+  "見本の系: 置ける worker が 1 台ずつの service 4 つ(能力 solo-a〜solo-d — 1 台ずつの worker だけが持つ)と、能力 cluster-net を持つ
+   worker ならどれにも置ける service 1 つ(#2805 — 置ける worker が 1 台の service が並ぶ形の途絶の筋書き・tests/test_outage_timelines.hy)"
+  (pulse-a (pulse-program foundation) :needs #{"solo-a"} :readiness {"windowSeconds" 5})
+  (pulse-b (pulse-program foundation) :needs #{"solo-b"} :readiness {"windowSeconds" 5})
+  (pulse-c (pulse-program foundation) :needs #{"solo-c"} :readiness {"windowSeconds" 5})
+  (pulse-d (pulse-program foundation) :needs #{"solo-d"} :readiness {"windowSeconds" 5})
+  (roamer (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+
 (defsystem lone-pulses [foundation]
   "pulses の needs を、1 台の worker だけが持つ能力 lone にした宣言(#2804 — 宣言の needs を広げて置ける worker が増える筋書きの前の宣言・
    tests/test_keep_when_cut_off.hy)"
