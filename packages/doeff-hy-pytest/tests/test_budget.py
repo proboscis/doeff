@@ -664,8 +664,7 @@ MANY_STEPS = """\
 """
 
 STEPS_FAIL_INI = (
-    'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
-    'doeff_test_budget_judge = "steps"\ndoeff_test_call_budget_steps = "1000"\n'
+    'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "1000"\n'
 )
 
 
@@ -694,7 +693,7 @@ def test_judge_steps_uses_the_steps_not_the_cpu_seconds() -> None:
 
 
 def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps(pytester: pytest.Pytester) -> None:
-    """判定が steps の時: 歩数が上限を超えた検は CPU が速くても赤・CPU を 0.3 秒回しても歩数が少ない検は緑。"""
+    """歩数の上限がある時: 歩数が上限を超えた検は CPU が速くても赤・CPU を 0.3 秒回しても歩数が少ない検は緑。"""
     spin_few = f"(require doeff-hy.macros [deftest])\n{SPIN}\n(import fake_work)\n(deftest test-spin\n  (fake_work.add 10)\n  (spin 0.3)\n  (assert True))\n"
     _steps_project(pytester, STEPS_FAIL_INI, {"test_steps": MANY_STEPS, "test_spin": spin_few})
     result = pytester.runpytest("-q")
@@ -712,7 +711,7 @@ def test_steps_judge_without_the_counter_names_it_and_judges_seconds(pytester: p
     )
     result = pytester.runpytest("-q", "-W", "default")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*doeff_test_budget_judge = steps だが歩数で判じられない*CPU 秒で判じる*"])
+    result.stdout.fnmatch_lines(["*doeff_test_call_budget_steps があるが歩数を測れない*CPU 秒で判じる*"])
 
 
 def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pytester) -> None:
@@ -726,7 +725,7 @@ def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pyteste
 
 
 def test_a_marked_real_io_test_stays_on_seconds(pytester: pytest.Pytester) -> None:
-    """印ごとの秒の上限に当たる検(本物の I/O を持つ検)は、判定が steps でも秒で判じる — 歩数に重さが出ないため。"""
+    """印ごとの秒の上限に当たる検(本物の I/O を持つ検)は、歩数の上限があっても秒で判じる — 歩数に重さが出ないため。"""
     marked = "(require doeff-hy.macros [deftest])\n(import pytest fake_work)\n(setv pytestmark [pytest.mark.real_world])\n(deftest test-io\n  (fake_work.add 10000)\n  (assert True))\n"
     _steps_project(
         pytester,
@@ -737,10 +736,10 @@ def test_a_marked_real_io_test_stays_on_seconds(pytester: pytest.Pytester) -> No
     result.assert_outcomes(passed=1)
 
 
-def test_the_steps_registry_is_separate_and_a_stale_steps_row_fails(pytester: pytest.Pytester) -> None:
-    """歩数の登録簿は秒の登録簿と分かれる: 歩数の登録簿に載った超過は緑・上限の半分以下で終わった歩数の登録は古い登録として赤。"""
+def test_a_registered_test_is_judged_by_steps_and_a_stale_row_fails(pytester: pytest.Pytester) -> None:
+    """登録簿は秒の時と同じ dir: 載った検の歩数の超過は緑・上限の半分以下の歩数で終わった登録は古い登録として赤。"""
     _steps_project(
-        pytester, STEPS_FAIL_INI + 'doeff_test_budget_steps_registry = ["steps-breaches"]\n', {"test_steps": MANY_STEPS}
+        pytester, STEPS_FAIL_INI + 'doeff_test_budget_registry = ["steps-breaches"]\n', {"test_steps": MANY_STEPS}
     )
     registry = pytester.mkdir("steps-breaches")
     for key in ("test_steps.hy::test_many_steps", "test_steps.hy::test_few_steps"):
@@ -754,10 +753,18 @@ def test_measured_steps_are_summed_and_listed_per_test_with_verbose(pytester: py
     """上限の内の検も、歩数を測れた検は終わりの一覧に合計を出し、-v なら検ごとに 1 行出す — 歩数の上限を決める材料(#2853)。"""
     _steps_project(
         pytester,
-        'doeff_test_call_budget_seconds = 10\ndoeff_test_budget_judge = "steps"\ndoeff_test_call_budget_steps = "100000"\n',
+        'doeff_test_call_budget_seconds = 10\ndoeff_test_call_budget_steps = "100000"\n',
         {"test_steps": MANY_STEPS},
     )
     result = pytester.runpytest("-v")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(["*歩数を測れた検 2 本・歩数の合計 10010*"])
     result.stdout.fnmatch_lines(["*test_steps.hy::test_many_steps:*歩数 10000*", "*test_steps.hy::test_few_steps:*歩数 10*"])
+
+
+def test_a_test_that_takes_no_vm_steps_is_within_the_steps_budget(pytester: pytest.Pytester) -> None:
+    """歩数が 0 の検(VM を回さず木を読むだけの検 — #2855)は、CPU を回しても上限の内(新しい仕組みを足さない最小の形)。"""
+    no_steps = f"(require doeff-hy.macros [deftest])\n{SPIN}\n(deftest test-reads-only\n  (spin 0.3)\n  (assert True))\n"
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_reads": no_steps})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1)
