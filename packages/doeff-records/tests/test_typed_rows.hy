@@ -1,11 +1,11 @@
 ;; 表ごとの行の型で読み書きする層(typed.hy)— 呼び手は欄 → 値の写像を見ずに、pydantic の model / dataclass で読み書きする。
 ;; 同じ筋書きを memory と PostgreSQL の handler の両方で回す(層は handler を足さないので、どの組の上でも同じ答え)。
-(require doeff-hy.macros [deftest <-])
+(require doeff-hy.macros [deftest <- val])
 (import dataclasses [dataclass])
 (import doeff_hy.frozen [FrozenMap])
 (import pydantic [BaseModel ConfigDict])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes])
-(import doeff_records.effects [WatchChanges])
+(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes Row Written WrittenRows])
+(import doeff_records.effects [WatchChanges ReadRow PutRow PutRows RowWrite])
 (import doeff_records.typed [RowType TypedRow TypedPage TypedWritten TypedConflict TypedRowChanged read-typed list-typed put-typed
                              typed-change fields-of-value value-of-fields])
 (import doeff_records.laws [MAKER PAINTER])
@@ -34,8 +34,14 @@
   (#^ str id)
   (#^ (| str None) note))
 
+(defclass NewerPart [Part]
+  "表 parts の行の型に、置き場の宣言(LAW-SCHEMA)に無い欄 method(既定値 None)を足した新しい版 — 書き手が置き場の宣言より先に
+   行の型へ欄を足した形。"
+  (setv #^ (| str None) method None))
+
 (setv PARTS (RowType "parts" Part)
       TICKETS (RowType "tickets" Ticket))
+(val NEWER-PARTS (RowType "parts" NewerPart))
 
 
 (deftest test-the-write-image-lists-every-field-and-none-removes
@@ -85,3 +91,41 @@
   (assert (and typed (all (gfor change typed (isinstance change TypedRowChanged)))) typed)
   (assert (= (lfor change typed change.at) (lfor change changes.items change.at)) "確定の刻 at を行の型へ運ぶ")
   (assert (= (. (get typed -1) value) cleared.value)))
+
+
+(deftest test-a-row-type-with-a-new-none-field-writes-to-a-store-that-does-not-declare-it
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  ;; 書き手が行の型に既定値 None の欄 method を足し、置き場の宣言(LAW-SCHEMA の parts)はまだ method を知らない形。書きの像は
+  ;; 欄を全部(None も)送るが、宣言の外の None は判定の前に落ちるので断られず、行に method は載らない。
+  (<- harness (LawSetup))
+  (<- born (harness.as-writer MAKER (put-typed NEWER-PARTS #("n1") (NewerPart :id "n1" :label "a") (ExpectAbsent))))
+  (assert (= born (TypedWritten 1 (NewerPart :id "n1" :label "a" :state "open"))) born)
+  (<- relabeled (harness.as-writer MAKER (put-typed NEWER-PARTS #("n1") (.model-copy born.value :update {"label" "b"})
+                                                    (ExpectVersion 1))))
+  (assert (= relabeled (TypedWritten 2 (NewerPart :id "n1" :label "b" :state "open"))) relabeled)
+  (<- stored (harness.as-writer MAKER (ReadRow "parts" #("n1"))))
+  (assert (= stored (Row #("n1") (FrozenMap {"id" "n1" "label" "b" "state" "open"}) 2)) stored)
+  ;; 同じ行を、method を持つ新しい行の型と、持たない古い行の型(Part — 型の外の欄を許さない)の両方で読める。
+  (<- newer (harness.as-writer MAKER (read-typed NEWER-PARTS #("n1"))))
+  (<- older (harness.as-writer MAKER (read-typed PARTS #("n1"))))
+  (assert (= #(newer older) #((TypedRow #("n1") (NewerPart :id "n1" :label "b" :state "open") 2)
+                              (TypedRow #("n1") (Part :id "n1" :label "b" :state "open") 2)))
+          #(newer older))
+  ;; method に値を入れた像は今どおり断る(理由の文に欄の名)。
+  (<- valued (harness.as-writer MAKER (put-typed NEWER-PARTS #("n1") (.model-copy newer.value :update {"method" "pane"})
+                                                 (ExpectVersion 2))))
+  (assert (and (isinstance valued Refused) (in "method" valued.reason)) valued)
+  ;; 宣言の外の None だけの書きは、空の差分の書き(変わる欄が無い書き)と同じ答え: 行の値を変えずに版が 1 進む。
+  (<- only-none (harness.as-writer MAKER (PutRow "parts" #("n1") (FrozenMap {"method" None}) (ExpectVersion 2))))
+  (<- nothing (harness.as-writer MAKER (PutRow "parts" #("n1") (FrozenMap) (ExpectVersion 3))))
+  (val unchanged (FrozenMap {"id" "n1" "label" "b" "state" "open"}))
+  (assert (= #(only-none nothing) #((Written 3 unchanged) (Written 4 unchanged))) #(only-none nothing))
+  ;; 束の書き(PutRows)も同じ: 新しい行の型の像(method = None)を在る行と生まれる行へ 1 束で書ける。
+  (<- bundle (harness.as-writer MAKER
+               (PutRows #((RowWrite "parts" #("n1") (fields-of-value NEWER-PARTS (NewerPart :id "n1" :label "c" :state "open"))
+                                    (ExpectVersion 4))
+                          (RowWrite "parts" #("n2") (fields-of-value NEWER-PARTS (NewerPart :id "n2" :label "d"))
+                                    (ExpectAbsent))))))
+  (assert (= bundle (WrittenRows #((Written 5 (FrozenMap {"id" "n1" "label" "c" "state" "open"}))
+                                   (Written 1 (FrozenMap {"id" "n2" "label" "d" "state" "open"})))))
+          bundle))

@@ -1,11 +1,17 @@
-;; 宣言の検めと判断の純関数の反例(handler を通さない)。
-(require doeff-hy.macros [deftest])
+;; 宣言の検めと判断の純関数の反例(handler を通さない)。末尾の 1 本だけ、宣言を途中で差し替えた memory の置き場で判断の答えが
+;; 書きの答え(Written)になることを確かめる(公開 effect では宣言の外の欄を持つ行を作れない — 古い行は宣言を差し替える前に書く)。
+(require doeff-hy.macros [deftest <- val])
+(import dataclasses)
+(import doeff [with_handlers])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable
-                              ExpectAbsent ExpectVersion ExpectAny])
-(import doeff_records.effects [PutRow ListRows])
-(import doeff_records.admission [json-equal? key-text judge-expect judge-put where-refusal row-expired?
+                              ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows])
+(import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows])
+(import doeff_records.admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
                                  Admitted])
-(import doeff_records.laws [LAW-SCHEMA])
+(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records.laws [LAW-SCHEMA MAKER])
 
 
 (defn refuses? [thunk exception]
@@ -121,3 +127,95 @@
   (assert (not (row-expired? tickets {"state" "done"} 0 59999)))
   (assert (not (row-expired? tickets {"state" "open"} 0 10000000)))
   (assert (not (row-expired? parts {"state" "closed"} 0 10000000))))
+
+
+;; --- 宣言の外で値が None の欄(行の型に既定値 None の欄を足した書き手が、その欄を宣言していない置き場へ書く形)-----------------
+
+(deftest test-an-undeclared-field-with-none-is-dropped-before-the-write-is-judged
+  ;; 行の型の書きの像は欄を全部(None も)送る。宣言に無い欄で値が None の物だけを差分から落とし、残りの差分を今どおりに判じる。
+  (val decl (LAW-SCHEMA.table "parts"))
+  (val row (Row #("p1") {"id" "p1" "label" "a" "color" "red" "state" "open"} 1))
+  ;; 宣言に無い欄 method の None は落ち、他の欄の差分は書かれる(確定する値に method は無い)— 在る行も生まれる行も。
+  (assert (= (judge-put decl "maker" row #("p1") {"label" "b" "method" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "label" "b" "color" "red" "state" "open"})))
+  (assert (= (judge-put decl "maker" None #("p2") {"label" "b" "method" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p2" "label" "b" "state" "open"})))
+  ;; 宣言に無い欄に値があれば今どおり断る(理由の文に欄の名)— 綴りの誤った欄も同じ。
+  (val valued (judge-put decl "maker" row #("p1") {"label" "b" "method" "pane"} :operators LAW-SCHEMA.operators))
+  (assert (and (isinstance valued Refused) (in "method" valued.reason)) valued)
+  (val misspelled (judge-put decl "maker" row #("p1") {"label" "b" "metod" "x"} :operators LAW-SCHEMA.operators))
+  (assert (and (isinstance misspelled Refused) (in "metod" misspelled.reason)) misspelled)
+  ;; 宣言に在る欄の None は今どおりその欄を消す(宣言の外の None と並んでも)。
+  (assert (= (judge-put decl "maker" row #("p1") {"color" None "method" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "label" "a" "state" "open"})))
+  ;; 書き手の照らしは変わらない: 落とした後の差分の変わる欄で照らす(painter は color の書き手で、label の書き手でない)。
+  (assert (= (judge-put decl "painter" row #("p1") {"color" "blue" "method" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "label" "a" "color" "blue" "state" "open"})))
+  (assert (isinstance (judge-put decl "painter" row #("p1") {"label" "z" "method" None} :operators LAW-SCHEMA.operators) Refused)))
+
+
+(deftest test-a-none-for-a-field-the-declaration-no-longer-has-leaves-the-old-row-field-in-place
+  ;; 欄 legacy を宣言から外した後の置き場の古い行(外す前に書いた legacy が残る)。その欄の None は判定の前に落ちるので、宣言の外の
+  ;; 欄の書き手を尋ねて例外(UndeclaredField)にならず、legacy は行に残る(消すのは欄を宣言から外す前の書き直し)。
+  (val decl (LAW-SCHEMA.table "parts"))
+  (val row (Row #("p1") {"id" "p1" "label" "a" "state" "open" "legacy" "x"} 1))
+  (assert (= (judge-put decl "maker" row #("p1") {"label" "b" "legacy" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "label" "b" "state" "open" "legacy" "x"})))
+  (assert (= (judge-put decl "painter" row #("p1") {"color" "blue" "legacy" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "label" "a" "color" "blue" "state" "open" "legacy" "x"})))
+  ;; 値のある legacy は今どおり宣言の外の欄として断る。
+  (val valued (judge-put decl "maker" row #("p1") {"legacy" "y"} :operators LAW-SCHEMA.operators))
+  (assert (and (isinstance valued Refused) (in "legacy" valued.reason)) valued))
+
+
+(deftest test-a-write-of-only-undeclared-nones-is-judged-like-a-write-that-changes-nothing
+  ;; 宣言の外の None の欄だけの書きは、落とすと空の差分 — 今の「変わる欄が無い書き」と同じ答えにする。書き手と行の有る無しを
+  ;; 問わず、空の差分の書きと同じ答え。
+  (val decl (LAW-SCHEMA.table "parts"))
+  (val row (Row #("p1") {"id" "p1" "label" "a" "state" "open"} 1))
+  (val pairs (lfor writer ["maker" "painter" "stranger"] current [row None]
+                   #((judge-put decl writer current #("p1") {"method" None} :operators LAW-SCHEMA.operators)
+                     (judge-put decl writer current #("p1") {} :operators LAW-SCHEMA.operators))))
+  (assert (all (gfor #(only-none empty) pairs (= only-none empty))) pairs)
+  ;; その答えの形: 在る行は値を変えずに許す(変わる欄が無いので書き手を照らさない)・生まれる行は鍵の欄の書き手(maker)だけが作る。
+  (assert (= (judge-put decl "stranger" row #("p1") {"method" None} :operators LAW-SCHEMA.operators) (Admitted row.value)))
+  (assert (= (judge-put decl "maker" None #("p1") {"method" None} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "state" "open"})))
+  (assert (isinstance (judge-put decl "stranger" None #("p1") {"method" None} :operators LAW-SCHEMA.operators) Refused)))
+
+
+(deftest test-put-rows-drops-undeclared-nones-row-by-row-the-same-way
+  ;; 束の書き(judge-put-rows)も行ごとに同じ判定: 宣言に無い欄の None(行の型に足した新しい欄・宣言から外した古い欄)は落ち、
+  ;; 値のある宣言の外の欄は断る(束の中の位置と理由の文の欄の名)。
+  (val legacy-row (Row #("p2") {"id" "p2" "label" "a" "state" "open" "legacy" "x"} 1))
+  (val writes #((RowWrite "parts" #("p1") {"label" "b" "method" None} (ExpectAbsent))
+                (RowWrite "parts" #("p2") {"label" "c" "legacy" None} (ExpectVersion 1))))
+  (assert (= (judge-put-rows LAW-SCHEMA "maker" writes #(None legacy-row))
+             #((Admitted {"id" "p1" "label" "b" "state" "open"})
+               (Admitted {"id" "p2" "label" "c" "state" "open" "legacy" "x"}))))
+  (val valued (judge-put-rows LAW-SCHEMA "maker" (+ writes #((RowWrite "parts" #("p3") {"method" "pane"} (ExpectAbsent))))
+                              #(None legacy-row None)))
+  (assert (and (isinstance valued RowsRefused) (= valued.index 2) (in "method" valued.reason)) valued))
+
+
+(deftest test-a-store-whose-declaration-dropped-a-field-writes-nones-for-it-and-keeps-the-old-field
+  ;; 置き場の宣言から欄 legacy を外す前に書いた行(legacy = "x")が残る memory の置き場。宣言を差し替えた後、その欄の None を含む
+  ;; 書きは PutRow でも PutRows でも例外にならず Written で版が進み、legacy は行に残る。値のある legacy は今どおり断る。
+  (val parts (LAW-SCHEMA.table "parts"))
+  (val before (dataclasses.replace LAW-SCHEMA
+                                   :tables (.updated LAW-SCHEMA.tables
+                                                     {"parts" (dataclasses.replace parts
+                                                                                   :fields (+ parts.fields #((FieldDecl "legacy" #(MAKER)))))})))
+  (val store (MemoryStore before))
+  (val handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)])
+  (<- born (with_handlers handlers (PutRow "parts" #("p1") (FrozenMap {"label" "a" "legacy" "x"}) (ExpectAbsent))))
+  (assert (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "legacy" "x" "state" "open"}))) born)
+  (setv store.schema LAW-SCHEMA)
+  (<- relabeled (with_handlers handlers (PutRow "parts" #("p1") (FrozenMap {"label" "b" "legacy" None}) (ExpectVersion 1))))
+  (assert (= relabeled (Written 2 (FrozenMap {"id" "p1" "label" "b" "legacy" "x" "state" "open"}))) relabeled)
+  (<- bundled (with_handlers handlers (PutRows #((RowWrite "parts" #("p1") (FrozenMap {"label" "c" "legacy" None}) (ExpectVersion 2))))))
+  (assert (= bundled (WrittenRows #((Written 3 (FrozenMap {"id" "p1" "label" "c" "legacy" "x" "state" "open"}))))) bundled)
+  (<- valued (with_handlers handlers (PutRow "parts" #("p1") (FrozenMap {"legacy" "y"}) (ExpectVersion 3))))
+  (assert (and (isinstance valued Refused) (in "legacy" valued.reason)) valued)
+  (<- kept (with_handlers handlers (ReadRow "parts" #("p1"))))
+  (assert (= kept (Row #("p1") (FrozenMap {"id" "p1" "label" "c" "legacy" "x" "state" "open"}) 3)) kept))
