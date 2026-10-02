@@ -1,0 +1,28 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/env_places.py",
+    "packages/doeff-hy/src/doeff_hy/static_cache.py"
+  ],
+  "module_extensions": {
+    "doeff-hy-static-check": {
+      "allow": [
+        "doeff-hy-env-places"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-hy-env-places",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/env_places.py"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/env_places.py"
+      ],
+      "responsibility": "doeff-hy の置き場のうち環境変数が名指す物を読む唯一の module — 変数の素の値と XDG の cache の根を返すだけで、判断は呼び手に残す(agora-redesign #2860)",
+      "typed": true
+    }
+  ]
+}

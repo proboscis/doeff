@@ -65,6 +65,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from doeff_effect_analyzer import env_places
+
 
 @dataclass(frozen=True)
 class Location:
@@ -511,13 +513,12 @@ _REQUIRE = re.compile(r"\(require\s+([A-Za-z_][\w.\-]*)")
 
 def _hy_cache_dir() -> Path | None:
     """Where expanded trees are kept (None = caching turned off)."""
-    configured = os.environ.get("DOEFF_EFFECT_ANALYZER_CACHE")
+    configured = env_places.tree_cache_setting()
     if configured == "off":
         return None
     if configured:
         return Path(configured)
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "doeff-effect-analyzer" / "hy-trees"
+    return env_places.cache_home() / "doeff-effect-analyzer" / "hy-trees"
 
 
 def _required_macro_digests(source: str) -> list[str]:

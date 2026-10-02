@@ -231,3 +231,68 @@ fn business_code_in_the_build_backend_is_red() {
         );
     }
 }
+
+/// 環境を読む module を 1 つに寄せて層の宣言で外した package(agora-redesign #2860)— doeff の repo の宣言をそのまま一時の repo に
+/// 置いて確かめる: 宣言を書き換えると、ここが赤になる。(宣言の path・寄せた module の path・同じ package のほかの module の path)
+const ENVIRONMENT_PACKAGES: [(&str, &str, &str, &str); 3] = [
+    (
+        "packages/doeff-hy/architecture.hy",
+        include_str!("../../doeff-hy/architecture.hy"),
+        "packages/doeff-hy/src/doeff_hy/env_places.py",
+        "packages/doeff-hy/src/doeff_hy/static_cache.py",
+    ),
+    (
+        "packages/doeff-effect-analyzer/architecture.hy",
+        include_str!("../../doeff-effect-analyzer/architecture.hy"),
+        "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/env_places.py",
+        "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py",
+    ),
+    (
+        "packages/doeff-flow/architecture.hy",
+        include_str!("../../doeff-flow/architecture.hy"),
+        "packages/doeff-flow/src/doeff_flow/env_places.py",
+        "packages/doeff-flow/src/doeff_flow/trace.py",
+    ),
+];
+
+/// 宣言・寄せた module(本文 `places`)・同じ package のほかの module(環境を読む)・package の `__init__.py` を置いた一時の repo。
+fn environment_package(declaration_path: &str, declaration: &str, places_path: &str, places: &str, sibling_path: &str) -> tempfile::TempDir {
+    let init = format!("{}/__init__.py", Path::new(places_path).parent().unwrap().display());
+    repo(&[
+        (declaration_path, declaration),
+        (init.as_str(), ""),
+        (places_path, places),
+        (sibling_path, ENV_READ),
+    ])
+}
+
+/// 寄せた module の環境の読みは DOEFF004 に当たらず、同じ package のほかの module の読みは今までどおり当たる(宣言は読めて
+/// DOEFF032 も出ない)。
+#[test]
+fn only_the_named_environment_module_is_out_of_the_environment_rule() {
+    for (declaration_path, declaration, places_path, sibling_path) in ENVIRONMENT_PACKAGES {
+        let dir = environment_package(declaration_path, declaration, places_path, ENV_READ, sibling_path);
+        assert_eq!(
+            hits(dir.path()),
+            vec![("DOEFF004".to_string(), sibling_path.to_string())],
+            "{}",
+            declaration_path
+        );
+    }
+}
+
+/// 寄せた module が業務の module(doeff)を import すると DOEFF032 に当たる(外した層に業務の code が入ったら赤)。
+#[test]
+fn business_code_in_the_environment_module_is_red() {
+    let places = format!("import doeff\n{}", ENV_READ);
+    for (declaration_path, declaration, places_path, sibling_path) in ENVIRONMENT_PACKAGES {
+        let dir = environment_package(declaration_path, declaration, places_path, &places, sibling_path);
+        let found = hits(dir.path());
+        assert!(
+            found.contains(&("DOEFF032".to_string(), places_path.to_string())),
+            "{}: {:?}",
+            declaration_path,
+            found
+        );
+    }
+}
