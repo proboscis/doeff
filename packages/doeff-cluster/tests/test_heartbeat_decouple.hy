@@ -176,7 +176,8 @@
   ;; 30 秒で 40 回ほど)。
   (val beats (Counter))
   (val original local.heartbeat)
-  (.setattr monkeypatch local "heartbeat" (fn [worker boot] (.update beats [worker.name]) (original worker boot)))
+  ;; 差し替えは本物の heartbeat と同じ引数(止まり始め stopping を含む — #2819)を受けてそのまま渡す。
+  (.setattr monkeypatch local "heartbeat" (fn [worker boot stopping] (.update beats [worker.name]) (original worker boot stopping)))
   (<- (sim-cluster (beacons sim-foundation) (quiet-for 30.0 True) :workers (get PAIRS None)))
   (val without (.total beats))
   (.clear beats)
