@@ -2,8 +2,7 @@
 ;;; memory や PostgreSQL の handler と同じ effect のまま記録の service を読み書きするため。
 ;;;
 ;;; 書き手の名は endpoint の writer を平文の見出し X-Records-Writer で送る(service は確かめずに書き手の名に使う — 自分の program
-;;; どうしの呼び出しに token の認証を入れない・#2986・#2988・#3007)。endpoint の token は移行の間だけ、在れば Authorization で送る
-;;; (今の呼び手のため — 呼び手が writer を渡すようになった後の版で消す)。
+;;; どうしの呼び出しに token の認証を入れない・#2986・#2988・#3007)。client は Authorization を送らない(欄 token は #2986 で消した)。
 ;;; 綴りは wire.hy(service と同じ 1 か所)。
 ;;;
 ;;; 答えの写し方:
@@ -64,13 +63,11 @@
 
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
-  "記録の service 1 つへの接続の組: base-url = http://host:port / token = 移行の間だけ(在れば Authorization で送る — 今の呼び手が
-   位置の引数で渡すので残す。呼び手が writer を渡すようになった後の版で消す・#3007)/
+  "記録の service 1 つへの接続の組: base-url = http://host:port /
    request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。要求は常に HttpRequest の effect で出す(file の頭の註)。
    meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
    writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)。"
   (#^ str base-url)
-  (setv #^ (| str None) token None)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
   (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
   (setv #^ (| (get Callable #(... object)) None) meter None)
@@ -92,10 +89,9 @@
 
 (defk request-headers [endpoint]
   {:pre [(: endpoint RecordsEndpoint)] :post [(: % (get dict #(str str)))]}
-  "要求の header(本文の型・在れば書き手の名と、移行の間の token)。"
+  "要求の header(本文の型と、在れば書き手の名)。"
   (| {"Content-Type" "application/json; charset=utf-8"}
-     (if (is endpoint.writer None) {} {WRITER-HEADER endpoint.writer})
-     (if (is endpoint.token None) {} {"Authorization" (+ "Bearer " endpoint.token)})))
+     (if (is endpoint.writer None) {} {WRITER-HEADER endpoint.writer})))
 
 
 (defk request-bytes [body]

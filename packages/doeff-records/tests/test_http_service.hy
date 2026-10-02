@@ -32,10 +32,10 @@
   (fn [writer] (memory-records-handler store writer)))
 
 
-(defn run-as [server clock #^ str token program]
-  "token の身元の client の handler で Program を走らせる。"
+(defn run-as [server clock #^ (| str None) writer program]
+  "writer を名乗る client の handler で Program を走らせる(None = 名乗らない — anonymous の書き手)。client は token を送らない(#2986)。"
   (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
-                                  (http-records-handler (RecordsEndpoint server.url :token token))]
+                                  (http-records-handler (RecordsEndpoint server.url :writer writer))]
                                  program))))
 
 
@@ -51,15 +51,15 @@
     (except [error HTTPError] #(error.code (json.loads (.read error))))))
 
 
-(deftest test-a-token-outside-the-roster-is-served-as-anonymous-and-writes
-  ;; 呼び手を断らない(#2988): 名簿に無い token の読みは答えの値になり(RecordsUnauthorized を上げない)、書きも anonymous の書き手として
+(deftest test-an-unnamed-caller-is-served-as-anonymous-and-writes
+  ;; 呼び手を断らない(#2988): 名乗らない呼び手の読みは答えの値になり(RecordsUnauthorized を上げない)、書きも anonymous の書き手として
   ;; 通る(置き場は書き手の名では断らない — #2994)。口が 401 で断る形・置き場が書き手で断る形に戻ると赤。
   (val store (MemoryStore LAW-SCHEMA))
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
   (val clock (get opened 1))
-  (val maker (get LAW-TOKENS "maker"))
-  (val stranger "not-in-roster")
+  (val maker "maker")
+  (val stranger None)
   (try
     (assert (= (run-as server clock stranger (ReadRow "parts" #("p1"))) (Missing)))
     (assert (= (. (run-as server clock stranger (ListRows "parts")) rows) #()))
@@ -79,7 +79,7 @@
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
   (val clock (get opened 1))
-  (val maker (get LAW-TOKENS "maker"))
+  (val maker "maker")
   (try
     (val unnamed (raw server "POST" "/v1/records/put-row"
                       :body {"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "absent"}}))
@@ -97,16 +97,16 @@
   #((get reply 0) (.get (get reply 1) "error")))
 
 
-(deftest test-a-put-rows-by-a-token-outside-the-roster-writes-the-rows
-  ;; 名簿に無い呼び手の束: 口は断らず(401 を出さない・#2988)、anonymous の書き手の束も書かれる(置き場は書き手の名では断らない — #2994)。
+(deftest test-a-put-rows-by-a-caller-outside-the-roster-writes-the-rows
+  ;; 名乗らない呼び手と名簿に無い token の束: 口は断らず(401 を出さない・#2988)、anonymous の書き手の束も書かれる(置き場は書き手の名では断らない — #2994)。
   (val store (MemoryStore LAW-SCHEMA))
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
   (val clock (get opened 1))
   (val writes #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAbsent)) (RowWrite "parts" #("p2") {"label" "b"} (ExpectAbsent))))
-  (val maker (get LAW-TOKENS "maker"))
+  (val maker "maker")
   (try
-    (assert (isinstance (run-as server clock "not-in-roster" (PutRows writes)) WrittenRows))
+    (assert (isinstance (run-as server clock None (PutRows writes)) WrittenRows))
     (assert (= (get (. (run-as server clock maker (ReadRow "parts" #("p2"))) value) "label") "b"))
     (val raw-rows (raw server "POST" "/v1/records/put-rows"
                        :body {"writes" [{"table" "parts" "key" ["p3"] "value" {"label" "c"} "expect" {"kind" "absent"}}]}
@@ -150,7 +150,7 @@
     (val url (+ "http://127.0.0.1:" (str (get server.server-address 1))))
     (try
       (do
-        (val endpoint (RecordsEndpoint url "t" :request-timeout 5.0))
+        (val endpoint (RecordsEndpoint url :request-timeout 5.0))
         (var said None)
         (try
           (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
@@ -183,13 +183,13 @@
                          :body {"writes" [one {"table" "nothing" "key" ["x"] "value" {} "expect" {"kind" "any"}}]} :token maker))
     (assert (= (! (status-and-error undeclared)) #(404 "not-found")) (repr undeclared))
     (try
-      (run-as server clock maker (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAny))
+      (run-as server clock "maker" (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAny))
                                             (RowWrite "nothing" #("x") {} (ExpectAny)))))
       (assert False "宣言に無い表を名指す束が答えを返した")
       ;; 欄は束が名指した表のうち宣言に無い物だけ。
       (except [refused UndeclaredTable]
         (assert (= #(refused.tables refused.streams) #(#("nothing") #())) refused)))
-    (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
+    (assert (= (run-as server clock "maker" (ReadRow "parts" #("p1"))) (Missing)))
     (finally (.close server))))
 
 
@@ -225,7 +225,7 @@
   (setv #(server clock) (open-service (memory-lease (MemoryStore LAW-SCHEMA))))
   (try
     (try
-      (run-as server clock (get LAW-TOKENS "maker") (ReadRow "nothing" #("p1")))
+      (run-as server clock "maker" (ReadRow "nothing" #("p1")))
       (assert False "宣言に無い表の読みが答えを返した")
       ;; client は断りの欄に宣言に無い表の名を入れる(memory の置き場と同じ — 使い手が欄で照らす)。
       (except [refused UndeclaredTable]
@@ -245,8 +245,8 @@
     (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token maker))
     (assert (and (= status 503) (= (get body "error") "store-unavailable")) (repr body))
     ;; 読みの 503 も今までどおり Unreachable の値(時間で晴れる届かなさ — 身元の断りとは別の答え)。
-    (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Unreachable "置き場が落ちている(検の代役)")))
-    (assert (= (run-as server clock maker (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))
+    (assert (= (run-as server clock "maker" (ReadRow "parts" #("p1"))) (Unreachable "置き場が落ちている(検の代役)")))
+    (assert (= (run-as server clock "maker" (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))
                (Unreachable "置き場が落ちている(検の代役)")))
     (finally (.close server))))
 
@@ -254,7 +254,7 @@
 (deftest test-a-closed-service-is-unreachable
   (setv #(server clock) (open-service (memory-lease (MemoryStore LAW-SCHEMA))))
   (.close server)
-  (setv answer (run-as server clock (get LAW-TOKENS "maker") (ReadRow "parts" #("p1"))))
+  (setv answer (run-as server clock "maker" (ReadRow "parts" #("p1"))))
   (assert (isinstance answer Unreachable) (repr answer)))
 
 
@@ -276,12 +276,12 @@
   (val tickets-store (MemoryStore LAW-SCHEMA))
   (setv #(parts-server clock) (open-service (memory-lease parts-store)))
   (setv #(tickets-server _) (open-service (memory-lease tickets-store)))
-  (val maker (get LAW-TOKENS "maker"))
+  (val maker "maker")
   (try
     (defn both [program]
       (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
-                                      (http-records-handler (RecordsEndpoint tickets-server.url maker))
-                                      (http-table-records-handler (RecordsEndpoint parts-server.url maker) (frozenset ["parts"]))]
+                                      (http-records-handler (RecordsEndpoint tickets-server.url :writer maker))
+                                      (http-table-records-handler (RecordsEndpoint parts-server.url :writer maker) (frozenset ["parts"]))]
                                      program))))
     (assert (isinstance (both (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Written))
     (assert (isinstance (both (PutRow "tickets" #("g" "t1") {"state" "open"} (ExpectAbsent))) Written))
