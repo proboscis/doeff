@@ -145,7 +145,7 @@
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
-(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
+(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held desired-after-silence])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
@@ -1573,12 +1573,23 @@
                                  (or (!= truth.statuses truth.sent-statuses) (!= announced truth.sent-stopping))
                                  (- now truth.last-ok-ms)
                                  (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))))
+    ;; 自己停止を周期ごとに時間で判じる(#2806 — 本番の coordinator への口の polled と同じ判断)。処理の止まりの間は拍の走らない本番に
+    ;; 合わせて判じず、明けた最初の周期で判じる。止めた周期は heartbeat を送らず、次の周期で送る(宣言を捨てた = fresh を下ろす)。
+    ;; 反例の worker ignores-fence(印の無い job も途絶で止めない壊れた worker)は判じない。
+    (val silenced (if (and (>= now truth.stalled-until-ms) (not worker.ignores-fence))
+                      (desired-after-silence (- now truth.last-ok-ms) truth.fence-ms truth.keep-fence-ms truth.fresh
+                                             truth.last-desired truth.last-warm)
+                      None))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-tick-bell worker.name boot truth watching))
     (var read (DesiredJobs truth.last-desired :warm truth.last-warm))
-    (when due
-      (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot announced))
-      (:= read beaten))
+    (cond
+      (is-not silenced None)
+      (do (<- (change-live-truth worker.name boot (fn [t] (replace t :fresh False))))
+          (:= read silenced))
+      due
+      (do (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot announced))
+          (:= read beaten)))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell read bell))
     (resume belled))
   (ObserveWorld []

@@ -43,3 +43,17 @@
   (if (> silent-ms fence-ms)
       (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm)
       (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {reason}")))
+
+
+(deff desired-after-silence [#^ int silent-ms #^ int fence-ms #^ int keep-fence-ms #^ bool holding #^ tuple last #^ tuple warm]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
+  {:pre [(: silent-ms int) (: fence-ms int) (: keep-fence-ms int) (: holding bool) (: last tuple) (: warm tuple)]
+   :post [(: % (| DesiredJobs None))] :tags {:context "worker" :role "judgment"}}
+  "処理の周期の頭で、heartbeat の成否を待たずに時間だけで自己停止を決めるため(#2806)。処理が止まって heartbeat を送れなかった worker は、
+   戻った最初の周期で最後の成功から fence を越えていれば、lease を持たない job と task を止めた宣言を返す(戻って最初の heartbeat の返事を
+   待つ間に動かし続けない — その間に coordinator が移し替えの期限を越えて他へ置いても 2 か所で走らない)。止める物は途絶の時と同じ
+   kept-when-cut-off(印の在る job は長い方の柵まで動かし続ける)。holding = 最後に成功した返事の宣言をまだ持っているか(止めた宣言を
+   返した後・届かなかった後は持たない — 次の周期は heartbeat を送って返事で戻すか、届かなければ desired-when-unreachable が判じる)。
+   答え None = 止めない(fence の内・もう止めてある)— heartbeat の判断へ進む。"
+  (if (and holding (> silent-ms fence-ms))
+      (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm)
+      None))
