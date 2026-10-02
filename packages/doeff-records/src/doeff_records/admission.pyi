@@ -58,37 +58,22 @@ def hyx_terminal_rowXquestion_markX(decl: TableDecl, value: FrozenMap) -> bool:
 def judged_diff(decl: TableDecl, diff: FrozenMap) -> FrozenMap:
     ...
 
-def hyx_field_changesXquestion_markX(current: Row | None, name: str, value: object) -> bool:
-    ...
-
-def changed_fields(decl: TableDecl, current: Row | None, diff: FrozenMap) -> tuple:
-    ...
-
 def shape_refusal(decl: TableDecl, current: Row | None, key: tuple, diff: FrozenMap) -> Refused | None:
     ...
 
 def landed_value(decl: TableDecl, current: Row | None, key: tuple, diff: FrozenMap) -> FrozenMap:
     ...
 
-def hyx_foundingXquestion_markX(decl: TableDecl, writer: str, current: Row | None, name: str) -> bool:
-    ...
-
-def writer_refusal(decl: TableDecl, writer: str, current: Row | None, changed: tuple) -> Refused | None:
-    ...
-
 def state_refusal(decl: TableDecl, value: FrozenMap) -> Refused | None:
-    ...
-
-def operator_refusal(decl: TableDecl, writer: str, current: Row | None, changed: tuple, operators: tuple) -> Refused | None:
     ...
 
 def size_refusal(decl: TableDecl, value: FrozenMap) -> Refused | None:
     ...
 
-def judge_put(decl: TableDecl, writer: str, current: Row | None, key: tuple, diff: FrozenMap, *, operators: tuple) -> Admitted | Refused:
+def judge_put(decl: TableDecl, current: Row | None, key: tuple, diff: FrozenMap) -> Admitted | Refused:
     ...
 
-def judge_put_rows(schema: RecordsSchema, writer: str, writes: tuple, currents: tuple) -> tuple | RowsConflict | RowsRefused:
+def judge_put_rows(schema: RecordsSchema, writes: tuple, currents: tuple) -> tuple | RowsConflict | RowsRefused:
     ...
 
 def hyx_row_expiredXquestion_markX(decl: TableDecl, value: FrozenMap, updated_ms: int, now_ms: int) -> bool:
@@ -123,5 +108,5 @@ class AppendNew:
 class AppendReplay:
     sequence: int
 
-def judge_append(decl: StreamDecl, writer: str, body: object, earlier: Event | None) -> AppendNew | AppendReplay | Refused:
+def judge_append(decl: StreamDecl, body: object, earlier: Event | None) -> AppendNew | AppendReplay | Refused:
     ...
