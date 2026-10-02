@@ -40,6 +40,10 @@
 ;;; 移し替えの期限(reassign-after-ms)+ 余裕のうちに他の worker で動き始める。判断は記録(job の process の区間・死んだ worker と時刻・
 ;;; job を本当に受けられる他の worker)を受けて、期限のうちに他で動き始めなかった job の列を返す純関数 1 つ。
 ;;;
+;;; 条 C9 tasks-answered-in-time: 送った task は、それを本当に走らせられる worker が在るなら、決めた時間(limit-ms)のうちに値で答えられる。
+;;; 判断は記録(task ごとに送った刻・答えた刻・見ていた終わりの刻)を受けて、時間を過ぎて答えた・見ていた間に答えなかった task の列を返す
+;;; 純関数 1 つ。記録を集めるのは検(tests/test_task_result_window.hy)。
+;;;
 ;;; 条 L1 places-only-on-reachable: 新しい置き先は、lease-ms(+ 余裕)のうちに coordinator へ届き得た worker にだけ置く — coordinator が
 ;;; 止まり置き場から作り直された後も。判断は記録(読めた置き先の列と、worker ごとの届かなくなった時刻)を受けて、届かなくなってから
 ;;; lease-ms + 余裕を過ぎた後に置いた置き先の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
@@ -233,6 +237,29 @@
                :if (not (any (gfor o processes (and (= o.job p.job) (!= o.worker d.worker) (in o.worker takers)
                                                      (>= o.started-ms d.since-ms) (<= o.started-ms due)))))
                (StrandedJob :job p.job :worker d.worker :died-at-ms d.since-ms :due-ms due))))
+
+
+(defrecord TaskCall
+  "条 C9 の記録 1 つ = 送った task 1 つ(name・sent-at-ms = 送った刻・answered-at-ms = 値で答えた刻 — 値で答えなければ None・
+   refused = 値でなく失敗で答えた(走らせられない など)・observed-until-ms = 見ていた終わりの刻)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str name)
+  (#^ int sent-at-ms)
+  (#^ (| int None) answered-at-ms)
+  (#^ bool refused)
+  (#^ int observed-until-ms))
+
+
+(defk tasks-answered-in-time [calls limit-ms]
+  {:pre [(: calls (get tuple #(TaskCall ...))) (: limit-ms int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C9: 送った task の記録の列から、値でなく失敗で答えた task・送ってから limit-ms を過ぎて答えた task・送ってから limit-ms を過ぎるまで
+   見ていたのに答えなかった task を返す(空なら緑)。coordinator が task を走らせられる worker へ置き、値の答えを呼び手へ返すことを、
+   筋書きの記録から判じるため。"
+  (tuple (gfor c calls
+               :setv due (+ c.sent-at-ms limit-ms)
+               :if (or c.refused
+                       (if (is c.answered-at-ms None) (> c.observed-until-ms due) (> c.answered-at-ms due)))
+               c)))
 
 
 (defrecord JobNeeds
