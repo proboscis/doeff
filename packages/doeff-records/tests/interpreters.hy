@@ -3,7 +3,8 @@
 ;;;   plain   scheduler だけ(純関数の検)。
 ;;;   memory  memory の handler + 仮想の時計(sim-time-handler)。
 ;;;   pg      PostgreSQL の handler + 仮想の時計。SQL の effect の答え手は doeff の postgres-sql-handler(呼び 1 つに thread 1 本)。
-;;;           env DOEFF_RECORDS_TEST_PG_DSN の置き場に、検ごとに乱数の接頭辞の表を作り、終わりに消す。env が無ければ skip
+;;;           env DOEFF_RECORDS_TEST_PG_DSN の置き場に、検ごとに乱数の接頭辞の表を作り、終わりに消す。env が無ければ conftest が
+;;;           使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip
 ;;;           (psycopg は依存に無い — `uv run --with psycopg` で足す)。
 ;;;   pg-pooled
 ;;;           pg と同じ置き場で、SQL の effect の答え手だけを pooled-postgres-sql-handler(scheduler を塞がない版)にする。
@@ -37,6 +38,7 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_hy.frozen [FrozenMap])
+(import disposable_postgres [session-postgres-skip-reason])
 
 (setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")
 (setv PG-DSN-VARIABLE "DOEFF_RECORDS_TEST_PG_DSN")
@@ -58,10 +60,15 @@
   (#^ Callable harness))
 
 
+(defn pg-skip-reason []
+  "PostgreSQL の検の skip の理由(env が在れば "")。env が無ければ conftest が使い捨ての PostgreSQL を立てて置くので、無いのは
+   立てられなかった時 — その理由を名指す(agora-redesign #2830)。"
+  (session-postgres-skip-reason PG-DSN-VARIABLE))
+
+
 (defn skip-reason [#^ str name]
   (cond
-    (and (in name #(PG PG-POOLED HTTP-PG)) (not (.get os.environ PG-DSN-VARIABLE)))
-      (.format "PostgreSQL の法は env {} に使い捨ての置き場の DSN を置いた時だけ走る" PG-DSN-VARIABLE)
+    (in name #(PG PG-POOLED HTTP-PG)) (pg-skip-reason)
     True ""))
 
 

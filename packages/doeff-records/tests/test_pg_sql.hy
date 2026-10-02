@@ -7,7 +7,7 @@
 ;;   - 旧い版の錠の文(`SELECT pg_advisory_xact_lock(hashtext(%s))`)を別の接続で取っている間、新しい版の書きは待つ
 ;;     (同じ錠を取り合う — 変更の列の番号に穴が出ない土台)。
 ;;   - 配列の引数は `IN (:t0, …)` に展げ、空の組は文にしない。
-;; 実 PostgreSQL の検は env DOEFF_RECORDS_TEST_PG_DSN が無ければ skip。
+;; 実 PostgreSQL の検は env DOEFF_RECORDS_TEST_PG_DSN の物(無ければ conftest が使い捨ての PostgreSQL を立てて置く — #2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [deftest val var <-])
 (import json)
 (import os)
@@ -25,11 +25,13 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement])
-(import tests.interpreters [PG-DSN-VARIABLE DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
+(import tests.interpreters [PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records.main [store-pressure-pg])
 (import doeff_records.store_choice [StorePressure])
 
 (val PG-DSN (.get os.environ PG-DSN-VARIABLE))
+;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
+(val PG-SKIP-REASON (pg-skip-reason))
 (val BEFORE-880-DDL (json.loads (.read-text (/ (. (Path __file__) parent) "pg_ddl_before_880.json") :encoding "utf-8")))
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
@@ -72,7 +74,7 @@
 
 
 (deftest test-postgres-hashes-the-old-and-new-lock-keys-to-the-same-number
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   (val connections (postgres-connections 1))
   (val connection (open-postgres))
   (try
@@ -91,7 +93,7 @@
 
 
 (deftest test-the-readyz-pressure-counts-a-connection-waiting-on-a-held-lock
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; #1858: 1 つの接続が advisory lock を持ったまま transaction を開いて止まり(idle in transaction)、別の接続が同じ錠を待つ間、
   ;; /readyz の詰まりの読み(store-pressure-pg)は錠を待つ本数 1 以上と idle in transaction の秒を答える。錠を放した後は待ちが 0。
   (val connections (postgres-connections 2))
@@ -128,7 +130,7 @@
 
 
 (deftest test-a-write-waits-while-the-version-before-880-holds-the-writer-lock
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 旧い版の process の代役: 別の接続で旧い版の錠の文を流して transaction を開いたままにする。新しい版の PutRow は同じ錠を待ち、
   ;; 旧い版が commit した後で書く。
   (val connections (postgres-connections 2))

@@ -396,6 +396,9 @@ dev = [
     "doeff-time",
     "pytest-xdist>=3.8.0",
     "pytest-timeout>=2.3.1",
+    # 実 PostgreSQL の検(doeff-core-effects の extra postgres・doeff-records の extra pg と同じ psycopg)を、日次と手元の dev の環境でも
+    # 走らせる — 検が使い捨ての PostgreSQL を自分で立てても、psycopg が無いと skip か import の失敗になる(agora-redesign #2830)。
+    "psycopg>=3.1",
     "hy>=1.2.0",
     "doeff-hy",
     "doeff-adr",
