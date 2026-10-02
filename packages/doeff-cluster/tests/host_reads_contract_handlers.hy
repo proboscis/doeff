@@ -19,7 +19,7 @@
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [reader state])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader host-reader])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.sim.local [SimChild SimLink host-answers])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
@@ -101,7 +101,7 @@
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "sim の宿の子の答え手(run-fenced と同じ並び: host-answers の内側に値の表の environ-reader)の下で program を走らせる。"
   (val link (SimLink :queue (RequestQueue) :actor CONTEXT.job :revision CONTEXT.revision :peer CONTEXT.worker
-                     :versions (current-versions)))
+                     :versions (! (process-versions os.environ))))
   (val child (SimChild :ctx CONTEXT :program-path PROGRAM-PATH :environ (dict DECLARED) :link link :pid 1 :passable #()))
   (<- answer (with_handlers [(reader OUTER) outer-answers (host-answers child) (environ-reader child.environ)] program))
   answer)

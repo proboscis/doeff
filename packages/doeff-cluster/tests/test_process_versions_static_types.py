@@ -1,8 +1,8 @@
-"""版の識別の型の宣言(foundation/process_versions.pyi)の失敗ケース(#2765)。
+"""版の識別の型の宣言(foundation/process_versions.pyi)の失敗ケース(#2765・#2766)。
 
-process_versions.hy は Hy の module で型の宣言が無かったので、current-versions を読む使い手と process-versions を <- で受ける使い手の
-strict に、書き手に直せない Unknown の赤が出得る。→ .pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると
-2 本目・3 本目が赤になる(test_readiness_static_types.py と同じ形)。
+process_versions.hy は Hy の module で型の宣言が無かったので、process-versions を <- や ! で受ける使い手の strict に、書き手に直せない
+Unknown の赤が出得る。→ .pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目・3 本目が赤になる
+(test_readiness_static_types.py と同じ形)。旧い current-versions は #2766 で消した。
 """
 
 import ast
@@ -23,12 +23,12 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
-(import doeff_cluster.foundation.process_versions [current-versions process-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 
-(defk probe-current []
-  {:pre [] :post [(: % str)] :tags {:context "probe" :role "entry"}}
-  "宣言の CLI と同じ素の読み(deff の答えの型が読める)。"
-  (val versions (current-versions))
+(defk probe-bang [environ]
+  {:pre [(: environ (get dict #(str str)))] :post [(: % str)] :tags {:context "probe" :role "entry"}}
+  "式の中の ! で版の識別を読む(検の宣言の組み立てと同じ読み — 答えの型が読める)。"
+  (val versions (! (process-versions environ)))
   (get versions "doeff"))
 
 (defk probe-process [environ]
@@ -39,7 +39,7 @@ MODULE = """\
 """
 
 # 宣言の名の全部。宣言に名を足したら、ここにも足す(実装に在るかは _mismatch が検める)。
-DECLARED = {"RUNTIME_ENV_KEY_VAR", "process_versions", "current_versions"}
+DECLARED = {"RUNTIME_ENV_KEY_VAR", "process_versions"}
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:

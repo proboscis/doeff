@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key current-platform])
 (import doeff_cluster.shared.entry.service_build [job resolve system-of system-declaration])
 (import doeff_cluster.shared.intent.service_model [CallShape System])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json])
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
@@ -65,20 +65,20 @@
   ;; 断る — 下の検)。子の環境変数の足し口は 1 つ: 実行環境の env-vars と :environ に同じ名が在れば宣言の時点で断る(改訂 1 の G)。
   (<- declared-env RuntimeEnv (sample-env))
   (<- plain System (quiet-system "recreate" None {}))
-  (val rows (. (system-declaration plain "rev-1" :versions (current-versions) :runtime-env declared-env) rows))
+  (val rows (. (system-declaration plain "rev-1" :versions (! (process-versions os.environ)) :runtime-env declared-env) rows))
   (<- env-json dict (runtime-env->json declared-env))
   (assert (= (get (get rows 0) "runtimeEnv") env-json) rows)
-  (assert (not-in "runtimeEnv" (get (. (system-declaration plain "rev-1" :versions (current-versions)) rows) 0)) "env を渡さない宣言は今の形のまま")
+  (assert (not-in "runtimeEnv" (get (. (system-declaration plain "rev-1" :versions (! (process-versions os.environ))) rows) 0)) "env を渡さない宣言は今の形のまま")
   ;; job は image の版を追う base-from を受けない — 渡せる名の一覧に base_from が無いことを直に確かめる(わざと誤った呼び出しを書かない)。
   (assert (not-in "base_from" (. (inspect.signature job) parameters)) "job は base-from を受けない")
   (val with-vars (replace declared-env :env-vars #((EnvVar :name "POLL" :value "1"))))
   (<- clashing System (quiet-system "recreate" None {"POLL" "2"}))
   (with [raised (pytest.raises ValueError)]
-    (system-declaration clashing "rev-1" :versions (current-versions) :runtime-env with-vars))
+    (system-declaration clashing "rev-1" :versions (! (process-versions os.environ)) :runtime-env with-vars))
   (assert (in "POLL" (str raised.value)))
   ;; coordinator も同じ重なりを行で断る(declare を通らない行 — 資源の口へ直に書かれた行)。
   (<- apart System (quiet-system "recreate" None {"POLL" "2"}))
-  (val row (get (. (system-declaration apart "rev-1" :versions (current-versions)) rows) 0))
+  (val row (get (. (system-declaration apart "rev-1" :versions (! (process-versions os.environ))) rows) 0))
   (<- vars-json dict (runtime-env->json with-vars))
   (with [raised (pytest.raises ValueError)]
     (job-from-json (| row {"runtimeEnv" vars-json})))
@@ -91,7 +91,7 @@
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
   (<- plain System (quiet-system "recreate" None {}))
-  (val row (get (. (system-declaration plain "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
+  (val row (get (. (system-declaration plain "rev-1" :versions (! (process-versions os.environ)) :runtime-env declared-env) rows) 0))
   (val job (job-from-json row))
   (assert (is-not job.spec.runtime-env None) job.spec)
   (assert (= (json.loads job.spec.runtime-env) env-json) job.spec)
@@ -131,7 +131,7 @@
   ;; レビューで見つけた欠陥)。版と指紋は両側で同じ・root の鍵だけが worker の中の値。
   (<- declared-env RuntimeEnv (sample-env))
   (<- handoff System (quiet-system "handoff" {"windowSeconds" 30} {"POLL" "5.0"}))
-  (val row (get (. (system-declaration handoff "rev-1" :versions (current-versions) :runtime-env declared-env) rows) 0))
+  (val row (get (. (system-declaration handoff "rev-1" :versions (! (process-versions os.environ)) :runtime-env declared-env) rows) 0))
   (val coordinator-spec (. (job-from-json row) spec))
   (<- worker-spec (declared-job-spec (! (spec-json coordinator-spec))))
   (assert (= worker-spec.revision coordinator-spec.revision) #(worker-spec coordinator-spec))
@@ -209,7 +209,7 @@
   (val declared (job "reporter" (report-service (str out))
                      :call (CallShape :function report-service :args [(str out)] :kwargs {})
                      :needs #{"net"}))
-  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (current-versions) :runtime-env env))
+  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (! (process-versions os.environ)) :runtime-env env))
   (val row (get declaration.rows 0))
   (<- spec (declared-job-spec (! (spec-json (. (job-from-json row) spec)))))
   ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。

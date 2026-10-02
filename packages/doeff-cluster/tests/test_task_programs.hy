@@ -38,7 +38,7 @@
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
@@ -312,8 +312,8 @@
   ;; fixture の値は検査器から型が見えない(repo の fixture は object)— conftest の served_coordinator の答え(str)をここで確かめる(test_served_program.hy と同じ)。
   (assert (isinstance served-coordinator str) served-coordinator)
   (val link (LinkRig served-coordinator WORKER #(NEED) 10 60000
-                             :task-dir (str (/ tmp-path "state" "tasks")) :versions (current-versions)))
-  (val sender (TaskSender :revision "r-served" :versions (current-versions) :runtime-env None))
+                             :task-dir (str (/ tmp-path "state" "tasks")) :versions (! (process-versions os.environ))))
+  (val sender (TaskSender :revision "r-served" :versions (! (process-versions os.environ)) :runtime-env None))
   (<- route CoordinatorRoute (route-of served-coordinator (int (* (time.time) 1000))))
   (val cell (RouteCell route))
   ;; 担い手を先に名乗らせる(置ける worker の無い task は置かれずに失敗する)。
@@ -326,7 +326,7 @@
       (assert (= spec.program (program-sha blob)) spec)
       (assert (is-not spec.program None) spec)
       (val cached (program-file (.program-dir link) spec.program))
-      (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" blob "versions" (current-versions)}))
+      (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" blob "versions" (! (process-versions os.environ))}))
       ;; 子 process: worker と同じ引数(task --result <file>)に cache の file を --program で渡す(ProcessHost が足すのと同じ)。
       (val done (subprocess.run [sys.executable "-m" "hy" "-m" spec.entry #* spec.args "--program" (str cached)]
                                 :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120
