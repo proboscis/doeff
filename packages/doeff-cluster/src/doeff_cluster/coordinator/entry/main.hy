@@ -80,6 +80,8 @@
   (setv parser (argparse.ArgumentParser :description "doeff worker の coordinator(実験)"))
   (.add-argument parser "--state-file" :required True)
   (.add-argument parser "--port" :type int :default 8080)
+  (.add-argument parser "--read-port" :type int :default None
+                 :help "読みだけの 2 つ目の待ち受けの port(既定 = 立てない)。許す経路は coordinator/core/read_door_policy.hy の表だけ(#2742)")
   (.add-argument parser "--naming" :default "{}"
                  :help "外の系と取り交わす名(JSON: ownerAnnotation・ownerScope・nodeCapabilities)— cluster_model.ClusterNaming")
   (setv args (.parse-args parser))
@@ -90,15 +92,15 @@
   (signal.signal signal.SIGINT on-signal)
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
   (setv state (load-state args.state-file store (int (* 1000 (time.time)))))
-  (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
+  (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS :read-port args.read-port))
   (.start inbox)
   ;; k8s の API は Pod の ServiceAccount の token が在る時だけ(手元の coordinator では Rollout の Deployment の観測が Unknown のまま)。
   ;; 読みも台数の変更も 3 秒で打ち切る(読むのは進行中の Rollout の相手だけ・1 秒に 1 回)。
   (setv kube (if (KubeClient.available)
                  (kube-api (KubeClient KubeUnavailable :timeout 3.0))
                  (kube-unavailable "k8s の ServiceAccount の token が無い(Pod の外の coordinator)")))
-  (print (.format "coordinator: :{} で受けます(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {})"
-                  args.port (len state.jobs) (len state.tasks) (len state.board) (len state.rollouts) state.revision
+  (print (.format "coordinator: :{} で受けます{}(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {})"
+                  args.port (if (is args.read-port None) "" (.format "・読みだけの口 :{}" args.read-port)) (len state.jobs) (len state.tasks) (len state.board) (len state.rollouts) state.revision
                   (if (KubeClient.available) "あり" "なし")) :file sys.stderr :flush True)
   ;; handler の組は coordinator_handler_sets の値(本番の組)。
   (run (scheduled (with_handlers (production-handlers inbox store stop kube) (run-coordinator state (ClusterTiming) naming))))

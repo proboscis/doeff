@@ -22,11 +22,13 @@
 
 
 (defclass RawRequest []
-  "受付が受けた HTTP 要求 1 件のまだ解かない形(method・path・query・JSON を読んだ本文・返事の札・名乗り・相手)。
-   調停ループ(と記録の置き場の Program)へは shared/protocol/inbox.hy の http-requests が Request に解いて渡す。"
+  "受付が受けた HTTP 要求 1 件のまだ解かない形(method・path・query・JSON を読んだ本文・返事の札・名乗り・相手・届いた待ち受け)。
+   調停ループ(と記録の置き場の Program)へは shared/protocol/inbox.hy の http-requests が Request に解いて渡す。
+   door = 届いた待ち受けの語(\"main\" = --port の口・\"read\" = 読みだけの口 — #2742。型 RequestDoor にするのは protocol)。"
   (defn #^ None __init__ [self #^ str method #^ str path #^ dict query #^ object body #^ ReplySlot slot
-                          #^ (| str None) actor #^ str peer]
-    (setv self.method method self.path path self.query query self.body body self.slot slot self.actor actor self.peer peer)))
+                          #^ (| str None) actor #^ str peer #^ str [door "main"]]
+    (setv self.method method self.path path self.query query self.body body self.slot slot self.actor actor self.peer peer
+          self.door door)))
 
 
 (defn #^ tuple json-reply [#^ object body]
@@ -62,10 +64,13 @@
 (defclass RequestInbox []
   "HTTP server(別 thread)が受けた要求を生の形で並べる箱。調停ループは 1 件ずつ取り出して返事を置く。
    formats = probe が名乗る本文の形の版の受け入れる範囲(coordinator の entry が cluster_model の ACCEPTED-FORMATS を渡す — この
-   module は intent の型を読まない)。"
-  (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic] #^ tuple [formats #()]]
+   module は intent の型を読まない)。
+   read-port = 読みだけの 2 つ目の待ち受けの port(None = 立てない・#2742)。そこで受けた要求も同じ列に並べ、door \"read\" を付ける —
+   どの経路を許すかはこの箱でなく coordinator の判断(coordinator/core/read_door_policy.hy)が決める。読みの口は probe にも直に答えない。"
+  (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic] #^ tuple [formats #()] #^ (| int None) [read-port None]]
     ;; last-take = 調停ループが最後に要求を取りに来た時刻(単調時計)。probe はこれだけで答える(ループを通さない)。
-    (setv self.queue (queue.Queue) self.port port self.server None self.clock clock self.last-take None self.formats formats))
+    (setv self.queue (queue.Queue) self.port port self.server None self.clock clock self.last-take None self.formats formats
+          self.read-port read-port self.read-server None))
 
   (defn #^ tuple probe [self #^ str path]
     "k8s の probe(/livez・/readyz)の答え。HTTP の thread が直に答える — 調停ループの遅れ(fsync・k8s の API)に巻き込まれない。"
@@ -79,12 +84,14 @@
       ;; HTTP/1.1 = 接続を使い回す。HTTP/1.0 では要求ごとに接続を閉じ、client は毎回 TCP を張り直していた
       ;; (tailnet の経路が数秒途絶えると新しい接続は必ず失敗する — coordinator_http.py の説明)。
       ;; 使われなくなった接続の thread は timeout 秒で終わる(client の側は 5 秒で手放す)。
-      (setv protocol-version "HTTP/1.1" timeout 120)
+      ;; door = この待ち受けで受けた要求に付ける語(読みだけの口は下の ReadHandler が "read" に替える)。
+      (setv protocol-version "HTTP/1.1" timeout 120 door "main")
       (defn #^ None log-message [self #^ str format #^ object #* args] None)
       (defn #^ None _handle [self #^ str method]
         (setv split (urlsplit self.path))
-        ;; probe は並べずに答える(調停ループが fsync や k8s の読みで数秒止まっても、probe が時間切れにならない)。
-        (when (and (= method "GET") (in split.path #("/livez" "/readyz")))
+        ;; probe は並べずに答える(調停ループが fsync や k8s の読みで数秒止まっても、probe が時間切れにならない)。読みだけの口では
+        ;; 答えず列へ並べる(許すかは coordinator の経路の表が決める — 表に無ければ断られる)。
+        (when (and (= self.door "main") (= method "GET") (in split.path #("/livez" "/readyz")))
           (setv #(status body) (.probe inbox split.path))
           (return (.send self status #* (json-reply body))))
         (setv length (int (or (.get self.headers "Content-Length") 0))
@@ -95,7 +102,7 @@
           (except [error ValueError]
             (return (.send self 400 #* (json-reply {"error" (.format "JSON を読めない: {}" error)})))))
         (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
-                                      (.get self.headers "X-Actor") (str (get self.client-address 0))))
+                                      (.get self.headers "X-Actor") (str (get self.client-address 0)) :door self.door))
         (if (.wait slot.done 30.0)
             (.send self slot.status slot.data slot.content-type)
             (.send self 503 #* (json-reply {"error" "調停ループが返事をしない"}))))
@@ -110,9 +117,16 @@
       (defn #^ None do-PUT [self] (._handle self "PUT"))
       (defn #^ None do-POST [self] (._handle self "POST"))
       (defn #^ None do-DELETE [self] (._handle self "DELETE")))
+    (defclass ReadHandler [Handler]
+      ;; 読みだけの口(#2742)— 受け方は同じで、並べる要求に "read" を付ける。
+      (setv door "read"))
     (setv self.server (ThreadingHTTPServer #("0.0.0.0" self.port) Handler))
-    (setv self.server.daemon-threads True)
-    (.start (threading.Thread :target self.server.serve-forever :daemon True)))
+    (when (is-not self.read-port None)
+      (setv self.read-server (ThreadingHTTPServer #("0.0.0.0" self.read-port) ReadHandler)))
+    (for [server [self.server self.read-server]]
+      (when (is-not server None)
+        (setv server.daemon-threads True)
+        (.start (threading.Thread :target server.serve-forever :daemon True)))))
 
   (defn #^ list take [self #^ float timeout #^ int limit]
     "最初の 1 件を timeout 秒まで待ち、その時点で並んでいる生の要求を limit 件まで一緒に取る。"
