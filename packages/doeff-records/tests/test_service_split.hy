@@ -88,14 +88,23 @@
 
 (deftest test-a-missing-required-environment-stops-the-start
   (val environ (dict REQUIRED-ENV))
-  (del (get environ ENV-PRINCIPALS-FILE))
+  (del (get environ ENV-PG-URL-FILE))
   (var refused None)
   (try
     (! (settings-under environ))
     (except [e SystemExit]
       (:= refused e)))
   (assert (is-not refused None) "必須の env が欠けても設定が読めた")
-  (assert (in ENV-PRINCIPALS-FILE (str refused)) refused))
+  (assert (in ENV-PG-URL-FILE (str refused)) refused))
+
+
+(deftest test-the-roster-is-not-required-to-start
+  ;; 呼び手を断らないので名簿は起動に要らない(#2988): env が無ければ空の名簿で読める。必須に戻ると SystemExit で赤。
+  (val environ (dict REQUIRED-ENV))
+  (del (get environ ENV-PRINCIPALS-FILE))
+  (<- settings RecordsSettings (settings-under environ))
+  (assert (= (dict settings.roster.digests) {}) settings.roster)
+  (assert (= settings.dsn DSN) settings))
 
 
 (deftest test-serving-is-built-from-the-schema-and-the-settings-only
