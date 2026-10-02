@@ -15,7 +15,7 @@ runtime_env_model.pyi と同じ形)。
 - 入口 sim-cluster・wall-sim-cluster は筋書きの答えの型をそのまま返す(defk は呼ぶと Program を返す)。
 - 仕組みの名のうち、他の module(doeff-cluster の検・業務の側の模擬)が import する物(SimChild・SimParts・SimExit・HostTruth・
   PartsOf・HostTruthOf・EndProcess と、coordinator-answers・host-answers・run-context-of・send-request・sim-process・
-  process-outside・ended-process・heartbeat・note-watch)も宣言する。外から使われない仕組み(SimPlan・PlanOf ほかの世界の effect と
+  process-outside・ended-process・heartbeat・settle-beats・note-watch)も宣言する。外から使われない仕組み(SimPlan・PlanOf ほかの世界の effect と
   筋の組み立て)は宣言しない。
 
 型の宣言がまだ無い doeff-cluster の Hy の module(coordinator/entry/handler_sets の RequestQueue・MemoryWalStore・job_context の
@@ -356,7 +356,8 @@ class SimExit:
 @dataclass(frozen=True, kw_only=True)
 class HostTruth:
     """worker の宿 1 つの真実(世界の session に在る)。processes・probes・statuses・last_desired・last_warm・task_echo は
-    worker_model の観測の値(型の宣言が無い — 読まずに運ぶ)。"""
+    worker_model の観測の値(型の宣言が無い — 読まずに運ぶ)。rest_bell は静かな拍を眠る宿の呼び鈴(request_queue.RestBell —
+    型の宣言が無い・読まずに運ぶ — #2850)。"""
 
     boot: str
     boot_at: int
@@ -387,6 +388,8 @@ class HostTruth:
     stalled_until_ms: int = 0
     keep_fence_ms: int = ...
     sent_stopping: bool = False
+    rest_bell: object | None = None
+    rest_reach: int = ...
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:
@@ -429,6 +432,7 @@ def sim_process(
 ) -> Program[None, object]: ...
 def ended_process(log: tuple[SimProcess, ...], job: str) -> Program[SimProcess | None, object]: ...
 def heartbeat(worker: SimWorker, boot: str, stopping: bool) -> Program[object, object]: ...
+def settle_beats(worker: SimWorker, boot: str, sent: tuple[object, ...]) -> Program[None, object]: ...
 def note_watch(
     name: str, boot: str, after: int, reading: _WatchReadingView
 ) -> Program[bool, object]: ...

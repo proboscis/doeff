@@ -1,4 +1,21 @@
 {
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/worker/core/quiet_policy.hy"
+  ],
+  "module_extensions": {
+    "doeff-cluster-coordinator-request-queue": {
+      "allow": [
+        "doeff-cluster-coordinator-replies"
+      ]
+    },
+    "doeff-cluster-local": {
+      "allow": [
+        "doeff-cluster-coordinator-request-bodies",
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-worker-quiet-policy"
+      ]
+    }
+  },
   "modules": [
     {
       "allow": [
