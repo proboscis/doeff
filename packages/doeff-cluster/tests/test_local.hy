@@ -30,7 +30,8 @@
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
                                                                  WorkerProbe alive-only-while-reachable
                                                                  PlacementSeen WorkerGone places-only-on-reachable
-                                                                 ProcessSpan WorkerCapacity running-within-capacity])
+                                                                 ProcessSpan WorkerCapacity running-within-capacity
+                                                                 JobNeeds WorkerAbility placed-only-where-eligible])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
@@ -678,6 +679,37 @@
                                :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :overstates-capacity 5))))
   (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
   (assert (= (len over) 1) #(over spans)))
+
+
+(defk placements-after [seconds]
+  {:pre [(: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C7 の記録を集めるため: seconds 秒待って GET /state の置き先を読む(PlacementSeen の列)。"
+  (<- (Delay seconds))
+  (<- state dict (ReadCoordinator "/state"))
+  (tuple (gfor #(job p) (.items (get state "placements"))
+               (PlacementSeen :job job :worker (get p "worker") :since-ms (get p "since_ms")))))
+
+
+(val BEACON-NEEDS #((JobNeeds :job "beacon" :needs (frozenset ["cluster-net"]))))
+(val GPU-ONLY-ABILITY #((WorkerAbility :worker "g1" :provides (frozenset ["gpu"]))))
+
+
+(deftest test-a-job-is-not-placed-on-a-worker-without-its-needs
+  ;; 条 C7(architecture.hy の :invariants): job の needs(cluster-net)を提供しない worker しか居なければ、coordinator はそこへ置かない。
+  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])))))
+  (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
+  (assert (= wrong #()) #(wrong placements)))
+
+
+(deftest test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c7
+  ;; 条 C7 の失敗ケース: heartbeat で持たない能力を名乗る壊れた worker(SimWorker の claims-provides)では、coordinator が名乗りどおり置き、
+  ;; 条 C7 の判断がその置き先を名指す(本当の能力は gpu だけ)。
+  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
+                                                          :claims-provides (frozenset ["gpu" "cluster-net"])))))
+  (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
+  (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
 
 
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused

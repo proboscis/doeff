@@ -75,6 +75,11 @@
 ;;;   test-a-worker-runs-no-more-jobs-than-its-capacity(capacity 1 の worker に service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは
 ;;;   同じ file の test-a-counterexample-worker-that-overstates-its-capacity-breaks-c6(heartbeat で capacity を多く名乗る壊れた worker — SimWorker
 ;;;   の overstates-capacity — で 2 つ置かれて C6 が名指す)。
+;;;   C7 placed-only-where-eligible(doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
+;;;   worker は job の needs を本当に提供する。確かめるのは tests/test_local.hy の test-a-job-is-not-placed-on-a-worker-without-its-needs
+;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c7(heartbeat で持たない能力を名乗る壊れた worker — SimWorker の
+;;;   claims-provides — へ置かれて C7 が名指す)。専用の能力の決まりと drain の期限の中へ置かない事は、別の条として後から足す。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -130,7 +135,8 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back"
                 "doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:places-only-on-reachable"
-                "doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity"
+                "doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
