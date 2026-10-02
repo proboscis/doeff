@@ -174,6 +174,12 @@ pub fn get_rule_info(rule_id: &str) -> RuleInfo {
             fix: "Replace `p_x: Program[...] = wrapper(...)` with `p_x: Program[...] = underlying(...)` using the same arguments. If the wrapper is intentional (naming/tracing), add `# noqa: DOEFF031`.",
             label: "@do の入口が素通しの wrapper",
         },
+        "DOEFF032" => RuleInfo {
+            name: "Rule Population Declaration Breach",
+            description: "A module of a layer that exempts rules (architecture.hy `:exempt`) imports a business module listed in the layer's `:forbid-modules`, or the package's architecture.hy cannot be read to decide the file's rule population.",
+            fix: "Move the business code to a layer that does not exempt rules, or fix the architecture.hy that owns this file. The exemption is for code outside Programs only (e.g. modules loaded by `.pth` at Python startup).",
+            label: "規則を外した層に業務の code が在る",
+        },
         "NOQA001" => RuleInfo {
             name: "Malformed noqa Comment",
             description: "The noqa comment format appears incorrect and may not suppress the intended rule.",

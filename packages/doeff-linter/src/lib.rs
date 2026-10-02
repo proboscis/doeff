@@ -17,6 +17,7 @@ pub mod head_report_cache;
 pub mod logging;
 pub mod models;
 pub mod noqa;
+pub mod population;
 pub mod position;
 pub mod project;
 pub mod report;
@@ -47,7 +48,50 @@ pub fn lint_file(
         Err(e) => return LintResult::with_error(path_str, format!("Failed to read file: {}", e)),
     };
 
-    lint_source(&path_str, &source, rules)
+    lint_source_at(&path_str, &source, rules)
+}
+
+/// path の決まった file の source に Python の規則を当て、その file を持つ package の宣言の母集団(crate::population — 層の
+/// `:exempt` の除外と、外した層の業務の import の DOEFF032)を当てる。実行の入口(file の列・editor の 1 file)はここを通る —
+/// lint_source は母集団を知らない(規則の単体の検の口・agora-redesign #2811)。
+pub fn lint_source_at(
+    file_path: &str,
+    source: &str,
+    rules: &[Box<dyn LintRule>],
+) -> LintResult {
+    let population = population::population_of(Path::new(file_path));
+    let mut result = lint_source(file_path, source, rules);
+    let named = rules.iter().any(|rule| rule.rule_id() == population::BUSINESS_IMPORT_RULE_ID);
+    match population {
+        Ok(population::FilePopulation::Plain) => {}
+        Ok(population::FilePopulation::Exempt { layer, rules: exempt, forbid_modules, declaration }) => {
+            result.violations.retain(|v| !exempt.contains(&v.rule_id));
+            if named {
+                if let Ok(ast) = parse(source, Mode::Module, file_path) {
+                    let noqa = NoqaDirectives::parse(source);
+                    result.violations.extend(
+                        population::business_import_violations(file_path, &ast, &layer, &forbid_modules, &declaration)
+                            .into_iter()
+                            .filter(|v| !noqa.is_suppressed(offset_to_line(source, v.offset), &v.rule_id)),
+                    );
+                }
+            }
+        }
+        // 宣言を読めない時は外さず(どの規則もそのまま当たる)、読めないことを当たりで名指す — file の誤り(error の欄)にすると、
+        // text の出力はその file の当たりを隠し、終了コードにも数えない。
+        Err(reason) => {
+            if named {
+                result.violations.push(Violation::new(
+                    population::BUSINESS_IMPORT_RULE_ID.to_string(),
+                    reason,
+                    0,
+                    file_path.to_string(),
+                    Severity::Error,
+                ));
+            }
+        }
+    }
+    result
 }
 
 /// Lint source code and return the results

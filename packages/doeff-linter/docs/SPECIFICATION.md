@@ -308,6 +308,17 @@ doeff-linter はこれを **実行せずに** doeff-indexer の Hy の読み取�
 `[tool.doeff-linter.layers]`・`roles`・`services` は置けない(二重の宣言は設定の誤り)。TOML には規則の入り切り・重さ・登録簿の置き場所・
 law の対応だけを残す。無ければ TOML の設定で今どおり動く。doeff-hy の実行時の macro(defarchitecture・defservice・layer)は未実装。
 
+**規則の母集団から外す層(agora-redesign #2811)。**層は `:modules [module の名 …]`(点で区切った module の名 — その下の module も入る)で
+module を名指し、`:exempt [(rule 規則 ID "理由") …]` で、名指しの module に限って Python の文ごとの規則(DOEFF001〜032)の母集団から外せる
+(例: Python の起動の時点で `.pth` から入る見張りは、Program の外で設定を Ask で受ける入口が無いので DOEFF004 を外す)。理由の空・層の
+規則の ID・知らない ID・同じ規則の 2 度・`:modules` の無い `:exempt` は読みの誤り(実行が読む宣言なら終了コード 2・母集団を引く宣言なら
+下の DOEFF032)。Python の規則の母集団は、**file から
+上へ最も近い architecture.hy**(その package の持ち主の宣言 — repo の根の `.git` より上は見ない)から file ごとに決める。実行が読む宣言
+(設定の `architecture`・根の architecture.hy)とは別に引くので、package の宣言を名指さない根の実行(doeff の pre-commit・`make lint-doeff`)
+も同じ除外に従う。module の名は `__init__.py` の在る dir を上へたどって組む(設定の `root` にも宣言の `:root` にも依らない)。外した層の
+module が、その層の `:forbid-modules` の module を import すると DOEFF032(error)— 外した層に業務の code が入ると、外した規則がその code
+にも当たらなくなるため。file を持つ package の宣言を読めない時は外さず(どの規則もそのまま当たる)、読めないことを DOEFF032 が名指す。
+
 ```hy
 (defarchitecture agora-controllers
   :root "controllers"                         ; service の dir を置く根

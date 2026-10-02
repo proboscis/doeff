@@ -83,6 +83,7 @@ skip_test_functions = true
 | DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
 | DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
 | DOEFF014 | No Try-Except Blocks | Use doeff's error handling effects instead of try-except |
+| DOEFF032 | Rule Population Declaration Breach | 規則の母集団から外した層(architecture.hy の `:exempt`)の module が業務の module を import している・package の宣言を読めず母集団を決められない |
 | DOEFF101 | Layer Import Direction | 層の module は設定で許した層の module だけを import する |
 | DOEFF102 | Layer Forbidden Module | 層ごとに禁じた module(I/O の module など)を直に import しない |
 | DOEFF103 | Types-Only Layer | 型だけの層に関数と handler を定めない |
