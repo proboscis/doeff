@@ -206,7 +206,7 @@ export function isMissingJevKey(errors: readonly string[]): boolean {
 
 /** キーが無い時に一度だけ出す通知の文(キーの値は扱わない)。 */
 export const MISSING_KEY_MESSAGE =
-  'Jev のキーが見つからない — Jev の呼び出しを覚える代理を向けた repo(pyproject の [tool.doeff-linter.semantic] proxy_url)は代理の token の file(既定 ~/.config/jev/proxy-token)が、向けていない repo は VS Code を起動した環境の TYPESAFE_API_KEY(shell から `code` で起動するか、JEV_API_KEY_FILE を指す)が要る。この session では保存した時と編集中の Jev の判定を止めます。';
+  'Jev のキーが見つからない — Jev の呼び出しを覚える proxy を向けていない repo(pyproject の [tool.doeff-linter.semantic] proxy_url が無い repo)は、VS Code を起動した環境の TYPESAFE_API_KEY(shell から `code` で起動するか、JEV_API_KEY_FILE を指す)が要る。この session では保存した時と編集中の Jev の判定を止めます。';
 
 /** 開いている document の今の中身と版(閉じた・workspace の外なら undefined)。 */
 export interface OpenDocument {
