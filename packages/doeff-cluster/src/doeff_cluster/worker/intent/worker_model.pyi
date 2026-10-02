@@ -185,6 +185,7 @@ class DesiredUnreadable:
 @dataclass(frozen=True)
 class ReadDesired(EffectBase[DesiredJobs | DesiredUnreadable]):
     env_report: dict[str, object] | None = None
+    stopping: bool = False
 
 @dataclass(frozen=True)
 class EnvReport(EffectBase[dict[str, object] | None]): ...

@@ -11,7 +11,9 @@
 ;; では途絶が明けない。sim の宿は同じ期限と間を仮想の時計で数える)。
 ;; (2026-09-28 まで sim の組の代わりに同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した。)
 (require doeff-hy.macros [deftest defk deff defhandler <- val var])
+(require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
+(import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が名指す
 (import pathlib [Path])
 (import typing [NoReturn])
 (import httpx)
@@ -31,6 +33,7 @@
                              ReadCoordinator])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster.coordinator.core.coordinator_invariants [StoppedGeneration TaskPlacementSeen stopped-generation-gets-no-new-task])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False)
@@ -366,6 +369,82 @@
   (assert (= (len processes) 1) processes)
   (val only (get processes 0))
   (assert (= #(only.worker only.exit-code) #("a" 0)) processes))
+
+
+;; --- sim だけ: drain を頼まない止め(sigterm)の後に積んだ task(#2819)------------------------------------------------
+;; 2026-10-02 使い手の模擬の筋書きが 204ef43c7(#2692)の後に赤: sigterm で止まる途中の担い手が子の終わりを報告した直後に、
+;; 呼び手がその担い手の能力を要る次の task を積み、coordinator がそれを止まる途中の担い手に置いた。置かれた task は
+;; 始まらず、同じ名の新しい世代にも渡らない(切り離した task は世代に結ぶ)ので、lease を過ぎて lost になった。coordinator が止まりを
+;; 知るのは明示の drain の頼み(本番の preStop)だけで、それを通らない止め(機体の終了・手の kill・sim の StopWorker)では穴が開く。
+;; 本物の coordinator の組の担い手(detached_rig の RigWorker)は本物の worker の拍ではなく止まりを名乗らないので、sim の組だけで回す。
+
+(val STOPPED-KEY "k-after-stop")
+;; 条 C3 の失敗ケースの担い手: a だけが止まり始めを heartbeat で名乗らない(sim の SimWorker の silent-stop — 直す前の worker と同じ)。
+(val SILENT-STOP-RUNNERS (tuple (gfor w SIM-RUNNERS (if (= w.name "a") (replace w :silent-stop True) w))))
+
+
+(defk boot-of [name]
+  {:pre [(: name str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "worker の今の世代を coordinator の worker の画面(GET /workers/<名>)から読むため(条 C3 の記録)。"
+  (<- view dict (ReadCoordinator (+ "/workers/" name)))
+  (get view "boot"))
+
+
+(defrecord StopRecords
+  "条 C3 の記録(筋書きの前半の答え): stopped = 止めた世代の列・placed = 止めた後・戻す前に読めた task の置き先の列(置かれていない
+   queued の task は載せない)。"
+  (#^ (get tuple #(StoppedGeneration ...)) stopped)
+  (#^ (get tuple #(TaskPlacementSeen ...)) placed))
+
+
+(defk placements-seen [key]
+  {:pre [(: key str)] :post [(: % (get tuple #(TaskPlacementSeen ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "coordinator の状態の画面から読める task key の置き先を、置かれた worker の今の世代つきで記録にするため(条 C3 の記録 — 置かれて
+   いない queued の task は空)。"
+  (<- state dict (ReadCoordinator "/state"))
+  (val row (next (gfor t (get state "tasks") :if (= (.get t "key") key) t) None))
+  (when (or (is row None) (is (.get row "worker") None) (= (get row "phase") "queued"))
+    (return #()))
+  (<- boot str (boot-of (get row "worker")))
+  #((TaskPlacementSeen :key key :worker (get row "worker") :boot boot)))
+
+
+(defk stop-without-drain-and-submit []
+  {:pre [] :post [(: % StopRecords)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの前半: a を drain を頼まずに止め(sim の StopWorker = sigterm — 宿が止まりを立て、worker が抜けるまで待つ)、その直後に x-tool を
+   要る task を積み、置かれ方を読む。止まった a は名簿の生存の窓(lease 10 秒)の内に居る。答え = 条 C3 の記録。"
+  (<- stopped-boot str (boot-of "a"))
+  (<- (StopWorker "a"))
+  (<- (submit-detached-task (slow-add SLOW 10) :key STOPPED-KEY :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- (Delay (* 4 POLL)))
+  (<- placed tuple (placements-seen STOPPED-KEY))
+  (StopRecords :stopped #((StoppedGeneration :worker "a" :boot stopped-boot)) :placed placed))
+
+
+(defk stop-without-drain-then-return []
+  {:pre [] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 前半(stop-without-drain-and-submit)の task は止まり始めを名乗った世代に置かれず待ち(条 C3 は緑)、a が新しい世代で名乗り
+   直すとそこで走って終わる(直す前は止まった世代に置かれ、新しい世代に渡らず lease の後に DetachedLost)。"
+  (<- seen StopRecords (stop-without-drain-and-submit))
+  (<- breaches tuple (stopped-generation-gets-no-new-task seen.stopped seen.placed))
+  (assert (= breaches #()) breaches)
+  (<- waiting (AwaitDetached STOPPED-KEY :timeout-seconds 0.0))
+  (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
+  (<- started bool (StartWorker "a"))
+  (assert started)
+  (<- done (AwaitDetached STOPPED-KEY))
+  (assert (= done (DetachedSucceeded 110)) done)
+  True)
+
+(deftest test-a-runner-stopped-without-a-drain-gets-no-new-task-until-its-next-generation
+  (<- ok bool (sim-cluster NO-JOBS (stop-without-drain-then-return) :workers SIM-RUNNERS :timing TIMING))
+  (assert ok))
+
+(deftest test-a-counterexample-worker-that-does-not-announce-its-stop-breaks-c3
+  ;; 失敗ケース: a が止まり始めを heartbeat で名乗らない(silent-stop)と、同じ前半で task が止まった a の世代に置かれ、条 C3 が task を名指す。
+  (<- seen StopRecords (sim-cluster NO-JOBS (stop-without-drain-and-submit) :workers SILENT-STOP-RUNNERS :timing TIMING))
+  (<- breaches tuple (stopped-generation-gets-no-new-task seen.stopped seen.placed))
+  (assert (= breaches #(STOPPED-KEY)) seen))
 
 
 ;; --- 本物の client: coordinator に届かない送りと待ちは値で答える -------------------------------------------------------------

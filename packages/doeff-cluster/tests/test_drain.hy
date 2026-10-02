@@ -61,12 +61,14 @@
     {"name" name "phase" "running" "runningRevision" job.spec.revision "desiredRevision" job.spec.revision
      "instance" (.format "{}-{}-g{}" worker name gen) "specHash" (spec-hash job.spec) "placement" gen "attempts" 1})
 
-  (defn #^ dict beat [self #^ str worker #^ (| list None) [running None] #^ list [provides K3S] #^ (| str None) [boot None]]
-    "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)。"
+  (defn #^ dict beat [self #^ str worker #^ (| list None) [running None] #^ list [provides K3S] #^ (| str None) [boot None]
+                      #^ bool [stopping False]]
+    "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)・stopping = 止まり始めた worker の名乗り(#2819)。"
     (setv (get self.boots worker) (or boot (.get self.boots worker "b1")))
     (self.call "POST" "/heartbeat" {"name" worker "provides" provides "capacity" 10 "versions" {}
                                     "boot" (get self.boots worker)
-                                    "statuses" (lfor n (or running []) (self.row worker n))}
+                                    "statuses" (lfor n (or running []) (self.row worker n))
+                                    "stopping" stopping}
                :actor None))
 
   (defn #^ dict ready [self #^ str worker #^ str name #^ bool [ready True] #^ str [role "standby"]]
@@ -225,6 +227,26 @@
   (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (get c.state.tasks "t2") phase) "queued")))
+
+
+(deftest test-a-stopping-worker-drains-its-own-generation-until-the-next-one
+  ;; sigterm で止まり始めた worker は heartbeat で止まりを名乗る(#2819 — preStop の drain の頼みを通らない止め: 機体の終了・手の kill・
+  ;; sim の StopWorker)。coordinator はその世代を drain に載せ、新しい置き先も task も置かない(task は待つ)。同じ世代の名乗り直しは
+  ;; drain を付け直さず期限を変えない。同じ名の新しい世代の heartbeat で解け、待っていた task がそこへ置かれる。
+  (val c (Coord))
+  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (c.beat "zeus" :stopping True)
+  (val d (get c.state.drains "zeus"))
+  (assert (= #(d.boot d.actor) #("b1" "worker-stopping")) d)
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
+  (assert (= (. (get c.state.tasks "t1") phase) "queued") (get c.state.tasks "t1"))
+  (c.advance 2)
+  (c.beat "zeus" :stopping True)
+  (assert (= (get c.state.drains "zeus") d) (get c.state.drains "zeus"))
+  (c.beat "zeus" :boot "b2")
+  (assert (not-in "zeus" c.state.drains) c.state.drains)
+  (val t (get c.state.tasks "t1"))
+  (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
 
 
 (deftest test-a-new-boot-or-the-deadline-ends-the-drain
