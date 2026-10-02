@@ -28,17 +28,18 @@ CODEX_HOME, so the identity is a concrete, known value on both gates.
 """
 
 import json
-import os
 import time
+from dataclasses import dataclass
 
 import pytest
+from conformance_env import agentd_bin_setting
 from harness import RESULT_SCHEMA, AgentdHarness
 
 PROMPT = "Produce the conformance structured result."
 
 # Transfer-gate seam (harness.resolve_agentd_bin): set => the Hy host is the
 # daemon under test; unset => the Rust oracle.
-HY_GATE = bool(os.environ.get("CONFORMANCE_AGENTD_BIN"))
+HY_GATE = bool(agentd_bin_setting())
 
 # Column-name fragments any reasonable identity persistence would use.
 IDENTITY_COLUMN_FRAGMENTS = (
@@ -50,9 +51,17 @@ IDENTITY_COLUMN_FRAGMENTS = (
 )
 
 
-def _launched_session_row(tmp_path) -> tuple[dict, str]:
+@dataclass(frozen=True)
+class _LaunchedSession:
+    """One S14 launch: the daemon's session row and the session-level CODEX_HOME it ran with."""
+
+    row: dict
+    codex_home: str
+
+
+def _launched_session_row(tmp_path) -> _LaunchedSession:
     """Shared S14 physics: a real M1 codex launch with an explicit
-    session-level CODEX_HOME; returns (session row, that CODEX_HOME)."""
+    session-level CODEX_HOME; returns the session row and that CODEX_HOME."""
     codex_home = tmp_path / "codex-home-s14"
     codex_home.mkdir()
     daemon_codex_home = tmp_path / "daemon-codex-home"
@@ -81,7 +90,9 @@ def _launched_session_row(tmp_path) -> tuple[dict, str]:
         assert env_entries
         assert env_entries[0]["values"]["CODEX_HOME"] == str(codex_home)
 
-        return harness.session_row(scenario.session_id), str(codex_home)
+        return _LaunchedSession(
+            row=harness.session_row(scenario.session_id), codex_home=str(codex_home)
+        )
 
 
 @pytest.mark.skipif(
@@ -93,7 +104,8 @@ def _launched_session_row(tmp_path) -> tuple[dict, str]:
     ),
 )
 def test_s14_expected_red_no_resolved_identity_on_session_row(tmp_path) -> None:
-    row, codex_home = _launched_session_row(tmp_path)
+    launched = _launched_session_row(tmp_path)
+    row, codex_home = launched.row, launched.codex_home
 
     # EXPECTED-RED (oracle): no identity column exists ...
     identity_columns = [
@@ -124,7 +136,8 @@ def test_s14_expected_red_no_resolved_identity_on_session_row(tmp_path) -> None:
     ),
 )
 def test_s14_identity_persisted_on_session_row(tmp_path) -> None:
-    row, codex_home = _launched_session_row(tmp_path)
+    launched = _launched_session_row(tmp_path)
+    row, codex_home = launched.row, launched.codex_home
 
     # The resolved identity is persisted on the row, byte-exact: for a
     # codex launch that is the effective CODEX_HOME the session ran with.

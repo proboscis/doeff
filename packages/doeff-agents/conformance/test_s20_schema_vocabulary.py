@@ -29,16 +29,16 @@ S20 freezes the restored contract on the canonical Hy session host:
 """
 
 import json
-import os
 
 import pytest
+from conformance_env import agentd_bin_setting
 from doeff_agents.agentd_client import AgentdClientError
 from harness import AgentdHarness
 
 # Transfer-gate seam (harness.resolve_agentd_bin): S20 requires the canonical Hy
 # host — the retired Rust implementation fail-opens on these keywords
 # (doeff#482) and is not a correctness reference.
-HY_GATE = bool(os.environ.get("CONFORMANCE_AGENTD_BIN"))
+HY_GATE = bool(agentd_bin_setting())
 pytestmark = pytest.mark.skipif(
     not HY_GATE,
     reason=(

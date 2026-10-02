@@ -2,6 +2,7 @@
 
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -54,11 +55,22 @@ def _monitor_existing_completion(handle: SessionHandle, *, poll_interval: float 
     )
 
 
+@dataclass(frozen=True)
+class _PipelineHandler:
+    """The scripted agent handler and the record of what it was asked.
+
+    The record holds the launches, sends, stops, captures and delays the handler answered.
+    """
+
+    handler: Any
+    state: dict[str, Any]
+
+
 def _make_pipeline_handler(
     scripts: Script,
     *,
     launch_agent_override: AgentType | None = None,
-) -> tuple[Any, dict[str, Any]]:
+) -> _PipelineHandler:
     queue = {session_name: list(observations) for session_name, observations in scripts.items()}
     state: dict[str, Any] = {
         "launches": [],
@@ -121,7 +133,7 @@ def _make_pipeline_handler(
 
         yield Pass(effect, k)
 
-    return handler, state
+    return _PipelineHandler(handler=handler, state=state)
 
 
 @do
@@ -155,7 +167,7 @@ def _run_interactive(session_name: str, config: LaunchConfig, messages: list[str
 
 
 def test_withhandler_delegation_returns_success() -> None:
-    handler, state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {
             "worker": [
                 (SessionStatus.RUNNING, "working"),
@@ -163,6 +175,7 @@ def test_withhandler_delegation_returns_success() -> None:
             ]
         }
     )
+    handler, state = pipeline.handler, pipeline.state
 
     result = run(
         _install_raw_handler(handler)(_run_completion("worker", _build_config(), poll_interval=0.5)),
@@ -177,7 +190,7 @@ def test_withhandler_delegation_returns_success() -> None:
 
 
 def test_monitor_agent_to_completion_cleans_existing_session() -> None:
-    handler, state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {
             "existing": [
                 (SessionStatus.RUNNING, "working"),
@@ -185,6 +198,7 @@ def test_monitor_agent_to_completion_cleans_existing_session() -> None:
             ]
         }
     )
+    handler, state = pipeline.handler, pipeline.state
     handle = _session_handle("existing", AgentType.CODEX)
 
     result = run(
@@ -199,13 +213,14 @@ def test_monitor_agent_to_completion_cleans_existing_session() -> None:
 
 
 def test_withhandler_delegation_returns_failure_status() -> None:
-    handler, state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {
             "worker-fail": [
                 (SessionStatus.FAILED, "fatal error from mock"),
             ]
         }
     )
+    handler, state = pipeline.handler, pipeline.state
 
     result = run(
         _install_raw_handler(handler)(_run_completion("worker-fail", _build_config())),
@@ -219,12 +234,13 @@ def test_withhandler_delegation_returns_failure_status() -> None:
 
 
 def test_withhandler_multiple_agent_delegations_in_sequence() -> None:
-    handler, state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {
             "alpha": [(SessionStatus.DONE, "alpha output")],
             "beta": [(SessionStatus.DONE, "beta output")],
         }
     )
+    handler, state = pipeline.handler, pipeline.state
 
     result = run(
         _install_raw_handler(handler)(_run_two_completions(_build_config())),
@@ -258,9 +274,10 @@ def test_withhandler_protocol_compliance_with_explicit_launch_handler() -> None:
             )
         yield Pass(effect, k)
 
-    lifecycle_handler, lifecycle_state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {"typed-flow": [(SessionStatus.DONE, "typed done")]}
     )
+    lifecycle_handler, lifecycle_state = pipeline.handler, pipeline.state
 
     wrapped = _install_raw_handler(lifecycle_handler)(
         _install_raw_handler(launch_only_handler)(
@@ -290,10 +307,11 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
                 return (yield Resume(k, handle))
         yield Pass(effect, k)
 
-    fallback_handler, fallback_state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {"fallback-agent": [(SessionStatus.DONE, "fallback output")]},
         launch_agent_override=AgentType.CODEX,
     )
+    fallback_handler, fallback_state = pipeline.handler, pipeline.state
 
     wrapped = _install_raw_handler(fallback_handler)(
         _install_raw_handler(primary_handler)(
@@ -316,7 +334,7 @@ def test_withhandler_fallback_when_primary_agent_unavailable() -> None:
 
 
 def test_interactive_session_launches_with_interactive_lifecycle() -> None:
-    handler, state = _make_pipeline_handler(
+    pipeline = _make_pipeline_handler(
         {
             "chat": [
                 (SessionStatus.BLOCKED, "ready"),
@@ -324,6 +342,7 @@ def test_interactive_session_launches_with_interactive_lifecycle() -> None:
             ]
         }
     )
+    handler, state = pipeline.handler, pipeline.state
 
     wrapped = _install_raw_handler(handler)(_run_interactive(
             "chat",
