@@ -142,7 +142,7 @@
   ;; 担い手が終わりを報告する(切り離した task は結果を保持する)。
   (<- finished tuple (beat (get remote 0) 1000 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
   (<- alive tuple (beat (get finished 0) (- later 500) []))
-  (val swept (tick (get alive 0) later T))
+  (val swept (! (tick (get alive 0) later T)))
   (assert (= (. (get swept.tasks id) phase) "finished"))
   (assert (in (get kept 1) swept.programs) "結果を保持している task の Program が消えた")
   (assert (in (get remote-program 1) swept.programs) "走っている task の Program が消えた")
@@ -150,7 +150,7 @@
   ;; 行が消えたら(保持を解く・呼び手が task を落とす)、置いてから猶予を過ぎた Program は消える。
   (<- released tuple (call swept "DELETE" "/detached/job-k" None (+ later 1000)))
   (<- dropped tuple (call (get released 0) "DELETE" (+ "/tasks/" (get remote 2 "task")) None (+ later 1000)))
-  (val gone (tick (get dropped 0) (+ later 2000) T))
+  (val gone (! (tick (get dropped 0) (+ later 2000) T)))
   (assert (not-in (get kept 1) gone.programs) gone.programs)
   (assert (not-in (get remote-program 1) gone.programs) gone.programs))
 

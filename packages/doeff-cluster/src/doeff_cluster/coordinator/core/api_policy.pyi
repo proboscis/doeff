@@ -1,9 +1,11 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = api_policy.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from doeff import Program as _Program
 from dataclasses import replace as replace
 from traceback import extract_tb as extract_tb
 from doeff_cluster.coordinator.intent.request_bodies import BodyMalformed as BodyMalformed
 from doeff_cluster.coordinator.intent.request_bodies import BodyUnreadable as BodyUnreadable
+from doeff_cluster.coordinator.intent.request_bodies import RequestBody as RequestBody
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import PlainText as PlainText
@@ -21,6 +23,8 @@ from doeff_cluster.coordinator.intent.cluster_model import RolloutTarget as Roll
 from doeff_cluster.coordinator.intent.cluster_model import StateReply as StateReply
 from doeff_cluster.coordinator.intent.cluster_model import DeploymentSeen as DeploymentSeen
 from doeff_cluster.coordinator.intent.cluster_model import DeploymentUnreadable as DeploymentUnreadable
+from doeff_cluster.coordinator.intent.cluster_model import ServiceBody as ServiceBody
+from doeff_cluster.coordinator.intent.cluster_model import LegacyJobs as LegacyJobs
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
 from doeff_cluster.coordinator.core.metrics_policy import record_metrics as record_metrics
 from doeff_cluster.coordinator.core.metrics_policy import metrics_text as metrics_text
@@ -37,7 +41,6 @@ from doeff_cluster.coordinator.core.cluster_policy import lease_write as lease_w
 from doeff_cluster.coordinator.core.cluster_policy import other_generation_boot as other_generation_boot
 from doeff_cluster.coordinator.core.cluster_policy import alive as alive
 from doeff_cluster.coordinator.core.cluster_policy import remember_keep_marks as remember_keep_marks
-from doeff import run as run
 from doeff_cluster.coordinator.core.resource_policy import Refused as Refused
 from doeff_cluster.coordinator.core.resource_policy import refuse as refuse
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
@@ -87,10 +90,10 @@ ROLLOUT_ACTOR: str
 TICK_MS: int
 ROLLOUT_TICK_MS: int
 
-def settle(before: ClusterState, after: ClusterState, actor: str, now: int, timing: ClusterTiming) -> ClusterState:
+def settle(before: ClusterState, after: ClusterState, actor: str, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
 
-def tick(state: ClusterState, now: int, timing: ClusterTiming) -> ClusterState:
+def tick(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
 ALIVE_MARK_MS: int
 
@@ -112,7 +115,7 @@ def ready_instance(state: ClusterState, name: str, now: int, timing: ClusterTimi
 def deployments_to_observe(state: ClusterState, now: int) -> list:
     ...
 
-def plan_rollouts(state: ClusterState, now: int, timing: ClusterTiming, naming: ClusterNaming=...) -> tuple:
+def plan_rollouts(state: ClusterState, now: int, timing: ClusterTiming, naming: ClusterNaming=...) -> _Program[tuple, object]:
     ...
 
 def scale_service(state: ClusterState, name: str, replicas: int) -> ClusterState:
@@ -124,13 +127,13 @@ def record_action(state: ClusterState, action: dict, ok: bool, error: str | None
 def loose_actor(request: Request) -> str:
     ...
 
-def detached_reply(state: ClusterState, reply: Reply, request: Request, now: int, timing: ClusterTiming) -> tuple:
+def detached_reply(state: ClusterState, reply: Reply, request: Request, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def unknown_request(state: ClusterState, request: Request) -> tuple:
     ...
 
-def respond_resources(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
+def respond_resources(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def respond_observations(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
@@ -139,20 +142,20 @@ def respond_observations(state: ClusterState, request: Request, body: object, pa
 def quiet_heartbeat(before: ClusterState, heard: ClusterState, name: str, now: int, timing: ClusterTiming) -> bool:
     ...
 
-def respond_legacy(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming, settled: bool=False) -> tuple:
+def respond_legacy(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming, settled: bool=False) -> _Program[tuple, object]:
     ...
 
-def respond_workers(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
+def respond_workers(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def respond_board(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
     ...
 
-def respond_tasks(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
+def respond_tasks(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
-def respond_stores(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
+def respond_stores(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
-def respond(state: ClusterState, request: Request, now: int, timing: ClusterTiming, body: object, settled: bool=False) -> tuple:
+def respond(state: ClusterState, request: Request, now: int, timing: ClusterTiming, body: RequestBody | ServiceBody | LegacyJobs | BodyUnreadable, settled: bool=False) -> _Program[tuple, object]:
     ...

@@ -33,7 +33,7 @@
   (if (or (deployments-to-observe state now) (nodes-to-read state now))
       None
       (do (val before (with-derived-capabilities state naming.node-capabilities))
-          (val planned (plan-rollouts before now timing naming))
+          (<- planned tuple (plan-rollouts before now timing naming))
           (if (get planned 1) None (stamp before (get planned 0) ROLLOUT-ACTOR now timing)))))
 
 
@@ -80,7 +80,8 @@
    action も出さず何も変えず、待ちが「変わった」と答えず期限の待ちを吸える歩(変わってよいのは生存の印と Rollout の拍の刻だけ)。"
   (val state before.state)
   (var rolled None)
-  (when (= (tick state at timing) state)
+  (<- ticked ClusterState (tick state at timing))
+  (when (= ticked state)
     (if (>= (- at state.rollout-tick-ms) ROLLOUT-TICK-MS)
         (do (<- after (| ClusterState None) (rollout-quiet state at timing naming))
             (when (= after state)

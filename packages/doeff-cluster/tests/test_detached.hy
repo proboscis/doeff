@@ -722,9 +722,9 @@
   (:= s (get reply-6 0))                     ; 担い手の heartbeat が lease を 19000 まで延ばす
   (val reply-7 (! (call s "GET" "/detached/job-2" 15000)))
   (:= s (get reply-7 0))   ; 呼び手の読みは lease に触らない
-  (:= s (tick s 18000 T))
+  (:= s (! (tick s 18000 T)))
   (assert (= (. (get s.tasks id) phase) "assigned"))
-  (:= s (tick s 19001 T))                            ; 担い手が沈黙した = worker の死
+  (:= s (! (tick s 19001 T)))                            ; 担い手が沈黙した = worker の死
   (assert (= (. (get s.tasks id) phase) "lost"))
   (assert (in "lease" (. (get s.tasks id) detail))))
 
@@ -747,7 +747,7 @@
   ;; 新しい世代の heartbeat は旧い世代の task の lease を延ばさない。旧い世代が戻らなければ lease 切れ(10 秒)で lost。
   (val reply-11 (! (beat s "w" 9000 :boot "b2")))
   (:= s (get reply-11 0))
-  (:= s (tick s 10001 T))
+  (:= s (! (tick s 10001 T)))
   (assert (= (. (get s.tasks id) phase) "lost"))
   (assert (in "lease" (. (get s.tasks id) detail))))
 
@@ -829,7 +829,7 @@
   ;; 旧い世代が消えた(heartbeat が止まった)= lease 切れで lost。新しい世代の heartbeat は延ばさない。
   (val reply-23 (! (beat s "w" 20000 :boot "new")))
   (:= s (get reply-23 0))
-  (:= s (tick s 22001 T))
+  (:= s (! (tick s 22001 T)))
   (assert (= (. (get s.tasks silent) phase) "lost"))
   (assert (in "lease" (. (get s.tasks silent) detail)))
   ;; 新しい世代の生存はそのまま(旧い世代の沈黙は worker の沈黙ではない)。
@@ -877,7 +877,7 @@
     (:= s (get beaten 0))
     (val reply (get beaten 2))
     (assert (not (.get reply "superseded" False)) #(t reply)))
-  (:= s (tick s 65000 T))
+  (:= s (! (tick s 65000 T)))
   (val reply-30 (! (call s "GET" "/workers/w" 65000)))
   (:= view (get reply-30 2))
   (assert (= #((get view "alive") (get view "ready") (get view "boot")) #(True True "new")) view))
@@ -1129,11 +1129,11 @@
   ;; 終わった行も置き場のキーを持つ(結果の保持の間は置き場の Program を参照し続け、行が消えたら掃除される)。
   (assert (= (. (get s.tasks id) program) SAMPLE-TASK-PROGRAM))
   ;; 担い手が死んで lease の時間が過ぎても、結果はそのまま
-  (:= s (tick s 60000 T))
+  (:= s (! (tick s 60000 T)))
   (setv #(_ _ view) (! (call s "GET" "/detached/job-4" 60000)))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 保持の期限(終わった時刻 1000 + 100 秒)を過ぎたら消える
-  (:= s (tick s 101001 T))
+  (:= s (! (tick s 101001 T)))
   (assert (= (! (phase-of s "job-4")) "unknown")))
 
 
