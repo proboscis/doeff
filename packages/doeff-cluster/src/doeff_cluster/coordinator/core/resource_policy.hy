@@ -9,13 +9,15 @@
 ;;;   持てば ReportReady の直近の報告の両方で決める。
 ;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
 ;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import json)
 (import typing [NoReturn])
+(import doeff_hy.table [Table TableWrite])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord
+                                                       ReportOrigin ReadinessReport MetricsReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of])
@@ -132,33 +134,47 @@
    "specHash" want "placement" row.placement})
 
 
-(defn #^ bool report-matches [#^ dict report #^ dict proc]
-  "報告が、今動いている process(running-process の ok の答え)の物か。worker・世代の名・試行の番号・spec の指紋・割り当ての世代が全部一致する。"
+(defn #^ bool report-matches [#^ ReportOrigin origin #^ dict proc]
+  "報告(の送り手の世代 origin)が、今動いている process(running-process の ok の答え)の物か。worker・世代の名・試行の番号・spec の指紋・
+   割り当ての世代が全部一致する。"
   (and (get proc "ok")
-       (= (.get report "worker") (get proc "worker"))
-       (= (.get report "instance") (get proc "instance"))
-       (= (str (.get report "attempt")) (get proc "attempt"))
-       (= (.get report "specHash") (get proc "specHash"))
-       (= (.get report "placement") (get proc "placement"))))
+       (= origin.worker (get proc "worker"))
+       (= origin.instance (get proc "instance"))
+       ;; 試行の番号は送られた型のまま残す(文字列か整数)— 比べる時だけ running-process の綴り(文字列)に揃える。
+       (= (str origin.attempt) (get proc "attempt"))
+       (= origin.spec-hash (get proc "specHash"))
+       (= origin.placement (get proc "placement"))))
 
 
-(defn #^ (| dict None) current-report [#^ (| tuple None) reports #^ dict proc]
-  "報告の列(古い順)のうち、今動いている process の最新の物。"
-  (next (gfor r (reversed (or reports #())) :if (report-matches r proc) r) None))
+(defn #^ (| ReadinessReport MetricsReport None) current-report [#^ (| tuple None) reports #^ dict proc]
+  "報告の列(古い順 — 観測の表 readiness か metrics の Service の行)のうち、今動いている process の最新の物。"
+  (next (gfor r (reversed (or reports #())) :if (report-matches r.origin proc) r) None))
 
 
-(defn #^ tuple keep-report [#^ (| tuple None) reports #^ dict report]
+(defn #^ tuple keep-report [#^ (| tuple None) reports #^ (| ReadinessReport MetricsReport) report]
   "世代ごとに最新 1 つ・直近の REPORTS-KEPT 世代だけ残す(古い順)。担い手の heartbeat より先に新しい process の報告が届いても、
    heartbeat が追いついた時にその報告を数えられるよう、1 つに畳まない。"
-  (setv others (lfor r (or reports #()) :if (!= (.get r "instance") (.get report "instance")) r))
+  (setv others (lfor r (or reports #()) :if (!= r.origin.instance report.origin.instance) r))
   (tuple (cut (+ others [report]) (- REPORTS-KEPT) None)))
 
 
-(defn #^ dict report-fields [#^ (| ReadinessBody MetricsBody) body #^ int now]
-  "報告の本文(道の型に解いた値 — #2445)から、送り手の process の世代と時刻を残す形にする(readiness と計器で同じ)。"
-  {"worker" body.worker "pid" body.pid "revision" body.revision
-   "instance" body.instance "attempt" body.attempt "specHash" body.spec-hash
-   "placement" body.placement "at" now})
+(defk report-origin [body now]
+  {:pre [(: body (| ReadinessBody MetricsBody)) (: now int)] :post [(: % ReportOrigin)] :tags {:context "coordinator" :role "judgment"}}
+  "報告の本文(受け口が JSON から道の型に解いた値 — #2445)の送り手の process の世代に、受けた時刻を添えるため(準備の報告と計器の報告で
+   同じ — 数えるのは今の process の報告だけ・report-matches)。"
+  (ReportOrigin :worker body.worker :pid body.pid :revision body.revision :instance body.instance :attempt body.attempt
+                :spec-hash body.spec-hash :placement body.placement :at now))
+
+
+(defk readiness-report [body now]
+  {:pre [(: body ReadinessBody) (: now int)] :post [(: % ReadinessReport)] :tags {:context "coordinator" :role "judgment"}}
+  "準備の報告の本文を、観測の表 readiness に置く記録にするため。ready・reason・role は fake(readiness-memory)と同じ関数
+   (reported-readiness)で揃える — role = active(仕事をしている)か standby(lease を他が持つ間の待機)。旧い報告は active。
+   reported-readiness の答えは shared の口の形(3 欄の dict — 使い手の検が readiness-memory の記録として読む)のまま受ける。記録の型へ
+   移すのは使い手と同じ版で出す別の単位(#2756 の comment)。"
+  (<- origin ReportOrigin (report-origin body now))
+  (<- claim dict (reported-readiness body.ready body.reason body.role))
+  (ReadinessReport :origin origin :ready (get claim "ready") :reason (get claim "reason") :role (get claim "role")))
 
 
 (defn #^ dict service-readiness [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing
@@ -172,16 +188,16 @@
   (when (is job.readiness None)
     (return (verdict "Ready" "process が動いている(readiness の宣言なし)")))
   (setv window-ms (int (* 1000 (get job.readiness "windowSeconds")))
-        report (current-report (.get state.readiness name) proc))
+        report (current-report (.row state.observations.readiness name) proc))
   (when (is report None)
     (return (verdict (if (< (- now state.started-ms) window-ms) "Unknown" "NotReady")
                      (.format "今動いている process(世代 {})からの準備できたの報告がまだ無い" (get proc "instance")))))
-  (setv age (- now (get report "at")))
-  (setv role (.get report "role" "active"))
+  (setv age (- now report.origin.at))
+  (setv role report.role)
   (cond
     (> age window-ms) (verdict "NotReady" (.format "最後の報告から {} 秒(window {} 秒)" (// age 1000) (// window-ms 1000)))
-    (not (get report "ready")) (| (verdict "NotReady" (+ "報告: " (.get report "reason" ""))) {"role" role})
-    True (| (verdict "Ready" (.get report "reason" "")) {"role" role})))
+    (not report.ready) (| (verdict "NotReady" (+ "報告: " report.reason)) {"role" role})
+    True (| (verdict "Ready" report.reason) {"role" role})))
 
 
 ;; --- 版の判定(2026-09-29・#1013)---------------------------------------------------------------
@@ -324,13 +340,15 @@
 
 
 (defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ ReadinessBody body #^ int now]
+  "POST /resources/Service/<名>/readiness: Service name の準備の報告を観測の表 readiness の名の行へ足すため(世代ごとに最新 1 つ —
+   keep-report)。表は保存しないが Service の status.ready の材料なので、版の比べ(dirty-keys)が読む。"
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
-  ;; ready・reason・role の残す形は fake(readiness-memory)と同じ関数で揃える。role = active(仕事をしている)か standby(lease を
-  ;; 他が持つ間の待機)。旧い報告は active。
-  (setv report (| (report-fields body now)
-                  (run (reported-readiness body.ready body.reason body.role))))
-  (replace state :readiness (| state.readiness {name (keep-report (.get state.readiness name) report)})))
+  (setv report (run (readiness-report body now))
+        seen state.observations)
+  (replace state :observations
+           (replace seen :readiness (.with-writes seen.readiness
+                                                  #((TableWrite name (keep-report (.row seen.readiness name) report)))))))
 
 
 ;; --- 資源の写し(版と記録の比べる単位) ------------------------------------------------------------
@@ -413,12 +431,18 @@
     _ (raise (ValueError (+ "snapshot の鍵の種類を知らない: " key)))))
 
 
-(defn #^ frozenset moved-names [#^ dict before #^ dict after]
-  "2 つの写像で、値が同じ物(is)でない鍵 — 足した・消した・置き換えた鍵。状態は置き換えで進む(replace)ので、触らない値は同じ物のまま。"
+(defn #^ frozenset moved-names [#^ (| dict Table) before #^ (| dict Table) after]
+  "2 つの写像(か書き換えない表 Table — 観測の表 readiness・#2756)で、値が同じ物(is)でない鍵 — 足した・消した・置き換えた鍵。状態は
+   置き換えで進む(replace・with-writes)ので、触らない値は同じ物のまま。"
   ;; 写像そのものが同じ物なら、どの鍵も同じ物(写像をその場で書き換えない)— 鍵を並べずに空を返す(#2716)。
-  (if (is before after)
-      (frozenset)
-      (frozenset (gfor k (| (set before) (set after)) :if (is-not (.get before k) (.get after k)) k))))
+  (match #(before after)
+    #(a b) :if (is a b) (frozenset)
+    ;; 表は写像ではない(鍵は keys・行は row で引く)。with-writes は書いた鍵の行だけを新しい物にし、他の行は同じ物のまま運ぶ。
+    #((Table) (Table)) (frozenset (gfor k (| (frozenset (.keys before)) (frozenset (.keys after)))
+                                        :if (is-not (.row before k) (.row after k)) k))
+    #((dict) (dict)) (frozenset (gfor k (| (set before) (set after)) :if (is-not (.get before k) (.get after k)) k))
+    _ (raise (TypeError (.format "moved-names は同じ種類の 2 つ(写像どうしか表どうし)を比べる: {} と {}"
+                                 (. (type before) __name__) (. (type after) __name__))))))
 
 
 (defn #^ frozenset status-row-names [#^ ClusterState state #^ str worker]
@@ -433,13 +457,14 @@
   "before → after で行が変わりうる資源の鍵(snapshot の行の材料が変わった資源の上集合)と、版の記録の無い資源の鍵(adopt — 行が
    同じでも版を振る)。stamp はこの鍵の行だけを組んで比べる。行は同じ now で組むので、材料の値が同じ物のままの資源の行は前後で等しい
    (時刻だけで変わる観測は snapshot に入れない・生死は note-liveness が silent に写して材料にする)。材料:
-   - Service: 宣言・置き先・並べた置き先・入れ替えの見張り・readiness の報告・受け付けない行(名ごと)/ 置き先か並べた置き先の
+   - Service: 宣言・置き先・並べた置き先・入れ替えの見張り・準備の報告(観測の表 readiness)・受け付けない行(名ごと)/ 置き先か並べた置き先の
      worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 置き先の無い Service は全 worker の生存と
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
    - Worker: 記録・沈黙の集合の出入り・drain。Task・Rollout: 自分の行。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
-                       (moved-names before.readiness after.readiness) (moved-names before.refused after.refused))
+                       (moved-names before.observations.readiness after.observations.readiness)
+                       (moved-names before.refused after.refused))
         workers-moved (| (moved-names before.workers after.workers) (moved-names before.statuses after.statuses))
         all-services (| (frozenset jobs-before) (frozenset jobs-after) (frozenset before.refused) (frozenset after.refused))
         global-moved (or (!= before.started-ms after.started-ms) (is-not before.drains after.drains))
@@ -547,7 +572,7 @@
   "資源の種類ごとの変わりやすい観測(比べる単位 snapshot に入れない物 — 資源の画面に足す)。"
   (cond
     (= kind "Service")
-      (do (setv a (.get state.placements name) reports (.get state.readiness name))
+      (do (setv a (.get state.placements name) reports (.row state.observations.readiness name))
           (ServiceObserved :ready-reason (get (service-readiness state name now timing) "reason")
                            :last-readiness (if reports (get reports -1) None)
                            :process (if a (job-status-row state a.worker name) None)
@@ -693,9 +718,12 @@
             (refuse 403 (.format "宣言を消せるのは所有者({})か、明示の force つきの delete だけ" current.owner)))
           (setv busy (active-rollouts-touching state [(target-key (RolloutTarget :kind "Service" :name name))]))
           (when (and busy (not force)) (refuse 409 (+ "この Service を扱う Rollout が進行中: " (.join ", " busy))))
+          ;; 消した Service の準備と計器の報告も観測の表から外す(同じ名で作り直した Service に前の process の報告を数えない)。
+          (setv seen state.observations
+                dropped #((TableWrite name None)))
           (replace state :jobs (tuple (gfor j state.jobs :if (!= j.spec.name name) j))
-                         :readiness (dfor #(k v) (.items state.readiness) :if (!= k name) k v)
-                         :metrics (dfor #(k v) (.items state.metrics) :if (!= k name) k v)))
+                         :observations (replace seen :readiness (.with-writes seen.readiness dropped)
+                                                     :metrics (.with-writes seen.metrics dropped))))
     (= kind "Rollout")
       (do (setv current (.get state.rollouts name))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))

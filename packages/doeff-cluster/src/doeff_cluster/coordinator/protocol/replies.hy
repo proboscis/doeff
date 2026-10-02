@@ -15,7 +15,7 @@
                                                        BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                                                        DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
-                                                       ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable])
+                                                       ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable ReadinessReport])
 (import doeff_cluster.shared.intent.warm_model [WarmState])
 (import doeff_cluster.shared.core.warm_rules [warm-state->json])
 (import doeff_hy.wire [dump])
@@ -145,13 +145,26 @@
     _ None))
 
 
+(defk readiness-report-json [report]
+  {:pre [(: report (| ReadinessReport None))] :post [(: % (| (get Mapping #(str object)) None))]
+   :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "Service の最後の準備の報告を、資源の画面の status.lastReadiness の値の JSON にするため(#2756 の前に状態の readiness の行をそのまま
+   写していた形と同じ — 欄の順は worker・pid・revision・instance・attempt・specHash・placement・at・ready・reason・role、attempt は
+   送られた型のまま、欠けた欄は null・報告が無ければ null)。"
+  (match report
+    (ReadinessReport :origin origin :ready ready :reason reason :role role)
+      {"worker" origin.worker "pid" origin.pid "revision" origin.revision "instance" origin.instance "attempt" origin.attempt
+       "specHash" origin.spec-hash "placement" origin.placement "at" origin.at "ready" ready "reason" reason "role" role}
+    _ None))
+
+
 (defk observed-json [#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed]
   {:pre [(: observed (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の種類ごとの観測 → status に足す JSON の欄(#2595 の前に resource_policy.resource-json が足していた欄と同じ)。"
   (cond
     (isinstance observed ServiceObserved)
       {"readyReason" observed.ready-reason
-       "lastReadiness" observed.last-readiness
+       "lastReadiness" (! (readiness-report-json observed.last-readiness))
        "process" (if (is observed.process None) None (status-row-to-json observed.process))
        "version" (! (version-json observed.version observed.running))}
     (isinstance observed WorkerObserved) {"silentMs" observed.silent-ms "alive" observed.alive}
