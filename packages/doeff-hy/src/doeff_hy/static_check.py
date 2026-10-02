@@ -41,6 +41,8 @@ import sys
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import groupby
+from operator import itemgetter
 from pathlib import Path
 from types import ModuleType
 
@@ -611,13 +613,48 @@ def _utf16_to_index(line: str, units: int) -> int:
     return len(line)
 
 
-def locate(projection: Projection, line: int, character: int) -> HyPosition:
-    """展開した Python の位置(0 始まり)を、それを含む一番内側の node の Hy の位置へ。"""
-    lines = projection.text.split("\n")
+@dataclass(frozen=True)
+class SpanIndex:
+    """1 つの展開の位置の索引 — 診断ごとに全文を行へ割り直し、全部の範囲を頭から調べ直さないため(agora-redesign #2846:
+    赤が 1,402 件の file で locate が 26 秒)。lines = 展開した Python の行・covering = 行の番号 → その行に掛かる範囲の
+    番号(projection.spans の元の順)。範囲は始まりの行から終わりの行まで(終わりの行も含む)の全部の行に載る。"""
+
+    spans: tuple[Span, ...]
+    lines: tuple[str, ...]
+    covering: tuple[tuple[int, ...], ...]
+
+
+def span_index(projection: Projection) -> SpanIndex:
+    """展開 1 つの位置の索引を 1 度だけ作る(locate を同じ展開の診断の数だけ呼ぶため)。"""
+    rows = max((span.end[0] for span in projection.spans), default=-1) + 1
+    # (行, 範囲の番号) の組を行・番号の順に並べ、行ごとにまとめる(番号の順 = projection.spans の元の順)。
+    pairs = sorted(
+        (row, number)
+        for number, span in enumerate(projection.spans)
+        for row in range(span.start[0], span.end[0] + 1)
+    )
+    by_row = {
+        row: tuple(number for _, number in group)
+        for row, group in groupby(pairs, key=itemgetter(0))
+    }
+    return SpanIndex(
+        projection.spans,
+        tuple(projection.text.split("\n")),
+        tuple(by_row.get(row, ()) for row in range(rows)),
+    )
+
+
+def locate(index: SpanIndex, line: int, character: int) -> HyPosition:
+    """展開した Python の位置(0 始まり)を、それを含む一番内側の node の Hy の位置へ。
+
+    点を含む範囲はどれも点の行に掛かるので、その行に掛かる範囲だけを元の順で調べる(含まない範囲は元から選ばれないので、
+    答えは全部の範囲を調べた時と同じ)。"""
+    lines = index.lines
     column = _utf16_to_index(lines[line], character) if line < len(lines) else character
     point = (line, column)
     best: Span | None = None
-    for span in projection.spans:
+    for number in index.covering[line] if 0 <= line < len(index.covering) else ():
+        span = index.spans[number]
         contains = span.start <= point < span.end or span.start == point
         inner = best is None or (span.start >= best.start and span.end <= best.end)
         if contains and inner:
@@ -671,14 +708,25 @@ def run_pyright(
             ) from error
     diagnostics: list[Diagnostic] = []
     general = output.get("generalDiagnostics", []) if isinstance(output, dict) else []
-    for item in general if isinstance(general, list) else []:
-        if not isinstance(item, dict):
-            continue
-        projection = written.get(Path(str(item.get("file", ""))).resolve())
+    items = [
+        item for item in (general if isinstance(general, list) else []) if isinstance(item, dict)
+    ]
+    # 位置の索引は、診断の在る展開ごとに 1 度だけ作る。
+    named = {Path(str(item.get("file", ""))).resolve() for item in items}
+    indexes = {
+        destination: span_index(projection)
+        for destination, projection in written.items()
+        if destination in named
+    }
+    for item in items:
+        destination = Path(str(item.get("file", ""))).resolve()
+        projection = written.get(destination)
         if projection is None:
             continue
         start = item.get("range", {}).get("start", {})
-        position = locate(projection, int(start.get("line", 0)), int(start.get("character", 0)))
+        position = locate(
+            indexes[destination], int(start.get("line", 0)), int(start.get("character", 0))
+        )
         diagnostics.append(
             Diagnostic(
                 str(projection.source.relative_to(root)),
