@@ -9,9 +9,10 @@ left with the authority or the code path to stop the daemon. 28 daemons at a
 over 4 days on the shared dev host (34 processes, 769MB RSS, ~250 polls/s).
 
 The boundary under test is therefore OUT OF BAND of the fixture: the harness
-hands the daemon `DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=1` at spawn time, and
-the daemon itself watches its spawning parent. When that supervisor vanishes
-(getppid() changed — SIGKILL, hard crash, plain exit, anything), the daemon
+hands the daemon `DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED=<its own pid>` at spawn
+time, and the daemon itself watches its spawning parent. When that supervisor
+vanishes (getppid() is no longer that pid — SIGKILL, hard crash, plain exit,
+anything, even while the daemon is still starting), the daemon
 
   1. reaps every ACTIVE session it launched (non-adopted rows, cleanup
      semantics — killing the mux session takes the parked
@@ -25,7 +26,8 @@ parent's death, the pre-existing restart/durability physics (S10/S15).
 
 S28a runs the issue's acceptance counterexample end to end (harness + parked
 agent, driver SIGKILLed); S28c isolates the serve-level mechanism without any
-mux session (cheap, no tmux).
+mux session (cheap, no tmux); S28e kills the spawner while the daemon is still
+starting, under a subreaper that is not pid 1 (agora-redesign #3026).
 """
 
 import contextlib
@@ -225,7 +227,7 @@ agentd_bin, runtime_dir, knob = sys.argv[1], sys.argv[2], sys.argv[3]
 env = {k: v for k, v in os.environ.items()
        if k != "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"}
 if knob == "1":
-    env["DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"] = "1"
+    env["DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"] = str(os.getpid())
 log = open(os.path.join(runtime_dir, "agentd.log"), "a")
 proc = subprocess.Popen(
     [agentd_bin,
@@ -347,6 +349,103 @@ def test_s28c_with_knob_daemon_self_evicts_after_parent_death() -> None:
         )
     finally:
         _terminate_pid(daemon_pid)
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+
+# Early spawner: hand the daemon this process's pid as its supervisor (as the
+# harness does), report the daemon pid and exit AT ONCE — the daemon is still
+# importing, before serve. argv: <agentd_bin> <runtime_dir>
+_EARLY_SPAWNER = r"""
+import json, os, subprocess, sys
+agentd_bin, runtime_dir = sys.argv[1], sys.argv[2]
+env = dict(os.environ)
+env["DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED"] = str(os.getpid())
+log = open(os.path.join(runtime_dir, "agentd.log"), "a")
+proc = subprocess.Popen(
+    [agentd_bin,
+     "--db", os.path.join(runtime_dir, "agentd.sqlite"),
+     "--socket", os.path.join(runtime_dir, "agentd.sock"),
+     "serve"],
+    stdout=log, stderr=subprocess.STDOUT, env=env,
+)
+print(json.dumps({"daemon_pid": proc.pid}), flush=True)
+os._exit(0)
+"""
+
+# Subreaper parent: become the reparenting target of the early spawner's
+# daemon (the shape of a dev host whose user systemd is a subreaper — orphans
+# land on a pid that is not 1), then wait for the daemon to exit by itself.
+# argv: <agentd_bin> <runtime_dir> <budget_s> <early spawner source>
+_SUBREAPER_PARENT = r"""
+import ctypes, json, os, signal, subprocess, sys, time
+agentd_bin, runtime_dir, budget_s, spawner = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
+PR_SET_CHILD_SUBREAPER = 36
+if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+    print(json.dumps({"error": "prctl(PR_SET_CHILD_SUBREAPER) failed"}), flush=True)
+    sys.exit(1)
+done = subprocess.run([sys.executable, "-c", spawner, agentd_bin, runtime_dir],
+                      capture_output=True, text=True, timeout=30)
+daemon_pid = json.loads(done.stdout.strip().splitlines()[-1])["daemon_pid"]
+started = time.monotonic()
+while time.monotonic() - started < budget_s:
+    if os.waitpid(daemon_pid, os.WNOHANG)[0] == daemon_pid:
+        print(json.dumps({"daemon_pid": daemon_pid,
+                          "exited_after_s": round(time.monotonic() - started, 1)}), flush=True)
+        sys.exit(0)
+    time.sleep(0.2)
+os.kill(daemon_pid, signal.SIGKILL)
+os.waitpid(daemon_pid, 0)
+print(json.dumps({"daemon_pid": daemon_pid, "exited_after_s": None}), flush=True)
+"""
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="PR_SET_CHILD_SUBREAPER is Linux-only",
+)
+def test_s28e_daemon_whose_spawner_dies_during_startup_self_evicts() -> None:
+    """The leak of 2026-10-02/03 (#3026): the spawner died while the daemon was
+    still starting, the daemon was reparented to a subreaper that is not pid 1
+    (user systemd), and the watch — which used to take its first parent at
+    serve time — took that subreaper for the supervisor and never fired. The
+    daemon must compare its parent against the pid the knob carries."""
+    runtime_dir = tempfile.mkdtemp(prefix="agentd-conf-s28-", dir="/tmp")
+    try:
+        parent = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _SUBREAPER_PARENT,
+                str(resolve_agentd_bin()),
+                runtime_dir,
+                "30",
+                _EARLY_SPAWNER,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        line = parent.stdout.strip().splitlines()[-1] if parent.stdout.strip() else "{}"
+        info = json.loads(line)
+        log_path = Path(runtime_dir) / "agentd.log"
+        log_text = (
+            log_path.read_text(encoding="utf-8", errors="replace")
+            if log_path.exists()
+            else ""
+        )
+        failed = f"subreaper parent failed: {info} rc={parent.returncode}\nstderr={parent.stderr}\n{log_text}"
+        assert "error" not in info, failed
+        assert parent.returncode == 0, failed
+        assert info["exited_after_s"] is not None, (
+            f"daemon (pid {info['daemon_pid']}) outlived a spawner that died during"
+            f" its startup — the watch took the reparenting target for the"
+            f" supervisor\n{log_text}"
+        )
+        assert "supervisor vanished" in log_text, (
+            f"the daemon exited, but not through the orphan boundary\n{log_text}"
+        )
+    finally:
         shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
