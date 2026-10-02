@@ -7,14 +7,15 @@ Traverse の件は、Traverse を出した所と sequential() の間に入って
 数えはその呼びで見る。
 """
 
+from collections.abc import Iterable
+
 import pytest
 from doeff_traverse.collection import Collection, ItemResult
 from doeff_traverse.effects import Traverse
 from doeff_traverse.handlers import sequential
 from doeff_vm import EffectBase
 
-import doeff.handler_utils as handler_utils
-from doeff import Resume, do, run
+from doeff import Resume, do, handler_utils, run
 from doeff import handler as program_handler
 
 
@@ -47,7 +48,7 @@ def reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return seen
 
 
-def traverse_under_answer(items: object) -> Collection:
+def traverse_under_answer(items: Iterable[int]) -> Collection[int]:
     """sequential → answer(内側の handler)→ Traverse の順に入れて走らせる。"""
 
     @do
@@ -75,7 +76,7 @@ def test_a_traverse_with_no_item_reads_no_handlers(reads: list[int]) -> None:
 
 
 def test_a_traverse_of_failed_items_only_reads_no_handlers(reads: list[int]) -> None:
-    failed = Collection([ItemResult(index=0, value=ValueError("earlier"), failed=True)])
+    failed: Collection[int] = Collection([ItemResult(index=0, value=ValueError("earlier"), failed=True)])
     col = traverse_under_answer(failed)
     assert len(col.failed_items) == 1, "失敗した件はそのまま運ぶ"
     assert reads == [], "失敗した件だけなら走らせる件が無いので読まない"
