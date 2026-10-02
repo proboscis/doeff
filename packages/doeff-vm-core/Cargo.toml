@@ -30,3 +30,8 @@ pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
 name = "dispatch"
 harness = false
 required-features = ["python_bridge"]
+
+# 積み上げの数(memory_stats::work_counts)は process 全体の和なので、検 1 本だけの binary(別の process)で測る(#2851)。
+[[test]]
+name = "test_work_counts"
+required-features = ["python_bridge"]

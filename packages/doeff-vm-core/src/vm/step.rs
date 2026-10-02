@@ -23,6 +23,7 @@ impl VM {
     /// Execute one step.
     pub fn step(&mut self, signal: Signal) -> StepResult {
         self.steps = self.steps.wrapping_add(1);
+        crate::memory_stats::record_step();
         let Signal {
             action,
             error_context,
@@ -577,6 +578,7 @@ impl VM {
                 )
             });
 
+            crate::memory_stats::record_handler_call();
             let outcome = handler_callable.call_handler(vec![effect, k_value]);
 
             match outcome {
@@ -614,6 +616,7 @@ impl VM {
             // handle is needed — call_handler returns immediately, so the
             // continuation is either consumed by the returned DoCtrl or
             // freed on drop if the handler errors.
+            crate::memory_stats::record_handler_call();
             let outcome = handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
             match outcome {
                 Ok(doctrl) => continue_eval(doctrl, error_context),
@@ -832,6 +835,7 @@ impl VM {
                 )
             });
 
+            crate::memory_stats::record_handler_call();
             let outcome = handler_callable.call_handler(vec![effect, k_value]);
 
             match outcome {
@@ -849,6 +853,7 @@ impl VM {
             }
         } else {
             // Synchronous handler path — see eval_perform for rationale.
+            crate::memory_stats::record_handler_call();
             let outcome =
                 handler_callable.call_handler(vec![effect, Value::Continuation(k)]);
             match outcome {
