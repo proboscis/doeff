@@ -7,14 +7,17 @@
 ;;; 書きは doeff-hy の表の書き TableWrite(key = キー・value = 新しい値・消えたキーは None — #2722)。層 protocol と foundation の両方が読める
 ;;; 型で、写像を effect の欄に持たない。置き場の口(DurableStore.persist)と置き場の 1 行の形は #2446 の前と同じ(キー → 新しい値の差分)なので、
 ;;; wal-store が書きの組から差分に戻して渡し、移しの前の置き場はそのまま読める。
-(require doeff-hy.macros [defhandler <- val])
+(require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [dataclass])
-(import typing [Protocol])
+(import pathlib [Path])
+(import abc [ABC])
+(import types [NotImplementedType])
 (import doeff [EffectBase])
 (import doeff_hy.table [TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
+(import doeff_cluster.coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log])
 
 
 (defclass [(dataclass :frozen True)] Persist [EffectBase]
@@ -24,9 +27,110 @@
   (#^ (get tuple #(TableWrite ...)) writes))
 
 
-(defclass DurableStore [Protocol]
-  "wal-store が書く置き場の形(foundation/wal_store の WalStore と entry の MemoryWalStore がこの形を持つ)。"
-  (defn #^ None persist [self #^ dict delta] (raise NotImplementedError)))
+;; --- 置き場の 2 つの形と、それを切り分けて読み書きする口(#2785)------------------------------------------------
+;; 置き場は 2 つの形のどちらか(閉じた和 DurableStore):
+;;   ByteLog    = file の置き場(foundation/wal_store の WalStore)— byte の I/O だけを持ち、行と写しの形(wal_format)はこの口が綴り・検める。
+;;   DeltaStore = memory の置き場(entry の MemoryWalStore と、それを継いだ模擬の壊れた置き場)— file を持たないので形を綴らず、
+;;                差分と表をそのまま受け渡す。
+;; 層 protocol は foundation も entry も読めず、foundation も protocol を読めないので、名前のある共通の基底は置けない。形は method の名で
+;; 見分ける: 実行時は ABC の __subclasshook__ が型ごとに 1 度だけ判じ、ABC が答えを覚える(typing.Protocol の isinstance は欄ごとに
+;; inspect.getattr_static を撃ち、Persist ごとの契約と match で 1 回 50 µs ほど — Persist の CPU の 6 割 — かかった・#2785 の測り)。
+;; 静的な形(使い手の型検査が読む)は store.pyi の Protocol。kv / recovered はどちらの置き場も持つ(kv = 耐久になった全部のキー・
+;; recovered = 読み直しで捨てた最後の行の記録)。
+
+(defclass MethodShape [ABC]
+  "method の名(METHODS)を全部持つ型をその形と見なす基底 — ByteLog と DeltaStore が 1 つの判じ方を共有するため。"
+  (setv #^ (get tuple #(str ...)) METHODS #())
+  (defn [classmethod] #^ (| bool NotImplementedType) __subclasshook__ [cls #^ type other]
+    (if (and cls.METHODS (all (gfor name cls.METHODS (callable (getattr other name None))))) True NotImplemented)))
+
+
+(defclass ByteLog [MethodShape]
+  "file の置き場の形(foundation/wal_store の WalStore)— 読み書きの口が写しと log の byte を受け渡す相手。"
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
+  (#^ int seq)
+  (#^ int max-log-bytes)
+  (#^ Path snapshot)
+  (#^ Path log)
+  (setv METHODS #("exists" "check_place" "read_snapshot_bytes" "read_log_lines" "drop_tail" "append_line" "write_snapshot"))
+  (defn #^ bool exists [self] (raise NotImplementedError))
+  (defn #^ None check-place [self] (raise NotImplementedError))
+  (defn #^ (| bytes None) read-snapshot-bytes [self] (raise NotImplementedError))
+  (defn #^ (get list bytes) read-log-lines [self] (raise NotImplementedError))
+  (defn #^ None drop-tail [self #^ int kept #^ int size #^ str reason] (raise NotImplementedError))
+  (defn #^ int append-line [self #^ bytes line] (raise NotImplementedError))
+  (defn #^ None write-snapshot [self #^ bytes data] (raise NotImplementedError)))
+
+
+(defclass DeltaStore [MethodShape]
+  "memory の置き場の形(entry の MemoryWalStore)— 読み書きの口が差分と表をそのまま受け渡す相手。"
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
+  (setv METHODS #("exists" "load" "persist" "checkpoint"))
+  (defn #^ bool exists [self] (raise NotImplementedError))
+  (defn #^ (get dict #(str object)) load [self] (raise NotImplementedError))
+  (defn #^ None persist [self #^ (get dict #(str object)) delta] (raise NotImplementedError))
+  (defn #^ None checkpoint [self] (raise NotImplementedError)))
+
+
+(val DurableStore (| ByteLog DeltaStore))
+
+
+(defk durable-exists [store]
+  {:pre [(: store DurableStore)] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
+  "置き場に耐久の中身が在るか — 起動が置き場から読み直すか、以前の形の file から移すかを決めるため。"
+  (.exists store))
+
+
+(defk durable-load [store]
+  {:pre [(: store DurableStore)] :post [(: % (get dict #(str object)))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "耐久の中身を読み直し、全部のキーの表を返す(置き場の kv と seq も進める)— 起動が返事を済ませた書きを 1 つも失わずに状態を作るため。
+   file の置き場は写し → log の行を検めて当て、読めない最後の 1 行だけを捨てて切り詰める。途中の破損は WalCorrupted で何も書き換えない。"
+  (match store
+    (ByteLog)
+      (do (.check-place store)
+          (val snapshot (.read-snapshot-bytes store))
+          ;; 写しが無ければ空の表・番号 0 から当てる。
+          (val base (if (is snapshot None)
+                        (SnapshotRead :kv {} :seq 0)
+                        (! (read-snapshot snapshot (str store.snapshot)))))
+          (<- scan LogScan (scan-log (.read-log-lines store) base.seq base.kv (str store.log)))
+          (match scan.dropped
+            (DroppedTail :kept kept :size size :reason reason) (.drop-tail store kept size reason)
+            None None)
+          (setv store.kv scan.kv store.seq scan.seq)
+          store.kv)
+    (DeltaStore) (.load store)))
+
+
+(defk durable-persist [store delta]
+  {:pre [(: store DurableStore) (: delta (get dict #(str object)))] :post [(: % None)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "1 まとまりの差分(キー → 新しい値・消えたキーは None)を耐久にして(fsync 済み)から戻る — Persist の答え手と起動の書きが同じ
+   書き方をするため。file の置き場は log に checksum つきの 1 行を追記し、log が上限を超えたら写しにまとめ直す。空の差分は書かない。"
+  (match store
+    (ByteLog)
+      (when delta
+        (setv store.seq (+ store.seq 1))
+        (<- line bytes (encode-line store.seq delta))
+        (val size (.append-line store line))
+        (<- (apply-delta store.kv delta))
+        (when (> size store.max-log-bytes)
+          (<- (durable-checkpoint store))))
+    (DeltaStore) (.persist store delta))
+  None)
+
+
+(defk durable-checkpoint [store]
+  {:pre [(: store DurableStore)] :post [(: % None)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "全部のキーを写しにまとめ直し(fsync 済み)、その後で log を空にする — log を上限の内に保ち、以前の形から移した状態を 1 つの写しに
+   置くため。"
+  (match store
+    (ByteLog)
+      (do (<- data bytes (encode-snapshot store.seq store.kv))
+          (.write-snapshot store data))
+    (DeltaStore) (.checkpoint store))
+  None)
 
 
 (defhandler durable-states
@@ -40,9 +144,9 @@
 
 (defhandler wal-store [#^ DurableStore store]
   ;; 引数に残す理由: 置き場(開いた log の file と seq)は composition root が起動の時に 1 つ作って渡す
-  ;; 置き場の口は差分(キー → 新しい値)のまま — 書きの組から戻して渡す。
+  ;; 置き場の口は差分(キー → 新しい値)のまま — 書きの組から戻して、置き場の形を切り分ける口 durable-persist に渡す。
   (Persist [writes]
-    (.persist store (dfor w writes w.key w.value))
+    (<- (durable-persist store (dfor w writes w.key w.value)))
     (resume None)))
 
 
