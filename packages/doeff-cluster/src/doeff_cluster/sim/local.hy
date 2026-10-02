@@ -557,6 +557,12 @@
   (setv #^ (| str None) watch-failure None))
 
 
+(defrecord HostTruthChange
+  "ChangeHostTruth の答え: before = 世界が読んだ宿の真実・after = 置き直した宿の真実(世代が終わっていて直さなかったなら None)。"
+  (#^ HostTruth before)
+  (#^ (| HostTruth None) after))
+
+
 (defclass WorkerDied [Exception]
   "偽の宿の世代が終わった(node ごと死んだ・止めた後に次の世代が起きた)— その世代の run-worker をその場で終わらせる。")
 
@@ -578,6 +584,12 @@
 (defeffect PutHostTruth
   "worker name の宿の真実を置き直す。"
   {:fields [(: name str) (: truth HostTruth)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ChangeHostTruth
+  "worker name の世代 boot の宿の真実を読み、まだその世代なら change(宿の真実 → 宿の真実・純粋)で直して置き直す — 読んで直して書く組を
+   世界への問い 1 つにする(読みと書きを別々に聞くと 1 組ごとに世界を 2 度通る・#2668)。live = 真なら止まった宿も「終わった世代」と
+   数える(live-truth と同じ)・偽なら世代だけを見る。答え = HostTruthChange(読んだ真実と、置き直した真実 — 終わった世代なら None)。"
+  {:fields [(: name str) (: boot str) (: live bool) (: change Callable)] :answer HostTruthChange :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NextPid
   "次の process の番号(sim の中で重ならない)。"
@@ -1320,6 +1332,17 @@
   truth)
 
 
+(defk change-live-truth [name boot change]
+  {:pre [(: name str) (: boot str) (: change Callable)] :post [(: % HostTruthChange)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker name の世代 boot の宿の真実を change で直して置き直すため(読んで直して書く組を世界への問い 1 つに — #2668)。その世代がもう
+   終わっていれば live-truth と同じく WorkerDied で run-worker を終わらせる。答え = 読んだ真実と置き直した真実。"
+  (<- changed HostTruthChange (ChangeHostTruth name boot True change))
+  (when (is changed.after None)
+    (raise (WorkerDied (.format "worker {} の世代 {} は終わった(今は {}{})" name boot changed.before.boot
+                                (if changed.before.down "・止まっている" "")))))
+  changed)
+
+
 (defk accepted-programs [link wanted known]
   {:pre [(: link SimLink) (: wanted list) (: known dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
@@ -1340,7 +1363,10 @@
    job と task と温める表の行を宣言として返す。届かなければ desired-when-unreachable(本番と同じ判断)。"
   (<- parts SimParts (PartsOf))
   (<- plan SimPlan (PlanOf))
-  (<- before HostTruth (live-truth worker.name boot))
+  ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない — 本番の coordinator への口の beat と同じ)。読みと下ろしは世界への
+  ;; 問い 1 つ(#2668)— 本文は下ろす前の真実から組む(下ろす欄 woken は本文に載らない)。
+  (<- marked HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :woken False))))
+  (val before marked.before)
   (<- sent-at int (now-epoch-ms))
   (<- views tuple (codes-view before.codes sent-at))
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name))
@@ -1349,8 +1375,6 @@
                                :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
                                :boot-at before.boot-at :tools {})
                (env-heartbeat-part (env-report views "ok") (current-platform))))
-  ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない — 本番の coordinator への口の beat と同じ)。
-  (<- (PutHostTruth worker.name (replace before :woken False)))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
@@ -1361,27 +1385,28 @@
           (val ids (sfor t (.get reply "tasks" []) (get t "id")))
           (<- known HostTruth (live-truth worker.name boot))
           (<- fetched dict (accepted-programs link (sorted (sfor s (+ jobs tasks) :if s.program s.program)) known.programs))
-          ;; 返事を待つ間に他の task が宿の真実を書く — 書く直前に読み直す(その間に世代が終わっていれば抜ける)。
-          (<- truth HostTruth (live-truth worker.name boot))
+          ;; 返事を待つ間に他の task が宿の真実を書く — 書く時に読み直す(その間に世代が終わっていれば抜ける)。読みと書きは世界への問い 1 つ。
           (val timing (.get reply "timing"))
           (val echo (dfor t (.get reply "tasks" []) :if (.get t "detached") (get t "id") (dict t)))
-          (<- (PutHostTruth worker.name
-                            (replace truth :last-ok-ms now :last-desired (+ jobs tasks) :last-warm warm :beats (+ truth.beats 1)
-                                     :fence-ms (if (and timing (in "fence_ms" timing)) (int (get timing "fence_ms")) truth.fence-ms)
-                                     :programs (| truth.programs fetched)
-                                     ;; 返事から外れた task の結果は落とす(本番の accept-tasks が結果の file を消すのと同じ)。
-                                     :results (dfor #(k v) (.items truth.results) :if (in k ids) k v)
-                                     :task-echo echo
-                                     ;; 次の拍の判断の材料(#1933 — 本番の coordinator への口の beat と同じ)。
-                                     :fresh True :sent-statuses before.statuses :beat-interval-ms (beat-interval-ms timing echo)
-                                     :watch-after (reply-revision reply) :beat-bells #())))
-          ;; 起こした後の待ちに、版が進んだことを知らせる。
-          (for [bell truth.beat-bells]
+          (<- written HostTruthChange
+              (change-live-truth worker.name boot
+                                 (fn [truth]
+                                   (replace truth :last-ok-ms now :last-desired (+ jobs tasks) :last-warm warm :beats (+ truth.beats 1)
+                                            :fence-ms (if (and timing (in "fence_ms" timing)) (int (get timing "fence_ms")) truth.fence-ms)
+                                            :programs (| truth.programs fetched)
+                                            ;; 返事から外れた task の結果は落とす(本番の accept-tasks が結果の file を消すのと同じ)。
+                                            :results (dfor #(k v) (.items truth.results) :if (in k ids) k v)
+                                            :task-echo echo
+                                            ;; 次の拍の判断の材料(#1933 — 本番の coordinator への口の beat と同じ)。
+                                            :fresh True :sent-statuses before.statuses :beat-interval-ms (beat-interval-ms timing echo)
+                                            :watch-after (reply-revision reply) :beat-bells #()))))
+          ;; 起こした後の待ちに、版が進んだことを知らせる(鳴らすのは置き直す前に掛かっていた呼び鈴)。
+          (for [bell written.before.beat-bells]
             (<- (CompletePromise bell None)))
           (DesiredJobs (+ jobs tasks) :warm warm))
-      (do (<- truth HostTruth (live-truth worker.name boot))
-          ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
-          (<- (PutHostTruth worker.name (replace truth :fresh False)))
+      (do ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
+          (<- unsent HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :fresh False))))
+          (val truth unsent.before)
           (if worker.ignores-fence
               (DesiredJobs truth.last-desired :warm truth.last-warm)
               (desired-when-unreachable (- now truth.last-ok-ms) truth.fence-ms truth.last-desired truth.last-warm
@@ -1471,13 +1496,11 @@
     (<- (live-truth worker.name boot))
     (resume None))
   (ProbeEntry [spec code-path]
-    (<- truth HostTruth (live-truth worker.name boot))
     (val key (spec-hash spec))
-    (<- (PutHostTruth worker.name (replace truth :probes (| truth.probes {key (ProbeView key ProbeState.PASSED)}))))
+    (<- (change-live-truth worker.name boot (fn [truth] (replace truth :probes (| truth.probes {key (ProbeView key ProbeState.PASSED)})))))
     (resume None))
   (ForgetProbes [keep]
-    (<- truth HostTruth (live-truth worker.name boot))
-    (<- (PutHostTruth worker.name (replace truth :probes (dfor #(k v) (.items truth.probes) :if (in k keep) k v))))
+    (<- (change-live-truth worker.name boot (fn [truth] (replace truth :probes (dfor #(k v) (.items truth.probes) :if (in k keep) k v)))))
     (resume None))
   (StartJob [spec attempt code-path]
     (<- truth HostTruth (live-truth worker.name boot))
@@ -1510,14 +1533,12 @@
       (<- (Cancel handle)))
     (resume None))
   (ReapJob [name pid outcome exit-code]
-    (<- truth HostTruth (live-truth worker.name boot))
-    (<- (PutHostTruth worker.name (replace truth :processes (tuple (gfor p truth.processes :if (!= p.pid pid) p)))))
+    (<- (change-live-truth worker.name boot (fn [truth] (replace truth :processes (tuple (gfor p truth.processes :if (!= p.pid pid) p))))))
     (resume None))
   (RetireJob [name pid new-name]
-    (<- truth HostTruth (live-truth worker.name boot))
-    (<- (PutHostTruth worker.name
-                      (replace truth :processes (tuple (gfor p truth.processes
-                                                             (if (= p.pid pid) (replace p :name new-name :retired-from name) p))))))
+    (<- (change-live-truth worker.name boot
+                           (fn [truth] (replace truth :processes (tuple (gfor p truth.processes
+                                                                              (if (= p.pid pid) (replace p :name new-name :retired-from name) p)))))))
     (when worker.retire-stops
       (<- handle (| Task None) (HandleOf pid))
       (when (is-not handle None)
@@ -1530,8 +1551,7 @@
     (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name) job instance))
     (resume None))
   (PublishStatus [statuses note]
-    (<- truth HostTruth (live-truth worker.name boot))
-    (<- (PutHostTruth worker.name (replace truth :statuses (status-report statuses truth.task-echo truth.results))))
+    (<- (change-live-truth worker.name boot (fn [truth] (replace truth :statuses (status-report statuses truth.task-echo truth.results)))))
     (resume None))
   (WorkerStopRequested []
     (<- truth HostTruth (live-truth worker.name boot))
@@ -1552,9 +1572,8 @@
     (<- bell Promise (CreatePromise))
     (<- (PutHostTruth name (replace truth :beat-bells (+ truth.beat-bells #(bell)))))
     (<- (promise-or-timeout bell.future WAKE-HOLD-SECONDS))
-    (<- woke HostTruth (HostTruthOf name))
-    (when (= woke.boot boot)
-      (<- (PutHostTruth name (replace woke :beat-bells (tuple (gfor b woke.beat-bells :if (is-not b bell) b)))))))
+    ;; 同じ世代なら自分の鈴を払う(読みと書きは世界への問い 1 つ — #2668)。
+    (<- (ChangeHostTruth name boot False (fn [woke] (replace woke :beat-bells (tuple (gfor b woke.beat-bells :if (is-not b bell) b)))))))
   None)
 
 
@@ -1562,20 +1581,23 @@
   {:pre [(: name str) (: boot str) (: after int) (: reading WatchReading)] :post [(: % bool)]
    :tags {:context "doeff-cluster" :role "program"}}
   "待ち 1 回の答えを宿の真実へ写すため(本番の coordinator への口の watch-loop の枝と同じ意味)。答え = 待ち続けるか。"
-  (<- truth HostTruth (HostTruthOf name))
-  (if (!= truth.boot boot)
-      False
-      (match reading.kind
-        WatchKind.UNSUPPORTED (do (<- (PutHostTruth name (replace truth :watch-unsupported True)))
-                                  False)
-        WatchKind.FAILED (do (<- (Delay WATCH-RETRY-SECONDS))
-                             True)
-        WatchKind.CHANGED (do (<- (PutHostTruth name (replace truth :watch-confirmed True :woken True)))
-                              True)
-        WatchKind.UNCHANGED (do (<- (PutHostTruth name (replace truth :watch-confirmed True
-                                                                :watch-after (if (= truth.watch-after after) reading.revision
-                                                                                 truth.watch-after))))
-                                True))))
+  ;; 書く答えは読みと書きを世界への問い 1 つで(#2668)— 世代が終わっていれば書かずに抜ける。
+  (match reading.kind
+    WatchKind.UNSUPPORTED (do (<- (ChangeHostTruth name boot False (fn [truth] (replace truth :watch-unsupported True))))
+                              False)
+    WatchKind.FAILED (do (<- truth HostTruth (HostTruthOf name))
+                         (if (!= truth.boot boot)
+                             False
+                             (do (<- (Delay WATCH-RETRY-SECONDS))
+                                 True)))
+    WatchKind.CHANGED (do (<- changed HostTruthChange (ChangeHostTruth name boot False (fn [truth] (replace truth :watch-confirmed True :woken True))))
+                          (is-not changed.after None))
+    WatchKind.UNCHANGED (do (<- changed HostTruthChange
+                                (ChangeHostTruth name boot False
+                                                 (fn [truth] (replace truth :watch-confirmed True
+                                                                      :watch-after (if (= truth.watch-after after) reading.revision
+                                                                                       truth.watch-after)))))
+                            (is-not changed.after None))))
 
 
 (defk watch-desired [worker boot]
@@ -1892,6 +1914,13 @@
   (PutHostTruth [name truth]
     (:= hosts (| hosts {name truth}))
     (resume None))
+  (ChangeHostTruth [name boot live change]
+    (val truth (get hosts name))
+    (if (or (!= truth.boot boot) (and live truth.down))
+        (resume (HostTruthChange :before truth :after None))
+        (do (val changed (change truth))
+            (:= hosts (| hosts {name changed}))
+            (resume (HostTruthChange :before truth :after changed)))))
   (NextPid []
     (:= next-pid (+ next-pid 1))
     (resume next-pid))
