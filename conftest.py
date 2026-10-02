@@ -25,19 +25,20 @@ import pytest
 # DOEFF_VM_INVARIANT_CHECKS=0 is honoured, and then
 # tests/test_vm_invariant_checks_enabled.py goes red, as it should.
 # ---------------------------------------------------------------------------
-os.environ.setdefault("DOEFF_VM_INVARIANT_CHECKS", "1")  # noqa: DOEFF004 - turns the VM oracle on for doeff's own test sessions (R4)
+_VM_INVARIANT_CHECKS = os.environ.setdefault("DOEFF_VM_INVARIANT_CHECKS", "1")  # noqa: DOEFF004 - turns the VM oracle on for doeff's own test sessions (R4)
 
 
-def _turn_vm_oracle_on() -> None:
+def _turn_vm_oracle_on(enabled: bool) -> None:
     """Make every VM run in this test session check its invariants after each step (R4)."""
     # The extension reads the variable once, at its first step; set it directly
     # too in case a plugin ran a program before this conftest was loaded.
     from doeff_vm.doeff_vm import set_invariant_checks
 
-    set_invariant_checks(os.environ["DOEFF_VM_INVARIANT_CHECKS"] == "1")
+    set_invariant_checks(enabled)
 
 
-_turn_vm_oracle_on()
+# The value setdefault left in the environment (an explicit 0 is honoured) — not read twice (#2901).
+_turn_vm_oracle_on(_VM_INVARIANT_CHECKS == "1")
 
 # ---------------------------------------------------------------------------
 # Load-scaled deadlines (ADR-DOE-ENFORCE-001 R6)
@@ -236,18 +237,14 @@ def _per_test_base_seconds(config) -> float:
     Explicit beats declared: an env var or ``--timeout`` from the caller is
     the number they meant, and scaling theirs is right — silently replacing
     it with the ini default would make the escape hatch a lie.  0 = not set.
+
+    The precedence (``--timeout``, then ``PYTEST_TIMEOUT``, then the ini) is
+    pytest-timeout's own, so it is read from pytest-timeout rather than
+    mirrored here — this file does not read the environment (#2901).
     """
-    readers = (
-        lambda: os.environ.get("PYTEST_TIMEOUT"),
-        lambda: config.option.timeout,
-        lambda: config.getini("timeout"),
-    )
-    for read in readers:
-        with suppress(Exception):
-            value = read()
-            if value not in (None, ""):
-                return float(value)
-    return 0.0
+    from pytest_timeout import get_env_settings
+
+    return float(get_env_settings(config).timeout or 0.0)
 
 
 def pytest_collection_modifyitems(config, items):

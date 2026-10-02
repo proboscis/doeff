@@ -117,15 +117,24 @@ def test_explicit_caller_deadline_is_scaled_not_replaced(
 
     class _Config:
         class option:  # noqa: N801 - mimics pytest's Config.option namespace
-            timeout = None
+            timeout: float | None = None
+
+        @classmethod
+        def getvalue(cls, name: str) -> object:
+            # pytest-timeout reads --timeout here; its other options are not given.
+            return cls.option.timeout if name == "timeout" else None
 
         @staticmethod
         def getini(name: str) -> str:
-            assert name == "timeout"
-            return "60"
+            # Only the per-test deadline is declared in the ini (pyproject.toml).
+            return "60" if name == "timeout" else ""
 
     monkeypatch.setenv("PYTEST_TIMEOUT", "300")
     assert conftest._per_test_base_seconds(_Config) == pytest.approx(300.0)
+
+    # Both given: --timeout beats the env var, in pytest-timeout's own precedence.
+    _Config.option.timeout = 120
+    assert conftest._per_test_base_seconds(_Config) == pytest.approx(120.0)
 
     monkeypatch.delenv("PYTEST_TIMEOUT")
     _Config.option.timeout = 120

@@ -2,7 +2,13 @@
 
 from datetime import datetime, timedelta, timezone  # UTC日時と秒単位の時刻差を作る。
 
-from doeff_core_effects.handlers import await_handler  # 非同期待機をスケジューラへ接続する。
+from doeff_core_effects.effects import Tell  # 実行した処理の名前を記録として送る。
+from doeff_core_effects.handlers import (  # 待機と記録を受け持つハンドラを選ぶ。
+    await_handler,  # 非同期待機をスケジューラへ接続する。
+    state,  # 集めた記録の置き場を持つ。
+    writer,  # Tellで送られた記録を集める。
+    writer_log,  # 集めた記録を、処理の途中でも読む。
+)
 from doeff_core_effects.scheduler import (  # 並行タスクの開始・待機・優先度を指定する。
     PRIORITY_HIGH,  # 実行可能な通常タスクより先に選ばれる優先度。
     PRIORITY_IDLE,  # 通常・高優先度の実行可能タスクがなくなってから選ばれる優先度。
@@ -47,50 +53,53 @@ def workflow():  # 実時間でも仮想時間でも同じ処理を使う。
 
 
 @do  # 予定処理と優先度の例で、実行された順序を記録する。
-def record_label(events: list[str], label: str):  # 記録先と表示名を受け取る。
-    events.append(label)  # 検証用リストへ、実行した時点でラベルを追加する。
+def record_label(label: str):  # 表示名だけを受け取る。
+    yield Tell(label)  # 実行した時点で、ラベルを記録として送る。
     return label  # 通常のSpawnならWaitでこのラベルを受け取れる。
 
 
 @do  # 絶対日時で予定を組み立てる。
-def timeline(events: list[str]):  # 予定が実行された証拠をリストへ残す。
+def timeline():  # 予定が実行された証拠は、Tellの記録として残る。
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)  # タイムゾーン付きの開始日時を作る。
     yield SetTime(start)  # 仮想時計を00:00:00へ設定する。
     alarm = yield ScheduleAt(  # 00:00:08に実行する予定を登録し、Taskを受け取る。
         start + timedelta(seconds=8),  # 予定時刻を8秒後に指定する。
-        record_label(events, "予定"),  # その時刻にラベルを記録するProgramを渡す。
+        record_label("予定"),  # その時刻にラベルを記録するProgramを渡す。
     )
     yield WaitUntil(start + timedelta(seconds=3))  # 00:00:03になるまで待つ。
     now = yield GetTime()  # 待機後の仮想日時を取得する。
     assert now == start + timedelta(seconds=3)  # 8秒の予定より先に、3秒で一度再開したことを確認。
-    assert events == []  # 8秒の予定はまだ実行されていない。
+    assert (yield writer_log()) == []  # 8秒の予定はまだ実行されていない。
     yield Wait(alarm)  # 予定のTaskが終わるまで待ち、失敗した場合は例外を受け取る。
+    assert (yield writer_log()) == ["予定"]  # 登録した予定が1回だけ動いたことを確認する。
     return (yield GetTime())  # 予定が終わった00:00:08を返す。
 
 
 @do  # 優先度は時間の設定と別に、スケジューラへの依頼として指定する。
-def priorities(events: list[str]):  # 実行可能な2タスクがどちらから選ばれるかを記録する。
+def priorities():  # 実行可能な2タスクがどちらから選ばれるかを記録する。
     background = yield Spawn(  # 背景処理を登録するが、通常優先度の親処理は先へ進める。
-        record_label(events, "背景処理"), priority=PRIORITY_IDLE  # 実行を後回しにする。
+        record_label("背景処理"), priority=PRIORITY_IDLE  # 実行を後回しにする。
     )
     urgent = yield Spawn(  # 高優先度の応答処理を追加する。
-        record_label(events, "応答処理"), priority=PRIORITY_HIGH  # 背景処理より先に選ばれる。
+        record_label("応答処理"), priority=PRIORITY_HIGH  # 背景処理より先に選ばれる。
     )
     yield Wait(urgent)  # 応答処理の完了を確認する。
     yield Wait(background)  # 背景処理も完了させ、未完了タスクを残さない。
+    return (yield writer_log())  # 記録された実行順を返す。
+
+
+def recorded(program):  # 記録を集めるwriterと、その置き場のstateを外側に付ける。
+    return state()(writer(program))  # 実行ごとに空の記録から始まる。
 
 
 def verify() -> None:  # テストの入口だけでProgramをrunし、観測結果を比較する。
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)  # 並行例の開始日時を固定する。
     elapsed = run(scheduled(sim_time_handler(start_time=start)(workflow())))  # 仮想時計で走らせる。
     assert elapsed == [20.0, 10.0]  # 結果順と各タスクの再開日時を確認する。
-    events: list[str] = []  # 指定時刻の予定だけを観測する空のリスト。
-    end = run(scheduled(sim_time_handler()(timeline(events))))  # 3秒と8秒の予定を処理する。
+    end = run(recorded(scheduled(sim_time_handler()(timeline()))))  # 3秒と8秒の予定を処理する。
     assert end == start + timedelta(seconds=8)  # 最後の再開時刻が8秒後であることを確認する。
-    assert events == ["予定"]  # 登録した予定が1回だけ動いたことを確認する。
-    priority_events: list[str] = []  # 優先度の例は別のリストで観測する。
-    run(scheduled(priorities(priority_events)))  # 時間ハンドラを使わず、タスクの順序を検証する。
-    assert priority_events == ["応答処理", "背景処理"]  # 高優先度が先に実行されたことを確認する。
+    order = run(recorded(scheduled(priorities())))  # 時間ハンドラを使わず、タスクの順序を検証する。
+    assert order == ["応答処理", "背景処理"]  # 高優先度が先に実行されたことを確認する。
     simulated = run(scheduled(sim_time_handler()(job(0.002))))  # 同じjobを仮想時間で実行する。
     asynchronous = run(  # 実時間の確認には2ミリ秒だけ待つjobを使う。
         scheduled(await_handler()(async_time_handler()(job(0.002))))  # 非同期の待機を処理する。

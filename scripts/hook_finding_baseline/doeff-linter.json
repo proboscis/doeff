@@ -41,7 +41,6 @@
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
     "DOEFF004": {
-      "conftest.py": 2,
       "docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py": 1,
       "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/event_log.py": 3,
@@ -98,7 +97,6 @@
       "packages/doeff-records/tests/test_static_stubs.py": 1,
       "packages/doeff-seedream/src/doeff_seedream/structured_llm.py": 1,
       "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py": 1,
-      "publications/zenn-use-cases-v0/render_preview.py": 1,
       "tests/test_rust_build_target_outside_package.py": 2
     },
     "DOEFF007": {
@@ -114,9 +112,7 @@
       "packages/doeff-flow/examples/04_concurrent_workflows.py": 1,
       "packages/doeff-linter/tests/fixtures/test_sample.py": 1,
       "packages/doeff-llm/src/doeff_llm/effects/chat.py": 1,
-      "packages/doeff-openrouter/src/doeff_openrouter/structured_llm.py": 1,
-      "publications/zenn-use-cases-v0/examples/memo_policy.py": 1,
-      "publications/zenn-use-cases-v0/examples/scheduling.py": 1
+      "packages/doeff-openrouter/src/doeff_openrouter/structured_llm.py": 1
     },
     "DOEFF008": {
       "packages/doeff-core-effects/tests/postgres_support/disposable_postgres.py": 1,
@@ -257,7 +253,6 @@
       "packages/doeff-time/src/doeff_time/handlers/__init__.py": 3
     },
     "DOEFF021": {
-      "doeff/runners/__init__.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/__init__.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/api.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/effects/__init__.py": 1,

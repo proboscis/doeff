@@ -169,20 +169,31 @@ assert execute_for_test(program) is False  # 正しいコストで削除する�
 現行の`memo_handler`は、保存先そのものに加え、保存先を返すProgramも受け取れます。外側の層に依頼が届かなければ、その層の生成処理も動きません。同じハンドラインスタンスでは、最初に必要になったときだけ生成します。
 
 ```python
+from doeff_core_effects.effects import Tell  # 保存先を生成したことを記録として送る。
+from doeff_core_effects.handlers import state, writer, writer_log  # 記録を集めて読む。
+
 @do  # 保存先の生成自体を、必要になるまで実行しないProgramにする。
-def open_expensive_store(opened):  # openedは検証専用の生成回数記録で、接続設定ではない。
-    opened.append("高価層")  # この行へ到達したときだけ、保存先が必要になったと分かる。
+def open_expensive_store():  # 接続設定ではなく、生成したことだけを記録する。
+    yield Tell("高価層")  # この行へ到達したときだけ、保存先が必要になったと分かる。
     return InMemoryStorage()  # 検証では通信を伴わない保存先を返す。
 
-opened = []  # 保存先が必要になった回数を検証用に記録する。
-lazy_layer = memo_handler(open_expensive_store(opened), cost=RecomputeCost.EXPENSIVE)  # まだ生成しない。
+@do  # 依頼を最後まで進め、その実行中に生成した保存先の記録を返す。
+def created_stores(program):  # 検証専用の観測で、本体の処理は変えない。
+    yield program  # 依頼の結果はこの検証では使わない。
+    return (yield writer_log())  # この実行で送られた記録を読む。
+
+def execute_recorded(program):  # 記録を集めるwriterと、その置き場のstateを付けて実行する。
+    return execute_for_test(state()(writer(created_stores(program))))  # 実行ごとに空の記録から始まる。
+
+lazy_layer = memo_handler(open_expensive_store(), cost=RecomputeCost.EXPENSIVE)  # まだ生成しない。
 cheap_layer = memo_handler(InMemoryStorage(), cost=RecomputeCost.CHEAP)  # 安価な保存だけを受け持つ。
-assert opened == []  # ハンドラを取り付ける準備だけでは生成処理が動かない。
-execute_for_test(lazy_layer(cheap_layer(MemoPut("preview", 1))))  # 安価な依頼は高価層を通過する。
-assert opened == []  # 高価層の保存先は、まだ必要ない。
-execute_for_test(lazy_layer(cheap_layer(store_results())))  # 高価な依頼で初めて保存先が必要になる。
-assert opened == ["高価層"]  # 複数の操作が届いても、このハンドラ内では一度だけ生成する。
+assert execute_recorded(lazy_layer(cheap_layer(MemoPut("preview", 1)))) == []  # 高価層は通過するだけ。
+created = execute_recorded(lazy_layer(cheap_layer(store_results())))  # 高価な依頼で初めて必要になる。
+assert created == ["高価層"]  # 複数の操作が届いても、このハンドラ内では一度だけ生成する。
+assert execute_recorded(lazy_layer(cheap_layer(store_results()))) == []  # 同じハンドラは作り直さない。
 ```
+
+生成したかどうかは、引数のリストへ書き込むのではなく`Tell`で記録として送り、`writer`ハンドラが集めた記録を`writer_log`で読みます。記録の置き場は`state`ハンドラなので、`execute_recorded`で2つを付けています（`Tell`と記録の集め方は[抽象の合成](doeff-composition.md)と[観測](doeff-observe.md)で扱います）。
 
 ## 保存先をSQLiteに替える
 

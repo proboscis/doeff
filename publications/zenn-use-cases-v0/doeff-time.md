@@ -124,6 +124,8 @@ print(result)  # おおむね[20.0, 10.0]。実時間なので起床の遅れな
 from datetime import datetime, timedelta, timezone  # UTC日時と、そこからの秒数差を作る。
 
 from doeff import do, run  # 予定処理をProgramにし、検証の入口で実行する。
+from doeff_core_effects.effects import Tell  # 実行した処理の名前を記録として送る。
+from doeff_core_effects.handlers import state, writer, writer_log  # 記録を集め、途中でも読む。
 from doeff_core_effects.scheduler import (  # タスクの優先度と終了待ちを扱う。
     PRIORITY_HIGH,  # 通常タスクより高い優先度。
     PRIORITY_IDLE,  # 通常タスクより低い優先度。
@@ -135,53 +137,56 @@ from doeff_time import GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 
 
 @do  # 予定処理と優先度の例で、実行された順序を記録する。
-def record_label(events: list[str], label: str):  # 記録先と表示名を受け取る。
-    events.append(label)  # 検証用リストへ、実行した時点でラベルを追加する。
+def record_label(label: str):  # 表示名だけを受け取る。
+    yield Tell(label)  # 実行した時点で、ラベルを記録として送る。
     return label  # 通常のSpawnならWaitでこのラベルを受け取れる。
 
 
 @do  # 絶対日時で予定を組み立てる。
-def timeline(events: list[str]):  # 予定が実行された証拠をリストへ残す。
+def timeline():  # 予定が実行された証拠は、Tellの記録として残る。
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)  # タイムゾーン付きの開始日時を作る。
     yield SetTime(start)  # 仮想時計を00:00:00へ設定する。
     alarm = yield ScheduleAt(  # 00:00:08に実行する予定を登録し、Taskを受け取る。
         start + timedelta(seconds=8),  # 予定時刻を8秒後に指定する。
-        record_label(events, "予定"),  # その時刻にラベルを記録するProgramを渡す。
+        record_label("予定"),  # その時刻にラベルを記録するProgramを渡す。
     )
     yield WaitUntil(start + timedelta(seconds=3))  # 00:00:03になるまで待つ。
     now = yield GetTime()  # 待機後の仮想日時を取得する。
     assert now == start + timedelta(seconds=3)  # 8秒の予定より先に、3秒で一度再開したことを確認。
-    assert events == []  # 8秒の予定はまだ実行されていない。
+    assert (yield writer_log()) == []  # 8秒の予定はまだ実行されていない。
     yield Wait(alarm)  # 予定のTaskが終わるまで待ち、失敗した場合は例外を受け取る。
+    assert (yield writer_log()) == ["予定"]  # 予定が1回だけ動いたことを確認する。
     return (yield GetTime())  # 予定が終わった00:00:08を返す。
 
 
 @do  # 優先度は時間の設定と別に、スケジューラへの依頼として指定する。
-def priorities(events: list[str]):  # 実行可能な2タスクがどちらから選ばれるかを記録する。
+def priorities():  # 実行可能な2タスクがどちらから選ばれるかを記録する。
     background = yield Spawn(  # 背景処理を登録するが、通常優先度の親処理は先へ進める。
-        record_label(events, "背景処理"), priority=PRIORITY_IDLE  # 実行を後回しにする。
+        record_label("背景処理"), priority=PRIORITY_IDLE  # 実行を後回しにする。
     )
     urgent = yield Spawn(  # 高優先度の応答処理を追加する。
-        record_label(events, "応答処理"), priority=PRIORITY_HIGH  # 背景処理より先に選ばれる。
+        record_label("応答処理"), priority=PRIORITY_HIGH  # 背景処理より先に選ばれる。
     )
     yield Wait(urgent)  # 応答処理の完了を確認する。
     yield Wait(background)  # 背景処理も完了させ、未完了タスクを残さない。
+    return (yield writer_log())  # 記録された実行順を返す。
+
+
+def recorded(program):  # 記録を集めるwriterと、その置き場のstateを外側に付ける。
+    return state()(writer(program))  # 実行ごとに空の記録から始まる。
 
 
 def verify_timeline_and_priority() -> None:  # この例の実行結果を、順序も含めて検証する。
-    events: list[str] = []  # 予定の実行回数を調べる記録先。
-    end = run(scheduled(sim_time_handler()(timeline(events))))  # 指定時刻まで仮想時計を進める。
+    end = run(recorded(scheduled(sim_time_handler()(timeline()))))  # 指定時刻まで仮想時計を進める。
     assert end == datetime(2026, 1, 1, 0, 0, 8, tzinfo=timezone.utc)  # 最終時刻は8秒後。
-    assert events == ["予定"]  # 予定が1回だけ動いたことを確認する。
-    priority_events: list[str] = []  # 優先度の検証は別の記録先を使う。
-    run(scheduled(priorities(priority_events)))  # 時間ハンドラなしで優先度を解釈する。
-    assert priority_events == ["応答処理", "背景処理"]  # 高優先度が先に動いたことを確認する。
+    order = run(recorded(scheduled(priorities())))  # 時間ハンドラなしで優先度を解釈する。
+    assert order == ["応答処理", "背景処理"]  # 高優先度が先に動いたことを確認する。
 
 
 verify_timeline_and_priority()  # 外部通信も実時間の待機もなく、両方の例を確認する。
 ```
 
-`ScheduleAt`から動く本文は、現行実装では時間ハンドラの外側へ委譲されます。この例はそこで追加の時間操作をせず、ラベルだけを記録します。予定の本文でも時計が必要なら、そのハンドラのスコープを明示する必要があります。この例の優先度は、実行可能なタスクを選ぶ順序に効いています。背景処理を登録した後も通常優先度の親処理が先へ進み、高優先度の応答処理を登録できるため、記録順は`["応答処理", "背景処理"]`になります。実行中のCPU処理を強制的に中断する仕組みではありません。
+実行した順序は、引数のリストへ書き込むのではなく`Tell`で記録として送ります。`writer`ハンドラが記録を集め、`writer_log`で処理の途中でも読めます。集めた記録の置き場は`state`ハンドラなので、`recorded`で2つを一番外側に付けています（`Tell`と記録の集め方は[抽象の合成](doeff-composition.md)と[観測](doeff-observe.md)で扱います）。`ScheduleAt`から動く本文は、現行実装では時間ハンドラの外側へ委譲されます。この例はそこで追加の時間操作をせず、ラベルだけを記録します。予定の本文でも時計が必要なら、そのハンドラのスコープを明示する必要があります。この例の優先度は、実行可能なタスクを選ぶ順序に効いています。背景処理を登録した後も通常優先度の親処理が先へ進み、高優先度の応答処理を登録できるため、記録順は`["応答処理", "背景処理"]`になります。実行中のCPU処理を強制的に中断する仕組みではありません。
 
 [完全な例](examples/scheduling.py)もリポジトリに保存しています。
 
