@@ -12,7 +12,7 @@
 
 ;; fake。本物(readiness-http → coordinator)と同じ契約を tests/test_readiness_contract.hy が両方で回す: coordinator が残す形
 ;; (reported-readiness — reason は先頭 300 字・role は standby 以外を active)で記録する。
-(defhandler readiness-memory [#^ list reports]
+(defhandler readiness-memory [#^ (get list (get dict #(str object))) reports]
   (ReportReady [ready reason role]
     (<- report dict (reported-readiness ready reason role))
     (.append reports report)

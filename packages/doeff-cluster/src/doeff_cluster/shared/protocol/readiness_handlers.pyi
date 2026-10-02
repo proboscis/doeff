@@ -1,29 +1,17 @@
-"""readiness_handlers.hy の公開面の型(準備できたの報告 ReportReady の答え手 — 型検査のための宣言・実行時は readiness_handlers.hy を読む・
-#2777)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = readiness_handlers.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-readiness_handlers.hy は Hy の module なので、答え手を土台の組に並べる使い手(模擬の土台が readiness-memory で報告を積む)の strict に、
-書き手に直せない Unknown の赤(Type of "readiness_memory" is unknown・Argument type is partially unknown)が出た。
-host_contract.pyi と同じ形で宣言する。
+from doeff_hy.static_types import Handler as _Handler
+from doeff_cluster.shared.intent.readiness_model import ReportReady as ReportReady
+from doeff_cluster.shared.core.readiness_report import reported_readiness as reported_readiness
+from doeff_cluster.shared.protocol.coordinator_route import RouteCell as RouteCell
+from doeff_cluster.shared.protocol.coordinator_route import RouteOptions as RouteOptions
+from doeff_cluster.shared.protocol.service_report import ServiceReport as ServiceReport
+from doeff_cluster.shared.protocol.service_report import sent_report as sent_report
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
 
-- readiness-memory(Python の名 readiness_memory)は報告を積む列を受け、本文の Program に被せる関数を返す(fake — 本物と同じ形で積む)。
-- readiness-http(Python の名 readiness_http)は coordinator への道と送り手の名乗りを受け、本文の Program に被せる関数を返す。
-- 実装との食い違いは packages/doeff-cluster/tests/test_readiness_static_types.py が検める。
-"""
+def readiness_memory(reports: list[dict[str, object]]) -> _Handler:
+    ...
 
-from typing import Protocol, TypeVar
-
-from doeff_vm import WithHandler
-
-from doeff import Program
-from doeff_cluster.shared.protocol.coordinator_route import RouteCell, RouteOptions
-from doeff_cluster.shared.protocol.service_report import ServiceReport
-
-_A = TypeVar("_A")
-
-class _ReadinessHandler(Protocol):
-    """本文の Program に ReportReady の答え手を被せる関数(答えの型は本文のまま)。"""
-
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
-
-def readiness_memory(reports: list[dict[str, object]]) -> _ReadinessHandler: ...
-def readiness_http(cell: RouteCell, options: RouteOptions, report: ServiceReport) -> _ReadinessHandler: ...
+def readiness_http(cell: RouteCell, options: RouteOptions, report: ServiceReport) -> _Handler:
+    ...
