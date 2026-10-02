@@ -28,6 +28,10 @@
 ;;; と答え、置き先にも選ぶ — 本番 2026-09-25 の欠陥・L643)。判断は記録(生存の読みと、その worker が届かなくなった時刻)を受けて、届かなく
 ;;; なってから lease-ms + 余裕を過ぎて alive と答えた読みの列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 ;;;
+;;; 条 C6 running-within-capacity: どの瞬間も、worker の上で動いている job の process の数は、その worker が本当に置ける数(capacity)を
+;;; 越えない。判断は記録(job の process ごとの生きていた区間と、worker ごとの本当の capacity)を受けて、越えた瞬間の列を返す純関数 1 つ。
+;;; 記録を集めるのは検(tests/test_local.hy の容量の検)。
+;;;
 ;;; 条 L1 places-only-on-reachable: 新しい置き先は、lease-ms(+ 余裕)のうちに coordinator へ届き得た worker にだけ置く — coordinator が
 ;;; 止まり置き場から作り直された後も。判断は記録(読めた置き先の列と、worker ごとの届かなくなった時刻)を受けて、届かなくなってから
 ;;; lease-ms + 余裕を過ぎた後に置いた置き先の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
@@ -148,6 +152,36 @@
                         (is-not p.unreachable-since-ms None)
                         (> p.at-ms (+ p.unreachable-since-ms lease-ms slack-ms)))
                p)))
+
+
+(defrecord WorkerCapacity
+  "条 C6 の記録 1 つ = worker 1 台の本当の capacity(置ける job の数)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int capacity))
+
+
+(defrecord OverCapacity
+  "条 C6 の破り 1 つ = worker の上で capacity を越えて動いていた瞬間(at-ms = 越えた process の起きた時刻・running = その時に動いていた数)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int at-ms)
+  (#^ int running)
+  (#^ int capacity))
+
+
+(defk running-within-capacity [spans capacities]
+  {:pre [(: spans (get tuple #(ProcessSpan ...))) (: capacities (get tuple #(WorkerCapacity ...)))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 C6: job の process の生きていた区間の列(ProcessSpan — どの job でも)と worker ごとの本当の capacity から、process が起きた瞬間に
+   その worker で動いていた数が capacity を越えた所(OverCapacity)を返す(空なら緑)。coordinator が worker の置ける数より多く置かない
+   ことを、筋書きの記録から判じるため。数えるのは起きた瞬間だけで足りる(数が増えるのは起きる時だけ)。区間は [起きた時刻, 終わった時刻)。"
+  (val ending (fn [s] (if (is s.ended-ms None) (float "inf") s.ended-ms)))
+  (tuple (gfor c capacities
+               at (sorted (set (gfor s spans :if (= s.worker c.worker) s.started-ms)))
+               :setv running (len (lfor o spans :if (and (= o.worker c.worker) (<= o.started-ms at) (< at (ending o))) o))
+               :if (> running c.capacity)
+               (OverCapacity :worker c.worker :at-ms at :running running :capacity c.capacity))))
 
 
 (defrecord PlacementSeen
