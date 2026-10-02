@@ -3,8 +3,6 @@
 from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
-from doeff_hy.macros import _install_guard_globals as _install_guard_globals
-from doeff_hy.macros import _guard_performed as _guard_performed
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff_hy.frozen import FrozenMap as FrozenMap

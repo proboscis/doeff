@@ -1,8 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = runtime_env.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-from doeff_hy.macros import _install_guard_globals as _install_guard_globals
-from doeff_hy.macros import _guard_performed as _guard_performed
 from doeff_cluster.shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
 from doeff_cluster.shared.intent.runtime_env_model import PythonProject as PythonProject
 from doeff_cluster.shared.intent.runtime_env_model import EnvVar as EnvVar

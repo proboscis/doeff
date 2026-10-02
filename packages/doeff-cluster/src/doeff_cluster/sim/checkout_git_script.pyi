@@ -1,8 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = checkout_git_script.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-from doeff_hy.macros import _install_guard_globals as _install_guard_globals
-from doeff_hy.macros import _guard_performed as _guard_performed
 from dataclasses import dataclass as dataclass
 import fnmatch as fnmatch
 from functools import partial as partial
