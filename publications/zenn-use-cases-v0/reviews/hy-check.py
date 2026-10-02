@@ -2,7 +2,6 @@
 
 import os  # 子プロセスへ例のimportパスを引き継ぐ。
 import re  # 記事からPythonとHyのコードブロックを取り出す。
-import subprocess  # pytestが生成されたテストを実際に収集するか確認する。
 import sys  # 例のディレクトリをimport対象へ追加する。
 from pathlib import Path  # 記事と専用例を、リポジトリ内の位置から見つける。
 from tempfile import TemporaryDirectory  # pytestの派生ファイルを検査後に除去する。
@@ -10,8 +9,10 @@ from tempfile import TemporaryDirectory  # pytestの派生ファイルを検査�
 import hy  # Hyの読み込みとマクロ展開を有効にする。
 import pytest  # 契約違反が明示的な例外になることを検査する。
 from doeff_core_effects import Ask  # 問い合わせられたキーを型付きで検査する。
+from doeff_core_effects.os_process import subprocess_handler  # pytestの子を起こす答え手。
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess  # 依頼の型。
 
-from doeff import Transfer, do, handler, run  # 問い合わせを記録するハンドラと実行境界を使う。
+from doeff import Transfer, do, handler, run, with_handlers  # ハンドラと実行境界を使う。
 
 SOURCE = Path(__file__).resolve().parents[1]  # publicationの正本ディレクトリを求める。
 sys.path.insert(0, str(SOURCE / "examples"))  # 完全な例を記事と同じ名前でimport可能にする。
@@ -66,12 +67,13 @@ with pytest.raises(AssertionError, match="post-condition"):  # 返り値の契�
 with TemporaryDirectory(prefix="doeff-hy-article-") as directory:  # 派生したpytest用ファイルを一時保存する。
     test_path = Path(directory) / "test_hy_example.py"  # pytestの収集対象になる名前を選ぶ。
     test_path.write_text(fixture_code)  # 掲載ブロックを改変せずに保存する。
-    environment = dict(os.environ)  # 既存の実行環境へ追加のimportパスだけ設定する。
-    environment["PYTHONPATH"] = os.pathsep.join(map(str, sys.path))  # 完全な例を子プロセスからも読み込めるようにする。
-    result = subprocess.run(  # 実際のpytest収集とfixture解決を確認する。
-        [sys.executable, "-m", "pytest", "-q", str(test_path) + "::test_greeting"],
-        env=environment, capture_output=True, text=True, timeout=60, check=True,
+    pythonpath = EnvEntry(name="PYTHONPATH", value=os.pathsep.join(map(str, sys.path)))  # 完全な例を子プロセスからも読み込めるようにする。
+    request = RunProcess(  # 既存の実行環境の継承は答え手に任せ、追加のimportパスだけを重ねる。
+        argv=(sys.executable, "-m", "pytest", "-q", str(test_path) + "::test_greeting"),
+        env=(pythonpath,), env_mode=EnvMode.EXTEND, timeout=60.0,
     )
+    result = run(with_handlers([subprocess_handler], request))  # 実際のpytest収集とfixture解決を確認する。
+    assert result.exit_code == 0, result.stdout + result.stderr  # 失敗や時間切れ(終了コード124)なら検証を止める。
     assert "1 passed" in result.stdout  # Hyが生成したテスト1件が成功したことを確認する。
     print(result.stdout.strip())  # 収集・実行結果を監査ログへ残す。
 

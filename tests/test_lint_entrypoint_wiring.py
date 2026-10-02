@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +13,10 @@ from types import ModuleType
 
 import pytest
 import yaml
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, ProcessOutcome, RunProcess
+
+from doeff import run, with_handlers
 
 ROOT: Path = Path(__file__).resolve().parents[1]
 
@@ -76,28 +79,38 @@ def _uv_dir(uv: str, kind: str) -> str:
     return subprocess.run([uv, kind, "dir"], capture_output=True, text=True, check=True).stdout.strip()
 
 
-def _environment(directory: Path) -> dict[str, str]:
-    environment: dict[str, str] = dict(os.environ)
+def _environment(directory: Path, path: str | None = None) -> tuple[EnvEntry, ...]:
+    """子の環境へ今の環境の上に重ねる分(path = 子の PATH・既定は偽の道具の dir と /usr/bin・/bin)。今の環境の受け継ぎと
+    外す名(SKIP など)は、子を起こす doeff の答え手が行う(_run_child・agora-redesign #3012)。"""
     real_uv: str | None = shutil.which("uv")
     assert real_uv is not None, "uv が要る(hook の script を走らせる)"
     fake_uv: Path = directory / "uv"
     fake_uv.write_text(f"#!{sys.executable}\n{FAKE_UV}", encoding="utf-8")
     fake_uv.chmod(0o755)
-    environment.update({
-        "PATH": f"{directory}:/usr/bin:/bin",
-        "REAL_UV": real_uv,
-        "LINT_CALLS": str(directory / "calls.jsonl"),
-        "PRE_COMMIT_HOME": str(directory / "pre-commit-cache"),
-        "PRE_COMMIT_ALLOW_NO_CONFIG": "0",
+    return (
+        EnvEntry(name="PATH", value=path if path is not None else f"{directory}:/usr/bin:/bin"),
+        EnvEntry(name="REAL_UV", value=real_uv),
+        EnvEntry(name="LINT_CALLS", value=str(directory / "calls.jsonl")),
+        EnvEntry(name="PRE_COMMIT_HOME", value=str(directory / "pre-commit-cache")),
+        EnvEntry(name="PRE_COMMIT_ALLOW_NO_CONFIG", value="0"),
         # hook の doeff-linter の項は、基点の鍵の binary を HOME の下の land-arm の開発版 → 断面の置き場から探す(#2906)—
         # HOME を一時の dir に向け(開発版は _repository が置く・断面の置き場は空 = 機体の物を読まない)、uv の cache と Python の
         # 置き場は本物を指したままにする(HOME を替えても uv が取り直さない)。
-        "HOME": str(directory),
-        "UV_CACHE_DIR": _uv_dir(real_uv, "cache"),
-        "UV_PYTHON_INSTALL_DIR": _uv_dir(real_uv, "python"),
-    })
-    environment.pop("SKIP", None)
-    return environment
+        EnvEntry(name="HOME", value=str(directory)),
+        EnvEntry(name="UV_CACHE_DIR", value=_uv_dir(real_uv, "cache")),
+        EnvEntry(name="UV_PYTHON_INSTALL_DIR", value=_uv_dir(real_uv, "python")),
+    )
+
+
+def _run_child(
+    argv: tuple[str, ...], cwd: Path, overlay: tuple[EnvEntry, ...], drop: tuple[str, ...] = ("SKIP",),
+) -> ProcessOutcome:
+    """子を doeff の子 process の答え手(subprocess_handler)で起こすため — 子の環境は今の環境から drop の名を外し、overlay を
+    重ねた物(受け継ぎは答え手の中で行う・agora-redesign #3012)。"""
+    return run(with_handlers(
+        [subprocess_handler],
+        RunProcess(argv=argv, cwd=str(cwd), env=overlay, env_mode=EnvMode.EXTEND, env_drop=drop),
+    ))
 
 
 @pytest.mark.parametrize("tool_status", [None, 0, 1, 2])
@@ -108,18 +121,18 @@ def test_make_lint_doeff_propagates_missing_and_tool_failure(
         _tool(tmp_path, "doeff-linter", tool_status)
     # packages/doeff-cluster の段(#2031・#2683)は warning を基点と比べるので、偽の linter(何も報せない)に合わせて空の基点を
     # 渡し、比べの script を走らせる uv を探し道に足す(本物の doeff-linter は探し道に入れない)。
-    environment: dict[str, str] = _environment(tmp_path)
     baseline: Path = tmp_path / "empty-baseline.json"
     baseline.write_text("{}", encoding="utf-8")
-    environment["DOEFF_CLUSTER_WARNING_BASELINE"] = str(baseline)
     uv: str | None = shutil.which("uv")
     assert uv is not None, "uv が要る(比べの script を走らせる)"
-    environment["PATH"] = f"{tmp_path}:{Path(uv).parent}:/usr/bin:/bin"
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        ["/usr/bin/make", "-f", str(ROOT / "Makefile"), "lint-doeff"],
-        cwd=tmp_path, env=environment, capture_output=True, text=True, check=False,
+    environment: tuple[EnvEntry, ...] = (
+        *_environment(tmp_path, f"{tmp_path}:{Path(uv).parent}:/usr/bin:/bin"),
+        EnvEntry(name="DOEFF_CLUSTER_WARNING_BASELINE", value=str(baseline)),
     )
-    assert (result.returncode == 0) == (tool_status == 0), result.stdout + result.stderr
+    result: ProcessOutcome = _run_child(
+        ("/usr/bin/make", "-f", str(ROOT / "Makefile"), "lint-doeff"), tmp_path, environment,
+    )
+    assert (result.exit_code == 0) == (tool_status == 0), result.stdout + result.stderr
     if tool_status is None:
         assert "doeff-linter" in result.stderr
         assert not (tmp_path / "calls.jsonl").exists()
@@ -183,7 +196,7 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
 class _HookRun:
     """pre-commit を 1 回走らせた結果(result)と、偽の道具が受けた呼びの列(calls — 1 つの呼びは引数の列)。"""
 
-    result: subprocess.CompletedProcess[str]
+    result: ProcessOutcome
     calls: list[list[str]]
 
 
@@ -195,16 +208,15 @@ def _pre_commit(
     if semgrep_status is not None:
         _tool(directory, "semgrep", semgrep_status)
     repository: Path = _repository(directory, changed, "value = 1\n")
-    environment: dict[str, str] = _environment(directory)
     uv: str | None = shutil.which("uv")
     assert uv is not None, "uv が要る(基点と比べる script を走らせる)"
-    environment["PATH"] = f"{directory}:{Path(uv).parent}:/usr/bin:/bin"
-    # 外側の `uv run pytest` の venv を子へ継がせない — 継ぐと hook の `uv run` がその venv の bin を探し道の先頭に置き、
-    # 本物の semgrep が偽の道具を隠す。
-    environment.pop("VIRTUAL_ENV", None)
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        [sys.executable, "-m", "pre_commit", "run", "--files", changed],
-        cwd=repository, env=environment, capture_output=True, text=True, check=False,
+    # 外側の `uv run pytest` の venv(VIRTUAL_ENV)を子へ継がせない — 継ぐと hook の `uv run` がその venv の bin を探し道の先頭に
+    # 置き、本物の semgrep が偽の道具を隠す。
+    result: ProcessOutcome = _run_child(
+        (sys.executable, "-m", "pre_commit", "run", "--files", changed),
+        repository,
+        _environment(directory, f"{directory}:{Path(uv).parent}:/usr/bin:/bin"),
+        ("SKIP", "VIRTUAL_ENV"),
     )
     calls_path: Path = directory / "calls.jsonl"
     calls: list[list[str]] = (
@@ -221,7 +233,7 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
     tmp_path: Path, changed: str,
 ) -> None:
     hook = _pre_commit(tmp_path, changed)
-    assert hook.result.returncode == 0, hook.result.stdout + hook.result.stderr
+    assert hook.result.exit_code == 0, hook.result.stdout + hook.result.stderr
     semgrep_calls: list[list[str]] = [call for call in hook.calls if call[0] == "semgrep" and "--version" not in call]
     assert len(semgrep_calls) == 1, hook.result.stdout + hook.result.stderr
     # どの項も uv.lock の版を uv の道具の置き場から呼ぶ(探し道の semgrep を直に呼ばない — #2906)。
@@ -241,7 +253,7 @@ def test_python_change_with_a_linter_error_not_in_the_baseline_is_stopped(tmp_pa
     # 基点(空)に無い error が変えた file に 1 つ在る → 止まる(#2848 の失敗ケース — 前からの所見だけなら通る、は script の検)。
     report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
     result = _pre_commit(tmp_path, "doeff/example.py", linter_report=report).result
-    assert result.returncode != 0, result.stdout + result.stderr
+    assert result.exit_code != 0, result.stdout + result.stderr
     assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in result.stdout + result.stderr
 
 
@@ -250,13 +262,13 @@ def test_hy_only_change_rejects_missing_or_failing_semgrep(
     tmp_path: Path, tool_status: int | None,
 ) -> None:
     hook = _pre_commit(tmp_path, "packages/example.hy", semgrep_status=tool_status)
-    assert hook.result.returncode != 0, hook.result.stdout + hook.result.stderr
+    assert hook.result.exit_code != 0, hook.result.stdout + hook.result.stderr
     assert not any(call[0] == "doeff-linter" for call in hook.calls)
 
 
 def test_unrelated_document_does_not_require_python_or_hy_linters(tmp_path: Path) -> None:
     hook = _pre_commit(tmp_path, "notes.md", semgrep_status=None)
-    assert hook.result.returncode == 0, hook.result.stdout + hook.result.stderr
+    assert hook.result.exit_code == 0, hook.result.stdout + hook.result.stderr
     assert hook.calls == []
 
 
@@ -278,10 +290,10 @@ def test_hy_only_hook_runs_real_semgrep_handler_boundary_rule(
     selected = [rule for rule in rules if rule["id"] == rule_id]
     assert len(selected) == 1
     (repository / ".semgrep.yaml").write_text(yaml.safe_dump({"rules": selected}))
-    result: subprocess.CompletedProcess[str] = subprocess.run(
-        [sys.executable, "-m", "pre_commit", "run", "semgrep-hy", "--files", changed],
-        cwd=repository, env=_environment(tmp_path), capture_output=True, text=True, check=False,
+    result: ProcessOutcome = _run_child(
+        (sys.executable, "-m", "pre_commit", "run", "semgrep-hy", "--files", changed),
+        repository, _environment(tmp_path),
     )
-    assert result.returncode == int(nested), result.stdout + result.stderr
+    assert result.exit_code == int(nested), result.stdout + result.stderr
     if nested:
         assert rule_id in result.stdout + result.stderr

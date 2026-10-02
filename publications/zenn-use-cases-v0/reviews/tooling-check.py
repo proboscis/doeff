@@ -1,11 +1,15 @@
 """tooling本文と専用例を、外部CLIやサービスへ接続せずに検証する。"""
 
-import os  # 子プロセスへ渡す既存の実行環境を保持する。
+import os  # 子プロセスのimport先を区切り文字でつなぐ。
 import re  # 本文中のコードブロックを取り出す。
-import subprocess  # 分離したプロセスで例を実行する。
 import sys  # 現在と同じPython環境を検証にも使う。
 from pathlib import Path  # リポジトリ内の教材を見つける。
 from tempfile import TemporaryDirectory  # 本文のHy断片だけを一時ファイルで実行する。
+
+from doeff_core_effects.os_process import subprocess_handler  # 子を起こす答え手。
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess  # 依頼の型。
+
+from doeff import run, with_handlers  # 依頼を答え手のもとで1回実行する。
 
 base = Path(__file__).resolve().parents[1]  # 記事シリーズのディレクトリを求める。
 root = base.parents[1]  # packagesを持つリポジトリのルートを求める。
@@ -14,16 +18,19 @@ paths += [  # ワークスペースの各パッケージを同じソース版で
     p / "src" if (p / "src").is_dir() else p  # 各パッケージの配置形式に合わせる。
     for p in sorted((root / "packages").iterdir()) if p.is_dir()  # パッケージのディレクトリだけを選ぶ。
 ]
-env = dict(  # 子プロセスだけに適用する検証用の環境を作る。
-    os.environ,  # PATHなど既存の実行環境を保持する。
-    PYTHONPATH=os.pathsep.join(map(str, paths)),  # ワークスペースのimport先を指定する。
-    SEMGREP_SEND_METRICS="off",  # Semgrepの外部メトリクス送信を無効にする。
+env = (  # 子プロセスだけに重ねる検証用の環境(PATHなど既存の実行環境の継承は答え手が行う)。
+    EnvEntry(name="PYTHONPATH", value=os.pathsep.join(map(str, paths))),  # ワークスペースのimport先を指定する。
+    EnvEntry(name="SEMGREP_SEND_METRICS", value="off"),  # Semgrepの外部メトリクス送信を無効にする。
 )
 source = (base / "doeff-tooling.md").read_text()  # 編集後の本文を検証対象にする。
 
 
 def execute(args):  # 子プロセスの失敗を検証失敗として伝える。
-    subprocess.run(args, cwd=root, env=env, check=True, timeout=60)  # 成功時だけ次の検査へ進む。
+    request = RunProcess(argv=tuple(args), cwd=str(root), env=env, env_mode=EnvMode.EXTEND, timeout=60.0)  # 1回分の依頼。
+    outcome = run(with_handlers([subprocess_handler], request))  # 子プロセスを起こし、終わりを待つ。
+    print(outcome.stdout, end="")  # 子プロセスの出力を、これまでどおり画面へ出す。
+    print(outcome.stderr, end="", file=sys.stderr)  # 子プロセスの診断も画面へ出す。
+    assert outcome.exit_code == 0, args  # 成功時だけ次の検査へ進む(時間切れは終了コード124)。
 
 
 execute([sys.executable, str(base / "examples/domain_check.py")])  # 対応・指定漏れ・所属を確認する。

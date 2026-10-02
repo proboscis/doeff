@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -28,6 +27,10 @@ from types import ModuleType
 from typing import Protocol
 
 import pytest
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
+
+from doeff import run, with_handlers
 
 
 class _Declaration(Protocol):
@@ -138,34 +141,44 @@ def _run_pytest(
     home: Path,
     path_dir: Path,
     *args: str,
-    env: dict[str, str] | None = None,
+    env: tuple[EnvEntry, ...] = (),
 ) -> pytest.RunResult:
     """Run pytest in a new process that sees only the stand-in HOME and PATH (and ``env``).
 
     The stand-ins go to the child's environment alone: this process keeps its own
     PATH (its memory guard thread starts ``ps``), and a real codex further down a
-    prepended PATH can never be reached.
+    prepended PATH can never be reached.  The child is started by doeff's process
+    handler (subprocess_handler), which lays ``env`` and the stand-ins over this
+    process's environment (agora-redesign #3012).
     """
     started = time.monotonic()
-    done = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-p",
-            "no:cacheprovider",
-            f"--basetemp={tmp_path / 'inner-basetemp'}",
-            *args,
-        ],
-        cwd=cwd,
-        env={**os.environ, **(env or {}), "HOME": str(home), "PATH": str(path_dir)},
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
+    done = run(
+        with_handlers(
+            [subprocess_handler],
+            RunProcess(
+                argv=(
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-p",
+                    "no:cacheprovider",
+                    f"--basetemp={tmp_path / 'inner-basetemp'}",
+                    *args,
+                ),
+                cwd=str(cwd),
+                env=(
+                    *(entry for entry in env if entry.name not in {"HOME", "PATH"}),
+                    EnvEntry(name="HOME", value=str(home)),
+                    EnvEntry(name="PATH", value=str(path_dir)),
+                ),
+                env_mode=EnvMode.EXTEND,
+                timeout=120.0,
+            ),
+        )
     )
+    assert not done.timed_out, f"the inner pytest did not finish in 120 s\n{done.stdout}\n{done.stderr}"
     return pytest.RunResult(
-        done.returncode,
+        done.exit_code,
         done.stdout.splitlines(),
         done.stderr.splitlines(),
         time.monotonic() - started,
@@ -205,23 +218,30 @@ def _checkout_sample(checkout: Path, commit: str) -> str:
 def _git_checkout(directory: Path, git: str) -> str:
     """A fresh git checkout at ``directory`` with one commit; returns the commit."""
     directory.mkdir(parents=True)
-    quiet = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    quiet = (
+        EnvEntry(name="GIT_CONFIG_GLOBAL", value=os.devnull),
+        EnvEntry(name="GIT_CONFIG_NOSYSTEM", value="1"),
+    )
 
-    def run(*args: str) -> str:
-        """Run git in the checkout without this machine's own git config or hooks."""
-        return subprocess.run(
-            [git, "-C", str(directory), *args],
-            env=quiet,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+    def git_run(*args: str) -> str:
+        """Run git in the checkout without this machine's own git config or hooks (doeff's
+        process handler lays ``quiet`` over this process's environment — agora-redesign #3012)."""
+        outcome = run(
+            with_handlers(
+                [subprocess_handler],
+                RunProcess(
+                    argv=(git, "-C", str(directory), *args), env=quiet, env_mode=EnvMode.EXTEND
+                ),
+            )
+        )
+        assert outcome.exit_code == 0, f"git {args} exited {outcome.exit_code}: {outcome.stderr}"
+        return outcome.stdout.strip()
 
-    run("init", "-q")
+    git_run("init", "-q")
     (directory / "contract.json").write_text("{}\n", encoding="utf-8")
-    run("add", "contract.json")
-    run("-c", "user.name=premise", "-c", "user.email=premise@example.invalid", "commit", "-qm", "c")
-    return run("rev-parse", "HEAD")
+    git_run("add", "contract.json")
+    git_run("-c", "user.name=premise", "-c", "user.email=premise@example.invalid", "commit", "-qm", "c")
+    return git_run("rev-parse", "HEAD")
 
 
 def _declarations(check_layer: ModuleType, result: pytest.RunResult) -> tuple[_Declaration, ...]:

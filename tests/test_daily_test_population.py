@@ -38,6 +38,10 @@ import pytest
 import tomllib
 from doeff_adr.pytest_plugin import DEFAULT_FILE_PATTERNS as ADR_FILE_PATTERNS
 from doeff_adr.pytest_plugin import parse_hy_test_skips
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
+
+from doeff import run, with_handlers
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -269,27 +273,33 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
     runner = tmp_path / "fake_runner.py"
     runner.write_text(_FAKE_RUNNER, encoding="utf-8")
     record = tmp_path / "calls.jsonl"
-    env = {
-        **os.environ,
-        "DOEFF_FAKE_RUNNER_RECORD": str(record),
-        "DOEFF_FAKE_RUNNER_FAIL": str(REPO_ROOT / "packages" / first / "tests"),
-    }
-    proc = subprocess.run(
-        [
-            "make",
-            "-s",
-            "-C",
-            str(REPO_ROOT),
-            "test-packages",
-            f"PACKAGE_UV_RUN={sys.executable} {runner}",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
+    # 子(make)は doeff の子 process の答え手が起こし、今の環境に偽の runner の 2 つの名を重ねて渡す(agora-redesign #3012)。
+    proc = run(
+        with_handlers(
+            [subprocess_handler],
+            RunProcess(
+                argv=(
+                    "make",
+                    "-s",
+                    "-C",
+                    str(REPO_ROOT),
+                    "test-packages",
+                    f"PACKAGE_UV_RUN={sys.executable} {runner}",
+                ),
+                env=(
+                    EnvEntry(name="DOEFF_FAKE_RUNNER_RECORD", value=str(record)),
+                    EnvEntry(
+                        name="DOEFF_FAKE_RUNNER_FAIL",
+                        value=str(REPO_ROOT / "packages" / first / "tests"),
+                    ),
+                ),
+                env_mode=EnvMode.EXTEND,
+                timeout=120.0,
+            ),
+        )
     )
     output = proc.stdout + proc.stderr
+    assert not proc.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
     calls = (
         [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
         if record.exists()
@@ -317,7 +327,7 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
         f"make test-packages が package の tests/ の外の根 {missed_roots} を訪ねていない(最初の {first}"
         f" だけを赤にした)— その根の検は日次で 1 本も走らない — R8\n{output[-2000:]}"
     )
-    assert proc.returncode != 0, (
+    assert proc.exit_code != 0, (
         f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
     )
     named = _named_failed_packages(output)
@@ -344,31 +354,34 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
     green.parent.mkdir(parents=True)
     green.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
-    # 模型の木は root の conftest も外の plugin も持たない — 外の走行の設定を持ち込まない。
-    env = {
-        **os.environ,
-        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
-        "PYTEST_ADDOPTS": "-p no:cacheprovider",
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    proc = subprocess.run(
-        [
-            "make",
-            "-s",
-            "-f",
-            str(REPO_ROOT / "Makefile"),
-            "-C",
-            str(tmp_path),
-            "test-packages",
-            f"PACKAGE_UV_RUN={sys.executable} -m",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
+    # 模型の木は root の conftest も外の plugin も持たない — 外の走行の設定を持ち込まない。子(make)は doeff の子 process の
+    # 答え手が起こし、今の環境にこの 3 つの名を重ねて渡す(agora-redesign #3012)。
+    proc = run(
+        with_handlers(
+            [subprocess_handler],
+            RunProcess(
+                argv=(
+                    "make",
+                    "-s",
+                    "-f",
+                    str(REPO_ROOT / "Makefile"),
+                    "-C",
+                    str(tmp_path),
+                    "test-packages",
+                    f"PACKAGE_UV_RUN={sys.executable} -m",
+                ),
+                env=(
+                    EnvEntry(name="PYTEST_DISABLE_PLUGIN_AUTOLOAD", value="1"),
+                    EnvEntry(name="PYTEST_ADDOPTS", value="-p no:cacheprovider"),
+                    EnvEntry(name="PYTHONDONTWRITEBYTECODE", value="1"),
+                ),
+                env_mode=EnvMode.EXTEND,
+                timeout=120.0,
+            ),
+        )
     )
     output = proc.stdout + proc.stderr
+    assert not proc.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output}"
     lines = output.splitlines()
     failed = sorted(line.split(" - ")[0] for line in lines if line.startswith("FAILED "))
 
@@ -382,7 +395,7 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
     assert any("packages/c/tests/test_ok.py" in line for line in lines), (
         f"赤の後ろの緑の package c が走っていない — R8\n{output}"
     )
-    assert proc.returncode != 0, f"失敗の package があるのに rc が 0 — R8\n{output}"
+    assert proc.exit_code != 0, f"失敗の package があるのに rc が 0 — R8\n{output}"
     named = _named_failed_packages(output)
     assert named == ["a", "b"], (
         f"最後に失敗の package (a b) を `test-packages failed:` の行で名指していない: {named}"
