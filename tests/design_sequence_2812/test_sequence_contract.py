@@ -1,6 +1,6 @@
-"""#2812 の設計用実行仕様。公開 API の実装・承認ではない。
+"""#2812 の旧 A 比較用実行仕様。一般的な推奨は撤回済み。
 
-sequence_factory を将来の公開 API に置き換えて同じ契約を再利用する。
+公開 Sequence の実装計画ではなく、旧案と基点の handler の差を保存する。
 参照実装の可変 list はテスト内だけで、production の規約変更を含まない。
 """
 from collections.abc import Generator
@@ -111,7 +111,7 @@ def test_rerun_gets_a_fresh_accumulator(sequence_factory):
 
 
 def test_existing_traverse_continues_after_failure():
-    """B を A と同一視できないことを現行 handler で再現する。"""
+    """基点の sequential handler と旧 A の差。Traverse 全体の制約ではない。"""
     events = []
     failure = ValueError("row failed")
 

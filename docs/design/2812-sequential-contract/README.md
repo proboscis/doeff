@@ -1,28 +1,61 @@
-# #2812: 順次 Sequence の API 比較と実行仕様（未決定）
+# #2812: Traverse の方針選択と旧 Sequence 案の比較資料
 
 対象: https://github.com/proboscis/agora-redesign/issues/2812
 
-これは設計レビュー用の提案であり、A の採用を記録する ADR でも、公開 API の実装でもない。
+これは設計レビュー用の訂正文書であり、公開 API や handler の実装ではない。A の一般的な推奨は撤回した。
 基点は doeff `c025b722ac1508293c1b29cedc3cda4a0c78363a`。
 2026-10-02 の開始時に GitHub main とローカル origin/main が一致することを確認した。
-#2760 は open で、この基点には対象の `read-each` がまだない。consumer 移行は担当外とする。
+開始時のこの基点には #2760 の `read-each` がまだなかった。後の consumer 確認は下記 `2b34c3ddb` を参照する。consumer 移行は担当外とする。
 
-## 推奨と判断が必要な点
+## 推奨の訂正: 処理の意図は Traverse、実行方針は入口の handler
 
-**A の「公開ヘルパーによる、順次実行・最初の例外で停止」を推奨する。**
-新しい VM 命令はこの結論の前提にしない。まず既存の Program 合成で契約を表し、性能を別途判定する。
-B は既存 handler の追加だけでは元の失敗動作を保存できない。
+**A を汎用の蓄積処理の解決策として推奨した判断は撤回した。A の承認質問も撤回済み。**
+旧案と計測結果は比較資料として残すが、公開 Sequence の実装・consumer 移行の指示ではない。
+この訂正も production 実装の承認を意味しない。
 
-maintainer に残る判断は、(1) 追加公開 API と下記の契約を採るか、
-(2) Python 合成で性能条件に届かなければ core/VM 側の最適化を別途許可するか、である。
-issue の「推奨」は「決めること」に置かれており、開始時に承認コメントはなかった。
-自動的に A を承認済みと扱う根拠はない。一方、この比較・実行仕様・Draft PR を作るための追加承認は不要。
-本提案では不変条件の追加をまだ発効させないため、実行可能 ADR / enforcement ledger は変更しない。
-採用後の実装では ADR・必要な検査・ledger を同時に整え、AGENTS の TDD 手順に従う。
+論点は append や for loop を helper の中へ隠すことではなく、業務の呼び出し箇所で
+traversal の順序・並行性・失敗方針まで固定してよいかである。
+A の `Sequence(*programs)` は順次・最初の例外で停止という方針を callsite に埋め込む。
+前回は、現行 `sequential()` の失敗蓄積を Traverse 自体の制約と捉えすぎた。
 
-## 既存コードとの比較
+修正版の推奨は、`for/do` / `Traverse` で「各要素にこの処理を適用する」と宣言し、
+アプリケーションの入口で handler の構成を一括して選ぶこと（composition root）。
+各 protocol 関数の内側で sequential handler を設置する形では同じ問題を再導入する。
+当初の互換性を保つなら順次・例外停止を入口で選ぶ。ただし現行 `sequential()` は
+失敗を記録して続行するため、そのまま追加するだけでは足りず、適合する handler と
+線形な蓄積・性能改善を検討する。並行実行への変更は reader の効果と業務契約を確認してから行う。
 
-| 観点 | A: `Sequence(*programs)` の提案 | B: 現行 `Traverse` + `sequential()` |
+既存の根拠:
+
+- [ADR-TRAVERSE-001: Handler = Interpreter / Opaque Results](https://github.com/proboscis/doeff/blob/c025b722ac1508293c1b29cedc3cda4a0c78363a/specs/features/ADR-TRAVERSE-001-applicative-traverse-via-free-monad-on-algebraic-effects.md#L128)
+  は、実行順序と失敗方針をロジックの外側の handler が選ぶと規定する。
+- [doeff-traverse README: Strategy is handler](https://github.com/proboscis/doeff/blob/c025b722ac1508293c1b29cedc3cda4a0c78363a/packages/doeff-traverse/README.md#L42)
+  は、同じ Program を異なる handler で動かす例を示す。
+- [parallel_fail_fast](https://github.com/proboscis/doeff/blob/c025b722ac1508293c1b29cedc3cda4a0c78363a/packages/doeff-traverse/doeff_traverse/handlers.py#L350)
+  は、失敗方針を handler 側で選べる現存の例。ただしこれを順次版の代用品として採用したわけではない。
+
+### 結果順と効果の実行順は別の契約
+
+#2760 の [read-each と consumer（2b34c3ddb）](https://github.com/proboscis/doeff/blob/2b34c3ddbb9d56d83ce77e1312284dd1efdb26ce/packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/state_json.hy#L148)
+は、入力順の結果を zip・dict・tuple に使う。**結果を入力順に並べることと、
+各 child の効果を順番に実行することは同じではない。** 並行処理でも結果順は保持できる一方、
+副作用の実行順は変わりうる。確認した consumer だけでは後者が業務上必須とは証明できず、
+逆に任意の reader を安全に並行化できるとも証明していない。
+失敗した行を黙って落とした部分的な状態を成功として返さないという読込の正しさと、
+いつ停止・収集するかという実行方針も分けて確認する。
+
+| 選択肢 | 判断・実務上の負担 |
+|---|---|
+| Traverse の意図を宣言し、入口の handler で方針を選ぶ | 現在の推奨。入口の構成、互換な失敗方針、Collection の取り出し・型・性能を整える必要がある |
+| A を順次実行が業務上必須の専用 API として別途提案する | 比較候補としてのみ残す。その必須性と既存抽象では足りない根拠が必要。汎用の蓄積置換としては推奨しない |
+
+次に詰めるのは #2760 / #2871 担当との handler・入口・受入条件の整合である。
+以下の旧 A の契約やテストをそのまま Traverse 全般の仕様に昇格させない。
+実行可能 ADR / enforcement ledger、Traverse / VM / consumer は今回変更していない。
+
+## 旧 A と当時の sequential handler の比較（履歴）
+
+| 観点 | 旧 A: `Sequence(*programs)` | 基点の `Traverse` + `sequential()`（Traverse 全体の制約ではない） |
 |---|---|---|
 | 入力 | `Program[T, E]` の可変長引数 | 値の列と `T -> Program[U, Any]` の関数 |
 | 結果 | `Program[tuple[T, ...], E]` | effect の答えは `Collection[U]` |
@@ -49,9 +82,9 @@ issue の「推奨」は「決めること」に置かれており、開始時�
   `Task[T] | Future[T]` を受けて list を返す。Program 列の直列評価ではない。
   スキルの古い `Gather(p_items)` 例は、この基点の API の根拠として使っていない。
 
-## 提案する型と動作
+## 旧 A が提案していた型と動作（未採用・比較用）
 
-公開する場合の候補名は issue に合わせて `doeff.Sequence`。実装方法は未決定。
+以下は撤回前の比較案の記録。公開名 `doeff.Sequence` の追加や実装への合意はない。
 
 ```python
 # 公開口の意図を表す signature（コードはまだ export しない）
@@ -93,19 +126,20 @@ doeff の継続は one-shot で複製不可。Sequence もこの既存契約に�
   `::test_v29_no_clone_for_dispatch` が複製の実装を禁止し、実行テスト
   `tests/core/test_vm_architecture_ocaml5.py::test_continuation_is_one_shot` が二度目の再開を拒否する。
 
-採用後のレビューではこの既存契約を変更していないことを確認し、上記3件と
+旧 A を別途再提案する場合に限り、レビューでこの既存契約を変更していないことを確認し、上記3件と
 `tests/design_sequence_2812/test_sequence_contract.py::test_rerun_gets_a_fresh_accumulator`
-を公開実装に対して確認する。継続複製の新しい仕様・テストは追加しない。
+をその候補実装に対して確認する。現在その実装計画はない。継続複製の新しい仕様・テストは追加しない。
 今回の事実訂正では上記4件を実行し、4 passed。限定収集の ADR 警告に加え、
 既存の二度 Resume するテストで non-tail Resume 警告と、終了時の
 `generator ignored GeneratorExit` 警告を観測した（終了コード0）。
 実装や共有環境は変更せず、これらの警告を解消したとはしない。
-A の公開 API の採用自体は引き続き承認待ち。
+この既存契約をユーザーに再決定してもらう必要はない。A の承認質問は撤回済み。
 
-## 再利用できる検証
+## 比較用の検証と、修正版提案に必要な検証
 
 `tests/design_sequence_2812/test_sequence_contract.py` はテスト用参照実装を fixture に差し込んだ実行仕様。
-採用後は `sequence_factory` を公開 Sequence に置き換える。9 件とも現行 VM で成功した。
+旧 A と基点の handler の差を記録する比較資料として維持する。9 件とも既存の実行環境で成功した。
+`sequence_factory` を公開 Sequence に置き換える予定は現在ない。修正版 handler の受入テストでもない。
 これは新 API の存在・性能・移行完了を証明するものではない。
 
 | 契約 | テスト |
@@ -118,12 +152,15 @@ A の公開 API の採用自体は引き続き承認待ち。
 | 未処理 effect を飲み込まない | `test_unhandled_child_effect_is_not_swallowed` |
 | 入れ子の形 | `test_nested_sequences_preserve_tuple_shape` |
 | 再実行時に蓄積を共有しない | `test_rerun_gets_a_fresh_accumulator` |
-| B が失敗後にも進む差異 | `test_existing_traverse_continues_after_failure` |
+| 基点の sequential handler が失敗後にも進む差異 | `test_existing_traverse_continues_after_failure` |
 
 `typing_contract.py` は T の推論と、E を宣言した Program 型へ代入できる正例を pyright で確認する。
 E が途中で Any に劣化しても代入は通りうるため、これだけで効果型の精密な保存を証明したとはしない。
-実装時は空入力、異種入力、非 Program 入力の拒否、呼出側の E 漏れの負例、
-Hy の `<-` による型認識も追加する。今回 Hy マクロは変更していない。
+旧 A の追加公開を別途検討する場合でも、この正例だけでは十分でない。
+修正版提案では、同じ traversal 宣言に異なる handler を組み合わせても業務コードを変更せずに
+実行方針を選べること、結果順と効果の実行順を別々に観測すること、空入力、失敗行の欠落防止、
+従来の順次・停止動作との互換性、型・実 consumer の性能を検証する必要がある。
+そのテストや handler は本 PR では追加していない。今回 Hy マクロも変更していない。
 
 実行例（既存環境のみ利用、install/sync は行わない）:
 
@@ -142,7 +179,7 @@ root conftest の VM invariant checks を有効にしたまま実施。
 限定収集のため実行可能 ADR が未収集という既存プラグインの警告が 1 件あり、全 ADR の検証済みとはしない。
 最初の pyright は Python 環境未指定で pytest import が解決できず、上の `--pythonpath` 指定で成功した。
 
-## 性能の予備計測と未達条件
+## 旧 A の性能予備計測と未達条件（履歴）
 
 `benchmark_sequence.py` は dict 内包表記、繰返し tuple 連結、参照 Sequence を比較する。
 Program を使う 2 方式は、毎回 Program の構築・run・最後の dict 化を含める。
@@ -172,7 +209,13 @@ main の Rust はその後も変化しており、バイナリとこの基点の
 これは現行インストール環境での設計比較の証拠に限り、最新 main の受入検証の代用にはならない。
 性能を受け入れる前に専用の正しいビルド環境で再測定する必要がある。
 
-## Issue の完了条件との対応（どちらも未完了）
+## Issue の完了条件との対応（いずれも未完了）
+
+下表は issue 本文の開始時の条件との対応。後の
+[c3-w48 のコメント](https://github.com/proboscis/agora-redesign/issues/2812#issuecomment-5948238434)
+には「load-state が実データ量と10倍量で #2760 前の1.5倍以内・線形」と別の条件がある。
+本文の10倍条件を黙って置き換えず、#2760 / #2871 の担当と対象・基準・計測方法を整合させる。
+コメントは A の採用や実装開始の承認とは扱わない。
 
 | Issue の条件 | 今回の証拠 | 残る作業 |
 |---|---|---|
@@ -180,5 +223,5 @@ main の Rust はその後も変化しており、バイナリとこの基点の
 | 2. #2760 と伸びうる蓄積箇所を移行 | 今回は consumer の変更なし | #2760 の完了と担当調整後に移行対象を一覧化。順序・失敗時の同値性と各 package の検証を実施 |
 
 これは意図的な設計先行の分割であり、issue を close する PR ではない。
-性能を満たさないまま条件を緩めたり、A の採用を宣言したりしない。
+性能を満たさないまま条件を緩めない。A への移行を前提に作業を開始しない。
 VM/Rust/do.py/macros の変更は #2816/#2817 と競合するため今回の範囲に含めない。

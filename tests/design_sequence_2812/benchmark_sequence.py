@@ -1,4 +1,4 @@
-"""設計比較用の計測。#2760 の実際の read-each の受入検証ではない。"""
+"""旧 A の比較用計測。推奨は撤回済みで、実 read-each / Traverse の受入検証ではない。"""
 from statistics import median
 from time import perf_counter, process_time
 

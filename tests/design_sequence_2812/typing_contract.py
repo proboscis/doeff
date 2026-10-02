@@ -1,4 +1,4 @@
-"""提案の T/E が既存 Program 型で表せることを確認する静的仕様。"""
+"""旧 A の比較用型仕様。公開 API の追加計画でも E の精密保存の証明でもない。"""
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, assert_type
