@@ -24,7 +24,7 @@
 (import doeff_hy.table [Table table-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request NextRequests])
-(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow HeartbeatBody])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -999,25 +999,40 @@
 
 ;; --- effect ----------------------------------------------------------------------
 
+(defrecord ProvisionalBeat
+  "worker の宿が預けた仮の拍 1 つ(模擬の時計の下 — #2790): at = 1 拍ずつの走りで worker がその heartbeat を送る刻・request = その刻に
+   送る POST /heartbeat の要求(本文は宿が本物の heartbeat と同じ綴りで組んだ物)・body = 本文を道の型に解いた物(本番の受け口の
+   ReadBody と同じ解き)・name = 送り手の worker の名(返事を worker の最後の返事と比べる鍵)。coordinator の静かな区間の判断が、
+   本番の受けの判断(api_policy.respond)でその刻に試して積む。"
+  (#^ int at)
+  (#^ Request request)
+  (#^ HeartbeatBody body)
+  (#^ str name))
+
+
 (defclass [(dataclass :frozen True)] IdleProbe []
   "要求の無い間の静かな区間を、模擬の時計の下の受け口が本番と同じ判断の関数で 1 歩ずつ試すための材料(idle_policy.quiet-stretch —
    2026-09-30・#2790)。state = この歩の前の調停の状態・timing / naming = 調停ループの設定・watchers = 返事を待たせている版の変化の
-   待ち(Watcher の tuple — 区間の中で期限が来た待ちは、1 拍ずつの走りの「変わっていない」の返事と送り直しを吸って期限を引き直す)。
+   待ち(Watcher の tuple — 区間の中で期限が来た待ちは、1 拍ずつの走りの「変わっていない」の返事と送り直しを吸って期限を引き直す)・
+   beats = worker の宿が預けた仮の拍(ProvisionalBeat の tuple — 刻の順。模擬の列が足す — 調停ループは空のまま渡す)。
    本番の受け口は読まない。"
   (#^ ClusterState state)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
-  (setv #^ tuple watchers #()))
+  (setv #^ tuple watchers #())
+  (setv #^ tuple beats #()))
 
 
 (defrecord QuietStep
   "模擬の時計の下で一度に進めた静かな区間の 1 歩(1 拍ずつの走りの coordinator-step 1 回に当たる — #2790)。at = 歩の刻(epoch ms)・
    state = その歩の後の調停の状態(1 拍ずつの走りの SaveState の after と同じ値)・watchers = その歩の後の待ち(期限を引き直した物を含む)・
-   marked = その歩が生存の印を書いたか(静かな歩のうち置き場へ書くのは印の歩だけ — 落ちの注入の数え方が読む)。"
+   marked = その歩が生存の印を書いたか(静かな歩のうち置き場へ書くのは印の歩だけ — 落ちの注入の数え方が読む)・beats = その歩が受けた
+   仮の拍(ProvisionalBeat の tuple — 1 拍ずつの走りでその刻に届く heartbeat)。"
   (#^ int at)
   (#^ ClusterState state)
   (#^ tuple watchers)
-  (#^ bool marked))
+  (#^ bool marked)
+  (setv #^ tuple beats #()))
 
 
 (defrecord QuietStretch

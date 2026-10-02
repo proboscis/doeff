@@ -533,7 +533,8 @@
    heartbeat が届いた時に鳴らす呼び鈴(起こした後の待ちが次の版を待つ)・watch-failure = 待ちの task が思わぬ例外で止まった理由
    (在れば拍ごとの heartbeat に戻る — 本番の coordinator への口の watching? が thread の死に気づくのと同じ)・tick-bell = 拍の間の
    眠りを起こす呼び鈴(#2692 — 待ちが「変わった」と答えた時に鳴らして手放し、次の宣言の読みが新しく掛ける。鳴るまでは拍をまたいで
-   同じ物を渡す)。"
+   同じ物を渡す)・rest-bell = 静かな拍を一度に眠っている宿の呼び鈴(#2790 — 宿の真実を誰かが書き換えると世界が鳴らして手放す。
+   列が預けた仮の拍を静かでないと判じた時・coordinator が止まった時は列が鳴らす)。"
   (#^ str boot)
   (#^ int boot-at)
   (#^ tuple processes)
@@ -559,7 +560,8 @@
   (setv #^ bool woken False)
   (setv #^ tuple beat-bells #())
   (setv #^ (| str None) watch-failure None)
-  (setv #^ (| Promise None) tick-bell None))
+  (setv #^ (| Promise None) tick-bell None)
+  (setv #^ (| Promise None) rest-bell None))
 
 
 (defrecord HostTruthChange
