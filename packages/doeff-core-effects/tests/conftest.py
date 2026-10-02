@@ -3,7 +3,8 @@
 - Hy の ``test_*.hy`` の集め手は root の ini の ``doeff_hy_test_files``(doeff-adr の plugin の 1 点)— この conftest は集めない(package の母集団は ``make test-packages`` が別に走らせる)。
 - 契約テスト(agora-redesign #1159)は deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
   stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy・http_server_contract_handlers.hy・
-  meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy(agora-redesign #1440)が持ち、ここはその表を
+  meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy(agora-redesign #1440)・
+  stack_dump_contract_handlers.hy(agora-redesign #2748)が持ち、ここはその表を
   引いて scheduler つきで 1 回回すだけ。外の module が要る解釈器(REQUIRES)は、その module の無い環境では skip する。
 """
 
@@ -47,6 +48,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     from meter_contract_handlers import INTERPRETERS as METER_INTERPRETERS
     from process_contract_handlers import INTERPRETERS as PROCESS_INTERPRETERS
     from random_contract_handlers import INTERPRETERS as RANDOM_INTERPRETERS
+    from stack_dump_contract_handlers import INTERPRETERS as STACK_DUMP_INTERPRETERS
     from stop_contract_handlers import INTERPRETERS as STOP_INTERPRETERS
 
     compositions: dict[str, Callable[[Program], Program]] = {
@@ -59,6 +61,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         **LATEST_INTERPRETERS,
         **HEAP_INTERPRETERS,
         **RANDOM_INTERPRETERS,
+        **STACK_DUMP_INTERPRETERS,
     }
     required = HTTP_SERVER_REQUIRES.get(doeff_interpreter_name)
     if required is not None and importlib.util.find_spec(required) is None:

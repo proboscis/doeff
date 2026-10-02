@@ -94,6 +94,9 @@
 (import doeff_core_effects.latest-effects [PublishLatest ReadLatest])
 (import doeff_core_effects.process-latest [process-latest-handler])
 (import doeff_core_effects.memory-latest [memory-latest-handler])
+(import doeff_core_effects.stack-dump-effects [ArmStackDump DisarmStackDump ReadStackDumps])
+(import doeff_core_effects.faulthandler-stack-dump [faulthandler-stack-dump-handler])
+(import doeff_core_effects.memory-stack-dump [memory-stack-dump-handler])
 (import doeff_core_effects.meter-effects [CountMetric ObserveSeconds SetGauge ReadMeter])
 (import doeff_core_effects.process-meter [process-meter-handler])
 (import doeff_core_effects.memory-meter [memory-meter-handler])
@@ -329,6 +332,14 @@
   :handlers [process-latest-handler memory-latest-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "process-latest-handler(本物・process の中の置き場)と memory-latest-handler(I/O なし)が答える。")
+
+
+(defdomain doeff-stack-dump
+  :title "StackDump 語彙 — 共有の実行の流れが止まった最中に全 thread の stack を書く見張り"
+  :effects [ArmStackDump DisarmStackDump ReadStackDumps]
+  :handlers [faulthandler-stack-dump-handler memory-stack-dump-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "faulthandler-stack-dump-handler(本物・faulthandler の C の thread が期限を数えて sys.stderr に書く)と memory-stack-dump-handler(I/O なし・数えるだけ)が答える。")
 
 
 (defdomain doeff-meter
