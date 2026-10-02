@@ -136,7 +136,7 @@
                           (dfor e state.audit (.format "audit/{:010d}" e.seq) #(#(e) (partial audit-event-to-json e)))))))
 
 
-(deff durable-sources [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(defk durable-sources [state]
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を除いた耐久の状態の鍵 → #(元の値の tuple 直列化の関数)。鍵と値の形の定義はここ 1 か所(durable-kv も durable-delta もここから作る)。
   元の値 = 鍵の値を決める状態の部品(dataclass・dict・数)。状態は replace で作り直すので、前と後で同じ物の部品は変わっていない。
@@ -145,10 +145,13 @@
   (dict (gfor g SOURCE-GROUPS #(k source) (.items (g.build state)) #(k source))))
 
 
-(deff durable-kv [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(defk durable-kv [state]
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を除いた耐久の状態のキーの表。"
-  (dfor #(k #(_ encode)) (.items (durable-sources state)) k (encode)))
+  ;; 鍵ごとの綴り(encode — SOURCE-GROUPS の遅延の関数)は deff のままの素の呼び。綴りを defk にするのは、列を回しながら <- して集める
+  ;; 形の道具が決まってから(#2761 の表の「待つ側」)。
+  (<- sources dict (durable-sources state))
+  (dfor #(k #(_ encode)) (.items sources) k (encode)))
 
 
 (defn #^ bool same-parts [#^ tuple before #^ tuple after]
@@ -185,7 +188,7 @@
 (defk full-kv [state]
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を含む全部のキーの表(まとめ直しと移しの時だけ)。"
-  (| (durable-kv state)
+  (| (! (durable-kv state))
      (dfor k state.board (+ BOARD k) (board-entry state k))))
 
 
@@ -249,7 +252,8 @@
    値の違う鍵(盤を除く)。ずらした値(worker の lastSeenMs・task の lease・Rollout の段の起点)と生きていた時刻(counter の aliveMs)を
    同じ 1 行で耐久にする。書かないと、ずらした値は次にその鍵が変わるまで置き場に載らず(沈黙している worker の鍵は二度と変わらない)、
    2 回目の再起動で 1 回目の止まっていた長さを沈黙・経過に数えてしまう(2026-09-25)。"
-  (dfor #(k v) (.items (durable-kv state)) :if (!= (.get kv k) v) k v))
+  (<- current dict (durable-kv state))
+  (dfor #(k v) (.items current) :if (!= (.get kv k) v) k v))
 
 
 (defk legacy-key-moves [kv]

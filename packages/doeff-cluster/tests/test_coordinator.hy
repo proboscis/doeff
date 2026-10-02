@@ -44,7 +44,7 @@
   (:= s (get reply-3 0))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
-  (var second (! (state-from-json (state-to-json s) 5000)))
+  (var second (! (state-from-json (! (state-to-json s)) 5000)))
   (val reply-4 (beat second "a" 5000))
   (:= second (get reply-4 0)) ; b はまだ名乗っていない
   (assert (= (dfor #(k v) (.items second.placements) k v.worker) before)))
@@ -351,7 +351,7 @@
                         (req "PUT" "/board/k" {"value" 1})]))
   (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
   (setv back (! (state-from-kv (! (durable-load (WalStore d))) 99999)))
-  (assert (= (durable-kv back) (durable-kv final)))
+  (assert (= (! (durable-kv back)) (! (durable-kv final))))
   (assert (= (. back revision) (. final revision)))
   (assert (= (dfor #(k row) (.items back.board) k row.value) {"k" 1})))
 
@@ -425,8 +425,8 @@
   (setv data {"formatVersion" 2 "jobs" [] "workers" [] "tasks" [] "nextTask" 1
               "assignments" {"a" {"job" "a" "worker" "atlas" "generation" 4 "since_ms" 0}}})
   (assert (= (. (get (. (! (state-from-json data 0)) placements) "a") generation) 4))
-  (assert (in "placements" (state-to-json (! (state-from-json data 0)))))
-  (assert (not-in "assignments" (state-to-json (! (state-from-json data 0))))))
+  (assert (in "placements" (! (state-to-json (! (state-from-json data 0))))))
+  (assert (not-in "assignments" (! (state-to-json (! (state-from-json data 0)))))))
 
 
 (deftest test-the-http-intake-splits-the-path-and-undoes-the-percent-code-per-part

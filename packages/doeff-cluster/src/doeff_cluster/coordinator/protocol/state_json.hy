@@ -27,9 +27,11 @@
   #((tuple jobs) refused))
 
 
-(deff state-to-json [#^ ClusterState state]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(defk state-to-json [state]
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の状態の保存の形。盤は入れない(盤は行ごとに別の file — SaveBoardRow)。"
+  ;; 行ごとの綴り(job-to-json・task-record-to-json ほか)は deff のままの素の呼び。綴りを defk にするのは、列を回しながら <- して
+  ;; 集める形の道具が決まってから(#2761 の表の「待つ側」)。
   {"formatVersion" 2
    "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.values state.refused) r.row))
    "programs" (dfor #(k p) (.items state.programs) k (program-row-to-json p))

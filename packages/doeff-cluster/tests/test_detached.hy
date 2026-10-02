@@ -767,7 +767,7 @@
   (var s (get reply-39 0))
   (val reply-40 (beat s "w" 100 :boot "new" :boot-at 2000))
   (:= s (get reply-40 0))
-  (for [again [(! (state-from-kv (! (full-kv s)) 200)) (! (state-from-json (json.loads (json.dumps (state-to-json s))) 200))]]
+  (for [again [(! (state-from-kv (! (full-kv s)) 200)) (! (state-from-json (json.loads (json.dumps (! (state-to-json s)))) 200))]]
     (setv w (get again.workers "w"))
     (assert (= #(w.boot w.retired w.boot-at) #("new" #("old") 2000)) w)
     ;; 読み直した後も、一度も見ていない古い世代は起動時刻で古いと分かる(名乗りとして受けない)。
@@ -915,7 +915,7 @@
   (assert (= fresh.task-prefix "t1e240-") fresh.task-prefix)
   ;; 頭は保存と読み直しで戻る(state JSON と durable kv)。
   (assert (= (. (! (state-from-kv (! (full-kv fresh)) 0)) task-prefix) "t1e240-"))
-  (assert (= (. (! (state-from-json (json.loads (json.dumps (state-to-json fresh))) 0)) task-prefix) "t1e240-"))
+  (assert (= (. (! (state-from-json (json.loads (json.dumps (! (state-to-json fresh)))) 0)) task-prefix) "t1e240-"))
   ;; 以前からの置き場(頭の欄が無い)は今までどおり t<番号>。
   (assert (= (. (! (state-from-kv (! (full-kv (ClusterState))) 0)) task-prefix) "t")))
 
