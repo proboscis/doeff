@@ -3,6 +3,8 @@
 host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に environ-reader を並べる使い手の strict に Unknown の赤が出ていた
 (host-reader は shared/entry/host_reader に在る — ここに 1 版残した古い host-reader は 2026-10-03 に消した・#2167)。
 → host_contract.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目・3 本目が赤になる。
+host_contract.pyi は手書きだったが、#3014 で足した this-program-path が載らず、道具で作り直した host_reader.pyi の import が宣言の無い名を
+指したので、道具の出力(python -m doeff_hy.static_stub --write --replace)に置き換えた(以後の食い違いは test_generated_stubs も赤にする)。
 """
 
 import ast
@@ -115,7 +117,7 @@ def test_the_stub_matches_host_contract_hy() -> None:
         for node in stub.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     } | {node.name for node in stub.body if isinstance(node, ast.FunctionDef | ast.ClassDef) and not node.name.startswith("_")}
-    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "environ_reader"}
+    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "this_program_path", "environ_reader"}
 
 
 def test_a_dropped_record_field_is_found() -> None:
