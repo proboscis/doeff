@@ -111,14 +111,14 @@
 
 (defclass [(dataclass :frozen True :kw-only True)] RunProcess [EffectBase]
   "子 process を 1 回走らせて終わりを待つ(頭の註)。終了 code は値で返る。"
-  #^ tuple argv
+  #^ (get tuple #(str ...)) argv
   #^ (| str None) stdin
   (setv stdin None)
   #^ (| float None) timeout
   (setv timeout None)
   #^ (| str None) cwd
   (setv cwd None)
-  #^ (| tuple None) env
+  #^ (| (get tuple #(EnvEntry ...)) None) env
   (setv env None)
   #^ EnvMode env-mode
   (setv env-mode EnvMode.REPLACE)
@@ -196,10 +196,10 @@
 
 (defclass [(dataclass :frozen True :kw-only True)] StartProcess [EffectBase]
   "子 process を立てて、終わりを待たずに返す(頭の註)。答え = ProcessStarted か ProcessNotStarted。"
-  #^ tuple argv
+  #^ (get tuple #(str ...)) argv
   #^ (| str None) cwd
   (setv cwd None)
-  #^ (| tuple None) env
+  #^ (| (get tuple #(EnvEntry ...)) None) env
   (setv env None)
   #^ EnvMode env-mode
   (setv env-mode EnvMode.REPLACE)

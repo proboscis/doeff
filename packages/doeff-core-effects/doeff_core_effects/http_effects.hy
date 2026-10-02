@@ -45,14 +45,21 @@
           self.log-each-request log-each-request
           self.connect-timeout-seconds connect-timeout-seconds))
 
-  (defn __repr__ [self]
+  (defn #^ str __repr__ [self]
     (+ "HttpRequest(" self.method " " (repr self.url) ")")))
 
 
 (defclass HttpResponse []
   "Result of HttpRequest. Plain data -- not an effect."
+  (#^ int status)
+  (#^ (get dict #(str str)) headers)
+  (#^ bytes content)
+  (#^ str text)
+  (#^ str url)
+  (#^ float elapsed-seconds)
 
-  (defn __init__ [self status headers content text url elapsed-seconds]
+  (defn #^ None __init__ [self #^ int status #^ (get dict #(str str)) headers #^ bytes content #^ str text #^ str url
+                          #^ float elapsed-seconds]
     (setv self.status status
           self.headers headers
           self.content content
@@ -60,15 +67,18 @@
           self.url url
           self.elapsed-seconds elapsed-seconds))
 
-  (defn raise-for-status [self]
+  (defn #^ None raise-for-status [self]
     (when (>= self.status 400)
       (raise (HttpError self.status self.url (cut self.text 0 500))))))
 
 
 (defclass HttpError [Exception]
   "Raised by HttpResponse.raise_for_status for HTTP error statuses."
+  (#^ int status)
+  (#^ str url)
+  (#^ str body-snippet)
 
-  (defn __init__ [self status url body-snippet]
+  (defn #^ None __init__ [self #^ int status #^ str url #^ str body-snippet]
     (.__init__ (super) (+ "HTTP " (str status) " " url ": " body-snippet))
     (setv self.status status
           self.url url

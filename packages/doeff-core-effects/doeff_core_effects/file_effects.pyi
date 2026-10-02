@@ -1,34 +1,16 @@
-"""file_effects.hy の公開面の型(型検査のための宣言 — 実行時は file_effects.hy を読む・agora-redesign #2323)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = file_effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-file_effects.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、`from doeff_core_effects.file_effects import ReadText`
-の名が全部 Unknown になる(消費者の strict の型検査で、書き手に直せない赤が連なる)。ここで型を宣言する。
-
-- defrecord は frozen で keyword だけの dataclass、defenum は StrEnum(値は名の小文字)。
-- effect(`(defclass [(dataclass :frozen True)] … [EffectBase])`)は位置でも渡せる frozen の dataclass で、`EffectBase[答えの型]` の
-  下位の型。失敗は値 FileFailed で答えるので、本物の file system に触れる effect の答えは成功の答えと FileFailed の和
-  (.hy の頭の註と os_file.hy の各 defk の :post のとおり)。ReadMemoryFiles は memory の置き場の中身だけを答える。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。file-done は答えから FileFailed を除いた型を返す。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が名・欄の名と順・既定値の有無・引数の名で検める。
-"""
-
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Any, TypeVar
-
-from doeff_vm import EffectBase
-
-from doeff import Program
-
-_A = TypeVar("_A")
+from doeff import Program as _Program
+from dataclasses import dataclass as dataclass
+from enum import StrEnum as StrEnum
+from doeff import EffectBase as EffectBase
 
 class PathKind(StrEnum):
-    FILE = "file"
-    DIRECTORY = "directory"
-    SYMLINK = "symlink"
-    MISSING = "missing"
-    OTHER = "other"
-
-# --- 値 ---
+    FILE = 'file'
+    DIRECTORY = 'directory'
+    SYMLINK = 'symlink'
+    MISSING = 'missing'
+    OTHER = 'other'
 
 @dataclass(frozen=True, kw_only=True)
 class FileFailed:
@@ -48,9 +30,9 @@ class DirEntry:
     kind: PathKind
 
 @dataclass(frozen=True, kw_only=True)
-class LockHeld:
-    path: str
-    token: int
+class DiskUsage:
+    total: int
+    free: int
 
 @dataclass(frozen=True, kw_only=True)
 class SourceNotCompiled:
@@ -58,11 +40,9 @@ class SourceNotCompiled:
     reason: str
 
 @dataclass(frozen=True, kw_only=True)
-class DiskUsage:
-    total: int
-    free: int
-
-# --- effect ---
+class LockHeld:
+    path: str
+    token: int
 
 @dataclass(frozen=True)
 class StatPath(EffectBase[PathStat | FileFailed]):
@@ -123,7 +103,7 @@ class CompilePythonSources(EffectBase[tuple[SourceNotCompiled, ...]]):
     tree: str
     items: tuple[tuple[str, str], ...]
     jobs: int = 1
-    roots: tuple[str, ...] = (".",)
+    roots: tuple[str, ...] = ...
 
 @dataclass(frozen=True)
 class LinkFile(EffectBase[FileFailed | None]):
@@ -164,8 +144,6 @@ class ReadDiskUsage(EffectBase[DiskUsage | FileFailed]):
 class MeasureTree(EffectBase[int | FileFailed]):
     path: str
 
-# --- memory の置き場の語彙 ---
-
 @dataclass(frozen=True, kw_only=True)
 class MemoryFile:
     path: str
@@ -174,12 +152,15 @@ class MemoryFile:
 
 @dataclass(frozen=True, kw_only=True)
 class MemoryFiles:
-    files: tuple[MemoryFile, ...] = ()
-    dirs: tuple[str, ...] = ()
-    locks: tuple[str, ...] = ()
+    files: tuple[MemoryFile, ...] = ...
+    dirs: tuple[str, ...] = ...
+    locks: tuple[str, ...] = ...
     free: int = ...
     total: int = ...
 
-def file_done(request: EffectBase[_A | FileFailed]) -> Program[_A, Any]: ...
+def file_done[A](request: EffectBase[A | FileFailed]) -> _Program[A, object]:
+    ...
+
 @dataclass(frozen=True)
-class ReadMemoryFiles(EffectBase[MemoryFiles]): ...
+class ReadMemoryFiles(EffectBase[MemoryFiles]):
+    ...
