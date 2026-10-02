@@ -24,7 +24,7 @@
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess SimReadiness ProcessesOf ReadinessOf CutWorker StallWorker StartWorker
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess ServiceReadiness ProcessesOf ReadinessOf CutWorker StallWorker StartWorker
                              DrainWorker Redeclare KillWorker ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
@@ -282,7 +282,7 @@
    after = 途絶が明けた後の process の列。"
   (#^ str host)
   (#^ tuple mid)
-  (#^ SimReadiness readiness)
+  (#^ ServiceReadiness readiness)
   (#^ tuple after))
 
 
@@ -301,7 +301,7 @@
   (<- (CutWorker host seconds))
   (<- (Delay 60.0))
   (<- mid tuple (ProcessesOf "pulse"))
-  (<- readiness SimReadiness (ReadinessOf "pulse"))
+  (<- readiness ServiceReadiness (ReadinessOf "pulse"))
   (<- (Delay (+ (- seconds 60.0) 30.0)))
   (<- after tuple (ProcessesOf "pulse"))
   (CutSeen :host host :mid mid :readiness readiness :after after))
@@ -316,7 +316,7 @@
   (<- (StallWorker host seconds))
   (<- (Delay (- seconds 1.0)))
   (<- mid tuple (ProcessesOf "pulse"))
-  (<- readiness SimReadiness (ReadinessOf "pulse"))
+  (<- readiness ServiceReadiness (ReadinessOf "pulse"))
   (<- (Delay 31.0))
   (<- after tuple (ProcessesOf "pulse"))
   (CutSeen :host host :mid mid :readiness readiness :after after))
@@ -418,7 +418,7 @@
   (<- (StartWorker "w2"))
   (<- (Delay 60.0))
   (<- mid tuple (ProcessesOf "pulse"))
-  (<- readiness SimReadiness (ReadinessOf "pulse"))
+  (<- readiness ServiceReadiness (ReadinessOf "pulse"))
   (<- (Delay 80.0))
   (<- (CutWorker "w1" 90.0))
   (<- (Delay 100.0))
@@ -457,7 +457,7 @@
   (<- (Redeclare (wide-pulses sim-foundation)))
   (<- (Delay 60.0))
   (<- mid tuple (ProcessesOf "pulse"))
-  (<- readiness SimReadiness (ReadinessOf "pulse"))
+  (<- readiness ServiceReadiness (ReadinessOf "pulse"))
   (<- (Delay 80.0))
   (<- after tuple (ProcessesOf "pulse"))
   (CutSeen :host "w1" :mid mid :readiness readiness :after after))
@@ -487,7 +487,7 @@
   (<- (DrainWorker "w1"))
   (<- (Delay 30.0))
   (<- after tuple (ProcessesOf "pulse"))
-  (<- readiness SimReadiness (ReadinessOf "pulse"))
+  (<- readiness ServiceReadiness (ReadinessOf "pulse"))
   (CutSeen :host "w1" :mid #() :readiness readiness :after after))
 
 
