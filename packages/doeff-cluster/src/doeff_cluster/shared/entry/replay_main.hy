@@ -59,7 +59,7 @@
             failure (.format "{}: {}" (. (type e) __name__) (cut (str e) 0 500)))))
   (setv report (| (replay-report state end)
                   {"seconds" (round (- (time.monotonic) started) 3) "failure" failure
-                   "program" (.get rec.header "program")}))
+                   "program" rec.header.program}))
   (with [h (open args.out "w" :encoding "utf-8")]
     (json.dump report h :ensure-ascii False :default str))
   (print (.format "replay: {}・出来事 {} のうち {}・判断の違い {}・分岐 {}" end (get report "events") (get report "consumed")

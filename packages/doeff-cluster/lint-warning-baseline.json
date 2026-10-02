@@ -21,7 +21,6 @@
     "src/doeff_cluster/coordinator/protocol/store.hy": 1,
     "src/doeff_cluster/foundation/foundation_check.hy": 1,
     "src/doeff_cluster/foundation/record_codec.hy": 2,
-    "src/doeff_cluster/foundation/record_log.hy": 6,
     "src/doeff_cluster/record_store/core/program.hy": 2,
     "src/doeff_cluster/shared/core/lease_rules.hy": 6,
     "src/doeff_cluster/shared/core/readiness_rules.hy": 1,

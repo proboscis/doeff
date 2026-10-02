@@ -24,6 +24,7 @@
 (import json)
 (import typing [get-args])
 (import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy.table [Table TableWrite table-of])
 (import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue RestoredValue
                                                 canonical apply-delta delta-of resolve-refs resolve-type encode-value decode-value])
 
@@ -57,32 +58,66 @@
 
 (defclass [(dataclass)] Entry []
   "問い 1 つ(req)と、その答え(ans)。ans-e が None = 記録が終わった時にまだ答えが返っていなかった。
+   args-text = 引数(名 → 値の JSON)の比べる形(record_codec.canonical — 鍵を並べた文字列)。read-recording が今の綴りへ揃えてから 1 度だけ
+   作り、match-step は文字列のまま比べる(#2727 — 以前は dict を持ち、比べるたびに canonical を作り直した)。中を読むのは違いの報告だけ
+   (recorded-args)。
    value = 成功の答えを read-recording が読む時に戻した値(RestoredAnswer)。再生は業務コードへその写しを渡す
-   (record_handlers.deliver-recorded)ので、同じ Recording を何度再生しても value は書き換わらない。"
+   (record_handlers.deliver-recorded)ので、同じ Recording を何度再生しても value は書き換わらない。
+   error = 失敗の答えの例外の記録の綴り(中継 — 中を読むのは再生が渡す時の decode-error だけ。読む時に例外へ戻すと、同じ object を
+   再生のたびに投げ直すことになる)。"
   (#^ int e)
   (#^ str task)
   (#^ int at)
   (#^ str type)
-  (#^ dict args)
+  (#^ str args-text)
   (#^ str mode)
   (setv #^ object subject None)
   (setv #^ object ans-e None)
   (setv #^ object ans-at None)
   (setv #^ bool ok True)
   (setv #^ RestoredAnswer value None)
-  (setv #^ (| dict None) error None))
+  (setv #^ (| OpaqueJson None) error None))
+
+
+(defrecord RunHeader
+  "記録の run の行(先頭の 1 行)のうち、再生と報告が読む欄。ほかの欄(worker・世代・版・設定)は読む所が無い(#2727)。"
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  (#^ int format)
+  (setv #^ (| str None) service None)
+  (setv #^ (| str None) run None)
+  (setv #^ (| str None) revision None)
+  (setv #^ (| str None) program None))
 
 
 (defclass [(dataclass)] Recording []
-  "読んだ記録。events = 出来事の番号の昇順の #(番号 種類 task の名 付帯)。entries = 問いの番号 → Entry。
-   queues = task の名 → その task の問いの番号の列(問いの順)。ended = 記録の中で終わった task の名 → ok。"
-  (#^ dict header)
+  "読んだ記録。events = 出来事の番号の昇順の #(番号 種類 task の名 付帯)。entries = 問いの番号で引く Entry の列(位置 = 出来事の番号・
+   答えの番号の位置は None — entry-of で引く)。queues = task の名 → その task の問いの番号の tuple(問いの順)の表。
+   ended = 記録の中で終わった task の名の集合(#2727 — 以前は名 → ok の dict だったが、ok を読む所は無い)。"
+  (#^ RunHeader header)
   (#^ list events)
-  (#^ dict entries)
-  (#^ dict queues)
-  (#^ dict ended)
+  (#^ (get tuple #((| Entry None) ...)) entries)
+  (#^ Table queues)
+  (#^ frozenset ended)
   (setv #^ object broken None)
   (setv #^ list muts (field :default-factory list)))
+
+
+(deff entry-of [#^ Recording rec #^ int e]  ; defk にできない: 再生係(handler — Program の外の object の method)が問いごとに呼ぶ純粋な引き
+  {:pre [(: rec Recording) (: e int)] :post [(: % (| Entry None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "出来事の番号 e の問い(Entry)。答えの番号・記録に無い番号は None — 再生係が「次に来るべき出来事」の問いを引くため。"
+  (if (< -1 e (len rec.entries)) (get rec.entries e) None))
+
+
+(deff queue-of [#^ Recording rec #^ str task]  ; defk にできない: 再生係(handler — Program の外の object の method)が問いごとに呼ぶ純粋な引き
+  {:pre [(: rec Recording) (: task str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "task の問いの番号の列(問いの順)。記録に無い task は空 — 再生係が task の次の問いを突き合わせるため。"
+  (or (.row rec.queues task) #()))
+
+
+(deff recorded-args [#^ Entry entry]  ; defk にできない: 再生係(handler)と報告の綴り(Program の外)が違いを報告する時に呼ぶ純粋な読み
+  {:pre [(: entry Entry)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "記録の引数(名 → 値の JSON)— 違いの報告と差分のため、比べる形の文字列から読み直す。"
+  (json.loads entry.args-text))
 
 
 (defn _resolve [line bases prefix full-key delta-key base-key key-key]
@@ -173,7 +208,8 @@
                                             (and (isinstance v dict) (in "$c" v)) v
                                             True (encode-value (json.loads (. (OpaqueJson.of (decode-value v)) text)))))
                               args))
-            (setv (get entries e) (Entry e (get l "t") (get l "at") ty current mode :subject (.get l "sj")))
+            ;; 比べる形の文字列は、揃えた後の引数から 1 度だけ作る(鍵を並べるので、記録の行の鍵の順に依らない)。
+            (setv (get entries e) (Entry e (get l "t") (get l "at") ty (canonical current) mode :subject (.get l "sj")))
             (.append (.setdefault queues (get l "t") []) e)
             (.append events #(e "req" (get l "t") e)))
       (= kind "ans")
@@ -193,18 +229,25 @@
                                    (raise (ValueError (.format "記録の答え(問い {}・effect の型 {})を今の版で戻せない: {}: {}"
                                                                entry.e entry.type (. (type err) __name__) err))
                                           :from err)))))
-                (setv entry.error (get l "err")))
+                (setv entry.error (if (is (get l "err") None) None (OpaqueJson.of (get l "err")))))
             (.append events #(e "ans" entry.task (get l "s"))))
       (= kind "mut") (do (.append events #(e "mut" None l)) (.append muts l))
       (= kind "end") (do (setv (get ended (get l "t")) (get l "ok")) (.append events #(e "end" (get l "t") None)))
       True None))
-  (Recording header events entries queues ended :broken broken :muts muts))
+  ;; 読みの間の索引(dict)を、再生が引く形へ: 問いは番号で引く tuple・task の問いの列は表・終わった task は名の集合。
+  (Recording (RunHeader :format (get header "format") :service (.get header "service") :run (.get header "run")
+                        :revision (.get header "revision") :program (.get header "program"))
+             events
+             (tuple (gfor i (range (+ (max entries :default -1) 1)) (.get entries i)))
+             (table-of (tuple (gfor #(task numbers) (.items queues) (TableWrite task (tuple numbers)))))
+             (frozenset ended)
+             :broken broken :muts muts))
 
 
 ;; --- 突き合わせ -------------------------------------------------------------------------------
 
-(defn #^ (get tuple #(str int list)) match-step [#^ Recording rec #^ list queue #^ int head #^ str type #^ dict args #^ str mode #^ (| str None) subject #^ bool task-ended]
-  "純粋: task の問いの列(queue・head = 次に見る位置)と、いま業務コードが出した問い(型・引数・mode・対の鍵)から、
+(defn #^ (get tuple #(str int list)) match-step [#^ Recording rec #^ tuple queue #^ int head #^ str type #^ str args-text #^ str mode #^ (| str None) subject #^ bool task-ended]
+  "純粋: task の問いの列(queue・head = 次に見る位置)と、いま業務コードが出した問い(型・引数の比べる形 args-text・mode・対の鍵)から、
    何をするかを決める。答え = #(判定 位置 飛ばした問いの番号の列)。判定:
      \"strict\"   記録の問いと同じ(read / live)
      \"same\"     decision / output で記録と同じ
@@ -223,12 +266,12 @@
     (setv entry (get rec.entries e))
     (cond
       (and (in mode LOOSE) (in entry.mode LOOSE) (= entry.type type) (= entry.subject subject))
-        (return #((if (= (canonical entry.args) (canonical args)) "same" "changed") pos skipped))
+        (return #((if (= entry.args-text args-text) "same" "changed") pos skipped))
       (in entry.mode LOOSE)
         (do (.append skipped e) (+= pos 1))
       (in mode LOOSE)
         (return #("extra" pos skipped))
-      (or (!= entry.type type) (!= (canonical entry.args) (canonical args)))
+      (or (!= entry.type type) (!= entry.args-text args-text))
         (return #("diverge" pos skipped))
       True
         (return #("strict" pos skipped)))))
@@ -239,7 +282,7 @@
 (deff diff-row [#^ str kind #^ (| Entry None) entry #^ str type #^ (| str None) subject #^ str task #^ (| dict None) replayed-args #^ (| int None) [at None]]  ; defk にできない: 再生係(handler)と再生の道具が Program の外で呼ぶ報告の純粋な綴り
   {:pre [(: kind str) (: entry (| Entry None)) (: type str) (: subject (| str None)) (: task str) (: replayed-args (| dict None)) (: at (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "判断の違い 1 件。kind = changed / missing / extra。recorded = 記録の引数・replayed = 再生の引数・delta = 記録 → 再生の差分。"
-  (setv recorded (if (is entry None) None entry.args))
+  (setv recorded (if (is entry None) None (recorded-args entry)))
   {"kind" kind "type" type "subject" subject "task" task
    "at" (if (is-not entry None) entry.at at) "event" (if (is entry None) None entry.e)
    "recorded" recorded "replayed" replayed-args
@@ -265,8 +308,8 @@
     (setv s (get by-subject k))
     (setv (get (get s "counts") (get d "kind")) (+ 1 (.get (get s "counts") (get d "kind") 0)))
     (setv (get s "lastAt") (get d "at")))
-  {"run" (.get rec.header "run") "service" (.get rec.header "service")
-   "recordedRevision" (.get rec.header "revision")
+  {"run" rec.header.run "service" rec.header.service
+   "recordedRevision" rec.header.revision
    "events" (len rec.events) "consumed" consumed
    "matched" counts
    "decisionDiffs" ds

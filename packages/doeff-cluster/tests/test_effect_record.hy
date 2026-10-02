@@ -29,9 +29,9 @@
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
-(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY WatchedRef])
+(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY WatchedRef recorded-args])
 (import pathlib)
-(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report])
+(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report deliver-recorded])
 
 
 ;; --- 1. 符号化 ---------------------------------------------------------------------------------
@@ -175,7 +175,7 @@
                  "a" {"key" "row/a" "value" (encode-value old) "expect" old-expect} "ok" True "v" True})
       (val rec (read-recording [{"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"} line]))
       (val replayed (args-of (WriteShared "row/a" (OpaqueJson.of new) new-expect) (HandleTable)))
-      (assert (= (canonical (. (get rec.entries 0) args)) (canonical replayed)) #(old old-expect (. (get rec.entries 0) args) replayed)))))
+      (assert (= (. (get rec.entries 0) args-text) (canonical replayed)) #(old old-expect (. (get rec.entries 0) args-text) replayed)))))
 
 
 (deftest test-a-recording-mixing-old-and-new-write-shared-forms-replays-without-differences
@@ -192,6 +192,48 @@
   (assert (= replayed recorded) #(replayed recorded))
   (assert (= (get report "outputDiffCounts") {"changed" 0 "missing" 0 "extra" 0}) report)
   (assert (get report "identical") report))
+
+
+;; ---- 読んだ記録の持ち方を変える前に書いた記録の file を、今の再生で読む(#2727)--------------------------------------------
+;; doeff 128a86555(Entry が引数を名 → 値の dict で持ち、比べるたびに canonical を作っていた版)の記録係で record-system を記録した行。
+;; 引数を比べる形の文字列で持ち、問いを番号で引く tuple・task の問いの列を表で持つ今の読みでも、既に書いた記録の再生は同じ。
+(val BEFORE-2727 (/ (. (pathlib.Path __file__) parent) "fixtures" "system_record_before_2727.json"))
+
+(deftest test-a-recording-written-before-2727-replays-the-same
+  (setv #(lines program store) (record-system))
+  (<- recorded list program)
+  (val before (json.loads (.read-text BEFORE-2727 :encoding "utf-8")))
+  ;; 失敗ケース: 問いの引数(a)の鍵の順を逆にした同じ記録。比べる形の文字列が記録の行の鍵の順に依れば、再生の引数と食い違って赤。
+  (val reordered (lfor l before (if (isinstance (.get l "a") dict)
+                                    (| l {"a" (dfor k (reversed (list (get l "a"))) k (get l "a" k))})
+                                    l)))
+  (assert (any (gfor #(a b) (zip before reordered) (!= (list (.get a "a" {})) (list (.get b "a" {}))))) "鍵の順を替えた行が無い")
+  (for [written [before reordered]]
+    (val state (ReplayState (read-recording written)))
+    (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
+    (val report (replay-report state "program-returned"))
+    (assert (= replayed recorded) #(replayed recorded))
+    (assert (get report "identical") report)
+    (assert (= (get report "consumed") (get report "events")) report)))
+
+
+(deftest test-a-recorded-failure-is-delivered-as-a-fresh-exception-of-the-same-kind
+  ;; #2727: 失敗の答え(err)は読む時に中継の OpaqueJson で持ち、再生が渡す時に decode-error で戻す — 同じ型・同じ文の例外を、
+  ;; 渡すたびに別の object で(読む時に例外へ戻すと、同じ object を再生のたびに投げ直す)。task の終わりの行は終わった task の名に入る。
+  (val head {"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"})
+  (val failed {"k" "call" "e" 0 "t" "root" "at" 0 "ty" (type-name ReadShared) "m" "read" "a" {"prefix" "row/"} "ok" False
+               "err" (encode-error (ValueError "盤に届かない"))})
+  (val rec (read-recording [head failed {"k" "end" "e" 2 "t" "root" "ok" False}]))
+  (val entry (get rec.entries 0))
+  (assert (isinstance entry.error OpaqueJson) entry.error)
+  (assert (= rec.ended (frozenset ["root"])) rec.ended)
+  (val state (ReplayState rec))
+  (val codec (codec-of (ReadShared "row/")))
+  (val first (deliver-recorded state entry codec))
+  (val second (deliver-recorded state entry codec))
+  (assert (not (or (get first 0) (get second 0))) #(first second))
+  (assert (and (isinstance (get first 1) ValueError) (= (str (get first 1)) "盤に届かない")) first)
+  (assert (and (isinstance (get second 1) ValueError) (is-not (get first 1) (get second 1))) #(first second)))
 
 
 ;; ---- WriteShared の記録は型の宣言から・OpaqueJson の欄は中の JSON の値で・ANY は値の汎用の綴りで(#2579)----------------------
@@ -235,8 +277,8 @@
     (val entry (get rec.entries (get l "e")))
     (val value (resolve-refs (get l "a" "value") blobs))
     (val replayed (args-of (WriteShared (get l "a" "key") (OpaqueJson.of value)) (HandleTable)))
-    (assert (= (canonical entry.args) (canonical replayed)) #(entry.args replayed))
-    (assert (= (get entry.args "expect") CURRENT-ANY) entry.args)))
+    (assert (= entry.args-text (canonical replayed)) #(entry.args-text replayed))
+    (assert (= (get (recorded-args entry) "expect") CURRENT-ANY) entry.args-text)))
 
 
 ;; ---- 答えの値は記録を読む時に戻す — 再生の handler は JSON を読まない(#2581)-------------------------------------------
