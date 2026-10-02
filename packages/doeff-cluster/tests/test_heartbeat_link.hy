@@ -6,6 +6,7 @@
 ;; - 待ちが答えた後は、間隔の内の拍では送らず、間隔が過ぎれば送る。待ちが「変わった」と答えれば間隔の内でも次の拍で送る。
 ;; - /watch が 404 なら拍ごとに戻る(1 行出す)。背景の task が思わぬ例外で止まれば、1 行出して拍ごとに戻る(黙って待ちを失わない)。
 ;; - 止めの合図で背景の task が止まる。待ちを使わない口(既定)は背景の task を起こさない。
+;; - 宣言の読みは拍の間の眠りを起こす呼び鈴を添え、呼び鈴は鳴るまで拍をまたいで同じ物・「変わった」で 1 度だけ鳴る(#2692)。
 (require doeff-hy.macros [defhandler defk deftest <- val var])
 (import collections.abc [Callable])
 (import threading)
@@ -17,10 +18,11 @@
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [scheduled])
+(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.worker.intent.worker_model [ReadDesired])
+(import doeff_cluster.worker.intent.worker_model [ReadDesired DesiredJobs])
 (import doeff_core_effects.http_effects [HttpRequest])
-(import doeff_cluster.worker.protocol.coordinator_link [coordinator-link])
+(import doeff_cluster.worker.protocol.coordinator_link [coordinator-link bell-rung])
 (import tests.link_rig [LinkRig LINK-ROUTE])
 (import tests.transport_http [transport-http])
 
@@ -30,10 +32,10 @@
 (defclass FakeCoordinator []
   "heartbeat に版つき(revision が None なら版の欄の無い旧い形)の返事をし、/watch に mode で答える偽の coordinator。
    mode = unchanged(少し待って「変わっていない」)・changed(最初の確かめの後に 1 度だけ「変わった」)・missing(404)・
-   broken(待ちの答え手が思わぬ例外で落ちる)。
+   broken(待ちの答え手が思わぬ例外で落ちる)・gated(gate-open が立った後に 1 度だけ「変わった」— 変化の刻を検が決める)。
    beats = 受けた heartbeat の数・watches = 受けた待ちの数。"
   (defn #^ None __init__ [self #^ str mode #^ (| int None) [revision 3]]
-    (setv self.mode mode self.revision revision self.beats 0 self.watches 0 self.changed-sent False
+    (setv self.mode mode self.revision revision self.beats 0 self.watches 0 self.changed-sent False self.gate-open False
           self.lock (threading.Lock)))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
@@ -47,7 +49,7 @@
               (= self.mode "missing") (httpx.Response 404 :json {"error" "知らない要求"})
               (= self.mode "broken") (raise (RuntimeError "壊れた待ち"))
               (= (get query "timeoutSeconds") "0.0") (httpx.Response 200 :json {"revision" self.revision "changed" False})
-              (and (= self.mode "changed") (not self.changed-sent))
+              (and (or (= self.mode "changed") (and (= self.mode "gated") self.gate-open)) (not self.changed-sent))
                 (do (setv self.changed-sent True)
                     (httpx.Response 200 :json {"revision" (+ self.revision 1) "changed" True}))
               True (do (time.sleep 0.05)
@@ -210,3 +212,56 @@
   (val err (. (.readouterr capsys) err))
   (assert (in "壊れた待ち" err) err)
   (assert (in "拍ごとの heartbeat に戻ります" err) err))
+
+
+(defk bell-of [read]
+  {:pre [(: read DesiredJobs)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "宣言の読みが添えた呼び鈴の #(promise の番号 もう鳴ったか) — 番号が同じなら同じ呼び鈴(Future は読むたびに作り直される)。"
+  (val changed read.changed)
+  (if (is changed None)
+      #(None False)
+      (do (<- rung (promise-or-timeout changed 0.0))
+          #(changed.promise-id (is rung True)))))
+
+
+(defk coalesced-bells [link coordinator]
+  {:pre [(: link LinkRig) (: coordinator FakeCoordinator)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "待ちが答えた後の読み 2 つ → 変化 → 読み 1 つの呼び鈴: #(1 つ目 2 つ目 変化の後の 1 つ目の呼び鈴 変化の後の読みの呼び鈴 重ねて鳴らした時の
+   例外の有無)。"
+  (<- (ReadDesired))
+  (<- (settle (fn [] (and link.state.watch.running link.state.watch.confirmed))))
+  (<- first DesiredJobs (ReadDesired))
+  (<- second DesiredJobs (ReadDesired))
+  (setv coordinator.gate-open True)
+  (<- (settle (fn [] link.state.watch.woken)))
+  (<- after-first tuple (bell-of first))
+  ;; 同じ眠りの間に「変わった」がもう 1 度来た(鳴らす呼び鈴はもう手放している — 2 度鳴らして例外にならない)。
+  (var repeated "")
+  (try
+    (<- (bell-rung link.state.watch))
+    (except [error Exception]
+      (:= repeated (repr error))))
+  (<- third DesiredJobs (ReadDesired))
+  (<- after-third tuple (bell-of third))
+  (<- before-first tuple (bell-of second))
+  (setv link.state.watch.closing True)
+  #(before-first after-first after-third repeated))
+
+
+(deftest test-a-read-carries-one-bell-until-a-change-rings-it-once [tmp-path]
+  ;; 待ちを使える口の宣言の読みは、拍の間の眠りを起こす呼び鈴を添える。呼び鈴は鳴るまで拍をまたいで同じ物(拍ごとに作らない)で、
+  ;; 待ちの「変わった」で 1 度だけ鳴り、次の読みは新しい呼び鈴を添える。同じ眠りの間に変化が重なっても鳴らすのは 1 度(#2692)。
+  ;; 反例: 呼び鈴を拍ごとに作る形は 1 つ目と 2 つ目の番号が違う・鳴らした呼び鈴を手放さない形は 2 度目で例外。
+  (val coordinator (FakeCoordinator "gated"))
+  (val link (watching-link coordinator tmp-path))
+  (val got (on-link link (coalesced-bells link coordinator)))
+  (val second (get got 0))
+  (val first (get got 1))
+  (val third (get got 2))
+  (val repeated (get got 3))
+  (assert (is-not (get first 0) None) got)
+  (assert (= (get first 0) (get second 0)) got)
+  (assert (get first 1) got)
+  (assert (!= (get third 0) (get first 0)) got)
+  (assert (not (get third 1)) got)
+  (assert (= repeated "") got))

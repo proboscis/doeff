@@ -15,11 +15,12 @@ runtime_env_model.pyi と同じ形)。
 - Action は action の effect の和の型。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from doeff_cluster.shared.intent.job_model import JobPhase, JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure
+from doeff_core_effects.scheduler import Future
 
 from doeff import EffectBase
 
@@ -147,6 +148,7 @@ class WorkerPolicy:
     stable_run_ms: int = 60000
     code_retry_ms: int = 30000
     tick_seconds: float = 0.5
+    wake_gap_seconds: float = 0.1
 
 @dataclass(frozen=True)
 class JobStatus:
@@ -170,6 +172,7 @@ class JobStatus:
 class DesiredJobs:
     jobs: tuple[JobSpec, ...]
     warm: tuple[WarmEnv, ...] = ()
+    changed: Future[bool] | None = field(default=None, compare=False)
 
 @dataclass(frozen=True)
 class DesiredUnreadable:
