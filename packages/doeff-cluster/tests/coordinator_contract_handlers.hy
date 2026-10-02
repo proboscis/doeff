@@ -49,7 +49,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState MetricsReport ReadinessReport])
 (import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv])
-(import doeff_cluster.shared_handlers [shared-http])
+(import doeff_cluster.shared.protocol.shared_handlers [shared-http])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-memory metrics-http])

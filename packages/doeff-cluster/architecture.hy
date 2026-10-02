@@ -82,7 +82,7 @@
   ;; checkout_git_script)。全 service の core と entry を読むので、どの service にも属さない(DOEFF114・115 の外・ほかの規則は当たる)。
   ;; 本番の code はこの dir を import しない。
   ;; JSON の値を手で綴ってよい foundation の module — 盤の送受信と、effect の記録の綴り(record_codec)と記録の形(record_log)(#2580)。
-  :wire-modules ["doeff_cluster.foundation.board_requests" "doeff_cluster.foundation.record_codec" "doeff_cluster.foundation.record_log"]
+  :wire-modules ["doeff_cluster.shared.protocol.board_requests" "doeff_cluster.foundation.record_codec" "doeff_cluster.foundation.record_log"]
   :verification-environment "sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"

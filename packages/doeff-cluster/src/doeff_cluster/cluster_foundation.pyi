@@ -15,7 +15,7 @@ from doeff_cluster.shared.protocol.service_report import ServiceReport as Servic
 from doeff_cluster.shared.protocol.service_report import service_report_of as service_report_of
 from doeff_cluster.shared.protocol.readiness_handlers import readiness_http as readiness_http
 from doeff_cluster.shared.protocol.metrics_handlers import metrics_http as metrics_http
-from .shared_handlers import shared_http as shared_http
+from doeff_cluster.shared.protocol.shared_handlers import shared_http as shared_http
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.protocol.coordinator_route import CoordinatorRoute as CoordinatorRoute
 from doeff_cluster.shared.protocol.coordinator_route import RouteCell as RouteCell
