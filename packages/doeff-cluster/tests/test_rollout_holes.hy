@@ -6,7 +6,8 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView WorkerInfo])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
@@ -75,24 +76,28 @@
 (deftest test-a-worker-row-moves-only-at-the-mark-and-reloads-the-mark
   ;; #2903(seen-marks を WorkerInfo の欄へ)の前後で同じ答え: heartbeat だけでは worker/<名> の行は変わらず(書きは印の拍ごと)、
   ;; 印の拍で連絡のあった worker の行だけが新しい lastSeenMs を持ち、沈黙した worker の行は変わらない。読み直すと、最後の連絡の
-  ;; 時刻は保存した印の時刻になり、読み直した状態の保存の鍵は元と同じ。
-  (val busy (WorkerInfo "w1" #("cpu") 1 10000))
-  (val quiet (WorkerInfo "w2" #("cpu") 1 10000))
-  (val marked (mark-alive (ClusterState :workers {"w1" busy "w2" quiet}) 10000))
+  ;; 時刻は保存した印の時刻になり、読み直した状態の保存の鍵は元と同じ。heartbeat は本物の受け口(POST /heartbeat)を通す — 受け口は
+  ;; heartbeat ごとに WorkerInfo を作り直すので、印を運び忘れると heartbeat のたびに行から lastSeenMs が消える(#2903 で一度そうなった)。
+  (val beat (fn [state name now]
+              (get (responded state (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "capacity" 1 "statuses" []}
+                                                  :actor "c-test")
+                              now T)
+                   0)))
+  (val workers-of (fn [kv] (dfor #(k v) (.items kv) :if (.startswith k "worker/") k v)))
+  (val marked (mark-alive (beat (beat (ClusterState) "w1" 10000) "w2" 10000) 10000))
   (<- at-mark dict (full-kv marked))
   (assert (= #((get at-mark "worker/w1" "lastSeenMs") (get at-mark "worker/w2" "lastSeenMs")) #(10000 10000)) at-mark)
-  (val beat (replace marked :workers (| marked.workers {"w1" (replace busy :last-seen-ms 12000)})))
-  (<- after-beat dict (full-kv beat))
-  (assert (= after-beat at-mark) "heartbeat だけで保存の行が変わった")
-  (val next-mark (mark-alive beat (+ 10000 ALIVE-MARK-MS)))
+  (val beaten (beat marked "w1" 12000))
+  (<- after-beat dict (full-kv beaten))
+  (assert (= (workers-of after-beat) (workers-of at-mark)) "heartbeat だけで worker の保存の行が変わった")
+  (val next-mark (mark-alive beaten (+ 10000 ALIVE-MARK-MS)))
   (<- at-next dict (full-kv next-mark))
   (assert (= (get at-next "worker/w1" "lastSeenMs") 12000) at-next)
   (assert (= (get at-next "worker/w2") (get at-mark "worker/w2")) "沈黙した worker の行が変わった")
   (<- reloaded ClusterState (state-from-kv at-next 20000))
   (assert (= (. (get reloaded.workers "w1") last-seen-ms) 12000))
   (<- again dict (full-kv reloaded))
-  (assert (= (dfor #(k v) (.items again) :if (.startswith k "worker/") k v)
-             (dfor #(k v) (.items at-next) :if (.startswith k "worker/") k v))))
+  (assert (= (workers-of again) (workers-of at-next))))
 
 
 (setv SPEC (validate-rollout-spec {"from" {"kind" "Deployment" "namespace" "ns" "name" "old" "replicas" None "dryRun" False}
