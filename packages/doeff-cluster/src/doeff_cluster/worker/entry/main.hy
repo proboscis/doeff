@@ -12,18 +12,19 @@
 (require doeff-hy.macros [deff defk <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
-(import os)
 (import sys)
-(import time)
-(import uuid)
 (import pathlib [Path])
 (import doeff [run with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
+(import doeff_core_effects.file_effects [WriteText file-done])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_core_effects.os_random [os-random-handler])
+(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
+(import doeff_core_effects.random_effects [RandomBytes])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_time [async-time-handler])
+(import doeff_time [async-time-handler sync-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.coordinator_inbox [stop-on-signals])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
@@ -33,7 +34,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [SelfStopSpans ReassignTooEarly timing-outlasts-the-self-stop])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
@@ -51,13 +52,40 @@
 (import doeff_cluster.shared.core.run_context_rules [worker-context-environ])
 
 
-(defn #^ None write-boot-file [#^ (| str None) path #^ str boot]
-  "この process の世代を Pod の中の file へ書く(DOEFF_WORKER_BOOT_FILE — 無ければ書かない)。readinessProbe が「coordinator の見る worker が
-   この Pod の物か」を比べる(drain_client.ready-of)— 同じ node の前の Pod と名が同じなので、名だけでは見分けられない。"
+;; この process の世代を書く Pod の中の file の名(無ければ書かない — readinessProbe が読む)。
+(val BOOT-FILE-VAR "DOEFF_WORKER_BOOT_FILE")
+
+
+(defk boot-file-written [path boot]
+  {:pre [(: path (| str None)) (: boot str)] :post [(: % None)] :tags {:context "worker" :role "main"}}
+  "この process の世代を Pod の中の file へ書くため(BOOT-FILE-VAR — 無ければ書かない)。readinessProbe が「coordinator の見る worker が
+   この Pod の物か」を比べる(drain_client.ready-of)— 同じ node の前の Pod と名が同じなので、名だけでは見分けられない。書きは file の
+   effect(置き換えで書く — 読み手が書きかけを見ない)で、答え手は入口が並べる os-file-handler。"
   (when path
-    (setv tmp (Path (+ path ".tmp")))
-    (.write-text tmp (+ boot "\n") :encoding "utf-8")
-    (os.replace tmp path)))
+    (<- (file-done (WriteText path (+ boot "\n") :replace True))))
+  None)
+
+
+(defk pass-env-names [names]
+  {:pre [(: names str)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "起動の引数 --pass-env(名を `,` で並べる)を、子 process へ渡す環境変数の名の列にするため。"
+  (tuple (gfor n (.split names ",") :if (.strip n) (.strip n))))
+
+
+(defk machine-environment [names]
+  {:pre [(: names tuple)] :post [(: % dict)] :tags {:context "worker" :role "main"}}
+  "起動の時に要る機体の環境変数(子へ渡す名・版の識別の env のキー・世代の file の名)を、在る分だけ名 → 値で読むため。読みは
+   ReadEnvironment の effect で、答え手は入口が並べる subprocess-handler(本物 = os.environ)— 入口の層で os.environ を直に読まない(DOEFF106)。"
+  (<- found (ReadEnvironment :names names))
+  (dfor entry found entry.name entry.value))
+
+
+(defk boot-name []
+  {:pre [] :post [(: % str)] :tags {:context "worker" :role "main"}}
+  "この process の世代の名(16 byte の乱数の 16 進 32 字 — 以前の uuid4 の hex と同じ長さ)を決めるため。乱数は RandomBytes の effect で、
+   答え手は入口が並べる os-random-handler。"
+  (<- noise (RandomBytes 16))
+  (.hex noise))
 
 
 (defk passed-environment [names environ]
@@ -65,7 +93,7 @@
   "子 process へ渡す worker の環境変数(名を `,` で並べる)— 機体の設定(家や作業場所の path・預かり所の URL)を job に届けるため。
    実行環境の job の子は worker の環境を許可表でしか継がない(handlers.child-environment)ので、機体の設定は worker が名で宣言する。
    名乗った名が worker の環境に無ければ起動を止める(黙って欠いたまま job を走らせない)。資格の値そのものは渡さない(file の path を渡す)。"
-  (val wanted (lfor n (.split names ",") :if (.strip n) (.strip n)))
+  (<- wanted tuple (pass-env-names names))
   (val missing (lfor n wanted :if (not-in n environ) n))
   (when missing
     (raise (ValueError (+ "--pass-env の名が worker の環境に無い: " (.join "," missing)))))
@@ -173,8 +201,11 @@
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
         codes (CodeSettings :repo args.repo :cache (str (/ state-dir "code")) :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
+        ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
+        machine-env (run (with-handlers [subprocess-handler]
+                           (machine-environment (+ (run (pass-env-names args.pass-env)) #(BOOT-FILE-VAR)))))
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
-        host-env (| (run (passed-environment args.pass-env (dict os.environ)))
+        host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name)))
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
         host (HostSettings :log-dir (str (/ state-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
@@ -194,10 +225,10 @@
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
-  (setv started-ms (int (* 1000 (time.time)))
-        boot (. (uuid.uuid4) hex)
+  (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
+        boot (run (with-handlers [os-random-handler] (boot-name)))
         link (LinkState args.name provides args.capacity (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot started-ms started-ms
-                        :versions (run (process-versions os.environ)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
+                        :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
@@ -207,7 +238,7 @@
         link-cell (RouteCell (run (route-of args.coordinator started-ms)))
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
         lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
-  (write-boot-file (os.environ.get "DOEFF_WORKER_BOOT_FILE") boot)
+  (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            (str (/ state-dir "status.json")) codes envs stop)))

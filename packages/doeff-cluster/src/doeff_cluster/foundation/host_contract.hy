@@ -29,7 +29,7 @@
 ;;; future だけ(#2618)。
 ;;; 柵は Program の Spawn を包み直して(process の中の task として覚える — process の終わりで一緒に止める)外へ送り、その包みが出す
 ;;; 登録(local.hy の KeepChild — sim の仕組みの effect)だけは表の外でも通す。
-(require doeff-hy.macros [defhandler val])
+(require doeff-hy.macros [defhandler defk val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import os)
@@ -82,6 +82,14 @@
               HOST-CONTRACT.run-context-key context
               HOST-CONTRACT.program-key program-path
               _ (! (process-versions os.environ))))))
+
+
+(defk this-program-path []
+  {:pre [] :post [(: % str)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "この job の子 process が走らせる詰めた Program の file の path を、worker が渡した環境変数(HOST-CONTRACT.program-env)から読むため
+   (無ければ空)。宿の答え手 shared/entry/host_reader が program-key の Ask に答える時に呼ぶ — 環境変数の読みは foundation に置き、
+   入口の層は直に読まない(DOEFF106)。"
+  (.get os.environ HOST-CONTRACT.program-env ""))
 
 
 (defhandler environ-reader [#^ Mapping [environ os.environ]]
