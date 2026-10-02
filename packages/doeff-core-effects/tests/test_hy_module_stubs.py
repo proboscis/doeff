@@ -40,6 +40,9 @@ STUBBED_MODULES = (
     "meter_prometheus",
     "memory_meter",
     "memory_latest",
+    "stack_dump_effects",
+    "memory_stack_dump",
+    "faulthandler_stack_dump",
     "os_file",
 )
 
