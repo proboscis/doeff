@@ -590,7 +590,8 @@
   {:fields [(: name str) (: truth HostTruth)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ChangeHostTruth
-  "worker name の世代 boot の宿の真実を読み、まだその世代なら change(宿の真実 → 宿の真実・純粋)で直して置き直す — 読んで直して書く組を
+  "worker name の世代 boot の宿の真実を読み、まだその世代なら change(宿の真実 → 宿の真実の純粋な関数か、宿の真実を組む defk — 呼んだ結果の
+   Program は世界の節の中で走らせる・待たない Program に限る)で直して置き直す — 読んで直して書く組を
    世界への問い 1 つにする(読みと書きを別々に聞くと 1 組ごとに世界を 2 度通る・#2668)。live = 真なら止まった宿も「終わった世代」と
    数える(live-truth と同じ)・偽なら世代だけを見る。答え = HostTruthChange(読んだ真実と、置き直した真実 — 終わった世代なら None)。"
   {:fields [(: name str) (: boot str) (: live bool) (: change Callable)] :answer HostTruthChange :tags {:context "doeff-cluster" :role "intent"}})
@@ -1348,6 +1349,14 @@
   changed)
 
 
+(defk statuses-written [truth statuses]
+  {:pre [(: truth HostTruth) (: statuses tuple)] :post [(: % HostTruth)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宿の真実 truth の状態の報告を statuses から綴り直した真実を作るため — PublishStatus が ChangeHostTruth の change に渡し、世界の節の中で
+   走る(綴りの status-report は何の効果も待たない)。"
+  (<- rows list (status-report statuses truth.task-echo truth.results))
+  (replace truth :statuses rows))
+
+
 (defk accepted-programs [link wanted known]
   {:pre [(: link SimLink) (: wanted list) (: known dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
@@ -1574,11 +1583,9 @@
     (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name) job instance))
     (resume None))
   (PublishStatus [statuses note]
-    ;; 宿の真実の結果と写しで状態の報告を綴り、報告だけを置き直す。綴り(status-report)は何の効果も待たないので、読みと書きの間に
-    ;; 他の task は宿の真実を書かない。
-    (<- truth HostTruth (live-truth worker.name boot))
-    (<- rows list (status-report statuses truth.task-echo truth.results))
-    (<- (change-live-truth worker.name boot (fn [latest] (replace latest :statuses rows))))
+    ;; 宿の真実の結果と写しで状態の報告を綴り、報告だけを置き直す — 綴り(defk の status-report)は世界の節の中で走らせ、読みと書きを
+    ;; 世界への問い 1 つにする(#2668・L1218 の不変条件 — 前に読んでから書くと 1 組で世界を 2 度通る)。
+    (<- (change-live-truth worker.name boot (fn [latest] (statuses-written latest statuses))))
     (resume None))
   (WorkerStopRequested []
     (<- truth HostTruth (live-truth worker.name boot))
@@ -1959,7 +1966,14 @@
     (val truth (get hosts name))
     (if (or (!= truth.boot boot) (and live truth.down))
         (resume (HostTruthChange :before truth :after None))
-        (do (val changed (change truth))
+        ;; change は宿の真実 → 宿の真実の純粋な関数か、宿の真実を組む defk(呼んだ結果は Program — 綴りの関数が defk の時)。Program は
+        ;; 待たない物に限る(読みと書きの間に他の task が宿の真実を書かないため)。Program なら節の中で走らせ、読みと書きを世界への問い
+        ;; 1 つのままにする(#2668 の L1218 の不変条件 — 検 test_sim_world_questions)。
+        (do (val produced (change truth))
+            (var changed produced)
+            (when (isinstance produced Program)
+              (<- ran HostTruth produced)
+              (:= changed ran))
             (:= hosts (| hosts {name changed}))
             (resume (HostTruthChange :before truth :after changed)))))
   (NextPid []
