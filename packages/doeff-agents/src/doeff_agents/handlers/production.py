@@ -23,7 +23,6 @@ from doeff_agents.adapters.codex import CodexAdapter, trust_workspace_in_codex_h
 from doeff_agents.adapters.gemini import GeminiAdapter
 from doeff_agents.agentd_client import DEFAULT_AWAIT_BUDGET_SECONDS
 from doeff_agents.claude_home import prepare_claude_home
-from doeff_agents.io_root import IoRoot
 from doeff_agents.effects import (
     AgentAttemptExhaustedError,
     AgentDeadlineExceededError,
@@ -63,6 +62,7 @@ from doeff_agents.effects import (
     StopSessionEffect,
     refuse_turn_capabilities,
 )
+from doeff_agents.io_root import IoRoot
 from doeff_agents.monitor import (
     MonitorState,
     SessionStatus,
@@ -1343,12 +1343,3 @@ def _default_io_root() -> IoRoot:
     from doeff_agents.io_handlers import run_driver_io
 
     return run_driver_io
-
-
-__all__ = [
-    "AgentHandler",
-    "SessionState",
-    "TmuxAgentHandler",
-    "get_adapter",
-    "register_adapter",
-]
