@@ -19,7 +19,6 @@
       "packages/doeff-git/src/doeff_git/handlers/testing.py": 1,
       "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/client.py": 3,
       "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/handlers/production.py": 1,
-      "packages/doeff-linter/tests/fixtures/test_sample.py": 2,
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
     "DOEFF004": {
@@ -29,12 +28,7 @@
       "packages/doeff-agents/src/doeff_agents/handlers/production.py": 1,
       "packages/doeff-core-effects/doeff_core_effects/cache.py": 1,
       "packages/doeff-core-effects/doeff_core_effects/handlers.py": 1,
-      "packages/doeff-core-effects/tests/test_disposable_postgres.py": 1,
-      "packages/doeff-indexer/doeff_indexer_build_backend.py": 3,
-      "packages/doeff-linter/tests/fixtures/test_noqa.py": 4,
-      "packages/doeff-linter/tests/fixtures/test_sample.py": 1,
-      "packages/doeff-openai/tests/e2e/test_effect_handlers_e2e.py": 1,
-      "packages/doeff-openai/tests/e2e/test_openai_api.py": 1
+      "packages/doeff-core-effects/tests/test_disposable_postgres.py": 1
     },
     "DOEFF006": {
       "packages/doeff-adr/src/doeff_adr/pytest_plugin.py": 1,
@@ -48,7 +42,6 @@
       "packages/doeff-hy/src/doeff_hy/static_baseline.py": 1,
       "packages/doeff-hy/tests/test_defhandler_effect_type_filter.py": 1,
       "packages/doeff-hy/tests/test_defhandler_passed_effects.py": 1,
-      "packages/doeff-linter/tests/fixtures/test_sample.py": 1,
       "packages/doeff-notify/src/doeff_notify/handlers/testing.py": 1,
       "packages/doeff-openai/src/doeff_openai/client.py": 1,
       "packages/doeff-openai/src/doeff_openai/structured_llm.py": 1,
@@ -56,8 +49,7 @@
       "packages/doeff-openrouter/src/doeff_openrouter/structured_llm.py": 1,
       "packages/doeff-records/tests/test_static_stubs.py": 1,
       "packages/doeff-seedream/src/doeff_seedream/structured_llm.py": 1,
-      "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py": 1,
-      "tests/test_rust_build_target_outside_package.py": 2
+      "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py": 1
     },
     "DOEFF007": {
       "packages/doeff-agentic/src/doeff_agentic/tui/widgets.py": 7,
@@ -65,7 +57,6 @@
       "packages/doeff-core-effects/tests/postgres_support/disposable_postgres.py": 1,
       "packages/doeff-events/src/doeff_events/handlers/memory.py": 2,
       "packages/doeff-flow/examples/04_concurrent_workflows.py": 1,
-      "packages/doeff-linter/tests/fixtures/test_sample.py": 1,
       "packages/doeff-llm/src/doeff_llm/effects/chat.py": 1,
       "packages/doeff-openrouter/src/doeff_openrouter/structured_llm.py": 1
     },
@@ -215,7 +206,6 @@
       "packages/doeff-image/src/doeff_image/effects/edit.py": 1,
       "packages/doeff-image/src/doeff_image/effects/generate.py": 1,
       "packages/doeff-image/src/doeff_image/types.py": 1,
-      "packages/doeff-indexer/doeff_indexer_build_backend.py": 1,
       "packages/doeff-llm/src/doeff_llm/__init__.py": 1,
       "packages/doeff-llm/src/doeff_llm/effects/__init__.py": 1,
       "packages/doeff-llm/src/doeff_llm/effects/chat.py": 1,
@@ -273,5 +263,5 @@
       "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
     }
   },
-  "version": "doeff-linter の組み立ての入力 52c0710b22adc52ac3ff7afc9587d171323bcef9"
+  "version": "doeff-linter の組み立ての入力 7975d39aad8429118514ace8858e226a9c5a39f2"
 }
