@@ -22,7 +22,10 @@ defrecord の欄の `#^` を Python の注記にした module の木を返す。
 import argparse
 import ast
 import builtins
+import json
 import os
+import re
+import subprocess
 import sys
 from dataclasses import dataclass, replace
 from functools import reduce
@@ -568,6 +571,38 @@ def stale_in(directory: Path) -> tuple[Stale, ...]:
     """package の source の dir の中で、道具が作った .pyi を持つ .hy を全部照らす(各 package の検が一致の検を 1 行で撃つため)。"""
     root = _absolute(directory)
     return stale_stubs(root, [root], hy_files([root]))
+
+
+#: 「型が分からない」の赤の文(全く分からない名・解けない import。型の一部が分からない名 — partially unknown — は契約を細かくする別件)。
+_UNKNOWN = re.compile(r"is unknown|could not be resolved|unknown import symbol")
+
+
+@dataclass(frozen=True)
+class UsedModule:
+    """使い手が import する 1 つの module(package の下の名)と、その名の並び(Hy の綴り)— 使い手の名の probe を組む材料。"""
+
+    module: str
+    names: tuple[str, ...]
+
+
+def users_probe(package: str, used: tuple[UsedModule, ...]) -> str:
+    """使い手の名を 1 つずつ別の名に束ねる検の module(束ねた名の型が Unknown なら、その行に strict の赤が出るように)。"""
+    imports = [f"(import {package}.{u.module} [{' '.join(u.names)}])" for u in used]
+    names = [name for u in used for name in u.names]
+    bindings = [f"(setv used-{index} {name})" for index, name in enumerate(names)]
+    return "\n".join([*imports, "", *bindings, ""])
+
+
+def unknown_in_users(workdir: Path, package: str, used: tuple[UsedModule, ...]) -> tuple[str, ...]:
+    """使い手の名を束ねた検の module を使い手の型の門と同じ strict で検め、「型が分からない」と Hy の compile の赤を返す
+    (各 package の検が、.pyi が使い手に届いているかを 1 行で確かめるため — 空なら使い手はどの名も型つきで読める)。"""
+    probe = workdir / "probe.hy"
+    probe.write_text(users_probe(package, used), encoding="utf-8")
+    command = [sys.executable, "-m", "doeff_hy.static_check", "--root", str(workdir), "--json", "--strict", "--no-cache", str(probe)]
+    done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
+    diagnostics: list[dict[str, object]] = json.loads(done.stdout) if done.stdout.strip() else []
+    errors = [f"{d['line']}: {d['rule']}: {d['message']}" for d in diagnostics if d["severity"] == "error"]
+    return tuple(e for e in errors if "hy-compile" in e or _UNKNOWN.search(e))
 
 
 def main(argv: list[str] | None = None) -> int:
