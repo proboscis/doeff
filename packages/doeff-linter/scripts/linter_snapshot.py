@@ -19,7 +19,11 @@
   * 置き場 = `<store>/<40 桁の sha>/doeff-linter`(store の既定 = $XDG_CACHE_HOME/doeff-linter-snapshots、無ければ ~/.cache の下。
     env DOEFF_LINTER_SNAPSHOT_DIR で替える)。在れば組まずに返す。
   * 錠 = `<store>/<sha>.lock` の flock — path ではなく sha の単位。同じ sha を組む 2 本目は 1 本目を待ち、組まれた物を使う。
-  * 組み方 = `cargo build --release --locked`。cargo の target は一時の dir に作り、組んだ後に消す(置き場には binary だけ)。
+  * 組み方 = `cargo build --release --locked`。cargo の target は置き場の隣の共有の dir(`<store の親>/cargo-target/doeff-linter`・
+    既定 = ~/.cache/cargo-target/doeff-linter)で、組んだ後も消さない — 依存の crate は sha をまたいで使い回し、新しい sha では
+    doeff-linter と doeff-indexer の crate と link だけを組む(以前は一時の dir で毎回冷えた所から組み、新しい pin の後で最初に
+    commit した席が load の高い時に 9 分払った・agora-redesign #2977)。違う sha を同時に組む 2 本が同じ release/ の binary を
+    上書きしないよう、組んで写すまでを `<target>.lock` の flock で 1 本ずつにする。
     build.rs は断面に .git が無いので env DOEFF_LINTER_BUILD_COMMIT に 40 桁の sha を渡す。組んだ binary の `--version` がその sha
     ちょうど(+dirty なし)を名乗る事を確かめてから、一時の名から rename で置く。
   * git に渡す env から GIT_ で始まる名を外す — 別の repo の git の hook の中で呼ばれると、git が渡す GIT_DIR などが `-C` より勝ち、
@@ -124,21 +128,28 @@ def find_cargo(env: dict[str, str]) -> str | None:
     return str(home_cargo) if home_cargo.exists() else None
 
 
-def build_into(source: Path, sha: str, target: Path, env: dict[str, str]) -> str | None:
-    """断面を cargo で組み、組んだ binary を target(一時の名)へ写す。失敗の理由を返す(None = 組めた)。"""
+def shared_cargo_target(store: Path) -> Path:
+    """sha をまたいで使い回す cargo の target(置き場の隣・頭の註)。"""
+    return store.parent / "cargo-target" / BIN_NAME
+
+
+def build_into(source: Path, sha: str, cargo_target: Path, target: Path, env: dict[str, str]) -> str | None:
+    """断面を共有の cargo の target で組み、組んだ binary を target(一時の名)へ写す。失敗の理由を返す(None = 組めた)。"""
     cargo = find_cargo(env)
     if not cargo:
         return "cargo が無い"
-    cargo_target = source / "cargo-target"
-    done = subprocess.run(
-        [cargo, "build", "--release", "--locked", "--manifest-path", str(source / MANIFEST)],
-        capture_output=True, text=True, check=False, timeout=BUILD_TIMEOUT_S,
-        env={**env, "CARGO_TARGET_DIR": str(cargo_target), BUILD_COMMIT_ENV: sha},
-    )
-    if done.returncode != 0:
-        last = (done.stderr.strip().splitlines() or [""])[-1]
-        return "cargo build が落ちた: " + last
-    shutil.copy2(cargo_target / "release" / BIN_NAME, target)
+    cargo_target.mkdir(parents=True, exist_ok=True)
+    with open(cargo_target.with_name(cargo_target.name + ".lock"), "w") as target_lock:
+        fcntl.flock(target_lock, fcntl.LOCK_EX)
+        done = subprocess.run(
+            [cargo, "build", "--release", "--locked", "--manifest-path", str(source / MANIFEST)],
+            capture_output=True, text=True, check=False, timeout=BUILD_TIMEOUT_S,
+            env={**env, "CARGO_TARGET_DIR": str(cargo_target), BUILD_COMMIT_ENV: sha},
+        )
+        if done.returncode != 0:
+            last = (done.stderr.strip().splitlines() or [""])[-1]
+            return "cargo build が落ちた: " + last
+        shutil.copy2(cargo_target / "release" / BIN_NAME, target)
     printed = subprocess.run([str(target), "--version"], capture_output=True, text=True, check=False).stdout or ""
     if names_commit(printed, sha):
         return None
@@ -164,7 +175,9 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> Snapsh
         work = Path(tempfile.mkdtemp(prefix="doeff-linter-snapshot-" + sha[:12] + "-"))
         try:
             partial = store / (sha + ".partial")
-            failure = extract_inputs(checkout, sha, work, env) or build_into(work, sha, partial, env)
+            failure = extract_inputs(checkout, sha, work, env) or build_into(
+                work, sha, shared_cargo_target(store), partial, env
+            )
             if failure:
                 return SnapshotUnavailable(failure)
             (store / sha).mkdir(exist_ok=True)

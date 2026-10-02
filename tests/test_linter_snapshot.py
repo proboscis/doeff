@@ -92,6 +92,24 @@ def test_a_built_snapshot_is_reused_without_building(tmp_path: Path) -> None:
     assert (tmp_path / "count").read_text(encoding="utf-8") == "built\n"
 
 
+def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
+    # 違う sha の 2 本は置き場の隣の同じ cargo の target(<store の親>/cargo-target/doeff-linter)で組み、target は組んだ後も残る —
+    # 依存の crate を sha をまたいで使い回すため(#2977)。反例: 一時の dir に組んで消す前の形では、target が残らずこの検が赤。
+    repo = stage(tmp_path)
+    env = environ(tmp_path, "")
+    first = snapshot(repo, env).communicate(timeout=50)[0].strip()
+    (repo / "packages/doeff-linter/marker").write_text("second", encoding="utf-8")
+    git_env = ["env", "-i", f"PATH={os.pathsep.join(os.get_exec_path())}", f"HOME={tmp_path}"]
+    subprocess.run([*git_env, "git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "y"],
+                   check=True, capture_output=True)
+    second = snapshot(repo, env).communicate(timeout=50)[0].strip()
+    assert first != second
+    assert (tmp_path / "count").read_text(encoding="utf-8") == "built\nbuilt\n"
+    kept = tmp_path / "cargo-target" / "doeff-linter" / "release" / "doeff-linter"
+    assert kept.exists()
+    assert "second" in subprocess.run([str(kept)], capture_output=True, text=True, check=True).stdout
+
+
 def test_a_linter_not_naming_the_sha_is_not_placed(tmp_path: Path) -> None:
     # 反例: 組んだ linter が sha ちょうどを名乗らなければ(手元の変更の印 +dirty)、置き場に置かず理由を 1 行出して 1 で終わる。
     repo = stage(tmp_path)
