@@ -1,7 +1,7 @@
-;;; ReportReady の handler 3 つ。readiness-http = coordinator の POST /resources/Service/<名>/readiness へ送る(クラスタ)・
-;;; readiness-claims = 入れ物 ReadinessLog に揃えた報告(ReadinessClaim)を積む(テストと模擬)・readiness-memory = list に 3 欄の
-;;; dict を積む旧い fake(使い手が readiness-claims へ移ったら消す — #3028)。送り方は service_report.hy(宛先の部品の上の
-;;; HttpRequest — 報告には送り手の process の世代が載る・#2337 の 4a)。
+;;; ReportReady の handler 2 つ。readiness-http = coordinator の POST /resources/Service/<名>/readiness へ送る(クラスタ)・
+;;; readiness-claims = 入れ物 ReadinessLog に揃えた報告(ReadinessClaim)を積む(テストと模擬 — 3 欄の dict を list に積んだ旧い fake
+;;; readiness-memory は使い手が移ったので消した・#3028)。送り方は service_report.hy(宛先の部品の上の HttpRequest — 報告には
+;;; 送り手の process の世代が載る・#2337 の 4a)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.macros [defhandler <-])
@@ -26,14 +26,6 @@
   (ReportReady [ready reason role]
     (<- claim ReadinessClaim (reported-readiness ready reason role))
     (setv log.claims (+ log.claims #(claim)))
-    (resume None)))
-
-
-;; 旧い fake(3 欄の dict を list に積む)。使い手が readiness-claims へ移るまで同じ形で残す(#3028 の最後の手で消す)。
-(defhandler readiness-memory [#^ (get list (get dict #(str object))) reports]
-  (ReportReady [ready reason role]
-    (<- claim ReadinessClaim (reported-readiness ready reason role))
-    (.append reports {"ready" claim.ready "reason" claim.reason "role" claim.role})
     (resume None)))
 
 

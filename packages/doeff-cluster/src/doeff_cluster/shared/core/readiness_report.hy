@@ -1,5 +1,5 @@
 ;;; 報告の readiness(ready・reason・role)を coordinator が残す形に揃える純粋な判断 — coordinator(record-readiness)と fake
-;;; (readiness-claims・readiness-memory)が同じ形で残す。型・定数(ReadinessClaim・ROLE-ACTIVE・ROLE-STANDBY・REASON-KEPT-CHARS・
+;;; (readiness-claims)が同じ形で残す。型・定数(ReadinessClaim・ROLE-ACTIVE・ROLE-STANDBY・REASON-KEPT-CHARS・
 ;;; JsonField)は doeff_cluster.shared.intent.readiness_model。intent の層から移した(判断は core — DOEFF105)。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
@@ -12,7 +12,7 @@
    :tags {:context "doeff-cluster" :role "judgment"}}
   "報告の ready・reason・role を coordinator が残す形(ReadinessClaim)に揃えるため: ready は真偽・reason は文字列の先頭
    REASON-KEPT-CHARS 字・role は standby 以外(旧い報告の欠けた欄を含む)を active と読む。coordinator(record-readiness)と
-   fake(readiness-claims・readiness-memory)が同じ形で残す(定義点はここ 1 つ — 契約テスト tests/test_readiness_contract.hy)。"
+   fake(readiness-claims)が同じ形で残す(定義点はここ 1 つ — 契約テスト tests/test_readiness_contract.hy)。"
   (ReadinessClaim :ready (bool ready)
                   :reason (cut (str reason) 0 REASON-KEPT-CHARS)
                   :role (if (= role ROLE-STANDBY) ROLE-STANDBY ROLE-ACTIVE)))

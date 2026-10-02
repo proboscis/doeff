@@ -1,8 +1,9 @@
 """準備できたの報告の型の宣言(shared/intent/readiness_model.pyi・shared/protocol/readiness_handlers.pyi)の失敗ケース(#2777)。
 
-readiness_model.hy と readiness_handlers.hy は Hy の module で型の宣言が無かったので、ReportReady を出す使い手と readiness-memory を
-土台の組に並べる使い手の strict に、書き手に直せない Unknown の赤(Type of "ReportReady" is unknown・Type of "readiness_memory" is unknown)
-が出ていた。→ 2 つの .pyi で宣言する。宣言を外すと赤になる。.pyi は doeff_hy.static_stub が .hy から作り(#2826)、
+readiness_model.hy と readiness_handlers.hy は Hy の module で型の宣言が無かったので、ReportReady を出す使い手と報告を積む fake の
+答え手を土台の組に並べる使い手の strict に、書き手に直せない Unknown の赤(Type of "ReportReady" is unknown・当時の fake
+readiness_memory の Type is unknown)が出ていた。→ 2 つの .pyi で宣言する。宣言を外すと赤になる。fake は #3028 で readiness-claims
+(入れ物 ReadinessLog)に替えた。.pyi は doeff_hy.static_stub が .hy から作り(#2826)、
 実装との一致は tests/test_generated_stubs.py(作り直した物 == commit された物)が検める。
 """
 
@@ -20,7 +21,7 @@ MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Program EffectBase with-handlers])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady ROLE-STANDBY])
-(import doeff_cluster.shared.protocol.readiness_handlers [readiness-memory])
+(import doeff_cluster.shared.protocol.readiness_handlers [ReadinessLog readiness-claims])
 
 (defk probe-report []
   {:pre [] :post [(: % None)] :tags {:context "probe" :role "program"}}
@@ -31,8 +32,7 @@ MODULE = """\
 (defk probe-recorded [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % int)] :tags {:context "probe" :role "foundation"}}
   "報告を積む答え手を並べた下で本文を走らせる(handler の型が読める)。"
-  (setv #^ (get list (get dict #(str object))) reports [])
-  (<- answer int (with-handlers [(readiness-memory reports)] body))
+  (<- answer int (with-handlers [(readiness-claims (ReadinessLog))] body))
   answer)
 """
 

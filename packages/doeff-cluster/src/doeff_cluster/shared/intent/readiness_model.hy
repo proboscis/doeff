@@ -5,7 +5,7 @@
 ;;; readiness {"windowSeconds": n} を見て、同じ担い手・同じ版からの ready が直近 n 秒以内にある時だけ Ready とする。
 ;;; 報告が途絶えれば(拍が止まった・落ちた)window を過ぎて NotReady になる。Rollout はこの Ready を見て旧を止める。
 ;;;
-;;; handler は 2 つ(readiness_handlers.hy): readiness-http = coordinator へ送る・readiness-memory = テストの記録。
+;;; handler は 2 つ(readiness_handlers.hy): readiness-http = coordinator へ送る・readiness-claims = テストと模擬の記録(ReadinessLog)。
 ;;; 宣言の readiness の形の検め(readiness-refusal)・入れ替えの期限(handoff-timeout-ms)は doeff_cluster.shared.core.readiness_rules
 ;;; (宣言の側と coordinator の側が使う)・報告の揃え(reported-readiness)は doeff_cluster.shared.core.readiness_report。ここは型と定数だけ。
 (require doeff-hy.macros [val])
