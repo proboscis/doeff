@@ -27,7 +27,9 @@
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back])
+(import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
+                                                                 WorkerProbe alive-only-while-reachable])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
 
@@ -552,6 +554,53 @@
   (<- reads tuple (sim-cluster (beacons sim-foundation) (revision-across-a-stop 10.0) :store ForgetsOnReload))
   (<- drops tuple (revision-never-goes-back reads))
   (assert (= (len drops) 1) #(drops reads)))
+
+
+(val PROBE-SLACK-MS 1500)  ; 条 L2 の余裕: heartbeat の間隔と読みの拍の差
+
+
+(defk liveness-across-a-stop []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 L2 の記録を集めるため: 8 秒待って beacon の worker を node ごと死なせ、2 秒後に coordinator を 2 秒止め、21 秒にその worker の生存を
+   読む(WorkerProbe の列・時刻は筋書きの予定の刻)。21 秒は、本物の置き場なら止まりの長さだけずらした最後の連絡(8 秒 + 2 秒)から lease を
+   過ぎて生きていないと答え、最後の連絡を読み直せない置き場なら作り直し(約 12 秒)から lease のうちで生きていると答える刻 — 死から
+   lease + 余裕(19.5 秒)を過ぎている。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf "beacon"))
+  (val host (. (get before 0) worker))
+  (<- (KillWorker host))
+  (<- (Delay 2.0))
+  (<- (StopCoordinator 2.0))
+  (<- (Delay 11.0))
+  (<- view dict (ReadCoordinator (+ "/workers/" host)))
+  #((WorkerProbe :at-ms 21000 :worker host :alive (bool (get view "alive")) :unreachable-since-ms 8000)))
+
+
+(deftest test-a-dead-worker-is-not-alive-after-the-coordinator-is-recreated
+  ;; 条 L2(architecture.hy の :invariants): 死んだ worker は、coordinator が作り直された後も lease の後に生きていると答えられない(本物の
+  ;; 置き場は最後の連絡の時刻を読み直す)。
+  (<- probes tuple (sim-cluster (beacons sim-foundation) (liveness-across-a-stop)))
+  (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
+  (assert (= lies #()) #(lies probes)))
+
+
+(defclass DropsLastSeen [MemoryWalStore]
+  "壊れた置き場(条 L2 の反例・#1976 の #34): worker の最後の連絡の時刻 lastSeenMs と、最後の生存の印の時刻 aliveMs(鍵 counter)を
+   置かない(L643 の前の形)— 作り直した coordinator は worker の最後の連絡を知らず、読み直した時刻に連絡があったとみなす。"
+  (defn #^ None persist [self #^ (get dict #(str object)) delta]
+    (setv drop (fn [v name] (if (isinstance v dict) (dfor #(a b) (.items v) :if (!= a name) a b) v)))
+    (.persist (super) (dfor #(k v) (.items delta)
+                            k (cond (.startswith k "worker/") (drop v "lastSeenMs")
+                                    (= k "counter") (drop v "aliveMs")
+                                    True v)))))
+
+
+(deftest test-a-counterexample-store-without-last-seen-breaks-l2
+  ;; 条 L2 の失敗ケース: 置き場の差し替えの口(#989)に lastSeenMs を置かない置き場を差すと、作り直した coordinator が死んだ worker を
+  ;; 生きていると答え、条 L2 の判断がその読みを名指す(同じ筋書きの本物の置き場では空 — 上の test-a-dead-worker-is-not-alive-…)。
+  (<- probes tuple (sim-cluster (beacons sim-foundation) (liveness-across-a-stop) :store DropsLastSeen))
+  (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
+  (assert (= (len lies) 1) #(lies probes)))
 
 
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
