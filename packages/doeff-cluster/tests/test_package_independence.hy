@@ -22,7 +22,7 @@
 (setv ENV-MODULES #("shared/intent/runtime_env_model.hy" "shared/intent/env_marker_model.hy" "shared/core/runtime_env.hy"
                     "shared/core/runtime_env_rules.hy"
                     "worker/intent/env_prepare_model.hy" "worker/core/env_prepare.hy" "sim/env_world.hy"
-                    "worker/protocol/env_translation.hy" "worker/entry/env_tool.hy" "env_handlers.hy"))
+                    "worker/protocol/env_translation.hy" "worker/entry/env_tool.hy"))
 
 (setv HY-IMPORT (re.compile r"\((?:import|require)\s+([A-Za-z_.][A-Za-z0-9_.\-]*)"))
 (setv HY-IMPORT-LIST (re.compile r"\(import\s+\[([^\]]*)\]"))
