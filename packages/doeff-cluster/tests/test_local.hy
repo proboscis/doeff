@@ -34,7 +34,7 @@
                                                                  ProcessSpan WorkerCapacity running-within-capacity
                                                                  JobNeeds WorkerAbility placed-only-where-eligible
                                                                  JobProcess moves-to-a-live-worker
-                                                                 WorkerExclusive exclusive-workers-take-only-their-jobs
+                                                                 WorkerExclusive exclusive-workers-take-only-their-jobs ran-only-where-eligible
                                                                  DrainWindow no-new-place-while-draining])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -782,6 +782,40 @@
                                                           :exclusive (frozenset ["gpu"]) :claims-exclusive (frozenset)))))
   (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
   (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
+
+
+(defk beacon-processes-after [seconds]
+  {:pre [(: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C13 の記録を集めるため: seconds 秒待って、beacon の子 process が本当に動いた区間を読む(JobProcess の列 — 真実の側)。"
+  (<- (Delay seconds))
+  (<- seen tuple (ProcessesOf "beacon"))
+  (tuple (gfor p seen (JobProcess :job "beacon" :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
+
+
+;; 条 C13 の筋書きの 2 台: gpu を専用に持つ g1 と、cluster-net を持つ w1(beacon は cluster-net を要る)。
+(val GPU-AND-NET-ABILITIES #((WorkerAbility :worker "g1" :provides (frozenset ["gpu"]))
+                             (WorkerAbility :worker "w1" :provides (frozenset ["cluster-net"]))))
+
+
+(deftest test-a-job-process-runs-only-on-an-eligible-worker
+  ;; 条 C13(architecture.hy の :invariants): gpu だけを持つ g1 と cluster-net を持つ w1 が居れば、beacon の子 process は w1 でだけ動く。
+  (<- processes tuple (sim-cluster (beacons sim-foundation) (beacon-processes-after 15.0)
+                                   :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"]))
+                                              (SimWorker :name "w1" :provides (frozenset ["cluster-net"])))))
+  (assert processes processes)
+  (<- wrong tuple (ran-only-where-eligible processes BEACON-NEEDS GPU-AND-NET-ABILITIES GPU-EXCLUSIVE))
+  (assert (= wrong #()) #(wrong processes)))
+
+
+(deftest test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c13
+  ;; 条 C13 の失敗ケース: heartbeat で持たない能力を名乗る壊れた worker(SimWorker の claims-provides)しか居なければ、beacon の子 process が
+  ;; 本当は cluster-net を持たない g1 で動き、条 C13 の判断がその process を名指す。
+  (<- processes tuple (sim-cluster (beacons sim-foundation) (beacon-processes-after 15.0)
+                                   :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
+                                                         :claims-provides (frozenset ["gpu" "cluster-net"])))))
+  (<- wrong tuple (ran-only-where-eligible processes BEACON-NEEDS GPU-AND-NET-ABILITIES #()))
+  (assert wrong processes)
+  (assert (all (gfor p wrong (= p.worker "g1"))) wrong))
 
 
 (val DRAIN-TTL 60.0)  ; 条 C11 の筋書きの drain の期限(秒)
