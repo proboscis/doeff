@@ -33,8 +33,12 @@
 ;;; 記録を集めるのは検(tests/test_local.hy の容量の検)。
 ;;;
 ;;; 条 C7 placed-only-where-eligible: 置き先の worker は、job の needs を本当に提供する。判断は記録(読めた置き先・job ごとの needs・worker
-;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力(exclusive)の決まりと、drain の
-;;; 期限の中の worker へ置かない事は、別の条として後から足す(今の検は tests/test_local.hy の gpu-only と tests/test_drain.hy)。
+;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力の決まりは条 C10、drain の期限の
+;;; 中の worker へ置かない事は別の条として後から足す(今の検は tests/test_drain.hy)。
+;;;
+;;; 条 C10 exclusive-workers-take-only-their-jobs: 専用の能力(exclusive)を本当に持つ worker には、その能力のどれかを needs に持つ job だけを
+;;; 置く(専用の worker を他の job で埋めない)。判断は記録(読めた置き先・job ごとの needs・worker ごとの本当の専用の能力)を受けて、専用の
+;;; worker へ置いた needs の合わない置き先の列を返す純関数 1 つ。
 ;;;
 ;;; 条 C8 moves-to-a-live-worker: 担い手の worker が死に、その job を本当に受けられる生きた worker が他に在るなら、その job は死から
 ;;; 移し替えの期限(reassign-after-ms)+ 余裕のうちに他の worker で動き始める。判断は記録(job の process の区間・死んだ worker と時刻・
@@ -285,6 +289,26 @@
                n needs
                a abilities
                :if (and (= n.job p.job) (= a.worker p.worker) (not (<= n.needs a.provides)))
+               p)))
+
+
+(defrecord WorkerExclusive
+  "条 C10 の記録 1 つ = worker 1 台が本当に持つ専用の能力(exclusive — 空なら専用の worker ではない)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ frozenset exclusive))
+
+
+(defk exclusive-workers-take-only-their-jobs [placements needs exclusives]
+  {:pre [(: placements (get tuple #(PlacementSeen ...))) (: needs (get tuple #(JobNeeds ...))) (: exclusives (get tuple #(WorkerExclusive ...)))]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C10: 読めた置き先の列から、専用の能力を本当に持つ worker へ置いたのに、job の needs にその能力のどれも無い置き先を返す(空なら緑)。
+   coordinator が専用の worker(例: gpu を持つ機体)を、その能力を要らない job で埋めないことを、筋書きの記録から判じるため。needs か
+   専用の能力の記録が無い置き先は判じない。"
+  (tuple (gfor p placements
+               n needs
+               x exclusives
+               :if (and (= n.job p.job) (= x.worker p.worker) x.exclusive (not (& n.needs x.exclusive)))
                p)))
 
 
