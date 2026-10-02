@@ -5,7 +5,6 @@ from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff_hy.frozen import FrozenMap as FrozenMap
-import doeff_hy.record
 
 @dataclass(frozen=True, kw_only=True)
 class SecondsTotal:

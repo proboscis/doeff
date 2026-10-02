@@ -41,7 +41,6 @@ from doeff_records.http_server import serve_records as serve_records
 from doeff_records.store_choice import StoreChoice as StoreChoice
 from doeff_records.store_choice import StorePressure as StorePressure
 from doeff_records.store_choice import PressureUnread as PressureUnread
-import doeff_hy.record
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 ENV_PG_URL_FILE: str

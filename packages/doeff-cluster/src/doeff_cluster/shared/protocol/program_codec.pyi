@@ -3,7 +3,6 @@
 from _typeshed import Incomplete
 import base64 as base64
 import collections as collections
-import collections.abc
 import io as io
 import cloudpickle as cloudpickle
 from types import NotImplementedType as NotImplementedType
