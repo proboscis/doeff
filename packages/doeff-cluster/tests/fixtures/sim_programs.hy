@@ -346,6 +346,10 @@
   "見本の系: 子の task に盤へ書かせ、自分は 3 拍で値を返して抜ける service 1 つ"
   (quitter (spawning-program foundation "quit/" 3) :needs #{"cluster-net"}))
 
+(defsystem quitters-v2 [foundation]
+  "quitters の版 2(抜けるまでの拍の数を変えた — 宣言し直すと入れ替わる・静かな区間の同値の検 tests/test_idle_skip.hy)"
+  (quitter (spawning-program foundation "quit/" 4) :needs #{"cluster-net"}))
+
 (defsystem pulses [foundation]
   "見本の系: 準備できたと報告し続けるだけの service 1 つ"
   (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
