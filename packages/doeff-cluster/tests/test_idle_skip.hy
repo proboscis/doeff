@@ -1,7 +1,8 @@
-;; 模擬の時計の下だけ、coordinator は要求の無い間に「本番の判断で何も変えない拍」を一度に眠る(idle_policy.quiet-ticks・
-;; coordinator_handler_sets の RequestQueue の skip-idle・2026-09-30 の決定)。本番の拍の間隔 1 秒と判断の刻は変えない。
+;; 模擬の時計の下だけ、coordinator は要求の無い間の静かな区間を一度に眠る(idle_policy.quiet-stretch・coordinator_handler_sets の
+;; RequestQueue の skip-idle・2026-09-30 の決定・#2790)。本番の拍の間隔 1 秒と判断の刻は変えない。
 ;;
-;; - 模擬の時計では、要求が無ければ次に状態の変わる拍まで一気に進む(1 秒ごとに起きない)。
+;; - 模擬の時計では、要求が無ければ最初の静かでない歩まで一気に進む(1 秒ごとに起きない)。眠った間の歩(生存の印・吸った待ちの
+;;   期限の引き直し)は、起きた時に調停ループへ渡して同じ順・同じ値で保存する。
 ;; - 本番の受付(http-requests)は材料 idle を読まず、拍の間隔は 1 秒のまま。skip-idle でない模擬の列も 1 秒ごと。
 ;; - 同じ筋書きを 1 秒ごとの拍と飛ばす拍で回すと、置き場への書きの列・coordinator の一生・process の列が一致する(判断の刻が同じ)。
 ;; - 系全体の静かな区間(worker の拍が状態を変えず、heartbeat が静かな早道に入り、coordinator の歩が生存の印のほか何も変えない間)も、
@@ -15,11 +16,11 @@
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests])
+(import doeff_core_effects.scheduler [CreatePromise Promise Spawn])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests IdleTaken])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests])
-(import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests http-request])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
                              SimWorker Redeclare])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
@@ -53,14 +54,45 @@
   woke)
 
 
-(deftest test-the-simulated-coordinator-sleeps-to-the-next-changing-tick
-  ;; 要求の無い新しい状態: 最初に状態を変える拍は、生きていた時刻の印(ALIVE-MARK-MS 5 秒)の 5 秒目。skip-idle の列は 5 秒目に
-  ;; 起きる(間の 1 秒ごとの拍を飛ばす)。判断の関数で試した拍の数(quiet-ticks)も 5。
-  (<- quiet int (quiet-ticks FRESH-PROBE 0))
-  (assert (= quiet 5) quiet)
-  (<- skipped tuple (queue-wakes True FRESH-PROBE 1))
-  (assert (= skipped #(5000)) skipped)
-  ;; 反例 — skip-idle でない列(本番と同じ間隔): 1 秒目に起きる。
+(defk send-at [queue seconds]
+  {:pre [(: queue RequestQueue) (: seconds float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの送り手: seconds 秒眠ってから、列に読みの要求を 1 件積むため(返事は待たない)。"
+  (<- (Delay seconds))
+  (<- slot Promise (CreatePromise))
+  (<- (enqueue-request queue (http-request "GET" "/state" {} None :slot slot)))
+  None)
+
+
+(defk take-once [queue probe seconds]
+  {:pre [(: queue RequestQueue) (: probe IdleProbe) (: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの取り手: seconds 秒後に要求を積む送り手を走らせ、coordinator の歩と同じ NextRequests 1.0(材料 idle 付き)を 1 回出して、
+   起きた刻と答えを読むため。"
+  (<- (Spawn (send-at queue seconds)))
+  (<- taken (| list IdleTaken) (IdleNextRequests 1.0 :idle probe))
+  (<- woke int (now-epoch-ms))
+  #(woke taken))
+
+
+(defk taken-at [skip-idle probe seconds]
+  {:pre [(: skip-idle bool) (: probe IdleProbe) (: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "模擬の列(skip-idle の真偽)を仮想の時計(起点 0)で回し、seconds 秒後に要求が来る時の取り手の起きた刻と答えを返すため。"
+  (val queue (RequestQueue :skip-idle skip-idle))
+  (<- seen tuple ((sim-time-handler :clock (clock-at 0)) (with-handlers [(queued-requests queue)] (take-once queue probe seconds))))
+  seen)
+
+
+(deftest test-the-simulated-coordinator-sleeps-through-quiet-steps-until-a-request
+  ;; 要求の無い新しい状態: 生存の印(ALIVE-MARK-MS 5 秒)の歩は静かな歩(置き場への書きはまとめて後で)なので起きない。skip-idle の列は
+  ;; 12.3 秒目の要求で起き、眠った間の 1 秒ごとの歩 12 個(1〜12 秒目)を添えて返す。印の歩は 5 秒目と 10 秒目。
+  (<- seen tuple (taken-at True FRESH-PROBE 12.3))
+  (val woke (get seen 0))
+  (val taken (get seen 1))
+  (assert (= woke 12300) seen)
+  (assert (isinstance taken IdleTaken) taken)
+  (assert (= (lfor step taken.steps step.at) (lfor k (range 1 13) (* 1000 k))) taken.steps)
+  (assert (= (lfor step taken.steps step.state.alive-ms) [0 0 0 0 5000 5000 5000 5000 5000 10000 10000 10000]) taken.steps)
+  (assert (= (len taken.batch) 1) taken)
+  ;; 反例 — skip-idle でない列(本番と同じ間隔): 1 秒目に起き、歩を添えない。
   (<- ticked tuple (queue-wakes False FRESH-PROBE 1))
   (assert (= ticked #(1000)) ticked))
 
