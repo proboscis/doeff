@@ -262,12 +262,13 @@
   (tuple (gfor p processes (ProcessSpan :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
 
 
-(defk overlaps-of [seen]
-  {:pre [(: seen JobSeen)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "job 1 つの筋書きの全体(明けた後の読みまでの process)で、条 C2 が名指す重なりの列を得るため。"
+(defk in-one-place [seen]
+  {:pre [(: seen JobSeen)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "job 1 つの筋書きの全体(明けた後の読みまでの process)で、条 C2 が重なりを名指さないことを確かめるため。"
   (<- spans tuple (spans-of seen.after.processes))
   (<- broken tuple (one-place-per-job spans))
-  broken)
+  (assert (= broken #()) #(seen.job broken))
+  None)
 
 
 (defk host-of [seen name]
@@ -280,10 +281,11 @@
   {:pre [(: seen JobSeen)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
   "移せる先の無い job の約束を確かめるため: 途絶の最中も明けた後も、process は途絶の前の 1 つ(同じ世代・同じ pid)だけで動き続け(起こし直し 0 回)、
    途絶の最中の ready は止まりと読まない Unknown(印を渡してある旨)、明けた後は Ready で、同じ process の準備の報告が coordinator に届き続ける。"
-  (assert (= seen.mid.processes #(seen.first)) seen)
-  (assert (= (len seen.after.processes) 1) seen.after.processes)
+  ;; 起こし直しの数(途絶の前の process の後に起きた process の数)が 0。
+  (assert (= (- (len seen.after.processes) 1) 0) #("起こし直し" seen.job seen.after.processes))
   (val last (get seen.after.processes 0))
   (assert (= #(last.instance last.pid last.exit-code) #(seen.first.instance seen.first.pid None)) seen.after.processes)
+  (assert (= seen.mid.processes #(seen.first)) seen)
   (assert (= seen.mid.ready.state "Unknown") seen.mid.ready)
   (assert (in "印" seen.mid.ready.reason) seen.mid.ready)
   (assert (= seen.after.ready.state "Ready") seen.after.ready)
@@ -309,9 +311,8 @@
   ;; 起こし直さず(以前は 45 秒で外し、戻った担い手が止めて 67 秒かけて起こし直した)、明けた後は heartbeat・Ready・報告・task の置きが続く。
   (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage STALL-1326 #("pulse")) :workers STALL-1326.workers))
   (val pulse (get seen.jobs 0))
+  (<- (in-one-place pulse))
   (<- (kept-running pulse))
-  (<- broken tuple (overlaps-of pulse))
-  (assert (= broken #()) broken)
   (<- (back-in-touch seen STALL-1326.hosts))
   ;; 止まりの最中は coordinator の見え方で生きていない(沈黙が 45 秒を越えている)— 外さなかったのは移し替えの期限の前だからではない。
   (<- mid-host HostSeen (host-of seen.mid-hosts "w1"))
@@ -328,9 +329,8 @@
   (val jobs #("pulse-a" "pulse-b" "pulse-c" "pulse-d" "roamer"))
   (<- seen TimelineSeen (sim-cluster (solo-pulses sim-foundation) (outage CUT-1353 jobs) :workers CUT-1353.workers))
   (for [job (cut seen.jobs 0 4)]
-    (<- (kept-running job))
-    (<- broken tuple (overlaps-of job))
-    (assert (= broken #()) #(job.job broken)))
+    (<- (in-one-place job))
+    (<- (kept-running job)))
   (<- (back-in-touch seen CUT-HOSTS))
   ;; coordinator は途絶の最中に 1 度止まり、同じ置き場から作り直された。
   (assert (= (len seen.runs) 2) seen.runs)
@@ -348,8 +348,7 @@
   (assert (= #(moved.worker moved.exit-code) #("w-spare" None)) roamer.after.processes)
   (assert (<= (+ seen.zero-ms T.reassign-after-ms) moved.started-ms (+ seen.zero-ms 115000)) #(seen.zero-ms moved))
   (assert (= roamer.after.ready.state "Ready") roamer.after.ready)
-  (<- broken tuple (overlaps-of roamer))
-  (assert (= broken #()) broken))
+  (<- (in-one-place roamer)))
 
 
 (deftest test-a-capable-worker-joining-30-seconds-into-the-cut-does-not-take-the-promised-job
@@ -363,9 +362,8 @@
   (<- holder HostSeen (host-of seen.mid-hosts "w1"))
   (assert joined.alive joined)
   (assert (and (not holder.alive) (> holder.silent-ms T.reassign-after-ms)) holder)
+  (<- (in-one-place pulse))
   (<- (kept-running pulse))
   (assert (= (lfor p pulse.after.processes p.worker) ["w1"]) pulse.after.processes)
-  (<- broken tuple (overlaps-of pulse))
-  (assert (= broken #()) broken)
   (<- (back-in-touch seen #("w1" "w2")))
   (assert (= (len seen.runs) 2) seen.runs))
