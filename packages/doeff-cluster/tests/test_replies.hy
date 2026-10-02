@@ -14,15 +14,16 @@
 (setv T (ClusterTiming))
 
 
-(defn #^ ClusterState written []
-  "盤に 2 行書いた状態(出来事の記録が 2 件)。"
-  (setv #(s _ _) (responded (ClusterState) (http-request "PUT" "/board/a" {} {"value" 1} :actor "c") 1000 T))
-  (setv #(s2 _ _) (responded s (http-request "PUT" "/board/b" {} {"value" 2} :actor "c") 2000 T))
-  s2)
+(defk written []
+  {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "盤に 2 行書いた状態(出来事の記録が 2 件)を、返事の検の出発点として組むため。"
+  (val first (responded (ClusterState) (http-request "PUT" "/board/a" {} {"value" 1} :actor "c") 1000 T))
+  (val second (responded (get first 0) (http-request "PUT" "/board/b" {} {"value" 2} :actor "c") 2000 T))
+  (get second 0))
 
 
 (deftest test-the-events-reply-is-a-typed-value-spelled-by-protocol
-  (val s (written))
+  (val s (! (written)))
   (setv #(_ status answer) (! (respond s (http-request "GET" "/events" {"since" "0"} None) 3000 T {})))
   (assert (= status 200))
   (assert (isinstance answer EventsView) answer)
@@ -33,7 +34,7 @@
 
 
 (deftest test-the-state-reply-adds-audit-and-drains-to-the-view
-  (val s (written))
+  (val s (! (written)))
   (setv #(_ _ answer) (! (respond s (http-request "GET" "/state" {} None) 3000 T {})))
   (assert (isinstance answer StateReply) answer)
   (setv #(_ _ body) (responded s (http-request "GET" "/state" {} None) 3000 T))

@@ -12,10 +12,9 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.job_context [RunContext])
-(import doeff [run with-handlers])
+(import doeff [with-handlers])
 (import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.protocol.task_result [task-result-request delivered-task-result])
 (import tests.transport_http [transport-http TEST-ROUTE])
 (import tests.clock_fixtures [clock-at])
@@ -98,10 +97,12 @@
   (assert (= (. (get (. (get bare 0) tasks) id) phase) "assigned") bare))
 
 
-(defn #^ bool delivered [#^ RunContext ctx #^ httpx.BaseTransport transport]  ; defk にできない: 検が Program の外から 1 回走らせる入口
-  "子の届け(delivered-task-result)を、transport の後ろの coordinator への検の HTTP の答え手と模擬の時計の下で走らせる。"
-  (run (scheduled (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))]
-                                 (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance "R" TEST-ROUTE)))))
+(defk delivered [ctx transport]
+  {:pre [(: ctx RunContext) (: transport httpx.BaseTransport)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "子の届け(delivered-task-result)を、transport の後ろの coordinator への検の HTTP の答え手と模擬の時計の下で走らせるため。"
+  (<- sent bool (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))]
+                               (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance "R" TEST-ROUTE)))
+  sent)
 
 
 (deftest test-the-child-delivers-its-result-and-leaves-a-refusal-or-an-outage-to-the-heartbeat
@@ -112,9 +113,9 @@
   (val coordinator (MemoryCoordinator (clock-at 300)))
   (setv coordinator.state (get placed 0))
   (val ctx (RunContext "http://coordinator" "w" "r" (+ "task/" id) :instance "w-p1"))
-  (assert (delivered ctx (httpx.MockTransport coordinator.handle)))
+  (assert (! (delivered ctx (httpx.MockTransport coordinator.handle))))
   (assert (= #((. (get coordinator.state.tasks id) phase) (. (get coordinator.state.tasks id) result)) #("finished" "R"))
           (get coordinator.state.tasks id))
   (val stray (RunContext "http://coordinator" "w" "r" "task/t-none" :instance "w-p2"))
-  (assert (not (delivered stray (httpx.MockTransport coordinator.handle))))
-  (assert (not (delivered ctx (httpx.MockTransport unreachable)))))
+  (assert (not (! (delivered stray (httpx.MockTransport coordinator.handle)))))
+  (assert (not (! (delivered ctx (httpx.MockTransport unreachable))))))

@@ -227,7 +227,7 @@
   ;; 入口の検めを probe-host と本物の答え手の下で回す(この spec の答えだけを見る — observed は spec-hash で引く)。
   (val probed (run-probes probes (probe-entered spec view.path)))
   (assert (= probed.state ProbeState.PASSED) probed)
-  (val ended (run-on-host rig.host (job-ended spec view.path (max 1.0 (- deadline (time.monotonic))))))
+  (val ended (! (run-on-host rig.host (job-ended spec view.path (max 1.0 (- deadline (time.monotonic)))))))
   (assert (.is-file out) (.format "service が書かなかった(終了 {})— log: {}" ended.exit-code
                                   (.read-text (next (.glob (/ rig.state "logs") "reporter*")) :errors "replace")))
   (.splitlines (.read-text out :encoding "utf-8")))

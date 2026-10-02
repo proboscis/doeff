@@ -68,7 +68,7 @@
 
 (deftest test-clock-effects-are-recorded-and-replayed
   ;; 記録に doeff-time の効果(GetTime / Delay)が載り、再生は記録の時刻を返す(眠らない)。
-  (setv #(lines program store) (record-system))
+  (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (setv names (json.dumps lines :ensure-ascii False))
   (assert (in "doeff_time.effects.time:GetTimeEffect" names) names)
@@ -115,19 +115,26 @@
   (<- (WriteShared "final" (OpaqueJson.of (list box))))
   (list box))
 
-(defn #^ tuple record-system []
-  (setv sink (MemorySink) clock (clock-at 1000000) box [] store {})
-  (setv log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (clock-ms clock))))
-  (setv result (with-handlers-list [(sim-time-handler :clock clock) (reader {"box" box}) #* (board-handlers store) (effect-recorder log)]
-                                   (system-program)))
-  #(sink.lines result store))
+(defk record-system []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "並行の系(system-program)を記録係の下に置いた Program を組むため。答え = #(記録の行の list(Program を走らせると埋まる) Program 盤の写し)。"
+  (val sink (MemorySink))
+  (val clock (clock-at 1000000))
+  (val box [])
+  (val store {})
+  (val log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (clock-ms clock))))
+  (val program (with_handlers [(sim-time-handler :clock clock) (reader {"box" box}) #* (board-handlers store) (effect-recorder log)]
+                              (system-program)))
+  #(sink.lines program store))
 
-(defn #^ Program with-handlers-list [#^ list handlers #^ Program program]
-  "handler の list(外側が先)で包む。"
-  (with_handlers handlers program))
+(defk with-handlers-list [handlers program]
+  {:pre [(: handlers list) (: program Program)] :post [(: % (| list dict))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "Program を handler の list(外側が先)の下で走らせ、その答えを返すため。"
+  (<- answer (with_handlers handlers program))
+  answer)
 
 (deftest test-concurrent-order-is-kept-by-replay
-  (setv #(lines program store) (record-system))
+  (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (setv rec (! (read-recording lines)))
   (assert (= (sorted (.keys rec.queues)) ["root" "root.0" "root.1" "root.2"]) (sorted (.keys rec.queues)))
@@ -142,7 +149,7 @@
 (deftest test-the-same-recording-replays-twice-to-the-same-history
   ;; #2581: 値は読む時点で 1 度だけ戻す。業務と再生の共有の箱が書き換えても、同じ Recording の 2 度目の再生は同じ答えを返す
   ;; (deliver-recorded は Entry.value の写しを渡す — 写しを外すと 2 度目が書き換え済みの箱を受けて赤)。
-  (setv #(lines program store) (record-system))
+  (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (setv rec (! (read-recording lines)))
   (<- first list (with-handlers-list [(effect-replayer (ReplayState rec))] (system-program)))
@@ -153,7 +160,7 @@
 
 (deftest test-replay-without-the-order-gives-a-different-history
   ;; 対照: 出来事の番号の順を待たない再生は、同じ答えを返しても task の交互の順が変わり、共有の箱の中身の順が記録と違う。
-  (setv #(lines program store) (record-system))
+  (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (setv state (ReplayState (! (read-recording lines)) :ordered False))
   (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
@@ -182,7 +189,7 @@
 
 (deftest test-a-recording-mixing-old-and-new-write-shared-forms-replays-without-differences
   ;; 1 つおきの WriteShared の行を旧い版の業務コードが tuple で書いた形にする(盤の JSON では同じ list)。
-  (setv #(lines program store) (record-system))
+  (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (val writes (lfor l lines :if (= (.get l "ty") (type-name WriteShared)) l))
   (assert (> (len writes) 4) (len writes))
@@ -202,7 +209,7 @@
 (val BEFORE-2727 (/ (. (pathlib.Path __file__) parent) "fixtures" "system_record_before_2727.json"))
 
 (deftest test-a-recording-written-before-2727-replays-the-same
-  (setv #(lines program store) (record-system))
+  (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (val before (json.loads (.read-text BEFORE-2727 :encoding "utf-8")))
   ;; 失敗ケース: 問いの引数(a)の鍵の順を逆にした同じ記録。比べる形の文字列が記録の行の鍵の順に依れば、再生の引数と食い違って赤。
@@ -308,7 +315,7 @@
 (deftest test-read-recording-restores-the-recorded-answers
   ;; 本番の記録の断片(書きの答え)と、時計・共有の箱(Ask の答え)・handle を含む系の記録の両方で、読んだ答えは記録の値を
   ;; decode-value で戻した物に等しい。JSON の印の付いた値(時刻 $dt・handle $h・tuple $t)は戻した型で持ち、$w は WatchedRef のまま。
-  (setv #(system-lines program store) (record-system))
+  (setv #(system-lines program store) (! (record-system)))
   (<- recorded list program)
   (for [lines [(json.loads (.read-text PRODUCTION-FRAGMENT :encoding "utf-8")) system-lines]]
     (val blobs (dfor l lines :if (= (.get l "k") "blob") (get l "h") (get l "v")))

@@ -36,8 +36,9 @@
   (if (.exists path) (.splitlines (.read-text path :encoding "utf-8")) []))
 
 
-(defn #^ EnvSettings sweeping [#^ Path tmp #^ str uv #^ str [hy-command "hy"]]
-  "下限を disk の大きさより上に置いて、必ず掃除させる設定。"
+(defk sweeping [tmp uv [hy-command "hy"]]
+  {:pre [(: tmp Path) (: uv str) (: hy-command str)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "下限を disk の大きさより上に置いて、必ず掃除させる設定を組むため。"
   (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :sweep-floor-bytes (** 10 18)))
 
 
@@ -55,7 +56,7 @@
 (deftest test-the-prune-does-not-block-the-worker-loop [tmp-path]
   (<- uv str (sleeping-uv tmp-path))
   ;; 前の prune が走っている間は次を起こさない(固定の集合を変えて、すぐの掃除を起こしても)。
-  (val took (run-envs (sweeping tmp-path uv) (sweep-twice (frozenset #("env-other")))))
+  (val took (! (run-envs (! (sweeping tmp-path uv)) (sweep-twice (frozenset #("env-other"))))))
   (assert (< took 5) "掃除は prune を待たずに返る")
   (time.sleep 0.3)
   (<- again list (calls tmp-path))
@@ -77,7 +78,7 @@
   (.write-text preparer "#!/bin/sh\nsleep 5\n" :encoding "utf-8")
   (os.chmod preparer 0o755)
   (val declared "{\"project\": {\"lockSha256\": \"L\", \"python\": \"3.12\"}}")
-  (run-envs (sweeping tmp-path uv (str preparer)) (preparing-then-sweep declared))
+  (<- (run-envs (! (sweeping tmp-path uv (str preparer))) (preparing-then-sweep declared)))
   (time.sleep 0.5)
   (assert (not (.exists (/ tmp-path "uv-calls"))) "準備の間は prune を起こさない"))
 
@@ -89,7 +90,7 @@
   (.write-text script (.format "#!/bin/sh\necho \"$@\" >> {}\n" (/ tmp-path "uv-calls")) :encoding "utf-8")
   (os.chmod script 0o755)
   ;; 1 回目の掃除の prune はすぐ終わる。固定の集合を変えて、すぐの掃除を起こす(prune は終わっている)。
-  (run-envs (sweeping tmp-path (str script)) (sweep-twice (frozenset #("env-other"))))
+  (<- (run-envs (! (sweeping tmp-path (str script))) (sweep-twice (frozenset #("env-other")))))
   (time.sleep 0.3)
   (<- again list (calls tmp-path))
   (assert (= again ["cache prune"]) again))
