@@ -296,7 +296,9 @@ struct CallRaised {
 
 impl doeff_vm_core::value::Callable for CallRaised {
     fn call(&self, _args: Vec<Value>) -> Result<Value, doeff_vm_core::VMError> {
-        Err(doeff_vm_core::VMError::uncaught_exception(self.exception.clone()))
+        Err(doeff_vm_core::VMError::uncaught_exception(
+            self.exception.clone(),
+        ))
     }
 
     fn name(&self) -> Option<String> {
