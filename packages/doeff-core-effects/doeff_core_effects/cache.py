@@ -10,7 +10,6 @@ is not yet ported. This module provides the core cache helpers and a simplified
 """
 
 import contextlib
-import os
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -20,9 +19,11 @@ from frozendict import (
     frozendict as FrozenDict,  # noqa: N812 - public FrozenDict alias is intentionally stable
 )
 
-from doeff import UnhandledEffect, do
+from doeff import UnhandledEffect, do, run, with_handlers
 from doeff_core_effects.memo_effects import MemoExists, MemoGet, MemoPut
 from doeff_core_effects.memo_policy import Lifecycle, MemoPolicy, ensure_memo_policy
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
 
 T = TypeVar("T")
 
@@ -30,8 +31,14 @@ CACHE_PATH_ENV_KEY = "DOEFF_CACHE_PATH"
 
 
 def persistent_cache_path() -> Path:
-    """Return the persistent cache path from env or default."""
-    env_path = os.environ.get(CACHE_PATH_ENV_KEY)
+    """Return the persistent cache path from env or default.
+
+    DOEFF_CACHE_PATH is asked through doeff's foundation handler (subprocess_handler
+    answers ReadEnvironment from the process environment) instead of read from the
+    process environment directly (agora-redesign #3012).
+    """
+    entries = run(with_handlers([subprocess_handler], ReadEnvironment((CACHE_PATH_ENV_KEY,))))
+    env_path = next((entry.value for entry in entries if entry.value), None)
     if env_path:
         return Path(env_path)
     return Path(tempfile.gettempdir()) / "doeff_cache"

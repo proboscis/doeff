@@ -30,6 +30,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
+
 from .types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
 
 
@@ -59,11 +63,18 @@ def _atomic_write(path: Path, content: str) -> None:
 def get_default_state_dir() -> Path:
     """Get the default state directory following XDG Base Directory Specification.
 
+    XDG_STATE_HOME is asked through doeff's foundation handler (subprocess_handler
+    answers ReadEnvironment from the process environment) instead of read from the
+    process environment directly; an empty value counts as unset, as the XDG spec
+    says (agora-redesign #3012).
+
     Returns:
         Path to ~/.local/state/doeff-agentic/
     """
-    xdg_state = os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
-    return Path(xdg_state) / "doeff-agentic"
+    entries = run(with_handlers([subprocess_handler], ReadEnvironment(("XDG_STATE_HOME",))))
+    xdg_state = next((entry.value for entry in entries if entry.value), None)
+    base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
+    return base / "doeff-agentic"
 
 
 def generate_workflow_id(name: str, timestamp: datetime | None = None) -> str:

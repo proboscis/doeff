@@ -493,7 +493,7 @@ def resolve_implementation(
     if choice is None:
         # The environment switch is the operator-facing rollback knob
         # (docs/25-rust-scheduler.md); the argument is the injected path.
-        choice = os.environ.get(IMPLEMENTATION_ENV_VAR) or DEFAULT_IMPLEMENTATION  # noqa: DOEFF004
+        choice = os.environ.get(IMPLEMENTATION_ENV_VAR) or DEFAULT_IMPLEMENTATION
     if choice not in ("python", "rust"):
         raise ValueError(
             f"scheduler implementation must be 'python' or 'rust', got {choice!r} "

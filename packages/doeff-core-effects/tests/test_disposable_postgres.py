@@ -8,13 +8,15 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
 from disposable_postgres import (
     CLIENT_SECONDS,
     DEFAULT_SOURCE,
@@ -59,8 +61,12 @@ def test_session_environment_points_at_a_live_postgres() -> None:
             psql = postgres_bin_dir(DEFAULT_SOURCE) / "psql"
         except DisposablePostgresError as failed:
             pytest.skip(f"{UNAVAILABLE_PREFIX}: {failed}")
+    # 検の module が読む DSN の env そのものを確かめる(#2830)。env は os.environ を直に読まず、doeff の foundation の
+    # handler(subprocess_handler が ReadEnvironment に答える)で問う(agora-redesign #3012)。
+    asked = run(with_handlers([subprocess_handler], ReadEnvironment((SQL_EFFECTS_VARIABLE, RECORDS_VARIABLE))))
+    session_env = {entry.name: entry.value for entry in asked}
     for variable in (SQL_EFFECTS_VARIABLE, RECORDS_VARIABLE):
-        dsn = os.environ.get(variable)  # noqa: DOEFF004 - 検の module が読む DSN の env そのものを確かめる(#2830)
+        dsn = session_env.get(variable)
         assert dsn, f"env {variable} が無い(conftest が使い捨ての PostgreSQL を用意していない)"
         assert select_one(psql, dsn) == "1"
 
