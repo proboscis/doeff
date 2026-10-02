@@ -354,6 +354,15 @@
   "見本の系: 準備できたと報告し続けるだけの service 1 つ"
   (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
+(defsystem lone-pulses [foundation]
+  "pulses の needs を、1 台の worker だけが持つ能力 lone にした宣言(#2804 — 宣言の needs を広げて置ける worker が増える筋書きの前の宣言・
+   tests/test_keep_when_cut_off.hy)"
+  (pulse (pulse-program foundation) :needs #{"lone"} :readiness {"windowSeconds" 5}))
+
+(defsystem wide-pulses [foundation]
+  "lone-pulses の needs を広げた宣言(#2804 — 能力 cluster-net を持つ worker ならどれにも置ける)"
+  (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+
 (defsystem detaching [foundation]
   "見本の系: 切り離した task を出して待つ service 1 つ"
   (detacher (detaching-program foundation 3 "detached/result") :needs #{"cluster-net"}))

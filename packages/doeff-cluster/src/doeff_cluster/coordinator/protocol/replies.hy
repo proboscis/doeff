@@ -57,7 +57,10 @@
      ;; 入れ替え(handoff)の job だけ: 形と、coordinator が Ready と数えている process の世代の名(worker は旧をこの後に止める)。
      (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})
      ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
-     (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})))
+     (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})
+     ;; 途絶しても動かし続けてよい印の在る job だけ(#2804 — cluster_policy.keep-marked): worker は coordinator に届かない間もこの job を
+     ;; 止めない。欄を読まない古い worker は今までどおり fence で止める。
+     (if spec.keep-when-cut-off {"keepWhenCutOff" True} {})))
 
 
 (defk task-offer-json [#^ TaskOffer offer]

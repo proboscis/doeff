@@ -307,6 +307,13 @@ class Drain:
     boot: str | None = None
     actor: str = ""
 
+@dataclass(frozen=True, kw_only=True)
+class KeepMark:
+    job: str
+    worker: str
+    boot: str | None
+    since_ms: int
+
 class HandoffPhase(StrEnum):
     WAITING = "WaitingReady"
     ABANDONED = "Abandoned"
@@ -623,6 +630,7 @@ class ClusterState:
     handoffs: dict[str, HandoffWatch] = ...
     silent: frozenset[str] = frozenset()
     observations: ClusterObservations = ...
+    keep_marks: dict[str, KeepMark] = ...
 
 @dataclass(frozen=True)
 class Fault:

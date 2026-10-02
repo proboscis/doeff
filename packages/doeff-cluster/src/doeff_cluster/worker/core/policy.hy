@@ -14,6 +14,7 @@
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [replace])
+(import doeff [run])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
@@ -24,10 +25,31 @@
 ;; 時計の期限で締まるので、途絶で止める必要が無い — 止めると coordinator の作り直し(版の更新)のたびに書き手が止まった。
 ;; 書き手の停止は lease に一本化し、自己停止は lease を持たない job と task にだけ当てる。切り離した task(2026-09-25)も止めない
 ;; (lease は担い手の worker の heartbeat が延ばし、途絶が lease より長ければ coordinator がその task を lost にする)。
+;; 途絶しても動かし続けてよい印(#2804): coordinator が「他に置ける worker が無い」と判じて返事の job に付けた印(JobSpec.keep-when-cut-off)
+;; の在る job も止めない。coordinator は印を渡した担い手から、担い手が印を持たないと知らせる(heartbeat の keptWhenCutOff — keep-marks-held)
+;; か Worker が消されるまで job を他へ移さないので、2 か所で走らない保証は時間の競争(fence < 移し替え)ではなく「移さない」で持つ。
+;; 止めるかどうかの判断はこの述語 1 つ(fence の判断 desired-when-unreachable と、時間で周期ごとに判ずる側が同じ述語を呼ぶ)。
+(defk kept-when-cut-off? [job]
+  {:pre [(: job JobSpec)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "coordinator に届かない間も job を動かし続けるかを 1 か所で決めるため: 入れ替えを宣言した書き手(lease の柵が書きを守る)・切り離した
+   task(担い手の heartbeat が lease を延ばす)・途絶しても動かし続けてよい印の在る service の job(coordinator が他へ移さない)。RemoteJob の
+   task は含まない(呼び手が lease を持つ)。"
+  (or (and job.handoff (not job.once))
+      (and job.once job.detached)
+      (and job.keep-when-cut-off (not job.once))))
+
+
 (defn #^ tuple kept-when-cut-off [#^ tuple jobs]
-  "純粋: coordinator に届かない間も動かし続ける job(入れ替えを宣言した書き手と、切り離した task)。RemoteJob の task は含まない
-   (呼び手が lease を持つ)。切り離した task は担い手の heartbeat が lease を延ばすので、途絶で止めない(2026-09-25)。"
-  (tuple (gfor job jobs :if (or (and job.handoff (not job.once)) (and job.once job.detached)) job)))
+  "純粋: coordinator に届かない間も動かし続ける job の列を、最後に受け取った宣言から選ぶため(判断は kept-when-cut-off? 1 つ)。"
+  (tuple (gfor job jobs :if (run (kept-when-cut-off? job)) job)))
+
+
+(defk keep-marks-held [jobs]
+  {:pre [(: jobs tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "最後に受け取った宣言のうち、途絶しても動かし続けてよい印の在る service の job の名(名の順)— heartbeat の keptWhenCutOff で coordinator に
+   知らせ、coordinator が「この worker はもう印を持たない」と確かめてから印の約束を外すため(印の無い返事が届いていない担い手から job を
+   移さない)。"
+  (tuple (sorted (gfor job jobs :if (and job.keep-when-cut-off (not job.once)) job.name))))
 
 (defn #^ (| ProcessView None) process-of [#^ WorldView world #^ str name]
   (for [process world.processes]

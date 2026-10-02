@@ -71,6 +71,8 @@
 ;;;   StartWorker 名            死んだ・止めた worker を新しい世代(boot)で起こす(答え = 起こしたか — 動いている worker には偽)。
 ;;;   CutWorker 名 秒           worker の網を秒の間切る: その worker と子 process の要求は coordinator に届かない(接続の失敗)。子は
 ;;;                             動き続け、fence を越えると本物の worker_policy の判断で lease を持たない job を止める。
+;;;   StallWorker 名 秒         worker の処理を秒の間止める(heartbeat を送らない・送りの失敗が無いので fence も効かない・子は動き続ける —
+;;;                             本番の worker の処理が I/O で止まった形・#2804)。
 ;;;   DrainWorker 名 [ttl]      本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で drain を頼む。
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
 ;;;   PreparationsOf 名         worker が起こした準備の列(SimPreparation — コードの版か env-<キー>・先読みか・始まり・終わり・失敗)。
@@ -142,6 +144,7 @@
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
+(import doeff_cluster.worker.core.policy [keep-marks-held])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
@@ -203,7 +206,9 @@
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
    (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
    壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)・retire-stops = 反例の
-   世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob の handler が、外すと同時に旧を止める — 条 W1 の反例)。"
+   世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob の handler が、外すと同時に旧を止める — 条 W1 の反例)・ignores-keep-marks =
+   途絶しても動かし続けてよい印(#2804)を知らない古い版の worker の代役(heartbeat に keptWhenCutOff を載せず、返事の keepWhenCutOff を
+   読み捨てる — 新しい coordinator と古い worker の組を確かめるため)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -215,7 +220,8 @@
   (setv #^ bool starts-down False)
   (setv #^ bool ignores-fence False)
   (setv #^ (| int None) beat-every-ms None)
-  (setv #^ bool retire-stops False))
+  (setv #^ bool retire-stops False)
+  (setv #^ bool ignores-keep-marks False))
 
 
 (defrecord SimProcess
@@ -436,6 +442,13 @@
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect StallWorker
+  "検の effect: worker name の処理を seconds 秒止める(#2804 — 2026-10-02 13:26 の形: worker の処理が I/O で止まり heartbeat が送られない)。
+   その間 heartbeat を送らない(送りの失敗が無いので fence も効かない)・子 process は動き続ける・拍は前の宣言のまま回る。答え = None。"
+  {:fields [(: name str) (: seconds float)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect DrainWorker
   "検の effect: worker name の drain を、本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で頼む。
    ttl-seconds = drain の期限。答え = 本番の CoordinatorCall と同じ形({\"status\" int \"body\" dict} か {\"error\" 理由})。"
@@ -533,7 +546,8 @@
    heartbeat が届いた時に鳴らす呼び鈴(起こした後の待ちが次の版を待つ)・watch-failure = 待ちの task が思わぬ例外で止まった理由
    (在れば拍ごとの heartbeat に戻る — 本番の coordinator への口の watching? が thread の死に気づくのと同じ)・tick-bell = 拍の間の
    眠りを起こす呼び鈴(#2692 — 待ちが「変わった」と答えた時に鳴らして手放し、次の宣言の読みが新しく掛ける。鳴るまでは拍をまたいで
-   同じ物を渡す)。"
+   同じ物を渡す)・stalled-until-ms = 処理の止まり(StallWorker — #2804)の終わりの時刻(epoch ms・0 = 止まっていない)。この刻までは
+   heartbeat を送らず(送りの失敗も無いので fence も効かない — 本番の worker の処理が I/O で止まった形)、前の宣言のまま拍を回す。"
   (#^ str boot)
   (#^ int boot-at)
   (#^ tuple processes)
@@ -559,7 +573,8 @@
   (setv #^ bool woken False)
   (setv #^ tuple beat-bells #())
   (setv #^ (| str None) watch-failure None)
-  (setv #^ (| Promise None) tick-bell None))
+  (setv #^ (| Promise None) tick-bell None)
+  (setv #^ int stalled-until-ms 0))
 
 
 (defrecord HostTruthChange
@@ -1395,16 +1410,23 @@
   (<- sent-at int (now-epoch-ms))
   (<- views tuple (codes-view before.codes sent-at))
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name))
-  (val body (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
+  ;; 今持っている印(#2804 — 本番の coordinator への口の beat と同じ判断)。印を知らない古い worker の代役は欄を載せない。
+  (<- kept tuple (keep-marks-held before.last-desired))
+  (val full (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
                                :node worker.node :capacity worker.capacity :versions (or worker.versions (current-versions))
                                :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
-                               :boot-at before.boot-at :tools {})
+                               :boot-at before.boot-at :tools {} :kept kept)
                (env-heartbeat-part (env-report views "ok") (current-platform))))
+  (val body (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
       (do (val reply (get answer 1))
-          (<- jobs tuple (declared-job-specs (get reply "jobs")))
+          (<- read-jobs tuple (declared-job-specs (get reply "jobs")))
+          ;; 印を知らない古い worker の代役は返事の印を読み捨てる(欄を知らない版の読みと同じ = 印の無い宣言)。
+          (val jobs (if worker.ignores-keep-marks
+                        (tuple (gfor s read-jobs (replace s :keep-when-cut-off False)))
+                        read-jobs))
           (<- tasks tuple (task-specs (.get reply "tasks" []) (Path "/sim/tasks" worker.name)))
           (val warm (tuple (gfor row (.get reply "warm" []) (warm-env-of-row row (current-platform)))))
           (val ids (sfor t (.get reply "tasks" []) (get t "id")))
@@ -1514,8 +1536,10 @@
     (<- now int (now-epoch-ms))
     (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None)
                        (is truth.watch-failure None)))
-    (val due (heartbeat-due watching truth.fresh truth.woken (!= truth.statuses truth.sent-statuses) (- now truth.last-ok-ms)
-                            (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms)))
+    ;; 処理の止まり(StallWorker — #2804)の間は送らない(送りの失敗も無いので fence の判断も走らない)。
+    (val due (and (>= now truth.stalled-until-ms)
+                  (heartbeat-due watching truth.fresh truth.woken (!= truth.statuses truth.sent-statuses) (- now truth.last-ok-ms)
+                                 (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-tick-bell worker.name boot truth watching))
     (var read (DesiredJobs truth.last-desired :warm truth.last-warm))
@@ -2184,6 +2208,11 @@
   (CutWorker [name seconds]
     (<- now int (now-epoch-ms))
     (:= cuts (| cuts {name (+ now (int (* 1000 seconds)))}))
+    (resume None))
+  (StallWorker [name seconds]
+    (<- now int (now-epoch-ms))
+    (val truth (get hosts name))
+    (:= hosts (| hosts {name (replace truth :stalled-until-ms (+ now (int (* 1000 seconds))))}))
     (resume None))
   (FailRoute [method path status seconds]
     (<- now int (now-epoch-ms))
