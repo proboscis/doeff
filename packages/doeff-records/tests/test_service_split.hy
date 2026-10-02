@@ -95,11 +95,11 @@
 
 
 (deftest test-a-principals-env-is-not-read
-  ;; 名簿の file は読まない(#3008): env RECORDS_PRINCIPALS_FILE が在っても読まず(file の表に無い path でも落ちない)、残してある roster の欄は空。
+  ;; 名簿の file は読まない(#3008): env RECORDS_PRINCIPALS_FILE が在っても読まず(file の表に無い path でも落ちない)、設定は名簿の欄を持たない。
   (val environ (dict REQUIRED-ENV))
   (setv (get environ "RECORDS_PRINCIPALS_FILE") "/secrets/not-read.json")
   (<- settings RecordsSettings (settings-under environ))
-  (assert (= (dict settings.roster.digests) {}) settings.roster)
+  (assert (not (hasattr settings "roster")) settings)
   (assert (= settings.dsn DSN) settings))
 
 
@@ -108,7 +108,6 @@
   (<- serving RecordsServing (records-serving LAW-SCHEMA settings PG-STORE))
   (assert (= serving.address settings.address) serving)
   (assert (is serving.schema LAW-SCHEMA) serving)
-  (assert (is serving.roster settings.roster) serving)
   (assert (= serving.maintenance settings.maintenance) serving)
   (assert (= serving.max-bytes REQUEST-MAX-BYTES) serving)
   (assert (isinstance serving.prepare (| Program EffectBase)) serving)

@@ -31,7 +31,6 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
-(import doeff_records.principals [Roster])
 (import doeff_records.http_server [records-server-config start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import doeff_core_effects.handlers [await-handler])
@@ -115,11 +114,6 @@
 
 
 (setv HTTP-POLL-SECONDS 0.05)
-
-
-(defn law-roster []
-  "service の組み立てに渡す空の名簿(残してある欄 — service は名簿を使わない・#3008)。"
-  (Roster))
 
 
 (defn sim-request-handlers [clock [answerers []]]

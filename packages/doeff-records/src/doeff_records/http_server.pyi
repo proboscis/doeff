@@ -17,7 +17,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from doeff_core_effects.http_server_effects import HttpAddress
-from doeff_records.principals import Roster
 from doeff_records.service import HttpAnswer, HttpRequest
 from doeff_records.values import RecordsSchema
 
@@ -44,7 +43,6 @@ class ServedBuild:
 class RecordsServing:
     address: HttpAddress
     schema: RecordsSchema
-    roster: Roster = ...
     prepare: Program[object, object] | EffectBase[object]
     request_handlers: tuple[object, ...]
     max_bytes: int
@@ -76,7 +74,6 @@ def ready_handlers(handler_for: Callable[[str], object]) -> Program[Callable[[st
 @dataclass(frozen=True)
 class RecordsServerConfig:
     schema: RecordsSchema
-    roster: Roster
     handler_for: Callable[[str], object]
     request_handlers: tuple[object, ...] = ()
     host: str = "127.0.0.1"
@@ -84,7 +81,6 @@ class RecordsServerConfig:
     meter: Callable[..., object] | None = None
     served: ServedBuild | None = None
 
-# 名簿の欄 roster は使われていない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す(#3008)。
 def records_server_config(
     schema: RecordsSchema,
     handler_for: Callable[[str], object],
