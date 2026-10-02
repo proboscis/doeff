@@ -65,6 +65,19 @@
                                     (= status (get STATUS-OF-ERROR ERROR-INTERNAL)) "・答えの途中で落ちた"
                                     True ""))))))
 
+;; 記録の client の計器の counter の名の綴り(#2740): client が送った要求 1 つごとに、要求の種 × 結果で records_client_requests_<種>_<結果>
+;; (描く名は末尾に _total — 上の service の系列と並べて読む)。種は write と read(client は記録の操作だけを送る — other は無い)。
+;; 結果 = service が答えた status(ANSWER-STATUSES — 503 は service に届いたが置き場に届かなかった)・unreachable(要求が service に
+;; 届かなかった — 接続できない・時間切れ。service の計器には出ない数)・other(それ以外の status — 間の proxy の 502 / 504・前に立つ口の
+;; 403 など)。頁送りの読み直しの合図(Reset)は 200 の本文の答えなので 200 に入る(Conflict・Refused と同じ)。系列は閉じていて、使い手は
+;; 起動の時に全部を 0 で置ける(http_client.zero-client-metrics)。
+(val CLIENT-ANSWER-METRIC "records_client_requests_{}_{}")
+(val CLIENT-UNREACHABLE "unreachable")
+(val CLIENT-OTHER-STATUS "other")
+(val CLIENT-KINDS #(RequestKind.WRITE RequestKind.READ))
+(val CLIENT-OUTCOMES (+ (tuple (gfor status ANSWER-STATUSES (str status))) #(CLIENT-UNREACHABLE CLIENT-OTHER-STATUS)))
+(val CLIENT-ANSWER-METRICS (tuple (gfor kind CLIENT-KINDS outcome CLIENT-OUTCOMES (.format CLIENT-ANSWER-METRIC kind outcome))))
+
 ;; 操作ごとに答えてよい kind(契約の records.routes の 200 の答えと同じ)。
 (setv ANSWER-KINDS {OP-READ-ROW #("row" "missing")
                     OP-LIST-ROWS #("page" "reset" "notIndexed")
@@ -132,6 +145,20 @@
   "path の要求に status で答えた数の counter の名を作るため(ANSWER-METRIC の綴り — 種は request-kind)。"
   (<- kind RequestKind (request-kind path))
   (.format ANSWER-METRIC kind status))
+
+
+(defk client-answer-metric [operation outcome]
+  {:pre [(: operation str) (: outcome str)] :post [(: % str)]}
+  "client が送った操作 operation の結果 outcome(CLIENT-OUTCOMES の 1 つ)を数える counter の名を作るため(CLIENT-ANSWER-METRIC の綴り)。"
+  (when (not-in outcome CLIENT-OUTCOMES)
+    (raise (ValueError (.format "client の結果は {} のどれか: {!r}" CLIENT-OUTCOMES outcome))))
+  (.format CLIENT-ANSWER-METRIC (if (in operation WRITE-OPERATIONS) RequestKind.WRITE RequestKind.READ) outcome))
+
+
+(defk client-status-outcome [status]
+  {:pre [(: status int)] :post [(: % str)]}
+  "service の答えの status を client の結果の語にするため(閉じた系列の外の status は other に畳む — 間の proxy の 502 / 504 など)。"
+  (if (in status ANSWER-STATUSES) (str status) CLIENT-OTHER-STATUS))
 
 
 ;; --- 境界の読みの部品 ---------------------------------------------------------------------------------------
