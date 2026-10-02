@@ -1016,21 +1016,22 @@
   answer)
 
 
-(defk ended-task-keys [delta]
-  {:pre [(: delta dict)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "coordinator の 1 回の Persist の差分から、終わりの phase(cluster_model.ENDED-PHASES)を書いた切り離した task の key を読むため
-   (その key の呼び鈴を鳴らす)。"
-  (frozenset (gfor #(k row) (.items delta)
-                   :if (and (.startswith k "task/") (isinstance row dict) (.get row "detached") (.get row "key")
+(defk ended-task-keys [writes]
+  {:pre [(: writes tuple)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator の 1 回の Persist の書き(TableWrite の組)から、終わりの phase(cluster_model.ENDED-PHASES)を書いた切り離した task の
+   key を読むため(その key の呼び鈴を鳴らす)。"
+  (frozenset (gfor w writes
+                   :setv row w.value
+                   :if (and (.startswith w.key "task/") (isinstance row dict) (.get row "detached") (.get row "key")
                             (in (.get row "phase") ENDED-PHASES))
                    (get row "key"))))
 
 
-(defk ring-ended-tasks [queue delta]
-  {:pre [(: queue RequestQueue) (: delta dict)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
-  "Persist が書き終えた差分で終わった切り離した task の呼び鈴を外して鳴らすため(待っている送り手が 1 回だけ読み直す)。
+(defk ring-ended-tasks [queue writes]
+  {:pre [(: queue RequestQueue) (: writes tuple)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
+  "Persist が書き終えた書きの組で終わった切り離した task の呼び鈴を外して鳴らすため(待っている送り手が 1 回だけ読み直す)。
    答え = 鳴らした呼び鈴の数。"
-  (<- keys frozenset (ended-task-keys delta))
+  (<- keys frozenset (ended-task-keys writes))
   (val rung (lfor key (sorted keys) bell (.pop queue.bells key #()) bell))
   (for [bell rung]
     (<- (CompletePromise bell None)))
@@ -1735,14 +1736,14 @@
     (<- (ReleaseRequest request))
     (<- effect)
     (resume None))
-  (Persist [delta]
+  (Persist [writes]
     (<- crash bool (PauseDue PAUSE-CRASH))
     (when crash
       (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))
     (<- effect)
-    ;; 書き終えた差分で終わった切り離した task の待ち手を起こす(送り手は読み直さずに待っている — proboscis/doeff#631)。
+    ;; 書き終えた書きで終わった切り離した task の待ち手を起こす(送り手は読み直さずに待っている — proboscis/doeff#631)。
     (<- parts SimParts (PartsOf))
-    (<- (ring-ended-tasks parts.queue delta))
+    (<- (ring-ended-tasks parts.queue writes))
     (resume None))
   (CoordinatorStopRequested []
     (<- due bool (PauseDue PAUSE-STOP))

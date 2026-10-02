@@ -18,7 +18,6 @@
     "src/doeff_cluster/coordinator/entry/main.hy": 1,
     "src/doeff_cluster/coordinator/intent/cluster_model.hy": 41,
     "src/doeff_cluster/coordinator/intent/kube_model.hy": 1,
-    "src/doeff_cluster/coordinator/protocol/store.hy": 1,
     "src/doeff_cluster/foundation/foundation_check.hy": 1,
     "src/doeff_cluster/foundation/record_codec.hy": 2,
     "src/doeff_cluster/record_store/core/program.hy": 2,
