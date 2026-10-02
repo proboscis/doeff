@@ -216,14 +216,16 @@ Program)を法に渡す。法は答えを順に並べた list を返すので、
 ## 検
 
 ```sh
-uv run pytest packages/doeff-records/tests -q
-# PostgreSQL の法も走らせる時(使い捨ての置き場を立てて):
-docker run -d --rm --name records-pg -e POSTGRES_PASSWORD=pw -p 55433:5432 postgres:17-alpine
+uv run --with psycopg pytest packages/doeff-records/tests -q
+# 自分の PostgreSQL を指す時:
 DOEFF_RECORDS_TEST_PG_DSN=postgresql://postgres:pw@127.0.0.1:55433/postgres \
   uv run --with psycopg pytest packages/doeff-records/tests -q
 ```
 
-env `DOEFF_RECORDS_TEST_PG_DSN` が無い時、PostgreSQL の検は skip と表示する(緑とは数えない)。
+env `DOEFF_RECORDS_TEST_PG_DSN` が無い時は、tests の conftest が pytest の始めに使い捨ての PostgreSQL 16 を一時の dir(TMPDIR の下)に立てて
+env を置き、終わりに止めて消す(部品 = `packages/doeff-core-effects/tests/postgres_support/disposable_postgres.py`・binary は pgserver の
+wheel に同梱の物を uv の分けた環境で取る)。立てられない機体(uv が無い・download できない・initdb が失敗する)では、PostgreSQL の検は
+「使い捨ての PostgreSQL を用意できない: <理由>」と skip に表示する(緑とは数えない)。
 
 法の検は 4 つの組で回す: `memory`・`pg`・`http-memory`・`http-pg`(後の 2 つは 127.0.0.1 に口を開き、client の handler で送る)。
 `test_parity_memory_pg.hy` は全部の法の答えの列が memory の組と等しいこと(番号・版・epoch・時刻まで)を確かめる。

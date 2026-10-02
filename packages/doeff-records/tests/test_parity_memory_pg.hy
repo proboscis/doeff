@@ -4,7 +4,7 @@
 (require doeff-hy.macros [deftest])
 (import os)
 (import doeff_records.laws [LAWS])
-(import tests.interpreters [build-interpreter PG-DSN-VARIABLE])
+(import tests.interpreters [build-interpreter PG-DSN-VARIABLE pg-skip-reason])
 
 (setv PG-DSN (.get os.environ PG-DSN-VARIABLE))
 
@@ -32,5 +32,5 @@
 
 (deftest test-every-law-gives-the-same-answers-on-memory-and-postgres
   {:skip-if (not PG-DSN)
-   :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+   :skip-reason (pg-skip-reason)}
   (assert-same-transcripts ["pg" "pg-pooled" "http-pg"]))

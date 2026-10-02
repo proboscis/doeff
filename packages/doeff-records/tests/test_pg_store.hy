@@ -1,7 +1,7 @@
 ;; PostgreSQL の置き場だけの性質: 別の接続からの同時の ExpectAbsent は 1 つだけ通る・接続を開き直しても行と番号が続く・
 ;; 置き場に届かなければ Unreachable の答え・PutRows の書きの途中で接続が落ちても 1 行も残らない。
 ;; SQL の effect の答え手は doeff の postgres-sql-handler(反例と故障は driver の手前の代役 tests/sql_probes.hy)。
-;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ skip。
+;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
 ;; 反例: 置き場の書きの錠を取らない答え手では、同時の ExpectAbsent が 2 つとも通る(「1 つだけ通る」の判定が赤になる)。
 (require doeff-hy.macros [deftest val var])
 (import os)
@@ -14,10 +14,12 @@
 (import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables DEFAULT-POLL-SECONDS])
-(import tests.interpreters [PG-DSN-VARIABLE DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
+(import tests.interpreters [PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 
 (val PG-DSN (.get os.environ PG-DSN-VARIABLE))
+;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
+(val PG-SKIP-REASON (pg-skip-reason))
 
 
 (defn admitted-exactly-one? [#^ list answers]
@@ -45,7 +47,7 @@
 
 
 (deftest test-concurrent-absent-writes-from-two-connections-admit-exactly-one
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 行が無い時の期待は、無い行に鍵が掛からない(READ COMMITTED に述語の鍵は無い)ので、置き場の錠が無いと 2 つとも通る。
   (val connections (postgres-connections 2))
   (val store (prepared-store connections (fresh-prefix)))
@@ -60,7 +62,7 @@
 
 
 (deftest test-without-the-store-lock-two-absent-writes-both-pass
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 反例: 上の検の判定(admitted-exactly-one?)が、錠を取らない答え手では赤になる — 判定が何も確かめずに緑になる形を外す。
   (val connections (postgres-connections 2))
   (val store (prepared-store connections (fresh-prefix)))
@@ -76,7 +78,7 @@
 
 
 (deftest test-rows-and-numbers-survive-reconnect
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   (val prefix (fresh-prefix))
   (val first (postgres-connections 1))
   (val store (prepared-store first prefix))
@@ -96,7 +98,7 @@
 
 
 (deftest test-an-unreachable-store-answers-unreachable
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 接続できない置き場(開いていない port)— 答え手の SqlUnreachable が公開 effect の答え Unreachable になる(読みも書きも)。
   (val closed (PostgresConnections #((PostgresDatabase :name DATABASE :dsn "postgresql://nobody@127.0.0.1:1/none?connect_timeout=2"))
                                    :size 1))
@@ -108,7 +110,7 @@
 
 
 (deftest test-put-rows-that-fails-mid-write-leaves-no-row-and-no-change
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 束の 2 行目の書きで接続が落ちる: 答えは Unreachable で、1 行目の書きも変更の列の 1 つも残らない(transaction ごと戻る)。
   (val connections (postgres-connections 1))
   (val store (prepared-store connections (fresh-prefix)))
