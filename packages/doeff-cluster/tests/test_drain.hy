@@ -18,6 +18,7 @@
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff [run with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_cluster.worker.protocol.coordinator_link [ready-file-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import doeff [run])
@@ -524,9 +525,12 @@
   ;; 同じ値を読む — 書く口と読む口の綴りが割れると probe は永久に NotReady になる。
   (val path (/ tmp-path "doeff-worker-boot"))
   (assert (is (! (with-handlers [os-file-handler] (read-boot (str path)))) None) "起動の前(file が無い)は世代を知らない")
-  ;; 書く口は worker の入口 main の write-boot-file(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した)。
-  (import doeff_cluster.worker.entry.main [write-boot-file])
-  (write-boot-file (str path) "b-1234")
+  ;; 書く口は worker の入口 main の boot-file-written(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した・
+  ;; #3014 で file の effect にした — 答え手は main と同じ os-file-handler)。path が無ければ書かない。
+  (import doeff_cluster.worker.entry.main [boot-file-written])
+  (! (with-handlers [os-file-handler] (boot-file-written None "b-0000")))
+  (assert (not (.exists path)) "path が無ければ書かない")
+  (! (with-handlers [os-file-handler] (boot-file-written (str path) "b-1234")))
   (assert (= (! (with-handlers [os-file-handler] (read-boot (str path)))) "b-1234")))
 
 
@@ -550,8 +554,9 @@
 
 (defk write-ready-file [draining]
   {:pre [(: draining bool)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
-  "書く口(coordinator への口の ready-file-written)を本物の file の答え手(os-file-handler)の下で 1 回走らせるため。"
-  (<- (with-handlers [os-file-handler] (ready-file-written draining)))
+  "書く口(coordinator への口の ready-file-written)を本物の file の答え手(os-file-handler)と環境変数の答え手(subprocess-handler —
+   書く口は ready の file の名を ReadEnvironment で読む・#3014)の下で 1 回走らせるため。"
+  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written draining)))
   None)
 
 

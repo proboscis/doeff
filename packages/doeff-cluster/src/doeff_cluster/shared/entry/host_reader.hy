@@ -11,23 +11,22 @@
 ;;; あちらからここを名で指せない: foundation の層は入口を読めず、ここは宿の契約の鍵を読むためにあちらを import する(指すと輪になる)。
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
-(import os)
 (import doeff_core_effects.effects [Ask])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT this-program-path])
+(import doeff_cluster.foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.entry.run_context_env [context-from-env])
 
 
 (defhandler host-reader
   {:needs #{} :tags {:context "doeff-cluster" :role "main"}}
-  ;; 本番の宿の答え(worker が子へ渡した環境変数を読む)。土台の handler なので os.environ を直に読む(ADR-DOE-CLUSTER-001 R5b —
-  ;; 記録係の下に置く)。環境変数は process の間で変わらないので session で 1 回だけ読む。
+  ;; 本番の宿の答え(worker が子へ渡した環境変数を読む)。環境変数の読みは foundation(run_context_env の context-from-env・
+  ;; host_contract の this-program-path・process_versions の this-process-versions)に置き、ここは鍵ごとに組むだけ(DOEFF106 —
+  ;; 入口の層で os.environ を直に読まない)。文脈は process の間で変わらないので session で 1 回だけ読む。
   (session val context (context-from-env))
-  (session val program-path (os.environ.get HOST-CONTRACT.program-env ""))
-  ;; 版の識別は env のキー(DOEFF_RUNTIME_ENV_KEY)を毎回読む(process-versions の註 — 版そのものは 1 度だけ読んで持つ)。
+  ;; Program の path と版の識別(env のキー DOEFF_RUNTIME_ENV_KEY を毎回読む — process-versions の註)は問われるたびに読む。
   (Ask [key]
     :when (in key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key HOST-CONTRACT.versions-key))
     (resume (match key
               HOST-CONTRACT.run-context-key context
-              HOST-CONTRACT.program-key program-path
-              _ (! (process-versions os.environ))))))
+              HOST-CONTRACT.program-key (! (this-program-path))
+              _ (! (this-process-versions))))))

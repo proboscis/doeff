@@ -44,11 +44,21 @@ doeff-time = { workspace = true }
 # 1 つなので、DOEFF110 は tests と src の defn が両方 0 になった変更で外す。minor(123・124・125)は今は扱わない。
 # DOEFF111 は src と tests の理由の無い deff が 0 になった変更(#2941 — http-request を defk に)で外した。
 # DOEFF119 は情報の規則として当たりを直す作業を止めている(利用者 2026-10-01 の決め・#2912)ので disable に置いたまま。
+# DOEFF114 の残り 3 件(旧い入口 — 配備してある worker が名で読むために 1 版残している job_entry など・#2112)は、配備を止めている間は
+# 残すので disable のまま(cisco-c8 2026-10-02 の決め — 配備を再開して旧い入口を消した変更で外す)。
 [tool.doeff-linter]
 root = "src"
 architecture = "architecture.hy"
 include = ["tests"]
 disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
+
+# 生の副作用(環境変数・時刻・乱数・file・process・http・signal)に直に触ってよい層は foundation だけ(DOEFF106 — 書かないと
+# DOEFF106 は何も出さずに走らない)。利用者の決め(2026-10-02 22:2x "reading env var from outside foundation handler is clear
+# violation")で効かせた — それ以外の層は effect を出し、foundation の答え手(os-file-handler・subprocess-handler・時計の handler など)
+# が答える(#3014)。当たりは 0 にしてから効かせた(登録簿に載せて通さない)。残る warning 1 件 = coordinator/protocol/store.hy の
+# (.exists store)(置き場の Protocol の method・書き方では Path.exists と見分けられない弱い証拠 — cisco-c8 の決め・#3014)。
+[tool.doeff-linter.raw_side_effects]
+allowed_layers = ["foundation"]
 
 [tool.doeff-linter.definitions]
 paths = ["doeff_cluster", "../tests"]
