@@ -36,10 +36,24 @@ class Finding:
     current: int
 
 
-def warning_counts(report: list[dict[str, object]]) -> Counts:
-    """linter の JSON(規則ごとの組の列)から、warning だけを規則 × file で数える。"""
+def package_path(package_dir: Path, reported: str) -> str:
+    """linter が報せた path(絶対のことも package の dir からのこともある)を、package の dir からの path に揃えるため。
+
+    鍵が作業木の置き場に依らないようにする(ddc164310 は絶対 path を鍵にしたので、別の作業木では lower が基点を空にし、
+    path を渡す check は 1 つも比べずに通った — agora-redesign #2683 の cc1-w38 の実測)。package の外の path は名指して止める。"""
+    path: Path = Path(reported)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(package_dir.resolve()).as_posix()
+    except ValueError:
+        raise SystemExit(f"linter が package の外の path を報せた: {reported}(基点の鍵にできない)") from None
+
+
+def warning_counts(report: list[dict[str, object]], package_dir: Path) -> Counts:
+    """linter の JSON(規則ごとの組の列)から、warning だけを規則 × file(package の dir からの path)で数える。"""
     paths_by_rule: dict[str, list[str]] = {
-        str(entry["rule"]): [str(v["file"]) for v in violations]
+        str(entry["rule"]): [package_path(package_dir, str(v["file"])) for v in violations]
         for entry in report
         if entry.get("severity") == "warning" and isinstance(violations := entry.get("violations"), list)
     }
@@ -125,13 +139,13 @@ def main(argv: list[str]) -> int:
         return 2
     baseline: Counts = json.loads(baseline_file.read_text(encoding="utf-8"))
     if argv[0] == "lower":
-        current: Counts = warning_counts(_run_linter(package_dir, []))
+        current: Counts = warning_counts(_run_linter(package_dir, []), package_dir)
         baseline_file.write_text(json.dumps(lowered(baseline, current), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                                  encoding="utf-8")
         print(f"基点を下げた: {baseline_file}")
         return 0
     paths: list[str] = _package_paths(argv[1:]) if len(argv) > 1 else []
-    current = warning_counts(_run_linter(package_dir, paths))
+    current = warning_counts(_run_linter(package_dir, paths), package_dir)
     measured: frozenset[str] | None = frozenset(paths) if paths else None
     grown, stale = compare(baseline, current, measured)
     if grown:

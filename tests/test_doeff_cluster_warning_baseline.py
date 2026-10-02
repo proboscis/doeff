@@ -65,7 +65,7 @@ def test_warning_counts_reads_only_warnings() -> None:
         {"rule": "DOEFF014", "severity": "info", "violations": [{"file": "src/a.hy"}]},
         {"rule": "DOEFF104", "severity": "error", "violations": [{"file": "src/b.hy"}]},
     ]
-    assert BASELINE.warning_counts(report) == {"DOEFF172": {"src/a.hy": 2}}
+    assert BASELINE.warning_counts(report, Path("/nowhere/packages/doeff-cluster")) == {"DOEFF172": {"src/a.hy": 2}}
 
 
 def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
@@ -94,3 +94,44 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
     passed = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check"], cwd=repo, env=environment,
                             capture_output=True, text=True, check=False)
     assert passed.returncode == 0, passed.stderr
+
+
+def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, dict[str, int]]) -> tuple[Path, dict[str, str]]:
+    """置き場を任意の dir にした検体の木(偽の linter つき)を作るため — 基点の鍵が置き場に依らないことを、別々の場所の木で試す。"""
+    package: Path = root / "packages" / "doeff-cluster"
+    package.mkdir(parents=True)
+    (package / "lint-warning-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
+    tools: Path = root / "bin"
+    tools.mkdir()
+    linter: Path = tools / "doeff-linter"
+    linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
+    linter.chmod(0o755)
+    return root, {"PATH": f"{tools}:/usr/bin:/bin"}
+
+
+def _absolute_report(root: Path, files: list[str]) -> list[dict[str, object]]:
+    """本物の linter と同じく、その木の絶対 path で warning を報せる報告を作るため。"""
+    package: Path = root / "packages" / "doeff-cluster"
+    return [{"rule": "DOEFF172", "severity": "warning", "violations": [{"file": str(package / f)} for f in files]}]
+
+
+def test_absolute_paths_from_another_tree_are_keyed_from_the_package(tmp_path: Path) -> None:
+    # 反例(ddc164310・cc1-w38 の実測): 基点は package の dir からの鍵。別の場所の木で linter が絶対 path を報せても、
+    # 基点どおりなら check は緑・path を渡す check も比べる(1 つ増やせば赤)・lower は基点を空にしない。
+    for place in ("tree-a", "elsewhere/tree-b"):
+        root: Path = tmp_path / place
+        repo, environment = _fake_repo(root, _absolute_report(root, ["src/a.hy", "src/a.hy", "src/b.hy"]), BASE)
+        ok = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check"], env=environment,
+                            capture_output=True, text=True, check=False)
+        assert ok.returncode == 0, ok.stderr
+        lower = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "lower"], env=environment,
+                               capture_output=True, text=True, check=False)
+        assert lower.returncode == 0, lower.stderr
+        kept = json.loads((repo / "packages" / "doeff-cluster" / "lint-warning-baseline.json").read_text(encoding="utf-8"))
+        assert kept == BASE, kept
+    grown_root: Path = tmp_path / "tree-c"
+    repo, environment = _fake_repo(grown_root, _absolute_report(grown_root, ["src/a.hy"] * 3 + ["src/b.hy"]), BASE)
+    staged = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check", "packages/doeff-cluster/src/a.hy"],
+                            env=environment, capture_output=True, text=True, check=False)
+    assert staged.returncode == 1, staged.stderr
+    assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in staged.stderr
