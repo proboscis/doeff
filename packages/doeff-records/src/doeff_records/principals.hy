@@ -1,8 +1,10 @@
-;;; 記録の service の呼び手の身元 — `Authorization: Bearer <token>` を身元の名簿(principals.json)で書き手の名へ引く(純粋)。
+;;; 記録の service の呼び手の書き手の名 — `Authorization: Bearer <token>` を名簿(principals.json)で書き手の名へ引く(純粋)。
 ;;;
 ;;; 名簿の形は {version: 1, principals: [{name, tokenSha256}]}(token そのものは持たず sha256 だけ — 呼び手の系の既存の名簿をそのまま読める)。
-;;; 引いた名がそのまま記録の handler の書き手の名になる(書き手の身元は effect の引数にせず、HTTP の口が要求ごとに handler を組む時に渡す)。
-;;; 名簿に在っても表の宣言の書き手でなければ、書きは記録の判断(admission)が Refused にする — 名簿は「誰か」、宣言は「何を書けるか」。
+;;; 引いた名がそのまま記録の handler の書き手の名になる(書き手の名は effect の引数にせず、HTTP の口が要求ごとに handler を組む時に渡す)。
+;;; 名簿は呼び手を断らない(#2988・利用者 2026-10-02「頼んでいない token の確かめを外す」): 見出しが無い・形が違う・
+;;; 名簿に無い token の呼び手は、名の無い書き手 ANONYMOUS として通す。書き手の名は呼び手が X-Records-Writer の見出しで名乗る(writer-of)。
+;;; 名簿は、呼び手が token をやめて名乗りに移るまでの間、名乗らない呼び手の書き手の名を引くためだけに読む。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "judgment"})
 (import dataclasses [dataclass field])
@@ -16,6 +18,7 @@
 (setv ROSTER-ENTRY-KEYS (frozenset ["name" "tokenSha256"]))
 (setv AUTH-SCHEME "Bearer")
 (setv HEX-DIGITS (frozenset "0123456789abcdef"))
+(setv ANONYMOUS "anonymous")
 
 
 (defclass [(dataclass :frozen True)] Roster []
@@ -24,13 +27,8 @@
 
 
 (defclass [(dataclass :frozen True)] Principal []
-  "名簿で引けた呼び手(name = 書き手の名)。"
+  "呼び手(name = 書き手の名・名簿で引けなければ ANONYMOUS)。"
   (#^ str name))
-
-
-(defclass [(dataclass :frozen True)] Unauthorized []
-  "身元が引けない(見出しが無い・形が違う・名簿に無い token)。reason = 人の読む理由(token は載せない)。"
-  (#^ str reason))
 
 
 (defk token-digest [token]
@@ -71,14 +69,25 @@
 
 
 (defk identify [roster header]
-  {:pre [(: roster Roster) (: header (| str None))] :post [(: % (| Principal Unauthorized))]}
-  "Authorization の見出し → 書き手の名。digest は定時間で比べる(名簿の全員と比べ、途中で抜けない)。"
-  (when (is header None) (return (Unauthorized "Authorization の見出しが無い")))
+  {:pre [(: roster Roster) (: header (| str None))] :post [(: % Principal)]}
+  "Authorization の見出し → 書き手の名。引けなければ(見出しが無い・形が違う・名簿に無い token)ANONYMOUS — 断らない。"
+  (when (is header None) (return (Principal ANONYMOUS)))
   (setv parts (.split (.strip header) None 1))
   (when (or (!= (len parts) 2) (!= (.lower (get parts 0)) (.lower AUTH-SCHEME)) (= (.strip (get parts 1)) ""))
-    (return (Unauthorized (.format "Authorization は '{} <token>'" AUTH-SCHEME))))
+    (return (Principal ANONYMOUS)))
   (<- presented (token-digest (.strip (get parts 1))))
   (setv found None)
   (for [#(name digest) (sorted (.items roster.digests))]
     (when (hmac.compare-digest presented digest) (setv found name)))
-  (if (is found None) (Unauthorized "名簿に無い token") (Principal found)))
+  (Principal (if (is found None) ANONYMOUS found)))
+
+
+(defk writer-of [roster authorization declared]
+  {:pre [(: roster Roster) (: authorization (| str None)) (: declared (| str None))] :post [(: % Principal)]}
+  "要求の書き手の名を決めるため: 呼び手が X-Records-Writer で名乗った名(空でなければ確かめずに使う)→ 無ければ移行の間だけ
+   Authorization の token を名簿で引く(identify)。token をやめた呼び手は名乗りだけで書き手の名を運ぶ(#2988)。"
+  (val named (if (is declared None) "" (.strip declared)))
+  (when named
+    (return (Principal named)))
+  (<- caller Principal (identify roster authorization))
+  caller)

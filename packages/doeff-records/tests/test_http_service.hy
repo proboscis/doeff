@@ -1,5 +1,5 @@
-;; 記録の service の HTTP の口: 身元(名簿に無い token は読み書きを問わず client が RecordsUnauthorized を上げ、何も変えない)・
-;; 断りの status と本文・宣言に無い表・置き場に届かない時の 503。置き場は memory(仮想の時計)— PostgreSQL の上の口は test_laws / test_parity の http-pg が確かめる。
+;; 記録の service の HTTP の口: 呼び手を断らない(名簿に無い token・token 無しの呼び手は anonymous の書き手として通り、書きは表の
+;; 書き手の宣言が Refused にする・X-Records-Writer で名乗れば token 無しで書ける — #2988)・断りの status と本文・宣言に無い表・置き場に届かない時の 503。置き場は memory(仮想の時計)— PostgreSQL の上の口は test_laws / test_parity の http-pg が確かめる。
 (require doeff-hy.macros [deftest defhandler defk deff val var])
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import json)
@@ -11,7 +11,7 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.values [ExpectAbsent ExpectAny Missing Unreachable UndeclaredTable Written WrittenRows WatchCursor])
+(import doeff_records.values [ExpectAbsent ExpectAny Missing Refused RowsRefused Unreachable UndeclaredTable Written WrittenRows WatchCursor])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -39,10 +39,11 @@
                                  program))))
 
 
-(defn raw [server #^ str method #^ str path * [body None] [token None]]
-  "口へ生の要求を送り、#(status 本文の JSON) を返す(client の handler を通さない断りの形の検のため)。"
+(defn raw [server #^ str method #^ str path * [body None] [token None] [writer None]]
+  "口へ生の要求を送り、#(status 本文の JSON) を返す(client の handler を通さない断りの形の検のため)。writer = X-Records-Writer の名乗り。"
   (setv headers {"Content-Type" "application/json"})
   (when token (setv (get headers "Authorization") (+ "Bearer " token)))
+  (when writer (setv (get headers "X-Records-Writer") writer))
   (setv request (Request (+ server.url path) :method method :headers headers
                          :data (if (is body None) None (if (isinstance body bytes) body (.encode (json.dumps body) "utf-8")))))
   (try
@@ -50,23 +51,9 @@
     (except [error HTTPError] #(error.code (json.loads (.read error))))))
 
 
-(defk identity-refusal-of [server clock token program]
-  {:pre [(: server RunningServer) (: clock SimClock) (: token str) (: program EffectBase)] :post [(: % str)]
-   :tags {:context "records" :role "foundation"}}
-  "token の身元の client で program を走らせ、client の handler が RecordsUnauthorized を上げたことを確かめて、その文を返す
-   (答えの値を返せば赤 — 身元の断りを Unreachable や Refused の値に写す client を通さない)。"
-  (var answer None)
-  (try
-    (:= answer (run-as server clock token program))
-    (except [error RecordsUnauthorized]
-      (return (str error))))
-  (raise (AssertionError (.format "身元の断りが答えの値になった: {!r}" answer))))
-
-
-(deftest test-a-token-outside-the-roster-raises-on-every-operation-and-changes-nothing
-  ;; 名簿に無い token は組み立ての誤り: 読みも書きも答えの値(Unreachable・Refused)にせず RecordsUnauthorized を上げる。読みを
-  ;; Unreachable に写していた時は、読み手が時間で晴れる届かなさと区別できず、token を誤った呼び手が読みを撃ち直し続けた。
-  ;; 文は口・status・操作を名指し、token そのものは写さない。1 行も書かない。
+(deftest test-a-token-outside-the-roster-is-served-as-anonymous-and-its-writes-are-refused-by-the-declarations
+  ;; 呼び手を断らない(#2988): 名簿に無い token の読みは答えの値になり(RecordsUnauthorized を上げない)、書きは anonymous の書き手として
+  ;; 表の書き手の宣言が Refused にする(1 行も書かない)。口が 401 で断る形に戻ると、ここで RecordsUnauthorized が上がって赤。
   (val store (MemoryStore LAW-SCHEMA))
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
@@ -74,23 +61,35 @@
   (val maker (get LAW-TOKENS "maker"))
   (val stranger "not-in-roster")
   (try
-    (for [#(operation program) [#("read-row" (ReadRow "parts" #("p1")))
-                                 #("list-rows" (ListRows "parts"))
-                                 #("watch-changes" (WatchChanges #("parts") (WatchCursor 0 0) :timeout 0.0))
-                                 #("read-events" (ReadEvents "journal"))
-                                 #("put-row" (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))
-                                 #("append-event" (AppendEvent "journal" "k1" {"n" 1}))
-                                 #("put-rows" (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAbsent)))))]]
-      (val said (! (identity-refusal-of server clock stranger program)))
-      (assert (in (+ "(401 " operation ")") said) said)
-      (assert (in server.url said) said)
-      (assert (in "名簿に無い token" said) said)
-      (assert (not-in stranger said) said))
+    (assert (= (run-as server clock stranger (ReadRow "parts" #("p1"))) (Missing)))
+    (assert (= (. (run-as server clock stranger (ListRows "parts")) rows) #()))
+    (assert (= (. (run-as server clock stranger (ReadEvents "journal")) items) #()))
+    (assert (isinstance (run-as server clock stranger (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Refused))
+    (assert (isinstance (run-as server clock stranger (AppendEvent "journal" "k1" {"n" 1})) Refused))
     ;; 何も変えていない(名簿に在る書き手が読むと行も出来事も無い)。
     (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
     (assert (= (. (run-as server clock maker (ReadEvents "journal")) items) #()))
-    ;; 名簿に在る書き手の同じ書きは通る(断ったのは身元で、書きの形ではない)。
+    ;; 名簿に在る書き手の同じ書きは通る(断ったのは表の書き手の宣言で、口ではない)。
     (assert (isinstance (run-as server clock maker (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Written))
+    (finally (.close server))))
+
+
+(deftest test-a-writer-named-by-the-header-writes-without-a-token
+  ;; token 無しの呼び手は X-Records-Writer で名乗った名で書く(名は確かめない — #2988)。名乗らず token も無ければ anonymous で、書きは
+  ;; 表の書き手の宣言が Refused(status は 200 の答え・401 ではない)。名乗りを読まない口に戻ると、名乗った書きが Refused で赤。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val opened (open-service (memory-lease store)))
+  (val server (get opened 0))
+  (val clock (get opened 1))
+  (val maker (get LAW-TOKENS "maker"))
+  (val put-p1 {"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "absent"}})
+  (try
+    (val unnamed (raw server "POST" "/v1/records/put-row" :body put-p1))
+    (assert (= #((get unnamed 0) (.get (get unnamed 1) "kind")) #(200 "refused")) (repr unnamed))
+    (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
+    (val named (raw server "POST" "/v1/records/put-row" :body put-p1 :writer "maker"))
+    (assert (= #((get named 0) (.get (get named 1) "kind")) #(200 "written")) (repr named))
+    (assert (= (get (. (run-as server clock maker (ReadRow "parts" #("p1"))) value) "label") "a"))
     (finally (.close server))))
 
 
@@ -100,8 +99,8 @@
   #((get reply 0) (.get (get reply 1) "error")))
 
 
-(deftest test-a-put-rows-by-a-token-outside-the-roster-raises-and-writes-no-row
-  ;; 名簿に無い呼び手の束: 口は 401 unauthorized で断り(口の契約は変えない)、client の handler は RecordsUnauthorized を上げる。1 行も書かない。
+(deftest test-a-put-rows-by-a-token-outside-the-roster-is-refused-by-the-declarations-and-writes-no-row
+  ;; 名簿に無い呼び手の束: 口は断らず(401 を出さない・#2988)、anonymous の書き手の束を表の書き手の宣言が RowsRefused にする。1 行も書かない。
   (val store (MemoryStore LAW-SCHEMA))
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
@@ -109,15 +108,14 @@
   (val writes #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAbsent)) (RowWrite "parts" #("p2") {"label" "b"} (ExpectAbsent))))
   (val maker (get LAW-TOKENS "maker"))
   (try
-    (val said (! (identity-refusal-of server clock "not-in-roster" (PutRows writes))))
-    (assert (in "(401 put-rows)" said) said)
+    (assert (isinstance (run-as server clock "not-in-roster" (PutRows writes)) RowsRefused))
     (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
     (assert (= (run-as server clock maker (ReadRow "parts" #("p2"))) (Missing)))
     (val refused (raw server "POST" "/v1/records/put-rows"
                       :body {"writes" [{"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "absent"}}]}
                       :token "nope"))
-    (assert (= (! (status-and-error refused)) #(401 "unauthorized")) (repr refused))
-    ;; 名簿に在る書き手の同じ束は通る(断ったのは身元で、束の形ではない)。
+    (assert (= (get refused 0) 200) (repr refused))
+    ;; 名簿に在る書き手の同じ束は通る(断ったのは表の書き手の宣言で、束の形ではない)。
     (assert (isinstance (run-as server clock maker (PutRows writes)) WrittenRows))
     (finally (.close server))))
 
@@ -205,10 +203,11 @@
         maker (get LAW-TOKENS "maker"))
   (try
     (assert (= (raw server "GET" "/healthz") #(200 {"status" "ok"})))
+    ;; 呼び手は断らない(#2988): token 無し・名簿に無い token の読みも 200 の答え。
     (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]}))
-    (assert (and (= status 401) (= (get body "error") "unauthorized")) (repr body))
+    (assert (and (= status 200) (= (get body "kind") "missing")) (repr body))
     (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token "nope"))
-    (assert (and (= status 401) (= (get body "error") "unauthorized")) (repr body))
+    (assert (and (= status 200) (= (get body "kind") "missing")) (repr body))
     (setv #(status body) (raw server "POST" "/v1/records/nothing" :body {} :token maker))
     (assert (and (= status 404) (= (get body "error") "not-found")) (repr body))
     (setv #(status body) (raw server "GET" "/v1/records/read-row" :token maker))

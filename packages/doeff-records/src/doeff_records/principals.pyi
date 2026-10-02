@@ -1,7 +1,7 @@
 """principals.hy の公開面の型(型検査のための宣言 — 実行時は principals.hy を読む)。
 
-principals.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、名簿 Roster と身元 Principal / Unauthorized が
-Unknown になる(service.pyi の RecordsService の欄・respond の身元の読みが Unknown に連なる)。ここで型を宣言する。
+principals.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、名簿 Roster と書き手 Principal が
+Unknown になる(service.pyi の RecordsService の欄・respond の書き手の名の読みが Unknown に連なる)。ここで型を宣言する。
 
 - `(defclass [(dataclass :frozen True)] …)` は位置でも渡せる frozen の dataclass。
 - defk は呼ぶと Program を返す(答えの型 = 実装の :post の型)。
@@ -18,6 +18,7 @@ ROSTER_DOCUMENT_KEYS: frozenset[str]
 ROSTER_ENTRY_KEYS: frozenset[str]
 AUTH_SCHEME: str
 HEX_DIGITS: frozenset[str]
+ANONYMOUS: str
 
 @dataclass(frozen=True)
 class Roster:
@@ -27,10 +28,7 @@ class Roster:
 class Principal:
     name: str
 
-@dataclass(frozen=True)
-class Unauthorized:
-    reason: str
-
 def token_digest(token: str) -> Program[str, object]: ...
 def decode_roster(text: str) -> Program[Roster, object]: ...
-def identify(roster: Roster, header: str | None) -> Program[Principal | Unauthorized, object]: ...
+def identify(roster: Roster, header: str | None) -> Program[Principal, object]: ...
+def writer_of(roster: Roster, authorization: str | None, declared: str | None) -> Program[Principal, object]: ...

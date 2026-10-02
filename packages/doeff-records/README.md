@@ -114,12 +114,13 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 | `GET /served` | — | `{commits: {<repo>: <sha>} \| null, instance: <世代> \| null, schemaDigests: {<表>: <sha256>}}` — 身元も表の用意も置き場も問わない(#2742) |
 
 - effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`・`RowsConflict`・`RowsRefused`)は 200 の本文の値。HTTP の断りは
-  `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・`401 unauthorized`(身元が引けない)・
+  `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・
   `404 not-found`(宣言に無い表・知らない route)・`503 store-unavailable`(置き場に届かない = `Unreachable`)・`500 internal`。
 - 綴り(JSON の欄の名・`kind`・位置と期待の形)の正本は `doeff_records.wire`。口と client は両方これを呼ぶ。
-- 身元: `Authorization: Bearer <token>` を身元の名簿 `principals.json`(`{version: 1, principals: [{name, tokenSha256}]}`)で
-  書き手の名へ引く(`doeff_records.principals`)。引いた名で記録の handler を組むので、書き手の名は effect の引数にならない。
-  名簿に在っても表の宣言の書き手でなければ、書きは記録の判断が `Refused` にする。
+- 書き手の名: 口は呼び手を断らない(#2988)。呼び手が `X-Records-Writer: <名>`(綴りの正本 = `doeff_records.wire.WRITER_HEADER`)で名乗れば、確かめずにその名を使う。
+  名乗らない呼び手は、移行の間だけ `Authorization: Bearer <token>` を名簿 `principals.json`(`{version: 1, principals: [{name, tokenSha256}]}`・env `RECORDS_PRINCIPALS_FILE` は任意)で
+  書き手の名へ引き、引けなければ `anonymous`(`doeff_records.principals`)。その名で記録の handler を組むので、書き手の名は effect の引数にならない。
+  表の宣言の書き手でなければ(`anonymous` を含む)、書きは記録の判断が `Refused` にする。
 - 待ち受けは入口の Program `doeff_records.http_server.serve_records` 1 つで、1 つの run・1 つの scheduler の中で動く(#880 U7)。
   doeff の汎用の HTTP の待ち受けの effect(`HttpListen`・`HttpNextRequest`・`HttpReadBody`・`HttpRespond`・`HttpShutdown`)を出し、
   要求ごとに `Spawn` した task が答える(例外でも必ず答える — 答えていなければ 500 internal)。本文の上限(16 MiB)は `HttpReadBody` が
@@ -144,7 +145,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
-答える。`401` / `403`(handler を組んだ token の身元を認めない)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
+答える。`401` / `403`(口は出さない — 前に立つ口が出した時)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
 時間を置いても晴れないので `Unreachable`(撃ち直してよい届かなさ)にも `Refused`(宣言がその書きを断った)にもしない。`404` は `UndeclaredTable` を上げる
 (欄 = 要求が名指した名のうち断りの理由に載った物 — 断りの本文の形は変えない。理由の綴りは `wire.hy` の `undeclared-reason` と
 `undeclared-refusal` の 1 か所)。

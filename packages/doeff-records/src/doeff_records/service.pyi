@@ -44,6 +44,7 @@ class HttpRequest:
     path: str
     authorization: str | None
     body: bytes
+    writer: str | None = None
 
 @dataclass(frozen=True)
 class HttpAnswer:

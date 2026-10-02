@@ -1,8 +1,9 @@
-;; 身元の名簿: principals.json を厳しく読み、Bearer の token を書き手の名へ引く(引けなければ Unauthorized)。
+;; 書き手の名を引く名簿: principals.json を厳しく読み、Bearer の token を書き手の名へ引く(引けなければ ANONYMOUS — 断らない・#2988)。
+;; 呼び手が X-Records-Writer で名乗った名は、名簿より先に確かめずに使う(writer-of)。
 (require doeff-hy.macros [deftest])
 (import json)
 (import doeff [run])
-(import doeff_records.principals [Principal Unauthorized decode-roster identify token-digest])
+(import doeff_records.principals [ANONYMOUS Principal decode-roster identify token-digest writer-of])
 
 
 (defn roster-text [entries]
@@ -16,7 +17,17 @@
   (assert (= (run (identify roster "Bearer tm")) (Principal "maker")))
   (assert (= (run (identify roster "bearer   tp ")) (Principal "painter")))
   (for [header [None "" "Bearer" "Basic tm" "Bearer other"]]
-    (assert (isinstance (run (identify roster header)) Unauthorized) (repr header))))
+    (assert (= (run (identify roster header)) (Principal ANONYMOUS)) (repr header))))
+
+
+(deftest test-a-declared-writer-name-comes-before-the-roster
+  ;; 名乗りが在れば token より先に使う(確かめない)。空の名乗りは無いのと同じで、名簿で引く(引けなければ ANONYMOUS)。
+  (setv roster (run (decode-roster (roster-text [{"name" "maker" "tokenSha256" (run (token-digest "tm"))}]))))
+  (assert (= (run (writer-of roster None "painter")) (Principal "painter")))
+  (assert (= (run (writer-of roster "Bearer tm" "painter")) (Principal "painter")))
+  (assert (= (run (writer-of roster "Bearer tm" "  ")) (Principal "maker")))
+  (assert (= (run (writer-of roster "Bearer tm" None)) (Principal "maker")))
+  (assert (= (run (writer-of roster None None)) (Principal ANONYMOUS))))
 
 
 (deftest test-a-malformed-roster-is-refused-at-startup

@@ -60,6 +60,7 @@
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric])
+(import doeff_records.wire [WRITER-HEADER])
 (import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
@@ -375,7 +376,8 @@
   "本文の読みの答えから要求の答えを決めるため: 入口が本文を断った答え(400)はそのまま、本文が読めれば answer-with で答える。"
   (match body
     (HttpAnswer) body
-    _ (! (answer-with serving (HttpRequest arrival.method path (! (header-value arrival.headers AUTH-HEADER)) body)))))
+    _ (! (answer-with serving (HttpRequest arrival.method path (! (header-value arrival.headers AUTH-HEADER)) body
+                                           (! (header-value arrival.headers WRITER-HEADER)))))))
 
 
 (defk final-answer [decided]

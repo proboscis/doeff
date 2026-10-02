@@ -34,7 +34,7 @@
 ;;; 組む環境変数として予約し、job の宣言の :environ に置けない(doeff_cluster/runtime_env_model.hy の RESERVED-ENV-PREFIXES)ので、この service を
 ;;; doeff-cluster の job として動かせるよう、以前の DOEFF_RECORDS_* から改めた(2026-10-01)。
 ;;;   RECORDS_PG_URL_FILE            PostgreSQL の接続 URL の file(必須・Secret の mount)
-;;;   RECORDS_PRINCIPALS_FILE        身元の名簿 principals.json(必須・{version: 1, principals: [{name, tokenSha256}]})
+;;;   RECORDS_PRINCIPALS_FILE        書き手の名を引く名簿 principals.json(任意・無ければ全員が名の無い書き手 — 呼び手は断らない #2988)
 ;;;   RECORDS_PREFIX                 表の名の接頭辞(既定 records_ — 同じ database の別の置き場の表と混ざらない)
 ;;;   RECORDS_HOST / _PORT           HTTP の口(既定 0.0.0.0 / 8875)
 ;;;   RECORDS_POOL_SIZE              要求に同時に貸す接続の上限(既定 8 — 手入れの係の 1 本を足した数を開く)
@@ -203,13 +203,23 @@
   answer)
 
 
+(defk optional-roster []
+  {:pre [] :post [(: % Roster)] :tags {:context "records" :role "entry"}}
+  "書き手の名を引く名簿を読むため(env が無ければ空の名簿 — 呼び手は断らないので起動に要らない・#2988)。"
+  (<- path str (env-text ENV-PRINCIPALS-FILE ""))
+  (when (= path "")
+    (return (Roster)))
+  (<- roster Roster (decode-roster (! (read-secret path))))
+  roster)
+
+
 (defk records-settings [dsn-of]
   {:pre [(: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % RecordsSettings)] :tags {:context "records" :role "entry"}}
   "env と Secret の file を読み、設定の値を作るため(頭の註の env の一覧 — 必須が欠ければ起動を止める)。dsn-of = 接続 URL の file の中身 →
    DSN の Program。読みは ReadEnvironment・ReadText(呼び手の外側の答え手が答える)。"
   (<- url-text str (read-secret (! (required-env ENV-PG-URL-FILE))))
   (<- dsn str (dsn-of url-text))
-  (<- roster Roster (decode-roster (! (read-secret (! (required-env ENV-PRINCIPALS-FILE))))))
+  (<- roster Roster (optional-roster))
   (<- prefix str (env-text ENV-PREFIX DEFAULT-PREFIX))
   (<- host str (origin-host))
   (<- size float (env-number ENV-POOL-SIZE (float DEFAULT-POOL-SIZE)))

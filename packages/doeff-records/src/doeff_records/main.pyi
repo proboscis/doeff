@@ -101,6 +101,9 @@ def records_connected[T](settings: RecordsSettings, body: Program[T, object] | E
 def records_foundation(settings: RecordsSettings, body: Program | EffectBase) -> _Program[int, object]:
     ...
 
+def optional_roster() -> _Program[Roster, object]:
+    ...
+
 def records_settings(dsn_of: Callable[[str], Program[str, object]]) -> _Program[RecordsSettings, object]:
     ...
 

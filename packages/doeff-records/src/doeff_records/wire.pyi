@@ -43,6 +43,7 @@ from doeff_records.effects import AppendEvent as AppendEvent
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
 PATH_PREFIX: str
+WRITER_HEADER: str
 OP_READ_ROW: str
 OP_LIST_ROWS: str
 OP_PUT_ROW: str
