@@ -10,7 +10,8 @@
 (import json)
 (import sys)
 (import time)
-(import pathlib [Path])
+(import doeff_core_effects.file_effects [ReadText])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff [run with-handlers])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
@@ -27,13 +28,12 @@
 (setv CALL-SECONDS 15.0 PROBE-CALL-SECONDS 5.0)
 
 
-(defn #^ (| str None) read-boot [#^ (| str None) path]
-  "この Pod の worker の世代(file の 1 行)。path が無い・file が無い・読めない = None。"
-  (when (not path) (return None))
-  (try
-    (setv text (.strip (.read-text (Path path) :encoding "utf-8")))
-    (if text text None)
-    (except [OSError] None)))
+(defk read-boot [path]
+  {:pre [(: path str)] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
+  "この Pod の worker の世代(file の 1 行)。file が無い・読めない = None。読みは file の効果(答え手 = 入口の os-file-handler)。"
+  (<- text (ReadText path))
+  (val line (if (isinstance text str) (.strip text) ""))
+  (if line line None))
 
 
 (defn #^ None main []
@@ -53,9 +53,11 @@
   (defn #^ (| dict bool) on-coordinator [#^ object program]
     ;; 並びは外側から: 待ち・本物の HTTP の答え手・時計・coordinator への口(drain の頼みの言い換えも持つ)。
     (run (scheduled (with-handlers [(await-handler) (http-production-handler) (sync-time-handler) (coordinator-calls cell options)] program))))
+  ;; この Pod の worker の世代は、本物の file の答え手を被せて 1 度だけ読む(--boot-file が無ければ None)。
+  (setv boot (if args.boot-file (run (with-handlers [os-file-handler] (read-boot args.boot-file))) None))
   (if (= args.mode "ready")
-      (sys.exit (if (on-coordinator (worker-ready args.name (read-boot args.boot-file))) 0 1))
-      (do (setv result (on-coordinator (await-drained args.name args.deadline args.interval (read-boot args.boot-file))))
+      (sys.exit (if (on-coordinator (worker-ready args.name boot)) 0 1))
+      (do (setv result (on-coordinator (await-drained args.name args.deadline args.interval boot)))
           (print (+ "drain: " (json.dumps result :ensure-ascii False)) :file sys.stderr :flush True)
           (sys.exit 0))))
 

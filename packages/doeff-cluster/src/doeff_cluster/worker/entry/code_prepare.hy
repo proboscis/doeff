@@ -25,7 +25,7 @@
 ;;; 焼く範囲(2026-09-26・#664 の実測): --entries <module,…> を渡すと、その module たちの import の閉包(Hy の import / require と
 ;;; Python の import を静的に辿る)だけを焼く。閉包の外の module は子が import した時に作られる(焼く物が減るだけで正しさは変わらない)。
 ;;; 並列数の既定は cgroup の CPU の上限(pod の limits)— node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import math)
@@ -35,6 +35,7 @@
 (import doeff [run with-handlers])
 (import doeff_time [sync-time-handler])
 (import doeff_core_effects.handlers [slog-handler])
+(import doeff_core_effects.file_effects [ReadText file-done])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.python_bytecode [prepare-compile-path])
 (import doeff_cluster.worker.core.code_prepare [prepare-tree])
@@ -51,20 +52,31 @@
       (max 1 available)))
 
 
-(defn #^ int usable-cpus []
-  "この process が使える CPU の数(affinity と cgroup の上限の小さい方)— 焼きの並列数の既定。"
-  (setv available (if (hasattr os "sched_getaffinity") (len (os.sched-getaffinity 0)) (or (os.cpu-count) 1))
-        path (Path "/sys/fs/cgroup/cpu.max"))
-  (cpu-limit-of (if (.is-file path) (.read-text path) None) available))
+(defk usable-cpus []
+  {:pre [] :post [(: % int)] :tags {:context "worker" :role "main"}}
+  "この process が使える CPU の数(affinity と cgroup の上限の小さい方)— 焼きの並列数の既定。cgroup の cpu.max は file の効果で読む
+   (答え手 = 入口の os-file-handler・無い / 読めない = 上限なし)。"
+  (val available (if (hasattr os "sched_getaffinity") (len (os.sched-getaffinity 0)) (or (os.cpu-count) 1)))
+  (<- cpu-max (ReadText "/sys/fs/cgroup/cpu.max"))
+  (cpu-limit-of (if (isinstance cpu-max str) cpu-max None) available))
+
+
+(defk changed-paths [path]
+  {:pre [(: path str)] :post [(: % frozenset)] :tags {:context "worker" :role "main"}}
+  "前の版の木から変わった path の一覧(--changed の file・空白で区切る)を読むため — 引き継がない file を決める材料。読めなければ OSError。"
+  (<- text (file-done (ReadText path)))
+  (frozenset (.split text)))
 
 
 (defn #^ None main []
+  ;; file の読み(cgroup の上限・変わった path の一覧)は本物の file の答え手(os-file-handler)の下で。
+  (setv default-jobs (run (with-handlers [os-file-handler] (usable-cpus))))
   (setv parser (argparse.ArgumentParser))
   (.add-argument parser "tree")
   (.add-argument parser "--revision" :required True)
   (.add-argument parser "--from" :dest "old")
   (.add-argument parser "--changed")
-  (.add-argument parser "--jobs" :type int :default (usable-cpus) :help "焼きの並列数(既定 = cgroup の CPU の上限)")
+  (.add-argument parser "--jobs" :type int :default default-jobs :help "焼きの並列数(既定 = cgroup の CPU の上限)")
   (.add-argument parser "--entries" :default "" :help "焼く範囲の入口の module(`,` で並べる・空 = 根の下を全部)")
   (.add-argument parser "--import-roots" :default "." :help "木の中の import の根(`,` で並べる・前が先)")
   (setv args (.parse-args parser))
@@ -77,7 +89,7 @@
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
   (prepare-compile-path tree roots)
-  (setv changed (frozenset (if args.changed (.split (.read-text (Path args.changed))) [])))
+  (setv changed (if args.changed (run (with-handlers [os-file-handler] (changed-paths args.changed))) (frozenset)))
   (setv old (if args.old (str (.resolve (Path args.old))) None))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
   ;; 木の効果は言い換え tree-files(worker/protocol/tree_files)が汎用の file の効果へ出し直し、本物の os-file-handler が答える(#2468)。
