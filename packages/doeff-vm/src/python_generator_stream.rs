@@ -477,6 +477,233 @@ impl PyIRStream {
     }
 }
 
+/// What a generator answered to one send or throw.
+enum Sent<'py> {
+    Yielded(Bound<'py, PyAny>),
+    Returned(Bound<'py, PyAny>),
+    Raised(PyErr),
+}
+
+/// Send `value` into `generator` with the C API `PyIter_Send`. A return comes back as
+/// `PYGEN_RETURN` with the value: no `send` method lookup, no argument tuple, and no
+/// StopIteration exception built and read back (agora-redesign #2801).
+fn send_into<'py>(
+    py: Python<'py>,
+    generator: &Bound<'py, PyAny>,
+    value: &Bound<'py, PyAny>,
+) -> Sent<'py> {
+    let mut result: *mut pyo3::ffi::PyObject = std::ptr::null_mut();
+    // SAFETY: `generator` and `value` are live objects held by the caller. On
+    // PYGEN_NEXT and PYGEN_RETURN `result` is a new reference we own; on PYGEN_ERROR
+    // it is NULL and the error indicator is set.
+    let status = unsafe { pyo3::ffi::PyIter_Send(generator.as_ptr(), value.as_ptr(), &mut result) };
+    match status {
+        // SAFETY: a new reference (see above).
+        pyo3::ffi::PySendResult::PYGEN_NEXT => {
+            Sent::Yielded(unsafe { Bound::from_owned_ptr(py, result) })
+        }
+        // SAFETY: a new reference (see above).
+        pyo3::ffi::PySendResult::PYGEN_RETURN => {
+            Sent::Returned(unsafe { Bound::from_owned_ptr(py, result) })
+        }
+        pyo3::ffi::PySendResult::PYGEN_ERROR => Sent::Raised(PyErr::fetch(py)),
+    }
+}
+
+/// `generator.throw(error)`: a StopIteration is the generator returning its value.
+fn throw_into<'py>(
+    py: Python<'py>,
+    generator: &Bound<'py, PyAny>,
+    error: &Bound<'py, PyAny>,
+) -> Sent<'py> {
+    match generator.call_method1("throw", (error,)) {
+        Ok(yielded) => Sent::Yielded(yielded),
+        Err(err) if err.is_instance_of::<PyStopIteration>(py) => Sent::Returned(
+            err.value(py)
+                .getattr("value")
+                .unwrap_or_else(|_| py.None().into_bound(py)),
+        ),
+        Err(err) => Sent::Raised(err),
+    }
+}
+
+fn exception_value(py: Python<'_>, err: &PyErr) -> Value {
+    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
+}
+
+/// `Apply` of a callable that raises `exception`: the VM raises it into the frame
+/// that yielded the call, where calling the definition would have raised it.
+fn raised_call(exception: Value) -> DoCtrl {
+    DoCtrl::Expand {
+        expr: Box::new(DoCtrl::Apply {
+            f: Box::new(DoCtrl::Pure {
+                value: Value::Callable(std::sync::Arc::new(CallRaised { exception })),
+            }),
+            args: Vec::new(),
+        }),
+    }
+}
+
+/// How many generators `run_calls_in_place` runs one inside another before it hands
+/// the chain to the VM — the depth of the nested `Expand(Pure(stream))` it builds.
+/// The chain lives in a `Vec`, not on the C stack, so a deeper recursion only takes
+/// one more hand-over per this many levels.
+const IN_PLACE_CHAIN_LIMIT: usize = 256;
+
+/// A generator `run_calls_in_place` started: a yielding definition called with the
+/// `Call`'s arguments.
+struct Started<'py> {
+    generator: Bound<'py, PyAny>,
+    tail_resume_lines: Vec<u32>,
+}
+
+impl Started<'_> {
+    fn into_stream(self) -> PythonGeneratorStream {
+        PythonGeneratorStream::new(
+            PyShared::new(self.generator.unbind()),
+            self.tail_resume_lines,
+        )
+    }
+}
+
+/// The generator of `obj` when it is a `Call` of a definition whose body yields
+/// (calling it only builds the generator — no body code runs), the error calling it
+/// raised (its arguments did not bind), or None for anything else.
+fn started_call<'py>(py: Python<'py>, obj: &Bound<'py, PyAny>) -> Option<PyResult<Started<'py>>> {
+    let call = obj.cast::<crate::do_expr::PyCall>().ok()?;
+    let call = call.get();
+    let definition = call.function.bind(py).get();
+    if !definition.yields {
+        return None;
+    }
+    let kwargs = call.kwargs.bind(py);
+    let kwargs = if kwargs.is_empty() {
+        None
+    } else {
+        Some(kwargs)
+    };
+    Some(
+        definition
+            .function
+            .bind(py)
+            .call(call.args.bind(py), kwargs)
+            .and_then(|result| {
+                // SAFETY: PyGen_Check only reads the object's type.
+                let generator = if unsafe { pyo3::ffi::PyGen_Check(result.as_ptr()) } != 0 {
+                    result
+                } else {
+                    returning_stream(py, &result)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?
+                };
+                Ok(Started {
+                    generator,
+                    tail_resume_lines: definition.tail_resume_lines.clone(),
+                })
+            }),
+    )
+}
+
+/// What `run_calls_in_place` did with a yielded object.
+enum InPlace<'py> {
+    /// Not a `Call` of a yielding definition: the stream classifies it.
+    NotACall,
+    /// The call (and every call it made in place) returned this value.
+    Returned(Bound<'py, PyAny>),
+    /// A started generator yielded something else, raised, or the chain grew past
+    /// `IN_PLACE_CHAIN_LIMIT`: the instruction that pushes the started generators
+    /// (caller first) as streams, the innermost carrying its first step.
+    HandedOver(DoCtrl),
+}
+
+/// Run a yielded `Call` of a yielding definition in place (agora-redesign #2816):
+/// start its generator and send into it with `PyIter_Send`. A `Call` it yields is
+/// started on top of it, and a value one returns is sent into the generator below.
+/// When the first call returns, its value is the answer — the VM took no step for
+/// any of it. When a started generator yields anything else (an effect, a Resume) or
+/// raises, the chain is handed to the VM as nested `Expand(Pure(stream))` whose
+/// innermost stream answers that step on its first resume — the frames (caller first)
+/// and the context the VM collects for an error are those it would have built by
+/// running every call itself.
+fn run_calls_in_place<'py>(py: Python<'py>, yielded: &Bound<'py, PyAny>) -> InPlace<'py> {
+    let first = match started_call(py, yielded) {
+        None => return InPlace::NotACall,
+        Some(Err(err)) => return InPlace::HandedOver(raised_call(exception_value(py, &err))),
+        Some(Ok(started)) => started,
+    };
+    let none = py.None().into_bound(py);
+    let mut sent = send_into(py, &first.generator, &none);
+    let mut chain = vec![first];
+    loop {
+        match sent {
+            Sent::Returned(value) => {
+                chain.pop();
+                match chain.last() {
+                    None => return InPlace::Returned(value),
+                    Some(caller) => sent = send_into(py, &caller.generator, &value),
+                }
+            }
+            Sent::Yielded(next) => {
+                let callee = if chain.len() < IN_PLACE_CHAIN_LIMIT {
+                    started_call(py, &next)
+                } else {
+                    None
+                };
+                let Some(top) = chain.pop() else {
+                    unreachable!("a generator in the chain answered")
+                };
+                match callee {
+                    Some(Ok(callee)) => {
+                        sent = send_into(py, &callee.generator, &none);
+                        chain.push(top);
+                        chain.push(callee);
+                    }
+                    Some(Err(err)) => {
+                        let mut stream = top.into_stream();
+                        stream.pending = Some(StreamStep::Instruction(raised_call(
+                            exception_value(py, &err),
+                        )));
+                        return InPlace::HandedOver(handed_over(chain, stream));
+                    }
+                    None => {
+                        let mut stream = top.into_stream();
+                        stream.pending = Some(stream.classify_yielded(py, &next));
+                        return InPlace::HandedOver(handed_over(chain, stream));
+                    }
+                }
+            }
+            Sent::Raised(err) => {
+                let Some(top) = chain.pop() else {
+                    unreachable!("a generator in the chain answered")
+                };
+                let mut stream = top.into_stream();
+                stream.last_location =
+                    PythonGeneratorStream::location_from_exception(py, &stream.generator, &err);
+                stream.exhausted = true;
+                stream.pending = Some(StreamStep::Error(exception_value(py, &err)));
+                return InPlace::HandedOver(handed_over(chain, stream));
+            }
+        }
+    }
+}
+
+/// The instruction that pushes `callers` (outermost first) and then `innermost` as
+/// Program frames: each stream's pending first step is the push of the next one.
+fn handed_over(callers: Vec<Started<'_>>, innermost: PythonGeneratorStream) -> DoCtrl {
+    let push = |stream: PythonGeneratorStream| DoCtrl::Expand {
+        expr: Box::new(DoCtrl::Pure {
+            value: Value::Stream(doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream))),
+        }),
+    };
+    callers
+        .into_iter()
+        .rev()
+        .fold(push(innermost), |inner, caller| {
+            let mut stream = caller.into_stream();
+            stream.pending = Some(StreamStep::Instruction(inner));
+            push(stream)
+        })
+}
+
 /// A Python generator wrapped as an IRStream.
 ///
 /// The generator yields Python objects that are classified into DoCtrl instructions.
@@ -488,6 +715,10 @@ pub struct PythonGeneratorStream {
     exhausted: bool,
     /// Last known source location, preserved after generator exhaustion.
     last_location: Option<doeff_vm_core::ir_stream::StreamSourceLocation>,
+    /// The first step of a generator that was started in place and handed to the
+    /// VM (`run_calls_in_place`): the VM's first resume answers it instead of
+    /// sending into the generator again.
+    pending: Option<StreamStep>,
 }
 
 impl PythonGeneratorStream {
@@ -497,6 +728,7 @@ impl PythonGeneratorStream {
             tail_resume_lines,
             exhausted: false,
             last_location: None,
+            pending: None,
         }
     }
 
@@ -536,68 +768,50 @@ impl PythonGeneratorStream {
         })
     }
 
-    /// Send `py_value` into the generator with the C API `PyIter_Send` and classify
-    /// the result. A return comes back as `PYGEN_RETURN` with the value: no `send`
-    /// method lookup, no argument tuple, and no StopIteration exception built and read
-    /// back — every resume of every program paid those (agora-redesign #2801).
+    /// Send `py_value` into the generator and carry on from its answer.
     fn send_to_generator(&mut self, py_value: &Bound<'_, PyAny>) -> StreamStep {
         Python::attach(|py| {
-            let gen = self.generator.bind(py);
-            let mut result: *mut pyo3::ffi::PyObject = std::ptr::null_mut();
-            // SAFETY: `gen` and `py_value` are live objects held by this frame. On
-            // PYGEN_NEXT and PYGEN_RETURN `result` is a new reference we own; on
-            // PYGEN_ERROR it is NULL and the error indicator is set.
-            let status =
-                unsafe { pyo3::ffi::PyIter_Send(gen.as_ptr(), py_value.as_ptr(), &mut result) };
-            match status {
-                pyo3::ffi::PySendResult::PYGEN_NEXT => {
-                    // SAFETY: a new reference (see above).
-                    let yielded = unsafe { Bound::from_owned_ptr(py, result) };
-                    self.classify_yielded(py, &yielded)
-                }
-                pyo3::ffi::PySendResult::PYGEN_RETURN => {
-                    self.exhausted = true;
-                    // SAFETY: a new reference (see above).
-                    let returned = unsafe { Bound::from_owned_ptr(py, result) };
-                    StreamStep::Done(python_to_value(py, &returned))
-                }
-                pyo3::ffi::PySendResult::PYGEN_ERROR => {
-                    let err = PyErr::fetch(py);
-                    self.last_location = Self::location_from_exception(py, &self.generator, &err);
-                    self.exhausted = true;
-                    StreamStep::Error(Value::Opaque(PyShared::new(
-                        err.value(py).clone().into_any().unbind(),
-                    )))
-                }
-            }
+            let sent = send_into(py, self.generator.bind(py), py_value);
+            self.carry_on(py, sent)
         })
     }
 
-    /// Call generator.throw(error) and classify the result.
+    /// Throw `py_error` into the generator and carry on from its answer.
     fn throw_to_generator(&mut self, py_error: &Bound<'_, PyAny>) -> StreamStep {
         Python::attach(|py| {
-            let gen = self.generator.bind(py);
-            match gen.call_method1("throw", (py_error,)) {
-                Ok(yielded) => self.classify_yielded(py, &yielded),
-                Err(err) if err.is_instance_of::<PyStopIteration>(py) => {
+            let sent = throw_into(py, self.generator.bind(py), py_error);
+            self.carry_on(py, sent)
+        })
+    }
+
+    /// Carry on after the generator answered `sent`: a return ends the stream and a
+    /// raise fails it. A yielded `Call` of a yielding definition runs in place
+    /// (`run_calls_in_place`): when it returns, its value goes straight back into this
+    /// generator and the VM takes no step for the call (agora-redesign #2816). Anything
+    /// else is classified as the stream's next instruction.
+    fn carry_on<'py>(&mut self, py: Python<'py>, mut sent: Sent<'py>) -> StreamStep {
+        loop {
+            match sent {
+                Sent::Returned(value) => {
                     self.exhausted = true;
-                    let return_value = err
-                        .value(py)
-                        .getattr("value")
-                        .ok()
-                        .map(|v| python_to_value(py, &v))
-                        .unwrap_or(Value::Unit);
-                    StreamStep::Done(return_value)
+                    return StreamStep::Done(python_to_value(py, &value));
                 }
-                Err(err) => {
+                Sent::Raised(err) => {
                     self.last_location = Self::location_from_exception(py, &self.generator, &err);
                     self.exhausted = true;
-                    StreamStep::Error(Value::Opaque(PyShared::new(
-                        err.value(py).clone().into_any().unbind(),
-                    )))
+                    return StreamStep::Error(exception_value(py, &err));
                 }
+                Sent::Yielded(yielded) => match run_calls_in_place(py, &yielded) {
+                    InPlace::NotACall => return self.classify_yielded(py, &yielded),
+                    InPlace::Returned(value) => {
+                        sent = send_into(py, self.generator.bind(py), &value);
+                    }
+                    InPlace::HandedOver(instruction) => {
+                        return StreamStep::Instruction(instruction)
+                    }
+                },
             }
-        })
+        }
     }
 
     /// Classify a yielded Python object into a DoCtrl instruction.
@@ -625,6 +839,11 @@ impl PythonGeneratorStream {
 
 impl IRStream for PythonGeneratorStream {
     fn resume(&mut self, value: Value) -> StreamStep {
+        // A stream handed over by `run_calls_in_place`: the VM's first resume (the Unit
+        // `push_stream_value` sends) answers the step the generator already took.
+        if let Some(step) = self.pending.take() {
+            return step;
+        }
         if self.exhausted {
             return StreamStep::Done(Value::Unit);
         }
@@ -936,30 +1155,22 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
             } else {
                 Some(kwargs)
             };
-            let f = match generator_function_stream(
+            return match generator_function_stream(
                 py,
                 &definition.function,
                 c.args.bind(py),
                 kwargs,
                 &definition.tail_resume_lines,
             ) {
-                Ok(stream) => {
-                    return Ok(DoCtrl::Expand {
-                        expr: Box::new(DoCtrl::Pure { value: stream }),
-                    })
-                }
+                Ok(stream) => Ok(DoCtrl::Expand {
+                    expr: Box::new(DoCtrl::Pure { value: stream }),
+                }),
                 // The arguments did not bind: raise it where the thunk raised it.
                 Err(doeff_vm_core::VMError::UncaughtException { exception }) => {
-                    Value::Callable(std::sync::Arc::new(CallRaised { exception }))
+                    Ok(raised_call(exception))
                 }
-                Err(other) => return Err(format!("Call: {other}")),
+                Err(other) => Err(format!("Call: {other}")),
             };
-            return Ok(DoCtrl::Expand {
-                expr: Box::new(DoCtrl::Apply {
-                    f: Box::new(DoCtrl::Pure { value: f }),
-                    args: Vec::new(),
-                }),
-            });
         }
         let thunk = CallThunk {
             function: c.function.clone_ref(py),
