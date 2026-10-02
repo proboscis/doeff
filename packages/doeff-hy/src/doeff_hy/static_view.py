@@ -41,7 +41,9 @@ from dataclasses import dataclass
 
 from doeff_hy.binding_forms import Finding
 
-_STATIC_VIEW: ContextVar[bool] = ContextVar("doeff_hy_static_view", default=False)
+# 型検査のための展開の印は bytecode の包みが持つ — 包みの compile の口が、この展開で作った実行できない code に macro の依存の
+# 記録を付けず、.pyc と共有の code の置き場から普通の import へ渡らないようにするため(doeff_hy_bytecode_guard/expansion.py)。
+from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION as _STATIC_VIEW
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,9 @@
   },
   "modules": [
     {
-      "allow": [],
+      "allow": [
+        "hy-bytecode-import"
+      ],
       "layer": "io",
       "name": "doeff-hy-static-check",
       "paths": [

@@ -14,6 +14,10 @@ import sys
 from collections.abc import Callable
 from types import CodeType, ModuleType
 
+# 型検査のための展開の印(contextvars だけを読む軽い module — 起動時に読んでよい。compile の途中で初めて読むと、その .pyc を
+# bytecode を書く設定の中で書いてしまう)。
+from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION
+
 TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
@@ -151,6 +155,11 @@ def _recording_source_to_code(previous: SourceToCode):
             # 見えないので記録を足さない。記録の無い bytecode は、Python が source と突き合わせる形なら次の読みで
             # compile し直される(get_code)。突き合わせない形(image の hash 方式)はそのまま信じる。bytecode を前もって
             # 作る道具は source_to_code_as_import で module の中で compile し、記録を付ける。
+            return code
+        if TYPE_CHECK_EXPANSION.get():
+            # 型検査のための展開(doeff_hy.static_view)の code は実行できない(:pre の isinstance と実行の時の import が無い)—
+            # 記録を付けない。記録の無い code は共有の置き場に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
+            # compile し直す(_record_is_current_here)。付けると普通の展開と同じ鍵で残り、普通の import が読んで落ちた(I-3)。
             return code
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
