@@ -462,6 +462,31 @@ def _write_semgrep_structured_fixtures(
     return paths
 
 
+def _semgrep_error_report(stdout: str) -> str:
+    """semgrep が失敗した時の stdout(--json の答え)から、理由を読める塊にするため。
+
+    errors の各項の種類・規則・file・文言を 1 行ずつ並べる(多い時は頭の 10 件)。JSON でない・errors が無い時は
+    stdout の頭をそのまま出す(何も捨てない)。
+    """
+    try:
+        payload = json.loads(stdout)
+    except ValueError:
+        return f"stdout (not JSON):\n{stdout[:2000]}"
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    if not isinstance(errors, list) or not errors:
+        return f"stdout:\n{stdout[:2000]}"
+    lines = [
+        " ".join(
+            f"{key}={str(error.get(key))[:600]}"
+            for key in ("type", "level", "rule_id", "path", "message")
+            if isinstance(error, dict) and error.get(key) is not None
+        )
+        or str(error)[:600]
+        for error in errors[:10]
+    ]
+    return f"semgrep errors ({len(errors)}):\n" + "\n".join(lines)
+
+
 def _run_semgrep(
     semgrep: str,
     config: Path,
@@ -496,7 +521,14 @@ def _run_semgrep(
         text=True,
     )
     if proc.returncode not in (0, 1):
-        raise AssertionError(f"semgrep failed with exit {proc.returncode}: {proc.stderr}")
+        # --quiet --json では、規則の読みの失敗・対象の parse の失敗・時間切れの理由は stderr に出ず、
+        # stdout の JSON の errors にだけ載る — stderr だけを名乗ると理由が空のまま落ちる
+        # (agora-redesign #2865: herdr-hud の日次で「semgrep failed with exit 2:」だけが残り、
+        # 規則の読みか semgrep の版かを名指せなかった)。
+        raise AssertionError(
+            f"semgrep failed with exit {proc.returncode}: {proc.stderr}\n"
+            f"{_semgrep_error_report(proc.stdout)}"
+        )
     # exit 1 は「findings あり」と「起動時 crash」の両方が返す — JSON の実在だけが
     # scan が本当に走った証拠。走らなかった scan を「発火なし」と黙読すると、
     # scanner の故障が『rule が発火しない』という偽の赤/緑に化ける(zeus 実測
