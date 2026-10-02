@@ -163,3 +163,44 @@ def test_runtime_guards_do_not_import_per_call() -> None:
     for guard in (_guard_performed, _guard_statement_value):
         opnames = {instruction.opname for instruction in dis.get_instructions(guard)}
         assert "IMPORT_NAME" not in opnames, guard.__name__
+
+
+@pytest.mark.parametrize("source", [
+    "(defk good [] {:pre [] :post [(: % int)]} 7) (good)",
+    "(defk good [] {:pre [] :post [(: % int)]} (<- x (do! 7)) x) (good)",
+    "(do! 7)",
+    "(do! {:post [(: % int)]} 7)",
+    "(defclass Box [] (defk good [self] {:pre [(: self Box)] :post [(: % int)]} 7)) (.good (Box))",
+])
+def test_value_returns_skip_the_error_guard(source: str) -> None:
+    """Successful returns must not pay for the error-reporting Python call (#2817)."""
+    program = _eval_no_doeff_do(source)
+    module = sys.modules["test_self_contained"]
+    calls: list[str] = []
+    original = module._guard_performed
+
+    def observe(frame: types.FrameType, event: str, arg: object) -> None:
+        if event == "call" and frame.f_code is original.__code__:
+            calls.append(frame.f_locals["label"])
+
+    previous = sys.getprofile()
+    sys.setprofile(observe)
+    try:
+        assert run(program) == 7
+    finally:
+        sys.setprofile(previous)
+    assert calls == []
+
+
+@pytest.mark.parametrize("source", [
+    "(defk bad [] {:pre [] :post [(: % int)]} (Num 7)) (bad)",
+    "(defk bad [] {:pre [] :post [(: % int)]} (<- x (do! 7)) (Num x)) (bad)",
+    "(do! (Num 7))",
+    "(do! {:post [(: % int)]} (Num 7))",
+    "(defclass Box [] (defk bad [self] {:pre [(: self Box)] :post [(: % int)]} (Num 7))) (.bad (Box))",
+])
+def test_error_guard_still_precedes_the_return_contract(source: str) -> None:
+    """A bare effect is rejected, including in generators and class bodies."""
+    program = _eval_no_doeff_do(source)
+    with pytest.raises(RuntimeError, match="last expression is an unperformed effect `Num`"):
+        run(program)
