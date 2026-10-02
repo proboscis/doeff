@@ -660,7 +660,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: now int) (: body (| (get dict #(str object)) None))] :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の口へ 1 回問うため(本物の判断 responded): 返り値 #(状態 status 本文)。"
-  (responded state (http-request method path {} body :actor "test") now T))
+  (responded state (! (http-request method path {} body :actor "test")) now T))
 
 (defk beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None]]
   {:pre [(: state ClusterState) (: name str) (: now int) (: boot str) (: statuses (| (get list (get dict #(str object))) None)) (: boot-at (| int None))

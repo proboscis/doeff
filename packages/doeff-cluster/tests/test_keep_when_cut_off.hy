@@ -153,7 +153,7 @@
 (defk heard [state body now]
   {:pre [(: state ClusterState) (: body dict) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "heartbeat 1 つを受け口と同じ解きと判断に通した #(次の状態 status 返事の JSON) を得るため。"
-  (responded state (http-request "POST" "/heartbeat" {} body) now T))
+  (responded state (! (http-request "POST" "/heartbeat" {} body)) now T))
 
 
 (deftest test-the-reply-marks-a-job-with-no-other-place-and-the-mark-is-released-only-by-the-holder
@@ -162,8 +162,8 @@
   ;; しれない)。古い worker(本文に keptWhenCutOff の欄が無い)には約束しない。
   (<- empty dict (beat-body "w1" [] []))
   (<- first tuple (heard (ClusterState) empty 0))
-  (val declared (responded (get first 0) (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
-                                                      :actor "test")
+  (val declared (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+                                                      :actor "test"))
                            0 T))
   (<- running dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] []))
   (<- marked tuple (heard (get declared 0) running 1000))
@@ -190,7 +190,7 @@
 (defk marks-in-state [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
   "GET /state の答えの keepMarks(途絶しても動かし続けてよい印の約束の読みの口 — #2883)を、受け口と同じ判断と綴りを通して読むため。"
-  (val answer (responded state (http-request "GET" "/state" {} None) now T))
+  (val answer (responded state (! (http-request "GET" "/state" {} None)) now T))
   (get answer 2 "keepMarks"))
 
 
@@ -200,8 +200,8 @@
   ;; 出ない)。版上げの後と障害の時に、どの job が約束で担い手に留まっているかを外から確かめるため。
   (<- empty dict (beat-body "w1" [] []))
   (<- first tuple (heard (ClusterState) (| empty {"boot" "w1-boot1"}) 0))
-  (val declared (responded (get first 0) (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
-                                                      :actor "test")
+  (val declared (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+                                                      :actor "test"))
                            0 T))
   (<- running dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] []))
   (<- marked tuple (heard (get declared 0) (| running {"boot" "w1-boot1"}) 1000))

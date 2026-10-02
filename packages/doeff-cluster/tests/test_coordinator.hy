@@ -30,7 +30,7 @@
   {:pre [(: method str) (: path str) (: body (| dict list str int float bool None)) (: query (| dict None)) (: actor (| str None))] :post [(: % Request)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "検の HTTP の要求の値 Request を作るため(送り手 actor つき)。"
-  (http-request method path (or query {}) body :actor actor))
+  (! (http-request method path (or query {}) body :actor actor)))
 
 (defk beat [state name now [statuses None] [versions V] [provides None]]
   {:pre [(: state ClusterState) (: name str) (: now int) (: statuses (| list None)) (: versions dict) (: provides (| list None))] :post [(: % tuple)]
@@ -443,7 +443,7 @@
 
 (deftest test-the-http-intake-splits-the-path-and-undoes-the-percent-code-per-part
   ;; percent の符号を戻すのは HTTP の境の 1 か所(#1636)。区切りの中の %2F は区切りを増やさずに / へ戻り、path は受けたまま残る。
-  (val request (http-request "PUT" "/board/team%2Fa/b%20c" {} {"value" 1} :actor "c-test"))
+  (val request (! (http-request "PUT" "/board/team%2Fa/b%20c" {} {"value" 1} :actor "c-test")))
   (assert (= request.parts #("board" "team/a" "b c")) request.parts)
   (assert (= request.path "/board/team%2Fa/b%20c"))
   (assert (= request.actor "c-test")))

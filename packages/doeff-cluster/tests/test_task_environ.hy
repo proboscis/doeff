@@ -63,7 +63,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の純粋な振り分け 1 件(送り手 c-test)→ #(次の状態 status 本文)。"
-  (responded state (http-request method path {} body :actor "c-test") now T))
+  (responded state (! (http-request method path {} body :actor "c-test")) now T))
 
 
 (defk beat [state now]

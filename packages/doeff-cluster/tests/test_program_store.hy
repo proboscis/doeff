@@ -29,7 +29,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の純粋な振り分け 1 件(送り手 c-me)→ #(次の状態 status 本文)。"
-  (responded state (http-request method path {} body :actor "c-me" :peer "10.0.0.9") now T))
+  (responded state (! (http-request method path {} body :actor "c-me" :peer "10.0.0.9")) now T))
 
 
 (defk stored [blob now]

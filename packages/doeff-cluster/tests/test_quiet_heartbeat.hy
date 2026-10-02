@@ -25,7 +25,7 @@
   {:pre [(: state ClusterState) (: body dict) (: now int) (: settled bool)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "heartbeat 1 つを、本文を型に解いてから判断へ渡した答え(settled = 状態が同じ now で調停済みと呼び手が保証するか)。"
-  (val request (http-request "POST" "/heartbeat" {} body))
+  (val request (! (http-request "POST" "/heartbeat" {} body)))
   (<- read (body-of request))
   (<- answer tuple (respond state request now T read :settled settled))
   answer)
@@ -35,12 +35,12 @@
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w が名乗り、Service s0 が w に置かれ、w が s0 を running と報告した状態(時刻 1000)を、検の出発点として組むため。"
   (<- named dict (beat-body "w" []))
-  (val first (responded (ClusterState) (http-request "POST" "/heartbeat" {} named) 0 T))
-  (val second (responded (get first 0) (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
-                                                     :actor "test")
+  (val first (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} named)) 0 T))
+  (val second (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+                                                     :actor "test"))
                          0 T))
   (<- reporting dict (beat-body "w" [{"name" "s0" "phase" "running" "revision" "r"}]))
-  (val third (responded (get second 0) (http-request "POST" "/heartbeat" {} reporting) 1000 T))
+  (val third (responded (get second 0) (! (http-request "POST" "/heartbeat" {} reporting)) 1000 T))
   (get third 0))
 
 
@@ -49,7 +49,7 @@
   (val now 3500)
   (val ready (! (tick (! (placed)) now T)))
   (val body (! (beat-body "w" [{"name" "s0" "phase" "running" "revision" "r"}])))
-  (val heard (register-heartbeat ready (run (body-of (http-request "POST" "/heartbeat" {} body))) now))
+  (val heard (register-heartbeat ready (run (body-of (! (http-request "POST" "/heartbeat" {} body)))) now))
   (assert (quiet-heartbeat ready heard "w" now T) "報告の変わらない heartbeat は静か")
   (val fast (! (answered ready body now True)))
   (val slow (! (answered ready body now False)))
@@ -63,7 +63,7 @@
   (val now 3500)
   (val ready (! (tick (! (placed)) now T)))
   (val changed-body (! (beat-body "w" [{"name" "s0" "phase" "exited" "revision" "r"}])))
-  (val changed (register-heartbeat ready (run (body-of (http-request "POST" "/heartbeat" {} changed-body))) now))
+  (val changed (register-heartbeat ready (run (body-of (! (http-request "POST" "/heartbeat" {} changed-body)))) now))
   (assert (not (quiet-heartbeat ready changed "w" now T)) "報告の行が変わった heartbeat は静かでない")
   (assert (= (get (! (answered ready changed-body now True)) 0) (get (! (answered ready changed-body now False)) 0))
           "静かでない heartbeat は settled でも調停を回す")
@@ -72,6 +72,6 @@
   (val silent (! (tick (! (placed)) late T)))
   (assert (in "w" silent.silent) "lease の窓を越えた worker は沈黙の列に入る")
   (val body (! (beat-body "w" [{"name" "s0" "phase" "running" "revision" "r"}])))
-  (val revived (register-heartbeat silent (run (body-of (http-request "POST" "/heartbeat" {} body))) late))
+  (val revived (register-heartbeat silent (run (body-of (! (http-request "POST" "/heartbeat" {} body)))) late))
   (assert (not (quiet-heartbeat silent revived "w" late T)) "沈黙から戻る heartbeat は静かでない")
   (assert (not-in "w" (. (get (! (answered silent body late True)) 0) silent)) "戻った worker は調停で沈黙の列から外れる"))

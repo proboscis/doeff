@@ -4,6 +4,7 @@
 ;;;   - 失敗が続く action は間を空けて出す(毎秒の送り直しをしない)
 ;;;   - 戻し(RollingBack)が終わらない時は stuck の印を出し、新は止めない
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff [run])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView])
@@ -79,8 +80,8 @@
   ;; 時刻は保存した印の時刻になり、読み直した状態の保存の鍵は元と同じ。heartbeat は本物の受け口(POST /heartbeat)を通す — 受け口は
   ;; heartbeat ごとに WorkerInfo を作り直すので、印を運び忘れると heartbeat のたびに行から lastSeenMs が消える(#2903 で一度そうなった)。
   (val beat (fn [state name now]
-              (get (responded state (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "capacity" 1 "statuses" []}
-                                                  :actor "c-test")
+              (get (responded state (run (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "capacity" 1 "statuses" []}
+                                                  :actor "c-test"))
                               now T)
                    0)))
   (val workers-of (fn [kv] (dfor #(k v) (.items kv) :if (.startswith k "worker/") k v)))

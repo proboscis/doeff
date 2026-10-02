@@ -40,7 +40,7 @@
   {:pre [(: state ClusterState) (: name str) (: op str) (: token str) (: now int) (: ttl int) (: permits int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "lease の口 POST /leases/<name> の要求を 1 つ判断 responded に渡し、(状態 状態の番号 本文) の組を返すため。"
-  (responded state (http-request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w") now T))
+  (responded state (! (http-request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w")) now T))
 
 
 ;; --- coordinator の時計だけで判じる ------------------------------------------------------------------
@@ -54,11 +54,11 @@
   (setv #(s _ _) (! (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000)))
   (setv row (. (get s.board "semaphore/app-writer") value))
   (setv stolen {"permits" 1 "holders" {"b/1/y/1" 99999}})
-  (setv #(_ early-status early-body) (responded s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
+  (setv #(_ early-status early-body) (responded s (! (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b"))
                                               10000 T))
   (assert (= early-status 409) early-body)
   ;; 切れた後なら通る(旧い版の奪い方も期限の後なら正しい)
-  (setv #(_ late-status _) (responded s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
+  (setv #(_ late-status _) (responded s (! (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b"))
                                     16001 T))
   (assert (= late-status 200))
   ;; 外すだけの書き(旧い worker の drop)は通す

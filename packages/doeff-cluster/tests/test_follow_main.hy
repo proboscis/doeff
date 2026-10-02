@@ -13,6 +13,7 @@
 ;; 係は 2026-09-28 に消した(Program の job は宣言した commit でだけ解く — ADR-DOE-CLUSTER-001・計画 2.2 の E)ので、版を変えるのは
 ;; 宣言し直しだけ。image の版を追う欄(baseFrom・base・overlay)を持つ宣言を断る検は test_old_declarations.hy。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff [run])
 (import dataclasses [replace])
 (import doeff [with_handlers])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -56,7 +57,7 @@
     None)
 
   (defn #^ dict call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]
-    (setv #(state status reply) (responded self.state (http-request method path {} body :actor actor) self.now T))
+    (setv #(state status reply) (responded self.state (run (http-request method path {} body :actor actor)) self.now T))
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)

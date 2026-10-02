@@ -67,7 +67,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| (get dict #(str object)) None)) (: now int) (: actor (| str None))] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の本物の返事(api_policy.respond)へ要求を 1 件送り、次の状態を返す。"
-  (val answered (responded state (http-request method path {} body :actor actor) now T))
+  (val answered (responded state (! (http-request method path {} body :actor actor)) now T))
   (assert (< (get answered 1) 300) #(method path (get answered 1) (get answered 2)))
   (get answered 0))
 
@@ -113,7 +113,7 @@
 (defk version-of [state [name "w"] [now START]]
   {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "資源の口(GET /resources/Service/<名>)の status.version。"
-  (val answered (responded state (http-request "GET" (+ "/resources/Service/" name) {} None :actor None) now T))
+  (val answered (responded state (! (http-request "GET" (+ "/resources/Service/" name) {} None :actor None)) now T))
   (assert (= (get answered 1) 200) (get answered 2))
   (get answered 2 "status" "version"))
 
@@ -253,7 +253,7 @@
   (assert (any (gfor e current.audit (= (.get e.changes "status.version") [{"state" "Updating"} {"state" "Current"}])))
           (lfor e current.audit e.changes))
   ;; 既存の欄は今までどおり(ready・process)。
-  (val body (get (responded current (http-request "GET" "/resources/Service/w" {} None :actor None) START T) 2))
+  (val body (get (responded current (! (http-request "GET" "/resources/Service/w" {} None :actor None)) START T) 2))
   (assert (= (get body "status" "ready") "Ready"))
   (assert (= (get body "status" "process" "runningRevision") "r1"))
   ;; running の母集団は still-live-somewhere と同じ: lease の内に報告した全部の worker の、名が一致する行と退いた行。
@@ -278,7 +278,7 @@
   (val verdict (version-state state "old" START T))
   (assert (= verdict.state VersionState.BLOCKED) verdict)
   (assert (in "旧い形の行" verdict.reason) verdict)
-  (val body (get (responded state (http-request "GET" "/resources/Service" {} None :actor None) START T) 2))
+  (val body (get (responded state (! (http-request "GET" "/resources/Service" {} None :actor None)) START T) 2))
   (val item (next (gfor i (get body "items") :if (= (get i "name") "old") i)))
   (assert (= (get item "status" "refused") "旧い形の行"))
   (assert (= (get item "status" "version" "state") "Blocked") item))

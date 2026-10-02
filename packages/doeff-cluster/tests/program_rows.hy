@@ -52,7 +52,7 @@
 
 (defn #^ HeartbeatBody heartbeat-of [#^ dict body]  ; defk にできない: 判断を直に呼ぶ検(Program の外)が呼ぶ
   "heartbeat の本文の JSON を、受け口と同じ解き(coordinator/protocol/request_bodies)で本文の型にする(形が合わなければ BodyInvalid)。"
-  (setv parsed (run (body-of (http-request "POST" "/heartbeat" {} body))))
+  (setv parsed (run (body-of (run (http-request "POST" "/heartbeat" {} body)))))
   (when (isinstance parsed BodyMalformed)
     (raise (BodyInvalid parsed.reason)))
   parsed)
@@ -60,7 +60,7 @@
 
 (defn #^ TaskBody task-body-of [#^ dict body]  ; defk にできない: 判断を直に呼ぶ検(Program の外)が呼ぶ
   "task の頼みの本文の JSON を、受け口と同じ解き(coordinator/protocol/request_bodies)で本文の型にする(形が合わなければ BodyInvalid)。"
-  (setv parsed (run (body-of (http-request "POST" "/tasks" {} body))))
+  (setv parsed (run (body-of (run (http-request "POST" "/tasks" {} body)))))
   (when (isinstance parsed BodyMalformed)
     (raise (BodyInvalid parsed.reason)))
   parsed)

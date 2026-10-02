@@ -4,7 +4,7 @@
 ;;; coordinator だけの CoordinatorFault は coordinator/protocol/faults.hy の coordinator-faults(coordinator の entry で重ねる — #2563)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
-(require doeff-hy.macros [defhandler deff])
+(require doeff-hy.macros [defhandler defk <- var])
 (import json)
 (import sys)
 (import time)
@@ -30,8 +30,7 @@
 
 
 ;; slot = 返事を待つ受付の側の物: 本番の HTTP の受付は ReplySlot、手元の宿(local.hy)は Promise、判断だけを見る検は None。
-(deff http-request [#^ str method #^ str path #^ dict query #^ (| dict list str int float bool None) body
-                    #^ (| ReplyTarget Promise None) [slot None] #^ (| str None) [actor None] #^ str [peer ""]]  ; defk にできない: 本番の受付の handler と sim の宿と検が、Program の外で同じ形で要求を作る
+(defk http-request [method path query body [slot None] [actor None] [peer ""]]
   {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None))
          (: slot (| ReplyTarget Promise None)) (: actor (| str None)) (: peer str)]
    :post [(: % Request)]
@@ -40,6 +39,16 @@
    HTTP の境のこの 1 か所 — 受け口の判断 api_policy.respond は parts だけを読む・#1636)。slot = 返事を待つ受付の側の物(判断は見ない)。"
   (Request method path query body (tuple (gfor p (.split (.strip path "/") "/") (url-unquote p)))
            :slot slot :actor actor :peer peer))
+
+
+(defk requests-of [raws]
+  {:pre [(: raws list)] :post [(: % (get tuple #(Request ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "受付の箱が並べた生の要求の列を、並びのまま Request の列にするため(NextRequests の答え)。"
+  (var requests #())
+  (for [raw raws]
+    (<- request Request (http-request raw.method raw.path raw.query raw.body :slot raw.slot :actor raw.actor :peer raw.peer))
+    (:= requests (+ requests #(request))))
+  requests)
 
 
 (defn #^ tuple encoded-reply [#^ object body]
@@ -53,8 +62,8 @@
 (defhandler http-requests [#^ InboxQueue inbox]
   ;; 引数に残す理由: 受付の箱(HTTP の server の thread と列)は composition root が起動の時に 1 つ作って渡す
   (NextRequests [timeout-seconds limit]
-    (resume (lfor raw (.take inbox timeout-seconds limit)
-                  (http-request raw.method raw.path raw.query raw.body :slot raw.slot :actor raw.actor :peer raw.peer))))
+    (<- requests (get tuple #(Request ...)) (requests-of (.take inbox timeout-seconds limit)))
+    (resume (list requests)))
   (Reply [request status body]
     (setv slot request.slot)
     (assert (isinstance slot ReplyTarget) "http-requests の要求の札は受付の箱の ReplySlot")

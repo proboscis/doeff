@@ -59,7 +59,7 @@
   "筋書きの送り手: seconds 秒眠ってから、列に読みの要求を 1 件積むため(返事は待たない)。"
   (<- (Delay seconds))
   (<- slot Promise (CreatePromise))
-  (<- (enqueue-request queue (http-request "GET" "/state" {} None :slot slot)))
+  (<- (enqueue-request queue (! (http-request "GET" "/state" {} None :slot slot))))
   None)
 
 
