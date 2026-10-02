@@ -137,6 +137,39 @@ def test_run_semgrep_empty_stdout_with_exit_0_is_loud(tmp_path):
         _run_semgrep(str(fake), config, [target], project_root=tmp_path)
 
 
+def test_run_semgrep_failure_names_the_json_errors_not_only_stderr(tmp_path):
+    """--quiet --json の semgrep は、失敗(exit 2)の理由を stdout の JSON の errors にだけ載せ、stderr は空。
+
+    反例 = agora-redesign #2865: herdr-hud の日次で「semgrep failed with exit 2:」だけが残り、規則の読みの失敗か
+    semgrep の版かを名指せなかった。失敗の文は errors の種類・規則・文言を名乗る。
+    """
+    verdict = {
+        "results": [],
+        "errors": [
+            {
+                "code": 7,
+                "level": "error",
+                "type": "InvalidRuleSchemaError",
+                "rule_id": "adr0003-alive-o1-guard",
+                "message": "Invalid rule schema: pattern-not-inside is not a valid key",
+            }
+        ],
+    }
+    fake = _fake_semgrep(tmp_path, f"cat <<'JSON'\n{json.dumps(verdict)}\nJSON\nexit 2\n")
+    config = tmp_path / "rule.json"
+    config.write_text(json.dumps({"rules": []}), encoding="utf-8")
+    target = tmp_path / "target.txt"
+    target.write_text("anything\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError) as caught:
+        _run_semgrep(str(fake), config, [target], project_root=tmp_path)
+    text = str(caught.value)
+    assert "exit 2" in text
+    assert "InvalidRuleSchemaError" in text
+    assert "adr0003-alive-o1-guard" in text
+    assert "pattern-not-inside is not a valid key" in text
+
+
 def test_crashing_scanner_is_not_reported_as_rule_not_firing(tmp_path, monkeypatch, registry):
     """zeus 実測の再演: crash する semgrep が『bad fixture に不一致』と報告されない。"""
     fake = _fake_semgrep(
