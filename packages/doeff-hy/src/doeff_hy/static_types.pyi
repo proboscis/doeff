@@ -97,6 +97,12 @@ HandlerBody: TypeAlias = Program[HandledAnswer, object]
 #: handler を被せた結果(本文と同じ答えの型)。
 HandledScope: TypeAlias = WithHandler[HandledAnswer]
 
+class Handler(Protocol):
+    """defhandler が作る関数 — 本文に答え手を被せる(答えの型は本文のまま)。型の宣言の生成(static_stub.py)が
+    defhandler の答えの型に使う(agora-redesign #2826)。"""
+
+    def __call__(self, body: HandlerBody[HandledAnswer], /) -> HandledScope[HandledAnswer]: ...
+
 #: 節 1 つの記述: (effect の型・使う操作の名・終える理由があるか)— handle.hy の ending-spec-form が作る組。
 _ClauseEnding: TypeAlias = tuple[object, tuple[str, ...], bool]
 
