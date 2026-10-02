@@ -32,8 +32,12 @@ from doeff_core_effects.file_effects import MeasureTree as MeasureTree
 from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
 from doeff_core_effects.python_bytecode import compile_python_sources as compile_python_sources
+from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects.offloaded_call import offloaded as offloaded
+from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
+LOCK_THREADS: ThreadPerCall
 
 def failed(path: str, error: OSError) -> _Program[FileFailed, object]:
     ...
@@ -89,3 +93,7 @@ def disk_usage(path: str) -> _Program[DiskUsage | FileFailed, object]:
 def measure_tree(path: str) -> _Program[int | FileFailed, object]:
     ...
 os_file_handler: _Handler
+
+def release_abandoned(answer: LockHeld | FileFailed) -> None:
+    ...
+offloaded_lock_handler: _Handler
