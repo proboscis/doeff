@@ -37,6 +37,7 @@ STUBBED_MODULES = (
     "scripted_http_server",
     "scripted_process",
     "meter_effects",
+    "meter_prometheus",
     "memory_meter",
     "memory_latest",
     "os_file",

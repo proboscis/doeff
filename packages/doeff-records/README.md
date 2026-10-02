@@ -109,6 +109,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 | `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
 | `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
 | `GET /healthz` | — | `{status: "ok"}` |
+| `GET /metrics` | — | Prometheus の text(`text/plain; version=0.0.4`)— 身元を問わない |
 
 - effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`・`RowsConflict`・`RowsRefused`)は 200 の本文の値。HTTP の断りは
   `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・`401 unauthorized`(身元が引けない)・
@@ -122,9 +123,18 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   要求ごとに `Spawn` した task が答える(例外でも必ず答える — 答えていなければ 500 internal)。本文の上限(16 MiB)は `HttpReadBody` が
   読む前に判じる。表の用意は task で、口は先に開き、用意の前の記録の操作は 503 store-unavailable・`/healthz` は 200。用意が落ちれば
   run は例外で終わる。止めの合図(`StopRequested`)で `HttpShutdown` し、走り中の要求を待ってから終わる。
+- 計器(#2709): 要求の task は答えを送った直後に、要求の種(`write` = put-row・put-rows・append-event / `read` = 残りの記録の操作 /
+  `other` = 記録の操作でない route)と実際に送った答えの status ごとの counter `records_requests_<種>_<status>` を doeff の `CountMetric` で
+  1 つ数える(本文の断りの 400・答えの途中で落ちた 500 も同じ 1 か所)。答えの送りが例外になれば、標準の誤りへ 1 行名指して 500 internal を
+  1 度だけ送り直し、500 として数える(送れなかった答えの status は数えない)。`GET /metrics` は身元を引く前に答え、`ReadMeter` の断面を
+  `doeff_core_effects.meter_prometheus.render_prometheus` で描く(名は末尾に `_total`・label なし)。系列は種 3 × status(200 と断りの
+  status)の 18 本で閉じていて、起動の時に全部を 0 で置く。置き場に届かなかった数 = `*_503_total`(表の用意の前と `/readyz` の不達を
+  含む)・答えの途中で落ちた数 = `*_500_total`。`other` には kubelet の `/healthz`・`/readyz` と `/metrics` 自身の読みが入る。値は
+  process の再起動で 0 に戻る(読み手は区間の差で数える)。計器の答え手は doeff の `memory-meter-handler`(差し替えの欄 `RecordsServing.meter` が在れば、その内側に被せる)。
 - 検と模擬の殻は `doeff_records.http_server.start_records_server(RecordsServerConfig(schema, roster, handler_for, request_handlers=…))`:
   入口の Program を別の thread の run で回し、`url` と `close()` を持つ `RunningServer` を返す。`handler_for` = 書き手の名 → 用意し終えた
-  置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)。
+  置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)、`meter` = 計器の
+  答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
 答える。`401` / `403`(handler を組んだ token の身元を認めない)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
