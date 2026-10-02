@@ -1,0 +1,24 @@
+{
+  "module_extensions": {
+    "doeff-hy-static-check": {
+      "allow": [
+        "doeff-hy-binding-forms"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-hy-binding-forms",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/binding_forms.py"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/binding_forms.py"
+      ],
+      "responsibility": "val・var・lazy val・session val と := の展開の時の検査(ADR-DOE-HY-006)— Hy の form を歩いて宣言の形を読み、所見(Finding)を返す純粋な判断。doeff-hy-check(static_check・static_view)が所見を Hy の位置の診断にする(契約の欠けを agora-redesign #2846 で埋めた)",
+      "typed": false
+    }
+  ]
+}
