@@ -1501,7 +1501,8 @@
         "doeff-cluster-drain-policy",
         "doeff-cluster-promise-wait",
         "doeff-cluster-watch-policy",
-        "doeff-cluster-kube-model"
+        "doeff-cluster-kube-model",
+        "doeff-cluster-worker-heartbeat-rules"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
