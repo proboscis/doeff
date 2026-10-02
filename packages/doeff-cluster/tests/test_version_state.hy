@@ -322,7 +322,7 @@
 (deftest test-a-placement-waiting-for-the-previous-holder-to-stop-is-updating
   ;; drain で止めて移す(recreate の Service): 移す先の zeus が戻ると置き先を外し、旧い担い手 atlas が止め終えるまで置かない。
   (val c (Coord))
-  (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
   (c.beat "atlas" ["r"])
   (assert (= (get (coord-version c "r") "state") "Current"))
   (c.advance 12)
@@ -346,7 +346,7 @@
 
 (deftest test-a-surged-handoff-writer-stays-current-and-running-lists-both-processes
   ;; drain で並べた置き先(surge)の process も running に入る(同じ版・退いていない)。版は指定どおりなので Current。
-  (val c (running-writer))
+  (<- c (running-writer))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (c.beat "zeus" ["w"])
   (c.beat "atlas" ["w"])
