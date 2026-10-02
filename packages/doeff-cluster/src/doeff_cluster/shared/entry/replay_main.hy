@@ -11,7 +11,7 @@
 ;;;
 ;;; 詰めた Program を運ぶので、記録を再生できるのは同じ版(Python・cloudpickle・doeff)と、記録した commit の code が揃う間だけ
 ;;; (改訂 1 の O — R3b の代償)。版が違えば理由つきで止まる。結果(一致・判断の違い・分岐)を JSON で書く。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import argparse)
 (import json)
@@ -30,7 +30,8 @@
     (lfor line h :if (.strip line) (json.loads line))))
 
 
-(defn #^ None main []  ; defk にできない: 道具の入口
+(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.shared.entry.replay_main` の __main__ が素の関数として呼ぶ)
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "記録と Program を読み、再生の mode で走らせて、再生の報告を書く。"
   (setv parser (argparse.ArgumentParser :description "記録の上で job の Program を再生する"))
   (.add-argument parser "--recording" :required True)

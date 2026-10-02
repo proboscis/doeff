@@ -11,7 +11,9 @@
 (import doeff_cluster.worker.protocol.heartbeat [status-row])
 
 
-(defn #^ dict status-json [#^ tuple statuses #^ str note #^ dict timings]
+(defk status-json [statuses note timings]
+  {:pre [(: statuses tuple) (: note str) (: timings dict)] :post [(: % dict)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "状態の行の列・注記・焼きの経過の秒を、外から覗ける状態の file の JSON の形に綴るため(答え手 status-file と検が同じ形を使う)。"
   {"note" note
    "codePrepareSeconds" timings
    "jobs" (lfor s statuses (status-row s))})
@@ -34,5 +36,6 @@
   ;; 引数に残す理由: 置き場の path は worker ごとの値(main が state dir から作る)。焼きの経過の秒は CodeTimings で問う(#2466)。
   (PublishStatus [statuses note]
     (<- timings dict (CodeTimings))
-    (<- (write-status-file path (status-json statuses note timings)))
+    (<- content dict (status-json statuses note timings))
+    (<- (write-status-file path content))
     (resume None)))

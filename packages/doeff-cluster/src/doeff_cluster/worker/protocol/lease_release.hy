@@ -18,7 +18,8 @@
 
 
 (defk board-rows [route options prefix]
-  {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: prefix str)] :post [(: % tuple)]}
+  {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: prefix str)] :post [(: % tuple)]
+   :tags {:context "worker" :role "protocol" :spells "http" :reads "json"}}
   "盤の行のうち鍵が prefix で始まる物を読むため。答え = #(行の dict か読めない理由の str 次の宛先の状態)。"
   (<- reply RoutedReply (routed-request route "GET" "/board" options {"prefix" prefix} None))
   (val answer reply.answer)
@@ -32,7 +33,7 @@
 
 (defk released-by-board [route options key row prefix instance]
   {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: key str) (: row dict) (: prefix str) (: instance str)]
-   :post [(: % CoordinatorRoute)]}
+   :post [(: % CoordinatorRoute)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "旧い coordinator(/leases の口が無い)へ: 盤の行の compare-and-set で担い手を外すため(競合は読み直して 3 回まで)。答え = 次の宛先の状態。"
   (var current route)
   (var seen row)
@@ -56,7 +57,8 @@
 
 
 (defk released-leases [route options job instance]
-  {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: job str) (: instance str)] :post [(: % CoordinatorRoute)]}
+  {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: job str) (: instance str)] :post [(: % CoordinatorRoute)]
+   :tags {:context "worker" :role "protocol" :spells "json"}}
   "終わった process(job の名 job・世代の名 instance)が持っていた lease を返すため(頭の註)。答え = 次の宛先の状態。"
   (val prefix (holder-tokens-prefix (lease-holder job instance)))
   (<- read tuple (board-rows route options SEMAPHORE-PREFIX))

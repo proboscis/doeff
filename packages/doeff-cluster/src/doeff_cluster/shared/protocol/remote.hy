@@ -46,7 +46,7 @@
 
 (defk program-put [cell options blob versions deadline-seconds]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: blob str) (: versions dict) (: deadline-seconds float)]
-   :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol"}}
+   :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "task を送る前に、詰めた Program を coordinator の置き場 PUT /programs/<sha> に版と一緒に置くため(task の本文は sha だけを運ぶ —
    service の宣言と同じ運び方・ADR-DOE-CLUSTER-001 R3b)。同じ中身は同じキーの同じ行なので、何度送っても同じ意味 — 失敗は
    deadline-seconds まで送り直す(resent-request)。答え = #(sha 答え)(答えの読みは呼び手 — 断りの型は口ごとに違う: remote-cluster は

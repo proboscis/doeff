@@ -30,7 +30,7 @@
 
 (defk report-request [service sender kind payload]
   {:pre [(: service str) (: sender dict) (: kind str) (: payload dict)] :post [(: % tuple) (= (len %) 4)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "service の報告 1 つ → #(method path query 本文)。kind = readiness | metrics・sender = 送り手の process の世代({worker pid revision} と
    RunContext.identity)。本番の口(sent-report)と sim の宿が同じ要求を coordinator へ送るため(定義点はここ 1 つ)。"
   #("POST" (.format "/resources/Service/{}/{}" (url-quote service :safe "") kind) {} (| sender payload)))
@@ -58,7 +58,7 @@
 
 
 (defk service-report-of [ctx pid]
-  {:pre [(: ctx RunContext) (: pid int)] :post [(: % ServiceReport)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: ctx RunContext) (: pid int)] :post [(: % ServiceReport)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "worker の子 process の文脈(job_context.RunContext)と process の pid から、世代つきの報告の送り手を作るため(送るのは上の
    sent-report)。pid は組み立てる側(cluster_foundation)が渡す — 前は foundation/report_client.hy が os.getpid を読んでいたが、層
    foundation は protocol の ServiceReport を読めないので、ここに寄せた(#2566)。"

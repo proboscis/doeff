@@ -13,7 +13,7 @@
 
 (deff task-result-request [#^ str task #^ str worker #^ str instance #^ str result]  ; defk にできない: 本番の子 process の入口(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: task str) (: worker str) (: instance str) (: result str)] :post [(: % tuple) (= (len %) 4)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "終わった task の結果 1 つ → #(method path query 本文)。task = coordinator の振った task の id・worker / instance = 送り手の子 process の
    担い手の名と世代の名・result = 詰めた結果(program_codec.encode-outcome)。本番の子 process(job_entry.run-task)と sim の宿が同じ要求を
    coordinator へ送るため(定義点はここ 1 つ — 受けるのは cluster_policy.absorb-task-result)。"
