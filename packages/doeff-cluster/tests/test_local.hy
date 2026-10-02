@@ -23,12 +23,13 @@
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [System CallShape])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
+(import tests.fixtures.sim_programs [beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
-                                                                 WorkerProbe alive-only-while-reachable])
+                                                                 WorkerProbe alive-only-while-reachable
+                                                                 PlacementSeen WorkerGone places-only-on-reachable])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
@@ -601,6 +602,51 @@
   (<- probes tuple (sim-cluster (beacons sim-foundation) (liveness-across-a-stop) :store DropsLastSeen))
   (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= (len lies) 1) #(lies probes)))
+
+
+(defrecord PlacedAfterAStop
+  "条 L1 の検の読み: 読めた置き先の列(PlacementSeen)と、死なせた worker の届かなくなった時刻(WorkerGone — 死んだ process の終わりの刻)。"
+  (#^ tuple placements)
+  (#^ tuple gone))
+
+
+(defk placement-after-a-stop []
+  {:pre [] :post [(: % PlacedAfterAStop)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 L1 の記録を集めるため: 8 秒に beacon の worker を死なせ、10 秒から coordinator を 2 秒止め、21 秒に service beacon-b を足した系を
+   宣言し直して、その少し後に置き先を読む。21 秒の理由は liveness-across-a-stop と同じ(本物の置き場なら死んだ worker を生きていないと
+   読み、最後の連絡を読み直せない置き場なら生きていると読む刻)。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf "beacon"))
+  (val host (. (get before 0) worker))
+  (<- (KillWorker host))
+  (<- (Delay 2.0))
+  (<- (StopCoordinator 2.0))
+  (<- (Delay 11.0))
+  (<- (Redeclare (beacons-plus sim-foundation)))
+  (<- (Delay 0.5))
+  (<- state dict (ReadCoordinator "/state"))
+  (<- after tuple (ProcessesOf "beacon"))
+  (val ended (next (gfor p after :if (= p.exit-code -9) p.ended-ms)))
+  (PlacedAfterAStop
+    :placements (tuple (gfor #(job p) (.items (get state "placements"))
+                             (PlacementSeen :job job :worker (get p "worker") :since-ms (get p "since_ms"))))
+    :gone #((WorkerGone :worker host :since-ms ended))))
+
+
+(deftest test-the-recreated-coordinator-places-no-new-job-on-a-dead-worker
+  ;; 条 L1(architecture.hy の :invariants): 作り直した coordinator は、死んだ worker へ新しい job を置かない(本物の置き場は最後の連絡の
+  ;; 時刻を読み直す — 置ける worker が他に無いので beacon-b は置かれない)。
+  (<- seen PlacedAfterAStop (sim-cluster (beacons sim-foundation) (placement-after-a-stop)))
+  (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
+  (assert (= wrong #()) #(wrong seen)))
+
+
+(deftest test-a-counterexample-store-without-last-seen-breaks-l1
+  ;; 条 L1 の失敗ケース: 最後の連絡を読み直せない置き場(DropsLastSeen)では、作り直した coordinator が死んだ worker を生きていると読み、
+  ;; 足した beacon-b をそこへ置き、条 L1 の判断がその置き先を名指す。
+  (<- seen PlacedAfterAStop (sim-cluster (beacons sim-foundation) (placement-after-a-stop) :store DropsLastSeen))
+  (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
+  (assert (in "beacon-b" (lfor p wrong p.job)) #(wrong seen)))
 
 
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused

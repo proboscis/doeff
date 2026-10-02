@@ -27,6 +27,10 @@
 ;;; 届き得た時だけ — coordinator が止まり置き場から作り直された後も(最後の連絡の時刻を置き場から読み直せないと、死んだ worker を生きている
 ;;; と答え、置き先にも選ぶ — 本番 2026-09-25 の欠陥・L643)。判断は記録(生存の読みと、その worker が届かなくなった時刻)を受けて、届かなく
 ;;; なってから lease-ms + 余裕を過ぎて alive と答えた読みの列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
+;;;
+;;; 条 L1 places-only-on-reachable: 新しい置き先は、lease-ms(+ 余裕)のうちに coordinator へ届き得た worker にだけ置く — coordinator が
+;;; 止まり置き場から作り直された後も。判断は記録(読めた置き先の列と、worker ごとの届かなくなった時刻)を受けて、届かなくなってから
+;;; lease-ms + 余裕を過ぎた後に置いた置き先の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
@@ -143,4 +147,30 @@
                :if (and p.alive
                         (is-not p.unreachable-since-ms None)
                         (> p.at-ms (+ p.unreachable-since-ms lease-ms slack-ms)))
+               p)))
+
+
+(defrecord PlacementSeen
+  "条 L1 の記録 1 つ = GET /state の置き先 1 つ(job・worker・since-ms = 置いた時刻)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ str worker)
+  (#^ int since-ms))
+
+
+(defrecord WorkerGone
+  "条 L1 の記録 1 つ = worker が coordinator へ届かなくなった時刻(死・網の切断)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int since-ms))
+
+
+(defk places-only-on-reachable [placements gone lease-ms slack-ms]
+  {:pre [(: placements (get tuple #(PlacementSeen ...))) (: gone (get tuple #(WorkerGone ...))) (: lease-ms int) (: slack-ms int)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 L1: 読めた置き先の列から、置いた worker が届かなくなって(gone)lease-ms + slack-ms を過ぎた後に置いた置き先を返す(空なら緑)。
+   coordinator が作り直しの後も、死んだ worker を置き先に選ばないことを、筋書きの記録から判じるため。"
+  (tuple (gfor p placements
+               g gone
+               :if (and (= g.worker p.worker) (> p.since-ms (+ g.since-ms lease-ms slack-ms)))
                p)))
