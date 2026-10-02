@@ -15,7 +15,7 @@ class FakeTmuxBackend:
         self.sessions = {}
         self.pane_outputs = {}
         self.sent_keys = []
-        self._next_pane = 0
+        self._mut_next_pane = 0
 
     def has_session(self, name):
         return name in self.sessions
@@ -25,8 +25,8 @@ class FakeTmuxBackend:
 
         from doeff_agents.tmux import SessionInfo
 
-        pane_id = f"%fake{self._next_pane}"
-        self._next_pane += 1
+        pane_id = f"%fake{self._mut_next_pane}"
+        self._mut_next_pane += 1
         self.sessions[cfg.session_name] = {"pane_id": pane_id, "work_dir": cfg.work_dir}
         # Boot straight into a ready REPL frame: the launch paths now
         # gate prompt delivery on the adapter ready_pattern (the codex

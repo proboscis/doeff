@@ -115,7 +115,7 @@ class TestMcpServerLoopDispatch:
             # Signal shutdown: the loop will observe the flag on its next
             # iteration and exit. If it happens to be parked on Wait we
             # also wake it; if not, the get times out harmlessly.
-            server.shutting_down = True
+            server.mut_shutting_down = True
             try:
                 ep = server.wakeup_mailbox.get(timeout=0.5)
                 ep.complete(None)
@@ -141,7 +141,7 @@ class TestMcpServerLoopDispatch:
         def driver():
             req = _push_one_request(server, "greet", {"name": "World"})
             driver_result.append(req.holder[0])
-            server.shutting_down = True
+            server.mut_shutting_down = True
             try:
                 ep = server.wakeup_mailbox.get(timeout=5.0)
                 ep.complete(None)
@@ -166,7 +166,7 @@ class TestMcpServerLoopDispatch:
         def driver():
             req = _push_one_request(server, "nonexistent", {})
             driver_result.append(req.holder[0])
-            server.shutting_down = True
+            server.mut_shutting_down = True
             try:
                 ep = server.wakeup_mailbox.get(timeout=5.0)
                 ep.complete(None)
@@ -203,7 +203,7 @@ class TestMcpServerLoopDispatch:
         def driver():
             req = _push_one_request(server, "boom", {"msg": "x"})
             driver_result.append(req.holder[0])
-            server.shutting_down = True
+            server.mut_shutting_down = True
             try:
                 ep = server.wakeup_mailbox.get(timeout=5.0)
                 ep.complete(None)
@@ -236,7 +236,7 @@ class TestMcpServerLoopMultiple:
         def driver():
             results.append(_push_one_request(server, "echo", {"msg": "one"}).holder[0])
             results.append(_push_one_request(server, "echo", {"msg": "two"}).holder[0])
-            server.shutting_down = True
+            server.mut_shutting_down = True
             try:
                 ep = server.wakeup_mailbox.get(timeout=5.0)
                 ep.complete(None)
@@ -259,7 +259,7 @@ class TestMcpServerLoopMultiple:
         def driver():
             # Give the VM a moment to post its first wakeup ep
             ep = server.wakeup_mailbox.get(timeout=5.0)
-            server.shutting_down = True
+            server.mut_shutting_down = True
             ep.complete(None)
 
         threading.Thread(target=driver, daemon=True).start()
@@ -300,7 +300,7 @@ class TestMcpServerLoopDaemonSpawn:
             # StopSession → server shutdown: set the flag, then complete the
             # pending wakeup ep so the loop can observe it.
             ep = server.wakeup_mailbox.get(timeout=5.0)
-            server.shutting_down = True
+            server.mut_shutting_down = True
             ep.complete(None)
             return "agent-result"
 
@@ -343,14 +343,14 @@ class TestMcpServerLoopProtocolFailures:
 
         class PoisonedQueue:
             def __init__(self) -> None:
-                self.raised = False
+                self.mut_raised = False
 
             def empty(self) -> bool:
-                return self.raised
+                return self.mut_raised
 
             def get_nowait(self):
-                self.raised = True
-                server.shutting_down = True
+                self.mut_raised = True
+                server.mut_shutting_down = True
                 raise RuntimeError("request queue poisoned")
 
         server.request_queue = cast(Any, PoisonedQueue())

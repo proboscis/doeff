@@ -11,14 +11,14 @@ from doeff_agents.session import _dismiss_onboarding_dialogs
 class FakeBackend:
     def __init__(self, outputs: list[str]) -> None:
         self.outputs = outputs
-        self.index = 0
+        self.mut_index = 0
         self.sent: list[tuple[str, str, bool, bool]] = []
 
     def capture_pane(self, target: str, lines: int = 50):
-        if self.index >= len(self.outputs):
+        if self.mut_index >= len(self.outputs):
             return self.outputs[-1]
-        out = self.outputs[self.index]
-        self.index += 1
+        out = self.outputs[self.mut_index]
+        self.mut_index += 1
         return out
 
     def send_keys(

@@ -581,6 +581,17 @@ def reap_preexisting_orphan_daemons() -> None:
     _sweep_residual_runtime_dirs()
 
 
+@dataclass(frozen=True)
+class _AgentdPlaces:
+    """Where one harness run's daemon lives: its binary and its isolated runtime dir (decided once, at __enter__)."""
+
+    agentd_bin: Path
+    runtime_dir: Path
+    db_path: Path
+    socket_path: Path
+    log_path: Path
+
+
 @dataclass
 class AgentdHarness:
     """One scenario = one isolated agentd (own root/db/socket/tmp homes)."""
@@ -596,14 +607,44 @@ class AgentdHarness:
     # (main.rs:1500), so an unset value would write trust entries into the
     # operator's real ~/.codex / ~/.claude during a test run.
     extra_env: dict[str, str] = field(default_factory=dict)
-    runtime_dir: Path = field(init=False)
-    agentd_bin: Path = field(init=False)
-    db_path: Path = field(init=False)
-    socket_path: Path = field(init=False)
-    log_path: Path = field(init=False)
-    client: AgentdClient = field(init=False)
-    _proc: subprocess.Popen[str] | None = field(init=False, default=None)
+    # Set by __enter__ (places) and by every start (the daemon process and its client — restart replaces both).
+    _mut_places: _AgentdPlaces | None = field(init=False, default=None)
+    _mut_client: AgentdClient | None = field(init=False, default=None)
+    _mut_proc: subprocess.Popen[str] | None = field(init=False, default=None)
     _sessions: list[str] = field(init=False, default_factory=list)
+
+    def _places(self) -> _AgentdPlaces:
+        """This run's places — reading them outside the `with` block is a harness misuse."""
+        if self._mut_places is None:
+            raise RuntimeError("AgentdHarness is used outside its `with` block")
+        return self._mut_places
+
+    @property
+    def agentd_bin(self) -> Path:
+        return self._places().agentd_bin
+
+    @property
+    def runtime_dir(self) -> Path:
+        return self._places().runtime_dir
+
+    @property
+    def db_path(self) -> Path:
+        return self._places().db_path
+
+    @property
+    def socket_path(self) -> Path:
+        return self._places().socket_path
+
+    @property
+    def log_path(self) -> Path:
+        return self._places().log_path
+
+    @property
+    def client(self) -> AgentdClient:
+        """The client of the daemon started last (restart replaces it)."""
+        if self._mut_client is None:
+            raise RuntimeError("AgentdHarness has not started its daemon")
+        return self._mut_client
 
     def __enter__(self) -> "AgentdHarness":
         require_binaries()
@@ -611,11 +652,15 @@ class AgentdHarness:
         # dir — pre-existing orphan daemons (and their parked agents) from
         # SIGKILLed past runs must not accumulate across harness startups.
         reap_preexisting_orphan_daemons()
-        self.agentd_bin = resolve_agentd_bin()
-        self.runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
-        self.db_path = self.runtime_dir / "agentd.sqlite"
-        self.socket_path = self.runtime_dir / "agentd.sock"
-        self.log_path = self.runtime_dir / "agentd.log"
+        agentd_bin = resolve_agentd_bin()
+        runtime_dir = Path(tempfile.mkdtemp(prefix="agentd-conf-", dir="/tmp"))
+        self._mut_places = _AgentdPlaces(
+            agentd_bin=agentd_bin,
+            runtime_dir=runtime_dir,
+            db_path=runtime_dir / "agentd.sqlite",
+            socket_path=runtime_dir / "agentd.sock",
+            log_path=runtime_dir / "agentd.log",
+        )
         self.start()
         return self
 
@@ -632,7 +677,7 @@ class AgentdHarness:
             if "--prompt-judge-cmd" in self.extra_serve_args
             else ["--prompt-judge-cmd", ""]
         )
-        self._proc = subprocess.Popen(
+        self._mut_proc = subprocess.Popen(
             [
                 str(self.agentd_bin),
                 "--db",
@@ -663,7 +708,7 @@ class AgentdHarness:
                 **self.extra_env,
             },
         )
-        self.client = AgentdClient(self.socket_path, timeout=5.0)
+        self._mut_client = AgentdClient(self.socket_path, timeout=5.0)
         self._wait_ready()
 
     def restart(self) -> None:
@@ -690,10 +735,10 @@ class AgentdHarness:
     def _wait_ready(self) -> None:
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
-            assert self._proc is not None
-            if self._proc.poll() is not None:
+            assert self._mut_proc is not None
+            if self._mut_proc.poll() is not None:
                 raise AssertionError(
-                    f"doeff-agentd exited early rc={self._proc.returncode}\n"
+                    f"doeff-agentd exited early rc={self._mut_proc.returncode}\n"
                     + self.log_text()
                 )
             try:
@@ -797,14 +842,14 @@ class AgentdHarness:
     # -- teardown ------------------------------------------------------------
 
     def _terminate(self) -> None:
-        if self._proc is None or self._proc.poll() is not None:
+        if self._mut_proc is None or self._mut_proc.poll() is not None:
             return
-        self._proc.terminate()
+        self._mut_proc.terminate()
         try:
-            self._proc.wait(timeout=5.0)
+            self._mut_proc.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
-            self._proc.kill()
-            self._proc.wait(timeout=5.0)
+            self._mut_proc.kill()
+            self._mut_proc.wait(timeout=5.0)
 
     def __exit__(self, *exc: object) -> None:
         for session_id in self._sessions:

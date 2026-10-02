@@ -365,11 +365,11 @@ def _child_harness_main() -> None:
     if not agent_live:
         print(json.dumps({"error": "agent never received the prompt"}), flush=True)
         raise SystemExit(1)
-    assert harness._proc is not None
+    assert harness._mut_proc is not None
     print(
         json.dumps(
             {
-                "daemon_pid": harness._proc.pid,
+                "daemon_pid": harness._mut_proc.pid,
                 "runtime_dir": str(harness.runtime_dir),
                 "session_id": scenario.session_id,
             }

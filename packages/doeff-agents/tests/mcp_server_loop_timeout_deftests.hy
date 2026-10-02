@@ -53,7 +53,7 @@
 
 
 (defn _wake-for-shutdown [server]
-  (setv server.shutting-down True)
+  (setv server.mut-shutting-down True)
   (try
     (setv ep (.get server.wakeup-mailbox :timeout 5.0))
     (.complete ep None)

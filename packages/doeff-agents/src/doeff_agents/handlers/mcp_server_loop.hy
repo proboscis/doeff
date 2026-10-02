@@ -133,15 +133,15 @@
    after waking and Spawns a task per request so the loop itself never
    blocks on slow tool handlers.
 
-   Exits when server.shutting_down is set (the shutdown path completes the
+   Exits when server.mut_shutting_down is set (the shutdown path completes the
    most recent wakeup ep to force one more iteration)."
   {:pre [(: server McpToolServer) (: full-stack list)] :post [(: % (type None))]}
-  (while (not server.shutting-down)
+  (while (not server.mut-shutting-down)
     (<- wakeup-ep (CreateExternalPromise))
     (.put server.wakeup-mailbox wakeup-ep)
     ;; Race guard: if shutdown was signaled between the while check and the
     ;; put, exit now rather than parking on an ep nobody will complete.
-    (when server.shutting-down
+    (when server.mut-shutting-down
       (break))
     ;; Background wait: don't block the sim_time clock driver while idle.
     ;; The HTTP thread completes this promise when a request arrives, and

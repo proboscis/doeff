@@ -94,7 +94,7 @@ class OneShotAgentdServer:
         self.socket_path = socket_path
         self.handler = handler
         self.requests: list[Mapping[str, Any]] = []
-        self._thread: threading.Thread | None = None
+        self._mut_thread: threading.Thread | None = None
 
     def __enter__(self) -> OneShotAgentdServer:
         if self.socket_path.exists():
@@ -113,13 +113,13 @@ class OneShotAgentdServer:
                     response = self.handler(request)
                     conn.sendall(json.dumps(response).encode("utf-8") + b"\n")
 
-        self._thread = threading.Thread(target=serve, daemon=True)
-        self._thread.start()
+        self._mut_thread = threading.Thread(target=serve, daemon=True)
+        self._mut_thread.start()
         return self
 
     def __exit__(self, *_exc_info: object) -> None:
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
+        if self._mut_thread is not None:
+            self._mut_thread.join(timeout=2.0)
         if self.socket_path.exists():
             self.socket_path.unlink()
 
@@ -641,15 +641,15 @@ class SilentListener:
 
     def __init__(self, socket_path: Path) -> None:
         self.socket_path = socket_path
-        self._server: socket.socket | None = None
+        self._mut_server: socket.socket | None = None
         self._conns: list[socket.socket] = []
-        self._thread: threading.Thread | None = None
+        self._mut_thread: threading.Thread | None = None
 
     def __enter__(self) -> SilentListener:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(self.socket_path))
         server.listen(8)
-        self._server = server
+        self._mut_server = server
 
         def serve() -> None:
             while True:
@@ -659,17 +659,17 @@ class SilentListener:
                     return
                 self._conns.append(conn)
 
-        self._thread = threading.Thread(target=serve, daemon=True)
-        self._thread.start()
+        self._mut_thread = threading.Thread(target=serve, daemon=True)
+        self._mut_thread.start()
         return self
 
     def __exit__(self, *_exc_info: object) -> None:
         for conn in self._conns:
             conn.close()
-        if self._server is not None:
-            self._server.close()
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
+        if self._mut_server is not None:
+            self._mut_server.close()
+        if self._mut_thread is not None:
+            self._mut_thread.join(timeout=2.0)
         if self.socket_path.exists():
             self.socket_path.unlink()
 
@@ -686,8 +686,8 @@ class BusyThenHealthyAgentdServer:
 
     def __init__(self, socket_path: Path) -> None:
         self.socket_path = socket_path
-        self._server: socket.socket | None = None
-        self._thread: threading.Thread | None = None
+        self._mut_server: socket.socket | None = None
+        self._mut_thread: threading.Thread | None = None
         self._requests_seen = 0
         self._lock = threading.Lock()
 
@@ -695,7 +695,7 @@ class BusyThenHealthyAgentdServer:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(self.socket_path))
         server.listen(8)
-        self._server = server
+        self._mut_server = server
 
         def answer(conn: socket.socket) -> None:
             with conn:
@@ -726,15 +726,15 @@ class BusyThenHealthyAgentdServer:
                     return
                 threading.Thread(target=answer, args=(conn,), daemon=True).start()
 
-        self._thread = threading.Thread(target=serve, daemon=True)
-        self._thread.start()
+        self._mut_thread = threading.Thread(target=serve, daemon=True)
+        self._mut_thread.start()
         return self
 
     def __exit__(self, *_exc_info: object) -> None:
-        if self._server is not None:
-            self._server.close()
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
+        if self._mut_server is not None:
+            self._mut_server.close()
+        if self._mut_thread is not None:
+            self._mut_thread.join(timeout=2.0)
         if self.socket_path.exists():
             self.socket_path.unlink()
 
@@ -1277,8 +1277,8 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
     )
 
     assert handle.session_id == "s2"
-    assert adapter.params is not None
-    assert adapter.params.prompt is None
+    assert adapter.mut_params is not None
+    assert adapter.mut_params.prompt is None
     assert fake_client.launches[0]["session_id"] == "s2"
     assert fake_client.launches[0]["agent_type"] == "custom"
     assert fake_client.launches[0]["prompt"] == "review this"
@@ -1389,13 +1389,13 @@ class FakeAgentdClient:
 
 class FakeAdapter:
     def __init__(self) -> None:
-        self.params = None
+        self.mut_params = None
 
     def available(self):
         return Pure(True)
 
     def launch_command(self, params):
-        self.params = params
+        self.mut_params = params
         return ["custom-agent", "--model", params.model or "default"]
 
 
