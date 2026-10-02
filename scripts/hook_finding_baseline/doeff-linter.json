@@ -21,10 +21,6 @@
       "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/handlers/production.py": 1,
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
-    "DOEFF004": {
-      "packages/doeff-agents/src/doeff_agents/handlers/daemon.py": 1,
-      "packages/doeff-agents/src/doeff_agents/handlers/production.py": 1
-    },
     "DOEFF006": {
       "packages/doeff-adr/src/doeff_adr/pytest_plugin.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/cli.py": 1,
