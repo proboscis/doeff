@@ -13,7 +13,8 @@
 //!
 //! Jev の呼び出しを覚える代理(repo proboscis/jev-proxy — 2026-10-01 に doeff の packages/doeff-jev-proxy から移した・agora-redesign #843・#1919):
 //! - 宛先は repo ごとの設定 `[tool.doeff-linter.semantic] proxy_url` で向ける(機体全体の環境変数にしない — 会社の repo は向けない)。
-//!   env の JEV_BASE_URL が在ればそちらが勝つ。代理へは代理の token(proxy_token_file)だけを送り、TypeSafe のキーは送らない。
+//!   env の JEV_BASE_URL が在ればそちらが勝つ。proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は
+//!   呼び手の身元を問わない・2026-10-02 に proxy の token を外した — agora-redesign #3002)。
 //! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を代理に「覚えている時だけ」問い、返った答えを手元の
 //!   cache に書く。本物の Jev は呼ばない。問いは定義 1 つずつではなく、代理の鍵(proxy_key — 本文を正規化した sha256)の束
 //!   (POST <proxy_url>/peek・PEEK_BATCH 個ずつ)で撃つ — 定義が数千ある repo でも往復が数回で済み、本文を送らない。
@@ -339,8 +340,6 @@ pub struct SemanticSection {
     pub source_limit: Option<usize>,
     /// Jev の呼び出しを覚える代理の宛先(例 http://jev-proxy.example:8878/v1/systemone)。無ければ代理を使わない。
     pub proxy_url: Option<String>,
-    /// 代理の身元の token の file(既定 ~/.config/jev/proxy-token)。
-    pub proxy_token_file: Option<String>,
     /// 覚えている時だけの問いの時間の上限(ms・既定 5000 — 全部の束を合わせた上限)。
     pub proxy_peek_timeout_ms: Option<u64>,
     /// 誤判定の一覧の dir(repo の根からの相対・1 鍵 1 file・2 行目から後が人の判定の理由)。載った Jev の当たりは出さず、件数にも入れない。
@@ -378,12 +377,9 @@ pub struct MixedConcernsSettings {
 #[derive(Debug, Clone)]
 pub struct ProxySettings {
     pub url: String,
-    pub token_file: String,
     pub peek_timeout: Duration,
 }
 
-/// 代理の token の file の既定の置き場。
-pub const DEFAULT_PROXY_TOKEN_FILE: &str = "~/.config/jev/proxy-token";
 /// 覚えている時だけの問いの時間の上限の既定(ms — 全部の束を合わせた上限。遅い網の機体から数千の鍵を送っても収まる長さ)。
 pub const DEFAULT_PROXY_PEEK_TIMEOUT_MS: u64 = 5000;
 /// 覚えている時だけの問いの束 1 つの鍵の数(代理の上限 20000 の内 — 鍵 1 つは 67 byte 前後)。
@@ -493,12 +489,11 @@ impl SemanticSettings {
             }
             Some(ProxySettings {
                 url: url.clone(),
-                token_file: section.proxy_token_file.clone().unwrap_or_else(|| DEFAULT_PROXY_TOKEN_FILE.to_string()),
                 peek_timeout: Duration::from_millis(section.proxy_peek_timeout_ms.unwrap_or(DEFAULT_PROXY_PEEK_TIMEOUT_MS)),
             })
         });
-        if section.proxy_url.is_none() && (section.proxy_token_file.is_some() || section.proxy_peek_timeout_ms.is_some()) {
-            problems.push("semantic.proxy_token_file・proxy_peek_timeout_ms は proxy_url と一緒に書く".to_string());
+        if section.proxy_url.is_none() && section.proxy_peek_timeout_ms.is_some() {
+            problems.push("semantic.proxy_peek_timeout_ms は proxy_url と一緒に書く".to_string());
         }
         SemanticSettings {
             proxy,
@@ -950,8 +945,8 @@ pub fn resolve_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&
     JevTarget { base_url: url, model, wire: resolved_wire, api_key: key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()), source, proxy: false }
 }
 
-/// repo の設定の代理を重ねて宛先を解く(純粋)。env の JEV_BASE_URL が在ればそれが勝つ(代理を使わない)。代理へは代理の token だけを
-/// 送る(TYPESAFE_API_KEY などの本物のキーは送らない)。model は解いた direct の model(gateway を解いていれば direct の既定)。
+/// repo の設定の proxy を重ねて宛先を解く(純粋)。env の JEV_BASE_URL が在ればそれが勝つ(proxy を使わない)。proxy へはキーを
+/// 送らない(TYPESAFE_API_KEY などの本物のキーも送らない)。model は解いた direct の model(gateway を解いていれば direct の既定)。
 pub fn resolve_repo_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&str) -> Option<String>, proxy: Option<&ProxySettings>) -> JevTarget {
     let base = resolve_target(env, read_text, None);
     match proxy {
@@ -962,7 +957,7 @@ pub fn resolve_repo_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn
                 Wire::Gateway => DIRECT_MODEL.to_string(),
             },
             wire: Wire::Direct,
-            api_key: read_text(&proxy.token_file).map(|k| k.trim().to_string()).filter(|k| !k.is_empty()),
+            api_key: None,
             source: "repo",
             proxy: true,
         },
@@ -1009,9 +1004,6 @@ pub struct HttpGateway {
 impl HttpGateway {
     /// 宛先から口を作る。TypeSafe と Vercel の宛先でキーが無ければ理由を返す(値は出さない)。
     pub fn new(target: JevTarget, timeout: Duration) -> Result<HttpGateway, String> {
-        if target.proxy && target.api_key.is_none() {
-            return Err("Jev の API キーが無い(代理の token の file — [tool.doeff-linter.semantic] proxy_token_file・既定 ~/.config/jev/proxy-token)".to_string());
-        }
         let needs_key = target.base_url.contains("api.typesafe.ai") || target.base_url.contains(GATEWAY_HOST);
         if needs_key && target.api_key.is_none() {
             return Err(match target.wire {
@@ -1085,10 +1077,7 @@ impl Gateway for HttpGateway {
             return PeekedMany::Unreachable("宛先が代理でない(覚えている時だけの問いは代理にだけ撃つ)".to_string());
         }
         let url = format!("{}/peek", self.target.base_url.trim_end_matches('/'));
-        let mut request = self.agent.post(&url).timeout(timeout).set("content-type", "application/json");
-        if let Some(key) = &self.target.api_key {
-            request = request.set("authorization", &format!("Bearer {}", key));
-        }
+        let request = self.agent.post(&url).timeout(timeout).set("content-type", "application/json");
         match request.send_string(&json!({ "keys": keys }).to_string()) {
             Ok(ok) => match ok.into_string().map_err(|e| e.to_string()).and_then(|text| parse_remembered(&text)) {
                 Ok(answers) => PeekedMany::Remembered(answers),
@@ -1713,23 +1702,20 @@ mod tests {
     }
 
     #[test]
-    fn repo_proxy_gets_only_the_proxy_token_and_env_url_wins() {
+    fn repo_proxy_gets_no_key_and_env_url_wins() {
         let env = |pairs: &'static [(&'static str, &'static str)]| move |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string());
-        let proxy = ProxySettings { url: "http://proxy:8878/v1/systemone".into(), token_file: "~/.config/jev/proxy-token".into(), peek_timeout: Duration::from_millis(1500) };
-        let token = |path: &str| (path == "~/.config/jev/proxy-token").then(|| "proxy-token\n".to_string());
-        // 代理へは代理の token だけ(env の TypeSafe のキーは送らない)。
-        let via = resolve_repo_target(&env(&[("TYPESAFE_API_KEY", "real-key")]), &token, Some(&proxy));
+        let proxy = ProxySettings { url: "http://proxy:8878/v1/systemone".into(), peek_timeout: Duration::from_millis(1500) };
+        let files = |path: &str| (path == "~/.config/jev/api_key").then(|| "file-key\n".to_string());
+        // proxy へはキーを送らない(env と home の file の TypeSafe のキーへも倒れない)。キーが無くても口は作れる。
+        let via = resolve_repo_target(&env(&[("TYPESAFE_API_KEY", "real-key")]), &files, Some(&proxy));
         assert_eq!((via.base_url.as_str(), via.model.as_str(), via.wire, via.source, via.proxy), ("http://proxy:8878/v1/systemone", DIRECT_MODEL, Wire::Direct, "repo", true));
-        assert_eq!(via.api_key.as_deref(), Some("proxy-token"));
-        // token の file が無ければキー無し(TypeSafe のキーへ倒れない)。
-        let no_token = resolve_repo_target(&env(&[("TYPESAFE_API_KEY", "real-key")]), &|_| None, Some(&proxy));
-        assert_eq!(no_token.api_key, None);
-        assert!(HttpGateway::new(no_token, Duration::from_secs(1)).err().unwrap().contains("Jev の API キーが無い"));
-        // env の JEV_BASE_URL が在れば repo の代理を使わない。
-        let env_wins = resolve_repo_target(&env(&[("JEV_BASE_URL", "http://seimf/v1"), ("TYPESAFE_API_KEY", "k")]), &token, Some(&proxy));
+        assert_eq!(via.api_key, None);
+        assert!(HttpGateway::new(via, Duration::from_secs(1)).is_ok());
+        // env の JEV_BASE_URL が在れば repo の proxy を使わない。
+        let env_wins = resolve_repo_target(&env(&[("JEV_BASE_URL", "http://seimf/v1"), ("TYPESAFE_API_KEY", "k")]), &files, Some(&proxy));
         assert_eq!((env_wins.base_url.as_str(), env_wins.proxy), ("http://seimf/v1", false));
-        // gateway を名指した環境でも、代理へは direct の形と direct の model で問う。
-        let gateway_env = resolve_repo_target(&env(&[("JEV_WIRE", "gateway")]), &token, Some(&proxy));
+        // gateway を名指した環境でも、proxy へは direct の形と direct の model で問う。
+        let gateway_env = resolve_repo_target(&env(&[("JEV_WIRE", "gateway")]), &files, Some(&proxy));
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
     }
 

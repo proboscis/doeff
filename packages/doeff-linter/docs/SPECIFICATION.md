@@ -568,7 +568,6 @@ timeout_seconds = 30
 source_limit = 1800
 # Jev の呼び出しを覚える proxy(repo proboscis/jev-proxy)— 無ければ使わない
 proxy_url = "http://jev-proxy.example:8878/v1/systemone"
-proxy_token_file = "~/.config/jev/proxy-token"   # 既定
 proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だけの問いの束を全部合わせた上限)
 ```
 
@@ -577,7 +576,7 @@ proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だ�
 `/v1/systemone` と同じ)。
 
 - 宛先は repo ごとの設定 `proxy_url` で向ける(機体全体の環境変数にはしない — 向けない repo は今までどおり)。環境変数 `JEV_BASE_URL` が在ればそちらが勝つ。
-- 代理へは代理の token(`proxy_token_file` の中身)だけを送る。TypeSafe のキーは送らない。token の file が無ければ撃たない(キーが無いのと同じ理由を出す)。
+- proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は呼び手の身元を問わない・2026-10-02 に proxy の token を外した・agora-redesign #3002)。
 - 全体の実行・hook は、手元の cache に無い読める定義を、代理の鍵の束で「覚えている時だけ」問う(`POST <proxy_url>/peek`・本文
   `{"keys": [鍵 …]}`・1,000 個ずつの束を並べて撃つ — 定義 1 つずつ撃たず、本文も送らない。代理は覚えている答えだけを
   `{"answers": {鍵: 答え}}` で返し、本物の Jev を呼ばない)。返った答えを手元の cache に書く。代理に届かない・時間切れの時は、残りの束を撃たず

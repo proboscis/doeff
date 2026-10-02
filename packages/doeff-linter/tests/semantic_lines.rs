@@ -277,7 +277,7 @@ fn line_examples_reach_the_questions_and_the_answers_come_back() {
 /// `SEMANTIC_LINES_DEFINITIONS=<json> SEMANTIC_LINES_PROXY_URL=<url> cargo test --test semantic_lines -- --ignored --nocapture`)。
 /// 問う定義 = env SEMANTIC_LINES_DEFINITIONS の JSON(`[{"name", "rule", "path", "expect", "source"} …]` — 本物の定義の source。linter と同じく
 /// :tags を消して `source_limit` 字で切る)。線引きと層の説明はこのテストの architecture.hy の物。宛先 = Jev の呼び出しを覚える proxy
-/// (env SEMANTIC_LINES_PROXY_URL・token は ~/.config/jev/proxy-token)。較正の見張りは問わない(問うのは 10 例だけ)。
+/// (env SEMANTIC_LINES_PROXY_URL — proxy はキーを問わない)。較正の見張りは問わない(問うのは 10 例だけ)。
 #[test]
 #[ignore]
 fn ask_jev_the_line_examples_once() {
@@ -293,7 +293,6 @@ fn ask_jev_the_line_examples_once() {
     let settings = semantic::SemanticSettings { lines: arch.semantic_lines.clone(), ..bare };
     let proxy = semantic::ProxySettings {
         url,
-        token_file: semantic::DEFAULT_PROXY_TOKEN_FILE.to_string(),
         peek_timeout: std::time::Duration::from_millis(semantic::DEFAULT_PROXY_PEEK_TIMEOUT_MS),
     };
     let target = semantic::target_for_repo(Some(&proxy));
