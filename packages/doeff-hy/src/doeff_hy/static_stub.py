@@ -272,6 +272,10 @@ def _value_type(node: ast.expr, scan: _Scan) -> ast.expr | None:
             return _value_type(operand, scan)
         case ast.Name(id=name) if (kind := scan.kind_of(name)) is not None:
             return kind
+        case ast.Name(id=name) if _camel(name):
+            # class の名そのもの(入れ物の要素 — `(val SIM-PASSABLE #(Spawn Wait …))` のような effect の型の表)は class の値なので type
+            # (以前は読めず Incomplete — 手書きの .pyi の tuple[type, ...] を道具が出せなかった・agora-redesign の doeff の赤の続き)。
+            return _name("type")
         case ast.Tuple(elts=[]):
             return _subscript("tuple", ast.Tuple(elts=[], ctx=ast.Load()))
         case ast.Tuple(elts=items):
