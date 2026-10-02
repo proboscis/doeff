@@ -2,8 +2,6 @@
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-from doeff_hy.macros import _install_guard_globals as _install_guard_globals
-from doeff_hy.macros import _guard_performed as _guard_performed
 import posixpath as posixpath
 from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter

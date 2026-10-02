@@ -438,6 +438,12 @@ def _constant(name: str, value: ast.expr, scan: _Scan) -> ast.stmt:
             return ast.AnnAssign(target=_name(name), annotation=kind, value=None, simple=1)
 
 
+def _macro_helper(module: str | None, name: str) -> bool:
+    """macro の展開が import する doeff_hy.macros の補助か(_install_guard_globals・_guard_performed など — 型の面ではないので
+    公開し直さない。公開し直すと .pyi が macro の module に依存する形になり、品質検査の依存の契約に当たった — #2842)。"""
+    return module == "doeff_hy.macros" and name.startswith("_")
+
+
 def _reexports(statement: ast.Import | ast.ImportFrom) -> tuple[ast.stmt, ...]:
     """import 1 文を、名を公開し直す形(`X as X`)の文に分ける(macro の補助と `hy` は外す)。"""
     match statement:
@@ -447,7 +453,7 @@ def _reexports(statement: ast.Import | ast.ImportFrom) -> tuple[ast.stmt, ...]:
             return tuple(
                 ast.ImportFrom(module=module, names=[ast.alias(name=a.name, asname=a.asname or a.name)], level=level)
                 for a in names
-                if a.name != "*" and not _hidden(a.asname or a.name)
+                if a.name != "*" and not _hidden(a.asname or a.name) and not _macro_helper(module, a.name)
             )
         case ast.Import(names=names):
             return tuple(
