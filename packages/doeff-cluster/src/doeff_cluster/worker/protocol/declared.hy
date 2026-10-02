@@ -48,7 +48,9 @@
            :handoff-abandoned (bool (.get job "handoffAbandoned" False))
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
-           :environ (environ-pairs (.get job "environ" {}))))
+           :environ (environ-pairs (.get job "environ" {}))
+           ;; 途絶しても動かし続けてよい印(#2804 — 移せる先の無い job だけが持つ・無ければ偽 = 古い coordinator の返事も同じ)。
+           :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)))
 
 
 (defk declared-job-specs [jobs]

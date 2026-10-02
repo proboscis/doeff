@@ -30,6 +30,7 @@ class JobSpec:
     env_key: str | None = None
     program: str | None = None
     environ: tuple[tuple[str, str], ...] = ()
+    keep_when_cut_off: bool = False
 
 class JobPhase(Enum):
     PREPARING = "preparing"

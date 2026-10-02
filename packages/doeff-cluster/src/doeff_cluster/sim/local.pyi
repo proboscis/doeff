@@ -132,6 +132,7 @@ class SimWorker:
     ignores_fence: bool = False
     beat_every_ms: int | None = None
     retire_stops: bool = False
+    ignores_keep_marks: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
@@ -305,6 +306,11 @@ class StartWorker(EffectBase[bool]):
 
 @dataclass(frozen=True)
 class CutWorker(EffectBase[None]):
+    name: str
+    seconds: float
+
+@dataclass(frozen=True)
+class StallWorker(EffectBase[None]):
     name: str
     seconds: float
 
