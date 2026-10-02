@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,15 +10,12 @@ VM_PYTHONPATH = str(ROOT / "packages" / "doeff-vm")
 
 
 def _run_python(script: str) -> dict[str, object]:
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        VM_PYTHONPATH if not existing else f"{VM_PYTHONPATH}{os.pathsep}{existing}"
-    )
+    """script を別の Python で走らせ、最後に print した JSON を読むため。子は環境を継ぎ(写さない — 環境を読まない)、
+    doeff-vm の source の置き場を import の道の先頭に、命令の中で足す(#2896)。"""
+    prelude = f"import sys; sys.path.insert(0, {VM_PYTHONPATH!r})\n"
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, "-c", prelude + script],
         cwd=ROOT,
-        env=env,
         capture_output=True,
         text=True,
         check=False,

@@ -7,11 +7,12 @@ the user exactly how to rewrite their command into the Hy-native form.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.cli.cli_child import with_settings
 
 pytestmark = pytest.mark.cli
 
@@ -20,22 +21,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
     command = ["uv", "run", "python", "-m", "doeff", "run", *args]
-    env = {
-        "PYTHONPATH": str(PROJECT_ROOT),
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "DOEFF_DISABLE_DEFAULT_ENV": "1",
-    }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
+    settings = {"PYTHONPATH": str(PROJECT_ROOT), "DOEFF_DISABLE_DEFAULT_ENV": "1"}
     return subprocess.run(
-        command,
+        with_settings(command, settings),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        env=env,
         check=False,
     )
 

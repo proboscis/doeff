@@ -10,11 +10,12 @@ from doeff_core_effects.memo_handlers import memo_handler
 from doeff_core_effects.memo_policy import MemoPolicy, RecomputeCost
 from doeff_core_effects.storage import InMemoryStorage
 
-from doeff import do
+from doeff import Program, do
 from tests._run_helpers import run_with_defaults
 
 
-def _lazy_storage(calls: list) -> tuple:
+def _lazy_storage(calls: list) -> Program[InMemoryStorage]:
+    """記憶の置き場を作る Program(作られるたびに calls に 1 つ印を足す — 何回作られたかを検が数える)。"""
     storage = InMemoryStorage()
 
     @do
@@ -22,7 +23,7 @@ def _lazy_storage(calls: list) -> tuple:
         calls.append(1)
         return storage
 
-    return build(), storage
+    return build()
 
 
 @do
@@ -44,7 +45,7 @@ def _unwrap(result):
 
 def test_lazy_storage_not_resolved_without_memo_effects():
     calls: list = []
-    storage_program, _ = _lazy_storage(calls)
+    storage_program = _lazy_storage(calls)
 
     value = _unwrap(
         run_with_defaults(memo_handler(storage_program, name="lazy")(_no_memo_program()))
@@ -56,7 +57,7 @@ def test_lazy_storage_not_resolved_without_memo_effects():
 
 def test_lazy_storage_resolves_once_on_first_memo_effect():
     calls: list = []
-    storage_program, _ = _lazy_storage(calls)
+    storage_program = _lazy_storage(calls)
 
     value = _unwrap(
         run_with_defaults(memo_handler(storage_program, name="lazy")(_put_then_get("k1", "v1")))
@@ -69,8 +70,8 @@ def test_lazy_storage_resolves_once_on_first_memo_effect():
 def test_lazy_storage_shared_nothing_between_instances():
     calls_a: list = []
     calls_b: list = []
-    program_a, _ = _lazy_storage(calls_a)
-    program_b, _ = _lazy_storage(calls_b)
+    program_a = _lazy_storage(calls_a)
+    program_b = _lazy_storage(calls_b)
 
     @do
     def body():

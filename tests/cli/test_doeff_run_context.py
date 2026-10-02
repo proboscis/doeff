@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from doeff.cli.run_services import DoeffRunContext
+from tests.cli.cli_child import with_settings
 
 pytestmark = pytest.mark.cli
 
@@ -64,22 +64,8 @@ def test_doeff_run_context_exported_from_doeff():
 
 def _run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     command = ["uv", "run", "python", "-m", "doeff", "run", *args]
-    pythonpath = (
-        f"{PROJECT_ROOT}" + (os.pathsep + os.environ.get("PYTHONPATH", ""))
-        if "PYTHONPATH" in os.environ
-        else str(PROJECT_ROOT)
-    )
-    env = {
-        "PYTHONPATH": pythonpath,
-        "PATH": os.environ.get("PATH", ""),
-        "HOME": os.environ.get("HOME", ""),
-        "DOEFF_DISABLE_DEFAULT_ENV": "1",
-    }
-    for key in ("UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "VIRTUAL_ENV", "PYTHONDONTWRITEBYTECODE"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
+    settings = {"PYTHONPATH": str(PROJECT_ROOT), "DOEFF_DISABLE_DEFAULT_ENV": "1"}
     return subprocess.run(
-        command, cwd=PROJECT_ROOT, text=True, capture_output=True,
-        env=env, check=False, input=input_text,
+        with_settings(command, settings), cwd=PROJECT_ROOT, text=True, capture_output=True,
+        check=False, input=input_text,
     )
