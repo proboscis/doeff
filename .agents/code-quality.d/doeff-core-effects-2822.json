@@ -4,6 +4,7 @@
     "packages/doeff-core-effects/tests/test_compute_effects.hy",
     "packages/doeff-core-effects/tests/test_http_failures.hy",
     "packages/doeff-core-effects/tests/test_http_server.hy",
+    "packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy",
     "packages/doeff-core-effects/tests/test_outcome_binds.hy",
     "packages/doeff-core-effects/tests/test_outcomes.hy",
     "packages/doeff-core-effects/tests/test_process_file_effects.hy",
@@ -334,6 +335,7 @@
         "doeff-core-effects-runtime",
         "doeff-core-effects-storage",
         "doeff-hy-frozen",
+        "doeff-hy-static-check",
         "hy-bytecode-import"
       ],
       "layer": "io",
@@ -362,6 +364,7 @@
         "packages/doeff-core-effects/tests/test_latest_contract.hy",
         "packages/doeff-core-effects/tests/test_meter_contract.hy",
         "packages/doeff-core-effects/tests/test_meter_prometheus.hy",
+        "packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy",
         "packages/doeff-core-effects/tests/test_outcome_binds.hy",
         "packages/doeff-core-effects/tests/test_outcomes.hy",
         "packages/doeff-core-effects/tests/test_postgres_statement_cancel.hy",
