@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .types import Issue, WorkflowHandle, WorkflowStatus, Workspace
+    from doeff_conductor.types import Issue, WorkflowHandle, WorkflowStatus, Workspace
 
 
 def _get_state_dir() -> Path:
@@ -75,8 +75,8 @@ class ConductorAPI:
             prepare_workflow_source_for_run,
         )
 
-        from .templates import get_template, is_template
-        from .types import PRHandle, WorkflowHandle, WorkflowStatus
+        from doeff_conductor.templates import get_template, is_template
+        from doeff_conductor.types import PRHandle, WorkflowHandle, WorkflowStatus
 
         # Generate workflow ID
         workflow_id = run_id or secrets.token_hex(4)
@@ -374,7 +374,7 @@ class ConductorAPI:
         status: "list[WorkflowStatus] | None" = None,
     ) -> "list[WorkflowHandle]":
         """List workflows with optional status filter."""
-        from .types import WorkflowHandle
+        from doeff_conductor.types import WorkflowHandle
 
         workflows = []
 
@@ -404,7 +404,7 @@ class ConductorAPI:
 
     def get_workflow(self, workflow_id: str) -> "WorkflowHandle | None":
         """Get workflow by ID or prefix."""
-        from .types import WorkflowHandle
+        from doeff_conductor.types import WorkflowHandle
 
         # Try exact match first
         workflow_dir = self.workflows_dir / workflow_id
@@ -475,7 +475,7 @@ class ConductorAPI:
 
         Returns list of stopped agent names.
         """
-        from .types import WorkflowStatus
+        from doeff_conductor.types import WorkflowStatus
 
         handle = self.get_workflow(workflow_id)
         if handle is None:
@@ -578,8 +578,8 @@ class ConductorAPI:
         workflow_id: str | None = None,
     ) -> "list[Workspace]":
         """List materialized workspaces."""
-        from .handlers.workspace_handler import _get_workspace_base_dir
-        from .types import Workspace
+        from doeff_conductor.handlers.workspace_handler import _get_workspace_base_dir
+        from doeff_conductor.types import Workspace
 
         workspaces = []
         workspace_base = _get_workspace_base_dir()
@@ -645,7 +645,7 @@ class ConductorAPI:
         """
         import shutil
 
-        from .handlers.workspace_handler import _get_workspace_base_dir
+        from doeff_conductor.handlers.workspace_handler import _get_workspace_base_dir
 
         cleaned = []
         workspace_base = _get_workspace_base_dir()
@@ -728,6 +728,4 @@ class ConductorAPI:
 
 
 # Import WorkflowHandle for type hints
-from .types import WorkflowHandle  # noqa: E402
-
-__all__ = ["ConductorAPI"]
+from doeff_conductor.types import WorkflowHandle  # noqa: E402

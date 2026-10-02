@@ -29,8 +29,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .exceptions import ConductorError
-from .types import IssueStatus, WorkflowStatus
+from doeff_conductor.exceptions import ConductorError
+from doeff_conductor.types import IssueStatus, WorkflowStatus
 
 console = Console()
 _CLI_USER_ERROR_TYPES: tuple[type[BaseException], ...] = (
@@ -276,7 +276,7 @@ def run(
         conductor run enforced_pr --issue /path/to/issue.md --watch
         conductor run ./my_workflow.hy --params '{"key": "value"}'
     """
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -289,16 +289,16 @@ def run(
         # Load issue if provided
         issue_obj = None
         if issue:
-            from .handlers.issue_handler import IssueHandler
+            from doeff_conductor.handlers.issue_handler import IssueHandler
 
             handler = IssueHandler()
             issue_path = Path(issue)
             if issue_path.exists():
                 content = issue_path.read_text()
-                from .handlers.issue_handler import _parse_frontmatter
+                from doeff_conductor.handlers.issue_handler import _parse_frontmatter
 
                 frontmatter, _body = _parse_frontmatter(content)
-                from .effects.issue import GetIssue
+                from doeff_conductor.effects.issue import GetIssue
 
                 if frontmatter.get("id"):
                     issue_obj = handler.handle_get_issue(GetIssue(id=frontmatter["id"]))
@@ -344,7 +344,7 @@ def resume_cmd(
     output_json: bool,
 ) -> None:
     """Resume a workflow from its snapshotted source."""
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -384,7 +384,7 @@ def ps_cmd(
         conductor ps
         conductor ps --status running --status blocked
     """
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -510,7 +510,7 @@ def _show_workflow_details(
     workflow_id: str,
     output_json: bool,
 ) -> None:
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -721,7 +721,7 @@ def watch_cmd(
     output_json: bool,
 ) -> None:
     """Watch workflow progress in real-time."""
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -784,12 +784,12 @@ def monitor_cmd(
     progress journal, agent-journal completion truth, and open gates; it never
     mutates run state and never reads agentd pane status as completion.
     """
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     state_dir = ConductorAPI(ctx.obj.get("state_dir")).state_dir
 
     if once:
-        from .monitor import render_dashboard
+        from doeff_conductor.monitor import render_dashboard
 
         try:
             console.print(
@@ -800,7 +800,7 @@ def monitor_cmd(
             sys.exit(1)
         return
 
-    from .monitor_app import MonitorApp
+    from doeff_conductor.monitor_app import MonitorApp
 
     MonitorApp(
         str(state_dir),
@@ -822,7 +822,7 @@ def stop_cmd(
     output_json: bool,
 ) -> None:
     """Stop a workflow or specific agent."""
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -1090,8 +1090,8 @@ def issue_create(
         conductor issue create "Fix bug" --body "Description here"
         conductor issue create "Feature" --body @description.md --labels feature,urgent
     """
-    from .effects.issue import CreateIssue
-    from .handlers.issue_handler import IssueHandler
+    from doeff_conductor.effects.issue import CreateIssue
+    from doeff_conductor.handlers.issue_handler import IssueHandler
 
     handler = IssueHandler()
 
@@ -1134,8 +1134,8 @@ def issue_list(
     output_json: bool,
 ) -> None:
     """List issues."""
-    from .effects.issue import ListIssues
-    from .handlers.issue_handler import IssueHandler
+    from doeff_conductor.effects.issue import ListIssues
+    from doeff_conductor.handlers.issue_handler import IssueHandler
 
     handler = IssueHandler()
 
@@ -1191,8 +1191,8 @@ def issue_show(
     output_json: bool,
 ) -> None:
     """Show issue details."""
-    from .effects.issue import GetIssue
-    from .handlers.issue_handler import IssueHandler
+    from doeff_conductor.effects.issue import GetIssue
+    from doeff_conductor.handlers.issue_handler import IssueHandler
 
     handler = IssueHandler()
 
@@ -1234,8 +1234,8 @@ def issue_resolve(
     output_json: bool,
 ) -> None:
     """Mark an issue as resolved."""
-    from .effects.issue import GetIssue, ResolveIssue
-    from .handlers.issue_handler import IssueHandler
+    from doeff_conductor.effects.issue import GetIssue, ResolveIssue
+    from doeff_conductor.handlers.issue_handler import IssueHandler
 
     handler = IssueHandler()
 
@@ -1275,7 +1275,7 @@ def workspace_list(
     output_json: bool,
 ) -> None:
     """List materialized workspaces."""
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -1325,7 +1325,7 @@ def workspace_cleanup(
     output_json: bool,
 ) -> None:
     """Cleanup orphaned workspace materializations."""
-    from .api import ConductorAPI
+    from doeff_conductor.api import ConductorAPI
 
     api = ConductorAPI(ctx.obj.get("state_dir"))
 
@@ -1375,7 +1375,7 @@ def template_list(
     output_json: bool,
 ) -> None:
     """List available workflow templates."""
-    from .templates import get_available_templates
+    from doeff_conductor.templates import get_available_templates
 
     templates = get_available_templates()
 
@@ -1402,7 +1402,7 @@ def template_list(
 @click.pass_context
 def template_show(ctx: click.Context, name: str) -> None:
     """Show template source code."""
-    from .templates import get_template_source
+    from doeff_conductor.templates import get_template_source
 
     try:
         source = get_template_source(name)

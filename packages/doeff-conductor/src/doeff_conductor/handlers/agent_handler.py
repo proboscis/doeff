@@ -102,10 +102,3 @@ class AgentHandler:
     def handle_agent(self, effect: "AgentEffect") -> object:
         """Handle schema-validated Agent effect via the injected backend."""
         return self._backend.handle_agent(effect, self._resolve_workspace_path)
-
-
-__all__ = [
-    "AgentBackend",
-    "AgentHandler",
-    "AgentdAgentBackend",
-]

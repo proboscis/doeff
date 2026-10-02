@@ -268,19 +268,3 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                         reason="E2E tests disabled. Set CONDUCTOR_E2E=1 or use -m e2e"
                     )
                 )
-
-
-__all__ = [
-    # Helper functions
-    "init_test_repo",
-    "is_e2e_enabled",
-    "is_git_available",
-    # Detection functions
-    "is_opencode_available",
-    # Handler API compatibility
-    "run_sync",
-    # Skip decorators
-    "skip_without_e2e",
-    "skip_without_git",
-    "skip_without_opencode",
-]

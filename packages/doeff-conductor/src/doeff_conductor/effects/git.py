@@ -114,17 +114,3 @@ GitPullEffect = GitPull
 GitDiffEffect = GitDiff
 GitCreatePREffect = GitCreatePR
 GitMergePREffect = GitMergePR
-
-
-__all__ = [
-    "Commit",
-    "CreatePR",
-    "GitCommitEffect",
-    "GitCreatePREffect",
-    "GitDiffEffect",
-    "GitMergePREffect",
-    "GitPullEffect",
-    "GitPushEffect",
-    "MergePR",
-    "Push",
-]
