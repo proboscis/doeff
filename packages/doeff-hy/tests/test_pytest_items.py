@@ -118,3 +118,20 @@ def test_malformed_record_is_refused() -> None:
     """記録の形が違う(版の違う doeff-hy が書いた等)は MalformedRecord で止める(黙って空にしない)。"""
     with pytest.raises(MalformedRecord):
         decode_records(['{"unknown": 1}'])
+
+
+def test_two_meta_maps_after_the_name_are_refused(hy_dir: Path) -> None:
+    """失敗ケース(agora-redesign #2726): 名の後に meta の map が 2 つ並ぶと、2 つ目は黙って本文の式になり、その鍵(:skip-if)が
+    捨てられていた(agora の検で印の map を既存の meta の前に足し、skip が消えて日次で KeyError — #2704)。展開の時に、捨てられる
+    鍵を名指して断る。meta を 1 つの map にまとめた形は今どおり通る。"""
+    split = (
+        "(require doeff-hy.macros [deftest])\n"
+        '(deftest test-split {:marks ["real_world"]} {:skip-if (= 1 1) :skip-reason "never"} (assert False))\n'
+    )
+    with pytest.raises(Exception, match=r"meta の map が 2 つ並んでいる.*:skip-if.*:skip-reason"):
+        _records(hy_dir, "probe_two_meta_maps", split)
+    merged = (
+        "(require doeff-hy.macros [deftest])\n"
+        '(deftest test-merged {:marks ["real_world"] :skip-if (= 1 1) :skip-reason "never"} (assert False))\n'
+    )
+    assert [record.name for record in _records(hy_dir, "probe_one_meta_map", merged)] == ["test_merged"]

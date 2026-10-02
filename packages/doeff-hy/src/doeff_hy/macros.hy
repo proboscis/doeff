@@ -1746,6 +1746,12 @@ the effect in the enclosing do-context.
     ;; Skip string literals (docstrings) at the start
     (when (not (isinstance form hy.models.String))
       (break)))
+  ;; meta の map のすぐ後にもう 1 つ map が並ぶ形は断る(agora-redesign #2726): 以前は 2 つ目を黙って本文の式にし、その鍵
+  ;; (例 :skip-if)が捨てられた — agora の検で印の map を既存の meta の前に足し、skip が消えて日次で KeyError になった(#2704)。
+  ;; 本文の先頭に map の式を置く意味は無いので、meta は 1 つの map にまとめる。
+  (when (and (is-not meta-idx None) (< (+ meta-idx 1) (len body)) (isinstance (get body (+ meta-idx 1)) hy.models.Dict))
+    (raise (SyntaxError (.format "deftest の meta の map が 2 つ並んでいる — 2 つ目の鍵 {} は本文の式として捨てられる。meta は 1 つの map にまとめる"
+                                 (lfor k (cut (get body (+ meta-idx 1)) None None 2) (str k))))))
   (when (is-not meta-idx None)
     (setv meta-dict (get body meta-idx)
           real-body (+ (cut body 0 meta-idx) (cut body (+ meta-idx 1) None)))
