@@ -5,7 +5,7 @@
 ;;; 探すので、doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読み、この宣言を読まない)。
 ;;; 層の置き場(#1988 の決め・移し方 = #2021 / #1976): service(coordinator・worker・record-store)の dir の下に層
 ;;; core / intent / protocol / entry、共有の部品は shared/<層>/、本物の I/O は foundation/。移しは子ごとに進め(#2022 で coordinator の core と
-;;; entry から)、まだ src/doeff_cluster/ に平たく在る module は pyproject.toml で DOEFF114・115 の対象外のまま(#2095 で外す)。
+;;; entry から)、src/doeff_cluster/ の直下に平たく在った最後の 3 file(旧い入口)を 2026-10-03 に消して DOEFF114・115 を効かせた(#2095)。
 ;;;
 ;;; 条と確かめる検:
 ;;;   C1 acknowledged-writes-survive(doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
