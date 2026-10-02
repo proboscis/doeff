@@ -13,11 +13,14 @@ error(critical)は lint-doeff-cluster.sh が doeff-linter の終了コードで�
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
 
 PACKAGE: str = "packages/doeff-cluster"
 BASELINE_NAME: str = "lint-warning-baseline.json"
@@ -145,7 +148,10 @@ def main(argv: list[str]) -> int:
         argv = argv[2:]
     package_dir: Path = top / PACKAGE
     # 基点の置き場を差し替えるのは make の入口の検だけ(偽の linter と空の基点で終了コードの伝わり方を試す)。
-    baseline_file: Path = Path(os.environ.get(BASELINE_ENV) or package_dir / BASELINE_NAME)
+    # 置き場の差し替えは環境変数の値 — os.environ を直に読まず、本物の答え手の下の ReadEnvironment で問う(agora-redesign #3012)。
+    entries = run(with_handlers([subprocess_handler], ReadEnvironment((BASELINE_ENV,))))
+    configured = next((entry.value for entry in entries if entry.name == BASELINE_ENV), None)
+    baseline_file: Path = Path(configured or package_dir / BASELINE_NAME)
     if not argv or argv[0] not in ("check", "lower"):
         print("使い方: doeff_cluster_warning_baseline.py check [path …] | lower", file=sys.stderr)
         return 2

@@ -243,24 +243,13 @@ fn business_code_in_the_build_backend_is_red() {
 
 /// 環境を読む module を 1 つに寄せて層の宣言で外した package(agora-redesign #2860)— doeff の repo の宣言をそのまま一時の repo に
 /// 置いて確かめる: 宣言を書き換えると、ここが赤になる。(宣言の path・寄せた module の path・同じ package のほかの module の path)
-const ENVIRONMENT_PACKAGES: [(&str, &str, &str, &str); 3] = [
-    (
-        "packages/doeff-hy/architecture.hy",
-        include_str!("../../doeff-hy/architecture.hy"),
-        "packages/doeff-hy/src/doeff_hy/env_places.py",
-        "packages/doeff-hy/src/doeff_hy/static_cache.py",
-    ),
+/// doeff-hy と doeff-flow は環境変数を ReadEnvironment の効果で問う形にして層を外した(agora-redesign #3012)ので、表から外した。
+const ENVIRONMENT_PACKAGES: [(&str, &str, &str, &str); 1] = [
     (
         "packages/doeff-effect-analyzer/architecture.hy",
         include_str!("../../doeff-effect-analyzer/architecture.hy"),
         "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/env_places.py",
         "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py",
-    ),
-    (
-        "packages/doeff-flow/architecture.hy",
-        include_str!("../../doeff-flow/architecture.hy"),
-        "packages/doeff-flow/src/doeff_flow/env_places.py",
-        "packages/doeff-flow/src/doeff_flow/trace.py",
     ),
 ];
 
