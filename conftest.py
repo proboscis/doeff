@@ -720,8 +720,10 @@ def _bytecode_settings_pinned():
 # at all when the developer's PYTHONPYCACHEPREFIX took the collection's bytecode
 # elsewhere.  Each such subprocess compiled its Hy modules from source again:
 # 4-9 s per process on zeus, most of test_env_careful.hy's time (agora-redesign
-# #2818, measured 2026-10-02).  A deployed worker has its bytecode baked in, so
-# the time existed only under test.
+# #2818, measured 2026-10-02).  On a deployed worker those subprocesses find
+# bytecode (the runtime-env preparation compiles the code inside an env root, and
+# a job's process may write the rest), so the time existed only under test
+# (agora-redesign #2833).
 #
 # A test whose subprocesses need bytecode asks for ``subprocess_bytecode``: its
 # subprocesses then write and read bytecode in one directory of this run under

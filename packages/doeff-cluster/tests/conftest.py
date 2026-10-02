@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -83,3 +85,39 @@ def served_coordinator(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
     yield url
     process.terminate()
     process.wait(timeout=30)
+
+
+@pytest.fixture(scope="session")
+def job_child_code_store(tmp_path_factory: pytest.TempPathFactory) -> str | None:
+    """実行環境の job の子(丁寧な模擬の rig が本物の子 process で起こす物)が読む Hy の code を、環境の置き場に入れておく。
+
+    本番の job の子は doeff_cluster を root の venv から読み、そこの code は準備が焼くか、最初の子が書く(子は bytecode を書ける)。
+    rig の子は doeff_cluster を root の外の作業木から読み、作業木にも root にも書かない(PYTHONDONTWRITEBYTECODE=1)ので、
+    起きるたびに Hy を source から compile し直していた(1 本 39 file・#2833)。ここで書ける設定の子 1 本が job の子の入口を
+    import し、置き場に足りない Hy の code を足す(.pyc は一時の dir へ)— 本番で最初の子が書く分を、先に 1 本で受け持つ。
+    置き場は環境が決める物(既定は利用者の cache の下)をそのまま使うので、2 回目の実行からは足す物がほぼ無い。置き場が off なら
+    何もしない。子は置き場を source の隣に使える .pyc が無い時だけ見るので、root の中に準備した bytecode を読む道は変わらない。
+
+    返す値は環境の DOEFF_HY_CODE_STORE(無ければ None)。job の子は許可表で絞った環境で起きて、この変数を継がないので、rig が
+    明示の値だけを子へ渡す(None の時は子も HOME から同じ既定の置き場を引く)。
+
+    scope は session: Hy の file の検は Module の node の下に無いので、module の scope を取れない(served_coordinator と同じ)。
+    """
+    import hy  # noqa: F401  - Hy の module を import できるようにする
+
+    from doeff_cluster.worker.protocol.declared import JOB_ENTRY
+
+    configured = os.environ.get("DOEFF_HY_CODE_STORE")
+    if configured is not None and configured.strip() == "off":
+        return configured
+    environment = {
+        name: value for name, value in os.environ.items() if name != "PYTHONDONTWRITEBYTECODE"
+    }
+    environment["PYTHONPYCACHEPREFIX"] = str(tmp_path_factory.mktemp("job-child-code"))
+    subprocess.run(
+        [sys.executable, "-c", f"import hy, {JOB_ENTRY}"],
+        env=environment,
+        check=True,
+        timeout=300,
+    )
+    return configured
