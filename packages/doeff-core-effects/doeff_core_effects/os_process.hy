@@ -13,8 +13,8 @@
 ;;; 子へ SIGTERM → RunProcess の stop-grace 秒の内に(group なら孫も)居なくなるのを待つ → 残れば SIGKILL を送って回収する。子と取り消しの
 ;;; 待ち合わせは ChildWatch(仕事の thread が起こした子を置き、取り消しが取り出す — 子を置く前の取り消しは、置いた仕事の thread が止める)。
 ;;; 止めた子は log の 1 行(logger doeff_core_effects.os_process の warning — argv の頭・pid・止め方)で名指し、計器の答え手を渡した
-;;; metered-offloaded-subprocess-handler では counter process_cancel_terminated_total(SIGTERM で止まった)・process_cancel_killed_total
-;;; (SIGKILL まで要った)に CountMetric で 1 つ数える。数えるのは要求の run の外なので、計器は handler を入れる所が渡す(要求の run の答え手の
+;;; metered-offloaded-subprocess-handler では counter process_cancel_terminated(SIGTERM で止まった)・process_cancel_killed
+;;; (SIGKILL まで要った — 描くと名に _total が付く)に CountMetric で 1 つ数える。数えるのは要求の run の外なので、計器は handler を入れる所が渡す(要求の run の答え手の
 ;;; 積みは届かない)。止める VM は新しいので計器の外側に state を置く — run をまたいで数えが残るのは process に 1 つの置き場の答え手
 ;;; (process-meter-handler)で、1 つの run の中の答え手(memory-meter-handler)を渡しても要求の run の断面には出ない。
 ;;; offloaded-subprocess-handler は計器の無い形(数えず、log にだけ出す — 計器の答え手の無い使い手が「答え手が無い」で落ちない)。
@@ -54,9 +54,10 @@
 ;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
 (val PROCESS-THREADS (ThreadPerCall))
 
-;; 取り消しで止めた子を数える counter の名(頭の註): SIGTERM で止まった数・猶予の後に SIGKILL まで要った数。
-(val CANCEL-TERMINATED-METRIC "process_cancel_terminated_total")
-(val CANCEL-KILLED-METRIC "process_cancel_killed_total")
+;; 取り消しで止めた子を数える counter の名(頭の註): SIGTERM で止まった数・猶予の後に SIGKILL まで要った数。名に _total を付けない —
+;; 描き手(meter_prometheus・doeff-cluster の coordinator の /metrics)が counter の名に _total を足す(#2938)。
+(val CANCEL-TERMINATED-METRIC "process_cancel_terminated")
+(val CANCEL-KILLED-METRIC "process_cancel_killed")
 ;; 取り消しで止めた group に残った process(孫)が居なくなるのを問う間隔(秒)。
 (val GROUP-POLL 0.02)
 
