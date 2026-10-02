@@ -67,7 +67,7 @@
 ;; --- readiness -------------------------------------------------------------------------------
 
 (defn #^ (| StatusRow None) job-status-row [#^ ClusterState state #^ str worker #^ str name]
-  (setv st (.get state.statuses worker))
+  (setv st (.row state.observations.statuses worker))
   (when (is st None) (return None))
   (for [row st.jobs]
     (when (= row.name name) (return row)))
@@ -99,7 +99,7 @@
     (setv unplaced (unplaced-kind now state job timing))
     (return (no "NotReady" (unplaced-not-ready unplaced) (+ "置き先が無い: " (unplaced-text unplaced job)))))
   (setv warming (< (- now state.started-ms) timing.lease-ms)
-        st (.get state.statuses a.worker))
+        st (.row state.observations.statuses a.worker))
   ;; 担い手の報告が古い: 移し替えの期限(reassign-after-ms)の内なら「分からない」(Unknown — 途絶の間。Rollout は失敗と数えない)。
   ;; 期限を過ぎた担い手からは job を他へ移すので NotReady(2026-09-25: 以前は heartbeat が 10 秒途絶えただけで NotReady と言い、
   ;; 書き手が書き先へ書けているのに Rollout が戻しに入りえた)。
@@ -458,7 +458,7 @@
 
 (defn #^ frozenset status-row-names [#^ ClusterState state #^ str worker]
   "worker の最新の報告に載る job の名(退いた process の元の名を含む — service-rows の母集団に入る名)。"
-  (setv st (.get state.statuses worker))
+  (setv st (.row state.observations.statuses worker))
   (if (is st None)
       (frozenset)
       (frozenset (+ (lfor row st.jobs row.name) (lfor row st.jobs :if row.retired-from row.retired-from)))))
@@ -481,7 +481,7 @@
                        (frozenset (gfor m (+ before.keep-marks after.keep-marks)
                                   :if (or (not-in m before.keep-marks) (not-in m after.keep-marks))
                                   m.job)))
-        workers-moved (| (moved-names before.workers after.workers) (moved-names before.statuses after.statuses))
+        workers-moved (| (moved-names before.workers after.workers) (moved-names before.observations.statuses after.observations.statuses))
         all-services (| (frozenset jobs-before) (frozenset jobs-after) (frozenset before.refused) (frozenset after.refused))
         global-moved (or (!= before.started-ms after.started-ms) (is-not before.drains after.drains))
         carried (frozenset (gfor state #(before after)
@@ -755,7 +755,8 @@
           (when (alive now w timing.reassign-after-ms)
             (refuse 409 "生きている worker は忘れられない(移し替えの期限まで沈黙した worker だけ)"))
           (replace state :workers (dfor #(k v) (.items state.workers) :if (!= k name) k v)
-                         :statuses (dfor #(k v) (.items state.statuses) :if (!= k name) k v)))
+                         :observations (replace state.observations
+                                                :statuses (.with-writes state.observations.statuses #((TableWrite name None))))))
     (= kind "Task")
       (do (when (not-in name state.tasks) (refuse 404 (+ "無い Task: " name)))
           (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k name) k v)))

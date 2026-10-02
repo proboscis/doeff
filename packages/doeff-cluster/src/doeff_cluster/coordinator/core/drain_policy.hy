@@ -140,7 +140,7 @@
 
 (defn #^ list live-rows [#^ ClusterState state #^ str worker]
   "worker の最新の報告のうち、まだ動いている job の名(task は数えない — task は drain で移さない)。退いた process は元の名で数える。"
-  (setv st (.get state.statuses worker))
+  (setv st (.row state.observations.statuses worker))
   (sorted (sfor row (if (is st None) #() st.jobs)
                 :setv name (or row.retired-from row.name)
                 :if (and (in row.phase LIVE-PHASES) (not (.startswith name "task/")))

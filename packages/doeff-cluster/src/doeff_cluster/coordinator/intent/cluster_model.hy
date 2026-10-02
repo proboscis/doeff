@@ -376,7 +376,7 @@
 
 
 (defrecord WorkerReport
-  "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
+  "worker 1 つの最新の状態の報告(ClusterObservations.statuses の行 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
    欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。"
   (#^ int at)
@@ -617,11 +617,13 @@
 (defrecord ClusterObservations
   "coordinator が外から読んだ・受けた、保存しない観測の置き場(ClusterState.observations — 上の 2 つの註)。deployments = 「ns/名」→
    Deployment の最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)・readiness = Service の名 →
-   準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順)。"
+   準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順)・statuses = worker の名 →
+   その worker の最新の状態の報告(heartbeat ごとに置き換える — #2904 の前は ClusterState.statuses の写像)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
   (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
-  (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #())))
+  (setv #^ (get Table WorkerReport) statuses (field :default-factory (partial table-of #()))))
 
 
 (defrecord ObservedDeployment
@@ -916,7 +918,6 @@
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
   (setv #^ dict board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
-  (setv #^ dict statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
   (setv #^ tuple events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
   (setv #^ dict meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)

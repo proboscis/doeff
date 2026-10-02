@@ -329,7 +329,7 @@
    期限の延長)を除いて前と同じ。調停はこの 3 つの欄を「生きているか・期限を過ぎたか」でしか読まず、before の調停の時点で生きていて
    期限の内だった物は、延びても同じ判断になる。"
   (setv prev (.get before.workers name) info (.get heard.workers name)
-        old-report (.get before.statuses name) new-report (.get heard.statuses name))
+        old-report (.row before.observations.statuses name) new-report (.row heard.observations.statuses name))
   (and (is-not prev None) (is-not info None) (is-not old-report None) (is-not new-report None)
        (not-in name before.silent)
        (alive now prev timing.lease-ms)
@@ -337,7 +337,9 @@
        (= (replace new-report :at old-report.at) old-report)
        (= (dfor #(k t) (.items heard.tasks) k (replace t :lease-until-ms 0))
           (dfor #(k t) (.items before.tasks) k (replace t :lease-until-ms 0)))
-       (= (replace heard :workers before.workers :statuses before.statuses :tasks before.tasks) before)))
+       (= (replace heard :workers before.workers :tasks before.tasks
+                         :observations (replace heard.observations :statuses before.observations.statuses))
+          before)))
 
 
 (defk respond-legacy [state request body parts now timing [settled False]]
