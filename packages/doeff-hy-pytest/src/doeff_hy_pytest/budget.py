@@ -12,11 +12,10 @@
 - ``doeff_test_budget_registry`` — 上限を超えてよい既存の検の登録簿の dir(rootdir からの相対・1 行 = 1 dir・
   1 つの値の書き方もそのまま読める)。どの dir に載った鍵も赤にしない。上限を超えた文が足し先に挙げるのは 1 行目の dir。
 
-- ``doeff_test_budget_judge`` — 実行の判定に使う物。``seconds``(既定・CPU 秒)か ``steps``(doeff-vm の歩数 — 機体の負荷で
-  揺れない決まった数・agora-redesign #2670)。``steps`` でも CPU 秒は測って報告に出す(移行の間は両方を測る)。戻し方 = ``seconds``。
-- ``doeff_test_call_budget_steps`` — 判定が ``steps`` の時の、検 1 本の実行の上限の歩数(正の整数)。
-- ``doeff_test_budget_steps_registry`` — 歩数の上限を超えてよい既存の検の登録簿の dir(秒の登録簿と分ける — 鍵が同じ nodeid で、
-  秒の登録と数の登録の行き先が混ざらないため)。
+- ``doeff_test_call_budget_steps`` — 検 1 本の実行の上限の doeff-vm の歩数(正の整数 — 機体の負荷で揺れない決まった数・
+  agora-redesign #2670)。在れば実行は歩数で判じ、CPU 秒は測って報告に出すだけ。登録簿は秒の時と同じ dir(載った行は歩数で判じる)。
+  doeff-vm に数の口が無い build・印ごとの秒の上限に当たる検(本物の I/O)は、今までどおり CPU 秒で判じる。歩数が 0 の検
+  (VM を回さず木を読むだけの検)は上限の内。
 
 上限の 3 つ(実行・印ごとの実行・収集)がどれも無ければ何もしない。設計の決め:
 
@@ -74,11 +73,7 @@ MARKER_CALL_BUDGET_INI = "doeff_test_call_budget_by_marker"
 COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
 MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
-JUDGE_INI = "doeff_test_budget_judge"
 CALL_STEPS_INI = "doeff_test_call_budget_steps"
-STEPS_REGISTRY_INI = "doeff_test_budget_steps_registry"
-# 判定に使う物(実行の段階だけ — 収集は Hy の変換と import の重さで、歩数に出ないので秒のまま)。
-Judge = Literal["seconds", "steps"]
 # 判定の単位(上限・登録・文の書き方が分かれる)。
 Unit = Literal["seconds", "steps"]
 
@@ -200,24 +195,13 @@ class Budgets:
     registry: Mapping[str, str]
     registry_dirs: tuple[str, ...]
     vm_build: VmBuild
-    judge: Judge = "seconds"
     call_steps: int | None = None
-    steps_registry: Mapping[str, str] = types.MappingProxyType({})
-    steps_registry_dirs: tuple[str, ...] = ()
     work_source: WorkSource = NoWorkReader("測っていない")
-
-    def registry_dirs_for(self, unit: Unit) -> tuple[str, ...]:
-        """単位ごとの登録簿の dir — 超えた文の足し先を、判定した単位の登録簿にするため。"""
-        match unit:
-            case "seconds":
-                return self.registry_dirs
-            case "steps":
-                return self.steps_registry_dirs
 
     @property
     def judges_steps(self) -> bool:
-        """実行を歩数で判じるか — 判定が steps で、上限があり、数の口がある時だけ(どれかが欠ければ秒で判じる)。"""
-        return self.judge == "steps" and self.call_steps is not None and isinstance(self.work_source, WorkReader)
+        """実行を歩数で判じるか — 歩数の上限があり、数の口がある時だけ(口が無ければ秒で判じる)。"""
+        return self.call_steps is not None and isinstance(self.work_source, WorkReader)
 
     @property
     def fails_over_budget(self) -> bool:
@@ -460,20 +444,11 @@ def _limit_text(budget: float, unit: Unit) -> str:
             return f"歩数 {int(budget)}"
 
 
-def _registry_ini(unit: Unit) -> str:
-    """単位ごとの登録簿の設定の名 — 足し先の dir を名指す文のため。"""
-    match unit:
-        case "seconds":
-            return REGISTRY_INI
-        case "steps":
-            return STEPS_REGISTRY_INI
-
-
 def over_budget_message(verdict: OverBudget, registry_dirs: Sequence[str]) -> str:
     """上限を超えた検の文 — 何秒(何歩)かかったか・上限・直し方を読み手に渡すため(足し先は、その単位の登録簿の 1 行目の dir)。"""
     m = verdict.measurement
     what = "実行(call)" if m.phase == "call" else "読み込み(import)"
-    where = registry_dirs[0] if registry_dirs else f"{_registry_ini(verdict.unit)} で指す dir"
+    where = registry_dirs[0] if registry_dirs else f"{REGISTRY_INI} で指す dir"
     return (
         f"doeff の検の時間の上限を超えた: {m.key} の{what}が {_seconds_text(m)}・上限 {_limit_text(verdict.budget, verdict.unit)}。"
         "検を速くする(模擬の世界を小さくする・待ちを書き込みで起こす)か、直せない理由があれば "
@@ -655,20 +630,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=[],
     )
     parser.addini(
-        JUDGE_INI,
-        "実行の判定に使う物: seconds(CPU 秒・既定)か steps(doeff-vm の歩数 — 負荷で揺れない数)",
-        default="seconds",
-    )
-    parser.addini(
         CALL_STEPS_INI,
-        "判定が steps の時の、Hy の検 1 本の実行の上限の歩数(正の整数・空 = 歩数で判じない)",
+        "Hy の検 1 本の実行の上限の doeff-vm の歩数(正の整数・空 = CPU 秒で判じる)",
         default="",
-    )
-    parser.addini(
-        STEPS_REGISTRY_INI,
-        "歩数の上限を超えてよい既存の検の登録簿の dir(秒の登録簿と分ける・1 行 = 1 dir)",
-        type="linelist",
-        default=[],
     )
 
 
@@ -691,16 +655,6 @@ def _marker_seconds(config: pytest.Config) -> Mapping[str, float]:
             raise pytest.UsageError(message)
         case table:
             return table
-
-
-def _judge(config: pytest.Config) -> Judge:
-    """実行の判定に使う物を読む(戻し方の 1 か所)。語彙の外は止める。"""
-    raw = str(config.getini(JUDGE_INI)).strip()
-    if raw == "seconds":
-        return "seconds"
-    if raw == "steps":
-        return "steps"
-    raise pytest.UsageError(f"{JUDGE_INI} は seconds か steps: {raw!r}")
 
 
 def parse_positive_steps(raw: str) -> int | SettingError:
@@ -746,10 +700,8 @@ def pytest_configure(config: pytest.Config) -> None:
         return
     mode = _mode(config)
     registry_dirs = tuple(str(line) for line in config.getini(REGISTRY_INI))
-    steps_registry_dirs = tuple(str(line) for line in config.getini(STEPS_REGISTRY_INI))
     try:
         registry = load_registries(Path(config.rootpath), registry_dirs)
-        steps_registry = load_registries(Path(config.rootpath), steps_registry_dirs)
     except RegistryError as exc:
         raise pytest.UsageError(str(exc)) from None
     config.stash[_BUDGETS_KEY] = Budgets(
@@ -760,17 +712,16 @@ def pytest_configure(config: pytest.Config) -> None:
         registry,
         registry_dirs,
         read_vm_build(),
-        judge=_judge(config),
         call_steps=call_steps,
-        steps_registry=types.MappingProxyType(steps_registry),
-        steps_registry_dirs=steps_registry_dirs,
         work_source=read_work_source(),
     )
     budgets = config.stash[_BUDGETS_KEY]
-    if budgets.judge == "steps" and not budgets.judges_steps:
-        # 歩数で判じると決めたのに判じられない(上限が無い・数の口が無い)— 黙って秒へ倒さず、名指して秒で判じる。
-        why = budgets.work_source.reason if isinstance(budgets.work_source, NoWorkReader) else f"{CALL_STEPS_INI} が空"
-        warnings.warn(BudgetWarning(f"{JUDGE_INI} = steps だが歩数で判じられない({why})— この走行は CPU 秒で判じる"), stacklevel=1)
+    if budgets.call_steps is not None and isinstance(budgets.work_source, NoWorkReader):
+        # 歩数の上限があるのに数の口が無い build — 黙って秒へ倒さず、名指して秒で判じる。
+        warnings.warn(
+            BudgetWarning(f"{CALL_STEPS_INI} があるが歩数を測れない({budgets.work_source.reason})— この走行は CPU 秒で判じる"),
+            stacklevel=1,
+        )
     counter = CompileCounter()
     counter.install()
     config.stash[_COUNTER_KEY] = counter
@@ -801,7 +752,7 @@ def _record(config: pytest.Config, verdict: Verdict) -> bool:
             if budgets.fails_for(verdict.unit):
                 return True
             warnings.warn(
-                BudgetWarning(over_budget_message(verdict, budgets.registry_dirs_for(verdict.unit))), stacklevel=1
+                BudgetWarning(over_budget_message(verdict, budgets.registry_dirs)), stacklevel=1
             )
             return False
         case RegisteredWithinBudget():
@@ -814,9 +765,9 @@ def _failure_message(verdict: Verdict, budgets: Budgets) -> str:
     """赤にした判定の文(足し先・消す先は、判定した単位の登録簿)。"""
     match verdict:
         case OverBudget():
-            return over_budget_message(verdict, budgets.registry_dirs_for(verdict.unit))
+            return over_budget_message(verdict, budgets.registry_dirs)
         case RegisteredWithinBudget():
-            return stale_registration_message(verdict, budgets.registry_dirs_for(verdict.unit))
+            return stale_registration_message(verdict, budgets.registry_dirs)
         case WithinBudget() | RegisteredOverBudget():
             raise AssertionError(f"赤にしない判定の文を求めた: {verdict}")
 
@@ -904,7 +855,7 @@ def pytest_runtest_makereport(
     # 印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、歩数に重さが出ないので秒で判じる。
     marked = any(name in budgets.call_seconds_by_marker for name in markers)
     if budgets.judges_steps and measured.work is not None and budgets.call_steps is not None and not marked:
-        verdict = judge_steps(measurement, budgets.call_steps, budgets.steps_registry)
+        verdict = judge_steps(measurement, budgets.call_steps, budgets.registry)
     else:
         budget = call_budget_for(markers, budgets.call_seconds_by_marker, budgets.call_seconds)
         if budget is None:
