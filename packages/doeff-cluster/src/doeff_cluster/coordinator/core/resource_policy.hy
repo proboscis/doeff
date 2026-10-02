@@ -18,7 +18,6 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord
                                                        ReportOrigin ReadinessReport MetricsReport])
-(import doeff_cluster.shared.intent.readiness_model [ReportedReadiness])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of])
@@ -170,10 +169,12 @@
 (defk readiness-report [body now]
   {:pre [(: body ReadinessBody) (: now int)] :post [(: % ReadinessReport)] :tags {:context "coordinator" :role "judgment"}}
   "準備の報告の本文を、観測の表 readiness に置く記録にするため。ready・reason・role は fake(readiness-memory)と同じ関数
-   (reported-readiness)で揃える — role = active(仕事をしている)か standby(lease を他が持つ間の待機)。旧い報告は active。"
+   (reported-readiness)で揃える — role = active(仕事をしている)か standby(lease を他が持つ間の待機)。旧い報告は active。
+   reported-readiness の答えは shared の口の形(3 欄の dict — 使い手の検が readiness-memory の記録として読む)のまま受ける。記録の型へ
+   移すのは使い手と同じ版で出す別の単位(#2756 の comment)。"
   (<- origin ReportOrigin (report-origin body now))
-  (<- claim ReportedReadiness (reported-readiness body.ready body.reason body.role))
-  (ReadinessReport :origin origin :ready claim.ready :reason claim.reason :role claim.role))
+  (<- claim dict (reported-readiness body.ready body.reason body.role))
+  (ReadinessReport :origin origin :ready (get claim "ready") :reason (get claim "reason") :role (get claim "role")))
 
 
 (defn #^ dict service-readiness [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing

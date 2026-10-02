@@ -25,7 +25,7 @@
 ;;;
 ;;; 契約の Program が coordinator の側の真実を読む口は検の effect だけ(読む手段だけを解釈器ごとに替える):
 ;;;   BoardSeen          → 盤の行 {鍵: 値}(fake = dict・本物 = MemoryCoordinator の状態の盤)
-;;;   ReportSeen kind    → 最後に残った報告(metrics = 計器の dict・readiness = ReportedReadiness {ready reason role})か None
+;;;   ReportSeen kind    → 最後に残った報告(metrics = 計器の dict・readiness = {ready reason role})か None
 ;;;   TasksSeen          → coordinator の task の行(TaskSeen の tuple — id の順)
 ;;;   WarmsSeen          → coordinator の温める表の行(WarmSeen の tuple — key の順)
 ;;;   SetReachable up    → coordinator へ届くか(本物 = transport が ConnectError を上げる・sim-cluster = coordinator の Pod を止める
@@ -47,7 +47,6 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState MetricsReport ReadinessReport])
-(import doeff_cluster.shared.intent.readiness_model [ReportedReadiness])
 (import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv])
 (import doeff_cluster.shared_handlers [shared-http])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
@@ -163,10 +162,10 @@
 
 
 (defk latest-report [coordinator kind]
-  {:pre [(: coordinator MemoryCoordinator) (: kind str) (in kind #(METRICS READINESS))] :post [(: % (| dict ReportedReadiness None))]
+  {:pre [(: coordinator MemoryCoordinator) (: kind str) (in kind #(METRICS READINESS))] :post [(: % (| dict None))]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "coordinator の状態の観測の表(ClusterState.observations の metrics・readiness — #2756)に最後に残った kind の報告を、fake が記録する
-   形(metrics = 計器の dict・readiness = ReportedReadiness)にして、本物と fake を同じ契約で比べるため。"
+   形(metrics = 計器の dict・readiness = {ready reason role} の dict)にして、本物と fake を同じ契約で比べるため。"
   (val seen coordinator.state.observations)
   (val reports (.row (if (= kind METRICS) seen.metrics seen.readiness) SERVICE))
   (match (if reports (get reports -1) None)
@@ -174,7 +173,7 @@
     (MetricsReport :counters counters :gauges gauges :durations durations)
       {"counters" (dict (.items counters)) "gauges" (dict (.items gauges))
        "durations" (dfor #(name row) (.items durations) name {"sum" row.sum "count" row.count})}
-    (ReadinessReport :ready ready :reason reason :role role) (ReportedReadiness :ready ready :reason reason :role role)))
+    (ReadinessReport :ready ready :reason reason :role role) {"ready" ready "reason" reason "role" role}))
 
 
 (defhandler coordinator-side [#^ MemoryCoordinator coordinator #^ dict line]
