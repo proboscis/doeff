@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen])
+(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark])
 (import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
@@ -438,31 +438,138 @@
   (tuple (gfor job state.jobs :if (> job.replicas 0) job)))
 
 
+;; --- 移せる先の無い job と、途絶しても動かし続けてよい印(#2804) ---------------------------------------------------------
+;; 本番の Service はどれも置ける worker が 1 台しかなく、担い手の途絶(処理の止まり・網の途絶)で置き先を外しても他へ移らず、止めて
+;; 起こし直す損だけが残った(2026-10-02 13:26・13:53)。そこで:
+;;   - 他に置ける worker が無い job は、担い手が移し替えの期限(reassign-after-ms)を過ぎて沈黙しても置き先を外さない(place-jobs の 1)。
+;;   - その job には返事で「途絶しても動かし続けてよい」印を付け(keep-marked・heartbeat-reply)、印を渡した事実を約束(ClusterState.keep-marks)
+;;     として持つ(remember-keep-marks)。worker は印の在る job を fence でも止めない(worker_policy.kept-when-cut-off?)。
+;;   - 約束の在る job は担い手から動かさない(place-jobs の 1・2)— 2 か所で走らない保証を時間の競争(fence < 移し替え)ではなく「移さない」で
+;;     持つ。約束が外れるのは、担い手の今の世代の heartbeat が印を持たないと知らせた時(released-keep-marks — 印の無い返事が届いた後なので、
+;;     その後は fence が効く)か、Worker が消された時(sweep-keep-marks)だけ。返事が届かない担い手からは移さない。
+;;   - 他に置ける worker が在る job は今までどおり: 印を付けず、担い手が期限を過ぎて沈黙したら外して移す(worker は fence で先に止まる)。
+;; 同じ名の worker の新しい世代(Pod の作り直し)の知らせ(印を持たない)では約束を外す(同じ名の置き先を新しい世代へ引き継ぐ今までの
+;; 前提と同じ)。届かない node の上の旧い世代は、印の在る job も長い方の柵(ClusterTiming.keep-fence-ms・240 秒)で止めるので、k8s が
+;; 作り直した新しい世代(早くても約 350 秒後 — 数の前提は ClusterTiming.keep-fence-ms の註)とは重ならない。
+
+
+(defk movable? [now state job holder load timing draining]
+  {:pre [(: now int) (: state ClusterState) (: job ClusterJob) (: holder str) (: load dict) (: timing ClusterTiming) (: draining frozenset)]
+   :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "job を担い手 holder 以外の worker へ今すぐ移せるか(生きていて・条件を満たし・drain 中でなく・空きの在る worker が他に在るか — can-take)を
+   決めるため。移せない job は担い手が沈黙しても置き先を外さず、途絶しても動かし続けてよい印を付ける。load = worker ごとの担っている数。"
+  (any (gfor w (.values state.workers)
+             (and (!= w.name holder) (can-take now state job w load timing draining)))))
+
+
+(defk keep-marked [now state worker timing]
+  {:pre [(: now int) (: state ClusterState) (: worker str) (: timing ClusterTiming)] :post [(: % frozenset)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "worker に置いた job のうち、返事で「途絶しても動かし続けてよい」印を付ける job の名を決めるため: 置き先(並べた置き先 surge は除く)が
+   この worker で、入れ替えでなく(入れ替えの書き手は印が無くても途絶で止めない)、この worker が条件を満たし、他の worker へ今すぐ
+   移せない job。負荷は他に置ける見込みの worker が在る時だけ求める(本番の Service はどれも置ける worker が 1 台なので求めない)。"
+  (val info (.get state.workers worker))
+  (val draining (draining-workers state now))
+  (val mine (if (is info None)
+                #()
+                (tuple (gfor job (active-jobs state)
+                             :setv placed (.get state.placements job.spec.name)
+                             :if (and (is-not placed None) (= placed.worker worker) (not job.spec.handoff) (eligible job info))
+                             job))))
+  (val crowded (any (gfor job mine w (.values state.workers)
+                          (and (!= w.name worker) (alive now w timing.lease-ms) (eligible job w) (not-in w.name draining)))))
+  (val load (if crowded (load-of state state.placements) {}))
+  (var marked #())
+  (for [job mine]
+    (<- free bool (movable? now state job worker load timing draining))
+    (when (not free)
+      (:= marked #(#* marked job.spec.name))))
+  (frozenset marked))
+
+
+(defk held-placements [now state timing]
+  {:pre [(: now int) (: state ClusterState) (: timing ClusterTiming)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "置き先の判断(place-jobs)の 1 段目 — 続けてよい割り当て(job の名 → Placement)を決めるため: 宣言に在り・replicas 1・担い手が知られて
+   いて、次のどれか。
+   - 途絶しても動かし続けてよい印の約束(keep-marks)をこの担い手と持つ(条件・生存・drain を問わない — 担い手が印を持たないと知らせる
+     までは、担い手の上で process が動いているかもしれない)。
+   - 担い手が条件を満たし、drain 中の担い手の上の入れ替えでない job で他へ移せる物でなく(移せるなら止めて移す — 置ける先が無ければ
+     残して空白を作らない・入れ替えの job は drain_policy が並べてから付け替える)、担い手が移し替えの期限の内か、他へ移せない
+     (外しても移らず、止めて起こし直す損だけが残る — #2804)。
+   いまの負荷は「他へ移せるか」の判断だけが読む — drain 中の worker も期限を過ぎて沈黙した担い手も無ければ求めない(#2655 — 調停の
+   1 周ごとの費用)。"
+  (val draining (draining-workers state now))
+  (val stale (any (gfor a (.values state.placements)
+                        :setv w (.get state.workers a.worker)
+                        (and (is-not w None) (not (alive now w timing.reassign-after-ms))))))
+  (val load (if (or draining stale) (load-of state state.placements) {}))
+  (var kept {})
+  (for [job (active-jobs state)]
+    (val current (.get state.placements job.spec.name))
+    (val worker (if (is current None) None (.get state.workers current.worker)))
+    (when (is-not worker None)
+      (val mark (.get state.keep-marks job.spec.name))
+      (val promised (and (is-not mark None) (= mark.worker current.worker)))
+      (val fit (eligible job worker))
+      (val leaving (and (in current.worker draining) (not job.spec.handoff)))
+      (val awake (alive now worker timing.reassign-after-ms))
+      (var free False)
+      (when (and (not promised) fit (or leaving (not awake)))
+        (<- movable bool (movable? now state job current.worker load timing draining))
+        (:= free movable))
+      (when (or promised (and fit (not (and leaving free)) (or awake (not free))))
+        (:= kept (| kept {job.spec.name current})))))
+  kept)
+
+
+(defk released-keep-marks [marks worker held]
+  {:pre [(: marks dict) (: worker str) (: held (| tuple None))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の今の世代の heartbeat が知らせた「今持っている印」(held — None = 欄の無い古い worker = 印を持たない)から、その worker への約束の
+   うち印を持たなくなった job の約束を外すため。worker は最後に届いた返事の印を知らせるので、外す約束の job は印の無い返事が届いた後 —
+   その後の途絶は fence が止める(移し替えより先)。外す物が無ければ同じ写像を返す。"
+  (val holding (frozenset (or held #())))
+  (val kept (dfor #(name mark) (.items marks) :if (or (!= mark.worker worker) (in name holding)) name mark))
+  (if (= (len kept) (len marks)) marks kept))
+
+
+(defk remember-keep-marks [state worker boot held reply now]
+  {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: held (| tuple None)) (: reply HeartbeatReply) (: now int)]
+   :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "heartbeat の返事で印を付けた job を、印を渡した担い手との約束として状態に残すため(返事を送る前に状態と一緒に保存される)。印を知る
+   worker(本文に keptWhenCutOff の欄が在る — held が None でない)だけ — 古い worker は印を読まずに fence で止めるので約束しない。
+   同じ担い手への約束は初めて渡した時刻を保つ。変わらなければ同じ状態を返す。"
+  (val marked (tuple (gfor spec reply.jobs :if spec.keep-when-cut-off spec.name)))
+  (if (or (is held None) (not marked))
+      state
+      (do (val added (dfor name marked
+                           :setv previous (.get state.keep-marks name)
+                           :if (not (and (is-not previous None) (= previous.worker worker) (= previous.boot boot)))
+                           name (KeepMark :job name :worker worker :boot boot
+                                          :since-ms (if (and (is-not previous None) (= previous.worker worker)) previous.since-ms now))))
+          (if added (replace state :keep-marks (| state.keep-marks added)) state))))
+
+
+(defk sweep-keep-marks [state]
+  {:pre [(: state ClusterState)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "消された・忘れた Worker への約束を外すため(Worker の削除は「その worker はもう動いていない」という明示の宣言 — 置き先を他へ移せる)。
+   外す物が無ければ同じ状態を返す。"
+  (if (all (gfor mark (.values state.keep-marks) (in mark.worker state.workers)))
+      state
+      (replace state :keep-marks (dfor #(name mark) (.items state.keep-marks) :if (in mark.worker state.workers) name mark))))
+
+
 (defn #^ dict place-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
   (setv jobs (active-jobs state)
         names (sfor job jobs job.spec.name)
-        draining (draining-workers state now)
-        kept {})
-  ;; 1. 続けてよい割り当てを残す(宣言に在り・replicas 1・条件を満たし・担い手が移し替えの期限内)。
-  ;;    drain 中の worker の上の入れ替えでない job は、他に置ける worker が在る時だけ外す(止めて移す)。置ける先が無ければ残す
-  ;;    (空白を作らない)。入れ替えの job は残す(drain_policy が並べてから付け替える)。
-  ;; いまの負荷は drain 中の worker の上の job を外すかの判断だけが読む — drain 中の worker が無ければ求めない(#2655 — 調停の 1 周
-  ;; ごとの費用)。
-  (setv current-load (if draining (load-of state state.placements) {}))
-  (for [job jobs]
-    (setv current (.get state.placements job.spec.name))
-    (when (is-not current None)
-      (setv worker (.get state.workers current.worker))
-      (when (and (is-not worker None) (eligible job worker)
-                 (alive now worker timing.reassign-after-ms)
-                 (not (and (in current.worker draining) (not job.spec.handoff)
-                           (any (gfor w (.values state.workers)
-                                      (and (!= w.name current.worker)
-                                           (can-take now state job w current-load timing draining)))))))
-        (setv (get kept job.spec.name) current))))
+        draining (draining-workers state now))
+  ;; 1. 続けてよい割り当てを残す(held-placements — 担い手が移し替えの期限内か、他へ移せないか、途絶しても動かし続けてよい印の約束を
+  ;;    持つ。drain 中の担い手の上の入れ替えでない job は、他へ移せる時だけ外す)。
+  (setv kept (run (held-placements now state timing)))
   ;; 2. 担い手の無い job を、生きている worker のうち空きの多い順へ置く(同点は名前順)。
   ;;    どこかの生きた worker がまだその job を動かしている間は置かない(条件が変わって生きた担い手から外した job は、
   ;;    元の担い手が止め終えたと報告してから置く)。drain 中の worker には置かない。
+  ;;    途絶しても動かし続けてよい印の約束の在る job は、約束の担い手にだけ置く(担い手が印を持たないと知らせるまで、担い手の上で
+  ;;    古い宣言の process が動いているかもしれない — 宣言から消えて置き先を外した後に宣言し直した job など・#2804)。
   ;;    drain で並べた置き先(surge)を持つ job は、その置き先へ付け替える(そこで動いている process をそのまま使う — 旧い担い手が
   ;;    沈黙して外れた時)。
   ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。
@@ -476,9 +583,11 @@
       (setv (get result job.spec.name) surge)
       (continue))
     (when (still-live-somewhere now state job.spec.name timing) (continue))
-    (setv candidates (sorted
+    (setv mark (.get state.keep-marks job.spec.name)
+          candidates (sorted
       (lfor w (.values state.workers)
-            :if (can-take now state job w load timing draining)
+            :if (and (can-take now state job w load timing draining)
+                     (or (is mark None) (= w.name mark.worker)))
             w)
       :key (fn [w] #((get load w.name) w.name))))
     (when candidates
@@ -572,7 +681,9 @@
   "担い手の無い job を、なぜ置けないかの種類に分ける — 状態の表示(unplaced-jobs の文)と版の判定(running-process の種類 →
    resource_policy.version-state: 前の担い手を待つのは正常な途中・他の 2 つは待っても進まない)が同じ分け方を読むため。"
   (cond
-    (still-live-somewhere now state job.spec.name timing) UnplacedKind.WAITING-PREVIOUS-HOLDER
+    ;; 途絶しても動かし続けてよい印の約束の在る job は、約束の担い手が印を持たないと知らせるまで他へ置かない(#2804)。
+    (or (still-live-somewhere now state job.spec.name timing) (in job.spec.name state.keep-marks))
+      UnplacedKind.WAITING-PREVIOUS-HOLDER
     (not (any (gfor w (.values state.workers) (and (alive now w timing.lease-ms) (eligible job w)
                                                     (not-in w.name (draining-workers state now))))))
       UnplacedKind.NO-ELIGIBLE-WORKER
@@ -874,7 +985,8 @@
 
 
 (defn #^ ClusterState reconcile [#^ int now #^ ClusterState state #^ ClusterTiming timing]
-  (setv state (forget-silent-workers (sweep-warms (sweep-drains (sweep-board state now) now) now) now))
+  ;; 消された・忘れた Worker への途絶しても動かし続けてよい印の約束は、置き先の判断の前に外す(#2804 — その job を他へ置ける)。
+  (setv state (run (sweep-keep-marks (forget-silent-workers (sweep-warms (sweep-drains (sweep-board state now) now) now) now))))
   ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
   ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
   ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。
@@ -907,6 +1019,7 @@
       (!= before.drains after.drains) (!= before.surges after.surges)
       (!= before.warms after.warms)
       (!= before.handoffs after.handoffs)
+      (!= before.keep-marks after.keep-marks)
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
@@ -975,8 +1088,11 @@
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name (WorkerReport :at now :endpoint body.endpoint
                                                                :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
+  ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
+  ;; 上で抜けるので約束に触らない)。
   (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
-                                         info)))
+                                         info)
+                 :keep-marks (run (released-keep-marks state.keep-marks name body.kept-when-cut-off))))
 
 
 (defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
@@ -1085,7 +1201,12 @@
   ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
   ;; formats = 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
   ;; revision = この返事を作った時の coordinator の版(#1933): worker は次の変化を GET /watch?after=<この版> で待つ。
-  (HeartbeatReply :jobs (tuple (jobs-for state name ready-instances)) :tasks (tasks-for state name boot) :warm (warms-for state name now)
+  ;; keepWhenCutOff = 他へ移せない job に付ける「途絶しても動かし続けてよい」印(#2804 — keep-marked)。印を渡した事実は呼び手が
+  ;; remember-keep-marks で約束として状態に残す。
+  (setv marked (run (keep-marked now state name timing)))
+  (HeartbeatReply :jobs (tuple (gfor spec (jobs-for state name ready-instances)
+                                     (if (in spec.name marked) (replace spec :keep-when-cut-off True) spec)))
+                  :tasks (tasks-for state name boot) :warm (warms-for state name now)
                   :timing timing :draining (in name state.drains) :superseded False :formats (tuple ACCEPTED-FORMATS)
                   :revision state.revision))
 

@@ -27,9 +27,10 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                                                WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
+(import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS ClusterTiming])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
+(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus])
 (import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
@@ -60,6 +61,9 @@
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
           self.fence-ms fence-ms self.statuses []
+          ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 返事の timing の keep_fence_ms が上書きする。
+          ;; 欄の無い返事 = 古い coordinator は印も付けないので、この既定が使われる事は無い)。
+          self.keep-fence-ms (. (ClusterTiming) keep-fence-ms)
           self.task-dir task-dir self.versions (or versions {})
           ;; 詰めた Program の cache(/programs/<sha> から取る — 子 process の言い換えと同じ state dir の programs・改訂 1 の F)。
           self.program-dir (os.path.join (os.path.dirname (os.path.abspath task-dir)) "programs")
@@ -315,9 +319,11 @@
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
   (setv state.watch.woken False)
   (val endpoint (get cell.route.urls cell.route.active))
+  ;; 今持っている印 = 最後に届いた返事の job の印(#2804 — coordinator はこれで印の約束を外す)。
+  (<- kept tuple (keep-marks-held state.last-jobs))
   (val body (| (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
                                :capacity state.capacity :versions state.versions :statuses sending
-                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools)
+                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept)
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
                    (env-heartbeat-part state.env-report (current-platform)))))
@@ -333,6 +339,9 @@
     (val timing (.get answered "timing"))
     (when (and timing (in "fence_ms" timing))
       (setv state.fence-ms (int (get timing "fence_ms"))))
+    ;; 印の在る job の長い方の柵(#2804)も同じく受け取る。
+    (when (and timing (in "keep_fence_ms" timing))
+      (setv state.keep-fence-ms (int (get timing "keep_fence_ms"))))
     (<- jobs tuple (declared-job-specs (get answered "jobs")))
     (setv state.last-jobs jobs)
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
@@ -353,7 +362,7 @@
       (<- (told-once state (repr error) (+ "worker: coordinator に名乗れない: " (repr error))))
       ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
       (setv state.last-desired None)
-      (:= desired (desired-when-unreachable (- now-ms state.last-ok-ms) state.fence-ms
+      (:= desired (desired-when-unreachable (- now-ms state.last-ok-ms) state.fence-ms state.keep-fence-ms
                                             (+ state.last-jobs state.last-tasks) state.last-warm (repr error)))))
   desired)
 
