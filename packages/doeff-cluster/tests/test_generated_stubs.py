@@ -61,6 +61,8 @@ USED = (
     UsedModule("worker.core.policy", ("plan", "records-after", "statuses")),
     UsedModule("coordinator.core.cluster_policy", ("IMAGE-FOLLOW-KEYS", "spec-of-declaration")),
     UsedModule("coordinator.entry.main", ("load-state",)),
+    # 子 process の入口(根の job_entry.pyi が読み直していた main — 根の旧い入口を消した後、今の置き場に宣言が無かった)。
+    UsedModule("worker.entry.job_entry", ("main",)),
     UsedModule("coordinator.protocol.cluster_json", ("naming-from-json",)),
     UsedModule("coordinator.core.program", ("run-coordinator",)),
     # coordinator の状態と Rollout の宣言の型(#2907 — 手書きの cluster_model.pyi を道具の出力へ置き換えた)。
