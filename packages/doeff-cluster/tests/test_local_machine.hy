@@ -6,9 +6,16 @@
 ;;;   - 筋書きが例外で終わっても同じく 1 つも残らない。
 ;;; 失敗ケース: 止め(StopProcess)に「止めた」と答えるだけで止めない壊した答え手を挟むと、終わった後に process が残る
 ;;; (残った process は検の後片づけで SIGKILL する)。
+;;;
+;;; 契約の effect への答え(#3032): 準備の状態(無い Service は Missing)・worker を落とす(1 回目は 1・2 回目は 0)・coordinator を止めて
+;;; 作り直す(coordinator の log の起動の行が 2 つ・作り直した後も /state を読める)・網を切る / 固める / 5xx は MachineCannotAnswer。
+;;; 失敗ケース: StopCoordinator に何もせず答える壊した答え手を挟むと、起動の行は 1 つのまま。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "entry"})
 (import os)
+(import collections.abc [Callable])
+(import dataclasses [dataclass])
 (import signal)
 (import socket)
 (import pathlib [Path])
@@ -21,8 +28,10 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [StopProcess ProcessExited])
 (import doeff_time [async-time-handler])
-(import doeff_cluster.sim.local [SimWorker ReadCoordinator])
-(import doeff_cluster.sim.machine [LocalMachine local-machine-cluster machine-answers machine-run coordinator-url])
+(import doeff_cluster.shared.intent.cluster_control [ReadinessOf KillWorker StopCoordinator])
+(import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
+(import doeff_cluster.sim.machine [LocalMachine MachineCell MachineCannotAnswer local-machine-cluster machine-answers machine-run
+                                   coordinator-url])
 
 (val WORKER "w-local")
 
@@ -82,15 +91,49 @@
     (resume (ProcessExited :pid pid :exit-code 0))))
 
 
-(defk run-with-stop-ignored [scenario machine]
-  {:pre [(: scenario (| Program EffectBase)) (: machine LocalMachine)] :post [(: % "scenario の答え")]
+;; 壊した答え手: StopCoordinator に何もせずに答える(coordinator を止めて作り直すのを忘れた手元の 1 台の代役)。
+(defhandler coordinator-stop-ignored
+  (StopCoordinator [seconds]
+    (resume None)))
+
+
+(defk run-with-broken [scenario machine broken]
+  {:pre [(: scenario (| Program EffectBase)) (: machine LocalMachine) (: broken Callable)] :post [(: % "scenario の答え")]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "local-machine-cluster と同じ組で、StopProcess の答え手だけを壊した物に差し替えて走らせるため(失敗ケース)。"
+  "local-machine-cluster と同じ組で、1 つの effect の答え手だけを壊した物(一番内側)に差し替えて走らせるため(失敗ケース)。"
   (<- url str (coordinator-url machine))
+  (val cell (MachineCell))
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler) (http-production-handler) subprocess-handler
-                                        os-file-handler (machine-answers url) stop-ignored]
-                          (machine-run scenario machine))))
+                                        os-file-handler (machine-answers url cell machine) broken]
+                          (machine-run scenario cell machine))))
   answer)
+
+
+(defrecord ContractAnswers
+  "筋書き contract-answers の答え: missing = 宣言していない Service の準備の状態・first-kill / second-kill = 同じ worker を 2 度落とした
+   数・workers-after = coordinator を作り直した後の /state の worker の名。"
+  (#^ str missing)
+  (#^ int first-kill)
+  (#^ int second-kill)
+  (#^ (get tuple #(str ...)) workers-after))
+
+
+(defk contract-answers []
+  {:pre [] :post [(: % ContractAnswers)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 契約の effect(準備の状態・worker を落とす・coordinator を止めて作り直す)を順に出し、答えを並べるため。"
+  (<- ready (ReadinessOf "not-declared"))
+  (<- first-kill int (KillWorker WORKER))
+  (<- second-kill int (KillWorker WORKER))
+  (<- (StopCoordinator 0.5))
+  (<- state (ReadCoordinator "/state"))
+  (ContractAnswers :missing ready.state :first-kill first-kill :second-kill second-kill
+                   :workers-after (tuple (sorted (.get state "workers" {})))))
+
+
+(defk coordinator-starts [tmp-path]
+  {:pre [(: tmp-path Path)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "coordinator の log の起動の行(「… で受けます」— 起きるたびに 1 行)を数えるため(作り直しを数える)。"
+  (.count (.read-text (/ tmp-path "coordinator" "coordinator.log") :encoding "utf-8") "で受けます"))
 
 
 (deftest test-a-local-machine-starts-a-coordinator-and-a-worker-and-stops-both-at-the-end [tmp-path]
@@ -111,8 +154,37 @@
 
 (deftest test-a-counterexample-that-only-answers-stop-leaves-processes-behind [tmp-path]
   (<- machine LocalMachine (machine-of tmp-path))
-  (<- names (run-with-stop-ignored (registered-workers) machine))
+  (<- names (run-with-broken (registered-workers) machine stop-ignored))
   (<- left tuple (leftover tmp-path))
   (<- (kill-leftover left))
   (assert (= names #(WORKER)) names)
   (assert (> (len left) 0) "止めを答えるだけの壊した答え手でも process が残らない — 検が止めを見ていない"))
+
+
+(deftest test-a-local-machine-answers-readiness-kills-a-worker-and-remakes-the-coordinator [tmp-path]
+  (<- machine LocalMachine (machine-of tmp-path))
+  (<- answers ContractAnswers (local-machine-cluster (contract-answers) :machine machine))
+  (assert (= answers.missing "Missing") answers)
+  (assert (= #(answers.first-kill answers.second-kill) #(1 0)) answers)
+  ;; 落とした worker は coordinator の作り直しの後も、置き場の行として名が残る(sim の KillWorker と同じく、lease が切れるまでは居る)。
+  (assert (in WORKER answers.workers-after) answers)
+  (<- starts int (coordinator-starts tmp-path))
+  (assert (= starts 2) starts)
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+(deftest test-a-local-machine-refuses-to-cut-stall-or-fail-routes [tmp-path]
+  (<- machine LocalMachine (machine-of tmp-path))
+  (with [_ (pytest.raises MachineCannotAnswer :match "CutWorker")]
+    (! (local-machine-cluster (CutWorker WORKER 1.0) :machine machine)))
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+(deftest test-a-counterexample-that-does-not-remake-the-coordinator-starts-it-only-once [tmp-path]
+  (<- machine LocalMachine (machine-of tmp-path))
+  (<- answers ContractAnswers (run-with-broken (contract-answers) machine coordinator-stop-ignored))
+  (<- starts int (coordinator-starts tmp-path))
+  (assert (= answers.missing "Missing") answers)
+  (assert (= starts 1) "StopCoordinator に何もせず答える壊した答え手でも起動の行が 2 つ — 検が作り直しを見ていない"))
