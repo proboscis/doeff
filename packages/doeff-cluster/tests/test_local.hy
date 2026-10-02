@@ -32,7 +32,8 @@
                                                                  PlacementSeen WorkerGone places-only-on-reachable
                                                                  ProcessSpan WorkerCapacity running-within-capacity
                                                                  JobNeeds WorkerAbility placed-only-where-eligible
-                                                                 JobProcess moves-to-a-live-worker])
+                                                                 JobProcess moves-to-a-live-worker
+                                                                 WorkerExclusive exclusive-workers-take-only-their-jobs])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
@@ -710,6 +711,28 @@
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
                                                           :claims-provides (frozenset ["gpu" "cluster-net"])))))
   (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
+  (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
+
+
+(val GPU-EXCLUSIVE #((WorkerExclusive :worker "g1" :exclusive (frozenset ["gpu"]))))
+
+
+(deftest test-an-exclusive-worker-takes-no-job-that-does-not-need-its-ability
+  ;; 条 C10(architecture.hy の :invariants): gpu を専用の能力に持つ worker しか居なければ、gpu を要らない beacon はそこへ置かれない。
+  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+                                    :workers #((SimWorker :name "g1" :provides (frozenset ["cluster-net" "gpu"])
+                                                          :exclusive (frozenset ["gpu"])))))
+  (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
+  (assert (= wrong #()) #(wrong placements)))
+
+
+(deftest test-a-counterexample-worker-that-hides-its-exclusive-ability-breaks-c10
+  ;; 条 C10 の失敗ケース: heartbeat で専用の能力を名乗らない壊れた worker(SimWorker の claims-exclusive = 空)では、coordinator が gpu を
+  ;; 要らない beacon をそこへ置き、条 C10 の判断がその置き先を名指す(本当の専用の能力は gpu)。
+  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+                                    :workers #((SimWorker :name "g1" :provides (frozenset ["cluster-net" "gpu"])
+                                                          :exclusive (frozenset ["gpu"]) :claims-exclusive (frozenset)))))
+  (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
   (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
 
 
