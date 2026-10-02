@@ -4,6 +4,8 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
+from doeff import EffectBase as EffectBase
+from doeff import Program as Program
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import Wait as Wait
@@ -74,10 +76,10 @@ class LawBroken(AssertionError):
 class LawHarness:
     as_writer: Callable
 
-def require_law(holds: bool, law: str, detail: str) -> None:
+def require_law(holds: bool, law: str, detail: str) -> _Program[None, object]:
     ...
 
-def as_writer(harness: LawHarness, writer: str, program: Incomplete) -> Incomplete:
+def as_writer[T](harness: LawHarness, writer: str, program: Program[T, object] | EffectBase[T]) -> _Program[T, object]:
     ...
 
 def collect_changes(harness: LawHarness, tables: tuple, cursor: WatchCursor, limit: int) -> _Program[tuple, object]:
