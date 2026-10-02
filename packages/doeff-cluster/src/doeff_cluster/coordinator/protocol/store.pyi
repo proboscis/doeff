@@ -5,15 +5,18 @@ store.hy は Hy の module なので、pyright は中を読めず、名が全部
 ここで型を宣言する(request_bodies.pyi と同じ形)。
 
 - Persist は凍った dataclass の EffectBase[None](欄 writes = 変わったキーごとの書き TableWrite — value は新しい値・消えたキーは None・#2722)。
-  置き場の口 DurableStore.persist は今までどおり差分(キー → 新しい値)を受ける。
-- DurableStore は置き場の形(persist の口だけ)。
+- 置き場は 2 つの形の閉じた和 DurableStore(#2785):
+  ByteLog    = file の置き場(foundation/wal_store の WalStore)— byte の I/O だけを持つ。行と写しの形は durable-* の口が綴り・検める。
+  DeltaStore = memory の置き場(entry の MemoryWalStore と、それを継いだ模擬の壊れた置き場)— 差分と表をそのまま受け渡す。
+- durable-exists・durable-load・durable-persist・durable-checkpoint は置き場の形を切り分けて読み書きする defk(Program を返す)。
 - durable-states は handler の値。wal-store と memory-store は置き場を受けて handler を返す関数(handler の型は Any)。
 """
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
 
-from doeff import EffectBase
+from doeff import EffectBase, Program
 from doeff_hy.table import TableWrite
 
 MODULE_TAGS: dict[str, str]
@@ -22,10 +25,36 @@ MODULE_TAGS: dict[str, str]
 class Persist(EffectBase[None]):
     writes: tuple[TableWrite[object], ...]
 
-class DurableStore(Protocol):
+@runtime_checkable
+class ByteLog(Protocol):
+    kv: dict[str, object]
+    seq: int
+    max_log_bytes: int
+    snapshot: Path
+    log: Path
+    def exists(self) -> bool: ...
+    def check_place(self) -> None: ...
+    def read_snapshot_bytes(self) -> bytes | None: ...
+    def read_log_lines(self) -> list[bytes]: ...
+    def drop_tail(self, good: int, dropped: int, reason: str) -> None: ...
+    def append_line(self, line: bytes) -> int: ...
+    def write_snapshot(self, data: bytes) -> None: ...
+
+@runtime_checkable
+class DeltaStore(Protocol):
+    kv: dict[str, object]
+    def exists(self) -> bool: ...
+    def load(self) -> dict[str, object]: ...
     def persist(self, delta: dict[str, object]) -> None: ...
+    def checkpoint(self) -> None: ...
+
+DurableStore = ByteLog | DeltaStore
 
 durable_states: Any
 
+def durable_exists(store: DurableStore) -> Program[bool, Any]: ...
+def durable_load(store: DurableStore) -> Program[dict[str, object], Any]: ...
+def durable_persist(store: DurableStore, delta: dict[str, object]) -> Program[None, Any]: ...
+def durable_checkpoint(store: DurableStore) -> Program[None, Any]: ...
 def wal_store(store: DurableStore) -> Any: ...
 def memory_store(log: list[dict[str, object]]) -> Any: ...
