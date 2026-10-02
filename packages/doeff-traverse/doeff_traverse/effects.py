@@ -24,7 +24,7 @@ while ``__init__`` was unannotated, and Collection once annotated).
 """
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, Generic, Never, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
 
 from doeff_vm import EffectBase
 
@@ -71,7 +71,14 @@ class Traverse(EffectBase[Collection]):
     Args:
         f: callable, item -> DoExpr
         items: iterable of items
+
+    The handlers run each Program ``f`` builds where the Traverse was performed (they put
+    the inner handlers and themselves back around it), so ``f`` is declared in
+    ``__doeff_runs_carried__``: a closure check reads ``f``'s body at the performing site
+    (agora-redesign #2973).
     """
+
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"f"})
 
     def __init__(self, f: Callable[..., object], items: Iterable[object], label: str | None = None) -> None:
         super().__init__()
@@ -95,7 +102,12 @@ class Reduce(EffectBase[_Acc], Generic[_Acc]):
         f: kleisli arrow, (acc, item) -> DoExpr[acc]
         init: initial accumulator value
         collection: a Collection (from Traverse) or plain iterable
+
+    Like Traverse, the handlers run each Program ``f`` builds where the Reduce was
+    performed, so ``f`` is declared in ``__doeff_runs_carried__`` (agora-redesign #2973).
     """
+
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"f"})
 
     def __init__(self, f: Callable[..., object], init: _Acc, collection: Iterable[object]) -> None:
         super().__init__()

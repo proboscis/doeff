@@ -36,6 +36,10 @@ generator function):
   runs its Program under the same handlers (``Spawn``) or elsewhere
   (``RemoteJob``) is the carrier's semantics, so carried Programs are reported
   separately with their own effect sets; callers choose which to fold in.
+- ``E(..., fn, ...)`` where ``fn`` is a function filling a field ``E`` declares in
+  ``__doeff_runs_carried__`` (``Traverse(f, items)`` — its handler calls ``f`` for each
+  item) → a carried Program: ``fn``'s body, read where it was written.  The handler's
+  ``effect.f(item)`` then adds nothing where the handler is read.
 - doeff-vm control values (``Resume``, ``Transfer``, ``Pass`` …) are not effects.
 
 Anything the reader cannot follow (a yielded local variable, a call whose target
@@ -1185,9 +1189,9 @@ class _Scope:
     # A local assigned on several paths, none reading it (Hy's ``match`` / ``cond`` as an
     # expression: ``_hy_anon_1 = …`` once per branch) → every value it may hold.
     local_choices: dict[str, tuple[ast.expr, ...]] = field(default_factory=dict)
-    # A local bound once and then only rebound to a call that wraps it (``prog = h(prog)``
-    # — handlers put back around a Program) → what it was first bound to.
-    local_rewraps: dict[str, ast.expr] = field(default_factory=dict)
+    # A local first bound on each path it is bound on and then only rebound to a call that
+    # wraps it (``prog = h(prog)`` — handlers put back around a Program) → those first values.
+    local_rewraps: dict[str, tuple[ast.expr, ...]] = field(default_factory=dict)
     # A local bound by one destructuring assignment and nothing else → where it was unpacked from.
     local_unpacked: dict[str, _Unpacked] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
@@ -1286,12 +1290,34 @@ class _Scope:
         ``effect.<attr>`` (``program = effect.program`` — what ``defhandler`` expands a
         clause's field pattern to), or first bound to it and then only wrapped in
         handlers (``prog = effect.program`` … ``prog = h(prog)`` — ``try_handler``
-        puts the inner handlers back around the Program it received)."""
-        value = self.local_values.get(name, self.local_rewraps.get(name))
-        if not isinstance(value, ast.Attribute) or _reads_itself(value, name):
+        puts the inner handlers back around the Program it received).  A first value may
+        also be the Program a declared function field builds (``prog = effect.f(item)`` —
+        doeff-traverse's ``sequential``, agora-redesign #2973), and a local first bound on
+        several paths holds a field only when every first value does."""
+        if name in self.local_values:
+            seeds: tuple[ast.expr, ...] = (self.local_values[name],)
+        else:
+            seeds = self.local_rewraps.get(name, ())
+        fields = [self._seed_field(seed, name) for seed in seeds]
+        if not fields or any(found is UNBOUND for found in fields):
             return UNBOUND
-        field_value = self.resolve(value)
-        return field_value if isinstance(field_value, ReceivedField) else UNBOUND
+        return fields[0]
+
+    def _seed_field(self, seed: ast.expr, name: str) -> Imported:
+        """``effect.<attr>`` → that field; ``effect.<attr>(…)`` for a function field the
+        effect declares in ``__doeff_runs_carried__`` → that field (the Program it builds is
+        read where the effect was performed); anything else → ``UNBOUND``."""
+        if _reads_itself(seed, name):
+            return UNBOUND
+        match seed:
+            case ast.Attribute():
+                found = self.resolve(seed)
+                return found if isinstance(found, ReceivedField) else UNBOUND
+            case ast.Call(func=func):
+                built = self.resolve(func)
+                return built if _builds_carried(built) else UNBOUND
+            case _:
+                return UNBOUND
 
     def _local_instance(self, name: str) -> Any:
         """``runtime = SomeClass(...)`` → an instance of ``SomeClass`` (for its methods)."""
@@ -1529,7 +1555,7 @@ class _BodyFacts:
     local_functions: dict[str, FunctionNode]
     elements: dict[str, ast.expr]
     choices: dict[str, tuple[ast.expr, ...]]
-    rewraps: dict[str, ast.expr]
+    rewraps: dict[str, tuple[ast.expr, ...]]
     unpacked: dict[str, _Unpacked]
     rebound: frozenset[str]
 
@@ -1598,9 +1624,9 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         if len(exprs) > 1 and name not in loops and not any(_reads_itself(e, name) for e in exprs)
     }
     rewraps = {
-        name: seed
+        name: seeds
         for name, exprs in assigned.items()
-        if len(exprs) > 1 and (seed := _rewrapped_seed(exprs, name)) is not None
+        if len(exprs) > 1 and (seeds := _rewrapped_seeds(exprs, name))
     }
     places = [place for node in _body_nodes(function) for place in _unpacked_places(node)]
     times = collections.Counter(place.name for place in places)
@@ -1640,25 +1666,59 @@ def _unpacked_places(node: ast.AST) -> tuple[_Unpacked, ...]:
             return ()
 
 
-def _rewrapped_seed(exprs: Sequence[ast.expr], name: str) -> ast.expr | None:
-    """The first value of a local every other assignment of which wraps it
+def _rewrapped_seeds(exprs: Sequence[ast.expr], name: str) -> tuple[ast.expr, ...]:
+    """The first values of a local every other assignment of which wraps it
     (``prog = effect.program`` · ``prog = h(prog)`` · ``prog = try_handler(prog)``), or
-    None.  A wrapping call takes the local as its one argument and reads it nowhere
-    else (not in its callee)."""
-    seeds = [expr for expr in exprs if not _reads_itself(expr, name)]
+    ().  A wrapping call takes the local as its one argument and reads it nowhere else
+    (not in its callee).  A local first bound on several paths (one per branch — the
+    Traverse and Reduce clauses of doeff-traverse's ``sequential``) has a first value for
+    each."""
+    seeds = tuple(expr for expr in exprs if not _reads_itself(expr, name))
     wraps = [expr for expr in exprs if _reads_itself(expr, name)]
-    if len(seeds) != 1 or not all(_wraps(expr, name) for expr in wraps):
-        return None
-    return seeds[0]
+    if not seeds or not wraps or not all(_wraps(expr, name) for expr in wraps):
+        return ()
+    return seeds
 
 
 def _wraps(expr: ast.expr, name: str) -> bool:
-    """``f(name)`` / ``(f x)(name)`` with ``name`` read only as the one argument."""
+    """``f(name)`` / ``(f x)(name)`` with ``name`` read only as the one argument, or
+    ``f(g(name))`` — wraps put around a wrap (``prog = try_handler(install_self(prog))``)."""
     match expr:
         case ast.Call(args=[ast.Name(id=argument)], keywords=[], func=func):
             return argument == name and not _reads_itself(func, name)
+        case ast.Call(args=[ast.Call() as inner], keywords=[], func=func):
+            return _wraps(inner, name) and not _reads_itself(func, name)
         case _:
             return False
+
+
+def _builds_carried(value: Imported) -> bool:
+    """A field of the received effect holding a function its handler calls to build the
+    Program it runs where the effect was performed — declared in ``__doeff_runs_carried__``
+    (doeff-traverse's ``Traverse.f``).  The Program a call of it builds is read at the
+    performing site (``_Reader._carried_builder``), so performing it in the handler adds
+    nothing (agora-redesign #2973)."""
+    if not isinstance(value, ReceivedField):
+        return False
+    effects = importlib.import_module("doeff_core_effects.effects")
+    return value.attr in effects.runs_carried_of(value.cls)
+
+
+def _declared_builders(carrier: Imported, call: ast.Call) -> tuple[ast.expr, ...]:
+    """The arguments of ``call`` that fill a field ``carrier`` declares in
+    ``__doeff_runs_carried__`` — matched to the parameter names of its constructor."""
+    if not _is_effect_class(carrier):
+        return ()
+    effects = importlib.import_module("doeff_core_effects.effects")
+    declared = effects.runs_carried_of(carrier)
+    if not declared:
+        return ()
+    names = list(inspect.signature(carrier).parameters)
+    leading = itertools.takewhile(lambda a: not isinstance(a, ast.Starred), call.args)
+    return (
+        *(argument for name, argument in zip(names, leading, strict=False) if name in declared),
+        *(keyword.value for keyword in call.keywords if keyword.arg in declared),
+    )
 
 
 def _unshadowed(table: dict[str, Any], shadowed: frozenset[str]) -> dict[str, Any]:
@@ -1974,7 +2034,22 @@ def _do_block(call: ast.Call, scope: _Scope) -> FunctionNode | None:
     ``_install_guard_globals(_doeff_do(<local def or lambda>))()`` runs that body there."""
     if call.args or call.keywords or not isinstance(call.func, ast.Call):
         return None
-    wrapped = call.func
+    match _do_wrapped(call.func, scope):
+        case ast.Lambda() as node:
+            return node
+        case ast.Name() as name:
+            local = scope.resolve(name)
+            return local.node if isinstance(local, _LocalFunction) else None
+        case _:
+            return None
+
+
+def _do_wrapped(expr: ast.expr, scope: _Scope) -> ast.expr | None:
+    """The function ``_doeff_do(<local def or lambda>)`` wraps — what ``(do! …)`` calls in
+    place, and what ``for/do`` hands to ``Traverse`` as its ``f`` — or None."""
+    if not isinstance(expr, ast.Call):
+        return None
+    wrapped = expr
     if (
         len(wrapped.args) == 1
         and isinstance(wrapped.args[0], ast.Call)
@@ -1983,14 +2058,8 @@ def _do_block(call: ast.Call, scope: _Scope) -> FunctionNode | None:
         wrapped = wrapped.args[0]
     if len(wrapped.args) != 1 or scope.resolve(wrapped.func) is not _do_decorator():
         return None
-    match wrapped.args[0]:
-        case ast.Lambda() as node:
-            return node
-        case ast.Name():
-            local = scope.resolve(wrapped.args[0])
-            return local.node if isinstance(local, _LocalFunction) else None
-        case _:
-            return None
+    function = wrapped.args[0]
+    return function if isinstance(function, (ast.Lambda, ast.Name)) else None
 
 
 def _bound_operand(expr: ast.expr, scope: _Scope) -> ast.expr:
@@ -2377,7 +2446,9 @@ class _Reader:
         *,
         skip: frozenset[_Identity] = frozenset(),
     ) -> None:
-        """Programs handed to ``carrier`` in ``call`` (those the callee runs itself skipped)."""
+        """Programs handed to ``carrier`` in ``call`` (those the callee runs itself skipped),
+        and the Program a function handed in a field ``carrier`` declares in
+        ``__doeff_runs_carried__`` builds (``Traverse(f, items)`` — ``f``'s body)."""
         for argument in (*call.args, *(keyword.value for keyword in call.keywords)):
             location = Location(filename, getattr(argument, "lineno", 0))
             for program in self._carried_programs(argument, scope):
@@ -2386,6 +2457,32 @@ class _Reader:
                 body = _Facts()
                 self._performed_passed(program, body)
                 facts.carried.append(_Carried(carrier, body, _label_of(program), location))
+        facts.carried.extend(
+            built
+            for argument in _declared_builders(carrier, call)
+            if not self._carried_programs(argument, scope)
+            and (built := self._carried_builder(carrier, argument, scope, filename)) is not None
+        )
+
+    def _carried_builder(
+        self, carrier: Imported, argument: ast.expr, scope: _Scope, filename: str
+    ) -> _Carried | None:
+        """A function ``carrier`` calls to build the Program it runs where it was performed
+        (``Traverse``'s ``f``): its body is that Program, read where the function was
+        written with its parameters unbound — a ``do``-wrapped local def or lambda (what
+        ``for/do`` expands to), a local def or lambda, or a Program function.  A value the
+        reader cannot read as a function is not carried, as before (agora-redesign #2973)."""
+        location = Location(filename, getattr(argument, "lineno", 0))
+        function = _do_wrapped(argument, scope) or argument
+        value = _argument_value(function, scope)
+        if isinstance(value, _LocalFunction):
+            body = _Facts()
+            self._local_call(value, ast.Call(func=function, args=[], keywords=[]), scope, body)
+        elif (program := _function_of(value)) is not None and self.is_program(program):
+            body = _Facts(calls=[_Call(program, _NO_BINDINGS, location)])
+        else:
+            return None
+        return _Carried(carrier, body, ast.unparse(argument), location)
 
     def _carried_programs(
         self, argument: ast.expr, scope: _Scope
@@ -2442,12 +2539,15 @@ class _Reader:
 def _adds_nothing(expr: ast.expr, scope: _Scope) -> bool:
     """A yielded value whose performing adds nothing here: ``None``, or the Program the
     received effect carried (``yield effect.program`` — read where the effect was
-    performed, see ``ReceivedField``)."""
+    performed, see ``ReceivedField``), or the Program a function field it declares in
+    ``__doeff_runs_carried__`` builds (``yield effect.f(item)`` — see ``_builds_carried``)."""
     match expr:
         case ast.Constant(value=None):
             return True
         case ast.Name() | ast.Attribute():
             return isinstance(scope.resolve(expr), ReceivedField)
+        case ast.Call(func=func):
+            return _builds_carried(scope.resolve(func))
         case _:
             return False
 
