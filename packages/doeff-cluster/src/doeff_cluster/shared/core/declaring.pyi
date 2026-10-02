@@ -6,7 +6,8 @@ from doeff_cluster.shared.core.runtime_env import checked_declaring_checkout as 
 from doeff_cluster.shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnvInvalid as RuntimeEnvInvalid
 from doeff_cluster.shared.core.service_rules import foundation_needs_refusal as foundation_needs_refusal
+from doeff_cluster.shared.intent.service_model import RecordArgument as RecordArgument
 from doeff_cluster.shared.intent.service_model import System as System
 
-def declaring_refusal(build: Callable, foundation: Callable, system: System, revision: str) -> _Program[str | None, object]:
+def declaring_refusal(build: Callable, foundation: Callable | RecordArgument, system: System, revision: str) -> _Program[str | None, object]:
     ...

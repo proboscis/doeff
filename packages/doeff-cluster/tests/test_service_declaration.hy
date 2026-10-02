@@ -491,3 +491,17 @@
       (service-rules.foundation-needs-refusal (lab-record (PairFoundation :main plain-foundation :side wide-foundation :step 2))
                                               plain-foundation))
   (assert (and (is-not refused None) (in "wide_foundation" refused) (in "tally" refused)) refused))
+
+
+(deftest test-a-foundation-record-given-as-the-foundation-is-checked-against-its-needs
+  ;; 宣言の道具が系の引数の型の値(土台の関数を欄に持つ record)を土台そのものとして渡しても、record の欄の土台の :needs を検める
+  ;; (#3030 — 型から本番の土台を引く道具は関数でなく record を渡す)。job の呼び出しの形に record が載っていない系でも見落とさない。
+  (import tests.fixtures.declared_system [wide-foundation])
+  (val narrow (system-of "two" #((job "tally" (two-foundations-job plain-foundation plain-foundation)
+                                      :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {})
+                                      :needs #{"cluster-net"}))))
+  (<- ok (| str None) (service-rules.foundation-needs-refusal narrow PAIR))
+  (assert (is ok None) ok)
+  (<- refused (| str None)
+      (service-rules.foundation-needs-refusal narrow (PairFoundation :main plain-foundation :side wide-foundation :step 2)))
+  (assert (and (is-not refused None) (in "wide_foundation" refused)) refused))

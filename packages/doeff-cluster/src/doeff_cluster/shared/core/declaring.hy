@@ -11,14 +11,15 @@
 (import doeff_cluster.shared.core.runtime_env [checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.service_rules [foundation-needs-refusal])
-(import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster.shared.intent.service_model [RecordArgument System])
 
 
 (defk declaring-refusal [build foundation system revision]
-  {:pre [(: build Callable) (: foundation Callable) (: system System) (: revision str)] :post [(: % (| str None))]
+  {:pre [(: build Callable) (: foundation (| Callable RecordArgument)) (: system System) (: revision str)] :post [(: % (| str None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "宣言してよいかを検めて、断る理由の文を返すため(よければ None — 頭の註の 2 つ)。build = 系の関数(その module の file の在る
-   checkout を読む)・foundation = 土台の関数・system = build に foundation を渡した系。"
+   checkout を読む)・foundation = 系に渡した土台(土台の関数か、土台の関数を欄に持つ record — 型から本番の土台を引く宣言の道具が
+   record を渡す・#3030)・system = build に foundation を渡した系。"
   (<- needs (| str None) (foundation-needs-refusal system foundation))
   ;; build は呼べる関数なので、その module は読み込み済み — 名から import し直さず sys.modules から引く(#1692)。
   (val source (getattr (.get sys.modules build.__module__) "__file__" None))
