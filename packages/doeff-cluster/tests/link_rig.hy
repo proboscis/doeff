@@ -12,6 +12,7 @@
 (import doeff [EffectBase Program run with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
@@ -77,7 +78,8 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "program(defk を呼んだ結果の Program か effect)を rig の口の handler と検の答え手の下で回し、その答えを返すため(scheduler は呼び手が
    被せる — LinkRig の method は (run (scheduled …)) で 1 回走らせる)。"
-  (<- answer (with-handlers [(await-handler) (transport-http rig.transport) os-file-handler slog-handler (sync-time-handler)
+  ;; 環境変数の読み(ReadEnvironment — 準備の file の名 DOEFF_WORKER_READY_FILE)は本番の worker の入口と同じ本物の subprocess-handler(#3014)。
+  (<- answer (with-handlers [(await-handler) (transport-http rig.transport) os-file-handler subprocess-handler slog-handler (sync-time-handler)
                              (coordinator-link rig.state rig.cell LINK-ROUTE rig.watch-cell)]
                             program))
   answer)

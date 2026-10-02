@@ -6,9 +6,10 @@
 ;;; module が remote_model 経由で os・pathlib を読んでいた)。呼ぶのは送り手と受け側の入口と io の handler だけで、
 ;;; 宣言の組み立て(service_build.system-declaration)には呼び手がこの値を渡す。環境変数の置き場も呼び手が渡す(process の入口と宿の
 ;;; handler は os.environ・sim の送り手は空 — 旧い current-versions は #2766 で消した)。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Mapping])
+(import os)
 (import functools [cache])
 (import hashlib)
 (import importlib.metadata)
@@ -61,3 +62,11 @@
   ;; 比べる(remote_model.version-diffs)。
   (val key (.get environ RUNTIME-ENV-KEY-VAR ""))
   {#** (_installed-versions) #** (if key {"envKey" key} {})})
+
+
+(defk this-process-versions []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "この process の版の識別を、この process の環境変数から綴るため — 宿を持たない呼び手(手元の道具の送り手・宣言の道具・子の入口の
+   突き合わせ)が使う。os.environ の読みを foundation の層に閉じる(入口と protocol の層は os.environ に触らない — DOEFF106・#3014)。"
+  (<- versions dict (process-versions os.environ))
+  versions)
