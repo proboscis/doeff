@@ -200,9 +200,10 @@
   ;; 約束は保存する(鍵 keep/<名>)— coordinator を置き場から作り直しても、印を渡した担い手から job を他へ移さない。
   (<- mark KeepMark (promise-to "a" "w1"))
   (val state (ClusterState :keep-marks #(mark)))
-  (val kv (full-kv state))
+  (<- kv dict (full-kv state))
   (assert (in "keep/a" kv) kv)
-  (assert (= (. (state-from-kv kv 5000) keep-marks) #(mark))))
+  (<- back ClusterState (state-from-kv kv 5000))
+  (assert (= back.keep-marks #(mark))))
 
 
 (deftest test-a-worker-keeps-a-marked-job-through-a-two-minute-cut-and-stops-an-unmarked-one-after-the-fence

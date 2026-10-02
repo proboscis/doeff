@@ -133,7 +133,7 @@
 (deftest test-entry-6-a-raw-entry-service-row-is-read-as-refused-from-the-state-file-and-the-durable-kv
   ;; 入口 6(生の entry の job): 読み直しは落ちず、生の entry の行を RefusedJob(元の行と理由)にする — worker に直に起こさせない。
   (<- data dict (saved-with-raw-entry-row))
-  (for [state [(state-from-json data 5000) (state-from-kv (full-kv (state-from-json data 5000)) 5000)]]
+  (for [state [(! (state-from-json data 5000)) (! (state-from-kv (! (full-kv (! (state-from-json data 5000)))) 5000))]]
     (assert (= (lfor j state.jobs j.spec.name) ["new"]) state.jobs)
     (val refused (get state.refused "raw"))
     (assert (isinstance refused RefusedJob) state.refused)
@@ -145,27 +145,27 @@
 
 (deftest test-entry-6-an-old-service-row-in-the-state-file-is-read-as-refused
   (<- data dict (saved-with-old-row))
-  (val state (state-from-json data 5000))
+  (val state (! (state-from-json data 5000)))
   (<- ok bool (check-refused-state state))
   (assert ok)
   ;; 保存し直しても元の行のまま残り、読み直しても同じ理由で受け付けない。
   (val again (state-to-json state))
   (assert (in {"name" "old"} (lfor r (get again "jobs") {"name" (get r "name")})))
-  (<- still bool (check-refused-state (state-from-json again 6000)))
+  (<- still bool (check-refused-state (! (state-from-json again 6000))))
   (assert still))
 
 
 (deftest test-entry-6-an-old-service-row-in-the-durable-kv-is-read-as-refused
   (<- data dict (saved-with-old-row))
-  (val kv (full-kv (state-from-json data 5000)))
+  (val kv (! (full-kv (! (state-from-json data 5000)))))
   (assert (= (get kv "service/old" "run") OLD-RUN) "refused の行は元の行のまま durable KV に書く")
-  (<- ok bool (check-refused-state (state-from-kv kv 5000)))
+  (<- ok bool (check-refused-state (! (state-from-kv kv 5000))))
   (assert ok))
 
 
 (deftest test-entry-6-a-refused-service-is-shown-replaced-by-put-and-deleted
   (<- data dict (saved-with-old-row))
-  (val state (state-from-json data 5000))
+  (val state (! (state-from-json data 5000)))
   ;; GET /resources/Service に status.refused が出る(spec は元の行のまま)。
   (<- listed tuple (call state "GET" "/resources/Service" None 5000))
   (val items (dfor item (get listed 2 "items") (get item "name") item))
@@ -223,8 +223,8 @@
   ;; 入口 7(task の行): 今の TaskRecord に無い欄(env)を持つ旧い行でも、読み直しは落ちない(実弾 2026-09-28 の予行 — 3880944e の
   ;; 行の env で TypeError になり coordinator が起きなかった)。終わった行はそのまま読み、まだ終わっていない行は failed と理由。
   (<- rows dict (old-task-rows))
-  (val kv (| (full-kv (ClusterState)) rows))
-  (val state (state-from-kv kv 5000))
+  (val kv (| (! (full-kv (ClusterState))) rows))
+  (val state (! (state-from-kv kv 5000)))
   (val done (get state.tasks "t1"))
   (val pending (get state.tasks "t2"))
   (assert (= #(done.phase done.result) #("finished" "done")) done)
@@ -245,7 +245,7 @@
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "読み直しで行を捨てる、または行の無い版の記録を持つ durable KV: 旧い形の worker w1 の行(labels だけ)とその版の記録・行の無い
    Service s1 の版の記録。"
-  (| (full-kv (ClusterState))
+  (| (! (full-kv (ClusterState)))
      {"worker/w1" {"name" "w1" "capacity" 4 "labels" {"host" "w1" "role" "agent"} "versions" {} "lastSeenMs" 100}
       "meta/Worker/w1" STALE-META
       "meta/Service/s1" STALE-META}))
@@ -262,7 +262,7 @@
 
 (deftest test-a-worker-dropped-by-the-reload-registers-again-under-the-same-name
   (<- kv dict (store-with-dropped-rows))
-  (val state (state-from-kv kv 5000))
+  (val state (! (state-from-kv kv 5000)))
   (assert (not-in "w1" state.workers) "旧い形の worker の行は読まない")
   (<- beat tuple (call state "POST" "/heartbeat"
                        {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "capacity" 1 "versions" {}
@@ -276,7 +276,7 @@
 (deftest test-a-service-whose-row-is-gone-but-whose-version-record-stayed-is-declared-again
   ;; 種類を問わない: 行の無い版の記録が残っていても、同じ名の新しい形の Service を作れる。
   (<- kv dict (store-with-dropped-rows))
-  (val state (state-from-kv kv 5000))
+  (val state (! (state-from-kv kv 5000)))
   (<- made tuple (call state "POST" "/resources/Service" {"name" "s1" "spec" ROW} 6000))
   (assert (= (get made 1) 201) made)
   (<- fresh bool (created-afresh (get made 0) "Service/s1" "c-me" 6000))
@@ -287,7 +287,7 @@
   ;; 読み直しで受け付けない行(RefusedJob)になった旧い Service は、同じ名の新しい形の POST で受け付けた job に置き換わる(版の記録は
   ;; 同じ資源の続き — 行は前の状態に在った)。
   (<- data dict (saved-with-old-row))
-  (val state (state-from-kv (full-kv (state-from-json data 5000)) 5000))
+  (val state (! (state-from-kv (! (full-kv (! (state-from-json data 5000)))) 5000)))
   (val before (get state.meta "Service/old"))
   (<- run dict (program-run "m:g" 1))
   (<- made tuple (call state "POST" "/resources/Service" {"name" "old" "spec" (| ROW {"run" run})} 6000))

@@ -37,7 +37,7 @@
   (:= s (get reply-2 0))
   (assert (= (expiry-of s) {"w/process/atlas/7" 61000}))
   ;; 期限は行と一緒に保存し、読み直しで戻る
-  (setv back (state-from-kv (full-kv s) 2000))
+  (setv back (! (state-from-kv (! (full-kv s)) 2000)))
   (assert (= (expiry-of back) {"w/process/atlas/7" 61000}))
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (call s "GET" "/state" None 60000))
@@ -85,7 +85,7 @@
   (:= status (get reply-8 1))
   (assert (= status 200))
   ;; 行の数の上限
-  (setv many (replace (ClusterState) :board (board-rows-of (dfor i (range BOARD-MAX-ROWS) (str i) 1) {})))
+  (setv many (replace (ClusterState) :board (! (board-rows-of (dfor i (range BOARD-MAX-ROWS) (str i) 1) {}))))
   (val reply-9 (put many "new" 1))
   (:= status (get reply-9 1))
   (assert (= status 507))
@@ -96,7 +96,7 @@
 
 (deftest test-board-usage-is-measured-again-on-load-and-exposed-as-metrics
   (setv #(s _ _) (put (ClusterState) "a" {"k" "日本語"}))
-  (setv back (state-from-kv (full-kv s) 2000))
+  (setv back (! (state-from-kv (! (full-kv s)) 2000)))
   (assert (= (board-usage back) (board-usage s)))
   (assert (= (. (board-usage back) bytes) (value-size {"k" "日本語"})))
   (setv text (metrics-text back 2000 T))

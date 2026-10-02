@@ -684,7 +684,7 @@
   (var s (get reply-24 0))
   (val reply-25 (beat s "w" 1000 :boot "new"))
   (:= s (get reply-25 0))
-  (var again (state-from-kv (full-kv s) 2000))
+  (var again (! (state-from-kv (! (full-kv s)) 2000)))
   (assert (= #((. (get again.workers "w") boot) (. (get again.workers "w") retired)) #("new" #("old"))))
   ;; 読み直した後も、旧い世代の heartbeat は新しい世代を押しのけない。
   (val reply-26 (beat again "w" 2100 :boot "old"))
@@ -766,7 +766,7 @@
   (var s (get reply-39 0))
   (val reply-40 (beat s "w" 100 :boot "new" :boot-at 2000))
   (:= s (get reply-40 0))
-  (for [again [(state-from-kv (full-kv s) 200) (state-from-json (json.loads (json.dumps (state-to-json s))) 200)]]
+  (for [again [(! (state-from-kv (! (full-kv s)) 200)) (! (state-from-json (json.loads (json.dumps (state-to-json s))) 200))]]
     (setv w (get again.workers "w"))
     (assert (= #(w.boot w.retired w.boot-at) #("new" #("old") 2000)) w)
     ;; 読み直した後も、一度も見ていない古い世代は起動時刻で古いと分かる(名乗りとして受けない)。
@@ -774,9 +774,9 @@
     (assert (get reply "superseded") reply)
     (assert (= (. (get again.workers "w") boot) "new")))
   ;; 起動時刻の欄の無い旧い形の置き場は、起動時刻を知らない(初めて見た順へ落とす)。
-  (setv kv (full-kv s))
+  (setv kv (! (full-kv s)))
   (del (get kv "worker/w" "bootAt"))
-  (assert (is (. (get (. (state-from-kv kv 200) workers) "w") boot-at) None)))
+  (assert (is (. (get (. (! (state-from-kv kv 200)) workers) "w") boot-at) None)))
 
 
 ;; --- 置き場を失った coordinator と走っている切り離した task(2026-09-27 — #757)----------------------------
@@ -913,10 +913,10 @@
   (assert (!= (get reply "task") id) #(reply id))
   (assert (= fresh.task-prefix "t1e240-") fresh.task-prefix)
   ;; 頭は保存と読み直しで戻る(state JSON と durable kv)。
-  (assert (= (. (state-from-kv (full-kv fresh) 0) task-prefix) "t1e240-"))
-  (assert (= (. (state-from-json (json.loads (json.dumps (state-to-json fresh))) 0) task-prefix) "t1e240-"))
+  (assert (= (. (! (state-from-kv (! (full-kv fresh)) 0)) task-prefix) "t1e240-"))
+  (assert (= (. (! (state-from-json (json.loads (json.dumps (state-to-json fresh))) 0)) task-prefix) "t1e240-"))
   ;; 以前からの置き場(頭の欄が無い)は今までどおり t<番号>。
-  (assert (= (. (state-from-kv (full-kv (ClusterState)) 0) task-prefix) "t")))
+  (assert (= (. (! (state-from-kv (! (full-kv (ClusterState))) 0)) task-prefix) "t")))
 
 
 (deftest test-an-echo-without-revision-is-not-adopted-and-the-heartbeat-is-answered [tmp-path]
@@ -986,7 +986,7 @@
   (var reply (get reply-64 2))
   (val reply-65 (beat s "w" 1000 :statuses [{"name" (+ "task/" (get reply "task")) "phase" "finished" "result" "R" "detail" ""}]))
   (:= s (get reply-65 0))
-  (setv again (state-from-kv (full-kv s) 2000))
+  (setv again (! (state-from-kv (! (full-kv s)) 2000)))
   (assert (= again.tasks s.tasks))
   (setv #(_ _ view) (call again "GET" "/detached/job-6" 2000))
   (assert (= (get view "result") "R"))
@@ -1076,7 +1076,7 @@
   (assert (all (gfor item task.needs (isinstance item str))))
   (assert (= task.versions #((ComponentVersion "doeff" "1") (ComponentVersion "python" "3.14.0"))))
   (assert (all (gfor item task.versions (isinstance item ComponentVersion))))
-  (setv again (get (. (state-from-kv (full-kv reply.state) 0) tasks) task.id))
+  (setv again (get (. (! (state-from-kv (! (full-kv reply.state)) 0)) tasks) task.id))
   (assert (= again task))
   (assert (= again.needs #("cluster-net" "x-tool"))))
 
