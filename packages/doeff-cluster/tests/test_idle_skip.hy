@@ -4,6 +4,9 @@
 ;; - 模擬の時計では、要求が無ければ次に状態の変わる拍まで一気に進む(1 秒ごとに起きない)。
 ;; - 本番の受付(http-requests)は材料 idle を読まず、拍の間隔は 1 秒のまま。skip-idle でない模擬の列も 1 秒ごと。
 ;; - 同じ筋書きを 1 秒ごとの拍と飛ばす拍で回すと、置き場への書きの列・coordinator の一生・process の列が一致する(判断の刻が同じ)。
+;; - 系全体の静かな区間(worker の拍が状態を変えず、heartbeat が静かな早道に入り、coordinator の歩が生存の印のほか何も変えない間)も、
+;;   切り離した task の lease・宣言し直し・worker の死・coordinator の止まりを挟んで、1 拍ずつ進めた走りと同じ判断を同じ刻に下す
+;;   (#2781 — 下の「系全体の静かな区間」の節)。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -18,10 +21,12 @@
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
-                             SimWorker])
+                             SimWorker Redeclare])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited DetachedSucceeded])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.sim_programs [quitters beacons])
+(import tests.fixtures.sim_programs [quitters quitters-v2 beacons slow-task sim-task-foundation NET])
 (import tests.test_local_rollout [reverse-scenario DEPLOYMENTS WORKERS :as ROLLOUT-WORKERS])
 (import tests.clock_fixtures [clock-at])
 
@@ -183,5 +188,45 @@
   ;; (Rollout の拍が読む・出す拍は飛ばさない — idle_policy.rollout-quiet の None の枝)。
   (<- every Trace (trace-of (beacons sim-foundation) (reverse-scenario) False :workers ROLLOUT-WORKERS :deployments DEPLOYMENTS))
   (<- skipped Trace (trace-of (beacons sim-foundation) (reverse-scenario) True :workers ROLLOUT-WORKERS :deployments DEPLOYMENTS))
+  (<- breaches list (same-decisions every skipped))
+  (assert (= breaches []) breaches))
+
+
+;; --- 系全体の静かな区間(#2781): worker の拍も一度に進める ------------------------------------------------------------
+;; 模擬の時計の下(skip-idle)では、worker の拍が状態を変えず・heartbeat が静かな早道に入り・coordinator の歩が生存の印のほか何も
+;; 変えない区間を、本番の判断の関数で試して一度に進める(飛ばした拍の生存の印は、本番で拍が届いたのと同じ刻で積む)。1 拍ずつ進めた
+;; 走り(skip-idle 偽 — coordinator の 1 秒ごとの拍と、worker の 10 秒ごとの拍と heartbeat)と、判断とその刻が同じ。
+
+(val QUIET-SECONDS 60.0)    ; 出来事の間の静かな区間の長さ(拍 10 秒の worker 2 台に、heartbeat が 6 回ずつ届く長さ)
+
+
+(defk quiet-stretches []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 静かな区間をはさんで、切り離した task(lease 60 秒・40 秒眠る)・宣言し直し・worker w1 の死・coordinator の 5 秒の止まりを
+   順に入れ、task の答え・一生・process・盤の行を読むため(飛ばしてよい拍と、状態を変える拍の両方を含む)。"
+  (<- (Delay 30.0))
+  (<- (submit-detached-task (slow-task sim-task-foundation 40.0) :key "stretch" :needs NET :name "slow" :lease-seconds 60.0))
+  (<- answer DetachedAwaited (AwaitDetached "stretch" :timeout-seconds 120.0))
+  (<- (Delay QUIET-SECONDS))
+  (<- (Redeclare (quitters-v2 sim-foundation)))
+  (<- (Delay QUIET-SECONDS))
+  (<- (KillWorker "w1"))
+  (<- (Delay QUIET-SECONDS))
+  (<- (StopCoordinator 5.0))
+  (<- (Delay QUIET-SECONDS))
+  (<- runs tuple (CoordinatorRuns))
+  (<- processes tuple (ProcessesOf "quitter"))
+  (<- rows dict (SharedRows "quit/"))
+  #(answer runs processes rows))
+
+
+(deftest test-a-quiet-system-keeps-every-decision-at-the-same-tick
+  ;; 1 拍ずつ進めた走りと、静かな区間を一度に進める走りで、置き場への書きの列(判断とその刻)・task の答え・coordinator の一生・
+  ;; process の列・盤の行が一致する。task は lease の内に終わる(飛ばした拍の生存の印と lease の延長が、本番と同じ刻で積まれる)。
+  (<- every Trace (trace-of (quitters sim-foundation) (quiet-stretches) False :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-stretches) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (assert (is-not every.answer None) "走りは答えを返している")
+  (assert (isinstance (get every.answer 0) DetachedSucceeded) every.answer)
+  (assert (= (len (get every.answer 1)) 2) every.answer)
   (<- breaches list (same-decisions every skipped))
   (assert (= breaches []) breaches))
