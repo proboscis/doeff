@@ -54,6 +54,9 @@ class KubeCalls(Protocol):
     def annotate(self, namespace: str, name: str, annotations: dict) -> None:
         ...
 
+    def in_background(self, work: Callable[[], None]) -> Callable[[], bool]:
+        ...
+
 @dataclass(frozen=True, kw_only=True)
 class KubeBodyRead:
     name: str
@@ -69,7 +72,7 @@ class KubeReadBatch:
     nodes: tuple[str, ...]
     started_ms: int
     named: Incomplete
-    done: Incomplete
+    finished: Callable[[], bool]
     deployment_results: tuple[KubeBodyRead | KubeReadFailed, ...]
     node_results: tuple[KubeBodyRead | KubeReadFailed, ...]
 
@@ -80,6 +83,9 @@ class KubeReadBatch:
         ...
 
     def read_with(self, read_deployment: Callable[[str], OpaqueJson], read_node: Callable[[str], OpaqueJson]) -> None:
+        ...
+
+    def read_now(self, read_deployment: Callable[[str], OpaqueJson], read_node: Callable[[str], OpaqueJson]) -> None:
         ...
 
 class KubeReadBatches:

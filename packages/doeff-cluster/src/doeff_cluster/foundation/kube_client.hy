@@ -7,6 +7,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import pathlib [Path])
+(import threading)
 (import typing [Callable])
 (import httpx)
 (import doeff_hy.json_value [OpaqueJson])
@@ -69,4 +70,11 @@
     (.call self "PATCH" (.path self namespace name)
            :content-type "application/merge-patch+json"
            :content (.encode (json.dumps {"metadata" {"annotations" annotations}}) "utf-8"))
-    None))
+    None)
+
+  (defn #^ (get Callable #([] bool)) in-background [self #^ (get Callable #([] None)) work]
+    "読みの束(coordinator/protocol/kube の KubeReadBatch)を調停ループの外の daemon の thread で読み、終わったかを答える関数を返すため
+     (同期の client が scheduler の thread を塞がない — #2807)。work が返った後に終わった印を立てる。"
+    (setv done (threading.Event))
+    (.start (threading.Thread :target (fn [] (work) (.set done)) :name "kube-reads" :daemon True))
+    done.is-set))

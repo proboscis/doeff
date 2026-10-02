@@ -14,7 +14,6 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable Mapping])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import threading)
 (import typing [Protocol])
 (import doeff_hy.wire [parse Malformed])
 (import doeff_hy.json_value [OpaqueJson])
@@ -67,7 +66,9 @@
   (defn #^ OpaqueJson node-labels [self #^ str node] (raise NotImplementedError))  ; 答え = Node の metadata.labels
   (defn #^ OpaqueJson read [self #^ str namespace #^ str name] (raise NotImplementedError))  ; 答え = Deployment の object
   (defn #^ int scale [self #^ str namespace #^ str name #^ int replicas #^ bool dry-run] (raise NotImplementedError))
-  (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations] (raise NotImplementedError)))
+  (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations] (raise NotImplementedError))
+  ;; 読みの束を調停ループの外の thread で読ませる(同期の client が scheduler の thread を塞がない)。答え = 終わったかを答える関数。
+  (defn #^ (get Callable #([] bool)) in-background [self #^ (get Callable #([] None)) work] (raise NotImplementedError)))
 
 
 ;; --- 読みの束(調停ループの外の読み — 頭の註・#2807)------------------------------------------------------------
@@ -87,9 +88,11 @@
 
 (defclass KubeReadBatch []
   "走っている読みの束 1 つ: 読む鍵(deployments = 「ns/名」・nodes = node の名)・始めた時刻・名指したか・終わったら答えの列
-   (調停ループの外の thread が書き、答え手が受け取る — done が立つまで答えの列は読まない)。"
+   (調停ループの外の thread が書き、答え手が受け取る — finished が真を返すまで答えの列は読まない)。finished = 終わったかを答える関数
+   (本番は k8s の client の in-background が返す物・同じ thread で読む答え手は読み終えた時に真へ替える)。"
   (defn #^ None __init__ [self #^ (get tuple #(str ...)) deployments #^ (get tuple #(str ...)) nodes #^ int started-ms]
-    (setv self.deployments deployments self.nodes nodes self.started-ms started-ms self.named False self.done (threading.Event))
+    (setv self.deployments deployments self.nodes nodes self.started-ms started-ms self.named False)
+    (setv #^ (get Callable #([] bool)) self.finished (fn [] False))
     (setv #^ (get tuple #((| KubeBodyRead KubeReadFailed) ...)) self.deployment-results #())
     (setv #^ (get tuple #((| KubeBodyRead KubeReadFailed) ...)) self.node-results #())
     None)
@@ -102,10 +105,15 @@
         (KubeReadFailed :name name :error (str error)))))
 
   (defn #^ None read-with [self #^ (get Callable #([str] OpaqueJson)) read-deployment #^ (get Callable #([str] OpaqueJson)) read-node]
-    "束の鍵を順に読み(read-deployment は「ns/名」・read-node は node の名を受ける)、答えの列を置いて終わった印を立てる。"
+    "束の鍵を順に読み(read-deployment は「ns/名」・read-node は node の名を受ける)、答えの列を置く(終わった印は読ませた側が立てる)。"
     (setv self.deployment-results (tuple (gfor key self.deployments (.read-one self (fn [] (read-deployment key)) key)))
           self.node-results (tuple (gfor node self.nodes (.read-one self (fn [] (read-node node)) node))))
-    (.set self.done)
+    None)
+
+  (defn #^ None read-now [self #^ (get Callable #([str] OpaqueJson)) read-deployment #^ (get Callable #([str] OpaqueJson)) read-node]
+    "同じ thread で束を読み終え、終わった印を立てる(資格の無い所と模擬の k8s の答え手が使う)。"
+    (.read-with self read-deployment read-node)
+    (setv self.finished (fn [] True))
     None))
 
 
@@ -178,7 +186,7 @@
   (cond
     (is batch None)
       (KubeReadsIdle)
-    (or held (not (.is-set batch.done)))
+    (or held (not (batch.finished)))
       (do (val overdue (and (not batch.named) (>= (- now-ms batch.started-ms) name-after-ms)))
           (when overdue
             (setv batch.named True))
@@ -194,10 +202,9 @@
   (StartKubeReads [deployments nodes started-ms]
     (val batch (.begin batches deployments nodes started-ms))
     (when (is-not batch None)
-      ;; 調停ループの外の daemon の thread で読む(同期の client が scheduler の thread を塞がない — 頭の註)。
-      (.start (threading.Thread :target (fn [] (.read-with batch (fn [key] (.read client #* (.split key "/" 1)))
-                                                                  (fn [node] (.node-labels client node))))
-                                :name "kube-reads" :daemon True)))
+      ;; 調停ループの外の thread で読む(同期の client が scheduler の thread を塞がない — 頭の註)。thread は k8s の client(foundation)が持つ。
+      (setv batch.finished (.in-background client (fn [] (.read-with batch (fn [key] (.read client #* (.split key "/" 1)))
+                                                                         (fn [node] (.node-labels client node)))))))
     (resume (is-not batch None)))
   (CollectKubeReads [now-ms name-after-ms]
     (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone) (collected-reads batches now-ms name-after-ms False))
@@ -212,7 +219,7 @@
     ;; 読みは始めた時に全部その理由で終わる(観測は読めなかった観測になり、Rollout はその理由を名指して Unknown と扱う)。
     (val batch (.begin batches deployments nodes started-ms))
     (when (is-not batch None)
-      (.read-with batch (fn [key] (raise (KubeUnavailable reason))) (fn [node] (raise (KubeUnavailable reason)))))
+      (.read-now batch (fn [key] (raise (KubeUnavailable reason))) (fn [node] (raise (KubeUnavailable reason)))))
     (resume (is-not batch None)))
   (CollectKubeReads [now-ms name-after-ms]
     (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone) (collected-reads batches now-ms name-after-ms False))
@@ -265,7 +272,7 @@
   (StartKubeReads [deployments nodes started-ms]
     (val batch (.begin kube.batches deployments nodes started-ms))
     (when (is-not batch None)
-      (.read-with batch kube.deployment-object kube.node-labels-of))
+      (.read-now batch kube.deployment-object kube.node-labels-of))
     (resume (is-not batch None)))
   (CollectKubeReads [now-ms name-after-ms]
     (val held (and (is-not kube.stalled-until-ms None) (< now-ms kube.stalled-until-ms)))
