@@ -1,4 +1,4 @@
-;; 静かな heartbeat の早道の失敗ケース(agora-redesign #2655): coordinator の 1 歩の中(状態が同じ now で調停済み)で、変化の無い
+;; 静かな heartbeat の早道の失敗ケース(#2655): coordinator の 1 歩の中(状態が同じ now で調停済み)で、変化の無い
 ;; heartbeat は調停を繰り返さない(api_policy.quiet-heartbeat)。早道は状態の変化を落とさない — 静かな heartbeat の答えは調停を
 ;; 回した答えと同じで、変化のある heartbeat(報告の行が変わる・沈黙から戻る)は早道に入らない。
 (require doeff-hy.macros [deftest val])

@@ -1,4 +1,4 @@
-;; worker の拍の間の眠りを宣言の変化で起こす(agora-redesign #2692)。
+;; worker の拍の間の眠りを宣言の変化で起こす(#2692)。
 ;;
 ;; worker の調整ループ(worker/core/program の run-worker)は拍ごとに tick-seconds(0.5 秒)を眠る。前の形は眠りが無条件で、名指しの待ちが
 ;; 「変わった」と答えても次の拍の境まで起きず、task の開始が変化の刻の位相で 0〜0.5 秒遅れた。今は宣言の読みが呼び鈴(DesiredJobs.changed)を

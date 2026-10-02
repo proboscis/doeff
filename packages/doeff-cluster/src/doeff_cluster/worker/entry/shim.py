@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 
-# 層 entry の文脈と役の名乗り(DOEFF104・agora-redesign #2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
+# 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
 # 版をまたいで名前で読む)。
 MODULE_TAGS = {"context": "worker", "role": "main"}
 
