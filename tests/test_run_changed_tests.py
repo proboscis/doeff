@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -33,18 +32,23 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
+
+from doeff import run, with_handlers
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "scripts" / "run_changed_tests.py"
 STUB_TEST = "packages/doeff-core-effects/tests/test_hy_module_stubs.py"
 CORE_EFFECTS = "packages/doeff-core-effects/doeff_core_effects"
 ADR_PLUGIN = "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
-GIT_ENV = {
-    "GIT_AUTHOR_NAME": "model",
-    "GIT_AUTHOR_EMAIL": "model@example.invalid",
-    "GIT_COMMITTER_NAME": "model",
-    "GIT_COMMITTER_EMAIL": "model@example.invalid",
-}
+#: 模型の repo の git の作者(子の環境へ足す分 — 今の環境の受け継ぎは子 process の答え手が行う)。
+GIT_ENV = (
+    EnvEntry(name="GIT_AUTHOR_NAME", value="model"),
+    EnvEntry(name="GIT_AUTHOR_EMAIL", value="model@example.invalid"),
+    EnvEntry(name="GIT_COMMITTER_NAME", value="model"),
+    EnvEntry(name="GIT_COMMITTER_EMAIL", value="model@example.invalid"),
+)
 
 
 @dataclass(frozen=True)
@@ -76,15 +80,16 @@ class RunnerOutput:
 
 
 def _git(root: Path, *args: str) -> str:
-    """模型の repo で git を走らせる(作者は固定の名)。"""
-    proc = subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        check=True,
-        env={**os.environ, **GIT_ENV},
+    """模型の repo で git を走らせる(作者は固定の名)。子は doeff の子 process の答え手(subprocess_handler)が起こし、
+    今の環境に GIT_ENV を重ねて渡す(agora-redesign #3012)。"""
+    outcome = run(
+        with_handlers(
+            [subprocess_handler],
+            RunProcess(argv=("git", "-C", str(root), *args), env=GIT_ENV, env_mode=EnvMode.EXTEND),
+        )
     )
-    return proc.stdout.strip()
+    assert outcome.exit_code == 0, f"git {args} が rc {outcome.exit_code}: {outcome.stderr}"
+    return outcome.stdout.strip()
 
 
 def _pyproject(rows: tuple[Row, ...]) -> str:

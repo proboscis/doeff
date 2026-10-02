@@ -5,7 +5,6 @@ import importlib.util  # 既存の回帰シナリオを記事の実行入口で�
 import io  # 標準出力を文字列として保持する。
 import os  # 子プロセスの検索パスと検証用の作業ディレクトリを設定する。
 import re  # 記事のPythonブロックを抜き出す。
-import subprocess  # メモリを共有しない3つのPythonプロセスを起動する。
 import sys  # 現在と同じPython環境を子プロセスで使う。
 from pathlib import Path  # リポジトリ内の原稿と実装を参照する。
 from tempfile import TemporaryDirectory  # 検証結果の保存先を毎回分離する。
@@ -17,17 +16,30 @@ for package in sorted((ROOT / "packages").iterdir()):  # 開発中の各公開�
     if package.is_dir():  # パッケージディレクトリだけを候補にする。
         paths.append(package / "src" if (package / "src").is_dir() else package)  # 配置形式に合わせる。
 sys.path[:0] = list(map(str, paths))  # インストール済みの旧版より、このcheckoutを優先する。
-env = dict(os.environ)  # 認証情報は参照・表示せず、通常の実行環境を継承する。
-env["PYTHONPATH"] = os.pathsep.join(map(str, paths))  # 子プロセスにも同じ実装を選ばせる。
+
+
+def run_stage(db, stage):  # 1つの段階を、メモリを共有しない別のPythonプロセスで実行する。
+    # 子プロセスを起こす答え手は、sys.pathを整えた後で読み、このcheckoutの実装を使う。
+    from doeff_core_effects.os_process import subprocess_handler  # 子を起こす答え手。
+    from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess  # 依頼の型。
+
+    from doeff import run, with_handlers  # 依頼を答え手のもとで1回実行する。
+
+    pythonpath = EnvEntry(name="PYTHONPATH", value=os.pathsep.join(map(str, paths)))  # 子プロセスにも同じ実装を選ばせる。
+    request = RunProcess(  # 認証情報は参照・表示せず、通常の実行環境の継承は答え手に任せてimportパスだけを重ねる。
+        argv=(sys.executable, str(SOURCE / "examples/durable.py"), db, stage),
+        cwd=str(ROOT), env=(pythonpath,), env_mode=EnvMode.EXTEND, timeout=60.0,
+    )
+    outcome = run(with_handlers([subprocess_handler], request))  # 子プロセスを起こし、終わりを待って結果を受け取る。
+    assert outcome.exit_code == 0, outcome.stderr  # 失敗や時間切れ(終了コード124)なら検証を止める。
+    return outcome  # 標準出力と標準エラーを呼び出し側で検査する。
+
 
 with TemporaryDirectory() as directory:  # 過去のキャッシュがない保存先で試す。
     db = str(Path(directory) / "document.sqlite")  # 3つのプロセスが共有するのはこのDBだけにする。
     outputs = []  # 各プロセスの標準出力を比較する。
     for stage in ("prepare", "finish", "finish"):  # 解析、全体、全体を順に起動する。
-        completed = subprocess.run(  # 各段階を別のPythonプロセスで実行する。
-            [sys.executable, str(SOURCE / "examples/durable.py"), db, stage],
-            cwd=ROOT, env=env, text=True, capture_output=True, check=True, timeout=60,
-        )
+        completed = run_stage(db, stage)  # 各段階を別のPythonプロセスで実行する。
         assert not completed.stderr, completed.stderr  # 終了処理を含めて警告や例外が出ていないことを確認する。
         outputs.append(completed.stdout)  # 後で診断表示と結果を検査する。
     assert outputs[0] == "本文を解析しました\n('# はじめに', '説明文', '# 遊び方')\n"  # 初回は解析だけ動く。

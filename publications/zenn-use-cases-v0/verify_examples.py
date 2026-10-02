@@ -5,13 +5,16 @@ from __future__ import annotations
 import ast
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
 from verify_comments import verify as verify_comments
 from verify_publication import verify as verify_publication
+
+from doeff import run, with_handlers
 
 SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
@@ -46,21 +49,27 @@ def main():
     for package in sorted((ROOT / "packages").iterdir()):
         if package.is_dir():
             paths.append(package / "src" if (package / "src").is_dir() else package)
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(map(str, paths))
-    env["SEMGREP_SEND_METRICS"] = "off"
+    # 子プロセスに重ねる分だけを書く。今の実行環境の継承は子プロセスを起こす答え手が行う。
+    env = (
+        EnvEntry(name="PYTHONPATH", value=os.pathsep.join(map(str, paths))),
+        EnvEntry(name="SEMGREP_SEND_METRICS", value="off"),
+    )
 
     def execute(args):
-        result = subprocess.run(
-            [sys.executable, *args],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
+        """例を同じPython環境の別プロセスで実行し、失敗を検証失敗として止めるため。"""
+        result = run(
+            with_handlers(
+                [subprocess_handler],
+                RunProcess(
+                    argv=(sys.executable, *args),
+                    cwd=str(ROOT),
+                    env=env,
+                    env_mode=EnvMode.EXTEND,
+                    timeout=120.0,
+                ),
+            )
         )
-        if result.returncode:
+        if result.exit_code:
             raise RuntimeError(f"{args}\n{result.stdout}\n{result.stderr}")
         return result
 

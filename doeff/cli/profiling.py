@@ -6,10 +6,12 @@ Profiling is enabled by default. To disable:
 
 import sys
 import time
-from collections.abc import Generator, Mapping
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+
+from doeff_core_effects.process_effects import EnvEntry
 
 _DISABLE_PROFILE_ENV = "DOEFF_DISABLE_PROFILE"
 
@@ -26,8 +28,12 @@ _CURRENT_CONFIG: ContextVar[ProfilingConfig | None] = ContextVar(
 )
 
 
-def profiling_config_from_env(env: Mapping[str, str]) -> ProfilingConfig:
-    return ProfilingConfig(enabled=not bool(env.get(_DISABLE_PROFILE_ENV)))
+def profiling_config_from_env(env: tuple[EnvEntry, ...]) -> ProfilingConfig:
+    """env = the process environment as ReadEnvironment answers it (agora-redesign #3012);
+    a non-empty DOEFF_DISABLE_PROFILE turns profiling off."""
+    return ProfilingConfig(
+        enabled=not any(entry.value for entry in env if entry.name == _DISABLE_PROFILE_ENV)
+    )
 
 
 @contextmanager
