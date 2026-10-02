@@ -72,6 +72,7 @@ EMPTY_ANSWER = '{"tests": [], "hubs": [], "not_modules": [], "unreadable": [], "
 class RunnerOutput:
     returncode: int
     text: str
+    stdout: str
 
 
 def _git(root: Path, *args: str) -> str:
@@ -191,7 +192,18 @@ def _run(
         timeout=120,
         check=False,
     )
-    return RunnerOutput(returncode=proc.returncode, text=proc.stdout + proc.stderr)
+    return RunnerOutput(
+        returncode=proc.returncode, text=proc.stdout + proc.stderr, stdout=proc.stdout
+    )
+
+
+def _counts(output: RunnerOutput) -> str:
+    """入口の出力の最後の行 — 数だけの要約(agora-redesign #2685)。どの道で終わっても最後の行にちょうど 1 行出る。"""
+    lines = [line for line in output.stdout.splitlines() if line.strip()]
+    assert lines, f"入口が何も出していない(rc {output.returncode})\n{output.text[-3000:]}"
+    assert lines[-1].startswith("land-focus-counts: "), lines[-5:]
+    assert sum(1 for line in lines if line.startswith("land-focus-counts:")) == 1, lines
+    return lines[-1]
 
 
 def _summary(output: RunnerOutput) -> str:
@@ -249,6 +261,9 @@ def test_a_set_over_the_budget_is_named_unmeasured_not_red(tmp_path: Path) -> No
     assert "未測: 1" in summary, summary
     assert "tests/test_slow.py — 上限 8 秒で打ち切り" in summary, summary
     assert "赤: 0" in summary, summary
+    counts = _counts(output)
+    assert " selected=2 ran=1 red=0 unmeasured=1 unmeasured_reverse=0 rc=0 " in counts, counts
+    assert counts.endswith(" budget=8"), counts
 
 
 def test_a_worktree_without_an_environment_names_every_selected_test_unmeasured(
@@ -273,6 +288,8 @@ def test_a_table_naming_a_missing_test_file_stops(tmp_path: Path) -> None:
     output = _run(model)
     assert output.returncode == 2, output.text[-3000:]
     assert "tests/test_gone.py" in output.text, output.text
+    # 選ぶ前に止まった回も数の要約を 1 行出す(選んだ検 0 本・rc 2)— 1 日の数から止まった回が漏れないように。
+    assert " selected=0 ran=0 red=0 unmeasured=0 unmeasured_reverse=0 rc=2 " in _counts(output)
 
 
 def test_the_repository_table_reads_and_names_existing_tests(
@@ -545,3 +562,35 @@ def test_the_session_roots_are_read_from_the_makefile(runner: ModuleType) -> Non
     roots = runner.read_session_roots(REPO_ROOT)
     assert roots.extra, "tests/ の外の根が 0 個 — Makefile の読みが壊れている"
     assert all((REPO_ROOT / root).is_dir() for root in roots.extra), roots
+
+
+def test_the_counts_split_every_selected_test_once(runner: ModuleType) -> None:
+    """数の要約(agora-redesign #2685): 選んだ検の 1 本ずつが走った・赤・未測のどれか 1 つに数えられ(selected = ran + red +
+    unmeasured)、未測のうち逆依存の検を分けて数える。行は頭の印と `名=数` だけ(検の名の一覧は載せない)。"""
+    origin, verdict = runner.Origin, runner.Verdict
+    results = tuple(
+        runner.TargetResult(runner.Target(arg=arg, origin=kind, why="検"), outcome, "理由")
+        for arg, kind, outcome in (
+            ("tests/test_contract.py", origin.CONTRACT, verdict.GREEN),
+            ("tests/test_changed.py", origin.CHANGED, verdict.RED),
+            ("tests/test_changed_slow.py", origin.CHANGED, verdict.UNMEASURED),
+            ("tests/test_far_a.py", origin.REVERSE, verdict.UNMEASURED),
+            ("tests/test_far_b.py", origin.REVERSE, verdict.UNMEASURED),
+            ("tests/test_near.py", origin.REVERSE, verdict.GREEN),
+        )
+    )
+    counts = runner.counts_of(runner.Finished(rc=1, results=results), 61.04, 60.0)
+    assert (counts.selected, counts.ran, counts.red, counts.unmeasured) == (6, 2, 1, 3)
+    assert counts.unmeasured_reverse == 2
+    assert counts.selected == counts.ran + counts.red + counts.unmeasured
+    line = runner.counts_line(counts)
+    assert line == (
+        "land-focus-counts: selected=6 ran=2 red=1 unmeasured=3 unmeasured_reverse=2"
+        " rc=1 seconds=61.0 budget=60"
+    ), line
+    assert "tests/" not in line
+    empty = runner.counts_line(runner.counts_of(runner.Finished(rc=2, results=()), 0.31, 60.0))
+    assert empty == (
+        "land-focus-counts: selected=0 ran=0 red=0 unmeasured=0 unmeasured_reverse=0"
+        " rc=2 seconds=0.3 budget=60"
+    ), empty

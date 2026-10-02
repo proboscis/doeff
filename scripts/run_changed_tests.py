@@ -33,6 +33,9 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
 
 出力は 走った(緑)・赤・未測 の 3 つ。終わらなかった file・集めた検が 0 本の file・venv の無い作業木は「未測」と
 名指し、赤と分ける。rc は 赤が在れば 1・表や入力が読めなければ 2・それ以外 0(未測は登記を止めない — 名指すだけ)。
+どの道で終わっても、出力の最後の行は数だけの要約 1 行(`land-focus-counts: selected=… ran=… red=… unmeasured=…
+unmeasured_reverse=… rc=… seconds=… budget=…`・agora の入口と同じ綴り)— 1 日の未測を実数で数える読み手のため
+(agora-redesign #2685)。検の名の一覧は載せない。この入口は file にも記録の service にも書かない(届ける口は別に持つ)。
 
 pytest の結果は、この同じ file の ReportPlugin を pytest の plugin として渡して行ごとの JSON で受け取る
 — 打ち切った時も、そこまでに終わった検の結末が残る。stdlib 単独(呼び口は `uv run --script`・機体の python は撃たない)。
@@ -92,6 +95,8 @@ LINTER_TIMEOUT_SECONDS = 30.0
 EXTRA_ROOTS_TARGET = "print-package-extra-test-roots"
 #: repo の根の session(package の tests/ と、その外の根のどちらにも当たらない検 — 日次の root の `pytest` と同じ)。
 ROOT_SESSION = "."
+#: 入口の出力の最後の 1 行(数だけの要約)の頭 — agora の登記の前の入口(scripts/land_focus_gate.hy)と同じ綴り(agora-redesign #2685)。
+COUNTS_PREFIX = "land-focus-counts:"
 #: Makefile に session の根を聞く命令を待つ上限の秒(変数を 1 つ echo するだけ — 60 秒の検の予算とは別に数える)。
 MAKE_TIMEOUT_SECONDS = 30.0
 
@@ -1046,9 +1051,61 @@ def _print_summary(
     _print_reverse(reverse, sum(1 for r in results if r.target.origin is Origin.REVERSE))
 
 
+@dataclass(frozen=True)
+class Finished:
+    """入口の 1 回の結末 — 終了 code と、選んだ検ごとの結果(数の要約の元・止まった時は選んだ検の全部が未測)。"""
+
+    rc: int
+    results: tuple[TargetResult, ...]
+
+
+@dataclass(frozen=True)
+class RunCounts:
+    """入口の 1 回を数だけで表す要約(agora-redesign #2685 — 1 日の未測を実数で数えるため・中身の一覧は載せない)。
+    selected = ran + red + unmeasured。unmeasured_reverse = 未測のうち逆依存の検。seconds = 入口の壁時計。"""
+
+    selected: int
+    ran: int
+    red: int
+    unmeasured: int
+    unmeasured_reverse: int
+    rc: int
+    seconds: float
+    budget: float
+
+
+def counts_of(finished: Finished, seconds: float, budget: float) -> RunCounts:
+    """入口の結末を数だけの要約にする — 機械が 1 行で読める形の元(純粋)。"""
+    results = finished.results
+    return RunCounts(
+        selected=len(results),
+        ran=sum(1 for r in results if r.verdict is Verdict.GREEN),
+        red=sum(1 for r in results if r.verdict is Verdict.RED),
+        unmeasured=sum(1 for r in results if r.verdict is Verdict.UNMEASURED),
+        unmeasured_reverse=sum(
+            1
+            for r in results
+            if r.verdict is Verdict.UNMEASURED and r.target.origin is Origin.REVERSE
+        ),
+        rc=finished.rc,
+        seconds=seconds,
+        budget=budget,
+    )
+
+
+def counts_line(counts: RunCounts) -> str:
+    """数の要約を、入口の出力の最後の 1 行にする(頭は COUNTS_PREFIX・欄は `名=数` を空白で区切る — agora の入口と同じ綴り)。"""
+    return (
+        f"{COUNTS_PREFIX} selected={counts.selected} ran={counts.ran} red={counts.red}"
+        f" unmeasured={counts.unmeasured} unmeasured_reverse={counts.unmeasured_reverse}"
+        f" rc={counts.rc} seconds={counts.seconds:.1f} budget={counts.budget:g}"
+    )
+
+
 def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
     """登記の前の入口: 変えた file → 契約の組 + 変えた検 + 逆依存の検 → 日次と同じ session ごとの pytest の process → 3 つに分けた
-    要約と rc。"""
+    要約と rc。どの道で終わっても、出力の最後の行は数だけの要約 1 行(counts_line)。"""
+    started = time.monotonic()
     parser = argparse.ArgumentParser(
         description="変えた所の検 — 登記の前に、契約の検の組・変えた検・逆依存の検を 60 秒の上限で走らせる"
     )
@@ -1065,7 +1122,13 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
         help="逆依存を問う doeff-linter の命令(既定 = PATH の上の doeff-linter)",
     )
     args = parser.parse_args(argv)
-    run_environment = read_run_environment(environ)
+    finished = _run_entry(args, read_run_environment(environ))
+    print(counts_line(counts_of(finished, time.monotonic() - started, args.budget)))
+    return finished.rc
+
+
+def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Finished:
+    """入口の本体 — 選んで走らせ、3 つに分けた要約を出し、結末(rc と検ごとの結果)を返す。"""
     try:
         repo = Path(_git(args.repo, "rev-parse", "--show-toplevel").strip())
         table = read_contract_table(repo)
@@ -1074,7 +1137,7 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
         roots = read_session_roots(repo)
     except StopError as exc:
         print(f"変えた所の検: 止める — {exc}", file=sys.stderr)
-        return 2
+        return Finished(rc=2, results=())
     print(
         f"変えた所の検: 作業木の中身で走らせる(index ではない)— {repo}・分岐点 {changes.base[:12]}"
         f" から作業木までに変えた file {len(changes.files)} 本",
@@ -1092,23 +1155,22 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
     if not targets:
         print("当たる契約の組も変えた検の file も逆依存の検も無い — 走らせる検は 0 本")
         _print_reverse(reverse, 0)
-        return 0
+        return Finished(rc=0, results=())
     environment = project_environment(repo, run_environment)
     if not (environment / "pyvenv.cfg").is_file():
         reason = f"作業木に uv の環境({environment})が無い — `uv sync --frozen --group dev` で作る"
-        _print_summary(
-            tuple(TargetResult(t, Verdict.UNMEASURED, reason) for t in targets),
-            0.0,
-            args.budget,
-            reverse,
-        )
-        return 0
+        unready = tuple(TargetResult(t, Verdict.UNMEASURED, reason) for t in targets)
+        _print_summary(unready, 0.0, args.budget, reverse)
+        return Finished(rc=0, results=unready)
     batches = batches_of(selection, roots)
     try:
         outcomes = run_batches(repo, batches, args.budget, run_environment)
     except StopError as exc:
         print(f"変えた所の検: 止める — {exc}", file=sys.stderr)
-        return 2
+        stopped = f"入口が止まった — {exc}"
+        return Finished(
+            rc=2, results=tuple(TargetResult(t, Verdict.UNMEASURED, stopped) for t in targets)
+        )
     results = tuple(
         classify(t, outcome.run, args.budget) for outcome in outcomes for t in outcome.batch.targets
     )
@@ -1118,7 +1180,7 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
         f"pytest の process: {sum(1 for o in outcomes if isinstance(o.run, PytestRun))}/{len(outcomes)} 本が走った"
         f"(session: {', '.join(o.batch.session for o in outcomes)})"
     )
-    return 1 if any(r.verdict is Verdict.RED for r in results) else 0
+    return Finished(rc=1 if any(r.verdict is Verdict.RED for r in results) else 0, results=results)
 
 
 def _main_as_pytest(argv: list[str]) -> int:
