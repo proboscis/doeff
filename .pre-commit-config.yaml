@@ -40,12 +40,13 @@ repos:
 
       # packages/doeff-cluster は自分の設定(pyproject.toml の [tool.doeff-linter])と service・不変条件の宣言(architecture.hy)を
       # 持つ。根で走る上の doeff-linter はそれを読まないので、package の dir に入って当てる(Hy の file も渡す)。script が
-      # architecture.hy を必ず足すので、:invariants を消す commit は DOEFF163 で止まる(agora-redesign #2031)。
+      # architecture.hy を必ず足すので、:invariants を消す commit は DOEFF163 で止まる(agora-redesign #2031)。検の dir(tests/)も渡す —
+      # package の設定の include で linter の歩く範囲に入り、定義の書き方の規則(今は critical と当たり 0 の規則)が判じる(agora-redesign #2821)。
       - id: doeff-linter-doeff-cluster
         name: doeff-linter (packages/doeff-cluster の設定と宣言で)
         entry: sh scripts/lint-doeff-cluster.sh
         language: system
-        files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|src/.*\.(hy|py))$'
+        files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
         pass_filenames: true
 
       # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement 資産と台帳は同じ commit で動く。
