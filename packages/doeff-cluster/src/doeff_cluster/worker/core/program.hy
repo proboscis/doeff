@@ -7,7 +7,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
-  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport] doeff_cluster.shared.intent.job_model [JobPhase])
+  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
 
 (defk worker-tick [state policy stopping]
@@ -78,4 +78,5 @@
     (val alive (get ticked 1))
     (:= state (get ticked 0))
     (when (and stopping (= alive 0)) (return state))
-    (<- (tick-pause policy (get ticked 2)))))
+    ;; 拍の間の眠りは答え手が決める(本番 = tick-pauses の tick-pause・模擬の時計の下の宿は静かな拍を一度に眠れる — #2781)。
+    (<- (AwaitNextTick policy (get ticked 2) state))))
