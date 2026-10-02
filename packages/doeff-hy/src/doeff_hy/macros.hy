@@ -1296,7 +1296,9 @@ defk {name}: {{:post [...]}} is required.
 (defn _traverse-form [param items label inner-body]
   "From / Iterate の 1 つを Traverse の effect にする: 件ごとの関数(param を受け、残りの束縛と本体を do で包む)と items。
 
-   実行時の展開: `(_doeff_traverse_Traverse (fn [param] ((_doeff_do (fn [] (do 本体))))) items)`。
+   実行時の展開: `(_doeff_traverse_Traverse (_doeff_do (fn [param] (do 本体))) items)`。件ごとの関数は Traverse 1 つに 1 度だけ
+   `@do` で包む — 件ごとに `(fn [param] ((_doeff_do (fn [] …))))` で包み直すと、件 1 つあたり約 7 µs の `@do` の組み立て
+   (DoFunction・functools.wraps)がかかっていた(agora-redesign #2871)。件の Program は同じ(件を引数に受ける 1 つの呼び)。
    型検査のための展開(`_static-view?`)では、件の引数を `#^ object` の別名で受け、本体の前で
    `(setv param (_doeff_traverse_item items の写し 件))` と件の型へ読み直す — Hy の fn は本体が文を持つと def になり、
    引数に注記が無いと pyright strict が「引数の型が分からない」と赤にする(書き手は件の型を書く口を持たない)。
@@ -1313,14 +1315,10 @@ defk {name}: {{:post [...]}} is required.
                  (_doeff_traverse_Traverse ~step ~items-ref :label ~label))
             `(do (setv ~items-ref ~items)
                  (_doeff_traverse_Traverse ~step ~items-ref))))
-      (if (is-not label None)
-          `(_doeff_traverse_Traverse
-             (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
-             ~items
-             :label ~label)
-          `(_doeff_traverse_Traverse
-             (fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))
-             ~items))))
+      (let [step `(_doeff_do (fn [~param] (do ~inner-body)))]
+        (if (is-not label None)
+            `(_doeff_traverse_Traverse ~step ~items :label ~label)
+            `(_doeff_traverse_Traverse ~step ~items)))))
 
 (defmacro traverse [#* forms]
   "Applicative traverse — batch processing with handler-injected strategy.
