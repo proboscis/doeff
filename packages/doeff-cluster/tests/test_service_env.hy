@@ -114,7 +114,7 @@
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
   (<- key str (env-key declared-env (current-platform)))
-  (val wire {"name" "quiet" "entry" "doeff_cluster.job_entry" "args" ["service"] "revision" "rev-1" "once" False
+  (val wire {"name" "quiet" "entry" "doeff_cluster.worker.entry.job_entry" "args" ["service"] "revision" "rev-1" "once" False
              "runtimeEnv" env-json})
   (<- spec (declared-job-spec wire))
   ;; 版は宣言のまま(coordinator の版と同じ)・root の置き場の鍵は worker が計算した env のキー。
@@ -146,7 +146,7 @@
   ;; 検めると、root に無い module を worker の venv が読めて誤って通る。
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
-  (val spec (JobSpec "quiet" "doeff_cluster.job_entry" #("service" "--identity" "0123456789abcdef")
+  (val spec (JobSpec "quiet" "doeff_cluster.worker.entry.job_entry" #("service" "--identity" "0123456789abcdef")
                      "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64)))
   ;; 検めの子の起こし方の判断(probe-command — #2465)を、子を起こさずに見る。
   (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec)) :hy-command "/worker/bin/hy" :uv "/bin/uv"
@@ -156,8 +156,8 @@
   (val environment (dfor e plan.env e.name e.value))
   (assert (= (cut argv 0 6) ["/bin/uv" "run" "--no-sync" "--frozen" "--project" "/state/roots/env-k/app"]) argv)
   ;; Program の job の検めは入口の module の import だけ(詰めた Program の版と復元は起こした子が検める)。
-  (assert (= (probe-targets spec) ["doeff_cluster.job_entry"]))
-  (assert (in "doeff_cluster.job_entry" argv) argv)
+  (assert (= (probe-targets spec) ["doeff_cluster.worker.entry.job_entry"]))
+  (assert (in "doeff_cluster.worker.entry.job_entry" argv) argv)
   (assert (not-in "/worker/bin/hy" argv) "worker の hy では検めない")
   (assert (not-in "PYTHONPATH" environment) "PYTHONPATH を置かない")
   (assert (= cwd (str tmp-path)) cwd))

@@ -63,7 +63,7 @@
   specs)
 
 
-(val JOB-ENTRY "doeff_cluster.job_entry")
+(val JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
 
 
 (defk task-spec [task task-dir]

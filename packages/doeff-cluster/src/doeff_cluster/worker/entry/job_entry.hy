@@ -1,10 +1,12 @@
 ;;; worker が起動する子 process の入口(service と task)。その commit のコードを展開した木(か実行環境の root)の中で動く。
-;;; #2028 で doeff_cluster/job_entry.hy からここへ移した。worker が送る名 JOB-ENTRY は旧い path(doeff_cluster.job_entry — この入口へ渡すだけ)のまま
-;;; (job は宣言した doeff の commit の中で動くので、送る名の切り替えは #2112・旧い入口を消すのは #2113)。
+;;; #2028 で doeff_cluster/job_entry.hy からここへ移した。worker が送る名 JOB-ENTRY はこの入口の名(#2112)。旧い path の
+;;; doeff_cluster.job_entry(この入口へ渡すだけ)は、配備してある worker と旧い doeff で宣言した Service が名で読むので最後の配備まで残す
+;;; (job は宣言した doeff の commit の中で動く — 送る名を切り替えた版へ coordinator と worker を上げる前に、旧い doeff の宣言を
+;;; 新旧両方の入口を持つ doeff で宣言し直す)。
 ;;;
-;;;   hy -m doeff_cluster.job_entry service --identity <指紋> --program PATH
-;;;   hy -m doeff_cluster.job_entry task --program PATH --result PATH
-;;;   hy -m doeff_cluster.job_entry probe --program PATH   (入口の検め — 版と復元だけを確かめて走らせない)
+;;;   hy -m doeff_cluster.worker.entry.job_entry service --identity <指紋> --program PATH
+;;;   hy -m doeff_cluster.worker.entry.job_entry task --program PATH --result PATH
+;;;   hy -m doeff_cluster.worker.entry.job_entry probe --program PATH   (入口の検め — 版と復元だけを確かめて走らせない)
 ;;;
 ;;; job が受け取るのは Program の値 1 つだけ(ADR-DOE-CLUSTER-001 R1・R3)。この入口は既定の handler を 1 つも足さない(R2):
 ;;; 版を検め、詰めた Program を解き、(run program) するだけ。scheduler・時計・記録係・業務の handler は Program が自分の
@@ -24,7 +26,7 @@
 ;;; service と probe では理由の 1 行を出して止まる。
 ;;;
 ;;; 実行環境(runtime env)の job: worker は env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m
-;;; doeff_cluster.job_entry …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
+;;; doeff_cluster.worker.entry.job_entry …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
 ;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "worker" :role "main"})

@@ -104,7 +104,7 @@
   (assert (= (! (plan 11 #(A2) (! (world :codes #(READY1 READY2))) records POLICY)) #((StartJob A2 2 "/c/rev2")))))
 
 (deftest test-task-runs-once-and-is-reported-finished
-  (setv task (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :once True))
+  (setv task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
   (assert (= (! (plan 0 #(task) (! (world)) {} POLICY)) #((StartJob task 1 "/c/rev1"))))
   ;; 終わった後は宣言に残っていても起動し直さない(worker の障害でも走らせ直さないのと同じ)
   (setv done {"task/t1" (JobRecord "task/t1" 1 100 Outcome.EXITED 0)})
@@ -148,7 +148,7 @@
 
 (deftest test-task-that-exits-with-code-0-is-not-counted-as-a-failure
   ;; 1 回だけ走って exit code 0 で終わった task は失敗ではない。記録の failures は 0 で、状態に failures・backoff を出さない。
-  (val task (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :once True))
+  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
   (val start (! (plan 0 #(task) (! (world)) {} POLICY)))
   (val started (! (records-after 0 {} start POLICY)))
   (val reap (! (plan 1000 #(task) (! (world (replace (! (running task)) :exit-code 0))) started POLICY)))
@@ -162,7 +162,7 @@
 
 (deftest test-task-that-exits-with-a-nonzero-code-is-still-counted
   ;; exit code 1 で終わった task は今までどおり失敗に数え、状態に回数を出す(起こし直しはしない)。
-  (val task (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :once True))
+  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
   (val started (! (records-after 0 {} (! (plan 0 #(task) (! (world)) {} POLICY)) POLICY)))
   (val reap (! (plan 1000 #(task) (! (world (replace (! (running task)) :exit-code 1))) started POLICY)))
   (val done (! (records-after 1000 started reap POLICY)))
