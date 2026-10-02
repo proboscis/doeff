@@ -61,6 +61,21 @@ pub struct ArchLayer {
     /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む(operator 2026-09-28 "A okay")。
     #[serde(skip)]
     pub dependency_layers: Option<Vec<String>>,
+    /// この層に入る module を綴りで名指す(`:modules [名 …]` — 点で区切った module の名・その下の module も入る)。置き場の dir で層が
+    /// 決まらない package(起動の時点で入る module ほか)が、層の宣言から規則の母集団を決めるため(agora-redesign #2811)。
+    #[serde(skip)]
+    pub modules: Vec<String>,
+    /// 名指しの module に限って、その規則の母集団から外す(`:exempt [(rule 規則 ID "理由") …]`)。理由が要り、:modules の無い層には
+    /// 置けない(読みの誤り)。file から上へ最も近い architecture.hy のこの欄を、Python の規則の当て方が読む(crate::population)。
+    #[serde(skip)]
+    pub exempt: Vec<RuleExemption>,
+}
+
+/// 層が名指しの module を規則の母集団から外す宣言 1 つ(`(rule 規則 ID "理由")`・agora-redesign #2811)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleExemption {
+    pub rule: String,
+    pub reason: String,
 }
 
 /// service 1 つの宣言。
@@ -826,6 +841,17 @@ impl Architecture {
             .find(|l| l.name == reader)
             .and_then(|l| l.dependency_layers.as_deref())
             .unwrap_or(&self.open_layers)
+    }
+
+    /// module(点で区切った綴り)が入る層のうち、規則の除外を持つ層(:modules の名と同じか、その下の module)。Python の規則の母集団を
+    /// file ごとに決める 1 点(crate::population)が読む(agora-redesign #2811)。
+    pub fn exempt_layer_of(&self, module: &str) -> Option<&ArchLayer> {
+        self.layers.iter().find(|layer| {
+            !layer.exempt.is_empty()
+                && layer.modules.iter().any(|named| {
+                    module == named || module.strip_prefix(named.as_str()).is_some_and(|rest| rest.starts_with('.'))
+                })
+        })
     }
 
     /// file を読んで宣言にする(読めない・形が違う時は位置つきの理由の列)。root は repo の根(:contract-files の path の基準)。
@@ -2773,10 +2799,14 @@ impl<'a> Parser<'a> {
             types_only: false,
             wire_free: false,
             dependency_layers: None,
+            modules: Vec::new(),
+            exempt: Vec::new(),
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
         for (key, value) in self.pairs(&rest) {
             match self.text(key) {
+                ":modules" => layer.modules = self.names(value, ":modules"),
+                ":exempt" => layer.exempt = self.rule_exemptions(value, &layer.name),
                 ":summary" => layer.summary = self.required_string(value, ":summary"),
                 ":knows" => layer.knows = self.required_string(value, ":knows"),
                 ":does-not-know" => layer.does_not_know = self.required_string(value, ":does-not-know"),
@@ -2798,7 +2828,53 @@ impl<'a> Parser<'a> {
                 _ => self.unknown_key(key, "layer"),
             }
         }
+        if !layer.exempt.is_empty() && layer.modules.is_empty() {
+            // 除外は名指しの module にだけ効く — 置き場の dir ごと外す形にすると、層に足した別の module が黙って母集団から外れる。
+            self.problem(form, &format!("layer {} の :exempt は :modules の名指しの module にだけ効く — :modules が無い", layer.name));
+        }
         Some(layer)
+    }
+
+    /// `:exempt [(rule 規則 ID "理由") …]` を読む(agora-redesign #2811)。理由の無い除外・知らない規則 ID・同じ規則の 2 度の宣言は
+    /// 読みの誤り(位置つきの理由を積む)。外せるのは Python の文ごとの規則(crate::rules::get_all_rules)だけ — 母集団を外す 1 点
+    /// (crate::population)は file ごとの Python の規則の当たりに効くので、層の規則の ID を書くと黙って効かない形になる。
+    fn rule_exemptions(&mut self, value: &Form, layer: &str) -> Vec<RuleExemption> {
+        let entries = self.bracket(value).unwrap_or_else(|| {
+            self.problem(value, &format!("layer {} の :exempt は (rule 規則 ID \"理由\") の列", layer));
+            Vec::new()
+        });
+        use crate::rules::base::LintRule as _;
+        let known: Vec<String> = crate::rules::get_all_rules().iter().map(|rule| rule.rule_id().to_string()).collect();
+        let mut out: Vec<RuleExemption> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("rule"));
+            let Some(parts) = parts else {
+                self.problem(entry, &format!("layer {} の :exempt の要素は (rule 規則 ID \"理由\")", layer));
+                continue;
+            };
+            let Some(rule) = parts.get(1).and_then(|f| self.name(f)) else {
+                self.problem(entry, &format!("layer {} の :exempt の要素に規則 ID が無い", layer));
+                continue;
+            };
+            let reason = parts.get(2).and_then(|f| self.string(f)).unwrap_or_default();
+            if parts.len() > 3 {
+                self.problem(entry, &format!("layer {} の :exempt の {} に余計な値がある — (rule 規則 ID \"理由\") の 2 つだけ", layer, rule));
+            }
+            if !known.iter().any(|id| *id == rule) {
+                self.problem(entry, &format!("layer {} の :exempt の {} は、外せる規則(Python の文ごとの規則)の ID ではない", layer, rule));
+                continue;
+            }
+            if reason.trim().is_empty() {
+                self.problem(entry, &format!("layer {} の :exempt の {} に理由が無い(なぜこの層ではその規則が当てはまらないか)", layer, rule));
+                continue;
+            }
+            if out.iter().any(|e| e.rule == rule) {
+                self.problem(entry, &format!("layer {} の :exempt に {} が 2 度宣言されている", layer, rule));
+                continue;
+            }
+            out.push(RuleExemption { rule, reason });
+        }
+        out
     }
 
     /// `(defservice 名 "説明"? {:depends-on [..] :layers [..]})`。
@@ -3077,6 +3153,37 @@ mod tests {
         assert!(problems.contains("`::` を含まない"), "区切りを含む名を通した:\n{}", problems);
         assert!(problems.contains(":clause-exemptions の C1 の理由は空でない文字列"), "空の理由を通した:\n{}", problems);
         assert!(problems.contains(":clause-exemptions の C9 は :clauses に無い条"), "宣言に無い条を外した:\n{}", problems);
+    }
+
+    #[test]
+    fn layer_rule_exemptions_name_their_modules_and_reasons() {
+        // agora-redesign #2811: 層は :modules で module を名指し、:exempt [(rule 規則 ID "理由")] で名指しの module に限って Python の
+        // 規則の母集団から外す。理由の空・層の規則の ID・知らない ID・:modules の無い除外・同じ規則の 2 度は読みの誤り。
+        let declared = GOOD.replace(
+            "(layer foundation)",
+            "(layer foundation) (layer startup :modules [guard \"guard.hooks\"] :exempt [(rule DOEFF004 \"起動の時点に入る\")] :forbid-modules [doeff])",
+        );
+        let arch = Architecture::parse(&declared, Path::new("architecture.hy")).unwrap();
+        let startup = arch.layers.iter().find(|l| l.name == "startup").unwrap();
+        assert_eq!(startup.modules, vec!["guard".to_string(), "guard.hooks".to_string()]);
+        assert_eq!(startup.exempt, vec![RuleExemption { rule: "DOEFF004".into(), reason: "起動の時点に入る".into() }]);
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+        assert_eq!(arch.exempt_layer_of("guard").map(|l| l.name.as_str()), Some("startup"));
+        assert_eq!(arch.exempt_layer_of("guard.hooks.inner").map(|l| l.name.as_str()), Some("startup"));
+        assert_eq!(arch.exempt_layer_of("guardian").map(|l| l.name.as_str()), None, "名の頭が同じだけの別の module を入れた");
+        assert_eq!(arch.exempt_layer_of("billing.core").map(|l| l.name.as_str()), None);
+
+        let bad = GOOD.replace(
+            "(layer foundation)",
+            "(layer foundation) (layer startup :modules [guard] :exempt [(rule DOEFF004 \"\") (rule DOEFF106 \"層の規則\") (rule DOEFF999 \"x\") \
+             (rule DOEFF001 \"一\") (rule DOEFF001 \"二\")]) (layer loose :exempt [(rule DOEFF004 \"名指しが無い\")])",
+        );
+        let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(problems.contains("DOEFF004 に理由が無い"), "空の理由を通した:\n{}", problems);
+        assert!(problems.contains("DOEFF106 は、外せる規則(Python の文ごとの規則)の ID ではない"), "層の規則の ID を通した:\n{}", problems);
+        assert!(problems.contains("DOEFF999 は、外せる規則"), "知らない ID を通した:\n{}", problems);
+        assert!(problems.contains("DOEFF001 が 2 度宣言されている"), "同じ規則の 2 度を通した:\n{}", problems);
+        assert!(problems.contains("layer loose の :exempt は :modules の名指しの module にだけ効く"), ":modules の無い除外を通した:\n{}", problems);
     }
 
     #[test]

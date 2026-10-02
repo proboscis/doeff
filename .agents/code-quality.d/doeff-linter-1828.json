@@ -109,7 +109,10 @@
     "packages/doeff-linter/tests/layer_rules.rs",
     "packages/doeff-linter/tests/semantic_lines.rs",
     "packages/doeff-linter/tests/semantic_proxy.rs",
-    "packages/doeff-linter/tests/semantic_rules.rs"
+    "packages/doeff-linter/tests/semantic_rules.rs",
+    "packages/doeff-linter/src/population.rs",
+    "packages/doeff-linter/src/rules/doeff032_rule_population_declaration.rs",
+    "packages/doeff-linter/tests/rule_population.rs"
   ],
   "modules": [
     {
@@ -132,6 +135,7 @@
         "packages/doeff-linter/src/main.rs",
         "packages/doeff-linter/src/models.rs",
         "packages/doeff-linter/src/noqa.rs",
+        "packages/doeff-linter/src/population.rs",
         "packages/doeff-linter/src/position.rs",
         "packages/doeff-linter/src/report.rs",
         "packages/doeff-linter/src/rule_info.rs",
@@ -150,6 +154,7 @@
         "packages/doeff-linter/src/main.rs",
         "packages/doeff-linter/src/models.rs",
         "packages/doeff-linter/src/noqa.rs",
+        "packages/doeff-linter/src/population.rs",
         "packages/doeff-linter/src/position.rs",
         "packages/doeff-linter/src/report.rs",
         "packages/doeff-linter/src/rule_info.rs",
@@ -319,6 +324,7 @@
         "packages/doeff-linter/src/rules/doeff024_no_recover_ask.rs",
         "packages/doeff-linter/src/rules/doeff030_ask_result_type_annotation.rs",
         "packages/doeff-linter/src/rules/doeff031_no_redundant_do_wrapper_entrypoint.rs",
+        "packages/doeff-linter/src/rules/doeff032_rule_population_declaration.rs",
         "packages/doeff-linter/src/rules/mod.rs"
       ],
       "public": [
@@ -349,6 +355,7 @@
         "packages/doeff-linter/src/rules/doeff024_no_recover_ask.rs",
         "packages/doeff-linter/src/rules/doeff030_ask_result_type_annotation.rs",
         "packages/doeff-linter/src/rules/doeff031_no_redundant_do_wrapper_entrypoint.rs",
+        "packages/doeff-linter/src/rules/doeff032_rule_population_declaration.rs",
         "packages/doeff-linter/src/rules/mod.rs"
       ],
       "responsibility": "1 file の中で判じる規則(DOEFF0xx〜1xx)の判定。(agora-redesign #1828)",
@@ -381,6 +388,7 @@
         "packages/doeff-linter/tests/facts_cache_roots.rs",
         "packages/doeff-linter/tests/hy_index_cache.rs",
         "packages/doeff-linter/tests/layer_rules.rs",
+        "packages/doeff-linter/tests/rule_population.rs",
         "packages/doeff-linter/tests/semantic_lines.rs",
         "packages/doeff-linter/tests/semantic_proxy.rs",
         "packages/doeff-linter/tests/semantic_rules.rs"
@@ -392,6 +400,7 @@
         "packages/doeff-linter/tests/facts_cache_roots.rs",
         "packages/doeff-linter/tests/hy_index_cache.rs",
         "packages/doeff-linter/tests/layer_rules.rs",
+        "packages/doeff-linter/tests/rule_population.rs",
         "packages/doeff-linter/tests/semantic_lines.rs",
         "packages/doeff-linter/tests/semantic_proxy.rs",
         "packages/doeff-linter/tests/semantic_rules.rs"
