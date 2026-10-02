@@ -65,8 +65,13 @@ pub struct ArchLayer {
     /// 決まらない package(起動の時点で入る module ほか)が、層の宣言から規則の母集団を決めるため(agora-redesign #2811)。
     #[serde(skip)]
     pub modules: Vec<String>,
-    /// 名指しの module に限って、その規則の母集団から外す(`:exempt [(rule 規則 ID "理由") …]`)。理由が要り、:modules の無い層には
-    /// 置けない(読みの誤り)。file から上へ最も近い architecture.hy のこの欄を、Python の規則の当て方が読む(crate::population)。
+    /// この層に入る file を、宣言の在る dir からの相対 path で 1 つずつ名指す(`:files ["相対 path" …]`)。module の名を持たない
+    /// file(package の外の、hash で封をした設計の記録ほか)は :modules では名指せない — 名が素の stem になり、上の dir の宣言で書くと
+    /// その下の同じ名の file が全部入る(agora-redesign #2934)。名指した file が無い・`..`・dir は読みの誤り。
+    #[serde(skip)]
+    pub files: Vec<String>,
+    /// 名指しの module・file に限って、その規則の母集団から外す(`:exempt [(rule 規則 ID "理由") …]`)。理由が要り、:modules も :files も
+    /// 無い層には置けない(読みの誤り)。file から上へ最も近い architecture.hy のこの欄を、Python の規則の当て方が読む(crate::population)。
     #[serde(skip)]
     pub exempt: Vec<RuleExemption>,
 }
@@ -852,6 +857,14 @@ impl Architecture {
                     module == named || module.strip_prefix(named.as_str()).is_some_and(|rest| rest.starts_with('.'))
                 })
         })
+    }
+
+    /// file(宣言の在る dir からの相対 path・`/` 区切り)を :files で名指す層のうち、規則の除外を持つ層。名指しと 1 字違わず同じ
+    /// path だけが入る(agora-redesign #2934)。
+    pub fn exempt_layer_of_file(&self, relative: &str) -> Option<&ArchLayer> {
+        self.layers
+            .iter()
+            .find(|layer| !layer.exempt.is_empty() && layer.files.iter().any(|named| named == relative))
     }
 
     /// file を読んで宣言にする(読めない・形が違う時は位置つきの理由の列)。root は repo の根(:contract-files の path の基準)。
@@ -2800,12 +2813,14 @@ impl<'a> Parser<'a> {
             wire_free: false,
             dependency_layers: None,
             modules: Vec::new(),
+            files: Vec::new(),
             exempt: Vec::new(),
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
         for (key, value) in self.pairs(&rest) {
             match self.text(key) {
                 ":modules" => layer.modules = self.names(value, ":modules"),
+                ":files" => layer.files = self.layer_files(value, &layer.name),
                 ":exempt" => layer.exempt = self.rule_exemptions(value, &layer.name),
                 ":summary" => layer.summary = self.required_string(value, ":summary"),
                 ":knows" => layer.knows = self.required_string(value, ":knows"),
@@ -2828,11 +2843,47 @@ impl<'a> Parser<'a> {
                 _ => self.unknown_key(key, "layer"),
             }
         }
-        if !layer.exempt.is_empty() && layer.modules.is_empty() {
-            // 除外は名指しの module にだけ効く — 置き場の dir ごと外す形にすると、層に足した別の module が黙って母集団から外れる。
-            self.problem(form, &format!("layer {} の :exempt は :modules の名指しの module にだけ効く — :modules が無い", layer.name));
+        if !layer.exempt.is_empty() && layer.modules.is_empty() && layer.files.is_empty() {
+            // 除外は名指しの module・file にだけ効く — 置き場の dir ごと外す形にすると、層に足した別の file が黙って母集団から外れる。
+            self.problem(
+                form,
+                &format!("layer {} の :exempt は :modules か :files の名指しにだけ効く — どちらも無い", layer.name),
+            );
         }
         Some(layer)
+    }
+
+    /// `:files ["相対 path" …]` を読む(agora-redesign #2934)— 宣言の在る dir からの相対 path(`/` 区切り)で file を 1 つずつ
+    /// 名指す。絶対 path・`..`・`.` の段・`.py` でない path・名指した file が無い・同じ path の 2 度は読みの誤り(消した・動かした
+    /// file の名指しが残らない)。dir は名指せない(dir に足した file が黙って層に入らない)。
+    fn layer_files(&mut self, value: &Form, layer: &str) -> Vec<String> {
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, &format!("layer {} の :files は [\"相対 path\" …] の列", layer));
+            return Vec::new();
+        };
+        let base = self.path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let mut out: Vec<String> = Vec::new();
+        for item in items {
+            let Some(file) = self.string(item) else {
+                self.problem(item, &format!("layer {} の :files の要素は、宣言の在る dir からの相対 path の文字列", layer));
+                continue;
+            };
+            let relative = Path::new(&file);
+            let plain = !relative.is_absolute()
+                && relative.components().all(|part| matches!(part, std::path::Component::Normal(_)));
+            if !plain {
+                self.problem(item, &format!("layer {} の :files の {} は、宣言の在る dir の下の相対 path で書く(絶対 path・`..`・`.` は書けない)", layer, file));
+            } else if !file.ends_with(".py") {
+                self.problem(item, &format!("layer {} の :files の {} は Python の file(.py)ではない — dir は名指せない", layer, file));
+            } else if out.contains(&file) {
+                self.problem(item, &format!("layer {} の :files の {} が 2 度書かれている", layer, file));
+            } else if !base.join(relative).is_file() {
+                self.problem(item, &format!("layer {} の :files の {} が無い(消した・動かした file の名指しが残っている)", layer, file));
+            } else {
+                out.push(file);
+            }
+        }
+        out
     }
 
     /// `:exempt [(rule 規則 ID "理由") …]` を読む(agora-redesign #2811)。理由の無い除外・知らない規則 ID・同じ規則の 2 度の宣言は
@@ -3183,7 +3234,42 @@ mod tests {
         assert!(problems.contains("DOEFF106 は、外せる規則(Python の文ごとの規則)の ID ではない"), "層の規則の ID を通した:\n{}", problems);
         assert!(problems.contains("DOEFF999 は、外せる規則"), "知らない ID を通した:\n{}", problems);
         assert!(problems.contains("DOEFF001 が 2 度宣言されている"), "同じ規則の 2 度を通した:\n{}", problems);
-        assert!(problems.contains("layer loose の :exempt は :modules の名指しの module にだけ効く"), ":modules の無い除外を通した:\n{}", problems);
+        assert!(problems.contains("layer loose の :exempt は :modules か :files の名指しにだけ効く"), "名指しの無い除外を通した:\n{}", problems);
+    }
+
+    #[test]
+    fn layer_files_name_existing_files_by_relative_path() {
+        // agora-redesign #2934: :files は宣言の在る dir からの相対 path で file を 1 つずつ名指す(module の名を持たない file のため)。
+        // 名指しと 1 字違わず同じ path だけが入る。無い file・`..`・絶対 path・dir(.py でない)・2 度は読みの誤り。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("sealed")).unwrap();
+        std::fs::write(dir.path().join("sealed").join("a.py"), "x = 1\n").unwrap();
+        std::fs::write(dir.path().join("b.py"), "x = 1\n").unwrap();
+        let declaration = dir.path().join("architecture.hy");
+        let declared = GOOD.replace(
+            "(layer foundation)",
+            "(layer foundation) (layer sealed :files [\"sealed/a.py\" \"b.py\"] :exempt [(rule DOEFF007 \"封の表が控える\")])",
+        );
+        let arch = Architecture::parse_at(&declared, &declaration, dir.path()).unwrap();
+        let sealed = arch.layers.iter().find(|l| l.name == "sealed").unwrap();
+        assert_eq!(sealed.files, vec!["sealed/a.py".to_string(), "b.py".to_string()]);
+        assert!(arch.notices.is_empty(), "知らない鍵として知らせた: {:?}", arch.notices);
+        assert_eq!(arch.exempt_layer_of_file("sealed/a.py").map(|l| l.name.as_str()), Some("sealed"));
+        assert_eq!(arch.exempt_layer_of_file("b.py").map(|l| l.name.as_str()), Some("sealed"));
+        assert_eq!(arch.exempt_layer_of_file("sealed/c.py").map(|l| l.name.as_str()), None, "名指していない同じ dir の file を入れた");
+        assert_eq!(arch.exempt_layer_of_file("a.py").map(|l| l.name.as_str()), None, "名の末尾が同じだけの別の path を入れた");
+
+        let bad = GOOD.replace(
+            "(layer foundation)",
+            "(layer foundation) (layer sealed :files [\"missing.py\" \"../b.py\" \"/b.py\" \"sealed\" \"b.py\" \"b.py\"] \
+             :exempt [(rule DOEFF007 \"封の表が控える\")])",
+        );
+        let problems = Architecture::parse_at(&bad, &declaration, dir.path()).unwrap_err().join("\n");
+        assert!(problems.contains(":files の missing.py が無い"), "無い file の名指しを通した:\n{}", problems);
+        assert!(problems.contains(":files の ../b.py は、宣言の在る dir の下の相対 path で書く"), "`..` を通した:\n{}", problems);
+        assert!(problems.contains(":files の /b.py は、宣言の在る dir の下の相対 path で書く"), "絶対 path を通した:\n{}", problems);
+        assert!(problems.contains(":files の sealed は Python の file(.py)ではない"), "dir の名指しを通した:\n{}", problems);
+        assert!(problems.contains(":files の b.py が 2 度書かれている"), "同じ path の 2 度を通した:\n{}", problems);
     }
 
     #[test]

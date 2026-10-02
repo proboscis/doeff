@@ -109,10 +109,18 @@ pub fn population_of(file: &Path) -> Result<FilePopulation, String> {
         return Ok(FilePopulation::Plain);
     };
     let architecture = declaration(&path)?;
-    let Some(module) = module_name(&absolute) else {
-        return Ok(FilePopulation::Plain);
+    // :files の path での名指しを先に見る(module の名を持たない file — agora-redesign #2934)、無ければ :modules の名
+    let base = path.parent().unwrap_or(Path::new("."));
+    let by_file = absolute
+        .strip_prefix(base)
+        .ok()
+        .and_then(|relative| relative.to_str())
+        .and_then(|relative| architecture.exempt_layer_of_file(relative));
+    let layer = match by_file {
+        Some(layer) => Some(layer),
+        None => module_name(&absolute).and_then(|module| architecture.exempt_layer_of(&module)),
     };
-    Ok(match architecture.exempt_layer_of(&module) {
+    Ok(match layer {
         Some(layer) => FilePopulation::Exempt {
             layer: layer.name.clone(),
             rules: layer.exempt.iter().map(|e| e.rule.clone()).collect(),
