@@ -34,7 +34,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.worker.core.program [run-worker])
@@ -170,7 +170,7 @@
   (setv started-ms (int (* 1000 (time.time)))
         boot (. (uuid.uuid4) hex)
         link (LinkState args.name provides args.capacity (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot started-ms started-ms
-                        :versions (current-versions) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
+                        :versions (run (process-versions os.environ)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。

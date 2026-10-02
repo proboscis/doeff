@@ -206,6 +206,7 @@ class SimLink:
     actor: str
     revision: str
     peer: str
+    versions: dict[str, str]
     runtime_env: RuntimeEnv | None = None
 
 @dataclass(frozen=True, kw_only=True)

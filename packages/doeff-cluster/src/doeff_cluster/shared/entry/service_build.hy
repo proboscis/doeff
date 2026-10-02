@@ -54,7 +54,7 @@
 (deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions]  ; defk にできない: declare の CLI が呼ぶ
   {:pre [(: system System) (: revision str) (: versions dict) (: runtime-env (| RuntimeEnv None)) (: environ (| dict None))] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "系 → coordinator へ渡す宣言(改訂 1 の A・F・G)。job ごとに Program を詰めて sha を鍵に programs へ、行は sha と identity・
-   versions・describe・environ を持つ。versions = 送り手の版の識別(キーワード専用の必須 — 呼び手が io の層の process_versions.current-versions で読んで渡す —
+   versions・describe・environ を持つ。versions = 送り手の版の識別(キーワード専用の必須 — 呼び手が io の層の process_versions.process-versions で綴って渡す —
    宣言の組み立ては process を読まない・#1630)。runtime-env の env-vars と :environ で同じ名が在れば断る(子の環境変数の足し口を 1 つにする)。
    environ = job ごとの environ の上書き(配る先ごとの値 — 口の URL・下限の刻など。宣言の :environ に重ね、規則は environ-overlay-refusal。
    spec-hash に入るので、上書きを変えると入れ替わる)。"
