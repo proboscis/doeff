@@ -1,8 +1,4 @@
 {
-  "DOEFF113": {
-    "src/doeff_cluster/coordinator/core/cluster_policy.hy": 1,
-    "src/doeff_cluster/coordinator/core/program.hy": 1
-  },
   "DOEFF172": {
     "src/doeff_cluster/coordinator/core/api_policy.hy": 9,
     "src/doeff_cluster/coordinator/core/cluster_policy.hy": 33,
