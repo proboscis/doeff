@@ -20,3 +20,9 @@ class ReportReady(EffectBase[None]):
     ready: bool
     reason: str = ''
     role: str = ...
+
+@dataclass(frozen=True, kw_only=True)
+class ReadinessClaim:
+    ready: bool
+    reason: str
+    role: str
