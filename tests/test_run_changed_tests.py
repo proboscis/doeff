@@ -12,6 +12,11 @@ t135 の形: doeff-core-effects の `.hy` に公開の名を 1 つ足し、隣�
 2 便目(逆依存): 入口は doeff-linter の `--affected-tests` に問う。検では実の linter を呼ばず、決めた答えを返す代役の
 命令(`--linter`)に差し替え、契約の組 → 変えた検 → 逆依存(距離の順)に並ぶこと・linter が答えない時に名指して進むことを
 確かめる。linter 側の選び方そのものの失敗ケースは doeff-linter の Rust の検(project::affected_tests)が持つ。
+
+session の境目(agora-redesign #2682): 入口は日次と同じ境目(repo の根・`packages/<名>/tests`・Makefile の
+PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest の process で走らせる。`tests/` に `__init__.py` と `conftest.py` を持つ package を
+2 つ同時に選んでも止まらないこと(1 回の pytest では `tests.conftest` の名がぶつかり rc 2 で止まった)・合計の上限を束どうしで
+分け合い、番の来なかった束を未測と名指すこと・束の並びが契約の組を先に保つことを確かめる。
 """
 
 from __future__ import annotations
@@ -22,8 +27,10 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -121,7 +128,8 @@ def _make_model(
         root / CORE_EFFECTS,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    for rel in (STUB_TEST, ADR_PLUGIN):
+    # Makefile は入口が session の境目(PACKAGE_EXTRA_TEST_ROOTS)を聞く定義元(agora-redesign #2682)。
+    for rel in (STUB_TEST, ADR_PLUGIN, "Makefile"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / rel, root / rel)
     (root / "tests").mkdir()
@@ -384,3 +392,156 @@ def test_an_unanswering_linter_is_named_and_the_run_goes_on(
     assert "赤: 0" in summary, summary
     assert "逆依存を測れなかった — " in summary, summary
     assert named in summary, summary
+
+
+# ---------------------------------------------------------------------------
+# 日次と同じ session の境目ごとに別の pytest の process(agora-redesign #2682)
+# ---------------------------------------------------------------------------
+
+
+def _package_tests(name: str) -> tuple[tuple[str, str], ...]:
+    """`tests/` に `__init__.py` と `conftest.py` の両方を持つ package 1 つ(doeff の claude-code・cluster・conductor・records の形)。
+    この形の package を 2 つ 1 つの pytest の session に混ぜると、どちらの conftest も `tests.conftest` の名になりぶつかる。"""
+    base = f"packages/{name}/tests"
+    return (
+        (f"{base}/__init__.py", ""),
+        (
+            f"{base}/conftest.py",
+            f"import pytest\n\n\n@pytest.fixture\ndef owner():\n    return {name!r}\n",
+        ),
+        (f"{base}/test_owner.py", f"def test_owner(owner):\n    assert owner == {name!r}\n"),
+    )
+
+
+def _touch_test(model: Model, rel: str) -> None:
+    """模型の検の file に 1 行足す(その file を「変えた検」にする)。"""
+    path = model.root / rel
+    path.write_text(path.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+
+
+ALPHA = "packages/doeff-alpha/tests/test_owner.py"
+BETA = "packages/doeff-beta/tests/test_owner.py"
+
+
+def test_tests_of_two_packages_with_their_own_conftest_both_run(tmp_path: Path) -> None:
+    """失敗ケース(#2658 の標本の 12 commit 中 6 本の形): `tests/__init__.py` と `conftest.py` を持つ package 2 つの検が同時に
+    選ばれる変更。1 回の pytest に渡すと `tests.conftest` の名がぶつかり、入口は 1 本も走らせずに止まった(rc 2)。日次と
+    同じ session の境目で process を分けるので、契約の組(repo の根)→ 2 つの package の順に 3 つの process で全部走る。"""
+    model = _make_model(
+        tmp_path, (REPO_ROW,), extra=(*_package_tests("doeff-alpha"), *_package_tests("doeff-beta"))
+    )
+    _touch_test(model, ALPHA)
+    _touch_test(model, BETA)
+    output = _run(model)
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "ImportPathMismatchError" not in output.text, output.text[-3000:]
+    assert "走った: 3" in summary, summary
+    assert f"{ALPHA} — 1 本(変えた検" in summary, summary
+    assert f"{BETA} — 1 本(変えた検" in summary, summary
+    assert (
+        "pytest の process: 3/3 本が走った(session: ., packages/doeff-alpha/tests, packages/doeff-beta/tests)"
+        in summary
+    ), summary
+
+
+def test_a_batch_left_without_budget_is_named_unmeasured(tmp_path: Path) -> None:
+    """合計の上限は束どうしで分け合う: 先頭の契約の組の束(repo の根)が上限(ここでは 6 秒)を使い切ると、後ろの package の
+    束は pytest を起こさず、その検を「番が来なかった」未測と名指す(赤にしない・rc 0)。"""
+    model = _make_model(
+        tmp_path,
+        (Row(prefix="", tests=("tests/test_slow.py",)),),
+        extra=_package_tests("doeff-alpha"),
+    )
+    _touch_test(model, ALPHA)
+    output = _run(model, "--budget", "6")
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "未測: 2" in summary, summary
+    assert "tests/test_slow.py — 上限 6 秒で打ち切り" in summary, summary
+    assert f"{ALPHA} — 上限 6 秒の内に番が来なかった" in summary, summary
+    assert "pytest の process: 1/2 本が走った" in summary, summary
+
+
+@pytest.fixture(scope="module")
+def runner() -> Iterator[ModuleType]:
+    """入口の script を module として読む(dataclass は定義した module を sys.modules から引く — 検の間だけ置く)。"""
+    spec = importlib.util.spec_from_file_location("run_changed_tests", RUNNER)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setitem(sys.modules, spec.name, module)
+        spec.loader.exec_module(module)
+        yield module
+
+
+SIM = "packages/doeff-cluster/src/doeff_cluster/sim"
+
+
+def test_each_test_goes_to_the_session_the_daily_run_uses(runner: ModuleType) -> None:
+    """session の境目は日次と同じ: tests/ の外の根の下はその根・`packages/<名>/tests/` の下はその package・他は repo の根。
+    `::検の名` の付いた引数も file の path で決める。"""
+    roots = runner.SessionRoots(extra=(SIM,))
+    assert runner.session_of(f"{SIM}/test_local.hy", roots) == SIM
+    assert runner.session_of(f"{SIM}/deep/test_x.hy::test_y", roots) == SIM
+    assert runner.session_of("packages/doeff-records/tests/test_laws.hy", roots) == (
+        "packages/doeff-records/tests"
+    )
+    assert runner.session_of("packages/doeff-records/tests/sub/test_a.py::test_b", roots) == (
+        "packages/doeff-records/tests"
+    )
+    assert runner.session_of("packages/doeff-records/src/doeff_records/test_x.py", roots) == "."
+    assert runner.session_of("tests/test_daily_test_population.py", roots) == "."
+    assert runner.session_of("docs/adr/defadr_doeff_domain_001.hy::test_x", roots) == "."
+    # 根の名で始まるだけの別の dir は、その根ではない。
+    assert runner.session_of(f"{SIM}_other/test_x.hy", roots) == "."
+
+
+def test_batches_keep_the_contract_set_first_and_merge_neighbours(runner: ModuleType) -> None:
+    """束の並び: 組(契約の組 → 変えた検 → 逆依存)の順を保ち、組の中は session ごとに束ねる(session の順は組の中で最初に
+    現れた順)。隣り合う同じ session の束は 1 つの process にする — 契約の組が別の package に在っても、逆依存より先に走る。"""
+    origin = runner.Origin
+
+    def target(arg: str, kind: object) -> object:
+        return runner.Target(arg=arg, origin=kind, why="検")
+
+    selection = runner.Selection(
+        targets=(
+            target("tests/test_daily_test_population.py", origin.CONTRACT),
+            target("packages/doeff-records/tests/test_static_stubs.py", origin.CONTRACT),
+            target("packages/doeff-records/tests/test_changed.py", origin.CHANGED),
+            target("packages/doeff-cluster/tests/test_near.py", origin.REVERSE),
+            target("tests/test_far.py", origin.REVERSE),
+            target("packages/doeff-cluster/tests/test_far.py", origin.REVERSE),
+        )
+    )
+    batches = runner.batches_of(selection, runner.SessionRoots(extra=()))
+    assert [(b.session, [t.arg for t in b.targets]) for b in batches] == [
+        (".", ["tests/test_daily_test_population.py"]),
+        (
+            "packages/doeff-records/tests",
+            [
+                "packages/doeff-records/tests/test_static_stubs.py",
+                "packages/doeff-records/tests/test_changed.py",
+            ],
+        ),
+        (
+            "packages/doeff-cluster/tests",
+            [
+                "packages/doeff-cluster/tests/test_near.py",
+                "packages/doeff-cluster/tests/test_far.py",
+            ],
+        ),
+        (".", ["tests/test_far.py"]),
+    ]
+    # 1 つの session だけなら 1 つの process(今までと同じ)。
+    single = runner.Selection(targets=selection.targets[:1])
+    assert len(runner.batches_of(single, runner.SessionRoots(extra=()))) == 1
+
+
+def test_the_session_roots_are_read_from_the_makefile(runner: ModuleType) -> None:
+    """本物の木: session の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS(日次の母集団の定義元)から読め、どれも木に在る dir。"""
+    roots = runner.read_session_roots(REPO_ROOT)
+    assert roots.extra, "tests/ の外の根が 0 個 — Makefile の読みが壊れている"
+    assert all((REPO_ROOT / root).is_dir() for root in roots.extra), roots

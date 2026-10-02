@@ -23,7 +23,13 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
    同じ値を `--test-pattern` で渡し、答えも 3 と同じ判定で絞る。直接の使い手が多すぎる module(`doeff-hy.macros`・
    `doeff/__init__.py` の形)は linter が通り抜けず名を返すので「逆依存が広すぎて辿らなかった」と名指す。linter が無い・
    答えが読めない時は逆依存を足さずに「逆依存を測れなかった」と名指す(黙って空にしない・赤とは分ける)。
-5. 契約の組を先頭に 1 回の pytest(`-m "not e2e"`)にまとめ、合計の壁時計の上限(既定 60 秒)で打ち切る。
+5. 選んだ検を、日次と同じ pytest の session の境目(repo の根・package ごとの `packages/<名>/tests`・package の tests/ の
+   外の根 = Makefile の PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest(`-m "not e2e"`)の process で走らせる。日次の
+   `make test-packages` が package ごとに session を分けるのと同じ理由で、`tests/` に `__init__.py` と `conftest.py` を
+   持つ package の検を 1 つの session に混ぜると `tests.conftest` の名がぶつかり(ImportPathMismatchError)、pytest が
+   1 本も走らせずに止まる(agora-redesign #2682 — #2658 の標本で 12 commit 中 6 本)。順は組(契約の組 → 変えた検 →
+   逆依存)ごとに session で束ね、隣り合う同じ session の束は 1 つの process にする。束を順に走らせ、合計の壁時計の上限
+   (既定 60 秒)の残りを次の束に渡す — 番が来なかった束の検は「未測」と名指す。
 
 出力は 走った(緑)・赤・未測 の 3 つ。終わらなかった file・集めた検が 0 本の file・venv の無い作業木は「未測」と
 名指し、赤と分ける。rc は 赤が在れば 1・表や入力が読めなければ 2・それ以外 0(未測は登記を止めない — 名指すだけ)。
@@ -49,6 +55,7 @@ from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from enum import Enum
+from itertools import groupby
 from pathlib import Path
 from typing import Protocol
 
@@ -81,6 +88,12 @@ PYTEST_TOOL_FAILURES = frozenset({3, 4})
 DEFAULT_LINTER = "doeff-linter"
 #: linter の答えを待つ上限の秒(doeff で cache が温まって約 0.1 秒・冷えて約 0.2 秒 — 60 秒の検の予算とは別に数える)。
 LINTER_TIMEOUT_SECONDS = 30.0
+#: package の tests/ の外の検の根を名指す Makefile の target(日次の母集団の根の定義元 — 2 つ目の一覧を書かない)。
+EXTRA_ROOTS_TARGET = "print-package-extra-test-roots"
+#: repo の根の session(package の tests/ と、その外の根のどちらにも当たらない検 — 日次の root の `pytest` と同じ)。
+ROOT_SESSION = "."
+#: Makefile に session の根を聞く命令を待つ上限の秒(変数を 1 つ echo するだけ — 60 秒の検の予算とは別に数える)。
+MAKE_TIMEOUT_SECONDS = 30.0
 
 
 class StopError(Exception):
@@ -562,6 +575,78 @@ def extend_with_reverse(
 
 
 # ---------------------------------------------------------------------------
+# pytest の session の境目(日次と同じ — agora-redesign #2682)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SessionRoots:
+    """日次の session の境目のうち、package の tests/ の外の検の根(Makefile の PACKAGE_EXTRA_TEST_ROOTS・根からの path)。"""
+
+    extra: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Batch:
+    """1 つの pytest の process に渡す検の並び — session = その検の session の根(ROOT_SESSION・`packages/<名>/tests`・
+    tests/ の外の根のどれか)。"""
+
+    session: str
+    targets: tuple[Target, ...]
+
+
+def read_session_roots(repo: Path) -> SessionRoots:
+    """package の tests/ の外の検の根を、日次の母集団の定義元(Makefile の target)に聞く(実 I/O はここだけ)。読めなければ
+    止める — 黙って根を 0 個にすると、その根の検が repo の根の session に混ざり、日次と違う session で走る。"""
+    try:
+        proc = subprocess.run(
+            ["make", "-s", "--no-print-directory", "-C", str(repo), EXTRA_ROOTS_TARGET],
+            capture_output=True,
+            text=True,
+            timeout=MAKE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise StopError(f"make {EXTRA_ROOTS_TARGET} を走らせられない: {exc}") from exc
+    if proc.returncode != 0:
+        raise StopError(f"make {EXTRA_ROOTS_TARGET} が rc {proc.returncode}: {proc.stderr.strip()}")
+    return SessionRoots(extra=tuple(root.rstrip("/") for root in proc.stdout.split()))
+
+
+def session_of(arg: str, roots: SessionRoots) -> str:
+    """検の引数 1 つが走る session の根 — 日次の境目と同じ: tests/ の外の根の下はその根・`packages/<名>/tests/` の下は
+    その package の tests・どちらでもない検は repo の根(日次の root の `pytest`)。"""
+    path = _test_path(arg)
+    extra = next((root for root in roots.extra if path.startswith(f"{root}/")), None)
+    if extra is not None:
+        return extra
+    match path.split("/"):
+        case ["packages", name, "tests", _, *_]:
+            return f"packages/{name}/tests"
+        case _:
+            return ROOT_SESSION
+
+
+def batches_of(selection: Selection, roots: SessionRoots) -> tuple[Batch, ...]:
+    """選んだ並びを、組(契約の組 → 変えた検 → 逆依存)の順を保ったまま process の束に分ける。組の中は session ごとに
+    束ね(session の順は組の中で最初に現れた順・束の中は選んだ順)、隣り合う同じ session の束は 1 つの process にする。
+    純粋な関数(session の根は呼び手が読んで渡す)。"""
+    keyed = tuple((t, session_of(t.arg, roots)) for t in selection.targets)
+    per_origin = tuple(
+        Batch(
+            session=session,
+            targets=tuple(t for t, s in keyed if t.origin is origin and s == session),
+        )
+        for origin in Origin
+        for session in dict.fromkeys(s for t, s in keyed if t.origin is origin)
+    )
+    return tuple(
+        Batch(session=session, targets=tuple(t for batch in group for t in batch.targets))
+        for session, group in groupby(per_origin, key=lambda batch: batch.session)
+    )
+
+
+# ---------------------------------------------------------------------------
 # pytest の結末(plugin が書く行ごとの JSON)
 # ---------------------------------------------------------------------------
 
@@ -677,6 +762,22 @@ class PytestRun:
     seconds: float
 
 
+@dataclass(frozen=True)
+class NotReached:
+    """合計の上限を前の束が使い切り、pytest を起こさなかった束。"""
+
+
+BatchRun = PytestRun | NotReached
+
+
+@dataclass(frozen=True)
+class BatchOutcome:
+    """束 1 つと、その束の走り(走ったか、番が来なかったか)。"""
+
+    batch: Batch
+    run: BatchRun
+
+
 def _belongs(nodeid: str, arg: str) -> bool:
     return (
         nodeid == arg
@@ -685,7 +786,21 @@ def _belongs(nodeid: str, arg: str) -> bool:
     )
 
 
-def classify(target: Target, run: PytestRun, budget: float) -> TargetResult:
+def classify(target: Target, outcome: BatchRun, budget: float) -> TargetResult:
+    """検 1 つを、その束の走りから 3 つ(走った・赤・未測)に分ける — 番が来なかった束の検を、赤と混ぜずに未測と名指すため。"""
+    match outcome:
+        case NotReached():
+            return TargetResult(
+                target,
+                Verdict.UNMEASURED,
+                f"上限 {budget:g} 秒の内に番が来なかった(前の束が使い切った)",
+            )
+        case PytestRun() as run:
+            return _classify_run(target, run, budget)
+
+
+def _classify_run(target: Target, run: PytestRun, budget: float) -> TargetResult:
+    """走った束の検 1 つを分ける — 集め終わらなかった・打ち切られた検を、赤と混ぜずに未測と名指すため。"""
     collected = next((e for e in run.events if isinstance(e, Collected)), None)
     collect_errors = [
         e
@@ -862,6 +977,40 @@ def run_pytest(
     return PytestRun(events=events, returncode=returncode, timed_out=timed_out, seconds=seconds)
 
 
+def _run_batch(
+    repo: Path,
+    index: int,
+    batches: tuple[Batch, ...],
+    budget: float,
+    started: float,
+    environment: RunEnvironment,
+) -> BatchOutcome:
+    """束 1 つを、合計の上限の残りを上限にして 1 つの pytest の process で走らせる — 残りが無ければ起こさない
+    (前の束が使い切った分を後ろの束の「未測」として名指すため)。"""
+    batch = batches[index]
+    remaining = budget - (time.monotonic() - started)
+    if remaining <= 0:
+        return BatchOutcome(batch=batch, run=NotReached())
+    print(
+        f"== pytest の process {index + 1}/{len(batches)}: session {batch.session}"
+        f"(検 {len(batch.targets)} 本・残り {remaining:.1f} 秒)==",
+        flush=True,  # pytest の出力より先に出す
+    )
+    return BatchOutcome(batch=batch, run=run_pytest(repo, batch.targets, remaining, environment))
+
+
+def run_batches(
+    repo: Path, batches: tuple[Batch, ...], budget: float, environment: RunEnvironment
+) -> tuple[BatchOutcome, ...]:
+    """束を並びの順に 1 つずつ走らせ、合計の壁時計の上限(budget)を束どうしで分け合う — 契約の組の束がいつも先に走る。
+    tuple は束を順に評価するので、各束は前の束が使った時間を引いた残りを受け取る。"""
+    started = time.monotonic()
+    return tuple(
+        _run_batch(repo, index, batches, budget, started, environment)
+        for index in range(len(batches))
+    )
+
+
 def _print_reverse(answer: AffectedAnswer, added: int) -> None:
     """逆依存の測り方の結末を名指す — 測れなかった時・広すぎて辿らなかった module を、赤と混ぜずに出す。"""
     match answer:
@@ -898,7 +1047,8 @@ def _print_summary(
 
 
 def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
-    """登記の前の入口: 変えた file → 契約の組 + 変えた検 + 逆依存の検 → 1 回の pytest → 3 つに分けた要約と rc。"""
+    """登記の前の入口: 変えた file → 契約の組 + 変えた検 + 逆依存の検 → 日次と同じ session ごとの pytest の process → 3 つに分けた
+    要約と rc。"""
     parser = argparse.ArgumentParser(
         description="変えた所の検 — 登記の前に、契約の検の組・変えた検・逆依存の検を 60 秒の上限で走らせる"
     )
@@ -921,6 +1071,7 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
         table = read_contract_table(repo)
         patterns = collector_patterns(repo)
         changes = changed_files(repo, args.base)
+        roots = read_session_roots(repo)
     except StopError as exc:
         print(f"変えた所の検: 止める — {exc}", file=sys.stderr)
         return 2
@@ -934,9 +1085,10 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
         if changes.files
         else Affected(tests=(), hubs=(), unreadable=())
     )
-    targets = extend_with_reverse(
+    selection = extend_with_reverse(
         select_targets(table, changes, patterns, repo), reverse, patterns, repo
-    ).targets
+    )
+    targets = selection.targets
     if not targets:
         print("当たる契約の組も変えた検の file も逆依存の検も無い — 走らせる検は 0 本")
         _print_reverse(reverse, 0)
@@ -951,13 +1103,21 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
             reverse,
         )
         return 0
+    batches = batches_of(selection, roots)
     try:
-        run = run_pytest(repo, targets, args.budget, run_environment)
+        outcomes = run_batches(repo, batches, args.budget, run_environment)
     except StopError as exc:
         print(f"変えた所の検: 止める — {exc}", file=sys.stderr)
         return 2
-    results = tuple(classify(t, run, args.budget) for t in targets)
-    _print_summary(results, run.seconds, args.budget, reverse)
+    results = tuple(
+        classify(t, outcome.run, args.budget) for outcome in outcomes for t in outcome.batch.targets
+    )
+    seconds = sum(o.run.seconds for o in outcomes if isinstance(o.run, PytestRun))
+    _print_summary(results, seconds, args.budget, reverse)
+    print(
+        f"pytest の process: {sum(1 for o in outcomes if isinstance(o.run, PytestRun))}/{len(outcomes)} 本が走った"
+        f"(session: {', '.join(o.batch.session for o in outcomes)})"
+    )
     return 1 if any(r.verdict is Verdict.RED for r in results) else 0
 
 

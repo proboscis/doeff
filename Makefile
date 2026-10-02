@@ -160,8 +160,9 @@ test-e2e:
 	$(PYTEST_MEMORY_ENV) uv run pytest -m "e2e"
 
 # 登記(ai land request)の前に手元で走らせる変えた所の検(agora-redesign #2605)。分岐点(既定 git merge-base HEAD origin/main)から
-# 作業木までに変えた file が当たる契約の検の組(root の pyproject.toml の [[tool.doeff.contract-tests]])を先頭に、変えた検の file を
-# 1 回の pytest で走らせ、合計 60 秒で打ち切る。終わらなかった file は「未測」と名指し、赤だけ rc 1。commit の hook では走らせない
+# 作業木までに変えた file が当たる契約の検の組(root の pyproject.toml の [[tool.doeff.contract-tests]])を先頭に、変えた検の file と
+# 逆依存の検を、下の test-packages と同じ session の境目(repo の根・package ごとの tests・PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest で
+# 走らせ、合計 60 秒で打ち切る(agora-redesign #2682)。終わらなかった file は「未測」と名指し、赤だけ rc 1。commit の hook では走らせない
 # (#1122・#794)。分岐点を変える: make test-changed TEST_CHANGED_ARGS="--base <rev>"。
 TEST_CHANGED_ARGS ?=
 test-changed:
@@ -187,7 +188,8 @@ PACKAGE_UV_RUN ?= uv run
 # - packages/doeff-cluster/src/doeff_cluster/sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
 #   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・集め方は同じ dir の conftest.py・agora-redesign #2542)。
 PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/sim
-# 母集団の根の定義はこの変数の 1 点。置き場の検(tests/test_daily_test_population.py)は下の target で読む
+# 母集団の根の定義はこの変数の 1 点。置き場の検(tests/test_daily_test_population.py)と、登記の前の入口の session の境目
+# (scripts/run_changed_tests.py の read_session_roots・agora-redesign #2682)は下の target で読む
 # (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる・agora-redesign #2577)。
 print-package-extra-test-roots:
 	@echo $(PACKAGE_EXTRA_TEST_ROOTS)
