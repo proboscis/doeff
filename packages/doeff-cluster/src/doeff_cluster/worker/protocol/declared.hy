@@ -22,7 +22,7 @@
 
 
 (defk env-placement [declared revision]
-  {:pre [(: declared (| dict None)) (: revision (| str None))] :post [(: % EnvPlacement)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  {:pre [(: declared (| (get dict #(str object)) None)) (: revision (| str None))] :post [(: % EnvPlacement)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "job の宣言の runtimeEnv(在れば)と版から、起こす版と root の置き場を決めるため。実行環境の job(task も service も — 2026-09-26)は、
    env のキー(この worker の platform で計算)を root の置き場の鍵にする。版は宣言のまま運ぶ — coordinator が同じ宣言から計算する版と
    指紋に合わせるため(版を持たない task だけは \"env-<キー>\" を版の代わりにする)。無ければ版のまま。"
@@ -36,7 +36,7 @@
 
 
 (defk declared-job-spec [job]
-  {:pre [(: job dict)] :post [(: % JobSpec)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  {:pre [(: job (get dict #(str object)))] :post [(: % JobSpec)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。worker が job を受けるのは
    coordinator からだけ(宣言の file を直に読む口は無い — ADR-DOE-CLUSTER-001 R1)。"
   (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
@@ -54,7 +54,7 @@
 
 
 (defk declared-job-specs [jobs]
-  {:pre [(: jobs list)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  {:pre [(: jobs (get list (get dict #(str object))))] :post [(: % (get tuple #(JobSpec ...)))] :tags {:context "worker" :role "protocol" :reads "json"}}
   "heartbeat の返事の job の行の列を、worker が起動する形の列に読むため(worker の拍と sim の宿が同じ読みを使う)。"
   (var specs #())
   (for [job jobs]
@@ -67,7 +67,7 @@
 
 
 (defk task-spec [task task-dir]
-  {:pre [(: task dict) (: task-dir Path)] :post [(: % JobSpec)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  {:pre [(: task (get dict #(str object))) (: task-dir Path)] :post [(: % JobSpec)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。結果はこの worker の file(名前は task の id で決まる)。詰めた Program は
    service の job と同じく置き場のキー program(sha)で持ち、worker の coordinator への口が /programs/<sha> から cache へ取り、
    子 process の言い換え(worker/protocol/process_host)が `--program <cache の file>` を足す(入口は `task --result <file> --program <file>` — 版は file の中の versions)。
@@ -84,7 +84,7 @@
 
 
 (defk task-specs [tasks task-dir]
-  {:pre [(: tasks list) (: task-dir Path)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  {:pre [(: tasks (get list (get dict #(str object)))) (: task-dir Path)] :post [(: % (get tuple #(JobSpec ...)))] :tags {:context "worker" :role "protocol" :reads "json"}}
   "heartbeat の返事の task の行の列を、1 度だけ走らせる job の列に読むため(worker の拍と sim の宿が同じ読みを使う)。"
   (var specs #())
   (for [task tasks]

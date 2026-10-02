@@ -48,7 +48,7 @@
 
 
 (defk declare-request [method url actor body]
-  {:pre [(: method str) (: url str) (: actor str) (: body (| dict None))] :post [(: % HttpResponse)]
+  {:pre [(: method str) (: url str) (: actor str) (: body (| (get dict #(str object)) None))] :post [(: % HttpResponse)]
    :tags {:context "doeff-cluster" :role "main" :spells "http"}}
   "宣言の書きの要求 1 つを、送り手(header X-Actor — coordinator は出来事の記録に残す)を付けて送り直さずに送るため。4xx・5xx も返事として
    返し、届かなければ汎用の HTTP の答え手の例外のまま上げる。"
@@ -58,7 +58,7 @@
 
 
 (defk service-written [base actor row replicas]
-  {:pre [(: base str) (: actor str) (: row Mapping) (: replicas (| int None))] :post [(: % HttpResponse)]
+  {:pre [(: base str) (: actor str) (: row (get Mapping #(str object))) (: replicas (| int None))] :post [(: % HttpResponse)]
    :tags {:context "doeff-cluster" :role "main" :reads "json"}}
   "Service の行 1 つを資源の口へ書くため: 無ければ POST /resources/Service で作り(所有者 = 送り手)、在れば GET で読んだ resourceVersion を
    付けて PUT する(読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。答え = 書きの返事。"

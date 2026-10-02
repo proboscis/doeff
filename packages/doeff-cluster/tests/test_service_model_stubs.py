@@ -1,15 +1,14 @@
-"""系の宣言の 3 つの module と、worker の拍の 2 つの module・宣言の命令の module の型の宣言(.pyi)と実装の食い違いの失敗ケース。
+"""系の宣言の 3 つの module の型の宣言(.pyi)と実装の食い違いの失敗ケース。
 
 service_model.hy の判断と構成子を、層に合わせて core/service_rules.hy と entry/service_build.hy へ分けた。型の宣言は手書きなので、
 関数を移す・引数を変えると、宣言だけが古い置き場に黙って残る(使い手の strict では Unknown か、実行時に無い名を型が通す)。
-逆に、関数を defk にした・足した時に宣言を書かないと、使い手の strict でその名が Unknown になる(#2824 — worker/protocol/declared.hy・
-worker/protocol/heartbeat.hy・shared/entry/declare.hy には宣言が無く、defk にした declared-job-specs・status-rows-json・
-apply-declaration を使い手が受けると赤になった)。
+(worker/protocol/declared.hy・worker/protocol/heartbeat.hy・shared/entry/declare.hy の .pyi は道具 doeff_hy.static_stub が .hy の契約から
+作るので、ここでは照らさない — 作り直した物と commit された物の一致は tests/test_generated_stubs.py が検める・#2824。)
 ここで .hy の source を読み、module の直下で定義した公開の名と宣言の名を照らし、さらに:
 
 - defrecord の型は dataclass の欄の名と順が宣言の欄と同じ。
 - deff / defk の関数は引数の名と順が同じ。
-- doeff-cluster の Hy の file(src と検)がこれらの module から import する名は、どれも宣言に在る。
+- doeff-cluster の Hy の file(src と検)が 3 つの module から import する名は、どれも宣言に在る。
 """
 
 import ast
@@ -22,15 +21,14 @@ from pathlib import Path
 import hy  # .hy の module を読む import hook を有効にする(名の mangle と source の読みにも使う)
 import pytest
 from doeff_cluster.shared.core import service_rules
-from doeff_cluster.shared.entry import declare, service_build
+from doeff_cluster.shared.entry import service_build
 from doeff_cluster.shared.intent import service_model
-from doeff_cluster.worker.protocol import declared, heartbeat
 
 PACKAGE = Path(__file__).resolve().parents[1]
 SOURCE = PACKAGE / "src"
 
-#: 型の宣言を持つ module(系の宣言の 3 つ・worker の拍が返事を読む / 本文を綴る 2 つ・宣言の命令)。
-MODULES = (service_model, service_rules, service_build, declared, heartbeat, declare)
+#: 手で書いた型の宣言を持つ系の宣言の module。
+MODULES = (service_model, service_rules, service_build)
 
 #: module の直下で名を定義する Hy の form の頭。
 DEFINING_HEADS = frozenset({"defrecord", "defclass", "defk", "deff", "val", "var", "setv"})
@@ -139,16 +137,8 @@ def test_a_function_left_in_the_old_stub_is_found() -> None:
     assert "実装に無い宣言の名: job" in _mismatches(MODULES[0], broken)
 
 
-def test_a_defk_without_a_declaration_is_found() -> None:
-    # #2824 の形: defk にした status-rows-json の宣言を heartbeat.pyi から外すと、宣言に無い公開の名として見つかる
-    # (使い手の strict では Type of "status_rows_json" is unknown になる名)。
-    stub = _stub_tree(heartbeat)
-    broken = ast.Module(body=[node for node in stub.body if _declared_name(node) != "status_rows_json"], type_ignores=[])
-    assert _mismatches(heartbeat, broken) == ("宣言に無い公開の名: status_rows_json",)
-
-
 def test_the_stubs_declare_every_name_the_package_imports() -> None:
-    # doeff-cluster の Hy の file(src と検)がこれらの module から import する名は全部宣言に在る。1 つの import に module を
+    # doeff-cluster の Hy の file(src と検)が 3 つの module から import する名は全部宣言に在る。1 つの import に module を
     # 並べる形(`(import a [x] b [y])`)の 2 つ目以降も読む。
     for module in MODULES:
         form = re.compile(r"(?:\(import|\])\s+" + re.escape(module.__name__) + r"\s+\[([^\]]*)\]")
