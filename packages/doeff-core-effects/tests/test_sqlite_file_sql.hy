@@ -6,6 +6,7 @@
 ;;;   - SqlTransaction の中の失敗で巻き戻る。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import sqlite3)
+(import pathlib [Path])
 (import pytest)
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
@@ -22,7 +23,7 @@
 
 
 (defk empty-file [tmp-path]
-  {:pre [(: tmp-path "Path")] :post [(: % str)]
+  {:pre [(: tmp-path Path)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
   "stdlib の sqlite3 で空の DB の file を用意するため(答え手は既存の file しか開かない)。"
   (val path (str (/ tmp-path "custody.db")))

@@ -13,6 +13,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import http.client)
+(import pathlib [Path])
 (import queue)
 (import socket)
 (import threading)
@@ -60,10 +61,12 @@
 
 ;; --- 台本の答え手 --------------------------------------------------------------------------------------------------------------
 
-(defn arrival [n path #** fields]
-  (HttpRequestArrived :ticket (str n) :method (.get fields "method" "GET") :path path :target (.get fields "target" path)
-                      :headers (.get fields "headers" #()) :upgrade (.get fields "upgrade" False)
-                      :remote (.get fields "remote" None)))
+(defn #^ HttpRequestArrived arrival [#^ (| int str) n #^ str path * #^ str [method "GET"] #^ (| str None) [target None]
+                                     #^ (get tuple #(HttpHeader ...)) [headers #()] #^ bool [upgrade False]
+                                     #^ (| str None) [remote None]]
+  "台本の要求 1 つを作るため(ticket = n の文字・target を書かなければ path と同じ)。"
+  (HttpRequestArrived :ticket (str n) :method method :path path :target (if (is target None) path target)
+                      :headers headers :upgrade upgrade :remote remote))
 
 
 (defk served-after [site upstream]
@@ -152,7 +155,7 @@
   #((. (type first) __name__) second.ticket (. (type third) __name__)))
 
 
-(defn test-an-appended-script-is-served-after-the-script-ran-dry []
+(defn #^ None test-an-appended-script-is-served-after-the-script-ran-dry []
   (assert (= (run (scheduled (with_handlers [(state) (scripted-http-server (HttpScript :arrivals #()))] (append-then-drain))))
              #("HttpServerClosed" "z" "HttpServerClosed"))))
 
@@ -189,13 +192,14 @@
 
 ;; --- 本物の答え手 --------------------------------------------------------------------------------------------------------------
 
-(defn free-port []
+(defn #^ int free-port []
+  "空いている port を 1 つ OS に選ばせて、その番号を返すため。"
   (with [s (socket.socket)]
     (.bind s #("127.0.0.1" 0))
     (get (.getsockname s) 1)))
 
 
-(defn test-the-aiohttp-server-relays-http-bodies-and-ws-frames [tmp-path]
+(defn #^ None test-the-aiohttp-server-relays-http-bodies-and-ws-frames [#^ Path tmp-path]
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
   (import aiohttp [web WSMsgType])
   (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
@@ -211,11 +215,14 @@
         (.startswith event.path "/relay") (<- (HttpForward :ticket t :url (+ upstream (cut event.target 6 None))))
         (= event.path "/ws") (<- (WsForward :ticket t :url (+ upstream "/ws")))
         True (<- (HttpRespond :ticket t :status 200 :headers #() :body (HttpNoBody))))))
-  (defn :async upstream-app []
-    (defn :async echo [request]
+  (defn :async #^ (get tuple #(web.AppRunner int)) upstream-app []
+    "中継先の相手役(HTTP の echo と ws の echo)を空いた port で開き、runner と port を返すため。"
+    (defn :async #^ web.Response echo [#^ web.Request request]
+      "受けた本文を 201 で返し、中継が付けた X-Forwarded-Proto を控えるため。"
       (.append seen (.get request.headers "X-Forwarded-Proto"))
       (web.Response :status 201 :body (await (.read request))))
-    (defn :async ws-echo [request]
+    (defn :async #^ web.WebSocketResponse ws-echo [#^ web.Request request]
+      "ws の text を echo し、bye で状態符 4002 の close を送るため。"
       (setv ws (web.WebSocketResponse))
       (await (.prepare ws request))
       (for [:async message ws]
@@ -231,7 +238,8 @@
     (setv up (free-port))
     (await (.start (web.TCPSite runner "127.0.0.1" up)))
     #(runner up))
-  (defn :async scenario []
+  (defn :async #^ None scenario []
+    "相手役を開き、本物の答え手を別の thread で回して、HTTP の中継と ws の中継を確かめるため。"
     (setv #(runner up) (await (upstream-app)))
     (.start (threading.Thread :target (fn [] (try (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
                                                                                  (serve-on-port (.format "http://127.0.0.1:{}" up)))))
@@ -255,15 +263,17 @@
   (asyncio.run (scenario)))
 
 
-(defn test-the-aiohttp-server-binds-a-free-port-and-stamps-events []
+(defn #^ None test-the-aiohttp-server-binds-a-free-port-and-stamps-events []
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  (import aiohttp [WSMessage])
   (import queue)
   (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
   (setv result (queue.Queue) bound (queue.Queue))
   (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
                                                                                        (ws-echo 64 bound.put))))))
                             :daemon True))
-  (defn :async scenario [base]
+  (defn :async #^ WSMessage scenario [#^ str base]
+    "ws に上げて 1 往復し、stop で待ち受けを閉じさせて、最後に受けた frame を返すため。"
     (with [:async session (aiohttp.ClientSession)]
       (with [:async ws (.ws-connect session (+ base "/ws"))]
         (await (.send-str ws "hi"))
@@ -283,7 +293,8 @@
   (assert (>= report.flushed-bytes (len "echo:hi"))))
 
 
-(defn test-the-aiohttp-server-names-an-answer-the-peer-left-in-one-line-and-counts-it [capfd caplog]
+(defn #^ None test-the-aiohttp-server-names-an-answer-the-peer-left-in-one-line-and-counts-it [#^ (get pytest.CaptureFixture str) capfd
+                                                                                               #^ pytest.LogCaptureFixture caplog]
   ;; 相手が先に切った要求への答え(agora-redesign #2757): aiohttp の traceback(Error handling request)を出さず、1 行の名乗りと
   ;; 待ち受けの数え(閉じる時の合計)を残す。次の要求には今までどおり答える。
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")

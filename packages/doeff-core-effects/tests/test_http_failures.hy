@@ -71,14 +71,25 @@
 
 
 (defclass TimeoutSpy []
-  "要求ごとの timeout の引数を控えて、200 の返事を返す client(接続の段の上限の検 — 本物の transport は時間を数えない)。"
-  (defn __init__ [self] (setv self.timeouts []))
-  (defn :async request [self #** kwargs]
-    (.append self.timeouts (get kwargs "timeout"))
-    (setv response (httpx.Response 200 :content b"ok" :request (httpx.Request (get kwargs "method") (get kwargs "url"))))
+  "要求ごとの timeout の引数を控えて、200 の返事を返す client(接続の段の上限の検 — 本物の transport は時間を数えない)。
+   要求の口は答え手が呼ぶ client の口(http_handlers.pyi の HttpAsyncClient)と同じ引数を受ける。"
+  (defn #^ None __init__ [self]
+    "控えた timeout の列を空で始めるため。"
+    (setv #^ (get tuple #((| float httpx.Timeout None) ...)) self.timeouts #()))
+  (defn :async #^ httpx.Response request [self #^ str method #^ str url *
+                                         #^ (| (get dict #(str (| str int float bool None))) None) [params None]
+                                         #^ (| bytes None) [content None]
+                                         #^ (| (get dict #(str str)) None) [headers None]
+                                         #^ (| float httpx.Timeout None) [timeout None]
+                                         #^ bool [follow-redirects True]]
+    "要求の timeout を控えて、送らずに 200 の返事を返すため。"
+    (setv self.timeouts (+ self.timeouts #(timeout)))
+    (setv response (httpx.Response 200 :content b"ok" :request (httpx.Request method url)))
     (setattr response "elapsed" (datetime.timedelta 0))
     response)
-  (defn :async aclose [self] None))
+  (defn :async #^ None aclose [self]
+    "閉じる口(持つ資源が無いので何もしない)。"
+    None))
 
 
 (defk ask-with-connect-limit []

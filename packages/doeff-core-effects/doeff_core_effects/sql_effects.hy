@@ -62,6 +62,9 @@
 
 ;; 同じ閉じた集合の型の別名(呼び手が注記に使う名 — 型の宣言 sql_effects.pyi の SqlValue と同じ物)。
 (val SqlValue (| int float str bytes bool None))
+;; driver が答える値のうち、閉じた集合 SqlValue へ写す決まりの在る型(normalized-value が受ける型 — 型の宣言 sql_effects.pyi の
+;; DriverValue と同じ物)。datetime.datetime は datetime.date の下位の型。この外の型の値は normalized-rows が TypeError で断る。
+(val DriverValue (| int float str bytes bool None memoryview bytearray Decimal datetime.date datetime.time UUID))
 
 ;; 中立の記法の字句: 文字列の literal・引用した名・注釈・$$ の本文・`::` はそのまま文、`:name` は引数、他は 1 字ずつ文。
 (val TOKEN (re.compile r"(?P<text>'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*.*?\*/|\$\$.*?\$\$|::)|:(?P<name>[A-Za-z_][A-Za-z0-9_]*)|(?P<plain>[^'\"\-/:$]+|.)"
@@ -277,30 +280,32 @@
 ;; --- 行の値の正規化 --------------------------------------------------------------------------------------------------------
 
 (defk normalized-value [value]
-  {:pre [(: value "driver の値(型は driver ごと — ここで検める)")] :post [(: % (| int float str bytes bool None))]
+  {:pre [(: value DriverValue)] :post [(: % (| int float str bytes bool None))]
    :tags {:context "sql" :role "foundation"}}
-  "driver の値を閉じた集合 SqlValue へ写すため(集合の外で写し方の決まっていない型は TypeError — 黙って str にしない)。
-   value の型は driver ごとに違う(ここが境界で型を検める 1 点)。"
+  "写す決まりの在る driver の値(DriverValue)を閉じた集合 SqlValue へ写すため。写し方の決まっていない型を黙って str にしない —
+   その型の値は driver の行を受ける normalized-rows が TypeError で断る(driver の値の型を検める 1 点)。"
   (match value
     (| (bool) (int) (float) (str) (bytes) None) value
     (| (memoryview) (bytearray)) (bytes value)
     (Decimal) (if (= value (.to-integral-value value)) (int value) (float value))
     (| (datetime.datetime) (datetime.date) (datetime.time)) (.isoformat value)
-    (UUID) (str value)
-    _ (raise (TypeError (.format "driver の値の型 {} を SqlValue へ写す決まりが無い" (. (type value) __name__))))))
+    (UUID) (str value)))
 
 
 (defk normalized-rows [rows]
   {:pre [(: rows #(list tuple))] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
   "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。全部の値の型が閉じた集合の型そのもの
-   (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形・agora-redesign #2423)。"
+   (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形・agora-redesign #2423)。
+   値の型は driver ごとに違う — 写す決まりの無い型(DriverValue の外)はここで TypeError(driver の値の型を検める 1 点)。"
   (when (all (gfor row rows (all (gfor value row (in (type value) PLAIN-VALUE-TYPES)))))
     (return (tuple (gfor row rows (tuple row)))))
   (var normalized [])
   (for [row rows]
     (var values [])
     (for [value row]
+      (when (not (isinstance value DriverValue))
+        (raise (TypeError (.format "driver の値の型 {} を SqlValue へ写す決まりが無い" (. (type value) __name__)))))
       (.append values (! (normalized-value value))))
     (.append normalized (tuple values)))
   (tuple normalized))

@@ -15,9 +15,11 @@
 (import threading)
 (import time)
 (import socket)
+(import collections.abc [Callable])
 (import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
 (import decimal [Decimal])
+(import doeff [Program])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.effects [Get])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
@@ -237,7 +239,7 @@
 
 
 (defk misuse [database program]
-  {:pre [(: database str) (: program "Program")] :post [(: % str)]
+  {:pre [(: database str) (: program Program)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
   "transaction が SqlTransactionMisuse で断られることを、断りの文にして返す筋書き。"
   (try
@@ -406,8 +408,8 @@
     (assert (= answer (SqlUnreachable :reason "gone")) #(sqlstate answer)))
   ;; 反例: class 57 の他(57014 = 文の取り消し・57000)と、接続でない engine の答え(23505・40001・53300)は SqlFailed のまま。
   (for [sqlstate ["57014" "57000" "23505" "40001" "53300"]]
-    (<- answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "engine"))
-    (assert (= answer (SqlFailed :sqlstate sqlstate :reason "engine")) #(sqlstate answer))))
+    (<- engine-answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "engine"))
+    (assert (= engine-answer (SqlFailed :sqlstate sqlstate :reason "engine")) #(sqlstate engine-answer))))
 
 
 ;; --- 接続の上限(agora-redesign #1479)------------------------------------------------------------------------------------------
@@ -456,7 +458,7 @@
 (defclass CuttingProxy []
   "実 PG の前に置く TCP の中継(検の殻)— cut で走っている接続を両側とも閉じる(DB の pod の入れ替えで口が途中で閉じた形)。"
 
-  (defn __init__ [self #^ str host #^ int port]  ; defk にできない: 検の殻の資源(socket と thread)の初期化
+  (defn #^ None __init__ [self #^ str host #^ int port]  ; defk にできない: 検の殻の資源(socket と thread)の初期化
     "中継の待ち受けを開き、受けた接続ごとに行き先へ繋いで流す thread を立てるため。"
     (setv self.target #(host port)
           self.listener (socket.create-server #("127.0.0.1" 0))
@@ -465,7 +467,7 @@
           self.lock (threading.Lock))
     (.start (threading.Thread :target self.accept :daemon True)))
 
-  (defn accept [self]  ; defk にできない: 検の殻の thread の target
+  (defn #^ None accept [self]  ; defk にできない: 検の殻の thread の target
     "受けた接続を行き先へ繋ぎ、両向きに流すため(待ち受けが閉じたら終わる)。"
     (while True
       (try
@@ -476,7 +478,7 @@
       (for [[a b] [[client upstream] [upstream client]]]
         (.start (threading.Thread :target self.pipe :args #(a b) :daemon True)))))
 
-  (defn connect-upstream [self]  ; defk にできない: 検の殻の socket を開く
+  (defn #^ socket.socket connect-upstream [self]  ; defk にできない: 検の殻の socket を開く
     "行き先へ繋ぐため。host が / で始まれば PostgreSQL の unix socket の dir へ繋ぐ(使い捨ての PostgreSQL は TCP で待ち受けない
      — agora-redesign #2830)。"
     (setv #(host port) self.target)
@@ -487,7 +489,7 @@
         upstream)
       (socket.create-connection self.target)))
 
-  (defn pipe [self a b]  ; defk にできない: 検の殻の thread の target
+  (defn #^ None pipe [self #^ socket.socket a #^ socket.socket b]  ; defk にできない: 検の殻の thread の target
     "a から読んだ bytes を b へ流すため(どちらかが閉じたら終わる)。"
     (try
       (while True
@@ -496,7 +498,7 @@
         (.sendall b data))
       (except [OSError] None)))
 
-  (defn cut [self]  ; defk にできない: 検の殻の操作
+  (defn #^ None cut [self]  ; defk にできない: 検の殻の操作
     "走っている接続を全部、両側とも閉じるため(待ち受けは開いたまま — 次の接続は通す)。"
     (with [self.lock]
       (for [s self.live]
@@ -504,7 +506,7 @@
         (.close s))
       (.clear self.live)))
 
-  (defn close [self]  ; defk にできない: 検の殻の後始末
+  (defn #^ None close [self]  ; defk にできない: 検の殻の後始末
     "中継を止めるため。"
     (.cut self)
     (.close self.listener)))
@@ -915,13 +917,13 @@
   None)
 
 
-(defn abandoned-in-its-own-run [answerer-of]  ; defk にできない: 親の run を別の thread で走らせ切る検の入口(この検の run の中では親が終わらない)
+(defn #^ (get tuple #(str PostgresConnections)) abandoned-in-its-own-run [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; defk にできない: 親の run を別の thread で走らせ切る検の入口(この検の run の中では親が終わらない)
   "transaction の途中の task を残して終わる run を 1 つ走らせ切り、その後の接続の貸し出しを返すため。answerer-of = 接続の貸し出し → 答え手の組。"
   (import warnings)
   (import doeff [run with_handlers])
   (import doeff_core_effects.scheduler [scheduled])
   (setv connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
-  (defn ask []  ; defk にできない: 別の thread で走らせ切る run の本体
+  (defn #^ str ask []  ; defk にできない: 別の thread で走らせ切る run の本体
     (with [_ (warnings.catch-warnings)]
       (warnings.simplefilter "ignore")
       (run (scheduled (with_handlers (answerer-of connections) (abandon-mid-transaction))))))
@@ -953,7 +955,7 @@
   (.shutdown pool))
 
 
-(defn answer-while-terminated [answerer-of]  ; defk にできない: 答え手を別の thread の run で回し、この thread から接続を切る検の入口
+(defn #^ (| SqlRows SqlFailed SqlUnreachable) answer-while-terminated [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; defk にできない: 答え手を別の thread の run で回し、この thread から接続を切る検の入口
   "長い問い合わせの途中で管理者がその接続を切った(pg_terminate_backend — SQLSTATE 57P01)時の答えを読むため。
    answerer-of = 接続の貸し出し → 答え手の組(list)。"
   (import psycopg)
@@ -963,7 +965,7 @@
   (setv marker (.format "doeff_terminate_{}" (. (uuid.uuid4) hex))
         connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1)
         answers [])
-  (defn ask []  ; defk にできない: thread の target
+  (defn #^ None ask []  ; defk にできない: thread の target
     (.append answers (run (scheduled (with_handlers (answerer-of connections)
                                                     (SqlQuery DB (.format "SELECT pg_sleep(30) /* {} */" marker) #()))))))
   (setv worker (threading.Thread :target ask))
