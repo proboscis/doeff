@@ -1,7 +1,6 @@
 """Gemini integration tests with WithHandler-based mocks and one live smoke test."""
 
 
-import os
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -98,9 +97,7 @@ def _with_mock_gemini_handler(program: Any, *, mock_client: Any, asked_keys: lis
 
 
 def _get_live_gemini_env_or_skip() -> dict[str, Any]:
-    if os.getenv("DOEFF_GEMINI_RUN_E2E") != "1":  # noqa: DOEFF004 - live e2e opt-in gate (pre-existing)
-        pytest.skip("Set DOEFF_GEMINI_RUN_E2E=1 to run the live Gemini e2e smoke test")
-
+    # 選ばれたかは印 real_gemini で決まる(tests/e2e/conftest.py — 以前の環境変数 DOEFF_GEMINI_RUN_E2E の代わり・#3012)。
     pytest.importorskip("google.genai")
 
     try:
@@ -249,6 +246,7 @@ async def test_structured_llm__gemini_with_pydantic() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.e2e
+@pytest.mark.real_gemini
 async def test_structured_llm__gemini_live_with_pydantic() -> None:
     """Single opt-in live smoke test against Gemini API."""
 

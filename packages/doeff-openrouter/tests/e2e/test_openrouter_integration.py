@@ -2,12 +2,15 @@
 
 
 import json
-import os
+from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 from _runner import run_program
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
+from local_dotenv import dotenv_values
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.client import OpenRouterClient
 from doeff_openrouter.structured_llm import (
@@ -25,8 +28,13 @@ from doeff import (
     Pass,
     Resume,
     do,
+    run,
+    with_handlers,
 )
 from doeff import handler as _program_handler
+
+# packages/doeff-openrouter — the runner keeps the live key in its .env (local_dotenv).
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 MOCK_STRUCTURED_MODELS = [
     pytest.param("openai/gpt-4o-mini", True, id="openai-gpt-4o-mini"),
@@ -111,9 +119,12 @@ def _build_mock_handler(client: MockOpenRouterClient) -> Callable[..., Any]:
 
 @pytest.fixture(scope="module")
 def api_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY")  # noqa: DOEFF004 - live e2e opt-in gate (pre-existing)
+    """The live test's key: $OPENROUTER_API_KEY first (read through ReadEnvironment and its real handler —
+    not os.environ directly, DOEFF004 — agora-redesign #3012), then the runner's packages/doeff-openrouter/.env."""
+    found = run(with_handlers([subprocess_handler], ReadEnvironment(("OPENROUTER_API_KEY",))))
+    key = found[0].value if found else dotenv_values(PACKAGE_ROOT / ".env").get("OPENROUTER_API_KEY")
     if not key:
-        pytest.skip("Set OPENROUTER_API_KEY to run the live OpenRouter e2e smoke test.")
+        pytest.skip("Set OPENROUTER_API_KEY (or put it in packages/doeff-openrouter/.env) to run the live OpenRouter e2e smoke test.")
     return key
 
 

@@ -13,7 +13,7 @@ pre-existing test suite can run unchanged.
 
 from __future__ import annotations
 
-import os  # noqa: PINJ050 — test-only env bridge for Ask("openai_api_key")
+
 import runpy
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff_core_effects.effects import Try
+from doeff_core_effects.process_effects import ReadEnvironment
 from doeff_core_effects.handlers import (
     await_handler,
     lazy_ask,
@@ -115,20 +116,22 @@ async def run_program(program: Any, env: dict | None = None) -> RunResult:
 def openai_api_key_from_env_handler(effect, k):
     """Resolve ``Ask("openai_api_key")`` from the ``OPENAI_API_KEY`` env var.
 
-    Keeps ``os.environ`` access confined to a single handler: the
-    program under test still yields a plain ``Ask`` effect and never
-    touches environment variables directly. Any other effect — or an
-    ``Ask`` for a different key — is passed through so an outer handler
-    (e.g. a ``lazy_ask`` with an env dict) can resolve it.
+    The program under test still yields a plain ``Ask`` effect and never
+    touches environment variables directly; this handler asks for the
+    variable with the ``ReadEnvironment`` effect, which the caller's real
+    handler (``subprocess_handler`` outside this one) answers — no direct
+    ``os.environ`` read (DOEFF004 — agora-redesign #3012). Any other
+    effect — or an ``Ask`` for a different key — is passed through so an
+    outer handler (e.g. a ``lazy_ask`` with an env dict) can resolve it.
 
     When the ``OPENAI_API_KEY`` variable is absent the effect is
     ``Pass``-ed rather than resolved with ``None`` — that matches the
     loud-fail contract for missing keys.
     """
     if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
-        value = os.environ.get("OPENAI_API_KEY")  # noqa: DOEFF004 - the one test-only env bridge (pre-existing)
-        if value is not None:
-            return (yield Resume(k, value))
+        found = yield ReadEnvironment(("OPENAI_API_KEY",))
+        if found:
+            return (yield Resume(k, found[0].value))
     yield Pass(effect, k)
 
 

@@ -1,20 +1,19 @@
-"""Load a local .env into the test process's environment — the one doeff-openrouter test module that touches it.
+"""Read a local .env — the live tests' OpenRouter key the runner keeps in ``packages/doeff-openrouter/.env``.
 
-The live tests reach OpenRouter with a key the runner keeps in ``packages/doeff-openrouter/.env``;
-pytest runs outside any doeff Program, so the key is handed over as an environment variable of the
-test process. Variables already set win over the file. ``packages/doeff-openrouter/architecture.hy``
-names this module and takes it out of DOEFF004 (agora-redesign #2861); other test modules still may
-not read or write the environment.
+pytest runs outside any doeff Program. The live test reads the key from its own fixture: the
+environment variable first (through the ReadEnvironment effect and its real handler), then this
+file. Nothing is written into the test process's environment any more (DOEFF004 — agora-redesign
+#3012; this module used to copy the file into ``os.environ`` and was exempted from the rule, #2861).
 """
 
-import os
 from pathlib import Path
 
 
-def load_dotenv(env_path: Path) -> None:
-    """Set each ``KEY=VALUE`` of ``env_path`` that the environment does not already have."""
+def dotenv_values(env_path: Path) -> dict[str, str]:
+    """The ``KEY=VALUE`` pairs of ``env_path`` (empty when the file is missing or unreadable)."""
     if not env_path.exists():
-        return
+        return {}
+    values: dict[str, str] = {}
     try:
         for raw_line in env_path.read_text().splitlines():
             line = raw_line.strip()
@@ -24,9 +23,9 @@ def load_dotenv(env_path: Path) -> None:
                 continue
             key, value = line.split("=", 1)
             key = key.strip()
-            value = value.strip().strip("'\"")
-            if key and key not in os.environ:
-                os.environ[key] = value
+            if key:
+                values[key] = value.strip().strip("'\"")
     except OSError:
-        # If we cannot read the file we fall back to existing environment.
-        pass
+        # If we cannot read the file the live test falls back to the environment alone.
+        return {}
+    return values

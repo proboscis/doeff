@@ -1,6 +1,7 @@
 ;;; doeff-agents の層の宣言(agora-redesign #2861)。
 ;;;
-;;; 今は、規則の母集団から外す層 2 つだけを置く。doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い
+;;; 今は、層 1 つ(fake-agent)だけを置く — 規則の母集団から外す物は無い(以前の外し 2 つは #3012 で消した: fake-agent の DOEFF004 と、
+;;; 層 runner-env そのもの)。doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い
 ;;; architecture.hy(この file)から決める(#2811)。ここで外すのは下の名指しの module だけで、この package のほかの file の母集団は
 ;;; 変わらない(今までどおり DOEFF004 が当たる)。module の名は file の名(conformance・tests の dir には __init__.py が無い)。
 ;;;
@@ -15,16 +16,9 @@
 ;;;   CONFORMANCE_JUDGE_JOURNAL)で受ける(README の契約)— 読み方は同じく ReadEnvironment。この層は DOEFF004 を外さない。
 ;;;   前の形へ戻すなら、2 つの代役の _received_environment を os.environ の読みへ戻し、DOEFF004 の :exempt の行と
 ;;;   forbid-modules の doeff・doeff_core_effects を足し直す。
-;;; runner-env = 検を走らせる人が環境変数で選ぶ材料(検の相手の daemon・本物の Claude の設定の dir と口座)を読む module
-;;;   (tests/runner_env.py)。変数の素の値を返すだけで、どれを使うか・既定の値は呼び手(sessionhost_bin・
-;;;   agentd_real_agent_result_retry_e2e_support)に残す。
-;;;   conformance の側の同じ役の module(conformance/conformance_env.py・#2954)も同じ層: conformance を走らせる人が選ぶ
-;;;   agentd 互換の実行の file(CONFORMANCE_AGENTD_BIN)・session host の backend・herdr の socket の素の値を返し、既定の値と
-;;;   使い方は呼び手(harness・test_s8 / test_s14 / test_s20 の HY_GATE)に残す。
-;;;   - 外す規則: DOEFF004(os.environ を直に読む)— 名指しの module に限る。
-;;;   - 禁じる import: doeff の業務の module。外した層に業務の code が入ると DOEFF032 が赤にする。
-;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり名指しの module に当たる。この file を消すと、この package の file の母集団は
-;;;   根の設定へ戻る。
+;;; (以前の層 runner-env — tests/runner_env.py・conformance/conformance_env.py — は外した: 2 つは環境変数を ReadEnvironment と本物の
+;;;   答え手で読むようになり、DOEFF004 から外す理由と doeff の import を禁じる理由が無くなった・agora-redesign #3012。)
+;;; 戻し方: この file を消すと、この package の file の母集団は根の設定へ戻る。
 (defarchitecture doeff-agents
   :root "."
   :layers [(layer fake-agent
@@ -32,11 +26,4 @@
              :knows "本物の CLI の起こされ方・conformance の手順と記録の形・環境変数の名・環境を問う effect(ReadEnvironment)と答える handler"
              :does-not-know "doeff_agents の業務の Program・handler"
              :modules [conformance_agent scripted_judge]
-             :forbid-modules [doeff_agents doeff_hy doeff_vm])
-           (layer runner-env
-             :summary "検を走らせる人が環境変数で選ぶ材料を読む module — 変数の素の値を返すだけ"
-             :knows "環境変数の名"
-             :does-not-know "doeff の Program・effect・handler・どの値を使うかの判断"
-             :modules [runner_env conformance_env]
-             :exempt [(rule DOEFF004 "pytest は Program の外で走り、e2e の相手(daemon・本物の Claude の設定の dir と口座)は走らせる人が環境変数で選ぶので、Ask で受ける入口が無い(変数の素の値を返すだけで、判断は呼び手に残す)")]
-             :forbid-modules [doeff doeff_agents doeff_core_effects doeff_hy doeff_vm])])
+             :forbid-modules [doeff_agents doeff_hy doeff_vm])])
