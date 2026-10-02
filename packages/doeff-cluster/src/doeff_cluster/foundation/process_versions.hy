@@ -70,3 +70,10 @@
    突き合わせ)が使う。os.environ の読みを foundation の層に閉じる(入口と protocol の層は os.environ に触らない — DOEFF106・#3014)。"
   (<- versions dict (process-versions os.environ))
   versions)
+
+
+(defk this-process-environ []
+  {:pre [] :post [(: % Mapping)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "この process の環境変数の写像を返すため — 入口が Program の外で読む実行先の文脈(shared/entry/run_context_env の context-from-env)の
+   材料。os.environ の読みを foundation の層に閉じ、写像は組まずにそのまま渡す(読みの規則は core の context-of-environ の 1 つ — #3014)。"
+  os.environ)
