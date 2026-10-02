@@ -131,7 +131,7 @@
   (assert (all (gfor ms latencies (< ms 150))) latencies))
 
 
-;; --- その worker の最初の task(コードの木がまだ無い worker — agora-redesign #2719)-------------------------------------
+;; --- その worker の最初の task(コードの木がまだ無い worker — #2719)-------------------------------------
 ;;
 ;; 木の無い worker は最初の拍で準備(PrepareCode)を撃つ。準備がその拍のうちに揃えば(模擬の既定 prepare-seconds = 0)、action の後の観測で
 ;; 揃った木を見て同じ拍で起こす。揃わなければ(本番の git・uv のような長い準備)落ちずに今までの道 — 後の拍で揃いを観測してから起こす。

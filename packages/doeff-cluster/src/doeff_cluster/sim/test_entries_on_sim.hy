@@ -6,7 +6,7 @@
 ;;;   record-store  record_store.entry.main の record-store-on を handler_sets の emulated-handlers(まねた受付の箱と memory の file system)
 ;;;                 の上で
 ;;;
-;;; 走らせ方 = この dir の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy`)。
+;;; 走らせ方 = package の根の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy`)。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])

@@ -11,7 +11,7 @@
 ;;; 記録した行を read-recording で読み、同じ Program を記録係の replay の枝(外の世界の handler なし)で再生して違いが無いことを見る。
 ;;; 失敗ケース: 置き場が送りを捨てると記録が欠け、読めない(run の行が無い)か、再生が分岐する(問いが記録と食い違う)。
 ;;;
-;;; 走らせ方 = この dir の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_recording_on_sim.hy`)。
+;;; 走らせ方 = package の根の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_recording_on_sim.hy`)。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defenum])
 (import enum [StrEnum])
