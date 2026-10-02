@@ -74,6 +74,10 @@ COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
 MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
 CALL_STEPS_INI = "doeff_test_call_budget_steps"
+# 歩数の既定の上限(設定に `default` と書いた時)— 前の CPU 1.0 秒の上限に当たる数(agora-redesign #2670 の 2)。
+# 根 = vg-w43 の 65 本の測り(#2853 issuecomment-5952699812)の歩数 ÷ CPU 秒の中央値 95,574 歩/秒 × 1.0 秒を丸めた値。
+# 上限は上げない決め(#2670 issuecomment-5963008183)なので、静かな機体の比(より大きい)ではなく、この比を採る。
+DEFAULT_CALL_BUDGET_STEPS = 100_000
 # 判定の単位(上限・登録・文の書き方が分かれる)。
 Unit = Literal["seconds", "steps"]
 
@@ -658,7 +662,9 @@ def _marker_seconds(config: pytest.Config) -> Mapping[str, float]:
 
 
 def parse_positive_steps(raw: str) -> int | SettingError:
-    """歩数の文字を正の整数に読む。数でない・正でない値は既定へ黙って倒さず誤りにする。"""
+    """歩数の文字を正の整数に読む(`default` は既定の上限 DEFAULT_CALL_BUDGET_STEPS)。数でない・正でない値は既定へ黙って倒さず誤りにする。"""
+    if raw == "default":
+        return DEFAULT_CALL_BUDGET_STEPS
     try:
         value = int(raw)
     except ValueError:
