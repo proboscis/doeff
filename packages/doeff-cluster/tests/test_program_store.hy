@@ -113,7 +113,7 @@
   (<- s ClusterState (stored BLOB 1000))
   (val want {sha (ProgramRow :blob BLOB :versions VERSIONS :put-ms 1000)})
   (assert (= s.programs want))
-  (assert (= (. (! (state-from-json (state-to-json s) 2000)) programs) want))
+  (assert (= (. (! (state-from-json (! (state-to-json s)) 2000)) programs) want))
   (val kv (! (full-kv s)))
   (assert (in (+ "program/" sha) kv) (sorted kv))
   (assert (= (. (! (state-from-kv kv 2000)) programs) want)))

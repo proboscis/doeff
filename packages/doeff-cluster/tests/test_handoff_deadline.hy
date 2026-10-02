@@ -123,7 +123,7 @@
 (defk restart-coordinator [sim]
   {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "模擬の世界の coordinator を作り直すため: 耐久の置き場の形から読み直す(worker の報告・readiness は失う)。止まっていた時間は無い。"
-  (<- stored ClusterState (state-from-kv (durable-kv sim.state) sim.now))
+  (<- stored ClusterState (state-from-kv (! (durable-kv sim.state)) sim.now))
   (setv sim.state (get (resume-after-downtime stored sim.now) 0))
   None)
 

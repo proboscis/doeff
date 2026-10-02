@@ -1,5 +1,5 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
-(require doeff-hy.macros [deftest <- val var])
+(require doeff-hy.macros [defk deftest <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState WorkerInfo TaskRecord])
@@ -141,9 +141,11 @@
 ;; durable-delta は元の値が同じ物の鍵を直列化しない。差分の中身(Persist に渡す物)が、前と後を丸ごと durable-kv にして比べた答えと
 ;; 1 字も違わない事を、worker・Service・task・盤・監査の行が動く拍の並びで確かめる。
 
-(defn #^ dict delta-by-full-serialization [#^ ClusterState before #^ ClusterState after]
-  "以前の形の差分(盤を除く): 前と後を丸ごと直列化して比べる。"
-  (setv old (durable-kv before) new (durable-kv after))
+(defk delta-by-full-serialization [before after]
+  {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "以前の形の差分(盤を除く): 前と後を丸ごと直列化して比べる — durable-delta の答えと突き合わせるため。"
+  (<- old dict (durable-kv before))
+  (<- new dict (durable-kv after))
   (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v)
      (dfor k old :if (not-in k new) k None)))
 
@@ -166,7 +168,7 @@
   (for [#(method path body now) steps]
     (val reply (call s method path body now))
     (val after (get reply 0))
-    (assert (= (without-board (! (durable-delta s after))) (delta-by-full-serialization s after)) #(method path))
+    (assert (= (without-board (! (durable-delta s after))) (! (delta-by-full-serialization s after))) #(method path))
     (:= compared (+ compared 1))
     (:= s after))
   (assert (= compared (len steps)))
@@ -177,5 +179,5 @@
   ;; 中身の違う部品は差分に入る(同一性だけで黙って落とさない)。
   (val changed (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))
   (val got (without-board (! (durable-delta s changed))))
-  (assert (= got (delta-by-full-serialization s changed)))
+  (assert (= got (! (delta-by-full-serialization s changed))))
   (assert (and got (all (gfor k got (.startswith k "worker/"))))))

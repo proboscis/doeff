@@ -172,7 +172,7 @@
   (assert (= (. (get s.audit -1) actor) "migration"))
   (assert (= (dfor #(k row) (.items s.board) k row.version) {"k" 1}))
   ;; 新しい形で書き直した物に盤は入らない(盤は行ごとの file)
-  (assert (not-in "board" (state-to-json s)))
+  (assert (not-in "board" (! (state-to-json s))))
   ;; 誰でも 1 度だけ所有者を引き取れる。引き取った後は他の送り手が変えられない
   (val reply-20 (call s "PUT" "/resources/Service/turn-runner"
                              {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-lab"} "resourceVersion" (rv s "Service" "turn-runner")}
