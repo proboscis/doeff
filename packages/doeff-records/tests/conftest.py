@@ -3,7 +3,7 @@
 - 検は Hy の ``test_*.hy``(deftest)。集め手は root の ini の ``doeff_hy_test_files``(doeff-adr の plugin の 1 点)— この conftest は集めない。
 - 解釈器は 3 つ(``plain`` / ``memory`` / ``pg``)。``pg`` は env ``DOEFF_RECORDS_TEST_PG_DSN`` の PostgreSQL に載る
   (psycopg は依存に無いので ``uv run --with psycopg`` で足す)。
-- env が無ければ、pytest_configure(検の module の import より前)で使い捨ての PostgreSQL を立てて env を置く(agora-redesign #2830)。
+- env が無ければ、pytest_configure(検の module の import より前)で使い捨ての PostgreSQL を立てて env を置く(#2830)。
   部品は doeff-core-effects の tests の postgres_support/disposable_postgres.py の 1 か所(この package が SQL の effect の
   PostgreSQL の答え手を借りる先)。用意できない機体では、検は「使い捨ての PostgreSQL を用意できない: <理由>」で skip する。
 """
