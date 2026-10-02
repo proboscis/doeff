@@ -50,6 +50,8 @@ MODULE = """\
   (#^ str target)
   (setv #^ int tries 3))
 
+(val EFFECT-TYPES #(Ping Point))
+
 (deff double [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
   "2 倍にするため。"
@@ -105,6 +107,9 @@ def _lines(tmp_path: Path) -> list[str]:
         "Answer: TypeAlias = int | str",
         "LIMIT_OF: dict[str, int]",
         "PRIMARY: Color",
+        # class の名の並び(sim の柵が通す effect の型の表 — doeff-cluster の SIM-PASSABLE の形)。読めないと Incomplete になり、
+        # 手書きの .pyi を道具の出力へ置き換えた時に tuple[type, ...] の型が落ちた。
+        "EFFECT_TYPES: tuple[type, ...]",
         "class Point:",
         "class Ping(EffectBase[int]):",
         "    tries: int = 3",
