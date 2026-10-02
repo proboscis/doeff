@@ -29,7 +29,8 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
                                                                  WorkerProbe alive-only-while-reachable
-                                                                 PlacementSeen WorkerGone places-only-on-reachable])
+                                                                 PlacementSeen WorkerGone places-only-on-reachable
+                                                                 ProcessSpan WorkerCapacity running-within-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
@@ -647,6 +648,36 @@
   (<- seen PlacedAfterAStop (sim-cluster (beacons sim-foundation) (placement-after-a-stop) :store DropsLastSeen))
   (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (in "beacon-b" (lfor p wrong p.job)) #(wrong seen)))
+
+
+(defk spans-on-one-worker []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C6 の記録を集めるため: 15 秒待って、beacons-plus の 2 つの service(beacon・beacon-b)の process の生きていた区間を読む。"
+  (<- (Delay 15.0))
+  (<- a tuple (ProcessesOf "beacon"))
+  (<- b tuple (ProcessesOf "beacon-b"))
+  (tuple (gfor p (+ a b) (ProcessSpan :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
+
+
+(val ONE-SLOT (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1))
+
+
+(deftest test-a-worker-runs-no-more-jobs-than-its-capacity
+  ;; 条 C6(architecture.hy の :invariants): capacity 1 の worker 1 台に service 2 つの系を置くと、coordinator は 1 つだけ置き、動く数は
+  ;; capacity を越えない。
+  (<- spans tuple (sim-cluster (beacons-plus sim-foundation) (spans-on-one-worker) :workers #(ONE-SLOT)))
+  (assert spans spans)
+  (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
+  (assert (= over #()) #(over spans)))
+
+
+(deftest test-a-counterexample-worker-that-overstates-its-capacity-breaks-c6
+  ;; 条 C6 の失敗ケース: heartbeat で capacity を多く名乗る壊れた worker(SimWorker の overstates-capacity)では、coordinator が名乗りどおり
+  ;; 2 つ置き、本当の capacity 1 を越えて動き、条 C6 の判断がその瞬間を名指す。
+  (<- spans tuple (sim-cluster (beacons-plus sim-foundation) (spans-on-one-worker)
+                               :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :overstates-capacity 5))))
+  (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
+  (assert (= (len over) 1) #(over spans)))
 
 
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
