@@ -9,7 +9,10 @@
 ;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
 ;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
 ;;;                 aiohttp の lingering で読み捨てさせない)
-;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)
+;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)。
+;;;                 相手が先に切った後の書き込みの失敗(答えが遅れ、相手の上限が先に来た — ConnectionError)は aiohttp へ上げず、1 行で
+;;;                 名乗って待ち受けごとに数える(上げると aiohttp が 1 件ごとに traceback を書く — 2026-10-02 の record の止まりで約 2.2KB ×
+;;;                 265 本・agora-redesign #2757)。待ち受けを閉じる時に、届かなかった答えの合計を 1 行名乗る
 ;;;   HTTP の中継   本文を両向きとも streaming で通す。hop-by-hop の頭を落とし、X-Forwarded-Proto / X-Forwarded-For を足す。Host は要求の
 ;;;                 値のまま。中継先に届かなければ 502
 ;;;   ws の中継     先に中継先へ ws で繋いでから(届かなければ 502)、要求を ws に上げて frame を両向きに写す。1 frame の上限は HttpListen の
@@ -168,7 +171,9 @@
           self.peers {}
           self.shut None
           self.ws-send-drain None
-          self.count 0)
+          self.count 0
+          ;; 相手が先に切って届かなかった答えの数(この待ち受けの起動から — 0 に戻さない)。
+          self.dropped-answers 0)
     (self.reset-report)
     None)
 
@@ -372,6 +377,8 @@
       (await (.cleanup self.runner)))
     (when (is-not self.client None)
       (await (.close self.client)))
+    (when (> self.dropped-answers 0)
+      (relay-failed (.format "待ち受けを閉じる — 相手が先に切って届かなかった答えは合わせて {} 件" self.dropped-answers)))
     (when (is-not self.queue None)
       (await (.put self.queue (HttpServerClosed :reason reason))))
     None)
@@ -419,26 +426,33 @@
           (.add response.headers header.name header.value)))
     ;; 本文を運ばない答え(HEAD・1xx・204・304)は、本文を渡されても送らない — 台本の答え手と同じ carries-content で決める。
     (setv sent-body (if (run (carries-content request.method status)) body (HttpNoBody)))
-    (match sent-body
-      (HttpBodyBytes :data data)
-        (do (setv response.content-length (len data))
-            (await (.prepare response request))
-            (await (.write response data)))
-      (HttpBodyFileRange :path path :start start :length length)
-        (do (await (.prepare response request))
-            (with [handle (open path "rb")]
-              (.seek handle start)
-              (setv left length)
-              (while (> left 0)
-                (setv chunk (.read handle (min left FILE-CHUNK-BYTES)))
-                (when (not chunk) (break))
-                (setv left (- left (len chunk)))
-                (await (.write response chunk)))))
-      (HttpNoBody) (await (.prepare response request)))
-    (await (.write-eof response))
-    (when cut-off
-      ;; 書いた答えは transport が流し切ってから閉じる。protocol の側で閉じるので、aiohttp は残りの本文の lingering をしない。
-      (.force-close request.protocol))
+    (try
+      (match sent-body
+        (HttpBodyBytes :data data)
+          (do (setv response.content-length (len data))
+              (await (.prepare response request))
+              (await (.write response data)))
+        (HttpBodyFileRange :path path :start start :length length)
+          (do (await (.prepare response request))
+              (with [handle (open path "rb")]
+                (.seek handle start)
+                (setv left length)
+                (while (> left 0)
+                  (setv chunk (.read handle (min left FILE-CHUNK-BYTES)))
+                  (when (not chunk) (break))
+                  (setv left (- left (len chunk)))
+                  (await (.write response chunk)))))
+        (HttpNoBody) (await (.prepare response request)))
+      (await (.write-eof response))
+      (when cut-off
+        ;; 書いた答えは transport が流し切ってから閉じる。protocol の側で閉じるので、aiohttp は残りの本文の lingering をしない。
+        (.force-close request.protocol))
+      (except [error ConnectionError]
+        ;; 相手が先に切った(頭の註の応答の送出)— aiohttp へ上げず 1 行で名乗って数える。返した答えは aiohttp が畳む(閉じた transport
+        ;; への書きの ConnectionError は aiohttp が黙って受ける)。
+        (setv self.dropped-answers (+ self.dropped-answers 1))
+        (relay-failed (.format "{} {} への答え(status {})は相手が先に切ったので届かなかった — この待ち受けで {} 件目: {}"
+                               request.method request.path status self.dropped-answers error))))
     response)
 
   (defn :async #^ web.StreamResponse relay-http [self #^ web.Request request #^ str url]
