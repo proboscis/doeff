@@ -36,7 +36,10 @@
 (setv T (ClusterTiming))
 
 
-(defn #^ tuple lease [#^ ClusterState state #^ str name #^ str op #^ str token #^ int now #^ int [ttl 15000] #^ int [permits 1]]
+(defk lease [state name op token now [ttl 15000] [permits 1]]
+  {:pre [(: state ClusterState) (: name str) (: op str) (: token str) (: now int) (: ttl int) (: permits int)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "lease の口 POST /leases/<name> の要求を 1 つ判断 responded に渡し、(状態 状態の番号 本文) の組を返すため。"
   (responded state (http-request "POST" (+ "/leases/" name) {} {"op" op "token" token "permits" permits "ttlMs" ttl} :actor "w") now T))
 
 
@@ -48,7 +51,7 @@
 
 (deftest test-an-old-writer-cannot-evict-a-live-holder-through-the-board
   ;; 旧い版の process は自分の時計で「切れた」と判じて盤を compare-and-set で書く。coordinator の時計でまだ切れていなければ断る。
-  (setv #(s _ _) (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000))
+  (setv #(s _ _) (! (lease (ClusterState) "app-writer" "claim" "a/1/x/1" 1000)))
   (setv row (. (get s.board "semaphore/app-writer") value))
   (setv stolen {"permits" 1 "holders" {"b/1/y/1" 99999}})
   (setv #(_ early-status early-body) (responded s (http-request "PUT" "/board/semaphore/app-writer" {} {"value" stolen "expect" row} :actor "b")
@@ -72,24 +75,34 @@
     (resume (+ now (timedelta :milliseconds offset)))))
 
 
-(defn #^ tuple run-takeover [#^ int a-offset #^ int b-offset]
+(defk fenced-writer [session who outer attempts]
+  {:pre [(: session SemaphoreSession) (: who str) (: outer list) (: attempts list)] :post [(: % (type None))]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 つの worker の書き手: outer(途絶・時計のずれ)→ cluster-semaphore → 書きの柵の下で、lease を取って 1 秒ごとに書く(90 秒まで)。"
+  ;; 本番の書き手と同じ柵の余裕(FENCE-MARGIN-MS)。
+  (<- (with_handlers (+ outer [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) FENCE-MARGIN-MS)])
+        (lease-writer who attempts 1 90000)))
+  None)
+
+
+(defk run-takeover [a-offset b-offset]
+  {:pre [(: a-offset int) (: b-offset int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "A は lease を持って 1 秒ごとに書く。3 秒目に A から coordinator へ届かなくなる(延長できない)。B は 0 秒から待つ。"
-  (setv clock (SimClock) store {} attempts [] written [])
-  (setv sa (SemaphoreSession "old" :ttl-seconds 45.0 :poll-seconds 0.5)
-        sb (SemaphoreSession "new" :ttl-seconds 45.0 :poll-seconds 0.5))
-  (defn #^ object fenced [#^ SemaphoreSession session #^ str who #^ list outer]
-    ;; 本番の書き手と同じ柵の余裕(FENCE-MARGIN-MS)。
-    (with_handlers (+ outer [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) FENCE-MARGIN-MS)])
-      (lease-writer who attempts 1 90000)))
+  (val clock (SimClock))
+  (val store {})
+  (val attempts [])
+  (val written [])
+  (val sa (SemaphoreSession "old" :ttl-seconds 45.0 :poll-seconds 0.5))
+  (val sb (SemaphoreSession "new" :ttl-seconds 45.0 :poll-seconds 0.5))
   #((with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
-      (run-all [(fenced sa "a" [(cut-off-at clock 3000) (skewed-clock a-offset)])
-                (fenced sb "b" [(skewed-clock b-offset)])]))
+      (run-all [(fenced-writer sa "a" [(cut-off-at clock 3000) (skewed-clock a-offset)] attempts)
+                (fenced-writer sb "b" [(skewed-clock b-offset)] attempts)]))
     attempts written))
 
 
 (deftest test-no-write-of-the-old-holder-lands-after-the-new-holder-starts-whatever-the-clock-skew
   (for [#(a-offset b-offset) [#(0 0) #(-5000 0) #(5000 0) #(0 5000) #(0 -5000) #(-5000 5000)]]
-    (setv #(program attempts written) (run-takeover a-offset b-offset))
+    (setv #(program attempts written) (! (run-takeover a-offset b-offset)))
     (<- program)
     (setv a-landed (lfor #(w at) written :if (= w "a") at) b-landed (lfor #(w at) written :if (= w "b") at))
     (assert (and a-landed b-landed) #(a-offset b-offset))

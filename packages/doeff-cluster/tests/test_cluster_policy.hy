@@ -1,4 +1,4 @@
-(require doeff-hy.macros [deftest val])
+(require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
@@ -11,14 +11,19 @@
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
-(defn #^ ClusterJob job [#^ str name #^ tuple [needs #()] #^ (| str None) [pin None]]
+(defk job [name [needs #()] [pin None]]
+  {:pre [(: name str) (: needs tuple) (: pin (| str None))] :post [(: % ClusterJob)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "要る能力 needs と置き先の指定 pin を持つ job の行を作るため。"
   (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin))
-(defn #^ WorkerInfo worker [#^ str name #^ int seen #^ int [capacity 10] #^ str #* provides] (WorkerInfo name (tuple (sorted provides)) capacity seen))
+(defk worker [name seen [capacity 10] #* provides]
+  {:pre [(: name str) (: seen int) (: capacity int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "最後の連絡が seen で能力 provides を持つ worker の記録を作るため。"
+  (WorkerInfo name (tuple (sorted provides)) capacity seen))
 
 (deftest test-spreads-and-respects-capabilities-and-pins
   (setv state (ClusterState
-    #((job "a") (job "b") (job "k" :needs #("cluster-net")) (job "p" :pin "mac"))
-    {"mac" (worker "mac" 0) "new" (worker "new" 0) "pod" (worker "pod" 0 10 "cluster-net")}))
+    #((! (job "a")) (! (job "b")) (! (job "k" :needs #("cluster-net"))) (! (job "p" :pin "mac")))
+    {"mac" (! (worker "mac" 0)) "new" (! (worker "new" 0)) "pod" (! (worker "pod" 0 10 "cluster-net"))}))
   (setv result (place-jobs 1000 state T))
   (assert (= (. (get result "k") worker) "pod"))
   (assert (= (. (get result "p") worker) "mac"))
@@ -26,26 +31,26 @@
   (assert (= (sorted (lfor n ["a" "b"] (. (get result n) worker))) ["mac" "new"])))
 
 (deftest test-placement-is-stable-while-worker-is-alive
-  (setv state (ClusterState #((job "a")) {"mac" (worker "mac" 0) "new" (worker "new" 0)}
+  (setv state (ClusterState #((! (job "a"))) {"mac" (! (worker "mac" 0)) "new" (! (worker "new" 0))}
                             {"a" (Placement "a" "new" 3 0)}))
   (assert (= (get (place-jobs 5000 state T) "a") (Placement "a" "new" 3 0))))
 
 (deftest test-silent-worker-keeps-job-until-reassign-deadline
   ;; new の最後の heartbeat は 0。fence(T の 10 秒)で new は自分で止めている。移すのは 30 秒後から。他に置ける worker(mac)が在る
   ;; 場合の形 — 置ける worker が無い job は沈黙しても置き先を外さない(#2804 — tests/test_keep_when_cut_off.hy)。
-  (setv state (ClusterState #((job "a")) {"mac" (worker "mac" 40000) "new" (worker "new" 0)}
+  (setv state (ClusterState #((! (job "a"))) {"mac" (! (worker "mac" 40000)) "new" (! (worker "new" 0))}
                             {"a" (Placement "a" "new" 1 0)}))
   (assert (= (. (get (place-jobs 30000 state T) "a") worker) "new"))
   (setv moved (get (place-jobs 30001 state T) "a"))
   (assert (= #(moved.worker moved.generation) #("mac" 2))))
 
 (deftest test-no_candidate-leaves-job-unassigned-and-removed-job-is-dropped
-  (setv state (ClusterState #((job "k" :needs #("cluster-net"))) {"mac" (worker "mac" 0)}
+  (setv state (ClusterState #((! (job "k" :needs #("cluster-net")))) {"mac" (! (worker "mac" 0))}
                             {"gone" (Placement "gone" "mac" 1 0)}))
   (assert (= (place-jobs 1000 state T) {})))
 
 (deftest test-capacity-and-jobs-for
-  (setv state (ClusterState #((job "a") (job "b") (job "c")) {"mac" (worker "mac" 0 2)}))
+  (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) {"mac" (! (worker "mac" 0 2))}))
   (setv result (place-jobs 0 state T))
   (assert (= (sorted result) ["a" "b"]))
   (assert (= (lfor s (jobs-for (replace state :placements result) "mac") s.name) ["a" "b"])))
@@ -62,27 +67,33 @@
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks unplaced-jobs])
 
 (setv AGENT "agent-cli")
-(defn #^ WorkerInfo mac [#^ str name #^ int [seen 0]] (replace (worker name seen 10 AGENT "desk") :exclusive #(AGENT)))
-(defn #^ WorkerInfo pod [#^ str name #^ int [seen 0]] (worker name seen 10 "cluster-net"))
+(defk mac [name [seen 0]]
+  {:pre [(: name str) (: seen int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "agent の専用の能力(exclusive)を持つ Mac の worker の記録を作るため。"
+  (replace (! (worker name seen 10 AGENT "desk")) :exclusive #(AGENT)))
+(defk pod [name [seen 0]]
+  {:pre [(: name str) (: seen int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "k3s の能力 cluster-net を持つ Pod の worker の記録を作るため。"
+  (! (worker name seen 10 "cluster-net")))
 
 (deftest test-general-job-is-not-placed-on-a-dedicated-worker
   ;; Mac の方が空いていても、専用の印を求めない job は k3s へ
-  (setv state (ClusterState #((job "a") (job "b") (job "c")) {"mac" (mac "mac") "atlas" (pod "atlas")}))
+  (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))
   (assert (= (sfor n ["a" "b" "c"] (. (get (place-jobs 1000 state T) n) worker)) #{"atlas"})))
 
 (deftest test-agent-job-goes-to-the-dedicated-worker
-  (setv state (ClusterState #((job "runner" :needs #(AGENT))) {"mac" (mac "mac") "atlas" (pod "atlas")}))
+  (setv state (ClusterState #((! (job "runner" :needs #(AGENT)))) {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))
   (assert (= (. (get (place-jobs 1000 state T) "runner") worker) "mac")))
 
 (deftest test-pin-does-not-override-the-dedicated-mark
-  (setv state (ClusterState #((job "p" :pin "mac")) {"mac" (mac "mac")}))
+  (setv state (ClusterState #((! (job "p" :pin "mac"))) {"mac" (! (mac "mac"))}))
   (assert (= (place-jobs 1000 state T) {}))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 state T) "p"))))
 
 (deftest test-job-without-a-place-is-reported-unplaced
   ;; agent の job で Mac が居ない・一般の job で k3s が居ない
-  (setv state (ClusterState #((job "runner" :needs #(AGENT)) (job "placer")) {"atlas" (pod "atlas")}))
-  (setv s2 (ClusterState #((job "placer")) {"mac" (mac "mac")}))
+  (setv state (ClusterState #((! (job "runner" :needs #(AGENT))) (! (job "placer"))) {"atlas" (! (pod "atlas"))}))
+  (setv s2 (ClusterState #((! (job "placer"))) {"mac" (! (mac "mac"))}))
   (assert (not-in "runner" (place-jobs 1000 state T)))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 state T) "runner")))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 s2 T) "placer"))))
@@ -90,7 +101,7 @@
 (deftest test-job-leaving-a-worker-that-became-dedicated-waits-until-it-stopped-there
   ;; mac が専用の印を付けて戻った。mac に載っていた一般の job は外れ、mac がまだ動かしていると報告している間は置かず、
   ;; 止め終えた報告の後で k3s へ置く(同じ job を 2 つ動かさない)。
-  (setv state (ClusterState #((job "placer")) {"mac" (mac "mac") "atlas" (pod "atlas")}
+  (setv state (ClusterState #((! (job "placer"))) {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}
                             {"placer" (Placement "placer" "mac" 2 0)}
                             :statuses {"mac" (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "placer" :phase "running")))}))
   (assert (= (place-jobs 1000 state T) {}))
@@ -98,17 +109,19 @@
   (setv stopped (replace state :placements {} :statuses {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))
   (assert (= (. (get (place-jobs 2000 stopped T) "placer") worker) "atlas")))
 
-(defn #^ TaskRecord task [#^ str id #^ tuple needs]
+(defk task [id needs]
+  {:pre [(: id str) (: needs tuple)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "要る能力 needs を持つ待っている task の記録(python 3・lease の期限 20000)を作るため。"
   (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" #((ComponentVersion "python" "3")) needs 15000 20000 0))
 
 (deftest test-task-follows-the-same-dedicated-rule
-  (setv workers {"mac" (replace (mac "mac") :versions #((ComponentVersion "python" "3")))
-                 "atlas" (replace (pod "atlas") :versions #((ComponentVersion "python" "3")))})
-  (setv state (ClusterState #() workers {} {"t1" (task "t1" #()) "t2" (task "t2" #(AGENT))}))
+  (setv workers {"mac" (replace (! (mac "mac")) :versions #((ComponentVersion "python" "3")))
+                 "atlas" (replace (! (pod "atlas")) :versions #((ComponentVersion "python" "3")))})
+  (setv state (ClusterState #() workers {} {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT)))}))
   (setv placed (place-tasks 1000 state {} T))
   (assert (= #((. (get placed "t1") worker) (. (get placed "t2") worker)) #("atlas" "mac")))
   ;; agent の task で Mac が居なければ、送らずに失敗(理由に要る能力)
-  (setv only-pod (ClusterState #() {"atlas" (get workers "atlas")} {} {"t3" (task "t3" #(AGENT))}))
+  (setv only-pod (ClusterState #() {"atlas" (get workers "atlas")} {} {"t3" (! (task "t3" #(AGENT)))}))
   (setv failed (get (place-tasks 1000 only-pod {} T) "t3"))
   (assert (= failed.phase "failed"))
   (assert (in "agent-cli" failed.detail)))
@@ -119,32 +132,33 @@
 ;; worker が無い」で即 失敗した。worker の Recreate の入れ替えの間(約 70 秒)も同じ。待っても晴れない理由(能力と版の合う worker が
 ;; 登録されていない)だけで失敗にし、登録された worker がいま黙っているだけなら task の lease の間は待つ。
 
-(defn #^ ClusterState silent-verify-state [#^ int seen #^ bool detached]
-  ;; 能力 verify を持つ唯一の worker(最後の連絡 = seen)と、それを要る待っている task 1 本(lease の期限 20000)の状態。
-  (setv v (replace (worker "verify-1" seen 1 "verify") :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
-  (ClusterState #() {"verify-1" v} {} {"t1" (replace (task "t1" #("verify")) :detached detached)}))
+(defk silent-verify-state [seen detached]
+  {:pre [(: seen int) (: detached bool)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "能力 verify を持つ唯一の worker(最後の連絡 = seen)と、それを要る待っている task 1 本(lease の期限 20000)の状態を作るため。"
+  (val v (replace (! (worker "verify-1" seen 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (ClusterState #() {"verify-1" v} {} {"t1" (replace (! (task "t1" #("verify"))) :detached detached)}))
 
 (deftest test-a-queued-task-waits-while-its-only-capable-worker-is-silent
   ;; 失敗ケース(直す前の形では failed): 唯一の能力の合う worker の最後の連絡が生存の窓(lease-ms 10 秒)より古い — 入れ替えの間の沈黙。
   (for [detached [False True]]
-    (setv waiting (get (place-tasks 15000 (silent-verify-state 0 detached) {} T) "t1"))
+    (setv waiting (get (place-tasks 15000 (! (silent-verify-state 0 detached)) {} T) "t1"))
     (assert (= waiting.phase "queued") #(detached waiting.phase waiting.detail))
     (assert (in "verify-1" waiting.detail) waiting.detail)
     (assert (in "いま連絡していない" waiting.detail) waiting.detail)
     ;; worker が連絡し直すと(最後の連絡が新しい)置かれる。
-    (setv placed (get (place-tasks 15000 (silent-verify-state 14000 detached) {} T) "t1"))
+    (setv placed (get (place-tasks 15000 (! (silent-verify-state 14000 detached)) {} T) "t1"))
     (assert (= #(placed.phase placed.worker) #("assigned" "verify-1")) #(detached placed.phase))))
 
 (deftest test-a-queued-task-fails-when-no-registered-worker-can-ever-run-it
   ;; 待っても晴れない理由は今どおり失敗: 能力の合う worker が 1 台も登録されていない(上の test-task-follows-the-same-dedicated-rule と
   ;; 同じ)・登録された worker の版が違う・合う worker が待ちの期限(ClusterTiming.silent-worker-wait-ms)より長く live でない。
-  (setv other (replace (worker "atlas" 0 10 "cluster-net") :versions #((ComponentVersion "python" "3"))))
-  (setv none (get (place-tasks 15000 (ClusterState #() {"atlas" other} {} {"t1" (task "t1" #("verify"))}) {} T) "t1"))
+  (setv other (replace (! (worker "atlas" 0 10 "cluster-net")) :versions #((ComponentVersion "python" "3"))))
+  (setv none (get (place-tasks 15000 (ClusterState #() {"atlas" other} {} {"t1" (! (task "t1" #("verify")))}) {} T) "t1"))
   (assert (= none.phase "failed") none.phase)
-  (setv old (replace (worker "verify-1" 0 1 "verify") :versions #((ComponentVersion "python" "2")) :exclusive #("verify")))
-  (setv mismatch (get (place-tasks 15000 (ClusterState #() {"verify-1" old} {} {"t1" (task "t1" #("verify"))}) {} T) "t1"))
+  (setv old (replace (! (worker "verify-1" 0 1 "verify")) :versions #((ComponentVersion "python" "2")) :exclusive #("verify")))
+  (setv mismatch (get (place-tasks 15000 (ClusterState #() {"verify-1" old} {} {"t1" (! (task "t1" #("verify")))}) {} T) "t1"))
   (assert (= mismatch.phase "failed") mismatch.phase)
-  (setv expired (get (place-tasks (+ T.silent-worker-wait-ms 1) (silent-verify-state 0 True) {} T) "t1"))
+  (setv expired (get (place-tasks (+ T.silent-worker-wait-ms 1) (! (silent-verify-state 0 True)) {} T) "t1"))
   (assert (= expired.phase "failed") expired.phase))
 
 
@@ -156,14 +170,14 @@
 (deftest test-a-queued-detached-task-waits-past-its-lease-while-the-capable-worker-is-away
   ;; 失敗ケース(直す前の版では「版と能力(専用の能力を含む)が合う worker が無い」で failed): task の lease の期限(20000)を過ぎ、唯一の
   ;; 能力の合う worker が 120 秒 live でない(drain に入ってから 60 秒より長い)。
-  (val waiting (get (place-tasks 120000 (silent-verify-state 0 True) {} T) "t1"))
+  (val waiting (get (place-tasks 120000 (! (silent-verify-state 0 True)) {} T) "t1"))
   (assert (= waiting.phase "queued") #(waiting.phase waiting.detail))
   (assert (in "verify-1 がいま連絡していない" waiting.detail) waiting.detail)
   (assert (in (.format "待ちの期限 = 最後の連絡から {} 秒" (// T.silent-worker-wait-ms 1000)) waiting.detail) waiting.detail)
   ;; 待っている間の記録は拍ごとに変わらない(detail に経った秒を書かない — 変われば調停が拍ごとに保存し、版を進める)。
-  (assert (= (get (place-tasks 121000 (silent-verify-state 0 True) {} T) "t1") waiting))
+  (assert (= (get (place-tasks 121000 (! (silent-verify-state 0 True)) {} T) "t1") waiting))
   ;; worker が名乗り直すと置かれる(lease の期限を過ぎていても)。
-  (val placed (get (place-tasks 120000 (silent-verify-state 119000 True) {} T) "t1"))
+  (val placed (get (place-tasks 120000 (! (silent-verify-state 119000 True)) {} T) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "verify-1")) #(placed.phase placed.detail)))
 
 (deftest test-a-queued-task-fails-by-name-when-the-capable-worker-stays-away-past-the-deadline
@@ -172,7 +186,7 @@
   (val limit T.silent-worker-wait-ms)
   (val named (.format "verify-1 が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)" (+ (// limit 1000) 1) (// limit 1000)))
   (for [detached [False True]]
-    (val silent (silent-verify-state 0 detached))
+    (<- silent (silent-verify-state 0 detached))
     (val state (replace silent :tasks (dfor #(k t) (.items silent.tasks) k (replace t :lease-until-ms (* 2 limit)))))
     (assert (= (. (get (place-tasks limit state {} T) "t1") phase) "queued") detached)
     (val failed (get (place-tasks (+ limit 1000) state {} T) "t1"))
@@ -182,10 +196,10 @@
 (deftest test-the-wait-counts-from-the-most-recent-capable-worker
   ;; 能力の合う worker が 2 台登録されている時は、最後の連絡が新しい方から数える(古い方が期限より長く黙っていても、新しい方が期限の内なら待つ)。
   (val limit T.silent-worker-wait-ms)
-  (val old (replace (worker "verify-old" 0 1 "verify") :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (val old (replace (! (worker "verify-old" 0 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
   ;; verify-new も生存の窓(10 秒)の外(61 秒 live でない)— 置けないが、期限の内なので待つ。
-  (val new (replace (worker "verify-new" (- limit 60000) 1 "verify") :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
-  (val state (ClusterState #() {"verify-old" old "verify-new" new} {} {"t1" (replace (task "t1" #("verify")) :detached True)}))
+  (val new (replace (! (worker "verify-new" (- limit 60000) 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (val state (ClusterState #() {"verify-old" old "verify-new" new} {} {"t1" (replace (! (task "t1" #("verify"))) :detached True)}))
   (val waiting (get (place-tasks (+ limit 1000) state {} T) "t1"))
   (assert (= waiting.phase "queued") #(waiting.phase waiting.detail))
   (assert (in "verify-new・verify-old がいま連絡していない" waiting.detail) waiting.detail))
@@ -197,15 +211,15 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
-  (setv gpu (replace (worker "g" 0 10 "gpu" "cluster-net") :exclusive #("gpu")))
+  (setv gpu (replace (! (worker "g" 0 10 "gpu" "cluster-net")) :exclusive #("gpu")))
   (assert (placeable #("gpu") gpu))
   (assert (placeable #("cluster-net" "gpu") gpu))
   ;; 専用の能力を要らない一般の仕事は、提供されていても置かない
   (assert (not (placeable #("cluster-net") gpu)))
   (assert (not (placeable #() gpu)))
   ;; 提供の外の能力を要る仕事は置かない
-  (assert (not (placeable #("claude-cli") (worker "p" 0 10 "cluster-net"))))
-  (assert (placeable #() (worker "p" 0 10 "cluster-net"))))
+  (assert (not (placeable #("claude-cli") (! (worker "p" 0 10 "cluster-net")))))
+  (assert (placeable #() (! (worker "p" 0 10 "cluster-net")))))
 
 (deftest test-old-label-forms-are-refused-with-a-reason
   (import pytest)
@@ -280,7 +294,7 @@
   (assert (= (. (get s.workers "at-home") provides) #("net")))
   (assert (= (. (get s.workers "at-work") node) "node-company"))
   ;; label を読む前は、どちらにも company-machine を要る job を置かない。
-  (setv secret (ClusterState #((job "secret" :needs #(COMPANY "net"))) s.workers))
+  (setv secret (ClusterState #((! (job "secret" :needs #(COMPANY "net")))) s.workers))
   (assert (= (place-jobs 1000 secret T) {}))
   ;; derivable に無い能力は、今までどおり名乗りのまま受ける。
   (<- plain ClusterState (beat-as (ClusterState) "w" "" 1000))
@@ -293,7 +307,7 @@
   (assert (= (. (get ticked.workers "at-work") derived) #(COMPANY)))
   (assert (= (. (get ticked.workers "at-home") derived) #()))
   ;; company-machine を要る job は会社の node の worker にだけ置く。一般の job はどちらにも置ける。
-  (setv secret (replace ticked :jobs #((job "secret" :needs #(COMPANY "net")) (job "other" :needs #(COMPANY)))))
+  (setv secret (replace ticked :jobs #((! (job "secret" :needs #(COMPANY "net"))) (! (job "other" :needs #(COMPANY))))))
   (setv placed (place-jobs 1000 secret T))
   (assert (= (sorted placed) ["other" "secret"]) placed)
   (assert (= (sfor p (.values placed) p.worker) #{"at-work"}) placed)
@@ -317,7 +331,7 @@
   (assert (isinstance (.row cut-off.observations.nodes "node-company") NodeLabelsUnreadable) cut-off.observations)
   (assert (= (. (get cut-off.workers "at-work") derived) #(COMPANY)))
   (assert (= (. (get cut-off.workers "at-home") derived) #()))
-  (setv secret (replace cut-off :jobs #((job "secret" :needs #(COMPANY "net")))))
+  (setv secret (replace cut-off :jobs #((! (job "secret" :needs #(COMPANY "net"))))))
   (assert (= (. (get (place-jobs later secret T) "secret") worker) "at-work"))
   ;; 読めるようになり label が外れていれば、次の読みで外す。
   (setv kube.down False)
@@ -332,9 +346,9 @@
   (<- n2 (get Table str) (labels-table {"doeff.dev/company-machine" "false"}))
   (<- seen ClusterObservations (node-observations #(#("n1" (NodeLabelsSeen :labels n1 :at 0))
                                                     #("n2" (NodeLabelsSeen :labels n2 :at 0)))))
-  (val s (replace (ClusterState :workers {"a" (replace (worker "a" 0 10 "net") :node "n1")
-                                         "b" (replace (worker "b" 0 10 "net") :node "n2")
-                                         "c" (replace (worker "c" 0 10 "net") :derived #("stale"))})
+  (val s (replace (ClusterState :workers {"a" (replace (! (worker "a" 0 10 "net")) :node "n1")
+                                         "b" (replace (! (worker "b" 0 10 "net")) :node "n2")
+                                         "c" (replace (! (worker "c" 0 10 "net")) :derived #("stale"))})
                   :observations seen))
   (val out (with-derived-capabilities s table))
   (assert (= (. (get out.workers "a") derived) #(COMPANY "gpu")))
@@ -350,10 +364,13 @@
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 
-(setv SAVED (ClusterState :workers {"old" (worker "old" 0 10 "net") "new" (worker "new" 0 10 "net")}
-                         :tasks {"t1" (task "t1" #("net")) "t2" (replace (task "t2" #("net")) :phase "finished")}
-                         :warms {"k1" (WarmEntry "k1" {"repos" []} #("net") 999999 "svc-a")}
-                         :next-task 3))
+(defk saved-state []
+  {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "旧い形へ書き換えて読み直す元の状態: worker 2 台・task 2 本(1 本は終わった)・温める表の行 1 つ。"
+  (ClusterState :workers {"old" (! (worker "old" 0 10 "net")) "new" (! (worker "new" 0 10 "net"))}
+                :tasks {"t1" (! (task "t1" #("net"))) "t2" (replace (! (task "t2" #("net"))) :phase "finished")}
+                :warms {"k1" (WarmEntry "k1" {"repos" []} #("net") 999999 "svc-a")}
+                :next-task 3))
 
 (defk to-old-worker [row]
   {:pre [(: row dict)] :post [(: % dict)]}
@@ -378,7 +395,7 @@
   True)
 
 (deftest test-old-saved-rows-in-the-state-file-are-read-without-crashing
-  (setv data (! (state-to-json SAVED)))
+  (setv data (! (state-to-json (! (saved-state)))))
   (assert (get data "warms") "state file に温める表の行が在る(旧い形へ書き換える対象)")
   (setv workers [])
   (for [w (get data "workers")]
@@ -398,7 +415,7 @@
   (assert ok))
 
 (deftest test-old-saved-rows-in-the-durable-kv-are-read-without-crashing
-  (setv kv (! (full-kv SAVED)))
+  (setv kv (! (full-kv (! (saved-state)))))
   (assert (in "warm/k1" kv) (sorted kv))
   (setv old (dict kv))
   (<- worker-row dict (to-old-worker (get kv "worker/old")))
@@ -418,10 +435,10 @@
   (<- seen ClusterObservations (node-observations #(#("known" (NodeLabelsSeen :labels known :at 0))
                                                     #("error" (NodeLabelsUnreadable :error "unavailable" :at 0)))))
   (val state (ClusterState :workers
-    {"observed" (replace (worker "observed" 0) :node "known" :derived capabilities)
-     "plain" (worker "plain" 0)
-     "missing" (replace (worker "missing" 0) :node "missing" :derived capabilities)
-     "error" (replace (worker "error" 0) :node "error" :derived capabilities)}
+    {"observed" (replace (! (worker "observed" 0)) :node "known" :derived capabilities)
+     "plain" (! (worker "plain" 0))
+     "missing" (replace (! (worker "missing" 0)) :node "missing" :derived capabilities)
+     "error" (replace (! (worker "error" 0)) :node "error" :derived capabilities)}
     :observations seen))
   (val result (with-derived-capabilities state table))
   (assert (= result state))
@@ -434,9 +451,9 @@
   (<- known (get Table str) (labels-table COMPANY-LABEL))
   (<- seen ClusterObservations (node-observations #(#("known" (NodeLabelsSeen :labels known :at 0)))))
   (val state (ClusterState :workers
-    {"changed" (replace (worker "changed" 0) :node "known")
-     "same" (worker "same" 0)
-     "stale" (replace (worker "stale" 0) :derived #(COMPANY))}
+    {"changed" (replace (! (worker "changed" 0)) :node "known")
+     "same" (! (worker "same" 0))
+     "stale" (replace (! (worker "stale" 0)) :derived #(COMPANY))}
     :observations seen))
   (val result (with-derived-capabilities state table))
   (assert (is-not result state))
@@ -456,7 +473,7 @@
   (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
   (<- known (get Table str) (labels-table COMPANY-LABEL))
   (<- seen ClusterObservations (node-observations #(#("known" (NodeLabelsSeen :labels known :at 0)))))
-  (val state (ClusterState :workers {"w" (replace (worker "w" 0) :node "known" :derived #(COMPANY))} :observations seen))
+  (val state (ClusterState :workers {"w" (replace (! (worker "w" 0)) :node "known" :derived #(COMPANY))} :observations seen))
   (assert (= (. (get (. (with-derived-capabilities state table) workers) "w") derived) #(COMPANY)))
   ;; node の観測値を書き換えた次の呼び出しでも、同じ worker の前回の結果を流用しない(観測は凍った値 — 書き換えは新しい表と記録)。
   (<- emptied (get Table str) (labels-table {}))

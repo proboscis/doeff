@@ -1,5 +1,6 @@
 ;;; coordinator の probe(2026-09-25): /livez・/readyz は調停ループを通さず、HTTP の受付が「ループが最後に要求を取りに来た時刻」
 ;;; だけで答える。fsync や k8s の読みでループが数秒止まっても落ちない。ループが本当に固まった時だけ落ちる。
+(require doeff-hy.macros [defk deftest <- val])
 (import json)
 (import socket)
 (import urllib.request)
@@ -25,13 +26,17 @@
   (assert (= (get (probe-verdict "/livez" (+ LIVE-STALL-SECONDS 1)) 0) 503)))
 
 
-(defn #^ int free-port []
+(defk free-port []
+  {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "手元の空いた TCP の port の番号を 1 つ取るため(検の HTTP の受付を起こす前)。"
   (with [s (socket.socket)]
     (.bind s #("127.0.0.1" 0))
     (get (.getsockname s) 1)))
 
 
-(defn #^ tuple get-status [#^ int port #^ str path]
+(defk get-status [port path]
+  {:pre [(: port int) (: path str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "手元の port の path へ GET を 1 回送り、状態の番号と JSON の本文の組を返すため(4xx・5xx も組で返す)。"
   (try
     (with [r (urllib.request.urlopen f"http://127.0.0.1:{port}{path}" :timeout 2)]
       #(r.status (json.loads (.read r))))
@@ -39,22 +44,23 @@
       #(e.code (json.loads (.read e))))))
 
 
-(defn #^ None test-probes-answer-without-the-loop []
+(deftest test-probes-answer-without-the-loop
   ;; 調停ループが 1 度も要求を取らない(= fsync で塞がっている)間も、probe は並ばずに即答する。
-  (setv now [1000.0] port (free-port)
-        inbox (RequestInbox port :clock (fn [] (get now 0))))
+  (val now [1000.0])
+  (<- port int (free-port))
+  (val inbox (RequestInbox port :clock (fn [] (get now 0))))
   (.start inbox)
-  (setv server inbox.server)
+  (val server inbox.server)
   (assert (is-not server None) "start の後は HTTP server が在る")
-  (assert (= (get (get-status port "/readyz") 0) 503))    ; まだループが来ていない
+  (assert (= (get (! (get-status port "/readyz")) 0) 503))    ; まだループが来ていない
   (.take inbox 0.01 10)                                   ; ループが 1 度取りに来た
   (setv (get now 0) 1020.0)                               ; 20 秒 取りに来ない(fsync が遅い)
-  (assert (= (get (get-status port "/readyz") 0) 200))
+  (assert (= (get (! (get-status port "/readyz")) 0) 200))
   (setv (get now 0) 1040.0)                               ; 40 秒 = 止まった
-  (setv #(status body) (get-status port "/readyz"))
+  (setv #(status body) (! (get-status port "/readyz")))
   (assert (= status 503))
   (assert (in "40.0" (get body "reason")))
-  (assert (= (get (get-status port "/livez") 0) 200))
+  (assert (= (get (! (get-status port "/livez")) 0) 200))
   ;; probe は箱に並ばない(ループの仕事を増やさない)
   (assert (.empty inbox.queue))
   (.shutdown server))

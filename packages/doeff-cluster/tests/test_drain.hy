@@ -2,7 +2,7 @@
 ;;   並べる(surge)・並べた先の Ready を待つ・付け替えて旧を宣言から外す・移す先が無ければ並べず旧を止めない・取り消し・
 ;;   入れ替えでない Service は止めて移す・drain 中の worker に新しい置き先を割り当てない・別の世代の heartbeat と期限で解ける・
 ;;   保存と読み直し。時刻は純粋な now の引数(Program の検は doeff-time の SimClock)。
-(require doeff-hy.macros [deftest defhandler <- val var])
+(require doeff-hy.macros [deftest defhandler <- val var defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
@@ -29,7 +29,9 @@
 
 (setv T (ClusterTiming))
 (setv K3S ["cluster-net"])
-(defn #^ dict service [#^ (| dict None) [extra None]]
+(defk service [[extra None]]
+  {:pre [(: extra (| dict None))] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "入れ替え(handoff)の Service の宣言の spec(extra の欄で上書きする)を作るため。"
   (| {"revision" "r1" "needs" K3S "readiness" {"windowSeconds" 10} "update" "handoff"
       "run" SAMPLE-RUN}
      (or extra {})))
@@ -94,10 +96,11 @@
   (defn #^ list names-for [self #^ str worker] (lfor s (jobs-for self.state worker) s.name)))
 
 
-(defn #^ Coord running-writer []
+(defk running-writer []
+  {:pre [] :post [(: % Coord)] :tags {:context "doeff-cluster-test" :role "program"}}
   "書き手 w が atlas で動き Ready(active)。zeus も生きている。"
-  (setv c (Coord))
-  (c.call "POST" "/resources/Service" {"name" "w" "spec" (service)} :expect 201)
+  (val c (Coord))
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
   (assert (= (c.placed "w") "atlas"))
   (c.beat "atlas" ["w"])
   (c.ready "atlas" "w" :role "active")
@@ -106,7 +109,7 @@
 
 
 (deftest test-drain-surges-a-handoff-writer-then-moves-it-only-after-the-new-process-is-ready
-  (setv c (running-writer))
+  (<- c (running-writer))
   (var view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
   ;; 並べる: 置き先は atlas のまま、zeus へ並べた置き先(世代 +1)。zeus の heartbeat の返事に w が載る。atlas にも載ったまま。
   (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
@@ -147,7 +150,7 @@
 
 
 (deftest test-no-target-means-no-surge-and-the-old-keeps-running-until-a-target-appears
-  (setv c (running-writer))
+  (<- c (running-writer))
   ;; zeus が沈黙(死んだ)。
   (c.advance 12)
   (c.beat "atlas" ["w"])
@@ -167,7 +170,7 @@
 
 
 (deftest test-a-target-that-is-draining-or-not-eligible-is-not-used
-  (setv c (running-writer))
+  (<- c (running-writer))
   ;; zeus も drain 中 → 移す先が無い。
   (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
@@ -182,7 +185,7 @@
 
 
 (deftest test-cancelling-the-drain-drops-the-surge-and-keeps-the-old
-  (setv c (running-writer))
+  (<- c (running-writer))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (c.beat "zeus" ["w"])
   (setv view (c.call "DELETE" "/workers/atlas/drain" :actor "c-test"))
@@ -198,7 +201,7 @@
 
 (deftest test-a-recreate-service-is-stopped-and-moved-only-when-another-worker-can-take-it
   (setv c (Coord))
-  (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
   (assert (= (c.placed "r") "atlas"))
   (c.beat "atlas" ["r"])
   ;; zeus が死んでいる間の drain: 移す先が無いので外さない。
@@ -220,7 +223,7 @@
 (deftest test-a-draining-worker-gets-no-new-placements-or-tasks
   (setv c (Coord))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.call "POST" "/resources/Service" {"name" "n" "spec" (service)} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "n" "spec" (! (service))} :expect 201)
   (assert (= (c.placed "n") "zeus"))
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (get c.state.tasks "t1") worker) "zeus"))
@@ -251,7 +254,7 @@
 
 
 (deftest test-a-new-boot-or-the-deadline-ends-the-drain
-  (setv c (running-writer))
+  (<- c (running-writer))
   (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30} :actor "drain@zeus")
   (assert (= (. (get c.state.drains "zeus") boot) "b1"))
   ;; 同じ世代の heartbeat では解けない。頼み直しは始めた時刻を変えず、期限だけ延ばす。
@@ -278,7 +281,7 @@
   ;; 2026-09-27 04:44 JST の実測: Deployment の worker の Pod を消すと、旧 Pod は preStop で drain を頼み直し
   ;; ながら heartbeat を送り続け、新 Pod の worker は同じ名で名乗る。drain の印が約 2 秒ごとに付いて(旧の drain)消えた(新の
   ;; heartbeat)。旧い世代の頼みと heartbeat は、新しい世代の置き場を止めない。
-  (setv c (running-writer))
+  (<- c (running-writer))
   (c.beat "zeus" :boot "old")
   (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@zeus")
   (assert (= (. (get c.state.drains "zeus") boot) "old"))
@@ -312,8 +315,8 @@
   ;; Pod の停止まで)・recreate の job は載せない(止めて lease を返す)・退いた後に置かれた job と RemoteJob の task は載せない。
   (setv c (Coord #("atlas")))
   (c.beat "atlas" :boot "old")
-  (c.call "POST" "/resources/Service" {"name" "w" "spec" (service)} :expect 201)
-  (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
   (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
   (c.call "PUT" "/detached/job-own" (c.task-body K3S {"revision" "r" "leaseSeconds" 60})
           :actor "c-test")
@@ -321,7 +324,7 @@
   (c.advance 1)
   (c.beat "atlas" :boot "new")
   ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 atlas へ置かれる)。
-  (c.call "POST" "/resources/Service" {"name" "w2" "spec" (service)} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "w2" "spec" (! (service))} :expect 201)
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (setv remote (next (gfor t (.values c.state.tasks) :if (not t.detached) t))
         own (next (gfor t (.values c.state.tasks) :if t.detached t)))
@@ -384,7 +387,7 @@
 
 
 (deftest test-drains-and-surges-survive-a-restart-and-an-old-store-reads-as-empty
-  (setv c (running-writer))
+  (<- c (running-writer))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (setv kv (! (full-kv c.state)))
   (assert (in (+ DRAIN "atlas") kv))
@@ -415,12 +418,15 @@
     (.append calls #((get request 0) (get request 1) (get request 3)))
     (resume (if (> (len answers) 1) (.pop answers 0) (get answers 0)))))
 
-(defn #^ dict drained [#^ bool flag] {"status" 200 "body" {"ready" False "drain" {"drained" flag}}})
+(defk drained [flag]
+  {:pre [(: flag bool)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "drain の頼みへの coordinator の答え(drained の真偽だけを変える)を作るため。"
+  {"status" 200 "body" {"ready" False "drain" {"drained" flag}}})
 
 (deftest test-await-drained-asks-again-until-drained
   (setv calls [] clock (SimClock))
   (<- result dict ((sim-time-handler :clock clock)
-              ((scripted-coordinator [{"error" "ConnectError"} {"status" 503 "body" {}} (drained False) (drained True)] calls)
+              ((scripted-coordinator [{"error" "ConnectError"} {"status" 503 "body" {}} (! (drained False)) (! (drained True))] calls)
                (await-drained "atlas" 90.0 2.0))))
   (assert (= (get result "outcome") "drained") result)
   (assert (= (len calls) 4))
@@ -434,7 +440,7 @@
 (defhandler asks-of [#^ list asks]
   (AskDrain [name ttl-seconds own-boot]
     (.append asks #(name ttl-seconds own-boot))
-    (resume (drained True))))
+    (resume (! (drained True)))))
 
 (deftest test-await-drained-asks-with-a-typed-request-not-a-wire-shape
   (setv asks [])
@@ -444,7 +450,7 @@
 
 (deftest test-await-drained-gives-up-at-the-deadline-and-stops-on-unknown-worker
   (<- result dict ((sim-time-handler :clock (SimClock))
-              ((scripted-coordinator [(drained False)] []) (await-drained "atlas" 10.0 2.0))))
+              ((scripted-coordinator [(! (drained False))] []) (await-drained "atlas" 10.0 2.0))))
   (assert (= (get result "outcome") "timeout") result)
   (assert (>= (get result "elapsed") 10.0))
   (<- gone dict ((sim-time-handler :clock (SimClock))
@@ -487,7 +493,7 @@
   ;; (その世代の task が無い = drained)で終わる — 新しい世代に drain を付けて 90 秒待たない。
   (setv calls [])
   (<- sent dict ((sim-time-handler :clock (SimClock))
-            ((scripted-coordinator [(drained True)] calls) (await-drained "atlas" 90.0 2.0 "old"))))
+            ((scripted-coordinator [(! (drained True))] calls) (await-drained "atlas" 90.0 2.0 "old"))))
   (assert (= (get sent "outcome") "drained"))
   (assert (= (get (get (get calls 0) 2) "boot") "old"))
   (setv c (Coord))

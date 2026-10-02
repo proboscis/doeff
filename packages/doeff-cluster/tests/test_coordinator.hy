@@ -15,7 +15,6 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view job-from-json identity-hash] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
-(import doeff [run])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
@@ -27,26 +26,32 @@
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0" "doeff" "1"})
 
-(defn #^ Request req [#^ str method #^ str path #^ (| dict list str int float bool None) [body None] #^ (| dict None) [query None] #^ (| str None) [actor "test"]]
+(defk req [method path [body None] [query None] [actor "test"]]
+  {:pre [(: method str) (: path str) (: body (| dict list str int float bool None)) (: query (| dict None)) (: actor (| str None))] :post [(: % Request)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "検の HTTP の要求の値 Request を作るため(送り手 actor つき)。"
   (http-request method path (or query {}) body :actor actor))
 
-(defn #^ tuple beat [#^ ClusterState state #^ str name #^ int now #^ (| list None) [statuses None] #^ dict [versions V] #^ (| list None) [provides None]]
-  (responded state (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10
-                                           "versions" versions "statuses" (or statuses [])}) now T))
+(defk beat [state name now [statuses None] [versions V] [provides None]]
+  {:pre [(: state ClusterState) (: name str) (: now int) (: statuses (| list None)) (: versions dict) (: provides (| list None))] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "worker name の heartbeat を 1 つ判断 responded に渡し、(状態 状態の番号 本文) の組を返すため。"
+  (responded state (! (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10
+                                           "versions" versions "statuses" (or statuses [])})) now T))
 
 
 (deftest test-restart-keeps-placements-of-workers-that-have-not-reported-yet
   ;; 作り直した coordinator へ最初に名乗った worker に全 job が寄らないこと(実測 2026-09-23 の欠陥)。
-  (val reply-1 (beat (ClusterState) "a" 0))
+  (<- reply-1 (beat (ClusterState) "a" 0))
   (var s (get reply-1 0))
-  (val reply-2 (beat s "b" 0))
+  (<- reply-2 (beat s "b" 0))
   (:= s (get reply-2 0))
-  (val reply-3 (responded s (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})}) 0 T))
+  (val reply-3 (responded s (! (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})})) 0 T))
   (:= s (get reply-3 0))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
   (var second (! (state-from-json (! (state-to-json s)) 5000)))
-  (val reply-4 (beat second "a" 5000))
+  (<- reply-4 (beat second "a" 5000))
   (:= second (get reply-4 0)) ; b はまだ名乗っていない
   (assert (= (dfor #(k v) (.items second.placements) k v.worker) before)))
 
@@ -64,21 +69,24 @@
 ;; 両方で見る。
 
 
-(defn #^ tuple submit [#^ ClusterState state #^ int now #^ dict [versions V] #^ float [lease 15.0]]
+(defk submit [state now [versions V] [lease 15.0]]
+  {:pre [(: state ClusterState) (: now int) (: versions dict) (: lease (| float int))] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "task を 1 つ積み、(状態 task の id) の組を返すため。"
   ;; 詰めた Program を置き場に(送り手の版 versions と一緒に)置いてから、task の本文は置き場のキーだけを運ぶ。
-  (setv #(state sha) (run (program-placed state versions :now now)))
-  (setv #(state _ body) (responded state (req "POST" "/tasks" {"program" sha "revision" "r"
-                                                              "needs" ["net"] "name" "n" "leaseSeconds" lease}) now T))
-  #(state (get body "task")))
+  (<- placed tuple (program-placed state versions :now now))
+  (val reply (responded (get placed 0) (! (req "POST" "/tasks" {"program" (get placed 1) "revision" "r"
+                                                               "needs" ["net"] "name" "n" "leaseSeconds" lease})) now T))
+  #((get reply 0) (get (get reply 2) "task")))
 
 
 (deftest test-task-goes-to-a-worker-and-its-result-comes-back
-  (val reply-5 (beat (ClusterState) "w" 0))
+  (<- reply-5 (beat (ClusterState) "w" 0))
   (var s (get reply-5 0))
-  (val reply-6 (submit s 100))
+  (<- reply-6 (submit s 100))
   (:= s (get reply-6 0))
   (val id (get reply-6 1))
-  (val reply-7 (beat s "w" 200))
+  (<- reply-7 (beat s "w" 200))
   (:= s (get reply-7 0))
   (var body (get reply-7 2))
   (assert (= (lfor t (get body "tasks") (get t "id")) [id]))
@@ -86,11 +94,11 @@
   (assert (= (get body "tasks" 0 "program") SAMPLE-TASK-PROGRAM))
   (assert (not-in "blob" (get body "tasks" 0)))
   ;; worker が終わったと報告する(結果の blob を添えて)
-  (val reply-8 (beat s "w" 300 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (<- reply-8 (beat s "w" 300 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
   (:= s (get reply-8 0))
   (:= body (get reply-8 2))
   (assert (= (get body "tasks") [])) ; 終わった task はもう送らない = worker は file を片付ける
-  (val reply-9 (responded s (req "GET" (+ "/tasks/" id)) 400 T))
+  (val reply-9 (responded s (! (req "GET" (+ "/tasks/" id))) 400 T))
   (:= s (get reply-9 0))
   (val view (get reply-9 2))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
@@ -100,49 +108,49 @@
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking
-  (val reply-10 (beat (ClusterState) "w" 0))
+  (<- reply-10 (beat (ClusterState) "w" 0))
   (var s (get reply-10 0))
-  (val reply-11 (submit s 0 :lease 5.0))
+  (<- reply-11 (submit s 0 :lease 5.0))
   (:= s (get reply-11 0))
   (val id (get reply-11 1))
-  (val reply-12 (responded s (req "GET" (+ "/tasks/" id)) 4000 T))
+  (val reply-12 (responded s (! (req "GET" (+ "/tasks/" id))) 4000 T))
   (:= s (get reply-12 0)) ; 問い合わせが lease を 9000 まで延ばす
-  (val reply-13 (beat s "w" 8000))
+  (<- reply-13 (beat s "w" 8000))
   (:= s (get reply-13 0))
   (var body (get reply-13 2))
   (assert (= (len (get body "tasks")) 1))
-  (val reply-14 (beat s "w" 9001))
+  (<- reply-14 (beat s "w" 9001))
   (:= s (get reply-14 0))
   (:= body (get reply-14 2))
   (assert (= (get body "tasks") [])) ; 担い手は次の拍でその子 process を止める
-  (val reply-15 (responded s (req "GET" (+ "/tasks/" id)) 9002 T))
+  (val reply-15 (responded s (! (req "GET" (+ "/tasks/" id))) 9002 T))
   (:= s (get reply-15 0))
   (val view (get reply-15 2))
   (assert (= (get view "phase") "missing")))
 
 
 (deftest test-task-from-a-different-version-is-refused-before-sending
-  (val reply-16 (beat (ClusterState) "w" 0))
+  (<- reply-16 (beat (ClusterState) "w" 0))
   (var s (get reply-16 0))
-  (val reply-17 (submit s 10 :versions (| V {"python" "3.9.6"})))
+  (<- reply-17 (submit s 10 :versions (| V {"python" "3.9.6"})))
   (:= s (get reply-17 0))
   (val id (get reply-17 1))
   (setv task (get s.tasks id))
   (assert (= task.phase "failed"))
   (assert (in "python=3.14.0" task.detail))
-  (val reply-18 (beat s "w" 20))
+  (<- reply-18 (beat s "w" 20))
   (:= s (get reply-18 0))
   (val body (get reply-18 2))
   (assert (= (get body "tasks") [])))
 
 
 (deftest test-task-of-a-silent-worker-fails-and-is-not-rerun
-  (val reply-19 (beat (ClusterState) "w" 0))
+  (<- reply-19 (beat (ClusterState) "w" 0))
   (var s (get reply-19 0))
-  (val reply-20 (submit s 0 :lease 100.0))
+  (<- reply-20 (submit s 0 :lease 100.0))
   (:= s (get reply-20 0))
   (val id (get reply-20 1))
-  (val reply-21 (beat s "x" (+ T.reassign-after-ms 1000)))
+  (<- reply-21 (beat s "x" (+ T.reassign-after-ms 1000)))
   (:= s (get reply-21 0)) ; w は 0 から移し替えの期限を越えて沈黙、x だけが生きている
   (setv task (get s.tasks id))
   (assert (= task.phase "failed"))
@@ -175,16 +183,17 @@
     (.append script.saved (dfor w writes w.key w.value)) (resume None))
   (CoordinatorStopRequested [] (resume (and (not script.requests) (> script.now 3000)))))
 
-(defn #^ Callable scripted [#^ Script script]
+(defk scripted [script]
+  {:pre [(: script Script)] :post [(: % Callable)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "台本の外側に仮想の時計(script の SimClock)を被せる。"
   (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies (durable-states (reply-bodies program)))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
-  (setv script (Script [(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})
-                        (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]})
-                        (req "PUT" "/board/k" {"value" 1})
-                        (req "GET" "/nothing")]))
-  (<- final ClusterState ((scripted script) (run-coordinator (ClusterState) T (ClusterNaming))))
+  (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V}))
+                        (! (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}))
+                        (! (req "PUT" "/board/k" {"value" 1}))
+                        (! (req "GET" "/nothing"))]))
+  (<- final ClusterState ((! (scripted script)) (run-coordinator (ClusterState) T (ClusterNaming))))
   (assert (= (lfor r script.replies (get r 1)) [200 200 200 404]))
   (assert (= (. (get final.placements "a") worker) "w"))
   ;; 永続化は変化のあったまとまりだけ。盤の書きは盤のキー 1 つだけ(資源の状態を書き直さない)
@@ -199,17 +208,17 @@
 (deftest test-group-commit-answers-a-batch-only-after-one-persist
   ;; 3 件が 1 まとまり: 永続化は 1 回、返事は 3 件とも永続化の後。
   (setv order [])
-  (setv script (Script [[(req "PUT" "/board/a" {"value" 1}) (req "PUT" "/board/b" {"value" 2}) (req "GET" "/board")]]))
-  (<- final ClusterState ((scripted script) ((recording order) (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))
+  (setv script (Script [[(! (req "PUT" "/board/a" {"value" 1})) (! (req "PUT" "/board/b" {"value" 2})) (! (req "GET" "/board"))]]))
+  (<- final ClusterState ((! (scripted script)) ((recording order) (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))
   (assert (= order ["persist" "reply /board/a" "reply /board/b" "reply /board"]) order)
   (assert (= (len script.saved) 1)))
 
 (deftest test-a-crash-during-persist-leaves-the-batch-unanswered
   ;; 2 まとまり目の fsync の途中で落ちる: 1 まとまり目の書きは返事済み・2 まとまり目の送り手には返事が来ない(失敗として扱われる)。
   (import pytest)
-  (setv script (Script [[(req "PUT" "/board/a" {"value" 1})] [(req "PUT" "/board/b" {"value" 2})]] :fail-at 2))
+  (setv script (Script [[(! (req "PUT" "/board/a" {"value" 1}))] [(! (req "PUT" "/board/b" {"value" 2}))]] :fail-at 2))
   (with [(pytest.raises Crashed)]
-    (<- _ ClusterState ((scripted script) (run-coordinator (ClusterState) T (ClusterNaming)))))
+    (<- _ ClusterState ((! (scripted script)) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies (get r 0)) ["/board/a"]))
   (assert (= (lfor d script.saved (sorted d)) [["board/a"]])))
 
@@ -222,9 +231,9 @@
   ;; #2722: Persist の欄は writes(TableWrite の組)。旧い名 delta で読む答え手は、書きの組を差分として黙って読まずに、欄の名を名指して
   ;; 落ちる(答え手の節は (. effect delta) で欄を読む)。
   (import pytest)
-  (val script (Script [(req "PUT" "/board/k" {"value" 1})]))
+  (val script (Script [(! (req "PUT" "/board/k" {"value" 1}))]))
   (with [(pytest.raises AttributeError :match "delta")]
-    (<- _ ClusterState ((scripted script) (old-field-name-reader (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
+    (<- _ ClusterState ((! (scripted script)) (old-field-name-reader (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
 
 
 (defhandler fault-log [#^ list faults]
@@ -243,9 +252,9 @@
                              (raise (TypeError "stamp の引数が合わない(偽の欠陥)"))
                              (real-stamp before after actor #* rest))))
   (val faults [])
-  (val script (Script [[(req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V})
-                        (req "PUT" "/board/k" [1 2])]]))
-  (<- final ClusterState ((scripted script) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (val script (Script [[(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "versions" V}))
+                        (! (req "PUT" "/board/k" [1 2]))]]))
+  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/heartbeat" 500) #("/board/k" 400)]) script.replies)
   (val body (get (get script.replies 0) 2))
   (assert (get body "fault") body)
@@ -263,10 +272,10 @@
   ;; 送り手の誤りで 400。直す前は宣言の JSON → JobSpec の不変条件の素の ValueError が、本文の読み(ReadBody — 判断の欠陥の囲みの外)から
   ;; 調停ループの外まで抜け、coordinator の process ごと落ちた。後ろの要求(GET /state)にも答え、宣言は書かない。
   (val faults [])
-  (val script (Script [(req "POST" "/resources/Service" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}})
-                       (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "" "needs" ["net"]}})
-                       (req "GET" "/state")]))
-  (<- final ClusterState ((scripted script) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (val script (Script [(! (req "POST" "/resources/Service" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}}))
+                       (! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "" "needs" ["net"]}}))
+                       (! (req "GET" "/state"))]))
+  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1)))
              [#("/resources/Service" 400) #("/resources/Service/a" 400) #("/state" 200)])
           script.replies)
@@ -283,9 +292,9 @@
   (monkeypatch.setattr doeff_cluster.coordinator.protocol.request_bodies "service_body_of"
                        (fn [body parts] (raise (TypeError "宣言の本文の読みの欠陥(偽)"))))
   (val faults [])
-  (val script (Script [(req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}})
-                       (req "GET" "/state")]))
-  (<- final ClusterState ((scripted script) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (val script (Script [(! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}}))
+                       (! (req "GET" "/state"))]))
+  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/resources/Service/a" 500) #("/state" 200)]) script.replies)
   (assert (get (get (get script.replies 0) 2) "fault") script.replies)
   (assert (= (lfor f faults #(f.method f.path f.error-type)) [#("PUT" "/resources/Service/a" "TypeError")]) faults)
@@ -295,16 +304,18 @@
 
 ;; --- shim(Python のまま残す見張り)-----------------------------------------------------------
 
-(defn #^ subprocess.Popen shim [#^ str #* command]
+(defk shim [#* command]
+  {:pre [(: command tuple)] :post [(: % subprocess.Popen)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "shim の process を 1 つ起こすため(command = shim が子として起こす job の命令)。"
   ;; worker と同じく、shim を新しい group の先頭として起動し、stdin のパイプを握る。
   (subprocess.Popen [sys.executable "-m" "doeff_cluster.shim" "1" "--" #* command]
                     :stdin subprocess.PIPE :start-new-session True))
 
-(defn #^ None test-shim-passes-the-job-exit-code []
-  (assert (= (.wait (shim sys.executable "-c" "raise SystemExit(3)") :timeout 30) 3)))
+(deftest test-shim-passes-the-job-exit-code
+  (assert (= (.wait (! (shim sys.executable "-c" "raise SystemExit(3)")) :timeout 30) 3)))
 
-(defn #^ None test-shim-stops-the-job-when-the-worker-goes-away []
-  (setv p (shim sys.executable "-c" "import time; time.sleep(60)"))
+(deftest test-shim-stops-the-job-when-the-worker-goes-away
+  (<- p subprocess.Popen (shim sys.executable "-c" "import time; time.sleep(60)"))
   (time.sleep 1.0)
   (assert (is-not p.stdin None) "shim は stdin をパイプで開く")
   (.close p.stdin) ; worker が消えた時と同じ(パイプの EOF)
@@ -348,8 +359,8 @@
   (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (<- (durable-load store))
-  (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
-                        (req "PUT" "/board/k" {"value" 1})]))
+  (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}}))
+                        (! (req "PUT" "/board/k" {"value" 1}))]))
   (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
   (setv back (! (state-from-kv (! (durable-load (WalStore d))) 99999)))
   (assert (= (! (durable-kv back)) (! (durable-kv final))))
