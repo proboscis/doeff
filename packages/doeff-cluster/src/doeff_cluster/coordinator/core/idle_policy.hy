@@ -99,16 +99,19 @@
   "仮の拍を受けた歩の後の状態 after が、歩の前の before から時刻の欄(生存の印 — coordinator の alive-ms と worker ごとの seen-mark・
    Rollout の拍の刻・worker の最後の連絡の時刻・状態の報告の at)のほか何も変えていないかを知るため — 静かな歩の条件。task の lease の
    延長は静かでないに数える(#2781 の表 — 延長は保存が要る)。"
+  ;; worker の報告は観測の表(ClusterObservations.statuses — #2904)。
+  (val after-reports after.observations.statuses)
+  (val before-reports before.observations.statuses)
   (and (= (set after.workers) (set before.workers))
-       (= (set after.statuses) (set before.statuses))
+       (= (set (.keys after-reports)) (set (.keys before-reports)))
        (all (gfor #(name info) (.items after.workers)
                   (= (replace info :last-seen-ms (. (get before.workers name) last-seen-ms)
                                    :seen-mark (. (get before.workers name) seen-mark))
                      (get before.workers name))))
-       (all (gfor #(name report) (.items after.statuses)
-                  (= (replace report :at (. (get before.statuses name) at)) (get before.statuses name))))
+       (all (gfor #(name report) (.items after-reports)
+                  (= (replace report :at (. (.row before-reports name) at)) (.row before-reports name))))
        (= (replace after :alive-ms before.alive-ms :rollout-tick-ms before.rollout-tick-ms
-                   :workers before.workers :statuses before.statuses)
+                   :workers before.workers :observations (replace after.observations :statuses before-reports))
           before)))
 
 

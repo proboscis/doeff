@@ -10,7 +10,7 @@
     "src/doeff_cluster/coordinator/core/resource_policy.hy": 16,
     "src/doeff_cluster/coordinator/core/rollout_policy.hy": 8,
     "src/doeff_cluster/coordinator/core/warm_policy.hy": 1,
-    "src/doeff_cluster/coordinator/intent/cluster_model.hy": 34,
+    "src/doeff_cluster/coordinator/intent/cluster_model.hy": 33,
     "src/doeff_cluster/coordinator/intent/kube_model.hy": 1,
     "src/doeff_cluster/foundation/foundation_check.hy": 1,
     "src/doeff_cluster/foundation/record_codec.hy": 2,

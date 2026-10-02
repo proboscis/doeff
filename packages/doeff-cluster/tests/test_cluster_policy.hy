@@ -104,10 +104,14 @@
   ;; 止め終えた報告の後で k3s へ置く(同じ job を 2 つ動かさない)。
   (setv state (ClusterState #((! (job "placer"))) {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}
                             {"placer" (Placement "placer" "mac" 2 0)}
-                            :statuses {"mac" (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "placer" :phase "running")))}))
+                            :observations (ClusterObservations
+                                            :statuses (table-of #((TableWrite "mac" (WorkerReport :at 0 :endpoint None
+                                                                                                 :jobs #((StatusRow :name "placer" :phase "running")))))))))
   (assert (= (! (place-jobs 1000 state T)) {}))
   (assert (= (get (unplaced-jobs 1000 (replace state :placements {}) T) "placer") "前の担い手が止め終えるのを待っている"))
-  (setv stopped (replace state :placements {} :statuses {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))
+  (setv stopped (replace state :placements {}
+                         :observations (ClusterObservations
+                                         :statuses (table-of #((TableWrite "mac" (WorkerReport :at 1500 :endpoint None :jobs #())))))))
   (assert (= (. (get (! (place-jobs 2000 stopped T)) "placer") worker) "atlas")))
 
 (defk task [id needs]
