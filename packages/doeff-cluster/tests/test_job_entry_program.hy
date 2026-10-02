@@ -43,12 +43,12 @@
 (deftest test-a-service-program-with-its-own-handlers-runs-and-reports-its-result [tmp-path]
   ;; この process で詰めた Program(土台の reader と scheduler を自分で並べる)を子が解いて走らせる。
   (<- path (program-file (/ tmp-path "p.json") (tally-program plain-foundation 2) (! (process-versions os.environ))))
-  (<- done (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" path))
+  (<- done (entry "doeff_cluster.worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" path))
   (assert (= done.returncode 0) done.stderr)
   (assert (in "が終わった: 102" done.stderr) done.stderr)
   ;; 本体の中で handler を作る Program も同じ。
   (<- inner (program-file (/ tmp-path "q.json") (self-contained-program 5) (! (process-versions os.environ))))
-  (<- again (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" inner))
+  (<- again (entry "doeff_cluster.worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" inner))
   (assert (= again.returncode 0) again.stderr)
   (assert (in "が終わった: 15" again.stderr) again.stderr))
 
@@ -56,7 +56,7 @@
 (deftest test-the-entry-adds-no-handler-so-an-unanswered-effect-ends-the-service [tmp-path]
   ;; 反例: handler を並べない Program の Ask "base" に答える物は子の中に無い(入口が既定の handler を足していない)。
   (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (! (process-versions os.environ))))
-  (<- done (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" path))
+  (<- done (entry "doeff_cluster.worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" path))
   (assert (!= done.returncode 0) done.stderr)
   (assert (in "Ask" done.stderr) done.stderr)
   (assert (not-in "が終わった" done.stderr) done.stderr))
@@ -64,12 +64,12 @@
 
 (deftest test-a-program-file-from-another-version-is-refused-before-decoding [tmp-path]
   (<- path (program-file (/ tmp-path "p.json") (tally-program plain-foundation 2) (| (! (process-versions os.environ)) {"cloudpickle" "0.0.1"})))
-  (<- done (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" path))
+  (<- done (entry "doeff_cluster.worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" path))
   (assert (= done.returncode 3) done.stderr)
   (assert (in "版が違うので Program を解かない" done.stderr) done.stderr)
   (assert (in "cloudpickle: 送り手 0.0.1" done.stderr) done.stderr)
   ;; worker が取れていない(file が無い)時も解かずに止まる。
-  (<- missing (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" (str (/ tmp-path "absent.json"))))
+  (<- missing (entry "doeff_cluster.worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" (str (/ tmp-path "absent.json"))))
   (assert (= missing.returncode 3) missing.stderr)
   (assert (in "Program の file" missing.stderr) missing.stderr))
 
@@ -77,33 +77,37 @@
 (deftest test-the-probe-decodes-the-program-without-running-it [tmp-path]
   ;; probe は版と復元だけを確かめる(走らせない — handler の無い Program でも通る)。
   (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (! (process-versions os.environ))))
-  (<- ok (entry "doeff_cluster.job_entry" "probe" "--program" path))
+  (<- ok (entry "doeff_cluster.worker.entry.job_entry" "probe" "--program" path))
   (assert (= ok.returncode 0) ok.stderr)
   (assert (in "を解けた" ok.stderr) ok.stderr)
+  ;; 旧い入口 doeff_cluster.job_entry は、配備してある worker と旧い宣言の Service が名で読むので最後の配備まで残す(#2112)— 同じ入口へ渡す。
+  (<- old-name (entry "doeff_cluster.job_entry" "probe" "--program" path))
+  (assert (= old-name.returncode 0) old-name.stderr)
+  (assert (in "を解けた" old-name.stderr) old-name.stderr)
   (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (! (process-versions os.environ)) {"doeff" "0.0.0"})))
-  (<- refused (entry "doeff_cluster.job_entry" "probe" "--program" other))
+  (<- refused (entry "doeff_cluster.worker.entry.job_entry" "probe" "--program" other))
   (assert (= refused.returncode 1) refused.stderr)
   (assert (in "版が違う" refused.stderr) refused.stderr)
-  (<- missing (entry "doeff_cluster.job_entry" "probe" "--program" (str (/ tmp-path "absent.json"))))
+  (<- missing (entry "doeff_cluster.worker.entry.job_entry" "probe" "--program" (str (/ tmp-path "absent.json"))))
   (assert (= missing.returncode 1) missing.stderr))
 
 
 (deftest test-old-entry-arguments-are-refused-by-argparse
   ;; 計画 2.8 の入口 13: 旧い引数(関数の参照 + handler の組の import path + 設定)は入口に無い。
-  (<- old (entry "doeff_cluster.job_entry" "service" "--factory" "m:f" "--env" "m:e" "--config" "{}"))
+  (<- old (entry "doeff_cluster.worker.entry.job_entry" "service" "--factory" "m:f" "--env" "m:e" "--config" "{}"))
   (assert (= old.returncode 2) old.stderr)
   (assert (in "--identity" old.stderr) old.stderr)
-  (<- extra (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" "p.json" "--env" "m:e"))
+  (<- extra (entry "doeff_cluster.worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" "p.json" "--env" "m:e"))
   (assert (= extra.returncode 2) extra.stderr)
   (assert (in "unrecognized arguments: --env m:e" extra.stderr) extra.stderr)
-  (<- task (entry "doeff_cluster.job_entry" "task" "--program" "p.json" "--result" "r" "--env" "m:e"))
+  (<- task (entry "doeff_cluster.worker.entry.job_entry" "task" "--program" "p.json" "--result" "r" "--env" "m:e"))
   (assert (= task.returncode 2) task.stderr)
   (assert (in "unrecognized arguments: --env m:e" task.stderr) task.stderr)
   ;; task の旧い入口(詰めた Program を --blob の file で・版を --versions で渡す形)も無い — service と同じ --program の file 1 つ(R3b)。
-  (<- blob (entry "doeff_cluster.job_entry" "task" "--program" "p.json" "--result" "r" "--blob" "b" "--versions" "{}"))
+  (<- blob (entry "doeff_cluster.worker.entry.job_entry" "task" "--program" "p.json" "--result" "r" "--blob" "b" "--versions" "{}"))
   (assert (= blob.returncode 2) blob.stderr)
   (assert (in "unrecognized arguments: --blob b --versions {}" blob.stderr) blob.stderr)
-  (<- bare (entry "doeff_cluster.job_entry" "task" "--blob" "b" "--result" "r"))
+  (<- bare (entry "doeff_cluster.worker.entry.job_entry" "task" "--blob" "b" "--result" "r"))
   (assert (= bare.returncode 2) bare.stderr)
   (assert (in "--program" bare.stderr) bare.stderr))
 

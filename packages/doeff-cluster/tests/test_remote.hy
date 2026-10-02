@@ -114,7 +114,7 @@
   (val program-path (write-program-file (/ tmp-path "programs") (program-sha blob) blob versions))
   (val result (/ tmp-path "task.result"))
   (val env (| (dict os.environ) {"PYTHONPATH" (str ROOT) "DOEFF_WORKER_NAME" "child" "DOEFF_WORKER_JOB" "t"}))
-  (val done (subprocess.run [HY "-m" "doeff_cluster.job_entry" "task" "--result" (str result) "--program" (str program-path)]
+  (val done (subprocess.run [HY "-m" "doeff_cluster.worker.entry.job_entry" "task" "--result" (str result) "--program" (str program-path)]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (decode-outcome (.read-text result)))
@@ -155,7 +155,7 @@
   ;; (結果を書かずに終わった = lost と取り違えない)。
   (val result (/ tmp-path "task.result"))
   (val env (| (dict os.environ) {"PYTHONPATH" (str ROOT) "DOEFF_WORKER_NAME" "child" "DOEFF_WORKER_JOB" "t"}))
-  (val done (subprocess.run [HY "-m" "doeff_cluster.job_entry" "task" "--result" (str result)
+  (val done (subprocess.run [HY "-m" "doeff_cluster.worker.entry.job_entry" "task" "--result" (str result)
                              "--program" (str (/ tmp-path "programs" "absent.json"))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)

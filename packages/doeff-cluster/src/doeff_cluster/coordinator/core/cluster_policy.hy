@@ -27,7 +27,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
 (import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
 
-(setv JOB-ENTRY "doeff_cluster.job_entry")
+(setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
 (setv MAX-EVENTS 200)
 
 ;; --- 盤と task の容量(2026-09-25) ---

@@ -35,7 +35,7 @@
 
 
 (deftest test-a-runtime-env-job-inherits-only-the-allowed-worker-environment
-  (val spec (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
+  (val spec (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
   (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
@@ -45,7 +45,7 @@
   (assert (= #((get env "PATH") (get env "LC_ALL") (get env "DECLARED") (get env "DOEFF_PROGRAM_FILE")) #("/usr/bin" "C.UTF-8" "1" "/state/programs/s.json")) env)
   (assert (not (& (set env) #{"SECRET_TOKEN" "VIRTUAL_ENV" "PYTHONPATH"})) env)
   (assert (= plan.env-mode EnvMode.REPLACE) plan.env-mode)
-  (assert (= (cut plan.argv 6 None) #("uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-k1/app" "hy" "-m" "doeff_cluster.job_entry"
+  (assert (= (cut plan.argv 6 None) #("uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-k1/app" "hy" "-m" "doeff_cluster.worker.entry.job_entry"
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
