@@ -146,7 +146,8 @@
 
 
 (defk environment-answer [present names prefixes]
-  {:pre [(: present tuple) (: names tuple) (: prefixes tuple)] :post [(: % tuple)] :tags {:context "process" :role "judgment"}}
+  {:pre [(: present (get tuple #((get tuple #(str str)) ...))) (: names (get tuple #(str ...))) (: prefixes (get tuple #(str ...)))]
+   :post [(: % (get tuple #(EnvEntry ...)))] :tags {:context "process" :role "judgment"}}
   "ReadEnvironment の答えを、本物(os.environ)と台本(ProcessScript の env)が同じ規則で組むため(#2472): present = 在る環境変数の
    #(名 値) の列。答え = names の順に在る分、続けて prefixes のどれかで始まる名(names に無い物)を名の順に — 同じ名は 1 度だけ。"
   (val values (dict present))

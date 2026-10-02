@@ -49,7 +49,7 @@ class ReadEnvironment(EffectBase):
     names: tuple[str, ...]
     prefixes: tuple[str, ...] = ...
 
-def environment_answer(present: tuple, names: tuple, prefixes: tuple) -> _Program[tuple, object]:
+def environment_answer(present: tuple[tuple[str, str], ...], names: tuple[str, ...], prefixes: tuple[str, ...]) -> _Program[tuple[EnvEntry, ...], object]:
     ...
 
 @dataclass(frozen=True)
