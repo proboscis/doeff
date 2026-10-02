@@ -130,6 +130,14 @@
    "why": "gc.collect・gc.freeze で process の GC の状態を変える(gc_freeze.hy)"
   },
   {
+   "handler": "doeff_core_effects.faulthandler_stack_dump:faulthandler-stack-dump-handler",
+   "touches": [
+    "thread",
+    "file"
+   ],
+   "why": "faulthandler.dump_traceback_later の C の thread が期限を数え、過ぎたら sys.stderr の file に全 thread の stack を書く(faulthandler_stack_dump.hy)"
+  },
+  {
    "handler": "doeff_core_effects.handlers:await_handler",
    "touches": [
     "thread"
