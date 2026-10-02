@@ -79,7 +79,7 @@ def t_A2_two_seats_writing_the_shared_home_do_not_break_each_other(tmp):
 
 # ---------------------------------------------------------------- 盲検 B
 def _decoys(home: str) -> None:
-    """盲検 B の戻り先の綴りに、現に読める file を置く(env HOME も据わっている)。"""
+    """盲検 B の戻り先の綴りに、現に読める file を置く(世界の HOME も据わっている)。"""
     for rel in ("dotfiles/claude/CLAUDE.md", ".claude/CLAUDE.md"):
         path = os.path.join(home, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -99,9 +99,8 @@ def t_B_no_declaration_means_the_home_is_untouched_even_with_canon_on_disk(tmp):
     home, decl, cfg = _fixture(tmp)
     _decoys(home)
     decl.pop("claude_memory_file"); decl.pop("claude_skills_dir")
-    os.environ["HOME"] = home                                        # 世界に HOME が在る
     trace: list[tuple[str, str]] = []
-    _, log = chain.launch_beat(decl, home, cfg, trace=trace)
+    _, log = chain.launch_beat(decl, home, cfg, trace=trace, world={"HOME": home})   # 世界に HOME が在る
     assert not os.path.exists(os.path.join(cfg, "CLAUDE.md")), "宣言が無いのに条文が届いた"
     assert not os.path.exists(os.path.join(cfg, "skills")), "宣言が無いのに skills が届いた"
     assert not any("seat-instructions" in line for line in log), f"計器が成功を名乗った: {log}"
@@ -122,9 +121,8 @@ def t_B_the_installer_reads_only_what_the_declaration_named(tmp):
     shutil.rmtree(os.path.join(home, "dotfiles", "agent", "skills"))
     decl["claude_memory_file"] = "~/opt/agent-canon/CLAUDE.md"          # 名指しは別の正本
     decl["claude_skills_dir"] = "~/opt/agent-canon/skills"
-    os.environ["HOME"] = home
     trace: list[tuple[str, str]] = []
-    _, log = chain.launch_beat(decl, home, cfg, trace=trace)
+    _, log = chain.launch_beat(decl, home, cfg, trace=trace, world={"HOME": home})
     named = {os.path.join(home, "opt", "agent-canon", "CLAUDE.md"),
              os.path.join(home, "opt", "agent-canon", "skills")}
     touched = {path for _, path in trace}

@@ -276,9 +276,11 @@ def build_argv(params: dict, home: str | None, session_hooks: str) -> list[str]:
 # --------------------------------------------------------------------------
 def launch_beat(declaration: dict, home: str, config_dir: str, agent_type: str = "claude",
                 session_hooks: str = "inherit", extra_params: dict | None = None,
-                trace: list[tuple[str, str]] | None = None):
+                trace: list[tuple[str, str]] | None = None, world: dict[str, str] | None = None):
+    """world = 席の process が継ぐ世界の環境(HOME ほか)。起動の env は、その上に宣言の値を重ねた物。
+    検は世界を引数で据える(この process の os.environ を書かない — 盲検 B の逃げ道は「検の世界に HOME が無い」だった)。"""
     log: list[str] = []
-    env = join_env_of(declaration, home)
+    env = {**(world or {}), **join_env_of(declaration, home)}
     params = dict(extra_params or {})
     params.update(instruction_sources(env, agent_type, log, trace))
     install_into_home(config_dir, params, log)
