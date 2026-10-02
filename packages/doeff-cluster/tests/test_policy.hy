@@ -1,9 +1,9 @@
-(require doeff-hy.macros [deftest val var])
+(require doeff-hy.macros [deftest val var <-])
 
 (import dataclasses [replace])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage StopProgress
   Outcome JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.worker.core.policy [plan records-after statuses])
+(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)
       A1 (JobSpec "a" "jobs.a" #() "rev1")
@@ -23,6 +23,18 @@
   (setv failed (world :codes #((CodeView "rev1" CodeState.FAILED :detail "no such commit"))))
   (assert (= (plan 0 #(A1) failed {} POLICY) #()))
   (assert (= (. (get (statuses 0 #(A1) failed {} POLICY) 0) phase) JobPhase.CODE-FAILED)))
+
+(deftest test-a-tree-ready-within-the-tick-starts-the-job-in-that-tick
+  ;; 拍の頭で木が無く、準備の action の後の観測で揃った job は、その拍のうちに起こす(#2719)。揃っていなければ何もしない
+  ;; (今までどおり後の拍で揃いを観測してから起こす)・拍の頭で既に揃っていた木は plan が扱ったので重ねない。
+  (val cold (world :codes #()))
+  (val preparing (world :codes #((CodeView "rev1" CodeState.PREPARING))))
+  (<- started tuple (ready-followups 0 #(A1) cold (world) {} POLICY))
+  (assert (= started #((StartJob A1 1 "/c/rev1"))))
+  (<- waiting tuple (ready-followups 0 #(A1) cold preparing {} POLICY))
+  (assert (= waiting #()))
+  (<- already tuple (ready-followups 0 #(A1) (world) (world) {} POLICY))
+  (assert (= already #())))
 
 (deftest test-failed-code-is-prepared-again-after-the-retry-wait
   (setv policy (replace POLICY :code-retry-ms 30000)
