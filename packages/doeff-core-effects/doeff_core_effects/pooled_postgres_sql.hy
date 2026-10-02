@@ -19,7 +19,7 @@
 ;;;   - 並び: 外側に scheduled と、session の値の置き場(doeff_core_effects の state)が要る。
 ;;;   - 同じ PostgresConnections を postgres-sql-handler と分け合ってもよい(接続の上限は PostgresConnections の錠が pool の thread の中で守る)。
 ;;;   - 仕組みの置き場: 外から完了させる promise で待つ係(offloaded・取り消しの後始末 Handoff)は offloaded_call.hy、接続を借りて流して返す
-;;;     仕事(with-lease)と transaction の段(offloaded-transaction)は postgres_sql.hy — postgres-sql-handler と共に使う(#1215)。この file が
+;;;     仕事(offloaded-statement)と transaction の段(offloaded-transaction)は postgres_sql.hy — postgres-sql-handler と共に使う(#1215)。この file が
 ;;;     持つのは許可の待ち方(scheduler の semaphore)と、呼び手の pool を使うことだけ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import concurrent.futures [Executor])

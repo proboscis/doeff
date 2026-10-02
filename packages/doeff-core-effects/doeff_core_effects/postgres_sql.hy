@@ -19,8 +19,11 @@
 ;;;     だけが外から完了させる promise で待つ。遅い文の間も同じ run の他の task(待ち受けの /healthz・時計の刻み)は回る。同時に使う接続の
 ;;;     上限は PostgresConnections の許可(thread の間の錠)が持ち、許可を待つのも thread の中 — thread の数に上限を置かないので、許可を持つ
 ;;;     transaction の次の文が thread の空きを待って詰まることがない。手順(文・値の写し・transaction の段・取り消しの後始末)は
-;;;     pooled-postgres-sql-handler と同じ offloaded-transaction と with-lease を使い、違いは Executor と許可の待ち方だけ(pooled は呼び手の pool と
-;;;     scheduler の semaphore)。外側に scheduled が要る(CreateExternalPromise と Wait)— session の値の置き場(state)は要らない。
+;;;     pooled-postgres-sql-handler と同じ offloaded-transaction と offloaded-statement を使い、違いは Executor と許可の待ち方だけ(pooled は呼び手の
+;;;     pool と scheduler の semaphore)。外側に scheduled が要る(CreateExternalPromise と Wait)— session の値の置き場(state)は要らない。
+;;;   - 取り消し(agora-redesign #2792): 文 1 つの effect も transaction と同じく「接続を借りる」と「流して返す」を別の仕事にする。許可を待って
+;;;     いる間に取り消された要求は、許可が取れても文を流さずにすぐ返す(DB が止まった間に取り消された読みが、DB が戻った時にまとめて流れ、
+;;;     後から来た要求を待たせない)。走り出した文は止めない。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (import queue [Queue Empty])
@@ -317,12 +320,15 @@
 (defk postgres-lease [connections database]
   {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "psycopg の接続 | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "接続を 1 本借りるため(開けなければ SqlUnreachable)。"
-  (import psycopg)
+  "接続を 1 本借りるため(開けなければ SqlUnreachable)。psycopg は借りが誤りで終わった時の読み分けでだけ読む — driver を読むのは貸し出しの
+   acquire なので、借りが通る道は psycopg の無い環境でも偽の貸し出しで撃てる(agora-redesign #2792 の検)。"
   (try
     (.acquire connections database)
-    (except [error psycopg.Error]
-      (SqlUnreachable :reason (str error)))))
+    (except [error Exception]
+      (import psycopg)
+      (match error
+        (psycopg.Error) (SqlUnreachable :reason (str error))
+        _ (raise)))))
 
 
 (deff lease-now [connections database]  ; defk にできない: driver の thread で回す入口(VM の外)
@@ -338,16 +344,16 @@
     (.release connections database leased)))
 
 
-(deff with-lease [connections database work]  ; defk にできない: driver の thread で回す入口
-  {:pre [(: connections PostgresConnections) (: database str) (: work "(接続) → Program の callable")]
-   :post [(: % "work の答え | SqlUnreachable")]}
-  "driver の thread の仕事 1 つで接続を借り、work(接続 → Program)を流し、必ず返すため(文 1 つの effect の答え)。"
-  (setv leased (lease-now connections database))
-  (if (isinstance leased SqlUnreachable)
-      leased
-      (try
-        (run-detached (work leased))
-        (finally (.release connections database leased)))))
+(deff run-then-return [connections database leased claim work]  ; defk にできない: driver の thread で回す入口
+  {:pre [(: connections PostgresConnections) (: database str) (: leased "psycopg の接続") (: claim "threading.Lock")
+         (: work "(接続) → Program の callable")]
+   :post [(: % "work の答え | None")]}
+  "driver の thread の仕事 1 つで、借りた接続で work(接続 → Program)を流し、必ず返すため(文 1 つの effect の答え)。claim を先に取れた
+   時だけ流す — 取れなければ、待ち手が文の始まる前に取り消され、offloaded-statement がもう接続を返している(答えは誰にも届かないので None)。"
+  (when (.acquire claim :blocking False)
+    (try
+      (run-detached (work leased))
+      (finally (.release connections database leased)))))
 
 
 (defk offloaded-transaction [connections pool database program lock-key]
@@ -375,9 +381,21 @@
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: work "(接続) → Program の callable")]
    :post [(: % "work の答え | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つの effect を pool の仕事 1 つ(接続を借りる → 流す → 返す)で答えるため(待つのは撃った task だけ)。"
-  (<- answer (offloaded pool (fn [] (with-lease connections database work)) keep-nothing))
-  answer)
+  "文 1 つの effect を、transaction と同じく pool の仕事 2 つで答えるため(待つのは撃った task だけ — agora-redesign #2792)。
+     1. 接続を借りる。許可を待っている間に取り消された要求は、許可が取れても文を流さず、return-abandoned ですぐ返す(DB が止まった間に
+        取り消された要求が、DB が戻った時にまとめて文を流して後から来た要求を待たせない)。
+     2. 文と返却を 1 つの仕事(run-then-return)で流す。走り出した文は止めず、終わった thread が返す(取り消された task は文の終わりを
+        待たない)。借りた後で文の仕事が走り出す前に取り消されたら、finally が接続を返す — 返すのは claim(錠)を先に取った側の 1 度だけ。"
+  (<- leased (offloaded pool (fn [] (lease-now connections database)) (fn [value] (return-abandoned connections database value))))
+  (match leased
+    (SqlUnreachable) leased
+    _ (do (val claim (threading.Lock))
+          (try
+            (<- answer (offloaded pool (fn [] (run-then-return connections database leased claim work)) keep-nothing))
+            answer
+            (finally
+              (when (.acquire claim :blocking False)
+                (.submit pool return-abandoned connections database leased)))))))
 
 
 (defhandler postgres-sql-handler [#^ PostgresConnections connections]
