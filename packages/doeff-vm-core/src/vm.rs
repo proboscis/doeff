@@ -28,6 +28,10 @@ pub struct VM {
     pub segments: FiberArena,
     pub var_store: VarStore,
     pub current_segment: Option<SegmentId>,
+    /// Steps this VM has taken since it was built — a structural cost measure:
+    /// tests pin how many steps a construct takes (a `Call` round trip —
+    /// agora-redesign #2801), which the wall clock under load cannot.
+    pub steps: u64,
 }
 
 // NOTE (#492): there is deliberately NO VM-global `pending_handler_k_handle`
@@ -43,6 +47,7 @@ impl VM {
             segments: FiberArena::new(),
             var_store: VarStore::new(),
             current_segment: None,
+            steps: 0,
         }
     }
 

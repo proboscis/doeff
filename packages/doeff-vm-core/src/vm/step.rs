@@ -22,6 +22,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute one step.
     pub fn step(&mut self, signal: Signal) -> StepResult {
+        self.steps = self.steps.wrapping_add(1);
         let Signal {
             action,
             error_context,
