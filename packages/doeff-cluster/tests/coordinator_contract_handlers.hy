@@ -5,7 +5,8 @@
 ;;;   shared-http            本物: shared-http(宛先の部品の HttpRequest → coordinator の /board・/leases)
 ;;;   metrics-memory         fake: metrics-memory(list に記録)
 ;;;   metrics-http           本物: metrics-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/metrics)
-;;;   readiness-memory       fake: readiness-memory(list に記録)
+;;;   readiness-claims       fake: readiness-claims(入れ物 ReadinessLog に揃えた報告 ReadinessClaim を積む — #3028)
+;;;   readiness-memory       fake: readiness-memory(list に 3 欄の dict を記録 — 旧い fake・#3028 の最後の手で消す)
 ;;;   readiness-http         本物: readiness-http(宛先の部品の HttpRequest → POST /resources/Service/<名>/readiness)
 ;;;   remote-cluster         本物: remote-cluster(宛先の部品の HttpRequest → coordinator の /programs・/tasks)と担い手(RigWorker)
 ;;;   remote-cluster-env     同じ・送り手が実行環境を宣言する(TaskSender の runtime-env = CONTRACT-ENV)
@@ -25,7 +26,7 @@
 ;;;
 ;;; 契約の Program が coordinator の側の真実を読む口は検の effect だけ(読む手段だけを解釈器ごとに替える):
 ;;;   BoardSeen          → 盤の行 {鍵: 値}(fake = dict・本物 = MemoryCoordinator の状態の盤)
-;;;   ReportSeen kind    → 最後に残った報告(metrics = 計器の dict・readiness = {ready reason role})か None
+;;;   ReportSeen kind    → 最後に残った報告(metrics = 計器の dict・readiness = ReadinessClaim)か None
 ;;;   TasksSeen          → coordinator の task の行(TaskSeen の tuple — id の順)
 ;;;   WarmsSeen          → coordinator の温める表の行(WarmSeen の tuple — key の順)
 ;;;   SetReachable up    → coordinator へ届くか(本物 = transport が ConnectError を上げる・sim-cluster = coordinator の Pod を止める
@@ -53,7 +54,8 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-memory metrics-http])
-(import doeff_cluster.shared.protocol.readiness_handlers [readiness-memory readiness-http])
+(import doeff_cluster.shared.protocol.readiness_handlers [ReadinessLog readiness-claims readiness-memory readiness-http])
+(import doeff_cluster.shared.intent.readiness_model [ReadinessClaim])
 (import doeff_cluster.shared.protocol.service_report [ServiceReport])
 (import doeff_core_effects.handlers [slog-handler])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
@@ -155,19 +157,39 @@
   env)
 
 
+(defk old-readiness-claim [report]
+  {:pre [(: report (| dict None))] :post [(: % (| ReadinessClaim None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "旧い fake readiness-memory が積んだ 3 欄の dict を、契約が比べる形 ReadinessClaim に読むため(旧い fake と一緒に消す — #3028)。"
+  (if (is report None)
+      None
+      (ReadinessClaim :ready (get report "ready") :reason (get report "reason") :role (get report "role"))))
+
+
 (defhandler memory-side [#^ dict store #^ list reports]
   ;; 引数に残す理由: 真実は fake の handler と同じ dict / list そのもの(組み立てが 1 つ作って両方へ渡す — Ask で運ぶ設定ではない)。
   ;; fake の側の真実: 共有の保存の dict と、報告の handler が積む list(1 つの解釈器の報告の族は 1 つ)。fake は網を持たない。
   (BoardSeen [] (resume (dict store)))
-  (ReportSeen [kind] (resume (if reports (get reports -1) None)))
+  (ReportSeen [kind]
+    (val last (if reports (get reports -1) None))
+    (if (= kind READINESS)
+        (do (<- claim (old-readiness-claim last))
+            (resume claim))
+        (resume last)))
+  (SetReachable [up] (resume None)))
+
+
+(defhandler claims-side [#^ ReadinessLog log]
+  ;; 引数に残す理由: 真実は fake の答え手 readiness-claims と同じ入れ物そのもの(組み立てが 1 つ作って両方へ渡す)。
+  ;; fake readiness-claims の側の真実: 入れ物に積んだ最後の報告。fake は網を持たない。
+  (ReportSeen [kind] (resume (if log.claims (get log.claims -1) None)))
   (SetReachable [up] (resume None)))
 
 
 (defk latest-report [coordinator kind]
-  {:pre [(: coordinator MemoryCoordinator) (: kind str) (in kind #(METRICS READINESS))] :post [(: % (| dict None))]
+  {:pre [(: coordinator MemoryCoordinator) (: kind str) (in kind #(METRICS READINESS))] :post [(: % (| dict ReadinessClaim None))]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "coordinator の状態の観測の表(ClusterState.observations の metrics・readiness — #2756)に最後に残った kind の報告を、fake が記録する
-   形(metrics = 計器の dict・readiness = {ready reason role} の dict)にして、本物と fake を同じ契約で比べるため。"
+   形(metrics = 計器の dict・readiness = ReadinessClaim)にして、本物と fake を同じ契約で比べるため。"
   (val seen coordinator.state.observations)
   (val reports (.row (if (= kind METRICS) seen.metrics seen.readiness) SERVICE))
   (match (if reports (get reports -1) None)
@@ -175,7 +197,7 @@
     (MetricsReport :counters counters :gauges gauges :durations durations)
       {"counters" (dict (.items counters)) "gauges" (dict (.items gauges))
        "durations" (dfor #(name row) (.items durations) name {"sum" row.sum "count" row.count})}
-    (ReadinessReport :ready ready :reason reason :role role) {"ready" ready "reason" reason "role" role}))
+    (ReadinessReport :ready ready :reason reason :role role) (ReadinessClaim :ready ready :reason reason :role role)))
 
 
 (defhandler coordinator-side [#^ MemoryCoordinator coordinator #^ dict line]
@@ -267,6 +289,15 @@
   (val store {})
   (val reports [])
   (<- answer (with_handlers [(sim-time-handler :clock (SimClock)) (memory-side store reports) #* (make-handlers store reports)] program))
+  answer)
+
+
+(defk under-claims [program]
+  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+   :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "fake readiness-claims の下で program を走らせるため。外から順に: 仮想の時計・真実の口(入れ物の最後の報告)・fake。"
+  (val log (ReadinessLog))
+  (<- answer (with_handlers [(sim-time-handler :clock (SimClock)) (claims-side log) (readiness-claims log)] program))
   answer)
 
 
@@ -376,6 +407,7 @@
    "shared-http" (partial under-coordinator (fn [transport] [(shared-http (contract-route) CONTRACT-ROUTE)]))
    "metrics-memory" (partial under-memory (fn [store reports] [(metrics-memory reports)]))
    "metrics-http" (partial under-coordinator (fn [transport] [slog-handler (metrics-http (contract-route) CONTRACT-ROUTE (contract-report))]))
+   "readiness-claims" under-claims
    "readiness-memory" (partial under-memory (fn [store reports] [(readiness-memory reports)]))
    "readiness-http" (partial under-coordinator (fn [transport] [slog-handler (readiness-http (contract-route) CONTRACT-ROUTE (contract-report))]))
    "remote-cluster" (partial under-rig False)

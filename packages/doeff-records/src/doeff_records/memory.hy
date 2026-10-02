@@ -157,6 +157,34 @@
   None)
 
 
+(deff _bell-names [tables streams]  ; defk にできない: 錠の内で同期に呼ぶ(watch-round と書きの鳴らし)
+  {:pre [(: tables tuple) (: streams tuple)] :post [(: % frozenset)]
+   :tags {:context "records" :role "foundation"}}
+  "呼び鈴が待つ名と書きが鳴らす名の形を 1 か所で決めるため: 表は #(\"table\" 表)・列は #(\"stream\" 列)(表と列が同じ綴りでも混ざらない)。
+   この形は置き場の中だけの取り決めで、置き場の外の待ち手は hang-bell に表と列の名を渡す(#3028)。"
+  (frozenset (+ (tuple (gfor table tables #("table" table))) (tuple (gfor stream streams #("stream" stream))))))
+
+
+(defk hang-bell [store tables streams]
+  {:pre [(: store MemoryStore) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...)))] :post [(: % ExternalPromise)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場 store の表 tables か列 streams への書きで鳴る呼び鈴を掛けて返すため — 置き場の外の待ち手(模擬の世界の落ち着きの見張りなど)が、
+   置き場の内側(呼び鈴の名の形・錠)に触らずに書きを待つ口(#3028)。鳴った呼び鈴は書きが外す。鳴らずに待ちを終える時は drop-bell。"
+  (<- bell ExternalPromise (CreateExternalPromise))
+  (with [store.lock]
+    (setv (get store.bells bell) (_bell-names tables streams)))
+  bell)
+
+
+(defk drop-bell [store bell]
+  {:pre [(: store MemoryStore) (: bell ExternalPromise)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "掛けた呼び鈴 bell を置き場 store から外すため(鳴らずに待ちを終える時 — 鳴った呼び鈴は書きが外し済み・外し済みでも効かずに返る)。"
+  (with [store.lock]
+    (.pop store.bells bell None))
+  None)
+
+
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
 (defn #^ object guarded [#^ MemoryStore store #^ Callable operation]  ; defk にできない: 錠の内で同期に置き場を触る関数を 1 つ呼ぶ(pg.hy の guarded と同じ役)
@@ -277,7 +305,7 @@
     (setv (get store.changed-at store.head) now-ms)
     (.append store.changes (RowRemoved item.table item.stored.row.key store.head)))
   (when removed
-    (ring-bells store (frozenset (gfor item rows #("table" item.table)))))
+    (ring-bells store (_bell-names (tuple (gfor item rows item.table)) #())))
   (when events
     (drop-events store events))
   removed)
@@ -346,7 +374,7 @@
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
   (.append store.changes (RowChanged table key version value store.head now-ms))
-  (ring-bells store (frozenset [#("table" table)]))
+  (ring-bells store (_bell-names #(table) #()))
   (setv decl (store.schema.table table))
   (when (and (isinstance decl.retention KeepFor) (terminal-row? decl value))
     (push-due store (+ now-ms (keep-ms decl.retention)) (RowDue :table table :text text :stored stored)))
@@ -424,12 +452,12 @@
       (WatchChanges :tables tables)
         (setv answer (memory-watch-scan store ask)
               quiet (and (isinstance answer Changes) (not answer.items))
-              names (frozenset (gfor name tables #("table" name)))
+              names (_bell-names (tuple tables) #())
               due-ms store.purge-due-ms)
       (WatchEvents :stream stream)
         (setv answer (memory-events-scan store ask)
               quiet (isinstance answer EventsQuiet)
-              names (frozenset [#("stream" stream)])
+              names (_bell-names #() #(stream))
               due-ms None))
     (when (and quiet (is-not bell None))
       (setv (get store.bells bell) names))
@@ -480,8 +508,7 @@
   (try
     (<- (Wait bell.future :priority PRIORITY-IDLE))
     (finally
-      (with [store.lock]
-        (.pop store.bells bell None))
+      (<- (drop-bell store bell))
       (<- withdrawing (Spawn (withdraw-timer timer)))
       (try
         (<- (Wait withdrawing))
@@ -546,7 +573,7 @@
              (when (isinstance decl.retention KeepFor)
                (note-event-due store decl event))
              ;; 新しく積んだ時だけ、この列を待つ待ち手を鳴らす(再送は列の頭を動かさない)。
-             (ring-bells store (frozenset [#("stream" ask.stream)]))
+             (ring-bells store (_bell-names #() #(ask.stream)))
              (Appended event.sequence))))
 
 

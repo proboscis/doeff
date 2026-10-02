@@ -9,6 +9,7 @@
 ;;; 宣言の readiness の形の検め(readiness-refusal)・入れ替えの期限(handoff-timeout-ms)は doeff_cluster.shared.core.readiness_rules
 ;;; (宣言の側と coordinator の側が使う)・報告の揃え(reported-readiness)は doeff_cluster.shared.core.readiness_report。ここは型と定数だけ。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
@@ -42,3 +43,12 @@
   (#^ bool ready)
   (setv #^ str reason "")
   (setv #^ str role ROLE-ACTIVE))
+
+
+(defrecord ReadinessClaim
+  "報告 1 つを coordinator が残す形に揃えた物(shared/core/readiness_report.reported-readiness の答え — coordinator と fake が同じ形で残す):
+   ready = 準備できたか・reason = 理由の先頭 REASON-KEPT-CHARS 字・role = ROLE-ACTIVE か ROLE-STANDBY(standby 以外は active と読む)。
+   以前は 3 欄の dict で、使い手が欄の名の綴りで読んでいた(#3028)。"
+  (#^ bool ready)
+  (#^ str reason)
+  (#^ str role))

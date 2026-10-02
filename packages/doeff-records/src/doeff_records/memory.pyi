@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Protocol, TypeVar
 
+from doeff_core_effects.scheduler import ExternalPromise
 from doeff_vm import WithHandler
 
 from doeff import Program
@@ -159,6 +160,12 @@ def memory_clear_faults(store: MemoryStore, names: frozenset[str] | None) -> Non
 def memory_watch(
     store: MemoryStore, ask: WatchChanges | WatchEvents
 ) -> Program[Changes | Reset | EventsMoved | EventsQuiet | Unreachable, object]: ...
+
+# 置き場の外の待ち手が、置き場の内側(呼び鈴の名の形・錠)に触らずに書きを待つ口(#3028)。
+def hang_bell(
+    store: MemoryStore, tables: tuple[str, ...], streams: tuple[str, ...]
+) -> Program[ExternalPromise[None], object]: ...
+def drop_bell(store: MemoryStore, bell: ExternalPromise[None]) -> Program[None, object]: ...
 def answered(
     store: MemoryStore,
     operation: StoreOperation,
