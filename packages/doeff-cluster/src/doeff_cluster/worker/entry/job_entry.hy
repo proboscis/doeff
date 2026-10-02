@@ -28,14 +28,15 @@
 ;;; 実行環境(runtime env)の job: worker は env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m
 ;;; doeff_cluster.worker.entry.job_entry …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
 ;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import json)
 (import os)
-(import pathlib [Path])
 (import sys)
-(import doeff [run])
+(import doeff [run with_handlers])
+(import doeff_core_effects.file_effects [FileFailed ReadText WriteText file-done])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed VersionMismatch RemoteJobFailed])
 (import doeff_cluster.shared.core.remote_rules [version-diffs diffs-text failed-from])
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
@@ -47,18 +48,29 @@
 (import doeff_cluster.worker.entry.result_delivery [deliver-task-result])
 
 
-(deff program-row [#^ str path]  ; defk にできない: process の入口(Program の外)が file を読む
+(defk parsed-program-row [path text]
+  {:pre [(: path str) (: text (| str FileFailed))] :post [(: % (| dict list str int float bool None RemoteJobFailed))]
+   :tags {:context "worker" :role "main"}}
+  "読んだ Program の file の text を JSON に解くため(読めない・解けない file は RemoteJobFailed — 理由の文を持つ)。"
+  (if (isinstance text FileFailed)
+      (RemoteJobFailed (.format "Program の file {} を読めない(worker が /programs から取れていない): {}" path text.detail))
+      (try
+        (json.loads text)
+        (except [error ValueError]
+          (RemoteJobFailed (.format "Program の file {} を読めない(worker が /programs から取れていない): {}" path error))))))
+
+
+(defk program-row [path]
   {:pre [(: path str)] :post [(: % (| dict RemoteJobFailed))] :tags {:context "worker" :role "main"}}
-  "Program の file の中身 {\"blob\" \"versions\"} を読むため(読めない・形の違う file は RemoteJobFailed — 理由の文を持つ)。"
-  (let [row (try
-              (json.loads (.read-text (Path path) :encoding "utf-8"))
-              (except [error [OSError ValueError]]
-                (RemoteJobFailed (.format "Program の file {} を読めない(worker が /programs から取れていない): {}" path error))))]
-    (cond
-      (isinstance row RemoteJobFailed) row
-      (not (and (isinstance row dict) (isinstance (.get row "blob") str) (isinstance (.get row "versions" {}) dict)))
-        (RemoteJobFailed (.format "Program の file {} の形が違う({{\"blob\" \"versions\"}} ではない)" path))
-      True row)))
+  "Program の file の中身 {\"blob\" \"versions\"} を読むため(読めない・形の違う file は RemoteJobFailed — 理由の文を持つ)。
+   file の読みは effect ReadText(答え手 = 入口が積む os-file-handler — #3014)。"
+  (<- text (ReadText path))
+  (<- row (parsed-program-row path text))
+  (cond
+    (isinstance row RemoteJobFailed) row
+    (not (and (isinstance row dict) (isinstance (.get row "blob") str) (isinstance (.get row "versions" {}) dict)))
+      (RemoteJobFailed (.format "Program の file {} の形が違う({{\"blob\" \"versions\"}} ではない)" path))
+    True row))
 
 
 (deff decoded-program [#^ str blob]  ; defk にできない: process の入口(Program の外)が詰めた Program を解く
@@ -75,7 +87,7 @@
   "Program の file → #(Program None) か #(None 断り)。service・task・probe が同じ読みを使うため(入口の形を分けない — R3・R3b)。
    断り = VersionMismatch(file の版がこの process の版と違う — 食い違った欄と env のキーを持ち、解かない)か RemoteJobFailed
    (file が無い・形が違う・解けない)。env-key = 子の実行環境のキー(env の job でなければ空)。"
-  (let [row (program-row path)]
+  (let [row (run (with_handlers [os-file-handler] (program-row path)))]
     (if (isinstance row RemoteJobFailed)
         #(None row)
         (let [expected (.get row "versions" {})
@@ -128,10 +140,8 @@
   (setv ctx (context-from-env))
   (setv outcome (task-outcome args.program ctx))
   (setv encoded (encode-outcome outcome))
-  (setv tmp (+ args.result ".tmp"))
-  (with [f (open tmp "w" :encoding "utf-8")]
-    (.write f encoded))
-  (os.replace tmp args.result)
+  ;; 別名に書いてから置き換える(書きかけを worker に読ませない)— effect WriteText :replace True(答え手 = os-file-handler・#3014)。
+  (run (with_handlers [os-file-handler] (file-done (WriteText args.result encoded :replace True))))
   ;; 届けは入口自身の I/O(worker/entry/result_delivery — job の Program を包まない)。
   (deliver-task-result ctx encoded)
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
