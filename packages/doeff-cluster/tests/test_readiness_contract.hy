@@ -1,4 +1,4 @@
-;;; readiness の報告の契約テスト — 同じ effect ReportReady に答える本物(readiness-http → coordinator)と fake(readiness-memory)が、
+;;; readiness の報告の契約テスト — 同じ effect ReportReady に答える本物(readiness-http → coordinator)と fake(readiness-claims — 入れ物 ReadinessLog)が、
 ;;; 同じ deftest を通る。解釈器の組み立ては coordinator_contract_handlers.hy。
 ;;;
 ;;;   * 答えはいつも None・coordinator の側に最後に残るのは最後の報告の ReadinessClaim(ready reason role)(既定は reason "" と role active)
@@ -11,7 +11,7 @@
 
 
 (deftest test-the-last-report-is-kept-on-the-coordinator
-  {:interpreters ["readiness-claims" "readiness-memory" "readiness-http"]}
+  {:interpreters ["readiness-claims" "readiness-http"]}
   (<- nothing (ReportSeen READINESS))
   (<- answer (ReportReady True))
   (<- plain (ReportSeen READINESS))
@@ -24,7 +24,7 @@
 
 
 (deftest test-the-report-is-kept-in-the-coordinator-form
-  {:interpreters ["readiness-claims" "readiness-memory" "readiness-http"]}
+  {:interpreters ["readiness-claims" "readiness-http"]}
   (<- (ReportReady True (* "理" 400) "leader"))
   (<- seen ReadinessClaim (ReportSeen READINESS))
   (assert (= seen (ReadinessClaim :ready True :reason (* "理" 300) :role ROLE-ACTIVE))
@@ -32,7 +32,7 @@
 
 
 (deftest test-an-unreachable-coordinator-does-not-stop-the-reporter
-  {:interpreters ["readiness-claims" "readiness-memory" "readiness-http"]}
+  {:interpreters ["readiness-claims" "readiness-http"]}
   (<- (ReportReady True "first"))
   (<- (SetReachable False))
   (<- cut-off (ReportReady False "cut off"))
