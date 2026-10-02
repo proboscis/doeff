@@ -173,7 +173,7 @@
 
 (defclass [(dataclass :frozen True)] SyncProject [EffectBase]
   "project の依存を lock どおりに venv へ入れる(no-install = wheel で後から入れる package)。
-   答え = SyncReport か EnvFailure(lock-stale・sync-failed・python-unavailable)。"
+   答え = SyncReport か EnvFailure(sync-failed・python-unavailable — lock-stale は --frozen の準備では出ない・#2730)。"
   (#^ str project-dir)
   (#^ str python)
   (#^ tuple groups)

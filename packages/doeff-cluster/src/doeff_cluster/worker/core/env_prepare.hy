@@ -11,7 +11,7 @@
 ;;;   3 展開      MaterializeTree                            同じ commit のツリーを持つ別の root があれば複製(.venv・マーカー・__pycache__ を除く)
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   5 native    TreeHash / EnsureNativeWheel               キーの wheel が無ければ build(native-build-failed)
-;;;   6 依存      SyncProject                                uv sync --locked(lock-stale・sync-failed・python-unavailable)
+;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
 ;;;   9 bytecode  ReadEditableRoots / CompileTree            root の venv の interpreter で作る(引き継ぎ元は lock と Python が同じ root)。

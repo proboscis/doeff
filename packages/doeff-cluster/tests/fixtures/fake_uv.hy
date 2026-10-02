@@ -1,6 +1,6 @@
 ;;; 丁寧な模擬の fake の uv(test_env_careful.hy が PATH の先頭に置く sh の包みから起こす)。本物の準備の process(env_handlers の翻訳 env-translation)が呼ぶ 4 つの命令だけを模す:
 ;;;
-;;;   uv sync --locked --project P --python X --no-default-groups [--group g]… [--no-install-package n]…
+;;;   uv sync --frozen --project P --python X --no-default-groups [--group g]… [--no-install-package n]…
 ;;;       P/.venv を作る: bin/python は検の interpreter への symlink、site-packages の .pth が検の環境の site-packages を足す
 ;;;       (doeff・hy・cloudpickle を本物のまま使う)。uv.lock の行(名==版)のうち cache に無い物を「download」と数えて log に書く。
 ;;;       行に ` fake-top=名` が在れば、その名の package を site-packages に置く(根の名前の影の反例)。
