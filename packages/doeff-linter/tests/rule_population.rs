@@ -37,8 +37,13 @@ fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
-/// 根から設定なしで走らせ、(規則, file の相対 path) の組を返す。
+/// 根から設定なしで repo 全体に走らせ、(規則, file の相対 path) の組を返す。
 fn hits(root: &Path) -> Vec<(String, String)> {
+    hits_of(root, ".")
+}
+
+/// 根から設定なしで `target`(根からの相対 path)だけに走らせ、(規則, file の相対 path) の組を返す。
+fn hits_of(root: &Path, target: &str) -> Vec<(String, String)> {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args([
             "--no-config",
@@ -47,7 +52,7 @@ fn hits(root: &Path) -> Vec<(String, String)> {
             "DOEFF004,DOEFF032",
             "--output-format",
             "json",
-            ".",
+            target,
         ])
         .current_dir(root)
         .output()
@@ -211,25 +216,29 @@ fn the_build_backend_is_out_of_the_environment_rule_and_business_code_is_not() {
     );
 }
 
-/// build の入口が業務の module(doeff)を import すると、本物の path でも symlink の path でも DOEFF032 に当たる
-/// (外した層に業務の code が入ったら赤)。
+/// build の入口が業務の module(doeff)を import すると DOEFF032 に当たる(外した層に業務の code が入ったら赤)。
+/// repo 全体を当てると、symlink とその本物は 1 つの file として本物の path で 1 度だけ名指し(agora-redesign #2905)、
+/// symlink の path だけを名指しても(pre-commit が変えた path を渡す形)当たる。
 #[cfg(unix)]
 #[test]
 fn business_code_in_the_build_backend_is_red() {
     let backend = format!("import doeff\n{}", ENV_READ);
     let dir = packages_repo(&backend);
-    let found = hits(dir.path());
-    for path in [
-        "tools/doeff_cargo_backend.py",
-        "packages/doeff-vm/doeff_cargo_backend.py",
-    ] {
-        assert!(
-            found.contains(&("DOEFF032".to_string(), path.to_string())),
-            "{}: {:?}",
-            path,
-            found
-        );
-    }
+    let named_032 = |found: Vec<(String, String)>| -> Vec<String> {
+        found
+            .into_iter()
+            .filter(|(rule, _)| rule == "DOEFF032")
+            .map(|(_, path)| path)
+            .collect()
+    };
+    assert_eq!(
+        named_032(hits(dir.path())),
+        vec!["tools/doeff_cargo_backend.py".to_string()]
+    );
+    assert_eq!(
+        named_032(hits_of(dir.path(), "packages/doeff-vm/doeff_cargo_backend.py")),
+        vec!["packages/doeff-vm/doeff_cargo_backend.py".to_string()]
+    );
 }
 
 /// 環境を読む module を 1 つに寄せて層の宣言で外した package(agora-redesign #2860)— doeff の repo の宣言をそのまま一時の repo に

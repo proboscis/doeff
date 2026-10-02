@@ -5,7 +5,7 @@ use colored::*;
 use doeff_linter::{
     collect_python_files_with_options, config,
     editor::{self, EditorInput},
-    lint_files_parallel, lint_source_at,
+    lint_files_parallel, lint_source_at, one_path_per_file,
     logging::{LintLogEntry, LintLogger},
     models::{LintResult, Severity, Violation},
     position::offset_of,
@@ -1166,13 +1166,14 @@ fn run_normal(args: &Args) -> ExitCode {
 
         // Filter by exclude patterns and convert to PathBuf
         // Modified mode always applies exclusions (like force_exclude)
-        modified_files
-            .into_iter()
-            .filter(|f| {
-                !exclude_patterns.iter().any(|pat| f.contains(pat))
-            })
-            .map(std::path::PathBuf::from)
-            .collect()
+        // symlink と本物を 1 つにまとめるのは dir の走査・名指しの file と同じ 1 点(#2905)
+        one_path_per_file(
+            modified_files
+                .into_iter()
+                .filter(|f| !exclude_patterns.iter().any(|pat| f.contains(pat)))
+                .map(std::path::PathBuf::from)
+                .collect(),
+        )
     } else {
         collect_python_files_with_options(&args.paths, &exclude_patterns, args.force_exclude)
     };

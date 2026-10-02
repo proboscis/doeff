@@ -300,7 +300,41 @@ pub fn collect_python_files_with_options(
         }
     }
 
-    files
+    one_path_per_file(files)
+}
+
+/// 同じ本物の file を指す path(symlink とその本物・同じ file への別の symlink)を 1 つにまとめる。
+///
+/// 名指す path: 対象に symlink でない path(本物)があればそれ、無ければ最初に見た path。並びは
+/// 各 file を最初に見た順。本物を解けない path(壊れた symlink など)は、それだけで 1 つと数える。
+/// 同じ当たりを path の数だけ数えないための 1 点で、file を集める経路(dir の走査・名指しの file・
+/// `--modified`)はどれもここを通る(agora-redesign #2905)。規則が当たるかは本物で決まる
+/// (母集団の宣言も symlink を解いて引く)ので、まとめても見る範囲は減らない。
+pub fn one_path_per_file(files: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let mut chosen: std::collections::HashMap<std::path::PathBuf, std::path::PathBuf> =
+        std::collections::HashMap::new();
+    for file in files {
+        let real = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+        match chosen.get(&real) {
+            None => {
+                seen.push(real.clone());
+                chosen.insert(real, file);
+            }
+            Some(kept) => {
+                if is_symlink(kept) && !is_symlink(&file) {
+                    chosen.insert(real, file);
+                }
+            }
+        }
+    }
+    seen.into_iter().filter_map(|real| chosen.remove(&real)).collect()
+}
+
+/// path そのものが symlink か(先を辿らずに見る)。問うのは 2 つの path が同じ本物に解けた時だけで、
+/// その時は両方とも読めている — 読めないのは実行の途中で消えた時だけで、どちらの path で名指しても同じ。
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).map_or(false, |meta| meta.file_type().is_symlink())
 }
 
 /// path が除く pattern(file の名の一致・部分一致か、path の区切りの一致)に当たるか。
@@ -900,6 +934,63 @@ p: Program = process()"#,
     fn the_bodies_of_try_star_are_checked() {
         let code = "import os\ntry:\n    os.getenv(\"A\")\nexcept* ValueError:\n    os.getenv(\"B\")\nelse:\n    os.getenv(\"C\")\nfinally:\n    os.getenv(\"D\")\n";
         assert_eq!(environ_hits(code), 4);
+    }
+
+    /// 本物の file 1 つ(`tools/backend.py`)と、それを指す symlink 2 つ(`a/backend.py`・
+    /// `b/backend.py`)を置いた dir — doeff の `doeff_cargo_backend.py` と同じ形(#2905)。
+    fn real_file_and_two_links(code: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("tools").join("backend.py");
+        std::fs::create_dir_all(dir.path().join("tools")).unwrap();
+        std::fs::write(&real, code).unwrap();
+        for package in ["a", "b"] {
+            let at = dir.path().join(package);
+            std::fs::create_dir_all(&at).unwrap();
+            std::os::unix::fs::symlink(&real, at.join("backend.py")).unwrap();
+        }
+        (dir, real)
+    }
+
+    fn doeff004_hits(files: &[std::path::PathBuf]) -> usize {
+        let rules = crate::rules::get_enabled_rules(Some(&["DOEFF004".to_string()]));
+        lint_files_parallel(files, &rules)
+            .iter()
+            .map(|result| result.violations.len())
+            .sum()
+    }
+
+    const ONE_ENVIRON_READ: &str = "import os\nos.environ[\"A\"]\n";
+
+    #[test]
+    fn a_file_reached_through_symlinks_is_linted_once_under_its_real_path() {
+        // dir を走査すると本物 1 つと symlink 2 つが集まる — 当たり 1 つが 3 件と数えられていた(#2905)
+        let (dir, real) = real_file_and_two_links(ONE_ENVIRON_READ);
+        let files = collect_python_files(&[dir.path().to_string_lossy().to_string()], &[]);
+        assert_eq!(files, vec![real]);
+        assert_eq!(doeff004_hits(&files), 1);
+    }
+
+    #[test]
+    fn symlinks_alone_still_count_their_real_file_once() {
+        // 本物を対象に入れず symlink だけを名指しても、数えが消えず 1 件(最初に名指した path で)
+        let (dir, _real) = real_file_and_two_links(ONE_ENVIRON_READ);
+        let link_a = dir.path().join("a").join("backend.py");
+        let link_b = dir.path().join("b").join("backend.py");
+        let named = [link_a.clone(), link_b]
+            .map(|p| p.to_string_lossy().to_string())
+            .to_vec();
+        let files = collect_python_files(&named, &[]);
+        assert_eq!(files, vec![link_a]);
+        assert_eq!(doeff004_hits(&files), 1);
+    }
+
+    #[test]
+    fn the_real_path_is_named_even_when_a_symlink_comes_first() {
+        let (dir, real) = real_file_and_two_links(ONE_ENVIRON_READ);
+        let other = dir.path().join("other.py");
+        std::fs::write(&other, "x = 1\n").unwrap();
+        let named = [dir.path().join("a").join("backend.py"), other.clone(), real.clone()];
+        assert_eq!(one_path_per_file(named.to_vec()), vec![real, other]);
     }
 }
 
