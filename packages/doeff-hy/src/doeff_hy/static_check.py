@@ -18,7 +18,8 @@
 1. 各 .hy を Hy の compiler で展開する(doeff-hy の macro は「型検査のための展開」=
    doeff_hy/static_view.py の切替の下で走る)。source の import は実行しない
    (macro の `require` だけは Hy の compile の常として macro の module を import する)。
-2. 検める file が import する、根の下の別の .hy も同じく展開する(型を解くため・赤は出さない)。
+2. 検める file が import する、根の下の別の .hy も同じく展開する(型を解くため・赤は出さない)。探すのは import の根と、
+   import する file の dir から根までの親(pyright の探し方と同じ — search_dirs)。
 3. 根の中身を symlink で映した一時の木に、展開した Python を `<名>.py` として置き、
    根の pyright の設定を写して pyright を撃つ。消費 repo の file は変えない。
 4. pyright の診断を、展開した Python の位置 → Hy の式の位置(macro は合成した式にも
@@ -451,12 +452,30 @@ def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:
     )
 
 
-def _module_candidates(roots: list[Path], name: str) -> list[Path]:
+def _module_candidates(dirs: list[Path], name: str) -> list[Path]:
+    """import の名 name が dirs の下で当たりうる .hy(dir ごとに <名>.hy と <名>/__init__.hy)— 依存の展開が探す file。"""
     found: list[Path] = []
-    for root in roots:
-        base = root.joinpath(*name.split("."))
+    for directory in dirs:
+        base = directory.joinpath(*name.split("."))
         found += [base.with_suffix(".hy"), base / "__init__.hy"]
     return found
+
+
+def search_dirs(root: Path, roots: list[Path], source: Path) -> list[Path]:
+    """source が書く絶対の import の .hy を探す dir を、探す順に並べる(依存の展開の探し道の 1 か所)。
+
+    import の根(import_roots — repo の根と extraPaths)の後に、source の dir から根まで親を辿った dir を置く。pyright は
+    絶対の import を根・extraPaths・標準ライブラリ・環境で解けない時、import する file の dir から根へ向けて親の dir を順に
+    探す(`hy scripts/x.hy` で撃つ script の隣の module `(import e2e_wire …)` がこれで解ける)。前は import の根だけを探したので、
+    1 file だけを検めると隣の .hy が展開されず、pyright が import を解けなかった(reportMissingImports と、そこから来る
+    Unknown の赤)。dir ごと検めると隣の .hy も検める file として展開されるので解けていた — 同じ file の答えが検め方で
+    分かれた(agora-redesign #2898)。
+
+    展開は在る候補を全部集める(先の dir で当たっても後の dir を探す)。pyright が読まない展開(標準ライブラリと同じ名の
+    隣の .hy など — pyright は標準ライブラリを先に解く)は余分な展開になるだけで、検める file の赤を変えない
+    (dir ごと検める時もその .hy は展開されて木に在る)。"""
+    local = [d for d in (source.parent, *source.parent.parents) if d.is_relative_to(root)]
+    return list(dict.fromkeys([*roots, *local]))
 
 
 def import_roots(root: Path, settings: dict[str, object]) -> list[Path]:
@@ -559,8 +578,10 @@ def project_closure(
             failures.append(result)
             continue
         projections[source] = result
+        # import の .hy は import の根と、import する file の dir から根までの親で探す(pyright の探し方 — search_dirs)。
+        dirs = search_dirs(root, roots, source)
         for name in imported_modules(result):
-            for candidate in _module_candidates(roots, name):
+            for candidate in _module_candidates(dirs, name):
                 if candidate.is_file() and _absolute(candidate) not in seen:
                     pending.append(_absolute(candidate))
     return Closure(projections, failures)
