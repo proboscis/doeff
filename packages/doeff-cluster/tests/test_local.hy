@@ -319,9 +319,9 @@
   (val child (SimChild :ctx ctx :program-path "" :environ {} :pid 7 :passable #()
                        :link (SimLink :queue (RequestQueue) :actor "svc" :revision "r" :peer "w" :versions {})))
   (<- (with-handlers [(end-recorder ends)]
-        (sim-process "w" (JobSpec "svc" "doeff_cluster.job_entry" #("service") "r" :program (* "a" 64)) child None)))
+        (sim-process "w" (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #("service") "r" :program (* "a" 64)) child None)))
   (<- (with-handlers [(end-recorder ends)]
-        (sim-process "w" (JobSpec "task/t1" "doeff_cluster.job_entry" #("task") "r" :once True :program (* "b" 64)) child None)))
+        (sim-process "w" (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "r" :once True :program (* "b" 64)) child None)))
   (assert (= (len ends) 2) ends)
   (val service (get ends 0))
   (val task (get ends 1))

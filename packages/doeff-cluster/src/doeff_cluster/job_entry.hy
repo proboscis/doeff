@@ -1,7 +1,7 @@
-;;; 旧い path の子 process の入口(#2028 の 1 段目)。本体は worker/entry/job_entry。worker が送る名 JOB-ENTRY(coordinator/core/cluster_policy・
-;;; worker/protocol/declared)は、job が宣言した doeff の commit の中で `hy -m doeff_cluster.job_entry …` として動くので、宣言した全 service の
-;;; doeff がこの commit 以上になるまで旧い名のまま送る(切り替え = #2112)。ここは新しい入口の main へ渡すだけで、名を再輸出しない
-;;; (消すのは #2113 — 本番の coordinator・worker と全 service の doeff が切り替えの後になってから)。
+;;; 旧い path の子 process の入口(#2028 の 1 段目)。本体は worker/entry/job_entry。この版の worker が送る名 JOB-ENTRY は新しい入口の名
+;;; (#2112)だが、配備してある coordinator・worker(送る名を切り替える前の版)は `hy -m doeff_cluster.job_entry …` を送り、job は宣言した
+;;; doeff の commit の中で動く。だから旧い名は最後の配備まで残す。ここは新しい入口の main へ渡すだけで、名を再輸出しない(消すのは最後の
+;;; 配備 — 旧い doeff の宣言を新旧両方を持つ doeff で宣言し直し、coordinator と worker を切り替えた版へ上げた後)。
 (import doeff_cluster.worker.entry.job_entry [main])
 
 

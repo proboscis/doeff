@@ -149,7 +149,7 @@
   (val path (/ programs (+ sha ".json")))
   (.write-text path (json.dumps {"blob" blob "versions" (! (process-versions os.environ))}) :encoding "utf-8")
   (<- recorded subprocess.CompletedProcess
-      (child "doeff_cluster.job_entry"
+      (child "doeff_cluster.worker.entry.job_entry"
              {RECORD-MODE-KEY "record"
               RECORD-OTLP-KEY (.format "http://127.0.0.1:{}" (get inbox.server-address 1))
               "LEDGER_ROUNDS" "2"

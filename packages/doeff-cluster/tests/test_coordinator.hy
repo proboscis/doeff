@@ -60,7 +60,7 @@
 (deftest test-service-declaration-becomes-the-job-entry-command
   ;; Program の job の行 → job_entry の service 入口。引数は identity の指紋だけ(詰めた Program は置き場のキーで運ぶ・比べない欄)。
   (val job (job-from-json {"name" "runner" "revision" "abc" "needs" ["net"] "run" SAMPLE-RUN "environ" {"B" "1" "A" "2"}}))
-  (assert (= job.spec.entry "doeff_cluster.job_entry"))
+  (assert (= job.spec.entry "doeff_cluster.worker.entry.job_entry"))
   (assert (= job.spec.args #("service" "--identity" (identity-hash SAMPLE-RUN))))
   (assert (= job.spec.program SAMPLE-PROGRAM))
   (assert (= job.spec.environ #(#("A" "2") #("B" "1"))) "environ は名の順の組"))

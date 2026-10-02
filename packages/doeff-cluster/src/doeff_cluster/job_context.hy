@@ -1,8 +1,8 @@
 ;;; 実行先の子 process の文脈(worker が環境変数で渡す RunContext)と、その読み(2026-09-26)。
 ;;;
-;;; 入口(job_entry)とは別の module に置く理由: 子は `hy -m doeff_cluster.job_entry` で起きるので job_entry は __main__ として読まれる。
+;;; 入口(job_entry)とは別の module に置く理由: 子は `hy -m doeff_cluster.worker.entry.job_entry` で起きるので job_entry は __main__ として読まれる。
 ;;; env の組み立て(業務の側の関数)が job_entry から RunContext や runtime-env-of-context を import すると、同じ file が
-;;; doeff_cluster.job_entry としてもう 1 回読まれて class が 2 つになり、__main__ の RunContext を渡された :pre の型の検めが必ず落ちた
+;;; doeff_cluster.worker.entry.job_entry としてもう 1 回読まれて class が 2 つになり、__main__ の RunContext を渡された :pre の型の検めが必ず落ちた
 ;;; (実験用の namespace で再現)。入口でないこの module の class は 1 つだけ読まれる。job_entry はここから import し、今の名は
 ;;; job_entry からも引ける。
 (require doeff-hy.macros [defk <- val])

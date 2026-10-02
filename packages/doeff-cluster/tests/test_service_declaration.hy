@@ -450,7 +450,7 @@
   (val program-file (/ tmp-path "program.json"))
   (.write-text program-file (json.dumps {"blob" (get declaration.programs (get run "program")) "versions" (get run "versions")})
                :encoding "utf-8")
-  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.job_entry" "service"
+  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.job_entry" "service"
                              "--identity" (identity-hash run) "--program" (str program-file)]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120
                             :env (| (dict os.environ) {"DOEFF_WORKER_JOB" "greeter"})))
