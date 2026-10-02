@@ -5304,3 +5304,65 @@ fn baseline_only_criticals_are_compared_and_a_bad_file_is_an_argument_error() {
         run(dir.path(), &["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()], None);
     assert_eq!(code, 2, "{}", stderr);
 }
+
+/// 層の宣言の :exempt で定義の書き方の規則を外す repo(agora-redesign #2913)。package の dir に architecture.hy を置き、src の module を
+/// 名指す(doeff-hy の macro の展開の時点の module と同じ形)。declaration が None なら宣言を置かない。
+fn exempt_repo(declaration: Option<&str>) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    let mut files: Vec<(&str, &str)> = vec![
+        ("pyproject.toml", "[tool.doeff-linter]\nenable = [\"DOEFF110\"]\n[tool.doeff-linter.definitions]\npaths = [\"pkg/src/app\"]\n"),
+        ("pkg/src/app/__init__.py", ""),
+        ("pkg/src/app/expand.hy", "(val MODULE-TAGS {:context \"app\" :role \"macro\"})\n(defn helper [form] form)\n"),
+        ("pkg/src/app/runtime.hy", "(val MODULE-TAGS {:context \"app\" :role \"judgment\"})\n(defn decide [x] x)\n"),
+    ];
+    if let Some(text) = declaration {
+        files.push(("pkg/architecture.hy", text));
+    }
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// macro の展開の時点の module を名指して DOEFF110 を理由つきで外す宣言。REASON を置き換えて理由の無い宣言も作る。
+const EXEMPT_DECLARATION: &str = "(defarchitecture pkg\n  :root \"app\"\n  :layers [(layer macro\n             :summary \"macro の展開の時点に呼ばれる\"\n             :knows \"Hy の form\"\n             :does-not-know \"doeff の Program\"\n             :modules [app.expand]\n             :exempt [(rule DOEFF110 \"REASON\")])])\n";
+
+#[test]
+fn a_layer_exemption_drops_the_definition_rule_only_for_the_named_module() {
+    let declared = EXEMPT_DECLARATION.replace("REASON", "macro の展開の時点に Python の関数として呼ばれる — Program を返せない");
+    let dir = exempt_repo(Some(&declared));
+    // 全体の実行: 名指しの module(app.expand)の defn は外れ、名指していない module の defn は今どおり鳴る。
+    let (_, whole) = editor(dir.path());
+    assert_eq!(keys(&whole, "DOEFF110"), vec!["pkg/src/app/runtime.hy::DOEFF110::decide"], "{}", whole);
+    // 1 file の実行(editor・commit の hook の子)も同じ 1 点で外す。
+    let source = std::fs::read_to_string(dir.path().join("pkg/src/app/expand.hy")).unwrap();
+    let (_, stdout, stderr) =
+        run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "pkg/src/app/expand.hy"], Some(&source));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    assert!(keys(&single, "DOEFF110").is_empty(), "{}", single);
+}
+
+#[test]
+fn without_a_declaration_or_a_reason_the_definition_rule_still_hits() {
+    // 失敗ケース 1: 宣言が無ければ、どちらの module の defn も鳴る。
+    let dir = exempt_repo(None);
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF110"),
+        vec!["pkg/src/app/expand.hy::DOEFF110::helper", "pkg/src/app/runtime.hy::DOEFF110::decide"],
+        "{}",
+        report
+    );
+    // 失敗ケース 2: 理由の無い除外は宣言の読みの誤りで、何も外さない(黙って緑にしない)。
+    let reasonless = exempt_repo(Some(&EXEMPT_DECLARATION.replace("REASON", "")));
+    let (_, report) = editor(reasonless.path());
+    assert_eq!(
+        keys(&report, "DOEFF110"),
+        vec!["pkg/src/app/expand.hy::DOEFF110::helper", "pkg/src/app/runtime.hy::DOEFF110::decide"],
+        "{}",
+        report
+    );
+}

@@ -605,6 +605,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                                         found.extend(judge_effect_mismatches(file, &source, definitions, effect_world.as_ref()));
                                     }
+                                    let exempt = layer_exempted_rules(&file.path);
+                                    found.retain(|draft| !exempt.contains(&draft.rule));
                                     found
                                 })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
@@ -737,16 +739,20 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     && (is_definition_file(rel, definitions) || is_test_file(rel, definitions))
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
-                    drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
+                    let mut found = judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref());
                     let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
-                    drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
+                    found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
                     let program_fields = crate::timing::timed("program-fields", || program_fields_for(root, enabled));
-                    drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
+                    found.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
-                        drafts.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
+                        found.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
                     }
+                    // 全体の実行と同じ 1 点で、層の宣言が名指しの module から外した定義の書き方の規則を落とす(#2913)。
+                    let exempt = layer_exempted_rules(&file.path);
+                    found.retain(|draft| !exempt.contains(&draft.rule));
+                    drafts.extend(found);
                 }
             }
             if let (Some(architecture), Some(rel), Some(language)) = (&settings.architecture, &rel, language_of(&path)) {
@@ -4155,6 +4161,20 @@ fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> 
         && (definitions.paths.is_empty() || definitions.paths.iter().any(|place| matches_place(rel, place)))
         && !definitions.exclude.iter().any(|place| matches_place(rel, place))
         && !rel.split('/').any(|part| definitions.exclude_parts.contains(part))
+}
+
+/// 層の宣言(file から上へ最も近い architecture.hy)の `:exempt` が、この file の module を名指しで外した定義の書き方の規則
+/// (ProjectRule::exemptible_by_layer の物だけ・agora-redesign #2913)。Python の文ごとの規則と同じ 1 点(crate::population)で決める。
+/// 宣言を読めない時は何も外さない — 黙って緑にしない(読めない宣言は同じ package の Python の file の DOEFF032 が名指す)。
+fn layer_exempted_rules(path: &Path) -> BTreeSet<ProjectRule> {
+    match crate::population::population_of(path) {
+        Ok(crate::population::FilePopulation::Exempt { rules, .. }) => rules
+            .iter()
+            .filter_map(|id| ProjectRule::parse(id))
+            .filter(|rule| rule.exemptible_by_layer())
+            .collect(),
+        Ok(crate::population::FilePopulation::Plain) | Err(_) => BTreeSet::new(),
+    }
 }
 
 /// architecture.hy が宣言した、素の関数を許す理由の種類(無ければ空)。
