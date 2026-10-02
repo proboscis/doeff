@@ -8,7 +8,7 @@
 ;;      recreate の起動中 = Updating。
 ;;   3. drain の模擬(test_drain の Coord): 置き先が「前の担い手の停止を待つ」間は Updating。
 ;;   4. 停止の述語は 1 つ: target-view と version-state が同じ関数(service-stopped)を呼ぶ(止まっている・止めている途中)。
-(require doeff-hy.macros [deftest val])
+(require doeff-hy.macros [deftest val <-])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob RolloutTarget VersionState NotReadyKind UnplacedKind])
@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.resource_policy [version-state running-process live-processes not-ready-version phase-version
                                        unplaced-not-ready snapshot])
 (import tests.program_rows [SAMPLE-RUN])
-(import tests.test_handoff_deadline [Sim HANDOFF RECREATE TIMEOUT-SECONDS])
+(import tests.test_handoff_deadline [Sim steps HANDOFF RECREATE TIMEOUT-SECONDS])
 (import tests.test_drain [Coord service running-writer])
 
 (val T (ClusterTiming))
@@ -273,14 +273,14 @@
 
 (deftest test-a-handoff-to-a-broken-revision-is-updating-then-blocked-after-the-deadline
   (val sim (Sim HANDOFF))
-  (sim.steps 12)
+  (<- (steps sim 12))
   (assert (= (get (sim.status) "version") {"state" "Current" "reason" "" "running" [{"revision" "r1" "retired" False}]})
           (sim.status))
   (sim.mark-broken "r2")
   (sim.redeclare (| HANDOFF {"revision" "r2"}))
   ;; 5 秒後: 新しい版 r2 は動いているが Ready でない。旧い版 r1 は退避名で仕事を続けている。running-process は ok と答える
   ;; (入れ替えの合図の意味)が、版の判定は Updating。
-  (sim.steps 5)
+  (<- (steps sim 5))
   (val during (get (sim.status) "version"))
   (assert (get (running-process sim.state "writer-a" sim.now T) "ok"))
   (assert (= (get (sim.status) "handoff" "phase") "WaitingReady"))
@@ -288,7 +288,7 @@
   (assert (= (pairs during) [#("r1" True) #("r2" False)]) during)
   (assert (in "r2" (get during "reason")) during)
   ;; 期限の後: 入れ替えを諦めた(新しい版を止め、旧い版 r1 が動き続けている)= Blocked。
-  (sim.steps (+ TIMEOUT-SECONDS 15))
+  (<- (steps sim (+ TIMEOUT-SECONDS 15)))
   (val after (get (sim.status) "version"))
   (assert (= (get (sim.status) "handoff" "phase") "Abandoned"))
   (assert (= (get after "state") "Blocked") after)
@@ -298,16 +298,16 @@
 
 (deftest test-a-recreate-service-is-updating-while-the-new-revision-starts
   (val sim (Sim RECREATE))
-  (sim.steps 12)
+  (<- (steps sim 12))
   (sim.mark-broken "r2")
   (sim.redeclare (| RECREATE {"revision" "r2"}))
-  (sim.steps 5)
+  (<- (steps sim 5))
   (val starting (get (sim.status) "version"))
   (assert (= (get (sim.status) "process" "phase") "starting") (sim.status))
   (assert (= (get starting "state") "Updating") starting)
   (assert (= (get starting "running") []) starting)
   ;; r2 が動き出した後は Current — Current は健康(readiness)を含まない(壊れた r2 は NotReady のまま)。
-  (sim.steps 20)
+  (<- (steps sim 20))
   (assert (= (get (sim.status) "ready") "NotReady"))
   (assert (= (get (sim.status) "version" "state") "Current") (sim.status)))
 
