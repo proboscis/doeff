@@ -9,6 +9,8 @@
 ;;; verdict の側(`typecheck.hy`)を投影可能に保つ。
 
 (require doeff-hy.handle [defhandler])
+;; module の頭のタグ(doeff-linter の DOEFF112)— val は doeff-hy.macros の require が要るので、この module では setv で書く。
+(setv MODULE-TAGS {:context "typecheck" :role "foundation"})
 
 (import doeff [run])
 (import doeff_hy.typecheck [TypeCheck TypeCheckError type-check-verdict])

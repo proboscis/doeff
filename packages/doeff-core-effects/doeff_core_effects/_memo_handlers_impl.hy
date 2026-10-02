@@ -13,7 +13,8 @@
 ;;; (module, handler-name, var-name) only, so the three memo tiers of a
 ;;; typical stack (L1 / cheap / expensive) would collide on one shared cell.
 
-(require doeff-hy.macros [defk deff <-])
+(require doeff-hy.macros [defk deff <- val])
+(val MODULE-TAGS {:context "memo" :role "foundation"})
 (require doeff-hy.handle [defhandler])
 
 (import doeff [DoExpr EffectBase UnhandledEffect])

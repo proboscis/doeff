@@ -1,4 +1,5 @@
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "http" :role "program"})
 (import doeff [do :as _doeff-do])
 (import doeff-core-effects [HttpRequest HttpResponse])
 (import numbers [Real])
