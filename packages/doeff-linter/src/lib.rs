@@ -796,5 +796,44 @@ p: Program = process()"#,
         let code = "import os\nasync def g(h):\n    return await h(os.getenv(\"G\"))\n";
         assert_eq!(environ_hits(code), 1);
     }
+
+    // 本体の再帰が降りる入れ子の本体(agora-redesign #2834)。各構文の本体の中の os.getenv() が当たる数を見る —
+    // 本体の再帰が降りない本体が在ると、そこの当たりは 0 件になる。
+
+    #[test]
+    fn the_else_body_of_for_is_checked() {
+        let code = "import os\nfor x in []:\n    pass\nelse:\n    os.getenv(\"A\")\n";
+        assert_eq!(environ_hits(code), 1);
+    }
+
+    #[test]
+    fn the_else_body_of_while_is_checked() {
+        let code = "import os\nwhile False:\n    pass\nelse:\n    os.getenv(\"A\")\n";
+        assert_eq!(environ_hits(code), 1);
+    }
+
+    #[test]
+    fn the_body_and_else_of_async_for_are_checked() {
+        let code = "import os\nasync def f(xs):\n    async for x in xs:\n        os.getenv(\"A\")\n    else:\n        os.getenv(\"B\")\n";
+        assert_eq!(environ_hits(code), 2);
+    }
+
+    #[test]
+    fn the_body_of_async_with_is_checked() {
+        let code = "import os\nasync def f(lock):\n    async with lock:\n        os.getenv(\"A\")\n";
+        assert_eq!(environ_hits(code), 1);
+    }
+
+    #[test]
+    fn the_bodies_of_match_cases_are_checked() {
+        let code = "import os\nmatch 1:\n    case 1:\n        os.getenv(\"A\")\n    case _:\n        os.getenv(\"B\")\n";
+        assert_eq!(environ_hits(code), 2);
+    }
+
+    #[test]
+    fn the_bodies_of_try_star_are_checked() {
+        let code = "import os\ntry:\n    os.getenv(\"A\")\nexcept* ValueError:\n    os.getenv(\"B\")\nelse:\n    os.getenv(\"C\")\nfinally:\n    os.getenv(\"D\")\n";
+        assert_eq!(environ_hits(code), 4);
+    }
 }
 
