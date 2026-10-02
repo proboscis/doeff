@@ -30,6 +30,7 @@
 (import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
+(import doeff_cluster.worker.core.policy [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus])
 (import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
@@ -315,9 +316,11 @@
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
   (setv state.watch.woken False)
   (val endpoint (get cell.route.urls cell.route.active))
+  ;; 今持っている印 = 最後に届いた返事の job の印(#2804 — coordinator はこれで印の約束を外す)。
+  (<- kept tuple (keep-marks-held state.last-jobs))
   (val body (| (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
                                :capacity state.capacity :versions state.versions :statuses sending
-                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools)
+                               :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept)
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
                    (env-heartbeat-part state.env-report (current-platform)))))

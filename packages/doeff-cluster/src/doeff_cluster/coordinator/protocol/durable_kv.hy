@@ -8,6 +8,8 @@
 ;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
+;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
+;;;   coordinator はこの鍵を読まずに無視する — 印を約束しない今までの振る舞い)
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。
@@ -22,7 +24,7 @@
 (import dataclasses [asdict dataclass replace])
 (import collections.abc [Callable])
 (import functools [partial])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes value-size
@@ -32,6 +34,7 @@
 (setv PLACEMENT "placement/")
 (setv DRAIN "drain/" SURGE "surge/" WARM "warm/" PROGRAM "program/")
 (val HANDOFF "handoff/")
+(val KEEP "keep/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -125,6 +128,9 @@
     (SourceGroup :fields #("handoffs")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor #(k w) (.items state.handoffs) (+ HANDOFF k) #(#(w) w.to-json))))
+    (SourceGroup :fields #("keep_marks")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k m) (.items state.keep-marks) (+ KEEP k) #(#(m) (partial asdict m)))))
     (SourceGroup :fields #("audit")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor e state.audit (.format "audit/{:010d}" e.seq) #(#(e) (partial audit-event-to-json e)))))))
@@ -223,6 +229,7 @@
     :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
     :programs (dfor #(k v) (part PROGRAM) k (program-row-from-json v))
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
+    :keep-marks (dfor #(k v) (part KEEP) k (KeepMark #** v))
     :audit (tuple (gfor #(_ e) (part "audit/") (audit-event-from-json e)))
     :board (dfor #(k v) (part BOARD) k (BoardRow :value (get v "value") :version (get v "resourceVersion")
                                                  :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))

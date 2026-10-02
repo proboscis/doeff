@@ -31,15 +31,18 @@
 
 
 (deff heartbeat-body [* #^ str name #^ tuple provides #^ tuple exclusive #^ str node #^ int capacity #^ dict versions
-                      #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
+                      #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools #^ tuple kept]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: name str) (: provides tuple) (: exclusive tuple) (: node str) (: capacity int) (: versions dict) (: statuses list)
-         (: endpoint str) (: boot str) (: boot-at int) (: tools dict)] :post [(: % dict)]
+         (: endpoint str) (: boot str) (: boot-at int) (: tools dict) (: kept tuple)] :post [(: % dict)]
    :tags {:context "worker" :role "protocol"}}
-  "POST /heartbeat の本文(生存・能力・版・状態の報告・世代)を作るため。実行環境の root の名乗り(env-body)は本番の worker だけが足す。"
+  "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印)を作るため。実行環境の root の名乗り(env-body)は本番の worker
+   だけが足す。kept = 途絶しても動かし続けてよい印を今持っている job の名(worker_policy.keep-marks-held — #2804)。欄を毎回書く(空でも)
+   — coordinator は欄の在る worker だけを「印を知る worker」と数え、欄の無い本文(古い worker)には印の約束を持たない。"
   {"name" name "provides" (list provides) "exclusive" (list exclusive) "node" node "capacity" capacity "versions" versions
    "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at
    "format" PROTOCOL-FORMAT
-   "tools" tools})
+   "tools" tools
+   "keptWhenCutOff" (list kept)})
 
 
 (defk status-report [statuses task-echo results]
