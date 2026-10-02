@@ -2,16 +2,20 @@
 //!
 //! Forbid direct access to environment variables.
 //!
-//! この規則は渡された文 1 つの式だけを見る。入れ子の文(関数・クラス・if の中ほか)は linter 本体の文ごとの再帰
-//! (lib の check_stmt_recursive)が 1 つずつ渡すので、ここでは降りない — 降りると同じ当たりを 2 度数える。
+//! os を指す名・os.environ を指す名・os.getenv を指す名は、file の import 文から作る表(utils の OsEnvNames)で解く —
+//! `import os as x` の `x.environ` / `x.getenv`、`from os import environ [as e]` の `environ` / `e`、
+//! `from os import getenv [as g]` の `getenv` / `g` も、素の `os.environ` / `os.getenv` と同じに当たる(agora-redesign #3012)。
+//! 表は file に 1 度だけ作るので、この規則は module 全体を見る(RuleReach::Module — 本体は file に 1 度だけ当てる)。
+//! 文は utils の each_statement で全部を 1 度ずつ辿り(入れ子の本体の一覧は本体の再帰と同じ 1 か所)、文ごとに自分の式だけを見る。
 //! 式・pattern は種類を全部辿る(網羅の match)。手で並べた種類の外を黙って飛ばすと、`or` の中ほかを見落とす
 //! (agora-redesign #2832)。
 
 use crate::models::{RuleContext, Severity, Violation};
-use crate::rules::base::LintRule;
+use crate::rules::base::{LintRule, RuleReach};
+use crate::utils::{each_statement, OsEnvNames};
 use rustpython_ast::{
-    Arguments, Comprehension, ExceptHandler, Expr, Keyword, MatchCase, Pattern, Stmt, TypeParam,
-    WithItem,
+    Arguments, Comprehension, ExceptHandler, Expr, Keyword, MatchCase, Mod, Pattern, Stmt,
+    TypeParam, WithItem,
 };
 
 pub struct NoOsEnvironRule;
@@ -20,22 +24,13 @@ impl NoOsEnvironRule {
     pub fn new() -> Self {
         Self
     }
-
-    fn is_os_environ(expr: &Expr) -> bool {
-        if let Expr::Attribute(attr) = expr {
-            if attr.attr.as_str() == "environ" {
-                if let Expr::Name(name) = &*attr.value {
-                    return name.id.as_str() == "os";
-                }
-            }
-        }
-        false
-    }
 }
 
 /// 文 1 つの式を辿り、当たりを積む。
 struct EnvironReads<'a> {
     file_path: &'a str,
+    /// file の import 文から作った、環境変数の読みを指す名の表。
+    names: &'a OsEnvNames,
     violations: Vec<Violation>,
 }
 
@@ -50,7 +45,7 @@ impl<'a> EnvironReads<'a> {
         ));
     }
 
-    /// 文の自分の式(入れ子の文の本体は除く — 本体の再帰が渡す)。
+    /// 文の自分の式(入れ子の文の本体は除く — each_statement が 1 つずつ渡す)。
     fn stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::FunctionDef(func) => {
@@ -130,9 +125,9 @@ impl<'a> EnvironReads<'a> {
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            // os.environ["KEY"]
+            // os.environ["KEY"](別名の x.environ["KEY"]・e["KEY"] も)
             Expr::Subscript(subscript) => {
-                if NoOsEnvironRule::is_os_environ(&subscript.value) {
+                if self.names.is_environ(&subscript.value) {
                     self.hit(
                         "Direct access to os.environ is forbidden. \
                          Use dependency injection to receive configuration values."
@@ -143,10 +138,10 @@ impl<'a> EnvironReads<'a> {
                 self.expr(&subscript.value);
                 self.expr(&subscript.slice);
             }
-            // os.environ.get() / os.getenv()
+            // os.environ.get() / os.getenv()(別名の x.environ.get()・e.get()・x.getenv()・g() も)
             Expr::Call(call) => {
                 if let Expr::Attribute(attr) = &*call.func {
-                    if NoOsEnvironRule::is_os_environ(&attr.value) {
+                    if self.names.is_environ(&attr.value) {
                         self.hit(
                             format!(
                                 "Calling os.environ.{}() is forbidden. \
@@ -156,16 +151,14 @@ impl<'a> EnvironReads<'a> {
                             call.range.start().to_usize(),
                         );
                     }
-                    if let Expr::Name(name) = &*attr.value {
-                        if name.id.as_str() == "os" && attr.attr.as_str() == "getenv" {
-                            self.hit(
-                                "os.getenv() is forbidden. \
-                                 Use dependency injection to receive configuration values."
-                                    .to_string(),
-                                call.range.start().to_usize(),
-                            );
-                        }
-                    }
+                }
+                if self.names.is_getenv(&call.func) {
+                    self.hit(
+                        "os.getenv() is forbidden. \
+                         Use dependency injection to receive configuration values."
+                            .to_string(),
+                        call.range.start().to_usize(),
+                    );
                 }
                 self.expr(&call.func);
                 self.exprs(&call.args);
@@ -343,12 +336,23 @@ impl LintRule for NoOsEnvironRule {
         "Forbid direct access to environment variables"
     }
 
+    /// 名の表を file の import 文から 1 度だけ作るので、module 全体を見る(本体は file に 1 度だけ当てる — 文ごとに当てると、
+    /// 文の数だけ表を作り直す)。
+    fn reach(&self) -> RuleReach {
+        RuleReach::Module
+    }
+
     fn check(&self, context: &RuleContext) -> Vec<Violation> {
+        let Mod::Module(module) = context.ast else {
+            return Vec::new();
+        };
+        let names = OsEnvNames::of_module(context.ast);
         let mut reads = EnvironReads {
             file_path: context.file_path,
+            names: &names,
             violations: Vec::new(),
         };
-        reads.stmt(context.stmt);
+        each_statement(&module.body, &mut |stmt| reads.stmt(stmt));
         reads.violations
     }
 }
@@ -356,28 +360,49 @@ impl LintRule for NoOsEnvironRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_ast::Mod;
+    use crate::rules::base::RuleReach;
+    use crate::utils::each_statement;
+    use rustpython_ast::{Mod, Stmt};
     use rustpython_parser::{parse, Mode};
 
+    /// 規則を、linter 本体(lib の lint_source)と同じ単位で当てる — 規則の見る単位(reach)どおりに文を渡す
+    /// (module なら file に 1 度・文なら入れ子の文まで 1 つずつ・部分木なら上の段の文だけ)。
     fn check_code(code: &str) -> Vec<Violation> {
         let ast = parse(code, Mode::Module, "test.py").unwrap();
         let rule = NoOsEnvironRule::new();
-        let mut violations = Vec::new();
-
-        if let Mod::Module(module) = &ast {
-            for stmt in &module.body {
-                let context = RuleContext {
-                    stmt,
-                    file_path: "test.py",
-                    source: code,
-                    ast: &ast,
-                };
-                violations.extend(rule.check(&context));
+        let Mod::Module(module) = &ast else {
+            return Vec::new();
+        };
+        let check = |stmt: &Stmt| {
+            rule.check(&RuleContext {
+                stmt,
+                file_path: "test.py",
+                source: code,
+                ast: &ast,
+            })
+        };
+        match rule.reach() {
+            RuleReach::Module => module.body.first().map(check).unwrap_or_default(),
+            RuleReach::Statement => {
+                let mut violations = Vec::new();
+                each_statement(&module.body, &mut |stmt| violations.extend(check(stmt)));
+                violations
             }
+            RuleReach::Subtree => module.body.iter().flat_map(check).collect(),
         }
-
-        violations
     }
+
+    /// 当たりの文(message)の並び。
+    fn messages(code: &str) -> Vec<String> {
+        check_code(code).into_iter().map(|violation| violation.message).collect()
+    }
+
+    const ENVIRON_SUBSCRIPT: &str = "Direct access to os.environ is forbidden. \
+         Use dependency injection to receive configuration values.";
+    const ENVIRON_GET: &str = "Calling os.environ.get() is forbidden. \
+         Use dependency injection to receive configuration values.";
+    const GETENV: &str = "os.getenv() is forbidden. \
+         Use dependency injection to receive configuration values.";
 
     #[test]
     fn test_os_environ_subscript() {
@@ -448,10 +473,10 @@ def g(root=os.getenv("G")) -> os.environ["T"]:
         assert_eq!(check_code(code).len(), 9);
     }
 
-    /// 規則 1 つに渡した文では入れ子の文の本体を見ない(本体の再帰が 1 つずつ渡す — 降りると 2 度数える)。
-    /// 本体の再帰を通した数は lib の検(関数の中の読みは 1 度だけ)が見る。
+    /// 入れ子の文(関数・class の method)の中の読みは 1 度ずつ数える(2 度数えない)。本体の再帰を通した数は lib の検
+    /// (関数の中の読みは 1 度だけ)も見る。
     #[test]
-    fn test_the_rule_alone_does_not_descend_into_nested_statements() {
+    fn test_reads_in_nested_statements_are_counted_once_each() {
         let code = r#"
 import os
 def store_root():
@@ -460,7 +485,92 @@ class Settings:
     def home(self):
         return os.getenv("HOME")
 "#;
-        assert_eq!(check_code(code).len(), 0);
+        assert_eq!(check_code(code).len(), 2);
+    }
+
+    // 別名の読み(agora-redesign #3012)— 直す前は名が文字どおり `os` の時だけ見ていて、どれも 0 件だった。
+    // 別名でも当たりの文は素の os.environ / os.getenv の時と同じ。
+
+    /// `import os as x` の 3 形(x.environ.get()・x.environ[...]・x.getenv())。
+    #[test]
+    fn test_reads_through_import_os_as_alias_are_seen() {
+        let code = r#"
+import os as x
+a = x.environ.get("A")
+b = x.environ["B"]
+c = x.getenv("C")
+"#;
+        assert_eq!(messages(code), vec![ENVIRON_GET, ENVIRON_SUBSCRIPT, GETENV]);
+    }
+
+    /// `from os import environ` の素の名 environ(environ.get()・environ[...])。
+    #[test]
+    fn test_reads_through_from_os_import_environ_are_seen() {
+        let code = r#"
+from os import environ
+a = environ.get("A")
+b = environ["B"]
+"#;
+        assert_eq!(messages(code), vec![ENVIRON_GET, ENVIRON_SUBSCRIPT]);
+    }
+
+    /// `from os import environ as e` の別名 e(e.get()・e[...])。
+    #[test]
+    fn test_reads_through_from_os_import_environ_as_alias_are_seen() {
+        let code = r#"
+from os import environ as e
+a = e.get("A")
+b = e["B"]
+"#;
+        assert_eq!(messages(code), vec![ENVIRON_GET, ENVIRON_SUBSCRIPT]);
+    }
+
+    /// `from os import getenv` の素の名 getenv と、`from os import getenv as g` の別名 g。
+    #[test]
+    fn test_reads_through_from_os_import_getenv_and_its_alias_are_seen() {
+        let code = r#"
+from os import getenv
+from os import getenv as g
+a = getenv("A")
+b = g("B")
+"#;
+        assert_eq!(messages(code), vec![GETENV, GETENV]);
+    }
+
+    /// 関数の中の import 文の別名も、その関数の中の読み(と、表は file の全体で 1 つなので file の他の所の読み)に当たる。
+    #[test]
+    fn test_aliases_imported_inside_a_function_are_seen() {
+        let code = r#"
+def settings():
+    import os as x
+    from os import environ as e, getenv as g
+    return x.environ["A"], e.get("B"), g("C")
+"#;
+        assert_eq!(messages(code), vec![ENVIRON_SUBSCRIPT, ENVIRON_GET, GETENV]);
+    }
+
+    /// os を指さない名は当たらない: 別の module の environ・getenv、os 以外の module の別名の environ 属性、
+    /// 相対の `from .os import environ`、`import os.path as p` の p、"environ" を鍵に持つ辞書。
+    #[test]
+    fn test_names_not_bound_to_os_are_not_seen() {
+        let code = r#"
+from mymod import environ
+from mymod import getenv as g
+from .os import environ as rel
+import mymod as x
+import os.path as p
+environ.get("A")
+environ["B"]
+g("C")
+rel["D"]
+x.environ.get("E")
+x.getenv("F")
+p.environ["G"]
+d = {"environ": 1}
+d["environ"]
+request.environ.get("H")
+"#;
+        assert_eq!(messages(code), Vec::<String>::new());
     }
 
     /// 書き込み(`os.environ[...] = ...`)と消し(`del os.environ[...]`)も環境変数への直の触れ方として当たる。

@@ -2,18 +2,22 @@
 //! #1898 の子 (b))。Hy の file の生の副作用は Hy の定義の索引(hy_index の raw_catalog)が集めるが、Python の file はその索引の外で、
 //! 業務の層の `.py` が環境変数を読んでも何も当たらなかった。
 //!
-//! 読むのは Python の字句(rustpython の lexer)だけ — 文字列と註の中は別の字句なので数えない。当てる形:
+//! 読みの位置は Python の字句(rustpython の lexer)で探す — 文字列と註の中は別の字句なので数えない。当てる形:
 //!   * `os.environ`・`os.getenv`(`import os as o` の別名 `o.environ` も)
 //!   * `from os import environ` / `getenv`(`as` の別名も)の後の素の名 `environ`・`getenv`
+//!
+//! どの名が os・os.environ・os.getenv を指すかは、DOEFF004 と同じ表(utils の OsEnvNames — 構文木の import 文から作る)で解く。
+//! 以前は字句の並びから別名を集め、`import json, os as o`(os が 2 番目以降)の o を見落とし、`from pkg import os as o` の o を
+//! os と見ていた(agora-redesign #3012)。import 文の中の字句は読みでないので数えない。
 //!
 //! 環境変数のほかの生の副作用(file・時計・network)は、ここでは当てない — 範囲を環境変数の読みに絞る(#1907 の決め — 広げると当たりが
 //! 増えうるので、要る時に別の変更で足す)。当たった位置を包む関数の名は構文木の関数の範囲から引く(無ければ module の直下)。
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use rustpython_ast::{Mod, Ranged, Stmt};
 use rustpython_parser::lexer::lex;
 use rustpython_parser::{parse, Mode, Tok};
+
+use crate::utils::{each_statement, OsEnvNames};
 
 /// 環境変数を読む `os` の属性の名。
 const ENV_NAMES: &[&str] = &["environ", "getenv"];
@@ -56,59 +60,52 @@ fn enclosing(spans: &[(usize, usize, String)], at: usize) -> String {
         .unwrap_or_else(|| "<module>".to_string())
 }
 
+/// 素の名が指す os の読みの名(`environ`・`getenv`)— 表に無い名は None。
+fn bare_original(names: &OsEnvNames, name: &str) -> Option<&'static str> {
+    if names.environ.contains(name) {
+        Some("environ")
+    } else if names.getenv.contains(name) {
+        Some("getenv")
+    } else {
+        None
+    }
+}
+
 /// `.py` の source の環境変数の読みを見つけるため(字句に読めない file は空 — 構文の誤りは別の規則が出す)。
+/// 構文木に読めない file は名の表を作れないので、素の `os.environ`・`os.getenv` だけを当てる。
 pub fn env_reads(source: &str) -> Vec<EnvRead> {
     let Ok(tokens) = lex(source, Mode::Module).collect::<Result<Vec<_>, _>>() else {
         return Vec::new();
     };
     let mut spans = Vec::new();
-    if let Ok(Mod::Module(module)) = parse(source, Mode::Module, "<module>") {
-        functions(&module.body, "", &mut spans);
+    // import 文の範囲(その中の字句 — `from os import environ` の environ ほか — は読みでない)。
+    let mut imports: Vec<(usize, usize)> = Vec::new();
+    let mut names = OsEnvNames::plain();
+    if let Ok(ast) = parse(source, Mode::Module, "<module>") {
+        if let Mod::Module(module) = &ast {
+            functions(&module.body, "", &mut spans);
+            each_statement(&module.body, &mut |stmt| {
+                if matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
+                    imports.push((stmt.range().start().to_usize(), stmt.range().end().to_usize()));
+                }
+            });
+        }
+        names = OsEnvNames::of_module(&ast);
     }
     let name_of = |i: usize| match tokens.get(i) {
         Some((Tok::Name { name }, _)) => Some(name.as_str()),
         _ => None,
     };
-    // `import os as o` の別名と、`from os import environ as e` の素の名の別名を先に集める。
-    let mut os_names: BTreeSet<String> = BTreeSet::from(["os".to_string()]);
-    let mut bare: BTreeMap<String, String> = BTreeMap::new();
-    let mut in_import = BTreeSet::new();
-    for i in 0..tokens.len() {
-        match &tokens[i].0 {
-            Tok::Import if name_of(i + 1) == Some("os") && matches!(tokens.get(i + 2), Some((Tok::As, _))) => {
-                if let Some(alias) = name_of(i + 3) {
-                    os_names.insert(alias.to_string());
-                }
-            }
-            Tok::From if name_of(i + 1) == Some("os") && matches!(tokens.get(i + 2), Some((Tok::Import, _))) => {
-                let mut j = i + 3;
-                while let Some((token, _)) = tokens.get(j) {
-                    if matches!(token, Tok::Newline | Tok::Semi) {
-                        break;
-                    }
-                    in_import.insert(j);
-                    if let Some(name) = name_of(j).filter(|n| ENV_NAMES.contains(n)) {
-                        let alias = if matches!(tokens.get(j + 1), Some((Tok::As, _))) { name_of(j + 2) } else { None };
-                        bare.insert(alias.unwrap_or(name).to_string(), name.to_string());
-                        if alias.is_some() {
-                            in_import.insert(j + 2);
-                        }
-                    }
-                    j += 1;
-                }
-            }
-            _ => {}
-        }
-    }
     let mut out = Vec::new();
     for i in 0..tokens.len() {
-        if in_import.contains(&i) {
+        let at = tokens[i].1.start().to_usize();
+        if imports.iter().any(|(start, end)| *start <= at && at < *end) {
             continue;
         }
         let Some(name) = name_of(i) else { continue };
         let after_dot = i > 0 && matches!(tokens[i - 1].0, Tok::Dot);
         let range = tokens[i].1;
-        if os_names.contains(name) && !after_dot && matches!(tokens.get(i + 1), Some((Tok::Dot, _))) {
+        if names.os.contains(name) && !after_dot && matches!(tokens.get(i + 1), Some((Tok::Dot, _))) {
             if let Some(attribute) = name_of(i + 2).filter(|a| ENV_NAMES.contains(a)) {
                 let end = tokens[i + 2].1.end().to_usize();
                 out.push(EnvRead {
@@ -118,7 +115,7 @@ pub fn env_reads(source: &str) -> Vec<EnvRead> {
                     definition: enclosing(&spans, range.start().to_usize()),
                 });
             }
-        } else if let Some(original) = bare.get(name).filter(|_| !after_dot) {
+        } else if let Some(original) = bare_original(&names, name).filter(|_| !after_dot) {
             out.push(EnvRead {
                 start: range.start().to_usize(),
                 end: range.end().to_usize(),
@@ -151,6 +148,22 @@ mod tests {
             names(source),
             vec![("os.environ".into(), "<module>".into()), ("os.environ".into(), "<module>".into()), ("os.getenv".into(), "<module>".into())]
         );
+    }
+
+    /// 反例(agora-redesign #3012): `import json, os as o` の o は os を指す — 直す前は import の直後の名が os の時だけ別名を
+    /// 覚え、0 件だった。関数の中の import の別名も同じ。
+    #[test]
+    fn an_os_alias_after_another_module_in_one_import_is_found() {
+        let source = "import json, os as o\nA = o.environ[\"A\"]\n\ndef f():\n    import sys, os as p\n    return p.getenv(\"B\")\n";
+        assert_eq!(names(source), vec![("os.environ".into(), "<module>".into()), ("os.getenv".into(), "f".into())]);
+    }
+
+    /// 反例(agora-redesign #3012): `from pkg import os as o` の o は pkg の中の os で、os の module ではない — 直す前は字句の
+    /// `import os as o` の並びに当たり、os の別名と見ていた。
+    #[test]
+    fn os_imported_from_another_package_is_not_an_os_alias() {
+        let source = "from pkg import os as o\nA = o.environ[\"A\"]\n";
+        assert!(names(source).is_empty(), "{:?}", names(source));
     }
 
     #[test]
