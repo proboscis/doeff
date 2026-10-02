@@ -1,0 +1,6 @@
+# 検体。doeff-packages-have-no-application-vocabulary が 4 行目で発火し、6 行目では発火しない(.pyi も見る)。
+from collections.abc import Callable
+
+def kanban_rows() -> list[str]: ...
+
+def worker_rows() -> list[str]: ...

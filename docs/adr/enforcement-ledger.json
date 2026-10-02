@@ -166,6 +166,7 @@
     "doeff-no-thread-offload-in-async-run",
     "doeff-no-typing-any-in-public-api",
     "doeff-no-yielded-effect-variant",
+    "doeff-packages-have-no-application-vocabulary",
     "doeff-pinjected-no-intercept",
     "doeff-public-api-no-subpackage-imports",
     "doeff-public-docs-no-subpackage-imports",

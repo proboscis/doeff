@@ -287,6 +287,32 @@ rules:
         # Python の module の名に直すのに hy.mangle を使う — 設定の鍵を引数の名に直す写しではない(日次 t69 の誤検出・#639)。
         - "**/doeff_cluster/worker/core/code_plan.hy"
 
+  - id: doeff-packages-have-no-application-vocabulary
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      汎用の package(doeff-cluster・doeff-records・doeff-claude-code)は、上に載る業務の系の語を書かない — agora・kanban・
+      conversation・budget・artifact・herdr・hypha・mediagen・sporocarp・acp・controllers/・controllers.・clients/hy(大文字小文字を
+      区別しない・前が英字でない時)。汎用の部品が業務の系を名指すと、境界が file の文字から崩れる。註・docstring・README の
+      repo の名や issue の参照も同じ(「agora-redesign #2830」は「#2830」と書く)。語の一覧の定義元はこの規則 1 つ(元は 3 package の
+      tests/test_no_application_vocabulary.hy の写し — agora-redesign #2875。写しの差は、.pyi を全部で見る・doeff-records の宣言の
+      欄の名 size-budget を全部で許す形に揃えた)。
+    patterns:
+      - pattern-regex: '(?i)(?<![a-z])(agora|kanban|conversation|budget|artifact|herdr|hypha|mediagen|sporocarp|acp|controllers/|controllers\.|clients/hy)'
+      # doeff-records の宣言の欄の名(size-budget / size_budget)は業務の語ではない。
+      - pattern-not-regex: '(?i)size[-_]budget'
+    paths:
+      include:
+        - "/packages/doeff-cluster/**"
+        - "/packages/doeff-records/**"
+        - "/packages/doeff-claude-code/**"
+        - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
+        - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
+      exclude:
+        # 語の一覧を写した旧い検(この規則が入った後の便で退役する — #2875)。
+        - "/packages/*/tests/test_no_application_vocabulary.hy"
+
   - id: doeff-agents-idle-shell-vocabulary-is-policy-owned
     languages:
       - generic
