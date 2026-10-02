@@ -11,12 +11,15 @@
 ;;   回り続ける(この検は上限の拍の数で打ち切って赤)。
 ;; - 1 回の眠りの間に変化が何度来ても、鳴る呼び鈴は 1 つ(本番の coordinator への口 — 鳴るまで拍をまたいで同じ呼び鈴を渡す)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached])
+(import doeff_cluster.shared.entry.service_build [system-of])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf ReadCoordinator])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView DesiredJobs ReadDesired ObserveWorld WorkerStopRequested
                                                   PublishStatus EnvReport])
@@ -126,3 +129,47 @@
                                    :workers #((SimWorker :name "w1" :provides NET))))
   (assert (= (len latencies) (len PAUSES)) latencies)
   (assert (all (gfor ms latencies (< ms 150))) latencies))
+
+
+;; --- その worker の最初の task(コードの木がまだ無い worker — agora-redesign #2719)-------------------------------------
+;;
+;; 木の無い worker は最初の拍で準備(PrepareCode)を撃つ。準備がその拍のうちに揃えば(模擬の既定 prepare-seconds = 0)、action の後の観測で
+;; 揃った木を見て同じ拍で起こす。揃わなければ(本番の git・uv のような長い準備)落ちずに今までの道 — 後の拍で揃いを観測してから起こす。
+;; 反例: 揃いを次の拍まで見ない形では、最初の task の開始が拍 1 つ(500 ms)近く遅れる(呼び鈴は鳴らないので tick-seconds を待つ)。
+
+;; job を持たない系: worker は最初の task まで木を持たない(冷えた worker)。
+(val NO-JOBS (system-of "first-task" #()))
+
+(defrecord FirstStart
+  "最初の task の測り: ms = 置いてから task の process が起きるまでの仮想の ms・outcome = 待った答え。"
+  (#^ int ms)
+  (#^ DetachedSucceeded outcome))
+
+
+(defk first-start []
+  {:pre [] :post [(: % FirstStart)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 落ち着いた後、木の無い worker へ最初の task を置き、開始までの仮想の ms と結果を返すため(尺は start-latency と同じ 送信 → 開始)。"
+  (<- (Delay SETTLE-SECONDS))
+  (<- asked int (now-epoch-ms))
+  (<- (submit-detached-task (slow-task sim-task-foundation 0.2) :key "first" :needs NET :name "first"))
+  (<- outcome DetachedSucceeded (AwaitDetached "first" :timeout-seconds 30.0))
+  (<- id str (task-id-named "first"))
+  (<- runs tuple (ProcessesOf (+ "task/" id)))
+  (FirstStart :ms (- (. (get runs 0) started-ms) asked) :outcome outcome))
+
+
+(deftest test-the-first-task-starts-in-the-tick-its-tree-became-ready
+  ;; 準備がその拍のうちに揃う worker(prepare-seconds = 0): 最初の task も、呼び鈴で起きた拍のうちに起きる(2 番目以降の task と同じ尺の内)。
+  ;; 反例: 揃いを次の拍まで見ない形は 500 ms 前後。
+  (<- first FirstStart (sim-cluster NO-JOBS (first-start)
+                                    :workers #((SimWorker :name "w1" :provides NET))))
+  (assert (= first.outcome.value 0.2) first)
+  (assert (< first.ms 150) first))
+
+
+(deftest test-a-task-that-arrives-before-its-tree-is-ready-starts-after-the-preparation
+  ;; 準備に 1 秒かかる worker: task は落ちずに待ち、準備が揃った後の最初の拍で起きる(揃う前には起きない・拍 1 つより遅れない)。
+  (<- first FirstStart (sim-cluster NO-JOBS (first-start)
+                                    :workers #((SimWorker :name "w1" :provides NET :prepare-seconds 1.0))))
+  (assert (= first.outcome.value 0.2) first)
+  (assert (<= 1000 first.ms (+ 1000 500 150)) first))

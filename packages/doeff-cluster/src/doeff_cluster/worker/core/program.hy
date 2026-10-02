@@ -8,7 +8,7 @@
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker.core.policy [plan records-after statuses])
+(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
 
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
@@ -26,12 +26,19 @@
   (setv warm (cond stopping #() (isinstance read DesiredJobs) read.warm True state.warm))
   (setv actions (plan now desired world state.records policy :warm warm))
   (for [action actions] (<- action))
-  (setv records (records-after now state.records actions policy))
+  (var records (records-after now state.records actions policy))
   ;; 状態の表示は action の後の観測から作る(起動・回収を 1 拍遅れで見せない)。
   (var after world)
   (when actions
     (<- observed WorldView (ObserveWorld))
-    (:= after observed))
+    (:= after observed)
+    ;; この拍の準備で木が揃った job は、同じ拍のうちに起こす(最初の task が拍 1 つ待たない — #2719)。
+    (<- followups tuple (ready-followups now desired world after records policy))
+    (for [action followups] (<- action))
+    (:= records (records-after now records followups policy))
+    (when followups
+      (<- settled WorldView (ObserveWorld))
+      (:= after settled)))
   (setv report (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
   #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
