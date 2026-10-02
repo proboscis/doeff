@@ -5,8 +5,9 @@
 ;;; source の file・環境変数)なので、送る形と判断を置く remote_model.hy(domain)から分けた(#1630 — 純粋な層の
 ;;; module が remote_model 経由で os・pathlib を読んでいた)。呼ぶのは送り手と受け側の入口と io の handler だけで、
 ;;; 宣言の組み立て(service_build.system-declaration)には呼び手がこの値を渡す。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [deff defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
+(import collections.abc [Mapping])
 (import functools [cache])
 (import hashlib)
 (import importlib.metadata)
@@ -14,6 +15,7 @@
 (import pathlib [Path])
 (import sys)
 (import types [MappingProxyType ModuleType])
+(import doeff [run])
 (import doeff.do)
 
 
@@ -46,10 +48,24 @@
      "doeff-do" (_source-fingerprint (get sys.modules "doeff.do"))}))
 
 
-(deff current-versions []  ; defk にできない: 送り手と宿が Program の外(blob を作る時・起動の時)で呼ぶ — 環境変数を毎回読む
+;; env の root の中の子 process が自分の env のキーを受け取る環境変数の名(worker が子へ渡す — job_context の context-from-env と同じ名)。
+(val RUNTIME-ENV-KEY-VAR "DOEFF_RUNTIME_ENV_KEY")
+
+
+(defk process-versions [environ]
+  {:pre [(: environ Mapping)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "この process の版の識別を綴るため — 送り手が blob と heartbeat に添え、受け側が突き合わせる(remote_model.version-diffs)。入っている版
+   (_installed-versions)に、environ の RUNTIME-ENV-KEY-VAR を名乗り envKey として添える。environ は呼び手が渡す: process の入口と宿の
+   handler は os.environ(環境変数は process の中で変わり得るので読むたびに渡す)・env の root の外として名乗る呼び手(sim の送り手)は空。
+   Program の中の読み手は自分で読まず、宿の契約の鍵 versions-key を Ask で読む(答えるのは宿の handler — host_contract.hy)。"
+  ;; env の root の中の子 process は、その env のキーを名乗る。送り手が env の中で動いていれば送り手も名乗る。両方が名乗る時だけ
+  ;; 比べる(remote_model.version-diffs)。
+  (val key (.get environ RUNTIME-ENV-KEY-VAR ""))
+  {#** (_installed-versions) #** (if key {"envKey" key} {})})
+
+
+(deff current-versions []  ; defk にできない: 検と使い手の repo の呼び手(後半 #2766 で移して消す)が Program の外で素で呼ぶ
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
-  "この process の版の識別。送り手が blob に添え、受け側が突き合わせる。"
-  {#** (_installed-versions)
-   ;; env の root の中の子 process は、その env のキーを名乗る(worker が DOEFF_RUNTIME_ENV_KEY で渡す)。送り手が env の中で動いていれば
-   ;; 送り手も名乗る。両方が名乗る時だけ比べる(remote_model.version-diffs)。環境変数は process の中で変わり得るので毎回読む。
-   #** (let [key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")] (if key {"envKey" key} {}))})
+  "この process の版の識別(process-versions に os.environ を渡した物)。本番の呼び手は process-versions と宿の契約の鍵 versions-key へ
+   移した(#2765)— 残る呼び手は検と使い手の repo だけで、後半(#2766)で移して消す。"
+  (run (process-versions os.environ)))
