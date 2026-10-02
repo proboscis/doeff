@@ -12,7 +12,7 @@
 ;;; 記録(準備中・失敗・経過の秒・検めの答え)は handler の session の値で持つ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import pathlib [Path])
 (import doeff_core_effects [slog])
@@ -52,7 +52,7 @@
 
 (defk tree-check [settings name seen]
   {:pre [(: settings CodeSettings) (: name str) (: seen (| TreeCheck None))] :post [(: % (| TreeCheck None))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "worker" :role "protocol"}}
   "cache の直下の dir 1 つを検めるため(seen = 前の拍の検め — 同じ mtime と大きさなら使い回す)。dir が無ければ None。"
   (val path (+ settings.cache "/" name))
   (<- stat (StatPath path))
@@ -72,7 +72,7 @@
 
 
 (defk cache-checks [settings checked]
-  {:pre [(: settings CodeSettings) (: checked dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: settings CodeSettings) (: checked dict)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
   "cache の直下の dir(. で始まる名を除く)の検めの列を返すため(checked = 前の拍の検め — 版 → TreeCheck)。"
   (<- top (ListDirectory settings.cache))
   (var checks #())

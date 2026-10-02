@@ -19,7 +19,7 @@
 
 
 (deff required-field [#^ dict body #^ str key]  ; defk にできない: 宣言と保存の行の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: body dict) (: key str)] :post [(: % (| dict list str int float bool None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: body dict) (: key str)] :post [(: % (| dict list str int float bool None))] :tags {:context "coordinator" :role "judgment"}}
   "宣言と保存の行(JSON)の必須の欄の値 — 欄が無ければ BodyInvalid(送り手の誤り・400)。受け口の本文は coordinator/protocol/request_bodies
    が道の型に解く(#2445)ので、ここを通るのは本文の中の宣言の行と保存の行だけ(行の型は #2447)。(get body 欄) の KeyError に頼ると、受け口は
    送り手の欠けと coordinator の中の KeyError を分けられない(#1024)。値は null でもよい(在ることだけを検める)。"
@@ -29,7 +29,7 @@
 
 
 (deff int-field [#^ dict fields #^ str key default]  ; defk にできない: query と保存の行の読み(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: fields dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: fields dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "query と保存の行の整数の欄(無ければ default)を int に読む(受け口の本文は道の型 — #2445) — 読めない値(数でない文字列・object など)は BodyInvalid
    (送り手の誤り・400)。読み方は int() のまま(小数は切り捨て・数字の文字列は数)。"
   (setv value (.get fields key default))

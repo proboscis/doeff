@@ -17,7 +17,7 @@
 
 
 (defk query-revision [value]
-  {:pre [(: value (| str int None))] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: value (| str int None))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "問いの after(知っている版)を読むため: 0 以上の整数(文字列の数字か int)。読めなければ None。"
   (match value
     (int) (if (>= value 0) value None)
@@ -26,7 +26,7 @@
 
 
 (defk query-seconds [value]
-  {:pre [(: value (| str int float None))] :post [(: % (| float None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: value (| str int float None))] :post [(: % (| float None))] :tags {:context "coordinator" :role "judgment"}}
   "問いの timeoutSeconds を読むため: 0 以上の有限の数(文字列か数)を WATCH-MAX-SECONDS で頭打ちにする。無ければ上限。読めなければ None。"
   (val number (match value
                 None WATCH-MAX-SECONDS
@@ -39,7 +39,7 @@
 
 
 (defk watch-of [request now]
-  {:pre [(: request Request) (: now int)] :post [(: % (| Watcher WatchRefusal None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: request Request) (: now int)] :post [(: % (| Watcher WatchRefusal None))] :tags {:context "coordinator" :role "judgment"}}
   "受けた要求が版の変化を待つ読み(GET /watch)なら、その待ち(期限 = now + timeoutSeconds)か、読めない問いの断りにするため。
    それ以外の要求は None(受け口の振り分け api_policy.respond へ渡す)。"
   (if (not (and (= request.method "GET") (= (tuple request.parts) #("watch"))))
@@ -55,7 +55,7 @@
 
 (defk worker-mark [state worker boot now timing]
   {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: now int) (: timing ClusterTiming)] :post [(: % HeartbeatReply)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "coordinator" :role "judgment"}}
   "名指した worker の見え方(その世代の heartbeat の返事から温める表と版の欄を空にした物)を、返事と同じ関数で作るため — 待ちが起きる
    条件と worker が受け取る物の定義を 2 つにしない。"
   (val reply (heartbeat-reply state worker timing (ready-instances state worker now timing) :now now :boot boot))
@@ -63,14 +63,14 @@
 
 
 (defk watch-deadline [watcher state now]
-  {:pre [(: watcher Watcher) (: state ClusterState) (: now int)] :post [(: % WatchStep)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: watcher Watcher) (: state ClusterState) (: now int)] :post [(: % WatchStep)] :tags {:context "coordinator" :role "judgment"}}
   "変わっていない待ちを、期限を過ぎていれば「変わっていない」の答えで返し、それ以外は待ち続けさせるため。"
   (WatchStep :answer (if (>= now watcher.deadline-ms) (WatchAnswer state.revision False) None) :watcher watcher))
 
 
 (defk settle-watch [watcher state now timing]
   {:pre [(: watcher Watcher) (: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % WatchStep)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "coordinator" :role "judgment"}}
   "待ち 1 件を今の状態で判じるため。worker を名指さない待ちは版が after と違えば起きる。名指した待ちは、最初に見た時に版が after と
    違えば(送り手の知らない変化が既にある)起き、同じならその時の見え方を覚え、後で版が進んだ時に見え方が変わっていれば起きる
    (変わっていなければ覚えた版を進めて待ち続ける)。どれでもなければ期限で返す。"
@@ -95,6 +95,6 @@
 
 
 (defk earliest-deadline [watchers]
-  {:pre [(: watchers tuple)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: watchers tuple)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "待ちのいちばん早い期限(待ちが無ければ None)— 模擬の時計の下の受け口が、その刻の後の拍を飛ばさないため(IdleProbe.wake-ms)。"
   (if watchers (min (gfor w watchers w.deadline-ms)) None))

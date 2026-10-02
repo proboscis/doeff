@@ -23,7 +23,7 @@
 
 (defk rollout-quiet [state now timing naming]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| ClusterState None))]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+   :tags {:context "coordinator" :role "judgment"}}
   "now の Rollout の拍(coordinator.rollout-tick)が k8s を読まず action も出さない時の、その拍の後の状態を知るため。読む・出すなら
    None。rollout-tick の純粋な部分と同じ順(観測 → 能力の導出 → plan-rollouts → stamp)。"
   (if (or (deployments-to-observe state now) (nodes-to-read state now))
@@ -34,7 +34,7 @@
 
 
 (defk quiet-ticks [probe now]
-  {:pre [(: probe IdleProbe) (: now int)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: probe IdleProbe) (: now int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "要求が無い間に飛ばしてよい拍の数(1 以上 — 1 拍 = TICK-MS)を知るため。1 拍先から 1 拍ずつ、本番の要求の無い拍(tick → 1 秒ごとの Rollout の
    拍 → mark-alive)を試し、状態が変わる・k8s を読む・action を出す・版の変化の待ちの期限を過ぎる最初の拍までの秒。何も変えない拍は状態を変えないので、次の拍も
    同じ状態から試す(Rollout の拍の刻 rollout-tick-ms だけは、本番と同じく拍ごとに進める — 調停の判断は読まない欄)。"
@@ -61,7 +61,7 @@
 
 
 (defk rest-to-tick [elapsed-ms quiet-ms]
-  {:pre [(: elapsed-ms int) (: quiet-ms int)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: elapsed-ms int) (: quiet-ms int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "要求ではない出来事で起こされた取り手が、本番の 1 秒の拍がその出来事に気づく刻(眠り始めから整数秒・1 秒以上・飛ばしてよい長さ
    まで)まで、あと何 ms 眠るかを知るため。"
   (- (min quiet-ms (max TICK-MS (* TICK-MS (ceil (/ elapsed-ms TICK-MS))))) elapsed-ms))

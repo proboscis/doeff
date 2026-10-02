@@ -2,7 +2,7 @@
 ;;; 焼きの経過の秒はコードの木の言い換え(worker/protocol/code_store)へ CodeTimings で問う。file の I/O は file system の effect
 ;;; (本番 = os-file-handler・検 = memory-file-handler)。
 (require doeff-hy.macros [defhandler defk <- val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
+(val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import os)
 (import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
@@ -22,7 +22,7 @@
 
 
 (defk write-status-file [path content]
-  {:pre [(: path str) (: content dict)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: path str) (: content dict)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
   "worker の状態を、外から覗ける 1 つの JSON の file として置くため(親の dir を作り、置き換えで書いて書きかけを読ませない)。
    file の I/O は file system の effect(本番 = os-file-handler・検 = memory-file-handler)で、断りは OSError で上げる。"
   (<- (file-done (MakeDirectory (os.path.dirname path))))
