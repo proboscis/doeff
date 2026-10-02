@@ -1624,7 +1624,7 @@
       (<- views tuple (codes-view truth.codes at))
       (when (or (is heard None) (!= views seen-views))
         (<- body dict (beat-body worker truth at False))
-        (val request (http-request "POST" "/heartbeat" {} body :actor worker.name :peer worker.name))
+        (val request (! (http-request "POST" "/heartbeat" {} body :actor worker.name :peer worker.name)))
         (<- parsed (body-of request))
         (match parsed
           (HeartbeatBody) (:= heard (ProvisionalBeat :at at :request request :body parsed :name worker.name))
