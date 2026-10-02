@@ -23,6 +23,10 @@
 ;;; 作り直されても(読み直せない置き場で空から起き直すと版が 0 へ戻り、worker と使い手が古い版の答えを新しいと取り違える)。判断は記録
 ;;; (読んだ順の版の列)を受けて、それまでの最大より小さい読みの組の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 ;;;
+;;; 条 C12 service-versions-never-go-back: GET /state の Service ごとの resourceVersion も、読んだ順に減らない — 作り直しの後も(版が戻ると、
+;;; 版で書きの衝突を見る呼び手が古い版のまま書き戻せる)。C5 は coordinator 全体の版だけを見るので別の条にした(#1976 の
+;;; 写しの C2 の残り)。判断は記録(読んだ順の Service ごとの版の列)を受けて、同じ Service のそれまでの最大より小さい読みの組の列を返す純関数 1 つ。
+;;;
 ;;; 条 L2 alive-only-while-reachable: GET /workers/<名> が alive = true と答えるのは、その worker が lease-ms(+ 余裕)のうちに coordinator へ
 ;;; 届き得た時だけ — coordinator が止まり置き場から作り直された後も(最後の連絡の時刻を置き場から読み直せないと、死んだ worker を生きている
 ;;; と答え、置き先にも選ぶ — 本番 2026-09-25 の欠陥・L643)。判断は記録(生存の読みと、その worker が届かなくなった時刻)を受けて、届かなく
@@ -148,6 +152,35 @@
                :setv read (get reads i)
                :if (< read.revision prior.revision)
                (RevisionDrop :earlier prior :later read))))
+
+
+(defrecord ServiceVersionRead
+  "条 C12 の記録 1 つ = GET /state の 1 回の読みの Service 1 つ(at-ms = 読んだ時刻・service = 名・version = その Service の resourceVersion)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ int at-ms)
+  (#^ str service)
+  (#^ int version))
+
+
+(defrecord ServiceVersionDrop
+  "条 C12 の破り 1 つ = 同じ Service のそれまでの最大の読みより resourceVersion が小さい読みの組(earlier = その最大の読み)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ ServiceVersionRead earlier)
+  (#^ ServiceVersionRead later))
+
+
+(defk service-versions-never-go-back [reads]
+  {:pre [(: reads (get tuple #(ServiceVersionRead ...)))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C12: 読んだ順の Service ごとの版の読みの列(ServiceVersionRead)から、同じ Service のそれまでの最大の読みより resourceVersion が
+   小さい読みを、その最大の読みと組にした破りの列(ServiceVersionDrop)を返す(空なら緑)。Service の版で書きの衝突を見る呼び手(宣言を
+   PUT する道具)が、coordinator の作り直しの後に古い版で書き戻せないことを、止まりの筋書きの記録から判じるため。"
+  (tuple (gfor i (range 1 (len reads))
+               :setv read (get reads i)
+               :setv earlier (lfor r (cut reads 0 i) :if (= r.service read.service) r)
+               :if earlier
+               :setv prior (max earlier :key (fn [r] r.version))
+               :if (< read.version prior.version)
+               (ServiceVersionDrop :earlier prior :later read))))
 
 
 (defrecord WorkerProbe

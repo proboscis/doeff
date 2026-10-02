@@ -60,6 +60,10 @@
 ;;;   test-the-coordinator-revision-never-goes-back-across-a-stop(止まりの前と作り直しの後の版を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-store-that-forgets-on-reload-breaks-c5(置き場の差し替えの口に、読み直しで何も無いと答える置き場 ForgetsOnReload を
 ;;;   差すと、coordinator が空から起き直して版が戻り、C5 が名指す)。
+;;;   C12 service-versions-never-go-back(doeff_cluster.coordinator.core.coordinator_invariants:service-versions-never-go-back — #1976 の写しの
+;;;   C2 の残り)— GET /state の Service ごとの resourceVersion も、読んだ順に減らない(作り直しの後も)。確かめるのは tests/test_local.hy の
+;;;   test-service-versions-never-go-back-across-a-stop。失敗ケースは同じ file の test-a-counterexample-store-that-resets-service-versions-breaks-c12
+;;;   (読み直しで資源の版の記録と版を配る数を 1 に戻す置き場 ResetsServiceVersionsOnReload を差すと、Service の版が戻り、C12 が名指す)。
 ;;;   L2 alive-only-while-reachable(doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable — #1976 の #34)— GET
 ;;;   /workers/<名> が alive と答えるのは、その worker が lease-ms(+ 余裕)のうちに届き得た時だけ(止まり置き場から作り直された後も)。
 ;;;   確かめるのは tests/test_local.hy の test-a-dead-worker-is-not-alive-after-the-coordinator-is-recreated(死んだ worker の生存の読みと
@@ -153,6 +157,7 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"
                 "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"
                 "doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back"
+                "doeff_cluster.coordinator.core.coordinator_invariants:service-versions-never-go-back"
                 "doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:places-only-on-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity"
