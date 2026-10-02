@@ -7,6 +7,7 @@
 (import functools)
 (import hashlib)
 (import json)
+(import math [ceil])
 (import re)
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -682,19 +683,29 @@
                                          (lfor t (.get task.runtime-env "tools" []) (.format "{}{}" (get t "name")
                                                                                              (if (.get t "version") (+ "=" (get t "version")) ""))))))
         ;; 能力と版の合う worker は登録されているが、いま連絡していない(coordinator を起こし直した直後・worker の Recreate の入れ替えの間・
-        ;; 能力を持つ worker が 1 台だけの時の一瞬の沈黙)。待っても晴れない理由ではないので、失敗にせず待つ(#2440)。待ちの上限は
-        ;; task の lease: 切り離していない task は呼び手が問い合わせを止めると上で落ち、切り離した task は積んだ時の lease の期限まで。
-        ;; 登録された worker のどれも能力と版が合わない時は、今どおり下の枝で失敗にする(待っても晴れない)。
-        (and (not able) (<= now task.lease-until-ms) (any (gfor w (.values state.workers) (can-run-task task w))))
-          (setv (get tasks id)
-                (replace task :detail (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ"
-                                               (list task.needs)
-                                               (.join "・" (sorted (gfor w (.values state.workers) :if (can-run-task task w) w.name))))))
-        (and (not able) task.detached)
-          (setv (get tasks id) (end-detached task (unplaceable-phase task state now timing) now
-                                             (versions-note task state now timing)))
-        (not able) (setv (get tasks id) (replace task :phase "failed" :finished-ms now
-                                                 :detail (versions-note task state now timing))))))
+        ;; 能力を持つ worker が 1 台だけの時の一瞬の沈黙)なら、待っても晴れうるので失敗にせず待つ(#2440)。待ちの上限は task の lease では
+        ;; なく明示の期限 ClusterTiming.silent-worker-wait-ms で、合う worker のうち最後の連絡が新しい物から数える(#2753 — 切り離した task の
+        ;; lease は積んだ時の 60 秒で、入れ替えの drain の間に過ぎて落ちた)。待つ間の detail は拍ごとに変えない(経った秒を書くと、調停が
+        ;; 拍ごとに保存して版を進める)。期限を過ぎたら、待った長さと期限を名指して終える。登録された worker のどれも能力と版が合わない時は
+        ;; 待っても晴れないので、版の違う所を名指して終える。ended = 終える理由(None = 待つ)。
+        (not able)
+          (let [capable (lfor w (.values state.workers) :if (can-run-task task w) w)
+                silence (if capable (- now (max (gfor w capable w.last-seen-ms))) None)
+                names (.join "・" (sorted (gfor w capable w.name)))
+                limit-s (// timing.silent-worker-wait-ms 1000)
+                ended (cond
+                        (is silence None) (versions-note task state now timing)
+                        (> silence timing.silent-worker-wait-ms)
+                          (.format "要る能力 {} の worker {} が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)"
+                                   (list task.needs) names (ceil (/ silence 1000)) limit-s)
+                        True None)]
+            (setv (get tasks id)
+                  (cond
+                    (is ended None)
+                      (replace task :detail (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
+                                                     (list task.needs) names limit-s))
+                    task.detached (end-detached task (unplaceable-phase task state now timing) now ended)
+                    True (replace task :phase "failed" :finished-ms now :detail ended)))))))
   tasks)
 
 

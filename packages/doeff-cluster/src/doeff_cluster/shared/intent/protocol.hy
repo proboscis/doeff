@@ -14,6 +14,10 @@
   ;; 柵だけが守る(worker_policy.kept-when-cut-off・2026-09-25)。
   (setv #^ int fence-ms 20000)
   (setv #^ int reassign-after-ms 45000) ; 連絡の途絶えた worker の job を他へ移すまで
+  ;; 能力と版の合う worker が登録されているが live でない間、待っている task を失敗にせず待つ上限(その worker の最後の連絡から数える —
+  ;; task の lease とは別)。worker の Recreate の入れ替え(古い Pod の drain の最長 約 4 時間 + 新しい Pod の名乗り)を覆う 5 時間
+  ;; (#2753 — 切り離した task の lease は積んだ時の 60 秒で、入れ替えの間に過ぎて「合う worker が無い」で落ちた)。
+  (setv #^ int silent-worker-wait-ms (* 5 3600 1000))
 
   (defn #^ None __post-init__ [self]
     (when (<= self.reassign-after-ms self.fence-ms)
