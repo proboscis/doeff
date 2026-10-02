@@ -17,7 +17,7 @@
 (import doeff_hy.table [TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
-(import doeff_cluster.coordinator.protocol.wal_format [LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log])
+(import doeff_cluster.coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log])
 
 
 (defclass [(dataclass :frozen True)] Persist [EffectBase]
@@ -40,14 +40,15 @@
 
 (defclass MethodShape [ABC]
   "method の名(METHODS)を全部持つ型をその形と見なす基底 — ByteLog と DeltaStore が 1 つの判じ方を共有するため。"
-  (setv METHODS #())
+  (setv #^ (get tuple #(str ...)) METHODS #())
   (defn [classmethod] #^ (| bool NotImplementedType) __subclasshook__ [cls #^ type other]
     (if (and cls.METHODS (all (gfor name cls.METHODS (callable (getattr other name None))))) True NotImplemented)))
 
 
 (defclass ByteLog [MethodShape]
   "file の置き場の形(foundation/wal_store の WalStore)— 読み書きの口が写しと log の byte を受け渡す相手。"
-  (#^ dict kv)
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
   (#^ int seq)
   (#^ int max-log-bytes)
   (#^ Path snapshot)
@@ -56,19 +57,20 @@
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ None check-place [self] (raise NotImplementedError))
   (defn #^ (| bytes None) read-snapshot-bytes [self] (raise NotImplementedError))
-  (defn #^ list read-log-lines [self] (raise NotImplementedError))
-  (defn #^ None drop-tail [self #^ int good #^ int dropped #^ str reason] (raise NotImplementedError))
+  (defn #^ (get list bytes) read-log-lines [self] (raise NotImplementedError))
+  (defn #^ None drop-tail [self #^ int kept #^ int size #^ str reason] (raise NotImplementedError))
   (defn #^ int append-line [self #^ bytes line] (raise NotImplementedError))
   (defn #^ None write-snapshot [self #^ bytes data] (raise NotImplementedError)))
 
 
 (defclass DeltaStore [MethodShape]
   "memory の置き場の形(entry の MemoryWalStore)— 読み書きの口が差分と表をそのまま受け渡す相手。"
-  (#^ dict kv)
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
   (setv METHODS #("exists" "load" "persist" "checkpoint"))
   (defn #^ bool exists [self] (raise NotImplementedError))
-  (defn #^ dict load [self] (raise NotImplementedError))
-  (defn #^ None persist [self #^ dict delta] (raise NotImplementedError))
+  (defn #^ (get dict #(str object)) load [self] (raise NotImplementedError))
+  (defn #^ None persist [self #^ (get dict #(str object)) delta] (raise NotImplementedError))
   (defn #^ None checkpoint [self] (raise NotImplementedError)))
 
 
@@ -82,7 +84,7 @@
 
 
 (defk durable-load [store]
-  {:pre [(: store DurableStore)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  {:pre [(: store DurableStore)] :post [(: % (get dict #(str object)))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "耐久の中身を読み直し、全部のキーの表を返す(置き場の kv と seq も進める)— 起動が返事を済ませた書きを 1 つも失わずに状態を作るため。
    file の置き場は写し → log の行を検めて当て、読めない最後の 1 行だけを捨てて切り詰める。途中の破損は WalCorrupted で何も書き換えない。"
   (match store
@@ -94,15 +96,16 @@
                         (SnapshotRead :kv {} :seq 0)
                         (! (read-snapshot snapshot (str store.snapshot)))))
           (<- scan LogScan (scan-log (.read-log-lines store) base.seq base.kv (str store.log)))
-          (when scan.dropped
-            (.drop-tail store scan.good scan.dropped scan.reason))
+          (match scan.dropped
+            (DroppedTail :kept kept :size size :reason reason) (.drop-tail store kept size reason)
+            None None)
           (setv store.kv scan.kv store.seq scan.seq)
           store.kv)
     (DeltaStore) (.load store)))
 
 
 (defk durable-persist [store delta]
-  {:pre [(: store DurableStore) (: delta dict)] :post [(: % None)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  {:pre [(: store DurableStore) (: delta (get dict #(str object)))] :post [(: % None)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "1 まとまりの差分(キー → 新しい値・消えたキーは None)を耐久にして(fsync 済み)から戻る — Persist の答え手と起動の書きが同じ
    書き方をするため。file の置き場は log に checksum つきの 1 行を追記し、log が上限を超えたら写しにまとめ直す。空の差分は書かない。"
   (match store

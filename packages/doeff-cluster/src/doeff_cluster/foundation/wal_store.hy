@@ -46,6 +46,8 @@
   "dir の中の snapshot.json と wal.jsonl の byte の I/O。kv / seq = いま耐久になっている全部のキーと最後のまとまりの番号(まとめ直しの
    材料 — 置き場の口が読み直しと書きの後に進める)。recovered = 読み直しで最後の読めない行を捨てた時の記録(捨てた byte 数・理由・
    残した byte 数 — coordinator が起動の行と計器に出す)。fsync-seconds = 直近の fsync の時間(秒)の記録(log の遅さを測る)。"
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
   (defn #^ None __init__ [self #^ str directory #^ int [max-log-bytes MAX-LOG-BYTES] #^ Callable [fsync os.fsync]]
     (setv self.dir (Path directory) self.max-log-bytes max-log-bytes self.fsync fsync
           self.snapshot (/ self.dir "snapshot.json") self.log (/ self.dir "wal.jsonl")
@@ -68,18 +70,18 @@
     "写しの byte(写しがまだ無ければ None)。"
     (if (.exists self.snapshot) (.read-bytes self.snapshot) None))
 
-  (defn #^ list read-log-lines [self]
+  (defn #^ (get list bytes) read-log-lines [self]
     "log の行(改行つきの byte の list・log がまだ無ければ空)。最後の行は改行を持たないことがある(fsync の途中で落ちた)。"
     (if (.exists self.log)
         (with [handle (open self.log "rb")] (list handle))
         []))
 
-  (defn #^ None drop-tail [self #^ int good #^ int dropped #^ str reason]
-    "読み直しで最後の読めない 1 行を捨てる: log を good byte で切り詰めて fsync し、捨てた記録を recovered に残して 1 行出す。"
-    (setv self.recovered {"dropped" dropped "reason" reason "kept" good})
-    (print (.format "coordinator: log の最後の読めない行を捨てた({} byte・{})" dropped reason) :file sys.stderr :flush True)
+  (defn #^ None drop-tail [self #^ int kept #^ int size #^ str reason]
+    "読み直しで最後の読めない 1 行(size byte)を捨てる: log を kept byte で切り詰めて fsync し、捨てた記録を recovered に残して 1 行出す。"
+    (setv self.recovered {"dropped" size "reason" reason "kept" kept})
+    (print (.format "coordinator: log の最後の読めない行を捨てた({} byte・{})" size reason) :file sys.stderr :flush True)
     (with [handle (open self.log "r+b")]
-      (.truncate handle good)
+      (.truncate handle kept)
       (.flush handle)
       (self.fsync (.fileno handle))))
 

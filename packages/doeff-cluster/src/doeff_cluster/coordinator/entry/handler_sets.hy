@@ -38,6 +38,8 @@
    (durable-load・durable-persist ほか)を通してそのまま使える。file を持たないので行と写しの形を綴らない(#2785)。
    kv = 耐久になった全部のキー・deltas = Persist の列(書いた順)・recovered = 読み直しで捨てた行の記録(memory では捨てないので None)。
    fail-at = 失敗させる Persist の番号(1 から — fsync の失敗の注入。その番号の Persist は何も書かずに OSError)。"
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
   (defn #^ None __init__ [self]
     (setv self.kv {} self.seq 0 self.deltas [] self.fail-at (set) self.recovered None)
     None)
@@ -46,7 +48,7 @@
 
   (defn #^ dict load [self] self.kv)
 
-  (defn #^ None persist [self #^ dict delta]
+  (defn #^ None persist [self #^ (get dict #(str object)) delta]
     (when (not delta) (return None))
     (when (in (+ self.seq 1) self.fail-at)
       (.discard self.fail-at (+ self.seq 1))

@@ -21,36 +21,52 @@
   "置き場の途中が壊れている(返事を済ませた書きを失わずには読めない)。起動を断るために投げる。")
 
 
-(defrecord LineRead
-  "log の 1 行を読んだ結果 — 読み直しが行ごとに、当てるか・捨てるか・起動を断るかを決める材料。record = 行の JSON の object
-   (crc を除いた seq と delta — JSON の境目の値なので dict のまま持つ)か、読めなければ None(reason に理由)。checked = checksum を
-   確かめた行か(旧い形の行は False)。"
+(defrecord GoodLine
+  "読めた log の 1 行 — 読み直しが当てる材料。seq = まとまりの番号・delta = その差分(キー → 新しい値・消えたキーは None —
+   置き場の JSON の表の断片なので dict)・checked = checksum を確かめた行か(旧い形の行は False)。"
   {:tags {:context "coordinator" :role "protocol"}}
-  (#^ (| dict None) record)
-  (#^ bool checked)
-  (#^ (| str None) reason))
+  (#^ int seq)
+  (#^ (get dict #(str object)) delta)
+  (#^ bool checked))
+
+
+(defrecord BadLine
+  "読めない log の 1 行 — 最後の行なら捨て、後ろに行が続けば起動を断る。reason = 読めない理由。"
+  {:tags {:context "coordinator" :role "protocol"}}
+  (#^ str reason))
+
+
+;; log の 1 行を読んだ結果(閉じた和)— 読み直しが行ごとに、当てるか・捨てるか・起動を断るかを決める。
+(val LineRead (| GoodLine BadLine))
+
+
+(defrecord DroppedTail
+  "読み直しで捨てた最後の 1 行 — kept = 残す byte 数(log をここで切り詰める)・size = 捨てた行の byte 数・reason = 捨てた理由。"
+  {:tags {:context "coordinator" :role "protocol"}}
+  (#^ int kept)
+  (#^ int size)
+  (#^ str reason))
 
 
 (defrecord LogScan
   "log を写しの上へ当てた結果 — 起動の読み直しの答え。kv = 当てた後の全部のキー(置き場の JSON の表なので dict)・seq = 最後に当てた
-   まとまりの番号・good = 残す byte 数・dropped = 捨てた最後の行の byte 数(0 = 捨てていない)・reason = 捨てた理由。"
+   まとまりの番号・dropped = 捨てた最後の行(None = 捨てていない)。"
   {:tags {:context "coordinator" :role "protocol"}}
-  (#^ dict kv)
+  (#^ (get dict #(str object)) kv)
   (#^ int seq)
-  (#^ int good)
-  (#^ int dropped)
-  (#^ (| str None) reason))
+  (#^ (| DroppedTail None) dropped))
 
 
 (defrecord SnapshotRead
   "写しを読んだ結果 — 読み直しの起点。kv = 写しの全部のキー(置き場の JSON の表なので dict)・seq = 写しが含む最後のまとまりの番号。"
   {:tags {:context "coordinator" :role "protocol"}}
-  (#^ dict kv)
+  (#^ (get dict #(str object)) kv)
   (#^ int seq))
 
 
 (defk apply-delta [kv delta]
-  {:pre [(: kv dict) (: delta dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol"}}
+  {:pre [(: kv (get dict #(str object))) (: delta (get dict #(str object)))] :post [(: % (get dict #(str object)))]
+   :tags {:context "coordinator" :role "protocol"}}
   "差分(キー → 新しい値・消えたキーは None)を表 kv に当てて kv を返す — 読み直しと書きの後で、耐久になった全部のキーの表を
    同じ当て方で進めるため(表は置き場ごとに 1 つで大きいので、写さずにその場で書き換える)。"
   (for [#(k v) (.items delta)]
@@ -59,7 +75,7 @@
 
 
 (defk canonical [body]
-  {:pre [(: body dict)] :post [(: % str)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  {:pre [(: body (get dict #(str object)))] :post [(: % str)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "checksum を取る正規化した JSON(鍵を並べ替え・区切りの空白なし)— 書きと検めが同じ text の crc を比べるため。"
   (json.dumps body :ensure-ascii False :sort-keys True :separators #("," ":")))
 
@@ -71,7 +87,7 @@
 
 
 (defk sealed [body]
-  {:pre [(: body dict)] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  {:pre [(: body (get dict #(str object)))] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "body(crc を持たない dict)を crc つきの 1 つの JSON の byte にする — 行と写しが同じ封じ方を使うため。正規化した text の先頭へ
    crc の欄を差し込むだけなので dump は 1 回。body の鍵はどれも \"crc\" より後に並ぶ(delta・kv・seq)。"
   (<- text str (canonical body))
@@ -80,14 +96,14 @@
 
 
 (defk encode-line [seq delta]
-  {:pre [(: seq int) (: delta dict)] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  {:pre [(: seq int) (: delta (get dict #(str object)))] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "log の 1 行(改行つき)— Persist 1 回分のまとまりを番号 seq つきで追記するため。"
   (<- line bytes (sealed {"seq" seq "delta" delta}))
   (+ line b"\n"))
 
 
 (defk encode-snapshot [seq kv]
-  {:pre [(: seq int) (: kv dict)] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  {:pre [(: seq int) (: kv (get dict #(str object)))] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "まとめ直した写しの byte — log を空にする前に、全部のキーを seq のまとまりまで含む 1 つの写しにするため。"
   (<- data bytes (sealed {"seq" seq "kv" kv}))
   data)
@@ -96,27 +112,28 @@
 (defk read-line-record [line]
   {:pre [(: line bytes)] :post [(: % LineRead)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "log の 1 行を読む — 読み直しが行ごとに、当てるか・捨てるか・起動を断るかを決めるため。"
-  (val parsed (if (.endswith line b"\n")
-                  (try #("json" (json.loads line)) (except [ValueError] #("not-json" None)))
-                  #("cut" None)))
-  (match parsed
-    #("cut" _) (LineRead :record None :checked False :reason "改行が無い(途中で切れた)")
-    #("not-json" _) (LineRead :record None :checked False :reason "JSON にならない")
-    #(_ record)
-      (if (not (and (isinstance record dict) (isinstance (.get record "seq") int) (isinstance (.get record "delta") dict)))
-          (LineRead :record None :checked False :reason "seq と delta の形でない")
-          (do (val body (dfor #(k v) (.items record) :if (!= k "crc") k v))
-              (if (not-in "crc" record)
-                  (LineRead :record record :checked False :reason None)
-                  (do (<- text str (canonical body))
-                      (<- crc str (checksum text))
-                      (if (= (get record "crc") crc)
-                          (LineRead :record body :checked True :reason None)
-                          (LineRead :record None :checked False :reason "checksum が合わない"))))))))
+  (when (not (.endswith line b"\n"))
+    (return (BadLine :reason "改行が無い(途中で切れた)")))
+  (val record (try (json.loads line) (except [ValueError] (return (BadLine :reason "JSON にならない")))))
+  (when (not (isinstance record dict))
+    (return (BadLine :reason "seq と delta の形でない")))
+  (val seq (.get record "seq"))
+  (val delta (.get record "delta"))
+  (when (not (and (isinstance seq int) (isinstance delta dict)))
+    (return (BadLine :reason "seq と delta の形でない")))
+  (when (not-in "crc" record)
+    (return (GoodLine :seq seq :delta delta :checked False)))
+  ;; crc は crc の欄を除いた全部の欄(書き手が書くのは seq と delta だけ)の正規化した JSON に対して取ってある。
+  (<- text str (canonical (dfor #(k v) (.items record) :if (!= k "crc") k v)))
+  (<- crc str (checksum text))
+  (if (= (get record "crc") crc)
+      (GoodLine :seq seq :delta delta :checked True)
+      (BadLine :reason "checksum が合わない")))
 
 
 (defk scan-log [lines base kv where]
-  {:pre [(: lines list) (: base int) (: kv dict) (: where str)] :post [(: % LogScan)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  {:pre [(: lines (get list bytes)) (: base int) (: kv (get dict #(str object))) (: where str)] :post [(: % LogScan)]
+   :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "log の行(改行つきの byte の list)を写しの上(base = 写しの seq・kv = その中身)へ当てる — 起動の読み直しで、返事を済ませた
    書きを 1 つも失わずに表と番号を作るため。読めないのが最後の 1 行なら捨てる(返事をしていないまとまり)。それ以外の破損・seq の飛び/逆行は WalCorrupted。
    checksum つきの行が 1 つでも出た後の、checksum の無い行も破損とみなす(書き手は旧い形へ戻らない)。"
@@ -128,28 +145,27 @@
   (for [#(i line) (enumerate lines)]
     (<- read LineRead (read-line-record line))
     ;; checksum の無い行は、checksum つきの行の後なら読めない行と同じに扱う。
-    (val unchecked-after-checked (and (is-not read.record None) (not read.checked) checked-seen))
-    (val record (if unchecked-after-checked None read.record))
-    (val reason (if unchecked-after-checked "checksum の無い行が checksum つきの行の後に在る" read.reason))
-    (when (is record None)
-      (when (!= i (- (len lines) 1))
-        (raise (WalCorrupted (.format "{}: {} byte 目から始まる {} 行目が壊れている({})。後ろに {} 行が続くので、切り詰めずに起動を断る(直前の seq {})"
-                                      where good (+ i 1) reason (- (len lines) i 1) prev))))
-      (:= dropped #((len line) reason))
-      (break))
-    (val n (get record "seq"))
-    (when (if (is prev None) (> n (+ base 1)) (!= n (+ prev 1)))
-      (raise (WalCorrupted (.format "{}: {} byte 目から始まる {} 行目の seq {} が続きでない(直前の seq {}・snapshot の seq {})。起動を断る"
-                                    where good (+ i 1) n prev base))))
-    (:= prev n)
-    (:= checked-seen (or checked-seen read.checked))
-    (:= good (+ good (len line)))
-    (when (> n base)
-      (<- (apply-delta kv (get record "delta")))
-      (:= seq n)))
-  (match dropped
-    None (LogScan :kv kv :seq seq :good good :dropped 0 :reason None)
-    #(size why) (LogScan :kv kv :seq seq :good good :dropped size :reason why)))
+    (val judged (match read
+                  (GoodLine :checked False) (if checked-seen (BadLine :reason "checksum の無い行が checksum つきの行の後に在る") read)
+                  _ read))
+    (match judged
+      (BadLine :reason reason)
+        (do (when (!= i (- (len lines) 1))
+              (raise (WalCorrupted (.format "{}: {} byte 目から始まる {} 行目が壊れている({})。後ろに {} 行が続くので、切り詰めずに起動を断る(直前の seq {})"
+                                            where good (+ i 1) reason (- (len lines) i 1) prev))))
+            (:= dropped (DroppedTail :kept good :size (len line) :reason reason))
+            (break))
+      (GoodLine :seq n :delta delta :checked checked)
+        (do (when (if (is prev None) (> n (+ base 1)) (!= n (+ prev 1)))
+              (raise (WalCorrupted (.format "{}: {} byte 目から始まる {} 行目の seq {} が続きでない(直前の seq {}・snapshot の seq {})。起動を断る"
+                                            where good (+ i 1) n prev base))))
+            (:= prev n)
+            (:= checked-seen (or checked-seen checked))
+            (:= good (+ good (len line)))
+            (when (> n base)
+              (<- (apply-delta kv delta))
+              (:= seq n)))))
+  (LogScan :kv kv :seq seq :dropped dropped))
 
 
 (defk read-snapshot [data where]
@@ -158,11 +174,15 @@
    ことはない)。crc の無い旧い形はそのまま読む。"
   (val record (try (json.loads data)
                    (except [ValueError] (raise (WalCorrupted (.format "{}: JSON にならない。起動を断る" where))))))
-  (when (not (and (isinstance record dict) (isinstance (.get record "seq") int) (isinstance (.get record "kv") dict)))
+  (when (not (isinstance record dict))
+    (raise (WalCorrupted (.format "{}: seq と kv の形でない。起動を断る" where))))
+  (val seq (.get record "seq"))
+  (val kv (.get record "kv"))
+  (when (not (and (isinstance seq int) (isinstance kv dict)))
     (raise (WalCorrupted (.format "{}: seq と kv の形でない。起動を断る" where))))
   (when (in "crc" record)
     (<- text str (canonical (dfor #(k v) (.items record) :if (!= k "crc") k v)))
     (<- crc str (checksum text))
     (when (!= (get record "crc") crc)
-      (raise (WalCorrupted (.format "{}: checksum が合わない(seq {})。起動を断る" where (get record "seq"))))))
-  (SnapshotRead :kv (get record "kv") :seq (get record "seq")))
+      (raise (WalCorrupted (.format "{}: checksum が合わない(seq {})。起動を断る" where seq)))))
+  (SnapshotRead :kv kv :seq seq))

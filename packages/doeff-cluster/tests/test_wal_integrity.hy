@@ -8,7 +8,7 @@
 (import pytest)
 (import pathlib [Path])
 (import doeff_cluster.foundation.wal_store [WalStore])
-(import doeff_cluster.coordinator.protocol.wal_format [WalCorrupted LineRead LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
+(import doeff_cluster.coordinator.protocol.wal_format [WalCorrupted GoodLine DroppedTail LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
 
 
@@ -39,9 +39,9 @@
   (<- line bytes (log-bytes tmp-path))
   (val record (json.loads line))
   (assert (= (sorted record) ["crc" "delta" "seq"]))
-  (<- back LineRead (read-line-record line))
+  (<- back GoodLine (read-line-record line))
   (assert back.checked)
-  (assert (= (get back.record "delta") {"board/a" {"value" "日本語" "resourceVersion" 1}})))
+  (assert (= back.delta {"board/a" {"value" "日本語" "resourceVersion" 1}})))
 
 
 (deftest test-a-flipped-byte-in-the-last-line-is-dropped-and-the-log-truncated [tmp-path]
@@ -114,8 +114,17 @@
   (<- scan LogScan (scan-log lines 2 {"b" 2} "log"))
   (assert (= scan.kv {"b" 2 "c" 3}))
   (assert (= scan.seq 3))
-  (assert (= scan.dropped 0)))
+  (assert (is scan.dropped None)))
 
+
+
+(deftest test-a-cut-last-line-is-reported-as-the-dropped-tail
+  ;; 改行まで書けなかった最後の行: 当てずに、残す byte 数・捨てる byte 数・理由を返す(切り詰めるのは置き場の口)。
+  (val lines [(! (encode-line 1 {"a" 1})) (cut (! (encode-line 2 {"b" 2})) 0 -3)])
+  (<- scan LogScan (scan-log lines 0 {} "log"))
+  (assert (= scan.kv {"a" 1}))
+  (assert (= scan.seq 1))
+  (assert (= scan.dropped (DroppedTail :kept (len (get lines 0)) :size (len (get lines 1)) :reason "改行が無い(途中で切れた)"))))
 
 (deftest test-sealed-snapshot-round-trips
   (<- back SnapshotRead (read-snapshot (! (sealed {"seq" 7 "kv" {"x" [1 2]}})) "s"))
