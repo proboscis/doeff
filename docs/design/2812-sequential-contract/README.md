@@ -95,7 +95,8 @@ def Sequence(*programs: Program[T, E]) -> Program[tuple[T, ...], E]: ...
 | 再実行時に蓄積を共有しない | `test_rerun_gets_a_fresh_accumulator` |
 | B が失敗後にも進む差異 | `test_existing_traverse_continues_after_failure` |
 
-`typing_contract.py` は T の推論と E の保存の正例を pyright で確認する。
+`typing_contract.py` は T の推論と、E を宣言した Program 型へ代入できる正例を pyright で確認する。
+E が途中で Any に劣化しても代入は通りうるため、これだけで効果型の精密な保存を証明したとはしない。
 実装時は空入力、異種入力、非 Program 入力の拒否、呼出側の E 漏れの負例、
 Hy の `<-` による型認識も追加する。今回 Hy マクロは変更していない。
 
@@ -119,7 +120,11 @@ root conftest の VM invariant checks を有効にしたまま実施。
 ## 性能の予備計測と未達条件
 
 `benchmark_sequence.py` は dict 内包表記、繰返し tuple 連結、参照 Sequence を比較する。
-毎回 Program の構築・run・最後の dict 化を含める。入力 pairs の作成は各方式とも計測外。
+Program を使う 2 方式は、毎回 Program の構築・run・最後の dict 化を含める。
+dict 基準は内包表記だけを測る。入力 pairs の作成は各方式とも計測外。
+繰返し側は `result = (*result, value)` による tuple 全体の再構築で、issue 原文の
+`result + (value,)` とは異なる。どちらも O(n²) だが定数は違うので、表の2.53秒や
+参照実装への短縮倍率を、実際の旧 read-each の時間・改善倍率として使わない。
 各方式 warm-up 1 回 + 5 回の中央値。CPU は process_time、wall は perf_counter。
 VM invariant checks は明示的に有効。macOS / CPython 3.14.3 free-threaded の既存環境。
 
