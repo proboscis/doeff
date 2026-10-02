@@ -75,10 +75,14 @@ from doeff_effect_analyzer.program_effects import (
     _locate,
     _location_of,
     _no_carrier,
+    _passed_arguments,
+    _ProgramAnyOf,
+    _ProgramArg,
     _Reader,
     _report_facts,
     _Scope,
     _scope_of,
+    _WrittenArgument,
     bindings_for,
     pass_through,
     qualified_name,
@@ -628,13 +632,9 @@ def element_of(
         return raw_handler_of(element, scope, filename, text)
     if isinstance(element, ast.Name) and isinstance(scope.resolve(element), _LocalFunction):
         return raw_handler_of(element, scope, filename, text)  # a dispatch function defined in the body
-    if (
-        isinstance(element, ast.Name)
-        and scope.resolve(element) is UNBOUND
-        and depth < _MAX_LIST_HOPS
-        and element.id in scope.local_values
-    ):  # h = (reader {...}) … [h]
-        return element_of(scope.local_values[element.id], scope, filename, depth=depth + 1)
+    placed = _placed_element(element, scope, filename, text, location, depth=depth)
+    if placed is not None:
+        return placed
     head = element.func if isinstance(element, ast.Call) else element
     value = scope.resolve(head)
     if value is UNBOUND:
@@ -664,7 +664,22 @@ def _element_handler(element: ast.expr, value: Any, scope: _Scope, text: str) ->
     return wrapped if wrapped.known else direct
 
 
-_MAX_LIST_HOPS = 6
+# How many names, builders and written arguments a handler list is followed through.  Only
+# these hops can come back to where they started (``x = [*x]``, a builder calling itself);
+# the literal, ``+``, bind and spread around them are finite in the tree and not counted —
+# counting them stopped a ``(<- launch (managed-launch [] adapter))`` inside a builder
+# before its plain list was reached (agora-redesign #2674).
+_MAX_LIST_HOPS = 12
+
+
+@dataclass(frozen=True)
+class _Slot:
+    """One place in a handler list read from source: the handler there, and whether it stands
+    for a whole list the reader could not open (``whole_list`` — it may hold any number of
+    handlers, so the places after it are not known by position)."""
+
+    handler: HandlerEffects
+    whole_list: bool = False
 
 
 def stack_of(
@@ -674,54 +689,186 @@ def stack_of(
 
     A list / tuple literal (``*spread`` elements included), ``a + b``, a name bound
     once to one of these (or to ``yield builder()`` — ``(<- base list (builder))``),
-    a call to a builder function, or a bound / module-level list of handler values.
-    What cannot be read becomes an ``unread`` entry (it may hide a gap).
+    a call to a builder function, a builder's parameter bound to what its caller wrote,
+    or a bound / module-level list of handler values.  What cannot be read becomes an
+    ``unread`` entry (it may hide a gap).
     """
+    return [slot.handler for slot in _slots_of(expr, scope, filename, depth=depth)]
+
+
+def _slots_of(expr: ast.expr, scope: _Scope, filename: str, *, depth: int) -> list[_Slot]:
+    """``stack_of`` with each place marked when it stands for a list read as one entry."""
     text = ast.unparse(expr)
     location = Location(filename, getattr(expr, "lineno", 0))
     if depth > _MAX_LIST_HOPS:
-        return [_unread(text, Unresolved("handler list is too indirect to follow", text, location))]
-    deeper = depth + 1
-    stack: list[HandlerEffects]
+        reason = "handler list is too indirect to follow"
+        return [_Slot(_unread(text, Unresolved(reason, text, location)), whole_list=True)]
+    hop = depth + 1
+    slots: list[_Slot]
     match expr:
         case ast.List(elts=elements) | ast.Tuple(elts=elements):
-            stack = [
-                handler
+            slots = [
+                slot
                 for element in elements
-                for handler in (
-                    stack_of(element.value, scope, filename, depth=deeper)
+                for slot in (
+                    _slots_of(element.value, scope, filename, depth=depth)
                     if isinstance(element, ast.Starred)
-                    else [element_of(element, scope, filename)]
+                    else [_Slot(element_of(element, scope, filename, depth=depth))]
                 )
             ]
         case ast.BinOp(left=left, op=ast.Add(), right=right):
-            stack = [
-                *stack_of(left, scope, filename, depth=deeper),
-                *stack_of(right, scope, filename, depth=deeper),
+            slots = [
+                *_slots_of(left, scope, filename, depth=depth),
+                *_slots_of(right, scope, filename, depth=depth),
             ]
         case ast.IfExp() if (wrapper := _bind_expression(expr, scope)) is not None:
             # doeff-hy's bind (``(<- hs (builder))``): the list the bound builder answers.
-            stack = stack_of(_bound_operand(wrapper, scope), scope, filename, depth=deeper)
+            slots = _slots_of(_bound_operand(wrapper, scope), scope, filename, depth=depth)
         case ast.IfExp(body=body, orelse=orelse):
-            stack = _one_stack([body, orelse], scope, filename, text, location, depth=deeper)
+            slots = _one_stack([body, orelse], scope, filename, text, location, depth=depth)
         case (
             ast.Yield(value=ast.expr() as inner)
             | ast.YieldFrom(value=inner)
             | ast.Await(value=inner)
         ):
-            stack = stack_of(_bound_operand(inner, scope), scope, filename, depth=deeper)
+            slots = _slots_of(_bound_operand(inner, scope), scope, filename, depth=depth)
         case ast.Name(id=name) if scope.resolve(expr) is UNBOUND and name in scope.local_values:
-            stack = stack_of(scope.local_values[name], scope, filename, depth=deeper)
+            slots = _slots_of(scope.local_values[name], scope, filename, depth=hop)
+        case ast.Name() if isinstance(written := scope.resolve(expr), _WRITTEN):
+            # A builder's parameter: the list its caller wrote for it, read where written.
+            slots = _slots_of(written.expr, written.scope, written.filename, depth=hop)
         case ast.Call(func=func) if (builder := _builder_function(scope.resolve(func))) is not None:
-            stack = _env_of(builder, _call_bindings(builder, expr, scope), text, depth=deeper)
+            slots = _env_of(builder, _builder_bindings(builder, expr, scope), text, depth=hop)
         case _:
             value = scope.resolve(expr)
-            stack = (
-                [analyze_handler(item) for item in value]
+            slots = (
+                [_Slot(analyze_handler(item)) for item in value]
                 if isinstance(value, (list, tuple))
-                else [_unread(text, Unresolved("handler list could not be read", text, location))]
+                else [
+                    _Slot(
+                        _unread(text, Unresolved("handler list could not be read", text, location)),
+                        whole_list=True,
+                    )
+                ]
             )
-    return stack
+    return slots
+
+
+# What a builder's parameter may be bound to that names an expression written in the caller:
+# a Program-looking call (``(indexed (runtime-handlers))``) or any other argument the reader
+# could not bind to an object (``(managed-launch [] adapter)``).
+_WRITTEN = (_ProgramArg, _WrittenArgument)
+
+
+def _builder_bindings(function: FunctionType, call: ast.Call, scope: _Scope) -> _Bound:
+    """``function``'s parameters bound to the arguments of ``call``: an object when known
+    here, else the expression the caller wrote (read as a handler where the builder places
+    the parameter in its list)."""
+    known = _call_bindings(function, call, scope)
+    written = _Bound(
+        tuple(
+            Binding(passed.name, _WrittenArgument(passed.argument, scope))
+            for passed in _passed_arguments(function, call, scope)
+            if passed.name not in known.names()
+        )
+    )
+    return written.plus(known)
+
+
+def _placed_element(
+    element: ast.expr,
+    scope: _Scope,
+    filename: str,
+    text: str,
+    location: Location,
+    *,
+    depth: int,
+) -> HandlerEffects | None:
+    """The handler at a place in a list written elsewhere, or None when ``element`` is not
+    such a place: a builder's parameter bound to what its caller wrote (read there), a name
+    unpacked from a list (``(setv [lower adapter] (runtime-handlers))``), or a constant index
+    into one (``(get runtime 0)``).  A place inside a list that could not be read whole is
+    that list's unread entry under the same name — the name an unreadable parent was
+    reported by passes to its parts (agora-redesign #2674).  A name bound once to an element
+    (``h = (reader {...})`` … ``[h]``) is read as that element."""
+    hop = depth + 1
+    value = scope.resolve(element)
+    placed: HandlerEffects | None
+    match element:
+        case _ if depth >= _MAX_LIST_HOPS and _follows(element, value, scope):
+            reason = "handler is too indirect to follow"
+            placed = _unread(text, Unresolved(reason, text, location))
+        case ast.Name(id=name) if value is UNBOUND and name in scope.local_values:
+            placed = element_of(scope.local_values[name], scope, filename, depth=hop)
+        case ast.Name() if isinstance(value, _WRITTEN):
+            placed = element_of(value.expr, value.scope, value.filename, depth=hop)
+        case ast.Name(id=name) if value is UNBOUND and name in scope.local_unpacked:
+            place = scope.local_unpacked[name]
+            slots = _slots_of(place.value, scope, filename, depth=hop)
+            placed = _pick(slots, place.index, place.count, text, location)
+        case ast.Subscript(value=listed, slice=ast.Constant(value=int() as index)) if (
+            not isinstance(value, _PLACED_PROGRAMS)
+        ):
+            slots = _slots_of(listed, scope, filename, depth=hop)
+            placed = _pick(slots, index, None, text, location)
+        case _:
+            placed = None
+    return placed
+
+
+def _follows(element: ast.expr, value: object, scope: _Scope) -> bool:
+    """Whether ``_placed_element`` reads ``element`` somewhere else (``value`` = what it
+    resolves to)."""
+    match element:
+        case ast.Name(id=name) if value is UNBOUND:
+            return name in scope.local_values or name in scope.local_unpacked
+        case ast.Name():
+            return isinstance(value, _WRITTEN)
+        case ast.Subscript(slice=ast.Constant(value=int())):
+            return not isinstance(value, _PLACED_PROGRAMS)
+        case _:
+            return False
+
+
+# An element of a sequence of Programs (``ports[0]`` — read as the Program it is, not as a handler).
+_PLACED_PROGRAMS = (_ProgramArg, _ProgramAnyOf)
+
+
+def _pick(
+    slots: Sequence[_Slot], index: int, count: int | None, text: str, location: Location
+) -> HandlerEffects:
+    """The handler at ``index`` of a list read as ``slots`` (``count`` = how many names it
+    is unpacked into, when unpacked).  A place counted from the front (or, when the length
+    is known, from the back) that only single handlers precede is exact; any other place
+    lies inside a list that could not be read whole and is reported unread under that
+    list's name."""
+    size = len(slots)
+    whole = [slot.handler for slot in slots if slot.whole_list]
+    if not whole:
+        if count is not None and count != size:
+            reason = f"unpacks {count} names from a list of {size} handlers"
+            return _unread(text, Unresolved(reason, text, location))
+        if not -size <= index < size:
+            reason = f"index {index} is outside a list of {size} handlers"
+            return _unread(text, Unresolved(reason, text, location))
+        return slots[index].handler
+    front = index if index >= 0 else None
+    back = -index if index < 0 else (count - index if count is not None else None)
+    if front is not None and front < size and not any(s.whole_list for s in slots[: front + 1]):
+        return slots[front].handler
+    if (
+        back is not None
+        and 0 < back <= size
+        and not any(s.whole_list for s in slots[size - back :])
+    ):
+        return slots[size - back].handler
+    name = " | ".join(dict.fromkeys(handler.name for handler in whole))
+    reason = f"element {index} of a handler list that could not be read whole"
+    return _unread(
+        name,
+        *(item for handler in whole for item in handler.unresolved),
+        Unresolved(reason, text, location),
+    )
 
 
 def _builder_function(value: Any) -> FunctionType | None:
@@ -731,25 +878,18 @@ def _builder_function(value: Any) -> FunctionType | None:
     return _function_of(value)
 
 
-def _env_of(
-    function: FunctionType, bound: _Bound, text: str, *, depth: int
-) -> list[HandlerEffects]:
+def _env_of(function: FunctionType, bound: _Bound, text: str, *, depth: int) -> list[_Slot]:
     """The handler list a builder called inside another list returns (unread when it cannot be)."""
     located = _locate(function, bound)
     if isinstance(located, Unresolved):
-        return [_unread(text, located)]
+        return [_Slot(_unread(text, located), whole_list=True)]
     node, scope, filename = located.node, located.scope, located.filename
     returns = _returned_lists(node)
     location = _location_of(function)
     if not returns:
-        return [
-            _unread(
-                text,
-                Unresolved(
-                    "builder does not return a handler list", function.__qualname__, location
-                ),
-            )
-        ]
+        reason = "builder does not return a handler list"
+        unread = _unread(text, Unresolved(reason, function.__qualname__, location))
+        return [_Slot(unread, whole_list=True)]
     return _one_stack(returns, scope, filename, text, location, depth=depth)
 
 
@@ -772,17 +912,17 @@ def _one_stack(
     location: Location,
     *,
     depth: int,
-) -> list[HandlerEffects]:
+) -> list[_Slot]:
     """The handler list each of ``paths`` (the returns of a builder, the arms of a
     conditional) denotes, when they all denote the same one.  Which path runs is not
     known before running, so lists that differ are unread (reading one path alone —
     the last return — answered for handlers the other paths do not install)."""
-    stacks = [stack_of(path, scope, filename, depth=depth) for path in paths]
-    if len({tuple(handler.name for handler in stack) for stack in stacks}) == 1:
+    stacks = [_slots_of(path, scope, filename, depth=depth) for path in paths]
+    if len({tuple(slot.handler.name for slot in stack) for stack in stacks}) == 1:
         return stacks[0]
     written = " | ".join(ast.unparse(path) for path in paths)
     reason = "builder returns different handler lists on its paths"
-    return [_unread(text, Unresolved(reason, written, location))]
+    return [_Slot(_unread(text, Unresolved(reason, written, location)), whole_list=True)]
 
 
 # --------------------------------------------------------------------------- env
@@ -808,7 +948,8 @@ def analyze_env(builder: Any, *, bindings: Mapping[str, Any] | None = None) -> l
     if not returns:
         raise ValueError(f"{function.__qualname__} does not return a handler list")
     location = _location_of(function)
-    return _one_stack(returns, scope, filename, function.__qualname__, location, depth=0)
+    slots = _one_stack(returns, scope, filename, function.__qualname__, location, depth=0)
+    return [slot.handler for slot in slots]
 
 
 # --------------------------------------------------------------------------- coverage

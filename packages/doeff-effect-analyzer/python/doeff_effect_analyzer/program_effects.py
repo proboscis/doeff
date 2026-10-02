@@ -45,6 +45,7 @@ treated as handling nothing, so what it might absorb is still reported).
 """
 
 import ast
+import collections
 import contextlib
 import functools
 import hashlib
@@ -546,7 +547,8 @@ def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
         [
             # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
             # definitions that are built only when followed (_CachedTree — agora-redesign #1591).
-            "v3",
+            # v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
+            "v4",
             sys.version,
             hy.__version__,
             module_name,
@@ -880,6 +882,7 @@ class _IdentityKind(Enum):
     PROGRAM_SEQUENCE = "program-sequence"  # a tuple / list of Program arguments
     PROGRAM_ELEMENT = "program-element"  # one element of such a sequence, not known which
     LOCAL_FUNCTION = "local-function"  # a lambda / nested def, read where it was written
+    WRITTEN_ARGUMENT = "written-argument"  # a builder argument, read as a handler where written
     RECEIVED_FIELD = "received-field"  # a field of a clause's received effect
     INSTANCE = "instance"  # an instance of a class
     OBJECT = "object"  # any other object, by id
@@ -1033,6 +1036,35 @@ class _LocalFunction:
         return 1 + self.scope.bound.depth
 
 
+@dataclass(frozen=True, eq=False)
+class _WrittenArgument:
+    """A handler-list builder's parameter bound to the expression the caller wrote for it
+    when the reader cannot bind it to an object (``(managed-launch [] adapter)`` — a list
+    literal, a name the caller unpacked).  Where the builder places the parameter in its list
+    (``[mark #* around adapter]``), the expression is read as a handler (list) in the
+    caller's ``scope`` (agora-redesign #2674)."""
+
+    expr: ast.expr
+    scope: "_Scope"
+
+    @property
+    def filename(self) -> str:
+        """The file the expression was written in."""
+        return _module_source(self.scope.module).filename
+
+
+@dataclass(frozen=True)
+class _Unpacked:
+    """A local bound by exactly one destructuring assignment (``[lower, adapter] = f()``,
+    Hy's ``(setv [lower adapter] (f))``) and nothing else: the element at ``index`` of what
+    ``value`` holds, unpacked into ``count`` names."""
+
+    name: str
+    value: ast.expr
+    index: int
+    count: int
+
+
 _PROGRAM_VALUES = (_ProgramArg, _ProgramSeq, _ProgramAnyOf, _LocalFunction)
 
 
@@ -1121,6 +1153,8 @@ def _written_identity(value: Imported) -> _Identity | None:
             )
         case _LocalFunction(node=node, scope=scope):
             return _Identity(_IdentityKind.LOCAL_FUNCTION, id(node), scope.bound.key)
+        case _WrittenArgument(expr=expr, scope=scope):
+            return _Identity(_IdentityKind.WRITTEN_ARGUMENT, id(expr), scope.bound.key)
         case _:
             return None
 
@@ -1153,6 +1187,8 @@ class _Scope:
     # A local bound once and then only rebound to a call that wraps it (``prog = h(prog)``
     # — handlers put back around a Program) → what it was first bound to.
     local_rewraps: dict[str, ast.expr] = field(default_factory=dict)
+    # A local bound by one destructuring assignment and nothing else → where it was unpacked from.
+    local_unpacked: dict[str, _Unpacked] = field(default_factory=dict)
     bound: _Bound = _NO_BINDINGS
     # What each expression resolved to in this scope, by id(expr).  Resolution
     # reads only the frozen fields above and the module's globals, so a scope answers the
@@ -1445,6 +1481,7 @@ def _scope_of(
     elements = facts.elements
     choices = facts.choices
     rewraps = facts.rewraps
+    unpacked = facts.unpacked
     # A parameter rebound in the body (by an assignment or a loop) no longer holds what
     # the caller passed.
     own_bound = bound.without(facts.rebound)
@@ -1459,6 +1496,7 @@ def _scope_of(
             local_elements=elements,
             local_choices=choices,
             local_rewraps=rewraps,
+            local_unpacked=unpacked,
             bound=own_bound,
         )
     shadowed = frozenset(names)
@@ -1472,6 +1510,7 @@ def _scope_of(
         local_elements={**_unshadowed(parent.local_elements, shadowed), **elements},
         local_choices={**_unshadowed(parent.local_choices, shadowed), **choices},
         local_rewraps={**_unshadowed(parent.local_rewraps, shadowed), **rewraps},
+        local_unpacked={**_unshadowed(parent.local_unpacked, shadowed), **unpacked},
         bound=parent.bound.without(shadowed).plus(own_bound),
     )
 
@@ -1490,6 +1529,7 @@ class _BodyFacts:
     elements: dict[str, ast.expr]
     choices: dict[str, tuple[ast.expr, ...]]
     rewraps: dict[str, ast.expr]
+    unpacked: dict[str, _Unpacked]
     rebound: frozenset[str]
 
 
@@ -1561,6 +1601,14 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         for name, exprs in assigned.items()
         if len(exprs) > 1 and (seed := _rewrapped_seed(exprs, name)) is not None
     }
+    places = [place for node in _body_nodes(function) for place in _unpacked_places(node)]
+    times = collections.Counter(place.name for place in places)
+    # A name unpacked once and bound nowhere else holds that element.
+    unpacked = {
+        place.name: place
+        for place in places
+        if times[place.name] == 1 and place.name not in assigned and place.name not in loops
+    }
     return _BodyFacts(
         names=frozenset(names),
         imports=imports,
@@ -1570,8 +1618,25 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         elements=elements,
         choices=choices,
         rewraps=rewraps,
-        rebound=frozenset(assigned) | frozenset(loops),
+        unpacked=unpacked,
+        rebound=frozenset(assigned) | frozenset(loops) | frozenset(times),
     )
+
+
+def _unpacked_places(node: ast.AST) -> tuple[_Unpacked, ...]:
+    """The names ``[a, b] = v`` / ``a, b = v`` binds, each with its place (only when every
+    target is a plain name — a starred or nested target is not followed)."""
+    match node:
+        case ast.Assign(
+            targets=[ast.List(elts=targets) | ast.Tuple(elts=targets)], value=value
+        ) if all(isinstance(target, ast.Name) for target in targets):
+            return tuple(
+                _Unpacked(target.id, value, index, len(targets))
+                for index, target in enumerate(targets)
+                if isinstance(target, ast.Name)
+            )
+        case _:
+            return ()
 
 
 def _rewrapped_seed(exprs: Sequence[ast.expr], name: str) -> ast.expr | None:
@@ -1684,8 +1749,28 @@ def _mangle(name: str) -> str:
     return hy.mangle(name)
 
 
+@dataclass(frozen=True)
+class _Passed:
+    """One parameter of a called function and the argument expression the call gives it."""
+
+    name: str
+    argument: ast.expr
+
+
 def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) -> _Bound:
     """``function``'s parameters bound to the arguments of ``call`` that are known here."""
+    known = (
+        Binding(passed.name, _argument_value(passed.argument, scope))
+        for passed in _passed_arguments(function, call, scope)
+    )
+    return _Bound(tuple(b for b in known if b.value is not UNBOUND))
+
+
+def _passed_arguments(
+    function: types.FunctionType, call: ast.Call, scope: _Scope
+) -> tuple[_Passed, ...]:
+    """The parameters of ``function`` that ``call`` gives an argument (positional up to the
+    first ``*spread``, then by keyword)."""
     try:
         params = [
             p
@@ -1693,7 +1778,7 @@ def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) 
             if p.kind is not inspect.Parameter.VAR_KEYWORD
         ]
     except (TypeError, ValueError):
-        return _NO_BINDINGS
+        return ()
     positional = [
         p.name
         for p in params
@@ -1707,12 +1792,10 @@ def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) 
     # Positional arguments up to the first *spread (after it positions are unknown).
     leading = list(itertools.takewhile(lambda a: not isinstance(a, ast.Starred), call.args))
     names = {p.name for p in params}
-    passed = itertools.chain(
-        zip(positional, leading, strict=False),
-        ((k.arg, k.value) for k in call.keywords if k.arg is not None and k.arg in names),
+    return (
+        *(_Passed(name, argument) for name, argument in zip(positional, leading, strict=False)),
+        *(_Passed(k.arg, k.value) for k in call.keywords if k.arg is not None and k.arg in names),
     )
-    known = [Binding(name, _argument_value(argument, scope)) for name, argument in passed]
-    return _Bound(tuple(b for b in known if b.value is not UNBOUND))
 
 
 def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
