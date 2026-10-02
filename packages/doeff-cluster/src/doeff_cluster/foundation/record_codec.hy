@@ -38,13 +38,14 @@
 (import base64)
 (import collections [OrderedDict])
 (import collections.abc [Callable])
-(import typing [ClassVar Protocol])
+(import typing [ClassVar Protocol runtime-checkable])
 (import datetime [datetime])
 (import dataclasses)
 (import hashlib)
 (import importlib)
 (import json)
 (import math)
+(import doeff [EffectBase])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
@@ -108,8 +109,9 @@
   (if (in kind #("named-sem" "sem")) (ReplaySemaphore kind ref) (ReplayHandle kind ref)))
 
 
-(defclass DataclassValue [Protocol]
-  "記録から作り直した dataclass の値(どの dataclass も持つ __dataclass_fields__ で名指す — 記録で運ぶ型は実行時に resolve-type で引く)。"
+(defclass [runtime-checkable] DataclassValue [Protocol]
+  "記録から作り直した dataclass の値(どの dataclass も持つ __dataclass_fields__ で名指す — 記録で運ぶ型は実行時に resolve-type で引く)。
+   契約(decode-value の答え)が実行の時に isinstance で確かめるので runtime-checkable(__dataclass_fields__ を持つかだけを見る)。"
   #^ (get ClassVar dict) __dataclass_fields__)
 
 
@@ -212,6 +214,7 @@
   (and (isinstance k str) (not (.startswith k "$"))))
 
 ;; v はどの値でもよい(記録の形にできない型は UnencodableValue で断る — 受ける型を狭めると断る所が型の上に移るだけ)。
+;; 契約つきの deff は object の引数を受けないので defn のまま(綴りの 1 点と名乗れず、DOEFF172 の基点に残る — #2722)。
 (defn #^ JsonValue encode-value [#^ object v #^ (| HandleTable None) [handles None]]
   "値 → JSON の値。型を落とさない(tuple・bytes・dataclass・例外・handle に印を付ける)。知らない物は UnencodableValue。"
   (cond
@@ -243,7 +246,8 @@
        "f" (dfor f (dataclasses.fields v) f.name (encode-value (getattr v f.name) handles))}
     True (raise (UnencodableValue (.format "記録の形にできない値の型: {}" (type-name (type v)))))))
 
-(defn #^ dict encode-error [#^ BaseException e #^ (| HandleTable None) [handles None]]
+(deff encode-error [#^ BaseException e #^ (| HandleTable None) [handles None]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: e BaseException) (: handles (| HandleTable None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "例外 → JSON。型の名・args・文・JSON にできる属性(__ で始まる物を除く — doeff の traceback 等)。"
   (setv args [])
   (for [a e.args]
@@ -254,30 +258,35 @@
       (try (setv (get attrs k) (encode-value x handles)) (except [UnencodableValue] None))))
   {"$e" (type-name (type e)) "args" args "msg" (str e) "attrs" attrs})
 
-(defn #^ RestoredValue decode-value [#^ JsonValue j]
+(deff decode-value [#^ JsonValue j]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: j JsonValue)] :post [(: % RestoredValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "encode-value の逆。handle は ReplayHandle(再生の札)になる。"
-  (cond
-    (isinstance j list) (lfor x j (decode-value x))
-    (not (isinstance j dict)) j
-    (in "$f" j) (float (get j "$f"))
-    (in "$b" j) (base64.b64decode (get j "$b"))
-    (in "$dt" j) (datetime.fromisoformat (get j "$dt"))
-    (in "$h" j) (handle-for (get j "$h") (get j "id"))
-    (in "$t" j) (tuple (lfor x (get j "$t") (decode-value x)))
-    (in "$d" j) (dfor #(k x) (get j "$d") (decode-value k) (decode-value x))
-    (in "$e" j) (decode-error j)
-    (in "$repr" j) (get j "$repr")
-    (in "$c" j) (do (setv cls (resolve-type (get j "$c")))
-                    (when (is cls None)
-                      (raise (UnencodableValue (+ "記録の dataclass を import できない: " (get j "$c")))))
-                    (cls #** (dfor #(k x) (.items (get j "f")) k (decode-value x))))
-    ;; 素の dict は encode-value が「$ で始まらない文字列の鍵だけ」の時に限って書く(他は $d)。知らない $ の鍵は読めない印 —
-    ;; 素の dict として黙って返さない(#2581)。
-    (not (all (gfor k j (_plain-key? k))))
-      (raise (UnencodableValue (+ "記録の値の印を読めない: " (canonical j))))
-    True (dfor #(k x) (.items j) k (decode-value x))))
+  ;; 契約の確かめは入口の 1 度だけにし、節ごとの再帰は契約の無い局所の関数で回す(節ごとに確かめると大きな値で約 1.8 倍 — #2722)。
+  (defn #^ RestoredValue restored [#^ JsonValue j]
+    (cond
+      (isinstance j list) (lfor x j (restored x))
+      (not (isinstance j dict)) j
+      (in "$f" j) (float (get j "$f"))
+      (in "$b" j) (base64.b64decode (get j "$b"))
+      (in "$dt" j) (datetime.fromisoformat (get j "$dt"))
+      (in "$h" j) (handle-for (get j "$h") (get j "id"))
+      (in "$t" j) (tuple (lfor x (get j "$t") (restored x)))
+      (in "$d" j) (dfor #(k x) (get j "$d") (restored k) (restored x))
+      (in "$e" j) (decode-error j)
+      (in "$repr" j) (get j "$repr")
+      (in "$c" j) (do (setv cls (resolve-type (get j "$c")))
+                      (when (is cls None)
+                        (raise (UnencodableValue (+ "記録の dataclass を import できない: " (get j "$c")))))
+                      (cls #** (dfor #(k x) (.items (get j "f")) k (restored x))))
+      ;; 素の dict は encode-value が「$ で始まらない文字列の鍵だけ」の時に限って書く(他は $d)。知らない $ の鍵は読めない印 —
+      ;; 素の dict として黙って返さない(#2581)。
+      (not (all (gfor k j (_plain-key? k))))
+        (raise (UnencodableValue (+ "記録の値の印を読めない: " (canonical j))))
+      True (dfor #(k x) (.items j) k (restored x))))
+  (restored j))
 
-(defn #^ BaseException decode-error [#^ dict j]
+(deff decode-error [#^ dict j]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: j dict)] :post [(: % BaseException)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の例外を同じ型・同じ args・同じ属性で作り直す(__init__ は呼ばない — 独自の __init__ を持つ例外も同じ物になる)。
    型を import できなければ RecordedError(型の名と文)。"
   (setv cls (resolve-type (get j "$e")))
@@ -299,7 +308,8 @@
 
 ;; --- 差分(大きな値) ---------------------------------------------------------------------------
 
-(defn _list-ops [prev new]
+(deff _list-ops [prev new]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: prev list) (: new list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "prev の list から new の list を作る手順: [\"r\" 始め 長さ](prev の連続した区間)と [\"v\" 値](新しい項)。"
   (setv index {})
   (for [#(i x) (enumerate prev)]
@@ -319,35 +329,44 @@
   (flush)
   ops)
 
-(defn #^ dict delta-of [#^ JsonValue prev #^ JsonValue new]
+(deff delta-of [#^ JsonValue prev #^ JsonValue new]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: prev JsonValue) (: new JsonValue)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "JSON の値 prev から new への差分(どの節も印付きの dict)。"
-  (cond
-    (= (canonical prev) (canonical new)) {"$=" 1}
-    (and (isinstance prev dict) (isinstance new dict))
-      {"$o" (dfor #(k x) (.items new) k (if (in k prev) (delta-of (get prev k) x) {"$v" x}))
-       "$del" (lfor k prev :if (not-in k new) k)}
-    (and (isinstance prev list) (isinstance new list)) {"$a" (_list-ops prev new)}
-    True {"$v" new}))
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ dict delta [#^ JsonValue prev #^ JsonValue new]
+    (cond
+      (= (canonical prev) (canonical new)) {"$=" 1}
+      (and (isinstance prev dict) (isinstance new dict))
+        {"$o" (dfor #(k x) (.items new) k (if (in k prev) (delta (get prev k) x) {"$v" x}))
+         "$del" (lfor k prev :if (not-in k new) k)}
+      (and (isinstance prev list) (isinstance new list)) {"$a" (_list-ops prev new)}
+      True {"$v" new}))
+  (delta prev new))
 
-(defn #^ JsonValue apply-delta [#^ JsonValue prev #^ dict delta]
-  (cond
-    (in "$=" delta) prev
-    (in "$v" delta) (get delta "$v")
-    ;; dict の差分は前の値も dict、list の差分は前の値も list のはず(違えば下の「読めない」で断る)。
-    (and (in "$o" delta) (isinstance prev dict))
-      (do (setv out (dfor #(k x) (.items prev) :if (not-in k (get delta "$del")) k x))
-          (for [#(k d) (.items (get delta "$o"))]
-            (setv (get out k) (apply-delta (.get prev k) d)))
-          ;; 鍵の順は new の順に揃える(比べる形は順を見ないが、復号した dict の順も元に近づける)
-          (dfor k (get delta "$o") k (get out k)))
-    (and (in "$a" delta) (isinstance prev list))
-      (do (setv out [])
-          (for [op (get delta "$a")]
-            (if (= (get op 0) "r")
-                (.extend out (cut prev (get op 1) (+ (get op 1) (get op 2))))
-                (.append out (get op 1))))
-          out)
-    True (raise (ValueError (+ "差分の形を読めない: " (canonical delta))))))
+(deff apply-delta [#^ JsonValue prev #^ dict delta]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: prev JsonValue) (: delta dict)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "delta-of の逆 — 形の版 1 の記録の値を、前の値と差分から戻す。"
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ JsonValue applied [#^ JsonValue prev #^ dict delta]
+    (cond
+      (in "$=" delta) prev
+      (in "$v" delta) (get delta "$v")
+      ;; dict の差分は前の値も dict、list の差分は前の値も list のはず(違えば下の「読めない」で断る)。
+      (and (in "$o" delta) (isinstance prev dict))
+        (do (setv out (dfor #(k x) (.items prev) :if (not-in k (get delta "$del")) k x))
+            (for [#(k d) (.items (get delta "$o"))]
+              (setv (get out k) (applied (.get prev k) d)))
+            ;; 鍵の順は new の順に揃える(比べる形は順を見ないが、復号した dict の順も元に近づける)
+            (dfor k (get delta "$o") k (get out k)))
+      (and (in "$a" delta) (isinstance prev list))
+        (do (setv out [])
+            (for [op (get delta "$a")]
+              (if (= (get op 0) "r")
+                  (.extend out (cut prev (get op 1) (+ (get op 1) (get op 2))))
+                  (.append out (get op 1))))
+            out)
+      True (raise (ValueError (+ "差分の形を読めない: " (canonical delta))))))
+  (applied prev delta))
 
 
 ;; --- 内容参照(大きな値) ---------------------------------------------------------------------
@@ -372,40 +391,48 @@
     None)
   (defn #^ int __len__ [self] (len self.order)))
 
-(defn #^ object intern-json [#^ object j #^ BlobMemory seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]
+(deff intern-json [#^ JsonValue j #^ BlobMemory seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: j JsonValue) (: seen BlobMemory) (: emit Callable) (: min-chars int)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "JSON の値 j を下から畳む: canonical が min-chars 以上の dict / list の節を {\"$ref\": h} に置き換え、seen に無い h なら
    (emit h 畳んだ節)を呼んで中身を書かせ、seen に足す。子が先に畳まれるので、親の比べる形の長さは子の参照の長さで測る。
    答え = 畳んだ値(小さければ j と同じ形)。"
-  (setv form (cond
-               (isinstance j dict) (dfor #(k v) (.items j) k (intern-json v seen emit min-chars))
-               (isinstance j list) (lfor v j (intern-json v seen emit min-chars))
-               True j))
-  (when (not (isinstance form #(dict list)))
-    (return form))
-  (setv text (canonical form))
-  (when (< (len text) min-chars)
-    (return form))
-  (setv h (content-hash text))
-  (when (not-in h seen)
-    (.add seen h)
-    (emit h form))
-  {"$ref" h})
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ JsonValue folded [#^ JsonValue j]
+    (setv form (cond
+                 (isinstance j dict) (dfor #(k v) (.items j) k (folded v))
+                 (isinstance j list) (lfor v j (folded v))
+                 True j))
+    (when (not (isinstance form #(dict list)))
+      (return form))
+    (setv text (canonical form))
+    (when (< (len text) min-chars)
+      (return form))
+    (setv h (content-hash text))
+    (when (not-in h seen)
+      (.add seen h)
+      (emit h form))
+    {"$ref" h})
+  (folded j))
 
-(defn #^ JsonValue resolve-refs [#^ JsonValue j #^ dict blobs #^ (| dict None) [memo None]]
+(deff resolve-refs [#^ JsonValue j #^ dict blobs #^ (| dict None) [memo None]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: j JsonValue) (: blobs dict) (: memo (| dict None))] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "intern-json の逆。blobs = h → 畳んだ節(blob の行の v)。無い参照は ValueError(記録が欠けている)。"
   (setv memo (if (is memo None) {} memo))
-  (cond
-    (isinstance j list) (lfor v j (resolve-refs v blobs memo))
-    (not (isinstance j dict)) j
-    (and (= (len j) 1) (in "$ref" j))
-      (do (setv h (get j "$ref"))
-          (when (not-in h memo)
-            (when (not-in h blobs)
-              (raise (ValueError (+ "内容参照の中身(blob)が記録に無い: " h))))
-            (setv (get memo h) (resolve-refs (get blobs h) blobs memo)))
-          ;; 同じ参照は同じ object を共有する(読む側は JSON の値として読むだけ — 業務コードへ渡す値は decode-value が新しく作る)。
-          (get memo h))
-    True (dfor #(k v) (.items j) k (resolve-refs v blobs memo))))
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ JsonValue resolved [#^ JsonValue j]
+    (cond
+      (isinstance j list) (lfor v j (resolved v))
+      (not (isinstance j dict)) j
+      (and (= (len j) 1) (in "$ref" j))
+        (do (setv h (get j "$ref"))
+            (when (not-in h memo)
+              (when (not-in h blobs)
+                (raise (ValueError (+ "内容参照の中身(blob)が記録に無い: " h))))
+              (setv (get memo h) (resolved (get blobs h))))
+            ;; 同じ参照は同じ object を共有する(読む側は JSON の値として読むだけ — 業務コードへ渡す値は decode-value が新しく作る)。
+            (get memo h))
+      True (dfor #(k v) (.items j) k (resolved v))))
+  (resolved j))
 
 
 ;; --- effect の登録 -----------------------------------------------------------------------------
@@ -420,7 +447,8 @@
           self.unexecuted unexecuted self.binds binds self.watch watch self.arg-names arg-names)))
 
 
-(defn _fields-args [effect handles]
+(deff _fields-args [effect handles]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: effect EffectBase) (: handles HandleTable)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   ;; 欄の名は登録の arg-names(型の宣言の args)か、無ければ dataclass の全部の欄。
   ;; OpaqueJson の欄(形を書き手が決める JSON — 盤の書きの値など)は、包みの型の綴りでなく中の JSON の値で綴る(#2579)。
   ;; 比べる形が書き手の包み方に依らず、値が素の JSON の値だった旧い記録の行とも同じ綴りになる(旧い行の揃えは record_log.read-recording)。
@@ -429,6 +457,7 @@
         :setv v (getattr effect name)
         name (encode-value (if (isinstance v OpaqueJson) (json.loads v.text) v) handles)))
 
+;; v はどの値でもよい(encode-value と同じ理由で defn のまま — #2722)。
 (defn _loose-value [v handles]
   "live の effect の引数・答えは順番の突き合わせと報告にしか使わないので、JSON にできない値は repr の印にする。"
   (try (encode-value v handles) (except [UnencodableValue] {"$repr" (repr v)})))
