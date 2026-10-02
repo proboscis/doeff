@@ -271,16 +271,20 @@ class _ExpansionState:
     workflow_budget_limit: int | None
     nodes: list[ExpandedNode] = dataclass_field(default_factory=list)
     bindings: dict[str, BindingInfo] = dataclass_field(default_factory=dict)
-    budget_total: int = 0
+    _mut_budget_total: int = 0
     required_merge_groups: list[frozenset[str]] = dataclass_field(default_factory=list)
     merged_workspace_keys: set[str] = dataclass_field(default_factory=set)
 
+    @property
+    def budget_total(self) -> int:
+        return self._mut_budget_total
+
     def add_budget(self, budget: Any | None, context: str) -> int:
         units = _parse_budget_annotation(budget, context)
-        self.budget_total += units
-        if self.workflow_budget_limit is not None and self.budget_total > self.workflow_budget_limit:
+        self._mut_budget_total += units
+        if self.workflow_budget_limit is not None and self._mut_budget_total > self.workflow_budget_limit:
             raise WorkflowExpansionError(
-                f"budget annotations sum to {self.budget_total}, above workflow limit "
+                f"budget annotations sum to {self._mut_budget_total}, above workflow limit "
                 f"{self.workflow_budget_limit}"
             )
         return units
