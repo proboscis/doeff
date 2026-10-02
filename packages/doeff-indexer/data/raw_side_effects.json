@@ -134,7 +134,8 @@
           "name": "replace",
           "context": [
             "pathlib"
-          ]
+          ],
+          "max_args": 1
         },
         {
           "name": "touch",

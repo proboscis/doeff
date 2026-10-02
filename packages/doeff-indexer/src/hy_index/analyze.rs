@@ -1187,9 +1187,15 @@ impl<'a> Analyzer<'a> {
             _ => {}
         }
         if !self.is_keyword_head(head) {
+            let pushed = self.references.len();
             self.reference(items[0].span);
             let keywords = items[1..].iter().filter(|item| matches!(item.node, Node::Keyword)).map(|item| self.text(item.span).to_string()).collect();
             let arguments = self.call_arguments(&items[1..]);
+            // 頭が method(`(.m 受け手 …)` か `(x.m …)`)なら、最後の区切り m に受け手を除く引数の数を添える(model の call_arity)。
+            let method_head = self.text(items[0].span).starts_with('.');
+            if let Some(last) = self.references[pushed..].last_mut().filter(|r| r.member) {
+                last.call_arity = Some(if method_head { arguments.len().saturating_sub(1) } else { arguments.len() });
+            }
             self.record_call(items[0].span, items.last().map_or(items[0].span.end, |last| last.span.end), keywords, arguments, performed);
         }
         for (index, item) in rest.iter().enumerate() {
@@ -1439,6 +1445,7 @@ impl<'a> Analyzer<'a> {
                 target: None,
                 type_only: self.call_suppression > 0,
                 inspected,
+                call_arity: None,
             });
             qualifier = Some(match qualifier {
                 Some(prefix) => format!("{}.{}", prefix, part),
