@@ -70,29 +70,27 @@ def _two_checkouts(tmp_path: Path) -> tuple[Path, Path]:
     return newer, older
 
 
-def _build_env(temp_root: Path, target_dir: Path | None) -> dict[str, str]:
-    """build の process の env: 一時の dir の置き場を temp_root に向け、CARGO_TARGET_DIR は渡す時だけ置く。"""
-    env = {name: value for name, value in os.environ.items() if name != "CARGO_TARGET_DIR"}
-    env["TMPDIR"] = str(temp_root)
+def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
+    """build の process の命令の頭に付ける `env`: 子はこの process の環境を継ぎ、CARGO_TARGET_DIR を外して(`env -u`)渡す時だけ置き、
+    一時の dir の置き場を temp_root に向ける。"""
     # wheel の置き場も検ごとの dir に(利用者の ~/.cache に書かず、検どうしで同じ source の wheel を引き合わない — agora-redesign #2364)。
-    env["DOEFF_WHEEL_CACHE"] = str(temp_root / "wheel-cache")
+    settings = [f"TMPDIR={temp_root}", f"DOEFF_WHEEL_CACHE={temp_root / 'wheel-cache'}"]
     match target_dir:
         case None:
-            pass
+            target: list[str] = []
         case Path() as given:
-            env["CARGO_TARGET_DIR"] = str(given)
-    return env
+            target = [f"CARGO_TARGET_DIR={given}"]
+    return ["env", "-u", "CARGO_TARGET_DIR", *settings, *target]
 
 
 def _start_build(
-    package: Path, wheel_dir: Path, env: dict[str, str], hook: str = "build_wheel"
+    package: Path, wheel_dir: Path, env: list[str], hook: str = "build_wheel"
 ) -> subprocess.Popen[str]:
     """frontend と同じく別の process で build の hook を呼び始める(同時の build を試すため、待たずに返す)。"""
     wheel_dir.mkdir(parents=True, exist_ok=True)
     return subprocess.Popen(
-        [sys.executable, "-c", _CALL_HOOK, hook, str(wheel_dir)],
+        [*env, sys.executable, "-c", _CALL_HOOK, hook, str(wheel_dir)],
         cwd=package,
-        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -106,7 +104,7 @@ def _finish_build(process: subprocess.Popen[str], wheel_dir: Path) -> Path:
     return wheel_dir / out.strip().splitlines()[-1]
 
 
-def _build(package: Path, wheel_dir: Path, env: dict[str, str], hook: str = "build_wheel") -> Path:
+def _build(package: Path, wheel_dir: Path, env: list[str], hook: str = "build_wheel") -> Path:
     """1 つの package を hook で組んで、出来た file の path を返す。"""
     return _finish_build(_start_build(package, wheel_dir, env, hook), wheel_dir)
 
@@ -126,11 +124,10 @@ def _leftovers(temp_root: Path) -> list[str]:
     return sorted(path.name for path in temp_root.iterdir() if path.name.startswith(TEMP_PREFIX))
 
 
-def _run_wrapped(command: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_wrapped(command: list[str], env: list[str]) -> subprocess.CompletedProcess[str]:
     """`python doeff_cargo_backend.py <命令…>`(文書が勧める maturin develop の包み)で命令を走らせる。"""
     return subprocess.run(
-        [sys.executable, str(BACKEND), *command],
-        env=env,
+        [*env, sys.executable, str(BACKEND), *command],
         capture_output=True,
         text=True,
         timeout=BUILD_TIMEOUT_SECONDS,
@@ -342,9 +339,8 @@ def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: P
         out = tmp_path / "sdist" / root.name
         out.mkdir(parents=True)
         built = subprocess.run(
-            [sys.executable, "-c", call_declared, backend, str(out)],
+            [*env, sys.executable, "-c", call_declared, backend, str(out)],
             cwd=root,
-            env=env,
             capture_output=True,
             text=True,
             timeout=BUILD_TIMEOUT_SECONDS,
@@ -369,7 +365,7 @@ def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: P
     assert _leftovers(temp_root) == []
 
 
-def _build_logged(package: Path, wheel_dir: Path, env: dict[str, str]) -> tuple[Path, str]:
+def _build_logged(package: Path, wheel_dir: Path, env: list[str]) -> tuple[Path, str]:
     """build_wheel を呼び、出来た wheel の path と口の stderr(使った / 組んだの 1 行)を返す。"""
     process = _start_build(package, wheel_dir, env)
     out, err = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
