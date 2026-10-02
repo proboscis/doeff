@@ -17,7 +17,7 @@
 (import doeff_hy.table [TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
-(import doeff_cluster.coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log])
+(import doeff_cluster.coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log writes-of])
 
 
 (defclass [(dataclass :frozen True)] Persist [EffectBase]
@@ -35,8 +35,8 @@
 ;; 層 protocol は foundation も entry も読めず、foundation も protocol を読めないので、名前のある共通の基底は置けない。形は method の名で
 ;; 見分ける: 実行時は ABC の __subclasshook__ が型ごとに 1 度だけ判じ、ABC が答えを覚える(typing.Protocol の isinstance は欄ごとに
 ;; inspect.getattr_static を撃ち、Persist ごとの契約と match で 1 回 50 µs ほど — Persist の CPU の 6 割 — かかった・#2785 の測り)。
-;; 静的な形(使い手の型検査が読む)は store.pyi の Protocol。kv / recovered はどちらの置き場も持つ(kv = 耐久になった全部のキー・
-;; recovered = 読み直しで捨てた最後の行の記録)。
+;; 静的な形(使い手の型検査が読む)は store.pyi の Protocol。どちらの置き場も method table / replace-table / recovery を持つ(table =
+;; 耐久になった全部のキーの表・recovery = 読み直しで捨てた最後の行の記録)— 写像を欄に持たない(DOEFF172)。
 
 (defclass MethodShape [ABC]
   "method の名(METHODS)を全部持つ型をその形と見なす基底 — ByteLog と DeltaStore が 1 つの判じ方を共有するため。"
@@ -47,13 +47,16 @@
 
 (defclass ByteLog [MethodShape]
   "file の置き場の形(foundation/wal_store の WalStore)— 読み書きの口が写しと log の byte を受け渡す相手。"
-  (#^ (get dict #(str object)) kv)
-  (#^ (| (get dict #(str object)) None) recovered)
   (#^ int seq)
   (#^ int max-log-bytes)
   (#^ Path snapshot)
   (#^ Path log)
-  (setv METHODS #("exists" "check_place" "read_snapshot_bytes" "read_log_lines" "drop_tail" "append_line" "write_snapshot"))
+  (setv METHODS #("exists" "check_place" "read_snapshot_bytes" "read_log_lines" "drop_tail" "append_line" "write_snapshot"
+                  "table" "replace_table" "recovery"))
+  ;; 表と読み直しの記録は欄に持たず method で受け渡す(写像を欄に持たない — DOEFF172)。
+  (defn #^ (get dict #(str object)) table [self] (raise NotImplementedError))
+  (defn #^ None replace-table [self #^ (get dict #(str object)) kv] (raise NotImplementedError))
+  (defn #^ (| (get dict #(str object)) None) recovery [self] (raise NotImplementedError))
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ None check-place [self] (raise NotImplementedError))
   (defn #^ (| bytes None) read-snapshot-bytes [self] (raise NotImplementedError))
@@ -65,9 +68,11 @@
 
 (defclass DeltaStore [MethodShape]
   "memory の置き場の形(entry の MemoryWalStore)— 読み書きの口が差分と表をそのまま受け渡す相手。"
-  (#^ (get dict #(str object)) kv)
-  (#^ (| (get dict #(str object)) None) recovered)
-  (setv METHODS #("exists" "load" "persist" "checkpoint"))
+  (setv METHODS #("exists" "load" "persist" "checkpoint" "table" "replace_table" "recovery"))
+  ;; 表と読み直しの記録は欄に持たず method で受け渡す(写像を欄に持たない — DOEFF172)。
+  (defn #^ (get dict #(str object)) table [self] (raise NotImplementedError))
+  (defn #^ None replace-table [self #^ (get dict #(str object)) kv] (raise NotImplementedError))
+  (defn #^ (| (get dict #(str object)) None) recovery [self] (raise NotImplementedError))
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ (get dict #(str object)) load [self] (raise NotImplementedError))
   (defn #^ None persist [self #^ (get dict #(str object)) delta] (raise NotImplementedError))
@@ -85,7 +90,7 @@
 
 (defk durable-load [store]
   {:pre [(: store DurableStore)] :post [(: % (get dict #(str object)))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
-  "耐久の中身を読み直し、全部のキーの表を返す(置き場の kv と seq も進める)— 起動が返事を済ませた書きを 1 つも失わずに状態を作るため。
+  "耐久の中身を読み直し、全部のキーの表を返す(置き場の表と seq も進める)— 起動が返事を済ませた書きを 1 つも失わずに状態を作るため。
    file の置き場は写し → log の行を検めて当て、読めない最後の 1 行だけを捨てて切り詰める。途中の破損は WalCorrupted で何も書き換えない。"
   (match store
     (ByteLog)
@@ -93,14 +98,17 @@
           (val snapshot (.read-snapshot-bytes store))
           ;; 写しが無ければ空の表・番号 0 から当てる。
           (val base (if (is snapshot None)
-                        (SnapshotRead :kv {} :seq 0)
+                        (SnapshotRead :seq 0 :rows #())
                         (! (read-snapshot snapshot (str store.snapshot)))))
-          (<- scan LogScan (scan-log (.read-log-lines store) base.seq base.kv (str store.log)))
+          ;; 写しの書きを表に組み、log の行をその表の上へその場で当てる。
+          (val table (dfor row base.rows row.key row.value))
+          (<- scan LogScan (scan-log (.read-log-lines store) base.seq table (str store.log)))
           (match scan.dropped
             (DroppedTail :kept kept :size size :reason reason) (.drop-tail store kept size reason)
             None None)
-          (setv store.kv scan.kv store.seq scan.seq)
-          store.kv)
+          (.replace-table store table)
+          (setv store.seq scan.seq)
+          table)
     (DeltaStore) (.load store)))
 
 
@@ -114,7 +122,8 @@
         (setv store.seq (+ store.seq 1))
         (<- line bytes (encode-line store.seq delta))
         (val size (.append-line store line))
-        (<- (apply-delta store.kv delta))
+        (<- writes tuple (writes-of delta))
+        (<- (apply-delta (.table store) writes))
         (when (> size store.max-log-bytes)
           (<- (durable-checkpoint store))))
     (DeltaStore) (.persist store delta))
@@ -127,7 +136,7 @@
    置くため。"
   (match store
     (ByteLog)
-      (do (<- data bytes (encode-snapshot store.seq store.kv))
+      (do (<- data bytes (encode-snapshot store.seq (.table store)))
           (.write-snapshot store data))
     (DeltaStore) (.checkpoint store))
   None)

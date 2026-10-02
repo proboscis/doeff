@@ -78,23 +78,24 @@
       (<- (durable-persist store delta)))
     (when moves
       (<- (slog (.format "coordinator: 置き先の鍵を新しい名へ移した({} 件)" (len (get moves -1))))))
-    (val resumed (resume-after-downtime (state-from-kv store.kv now) now))
+    (val resumed (resume-after-downtime (state-from-kv (.table store) now) now))
     (val state (get resumed 0))
     (val gap (get resumed 1))
     ;; ずらした時計(worker の最後の連絡・task の lease・Rollout の段の起点)と生きていた時刻を、受け付けを始める前に耐久にする
     ;; (durable_kv.resume-writes)。
-    (<- (durable-persist store (resume-writes store.kv state)))
+    (<- (durable-persist store (resume-writes (.table store) state)))
     (when (> gap 0)
       (<- (slog (.format "coordinator: 止まっていた {:.1f} 秒を、進行中の Rollout の段と task の lease の時間に数えない" (/ gap 1000)))))
-    (when store.recovered
-      (<- (slog (.format "coordinator: 置き場の読み直しで最後の読めない行を捨てた: {}" store.recovered))))
+    (val recovery (.recovery store))
+    (when recovery
+      (<- (slog (.format "coordinator: 置き場の読み直しで最後の読めない行を捨てた: {}" recovery))))
     (return state))
   (<- (durable-load store))
   (<- legacy (| ClusterState None) (legacy-state state-file now))
   ;; 置き場の無いところから起きた: task の id の頭を起動ごとに違う物にする(前の coordinator の id を振り直さない — #757)。
   (when (is legacy None)
     (return (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
-  (setv store.kv (full-kv legacy))
+  (.replace-table store (full-kv legacy))
   (<- (durable-checkpoint store))
   (<- (slog (.format "coordinator: 以前の形の状態を追記の log の置き場へ移した(Service {}・盤 {} 行・版 {})"
                      (len legacy.jobs) (len legacy.board) legacy.revision)))

@@ -15,6 +15,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import json)
 (import zlib)
+(import doeff_hy.table [TableWrite])
 
 
 (defclass WalCorrupted [RuntimeError]
@@ -22,11 +23,11 @@
 
 
 (defrecord GoodLine
-  "読めた log の 1 行 — 読み直しが当てる材料。seq = まとまりの番号・delta = その差分(キー → 新しい値・消えたキーは None —
-   置き場の JSON の表の断片なので dict)・checked = checksum を確かめた行か(旧い形の行は False)。"
+  "読めた log の 1 行 — 読み直しが当てる材料。seq = まとまりの番号・writes = その差分のキーごとの書き(TableWrite — value は新しい値・
+   消えたキーは None。Persist の欄と同じ形で、写像を欄に持たない — DOEFF172)・checked = checksum を確かめた行か(旧い形の行は False)。"
   {:tags {:context "coordinator" :role "protocol"}}
   (#^ int seq)
-  (#^ (get dict #(str object)) delta)
+  (#^ (get tuple #(TableWrite ...)) writes)
   (#^ bool checked))
 
 
@@ -49,28 +50,35 @@
 
 
 (defrecord LogScan
-  "log を写しの上へ当てた結果 — 起動の読み直しの答え。kv = 当てた後の全部のキー(置き場の JSON の表なので dict)・seq = 最後に当てた
-   まとまりの番号・dropped = 捨てた最後の行(None = 捨てていない)。"
+  "log を写しの上へ当てた結果 — 起動の読み直しの答え。表は scan-log に渡した物をその場で進める(写さない — 表は置き場ごとに 1 つで
+   大きい)。seq = 最後に当てたまとまりの番号・dropped = 捨てた最後の行(None = 捨てていない)。"
   {:tags {:context "coordinator" :role "protocol"}}
-  (#^ (get dict #(str object)) kv)
   (#^ int seq)
   (#^ (| DroppedTail None) dropped))
 
 
 (defrecord SnapshotRead
-  "写しを読んだ結果 — 読み直しの起点。kv = 写しの全部のキー(置き場の JSON の表なので dict)・seq = 写しが含む最後のまとまりの番号。"
+  "写しを読んだ結果 — 読み直しの起点。seq = 写しが含む最後のまとまりの番号・rows = 写しの全部のキーの書き(TableWrite — 写像を欄に
+   持たない — DOEFF172。表に組むのは置き場の口)。"
   {:tags {:context "coordinator" :role "protocol"}}
-  (#^ (get dict #(str object)) kv)
-  (#^ int seq))
+  (#^ int seq)
+  (#^ (get tuple #(TableWrite ...)) rows))
 
 
-(defk apply-delta [kv delta]
-  {:pre [(: kv (get dict #(str object))) (: delta (get dict #(str object)))] :post [(: % (get dict #(str object)))]
+(defk writes-of [delta]
+  {:pre [(: delta (get dict #(str object)))] :post [(: % (get tuple #(TableWrite ...)))] :tags {:context "coordinator" :role "protocol"}}
+  "差分の写像(JSON の行の delta・写しの kv・Persist の答え手が受けた差分)をキーごとの書きの組にする — record と表の当て方が写像を
+   欄に持たずに差分を受け渡すため。"
+  (tuple (gfor #(key value) (.items delta) (TableWrite key value))))
+
+
+(defk apply-delta [kv writes]
+  {:pre [(: kv (get dict #(str object))) (: writes (get tuple #(TableWrite ...)))] :post [(: % (get dict #(str object)))]
    :tags {:context "coordinator" :role "protocol"}}
-  "差分(キー → 新しい値・消えたキーは None)を表 kv に当てて kv を返す — 読み直しと書きの後で、耐久になった全部のキーの表を
-   同じ当て方で進めるため(表は置き場ごとに 1 つで大きいので、写さずにその場で書き換える)。"
-  (for [#(k v) (.items delta)]
-    (if (is v None) (.pop kv k None) (setv (get kv k) v)))
+  "差分のキーごとの書き(value = 新しい値・消えたキーは None)を表 kv に当てて kv を返す — 読み直しと書きの後で、耐久になった全部の
+   キーの表を同じ当て方で進めるため(表は置き場ごとに 1 つで大きいので、写さずにその場で書き換える)。"
+  (for [w writes]
+    (if (is w.value None) (.pop kv w.key None) (setv (get kv w.key) w.value)))
   kv)
 
 
@@ -121,20 +129,21 @@
   (val delta (.get record "delta"))
   (when (not (and (isinstance seq int) (isinstance delta dict)))
     (return (BadLine :reason "seq と delta の形でない")))
+  (<- writes tuple (writes-of delta))
   (when (not-in "crc" record)
-    (return (GoodLine :seq seq :delta delta :checked False)))
+    (return (GoodLine :seq seq :writes writes :checked False)))
   ;; crc は crc の欄を除いた全部の欄(書き手が書くのは seq と delta だけ)の正規化した JSON に対して取ってある。
   (<- text str (canonical (dfor #(k v) (.items record) :if (!= k "crc") k v)))
   (<- crc str (checksum text))
   (if (= (get record "crc") crc)
-      (GoodLine :seq seq :delta delta :checked True)
+      (GoodLine :seq seq :writes writes :checked True)
       (BadLine :reason "checksum が合わない")))
 
 
 (defk scan-log [lines base kv where]
   {:pre [(: lines (get list bytes)) (: base int) (: kv (get dict #(str object))) (: where str)] :post [(: % LogScan)]
    :tags {:context "coordinator" :role "protocol" :reads "json"}}
-  "log の行(改行つきの byte の list)を写しの上(base = 写しの seq・kv = その中身)へ当てる — 起動の読み直しで、返事を済ませた
+  "log の行(改行つきの byte の list)を写しの上(base = 写しの seq・kv = その中身の表 — その場で進める)へ当てる — 起動の読み直しで、返事を済ませた
    書きを 1 つも失わずに表と番号を作るため。読めないのが最後の 1 行なら捨てる(返事をしていないまとまり)。それ以外の破損・seq の飛び/逆行は WalCorrupted。
    checksum つきの行が 1 つでも出た後の、checksum の無い行も破損とみなす(書き手は旧い形へ戻らない)。"
   (var seq base)
@@ -155,7 +164,7 @@
                                             where good (+ i 1) reason (- (len lines) i 1) prev))))
             (:= dropped (DroppedTail :kept good :size (len line) :reason reason))
             (break))
-      (GoodLine :seq n :delta delta :checked checked)
+      (GoodLine :seq n :writes writes :checked checked)
         (do (when (if (is prev None) (> n (+ base 1)) (!= n (+ prev 1)))
               (raise (WalCorrupted (.format "{}: {} byte 目から始まる {} 行目の seq {} が続きでない(直前の seq {}・snapshot の seq {})。起動を断る"
                                             where good (+ i 1) n prev base))))
@@ -163,9 +172,9 @@
             (:= checked-seen (or checked-seen checked))
             (:= good (+ good (len line)))
             (when (> n base)
-              (<- (apply-delta kv delta))
+              (<- (apply-delta kv writes))
               (:= seq n)))))
-  (LogScan :kv kv :seq seq :dropped dropped))
+  (LogScan :seq seq :dropped dropped))
 
 
 (defk read-snapshot [data where]
@@ -185,4 +194,5 @@
     (<- crc str (checksum text))
     (when (!= (get record "crc") crc)
       (raise (WalCorrupted (.format "{}: checksum が合わない(seq {})。起動を断る" where seq)))))
-  (SnapshotRead :kv kv :seq seq))
+  (<- rows tuple (writes-of kv))
+  (SnapshotRead :seq seq :rows rows))
