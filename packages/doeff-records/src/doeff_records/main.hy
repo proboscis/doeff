@@ -60,7 +60,6 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
-(import doeff_records.principals [Roster])
 (import doeff_records.pg [pg-records-handler prepare-records-store DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening REQUEST-MAX-BYTES serve-records])
@@ -91,12 +90,11 @@
 
 (defrecord RecordsSettings
   "env と Secret の file から読んだ設定の値(records-settings が作る — 土台の口 records-connected と本体の設定 records-serving の材料):
-   dsn = PostgreSQL の DSN・roster = 使わない欄(次の変更で消す)・prefix = 表の名の接頭辞・origin-host = 行に刻む機体の名・pool-size = 要求に同時に貸す
+   dsn = PostgreSQL の DSN・prefix = 表の名の接頭辞・origin-host = 行に刻む機体の名・pool-size = 要求に同時に貸す
    接続の上限(手入れの係の 1 本は別に足す)・address = 待ち受けの宛先・maintenance = 手入れの周期。資源(接続の貸し出しと pool)は持たない —
    records-connected が開いて閉じる。"
   {:check [(> (len dsn) 0) (> (len prefix) 0) (> (len origin-host) 0) (> pool-size 0)]}
   (#^ str dsn)
-  (setv #^ Roster roster (Roster))
   (#^ str prefix)
   (#^ str origin-host)
   (#^ int pool-size)
@@ -269,7 +267,7 @@
   "本体(serve-records)の設定を、表の宣言 schema と設定の値と置き場の選び choice から作るため。表の用意(prepare)と /readyz の問い
    (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice。
    以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた。"
-  (RecordsServing :address settings.address :schema schema :roster settings.roster
+  (RecordsServing :address settings.address :schema schema
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
                   :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness

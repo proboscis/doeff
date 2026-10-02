@@ -597,7 +597,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/principals.hy"
       ],
-      "responsibility": "記録の service の呼び手の身元: principals.json を厳しく読み、Bearer の token を定時間の比べで書き手の名へ引く。I/O なし(file は composition root が読む)",
+      "responsibility": "記録の service の呼び手の書き手の名: X-Records-Writer の名乗りをそのまま書き手の名にする(無ければ anonymous)。I/O なし",
       "layer": "pure",
       "public": [
         "packages/doeff-records/src/doeff_records/principals.hy"

@@ -26,7 +26,6 @@ from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
 from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler as pooled_postgres_sql_handler
 from doeff_time import async_time_handler as async_time_handler
 from doeff_records.values import RecordsSchema as RecordsSchema
-from doeff_records.principals import Roster as Roster
 from doeff_records.pg import pg_records_handler as pg_records_handler
 from doeff_records.pg import prepare_records_store as prepare_records_store
 from doeff_records.pg import DEFAULT_POLL_SECONDS as DEFAULT_POLL_SECONDS
@@ -62,7 +61,6 @@ DRAIN_SECONDS: float
 @dataclass(frozen=True, kw_only=True)
 class RecordsSettings:
     dsn: str
-    roster: Roster = ...
     prefix: str
     origin_host: str
     pool_size: int

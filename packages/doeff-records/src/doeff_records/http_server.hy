@@ -56,7 +56,6 @@
 (import doeff_records.values [RecordsSchema Unreachable])
 (import doeff_records.schema_digest [schema-digests])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents ReadStreamEnd])
-(import doeff_records.principals [Roster])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric])
@@ -116,7 +115,7 @@
 
 
 (defrecord RecordsServing
-  "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・roster = 使わない欄(次の変更で消す)・prepare = 表を用意して
+  "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・prepare = 表を用意して
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
    検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
    drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
@@ -126,7 +125,6 @@
    served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
-  (setv #^ Roster roster (Roster))
   (#^ (| Program EffectBase) prepare)
   (#^ tuple request-handlers)
   (#^ int max-bytes)
@@ -555,12 +553,11 @@
 ;; --- 検の殻 --------------------------------------------------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] RecordsServerConfig []
-  "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / roster = 使わない欄 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
+  "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
    request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
    meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)/
    served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)。"
   (#^ RecordsSchema schema)
-  (#^ Roster roster)
   (#^ Callable handler-for)
   (setv #^ tuple request-handlers #())
   (setv #^ str host "127.0.0.1")
@@ -572,9 +569,9 @@
 (defk records-server-config [schema handler-for [request-handlers #()] [host "127.0.0.1"] [port 0] [meter None] [served None]]
   {:pre [(: schema RecordsSchema) (: handler-for Callable) (: request-handlers tuple) (: host str) (: port int)
          (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None))] :post [(: % RecordsServerConfig)]}
-  "名簿を取らずに RecordsServerConfig を組む(中で空の Roster を入れる — 欄 roster は使われない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す・#3008)。
-   引数は RecordsServerConfig の欄から roster を除いた物を同じ順で。"
-  (RecordsServerConfig schema (Roster) handler-for request-handlers host port meter served))
+  "名簿を取らずに RecordsServerConfig を組む(引数を並べて組む・#3008)。
+   引数は RecordsServerConfig の欄と同じ順。"
+  (RecordsServerConfig schema handler-for request-handlers host port meter served))
 
 
 (defclass [(dataclass :frozen True)] RunningServer []
@@ -622,7 +619,7 @@
    (aiohttp-http-server・async-time-handler・await-handler)で、止めの合図と名乗りだけを shell-control が答える。開けなければ例外を上げる。"
   (setv opened (queue.Queue)
         ended (threading.Event))
-  (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema :roster config.roster
+  (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
                                 :drain-seconds 0.0 :meter config.meter :served config.served))

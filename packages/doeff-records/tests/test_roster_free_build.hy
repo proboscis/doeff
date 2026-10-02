@@ -1,12 +1,12 @@
 ;; 名簿を渡さずに service・設定を組む関数(records-service・records-server-config)の失敗ケース(#3008)。
-;; 組んだ物が、名簿なしで起動・応答し、名乗り(X-Records-Writer)の名で書けること。名簿を要る形に戻ると赤。
+;; 組んだ物が、名簿なしで起動・応答し、名乗り(X-Records-Writer)の名で書けること。名簿を要る形に戻ると赤。消した roster の欄を渡すと構築で断られる。
 (require doeff-hy.macros [deftest defk val])
 (import json)
 (import urllib.request [Request urlopen])
 (import doeff [run with_handlers])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.service [HttpRequest records-service respond])
+(import doeff_records.service [HttpRequest RecordsService records-service respond])
 (import doeff_records.http_server [records-server-config start-records-server])
 (import tests.interpreters [sim-request-handlers])
 (import doeff_time [SimClock sim-time-handler])
@@ -21,6 +21,11 @@
   (val request (HttpRequest "POST" "/v1/records/put-row" (.encode (json.dumps PUT-BODY) "utf-8") :writer "maker"))
   (val answer (run (with_handlers [(sim-time-handler :clock (SimClock))] (respond service request))))
   (assert (= answer.status 200) answer)
+  ;; 消した roster の欄を渡すと構築で断られる(欄は無い)。
+  (try
+    (RecordsService :schema LAW-SCHEMA :roster None :handler-for (fn [writer] None))
+    (assert False "消した roster の欄を受けた")
+    (except [TypeError] None))
   (assert (= seen ["maker"]) seen))
 
 

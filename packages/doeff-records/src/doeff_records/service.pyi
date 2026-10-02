@@ -27,7 +27,7 @@ from doeff_records.effects import (
     ReadStreamEnd,
     WatchChanges,
 )
-from doeff_records.principals import Principal, Roster
+from doeff_records.principals import Principal
 from doeff_records.values import RecordsSchema
 
 METHOD_GET: str
@@ -53,10 +53,8 @@ class HttpAnswer:
 @dataclass(frozen=True)
 class RecordsService:
     schema: RecordsSchema
-    roster: Roster
     handler_for: Callable[[str], object]
 
-# 名簿の欄 roster は使われていない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す(#3008)。
 def records_service(schema: RecordsSchema, handler_for: Callable[[str], object]) -> Program[RecordsService, object]: ...
 def json_answer(status: int, body: dict[str, object]) -> Program[HttpAnswer, object]: ...
 def refusal_answer(error: str, reason: str) -> Program[HttpAnswer, object]: ...

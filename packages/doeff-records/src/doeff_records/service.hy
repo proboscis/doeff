@@ -15,7 +15,7 @@
 (import json)
 (import doeff [with_handlers])
 (import doeff_records.values [RecordsSchema Unreachable])
-(import doeff_records.principals [Roster Principal writer-of])
+(import doeff_records.principals [Principal writer-of])
 (import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
                             decode-request encode-answer refusal-json undeclared-reason])
@@ -40,17 +40,16 @@
 
 
 (defclass [(dataclass :frozen True)] RecordsService []
-  "HTTP の口 1 つの組: schema = 置き場の宣言(宣言に無い表を 404 で断る)/ roster = 使わない欄(次の変更で消す)/
+  "HTTP の口 1 つの組: schema = 置き場の宣言(宣言に無い表を 404 で断る)/
    handler-for = 書き手の名 → その書き手の記録の handler(composition root が置き場ごとに組む)。"
   (#^ RecordsSchema schema)
-  (#^ Roster roster)
   (#^ Callable handler-for))
 
 
 (defk records-service [schema handler-for]
   {:pre [(: schema RecordsSchema) (: handler-for Callable)] :post [(: % RecordsService)]}
-  "名簿を取らずに RecordsService を組む(中で空の Roster を入れる — 欄 roster は使われない・使い手がこの関数へ付け替えた後の変更で欄と Roster を消す・#3008)。"
-  (RecordsService schema (Roster) handler-for))
+  "名簿を取らずに RecordsService を組む(引数を並べて組む・#3008)。"
+  (RecordsService schema handler-for))
 
 
 (defk json-answer [status body]
