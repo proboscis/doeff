@@ -17,7 +17,7 @@
 (defk deployment-view [body]
   {:pre [(: body (get Mapping #(str object)))] :post [(: % (get dict #(str object)))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "k8s の Deployment の object(API の JSON の本文)から、Rollout が見る欄だけの観測の JSON を読むため(deployment-reading が型の値へ解く)。
-   KubeClient.read は本文を返すだけで、読みはこの 1 点(agora-redesign #2764 — 以前は foundation/kube_client の method が素で呼んだ)。"
+   KubeClient.read は本文を返すだけで、読みはこの 1 点(#2764 — 以前は foundation/kube_client の method が素で呼んだ)。"
   (val spec (.get body "spec" {}))
   (val status (.get body "status" {}))
   (val meta (.get body "metadata" {}))

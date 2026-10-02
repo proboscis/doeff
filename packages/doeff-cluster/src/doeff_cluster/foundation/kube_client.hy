@@ -2,7 +2,7 @@
 ;;; coordinator の kube_model の effect に答える handler は coordinator/protocol/kube.hy — この module は intent の型を読まない
 ;;; (層 foundation が読めるのは foundation だけ)ので、届かない・断られた時に投げる例外の型は組み立てる側(entry)が :fail で渡す。
 ;;; Deployment の読みは API の JSON の本文を返すだけ — 観測の欄の読みは答え手の側(coordinator/protocol/kube.hy の deployment-view・
-;;; agora-redesign #2764)。
+;;; #2764)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)

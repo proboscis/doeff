@@ -1,4 +1,4 @@
-;;; k8s の Deployment の object → Rollout が見る観測の JSON(coordinator/protocol/kube.hy の deployment-view — agora-redesign #2764 で
+;;; k8s の Deployment の object → Rollout が見る観測の JSON(coordinator/protocol/kube.hy の deployment-view — #2764 で
 ;;; foundation/kube_client の method の素の呼びから、答え手 kube-api が通す defk へ上げた)。
 ;;; 4418414 で入れ子の読みを誤り、本番の Deployment を読むたびに coordinator が落ちた
 ;;; (AttributeError: 'list' object has no attribute 'get')— 本物の形の object で撃つ。

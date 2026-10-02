@@ -116,7 +116,7 @@
 
 (defrecord SinkBatch
   "置き場への 1 回の送りに載せる、貯めた行の先頭の束: items = buffer の先頭の項(#(区切り 行の dict 行の JSON の文字列))・now-ms = 束を
-   取った時の壁時計(ms — OTLP の観測の時刻)。口の class は束を渡すだけで、送りの本文は sink-post が口の種類ごとに綴る(agora-redesign #2764)。"
+   取った時の壁時計(ms — OTLP の観測の時刻)。口の class は束を渡すだけで、送りの本文は sink-post が口の種類ごとに綴る(#2764)。"
   (#^ tuple items)
   (#^ int now-ms))
 
