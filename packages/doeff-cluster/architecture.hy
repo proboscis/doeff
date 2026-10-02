@@ -94,6 +94,11 @@
 ;;;   (drain を頼んだ worker 1 台の世界で系に service を足し、置き先と drain の窓を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-claims-a-new-generation-every-beat-breaks-c11(heartbeat ごとに新しい世代を名乗る壊れた worker —
 ;;;   SimWorker の fresh-boot-every-beat — では drain が効かず、足した job が drain の期限の内に置かれて C11 が名指す)。
+;;;   C13 ran-only-where-eligible(doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible — #1976 の写しの C3 の残り)—
+;;;   子 process も、needs を本当に提供し、専用の能力を持つなら job がその能力を要る worker でだけ動く(C7・C10 の置き先 = 信念に対し、
+;;;   本当に動いた process = 真実を見る)。確かめるのは tests/test_local.hy の test-a-job-process-runs-only-on-an-eligible-worker。失敗ケースは
+;;;   同じ file の test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c13(持たない能力を名乗る壊れた worker — SimWorker の
+;;;   claims-provides — の上で beacon が動き、C13 が名指す)。
 ;;;   C8 moves-to-a-live-worker(doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
 ;;;   job を本当に受けられる生きた worker が他に在るなら、死から移し替えの期限 + 余裕のうちに他で動き始める。確かめるのは tests/test_local.hy の
 ;;;   test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time(2 台のうち担い手を死なせ、process の区間と死の刻を判断に渡す — 期限は
@@ -165,7 +170,8 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker"
                 "doeff_cluster.coordinator.core.coordinator_invariants:tasks-answered-in-time"
                 "doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"
-                "doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining"
+                "doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。

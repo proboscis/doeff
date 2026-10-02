@@ -44,6 +44,11 @@
 ;;; 置く(専用の worker を他の job で埋めない)。判断は記録(読めた置き先・job ごとの needs・worker ごとの本当の専用の能力)を受けて、専用の
 ;;; worker へ置いた needs の合わない置き先の列を返す純関数 1 つ。
 ;;;
+;;; 条 C13 ran-only-where-eligible: 子 process も、job の needs を本当に提供し、専用の能力を持つなら job がその能力を要る worker でだけ
+;;; 動く(C7・C10 は coordinator が読ませる置き先 = 信念を見る。こちらは本当に動いた process = 真実を見る — #1976 の写しの C3 の残り)。
+;;; 判断は記録(本当に動いた process の列・job ごとの needs・worker ごとの本当の能力と専用の能力)を受けて、資格の無い worker で動いた
+;;; process の列を返す純関数 1 つ。
+;;;
 ;;; 条 C11 no-new-place-while-draining: drain を頼まれた worker には、drain の期限の内に新しい置き先を置かない(drain は worker を空けるための
 ;;; 頼み)。判断は記録(読めた置き先と、worker ごとの drain を頼んだ刻と期限)を受けて、drain の窓の内に置いた置き先の列を返す純関数 1 つ。
 ;;;
@@ -345,6 +350,21 @@
                n needs
                x exclusives
                :if (and (= n.job p.job) (= x.worker p.worker) x.exclusive (not (& n.needs x.exclusive)))
+               p)))
+
+
+(defk ran-only-where-eligible [processes needs abilities exclusives]
+  {:pre [(: processes (get tuple #(JobProcess ...))) (: needs (get tuple #(JobNeeds ...))) (: abilities (get tuple #(WorkerAbility ...)))
+         (: exclusives (get tuple #(WorkerExclusive ...)))]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C13: 本当に動いた job の process の列から、走った worker が job の needs を本当に提供していない process と、専用の能力を本当に持つ
+   worker でその能力を要らない job が走った process を返す(空なら緑)。C7・C10 は coordinator が読ませる置き先(信念)を判じるので、
+   子 process が本当にどこで動いたか(真実)も能力に合うことを、筋書きの記録から判じるため。needs か能力の記録が無い process は判じない。"
+  (tuple (gfor p processes
+               n needs
+               :if (= n.job p.job)
+               :if (or (any (gfor a abilities (and (= a.worker p.worker) (not (<= n.needs a.provides)))))
+                       (any (gfor x exclusives (and (= x.worker p.worker) x.exclusive (not (& n.needs x.exclusive))))))
                p)))
 
 
