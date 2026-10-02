@@ -1,23 +1,31 @@
-"""host_contract.hy の公開面の型(宿の契約の鍵と、宿の答え手 — 型検査のための宣言・実行時は host_contract.hy を読む・#2197)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = host_contract.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に environ-reader を並べる使い手の strict に、書き手に
-直せない Unknown の赤(Argument type is partially unknown)が出ていた。host-reader は shared/entry/host_reader に在る(ここに 1 版
-残した古い host-reader は、古い入口 job_context と一緒に消した — 利用者の決め 2026-10-03・#2167)。
-
-- 鍵の組 HostContract は defrecord(凍った dataclass・名の引数だけ)。
-- environ-reader(Python の名 environ_reader)は置き場を受け、本文の Program に被せる関数を返す。
-- 実装との食い違いは packages/doeff-cluster/tests/test_host_contract_static_types.py が検める。
-"""
-
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Protocol, TypeVar
-
-from doeff_vm import WithHandler
-
-from doeff import Program
-
-_A = TypeVar("_A")
+from _typeshed import Incomplete
+from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+from dataclasses import dataclass as dataclass
+from collections.abc import Mapping as Mapping
+from doeff_core_effects.effects import Ask as Ask
+from doeff_core_effects.scheduler import Spawn as Spawn
+from doeff_core_effects.scheduler import TaskCompleted as TaskCompleted
+from doeff_core_effects.scheduler import Gather as Gather
+from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects.scheduler import Race as Race
+from doeff_core_effects.scheduler import Cancel as Cancel
+from doeff_core_effects.scheduler import CreatePromise as CreatePromise
+from doeff_core_effects.scheduler import CompletePromise as CompletePromise
+from doeff_core_effects.scheduler import FailPromise as FailPromise
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import CreateSemaphore as CreateSemaphore
+from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
+from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
+from doeff_time import DelayEffect as DelayEffect
+from doeff_time import GetTimeEffect as GetTimeEffect
+from doeff_time import GetMonotonicEffect as GetMonotonicEffect
+from doeff_time import WaitUntilEffect as WaitUntilEffect
+from doeff_time import WaitWithinEffect as WaitWithinEffect
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
 
 @dataclass(frozen=True, kw_only=True)
 class HostContract:
@@ -25,13 +33,11 @@ class HostContract:
     program_key: str
     versions_key: str
     program_env: str
-
 HOST_CONTRACT: HostContract
-SIM_PASSABLE: tuple[type, ...]
+SIM_PASSABLE: Incomplete
 
-class _HostHandler(Protocol):
-    """本文の Program に handler を被せる関数(答えの型は本文のまま)。"""
+def this_program_path() -> _Program[str, object]:
+    ...
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
-
-def environ_reader(environ: Mapping[str, str] = ...) -> _HostHandler: ...
+def environ_reader(environ: Mapping[str, str]=...) -> _Handler:
+    ...

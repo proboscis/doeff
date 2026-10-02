@@ -71,7 +71,7 @@
   (.get os.environ HOST-CONTRACT.program-env ""))
 
 
-(defhandler environ-reader [#^ Mapping [environ os.environ]]
+(defhandler environ-reader [#^ (get Mapping #(str str)) [environ os.environ]]
   {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 名 → 値の置き場が宿ごとに違う(本番 = 子の process の os.environ — 既定・sim = 子の spec.environ)。読みの定義を
   ;; この 1 つにして、本番の子と sim の子が同じ :environ に同じ値を返す(頭の註)。本番の土台は引数なしの (environ-reader) を土台の
