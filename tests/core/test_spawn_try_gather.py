@@ -42,7 +42,7 @@ class FetchEffect(EffectBase):
 def handler(effect: Effect, k):
     if not isinstance(effect, FetchEffect):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, f"data-{effect.key}"))
 
 

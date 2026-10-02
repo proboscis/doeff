@@ -46,7 +46,7 @@ class ScopeBoom(EffectBase):
 def ping_base_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopePing):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, f"base:{effect.label}"))
 
 
@@ -54,7 +54,7 @@ def ping_base_handler(effect: Effect, k: object):
 def boom_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeBoom):
         yield Pass(effect, k)
-        return
+        return None
     raise RuntimeError(f"boom:{effect.label}")
 
 
@@ -68,12 +68,12 @@ def test_nested_dispatch_scope_restores_outer_context() -> None:
     def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass(effect, k)
-            return
+            return None
         # Under re-entrant dispatch, this handler sees nested ScopePing effects too.
         # Explicitly pass nested pings through so the base handler resolves them.
         if effect.label.endswith(":inner"):
             yield Pass(effect, k)
-            return
+            return None
         nested = yield ScopePing(label=f"{effect.label}:inner")
         return (yield Resume(k, f"{nested}|outer"))
 
@@ -88,7 +88,7 @@ def test_delegate_keeps_nested_handler_scope_order() -> None:
     def inner(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass(effect, k)
-            return
+            return None
         delegated = yield effect
         return (yield Resume(k, f"{delegated}|inner"))
 
@@ -96,7 +96,7 @@ def test_delegate_keeps_nested_handler_scope_order() -> None:
     def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass(effect, k)
-            return
+            return None
         delegated = yield effect
         return (yield Resume(k, f"{delegated}|outer"))
 
@@ -130,7 +130,7 @@ def test_nested_try_inside_handler_does_not_corrupt_outer_flow() -> None:
     def outer(effect: Effect, k: object):
         if not isinstance(effect, ScopePing):
             yield Pass(effect, k)
-            return
+            return None
         nested = yield Try(ScopeBoom(label="inner"))
         assert nested.is_err()
         return (yield Resume(k, f"after:{effect.label}"))
@@ -150,7 +150,7 @@ def test_transfer_keeps_dispatch_stack_stable_for_repeated_effects() -> None:
     def transfer_handler(effect: Effect, k: object):
         if not isinstance(effect, TransferPing):
             yield Pass(effect, k)
-            return
+            return None
         yield Transfer(k, effect.value)
 
     @do

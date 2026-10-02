@@ -45,7 +45,7 @@ def test_handler_ask_sees_local_scope() -> None:
     def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Ask("config")
         return (yield Resume(k, value))
 
@@ -73,7 +73,7 @@ def test_handler_ask_falls_through_to_outer_env() -> None:
     def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Ask("outer_key")
         return (yield Resume(k, value))
 
@@ -101,7 +101,7 @@ def test_handler_ask_nested_local() -> None:
     def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Ask("key")
         return (yield Resume(k, value))
 
@@ -134,7 +134,7 @@ def test_multiple_handlers_ask_in_local() -> None:
     def handler_a(effect: Effect, k):
         if not isinstance(effect, EffA):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Ask("key_a")
         return (yield Resume(k, value))
 
@@ -142,7 +142,7 @@ def test_multiple_handlers_ask_in_local() -> None:
     def handler_b(effect: Effect, k):
         if not isinstance(effect, EffB):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Ask("key_b")
         return (yield Resume(k, value))
 
@@ -182,7 +182,7 @@ def test_handler_ask_lazy_value_in_local() -> None:
     def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Ask("lazy_svc")
         return (yield Resume(k, value))
 
@@ -209,7 +209,7 @@ def test_local_eval_keeps_typed_handler_filtering() -> None:
     def replace_audio_handler(effect: Effect, k):
         if not isinstance(effect, ReplaceAudioTrackForLocalTypedFilter):
             yield Pass(effect, k)
-            return
+            return None
         seen_effect_types.append(type(effect).__name__)
         value = f"{effect.duck_original}:{effect.duck_speech}"
         return (yield Resume(k, value))
@@ -242,7 +242,7 @@ def test_handler_emitted_local_overrides_effect_site_scope() -> None:
     def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass(effect, k)
-            return
+            return None
         value = yield Local({"config": "from_handler_local"}, Ask("config"))
         return (yield Resume(k, value))
 
@@ -271,7 +271,7 @@ def test_handler_emitted_local_scope_is_popped_after_eval() -> None:
     def ping_handler(effect: Effect, k):
         if not isinstance(effect, Ping):
             yield Pass(effect, k)
-            return
+            return None
         inner = yield Local({"config": "handler_local"}, Ask("config"))
         outer = yield Ask("config")
         return (yield Resume(k, (inner, outer)))

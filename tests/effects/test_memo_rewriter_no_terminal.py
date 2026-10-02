@@ -25,7 +25,7 @@ def _lookup_handler(calls):
     def handler(effect, k):
         if not isinstance(effect, Lookup):
             yield Pass(effect, k)
-            return
+            return None
 
         calls["count"] += 1
         return (yield Resume(k, f"value:{effect.key}"))

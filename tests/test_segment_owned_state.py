@@ -60,7 +60,7 @@ class ScopeTrigger(EffectBase):
 def inner_ping_handler(effect: Effect, k: object):
     if not isinstance(effect, InnerPing):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, f"inner:{effect.label}"))
 
 
@@ -68,7 +68,7 @@ def inner_ping_handler(effect: Effect, k: object):
 def outer_ping_handler(effect: Effect, k: object):
     if not isinstance(effect, OuterPing):
         yield Pass(effect, k)
-        return
+        return None
     first = yield InnerPing(label=f"{effect.label}:a")
     second = yield InnerPing(label=f"{effect.label}:b")
     return (yield Resume(k, f"{first}|{second}"))
@@ -78,7 +78,7 @@ def outer_ping_handler(effect: Effect, k: object):
 def boom_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeBoom):
         yield Pass(effect, k)
-        return
+        return None
     raise RuntimeError(f"boom:{effect.label}")
 
 
@@ -86,7 +86,7 @@ def boom_handler(effect: Effect, k: object):
 def outer_boom_handler(effect: Effect, k: object):
     if not isinstance(effect, OuterPing):
         yield Pass(effect, k)
-        return
+        return None
     inner = yield Try(ScopeBoom(label="inner"))
     return (yield Resume(k, inner))
 
@@ -95,7 +95,7 @@ def outer_boom_handler(effect: Effect, k: object):
 def scope_probe_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeProbe):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, f"handled:{effect.label}"))
 
 
@@ -103,7 +103,7 @@ def scope_probe_handler(effect: Effect, k: object):
 def scope_trigger_handler(effect: Effect, k: object):
     if not isinstance(effect, ScopeTrigger):
         yield Pass(effect, k)
-        return
+        return None
     return (yield Resume(k, f"trigger:{effect.label}"))
 
 
@@ -157,14 +157,14 @@ def test_three_level_nested_structural_isolation() -> None:
     def h3(effect: Effect, k: object):
         if not isinstance(effect, L3):
             yield Pass(effect, k)
-            return
+            return None
         return (yield Resume(k, "L3"))
 
     @do
     def h2(effect: Effect, k: object):
         if not isinstance(effect, L2):
             yield Pass(effect, k)
-            return
+            return None
         inner = yield L3()
         return (yield Resume(k, f"L2<{inner}>"))
 
@@ -172,7 +172,7 @@ def test_three_level_nested_structural_isolation() -> None:
     def h1(effect: Effect, k: object):
         if not isinstance(effect, L1):
             yield Pass(effect, k)
-            return
+            return None
         inner = yield L2()
         return (yield Resume(k, f"L1<{inner}>"))
 

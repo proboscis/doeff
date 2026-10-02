@@ -175,7 +175,7 @@ def test_spawn_does_not_duplicate_handlers():
     def _counting_handler(effect: Effect, k):
         if not isinstance(effect, CountEffect):
             yield Pass(effect, k)
-            return
+            return None
         handler_call_count["n"] += 1
         return (yield Resume(k, handler_call_count["n"]))
 

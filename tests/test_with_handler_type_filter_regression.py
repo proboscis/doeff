@@ -38,7 +38,7 @@ def alpha_handler_typed(effect: Alpha, k):
 def alpha_handler_isinstance(effect: Effect, k):
     if not isinstance(effect, Alpha):
         yield doeff_vm.Pass(effect, k)
-        return
+        return None
     return (yield doeff_vm.Resume(k, f"alpha:{effect.value}"))
 
 
