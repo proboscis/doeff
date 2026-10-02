@@ -16,20 +16,23 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob Outcome ProcessView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob Outcome ProcessView WorkerPolicy])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 
 
-(defk host-settings [state [hy-command "hy"] [extra-env {}] [layout (CodeLayout)] [uv "uv"]]
-  {:pre [(: state Path) (: hy-command str) (: extra-env dict) (: layout CodeLayout) (: uv str)] :post [(: % HostSettings)]
+(defk host-settings [state [hy-command "hy"] [extra-env {}] [layout (CodeLayout)] [uv "uv"] [policy (WorkerPolicy)]]
+  {:pre [(: state Path) (: hy-command str) (: extra-env dict) (: layout CodeLayout) (: uv str) (: policy WorkerPolicy)] :post [(: % HostSettings)]
    :tags {:context "doeff-cluster-test" :role "program"}}
-  "検の state dir に、main と同じ置き方(logs・jobs・programs)で job の子 process の設定を作るため。"
+  "検の state dir に、main と同じ置き方(logs・jobs・programs)と同じ shim の時間の導き方(policy から shim-spans — 既定は本番の方針)で
+   job の子 process の設定を作るため。"
+  (<- shim ShimSpans (shim-spans policy))
   (HostSettings :log-dir (str (/ state "logs")) :jobs-dir (str (/ state "jobs")) :program-dir (str (/ state "programs"))
                 :python sys.executable :hy-command hy-command :uv uv
                 :extra-env (tuple (gfor k (sorted extra-env) (EnvEntry :name k :value (get extra-env k))))
-                :layout layout :program-env HOST-CONTRACT.program-env))
+                :layout layout :program-env HOST-CONTRACT.program-env :shim shim))
 
 
 (defk launched [settings spec code-path instance attempt]
@@ -44,7 +47,8 @@
                                  :worker-pid (os.getpid)
                                  :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
                                  :program-env settings.program-env
-                                 :work-dir (+ settings.jobs-dir "/" (.replace spec.name "/" "_"))))
+                                 :work-dir (+ settings.jobs-dir "/" (.replace spec.name "/" "_"))
+                                 :shim-grace-ms settings.shim.shim-grace-ms))
   (val overlay (dfor e plan.env e.name e.value))
   #((list plan.argv) plan.cwd (if (= plan.env-mode EnvMode.EXTEND) (| (dict os.environ) overlay) overlay)))
 
