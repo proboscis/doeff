@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conformance_env import agentd_bin_setting, herdr_socket_setting, sessionhost_backend_setting
 from doeff_agents.agentd_client import AgentdClient
 
 CONFORMANCE_DIR = Path(__file__).resolve().parent
@@ -52,7 +53,8 @@ RESULT_SCHEMA: dict[str, Any] = {
 # harness swaps its own backend-dependent physics (required binary, out-of-band
 # kill) to the herdr equivalents. Observations live in herdr-physics.md — the
 # frozen contract README is tmux-oracle and stays untouched.
-SESSIONHOST_BACKEND = os.environ.get("DOEFF_SESSIONHOST_BACKEND", "tmux")
+_BACKEND_SETTING = sessionhost_backend_setting()
+SESSIONHOST_BACKEND = _BACKEND_SETTING if _BACKEND_SETTING is not None else "tmux"
 
 
 def require_binaries() -> None:
@@ -78,9 +80,11 @@ def _herdr_call(
     """
     import socket as socket_mod
 
-    herdr_socket = os.environ.get(
-        "DOEFF_SESSIONHOST_HERDR_SOCKET",
-        os.path.join(os.path.expanduser("~"), ".config", "herdr", "herdr.sock"),
+    socket_setting = herdr_socket_setting()
+    herdr_socket = (
+        socket_setting
+        if socket_setting is not None
+        else os.path.join(os.path.expanduser("~"), ".config", "herdr", "herdr.sock")
     )
     line = json.dumps({"id": "conf-oob", "method": method, "params": params})
     sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
@@ -315,7 +319,7 @@ def resolve_agentd_bin() -> Path:
     stale PATH tools, issue #556), then PATH.  Unresolvable is a loud
     AssertionError — no silent fallback (R7).
     """
-    override = os.environ.get("CONFORMANCE_AGENTD_BIN")
+    override = agentd_bin_setting()
     if override:
         path = Path(override)
         if not (path.exists() and os.access(path, os.X_OK)):
@@ -583,7 +587,10 @@ def reap_preexisting_orphan_daemons() -> None:
 
 @dataclass(frozen=True)
 class _AgentdPlaces:
-    """Where one harness run's daemon lives: its binary and its isolated runtime dir (decided once, at __enter__)."""
+    """Where one harness run's daemon lives: its binary and its isolated runtime dir.
+
+    Decided once, at __enter__.
+    """
 
     agentd_bin: Path
     runtime_dir: Path
@@ -607,7 +614,8 @@ class AgentdHarness:
     # (main.rs:1500), so an unset value would write trust entries into the
     # operator's real ~/.codex / ~/.claude during a test run.
     extra_env: dict[str, str] = field(default_factory=dict)
-    # Set by __enter__ (places) and by every start (the daemon process and its client — restart replaces both).
+    # Set by __enter__ (places) and by every start (the daemon process and its client —
+    # restart replaces both).
     _mut_places: _AgentdPlaces | None = field(init=False, default=None)
     _mut_client: AgentdClient | None = field(init=False, default=None)
     _mut_proc: subprocess.Popen[str] | None = field(init=False, default=None)
