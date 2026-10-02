@@ -118,8 +118,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   `404 not-found`(宣言に無い表・知らない route)・`503 store-unavailable`(置き場に届かない = `Unreachable`)・`500 internal`。
 - 綴り(JSON の欄の名・`kind`・位置と期待の形)の正本は `doeff_records.wire`。口と client は両方これを呼ぶ。
 - 書き手の名: 口は呼び手を断らない(#2988)。呼び手が `X-Records-Writer: <名>`(綴りの正本 = `doeff_records.wire.WRITER_HEADER`)で名乗れば、確かめずにその名を使う。
-  名乗らない呼び手は、移行の間だけ `Authorization: Bearer <token>` を名簿 `principals.json`(`{version: 1, principals: [{name, tokenSha256}]}`・env `RECORDS_PRINCIPALS_FILE` は任意)で
-  書き手の名へ引き、引けなければ `anonymous`(`doeff_records.principals`)。その名で記録の handler を組むので、書き手の名は effect の引数にならない。
+  名乗らない呼び手は `anonymous`(`doeff_records.principals`)。口は名簿の file も `Authorization` の見出しも読まない(#3008)。その名で記録の handler を組むので、書き手の名は effect の引数にならない。
   書き手の名は行と出来事に記録するだけで、記録の判断は書き手の名では断らない(`anonymous` の書きも通る・#2994)。
 - 待ち受けは入口の Program `doeff_records.http_server.serve_records` 1 つで、1 つの run・1 つの scheduler の中で動く(#880 U7)。
   doeff の汎用の HTTP の待ち受けの effect(`HttpListen`・`HttpNextRequest`・`HttpReadBody`・`HttpRespond`・`HttpShutdown`)を出し、

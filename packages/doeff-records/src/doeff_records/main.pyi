@@ -27,7 +27,6 @@ from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler a
 from doeff_time import async_time_handler as async_time_handler
 from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.principals import Roster as Roster
-from doeff_records.principals import decode_roster as decode_roster
 from doeff_records.pg import pg_records_handler as pg_records_handler
 from doeff_records.pg import prepare_records_store as prepare_records_store
 from doeff_records.pg import DEFAULT_POLL_SECONDS as DEFAULT_POLL_SECONDS
@@ -43,7 +42,6 @@ from doeff_records.store_choice import PressureUnread as PressureUnread
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 ENV_PG_URL_FILE: str
-ENV_PRINCIPALS_FILE: str
 ENV_PREFIX: str
 ENV_HOST: str
 ENV_PORT: str
@@ -64,7 +62,7 @@ DRAIN_SECONDS: float
 @dataclass(frozen=True, kw_only=True)
 class RecordsSettings:
     dsn: str
-    roster: Roster
+    roster: Roster = ...
     prefix: str
     origin_host: str
     pool_size: int
@@ -99,9 +97,6 @@ def records_connected[T](settings: RecordsSettings, body: Program[T, object] | E
     ...
 
 def records_foundation(settings: RecordsSettings, body: Program | EffectBase) -> _Program[int, object]:
-    ...
-
-def optional_roster() -> _Program[Roster, object]:
     ...
 
 def records_settings(dsn_of: Callable[[str], Program[str, object]]) -> _Program[RecordsSettings, object]:

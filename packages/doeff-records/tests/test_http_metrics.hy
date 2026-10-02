@@ -21,7 +21,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.wire [STATUS-OF-ERROR])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
-(import tests.interpreters [LAW-TOKENS law-roster sim-request-handlers])
+(import tests.interpreters [law-roster sim-request-handlers])
 
 ;; 届かない時間枠に送る書きの数(筋書き meter-scenario の q1〜q3)と、届かない状態の理由。
 (val OUTAGE-WRITES 3)
@@ -82,9 +82,9 @@
 
 (defk post-write [url key]
   {:pre [(: url str) (: key str)] :post [(: % int)] :tags {:context "records" :role "foundation"}}
-  "名簿に在る書き手(maker)の token で put-row を 1 件送り、答えの status を返すため(5xx を撃ち直さない — 1 件は 1 要求)。"
+  "書き手(maker)を X-Records-Writer で名乗って put-row を 1 件送り、答えの status を返すため(5xx を撃ち直さない — 1 件は 1 要求)。"
   (<- response (HttpRequest "POST" (+ url "/v1/records/put-row")
-                            :headers {"Authorization" (+ "Bearer " (get LAW-TOKENS MAKER))}
+                            :headers {"X-Records-Writer" MAKER}
                             :body {"table" "parts" "key" [key] "value" {"label" "a"} "expect" {"kind" "any"}}
                             :max-retries 0))
   response.status)

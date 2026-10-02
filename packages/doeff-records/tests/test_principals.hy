@@ -1,5 +1,5 @@
-;; 書き手の名を引く名簿: principals.json を厳しく読み、Bearer の token を書き手の名へ引く(引けなければ ANONYMOUS — 断らない・#2988)。
-;; 呼び手が X-Records-Writer で名乗った名は、名簿より先に確かめずに使う(writer-of)。
+;; 書き手の名は呼び手の X-Records-Writer の名乗りだけで決まる(writer-of — 無ければ ANONYMOUS・#3008)。
+;; 名簿の読み(decode-roster・identify)は service の経路から外れ、名簿を自前で読む呼び手の系のために残してある物の検(次の変更で消す)。
 (require doeff-hy.macros [deftest])
 (import json)
 (import doeff [run])
@@ -20,14 +20,14 @@
     (assert (= (run (identify roster header)) (Principal ANONYMOUS)) (repr header))))
 
 
-(deftest test-a-declared-writer-name-comes-before-the-roster
-  ;; 名乗りが在れば token より先に使う(確かめない)。空の名乗りは無いのと同じで、名簿で引く(引けなければ ANONYMOUS)。
-  (setv roster (run (decode-roster (roster-text [{"name" "maker" "tokenSha256" (run (token-digest "tm"))}]))))
-  (assert (= (run (writer-of roster None "painter")) (Principal "painter")))
-  (assert (= (run (writer-of roster "Bearer tm" "painter")) (Principal "painter")))
-  (assert (= (run (writer-of roster "Bearer tm" "  ")) (Principal "maker")))
-  (assert (= (run (writer-of roster "Bearer tm" None)) (Principal "maker")))
-  (assert (= (run (writer-of roster None None)) (Principal ANONYMOUS))))
+(deftest test-a-declared-writer-name-is-the-writer
+  (assert (= (run (writer-of "painter")) (Principal "painter")))
+  (assert (= (run (writer-of "  painter ")) (Principal "painter"))))
+
+
+(deftest test-no-declared-name-is-anonymous
+  (assert (= (run (writer-of None)) (Principal ANONYMOUS)))
+  (assert (= (run (writer-of "  ")) (Principal ANONYMOUS))))
 
 
 (deftest test-a-malformed-roster-is-refused-at-startup

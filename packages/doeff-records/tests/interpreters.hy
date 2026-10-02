@@ -10,7 +10,7 @@
 ;;;           pg と同じ置き場で、SQL の effect の答え手だけを pooled-postgres-sql-handler(scheduler を塞がない版)にする。
 ;;;   http-memory / http-pg
 ;;;           記録の service の HTTP の口(127.0.0.1 の空き port)を memory / PostgreSQL の置き場の上に開き、法の Program は
-;;;           client の handler(http-records-handler)で公開 effect を撃つ。書き手の名は身元の名簿の token で運ぶ(LAW-TOKENS)。
+;;;           client の handler(http-records-handler)で公開 effect を撃つ。書き手の名は client の RecordsEndpoint の writer(X-Records-Writer)で運ぶ。
 ;;;           service と client は同じ仮想の時計(SimClock 1 つ)を読む。検の口と手入れの effect(AdvanceStoreEpoch・SweepExpired・
 ;;;           PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
 ;;;           client の要求は HttpRequest の effect なので、答え手(await-handler と http-production-handler)を組の最も外側に置く。
@@ -31,7 +31,7 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
-(import doeff_records.principals [Roster token-digest])
+(import doeff_records.principals [Roster])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import doeff_core_effects.handlers [await-handler])
@@ -114,14 +114,12 @@
                     (fn [] harness)))
 
 
-;; 法の書き手の名 → 身元の token(検だけの値 — 名簿には sha256 だけを載せる)。
-(setv LAW-TOKENS (dfor writer ["maker" "painter" "closer" "stranger" "overseer"] writer (+ "law-token-" writer)))
 (setv HTTP-POLL-SECONDS 0.05)
 
 
 (defn law-roster []
-  "法の書き手 4 人の身元の名簿(service の組み立てに渡す)。"
-  (Roster (FrozenMap (dfor #(writer token) (.items LAW-TOKENS) writer (run (token-digest token))))))
+  "service の組み立てに渡す空の名簿(残してある欄 — service は名簿を使わない・#3008)。"
+  (Roster))
 
 
 (defn sim-request-handlers [clock [answerers []]]
