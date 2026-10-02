@@ -17,7 +17,7 @@ from doeff_core_effects import Ask
 from doeff_core_effects.handlers import await_handler, lazy_ask
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, run
+from doeff import EffectBase, Expand, Pure, run
 
 
 @dataclass(frozen=True)
@@ -163,3 +163,67 @@ def test_runtime_guards_do_not_import_per_call() -> None:
     for guard in (_guard_performed, _guard_statement_value):
         opnames = {instruction.opname for instruction in dis.get_instructions(guard)}
         assert "IMPORT_NAME" not in opnames, guard.__name__
+
+
+@pytest.mark.parametrize("source", [
+    "(defk good [] {:pre [] :post [(: % int)]} 7) (good)",
+    "(defk good [] {:pre [] :post [(: % int)]} (<- x (do! 7)) x) (good)",
+    "(do! 7)",
+    "(do! {:post [(: % int)]} 7)",
+    "(defclass Box [] (defk good [self] {:pre [(: self Box)] :post [(: % int)]} 7)) (.good (Box))",
+])
+def test_value_returns_skip_the_error_guard(source: str) -> None:
+    """Successful returns must not pay for the error-reporting Python call (#2817)."""
+    program = _eval_no_doeff_do(source)
+    assert isinstance(program, Expand)
+    module = sys.modules["test_self_contained"]
+    calls: list[str] = []
+    original = module._guard_performed
+
+    def observe(frame: types.FrameType, event: str, arg: object) -> None:
+        if event == "call" and frame.f_code is original.__code__:
+            calls.append(frame.f_locals["label"])
+
+    previous = sys.getprofile()
+    sys.setprofile(observe)
+    try:
+        assert run(program) == 7
+    finally:
+        sys.setprofile(previous)
+    assert calls == []
+
+
+@pytest.mark.parametrize("source", [
+    "(defk bad [] {:pre [] :post [(: % int)]} (Num 7)) (bad)",
+    "(defk bad [] {:pre [] :post [(: % int)]} (<- x (do! 7)) (Num x)) (bad)",
+    "(do! (Num 7))",
+    "(do! {:post [(: % int)]} (Num 7))",
+    "(defclass Box [] (defk bad [self] {:pre [(: self Box)] :post [(: % int)]} (Num 7))) (.bad (Box))",
+])
+def test_error_guard_still_precedes_the_return_contract(source: str) -> None:
+    """A bare effect is rejected, including in generators and class bodies."""
+    program = _eval_no_doeff_do(source)
+    assert isinstance(program, Expand)
+    with pytest.raises(RuntimeError, match="last expression is an unperformed effect `Num`"):
+        run(program)
+
+
+@pytest.mark.parametrize("program_kind", ["pure", "expand"])
+@pytest.mark.parametrize("source", [
+    "(defk kept [] {:pre [] :post [(: % (| Pure Expand))]} payload) (kept)",
+    "(defk kept [] {:pre [] :post [(: % (| Pure Expand))]} (<- x (do! 7)) payload) (kept)",
+    "(do! payload)",
+    "(do! {:post [(: % (| Pure Expand))]} payload)",
+    (
+        "(defclass Box [] (defk kept [self] {:pre [(: self Box)] "
+        ":post [(: % (| Pure Expand))]} payload)) (.kept (Box))"
+    ),
+])
+def test_program_return_preserves_identity(source: str, program_kind: str) -> None:
+    """A Program is a return value here, not an unperformed Effect or an implicit bind."""
+    # This Expand raises if run: returning it must neither execute it nor wrap/copy it.
+    payload = Pure(7) if program_kind == "pure" else _eval_no_doeff_do("(do! (Num 7))")
+    assert isinstance(payload, (Pure, Expand))
+    program = _eval_no_doeff_do(source, payload=payload, Pure=Pure, Expand=Expand)
+    assert isinstance(program, Expand)
+    assert run(program) is payload
