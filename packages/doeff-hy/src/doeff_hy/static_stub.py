@@ -150,8 +150,10 @@ def _absolute(path: Path) -> Path:
     return Path(os.path.normpath(path.absolute()))
 
 
-def _hidden(name: str) -> bool:
-    """型の面に出さない名か(module の印・Hy の gensym・macro の補助と記帳)。"""
+def hidden_name(name: str) -> bool:
+    """型の面に出さない名か(module の印・Hy の gensym・macro の補助と記帳)。手書きの宣言と実装を照らす検
+    (doeff-core-effects の test_hy_module_stubs)も、公開の名をこの 1 か所で決める(agora-redesign #2909 — MODULE_TAGS を
+    道具は隠し検は数える食い違いで、頭のタグを足した module が赤になった)。"""
     return name in _HIDDEN_NAMES or name.startswith(_HIDDEN_PREFIXES)
 
 
@@ -350,7 +352,7 @@ def _keeps(decorator: ast.expr) -> bool:
 def _reads_hidden(node: ast.expr) -> bool:
     """式が、.pyi の頭に置けない macro の補助の名を読むか(.pyi に写すと解けない名を残さないため — 補助の import が
     置ける名は解けるので数えない: defeffect の `@_doeff_dataclass(frozen=True)` は残す)。"""
-    return any(isinstance(n, ast.Name) and _hidden(n.id) and n.id not in _HELPER_NAMES for n in ast.walk(node))
+    return any(isinstance(n, ast.Name) and hidden_name(n.id) and n.id not in _HELPER_NAMES for n in ast.walk(node))
 
 
 def _class_var(annotation: ast.expr) -> bool:
@@ -415,13 +417,13 @@ def _member(statement: ast.stmt) -> ast.stmt | None:
     (defeffect の `__doeff_answer__`・defwire の `__doeff_wire__` など隠す名)は写さない — 答えの型は基底が持ち、欄として写すと
     手の .pyi の欄の照らし(dataclass の欄の並び)にも欄と数えられた(#2886)。"""
     match statement:
-        case ast.AnnAssign(target=ast.Name() as target, annotation=annotation, value=value) if not _hidden(target.id):
+        case ast.AnnAssign(target=ast.Name() as target, annotation=annotation, value=value) if not hidden_name(target.id):
             kind = _annotation(annotation) or annotation
             kept = None if value is None or _class_var(kind) else _default(value)
             return ast.AnnAssign(target=target, annotation=kind, value=kept, simple=1)
-        case ast.Assign(targets=[ast.Name() as target], value=value) if not _hidden(target.id):
+        case ast.Assign(targets=[ast.Name() as target], value=value) if not hidden_name(target.id):
             return ast.Assign(targets=[target], value=_default(value))
-        case ast.FunctionDef() | ast.AsyncFunctionDef() if not _hidden(statement.name):
+        case ast.FunctionDef() | ast.AsyncFunctionDef() if not hidden_name(statement.name):
             return _function(statement, method=True)
         case ast.ClassDef():
             return _class(statement)
@@ -496,13 +498,13 @@ def _reexports(statement: ast.Import | ast.ImportFrom) -> tuple[ast.stmt, ...]:
             return tuple(
                 ast.ImportFrom(module=module, names=[ast.alias(name=a.name, asname=a.asname or a.name)], level=level)
                 for a in names
-                if a.name != "*" and not _hidden(a.asname or a.name) and not _macro_helper(module, a.name)
+                if a.name != "*" and not hidden_name(a.asname or a.name) and not _macro_helper(module, a.name)
             )
         case ast.Import(names=names):
             return tuple(
                 ast.Import(names=[ast.alias(name=a.name, asname=a.asname or (a.name if "." not in a.name else None))])
                 for a in names
-                if a.name.split(".")[0] != "hy" and not _hidden(a.asname or a.name)
+                if a.name.split(".")[0] != "hy" and not hidden_name(a.asname or a.name)
             )
 
 
@@ -513,15 +515,15 @@ def _step(state: _Scan, statement: ast.stmt) -> _Scan:
         case ast.Import() | ast.ImportFrom():
             return replace(state, imports=(*state.imports, *_reexports(statement)))
         case ast.FunctionDef() | ast.AsyncFunctionDef():
-            return state.defined(statement.name, _function(statement, method=False), public=not _hidden(statement.name))
-        case ast.ClassDef() if not _hidden(statement.name):
+            return state.defined(statement.name, _function(statement, method=False), public=not hidden_name(statement.name))
+        case ast.ClassDef() if not hidden_name(statement.name):
             return state.declared(statement.name, _class(statement))
-        case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation, value=value) if not _hidden(name):
+        case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation, value=value) if not hidden_name(name):
             kind = _annotation(annotation) or annotation
             alias = isinstance(kind, ast.Name) and kind.id == "TypeAlias"
             node = ast.AnnAssign(target=_name(name), annotation=kind, value=value if alias else None, simple=1)
             return state.declared(name, node)
-        case ast.Assign(targets=[ast.Name(id=name)], value=value) if not _hidden(name):
+        case ast.Assign(targets=[ast.Name(id=name)], value=value) if not hidden_name(name):
             return state.declared(name, _constant(name, value, state))
         case _:
             return state

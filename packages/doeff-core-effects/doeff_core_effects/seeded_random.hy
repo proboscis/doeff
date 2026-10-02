@@ -4,6 +4,7 @@
 ;;; 値の作り方: n 回目(0 始まり)の呼びは sha256("<種>:<n>:<塊>") の digest を塊 0・1・… と並べた頭の count byte。同じ種と同じ呼びの順なら
 ;;; 同じ値、呼びごとに違う値になる。呼びの数えはこの run の中の状態(session の値)で、別の run とは共有しない。外側に state の handler が要る。
 (require doeff-hy.macros [defhandler defk var val])
+(val MODULE-TAGS {:context "random" :role "foundation"})
 (import hashlib)
 (import doeff_core_effects.random_effects [RandomBytes])
 

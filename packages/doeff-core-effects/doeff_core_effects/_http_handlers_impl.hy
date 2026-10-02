@@ -1,4 +1,5 @@
-(require doeff-hy.macros [defk <- do!])
+(require doeff-hy.macros [defk <- do! val])
+(val MODULE-TAGS {:context "http" :role "foundation"})
 (require doeff-hy.handle [defhandler])
 
 (import hashlib)

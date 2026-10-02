@@ -8,7 +8,8 @@
 ;;; 保持の法(law-transient-rows-expire)は doeff-time の Delay で時間を進めるので、仮想の時計(sim-time-handler)の下で回す。
 ;;; 待ちの法(law-watch-waits-for-a-change・law-watch-events-waits-for-an-append)は doeff の scheduler の Spawn を使う。
 ;;; 手入れの法(law-maintenance-prunes-and-sweeps)は手入れの effect(maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import doeff_hy.frozen [FrozenMap])

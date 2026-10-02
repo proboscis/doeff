@@ -160,7 +160,17 @@ ignore = [
 external = ["PINJ", "DOEFF"]  # doeff-linter codes in `# noqa: DOEFFnnn`
 
 [tool.doeff-linter]
-disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None patterns
+# DOEFF013: Prefer Maybe Monad - intentionally using Optional/None patterns。
+# DOEFF110・119・123・125: 下の定義の書き方の規則の母集団(#2909 で足した)で当たりの在る規則 — #2877 の子(#2912 class・#2922
+# doeff-records の defn・#2923 doeff-core-effects の defn・#2913 doeff-hy)が数を 0 にした変更で 1 つずつ外す(先に効かせて main を
+# 赤にしない・登録簿に載せて通さない)。minor(123・125)は今は扱わない。
+disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF125"]
+
+# 定義の書き方の規則(DOEFF110 defn・111 deff の理由・112 タグ・119 class・126 素の defk 呼び ほか)の母集団(agora-redesign #2909・
+# #2877)。以前はこの節が無く、doeff の package の src に defn・class・素の defk 呼びを足しても鳴らなかった。今効くのは
+# DOEFF112(頭の MODULE-TAGS で補う)・DOEFF126(critical)と当たり 0 の規則。
+[tool.doeff-linter.definitions]
+paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effects/doeff_core_effects", "packages/doeff-hy/src/doeff_hy"]
 
 # 契約の検の固定の組(agora-redesign #2605): 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
 # 接頭辞に当たる行の検を、変えた検の file より先に必ず走らせる。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で

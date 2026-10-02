@@ -29,6 +29,7 @@
 ;;;                     起こすのの代役(同じ VM で task を走らせる模擬では task ごとに 1 回聞かれる)。
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "process" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import errno)
 (import fnmatch)

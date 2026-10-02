@@ -8,7 +8,8 @@
 ;;;   PruneChanges   keep-seconds より古い変更を変更の列から消し、floor(これより前の位置は Reset)を上げる。変更の列が際限なく
 ;;;                  伸びないようにする。floor より前の位置で WatchChanges を頼んだ読み手は Reset を受けて一覧から読み直す
 ;;;                  (keep-seconds は読み手の遅れの許容 — これより遅れた読み手だけが読み直す)
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_time [Delay])

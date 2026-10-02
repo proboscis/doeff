@@ -4,6 +4,7 @@
 ;;; 積んだ時は待ち手を全部起こし、起きた待ち手は列を見直す(空なら待ち直す)。1 人だけに値を渡す形にしないのは、待ち手の task が Cancel
 ;;; された時に、その promise へ渡した値が誰にも届かず消えるため — 値は常に列に残り、生きている待ち手が取る。
 (require doeff-hy.macros [defhandler defk <- val])
+(val MODULE-TAGS {:context "scheduler" :role "foundation"})
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
 (import doeff_core_effects.channel_effects [Channel CreateChannel PutChannel TakeChannel])
 

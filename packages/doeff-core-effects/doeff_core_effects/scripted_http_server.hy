@@ -31,6 +31,7 @@
 ;;; 命令は届けた要求の札へ撃つ(届けていない札への命令は KeyError — 本物の答え手と同じ)。
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "http-server" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose

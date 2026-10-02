@@ -8,7 +8,8 @@
 ;;; 欄の名(alias が在れば alias)で、表の宣言の欄の名と同じにする。書きは行の全体の像: 行の型の欄を全部載せ、値が None の欄は
 ;;; 「その欄を消す」(PutRow の差分の None)。値の変わらない欄は書き手の名簿で照らさない(admission)ので、自分の欄だけを変えた
 ;;; 像を書けばよい。handler は増やさない — どの handler の組の上でも同じに動く。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses)
 (import dataclasses [dataclass field])
 (import functools)

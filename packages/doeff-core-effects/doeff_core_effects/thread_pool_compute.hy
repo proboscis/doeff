@@ -7,6 +7,7 @@
 ;;; ⚠ Python の thread なので、純 Python の重い計算は GIL を分け合う。得られるのは「処理のループが計算の間も他の出来事に答え続ける」ことで、
 ;;; CPU の本数ぶんの速さではない。
 (require doeff-hy.macros [defhandler <- val])
+(val MODULE-TAGS {:context "compute" :role "foundation"})
 (import concurrent.futures [Executor])
 (import doeff_vm [PyVM])
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait])

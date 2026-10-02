@@ -2,7 +2,8 @@
 ;;; timeout 秒が過ぎるまで、poll-seconds ごとに読み直す。memory の置き場はこれを使わない(書きが待ち手を起こす呼び鈴 — memory.hy の
 ;;; memory-watch)。WatchEvents は ReadEvents(limit 1)の読み直しで答える(記録の service には待ちの口を足さない — 出自の issue は #1019)。
 ;;; 時計は doeff-time(GetMonotonic で経過を測り、Delay で眠る・GetTime で保持の期限を刻む)。仮想の時計の下では一瞬で終わる。
-(require doeff-hy.macros [defk <- var])
+(require doeff-hy.macros [defk <- var val])
+(val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_records.values [Changes Events EventsMoved EventsQuiet Reset Unreachable])

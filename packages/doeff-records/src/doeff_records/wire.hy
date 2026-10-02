@@ -8,6 +8,7 @@
 ;;; effect の答えの失敗(Conflict・Refused・NotIndexed・Reset・Missing・RowsConflict・RowsRefused)は答えの値で、`kind` の欄で判別する。
 ;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(service.hy)。
 (require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "records" :role "protocol"})
 (require doeff-hy.record [defenum])
 (import dataclasses [dataclass])
 (import enum [StrEnum])

@@ -7,6 +7,7 @@
 ;;;   compile-python-sources  本物: 木の source を process の pool で並列に焼いて __pycache__ へ置く(fork — Hy の macro 展開が大半)
 ;;;   prepare-compile-path    焼く process の import の路に木の中の根を足す(焼く source の macro が木の中の別の module を require するため)
 (require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "bytecode" :role "foundation"})
 (import importlib.machinery)
 (import importlib.util)
 (import marshal)

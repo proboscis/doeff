@@ -2,6 +2,7 @@
 ;;; その場で program を新しい VM で回して答える。本物の thread-pool-compute-handler と答えの値は同じで、違うのは「回っている間に他の task が
 ;;; 進むか」だけ。仮想の時計の模擬で決定的に回すための答え手。
 (require doeff-hy.macros [defhandler defk <- val])
+(val MODULE-TAGS {:context "compute" :role "foundation"})
 (import doeff [DoExpr])
 (import doeff_vm [PyVM])
 (import doeff_core_effects.compute_effects [Compute Computed ComputeFailed])

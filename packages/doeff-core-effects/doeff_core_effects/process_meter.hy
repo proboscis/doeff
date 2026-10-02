@@ -17,6 +17,7 @@
 ;;; 同じ名前で違う設定を入れると ValueError で断る(桁の表が食い違ったまま同じ置き場を書かない)。置き場は process の終わりまで残る。
 ;;; 時計・gc・thread に触るのはこの module だけ(memory の答え手 memory_meter.hy は触らない)。
 (require doeff-hy.macros [defhandler defk <- val])
+(val MODULE-TAGS {:context "meter" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import collections [deque])
 (import collections.abc [Callable])

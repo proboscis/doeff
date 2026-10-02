@@ -11,6 +11,7 @@
 ;;; 持つ。立てる・問う・signal を送るは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
 ;;; では thread で回す。
 (require doeff-hy.macros [defhandler defk <- val var])
+(val MODULE-TAGS {:context "process" :role "foundation"})
 (import contextlib)
 (import fnmatch)
 (import importlib.util)

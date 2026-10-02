@@ -8,7 +8,8 @@
 ;;;                             知らない route)/ 503 store-unavailable(置き場に届かない = Unreachable)/ 500 internal
 ;;;   GET  /healthz             200(process が生きている)
 ;;; 綴りの正本 = wire.hy。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "records" :role "protocol"})
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import json)
