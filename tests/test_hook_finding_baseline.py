@@ -14,11 +14,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+
+import tomllib
 
 ROOT: Path = Path(__file__).resolve().parents[1]
 SCRIPT: Path = ROOT / "scripts" / "hook_finding_baseline.py"
@@ -372,3 +375,85 @@ def test_a_lock_without_semgrep_stops_without_falling_back_to_the_path(tmp_path:
     assert missing.returncode != 0
     assert "1 つに決まらない" in missing.stderr
     assert calls.read_text() == before
+
+
+# --- 日次の段(#2906 の 4 便目)— git の無い木(remote_check の写し)で、組んだ時に書いた鍵で照らし、「測れない」を赤にする ---------
+
+
+def _copy_without_git(rig: Rig, tmp_path: Path) -> Path:
+    """一時の repo を .git 抜きで写すため(日次の段の木 = git ls-files の名簿の file だけを写した物)。"""
+    copy = tmp_path / "copy"
+    shutil.copytree(rig.repo, copy, ignore=shutil.ignore_patterns(".git"))
+    return copy
+
+
+def _record_key(rig: Rig, key: str) -> None:
+    """偽の land-arm の開発版の記録に、組んだ時の鍵を書き、記録の commit は git の知らない物にするため。"""
+    record = rig.dev / "installed.json"
+    record.write_text(json.dumps({"commit": "0" * 40, "input_key": key}))
+
+
+def test_a_tree_without_git_walks_its_files_and_skips_made_dirs(tmp_path: Path) -> None:
+    for relative in ("a.py", "sub/b.pyi", "sub/c.txt", ".venv/x.py", "__pycache__/y.py", "node_modules/z.py"):
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text("x = 1\n")
+    assert TOOL.population(tmp_path, "doeff-linter") == ["a.py", "sub/b.pyi"]
+
+
+def test_strict_turns_unmeasured_red(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    assert _run(rig, "init", "doeff-linter").returncode == 0
+    _install_dev(rig, _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n"))
+    strict = _run(rig, "--strict", "check", "doeff-linter")
+    assert strict.returncode == TOOL.UNMEASURED_RC
+    assert "測れない" in strict.stderr
+    # hook(--strict なし)は同じ木で通す
+    assert _run(rig, "check", "doeff-linter").returncode == 0
+
+
+def test_a_recorded_key_measures_a_tree_without_git(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    assert _run(rig, "init", "doeff-linter").returncode == 0
+    _record_key(rig, _baseline_version(rig))
+    copy = _copy_without_git(rig, tmp_path)
+    run = [sys.executable, str(SCRIPT), "--root", str(copy), "--strict", "check", "doeff-linter"]
+    same = subprocess.run(run, env=rig.environment, capture_output=True, text=True, check=False)
+    assert same.returncode == 0, same.stderr
+    assert "dir を歩いて" in same.stderr
+    (copy / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
+    grown = subprocess.run(run, env=rig.environment, capture_output=True, text=True, check=False)
+    assert grown.returncode == 1
+    assert "DOEFF999 pkg/a.py: 基点 1 → 今 2" in grown.stderr
+
+
+def test_a_snapshot_with_a_recorded_key_is_found_without_git(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    assert _run(rig, "init", "doeff-linter").returncode == 0
+    snapshot = rig.snapshots / ("f" * 40)
+    _place_linter(snapshot, "f" * 40)
+    (snapshot / "input_key").write_text(_baseline_version(rig) + "\n")
+    _install_dev(rig, _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n"))
+    copy = _copy_without_git(rig, tmp_path)
+    found = subprocess.run([sys.executable, str(SCRIPT), "--root", str(copy), "--strict", "check", "doeff-linter"],
+                           env=rig.environment, capture_output=True, text=True, check=False)
+    assert found.returncode == 0, found.stderr
+    assert (snapshot / "calls").exists()
+
+
+def test_the_key_entry_prints_the_key_of_a_commit(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    printed = subprocess.run([sys.executable, str(ROOT / "scripts" / "doeff_linter_locked.py"), "key", "HEAD"],
+                             cwd=rig.repo, env=rig.environment, capture_output=True, text=True, check=False)
+    assert printed.returncode == 0, printed.stderr
+    assert printed.stdout.strip() == LINTER_LOCKED.input_key(rig.repo, "HEAD")
+
+
+def test_the_daily_gate_runs_the_baseline_check_strictly() -> None:
+    # 日次の全体検証の段の列に、hook と同じ基点の比べを repo 全体へ --strict で当てる段が在る(消すと、hook を「測れない」で
+    # 通った commit を測る所が無くなる)。木は build の生成物が混ざらない別の label。
+    stages = tomllib.loads((ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
+    lint = [stage for stage in stages if stage["name"] == "lint"]
+    assert len(lint) == 1
+    assert "--label doeff-gate-lint" in lint[0]["run"]
+    assert "hook_finding_baseline.py --strict check doeff-linter" in lint[0]["run"]
+    assert "hook_finding_baseline.py --strict check semgrep" in lint[0]["run"]
