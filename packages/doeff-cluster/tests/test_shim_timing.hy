@@ -81,7 +81,9 @@
 
 (deftest test-reaping-an-unobserved-job-waits-for-the-shim-deadline-before-the-kill [tmp-path]
   ;; 失敗ケース(#2940): 終わりを観測していない子の回収は、止めの合図から shim の期限まで group へ KILL を送らない。以前は猶予 0 で
-  ;; 合図と同時に KILL を送り(回収が 0 秒で終わる)、shim が子孫を片づける前に shim を殺した。期限を過ぎれば強いて止め、本体は残らない。
+  ;; 合図と同時に KILL を送り(回収が 0 秒で終わる)、shim が子孫を片づける前に shim を殺した。2 段目から shim は合図を捨てる job を
+  ;; 自分の猶予(期限より前)で KILL して片づけ、自分で終わるので、回収の終わりは shim の猶予の後 — 下限は shim の猶予(合図と同時の
+  ;; KILL は赤のまま)。本体は残らない。
   (val tree (/ tmp-path "tree"))
   (.mkdir tree)
   (val ready (/ tmp-path "ignorer.pid"))
@@ -91,6 +93,7 @@
   (<- settings (host-settings tmp-path :hy-command HY :policy SHORT))
   (<- deadline int (shim-deadline-ms settings.shim))
   (val waited (! (run-on-host settings (reaped-before-its-end (JobSpec "task/t1" "term_ignorer" #() "rev-a" :once True) tree ready))))
-  (assert (>= waited deadline) (.format "回収が shim の期限 {} ms より前に KILL を送った({} ms)" deadline waited))
+  (val grace settings.shim.shim-grace-ms)
+  (assert (>= waited grace) (.format "回収が shim の猶予 {} ms より前に KILL を送った({} ms)" grace waited))
   (assert (< waited (+ deadline 10000)) waited)
   (! (assert-gone (int (.read-text ready)) "回収した job の本体")))

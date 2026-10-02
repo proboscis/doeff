@@ -2,8 +2,8 @@
 ;;;
 ;;; worker は job と入口の検めを shim の下の新しい process group に起こす。job を止める時は group へ止めの合図(TERM)を送り、停止の猶予
 ;;; (WorkerPolicy.stop-grace-ms)の後の拍で group へ KILL を送る(worker/core/policy の stop-actions — 拍で判じるので KILL は合図の後
-;;; 停止の猶予 〜 停止の猶予 + 拍 の間に来る)。shim は合図から shim の猶予だけ job を待ち、job の group を強いて止めて子孫を片づけてから
-;;; 終わる(片づけは 2 段目で入れる)。片づけが worker の KILL に先を越されないよう、shim の期限は停止の猶予より後にしない:
+;;; 停止の猶予 〜 停止の猶予 + 拍 の間に来る)。shim は合図から shim の猶予だけ job を待ち、job と引き取った子孫を強いて止めて片づけてから
+;;; 終わる(片づけは 2 段目 — worker/entry/shim)。片づけが worker の KILL に先を越されないよう、shim の期限は停止の猶予より後にしない:
 ;;;   shim の猶予 + 掃除の余裕 ≤ 停止の猶予
 ;;; shim の猶予は停止の猶予と掃除の余裕(WorkerPolicy.shim-sweep-margin-ms)から導く — 導く所はここ 1 つ(job と検めの shim の引数・
 ;;; worker の側で shim を止める道の待ち・入口の検め・検が同じ値を読む)。worker の側で shim を止める道(終わりを観測していない子の回収・

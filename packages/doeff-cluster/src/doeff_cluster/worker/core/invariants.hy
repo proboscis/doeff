@@ -5,8 +5,16 @@
 ;;; なってから、どの時点でも Ready を報告した生きた process が 1 つ以上在る(旧は新が Ready になった後にだけ止める — worker_policy の
 ;;; handoff-actions / retired-actions)。判断は記録(世代ごとの最初の Ready の時刻と終わった時刻)を受けて空白の列を返す純関数 1 つ。
 ;;; 記録を集めるのは検(tests/test_local.hy の handoff の入れ替えの検)。
+;;;
+;;; 条 C4b stopped-job-leaves-no-descendant(#2940 の 2 段目): job を止め切った後、job の子孫(job が別の session・process group で起こした
+;;; 孫を含む)は 1 つも生きていない。止め切りの時刻 = 止めの合図から停止の猶予 + KILL の猶予の後・worker が消えてから shim の期限の後・
+;;; job が自分で終わったのを worker が観測した時。守るのは入れ物 shim(worker/entry/shim)の子孫の引き取りと片づけ。判断は記録(止め切りの
+;;; 時刻と、子孫ごとに生きているのを最後に見た時刻)を受けて破りの列を返す純関数 1 つ。記録を集めるのは本物の process の検
+;;; (tests/test_shim_descendants.hy)。
 
 (require doeff-hy.macros [defk])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
 
 
 (defk handoff-keeps-a-ready-writer [lifetimes]
@@ -20,3 +28,29 @@
                :setv start (get spans i 0)
                :if (< covered start)
                #(covered start))))
+
+
+(defrecord DescendantLife
+  "条 C4b の記録 1 つ = job の子孫 1 つの見え方: pid・label = 筋書きが付けた名(破りの名指しに使う)・last-alive-ms = 生きているのを最後に
+   見た時刻(epoch ms — 見張りの間に一度も生きているのを見なければ None。回収を待つだけの zombie は生きていない)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int pid)
+  (#^ str label)
+  (#^ (| int None) last-alive-ms))
+
+
+(defrecord DescendantOutlivedTheStop
+  "条 C4b の破り 1 つ: 止め切りの時刻 stopped-ms の後に生きているのを見た子孫 life。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int stopped-ms)
+  (#^ DescendantLife life))
+
+
+(defk stopped-job-leaves-no-descendant [stopped-ms lives]
+  {:pre [(: stopped-ms int) (: lives (get tuple #(DescendantLife ...)))] :post [(: % (get tuple #(DescendantOutlivedTheStop ...)))]
+   :tags {:context "worker" :role "judgment"}}
+  "条 C4b: 止め切りの時刻(epoch ms)と子孫ごとの見え方の列から、止め切りの後に生きているのを見た子孫を破りの列にして返す(空なら緑)—
+   job を止め切った後に子孫が孤児として残らないことを、筋書きの記録から判じるため。止め切りの時刻ちょうどに見たのは破りではない。"
+  (tuple (gfor life lives
+               :if (and (is-not life.last-alive-ms None) (> life.last-alive-ms stopped-ms))
+               (DescendantOutlivedTheStop :stopped-ms stopped-ms :life life))))
