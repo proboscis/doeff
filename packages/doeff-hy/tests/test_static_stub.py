@@ -218,6 +218,16 @@ def test_a_defeffect_keeps_its_base_with_the_answer_and_its_dataclass(tmp_path: 
     assert line in stub_of(tmp_path, [tmp_path], source).text.splitlines()
 
 
+def test_a_defeffect_stub_carries_no_macro_bookkeeping_field(tmp_path: Path) -> None:
+    # 失敗ケース(#2886): `__doeff_answer__: _doeff_ClassVar[object]` を写すと、手の .pyi の欄の照らし
+    # (doeff-core-effects の test_hy_module_stubs — dataclass の欄の並び)が別名の ClassVar を見抜けずに欄と数え、
+    # 置き換えた effect の module が 4 つ赤になった。答えの型は基底が持つので、記帳の名は .pyi に要らない。
+    source = _module(tmp_path, EFFECTS)
+    text = stub_of(tmp_path, [tmp_path], source).text
+    assert "__doeff_answer__" not in text
+    assert "_doeff_ClassVar" not in text
+
+
 def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:
     # 失敗ケース(#2886): 使い手の `(<- n (Pong target))` の n は、生成された .pyi の基底が Unknown だったので Unknown に読まれ、
     # strict の型検査が「型が分からない」の赤を 7 件出した。答えの型 int が基底に載れば、n は int に読める。

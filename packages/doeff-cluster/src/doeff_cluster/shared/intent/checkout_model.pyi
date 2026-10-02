@@ -2,7 +2,6 @@
 
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
-from typing import ClassVar as _doeff_ClassVar
 from dataclasses import dataclass as dataclass
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,15 +27,13 @@ class CheckoutState:
 
 @_doeff_dataclass(frozen=True)
 class ReadCheckout(_doeff_effect_base[CheckoutState]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
     path: str
     remote: str
 
 @_doeff_dataclass(frozen=True)
 class CheckoutRoot(_doeff_effect_base[str | None]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
     path: str
 
 @_doeff_dataclass(frozen=True)
 class SenderSourceRoot(_doeff_effect_base[str | None]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
+    ...

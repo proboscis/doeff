@@ -2,7 +2,6 @@
 
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
-from typing import ClassVar as _doeff_ClassVar
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
@@ -107,7 +106,6 @@ class DiskFree(EffectBase):
 
 @_doeff_dataclass(frozen=True)
 class RepoAllowed(_doeff_effect_base[bool]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
     url: str
 
 @dataclass(frozen=True)
