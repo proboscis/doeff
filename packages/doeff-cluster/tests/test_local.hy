@@ -27,7 +27,7 @@
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive])
+(import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
 
@@ -518,6 +518,40 @@
   (assert seen.before seen)
   (<- lost tuple (acknowledged-writes-survive seen.before seen.after.rows))
   (assert (in "beacon/a" lost) #(lost seen.after.rows)))
+
+
+(defk revision-across-a-stop [seconds]
+  {:pre [(: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C5 の記録を集めるため: 8 秒待って GET /state の版を読み、coordinator を seconds 秒止め、作り直しの後に 25 秒待ってもう 1 度読む
+   (読んだ順の RevisionRead の列・時刻は筋書きの予定の刻)。"
+  (<- (Delay 8.0))
+  (<- before dict (ReadCoordinator "/state"))
+  (<- (StopCoordinator seconds))
+  (<- (Delay (+ seconds 25.0)))
+  (<- after dict (ReadCoordinator "/state"))
+  #((RevisionRead :at-ms 8000 :revision (get before "revision"))
+    (RevisionRead :at-ms (int (* (+ 8.0 seconds 25.0) 1000)) :revision (get after "revision"))))
+
+
+(deftest test-the-coordinator-revision-never-goes-back-across-a-stop
+  ;; 条 C5(architecture.hy の :invariants): 止まりの前に読んだ版より、作り直しの後の版が小さくない(本物の置き場は版を読み直す)。
+  (<- reads tuple (sim-cluster (beacons sim-foundation) (revision-across-a-stop 10.0)))
+  (assert (> (. (get reads 0) revision) 0) reads)
+  (<- drops tuple (revision-never-goes-back reads))
+  (assert (= drops #()) drops))
+
+
+(defclass ForgetsOnReload [MemoryWalStore]
+  "壊れた置き場(条 C5 の反例・#1976 の #36): 書きは受けるが、作り直しの読み直しで「何も無い」と答える — coordinator は空から起き直す。"
+  (defn #^ bool exists [self] False))
+
+
+(deftest test-a-counterexample-store-that-forgets-on-reload-breaks-c5
+  ;; 条 C5 の失敗ケース: 置き場の差し替えの口(#989)に読み直しで何も返さない置き場を差すと、作り直した coordinator の版が止まりの前より
+  ;; 小さくなり、条 C5 の判断がその読みの組を名指す(同じ筋書きの本物の置き場では空 — 上の test-the-coordinator-revision-…)。
+  (<- reads tuple (sim-cluster (beacons sim-foundation) (revision-across-a-stop 10.0) :store ForgetsOnReload))
+  (<- drops tuple (revision-never-goes-back reads))
+  (assert (= (len drops) 1) #(drops reads)))
 
 
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
