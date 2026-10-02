@@ -995,9 +995,12 @@
              id)))
 
 
-(defn #^ ClusterState reconcile [#^ int now #^ ClusterState state #^ ClusterTiming timing]
+(defk reconcile [now given timing]
+  {:pre [(: now int) (: given ClusterState) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "1 拍の調停: 期限を過ぎた物(盤の行・drain・温める表の行・沈黙した worker・消えた Worker への約束)を掃いてから、job と task の
+   置き先を決め直し、置き先の変化を出来事の列に足した状態を求めるため。何も変わらなければ掃いた後の状態そのものを返す。"
   ;; 消された・忘れた Worker への途絶しても動かし続けてよい印の約束は、置き先の判断の前に外す(#2804 — その job を他へ置ける)。
-  (setv state (run (sweep-keep-marks (forget-silent-workers (sweep-warms (sweep-drains (sweep-board state now) now) now) now))))
+  (<- state ClusterState (sweep-keep-marks (forget-silent-workers (sweep-warms (sweep-drains (sweep-board given now) now) now) now)))
   ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
   ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
   ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。

@@ -23,7 +23,7 @@
 
 (deftest test-the-events-reply-is-a-typed-value-spelled-by-protocol
   (val s (written))
-  (setv #(_ status answer) (respond s (http-request "GET" "/events" {"since" "0"} None) 3000 T {}))
+  (setv #(_ status answer) (! (respond s (http-request "GET" "/events" {"since" "0"} None) 3000 T {})))
   (assert (= status 200))
   (assert (isinstance answer EventsView) answer)
   (setv #(_ _ body) (responded s (http-request "GET" "/events" {} None) 3000 T))
@@ -34,7 +34,7 @@
 
 (deftest test-the-state-reply-adds-audit-and-drains-to-the-view
   (val s (written))
-  (setv #(_ _ answer) (respond s (http-request "GET" "/state" {} None) 3000 T {}))
+  (setv #(_ _ answer) (! (respond s (http-request "GET" "/state" {} None) 3000 T {})))
   (assert (isinstance answer StateReply) answer)
   (setv #(_ _ body) (responded s (http-request "GET" "/state" {} None) 3000 T))
   (assert (and (isinstance body dict) (in "audit" body) (in "drains" body) (in "workers" body)) (sorted body))
@@ -60,7 +60,7 @@
   ;; worker 1 つの画面は型の値(WorkerDrainView)で、JSON の欄は前と同じ — 退いた世代の待ちの答えだけが superseded を書き、
   ;; その drain には頼みの記録(sinceMs・untilMs・actor)が無い。
   (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2")}))
-  (setv #(_ _ answer) (respond s (http-request "GET" "/workers/w1" {} None) 2000 T {}))
+  (setv #(_ _ answer) (! (respond s (http-request "GET" "/workers/w1" {} None) 2000 T {})))
   (assert (isinstance answer WorkerDrainView) answer)
   (setv body (! (reply-json answer)))
   (assert (= (sorted body) ["alive" "boot" "derived" "drain" "draining" "exclusive" "name" "node" "provides" "ready" "silentMs"]) body)
@@ -76,7 +76,7 @@
 (deftest test-the-resources-are-typed-and-spelled-in-the-old-shape
   ;; 資源の一覧と 1 つは型の値(ResourceList・ResourceView)で、status は比べる単位の status に種類ごとの観測を足した物。
   (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2")}))
-  (setv #(_ _ answer) (respond s (http-request "GET" "/resources/Worker" {} None) 2000 T {}))
+  (setv #(_ _ answer) (! (respond s (http-request "GET" "/resources/Worker" {} None) 2000 T {})))
   (assert (isinstance answer ResourceList) answer)
   (assert (all (gfor v answer.items (isinstance v ResourceView))) answer)
   (setv body (! (reply-json answer)))
@@ -92,7 +92,7 @@
 
 (deftest test-a-refusal-is-typed-and-spelled-in-the-old-shape
   ;; 断りの答えは型の値(ErrorReply)で、JSON は {error …} — 付け足しの欄(current・conflicts・open・fault)は在る時だけ書く。
-  (setv #(_ status answer) (respond (ClusterState) (http-request "GET" "/nowhere" {} None) 1000 T {}))
+  (setv #(_ status answer) (! (respond (ClusterState) (http-request "GET" "/nowhere" {} None) 1000 T {})))
   (assert (= status 404))
   (assert (isinstance answer ErrorReply) answer)
   (assert (= (sorted (! (reply-json answer))) ["error"]) (! (reply-json answer)))
@@ -107,10 +107,10 @@
   (assert (= #(write-status written) #(200 {"ok" True "resourceVersion" 1})) written)
   (setv #(_ clash-status clash) (responded s (http-request "PUT" "/board/a" {} {"value" 2 "expectVersion" 5} :actor "c") 1000 T))
   (assert (= #(clash-status clash) #(409 {"ok" False "current" 1 "resourceVersion" 1})) clash)
-  (setv #(_ _ plain) (respond s (http-request "GET" "/board" {} None) 1000 T {}))
+  (setv #(_ _ plain) (! (respond s (http-request "GET" "/board" {} None) 1000 T {})))
   (assert (isinstance plain BoardRead) plain)
   (assert (= (! (reply-json plain)) {"a" 1}))
-  (setv #(_ _ versioned) (respond s (http-request "GET" "/board" {"withVersions" "1"} None) 1000 T {}))
+  (setv #(_ _ versioned) (! (respond s (http-request "GET" "/board" {"withVersions" "1"} None) 1000 T {})))
   (assert (= (! (reply-json versioned)) {"a" {"value" 1 "resourceVersion" 1}}))
   (assert (= (! (reply-json (BoardWritten :version None))) {"ok" True "resourceVersion" None}))
   (assert (= (! (reply-json (BoardConflict :current 1 :version 1 :reason "x"))) {"ok" False "current" 1 "resourceVersion" 1 "error" "x"})))
@@ -118,7 +118,7 @@
 
 (deftest test-the-task-answers-are-typed-and-spelled-in-the-old-shape
   ;; task の口の答えは型の値で、JSON は前と同じ形(知らない task の問いは {phase: missing})。
-  (setv #(_ _ missing) (respond (ClusterState) (http-request "GET" "/tasks/t9" {} None) 1000 T {}))
+  (setv #(_ _ missing) (! (respond (ClusterState) (http-request "GET" "/tasks/t9" {} None) 1000 T {})))
   (assert (isinstance missing TaskMissing) missing)
   (assert (= (! (reply-json missing)) {"phase" "missing"}))
   (assert (= (! (reply-json (TaskAccepted :id "t1"))) {"task" "t1"}))
@@ -130,10 +130,10 @@
 
 (deftest test-the-detached-answers-are-typed-and-spelled-in-the-old-shape
   ;; 切り離した task の口の答えは型の値で、JSON は前と同じ形(行の無い key は {key phase: unknown}・起きた直後は 503 の warming)。
-  (setv #(_ unknown-status unknown) (respond (ClusterState :started-ms -100000) (http-request "GET" "/detached/k1" {} None) 1000 T {}))
+  (setv #(_ unknown-status unknown) (! (respond (ClusterState :started-ms -100000) (http-request "GET" "/detached/k1" {} None) 1000 T {})))
   (assert (and (= unknown-status 200) (isinstance unknown DetachedUnknown)) unknown)
   (assert (= (! (reply-json unknown)) {"key" "k1" "phase" "unknown"}))
-  (setv #(_ warming-status warming) (respond (ClusterState :started-ms 900) (http-request "GET" "/detached/k1" {} None) 1000 T {}))
+  (setv #(_ warming-status warming) (! (respond (ClusterState :started-ms 900) (http-request "GET" "/detached/k1" {} None) 1000 T {})))
   (assert (and (= warming-status 503) (isinstance warming DetachedWarming)) warming)
   (assert (= (sorted (! (reply-json warming))) ["error" "key" "phase"]))
   (assert (= (! (reply-json (DetachedSubmitted :key "k" :id "t1" :created True :phase "queued")))
