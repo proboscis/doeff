@@ -143,21 +143,22 @@ lint-packages:
 
 PYTEST_MEM_GUARD_MB ?= 8192
 PYTEST_MEM_GUARD_POLL_INTERVAL ?= 1.0
-PYTEST_MEMORY_ENV := PYTEST_MEM_GUARD_MB=$(PYTEST_MEM_GUARD_MB) \
-	PYTEST_MEM_GUARD_POLL_INTERVAL=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
+# 見張りの設定は tests/conftest.py の option に命令行で渡す(conftest は環境を読まない — #2896)。
+PYTEST_MEMORY_OPTIONS := --mem-guard-mb=$(PYTEST_MEM_GUARD_MB) \
+	--mem-guard-poll-interval=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
 
 # ADR-DOE-ENFORCE-001 R4: VM conformance oracle の Rust 側テスト(invariant-checks 有効)。
 test-vm-invariants:
 	cd packages/doeff-vm-core && cargo test --features "invariant-checks python_bridge"
 
 test: bench-smoke
-	$(PYTEST_MEMORY_ENV) uv run pytest
+	uv run pytest $(PYTEST_MEMORY_OPTIONS)
 
 test-unit:
-	$(PYTEST_MEMORY_ENV) uv run pytest -m "not e2e and not slow"
+	uv run pytest $(PYTEST_MEMORY_OPTIONS) -m "not e2e and not slow"
 
 test-e2e:
-	$(PYTEST_MEMORY_ENV) uv run pytest -m "e2e"
+	uv run pytest $(PYTEST_MEMORY_OPTIONS) -m "e2e"
 
 # 登記(ai land request)の前に手元で走らせる変えた所の検(agora-redesign #2605)。分岐点(既定 git merge-base HEAD origin/main)から
 # 作業木までに変えた file が当たる契約の検の組(root の pyproject.toml の [[tool.doeff.contract-tests]])を先頭に、変えた検の file と

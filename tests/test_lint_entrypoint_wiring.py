@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
@@ -178,9 +179,18 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     return repository
 
 
+@dataclass(frozen=True)
+class _HookRun:
+    """pre-commit を 1 回走らせた結果(result)と、偽の道具が受けた呼びの列(calls — 1 つの呼びは引数の列)。"""
+
+    result: subprocess.CompletedProcess[str]
+    calls: list[list[str]]
+
+
 def _pre_commit(
     directory: Path, changed: str, *, semgrep_status: int | None = 0, linter_report: str | None = None,
-) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+) -> _HookRun:
+    """偽の道具を道の先頭に置いた検体の repo で、changed だけを pre-commit に渡して走らせるため。"""
     _tool(directory, "doeff-linter", 0, report=linter_report)
     if semgrep_status is not None:
         _tool(directory, "semgrep", semgrep_status)
@@ -201,7 +211,7 @@ def _pre_commit(
         [json.loads(line) for line in calls_path.read_text().splitlines()]
         if calls_path.exists() else []
     )
-    return result, calls
+    return _HookRun(result=result, calls=calls)
 
 
 @pytest.mark.parametrize("changed", [
@@ -210,25 +220,27 @@ def _pre_commit(
 def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
     tmp_path: Path, changed: str,
 ) -> None:
-    result, calls = _pre_commit(tmp_path, changed)
-    assert result.returncode == 0, result.stdout + result.stderr
-    semgrep_calls: list[list[str]] = [call for call in calls if call[0] == "semgrep" and "--version" not in call]
-    assert len(semgrep_calls) == 1, result.stdout + result.stderr
+    hook = _pre_commit(tmp_path, changed)
+    assert hook.result.returncode == 0, hook.result.stdout + hook.result.stderr
+    semgrep_calls: list[list[str]] = [call for call in hook.calls if call[0] == "semgrep" and "--version" not in call]
+    assert len(semgrep_calls) == 1, hook.result.stdout + hook.result.stderr
     # どの項も uv.lock の版を uv の道具の置き場から呼ぶ(探し道の semgrep を直に呼ばない — #2906)。
-    assert [call for call in calls if call[0] == "uv"] == [["uv", "tool", "run", "--from", "semgrep==0.0.0-fake", "semgrep"]]
+    assert [call for call in hook.calls if call[0] == "uv"] == [
+        ["uv", "tool", "run", "--from", "semgrep==0.0.0-fake", "semgrep"],
+    ]
     assert semgrep_calls[0][-1] == changed
     # Python は基点と比べる script が JSON で数える(#2848)・Hy は semgrep が所見 1 つで止める(--error)。
     assert ("--json" if changed.endswith(".py") else "--error") in semgrep_calls[0]
     assert "doeff/" not in semgrep_calls[0]
     assert "packages/" not in semgrep_calls[0]
-    python_calls: list[list[str]] = [call for call in calls if call[0] == "doeff-linter" and "--version" not in call]
+    python_calls: list[list[str]] = [call for call in hook.calls if call[0] == "doeff-linter" and "--version" not in call]
     assert len(python_calls) == int(changed.endswith(".py"))
 
 
 def test_python_change_with_a_linter_error_not_in_the_baseline_is_stopped(tmp_path: Path) -> None:
     # 基点(空)に無い error が変えた file に 1 つ在る → 止まる(#2848 の失敗ケース — 前からの所見だけなら通る、は script の検)。
     report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
-    result, _ = _pre_commit(tmp_path, "doeff/example.py", linter_report=report)
+    result = _pre_commit(tmp_path, "doeff/example.py", linter_report=report).result
     assert result.returncode != 0, result.stdout + result.stderr
     assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in result.stdout + result.stderr
 
@@ -237,15 +249,15 @@ def test_python_change_with_a_linter_error_not_in_the_baseline_is_stopped(tmp_pa
 def test_hy_only_change_rejects_missing_or_failing_semgrep(
     tmp_path: Path, tool_status: int | None,
 ) -> None:
-    result, calls = _pre_commit(tmp_path, "packages/example.hy", semgrep_status=tool_status)
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert not any(call[0] == "doeff-linter" for call in calls)
+    hook = _pre_commit(tmp_path, "packages/example.hy", semgrep_status=tool_status)
+    assert hook.result.returncode != 0, hook.result.stdout + hook.result.stderr
+    assert not any(call[0] == "doeff-linter" for call in hook.calls)
 
 
 def test_unrelated_document_does_not_require_python_or_hy_linters(tmp_path: Path) -> None:
-    result, calls = _pre_commit(tmp_path, "notes.md", semgrep_status=None)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == []
+    hook = _pre_commit(tmp_path, "notes.md", semgrep_status=None)
+    assert hook.result.returncode == 0, hook.result.stdout + hook.result.stderr
+    assert hook.calls == []
 
 
 @pytest.mark.parametrize("nested", [False, True])
