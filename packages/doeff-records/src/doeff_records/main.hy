@@ -159,7 +159,7 @@
 ;; --- 本番の用意と土台 ----------------------------------------------------------------------------------------------------------------
 
 (defk pg-handlers-of [schema prefix host]
-  {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % Callable)] :tags {:context "records" :role "entry"}}
+  {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
   "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
    1 度だけ撃つ)。"
   (<- store (prepare-records-store DATABASE schema prefix))
@@ -203,7 +203,7 @@
 
 
 (defk records-settings [dsn-of]
-  {:pre [(: dsn-of Callable)] :post [(: % RecordsSettings)] :tags {:context "records" :role "entry"}}
+  {:pre [(: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % RecordsSettings)] :tags {:context "records" :role "entry"}}
   "env と Secret の file を読み、設定の値を作るため(頭の註の env の一覧 — 必須が欠ければ起動を止める)。dsn-of = 接続 URL の file の中身 →
    DSN の Program。読みは ReadEnvironment・ReadText(呼び手の外側の答え手が答える)。"
   (<- url-text str (read-secret (! (required-env ENV-PG-URL-FILE))))
@@ -287,7 +287,7 @@
 
 
 (defk serve-records-service [schema dsn-of]
-  {:pre [(: schema RecordsSchema) (: dsn-of Callable)] :post [(: % int)] :tags {:context "records" :role "entry"}}
+  {:pre [(: schema RecordsSchema) (: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % int)] :tags {:context "records" :role "entry"}}
   "記録の service を単独で起こすため: env を読んで設定の値を作り(records-settings)、本体の設定(records-serving)を単独の本番の土台
    (records-foundation — 接続と pool は土台の口が開いて閉じる)の下で records-process に撃つ。dsn-of = 接続 URL の file の中身 → DSN の
    Program。答え = process の終わりの code(用意の失敗は例外のまま上げる)。"

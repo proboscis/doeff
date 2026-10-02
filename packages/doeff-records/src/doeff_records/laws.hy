@@ -86,7 +86,7 @@
 
 
 (defk collect-pages [#^ LawHarness harness #^ str table #^ FrozenMap where #^ int limit]
-  {:pre [(: harness LawHarness) (: table str) (: where FrozenMap) (: limit int)] :post [(: % list)]}
+  {:pre [(: harness LawHarness) (: table str) (: where FrozenMap) (: limit int)] :post [(: % (get list object))]}
   "next-cursor が尽きるまで ListRows の頁を読み、頁を全部並べる。"
   (setv pages [] cursor None)
   (while True
@@ -99,7 +99,7 @@
 ;; --- 法 1: 古い版の PutRow は Conflict ---------------------------------------------------------------------
 
 (defk law-stale-put-conflicts [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "古い版の PutRow は Conflict" t [])
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (require-law (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "生まれる行: {!r}" born))
@@ -124,7 +124,7 @@
 ;; --- 法 2: 確定した変更は WatchChanges にちょうど 1 回・順序どおり -----------------------------------------
 
 (defk law-committed-changes-appear-once-in-order [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "確定した変更は WatchChanges にちょうど 1 回・順序どおり")
   (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
   (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start))
@@ -165,7 +165,7 @@
 ;; --- 法 3: epoch が変わると Reset ------------------------------------------------------------------------
 
 (defk law-epoch-change-resets [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "epoch が変わると Reset")
   (<- first (as-writer harness MAKER (ListRows "parts")))
   (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
@@ -191,7 +191,7 @@
 ;; --- 法 4: 宣言に無い書き手・欄・状態・上限・operator の欄・終端は Refused -------------------------------------------
 
 (defk law-undeclared-writes-are-refused [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "宣言が許さない書きは Refused で、行を変えない")
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (setv refusals [])
@@ -228,7 +228,7 @@
 ;; --- 法 4b: operator の宣言の欄は operator の主体だけが書ける・他の欄は欄の書き手の宣言どおり ------------------------
 
 (defk law-operator-paths-need-an-operator [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "operator の宣言の欄を agent が書けないことを、どの置き場の組でも同じに確かめるための法:
    欄の書き手でも operator の主体でなければ Refused・operator の主体は書ける・operator の主体でも欄の書き手でない欄は書けない・
    operator-paths の外の欄には主体の区別が効かない。"
@@ -257,7 +257,7 @@
 ;; --- 法 4c: 誕生の書き手(founders)は行が無い時だけ書け、生まれた行は書き換えられない ------------------------------
 
 (defk law-founders-write-only-at-birth [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "欄の founders を、どの置き場の組でも同じに確かめるための法: 誕生の書き手でない者は行を生めない・誕生の書き手でも founders に
    居ない欄を添えた誕生は断る・誕生の書き手は行が無い時だけ既定の行を生める(operator の宣言の欄でも)・生まれた行の欄は誕生の
    書き手には書けず、operator の主体だけが書ける・生まれた後の誕生の書き(ExpectAbsent)は Conflict。"
@@ -283,7 +283,7 @@
 ;; --- 法 5: transient の行は期限で消え、record の行は消えない ------------------------------------------------
 
 (defk law-transient-rows-expire [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "transient の行は期限で消え、record の行は消えない")
   (<- t1 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
   (<- t2 (as-writer harness MAKER (PutRow "tickets" #("g1" "t2") (FrozenMap {"owner" "o2"}) (ExpectAbsent))))
@@ -316,7 +316,7 @@
 (setv WHERES (lfor where [{} {"color" "red"} {"label" "a"} {"color" "blue" "label" "b"} {"id" "p03"} {"color" "none"}] (FrozenMap where)))
 
 (defk law-indexed-list-equals-filtered-scan [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "索引の ListRows は全件を読んで絞った結果と同じ" transcript [])
   (for [n (range 1 13)]
     (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n))
@@ -343,7 +343,7 @@
 ;; --- 法 7: 追記の冪等キー ----------------------------------------------------------------------------------
 
 (defk law-append-is-idempotent [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "同じ冪等キーの再送は前の番号を返し、別の本文は Refused")
   (<- a1 (as-writer harness MAKER (AppendEvent "journal" "k1" {"n" 1})))
   (<- a2 (as-writer harness MAKER (AppendEvent "journal" "k2" {"n" 2})))
@@ -373,7 +373,7 @@
   written)
 
 (defk law-watch-waits-for-a-change [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "WatchChanges は変更が来るまで timeout まで待つ")
   (<- start (as-writer harness MAKER (ListRows "parts")))
   (setv cursor (WatchCursor start.epoch start.sequence))
@@ -401,7 +401,7 @@
   appended)
 
 (defk law-watch-events-waits-for-an-append [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
   "列の待ちの法: 頭が after より進んでいれば待たずに EventsMoved・進まなければ timeout で EventsQuiet(after が頭より先でも誤りに
    しない)・待っている間の追記で EventsMoved(列の外の行の書きでは返らない)。どの置き場の handler も同じ答えを返すことを確かめるため。"
@@ -425,7 +425,7 @@
 ;; --- 法 9: 差分の None はその欄を消す(JSON merge patch の null)------------------------------------------------
 
 (defk law-none-removes-a-field [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "PutRow の差分の値 None はその欄を消し、行の値は None を持たない")
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a" "color" "red"}) (ExpectAbsent))))
   (require-law (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "color" "red" "state" "open"}))) law (.format "生まれる行: {!r}" born))
@@ -452,7 +452,7 @@
 ;; --- 法 10: 刈った変更より前の位置は Reset・回収は期限切れの行を消す ----------------------------------------------
 
 (defk law-maintenance-prunes-and-sweeps [#^ LawHarness harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   (setv law "刈った変更より前の位置は Reset・floor の位置からは続けられ・行は消えない。回収は期限切れの行だけを 1 回消す")
   (<- start (as-writer harness MAKER (ListRows "parts")))
   (<- before (GetTime))
@@ -497,7 +497,7 @@
 ;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------
 
 (defk law-put-rows-is-all-or-nothing [harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "複数行の書き(PutRows)が 1 transaction の約束を守ることを、どの置き場の組でも同じに確かめるための法:
    全部通る束は束の順の Written を返し、期待のずれ 1 行・書きの断り 1 行の束は 1 行も書かない・期待のずれは断りより先に答える・
    確定した束の変更は束の順に続いた番号で 1 回ずつ見え、通らなかった束の変更は見えない。"
@@ -555,7 +555,7 @@
 ;; --- 法 12: 組で数える列の出来事は組の最後の出来事から数えて同時に消える -----------------------------------------------------
 
 (defk law-grouped-events-expire-together [harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "保持の組(ByKeySuffix)の法: 組の後の出来事が残る間は前の出来事も残り(同じ本文の再送は前の番号)、組の最後の出来事から保持の秒で
    組ごと消える。区切りを含まないキーと、後の出来事の無い組は、出来事ごとに消える。"
   (val law "組で数える列の出来事は組の最後の出来事から数えて同時に消える")
@@ -588,7 +588,7 @@
 ;; --- 法 13: 列の末尾の番号は 1 回の読みで答え、空の列は空と答える ----------------------------------------------------
 
 (defk law-stream-end-is-the-last-sequence [harness]
-  {:pre [(: harness LawHarness)] :post [(: % list)]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
   "列の末尾の法: ReadStreamEnd は列の最後の出来事の番号を StreamEnd で答え(別の列に後から積んだ出来事は数えない・同じ冪等キーの再送は
    末尾を動かさない)、出来事が 1 つも無い列は StreamEmpty で答える。保持で刈った後は残る出来事の最後の番号・全部刈れば StreamEmpty。
