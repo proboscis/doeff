@@ -1502,7 +1502,9 @@
         "doeff-cluster-promise-wait",
         "doeff-cluster-watch-policy",
         "doeff-cluster-kube-model",
-        "doeff-cluster-worker-heartbeat-rules"
+        "doeff-cluster-worker-heartbeat-rules",
+        "doeff-cluster-worker-quiet-policy",
+        "doeff-cluster-worker-tick-pauses"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
