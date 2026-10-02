@@ -42,6 +42,11 @@
 ;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の定数から内訳を作って判断に渡す — 数を検に
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
+;;;   C5 revision-never-goes-back(doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back — #1976 の #36)— GET /state の
+;;;   coordinator の版は、読んだ順に減らない(止まり置き場から作り直されても)。確かめるのは tests/test_local.hy の
+;;;   test-the-coordinator-revision-never-goes-back-across-a-stop(止まりの前と作り直しの後の版を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-store-that-forgets-on-reload-breaks-c5(置き場の差し替えの口に、読み直しで何も無いと答える置き場 ForgetsOnReload を
+;;;   差すと、coordinator が空から起き直して版が戻り、C5 が名指す)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -93,7 +98,8 @@
    :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"
                 "doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job"
                 "doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"
-                "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"]})
+                "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"
+                "doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
