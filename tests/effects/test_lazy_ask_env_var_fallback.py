@@ -25,7 +25,7 @@ When program does Ask("creds"):
 """
 from __future__ import annotations
 
-import os
+from collections.abc import Mapping
 
 from doeff_core_effects.handlers import lazy_ask
 from doeff_core_effects.scheduler import scheduled
@@ -39,17 +39,27 @@ from doeff import (
 )
 from doeff import handler as _install_raw_handler
 
-# --- env_var_fallback_handler: resolves Ask from os.environ, passes otherwise ---
+# --- env_var_fallback_handler: resolves Ask from an outer source, passes otherwise ---
+# The source stands in for os.environ: each test hands in the values it needs
+# (injected, not read from the process environment — #2896).
 
 
-@do
-def env_var_fallback_handler(effect, k):
-    """Handles Ask by looking up os.environ; passes if key not found."""
-    if isinstance(effect, Ask):
-        val = os.environ.get(effect.key)
-        if val is not None:
-            return (yield Resume(k, val))
-    yield Pass(effect, k)
+def env_var_fallback_handler(source: Mapping[str, str]):
+    """Build a handler that answers Ask from ``source`` and passes if the key is not there.
+
+    The source names its values by string (as os.environ does), so an Ask whose key is not a
+    string is passed on.
+    """
+
+    @do
+    def handle(effect, k):
+        if isinstance(effect, Ask) and isinstance(effect.key, str):
+            val = source.get(effect.key)
+            if val is not None:
+                return (yield Resume(k, val))
+        yield Pass(effect, k)
+
+    return handle
 
 
 # --- Tests ---
@@ -59,10 +69,10 @@ class TestLazyAskEnvVarFallback:
     """#390: lazy_ask should include inner Ask-resolving handlers during
     lazy Program evaluation."""
 
-    def test_lazy_program_ask_resolved_by_inner_env_handler(self, monkeypatch):
+    def test_lazy_program_ask_resolved_by_inner_env_handler(self):
         """Core scenario from #390: lazy Program does Ask("path_key"),
         env_var_fallback_handler resolves it from os.environ."""
-        monkeypatch.setenv("path_key", "/etc/secrets/creds.json")
+        source = {"path_key": "/etc/secrets/creds.json"}
 
         @do
         def some_program():
@@ -75,14 +85,14 @@ class TestLazyAskEnvVarFallback:
 
         env = {"creds": some_program()}
 
-        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler(source))(program()))
         result = run(scheduled(composed))
         assert result == "Credentials(/etc/secrets/creds.json)"
 
-    def test_lazy_program_ask_falls_through_to_lazy_ask_env(self, monkeypatch):
+    def test_lazy_program_ask_falls_through_to_lazy_ask_env(self):
         """Ask inside lazy Program: env_var_fallback doesn't have the key,
         but lazy_ask's own env does. Should resolve from lazy_ask."""
-        monkeypatch.delenv("project_id", raising=False)
+        source: dict[str, str] = {}  # the outer source does not have project_id
 
         @do
         def some_program():
@@ -98,15 +108,15 @@ class TestLazyAskEnvVarFallback:
             "project_id": "my-project-123",
         }
 
-        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler(source))(program()))
         result = run(scheduled(composed))
         assert result == "project=my-project-123"
 
-    def test_lazy_program_ask_prefers_inner_handler_over_lazy_ask(self, monkeypatch):
+    def test_lazy_program_ask_prefers_inner_handler_over_lazy_ask(self):
         """When both env_var_fallback (os.environ) and lazy_ask's env have the
         key, the inner handler (env_var_fallback) should resolve it first
         because it's closer to the Ask source."""
-        monkeypatch.setenv("api_url", "https://env.example.com")
+        source = {"api_url": "https://env.example.com"}
 
         @do
         def some_program():
@@ -122,12 +132,12 @@ class TestLazyAskEnvVarFallback:
             "api_url": "https://lazy-ask.example.com",
         }
 
-        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler(source))(program()))
         result = run(scheduled(composed))
         # Inner handler (env_var_fallback) is closer -> resolves from os.environ
         assert result == "url=https://env.example.com"
 
-    def test_recursive_lazy_with_env_fallback(self, monkeypatch):
+    def test_recursive_lazy_with_env_fallback(self):
         """Recursive lazy chain where intermediate Program uses Ask resolved
         by env_var_fallback_handler.
 
@@ -135,7 +145,7 @@ class TestLazyAskEnvVarFallback:
           "creds" -> Program that Asks "path_key"
           "path_key" -> Program that Asks "base_dir" (from os.environ)
         """
-        monkeypatch.setenv("base_dir", "/opt/secrets")
+        source = {"base_dir": "/opt/secrets"}
 
         @do
         def lazy_path():
@@ -156,11 +166,11 @@ class TestLazyAskEnvVarFallback:
             "path_key": lazy_path(),
         }
 
-        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler)(program()))
+        composed = lazy_ask(env=env)(_install_raw_handler(env_var_fallback_handler(source))(program()))
         result = run(scheduled(composed))
         assert result == "Credentials(/opt/secrets/creds.json)"
 
-    def test_env_fallback_with_full_handler_stack(self, monkeypatch):
+    def test_env_fallback_with_full_handler_stack(self):
         """Full realistic stack: lazy_ask -> writer -> try -> state ->
         env_var_fallback -> program.
 
@@ -168,7 +178,7 @@ class TestLazyAskEnvVarFallback:
         """
         from doeff_core_effects.handlers import state, try_handler, writer
 
-        monkeypatch.setenv("secret_path", "/run/secrets/api-key")
+        source = {"secret_path": "/run/secrets/api-key"}
 
         @do
         def some_program():
@@ -186,6 +196,6 @@ class TestLazyAskEnvVarFallback:
             "name": "test-service",
         }
 
-        composed = lazy_ask(env=env)(writer(try_handler(state()(_install_raw_handler(env_var_fallback_handler)(program())))))
+        composed = lazy_ask(env=env)(writer(try_handler(state()(_install_raw_handler(env_var_fallback_handler(source))(program())))))
         result = run(scheduled(composed))
         assert result == "loaded:/run/secrets/api-key|test-service"

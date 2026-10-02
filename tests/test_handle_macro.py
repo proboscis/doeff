@@ -10,6 +10,7 @@ Verifies:
 import inspect
 import sys
 from dataclasses import dataclass
+from types import ModuleType
 
 import doeff_hy  # noqa — registers extensions
 import hy
@@ -504,41 +505,41 @@ class TestDefhandlerFactoryModuleCompile:
     because the Hy compiler accumulates state across top-level forms.
     """
 
-    @pytest.fixture(autouse=True)
-    def _import_repro(self):
+    @pytest.fixture
+    def mod(self) -> ModuleType:
         """Import the repro .hy fixture as a module."""
         # Clear cached module for fresh compile each test
         sys.modules.pop("tests.fixtures.repro_387", None)
         sys.modules.pop("repro_387", None)
         import tests.fixtures.repro_387 as mod
-        self.mod = mod
+        return mod
 
-    def test_make_handler_not_generator(self):
+    def test_make_handler_not_generator(self, mod: ModuleType):
         """make-handler factory must return handler, not generator."""
-        result = self.mod.make_handler("http://test")
+        result = mod.make_handler("http://test")
         assert not inspect.isgenerator(result), \
             f"make_handler returned generator: {type(result)}"
         assert callable(result)
 
-    def test_make_handler_many_clauses_not_generator(self):
+    def test_make_handler_many_clauses_not_generator(self, mod: ModuleType):
         """make-handler-many-clauses — multi-clause variant."""
-        result = self.mod.make_handler_many_clauses("http://test")
+        result = mod.make_handler_many_clauses("http://test")
         assert not inspect.isgenerator(result), \
             f"make_handler_many_clauses returned generator: {type(result)}"
         assert callable(result)
 
-    def test_factory_function_not_generator_function(self):
+    def test_factory_function_not_generator_function(self, mod: ModuleType):
         """The factory defn itself must not be a generator function."""
-        assert not inspect.isgeneratorfunction(self.mod.make_handler), \
+        assert not inspect.isgeneratorfunction(mod.make_handler), \
             "make_handler is a generator function — yield leaked to outer defn"
-        assert not inspect.isgeneratorfunction(self.mod.make_handler_many_clauses), \
+        assert not inspect.isgeneratorfunction(mod.make_handler_many_clauses), \
             "make_handler_many_clauses is a generator function — yield leaked"
 
-    def test_pre_handlers_are_callable(self):
+    def test_pre_handlers_are_callable(self, mod: ModuleType):
         """Sanity check: _doeff-do handlers before defhandler still work."""
-        h1 = self.mod.pre_handler_1()
-        h2 = self.mod.pre_handler_2("config")
-        h3 = self.mod.pre_handler_3("http://test")
+        h1 = mod.pre_handler_1()
+        h2 = mod.pre_handler_2("config")
+        h3 = mod.pre_handler_3("http://test")
         assert callable(h1)
         assert callable(h2)
         assert callable(h3)
@@ -554,21 +555,21 @@ class TestDefhandlerMissingRequire:
     outer defn — making the factory a generator function.
     """
 
-    @pytest.fixture(autouse=True)
-    def _import_repro(self):
+    @pytest.fixture
+    def mod(self) -> ModuleType:
         """Import the no-require repro fixture."""
         import os
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_387_no_require", None)
         import fixtures.repro_387_no_require as mod
-        self.mod = mod
+        return mod
 
-    def test_yield_leaks_without_defhandler_require(self):
+    def test_yield_leaks_without_defhandler_require(self, mod: ModuleType):
         """Without (require doeff-hy.handle [defhandler]), factory becomes generator.
 
         This is the actual #387 bug — the fix is to add the require.
         """
-        assert inspect.isgeneratorfunction(self.mod.make_handler_missing_require), \
+        assert inspect.isgeneratorfunction(mod.make_handler_missing_require), \
             "Expected yield leak: defhandler without require should make outer defn a generator"
 
 
@@ -578,19 +579,20 @@ class TestDefhandlerReExport:
     After the #387 fix, users only need one require line instead of two.
     """
 
-    @pytest.fixture(autouse=True)
-    def _import_repro(self):
+    @pytest.fixture
+    def mod(self) -> ModuleType:
+        """macros の再輸出の defhandler を使う再現の .hy を、検ごとに読み直した module。"""
         import os
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_387_via_macros", None)
         import fixtures.repro_387_via_macros as mod
-        self.mod = mod
+        return mod
 
-    def test_defhandler_via_macros_require(self):
+    def test_defhandler_via_macros_require(self, mod: ModuleType):
         """(require doeff-hy.macros [defk <- defhandler]) should work."""
-        assert not inspect.isgeneratorfunction(self.mod.make_handler), \
+        assert not inspect.isgeneratorfunction(mod.make_handler), \
             "defhandler via macros re-export should not leak yield"
-        result = self.mod.make_handler("http://test")
+        result = mod.make_handler("http://test")
         assert callable(result)
         assert not inspect.isgenerator(result)
 
