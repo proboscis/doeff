@@ -1262,7 +1262,9 @@
              :board-keys (len state.board)
              :surges (dict state.surges)
              :events (tuple (cut state.events -50 None))
-             :revision state.revision))
+             :revision state.revision
+             ;; 途絶しても動かし続けてよい印の約束(#2883 — 読みだけ。列は job の名の順のまま)。
+             :keep-marks state.keep-marks))
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ dict body]
