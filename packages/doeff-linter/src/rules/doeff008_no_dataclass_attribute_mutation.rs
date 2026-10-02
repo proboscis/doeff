@@ -3,7 +3,7 @@
 //! Dataclass instances should be immutable. Use dataclasses.replace() instead.
 
 use crate::models::{RuleContext, Severity, Violation};
-use crate::rules::base::LintRule;
+use crate::rules::base::{LintRule, RuleReach};
 use crate::utils::{has_dataclass_decorator, looks_like_dataclass_name};
 use rustpython_ast::{Expr, Mod, Stmt, StmtClassDef};
 use std::collections::{HashMap, HashSet};
@@ -226,6 +226,12 @@ impl LintRule for NoDataclassAttributeMutationRule {
 
     fn description(&self) -> &str {
         "Dataclass instances should be immutable. Use dataclasses.replace() instead."
+    }
+
+    /// module 全体の dataclass の名と instance を集めて見る規則なので、本体が file に 1 度だけ当てる(#2858 —
+    /// 文ごとに当てると、当たり 1 つを file の文の数だけ数えていた)。
+    fn reach(&self) -> RuleReach {
+        RuleReach::Module
     }
 
     fn check(&self, context: &RuleContext) -> Vec<Violation> {
