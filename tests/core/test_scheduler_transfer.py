@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 import pytest
@@ -27,6 +28,12 @@ def _result_is_ok(result: Any) -> bool:
 def _result_is_err(result: Any) -> bool:
     probe = getattr(result, "is_err", None)
     return bool(probe() if callable(probe) else probe)
+
+
+async def _until_set(reached: threading.Event) -> None:
+    """ほかの task が名指しの点に届く(reached が立つ)まで loop に譲り続ける。実時間は待たない — 待つ物は出来事(#2957)。"""
+    while not reached.is_set():
+        await asyncio.sleep(0)
 
 
 def test_spawn_gather_basic() -> None:
@@ -148,17 +155,20 @@ def test_task_error_propagation() -> None:
 
 def test_gather_collects_try_wrapped_children_without_fail_fast_cancellation() -> None:
     events: list[str] = []
+    failed = threading.Event()
 
     @do
     def fail():
         events.append("fail:start")
         _ = yield Await(asyncio.sleep(0))
+        failed.set()
         raise RuntimeError("inner fail")
 
     @do
     def ok():
         events.append("ok:start")
-        _ = yield Await(asyncio.sleep(0.01))
+        # fail が例外を投げた後まで ok は終わらない — 兄弟の失敗が ok の pending の間に起きる順を名指す
+        _ = yield Await(_until_set(failed))
         events.append("ok:done")
         return "ok"
 
@@ -181,13 +191,17 @@ def test_gather_collects_try_wrapped_children_without_fail_fast_cancellation() -
 
 
 def test_race_with_transfer() -> None:
+    fast_returned = threading.Event()
+
     @do
     def fast():
+        fast_returned.set()
         return "fast"
 
     @do
     def slow():
-        _ = yield Await(asyncio.sleep(0.02))
+        # fast が返った後まで slow は終わらない — race の勝ちが fast に決まる順を名指す
+        _ = yield Await(_until_set(fast_returned))
         return "slow"
 
     @do
