@@ -10,12 +10,14 @@ Hy は **PyPI の版**(fork ではない — 利用者の決定 2026-09-29「Hy 
 
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import marshal
 import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Buffer
 from pathlib import Path
 
 import pytest
@@ -301,6 +303,56 @@ def test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_ma
     os.link(carried, cache / carried.name)
     assert _run_on_pypi_hy(second, "before-hy", tmp_path / "store-second") == 15
     assert _expansions(second) == 1
+
+
+def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_code_under_the_new_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """共有の置き場の鍵は、compile した bytes そのものから作る(agora-redesign #2799)。以前は compile の後に file を読み直して
+    鍵を作ったので、その間に file が書き換わると(着地の git の更新・編集の最中の import)、古い中身から作った code が新しい
+    中身の鍵の下に入り、同じ中身の file を読む全部の作業木が古い振る舞いで動いた(実例 2026-10-02 13:57 — doeff-cluster の
+    sim/local.hy の検が毎回赤)。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import loader_hooks
+
+    store = tmp_path / "store"
+    monkeypatch.setenv(loader_hooks.CODE_STORE_ENV, str(store))
+    # この suite は PYTHONDONTWRITEBYTECODE=1 で走る — 置き場は bytecode を書く設定の時だけ書くので、この検の中だけ書かせる。
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    package = tmp_path / "racepkg"
+    package.mkdir()
+    source = package / "mod.hy"
+    old, new = b"(setv value 1)\n", b"(setv value 2)\n"
+    source.write_bytes(old)
+    name = "racepkg.mod"
+
+    class FileChangedAfterCompile(importlib.machinery.SourceFileLoader):
+        """compile の直後に source の file が書き換わった筋書き — compile した code の .pyc を書いた後の source の読みは
+        新しい中身を返す(標準の get_code は compile の直後に .pyc を書く)。"""
+
+        mut_compiled = False
+
+        def set_data(self, path: str, data: Buffer, *, _mode: int = 0o666) -> None:
+            super().set_data(path, data, _mode=_mode)
+            self.mut_compiled = True
+
+        def get_data(self, path: str) -> bytes:
+            if self.mut_compiled and path == str(source):
+                return new
+            return super().get_data(path)
+
+    loader = FileChangedAfterCompile(name, str(source))
+    spec = importlib.util.spec_from_file_location(name, str(source), loader=loader)
+    assert spec is not None
+    monkeypatch.setitem(sys.modules, name, importlib.util.module_from_spec(spec))
+    assert loader.get_code(name) is not None
+    assert loader.mut_compiled
+    assert not Path(loader_hooks._store_entry(str(store), name, new)).exists(), (
+        "新しい中身の鍵の下に、古い中身から作った code が入った"
+    )
+    assert Path(loader_hooks._store_entry(str(store), name, old)).exists(), (
+        "compile した中身の鍵で置き場に入らない"
+    )
 
 
 def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:

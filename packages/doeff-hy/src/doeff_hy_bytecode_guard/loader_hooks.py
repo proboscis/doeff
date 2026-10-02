@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")
 
 GetCode = Callable[[importlib.machinery.SourceFileLoader, str], "CodeType | None"]
+GetData = Callable[[importlib.machinery.SourceFileLoader, str], bytes]
 SourceToCode = Callable[..., CodeType]
 
 #: 包んだかどうか(process に 1 つ)。包みは process の ``SourceFileLoader`` という 1 つの共有物を書き換えるので、
@@ -34,6 +35,10 @@ _installation = {"installed": False}
 #: 前後の回数の差で知るため(get_code は入れ子になる — compile の中の require が別の module を import する)。
 #: threading は起動時に読まないため、初めて Hy の source に当たった時に作る。
 _compile_counts: dict[str, object] = {}
+
+#: この thread で最後に読んだ Hy の source の bytes(path ごと)— compile した bytes を、共有の置き場の鍵に使うため
+#: (agora-redesign #2799)。get_code が終わる時にその path の分を捨てる(source を process の間ずっと持たない)。
+_source_reads: dict[str, object] = {}
 
 #: file の sha256 — 鍵は (path, 更新時刻 ns, 大きさ)。同じ process で同じ macro の file を何百回も照合するので、
 #: 変わっていない file を読み直さない。
@@ -52,6 +57,7 @@ def install() -> None:
     loader = importlib.machinery.SourceFileLoader
     loader.source_to_code = _recording_source_to_code(loader.source_to_code)
     loader.get_code = _checking_get_code(loader.get_code)
+    loader.get_data = _remembering_get_data(loader.get_data)
     _installation["installed"] = True
 
 
@@ -156,6 +162,21 @@ def _recording_source_to_code(previous: SourceToCode):
 
 
 # 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
+def _remembering_get_data(previous: GetData):
+    """読みの口の包み — Hy の source を読んだ bytes を、この thread の「最後に読んだ中身」として覚えるため。compile の口は
+    Hy の包みの内側では展開した後の木しか受け取らないので、compile した bytes が見えるのは読みの所だけ。共有の置き場の鍵は
+    この bytes から作り、file を読み直さない(agora-redesign #2799)。"""
+
+    def get_data(self: importlib.machinery.SourceFileLoader, path: str) -> bytes:
+        data = previous(self, path)
+        if is_hy_source(path):
+            _last_sources()[path] = data
+        return data
+
+    return get_data
+
+
+# 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
 def _checking_get_code(previous: GetCode):
     """読みの口の包み — .pyc から読んだ Hy の module の展開が古い macro に依っていれば compile し直すため。"""
 
@@ -163,6 +184,13 @@ def _checking_get_code(previous: GetCode):
         path = self.get_filename(fullname)
         if not is_hy_source(path):
             return previous(self, fullname)
+        try:
+            return _hy_code(self, fullname, path)
+        finally:
+            _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
+
+    def _hy_code(self: importlib.machinery.SourceFileLoader, fullname: str, path: str) -> CodeType | None:
+        """Hy の source の code — 共有の置き場・.pyc・compile のどれかから、展開が今の macro に依る物を返すため。"""
         shared = _from_shared_store(self, fullname, path)
         if shared is not None:
             return shared  # 別の作業木で作った同じ中身の code — 記録は今の環境の macro の file で確かめた
@@ -171,7 +199,7 @@ def _checking_get_code(previous: GetCode):
         code = previous(self, fullname)
         if code is None or counts.get(path, 0) != before:
             if code is not None:
-                _to_shared_store(self, fullname, path, code)
+                _to_shared_store(fullname, _compiled_source(path), code)
             return code  # 今 compile した物 — 依った macro は今の file
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
@@ -185,7 +213,7 @@ def _checking_get_code(previous: GetCode):
             # Python が source の変更を信じないのと同じく、macro の変更も信じない(組み立ての中で焼き直す前提)。
             return code
         recompiled = _recompile(self, path, header)
-        _to_shared_store(self, fullname, path, recompiled)
+        _to_shared_store(fullname, _compiled_source(path), recompiled)
         return recompiled
 
     return get_code
@@ -313,13 +341,20 @@ def _from_shared_store(
     return code
 
 
-def _to_shared_store(
-    self: importlib.machinery.SourceFileLoader, fullname: str, path: str, code: CodeType
-) -> None:
-    """今 compile した Hy の code を共有の置き場へ足す(記録の無い code・bytecode を書かない設定では足さない)— 次に同じ
-    中身の file を別の作業木で読む時に、変換をやり直さないため。書けない置き場では黙って足さない(置き場は速さのためだけ)。"""
+def _compiled_source(path: str) -> bytes | None:
+    """今 compile した Hy の source の bytes — この thread で compile の直前に読んだ中身(読みの口が覚えた物)。読みの口を
+    通らずに compile した時(覚えが無い)は None で、置き場には足さない(鍵の bytes が compile した物と同じとは言えない)。"""
+    data = _last_sources().get(path)
+    return data if isinstance(data, bytes) else None
+
+
+def _to_shared_store(fullname: str, source: bytes | None, code: CodeType) -> None:
+    """今 compile した Hy の code を、compile した source の bytes を鍵にして共有の置き場へ足す(記録の無い code・bytecode を
+    書かない設定では足さない)— 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
+    からだけ作り、file を読み直さない(読み直すと、間に書き換わった file の中身の鍵に古い code が入る — agora-redesign #2799)。
+    書けない置き場では黙って足さない(置き場は速さのためだけ)。"""
     store = _store_dir()
-    if store is None or sys.dont_write_bytecode:
+    if store is None or source is None or sys.dont_write_bytecode:
         return
     from doeff_hy_bytecode_guard import records  # 共有の置き場を使う時だけ読む
 
@@ -330,7 +365,7 @@ def _to_shared_store(
     import tempfile
 
     with contextlib.suppress(OSError):
-        entry = _store_entry(store, fullname, self.get_data(path))
+        entry = _store_entry(store, fullname, source)
         os.makedirs(os.path.dirname(entry), exist_ok=True)
         # 同時に書く別の process と混ざらないよう、同じ dir の一時の file に書いてから置き換える。
         handle, temporary = tempfile.mkstemp(dir=os.path.dirname(entry), suffix=".tmp")
@@ -402,6 +437,16 @@ def _module_being_loaded(
     if module is None or vars(module).get("__file__") != path:
         return None
     return module
+
+
+def _last_sources() -> dict[str, bytes]:
+    """この thread で最後に読んだ Hy の source の表(初めてなら作る)。"""
+    import threading  # 起動時に読まない
+
+    local = _source_reads.get("local")
+    if not isinstance(local, threading.local):
+        local = _source_reads.setdefault("local", threading.local())
+    return vars(local).setdefault("sources", {})
 
 
 def _counts() -> dict[str, int]:

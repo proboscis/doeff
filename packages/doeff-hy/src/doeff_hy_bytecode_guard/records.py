@@ -90,7 +90,9 @@ def record_is_current(
 
 
 #: 作業木をまたいで共有する code の置き場の鍵の印(形を変えたら末尾の番号を上げる — 古い鍵の entry は当たらなくなる)。
-STORE_TAG = "doeff-hy/code-store/1"
+#: 2 = 鍵を compile した bytes そのものから作る版(agora-redesign #2799)。1 の版の置き場には、compile の後に file を読み直した
+#: 鍵の下に古い中身の code が入った entry が在り得るので、新しい版からは引かない(古い entry の file は消さずに残す)。
+STORE_TAG = "doeff-hy/code-store/2"
 
 
 def store_key(
