@@ -19,14 +19,11 @@ defrecord の欄の `#^` を Python の注記にした module の木を返す。
 --replace を付けない限り書き換えない。
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 import builtins
 import os
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import reduce
 from pathlib import Path
@@ -55,9 +52,8 @@ _STR_METHODS = frozenset({"format", "join", "strip", "lower", "upper", "replace"
 _NONE_METHODS = frozenset({"__init__", "__post_init__"})
 #: 型を出せなかった所の印の名(typeshed の _typeshed.Incomplete)。
 _INCOMPLETE = "Incomplete"
-
-#: 先に読んだ定数の名からその型を引く関数(引けなければ None)。
-_KindOf = Callable[[str], ast.expr | None]
+#: 答えが str の os.path の関数(module の場所から作る path の定数の型を読むため)。
+_PATH_FUNCTIONS = frozenset({"dirname", "abspath", "basename", "join", "realpath", "normpath", "expanduser"})
 
 
 @dataclass(frozen=True)
@@ -113,10 +109,22 @@ class _Scan:
 
     imports: tuple[ast.stmt, ...]
     declarations: tuple[_Declared, ...]
+    #: module の直下の関数の宣言(型の面に出さない名も含む — `x = _hy_anon_3()` の値の型をその関数の答えから引くため)。
+    functions: tuple[_Declared, ...] = ()
 
-    def declared(self, name: str, node: ast.stmt) -> _Scan:
+    def declared(self, name: str, node: ast.stmt) -> "_Scan":
         """宣言 1 つを足した次の状態を返す。"""
         return replace(self, declarations=(*self.declarations, _Declared(name, node)))
+
+    def defined(self, name: str, node: ast.FunctionDef, public: bool) -> "_Scan":
+        """関数 1 つを覚えた次の状態を返す(公開の名なら宣言にも足す)。"""
+        known = replace(self, functions=(*self.functions, _Declared(name, node)))
+        return known.declared(name, node) if public else known
+
+    def answer_of(self, name: str) -> ast.expr | None:
+        """先に読んだ module の関数を呼んだ値の型(関数の宣言の答え — 引数の無い defhandler の `x = _hy_anon_3()` など)。"""
+        answers = [d.node.returns for d in self.functions if d.name == name and isinstance(d.node, ast.FunctionDef)]
+        return answers[-1] if answers and answers[-1] is not None else None
 
     def kind_of(self, name: str) -> ast.expr | None:
         """先に読んだ定数の型(値を持たない注記の宣言の型 — 後の定数の値がその名を読む時に引く)。"""
@@ -139,8 +147,9 @@ def _hidden(name: str) -> bool:
 
 
 def _camel(name: str) -> bool:
-    """class の名と読める CamelCase の名か(全部大文字の定数の名と分けるため)。"""
-    return name[:1].isupper() and any(c.islower() for c in name)
+    """class の名と読める CamelCase の名か(全部大文字の定数の名と分けるため・頭の `_` は module の内の class の印として外して見る)。"""
+    bare = name.lstrip("_")
+    return bare[:1].isupper() and any(c.islower() for c in bare)
 
 
 def _name(text: str) -> ast.Name:
@@ -172,8 +181,12 @@ def _type_like(node: ast.expr) -> bool:
             return _camel(attr)
         case ast.Subscript(value=base):
             return _type_like(base)
-        case ast.BinOp(left=left, op=ast.BitOr(), right=right):
-            return _type_like(left) and _type_like(right)
+        case ast.BinOp(op=ast.BitOr()):
+            # 和の葉が全部型の式の形で、None か組み込みの型が 1 つでもあれば型の和(値どうしの `|` に None や int は混ざらない —
+            # 小文字の class `datetime` を含む和も型と読むため)。
+            leaves = _union_leaves(node)
+            shaped = all(isinstance(leaf, ast.Name | ast.Attribute | ast.Subscript) or _none(leaf) for leaf in leaves)
+            return shaped and any(_type_like(leaf) for leaf in leaves)
         case _:
             return False
 
@@ -201,21 +214,21 @@ def _default(node: ast.expr) -> ast.expr:
             return ast.Constant(value=...)
 
 
-def _elements(items: list[ast.expr], kind_of: _KindOf) -> list[ast.expr] | None:
+def _elements(items: list[ast.expr], scan: _Scan) -> list[ast.expr] | None:
     """入れ物の要素の型の並び(1 つでも出せなければ None — 入れ物の型を半端に出さない)。"""
-    found = [_value_type(item, kind_of) for item in items]
+    found = [_value_type(item, scan) for item in items]
     return [kind for kind in found if kind is not None] if all(kind is not None for kind in found) else None
 
 
-def _container(maker: str, items: list[ast.expr], kind_of: _KindOf) -> ast.expr | None:
+def _container(maker: str, items: list[ast.expr], scan: _Scan) -> ast.expr | None:
     """literal の入れ物の型(tuple は可変長の `tuple[T, ...]`)。"""
-    kinds = _elements(items, kind_of)
+    kinds = _elements(items, scan)
     if not kinds:
         return None
     return _subscript("tuple", _union(kinds), ast.Constant(value=...)) if maker == "tuple" else _subscript(maker, _union(kinds))
 
 
-def _value_type(node: ast.expr, kind_of: _KindOf) -> ast.expr | None:
+def _value_type(node: ast.expr, scan: _Scan) -> ast.expr | None:
     """定数の値の型を literal の形から読む(読めなければ None — 呼び手が Incomplete にする)。"""
     match node:
         case ast.Constant(value=bool()):
@@ -230,35 +243,41 @@ def _value_type(node: ast.expr, kind_of: _KindOf) -> ast.expr | None:
             return _name("str")
         case ast.Constant(value=bytes()):
             return _name("bytes")
-        case ast.Name(id=name) if (kind := kind_of(name)) is not None:
+        case ast.Name(id=name) if (kind := scan.kind_of(name)) is not None:
             return kind
         case ast.Tuple(elts=[]):
             return _subscript("tuple", ast.Tuple(elts=[], ctx=ast.Load()))
         case ast.Tuple(elts=items):
-            return _container("tuple", items, kind_of)
+            return _container("tuple", items, scan)
         case ast.List(elts=items) if items:
-            return _container("list", items, kind_of)
+            return _container("list", items, scan)
         case ast.Set(elts=items):
-            return _container("set", items, kind_of)
+            return _container("set", items, scan)
         case ast.Call(func=ast.Name(id=("tuple" | "list" | "set" | "frozenset") as maker), args=[ast.Tuple(elts=items) | ast.List(elts=items)]) if items:
-            return _container(maker, items, kind_of)
+            return _container(maker, items, scan)
         case ast.Call(func=ast.Name(id=("tuple" | "list" | "set" | "frozenset") as maker), args=[ast.GeneratorExp(elt=item) | ast.ListComp(elt=item)]):
-            return _container(maker, [item], kind_of)
+            return _container(maker, [item], scan)
         case ast.ListComp(elt=item):
-            return _container("list", [item], kind_of)
+            return _container("list", [item], scan)
         case ast.Dict(keys=keys, values=values) if keys and all(key is not None for key in keys):
-            key_kinds = _elements([key for key in keys if key is not None], kind_of)
-            value_kinds = _elements(values, kind_of)
+            key_kinds = _elements([key for key in keys if key is not None], scan)
+            value_kinds = _elements(values, scan)
             return _subscript("dict", _union(key_kinds), _union(value_kinds)) if key_kinds and value_kinds else None
         case ast.BinOp(left=left, op=ast.Add(), right=right):
-            return _sum_type(_value_type(left, kind_of), _value_type(right, kind_of))
+            return _sum_type(_value_type(left, scan), _value_type(right, scan))
+        case ast.BinOp(left=left, op=ast.Sub() | ast.Mult() | ast.FloorDiv() | ast.Mod() | ast.Pow(), right=right):
+            return _number_type(_value_type(left, scan), _value_type(right, scan))
         case ast.Call(func=ast.Name(id=("str" | "int" | "float" | "bool" | "bytes") as maker)):
             return _name(maker)
         case ast.Call(func=ast.Attribute(value=base, attr=method)) if method in _STR_METHODS:
-            kind = _value_type(base, kind_of)
+            kind = _value_type(base, scan)
             return kind if kind is not None and ast.unparse(kind) == "str" else None
+        case ast.Call(func=ast.Attribute(value=ast.Attribute(value=ast.Name(id="os"), attr="path"), attr=function)) if function in _PATH_FUNCTIONS:
+            return _name("str")
         case ast.Attribute(value=ast.Name(id=owner), attr=member) if _camel(owner) and member.isupper():
             return _name(owner)
+        case ast.Call(func=ast.Name(id=function)) if (answer := scan.answer_of(function)) is not None:
+            return answer
         case ast.Call(func=ast.Name(id=maker)) if _camel(maker):
             return _name(maker)
         case _:
@@ -279,6 +298,28 @@ def _sum_type(left: ast.expr | None, right: ast.expr | None) -> ast.expr | None:
             return left
         case _:
             return None
+
+
+def _number_type(left: ast.expr | None, right: ast.expr | None) -> ast.expr | None:
+    """数どうしの演算(`(* 32 1024 1024)` のような大きさの定数)の型: int どうしは int・float が混ざれば float。"""
+    kinds = {ast.unparse(k) for k in (left, right) if k is not None}
+    if left is None or right is None or not kinds <= {"int", "float"}:
+        return None
+    return _name("float" if "float" in kinds else "int")
+
+
+def _union_leaves(node: ast.expr) -> list[ast.expr]:
+    """`A | B | C` の葉の並び(型の和かどうかを葉ごとに見るため)。"""
+    match node:
+        case ast.BinOp(left=left, op=ast.BitOr(), right=right):
+            return [*_union_leaves(left), *_union_leaves(right)]
+        case _:
+            return [node]
+
+
+def _none(node: ast.expr) -> bool:
+    """None の literal か(型の和の葉の None)。"""
+    return isinstance(node, ast.Constant) and node.value is None
 
 
 def _keeps(decorator: ast.expr) -> bool:
@@ -383,7 +424,7 @@ def _class(node: ast.ClassDef) -> ast.ClassDef:
     )
 
 
-def _constant(name: str, value: ast.expr, kind_of: _KindOf) -> ast.stmt:
+def _constant(name: str, value: ast.expr, scan: _Scan) -> ast.stmt:
     """module の定数 1 つの宣言(型の別名と TypeVar は形のまま・ほかは値の型の注記)。"""
     match value:
         case ast.BinOp(op=ast.BitOr()) | ast.Subscript() if _type_like(value):
@@ -393,7 +434,7 @@ def _constant(name: str, value: ast.expr, kind_of: _KindOf) -> ast.stmt:
         case ast.Call(func=ast.Name(id=maker) | ast.Attribute(attr=maker)) if maker in _TYPE_MAKERS:
             return ast.Assign(targets=[_name(name)], value=value)
         case _:
-            kind = _value_type(value, kind_of) or _name(_INCOMPLETE)
+            kind = _value_type(value, scan) or _name(_INCOMPLETE)
             return ast.AnnAssign(target=_name(name), annotation=kind, value=None, simple=1)
 
 
@@ -422,8 +463,8 @@ def _step(state: _Scan, statement: ast.stmt) -> _Scan:
     match statement:
         case ast.Import() | ast.ImportFrom():
             return replace(state, imports=(*state.imports, *_reexports(statement)))
-        case ast.FunctionDef() | ast.AsyncFunctionDef() if not _hidden(statement.name):
-            return state.declared(statement.name, _function(statement, method=False))
+        case ast.FunctionDef() | ast.AsyncFunctionDef():
+            return state.defined(statement.name, _function(statement, method=False), public=not _hidden(statement.name))
         case ast.ClassDef() if not _hidden(statement.name):
             return state.declared(statement.name, _class(statement))
         case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation, value=value) if not _hidden(name):
@@ -432,7 +473,7 @@ def _step(state: _Scan, statement: ast.stmt) -> _Scan:
             node = ast.AnnAssign(target=_name(name), annotation=kind, value=value if alias else None, simple=1)
             return state.declared(name, node)
         case ast.Assign(targets=[ast.Name(id=name)], value=value) if not _hidden(name):
-            return state.declared(name, _constant(name, value, state.kind_of))
+            return state.declared(name, _constant(name, value, state))
         case _:
             return state
 

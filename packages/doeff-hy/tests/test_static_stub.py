@@ -19,8 +19,13 @@ MODULE = """\
 (require doeff-hy.record [defrecord defenum])
 (import doeff [EffectBase Program])
 (import dataclasses [dataclass])
+(import datetime [datetime])
+(import os)
 
 (val GREETING "hi")
+(val HERE (os.path.dirname (os.path.abspath __file__)))
+(val MAX-BYTES (* 32 1024 1024))
+(val Stamp (| datetime None))
 (val LIMITS #(1 2 3))
 (val NAMES (+ #("a") #("b")))
 (val SQL (+ "SELECT 1" " FROM t"))
@@ -62,6 +67,13 @@ MODULE = """\
 (defhandler counting [#^ (get list int) seen]
   (Ping [target tries]
     (resume (+ tries (len seen)))))
+
+(defhandler answering-one
+  (Ping [target tries]
+    (resume 1)))
+
+(defclass _Sentinel [])
+(val SENTINEL (_Sentinel))
 """
 
 
@@ -95,6 +107,11 @@ def _lines(tmp_path: Path) -> list[str]:
         "def double(n: int) -> int:",
         "def ping_twice(target: str) -> _Program[int, object]:",
         "def counting(seen: list[int]) -> _Handler:",
+        "answering_one: _Handler",
+        "HERE: str",
+        "MAX_BYTES: int",
+        "Stamp: TypeAlias = datetime | None",
+        "SENTINEL: _Sentinel",
         "def passed_through(body: Program) -> _Program[Incomplete, object]:",
         "from doeff import EffectBase as EffectBase",
     ],
