@@ -20,6 +20,8 @@
 (import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport ServiceReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
                              StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])
+(import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ReadinessWaitExpired AwaitJobProcess JobProcessSeen
+                                                     JobProcessWaitExpired])
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [System CallShape])
 (import tests.fixtures.envs [sim-foundation])
@@ -1201,3 +1203,73 @@
   (assert (= (lfor p seen.after p.worker) ["late"]) seen.after)
   (assert (is (. (get seen.after 0) exit-code) None) seen.after)
   (assert (get seen.view "alive") seen.view))
+
+
+;; --- 期限つきの待ち(AwaitReadiness・AwaitJobProcess — 書きで起きる・#3053)------------------------------------
+
+(defrecord Recovered
+  "待つ effect だけで見た job 1 つの起こし直し: first = 宣言の後の準備・before = 最初の process・crashed = Crash の答え・after = 起こし
+   直しの次の process・again = その後の準備。"
+  (#^ (| ServiceReadiness ReadinessWaitExpired) first)
+  (#^ (| JobProcessSeen JobProcessWaitExpired) before)
+  (#^ int crashed)
+  (#^ (| JobProcessSeen JobProcessWaitExpired) after)
+  (#^ (| ServiceReadiness ReadinessWaitExpired) again)
+  (#^ float first-wait-seconds))
+
+
+(defk crash-and-await [name seconds]
+  {:pre [(: name str) (: seconds float)] :post [(: % Recovered)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: job name が Ready になるのを待ち、最初の process を待ち、Crash で落として次の process ともう一度の Ready を待つため(どの待ちも
+   読み直しのループを書かない — 答えるのは cluster の handler)。"
+  (<- asked int (now-epoch-ms))
+  (<- first (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness name "Ready" seconds))
+  (<- answered int (now-epoch-ms))
+  (<- before (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #() seconds))
+  (when (not (isinstance before JobProcessSeen))
+    (raise (AssertionError (+ "最初の process が名乗られない: " (repr before)))))
+  (<- n int (Crash name))
+  (<- after (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #(before.pid) seconds))
+  (<- again (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness name "Ready" seconds))
+  (Recovered :first first :before before :crashed n :after after :again again
+             :first-wait-seconds (/ (- answered asked) 1000.0)))
+
+
+(deftest test-the-waits-see-a-crashed-service-restart-without-polling-the-clock
+  ;; 待つ effect の答え: Ready になった時の準備・最初の process・落とした後の別の pid の process・もう一度の Ready。
+  (<- seen Recovered (sim-cluster (beacons sim-foundation) (crash-and-await "beacon" 30.0)))
+  (assert (and (isinstance seen.first ServiceReadiness) (= seen.first.state "Ready")) seen.first)
+  ;; 書きで起きる: Ready の待ちは、coordinator が Ready を数えた書きの時に答え、期限(30 秒)まで眠らない — 起こしを外すと期限で
+  ;; 起きてから読み直すので、ここが 30 秒になる。
+  (assert (< seen.first-wait-seconds 20.0) seen.first-wait-seconds)
+  (assert (= seen.crashed 1) seen)
+  (assert (and (isinstance seen.after JobProcessSeen) (!= seen.after.pid seen.before.pid)) seen)
+  (assert (and (isinstance seen.again ServiceReadiness) (= seen.again.state "Ready")) seen.again))
+
+
+(defrecord Expired
+  "起きない事を待った答え: never-ready = 来ない準備の状態の待ち・no-restart = 落としていない job の次の process の待ち。"
+  (#^ (| ServiceReadiness ReadinessWaitExpired) never-ready)
+  (#^ (| JobProcessSeen JobProcessWaitExpired) no-restart))
+
+
+(defk await-what-never-comes [name seconds]
+  {:pre [(: name str) (: seconds float)] :post [(: % Expired)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(失敗ケース): Ready になった job name について、来ない状態(Missing)と、落としていないので起きない次の process を seconds 秒
+   待つため — 期限で値が返り、黙って待ち続けない。"
+  (<- (AwaitReadiness name "Ready" 30.0))
+  (<- first (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #() 30.0))
+  (when (not (isinstance first JobProcessSeen))
+    (raise (AssertionError (+ "最初の process が名乗られない: " (repr first)))))
+  (<- never (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness name "Missing" seconds))
+  (<- none (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #(first.pid) seconds))
+  (Expired :never-ready never :no-restart none))
+
+
+(deftest test-a-wait-for-what-never-comes-answers-expired-at-its-deadline
+  (<- seen Expired (sim-cluster (beacons sim-foundation) (await-what-never-comes "beacon" 6.0)))
+  (assert (isinstance seen.never-ready ReadinessWaitExpired) seen.never-ready)
+  (assert (= seen.never-ready.last.state "Ready") seen.never-ready)
+  (assert (>= seen.never-ready.waited-seconds 6.0) seen.never-ready)
+  (assert (isinstance seen.no-restart JobProcessWaitExpired) seen.no-restart)
+  (assert (= seen.no-restart.waited-seconds 6.0) seen.no-restart))

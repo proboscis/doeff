@@ -18,6 +18,36 @@ class Redeclare(_doeff_effect_base[tuple[str, ...]]):
 class ReadinessOf(_doeff_effect_base[ServiceReadiness]):
     name: str
 
+@dataclass(frozen=True, kw_only=True)
+class ReadinessWaitExpired:
+    name: str
+    state: str
+    last: ServiceReadiness
+    waited_seconds: float
+
+@dataclass(frozen=True, kw_only=True)
+class JobProcessSeen:
+    job: str
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class JobProcessWaitExpired:
+    job: str
+    excluding: tuple[int, ...]
+    waited_seconds: float
+
+@_doeff_dataclass(frozen=True)
+class AwaitReadiness(_doeff_effect_base[ServiceReadiness | ReadinessWaitExpired]):
+    name: str
+    state: str
+    timeout_seconds: float
+
+@_doeff_dataclass(frozen=True)
+class AwaitJobProcess(_doeff_effect_base[JobProcessSeen | JobProcessWaitExpired]):
+    job: str
+    excluding: tuple[int, ...]
+    timeout_seconds: float
+
 @_doeff_dataclass(frozen=True)
 class Crash(_doeff_effect_base[int]):
     name: str
