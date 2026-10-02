@@ -2,8 +2,7 @@
 
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
-from typing import ClassVar as _doeff_ClassVar
 
 @_doeff_dataclass(frozen=True)
 class CollectAndFreeze(_doeff_effect_base[int]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
+    ...

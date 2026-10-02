@@ -2,11 +2,9 @@
 
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
-from typing import ClassVar as _doeff_ClassVar
 ENV_MARKER: str
 ENV_MARKER_FORMAT: int
 
 @_doeff_dataclass(frozen=True)
 class FileSha256(_doeff_effect_base[str | None]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
     path: str

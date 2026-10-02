@@ -97,8 +97,8 @@ class _Helper:
     asname: str | None
 
 
-#: 補助の型の import(宣言の中の名 reads を読む時だけ置く)。後の 3 つは defeffect の展開が import する macro の補助の名で、
-#: 宣言の基底・飾り・欄の注記がそのまま読む — 隠す名(_doeff_)の import は公開し直さないので、ここで置かないと .pyi に
+#: 補助の型の import(宣言の中の名 reads を読む時だけ置く)。後の 2 つは defeffect の展開が import する macro の補助の名で、
+#: 宣言の基底・飾りがそのまま読む — 隠す名(_doeff_)の import は公開し直さないので、ここで置かないと .pyi に
 #: 定義の無い名が残り、使い手には effect の基底が Unknown(答えの型も Unknown)になっていた(agora-redesign #2886)。
 _HELPERS = (
     _Helper("TypeAlias", "typing", "TypeAlias", None),
@@ -107,7 +107,6 @@ _HELPERS = (
     _Helper("_Handler", "doeff_hy.static_types", "Handler", "_Handler"),
     _Helper("_doeff_effect_base", "doeff", "EffectBase", "_doeff_effect_base"),
     _Helper("_doeff_dataclass", "dataclasses", "dataclass", "_doeff_dataclass"),
-    _Helper("_doeff_ClassVar", "typing", "ClassVar", "_doeff_ClassVar"),
 )
 #: 補助の import が .pyi の頭に置ける名(隠す名でも、宣言に残してよい)。
 _HELPER_NAMES = frozenset(helper.asname or helper.name for helper in _HELPERS)
@@ -407,9 +406,11 @@ def _function(node: ast.FunctionDef | ast.AsyncFunctionDef, method: bool) -> ast
 
 
 def _member(statement: ast.stmt) -> ast.stmt | None:
-    """class の本体の文 1 つの宣言(欄・class の値・method・入れ子の class。型の面を持たない文は None)。"""
+    """class の本体の文 1 つの宣言(欄・class の値・method・入れ子の class。型の面を持たない文は None)。macro の記帳の名
+    (defeffect の `__doeff_answer__`・defwire の `__doeff_wire__` など隠す名)は写さない — 答えの型は基底が持ち、欄として写すと
+    手の .pyi の欄の照らし(dataclass の欄の並び)にも欄と数えられた(#2886)。"""
     match statement:
-        case ast.AnnAssign(target=ast.Name() as target, annotation=annotation, value=value):
+        case ast.AnnAssign(target=ast.Name() as target, annotation=annotation, value=value) if not _hidden(target.id):
             kind = _annotation(annotation) or annotation
             kept = None if value is None or _class_var(kind) else _default(value)
             return ast.AnnAssign(target=target, annotation=kind, value=kept, simple=1)

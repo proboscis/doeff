@@ -2,7 +2,6 @@
 
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
-from typing import ClassVar as _doeff_ClassVar
 from dataclasses import dataclass as dataclass
 
 @dataclass(frozen=True, kw_only=True)
@@ -18,6 +17,5 @@ class ProcessWaitExpired:
 
 @_doeff_dataclass(frozen=True)
 class AwaitProcessEnded(_doeff_effect_base[ProcessEnded | ProcessWaitExpired]):
-    __doeff_answer__: _doeff_ClassVar[object] = ...
     job: str
     timeout_seconds: float | None = None
