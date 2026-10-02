@@ -91,11 +91,29 @@ class FakeInjection:
     fate: str = 'queued'
 
 class FakeTurn:
+    seq: int
+    started_at: float
+    reply: FakeReply
+    refs: list[str]
+    phase: str
+    due_at: float
+    lines_emitted: int
+    injections: list[FakeInjection]
+    permission: str | None
+    lines: list[ClaudeStreamLine]
+    end: Completed | Failed | Interrupted | BackendLost | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
 
 class FakeSession:
+    session_id: str
+    home: Incomplete
+    cwd: str
+    current_seq: Incomplete
+    next_line_seq: Incomplete
+    closed: Incomplete
+    turns: dict[int, FakeTurn]
 
     def __init__(self, session_id: str, home: Incomplete, cwd: str) -> None:
         ...
@@ -104,6 +122,11 @@ class FakeSession:
         ...
 
 class FakeClaudeWorld:
+    responder: Incomplete
+    respond: Incomplete
+    transcripts: Incomplete
+    activity: Incomplete
+    sessions: Incomplete
 
     def __init__(self, responder: Incomplete=None, *, respond: Incomplete=None) -> None:
         ...

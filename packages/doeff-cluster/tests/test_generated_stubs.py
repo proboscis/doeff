@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import UsedModule, stale_in, unknown_in_users
+from doeff_hy.static_stub import UsedModule, stale_in, strict_errors, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
@@ -78,3 +78,29 @@ def test_names_the_users_import_are_not_unknown(tmp_path: Path) -> None:
 
 def test_generated_stubs_are_what_the_tool_makes() -> None:
     assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []
+
+
+# 使い手の repo の渡し方(置き場の口に WalStore を ByteLog として渡す)を写した検の module(#2972)。
+WAL_STORE_AS_BYTE_LOG = """\
+(require doeff-hy.macros [defk <-])
+(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster.coordinator.protocol.store [ByteLog])
+
+(defk seq-of [log]
+  {:pre [(: log ByteLog)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
+  "置き場の形の欄を読むため。"
+  log.seq)
+
+(defk seq-of-wal-store [store]
+  {:pre [(: store WalStore)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
+  "WalStore を置き場の形 ByteLog として渡すため。"
+  (<- n (seq-of store))
+  n)
+"""
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_the_wal_store_satisfies_the_byte_log_shape(tmp_path: Path) -> None:
+    # 失敗ケース(#2972): 道具が WalStore の __init__ で置く欄(seq・max_log_bytes・snapshot・log)を .pyi に宣言せず、WalStore は
+    # それらを求める ByteLog を満たさなかった — 使い手の repo の正しい渡し方に型の赤が 2 件(17 本目の pin)。
+    assert strict_errors(tmp_path, WAL_STORE_AS_BYTE_LOG) == ()

@@ -14,6 +14,16 @@ def fsync_dir(d: Path) -> None:
     ...
 
 class WalStore:
+    dir: Path
+    max_log_bytes: int
+    fsync: Callable
+    snapshot: Path
+    log: Path
+    kv: dict[str, object]
+    seq: int
+    handle: BinaryIO | None
+    fsync_seconds: list[float]
+    recovered: dict[str, int | str] | None
 
     def __init__(self, directory: str, max_log_bytes: int=..., fsync: Callable=...) -> None:
         ...
