@@ -29,12 +29,12 @@
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
 (import collections.abc [Callable Generator])
-(import typing [Literal Protocol TypeVar])
+(import typing [Protocol TypeVar])
 (import doeff [Program])
 (import doeff_vm [GetBoundaries K WithObserve Callable :as VmCallable])
 (import doeff_core_effects.scheduler [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
 (import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
-                                         EffectCodec HandleTable UnencodableValue UnrecordableEffect RestoredValue
+                                         EffectCodec HandleTable UnencodableValue UnrecordableEffect
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
 (import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize
@@ -588,20 +588,13 @@
       (setv self.divergence info))
     self.divergence)
 
-  (defn #^ None stall [self]
-    "他の task が全部止まったのに番号が進まない: 記録の出来事を誰も出さない = 分岐。"
+  (defn #^ (| (get tuple #(int str str int)) None) stall-point [self]
+    "他の task が全部止まったのに番号が進まない時、誰も出さない記録の出来事の地点 #(番号 種類 task 問いの番号) を返す
+     (分岐の報告は defk stall-divergence が綴る)。進み切った・分岐が立っている時は None。"
     (setv e (.current self))
     (when (or (is e None) self.finished (is-not self.divergence None)) (return None))
     (setv #(_ kind owner extra) (get self.rec.events self.cursor))
-    (setv entry (entry-of self.rec (if (= kind "req") e extra)))
-    (.diverge self {"reason" (if (in owner self.ended)
-                                 "記録ではこの後も問いを出す task が、再生では先に終わった"
-                                 "記録の出来事を再生の業務の Program が出さないまま止まった")
-                    "event" e "kind" kind "task" owner
-                    "expected" (if (is entry None) None {"type" entry.type "args" (recorded-args entry)})
-                    "at" (if (is entry None) None entry.at)})
-    ;; 分岐は self.divergence に残る。stall は印を付けるだけで、答えは返さない。
-    None)
+    #(e kind owner (if (= kind "req") e extra)))
 
   (defn #^ None task-ended [self #^ str label #^ bool ok #^ (| BaseException None) error]
     (setv (get self.ended label) (if ok True (repr error)))))
@@ -631,12 +624,43 @@
   None)
 
 
+(defk stall-divergence [state]
+  {:pre [(: state ReplayState)] :post [(: % (| (get dict #(str object)) None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "他の task が全部止まったのに番号が進まない時の分岐の報告(理由・地点・記録が待っていた問い)を綴るため — 記録の出来事を誰も出さない = 分岐。
+   止まった地点が無ければ None。"
+  (match (.stall-point state)
+    None None
+    #(e kind owner asked)
+      (do (<- entry (| Entry None) (entry-of state.rec asked))
+          (<- expected (| (get dict #(str object)) None) (expected-of entry))
+          ;; 型の注釈つきで 1 度受ける(dict の literal は欄ごとの型で推され、そのままでは答えの dict[str, object] に合わない)。
+          (setv #^ (get dict #(str object)) report
+                {"reason" (if (in owner state.ended)
+                              "記録ではこの後も問いを出す task が、再生では先に終わった"
+                              "記録の出来事を再生の業務の Program が出さないまま止まった")
+                 "event" e "kind" kind "task" owner "expected" expected "at" (if (is entry None) None entry.at)})
+          report)))
+
+
+(defk expected-of [entry]
+  {:pre [(: entry (| Entry None))] :post [(: % (| (get dict #(str object)) None))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "分岐の報告に載せる、記録が待っていた問い(型と引数)を綴るため。待っていた問いが無ければ None。"
+  (if (is entry None)
+      None
+      (do (<- args (get dict #(str object)) (recorded-args entry))
+          (setv #^ (get dict #(str object)) expected {"type" entry.type "args" args})
+          expected)))
+
+
 (defk replay-driver [state]
   {:pre [(: state ReplayState)] :post [(: % (type None))]}
   ;; 他の task が全部止まった時だけ動く(PRIORITY_IDLE の daemon)。それでも待っている task が居れば、番号の出来事を誰も出さない。
   (try
     (when state.waiting
-      (.stall state)
+      ;; 分岐は state.divergence に残る(最初の 1 つだけ)。ここは印を付けて、待っている task を起こすだけ。
+      (<- stalled (| (get dict #(str object)) None) (stall-divergence state))
+      (when (is-not stalled None)
+        (.diverge state stalled))
       (<- (wake (.wakeable state))))
     (finally
       (setv state.driver-running False)))
@@ -651,21 +675,25 @@
 
 
 ;; 成功の答えの値は read-recording が記録を読む時に戻した値(record_log.RestoredAnswer — #1693・#2581)。ここは JSON を読まない。
-(defn #^ (| (get tuple #((get Literal True) RestoredValue)) (get tuple #((get Literal False) BaseException))) deliver-recorded [#^ ReplayState state #^ Entry entry #^ EffectCodec codec]
-  "記録の答えを業務へ返す値にする(共有の箱の参照は再生の箱へ)。例外なら例外の object。"
-  (when (not entry.ok)
+(defk deliver-recorded [state entry codec]
+  {:pre [(: state ReplayState) (: entry Entry) (: codec EffectCodec)] :post [(: % (get tuple #(bool object)))]
+   :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "記録の答えを、再生が業務へ返す値にするため(共有の箱の参照は再生の箱へ)。答え = #(True 値) か、失敗の答えなら #(False 例外の object)。"
+  (cond
+    entry.ok
+      (match entry.value
+        (WatchedRef :entry watched) #(True (get state.watched watched))
+        ;; 渡すのは読んだ値の写し — 業務と再生の箱が書き換えても Entry.value(記録の読みの答え)は変わらない
+        ;; (以前は渡すたびに JSON から作り直していた。同じ Recording を 2 度再生しても同じ値を返す・#2581)。
+        restored (do (val value (copy.deepcopy restored))
+                     (when (and codec.watch (isinstance value #(dict list)))
+                       (setv (get state.watched entry.e) value))
+                     #(True value)))
     ;; 失敗の答えは err の欄を持つ(read-recording が ok = 偽の答えの行から入れる)— 無ければ記録が壊れている。
-    (when (is entry.error None)
-      (raise (ValueError (.format "記録の失敗の答え(問い {})に err が無い" entry.e))))
-    (return #(False (decode-error (json.loads entry.error.text)))))
-  (match entry.value
-    (WatchedRef :entry watched) #(True (get state.watched watched))
-    ;; 渡すのは読んだ値の写し — 業務と再生の箱が書き換えても Entry.value(記録の読みの答え)は変わらない
-    ;; (以前は渡すたびに JSON から作り直していた。同じ Recording を 2 度再生しても同じ値を返す・#2581)。
-    restored (do (setv value (copy.deepcopy restored))
-                 (when (and codec.watch (isinstance value #(dict list)))
-                   (setv (get state.watched entry.e) value))
-                 #(True value))))
+    (is entry.error None)
+      (raise (ValueError (.format "記録の失敗の答え(問い {})に err が無い" entry.e)))
+    True
+      #(False (decode-error (json.loads entry.error.text)))))
 
 
 (defhandler effect-replayer [#^ ReplayState state]
@@ -698,9 +726,10 @@
     (cond
       (= verdict "diverge")
         (do (setv entry (if (< pos (len queue)) (get rec.entries (get queue pos)) None))
+            (<- expected (| (get dict #(str object)) None) (expected-of entry))
             (val divergence (.diverge state {"reason" (if (is entry None) "記録ではもう問いを出さない task が問いを出した" "問いが記録と食い違った")
                              "task" label "event" (if entry entry.e None) "at" (if entry entry.at None)
-                             "expected" (if entry {"type" entry.type "args" (recorded-args entry)} None)
+                             "expected" expected
                              "actual" {"type" codec.name "args" args}}))
             (<- (wake (.wakeable state)))
             (raise (ReplayDiverged (get divergence "reason"))))
@@ -749,12 +778,12 @@
           (cond
             (= mode LIVE) (if (is error None) (resume answer) (raise error))
             True
-              (do (setv #(ok value) (deliver-recorded state entry codec))
+              (do (<- delivered (get tuple #(bool object)) (deliver-recorded state entry codec))
                   ;; 失敗の答えは decode-error が作った例外(deliver-recorded の約束)— 例外でなければ記録が壊れている。
-                  (match #(ok value)
+                  (match delivered
                     #(True answer) (resume answer)
                     #(False (BaseException) :as error) (raise error)
-                    _ (raise (TypeError (.format "記録の失敗の答えが例外でない: {!r}" value))))))))))
+                    _ (raise (TypeError (.format "記録の失敗の答えが例外でない: {!r}" delivered))))))))))
 
 
 (defk replay-report [#^ ReplayState state #^ str end]
