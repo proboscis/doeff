@@ -122,9 +122,12 @@
   (#^ Path lib))
 
 
-(defk make-rig [base [min-free-bytes 0] [allowed None]]
-  {:pre [(: base Path) (: min-free-bytes int) (: allowed (| tuple None))] :post [(: % Rig)]}
-  "worker の組(root の準備と子 process の言い換えの設定)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。"
+(defk make-rig [base [min-free-bytes 0] [allowed None] [code-store None]]
+  {:pre [(: base Path) (: min-free-bytes int) (: allowed (| tuple None)) (: code-store (| str None))] :post [(: % Rig)]}
+  "worker の組(root の準備と子 process の言い換えの設定)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。
+   code-store = 実行環境の job の子へ渡す Hy の code の置き場の設定(conftest の job_child_code_store が環境から返す値 — 子は
+   root の外の作業木の doeff_cluster を読むので、本番の「root の中の焼いた code・最初の子が書いた code」の代わりに置き場から
+   読む。None = 渡さない — 子は HOME から既定の置き場を引く)。"
   (val fake (/ base "fake-uv"))
   (.mkdir fake :parents True)
   (val site (next (gfor p sys.path :if (.endswith p "site-packages") p)))
@@ -143,8 +146,11 @@
   (<- tools-url str (url-of base "tools"))
   (.write-text keys (json.dumps (dfor u (or allowed #(app-url lib-url tools-url)) u "")))
   (val state (/ base "state"))
-  ;; 検の子 process は checkout の中に bytecode を書かない(root の中に準備した bytecode は読むだけ)。
-  (<- host (host-settings state :hy-command HY :extra-env {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
+  ;; 検の子 process は checkout の中に bytecode を書かない(root の中に準備した bytecode は読むだけ)。Hy の code の置き場は、
+  ;; source の隣に使える .pyc が無い module(root の外の doeff の code)だけを答える。
+  (<- host (host-settings state :hy-command HY
+                         :extra-env (| {"DOEFF_WORKER_NAME" "careful" "PYTHONDONTWRITEBYTECODE" "1"}
+                                       (if (is code-store None) {} {"DOEFF_HY_CODE_STORE" code-store}))
                          :uv (str wrapper)))
   (Rig :base base :state state :fake fake :app app :lib lib
        :envs (EnvSettings :state (str state) :hy-command HY :platform (current-platform) :code-prepare PREPARE-TOOL :repo-keys (str keys)

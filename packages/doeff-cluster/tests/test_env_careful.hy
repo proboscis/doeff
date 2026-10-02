@@ -43,8 +43,9 @@
   (assert (isinstance outcome.value tuple) outcome)
   outcome.value)
 
-(deftest test-careful-scenarios-1-and-2 [tmp-path subprocess-bytecode]
-  (<- rig Rig (make-rig tmp-path))
+(deftest test-careful-scenarios-1-and-2 [tmp-path subprocess-bytecode job-child-code-store]
+  (assert (or (is job-child-code-store None) (isinstance job-child-code-store str)) job-child-code-store)
+  (<- rig Rig (make-rig tmp-path :code-store job-child-code-store))
   (<- files-a1 dict (app-files 1 LOCK))
   (<- a1 str (push-commit rig.app files-a1 "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
@@ -172,8 +173,9 @@
   problems)
 
 
-(deftest test-careful-counterexamples-are-caught [tmp-path subprocess-bytecode]
-  (<- rig Rig (make-rig tmp-path))
+(deftest test-careful-counterexamples-are-caught [tmp-path subprocess-bytecode job-child-code-store]
+  (assert (or (is job-child-code-store None) (isinstance job-child-code-store str)) job-child-code-store)
+  (<- rig Rig (make-rig tmp-path :code-store job-child-code-store))
   (<- files-a1 dict (app-files 1 LOCK))
   (<- a1 str (push-commit rig.app files-a1 "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
