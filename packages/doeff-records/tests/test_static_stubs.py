@@ -1,5 +1,5 @@
-"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
-store_choice.pyi・typed.pyi・principals.pyi・service.pyi・http_server.pyi・schema_digest.pyi)の検。
+"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口・client の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
+store_choice.pyi・typed.pyi・principals.pyi・service.pyi・http_server.pyi・schema_digest.pyi・http_client.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -16,6 +16,9 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - 走っている木と表の要約(http_server.pyi・schema_digest.pyi)の失敗ケース: 2 つを外した写しでは、ServedBuild・RepoCommit・
   schema-digests と、要約の答えを受けた変数が Unknown の赤になり、置くと消える。置いた側では欄の取り違え(str の repo に int を
   足す)が赤になる(使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形・#2742)。
+- client の層(http_client.pyi)の失敗ケース: http_client.pyi だけを外した写しでは、口の組 RecordsEndpoint・答え手 http-records-handler・
+  計器の 0 置き zero-client-metrics が Unknown の赤になり、置くと消える。置いた側では口の欄の取り違え(float の上限の秒に文字列を足す)が
+  赤になる(書き手の job の土台が口を作り、計器の系列を 0 で置いてから答え手を並べる形)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
   型の並びが実装と同じ(宣言だけが先へ行かない)。
 """
@@ -32,13 +35,12 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
-from doeff import EffectBase
+import pytest
 from doeff_records import (
     effects,
     faults,
+    http_client,
     http_server,
     memory,
     principals,
@@ -48,6 +50,8 @@ from doeff_records import (
     typed,
     values,
 )
+
+from doeff import EffectBase
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -63,6 +67,7 @@ STUBBED: tuple[types.ModuleType, ...] = (
     service,
     http_server,
     schema_digest,
+    http_client,
 )
 
 MODULE = """\
@@ -214,6 +219,32 @@ SERVED_UNKNOWN_NAMES: tuple[str, ...] = (
     '"digests"',
 )
 
+#: client の層の検体 — 書き手の job の土台の形: 口の組 RecordsEndpoint を受け、計器の系列を 0 で置いてから、答え手
+#: http-records-handler の下で読みを 1 つ撃ち、口の欄を読む。
+CLIENT_MODULE = """\
+(require doeff-hy.macros [defk <-])
+(import doeff [with-handlers])
+(import doeff_records.effects [ReadRow])
+(import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
+
+(defk url-after-read [endpoint]
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % str)]}
+  (<- (zero-client-metrics endpoint))
+  (<- (with-handlers [(http-records-handler endpoint)] (ReadRow "t" #("k"))))
+  endpoint.base-url)
+
+(defk wrong-timeout [endpoint]
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % float)]}
+  (+ endpoint.request-timeout "x"))
+"""
+
+#: http_client.pyi を外すと Unknown になる名(import の行の名)。
+CLIENT_UNKNOWN_NAMES: tuple[str, ...] = (
+    '"RecordsEndpoint"',
+    '"http_records_handler"',
+    '"zero_client_metrics"',
+)
+
 
 @dataclass(frozen=True)
 class Run:
@@ -342,6 +373,25 @@ def test_with_the_served_stubs_the_build_and_the_digests_are_typed(tmp_path: Pat
     assert [e for e in run.errors() if e[1] in right] == [], run.errors()
     # str の repo に int を足すと赤(stub が tuple[RepoCommit, ...] を運び、repo が str と読める)。
     wrong = _line_of("(+ (. (get commits 0) repo) 1)", SERVED_MODULE)
+    assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
+
+
+@needs_pyright
+def test_without_the_client_stub_the_client_is_unknown(tmp_path: Path) -> None:
+    # 他の stub は置き、client の層の http_client.pyi だけを外す — 口の組・答え手・計器の 0 置きの名が Unknown になる。
+    unknown = _check(tmp_path, with_stubs=True, module=CLIENT_MODULE, omit=("http_client.pyi",)).unknown()
+    missing = [name for name in CLIENT_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
+    assert missing == [], unknown
+
+
+@needs_pyright
+def test_with_the_client_stub_the_endpoint_is_typed(tmp_path: Path) -> None:
+    run = _check(tmp_path, with_stubs=True, module=CLIENT_MODULE)
+    # 正しい使い(検体の頭から wrong-timeout の前まで)には赤が 1 つも無い — 口の組・答え手・計器の 0 置きの型が読める。
+    right = range(1, _line_of("(defk wrong-timeout", CLIENT_MODULE))
+    assert [e for e in run.errors() if e[1] in right] == [], run.errors()
+    # float の上限の秒に文字列を足すと赤(stub が RecordsEndpoint の欄の型を運ぶ)。
+    wrong = _line_of('(+ endpoint.request-timeout "x")', CLIENT_MODULE)
     assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
 
 
