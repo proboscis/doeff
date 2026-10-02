@@ -6,12 +6,13 @@
 ;;; 1 版残す旧い host-reader が旧い入口を読むので、ここが宿の契約を読むと import が輪になる(旧い入口を消すのは #2981 の 2 段目)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
-(import os)
 (import doeff [run])
+(import doeff_cluster.foundation.process_versions [this-process-environ])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [context-of-environ])
 
 
 (defn #^ RunContext context-from-env []
-  "この process の文脈を os.environ から読むため(子の入口が Program の外で 1 回読み、宿の答え手 host-reader が session で 1 回読む)。"
-  (run (context-of-environ os.environ)))
+  "この process の文脈を環境変数から読むため(子の入口が Program の外で 1 回読み、宿の答え手 host-reader が session で 1 回読む)。環境変数の
+   写像は foundation の this-process-environ が渡す(入口の層は os.environ に触らない — DOEFF106・#3014)。"
+  (run (context-of-environ (run (this-process-environ)))))
