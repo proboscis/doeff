@@ -102,7 +102,7 @@
   (setv #^ list muts (field :default-factory list)))
 
 
-(deff entry-of [#^ Recording rec #^ int e]  ; defk にできない: 再生係(handler — Program の外の object の method)が問いごとに呼ぶ純粋な引き
+(defk entry-of [rec e]
   {:pre [(: rec Recording) (: e int)] :post [(: % (| Entry None))] :tags {:context "doeff-cluster" :role "foundation"}}
   "出来事の番号 e の問い(Entry)。答えの番号・記録に無い番号は None — 再生係が「次に来るべき出来事」の問いを引くため。"
   (if (< -1 e (len rec.entries)) (get rec.entries e) None))
@@ -114,8 +114,8 @@
   (or (.row rec.queues task) #()))
 
 
-(deff recorded-args [#^ Entry entry]  ; defk にできない: 再生係(handler)と報告の綴り(Program の外)が違いを報告する時に呼ぶ純粋な読み
-  {:pre [(: entry Entry)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+(defk recorded-args [entry]
+  {:pre [(: entry Entry)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の引数(名 → 値の JSON)— 違いの報告と差分のため、比べる形の文字列から読み直す。"
   (json.loads entry.args-text))
 
@@ -291,7 +291,7 @@
 (defk diff-row [kind entry type subject task replayed-args [at None]]
   {:pre [(: kind str) (: entry (| Entry None)) (: type str) (: subject (| str None)) (: task str) (: replayed-args (| dict None)) (: at (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "判断の違い 1 件。kind = changed / missing / extra。recorded = 記録の引数・replayed = 再生の引数・delta = 記録 → 再生の差分。"
-  (val recorded (if (is entry None) None (recorded-args entry)))
+  (val recorded (if (is entry None) None (! (recorded-args entry))))
   {"kind" kind "type" type "subject" subject "task" task
    "at" (if (is-not entry None) entry.at at) "event" (if (is entry None) None entry.e)
    "recorded" recorded "replayed" replayed-args

@@ -31,7 +31,8 @@
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
 (import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY WatchedRef recorded-args])
 (import pathlib)
-(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report deliver-recorded])
+(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog effect-recorder ReplayState effect-replayer replay-report deliver-recorded
+                                                  stall-divergence])
 
 
 ;; --- 1. 符号化 ---------------------------------------------------------------------------------
@@ -229,11 +230,30 @@
   (assert (= rec.ended (frozenset ["root"])) rec.ended)
   (val state (ReplayState rec))
   (val codec (codec-of (ReadShared "row/")))
-  (val first (deliver-recorded state entry codec))
-  (val second (deliver-recorded state entry codec))
+  (val first (! (deliver-recorded state entry codec)))
+  (val second (! (deliver-recorded state entry codec)))
   (assert (not (or (get first 0) (get second 0))) #(first second))
   (assert (and (isinstance (get first 1) ValueError) (= (str (get first 1)) "盤に届かない")) first)
   (assert (and (isinstance (get second 1) ValueError) (is-not (get first 1) (get second 1))) #(first second)))
+
+
+(deftest test-a-stalled-replay-names-the-recorded-question-nobody-asked
+  ;; #2763: 他の task が全部止まったのに番号が進まない時の分岐の報告(stall-divergence)は、記録が待っていた問いの型と引数を名指す。
+  ;; 問いの引きと引数の読みを再生の状態の method から defk へ上げた所 — 待っていた問いを引けなければ expected が欠け、この検が赤になる。
+  (val head {"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"})
+  (val asked {"k" "call" "e" 0 "t" "root" "at" 5 "ty" (type-name ReadShared) "m" "read" "a" {"key" "row/a"} "ok" True "v" 1})
+  (val rec (! (read-recording [head asked {"k" "end" "e" 2 "t" "root" "ok" True}])))
+  (val state (ReplayState rec))
+  (val stalled (! (stall-divergence state)))
+  (assert (= stalled {"reason" "記録の出来事を再生の業務の Program が出さないまま止まった" "event" 0 "kind" "req" "task" "root"
+                      "expected" {"type" (type-name ReadShared) "args" {"key" "row/a"}} "at" 5})
+          stalled)
+  ;; 記録ではこの後も問いを出す task が、再生では先に終わった時は、理由がそれを名指す。
+  (.task-ended state "root" True None)
+  (assert (= (get (! (stall-divergence state)) "reason") "記録ではこの後も問いを出す task が、再生では先に終わった"))
+  ;; 分岐が立った後は地点を返さない(残すのは最初の分岐だけ)。
+  (.diverge state stalled)
+  (assert (is (! (stall-divergence state)) None)))
 
 
 ;; ---- WriteShared の記録は型の宣言から・OpaqueJson の欄は中の JSON の値で・ANY は値の汎用の綴りで(#2579)----------------------
@@ -278,7 +298,7 @@
     (val value (resolve-refs (get l "a" "value") blobs))
     (val replayed (! (args-of (WriteShared (get l "a" "key") (OpaqueJson.of value)) (HandleTable))))
     (assert (= entry.args-text (canonical replayed)) #(entry.args-text replayed))
-    (assert (= (get (recorded-args entry) "expect") CURRENT-ANY) entry.args-text)))
+    (assert (= (get (! (recorded-args entry)) "expect") CURRENT-ANY) entry.args-text)))
 
 
 ;; ---- 答えの値は記録を読む時に戻す — 再生の handler は JSON を読まない(#2581)-------------------------------------------
