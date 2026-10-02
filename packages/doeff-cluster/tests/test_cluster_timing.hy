@@ -6,7 +6,7 @@
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.core.timing_rules [SelfStopBudget ReassignTooEarly self-stop-ms timing-outlasts-the-self-stop])
+(import doeff_cluster.shared.core.timing_rules [SelfStopSpans ReassignTooEarly self-stop-ms timing-outlasts-the-self-stop])
 (import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import doeff_cluster.worker.entry.main [timing-checked])
@@ -16,45 +16,45 @@
 (val P (WorkerPolicy))
 
 
-(defk production-budget []
-  {:pre [] :post [(: % SelfStopBudget)] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk production-spans []
+  {:pre [] :post [(: % SelfStopSpans)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本番の定数(ClusterTiming の fence・coordinator_http の返事と接続の上限・WorkerPolicy の停止の猶予)から、worker の止め切りの内訳を
    作るため — 数を検に写さない。"
-  (SelfStopBudget :fence-ms T.fence-ms :reply-ms (int (* REPLY-SECONDS 1000)) :connect-ms (int (* CONNECT-SECONDS 1000))
+  (SelfStopSpans :fence-ms T.fence-ms :reply-ms (int (* REPLY-SECONDS 1000)) :connect-ms (int (* CONNECT-SECONDS 1000))
                   :stop-grace-ms P.stop-grace-ms :kill-grace-ms P.kill-grace-ms))
 
 
 (deftest test-the-production-timing-outlasts-the-self-stop
   ;; 条 C4 の確かめ: 本番の移し替えは、本番の定数で作った止め切りより後(破りの列が空)。
-  (<- budget SelfStopBudget (production-budget))
-  (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop T.reassign-after-ms budget))
+  (<- spans SelfStopSpans (production-spans))
+  (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop T.reassign-after-ms spans))
   (assert (= broken #()) #(T.reassign-after-ms broken)))
 
 
 (deftest test-moving-one-constant-past-the-self-stop-is-named
   ;; 失敗ケース: 定数を 1 つずつ動かすと破りを 1 つ名指す — 移し替えを止め切りの 1 ms 前に縮める・返事の上限を延ばす・停止の猶予を延ばす。
   ;; (移し替えを 45 秒に戻した #2806 の前の値も、ここの「縮める」に入る — 止め切りは本番の定数で 45 秒より長い。)
-  (<- budget SelfStopBudget (production-budget))
-  (<- needed int (self-stop-ms budget))
-  (<- early (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop (- needed 1) budget))
+  (<- spans SelfStopSpans (production-spans))
+  (<- needed int (self-stop-ms spans))
+  (<- early (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop (- needed 1) spans))
   (assert (= (len early) 1) early)
   (assert (= #((. (get early 0) reassign-ms) (. (get early 0) needed-ms)) #((- needed 1) needed)) early)
   (val slack (- T.reassign-after-ms needed))
   (<- slow-reply (get tuple #(ReassignTooEarly ...))
-      (timing-outlasts-the-self-stop T.reassign-after-ms (replace budget :reply-ms (+ budget.reply-ms slack 1))))
+      (timing-outlasts-the-self-stop T.reassign-after-ms (replace spans :reply-ms (+ spans.reply-ms slack 1))))
   (assert (= (len slow-reply) 1) slow-reply)
   (<- long-grace (get tuple #(ReassignTooEarly ...))
-      (timing-outlasts-the-self-stop T.reassign-after-ms (replace budget :stop-grace-ms (+ budget.stop-grace-ms slack 1))))
+      (timing-outlasts-the-self-stop T.reassign-after-ms (replace spans :stop-grace-ms (+ spans.stop-grace-ms slack 1))))
   (assert (= (len long-grace) 1) long-grace))
 
 
 (deftest test-the-worker-entry-refuses-a-start-that-breaks-the-timing
   ;; 組み立ての時に名指しで断る: worker の入口の timing-checked は、本番の組み立て(既定の fence と停止の猶予)を通し、停止の猶予を
   ;; 移し替えの余白より長くした起動を、job を走らせる前に ValueError で断る(文に C4 と内訳を名指す)。
-  (<- passed SelfStopBudget (timing-checked T.fence-ms P T))
-  (<- budget SelfStopBudget (production-budget))
-  (assert (= passed budget) passed)
-  (val slack (- T.reassign-after-ms (! (self-stop-ms budget))))
+  (<- passed SelfStopSpans (timing-checked T.fence-ms P T))
+  (<- spans SelfStopSpans (production-spans))
+  (assert (= passed spans) passed)
+  (val slack (- T.reassign-after-ms (! (self-stop-ms spans))))
   (with [raised (pytest.raises ValueError)]
     (<- (timing-checked T.fence-ms (replace P :stop-grace-ms (+ P.stop-grace-ms slack 1)) T)))
   (assert (in "C4" (str raised.value)) raised.value))
