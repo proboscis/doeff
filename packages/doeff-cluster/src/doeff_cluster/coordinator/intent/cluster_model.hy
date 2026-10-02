@@ -288,10 +288,26 @@
   (#^ bool stale))
 
 
+(defrecord KeepMark
+  "途絶しても動かし続けてよい印の約束 1 つ(#2804)= coordinator が worker へ「この job は途絶しても止めなくてよい」と返事で渡した事実。
+   印を渡した担い手は coordinator に届かない間も job を動かし続けうるので、coordinator はこの約束が在る間、job を他の worker へ置かない
+   (担い手の上の置き先を、沈黙・能力の変化・drain を問わず保つ — cluster_policy.place-jobs)。約束が外れるのは、担い手の今の世代の heartbeat が
+   その job の印を持たないと知らせた時(keptWhenCutOff — 印の無い返事が届いた後)か、Worker が消された時だけ。
+   job = job の名・worker = 印を渡した担い手の名・boot = 渡した時の担い手の process の世代(表示 — 世代が替わった担い手は新しい世代の
+   知らせで約束を外す)・since-ms = 初めて渡した時刻。保存する(durable_kv の keep/<名> — coordinator を作り直しても約束を忘れない)。
+   読みの口: GET /state の keepMarks(#2883 — StateView.keep-marks)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ str worker)
+  (#^ (| str None) boot)
+  (#^ int since-ms))
+
+
 (defrecord StateView
   "GET /state の状態の画面(cluster_policy.state-view — #2595): now・services・workers・placements(job の名 → Placement)・unplaced(job の名 →
    置き先が無い理由)・statuses(worker の名 → StatusView)・tasks・board-keys = 盤の行の数・surges(job の名 → Placement)・events = 直近
-   50 件の割り当ての移り変わり・revision。JSON の形は coordinator/protocol/replies が綴る。"
+   50 件の割り当ての移り変わり・revision・keep-marks = 途絶しても動かし続けてよい印の約束の列(job の名の順 — #2883: 版上げの後と障害の時に、
+   どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)。JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
   (#^ (get tuple #(WorkerView ...)) workers)
@@ -302,7 +318,8 @@
   (#^ int board-keys)
   (#^ (get dict #(str Placement)) surges)
   (#^ tuple events)
-  (#^ int revision))
+  (#^ int revision)
+  (#^ (get tuple #(KeepMark ...)) keep-marks))
 
 
 (defenum DrainPhase
@@ -416,20 +433,6 @@
   (#^ int until-ms)
   (setv #^ (| str None) boot None)
   (setv #^ str actor ""))
-
-
-(defrecord KeepMark
-  "途絶しても動かし続けてよい印の約束 1 つ(#2804)= coordinator が worker へ「この job は途絶しても止めなくてよい」と返事で渡した事実。
-   印を渡した担い手は coordinator に届かない間も job を動かし続けうるので、coordinator はこの約束が在る間、job を他の worker へ置かない
-   (担い手の上の置き先を、沈黙・能力の変化・drain を問わず保つ — cluster_policy.place-jobs)。約束が外れるのは、担い手の今の世代の heartbeat が
-   その job の印を持たないと知らせた時(keptWhenCutOff — 印の無い返事が届いた後)か、Worker が消された時だけ。
-   job = job の名・worker = 印を渡した担い手の名・boot = 渡した時の担い手の process の世代(表示 — 世代が替わった担い手は新しい世代の
-   知らせで約束を外す)・since-ms = 初めて渡した時刻。保存する(durable_kv の keep/<名> — coordinator を作り直しても約束を忘れない)。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ str job)
-  (#^ str worker)
-  (#^ (| str None) boot)
-  (#^ int since-ms))
 
 
 (defenum HandoffPhase

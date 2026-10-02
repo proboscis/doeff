@@ -100,7 +100,10 @@
    "boardKeys" view.board-keys
    "surges" (dfor #(k v) (.items view.surges) k (asdict v))
    "events" (list view.events)
-   "revision" view.revision})
+   "revision" view.revision
+   ;; 途絶しても動かし続けてよい印の約束(#2883): job の名の順の列 [{job worker boot sinceMs}] — 担い手 worker の世代 boot へ時刻 sinceMs から
+   ;; 渡してある。約束の在る job は担い手が印を手放すか Worker が消されるまで他へ移らない。読みだけ(書きの口は無い)。
+   "keepMarks" (lfor m view.keep-marks {"job" m.job "worker" m.worker "boot" m.boot "sinceMs" m.since-ms})})
 
 
 (defk drain-progress-json [#^ DrainProgress drain]
