@@ -1,5 +1,5 @@
 ;;; coordinator の保存の行と受け口の本文(JSON)を型へ読み・型から書く純粋な関数(cluster_model から移した・#2023 → 保存の綴りとして protocol へ移した・#2448)。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict fields])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
@@ -50,20 +50,20 @@
   (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)}))
 
 
-(deff task-record-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state_json・durable_kv — Program の外)が呼ぶ純粋な読み
+(defk task-record-from-json [data]
   {:pre [(: data dict)] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
    旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない
    (operator 2026-09-27)。旧い形 = TaskRecord に無い欄を持つ行(今の TaskRecord の欄の集合 1 つで判じる — 消した欄を 1 つずつ数えると、
    数え漏れた欄 1 つで読み直しが TypeError になり coordinator が起きない。実弾 2026-09-28 の予行: 3880944e の行の env)。
    無い欄は捨てて読む(終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
-  (setv known (sfor f (fields TaskRecord) f.name)
-        extra (sorted (gfor k data :if (not-in k known) k))
-        phase (stored-str data "phase" "queued")
-        unended (not-in phase ENDED-PHASES)
-        reason (old-task-row-reason (.get data "requires") extra)
-        ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
-        failure (if unended reason None))
+  (val known (sfor f (fields TaskRecord) f.name))
+  (val extra (sorted (gfor k data :if (not-in k known) k)))
+  (val phase (stored-str data "phase" "queued"))
+  (val unended (not-in phase ENDED-PHASES))
+  (val reason (old-task-row-reason (.get data "requires") extra))
+  ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
+  (val failure (if unended reason None))
   ;; 欄ごとに型を確かめて読む(#** で辞書を渡すと、型の違う保存の値が黙って欄に入る — #1662)。
   (TaskRecord :id (stored-str data "id")
               :name (stored-str data "name")

@@ -194,7 +194,7 @@
   (val data (state-to-json (get reported 0)))
   (val old (| data {"tasks" (lfor t (get data "tasks")
                                   (| (dfor #(k v) (.items t) :if (!= k "program") k v) {"blob" "QkxPQg=="}))}))
-  (for [again [(state-from-json old 100) (state-from-kv (full-kv (state-from-json old 100)) 100)]]
+  (for [again [(! (state-from-json old 100)) (! (state-from-kv (! (full-kv (! (state-from-json old 100)))) 100))]]
     (val rows (dfor t (.values again.tasks) t.key t))
     (assert (= (. (get rows "job-open") phase) "failed") (get rows "job-open"))
     (assert (in "旧い形の task(詰めた Program を行に持つ blob)" (. (get rows "job-open") detail)))
