@@ -1,7 +1,9 @@
 """commit の hook の doeff-linter と semgrep(Python)の所見を基点と比べる道具(scripts/hook_finding_baseline.py・agora-redesign #2848)の検。
 
 失敗ケース(#2848 の決め): 前からの所見の在る file に新しい所見を 1 つ足すと止まる・足さなければ通る・前からの所見を直したのに
-基点が古いと赤。基点の鍵は行番号に依らない。道具の版が基点と違う時は、赤でも緑でもなく「測れない」と名指して通す。
+基点が古いと赤。基点の鍵は行番号に依らない。doeff-linter の版が基点と違う時は、赤でも緑でもなく「測れない」と名指して通す。
+semgrep(#2906 の失敗ケース): 探し道の semgrep の版に依らず uv.lock の版を呼ぶ・lock の版が基点と違えば名指して赤・lock に semgrep が
+無ければ探し道へ戻らず止まる。
 """
 
 from __future__ import annotations
@@ -17,11 +19,12 @@ from types import ModuleType
 
 ROOT: Path = Path(__file__).resolve().parents[1]
 SCRIPT: Path = ROOT / "scripts" / "hook_finding_baseline.py"
+LOCKED: Path = ROOT / "scripts" / "semgrep_locked.py"
 
 
-def _module() -> ModuleType:
-    """script を module として読み、純粋な比べの関数を直に試すため。"""
-    spec = importlib.util.spec_from_file_location("hook_finding_baseline", SCRIPT)
+def _module(name: str, path: Path) -> ModuleType:
+    """script を module として読み、純粋な関数を直に試すため(同じ dir の module を import する script は、先にその module を読む)。"""
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module: ModuleType = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -29,7 +32,8 @@ def _module() -> ModuleType:
     return module
 
 
-TOOL = _module()
+SEMGREP_LOCKED = _module("semgrep_locked", LOCKED)
+TOOL = _module("hook_finding_baseline", SCRIPT)
 BASE: dict[str, dict[str, int]] = {"DOEFF016": {"pkg/a.py": 2, "pkg/b.py": 1}}
 
 
@@ -159,3 +163,84 @@ def test_init_never_overwrites_a_baseline(tmp_path: Path) -> None:
     assert _run(rig, "init", "doeff-linter").returncode == 0
     again = _run(rig, "init", "doeff-linter")
     assert again.returncode == 2 and "書き直さない" in again.stderr
+
+
+# --- semgrep は uv.lock の版を呼ぶ(#2906)— 偽の uv が `tool run --from semgrep==<版> semgrep` を答え、探し道の semgrep は別の版 ---
+
+LOCK_TEMPLATE = 'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{version}"\n\n[[package]]\nname = "other"\nversion = "0.1.0"\n'
+
+FAKE_UV = """\
+import json, sys
+from pathlib import Path
+here = Path(__file__).parent
+args = sys.argv[1:]
+with open(here / "uv-calls.jsonl", "a") as out:
+    out.write(json.dumps(args) + "\\n")
+if args[:3] != ["tool", "run", "--from"] or args[4] != "semgrep":
+    raise SystemExit(f"偽の uv が知らない呼び: {args}")
+version, rest = args[3].split("==")[1], args[5:]
+if "--version" in rest:
+    print(version)
+    raise SystemExit(0)
+paths = [a for a in rest if a.endswith(".py")]
+results = [{"check_id": "R1", "path": p} for p in paths for line in Path(p).read_text().splitlines() if "BAD" in line]
+print(json.dumps({"results": results, "errors": []}))
+"""
+
+FAKE_PATH_SEMGREP = """\
+import sys
+if "--version" in sys.argv:
+    print("9.9.9")
+    raise SystemExit(0)
+raise SystemExit("探し道の semgrep が呼ばれた")
+"""
+
+
+def _semgrep_rig(tmp_path: Path) -> Rig:
+    """一時の repo に uv.lock(semgrep 1.2.3)を置き、偽の uv と、別の版を名乗る探し道の semgrep を置くため。"""
+    rig = _rig(tmp_path)
+    (rig.repo / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.2.3"))
+    for name, body in (("uv", FAKE_UV), ("semgrep", FAKE_PATH_SEMGREP)):
+        tool = tmp_path / "bin" / name
+        tool.write_text(f"#!{sys.executable}\n{body}")
+        tool.chmod(0o755)
+    return rig
+
+
+def test_the_locked_command_names_the_lock_version(tmp_path: Path) -> None:
+    (tmp_path / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.169.0"))
+    assert SEMGREP_LOCKED.locked_command(tmp_path) == ["uv", "tool", "run", "--from", "semgrep==1.169.0", "semgrep"]
+
+
+def test_semgrep_is_called_at_the_lock_version_whatever_the_path_has(tmp_path: Path) -> None:
+    rig = _semgrep_rig(tmp_path)
+    assert _run(rig, "init", "semgrep").returncode == 0
+    baseline = json.loads((rig.repo / "scripts" / "hook_finding_baseline" / "semgrep.json").read_text())
+    assert baseline == {"version": "1.2.3", "counts": {"R1": {"pkg/a.py": 1}}}
+    (rig.repo / "pkg" / "b.py").write_text("z = 3  # BAD\n")
+    added = _run(rig, "check", "semgrep", "pkg/b.py")
+    assert added.returncode == 1
+    assert "R1 pkg/b.py: 基点 0 → 今 1" in added.stderr
+    calls = [json.loads(line) for line in (tmp_path / "bin" / "uv-calls.jsonl").read_text().splitlines()]
+    assert calls
+    assert all(call[:5] == ["tool", "run", "--from", "semgrep==1.2.3", "semgrep"] for call in calls)
+
+
+def test_a_lock_version_other_than_the_baseline_is_named_and_red(tmp_path: Path) -> None:
+    rig = _semgrep_rig(tmp_path)
+    assert _run(rig, "init", "semgrep").returncode == 0
+    (rig.repo / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.2.4"))
+    other = _run(rig, "check", "semgrep", "pkg/a.py")
+    assert other.returncode == 1
+    assert "1.2.3" in other.stderr
+    assert "1.2.4" in other.stderr
+    assert "lower semgrep" in other.stderr
+
+
+def test_a_lock_without_semgrep_stops_without_falling_back_to_the_path(tmp_path: Path) -> None:
+    rig = _semgrep_rig(tmp_path)
+    (rig.repo / "uv.lock").write_text('version = 1\n\n[[package]]\nname = "other"\nversion = "0.1.0"\n')
+    missing = _run(rig, "check", "semgrep", "pkg/a.py")
+    assert missing.returncode != 0
+    assert "1 つに決まらない" in missing.stderr
+    assert not (tmp_path / "bin" / "uv-calls.jsonl").exists()

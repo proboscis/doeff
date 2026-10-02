@@ -9,9 +9,10 @@
 
   check <道具> [path …]  測った file について、数が基点より多ければ赤(新しい所見 — 直す)。少ないのに基点が下がっていなければ
                          赤(直した便が同じ commit で基点を下げる — 下げ忘れると次の新しい所見が黙って入る)。path が無ければ
-                         repo の全部の file。道具の版が基点の版と違う時は、赤でも緑でもなく「測れない」と名指して通す — hook の
-                         道具(doeff-linter は ~/.cargo/bin の binary)は repo の main と別に版が動き、版が変わると同じ code で
-                         数が変わる(版の違いで全席の commit が止まる・黙って通る、のどちらも避ける)。
+                         repo の全部の file。doeff-linter の版が基点の版と違う時は、赤でも緑でもなく「測れない」と名指して通す —
+                         doeff-linter(~/.cargo/bin の binary)は repo の main と別に版が動き、版が変わると同じ code で数が変わる
+                         (版の違いで全席の commit が止まる・黙って通る、のどちらも避ける)。semgrep の版は木の中の uv.lock だけで
+                         決まる(scripts/semgrep_locked.py・#2906)ので、基点と違えば「lock を上げたのに数え直していない」木として赤。
   lower <道具>           repo の全部の file を今の道具で測り、基点を今の数まで下げ、版を今の版にする(上げない・新しい組を足さない)。
                          直した便と、道具の版を入れ直した便が実行して stage する。今の版で基点より増えた組は下げられないので名指す。
   init <道具>            基点の file が無い時だけ、repo の全部の file を測って版と一緒に書く(在れば断る — 上げる道にしない)。
@@ -29,6 +30,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from semgrep_locked import locked_command, locked_version
 
 BASELINE_DIR: str = "scripts/hook_finding_baseline"
 TOOLS: tuple[str, ...] = ("doeff-linter", "semgrep")
@@ -157,23 +160,25 @@ LINTER_SOURCE: str = "packages/doeff-linter"
 
 
 def tool_command(top: Path, tool: str) -> list[str]:
-    """道具を呼ぶ命令。semgrep は repo の dev の依存(uv.lock が版を決める)を uv で呼ぶ — 探し道の semgrep は、venv が有効かどうかで
-    版が割れ(2026-10-02: venv 1.169.0・uv tool 1.161.0)、基点と版が合わない「測れない」に黙って倒れるため。uv.lock の無い根
-    (検の一時の repo)では探し道の物。doeff-linter は Rust の binary で、探し道(~/.cargo/bin)の物 — 版は tool_version が鍵にする。"""
-    if tool == "semgrep" and (top / "uv.lock").is_file():
-        return ["uv", "run", "--frozen", "--no-sync", "--project", str(top), "semgrep"]
+    """道具を呼ぶ命令。semgrep は uv.lock が決める版を uv の道具の置き場から呼ぶ(scripts/semgrep_locked.py・#2906)— 探し道の
+    semgrep や作業木の環境の semgrep は、機体の入れ方と作業木の状態で版が割れ(2026-10-02 zeus: lock 1.169.0・共有の uv tool
+    1.161.0。`.venv` の無い作業木では `uv run --no-sync --project` が空の `.venv` を作って探し道の物を呼んだ)、基点と版が合わない
+    「測れない」に黙って倒れていた。doeff-linter は Rust の binary で、探し道(~/.cargo/bin)の物 — 版は tool_version が鍵にする。"""
+    if tool == "semgrep":
+        return locked_command(top)
     return [tool]
 
 
 def tool_version(top: Path, tool: str) -> str:
-    """hook が呼ぶ道具の版。semgrep = `--version` の 1 行目。doeff-linter = build した doeff の commit(`--version` が名乗る)の
-    packages/doeff-linter の木の hash — linter の中身が同じなら、branch で build しても着地の後に main から build し直しても同じ鍵に
-    なる(数を変える linter の便が、自分の build で基点を下げて同じ便で出せるように)。その commit を手元の git が知らない時は、
-    `--version` の 1 行目をそのまま鍵にする(基点と合わず「測れない」になる — 黙って通さない)。"""
+    """hook が呼ぶ道具の版。semgrep = uv.lock の版(tool_command がその版を呼ぶので、`--version` を聞き直さない — 1 回 約 2 秒)。
+    doeff-linter = build した doeff の commit(`--version` が名乗る)の packages/doeff-linter の木の hash — linter の中身が同じなら、
+    branch で build しても着地の後に main から build し直しても同じ鍵になる(数を変える linter の便が、自分の build で基点を下げて
+    同じ便で出せるように)。その commit を手元の git が知らない時は、`--version` の 1 行目をそのまま鍵にする(基点と合わず
+    「測れない」になる — 黙って通さない)。"""
+    if tool == "semgrep":
+        return locked_version(top)
     completed: subprocess.CompletedProcess[str] = subprocess.run(
-        [*tool_command(top, tool), "--version"] if tool == "doeff-linter"
-        else [*tool_command(top, tool), "--disable-version-check", "--version"],
-        cwd=top, capture_output=True, text=True, check=False,
+        [*tool_command(top, tool), "--version"], cwd=top, capture_output=True, text=True, check=False,
     )
     lines: list[str] = completed.stdout.strip().splitlines()
     if completed.returncode != 0 or not lines:
@@ -270,6 +275,17 @@ def main(argv: list[str]) -> int:
             print(f"{tool} の今の版で基点より多い組(下げる道では上げない — 直すか、規則の持ち主が扱いを決める):", file=sys.stderr)
             print("\n".join(_line(f) for f in grown_now), file=sys.stderr)
         return 0
+    return _check(top, tool, version, baseline, paths)
+
+
+def _check(top: Path, tool: str, version: str, baseline: Baseline, paths: list[str]) -> int:
+    """check の入口: 道具の版を基点と照らし、同じ版なら測った file の数を基点と比べる(赤 = 1・通す = 0)。"""
+    if version != baseline.version and tool == "semgrep":
+        # semgrep の版は木の中の uv.lock だけで決まる(機体に依らない)— 違うのは lock を上げたのに基点を数え直していない木だけ。
+        print(f"semgrep: 基点の版 {baseline.version} と uv.lock の版 {version} が違う — lock を上げた便が "
+              "`uv run --no-project python scripts/hook_finding_baseline.py lower semgrep` で基点を数え直し、同じ commit に入れる",
+              file=sys.stderr)
+        return 1
     if version != baseline.version:
         print(f"{tool}: 測れない(道具の版 {version} ≠ 基点の版 {baseline.version})— 基点と同じ版の道具で測るか、"
               f"版を入れ直した便が `uv run --no-project python scripts/hook_finding_baseline.py lower {tool}` で基点を数え直す",

@@ -40,10 +40,30 @@ def _tool(directory: Path, name: str, exit_code: int, *, report: str | None = No
     path.chmod(0o755)
 
 
+# hook の semgrep の 3 項は uv.lock の版を `uv tool run --from semgrep==<版> semgrep` で呼ぶ(#2906)。偽の uv はその呼びを記録して
+# 同じ dir の偽の semgrep へ回し、ほかの呼び(`uv run --no-project python …`)は本物の uv へ渡す。
+FAKE_UV: str = (
+    "import json, os, sys\n"
+    "args = sys.argv[1:]\n"
+    "if args[:3] == ['tool', 'run', '--from'] and args[4] == 'semgrep':\n"
+    "    with open(os.environ['LINT_CALLS'], 'a') as output:\n"
+    "        output.write(json.dumps(['uv', *args[:5]]) + '\\n')\n"
+    "    semgrep = os.path.join(os.path.dirname(sys.argv[0]), 'semgrep')\n"
+    "    os.execv(semgrep, [semgrep, *args[5:]])\n"
+    "os.execv(os.environ['REAL_UV'], [os.environ['REAL_UV'], *args])\n"
+)
+
+
 def _environment(directory: Path) -> dict[str, str]:
     environment: dict[str, str] = dict(os.environ)
+    real_uv: str | None = shutil.which("uv")
+    assert real_uv is not None, "uv が要る(hook の script を走らせる)"
+    fake_uv: Path = directory / "uv"
+    fake_uv.write_text(f"#!{sys.executable}\n{FAKE_UV}", encoding="utf-8")
+    fake_uv.chmod(0o755)
     environment.update({
         "PATH": f"{directory}:/usr/bin:/bin",
+        "REAL_UV": real_uv,
         "LINT_CALLS": str(directory / "calls.jsonl"),
         "PRE_COMMIT_HOME": str(directory / "pre-commit-cache"),
         "PRE_COMMIT_ALLOW_NO_CONFIG": "0",
@@ -90,7 +110,12 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     shutil.copyfile(ROOT / ".pre-commit-config.yaml", repository / ".pre-commit-config.yaml")
     # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
-    shutil.copyfile(ROOT / "scripts" / "hook_finding_baseline.py", repository / "scripts" / "hook_finding_baseline.py")
+    for script in ("hook_finding_baseline.py", "semgrep_locked.py"):
+        shutil.copyfile(ROOT / "scripts" / script, repository / "scripts" / script)
+    # semgrep の版は uv.lock が決める(#2906)— 偽の道具の版に合わせる。
+    (repository / "uv.lock").write_text(
+        f'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{FAKE_VERSIONS["semgrep"]}"\n', encoding="utf-8",
+    )
     for tool, version in FAKE_VERSIONS.items():
         (repository / "scripts" / "hook_finding_baseline" / f"{tool}.json").write_text(
             json.dumps({"version": version, "counts": {}}), encoding="utf-8",
@@ -138,6 +163,8 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
     assert result.returncode == 0, result.stdout + result.stderr
     semgrep_calls: list[list[str]] = [call for call in calls if call[0] == "semgrep" and "--version" not in call]
     assert len(semgrep_calls) == 1, result.stdout + result.stderr
+    # どの項も uv.lock の版を uv の道具の置き場から呼ぶ(探し道の semgrep を直に呼ばない — #2906)。
+    assert [call for call in calls if call[0] == "uv"] == [["uv", "tool", "run", "--from", "semgrep==0.0.0-fake", "semgrep"]]
     assert semgrep_calls[0][-1] == changed
     # Python は基点と比べる script が JSON で数える(#2848)・Hy は semgrep が所見 1 つで止める(--error)。
     assert ("--json" if changed.endswith(".py") else "--error") in semgrep_calls[0]
