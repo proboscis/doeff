@@ -11,7 +11,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [dataclass])
 (import pathlib [Path])
-(import typing [Protocol runtime-checkable])
+(import abc [ABC])
 (import doeff [EffectBase])
 (import doeff_hy.table [TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
@@ -31,16 +31,22 @@
 ;;   ByteLog    = file の置き場(foundation/wal_store の WalStore)— byte の I/O だけを持ち、行と写しの形(wal_format)はこの口が綴り・検める。
 ;;   DeltaStore = memory の置き場(entry の MemoryWalStore と、それを継いだ模擬の壊れた置き場)— file を持たないので形を綴らず、
 ;;                差分と表をそのまま受け渡す。
-;; 層 protocol は foundation も entry も読めないので、どちらも形(Protocol)で受け、組み立ては entry が持つ。kv / recovered は
-;; どちらの置き場も持つ(kv = 耐久になった全部のキー・recovered = 読み直しで捨てた最後の行の記録)。
+;; 層 protocol は foundation も entry も読めず、foundation も protocol を読めないので、名前のある共通の基底は置けない。形は method の名で
+;; 見分ける: 実行時は ABC の __subclasshook__ が型ごとに 1 度だけ判じ、ABC が答えを覚える(typing.Protocol の isinstance は欄ごとに
+;; inspect.getattr_static を撃ち、Persist ごとの契約と match で 1 回 50 µs ほど — Persist の CPU の 6 割 — かかった・#2785 の測り)。
+;; 静的な形(使い手の型検査が読む)は store.pyi の Protocol。kv / recovered はどちらの置き場も持つ(kv = 耐久になった全部のキー・
+;; recovered = 読み直しで捨てた最後の行の記録)。
 
-(defclass [runtime-checkable] ByteLog [Protocol]
+(defclass ByteLog [ABC]
   "file の置き場の形(foundation/wal_store の WalStore)— 読み書きの口が写しと log の byte を受け渡す相手。"
   (#^ dict kv)
   (#^ int seq)
   (#^ int max-log-bytes)
   (#^ Path snapshot)
   (#^ Path log)
+  (setv METHODS #("exists" "check_place" "read_snapshot_bytes" "read_log_lines" "drop_tail" "append_line" "write_snapshot"))
+  (defn [classmethod] __subclasshook__ [cls other]
+    (if (all (gfor name cls.METHODS (callable (getattr other name None)))) True NotImplemented))
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ None check-place [self] (raise NotImplementedError))
   (defn #^ (| bytes None) read-snapshot-bytes [self] (raise NotImplementedError))
@@ -50,9 +56,12 @@
   (defn #^ None write-snapshot [self #^ bytes data] (raise NotImplementedError)))
 
 
-(defclass [runtime-checkable] DeltaStore [Protocol]
+(defclass DeltaStore [ABC]
   "memory の置き場の形(entry の MemoryWalStore)— 読み書きの口が差分と表をそのまま受け渡す相手。"
   (#^ dict kv)
+  (setv METHODS #("exists" "load" "persist" "checkpoint"))
+  (defn [classmethod] __subclasshook__ [cls other]
+    (if (all (gfor name cls.METHODS (callable (getattr other name None)))) True NotImplemented))
   (defn #^ bool exists [self] (raise NotImplementedError))
   (defn #^ dict load [self] (raise NotImplementedError))
   (defn #^ None persist [self #^ dict delta] (raise NotImplementedError))
