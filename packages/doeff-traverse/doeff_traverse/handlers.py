@@ -6,7 +6,7 @@ normalize_to_none(): Fail handler — resumes with None at fail site.
 """
 
 from doeff import do
-from doeff.program import Pass, Resume, ResumeThrow
+from doeff.program import GetHandlers, Pass, Resume, ResumeThrow
 from doeff.program import handler as _program_handler
 from doeff_traverse.collection import Collection, HistoryEntry, ItemResult
 from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
@@ -39,16 +39,18 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
     """
     from doeff_core_effects.handlers import try_handler
 
-    from doeff.handler_utils import get_inner_handlers
+    from doeff.handler_utils import get_inner_handlers, inner_of
     @do
     def handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, Skip):
             return _SKIPPED
 
         if isinstance(effect, Traverse):
-            inner_hs = yield get_inner_handlers(k)
-            # One installer per inner handler for the whole Traverse, not one per item.
-            inner_installs = [_program_handler(h) for h in inner_hs]
+            # One installer per inner handler for the whole Traverse, not one per item —
+            # read when the first item runs (a Traverse with no item to run reads none),
+            # from GetHandlers itself rather than through get_inner_handlers' @do call
+            # (agora-redesign #2958).
+            inner_installs = None
             results = []
 
             # Iterate: Collection (from previous traverse) or raw iterable/generator
@@ -66,6 +68,8 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                     results.append(item)
                     continue
 
+                if inner_installs is None:
+                    inner_installs = [_program_handler(h) for h in inner_of((yield GetHandlers(k)))]
                 # Build fresh program for this item
                 prog = effect.f(item.value)
                 # Reinstall inner handlers + this handler for nested Traverse,
