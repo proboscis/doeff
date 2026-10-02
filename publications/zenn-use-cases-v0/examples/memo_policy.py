@@ -5,9 +5,13 @@ from tempfile import TemporaryDirectory  # 検証で作ったSQLiteだけを終�
 
 import pytest  # 全層で見つからないときのKeyErrorを検査する。
 from doeff_core_effects import HttpRequest  # 通信方法から独立したHTTP依頼の型を使う。
-from doeff_core_effects.handlers import (  # 保存層の待機と診断ログを受け持つ。
+from doeff_core_effects.effects import Tell  # 保存先を生成したことを記録として送る。
+from doeff_core_effects.handlers import (  # 保存層の待機・診断ログ・記録を受け持つ。
     await_handler,  # InMemoryStorageやSQLiteStorageが出すAwaitを進める。
     slog_discard_handler,  # 検証中のMemo診断ログは表示しない。
+    state,  # 集めた記録の置き場を持つ。
+    writer,  # Tellで送られた記録を集める。
+    writer_log,  # 集めた記録を読む。
 )
 from doeff_core_effects.http_handlers import http_production_handler  # HTTP取得だけの担当を選ぶ。
 from doeff_core_effects.memo_effects import (  # 保存先に依存しない4種類の操作を使う。
@@ -81,9 +85,15 @@ def read_missing():  # MemoGetは自動計算の依頼ではないことを確�
 
 
 @do  # 保存先の生成自体を、必要になるまで実行しないProgramにする。
-def open_expensive_store(opened):  # openedは検証専用の生成回数記録で、接続設定ではない。
-    opened.append("高価層")  # この行へ到達したときだけ、保存先が必要になったと分かる。
+def open_expensive_store():  # 接続設定ではなく、生成したことだけを記録する。
+    yield Tell("高価層")  # この行へ到達したときだけ、保存先が必要になったと分かる。
     return InMemoryStorage()  # 検証では通信を伴わない保存先を返す。
+
+
+@do  # 依頼を最後まで進め、その実行中に生成した保存先の記録を返す。
+def created_stores(program):  # 検証専用の観測で、本体の処理は変えない。
+    yield program  # 依頼の結果はこの検証では使わない。
+    return (yield writer_log())  # この実行で送られた記録を読む。
 
 
 @do  # 保持方針と実際の保存動作を同じProgram内で確認する。
@@ -140,14 +150,15 @@ def verify() -> None:  # テスト境界でのみrunし、外部へ接続しな�
     assert execute(program) is False  # 同じコストで削除した後には対象層のどこにも値がない。
     assert set(expensive.keys()) == {"snapshot"}  # 別のキーに保存した再現困難な値は消さない。
 
-    opened: list[str] = []  # 遅延生成した保存先の回数だけを記録する。
-    lazy_layer = memo_handler(open_expensive_store(opened), cost=RecomputeCost.EXPENSIVE)  # 未生成。
-    assert opened == []  # ハンドラを組み立てただけでは保存先を生成しない。
+    def execute_recorded(program):  # 記録を集めるwriterと、その置き場のstateを付けて実行する。
+        return execute(state()(writer(created_stores(program))))  # 実行ごとに空の記録から始まる。
+
+    lazy_layer = memo_handler(open_expensive_store(), cost=RecomputeCost.EXPENSIVE)  # 未生成。
     cheap_layer = memo_handler(InMemoryStorage(), cost=RecomputeCost.CHEAP)  # 安価な依頼の担当を付ける。
-    assert execute(lazy_layer(cheap_layer(MemoPut("preview", 1)))) is None  # 安価な保存だけを行う。
-    assert opened == []  # 通過するだけの高価層は、保存先を必要としない。
-    execute(lazy_layer(cheap_layer(store_results())))  # 高価・再現困難な依頼が初めてこの層へ届く。
-    assert opened == ["高価層"]  # 複数のMemo操作があっても、同じハンドラ内では生成は一度。
+    assert execute_recorded(lazy_layer(cheap_layer(MemoPut("preview", 1)))) == []  # 高価層は未生成。
+    created = execute_recorded(lazy_layer(cheap_layer(store_results())))  # 高価な依頼が初めて届く。
+    assert created == ["高価層"]  # 複数のMemo操作があっても、同じハンドラ内では生成は一度。
+    assert execute_recorded(lazy_layer(cheap_layer(store_results()))) == []  # 同じハンドラは再生成しない。
 
     assert execute(memo_handler(InMemoryStorage())(inspect_policy())) == ["準備", "遊び方"]  # TTL未適用。
     with TemporaryDirectory() as directory:  # 永続層の検証が所有するSQLiteファイルを用意する。
