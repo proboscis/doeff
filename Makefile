@@ -118,7 +118,7 @@ lint-doeff:
 	@if command -v doeff-linter >/dev/null 2>&1; then \
 		root=0; doeff-linter --no-log doeff/ packages/ || root=$$?; \
 		echo "Running doeff-linter in packages/doeff-cluster (package の設定と architecture.hy で)..."; \
-		cluster=0; sh scripts/lint-doeff-cluster.sh || cluster=$$?; \
+		cluster=0; sh $(dir $(abspath $(lastword $(MAKEFILE_LIST))))scripts/lint-doeff-cluster.sh || cluster=$$?; \
 		[ "$$root" -eq 0 ] && [ "$$cluster" -eq 0 ]; \
 	else \
 		echo "doeff-linter が未導入のため検査できません。成功として扱いません。" >&2; \

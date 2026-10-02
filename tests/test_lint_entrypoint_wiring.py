@@ -46,18 +46,29 @@ def test_make_lint_doeff_propagates_missing_and_tool_failure(
 ) -> None:
     if tool_status is not None:
         _tool(tmp_path, "doeff-linter", tool_status)
+    # packages/doeff-cluster の段(#2031・#2683)は warning を基点と比べるので、偽の linter(何も報せない)に合わせて空の基点を
+    # 渡し、比べの script を走らせる uv を探し道に足す(本物の doeff-linter は探し道に入れない)。
+    environment: dict[str, str] = _environment(tmp_path)
+    baseline: Path = tmp_path / "empty-baseline.json"
+    baseline.write_text("{}", encoding="utf-8")
+    environment["DOEFF_CLUSTER_WARNING_BASELINE"] = str(baseline)
+    uv: str | None = shutil.which("uv")
+    assert uv is not None, "uv が要る(比べの script を走らせる)"
+    environment["PATH"] = f"{tmp_path}:{Path(uv).parent}:/usr/bin:/bin"
     result: subprocess.CompletedProcess[str] = subprocess.run(
         ["/usr/bin/make", "-f", str(ROOT / "Makefile"), "lint-doeff"],
-        cwd=tmp_path, env=_environment(tmp_path), capture_output=True, text=True, check=False,
+        cwd=tmp_path, env=environment, capture_output=True, text=True, check=False,
     )
     assert (result.returncode == 0) == (tool_status == 0), result.stdout + result.stderr
     if tool_status is None:
         assert "doeff-linter" in result.stderr
         assert not (tmp_path / "calls.jsonl").exists()
     else:
-        assert json.loads((tmp_path / "calls.jsonl").read_text()) == [
-            "doeff-linter", "--no-log", "doeff/", "packages/",
-        ]
+        calls: list[list[str]] = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
+        assert calls[0] == ["doeff-linter", "--no-log", "doeff/", "packages/"]
+        assert calls[1] == ["doeff-linter", "--no-log"]  # packages/doeff-cluster の dir で package を丸ごと
+        if tool_status == 0:
+            assert calls[2] == ["doeff-linter", "--no-log", "--output-format", "json"]  # warning の基点との比べ
 
 
 def _repository(directory: Path, changed: str, source: str) -> Path:

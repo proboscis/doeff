@@ -11,7 +11,8 @@
 # 消す commit を止めるには宣言も当てる必要がある(2026-10-01 に確かめた — coordinator.hy だけを渡すと何も出ない)。
 set -eu
 
-TOP="$(git rev-parse --show-toplevel)"
+# 置き場は script の在り処から求める(make -f で別の dir から呼ばれても package を指す)。
+TOP="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE="packages/doeff-cluster"
 
 if ! command -v doeff-linter >/dev/null 2>&1; then
@@ -20,10 +21,17 @@ if ! command -v doeff-linter >/dev/null 2>&1; then
   exit 127
 fi
 
-cd "$TOP/$PACKAGE"
+# warning(major)は linter が 0 で終わるので、規則 × file の基点と比べて増えたら赤・減ったのに基点を下げていなければ赤
+# (scripts/doeff_cluster_warning_baseline.py・agora-redesign #2683)。error は linter の終了コードで止める。
+BASELINE_CHECK="$TOP/scripts/doeff_cluster_warning_baseline.py"
+
 if [ "$#" -eq 0 ]; then
-  exec doeff-linter --no-log
+  (cd "$TOP/$PACKAGE" && doeff-linter --no-log)
+  exec uv run --no-project python "$BASELINE_CHECK" --root "$TOP" check
 fi
+
+# 基点の比べは repo の根からの path をそのまま受ける(package の dir への読み替えは比べの側が持つ)ので、下で path を直す前に当てる。
+uv run --no-project python "$BASELINE_CHECK" --root "$TOP" check "$@"
 
 # repo の根からの path を package の dir からの path に直す(package の外の path は捨てる — pre-commit の files が絞るが、手で
 # 呼んだ時のため)。architecture.hy は最後に 1 回だけ足す(渡された分は捨てて重ねない)。
@@ -34,4 +42,5 @@ for path in "$@"; do
     "$PACKAGE"/*) set -- "$@" "${path#"$PACKAGE"/}" ;;
   esac
 done
+cd "$TOP/$PACKAGE"
 exec doeff-linter --no-log "$@" architecture.hy
