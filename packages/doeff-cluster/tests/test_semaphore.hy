@@ -204,8 +204,8 @@
 
 ;; --- 純粋な判断 --------------------------------------------------------------------------------
 
-(defn #^ None test-claim-renew-release-are-pure-row-transitions []
-  (setv row (claim None 1 "a/1" 0 15000))
+(deftest test-claim-renew-release-are-pure-row-transitions
+  (val row (claim None 1 "a/1" 0 15000))
   (assert (= row {"permits" 1 "holders" {"a/1" 15000}}))
   ;; 満ちている間は取れない・期限が切れたら取れる(切れた担い手は落ちる)。
   (assert (is (claim row 1 "b/1" 10000 15000) None))
@@ -220,7 +220,7 @@
   (assert (= (release row "b/1" 0) #(row False))))
 
 
-(defn #^ None test-named-semaphore-refuses-an-empty-or-slashed-name []
+(deftest test-named-semaphore-refuses-an-empty-or-slashed-name
   (for [bad ["" "a/b"]]
     (try (CreateNamedSemaphore bad) (assert False) (except [ValueError] None)))
   (assert (= (. (CreateNamedSemaphore "x" 3) permits) 3))
@@ -356,7 +356,7 @@
   (assert (= (len (! (times-of attempts "a" "ok"))) 40)))
 
 
-(defn #^ None test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock []
+(deftest test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock
   (assert (is (fence-verdict {"token" "t" "expiresMs" 15000} 12999 2000) None))
   (assert (is-not (fence-verdict {"token" "t" "expiresMs" 15000} 13000 2000) None))
   (assert (is-not (fence-verdict None 0 2000) None)))

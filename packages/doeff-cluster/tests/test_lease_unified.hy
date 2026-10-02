@@ -113,46 +113,47 @@
 
 ;; --- 柵の余裕と TTL の組 ----------------------------------------------------------------------------
 
-(defn #^ None test-lease-timing-needs-a-margin-longer-than-a-write-and-at-most-half-the-ttl []
+(deftest test-lease-timing-needs-a-margin-longer-than-a-write-and-at-most-half-the-ttl
   (assert (is (lease-timing-refusal 45.0 12000) None))
   (assert (is (lease-timing-refusal 90.0 12000) None))
   ;; 断る組は理由の文を返す(None でないことを先に確かめてから、文の中身を読む)。
-  (setv short-margin (lease-timing-refusal 15.0 2000))    ; 以前の組(余裕 2 秒)は断る
+  (val short-margin (lease-timing-refusal 15.0 2000))    ; 以前の組(余裕 2 秒)は断る
   (assert (is-not short-margin None))
   (assert (in "書きが着くまで" short-margin))
-  (setv past-half (lease-timing-refusal 15.0 12000))
+  (val past-half (lease-timing-refusal 15.0 12000))
   (assert (is-not past-half None))
   (assert (in "半分" past-half)))
 
 
 ;; --- coordinator に届かない間も書き手は止めない -----------------------------------------------------
 
-(defn #^ None test-only-lease-governed-jobs-are-kept-when-cut-off []
-  (setv writer (JobSpec "writer-a" "m" #() "r" :handoff True)
-        runner (JobSpec "turn-runner" "m" #() "r")
-        task (JobSpec "task/t1" "m" #() "r" :once True :handoff True))
+(deftest test-only-lease-governed-jobs-are-kept-when-cut-off
+  (val writer (JobSpec "writer-a" "m" #() "r" :handoff True))
+  (val runner (JobSpec "turn-runner" "m" #() "r"))
+  (val task (JobSpec "task/t1" "m" #() "r" :once True :handoff True))
   (assert (= (kept-when-cut-off #(writer runner task) 60000 240000) #(writer))))
 
 
-(defn #^ None test-a-cut-off-worker-keeps-its-writers-and-stops-the-rest []
-  (setv up [True])
-  (defn #^ httpx.Response handle [#^ httpx.Request request]
-    (if (get up 0)
-        (httpx.Response 200 :json {"jobs" [{"name" "writer-a" "entry" "m" "args" [] "revision" "r" "handoff" True}
-                                           {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
-                                   "tasks" [] "timing" {"fence_ms" 20000}})
-        (raise (httpx.ConnectError "coordinator を作り直している"))))
-  (setv link (LinkRig "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
-                              :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))
+(deftest test-a-cut-off-worker-keeps-its-writers-and-stops-the-rest
+  (var up True)
+  ;; httpx の MockTransport が要求ごとに同期で呼ぶ callback(Program の外)— 届くかどうかは呼ばれた時の up で決まる。
+  (val handle (fn #^ httpx.Response [#^ httpx.Request request]
+                (if up
+                    (httpx.Response 200 :json {"jobs" [{"name" "writer-a" "entry" "m" "args" [] "revision" "r" "handoff" True}
+                                                       {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
+                                               "tasks" [] "timing" {"fence_ms" 20000}})
+                    (raise (httpx.ConnectError "coordinator を作り直している")))))
+  (val link (LinkRig "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
+                     :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))
   ;; poll の答えは DesiredJobs か DesiredUnreadable — jobs を読む前に DesiredJobs であることを確かめる(読めない答えから jobs を
   ;; 読めば属性の誤りで落ちるだけで、確かめたい「読めた」を確かめない)。
-  (setv seen (.poll link))
+  (val seen (.poll link))
   (assert (isinstance seen DesiredJobs) seen)
   (assert (= (len seen.jobs) 2))
-  (setv (get up 0) False)
+  (:= up False)
   (assert (isinstance (.poll link) DesiredUnreadable))
   (setv link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 21))))              ; 途絶が fence(20 秒)を越えた
-  (setv desired (.poll link))
+  (val desired (.poll link))
   (assert (isinstance desired DesiredJobs) desired)
   (assert (= (lfor j desired.jobs j.name) ["writer-a"])))
 
