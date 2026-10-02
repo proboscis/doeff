@@ -17,7 +17,7 @@
 (import doeff_records.principals [Roster Principal Unauthorized identify])
 (import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-UNAUTHORIZED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
-                            decode-request encode-answer named-stores refusal-json])
+                            decode-request encode-answer refusal-json undeclared-reason])
 
 (setv METHOD-GET "GET" METHOD-POST "POST")
 (setv PATH-HEALTHZ "/healthz")
@@ -61,14 +61,10 @@
 
 (defk undeclared-name [schema ask]
   {:pre [(: schema RecordsSchema) (: ask PublicEffect)] :post [(: % (| str None))]}
-  "公開 effect(ask)が名指す表・追記の列のうち、宣言に無い物の説明(全部在れば None)— 宣言に無い表を撃つと handler が組み立ての誤りで落ちるので先に断る。"
-  (<- named (named-stores ask))
-  (setv tables (lfor name named.tables :if (not-in name schema.tables) name)
-        streams (lfor name named.streams :if (not-in name schema.streams) name))
-  (cond
-    tables (.format "宣言に無い表: {}" tables)
-    streams (.format "宣言に無い追記の列: {}" streams)
-    True None))
+  "公開 effect(ask)が名指す表・追記の列のうち、宣言に無い物の説明(全部在れば None)— 宣言に無い表を撃つと handler が組み立ての誤りで落ちるので先に断る。
+   理由の綴りは wire.hy の undeclared-reason の 1 か所(client が同じ綴りから UndeclaredTable の欄を戻す)。"
+  (<- reason (| str None) (undeclared-reason ask (tuple schema.tables) (tuple schema.streams)))
+  reason)
 
 
 (defk serve-operation [service principal operation body]

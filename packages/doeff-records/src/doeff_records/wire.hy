@@ -16,7 +16,7 @@
 (import doeff_hy.json_value [JsonValue])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              RowsConflict RowsRefused StreamEnd StreamEmpty])
+                              RowsConflict RowsRefused StreamEnd StreamEmpty UndeclaredTable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 
 (setv PATH-PREFIX "/v1/records/")
@@ -365,6 +365,37 @@
     (ReadEvents :stream stream) (NamedStores #() #(stream))
     (ReadStreamEnd :stream stream) (NamedStores #() #(stream))
     (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())))
+
+
+;; --- 宣言に無い名の断り(404 not-found)の理由の綴り---------------------------------------------------------
+;; service が理由の文を組み、client がその文から UndeclaredTable の欄(宣言に無いと分かった名)を戻す — 綴りはこの 2 つの 1 か所。
+;; 断りの本文(契約 $defs.refusal = error・reason)には欄を足さない: 旧い client は本文の知らない鍵を WireMalformed にするので、
+;; 本文を変えると版のずれの時(client と service の版が違う時 — 欄が要るのはまさにこの時)に読めなくなる。理由の文は名を
+;; Python の repr(引用符つき)で並べる。表・追記の列の名は英小文字・数字・_・- に限られ引用符を含まないので、client は要求が
+;; 名指した名のうち「'名'」が理由に載った物だけを欄にする — この綴りは欄を足す前の service(「宣言に無い表: ['x']」)とも同じ。
+;; 知らない route の断り(「知らない route: …」)は名を載せないので欄は空。
+
+(defk undeclared-reason [ask tables streams]
+  {:pre [(: ask PublicEffect) (: tables tuple) (: streams tuple)] :post [(: % (| str None))]}
+  "要求 ask が名指した名のうち宣言に在る表 tables・追記の列 streams に無い物を、404 の断りの理由の文にする(全部在れば None —
+   service が effect を撃つ前に断るため)。"
+  (<- named NamedStores (named-stores ask))
+  (setv missing-tables (lfor name named.tables :if (not-in name tables) name)
+        missing-streams (lfor name named.streams :if (not-in name streams) name))
+  (cond
+    missing-tables (.format "宣言に無い表: {}" missing-tables)
+    missing-streams (.format "宣言に無い追記の列: {}" missing-streams)
+    True None))
+
+
+(defk undeclared-refusal [ask reason]
+  {:pre [(: ask PublicEffect) (: reason str)] :post [(: % UndeclaredTable)]}
+  "service の 404 の断り(理由 reason)を、要求 ask が名指した名のうち理由に載った物を欄に持つ UndeclaredTable にするため
+   (上の註 — 使い手が欄でどの表の断りかを照らせるように)。"
+  (<- named NamedStores (named-stores ask))
+  (UndeclaredTable reason
+                   :tables (tuple (gfor name named.tables :if (in (repr name) reason) name))
+                   :streams (tuple (gfor name named.streams :if (in (repr name) reason) name))))
 
 
 ;; --- 答え ------------------------------------------------------------------------------------------------

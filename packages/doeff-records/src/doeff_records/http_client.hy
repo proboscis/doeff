@@ -14,7 +14,8 @@
 ;;;                          書きを Refused にもしない — Refused は宣言がその書きを断った答えで、名簿に在る書き手が宣言の書き手で
 ;;;                          ない時は今も 200 の本文の Refused で返る(memory の handler と同じ)。身元が引けないのは宣言の判断ではない。
 ;;;                          status だけで決める(前に立つ口の 403 の本文は JSON の断りとは限らない)
-;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)
+;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)。欄 tables・streams は、撃った要求が
+;;;                          名指した名のうち断りの理由に載った物(wire.hy の undeclared-refusal — 本文の形は変えない)
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
 ;;;
 ;;; WatchChanges の待ちは client の側で回す(service へは timeout 0 で撃ち、空なら poll-seconds 眠って撃ち直す — doeff-time の Delay)。
@@ -28,10 +29,10 @@
 (import dataclasses [dataclass])
 (import json)
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
-(import doeff_records.values [EventsMoved EventsQuiet Unreachable UndeclaredTable])
+(import doeff_records.values [EventsMoved EventsQuiet Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.watching [wait-for-changes moved-of])
-(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from])
+(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 (setv DEFAULT-POLL-SECONDS 0.2)
@@ -168,7 +169,7 @@
   (<- refusal (refusal-from body))
   (match refusal.error
     "store-unavailable" (Unreachable refusal.reason)
-    "not-found" (raise (UndeclaredTable refusal.reason))
+    "not-found" (raise (! (undeclared-refusal ask refusal.reason)))
     _ (raise (WireError (.format "{} が {} で断られた: {} {}" request.operation reply.status refusal.error refusal.reason)))))
 
 

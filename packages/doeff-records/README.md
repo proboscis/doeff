@@ -37,7 +37,8 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   transaction 1 つの中で全部の行を検めてから書くので、書きの途中の失敗は transaction ごと戻る。
 - `WatchChanges` は確定した変更を、番号の順にちょうど 1 回ずつ返す(断られた書き・衝突した書きは出ない)。位置の `epoch` が置き場の版と
   違えば `Reset` を返すので、一覧から読み直す。
-- 例外で上がるのは組み立ての誤り(定義に無い表・列を名指した = `UndeclaredTable`)と実装の誤りだけ。
+- 例外で上がるのは組み立ての誤り(定義に無い表・列を名指した = `UndeclaredTable`)と実装の誤りだけ。`UndeclaredTable` の欄
+  `tables`・`streams` は定義に無いと分かった名(分からない時は空)— 読み手はどの表の断りかを欄で照らし、文の綴りを読まない。
 
 ## 表の定義
 
@@ -138,7 +139,9 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
 答える。`401` / `403`(handler を組んだ token の身元を認めない)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
-時間を置いても晴れないので `Unreachable`(撃ち直してよい届かなさ)にも `Refused`(宣言がその書きを断った)にもしない。`404` は `UndeclaredTable` を上げる。
+時間を置いても晴れないので `Unreachable`(撃ち直してよい届かなさ)にも `Refused`(宣言がその書きを断った)にもしない。`404` は `UndeclaredTable` を上げる
+(欄 = 要求が名指した名のうち断りの理由に載った物 — 断りの本文の形は変えない。理由の綴りは `wire.hy` の `undeclared-reason` と
+`undeclared-refusal` の 1 か所)。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
 
 ## 置き場の手入れ(`doeff_records.maintenance`)

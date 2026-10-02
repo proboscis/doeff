@@ -19,7 +19,16 @@
 
 
 (defclass UndeclaredTable [ValueError]
-  "宣言に無い表・追記の列を名指した(組み立ての誤り — 値の失敗ではない)。")
+  "宣言に無い表・追記の列を名指した(組み立ての誤り — 値の失敗ではない)。tables・streams = 宣言に無いと分かった表・追記の列の名
+   (分からない時は空 — 文だけで作った旧い形・どの名か決められない断り)。読み手はどの表の断りかを欄で照らし、文の綴りを読まない
+   (使い手が、無くても仕事を続けられる表の断りだけを「出していない」答えに畳み、他の表の断りでは落ちるため)。"
+  (defn #^ None __init__ [self #^ str message * #^ tuple [tables #()] #^ tuple [streams #()]]
+    (.__init__ (super) message)
+    (setv self.tables (tuple tables)
+          self.streams (tuple streams)))
+  (defn #^ tuple __reduce__ [self]
+    ;; 欄は __init__ の引数(キーワードだけ)なので、例外の既定の写し(args だけで作り直す)では落ちる — 欄を状態として運ぶ。
+    #(UndeclaredTable #((get self.args 0)) {"tables" self.tables "streams" self.streams})))
 
 (defclass UndeclaredField [ValueError]
   "表の宣言に無い欄の書き手を尋ねた(組み立ての誤り — 書きの断りは admission が Refused で返す)。")
@@ -227,11 +236,11 @@
         (raise (ValueError (.format "RecordsSchema.streams[{!r}] は同じ名の StreamDecl" name))))))
 
   (defn #^ TableDecl table [self #^ str name]
-    (when (not-in name self.tables) (raise (UndeclaredTable (.format "宣言に無い表: {!r}" name))))
+    (when (not-in name self.tables) (raise (UndeclaredTable (.format "宣言に無い表: {!r}" name) :tables #(name))))
     (get self.tables name))
 
   (defn #^ StreamDecl stream [self #^ str name]
-    (when (not-in name self.streams) (raise (UndeclaredTable (.format "宣言に無い追記の列: {!r}" name))))
+    (when (not-in name self.streams) (raise (UndeclaredTable (.format "宣言に無い追記の列: {!r}" name) :streams #(name))))
     (get self.streams name)))
 
 
