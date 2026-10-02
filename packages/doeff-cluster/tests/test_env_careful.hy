@@ -1,55 +1,39 @@
 ;; 実行環境(runtime env)の丁寧な模擬 — 本物の root の言い換え env-host(準備の process = env_handlers の翻訳 env-translation と本物の答え手)・手元の bare repo と file:// の URL・
 ;; PATH の先頭の fake の uv(tests/fixtures/fake_uv.hy)・本物の ProcessHost(子 process と shim)・実時間。
 ;;
-;; 筋書き(設計 worker-runtime-env.md 節 5):
+;; ここは本物でしか確かめられない縁だけを見る(本物の git・root の venv の interpreter で作る bytecode・本物の子 process が見る環境)。
+;; 本物の準備の process は 1 回 約 6 秒・本物の子は 1 組 約 4.6 秒かかる(#2795 の測り)ので、判断の主張は速い検に置く:
+;;   - 準備の判断(筋書き 3 lock を変える・4 同じ lock の別の commit・5 native の source・7 repo を 3 つ・失敗の種類・名前の影)
+;;     = test_env_prepare.hy(同じ翻訳 env-translation を台本の git と uv・memory の置き場の上で回す)
+;;   - env-host の判断(筋書き 6 同じキーの準備は 1 本・8 先読み・9 掃除)= test_env_host_judgments.hy(準備の道具の起こし方だけを
+;;     同じ process の中の答え手に替える)
+;; この file の筋書き(設計 worker-runtime-env.md 節 5):
 ;;   1 宣言 → 準備 → 実行: 結果が返る・子の環境変数に PYTHONPATH が無い・子の cwd が作業 dir・bytecode は root の venv の interpreter で作った
-;;   2 送り手の repo の commit だけ変えて再送(返す値が commit で違う関数): 新しい値が返る・worker の pid が同じ・download は 0
-;;   3 lock を変えて再送: 新しい env のキー・download が増える
-;;   4 同じ lock・別の project の commit: 新しい root・download 0・native の build 0
-;;   5 native の source を変える: native の build が 1 回だけ増え、次の root は wheel を使い回す
-;;   6 同じ env の task を 2 本同時に: 準備は 1 本・2 本とも走る
-;;   7 repo を 3 つに: 3 つのツリーが兄弟に並ぶ・import の根の順が宣言どおり
-;;   8 先読み: 温める表の env を worker が job の前に準備し、task が来た最初の拍で子を起こす(準備を待たない)
-;;   9 固定された root がある時に空きが下限を切る: 固定された root・project ごとの最新・worker が作っていない dir は残り、
-;;     固定されていない古い root が消える
-;; 反例: 子に PYTHONPATH を残す / worker の再起動で走らせる実装 / 根と同じ最上位の名の第三者の package / 送り手の版の doeff をずらす /
-;;       節 3.6 の失敗の組(許可表に無い URL・push していない commit・lock の hash の 1 文字・fake の uv の失敗・空きが足りない)。
+;;   2 送り手の repo の commit だけ変えて再送(返す値が commit で違う関数): 新しい値が返る・worker の pid が同じ・download は 0・build は 0
+;;   push していない commit: 本物の git の fetch の答えを翻訳が commit-missing と読む
+;; 反例: 子に PYTHONPATH を残す / worker の再起動で走らせる実装 / 送り手の版の doeff をずらす。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
-(require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])
-(import dataclasses [replace])
-(import hashlib)
 (import json)
 (import os)
-(import shutil)
-(import subprocess)
 (import sys)
-(import time)
 (import pathlib [Path])
-(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key current-platform])
+(import doeff_cluster.shared.intent.runtime_env_model [NativeWheel RuntimeEnv EnvFailureKind])
+(import doeff_cluster.shared.core.runtime_env_rules [env-key current-platform])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.protocol.declared [task-spec])
+(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.protocol.env_store [env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
 (import doeff_core_effects.process_effects [EnvEntry StartProcess])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
- SweepEnvs] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.protocol.observations [ObserveEnvs])
-(import doeff_cluster.worker.core.policy [plan])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
-(import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.foundation.process_versions [current-versions])
 
 
-(import tests.careful_rig [FIXTURES HY LOCK DEADLINE-SECONDS JOB-ENV git push-commit remote-repo url-of app-files Rig make-rig declare fake-log count-log downloads prepare run-task run-envs
-                         settled-env prepared-env])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM])
+(import tests.careful_rig [LOCK git push-commit app-files Rig make-rig declare count-log downloads prepare run-task])
 
 ;; --- 筋書き ---------------------------------------------------------------------------------
 
@@ -59,7 +43,7 @@
   (assert (isinstance outcome.value tuple) outcome)
   outcome.value)
 
-(deftest test-careful-scenarios-1-to-5 [tmp-path monkeypatch]
+(deftest test-careful-scenarios-1-and-2 [tmp-path monkeypatch]
   (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
   (<- rig Rig (make-rig tmp-path))
   (<- files-a1 dict (app-files 1 LOCK))
@@ -112,67 +96,14 @@
   (val pid-2 (get answer-2 4))
   (assert (= value-2 2) "新しい root の source の値が返る")
   (assert (= pid-2 pid-1 (str (os.getpid))) "worker の process は同じ(再起動していない)")
+  (assert (is (get answer-2 1) None) "2 本目の子の環境変数にも PYTHONPATH が無い")
+  (<- work-2 str (job-work-dir rig.host "task/t2"))
+  (assert (= (get answer-2 2) work-2) "2 本目の子の cwd も空の作業 dir")
   (<- downloads-2 int (downloads rig))
   (<- builds-2 int (count-log rig "build "))
   (assert (= downloads-2 downloads-1) "同じ lock なので download は 0")
   ;; 4 同じ lock・別の project の commit → 新しい root・download 0・native の build 0
-  (assert (= builds-2 builds-1 1) "native の source が同じなので build は 0(最初の 1 回だけ)")
-  ;; 3 lock を変えて再送 → 新しいキー・download が増える
-  (val lock-3 (+ LOCK "rich==13.9.4\n"))
-  (<- files-a3 dict (app-files 3 lock-3))
-  (<- a3 str (push-commit rig.app files-a3 "app 3"))
-  (<- env-3 RuntimeEnv (declare rig a3 l1 lock-3))
-  (<- view-3 CodeView (prepare rig env-3))
-  (assert (= view-3.state CodeState.READY) view-3)
-  (<- downloads-3 int (downloads rig))
-  (assert (= (- downloads-3 downloads-2) 1) "増えた package だけ download")
-  ;; 5 native の source を変える → build が 1 回増え、同じ source の次の root は wheel を使い回す
-  (<- l2 str (push-commit rig.lib {"native/core/lib.rs" "fn b() {}\n"} "lib 2"))
-  (<- env-5 RuntimeEnv (declare rig a2 l2 LOCK))
-  (<- view-5 CodeView (prepare rig env-5))
-  (assert (= view-5.state CodeState.READY) view-5)
-  (<- builds-5 int (count-log rig "build "))
-  (assert (= builds-5 2))
-  (<- env-5b RuntimeEnv (declare rig a1 l2 LOCK))
-  (<- view-5b CodeView (prepare rig env-5b))
-  (assert (= view-5b.state CodeState.READY) view-5b)
-  (<- builds-5b int (count-log rig "build "))
-  (assert (= builds-5b 2) "同じ native の source の root は wheel を使い回す"))
-
-
-(deftest test-careful-scenarios-6-and-7 [tmp-path monkeypatch]
-  (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
-  (<- rig Rig (make-rig tmp-path))
-  (<- files-a1 dict (app-files 1 LOCK))
-  (<- a1 str (push-commit rig.app files-a1 "app 1"))
-  (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "lib/__init__.py" "Y = 2\n"} "lib 1"))
-  (<- t1 str (push-commit (/ rig.base "work" "tools") {"src/toolmod.py" "Z = 3\n"} "tools 1"))
-  (.insert sys.path 0 (str rig.app))
-  ;; 6 同じ env の task を 2 本同時に: 準備は 1 本・2 本とも走る
-  (<- env RuntimeEnv (declare rig a1 l1 LOCK))
-  (<- key str (env-key env (current-platform)))
-  (<- declared dict (runtime-env->json env))
-  (val text (json.dumps declared :sort-keys True :ensure-ascii False))
-  (val view (run-envs rig.envs (prepared-env (+ "env-" key) text :times 2)))
-  (assert (= view.state CodeState.READY) view)
-  (<- syncs int (count-log rig "sync"))
-  (assert (= syncs 1) "同じキーの準備は 1 本")
-  (<- first TaskSucceeded (run-task rig env "t1"))
-  (<- second TaskSucceeded (run-task rig env "t2"))
-  (<- first-answer tuple (child-answer first))
-  (<- second-answer tuple (child-answer second))
-  (assert (= (lfor a #(first-answer second-answer) (get a 0)) [1 1]) #(first second))
-  ;; 7 repo を 3 つに: 3 つのツリーが root の下に兄弟で並び、import の根が宣言の順で .pth に並ぶ
-  (<- tools-url str (url-of rig.base "tools"))
-  (<- env-7 RuntimeEnv (declare rig a1 l1 LOCK :roots #("tools/src" "app/." "lib/.")
-                                :extra-repos #((RepoCheckout :name "tools" :url tools-url :commit t1))))
-  (<- view-7 CodeView (prepare rig env-7))
-  (assert (= view-7.state CodeState.READY) view-7)
-  (assert (is-not view-7.path None) view-7)
-  (val root (Path view-7.path))
-  (assert (= (sorted (lfor e (.iterdir root) :if (and (.is-dir e) (not (.startswith e.name "."))) e.name)) ["app" "lib" "tools"]))
-  (val pth (next (.glob root "app/.venv/lib/*/site-packages/_doeff_cluster_roots.pth")))
-  (assert (= (.splitlines (.read-text pth)) [(str (/ root "tools" "src")) (str (/ root "app")) (str (/ root "lib"))])))
+  (assert (= builds-2 builds-1 1) "native の source が同じなので build は 0(最初の 1 回だけ)"))
 
 
 (defk failure-kind [rig env]
@@ -187,56 +118,23 @@
   view.failure.kind)
 
 
-(deftest test-careful-failures-come-back-as-their-kind [tmp-path monkeypatch]
+(deftest test-careful-an-unpushed-commit-comes-back-as-commit-missing [tmp-path monkeypatch]
+  ;; 本物の git の縁: remote に push していない commit を宣言すると、本物の git の fetch の答えを翻訳が commit-missing と読む
+  ;; (完成マーカーは置かない)。ほかの失敗の種類(許可表・届かない・lock の hash・uv の失敗・native の build・空き・名前の影・
+  ;; 子の約束の版)は、同じ翻訳を台本の git と uv の上で回す test_env_prepare.hy の test-each-failure-comes-back-as-its-kind と
+  ;; test-a-third-party-package-shadowing-a-root-is-refused が見る。
   (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
   (<- rig Rig (make-rig tmp-path))
   (<- files-a1 dict (app-files 1 LOCK))
-  (<- a1 str (push-commit rig.app files-a1 "app 1"))
+  (<- (push-commit rig.app files-a1 "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
-  ;; push していない commit
   (.write-text (/ rig.app "local.txt") "x\n")
   (<- (git rig.app "add" "-A"))
   (<- (git rig.app "commit" "-q" "-m" "local only"))
   (<- unpushed str (git rig.app "rev-parse" "HEAD"))
   (<- env-1 RuntimeEnv (declare rig unpushed l1 LOCK))
   (<- kind-1 EnvFailureKind (failure-kind rig env-1))
-  (assert (= kind-1 EnvFailureKind.COMMIT-MISSING) kind-1)
-  ;; lock の hash を 1 文字変える
-  (<- env RuntimeEnv (declare rig a1 l1 LOCK))
-  (val h env.project.lock-sha256)
-  (val wrong (replace env :project (replace env.project :lock-sha256 (+ (if (= (get h 0) "0") "1" "0") (cut h 1 None)))))
-  (<- kind-2 EnvFailureKind (failure-kind rig wrong))
-  (assert (= kind-2 EnvFailureKind.LOCK-MISMATCH) kind-2)
-  ;; fake の uv を失敗させる(lock が古い・build できない sdist・Python を取れない)
-  (for [#(fail want) [#("lock-stale" EnvFailureKind.LOCK-STALE) #("sync-failed" EnvFailureKind.SYNC-FAILED)
-                      #("python-unavailable" EnvFailureKind.PYTHON-UNAVAILABLE)]]
-    (.write-text (/ rig.fake "fail") fail)
-    (<- got EnvFailureKind (failure-kind rig env))
-    (assert (= got want) #(fail got)))
-  ;; native の build の失敗(新しい native の source で build が要る時)
-  (.write-text (/ rig.fake "fail") "native-build-failed")
-  (<- l2 str (push-commit rig.lib {"native/core/lib.rs" "fn broken( {}\n"} "lib 2"))
-  (<- env-3 RuntimeEnv (declare rig a1 l2 LOCK))
-  (<- kind-3 EnvFailureKind (failure-kind rig env-3))
-  (assert (= kind-3 EnvFailureKind.NATIVE-BUILD-FAILED) kind-3)
-  (.unlink (/ rig.fake "fail"))
-  ;; 根と同じ最上位の名(appjobs)を第三者の package が持つ(名前の影)
-  (val shadow-lock (+ LOCK "vendor-shadow==1.0 fake-top=appjobs\n"))
-  (<- files-a2 dict (app-files 2 shadow-lock))
-  (<- a2 str (push-commit rig.app files-a2 "app shadow"))
-  (<- env-4 RuntimeEnv (declare rig a2 l1 shadow-lock))
-  (<- kind-4 EnvFailureKind (failure-kind rig env-4))
-  (assert (= kind-4 EnvFailureKind.ENV-INCOMPATIBLE) kind-4)
-  ;; URL を許可表から外す
-  (<- app-url str (url-of rig.base "app"))
-  (.write-text (/ rig.base "repo-keys.json") (json.dumps {app-url ""}))
-  (<- kind-5 EnvFailureKind (failure-kind rig env))
-  (assert (= kind-5 EnvFailureKind.REPO-DENIED) kind-5)
-  ;; 空きが下限を切る
-  (.write-text (/ rig.base "repo-keys.json") (json.dumps {app-url "" (! (url-of rig.base "lib")) ""}))
-  (val full (replace rig.envs :min-free-bytes (** 10 18)))
-  (<- kind-6 EnvFailureKind (failure-kind (replace rig :envs full) env))
-  (assert (= kind-6 EnvFailureKind.DISK-FULL) kind-6))
+  (assert (= kind-1 EnvFailureKind.COMMIT-MISSING) kind-1))
 
 
 ;; --- 反例: 子の環境と worker の process ----------------------------------------------------
@@ -286,17 +184,19 @@
   (<- env RuntimeEnv (declare rig a1 l1 LOCK))
   (<- view CodeView (prepare rig env))
   (assert (= view.state CodeState.READY) view)
+  ;; 本物の実装で子の確かめが破れないこと(PYTHONPATH が無い・cwd が作業 dir・どの task も同じ worker の process)は、筋書き 1・2 の検
+  ;; (test-careful-scenarios-1-and-2 — 本物の子 2 本)が見る。ここは壊した実装が赤になることだけを見る: PYTHONPATH を残す実装は
+  ;; 子 1 本で破れ、worker を作り直す実装は子の pid を 2 本で比べて破れる。
   (var results {})
-  (for [#(label around) [#("real" #()) #("leaky" #(leaky-start)) #("restarting" #(restarting-start))]]
-    (var outcomes [])
-    (for [n [1 2]]
+  (for [#(label around runs) [#("leaky" #(leaky-start) 1) #("restarting" #(restarting-start) 2)]]
+    (var outcomes #())
+    (for [n (range 1 (+ runs 1))]
       (val task-id (.format "{}-{}" label n))
       (<- outcome (run-task rig env task-id :around around))
       (assert (isinstance outcome TaskSucceeded) outcome)
-      (.append outcomes #(f"task/{task-id}" outcome)))
-    (<- problems list (child-problems (tuple outcomes) rig.host))
-    (setv (get results label) problems))
-  (assert (= (get results "real") []) (get results "real"))
+      (:= outcomes (+ outcomes #(#(f"task/{task-id}" outcome)))))
+    (<- problems list (child-problems outcomes rig.host))
+    (:= results (| results {label problems})))
   (assert (any (gfor p (get results "leaky") (in "PYTHONPATH" p))) "子に PYTHONPATH を残すと筋書き 1 が赤")
   (assert (any (gfor p (get results "restarting") (in "worker の pid" p))) "worker の再起動で走らせると筋書き 2 が赤")
   ;; 送り手の版の doeff を 1 つずらす → 子が復元を断り、欄の名と env のキーが載る
@@ -310,89 +210,3 @@
   (assert (isinstance answer DetachedVersionMismatch) answer)
   (assert (= (lfor d answer.diffs d.field) ["doeff"]) answer.diffs)
   (assert (= answer.env-key key) answer))
-
-
-;; --- 筋書き 8・9(先読みと掃除) --------------------------------------------------------------------
-
-(defk warmed [warm]
-  {:pre [(: warm WarmEnv)] :post [(: % CodeView)]}
-  "温める表の行の root を先読みとして準備し、READY か FAILED の観測まで待つため(worker の判断が出す PrepareEnv と同じ)。"
-  (<- (PrepareEnv warm.key warm.runtime-env :warm True))
-  (<- view CodeView (settled-env warm.key))
-  view)
-
-
-(deftest test-careful-scenario-8-a-warmed-root-starts-the-task-on-the-first-tick [tmp-path monkeypatch]
-  (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
-  (<- rig Rig (make-rig tmp-path))
-  (<- files-a1 dict (app-files 1 LOCK))
-  (<- a1 str (push-commit rig.app files-a1 "app 1"))
-  (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
-  (.insert sys.path 0 (str rig.app))
-  (<- env RuntimeEnv (declare rig a1 l1 LOCK))
-  (<- key str (env-key env (current-platform)))
-  (<- declared dict (runtime-env->json env))
-  (val warm (WarmEnv :key (+ "env-" key) :runtime-env (json.dumps declared :sort-keys True :ensure-ascii False)))
-  (val policy (WorkerPolicy))
-  ;; 温める表を受けた worker は、job が無くても準備を起こす(先読み)
-  (val warming (plan 0 #() (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
-  (assert (= warming #((PrepareEnv warm.key warm.runtime-env :warm True))) warming)
-  (val view (run-envs rig.envs (warmed warm)))
-  (assert (= view.state CodeState.READY) view)
-  ;; 整った木は置き場の path を持つ(READY の約束 — path の無い READY は置き方の誤りなので名指して赤)。
-  (assert (is-not view.path None) view)
-  ;; task が来た最初の拍で子を起こす(PrepareEnv を挟まない = 準備が task の待ちに入らない)
-  (val tasks (/ rig.state "tasks"))
-  (<- spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared}
-                       tasks))
-  (val first (plan 1 #(spec) (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
-  (assert (= first #((StartJob spec 1 view.path))) first)
-  (<- outcome TaskSucceeded (run-task rig env "t8"))
-  (<- answer tuple (child-answer outcome))
-  (assert (= (get answer 0) 1) outcome)
-  ;; 反例: 温めていない env の task は、最初の拍で準備を起こす(準備が task の待ちに入る)
-  (<- files-a2 dict (app-files 2 LOCK))
-  (<- a2 str (push-commit rig.app files-a2 "app 2"))
-  (<- cold RuntimeEnv (declare rig a2 l1 LOCK))
-  (<- cold-declared dict (runtime-env->json cold))
-  (<- cold-spec (task-spec {"id" "t9" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM
-                             "runtimeEnv" cold-declared}
-                            tasks))
-  (assert (is-not cold-spec.runtime-env None) cold-spec)
-  (val cold-first (plan 2 #(cold-spec) (WorldView (run-envs rig.envs (ObserveEnvs)) #()) {} policy :warm #(warm)))
-  (assert (= cold-first #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env))) cold-first))
-
-
-(deftest test-careful-scenario-9-the-sweep-keeps-pinned-latest-and-foreign-dirs [tmp-path monkeypatch]
-  (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
-  (<- made Rig (make-rig tmp-path))
-  ;; 空きの下限を空きより上に置く(下限を切った状態を作る)
-  (val rig (replace made :envs (replace made.envs :sweep-floor-bytes (** 2 62))))
-  (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
-  (var views [])
-  (for [n [1 2 3]]
-    (<- files dict (app-files n LOCK))
-    (<- sha str (push-commit rig.app files (.format "app {}" n)))
-    (<- env RuntimeEnv (declare rig sha l1 LOCK))
-    (<- view CodeView (prepare rig env))
-    (assert (= view.state CodeState.READY) view)
-    (.append views view))
-  (val roots (lfor v views (Path v.path)))
-  (val a (get roots 0))
-  (val b (get roots 1))
-  (val c (get roots 2))
-  ;; 使った時刻: a(固定)が最も古く・b・c(最後に作った = project の最新)の順
-  (for [#(root at) [#(a 1000) #(b 2000) #(c 3000)]]
-    (.write-text (/ root ".last-used") "")
-    (os.utime (/ root ".last-used") #(at at)))
-  ;; worker が作っていない dir(キーの形の名で完成マーカーの無い dir と、別の名の dir)
-  (val foreign (/ rig.state "roots" "0123456789abcdef01234567"))
-  (.mkdir foreign)
-  (.write-text (/ foreign "keep.txt") "not ours\n")
-  (val notes (/ rig.state "roots" "notes"))
-  (.mkdir notes)
-  (run-envs rig.envs (SweepEnvs (frozenset #((+ "env-" a.name)))))
-  (assert (.exists a) "固定された root は残る")
-  (assert (not (.exists b)) "固定されていない古い root は消える")
-  (assert (.exists c) "project ごとの最新の root(bytecode の引き継ぎ元)は残る")
-  (assert (and (.exists foreign) (.exists notes)) "worker が作っていない dir は消さない"))
