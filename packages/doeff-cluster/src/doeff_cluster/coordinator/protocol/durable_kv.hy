@@ -55,13 +55,14 @@
      (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
 
 
-(deff worker-json [#^ WorkerInfo w #^ (| int None) seen]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
-  {:pre [(: w WorkerInfo) (: seen (| int None))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "鍵 worker/<名> の値。"
+(deff worker-json [#^ WorkerInfo w]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: w WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "鍵 worker/<名> の値。lastSeenMs は生存の印の拍で写した w.seen-mark(heartbeat ごとに進む last-seen-ms は書かない — 書きは
+   印の拍ごと・#2903 の前は ClusterState.seen-marks から引いた)。"
   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
       "versions" (dict w.versions)}
      (worker-generations-json w)
-     (if (is seen None) {} {"lastSeenMs" seen})))
+     (if (is w.seen-mark None) {} {"lastSeenMs" w.seen-mark})))
 
 
 (defn #^ object as-stored [#^ object value]
@@ -99,11 +100,9 @@
     (SourceGroup :fields #("placements")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor #(k a) (.items state.placements) (+ PLACEMENT k) #(#(a) (partial asdict a)))))
-    (SourceGroup :fields #("workers" "seen_marks")
+    (SourceGroup :fields #("workers")
                  :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor w (.values state.workers)
-                                :setv seen (.get state.seen-marks w.name)
-                                (+ "worker/" w.name) #(#(w seen) (partial worker-json w seen)))))
+                          (dfor w (.values state.workers) (+ "worker/" w.name) #(#(w) (partial worker-json w)))))
     (SourceGroup :fields #("tasks")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor t (.values state.tasks) (+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
@@ -223,8 +222,8 @@
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
                                  :exclusive (get caps 1) :node (.get w "node" "")
+                                 :seen-mark (.get w "lastSeenMs")
                                  #** generation))
-    :seen-marks (dfor #(k w) (part "worker/") :if (in "lastSeenMs" w) k (get w "lastSeenMs"))
     :tasks (dict tasks)
     :next-task (.get counter "nextTask" 1)
     :task-prefix (.get counter "taskPrefix" "t")
