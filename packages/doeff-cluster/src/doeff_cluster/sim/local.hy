@@ -151,7 +151,7 @@
 (import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program encode-outcome])
 (import doeff_cluster.shared.core.remote_rules [failed-from program-sha])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.protocol.task_result [task-result-request task-id-of-job])
 (import doeff_cluster.shared.protocol.service_report [report-request])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
@@ -197,7 +197,7 @@
 (defrecord SimWorker
   "sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・node に当たる)。provides = 提供する能力の名・
    exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・node = 置かれた k8s の node の名(空 = k8s の外)・
-   versions = 名乗る版(None = 送り手と同じ current-versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
+   versions = 名乗る版(None = 送り手と同じ筋の versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
    実行環境の root の準備にかかる仮想の秒・env-failure = 実行環境の root の準備がこの失敗で終わる worker(None = 揃う)・
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
    (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
@@ -304,12 +304,14 @@
 (defrecord SimLink
   "coordinator へ話す送り手の口 1 つ(クラスタの約束の答え coordinator-answers の引数)。queue = coordinator の受け口(要求の列)・
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
-   runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedSender の runtime-env — None =
-   送り手の版のコードだけ)。"
+   versions = 送り手の process の版の識別(Program を置く時に blob に添える — 本番の送り手が宿の契約の鍵 versions-key で読む値・
+   sim では筋の versions。blob の JSON にそのまま載る値なので dict のまま持つ)・runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedSender の
+   runtime-env — None = 送り手の版のコードだけ)。"
   (#^ RequestQueue queue)
   (#^ str actor)
   (#^ str revision)
   (#^ str peer)
+  (#^ dict versions)
   (setv #^ (| RuntimeEnv None) runtime-env None))
 
 
@@ -484,12 +486,14 @@
    関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。deployments = 偽の k8s の
    初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。runtime-env = 宣言の実行環境の宣言
    (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。skip-idle = coordinator の要求の列が、要求の無い間に何も変えない拍を
-   一度に眠るか(仮想の時計の入口 sim-cluster だけが真 — 本番の拍の間隔と判断の刻は変えない・2026-09-30)。"
+   一度に眠るか(仮想の時計の入口 sim-cluster だけが真 — 本番の拍の間隔と判断の刻は変えない・2026-09-30)。versions = sim の送り手・
+   worker・子が名乗る版の識別(sim-plan が 1 度だけ綴る — env の root の外の process として・foundation/process_versions。宣言と blob の JSON にそのまま載る値なので dict)。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
   (#^ dict environ)
   (#^ str revision)
+  (#^ dict versions)
   (#^ int start-ms)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
@@ -696,14 +700,14 @@
   #((SimWorker :name "sim-worker" :provides needs)))
 
 
-(defk declaration-of [system revision environ runtime-env]
-  {:pre [(: system System) (: revision str) (: environ dict) (: runtime-env (| RuntimeEnv None))] :post [(: % Declaration)]
+(defk declaration-of [system revision environ runtime-env versions]
+  {:pre [(: system System) (: revision str) (: environ dict) (: runtime-env (| RuntimeEnv None)) (: versions dict)] :post [(: % Declaration)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "系 → coordinator へ渡す宣言(本番の declare と同じ system-declaration)に、job ごとの environ の上書きと実行環境の宣言を重ねるため
    (計画 2.7 の H・改訂 1 の M — whole.hy の overrides の置き換え先)。上書きの規則(系に無い job・宣言の :environ に無い名・文字列でない
    値は断る)は本番の declare と同じ 1 つ(service_rules.environ-overlay-refusal)。実行環境の宣言は本番の declare の --runtime-env と同じ
-   欄に載り、本物の worker が子へ DOEFF_RUNTIME_ENV で渡す(子の run-context の runtime-env)。"
-  (system-declaration system revision :versions (current-versions) :runtime-env runtime-env :environ environ))
+   欄に載り、本物の worker が子へ DOEFF_RUNTIME_ENV で渡す(子の run-context の runtime-env)。versions = 送り手の版の識別(筋の versions)。"
+  (system-declaration system revision :versions versions :runtime-env runtime-env :environ environ))
 
 
 (defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [skip-idle False]]
@@ -717,8 +721,11 @@
   (val names (lfor w chosen w.name))
   (when (or (not chosen) (!= (len names) (len (set names))) (not (all (gfor w chosen (isinstance w SimWorker)))))
     (raise (ValueError (.format "workers は名の重ならない SimWorker の 1 つ以上の tuple: {!r}" chosen))))
-  (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env))
-  (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
+  ;; sim の送り手は env の root の外の process として名乗る(env のキーを名乗らない — 実の環境変数を読まない)。版そのものはこの
+  ;; process に入っている版で、sim の worker と子も同じ識別を名乗る(1 つの process の中の模擬)。
+  (<- versions dict (process-versions {}))
+  (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env versions))
+  (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
            :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
            :skip-idle skip-idle
            :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
@@ -810,10 +817,10 @@
   (if sha (+ "/sim/programs/" sha ".json") ""))
 
 
-(defk control-link [queue revision]
-  {:pre [(: queue RequestQueue) (: revision str)] :post [(: % SimLink)] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk control-link [queue revision versions]
+  {:pre [(: queue RequestQueue) (: revision str) (: versions dict)] :post [(: % SimLink)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の仕組み(宣言・検の読み)が coordinator へ話す口を作るため(送り手 sim-declare — 網の切断は受けない)。"
-  (SimLink :queue queue :actor DECLARE-ACTOR :revision revision :peer DECLARE-ACTOR))
+  (SimLink :queue queue :actor DECLARE-ACTOR :revision revision :peer DECLARE-ACTOR :versions versions))
 
 
 ;; --- coordinator との話し方(scheduler と時計の effect だけ — 柵の内側の答えも使う)--------------------------------
@@ -927,7 +934,7 @@
    本番の TaskSender の runtime-env と同じく本文の runtimeEnv に載せる)。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
-  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" (current-versions)}))
+  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
   (answered-body put "task の Program を置けない")
   (<- sent tuple (send-request link "POST" "/tasks" {}
                                (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ)))
@@ -963,7 +970,7 @@
    分からない — key で冪等)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
-  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" (current-versions)}))
+  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
   (if (is (get put 0) None)
       (submit-unreachable (unreached-reason put))
       (do (refused-or-body put "task の Program を置けない")
@@ -1187,7 +1194,7 @@
     (resume (match key
               HOST-CONTRACT.run-context-key child.ctx
               HOST-CONTRACT.program-key child.program-path
-              _ (current-versions))))
+              _ child.link.versions)))
   (ReportReady [ready reason role]
     (<- (send-report child "readiness" {"ready" ready "reason" reason "role" role}))
     (resume None))
@@ -1374,9 +1381,9 @@
   (val before marked.before)
   (<- sent-at int (now-epoch-ms))
   (<- views tuple (codes-view before.codes sent-at))
-  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name))
+  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
   (val body (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
-                               :node worker.node :capacity worker.capacity :versions (or worker.versions (current-versions))
+                               :node worker.node :capacity worker.capacity :versions (or worker.versions plan.versions)
                                :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
                                :boot-at before.boot-at :tools {})
                (env-heartbeat-part (env-report views "ok") (current-platform))))
@@ -1541,8 +1548,9 @@
     (<- program-path str (program-path-of spec.program))
     ;; 子の送り手の口は本番の子の TaskSender・DetachedSender と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
     (<- child-env (| RuntimeEnv None) (runtime-env-of-context ctx))
-    (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :runtime-env child-env))
     (<- plan SimPlan (PlanOf))
+    (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :versions plan.versions
+                       :runtime-env child-env))
     (<- outside ProcessOutside (process-outside plan.per-process spec.name worker.name))
     (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid
                          :passable (+ plan.passable outside.effects) :outside outside.handlers))
@@ -1571,7 +1579,8 @@
     (<- (live-truth worker.name boot))
     (<- parts SimParts (PartsOf))
     (<- plan SimPlan (PlanOf))
-    (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name) job instance))
+    (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions)
+                         job instance))
     (resume None))
   (PublishStatus [statuses note]
     ;; 宿の真実の結果と写しで状態の報告を綴り、報告だけを置き直す。綴り(status-report)は何の効果も待たないので、読みと書きの間に
@@ -1641,7 +1650,7 @@
    届くまで眠る。待つ口が無い(404)・世代が終わったら抜ける。網は worker と同じ(切れていれば届かない)。"
   (<- parts SimParts (PartsOf))
   (<- plan SimPlan (PlanOf))
-  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name))
+  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
   (var going True)
   (while going
     (<- truth HostTruth (HostTruthOf worker.name))
@@ -2141,7 +2150,7 @@
     (resume None))
   (DrainWorker [name ttl-seconds]
     (val request (drain-request name ttl-seconds (. (get hosts name) boot)))
-    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-shaped link request))
     (resume (if (is (get answer 0) None)
                 {"error" (unreached-reason answer)}
@@ -2159,14 +2168,14 @@
   (CoordinatorRuns []
     (resume runs))
   (ClientLink []
-    (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME)))
+    (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions)))
   (Redeclare [system]
-    (<- declaration Declaration (declaration-of system plan.revision plan.environ plan.runtime-env))
-    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- declaration Declaration (declaration-of system plan.revision plan.environ plan.runtime-env plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- names tuple (apply-declaration link declaration))
     (resume names))
   (DeclareRollout [name spec]
-    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-request link "POST" "/resources/Rollout" {} {"name" name "spec" (deepcopy spec)}))
     (resume (answered-body answer (+ "Rollout を作れない: " name))))
   (KubeCalls []
@@ -2206,18 +2215,18 @@
                 (do (<- answer (promise-or-timeout promise.future timeout-seconds))
                     (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))))
   (ReadinessOf [name]
-    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
     (resume (match (get answer 0)
               200 (SimReadiness :state (get (get answer 1) "status" "ready")
                                 :reason (str (.get (get (get answer 1) "status") "readyReason" "")))
               _ (SimReadiness :state "Missing" :reason (str (get answer 1))))))
   (SharedRows [prefix]
-    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-shaped link (board-read-request prefix)))
     (resume (answered-body answer "盤を読めない")))
   (ReadCoordinator [path]
-    (<- link SimLink (control-link parts.queue plan.revision))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-request link "GET" path {} None))
     (resume (answered-body answer (+ "GET " path)))))
 
@@ -2232,7 +2241,7 @@
   (<- parts SimParts (PartsOf))
   (<- pod Task (Spawn (coordinator-pod)))
   (<- (await-coordinator parts.queue))
-  (<- control SimLink (control-link parts.queue plan.revision))
+  (<- control SimLink (control-link parts.queue plan.revision plan.versions))
   (<- (apply-declaration control plan.declaration))
   (var keepers [])
   (for [w plan.workers]

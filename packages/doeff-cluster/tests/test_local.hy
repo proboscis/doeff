@@ -317,7 +317,7 @@
   (val ends [])
   (val ctx (RunContext "sim://coordinator" "w" "r" "svc"))
   (val child (SimChild :ctx ctx :program-path "" :environ {} :pid 7 :passable #()
-                       :link (SimLink :queue (RequestQueue) :actor "svc" :revision "r" :peer "w")))
+                       :link (SimLink :queue (RequestQueue) :actor "svc" :revision "r" :peer "w" :versions {})))
   (<- (with-handlers [(end-recorder ends)]
         (sim-process "w" (JobSpec "svc" "doeff_cluster.job_entry" #("service") "r" :program (* "a" 64)) child None)))
   (<- (with-handlers [(end-recorder ends)]
