@@ -219,6 +219,6 @@
 
 
 (deftest test-the-heartbeat-reply-carries-the-revision-to-watch-after
-  (val reply (heartbeat-reply (ClusterState :revision 7) "w1" (ClusterTiming)))
+  (val reply (! (heartbeat-reply (ClusterState :revision 7) "w1" (ClusterTiming))))
   (assert (= reply.revision 7) reply)
   (assert (= (get (! (reply-json reply)) "revision") 7) reply))

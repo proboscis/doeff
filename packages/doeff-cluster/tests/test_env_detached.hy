@@ -219,7 +219,7 @@
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
   (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #())} :tasks {"t1" requeued}))
-  (val placed (place-tasks 20 cluster {} timing))
+  (val placed (! (place-tasks 20 cluster {} timing)))
   (assert (= (. (get placed "t1") phase) "env-failed") (get placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})
   (assert (= (outcome-of-view view) (DetachedEnvUnavailable "repo-unreachable" "d" True))))
@@ -233,9 +233,9 @@
   (val base {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 10})
   (val broken (| declared {"repos" [{"name" "app" "url" APP-URL "commit" "main"}]}))
   (for [body [(| base {"runtimeEnv" broken}) (| base {"format" 99})]]
-    (assert (= (get (submit-task (get placed 0) (task-body-of body) 0) 1) 400) body)
+    (assert (= (get (! (submit-task (get placed 0) (task-body-of body) 0)) 1) 400) body)
     (assert (= (. (submit-detached (get placed 0) "k" (task-body-of body) 0) status) 400) body))
-  (val accepted (submit-task (get placed 0) (task-body-of (| base {"runtimeEnv" declared "format" 1})) 0))
+  (val accepted (! (submit-task (get placed 0) (task-body-of (| base {"runtimeEnv" declared "format" 1})) 0)))
   (assert (= (get accepted 1) 200) accepted)
   (assert (= (. (get (. (get accepted 0) tasks) "t1") runtime-env) declared)))
 

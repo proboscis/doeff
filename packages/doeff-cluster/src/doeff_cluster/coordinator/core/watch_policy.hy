@@ -58,7 +58,7 @@
    :tags {:context "coordinator" :role "judgment"}}
   "名指した worker の見え方(その世代の heartbeat の返事から温める表と版の欄を空にした物)を、返事と同じ関数で作るため — 待ちが起きる
    条件と worker が受け取る物の定義を 2 つにしない。"
-  (val reply (heartbeat-reply state worker timing (ready-instances state worker now timing) :now now :boot boot))
+  (<- reply HeartbeatReply (heartbeat-reply state worker timing (ready-instances state worker now timing) :now now :boot boot))
   (replace reply :warm #() :revision 0))
 
 

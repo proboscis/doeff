@@ -266,18 +266,19 @@
   ;; 能力の合う worker の heartbeat の返事にだけ載る(能力の足りない worker・専用の能力を持つ worker には載らない)
   (val hb {"name" "w1" "provides" ["agent-cli"] "capacity" 2 "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" []} "envCapacity" "ok"})
-  (val s1 (register-heartbeat after (heartbeat-of hb) 2000))
-  (assert (= (lfor e (. (heartbeat-reply s1 "w1" TIMING :now 2000) warm) e.runtime-env) [declared]))
-  (val s2 (register-heartbeat s1 (heartbeat-of (| hb {"name" "w2" "provides" ["net"]})) 2000))
-  (assert (= (. (heartbeat-reply s2 "w2" TIMING :now 2000) warm) #()) "能力の足りない worker には配らない")
-  (val with-gpu (register-heartbeat s2 (heartbeat-of (| hb {"name" "w3" "provides" ["agent-cli" "gpu"] "exclusive" ["gpu"]})) 2000))
-  (assert (= (. (heartbeat-reply with-gpu "w3" TIMING :now 2000) warm) #())
+  (val s1 (! (register-heartbeat after (heartbeat-of hb) 2000)))
+  (val reply-1 (! (heartbeat-reply s1 "w1" TIMING :now 2000)))
+  (assert (= (lfor e reply-1.warm e.runtime-env) [declared]))
+  (val s2 (! (register-heartbeat s1 (heartbeat-of (| hb {"name" "w2" "provides" ["net"]})) 2000)))
+  (assert (= (. (! (heartbeat-reply s2 "w2" TIMING :now 2000)) warm) #()) "能力の足りない worker には配らない")
+  (val with-gpu (! (register-heartbeat s2 (heartbeat-of (| hb {"name" "w3" "provides" ["agent-cli" "gpu"] "exclusive" ["gpu"]})) 2000)))
+  (assert (= (. (! (heartbeat-reply with-gpu "w3" TIMING :now 2000)) warm) #())
           "専用の能力(gpu)を持つ worker には、その能力を要らない行を配らない")
-  (assert (= (. (heartbeat-reply s2 "w1" TIMING :now 700000) warm) #()) "期限を過ぎた行は配らない")
+  (assert (= (. (! (heartbeat-reply s2 "w1" TIMING :now 700000)) warm) #()) "期限を過ぎた行は配らない")
   ;; 読む: w1 は準備中 → 準備済みを名乗った後は ready
   (val read-1 (get (responded s2 (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 2000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-1) preparing) #("w1")) read-1)
-  (val s3 (register-heartbeat s2 (heartbeat-of (| hb {"envs" {"ready" [key-linux] "preparing" [] "failed" []}})) 3000))
+  (val s3 (! (register-heartbeat s2 (heartbeat-of (| hb {"envs" {"ready" [key-linux] "preparing" [] "failed" []}})) 3000)))
   (val read-2 (get (responded s3 (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 3000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-2) ready) #("w1")) read-2)
   (val missing (responded s3 (! (http-request "GET" "/warm/000000000000000000000000" {} None)) 3000 TIMING))
@@ -359,11 +360,11 @@
   ;; 準備済みの w2 を、名前順で先の w1(空き同じ)より優先する
   (val warm-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}
                                 :tasks {"t1" task}))
-  (val placed (get (place-tasks 10 warm-state {} TIMING) "t1"))
+  (val placed (get (! (place-tasks 10 warm-state {} TIMING)) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "w2")) placed)
   ;; 準備済みが無ければ置くが phase は preparing(assigned と分ける)で、冷たい起動を数える
   (val cold-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks {"t1" task}))
-  (val cold (get (place-tasks 10 cold-state {} TIMING) "t1"))
+  (val cold (get (! (place-tasks 10 cold-state {} TIMING)) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks {"t1" cold}))
   (assert (= (get (load-of after {}) "w1") 1) "preparing の task も担い手の数に入る")
@@ -371,7 +372,7 @@
   ;; worker が準備済みを名乗った拍に assigned へ進む
   (val hb {"name" "w1" "provides" ["net"] "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})
-  (val promoted (register-heartbeat after (heartbeat-of hb) 20))
+  (val promoted (! (register-heartbeat after (heartbeat-of hb) 20)))
   (assert (= (. (get promoted.tasks "t1") phase) "assigned") (get promoted.tasks "t1")))
 
 
@@ -394,11 +395,11 @@
   (val task (! (env-task "t1" declared)))
   (val two (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}
                          :tasks {"t1" task}))
-  (assert (= (. (get (place-tasks 10 two {} TIMING) "t1") worker) "w2") "空きの尽きた worker を避ける")
+  (assert (= (. (get (! (place-tasks 10 two {} TIMING)) "t1") worker) "w2") "空きの尽きた worker を避ける")
   (val only (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))} :tasks {"t1" task}))
-  (assert (= (. (get (place-tasks 10 only {} TIMING) "t1") phase) "queued") "置ける先が無ければ待つ")
+  (assert (= (. (get (! (place-tasks 10 only {} TIMING)) "t1") phase) "queued") "置ける先が無ければ待つ")
   (val ready (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))} :tasks {"t1" task}))
-  (assert (= (. (get (place-tasks 10 ready {} TIMING) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
+  (assert (= (. (get (! (place-tasks 10 ready {} TIMING)) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
 
 
 ;; --- worker の判断 -----------------------------------------------------------------------------

@@ -202,7 +202,7 @@ def remember_keep_marks(state: ClusterState, worker: str, boot: str | None, held
 def sweep_keep_marks(state: ClusterState) -> _Program[ClusterState, object]:
     ...
 
-def place_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:
+def place_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> _Program[dict, object]:
     ...
 
 def jobs_for(state: ClusterState, worker: str, ready_instances: dict | None=None) -> tuple:
@@ -252,7 +252,7 @@ def settle_detached(task: TaskRecord, now: int) -> TaskRecord | None:
 def unplaceable_phase(task: TaskRecord, state: ClusterState, now: int, timing: ClusterTiming) -> str:
     ...
 
-def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> dict:
+def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[dict, object]:
     ...
 
 def same_boot(task: TaskRecord, boot: str | None) -> bool:
@@ -276,25 +276,25 @@ def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int) -> Tas
 def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None) -> dict:
     ...
 
-def absorb_task_result(state: ClusterState, id: str, body: TaskResultBody, now: int) -> tuple:
+def absorb_task_result(state: ClusterState, id: str, body: TaskResultBody, now: int) -> _Program[tuple, object]:
     ...
 
 def renew_detached(tasks: dict, worker: str, boot: str | None, now: int) -> dict:
     ...
 
-def sweep_board(state: ClusterState, now: int) -> ClusterState:
+def sweep_board(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def forget_silent_workers(state: ClusterState, now: int) -> ClusterState:
+def forget_silent_workers(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def sweep_drains(state: ClusterState, now: int) -> ClusterState:
+def sweep_drains(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def sweep_warms(state: ClusterState, now: int) -> ClusterState:
+def sweep_warms(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def cold_starts(before: dict, after: dict) -> int:
+def cold_starts(before: dict, after: dict) -> _Program[int, object]:
     ...
 
 def reconcile(now: int, given: ClusterState, timing: ClusterTiming) -> _Program[ClusterState, object]:
@@ -309,7 +309,7 @@ def board_changes(before: ClusterState, after: ClusterState) -> list:
 def hyx_text_mapXquestion_markX(value: dict | list | str | int | float | bool | None) -> bool:
     ...
 
-def register_heartbeat(state: ClusterState, body: HeartbeatBody, now: int) -> ClusterState:
+def register_heartbeat(given: ClusterState, body: HeartbeatBody, now: int) -> _Program[ClusterState, object]:
     ...
 
 def absorb_superseded_heartbeat(state: ClusterState, name: str, boot: str, statuses: tuple, now: int) -> ClusterState:
@@ -337,7 +337,7 @@ def promote_prepared(tasks: dict, worker: WorkerInfo) -> dict:
 def warms_for(state: ClusterState, worker: str, now: int) -> tuple:
     ...
 
-def heartbeat_reply(state: ClusterState, name: str, timing: ClusterTiming, ready_instances: dict | None=None, now: int=0, boot: str | None=None, statuses: tuple | None=None) -> HeartbeatReply:
+def heartbeat_reply(state: ClusterState, name: str, timing: ClusterTiming, ready_instances: dict | None=None, now: int=0, boot: str | None=None, statuses: tuple | None=None) -> _Program[HeartbeatReply, object]:
     ...
 
 def running_names(statuses: tuple) -> frozenset:
@@ -346,7 +346,7 @@ def running_names(statuses: tuple) -> frozenset:
 def superseded_reply(state: ClusterState, name: str, boot: str, statuses: tuple, timing: ClusterTiming, ready_instances: dict | None=None) -> HeartbeatReply:
     ...
 
-def state_view(state: ClusterState, now: int, timing: ClusterTiming) -> StateView:
+def state_view(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[StateView, object]:
     ...
 
 def runtime_env_refusal(body: dict) -> str | None:
@@ -355,13 +355,13 @@ def runtime_env_refusal(body: dict) -> str | None:
 def runtime_env_value_refusal(value: dict | list | tuple | str | int | float | bool | None) -> str | None:
     ...
 
-def submit_task(state: ClusterState, body: TaskBody, now: int, owner: str | None=None) -> tuple:
+def submit_task(state: ClusterState, body: TaskBody, now: int, owner: str | None=None) -> _Program[tuple, object]:
     ...
 
-def poll_task(state: ClusterState, id: str, now: int) -> tuple:
+def poll_task(state: ClusterState, id: str, now: int) -> _Program[tuple, object]:
     ...
 
-def lease_write(state: ClusterState, name: str, body: LeaseBody, now: int) -> tuple:
+def lease_write(state: ClusterState, name: str, body: LeaseBody, now: int) -> _Program[tuple, object]:
     ...
 
 def value_size(value: dict | list | str | int | float | bool | None) -> int:
@@ -376,7 +376,7 @@ def board_capacity_refusal(state: ClusterState, key: str, size: int) -> str | No
 def written_value(write: BoardWrite) -> object:
     ...
 
-def board_write(state: ClusterState, key: str, write: BoardWrite, now: int=0) -> tuple:
+def board_write(state: ClusterState, key: str, write: BoardWrite, now: int=0) -> _Program[tuple, object]:
     ...
 NODE_LABELS_TTL_MS: int
 

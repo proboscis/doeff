@@ -50,7 +50,7 @@
 
 (deftest test-the-heartbeat-reply-is-typed-and-spelled-in-the-old-shape
   ;; heartbeat の返事は型の値(HeartbeatReply)で、JSON の欄は前と同じ — superseded は退いた世代への返事の時だけ書く。
-  (val reply (heartbeat-reply (ClusterState :revision 3) "w1" T))
+  (val reply (! (heartbeat-reply (ClusterState :revision 3) "w1" T)))
   (assert (isinstance reply HeartbeatReply) reply)
   (val body (! (reply-json reply)))
   (assert (= (sorted body) ["draining" "formats" "jobs" "revision" "tasks" "timing" "warm"]) body)
