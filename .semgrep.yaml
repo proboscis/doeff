@@ -297,7 +297,8 @@ rules:
       区別しない・前が英字でない時)。汎用の部品が業務の系を名指すと、境界が file の文字から崩れる。註・docstring・README の
       repo の名や issue の参照も同じ(「agora-redesign #2830」は「#2830」と書く)。語の一覧の定義元はこの規則 1 つ(元は 3 package の
       tests/test_no_application_vocabulary.hy の写し — agora-redesign #2875。写しの差は、.pyi を全部で見る・doeff-records の宣言の
-      欄の名 size-budget を全部で許す形に揃えた)。
+      欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は
+      tests/test_package_file_names_have_no_application_vocabulary.py がこの規則の語の一覧を読んで確かめる。
     patterns:
       - pattern-regex: '(?i)(?<![a-z])(agora|kanban|conversation|budget|artifact|herdr|hypha|mediagen|sporocarp|acp|controllers/|controllers\.|clients/hy)'
       # doeff-records の宣言の欄の名(size-budget / size_budget)は業務の語ではない。
@@ -309,9 +310,6 @@ rules:
         - "/packages/doeff-claude-code/**"
         - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
         - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
-      exclude:
-        # 語の一覧を写した旧い検(この規則が入った後の便で退役する — #2875)。
-        - "/packages/*/tests/test_no_application_vocabulary.hy"
 
   - id: doeff-agents-idle-shell-vocabulary-is-policy-owned
     languages:

@@ -240,7 +240,7 @@ tests = [
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-claude-code/"
 tests = [
-    "packages/doeff-claude-code/tests/test_no_application_vocabulary.hy",  # 1.4 秒 — package の全 file の中身と名に業務の語が無い
+    "tests/test_package_file_names_have_no_application_vocabulary.py",  # 1.5 秒 — 汎用の 3 package の file の名に業務の語が無い(中身は semgrep の規則が commit で止める)
 ]
 
 [[tool.doeff.contract-tests]]
