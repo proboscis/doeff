@@ -72,6 +72,8 @@ dmypy.json
 .doeff-lint.jsonl
 .doeff-flow/
 *.jsonl
+# 旧い版の coordinator の置き場の log(版上げの下見の検 test_deployed_state_upgrade.hy が読む fixture — 生成された log ではない)
+!packages/doeff-cluster/tests/fixtures/coordinator_state_*/wal/wal.jsonl
 *.db
 *.db-journal
 *.db-shm
