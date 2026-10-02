@@ -523,11 +523,11 @@
   ;; worker の世代は起動の時に Pod の中の file(DOEFF_WORKER_BOOT_FILE)へ書かれ、readinessProbe の入口(drain_main.read-boot)が
   ;; 同じ値を読む — 書く口と読む口の綴りが割れると probe は永久に NotReady になる。
   (val path (/ tmp-path "doeff-worker-boot"))
-  (assert (is (read-boot (str path)) None) "起動の前(file が無い)は世代を知らない")
+  (assert (is (! (with-handlers [os-file-handler] (read-boot (str path)))) None) "起動の前(file が無い)は世代を知らない")
   ;; 書く口は worker の入口 main の write-boot-file(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した)。
   (import doeff_cluster.worker.entry.main [write-boot-file])
   (write-boot-file (str path) "b-1234")
-  (assert (= (read-boot (str path)) "b-1234")))
+  (assert (= (! (with-handlers [os-file-handler] (read-boot (str path)))) "b-1234")))
 
 
 (deftest test-the-heartbeat-reply-names-whether-the-worker-is-draining

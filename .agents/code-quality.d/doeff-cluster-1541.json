@@ -2593,7 +2593,8 @@
     {
       "allow": [
         "doeff-cluster-env-prepare",
-        "doeff-cluster-env-handlers"
+        "doeff-cluster-env-handlers",
+        "doeff-cluster-env-prepare-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-env-tool",
