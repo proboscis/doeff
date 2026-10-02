@@ -389,9 +389,36 @@ class NodeLabelsUnreadable:
     at: int
 
 @dataclass(frozen=True, kw_only=True)
+class ReportOrigin:
+    worker: str
+    pid: int | None
+    revision: str
+    instance: str | None
+    attempt: str | int | None
+    spec_hash: str | None
+    placement: int | None
+    at: int
+
+@dataclass(frozen=True, kw_only=True)
+class ReadinessReport:
+    origin: ReportOrigin
+    ready: bool
+    reason: str
+    role: str
+
+@dataclass(frozen=True, kw_only=True)
+class MetricsReport:
+    origin: ReportOrigin
+    counters: Table[int | float]
+    gauges: Table[int | float]
+    durations: Table[object]
+
+@dataclass(frozen=True, kw_only=True)
 class ClusterObservations:
     deployments: Table[DeploymentSeen | DeploymentUnreadable] = ...
     nodes: Table[NodeLabelsSeen | NodeLabelsUnreadable] = ...
+    readiness: Table[tuple[ReadinessReport, ...]] = ...
+    metrics: Table[tuple[MetricsReport, ...]] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class ObservedDeployment:
@@ -401,7 +428,7 @@ class ObservedDeployment:
 @dataclass(frozen=True, kw_only=True)
 class ServiceObserved:
     ready_reason: str
-    last_readiness: dict[str, object] | None
+    last_readiness: ReadinessReport | None
     process: object | None
     version: VersionVerdict
     running: tuple[LiveProcess, ...]
@@ -607,8 +634,6 @@ class ClusterState:
     audit: tuple[AuditEvent, ...] = ()
     audit_seq: int = 0
     rollouts: dict[str, RolloutRow] = ...
-    readiness: dict[str, object] = ...
-    metrics: dict[str, object] = ...
     derivable: frozenset[str] = frozenset()
     refused: dict[str, RefusedJob] = ...
     programs: dict[str, ProgramRow] = ...

@@ -60,9 +60,9 @@
 
 (defn #^ (| str None) last-refusal [#^ ClusterState state #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "今の宣言の spec(指紋 want)の process が送った最後の ReportReady(偽)の reason(業務の側が「なぜ準備できないか」を書く)。無ければ None。"
-  (next (gfor report (reversed (or (.get state.readiness name) #()))
-              :if (and (= (.get report "specHash") want) (not (.get report "ready")))
-              (.get report "reason" ""))
+  (next (gfor report (reversed (or (.row state.observations.readiness name) #()))
+              :if (and (= report.origin.spec-hash want) (not report.ready))
+              report.reason)
         None))
 
 
