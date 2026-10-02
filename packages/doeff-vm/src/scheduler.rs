@@ -2948,6 +2948,33 @@ impl PySchedulerCore {
             locked.live_parked_waiter_summary(false),
         ))
     }
+
+    /// `(tasks to cancel, tasks to wait for)` at root return, for the close-out
+    /// unwinding shared with the Python scheduler (agora-redesign #2684 /
+    /// #2690): the live non-daemon tasks — pending and running ones receive
+    /// Cancel, and those already cancelling are only waited for (Cancel is not
+    /// delivered twice). Ascending task ids, the order the Python scheduler
+    /// walks its task table in.
+    fn close_out_live_tasks(&self) -> PyResult<(Vec<Tid>, Vec<Tid>)> {
+        let locked = self.core.lock()?;
+        let mut live: Vec<(Tid, Status)> = locked
+            .tasks
+            .iter()
+            .filter(|(_, task)| {
+                !task.daemon
+                    && matches!(task.status, Status::Pending | Status::Running | Status::Cancelling)
+            })
+            .map(|(tid, task)| (*tid, task.status))
+            .collect();
+        live.sort_by_key(|(tid, _)| *tid);
+        let to_cancel = live
+            .iter()
+            .filter(|(_, status)| *status != Status::Cancelling)
+            .map(|(tid, _)| *tid)
+            .collect();
+        let to_wait = live.iter().map(|(tid, _)| *tid).collect();
+        Ok((to_cancel, to_wait))
+    }
 }
 
 /// `Promise._register` / `ExternalPromise._register` of a Rust scheduler run.
