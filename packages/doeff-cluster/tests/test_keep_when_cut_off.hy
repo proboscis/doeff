@@ -319,16 +319,16 @@
   ;; いる)。明けた後、担い手は印の無い返事を受けて印を持たないと知らせ、保証は時間の柵へ戻る — 次の途絶では fence(20 秒)で止まり、
   ;; 移し替え(45 秒)の後に 2 台目へ移る。どの時点でも 2 か所で走らない(条 C2)。
   (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-then-join) :workers JOINING))
+  (<- spans tuple (spans-of seen.after))
+  (<- broken tuple (one-place-per-job spans))
+  (assert (= broken #()) broken)
   (assert (= (lfor p seen.mid p.worker) ["w1"]) seen.mid)
   (assert (is (. (get seen.mid 0) exit-code) None) seen.mid)
   (assert (= seen.readiness.state "Unknown") seen.readiness)
   (val first (get seen.after 0))
   (val moved (get seen.after -1))
   (assert (= #(first.worker first.exit-code) #("w1" -15)) seen.after)
-  (assert (= #(moved.worker moved.exit-code) #("w2" None)) seen.after)
-  (<- spans tuple (spans-of seen.after))
-  (<- broken tuple (one-place-per-job spans))
-  (assert (= broken #()) broken))
+  (assert (= #(moved.worker moved.exit-code) #("w2" None)) seen.after))
 
 
 (defk cut-then-widen []
@@ -355,11 +355,11 @@
   ;; 受入 5・条件 2 の (b): 途絶の最中に宣言の needs が変わって置ける worker が増えても、印を渡した担い手から job を移さない。明けた後も
   ;; 担い手は条件を満たすので、そのまま動かし続ける(起こし直さない・2 か所で走らない)。
   (<- seen CutSeen (sim-cluster (lone-pulses sim-foundation) (cut-then-widen) :workers WIDENING))
-  (assert (= (lfor p seen.mid p.worker) ["w1"]) seen.mid)
-  (assert (= (lfor p seen.after #(p.worker p.exit-code)) [#("w1" None)]) seen.after)
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
-  (assert (= broken #()) broken))
+  (assert (= broken #()) broken)
+  (assert (= (lfor p seen.mid p.worker) ["w1"]) seen.mid)
+  (assert (= (lfor p seen.after #(p.worker p.exit-code)) [#("w1" None)]) seen.after))
 
 
 (defk join-then-drain []
