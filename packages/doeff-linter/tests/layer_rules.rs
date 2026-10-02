@@ -1685,6 +1685,40 @@ fn placed_layers_depend_only_on_placed_modules() {
     }
 }
 
+/// agora-redesign #2877: 別の file の defrecord で宣言の型が Program を名指す欄に置いた素の defk 呼びは拾わない(Program を運ぶ欄)。
+/// 同じ型の dict の欄に置いた素の呼びは今までどおり error(事実: doeff-records の start-records-server の :prepare)。
+#[test]
+fn defk_called_bare_into_a_program_field_of_a_record_is_not_an_answer() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF126\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n",
+    )
+    .unwrap();
+    let files = [
+        (
+            "app/core/serving.hy",
+            "(defrecord Serving\n  \"設定\"\n  (#^ (| Program EffectBase) prepare)\n  (#^ dict rows))\n(defk ready [h] {:tags {:context \"c\" :role \"program\"}} h)\n",
+        ),
+        (
+            "app/core/shell.hy",
+            concat!(
+                "(import app.core.serving [Serving ready])\n",
+                "(deff start [h] (Serving :prepare (ready h) :rows {}))  ; defk にできない: 検の殻\n",
+                "(deff wrong [h] (Serving :prepare None :rows (ready h)))  ; defk にできない: 検の殻\n",
+            ),
+        ),
+    ];
+    for (rel, text) in &files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let (code, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF126"), vec!["app/core/shell.hy::DOEFF126::wrong::ready"], "{}", report);
+    assert_eq!(code, 1);
+}
+
 #[test]
 fn defk_called_bare_is_an_error_and_program_positions_are_not() {
     // 事実(#798): defk に改めた latest-by-ref を、deff と検が素のまま呼んでいた — Program が値として流れた。

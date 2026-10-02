@@ -10,8 +10,9 @@
 //! 拾うのは、呼びの答えを値として使う所だけ(Program が値の代わりに流れて静かに間違う所): 比べ・演算・真偽の組み合わせ
 //! (`=`・`+`・`in`・`not`・`and` …)、答えを読む組み込みの関数(`len`・`str`・`get`・`sorted`・`isinstance` …)、method の的と引数
 //! (`(.get (f …) "欄")`・`(.append out (f …))`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねと
-//! 内包表記の元)、record の欄(頭が大文字の型を作る呼び — doeff の package の effect は除く)。その位置の中の `if`・`when`・`cond`・
-//! `do`・`let` の枝も答えとして使う所のまま。
+//! 内包表記の元)、record の欄(頭が大文字の型を作る呼び — doeff の package の effect は除く・repo の `defrecord` で宣言の型が Program か
+//! EffectBase を名指す欄も除く — `ProgramFields`・agora-redesign #2877)。その位置の中の `if`・`when`・`cond`・`do`・`let` の枝も
+//! 答えとして使う所のまま。
 //! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
 //! 関数(run-on など)かもしれず、追えない)、名への束ね(後で Program として渡すかもしれない)。
 //!
@@ -103,6 +104,79 @@ pub fn defk_names_in(source: &str, module: &str) -> DefkNames {
     DefkNames { names }
 }
 
+/// record の型の欄のうち、宣言の型が Program か EffectBase を名指す欄(module まで含めた型の名 → 欄の名・どちらも mangle 済み)。
+/// その欄は Program を運ぶ宣言なので、型を作る呼びのその欄に置いた素の defk 呼びは答えとして使う所ではない(agora-redesign #2877 —
+/// doeff-records の RecordsServing の :prepare は (| Program EffectBase) で、serve-records が用意の task として走らせる)。
+/// 入れないのは、型の註の無い欄・object / Any の欄・別名で隠れた欄(別名の名は Program と綴られない)— どれも今までどおり答えとして数える。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProgramFields {
+    fields: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl ProgramFields {
+    /// 別の表を足す。
+    pub fn extend(&mut self, other: ProgramFields) {
+        for (record, fields) in other.fields {
+            self.fields.entry(record).or_default().extend(fields);
+        }
+    }
+
+    /// module まで含めた型の名の欄(mangle 済み)が Program を運ぶ宣言か。
+    pub fn carries_program(&self, record: &str, field: &str) -> bool {
+        self.fields.get(record).is_some_and(|names| names.contains(field))
+    }
+
+    /// 空か。
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+}
+
+/// 欄の型の宣言が名指すと Program を運ぶ欄とする型の名(module を付けた綴りは最後の段で比べる — `doeff.Program` も同じ)。
+const PROGRAM_TYPES: &[&str] = &["Program", "EffectBase"];
+
+/// 欄の型の註(綴り)が Program か EffectBase を名指すか — 註を語に区切り、どれかの語の最後の段が PROGRAM_TYPES の名なら真
+/// (`(| Program EffectBase)`・`Program`・`doeff.Program`)。`object`・`Any`・別名は名指さない。
+fn names_program_type(annotation: &str) -> bool {
+    annotation
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-'))
+        .any(|word| PROGRAM_TYPES.contains(&word.rsplit('.').next().unwrap_or(word)))
+}
+
+/// 1 つの source の最上位の `defrecord` の、宣言の型が Program か EffectBase を名指す欄(`<module>.<型の名>` → 欄の名)。
+/// 欄は `(#^ 型 名)` と `#^ 型 名` の 2 つの綴り(doeff-hy の defrecord)。
+pub fn program_fields_in(source: &str, module: &str) -> ProgramFields {
+    let mut reader = Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    let hy = Hy { src: source };
+    let mut found = ProgramFields::default();
+    let mut pending: Vec<&Form> = forms.iter().collect();
+    while let Some(form) = pending.pop() {
+        let Some(items) = live(form) else { continue };
+        match items.first().and_then(|h| hy.symbol(h)) {
+            Some("do" | "eval-and-compile" | "eval-when-compile") => pending.extend(items[1..].iter().copied()),
+            Some("defrecord") => {
+                let Some(name) = items.get(1).and_then(|f| hy.symbol(f)) else { continue };
+                let record = format!("{}.{}", module, hy_mangle(name));
+                for item in items.iter().skip(2) {
+                    let annotated = match &item.node {
+                        Node::Annotated { .. } => Some(*item),
+                        Node::Seq { delim: Delim::Paren, .. } => live(item).and_then(|inner| inner.first().copied()),
+                        _ => None,
+                    };
+                    if let Some(Form { node: Node::Annotated { annotation: Some(annotation), target: Some(target) }, .. }) = annotated {
+                        if let (true, Some(field)) = (names_program_type(hy.text(annotation)), hy.symbol(target)) {
+                            found.fields.entry(record.clone()).or_default().insert(hy_mangle(field));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 /// 素の呼び 1 件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BareCall {
@@ -150,11 +224,18 @@ const MODULE_LEVEL_BODY_HEADS: &[&str] = &[
     "fn", "fn/a", "fnk", "defmacro", "defmacro/g!", "defreader", "defclass", "defrecord", "defmain", "import", "require", "quote", "quasiquote",
 ];
 
-/// 1 つの source の、答えとして使う所で呼んだ defk を全部拾う(同じ定義の同じ呼び先は最初の 1 件だけ)。
+/// 1 つの source の、答えとして使う所で呼んだ defk を全部拾う(同じ定義の同じ呼び先は最初の 1 件だけ)。record の欄の型は知らない
+/// (型を作る呼びの欄は全部答えとして数える — 欄の型を使うのは `bare_calls_with`)。
 pub fn bare_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<BareCall> {
+    bare_calls_with(source, scope, defks, &ProgramFields::default())
+}
+
+/// `bare_calls_in` と同じ — ただし型を作る呼びの `:欄 値` で、その欄の宣言の型が Program か EffectBase を名指すなら(`fields`)、値を
+/// 答えとして数えない(欄が Program を運ぶ宣言・agora-redesign #2877)。
+pub fn bare_calls_with(source: &str, scope: Scope<'_>, defks: &DefkNames, fields: &ProgramFields) -> Vec<BareCall> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
-    let walker = Walker { hy: Hy { src: source }, scope, defks };
+    let walker = Walker { hy: Hy { src: source }, scope, defks, fields };
     let mut found: Vec<BareCall> = Vec::new();
     for form in &forms {
         walker.top(form, &mut found);
@@ -169,6 +250,7 @@ struct Walker<'a> {
     hy: Hy<'a>,
     scope: Scope<'a>,
     defks: &'a DefkNames,
+    fields: &'a ProgramFields,
 }
 
 impl Walker<'_> {
@@ -280,6 +362,15 @@ impl Walker<'_> {
         };
         // record の欄は答えとして使う所 — ただし effect として出す型(`(<- (AnswerLater :answer (f …)))`)の欄は Program を運ぶことがあるので除く。
         let constructor = head.is_some_and(|h| h.chars().next().is_some_and(|c| c.is_ascii_uppercase())) && !doeff && !is_defk && !yielded;
+        // その欄の宣言の型が Program か EffectBase を名指す `:欄 値` の値は、Program を運ぶ欄に置いた物 — 答えとして使う所ではない(#2877)。
+        let program_field = |index: usize| -> bool {
+            let record = qualified.as_deref().filter(|_| constructor);
+            let keyword = items.get(index.wrapping_sub(1)).filter(|prev| index >= 2 && matches!(prev.node, Node::Keyword));
+            match (record, keyword) {
+                (Some(record), Some(prev)) => self.fields.carries_program(record, &hy_mangle(self.hy.text(prev).trim_start_matches(':'))),
+                _ => false,
+            }
+        };
         let binds = head == Some("<-");
         let last = items.len().saturating_sub(1);
         for (index, child) in items.iter().enumerate().skip(1) {
@@ -300,7 +391,7 @@ impl Walker<'_> {
                     }
                     continue;
                 }
-                _ => constructor && !matches!(child.node, Node::Keyword),
+                _ => constructor && !matches!(child.node, Node::Keyword) && !program_field(index),
             };
             let child_yielded = match head {
                 Some("!" | "yield" | "yield-from") => true,
@@ -389,6 +480,43 @@ mod tests {
         assert!(names.contains("app.core.x.fetch") && names.contains("app.core.x.inner") && names.contains("app.core.x.typed"));
         assert!(!names.contains("app.core.x.plain"));
         assert_eq!(names.len(), 3);
+    }
+
+    /// agora-redesign #2877: record の欄の宣言の型が Program か EffectBase を名指す時だけ、型を作る呼びのその欄の素の呼びを数えない。
+    /// 型の註の無い欄・object / Any の欄・別名で隠れた欄・位置で渡した値は今までどおり数える。
+    #[test]
+    fn record_fields_declared_as_programs_carry_bare_calls_and_others_do_not() {
+        let source = r#"(defrecord Serving
+  "設定"
+  (#^ (| Program EffectBase) prepare)
+  #^ Program later
+  (#^ doeff.Program qualified)
+  (#^ object anything)
+  (#^ typing.Any whatever)
+  (#^ PreparedProgram aliased)
+  (#^ dict rows)
+  plain)
+(defk carries [x] (Serving :prepare (fetch x) :later (fetch x) :qualified (fetch x)))
+(defk untyped [x] (Serving :plain (fetch x)))
+(defk opaque [x] (Serving :anything (fetch x)))
+(defk any-typed [x] (Serving :whatever (fetch x)))
+(defk hidden [x] (Serving :aliased (fetch x)))
+(defk data [x] (Serving :rows (fetch x)))
+(defk positional [x] (Serving (fetch x)))"#;
+        let fields = program_fields_in(source, "m");
+        assert!(fields.carries_program("m.Serving", "prepare") && fields.carries_program("m.Serving", "later"));
+        assert!(fields.carries_program("m.Serving", "qualified"));
+        for field in ["anything", "whatever", "aliased", "rows", "plain"] {
+            assert!(!fields.carries_program("m.Serving", field), "{}", field);
+        }
+        let bindings = BTreeMap::new();
+        let defks = DefkNames::of(&["m.fetch"]);
+        let got: Vec<String> =
+            bare_calls_with(source, Scope { module: "m", bindings: &bindings }, &defks, &fields).iter().map(|c| c.detail()).collect();
+        // Program を運ぶ欄(prepare・later・qualified)の carries は拾わない。註の無い欄・object・Any・別名・dict・位置の値は拾う。
+        assert_eq!(got, vec!["untyped::fetch", "opaque::fetch", "any_typed::fetch", "hidden::fetch", "data::fetch", "positional::fetch"]);
+        // 欄の型を知らない呼び(bare_calls_in)は今までどおり全部拾う。
+        assert!(found(source, &[]).contains(&"carries::fetch".to_string()));
     }
 
     #[test]

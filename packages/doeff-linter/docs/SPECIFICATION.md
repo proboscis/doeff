@@ -746,6 +746,11 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   `unless`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねの元・内包表記の元)、record の欄(頭が大文字の型を作る呼びの引数 —
   doeff の package の型と、effect として出す位置 `(<- (T …))`・`(! (T …))` の型は除く)。その位置の中の `if`・`when`・`cond`・`do`・`let`
   の枝も同じ。
+- **Program を運ぶ欄は拾わない**(agora-redesign #2877): repo の Hy の `defrecord` の欄で、宣言の型の註が `Program` か `EffectBase` を
+  名指す欄(`(#^ (| Program EffectBase) prepare)`・`#^ Program later`・`doeff.Program` — 註の語の最後の段で比べる)は Program を運ぶ宣言
+  なので、型を作る呼びの `:欄 値` の値は答えとして使う所ではない。拾うまま: 型の註の無い欄・`object` / `Any` の欄・別名で隠れた欄
+  (別名は Program と綴られない)・位置で渡した値・repo の外(Python の dataclass など)で定義した型。事実: doeff-records の
+  `start-records-server` が `(RecordsServing … :prepare (ready-handlers …))` — `serve-records` が用意の task として走らせる Program の欄。
 - **拾わない所**: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数へ渡す形も — Program を受けて走らせる
   関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
   (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に

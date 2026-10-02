@@ -581,6 +581,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
+                    let program_fields = crate::timing::timed("program-fields", || program_fields_for(root, enabled));
                     // 歩く範囲(根の下と設定の include — 根の外の検の dir も・agora-redesign #2821)。
                     let files: Vec<SourceFile> = hy_files::walked(root, &settings.include)
                         .into_iter()
@@ -600,7 +601,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .map(|source| {
                                     let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
                                     found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
-                                    found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks, &program_params));
+                                    found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks, &program_params, &program_fields));
                                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                                         found.extend(judge_effect_mismatches(file, &source, definitions, effect_world.as_ref()));
                                     }
@@ -741,7 +742,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
-                    drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params));
+                    let program_fields = crate::timing::timed("program-fields", || program_fields_for(root, enabled));
+                    drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         drafts.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
                     }
@@ -4391,6 +4393,28 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
     all
 }
 
+/// DOEFF126 が答えとして数えない record の欄(宣言の型が Program か EffectBase を名指す欄)を repo の Hy の file から集める(規則が
+/// 有効な時だけ — 無ければ空)。`(defrecord` の綴りを含む file だけを読む。defk の名と同じく file ごとに覚え、変わった file だけ読み直す
+/// (agora-redesign #2877)。
+fn program_fields_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::ProgramFields {
+    let mut all = bare_calls::ProgramFields::default();
+    if !enabled.contains(&ProjectRule::DefkCalledBare) {
+        return all;
+    }
+    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
+        .into_iter()
+        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
+        .collect();
+    let found: Vec<bare_calls::ProgramFields> = facts_cache::per_file(root, "program-fields", &files, |rel, path| {
+        let source = std::fs::read_to_string(path).ok()?;
+        source.contains("(defrecord").then(|| bare_calls::program_fields_in(&source, &module_of(rel))).filter(|f| !f.is_empty())
+    });
+    for fields in found {
+        all.extend(fields);
+    }
+    all
+}
+
 /// DOEFF127・130 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
 /// stdin の中身で読む。推論の読み方は defk の見出し(editor-json の signatures)と同じ `signatures::World` の 1 か所。
 fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, overlay: Option<(&str, &str)>) -> Option<signatures::World> {
@@ -4532,6 +4556,7 @@ fn judge_bare_calls(
     enabled: &BTreeSet<ProjectRule>,
     defks: &bare_calls::DefkNames,
     program_params: &param_calls::ProgramParams,
+    program_fields: &bare_calls::ProgramFields,
 ) -> Vec<Draft> {
     let in_population = is_definition_file(&file.rel, definitions) || is_test_file(&file.rel, definitions);
     if !enabled.contains(&ProjectRule::DefkCalledBare) || !in_population || defks.is_empty() {
@@ -4541,7 +4566,8 @@ fn judge_bare_calls(
     let module = module_of(&file.rel);
     let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
     let scope = smells::Scope { module: &module, bindings: &facts.bindings };
-    let mut drafts: Vec<Draft> = bare_calls::bare_calls_in(source, scope, defks)
+    // 宣言の型が Program か EffectBase を名指す record の欄に置いた素の呼びは数えない(agora-redesign #2877)。
+    let mut drafts: Vec<Draft> = bare_calls::bare_calls_with(source, scope, defks, program_fields)
         .into_iter()
         .map(|call| Draft {
             rule: ProjectRule::DefkCalledBare,
