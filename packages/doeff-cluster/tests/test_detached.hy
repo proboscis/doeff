@@ -11,7 +11,9 @@
 ;; 筋書き: 送って待つ / 同じ key の送り直し / 呼び手が消えても続き再接続 / 結果の後の担い手の死 / 走っている間の担い手の死 /
 ;;         lease は担い手が延ばす / 取り消し / Program の例外 / 知らない key と解放 / timeout / 版の不一致 / key の衝突。
 ;; その後に coordinator の判断(純粋な関数)と worker の途絶の検。
-(require doeff-hy.macros [deftest defk deff defhandler <- val var])
+(require doeff-hy.macros [deftest defk defhandler <- val var])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
 (import json)
@@ -47,6 +49,7 @@
                                       DetachedUnreachable DetachedAwaited])
 (import doeff_cluster.shared.protocol.detached [detached-cluster])
 (import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker ReadCoordinator])
 (import doeff_cluster.sim.local [ProcessesOf])
@@ -88,64 +91,86 @@
 
 ;; --- 組 -----------------------------------------------------------------------------------------------------
 
-(defclass Rig []
-  "筋書きを回す組。handlers = 筋書きに被せる handler の組(外側が先 — sim は使わない)・worker = 担い手(sim は None)・
-   sim-workers = sim の組の worker(SimWorker の tuple — 他の組は None)・slow / lease / poll = 時間の尺度・runs / ids = key の task を
-   coordinator が作った数 / id の列(sim の組は coordinator の GET /state を読むので None)。"
-  (defn #^ None __init__ [self #^ str kind #^ list handlers #^ (| RigWorker None) worker #^ float slow #^ float lease #^ float poll
-                  #^ (| Callable None) [runs None] #^ (| Callable None) [close None] #^ (| tuple None) [sim-workers None]
-                  #^ (| Callable None) [ids None]]
-    (setv self.kind kind self.handlers handlers self.worker worker self.slow slow self.lease lease self.poll poll
-          self.runs runs self.close (or close (fn [] None)) self.sim-workers sim-workers self.ids ids)))
+(defrecord Rig
+  "筋書きを回す組。kind = 組の名・handlers = 筋書きに被せる handler の組(外側が先 — sim は使わない)・worker = 担い手(sim は None)・
+   slow / lease / poll = 時間の尺度・coordinator / url = key の task を coordinator が作った数と id の列を読む先(coordinator の組は
+   手元の MemoryCoordinator・served の組は本物の process の URL・sim の組は coordinator の GET /state を読むので両方 None)・
+   close = 筋書きの後に閉じる物・sim-workers = sim の組の worker(SimWorker の tuple — 他の組は None)。"
+  (#^ str kind)
+  (#^ list handlers)
+  (#^ (| RigWorker None) worker)
+  (#^ float slow)
+  (#^ float lease)
+  (#^ float poll)
+  (setv #^ (| MemoryCoordinator None) coordinator None)
+  (setv #^ (| str None) url None)
+  (setv #^ Callable close (fn [] None))
+  (setv #^ (| tuple None) sim-workers None))
 
 
-(deff sim-rig [runner-versions]  ; defk にできない: pytest の params が渡す組を開く関数(open-sim-rig)が Program の外で呼ぶ
+(defk sim-rig [runner-versions]
   {:pre [(: runner-versions (| dict None))] :post [(: % Rig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "sim の組を開くため: 担い手 = 能力 local の sim の worker 1 台(runner-versions = その worker の名乗る版 — None は送り手と同じ)。
    送る Program が自分の handler を並べる(sim の宿は柵の中で走らせ、足りない handler を補わない)。task の始まりは worker の拍(0.5 秒)と
    コードの準備の拍を挟むので、slow は他の組より長く取る(仮想の時計なので走る時間は増えない)。"
-  (Rig "sim" [] None 6.0 5.0 1.0
+  (Rig :kind "sim" :handlers [] :worker None :slow 6.0 :lease 5.0 :poll 1.0
        :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions))))
 
 
-(defn #^ Rig coordinator-rig [#^ Path tmp-path #^ (| dict None) runner-versions]
-  (setv clock (SimClock)
-        coordinator (MemoryCoordinator clock)
-        transport (httpx.MockTransport coordinator.handle)
-        worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (or runner-versions (run (process-versions os.environ))) :transport transport)
-        sender (detached-sender "r"))
-  (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
-                      (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
-       worker 3.0 5.0 0.5
-       :runs (fn [key] (len (lfor t (.values coordinator.state.tasks) :if (= t.key key) t)))
-       :ids (fn [key] (lfor #(i t) (.items coordinator.state.tasks) :if (= t.key key) i))))
+(defk coordinator-rig [tmp-path runner-versions]
+  {:pre [(: tmp-path Path) (: runner-versions (| dict None))] :post [(: % Rig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "coordinator の組を開くため: 本物の coordinator の判断を MockTransport の後ろに置き、担い手は同じ VM で走らせる(仮想の時計 —
+   runner-versions = 担い手の名乗る版・None はこの process の版)。"
+  (<- here dict (process-versions os.environ))
+  (val clock (SimClock))
+  (val coordinator (MemoryCoordinator clock))
+  (val transport (httpx.MockTransport coordinator.handle))
+  (val worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (or runner-versions here) :transport transport))
+  (val sender (detached-sender "r"))
+  (Rig :kind "coordinator"
+       :handlers [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
+                  (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
+       :worker worker :slow 3.0 :lease 5.0 :poll 0.5 :coordinator coordinator))
 
 
-(defn #^ Rig served-rig [#^ str url #^ Path tmp-path #^ (| dict None) [runner-versions None]]
-  (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (run (process-versions os.environ))))
-        sender (detached-sender "r"))
-  (defn #^ list ids [#^ str key]
-    (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) (get t "id")))
-  (defn #^ int runs [#^ str key]
-    (len (ids key)))
+(defk served-rig [url tmp-path [runner-versions None]]
+  {:pre [(: url str) (: tmp-path Path) (: runner-versions (| dict None))] :post [(: % Rig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "served の組を開くため: 本物の coordinator の process(url)に HTTP で話す(実時間 — runner-versions = 担い手の名乗る版・None は
+   この process の版)。"
+  (<- here dict (process-versions os.environ))
+  (val worker (RigWorker url (/ tmp-path "tasks") (or runner-versions here)))
+  (val sender (detached-sender "r"))
   ;; 実時間: lease は heartbeat の間隔(0.2 秒)の十倍以上に取る(込んだ機体で heartbeat が遅れても消失と取り違えない)。
-  (Rig "served" [(await-handler) (async-time-handler) (http-production-handler) (rig-runner-loss worker)
-                 (detached-cluster (route-cell url) TEST-ROUTE sender :poll-seconds 0.2)]
-       worker 1.0 2.5 0.2 :runs runs :ids ids))
+  (Rig :kind "served"
+       :handlers [(await-handler) (async-time-handler) (http-production-handler) (rig-runner-loss worker)
+                  (detached-cluster (route-cell url) TEST-ROUTE sender :poll-seconds 0.2)]
+       :worker worker :slow 1.0 :lease 2.5 :poll 0.2 :url url))
 
 
-(defn #^ Rig open-sim-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
-  (sim-rig runner-versions))
+(defk open-sim-rig [tmp-path request [runner-versions None]]
+  {:pre [(: tmp-path Path) (: request pytest.FixtureRequest) (: runner-versions (| dict None))] :post [(: % Rig)]
+   :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "名 sim の組を開くため(組を開く関数の形 (tmp-path request [runner-versions]) にそろえる)。"
+  (<- rig Rig (sim-rig runner-versions))
+  rig)
 
 
-(defn #^ Rig open-coordinator-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
-  (coordinator-rig tmp-path runner-versions))
+(defk open-coordinator-rig [tmp-path request [runner-versions None]]
+  {:pre [(: tmp-path Path) (: request pytest.FixtureRequest) (: runner-versions (| dict None))] :post [(: % Rig)]
+   :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "名 coordinator の組を開くため(組を開く関数の形にそろえる)。"
+  (<- rig Rig (coordinator-rig tmp-path runner-versions))
+  rig)
 
 
-(defn #^ Rig open-served-rig [#^ Path tmp-path #^ pytest.FixtureRequest request #^ (| dict None) [runner-versions None]]
+(defk open-served-rig [tmp-path request [runner-versions None]]
+  {:pre [(: tmp-path Path) (: request pytest.FixtureRequest) (: runner-versions (| dict None))] :post [(: % Rig)]
+   :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "名 served の組を開くため(組を開く関数の形にそろえる)。"
   ;; 本物の coordinator の process(conftest の served_coordinator・session で共有)は served の組の検が
   ;; 走る時にだけ起こす(sim と coordinator の組だけを走らせる時は起動の数秒を払わない)。
-  (served-rig (.getfixturevalue request "served_coordinator") tmp-path runner-versions))
+  (<- rig Rig (served-rig (.getfixturevalue request "served_coordinator") tmp-path runner-versions))
+  rig)
 
 
 ;; 筋書き 1 つを 3 つの組で回す: 各 deftest は `:params {"rig_name" RIGS}` で組ごとの検に展開される
@@ -163,7 +188,8 @@
   {:pre [(: rig-name str) (: tmp-path Path) (: request pytest.FixtureRequest) (: runner-versions (| dict None))] :post [(: % Rig)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "名で表から組を開く関数を引き、組を開くため(runner-versions = None なら組の既定の版)。"
-  ((get RIG-OPENERS rig-name) tmp-path request runner-versions))
+  (<- rig Rig ((get RIG-OPENERS rig-name) tmp-path request runner-versions))
+  rig)
 
 
 (defk with-worker [rig scenario]
@@ -196,22 +222,22 @@
 
 (defk runs-of [rig key]
   {:pre [(: rig Rig) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "key の task を coordinator が作った数(冪等の検 — sim の組は coordinator の GET /state を読む)。"
-  (cond
-    (= rig.kind "sim") (do (<- state dict (ReadCoordinator "/state"))
-                           (len (lfor t (get state "tasks") :if (= (.get t "key") key) t)))
-    (is rig.runs None) (raise (ValueError (.format "組 {} は作った数を数えられない" rig.kind)))
-    True (rig.runs key)))
+  "key の task を coordinator が作った数(冪等の検 — task-ids-of の列の長さ)。"
+  (<- ids list (task-ids-of rig key))
+  (len ids))
 
 
 (defk task-ids-of [rig key]
   {:pre [(: rig Rig) (: key str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "key の task の id の列(担い手の job の名 task/<id> を引くため — sim の組は coordinator の GET /state を読む)。"
+  "key の task の id の列(担い手の job の名 task/<id> を引くため — sim の組は coordinator の GET /state を読み、coordinator の組は
+   手元の coordinator の状態を、served の組は本物の process の GET /state を組の HTTP の handler で読む)。"
   (cond
     (= rig.kind "sim") (do (<- state dict (ReadCoordinator "/state"))
                            (lfor t (get state "tasks") :if (= (.get t "key") key) (get t "id")))
-    (is rig.ids None) (raise (ValueError (.format "組 {} は task の id を引けない" rig.kind)))
-    True (rig.ids key)))
+    (is-not rig.coordinator None) (lfor #(i t) (.items rig.coordinator.state.tasks) :if (= t.key key) i)
+    (is-not rig.url None) (do (<- answer HttpResponse (HttpRequest "GET" (+ rig.url "/state")))
+                              (lfor t (get (json.loads answer.text) "tasks") :if (= (.get t "key") key) (get t "id")))
+    True (raise (ValueError (.format "組 {} は task の id を引けない" rig.kind)))))
 
 
 (defk runner-holds [rig key]
@@ -630,36 +656,53 @@
 
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 
-(defn #^ tuple call [#^ ClusterState state #^ str method #^ str path #^ int now #^ (| dict None) [body None]]
+(defk call [state method path now [body None]]
+  {:pre [(: state ClusterState) (: method str) (: path str) (: now int) (: body (| (get dict #(str object)) None))] :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "coordinator の口へ 1 回問うため(本物の判断 responded): 返り値 #(状態 status 本文)。"
   (responded state (http-request method path {} body :actor "test") now T))
 
-(defn #^ tuple beat [#^ ClusterState state #^ str name #^ int now #^ str [boot "b1"] #^ (| list None) [statuses None]
-           #^ (| int None) [boot-at None] #^ (| list None) [provides None]]
-  (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "versions" V "boot" boot
-                                          "statuses" (or statuses [])}
-                                         (if (is boot-at None) {} {"bootAt" boot-at}))))
+(defk beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None]]
+  {:pre [(: state ClusterState) (: name str) (: now int) (: boot str) (: statuses (| (get list (get dict #(str object))) None)) (: boot-at (| int None))
+         (: provides (| (get list str) None))]
+   :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker name の heartbeat を 1 回送るため(版 V・能力 provides・世代 boot・起動時刻 boot-at・状態の報告 statuses): 返り値 #(状態 status 本文)。"
+  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "versions" V "boot" boot
+                                                          "statuses" (or statuses [])}
+                                                         (if (is boot-at None) {} {"bootAt" boot-at}))))
+  reply)
 
-(defn #^ tuple put-detached [#^ ClusterState state #^ str key #^ int now #^ float [lease 10.0] #^ float [retain 100.0]]
+(defk put-detached [state key now [lease 10.0] [retain 100.0]]
+  {:pre [(: state ClusterState) (: key str) (: now int) (: lease float) (: retain float)] :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "切り離した task を key で 1 回送るため: 返り値 #(状態 status 本文)。"
   ;; 詰めた Program を置き場に(版 V と一緒に)置いてから、本文は置き場のキーだけを運ぶ(service の宣言と同じ運び方)。
-  (setv #(state sha) (run (program-placed state V :now now)))
-  (call state "PUT" (+ "/detached/" key) now {"program" sha "revision" "r" "needs" ["net"]
-                                              "leaseSeconds" lease "retainSeconds" retain}))
+  (<- placed (get tuple #(ClusterState str)) (program-placed state V :now now))
+  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" (+ "/detached/" key) now {"program" (get placed 1) "revision" "r" "needs" ["net"]
+                                                                        "leaseSeconds" lease "retainSeconds" retain}))
+  reply)
 
-;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
-(defn #^ str phase-of [#^ ClusterState state #^ str key] (get (get (call state "GET" (+ "/detached/" key) (+ state.started-ms T.lease-ms)) 2) "phase"))
+(defk phase-of [state key]
+  {:pre [(: state ClusterState) (: key str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "key の切り離した task の phase を呼び手の読みで引くため。"
+  ;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
+  (<- read (get tuple #(ClusterState int (get dict #(str object)))) (call state "GET" (+ "/detached/" key) (+ state.started-ms T.lease-ms)))
+  (val phase (get (get read 2) "phase"))
+  (assert (isinstance phase str) read)
+  phase)
 
 
 (deftest test-detached-task-goes-to-the-worker-with-its-boot-and-a-detached-flag
-  (val reply-1 (beat (ClusterState) "w" 0))
+  (val reply-1 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-1 0))
-  (val reply-2 (put-detached s "job-1" 100))
+  (val reply-2 (! (put-detached s "job-1" 100)))
   (:= s (get reply-2 0))
   (val status (get reply-2 1))
   (val reply (get reply-2 2))
   (assert (= #(status (get reply "created")) #(200 True)))
   (setv task (get s.tasks (get reply "task")))
   (assert (= #(task.phase task.worker task.boot) #("assigned" "w" "b1")))
-  (val reply-3 (beat s "w" 200))
+  (val reply-3 (! (beat s "w" 200)))
   (:= s (get reply-3 0))
   (val body (get reply-3 2))
   (setv #(row) (get body "tasks"))
@@ -669,15 +712,15 @@
 
 
 (deftest test-caller-reads-do-not-extend-the-lease-but-worker-heartbeats-do
-  (val reply-4 (beat (ClusterState) "w" 0))
+  (val reply-4 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-4 0))
-  (val reply-5 (put-detached s "job-2" 0 :lease 10.0))
+  (val reply-5 (! (put-detached s "job-2" 0 :lease 10.0)))
   (:= s (get reply-5 0))
   (val reply (get reply-5 2))
   (setv id (get reply "task"))
-  (val reply-6 (beat s "w" 9000))
+  (val reply-6 (! (beat s "w" 9000)))
   (:= s (get reply-6 0))                     ; 担い手の heartbeat が lease を 19000 まで延ばす
-  (val reply-7 (call s "GET" "/detached/job-2" 15000))
+  (val reply-7 (! (call s "GET" "/detached/job-2" 15000)))
   (:= s (get reply-7 0))   ; 呼び手の読みは lease に触らない
   (:= s (tick s 18000 T))
   (assert (= (. (get s.tasks id) phase) "assigned"))
@@ -689,20 +732,20 @@
 (deftest test-a-restarted-worker-process-does-not-rerun-its-detached-tasks-and-they-are-lost-by-the-lease
   ;; 2026-09-27までは新しい世代の heartbeat が来た拍に lost にしていた。旧い世代がまだ動いている(Pod の
   ;; preStop の drain の間)こともあるので、旧い世代の task は旧い世代の heartbeat だけが延ばし、沈黙したら lease 切れで lost。
-  (val reply-8 (beat (ClusterState) "w" 0))
+  (val reply-8 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-8 0))
-  (val reply-9 (put-detached s "job-3" 0 :lease 10.0))
+  (val reply-9 (! (put-detached s "job-3" 0 :lease 10.0)))
   (:= s (get reply-9 0))
   (val reply (get reply-9 2))
   (setv id (get reply "task"))
   ;; 同じ名の worker が別の process の世代で名乗る(結果の報告を持っていても、前の世代の物としては受け取らない・走らせ直さない)
-  (val reply-10 (beat s "w" 1000 :boot "b2" :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R"}]))
+  (val reply-10 (! (beat s "w" 1000 :boot "b2" :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R"}])))
   (:= s (get reply-10 0))
   (val body (get reply-10 2))
   (assert (= (get body "tasks") []))
   (assert (= (. (get s.tasks id) phase) "assigned"))
   ;; 新しい世代の heartbeat は旧い世代の task の lease を延ばさない。旧い世代が戻らなければ lease 切れ(10 秒)で lost。
-  (val reply-11 (beat s "w" 9000 :boot "b2"))
+  (val reply-11 (! (beat s "w" 9000 :boot "b2")))
   (:= s (get reply-11 0))
   (:= s (tick s 10001 T))
   (assert (= (. (get s.tasks id) phase) "lost"))
@@ -713,29 +756,35 @@
 ;; worker の Pod を消すと、旧 Pod は preStop の drain(約 40 秒)の間も worker の process を動かし、新 Pod の worker は同じ名で名乗る。
 ;; 2 つの process が交互に heartbeat を送る。coordinator は初めて見た世代を新しい世代とし、退いた世代の heartbeat を断る。
 
-(defn #^ tuple alternate [#^ ClusterState s #^ str name #^ int now #^ list boots #^ (| dict None) [statuses None]]
+(defk alternate [start name begin boots [statuses None]]
+  {:pre [(: start ClusterState) (: name str) (: begin int) (: boots (get list str)) (: statuses (| (get dict #(str (get list (get dict #(str object))))) None))]
+   :post [(: % (get tuple #(ClusterState int (get dict #(str (get dict #(str object)))))))]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
   "boots の順に 50 ms おきに heartbeat を送る。返り値 #(状態 最後の時刻 世代 → 最後の返事)。"
-  (setv replies {})
+  (var s start)
+  (var now begin)
+  (val replies {})
   (for [boot boots]
-    (+= now 50)
-    (setv #(s _ body) (beat s name now :boot boot :statuses (.get (or statuses {}) boot [])))
-    (setv (get replies boot) body))
+    (:= now (+ now 50))
+    (<- got (get tuple #(ClusterState int (get dict #(str object)))) (beat s name now :boot boot :statuses (.get (or statuses {}) boot [])))
+    (:= s (get got 0))
+    (setv (get replies boot) (get got 2)))
   #(s now replies))
 
 
 (deftest test-an-old-generation-heartbeat-does-not-lose-a-task-placed-on-the-new-generation
-  (val reply-12 (beat (ClusterState) "w" 0 :boot "old"))
+  (val reply-12 (! (beat (ClusterState) "w" 0 :boot "old")))
   (var s (get reply-12 0))
   ;; 新 Pod の worker が 11 秒後に同じ名で名乗る。以後の task は新しい世代に置く。
-  (val reply-13 (beat s "w" 11000 :boot "new"))
+  (val reply-13 (! (beat s "w" 11000 :boot "new")))
   (:= s (get reply-13 0))
-  (val reply-14 (put-detached s "job-25" 11010))
+  (val reply-14 (! (put-detached s "job-25" 11010)))
   (:= s (get reply-14 0))
   (val reply (get reply-14 2))
   (setv id (get reply "task"))
   (assert (= (. (get s.tasks id) boot) "new"))
   ;; 旧 Pod の drain の間、2 つの世代が交互に heartbeat を送る(実測は 2 秒ごと・ここは 50 ms ごと)。
-  (val reply-15 (alternate s "w" 11010 ["old" "new" "old" "new" "old"]))
+  (val reply-15 (! (alternate s "w" 11010 ["old" "new" "old" "new" "old"])))
   (:= s (get reply-15 0))
   (val now (get reply-15 1))
   (val replies (get reply-15 2))
@@ -747,38 +796,38 @@
   (assert (get replies "old" "superseded"))
   (assert (= (. (get s.workers "w") boot) "new"))
   ;; 旧い世代の heartbeat は新しい世代の task の lease を延ばさず、新しい世代の heartbeat が延ばす。
-  (val reply-16 (beat s "w" (+ now 50) :boot "new"))
+  (val reply-16 (! (beat s "w" (+ now 50) :boot "new")))
   (:= s (get reply-16 0))
   (assert (= (. (get s.tasks id) lease-until-ms) (+ now 50 (. (get s.tasks id) lease-ms)))))
 
 
 (deftest test-a-task-on-the-old-generation-keeps-its-lease-and-result-while-the-old-generation-lives
-  (val reply-17 (beat (ClusterState) "w" 0 :boot "old"))
+  (val reply-17 (! (beat (ClusterState) "w" 0 :boot "old")))
   (var s (get reply-17 0))
-  (val reply-18 (put-detached s "job-24" 0 :lease 10.0))
+  (val reply-18 (! (put-detached s "job-24" 0 :lease 10.0)))
   (:= s (get reply-18 0))
   (var reply (get reply-18 2))
   (setv done (get reply "task"))
-  (val reply-19 (put-detached s "job-23" 0 :lease 10.0))
+  (val reply-19 (! (put-detached s "job-23" 0 :lease 10.0)))
   (:= s (get reply-19 0))
   (:= reply (get reply-19 2))
   (setv silent (get reply "task"))
-  (val reply-20 (beat s "w" 6000 :boot "new"))
+  (val reply-20 (! (beat s "w" 6000 :boot "new")))
   (:= s (get reply-20 0))
   ;; 新しい世代が来ても、旧い世代に置いた task は lost にしない(旧い世代は drain の間まだ走らせている)。
   (assert (= (. (get s.tasks done) phase) "assigned"))
   ;; 旧い世代の heartbeat は自分の世代の task の lease を延ばし、その task だけを返事に載せる。
-  (val reply-21 (beat s "w" 9000 :boot "old"))
+  (val reply-21 (! (beat s "w" 9000 :boot "old")))
   (:= s (get reply-21 0))
   (val body (get reply-21 2))
   (assert (= (sorted (lfor t (get body "tasks") (get t "id"))) (sorted [done silent])))
   ;; 旧い世代の終わりの報告は受ける(結果を捨てない)。
-  (val reply-22 (beat s "w" 12000 :boot "old"
-                       :statuses [{"name" (+ "task/" done) "phase" "finished" "result" "R" "detail" ""}]))
+  (val reply-22 (! (beat s "w" 12000 :boot "old"
+                       :statuses [{"name" (+ "task/" done) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-22 0))
   (assert (= #((. (get s.tasks done) phase) (. (get s.tasks done) result)) #("finished" "R")))
   ;; 旧い世代が消えた(heartbeat が止まった)= lease 切れで lost。新しい世代の heartbeat は延ばさない。
-  (val reply-23 (beat s "w" 20000 :boot "new"))
+  (val reply-23 (! (beat s "w" 20000 :boot "new")))
   (:= s (get reply-23 0))
   (:= s (tick s 22001 T))
   (assert (= (. (get s.tasks silent) phase) "lost"))
@@ -788,14 +837,14 @@
 
 
 (deftest test-the-generation-order-survives-a-coordinator-restart
-  (val reply-24 (beat (ClusterState) "w" 0 :boot "old"))
+  (val reply-24 (! (beat (ClusterState) "w" 0 :boot "old")))
   (var s (get reply-24 0))
-  (val reply-25 (beat s "w" 1000 :boot "new"))
+  (val reply-25 (! (beat s "w" 1000 :boot "new")))
   (:= s (get reply-25 0))
   (var again (! (state-from-kv (! (full-kv s)) 2000)))
   (assert (= #((. (get again.workers "w") boot) (. (get again.workers "w") retired)) #("new" #("old"))))
   ;; 読み直した後も、旧い世代の heartbeat は新しい世代を押しのけない。
-  (val reply-26 (beat again "w" 2100 :boot "old"))
+  (val reply-26 (! (beat again "w" 2100 :boot "old")))
   (:= again (get reply-26 0))
   (val body (get reply-26 2))
   (assert (get body "superseded"))
@@ -807,9 +856,9 @@
 ;; 止んだ後も新しい世代の heartbeat を断り続けて名が沈黙した。worker は heartbeat に process の起動時刻 bootAt を載せる。
 
 (deftest test-an-empty-coordinator-that-hears-the-new-generation-first-keeps-the-new-generation
-  (val reply-27 (beat (ClusterState) "w" 0 :boot "new" :boot-at 2000))
+  (val reply-27 (! (beat (ClusterState) "w" 0 :boot "new" :boot-at 2000)))
   (var s (get reply-27 0))
-  (val reply-28 (beat s "w" 50 :boot "old" :boot-at 1000))
+  (val reply-28 (! (beat s "w" 50 :boot "old" :boot-at 1000)))
   (:= s (get reply-28 0))
   (val old-reply (get reply-28 2))
   ;; 古い世代の heartbeat は superseded の答え・今の世代は新しい世代のまま。
@@ -817,52 +866,52 @@
   (assert (= (. (get s.workers "w") boot) "new") (get s.workers "w"))
   (assert (in "old" (. (get s.workers "w") retired)))
   ;; 古い世代の preStop の drain は今の世代に付かない。
-  (val reply-29 (call s "POST" "/workers/w/drain" 100 {"boot" "old"}))
+  (val reply-29 (! (call s "POST" "/workers/w/drain" 100 {"boot" "old"})))
   (:= s (get reply-29 0))
   (var view (get reply-29 2))
   (assert (not-in "w" s.drains) s.drains)
   (assert (get view "drain" "superseded") view)
   ;; 古い世代が止み、新しい世代だけが 5 秒ごとに heartbeat を送る → 60 秒後も新しい世代が生きていて ready。
   (for [t (range 5000 65000 5000)]
-    (val beaten (beat s "w" t :boot "new" :boot-at 2000))
+    (val beaten (! (beat s "w" t :boot "new" :boot-at 2000)))
     (:= s (get beaten 0))
     (val reply (get beaten 2))
     (assert (not (.get reply "superseded" False)) #(t reply)))
   (:= s (tick s 65000 T))
-  (val reply-30 (call s "GET" "/workers/w" 65000))
+  (val reply-30 (! (call s "GET" "/workers/w" 65000)))
   (:= view (get reply-30 2))
   (assert (= #((get view "alive") (get view "ready") (get view "boot")) #(True True "new")) view))
 
 
 (deftest test-workers-that-do-not-name-a-boot-time-keep-the-first-seen-order
   ;; 起動時刻を名乗らない旧い worker は今までどおり(初めて見た順: 見ていない世代が新しい)。
-  (val reply-31 (beat (ClusterState) "w" 0 :boot "a"))
+  (val reply-31 (! (beat (ClusterState) "w" 0 :boot "a")))
   (var s (get reply-31 0))
-  (val reply-32 (beat s "w" 50 :boot "b"))
+  (val reply-32 (! (beat s "w" 50 :boot "b")))
   (:= s (get reply-32 0))
   (var reply (get reply-32 2))
   (assert (not (.get reply "superseded" False)))
   (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("b" #("a"))))
-  (val reply-33 (beat s "w" 100 :boot "a"))
+  (val reply-33 (! (beat s "w" 100 :boot "a")))
   (:= s (get reply-33 0))
   (:= reply (get reply-33 2))
   (assert (get reply "superseded"))
   ;; 片方だけが起動時刻を名乗る時も初めて見た順。
-  (val reply-34 (beat s "v" 0 :boot "a" :boot-at 2000))
+  (val reply-34 (! (beat s "v" 0 :boot "a" :boot-at 2000)))
   (:= s (get reply-34 0))
-  (val reply-35 (beat s "v" 50 :boot "b"))
+  (val reply-35 (! (beat s "v" 50 :boot "b")))
   (:= s (get reply-35 0))
   (assert (= (. (get s.workers "v") boot) "b")))
 
 
 (deftest test-a-newer-boot-time-takes-the-name-back-from-the-retired-list
   ;; 旧い coordinator が初めて見た順で退かせた世代でも、両方の起動時刻を知れば起動時刻の大きい方が今の世代。
-  (val reply-36 (beat (ClusterState) "w" 0 :boot "new"))
+  (val reply-36 (! (beat (ClusterState) "w" 0 :boot "new")))
   (var s (get reply-36 0))
-  (val reply-37 (beat s "w" 50 :boot "old" :boot-at 1000))
+  (val reply-37 (! (beat s "w" 50 :boot "old" :boot-at 1000)))
   (:= s (get reply-37 0))
   (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("old" #("new"))))
-  (val reply-38 (beat s "w" 100 :boot "new" :boot-at 2000))
+  (val reply-38 (! (beat s "w" 100 :boot "new" :boot-at 2000)))
   (:= s (get reply-38 0))
   (val reply (get reply-38 2))
   (assert (not (.get reply "superseded" False)) reply)
@@ -870,15 +919,15 @@
 
 
 (deftest test-the-boot-time-survives-the-state-file-and-the-durable-kv
-  (val reply-39 (beat (ClusterState) "w" 0 :boot "old" :boot-at 1000))
+  (val reply-39 (! (beat (ClusterState) "w" 0 :boot "old" :boot-at 1000)))
   (var s (get reply-39 0))
-  (val reply-40 (beat s "w" 100 :boot "new" :boot-at 2000))
+  (val reply-40 (! (beat s "w" 100 :boot "new" :boot-at 2000)))
   (:= s (get reply-40 0))
   (for [again [(! (state-from-kv (! (full-kv s)) 200)) (! (state-from-json (json.loads (json.dumps (! (state-to-json s)))) 200))]]
     (setv w (get again.workers "w"))
     (assert (= #(w.boot w.retired w.boot-at) #("new" #("old") 2000)) w)
     ;; 読み直した後も、一度も見ていない古い世代は起動時刻で古いと分かる(名乗りとして受けない)。
-    (setv #(again _ reply) (beat again "w" 300 :boot "older" :boot-at 500))
+    (setv #(again _ reply) (! (beat again "w" 300 :boot "older" :boot-at 500)))
     (assert (get reply "superseded") reply)
     (assert (= (. (get again.workers "w") boot) "new")))
   ;; 起動時刻の欄の無い旧い形の置き場は、起動時刻を知らない(初めて見た順へ落とす)。
@@ -893,20 +942,20 @@
 ;; coordinator はそれを引き取る。
 
 (deftest test-an-empty-coordinator-adopts-the-running-detached-task-a-worker-reports [tmp-path]
-  (val reply-41 (beat (ClusterState) "w" 0 :boot-at 1000))
+  (val reply-41 (! (beat (ClusterState) "w" 0 :boot-at 1000)))
   (var s (get reply-41 0))
-  (val reply-42 (put-detached s "job-amnesia" 0 :lease 10.0 :retain 100.0))
+  (val reply-42 (! (put-detached s "job-amnesia" 0 :lease 10.0 :retain 100.0)))
   (:= s (get reply-42 0))
   (val reply (get reply-42 2))
   (setv id (get reply "task"))
-  (val reply-43 (beat s "w" 100 :boot-at 1000))
+  (val reply-43 (! (beat s "w" 100 :boot-at 1000)))
   (:= s (get reply-43 0))
   (var body (get reply-43 2))
   (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(before) (.accept-tasks link (get body "tasks")))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
-  (val reply-44 (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows))
+  (val reply-44 (! (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows)))
   (var fresh (get reply-44 0))
   (:= body (get reply-44 2))
   (assert (= (lfor t (get body "tasks") (get t "id")) [id]) body)
@@ -915,89 +964,92 @@
   ;; 引き取った行は同じ置き場のキーを運ぶ(担い手の cache の Program を使い続ける — 状態を失った置き場に Program が無くてもよい)。
   (assert (= (get body "tasks" 0 "program") after.program SAMPLE-TASK-PROGRAM) body)
   (assert (.exists (/ tmp-path "tasks" (+ id ".program"))) "走っている task の Program の印が消えた")
-  (assert (= (phase-of fresh "job-amnesia") "assigned"))
+  (assert (= (! (phase-of fresh "job-amnesia")) "assigned"))
   ;; 終わりの報告は呼び手の key で読める。
-  (val reply-45 (beat fresh "w" 6000 :boot-at 1000
-                           :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (val reply-45 (! (beat fresh "w" 6000 :boot-at 1000
+                           :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}])))
   (:= fresh (get reply-45 0))
-  (setv #(_ _ view) (call fresh "GET" "/detached/job-amnesia" 6000))
+  (setv #(_ _ view) (! (call fresh "GET" "/detached/job-amnesia" 6000)))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")) view)
   ;; 次に振る id は引き取った id と重ならない。
-  (val reply-46 (put-detached fresh "job-next" 6100))
+  (val reply-46 (! (put-detached fresh "job-next" 6100)))
   (:= fresh (get reply-46 0))
   (val other (get reply-46 2))
   (assert (!= (get other "task") id))
   ;; 行を持つ task(取り消した)は引き取らない — 取り消し・lost は今までどおり止める。
-  (val reply-47 (call s "POST" "/detached/job-amnesia/cancel" 200))
+  (val reply-47 (! (call s "POST" "/detached/job-amnesia/cancel" 200)))
   (:= s (get reply-47 0))
-  (val reply-48 (beat s "w" 300 :boot-at 1000 :statuses rows))
+  (val reply-48 (! (beat s "w" 300 :boot-at 1000 :statuses rows)))
   (:= s (get reply-48 0))
   (:= body (get reply-48 2))
   (assert (= (get body "tasks") []) body)
   ;; 写しの無い報告(旧い worker)は引き取らない。
-  (val reply-49 (beat (ClusterState) "w" 5000 :statuses [{"name" (+ "task/" id) "phase" "running"}]))
+  (val reply-49 (! (beat (ClusterState) "w" 5000 :statuses [{"name" (+ "task/" id) "phase" "running"}])))
   (:= body (get reply-49 2))
   (assert (= (get body "tasks") []) body))
 
 
 ;; 直すべき所(構成レビュー 2026-09-27): 起きた直後の読み・needs・終わった報告・id の振り直し・欠けた写し。
 
-(defn #^ tuple placed-echo [#^ Path tmp-path #^ (| list None) [needs None]]
+(defk placed-echo [tmp-path [needs None]]
+  {:pre [(: tmp-path Path) (: needs (| (get list str) None))] :post [(: % (get tuple #(ClusterState str LinkRig JobSpec)))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "もとの coordinator が task を置き、worker が受けて状態の報告に写しを添えるまで。返り値 #(もとの状態 id 報告を作る link 元の spec)。"
-  (setv caps (or needs ["net"]))
-  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot-at 1000 :provides caps))
-  (setv #(s sha) (run (program-placed s V)))
-  (setv #(s _ reply) (call s "PUT" "/detached/job-e" 0 {"program" sha "revision" "r" "needs" caps
-                                                        "leaseSeconds" 10.0 "retainSeconds" 100.0}))
-  (setv id (get reply "task"))
-  (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :provides caps))
-  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
-  (setv #(spec) (.accept-tasks link (get body "tasks")))
-  #(s id link spec))
+  (val caps (or needs ["net"]))
+  (<- named (get tuple #(ClusterState int (get dict #(str object)))) (beat (ClusterState) "w" 0 :boot-at 1000 :provides caps))
+  (<- placed (get tuple #(ClusterState str)) (program-placed (get named 0) V))
+  (<- put (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" "/detached/job-e" 0 {"program" (get placed 1) "revision" "r" "needs" caps
+                                                                "leaseSeconds" 10.0 "retainSeconds" 100.0}))
+  (val id (get (get put 2) "task"))
+  (assert (isinstance id str) put)
+  (<- seen (get tuple #(ClusterState int (get dict #(str object)))) (beat (get put 0) "w" 100 :boot-at 1000 :provides caps))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (val specs (.accept-tasks link (get (get seen 2) "tasks")))
+  (assert (= (len specs) 1) specs)
+  #((get seen 0) id link (get specs 0)))
 
 
 (deftest test-a-just-started-coordinator-does-not-call-a-key-unknown-before-the-workers-report [tmp-path]
-  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv #(_ id link _) (! (placed-echo tmp-path)))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   (var fresh (ClusterState :started-ms 5000))
   ;; worker の最初の heartbeat より先に呼び手の読みが届く: 知らないと言わない(503・warming)。
-  (val reply-50 (call fresh "GET" "/detached/job-e" 5000))
+  (val reply-50 (! (call fresh "GET" "/detached/job-e" 5000)))
   (:= fresh (get reply-50 0))
   (var status (get reply-50 1))
   (var view (get reply-50 2))
   (assert (= #(status (get view "phase")) #(503 "warming")) #(status view))
-  (val reply-51 (beat fresh "w" 5100 :boot-at 1000 :statuses rows))
+  (val reply-51 (! (beat fresh "w" 5100 :boot-at 1000 :statuses rows)))
   (:= fresh (get reply-51 0))
-  (val reply-52 (call fresh "GET" "/detached/job-e" 5200))
+  (val reply-52 (! (call fresh "GET" "/detached/job-e" 5200)))
   (:= fresh (get reply-52 0))
   (:= status (get reply-52 1))
   (:= view (get reply-52 2))
   (assert (= #(status (get view "phase") (get view "task")) #(200 "assigned" id)) view)
   ;; 猶予(lease-ms)を過ぎた後の本当に知らない key は unknown。
-  (val reply-53 (call fresh "GET" "/detached/never" (+ 5000 T.lease-ms)))
+  (val reply-53 (! (call fresh "GET" "/detached/never" (+ 5000 T.lease-ms))))
   (:= status (get reply-53 1))
   (:= view (get reply-53 2))
   (assert (= #(status (get view "phase")) #(200 "unknown")) view))
 
 
 (deftest test-an-adopted-task-keeps-its-needs [tmp-path]
-  (setv #(s id link spec) (placed-echo tmp-path ["cluster-net"]))
+  (setv #(s id link spec) (! (placed-echo tmp-path ["cluster-net"])))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
-  (setv #(fresh _ _) (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows :provides ["cluster-net"]))
+  (setv #(fresh _ _) (! (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows :provides ["cluster-net"])))
   (assert (= (. (get fresh.tasks id) needs) (. (get s.tasks id) needs) #("cluster-net"))))
 
 
 (deftest test-an-empty-coordinator-adopts-a-finished-task-with-its-result [tmp-path]
   ;; worker は返事に無い task の結果の file を消す — 終わった報告も引き取らないと結果を失い、呼び手は完走した仕事を送り直す。
-  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv #(_ id link _) (! (placed-echo tmp-path)))
   (setv #(row) (.report link #((JobStatus (+ "task/" id) JobPhase.FINISHED "r" "r" None 1))))
-  (val reply-54 (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses [(| row {"result" "R" "detail" ""})]))
+  (val reply-54 (! (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses [(| row {"result" "R" "detail" ""})])))
   (var fresh (get reply-54 0))
-  (setv #(_ _ view) (call fresh "GET" "/detached/job-e" 5000))
+  (setv #(_ _ view) (! (call fresh "GET" "/detached/job-e" 5000)))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")) view)
   ;; code-failed も同じ(終わりの理由が呼び手に届く)。
-  (val reply-55 (beat (ClusterState) "w" 5000 :boot-at 1000
-                           :statuses [(| row {"phase" "code-failed" "detail" "boom"})]))
+  (val reply-55 (! (beat (ClusterState) "w" 5000 :boot-at 1000
+                           :statuses [(| row {"phase" "code-failed" "detail" "boom"})])))
   (:= fresh (get reply-55 0))
   (assert (= (. (get fresh.tasks id) phase) "code-failed")))
 
@@ -1005,17 +1057,17 @@
 (deftest test-a-coordinator-that-starts-without-a-store-does-not-reuse-task-ids [tmp-path]
   ;; 置き場の無いところから起きた coordinator が t1 から振り直すと、worker に残る前の t1 の blob で新しい t1 が走った
   ;; (以前の accept-tasks は blob の file が在れば書き直さなかった)。起動ごとに違う頭を振る。
-  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv #(_ id link _) (! (placed-echo tmp-path)))
   ;; 置き場も以前の形の file も無い — 以前の形の file を探す読みに os の file system が答える。
   (<- loaded (with-handlers [os-file-handler] (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456)))
   (var fresh loaded)
-  (val reply-56 (beat fresh "other" 123500))
+  (val reply-56 (! (beat fresh "other" 123500)))
   (:= fresh (get reply-56 0))
   (val reply-57 (run (program-placed fresh V "TkVX" (+ 123500 T.lease-ms))))
   (:= fresh (get reply-57 0))
   (val sha (get reply-57 1))
-  (val reply-58 (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
-                               {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0}))
+  (val reply-58 (! (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
+                               {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0})))
   (:= fresh (get reply-58 0))
   (val reply (get reply-58 2))
   (assert (!= (get reply "task") id) #(reply id))
@@ -1028,10 +1080,10 @@
 
 
 (deftest test-an-echo-without-revision-is-not-adopted-and-the-heartbeat-is-answered [tmp-path]
-  (setv #(_ id link _) (placed-echo tmp-path))
+  (setv #(_ id link _) (! (placed-echo tmp-path)))
   (setv #(row) (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   (setv broken (| row {"task" (dfor #(k v) (.items (get row "task")) :if (not-in k #("revision")) k v)}))
-  (setv #(fresh status body) (beat (ClusterState) "w" 5000 :statuses [broken]))
+  (setv #(fresh status body) (! (beat (ClusterState) "w" 5000 :statuses [broken])))
   (assert (= #(status (get body "tasks")) #(200 [])) #(status body))
   (assert (not-in id fresh.tasks)))
 
@@ -1056,74 +1108,75 @@
         transport (httpx.MockTransport coordinator.handle)
         worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (! (process-versions os.environ)) :transport transport)
         sender (detached-sender "r")
-        rig (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
-                                (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
-                 worker 3.0 5.0 0.5))
+        rig (Rig :kind "coordinator"
+                 :handlers [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
+                            (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
+                 :worker worker :slow 3.0 :lease 5.0 :poll 0.5))
   (<- ok (run-on rig (amnesia-scenario coordinator)))
   (assert ok))
 
 
 (deftest test-result-is-kept-after-the-worker-dies-until-release-or-retention
-  (val reply-59 (beat (ClusterState) "w" 0))
+  (val reply-59 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-59 0))
-  (val reply-60 (put-detached s "job-4" 0 :lease 5.0 :retain 100.0))
+  (val reply-60 (! (put-detached s "job-4" 0 :lease 5.0 :retain 100.0)))
   (:= s (get reply-60 0))
   (val reply (get reply-60 2))
   (setv id (get reply "task"))
-  (val reply-61 (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (val reply-61 (! (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-61 0))
   (assert (= (. (get s.tasks id) phase) "finished"))
   ;; 終わった行も置き場のキーを持つ(結果の保持の間は置き場の Program を参照し続け、行が消えたら掃除される)。
   (assert (= (. (get s.tasks id) program) SAMPLE-TASK-PROGRAM))
   ;; 担い手が死んで lease の時間が過ぎても、結果はそのまま
   (:= s (tick s 60000 T))
-  (setv #(_ _ view) (call s "GET" "/detached/job-4" 60000))
+  (setv #(_ _ view) (! (call s "GET" "/detached/job-4" 60000)))
   (assert (= #((get view "phase") (get view "result")) #("finished" "R")))
   ;; 保持の期限(終わった時刻 1000 + 100 秒)を過ぎたら消える
   (:= s (tick s 101001 T))
-  (assert (= (phase-of s "job-4") "unknown")))
+  (assert (= (! (phase-of s "job-4")) "unknown")))
 
 
 (deftest test-detached-records-survive-a-coordinator-restart
-  (val reply-62 (beat (ClusterState) "w" 0))
+  (val reply-62 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-62 0))
-  (val reply-63 (put-detached s "job-5" 0))
+  (val reply-63 (! (put-detached s "job-5" 0)))
   (:= s (get reply-63 0))
-  (val reply-64 (put-detached s "job-6" 0))
+  (val reply-64 (! (put-detached s "job-6" 0)))
   (:= s (get reply-64 0))
   (var reply (get reply-64 2))
-  (val reply-65 (beat s "w" 1000 :statuses [{"name" (+ "task/" (get reply "task")) "phase" "finished" "result" "R" "detail" ""}]))
+  (val reply-65 (! (beat s "w" 1000 :statuses [{"name" (+ "task/" (get reply "task")) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-65 0))
   (setv again (! (state-from-kv (! (full-kv s)) 2000)))
   (assert (= again.tasks s.tasks))
-  (setv #(_ _ view) (call again "GET" "/detached/job-6" 2000))
+  (setv #(_ _ view) (! (call again "GET" "/detached/job-6" 2000)))
   (assert (= (get view "result") "R"))
   ;; 読み直した後の送り直しも同じ行
-  (val reply-66 (put-detached again "job-5" 2000))
+  (val reply-66 (! (put-detached again "job-5" 2000)))
   (:= reply (get reply-66 2))
   (assert (not (get reply "created"))))
 
 
 (deftest test-drain-waits-until-the-detached-tasks-on-the-worker-are-done
-  (val reply-67 (beat (ClusterState) "w" 0))
+  (val reply-67 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-67 0))
-  (val reply-68 (put-detached s "job-7" 0))
+  (val reply-68 (! (put-detached s "job-7" 0)))
   (:= s (get reply-68 0))
   (val reply (get reply-68 2))
   (setv id (get reply "task"))
-  (val reply-69 (call s "POST" "/workers/w/drain" 100 {}))
+  (val reply-69 (! (call s "POST" "/workers/w/drain" 100 {})))
   (:= s (get reply-69 0))
   (var view (get reply-69 2))
   (assert (= (get view "drain" "remaining") [(+ "task/" id)]))
   (assert (not (get view "drain" "drained")))
   ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ待つ)
-  (val reply-70 (put-detached s "job-8" 200))
+  (val reply-70 (! (put-detached s "job-8" 200)))
   (:= s (get reply-70 0))
   (val other (get reply-70 2))
   (assert (= (. (get s.tasks (get other "task")) phase) "queued"))
-  (val reply-71 (beat s "w" 300 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (val reply-71 (! (beat s "w" 300 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}])))
   (:= s (get reply-71 0))
-  (val reply-72 (call s "GET" "/workers/w" 400))
+  (val reply-72 (! (call s "GET" "/workers/w" 400)))
   (:= s (get reply-72 0))
   (:= view (get reply-72 2))
   (assert (get view "drain" "drained")))
@@ -1131,25 +1184,25 @@
 
 (deftest test-remote-job-tasks-keep-their-caller-bound-lifetime
   ;; RemoteJob の task(/tasks)は今までどおり: 呼び手の問い合わせが lease を延ばし、drain は数えず、途絶で止める。
-  (val reply-73 (beat (ClusterState) "w" 0))
+  (val reply-73 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-73 0))
   (val reply-74 (run (program-placed s V)))
   (:= s (get reply-74 0))
   (val sha (get reply-74 1))
-  (val reply-75 (call s "POST" "/tasks" 0 {"program" sha "revision" "r" "needs" ["net"]
-                                               "name" "n" "leaseSeconds" 5.0}))
+  (val reply-75 (! (call s "POST" "/tasks" 0 {"program" sha "revision" "r" "needs" ["net"]
+                                               "name" "n" "leaseSeconds" 5.0})))
   (:= s (get reply-75 0))
   (var body (get reply-75 2))
   (setv id (get body "task"))
-  (val reply-76 (beat s "w" 100))
+  (val reply-76 (! (beat s "w" 100)))
   (:= s (get reply-76 0))
   (:= body (get reply-76 2))
   (assert (not-in "detached" (get body "tasks" 0)))
-  (val reply-77 (call s "POST" "/workers/w/drain" 100 {}))
+  (val reply-77 (! (call s "POST" "/workers/w/drain" 100 {})))
   (:= s (get reply-77 0))
   (val view (get reply-77 2))
   (assert (get view "drain" "drained"))
-  (val reply-78 (beat s "w" 5200))
+  (val reply-78 (! (beat s "w" 5200)))
   (:= s (get reply-78 0))                   ; heartbeat は RemoteJob の lease を延ばさない
   (assert (not-in id s.tasks)))
 
@@ -1169,7 +1222,7 @@
 (deftest test-detached-task-keeps-typed-needs-and-versions-through-the-saved-state
   ;; 口の答えは Reply(状態・status・本文)。task の行は needs を能力の名の名の順の tuple・版を ComponentVersion で持ち、保存と読み直しの
   ;; 後も同じ型。
-  (val reply-79 (beat (ClusterState) "w" 0))
+  (val reply-79 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-79 0))
   ;; 版は置き場に Program と一緒に置いた版(本文は版の写しを運ばない)。
   (val reply-80 (run (program-placed s V)))
@@ -1190,17 +1243,17 @@
 
 
 (deftest test-submit-refusals
-  (val reply-81 (beat (ClusterState) "w" 0))
+  (val reply-81 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-81 0))
-  (val reply-82 (put-detached s "job-9" 0 :lease 0.0))
+  (val reply-82 (! (put-detached s "job-9" 0 :lease 0.0)))
   (var status (get reply-82 1))
   (assert (= status 400))
-  (val reply-83 (put-detached s "job-9" 0 :retain (* 31 24 3600.0)))
+  (val reply-83 (! (put-detached s "job-9" 0 :retain (* 31 24 3600.0))))
   (:= status (get reply-83 1))
   (assert (= status 400))
-  (val reply-84 (put-detached s "job-9" 0))
+  (val reply-84 (! (put-detached s "job-9" 0)))
   (:= s (get reply-84 0))
-  (val reply-85 (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "needs" ["net"]}))
+  (val reply-85 (! (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "needs" ["net"]})))
   (:= status (get reply-85 1))
   (val body (get reply-85 2))
   (assert (= status 409) body))
@@ -1214,7 +1267,7 @@
   (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
-  (val reply-86 (beat (ClusterState) "w" 0))
+  (val reply-86 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-86 0))
   (val reply-87 (run (program-placed s V)))
   (:= s (get reply-87 0))
@@ -1226,16 +1279,16 @@
     (for [#(extra reason) [#({} "空") #({"needs" []} "空") #({"requires" {"kind" "k3s"}} "旧い形の requires")
                            #({"requires" {"kind" "k3s"} "needs" ["net"]} "旧い形の requires")
                            #({"needs" ["kind=k3s"]} "label の形") #({"needs" {"kind" "k3s"}} "label の object")]]
-      (setv #(after status body) (call s method path 10 (| base extra)))
+      (setv #(after status body) (! (call s method path 10 (| base extra))))
       (assert (= status 400) #(method path extra status body))
       (assert (in reason (get body "error")) #(method path extra body))
       (assert (= after s) #(method path extra)))   ; 状態を変えない(値で比べる — POST /tasks は断っても調停を通る)
     ;; needs を書けば同じ本文が通る(断りは needs の欠けだけによる)。
-    (setv #(_ passed-status passed-body) (call s method path 10 (| base {"needs" ["net"]})))
+    (setv #(_ passed-status passed-body) (! (call s method path 10 (| base {"needs" ["net"]}))))
     (assert (= passed-status 200) #(method path passed-status passed-body)))
   ;; 旧い形の env(handler の組の import path — ADR-DOE-CLUSTER-001 改訂 1 の J の 11)は、needs が揃っていても task の口で 400 と理由。
   (for [#(method path) [#("POST" "/tasks") #("PUT" "/detached/job-env")]]
-    (val answer (call s method path 10 (| task {"needs" ["net"] "env" "m:e"})))
+    (val answer (! (call s method path 10 (| task {"needs" ["net"] "env" "m:e"}))))
     (assert (= (get answer 1) 400) #(method path answer))
     (assert (in "旧い形の env" (get answer 2 "error")) #(method path answer))
     (assert (= (get answer 0) s) #(method path))))
@@ -1262,8 +1315,8 @@
 
 (deftest test-a-heartbeat-with-only-labels-is-refused
   ;; 旧い worker の名乗り(labels だけ・provides が無い)は 400 で理由を返し、worker を名簿に載せない。
-  (val reply-88 (call (ClusterState) "POST" "/heartbeat" 0
-                                   {"name" "old" "labels" {"kind" "k3s"} "capacity" 10 "versions" V "boot" "b1" "statuses" []}))
+  (val reply-88 (! (call (ClusterState) "POST" "/heartbeat" 0
+                                   {"name" "old" "labels" {"kind" "k3s"} "capacity" 10 "versions" V "boot" "b1" "statuses" []})))
   (val after (get reply-88 0))
   (var status (get reply-88 1))
   (var body (get reply-88 2))
@@ -1271,13 +1324,13 @@
   (assert (in "旧い形の labels" (get body "error")) body)
   (assert (not-in "old" after.workers))
   ;; provides の外の exclusive・label の形の名も断る。
-  (val reply-89 (call (ClusterState) "POST" "/heartbeat" 0
-                               {"name" "w" "provides" ["net"] "exclusive" ["gpu"] "capacity" 10 "versions" V "statuses" []}))
+  (val reply-89 (! (call (ClusterState) "POST" "/heartbeat" 0
+                               {"name" "w" "provides" ["net"] "exclusive" ["gpu"] "capacity" 10 "versions" V "statuses" []})))
   (:= status (get reply-89 1))
   (:= body (get reply-89 2))
   (assert (= status 400) body)
-  (val reply-90 (call (ClusterState) "POST" "/heartbeat" 0
-                               {"name" "w" "provides" ["kind=k3s"] "capacity" 10 "versions" V "statuses" []}))
+  (val reply-90 (! (call (ClusterState) "POST" "/heartbeat" 0
+                               {"name" "w" "provides" ["kind=k3s"] "capacity" 10 "versions" V "statuses" []})))
   (:= status (get reply-90 1))
   (:= body (get reply-90 2))
   (assert (= status 400) body))
