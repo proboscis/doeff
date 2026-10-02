@@ -14,14 +14,16 @@
 ;;;   doeff_worker_service_ready_replicas{service}(仕事をしている Ready だけ)・doeff_worker_service_standby{service}(lease を待つ待機の Ready)・
 ;;;   doeff_worker_service_unplaced{service}・doeff_worker_service_last_metrics_age_seconds{service}(どの process の物でも最新の計器の報告の古さ)・
 ;;;   doeff_worker_worker_heartbeat_age_seconds{worker}(worker ごとの最後の heartbeat の古さ — coordinator 自身の alert の材料)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import math)
+(import doeff [run])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES MetricsReport ReportOrigin])
 (import doeff_cluster.coordinator.intent.request_bodies [MetricsBody MetricsPayload])
-(import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-fields service-readiness])
+(import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-origin service-readiness])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
 
 (setv METRICS-STALE-MS 180000)   ; これより古い報告は出さない(書き手の拍は 5〜15 秒 + 読みの時間)
@@ -38,25 +40,62 @@
   (and (isinstance v #(int float)) (not (isinstance v bool)) (math.isfinite v)))
 
 
+(defk metrics-refusal [metrics]
+  {:pre [(: metrics MetricsPayload)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
+  "報告の metrics(受け口が JSON から道の型に解いた値 — 形は解く所が検めた・#2445)の名と値を検め、断る理由の文(400 の本文)を返すため
+   (合えば None)。coordinator(record-metrics)と fake(metrics-memory が通す checked-metrics)が同じ検めを通る。"
+  (val numbers (+ (if (is metrics.counters None) #() (tuple (.items metrics.counters)))
+                  (if (is metrics.gauges None) #() (tuple (.items metrics.gauges)))))
+  (val durations (if (is metrics.durations None) #() (tuple (.items metrics.durations))))
+  (val bad-number (next (gfor #(name v) numbers :if (not (and (metric-name? name) (number? v))) #(name v)) None))
+  (val bad-duration (next (gfor #(name row) durations
+                                :if (not (and (metric-name? name) (number? row.sum) (number? row.count)))
+                                #(name row))
+                          None))
+  (cond
+    (> (+ (len numbers) (len durations)) MAX-NAMES) (.format "metrics の名が多すぎる(上限 {})" MAX-NAMES)
+    (is-not bad-number None) (.format "計器の名か値が正しくない: {!r}={!r}" #* bad-number)
+    ;; 値の綴りは #2756 の前(duration を {sum count} の写像に写してから検めた頃)の断りの文と同じ。
+    (is-not bad-duration None) (.format "duration の名か値が正しくない: {!r}={{'sum': {!r}, 'count': {!r}}}"
+                                        (get bad-duration 0) (. (get bad-duration 1) sum) (. (get bad-duration 1) count))
+    True None))
+
+
 (defn #^ dict checked-metrics [#^ MetricsPayload metrics]
-  "報告の metrics(道の型に解いた値 — 形は解く所が検めた・#2445)の名と値を検める。合わなければ 400 で断る。"
-  (setv counters (or metrics.counters {}) gauges (or metrics.gauges {})
-        durations (dfor #(name row) (.items (or metrics.durations {})) name {"sum" row.sum "count" row.count}))
-  (when (> (+ (len counters) (len gauges) (len durations)) MAX-NAMES)
-    (refuse 400 (.format "metrics の名が多すぎる(上限 {})" MAX-NAMES)))
-  (for [#(name v) (+ (list (.items counters)) (list (.items gauges)))]
-    (when (not (and (metric-name? name) (number? v))) (refuse 400 (.format "計器の名か値が正しくない: {!r}={!r}" name v))))
-  (for [#(name row) (.items durations)]
-    (when (not (and (metric-name? name) (isinstance row dict) (number? (.get row "sum")) (number? (.get row "count"))))
-      (refuse 400 (.format "duration の名か値が正しくない: {!r}={!r}" name row))))
-  {"counters" (dict counters) "gauges" (dict gauges) "durations" (dict durations)})
+  "fake(shared/protocol/metrics_handlers.metrics-memory)が記録する計器の報告の形(族ごとの名 → 値の写像・欠けた族は空)にするため。
+   検めは coordinator と同じ metrics-refusal(合わなければ 400 で断る)。coordinator は同じ値を記録 MetricsReport で残す(metrics-report)。"
+  (setv problem (run (metrics-refusal metrics)))
+  (when (is-not problem None) (refuse 400 problem))
+  {"counters" (dict (or metrics.counters {})) "gauges" (dict (or metrics.gauges {}))
+   "durations" (dfor #(name row) (.items (or metrics.durations {})) name {"sum" row.sum "count" row.count})})
+
+
+(defk metrics-report [body now]
+  {:pre [(: body MetricsBody) (: now int)] :post [(: % MetricsReport)] :tags {:context "coordinator" :role "judgment"}}
+  "計器の報告の本文(名と値の検めを通った物 — metrics-refusal)を、観測の表 metrics に置く記録にするため。報告に無い族は空の表。
+   GET /metrics の綴り(metrics-text・add-service-metrics)は表を名の順に読む。"
+  (<- origin ReportOrigin (report-origin body now))
+  (val payload body.metrics)
+  (val counters (if (is payload.counters None) #() (tuple (.items payload.counters))))
+  (val gauges (if (is payload.gauges None) #() (tuple (.items payload.gauges))))
+  (val durations (if (is payload.durations None) #() (tuple (.items payload.durations))))
+  (MetricsReport :origin origin
+                 :counters (table-of (tuple (gfor #(name v) counters (TableWrite name v))))
+                 :gauges (table-of (tuple (gfor #(name v) gauges (TableWrite name v))))
+                 :durations (table-of (tuple (gfor #(name row) durations (TableWrite name row))))))
 
 
 (defn #^ ClusterState record-metrics [#^ ClusterState state #^ str name #^ MetricsBody body #^ int now]
+  "POST /resources/Service/<名>/metrics: Service name の計器の報告を検め(合わなければ 400)、観測の表 metrics の名の行へ足すため(世代ごとに
+   最新 1 つ — keep-report)。資源の状態を変えない(版の比べも保存も表 metrics を読まない)。"
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
-  (setv report (| (report-fields body now) {"metrics" (checked-metrics body.metrics)}))
-  (replace state :metrics (| state.metrics {name (keep-report (.get state.metrics name) report)})))
+  (setv problem (run (metrics-refusal body.metrics)))
+  (when (is-not problem None) (refuse 400 problem))
+  (setv report (run (metrics-report body now))
+        seen state.observations)
+  (replace state :observations
+           (replace seen :metrics (.with-writes seen.metrics #((TableWrite name (keep-report (.row seen.metrics name) report)))))))
 
 
 ;; --- 出す ----------------------------------------------------------------------------------------
@@ -93,35 +132,35 @@
   (+ (.join "\n" lines) (if lines "\n" "")))
 
 
-(defn #^ dict add-service-metrics [#^ dict families #^ dict labels #^ dict metrics]
-  (for [#(name v) (sorted (.items (.get metrics "counters" {})))]
+(defn #^ dict add-service-metrics [#^ dict families #^ dict labels #^ MetricsReport report]
+  "今の process の計器の報告 1 つ(観測の表 metrics の記録)を、族ごとの sample に足すため(族の名の順・名は本番の Deployment と同じ)。"
+  (for [#(name v) (sorted (.items report.counters))]
     (add-sample families (+ name "_total") "counter" (+ name "_total") labels (float v)))
-  (for [#(name v) (sorted (.items (.get metrics "gauges" {})))]
+  (for [#(name v) (sorted (.items report.gauges))]
     (add-sample families name "gauge" name labels (float v)))
-  (for [#(name row) (sorted (.items (.get metrics "durations" {})))]
-    (add-sample families (+ name "_seconds") "summary" (+ name "_seconds_sum") labels (float (get row "sum")))
-    (add-sample families (+ name "_seconds") "summary" (+ name "_seconds_count") labels (int (get row "count"))))
+  (for [#(name row) (sorted (.items report.durations))]
+    (add-sample families (+ name "_seconds") "summary" (+ name "_seconds_sum") labels (float row.sum))
+    (add-sample families (+ name "_seconds") "summary" (+ name "_seconds_count") labels (int row.count)))
   families)
 
 
 (defn #^ list current-metrics [#^ ClusterState state #^ int now #^ ClusterTiming timing]
   "Service ごとの #(名 worker 報告): 今動いている process の最新の報告で、METRICS-STALE-MS より新しい物だけ。"
-  (setv out [])
-  (for [job (sorted state.jobs :key (fn [j] j.spec.name))]
-    (setv name job.spec.name proc (running-process state name now timing))
-    (when (get proc "ok")
-      (setv report (current-report (.get state.metrics name) proc))
-      (when (and report (<= (- now (get report "at")) METRICS-STALE-MS))
-        (.append out #(name (get proc "worker") report)))))
-  out)
+  (lfor job (sorted state.jobs :key (fn [j] j.spec.name))
+        :setv name job.spec.name
+        :setv proc (running-process state name now timing)
+        :if (get proc "ok")
+        :setv report (current-report (.row state.observations.metrics name) proc)
+        :if (and report (<= (- now report.origin.at) METRICS-STALE-MS))
+        #(name (get proc "worker") report)))
 
 
 (defn #^ (| float None) last-metrics-age [#^ ClusterState state #^ str name #^ int now]
   "Service の process(今の・前の・退いた — 残している直近の世代)のうち、最も新しい計器の報告の古さ(秒)。報告が 1 つも無ければ None。
    今の process が報告をやめると、この値が伸び続ける(GET /metrics の本番の名の系列は METRICS-STALE-MS で消えるので、途絶えの
    alert はこちらを読む)。"
-  (setv reports (.get state.metrics name))
-  (if reports (/ (- now (max (gfor r reports (get r "at")))) 1000.0) None))
+  (setv reports (.row state.observations.metrics name))
+  (if reports (/ (- now (max (gfor r reports r.origin.at))) 1000.0) None))
 
 
 (defn #^ str metrics-text [#^ ClusterState state #^ int now #^ ClusterTiming timing]
@@ -173,6 +212,6 @@
   (for [#(name worker report) (current-metrics state now timing)]
     (setv labels {"service" name "worker" worker})
     (add-sample families "doeff_worker_service_metrics_age_seconds" "gauge" "doeff_worker_service_metrics_age_seconds" labels
-                (/ (- now (get report "at")) 1000.0))
-    (add-service-metrics families labels (get report "metrics")))
+                (/ (- now report.origin.at) 1000.0))
+    (add-service-metrics families labels report))
   (render-families families))

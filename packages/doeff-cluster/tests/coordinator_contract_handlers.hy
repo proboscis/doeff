@@ -46,7 +46,7 @@
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState MetricsReport ReadinessReport])
 (import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv])
 (import doeff_cluster.shared_handlers [shared-http])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
@@ -161,22 +161,28 @@
   (SetReachable [up] (resume None)))
 
 
-(deff latest-report [#^ MemoryCoordinator coordinator #^ str kind]  ; defk にできない: handler の節が Program の外の状態(MemoryCoordinator)から組む純粋な読み
+(defk latest-report [coordinator kind]
   {:pre [(: coordinator MemoryCoordinator) (: kind str) (in kind #(METRICS READINESS))] :post [(: % (| dict None))]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "coordinator の状態に最後に残った kind の報告を、effect の側の形(metrics = 計器の dict・readiness = {ready reason role})にする。"
-  (let [reports (.get (getattr coordinator.state kind) SERVICE #())]
-    (cond
-      (not reports) None
-      (= kind METRICS) (get reports -1 "metrics")
-      True (dfor field #("ready" "reason" "role") field (get reports -1 field)))))
+  "coordinator の状態の観測の表(ClusterState.observations の metrics・readiness — #2756)に最後に残った kind の報告を、fake が記録する
+   形(metrics = 計器の dict・readiness = {ready reason role} の dict)にして、本物と fake を同じ契約で比べるため。"
+  (val seen coordinator.state.observations)
+  (val reports (.row (if (= kind METRICS) seen.metrics seen.readiness) SERVICE))
+  (match (if reports (get reports -1) None)
+    None None
+    (MetricsReport :counters counters :gauges gauges :durations durations)
+      {"counters" (dict (.items counters)) "gauges" (dict (.items gauges))
+       "durations" (dfor #(name row) (.items durations) name {"sum" row.sum "count" row.count})}
+    (ReadinessReport :ready ready :reason reason :role role) {"ready" ready "reason" reason "role" role}))
 
 
 (defhandler coordinator-side [#^ MemoryCoordinator coordinator #^ dict line]
   ;; 引数に残す理由: 真実は transport の後ろの MemoryCoordinator と線そのもの(組み立てが 1 つ作って transport と共有する)。
   ;; 本物の側の真実: MemoryCoordinator の状態。line = {"up": bool}(transport が読む)。
   (BoardSeen [] (resume (dfor #(k row) (.items coordinator.state.board) k row.value)))
-  (ReportSeen [kind] (resume (latest-report coordinator kind)))
+  (ReportSeen [kind]
+    (<- seen (latest-report coordinator kind))
+    (resume seen))
   (TasksSeen []
     (<- rows tuple (tasks-seen-of coordinator.state))
     (resume rows))
