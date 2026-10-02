@@ -1,8 +1,8 @@
 ;;; 実行環境(root)1 つの準備の process の入口(#2028 — env_handlers.hy の main をここへ移した。翻訳 env-translation は
 ;;; worker/protocol/env_translation)。worker(worker/protocol/env_store の env-host)はこの入口を worker 自身の環境の別の process として起こす。
-;;; 送る名 ENV-TOOL は旧い path(doeff_cluster.env_handlers — 新しい入口へ渡すだけ)のまま(#2028 の 1 段目・消すのは #2113):
+;;; 送る名 ENV-TOOL はこの入口の名(旧い path の doeff_cluster.env_handlers は #2113 で消した — 同じ commit の worker が送る名と揃う):
 ;;;
-;;;   hy -m doeff_cluster.env_handlers --request <要求の JSON> --result <答えの JSON> --state <state dir>
+;;;   hy -m doeff_cluster.worker.entry.env_tool --request <要求の JSON> --result <答えの JSON> --state <state dir>
 ;;;      --repo-keys <許可表の JSON> --code-prepare <worker の code_prepare.hy> [--uv uv] [--progress <印の file>]
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "worker" :role "main"})

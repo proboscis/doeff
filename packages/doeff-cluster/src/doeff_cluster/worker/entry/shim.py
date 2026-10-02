@@ -5,8 +5,8 @@ worker は shim を新しい process group の先頭として起動し、stdin �
 worker が普通に止める時は group へ signal を送るので、shim は job の終了を待って同じ終了コードで終わる。
 macOS には親の死を子へ知らせる仕組み(Linux の PR_SET_PDEATHSIG)が無いので、パイプの EOF で代える。
 
-使い方: python -m doeff_cluster.shim <猶予秒> -- <job の命令…>(#2028 でここへ移した — worker が送る名は旧い path の doeff_cluster.shim のまま
-・旧い入口はこの main へ渡すだけ)
+使い方: python -m doeff_cluster.worker.entry.shim <猶予秒> -- <job の命令…>(#2028 でここへ移した — 旧い path の doeff_cluster.shim は
+#2113 で消し、worker が送る名もこの名にした)
 """
 
 import os

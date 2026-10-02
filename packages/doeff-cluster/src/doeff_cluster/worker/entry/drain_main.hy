@@ -1,8 +1,8 @@
 ;;; worker の Pod の drain の入口(composition root・2026-09-25)。Program は drain_client.hy。
 ;;;
-;;;   hy -m doeff_cluster.drain_main drain --coordinator URL --name NAME [--deadline 90] [--interval 2]
+;;;   hy -m doeff_cluster.worker.entry.drain_main drain --coordinator URL --name NAME [--deadline 90] [--interval 2]
 ;;;       preStop: drain を頼み、自分の上の job が他へ移るか上限まで待つ。いつも 0 で終わる(結末は stderr の 1 行)。
-;;;   hy -m doeff_cluster.drain_main ready --coordinator URL --name NAME
+;;;   hy -m doeff_cluster.worker.entry.drain_main ready --coordinator URL --name NAME
 ;;;       readinessProbe: coordinator から見て生きていて drain 中でなければ 0、それ以外は 1。
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})

@@ -309,7 +309,7 @@
   {:pre [(: command tuple)] :post [(: % subprocess.Popen)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "shim の process を 1 つ起こすため(command = shim が子として起こす job の命令)。"
   ;; worker と同じく、shim を新しい group の先頭として起動し、stdin のパイプを握る。
-  (subprocess.Popen [sys.executable "-m" "doeff_cluster.shim" "1" "--" #* command]
+  (subprocess.Popen [sys.executable "-m" "doeff_cluster.worker.entry.shim" "1" "--" #* command]
                     :stdin subprocess.PIPE :start-new-session True))
 
 (deftest test-shim-passes-the-job-exit-code

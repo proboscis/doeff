@@ -190,7 +190,7 @@
 
 (deftest test-a-worker-has-no-entrance-that-reads-jobs-from-a-declaration-file
   ;; 宣言の file から生の entry の job を直に起こす旧い口 --desired は無い(worker は coordinator からだけ job を受ける — R1)。
-  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.main" "--desired" "desired.json"
+  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--desired" "desired.json"
                              "--repo" "." "--state-dir" "/nonexistent"]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)
@@ -200,7 +200,7 @@
 
 (deftest test-entry-10-a-worker-started-with-old-labels-does-not-start
   ;; 入口 10: 旧い --labels(置き場所の label)で起こした worker は argparse の error で止まり、理由を stderr に出す。
-  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.main" "--coordinator" "http://127.0.0.1:9"
+  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
                              "--name" "w" "--labels" "kind=k3s" "--repo" "." "--state-dir" "/nonexistent"]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)

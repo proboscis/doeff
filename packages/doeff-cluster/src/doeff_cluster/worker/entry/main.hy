@@ -1,6 +1,6 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
-;;;   hy -m doeff_cluster.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
+;;;   hy -m doeff_cluster.worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。

@@ -236,12 +236,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/__main__.hy",
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy",
         "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/__main__.hy",
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy",
         "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
       ],
@@ -2620,36 +2618,6 @@
     },
     {
       "allow": [
-        "doeff-cluster-shim"
-      ],
-      "layer": "runtime",
-      "name": "doeff-cluster-shim-legacy-path",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shim.py"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shim.py"
-      ],
-      "responsibility": "旧い path の見張りの入口(新しい入口 worker/entry/shim へ渡すだけ・#2028 の 1 段目・消すのは #2113)。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-env-tool"
-      ],
-      "layer": "runtime",
-      "name": "doeff-cluster-env-handlers-legacy-path",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/env_handlers.hy"
-      ],
-      "responsibility": "旧い path の実行環境の準備の入口(新しい入口 worker/entry/env_tool へ渡すだけ・#2028 の 1 段目・消すのは #2113)。",
-      "typed": true
-    },
-    {
-      "allow": [
         "doeff-cluster-job-context",
         "doeff-cluster-task-result",
         "doeff-cluster-coordinator-route",
@@ -2664,36 +2632,6 @@
         "packages/doeff-cluster/src/doeff_cluster/worker/entry/result_delivery.hy"
       ],
       "responsibility": "子 process の task の結果を終わる前に coordinator へ直に届ける入口の組み立て。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-main"
-      ],
-      "layer": "runtime",
-      "name": "doeff-cluster-main-legacy-path",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/main.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/main.hy"
-      ],
-      "responsibility": "旧い path の worker の入口(新しい入口 worker/entry/main へ渡すだけ・#2029 の 1 段目・消すのは #2113)。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-drain-main"
-      ],
-      "layer": "runtime",
-      "name": "doeff-cluster-drain-main-legacy-path",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/drain_main.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/drain_main.hy"
-      ],
-      "responsibility": "旧い path の drain の入口(新しい入口 worker/entry/drain_main へ渡すだけ・#2029 の 1 段目・消すのは #2113)。",
       "typed": true
     },
     {

@@ -2,7 +2,7 @@
 ;;; Program を handler の組の上で回す口)はそのままに、handler の組だけを模擬の物へ差し替える:
 ;;;
 ;;;   coordinator   sim-cluster の coordinator の Pod(coordinator.entry.main の load-state と handler_sets の emulated-handlers)
-;;;   worker        sim-cluster の worker の世代(doeff_cluster.main の worker-on を偽の宿の組 sim-host の上で)
+;;;   worker        sim-cluster の worker の世代(doeff_cluster.worker.entry.main の worker-on を偽の宿の組 sim-host の上で)
 ;;;   record-store  record_store.entry.main の record-store-on を handler_sets の emulated-handlers(まねた受付の箱と memory の file system)
 ;;;                 の上で
 ;;;

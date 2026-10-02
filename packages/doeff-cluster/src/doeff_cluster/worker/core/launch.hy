@@ -53,7 +53,7 @@
   {:pre [(: python str) (: grace-ms int)] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
   "job の子と入口の検めを shim の下で起こす命令の頭を 1 つの形にするため(猶予は shim が秒の小数で読む — 値は worker の方針から
    worker/core/shim_timing の shim-spans が導く・#2940)。"
-  #(python "-B" "-m" "doeff_cluster.shim" (str (/ grace-ms 1000)) "--"))
+  #(python "-B" "-m" "doeff_cluster.worker.entry.shim" (str (/ grace-ms 1000)) "--"))
 
 
 (defrecord JobLaunch

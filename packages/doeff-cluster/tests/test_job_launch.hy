@@ -24,7 +24,7 @@
   (val env (dfor e plan.env e.name e.value))
   ;; shim の猶予の引数は、shim が読む形(秒の小数 — shim.py の float)で方針の値に戻る。
   (assert (= (float (get plan.argv 4)) (/ shim.shim-grace-ms 1000)) plan.argv)
-  (assert (= (+ (cut plan.argv 0 4) (cut plan.argv 5 None)) #("/py" "-B" "-m" "doeff_cluster.shim" "--" "/bin/hy" "-m" "app.main" "service"))
+  (assert (= (+ (cut plan.argv 0 4) (cut plan.argv 5 None)) #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "--" "/bin/hy" "-m" "app.main" "service"))
           plan.argv)
   (assert (= plan.cwd "/cache/rev1") plan.cwd)
   (assert (= #((get env "PYTHONPATH") (get env "MODE") (get env "DOEFF_WORKER_PID") (get env "DOEFF_WORKER_NAME")) #("/cache/rev1" "fast" "42" "w1")) env)

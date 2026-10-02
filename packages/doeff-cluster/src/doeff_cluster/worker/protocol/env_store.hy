@@ -34,7 +34,7 @@
 (import doeff_cluster.worker.protocol.heartbeat [env-report])
 
 
-(val ENV-TOOL "doeff_cluster.env_handlers")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
+(val ENV-TOOL "doeff_cluster.worker.entry.env_tool")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
 (val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 (val SWEEP-EVERY-MS 30000)      ; 空きが下限を切っている間の掃除の間隔(固定の集合が変わった時はすぐ)
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
