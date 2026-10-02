@@ -341,7 +341,6 @@ def store(cache_dir: Path, key: str, projection: CachedProjection) -> None:
 
 def default_cache_dir() -> Path:
     """既定の置き場(XDG の cache の下 — 消費 repo の木を汚さない)。"""
-    import os
+    from doeff_hy import env_places
 
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "doeff-hy-check"
+    return env_places.cache_home() / "doeff-hy-check"

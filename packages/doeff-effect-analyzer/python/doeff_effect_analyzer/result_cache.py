@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
+from doeff_effect_analyzer import env_places
 from doeff_effect_analyzer.program_effects import _EXPANSION_OBSERVERS, _hy_cache_dir
 
 T = TypeVar("T")
@@ -102,7 +103,7 @@ def cached_result(identity: tuple[str, ...] | None, compute: Callable[[], T]) ->
 
 def _entry_path(identity: tuple[str, ...] | None) -> Path | None:
     """Where the answer for ``identity`` is kept (None = not cached)."""
-    if identity is None or os.environ.get("DOEFF_EFFECT_ANALYZER_RESULT_CACHE") == "off":
+    if identity is None or env_places.result_cache_setting() == "off":
         return None
     trees = _hy_cache_dir()
     if trees is None:
