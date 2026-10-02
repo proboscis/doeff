@@ -6,11 +6,15 @@
 ;;;
 ;;; fake-agent = conformance の偽の agent(conformance/conformance_agent.py)。agentd が codex / claude の代わりに起こす、本物の
 ;;;   CLI の代役の script。本物の CLI と同じく、走らせ方の材料(手順の file・記録の file・結果の通り道・CLAUDE_CONFIG_DIR・CODEX_HOME)
-;;;   を環境変数で受ける — README の Env contract がこの script の口で、受けた環境を記録する(record_env)のも検の中身。標準の
-;;;   library だけで書き、doeff の Program の外で走る。
+;;;   を環境変数で受ける — README の Env contract がこの script の口で、受けた環境を記録する(record_env)のも検の中身。
+;;;   環境変数は os.environ を直に読まず、起動の時に 1 度 ReadEnvironment で問う(答えるのは doeff の foundation の handler
+;;;   subprocess_handler)— そのために doeff と doeff_core_effects は import してよい(agora-redesign #3012・利用者 2026-10-02 23:0x
+;;;   「known と印した critical も直す」)。本体は受けた写像を読む普通の Python のまま。
 ;;;   台本の判定器(conformance/scripted_judge.py・#2954)も同じ層: agentd が LLM の prompt judge の代わりに
 ;;;   `--prompt-judge-cmd` で起こす代役の script で、判定の表と記録の file を環境変数(CONFORMANCE_JUDGE_TABLE・
-;;;   CONFORMANCE_JUDGE_JOURNAL)で受ける(README の契約)。
+;;;   CONFORMANCE_JUDGE_JOURNAL)で受ける(README の契約)— 読み方は同じく ReadEnvironment。この層は DOEFF004 を外さない。
+;;;   前の形へ戻すなら、2 つの代役の _received_environment を os.environ の読みへ戻し、DOEFF004 の :exempt の行と
+;;;   forbid-modules の doeff・doeff_core_effects を足し直す。
 ;;; runner-env = 検を走らせる人が環境変数で選ぶ材料(検の相手の daemon・本物の Claude の設定の dir と口座)を読む module
 ;;;   (tests/runner_env.py)。変数の素の値を返すだけで、どれを使うか・既定の値は呼び手(sessionhost_bin・
 ;;;   agentd_real_agent_result_retry_e2e_support)に残す。
@@ -24,12 +28,11 @@
 (defarchitecture doeff-agents
   :root "."
   :layers [(layer fake-agent
-             :summary "conformance の偽の agent — agentd が本物の CLI の代わりに起こし、材料を環境変数で受ける"
-             :knows "本物の CLI の起こされ方・conformance の手順と記録の形・環境変数の名"
-             :does-not-know "doeff の Program・effect・handler"
+             :summary "conformance の偽の agent — agentd が本物の CLI の代わりに起こし、材料を環境変数で受ける(起動の時に 1 度 ReadEnvironment で問う)"
+             :knows "本物の CLI の起こされ方・conformance の手順と記録の形・環境変数の名・環境を問う effect(ReadEnvironment)と答える handler"
+             :does-not-know "doeff_agents の業務の Program・handler"
              :modules [conformance_agent scripted_judge]
-             :exempt [(rule DOEFF004 "本物の codex / claude の CLI の代役として agentd に起こされ、本物と同じく走らせ方の材料を環境変数で受ける(README の Env contract)— 受けた環境を記録するのも検の中身で、Program の外で走るので Ask で受ける入口が無い")]
-             :forbid-modules [doeff doeff_agents doeff_core_effects doeff_hy doeff_vm])
+             :forbid-modules [doeff_agents doeff_hy doeff_vm])
            (layer runner-env
              :summary "検を走らせる人が環境変数で選ぶ材料を読む module — 変数の素の値を返すだけ"
              :knows "環境変数の名"

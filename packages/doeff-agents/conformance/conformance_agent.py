@@ -1,7 +1,7 @@
 """conformance-agent: the script-driven fake CLI agentd launches instead of
 codex/claude (contract: conformance/README.md, C0-1).
 
-Stdlib only. Two launch modes share this file:
+Stdlib plus one doeff environment ask at start (#3012). Two launch modes share this file:
   M1 (PATH-shadowing): installed as `claude`/`codex` on a test-owned PATH dir
      so agentd's real argv builders run; argv/env are journaled for asserts.
   M2 (command override): launched via an explicit `command=`.
@@ -38,8 +38,23 @@ import sys
 import time
 from pathlib import Path
 
-JOURNAL = Path(os.environ["CONFORMANCE_JOURNAL"])
-SCRIPT = Path(os.environ["CONFORMANCE_SCRIPT"])
+from doeff import run, with_handlers
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
+
+
+def _received_environment() -> dict[str, str]:
+    """The environment agentd launched this stand-in with, asked once through
+    doeff's foundation handler (subprocess_handler answers ReadEnvironment from
+    the process environment) instead of read from the process environment at each use. The
+    env contract above is unchanged (agora-redesign #3012)."""
+    entries = run(with_handlers([subprocess_handler], ReadEnvironment((), ("",))))
+    return {entry.name: entry.value for entry in entries}
+
+
+ENV = _received_environment()
+JOURNAL = Path(ENV["CONFORMANCE_JOURNAL"])
+SCRIPT = Path(ENV["CONFORMANCE_SCRIPT"])
 
 # Frames reproduce the VERBATIM substrings the Rust monitor classifies on
 # (agentd-rust-final:src/main.rs:2775-3229). Frozen vocabulary — see
@@ -212,7 +227,7 @@ def resolve_conversation() -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup
     # M1 shims exec() this script, so argv[0] never carries the CLI name —
     # the shim exports CONFORMANCE_KIND instead. argv[0] stays as the M2 /
     # direct-invocation fallback.
-    kind = os.environ.get("CONFORMANCE_KIND") or Path(sys.argv[0]).name
+    kind = ENV.get("CONFORMANCE_KIND") or Path(sys.argv[0]).name
     if kind not in ("claude", "codex"):
         return
     argv = sys.argv[1:]
@@ -240,7 +255,7 @@ def resolve_conversation() -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup
 
     inherited = ""
     if kind == "claude":
-        config_dir = os.environ.get(
+        config_dir = ENV.get(
             "CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")
         )
         project_dir = (
@@ -284,7 +299,7 @@ def resolve_conversation() -> None:  # noqa: PLR0912, PLR0915 - baseline cleanup
             transcript = project_dir / f"{conv}.jsonl"
             transcript.write_text(inherited, encoding="utf-8")
     else:
-        codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+        codex_home = ENV.get("CODEX_HOME", str(Path.home() / ".codex"))
         stamp = time.strftime("%Y/%m/%d", time.gmtime())
         day_dir = Path(codex_home) / "sessions" / stamp
         day_dir.mkdir(parents=True, exist_ok=True)
@@ -401,8 +416,8 @@ def await_monitor_ack(timeout_s: float) -> bool:
     """
     import socket as socket_mod
 
-    session_id = os.environ["DOEFF_RESULT_SESSION_ID"]
-    socket_path = os.environ["DOEFF_AGENTD_SOCKET"]
+    session_id = ENV["DOEFF_RESULT_SESSION_ID"]
+    socket_path = ENV["DOEFF_AGENTD_SOCKET"]
     deadline = time.monotonic() + timeout_s
     request_id = 0
     while time.monotonic() < deadline:
@@ -449,12 +464,12 @@ def report_result(spec: object) -> None:
         payload = spec["payload"]  # type: ignore[index]
     proc = subprocess.Popen(
         [
-            os.environ["DOEFF_AGENTD_BIN"],
+            ENV["DOEFF_AGENTD_BIN"],
             "report-result-mcp",
             "--session",
-            os.environ["DOEFF_RESULT_SESSION_ID"],
+            ENV["DOEFF_RESULT_SESSION_ID"],
             "--socket",
-            os.environ["DOEFF_AGENTD_SOCKET"],
+            ENV["DOEFF_AGENTD_SOCKET"],
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -536,7 +551,7 @@ def main() -> None:  # noqa: PLR0912 - baseline cleanup keeps existing control f
     print("\n" * 30, end="", flush=True)
     script_path = SCRIPT
     if CONVERSATION["mode"] in ("resume", "fork"):
-        alt = os.environ.get("CONFORMANCE_RESUME_SCRIPT")
+        alt = ENV.get("CONFORMANCE_RESUME_SCRIPT")
         if alt:
             script_path = Path(alt)
     steps = json.loads(script_path.read_text(encoding="utf-8"))
@@ -578,7 +593,7 @@ def main() -> None:  # noqa: PLR0912 - baseline cleanup keeps existing control f
         elif "record_env" in step:
             journal(
                 "env",
-                values={name: os.environ.get(name) for name in step["record_env"]},
+                values={name: ENV.get(name) for name in step["record_env"]},
             )
         elif "exit" in step:
             journal("exiting", code=step["exit"])
