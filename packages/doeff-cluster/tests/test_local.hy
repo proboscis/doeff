@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [decode-outcome])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
+(import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport ServiceReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
                              StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])
 (import doeff_cluster.shared.entry.service_build [job system-of])
@@ -43,7 +43,7 @@
 
 (defrecord Seen
   "筋書きが読んだ job 1 つの姿: coordinator の ready・届いた報告・process・盤の行。"
-  (#^ SimReadiness readiness)
+  (#^ ServiceReadiness readiness)
   (#^ tuple reports)
   (#^ tuple processes)
   (#^ dict rows))
@@ -52,7 +52,7 @@
 (defk seen-of [name prefix]
   {:pre [(: name str) (: prefix str)] :post [(: % Seen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きの読み: job name の ready・報告・process と、盤の prefix の行を読む。"
-  (<- readiness SimReadiness (ReadinessOf name))
+  (<- readiness ServiceReadiness (ReadinessOf name))
   (<- reports tuple (ReportsOf name))
   (<- processes tuple (ProcessesOf name))
   (<- rows dict (SharedRows prefix))
@@ -210,7 +210,7 @@
 (defrecord Fenced
   "柵の検の読み: passer の盤の行と ready・peeker の process。"
   (#^ dict rows)
-  (#^ SimReadiness passer)
+  (#^ ServiceReadiness passer)
   (#^ tuple peeker))
 
 
@@ -219,7 +219,7 @@
   "筋書き: 10 秒待って、passer の盤の行と ready・peeker の process を読む。"
   (<- (Delay 10.0))
   (<- rows dict (SharedRows "fence/"))
-  (<- passer SimReadiness (ReadinessOf "passer"))
+  (<- passer ServiceReadiness (ReadinessOf "passer"))
   (<- peeker tuple (ProcessesOf "peeker"))
   (Fenced :rows rows :passer passer :peeker peeker))
 
@@ -444,7 +444,7 @@
 (defrecord Outage
   "coordinator の止まりの検の読み: 止める前の盤・止まっている間の ready・作り直した後の job の姿・Pod の一生の列。"
   (#^ dict before)
-  (#^ SimReadiness during)
+  (#^ ServiceReadiness during)
   (#^ Seen after)
   (#^ tuple runs))
 
@@ -459,7 +459,7 @@
       (<- (CrashCoordinator seconds))
       (<- (StopCoordinator seconds)))
   (<- (Delay 2.0))
-  (<- during SimReadiness (ReadinessOf "beacon"))
+  (<- during ServiceReadiness (ReadinessOf "beacon"))
   (<- (Delay (+ seconds 25.0)))
   (<- after Seen (seen-of "beacon" "beacon/"))
   (<- runs tuple (CoordinatorRuns))

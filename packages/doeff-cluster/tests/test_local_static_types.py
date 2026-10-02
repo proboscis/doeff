@@ -158,7 +158,7 @@ def test_the_stub_declares_every_name_other_modules_use() -> None:
         "SimProcess",
         "SimLink",
         "SimReport",
-        "SimReadiness",
+        "ServiceReadiness",
         "SimPreparation",
         "SimCoordinatorRun",
         "SimChild",

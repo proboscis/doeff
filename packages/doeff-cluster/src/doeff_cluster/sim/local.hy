@@ -177,9 +177,6 @@
 (import doeff_cluster.shared.intent.service_model [System Declaration])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare ReadinessOf Crash KillWorker StopWorker
                                                      StopCoordinator CrashCoordinator])
-;; SimReadiness = 旧い名(ReadinessOf の答えの型は契約の ServiceReadiness へ移した — #3029)。使い手の repo の検 1 file の
-;; 付け替えが、その repo の pin の流れで main に入ったら、この 1 行を消す。
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness :as SimReadiness])
 (import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
