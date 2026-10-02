@@ -14,6 +14,8 @@ README だけの変更では動かず、path 依存(doeff-indexer)の src の変
   1. land-arm の開発版(~/.local/share/doeff-linter-dev)— 記録 installed.json の commit から鍵を計算する。
   2. 断面の置き場(~/.cache/doeff-linter-snapshots — packages/doeff-linter/scripts/linter_snapshot.py の既定)— dir の名の sha から。
   3. どちらにも無ければ None(呼び手が「測れない」と名指す)。
+組んだ時に鍵を書いてある置き場(記録の欄 input_key・断面の dir の file input_key — land-arm が `key <commit>` の口で聞いて書く)は、
+git を引かずにその鍵で照らす — doeff の日次の lint の段は .git の無い木(remote_check の写し)で走るため(#2906 の 4 便目)。
 置き場は HOME の下の決まった場所で、環境変数では替えない(DOEFF004 — 検は HOME を一時の dir に向けて差し替える)。断面の道具を
 XDG_CACHE_HOME や DOEFF_LINTER_SNAPSHOT_DIR で別の場所に置いた機体では断面が見つからず「測れない」になる(黙って別の版で比べない)。
 """
@@ -36,6 +38,9 @@ INPUT_ENTRIES: tuple[str, ...] = ("src", "data", "Cargo.toml", "Cargo.lock", "bu
 KEY_PREFIX: str = "doeff-linter の組み立ての入力 "
 BIN_NAME: str = "doeff-linter"
 DEV_RECORD: str = "installed.json"
+#: 組んだ時に書いた鍵 — land-arm の記録(installed.json)の欄の名と、断面の dir の中の file の名。書いてあれば git を引かずに照らせる
+#: (日次の段の木は .git の無い写し — #2906)。書いていない置き場の物は、今どおり記録の commit から git で計算する。
+RECORDED_KEY: str = "input_key"
 # linter の `--version` が名乗る組んだ commit(build.rs の DOEFF_LINTER_COMMIT)。+dirty の付いた物は commit の鍵にしない。
 BUILT_COMMIT = re.compile(r"\(doeff ([0-9a-f]{40})\)")
 
@@ -50,10 +55,11 @@ class Located:
 
 @dataclass(frozen=True)
 class Candidate:
-    """置き場に在る binary と、それを組んだ commit。"""
+    """置き場に在る binary・それを組んだ commit・組んだ時に書いた鍵(書いていなければ None)・出どころ。"""
 
     binary: Path
     commit: str
+    recorded: str | None
     source: str
 
 
@@ -127,8 +133,11 @@ def _dev_candidate() -> list[Candidate]:
     binary: Path = dev_dir() / BIN_NAME
     if not (record.is_file() and binary.is_file()):
         return []
-    commit: object = json.loads(record.read_text(encoding="utf-8")).get("commit")
-    return [Candidate(binary, commit, "land-arm の開発版")] if isinstance(commit, str) else []
+    raw: object = json.loads(record.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(commit := raw.get("commit"), str):
+        return []
+    recorded: object = raw.get(RECORDED_KEY)
+    return [Candidate(binary, commit, recorded if isinstance(recorded, str) else None, "land-arm の開発版")]
 
 
 def _snapshot_candidates() -> list[Candidate]:
@@ -138,15 +147,22 @@ def _snapshot_candidates() -> list[Candidate]:
         return []
     built: list[Path] = [d for d in store.iterdir() if re.fullmatch(r"[0-9a-f]{40}", d.name) and (d / BIN_NAME).is_file()]
     return [
-        Candidate(d / BIN_NAME, d.name, "断面の置き場")
+        Candidate(d / BIN_NAME, d.name,
+                  (d / RECORDED_KEY).read_text(encoding="utf-8").strip() if (d / RECORDED_KEY).is_file() else None,
+                  "断面の置き場")
         for d in sorted(built, key=lambda d: (d / BIN_NAME).stat().st_mtime, reverse=True)
     ]
+
+
+def candidate_key(top: Path, candidate: Candidate) -> str | None:
+    """置き場の binary の鍵: 組んだ時に書いた鍵があればそれ(git を引かない)、無ければ組んだ commit から git で計算する。"""
+    return candidate.recorded if candidate.recorded is not None else input_key(top, candidate.commit)
 
 
 def locate(top: Path, key: str) -> Located | None:
     """鍵の合った binary を、land-arm の開発版 → 断面の置き場の順に探す(組まない)。無ければ None。"""
     for candidate in (*_dev_candidate(), *_snapshot_candidates()):
-        if input_key(top, candidate.commit) == key:
+        if candidate_key(top, candidate) == key:
             return Located(candidate.binary, candidate.source)
     return None
 
@@ -159,18 +175,27 @@ def searched() -> str:
 def dev_key(top: Path) -> str | None:
     """land-arm の開発版の鍵(開発版が無い・記録の commit を git が知らない時は None)— 「取り込めば測れる」を言うため。"""
     found: list[Candidate] = _dev_candidate()
-    return input_key(top, found[0].commit) if found else None
+    return candidate_key(top, found[0]) if found else None
 
 
 def main(argv: list[str]) -> int:
-    """`which [<commit>]` — commit(既定 HEAD)の組み立ての入力の鍵の binary の path を 1 行出す(shell の hook が呼ぶ —
-    scripts/lint-doeff-cluster.sh)。無ければ理由を出して 3(呼び手が「測れない」と名指す)。repo の根で呼ぶ。"""
-    if argv[:1] != ["which"] or len(argv) > 2:
-        print("使い方: doeff_linter_locked.py which [<commit>]", file=sys.stderr)
+    """2 つの口(repo の根で呼ぶ・commit の既定は HEAD):
+    `which [<commit>]` — commit の組み立ての入力の鍵の binary の path を 1 行出す(shell の hook が呼ぶ —
+    scripts/lint-doeff-cluster.sh)。無ければ理由を出して 3(呼び手が「測れない」と名指す)。
+    `key [<commit>]` — commit の組み立ての入力の鍵を 1 行出す(land-arm が組んだ版の記録に書く — 鍵の決め方をここ 1 か所に置く)。
+    git が commit を知らなければ 3。"""
+    if argv[:1] not in (["which"], ["key"]) or len(argv) > 2:
+        print("使い方: doeff_linter_locked.py which|key [<commit>]", file=sys.stderr)
         return 2
     top: Path = Path.cwd()
     commit: str = argv[1] if len(argv) == 2 else "HEAD"
     key: str | None = input_key(top, commit)
+    if argv[0] == "key":
+        if key is None:
+            print(f"{commit} の linter の組み立ての入力を git が読めない", file=sys.stderr)
+            return 3
+        print(key)
+        return 0
     located: Located | None = locate(top, key) if key is not None else None
     if located is None:
         print(f"{commit} の linter の組み立ての入力({key})の binary が {searched()} に無い", file=sys.stderr)

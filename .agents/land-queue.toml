@@ -76,12 +76,19 @@ name = "doeff"
 # vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、zeus の login shell の
 # node 22 / npm 10 で走る(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。後ろを止めない。
 # 戻すには vscode の段の 1 行を消す。
+# 2026-10-02(agora-redesign #2906 の 4 便目・cisco-c8 の割り・戻せる): commit の hook と同じ「規則 × file の基点より増えた所見」の比べ
+# (scripts/hook_finding_baseline.py)を repo の全部の Python の file に当てる段 lint を足す — doeff-linter(基点の鍵の binary を
+# zeus の land-arm の開発版 → 断面の置き場から探す)と semgrep(uv.lock の版)。hook は binary が見つからない時「測れない」で通すので、
+# 通った commit を測るのはこの段だけ — ここでは --strict で「測れない」そのものを赤(rc 3)にする。木は別の label(doeff-gate-lint)
+# に写す: build の段の make sync が作る .venv などが混ざらない(git の無い木では dir を歩いて名簿を作るため)。make sync は要らない。
+# 戻すには lint の段の 1 行を消す。
 full = [
   { name = "build", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync\"", blocks_rest = true },
   { name = "root", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\"" },
   { name = "packages", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\"" },
   { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make test-rust\"" },
-  { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"" }
+  { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"" },
+  { name = "lint", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-lint --sync-timeout 900 --run-timeout 900 --fallback-local -- sh -c \"uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep\"" }
 ]
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。

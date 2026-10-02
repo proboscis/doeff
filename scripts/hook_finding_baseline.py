@@ -28,8 +28,10 @@ symlink を測れない)。semgrep は全部の file を測る時も core を 2 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -147,14 +149,38 @@ def lowered(baseline: Counts, current: Counts) -> Counts:
     return {rule: per_file for rule, per_file in result.items() if per_file}
 
 
-def population(top: Path, tool: str) -> list[str]:
-    """repo の全部の file(git が追跡している .py / .pyi・symlink でない物・semgrep は規則の検体を外す)。"""
+# git の無い木(日次の段が zeus へ写した木 — remote_check は git ls-files の名簿の file だけを送り .git を送らない)を歩く時に
+# 入らない dir: 検査の走行や環境が作る物で、git が追跡しない(#2906)。
+UNTRACKED_DIRS: frozenset[str] = frozenset({".git", ".venv", "node_modules", "__pycache__"})
+
+
+def _tracked_python(top: Path) -> list[str] | None:
+    """git が追跡している .py / .pyi(git の作業木でなければ None)。"""
     listed: subprocess.CompletedProcess[str] = subprocess.run(
-        ["git", "ls-files", "-z", "--", "*.py", "*.pyi"], cwd=top, capture_output=True, text=True, check=True
+        ["git", "ls-files", "-z", "--", "*.py", "*.pyi"], cwd=top, capture_output=True, text=True, check=False
     )
+    return sorted(p for p in listed.stdout.split("\0") if p) if listed.returncode == 0 else None
+
+
+def _walked_python(top: Path) -> list[str]:
+    """git の無い木の .py / .pyi(作られる dir には入らない)— 日次の段の木は git の追跡している file の写しなので、歩けば同じ名簿。"""
+    def walk() -> Iterator[str]:
+        for directory, subdirectories, files in os.walk(top):
+            subdirectories[:] = sorted(d for d in subdirectories if d not in UNTRACKED_DIRS)
+            yield from ((Path(directory) / f).relative_to(top).as_posix() for f in files if f.endswith((".py", ".pyi")))
+    return sorted(walk())
+
+
+def population(top: Path, tool: str) -> list[str]:
+    """repo の全部の file(git が追跡している .py / .pyi・symlink でない物・semgrep は規則の検体を外す)。git の作業木でない木
+    (日次の段)では dir を歩いて名簿を作り、そう名乗る。"""
+    tracked: list[str] | None = _tracked_python(top)
+    if tracked is None:
+        print(f"{tool}: git の作業木でない木 — dir を歩いて名簿を作った({'・'.join(sorted(UNTRACKED_DIRS))} には入らない)",
+              file=sys.stderr)
     return [
         path
-        for path in sorted(p for p in listed.stdout.split("\0") if p)
+        for path in (tracked if tracked is not None else _walked_python(top))
         if not (top / path).is_symlink() and not (tool == "semgrep" and path.startswith(SEMGREP_FIXTURES))
     ]
 
@@ -250,16 +276,21 @@ def _unmeasured_hint(top: Path, baseline: Baseline) -> str:
 
 
 USAGE: str = (
-    "使い方: hook_finding_baseline.py [--root <dir>] [--linter <組んだ doeff-linter>] check|lower|init doeff-linter|semgrep [path …]"
+    "使い方: hook_finding_baseline.py [--root <dir>] [--linter <組んだ doeff-linter>] [--strict] "
+    "check|lower|init doeff-linter|semgrep [path …]"
 )
+#: 「測れない」を赤(3)にする旗の答え — 日次の段が使う(hook は通す・日次は通した commit を測る所なので通さない・#2906)。
+UNMEASURED_RC: int = 3
 
 
 @dataclass(frozen=True)
 class Request:
-    """入口の引数: 根(検が一時の repo で試すため)・lower と init で使う linter の binary(linter を変えた便の自分の build)・動詞・道具・file。"""
+    """入口の引数: 根(検が一時の repo で試すため)・lower と init で使う linter の binary(linter を変えた便の自分の build)・
+    「測れない」の時に返す値(hook は 0 で通す・日次の段は --strict で UNMEASURED_RC)・動詞・道具・file。"""
 
     top: Path
     linter: Path | None
+    unmeasured_rc: int
     command: str
     tool: str
     paths: list[str]
@@ -269,8 +300,12 @@ def parse(argv: list[str]) -> Request | None:
     """入口の引数を読むため(読めなければ None — 使い方を出して 2)。根の既定はこの script の在り処の 1 つ上。"""
     top: Path = Path(__file__).resolve().parents[1]
     linter: Path | None = None
+    unmeasured_rc: int = 0
     rest: list[str] = argv
-    while rest[:1] in (["--root"], ["--linter"]) and len(rest) >= 2:
+    while rest[:1] == ["--strict"] or (rest[:1] in (["--root"], ["--linter"]) and len(rest) >= 2):
+        if rest[0] == "--strict":
+            unmeasured_rc, rest = UNMEASURED_RC, rest[1:]
+            continue
         if rest[0] == "--root":
             top = Path(rest[1])
         else:
@@ -278,7 +313,7 @@ def parse(argv: list[str]) -> Request | None:
         rest = rest[2:]
     if len(rest) < 2 or rest[0] not in ("check", "lower", "init") or rest[1] not in TOOLS:
         return None
-    return Request(top=top, linter=linter, command=rest[0], tool=rest[1], paths=rest[2:])
+    return Request(top=top, linter=linter, unmeasured_rc=unmeasured_rc, command=rest[0], tool=rest[1], paths=rest[2:])
 
 
 def main(argv: list[str]) -> int:
@@ -293,7 +328,7 @@ def main(argv: list[str]) -> int:
         print(f"基点の file が無い: {baseline_file}(既定の 0 にしない)", file=sys.stderr)
         return 2
     if request.command == "check":
-        return _check(top, tool, read_baseline(baseline_file), request.paths)
+        return _check(top, tool, read_baseline(baseline_file), request.paths, request.unmeasured_rc)
     instrument: Instrument = semgrep_instrument(top) if tool == "semgrep" else linter_for_writing(top, request.linter)
     if request.command == "init":
         if baseline_file.exists():
@@ -315,17 +350,18 @@ def main(argv: list[str]) -> int:
     return 0
 
 
-def _check(top: Path, tool: str, baseline: Baseline, paths: list[str]) -> int:
-    """check の入口: 基点と同じ版の道具で、測った file の数を基点と比べる(赤 = 1・通す = 0)。"""
+def _check(top: Path, tool: str, baseline: Baseline, paths: list[str], unmeasured_rc: int) -> int:
+    """check の入口: 基点と同じ版の道具で、測った file の数を基点と比べる(赤 = 1・通す = 0・測れない = unmeasured_rc)。"""
     instrument: Instrument | None = semgrep_instrument(top) if tool == "semgrep" else linter_for_checking(top, baseline)
     if instrument is None:
         # doeff-linter: 基点の鍵の binary が置き場に無い(少し前の main から切った作業木・linter を変えた便の commit の間・
-        # land-arm が組み直すまでの数分)。止めずに通す — 通した commit は日次の全体の測りが同じ基点の形で測る(#2906)。
+        # land-arm が組み直すまでの数分)。hook は止めずに通す — 通した commit は日次の段(--strict)が同じ基点の形で測り、
+        # 日次では測れないことそのものを赤にする(#2906)。
         print(f"doeff-linter: 測れない(基点の版 {baseline.version} の binary が {searched()} のどちらにも無い — hook の中では"
               f"組まない)。{_unmeasured_hint(top, baseline)}。linter を変えた便は自分の build を "
-              "`uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` で渡して基点を数え直す",
-              file=sys.stderr)
-        return 0
+              "`uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` で渡して基点を数え直す"
+              + ("(--strict: 測れないを赤にする)" if unmeasured_rc else ""), file=sys.stderr)
+        return unmeasured_rc
     if instrument.version != baseline.version:
         # semgrep の版は木の中の uv.lock だけで決まる(機体に依らない)— 違うのは lock を上げたのに基点を数え直していない木だけ。
         print(f"semgrep: 基点の版 {baseline.version} と uv.lock の版 {instrument.version} が違う — lock を上げた便が "
