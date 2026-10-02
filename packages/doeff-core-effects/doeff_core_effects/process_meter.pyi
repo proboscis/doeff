@@ -6,9 +6,6 @@ from doeff_hy.static_types import Handler as _Handler
 from collections import deque as deque
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
-import gc as gc
-import threading as threading
-import time as time
 from doeff_core_effects.meter_effects import CountMetric as CountMetric
 from doeff_core_effects.meter_effects import EMPTY_METER as EMPTY_METER
 from doeff_core_effects.meter_effects import MeterSettings as MeterSettings

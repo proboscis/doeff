@@ -2,9 +2,6 @@
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import errno as errno
-import fnmatch as fnmatch
-import posixpath as posixpath
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from doeff import Program as Program

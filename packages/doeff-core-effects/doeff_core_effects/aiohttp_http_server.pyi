@@ -5,9 +5,6 @@ from doeff_hy.static_types import Handler as _Handler
 import asyncio as asyncio
 from collections import deque as deque
 from collections.abc import Coroutine as Coroutine
-import sys as sys
-import threading as threading
-import time as time
 from typing import TypeVar as TypeVar
 from pathlib import Path as Path
 import aiohttp as aiohttp
