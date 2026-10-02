@@ -125,10 +125,10 @@ class TestMcpE2E:
         class RecordingAgentHandler(MockAgentHandler):
             def __init__(self):
                 super().__init__()
-                self.mcp_servers = None
+                self.mut_mcp_servers = None
 
             def handle_launch_session(self, effect, mcp_servers=None):
-                self.mcp_servers = mcp_servers
+                self.mut_mcp_servers = mcp_servers
                 return L2SessionHandle(session_id=effect.spec.session_id)
 
         agent_handler = RecordingAgentHandler()
@@ -152,9 +152,9 @@ class TestMcpE2E:
         handle = run(scheduled(state()(wrapped)))
 
         assert handle.session_id == "run-001-node-mcp-0"
-        assert agent_handler.mcp_servers is not None
-        assert agent_handler.mcp_servers["doeff"].startswith("http://127.0.0.1:")
-        assert agent_handler.mcp_servers["doeff"].endswith("/sse")
+        assert agent_handler.mut_mcp_servers is not None
+        assert agent_handler.mut_mcp_servers["doeff"].startswith("http://127.0.0.1:")
+        assert agent_handler.mut_mcp_servers["doeff"].endswith("/sse")
 
     def test_launch_with_mcp_creates_server_and_mcp_json(self, tmp_path):
         """Launch with mcp_tools starts MCP server and writes .mcp.json."""

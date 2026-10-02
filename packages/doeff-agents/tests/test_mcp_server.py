@@ -205,7 +205,7 @@ class TestServerLifecycle:
                 raise RuntimeError("ready already completed")
 
         server = McpToolServer(tools=(), port=0)
-        server._ready_promise = FailingReadyPromise()
+        server._mut_ready_promise = FailingReadyPromise()
 
         def serve_forever(_poll_interval=0.5):
             raise AssertionError("serve_forever should not start after ready failure")

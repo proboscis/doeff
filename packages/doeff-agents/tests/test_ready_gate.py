@@ -158,7 +158,7 @@ class ScriptedBackend(SessionBackend):
 
     def __init__(self, frames: list[str]) -> None:
         self.frames = frames
-        self.frame_index = 0
+        self.mut_frame_index = 0
         self.sessions: set[str] = set()
         self.sent: list[tuple[str, str, int]] = []
         self.killed: list[str] = []
@@ -188,7 +188,7 @@ class ScriptedBackend(SessionBackend):
         literal: bool = True,
         enter: bool = True,
     ) -> None:
-        self.sent.append((target, keys, self.frame_index))
+        self.sent.append((target, keys, self.mut_frame_index))
 
     def capture_pane(
         self,
@@ -197,9 +197,9 @@ class ScriptedBackend(SessionBackend):
         *,
         strip_ansi_codes: bool = True,
     ) -> str:
-        frame = self.frames[min(self.frame_index, len(self.frames) - 1)]
-        if self.frame_index < len(self.frames) - 1:
-            self.frame_index += 1
+        frame = self.frames[min(self.mut_frame_index, len(self.frames) - 1)]
+        if self.mut_frame_index < len(self.frames) - 1:
+            self.mut_frame_index += 1
         return frame
 
     def capture_transcript(

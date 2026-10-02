@@ -112,7 +112,7 @@ class _McpHandler(BaseHTTPRequestHandler):
         log.info("MCP SSE session %s started", session.id)
 
         try:
-            while not self.server.shutting_down:
+            while not self.server.mut_shutting_down:
                 try:
                     msg = session.queue.get(timeout=30)
                 except queue.Empty:
@@ -200,8 +200,8 @@ class McpToolServer(_ThreadingHTTPServer):
     ) -> None:
         self._tools = {t.name: t for t in tools}
         self.sessions: dict[str, _SseSession] = {}
-        self.shutting_down = False
-        self._thread: threading.Thread | None = None
+        self.mut_shutting_down = False
+        self._mut_thread: threading.Thread | None = None
         self.tool_vm_timeout = TOOL_VM_TIMEOUT
 
         # Queue-based dispatch state.
@@ -213,7 +213,7 @@ class McpToolServer(_ThreadingHTTPServer):
 
         # Ready signaling — set by start() if the caller provides an
         # ExternalPromise so the VM can Wait on server readiness.
-        self._ready_promise: Any | None = None
+        self._mut_ready_promise: Any | None = None
 
         super().__init__(("127.0.0.1", port), _McpHandler)
 
@@ -238,20 +238,20 @@ class McpToolServer(_ThreadingHTTPServer):
         The VM can Wait on ready_promise.future to avoid a race where the
         agent process starts before the HTTP server can accept connections.
         """
-        self._ready_promise = ready_promise
-        self._thread = threading.Thread(
+        self._mut_ready_promise = ready_promise
+        self._mut_thread = threading.Thread(
             target=self._serve_with_ready_signal,
             name="doeff-mcp-server",
             daemon=True,
         )
-        self._thread.start()
+        self._mut_thread.start()
         log.info("MCP server started at %s", self.url)
 
     def _serve_with_ready_signal(self) -> None:
         """Serve loop wrapper that signals readiness once accepting."""
-        if self._ready_promise is not None:
+        if self._mut_ready_promise is not None:
             try:
-                self._ready_promise.complete(None)
+                self._mut_ready_promise.complete(None)
             except Exception:
                 log.exception("Failed to complete ready_promise")
                 raise
@@ -262,9 +262,9 @@ class McpToolServer(_ThreadingHTTPServer):
 
         Also wakes up any VM task blocked on wakeup_mailbox by completing
         the wakeup promise (if one is posted) so mcp-server-loop can
-        observe self.shutting_down and exit cleanly.
+        observe self.mut_shutting_down and exit cleanly.
         """
-        self.shutting_down = True
+        self.mut_shutting_down = True
         # Signal all sessions to close
         for session in list(self.sessions.values()):
             session.queue.put(None)
@@ -278,8 +278,8 @@ class McpToolServer(_ThreadingHTTPServer):
         except Exception:
             log.exception("Failed to wake VM on shutdown")
         super().shutdown()
-        if self._thread:
-            self._thread.join(timeout=5)
+        if self._mut_thread:
+            self._mut_thread.join(timeout=5)
         log.info("MCP server stopped")
 
     # -- JSON-RPC dispatch ---------------------------------------------------

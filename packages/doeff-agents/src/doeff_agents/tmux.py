@@ -519,13 +519,13 @@ class StableTmuxSessionBackend(TmuxSessionBackend):
         io_root: IoRoot | None = None,
     ) -> None:
         super().__init__(executable=executable, io_root=io_root)
-        self._availability_verified = False
+        self._mut_availability_verified = False
 
     def _ensure_tmux_available(self) -> None:
-        if self._availability_verified:
+        if self._mut_availability_verified:
             return
         super()._ensure_tmux_available()
-        self._availability_verified = True
+        self._mut_availability_verified = True
 
 
 def _default_io_root() -> IoRoot:
