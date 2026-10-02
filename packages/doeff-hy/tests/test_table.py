@@ -244,3 +244,47 @@ def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
                 assert dict(zip(got.keys(), got.rows())) == expected, (seed, base_rows, count)
                 assert got.size() == len(expected), (seed, base_rows, count)
                 assert all(got.row(k) == expected.get(k) for k in {k for k, _ in writes} | set(base)), (seed, base_rows, count)
+
+
+# ------------------------------------------------------------------ 速さの道(agora-redesign #2715 — #2708 の I0a・契約は変えない)
+
+
+class _UnreadableRow:
+    """検の材料: 比べられると止まる行(同じ表の比べが中身を読まない事を確かめるため)。"""
+
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("同じ表の比べが行の中身を読んだ")
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+def test_the_same_table_compares_equal_without_reading_rows() -> None:
+    table = table_of((TableWrite(key="k", value=_UnreadableRow()),))
+    assert table == table
+    # 失敗ケース: 中身の同じ別の表は行を読んで比べる(同じ object の近道を外すと、上の比べもここと同じく止まる)。
+    copy = table_of((TableWrite(key="k", value=table.row("k")),))
+    try:
+        _ = table == copy
+    except AssertionError:
+        return
+    raise AssertionError("別の表の比べが行を読まなかった")
+
+
+def test_a_small_table_keeps_rows_and_order_without_a_delta_layer() -> None:
+    old = _table(MIN_DELTA - 1)
+    new = old.with_writes((TableWrite(key="k1", value=100), TableWrite(key="k2", value=None), TableWrite(key="x", value=7)))
+    assert (old.row("k1"), old.row("k2"), old.size()) == (1, 2, MIN_DELTA - 1)
+    assert (new.row("k1"), new.row("k2"), new.row("x"), new.size()) == (100, None, 7, MIN_DELTA - 1)
+    assert new.keys() == tuple(key for key in old.keys() if key != "k2") + ("x",)
+    assert new.rows() == tuple(new.row(key) for key in new.keys())
+    # 小さな表は差分の層を持たない(書きごとに基を写す — 差分の dict の丸写しを払わない)。
+    assert (new._delta, new._removed) == ({}, frozenset())
+
+
+def test_items_pair_the_keys_with_the_rows() -> None:
+    small = _table(5).with_writes((TableWrite(key="k0", value=None), TableWrite(key="y", value=9)))
+    big = _table(MIN_DELTA * 2).with_writes((TableWrite(key="k3", value=-3), TableWrite(key="k4", value=None)))
+    for table in (small, big):
+        assert table.items() == tuple(zip(table.keys(), table.rows()))
+        assert all(table.row(key) == value for key, value in table.items())
+    assert big._delta  # 大きな表は差分の層の道を通っている(items が差分を含めて組む事の確かめ)

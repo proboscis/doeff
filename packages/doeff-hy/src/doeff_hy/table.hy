@@ -6,7 +6,10 @@
 ;;;   (3) 読み手の層は写像(dict・Mapping)を受け渡さず、鍵 → 値を引く関数で引く(agora の線引き 2 の (b))。
 ;;; Table は 3 つを満たす: 内側は「基 + 差分」の 2 層で、基は作った後に決して書き換えない。with-writes は差分だけを写して新しい
 ;;; Table を返す(写すのは差分だけ)。差分が基の 1/COMPACT-RATIO を超えたら、基と差分を合わせた新しい基を作る(その書きだけ O(n)・
-;;; 均すと小さい)。読みは差分 → 基の 2 回引き。Table は Mapping ではない(写像として受け渡さない)— 引くのは row・keys・rows・size だけ。
+;;; 均すと小さい)。読みは差分 → 基の 2 回引き。Table は Mapping ではない(写像として受け渡さない)— 引くのは row・keys・rows・items・
+;;; size だけ。
+;;; 基が MIN-DELTA 行未満の小さな表は差分の層を持たず、書くたびに基を写す — 写しは小さく、差分の層の費用(1 回の書きごとに差分の dict を
+;;; 丸ごと写す・集合の演算)の方が重い(dict の 1 鍵の写し 0.3〜0.7 µs に対し差分の層の書き 約 4.7 µs — agora-redesign #2715)。
 ;;;
 ;;; 1 拍の中で書いた行を読み直す書き手は、下書き(TableDraft — 下の節)で書きを貯め、拍の終わりに 1 回だけ with-writes を当てる。
 ;;;
@@ -30,7 +33,7 @@
 
 
 (defclass Table [(get Generic V)]
-  "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・rows・size、書きは with-writes(新しい Table を返す)。"
+  "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・rows・items・size、書きは with-writes(新しい Table を返す)。"
   (setv __slots__ #("_base" "_delta" "_removed" "_size"))
   (#^ (get dict #(str V)) _base)
   (#^ (get dict #(str V)) _delta)
@@ -61,12 +64,25 @@
     (+ (tuple (gfor #(key value) (.items self._base) :if (and (not-in key self._removed) (not-in key self._delta)) value))
        (tuple (.values self._delta))))
 
+  (defn #^ (get tuple #((get tuple #(str V)) ...)) items [self]
+    "鍵と行の組の列(keys・rows と同じ並び)— 鍵が値から導けない表の全行を、鍵ごと読む読み手(保存の綴り)のため(agora-redesign #2715)。"
+    (+ (tuple (gfor #(key value) (.items self._base) :if (and (not-in key self._removed) (not-in key self._delta)) #(key value)))
+       (tuple (.items self._delta))))
+
   (defn #^ int size [self]
     "行の数。"
     self._size)
 
   (defn #^ "Table[V]" with-writes [self #^ (get tuple #((get TableWrite V) ...)) writes]
     "書きの列を当てた新しい Table(この Table は変わらない)。同じ鍵の書きが列に 2 度あれば後の方が残る。"
+    ;; 小さな表は書きの列を写しへ直に当てる(鍵 → 行の中間の dict を組まない — _with-pending の小さな表の道と同じ答え)。
+    (when (and (< (len self._base) MIN-DELTA) (not self._delta) (not self._removed))
+      (setv written (dict self._base))
+      (for [write writes]
+        (if (is write.value None)
+            (.pop written write.key None)
+            (setv (get written write.key) write.value)))
+      (return (_base-only-table written)))
     (_with-pending self (dfor write writes write.key write.value)))
 
   (defn #^ str __repr__ [self]
@@ -75,6 +91,9 @@
   (defn #^ bool __eq__ [self #^ object other]
     "行の中身で比べる(鍵の集合が同じで、鍵ごとの行が等しい)— 表は値なので、写しと元の表は中身が同じなら等しい(基と差分の分け方は
      問わない)。表を欄に持つ凍った記録の等しさ(畳みの前後の cache の比べ)のため。"
+    ;; 同じ表は中身を読まずに等しい(書きの無い拍で前後の欄が同じ object のまま — 比べを O(1) に・agora-redesign #2715)。
+    (when (is self other)
+      (return True))
     (when (not (isinstance other (type self)))
       (return False))
     (and (= self._size (.size other))
@@ -90,11 +109,31 @@
     (raise (AttributeError (.format "Table は変えられない(欄 {!r} を書こうとした)" name)))))
 
 
+(defn #^ (get Table V) _base-only-table [#^ (get dict #(str V)) base]
+  "差分の層を持たない表(基だけ)を、行の数を集合の演算で数え直さずに作るため — 小さな表の書きの道(行の数 = 基の行の数)。
+   base はこの module の中で作った写しだけを受ける(作った後に書き換えない)。"
+  (setv table (object.__new__ Table))
+  (object.__setattr__ table "_base" base)
+  (object.__setattr__ table "_delta" {})
+  (object.__setattr__ table "_removed" (frozenset))
+  (object.__setattr__ table "_size" (len base))
+  table)
+
+
 (defn #^ (get Table V) _with-pending [#^ (get Table V) table #^ (get dict #(str (| V None))) pending]
   "鍵 → 行(None は行を消す)の書きを 1 度に当てた新しい Table(table も pending も変わらない)— Table.with-writes と TableDraft.freeze が
    通る 1 点(この module の中だけ — 写像を受け渡す口を公開しない)。書き 1 件ごとに TableWrite を組んで Hy の繰り返しで当てると、
    下書きの freeze(数万件の書き)が dict の写しの約 4 倍重かった(agora-redesign #2412)ので、書きを dict の一括の操作(内包・集合の
    差と和・| の合わせ)で当てる。"
+  ;; 小さな表(差分の層を持たない・基が MIN-DELTA 行未満)は基を写して書く — 差分の層の費用の方が写しより重い(頭の註)。
+  ;; 書きは少ない(1 拍に数件)ので、内包と集合の演算を組まずに写しへ 1 件ずつ当てる。
+  (when (and (< (len table._base) MIN-DELTA) (not table._delta) (not table._removed))
+    (setv written (dict table._base))
+    (for [#(key value) (.items pending)]
+      (if (is value None)
+          (.pop written key None)
+          (setv (get written key) value)))
+    (return (_base-only-table written)))
   (setv puts (dfor #(key value) (.items pending) :if (is-not value None) key value)
         drops (frozenset (gfor #(key value) (.items pending) :if (is value None) key))
         delta (| (dfor #(key value) (.items table._delta) :if (not-in key drops) key value) puts)
