@@ -25,7 +25,7 @@ USED = (
     UsedModule("sim.checkout_git_script", ("GitCheckout", "GitRemote", "GitRev", "git-command")),
     UsedModule("shared.core.job_rules", ("spec-hash",)),
     UsedModule("shared.intent.env_marker_model", ("ENV-MARKER", "FileSha256")),
-    UsedModule("cluster_foundation", ("lease-holder-of", "with-cluster-handlers")),
+    UsedModule("shared.entry.cluster_foundation", ("lease-holder-of", "with-cluster-handlers")),
     UsedModule("foundation.record_codec", ("DECISION", "EffectCodec", "OUTPUT", "READ", "register", "registered-types", "type-name")),
     UsedModule("shared.intent.process_model", ("AwaitProcessEnded", "ProcessEnded")),
     UsedModule("worker.core.env_prepare", ("env-marker->json",)),

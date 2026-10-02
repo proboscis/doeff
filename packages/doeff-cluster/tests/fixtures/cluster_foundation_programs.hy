@@ -8,7 +8,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster.foundation.host_contract [host-reader environ-reader])
-(import doeff_cluster.cluster_foundation [with-cluster-handlers])
+(import doeff_cluster.shared.entry.cluster_foundation [with-cluster-handlers])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])

@@ -282,10 +282,24 @@
    "touches": [
     "cluster"
    ],
-   "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
+   "why": "旧い path の入口(本体 = doeff_cluster.shared.entry.cluster_foundation)— #2980: 使い手の repo の名指しを付け替えた次の pin で消す"
   },
   {
    "handler": "doeff_cluster.cluster_foundation:cluster-handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "旧い path の入口(本体 = doeff_cluster.shared.entry.cluster_foundation)— #2980: 使い手の repo の名指しを付け替えた次の pin で消す"
+  },
+  {
+   "handler": "doeff_cluster.shared.entry.cluster_foundation:with-cluster-handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
+  },
+  {
+   "handler": "doeff_cluster.shared.entry.cluster_foundation:cluster-handlers",
    "touches": [
     "cluster"
    ],
