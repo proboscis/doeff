@@ -1,7 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = main.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-from types import FrameType as FrameType
 from pathlib import Path as Path
 from doeff import run as run
 from doeff import with_handlers as with_handlers
@@ -42,6 +41,7 @@ from doeff_cluster.foundation.kube_client import KubeClient as KubeClient
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox as RequestInbox
 from doeff_cluster.foundation.coordinator_inbox import StopState as StopState
+from doeff_cluster.foundation.coordinator_inbox import stop_on_signals as stop_on_signals
 from doeff_cluster.coordinator.entry.handler_sets import production_handlers as production_handlers
 from doeff_cluster.coordinator.core.program import run_coordinator as run_coordinator
 
