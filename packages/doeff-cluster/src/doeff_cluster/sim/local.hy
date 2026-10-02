@@ -232,7 +232,9 @@
    読み捨てる — 新しい coordinator と古い worker の組を確かめるため)・silent-stop = 反例の世界だけの壊れた worker(宣言の読みの handler が
    止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)・overstates-capacity = 反例の世界だけの壊れた worker(heartbeat で capacity の
    代わりにこの数を名乗る — None = capacity。本当に置ける数は capacity のまま — 条 C6 の反例・#1976)・claims-provides = 反例の世界だけの
-   壊れた worker(heartbeat で provides の代わりにこの能力を名乗る — None = provides。本当に提供する能力は provides のまま — 条 C7 の反例・#1976)。"
+   壊れた worker(heartbeat で provides の代わりにこの能力を名乗る — None = provides。本当に提供する能力は provides のまま — 条 C7 の反例・#1976)・
+   claims-exclusive = 反例の世界だけの壊れた worker(heartbeat で exclusive の代わりにこの専用の能力を名乗る — None = exclusive。本当の
+   専用の能力は exclusive のまま — 条 C10 の反例・#1976)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -249,7 +251,8 @@
   (setv #^ bool ignores-keep-marks False)
   (setv #^ bool silent-stop False)
   (setv #^ (| int None) overstates-capacity None)
-  (setv #^ (| frozenset None) claims-provides None))
+  (setv #^ (| frozenset None) claims-provides None)
+  (setv #^ (| frozenset None) claims-exclusive None))
 
 
 (defrecord SimProcess
@@ -1407,7 +1410,8 @@
   ;; 今持っている印(#2804 — 本番の coordinator への口の beat と同じ判断)。印を知らない古い worker の代役は欄を載せない。
   (<- kept tuple (keep-marks-held truth.last-desired))
   (val named (if (is worker.claims-provides None) worker.provides worker.claims-provides))
-  (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted worker.exclusive))
+  (val named-exclusive (if (is worker.claims-exclusive None) worker.exclusive worker.claims-exclusive))
+  (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node
                                 :capacity (if (is worker.overstates-capacity None) worker.capacity worker.overstates-capacity)
                                 :versions (or worker.versions plan.versions)
