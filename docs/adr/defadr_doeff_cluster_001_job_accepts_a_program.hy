@@ -109,7 +109,8 @@
      (rule R7 "旧い宣言(service の :env・:config・:env-config・:requires、env の関数、declare の --config)を受け付ける移行の期間は置かない。新しい API(Program の値 1 つ・:needs)だけにし、旧い形は宣言の時点で理由つきで断る(黙って読み替えない)。利用者(agora-controllers)の書き直しは同じ切り替えで行う(agora-redesign #833)。理由: 旧い形と新しい形が並んで通ると、どちらが正しい書き方か、どの宣言がどちらの意味で動いているかが、読み手にも linter にも分からなくなる(operator 逐語 \"it just makes everything confusing so\")。戻し方: 旧い欄を受ける読みを足し戻し、新旧を併存させる(この条を足した commit の revert — 旧い宣言は再び断られなくなるが、新しい API の実装は別の便なので残る)(2026-09-27 追加)。")
      (rule R5 "記録と再生は handler で行う(2026-09-27 決定 — 旧文『未決・案 A = Program の側で包む / 案 B = 実行器の観測の口』を置き換える)。形は今の effect-recorder と同じ間に入る handler: 記録は effect を外へ撃ち直して答えを書き留め、継続を再開する。再生は同じ場所で記録から答える。置き場は Program の中の with-handlers で、翻訳の handler と土台の handler の間(外の世界との境目 — 汎用の effect だけを記録する)。記録か再生かは置く handler で選び、どちらを置くかは Ask と os.environ を読む handler で決める。runner は記録係を差し込まない(今の recording-layer と run.config の record 欄をやめる)。WithObserve(見るだけで答えを見ない)はこの用途に使わず、tracing・ログの用途に限る。")
      (rule R5b "記録係より内側(Program 側 — 業務の handler・翻訳の handler)の handler は決定的でなければならない。時計・乱数・I/O を自分で読まず、汎用の effect にして記録係の下の土台の handler で答えさせる。これで記録係に届かない effect は再生でも同じ計算で答え直され、境目の記録だけで再生が成り立つ。守りは doeff-linter の DOEFF106(生の副作用に直に触る定義は土台の層にだけ置く)で、破れは再生の分岐(ReplayDiverged)として出る。scheduler の並行の順番(どの task が先に進むか)は再生で決定的にならないので、live の扱い(順番の突き合わせ)で扱う(2026-09-27 追加)。")
-     (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")]
+     (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")
+     (rule R8 "sim-cluster・手元の 1 台の cluster・k3s の cluster は同じ API(同じ入口・同じ宣言・同じ Program)で試す。置き場所の違いは handler(土台の handler の組)が吸い、命令の引数・環境の名の分岐で切り替えない(2026-10-02 23:2x 利用者の逐語 2 つ・Mac の調整役の中継・agora-redesign #2671: \"and i am concerned that the way to test local/cluster is different...\" / \"i mean, all sim cluster, local single machine cluster, and k3s cluster must be test via same api. such differences are to be absorbed by handler. not cli arg\")。dotfiles ADR-DOTFILES-027 R-ca36606c と同じ決め — 命令の側の助言はそちらのルールが運ぶ。R4b(置き場所の名前を宣言に書かない)と同じ向きの、試し方の側の決め。")]
   :laws
     [(law job-entry-adds-no-handler
        :statement "for_all job j (service / task): job_entry が j を走らせる時に足す handler の数 = 0 — j の Program の外で効く handler は無い"
@@ -158,7 +159,15 @@
           (counterexample "業務の handler が random で抽選する — 再生で別の値になり、以降の effect の列が記録と食い違う(ReplayDiverged)")
           (counterexample "Program 側の handler が file を直に読む — 再生の時の file の中身が記録の時と違えば答えが変わる")]
        :enforced-by ["doeff-linter DOEFF106"]
-       :wiring "未配線(2026-09-27)— DOEFF106 は doeff-linter に未着地(wt/hy-lint-visibility ほか)。破れは実行時に再生の分岐(ReplayDiverged)として出るが、それは事後の検出で針ではない")]
+       :wiring "未配線(2026-09-27)— DOEFF106 は doeff-linter に未着地(wt/hy-lint-visibility ほか)。破れは実行時に再生の分岐(ReplayDiverged)として出るが、それは事後の検出で針ではない")
+     (law every-cluster-is-tested-through-one-api
+       :statement "for_all 試しの置き場所 c ∈ {sim-cluster・手元の 1 台の cluster・k3s の cluster}: c で job を試す入口・宣言・Program は同じで、c の違いは土台の handler の組だけが吸う — 入口の引数や環境の名で code の道を切り替えない(R8)"
+       :counterexamples
+         [(counterexample "k3s で試す時だけ --cluster k3s の引数で job_entry の道を切り替える — 置き場所の違いが handler でなく入口の分岐に入る")
+          (counterexample "手元の 1 台の cluster のために別の命令の入口を作る — 同じ Program が置き場所ごとに別の API で試される")
+          (counterexample "sim-cluster だけ coordinator を抜いて Program を直に回す — 手元のテストが本番の入口を通らない(agora-redesign #2671 の 13 系の実例)")]
+       :enforced-by ["dotfiles の助言 develop-locally-never-wait-for-deployment(ADR-DOTFILES-027 R-ca36606c)"]
+       :wiring "未配線(2026-10-02)— 機械の検は無い(試しの入口が置き場所ごとに分かれていないかを測る針は未設計)。今は書く拍の助言だけ")]
   :enforcement
     [(deftest test-adr-doe-cluster-001-runner-handler-ratchet
        ;; 針: job_entry が Program の外から handler を足す呼び出しは台帳を超えない(新設は赤)・台帳の削り忘れも赤。
