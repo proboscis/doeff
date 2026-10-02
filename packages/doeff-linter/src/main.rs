@@ -228,6 +228,8 @@ struct Setup {
     settings: ProjectSettings,
     /// 設定の知らない鍵と規則の ID(読まずに残りを読んだ — DOEFF100 で知らせる・agora-redesign #848)。
     notices: Vec<project::notice::ConfigNotice>,
+    /// 読んだ service と層の宣言の file(根の外に在っても宣言の規則が判じる — 名指しの範囲の外に数えない・agora-redesign #2821)。
+    declaration: Option<PathBuf>,
 }
 
 impl Setup {
@@ -428,6 +430,7 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         Some(path) => Some(config_dir.clone().unwrap_or_else(|| root.clone()).join(path)),
         None => Some(root.join("architecture.hy")).filter(|p| p.is_file()),
     };
+    let declaration = architecture_path.clone();
     let architecture = match architecture_path {
         Some(path) => Some(
             project::architecture::Architecture::load(&path, &root).map_err(|problems| format!("architecture.hy の誤り:\n  {}", problems.join("\n  ")))?,
@@ -454,7 +457,7 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     if silenced {
         notices.clear();
     }
-    Ok(Setup { config, root, enabled_rules, exclude_patterns, settings, notices })
+    Ok(Setup { config, root, enabled_rules, exclude_patterns, settings, notices, declaration })
 }
 
 /// 違反を出す file を path の引数で絞る時の path の列(既定の "." なら None = 全部)。名指しの .hy の隣の同じ名の .pyi も含める
@@ -881,6 +884,13 @@ fn run_editor(args: &Args) -> ExitCode {
     report.new_critical = baseline.map(|baseline| {
         doeff_linter::baseline::new_criticals(&baseline, &doeff_linter::baseline::critical_identities(&report.violations))
     });
+    // 名指した Hy の file のうち linter が歩く範囲の外の物(層の規則が判じていない — 仕様 1 節「名指しの範囲の外」・agora-redesign #2821)。
+    report.out_of_scope = match (&only, stdin_file.is_none() && setup.has_project_rules()) {
+        (Some(named), true) => {
+            Some(project::hy_files::outside_walk(&setup.root, named, setup.declaration.as_deref()).iter().map(|p| p.to_string_lossy().into_owned()).collect())
+        }
+        _ => None,
+    };
     match doeff_linter::timing::timed("editor-serialize", || serde_json::to_string(&report)) {
         Ok(text) => println!("{}", text),
         Err(error) => {
@@ -892,7 +902,9 @@ fn run_editor(args: &Args) -> ExitCode {
         ExitCode::from(NEW_CRITICAL_EXIT)
     } else if report.has_errors() {
         ExitCode::from(1)
-    } else if project_report.semantic.as_ref().is_some_and(|s| s.unmeasured > 0) {
+    } else if project_report.semantic.as_ref().is_some_and(|s| s.unmeasured > 0)
+        || report.out_of_scope.as_ref().is_some_and(|outside| !outside.is_empty())
+    {
         ExitCode::from(UNMEASURED_EXIT)
     } else {
         ExitCode::SUCCESS
@@ -940,6 +952,7 @@ fn run_as_hook(args: &Args) -> ExitCode {
                 exclude_patterns,
                 settings: ProjectSettings::default(),
                 notices: Vec::new(),
+                declaration: None,
             }
         }
     };
@@ -1166,10 +1179,19 @@ fn run_normal(args: &Args) -> ExitCode {
     let mut results = lint_files_parallel(&files, &all_rules);
     // 意味の規則で問うはずだったのに答えを得られなかった数(0 でなければ、破れが無くても緑と分けて終了コード 3)。
     let mut unmeasured = 0;
+    // 命令の行で名指した Hy の file のうち、linter が歩く範囲の外の物(層の規則が判じていない — 破れが無くても緑と分けて終了コード 3・
+    // agora-redesign #2821)。--modified は名指しではないので数えない。
+    let mut outside: Vec<PathBuf> = Vec::new();
     if setup.has_project_rules() {
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。file 1 つで判じられる規則は
         // この path の下だけを読む(Target::Whole の focus)。
         let only: Option<Vec<PathBuf>> = if args.modified { Some(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect())) } else { only_paths(&args.paths) };
+        if let (Some(named), false) = (&only, args.modified) {
+            outside = project::hy_files::outside_walk(&setup.root, named, setup.declaration.as_deref());
+            for path in &outside {
+                eprintln!("{}", outside_line(path, &setup.root));
+            }
+        }
         let mut report =
             project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None));
         report.findings.extend(setup.notice_findings());
@@ -1270,15 +1292,30 @@ fn run_normal(args: &Args) -> ExitCode {
         eprintln!("\nNo issues found.");
     }
 
-    // Return exit code(0 = 破れなし・1 = 破れあり・2 = 引数・設定の誤り・3 = 破れは無いが意味の規則を測れなかった定義が在る)
+    // Return exit code(0 = 破れなし・1 = 破れあり・2 = 引数・設定の誤り・3 = 破れは無いが測れなかった物が在る — 意味の規則を測れなかった
+    // 定義か、名指した Hy の file が linter の歩く範囲の外)
     if error_count > 0 {
         ExitCode::from(1)
-    } else if unmeasured > 0 {
-        eprintln!("doeff-linter: 意味の規則を測れなかった定義が {} 在る(Jev に問えない・proxy の覚えを読む束が返らない)— 緑ではない", unmeasured);
+    } else if unmeasured > 0 || !outside.is_empty() {
+        if unmeasured > 0 {
+            eprintln!("doeff-linter: 意味の規則を測れなかった定義が {} 在る(Jev に問えない・proxy の覚えを読む束が返らない)— 緑ではない", unmeasured);
+        }
+        if !outside.is_empty() {
+            eprintln!("doeff-linter: 名指した Hy の file のうち {} 個が対象の外(上の行)— 測っていないので緑ではない", outside.len());
+        }
         ExitCode::from(UNMEASURED_EXIT)
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// 名指した Hy の file が linter の歩く範囲の外である事を名指す 1 行(通常の入口の stderr・agora-redesign #2821)。
+fn outside_line(path: &Path, root: &Path) -> String {
+    format!(
+        "doeff-linter: 対象の外 — {}(linter が歩く範囲 = 根 {} の下の Hy の file の外 — 層の規則はこの file を判じていない)",
+        path.display(),
+        root.display()
+    )
 }
 
 /// Violation info for grouping

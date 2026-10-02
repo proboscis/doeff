@@ -523,6 +523,14 @@ struct Blocking {
     grown_warnings: Vec<String>,
     whole: Vec<String>,
     unmeasured: Option<Unmeasured>,
+    /// stage した Hy の file のうち linter が歩く範囲の外の物 — 測っていない事を名指すだけで止めない(agora-redesign #2821)。
+    out_of_scope: Vec<String>,
+}
+
+/// 純粋: 子の linter の報告(editor-json)の `out_of_scope` — 名指した Hy の file のうち linter が歩く範囲の外の物(仕様 1 節
+/// 「名指しの範囲の外」・agora-redesign #2821)。欄が無い・null なら空。
+pub fn out_of_scope_of(report: &Value) -> Vec<String> {
+    report["out_of_scope"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect()
 }
 
 /// 途中で測れなかった理由(上限越えは名指して止めない・失敗は終了コード 2)。
@@ -569,6 +577,7 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                 .chain(blocking.grown_warnings.iter().map(|line| format!("major の warning が HEAD の版より増えた(stage した file の組の数): {}", line)))
                 .chain(blocking.whole.iter().map(|ident| format!("repo 全体の規則の HEAD に無い当たり: {}", ident)))
                 .chain(blocking.unmeasured.iter().map(unmeasured_line))
+                .chain(blocking.out_of_scope.iter().map(|path| format!("対象の外(linter が歩く範囲の外 — 層の規則はこの file を測っていない): {}", path)))
                 .collect();
             Assessment { code, lines }
         }
@@ -646,6 +655,7 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
         blocking.fresh_critical = tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
         blocking.grown_warnings = grown_major_warnings(&base, &tip);
+        blocking.out_of_scope = out_of_scope_of(&tip);
     }
 
     if !whole.is_empty() {

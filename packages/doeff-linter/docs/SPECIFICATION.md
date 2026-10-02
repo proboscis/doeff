@@ -28,8 +28,25 @@
 | 0 | error の違反が無い(warning と info はあってもよい) |
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
 | 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
-| 3 | error の違反は無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった — Jev に届かない・鍵が無い・較正が撃てない。緑ではない・agora-redesign #1160) |
+| 3 | error の違反は無いが、測れなかった物がある(緑ではない): 意味の規則で問うはずだった定義に答えを得られなかった(Jev に届かない・鍵が無い・較正が撃てない — agora-redesign #1160)か、名指した Hy の file が linter の歩く範囲の外(下の「名指しの範囲の外」・#2821) |
 | 4 | `--baseline-report` の時だけ: 基点に無い critical がある(新しい critical)。1・3 より先に判じる(2 は常に最優先) |
+
+### 名指しの範囲の外(agora-redesign #2821)
+
+層の規則は、repo の根(`root`)の下を歩いた Hy の file だけを判じる。根の外の Hy の file(例: 根を `src` にした package の `tests/`)を
+名指しても何も判じられず、以前は終了コード 0 で黙った — 「測って通った」と読める。今は、名指した path(file か dir — dir はその下の
+Hy の file に開く)のうち歩く範囲の外の Hy の file を名指し、error の違反が無ければ終了コード 3 にする。
+
+- **text / json の出力**: 1 file 1 行を stderr に「`doeff-linter: 対象の外 — <path>(linter が歩く範囲 = 根 <root> の下の Hy の file の外 — …)`」。
+- **editor-json の出力**: 一番上の欄 `out_of_scope`(名指しの綴りの下の path の辞書順の列)。名指しの無い実行(`.`)と `--stdin` は `null`。
+  版は上げない(欄の追加)。commit の hook(`--commit-hook`)はこの欄を読んで 1 行ずつ名指す(止めはしない — 測っていない事を名指す)。
+- **数えない物**: Hy でない file(Python の規則は名指しの path から file を集めて当てるので、範囲の外でも測る)・在らない path・
+  `--modified`(名指しではない)・読んだ service と層の宣言の file(設定の `architecture` か根の `architecture.hy` — 根の外に置いても
+  宣言の規則が判じる。doeff-cluster の commit の hook は path を渡す時に必ずこの file を足す)。
+- **歩く範囲の中でも判じる規則の無い file は数えない**(今の版の限り): 層の置き場の外の file や、`:exclude` に当たる段(既定 `tests`)の
+  下の file は、根の下でも層の規則が判じないが、ここでは名指さない。判定を「どれかの規則が判じるか」(`project::is_judged_file`)に
+  広げるかは #2821 の案 A と一緒に決める。
+- 戻し方: この欄・`project::hy_files::outside_walk` と 3 つの呼び手(通常の入口・editor-json・commit の hook)を消す。
 
 ### 基点との比べ(`--baseline-report`・agora-redesign #1803)
 
@@ -107,7 +124,8 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   ],
   "judged_rules": ["DOEFF016", "DOEFF101", "NOQA001"],  // この実行で判じた規則の ID(辞書順・契約の更新 8)— 下の説明
   "errors": [],                              // 読めなかった file・登録簿・目録の理由
-  "new_critical": null                       // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
+  "new_critical": null,                      // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
+  "out_of_scope": null                       // path を名指した実行の時だけ: 名指した Hy の file のうち歩く範囲の外の物(1 節「名指しの範囲の外」)
 }
 ```
 
