@@ -393,7 +393,8 @@ def _function(node: ast.FunctionDef | ast.AsyncFunctionDef, method: bool) -> ast
         body=[ast.Expr(value=ast.Constant(value=...))],
         decorator_list=[d for d in node.decorator_list if _keeps(d)],
         returns=_returns(node),
-        type_params=[],
+        # 契約の :tp(型の引数)は型検査の展開で `def f[T]` になる — 答えが引数の型で決まる関数の総称を .pyi へ運ぶ(#2893)。
+        type_params=list(node.type_params),
     )
 
 
@@ -593,15 +594,21 @@ def users_probe(package: str, used: tuple[UsedModule, ...]) -> str:
     return "\n".join([*imports, "", *bindings, ""])
 
 
-def unknown_in_users(workdir: Path, package: str, used: tuple[UsedModule, ...]) -> tuple[str, ...]:
-    """使い手の名を束ねた検の module を使い手の型の門と同じ strict で検め、「型が分からない」と Hy の compile の赤を返す
-    (各 package の検が、.pyi が使い手に届いているかを 1 行で確かめるため — 空なら使い手はどの名も型つきで読める)。"""
+def strict_errors(workdir: Path, probe_text: str) -> tuple[str, ...]:
+    """検の module(Hy の source)を使い手の型の門と同じ strict で検め、赤を「行: 規則: 文」で返す — 各 package の検が、.pyi の型が
+    使い手の書き方に届くか(取り違えが赤になるか)を確かめるため。"""
     probe = workdir / "probe.hy"
-    probe.write_text(users_probe(package, used), encoding="utf-8")
+    probe.write_text(probe_text, encoding="utf-8")
     command = [sys.executable, "-m", "doeff_hy.static_check", "--root", str(workdir), "--json", "--strict", "--no-cache", str(probe)]
     done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
     diagnostics: list[dict[str, object]] = json.loads(done.stdout) if done.stdout.strip() else []
-    errors = [f"{d['line']}: {d['rule']}: {d['message']}" for d in diagnostics if d["severity"] == "error"]
+    return tuple(f"{d['line']}: {d['rule']}: {d['message']}" for d in diagnostics if d["severity"] == "error")
+
+
+def unknown_in_users(workdir: Path, package: str, used: tuple[UsedModule, ...]) -> tuple[str, ...]:
+    """使い手の名を束ねた検の module を strict で検め、「型が分からない」と Hy の compile の赤を返す
+    (各 package の検が、.pyi が使い手に届いているかを 1 行で確かめるため — 空なら使い手はどの名も型つきで読める)。"""
+    errors = strict_errors(workdir, users_probe(package, used))
     return tuple(e for e in errors if "hy-compile" in e or _UNKNOWN.search(e))
 
 

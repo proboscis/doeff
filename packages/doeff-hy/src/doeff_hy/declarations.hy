@@ -31,6 +31,9 @@
 (setv ROLES #("type" "judgment" "program" "intent" "protocol" "foundation" "entry" "system" "process" "main"))
 ;; 契約の辞書が受ける鍵。
 (setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags" ":needs"))
+;; 関数(deff・defk)の契約の辞書が受ける鍵 — CONTRACT-KEYS と型の引数 :tp(`:tp [T]`・型検査の展開で PEP 695 の `def f[T]`・
+;; 実行時の確かめでは object に消す — doeff_hy/macros.hy の _type-params。agora-redesign #2893)。defp などは :tp を断る。
+(setv FUNCTION-CONTRACT-KEYS (+ CONTRACT-KEYS #(":tp")))
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
 (setv DECLARATION-KEYS #(":effects" ":tags" ":needs"))
 (setv TAG-KEYS #(":context" ":role"))
