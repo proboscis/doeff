@@ -30,7 +30,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator の口 1 つに要求を送った答え #(次の状態 status 本文) を得るため(本物の api_policy.respond)。"
-  (responded state (http-request method path {} body :actor "test") now T))
+  (responded state (! (http-request method path {} body :actor "test")) now T))
 
 
 (defk beat-body [worker statuses]

@@ -20,7 +20,7 @@
   {:pre [(: method str) (: path str) (: body (| dict None)) (: query (| dict None)) (: actor (| str None))] :post [(: % Request)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "検の HTTP の要求の値 Request を作るため(送り元の番地 10.0.0.9・送り手 actor)。"
-  (http-request method path (or query {}) body :actor actor :peer "10.0.0.9"))
+  (! (http-request method path (or query {}) body :actor actor :peer "10.0.0.9")))
 
 (defk call [state method path [body None] [query None]
             [actor "c-me"] [now 1000]]

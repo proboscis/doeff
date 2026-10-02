@@ -6,6 +6,7 @@
 ;;   RIG-PROVIDES            … 担い手の既定の能力(sim-cluster の組の worker も同じ能力を名乗る — 同じ needs の筋書きを回すため)
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff [run])
 (import json)
 (import urllib.parse [urlsplit parse-qsl])
 (import pathlib [Path])
@@ -139,8 +140,8 @@
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
     (setv self.state (tick self.state now self.timing))
-    (setv #(state status reply) (responded self.state (http-request request.method split.path (dict (parse-qsl split.query)) body
-                                                             :actor (.get request.headers "x-actor"))
+    (setv #(state status reply) (responded self.state (run (http-request request.method split.path (dict (parse-qsl split.query)) body
+                                                             :actor (.get request.headers "x-actor")))
                                          now self.timing))
     (setv self.state state)
     (httpx.Response status :json reply)))

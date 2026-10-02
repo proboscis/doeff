@@ -252,7 +252,7 @@
   (<- declared dict (declared-of "app-1"))
   (<- key-linux str (key-on declared "linux-x86_64"))
   (val body {"runtimeEnv" declared "needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
-  (val written (responded (ClusterState) (http-request "POST" "/warm" {} body :actor "svc-a") 1000 TIMING))
+  (val written (responded (ClusterState) (! (http-request "POST" "/warm" {} body :actor "svc-a")) 1000 TIMING))
   (val after (get written 0))
   (assert (= (get written 1) 200) written)
   (val warmed (warm-state-of-json (get written 2)))
@@ -270,12 +270,12 @@
           "専用の能力(gpu)を持つ worker には、その能力を要らない行を配らない")
   (assert (= (. (heartbeat-reply s2 "w1" TIMING :now 700000) warm) #()) "期限を過ぎた行は配らない")
   ;; 読む: w1 は準備中 → 準備済みを名乗った後は ready
-  (val read-1 (get (responded s2 (http-request "GET" (+ "/warm/" warmed.key) {} None) 2000 TIMING) 2))
+  (val read-1 (get (responded s2 (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 2000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-1) preparing) #("w1")) read-1)
   (val s3 (register-heartbeat s2 (heartbeat-of (| hb {"envs" {"ready" [key-linux] "preparing" [] "failed" []}})) 3000))
-  (val read-2 (get (responded s3 (http-request "GET" (+ "/warm/" warmed.key) {} None) 3000 TIMING) 2))
+  (val read-2 (get (responded s3 (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 3000 TIMING) 2))
   (assert (= (. (warm-state-of-json read-2) ready) #("w1")) read-2)
-  (val missing (responded s3 (http-request "GET" "/warm/000000000000000000000000" {} None) 3000 TIMING))
+  (val missing (responded s3 (! (http-request "GET" "/warm/000000000000000000000000" {} None)) 3000 TIMING))
   (assert (= (get missing 1) 404) missing))
 
 
@@ -375,9 +375,9 @@
   (<- placed tuple (program-placed (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)}
                                                  :next-task 2)
                                    {} :now 10))
-  (val submitted (responded (get placed 0) (http-request "POST" "/tasks" {}
+  (val submitted (responded (get placed 0) (! (http-request "POST" "/tasks" {}
                                                   {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 60
-                                                   "runtimeEnv" declared})
+                                                   "runtimeEnv" declared}))
                           10 TIMING))
   (assert (in "doeff_worker_env_cold_start_total 2" (metrics-text (get submitted 0) 10 TIMING))
           "冷たい起動(準備済みの worker が無い置き先)を数える"))

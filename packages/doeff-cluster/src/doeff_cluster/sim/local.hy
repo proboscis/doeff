@@ -875,7 +875,7 @@
   (if (not link.queue.up)
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
-          (<- (enqueue-request link.queue (http-request method path query body :slot promise :actor link.actor :peer link.peer)))
+          (<- (enqueue-request link.queue (! (http-request method path query body :slot promise :actor link.actor :peer link.peer))))
           ;; 区間の中で吸った待ちは、送り直しの刻から打ち切りを数え直す(1 拍ずつの走りでは返事と送り直しがあり打ち切りは来ない — #2790)。
           (<- answer (| tuple None) (await-answer link.queue promise REPLY-SECONDS))
           (if (is answer None)

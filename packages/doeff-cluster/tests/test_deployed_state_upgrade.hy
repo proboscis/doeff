@@ -41,9 +41,9 @@
   ;; 読んだ状態で 1 拍の調停が回り、状態の画面(GET /state)と Service の画面が答える。
   (val ticked (tick state NOW (ClusterTiming)))
   ;; responded の答え = #(次の状態 status 返事)。
-  (val state-answer (responded ticked (http-request "GET" "/state" {} None :actor "test") NOW (ClusterTiming)))
+  (val state-answer (responded ticked (! (http-request "GET" "/state" {} None :actor "test")) NOW (ClusterTiming)))
   (assert (= (get state-answer 1) 200) state-answer)
-  (val service-answer (responded ticked (http-request "GET" "/resources/Service/beacon" {} None :actor "test") NOW (ClusterTiming)))
+  (val service-answer (responded ticked (! (http-request "GET" "/resources/Service/beacon" {} None :actor "test")) NOW (ClusterTiming)))
   (assert (= (get service-answer 1) 200) service-answer)
   ;; この版の綴りで置き場へ書き戻せる(次の checkpoint の形)。
   (<- kv dict (full-kv ticked))

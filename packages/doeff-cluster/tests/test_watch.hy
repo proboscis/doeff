@@ -110,7 +110,7 @@
 (defk watcher-of [query]
   {:pre [(: query dict)] :post [(: % Watcher)] :tags {:context "doeff-cluster-test" :role "program"}}
   "刻 0 に受けた GET /watch(問い query)の待ちを作るため。"
-  (<- watch (| Watcher WatchRefusal None) (watch-of (http-request "GET" "/watch" query None) 0))
+  (<- watch (| Watcher WatchRefusal None) (watch-of (! (http-request "GET" "/watch" query None)) 0))
   (match watch
     (Watcher) watch
     _ (raise (ValueError (.format "待ちにならない問い: {}" query)))))

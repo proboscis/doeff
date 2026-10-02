@@ -19,7 +19,7 @@
   {:pre [(: state ClusterState) (: method str) (: path str) (: body (| dict list str int float bool None)) (: now int)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "coordinator の純粋な判断 responded に要求を 1 つ渡し、(状態 状態の番号 本文) の組を返すため。"
-  (responded state (http-request method path {} body :actor "c-test") now T))
+  (responded state (! (http-request method path {} body :actor "c-test")) now T))
 
 
 (defk expiry-of [state]

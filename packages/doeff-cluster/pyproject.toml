@@ -42,11 +42,13 @@ doeff-time = { workspace = true }
 # 当たりの在る major・minor(DOEFF110 defn・111 deff の理由・118 deftest でない検・119 class・123・124・125)は disable に置き、
 # #2877 の子が数を 0 にした変更で 1 つずつ外す(先に効かせて main を赤にしない・登録簿に載せて通さない)。disable は package 全体で
 # 1 つなので、DOEFF110 は tests と src の defn が両方 0 になった変更で外す。minor(123・124・125)は今は扱わない。
+# DOEFF111 は src と tests の理由の無い deff が 0 になった変更(#2941 — http-request を defk に)で外した。
+# DOEFF119 は情報の規則として当たりを直す作業を止めている(利用者 2026-10-01 の決め・#2912)ので disable に置いたまま。
 [tool.doeff-linter]
 root = "src"
 architecture = "architecture.hy"
 include = ["tests"]
-disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF111", "DOEFF118", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
+disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF118", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
 
 [tool.doeff-linter.definitions]
 paths = ["doeff_cluster", "../tests"]
