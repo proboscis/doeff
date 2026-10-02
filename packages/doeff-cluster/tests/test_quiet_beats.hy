@@ -53,36 +53,36 @@
   ;; 引数に残す理由: 検ごとに別の世界(時計・準備と process の長さ・反例の印)で並べる(Ask で区別できない)。
   ;; 宣言は job a の 1 つ。STOP-MS で止まれと答える。拍の間の眠りは、quiet-beats の答えを記録してから本番と同じく 1 拍だけ眠る。
   (ReadDesired [env-report] (resume (DesiredJobs #(JOB))))
-  (WorkerStopRequested [] (resume (>= (clock-ms world.clock) STOP-MS)))
+  (WorkerStopRequested [] (resume (>= (! (clock-ms world.clock)) STOP-MS)))
   (EnvReport [] (resume None))
   (ObserveWorld []
-    (<- seen WorldView (timed-view world (clock-ms world.clock)))
+    (<- seen WorldView (timed-view world (! (clock-ms world.clock))))
     (resume seen))
   (PublishStatus [statuses note]
-    (setv world.ticks (+ world.ticks #(#((clock-ms world.clock) statuses))))
+    (setv world.ticks (+ world.ticks #(#((! (clock-ms world.clock)) statuses))))
     (resume None))
   (PrepareCode [revision]
-    (val now (clock-ms world.clock))
+    (val now (! (clock-ms world.clock)))
     (setv world.codes (| world.codes {revision (+ now world.prepare-ms)}) world.acts (| world.acts #{now}))
     (resume None))
   (StartJob [spec attempt code-path]
-    (val now (clock-ms world.clock))
+    (val now (! (clock-ms world.clock)))
     (setv world.next-pid (+ world.next-pid 1))
     (setv world.procs (| world.procs {spec.name #((ProcessView spec.name spec attempt world.next-pid now) (+ now world.life-ms) 1)})
           world.acts (| world.acts #{now}))
     (resume None))
   (SignalJob [name pid stage]
     ;; 止めの合図で、その刻に exit-code 0 で落ちる。
-    (val now (clock-ms world.clock))
+    (val now (! (clock-ms world.clock)))
     (val row (get world.procs name))
     (setv world.procs (| world.procs {name #((get row 0) (min now (get row 1)) 0)}) world.acts (| world.acts #{now}))
     (resume None))
   (ReapJob [name pid outcome exit-code]
-    (val now (clock-ms world.clock))
+    (val now (! (clock-ms world.clock)))
     (setv world.procs (dfor #(k v) (.items world.procs) :if (!= k name) k v) world.acts (| world.acts #{now}))
     (resume None))
   (AwaitNextTick [policy changed state]
-    (val now (clock-ms world.clock))
+    (val now (! (clock-ms world.clock)))
     (<- beats int (quiet-beats state policy (fn [at] (timed-view world (if world.stale now at))) now LIMIT))
     (setv world.pauses (+ world.pauses #(#(now beats))))
     (<- (tick-pause policy changed))

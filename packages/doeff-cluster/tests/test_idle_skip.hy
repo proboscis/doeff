@@ -49,7 +49,7 @@
 (defk queue-wakes [skip-idle probe times]
   {:pre [(: skip-idle bool) (: probe IdleProbe) (: times int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "模擬の列(skip-idle の真偽)を仮想の時計(起点 0)で回し、取り手の起きた刻の列を返すため。"
-  (<- woke tuple ((sim-time-handler :clock (clock-at 0))
+  (<- woke tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(queued-requests (RequestQueue :skip-idle skip-idle))] (wake-times probe times))))
   woke)
 
@@ -77,7 +77,7 @@
   {:pre [(: skip-idle bool) (: probe IdleProbe) (: seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "模擬の列(skip-idle の真偽)を仮想の時計(起点 0)で回し、seconds 秒後に要求が来る時の取り手の起きた刻と答えを返すため。"
   (val queue (RequestQueue :skip-idle skip-idle))
-  (<- seen tuple ((sim-time-handler :clock (clock-at 0)) (with-handlers [(queued-requests queue)] (take-once queue probe seconds))))
+  (<- seen tuple ((sim-time-handler :clock (! (clock-at 0))) (with-handlers [(queued-requests queue)] (take-once queue probe seconds))))
   seen)
 
 
@@ -113,7 +113,7 @@
   ;; 本番の受付(http-requests)は材料 idle を読まない: 調停ループが NextRequests 1.0 に何も変えない長い状態を添えても、箱を待つ
   ;; 秒は 1 秒のまま。
   (val inbox (RecordingInbox))
-  (<- ((sim-time-handler :clock (clock-at 0)) (with-handlers [(http-requests inbox)] (wake-times FRESH-PROBE 2))))
+  (<- ((sim-time-handler :clock (! (clock-at 0))) (with-handlers [(http-requests inbox)] (wake-times FRESH-PROBE 2))))
   (assert (= inbox.timeouts [1.0 1.0]) inbox.timeouts))
 
 

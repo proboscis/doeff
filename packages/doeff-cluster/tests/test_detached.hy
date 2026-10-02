@@ -1094,7 +1094,7 @@
   (<- (Delay 1.0))
   ;; coordinator が置き場を失って起き直す(task の行も worker の名乗りも無い)。呼び手はすぐ読む — worker の最初の heartbeat より
   ;; 先に届く読みも「知らない」と答えない(送り直させて並走させない)。
-  (setv coordinator.state (ClusterState :started-ms (clock-ms coordinator.clock)))
+  (setv coordinator.state (ClusterState :started-ms (! (clock-ms coordinator.clock))))
   (<- outcome (AwaitDetached "k-amnesia"))
   (assert (= outcome (DetachedSucceeded 101)) outcome)
   True)
@@ -1228,7 +1228,7 @@
   (val reply-80 (run (program-placed s V)))
   (:= s (get reply-80 0))
   (val sha (get reply-80 1))
-  (setv reply (submit-detached s "job-typed" (task-body-of {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]})
+  (setv reply (submit-detached s "job-typed" (! (task-body-of {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}))
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status reply.body.created) #(200 True)))

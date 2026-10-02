@@ -12,7 +12,7 @@
 (import dataclasses [dataclass])
 (import typing [ClassVar])
 (import datetime [datetime timedelta timezone])
-(import doeff [EffectBase Pass with_handlers Program])
+(import doeff [EffectBase Pass with_handlers Program run])
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [Spawn Task Wait Gather])
@@ -119,10 +119,10 @@
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "並行の系(system-program)を記録係の下に置いた Program を組むため。答え = #(記録の行の list(Program を走らせると埋まる) Program 盤の写し)。"
   (val sink (MemorySink))
-  (val clock (clock-at 1000000))
+  (val clock (! (clock-at 1000000)))
   (val box [])
   (val store {})
-  (val log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (clock-ms clock))))
+  (val log (EffectLog sink {"service" "system" "run" "r1"} :strict True :wall-ms (fn [] (run (clock-ms clock)))))
   (val program (with_handlers [(sim-time-handler :clock clock) (reader {"box" box}) #* (board-handlers store) (effect-recorder log)]
                               (system-program)))
   #(sink.lines program store))
@@ -555,7 +555,7 @@
   ;; 行の形のまま(区切りの _chunk・問いと答えの行・大きな答えの内容参照 $ref と blob の行)。
   (val sink (MemorySink))
   (val log (EffectLog sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
-  (<- rows dict (with-handlers-list [(sim-time-handler :clock (clock-at 1000000)) #* (board-handlers {}) (effect-recorder log)]
+  (<- rows dict (with-handlers-list [(sim-time-handler :clock (! (clock-at 1000000))) #* (board-handlers {}) (effect-recorder log)]
                                     (read-after-writes)))
   (assert (= (len rows) 12) rows)
   (val reads (lfor l sink.lines :if (= (.get l "ty") (type-name ReadShared)) l))

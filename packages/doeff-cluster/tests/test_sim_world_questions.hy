@@ -57,7 +57,7 @@
   {:pre [(: n int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の列(1 秒ごとの拍)・本物の observe-requests・本物の sim の世界の間に数える handler を置き、静かな歩 n 回の問いの列を返すため。"
   (<- plan SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 None None None None))
-  (<- asked tuple ((sim-time-handler :clock (clock-at 0))
+  (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter
                                    (queued-requests (RequestQueue :skip-idle False)) observe-requests]
                      (quiet-steps n))))
@@ -84,7 +84,7 @@
 
 (deftest test-a-host-read-change-write-asks-the-world-once
   (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
-  (<- asked tuple ((sim-time-handler :clock (clock-at 0))
+  (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter] (publish-once))))
   ;; 世代を知る読み 1 つの後、報告の 1 組は ChangeHostTruth 1 つ(読みと書きを別々に聞かない)。
   (assert (= asked #("HostTruthOf" "ChangeHostTruth")) asked))

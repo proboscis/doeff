@@ -132,7 +132,7 @@
   (val good (replace SERVICE :entry "probe_ok:program"))
   (val broken (replace SERVICE :entry "probe_broken:program"))
   (val missing (replace SERVICE :entry "probe_ok:no_such_attr"))
-  (val got (run-probes (! (probe-settings tmp-path)) (entry-probe-scene tree good broken missing)))
+  (<- got tuple (run-probes (! (probe-settings tmp-path)) (entry-probe-scene tree good broken missing)))
   (val first (get got 0))
   (val g (get got 1))
   (val b (get got 2))
@@ -158,7 +158,7 @@
 (deftest test-probe-store-stops-a-probe-that-runs-too-long [tmp-path]
   (val tree (! (probe-tree tmp-path)))
   (val slow (replace SERVICE :entry "probe_slow:program"))
-  (val v (run-probes (! (probe-settings tmp-path :timeout-seconds 1)) (probed-once slow tree)))
+  (<- v ProbeView (run-probes (! (probe-settings tmp-path :timeout-seconds 1)) (probed-once slow tree)))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail))
 
@@ -187,7 +187,7 @@
                :encoding "utf-8")
   (val forks (replace SERVICE :entry "probe_forks:program"))
   (val pid-file (/ tmp-path "child.pid"))
-  (val v (run-probes (! (probe-settings tmp-path :timeout-seconds 3)) (probed-once forks (str tmp-path))))
+  (<- v ProbeView (run-probes (! (probe-settings tmp-path :timeout-seconds 3)) (probed-once forks (str tmp-path))))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail)
   (assert (.exists pid-file) "検めが孫を起こす前に時間切れになった(検の前提が崩れた)")
@@ -226,7 +226,7 @@
                  :encoding "utf-8"))
   (val specs (+ (lfor i (range 6) (replace SERVICE :entry (.format "probe_m{}:program" i) :name (.format "w{}" i)))
                 [(replace SERVICE :entry "probe_broken:program" :name "w6")]))
-  (val views (run-probes (! (probe-settings tmp-path)) (probed-all specs (str tmp-path))))
+  (<- views list (run-probes (! (probe-settings tmp-path)) (probed-all specs (str tmp-path))))
   (assert (= (lfor v (cut views 0 6) v.state) (* [ProbeState.PASSED] 6)) views)
   (assert (= (. (get views 6) state) ProbeState.FAILED) views)
   (assert (in "NoSuchClockName" (. (get views 6) detail)) (. (get views 6) detail))
@@ -267,7 +267,7 @@
                             "(defn program [] None)"])
                :encoding "utf-8")
   (val spawns (replace SERVICE :entry "probe_spawns:program"))
-  (val v (run-probes (! (probe-settings tmp-path :timeout-seconds 30)) (probed-once spawns (str tmp-path))))
+  (<- v ProbeView (run-probes (! (probe-settings tmp-path :timeout-seconds 30)) (probed-once spawns (str tmp-path))))
   (assert (= v.state ProbeState.PASSED))
   (! (assert-gone (! (wait-pid (/ tmp-path "spawned.pid"))) "通った検めの孫")))
 
@@ -293,7 +293,7 @@
                             "(defn program [] None)"])
                :encoding "utf-8")
   (val sleeps (replace SERVICE :entry "probe_sleeps:program"))
-  (val got (run-probes (! (probe-settings tmp-path :timeout-seconds 30))
+  (<- got tuple (run-probes (! (probe-settings tmp-path :timeout-seconds 30))
                        (shim-killed-scene sleeps (str tmp-path) (/ tmp-path "sleeper.pid"))))
   (assert (= (. (get got 0) state) ProbeState.FAILED))
   (! (assert-gone (get got 1) "shim の死んだ検めの本体")))
@@ -328,7 +328,7 @@
   (for [i (range 6)]
     (.write-text (/ tmp-path "probe_ok.hy")
                  (+ (.read-text (/ tmp-path "probe_ok.hy")) (.format "(defn program{} [] None)\n" i))))
-  (val got (run-probes (! (probe-settings tmp-path :timeout-seconds 3)) (hanging-scene specs hang ok-specs (str tmp-path))))
+  (<- got tuple (run-probes (! (probe-settings tmp-path :timeout-seconds 3)) (hanging-scene specs hang ok-specs (str tmp-path))))
   (val hung (get got 0))
   (val oks (get got 1))
   (val refired (get got 2))
@@ -383,7 +383,7 @@
   ;; 反例 (d) の観測の側: FAILED の後に撃ち直した検めの観測は、走っている間も直前の失敗の理由と回数を持つ。
   (val tree (! (probe-tree tmp-path)))
   (val broken (replace SERVICE :entry "probe_broken:program"))
-  (val got (run-probes (! (probe-settings tmp-path)) (refired-scene broken tree)))
+  (<- got tuple (run-probes (! (probe-settings tmp-path)) (refired-scene broken tree)))
   (val first (get got 0))
   (val second (get got 2))
   (assert (= first.state ProbeState.FAILED))
@@ -445,7 +445,7 @@
   (val kept (replace SERVICE :entry "probe_broken:program" :name "kept"))
   (val gone (replace SERVICE :entry "probe_broken:program" :name "gone"))
   (val nap (replace SERVICE :entry "probe_nap:program" :name "nap"))
-  (val got (run-probes (! (probe-settings tmp-path :timeout-seconds 30)) (forget-scene kept gone nap tree)))
+  (<- got tuple (run-probes (! (probe-settings tmp-path :timeout-seconds 30)) (forget-scene kept gone nap tree)))
   (val first (get got 0))
   (val napped (get got 2))
   (val last (get got 3))
@@ -495,7 +495,7 @@
 
 
 (deftest test-the-probe-store-fails-an-old-service-spec-without-a-process [tmp-path]
-  (val got (run-probes (! (probe-settings tmp-path)) (old-spec-scene)))
+  (<- got tuple (run-probes (! (probe-settings tmp-path)) (old-spec-scene)))
   (val views (get got 0))
   (val again (get got 1))
   ;; process を起こさない: 待ちにも走りにも載らず、すぐ FAILED の答えになる(無い木で起こせば OSError で落ちる)。

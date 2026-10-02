@@ -1,7 +1,7 @@
 ;; 調整ループ全体を仮想時計・偽の子 process・台本の宣言で決定的に動かす。
 (require doeff-hy.macros [deftest defk defhandler <- var val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff [Program])
+(import doeff [Program run])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
@@ -23,7 +23,7 @@
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。now = その epoch ミリ秒(記録の刻)。
     (setv self.clock (SimClock) self.codes {} self.procs {} self.next-pid 100 self.events []
           self.ignore-term ignore-term self.unkillable unkillable self.statuses []))
-  (defn [property] #^ int now [self] (clock-ms self.clock))
+  (defn [property] #^ int now [self] (run (clock-ms self.clock)))
   (defn #^ WorldView observe [self]
     ;; 展開は依頼の次の拍で終わる。
     (setv views (tuple (gfor #(rev state) (.items self.codes)

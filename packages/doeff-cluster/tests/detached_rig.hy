@@ -136,7 +136,7 @@
     (setv self.clock clock self.state (ClusterState) self.timing timing))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
-    (setv now (clock-ms self.clock)
+    (setv now (run (clock-ms self.clock))
           split (urlsplit (str request.url))
           body (if request.content (json.loads request.content) None))
     (setv self.state (run (tick self.state now self.timing)))

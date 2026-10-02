@@ -165,5 +165,5 @@
         (httpx.Response 200 :json board)
         (do (.append posts #(request.url.path (json.loads request.content)))
             (httpx.Response 200 :json {"ok" True "dropped" 1}))))
-  (released-through (httpx.MockTransport handle) "app-writer" "1-old")
+  (<- (released-through (httpx.MockTransport handle) "app-writer" "1-old"))
   (assert (= posts [#("/leases/app-writer" {"op" "drop" "token" "app-writer/1-old/"})])))
