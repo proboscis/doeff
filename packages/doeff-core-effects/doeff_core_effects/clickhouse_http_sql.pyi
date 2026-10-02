@@ -38,10 +38,8 @@ class ClickHouseDatabase:
     url: str
     database: str
     user: str
-    password: str
-    password = ...
-    timeout: float
-    timeout = 30.0
+    password: str = ...
+    timeout: float = 30.0
 
 @dataclass(frozen=True, kw_only=True)
 class ClickHouseParam:

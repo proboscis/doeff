@@ -45,8 +45,7 @@ POSTGRES_TYPES: dict[SqlColumnType, str]
 @dataclass(frozen=True, kw_only=True)
 class PostgresDatabase:
     name: str
-    dsn: str
-    dsn = ...
+    dsn: str = ...
 
 @dataclass(frozen=True, kw_only=True)
 class PostgresTimeouts:
