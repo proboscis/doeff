@@ -189,8 +189,21 @@
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
 
+(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations NodeLabelsSeen NodeLabelsUnreadable])
+
 (setv COMPANY "company-machine")
 (setv COMPANY-LABEL {"doeff.dev/company-machine" "true"})
+
+(defk labels-table [labels]
+  {:pre [(: labels (get dict #(str str)))] :post [(: % (get Table str))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "検の node の label(鍵 → 値)を、観測の記録 NodeLabelsSeen が持つ表へ写すため。"
+  (table-of (tuple (gfor #(key value) (.items labels) (TableWrite key value)))))
+
+(defk node-observations [rows]
+  {:pre [(: rows (get tuple #((get tuple #(str (| NodeLabelsSeen NodeLabelsUnreadable))) ...)))] :post [(: % ClusterObservations)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "node の名と観測(NodeLabelsSeen・NodeLabelsUnreadable)の組の列から、ClusterState.observations の値を作るため。"
+  (ClusterObservations :nodes (table-of (tuple (gfor #(node seen) rows (TableWrite node seen))))))
 
 (defk named [name node]
   {:pre [(: name str) (: node str)] :post [(: % dict)]}
@@ -256,7 +269,7 @@
   (<- work-beaten ClusterState (beat-as ticked "at-work" "node-company" later))
   (<- beaten ClusterState (beat-as work-beaten "at-home" "node-home" later))
   (<- cut-off ClusterState (tick-with beaten kube later))
-  (assert (in "error" (get cut-off.nodes "node-company")) cut-off.nodes)
+  (assert (isinstance (.row cut-off.observations.nodes "node-company") NodeLabelsUnreadable) cut-off.observations)
   (assert (= (. (get cut-off.workers "at-work") derived) #(COMPANY)))
   (assert (= (. (get cut-off.workers "at-home") derived) #()))
   (setv secret (replace cut-off :jobs #((job "secret" :needs #(COMPANY "net")))))
@@ -269,13 +282,16 @@
 
 (deftest test-with-derived-capabilities-reads-the-naming-table
   ;; 表(ClusterNaming の node-capabilities)の label と値が合う行の能力だけを足す。node を名乗らない worker は空。
-  (setv table #(#("doeff.dev/company-machine" "true" COMPANY) #("example.org/gpu" "a100" "gpu")))
-  (setv s (replace (ClusterState :workers {"a" (replace (worker "a" 0 10 "net") :node "n1")
-                                          "b" (replace (worker "b" 0 10 "net") :node "n2")
-                                          "c" (replace (worker "c" 0 10 "net") :derived #("stale"))})
-                  :nodes {"n1" {"labels" {"doeff.dev/company-machine" "true" "example.org/gpu" "a100"} "at" 0}
-                          "n2" {"labels" {"doeff.dev/company-machine" "false"} "at" 0}}))
-  (setv out (with-derived-capabilities s table))
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY) #("example.org/gpu" "a100" "gpu")))
+  (<- n1 (get Table str) (labels-table {"doeff.dev/company-machine" "true" "example.org/gpu" "a100"}))
+  (<- n2 (get Table str) (labels-table {"doeff.dev/company-machine" "false"}))
+  (<- seen ClusterObservations (node-observations #(#("n1" (NodeLabelsSeen :labels n1 :at 0))
+                                                    #("n2" (NodeLabelsSeen :labels n2 :at 0)))))
+  (val s (replace (ClusterState :workers {"a" (replace (worker "a" 0 10 "net") :node "n1")
+                                         "b" (replace (worker "b" 0 10 "net") :node "n2")
+                                         "c" (replace (worker "c" 0 10 "net") :derived #("stale"))})
+                  :observations seen))
+  (val out (with-derived-capabilities s table))
   (assert (= (. (get out.workers "a") derived) #(COMPANY "gpu")))
   (assert (= (. (get out.workers "b") derived) #()))
   (assert (= (. (get out.workers "c") derived) #())))
@@ -351,29 +367,33 @@
 
 (deftest test-derived-capabilities-reuse-equal-values
   ;; 計算で出来る tuple と別の object でも、値が等しければ既存の worker と状態を返す。
-  (setv capabilities (tuple [COMPANY]))
-  (setv table #(#("doeff.dev/company-machine" "true" COMPANY)))
-  (setv state (ClusterState :workers
+  (val capabilities (tuple [COMPANY]))
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (<- known (get Table str) (labels-table COMPANY-LABEL))
+  (<- seen ClusterObservations (node-observations #(#("known" (NodeLabelsSeen :labels known :at 0))
+                                                    #("error" (NodeLabelsUnreadable :error "unavailable" :at 0)))))
+  (val state (ClusterState :workers
     {"observed" (replace (worker "observed" 0) :node "known" :derived capabilities)
      "plain" (worker "plain" 0)
      "missing" (replace (worker "missing" 0) :node "missing" :derived capabilities)
      "error" (replace (worker "error" 0) :node "error" :derived capabilities)}
-    :nodes {"known" {"labels" COMPANY-LABEL "at" 0}
-            "error" {"error" "unavailable" "at" 0}}))
-  (setv result (with-derived-capabilities state table))
+    :observations seen))
+  (val result (with-derived-capabilities state table))
   (assert (= result state))
   (for [#(name original) (.items state.workers)]
     (assert (is (get result.workers name) original)))
   (assert (is result state)))
 
 (deftest test-derived-capabilities-copy-only-changed-workers
-  (setv table #(#("doeff.dev/company-machine" "true" COMPANY)))
-  (setv state (ClusterState :workers
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (<- known (get Table str) (labels-table COMPANY-LABEL))
+  (<- seen ClusterObservations (node-observations #(#("known" (NodeLabelsSeen :labels known :at 0)))))
+  (val state (ClusterState :workers
     {"changed" (replace (worker "changed" 0) :node "known")
      "same" (worker "same" 0)
      "stale" (replace (worker "stale" 0) :derived #(COMPANY))}
-    :nodes {"known" {"labels" COMPANY-LABEL "at" 0}}))
-  (setv result (with-derived-capabilities state table))
+    :observations seen))
+  (val result (with-derived-capabilities state table))
   (assert (is-not result state))
   (assert (is (get result.workers "same") (get state.workers "same")))
   (assert (is-not (get result.workers "changed") (get state.workers "changed")))
@@ -382,20 +402,66 @@
   (assert (= (. (get state.workers "changed") derived) #()))
   (assert (= (. (get state.workers "stale") derived) #(COMPANY)))
   ;; 同じ state でも表が変われば計算し直して、能力を外す。
-  (setv removed (with-derived-capabilities result #()))
+  (val removed (with-derived-capabilities result #()))
   (assert (= (. (get removed.workers "changed") derived) #()))
   (assert (is (get removed.workers "same") (get result.workers "same"))))
 
 (deftest test-derived-capabilities-still-read-and-check-labels
   (import pytest)
-  (setv table #(#("doeff.dev/company-machine" "true" COMPANY)))
-  (setv state (ClusterState :workers
-    {"w" (replace (worker "w" 0) :node "known" :derived #(COMPANY))}
-    :nodes {"known" {"labels" (dict COMPANY-LABEL) "at" 0}}))
-  (with-derived-capabilities state table)
-  ;; node の観測値を更新した次の呼び出しでも、同じ worker の前回の結果を流用しない。
-  (setv (get state.nodes "known" "labels") {})
-  (assert (= (. (get (. (with-derived-capabilities state table) workers) "w") derived) #()))
-  (setv (get state.nodes "known" "labels") None)
+  (val table #(#("doeff.dev/company-machine" "true" COMPANY)))
+  (<- known (get Table str) (labels-table COMPANY-LABEL))
+  (<- seen ClusterObservations (node-observations #(#("known" (NodeLabelsSeen :labels known :at 0)))))
+  (val state (ClusterState :workers {"w" (replace (worker "w" 0) :node "known" :derived #(COMPANY))} :observations seen))
+  (assert (= (. (get (. (with-derived-capabilities state table) workers) "w") derived) #(COMPANY)))
+  ;; node の観測値を書き換えた次の呼び出しでも、同じ worker の前回の結果を流用しない(観測は凍った値 — 書き換えは新しい表と記録)。
+  (<- emptied (get Table str) (labels-table {}))
+  (val relabelled (replace state :observations
+                           (replace seen :nodes (.with-writes seen.nodes #((TableWrite "known" (NodeLabelsSeen :labels emptied :at 0)))))))
+  (assert (= (. (get (. (with-derived-capabilities relabelled table) workers) "w") derived) #()))
+  ;; 観測の label が表でなければ、判断の契約(derived-capabilities の :pre)が断る。
+  (val broken (replace state :observations
+                       (replace seen :nodes (.with-writes seen.nodes #((TableWrite "known" (NodeLabelsSeen :labels None :at 0)))))))
   (with [(pytest.raises AssertionError)]
-    (with-derived-capabilities state table)))
+    (with-derived-capabilities broken table)))
+
+
+;; --- 観測の書きは版も保存も動かさない(#2728 J1)-----------------------------------------------------------------------------
+;; k8s の観測(Deployment・node の label)は ClusterState.observations の表に在り、版の比べ(resource_policy.stamp の dirty-keys)と
+;; 保存の差分(durable_kv.durable-delta)の外。観測を書き直すだけの拍は、資源の版・出来事の記録・保存の行を 1 つも動かさない。
+
+(import doeff_hy.json_value [OpaqueJson])
+(import doeff_cluster.coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable])
+(import doeff_cluster.coordinator.core.resource_policy [stamp])
+(import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
+
+(deftest test-the-observation-write-moves-neither-versions-nor-the-store
+  (val kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {}}))
+  (<- start ClusterState (company-state 1000))
+  (<- first ClusterState (tick-with start kube 1000))
+  ;; 2 拍目は label を読み直す間隔の後: rollout-tick が node の観測を書き直すが、導く能力は同じ。
+  (val later (+ 1000 NODE-LABELS-TTL-MS 1))
+  (<- second ClusterState (tick-with first kube later))
+  (val reread (.row second.observations.nodes "node-company"))
+  (val first-read (.row first.observations.nodes "node-company"))
+  (assert (and (isinstance reread NodeLabelsSeen) (= reread.at later)) reread)
+  (assert (and (isinstance first-read NodeLabelsSeen) (= first-read.at 1000)) first-read)
+  (assert (= #(second.revision second.audit-seq second.audit) #(first.revision first.audit-seq first.audit)))
+  (assert (= (durable-delta first second) {}) (durable-delta first second))
+  ;; Deployment の観測(読めた・読めなかった)を書いても同じ — 版を付ける stamp も保存の差分も動かない。検の状態は heartbeat の判断を
+  ;; 直に呼んで作ったので資源に版の記録が無い(stamp は版の記録の無い資源に版を振る)— 先に版を振り揃えてから比べる。
+  (val settled (stamp (ClusterState) second "c-test" later T))
+  (val reading (DeploymentReading :spec-replicas 1 :replicas 1 :ready-replicas 1 :available-replicas 1 :updated-replicas 1
+                                  :generation 2 :observed-generation 2 :annotations (OpaqueJson.of {})))
+  (val seen settled.observations)
+  (val observed (replace settled :observations
+                         (replace seen :deployments (.with-writes seen.deployments
+                                                                  #((TableWrite "prod/a" (DeploymentSeen :reading reading :at later))
+                                                                    (TableWrite "prod/b" (DeploymentUnreadable :error "x" :at later)))))))
+  (assert (= (.size observed.observations.deployments) 2))
+  (val stamped (stamp settled observed "rollout-controller" later T))
+  (assert (= #(stamped.revision stamped.audit-seq stamped.meta) #(settled.revision settled.audit-seq settled.meta)))
+  (assert (= (durable-delta settled stamped) {}) (durable-delta settled stamped))
+  ;; 反例の対照: 保存する欄(worker の記録)を書けば、同じ比べが版と差分を出す(比べが何も見ていないのではない)。
+  (val moved (replace observed :workers (| observed.workers {"at-home" (replace (get observed.workers "at-home") :capacity 3)})))
+  (assert (> (. (stamp settled moved "c-test" later T) revision) settled.revision))
+  (assert (in "worker/at-home" (durable-delta settled moved)) (durable-delta settled moved)))

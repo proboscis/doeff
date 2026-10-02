@@ -1,0 +1,32 @@
+{
+  "module_extensions": {
+    "doeff-cluster-cluster-model": {
+      "allow": [
+        "doeff-hy-json-value",
+        "doeff-hy-table"
+      ]
+    },
+    "doeff-cluster-cluster-policy": {
+      "allow": [
+        "doeff-hy-table"
+      ]
+    },
+    "doeff-cluster-coordinator": {
+      "allow": [
+        "doeff-hy-table"
+      ]
+    },
+    "doeff-cluster-kube-handlers": {
+      "allow": [
+        "doeff-cluster-cluster-model",
+        "doeff-hy-table",
+        "doeff-hy-wire"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-hy-table"
+      ]
+    }
+  }
+}
