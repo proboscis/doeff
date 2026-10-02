@@ -1376,6 +1376,7 @@
         "doeff-cluster-checkout-git-script",
         "doeff-cluster-checkout-model",
         "doeff-cluster-checkout-reads",
+        "doeff-cluster-client-foundation",
         "doeff-cluster-clock",
         "doeff-cluster-cluster-foundation",
         "doeff-cluster-cluster-json",

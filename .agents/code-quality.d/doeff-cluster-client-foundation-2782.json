@@ -1,0 +1,25 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-cluster-foundation",
+        "doeff-cluster-clock",
+        "doeff-cluster-coordinator-http",
+        "doeff-cluster-coordinator-route",
+        "doeff-cluster-detached",
+        "doeff-cluster-process-versions",
+        "doeff-cluster-runtime-env-model"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-client-foundation",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/client_foundation.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/client_foundation.hy"
+      ],
+      "responsibility": "cluster の job ではない手元の道具が、値で渡す名乗り(revision・実行環境の宣言)で coordinator へ切り離した task を送り・待つ口 with-detached-client(#2782)。",
+      "typed": true
+    }
+  ]
+}

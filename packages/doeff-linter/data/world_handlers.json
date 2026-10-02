@@ -292,6 +292,14 @@
    "why": "組み立て — 上の列そのもの"
   },
   {
+   "handler": "doeff_cluster.client_foundation:with-detached-client",
+   "touches": [
+    "cluster",
+    "env"
+   ],
+   "why": "組み立て — 手元の道具の名乗りで detached-cluster を被せる・版の識別に os.environ の DOEFF_RUNTIME_ENV_KEY を読む(#2782)"
+  },
+  {
    "handler": "doeff_agents.io_handlers:driver-io-handler",
    "touches": [
     "file",
