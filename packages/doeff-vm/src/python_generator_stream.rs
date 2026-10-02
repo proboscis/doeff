@@ -285,6 +285,29 @@ impl doeff_vm_core::value::Callable for CallThunk {
     }
 }
 
+/// The error calling a yielding definition raised when its `Call` was read
+/// (`classify_python_object`): `Apply` raises it where the `CallThunk` would have
+/// raised it, so the caller catches it at its yield as before — without calling
+/// the function a second time (agora-redesign #2801).
+#[derive(Debug)]
+struct CallRaised {
+    exception: Value,
+}
+
+impl doeff_vm_core::value::Callable for CallRaised {
+    fn call(&self, _args: Vec<Value>) -> Result<Value, doeff_vm_core::VMError> {
+        Err(doeff_vm_core::VMError::uncaught_exception(self.exception.clone()))
+    }
+
+    fn name(&self) -> Option<String> {
+        None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 static HANDLER_SPEC: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
 static RETURNING: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
 
@@ -511,23 +534,33 @@ impl PythonGeneratorStream {
         })
     }
 
-    /// Call generator.send(value) and classify the result.
+    /// Send `py_value` into the generator with the C API `PyIter_Send` and classify
+    /// the result. A return comes back as `PYGEN_RETURN` with the value: no `send`
+    /// method lookup, no argument tuple, and no StopIteration exception built and read
+    /// back — every resume of every program paid those (agora-redesign #2801).
     fn send_to_generator(&mut self, py_value: &Bound<'_, PyAny>) -> StreamStep {
         Python::attach(|py| {
             let gen = self.generator.bind(py);
-            match gen.call_method1("send", (py_value,)) {
-                Ok(yielded) => self.classify_yielded(py, &yielded),
-                Err(err) if err.is_instance_of::<PyStopIteration>(py) => {
-                    self.exhausted = true;
-                    let return_value = err
-                        .value(py)
-                        .getattr("value")
-                        .ok()
-                        .map(|v| python_to_value(py, &v))
-                        .unwrap_or(Value::Unit);
-                    StreamStep::Done(return_value)
+            let mut result: *mut pyo3::ffi::PyObject = std::ptr::null_mut();
+            // SAFETY: `gen` and `py_value` are live objects held by this frame. On
+            // PYGEN_NEXT and PYGEN_RETURN `result` is a new reference we own; on
+            // PYGEN_ERROR it is NULL and the error indicator is set.
+            let status =
+                unsafe { pyo3::ffi::PyIter_Send(gen.as_ptr(), py_value.as_ptr(), &mut result) };
+            match status {
+                pyo3::ffi::PySendResult::PYGEN_NEXT => {
+                    // SAFETY: a new reference (see above).
+                    let yielded = unsafe { Bound::from_owned_ptr(py, result) };
+                    self.classify_yielded(py, &yielded)
                 }
-                Err(err) => {
+                pyo3::ffi::PySendResult::PYGEN_RETURN => {
+                    self.exhausted = true;
+                    // SAFETY: a new reference (see above).
+                    let returned = unsafe { Bound::from_owned_ptr(py, result) };
+                    StreamStep::Done(python_to_value(py, &returned))
+                }
+                pyo3::ffi::PySendResult::PYGEN_ERROR => {
+                    let err = PyErr::fetch(py);
                     self.last_location = Self::location_from_exception(py, &self.generator, &err);
                     self.exhausted = true;
                     StreamStep::Error(Value::Opaque(PyShared::new(
@@ -887,6 +920,45 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     // A `Call` is an `Expand`: read it before the base class.
     if let Ok(c) = obj.cast::<PyCall>() {
         let c = c.get();
+        let definition = c.function.bind(py).get();
+        if definition.yields {
+            // A definition whose body yields is a generator function: calling it only
+            // builds the generator (no body code runs), so call it here and push the
+            // generator as the program's stream — `Expand(Pure(stream))`, the shape a
+            // `@do` handler's call takes (`call_generator_function`). The VM reaches the
+            // same Program frame in one step instead of the three of
+            // `Expand(Apply(Pure(thunk)))` (agora-redesign #2801).
+            let kwargs = c.kwargs.bind(py);
+            let kwargs = if kwargs.is_empty() {
+                None
+            } else {
+                Some(kwargs)
+            };
+            let f = match generator_function_stream(
+                py,
+                &definition.function,
+                c.args.bind(py),
+                kwargs,
+                &definition.tail_resume_lines,
+            ) {
+                Ok(stream) => {
+                    return Ok(DoCtrl::Expand {
+                        expr: Box::new(DoCtrl::Pure { value: stream }),
+                    })
+                }
+                // The arguments did not bind: raise it where the thunk raised it.
+                Err(doeff_vm_core::VMError::UncaughtException { exception }) => {
+                    Value::Callable(std::sync::Arc::new(CallRaised { exception }))
+                }
+                Err(other) => return Err(format!("Call: {other}")),
+            };
+            return Ok(DoCtrl::Expand {
+                expr: Box::new(DoCtrl::Apply {
+                    f: Box::new(DoCtrl::Pure { value: f }),
+                    args: Vec::new(),
+                }),
+            });
+        }
         let thunk = CallThunk {
             function: c.function.clone_ref(py),
             args: c.args.clone_ref(py),
