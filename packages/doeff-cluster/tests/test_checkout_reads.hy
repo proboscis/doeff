@@ -40,8 +40,9 @@
                  :members #(SENDER-SOURCE-DIR))))
 
 
-(defn #^ list grounds [#^ tuple checkouts]  ; defk にできない: with_handlers へ渡す handler の列を組む(Program の外)
-  "模擬の土台の組(外側が先): session の値の置き場 → memory の置き場(app の uv.lock)→ 台本の git。"
+(defk grounds [checkouts]
+  {:pre [(: checkouts tuple)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "模擬の土台の組(外側が先)を with_handlers へ渡す列として組むため: session の値の置き場 → memory の置き場(app の uv.lock)→ 台本の git。"
   [(state)
    (memory-file-handler (MemoryFiles :files #((MemoryFile :path "/src/app/uv.lock" :content (.encode LOCK "utf-8")))
                                      :dirs #("/src" "/src/app" "/src/lib")))
@@ -97,14 +98,14 @@
 
 (deftest test-the-translation-reads-agree-with-the-checkout-world []
   (<- world tuple (world-of False False))
-  (<- seen Reads (with_handlers (+ (grounds world) [checkout-reads]) (reads)))
+  (<- seen Reads (with_handlers (+ (! (grounds world)) [checkout-reads]) (reads)))
   (<- ok bool (agree-with-world seen))
   (assert ok))
 
 
 (deftest test-a-mistranslated-head-is-caught []
   (<- world tuple (world-of False False))
-  (<- seen Reads (with_handlers (+ (grounds world) [checkout-reads head-from-the-other-checkout]) (reads)))
+  (<- seen Reads (with_handlers (+ (! (grounds world)) [checkout-reads head-from-the-other-checkout]) (reads)))
   ;; 赤の理由が head の取り違えであること(app の読みに lib の head が載る)まで検める。
   (with [_ (pytest.raises AssertionError :match LIB-HEAD)]
     (<- (agree-with-world seen))))
@@ -112,7 +113,7 @@
 
 (deftest test-a-mistranslated-digest-is-caught []
   (<- world tuple (world-of False False))
-  (<- seen Reads (with_handlers (+ (grounds world) [checkout-reads digest-not-sha256]) (reads)))
+  (<- seen Reads (with_handlers (+ (! (grounds world)) [checkout-reads digest-not-sha256]) (reads)))
   ;; 赤の理由が digest の取り違えであること(sha1 の値が載る)まで検める。
   (with [_ (pytest.raises AssertionError :match (.hexdigest (hashlib.sha1 (.encode LOCK "utf-8"))))]
     (<- (agree-with-world seen))))
@@ -122,7 +123,7 @@
   {:pre [(: checkouts tuple)] :post [(: % (| RuntimeEnv InvalidKind))]}
   "app と lib の checkout から宣言を組むため(送り手の repo = lib)。断られたら断りの種類。"
   (try
-    (<- env RuntimeEnv (with_handlers (+ (grounds checkouts) [checkout-reads])
+    (<- env RuntimeEnv (with_handlers (+ (! (grounds checkouts)) [checkout-reads])
                                       (runtime-env-of-checkouts #((LocalCheckout :name "app" :path "/src/app")
                                                                   (LocalCheckout :name "lib" :path "/src/lib"))
                                                                 (ProjectOfCheckout :repo "app" :path "." :python "3.14")
@@ -185,7 +186,7 @@
   {:pre [(: checkouts tuple) (: path str) (: revision str)] :post [(: % (| RepoCheckout InvalidKind))]}
   "系の関数の source の dir path を宣言の版 revision で検めるため(通れば checkout の repo の読み・断られたら断りの種類)。"
   (try
-    (<- repo RepoCheckout (with_handlers (+ (grounds checkouts) [checkout-reads]) (checked-declaring-checkout path revision)))
+    (<- repo RepoCheckout (with_handlers (+ (! (grounds checkouts)) [checkout-reads]) (checked-declaring-checkout path revision)))
     (except [refused RuntimeEnvInvalid]
       (return refused.kind)))
   repo)

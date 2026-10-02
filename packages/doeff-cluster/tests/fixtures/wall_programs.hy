@@ -166,26 +166,24 @@
   (#^ int client-ms))
 
 
-(defn :async #^ tuple talk [#^ int port]
-  "外の thread の本物の socket の客: ws で繋ぎ、tool を送って 2 通(started・done)を受け、bye を送る。"
-  (import aiohttp)
-  (with [:async session (aiohttp.ClientSession)]
-    (with [:async ws (.ws-connect session (.format "http://127.0.0.1:{}/ws" port))]
-      (setv sent (time.monotonic))
-      (await (.send-str ws "tool"))
-      (setv heard [])
-      (for [_ (range 2)]
-        (setv message (await (.receive ws :timeout 10)))
-        (.append heard (Heard :body (json.loads message.data) :after-seconds (- (time.monotonic) sent)
-                              :client-ms (// (time.time-ns) 1000000))))
-      (await (.send-str ws "bye"))
-      (tuple heard))))
-
-
 (deff talk-over-ws [#^ int port]  ; defk にできない: 外の library(asyncio.to_thread)が外の thread で呼ぶ callback
   {:pre [(: port int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "protocol"}}
   "外の thread の客: 自分の event loop で talk を回す(答え = Heard の tuple)。"
-  (asyncio.run (talk port)))
+  (defn :async #^ tuple talk []
+    "外の thread の本物の socket の客: ws で繋ぎ、tool を送って 2 通(started・done)を受け、bye を送る(asyncio が回す coroutine)。"
+    (import aiohttp)
+    (with [:async session (aiohttp.ClientSession)]
+      (with [:async ws (.ws-connect session (.format "http://127.0.0.1:{}/ws" port))]
+        (setv sent (time.monotonic))
+        (await (.send-str ws "tool"))
+        (setv heard [])
+        (for [_ (range 2)]
+          (setv message (await (.receive ws :timeout 10)))
+          (.append heard (Heard :body (json.loads message.data) :after-seconds (- (time.monotonic) sent)
+                                :client-ms (// (time.time-ns) 1000000))))
+        (await (.send-str ws "bye"))
+        (tuple heard))))
+  (asyncio.run (talk)))
 
 
 (defk talk-to-the-listener [key deadline-seconds]

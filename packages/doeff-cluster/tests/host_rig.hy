@@ -8,7 +8,7 @@
 (import time)
 (import sys)
 (import pathlib [Path])
-(import doeff [run with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -66,8 +66,10 @@
   ended)
 
 
-(defn #^ object run-on-host [#^ HostSettings settings #^ object program #^ tuple [around #()]]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
-  "Program を process-host と本物の答え手の下で 1 回の run で回す。around = process-host と本物の答え手の間に置く handler(反例 — 本物へ
-   渡す前に StartProcess を書き換える壊した handler など)。"
+(defk run-on-host [settings program [around #()]]
+  {:pre [(: settings HostSettings) (: program Program) (: around tuple)] :post [(: % (| int ProcessView))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "Program を process-host と本物の答え手の下で回し、その答えを返すため。around = process-host と本物の答え手の間に置く handler(反例 —
+   本物へ渡す前に StartProcess を書き換える壊した handler など)。"
   ;; with-handlers の並びは先頭が外側。process-host の session の値(子の表)は外側の state が持つ。
-  (run (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler #* around (process-host settings)] program)))
+  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler #* around (process-host settings)] program))
+  answer)

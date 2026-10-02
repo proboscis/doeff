@@ -110,12 +110,15 @@
 (setv NOT-READY (TargetView :ready "NotReady" :stopped False :spec-replicas 1 :reason "拍が落ちた"))
 
 
-(defn #^ RolloutStatus observing [#^ int since] (RolloutStatus :phase "Observing" :phase-since-ms since))
+(defk observing [since]
+  {:pre [(: since int)] :post [(: % RolloutStatus)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "時刻 since から観察(Observing)に入った rollout の状態を、検の出発点として組むため。"
+  (RolloutStatus :phase "Observing" :phase-since-ms since))
 
 
 (deftest test-unknown-while-observing-neither-completes-nor-fails
   ;; 観察 60 秒のうち 50 秒を Unknown で過ごしても、完了も失敗もしない。Unknown の長さだけ観察を延ばす。
-  (val reply-3 (rollout-step SPEC (observing 0) STOPPED READY 10000))
+  (val reply-3 (rollout-step SPEC (! (observing 0)) STOPPED READY 10000))
   (var status (get reply-3 0))
   (val reply-4 (rollout-step SPEC status STOPPED UNKNOWN 11000))
   (:= status (get reply-4 0))
@@ -133,7 +136,7 @@
 
 
 (deftest test-complete-needs-a-ready-observation
-  (setv #(status _) (rollout-step SPEC (observing 0) STOPPED NOT-READY 61000))
+  (setv #(status _) (rollout-step SPEC (! (observing 0)) STOPPED NOT-READY 61000))
   (assert (= status.phase "Observing")))
 
 
