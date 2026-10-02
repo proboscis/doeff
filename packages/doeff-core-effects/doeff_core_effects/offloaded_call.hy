@@ -53,10 +53,12 @@
 
   (deff __init__ [self pool abandon job]  ; defk にできない: 資源の class の初期化
     {:pre [(: self Handoff) (: pool Executor) (: abandon "(値) → None の callable") (: job Future)] :post [(: % "None")]}
+    ;; 錠は同じ thread から入り直せる RLock: give-up が錠を持ったまま始まっていない仕事を外すと、Future.cancel が同じ thread で完了の
+    ;; callback(deliver)を呼ぶ。入り直せない錠だと scheduler の thread がそこで止まり、run 全体が固まった(agora-redesign #2792 の検で発見)。
     (setv self.pool pool
           self.abandon abandon
           self.job job
-          self.lock (threading.Lock)
+          self.lock (threading.RLock)
           self.abandoned False
           self.delivered NOT-DELIVERED))
 
