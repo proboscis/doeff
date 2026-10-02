@@ -474,7 +474,8 @@ defk {name}: :post type annotation cannot be an empty string.
    a @do call), NOT an EffectBase, so this never fires on it; plain functions
    (deff/defn) returning effect constructors are not kleisli and are not guarded.
    Returns `result` unchanged when fine, so it can wrap a return position.
-   Runs on every defk call: the names come from the module's import (no import per call — #844)."
+   The generated return checks EffectBase inline and calls this helper only for
+   an effect; its type comes from the module's import (no import per call — #844)."
   (when (isinstance result EffectBase)
     (raise (RuntimeError
              (+ label ": last expression is an unperformed effect `"
@@ -483,6 +484,15 @@ defk {name}: :post type annotation cannot be an empty string.
                 "bind it instead: (<- v (" (. (type result) __name__)
                 " ...)) then return v."))))
   result)
+
+(defn _performed-guard-form [label]
+  "Reject bare effects without a Python guard call on successful returns (#2817)."
+  ;; The static view keeps the typed helper: an inline test on a known return
+  ;; type would produce reportUnnecessaryIsInstance or widen it to EffectBase.
+  (if (_static-view?)
+      `(_guard-performed _contract_result ~label)
+      `(when (isinstance _contract_result _doeff_effect_base)
+         (_guard-performed _contract_result ~label))))
 
 
 ;; ADR-DOE-HY-001: statement-position bind guard --------------------------------
@@ -545,6 +555,7 @@ defk {name}: :post type annotation cannot be an empty string.
              "doeff-hy generated callable has no reachable __globals__")))
   (setv globals-dict (. target __globals__))
   (.setdefault globals-dict "_guard_performed" _guard-performed)
+  (.setdefault globals-dict "_doeff_effect_base" EffectBase)
   (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
   (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
   ;; defk の本体の束ねが名で引く outcomes の module(HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
@@ -592,6 +603,7 @@ defk {name}: :post type annotation cannot be an empty string.
       '(do)
       `(do
          (import doeff.do [do :as _doeff_do])
+         (import doeff [EffectBase :as _doeff_effect_base])
          (import doeff-hy.macros [_install-guard-globals _guard-performed
                                   _guard-statement-value _doeff-check-program-return]))))
 
@@ -668,7 +680,7 @@ defk {name}: :post type annotation cannot be an empty string.
                  name))
   (setv guard-stmt
     (if kleisli?
-        `(_guard-performed _contract_result ~(str name))
+        (_performed-guard-form (str name))
         `(do)))
   (if post-checks
       (let [post-asserts (_contract-code post-checks name "post-condition" kleisli?)
@@ -1051,7 +1063,7 @@ defk {name}: {{:post [...]}} is required.
                   ~@pre-code
                   ~@expanded
                   ~(_result-binding body-expr (.get (_contract-types post-checks) "%"))
-                  (_guard-performed _contract_result "do!")
+                  ~(_performed-guard-form "do!")
                   (let [% _contract_result]
                     ~@post-asserts)
                   (return ~(_result-symbol body-expr))))))))
@@ -1061,7 +1073,7 @@ defk {name}: {{:post [...]}} is required.
                 ~@pre-code
                 ~@expanded
                 ~(_result-binding body-expr None)
-                (_guard-performed _contract_result "do!")
+                ~(_performed-guard-form "do!")
                 (return ~(_result-symbol body-expr))))))))))
 
 

@@ -17,7 +17,7 @@ from doeff_core_effects import Ask
 from doeff_core_effects.handlers import await_handler, lazy_ask
 from doeff_core_effects.scheduler import scheduled
 
-from doeff import EffectBase, run
+from doeff import EffectBase, Expand, run
 
 
 @dataclass(frozen=True)
@@ -175,6 +175,7 @@ def test_runtime_guards_do_not_import_per_call() -> None:
 def test_value_returns_skip_the_error_guard(source: str) -> None:
     """Successful returns must not pay for the error-reporting Python call (#2817)."""
     program = _eval_no_doeff_do(source)
+    assert isinstance(program, Expand)
     module = sys.modules["test_self_contained"]
     calls: list[str] = []
     original = module._guard_performed
@@ -202,5 +203,6 @@ def test_value_returns_skip_the_error_guard(source: str) -> None:
 def test_error_guard_still_precedes_the_return_contract(source: str) -> None:
     """A bare effect is rejected, including in generators and class bodies."""
     program = _eval_no_doeff_do(source)
+    assert isinstance(program, Expand)
     with pytest.raises(RuntimeError, match="last expression is an unperformed effect `Num`"):
         run(program)
