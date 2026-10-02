@@ -21,8 +21,10 @@
 ;;;
 ;;; 条 C3 stopped-generation-gets-no-new-task: 止まり始めた worker の世代(drain の頼みを通らない止め — sigterm・機体の終了・手の kill)へ、
 ;;; 止まり始めの後に新しい task を置かない。その世代は task を始めずに抜け、切り離した task は同じ名の新しい世代へ渡らないので、置かれた
-;;; task は lease まで止まる(#2819)。判断は記録(止めた世代の列と、止めた後・戻す前に読めた task の置き先の列)を受けて破りの列を返す
-;;; 純関数 1 つ。記録を集めるのは検(tests/test_detached_runners.hy の drain を頼まない止めの検)。
+;;; task は lease まで止まる(#2819)。名乗りの前にその世代へ置いて始まっていない task も、名乗りを吸った後はその世代に残さない(積みと
+;;; 名乗りが同じ刻に届いた時に受ける順は決まっていない — #2976 の I-3 の赤 R5)。判断は記録(止めた世代の列と、止めた後・戻す前に読めた
+;;; task の置き先の列)を受けて破りの列を返す純関数 1 つ。記録を集めるのは検(tests/test_detached_runners.hy の drain を頼まない止めの検と、
+;;; 止める直前に置いた task の検)。
 ;;;
 ;;; 条 C5 revision-never-goes-back: GET /state の coordinator の版(revision)は、読んだ順に減らない — coordinator が止まり置き場から
 ;;; 作り直されても(読み直せない置き場で空から起き直すと版が 0 へ戻り、worker と使い手が古い版の答えを新しいと取り違える)。判断は記録

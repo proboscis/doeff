@@ -273,7 +273,7 @@ def task_finished(task: TaskRecord, now: int, detail: str, result: str | None) -
 def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int) -> TaskRecord:
     ...
 
-def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None) -> dict:
+def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None, stopping: bool=False) -> dict:
     ...
 
 def absorb_task_result(state: ClusterState, id: str, body: TaskResultBody, now: int) -> _Program[tuple, object]:
