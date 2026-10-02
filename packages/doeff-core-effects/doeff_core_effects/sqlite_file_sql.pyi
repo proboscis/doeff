@@ -2,7 +2,6 @@
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import sqlite3 as sqlite3
 from pathlib import Path as Path
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery

@@ -2,7 +2,6 @@
 
 from _typeshed import Incomplete
 from doeff_hy.static_types import Handler as _Handler
-import threading as threading
 from doeff_core_effects.latest_effects import PublishLatest as PublishLatest
 from doeff_core_effects.latest_effects import ReadLatest as ReadLatest
 from doeff import Pass as Pass

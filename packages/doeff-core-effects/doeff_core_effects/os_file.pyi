@@ -3,12 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
-import fcntl as fcntl
 from collections.abc import Callable as Callable
-import os as os
-import shutil as shutil
-import stat as stat
-import tempfile as tempfile
 from pathlib import Path as Path
 from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import FileFailed as FileFailed

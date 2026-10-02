@@ -1,11 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = declare.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-import argparse as argparse
 from collections.abc import Mapping as Mapping
-import json as json
-import os as os
-import sys as sys
 from urllib.parse import quote as url_quote
 from doeff import run as run
 from doeff import with_handlers as with_handlers

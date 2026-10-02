@@ -3,7 +3,6 @@
 from typing import TypeAlias
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
-import uuid as uuid
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_hy.frozen import frozen_map_of as frozen_map_of

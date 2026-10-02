@@ -5,7 +5,6 @@ from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from collections.abc import Mapping as Mapping
 from dataclasses import dataclass as dataclass
-import threading as threading
 from typing import Protocol as Protocol
 from doeff_hy.wire import parse as parse
 from doeff_hy.wire import Malformed as Malformed

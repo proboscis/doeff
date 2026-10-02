@@ -4,7 +4,6 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
-import json as json
 from doeff import with_handlers as with_handlers
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
