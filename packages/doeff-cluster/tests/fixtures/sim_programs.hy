@@ -318,6 +318,12 @@
           :update "handoff" :environ {"STEP" "1"}))
 
 
+(defsystem handoff-beacons-v3 [foundation]
+  "handoff-beacons の版 3(本体の引数 every を版 2 からも変えた — 入れ替えを 2 度通す条 C14 の検)"
+  (beacon (beacon-program foundation "beacon/h" 3.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+          :update "handoff" :environ {"STEP" "1"}))
+
+
 (defsystem relay [foundation]
   "見本の系: 盤に書く beacon と、それを読んで写す copier"
   (beacon (beacon-program foundation "relay/source" 1.0) :needs #{"cluster-net"} :environ {"STEP" "9"})

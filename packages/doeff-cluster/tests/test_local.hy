@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [System CallShape])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.sim_programs [beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
+(import tests.fixtures.sim_programs [beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
@@ -35,6 +35,7 @@
                                                                  JobNeeds WorkerAbility placed-only-where-eligible
                                                                  JobProcess moves-to-a-live-worker
                                                                  WorkerExclusive exclusive-workers-take-only-their-jobs ran-only-where-eligible
+                                                                 RunLimit runs-within-their-limit
                                                                  DrainWindow no-new-place-while-draining])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -190,6 +191,43 @@
   (<- lifetimes tuple (writer-lifetimes changed.after))
   (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))
   (assert gaps lifetimes))
+
+
+(defk handed-off-twice [first second]
+  {:pre [(: first System) (: second System)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C14 の記録を集めるため: 8 秒待って系 first で宣言し直し、15 秒待って系 second で宣言し直し、15 秒待って beacon の子 process が
+   本当に動いた区間を読む(入れ替えを 2 度通した JobProcess の列)。"
+  (<- (Delay 8.0))
+  (<- _first tuple (Redeclare first))
+  (<- (Delay 15.0))
+  (<- _second tuple (Redeclare second))
+  (<- (Delay 15.0))
+  (<- seen tuple (ProcessesOf "beacon"))
+  (tuple (gfor p seen (JobProcess :job "beacon" :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
+
+
+;; 条 C14 の上限: 入れ替えを宣言した beacon は旧と新の 2 つまで。
+(val HANDOFF-LIMIT #((RunLimit :job "beacon" :limit 2)))
+
+
+(deftest test-a-handoff-job-runs-at-most-two-processes-across-two-handoffs
+  ;; 条 C14(architecture.hy の :invariants): 入れ替えを 2 度通しても、beacon が同時に動く子 process は旧と新の 2 つまで(本物の worker は
+  ;; 新が Ready になった後に旧を止める)。
+  (<- processes tuple (sim-cluster (handoff-beacons sim-foundation)
+                                   (handed-off-twice (handoff-beacons-v2 sim-foundation) (handoff-beacons-v3 sim-foundation))))
+  (assert (>= (len processes) 3) processes)
+  (<- over tuple (runs-within-their-limit processes HANDOFF-LIMIT))
+  (assert (= over #()) #(over processes)))
+
+
+(deftest test-a-counterexample-worker-that-hides-retired-processes-breaks-c14
+  ;; 条 C14 の失敗ケース: 入れ替えで名から外した旧の process を観測に載せない壊れた worker(SimWorker の hides-retired)では、旧を止める前に
+  ;; 次の新が並び、2 度目の入れ替えで beacon が同時に 3 つ動き、条 C14 の判断がその process を名指す。
+  (<- processes tuple (sim-cluster (handoff-beacons sim-foundation)
+                                   (handed-off-twice (handoff-beacons-v2 sim-foundation) (handoff-beacons-v3 sim-foundation))
+                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :hides-retired True))))
+  (<- over tuple (runs-within-their-limit processes HANDOFF-LIMIT))
+  (assert over processes))
 
 
 (defk watch-rows [seconds prefix]

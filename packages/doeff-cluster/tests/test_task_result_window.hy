@@ -12,7 +12,7 @@
 (import doeff_core_effects.effects [Try])
 (import doeff_core_effects.handlers [try-handler])
 (import doeff [with-handlers])
-(import doeff_cluster.coordinator.core.coordinator_invariants [TaskCall tasks-answered-in-time])
+(import doeff_cluster.coordinator.core.coordinator_invariants [TaskCall tasks-answered-in-time JobProcess RunLimit runs-within-their-limit])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])
@@ -101,7 +101,13 @@
   (assert (= seen.killed-ms seen.ended-ms) seen)
   (assert (= (. (get seen.runs 0) exit-code) 0) seen.runs)
   (assert (= (len seen.runs) 1) seen.runs)
-  (assert (= seen.answer TASK-SECONDS) seen))
+  (assert (= seen.answer TASK-SECONDS) seen)
+  ;; 条 C14(architecture.hy の :invariants): task は同時に 1 つまでしか動かない。
+  (val name (. (get seen.runs 0) job))
+  (<- over tuple (runs-within-their-limit (tuple (gfor p seen.runs (JobProcess :job p.job :worker p.worker :started-ms p.started-ms
+                                                                            :ended-ms p.ended-ms)))
+                                          #((RunLimit :job name :limit 1))))
+  (assert (= over #()) over))
 
 
 (deftest test-a-detached-task-that-exited-0-keeps-its-answer-although-its-worker-dies-before-the-next-heartbeat

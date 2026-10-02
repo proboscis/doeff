@@ -99,6 +99,12 @@
 ;;;   本当に動いた process = 真実を見る)。確かめるのは tests/test_local.hy の test-a-job-process-runs-only-on-an-eligible-worker。失敗ケースは
 ;;;   同じ file の test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c13(持たない能力を名乗る壊れた worker — SimWorker の
 ;;;   claims-provides — の上で beacon が動き、C13 が名指す)。
+;;;   C14 runs-within-their-limit(doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit — #1976 の写しの C5 の残り)—
+;;;   入れ替え(handoff)を宣言した job は同時に 2 つ(旧と新)まで、task は同時に 1 つまでしか動かない(C2 は入れ替えを宣言しない job
+;;;   だけを見る)。確かめるのは tests/test_local.hy の test-a-handoff-job-runs-at-most-two-processes-across-two-handoffs(入れ替えを 2 度
+;;;   通す)と tests/test_task_result_window.hy の task の検(上限 1)。失敗ケースは test_local.hy の
+;;;   test-a-counterexample-worker-that-hides-retired-processes-breaks-c14(入れ替えで名から外した旧を観測に載せない壊れた worker —
+;;;   SimWorker の hides-retired — では、worker の判断が退いた process が無いと読んで次の新を並べ、beacon が 3 つ動いて C14 が名指す)。
 ;;;   C8 moves-to-a-live-worker(doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
 ;;;   job を本当に受けられる生きた worker が他に在るなら、死から移し替えの期限 + 余裕のうちに他で動き始める。確かめるのは tests/test_local.hy の
 ;;;   test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time(2 台のうち担い手を死なせ、process の区間と死の刻を判断に渡す — 期限は
@@ -171,7 +177,8 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:tasks-answered-in-time"
                 "doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"
                 "doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining"
-                "doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible"
+                "doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
