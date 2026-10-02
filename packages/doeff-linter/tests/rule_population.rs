@@ -173,22 +173,32 @@ fn an_exemption_without_a_reason_is_not_applied_and_is_named() {
     );
 }
 
-/// doeff の repo の `packages/architecture.hy`(agora-redesign #2859 — Rust の package の PEP 517 の build の入口を DOEFF004 から外す)
+/// doeff の repo の `tools/architecture.hy`(agora-redesign #2859 — Rust の package の PEP 517 の build の入口を DOEFF004 から外す)
 /// をそのまま一時の repo に置いて確かめる: 宣言を書き換えると、ここが赤になる。
-const PACKAGES_DECLARATION: &str = include_str!("../../architecture.hy");
+const BUILD_DECLARATION: &str = include_str!("../../../tools/architecture.hy");
 
-/// 自分の宣言を持たない package の根の build の入口と、同じ package の業務の module を置いた一時の repo。
+/// doeff の repo と同じ形の一時の repo: build の入口の本物は tools/doeff_cargo_backend.py の 1 つで、Rust の package の根の
+/// doeff_cargo_backend.py はそこへの symlink。同じ package に業務の module も置く。
+/// (#2859 の最初の検は package の根に普通の file を置いたので、symlink を解くと宣言の外に出る本物の形を見落とした。)
+#[cfg(unix)]
 fn packages_repo(backend: &str) -> tempfile::TempDir {
-    repo(&[
-        ("packages/architecture.hy", PACKAGES_DECLARATION),
-        ("packages/doeff-vm/doeff_cargo_backend.py", backend),
+    let dir = repo(&[
+        ("tools/architecture.hy", BUILD_DECLARATION),
+        ("tools/doeff_cargo_backend.py", backend),
         ("packages/doeff-vm/doeff_vm/__init__.py", ""),
         ("packages/doeff-vm/doeff_vm/settings.py", ENV_READ),
-    ])
+    ]);
+    std::os::unix::fs::symlink(
+        "../../tools/doeff_cargo_backend.py",
+        dir.path().join("packages/doeff-vm/doeff_cargo_backend.py"),
+    )
+    .unwrap();
+    dir
 }
 
-/// build の入口の os.environ の読みは DOEFF004 に当たらず、同じ package の業務の module の読みは今までどおり当たる
-/// (外すのは名指しの module だけ・宣言は読めて DOEFF032 も出ない)。
+/// build の入口の os.environ の読みは、本物の path でも package の根の symlink の path でも DOEFF004 に当たらず、同じ package の
+/// 業務の module の読みは今までどおり当たる(外すのは名指しの module だけ・宣言は読めて DOEFF032 も出ない)。
+#[cfg(unix)]
 #[test]
 fn the_build_backend_is_out_of_the_environment_rule_and_business_code_is_not() {
     let dir = packages_repo(ENV_READ);
@@ -201,18 +211,23 @@ fn the_build_backend_is_out_of_the_environment_rule_and_business_code_is_not() {
     );
 }
 
-/// build の入口が業務の module(doeff)を import すると DOEFF032 に当たる(外した層に業務の code が入ったら赤)。
+/// build の入口が業務の module(doeff)を import すると、本物の path でも symlink の path でも DOEFF032 に当たる
+/// (外した層に業務の code が入ったら赤)。
+#[cfg(unix)]
 #[test]
 fn business_code_in_the_build_backend_is_red() {
     let backend = format!("import doeff\n{}", ENV_READ);
     let dir = packages_repo(&backend);
     let found = hits(dir.path());
-    assert!(
-        found.contains(&(
-            "DOEFF032".to_string(),
-            "packages/doeff-vm/doeff_cargo_backend.py".to_string()
-        )),
-        "{:?}",
-        found
-    );
+    for path in [
+        "tools/doeff_cargo_backend.py",
+        "packages/doeff-vm/doeff_cargo_backend.py",
+    ] {
+        assert!(
+            found.contains(&("DOEFF032".to_string(), path.to_string())),
+            "{}: {:?}",
+            path,
+            found
+        );
+    }
 }
