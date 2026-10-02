@@ -1701,6 +1701,118 @@ class TestRootCloseOut:
         with pytest.warns(RuntimeWarning, match="abandon"):
             assert doeff_run(scheduled(body())) == "done"
 
+    def test_root_return_unwinds_an_abandoned_task_through_its_finally(self):
+        """#2684: a task left parked when the root returns is cancelled and its
+        finally runs to the end — including an effect inside the finally (the
+        shape that returns a leased SQL connection). The #501 warning still
+        names the unawaited work."""
+        seen = {"cancelled": False, "finally_effect": False}
+
+        @do
+        def holder(ep: Any):
+            try:
+                return (yield Wait(ep.future))
+            except TaskCancelledError:
+                seen["cancelled"] = True
+                raise
+            finally:
+                _ = yield CreatePromise()  # an effect in the finally
+                seen["finally_effect"] = True
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()  # never completed
+            _ = yield Spawn(holder(ep))
+            return "done"
+
+        with pytest.warns(RuntimeWarning, match="cancelled at root return"):
+            assert doeff_run(scheduled(body())) == "done"
+        assert seen == {"cancelled": True, "finally_effect": True}, seen
+
+    def test_root_close_out_failure_does_not_replace_the_answer(self):
+        """#2684: a failure inside the close-out itself (here an ``on_cancel``
+        callback that raises) is named by a warning; the run still returns the
+        root's answer and the cancelled task still unwinds."""
+        seen = {"finally": False}
+
+        def broken_callback():
+            raise RuntimeError("callback broke")
+
+        @do
+        def holder(ep: Any):
+            try:
+                return (yield Wait(ep.future))
+            finally:
+                seen["finally"] = True
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            ep.on_cancel(broken_callback)
+            _ = yield Spawn(holder(ep))
+            return "done"
+
+        with pytest.warns(RuntimeWarning, match="could not cancel task"):
+            assert doeff_run(scheduled(body())) == "done"
+        assert seen["finally"], "the cancelled task did not unwind"
+
+    def test_root_body_raising_still_unwinds_the_work_it_left(self):
+        """#2684: the error path returns resources too — the root body's
+        exception propagates unchanged after the left work is unwound."""
+        seen = {"finally": False}
+
+        @do
+        def holder(ep: Any):
+            try:
+                return (yield Wait(ep.future))
+            finally:
+                seen["finally"] = True
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            _ = yield Spawn(holder(ep))
+            raise ValueError("root body failed")
+
+        with pytest.warns(RuntimeWarning, match="cancelled at root return and unwound"):
+            with pytest.raises(ValueError, match="root body failed"):
+                doeff_run(scheduled(body()))
+        assert seen["finally"], "the left task did not unwind on the error path"
+
+    def test_root_return_does_not_wait_forever_for_a_cleanup_that_never_ends(
+        self, monkeypatch
+    ):
+        """#2684: unwinding is bounded — a finally that never finishes is
+        abandoned after the grace period and named as still live."""
+        import time as time_mod
+
+        from doeff_core_effects import scheduler as scheduler_mod
+
+        monkeypatch.setattr(scheduler_mod, "ROOT_CLOSE_OUT_GRACE_SECONDS", 0.2)
+
+        entered = {"finally": False}
+
+        @do
+        def stuck(ep: Any, never: Any):
+            try:
+                return (yield Wait(ep.future))
+            finally:
+                entered["finally"] = True
+                _ = yield Wait(never.future)  # cleanup that never ends
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise()
+            never = yield CreateExternalPromise()
+            _ = yield Spawn(stuck(ep, never))
+            return "done"
+
+        started = time_mod.monotonic()
+        with pytest.warns(RuntimeWarning, match="still live after"):
+            assert doeff_run(scheduled(body())) == "done"
+        assert time_mod.monotonic() - started < 2.0
+        assert entered["finally"], "the abandoned task was never cancelled"
+
     def test_empty_race_raises_value_error(self):
         """Repro D from the #501 report: Race() with zero waitables used to
         silently leak the caller continuation and 'succeed' with None."""
