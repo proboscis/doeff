@@ -148,7 +148,7 @@ def respond_legacy(state: ClusterState, request: Request, body: RequestBody | Se
 def respond_workers(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
-def respond_board(state: ClusterState, request: Request, body: object, parts: list, now: int, timing: ClusterTiming) -> tuple:
+def respond_board(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def respond_tasks(state: ClusterState, request: Request, body: RequestBody | ServiceBody | LegacyJobs, parts: list, now: int, timing: ClusterTiming) -> _Program[tuple, object]:

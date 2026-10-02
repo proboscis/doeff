@@ -1,7 +1,7 @@
 {
   "DOEFF172": {
     "src/doeff_cluster/coordinator/core/api_policy.hy": 9,
-    "src/doeff_cluster/coordinator/core/cluster_policy.hy": 33,
+    "src/doeff_cluster/coordinator/core/cluster_policy.hy": 31,
     "src/doeff_cluster/coordinator/core/detached_policy.hy": 3,
     "src/doeff_cluster/coordinator/core/drain_policy.hy": 6,
     "src/doeff_cluster/coordinator/core/handoff_policy.hy": 1,
