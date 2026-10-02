@@ -192,7 +192,8 @@ class TestAwait:
         from doeff_core_effects.scheduler import scheduled
 
         async def async_add(a, b):
-            await asyncio.sleep(0.01)
+            # 主張は「Await が coroutine の結果を持ち帰る」— loop に 1 度譲れば足り、時間は待たない(#2888)
+            await asyncio.sleep(0)
             return a + b
 
         @do
@@ -211,7 +212,7 @@ class TestAwait:
         from doeff_core_effects.scheduler import scheduled
 
         async def fetch(x):
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)  # loop に 1 度譲るだけ(#2888)
             return x * 10
 
         @do
@@ -330,10 +331,16 @@ class TestAwait:
         from doeff_core_effects.scheduler import scheduled
 
         b_in_flight = threading.Event()
+        # B を bridge の loop の上で飛行中に保つ門。前は 0.5 秒の窓だった — 検が A の SystemExit を確かめてから
+        # loop の thread で開ける(本物の thread・本物の loop のまま、順は出来事で決まる・#2888)
+        gate: dict[str, object] = {}
 
         async def slow_ok():
+            loop = asyncio.get_running_loop()
+            release = loop.create_future()
+            gate["loop"], gate["release"] = loop, release
             b_in_flight.set()
-            await asyncio.sleep(0.5)
+            await release
             return "B-done"
 
         async def evil():
@@ -374,6 +381,13 @@ class TestAwait:
         # ep.fail is the propagation channel: the scheduler's task wrapper
         # catches only Exception, so SystemExit reaches run A's caller.
         assert isinstance(results.get("a_exc"), SystemExit)
+        # A が SystemExit で落ちた時、B はまだ門の前で飛行中(門を外すと B が先に終わり、ここが赤)
+        assert "b" not in results, results
+        assert "b_exc" not in results, results
+        loop, release = gate["loop"], gate["release"]
+        assert isinstance(loop, asyncio.AbstractEventLoop)
+        assert isinstance(release, asyncio.Future)
+        loop.call_soon_threadsafe(release.set_result, None)
 
         tb.join(timeout=5.0)
         assert not tb.is_alive(), (
