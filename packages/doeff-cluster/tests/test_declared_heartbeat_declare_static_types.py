@@ -3,8 +3,12 @@
 
 3 つの module は Hy の module で型の宣言が無かったので、defk にした declared-job-specs・status-rows-json・apply-declaration を `<-` で
 受ける使い手の strict に、書き手に直せない赤(Type of "declared_job_specs" is unknown・Type of "status_rows_json" is unknown・受けた値の
-Argument type is unknown)が出ていた。→ 3 つの .pyi で宣言する。宣言を外すとこの検が赤になる。宣言の名・引数・欄が実装から離れると
-tests/test_service_model_stubs.py が赤になる(test_readiness_static_types.py と同じ分け方)。
+Argument type is unknown)が出ていた。→ 3 つの .pyi を道具 doeff_hy.static_stub が .hy の契約(:pre / :post と deff の `#^`)から作る。
+.pyi を外すとこの検が赤になる。.pyi が .hy から離れると tests/test_generated_stubs.py(作り直した物 == commit された物)が赤になる。
+
+ここが見るのは、答えの型が使い手の受け方に届く細かさか — 契約を素の `tuple`・`list`・`dict` に戻すと、道具はそのまま写し、使い手には
+partially unknown の赤(import の名・`<-` で受けた行・引数)が 12 件出る。test_generated_stubs.py の名の検は全く分からない名(is unknown)
+だけを見るので、この粗さはここでしか捕まらない。
 """
 
 import json

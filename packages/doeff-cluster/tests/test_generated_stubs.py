@@ -52,6 +52,10 @@ USED = (
     UsedModule("shared.protocol.detached", ("detached-path",)),
     UsedModule("shared.protocol.program_codec", ("decode-outcome", "encode-program")),
     UsedModule("worker.core.worker_rules", ("code-key",)),
+    # worker の拍の読みと綴り・宣言の送り(#2824 — 使い手の模擬の世界の 1 拍と宣言の命令が `<-` で受ける defk)。
+    UsedModule("worker.protocol.declared", ("declared-job-specs",)),
+    UsedModule("worker.protocol.heartbeat", ("status-rows-json",)),
+    UsedModule("shared.entry.declare", ("apply-declaration",)),
 )
 
 

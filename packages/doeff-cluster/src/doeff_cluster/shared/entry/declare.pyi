@@ -1,27 +1,43 @@
-"""shared/entry/declare.hy の公開面の型(型検査のための宣言 — 実行時は declare.hy を読む・#2824)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = declare.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-declare.hy は Hy の module なので、pyright は中を読めず、名が全部 Unknown になる。#2751 で defk にした apply-declaration を、
-使い手の repo の宣言の命令が土台の下で走らせて答えの真偽で終了の番号を決めると、書き手に直せない赤(Argument type is unknown)が
-出た。ここで型を宣言する(service_build.pyi と同じ形)。
-
-- defk(declare-request・service-written・apply-declaration)は呼ぶと Program を返す。答えは実装の :post(書きの返事 HttpResponse・
-  全部が通ったかの真偽)。
-- main は console script の入口(普通の関数)。
-- 実装との食い違いは packages/doeff-cluster/tests/test_service_model_stubs.py が検める。
-"""
-
-from collections.abc import Mapping
-from typing import Any
-
-from doeff import Program
-from doeff_cluster.shared.intent.service_model import Declaration
-from doeff_core_effects.http_effects import HttpResponse
-
+from doeff import Program as _Program
+import argparse as argparse
+from collections.abc import Mapping as Mapping
+import json as json
+import os as os
+import sys as sys
+from urllib.parse import quote as url_quote
+from doeff import run as run
+from doeff import with_handlers as with_handlers
+from doeff_core_effects.effects import slog as slog
+from doeff_core_effects.handlers import await_handler as await_handler
+from doeff_core_effects.handlers import slog_handler as slog_handler
+from doeff_core_effects.http_effects import HttpRequest as HttpRequest
+from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
+from doeff_core_effects.os_process import subprocess_handler as subprocess_handler
+from doeff_core_effects.scheduler import scheduled as scheduled
+from doeff_cluster.foundation.process_versions import process_versions as process_versions
+from doeff_cluster.shared.protocol.checkout_reads import checkout_reads as checkout_reads
+from doeff_cluster.shared.protocol.declaration_requests import spec_for_update as spec_for_update
+from doeff_cluster.shared.protocol.declaration_requests import create_body as create_body
+from doeff_cluster.shared.core.declaring import declaring_refusal as declaring_refusal
+from doeff_cluster.shared.core.service_rules import environ_overlay_refusal as environ_overlay_refusal
+from doeff_cluster.shared.entry.service_build import resolve as resolve
+from doeff_cluster.shared.entry.service_build import resolve_value as resolve_value
+from doeff_cluster.shared.entry.service_build import system_declaration as system_declaration
+from doeff_cluster.shared.intent.service_model import System as System
+from doeff_cluster.shared.intent.service_model import Declaration as Declaration
 DECLARE_REPLY_SECONDS: float
 
-def declare_request(method: str, url: str, actor: str, body: dict[str, object] | None) -> Program[HttpResponse, Any]: ...
-def service_written(base: str, actor: str, row: Mapping[str, object], replicas: int | None) -> Program[HttpResponse, Any]: ...
-def apply_declaration(
-    url: str, declaration: Declaration, actor: str, replicas: int | None = None
-) -> Program[bool, Any]: ...
-def main() -> None: ...
+def declare_request(method: str, url: str, actor: str, body: dict[str, object] | None) -> _Program[HttpResponse, object]:
+    ...
+
+def service_written(base: str, actor: str, row: Mapping[str, object], replicas: int | None) -> _Program[HttpResponse, object]:
+    ...
+
+def apply_declaration(url: str, declaration: Declaration, actor: str, replicas: int | None=None) -> _Program[bool, object]:
+    ...
+
+def main() -> None:
+    ...
