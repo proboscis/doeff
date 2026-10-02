@@ -45,6 +45,9 @@
 ;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
 ;;;   ReadInterpreter   自分の process の Python の interpreter の事実。答え = InterpreterFacts(prefix = sys.prefix を symlink まで解いた絶対
 ;;;                     path・pid)(agora-redesign #2347 — 消費者 = doeff-cluster の入口の検め。venv の上の root と、報告に載せる pid を読む)。
+;;;   ReadMachineName   自分の process が走る機体の名。答え = 名(str — 本物 = socket.gethostname をそのまま・台本 = ProcessScript の
+;;;                     machine-name)(agora-redesign #3050 — 消費者 = merge-queue の controller の leader の名乗り
+;;;                     <機体の名>/<pid>/<乱数>。pid は ReadInterpreter から読む)。
 ;;;   ResolveModule     module の名を、自分の process の import が解く置き場へ(import はしない — 点の付いた名は親の package を import する
 ;;;                     のは importlib.util.find_spec と同じ)。答え = ModuleFound(origin = file の絶対 path・file を持たない module〔__init__ の
 ;;;                     無い package・built-in・frozen〕は None / search-locations = submodule を探す dir の絶対 path の tuple)か
@@ -178,6 +181,10 @@
 
 (defclass [(dataclass :frozen True)] ReadInterpreter [EffectBase]
   "自分の process の Python の interpreter の事実を読む(頭の註)。答え = InterpreterFacts。")
+
+
+(defclass [(dataclass :frozen True)] ReadMachineName [EffectBase]
+  "自分の process が走る機体の名を読む(頭の註)。答え = 名(str)。")
 
 
 (defclass [(dataclass :frozen True)] ResolveModule [EffectBase]

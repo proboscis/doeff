@@ -12,6 +12,7 @@
 ;;;   * 時間切れは答え(exit-code 124・timed-out True)・時間内なら普通の答え
 ;;;   * output-path の末尾へ stdout・stderr の順に足す(答えも出力を持つ)。足せない output-path は OSError が上がる
 ;;;   * ExecutableAt は起こせる命令と起こせない命令を分ける・dir(命令と同じ名でも)と無い path は False・WorkingDirectory は在る dir の絶対 path
+;;;   * ReadMachineName は空でない機体の名を答える(agora-redesign #3050)
 ;;;   * ProcessAlive は生きている pid(init = 1)と終わった子の pid を分ける・0 以下の pid は生きていない(agora-redesign #2184)
 ;;;   * process-group は、時間内に終わった後に背景へ回った孫を止め、時間切れでは孫ごと group を止める。stream-output の output-path は、
 ;;;     時間切れで止めた子が出した分も持つ(agora-redesign #2184)
@@ -27,8 +28,8 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
-                                            environment-mapping])
+                                            ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound
+                                            ModuleNotFound environment-mapping])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
                                    NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES
                                    PROBE-MODULE NAMESPACE-MODULE MISSING-MODULE])
@@ -201,6 +202,14 @@
   (assert (os.path.isabs facts.prefix) facts)
   (assert (= seen.kind PathKind.DIRECTORY) (.format "prefix {} の種類 {}" facts.prefix seen.kind))
   (assert alive (.format "pid {} が生きていない" facts.pid)))
+
+
+(deftest test-the-own-machine-name-is-read
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 機体の名(agora-redesign #3050): 答えは空でない文字列。本物が socket.gethostname と同じ値・台本が ProcessScript の machine-name を
+  ;; 答えることは片方だけの性質(test_process_file_effects.hy)。
+  (<- name str (ReadMachineName))
+  (assert (and (isinstance name str) (> (len name) 0)) (.format "機体の名の答え {!r}" name)))
 
 
 (deftest test-a-module-name-is-resolved-to-its-place-without-importing-it

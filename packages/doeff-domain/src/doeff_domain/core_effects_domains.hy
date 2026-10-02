@@ -75,7 +75,7 @@
 (import doeff_core_effects.sqlite-sql [sqlite-sql-handler])
 (import doeff_core_effects.process-effects [RunProcess ExecutableAt
                                             ReadEnvironment WorkingDirectory
-                                            ProcessAlive ReadInterpreter ResolveModule
+                                            ProcessAlive ReadInterpreter ReadMachineName ResolveModule
                                             StartProcess PollProcess StopProcess
                                             SignalProcess])
 ;; offloaded-subprocess-handler は factory metered-offloaded-subprocess-handler に計器 None を渡した値で __doeff_body__ を持たない —
@@ -289,11 +289,11 @@
 (defdomain doeff-process
   :title "Process 語彙 — 子 process と自分の環境"
   :effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory
-            ProcessAlive ReadInterpreter ResolveModule
+            ProcessAlive ReadInterpreter ReadMachineName ResolveModule
             StartProcess PollProcess StopProcess SignalProcess]
   :handlers [subprocess-handler metered-offloaded-subprocess-handler scripted-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "subprocess-handler(本物)・metered-offloaded-subprocess-handler(本物 — 計器の無い形が offloaded-subprocess-handler)と scripted-process-handler(I/O なし・台本)が 11 effect 全てに答える。")
+  :docs "subprocess-handler(本物)・metered-offloaded-subprocess-handler(本物 — 計器の無い形が offloaded-subprocess-handler)と scripted-process-handler(I/O なし・台本)が 12 effect 全てに答える。")
 
 
 (defdomain doeff-channel
