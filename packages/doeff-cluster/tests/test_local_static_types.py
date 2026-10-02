@@ -6,7 +6,6 @@ local.hy は Hy の module で型の宣言が無かったので、担い手 SimW
 """
 
 import ast
-import importlib
 import inspect
 import json
 import shutil
@@ -15,11 +14,10 @@ import sys
 from dataclasses import fields
 from pathlib import Path
 
-import pytest
-
 # local は .hy の module — 先に hy を読んで import hook を有効にしてから読む(検だけを単独で走らせても読めるように)。
-importlib.import_module("hy")
-local = importlib.import_module("doeff_cluster.sim.local")
+import hy  # noqa: F401
+import pytest
+from doeff_cluster.sim import local
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -133,12 +131,24 @@ def test_the_stub_matches_local_hy() -> None:
 
 def test_the_stub_declares_every_name_other_modules_use() -> None:
     # 使い手(doeff-cluster の検)が import する名は全部宣言に在る(宣言に無い名は使い手の strict で unknown import symbol の赤)。
+    # 契約の effect(shared/intent/cluster_control — #3029)は `from … import X as X` で読み直す(as つきの import は型の宣言での
+    # 明示の読み直し — as の無い import は読み直しに数えない)。
     stub = _stub()
-    declared = {
-        node.target.id
-        for node in stub.body
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    } | {node.name for node in stub.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    declared = (
+        {
+            node.target.id
+            for node in stub.body
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+        | {node.name for node in stub.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+        | {
+            alias.asname
+            for node in stub.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.asname is not None
+        }
+    )
     used = {
         "sim_cluster",
         "wall_sim_cluster",

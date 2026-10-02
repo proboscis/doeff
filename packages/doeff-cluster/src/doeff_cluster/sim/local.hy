@@ -47,14 +47,16 @@
 ;;;   - 筋書き(scenario)は検の側の呼び手(本番の detached-cluster などを積む機体の外の process)として、同じ coordinator-answers(送り手 sim-client)
 ;;;     の下で走る。別の送り手(実行環境の宣言・版の違う呼び手)が要る筋書きは ClientLink の値を置き換えて coordinator-answers を自分で被せる。
 ;;;
-;;; 検の effect(sim の世界が答える — scenario の中で出す。service の Program が出すと柵で落ちる):
+;;; 検の effect(sim の世界が答える — scenario の中で出す。service の Program が出すと柵で落ちる)。Crash・Redeclare・ReadinessOf・
+;;; KillWorker・StopWorker・StopCoordinator・CrashCoordinator は契約の effect(shared/intent/cluster_control.hy — どの cluster の handler も
+;;; 答える物・ADR-DOE-CLUSTER-001 R8 の追補 (1))で、ここでは sim の世界が答える。残りは sim だけの観測と操作:
 ;;;   Crash 名                  動いている process を exit 1 で落とす(答え = 落とした数)。worker が本物の判断で起こし直す。
 ;;;   Redeclare 系              宣言し直す(本番の declare と同じ順で Program を置いてから Service の行を書く — update に従い recreate / handoff)。
 ;;;   DeclareRollout 名 spec     POST /resources/Rollout で作る(本番と同じ検証・所有者・重複検査)。
 ;;;   KubeCalls                 偽の k8s が受けた書きの履歴の写し(tuple)。
 ;;;   SettleDeployment ns 名     Deployment の Pod を宣言の台数へ進める(ready で準備済み台数を指定できる)。
 ;;;   ReportsOf 名              coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
-;;;   ReadinessOf 名            coordinator の Service の status の ready(SimReadiness — Ready / NotReady / Unknown / Missing)。
+;;;   ReadinessOf 名            coordinator の Service の status の ready(ServiceReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
 ;;;   AwaitProcessStarted 名    その job の最初の process が起きるまで待ち、その記録を返す(世界が process を記録した時に起きる)。
 ;;;   AwaitProcessEnded 名      契約の effect(process_model.hy — 本番は detached-cluster が coordinator を読んで答える)。sim では世界が
@@ -173,6 +175,11 @@
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [System Declaration])
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare ReadinessOf Crash KillWorker StopWorker
+                                                     StopCoordinator CrashCoordinator])
+;; SimReadiness = 旧い名(ReadinessOf の答えの型は契約の ServiceReadiness へ移した — #3029)。使い手の repo の検 1 file の
+;; 付け替えが、その repo の pin の流れで main に入ったら、この 1 行を消す。
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness :as SimReadiness])
 (import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
@@ -278,12 +285,6 @@
   (#^ (| dict None) metrics))
 
 
-(defrecord SimReadiness
-  "coordinator の Service の status の ready(ReadinessOf の答え)。state = Ready | NotReady | Unknown | Missing(Service が無い)。"
-  (#^ str state)
-  (#^ str reason))
-
-
 (defrecord SimPreparation
   "worker の宿が起こした準備 1 つ(PreparationsOf の答えの要素)。key = コードの版か env-<キー>・env = 実行環境の root か・warm = 先読みか・
    started-ms / ready-ms = 始まりと揃う(か失敗で終わる)時刻(epoch ms)・failure = 実行環境の準備の失敗(揃うなら None)。"
@@ -345,18 +346,6 @@
 
 ;; --- 検の effect(sim の世界が答える)----------------------------------------------------------------------
 
-(defeffect Crash
-  "検の effect: job name の動いている process を全部 exit 1 で落とす(本番の子の異常終了)。答え = 落とした数。"
-  {:fields [(: name str)]
-   :answer int
-   :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect Redeclare
-  "検の effect: 系を宣言し直す(版 = environ か引数を変えた系の値)。答え = 宣言した Service の名の tuple。"
-  {:fields [(: system System)]
-   :answer tuple
-   :tags {:context "doeff-cluster" :role "intent"}})
-
 (defeffect DeclareRollout
   "検の effect: 本番の資源 API と同じ要求で Rollout を作る。答え = 資源の本文。拒否・接続失敗は RemoteJobFailed。"
   {:fields [(: name str) (: spec dict)]
@@ -378,12 +367,6 @@
   "検の effect: job name の process から coordinator に届いた ReportReady / ReportMetrics の列(SimReport の tuple・届いた順)。"
   {:fields [(: name str)]
    :answer tuple
-   :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect ReadinessOf
-  "検の effect: coordinator が数えている Service name の ready(SimReadiness)。"
-  {:fields [(: name str)]
-   :answer SimReadiness
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ProcessesOf
@@ -411,20 +394,6 @@
    :answer (| dict PlainText)
    :tags {:context "doeff-cluster" :role "intent"}})
 
-(defeffect StopCoordinator
-  "検の effect: coordinator の Pod を次の拍で優雅に止め(止めの合図 — 取った要求には返事を済ませる)、seconds 秒止めてから作り直す
-   (同じ置き場から読み直す)。止まっている間の要求は接続の失敗。答え = None(止まるのは次の拍)。"
-  {:fields [(: seconds float)]
-   :answer None
-   :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect CrashCoordinator
-  "検の effect: coordinator の次の Persist を失敗させる(fsync の失敗 — 返事をせずに落ちる。取った要求の送り手には接続の失敗・その拍の
-   書きは置き場に残らない)。seconds 秒の後に同じ置き場から読み直して作り直す。答え = None(落ちるのは次の書き)。"
-  {:fields [(: seconds float)]
-   :answer None
-   :tags {:context "doeff-cluster" :role "intent"}})
-
 (defeffect FailRoute
   "検の effect: coordinator の口 method path(完全一致)への要求に、seconds 秒の間 status で答える(本番の coordinator の前の ingress・
    作り直しの最中の 5xx — 要求は調停ループに届かず、状態を変えない。本文は {\"error\" 理由})。網の切れた worker の要求は接続の失敗の
@@ -436,20 +405,6 @@
 (defeffect CoordinatorRuns
   "検の effect: coordinator の Pod の一生の列(SimCoordinatorRun の tuple・起きた順)。"
   {:answer tuple
-   :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect KillWorker
-  "検の effect: worker name が node ごと死ぬ — 動いている子 process は全部 exit -9 で止まり(中で Spawn した task も)、heartbeat が
-   止まる(coordinator は lease の後に生きていないと数える)。答え = 止めた process の数(もう死んでいれば 0)。"
-  {:fields [(: name str)]
-   :answer int
-   :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect StopWorker
-  "検の effect: worker name を優雅に止める(本番の SIGTERM — 宣言を空として全 job を止めの手順で回収し、lease を返して抜ける)。抜けるまで
-   待つ。答え = None。"
-  {:fields [(: name str)]
-   :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect StartWorker
@@ -2644,9 +2599,9 @@
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
     (resume (match (get answer 0)
-              200 (SimReadiness :state (get (get answer 1) "status" "ready")
-                                :reason (str (.get (get (get answer 1) "status") "readyReason" "")))
-              _ (SimReadiness :state "Missing" :reason (str (get answer 1))))))
+              200 (ServiceReadiness :state (get (get answer 1) "status" "ready")
+                                    :reason (str (.get (get (get answer 1) "status") "readyReason" "")))
+              _ (ServiceReadiness :state "Missing" :reason (str (get answer 1))))))
   (SharedRows [prefix]
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-shaped link (board-read-request prefix)))
