@@ -40,6 +40,9 @@
 ;;; 置く(専用の worker を他の job で埋めない)。判断は記録(読めた置き先・job ごとの needs・worker ごとの本当の専用の能力)を受けて、専用の
 ;;; worker へ置いた needs の合わない置き先の列を返す純関数 1 つ。
 ;;;
+;;; 条 C11 no-new-place-while-draining: drain を頼まれた worker には、drain の期限の内に新しい置き先を置かない(drain は worker を空けるための
+;;; 頼み)。判断は記録(読めた置き先と、worker ごとの drain を頼んだ刻と期限)を受けて、drain の窓の内に置いた置き先の列を返す純関数 1 つ。
+;;;
 ;;; 条 C8 moves-to-a-live-worker: 担い手の worker が死に、その job を本当に受けられる生きた worker が他に在るなら、その job は死から
 ;;; 移し替えの期限(reassign-after-ms)+ 余裕のうちに他の worker で動き始める。判断は記録(job の process の区間・死んだ worker と時刻・
 ;;; job を本当に受けられる他の worker)を受けて、期限のうちに他で動き始めなかった job の列を返す純関数 1 つ。
@@ -309,6 +312,25 @@
                n needs
                x exclusives
                :if (and (= n.job p.job) (= x.worker p.worker) x.exclusive (not (& n.needs x.exclusive)))
+               p)))
+
+
+(defrecord DrainWindow
+  "条 C11 の記録 1 つ = worker 1 台の drain を頼んだ刻(since-ms)と期限(until-ms)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int since-ms)
+  (#^ int until-ms))
+
+
+(defk no-new-place-while-draining [placements drains]
+  {:pre [(: placements (get tuple #(PlacementSeen ...))) (: drains (get tuple #(DrainWindow ...)))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 C11: 読めた置き先の列から、drain を頼まれた worker へ、drain の窓([頼んだ刻, 期限])の内に置いた置き先を返す(空なら緑)。coordinator が
+   空けると頼まれた worker へ新しい job を置かないことを、筋書きの記録から判じるため。drain の前からの置き先は判じない(置いた刻が窓の外)。"
+  (tuple (gfor p placements
+               d drains
+               :if (and (= d.worker p.worker) (<= d.since-ms p.since-ms d.until-ms))
                p)))
 
 

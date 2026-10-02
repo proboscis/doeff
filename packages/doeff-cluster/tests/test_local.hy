@@ -33,7 +33,9 @@
                                                                  ProcessSpan WorkerCapacity running-within-capacity
                                                                  JobNeeds WorkerAbility placed-only-where-eligible
                                                                  JobProcess moves-to-a-live-worker
-                                                                 WorkerExclusive exclusive-workers-take-only-their-jobs])
+                                                                 WorkerExclusive exclusive-workers-take-only-their-jobs
+                                                                 DrainWindow no-new-place-while-draining])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
@@ -734,6 +736,49 @@
                                                           :exclusive (frozenset ["gpu"]) :claims-exclusive (frozenset)))))
   (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
   (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
+
+
+(val DRAIN-TTL 60.0)  ; 条 C11 の筋書きの drain の期限(秒)
+
+
+(defrecord DrainedAndRedeclared
+  "条 C11 の検の読み: 読めた置き先の列(PlacementSeen)と drain の窓(DrainWindow)。"
+  (#^ tuple placements)
+  (#^ tuple drains))
+
+
+(defk placements-during-a-drain [worker]
+  {:pre [(: worker str)] :post [(: % DrainedAndRedeclared)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C11 の記録を集めるため: 8 秒待って worker の drain を頼み、2 秒後に service beacon-b を足した系を宣言し直し、さらに 2 秒後に置き先を読む
+   (drain の窓は頼んだ刻から DRAIN-TTL 秒)。"
+  (<- (Delay 8.0))
+  (<- since int (now-epoch-ms))
+  (<- (DrainWorker worker DRAIN-TTL))
+  (<- (Delay 2.0))
+  (<- (Redeclare (beacons-plus sim-foundation)))
+  (<- (Delay 2.0))
+  (<- placements tuple (placements-after 0.0))
+  (DrainedAndRedeclared :placements placements
+                        :drains #((DrainWindow :worker worker :since-ms since :until-ms (+ since (int (* DRAIN-TTL 1000)))))))
+
+
+(deftest test-a-draining-worker-takes-no-new-job
+  ;; 条 C11(architecture.hy の :invariants): drain を頼んだ worker 1 台の世界で系に service を足しても、coordinator は drain の期限の内に
+  ;; そこへ置かない(beacon-b は置かれない)。
+  (<- seen DrainedAndRedeclared (sim-cluster (beacons sim-foundation) (placements-during-a-drain "w1")
+                                             :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))))
+  (<- wrong tuple (no-new-place-while-draining seen.placements seen.drains))
+  (assert (= wrong #()) #(wrong seen)))
+
+
+(deftest test-a-counterexample-worker-that-claims-a-new-generation-every-beat-breaks-c11
+  ;; 条 C11 の失敗ケース: heartbeat ごとに新しい世代を名乗る壊れた worker(SimWorker の fresh-boot-every-beat)では、coordinator は drain を
+  ;; 別の世代の頼みとして付けないか解き、足した beacon-b を drain の期限の内にそこへ置き、条 C11 の判断がその置き先を名指す。
+  (<- seen DrainedAndRedeclared (sim-cluster (beacons sim-foundation) (placements-during-a-drain "w1")
+                                             :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])
+                                                                   :fresh-boot-every-beat True))))
+  (<- wrong tuple (no-new-place-while-draining seen.placements seen.drains))
+  (assert (in "beacon-b" (lfor p wrong p.job)) #(wrong seen)))
 
 
 (val FAILOVER-SLACK-MS 20000)  ; 条 C8 の余裕: 移し替えの期限の後、新しい担い手で process が起きるまで(木の用意・検め・起動 + 拍)

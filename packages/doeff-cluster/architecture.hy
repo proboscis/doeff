@@ -85,6 +85,11 @@
 ;;;   test-an-exclusive-worker-takes-no-job-that-does-not-need-its-ability(gpu を専用に持つ worker だけの世界の置き先を判断に渡す)。失敗ケース
 ;;;   は同じ file の test-a-counterexample-worker-that-hides-its-exclusive-ability-breaks-c10(heartbeat で専用の能力を名乗らない壊れた worker —
 ;;;   SimWorker の claims-exclusive — へ gpu を要らない job が置かれて C10 が名指す)。
+;;;   C11 no-new-place-while-draining(doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining — #1976)— drain を
+;;;   頼まれた worker には、drain の期限の内に新しい置き先を置かない。確かめるのは tests/test_local.hy の test-a-draining-worker-takes-no-new-job
+;;;   (drain を頼んだ worker 1 台の世界で系に service を足し、置き先と drain の窓を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-claims-a-new-generation-every-beat-breaks-c11(heartbeat ごとに新しい世代を名乗る壊れた worker —
+;;;   SimWorker の fresh-boot-every-beat — では drain が効かず、足した job が drain の期限の内に置かれて C11 が名指す)。
 ;;;   C8 moves-to-a-live-worker(doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
 ;;;   job を本当に受けられる生きた worker が他に在るなら、死から移し替えの期限 + 余裕のうちに他で動き始める。確かめるのは tests/test_local.hy の
 ;;;   test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time(2 台のうち担い手を死なせ、process の区間と死の刻を判断に渡す — 期限は
@@ -154,7 +159,8 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible"
                 "doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker"
                 "doeff_cluster.coordinator.core.coordinator_invariants:tasks-answered-in-time"
-                "doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"
+                "doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
