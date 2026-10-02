@@ -1,0 +1,14 @@
+{
+  "module_extensions": {
+    "doeff-cluster-metrics-policy": {
+      "allow": [
+        "doeff-hy-table"
+      ]
+    },
+    "doeff-cluster-resource-policy": {
+      "allow": [
+        "doeff-hy-table"
+      ]
+    }
+  }
+}
