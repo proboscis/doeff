@@ -2,10 +2,14 @@
 
 Tests the ExternalPromise mechanism for receiving results from
 external code (threads, asyncio, processes, etc.).
+
+The worker threads complete or fail their promise without a delay: the claim here is that
+completion from another thread is delivered, whichever of the completion and the Wait comes
+first (both go through the scheduler's external queue). Waking a scheduler already parked on an
+external wait is the subject of the realtime tests in tests/test_scheduler.py (#2885).
 """
 
 import threading
-import time
 from typing import Any
 
 from doeff import CreateExternalPromise, Gather, Spawn, Wait, do
@@ -75,7 +79,6 @@ class TestExternalPromiseCompletion:
             promise = yield CreateExternalPromise()
 
             def worker():
-                time.sleep(0.01)  # Simulate work
                 promise.complete(42)
 
             thread = threading.Thread(target=worker)
@@ -97,7 +100,6 @@ class TestExternalPromiseCompletion:
             promise = yield CreateExternalPromise()
 
             def worker():
-                time.sleep(0.01)
                 promise.fail(ValueError("external error"))
 
             thread = threading.Thread(target=worker)
@@ -145,7 +147,6 @@ class TestExternalPromiseWithAsyncRun:
             promise = yield CreateExternalPromise()
 
             def worker():
-                time.sleep(0.01)
                 promise.complete("async result")
 
             thread = threading.Thread(target=worker)
@@ -172,11 +173,9 @@ class TestExternalPromiseMultiple:
             promise2 = yield CreateExternalPromise()
 
             def worker1():
-                time.sleep(0.01)
                 promise1.complete("first")
 
             def worker2():
-                time.sleep(0.02)
                 promise2.complete("second")
 
             thread1 = threading.Thread(target=worker1)
@@ -218,7 +217,6 @@ class TestExternalPromiseRunIsolation:
             promise = yield CreateExternalPromise()
 
             def worker():
-                time.sleep(0.01)
                 promise.complete(expected)
 
             thread = threading.Thread(target=worker)
