@@ -4,6 +4,7 @@
 ;;; 接続の段の失敗(ConnectError・ConnectTimeout)= CONNECT-FAILED・時間切れ = TIMED-OUT・ほかの通信の失敗 = OTHER。
 ;;; 使い手は答え手 (transport-http transport) を外側に、口の handler(宛先の入れ物 route-cell・送り方 TEST-ROUTE)を内側に並べる。
 (require doeff-hy.macros [defhandler deff val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import httpx)
 (import doeff [run])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])

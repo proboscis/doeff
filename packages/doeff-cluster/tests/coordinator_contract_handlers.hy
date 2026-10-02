@@ -34,6 +34,7 @@
 ;;; (durable_kv.state-from-kv — 本物の coordinator が起き直す時と同じ読み)を、同じ関数(tasks-seen-of・warms-seen-of)で行にする。
 ;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
 (require doeff-hy.macros [defk deff defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])

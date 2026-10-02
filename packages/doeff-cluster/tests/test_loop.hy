@@ -1,5 +1,6 @@
 ;; 調整ループ全体を仮想時計・偽の子 process・台本の宣言で決定的に動かす。
-(require doeff-hy.macros [deftest defhandler <- var])
+(require doeff-hy.macros [deftest defhandler <- var val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])

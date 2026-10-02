@@ -8,6 +8,7 @@
 ;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の root の言い換え env-host と、検めと子 process の言い換え〔probe-host・process-host〕): service を宣言から
 ;;        env の root で起こし、送り手の commit だけ変えた 2 回目の宣言で新しい root の source の値が返り、worker の process は同じ。
 (require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import inspect)
 (import json)
 (import os)

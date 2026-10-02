@@ -4,6 +4,7 @@
 ;;   約束を破る変更(反例)を doeff_cluster.shared.entry.image_contract(判断は shared.core.image_rules)が赤にすることを確かめる。反例は本物の Dockerfile を 1 か所だけ変えて作る
 ;;   (fixture を別に持つと本物とずれるため)。
 (require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import pathlib [Path])
 (import doeff_cluster.shared.core.image_rules [image-contract-violations])
 

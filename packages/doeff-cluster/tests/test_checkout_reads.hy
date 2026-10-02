@@ -6,6 +6,7 @@
 ;;   - 組み立て(runtime-env-of-checkouts)が模擬の土台の上で本物と同じ所で断る(汚れ・push していない)
 ;;   - 系の宣言の前の検め(checked-declaring-checkout)が版の違い・checkout の外・汚れ・push していない commit を断る
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import hashlib)

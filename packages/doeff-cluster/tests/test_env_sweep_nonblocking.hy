@@ -8,6 +8,7 @@
 ;;   - root の準備が走っている間は起こさない(lock で準備と競わない)
 ;; 検は uv の代わりに、起きた印を書いて眠る script を渡す。
 (require doeff-hy.macros [deftest defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import os)
 (import time)
 (import pathlib [Path])

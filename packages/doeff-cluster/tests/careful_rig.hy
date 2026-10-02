@@ -3,6 +3,7 @@
 ;; test_env_careful.hy と test_service_env.hy が共有する(test の名でない module に置く — test の module を別の検から import すると、
 ;; pytest の書き換えの hook がそれを Python として読もうとして、走る順によって収集が落ちる)。
 (require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import dataclasses [replace])

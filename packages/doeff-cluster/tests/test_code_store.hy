@@ -2,6 +2,7 @@
 ;; 焼きの Program は fake の handler で、版ごとのコードの木の言い換え(worker/protocol/code_store の code-host — #2466)は手元の小さな
 ;; git repo と偽の焼きの道具で、本物の答え手(subprocess-handler・os-file-handler)の下で確かめる。
 (require doeff-hy.macros [defhandler defk deftest <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import os)
 (import subprocess)

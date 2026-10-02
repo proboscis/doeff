@@ -1,5 +1,6 @@
 ;; coordinator: 作り直し・盤の compare-and-set・task の一生(置く・結果・期限・版・担い手の沈黙)・調停ループの Program・shim。
 (require doeff-hy.macros [deftest defhandler defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import subprocess)

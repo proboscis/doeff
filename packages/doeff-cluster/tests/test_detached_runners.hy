@@ -11,6 +11,7 @@
 ;; では途絶が明けない。sim の宿は同じ期限と間を仮想の時計で数える)。
 ;; (2026-09-28 まで sim の組の代わりに同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した。)
 (require doeff-hy.macros [deftest defk deff defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が名指す

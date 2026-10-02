@@ -9,6 +9,7 @@
 ;;;   失敗ケース: 読みを始めた所で k8s が答えるまで調停ループの中で待つ壊した答え手(以前の同期の読みの形)を差すと、答えが遅れ、
 ;;;            worker が途絶で job を止める(本番の 13:53 の自己停止の形)
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import pytest)

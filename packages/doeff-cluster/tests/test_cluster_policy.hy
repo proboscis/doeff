@@ -1,4 +1,5 @@
 (require doeff-hy.macros [deftest val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.job_model [JobSpec])

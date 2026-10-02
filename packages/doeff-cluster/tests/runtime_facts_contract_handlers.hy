@@ -16,6 +16,7 @@
 ;;; 借りずに作る(食い違いが出るのは答えの形の違いだけにする)。pid は両方ともこの検の process の id。
 ;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
 (require doeff-hy.macros [defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass])
 (import enum [StrEnum])

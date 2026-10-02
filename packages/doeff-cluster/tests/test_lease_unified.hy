@@ -5,7 +5,8 @@
 ;;;   - 旧い版の直の書き(盤の compare-and-set)で、まだ切れていない担い手を追い出すことはできない。
 ;;;   - 柵の余裕は書きが着くまでの上限(10 秒)より長く、TTL の半分以下。
 ;;;   - coordinator に届かない間、worker は書き手(入れ替えを宣言した job)を止めない。観測の行を書けなくても書き手は止まらない。
-(require doeff-hy.macros [deftest defk defhandler <-])
+(require doeff-hy.macros [deftest defk defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import time)
 (import tempfile)

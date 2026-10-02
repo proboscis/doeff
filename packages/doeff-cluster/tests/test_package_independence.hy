@@ -6,6 +6,7 @@
 ;;                    するかは宣言の native だけが言う。
 ;; どちらも反例の fixture(tests/fixtures/independence)で走査が拾うことを確かめる。
 (require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import re)
 (import sys)
 (import tomllib)

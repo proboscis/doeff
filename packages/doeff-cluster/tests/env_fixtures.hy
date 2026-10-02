@@ -1,6 +1,7 @@
 ;; 実行環境の検の世界(env_world の EnvWorld と宣言)の組み立て。test_env_prepare と test_env_detached が共有する。
 ;; project の repo(app)と native の source を持つ repo(lib)の 2 つを並べる宣言と、その commit の remote。
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import hashlib)
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv])
 (import doeff_cluster.sim.env_world [EnvWorld WorldRemote WorldCommit WorldFile])

@@ -11,6 +11,7 @@
 ;;; 契約の外(本物だけの性質): file の mtime(memory の置き場は 0 で答える)— 「まだ書いている区切りは圧縮しない」「期限の中の run を
 ;;; 残す」は mtime の読みの性質で、ここでは十分に先の時刻(全部が古い)と 0(全部が新しい)で比べる・fsync の効き目。
 (require doeff-hy.macros [defk defhandler deftest <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import gzip)
 (import json)
 (import doeff [with_handlers])

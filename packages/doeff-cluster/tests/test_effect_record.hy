@@ -6,6 +6,7 @@
 ;;   4. 判断を 1 か所変えた版 → 違いはその profile の書きだけ
 ;;   5. 読み方を変えた版 → 分岐として止まる(推測で答えを作らない)
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import dataclasses)
 (import dataclasses [dataclass])

@@ -9,6 +9,7 @@
 ;; 反例: キーから import の根を外すと根だけ違う宣言が同じ root になる・根と同じ最上位の名の第三者の package・失敗の組(節 3.6)。
 ;; 筋書き 1・2 の実行と 6(同時の準備)は worker と子の起動の検(E10 の便 2)で確かめる。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import hashlib)
 (import json)

@@ -13,6 +13,7 @@
 ;;;
 ;;; 走らせ方 = package の根の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_recording_on_sim.hy`)。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "foundation"})
 (require doeff-hy.record [defenum])
 (import enum [StrEnum])
 (import json)

@@ -1,6 +1,7 @@
 ;; worker の世界の観測のまとめ(worker/protocol/world の local-host — #2469): ObserveWorld に、各言い換えの観測(コードの木・実行環境の
 ;; root・子 process・入口の検め・root の置き場の disk)を問うて 1 つの WorldView で答える。言い換えは小さな答え手で代える。
 (require doeff-hy.macros [defhandler deftest <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run with-handlers])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk ObserveWorld 
  WorldView])

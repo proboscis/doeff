@@ -5,6 +5,7 @@
 ;;;   * 書き直しは中身を丸ごと置き換える(前の長い中身の尻尾を残さない)・dir には状態の file だけが残る(一時 file を残さない)
 ;;; 本物だけの性質(置き換えの原子性・mode)は os の rename と chmod の性質で、ここでは file の中身と在処だけを比べる。
 (require doeff-hy.macros [defhandler deftest <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import doeff [with_handlers])
 (import doeff_core_effects.file_effects [ReadText ListDirectory])

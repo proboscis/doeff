@@ -8,6 +8,7 @@
 ;; - 止めの合図で背景の task が止まる。待ちを使わない口(既定)は背景の task を起こさない。
 ;; - 宣言の読みは拍の間の眠りを起こす呼び鈴を添え、呼び鈴は鳴るまで拍をまたいで同じ物・「変わった」で 1 度だけ鳴る(#2692)。
 (require doeff-hy.macros [defhandler defk deftest <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
 (import threading)
 (import time)

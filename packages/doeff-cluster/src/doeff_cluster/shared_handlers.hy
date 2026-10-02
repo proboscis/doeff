@@ -4,6 +4,7 @@
 ;;; 要求の形(board-read-request・board-write-request・lease-request)は foundation/board_requests.hy — この handler と手元の sim-cluster の
 ;;; 偽の宿(local.hy)が同じ関数で作る(本文を写さない)。
 (require doeff-hy.macros [defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
 (import doeff_hy.wire [parse])
