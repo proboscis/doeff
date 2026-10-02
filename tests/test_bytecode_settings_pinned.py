@@ -43,10 +43,10 @@ def _file_with_mtime(path: Path, mtime: float) -> None:
 
 
 def test_test_bodies_run_with_the_pinned_bytecode_settings() -> None:
+    # The environment variables behind these settings (PYTHONDONTWRITEBYTECODE=1, no PYTHONPYCACHEPREFIX)
+    # are observed where they act — in a subprocess — by the next test.
     assert sys.dont_write_bytecode is True
     assert sys.pycache_prefix is None
-    assert os.environ["PYTHONDONTWRITEBYTECODE"] == "1"
-    assert "PYTHONPYCACHEPREFIX" not in os.environ
 
 
 def test_subprocesses_inherit_the_pinned_bytecode_settings() -> None:

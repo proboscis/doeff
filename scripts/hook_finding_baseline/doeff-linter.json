@@ -99,7 +99,6 @@
       "packages/doeff-seedream/src/doeff_seedream/structured_llm.py": 1,
       "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py": 1,
       "publications/zenn-use-cases-v0/render_preview.py": 1,
-      "scripts/doeff_cluster_warning_baseline.py": 1,
       "tests/test_rust_build_target_outside_package.py": 2
     },
     "DOEFF007": {

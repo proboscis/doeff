@@ -32,9 +32,10 @@ def stage(tmp_path: Path) -> Path:
     (repo / "packages/doeff-linter/Cargo.toml").write_text('[package]\nname = "doeff-linter"\n', encoding="utf-8")
     (repo / "packages/doeff-linter/marker").write_text("committed", encoding="utf-8")
     (repo / "packages/doeff-indexer/Cargo.toml").write_text('[package]\nname = "doeff-indexer"\n', encoding="utf-8")
-    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    # git は最小の環境で撃つ(`env -i` — 外側の GIT_* も、使う人の git の設定も読まない)。
+    git_env = ["env", "-i", f"PATH={os.pathsep.join(os.get_exec_path())}", f"HOME={tmp_path}"]
     for argv in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"]):
-        subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True, env=env)
+        subprocess.run([*git_env, "git", "-C", str(repo), *argv], check=True, capture_output=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "cargo").write_text(FAKE_CARGO, encoding="utf-8")
@@ -42,20 +43,21 @@ def stage(tmp_path: Path) -> Path:
     return repo
 
 
-def environ(tmp_path: Path, suffix: str) -> dict[str, str]:
-    return {
-        **os.environ,
-        "PATH": str(tmp_path / "bin") + ":" + os.environ.get("PATH", ""),
-        "DOEFF_LINTER_SNAPSHOT_DIR": str(tmp_path / "store"),
-        "FAKE_CARGO_COUNT": str(tmp_path / "count"),
-        "FAKE_CARGO_SUFFIX": suffix,
-    }
+def environ(tmp_path: Path, suffix: str) -> list[str]:
+    """子の命令の頭に付ける `env` — 子はこの process の環境を継ぎ、偽の cargo を PATH の先頭に置いて 3 つの名を足す。"""
+    return [
+        "env",
+        f"PATH={os.pathsep.join([str(tmp_path / 'bin'), *os.get_exec_path()])}",
+        f"DOEFF_LINTER_SNAPSHOT_DIR={tmp_path / 'store'}",
+        f"FAKE_CARGO_COUNT={tmp_path / 'count'}",
+        f"FAKE_CARGO_SUFFIX={suffix}",
+    ]
 
 
-def snapshot(repo: Path, env: dict[str, str]) -> subprocess.Popen[str]:
+def snapshot(repo: Path, env: list[str]) -> subprocess.Popen[str]:
     return subprocess.Popen(
-        ["uv", "run", "--script", str(SCRIPT), str(repo), "HEAD"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        [*env, "uv", "run", "--script", str(SCRIPT), str(repo), "HEAD"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
 
 
@@ -106,8 +108,8 @@ def test_a_missing_commit_is_unavailable(tmp_path: Path) -> None:
     repo = stage(tmp_path)
     env = environ(tmp_path, "")
     proc = subprocess.Popen(
-        ["uv", "run", "--script", str(SCRIPT), str(repo), "0" * 40],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        [*env, "uv", "run", "--script", str(SCRIPT), str(repo), "0" * 40],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     out, err = proc.communicate(timeout=50)
     assert proc.returncode == 1, (out, err)

@@ -5,7 +5,6 @@
 set_invariant_checks で決まる。この検は、同じ build が変数だけで両方の状態になることを子 process で見る。
 """
 
-import os
 import subprocess
 import sys
 
@@ -24,11 +23,14 @@ PROBE = (
 
 def _probe(value: str | None) -> subprocess.CompletedProcess[str]:
     """変数を与えた(または外した)子 process で 1 つの program を走らせ、検査の状態を読むため。"""
-    env = {k: v for k, v in os.environ.items() if k != "DOEFF_VM_INVARIANT_CHECKS"}
-    if value is not None:
-        env["DOEFF_VM_INVARIANT_CHECKS"] = value
+    # 子はこの process の環境を継ぐ — 変数を外し(`env -u`)、value が在ればその値で置く。
+    setting = [] if value is None else [f"DOEFF_VM_INVARIANT_CHECKS={value}"]
     return subprocess.run(
-        [sys.executable, "-c", PROBE], env=env, capture_output=True, text=True, timeout=120, check=False
+        ["env", "-u", "DOEFF_VM_INVARIANT_CHECKS", *setting, sys.executable, "-c", PROBE],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
 
 

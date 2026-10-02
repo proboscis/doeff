@@ -31,27 +31,27 @@ BASE: dict[str, dict[str, int]] = {"DOEFF172": {"src/a.hy": 2, "src/b.hy": 1}}
 
 
 def test_a_new_warning_is_red() -> None:
-    grown, stale = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 3, "src/b.hy": 1}}, None)
-    assert [(f.path, f.baseline, f.current) for f in grown] == [("src/a.hy", 2, 3)]
-    assert stale == []
+    comparison = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 3, "src/b.hy": 1}}, None)
+    assert [(f.path, f.baseline, f.current) for f in comparison.grown] == [("src/a.hy", 2, 3)]
+    assert comparison.stale == ()
 
 
 def test_a_new_rule_in_a_new_file_is_red() -> None:
     current = {"DOEFF172": {"src/a.hy": 2, "src/b.hy": 1}, "DOEFF113": {"src/c.py": 1}}
-    grown, _ = BASELINE.compare(BASE, current, None)
-    assert [(f.rule, f.path) for f in grown] == [("DOEFF113", "src/c.py")]
+    comparison = BASELINE.compare(BASE, current, None)
+    assert [(f.rule, f.path) for f in comparison.grown] == [("DOEFF113", "src/c.py")]
 
 
 def test_a_fix_without_lowering_the_baseline_is_red() -> None:
-    grown, stale = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 2}}, None)
-    assert grown == []
-    assert [(f.path, f.baseline, f.current) for f in stale] == [("src/b.hy", 1, 0)]
+    comparison = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 2}}, None)
+    assert comparison.grown == ()
+    assert [(f.path, f.baseline, f.current) for f in comparison.stale] == [("src/b.hy", 1, 0)]
 
 
 def test_only_the_measured_files_are_compared() -> None:
     # commit の hook は変えた file だけを測る — 測っていない b.hy が 0 に見えても下げ忘れにしない。
-    grown, stale = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 2}}, frozenset({"src/a.hy", "architecture.hy"}))
-    assert grown == [] and stale == []
+    comparison = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 2}}, frozenset({"src/a.hy", "architecture.hy"}))
+    assert comparison.grown == () and comparison.stale == ()
 
 
 def test_lower_only_lowers() -> None:

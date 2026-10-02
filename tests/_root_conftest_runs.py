@@ -18,7 +18,6 @@ what is observed is the repository's own setup.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -47,10 +46,13 @@ def run_under_root_conftest(
     """
     shutil.copyfile(REPO_ROOT / "conftest.py", directory / "conftest.py")
     (directory / "test_probe.py").write_text(probe_source, encoding="utf-8")
-    inner_env = {name: value for name, value in os.environ.items() if name not in _OUTER_SETTINGS}
-    inner_env |= {"HOME": str(directory), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
-    inner_env |= env or {}
+    # The inner run inherits this process's environment except the outer settings (`env -u`), with HOME and the
+    # plugin switch set, then ``env`` on top.
+    settings = {"HOME": str(directory), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", **(env or {})}
     command = [
+        "env",
+        *[flag for name in sorted(_OUTER_SETTINGS) for flag in ("-u", name)],
+        *[f"{name}={value}" for name, value in settings.items()],
         sys.executable, "-m", "pytest",
         "-c", str(REPO_ROOT / "pyproject.toml"),
         "--rootdir", str(directory), "--confcutdir", str(directory),
@@ -61,7 +63,6 @@ def run_under_root_conftest(
         return subprocess.run(
             command,
             cwd=directory,
-            env=inner_env,
             capture_output=True,
             text=True,
             timeout=budget,
