@@ -227,7 +227,8 @@
               :count (len texts))))
 
 
-(defn #^ dict otlp-log-record [#^ str run #^ int chunk #^ dict line #^ str text #^ int now-ms]
+(deff otlp-log-record [#^ str run #^ int chunk #^ dict line #^ str text #^ int now-ms]  ; defk にできない: OTLP の置き場(OtlpSink の method — Program の外の I/O)が行ごとに呼ぶ純粋な綴り
+  {:pre [(: run str) (: chunk int) (: line dict) (: text str) (: now-ms int)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "記録の 1 行 → OTLP の log record 1 件。body = 行の JSON・時刻 = 行の at(無ければ now)・属性 = 読む側が絞る鍵
    (run・区切り・行の種類・出来事の番号・effect の型・内容の hash)。ClickHouse の表はこの属性を列に持つ(deploy/effect-telemetry)。"
   (setv at (or (.get line "at") (.get line "startedMs") now-ms))
@@ -741,7 +742,8 @@
   (.format "{}-{}-{}" (time.strftime "%Y%m%dT%H%M%SZ" (time.gmtime (/ started-ms 1000))) (or worker "local")
            (or instance (str (os.getpid)))))
 
-(defn #^ RecordingInstaller recording-handler [#^ dict record #^ str service #^ dict header]
+(deff recording-handler [#^ dict record #^ str service #^ dict header]  ; defk にできない: 記録係を作る入口(境目の記録係と、使い手の repo の記録係)が handler の組を作る時に呼ぶ — 答えは handler の値
+  {:pre [(: record dict) (: service str) (: header dict)] :post [(: % RecordingInstaller)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の置き場の設定 record → 記録係(境目の記録係 boundary-recorder の record の枝と、cluster の外の process が使う)。
    record = {\"otlp\": collector の URL(か \"store\": 旧い置き場の URL)・
    \"chunkSeconds\"・\"flushSeconds\"}。
@@ -800,10 +802,10 @@
 
 
 (defk boundary-recorder [contract]
-  {:pre [(: contract HostContract)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation"}}
+  {:pre [(: contract HostContract)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "境目の記録係の組(0 か 1 つ)を作る — Ask RECORD-MODE-KEY で off / record / replay を選ぶ。業務の Program が翻訳の handler と
    土台の handler の間に並べる(ADR-DOE-CLUSTER-001 R5)。contract = 宿の契約の鍵(record の header の run-context・Program の path・版を
-   Ask で読む鍵)。"
+   Ask で読む鍵)。record の枝は、記録係の設定(recording-handler が読む JSON の形 {\"otlp\": URL})を綴る。"
   (<- mode str (Ask RECORD-MODE-KEY))
   (match mode
     "off" []

@@ -3,7 +3,7 @@
 ;;; 要求を Request に解く・返事の本文を byte にする・NextRequests / Reply / CoordinatorStopRequested に答える handler は
 ;;; shared/protocol/inbox.hy(層 foundation は intent の型を読まない — #2563・#2445 の「protocol の 1 点で解く」と同じ形)。
 ;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れる)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import queue)
@@ -42,7 +42,8 @@
 (setv LIVE-STALL-SECONDS 120.0)
 
 
-(defn #^ tuple probe-verdict [#^ str path #^ (| float None) stalled-seconds]
+(deff probe-verdict [#^ str path #^ (| float None) stalled-seconds]  ; defk にできない: 受け口の HTTP の thread(Program の外)が probe ごとに呼ぶ純粋な綴り
+  {:pre [(: path str) (: stalled-seconds (| float None))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "純粋: probe の答え #(status 本文)。stalled-seconds = ループが最後に要求を取りに来てからの秒(まだ 1 度も来ていなければ None)。
    /livez はループが LIVE-STALL-SECONDS より長く止まった時だけ 503(起動直後で 1 度も来ていない時は 200 — 起動の遅さは
    startupProbe が見る)。/readyz は 1 度も来ていない・READY-STALL-SECONDS より長く止まった時に 503。"
