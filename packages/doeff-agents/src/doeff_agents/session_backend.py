@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Protocol
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
-from doeff import do
 
+from doeff import do
 from doeff_agents.io_effects import which_executable
 from doeff_agents.io_root import IoGenerator, IoRoot, as_optional_str
 
@@ -108,8 +108,8 @@ def default_session_backend(
     ``io_root`` is the composition-root choice of I/O家: the production handler
     by default, the in-memory fake in tests.
     """
-    from .io_handlers import run_driver_io
-    from .tmux import StableTmuxSessionBackend, TmuxSessionBackend
+    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents.tmux import StableTmuxSessionBackend, TmuxSessionBackend
 
     root: IoRoot = io_root if io_root is not None else run_driver_io
     resolved = root(resolve_default_executable(executable))
@@ -117,12 +117,3 @@ def default_session_backend(
         raise RuntimeError(f"terminal session backend の実行ファイルが解けない: {resolved!r}")
     backend_cls = StableTmuxSessionBackend if stable else TmuxSessionBackend
     return backend_cls(executable=resolved, io_root=root)
-
-
-__all__ = [
-    "SessionBackend",
-    "SessionConfig",
-    "SessionInfo",
-    "default_session_backend",
-    "resolve_default_executable",
-]

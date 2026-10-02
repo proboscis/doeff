@@ -9,6 +9,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from doeff_agents.adapters.base import AgentType, LaunchConfig
 from doeff_agents.agentd_client import (
     AgentdClient,
     AgentdClientError,
@@ -20,15 +21,9 @@ from doeff_agents.agentd_client import (
     ensure_agentd,
 )
 from doeff_agents.effects import AgentSessionSnapshot
-
-from .adapters.base import AgentType, LaunchConfig
-from .monitor import SessionStatus
-from .session import (
-    AgentSession,
-    launch_session,
-    monitor_session,
-)
-from .tmux import attach_session as tmux_attach
+from doeff_agents.monitor import SessionStatus
+from doeff_agents.session import AgentSession, launch_session, monitor_session
+from doeff_agents.tmux import attach_session as tmux_attach
 
 console = Console()
 
@@ -530,7 +525,7 @@ def ps_command(show_all: bool, ensure: bool) -> None:
 @click.argument("session_name")
 def attach(session_name: str) -> None:
     """Attach to a tmux session."""
-    from .tmux import is_inside_tmux
+    from doeff_agents.tmux import is_inside_tmux
 
     client = _agentd_client_or_exit()
     snapshot = _agentd_session_or_exit(client, session_name)
