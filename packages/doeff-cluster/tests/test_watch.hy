@@ -11,10 +11,12 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe QuietStep QuietStretch Watcher WatchRefusal])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.protocol.replies [reply-json])
-(import doeff_cluster.coordinator.core.idle_policy [quiet-ticks])
+(import doeff_cluster.coordinator.core.idle_policy [quiet-stretch])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of])
+(import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.sim.local [sim-cluster send-request ClientLink SimLink SimWorker ReadCoordinator DrainWorker StopCoordinator])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
@@ -96,13 +98,44 @@
     (assert (= (- (get skipped 2) (get skipped 0)) (- (get every 2) (get every 0))) #(seconds skipped every))))
 
 
-(deftest test-skipping-idle-ticks-stops-at-the-watch-deadline
-  ;; 何も変えない新しい状態で最初に状態を変える拍は 5 秒目(生きていた時刻の印)。待ちの期限 2.5 秒があれば 3 拍目で起きる。
-  ;; 反例 — 期限を知らない材料(wake-ms なし)なら 5 拍目まで寝過ごす(待ちに 2.5 秒遅れて返す)。
-  (<- with-deadline int (quiet-ticks (IdleProbe (ClusterState) (ClusterTiming) (ClusterNaming) :wake-ms 2500) 0))
-  (<- without int (quiet-ticks (IdleProbe (ClusterState) (ClusterTiming) (ClusterNaming)) 0))
-  (assert (= with-deadline 3) with-deadline)
-  (assert (= without 5) without))
+(defk stretch-with [watcher horizon]
+  {:pre [(: watcher (| Watcher None)) (: horizon int)] :post [(: % QuietStretch)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "何も変えない新しい状態の静かな区間を、待ち watcher(None = 待ち無し)を持たせて刻 0 から horizon まで試すため。"
+  (val held (if (is watcher None) #() #(watcher)))
+  (<- stretch QuietStretch (quiet-stretch (IdleProbe (ClusterState) (ClusterTiming) (ClusterNaming) :watchers held)
+                                          (QuietStep :at 0 :state (ClusterState) :watchers held :marked False) horizon))
+  stretch)
+
+
+(defk watcher-of [query]
+  {:pre [(: query dict)] :post [(: % Watcher)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "刻 0 に受けた GET /watch(問い query)の待ちを作るため。"
+  (<- watch (| Watcher WatchRefusal None) (watch-of (http-request "GET" "/watch" query None) 0))
+  (match watch
+    (Watcher) watch
+    _ (raise (ValueError (.format "待ちにならない問い: {}" query)))))
+
+
+(deftest test-a-quiet-stretch-stops-at-a-watch-deadline-it-cannot-absorb
+  ;; 何も変えない新しい状態の静かな区間は、生存の印(5 秒ごと)では切れない。worker を名指さない読み手の待ち(期限 2.5 秒)は、期限の
+  ;; 後の最初の歩(3 秒目)で「変わっていない」と返すので、そこで切れる(反例 — 期限を知らない試し方なら、その歩を飛ばして待ちに遅れて
+  ;; 返す)。worker を名指した確かめ済みの待ち(10 秒)は、期限の歩で 1 拍ずつの走りの返事と送り直しを吸い、期限を引き直して切らない。
+  (<- plain QuietStretch (stretch-with None 30000))
+  (assert (is plain.end-at None) plain.end-at)
+  (assert (= (len plain.steps) 30) (len plain.steps))
+  (<- reader Watcher (watcher-of {"after" "0" "timeoutSeconds" "2.5"}))
+  (<- read QuietStretch (stretch-with reader 30000))
+  (assert (= read.end-at 3000) read.end-at)
+  (assert (= (len read.steps) 2) read.steps)
+  (<- named Watcher (watcher-of {"after" "0" "timeoutSeconds" "10" "worker" "w1" "boot" "b1"}))
+  (<- held QuietStretch (stretch-with named 30000))
+  (assert (is held.end-at None) held.end-at)
+  (assert (= (lfor step held.steps (. (get step.watchers 0) deadline-ms)) (+ (* [10000] 9) (* [20000] 10) (* [30000] 10) [40000]))
+          (lfor step held.steps (. (get step.watchers 0) deadline-ms)))
+  ;; 確かめる前の 0 秒の待ち(送り直しは問いが違う)は吸わない — 最初の歩で切れる。
+  (<- unconfirmed Watcher (watcher-of {"after" "0" "timeoutSeconds" "0" "worker" "w1" "boot" "b1"}))
+  (<- first QuietStretch (stretch-with unconfirmed 30000))
+  (assert (= first.end-at 1000) first.end-at))
 
 
 (defk scoped-watches []
