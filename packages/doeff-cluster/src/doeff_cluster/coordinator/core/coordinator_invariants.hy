@@ -36,6 +36,10 @@
 ;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力(exclusive)の決まりと、drain の
 ;;; 期限の中の worker へ置かない事は、別の条として後から足す(今の検は tests/test_local.hy の gpu-only と tests/test_drain.hy)。
 ;;;
+;;; 条 C8 moves-to-a-live-worker: 担い手の worker が死に、その job を本当に受けられる生きた worker が他に在るなら、その job は死から
+;;; 移し替えの期限(reassign-after-ms)+ 余裕のうちに他の worker で動き始める。判断は記録(job の process の区間・死んだ worker と時刻・
+;;; job を本当に受けられる他の worker)を受けて、期限のうちに他で動き始めなかった job の列を返す純関数 1 つ。
+;;;
 ;;; 条 L1 places-only-on-reachable: 新しい置き先は、lease-ms(+ 余裕)のうちに coordinator へ届き得た worker にだけ置く — coordinator が
 ;;; 止まり置き場から作り直された後も。判断は記録(読めた置き先の列と、worker ごとの届かなくなった時刻)を受けて、届かなくなってから
 ;;; lease-ms + 余裕を過ぎた後に置いた置き先の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
@@ -194,6 +198,41 @@
   (#^ str job)
   (#^ str worker)
   (#^ int since-ms))
+
+
+(defrecord JobProcess
+  "条 C8 の記録 1 つ = job の process 1 つの生きていた区間(job・worker・started-ms・ended-ms — まだ動いていれば None)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ str worker)
+  (#^ int started-ms)
+  (#^ (| int None) ended-ms))
+
+
+(defrecord StrandedJob
+  "条 C8 の破り 1 つ = 担い手の死(worker・died-at-ms)から期限(due-ms)までに他の worker で動き始めなかった job。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str job)
+  (#^ str worker)
+  (#^ int died-at-ms)
+  (#^ int due-ms))
+
+
+(defk moves-to-a-live-worker [processes deaths takers deadline-ms]
+  {:pre [(: processes (get tuple #(JobProcess ...))) (: deaths (get tuple #(WorkerGone ...))) (: takers frozenset) (: deadline-ms int)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C8: 死んだ worker(deaths)の上で死の瞬間に動いていた job ごとに、job を本当に受けられる生きた他の worker(takers — 真実の側の名)が
+   在るのに、死から deadline-ms のうちに他の worker で process が起きていなければ破り(StrandedJob)とする(空なら緑)。coordinator が
+   担い手の死の後に job を受けられる worker へ移すことを、筋書きの記録から判じるため。takers が空なら移せないので判じない。"
+  (val ending (fn [p] (if (is p.ended-ms None) (float "inf") p.ended-ms)))
+  (tuple (gfor d deaths
+               p processes
+               ;; 死の瞬間に動いていた process(死で止まった process の終わりは死の刻と同じ)。
+               :if (and takers (= p.worker d.worker) (<= p.started-ms d.since-ms) (<= d.since-ms (ending p)))
+               :setv due (+ d.since-ms deadline-ms)
+               :if (not (any (gfor o processes (and (= o.job p.job) (!= o.worker d.worker) (in o.worker takers)
+                                                     (>= o.started-ms d.since-ms) (<= o.started-ms due)))))
+               (StrandedJob :job p.job :worker d.worker :died-at-ms d.since-ms :due-ms due))))
 
 
 (defrecord JobNeeds

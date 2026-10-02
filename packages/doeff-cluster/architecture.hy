@@ -80,6 +80,11 @@
 ;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c7(heartbeat で持たない能力を名乗る壊れた worker — SimWorker の
 ;;;   claims-provides — へ置かれて C7 が名指す)。専用の能力の決まりと drain の期限の中へ置かない事は、別の条として後から足す。
+;;;   C8 moves-to-a-live-worker(doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
+;;;   job を本当に受けられる生きた worker が他に在るなら、死から移し替えの期限 + 余裕のうちに他で動き始める。確かめるのは tests/test_local.hy の
+;;;   test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time(2 台のうち担い手を死なせ、process の区間と死の刻を判断に渡す — 期限は
+;;;   ClusterTiming.reassign-after-ms から作る)。失敗ケースは同じ file の test-a-counterexample-worker-that-hides-its-abilities-breaks-c8(もう
+;;;   1 台が heartbeat で能力を名乗らない壊れた worker — claims-provides = 空 — だと、coordinator は移せる先が無いと読んで動かさず、C8 が名指す)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -136,7 +141,8 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:places-only-on-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity"
-                "doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible"
+                "doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
