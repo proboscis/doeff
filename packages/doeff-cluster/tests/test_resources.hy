@@ -81,12 +81,12 @@
   (var s (get reply-5 0))
   (val status (get reply-5 1))
   (assert (= status 201))
-  (:= s (tick (! (beat s "atlas" 1000)) 1000 T))
+  (:= s (! (tick (! (beat s "atlas" 1000)) 1000 T)))
   (assert (in "a" s.placements) s.placements)
-  (setv idle (tick s 1500 T))
+  (setv idle (! (tick s 1500 T)))
   (assert (is idle s))
   (assert (= #(idle.revision idle.audit-seq (len idle.events)) #(s.revision s.audit-seq (len s.events))))
-  (assert (is (get (plan-rollouts s 1500 T) 0) s)))
+  (assert (is (get (! (plan-rollouts s 1500 T)) 0) s)))
 
 
 (deftest test-every-write-records-the-actor-and-the-versions

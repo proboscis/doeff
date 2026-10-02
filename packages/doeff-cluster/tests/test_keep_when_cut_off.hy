@@ -120,7 +120,7 @@
   ;; 読みの口(#2883): 消す前は約束が 1 件出て、Worker を消した後は消える。
   (assert (= (lfor m (. (state-view promised PAST-DEADLINE T) keep-marks) #(m.job m.worker)) [#("a" "w1")]))
   (val deleted (delete-resource promised "Worker" "w1" {} "operator" PAST-DEADLINE T))
-  (val after (reconcile PAST-DEADLINE deleted T))
+  (val after (! (reconcile PAST-DEADLINE deleted T)))
   (assert (= after.keep-marks #()) after.keep-marks)
   (assert (= (. (state-view after PAST-DEADLINE T) keep-marks) #()))
   (assert (= (. (get after.placements "a") worker) "w2") after.placements))
