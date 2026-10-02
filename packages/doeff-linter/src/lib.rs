@@ -836,6 +836,14 @@ p: Program = process()"#,
         assert_eq!(environ_hits(code), 1);
     }
 
+    /// 入れ子の関数・method の中の os.environ の参照(値として渡す・`in`)と os.getenv の参照も、それぞれ 1 度だけ数える
+    /// (直す前は添字・呼び出しの形だけを見ていて 0 件)。
+    #[test]
+    fn a_reference_inside_nested_functions_is_counted_once() {
+        let code = "import os\ndef outer():\n    def inner():\n        return dict(os.environ)\n    return inner\nclass Settings:\n    def present(self):\n        return \"HOME\" in os.environ\n    def reader(self):\n        return os.getenv\n";
+        assert_eq!(environ_hits(code), 3);
+    }
+
     // 本体の再帰が降りる入れ子の本体(agora-redesign #2834)。各構文の本体の中の os.getenv() が当たる数を見る —
     // 本体の再帰が降りない本体が在ると、そこの当たりは 0 件になる。
 
