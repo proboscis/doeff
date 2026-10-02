@@ -505,6 +505,21 @@
   (assert (> (get seen.after.rows "beacon/a" "n") 0) seen.after.rows))
 
 
+(defclass PretendsToPersist [MemoryWalStore]
+  "壊れた置き場(条 C1 の反例・#1976 の #35): Persist に何も書かずに答える — fsync したふり。coordinator は書けたと思って返事を返すが、
+   作り直しで読み直す置き場には何も無い。"
+  (defn #^ None persist [self #^ (get dict #(str object)) delta] None))
+
+
+(deftest test-a-counterexample-store-that-pretends-to-persist-breaks-c1
+  ;; 条 C1 の失敗ケース: 置き場の差し替えの口(#989)に Persist を捨てる置き場を差すと、止める前に返事を返した盤の行が作り直した後に
+  ;; 無く、条 C1 の判断がその行を名指す(同じ筋書きの本物の置き場では空 — 上の test-a-stopped-coordinator-is-recreated-…)。
+  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator False 10.0) :store PretendsToPersist))
+  (assert seen.before seen)
+  (<- lost tuple (acknowledged-writes-survive seen.before seen.after.rows))
+  (assert (in "beacon/a" lost) #(lost seen.after.rows)))
+
+
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
   ;; 置き場を作る関数が MemoryWalStore でない値を返せば、走らせる前に断る(emulated-handlers と load-state が読む口が無い)。
   (with [raised (pytest.raises TypeError)]
