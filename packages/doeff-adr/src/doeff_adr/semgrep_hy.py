@@ -145,16 +145,16 @@ def scan_with_hy_expansion(
 
     findings: list[SemgrepFinding] = []
     for result in results:
-        scanned = Path(result["path"])
+        scanned = Path(result.path)
         relative = origin.get(scanned, scanned)
-        scanned_line = int(result["start"]["line"])
+        scanned_line = result.line
         expansion = expanded.get(relative)
         findings.append(
             SemgrepFinding(
                 path=relative.as_posix(),
                 line=expansion.hy_line(scanned_line) if expansion else scanned_line,
-                rule_id=str(result["check_id"]),
-                message=str(result.get("extra", {}).get("message", "")),
+                rule_id=result.check_id,
+                message=result.message,
                 scanned_line=scanned_line,
             )
         )

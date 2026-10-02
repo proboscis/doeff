@@ -6,6 +6,7 @@ assertions that pytest-generated functions can call.
 """
 
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -55,6 +56,16 @@ class SemgrepSpec:
 
 
 @dataclass(frozen=True)
+class SemgrepResult:
+    """semgrep の --json の結果 1 件のうち、検が読む欄 — JSON の境界で型のある値にして、使い手が dict を引かないため。"""
+
+    check_id: str
+    path: str
+    line: int
+    message: str
+
+
+@dataclass(frozen=True)
 class AdrSpec:
     id: str
     title: str
@@ -71,6 +82,9 @@ class AdrSpec:
 
 _ADRS: dict[str, AdrSpec] = {}
 _ENFORCEMENTS: dict[str, EnforcementRef | SemgrepSpec] = {}
+# installed の defsemgrep の例の組 1 つに当たった規則の id(鍵 = semgrep・設定の path と中身・例の中身の digest)。
+# 同じ設定を読む規則の例を 1 回の semgrep で確かめ、同じ process の残りの検はここから読む(agora-redesign #2976 I-3)。
+_INSTALLED_VERDICTS: dict[str, frozenset[str]] = {}
 
 
 def clear_registry() -> None:
@@ -367,9 +381,7 @@ def _installed_fixture_rule_ids(
 ) -> set[str]:
     fixtures = spec.hit_fixtures if polarity == "hit" else spec.clean_fixtures
     if not spec.expand_hy:
-        return _result_rule_ids(
-            _run_installed_semgrep_fixture_set(semgrep, config_path, fixtures, polarity=polarity)
-        )
+        return set(_installed_verdict(semgrep, config_path, spec, fixtures))
     from doeff_adr.semgrep_hy import scan_with_hy_expansion
 
     with tempfile.TemporaryDirectory(prefix=f"doeff-adr-hy-fixtures-{polarity}-") as tmp:
@@ -382,19 +394,105 @@ def _installed_fixture_rule_ids(
     return {finding.rule_id for finding in findings}
 
 
-def _run_installed_semgrep_fixture_set(
+def _installed_verdict(
     semgrep: str,
     config_path: Path,
+    spec: SemgrepSpec,
     fixtures: tuple[dict[str, str], ...],
-    *,
-    polarity: str,
-) -> list[dict[str, Any]]:
-    with tempfile.TemporaryDirectory(
-        prefix=f"doeff-adr-installed-semgrep-{polarity}-"
-    ) as tmp:
+) -> frozenset[str]:
+    """例の組 1 つに当たった規則の id — 同じ設定を読む規則の例をまとめて 1 回の semgrep で確かめた答えから読む。
+
+    規則の検 1 本ごとに semgrep を起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ重なる
+    (agora-controllers の defadr_turn_boundary は 7 規則で 14 回・約 33 秒 — agora-redesign #2976 I-3)。最初の検の時に、
+    同じ設定を読む登録済みの規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。
+    """
+    config_digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    key = _fixture_set_key(semgrep, config_path, config_digest, fixtures)
+    if key not in _INSTALLED_VERDICTS:
+        siblings = {
+            _fixture_set_key(
+                semgrep, config_path, config_digest, sibling_fixtures
+            ): sibling_fixtures
+            for sibling in _ENFORCEMENTS.values()
+            if isinstance(sibling, SemgrepSpec)
+            and sibling.installed_rule_id is not None
+            and not sibling.expand_hy
+            and (sibling.config, sibling.config_base) == (spec.config, spec.config_base)
+            for sibling_fixtures in (sibling.hit_fixtures, sibling.clean_fixtures)
+            if sibling_fixtures
+        }
+        pending = {
+            pending_key: pending_fixtures
+            for pending_key, pending_fixtures in (siblings | {key: fixtures}).items()
+            if pending_key not in _INSTALLED_VERDICTS
+        }
+        _INSTALLED_VERDICTS.update(_run_installed_semgrep_batch(semgrep, config_path, pending))
+    return _INSTALLED_VERDICTS[key]
+
+
+def _fixture_set_key(
+    semgrep: str, config_path: Path, config_digest: str, fixtures: tuple[dict[str, str], ...]
+) -> str:
+    """覚えた答えを引く鍵 — semgrep・設定・例のどれかが変われば別の鍵になり、古い答えを使い回さないため。"""
+    material = json.dumps(
+        [semgrep, str(config_path), config_digest, list(fixtures)], sort_keys=True
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+# 子 process を、git の repo の場所を決める環境変数を外して起こす前置き — 外の repo の hook の中で回っても、
+# 組ごとの git の repo が root になるようにするため(環境を読まずに外すので env -u で渡す)。
+_WITHOUT_GIT_ENV: tuple[str, ...] = (
+    "env",
+    "-u",
+    "GIT_DIR",
+    "-u",
+    "GIT_WORK_TREE",
+    "-u",
+    "GIT_INDEX_FILE",
+    "-u",
+    "GIT_COMMON_DIR",
+    "-u",
+    "GIT_OBJECT_DIRECTORY",
+)
+
+
+def _run_installed_semgrep_batch(
+    semgrep: str,
+    config_path: Path,
+    fixture_sets: dict[str, tuple[dict[str, str], ...]],
+) -> dict[str, frozenset[str]]:
+    """例の組ごとに、当たった規則の id を 1 回の semgrep で出す。
+
+    組ごとの dir に例を書き、組ごとに git の repo にする — semgrep は対象の dir ごとに一番近い git の root を
+    project root に取るので、root に固定した paths.include(``/controllers/**`` の形)が組ごとに効き、組の間で
+    例の path が重なってもよい。``--project-root`` は 1 つしか渡せないので渡さない。外の git の repo の中に木を
+    置いても、commit の hook が GIT_DIR を渡していても root がそちらへ落ちないよう、git の環境変数を外して回す
+    (落ちると root に固定した include が黙って死ぬ — 実測 2026-10-03: 外の repo の中で 7 規則の当たる例が全部外れた)。
+    """
+    cases = {f"case-{index}": key for index, key in enumerate(fixture_sets)}
+    with tempfile.TemporaryDirectory(prefix="doeff-adr-installed-semgrep-") as tmp:
         root = Path(tmp)
-        targets = _write_semgrep_structured_fixtures(root, fixtures)
-        return _run_semgrep(semgrep, config_path, targets, cwd=root, project_root=root)
+        for case, key in cases.items():
+            _write_semgrep_structured_fixtures(root / case, fixture_sets[key])
+            # GIT_DIR が残ると git init は組の dir ではなく GIT_DIR の repo を初期化し直す。
+            subprocess.run(
+                [*_WITHOUT_GIT_ENV, "git", "init", "-q", str(root / case)],
+                check=True,
+                capture_output=True,
+            )
+        results = _run_semgrep(
+            semgrep,
+            config_path,
+            [Path(case) for case in cases],
+            cwd=root,
+            project_root=None,
+            launcher=_WITHOUT_GIT_ENV,
+        )
+    return {
+        key: frozenset(result.check_id for result in results if Path(result.path).parts[0] == case)
+        for case, key in cases.items()
+    }
 
 
 def _semgrep_config(spec: SemgrepSpec) -> dict[str, Any]:
@@ -493,10 +591,12 @@ def _run_semgrep(
     paths: list[Path],
     *,
     cwd: Path | None = None,
-    project_root: Path,
-) -> list[dict[str, Any]]:
+    project_root: Path | None,
+    launcher: tuple[str, ...] = (),
+) -> list[SemgrepResult]:
     proc = subprocess.run(
         [
+            *launcher,
             semgrep,
             # 検査の意味は tree だけで決まる — scanner に network(metrics 送信・
             # 新版照会)を許すと、到達性や応答時間という機体の事情が検査の実行に
@@ -507,8 +607,9 @@ def _run_semgrep(
             # .git の無い検査 tree で root が走査対象 dir 自身に落ち、対象より
             # 上のセグメントを参照する paths.include だけが無音で死ぬ(zeus 実測
             # 2026-08-17: 発火する rule としない rule が include の形で割れた)。
-            "--project-root",
-            str(project_root),
+            # None は「対象の dir ごとに git の repo を作って root を固めた」呼び手
+            # (_run_installed_semgrep_batch)だけが渡す — root を 1 つに決められないため。
+            *(() if project_root is None else ("--project-root", str(project_root))),
             "--quiet",
             "--json",
             "--config",
@@ -546,7 +647,15 @@ def _run_semgrep(
             f"semgrep JSON output has no results field (exit {proc.returncode}) — "
             f"stdout:\n{proc.stdout[:2000]}\nstderr:\n{proc.stderr}"
         )
-    return list(payload["results"])
+    return [
+        SemgrepResult(
+            check_id=str(result["check_id"]),
+            path=str(result["path"]),
+            line=int(result["start"]["line"]),
+            message=str(result["extra"]["message"]),
+        )
+        for result in payload["results"]
+    ]
 
 
 def resolved_config_path(spec: SemgrepSpec) -> Path:
@@ -594,10 +703,6 @@ def _ensure_installed_rule_exists(config_path: Path, rule_id: str) -> None:
     rules = payload.get("rules") or []
     if not any(rule.get("id") == rule_id for rule in rules):
         raise AssertionError(f"semgrep rule not found in {config_path}: {rule_id}")
-
-
-def _result_rule_ids(results: list[dict[str, Any]]) -> set[str]:
-    return {str(result["check_id"]) for result in results}
 
 
 def _has_rule(rule_ids: set[str], expected_rule_id: str) -> bool:
