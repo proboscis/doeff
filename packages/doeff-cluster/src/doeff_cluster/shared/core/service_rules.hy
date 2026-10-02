@@ -88,17 +88,19 @@
 
 
 (defk foundation-needs-refusal [system foundation]
-  {:pre [(: system System) (: foundation Callable)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: system System) (: foundation (| Callable RecordArgument))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "土台の関数の頭の :needs(__doeff_needs__)が系の各 job の :needs の一部かを検め、外れた job と足りない能力を並べた理由の文を
-   返すため(外れが無ければ None)— declare が宣言の前に断る(計画 9 節の P・ADR-DOE-CLUSTER-001 R4b。doeff-linter の照合が来るまでは
+   返すため(外れが無ければ None)。foundation = 系に渡した土台 — 土台の関数か、土台の関数を欄に持つ record(系の引数の型の値 — 型から
+   本番の土台を引く宣言の道具が渡す・#3030。record は欄の中の関数を全部見る)。declare が宣言の前に断る(計画 9 節の P・ADR-DOE-CLUSTER-001 R4b。doeff-linter の照合が来るまでは
    宣言の時点で)。土台が :needs を名乗らなければ検めない。土台が中に並べる handler の :needs は集めない(集めるには handler を作る =
    実行が要る)— 土台の頭に手で書く決まりで、頭が中の handler の :needs を漏らしていても linter の照合までは見つからない。"
   ;; 見るのは foundation と、各 job の呼び出しの形(CallShape)の引数に在る関数の全部 — 系が土台を 2 つ以上受ける時(家族ごとの口の
   ;; 違う土台)も、宣言の道具が土台ごとに検めを手で写さずに済む(構成のレビュー 2026-09-28 の D)。
   (var short [])
+  (<- own list (callables-in [foundation]))
   (for [j system.jobs]
     (<- found list (callables-in [#* j.call.args #* (.values j.call.kwargs)]))
-    (val carried (lfor f (+ [foundation] found) :if (is-not (getattr f "__doeff_needs__" None) None) f))
+    (val carried (lfor f (+ own found) :if (is-not (getattr f "__doeff_needs__" None) None) f))
     (for [f carried]
       ;; 欄は宣言の道具が関数に付ける印なので getattr で読む(関数の型は欄を持たない — #1690)
       (val missing (- (frozenset (getattr f "__doeff_needs__")) j.needs))
