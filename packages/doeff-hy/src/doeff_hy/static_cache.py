@@ -10,7 +10,11 @@
 - source が `require` する根の下の macro の module の中身(推移的に)。名は Hy の compiler が require に渡すのと同じ
   名で拾う — 点つきの `a.b.c`(reader は `(. a b c)` の式に読む)・1 つの require に並べた 2 つ目からの module・
   相対の `.x`(source の package から解く)も。点つきの名を拾わず、macro を変えても古い展開が当たっていた
-  (agora-redesign #2696)。
+  (agora-redesign #2696)。根の下で当たらない名は、根の外の最上位の package の置き場(find_spec — import はしない)で
+  file に解いて中身を入れる(別の package の macro — 例 doeff-adr.macros。以前は黙って捨て、macro を変えても古い展開が
+  当たっていた — agora-redesign #2774)。doeff_hy 自身は上の指紋が持つので二重に入れない。解けない名は Hy の require も
+  失敗するので鍵に入れない。
+- Hy の版(Hy を上げると展開が変わりうる — agora-redesign #2774)。
 - この file の版(CACHE_VERSION — 保存の形を変えたら上げる)。
 
 鍵を作るには source が `require` する module の名が要り、それを知るには source を Hy の reader で読む。読みは展開の
@@ -41,6 +45,8 @@ CACHE_VERSION = 1
 # require の読みの保存の版(上の docstring)。1 = 一番外の require の 1 つ目の点なしの名だけ。
 # 2 = Hy の compiler が require に渡す名を全部(点つき・2 つ目からの module・相対)— agora-redesign #2696。
 REQUIRES_VERSION = 2
+# macro と展開の source を _doeff_hy_digest が丸ごと鍵に入れる package(根の外の macro の解決では二重に読まない)。
+DIGESTED_PACKAGE = "doeff_hy"
 
 
 @dataclass(frozen=True)
@@ -212,6 +218,34 @@ def _module_files(roots: tuple[Path, ...], module: str) -> tuple[Path, ...]:
     )
 
 
+@cache
+def _outside_roots(top: str) -> tuple[Path, ...]:
+    """根の外の最上位の package(か module)を置いた dir — `_module_files` に根として渡す形(agora-redesign #2774)。
+    find_spec は最上位の名で引くので親を import せず、module 自体も import しない。1 回の実行の間は変わらないので名ごとに覚える。"""
+    try:
+        spec = importlib.util.find_spec(top)
+    except (ImportError, ValueError):
+        return ()
+    if spec is None:
+        return ()
+    if spec.submodule_search_locations:
+        return tuple(Path(location).parent for location in spec.submodule_search_locations)
+    if spec.origin is not None and spec.origin.endswith(".hy"):
+        return (Path(spec.origin).parent,)
+    return ()
+
+
+def _macro_files(roots: tuple[Path, ...], module: str) -> tuple[Path, ...]:
+    """require した module の名を、在る .hy の file に解く — 根の下で当たればそれ、当たらなければ根の外の package の置き場で
+    (別の package の macro — 例 doeff-adr.macros。以前は黙って捨て、macro を変えても古い展開が当たった — agora-redesign #2774)。
+    doeff_hy 自身は _doeff_hy_digest が持つので、根の外では引かない(二重に入れない)。"""
+    inside = tuple(candidate for candidate in _module_files(roots, module) if candidate.is_file())
+    top = module.split(".")[0]
+    if inside or top == DIGESTED_PACKAGE:
+        return inside
+    return tuple(candidate for candidate in _module_files(_outside_roots(top), module) if candidate.is_file())
+
+
 def _macro_sources(
     roots: tuple[Path, ...],
     text: str,
@@ -219,8 +253,8 @@ def _macro_sources(
     seen: frozenset[Path] = frozenset(),
     cache_dir: Path | None = None,
 ) -> tuple[Path, ...]:
-    """source が require する根の下の .hy を推移的に集める(根の外 = doeff-hy などは _doeff_hy_digest が持つ)。
-    package = source の相対の require を解く package。"""
+    """source が require する macro の .hy を推移的に集める(根の下と、根の外の別の package — doeff_hy 自身は _doeff_hy_digest が
+    持つ)。package = source の相対の require を解く package。"""
     modules = tuple(
         absolute
         for name in _required_modules(text, cache_dir)
@@ -229,8 +263,8 @@ def _macro_sources(
     found = tuple(
         _MacroSource(candidate, _package_of(module, candidate))
         for module in modules
-        for candidate in _module_files(roots, module)
-        if candidate.is_file() and candidate not in seen
+        for candidate in _macro_files(roots, module)
+        if candidate not in seen
     )
     known = seen | frozenset(macro.path for macro in found)
     return tuple(macro.path for macro in found) + tuple(
@@ -248,7 +282,7 @@ def cache_key(
     """展開を引く鍵(上の docstring の 4 つが同じなら同じ展開になる)。cache_dir があれば require の読みもそこで引く。"""
     text = source.read_text(encoding="utf-8")
     digest = hashlib.sha256()
-    for part in (str(CACHE_VERSION), _doeff_hy_digest(), module, relative, text):
+    for part in (str(CACHE_VERSION), hy.__version__, _doeff_hy_digest(), module, relative, text):
         digest.update(part.encode())
         digest.update(b"\0")
     package = _package_of(module, source)

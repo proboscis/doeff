@@ -318,3 +318,66 @@ def test_a_require_scan_kept_by_the_older_version_is_not_read(
     monkeypatch.undo()
     assert static_cache._requires_entry(cache, text) != stale
     assert static_cache._required_modules(text, cache) == ("a.b",)
+
+
+OUTSIDE_PACKAGE = "probe_outside_macros"
+
+
+@pytest.fixture
+def outside_macros(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """根(proj)の外に置いた別の package の macro の module(outside/probe_outside_macros/macros.hy — sys.path から引ける)と、
+    根の下でそれを require する proj/probe.hy。検の後で、この検が import した module を sys.modules から外す。"""
+    import sys
+
+    outside = tmp_path / "outside"
+    monkeypatch.syspath_prepend(str(outside))
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    package = outside / OUTSIDE_PACKAGE
+    package.mkdir(parents=True)
+    (package / "__init__.hy").write_text("", encoding="utf-8")
+    macros = package / "macros.hy"
+    macros.write_text('(defmacro said [] "old")\n', encoding="utf-8")
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "probe.hy").write_text(f"(require {OUTSIDE_PACKAGE}.macros [said])\n(setv word (said))\n", encoding="utf-8")
+    yield macros
+    for name in [n for n in sys.modules if n == OUTSIDE_PACKAGE or n.startswith(f"{OUTSIDE_PACKAGE}.")]:
+        del sys.modules[name]
+
+
+def test_a_macro_of_another_package_outside_the_roots_is_in_the_key(tmp_path: Path, outside_macros: Path) -> None:
+    # 失敗ケース(agora-redesign #2774): 根の外の別の package の macro(例 doeff-adr.macros)は、require の名を根の下の file に
+    # 解けず黙って捨てられ、鍵に入らなかった。macro を変えても古い展開が当たった(型検査が古い展開を測る)。根の外の package の
+    # 置き場から file を解いて中身を鍵に入れ、変えれば展開し直して新しい macro の答えが出る。
+    import sys
+
+    from doeff_hy import static_cache
+    from doeff_hy.static_check import Projection, project_cached
+
+    project = tmp_path / "proj"
+    cache = tmp_path / ".cache"
+    roots = [project]
+    source = project / "probe.hy"
+    first = project_cached(project, roots, source, cache)
+    assert isinstance(first, Projection) and "'old'" in first.text, first
+    warm = static_cache.cache_key(tuple(roots), source, "probe", "probe.hy", cache)
+    outside_macros.write_text('(defmacro said [] "new")\n', encoding="utf-8")
+    for name in [n for n in sys.modules if n.startswith(f"{OUTSIDE_PACKAGE}.")]:
+        del sys.modules[name]  # 次の実行(別の process)と同じく、macro の module を読み直させる
+    assert static_cache.cache_key(tuple(roots), source, "probe", "probe.hy", cache) != warm, "根の外の macro を変えても鍵が同じ"
+    second = project_cached(project, roots, source, cache)
+    assert isinstance(second, Projection) and "'new'" in second.text, second
+
+
+def test_the_hy_version_is_in_the_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 失敗ケース(agora-redesign #2774): Hy の版が鍵に入らず、Hy を上げても古い展開が当たった。版の値が変われば鍵が変わる。
+    import hy
+
+    from doeff_hy import static_cache
+
+    source = tmp_path / "probe.hy"
+    source.write_text("(setv word 1)\n", encoding="utf-8")
+    roots = (tmp_path,)
+    warm = static_cache.cache_key(roots, source, "probe", "probe.hy")
+    monkeypatch.setattr(hy, "__version__", f"{hy.__version__}.probe")
+    assert static_cache.cache_key(roots, source, "probe", "probe.hy") != warm, "Hy の版を変えても鍵が同じ"
