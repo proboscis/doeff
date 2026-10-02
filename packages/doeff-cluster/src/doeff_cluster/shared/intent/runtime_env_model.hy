@@ -221,7 +221,7 @@
 ;;   repo-unreachable    clone / fetch の network の失敗(一時)
 ;;   commit-missing      fetch の後も commit が無い(送り手が push していない)
 ;;   lock-mismatch       展開した uv.lock の sha256 が宣言と違う
-;;   lock-stale          uv sync --locked が「lock が古い」で断る
+;;   lock-stale          uv sync が「lock が古い」で断る(worker の準備は --frozen なので今は出ない — #2730。翻訳の読み分けと共に残す)
 ;;   sync-failed         uv sync のその他の失敗(一時 / 恒久は uv の出力で分ける)
 ;;   env-incompatible    名前の影・子の約束の版の外
 (defenum EnvFailureKind

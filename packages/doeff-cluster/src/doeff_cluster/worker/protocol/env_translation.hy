@@ -518,7 +518,10 @@
 
   (SyncProject [project-dir python groups no-install]
     (<- env tuple (uv-environment state-dir))
-    (val args (+ #(uv "sync" "--locked" "--project" project-dir "--python" python "--no-default-groups")
+    ;; lock はそのまま使う(--frozen)。lock の中身は宣言の lock-sha256 で縛ってあり、確かめは宣言の側に在る。--locked は lock が
+    ;; pyproject と合うかを解き直すので、入れない組(dev など)の git の依存まで取りに行き、worker が読めない private の repo が
+    ;; 在ると準備が全部止まる(#2730 — 2026-10-02 の本番)。
+    (val args (+ #(uv "sync" "--frozen" "--project" project-dir "--python" python "--no-default-groups")
                  (tuple (gfor g groups a ["--group" g] a))
                  (tuple (gfor n no-install a ["--no-install-package" n] a))))
     (<- result CommandResult (uv-command args project-dir env))
