@@ -130,7 +130,7 @@
 
 
 (defn http-interpreter [handler-for backing close-store [answerers []]]
-  "HTTP の口を開き、法の書き手を client の handler(その書き手の token)で包む組。backing = 書き手の名 → 置き場の handler
+  "HTTP の口を開き、法の書き手を client の handler(その書き手の名を名乗る)で包む組。backing = 書き手の名 → 置き場の handler
    (検の口と手入れの effect に直に答える — client の外側に被せる)。client の要求は HttpRequest の effect なので、答え手
    await-handler と http-production-handler を組の最も外側に置く。"
   (setv clock (SimClock)
@@ -138,7 +138,7 @@
                                                           :request-handlers (sim-request-handlers clock answerers)))
         harness (LawHarness (fn [writer program]
                               (with_handlers [(backing writer)
-                                              (http-records-handler (RecordsEndpoint server.url (get LAW-TOKENS writer)
+                                              (http-records-handler (RecordsEndpoint server.url :writer writer
                                                                                      :poll-seconds HTTP-POLL-SECONDS))]
                                              program))))
   (defn close []
