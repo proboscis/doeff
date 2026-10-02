@@ -22,13 +22,8 @@
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
     "DOEFF004": {
-      "packages/doeff-agentic/src/doeff_agentic/event_log.py": 3,
-      "packages/doeff-agentic/src/doeff_agentic/state.py": 1,
       "packages/doeff-agents/src/doeff_agents/handlers/daemon.py": 1,
-      "packages/doeff-agents/src/doeff_agents/handlers/production.py": 1,
-      "packages/doeff-core-effects/doeff_core_effects/cache.py": 1,
-      "packages/doeff-core-effects/doeff_core_effects/handlers.py": 1,
-      "packages/doeff-core-effects/tests/test_disposable_postgres.py": 1
+      "packages/doeff-agents/src/doeff_agents/handlers/production.py": 1
     },
     "DOEFF006": {
       "packages/doeff-adr/src/doeff_adr/pytest_plugin.py": 1,
@@ -263,5 +258,5 @@
       "packages/doeff-time/src/doeff_time/handlers/__init__.py": 1
     }
   },
-  "version": "doeff-linter の組み立ての入力 7975d39aad8429118514ace8858e226a9c5a39f2"
+  "version": "doeff-linter の組み立ての入力 995fb854755e1b00846812b7670c07dcce50db9b"
 }
