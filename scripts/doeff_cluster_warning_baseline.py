@@ -96,9 +96,9 @@ def lowered(baseline: Counts, current: Counts) -> Counts:
     return {rule: per_file for rule, per_file in result.items() if per_file}
 
 
-def _run_linter(package_dir: Path, paths: list[str]) -> list[dict[str, object]]:
+def _run_linter(linter: str, package_dir: Path, paths: list[str]) -> list[dict[str, object]]:
     """package の dir で linter を 1 回走らせて JSON の報告を得るため(rc 0 / 1 以外は測れなかったとして止める)。"""
-    arguments: list[str] = ["doeff-linter", "--no-log", "--output-format", "json", *paths]
+    arguments: list[str] = [linter, "--no-log", "--output-format", "json", *paths]
     completed: subprocess.CompletedProcess[str] = subprocess.run(
         arguments, cwd=package_dir, capture_output=True, text=True, check=False,
     )
@@ -124,10 +124,16 @@ def _line(finding: Finding) -> str:
 
 def main(argv: list[str]) -> int:
     """check(commit の hook と make lint-doeff)と lower(直した便)の 2 つの入口。"""
-    # 置き場の根は呼び手(lint-doeff-cluster.sh)が --root で渡す。無ければこの script の在り処の 1 つ上。
+    # 置き場の根は呼び手(lint-doeff-cluster.sh)が --root で渡す。無ければこの script の在り処の 1 つ上。linter は commit の hook が
+    # --linter で HEAD の組み立ての入力の鍵の binary を渡す(#2906)。無ければ探し道の doeff-linter(make lint-doeff)。
     top: Path = Path(__file__).resolve().parents[1]
-    if argv[:1] == ["--root"] and len(argv) >= 2:
-        top, argv = Path(argv[1]), argv[2:]
+    linter: str = "doeff-linter"
+    while argv[:1] in (["--root"], ["--linter"]) and len(argv) >= 2:
+        if argv[0] == "--root":
+            top = Path(argv[1])
+        else:
+            linter = argv[1]
+        argv = argv[2:]
     package_dir: Path = top / PACKAGE
     # 基点の置き場を差し替えるのは make の入口の検だけ(偽の linter と空の基点で終了コードの伝わり方を試す)。
     baseline_file: Path = Path(os.environ.get(BASELINE_ENV) or package_dir / BASELINE_NAME)
@@ -139,13 +145,13 @@ def main(argv: list[str]) -> int:
         return 2
     baseline: Counts = json.loads(baseline_file.read_text(encoding="utf-8"))
     if argv[0] == "lower":
-        current: Counts = warning_counts(_run_linter(package_dir, []), package_dir)
+        current: Counts = warning_counts(_run_linter(linter, package_dir, []), package_dir)
         baseline_file.write_text(json.dumps(lowered(baseline, current), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                                  encoding="utf-8")
         print(f"基点を下げた: {baseline_file}")
         return 0
     paths: list[str] = _package_paths(argv[1:]) if len(argv) > 1 else []
-    current = warning_counts(_run_linter(package_dir, paths), package_dir)
+    current = warning_counts(_run_linter(linter, package_dir, paths), package_dir)
     measured: frozenset[str] | None = frozenset(paths) if paths else None
     grown, stale = compare(baseline, current, measured)
     if grown:
