@@ -31,7 +31,8 @@
                                                                  WorkerProbe alive-only-while-reachable
                                                                  PlacementSeen WorkerGone places-only-on-reachable
                                                                  ProcessSpan WorkerCapacity running-within-capacity
-                                                                 JobNeeds WorkerAbility placed-only-where-eligible])
+                                                                 JobNeeds WorkerAbility placed-only-where-eligible
+                                                                 JobProcess moves-to-a-live-worker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
 (import tests.env_fixtures [LOCK env-of])
@@ -710,6 +711,55 @@
                                                           :claims-provides (frozenset ["gpu" "cluster-net"])))))
   (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
   (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
+
+
+(val FAILOVER-SLACK-MS 20000)  ; 条 C8 の余裕: 移し替えの期限の後、新しい担い手で process が起きるまで(木の用意・検め・起動 + 拍)
+
+
+(defrecord KilledCarrier
+  "条 C8 の検の読み: beacon の process の区間の列(JobProcess)・担い手の死(WorkerGone — 死んだ process の終わりの刻)・死なせた worker の名。"
+  (#^ tuple processes)
+  (#^ tuple deaths)
+  (#^ str host))
+
+
+(defk carrier-killed-then-waited []
+  {:pre [] :post [(: % KilledCarrier)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C8 の記録を集めるため: 8 秒待って beacon の担い手を node ごと死なせ、移し替えの期限 + 余裕(80 秒)より後の 85 秒後に beacon の
+   process の区間を読む。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf "beacon"))
+  (val host (. (get before 0) worker))
+  (<- (KillWorker host))
+  (<- (Delay 85.0))
+  (<- after tuple (ProcessesOf "beacon"))
+  (val ended (next (gfor p after :if (= p.exit-code -9) p.ended-ms)))
+  (KilledCarrier :processes (tuple (gfor p after (JobProcess :job "beacon" :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms)))
+                 :deaths #((WorkerGone :worker host :since-ms ended))
+                 :host host))
+
+
+;; 条 C8 の期限は本番の移し替えの期限から作る(数を検に写さない)。
+(val FAILOVER-DEADLINE-MS (+ (. (ClusterTiming) reassign-after-ms) FAILOVER-SLACK-MS))
+
+
+(deftest test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time
+  ;; 条 C8(architecture.hy の :invariants): 2 台のうち担い手を死なせると、もう 1 台(本当に受けられる)へ期限のうちに移って動く。
+  (<- seen KilledCarrier (sim-cluster (beacons sim-foundation) (carrier-killed-then-waited) :workers TWO-WORKERS))
+  (val takers (frozenset (gfor w TWO-WORKERS :if (!= w.name seen.host) w.name)))
+  (<- stranded tuple (moves-to-a-live-worker seen.processes seen.deaths takers FAILOVER-DEADLINE-MS))
+  (assert (= stranded #()) #(stranded seen)))
+
+
+(deftest test-a-counterexample-worker-that-hides-its-abilities-breaks-c8
+  ;; 条 C8 の失敗ケース: もう 1 台が heartbeat で能力を名乗らない壊れた worker(SimWorker の claims-provides = 空)だと、coordinator は
+  ;; 移せる先が無いと読んで job を担い手から動かさず、本当は受けられる w2 が生きているのに期限を過ぎ、条 C8 の判断がその job を名指す。
+  (<- seen KilledCarrier (sim-cluster (beacons sim-foundation) (carrier-killed-then-waited)
+                                      :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
+                                                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :claims-provides (frozenset)))))
+  (assert (= seen.host "w1") seen)
+  (<- stranded tuple (moves-to-a-live-worker seen.processes seen.deaths (frozenset ["w2"]) FAILOVER-DEADLINE-MS))
+  (assert (= (lfor s stranded s.job) ["beacon"]) #(stranded seen)))
 
 
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
