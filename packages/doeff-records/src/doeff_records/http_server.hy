@@ -77,7 +77,6 @@
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
-(val AUTH-HEADER "Authorization")
 (val JSON-CONTENT-TYPE "application/json; charset=utf-8")
 ;; 要求の本文の上限(行の値の上限は表の宣言の size-budget が決める — これは口の読みの上限)。
 (val REQUEST-MAX-BYTES (* 16 1024 1024))
@@ -117,7 +116,7 @@
 
 
 (defrecord RecordsServing
-  "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・roster = 身元の名簿・prepare = 表を用意して
+  "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・roster = 使わない欄(次の変更で消す)・prepare = 表を用意して
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
    検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
    drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
@@ -127,7 +126,7 @@
    served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
-  (#^ Roster roster)
+  (setv #^ Roster roster (Roster))
   (#^ (| Program EffectBase) prepare)
   (#^ tuple request-handlers)
   (#^ int max-bytes)
@@ -376,7 +375,7 @@
   "本文の読みの答えから要求の答えを決めるため: 入口が本文を断った答え(400)はそのまま、本文が読めれば answer-with で答える。"
   (match body
     (HttpAnswer) body
-    _ (! (answer-with serving (HttpRequest arrival.method path (! (header-value arrival.headers AUTH-HEADER)) body
+    _ (! (answer-with serving (HttpRequest arrival.method path body
                                            (! (header-value arrival.headers WRITER-HEADER)))))))
 
 
@@ -555,7 +554,7 @@
 ;; --- 検の殻 --------------------------------------------------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] RecordsServerConfig []
-  "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / roster = 身元の名簿 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
+  "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / roster = 使わない欄 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
    request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
    meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)/
    served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)。"

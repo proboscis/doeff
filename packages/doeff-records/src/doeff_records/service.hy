@@ -2,7 +2,7 @@
 ;;;
 ;;; 判断は持たない: 綴りの読み書きは wire.hy、書き手の名は principals.hy、書きの許可・期待・保持は記録の handler(admission)。
 ;;; ここが持つのは順序だけ — 書き手の名 → 本文の読み → 宣言に在る表か → effect を撃つ → 答えを綴る。
-;;; 書き手の名は effect の引数にしない: 名簿で引いた名で handler を組み(handler-for)、その下で effect を撃つ。呼び手は断らない(#2988)。
+;;; 書き手の名は effect の引数にしない: 呼び手の名乗り(X-Records-Writer)の名で handler を組み(handler-for)、その下で effect を撃つ。呼び手は断らない(#2988)。
 ;;;
 ;;;   POST /v1/records/<操作>   200 = effect の答え(kind で判別)/ 400 malformed / 404 not-found(宣言に無い表・
 ;;;                             知らない route)/ 503 store-unavailable(置き場に届かない = Unreachable)/ 500 internal
@@ -25,11 +25,10 @@
 
 
 (defclass [(dataclass :frozen True)] HttpRequest []
-  "HTTP の口が受けた要求 1 つ: method・path(query を除く)・authorization = Authorization の見出し(無ければ None)・body = 本文の byte・
-   writer = 呼び手が名乗る書き手の名 X-Records-Writer の見出し(無ければ None — 在れば名簿より先に使う・#2988)。"
+  "HTTP の口が受けた要求 1 つ: method・path(query を除く)・body = 本文の byte・
+   writer = 呼び手が名乗る書き手の名 X-Records-Writer の見出し(無ければ None — 無ければ名無しの anonymous)。"
   (#^ str method)
   (#^ str path)
-  (#^ (| str None) authorization)
   (#^ bytes body)
   (setv #^ (| str None) writer None))
 
@@ -41,7 +40,7 @@
 
 
 (defclass [(dataclass :frozen True)] RecordsService []
-  "HTTP の口 1 つの組: schema = 置き場の宣言(宣言に無い表を 404 で断る)/ roster = 書き手の名を引く名簿(呼び手は断らない)/
+  "HTTP の口 1 つの組: schema = 置き場の宣言(宣言に無い表を 404 で断る)/ roster = 使わない欄(次の変更で消す)/
    handler-for = 書き手の名 → その書き手の記録の handler(composition root が置き場ごとに組む)。"
   (#^ RecordsSchema schema)
   (#^ Roster roster)
@@ -102,6 +101,6 @@
     (return (! (refusal-answer ERROR-NOT-FOUND (.format "知らない route: {} {}" request.method request.path)))))
   (when (!= request.method METHOD-POST)
     (return (! (refusal-answer ERROR-MALFORMED (.format "{} は POST だけ: {}" request.path request.method)))))
-  (<- caller Principal (writer-of service.roster request.authorization request.writer))
+  (<- caller Principal (writer-of request.writer))
   (<- reply (serve-operation service caller operation request.body))
   reply)

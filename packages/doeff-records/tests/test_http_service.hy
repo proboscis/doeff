@@ -17,7 +17,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig RunningServer start-records-server])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
-(import tests.interpreters [LAW-TOKENS law-roster sim-request-handlers])
+(import tests.interpreters [law-roster sim-request-handlers])
 
 
 (defn open-service [handler-for]
@@ -88,6 +88,22 @@
                     :body {"table" "parts" "key" ["p2"] "value" {"label" "b"} "expect" {"kind" "absent"}} :writer "maker"))
     (assert (= #((get named 0) (.get (get named 1) "kind")) #(200 "written")) (repr named))
     (assert (= (get (. (run-as server clock maker (ReadRow "parts" #("p2"))) value) "label") "b"))
+    (finally (.close server))))
+
+
+(deftest test-a-token-alone-names-no-writer
+  ;; Authorization の token だけを送った要求の書き手は anonymous(token を名簿で引かない — #3008): 口が handler を組む時に渡した書き手の名を
+  ;; 控え、token だけの要求は anonymous・名乗りが在ればその名と分かる。token から名を引く形に戻ると anonymous でなくなり赤。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val seen [])
+  (val opened (open-service (fn [writer] (.append seen writer) (memory-records-handler store writer))))
+  (val server (get opened 0))
+  (try
+    (val body {"table" "parts" "key" ["t1"] "value" {"label" "a"} "expect" {"kind" "any"}})
+    (assert (= (get (raw server "POST" "/v1/records/put-row" :body body :token "any-token") 0) 200))
+    (assert (= seen ["anonymous"]) seen)
+    (assert (= (get (raw server "POST" "/v1/records/put-row" :body body :token "any-token" :writer "maker") 0) 200))
+    (assert (= seen ["anonymous" "maker"]) seen)
     (finally (.close server))))
 
 
@@ -172,15 +188,15 @@
   (val opened (open-service (memory-lease store)))
   (val server (get opened 0))
   (val clock (get opened 1))
-  (val maker (get LAW-TOKENS "maker"))
+  (val maker "maker")
   (val one {"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "any"}})
   (try
-    (val twice (raw server "POST" "/v1/records/put-rows" :body {"writes" [one one]} :token maker))
+    (val twice (raw server "POST" "/v1/records/put-rows" :body {"writes" [one one]} :writer maker))
     (assert (= (! (status-and-error twice)) #(400 "malformed")) (repr twice))
-    (val empty (raw server "POST" "/v1/records/put-rows" :body {"writes" []} :token maker))
+    (val empty (raw server "POST" "/v1/records/put-rows" :body {"writes" []} :writer maker))
     (assert (= (! (status-and-error empty)) #(400 "malformed")) (repr empty))
     (val undeclared (raw server "POST" "/v1/records/put-rows"
-                         :body {"writes" [one {"table" "nothing" "key" ["x"] "value" {} "expect" {"kind" "any"}}]} :token maker))
+                         :body {"writes" [one {"table" "nothing" "key" ["x"] "value" {} "expect" {"kind" "any"}}]} :writer maker))
     (assert (= (! (status-and-error undeclared)) #(404 "not-found")) (repr undeclared))
     (try
       (run-as server clock "maker" (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAny))
@@ -195,7 +211,7 @@
 
 (deftest test-refusals-carry-the-contract-status-and-body
   (setv #(server clock) (open-service (memory-lease (MemoryStore LAW-SCHEMA)))
-        maker (get LAW-TOKENS "maker"))
+        maker "maker")
   (try
     (assert (= (raw server "GET" "/healthz") #(200 {"status" "ok"})))
     ;; 呼び手は断らない(#2988): token 無し・名簿に無い token の読みも 200 の答え。
@@ -203,20 +219,20 @@
     (assert (and (= status 200) (= (get body "kind") "missing")) (repr body))
     (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token "nope"))
     (assert (and (= status 200) (= (get body "kind") "missing")) (repr body))
-    (setv #(status body) (raw server "POST" "/v1/records/nothing" :body {} :token maker))
+    (setv #(status body) (raw server "POST" "/v1/records/nothing" :body {} :writer maker))
     (assert (and (= status 404) (= (get body "error") "not-found")) (repr body))
-    (setv #(status body) (raw server "GET" "/v1/records/read-row" :token maker))
+    (setv #(status body) (raw server "GET" "/v1/records/read-row" :writer maker))
     (assert (and (= status 400) (= (get body "error") "malformed")) (repr body))
-    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body b"{not json" :token maker))
+    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body b"{not json" :writer maker))
     (assert (and (= status 400) (= (get body "error") "malformed")) (repr body))
-    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"] "extra" 1} :token maker))
+    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"] "extra" 1} :writer maker))
     (assert (and (= status 400) (= (get body "error") "malformed")) (repr body))
     (setv #(status body) (raw server "POST" "/v1/records/put-row"
-                              :body {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "maybe"}} :token maker))
+                              :body {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "maybe"}} :writer maker))
     (assert (and (= status 400) (= (get body "error") "malformed")) (repr body))
-    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "nothing" "key" ["p1"]} :token maker))
+    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "nothing" "key" ["p1"]} :writer maker))
     (assert (and (= status 404) (= (get body "error") "not-found")) (repr body))
-    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token maker))
+    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :writer maker))
     (assert (= #(status body) #(200 {"kind" "missing"})) (repr body))
     (finally (.close server))))
 
@@ -240,9 +256,9 @@
 
 (deftest test-an-unreachable-store-answers-503-and-the-client-sees-unreachable
   (setv #(server clock) (open-service (fn [writer] (unreachable-store)))
-        maker (get LAW-TOKENS "maker"))
+        maker "maker")
   (try
-    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :token maker))
+    (setv #(status body) (raw server "POST" "/v1/records/read-row" :body {"table" "parts" "key" ["p1"]} :writer maker))
     (assert (and (= status 503) (= (get body "error") "store-unavailable")) (repr body))
     ;; 読みの 503 も今までどおり Unreachable の値(時間で晴れる届かなさ — 身元の断りとは別の答え)。
     (assert (= (run-as server clock "maker" (ReadRow "parts" #("p1"))) (Unreachable "置き場が落ちている(検の代役)")))

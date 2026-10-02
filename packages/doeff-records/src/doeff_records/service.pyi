@@ -42,7 +42,6 @@ PublicEffect: TypeAlias = (
 class HttpRequest:
     method: str
     path: str
-    authorization: str | None
     body: bytes
     writer: str | None = None
 

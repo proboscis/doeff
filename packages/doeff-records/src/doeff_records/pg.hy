@@ -519,7 +519,7 @@
 
 (defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host #^ float poll-seconds]
   ;; 引数に残す理由: store は用意し終えた置き場(prepare-records-store の答え — 表の用意を済ませた証)で、置き場ごとに違う。
-  ;; writer は身元の名簿で引いた書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名、
+  ;; writer は呼び手が名乗った書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名、
   ;; poll-seconds は WatchChanges / WatchEvents の読み直しの間隔で、どちらも組み立ての側の設定。
   "PostgreSQL の置き場の答え手(頭の註)。SqlQuery / SqlTransaction を外側の答え手へ出す。"
   {:tags {:context "records" :role "foundation"}}

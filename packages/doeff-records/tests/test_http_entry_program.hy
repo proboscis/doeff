@@ -35,7 +35,7 @@
 (import doeff_records.effects [ReadRow])
 (import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_records.main [records-process])
-(import tests.interpreters [LAW-TOKENS law-roster])
+(import tests.interpreters [law-roster])
 
 ;; 本文の上限(検のために小さく — 本番は http_server.hy の REQUEST-MAX-BYTES)。
 (val MAX-BYTES 4096)
@@ -82,8 +82,8 @@
 (defk arrival [ticket method target who length]
   {:pre [(: ticket str) (: method str) (: target str) (: who (| str None)) (: length (| int None))] :post [(: % HttpRequestArrived)]
    :tags {:context "records" :role "judgment"}}
-  "台本の要求 1 つ(who = 身元の名簿の書き手・length = 宣言する本文の長さ)を作るため。"
-  (val auth (if (is who None) #() #((HttpHeader :name "Authorization" :value (+ "Bearer " (get LAW-TOKENS who))))))
+  "台本の要求 1 つ(who = 名乗る書き手・length = 宣言する本文の長さ)を作るため。"
+  (val auth (if (is who None) #() #((HttpHeader :name "X-Records-Writer" :value who))))
   (val declared (if (is length None) #() #((HttpHeader :name "Content-Length" :value (str length)))))
   (HttpRequestArrived :ticket ticket :method method :path (get (.split target "?") 0) :target target :headers (+ auth declared) :upgrade False))
 
