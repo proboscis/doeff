@@ -6,8 +6,9 @@
 from itertools import accumulate
 
 import hy  # noqa: F401  # .hy の module の import hook
+import pytest
 
-from doeff_hy.table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, table_of
+from doeff_hy.table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, draft_of, table_of
 
 
 def _table(n: int) -> Table[int]:
@@ -81,6 +82,38 @@ def test_table_is_not_a_mapping() -> None:
 
     assert not isinstance(_table(1), Mapping)
     assert isinstance(_table(1), Table)
+
+
+def test_a_table_and_a_draft_refuse_truth_and_len_and_name_size() -> None:
+    """表と下書きを真偽・長さで読むと TypeError で断り、直し方の .size を名指す(agora-redesign #2755 = #2708 の I0b)。
+    数は size で読む(下書きの size は書きを当てた後の行の数)。"""
+    empty = table_of(())
+    full = _table(3)
+    for value in (empty, full, draft_of(empty), draft_of(full)):
+        with pytest.raises(TypeError, match=r"\.size"):
+            bool(value)
+        with pytest.raises(TypeError, match=r"\.size"):
+            len(value)
+        with pytest.raises(TypeError, match=r"\.size"):
+            _ = not value
+    assert (empty.size(), full.size(), draft_of(empty).size()) == (0, 3, 0)
+    draft = draft_of(full)
+    draft.remove("k0")
+    draft.put("x", 9)
+    draft.put("k1", 10)
+    assert draft.size() == 3 == len(draft.keys())
+
+
+def test_the_counterexample_a_table_without_bool_reads_true_when_empty() -> None:
+    """失敗ケース(I0b の前の形): __bool__ も __len__ も持たない class の値は、空でも真と読まれる — `(when (not table) …)` の
+    早い戻りが黙って効かない。Table はこれを断る(上の検)。"""
+
+    class _SilentTable:
+        def size(self) -> int:
+            return 0
+
+    silent = _SilentTable()
+    assert silent.size() == 0 and bool(silent)  # 空なのに真 — 見落としが例外にならない
 
 
 # ------------------------------------------------------------------ 下書き TableDraft(agora-redesign #2254)
