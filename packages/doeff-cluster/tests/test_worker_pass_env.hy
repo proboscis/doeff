@@ -13,7 +13,7 @@
   (<- passed dict (passed-environment "AGENT_HOME, AGENT_URL" environ))
   (assert (= passed {"AGENT_HOME" "/scratch/home" "AGENT_URL" "http://x:1"}) passed)
   ;; 子の環境: 許可表の物 + 渡した設定 + 宣言。名乗っていない変数(資格を含む)は継がない。
-  (val child (child-environment environ passed {"DECLARED" "1"} {"DOEFF_WORKER_NAME" "w"}))
+  (val child (! (child-environment environ passed {"DECLARED" "1"} {"DOEFF_WORKER_NAME" "w"})))
   (assert (= (get child "AGENT_HOME") "/scratch/home"))
   (assert (= (get child "AGENT_URL") "http://x:1"))
   (assert (not-in "SECRET_TOKEN" child) child)

@@ -110,10 +110,10 @@
   {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker の本物の判断で模擬の世界を 1 拍進め、状態を本物の綴り(status-rows-json)の heartbeat で送り、返事の job を宣言にするため。"
   (val world (sim.world))
-  (val actions (plan sim.now sim.desired world sim.records sim.policy))
+  (val actions (! (plan sim.now sim.desired world sim.records sim.policy)))
   (for [a actions] (sim.apply a))
-  (setv sim.records (records-after sim.now sim.records actions sim.policy))
-  (<- rows tuple (status-rows-json (tuple (statuses sim.now sim.desired (sim.world) sim.records sim.policy))))
+  (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
+  (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
   (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" (list rows)}
                        :actor None))
   (setv sim.desired (tuple (gfor j (get reply "jobs")

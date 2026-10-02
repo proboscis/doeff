@@ -25,9 +25,10 @@
   (<- now int (now-epoch-ms))
   (<- world WorldView (ObserveWorld))
   (setv warm (cond stopping #() (isinstance read DesiredJobs) read.warm True state.warm))
-  (setv actions (plan now desired world state.records policy :warm warm))
+  (<- actions tuple (plan now desired world state.records policy :warm warm))
   (for [action actions] (<- action))
-  (var records (records-after now state.records actions policy))
+  (<- counted dict (records-after now state.records actions policy))
+  (var records counted)
   ;; 状態の表示は action の後の観測から作る(起動・回収を 1 拍遅れで見せない)。
   (var after world)
   (when actions
@@ -36,11 +37,12 @@
     ;; この拍の準備で木が揃った job は、同じ拍のうちに起こす(最初の task が拍 1 つ待たない — #2719)。
     (<- followups tuple (ready-followups now desired world after records policy))
     (for [action followups] (<- action))
-    (:= records (records-after now records followups policy))
+    (<- followed dict (records-after now records followups policy))
+    (:= records followed)
     (when followups
       (<- settled WorldView (ObserveWorld))
       (:= after settled)))
-  (setv report (statuses now desired after records policy))
+  (<- report tuple (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
   #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
