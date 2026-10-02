@@ -17,8 +17,10 @@
 ;;; 旧い接頭辞(LEGACY-PLACEMENT)の鍵が残っているので、読みは両方を読み(同じ名なら新しい鍵が勝つ)、起動時に
 ;;; legacy-key-moves の 2 つの書きで新しい鍵へ移す — 新しい鍵を書き終えてから旧い鍵を消す。
 (require doeff-hy.macros [deff val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
-(import dataclasses [asdict replace])
+(import dataclasses [asdict dataclass replace])
+(import collections.abc [Callable])
 (import functools [partial])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
@@ -64,28 +66,77 @@
   value)
 
 
+;; 鍵の組(#2716): 状態の欄の組 → その欄だけから作る鍵。組ごとに鍵の接頭辞が重ならない(counter・service/・placement/・worker/・
+;; task/・meta/・rollout/・drain/・surge/・warm/・program/・handoff/・audit/)ので、組ごとに作った差分の和は、全部をまとめて作った差分と
+;; 同じ。durable-delta は、欄が前後で全部同じ object の組の鍵を作らずに飛ばす — 状態は replace で作り直す(欄の写像をその場で書き換え
+;; ない)ので、同じ object の欄から作る鍵は前後で同じ。並びは durable-sources の鍵の順。service/ は宣言の行の後に断った行(refused)を
+;; 書き、同じ名なら後が勝つ。
+;; 組の作り手の答え = 鍵 → #(元の値の tuple 直列化の関数)。
+(val Sources (get dict #(str (get tuple #((get tuple #(object ...)) (get Callable #([] object)))))))
+
+
+(defrecord SourceGroup
+  "鍵の組 1 つ(#2716): fields = 組の鍵を決める ClusterState の欄の Python の名(getattr で前後を比べる)・build = その欄だけから
+   組の鍵を作る(答えは Sources)。"
+  (#^ (get tuple #(str ...)) fields)
+  (#^ (get Callable #([ClusterState] Sources)) build))
+
+
+(val SOURCE-GROUPS
+  #((SourceGroup :fields #("next_task" "revision" "audit_seq" "alive_ms" "task_prefix")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          {"counter" #(#(state.next-task state.revision state.audit-seq state.alive-ms state.task-prefix)
+                                       (partial counter-json state))}))
+    (SourceGroup :fields #("jobs" "refused")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (setv #^ Sources declared (dfor j state.jobs (+ "service/" j.spec.name) #(#(j) (partial job-to-json j))))
+                          (setv #^ Sources refused
+                                (dfor r (.values state.refused) (+ "service/" r.name) #(#(r.row) (partial as-stored r.row))))
+                          (| declared refused)))
+    (SourceGroup :fields #("placements")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k a) (.items state.placements) (+ PLACEMENT k) #(#(a) (partial asdict a)))))
+    (SourceGroup :fields #("workers" "seen_marks")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor w (.values state.workers)
+                                :setv seen (.get state.seen-marks w.name)
+                                (+ "worker/" w.name) #(#(w seen) (partial worker-json w seen)))))
+    (SourceGroup :fields #("tasks")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor t (.values state.tasks) (+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
+    (SourceGroup :fields #("meta")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k m) (.items state.meta) (+ "meta/" k) #(#(m) (partial resource-meta-to-json m)))))
+    (SourceGroup :fields #("rollouts")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k r) (.items state.rollouts) (+ "rollout/" k) #(#(r) (partial rollout-row-to-json r)))))
+    (SourceGroup :fields #("drains")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k d) (.items state.drains) (+ DRAIN k) #(#(d) (partial asdict d)))))
+    (SourceGroup :fields #("surges")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k a) (.items state.surges) (+ SURGE k) #(#(a) (partial asdict a)))))
+    (SourceGroup :fields #("warms")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k w) (.items state.warms) (+ WARM k) #(#(w) (partial warm-entry-to-json w)))))
+    (SourceGroup :fields #("programs")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k p) (.items state.programs) (+ PROGRAM k) #(#(p) (partial program-row-to-json p)))))
+    (SourceGroup :fields #("handoffs")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k w) (.items state.handoffs) (+ HANDOFF k) #(#(w) w.to-json))))
+    (SourceGroup :fields #("audit")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor e state.audit (.format "audit/{:010d}" e.seq) #(#(e) (partial audit-event-to-json e)))))))
+
+
 (deff durable-sources [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を除いた耐久の状態の鍵 → #(元の値の tuple 直列化の関数)。鍵と値の形の定義はここ 1 か所(durable-kv も durable-delta もここから作る)。
   元の値 = 鍵の値を決める状態の部品(dataclass・dict・数)。状態は replace で作り直すので、前と後で同じ物の部品は変わっていない。
   同じ鍵を 2 度書く所(service/ — 宣言の行の後に断った行)は、後の書きが勝つ(以前の形と同じ順)。"
-  (setv out {"counter" #(#(state.next-task state.revision state.audit-seq state.alive-ms state.task-prefix) (partial counter-json state))})
-  (for [j state.jobs] (setv (get out (+ "service/" j.spec.name)) #(#(j) (partial job-to-json j))))
-  (for [r (.values state.refused)] (setv (get out (+ "service/" r.name)) #(#(r.row) (partial as-stored r.row))))
-  (for [#(k a) (.items state.placements)] (setv (get out (+ PLACEMENT k)) #(#(a) (partial asdict a))))
-  (for [w (.values state.workers)]
-    (setv seen (.get state.seen-marks w.name))
-    (setv (get out (+ "worker/" w.name)) #(#(w seen) (partial worker-json w seen))))
-  (for [t (.values state.tasks)] (setv (get out (+ "task/" t.id)) #(#(t) (partial task-record-to-json t))))
-  (for [#(k m) (.items state.meta)] (setv (get out (+ "meta/" k)) #(#(m) (partial resource-meta-to-json m))))
-  (for [#(k r) (.items state.rollouts)] (setv (get out (+ "rollout/" k)) #(#(r) (partial rollout-row-to-json r))))
-  (for [#(k d) (.items state.drains)] (setv (get out (+ DRAIN k)) #(#(d) (partial asdict d))))
-  (for [#(k a) (.items state.surges)] (setv (get out (+ SURGE k)) #(#(a) (partial asdict a))))
-  (for [#(k w) (.items state.warms)] (setv (get out (+ WARM k)) #(#(w) (partial warm-entry-to-json w))))
-  (for [#(k p) (.items state.programs)] (setv (get out (+ PROGRAM k)) #(#(p) (partial program-row-to-json p))))
-  (for [#(k w) (.items state.handoffs)] (setv (get out (+ HANDOFF k)) #(#(w) w.to-json)))
-  (for [e state.audit] (setv (get out (.format "audit/{:010d}" e.seq)) #(#(e) (partial audit-event-to-json e))))
-  out)
+  ;; 鍵の形の定義は上の SOURCE-GROUPS の組ごと(#2716)— ここはその和を組の順に並べるだけ(同じ鍵は後の組・後の行が勝つ)。
+  (dict (gfor g SOURCE-GROUPS #(k source) (.items (g.build state)) #(k source))))
 
 
 (deff durable-kv [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
@@ -105,23 +156,24 @@
   "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
   元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
   前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は同一性で比べる(cluster_policy.board-changes)。"
-  (setv old (durable-sources before))
-  (setv new (durable-sources after))
-  (setv delta {})
-  (for [#(k #(parts encode)) (.items new)]
-    (setv prior (.get old k))
-    (cond (is prior None) (setv (get delta k) (encode))
-          (same-parts (get prior 0) parts) None
-          True (do (setv value (encode))
-                   (when (!= ((get prior 1)) value) (setv (get delta k) value)))))
-  (for [k old]
-    (when (not-in k new) (setv (get delta k) None)))
-  (for [key (board-changes before after)]
-    (setv (get delta (+ BOARD key))
-          (if (in key after.board)
-              (board-entry after key)
-              None)))
-  delta)
+  ;; 欄が前後で全部同じ object の組(SOURCE-GROUPS)は、鍵の部品を作らずに飛ばす(#2716 — 1 拍で変わるのは一握りの欄なので、拍の費用が
+  ;; 変わらない欄の大きさに比例しない)。残りの組だけ前後の部品を作り、鍵ごとに以前と同じ比べ方をする。組ごとに鍵が重ならないので、
+  ;; 答えは全部の組を作った時と同じ。
+  (setv groups (tuple (gfor g SOURCE-GROUPS
+                            :if (not (all (gfor f g.fields (is (getattr before f) (getattr after f)))))
+                            #((g.build before) (g.build after)))))
+  (setv written (dfor #(old new) groups
+                      #(k #(parts encode)) (.items new)
+                      :setv prior (.get old k)
+                      :if (or (is prior None) (not (same-parts (get prior 0) parts)))
+                      :setv value (encode)
+                      :if (or (is prior None) (!= ((get prior 1)) value))
+                      k value))
+  (setv removed (dfor #(old new) groups k old :if (not-in k new) k None))
+  (setv #^ (get dict #(str (| (get dict #(str object)) None))) board
+        (dfor key (board-changes before after)
+              (+ BOARD key) (if (in key after.board) (board-entry after key) None)))
+  (| written removed board))
 
 
 (deff full-kv [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り

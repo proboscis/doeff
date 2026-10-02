@@ -415,7 +415,10 @@
 
 (defn #^ frozenset moved-names [#^ dict before #^ dict after]
   "2 つの写像で、値が同じ物(is)でない鍵 — 足した・消した・置き換えた鍵。状態は置き換えで進む(replace)ので、触らない値は同じ物のまま。"
-  (frozenset (gfor k (| (set before) (set after)) :if (is-not (.get before k) (.get after k)) k)))
+  ;; 写像そのものが同じ物なら、どの鍵も同じ物(写像をその場で書き換えない)— 鍵を並べずに空を返す(#2716)。
+  (if (is before after)
+      (frozenset)
+      (frozenset (gfor k (| (set before) (set after)) :if (is-not (.get before k) (.get after k)) k))))
 
 
 (defn #^ frozenset status-row-names [#^ ClusterState state #^ str worker]
