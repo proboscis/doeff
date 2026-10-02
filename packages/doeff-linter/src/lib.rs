@@ -30,7 +30,7 @@ pub mod utils;
 use models::{LintResult, RuleContext, Severity, Violation};
 use noqa::{offset_to_line, NoqaDirectives};
 use rayon::prelude::*;
-use rules::base::LintRule;
+use rules::base::{LintRule, RuleReach};
 use rustpython_ast::{Mod, Stmt};
 use rustpython_parser::{parse, Mode};
 use std::path::Path;
@@ -121,12 +121,48 @@ pub fn lint_source(
     }
 
     if let Mod::Module(module) = &ast {
+        // module 全体を見る規則は file に 1 度だけ(module の最初の文を stmt にして)— #2858。
+        if let Some(first) = module.body.first() {
+            let context = RuleContext {
+                stmt: first,
+                file_path,
+                source,
+                ast: &ast,
+            };
+            for rule in rules.iter().filter(|rule| rule.reach() == RuleReach::Module) {
+                apply_rule(rule.as_ref(), &context, &noqa, &mut result.violations);
+            }
+        }
         for stmt in &module.body {
-            check_stmt_recursive(stmt, file_path, source, &ast, rules, &noqa, &mut result.violations);
+            check_stmt_recursive(stmt, true, file_path, source, &ast, rules, &noqa, &mut result.violations);
         }
     }
 
     result
+}
+
+/// 本体の再帰がこの文を規則に渡すか — 規則が見る単位(RuleReach)に従う。自分で入れ子を歩く規則に入れ子の文を
+/// 渡すと、同じ当たりを入れ子の深さの分だけ数える(agora-redesign #2858)。
+fn passes_statement(reach: RuleReach, top_level: bool) -> bool {
+    match reach {
+        RuleReach::Statement => true,
+        RuleReach::Subtree => top_level,
+        RuleReach::Module => false,
+    }
+}
+
+/// 規則を 1 回当て、noqa で抑えた当たりを除いて積む。
+fn apply_rule(
+    rule: &dyn LintRule,
+    context: &RuleContext,
+    noqa: &NoqaDirectives,
+    violations: &mut Vec<Violation>,
+) {
+    violations.extend(
+        rule.check(context)
+            .into_iter()
+            .filter(|v| !noqa.is_suppressed(offset_to_line(context.source, v.offset), &v.rule_id)),
+    );
 }
 
 /// Convert line number (1-indexed) to byte offset
@@ -138,8 +174,11 @@ fn line_to_offset(source: &str, line: usize) -> usize {
         .sum()
 }
 
+/// 文 1 つを、その単位を受け持つ規則に当て、入れ子の文へ降りる。`top_level` = module の上の段の文。
+#[allow(clippy::too_many_arguments)]
 fn check_stmt_recursive(
     stmt: &Stmt,
+    top_level: bool,
     file_path: &str,
     source: &str,
     ast: &Mod,
@@ -154,72 +193,66 @@ fn check_stmt_recursive(
         ast,
     };
 
-    for rule in rules {
-        let rule_violations = rule.check(&context);
-        for v in rule_violations {
-            let line = offset_to_line(source, v.offset);
-            if !noqa.is_suppressed(line, &v.rule_id) {
-                violations.push(v);
-            }
-        }
+    for rule in rules.iter().filter(|rule| passes_statement(rule.reach(), top_level)) {
+        apply_rule(rule.as_ref(), &context, noqa, violations);
     }
 
     // Recursively check nested statements
     match stmt {
         Stmt::ClassDef(class_def) => {
             for s in &class_def.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::FunctionDef(func) => {
             for s in &func.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::AsyncFunctionDef(func) => {
             for s in &func.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::If(if_stmt) => {
             for s in &if_stmt.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
             for s in &if_stmt.orelse {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::While(while_stmt) => {
             for s in &while_stmt.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::For(for_stmt) => {
             for s in &for_stmt.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::With(with_stmt) => {
             for s in &with_stmt.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         Stmt::Try(try_stmt) => {
             for s in &try_stmt.body {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
             for handler in &try_stmt.handlers {
                 if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
                     for s in &h.body {
-                        check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                        check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
                     }
                 }
             }
             for s in &try_stmt.orelse {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
             for s in &try_stmt.finalbody {
-                check_stmt_recursive(s, file_path, source, ast, rules, noqa, violations);
+                check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
             }
         }
         _ => {}
@@ -770,6 +803,45 @@ p: Program = process()"#,
         }
 
         result.join("\n")
+    }
+
+    /// 本体の文ごとの再帰を通した、規則 1 つの当たりの数(agora-redesign #2858 — 規則が見る単位どおりに渡す)。
+    fn hits_of(rule: Box<dyn LintRule>, file_path: &str, code: &str) -> usize {
+        let rule_id = rule.rule_id().to_string();
+        let rules: Vec<Box<dyn LintRule>> = vec![rule];
+        lint_source(file_path, code, &rules)
+            .violations
+            .iter()
+            .filter(|violation| violation.rule_id == rule_id)
+            .count()
+    }
+
+    /// module 全体を見る規則(DOEFF008)の当たり 1 つは 1 件(直す前は本体が渡す文の数だけ数えていた)。
+    #[test]
+    fn a_module_rule_counts_one_finding_once() {
+        let code = "from dataclasses import dataclass\n\n@dataclass\nclass Person:\n    name: str\n\nperson = Person(\"Alice\")\nperson.name = \"Bob\"\nprint(person)\n";
+        let rule = Box::new(crate::rules::doeff008_no_dataclass_attribute_mutation::NoDataclassAttributeMutationRule::new());
+        assert_eq!(hits_of(rule, "test.py", code), 1);
+    }
+
+    /// 自分で入れ子を歩く規則(DOEFF014)の、関数の中の try 1 つは 1 件(直す前は関数の文と try の文の 2 度)・
+    /// class の method の中の try 1 つも 1 件(直す前は class・method・try の 3 度)。
+    #[test]
+    fn a_subtree_rule_counts_a_nested_finding_once() {
+        let in_function = "def f():\n    try:\n        g()\n    except ValueError:\n        pass\n";
+        let in_method = "class C:\n    def m(self):\n        try:\n            g()\n        except ValueError:\n            pass\n";
+        for code in [in_function, in_method] {
+            let rule = Box::new(crate::rules::doeff014_no_try_except::NoTryExceptRule::new());
+            assert_eq!(hits_of(rule, "test.py", code), 1, "{code}");
+        }
+    }
+
+    /// module の規則は、入れ子の文を持つ file でも 1 度だけ当たる(置き場を見る DOEFF010)。
+    #[test]
+    fn a_module_rule_runs_once_per_file() {
+        let code = "def test_a():\n    if True:\n        assert 1\n\ndef test_b():\n    assert 2\n";
+        let rule = Box::new(crate::rules::doeff010_test_file_placement::TestFilePlacementRule::new());
+        assert_eq!(hits_of(rule, "src/test_example.py", code), 1);
     }
 }
 

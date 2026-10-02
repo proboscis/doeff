@@ -34,7 +34,7 @@
 //! ```
 
 use crate::models::{RuleContext, Severity, Violation};
-use crate::rules::base::LintRule;
+use crate::rules::base::{LintRule, RuleReach};
 use rustpython_ast::{Expr, Mod, Stmt};
 use std::collections::HashSet;
 
@@ -684,17 +684,16 @@ impl LintRule for NoAppendLoopRule {
         "Prefer list comprehensions or named functions over append loops"
     }
 
+    /// 文の並び(module の本体)を見る規則なので、本体が file に 1 度だけ当てる(#2858 — 最初の文の絞りは本体の役目)。
+    fn reach(&self) -> RuleReach {
+        RuleReach::Module
+    }
+
     fn check(&self, context: &RuleContext) -> Vec<Violation> {
-        // Only run once per file (when we see the first statement)
         if let Mod::Module(module) = context.ast {
-            // Check if this is the first statement to avoid duplicate checks
-            if let Some(first_stmt) = module.body.first() {
-                if std::ptr::eq(context.stmt, first_stmt) {
-                    // Collect visualization library aliases from imports
-                    let viz_aliases = Self::collect_visualization_aliases(&module.body);
-                    return Self::check_statement_sequence(&module.body, context.file_path, &viz_aliases);
-                }
-            }
+            // Collect visualization library aliases from imports
+            let viz_aliases = Self::collect_visualization_aliases(&module.body);
+            return Self::check_statement_sequence(&module.body, context.file_path, &viz_aliases);
         }
         vec![]
     }

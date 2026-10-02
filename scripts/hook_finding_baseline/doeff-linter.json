@@ -143,8 +143,8 @@
       "publications/zenn-use-cases-v0/examples/scheduling.py": 1
     },
     "DOEFF008": {
-      "packages/doeff-core-effects/tests/postgres_support/disposable_postgres.py": 169,
-      "packages/doeff-vm/tests/test_handler_spec_shared_by_code.py": 210
+      "packages/doeff-core-effects/tests/postgres_support/disposable_postgres.py": 1,
+      "packages/doeff-vm/tests/test_handler_spec_shared_by_code.py": 2
     },
     "DOEFF010": {
       "docs/design/seat-home-common-instructions-AJ8C0B/model/test_chain.py": 1,
@@ -445,5 +445,5 @@
       "tests/cli_assets/__init__.py": 1
     }
   },
-  "version": "doeff-linter の source の木 34a6625dcc2b3a2c6b7cd93908269743cae7caff"
+  "version": "doeff-linter の source の木 0dcb793f3e3e15445ae81577399e9fed4f6a0ed9"
 }
