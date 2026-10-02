@@ -1,9 +1,11 @@
 ;; coordinator との HTTP: coordinator が接続を使い回させること・heartbeat の途絶の数えが宛先の切り替えをまたぐこと(2026-09-23 の newmac の件)。
 ;; 宛先の切り替えと読みの送り直しの性質は宛先の部品の検(test_coordinator_route — #2427 で httpx の client を持つ口を退役させた)。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [defk deftest <- val var])
 (import threading)
 (import httpx)
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox json-reply])
+(import doeff_cluster.shared.intent.protocol [NextRequests Reply RequestDoor])
+(import doeff_cluster.shared.protocol.inbox [http-requests])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
@@ -39,6 +41,51 @@
       (.set stop)
       (.shutdown server)))
   (assert (= (len opened) 1)))
+
+
+(defk answer-with-the-door [count]
+  {:pre [(: count int)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "program"}}
+  "受付の列から要求を count 件取り、届いた口の名を 203 で答えるため(coordinator の調停ループの代わり)。答え = path → RequestDoor。"
+  (var got [])
+  (while (> count (len got))
+    (<- batch list (NextRequests 5.0))
+    (:= got (+ got batch)))
+  (for [request got]
+    (<- (Reply request 203 {"door" (str request.door)})))
+  (dfor r got r.path r.door))
+
+
+(deftest test-the-read-port-queues-requests-marked-as-read-and-does-not-answer-probes
+  ;; 読みだけの口(#2742): 同じ列に並べ、受付の handler(http-requests)が Request の door を RequestDoor.READ にする。どの経路を許すかは
+  ;; 箱でなく coordinator の表が決めるので、箱は probe(/readyz)にも直に答えずに並べる。全部の経路の口の probe は今までどおり直に答える。
+  (val inbox (RequestInbox 0 :read-port 0))
+  (.start inbox)
+  (val main-port (get inbox.server.server-address 1))
+  (val read-port (get inbox.read-server.server-address 1))
+  (val answers {})
+  (defn #^ None ask [#^ str key #^ int port #^ str path]  ; thread の target(threading が呼ぶ callback)
+    (with [client (httpx.Client :base-url f"http://127.0.0.1:{port}" :timeout 5.0)]
+      (setv (get answers key) (.get client path))))
+  (assert (= (. (httpx.get f"http://127.0.0.1:{main-port}/livez" :timeout 5.0) status-code) 200) "全部の経路の口は probe に直に答える")
+  (val askers [(threading.Thread :target ask :args #("read-probe" read-port "/readyz") :daemon True)
+               (threading.Thread :target ask :args #("main" main-port "/resources/Service/a") :daemon True)])
+  (for [t askers] (.start t))
+  (<- doors dict ((http-requests inbox) (answer-with-the-door 2)))
+  (for [t askers] (.join t 5.0))
+  (.shutdown inbox.server)
+  (.shutdown inbox.read-server)
+  (assert (= doors {"/readyz" RequestDoor.READ "/resources/Service/a" RequestDoor.MAIN}) doors)
+  (assert (= (. (get answers "read-probe") status-code) 203) "読みの口の probe は列を通って coordinator の答えが返る")
+  (assert (= (.json (get answers "read-probe")) {"door" "read"}))
+  (assert (= (.json (get answers "main")) {"door" "main"})))
+
+
+(deftest test-the-inbox-opens-no-read-port-by-default
+  (val inbox (RequestInbox 0))
+  (.start inbox)
+  (try
+    (assert (is inbox.read-server None))
+    (finally (.shutdown inbox.server))))
 
 
 ;; --- 宛先の切り替えをまたぐ heartbeat(fake の transport = httpx.MockTransport で、LAN の宛先が届く / 届かないを作る) -------------

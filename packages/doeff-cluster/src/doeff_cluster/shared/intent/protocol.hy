@@ -1,7 +1,9 @@
 ;;; coordinator・worker・記録の置き場が取り交わす形 — 本文の版・拍の時間・HTTP の要求と返事の effect・送り手の誤り(cluster_model から移した・#2023)。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defenum])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
+(import enum [StrEnum])
 (import doeff [EffectBase])
 
 
@@ -28,11 +30,17 @@
 
 ;; --- HTTP の要求と返事 ----------------------------------------------------------
 
+;; 要求が届いた待ち受け(#2742)。MAIN = 全部の経路を受ける口(--port)・READ = 読みだけの口(coordinator の --read-port)。READ の
+;; 要求は、coordinator が許す経路の表(coordinator/core/read_door_policy.hy)に無ければ振り分けの前に断る。
+(defenum RequestDoor MAIN READ)
+
+
 (defclass [(dataclass :frozen True :eq False)] Request []
   "受けた HTTP 要求 1 件。slot は返事を待つ handler の側の物(判断は見ない)。
    actor = 送り手(header X-Actor)。無ければ None(資源の書きは断る・盤と task は送り元の番地で記録する)。
    path = 受けたままの path(log と返事の文に使う)・parts = path を / で割り、区切りごとに percent の符号を戻した物。
-   符号を戻すのは HTTP の境(coordinator_inbox.http-request)の仕事で、判断(api_policy.respond)は parts だけを読む(#1636)。"
+   符号を戻すのは HTTP の境(coordinator_inbox.http-request)の仕事で、判断(api_policy.respond)は parts だけを読む(#1636)。
+   door = 届いた待ち受け(RequestDoor — 読みだけの口か)。"
   (#^ str method)
   (#^ str path)
   (#^ dict query)
@@ -40,7 +48,8 @@
   (#^ tuple parts)
   (setv #^ object slot None)
   (setv #^ (| str None) actor None)
-  (setv #^ str peer ""))
+  (setv #^ str peer "")
+  (setv #^ RequestDoor door RequestDoor.MAIN))
 
 
 (defclass BodyInvalid [ValueError]
