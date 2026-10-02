@@ -19,6 +19,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import copy)
 (import dataclasses [dataclass])
+(import itertools [takewhile])
 (import json)
 (import os)
 (import sys)
@@ -113,6 +114,13 @@
   (#^ int count))
 
 
+(defrecord SinkBatch
+  "置き場への 1 回の送りに載せる、貯めた行の先頭の束: items = buffer の先頭の項(#(区切り 行の dict 行の JSON の文字列))・now-ms = 束を
+   取った時の壁時計(ms — OTLP の観測の時刻)。口の class は束を渡すだけで、送りの本文は sink-post が口の種類ごとに綴る(agora-redesign #2764)。"
+  (#^ tuple items)
+  (#^ int now-ms))
+
+
 (defclass RecordSink [Protocol]
   "記録の係(EffectLog)が置き場に求める口 — 行を書く・送る分を作る・送った結果を受ける・届かずに捨てた行の数。実体は MemorySink(検)と
    BufferedSink の族(HttpSink・OtlpSink)。EffectLog の欄 sink をこの型で宣言する(#1675 — 以前は object で
@@ -121,7 +129,7 @@
   ;; 本体は説明の文と値(Hy は最後の式を返すので、`...` や文だけだとその値を返し、返りの型と食い違う)。
   (defn #^ None write [self #^ int chunk #^ dict line] "行 line を区切り chunk に書く。" None)
   (defn #^ bool begin-send [self #^ bool force] "いま送るか(送るなら送りの最中の印を立てる)。force = 期限を待たずに送る。" False)
-  (defn #^ (| SinkPost None) next-post [self] "次の 1 回の送り(送る物が無ければ None)。" None)
+  (defn #^ (| SinkBatch None) next-batch [self] "次の 1 回の送りに載せる束(送る物が無ければ None)。" None)
   (defn #^ None delivered [self #^ SinkPost post] "post が届いた: その分を buffer から外す。" None)
   (defn #^ None undelivered [self #^ str reason] "送れなかった: 貯めたまま次を待つ(理由を出す)。" None)
   (defn #^ None end-send [self] "送りの最中の印を下ろす。" None)
@@ -135,7 +143,7 @@
     ;; JSON を通して持つ(本物の置き場と同じく、JSON にできない物が紛れたらここで落ちる)。chunk は行に添えて残す。
     (.append self.lines (| (json.loads (json.dumps line :ensure-ascii False)) {"_chunk" chunk})))
   (defn #^ bool begin-send [self #^ bool force] False)
-  (defn #^ (| SinkPost None) next-post [self] None)
+  (defn #^ (| SinkBatch None) next-batch [self] None)
   (defn #^ None delivered [self #^ SinkPost post] None)
   (defn #^ None undelivered [self #^ str reason] None)
   (defn #^ None end-send [self] None)
@@ -144,8 +152,9 @@
 
 (defclass BufferedSink []
   "行を貯めて flush-seconds か max-lines ごとに送る置き場の口の共通部分。届かない間は貯め続け(retry-seconds ごとに試す)、
-   max-buffer 行を超えたら捨てて lost を数える(記録は途切れる — 本番を止めない)。送りの中身(post-request)は子 class が決める。
-   buffer の 1 項 = #(区切り 行の dict 行の JSON の文字列)。送りそのものは send-records が HttpRequest で出す。"
+   max-buffer 行を超えたら捨てて lost を数える(記録は途切れる — 本番を止めない)。送りの本文は sink-post が口の種類(子 class)ごとに
+   綴る(#2764 — 以前は子 class の method post-request)。buffer の 1 項 = #(区切り 行の dict 行の JSON の文字列)。送りそのものは
+   send-records が HttpRequest で出す。"
   (defn #^ None __init__ [self #^ float [flush-seconds 2.0] #^ int [max-lines 500] #^ int [max-buffer 200000] #^ float [timeout 10.0]
                           #^ float [retry-seconds 10.0] #^ int [max-post-bytes 4000000]]
     (setv self.flush-seconds flush-seconds self.max-post-bytes max-post-bytes
@@ -155,10 +164,6 @@
   (defn #^ None write [self #^ int chunk #^ dict line]
     (.append self.buffer #(chunk line (json.dumps line :ensure-ascii False :separators #("," ":"))))
     None)
-
-  (defn #^ SinkPost post-request [self #^ list items]
-    "items(buffer の先頭の項)を置き場へ送る 1 回の送り。中身は子 class が決める(ここは宣言だけ)。"
-    (raise (NotImplementedError (.format "{} は post-request を定めていない" (. (type self) __name__)))))
 
   (defn #^ int batch-size [self]
     "次の 1 回の送りに載せる行の数(先頭から max-post-bytes まで・最低 1 行)。"
@@ -180,8 +185,11 @@
     (setv self.last-flush now self.sending True)
     True)
 
-  (defn #^ (| SinkPost None) next-post [self]
-    (if self.buffer (.post-request self (cut self.buffer 0 (.batch-size self))) None))
+  (defn #^ (| SinkBatch None) next-batch [self]
+    "次の 1 回の送りに載せる束(buffer の先頭から batch-size 行)と、束を取った時の壁時計。送る物が無ければ None。"
+    (if self.buffer
+        (SinkBatch :items (tuple (cut self.buffer 0 (.batch-size self))) :now-ms (int (* 1000 (time.time))))
+        None))
 
   (defn #^ None delivered [self #^ SinkPost post]
     ;; 送れた分だけ buffer から外す(途中で失敗したら残りだけを次に送る)。
@@ -213,54 +221,67 @@
    ⚠ 2026-09-25 から OtlpSink(OpenTelemetry → ClickHouse)へ移す途中。新しい経路が本番で動いたのを確かめたら退役する。"
   (defn #^ None __init__ [self #^ str url #^ str service #^ str run #^ float [flush-seconds 2.0] #^ int [max-buffer 200000]]
     (.__init__ (super) :flush-seconds flush-seconds :max-buffer max-buffer)
-    (setv self.url (.rstrip url "/") self.service service self.run run))
-
-  (defn #^ SinkPost post-request [self #^ list items]
-    (setv chunk (get (get items 0) 0) texts [])
-    (for [#(c _l text) items]
-      (when (!= c chunk) (break))
-      (.append texts text))
-    ;; 本文は JSON の境界の dict(HTTP の答え手が JSON に綴る)。
-    (SinkPost :request (HttpRequest "POST" (+ self.url "/append")
-                                    :headers {"Content-Type" "application/json" "X-Actor" (+ "recorder:" self.service)}
-                                    :body {"service" self.service "run" self.run "chunk" chunk "lines" texts}
-                                    :timeout-seconds self.timeout :max-retries 0 :failures-as-values True)
-              :count (len texts))))
-
-
-(deff otlp-log-record [#^ str run #^ int chunk #^ dict line #^ str text #^ int now-ms]  ; defk にできない: OTLP の置き場(OtlpSink の method — Program の外の I/O)が行ごとに呼ぶ純粋な綴り
-  {:pre [(: run str) (: chunk int) (: line dict) (: text str) (: now-ms int)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
-  "記録の 1 行 → OTLP の log record 1 件。body = 行の JSON・時刻 = 行の at(無ければ now)・属性 = 読む側が絞る鍵
-   (run・区切り・行の種類・出来事の番号・effect の型・内容の hash)。ClickHouse の表はこの属性を列に持つ(deploy/effect-telemetry)。"
-  (setv at (or (.get line "at") (.get line "startedMs") now-ms))
-  (setv attrs [["run" run] ["chunk" (str chunk)] ["k" (str (.get line "k"))]])
-  (when (in "e" line) (.append attrs ["e" (str (get line "e"))]))
-  (when (in "ty" line) (.append attrs ["ty" (get line "ty")]))
-  (when (in "h" line) (.append attrs ["h" (get line "h")]))
-  {"timeUnixNano" (str (* (int at) 1000000))
-   "observedTimeUnixNano" (str (* now-ms 1000000))
-   "body" {"stringValue" text}
-   "attributes" (lfor #(k v) attrs {"key" k "value" {"stringValue" v}})})
+    (setv self.url (.rstrip url "/") self.service service self.run run)))
 
 
 (defclass OtlpSink [BufferedSink]
   "OpenTelemetry の collector の OTLP/HTTP(JSON)の口 POST <url>/v1/logs。行 1 つ = log record 1 件・resource の service.name = service。
-   collector が ClickHouse(hot / warm / cold の 3 層・期限で移して最後に消す)へ入れる(deploy/effect-telemetry.yaml)。"
+   collector が ClickHouse(hot / warm / cold の 3 層・期限で移して最後に消す)へ入れる(deploy/effect-telemetry.yaml)。本文の綴りは
+   otlp-logs-post。"
   (defn #^ None __init__ [self #^ str url #^ str service #^ str run #^ float [flush-seconds 2.0] #^ int [max-buffer 200000]]
     (.__init__ (super) :flush-seconds flush-seconds :max-buffer max-buffer)
-    (setv self.url (.rstrip url "/") self.service service self.run run))
+    (setv self.url (.rstrip url "/") self.service service self.run run)))
 
-  (defn #^ SinkPost post-request [self #^ list items]
-    (setv now-ms (int (* 1000 (time.time))))
-    ;; 本文は JSON の境界の dict(HTTP の答え手が JSON に綴る)。
-    (SinkPost :request (HttpRequest "POST" (+ self.url "/v1/logs")
-                                    :headers {"Content-Type" "application/json"}
-                                    :body {"resourceLogs"
-                                           [{"resource" {"attributes" [{"key" "service.name" "value" {"stringValue" self.service}}]}
-                                             "scopeLogs" [{"scope" {"name" "doeff.effect-record" "version" (str FORMAT-VERSION)}
-                                                           "logRecords" (lfor #(c line text) items (otlp-log-record self.run c line text now-ms))}]}]}
-                                    :timeout-seconds self.timeout :max-retries 0 :failures-as-values True)
-              :count (len items))))
+
+(defk store-append-post [sink batch]
+  {:pre [(: sink HttpSink) (: batch SinkBatch)] :post [(: % SinkPost)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "貯めた行の束を、記録の置き場 effect-records の POST /append の 1 回の送りに綴るため(1 回の送りは束の先頭と同じ区切りの行だけ —
+   以前は HttpSink の method post-request・#2764)。"
+  (val chunk (get (get batch.items 0) 0))
+  (val texts (lfor #(_c _l text) (takewhile (fn [item] (= (get item 0) chunk)) batch.items) text))
+  ;; 本文は JSON の境界の dict(HTTP の答え手が JSON に綴る)。
+  (SinkPost :request (HttpRequest "POST" (+ sink.url "/append")
+                                  :headers {"Content-Type" "application/json" "X-Actor" (+ "recorder:" sink.service)}
+                                  :body {"service" sink.service "run" sink.run "chunk" chunk "lines" texts}
+                                  :timeout-seconds sink.timeout :max-retries 0 :failures-as-values True)
+            :count (len texts)))
+
+
+(defk otlp-logs-post [sink batch]
+  {:pre [(: sink OtlpSink) (: batch SinkBatch)] :post [(: % SinkPost)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "貯めた行の束を OTLP/HTTP(JSON)の 1 回の送りに綴るため。行 1 つ = log record 1 件: body = 行の JSON・時刻 = 行の at(無ければ束の
+   now)・属性 = 読む側が絞る鍵(run・区切り・行の種類・出来事の番号・effect の型・内容の hash — ClickHouse の表はこの属性を列に持つ・
+   deploy/effect-telemetry)。以前は OtlpSink の method が行ごとに素で呼ぶ deff otlp-log-record だった(#2764 — 行ごとの綴りは束の内包表記の
+   中の式にし、行ごとに Program を作らない)。"
+  (val records
+    (lfor #(chunk line text) batch.items
+          :setv at (or (.get line "at") (.get line "startedMs") batch.now-ms)
+          :setv attrs (+ #(#("run" sink.run) #("chunk" (str chunk)) #("k" (str (.get line "k"))))
+                         (if (in "e" line) #(#("e" (str (get line "e")))) #())
+                         (if (in "ty" line) #(#("ty" (get line "ty"))) #())
+                         (if (in "h" line) #(#("h" (get line "h"))) #()))
+          {"timeUnixNano" (str (* (int at) 1000000))
+           "observedTimeUnixNano" (str (* batch.now-ms 1000000))
+           "body" {"stringValue" text}
+           "attributes" (lfor #(k v) attrs {"key" k "value" {"stringValue" v}})}))
+  ;; 本文は JSON の境界の dict(HTTP の答え手が JSON に綴る)。
+  (SinkPost :request (HttpRequest "POST" (+ sink.url "/v1/logs")
+                                  :headers {"Content-Type" "application/json"}
+                                  :body {"resourceLogs"
+                                         [{"resource" {"attributes" [{"key" "service.name" "value" {"stringValue" sink.service}}]}
+                                           "scopeLogs" [{"scope" {"name" "doeff.effect-record" "version" (str FORMAT-VERSION)}
+                                                         "logRecords" records}]}]}
+                                  :timeout-seconds sink.timeout :max-retries 0 :failures-as-values True)
+            :count (len batch.items)))
+
+
+(defk sink-post [sink batch]
+  {:pre [(: sink BufferedSink) (: batch SinkBatch)] :post [(: % SinkPost)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "貯めた行の束を、置き場の口の種類ごとの送り 1 回に綴るため(綴りは口の class の外 — 口は束を渡し、送れた分を外すだけ・#2764)。"
+  (match sink
+    (OtlpSink) (! (otlp-logs-post sink batch))
+    (HttpSink) (! (store-append-post sink batch))
+    _ (raise (TypeError (.format "送りの綴りの無い置き場の口: {}" (. (type sink) __name__))))))
 
 
 (defk post-records [post]
@@ -283,14 +304,15 @@
    行を捨てる(max-buffer — 記録は途切れる)。"
   (when (.begin-send sink force)
     (try
-      (var post (.next-post sink))
-      (while (is-not post None)
+      (var batch (.next-batch sink))
+      (while (is-not batch None)
+        (<- post SinkPost (sink-post sink batch))
         (<- reason (| str None) (post-records post))
         (if (is reason None)
             (do (.delivered sink post)
-                (:= post (.next-post sink)))
+                (:= batch (.next-batch sink)))
             (do (.undelivered sink reason)
-                (:= post None))))
+                (:= batch None))))
       (finally
         (.end-send sink))))
   (.trim sink)

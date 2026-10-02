@@ -14,9 +14,26 @@
 (import doeff_cluster.coordinator.intent.kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 
 
+(defk deployment-view [body]
+  {:pre [(: body (get Mapping #(str object)))] :post [(: % (get dict #(str object)))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "k8s の Deployment の object(API の JSON の本文)から、Rollout が見る欄だけの観測の JSON を読むため(deployment-reading が型の値へ解く)。
+   KubeClient.read は本文を返すだけで、読みはこの 1 点(agora-redesign #2764 — 以前は foundation/kube_client の method が素で呼んだ)。"
+  (val spec (.get body "spec" {}))
+  (val status (.get body "status" {}))
+  (val meta (.get body "metadata" {}))
+  {"specReplicas" (.get spec "replicas" 1)
+   "replicas" (.get status "replicas" 0)
+   "readyReplicas" (.get status "readyReplicas" 0)
+   "availableReplicas" (.get status "availableReplicas" 0)
+   "updatedReplicas" (.get status "updatedReplicas" 0)
+   "generation" (.get meta "generation" 0)
+   "observedGeneration" (.get status "observedGeneration" 0)
+   "annotations" (or (.get meta "annotations") {})})
+
+
 (defk deployment-reading [view]
   {:pre [(: view (get Mapping #(str object)))] :post [(: % DeploymentReading)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
-  "k8s の Deployment の観測の JSON(foundation/kube_client の deployment-view の形)を ReadDeployment の答えの型へ解くため。形が違えば
+  "k8s の Deployment の観測の JSON(deployment-view の形)を ReadDeployment の答えの型へ解くため。形が違えば
    KubeUnavailable — Rollout はこの相手を Unknown と扱い、形の読めない答えで台数を変えない。"
   (<- parsed (parse DeploymentReading view))
   (match parsed
@@ -35,7 +52,7 @@
 (defclass KubeCalls [Protocol]
   "kube-api が呼ぶ k8s の client の形(foundation/kube_client の KubeClient がこの形を持つ)。届かない時は KubeUnavailable を投げる。"
   (defn #^ dict node-labels [self #^ str node] (raise NotImplementedError))
-  (defn #^ dict read [self #^ str namespace #^ str name] (raise NotImplementedError))
+  (defn #^ dict read [self #^ str namespace #^ str name] (raise NotImplementedError))  ; 答え = Deployment の object(API の JSON の本文のまま)
   (defn #^ int scale [self #^ str namespace #^ str name #^ int replicas #^ bool dry-run] (raise NotImplementedError))
   (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations] (raise NotImplementedError)))
 
@@ -46,7 +63,8 @@
     (<- labels (node-labels-table (.node-labels client node)))
     (resume labels))
   (ReadDeployment [namespace name]
-    (<- reading (deployment-reading (.read client namespace name)))
+    (<- view (deployment-view (.read client namespace name)))
+    (<- reading (deployment-reading view))
     (resume reading))
   (ScaleDeployment [namespace name replicas dry-run] (resume (.scale client namespace name replicas dry-run)))
   (AnnotateDeployment [namespace name annotations] (resume (.annotate client namespace name annotations))))

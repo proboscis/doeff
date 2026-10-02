@@ -1,9 +1,10 @@
-;;; k8s の Deployment の object → Rollout が見る観測の dict(kube_client.deployment-view)。
+;;; k8s の Deployment の object → Rollout が見る観測の JSON(coordinator/protocol/kube.hy の deployment-view — agora-redesign #2764 で
+;;; foundation/kube_client の method の素の呼びから、答え手 kube-api が通す defk へ上げた)。
 ;;; 4418414 で入れ子の読みを誤り、本番の Deployment を読むたびに coordinator が落ちた
 ;;; (AttributeError: 'list' object has no attribute 'get')— 本物の形の object で撃つ。
 ;;; pod template の container の image は読まない(読んでいたのは image の版を追う係だけで、2026-09-28 に消した)。
-(require doeff-hy.macros [deftest val])
-(import doeff_cluster.foundation.kube_client [deployment-view])
+(require doeff-hy.macros [deftest <- val])
+(import doeff_cluster.coordinator.protocol.kube [deployment-view])
 
 
 (val REAL-SHAPED
@@ -15,14 +16,14 @@
 
 
 (deftest test-reads-the-rollout-fields-from-a-real-shaped-deployment
-  (val view (deployment-view REAL-SHAPED))
+  (<- view (deployment-view REAL-SHAPED))
   (assert (= view {"specReplicas" 0 "replicas" 0 "readyReplicas" 0 "availableReplicas" 0 "updatedReplicas" 0
                    "generation" 7 "observedGeneration" 7 "annotations" {"a" "b"}})
           view))
 
 
 (deftest test-a-deployment-without-status-reads-as-zero-replicas
-  (val view (deployment-view {"spec" {"replicas" 1}}))
+  (<- view (deployment-view {"spec" {"replicas" 1}}))
   (assert (= (get view "specReplicas") 1) view)
   (assert (= (get view "readyReplicas") 0) view)
   (assert (= (get view "annotations") {}) view))
