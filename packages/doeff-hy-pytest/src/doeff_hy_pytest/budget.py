@@ -162,9 +162,7 @@ def read_work_source() -> WorkSource:
     """積み上げの数の口を session の始めに 1 回探す。compiled の module から直に引く(``doeff_vm/__init__.py`` へは足さない
     — 古い ``.so`` で import が AttributeError になり全部の使い手が落ちるため・同じ file の註)。"""
     try:
-        from importlib import import_module
-
-        ext = import_module("doeff_vm.doeff_vm")
+        import doeff_vm.doeff_vm as ext
     except ImportError as exc:
         return NoWorkReader(f"doeff_vm を import できない: {exc}")
     reader = getattr(ext, "vm_work_counts", None)
