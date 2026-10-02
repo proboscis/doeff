@@ -25,6 +25,7 @@ import functools
 import logging
 import os
 import sys
+import threading
 import time
 import warnings
 import weakref
@@ -593,13 +594,112 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
     return _WithHandlerRaw(core.prompt(), root_close_out(body_program))
 
 
-def _warn_abandoned_work(abandoned: list[str], parked: list[str]) -> None:
-    """The #501 close-out warning shared by both implementations."""
+#: Wall-clock bound on unwinding abandoned work at root return
+#: (agora-redesign #2684). A task whose cleanup does not finish by then is
+#: abandoned as before (#501) and still named by the warning — the run's
+#: answer is never held hostage by a cleanup that does not end.
+ROOT_CLOSE_OUT_GRACE_SECONDS = 5.0
+
+
+@do
+def _await_unwound(task_ids: list[int]):
+    """Wait for each cancelled task to finish unwinding (its finally blocks).
+
+    Runs as a daemon task so the close-out can race it against the grace
+    timer; the outcome of each task is not the root's answer, so every
+    exception it ends with is swallowed here.
+    """
+    for task_id in task_ids:
+        try:
+            yield Wait(Task(task_id))
+        except TaskCancelledError:
+            pass
+        except Exception as ending:
+            # Its cleanup raised: named, but not the run's answer.
+            warnings.warn(
+                f"task {task_id} ended its root close-out unwinding with "
+                f"{type(ending).__name__}: {ending}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    return None
+
+
+def _warn_close_out_failure(step: str, error: Exception) -> None:
+    """Name a failure of the root close-out itself without touching the answer."""
+    warnings.warn(
+        f"scheduler root close-out (#2684) could not {step}: "
+        f"{type(error).__name__}: {error}",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+@do
+def _unwind_abandoned(to_cancel: list[int], to_wait: list[int]):
+    """Deliver Cancel to work the root return would abandon, then wait (bounded).
+
+    Before #2684 the root return dropped live non-daemon tasks without
+    unwinding them, so a ``finally`` that returns a resource (a leased SQL
+    connection mid-transaction, a lock, a temporary file) never ran. Now each
+    task in ``to_cancel`` receives ``TaskCancelledError`` at its suspension
+    point exactly like an explicit ``Cancel``; an unstarted task ends without
+    running its body. ``to_wait`` adds tasks already unwinding from an earlier
+    Cancel. The root waits up to ``ROOT_CLOSE_OUT_GRACE_SECONDS``; whatever is
+    still live after that is abandoned and reported by the #501 warning as
+    before. A failure of the close-out itself (a raising ``on_cancel``
+    callback, a deadlock) is named by a warning and never replaces the run's
+    answer.
+    """
+    if not to_wait:
+        return None
+    for task_id in to_cancel:
+        try:
+            yield Cancel(Task(task_id))
+        except Exception as error:
+            _warn_close_out_failure(f"cancel task {task_id}", error)
+    try:
+        grace = yield CreateExternalPromise(
+            deadline=time.monotonic() + ROOT_CLOSE_OUT_GRACE_SECONDS
+        )
+        timer = threading.Timer(ROOT_CLOSE_OUT_GRACE_SECONDS, grace.complete, (None,))
+        timer.daemon = True
+        timer.start()
+        try:
+            drain = yield Spawn(_await_unwound(list(to_wait)), daemon=True)
+            yield Race(drain, grace.future)
+        finally:
+            timer.cancel()
+    except Exception as error:
+        _warn_close_out_failure("wait for the cancelled work to unwind", error)
+    return None
+
+
+def _warn_abandoned_work(
+    abandoned: list[str], parked: list[str], left_live: list[str] | None = None
+) -> None:
+    """The #501 close-out warning shared by both implementations.
+
+    ``left_live`` (#2684) names what was still live after the root close-out
+    cancelled the unawaited work and waited for it to unwind; ``None`` means
+    the implementation does not unwind (the work was dropped as found).
+    """
     if abandoned or parked:
+        match left_live:
+            case None:
+                unwound = ""
+            case []:
+                unwound = " — cancelled at root return and unwound (#2684)"
+            case _:
+                unwound = (
+                    " — cancelled at root return; still live after "
+                    f"{ROOT_CLOSE_OUT_GRACE_SECONDS}s of unwinding: "
+                    f"[{'; '.join(left_live)}] (#2684)"
+                )
         warnings.warn(
             "scheduler root body returned while abandoning in-flight "
             f"work (#501): ready entries [{'; '.join(abandoned)}]; "
-            f"parked waiters [{'; '.join(parked)}]. Spawned work that "
+            f"parked waiters [{'; '.join(parked)}]{unwound}. Spawned work that "
             "must finish has to be awaited (Wait/Gather) before the "
             "root body returns; intentional background work should be "
             "spawned with Spawn(..., daemon=True).",
@@ -1105,16 +1205,44 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     @do
     def root_close_out(prog):
-        """Report work the run abandons when the root body returns (#501).
+        """Unwind, then report, work the run abandons when the root body returns.
 
-        Diagnostic only: return value and cancellation semantics are
-        unchanged — the abandoned entries are still dropped, but loudly.
+        #2684: live non-daemon tasks are cancelled and their unwinding
+        (finally blocks) is awaited up to ROOT_CLOSE_OUT_GRACE_SECONDS, so a
+        resource returned in a finally is returned. #501: whatever is still
+        live afterwards is dropped, but loudly. The return value is unchanged.
         """
-        result = yield prog
+        try:
+            result = yield prog
+        except BaseException:
+            # The root body raised: the work it left behind still gets unwound
+            # (a leased connection must come back on the error path too), then
+            # the body's exception propagates unchanged.
+            yield close_out()
+            raise
+        yield close_out()
+        return result
+
+    @do
+    def close_out():
+        """Cancel and await (bounded) the unawaited work, then warn (#501/#2684)."""
         abandoned = abandoned_ready_summary()
         parked = live_parked_waiter_summary(include_daemons=False)
-        _warn_abandoned_work(abandoned, parked)
-        return result
+        live = [
+            tid
+            for tid, task in tasks.items()
+            if task["status"] in ("pending", "running", "cancelling") and not is_daemon(tid)
+        ]
+        yield _unwind_abandoned(
+            [tid for tid in live if tasks[tid]["status"] != "cancelling"],
+            live,
+        )
+        _warn_abandoned_work(
+            abandoned,
+            parked,
+            abandoned_ready_summary() + live_parked_waiter_summary(include_daemons=False),
+        )
+        return None
 
     def live_semaphore_waiters():
         """Return live semaphore waiters, pruning cancelled task continuations."""

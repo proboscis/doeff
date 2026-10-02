@@ -879,6 +879,64 @@
   (assert (= answer #(True 0)) answer))
 
 
+(defk abandon-mid-transaction []
+  {:pre [] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の途中の task を Cancel も Wait もせずに置いて、親の program を終えるため(run の終わりの後始末を撃つ — #2684)。"
+  (<- (SqlQuery DB "DROP TABLE IF EXISTS pooled_abandon" #()))
+  (<- (SqlQuery DB "CREATE TABLE pooled_abandon (id bigint)" #()))
+  (<- (Spawn (SqlTransaction :database DB :program (insert-into-abandon-then-sleep) :lock-key "pooled-abandon")))
+  (<- (pause 0.5))
+  "left")
+
+
+(defk insert-into-abandon-then-sleep []
+  {:pre [] :post [(: % None)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の中で 1 行入れてから長く眠るため(眠りの間に親の run が終わる)。"
+  (<- (SqlQuery DB "INSERT INTO pooled_abandon (id) VALUES (1)" #()))
+  (<- (SqlQuery DB "SELECT pg_sleep(1.5)" #()))
+  None)
+
+
+(defn abandoned-in-its-own-run [answerer-of]  ; defk にできない: 親の run を別の thread で走らせ切る検の入口(この検の run の中では親が終わらない)
+  "transaction の途中の task を残して終わる run を 1 つ走らせ切り、その後の接続の貸し出しを返すため。answerer-of = 接続の貸し出し → 答え手の組。"
+  (import warnings)
+  (import doeff [run with_handlers])
+  (import doeff_core_effects.scheduler [scheduled])
+  (setv connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (defn ask []  ; defk にできない: 別の thread で走らせ切る run の本体
+    (with [_ (warnings.catch-warnings)]
+      (warnings.simplefilter "ignore")
+      (run (scheduled (with_handlers (answerer-of connections) (abandon-mid-transaction))))))
+  (with [runner (ThreadPoolExecutor :max-workers 1)]
+    (setv answer (.result (.submit runner ask) :timeout 20)))
+  #(answer connections))
+
+
+(deftest test-postgres-returns-the-connection-of-a-transaction-the-run-left-behind
+  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  ;; 根(agora-redesign #1859 / #2684): run の親が終わる時に途中の transaction の task を捨てると、接続を返す finally が走らず、
+  ;; 接続は借りたまま・transaction の途中のまま残った(貸し出しの空き 0・許可の空き 0)。今は run の終わりに Cancel が届き、
+  ;; finally が rollback して接続を返す。
+  (import psycopg)
+  (val pool (ThreadPoolExecutor :max-workers 2))
+  (for [answerer-of [(fn [connections] [(state) (postgres-sql-handler connections)])
+                     (fn [connections] [(state) (pooled-postgres-sql-handler connections pool)])]]
+    (val outcome (abandoned-in-its-own-run answerer-of))
+    (val answer (get outcome 0))
+    (val connections (get outcome 1))
+    (try
+      (assert (= answer "left") answer)
+      (val idle (list (. (get connections.idle DB) queue)))
+      (assert (= (len idle) 1) f"接続が返っていない(貸し出しの空き {(len idle)})")
+      (assert (= (. (get idle 0) info transaction-status) psycopg.pq.TransactionStatus.IDLE))
+      (with [admin (psycopg.connect (or POSTGRES-DSN "") :autocommit True)]
+        (assert (= (get (.fetchone (.execute admin "SELECT count(*) FROM pooled_abandon")) 0) 0) "transaction の中で入れた行が残った"))
+      (finally (.close connections))))
+  (.shutdown pool))
+
+
 (defn answer-while-terminated [answerer-of]  ; defk にできない: 答え手を別の thread の run で回し、この thread から接続を切る検の入口
   "長い問い合わせの途中で管理者がその接続を切った(pg_terminate_backend — SQLSTATE 57P01)時の答えを読むため。
    answerer-of = 接続の貸し出し → 答え手の組(list)。"
