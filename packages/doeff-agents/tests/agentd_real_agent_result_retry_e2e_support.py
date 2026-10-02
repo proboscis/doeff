@@ -18,6 +18,11 @@ from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.claude_home import prepare_claude_home
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
 from doeff_agents.io_handlers import run_driver_io
+from runner_env import (
+    personal_claude_config_dir_setting,
+    real_claude_auth_email_setting,
+    real_claude_config_dir_setting,
+)
 from sessionhost_bin import resolve_sessionhost_bin
 from sessionhost_isolated_host import sessionhost_serve_argv
 
@@ -197,19 +202,15 @@ def _prepare_real_claude_home(work_dir: Path) -> Path:
 
 
 def _real_claude_config_dir() -> Path:
-    configured = os.environ.get("DOEFF_AGENTS_REAL_CLAUDE_CONFIG_DIR") or os.environ.get(
-        "DOEFF_AGENTS_PERSONAL_CLAUDE_CONFIG_DIR"
-    )
+    configured = real_claude_config_dir_setting() or personal_claude_config_dir_setting()
     if configured:
         return Path(configured).expanduser()
     return DEFAULT_REAL_CLAUDE_CONFIG_DIR.expanduser()
 
 
 def _real_claude_auth_email() -> str:
-    return os.environ.get(  # noqa: DOEFF004 - live e2e target is chosen by the runner's env (pre-existing)
-        "DOEFF_AGENTS_REAL_CLAUDE_AUTH_EMAIL",
-        DEFAULT_REAL_CLAUDE_AUTH_EMAIL,
-    )
+    email = real_claude_auth_email_setting()
+    return email if email is not None else DEFAULT_REAL_CLAUDE_AUTH_EMAIL
 
 
 def _assert_real_claude_auth(claude_json: Path, expected_email: str) -> None:

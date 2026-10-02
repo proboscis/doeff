@@ -92,11 +92,15 @@ def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None) -> int:
     assert uv is not None, "uv が PATH に無い — PyPI の Hy の使い捨ての環境を作れない"
     script = root / f"load_{guard}.py"
     script.write_text(_LOADER.format(root=str(root), guard=guard, guard_root=str(GUARD_ROOT)))
-    env = {key: value for key, value in os.environ.items() if key not in _ENV_NOT_PASSED}
-    env["DOEFF_HY_CODE_STORE"] = str(store if store is not None else root / "code-store")
+    # 子はこの process の環境を継ぐ — _ENV_NOT_PASSED の名だけ外し(`env -u`)、共有の code の置き場を足す。
+    unset = [flag for name in _ENV_NOT_PASSED for flag in ("-u", name)]
+    code_store = store if store is not None else root / "code-store"
     python = f"{sys.version_info.major}.{sys.version_info.minor}"
     completed = subprocess.run(
         [
+            "env",
+            *unset,
+            f"DOEFF_HY_CODE_STORE={code_store}",
             uv,
             "run",
             "--no-project",
@@ -110,7 +114,6 @@ def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None) -> int:
         ],
         capture_output=True,
         text=True,
-        env=env,
         cwd=root,
         timeout=300,
         check=False,

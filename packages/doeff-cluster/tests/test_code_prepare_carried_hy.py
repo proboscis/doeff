@@ -12,7 +12,6 @@ checkout の中の package の .pyc を書かない。道具は .pyc を自分�
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,11 +44,21 @@ def _write_package(root: Path, add: int) -> None:
 
 
 def _child(command: list[str], tree: Path, store: Path) -> str:
-    env = {key: value for key, value in os.environ.items() if key != "PYTHONPYCACHEPREFIX"}
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["DOEFF_HY_CODE_STORE"] = str(store)
+    # 子はこの process の環境を継ぐ — PYTHONPYCACHEPREFIX だけ外し(`env -u`)、2 つの名を足す。
     completed = subprocess.run(
-        command, capture_output=True, text=True, env=env, cwd=tree, timeout=180, check=False
+        [
+            "env",
+            "-u",
+            "PYTHONPYCACHEPREFIX",
+            "PYTHONDONTWRITEBYTECODE=1",
+            f"DOEFF_HY_CODE_STORE={store}",
+            *command,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tree,
+        timeout=180,
+        check=False,
     )
     assert completed.returncode == 0, completed.stderr
     return completed.stdout

@@ -296,3 +296,61 @@ fn business_code_in_the_environment_module_is_red() {
         );
     }
 }
+
+/// 名指しの module が `__init__.py` の無い dir に在る package(module の名 = file の名・agora-redesign #2861)— doeff の repo の宣言を
+/// そのまま一時の repo に置いて確かめる。(宣言の path・宣言・名指しの module の path・同じ dir のほかの module の path)
+const BARE_MODULE_PACKAGES: [(&str, &str, &str, &str); 3] = [
+    (
+        "packages/doeff-agents/architecture.hy",
+        include_str!("../../doeff-agents/architecture.hy"),
+        "packages/doeff-agents/conformance/conformance_agent.py",
+        "packages/doeff-agents/conformance/harness.py",
+    ),
+    (
+        "packages/doeff-agents/architecture.hy",
+        include_str!("../../doeff-agents/architecture.hy"),
+        "packages/doeff-agents/tests/runner_env.py",
+        "packages/doeff-agents/tests/sessionhost_bin.py",
+    ),
+    (
+        "packages/doeff-openrouter/architecture.hy",
+        include_str!("../../doeff-openrouter/architecture.hy"),
+        "packages/doeff-openrouter/tests/local_dotenv.py",
+        "packages/doeff-openrouter/tests/conftest.py",
+    ),
+];
+
+/// 宣言・名指しの module(本文 `named`)・同じ dir のほかの module(環境を読む)を置いた一時の repo(`__init__.py` は置かない)。
+fn bare_module_package(declaration_path: &str, declaration: &str, named_path: &str, named: &str, sibling_path: &str) -> tempfile::TempDir {
+    repo(&[(declaration_path, declaration), (named_path, named), (sibling_path, ENV_READ)])
+}
+
+/// 名指しの module の環境の読みは DOEFF004 に当たらず、同じ dir のほかの module の読みは今までどおり当たる。
+#[test]
+fn only_the_named_bare_module_is_out_of_the_environment_rule() {
+    for (declaration_path, declaration, named_path, sibling_path) in BARE_MODULE_PACKAGES {
+        let dir = bare_module_package(declaration_path, declaration, named_path, ENV_READ, sibling_path);
+        assert_eq!(
+            hits(dir.path()),
+            vec![("DOEFF004".to_string(), sibling_path.to_string())],
+            "{}",
+            named_path
+        );
+    }
+}
+
+/// 名指しの module が業務の module(doeff)を import すると DOEFF032 に当たる(外した層に業務の code が入ったら赤)。
+#[test]
+fn business_code_in_a_named_bare_module_is_red() {
+    let named = format!("import doeff\n{}", ENV_READ);
+    for (declaration_path, declaration, named_path, sibling_path) in BARE_MODULE_PACKAGES {
+        let dir = bare_module_package(declaration_path, declaration, named_path, &named, sibling_path);
+        let found = hits(dir.path());
+        assert!(
+            found.contains(&("DOEFF032".to_string(), named_path.to_string())),
+            "{}: {:?}",
+            named_path,
+            found
+        );
+    }
+}

@@ -26,7 +26,6 @@ by the per-test timeout.
 from __future__ import annotations
 
 import ast
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -119,16 +118,22 @@ def _fresh_import(
         "assert 'hy' not in sys.modules, 'import doeff loaded hy; this probe needs a Hy-free start'\n"
         f"{statement}\n"
     )
-    env = {name: value for name, value in os.environ.items() if name != "PYTHONDONTWRITEBYTECODE"}
-    env["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
+    # The child inherits this process's environment except PYTHONDONTWRITEBYTECODE (`env -u`), with its own pycache prefix.
     try:
         return subprocess.run(
-            [sys.executable, "-c", probe],
+            [
+                "env",
+                "-u",
+                "PYTHONDONTWRITEBYTECODE",
+                f"PYTHONPYCACHEPREFIX={bytecode_dir}",
+                sys.executable,
+                "-c",
+                probe,
+            ],
             capture_output=True,
             text=True,
             timeout=deadline,
             check=False,
-            env=env,
         )
     except subprocess.TimeoutExpired:
         pytest.fail(f"{statement!r} did not finish within {deadline:.0f}s in a fresh interpreter")
