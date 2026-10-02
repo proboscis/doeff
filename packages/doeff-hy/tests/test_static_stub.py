@@ -126,6 +126,12 @@ def test_the_stub_starts_with_the_mark_and_has_no_bodies(tmp_path: Path) -> None
     assert not [line for line in lines if "_doeff_perform" in line or "yield" in line]
 
 
+def test_the_macro_helpers_the_expansion_imports_are_not_reexported(tmp_path: Path) -> None:
+    # defk の展開は doeff_hy.macros の補助(_install_guard_globals・_guard_performed など)を import する。型の面ではないので
+    # 公開し直さない — 公開し直すと、.pyi が macro の module に依存する形になり、品質検査の依存の契約にも当たった(#2842)。
+    assert not [line for line in _lines(tmp_path) if line.startswith("from doeff_hy.macros import _")]
+
+
 def test_what_cannot_be_typed_is_named_not_left_unknown(tmp_path: Path) -> None:
     # 説明の文字列の :post と、sorted の答えは型を出せない — Incomplete にして名を返す。
     source = _module(tmp_path)
