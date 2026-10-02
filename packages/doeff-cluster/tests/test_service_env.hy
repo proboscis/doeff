@@ -26,7 +26,8 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json])
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView WorkerPolicy])
+(import doeff_cluster.worker.core.shim_timing [shim-spans])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings])
 (import tests.probe_rig [probe-settings run-probes observed])
 (import doeff_cluster.job_context [RunContext runtime-env-of-context])
@@ -239,7 +240,7 @@
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
   (.insert sys.path 0 (str rig.app))
   (val probes (ProbeSettings :python sys.executable :hy-command HY :uv (str (/ rig.fake "uv")) :layout (CodeLayout)
-                             :probe-dir (str (/ rig.state "probe"))))
+                             :probe-dir (str (/ rig.state "probe")) :shim (! (shim-spans (WorkerPolicy)))))
   ;; 1 回目: 宣言の root で起こす
   (<- env-1 RuntimeEnv (declare rig a1 l1 LOCK))
   (<- lines-1 list (run-service rig env-1 (/ tmp-path "out-1") probes))

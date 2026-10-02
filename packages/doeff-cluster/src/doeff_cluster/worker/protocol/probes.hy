@@ -9,48 +9,58 @@
 ;;;     終わったら(通った・失敗した・時間切れ・shim が先に死んだのどれでも)group ごと止めて回収する(reap-group・StopProcess)。
 ;;;   * timeout-seconds を越えた束は止め、結果の出た対象は結果どおり・進んでいた対象を持つ spec だけ時間切れの FAILED・残りの spec は
 ;;;     待ちへ戻す(probe-settle)。時間切れの spec の撃ち直しは単独の束で起こす。結果の鍵は spec-hash。回数と前の回の失敗の理由は
-;;;     撃ち直しの間も持つ。
+;;;     撃ち直しの間も持つ。時間切れの止め方(#2940 — probe-step): group へ止めの合図(SignalProcess の TERM)を送って束を走らせたまま
+;;;     置き、後の観測で終わりを待つ。合図から shim の期限(settings.shim の shim の猶予 + 掃除の余裕)を過ぎても終わらない時だけ強いて
+;;;     止める(StopProcess の猶予 0)。合図の後に期限まで待ち込まない — 観測は拍の時計を読んだ後に走るので、待ち込むと同じ拍の job の
+;;;     止めの合図が拍の時計より遅れて出て、worker の KILL が shim の期限より前に来うる。止めている間も束は木の走っている束として残る
+;;;     ので、同じ木の次の束(時間切れの spec の単独の撃ち直しも)は、前の束が終わるまで起こさない。
 ;;;   * 束の標準出力と標準エラーは probe-dir の下の file に受け(pipe は溜まると子が止まる)、束が終わったら読んで消す。
 ;;; 記録(待ち・走っている束・答え・回数・前の回の失敗・時間切れの印)は handler の session の値で持つ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import doeff_core_effects.file_effects [MakeDirectory ReadText RemoveTree file-done])
-(import doeff_core_effects.process_effects [ReadEnvironment StartProcess PollProcess StopProcess ProcessNotStarted ProcessExited])
+(import doeff_core_effects.process_effects [ReadEnvironment StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessNotStarted
+                                            ProcessExited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeEntry ForgetProbes ProbeState ProbeView])
 (import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.worker_rules [probe-refusal])
-(import doeff_cluster.worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
-(import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS PROBE-STOP-GRACE probe-targets probe-launches probe-reason probe-results
-                                               probe-settle probe-command ProbeSettle])
+(import doeff_cluster.worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES shim-argv])
+(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
+(import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
+                                               probe-settle probe-command probe-step ProbeSettle ProbeStep])
 
 
 (defrecord ProbeSettings
   "入口の検めの起こし方の設定(worker の組み立ての入口 main が作る): python = shim を起こす interpreter・hy-command = 木の job の hy・
    uv = 実行環境の job の uv・layout = 業務の repo の木の形・probe-dir = 実行環境の job の検めの cwd と束の出力の file の dir・
-   timeout-seconds = 束 1 本の時間の上限。"
+   shim = shim の時間の内訳(worker の方針から shim_timing.shim-spans が導く — 検めの shim の猶予と、時間切れの束を強いて止めるまでの
+   待ちが同じ値を読む・#2940)・timeout-seconds = 束 1 本の時間の上限。"
   (#^ str python)
   (#^ str hy-command)
   (#^ str uv)
   (#^ CodeLayout layout)
   (#^ str probe-dir)
+  (#^ ShimSpans shim)
   (setv #^ (| int float) timeout-seconds PROBE-SECONDS))
 
 
 (defrecord ProbeRun
   "走っている検めの束 1 本(木ごとに 1 本): pid = shim の process(group の先頭)・specs = 束の spec・targets = 束の対象(検める順)・
-   runtime-env = 実行環境の宣言・started-ms = 起こした時刻(epoch ms)・out / err = 標準出力と標準エラーを受ける file。"
+   runtime-env = 実行環境の宣言・started-ms = 起こした時刻(epoch ms)・out / err = 標準出力と標準エラーを受ける file・
+   stopping-ms = 時間切れで止めの合図を送った時刻(epoch ms・送っていなければ None — #2940)。"
   (#^ int pid)
   (#^ tuple specs)
   (#^ tuple targets)
   (#^ (| str None) runtime-env)
   (#^ int started-ms)
   (#^ str out)
-  (#^ str err))
+  (#^ str err)
+  (setv #^ (| int None) stopping-ms None))
 
 
 (defrecord ProbeOutcome
@@ -81,7 +91,8 @@
   (val out (.format "{}/{}.out" runs-dir n))
   (val err (.format "{}/{}.err" runs-dir n))
   (<- started-ms int (now-epoch-ms))
-  (<- answer (StartProcess :argv (+ #(settings.python "-B" "-m" "doeff_cluster.shim" PROBE-STOP-GRACE "--") plan.argv)
+  (<- shim (get tuple #(str ...)) (shim-argv settings.python settings.shim.shim-grace-ms))
+  (<- answer (StartProcess :argv (+ shim plan.argv)
                            :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path out :stderr-path err
                            :process-group True :hold-stdin True :reap-group True))
   (when (isinstance answer ProcessNotStarted)
@@ -92,10 +103,9 @@
 (defk finish-probe [settings run code]
   {:pre [(: settings ProbeSettings) (: run ProbeRun) (: code (| int None))] :post [(: % tuple)]
    :tags {:context "worker" :role "protocol"}}
-  "束を片づけて spec ごとの行き先(ProbeOutcome の tuple)を返すため。code = 終了の番号(None = 時間切れ — 止めて回収する)。終わった束は
-   回収の時に group の残りを止めている(reap-group)。出力の file を読んで消す。"
-  (when (is code None)
-    (<- (StopProcess :pid run.pid :stop-grace 0.0)))
+  "束を片づけて spec ごとの行き先(ProbeOutcome の tuple)を返すため。code = 終了の番号(None = 時間切れで止めた束 — 止めの合図の後に
+   自分で終わった束も、強いて止めた束も)。束の process は呼び手が回収し終えている(回収の時に group の残りを止めている — reap-group)。
+   出力の file を読んで消す。"
   (<- stdout (ReadText run.out))
   (<- stderr (ReadText run.err))
   (<- (RemoveTree run.out))
@@ -165,13 +175,26 @@
       (:= launched (+ launched 1))
       (<- run ProbeRun (launch-probe settings batch specs launched))
       (:= runs (| runs {(get batch 0) run})))
-    ;; 終わった束と時間切れの束を片づけ、spec ごとの行き先を記録に置く。
+    ;; 時間切れの束へ止めの合図を送り、終わった束と shim の期限を過ぎても残る束を片づけ、spec ごとの行き先を記録に置く(probe-step)。
     (<- now-ms int (now-epoch-ms))
+    (<- deadline int (shim-deadline-ms settings.shim))
     (for [#(tree run) (list (.items runs))]
       (<- polled (PollProcess run.pid))
-      (val code (if (isinstance polled ProcessExited) polled.exit-code None))
-      (when (or (isinstance polled ProcessExited) (> (- now-ms run.started-ms) (* settings.timeout-seconds 1000)))
-        (<- outcomes tuple (finish-probe settings run code))
+      (val exited (isinstance polled ProcessExited))
+      (<- step ProbeStep (probe-step exited (- now-ms run.started-ms) (* settings.timeout-seconds 1000)
+                                     (if (is run.stopping-ms None) None (- now-ms run.stopping-ms)) deadline))
+      (match step
+        ProbeStep.TERM
+          ;; 時間切れ: group へ止めの合図だけを送り、束を走らせたまま置く(終わりは後の観測で待つ — 頭の註)。
+          (do (<- (SignalProcess :pid run.pid :signal ProcessSignal.TERM))
+              (:= runs (| runs {tree (replace run :stopping-ms now-ms)})))
+        ProbeStep.KILL
+          ;; 合図から shim の期限を過ぎても残る束: shim が group を片づける時間はもう過ぎたので、強いて止めて回収する。
+          (<- (StopProcess :pid run.pid :stop-grace 0.0))
+        _ None)
+      (when (in step #(ProbeStep.KILL ProbeStep.SETTLE))
+        ;; 止めの合図を送った束は、合図の後に自分で終わっても時間切れとして片づける(code = None)。
+        (<- outcomes tuple (finish-probe settings run (if (and exited (is run.stopping-ms None)) polled.exit-code None)))
         (:= runs (dfor #(k v) (.items runs) :if (!= k tree) k v))
         (for [o outcomes]
           (val key (spec-hash o.spec))

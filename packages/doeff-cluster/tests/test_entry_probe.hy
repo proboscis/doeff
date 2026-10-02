@@ -15,6 +15,7 @@
 (import doeff_cluster.worker.core.policy [plan statuses])
 (import doeff_cluster.worker.protocol.heartbeat [status-row] doeff_cluster.worker.core.probe_rules [probe-reason])
 (import tests.probe_rig [probe-settings observed run-probes])
+(import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
 
@@ -297,6 +298,55 @@
                        (shim-killed-scene sleeps (str tmp-path) (/ tmp-path "sleeper.pid"))))
   (assert (= (. (get got 0) state) ProbeState.FAILED))
   (! (assert-gone (get got 1) "shim の死んだ検めの本体")))
+
+
+(defk stopped-probe-scene [spec tree pid-file]
+  {:pre [(: spec JobSpec) (: tree str) (: pid-file Path)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "止めの合図を捨てる検めを起こし、捨てる構えができた(本体が pid を書いた)後、終わるまで観測し、#(答え 観測 1 回の最長の秒 本体の pid)を
+   返すため(観測が待ち込むかを測る)。"
+  (<- (ProbeEntry spec tree))
+  (<- (ObserveProbes))
+  (val body (! (wait-pid pid-file)))
+  (val key (spec-hash spec))
+  (val limit (+ (time.monotonic) 60))
+  (var longest 0.0)
+  (var found None)
+  (while (and (is found None) (< (time.monotonic) limit))
+    (val began (time.monotonic))
+    (<- views tuple (ObserveProbes))
+    (:= longest (max longest (- (time.monotonic) began)))
+    (for [view views]
+      (when (and (= view.spec-hash key) (= view.state ProbeState.FAILED)) (:= found view)))
+    (when (is found None) (time.sleep 0.05)))
+  (when (is found None) (raise (AssertionError "止めの合図を捨てる検めが 60 秒で片づかない")))
+  #(found longest body))
+
+
+(deftest test-a-timed-out-probe-is-killed-only-after-the-shim-deadline-without-blocking [tmp-path]
+  ;; 失敗ケース(#2940): 時間切れの検めは group へ止めの合図を送り、合図から shim の期限(shim の猶予 + 掃除の余裕)まで KILL を送らない。
+  ;; 以前は合図と同時に KILL を送った(起こしてから片づけまでが時間の上限とほぼ同じ — shim が子孫を片づける前に shim を殺す)。期限まで
+  ;; 観測の中で待ち込む形も退ける — 観測は拍の時計を読んだ後に走るので、待ち込むと同じ拍の job の止めの合図が遅れる(観測 1 回が期限の
+  ;; 長さになる)。期限を過ぎれば強いて止め、本体は残らない。方針は短くして(shim の期限 3 秒)検の時間を抑える。
+  (! (probe-tree tmp-path))
+  (.write-text (/ tmp-path "probe_ignores.hy")
+               (.join "\n" ["(import os signal time pathlib [Path])"
+                            "(signal.signal signal.SIGTERM signal.SIG-IGN)"
+                            "(.write-text (Path \"ignorer.pid\") (str (os.getpid)))"
+                            "(time.sleep 60)"
+                            "(defn program [] None)"])
+               :encoding "utf-8")
+  (val policy (WorkerPolicy :stop-grace-ms 3000 :shim-sweep-margin-ms 1000))
+  (val timeout-seconds 5)
+  (val settings (! (probe-settings tmp-path :timeout-seconds timeout-seconds :policy policy)))
+  (val deadline-ms (! (shim-deadline-ms settings.shim)))
+  (val ignores (replace SERVICE :entry "probe_ignores:program"))
+  (<- got tuple (run-probes settings (stopped-probe-scene ignores (str tmp-path) (/ tmp-path "ignorer.pid"))))
+  (val view (get got 0))
+  (assert (in "終わらない" view.detail) view.detail)
+  (assert (>= (- view.failed-ms view.started-ms) (+ (* timeout-seconds 1000) deadline-ms))
+          (.format "合図から shim の期限 {} ms を待たずに KILL を送った(起こしてから片づけまで {} ms)" deadline-ms (- view.failed-ms view.started-ms)))
+  (assert (< (get got 1) (/ deadline-ms 1000 2)) (.format "観測 1 回が {:.3f} 秒待ち込んだ" (get got 1)))
+  (! (assert-gone (get got 2) "時間切れの検めの本体")))
 
 
 (defk hanging-scene [specs hang ok-specs tree]

@@ -1,0 +1,44 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/worker/core/shim_timing.hy"
+  ],
+  "module_extensions": {
+    "doeff-cluster-main": {
+      "allow": [
+        "doeff-cluster-worker-shim-timing"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-worker-shim-timing"
+      ]
+    },
+    "doeff-cluster-worker-probes": {
+      "allow": [
+        "doeff-cluster-worker-shim-timing"
+      ]
+    },
+    "doeff-cluster-worker-process-host": {
+      "allow": [
+        "doeff-cluster-worker-shim-timing"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-worker-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-worker-shim-timing",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/shim_timing.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/shim_timing.hy"
+      ],
+      "responsibility": "入れ物 shim の時間の判断(#2940): shim の猶予を停止の猶予と掃除の余裕から導き(1 か所)、shim の期限(猶予 + 余裕)が worker の KILL(停止の猶予)より後になる組を名指す純関数。値は呼び手(worker の入口の組み立てと検)が集める。",
+      "typed": true
+    }
+  ]
+}

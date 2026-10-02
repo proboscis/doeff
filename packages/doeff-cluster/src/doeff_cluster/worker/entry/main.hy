@@ -40,6 +40,7 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState CodeLayout])
+(import doeff_cluster.worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
@@ -94,9 +95,11 @@
 (defk timing-checked [fence-ms policy timing]
   {:pre [(: fence-ms int) (: policy WorkerPolicy) (: timing ClusterTiming)] :post [(: % SelfStopSpans)]
    :tags {:context "worker" :role "main"}}
-  "起動の組み立てが時間の不変条件 C4(shared/core/timing_rules・#2806)を破るなら名指しで断るため — 移し替え(timing の reassign-after-ms)が、
-   この worker の止め切り(fence + heartbeat の返事の上限 + 接続の上限 + 子の停止の猶予)より前になる起動(--fence や --stop-grace を長く
-   し過ぎた等)を、job を走らせる前に止める。答え = 判じた内訳。"
+  "起動の組み立てが時間の不変条件を破るなら名指しで断るため — job を走らせる前に止める。答え = C4 の判じた内訳。
+   C4(shared/core/timing_rules・#2806): 移し替え(timing の reassign-after-ms)が、この worker の止め切り(fence + heartbeat の返事の上限 +
+   接続の上限 + 子の停止の猶予)より前になる起動(--fence や --stop-grace を長くし過ぎた等)。
+   shim の期限(worker/core/shim_timing・#2940): 子の shim の期限(shim の猶予 + 掃除の余裕)が worker の KILL(停止の猶予)より後になる
+   起動(--stop-grace を掃除の余裕より短くした等 — shim が子孫を片づける前に worker が shim を殺す)。"
   (val spans (SelfStopSpans :fence-ms fence-ms :reply-ms (int (* REPLY-SECONDS 1000)) :connect-ms (int (* CONNECT-SECONDS 1000))
                               :stop-grace-ms policy.stop-grace-ms :kill-grace-ms policy.kill-grace-ms))
   (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop timing.reassign-after-ms spans))
@@ -104,6 +107,12 @@
     (val b (get broken 0))
     (raise (ValueError (.format "時間の不変条件 C4 を破る起動: 移し替え {} ms が worker の止め切り {} ms(fence {} + 返事の上限 {} + 接続の上限 {} + 停止の猶予 {} + {})より前"
                                 b.reassign-ms b.needed-ms spans.fence-ms spans.reply-ms spans.connect-ms spans.stop-grace-ms spans.kill-grace-ms))))
+  (<- shim ShimSpans (shim-spans policy))
+  (<- late (get tuple #(ShimOutlastsTheKill ...)) (shim-ends-before-the-kill shim))
+  (when late
+    (val l (get late 0))
+    (raise (ValueError (.format "shim の期限が worker の KILL より後になる起動: shim の期限 {} ms(shim の猶予 {} + 掃除の余裕 {})が停止の猶予 {} ms を越える"
+                                l.deadline-ms shim.shim-grace-ms shim.sweep-margin-ms l.kill-ms))))
   spans)
 
 
@@ -159,6 +168,9 @@
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
+        policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
+        ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
+        shim (run (shim-spans policy))
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
         codes (CodeSettings :repo args.repo :cache (str (/ state-dir "code")) :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
@@ -169,16 +181,15 @@
         host (HostSettings :log-dir (str (/ state-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
                            :program-dir (str (/ state-dir "programs")) :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
-                           :program-env HOST-CONTRACT.program-env)
+                           :program-env HOST-CONTRACT.program-env :shim shim)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
-                              :probe-dir (str (/ state-dir "probe")))
-        policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
+                              :probe-dir (str (/ state-dir "probe")) :shim shim)
         stop (StopState))
-  ;; 時間の不変条件 C4(#2806)を破る起動は、job を走らせる前に名指しで断る。
+  ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   (defn #^ None on-signal [#^ int signum #^ (| FrameType None) frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)

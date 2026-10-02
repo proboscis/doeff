@@ -143,6 +143,7 @@ class JobRecord:
 class WorkerPolicy:
     stop_grace_ms: int = 10000
     kill_grace_ms: int = 5000
+    shim_sweep_margin_ms: int = 1500
     restart_backoff_ms: int = 2000
     restart_backoff_max_ms: int = 60000
     stable_run_ms: int = 60000
