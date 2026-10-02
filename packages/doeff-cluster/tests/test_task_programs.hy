@@ -191,7 +191,7 @@
   (<- done tuple (call (get open 0) "PUT" "/detached/job-done" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
   (val done-id (get done 2 "task"))
   (<- reported tuple (beat (get done 0) 20 [{"name" (+ "task/" done-id) "phase" "finished" "result" "R" "detail" ""}]))
-  (val data (state-to-json (get reported 0)))
+  (val data (! (state-to-json (get reported 0))))
   (val old (| data {"tasks" (lfor t (get data "tasks")
                                   (| (dfor #(k v) (.items t) :if (!= k "program") k v) {"blob" "QkxPQg=="}))}))
   (for [again [(! (state-from-json old 100)) (! (state-from-kv (! (full-kv (! (state-from-json old 100)))) 100))]]

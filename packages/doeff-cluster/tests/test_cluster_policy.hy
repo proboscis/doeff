@@ -377,7 +377,7 @@
   True)
 
 (deftest test-old-saved-rows-in-the-state-file-are-read-without-crashing
-  (setv data (state-to-json SAVED))
+  (setv data (! (state-to-json SAVED)))
   (assert (get data "warms") "state file に温める表の行が在る(旧い形へ書き換える対象)")
   (setv workers [])
   (for [w (get data "workers")]

@@ -60,8 +60,8 @@
   (val s (get (responded (ClusterState) (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "statuses" []}
                                                        :actor "c-test") 1000 T) 0))
   (val changed (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))
-  (val old (dk.durable-kv s))
-  (val new (dk.durable-kv changed))
+  (val old (! (dk.durable-kv s)))
+  (val new (! (dk.durable-kv changed)))
   (val by-full (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v) (dfor k old :if (not-in k new) k None)))
   (val got (! (dk.durable-delta s changed)))
   (assert (= got by-full) #(got by-full))

@@ -146,7 +146,7 @@
 (defk restart-coordinator [sim]
   {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "模擬の世界の coordinator を作り直すため: 保存した形から読み直す(worker の報告・readiness・k8s の観測は失う)。"
-  (<- state ClusterState (state-from-json (state-to-json sim.state) sim.now))
+  (<- state ClusterState (state-from-json (! (state-to-json sim.state)) sim.now))
   (setv sim.state state)
   None)
 

@@ -99,7 +99,7 @@
    (旧い coordinator が書いた置き場の写し — 資源の版の meta も在る)。"
   (<- a tuple (call (ClusterState) "POST" "/resources/Service" {"name" "new" "spec" ROW} 1000))
   (<- b tuple (call (get a 0) "POST" "/resources/Service" {"name" "old" "spec" ROW} 1000))
-  (val data (state-to-json (get b 0)))
+  (val data (! (state-to-json (get b 0))))
   (| data {"jobs" (lfor row (get data "jobs")
                         (if (= (get row "name") "old")
                             (| (dfor #(k v) (.items row) :if (!= k "run") k v) {"run" OLD-RUN})
@@ -123,7 +123,7 @@
    (生の entry の job を受けていた coordinator が書いた置き場の写し)。"
   (<- a tuple (call (ClusterState) "POST" "/resources/Service" {"name" "new" "spec" ROW} 1000))
   (<- b tuple (call (get a 0) "POST" "/resources/Service" {"name" "raw" "spec" ROW} 1000))
-  (val data (state-to-json (get b 0)))
+  (val data (! (state-to-json (get b 0))))
   (| data {"jobs" (lfor row (get data "jobs")
                         (if (= (get row "name") "raw")
                             (| (dfor #(k v) (.items row) :if (!= k "run") k v) {"entry" "m" "args" ["--x" "1"]})
@@ -149,7 +149,7 @@
   (<- ok bool (check-refused-state state))
   (assert ok)
   ;; 保存し直しても元の行のまま残り、読み直しても同じ理由で受け付けない。
-  (val again (state-to-json state))
+  (val again (! (state-to-json state)))
   (assert (in {"name" "old"} (lfor r (get again "jobs") {"name" (get r "name")})))
   (<- still bool (check-refused-state (! (state-from-json again 6000))))
   (assert still))
