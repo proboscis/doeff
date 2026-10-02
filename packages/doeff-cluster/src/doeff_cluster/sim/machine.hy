@@ -15,9 +15,13 @@
 ;;;   StopWorker 名               worker を優雅に止める(SIGTERM → stop-grace 秒 → SIGKILL・抜けるまで待つ)。
 ;;;   StopCoordinator 秒          coordinator を優雅に止め、秒の間止めてから同じ置き場で作り直し、起き上がるまで待って答える。
 ;;;   CrashCoordinator 秒         coordinator を SIGKILL で落とし(返事をせずに落ちる)、秒の後に同じ置き場で作り直して答える。
+;;;   Redeclare 系               宣言の CLI と同じ system-declaration と apply-declaration で、起こした coordinator へ宣言を書く(答え =
+;;;                              宣言した Service の名 — sim と同じ)。版は LocalMachine の revision・job の code は worker が code-repo
+;;;                              (配備と同じ CODE_REPO_URL — 版の木)からその版で取り出す(#3040)。
+;;;   Crash 名                   worker が動かしている job の process を group ごと SIGKILL で落とす(答え = 落とした数)。worker は 0 以外の
+;;;                              終わりとして本物の判断で起こし直す(sim の Crash は exit 1・ここは signal の終わり — worker の数え方は同じ)。
 ;;;   CutWorker・StallWorker・FailRoute は答えない — MachineCannotAnswer で、その effect の名と訳を出して止める(網を切る・固める・5xx を
-;;;   返させるのは sim だけ・ADR の追補 (3) の残り)。系の宣言(Redeclare)と job を落とす(Crash)は、手元の worker が job の code を
-;;;   手に入れる道と一緒に #3032 の子で足す。
+;;;   返させるのは sim だけ・ADR の追補 (3) の残り)。
 ;;; sim との違い: sim の StopCoordinator / CrashCoordinator は次の拍で止まり、筋書きと並んで秒の後に作り直す。ここでは作り直して起き上がる
 ;;; まで答えを返さない(止まっている間の要求を筋書きが出すことは無い)。
 ;;;
@@ -33,25 +37,31 @@
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers Program EffectBase])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.file_effects [MakeDirectory FileFailed])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.process_effects [StartProcess StopProcess PollProcess SignalProcess ProcessSignal ProcessSignalled ProcessStarted
-                                            ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild EnvMode EnvEntry])
+                                            ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild EnvMode EnvEntry
+                                            RunProcess ProcessOutcome])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [Delay async-time-handler])
+(import doeff_cluster.foundation.process_versions [this-process-versions])
+(import doeff_cluster.shared.entry.declare [apply-declaration])
+(import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
-                                                     CrashCoordinator])
+                                                     CrashCoordinator Redeclare Crash])
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 
 ;; 配備と同じ起動の script(packages/doeff-cluster/deploy/boot.sh — この file は src/doeff_cluster/sim/ に在る)。
 (val BOOT-SCRIPT (str (/ (get (. (Path __file__) parents) 3) "deploy" "boot.sh")))
 ;; 起き上がりを問い直す間隔・SIGKILL の後に回収を問い直す間隔(秒)。
 (val PROBE-SECONDS 0.2)
+;; Redeclare が宣言の書きに載せる送り手の名(宣言の CLI の --actor と同じ役 — 出来事の記録に残る名)。
+(val MACHINE-ACTOR "local-machine")
 
 
 (defclass MachineCannotAnswer [Exception]
@@ -62,12 +72,15 @@
   "手元の 1 台の cluster の置き方。work-dir = 作業の dir の親(coordinator は coordinator/・worker は workers/<名>/ — 出力の log も
    その下)・port = coordinator の受け口(127.0.0.1)・workers = worker の顔ぶれ(sim と同じ SimWorker — name・provides・exclusive・
    capacity・node を使う)・boot-seconds = coordinator と worker の起き上がりを待つ上限の秒・stop-grace = 止める時に SIGTERM から
-   SIGKILL までの猶予の秒。"
+   SIGKILL までの猶予の秒。job の code の道(#3040): code-repo = 版の木の git(worker の CODE_REPO_URL — 配備と同じ名。空 = 版の木を
+   持たない worker)・revision = Redeclare が宣言に書く版(code-repo の commit — sim-cluster の revision と同じ役)。"
   (#^ str work-dir)
   (#^ int port)
   (#^ (get tuple #(SimWorker ...)) workers)
   (setv #^ float boot-seconds 120.0)
-  (setv #^ float stop-grace 30.0))
+  (setv #^ float stop-grace 30.0)
+  (setv #^ str code-repo "")
+  (setv #^ str revision ""))
 
 
 (defrecord MachineProcess
@@ -78,6 +91,13 @@
   (#^ str log)
   (#^ str home)
   (#^ (get tuple #(EnvEntry ...)) env))
+
+
+(defrecord JobProcess
+  "worker が動かしている job の process 1 つ(worker = 動かしている worker の役・pid = /state の statuses に worker が名乗った pid —
+   shim の下で自分の process group の先頭に起こした子)。"
+  (#^ MachineProcess worker)
+  (#^ int pid))
 
 
 (defclass MachineCell []
@@ -115,6 +135,7 @@
     (EnvEntry :name "WORKER_CAPACITY" :value (str worker.capacity))
     (EnvEntry :name "NODE_NAME" :value worker.node)
     (EnvEntry :name "WORK_DIR" :value (str home))
+    (EnvEntry :name "CODE_REPO_URL" :value machine.code-repo)
     (EnvEntry :name "DOEFF_WORKER_BOOT_FILE" :value (str (/ home "boot")))
     (EnvEntry :name "DOEFF_WORKER_READY_FILE" :value (str (/ home "ready")))))
 
@@ -204,6 +225,31 @@
   (get found 0))
 
 
+(defk running-jobs [state name roles]
+  {:pre [(: state dict) (: name str) (: roles (get tuple #(MachineProcess ...)))] :post [(: % (get tuple #(JobProcess ...)))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator の /state の statuses(worker の名 → 名乗った job の行)から、起こした worker が動かしている job name の process を引くため
+   (pid の無い行 — 起こす前・終わった後 — は外す)。state は HTTP の答えの JSON の object。"
+  (val statuses (.get state "statuses" {}))
+  (tuple (gfor role roles
+               row (.get (.get statuses role.name {}) "jobs" [])
+               :if (and (= (.get row "name") name) (isinstance (.get row "pid") int))
+               (JobProcess :worker role :pid (get row "pid")))))
+
+
+(defk job-crashed [job]
+  {:pre [(: job JobProcess)] :post [(: % int)] :tags {:context "doeff-cluster" :role "program"}}
+  "job の process を、その process group ごと SIGKILL で落とすため(答え = 落とした数)。SignalProcess は自分が起こした子にしか送らない
+   (他人の process に送らない)— job は worker の子なので、ps で親が当の worker であることを確かめてから kill を走らせる。/state の pid が
+   終わった後に別の process へ使い回されていたら落とさない(多くの会話が使う機体で他人の process を落とさない)。"
+  (<- parent ProcessOutcome (RunProcess :argv #("ps" "-o" "ppid=" "-p" (str job.pid)) :env-mode EnvMode.EXTEND :timeout 10.0))
+  (if (and (= parent.exit-code 0) (= (.strip parent.stdout) (str job.worker.pid)))
+      (do (<- sent ProcessOutcome (RunProcess :argv #("kill" "-KILL" "--" (+ "-" (str job.pid))) :env-mode EnvMode.EXTEND
+                                              :timeout 10.0))
+          (if (= sent.exit-code 0) 1 0))
+      0))
+
+
 (defk coordinator-remade [url cell machine down-seconds]
   {:pre [(: url str) (: cell MachineCell) (: machine LocalMachine) (: down-seconds float)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "program"}}
@@ -235,6 +281,23 @@
                 (do (val status (get (json.loads answer.text) "status"))
                     (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
                 (ServiceReadiness :state "Missing" :reason answer.text))))
+  (Redeclare [system]
+    (<- versions dict (this-process-versions))
+    (val declaration (system-declaration system machine.revision :versions versions))
+    (<- placed bool (apply-declaration url declaration MACHINE-ACTOR))
+    (when (not placed)
+      (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))
+    (resume (tuple (lfor row declaration.rows (get row "name")))))
+  (Crash [name]
+    (<- state (| dict None) (state-of url))
+    (when (is state None)
+      (raise (RuntimeError (+ "coordinator の /state を読めない — Crash(" name ")"))))
+    (<- jobs tuple (running-jobs state name (tuple (lfor role cell.roles :if (!= role.name "coordinator") role))))
+    (var count 0)
+    (for [job jobs]
+      (<- one int (job-crashed job))
+      (:= count (+ count one)))
+    (resume count))
   (KillWorker [name]
     (<- role MachineProcess (role-named cell name))
     (<- count int (killed role))
@@ -291,7 +354,7 @@
   "手元の 1 台の cluster の上で筋書きを走らせる入口(sim-cluster と同じ形 — 違いは土台の handler の組だけ)。答え = 筋書きの答え。"
   (<- url str (coordinator-url machine))
   (val cell (MachineCell))
-  (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler) (http-production-handler) subprocess-handler
+  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (async-time-handler) (http-production-handler) subprocess-handler
                                         os-file-handler (machine-answers url cell machine)]
                           (machine-run scenario cell machine))))
   answer)
