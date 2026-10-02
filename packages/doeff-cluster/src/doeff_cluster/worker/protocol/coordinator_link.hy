@@ -30,7 +30,7 @@
 (import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS ClusterTiming])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
-(import doeff_cluster.worker.core.policy [keep-marks-held])
+(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus])
 (import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])

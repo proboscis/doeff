@@ -1,6 +1,6 @@
 ;;; heartbeat の返事と途絶の判断 — 温める表の行の読み・終わった task の見分け・coordinator に届かない拍の宣言(本番の coordinator への口 と
 ;;; 手元の sim-cluster の宿 sim/local が同じ判断を使う)。handlers.hy から分けた(#2026)。本文の形は worker/protocol/heartbeat。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import json)
 (import doeff [run])
@@ -23,6 +23,14 @@
   {:pre [(: s JobStatus)] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
   "終わった task の状態の行なら task の id(結果を添える相手)、それ以外は None — 結果の file を読む・世界の結果を引く所を 1 つにするため。"
   (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED)) (cut s.name 5 None) None))
+
+
+(defk keep-marks-held [jobs]
+  {:pre [(: jobs tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "最後に受け取った宣言のうち、途絶しても動かし続けてよい印(#2804)の在る service の job の名(名の順)— heartbeat の keptWhenCutOff で
+   coordinator に知らせ、coordinator が「この worker はもう印を持たない」と確かめてから印の約束を外すため(印の無い返事が届いていない
+   担い手から job を移さない)。本番の coordinator への口と sim の宿が同じ判断で本文に載せる。"
+  (tuple (sorted (gfor job jobs :if (and job.keep-when-cut-off (not job.once)) job.name))))
 
 
 (deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ int keep-fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う

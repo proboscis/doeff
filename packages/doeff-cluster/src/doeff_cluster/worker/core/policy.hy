@@ -45,14 +45,6 @@
   "純粋: coordinator に届かない間(silent-ms)も動かし続ける job の列を、最後に受け取った宣言から選ぶため(判断は kept-when-cut-off? 1 つ)。"
   (tuple (gfor job jobs :if (run (kept-when-cut-off? job silent-ms keep-fence-ms)) job)))
 
-
-(defk keep-marks-held [jobs]
-  {:pre [(: jobs tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "最後に受け取った宣言のうち、途絶しても動かし続けてよい印の在る service の job の名(名の順)— heartbeat の keptWhenCutOff で coordinator に
-   知らせ、coordinator が「この worker はもう印を持たない」と確かめてから印の約束を外すため(印の無い返事が届いていない担い手から job を
-   移さない)。"
-  (tuple (sorted (gfor job jobs :if (and job.keep-when-cut-off (not job.once)) job.name))))
-
 (defn #^ (| ProcessView None) process-of [#^ WorldView world #^ str name]
   (for [process world.processes]
     (when (= process.name name) (return process)))
