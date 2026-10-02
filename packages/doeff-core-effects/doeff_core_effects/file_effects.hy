@@ -80,24 +80,24 @@
   (#^ int token))
 
 
-(defclass [(dataclass :frozen True)] StatPath [EffectBase]
+(defclass [(dataclass :frozen True)] StatPath [(get EffectBase (| PathStat FileFailed))]
   "path の様子(頭の註)。follow-symlinks = False は symlink を辿らない(壊れた先の symlink も kind SYMLINK)。"
   (#^ str path)
   (setv #^ bool follow-symlinks True))
 
 
-(defclass [(dataclass :frozen True)] ReadText [EffectBase]
+(defclass [(dataclass :frozen True)] ReadText [(get EffectBase (| str FileFailed))]
   "text を読む(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] ReadBytes [EffectBase]
+(defclass [(dataclass :frozen True)] ReadBytes [(get EffectBase (| bytes FileFailed))]
   "bytes を読む(頭の註)。limit = 先頭の limit byte だけ(None = 全部)。"
   (#^ str path)
   (setv #^ (| int None) limit None))
 
 
-(defclass [(dataclass :frozen True)] WriteText [EffectBase]
+(defclass [(dataclass :frozen True)] WriteText [(get EffectBase (| FileFailed None))]
   "text を書く(頭の註)。"
   (#^ str path)
   (#^ str text)
@@ -106,7 +106,7 @@
   (setv #^ bool sync False))
 
 
-(defclass [(dataclass :frozen True)] WriteBytes [EffectBase]
+(defclass [(dataclass :frozen True)] WriteBytes [(get EffectBase (| FileFailed None))]
   "bytes を書く(頭の註)。"
   (#^ str path)
   (#^ bytes content)
@@ -115,87 +115,87 @@
   (setv #^ bool sync False))
 
 
-(defclass [(dataclass :frozen True)] AppendText [EffectBase]
+(defclass [(dataclass :frozen True)] AppendText [(get EffectBase (| FileFailed None))]
   "text を末尾に足す(頭の註)。"
   (#^ str path)
   (#^ str text)
   (setv #^ bool sync False))
 
 
-(defclass [(dataclass :frozen True)] MakeDirectory [EffectBase]
+(defclass [(dataclass :frozen True)] MakeDirectory [(get EffectBase (| FileFailed None))]
   "dir を親ごと作る(頭の註)。"
   (#^ str path)
   (setv #^ (| int None) mode None))
 
 
-(defclass [(dataclass :frozen True)] ListDirectory [EffectBase]
+(defclass [(dataclass :frozen True)] ListDirectory [(get EffectBase (| (get tuple #(DirEntry ...)) FileFailed))]
   "dir の直下を並べる(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] WalkTree [EffectBase]
+(defclass [(dataclass :frozen True)] WalkTree [(get EffectBase (| (get tuple #(DirEntry ...)) FileFailed))]
   "dir の下の全部を並べる(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] CopyFile [EffectBase]
+(defclass [(dataclass :frozen True)] CopyFile [(get EffectBase (| FileFailed None))]
   "file の中身を写す(頭の註)。"
   (#^ str source)
   (#^ str target))
 
 
-(defclass [(dataclass :frozen True)] CompilePythonSources [EffectBase]
+(defclass [(dataclass :frozen True)] CompilePythonSources [(get EffectBase (get tuple #(SourceNotCompiled ...)))]
   "木の source を .pyc に焼く(頭の註)。"
   (#^ str tree)
-  (#^ tuple items)
+  (#^ (get tuple #((get tuple #(str str)) ...)) items)
   (setv #^ int jobs 1)
-  (setv #^ tuple roots #(".")))
+  (setv #^ (get tuple #(str ...)) roots #(".")))
 
 
-(defclass [(dataclass :frozen True)] LinkFile [EffectBase]
+(defclass [(dataclass :frozen True)] LinkFile [(get EffectBase (| FileFailed None))]
   "file 1 つにもう 1 つの名を付ける(頭の註)。"
   (#^ str source)
   (#^ str target))
 
 
-(defclass [(dataclass :frozen True)] CopyTree [EffectBase]
+(defclass [(dataclass :frozen True)] CopyTree [(get EffectBase (| FileFailed None))]
   "dir の中身を重ねて写す(頭の註)。"
   (#^ str source)
   (#^ str target))
 
 
-(defclass [(dataclass :frozen True)] RenamePath [EffectBase]
+(defclass [(dataclass :frozen True)] RenamePath [(get EffectBase (| FileFailed None))]
   "path の名を変える(頭の註)。"
   (#^ str source)
   (#^ str target))
 
 
-(defclass [(dataclass :frozen True)] RemoveTree [EffectBase]
+(defclass [(dataclass :frozen True)] RemoveTree [(get EffectBase (| FileFailed None))]
   "file か dir を中身ごと消す(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] AcquireLock [EffectBase]
+(defclass [(dataclass :frozen True)] AcquireLock [(get EffectBase (| LockHeld FileFailed))]
   "錠を排他で取る(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] ReleaseLock [EffectBase]
+(defclass [(dataclass :frozen True)] ReleaseLock [(get EffectBase (| FileFailed None))]
   "取った錠を放す(頭の註)。"
   (#^ LockHeld held))
 
 
-(defclass [(dataclass :frozen True)] ReadDiskFree [EffectBase]
+(defclass [(dataclass :frozen True)] ReadDiskFree [(get EffectBase (| int FileFailed))]
   "path を含む file system の空きを読む(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] ReadDiskUsage [EffectBase]
+(defclass [(dataclass :frozen True)] ReadDiskUsage [(get EffectBase (| DiskUsage FileFailed))]
   "path を含む file system の総量と空きを読む(頭の註)。"
   (#^ str path))
 
 
-(defclass [(dataclass :frozen True)] MeasureTree [EffectBase]
+(defclass [(dataclass :frozen True)] MeasureTree [(get EffectBase (| int FileFailed))]
   "dir の下の file の大きさの合計を測る(頭の註)。"
   (#^ str path))
 
@@ -218,7 +218,7 @@
 
 
 (defk file-done [request]
-  {:pre [(: request EffectBase)] :post [(: % (| PathStat LockHeld DiskUsage str bytes tuple int None))] :tags {:context "file-system" :role "foundation"}}
+  {:tp [A] :pre [(: request (of EffectBase (| A FileFailed)))] :post [(: % A)] :tags {:context "file-system" :role "foundation"}}
   "file system の effect を 1 つ出し、断り(FileFailed)は OSError で上げて成功の答えだけを返すため(失敗したら続けられない書き手・
    読み手が、os の呼び出しを直に書いていた時と同じ例外の型で落ちる)。"
   (<- answer request)
@@ -227,5 +227,5 @@
   answer)
 
 
-(defclass [(dataclass :frozen True)] ReadMemoryFiles [EffectBase]
+(defclass [(dataclass :frozen True)] ReadMemoryFiles [(get EffectBase MemoryFiles)]
   "memory の置き場の今の中身(MemoryFiles)を読む(頭の註)。")
