@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+
 from doeff import (
     AcquireSemaphore,
     Await,
@@ -21,6 +23,9 @@ from doeff import (
 from tests._run_helpers import run_with_defaults
 
 # REMOVED: from doeff_core_effects.handlers import sqlite_cache_handler
+
+# 3 つの検は全部、Await が本物の asyncio の loop の上で並行することを実時間で見る(#2882)。
+pytestmark = pytest.mark.realtime
 
 
 async def _async_sleep(duration: float) -> str:

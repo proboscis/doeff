@@ -1,5 +1,6 @@
 """Tests for core effects — Ask, Get, Put, Tell."""
 
+import pytest
 from doeff_core_effects.effects import Ask, Get, Listen, Put, Slog, Tell, Try
 from doeff_core_effects.handlers import (
     listen_handler,
@@ -222,6 +223,7 @@ class TestAwait:
         result = doeff_run(scheduled(await_handler()(body())))
         assert result == 30
 
+    @pytest.mark.realtime
     def test_await_100_concurrent_tasks(self):
         """100 spawned tasks each awaiting 100ms sleep — must finish in <2s."""
         import asyncio
