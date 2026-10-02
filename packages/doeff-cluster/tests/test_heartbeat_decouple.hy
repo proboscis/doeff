@@ -31,17 +31,33 @@
 
 ;; --- desired の変化に遅れず起きる ------------------------------------------------------------------------
 
+(defk just-heard [name]
+  {:pre [(: name str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "worker name の heartbeat が coordinator に届いた直後(届いてから 100 ms 以内)まで待つため。答え = 届いてからの ms。"
+  (<- first dict (ReadCoordinator (+ "/workers/" name)))
+  (var silent (get first "silentMs"))
+  (while (> silent 100)
+    (<- (Delay 0.05))
+    (<- again dict (ReadCoordinator (+ "/workers/" name)))
+    (:= silent (get again "silentMs")))
+  silent)
+
+
 (defk redeclare-latency [mode]
   {:pre [(: mode str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 落ち着いた後に beacon を版 2 に宣言し直し、旧い版の process が止まるまでの ms を返す(worker が変化に気づいた刻の物差し)。
    mode = tick(待つ口の無い coordinator — 最初から /watch が 404・拍ごとの heartbeat)・watch(待ちで受ける)・blind(落ち着いた後に
-   待ちの口を 503 で塞ぐ — 待ちが届かない)。"
+   待ちの口を 503 で塞ぐ — 待ちが届かない)。blind は、beacon を持つ worker の heartbeat が届いた直後に宣言し直す: 次に気づけるのは
+   heartbeat の間隔の後で、遅れが heartbeat の位相の偶然に依らない(以前は宣言し直しが次の heartbeat の約 1 秒前に当たり、反例の余白が
+   0 だった — #2719 で気づいた拍のうちに起こすようになると 500 ms 足りずに赤)。"
   (when (= mode "tick")
     (<- (FailRoute "GET" "/watch" 404 1000.0)))
   (<- (Delay SETTLE-SECONDS))
   (when (= mode "blind")
     (<- (FailRoute "GET" "/watch" 503 100.0))
-    (<- (Delay 12.0)))
+    (<- (Delay 12.0))
+    (<- running tuple (ProcessesOf "beacon"))
+    (<- (just-heard (. (get running -1) worker))))
   (<- asked int (now-epoch-ms))
   (<- (Redeclare (beacons-v2 sim-foundation)))
   (<- (Delay 10.0))
@@ -52,12 +68,13 @@
 
 (deftest test-a-desired-change-wakes-the-worker-within-a-tick
   ;; 宣言し直しは待ちが受け、拍ごとに heartbeat を送る今までの形と拍 1 つ(0.5 秒)の差の内で旧い版を止める。反例 — 待ちが塞がれた
-  ;; worker は heartbeat の間隔(8 秒)が来るまで気づかない。
+  ;; worker は heartbeat の間隔(8 秒)が来るまで気づかない(heartbeat の直後に宣言し直すので、遅れは間隔からその拍の分を引いた以上)。
   (<- ticking int (sim-cluster (beacons sim-foundation) (redeclare-latency "tick") :workers (get PAIRS None)))
   (<- watching int (sim-cluster (beacons sim-foundation) (redeclare-latency "watch") :workers (get PAIRS None)))
   (<- blind int (sim-cluster (beacons sim-foundation) (redeclare-latency "blind") :workers (get PAIRS 8000)))
   (assert (<= watching (+ ticking 500)) #(ticking watching blind))
-  (assert (>= blind (+ ticking 1000)) #(ticking watching blind)))
+  (assert (>= blind (+ ticking 1000)) #(ticking watching blind))
+  (assert (>= blind (- 8000 1000)) #(ticking watching blind)))
 
 
 (defk broken-watch-latency []
