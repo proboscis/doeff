@@ -1,16 +1,16 @@
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Any
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = process_effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-from doeff import EffectBase, Program
-from doeff_core_effects.file_effects import PathKind
-
+from doeff import Program as _Program
+from dataclasses import dataclass as dataclass
+from enum import StrEnum as StrEnum
+from doeff import EffectBase as EffectBase
+from doeff_core_effects.file_effects import PathKind as PathKind
 TIMED_OUT_CODE: int
 NOT_STARTED_CODE: int
 
 class EnvMode(StrEnum):
-    REPLACE = "replace"
-    EXTEND = "extend"
+    REPLACE = 'replace'
+    EXTEND = 'extend'
 
 @dataclass(frozen=True, kw_only=True)
 class EnvEntry:
@@ -22,23 +22,36 @@ class ProcessOutcome:
     exit_code: int
     stdout: str
     stderr: str
-    timed_out: bool = False
-    started: bool = True
-    start_error: str = ""
+    timed_out: bool
+    timed_out = False
+    started: bool
+    started = True
+    start_error: str
+    start_error = ''
 
 @dataclass(frozen=True, kw_only=True)
 class RunProcess(EffectBase):
     argv: tuple[str, ...]
-    stdin: str | None = None
-    timeout: float | None = None
-    cwd: str | None = None
-    env: tuple[EnvEntry, ...] | None = None
-    env_mode: EnvMode = EnvMode.REPLACE
-    env_drop: tuple[str, ...] = ()
-    output_path: str | None = None
-    process_group: bool = False
-    stop_grace: float = 10.0
-    stream_output: bool = False
+    stdin: str | None
+    stdin = None
+    timeout: float | None
+    timeout = None
+    cwd: str | None
+    cwd = None
+    env: tuple[EnvEntry, ...] | None
+    env = None
+    env_mode: EnvMode
+    env_mode = ...
+    env_drop: tuple[str, ...]
+    env_drop = ...
+    output_path: str | None
+    output_path = None
+    process_group: bool
+    process_group = False
+    stop_grace: float
+    stop_grace = 10.0
+    stream_output: bool
+    stream_output = False
 
 @dataclass(frozen=True, kw_only=True)
 class ExecutableAt(EffectBase):
@@ -47,17 +60,22 @@ class ExecutableAt(EffectBase):
 @dataclass(frozen=True)
 class ReadEnvironment(EffectBase):
     names: tuple[str, ...]
-    prefixes: tuple[str, ...] = ()
+    prefixes: tuple[str, ...] = ...
+
+def environment_answer(present: tuple, names: tuple, prefixes: tuple) -> _Program[tuple, object]:
+    ...
 
 @dataclass(frozen=True)
-class WorkingDirectory(EffectBase): ...
+class WorkingDirectory(EffectBase):
+    ...
 
 @dataclass(frozen=True)
 class ProcessAlive(EffectBase):
     pid: int
 
 @dataclass(frozen=True)
-class ReadInterpreter(EffectBase): ...
+class ReadInterpreter(EffectBase):
+    ...
 
 @dataclass(frozen=True)
 class ResolveModule(EffectBase):
@@ -81,15 +99,24 @@ class ModuleNotFound:
 @dataclass(frozen=True, kw_only=True)
 class StartProcess(EffectBase):
     argv: tuple[str, ...]
-    cwd: str | None = None
-    env: tuple[EnvEntry, ...] | None = None
-    env_mode: EnvMode = EnvMode.REPLACE
-    env_drop: tuple[str, ...] = ()
-    stdout_path: str | None = None
-    stderr_path: str | None = None
-    process_group: bool = False
-    hold_stdin: bool = False
-    reap_group: bool = False
+    cwd: str | None
+    cwd = None
+    env: tuple[EnvEntry, ...] | None
+    env = None
+    env_mode: EnvMode
+    env_mode = ...
+    env_drop: tuple[str, ...]
+    env_drop = ...
+    stdout_path: str | None
+    stdout_path = None
+    stderr_path: str | None
+    stderr_path = None
+    process_group: bool
+    process_group = False
+    hold_stdin: bool
+    hold_stdin = False
+    reap_group: bool
+    reap_group = False
 
 @dataclass(frozen=True)
 class PollProcess(EffectBase):
@@ -98,11 +125,12 @@ class PollProcess(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class StopProcess(EffectBase):
     pid: int
-    stop_grace: float = 10.0
+    stop_grace: float
+    stop_grace = 10.0
 
 class ProcessSignal(StrEnum):
-    TERM = "term"
-    KILL = "kill"
+    TERM = 'term'
+    KILL = 'kill'
 
 @dataclass(frozen=True, kw_only=True)
 class SignalProcess(EffectBase):
@@ -135,7 +163,14 @@ class ProcessExited:
 class ProcessNotChild:
     pid: int
 
-def timed_out_outcome(stdout: str, stderr: str) -> Program[ProcessOutcome, Any]: ...
-def not_started_outcome(detail: str) -> Program[ProcessOutcome, Any]: ...
-def start_refusal(error_number: int, path: str) -> Program[str, Any]: ...
-def executable_file_answer(kind: PathKind, runnable: bool) -> Program[bool, Any]: ...
+def timed_out_outcome(stdout: str, stderr: str) -> _Program[ProcessOutcome, object]:
+    ...
+
+def not_started_outcome(detail: str) -> _Program[ProcessOutcome, object]:
+    ...
+
+def start_refusal(error_number: int, path: str) -> _Program[str, object]:
+    ...
+
+def executable_file_answer(kind: PathKind, runnable: bool) -> _Program[bool, object]:
+    ...
