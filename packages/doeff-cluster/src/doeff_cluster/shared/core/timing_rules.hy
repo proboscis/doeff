@@ -7,7 +7,8 @@
 ;;; 返事を待って止まっている — 周期の頭の自己停止の判断 desired-after-silence も走らない)→ 失敗の枝で fence を越えたと判じて止めの合図
 ;;; → 子の停止の猶予(止めの合図から待つ秒 + 強く止めてから待つ秒)。なので
 ;;;   移し替え ≥ fence + 返事の上限 + 接続の上限 + 子の停止の猶予
-;;; C4 は C4b(止め切りの後、job の子孫は 1 つも生きていない — #2940 の 2 段目で入れる)が成り立つ前提の上で意味を持つ。
+;;; C4 は C4b(止め切りの後、job の子孫は 1 つも生きていない — worker の条 stopped-job-leaves-no-descendant・#2940 の 2 段目)が成り立つ
+;;; 前提の上で意味を持つ。
 ;;; 値の定義の置き場は 1 か所にまとまっていない(fence と移し替え = shared/intent/protocol の ClusterTiming・返事と接続の上限 =
 ;;; foundation/coordinator_http の REPLY-SECONDS と CONNECT-SECONDS・停止の猶予 = worker/intent/worker_model の WorkerPolicy)ので、判断は
 ;;; 値を受け取る純関数にし、値を集めるのは呼び手(worker の入口の組み立てと、条の検 tests/test_cluster_timing.hy)。

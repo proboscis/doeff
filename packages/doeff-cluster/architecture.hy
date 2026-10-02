@@ -42,6 +42,19 @@
 ;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の定数から内訳を作って判断に渡す — 数を検に
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
+;;;   C4b stopped-job-leaves-no-descendant(doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant — #2940 の 2 段目)— job を
+;;;   止め切った後(止めの合図から停止の猶予 + KILL の猶予の後・worker が消えてから shim の期限の後・job が自分で終わったのを worker が観測
+;;;   した時)、job の子孫は 1 つも生きていない — job が別の session・process group で起こした孫も(C4 の止め切りはこの条の上で意味を持つ)。
+;;;   守るのは入れ物 shim(worker/entry/shim)の 1 か所: job を起こす前に自分を子孫の引き取り手(PR_SET_CHILD_SUBREAPER)にし、3 つの道で同じ
+;;;   片づけ(PPid が shim の process を KILL して回収することを、子が 0 になるまで)を 1 度だけ通してから終わる。範囲は Linux の worker
+;;;   (引き取りと /proc が要る — 使えない機体では shim が理由を stderr に 1 行出し、process group への合図だけで止める)。残る穴: shim
+;;;   自身が外から KILL された時(worker の停止の猶予の後の KILL・手の kill -9)は、引き取った子孫が PID 1 へ逃げる。模擬の SimWorker は
+;;;   process を起こさないので、確かめるのは本物の process の検 tests/test_shim_descendants.hy(本番の組み立て run-on-host のまま):
+;;;   test-a-job-stopped-by-the-worker-leaves-no-descendant・test-a-job-ignoring-the-stop-is-killed-by-the-shim-before-the-worker-kill・
+;;;   test-a-job-orphaned-by-the-worker-leaves-no-descendant・test-a-job-that-ends-by-itself-leaves-no-descendant(止め切りの時刻と、孫を最後に
+;;;   生きて見た時刻を判断に渡す)。失敗ケースは同じ file の test-a-shim-without-adoption-leaves-the-grandchild-and-c4b-names-it(引き取りを
+;;;   「使えない」と答える部品を渡した shim の変種 tests/fixtures/shim_without_adoption を差すと、別の session の孫が止め切りの後も残り、
+;;;   C4b がその孫を名指す)。
 ;;;   C5 revision-never-goes-back(doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back — #1976 の #36)— GET /state の
 ;;;   coordinator の版は、読んだ順に減らない(止まり置き場から作り直されても)。確かめるのは tests/test_local.hy の
 ;;;   test-the-coordinator-revision-never-goes-back-across-a-stop(止まりの前と作り直しの後の版を判断に渡す)。失敗ケースは同じ file の
@@ -101,7 +114,7 @@
                 "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"
                 "doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back"]})
 
-;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は worker の入口
+;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
 ;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)・intent(観測・記録・effect の型 — worker/intent)・
 ;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)・entry(worker の入口 main・drain の入口 drain_main(#2029)・子 process の入口
@@ -112,7 +125,8 @@
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(operator 2026-10-01 の補足「doeff-cluster の coordinator と worker の image は残る」)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.worker.entry.main"]
-   :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"]})
+   :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"
+                "doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant"]})
 
 ;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の

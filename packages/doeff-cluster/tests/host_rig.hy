@@ -71,7 +71,7 @@
 
 
 (defk run-on-host [settings program [around #()]]
-  {:pre [(: settings HostSettings) (: program Program) (: around tuple)] :post [(: % (| int ProcessView))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: settings HostSettings) (: program Program) (: around tuple)] :post [(: % (| int tuple ProcessView))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "Program を process-host と本物の答え手の下で回し、その答えを返すため。around = process-host と本物の答え手の間に置く handler(反例 —
    本物へ渡す前に StartProcess を書き換える壊した handler など)。"
   ;; with-handlers の並びは先頭が外側。process-host の session の値(子の表)は外側の state が持つ。

@@ -326,7 +326,9 @@
   ;; 失敗ケース(#2940): 時間切れの検めは group へ止めの合図を送り、合図から shim の期限(shim の猶予 + 掃除の余裕)まで KILL を送らない。
   ;; 以前は合図と同時に KILL を送った(起こしてから片づけまでが時間の上限とほぼ同じ — shim が子孫を片づける前に shim を殺す)。期限まで
   ;; 観測の中で待ち込む形も退ける — 観測は拍の時計を読んだ後に走るので、待ち込むと同じ拍の job の止めの合図が遅れる(観測 1 回が期限の
-  ;; 長さになる)。期限を過ぎれば強いて止め、本体は残らない。方針は短くして(shim の期限 3 秒)検の時間を抑える。
+  ;; 長さになる)。期限を過ぎれば強いて止め、本体は残らない。方針は短くして(shim の期限 3 秒)検の時間を抑える。2 段目から shim は
+  ;; 合図を捨てる本体を自分の猶予(期限より前)で KILL して片づけ、自分で終わるので、片づけの下限は合図 + shim の猶予(合図と同時の
+  ;; KILL は赤のまま)。
   (! (probe-tree tmp-path))
   (.write-text (/ tmp-path "probe_ignores.hy")
                (.join "\n" ["(import os signal time pathlib [Path])"
@@ -343,8 +345,9 @@
   (<- got tuple (run-probes settings (stopped-probe-scene ignores (str tmp-path) (/ tmp-path "ignorer.pid"))))
   (val view (get got 0))
   (assert (in "終わらない" view.detail) view.detail)
-  (assert (>= (- view.failed-ms view.started-ms) (+ (* timeout-seconds 1000) deadline-ms))
-          (.format "合図から shim の期限 {} ms を待たずに KILL を送った(起こしてから片づけまで {} ms)" deadline-ms (- view.failed-ms view.started-ms)))
+  (val grace-ms settings.shim.shim-grace-ms)
+  (assert (>= (- view.failed-ms view.started-ms) (+ (* timeout-seconds 1000) grace-ms))
+          (.format "合図から shim の猶予 {} ms を待たずに KILL を送った(起こしてから片づけまで {} ms)" grace-ms (- view.failed-ms view.started-ms)))
   (assert (< (get got 1) (/ deadline-ms 1000 2)) (.format "観測 1 回が {:.3f} 秒待ち込んだ" (get got 1)))
   (! (assert-gone (get got 2) "時間切れの検めの本体")))
 

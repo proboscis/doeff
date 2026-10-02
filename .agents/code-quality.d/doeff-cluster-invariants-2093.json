@@ -17,7 +17,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/worker/core/invariants.hy"
       ],
-      "responsibility": "worker の業務の不変条件(packages/doeff-cluster/architecture.hy の defservice worker の :invariants が名指す判断)— 条 W1: 入れ替え(handoff)の間も Ready の書き手が途切れない。記録(世代ごとの最初の Ready の時刻と終わった時刻)を受けて空白の区間の列を返す純関数(agora-redesign #2093)",
+      "responsibility": "worker の業務の不変条件(packages/doeff-cluster/architecture.hy の defservice worker の :invariants が名指す判断)— 条 W1: 入れ替え(handoff)の間も Ready の書き手が途切れない。記録(世代ごとの最初の Ready の時刻と終わった時刻)を受けて空白の区間の列を返す純関数(agora-redesign #2093)。条 C4b: 止め切りの後、job の子孫は 1 つも生きていない。記録(止め切りの時刻と、子孫ごとに生きているのを最後に見た時刻)を受けて破りの列を返す純関数と、その記録と破りの型(agora-redesign #2940)",
       "typed": true
     }
   ]
