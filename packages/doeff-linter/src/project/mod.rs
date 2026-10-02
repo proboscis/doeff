@@ -581,10 +581,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
-                    let files: Vec<SourceFile> = hy_files::collect(root)
+                    // 歩く範囲(根の下と設定の include — 根の外の検の dir も・agora-redesign #2821)。
+                    let files: Vec<SourceFile> = hy_files::walked(root, &settings.include)
                         .into_iter()
-                        .filter_map(|path| {
-                            let rel = relative_path(root, &path)?;
+                        .filter_map(|(rel, path)| {
                             (is_definition_file(&rel, definitions) || is_test_file(&rel, definitions))
                                 .then_some(SourceFile { rel, path, language: Language::Hy })
                         })
@@ -727,7 +727,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(judge_places(root, architecture, layers, &[file], enabled, PlaceScope::Single, Some(source)));
                 }
             }
-            if let (Some(definitions), Some(rel)) = (&settings.definitions, &rel) {
+            // 定義の書き方の規則の名乗りは歩く範囲で引く — 根の外でも設定の include の dir の下なら `..` を含む相対(全体の実行の
+            // hy_files::walked と同じ名乗り・agora-redesign #2821)。
+            let definition_rel = rel.clone().or_else(|| hy_files::walked_rel(root, &settings.include, &path));
+            if let (Some(definitions), Some(rel)) = (&settings.definitions, &definition_rel) {
                 if wants_definitions(enabled)
                     && language_of(&path) == Some(Language::Hy)
                     && (is_definition_file(rel, definitions) || is_test_file(rel, definitions))
@@ -4345,12 +4348,12 @@ fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<
                 Vec::new()
             }
         }
-        None => hy_files::collect(root)
+        // 歩く範囲(根の下と設定の include)の file — 定義の規則の母集団と同じ一覧(agora-redesign #2821)。
+        None => hy_files::walked(root, &settings.include)
             .par_iter()
-            .filter_map(|path| {
-                let rel = relative_path(root, path)?;
+            .filter_map(|(rel, path)| {
                 let source = std::fs::read_to_string(path).ok()?;
-                is_judged_file(&rel, &source, settings).then(|| unreadable::finding(&rel, path, &source)).flatten()
+                is_judged_file(rel, &source, settings).then(|| unreadable::finding(rel, path, &source)).flatten()
             })
             .collect(),
     }

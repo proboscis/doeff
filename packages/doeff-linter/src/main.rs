@@ -447,6 +447,12 @@ fn prepare(args: &Args) -> Result<Setup, String> {
             .map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
         (None, None) => ProjectSettings::default(),
     };
+    // 根の外で歩く dir(設定 file の dir から)。無い dir は黙って何も歩かない形にせず、設定の誤りとして止める(agora-redesign #2821)。
+    let include_base = config_dir.clone().unwrap_or_else(|| root.clone());
+    settings.include = config.iter().flat_map(|c| c.include.iter()).map(|dir| include_base.join(dir)).collect();
+    if let Some(missing) = settings.include.iter().find(|dir| !dir.is_dir()) {
+        return Err(format!("設定の include の dir {} が無い", missing.display()));
+    }
     settings.config_dir = config_dir;
     if let Some((path, text)) = &config_file {
         notices.extend(settings.unknown_rules.iter().map(|unknown| project::notice::rule_notice(path, text, unknown)));
@@ -887,7 +893,12 @@ fn run_editor(args: &Args) -> ExitCode {
     // 名指した Hy の file のうち linter が歩く範囲の外の物(層の規則が判じていない — 仕様 1 節「名指しの範囲の外」・agora-redesign #2821)。
     report.out_of_scope = match (&only, stdin_file.is_none() && setup.has_project_rules()) {
         (Some(named), true) => {
-            Some(project::hy_files::outside_walk(&setup.root, named, setup.declaration.as_deref()).iter().map(|p| p.to_string_lossy().into_owned()).collect())
+            Some(
+                project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, setup.declaration.as_deref())
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect(),
+            )
         }
         _ => None,
     };
@@ -1187,7 +1198,7 @@ fn run_normal(args: &Args) -> ExitCode {
         // この path の下だけを読む(Target::Whole の focus)。
         let only: Option<Vec<PathBuf>> = if args.modified { Some(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect())) } else { only_paths(&args.paths) };
         if let (Some(named), false) = (&only, args.modified) {
-            outside = project::hy_files::outside_walk(&setup.root, named, setup.declaration.as_deref());
+            outside = project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, setup.declaration.as_deref());
             for path in &outside {
                 eprintln!("{}", outside_line(path, &setup.root));
             }
