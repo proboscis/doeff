@@ -52,7 +52,7 @@ def _instruction_sources_with_fallbacks(env, agent_type, log, trace=None):
     if agent_type != "claude":
         return {}
     params = {}
-    home = os.environ.get("HOME", "")
+    home = env.get("HOME", "")                  # 世界の HOME(起動の env は世界の環境に宣言を重ねた物)
     for declared, shapes, key, kind in (
         (env.get(chain.CLAUDE_MEMORY_FILE_ENV, ""), _FALLBACK_MEMORY, "claude_memory_text", "read"),
         (env.get(chain.CLAUDE_SKILLS_DIR_ENV, ""), _FALLBACK_SKILLS, "claude_skills_dir", "stat"),

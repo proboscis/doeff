@@ -42,12 +42,12 @@
 | `evidence/probe_user_layer.sh` | 一致 |  |
 | `evidence/read_body_contract.sh` | 一致 |  |
 | `implementation-request.md` | 一致 |  |
-| `model/chain.py` | 一致 |  |
+| `model/chain.py` | 一致 | 2026-10-02 に環境変数の読み書きを引数へ直した(agora-redesign #3012)— 封の表の行は直した後の中身で作り直した。元の sha256 = `2391d69c…` |
 | `model/check_body_contract.py` | 一致 |  |
 | `model/test_chain.py` | 一致 |  |
-| `model/test_counterexamples.py` | 一致 |  |
+| `model/test_counterexamples.py` | 一致 | 2026-10-02 に環境変数の読み書きを引数へ直した(agora-redesign #3012)— 封の表の行は直した後の中身で作り直した。元の sha256 = `fffb27ae…` |
 | `model/test_scenario_checks.py` | 一致 |  |
-| `model/test_violations_are_rejected.py` | 一致 |  |
+| `model/test_violations_are_rejected.py` | 一致 | 2026-10-02 に環境変数の読み書きを引数へ直した(agora-redesign #3012)— 封の表の行は直した後の中身で作り直した。元の sha256 = `b9a90242…` |
 | `report.json` | 不一致 | 再生(記録に残る生成 script を実行・file の hash を含む欄は元と異なる) |
 
 一致 21 / 全 26(evidence/SHA256SUMS.txt 自体は担い手の目録のコピー)

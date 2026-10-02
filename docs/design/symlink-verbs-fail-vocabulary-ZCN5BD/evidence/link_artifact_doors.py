@@ -19,11 +19,22 @@ import tempfile
 import time
 
 import hy  # noqa: F401  (Hy の import hook)
-from doeff import run
+from doeff import run, with_handlers
 from doeff_agents.sessionhost import effects, substrate
+from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects.process_effects import ReadEnvironment
 
 HANDLER = substrate.real_substrate("tmux")
-ROUNDS = int(os.environ.get("ROUNDS", "200"))
+ROUNDS_ENV = "ROUNDS"
+DEFAULT_ROUNDS = 200
+
+
+def rounds_of(entries):
+    """回数を ReadEnvironment の答え(在る分だけの EnvEntry)から読む — 環境変数 ROUNDS が無ければ既定の 200 回。"""
+    for entry in entries:
+        if entry.name == ROUNDS_ENV:
+            return int(entry.value)
+    return DEFAULT_ROUNDS
 
 
 def ship(source_path, target_path):
@@ -131,13 +142,13 @@ def reap(pids, deadline):
             time.sleep(0.001)
 
 
-def race(base, which):
+def race(base, which, rounds):
     source = os.path.join(base, f"{which}-src.jsonl")
     with open(source, "w") as handle:
         handle.write('{"type":"summary"}\n')
     tally = {}
     wrong = []
-    for round_index in range(ROUNDS):
+    for round_index in range(rounds):
         target_project = os.path.join(base, f"{which}-proj-{round_index}")
         os.makedirs(target_project)
         target = os.path.join(target_project, "sessions-index.json")
@@ -202,16 +213,17 @@ def refusals(base, label, verb):
 
 
 def main():
+    rounds = rounds_of(run(with_handlers([subprocess_handler], ReadEnvironment((ROUNDS_ENV,)))))
     base = os.path.realpath(tempfile.mkdtemp(prefix="link-artifact-doors-"))
     print(f"# 機体 {platform.node()} / {platform.system()} {platform.release()} / python {sys.version.split()[0]}")
     print(f"# 検体 = 本線 7451fa17 の substrate.hy FsLinkArtifact(実 handler を駆動)")
-    print(f"# 回数 = {ROUNDS} 回 × 2 process / 作業 dir = {base}")
+    print(f"# 回数 = {rounds} 回 × 2 process / 作業 dir = {base}")
     print()
     for which, label in (("ship", "出荷"), ("fixed", "試作")):
-        tally, wrong = race(base, which)
-        print(f"-- 同拍の競り({label}・{ROUNDS} 回 × 2 席 = {ROUNDS * 2} 呼び出し)--")
+        tally, wrong = race(base, which, rounds)
+        print(f"-- 同拍の競り({label}・{rounds} 回 × 2 席 = {rounds * 2} 呼び出し)--")
         for key in sorted(tally):
-            print(f"  {key:24s} {tally[key]:5d}  ({100.0 * tally[key] / (ROUNDS * 2):.1f} %)")
+            print(f"  {key:24s} {tally[key]:5d}  ({100.0 * tally[key] / (rounds * 2):.1f} %)")
         print(f"  根が正しい先を指さない回: {len(wrong)}")
         print()
     refusals(base, "ship", ship)
