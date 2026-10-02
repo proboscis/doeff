@@ -5,7 +5,6 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 import contextlib as contextlib
 import fnmatch as fnmatch
-import importlib.util
 import io as io
 import os as os
 import signal as signal

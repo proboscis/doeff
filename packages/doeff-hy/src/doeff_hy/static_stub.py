@@ -552,14 +552,29 @@ def _bound(statement: ast.stmt) -> tuple[str, ...]:
             return ()
 
 
+def _unread_dotted(line: ast.stmt, reads: set[str]) -> bool:
+    """点つきの module の import(`import a.b`)で、宣言が頭の名 `a` を読まない物か — 写さないため。使い手に名を公開しない
+    import で、defrecord の展開が引く `doeff_hy.record` のように .pyi に依存だけを足していた(品質検査の module の依存の
+    契約に当たった — #2886)。宣言が `a.b.X` を読むなら残す。"""
+    match line:
+        case ast.Import(names=[ast.alias(name=name, asname=None)]) if "." in name:
+            return name.split(".")[0] not in reads
+        case _:
+            return False
+
+
 def _render(state: _Scan, source_name: str) -> StubText:
     """読み終えた状態から .pyi の本文を組む(補助の型の import は宣言が読む物だけ・同じ import は 1 つに)。"""
     declared = state.declarations
     body = [d.node for index, d in enumerate(declared) if d.name not in {e.name for e in declared[index + 1 :]}]
     keys = [ast.unparse(line) for line in state.imports]
-    imports = [line for index, line in enumerate(state.imports) if keys[index] not in keys[:index]]
-    bound = {name for line in imports for name in _bound(line)}
     reads = {n.id for statement in body for n in ast.walk(statement) if isinstance(n, ast.Name)}
+    imports = [
+        line
+        for index, line in enumerate(state.imports)
+        if keys[index] not in keys[:index] and not _unread_dotted(line, reads)
+    ]
+    bound = {name for line in imports for name in _bound(line)}
     head = [
         ast.ImportFrom(module=helper.module, names=[ast.alias(name=helper.name, asname=helper.asname)], level=0)
         for helper in _HELPERS

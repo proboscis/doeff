@@ -228,6 +228,25 @@ def test_a_defeffect_stub_carries_no_macro_bookkeeping_field(tmp_path: Path) -> 
     assert "_doeff_ClassVar" not in text
 
 
+def test_a_dotted_module_import_no_declaration_reads_is_not_copied(tmp_path: Path) -> None:
+    # 失敗ケース(#2886): defrecord の展開が引く `import doeff_hy.record` を .pyi に写すと、宣言はどれも読まないのに
+    # .pyi が doeff_hy.record に依存する形になり、品質検査の module の依存の契約(dependency-not-allowed)に当たった
+    # (meter_effects の手の .pyi を道具の出力に置き換えた時)。点つきの import は使い手に名を公開しないので写さない。
+    # 頭の辞書つきの defrecord の展開は `(import doeff_hy.declarations doeff_hy.record)` を出す。
+    checked = """\
+(require doeff-hy.record [defrecord])
+
+(defrecord Amount
+  "負でない量。"
+  {:tags {:context "probe" :role "type"}
+   :check [(>= value 0)]}
+  (#^ int value))
+"""
+    lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, checked)).text.splitlines()
+    assert "class Amount:" in lines
+    assert [line for line in lines if line.startswith("import doeff_hy.")] == []
+
+
 def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:
     # 失敗ケース(#2886): 使い手の `(<- n (Pong target))` の n は、生成された .pyi の基底が Unknown だったので Unknown に読まれ、
     # strict の型検査が「型が分からない」の赤を 7 件出した。答えの型 int が基底に載れば、n は int に読める。
