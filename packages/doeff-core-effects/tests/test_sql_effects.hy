@@ -31,12 +31,18 @@
 (import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
                                                 clickhouse-insert-request clickhouse-rows clickhouse-written-rows clickhouse-failure
                                                 clickhouse-schema-statements ClickHouseDatabase ClickHouseResponse ClickHouseParam])
+(import disposable_postgres [session-postgres-skip-reason])
 
 (val DB "store")
 (val POSTGRES-DSN (os.environ.get "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val CLICKHOUSE-URL (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_URL"))
-;; 実 PG の検の skip(DSN か psycopg が無い)。
-(val POOLED-SKIP (or (is POSTGRES-DSN None) (is (importlib.util.find-spec "psycopg") None)))
+;; 実 PG の検の skip(DSN か psycopg が無い)。DSN は env が無ければ conftest が立てた使い捨ての PostgreSQL の物
+;; (postgres_support/disposable_postgres.py — agora-redesign #2830)。立てられなかった時は、その理由を名指す。
+(val POSTGRES-SKIP-REASON (session-postgres-skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN"))
+(val POOLED-SKIP-REASON (cond POSTGRES-SKIP-REASON POSTGRES-SKIP-REASON
+                              (is (importlib.util.find-spec "psycopg") None) "psycopg が無い(uv run --with psycopg で足す)"
+                              True ""))
+(val POOLED-SKIP (bool POOLED-SKIP-REASON))
 
 ;; 検の表: 主鍵つきの行の表と、一意の索引を持つ表。
 (val ITEMS (SqlTable :name "items"
@@ -465,10 +471,21 @@
       (try
         (setv [client _] (.accept self.listener))
         (except [OSError] (return None)))
-      (setv upstream (socket.create-connection self.target))
+      (setv upstream (.connect-upstream self))
       (with [self.lock] (.extend self.live [client upstream]))
       (for [[a b] [[client upstream] [upstream client]]]
         (.start (threading.Thread :target self.pipe :args #(a b) :daemon True)))))
+
+  (defn connect-upstream [self]  ; defk にできない: 検の殻の socket を開く
+    "行き先へ繋ぐため。host が / で始まれば PostgreSQL の unix socket の dir へ繋ぐ(使い捨ての PostgreSQL は TCP で待ち受けない
+     — agora-redesign #2830)。"
+    (setv #(host port) self.target)
+    (if (.startswith host "/")
+      (do
+        (setv upstream (socket.socket socket.AF-UNIX socket.SOCK-STREAM))
+        (.connect upstream (os.path.join host (.format ".s.PGSQL.{}" port)))
+        upstream)
+      (socket.create-connection self.target)))
 
   (defn pipe [self a b]  ; defk にできない: 検の殻の thread の target
     "a から読んだ bytes を b へ流すため(どちらかが閉じたら終わる)。"
@@ -494,7 +511,7 @@
 
 
 (deftest test-postgres-recovers-after-the-connection-is-cut-mid-way
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 実 PG の反例(#1479 の受入 — 本番の DB の pod は入れ替えない): 中継の口で接続を途中で閉じると、その接続の次の文は
   ;; SqlUnreachable、その次の文は新しい接続で 25 秒以内に答える(切れた接続は返す時に捨てられ、次の借りが張り直す)。
   (import psycopg.conninfo [conninfo-to-dict make-conninfo])
@@ -544,7 +561,7 @@
 
 
 (deftest test-postgres-cuts-a-stalled-transaction-so-its-lock-is-freed
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 実 PG(agora-redesign #1846 の反例): 錠を持ったまま止まった transaction は、上限(0.5 秒)で engine が切って錠を外し、同じ錠の
   ;; transaction が通る。上限の無い接続では錠が外れず、同じ錠の transaction は文の上限(3 秒)で 57014 に落ちる(2026-09-30 の着地の台帳の
   ;; 事故の形)。
@@ -556,7 +573,7 @@
 
 
 (deftest test-postgres-cuts-a-statement-at-the-statement-timeout
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 実 PG: 文の上限(0.5 秒)を超えた文は engine が取り消し(57014)、SqlFailed で返る。接続は返されて次の文が答える。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN "")))
                                         :timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10
@@ -676,8 +693,7 @@
 
 
 (deftest test-postgres-answers-like-the-sqlite-handler
-  {:skip-if (or (is POSTGRES-DSN None) (is (importlib.util.find-spec "psycopg") None))
-   :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
   (try
     (<- real (with-handler [(postgres-sql-handler connections)] (postgres-journey)))
@@ -813,7 +829,7 @@
 
 
 (deftest test-pooled-postgres-answers-like-the-sqlite-handler
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
   (val pool (ThreadPoolExecutor :max-workers 2))
   (try
@@ -826,7 +842,7 @@
 
 
 (deftest test-pooled-postgres-does-not-block-the-scheduler
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 接続 1 本: 遅い問い合わせが許可を持ち、2 つ目は許可を待つ。その間も別の task の刻みが遅れない。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (ThreadPoolExecutor :max-workers 1))
@@ -844,7 +860,7 @@
 
 
 (deftest test-pooled-postgres-takes-the-same-advisory-lock-as-before
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (import psycopg)
   (val keys #("records-writer" "agora-records-writer" "records-migrate" "会話-01J0000000000000000000000"))
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
@@ -864,7 +880,7 @@
 
 
 (deftest test-pooled-postgres-rolls-back-and-returns-the-connection-on-cancel
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (import psycopg)
   ;; 接続 1 本: 取り消しの後の問い合わせが通れば、許可と接続が返っている。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
@@ -915,7 +931,7 @@
 
 
 (deftest test-postgres-returns-the-connection-of-a-transaction-the-run-left-behind
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 根(agora-redesign #1859 / #2684): run の親が終わる時に途中の transaction の task を捨てると、接続を返す finally が走らず、
   ;; 接続は借りたまま・transaction の途中のまま残った(貸し出しの空き 0・許可の空き 0)。今は run の終わりに Cancel が届き、
   ;; finally が rollback して接続を返す。
@@ -964,7 +980,7 @@
 
 
 (deftest test-postgres-reads-an-administrator-disconnect-as-unreachable
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 実 PG の反例: 問い合わせの途中で接続を管理者に切られた(57P01)答えは、同期の答え手でも塞がない答え手でも SqlUnreachable
   ;; (#880 の裁定の前は SqlFailed(57P01))。
   (val sync-answer (answer-while-terminated (fn [connections] [(postgres-sql-handler connections)])))
@@ -1002,7 +1018,7 @@
 
 
 (deftest test-postgres-does-not-block-the-scheduler
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 接続 1 本: 遅い問い合わせ(pg_sleep 1 秒)が接続を持ち、2 つ目は接続を待つ。その間も別の task の刻みが遅れない。答え手は
   ;; postgres-sql-handler 1 つだけ(state も pool も被せない — 組み立ての側は変わらない)。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
@@ -1020,7 +1036,7 @@
 
 
 (deftest test-postgres-serializes-only-transactions-with-the-same-lock-key
-  {:skip-if POOLED-SKIP :skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN が無い(か psycopg が無い)"}
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   ;; 接続 2 本: 同じ鍵の transaction 2 つは錠で直列(時刻の区間が重ならない)・違う鍵なら並ぶ(区間が重なる — 直列なのは錠のためで、
   ;; scheduler が塞がれたためではない)。どちらの間も別の task の刻みは遅れない。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))

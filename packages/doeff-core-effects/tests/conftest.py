@@ -6,6 +6,9 @@
   meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy(agora-redesign #1440)・
   stack_dump_contract_handlers.hy(agora-redesign #2748)が持ち、ここはその表を
   引いて scheduler つきで 1 回回すだけ。外の module が要る解釈器(REQUIRES)は、その module の無い環境では skip する。
+- 実 PostgreSQL の検(test_sql_effects.hy)の DSN の env は、pytest_configure(検の module の import より前)で
+  postgres_support/disposable_postgres.py が用意する — env が無ければ使い捨ての PostgreSQL を立てる(agora-redesign #2830・
+  doeff-records の tests の conftest も同じ部品を呼ぶ)。
 """
 
 from __future__ import annotations
@@ -27,6 +30,19 @@ TESTS_DIR = Path(__file__).resolve().parent
 # with other testpaths (pytest only prepends a test file's own directory lazily).
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
+
+# 使い捨ての PostgreSQL の部品(doeff-records の tests の conftest も同じ dir を読む — 置き場は 1 か所)。
+POSTGRES_SUPPORT_DIR = TESTS_DIR / "postgres_support"
+if str(POSTGRES_SUPPORT_DIR) not in sys.path:
+    sys.path.insert(0, str(POSTGRES_SUPPORT_DIR))
+
+from disposable_postgres import provide_session_postgres  # noqa: E402 - sys.path の後
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """検の module が DSN の env を読む前に、使い捨ての PostgreSQL を用意する(env が在ればそれを使う)。"""
+    provide_session_postgres(config)
+
 
 # 契約テストでない deftest の名: handler は各 deftest が本体の中で被せる(test_sql_effects.hy)。
 PLAIN = "plain"

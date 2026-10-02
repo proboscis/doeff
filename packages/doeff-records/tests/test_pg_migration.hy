@@ -3,7 +3,7 @@
 ;; (移行の文が流れるのは prepare-records-store の 1 度だけ)。
 ;; 反例: 移行の錠を取らない答え手では、同時の用意が CREATE … IF NOT EXISTS の競り合いで UniqueViolation(SQLSTATE 23505)になる
 ;; (「出ない」の判定が赤になる形 — 判定が何も確かめずに緑になる形を外す)。
-;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ skip。
+;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [deftest val])
 (import os)
 (import threading)
@@ -16,10 +16,12 @@
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store RecordsSqlFailed DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [schema-statements])
-(import tests.interpreters [PG-DSN-VARIABLE DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
+(import tests.interpreters [PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 
 (val PG-DSN (.get os.environ PG-DSN-VARIABLE))
+;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
+(val PG-SKIP-REASON (pg-skip-reason))
 (val RACERS 4)
 (val ROUNDS 10)
 
@@ -54,7 +56,7 @@
 
 
 (deftest test-concurrent-prepares-of-one-store-raise-no-unique-violation
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 別の process(replicas > 1・入れ替えの重なり)の代役: 新しい置き場を RACERS 本の接続が同時に用意する。
   (for [prefix (lfor _ (range ROUNDS) (fresh-prefix))]
     (try
@@ -63,7 +65,7 @@
 
 
 (deftest test-without-the-migrate-lock-concurrent-prepares-collide
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 反例: 移行の錠を外すと、同じ競り合いで UniqueViolation(23505)が出る(IF NOT EXISTS だけでは防げない)。
   (val seen [])
   (for [prefix (lfor _ (range ROUNDS) (fresh-prefix))]
@@ -74,7 +76,7 @@
 
 
 (deftest test-concurrent-requests-do-not-migrate-again
-  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 起動直後の同時の要求の代役: 表を 1 度用意した後、RACERS 本の要求が同時に読む。移行の文は最初の 1 度だけ流れる。
   (val prefix (fresh-prefix))
   (val counts (StatementCounts))
