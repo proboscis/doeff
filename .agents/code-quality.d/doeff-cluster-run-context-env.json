@@ -5,6 +5,7 @@
   "modules": [
     {
       "allow": [
+        "doeff-cluster-process-versions",
         "doeff-cluster-run-context",
         "doeff-cluster-run-context-rules"
       ],
