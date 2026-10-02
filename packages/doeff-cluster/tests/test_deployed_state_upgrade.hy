@@ -46,4 +46,5 @@
   (val service-answer (responded ticked (http-request "GET" "/resources/Service/beacon" {} None :actor "test") NOW (ClusterTiming)))
   (assert (= (get service-answer 1) 200) service-answer)
   ;; この版の綴りで置き場へ書き戻せる(次の checkpoint の形)。
-  (assert (in "task/" (.join " " (full-kv ticked))) (sorted (full-kv ticked))))
+  (<- kv dict (full-kv ticked))
+  (assert (in "task/" (.join " " kv)) (sorted kv)))

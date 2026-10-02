@@ -192,7 +192,7 @@
    書き換えない)。"
   (<- parts SimParts (PartsOf))
   (<- now int (now-epoch-ms))
-  (state-from-kv (.load parts.store) now))
+  (! (state-from-kv (.load parts.store) now)))
 
 
 (defhandler sim-side []

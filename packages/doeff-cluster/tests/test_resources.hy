@@ -166,7 +166,7 @@
 (deftest test-legacy-state-file-is-adopted-with-versions-and-a-legacy-owner
   (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "needs" ["net"] "pin" None "run" SAMPLE-RUN}]
                 "assignments" {} "workers" [] "tasks" [] "nextTask" 1 "board" {"k" 1}}) ; 改名の前の file の形
-  (setv s (adopt-legacy (state-from-json legacy 1000) 1000 T))
+  (setv s (adopt-legacy (! (state-from-json legacy 1000)) 1000 T))
   (assert (= (. (get s.jobs 0) owner) LEGACY-OWNER))
   (assert (is-not (rv s "Service" "turn-runner") None))
   (assert (= (. (get s.audit -1) actor) "migration"))
@@ -189,7 +189,7 @@
 
 (deftest test-board-rows-have-their-own-versions-and-only-written-rows-are-saved
   (setv big (dfor i (range 16) (.format "shadow-a/rows/{:02x}" i) (* "x" 1000)))
-  (setv s (ClusterState :board (board-rows-of big {})))
+  (setv s (ClusterState :board (! (board-rows-of big {}))))
   (val reply-22 (call s "PUT" "/board/writer-a/cycle" {"value" {"n" 1}} :actor None))
   (val s2 (get reply-22 0))
   (var status (get reply-22 1))
