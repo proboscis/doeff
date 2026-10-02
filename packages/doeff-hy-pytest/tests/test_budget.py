@@ -22,9 +22,11 @@ from doeff_hy_pytest.budget import (
     SettingError,
     UncheckedVmBuild,
     Verdict,
+    VmWork,
     WithinBudget,
     call_budget_for,
     judge,
+    judge_steps,
     load_registries,
     load_registry,
     parse_marker_budgets,
@@ -628,3 +630,121 @@ def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilatio
     assert cold.count == 1 and cold.cpu_seconds > 0
     assert cached.count == 0
     assert outside.count == 0
+
+
+# ── 歩数で判じる(agora-redesign #2670・#2852)──────────────────────────────────────────────
+# 数の口(doeff_vm.doeff_vm.vm_work_counts)だけを、検の中から歩数を足せる偽の関数に差し替える。CPU 秒が揺れても歩数は
+# 決まった数なので、判定が数なら同じ検は毎回同じ判定になる。
+
+FAKE_WORK = """\
+STEPS = [0]
+
+
+def add(steps):
+    STEPS[0] += steps
+
+
+def counts():
+    return (STEPS[0], 0)
+"""
+
+PIN_FAKE_WORK = (
+    "\nimport doeff_vm.doeff_vm as _ext\nimport fake_work\n\n_ext.vm_work_counts = fake_work.counts\n"
+)
+
+MANY_STEPS = """\
+(require doeff-hy.macros [deftest])
+(import fake_work)
+(deftest test-many-steps
+  (fake_work.add 10000)
+  (assert True))
+(deftest test-few-steps
+  (fake_work.add 10)
+  (assert True))
+"""
+
+STEPS_FAIL_INI = (
+    'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
+    'doeff_test_budget_judge = "steps"\ndoeff_test_call_budget_steps = "1000"\n'
+)
+
+
+def _steps_project(pytester: pytest.Pytester, ini: str, files: dict[str, str], *, fake: bool = True) -> None:
+    pytester.makepyfile(fake_work=FAKE_WORK)
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD + (PIN_FAKE_WORK if fake else ""))
+    pytester.makepyprojecttoml('[tool.pytest.ini_options]\ndoeff_adr_hy_files = ["test_*.hy"]\n' + ini)
+    pytester.makefile(".hy", **files)
+
+
+def _steps_measurement(steps: int, key: str = "t.hy::test") -> Measurement:
+    return Measurement(
+        key=key, phase="call", cpu_seconds=9.0, wall_seconds=9.0, compile=CompileTally(0, 0.0), work=VmWork(steps, 0)
+    )
+
+
+def test_judge_steps_uses_the_steps_not_the_cpu_seconds() -> None:
+    """歩数の判定は CPU 秒を見ない — CPU 9 秒でも歩数が上限の内なら内、上限を超えれば超え。"""
+    assert isinstance(judge_steps(_steps_measurement(500), 1000, {}), WithinBudget)
+    over = judge_steps(_steps_measurement(1500), 1000, {})
+    assert isinstance(over, OverBudget) and over.unit == "steps" and over.budget == 1000
+    assert isinstance(judge_steps(_steps_measurement(1500), 1000, {"t.hy::test": "既存"}), RegisteredOverBudget)
+    stale = judge_steps(_steps_measurement(400), 1000, {"t.hy::test": "既存"})
+    assert isinstance(stale, RegisteredWithinBudget) and stale.stale
+    assert not judge_steps(_steps_measurement(800), 1000, {"t.hy::test": "既存"}).stale
+
+
+def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps(pytester: pytest.Pytester) -> None:
+    """判定が steps の時: 歩数が上限を超えた検は CPU が速くても赤・CPU を 0.3 秒回しても歩数が少ない検は緑。"""
+    spin_few = f"(require doeff-hy.macros [deftest])\n{SPIN}\n(import fake_work)\n(deftest test-spin\n  (fake_work.add 10)\n  (spin 0.3)\n  (assert True))\n"
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_steps": MANY_STEPS, "test_spin": spin_few})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2, failed=1)
+    result.stdout.fnmatch_lines(["*test_steps.hy::test_many_steps*歩数 10000*上限 歩数 1000*"])
+    result.stdout.fnmatch_lines(["*実行は doeff-vm の歩数で判じる*"])
+
+
+def test_steps_judge_without_the_counter_names_it_and_judges_seconds(pytester: pytest.Pytester) -> None:
+    """数の口が無い build では、黙って通さず名指しの警告を出し、CPU 秒で判じる(遅い検は赤)。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_slow": SLOW_CALL}, fake=False)
+    pytester.makeconftest(
+        CONFTEST + PIN_UNCHECKED_VM_BUILD + "\nimport doeff_vm.doeff_vm as _ext\n"
+        "if hasattr(_ext, 'vm_work_counts'):\n    del _ext.vm_work_counts\n"
+    )
+    result = pytester.runpytest("-q", "-W", "default")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(["*doeff_test_budget_judge = steps だが歩数で判じられない*CPU 秒で判じる*"])
+
+
+def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pytester) -> None:
+    """歩数は不変条件の検査の有無で変わらないので、検査つきの build でも fail の形なら赤にする(秒は報告だけのまま)。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_steps": MANY_STEPS})
+    pytester.makeconftest(
+        CONFTEST + "\nimport doeff_vm\n\ndoeff_vm.invariant_checks_enabled = lambda: True\n" + PIN_FAKE_WORK
+    )
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=1)
+
+
+def test_a_marked_real_io_test_stays_on_seconds(pytester: pytest.Pytester) -> None:
+    """印ごとの秒の上限に当たる検(本物の I/O を持つ検)は、判定が steps でも秒で判じる — 歩数に重さが出ないため。"""
+    marked = "(require doeff-hy.macros [deftest])\n(import pytest fake_work)\n(setv pytestmark [pytest.mark.real_world])\n(deftest test-io\n  (fake_work.add 10000)\n  (assert True))\n"
+    _steps_project(
+        pytester,
+        STEPS_FAIL_INI + 'doeff_test_call_budget_by_marker = ["real_world=10"]\nmarkers = ["real_world: 本物の I/O"]\n',
+        {"test_io": marked},
+    )
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1)
+
+
+def test_the_steps_registry_is_separate_and_a_stale_steps_row_fails(pytester: pytest.Pytester) -> None:
+    """歩数の登録簿は秒の登録簿と分かれる: 歩数の登録簿に載った超過は緑・上限の半分以下で終わった歩数の登録は古い登録として赤。"""
+    _steps_project(
+        pytester, STEPS_FAIL_INI + 'doeff_test_budget_steps_registry = ["steps-breaches"]\n', {"test_steps": MANY_STEPS}
+    )
+    registry = pytester.mkdir("steps-breaches")
+    for key in ("test_steps.hy::test_many_steps", "test_steps.hy::test_few_steps"):
+        (registry / registry_file_name(key)).write_text(f"{key}\n既存の重い検\n", encoding="utf-8")
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(["*test_few_steps は登録簿に載っているが*上限 歩数 1000 の*"])
