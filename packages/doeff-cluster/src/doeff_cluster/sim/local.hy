@@ -1146,10 +1146,11 @@
 
 
 (defk tracked-child [pid body priority daemon]
-  {:pre [(: pid int) (: body Program) (: priority int) (: daemon bool)] :post [(: % "body の答え")]
+  {:pre [(: pid int) (: body (| Program EffectBase)) (: priority int) (: daemon bool)] :post [(: % "body の答え")]
    :tags {:context "doeff-cluster" :role "program"}}
   "process pid の中で Spawn した task の本体: body を同じ handler の下の task として起こし、その把手を世界に覚えさせ(process の終わりで
-   取り消す)、答えを待って返すため。呼び手がこの task を取り消せば body も取り消す。"
+   取り消す)、答えを待って返すため。呼び手がこの task を取り消せば body も取り消す。body は本番の Spawn と同じく Program か効果 1 つ
+   (効果をそのまま Spawn する Program も、本番と同じく sim で走る — #2938)。"
   (<- inner Task (TrackedSpawn body :priority priority :daemon daemon))
   (<- (KeepChild pid inner))
   (try
