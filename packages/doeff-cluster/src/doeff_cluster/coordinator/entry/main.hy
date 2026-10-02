@@ -23,6 +23,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix] doeff_cluster.coordinator.protocol.state_json [state-from-json])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
 (import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster.coordinator.protocol.store [DurableStore durable-exists durable-load durable-persist durable-checkpoint])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.core.resource_policy [adopt-legacy])
 (import doeff_cluster.coordinator.protocol.kube [kube-api kube-unavailable] doeff_cluster.foundation.kube_client [KubeClient] doeff_cluster.coordinator.intent.kube_model [KubeUnavailable])
@@ -64,15 +65,17 @@
 
 
 (defk load-state [state-file store now]
-  {:pre [(: state-file str) (: store WalStore) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "main"}}
+  {:pre [(: state-file str) (: store DurableStore) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "main"}}
   "coordinator が受け付けを始める前に、耐久の置き場(snapshot + log)から状態を読むため。置き場がまだ無ければ、以前の形の file から移す
    (legacy-state)。移した結果は snapshot に書き(fsync 済み)、元の file はそのまま残す(戻す時に使える)。以前の形の file の読みは
-   file system の effect・1 行の報告は slog で、入口が答え手を並べる。置き場の読み書きは置き場の値を直に呼ぶ(#2760・#2764 で effect へ)。"
-  (when (.exists store)
+   file system の effect・1 行の報告は slog で、入口が答え手を並べる。置き場の読み書きは置き場の口(protocol/store の durable-exists・
+   durable-load・durable-persist・durable-checkpoint — file と memory の置き場を切り分ける・#2785)を通す。"
+  (when (! (durable-exists store))
     ;; 改名の前の置き先の鍵は、新しい鍵を書き終えてから消す(durable_kv.legacy-key-moves の 2 つの書きを順に fsync)。
-    (val moves (legacy-key-moves (.load store)))
+    (<- loaded dict (durable-load store))
+    (val moves (legacy-key-moves loaded))
     (for [delta moves]
-      (.persist store delta))
+      (<- (durable-persist store delta)))
     (when moves
       (<- (slog (.format "coordinator: 置き先の鍵を新しい名へ移した({} 件)" (len (get moves -1))))))
     (val resumed (resume-after-downtime (state-from-kv store.kv now) now))
@@ -80,19 +83,19 @@
     (val gap (get resumed 1))
     ;; ずらした時計(worker の最後の連絡・task の lease・Rollout の段の起点)と生きていた時刻を、受け付けを始める前に耐久にする
     ;; (durable_kv.resume-writes)。
-    (.persist store (resume-writes store.kv state))
+    (<- (durable-persist store (resume-writes store.kv state)))
     (when (> gap 0)
       (<- (slog (.format "coordinator: 止まっていた {:.1f} 秒を、進行中の Rollout の段と task の lease の時間に数えない" (/ gap 1000)))))
     (when store.recovered
       (<- (slog (.format "coordinator: 置き場の読み直しで最後の読めない行を捨てた: {}" store.recovered))))
     (return state))
-  (.load store)
+  (<- (durable-load store))
   (<- legacy (| ClusterState None) (legacy-state state-file now))
   ;; 置き場の無いところから起きた: task の id の頭を起動ごとに違う物にする(前の coordinator の id を振り直さない — #757)。
   (when (is legacy None)
     (return (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
   (setv store.kv (full-kv legacy))
-  (.checkpoint store)
+  (<- (durable-checkpoint store))
   (<- (slog (.format "coordinator: 以前の形の状態を追記の log の置き場へ移した(Service {}・盤 {} 行・版 {})"
                      (len legacy.jobs) (len legacy.board) legacy.revision)))
   legacy)

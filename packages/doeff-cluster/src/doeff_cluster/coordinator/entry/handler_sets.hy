@@ -19,7 +19,7 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
-(import doeff_cluster.foundation.wal_store [WalStore MAX-LOG-BYTES apply-delta] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
+(import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
@@ -33,19 +33,22 @@
 
 ;; --- まねた環境 -------------------------------------------------------------------------------
 
-(defclass MemoryWalStore [WalStore]
-  "memory の置き場(WalStore と同じ口 — load-state と wal-store がそのまま使える)。deltas = Persist の列(書いた順)。
+(defclass MemoryWalStore []
+  "memory の置き場 — 差分の口の置き場(protocol/store の DeltaStore の形)なので、load-state と wal-store が置き場の口
+   (durable-load・durable-persist ほか)を通してそのまま使える。file を持たないので行と写しの形を綴らない(#2785)。
+   kv = 耐久になった全部のキー・deltas = Persist の列(書いた順)・recovered = 読み直しで捨てた行の記録(memory では捨てないので None)。
    fail-at = 失敗させる Persist の番号(1 から — fsync の失敗の注入。その番号の Persist は何も書かずに OSError)。"
+  (#^ (get dict #(str object)) kv)
+  (#^ (| (get dict #(str object)) None) recovered)
   (defn #^ None __init__ [self]
-    (setv self.kv {} self.seq 0 self.deltas [] self.fail-at (set) self.recovered None self.handle None
-          self.fsync-seconds [] self.max-log-bytes MAX-LOG-BYTES)
+    (setv self.kv {} self.seq 0 self.deltas [] self.fail-at (set) self.recovered None)
     None)
 
   (defn #^ bool exists [self] (or (> self.seq 0) (bool self.kv)))
 
   (defn #^ dict load [self] self.kv)
 
-  (defn #^ None persist [self #^ dict delta]
+  (defn #^ None persist [self #^ (get dict #(str object)) delta]
     (when (not delta) (return None))
     (when (in (+ self.seq 1) self.fail-at)
       (.discard self.fail-at (+ self.seq 1))
@@ -53,7 +56,10 @@
     (+= self.seq 1)
     (setv copied (copy.deepcopy delta))
     (.append self.deltas copied)
-    (apply-delta self.kv (copy.deepcopy copied))
+    ;; 当て方は file の置き場と同じ(消えたキーは None — protocol/wal_format の apply-delta)。この method は Program の外なので
+    ;; defk を呼ばずに同じ 2 通りをここで当てる。
+    (for [#(k v) (.items (copy.deepcopy copied))]
+      (if (is v None) (.pop self.kv k None) (setv (get self.kv k) v)))
     None)
 
   (defn #^ None checkpoint [self] None))

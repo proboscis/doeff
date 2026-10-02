@@ -1515,13 +1515,15 @@
       "name": "doeff-cluster-wal-store",
       "paths": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/store.hy",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/wal_format.hy",
         "packages/doeff-cluster/src/doeff_cluster/foundation/wal_store.hy"
       ],
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/store.hy",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/wal_format.hy",
         "packages/doeff-cluster/src/doeff_cluster/foundation/wal_store.hy"
       ],
-      "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)と、Persist に答える handler(coordinator/protocol/store)。",
+      "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)の byte の I/O(foundation/wal_store)・行と写しの形(coordinator/protocol/wal_format)・置き場の口と Persist に答える handler(coordinator/protocol/store)。",
       "typed": true
     },
     {
