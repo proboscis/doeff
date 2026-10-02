@@ -1,16 +1,16 @@
 ;;; 共有の保存の handler: shared-http = coordinator の /board と /leases(クラスタ)。業務コードは ReadShared / WriteShared / LeaseOp しか
 ;;; 知らない。テストは業務の効果の fake を持たず、同じ shared-http を HTTP の層の fake の盤(tests/board_fake.hy — coordinator と同じ
 ;;; 純粋な判断で答える)の上で回す(#2337 の 3 本目で shared-memory を退役させた)。
-;;; 要求の形(board-read-request・board-write-request・lease-request)は foundation/board_requests.hy — この handler と手元の sim-cluster の
+;;; 要求の形(board-read-request・board-write-request・lease-request)は同じ層の board_requests.hy — この handler と手元の sim-cluster の
 ;;; 偽の宿(local.hy)が同じ関数で作る(本文を写さない)。
+;;; 層 protocol に置く(#2979 — 前は package の根に在った)。送り直しの期限と間は、ほかの protocol の口(detached・remote)と同じく
+;;; 組み立てが渡す RouteOptions の欄から読む — 定数を foundation から直に読まない(層 protocol は foundation を読めない・#2565)。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
 (import doeff_hy.wire [parse])
-(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
-(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
-(import doeff_cluster.foundation.board_requests [board-read-request board-write-request lease-request])
+(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json write-accepted])
 
@@ -25,7 +25,7 @@
 (defhandler shared-http [#^ RouteCell cell #^ RouteOptions options]
   (ReadShared [prefix]
     (setv #(method path query _) (board-read-request prefix))
-    (<- reply RoutedReply (resent-request cell.route method path options query None IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS))
+    (<- reply RoutedReply (resent-request cell.route method path options query None options.resend-deadline-seconds options.resend-pause-seconds))
     (setv cell.route reply.route)
     (<- rows dict (answer-json reply.answer))
     (resume rows))
@@ -38,7 +38,7 @@
   (LeaseOp [name op token permits ttl-ms]
     (setv #(method path _ body) (lease-request name op token permits ttl-ms))
     (<- reply RoutedReply (match (in op #("claim" "renew"))
-                            True (resent-request cell.route method path options None body IDEMPOTENT-DEADLINE-SECONDS RESEND-PAUSE-SECONDS)
+                            True (resent-request cell.route method path options None body options.resend-deadline-seconds options.resend-pause-seconds)
                             False (routed-request cell.route method path options None body)))
     (setv cell.route reply.route)
     (<- answered dict (answer-json reply.answer))

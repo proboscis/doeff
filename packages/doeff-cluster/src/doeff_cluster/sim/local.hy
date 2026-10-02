@@ -172,7 +172,7 @@
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [System Declaration])
-(import doeff_cluster.foundation.board_requests [board-read-request board-write-request lease-request])
+(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json])

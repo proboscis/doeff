@@ -142,13 +142,6 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared_handlers.hy",
-      "reason": "registered-with-legacy",
-      "rule": "private-symbol",
-      "subject": "packages/doeff-cluster/src/doeff_cluster/shared_model.hy"
-    },
-    {
-      "count": 1,
       "path": "packages/doeff-cluster/src/doeff_cluster/record_store.hy",
       "reason": "registered-with-legacy",
       "rule": "pure-io-call",

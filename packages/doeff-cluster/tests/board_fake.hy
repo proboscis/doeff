@@ -20,7 +20,7 @@
 (import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
-(import doeff_cluster.shared_handlers [shared-http])
+(import doeff_cluster.shared.protocol.shared_handlers [shared-http])
 (import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
