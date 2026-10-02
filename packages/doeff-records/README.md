@@ -111,6 +111,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 | `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
 | `GET /healthz` | — | `{status: "ok"}` |
 | `GET /metrics` | — | Prometheus の text(`text/plain; version=0.0.4`)— 身元を問わない |
+| `GET /served` | — | `{commits: {<repo>: <sha>} \| null, instance: <世代> \| null, schemaDigests: {<表>: <sha256>}}` — 身元も表の用意も置き場も問わない(#2742) |
 
 - effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`・`RowsConflict`・`RowsRefused`)は 200 の本文の値。HTTP の断りは
   `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・`401 unauthorized`(身元が引けない)・
@@ -132,6 +133,11 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   status)の 18 本で閉じていて、起動の時に全部を 0 で置く。置き場に届かなかった数 = `*_503_total`(表の用意の前と `/readyz` の不達を
   含む)・答えの途中で落ちた数 = `*_500_total`。`other` には kubelet の `/healthz`・`/readyz` と `/metrics` 自身の読みが入る。値は
   process の再起動で 0 に戻る(読み手は区間の差で数える)。計器の答え手は doeff の `memory-meter-handler`(差し替えの欄 `RecordsServing.meter` が在れば、その内側に被せる)。
+- 走っている木と表の要約(#2742): `GET /served` は、動いている process が走っている木の commit と世代(`RecordsServing.served` の
+  `ServedBuild` — 使い手の入口が土台の実行の文脈から読んで渡す・無ければ `null`)と、配っている表の宣言の要約(`schemaDigests` =
+  表の名 → 表の宣言の `repr` を utf-8 にした sha256)を答える。要約の評価は `doeff_records.schema_digest.schema_digests` の 1 か所で、
+  使い手の木の data(使い手の repo が木ごとに書く表の要約の file)も同じ関数で書く。身元を引く前・表の用意を問う前に答えるので、
+  置き場に届かない間も読める。計器の種は `other`。`TableDecl` の形が doeff の版で変わると、全部の表の要約が一度に変わる。
 - 検と模擬の殻は `doeff_records.http_server.start_records_server(RecordsServerConfig(schema, roster, handler_for, request_handlers=…))`:
   入口の Program を別の thread の run で回し、`url` と `close()` を持つ `RunningServer` を返す。`handler_for` = 書き手の名 → 用意し終えた
   置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)、`meter` = 計器の

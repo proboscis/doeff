@@ -31,6 +31,7 @@
     "packages/doeff-records/src/doeff_records/service.hy",
     "packages/doeff-records/src/doeff_records/http_client.hy",
     "packages/doeff-records/src/doeff_records/http_server.hy",
+    "packages/doeff-records/src/doeff_records/schema_digest.hy",
     "packages/doeff-records/src/doeff_records/maintenance.hy",
     "packages/doeff-records/src/doeff_records/store_choice.hy",
     "packages/doeff-records/src/doeff_records/main.hy"
@@ -671,7 +672,25 @@
         "records-values",
         "records-effects",
         "records-maintenance",
-        "records-store-choice"
+        "records-store-choice",
+        "records-schema-digest",
+        "doeff-hy-frozen"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-schema-digest",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/schema_digest.hy"
+      ],
+      "responsibility": "置き場の宣言の表ごとの要約(表の名 → 表の宣言の repr の sha256)の評価の 1 か所。GET /served と使い手の木の data が同じ評価を使う(#2742)。I/O なし",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-records/src/doeff_records/schema_digest.hy"
+      ],
+      "allow": [
+        "records-values",
+        "doeff-hy-frozen"
       ],
       "typed": true
     },

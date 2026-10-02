@@ -1,0 +1,12 @@
+{
+  "commits": {
+    "doeff": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "records-app": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "instance": "3-0123456789ab",
+  "schemaDigests": {
+    "charters": "bc7e53595f6647189a73e91b2772d823c6045d9ade5419e1826efc2f6d35fbb5",
+    "parts": "036286729484a4d94774c9bb9c036a57fb02327ca1552810e80b53f4651163af",
+    "tickets": "714d888dbebadd48a5f2f3d3dbb7eaba52de62022619a6975d2c121278c4814c"
+  }
+}

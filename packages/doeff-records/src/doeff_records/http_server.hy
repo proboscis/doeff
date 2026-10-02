@@ -28,6 +28,9 @@
 ;;;     送り直した 500 も同じ 1 か所 — 答えを受け取った呼び手が次に読む /metrics には、その答えがもう入っている)。答え手は serving.meter(None = doeff の
 ;;;     memory-meter-handler — 検は壊した計器を差す)。名の綴りと閉じた系列は wire の ANSWER-METRICS で、起動の時に全部を 0 で置く。GET /metrics は
 ;;;     身元を問わず(/readyz と同じく身元を引く前に答える)、ReadMeter の断面を doeff の render-prometheus で Prometheus の text に描く
+;;   - GET /served(#2742)は、動いている process が走っている木の commit と世代(serving.served — 使い手の入口が渡す・無ければ null)と、
+;;     配っている表の宣言の要約(schema_digest.schema-digests)を答える。身元も表の用意も置き場も問わない(置き場に届かない間も使い手が
+;;     動いている版を読める)。計器では種 other に数える
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
 ;;; 要求の本文の上限は HttpReadBody の max-bytes(読む前に宣言の長さで、宣言の無い本文は流しながら判じる)だけが持つ。
@@ -49,7 +52,9 @@
                                                 HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed
                                                 HttpShutdown])
 (import doeff_time [Delay GetMonotonic async-time-handler])
+(import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [RecordsSchema Unreachable])
+(import doeff_records.schema_digest [schema-digests])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.principals [Roster])
 (import doeff_records.maintenance [maintenance-loop])
@@ -66,6 +71,8 @@
 (val READINESS-SECONDS 1.0)
 ;; 計器の口(身元を問わない — 数だけを答え、行の中身を載せない・#2709)。
 (val PATH-METRICS "/metrics")
+;; 動いている process の木と配っている表の要約の口(身元を問わず、表の用意と置き場に頼らない — #2742)。
+(val PATH-SERVED "/served")
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -94,6 +101,20 @@
   (#^ float keep-seconds))
 
 
+(defrecord RepoCommit
+  "走っている木の repo 1 つ: repo = repo の名(使い手の repo と doeff など)・commit = commit の sha。"
+  (#^ str repo)
+  (#^ str commit))
+
+
+(defrecord ServedBuild
+  "記録の service の process が走っている木と世代(GET /served が答える・#2742): commits = 走っている木の repo ごとの commit(知らなければ
+   None)・instance = process の世代(入れ替えの間に旧と新が交互に答えるのを読み手が見分けるため・知らなければ None)。使い手の入口が、
+   土台の実行の文脈(doeff-cluster の job なら宣言の revision・実行環境の宣言・世代)から読んで渡す。"
+  (setv #^ (| (get tuple #(RepoCommit ...)) None) commits None)
+  (setv #^ (| str None) instance None))
+
+
 (defrecord RecordsServing
   "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・roster = 身元の名簿・prepare = 表を用意して
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
@@ -101,7 +122,8 @@
    drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
    READINESS-SECONDS の上限で撃つ・None = 用意が済めば ready — memory の置き場)・pressure = () → 置き場の詰まりの読み
    (StorePressure | PressureUnread)の Program(/readyz が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
-   meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)。"
+   meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)・
+   served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
   (#^ Roster roster)
@@ -113,7 +135,8 @@
   (#^ float drain-seconds)
   (setv #^ (| Callable None) readiness None)
   (setv #^ (| Callable None) pressure None)
-  (setv #^ (| (get Callable #(... object)) None) meter None))
+  (setv #^ (| (get Callable #(... object)) None) meter None)
+  (setv #^ (| ServedBuild None) served None))
 
 
 (defrecord TextAnswer
@@ -315,13 +338,28 @@
   (TextAnswer :status 200 :content-type METRICS-CONTENT-TYPE :body text))
 
 
+(defk served-answer [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
+  "GET /served に答えるため: 動いている process が走っている木の commit・世代と、配っている表の宣言の要約(schema-digests)を返す。
+   使い手が動いている版をそろえるために読む(#2742)。身元を問わず、表の用意と置き場に頼らない — 置き場に届かない間も読める。
+   知らない欄は null(commits・instance)。"
+  (<- digests FrozenMap (schema-digests serving.schema))
+  (val build (or serving.served (ServedBuild)))
+  (! (json-answer 200 {"commits" (if (is build.commits None) None (dfor c build.commits c.repo c.commit))
+                       "instance" build.instance
+                       "schemaDigests" (dict digests)})))
+
+
 (defk answer-with [serving request]
   {:pre [(: serving RecordsServing) (: request HttpRequest)] :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
   "要求 1 つを service.respond で答えるため: 用意が済んでいれば置き場の handler、済んでいなければ store-not-prepared の下で撃つ。
    要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)を被せる。GET /readyz は置き場を問い(readiness-answer)、
-   GET /metrics は計器を描く(metrics-answer — どちらも身元を引く前に答える)。"
+   GET /metrics は計器を描く(metrics-answer — どちらも身元を引く前に答える)。GET /served は走っている木と表の要約を答える
+   (served-answer — 身元も表の用意も問わない)。"
   (when (and (= request.method "GET") (= request.path PATH-METRICS))
     (return (! (metrics-answer))))
+  (when (and (= request.method "GET") (= request.path PATH-SERVED))
+    (return (! (served-answer serving))))
   (<- prepared (| Callable None) (PreparedHandlers))
   (when (and (= request.method "GET") (= request.path PATH-READYZ))
     (return (! (with-handlers [#* serving.request-handlers] (readiness-answer serving prepared)))))
@@ -517,14 +555,16 @@
 (defclass [(dataclass :frozen True)] RecordsServerConfig []
   "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / roster = 身元の名簿 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
    request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
-   meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)。"
+   meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)/
+   served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)。"
   (#^ RecordsSchema schema)
   (#^ Roster roster)
   (#^ Callable handler-for)
   (setv #^ tuple request-handlers #())
   (setv #^ str host "127.0.0.1")
   (setv #^ int port 0)
-  (setv #^ (| (get Callable #(... object)) None) meter None))
+  (setv #^ (| (get Callable #(... object)) None) meter None)
+  (setv #^ (| ServedBuild None) served None))
 
 
 (defclass [(dataclass :frozen True)] RunningServer []
@@ -575,7 +615,7 @@
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema :roster config.roster
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
-                                :drain-seconds 0.0 :meter config.meter))
+                                :drain-seconds 0.0 :meter config.meter :served config.served))
   (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server
                                 (shell-control opened.put (fn [] (if (.is-set ended) SHELL-STOP-REASON None)))]
                                (serve-records serving)))
