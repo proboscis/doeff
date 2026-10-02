@@ -276,9 +276,27 @@ class SchedulerDeadlockError(RuntimeError):
 
 
 class Race(EffectBase[_T], Generic[_T]):
-    def __init__(self, *tasks: "Task[_T] | Future[_T]") -> None:
+    """Wait for the first of several Tasks or Futures to resolve.
+
+    ``priority`` is the same park mode as ``Wait``'s for *external* promises:
+    ``None`` (default) holds a ready-heap placeholder per pending external
+    promise that shields DAEMON tasks (the sim clock driver) from running past
+    the pending completion; ``PRIORITY_IDLE`` parks the race without that
+    placeholder, so the sim clock may advance while it waits — a timed wait
+    (doeff-time's WaitWithin) on a promise that in-run code completes, such as
+    doeff-records' memory-store bell, needs the clock to reach its deadline
+    (agora-redesign #3054). The owner still wakes at its own task priority.
+    Internal waitables park the same way under either value.
+    """
+
+    def __init__(self, *tasks: "Task[_T] | Future[_T]", priority: int | None = None) -> None:
         super().__init__()
+        if priority not in (None, PRIORITY_IDLE):
+            raise ValueError(
+                f"Race priority is a park mode: None or PRIORITY_IDLE, got {priority!r}"
+            )
         self.tasks = tasks
+        self.priority = priority
 
 
 class CreatePromise(EffectBase["Promise[_T]"], Generic[_T]):
@@ -1498,7 +1516,13 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             return enqueue_raise(owner_tid, waiter_k, TaskCancelledError(), priority)
         return None
 
-    def register_pending_waiter(wk, entry_type, owner_tid, state):
+    def register_pending_waiter(
+        wk: tuple[str, int],
+        entry_type: Literal["gather", "race"],
+        owner_tid: int | None,
+        state: dict[str, object],
+        park: bool = False,
+    ) -> None:
         """Register a gather/race waiter for a pending waitable (#505).
 
         A pending EXTERNAL promise additionally gets a claimed-style
@@ -1509,11 +1533,15 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         resumes anything. wake_waiters
         (or remove_gather_waiters/remove_race_waiters on early resolution)
         sets ``claimed`` and the placeholder drops itself, so Gather/Race
-        get the same sim-ordering semantics as Wait.
+        get the same sim-ordering semantics as Wait. ``park`` (a Race with
+        ``priority=PRIORITY_IDLE``) registers without the placeholder, like
+        Wait's IDLE park: the waiter still counts for the blocking drain
+        (has_pending_external_waiters reads ``waiters``), but the sim clock
+        may run (agora-redesign #3054).
         """
         claimed = None
         kind, wid = wk
-        if kind == "promise" and promises[wid].get("external"):
+        if kind == "promise" and promises[wid].get("external") and not park:
             claimed = [False]
             enqueue(
                 ("wait_external", owner_tid, None, wk, claimed),
@@ -1902,7 +1930,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     "resolved": False,
                 }
                 for wk in pending_wks:
-                    register_pending_waiter(wk, "race", current_tid, race_state)
+                    register_pending_waiter(
+                        wk, "race", current_tid, race_state,
+                        park=effect.priority == PRIORITY_IDLE,
+                    )
             yield TailEval(pick_next())
 
         elif isinstance(effect, Cancel):

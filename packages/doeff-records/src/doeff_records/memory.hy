@@ -9,8 +9,9 @@
 ;;; 届かない状態(検の口 faults.SetStoreOutage)を置くと待ち手を全部鳴らし、待ちの各回の走査が待つ名の届かない状態を見て Unreachable で
 ;;; 返る — HTTP と PostgreSQL の口の待ちが読み直しの次の問いで不達を知るのと同じ(待ちの頭だけで見ると、待ちの最中に置いた窓に上限まで
 ;;; 気づかない — 出自の issue は #1020・使い手の画面の読み手で上限を 30 秒に延ばした時に出た)。
-;;; 期限(timeout と、保持の期限で行が消え得る刻の早い方)は doeff-time の ScheduleAt で 1 回だけ鳴らす。呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
-;;; thread の書きからも鳴らせるため。待ちは PRIORITY_IDLE で park する(仮想の時計を止めない — 期限の刻まで時計が進める)。
+;;; 期限(timeout と、保持の期限で行が消え得る刻の早い方)は doeff-time の期限つきの待ち WaitWithin の 1 つ(呼び鈴か期限の早い方 —
+;;; 仮想の時計の下では task を作らない・#3054)。呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
+;;; thread の書きからも鳴らせるため。待ちは park で待つ(仮想の時計を止めない — 期限の刻まで時計が進める)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 ;;;
@@ -28,8 +29,8 @@
 (import dataclasses [dataclass])
 (import datetime [datetime timedelta])
 (import doeff [EffectBase Program])
-(import doeff_core_effects.scheduler [Cancel CreateExternalPromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait])
-(import doeff_time [GetTime ScheduleAt])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff_time [GetTime WaitWithin])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
@@ -464,14 +465,6 @@
     (WatchRound :answer answer :quiet quiet :due-ms due-ms)))
 
 
-(defk rung [bell]
-  {:pre [(: bell ExternalPromise)] :post [(: % None)]
-   :tags {:context "records" :role "foundation"}}
-  "待ちの期限の刻に呼び鈴を鳴らすため(書きが先に鳴らしていれば効かない — 外の promise は最初の 1 回だけが効く)。"
-  (.complete bell None)
-  None)
-
-
 (defk wake-time [now deadline due-ms]
   {:pre [(: now datetime) (: deadline datetime) (: due-ms (| int None))] :post [(: % datetime)]
    :tags {:context "records" :role "foundation"}}
@@ -481,40 +474,18 @@
       (min deadline (+ now (timedelta :milliseconds (max 1 (- due-ms (epoch-ms now))))))))
 
 
-(defk withdraw-timer [timer]
-  {:pre [(: timer Task)] :post [(: % None)]
+(defk bell-or-timer [store bell seconds]
+  {:pre [(: store MemoryStore) (: bell ExternalPromise) (: seconds float)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "期限の鳴らし timer を取り消し、解け終わるまで待つため(待たずに実行の根が返ると、解けていない task が置き去りの仕事として残る)。
-   取り消した timer の Wait は TaskCancelledError で返るので、それをここで飲む。飲むのはこの片付けの task の中だけ — 待ち手の中で飲むと、
-   同じ刻に待ち手自身へ届いた取り消し(同じ書きで起きた別の task が待ち手を取り消す — 複数の表の待ちを Race した使い手が、負けた側を
-   取り消す片付け)も同じ TaskCancelledError なので見分けられずに消え、待ち手は呼び鈴を掛け直して timeout まで生き、取り消した側も
-   そこまで止まる(使い手の模擬で、Race の後の片付けが 4 秒の書きの後 31 秒まで止まった)。先に鳴らし終えていれば取り消しは効かず、すぐ返る。"
-  (<- (Cancel timer))
+  "掛けた呼び鈴 bell が鳴るか、seconds 秒が過ぎるまで眠るため。待ちは doeff-time の期限つきの待ち WaitWithin の 1 つ(仮想の時計の下では
+   期限は時計の列の 1 項で、task を作らない・呼び鈴が先に鳴れば列から外す — #3054。前は期限の鳴らしを ScheduleAt の task に
+   し、起きた後にその取り消しを別の片付けの task で待っていた — 待ち 1 回に task 2 本)。park = 外の promise を仮想の時計を止めずに待つ
+   (既定の待ちは時計を止め、期限の刻へ進めなくなる)。起きた後(と、待ち手が取り消された時)は呼び鈴を外す。どちらで起きたかは見ない —
+   呼び手は起きた後に走査し直す。"
   (try
-    (<- (Wait timer))
-    (except [TaskCancelledError]
-      None))
-  None)
-
-
-(defk bell-or-timer [store bell at]
-  {:pre [(: store MemoryStore) (: bell ExternalPromise) (: at datetime)] :post [(: % None)]
-   :tags {:context "records" :role "foundation"}}
-  "掛けた呼び鈴 bell が鳴るか、刻 at が来るまで眠るため。刻の鳴らしは ScheduleAt の 1 回(仮想の時計の下では時計の列の 1 項)。
-   待ちは PRIORITY_IDLE で park する — 外の promise の既定の待ちは仮想の時計を止める(期限の刻へ進めなくなる)ため。
-   起きた後(と、待ち手が取り消された時)は呼び鈴を外し、期限の鳴らしを別の task(withdraw-timer)で取り消して、その終わりを待つ。
-   その待ちの最中に待ち手自身が取り消されたら、片付けの task の終わりを待ってから取り消しを上へ渡す(飲まない)。"
-  (<- timer (ScheduleAt at (rung bell)))
-  (try
-    (<- (Wait bell.future :priority PRIORITY-IDLE))
+    (<- _woke (WaitWithin bell.future seconds :park True))
     (finally
-      (<- (drop-bell store bell))
-      (<- withdrawing (Spawn (withdraw-timer timer)))
-      (try
-        (<- (Wait withdrawing))
-        (except [cancelled TaskCancelledError]
-          (<- (Wait withdrawing))
-          (raise cancelled)))))
+      (<- (drop-bell store bell))))
   None)
 
 
@@ -547,7 +518,7 @@
     (:= round (guarded store (fn [] (watch-round store ask (epoch-ms now) bell))))
     (when round.quiet
       (<- at (wake-time now deadline round.due-ms))
-      (<- (bell-or-timer store bell at))
+      (<- (bell-or-timer store bell (.total-seconds (- at now))))
       (<- woke (GetTime))
       (:= now woke)
       (when (>= now deadline)

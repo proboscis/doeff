@@ -106,18 +106,20 @@ class SimTimeRuntime:
         yield Wait(promise.future)
 
     @do
-    def _wait_within(self, future: "Future[object]", seconds: float):
+    def _wait_within(self, future: "Future[object]", seconds: float, park: bool):
         """Answer ``future``'s value, or None once ``seconds`` of virtual time pass first.
 
         The deadline is a promise on this handler's time queue (like a Delay) raced against the
         future — no timer task is spawned, and a deadline the future beat is withdrawn from the
-        queue so the clock driver never advances to it (agora-redesign #2618).
+        queue so the clock driver never advances to it (agora-redesign #2618). ``park`` races
+        an external promise without shielding the clock driver, so the deadline can pass while
+        the promise is pending (agora-redesign #3054).
         """
         deadline = yield CreatePromise()
         sequence = self._time_queue.push(self._clock.current_time + _delay_span(seconds), deadline)
         _ = yield self._ensure_clock_driver()
         try:
-            first = yield Race(future, deadline.future)
+            first = yield Race(future, deadline.future, priority=PRIORITY_IDLE if park else None)
         finally:
             self._time_queue.withdraw(sequence)
         return first
@@ -172,7 +174,7 @@ class SimTimeRuntime:
             reading = now if isinstance(effect, GetTimeEffect) else now.timestamp()
             return (yield Transfer(k, reading))
         if isinstance(effect, WaitWithinEffect):
-            first = yield self._wait_within(effect.future, effect.seconds)
+            first = yield self._wait_within(effect.future, effect.seconds, effect.park)
             return (yield Transfer(k, first))
         if isinstance(effect, ScheduleAtEffect):
 

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff_core_effects.scheduler import CreateExternalPromise, Race, Spawn
+from doeff_core_effects.scheduler import PRIORITY_IDLE, CreateExternalPromise, Race, Spawn
 from doeff_core_effects.scheduler import Wait as WaitTask
 
 from doeff import Pass, Transfer, do
@@ -73,7 +73,7 @@ class SyncTimeRuntime:
             timer.daemon = True
             timer.start()
             try:
-                first = yield Race(effect.future, deadline.future)
+                first = yield Race(effect.future, deadline.future, priority=PRIORITY_IDLE if effect.park else None)
             finally:
                 timer.cancel()
             return (yield Transfer(k, first))
