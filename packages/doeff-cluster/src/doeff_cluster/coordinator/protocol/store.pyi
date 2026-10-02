@@ -4,7 +4,8 @@ store.hy は Hy の module なので、pyright は中を読めず、名が全部
 模擬の世界の検)が durable-states と wal-store を使うと、書き手に直せない赤(Type of "durable_states" is unknown ほか)が出た。
 ここで型を宣言する(request_bodies.pyi と同じ形)。
 
-- Persist は凍った dataclass の EffectBase[None](欄 delta = キー → 新しい値・消えたキーは None)。
+- Persist は凍った dataclass の EffectBase[None](欄 writes = 変わったキーごとの書き TableWrite — value は新しい値・消えたキーは None・#2722)。
+  置き場の口 DurableStore.persist は今までどおり差分(キー → 新しい値)を受ける。
 - DurableStore は置き場の形(persist の口だけ)。
 - durable-states は handler の値。wal-store と memory-store は置き場を受けて handler を返す関数(handler の型は Any)。
 """
@@ -13,12 +14,13 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from doeff import EffectBase
+from doeff_hy.table import TableWrite
 
 MODULE_TAGS: dict[str, str]
 
 @dataclass(frozen=True)
 class Persist(EffectBase[None]):
-    delta: dict[str, object]
+    writes: tuple[TableWrite[object], ...]
 
 class DurableStore(Protocol):
     def persist(self, delta: dict[str, object]) -> None: ...

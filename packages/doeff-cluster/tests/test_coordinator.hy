@@ -168,10 +168,10 @@
     (setv item (if script.requests (.pop script.requests 0) []))
     (resume (if (isinstance item list) item [item])))
   (Reply [request status body] (.append script.replies #(request.path status body)) (resume None))
-  (Persist [delta]
-    ;; fail-at 回目の永続化で落ちる(fsync の途中で coordinator が落ちた形)
+  (Persist [writes]
+    ;; fail-at 回目の永続化で落ちる(fsync の途中で coordinator が落ちた形)。積むのは置き場の口と同じ差分(キー → 新しい値)。
     (when (= (+ (len script.saved) 1) script.fail-at) (raise (Crashed "fsync の途中で落ちた")))
-    (.append script.saved delta) (resume None))
+    (.append script.saved (dfor w writes w.key w.value)) (resume None))
   (CoordinatorStopRequested [] (resume (and (not script.requests) (> script.now 3000)))))
 
 (defn #^ Callable scripted [#^ Script script]
@@ -192,7 +192,7 @@
   (assert (= (sorted board-batch) ["board/k"])))
 
 (defhandler recording [#^ list order]
-  (Persist [delta] (.append order "persist") (<- (Persist delta)) (resume None))
+  (Persist [writes] (.append order "persist") (<- (Persist writes)) (resume None))
   (Reply [request status body] (.append order (+ "reply " request.path)) (<- (Reply request status body)) (resume None)))
 
 (deftest test-group-commit-answers-a-batch-only-after-one-persist
@@ -211,6 +211,19 @@
     (<- _ ClusterState ((scripted script) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies (get r 0)) ["/board/a"]))
   (assert (= (lfor d script.saved (sorted d)) [["board/a"]])))
+
+(defhandler old-field-name-reader
+  ;; 失敗ケース(#2722): Persist の欄を旧い名(delta — キー → 値の dict だった頃)のまま読む答え手。節の欄の束ね `(Persist [delta] …)` は
+  ;; 欄を (. effect delta) で読み、型検査も名を捕まえる(この file に error を残さないよう、ここは実行の時だけ名を引く getattr で同じ読みをする)。
+  (Persist [] (getattr effect "delta") (resume None)))
+
+(deftest test-a-persist-reader-still-using-the-old-field-name-fails-by-name
+  ;; #2722: Persist の欄は writes(TableWrite の組)。旧い名 delta で読む答え手は、書きの組を差分として黙って読まずに、欄の名を名指して
+  ;; 落ちる(答え手の節は (. effect delta) で欄を読む)。
+  (import pytest)
+  (val script (Script [(req "PUT" "/board/k" {"value" 1})]))
+  (with [(pytest.raises AttributeError :match "delta")]
+    (<- _ ClusterState ((scripted script) (old-field-name-reader (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
 
 
 (defhandler fault-log [#^ list faults]
