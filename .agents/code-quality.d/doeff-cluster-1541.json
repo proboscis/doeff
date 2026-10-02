@@ -8,7 +8,7 @@
     {
       "function": "resolve_value",
       "path": "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy",
-      "reason": "CLI の入口(declare)が引数の関数の参照(module:attr)を関数へ解くのが役目の口 — 系の関数と土台の関数は名で渡される(#1692)。"
+      "reason": "利用側の宣言の道具の入口が引数の関数の参照(module:attr)を関数へ解くのが役目の口 — 系の関数は名で渡される(#1692・この package の宣言の命令は #3030 で消した)。"
     }
   ],
   "exclude": [
@@ -1486,7 +1486,8 @@
         "doeff-cluster-run-context",
         "doeff-cluster-run-context-rules",
         "doeff-cluster-host-reader",
-        "doeff-cluster-boundary-recorder"
+        "doeff-cluster-boundary-recorder",
+        "doeff-cluster-declaring"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

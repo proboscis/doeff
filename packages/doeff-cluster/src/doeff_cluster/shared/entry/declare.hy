@@ -1,47 +1,29 @@
-;;; 系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。
+;;; 系(defsystem の関数)の宣言を coordinator へ書く(ADR-DOE-CLUSTER-001)— apply-declaration と、その下請けの要求 2 つ。
 ;;;
-;;;   hy -m doeff_cluster.shared.entry.declare <module>:<系の関数> --foundation <module>:<土台の関数> --revision <commit>
-;;;       [--only 'job,…'] [--environ FILE] [--apply URL --actor <送り手>] [--replicas 0|1]
+;;; 宣言の入口(命令)は利用側の宣言の道具が持つ(#3030 — 以前ここに在った命令 `hy -m doeff_cluster.shared.entry.declare` は、
+;;; 系に渡す土台を引数 --foundation で選んでいた。土台は利用側の「土台の型 → 本番の土台」の表で選び、引数で選ばないので、汎用の
+;;; 命令はこの package に置かない)。利用側の道具は次の部品を並べる:
+;;;   - 系の関数に土台を渡して System の値を作り、宣言してよいかを doeff_cluster.shared.core.declaring の declaring-refusal で検める
+;;;     (系の関数の module の在る git の checkout が汚れておらず push 済みで HEAD が宣言の版と同じ commit・土台の :needs が各 job の
+;;;     :needs の一部 — checkout の読みは effect で、答えるのは doeff_cluster.shared.protocol.checkout_reads の checkout-reads と
+;;;     汎用の子 process の handler)。
+;;;   - 宣言の行と詰めた Program を doeff_cluster.shared.entry.service_build の system-declaration で組む。
+;;;   - ここの apply-declaration で書く: 先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で
+;;;     書く — 無ければ POST /resources/Service で作る(所有者 = 送り手)。在れば GET で読んだ resourceVersion を付けて PUT する
+;;;     (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
+;;;     (replicas は Rollout が持つ。replicas を渡した時だけ変える)。一覧に無い Service には触らない。
 ;;;
-;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_build.system-declaration)。
-;;; 宣言の前に 2 つを検め、外れれば理由つきで終了 2(argparse の error と同じ — 計画 2.2 の E・9 節の P):
-;;;   - 系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が --revision と同じ commit(詰める Program が参照する
-;;;     code と、実行先が --revision で展開する code を一致させる — runtime_env.checked-declaring-checkout。checkout の読みは effect で、
-;;;     答えるのは runtime_env の翻訳の handler checkout-reads と汎用の子 process の handler)
-;;;   - 土台の関数の頭の :needs(__doeff_needs__)が各 job の :needs の一部(service_rules.foundation-needs-refusal。土台が :needs を
-;;;     名乗らなければ検めない)
-;;; 付けなければ宣言の行(と job ごとの describe = 呼んだ関数と引数)を印字するだけ。
-;;; --apply を付けると、先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で書く:
-;;;   無ければ POST /resources/Service で作る(所有者 = --actor)。在れば GET で読んだ resourceVersion を付けて PUT する
-;;;   (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
-;;;   (replicas は Rollout が持つ。--replicas を付けた時だけ変える)。一覧に無い Service には触らない。
-;;; 旧い引数(--config・--pin)と、System の値を直に指す旧い形は受け付けない。
-;;;
-;;; 置き場(#2346): CLI と apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
+;;; 置き場(#2346): apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
 ;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
-(require doeff-hy.macros [defk deff <- val var])
+(require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
-(import argparse)
 (import collections.abc [Mapping])
 (import json)
-(import sys)
 (import urllib.parse [quote :as url-quote])
-(import doeff [run with_handlers])
 (import doeff_core_effects.effects [slog])
-(import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.os_file [os-file-handler])
-(import doeff_core_effects.file_effects [ReadText])
-(import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.foundation.process_versions [this-process-versions])
-(import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.shared.protocol.declaration_requests [spec-for-update create-body])
-(import doeff_cluster.shared.core.declaring [declaring-refusal])
-(import doeff_cluster.shared.core.service_rules [environ-overlay-refusal])
-(import doeff_cluster.shared.entry.service_build [resolve resolve-value system-declaration])
-(import doeff_cluster.shared.intent.service_model [System Declaration])
+(import doeff_cluster.shared.intent.service_model [Declaration])
 
 
 ;; 要求 1 つの上限(秒)。書きは送り直さない(返事を読む前に切れた書きは相手に届いたか分からない)。
@@ -98,57 +80,3 @@
     (when (>= written.status 300)
       (:= rows-written False)))
   rows-written)
-
-
-(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.shared.entry.declare` の __main__ が素の関数として呼ぶ)
-  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster" :role "main" :reads "json" :spells "json"}}
-  "宣言の CLI。旧い引数は理由つきで断る。"
-  (setv parser (argparse.ArgumentParser :description "系(defsystem の関数)→ coordinator の宣言"))
-  (.add-argument parser "system" :help "module:attr(defsystem の関数の名)")
-  (.add-argument parser "--foundation" :required True :help "module:attr(土台の関数 — 本体の Program を受けて自分の handler の下で走らせる module の最上位の関数)")
-  (.add-argument parser "--revision" :required True)
-  (.add-argument parser "--only" :default "" :help "この job だけ(`,` で並べる)")
-  (.add-argument parser "--apply" "--put" :dest "apply")
-  (.add-argument parser "--actor" :help "送り手(依頼の主体の id・作業係の名)。--apply に要る")
-  (.add-argument parser "--replicas" :type int :choices [0 1])
-  (.add-argument parser "--environ" :default None :help "job ごとの environ の上書きの JSON の file({job: {名: 文字列}} — 宣言の :environ に書いた名の値だけを変える。配る先ごとの口の URL など)")
-  (.add-argument parser "--config" :default None :help "受け付けない(旧い形 — 設定は Program の中の Ask と :environ で読む)")
-  (.add-argument parser "--pin" :default None :help "受け付けない(旧い形 — Program を詰めた commit と別の commit で解くことになる)")
-  (setv args (.parse-args parser))
-  (when (is-not args.config None)
-    (.error parser "--config は受け付けない — 設定は Program の中の Ask と、宣言の :environ で読む(ADR-DOE-CLUSTER-001 R4)"))
-  (when (is-not args.pin None)
-    (.error parser "--pin は受け付けない — Program の job は宣言した commit でだけ解く"))
-  ;; System の値を指す旧い形は、関数として呼ぶ前に見て、理由つきで断る(名を解くのは resolve の 1 か所 — #1692)。
-  (when (and (in ":" args.system) (isinstance (resolve-value args.system) System))
-    (.error parser "系の値ではなく、defsystem の関数(土台を受けて系を返す)を指す"))
-  (setv build (resolve args.system))
-  (setv system (build (resolve args.foundation)))
-  ;; 宣言の前の検め(頭の註)。checkout の読みの effect は汎用の子 process(git)へ訳して本物の git で答える。
-  (match (run (scheduled (with_handlers [subprocess-handler checkout-reads]
-                           (declaring-refusal build (resolve args.foundation) system args.revision))))
-    None None
-    reason (.error parser reason))
-  (setv only (sfor n (.split args.only ",") :if n n)
-        overlay (if args.environ (json.loads (run (with_handlers [os-file-handler] (ReadText args.environ)))) {})
-        refusal (environ-overlay-refusal system overlay)
-        _ (when (is-not refusal None) (.error parser refusal))
-        declaration (system-declaration system args.revision :versions (run (this-process-versions)) :environ overlay)
-        rows (lfor row declaration.rows :if (or (not only) (in (get row "name") only)) row)
-        declaration (Declaration :rows rows
-                                 :programs (dfor row rows :setv sha (get (get row "run") "program")
-                                                 sha (get declaration.programs sha))))
-  (cond
-    args.apply
-      (do (when (not args.actor) (.error parser "--apply には --actor(送り手)が要る"))
-          ;; 書きの HTTP は汎用の答え手(http-production-handler)・1 行の報告は slog の答え手(stderr)が持つ。どれかが落ちれば 1 で終わる。
-          (when (not (run (scheduled (with_handlers [(await-handler) (http-production-handler) slog-handler]
-                                       (apply-declaration args.apply declaration args.actor args.replicas)))))
-            (sys.exit 1)))
-    True (do (for [row rows]
-               (print (.format "{}: {}" (get row "name") (get (get row "run") "describe")) :file sys.stderr))
-             (print (json.dumps {"jobs" rows} :ensure-ascii False :indent 1)))))
-
-
-(when (= __name__ "__main__")
-  (main))

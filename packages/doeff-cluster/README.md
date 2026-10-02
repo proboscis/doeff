@@ -157,21 +157,32 @@ environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べ
 
 ### 宣言する(declare)
 
-```sh
-hy -m doeff_cluster.shared.entry.declare myapp.systems:my_system --foundation myapp.foundation:production_foundation \
-  --revision "$(git rev-parse HEAD)" [--only a,b] [--apply $COORD --actor $ME] [--replicas 0|1]
+宣言の入口(命令)はこの package に置かず、利用側の宣言の道具が次の部品を並べます(#3030 — 系に渡す土台は利用側の
+「土台の型 → 本番の土台」の表で選び、命令の引数で選びません。以前の `hy -m doeff_cluster.shared.entry.declare … --foundation …` は消えました)。
+
+```hy
+(import doeff [run with-handlers])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_cluster.shared.core.declaring [declaring-refusal])
+(import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
+(import doeff_cluster.shared.entry.service_build [system-declaration])
+(import doeff_cluster.shared.entry.declare [apply-declaration])
+
+;; foundation = 利用側の表が系の関数の土台の引数の型から引いた本番の土台
+(setv system (my-system foundation))
+(setv refusal (run (with-handlers [subprocess-handler checkout-reads] (declaring-refusal my-system foundation system revision))))
+(setv declaration (system-declaration system revision :versions versions))
+(run (apply-declaration coordinator-url declaration actor))
 ```
 
-- 系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が `--revision` と同じ commit の時だけ宣言します
-  (詰める Program が参照するコードと、実行先が `--revision` で展開するコードを一致させるため)。外れれば理由つきで終了 2 です。
-  土台の `:needs` が job の `:needs` に含まれない時も同じく終了 2 です。
-- `--apply` を付けなければ、宣言の行(JSON)を標準出力に、job ごとの呼び出しの表示(`describe` — 関数の名と引数)を標準エラーに出します。
-- `--apply` を付けると、詰めた Program を `PUT /programs/<sha>` で先に置き、Service ごとに無ければ `POST`・在れば読んだ
-  `resourceVersion` を付けて `PUT` します(所有者と replicas は今の値を保ち、`--replicas` を付けた時だけ変えます)。
-- 宣言の行は `{name revision needs run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
+- `declaring-refusal` は、系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が宣言の版と同じ commit の時だけ
+  None を返します(詰める Program が参照するコードと、実行先が版で展開するコードを一致させるため)。外れれば理由の文を返します。
+  土台の `:needs` が job の `:needs` に含まれない時も理由の文を返します。土台は関数でも、土台の関数を欄に持つ record でも渡せます。
+- `system-declaration` が宣言の行と詰めた Program を組みます。行は `{name revision needs run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
   同一性(入れ替えの要否を決める指紋)は、呼んだ関数の `module:qualname` と引数の正規の JSON・版・environ から作り、詰めた中身は
   比べません(cloudpickle の出力は同じ Program でも揺れるため)。
-- `--config`・`--pin`・系の値(System)を直に指す形は受け付けません。
+- `apply-declaration` は、詰めた Program を `PUT /programs/<sha>` で先に置き、Service ごとに無ければ `POST`・在れば読んだ
+  `resourceVersion` を付けて `PUT` します(所有者と replicas は今の値を保ち、replicas を渡した時だけ変えます)。
 
 ### 業務の effect を記録に載せる
 
