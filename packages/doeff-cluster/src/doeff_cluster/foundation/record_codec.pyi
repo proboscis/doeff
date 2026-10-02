@@ -3,8 +3,6 @@
 from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
-from doeff_hy.macros import _install_guard_globals as _install_guard_globals
-from doeff_hy.macros import _guard_performed as _guard_performed
 import base64 as base64
 from collections import OrderedDict as OrderedDict
 from collections.abc import Callable as Callable

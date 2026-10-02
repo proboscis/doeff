@@ -2,9 +2,6 @@
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
-from doeff_hy.macros import _install_guard_globals as _install_guard_globals
-from doeff_hy.macros import _guard_performed as _guard_performed
-from doeff_hy.macros import _guard_statement_value as _guard_statement_value
 from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from doeff_hy.frozen import FrozenMap as FrozenMap
