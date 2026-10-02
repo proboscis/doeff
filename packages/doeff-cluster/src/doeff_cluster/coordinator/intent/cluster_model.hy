@@ -35,12 +35,12 @@
 
 (defclass [(dataclass :frozen True)] ClusterJob []
   (#^ JobSpec spec)
-  (setv #^ tuple needs #())           ; 要る能力の名(名の順 — capabilities-of)。置く worker は needs ⊆ provides
+  (setv #^ (get tuple #(str ...)) needs #())           ; 要る能力の名(名の順 — capabilities-of)。置く worker は needs ⊆ provides
   (setv #^ (| str None) pin None)     ; この worker にだけ置く
-  (setv #^ (| dict None) run None)    ; 宣言の run(詰めた Program の置き場のキー・identity・版・describe)。表示と保存のため
+  (setv #^ (| (get dict #(str object)) None) run None)    ; 宣言の run(詰めた Program の置き場のキー・identity・版・describe)。表示と保存のため
   ;; --- Service の資源としての欄(2026-09-24) ---
   (setv #^ int replicas 1)            ; 0 = 宣言は残すが置かない(Rollout が旧を止める・新を起こす口)。1 = 置いて動かし続ける
-  (setv #^ (| dict None) readiness None) ; {"windowSeconds": n} = ReportReady の「準備できた」が直近 n 秒以内にある時だけ Ready
+  (setv #^ (| (get dict #(str object)) None) readiness None) ; {"windowSeconds": n} = ReportReady の「準備できた」が直近 n 秒以内にある時だけ Ready
   (setv #^ (| str None) owner None)   ; 宣言の所有者(依頼の主体の id・作業係の名)。消せるのは所有者か明示の force の delete だけ
   ;; --- 入れ替え(2026-09-24) ---
   ;; 入れ替えの形: "recreate"(旧を止めてから新 — 既定)か "handoff"(新が Ready と数えられてから旧を止める — worker_model.JobSpec)。
@@ -59,7 +59,7 @@
 
 (defclass [(dataclass :frozen True)] WorkerInfo []
   (#^ str name)
-  (#^ tuple provides)                 ; 提供する能力の名(名の順 — クラスタの設定で名乗る)
+  (#^ (get tuple #(str ...)) provides)                 ; 提供する能力の名(名の順 — クラスタの設定で名乗る)
   (#^ int capacity)
   (#^ int last-seen-ms)
   (setv #^ (get tuple #(ComponentVersion ...)) versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
@@ -75,9 +75,9 @@
   ;; platform = root のキーの材料(runtime_env_model.current-platform)・env-ready / env-preparing = 準備済み / 準備中の root のキー・
   ;; env-failed = 準備に失敗した root(EnvFailed の tuple)・env-capacity = "ok" か "exhausted"(準備を始める空きが無い)。
   (setv #^ str platform "")
-  (setv #^ frozenset env-ready (frozenset))
-  (setv #^ frozenset env-preparing (frozenset))
-  (setv #^ tuple env-failed #())
+  (setv #^ (get frozenset str) env-ready (frozenset))
+  (setv #^ (get frozenset str) env-preparing (frozenset))
+  (setv #^ (get tuple #(EnvFailed ...)) env-failed #())
   (setv #^ str env-capacity "ok")
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
@@ -86,11 +86,11 @@
   ;; 古い世代に今の世代を明け渡さない。起動時刻を名乗らない旧い worker・旧い形の置き場は None(初めて見た順へ落とす)。保存する。
   (setv #^ (| int None) boot-at None)
   ;; 専用の能力(provides の一部・名の順)。空でなければ、このどれかを needs に持つ job / task だけを置く(以前の dedicated の印)。
-  (setv #^ tuple exclusive #())
+  (setv #^ (get tuple #(str ...)) exclusive #())
   ;; worker の置かれた node の名(heartbeat の node — k8s の downward API。k8s の外の機体は空)と、coordinator がその node の label から
   ;; 導いた能力(ClusterNaming の node-capabilities — worker の自己申告ではない)。置き先の判断は provides と derived の和を見る。
   (setv #^ str node "")
-  (setv #^ tuple derived #())
+  (setv #^ (get tuple #(str ...)) derived #())
   ;; 最後の連絡の時刻(last-seen-ms)を、coordinator の生存の印と同じ拍(api_policy.mark-alive・ALIVE-MARK-MS ごと)で写した値 = 耐久の鍵
   ;; worker/<名> の lastSeenMs(2026-09-25)。last-seen-ms は heartbeat ごとに進むが保存の行には入れない — 書きは印の拍ごと(5 秒に
   ;; 1 回)。起動の時は、この値と alive-ms の差(止まる前の最後の印の時点の沈黙)を今から数え直す(api_policy.resume-after-downtime)。
@@ -112,8 +112,8 @@
    needs = 準備してほしい worker に要る能力・until-ms = 期限(過ぎた行は調停が消す)・holder = 頼んだ主体(記録と表示だけ)。
    能力の合う worker は heartbeat の返事で行を受け取り、job の準備より低い優先度で準備する。行の期限の内は掃除がその root を消さない。"
   (#^ str key)
-  (#^ dict runtime-env)
-  (#^ tuple needs)
+  (#^ (get dict #(str object)) runtime-env)
+  (#^ (get tuple #(str ...)) needs)
   (#^ int until-ms)
   (#^ str holder))
 
@@ -123,7 +123,7 @@
    送り手の版(名 → 版)・put-ms = 置いた時刻(参照の無い Program を猶予の後に消す — program_policy.sweep-programs)。#2447 で JSON の dict を
    この型にした。保存の JSON の形 {blob versions putMs} は cluster_policy の program-row-to-json / program-row-from-json。"
   (#^ str blob)
-  (#^ dict versions)
+  (#^ (get dict #(str str)) versions)
   (#^ int put-ms))
 
 
@@ -231,8 +231,8 @@
   (setv #^ (| int None) restored-old-ms None)
   (setv #^ (| RolloutStuck None) stuck None)
   (setv #^ (| int None) stuck-cleared-ms None)
-  (setv #^ (| dict None) last-action None)
-  (setv #^ (| dict None) simulated None)
+  (setv #^ (| (get dict #(str object)) None) last-action None)
+  (setv #^ (| (get dict #(str int)) None) simulated None)
   (setv #^ (| str None) marked-deployment None)
   (setv #^ (| RolloutDrift None) drift None)
   (setv #^ (| int None) drift-resolved-ms None))
@@ -261,7 +261,7 @@
   (#^ (| int None) from-version)
   (#^ (| int None) to-version)
   (#^ (| int None) generation)
-  (#^ dict changes))
+  (#^ (get dict #(str object)) changes))
 
 
 (defrecord EventsView
@@ -323,7 +323,7 @@
   (#^ (get tuple #(TaskRecord ...)) tasks)
   (#^ int board-keys)
   (#^ (get dict #(str Placement)) surges)
-  (#^ tuple events)
+  (#^ (get tuple #(object ...)) events)
   (#^ int revision)
   (#^ (get tuple #(KeepMark ...)) keep-marks))
 
@@ -417,7 +417,7 @@
    持っておく: name = Service の名・row = 元の行(保存と表示のため JSON のまま)・reason = 理由。置き先・Rollout・drain・計器は
    ClusterState.jobs(受け付けた job)だけを見て、これは見ない。PUT で新しい形に書き直せば jobs へ移る。"
   (#^ str name)
-  (#^ dict row)
+  (#^ (get dict #(str object)) row)
   (#^ str reason))
 
 
@@ -463,12 +463,12 @@
   (setv #^ str reason "")
   (setv #^ (| str None) last-report None)
 
-  (defn #^ dict to-json [self]  ; defk にできない: 保存の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
+  (defn #^ (get dict #(str object)) to-json [self]  ; defk にできない: 保存の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
     "保存の形(durable_kv と state-to-json が使う)。"
     {"declaration" self.declaration "sinceMs" self.since-ms "phase" self.phase.value
      "abandonedMs" self.abandoned-ms "reason" self.reason "lastReport" self.last-report})
 
-  (defn #^ dict status-json [self #^ int timeout-ms]  ; defk にできない: 資源の表示の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
+  (defn #^ (get dict #(str object)) status-json [self #^ int timeout-ms]  ; defk にできない: 資源の表示の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
     "Service の資源の status.handoff に載せる形(段が変わる時だけ変わる — 拍ごとに版と出来事の記録を進めない)。"
     (| {"phase" self.phase.value "sinceMs" self.since-ms "timeoutSeconds" (/ timeout-ms 1000)}
        (if (= self.phase HandoffPhase.ABANDONED)
@@ -665,8 +665,8 @@
   (#^ str kind)
   (#^ str name)
   (#^ (| ResourceMeta None) meta)
-  (#^ dict spec)
-  (#^ dict status)
+  (#^ (get dict #(str object)) spec)
+  (#^ (get dict #(str object)) status)
   (#^ (| ServiceObserved WorkerObserved TaskObserved RolloutObserved None) observed))
 
 
@@ -842,7 +842,7 @@
                       worker の自己申告に任せない)。既定 = company-machine を label doeff.dev/company-machine=true から。"
   (setv #^ str owner-annotation "doeff-cluster/replicas-owned-by")
   (setv #^ str owner-scope "doeff-cluster")
-  (setv #^ tuple node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine"))))
+  (setv #^ (get tuple #((get tuple #(str str str)) ...)) node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine"))))
 
 
 ;; 受け入れる本文の版の範囲(送り手の版 PROTOCOL-FORMAT は shared/intent/protocol.hy)。
@@ -862,7 +862,7 @@
   (#^ (| str None) program)
   (#^ str revision)
   (#^ (get tuple #(ComponentVersion ...)) versions)   ; 送り手の版(名の順)
-  (#^ tuple needs)                    ; 要る能力の名(名の順)
+  (#^ (get tuple #(str ...)) needs)                    ; 要る能力の名(名の順)
   (#^ int lease-ms)
   (#^ int lease-until-ms)
   (#^ int submitted-ms)
@@ -886,15 +886,15 @@
   ;; runtime-env = 宣言の JSON(runtime_env_model の runtime-env->json の形)。在れば worker の版と比べずに置き(版の突き合わせは
   ;; env の root の中の子 process が行う)、worker は env の root を準備してから走らせる。準備の失敗(phase env-failed)は
   ;; failure-kind と retryable を持つ。一時の失敗は、試した worker(avoid)を避けて env-attempts が ENV-RETRIES になるまで置き直す。
-  (setv #^ (| dict None) runtime-env None)
+  (setv #^ (| (get dict #(str object)) None) runtime-env None)
   (setv #^ int env-attempts 0)
-  (setv #^ tuple avoid #())
+  (setv #^ (get tuple #(str ...)) avoid #())
   (setv #^ str failure-kind "")
   (setv #^ bool retryable False)
   ;; --- 子の環境変数(2026-09-28)---
   ;; environ = 送り手の effect の :environ(名の順の #(名 値) の tuple — service の JobSpec.environ と同じ形)。heartbeat の返事で worker へ
   ;; 運び、worker は service と同じ路(ProcessHost.launch)で子の環境変数に置く。この欄の無い行(2026-09-28 より前)は空で読む。
-  (setv #^ tuple environ #()))
+  (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #()))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -906,34 +906,34 @@
 
 
 (defclass [(dataclass :frozen True)] ClusterState []
-  (setv #^ tuple jobs #())
-  (setv #^ dict workers (field :default-factory dict))
-  (setv #^ dict placements (field :default-factory dict)) ; job の名 → Placement
-  (setv #^ dict tasks (field :default-factory dict))
+  (setv #^ (get tuple #(ClusterJob ...)) jobs #())
+  (setv #^ (get dict #(str WorkerInfo)) workers (field :default-factory dict))
+  (setv #^ (get dict #(str Placement)) placements (field :default-factory dict)) ; job の名 → Placement
+  (setv #^ (get dict #(str TaskRecord)) tasks (field :default-factory dict))
   (setv #^ int next-task 1)
   ;; task の id の頭(2026-09-27 — #757)。id = <頭><番号>。以前からの置き場は "t"(t1, t2 …)。置き場の無いところから起きた
   ;; coordinator は起動ごとに違う頭を振る(cluster_policy.fresh-task-prefix)— 前の coordinator が振った id(worker に blob が
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
-  (setv #^ dict board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
-  (setv #^ dict statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
-  (setv #^ tuple events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
+  (setv #^ (get dict #(str BoardRow)) board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
+  (setv #^ (get dict #(str WorkerReport)) statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
+  (setv #^ (get tuple #(object ...)) events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
-  (setv #^ dict meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
+  (setv #^ (get dict #(str ResourceMeta)) meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
   (setv #^ int revision 0)                              ; coordinator 全体の版の番号(書きのたびに 1 進む)
-  (setv #^ tuple audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
+  (setv #^ (get tuple #(AuditEvent ...)) audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
   (setv #^ int audit-seq 0)
-  (setv #^ dict rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
+  (setv #^ (get dict #(str RolloutRow)) rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
   ;; --- 保存しない観測 ---
   ;; Service の process の準備と計器の報告(#2756)、k8s の Deployment と node の label の最後の観測(#2728)は最後の欄 observations
   ;; (ClusterObservations)。
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
   ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
-  (setv #^ frozenset derivable (frozenset))
+  (setv #^ (get frozenset str) derivable (frozenset))
   ;; 受け付けない Service の行(名 → RefusedJob — 改訂 1 の C)。保存する(元の行のまま)— 読み直しても同じ理由で受け付けない。
-  (setv #^ dict refused (field :default-factory dict))
+  (setv #^ (get dict #(str RefusedJob)) refused (field :default-factory dict))
   ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。
-  (setv #^ dict programs (field :default-factory dict))
+  (setv #^ (get dict #(str ProgramRow)) programs (field :default-factory dict))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)
   (setv #^ int rollout-tick-ms 0)                       ; Rollout を最後に調停した時刻
   ;; coordinator が生きていた最後の時刻(ALIVE-MARK-MS ごとに耐久の鍵 counter へ書く)。起動の時に「止まっていた長さ」を測り、
@@ -945,21 +945,21 @@
   ;; drain(2026-09-25): worker の名 → Drain と、入れ替えの Service を drain 中の worker から移す間の並べた置き先
   ;; (job の名 → Placement・surge)。surge の担い手は process を起こし(standby で待つ)、coordinator がそれを Ready と数えたら
   ;; placements をその置き先へ付け替える(旧い担い手は宣言から外れて止め、lease を返す)。どちらも保存する(durable_kv)。
-  (setv #^ dict drains (field :default-factory dict))
-  (setv #^ dict surges (field :default-factory dict))
+  (setv #^ (get dict #(str Drain)) drains (field :default-factory dict))
+  (setv #^ (get dict #(str Placement)) surges (field :default-factory dict))
   ;; 温める表(2026-09-26): 行のキー → WarmEntry。保存する(durable_kv の warm/<キー>)。
-  (setv #^ dict warms (field :default-factory dict))
+  (setv #^ (get dict #(str WarmEntry)) warms (field :default-factory dict))
   ;; 冷たい起動の数(実行環境の task を、準備済みの worker が 1 つも無いまま置いた回数 — 計器 doeff_worker_env_cold_start_total)。
   ;; 保存しない(counter は process の世代ごとに 0 から数える)。
   (setv #^ int env-cold-starts 0)
   ;; 入れ替え(handoff)の期限の見張り(2026-09-26): Service の名 → HandoffWatch。新の世代が動き出してから期限の間 Ready にならなければ
   ;; 諦めを記録し、heartbeat の返事の job に載せる(worker は新を止めて旧を残す — handoff_policy)。保存する(durable_kv)。
-  (setv #^ dict handoffs (field :default-factory dict))
+  (setv #^ (get dict #(str HandoffWatch)) handoffs (field :default-factory dict))
   ;; 生きていないと数えた worker の名(heartbeat が lease の外 — #1934)。調停の拍ごとに cluster_policy.note-liveness が時刻から
   ;; 求め直し、変わった拍だけ新しい値にする — Worker の資源の status の live と版は、この欄の変化で進む(時刻そのものを版の比べに
   ;; 入れると、何も変わらない拍の早い戻り(resource_policy.stamp)で切り替わりを取りこぼす)。保存しない(読み直しの後の最初の拍で
   ;; 求め直す)。位置の引数で作る呼び手を崩さないよう最後の欄に置く。
-  (setv #^ frozenset silent (frozenset))
+  (setv #^ (get frozenset str) silent (frozenset))
   ;; 外から読んだ・受けた保存しない観測(k8s の Deployment と node の label — #2728 J1・Service の process の準備と計器の報告 — #2756 J2。
   ;; worker の観測も順に移す)。保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。版の比べ(resource_policy.dirty-keys)が読むのは
   ;; Service の status.ready の材料の readiness の表だけ。位置の引数の呼び手のため最後に置く。
@@ -1005,15 +1005,15 @@
   (#^ (| str None) key)
   (#^ int lease-ms)
   (#^ int retain-ms)
-  (#^ tuple needs)
-  (#^ (| dict None) runtime-env)
-  (#^ tuple environ))
+  (#^ (get tuple #(str ...)) needs)
+  (#^ (| (get dict #(str object)) None) runtime-env)
+  (#^ (get tuple #((get tuple #(str str)) ...)) environ))
 
 
 (defrecord WarmOffer
   "heartbeat の返事で worker へ配る温める表の行 1 つ(cluster_policy.warms-for): key = 行のキー・runtime-env = 宣言の JSON。"
   (#^ str key)
-  (#^ dict runtime-env))
+  (#^ (get dict #(str object)) runtime-env))
 
 
 (defrecord HeartbeatReply
@@ -1026,7 +1026,7 @@
   (#^ ClusterTiming timing)
   (#^ bool draining)
   (#^ bool superseded)
-  (#^ tuple formats)
+  (#^ (get tuple #(int ...)) formats)
   (#^ int revision))
 
 
@@ -1087,8 +1087,8 @@
   (#^ ClusterState state)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
-  (setv #^ tuple watchers #())
-  (setv #^ tuple beats #()))
+  (setv #^ (get tuple #(Watcher ...)) watchers #())
+  (setv #^ (get tuple #(ProvisionalBeat ...)) beats #()))
 
 
 (defrecord QuietStep
@@ -1098,15 +1098,15 @@
    仮の拍(ProvisionalBeat の tuple — 1 拍ずつの走りでその刻に届く heartbeat)。"
   (#^ int at)
   (#^ ClusterState state)
-  (#^ tuple watchers)
+  (#^ (get tuple #(Watcher ...)) watchers)
   (#^ bool marked)
-  (setv #^ tuple beats #()))
+  (setv #^ (get tuple #(ProvisionalBeat ...)) beats #()))
 
 
 (defrecord QuietStretch
   "静かな区間を本番の判断で試した答え(idle_policy.quiet-stretch): steps = 試して静かだった歩(QuietStep の tuple — 刻の順)・end-at =
    最初の静かでない歩の刻(区間の終わり — 調停ループが本物の歩を回す刻。試した上限までに無ければ None)。"
-  (#^ tuple steps)
+  (#^ (get tuple #(QuietStep ...)) steps)
   (#^ (| int None) end-at))
 
 
@@ -1114,8 +1114,8 @@
   "模擬の時計の下の受け口が IdleNextRequests に返す答え(本番の受け口は要求の list を返す): steps = 眠った区間の中で 1 拍ずつの走りが
    下したはずの歩(QuietStep の tuple — 刻の順。調停ループは歩ごとに SaveState してから本物の歩を回す)・batch = 起きた時に取った要求の
    list(本番の答えと同じ意味)。"
-  (#^ tuple steps)
-  (#^ list batch))
+  (#^ (get tuple #(QuietStep ...)) steps)
+  (#^ (get list object) batch))
 
 
 (defclass [(dataclass :frozen True)] IdleNextRequests [NextRequests]

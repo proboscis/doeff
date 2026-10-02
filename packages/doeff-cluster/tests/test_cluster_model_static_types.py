@@ -2,24 +2,19 @@
 
 cluster_model.hy は Hy の module で型の宣言が無かったので、Rollout の宣言の型 RolloutSpec を名指す使い手(使い手の repo の模擬の
 世界の反例)の strict に、書き手に直せない Unknown の赤(Type of "RolloutSpec" is unknown ほか)が出た。→ cluster_model.pyi で
-宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目(欄の名と順・enum の値)が赤になる。
+宣言する。宣言を外すと、ここの検(欄と要素の型を読む使い手)が赤になる。
+
+.pyi は #2907 から doeff_hy.static_stub が cluster_model.hy から作る(要素の型は .hy の欄の注記に書く)。宣言と実装の一致
+(名・欄の順・型)は tests/test_generated_stubs.py の一致の検が見る — 手書きの時代の「欄の名と順・enum の値を照らす」2 本は外した。
 """
 
-import ast
-import inspect
 import json
 import shutil
 import subprocess
 import sys
-from dataclasses import fields
-from enum import Enum
 from pathlib import Path
 
 import pytest
-
-# cluster_model は .hy の module — 先に hy を読んで import hook を有効にしてから読む(検だけを単独で走らせても読めるように)。
-import hy  # noqa: F401
-from doeff_cluster.coordinator.intent import cluster_model as model
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -78,61 +73,3 @@ def test_users_of_rollout_spec_and_cluster_state_get_no_unknown_types(tmp_path: 
     errors = _errors(tmp_path)
     assert not [e for e in errors if e[0] == "hy-compile"], errors
     assert not [e for e in errors if "unknown" in e[2].lower()], errors
-
-
-def _stub() -> ast.Module:
-    return ast.parse(Path(inspect.getfile(model)).with_suffix(".pyi").read_text(encoding="utf-8"))
-
-
-def test_the_stub_matches_cluster_model_hy() -> None:
-    # 宣言の名は cluster_model.hy に在り、dataclass の欄の名と順・enum の名と値は実装と同じ(宣言だけが先へ行かない)。
-    stub = _stub()
-    constants = [
-        node.target.id
-        for node in stub.body
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    ]
-    classes = {node.name: node for node in stub.body if isinstance(node, ast.ClassDef)}
-    assert [name for name in constants + list(classes) if not hasattr(model, name)] == []
-    for name, node in classes.items():
-        actual = getattr(model, name)
-        stub_fields = [
-            item.target.id
-            for item in node.body
-            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
-        ]
-        if isinstance(actual, type) and issubclass(actual, Enum):
-            members = [
-                (item.targets[0].id, item.value.value)
-                for item in node.body
-                if isinstance(item, ast.Assign)
-                and isinstance(item.targets[0], ast.Name)
-                and isinstance(item.value, ast.Constant)
-            ]
-            assert members == [(m.name, m.value) for m in actual], name
-        elif hasattr(actual, "__dataclass_fields__"):
-            own = [f.name for f in fields(actual)]
-            # IdleNextRequests(実行時は NextRequests の子 class)も親の欄から同じ順で宣言する(頭の註・#2790)。
-            assert stub_fields == own, name
-        elif hasattr(actual, "_fields"):
-            assert stub_fields == list(actual._fields), name
-
-
-def test_the_stub_declares_every_name_cluster_model_defines() -> None:
-    # 実装の公開の型と定数は全部宣言に在る(宣言に無い名は使い手の strict で unknown import symbol の赤)。
-    stub = _stub()
-    declared = {
-        node.target.id
-        for node in stub.body
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    } | {node.name for node in stub.body if isinstance(node, ast.ClassDef)}
-    defined = {
-        name
-        for name, value in vars(model).items()
-        if not name.startswith("_")
-        and (
-            (isinstance(value, type) and value.__module__ == model.__name__)
-            or (name.isupper() and isinstance(value, (tuple, frozenset, dict)))
-        )
-    }
-    assert sorted(defined - declared) == []
