@@ -4,9 +4,13 @@
 //! `[tool.doeff-linter.commit_hook]`(上限の秒)だけ。元の実装 = agora-controllers の
 //! `scripts/commit_hook.hy`(lint-staged・whole-repo-fresh)。
 //!
-//! 止める物は 3 種:
+//! 止める物は 4 種:
 //! - stage した source(.hy・.hyk・.hyp・.py)の、critical でない規則の登録簿の外の error(登録簿の既知は linter が warning に下げる)。
 //! - stage した source の critical のうち HEAD の版に無い物(`--baseline-report` の `new_critical`)。
+//! - stage した source の major の warning の数が、規則ごとに HEAD の版より増えた物(agora-redesign #2683 — warning は終了コードを
+//!   変えないので、直している間に新しい warning が入っても減らなかった)。数は stage した file の組の合計で比べる(移した・消した
+//!   file の HEAD の版も数える)— file ごとに比べると、warning を増やさない移しや分割まで止まる。基点は HEAD の版そのものなので、
+//!   減らした commit の後は次の commit の基点が自ずと下がる(基点の file を持たない・下げ忘れが無い)。
 //! - repo 全体の比べ(repo 全体が要ると規則が名乗る列 — `ProjectRule::needs_whole_repo`・agora-redesign #2090 — を repo 全体に当てる)の
 //!   当たりのうち HEAD の木に無い物 — 当たりが変更の外の file(architecture.hy・登録簿の表・別の source)に付きうる規則は、stage した
 //!   path に当てても出ない。source を 1 つも stage しない commit(表だけの変更)にも当てる。この列は stage した path に当てる規則から
@@ -104,6 +108,29 @@ pub fn report_idents(report: &Value) -> BTreeSet<String> {
         .filter(|v| v["level"] == "critical")
         .chain(blocking_violations(report))
         .map(|v| violation_identity(report, v))
+        .collect()
+}
+
+/// 純粋: 報告の major の warning(severity が warning・level が major — critical は new_critical、登録簿の外の error は
+/// blocking_violations が受け持つ)を規則ごとに数える。
+fn major_warning_counts(report: &Value) -> std::collections::BTreeMap<String, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for v in violations(report).filter(|v| v["severity"] == "warning" && v["level"] == "major") {
+        *counts.entry(v["rule"].as_str().unwrap_or("").to_string()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// 純粋: stage した file の組で、major の warning の数が HEAD の版(head)より先端(tip)で増えた規則を 1 行ずつ
+/// (`<規則> <HEAD の数> → <先端の数>`・規則の辞書順)。同じ数・減った規則は出さない。
+pub fn grown_major_warnings(head: &Value, tip: &Value) -> Vec<String> {
+    let before = major_warning_counts(head);
+    major_warning_counts(tip)
+        .into_iter()
+        .filter_map(|(rule, n)| {
+            let was = before.get(&rule).copied().unwrap_or(0);
+            (n > was).then(|| format!("{} {} → {}", rule, was, n))
+        })
         .collect()
 }
 
@@ -373,6 +400,13 @@ fn staged_paths(root: &Path) -> Result<Vec<String>, String> {
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
 }
 
+/// stage で消えた path(名前替えの旧い側を含む — `--no-renames` の D)。major の warning の数の HEAD の側に、移した・消した file の
+/// HEAD の版も数えるため(数えないと、warning を増やさない移しが増えに見える)。
+fn removed_paths(root: &Path) -> Result<Vec<String>, String> {
+    let out = git(root, &["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=D", "-z"])?;
+    Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
+}
+
 /// HEAD の木を dest へ 1 度だけ書き出す(`git archive --format=tar HEAD | tar -x -C dest`)。HEAD が無い(最初の commit)なら false。
 fn export_head(root: &Path, dest: &Path) -> Result<bool, String> {
     if git(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_err() {
@@ -422,6 +456,7 @@ fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String],
 struct Blocking {
     staged: Vec<String>,
     fresh_critical: Vec<String>,
+    grown_warnings: Vec<String>,
     whole: Vec<String>,
 }
 
@@ -453,10 +488,18 @@ pub fn run(options: &CommitHookOptions) -> u8 {
             for ident in &blocking.fresh_critical {
                 eprintln!("{}HEAD に無い critical: {}", PREFIX, ident);
             }
+            for line in &blocking.grown_warnings {
+                eprintln!("{}major の warning が HEAD の版より増えた(stage した file の組の数): {}", PREFIX, line);
+            }
             for ident in &blocking.whole {
                 eprintln!("{}repo 全体の規則の HEAD に無い当たり: {}", PREFIX, ident);
             }
-            u8::from(!(blocking.staged.is_empty() && blocking.fresh_critical.is_empty() && blocking.whole.is_empty()))
+            u8::from(
+                !(blocking.staged.is_empty()
+                    && blocking.fresh_critical.is_empty()
+                    && blocking.grown_warnings.is_empty()
+                    && blocking.whole.is_empty()),
+            )
         }
         Err(Stop::TimedOut) => {
             eprintln!("{}doeff-linter が {} 秒で終わらなかった — 測れなかったまま通す", PREFIX, options.timeout.as_secs());
@@ -499,8 +542,21 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
 
     if !paths.is_empty() {
-        // HEAD の版(HEAD に在る path だけ)を同じ規則で撃ち、先端の根の path へ付け替えて基点にする。
-        let head_paths: Vec<String> = tree.map(|t| paths.iter().filter(|p| t.join(p).is_file()).cloned().collect()).unwrap_or_default();
+        // HEAD の版(HEAD に在る path だけ)を同じ規則で撃ち、先端の根の path へ付け替えて基点にする。stage で消えた file(名前替えの
+        // 旧い側を含む)の HEAD の版も撃つ — major の warning の数を、移した・消した file の分も含めて比べるため。
+        let removed = removed_paths(root).map_err(Stop::Failed)?;
+        let head_paths: Vec<String> = tree
+            .map(|t| {
+                paths
+                    .iter()
+                    .chain(linted_paths(&removed, |p| t.join(p).is_file()).iter())
+                    .filter(|p| t.join(p).is_file())
+                    .cloned()
+                    .collect::<BTreeSet<String>>()
+                    .into_iter()
+                    .collect()
+            })
+            .unwrap_or_default();
         let base = match tree {
             Some(t) if !head_paths.is_empty() => {
                 let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), quick, &[], &head_paths), options.timeout), "HEAD の版")?;
@@ -515,6 +571,7 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, quick, &extra, &paths), options.timeout), "stage した file ")?;
         blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
         blocking.fresh_critical = tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        blocking.grown_warnings = grown_major_warnings(&base, &tip);
     }
 
     if !whole.is_empty() {
@@ -615,6 +672,45 @@ mod tests {
         let picked: Vec<&str> = blocking_violations(&report).iter().map(|v| v["key"].as_str().unwrap()).collect();
         assert_eq!(picked, vec!["k-error"]);
         assert_eq!(violation_line(&report, blocking_violations(&report)[0]), "a.hy:3: DOEFF1 m");
+    }
+
+    fn w(rule: &str, path: &str, severity: &str, level: &str) -> Value {
+        json!({ "rule": rule, "path": path, "severity": severity, "level": level, "message": "m" })
+    }
+
+    /// agora-redesign #2683: major の warning は規則ごとの数で HEAD の版と比べる — 1 つ増えれば名指す・同じ数と減った数は出さない・
+    /// 別の file へ移っただけ(移し・分割)は数が同じなので出さない。critical・error・minor・info は数えない(別の段か対象の外)。
+    #[test]
+    fn commit_hook_grown_major_warnings_counts_per_rule() {
+        let head = json!({ "violations": [
+            w("DOEFF172", "/h/a.hy", "warning", "major"),
+            w("DOEFF113", "/h/old.hy", "warning", "major"),
+            w("DOEFF113", "/h/old.hy", "warning", "major"),
+        ]});
+        // 増えた: DOEFF172 が 1 → 2(同じ file)。新しい規則 DOEFF105 が 0 → 1。DOEFF113 は old.hy から new.hy へ 2 つとも移った(同じ数)。
+        let grown = json!({ "violations": [
+            w("DOEFF172", "/r/a.hy", "warning", "major"),
+            w("DOEFF172", "/r/a.hy", "warning", "major"),
+            w("DOEFF105", "/r/b.hy", "warning", "major"),
+            w("DOEFF113", "/r/new.hy", "warning", "major"),
+            w("DOEFF113", "/r/new.hy", "warning", "major"),
+        ]});
+        assert_eq!(grown_major_warnings(&head, &grown), ids(&["DOEFF105 0 → 1", "DOEFF172 1 → 2"]));
+        // 同じ数・減った数は止めない(減った commit の次は、その HEAD が基点になる)。
+        assert!(grown_major_warnings(&head, &head).is_empty());
+        let fewer = json!({ "violations": [w("DOEFF113", "/r/new.hy", "warning", "major")] });
+        assert!(grown_major_warnings(&head, &fewer).is_empty());
+        // major の warning でない物は数えない: critical(new_critical の段)・error(blocking_violations の段)・minor・info。
+        let others = json!({ "violations": [
+            w("DOEFF172", "/r/a.hy", "warning", "major"),
+            w("DOEFF999", "/r/a.hy", "warning", "critical"),
+            w("DOEFF998", "/r/a.hy", "error", "major"),
+            w("DOEFF997", "/r/a.hy", "warning", "minor"),
+            w("DOEFF996", "/r/a.hy", "info", "info"),
+        ]});
+        assert!(grown_major_warnings(&head, &others).is_empty());
+        // HEAD に版が無い(新しい file だけ)なら、基点は 0。
+        assert_eq!(grown_major_warnings(&json!({ "violations": [] }), &fewer), ids(&["DOEFF113 0 → 1"]));
     }
 
     #[test]

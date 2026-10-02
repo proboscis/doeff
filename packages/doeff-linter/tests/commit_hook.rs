@@ -380,3 +380,81 @@ fn timeout_passes_with_an_unmeasured_line() {
     assert!(stderr.contains("測れなかった"), "{}", stderr);
     assert_eq!(stderr.lines().count(), 1, "{}", stderr);
 }
+
+/// agora-redesign #2683 の設定 — DOEFF172(写像の置き場の臭い・major の warning — 終了コードを変えない)だけ。
+const WARNING_PYPROJECT: &str = r#"[tool.doeff-linter]
+enable = ["DOEFF172"]
+
+[tool.doeff-linter.commit_hook]
+timeout_s = 120
+"#;
+
+/// 層の置き場(core)の file — 定義 1 つが handler の外で写像を組む(DOEFF172 が 1 つ)。
+const ONE_MAP: &str = "(defk table [n]\n  {\"a\" n})\n";
+
+/// warning の 1 つ在る基点を commit した repo。
+fn warning_repo() -> tempfile::TempDir {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", WARNING_PYPROJECT);
+    write(root, "app/core/table.hy", ONE_MAP);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "warning 1 つの基点"]);
+    dir
+}
+
+/// 失敗ケース(agora-redesign #2683): major の warning は終了コードを変えないので、hook は規則ごとの数を HEAD の版と比べる。同じ file に
+/// DOEFF172 を 1 つ足した commit と、warning の在る新しい file を足した commit は 1 で止まり、規則と数を名指す。
+#[test]
+fn a_new_major_warning_blocks_and_names_the_rule_and_counts() {
+    let dir = warning_repo();
+    let root = dir.path();
+    write(root, "app/core/table.hy", &format!("{}\n(defk other [n]\n  {{\"b\" n}})\n", ONE_MAP));
+    git(root, &["add", "app/core/table.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(
+        stderr.contains("doeff-linter commit-hook: major の warning が HEAD の版より増えた(stage した file の組の数): DOEFF172 1 → 2"),
+        "{}",
+        stderr
+    );
+
+    git(root, &["reset", "-q", "--hard", "HEAD"]);
+    write(root, "app/core/fresh.hy", ONE_MAP);
+    git(root, &["add", "app/core/fresh.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    // 組は stage した file だけ(table.hy は stage していない)— 新しい file の HEAD の版は無いので 0 から。
+    assert!(stderr.contains("DOEFF172 0 → 1"), "新しい file の warning も組の数に入る: {}", stderr);
+}
+
+/// 数の増えない変更は通る — 同じ数の書き換え・別の file への移し(git mv — 移した元の HEAD の版も数える)・warning を直す変更。
+/// 直した commit の後は、その HEAD が次の基点になる(基点の file を持たない)。
+#[test]
+fn a_same_count_change_a_move_and_a_fix_pass() {
+    let dir = warning_repo();
+    let root = dir.path();
+    write(root, "app/core/table.hy", "(defk table [m]\n  {\"a\" m})\n");
+    git(root, &["add", "app/core/table.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(!stderr.contains("増えた"), "{}", stderr);
+
+    git(root, &["reset", "-q", "--hard", "HEAD"]);
+    git(root, &["mv", "app/core/table.hy", "app/core/moved.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "移しは数を増やさない: {}", stderr);
+
+    git(root, &["reset", "-q", "--hard", "HEAD"]);
+    write(root, "app/core/table.hy", "(defk table [n]\n  n)\n");
+    git(root, &["add", "app/core/table.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    git(root, &["commit", "-q", "-m", "直した"]);
+    // 直した後の HEAD が基点 — 同じ写像を戻す commit は 0 → 1 で止まる。
+    write(root, "app/core/table.hy", ONE_MAP);
+    git(root, &["add", "app/core/table.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("DOEFF172 0 → 1"), "{}", stderr);
+}
