@@ -1,0 +1,14 @@
+{
+  "module_extensions": {
+    "doeff-cluster-drain-main": {
+      "allow": [
+        "doeff-cluster-clock"
+      ]
+    },
+    "doeff-cluster-main": {
+      "allow": [
+        "doeff-cluster-clock"
+      ]
+    }
+  }
+}
