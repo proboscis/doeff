@@ -78,7 +78,7 @@
           (val snapshot (.read-snapshot-bytes store))
           ;; 写しが無ければ空の表・番号 0 から当てる。
           (val base (if (is snapshot None)
-                        (SnapshotRead {} 0)
+                        (SnapshotRead :kv {} :seq 0)
                         (! (read-snapshot snapshot (str store.snapshot)))))
           (<- scan LogScan (scan-log (.read-log-lines store) base.seq base.kv (str store.log)))
           (when scan.dropped

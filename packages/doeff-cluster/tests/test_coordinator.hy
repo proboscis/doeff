@@ -1,5 +1,5 @@
 ;; coordinator: 作り直し・盤の compare-and-set・task の一生(置く・結果・期限・版・担い手の沈黙)・調停ループの Program・shim。
-(require doeff-hy.macros [deftest defhandler <- val var])
+(require doeff-hy.macros [deftest defhandler defk <- val var])
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import subprocess)
@@ -18,7 +18,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
-(import doeff_cluster.coordinator.protocol.store [Persist durable-states])
+(import doeff_cluster.coordinator.protocol.store [Persist durable-states durable-load durable-persist])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
@@ -275,25 +275,25 @@
   (assert (!= (.wait p :timeout 30) 0)))
 
 
-(defn #^ None test-wal-store-keeps-answered-batches-and-drops-a-torn-tail [#^ Path tmp-path]
+(deftest test-wal-store-keeps-answered-batches-and-drops-a-torn-tail [tmp-path]
   ;; 耐久の置き場: 返事を済ませた(fsync まで終えた)まとまりは読み直しで必ず戻る。fsync の途中で落ちたまとまり(最後の切れた行)は
   ;; 捨てる(その送り手には返事をしていない)。まとめ直しの後も同じ。
-  (import doeff_cluster.foundation.wal_store [WalStore])
-  (setv store (WalStore (str tmp-path) :max-log-bytes 10000000))
-  (.load store)
-  (.persist store {"board/a" {"value" 1 "resourceVersion" 1}})
-  (.persist store {"service/s" {"name" "s"} "counter" {"revision" 3}})
+  (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
+  (val store (WalStore (str tmp-path) :max-log-bytes 10000000))
+  (<- (durable-load store))
+  (<- (durable-persist store {"board/a" {"value" 1 "resourceVersion" 1}}))
+  (<- (durable-persist store {"service/s" {"name" "s"} "counter" {"revision" 3}}))
   ;; 3 まとまり目を書いている途中で落ちた(改行の前で切れた)
   (with [f (open (/ tmp-path "wal.jsonl") "ab")] (.write f b"{\"seq\": 3, \"delta\": {\"board/b\": "))
-  (setv again (WalStore (str tmp-path)))
-  (setv kv (.load again))
+  (val again (WalStore (str tmp-path)))
+  (<- kv dict (durable-load again))
   (assert (= kv {"board/a" {"value" 1 "resourceVersion" 1} "service/s" {"name" "s"} "counter" {"revision" 3}}))
   ;; 切れた行は捨てられ、次の書きは seq 3 から続く
-  (.persist again {"board/a" None})
-  (.checkpoint again)
-  (.persist again {"board/c" {"value" 5 "resourceVersion" 1}})
-  (setv third (WalStore (str tmp-path)))
-  (assert (= (.load third) {"service/s" {"name" "s"} "counter" {"revision" 3} "board/c" {"value" 5 "resourceVersion" 1}}))
+  (<- (durable-persist again {"board/a" None}))
+  (<- (durable-checkpoint again))
+  (<- (durable-persist again {"board/c" {"value" 5 "resourceVersion" 1}}))
+  (val third (WalStore (str tmp-path)))
+  (assert (= (! (durable-load third)) {"service/s" {"name" "s"} "counter" {"revision" 3} "board/c" {"value" 5 "resourceVersion" 1}}))
   (assert (= third.seq 4)))
 
 
@@ -308,14 +308,14 @@
 (deftest test-state-survives-a-restart-through-the-log-with-the-same-versions
   ;; 資源の書き(版つき)を追記の log へ永続化し、読み直した状態の資源の版と宣言が同じ。
   (import tempfile)
-  (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [wal-store])
+  (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [wal-store durable-load])
   (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
-  (.load store)
+  (<- (durable-load store))
   (setv script (Script [(req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}})
                         (req "PUT" "/board/k" {"value" 1})]))
   (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
-  (setv back (state-from-kv (.load (WalStore d)) 99999))
+  (setv back (state-from-kv (! (durable-load (WalStore d))) 99999))
   (assert (= (durable-kv back) (durable-kv final)))
   (assert (= (. back revision) (. final revision)))
   (assert (= (dfor #(k row) (.items back.board) k row.value) {"k" 1})))
@@ -323,14 +323,16 @@
 
 ;; --- 置き先の鍵の改名(2026-09-25): 改名の前に書いた置き場から起動する --------------------------------------------
 
-(defn #^ WalStore legacy-store [#^ str d]
-  ;; 改名の前の coordinator が書いた形: 置き先は旧い接頭辞(durable_kv.LEGACY-PLACEMENT)の鍵に在る。
-  (setv store (WalStore d))
-  (.load store)
-  (.persist store {"counter" {"nextTask" 1 "revision" 2 "auditSeq" 0}
+(defk legacy-store [d]
+  {:pre [(: d str)] :post [(: % WalStore)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "改名の前の coordinator が書いた形の置き場を dir d に作る — 置き先が旧い接頭辞(durable_kv.LEGACY-PLACEMENT)の鍵に在る置き場から
+   起動する検のため。"
+  (val store (WalStore d))
+  (<- (durable-load store))
+  (<- (durable-persist store {"counter" {"nextTask" 1 "revision" 2 "auditSeq" 0}
                    "service/a" {"name" "a" "revision" "r" "needs" ["net"] "pin" None "replicas" 1 "readiness" None
                                 "owner" None "run" SAMPLE-RUN}
-                   (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}})
+                   (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}}))
   (assert (is-not store.handle None) "開いた置き場は log の handle を持つ")
   (.close store.handle)
   store)
@@ -344,14 +346,14 @@
   (import doeff_core_effects.handlers [slog-handler])
   (import doeff_cluster.coordinator.entry.main [load-state])
   (setv d (tempfile.mkdtemp))
-  (legacy-store d)
+  (<- (legacy-store d))
   ;; 置き場が在るので以前の形の file は読まない — 読み直しの 1 行の報告(slog)だけに答える。
   (<- state (with-handlers [slog-handler] (load-state (str (/ (Path d) "absent.json")) (WalStore d) 5000)))
   ;; 読んだ置き先は旧い鍵の中身そのもの(担い手も世代も変わらない = worker は process を起こし直さない)
   (assert (= (. (get state.placements "a") worker) "zeus"))
   (assert (= (. (get state.placements "a") generation) 3))
   ;; 置き場は新しい鍵だけを持つ(読み直しても同じ)
-  (setv kv (.load (WalStore d)))
+  (setv kv (! (durable-load (WalStore d))))
   (assert (in (+ PLACEMENT "a") kv))
   (assert (not-in (+ LEGACY-PLACEMENT "a") kv))
   ;; 旧い鍵を消した書きは、新しい鍵を書いた書きより後(log の行の順)

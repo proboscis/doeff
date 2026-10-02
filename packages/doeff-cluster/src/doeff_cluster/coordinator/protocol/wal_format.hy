@@ -100,19 +100,19 @@
                   (try #("json" (json.loads line)) (except [ValueError] #("not-json" None)))
                   #("cut" None)))
   (match parsed
-    #("cut" _) (LineRead None False "改行が無い(途中で切れた)")
-    #("not-json" _) (LineRead None False "JSON にならない")
+    #("cut" _) (LineRead :record None :checked False :reason "改行が無い(途中で切れた)")
+    #("not-json" _) (LineRead :record None :checked False :reason "JSON にならない")
     #(_ record)
       (if (not (and (isinstance record dict) (isinstance (.get record "seq") int) (isinstance (.get record "delta") dict)))
-          (LineRead None False "seq と delta の形でない")
+          (LineRead :record None :checked False :reason "seq と delta の形でない")
           (do (val body (dfor #(k v) (.items record) :if (!= k "crc") k v))
               (if (not-in "crc" record)
-                  (LineRead record False None)
+                  (LineRead :record record :checked False :reason None)
                   (do (<- text str (canonical body))
                       (<- crc str (checksum text))
                       (if (= (get record "crc") crc)
-                          (LineRead body True None)
-                          (LineRead None False "checksum が合わない"))))))))
+                          (LineRead :record body :checked True :reason None)
+                          (LineRead :record None :checked False :reason "checksum が合わない"))))))))
 
 
 (defk scan-log [lines base kv where]
@@ -148,8 +148,8 @@
       (<- (apply-delta kv (get record "delta")))
       (:= seq n)))
   (match dropped
-    None (LogScan kv seq good 0 None)
-    #(size why) (LogScan kv seq good size why)))
+    None (LogScan :kv kv :seq seq :good good :dropped 0 :reason None)
+    #(size why) (LogScan :kv kv :seq seq :good good :dropped size :reason why)))
 
 
 (defk read-snapshot [data where]
@@ -165,4 +165,4 @@
     (<- crc str (checksum text))
     (when (!= (get record "crc") crc)
       (raise (WalCorrupted (.format "{}: checksum が合わない(seq {})。起動を断る" where (get record "seq"))))))
-  (SnapshotRead (get record "kv") (get record "seq")))
+  (SnapshotRead :kv (get record "kv") :seq (get record "seq")))
