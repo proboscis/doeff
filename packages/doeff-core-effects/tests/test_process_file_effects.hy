@@ -1,6 +1,7 @@
 ;;; 汎用の子 process と file system の effect(process_effects.hy・file_effects.hy — agora-redesign #802 便 1)の検。
 ;;;   - 子 process の本物(subprocess-handler)と I/O なし(scripted-process-handler)が同じ答えになる性質(returncode・出力・時間切れ・起こせない形・
-;;;     環境・cwd・stdin・出力の追記)は契約テスト test_process_contract.hy。ここは片方だけの性質(本物の WorkingDirectory・台本が env None を
+;;;     環境・cwd・stdin・出力の追記)は契約テスト test_process_contract.hy。ここは片方だけの性質(本物の WorkingDirectory と ReadMachineName・
+;;;     答え手の無い ReadMachineName が落ちる形・台本の機体の名・台本が env None を
 ;;;     受ける形・job ごとの作業 dir・台本から台本を走らせる)。
 ;;;   - 本物の file の答え手(os-file-handler)は一時 dir で、値の詰め替え(種類・mode・symlink を保つ写し)を確かめる。
 ;;;   - 同じ筋書きの Program を本物(一時 dir)と I/O なし(memory-file-handler)の両方で走らせ、答えが同じになることを確かめる(同じ所で断る)。
@@ -10,14 +11,17 @@
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import os)
+(import socket)
+(import pytest)
 (import stat)
 (import tempfile)
 (import dataclasses [dataclass])
 (import typing [TypeVar])
 (import doeff [run with_handlers Program])
+(import doeff_vm [UnhandledEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory])
+(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
@@ -44,6 +48,32 @@
   ;; 本物の WorkingDirectory は自分の process の作業 dir(fake は job ごとに新しい dir — 下の台本の筋書き)。
   (<- here str (with_handlers [subprocess-handler] (WorkingDirectory)))
   (assert (= here (os.getcwd)) here))
+
+
+(deftest test-subprocess-answers-the-machine-name-from-the-os
+  ;; 本物の ReadMachineName は socket.gethostname と同じ値(agora-redesign #3050)。
+  (<- name str (with_handlers [subprocess-handler] (ReadMachineName)))
+  (assert (= name (socket.gethostname)) name))
+
+
+(deftest test-scripted-process-answers-the-machine-name-of-the-script
+  ;; 台本の ReadMachineName は ProcessScript の machine-name(既定は "scripted-machine")。
+  (<- given str (with_handlers [(scripted-process-handler (ProcessScript :commands #() :machine-name "sim-host"))] (ReadMachineName)))
+  (<- default str (with_handlers [(scripted-process-handler (ProcessScript :commands #()))] (ReadMachineName)))
+  (assert (= #(given default) #("sim-host" "scripted-machine")) #(given default)))
+
+
+(defk read-machine-name-alone []
+  {:pre [] :post [(: % str)] :tags {:context "process-test" :role "program"}}
+  "答え手を積まずに ReadMachineName を出す Program(反例の筋書き)。"
+  (<- name str (ReadMachineName))
+  name)
+
+
+(deftest test-counterexample-machine-name-without-a-handler-is-unhandled
+  ;; 答え手の無い run では ReadMachineName は未処理で落ちる(既定の名で黙って答える所は無い)。
+  (with [(pytest.raises UnhandledEffect :match "ReadMachineName")]
+    (run (read-machine-name-alone))))
 
 
 (defk shown-env [commands request]

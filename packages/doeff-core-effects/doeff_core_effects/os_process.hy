@@ -1,5 +1,6 @@
 ;;; 汎用の子 process の effect(process_effects.hy)の本物の答え手 subprocess-handler(agora-redesign #802 便 1)。subprocess と os.environ を
 ;;; 呼んで値を詰め替えるだけで、判断を持たない。doeff-agents の driver-io-handler も RunProcess に同じ run-subprocess で答える(実装は 1 つ)。
+;;; ReadMachineName は socket.gethostname をそのまま答える(agora-redesign #3050)。
 ;;; 子の標準入力・標準出力・標準エラーと output-path は utf-8 と surrogateescape で読み書きする(可逆 — process_effects.hy の頭の註・
 ;;; agora-redesign #2160)。
 ;;;
@@ -35,6 +36,7 @@
 (import logging)
 (import os)
 (import signal)
+(import socket)
 (import subprocess)
 (import sys)
 (import threading)
@@ -48,7 +50,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
+                                            ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer environment-answer])
 
 ;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
@@ -636,6 +638,8 @@
   (ReadInterpreter []
     (<- facts InterpreterFacts (os-interpreter-facts))
     (resume facts))
+  (ReadMachineName []
+    (resume (socket.gethostname)))
   (ResolveModule [name]
     (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
     (resume found))
@@ -693,6 +697,8 @@
   (ReadInterpreter []
     (<- facts InterpreterFacts (os-interpreter-facts))
     (resume facts))
+  (ReadMachineName []
+    (resume (socket.gethostname)))
   (ResolveModule [name]
     (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
     (resume found))

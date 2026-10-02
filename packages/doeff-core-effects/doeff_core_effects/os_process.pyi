@@ -38,6 +38,7 @@ from doeff_core_effects.process_effects import SignalProcess as SignalProcess
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.process_effects import ProcessSignalled as ProcessSignalled
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
+from doeff_core_effects.process_effects import ReadMachineName as ReadMachineName
 from doeff_core_effects.process_effects import ResolveModule as ResolveModule
 from doeff_core_effects.process_effects import InterpreterFacts as InterpreterFacts
 from doeff_core_effects.process_effects import ModuleFound as ModuleFound
