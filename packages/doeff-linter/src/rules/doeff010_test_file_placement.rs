@@ -3,8 +3,7 @@
 //! Test files must be placed under a 'tests' directory.
 
 use crate::models::{RuleContext, Severity, Violation};
-use crate::rules::base::LintRule;
-use rustpython_ast::Mod;
+use crate::rules::base::{LintRule, RuleReach};
 use std::path::Path;
 
 pub struct TestFilePlacementRule;
@@ -48,17 +47,13 @@ impl LintRule for TestFilePlacementRule {
         "Test files must be placed under a 'tests' directory"
     }
 
+    /// file の置き場を見る規則なので、本体が file に 1 度だけ当てる(#2858 — 最初の文の絞りは本体の役目)。
+    fn reach(&self) -> RuleReach {
+        RuleReach::Module
+    }
+
     fn check(&self, context: &RuleContext) -> Vec<Violation> {
         let mut violations = Vec::new();
-
-        // Only check on first statement to avoid duplicate violations
-        if let Mod::Module(module) = context.ast {
-            if !module.body.is_empty() && !std::ptr::eq(context.stmt, &module.body[0]) {
-                return violations;
-            }
-        } else {
-            return violations;
-        }
 
         if Self::is_test_file(context.file_path) && !Self::is_in_tests_directory(context.file_path)
         {
@@ -87,6 +82,7 @@ impl LintRule for TestFilePlacementRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustpython_ast::Mod;
     use rustpython_parser::{parse, Mode};
 
     fn check_code(code: &str, file_path: &str) -> Vec<Violation> {

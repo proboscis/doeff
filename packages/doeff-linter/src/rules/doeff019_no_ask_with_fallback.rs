@@ -5,7 +5,7 @@
 //! The `ask` effect should be the ONLY way to obtain the value to reduce complexity.
 
 use crate::models::{RuleContext, Severity, Violation};
-use crate::rules::base::LintRule;
+use crate::rules::base::{LintRule, RuleReach};
 use rustpython_ast::{BoolOp, Expr, Stmt};
 
 pub struct NoAskWithFallbackRule;
@@ -406,6 +406,12 @@ impl LintRule for NoAskWithFallbackRule {
 
     fn description(&self) -> &str {
         "Forbid using 'ask' effect with fallback patterns; ask should be the sole source"
+    }
+
+    /// 自分で入れ子の文(関数・class・try ほか)を歩いて当たりを出す規則なので、本体は module の上の段の文だけを
+    /// 渡す(#2858 — 入れ子の文も渡すと、同じ当たりを入れ子の深さの分だけ数えていた)。
+    fn reach(&self) -> RuleReach {
+        RuleReach::Subtree
     }
 
     fn check(&self, context: &RuleContext) -> Vec<Violation> {
