@@ -10,12 +10,23 @@
 ;;;     PYTHONPATH / VIRTUAL_ENV の ENV)
 ;;;   - npm の道具は版を固定して入れる(`名@x.y.z`)
 ;;; 業務の code と依存は宣言(RuntimeEnv)から worker が root に用意するので、image には載らない。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import sys)
-(import pathlib [Path])
-(import doeff [run])
+(import doeff [run with_handlers])
+(import doeff_core_effects.file_effects [FileFailed ReadText])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.shared.core.image_rules [image-contract-violations])
+
+
+(defk dockerfile-violations [path]
+  {:pre [(: path str)] :post [(: % (| tuple FileFailed))]}
+  "Dockerfile を file system の effect で読み、約束への違反を返すため(読めなければ FileFailed — 答え手は入口が被せる)。"
+  (<- text (| str FileFailed) (ReadText path))
+  (when (isinstance text FileFailed)
+    (return text))
+  (<- found tuple (image-contract-violations text))
+  found)
 
 
 (defn #^ None main []
@@ -26,10 +37,13 @@
     (sys.exit 2))
   (setv failed False)
   (for [p paths]
-    (setv found (run (image-contract-violations (.read-text (Path p) :encoding "utf-8"))))
-    (for [v found]
-      (print (.format "{}:{}: {} — {}" p v.line v.rule v.text))
-      (setv failed True)))
+    (setv found (run (with_handlers [os-file-handler] (dockerfile-violations p))))
+    (if (isinstance found FileFailed)
+        (do (print (.format "{}: 読めない — {}" p found.detail) :file sys.stderr)
+            (setv failed True))
+        (for [v found]
+          (print (.format "{}:{}: {} — {}" p v.line v.rule v.text))
+          (setv failed True))))
   (sys.exit (if failed 1 0)))
 
 

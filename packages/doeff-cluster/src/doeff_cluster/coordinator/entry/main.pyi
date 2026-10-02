@@ -5,6 +5,8 @@ from types import FrameType as FrameType
 from pathlib import Path as Path
 from doeff import run as run
 from doeff import with_handlers as with_handlers
+from doeff_time import sync_time_handler as sync_time_handler
+from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_core_effects.effects import slog as slog
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import ListDirectory as ListDirectory
@@ -50,6 +52,9 @@ def legacy_state(state_file: str, now: int) -> _Program[ClusterState | None, obj
     ...
 
 def load_state(state_file: str, store: DurableStore, now: int) -> _Program[ClusterState, object]:
+    ...
+
+def state_on_start(state_file: str, store: DurableStore) -> _Program[ClusterState, object]:
     ...
 
 def main() -> None:

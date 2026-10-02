@@ -18,7 +18,6 @@ from doeff_vm import WithHandler as WithHandler
 class ReplyTarget(Protocol):
     done: object = None
     status: int = 0
-    created: float = 0.0
     data: bytes = b''
     content_type: str = ''
 
