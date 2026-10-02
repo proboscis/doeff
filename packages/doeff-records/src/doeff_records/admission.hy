@@ -2,7 +2,9 @@
 ;;; 判断を handler ごとに写さない(写すと 1 つだけ古い答えを返す日が来る)。
 ;;;
 ;;; 判断の順(PutRow): 期待(Conflict)→ 宣言の外で値が None の欄を差分から落とす → 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え →
-;;; 書き手 → 状態の語彙 → operator の欄の主体 → 上限。PutRows の束は、全部の行の期待 → 全部の行の書きの判定(1 行ずつは PutRow と同じ判断)。
+;;; 状態の語彙 → 上限。PutRows の束は、全部の行の期待 → 全部の行の書きの判定(1 行ずつは PutRow と同じ判断)。
+;;; 書き手の名(欄の writers・founders・operator-paths・列の writers)では断らない — 書いてよい program は linter の規則と模擬環境の
+;;; 失敗ケースで守る(#2994・#2989)。
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
@@ -91,24 +93,6 @@
                       "判定にかける差分"))
 
 
-(defn #^ bool field-changes? [#^ (| Row None) current #^ str name #^ object value]
-  "差分の 1 欄が行を変えるか: None(欄を消す)は欄が在る時だけ・他の値は今の値と違う時だけ。"
-  (when (is current None) (return (is-not value None)))
-  (setv present (in name current.value))
-  (if (is value None)
-      present
-      (not (and present (json-equal? (get current.value name) value)))))
-
-
-(defn #^ tuple changed-fields [#^ TableDecl decl #^ (| Row None) current #^ FrozenMap diff]
-  "書きが変える欄(書き手の名簿で照らす欄): 生まれる行 = 鍵の欄と、値が None でない差分の全部 / 在る行 = 値の変わる差分の欄
-   (None = 欄を消す — 在る欄を消す書きも、その欄の書き手で照らす)。"
-  (if (is current None)
-      (tuple (+ (list decl.key-fields)
-                (sorted (gfor #(name value) (.items diff) :if (and (not-in name decl.key-fields) (is-not value None)) name))))
-      (tuple (sorted (gfor #(name value) (.items diff) :if (field-changes? current name value) name)))))
-
-
 (defn #^ (| Refused None) shape-refusal [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ FrozenMap diff]
   "鍵の形・宣言の外の欄・終端の行・鍵の欄の書き換え。"
   (setv unknown (sorted (gfor name diff :if (not (decl.declares name)) name)))
@@ -136,39 +120,12 @@
   (frozen-json-object (dfor #(name v) (.items (| merged born-state)) :if (is-not v None) name v) "確定する行の値"))
 
 
-(defn #^ bool founding? [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ str name]
-  "この書きが欄 name の誕生の書き手の書きか: 行がまだ無く(current = None)、書き手が欄の founders に居る。"
-  (and (is current None) (in writer (decl.founders-of name))))
-
-
-(defn #^ (| Refused None) writer-refusal [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple changed]
-  "変わる欄ごとに書き手を照らす: 欄の writers か、行の誕生の書きなら欄の founders(founding?)。"
-  (for [name changed]
-    (setv writers (decl.writers-of name))
-    (when (not (or (in writer writers) (founding? decl writer current name)))
-      (return (Refused (.format "表 {} の欄 {} を書いてよいのは {!r} で、{!r} はその中に無い"
-                                decl.name name writers writer)))))
-  None)
-
-
 (defn #^ (| Refused None) state-refusal [#^ TableDecl decl #^ FrozenMap value]
   (when (not decl.states) (return None))
   (setv word (.get value decl.state-field))
   (if (and (isinstance word str) (in word decl.states))
       None
       (Refused (.format "表 {} の状態の語 {!r} は宣言 {!r} の外" decl.name word decl.states))))
-
-
-(defn #^ (| Refused None) operator-refusal [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple changed #^ tuple operators] ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
-  "operator の宣言の欄を agent が書かないようにする: 変わる欄に operator-paths の欄があれば、書き手が operator の主体の一覧
-   (RecordsSchema.operators)に入っていること。書き手の名は handler を組む時に身元から入る値で、effect の引数には無い —
-   agent が operator を名乗る口は無い。例外は行の誕生の書きの founders(founding?)だけ — 宣言がその書き手に既定の行を生むことを
-   許した欄で、生まれた後の行の書きには効かない。"
-  (setv guarded (tuple (gfor name changed :if (and (in name decl.operator-paths) (not (founding? decl writer current name))) name)))
-  (if (and guarded (not-in writer operators))
-      (Refused (.format "表 {} の欄 {!r} は operator の宣言の欄で、書いてよいのは operator の主体 {!r} だけ({!r} はその中に無い)"
-                        decl.name guarded operators writer))
-      None))
 
 
 (defn #^ (| Refused None) size-refusal [#^ TableDecl decl #^ FrozenMap value]
@@ -179,24 +136,19 @@
       None))
 
 
-(defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple key #^ FrozenMap diff
-                                         * #^ tuple operators]
+(defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ FrozenMap diff]
   "書きを許すか: Admitted(確定する値)か Refused(理由)。期待(judge-expect)は呼び手が先に見る。
-   operators = operator の主体の一覧(置き場の宣言の RecordsSchema.operators)— operator の宣言の欄の書きはこれで判定する。
-   判定は差分から宣言の外で値が None の欄を落とした差分(judged-diff)で行う。"
+   判定は差分から宣言の外で値が None の欄を落とした差分(judged-diff)で行う。書き手の名では断らない。"
   (setv judged (judged-diff decl diff))
   (setv shape (shape-refusal decl current key judged))
   (when shape (return shape))
-  (setv changed (changed-fields decl current judged)
-        value (landed-value decl current key judged))
-  (or (writer-refusal decl writer current changed)
-      (state-refusal decl value)
-      (operator-refusal decl writer current changed operators)
+  (setv value (landed-value decl current key judged))
+  (or (state-refusal decl value)
       (size-refusal decl value)
       (Admitted value)))
 
 
-(defn #^ (| tuple RowsConflict RowsRefused) judge-put-rows [#^ RecordsSchema schema #^ str writer #^ tuple writes #^ tuple currents]  ; defk にできない: handler(memory・PG)が置き場の lock と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+(defn #^ (| tuple RowsConflict RowsRefused) judge-put-rows [#^ RecordsSchema schema #^ tuple writes #^ tuple currents]  ; defk にできない: handler(memory・PG)が置き場の lock と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
   "PutRows の束を全部か 0 で書けるかの判断を 1 か所に置く(memory と PostgreSQL の handler が同じ答えを返すため)。
    writes = RowWrite の tuple / currents = 各行の今の行(Row か None・writes と同じ順)。
    答え = 全部通れば各行の Admitted の tuple(writes と同じ順)/ 期待の合わない行があれば束の順で最初の行の RowsConflict /
@@ -207,7 +159,7 @@
     (when conflict (return (RowsConflict index write.table write.key conflict.current))))
   (setv admitted [])
   (for [#(index #(write current)) (enumerate (zip writes currents :strict True))]
-    (setv verdict (judge-put (schema.table write.table) writer current write.key write.value :operators schema.operators))
+    (setv verdict (judge-put (schema.table write.table) current write.key write.value))
     (when (isinstance verdict Refused) (return (RowsRefused index write.table write.key verdict.reason)))
     (.append admitted verdict))
   (tuple admitted))
@@ -277,12 +229,9 @@
   (#^ int sequence))
 
 
-(defn #^ (| AppendNew AppendReplay Refused) judge-append [#^ StreamDecl decl #^ str writer #^ object body
-                                                         #^ (| Event None) earlier]
-  "積んでよいか: 書き手 → 冪等キーの再送(同じ本文なら前の番号・違えば Refused)→ 上限。"
+(defn #^ (| AppendNew AppendReplay Refused) judge-append [#^ StreamDecl decl #^ object body #^ (| Event None) earlier]
+  "積んでよいか: 冪等キーの再送(同じ本文なら前の番号・違えば Refused)→ 上限。書き手の名では断らない。"
   (cond
-    (not-in writer decl.writers)
-      (Refused (.format "追記の列 {} に積んでよいのは {!r} で、{!r} はその中に無い" decl.name decl.writers writer))
     (is-not earlier None)
       (if (= (canonical-json earlier.body) (canonical-json body))
           (AppendReplay earlier.sequence)

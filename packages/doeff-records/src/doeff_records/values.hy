@@ -94,8 +94,7 @@
 (defclass [(dataclass :frozen True)] FieldDecl []
   "表の欄 1 つの宣言: name = 欄の名 / writers = その欄を書いてよい書き手の名(空でない文字列の空でない tuple)/
    founders = 行の誕生の書き(行がまだ無い時)に限ってその欄を書いてよい書き手(空でない文字列の tuple・既定 = 無し)。
-   生まれた後の行のその欄は writers だけが書く — 据え付けの係が既定の行を生むことだけを許し、在る行は書き換えさせない形
-   (operator の宣言の欄でも、誕生の書きの founders は operator の主体を要さない — admission.hy の writer-refusal・operator-refusal)。"
+   writers と founders は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
   (#^ str name)
   (#^ tuple writers)
   (setv #^ tuple founders #())
@@ -113,7 +112,7 @@
    (宣言した欄はこれで全部。行を作る = 鍵の欄を書く、なので鍵の欄の書き手 = 行を作ってよい書き手)/
    indexes = ListRows の where に使える欄(鍵の欄は常に使える)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
-   operator-paths = operator の宣言の欄(書けるのは RecordsSchema.operators に入る書き手だけ)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
+   operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
   (#^ str name)
   (#^ tuple key-fields)
   (#^ tuple fields)
@@ -212,8 +211,7 @@
 (defclass [(dataclass :frozen True)] RecordsSchema []
   "置き場 1 つの宣言の全部: tables = 表の名 → TableDecl・streams = 列の名 → StreamDecl(どちらも凍らせた写像 —
    作る時に受けた写像を写し取る)/ operators = operator の主体の名(身元の名簿の名 = 書き手の名)の tuple。
-   表の operator-paths の欄は、欄の書き手(FieldDecl.writers)であり、かつこの一覧に入る書き手だけが書ける —
-   operator の宣言を agent が書かないように、許可の根拠を書き手の主体に置く。空 = 誰も書けない。"
+   operators と表の operator-paths は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
   (setv #^ (get FrozenMap TableDecl) tables (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap StreamDecl) streams (field :default-factory FrozenMap))
   (setv #^ tuple operators #())

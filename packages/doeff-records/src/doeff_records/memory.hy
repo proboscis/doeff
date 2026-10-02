@@ -346,7 +346,7 @@
         current (memory-current-row store ask.table ask.key))
   (setv conflict (judge-expect ask.expect current))
   (when conflict (return conflict))
-  (setv verdict (judge-put decl writer current ask.key ask.value :operators store.schema.operators))
+  (setv verdict (judge-put decl current ask.key ask.value))
   (when (isinstance verdict Refused) (return verdict))
   (memory-store-row store ask.table ask.key current verdict.value now-ms))
 
@@ -355,7 +355,7 @@
   "PutRows の束を全部か 0 で書く: 全部の行の判定(admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積む。"
   (for [write ask.writes] (store.schema.table write.table))
   (setv currents (tuple (gfor write ask.writes (memory-current-row store write.table write.key)))
-        verdict (judge-put-rows store.schema writer ask.writes currents))
+        verdict (judge-put-rows store.schema ask.writes currents))
   (when (not (isinstance verdict tuple)) (return verdict))
   (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
                             (memory-store-row store write.table write.key current admitted.value now-ms)))))
@@ -521,7 +521,7 @@
 (defn #^ object memory-append [#^ MemoryStore store #^ str writer #^ AppendEvent ask #^ int now-ms]
   (setv decl (store.schema.stream ask.stream)
         slot #(ask.stream ask.idempotency-key)
-        verdict (judge-append decl writer ask.body (.get store.by-idempotency slot)))
+        verdict (judge-append decl ask.body (.get store.by-idempotency slot)))
   (cond
     (isinstance verdict Refused) verdict
     (isinstance verdict AppendReplay) (Appended verdict.sequence)

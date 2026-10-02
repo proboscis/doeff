@@ -44,20 +44,18 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 `TableDecl(name, key_fields, fields, indexes, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
 
-- `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書いてよい書き手の名の tuple)の tuple。定義した欄はこれで全部
-  (載っていない欄への書きは断る)。行を作ることはキーの欄を書くことなので、キーの欄の書き手が行を作ってよい書き手になる。
-  値の変わらない欄は照らさない。定義を尋ねる口は `decl.declares(name)`・`decl.writers_of(name)`・`decl.field_names()`。
+- `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書く書き手の名の tuple)の tuple。定義した欄はこれで全部
+  (載っていない欄への書きは断る)。`writers` は宣言だけで、置き場の書きの判断は書き手の名では断らない(#2994)。
+  定義を尋ねる口は `decl.declares(name)`・`decl.writers_of(name)`・`decl.field_names()`。
 - `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
   終端の行はもう書けない。
-- `operator_paths`: operator の宣言の欄。書けるのは、その欄の書き手(`writers`)であり、かつ `RecordsSchema.operators` に入る書き手だけ。
-  書き手の名は handler を組む時に身元から入る値なので、effect の中身で operator を名乗ることはできない。
+- `operator_paths`: operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)。
 - `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に消し、変更の列に `RowRemoved` を出す)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に消す)。
 置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
-operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の欄を書けない。`operator_paths` の欄の書き手に operator の主体が
-1 人も居ない宣言は、作る時に `ValueError`)。
+operator の主体の名の tuple。`operator_paths` の欄の書き手に operator の主体が 1 人も居ない宣言は、作る時に `ValueError`)。
 
 ## 表ごとの行の型で読み書きする(`doeff_records.typed`)
 
@@ -120,7 +118,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 - 書き手の名: 口は呼び手を断らない(#2988)。呼び手が `X-Records-Writer: <名>`(綴りの正本 = `doeff_records.wire.WRITER_HEADER`)で名乗れば、確かめずにその名を使う。
   名乗らない呼び手は、移行の間だけ `Authorization: Bearer <token>` を名簿 `principals.json`(`{version: 1, principals: [{name, tokenSha256}]}`・env `RECORDS_PRINCIPALS_FILE` は任意)で
   書き手の名へ引き、引けなければ `anonymous`(`doeff_records.principals`)。その名で記録の handler を組むので、書き手の名は effect の引数にならない。
-  表の宣言の書き手でなければ(`anonymous` を含む)、書きは記録の判断が `Refused` にする。
+  書き手の名は行と出来事に記録するだけで、記録の判断は書き手の名では断らない(`anonymous` の書きも通る・#2994)。
 - 待ち受けは入口の Program `doeff_records.http_server.serve_records` 1 つで、1 つの run・1 つの scheduler の中で動く(#880 U7)。
   doeff の汎用の HTTP の待ち受けの effect(`HttpListen`・`HttpNextRequest`・`HttpReadBody`・`HttpRespond`・`HttpShutdown`)を出し、
   要求ごとに `Spawn` した task が答える(例外でも必ず答える — 答えていなければ 500 internal)。本文の上限(16 MiB)は `HttpReadBody` が
@@ -200,8 +198,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_stale_put_conflicts` | 古い版の `PutRow` は `Conflict`・衝突は行を変えない |
 | `law_committed_changes_appear_once_in_order` | 確定した変更は `WatchChanges` にちょうど 1 回・順序どおり |
 | `law_epoch_change_resets` | 置き場の版が変わると `Reset`・読み直した一覧から続けられる |
-| `law_undeclared_writes_are_refused` | 定義に無い書き手・欄・状態・上限・operator の欄・終端の行・キーの書き換えは `Refused` で、行を変えない |
-| `law_operator_paths_need_an_operator` | `operator_paths` の欄は operator の主体の書き手だけが書ける(欄の書き手でも operator でなければ `Refused`・operator でも欄の書き手でない欄は `Refused`)・他の欄は欄の書き手の定義どおり |
+| `law_undeclared_writes_are_refused` | 定義に無い欄・状態・上限・終端の行・キーの書き換えは `Refused` で、行を変えない。書き手の名では断らない |
 | `law_transient_rows_expire` | `KeepFor` の終端の行は期限で消え、`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |

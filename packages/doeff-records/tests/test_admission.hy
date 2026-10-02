@@ -67,32 +67,24 @@
   (assert (= (judge-expect (ExpectVersion 2) row) (Conflict row)))
   (assert (= (judge-expect (ExpectVersion 1) None) (Conflict (Missing))))
   (assert (is (judge-expect (ExpectAny) row) None))
-  ;; 終端の行は書き手を問う前に断る(誰の書きでも同じ理由)。
-  (setv frozen (judge-put decl "stranger" row #("p1") {"label" "x"} :operators LAW-SCHEMA.operators))
+  ;; 終端の行は断る(誰の書きでも同じ理由)。
+  (setv frozen (judge-put decl row #("p1") {"label" "x"}))
   (assert (and (isinstance frozen Refused) (in "終端" frozen.reason)) frozen)
   ;; 生まれる行は initial を持ち、鍵の欄を値に置く。
-  (setv born (judge-put decl "maker" None #("p2") {"label" "x"} :operators LAW-SCHEMA.operators))
+  (setv born (judge-put decl None #("p2") {"label" "x"}))
   (assert (= born (Admitted {"id" "p2" "label" "x" "state" "open"})))
   (assert (= (where-refusal decl {"id" "p1" "color" "red" "note" "n"}) (NotIndexed #("note")))))
 
 
-(deftest test-operator-paths-are-judged-by-the-writer-principal
-  ;; operator の宣言の欄は、欄の書き手かつ operator の主体の書き手だけ。書き手の名は handler の組み立ての値で、
-  ;; judge-put の答えは同じ差分でも書き手の名だけで変わる(effect の中身で operator を名乗る口は無い)。
+(deftest test-operator-paths-and-field-writers-do-not-refuse-a-write
+  ;; 書きの判断は書き手の名を受け取らない(#2994): operator の宣言の欄(grant)も、欄の書き手の宣言に無い欄(label を painter が
+  ;; 書く形)も、宣言の形が合えば通る。
   (setv decl (LAW-SCHEMA.table "parts")
         row (Row #("p1") {"id" "p1" "state" "open"} 1))
-  ;; maker は grant の欄の書き手だが operator の主体でない → operator の段で断る。stranger・painter は欄の書き手の段で先に断る。
-  (setv maker (judge-put decl "maker" row #("p1") {"grant" "yes"} :operators LAW-SCHEMA.operators))
-  (assert (and (isinstance maker Refused) (in "operator の宣言の欄" maker.reason)) maker)
-  (for [writer ["stranger" "painter"]]
-    (assert (isinstance (judge-put decl writer row #("p1") {"grant" "yes"} :operators LAW-SCHEMA.operators) Refused) writer))
-  (assert (= (judge-put decl "overseer" row #("p1") {"grant" "yes"} :operators LAW-SCHEMA.operators)
+  (assert (= (judge-put decl row #("p1") {"grant" "yes"})
              (Admitted {"id" "p1" "state" "open" "grant" "yes"})))
-  ;; operator の主体でも欄の書き手でなければ断る(何でも書ける主体ではない)・operator の欄の外は主体を問わない。
-  (assert (isinstance (judge-put decl "overseer" row #("p1") {"label" "x"} :operators LAW-SCHEMA.operators) Refused))
-  (assert (isinstance (judge-put decl "maker" row #("p1") {"label" "x"} :operators LAW-SCHEMA.operators) Admitted))
-  ;; operator の一覧が空の置き場では、operator の欄は誰も書けない(安全側の既定)。
-  (assert (isinstance (judge-put decl "overseer" row #("p1") {"grant" "yes"} :operators #()) Refused)))
+  (assert (= (judge-put decl row #("p1") {"label" "x"})
+             (Admitted {"id" "p1" "state" "open" "label" "x"}))))
 
 
 (deftest test-a-schema-whose-operator-path-no-operator-can-write-is-refused-at-construction
@@ -103,19 +95,12 @@
   (assert (RecordsSchema :tables {"parts" parts} :operators #("overseer"))))
 
 
-(deftest test-founders-write-a-field-only-when-the-row-is-born
-  ;; 誕生の書き手(FieldDecl.founders): 行が無い時だけ欄を書け(operator の宣言の欄でも operator の主体を要さない)、在る行には効かない。
+(deftest test-founders-do-not-limit-when-a-field-is-written
+  ;; 誕生の書き手(FieldDecl.founders)は宣言の形として残るが、書きの判断は読まない(#2994): 誕生の書きも、生まれた行の書き換えも通る。
   (setv charters (LAW-SCHEMA.table "charters")
         row (Row #("c1") {"name" "c1" "rule" "r0"} 1))
-  (assert (isinstance (judge-put charters "maker" None #("c1") {"rule" "r0"} :operators LAW-SCHEMA.operators) Admitted))
-  (setv beyond (judge-put charters "maker" None #("c1") {"rule" "r0" "note" "n"} :operators LAW-SCHEMA.operators))
-  (assert (and (isinstance beyond Refused) (in "note" beyond.reason)) beyond)
-  (assert (isinstance (judge-put charters "stranger" None #("c1") {"rule" "r0"} :operators LAW-SCHEMA.operators) Refused))
-  (setv rewrite (judge-put charters "maker" row #("c1") {"rule" "r1"} :operators LAW-SCHEMA.operators))
-  (assert (and (isinstance rewrite Refused) (in "rule" rewrite.reason)) rewrite)
-  ;; 同じ値の書き直しは変わる欄が無いので断らない(据え付けの撃ち直し)・operator の主体は在る行を書ける。
-  (assert (isinstance (judge-put charters "maker" row #("c1") {"rule" "r0"} :operators LAW-SCHEMA.operators) Admitted))
-  (assert (isinstance (judge-put charters "overseer" row #("c1") {"rule" "r1"} :operators LAW-SCHEMA.operators) Admitted))
+  (assert (= (judge-put charters None #("c1") {"rule" "r0" "note" "n"}) (Admitted {"name" "c1" "rule" "r0" "note" "n"})))
+  (assert (= (judge-put charters row #("c1") {"rule" "r1"}) (Admitted {"name" "c1" "rule" "r1"})))
   ;; founders の綴りの外は宣言の時に止める。
   (for [founders [#("") ["maker"] #(1)]]
     (assert (refuses? (fn [] (FieldDecl "x" #("w") :founders founders)) #(ValueError TypeError)) founders)))
@@ -136,22 +121,20 @@
   (val decl (LAW-SCHEMA.table "parts"))
   (val row (Row #("p1") {"id" "p1" "label" "a" "color" "red" "state" "open"} 1))
   ;; 宣言に無い欄 method の None は落ち、他の欄の差分は書かれる(確定する値に method は無い)— 在る行も生まれる行も。
-  (assert (= (judge-put decl "maker" row #("p1") {"label" "b" "method" None} :operators LAW-SCHEMA.operators)
+  (assert (= (judge-put decl row #("p1") {"label" "b" "method" None})
              (Admitted {"id" "p1" "label" "b" "color" "red" "state" "open"})))
-  (assert (= (judge-put decl "maker" None #("p2") {"label" "b" "method" None} :operators LAW-SCHEMA.operators)
+  (assert (= (judge-put decl None #("p2") {"label" "b" "method" None})
              (Admitted {"id" "p2" "label" "b" "state" "open"})))
   ;; 宣言に無い欄に値があれば今どおり断る(理由の文に欄の名)— 綴りの誤った欄も同じ。
-  (val valued (judge-put decl "maker" row #("p1") {"label" "b" "method" "pane"} :operators LAW-SCHEMA.operators))
+  (val valued (judge-put decl row #("p1") {"label" "b" "method" "pane"}))
   (assert (and (isinstance valued Refused) (in "method" valued.reason)) valued)
-  (val misspelled (judge-put decl "maker" row #("p1") {"label" "b" "metod" "x"} :operators LAW-SCHEMA.operators))
+  (val misspelled (judge-put decl row #("p1") {"label" "b" "metod" "x"}))
   (assert (and (isinstance misspelled Refused) (in "metod" misspelled.reason)) misspelled)
   ;; 宣言に在る欄の None は今どおりその欄を消す(宣言の外の None と並んでも)。
-  (assert (= (judge-put decl "maker" row #("p1") {"color" None "method" None} :operators LAW-SCHEMA.operators)
+  (assert (= (judge-put decl row #("p1") {"color" None "method" None})
              (Admitted {"id" "p1" "label" "a" "state" "open"})))
-  ;; 書き手の照らしは変わらない: 落とした後の差分の変わる欄で照らす(painter は color の書き手で、label の書き手でない)。
-  (assert (= (judge-put decl "painter" row #("p1") {"color" "blue" "method" None} :operators LAW-SCHEMA.operators)
-             (Admitted {"id" "p1" "label" "a" "color" "blue" "state" "open"})))
-  (assert (isinstance (judge-put decl "painter" row #("p1") {"label" "z" "method" None} :operators LAW-SCHEMA.operators) Refused)))
+  (assert (= (judge-put decl row #("p1") {"color" "blue" "method" None})
+             (Admitted {"id" "p1" "label" "a" "color" "blue" "state" "open"}))))
 
 
 (deftest test-a-none-for-a-field-the-declaration-no-longer-has-leaves-the-old-row-field-in-place
@@ -159,29 +142,28 @@
   ;; 欄の書き手を尋ねて例外(UndeclaredField)にならず、legacy は行に残る(消すのは欄を宣言から外す前の書き直し)。
   (val decl (LAW-SCHEMA.table "parts"))
   (val row (Row #("p1") {"id" "p1" "label" "a" "state" "open" "legacy" "x"} 1))
-  (assert (= (judge-put decl "maker" row #("p1") {"label" "b" "legacy" None} :operators LAW-SCHEMA.operators)
+  (assert (= (judge-put decl row #("p1") {"label" "b" "legacy" None})
              (Admitted {"id" "p1" "label" "b" "state" "open" "legacy" "x"})))
-  (assert (= (judge-put decl "painter" row #("p1") {"color" "blue" "legacy" None} :operators LAW-SCHEMA.operators)
+  (assert (= (judge-put decl row #("p1") {"color" "blue" "legacy" None})
              (Admitted {"id" "p1" "label" "a" "color" "blue" "state" "open" "legacy" "x"})))
   ;; 値のある legacy は今どおり宣言の外の欄として断る。
-  (val valued (judge-put decl "maker" row #("p1") {"legacy" "y"} :operators LAW-SCHEMA.operators))
+  (val valued (judge-put decl row #("p1") {"legacy" "y"}))
   (assert (and (isinstance valued Refused) (in "legacy" valued.reason)) valued))
 
 
 (deftest test-a-write-of-only-undeclared-nones-is-judged-like-a-write-that-changes-nothing
-  ;; 宣言の外の None の欄だけの書きは、落とすと空の差分 — 今の「変わる欄が無い書き」と同じ答えにする。書き手と行の有る無しを
+  ;; 宣言の外の None の欄だけの書きは、落とすと空の差分 — 今の「変わる欄が無い書き」と同じ答えにする。行の有る無しを
   ;; 問わず、空の差分の書きと同じ答え。
   (val decl (LAW-SCHEMA.table "parts"))
   (val row (Row #("p1") {"id" "p1" "label" "a" "state" "open"} 1))
-  (val pairs (lfor writer ["maker" "painter" "stranger"] current [row None]
-                   #((judge-put decl writer current #("p1") {"method" None} :operators LAW-SCHEMA.operators)
-                     (judge-put decl writer current #("p1") {} :operators LAW-SCHEMA.operators))))
+  (val pairs (lfor current [row None]
+                   #((judge-put decl current #("p1") {"method" None})
+                     (judge-put decl current #("p1") {}))))
   (assert (all (gfor #(only-none empty) pairs (= only-none empty))) pairs)
-  ;; その答えの形: 在る行は値を変えずに許す(変わる欄が無いので書き手を照らさない)・生まれる行は鍵の欄の書き手(maker)だけが作る。
-  (assert (= (judge-put decl "stranger" row #("p1") {"method" None} :operators LAW-SCHEMA.operators) (Admitted row.value)))
-  (assert (= (judge-put decl "maker" None #("p1") {"method" None} :operators LAW-SCHEMA.operators)
-             (Admitted {"id" "p1" "state" "open"})))
-  (assert (isinstance (judge-put decl "stranger" None #("p1") {"method" None} :operators LAW-SCHEMA.operators) Refused)))
+  ;; その答えの形: 在る行は値を変えずに許す・生まれる行は鍵の欄と initial だけを持つ。
+  (assert (= (judge-put decl row #("p1") {"method" None}) (Admitted row.value)))
+  (assert (= (judge-put decl None #("p1") {"method" None})
+             (Admitted {"id" "p1" "state" "open"}))))
 
 
 (deftest test-put-rows-drops-undeclared-nones-row-by-row-the-same-way
@@ -190,10 +172,10 @@
   (val legacy-row (Row #("p2") {"id" "p2" "label" "a" "state" "open" "legacy" "x"} 1))
   (val writes #((RowWrite "parts" #("p1") {"label" "b" "method" None} (ExpectAbsent))
                 (RowWrite "parts" #("p2") {"label" "c" "legacy" None} (ExpectVersion 1))))
-  (assert (= (judge-put-rows LAW-SCHEMA "maker" writes #(None legacy-row))
+  (assert (= (judge-put-rows LAW-SCHEMA writes #(None legacy-row))
              #((Admitted {"id" "p1" "label" "b" "state" "open"})
                (Admitted {"id" "p2" "label" "c" "state" "open" "legacy" "x"}))))
-  (val valued (judge-put-rows LAW-SCHEMA "maker" (+ writes #((RowWrite "parts" #("p3") {"method" "pane"} (ExpectAbsent))))
+  (val valued (judge-put-rows LAW-SCHEMA (+ writes #((RowWrite "parts" #("p3") {"method" "pane"} (ExpectAbsent))))
                               #(None legacy-row None)))
   (assert (and (isinstance valued RowsRefused) (= valued.index 2) (in "method" valued.reason)) valued))
 

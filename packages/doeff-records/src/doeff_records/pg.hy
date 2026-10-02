@@ -340,7 +340,7 @@
   (<- current (locked-row store ask.table text))
   (val conflict (judge-expect ask.expect current))
   (when conflict (return conflict))
-  (val verdict (judge-put decl writer current ask.key ask.value :operators store.schema.operators))
+  (val verdict (judge-put decl current ask.key ask.value))
   (when (isinstance verdict Refused) (return verdict))
   (<- written (store-row store origin-host writer ask.table text current verdict.value now-ms head.epoch))
   written)
@@ -359,7 +359,7 @@
   (for [#(write text) (zip ask.writes texts :strict True)]
     (<- current (locked-row store write.table text))
     (.append currents current))
-  (val verdict (judge-put-rows store.schema writer ask.writes (tuple currents)))
+  (val verdict (judge-put-rows store.schema ask.writes (tuple currents)))
   (when (not (isinstance verdict tuple)) (return verdict))
   (var written [])
   (for [#(write text current admitted) (zip ask.writes texts currents verdict :strict True)]
@@ -400,7 +400,7 @@
   (<- find (find-event-statement store.prefix ask.stream ask.idempotency-key))
   (<- found (query-rows store.database find))
   (val previous (if found (! (event-of ask.stream (get found 0))) None))
-  (val verdict (judge-append decl writer ask.body previous))
+  (val verdict (judge-append decl ask.body previous))
   (when (isinstance verdict Refused) (return verdict))
   (when (isinstance verdict AppendReplay) (return (Appended verdict.sequence)))
   (val payload (canonical-json {"idempotencyKey" ask.idempotency-key "writer" writer "body" ask.body}))
