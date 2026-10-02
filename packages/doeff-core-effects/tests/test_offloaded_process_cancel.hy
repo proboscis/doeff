@@ -14,7 +14,7 @@
 ;;;       居なくなる。process-group の道では、子が背景に起こした孫も居なくなる(group ごと止める)。
 ;;;   (d) (c) の子が SIGTERM を無視する時: stop-grace の後に SIGKILL で止まる(group なら孫も)。
 ;;;   (e) 止めた子の数え: 計器の答え手を渡した metered-offloaded-subprocess-handler の下で (c) と (d) を 1 回ずつ取り消すと、計器の
-;;;       counter process_cancel_terminated_total と process_cancel_killed_total が 1 つずつ進む。数えるのは要求の run の外(別の thread の
+;;;       counter process_cancel_terminated と process_cancel_killed が 1 つずつ進む(描くと名に _total が付く)。数えるのは要求の run の外(別の thread の
 ;;;       新しい VM)なので、計器は run をまたいで同じ置き場を読み書きする process-meter-handler(検ごとの名の置き場)。
 ;;;
 ;;; 確かめる事: 取り消された task は TaskCancelledError で終わる・scheduler は固まらずに次の task(子 1 本の RunProcess)へ進む・
