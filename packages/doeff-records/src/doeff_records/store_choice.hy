@@ -8,7 +8,7 @@
 
 
 (defrecord StorePressure
-  "置き場の詰まりの読み(/readyz の答えに載せる — agora-redesign #1858): lock-waiters = 置き場の錠を待っている接続の本数・
+  "置き場の詰まりの読み(/readyz の答えに載せる): lock-waiters = 置き場の錠を待っている接続の本数・
    idle-in-transaction-max-seconds = transaction を開いたまま止まっている接続のうち最も長い秒(無ければ 0.0)。"
   (#^ int lock-waiters)
   (#^ float idle-in-transaction-max-seconds))
