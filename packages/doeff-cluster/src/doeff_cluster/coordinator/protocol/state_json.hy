@@ -1,8 +1,9 @@
 ;;; coordinator の状態の保存の綴り(state file の JSON と、durable の KV の行の値)— ClusterState と欄の型を JSON へ書き・JSON から読む
 ;;; 純粋な関数(core/cluster_policy から移した・#2448)。書き手の手前の protocol(durable_kv・store の durable-states・entry の
 ;;; state file の読み)だけが呼ぶ。core の判断は JSON の保存の形を知らない。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
+(import collections.abc [Callable])
 (import dataclasses [asdict])
 (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
@@ -61,7 +62,7 @@
      (if (is worker.boot-at None) {} {"bootAt" worker.boot-at})))
 
 
-(deff worker-generations-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+(defk worker-generations-from-json [data]
   {:pre [(: data dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代・起動時刻を知らない。"
   {"boot" (.get data "boot") "retired" (tuple (.get data "retired" [])) "boot_at" (boot-at-of data)})
@@ -99,7 +100,7 @@
    "fromVersion" event.from-version "toVersion" event.to-version "generation" event.generation "changes" event.changes})
 
 
-(deff audit-event-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+(defk audit-event-from-json [data]
   {:pre [(: data dict)] :post [(: % AuditEvent)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 出来事の記録 1 件(audit-event-to-json の逆)。"
   (AuditEvent :seq (int (get data "seq")) :at (int (get data "at")) :actor (str (get data "actor")) :verb (str (get data "verb"))
@@ -114,7 +115,7 @@
   {"blob" row.blob "versions" row.versions "putMs" row.put-ms})
 
 
-(deff program-row-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+(defk program-row-from-json [data]
   {:pre [(: data dict)] :post [(: % ProgramRow)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 置き場の Program の行(program-row-to-json の逆)。"
   (ProgramRow :blob (get data "blob") :versions (dict (.get data "versions" {})) :put-ms (int (get data "putMs"))))
@@ -126,25 +127,38 @@
   (| (asdict entry) {"needs" (list entry.needs)}))
 
 
-(deff warm-entry-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+(defk warm-entry-from-json [data]
   {:pre [(: data dict)] :post [(: % (| WarmEntry None))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 温める表の行(warm-entry-to-json の逆)。旧い形(requires の object)の行は None(読み直しで捨てる — 期限つきの
    頼みなので、頼み手が新しい形で頼み直す)。"
   (when (in "requires" data)
     (return None))
   ;; needs だけを能力の組に読み替える。(| data {…}) で合わせると値の型に tuple が混ざり、他の欄の型と食い違って見える(#1690)
-  (setv fields (dict data))
+  (val fields (dict data))
   (setv (get fields "needs") (capabilities-of (.get data "needs" []) "温める表の行の needs"))
   (WarmEntry #** fields))
 
 
-(deff board-rows-of [#^ dict values #^ dict versions]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+(defk board-rows-of [values versions]
   {:pre [(: values dict) (: versions dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "読み直した盤の値(鍵 → 値)と版(鍵 → 版・無い鍵は 1)→ 盤の行の表(期限なし・大きさは測り直す)。"
   (dfor #(k v) (.items values) k (BoardRow :value v :version (.get versions k 1) :expires-ms None :size (value-size v))))
 
 
-(deff state-from-json [#^ dict data #^ int now #^ (| dict None) [board None] #^ (| dict None) [board-versions None]]  ; defk にできない: 保存の読み直し(state file と durable の KV — Program の外)が呼ぶ純粋な読み
+(defk read-each [reader pairs]
+  {:pre [(: reader Callable) (: pairs tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "保存の行の組 #(鍵 JSON の値) の列を、行の読み(defk)で #(鍵 読んだ値) の列に読むため(state file と durable の KV の読み直しが
+   同じ読みを使う)。並びは渡した順のまま。起動の読み直しで 1 度だけ通る。tuple の組み立ての蓄積は行の数の 2 乗で伸びる
+   (1 万行で 0.2 秒・3 万行で 2.8 秒 — 終わった task は最大 30 日残る)。doeff に Program の列を順に走らせる線形の道具が入ったら
+   それに替える(#2812)。"
+  (var read #())
+  (for [#(key value) pairs]
+    (<- row (reader value))
+    (:= read (+ read #(#(key row)))))
+  read)
+
+
+(defk state-from-json [data now [board None] [board-versions None]]
   {:pre [(: data dict) (: now int) (: board (| dict None)) (: board-versions (| dict None))] :post [(: % ClusterState)]
    :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存した状態から作り直す。知っていた worker は全員「いま生きていた」とみなす。生存を捨てると、最初に heartbeat を
@@ -152,38 +166,43 @@
    この時点から移し替えの期限が過ぎた後に移る(その頃には自分で止まっている)。
    board = 行ごとの file から読んだ盤(渡さなければ、旧い形の file に在った盤)。資源の版の欄が無い旧い形の file は、
    読んだ後の最初の書きで resource_policy.stamp が版を振る(送り手 = 移し替え)。"
-  (setv #(jobs refused) (read-service-rows (list (get data "jobs"))))
+  (val service-rows (read-service-rows (list (get data "jobs"))))
+  ;; 旧い形(labels だけ — 2026-09-27 より前)の worker の行は読まない。能力を知らない worker に置かないため(次の heartbeat で
+  ;; 新しい形の名乗りから作り直す)。
+  (val stored-workers (tuple (gfor w (.get data "workers" []) :if (in "provides" w) #((get w "name") w))))
+  (<- generations tuple (read-each worker-generations-from-json stored-workers))
+  (<- programs tuple (read-each program-row-from-json (tuple (.items (.get data "programs" {})))))
+  (<- tasks tuple (read-each task-record-from-json (tuple (gfor t (.get data "tasks" []) #((get t "id") t)))))
+  (<- board-rows dict (board-rows-of (if (is board None) (.get data "board" {}) board) (or board-versions {})))
+  (<- audit tuple (read-each audit-event-from-json (tuple (enumerate (.get data "audit" [])))))
+  (<- warms tuple (read-each warm-entry-from-json (tuple (.items (.get data "warms" {})))))
   (ClusterState
-    :jobs jobs
-    :refused refused
-    :programs (dfor #(k v) (.items (.get data "programs" {})) k (program-row-from-json v))
-    ;; 旧い形(labels だけ — 2026-09-27 より前)の worker の行は読まない。能力を知らない worker に置かないため(次の heartbeat で
-    ;; 新しい形の名乗りから作り直す)。
-    :workers (dfor w (.get data "workers" [])
-                   :if (in "provides" w)
-                   :setv caps (worker-capabilities-of w (.format "保存の worker {}" (get w "name")))
-                   (get w "name")
-                   (WorkerInfo (get w "name") (get caps 0) (get w "capacity") now
+    :jobs (get service-rows 0)
+    :refused (get service-rows 1)
+    :programs (dict programs)
+    :workers (dfor #(#(name w) #(_ generation)) (zip stored-workers generations)
+                   :setv caps (worker-capabilities-of w (.format "保存の worker {}" name))
+                   name
+                   (WorkerInfo name (get caps 0) (get w "capacity") now
                                (component-versions-of (.get w "versions" {}))
                                :exclusive (get caps 1) :node (.get w "node" "")
-                               #** (worker-generations-from-json w)))
+                               #** generation))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
-    :tasks (dfor t (.get data "tasks" [])
-                 (get t "id")
-                 (task-record-from-json t))
+    :tasks (dict tasks)
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
-    :board (board-rows-of (if (is board None) (.get data "board" {}) board) (or board-versions {}))
+    :board board-rows
     :meta (dfor #(k v) (.items (.get data "meta" {})) k (resource-meta-from-json v))
     :revision (.get data "revision" 0)
-    :audit (tuple (gfor e (.get data "audit" []) (audit-event-from-json e)))
+    :audit (tuple (gfor #(_ event) audit event))
     :audit-seq (.get data "auditSeq" 0)
     :rollouts (dfor #(k r) (.items (.get data "rollouts" {})) k (rollout-row-from-json r))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
     :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))
-    :warms (dfor #(k v) (.items (.get data "warms" {})) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
+    ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
+    :warms (dfor #(k entry) warms :if (is-not entry None) k entry)
     ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。
     :handoffs (dfor #(k v) (.items (.get data "handoffs" {})) k (handoff-watch-from-json v))
     :started-ms now))

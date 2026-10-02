@@ -117,12 +117,15 @@
 
   (defn #^ list live [self #^ str revision]  ; defk にできない: 模擬の世界の method
     "その版で動いている子 process。"
-    (lfor p self.processes :if (and (is p.exit-code None) (= p.spec.revision revision)) p))
+    (lfor p self.processes :if (and (is p.exit-code None) (= p.spec.revision revision)) p)))
 
-  (defn #^ None restart-coordinator [self]  ; defk にできない: 模擬の世界の method(作り直し)
-    "coordinator の作り直し: 耐久の置き場の形から読み直す(worker の報告・readiness は失う)。止まっていた時間は無い。"
-    (setv #(state _) (resume-after-downtime (state-from-kv (durable-kv self.state) self.now) self.now))
-    (setv self.state state)))
+
+(defk restart-coordinator [sim]
+  {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "模擬の世界の coordinator を作り直すため: 耐久の置き場の形から読み直す(worker の報告・readiness は失う)。止まっていた時間は無い。"
+  (<- stored ClusterState (state-from-kv (durable-kv sim.state) sim.now))
+  (setv sim.state (get (resume-after-downtime stored sim.now) 0))
+  None)
 
 
 (defk worker-tick [sim]
@@ -271,7 +274,7 @@
   ;; 起こし直さない: 時間が経っても、coordinator を作り直しても(諦めは保存される)、r2 は起きない。
   (val starts-r2 (started sim "r2"))
   (<- (steps sim 20))
-  (sim.restart-coordinator)
+  (<- (restart-coordinator sim))
   (<- (steps sim 40))
   (assert (= (started sim "r2") starts-r2) sim.starts)
   (assert (= (sim.live "r2") []))
