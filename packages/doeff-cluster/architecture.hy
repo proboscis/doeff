@@ -11,7 +11,8 @@
 ;;;   C1 acknowledged-writes-survive(doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
 ;;;   止まり置き場から作り直された後も残る。確かめるのは tests/test_local.hy の
 ;;;   test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime(止める前の行と作り直した後の行を判断に渡す)。
-;;;   壊した置き場の反例を deftest で結ぶ形(DOEFF167)は別に足す。
+;;;   失敗ケースは同じ file の test-a-counterexample-store-that-pretends-to-persist-breaks-c1(置き場の差し替えの口に Persist を捨てる
+;;;   置き場 PretendsToPersist — fsync したふり — を差すと、作り直した後に行が無く C1 が名指す・#1976 の #35)。
 ;;;   C2 one-place-per-job(doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job — #2804)— 入れ替えを宣言しない job は、
 ;;;   担い手が途絶しても(処理の止まり・網の途絶)、その間に能力の合う worker が加わっても・宣言の needs が変わっても・置ける worker が
 ;;;   退いても(drain・Worker の削除)、同時に 2 つ走らない(違う worker の上でも、同じ名の worker の新しい世代の上でも)。他へ移せる job は時間の柵(worker の fence が coordinator の
