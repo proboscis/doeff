@@ -15,6 +15,11 @@
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
 (setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(setv STATUSES-SEEN
+      (+ "{\"w1\": {\"at\": 1000, \"endpoint\": null, \"jobs\": [{\"name\": \"a\", \"phase\": \"running\", \"desiredRevision\": \"r1\", "
+         "\"runningRevision\": \"r1\", \"pid\": 41, \"attempts\": 0, \"detail\": \"\", \"instance\": \"i1\", \"specHash\": null, "
+         "\"placement\": null, \"retiredFrom\": null}], \"stale\": true}, "
+         "\"w2\": {\"at\": 2000, \"endpoint\": null, \"jobs\": [], \"stale\": false}}"))
 
 (defk req [method path [body None] [query None] [actor "c-me"]]
   {:pre [(: method str) (: path str) (: body (| dict None)) (: query (| dict None)) (: actor (| str None))] :post [(: % Request)]
@@ -34,6 +39,22 @@
   "worker name の heartbeat(状態の行 statuses)を 1 つ受けた後の状態を返すため。"
   (get (! (call state "POST" "/heartbeat" {"name" name "provides" ["net"] "capacity" 10 "versions" V "statuses" (or statuses [])}
              :actor None :now now)) 0))
+
+(deftest test-the-state-view-spells-each-worker-report-the-same-way
+  ;; #2904(ClusterState.statuses を ClusterObservations の表へ)の前後で同じ綴り: GET /state の statuses は worker 名 → {at endpoint jobs
+  ;; stale}(jobs は報告の行の綴り)。文字列で固定する — 欄の順・stale の判定(受けてから lease を越えた報告)・2 台目の報告・消した
+  ;; worker の報告が残らない事。期待の文字列は、変更の前の code の答えを見て固定した。
+  (<- one ClusterState (beat (ClusterState) "w1" 1000 [{"name" "a" "phase" "running" "desiredRevision" "r1" "runningRevision" "r1"
+                                                         "pid" 41 "instance" "i1"}]))
+  (<- two ClusterState (beat one "w2" 2000))
+  (<- seen tuple (call two "GET" "/state" :now (+ 1001 T.lease-ms)))
+  (assert (= (json.dumps (get seen 2 "statuses") :ensure-ascii False) STATUSES-SEEN) (json.dumps (get seen 2 "statuses") :ensure-ascii False))
+  (val forget-at (+ 2001 T.reassign-after-ms))
+  (<- forgot tuple (call two "DELETE" "/resources/Worker/w2" :now forget-at))
+  (assert (= (get forgot 1) 200) forgot)
+  (<- after tuple (call (get forgot 0) "GET" "/state" :now forget-at))
+  (assert (= (sorted (get after 2 "statuses")) ["w1"]) (get after 2 "statuses")))
+
 
 (defk rv [state kind name]
   {:pre [(: state ClusterState) (: kind str) (: name str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
