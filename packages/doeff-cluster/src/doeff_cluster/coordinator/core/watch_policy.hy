@@ -50,7 +50,7 @@
             (is after None) (WatchRefusal request "after(知っている coordinator の版 — 0 以上の整数)が要る")
             (is seconds None) (WatchRefusal request "timeoutSeconds は 0 以上の数")
             True (Watcher :request request :after after :deadline-ms (+ now (int (* 1000 seconds)))
-                          :worker (.get request.query "worker") :boot (.get request.query "boot"))))))
+                          :worker (.get request.query "worker") :boot (.get request.query "boot") :asked after :seconds seconds)))))
 
 
 (defk worker-mark [state worker boot now timing]
@@ -92,9 +92,3 @@
       (WatchStep :answer (WatchAnswer state.revision True) :watcher watcher)
       (do (<- step WatchStep (watch-deadline kept state now))
           step)))
-
-
-(defk earliest-deadline [watchers]
-  {:pre [(: watchers tuple)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "待ちのいちばん早い期限(待ちが無ければ None)— 模擬の時計の下の受け口が、その刻の後の拍を飛ばさないため(IdleProbe.wake-ms)。"
-  (if watchers (min (gfor w watchers w.deadline-ms)) None))

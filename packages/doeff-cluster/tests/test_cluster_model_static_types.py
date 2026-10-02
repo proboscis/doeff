@@ -112,10 +112,8 @@ def test_the_stub_matches_cluster_model_hy() -> None:
             assert members == [(m.name, m.value) for m in actual], name
         elif hasattr(actual, "__dataclass_fields__"):
             own = [f.name for f in fields(actual)]
-            # IdleNextRequests は実行時は NextRequests の子 class — 宣言は自分の欄だけ(頭の註)。
-            assert stub_fields == own[len(own) - len(stub_fields) :], name
-            if name != "IdleNextRequests":
-                assert stub_fields == own, name
+            # IdleNextRequests(実行時は NextRequests の子 class)も親の欄から同じ順で宣言する(頭の註・#2790)。
+            assert stub_fields == own, name
         elif hasattr(actual, "_fields"):
             assert stub_fields == list(actual._fields), name
 
