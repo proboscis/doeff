@@ -48,7 +48,7 @@
 
 (deftest test-a-refused-connection-moves-to-the-next-address-and-stays-there
   (val calls [])
-  (val clock (clock-at START-MS))
+  (val clock (! (clock-at START-MS)))
   (<- route CoordinatorRoute (route-of (+ LAN "," NET) START-MS))
   (<- reply RoutedReply (with-handlers [(sim-time-handler :clock clock)
                                         (scripted-coordinator {LAN [(! (refused LAN))] NET [(! (ok NET))]} calls)]
@@ -69,7 +69,7 @@
   ;; 読みの時間切れは要求が届いたかもしれない — 次の宛先へ回して書きを 2 度届けない。答えは失敗のまま返る。
   (val calls [])
   (<- route CoordinatorRoute (route-of (+ LAN "," NET) START-MS))
-  (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (clock-at START-MS))
+  (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (! (clock-at START-MS)))
                                         (scripted-coordinator {LAN [(! (read-timed-out LAN))] NET [(! (ok NET))]} calls)]
                                        (routed-request route "PUT" "/board/k" OPTIONS None {"value" 1})))
   (assert (isinstance reply.answer HttpFailed) reply)
@@ -88,7 +88,7 @@
   (assert (= late.route.switched-at-ms (+ START-MS 60000)) late)
   ;; 先頭に戻れる時は戻る。
   (val calls [])
-  (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (clock-at (+ START-MS 61000)))
+  (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (! (clock-at (+ START-MS 61000))))
                                         (scripted-coordinator {LAN [(! (ok LAN))] NET [(! (ok NET))]} calls)]
                                        (routed-request on-net "GET" "/state" OPTIONS None None)))
   (assert (= reply.route.active 0) reply.route)
@@ -99,7 +99,7 @@
   (val calls [])
   (val delays [])
   (<- route CoordinatorRoute (route-of (+ LAN "," NET) START-MS))
-  (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (clock-at START-MS))
+  (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (! (clock-at START-MS)))
                                         (count-delays delays)
                                         (scripted-coordinator {LAN [(! (refused LAN))] NET [(! (refused NET))]} calls)]
                                        (routed-request route "GET" "/board" OPTIONS None None)))
@@ -113,18 +113,18 @@
   (val calls [])
   (val delays [])
   (<- route CoordinatorRoute (route-of LAN START-MS))
-  (<- answered RoutedReply (with-handlers [(sim-time-handler :clock (clock-at START-MS))
+  (<- answered RoutedReply (with-handlers [(sim-time-handler :clock (! (clock-at START-MS)))
                                            (count-delays delays)
                                            (scripted-coordinator {LAN [(! (read-timed-out LAN)) (! (read-timed-out LAN)) (! (ok LAN))]} calls)]
                                           (resent-request route "GET" "/board" OPTIONS None None 25.0 0.5)))
   (assert (isinstance answered.answer HttpResponse) answered)
   (assert (= (len calls) 3) calls)
-  (val clock (clock-at START-MS))
+  (val clock (! (clock-at START-MS)))
   (<- gave-up RoutedReply (with-handlers [(sim-time-handler :clock clock)
                                           (scripted-coordinator {LAN [(! (read-timed-out LAN))]} [])]
                                          (resent-request route "GET" "/board" OPTIONS None None 2.0 0.5)))
   (assert (isinstance gave-up.answer HttpFailed) gave-up)
-  (assert (<= (- (clock-ms clock) START-MS) 2000) (clock-ms clock)))
+  (assert (<= (- (! (clock-ms clock)) START-MS) 2000) (! (clock-ms clock))))
 
 
 (deftest test-a-spec-without-addresses-is-refused

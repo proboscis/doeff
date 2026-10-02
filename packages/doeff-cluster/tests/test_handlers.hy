@@ -120,7 +120,7 @@
                (if (= (get board key) (get body "expect"))
                    (do (setv (get board key) (get body "value")) (httpx.Response 200 :json {}))
                    (httpx.Response 409 :json {})))))
-  (released-through (httpx.MockTransport handle) "app-writer" "1-old")
+  (<- (released-through (httpx.MockTransport handle) "app-writer" "1-old"))
   (assert (= (get board "semaphore/app-writer" "holders") {"app-writer/2-new/1" 88}))
   (assert (= (get board "semaphore/other" "holders") {"other-job/1-old/1" 77}) "別の job の同じ名の世代は触らない")
   (assert (= puts ["semaphore/app-writer"]))
