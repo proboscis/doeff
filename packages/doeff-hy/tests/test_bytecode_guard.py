@@ -373,3 +373,55 @@ def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.split() == ["True", "False"]
+
+
+def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_normal_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """型検査のための展開(doeff_hy.static_view)の最中に require で初めて読み込まれた macro の提供元は、:pre の isinstance と
+    実行の時の import の無い、実行できない code になる。それに macro の依存の記録を付けると、.pyc と共有の置き場に普通の展開と
+    同じ鍵で残り、後の普通の import がそれを読んで ``NameError: name '_doeff_do' is not defined`` で落ちた(milestone I の I-3 の
+    再現 2026-10-03 — doeff-hy-check の後の普通の実行)。型検査の展開の code は置き場に入らず、後の普通の import は :pre の付いた
+    展開を読む。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff import run
+    from doeff_hy.static_view import static_view
+    from doeff_hy_bytecode_guard import loader_hooks
+
+    store = tmp_path / "store"
+    monkeypatch.setenv(loader_hooks.CODE_STORE_ENV, str(store))
+    # この suite は PYTHONDONTWRITEBYTECODE=1 で走る — .pyc と置き場は bytecode を書く設定の時だけ書くので、この検の中だけ書かせる。
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "pyc"))
+    package = tmp_path / "typecheckpkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    source = package / "provider.hy"
+    source.write_text(
+        "(require doeff-hy.macros [defk])\n"
+        "(defmacro twice [x] `(+ ~x ~x))\n"
+        "(defk checked [x]\n"
+        '  {:pre [(: x int)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}\n'
+        '  "型の契約つきの関数(:pre の isinstance は普通の展開にだけ在る)。"\n'
+        "  x)\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    name = "typecheckpkg.provider"
+    try:
+        # 型検査の対象の require が初めて読み込む形の compile の段(module を置いた中の get_code — .pyc と置き場への書きが起きる)。
+        # 型検査の展開の code は実行できないので exec はしない(doeff-hy-check でも require の exec が NameError で落ちる)。
+        spec = importlib.util.find_spec(name)
+        assert spec is not None and isinstance(spec.loader, importlib.machinery.SourceFileLoader)
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        with static_view():
+            spec.loader.get_code(name)
+        assert not Path(loader_hooks._store_entry(str(store), name, source.read_bytes())).exists(), (
+            "型検査のための展開の code が共有の置き場に入った"
+        )
+        del sys.modules[name]
+        provider = importlib.import_module(name)  # 同じ .pyc の置き場と共有の置き場での普通の import
+        with pytest.raises(AssertionError, match="pre-condition"):
+            run(provider.checked("not-an-int"))
+    finally:
+        for loaded in (name, "typecheckpkg"):
+            sys.modules.pop(loaded, None)
