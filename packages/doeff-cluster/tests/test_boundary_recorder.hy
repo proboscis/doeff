@@ -34,7 +34,7 @@
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.shared_model [ReadShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
@@ -147,7 +147,7 @@
   (val programs (/ tmp-path "programs"))
   (.mkdir programs)
   (val path (/ programs (+ sha ".json")))
-  (.write-text path (json.dumps {"blob" blob "versions" (current-versions)}) :encoding "utf-8")
+  (.write-text path (json.dumps {"blob" blob "versions" (! (process-versions os.environ))}) :encoding "utf-8")
   (<- recorded subprocess.CompletedProcess
       (child "doeff_cluster.job_entry"
              {RECORD-MODE-KEY "record"
@@ -266,7 +266,7 @@
   (assert (= #((get header "program") (get header "service") (get header "worker") (get header "instance"))
              #(cycle.sha JOB "w-rec" "i-1"))
           header)
-  (assert (= (get header "versions") (current-versions)) header)
+  (assert (= (get header "versions") (! (process-versions os.environ))) header)
   ;; 記録係は翻訳の後の汎用の effect だけを見る: 業務の effect(CountVisit・DrawTicket)も、記録係を選ぶ前の mode の Ask も載らない。
   (val types (sfor line cycle.lines :if (in "ty" line) (get line "ty")))
   (assert (= types #{"doeff_core_effects.effects:Ask" "doeff_cluster.shared.intent.shared_model:ReadShared" "doeff_cluster.shared.intent.shared_model:WriteShared"})

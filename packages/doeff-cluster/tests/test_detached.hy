@@ -38,7 +38,8 @@
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
 (import doeff_cluster.shared.core.remote_rules [failed-from])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import os)
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
@@ -106,7 +107,7 @@
   (setv clock (SimClock)
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
-        worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (or runner-versions (current-versions)) :transport transport)
+        worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (or runner-versions (run (process-versions os.environ))) :transport transport)
         sender (detached-sender "r"))
   (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
                       (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]
@@ -115,7 +116,7 @@
 
 
 (defn #^ Rig served-rig [#^ str url #^ Path tmp-path #^ (| dict None) [runner-versions None]]
-  (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (current-versions)))
+  (setv worker (RigWorker url (/ tmp-path "tasks") (or runner-versions (run (process-versions os.environ))))
         sender (detached-sender "r"))
   (defn #^ int runs [#^ str key]
     (len (lfor t (get (.json (httpx.get (+ url "/state"))) "tasks") :if (= (.get t "key") key) t)))
@@ -946,7 +947,7 @@
   (setv clock (SimClock)
         coordinator (MemoryCoordinator clock)
         transport (httpx.MockTransport coordinator.handle)
-        worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (current-versions) :transport transport)
+        worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (! (process-versions os.environ)) :transport transport)
         sender (detached-sender "r")
         rig (Rig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runner-loss worker)
                                 (detached-cluster (route-cell) TEST-ROUTE sender :poll-seconds 0.5)]

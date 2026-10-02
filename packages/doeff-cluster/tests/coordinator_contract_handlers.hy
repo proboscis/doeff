@@ -56,7 +56,8 @@
 (import doeff_cluster.shared.protocol.service_report [ServiceReport])
 (import doeff_core_effects.handlers [slog-handler])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import os)
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.protocol.detached [warm-cluster])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink PartsOf SimParts StopCoordinator coordinator-answers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -310,8 +311,8 @@
   (val line {"up" True})
   (val transport (httpx.MockTransport (partial line-answer coordinator line)))
   (val task-dir (Path (tempfile.mkdtemp :prefix "remote-contract-")))
-  (val worker (RigWorker COORDINATOR task-dir (current-versions) :transport transport))
-  (val sender (TaskSender :revision SENDER-REVISION :versions (current-versions) :runtime-env env))
+  (val worker (RigWorker COORDINATOR task-dir (! (process-versions os.environ)) :transport transport))
+  (val sender (TaskSender :revision SENDER-REVISION :versions (! (process-versions os.environ)) :runtime-env env))
   (try
     (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line)
                               (remote-cluster (contract-route) CONTRACT-ROUTE sender)]

@@ -14,7 +14,8 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster.client_foundation [with-detached-client])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import os)
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
@@ -68,7 +69,7 @@
   (val clock (SimClock))
   (val coordinator (MemoryCoordinator clock))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val worker (RigWorker COORDINATOR-URL (/ tmp-path "tasks") (current-versions) :transport transport))
+  (val worker (RigWorker COORDINATOR-URL (/ tmp-path "tasks") (! (process-versions os.environ)) :transport transport))
   (<- outcome DetachedSucceeded
       (with-handlers [(sim-time-handler :clock clock) (transport-http transport)]
         (with-detached-client COORDINATOR-URL REVISION None (with-runner worker (submit-and-await "k-client")))))

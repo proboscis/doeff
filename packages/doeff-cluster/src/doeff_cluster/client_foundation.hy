@@ -32,7 +32,7 @@
   (<- now int (now-epoch-ms))
   (<- route CoordinatorRoute (route-of coordinator now))
   ;; 版の識別: 宿の契約の versions-key を読む cluster の job と違い、手元の道具は宿を持たないので、この process の環境から作る
-  ;; (current-versions と同じ値 — Program の中で run を入れ子にしない)。
+  ;; (process の入口と同じく os.environ を渡す — Program の中で run を入れ子にしない)。
   (<- versions (get dict #(str str)) (process-versions os.environ))
   (val sender (DetachedSender :revision revision :versions versions :runtime-env runtime-env
                               :deadline-seconds IDEMPOTENT-DEADLINE-SECONDS))

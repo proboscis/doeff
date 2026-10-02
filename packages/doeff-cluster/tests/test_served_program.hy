@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [program-file])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec])
 (import tests.fixtures.services [lab])
 (import tests.fixtures.envs [plain-foundation])
@@ -35,7 +35,7 @@
 (defk declaration-for-this-test []
   {:pre [] :post [(: % Declaration)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "見本の系 lab の宣言(Program を詰めた本物の Declaration)を、名と needs だけこの検の物に替えた宣言。"
-  (val declared (system-declaration (lab plain-foundation) "r-served" :versions (current-versions)))
+  (val declared (system-declaration (lab plain-foundation) "r-served" :versions (! (process-versions os.environ))))
   (Declaration :rows (lfor row declared.rows (| row {"name" JOB "needs" [NEED]})) :programs declared.programs))
 
 
@@ -67,7 +67,7 @@
   (assert (= (get (.json stored) "blob") (get declaration.programs sha)))
   ;; worker: 本物の coordinator への口 の heartbeat → 返事の job に置き場のキー → cache の file。
   (val link (LinkRig served-coordinator WORKER #(NEED) 10 60000
-                             :task-dir (str (/ tmp-path "state" "tasks")) :versions (current-versions)))
+                             :task-dir (str (/ tmp-path "state" "tasks")) :versions (! (process-versions os.environ))))
   (try
     (do
       (<- spec JobSpec (desired-job link))

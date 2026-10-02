@@ -30,7 +30,7 @@
 (import doeff_core_effects.process_effects [EnvEntry StartProcess])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 
 
 (import tests.careful_rig [LOCK git push-commit app-files Rig make-rig declare count-log downloads prepare run-task])
@@ -200,7 +200,7 @@
   (import doeff_cluster.shared.intent.detached_model [DetachedVersionMismatch])
   (import doeff_cluster.shared.protocol.detached [outcome-from-task-outcome])
   (<- key str (env-key env (current-platform)))
-  (val shifted (| (current-versions) {"doeff" "0.0.0-shifted"}))
+  (val shifted (| (! (process-versions os.environ)) {"doeff" "0.0.0-shifted"}))
   (<- refused (run-task rig env "shifted" :versions shifted))
   (assert (isinstance refused TaskFailed) refused)
   (val answer (outcome-from-task-outcome refused))

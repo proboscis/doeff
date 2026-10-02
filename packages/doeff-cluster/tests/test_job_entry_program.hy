@@ -15,7 +15,7 @@
 (import pathlib [Path])
 (import doeff [Program])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.fixtures.services [tally-program bare-program self-contained-program])
 
@@ -42,12 +42,12 @@
 
 (deftest test-a-service-program-with-its-own-handlers-runs-and-reports-its-result [tmp-path]
   ;; この process で詰めた Program(土台の reader と scheduler を自分で並べる)を子が解いて走らせる。
-  (<- path (program-file (/ tmp-path "p.json") (tally-program plain-foundation 2) (current-versions)))
+  (<- path (program-file (/ tmp-path "p.json") (tally-program plain-foundation 2) (! (process-versions os.environ))))
   (<- done (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" path))
   (assert (= done.returncode 0) done.stderr)
   (assert (in "が終わった: 102" done.stderr) done.stderr)
   ;; 本体の中で handler を作る Program も同じ。
-  (<- inner (program-file (/ tmp-path "q.json") (self-contained-program 5) (current-versions)))
+  (<- inner (program-file (/ tmp-path "q.json") (self-contained-program 5) (! (process-versions os.environ))))
   (<- again (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" inner))
   (assert (= again.returncode 0) again.stderr)
   (assert (in "が終わった: 15" again.stderr) again.stderr))
@@ -55,7 +55,7 @@
 
 (deftest test-the-entry-adds-no-handler-so-an-unanswered-effect-ends-the-service [tmp-path]
   ;; 反例: handler を並べない Program の Ask "base" に答える物は子の中に無い(入口が既定の handler を足していない)。
-  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (current-versions)))
+  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (! (process-versions os.environ))))
   (<- done (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" path))
   (assert (!= done.returncode 0) done.stderr)
   (assert (in "Ask" done.stderr) done.stderr)
@@ -63,7 +63,7 @@
 
 
 (deftest test-a-program-file-from-another-version-is-refused-before-decoding [tmp-path]
-  (<- path (program-file (/ tmp-path "p.json") (tally-program plain-foundation 2) (| (current-versions) {"cloudpickle" "0.0.1"})))
+  (<- path (program-file (/ tmp-path "p.json") (tally-program plain-foundation 2) (| (! (process-versions os.environ)) {"cloudpickle" "0.0.1"})))
   (<- done (entry "doeff_cluster.job_entry" "service" "--identity" (* "0" 16) "--program" path))
   (assert (= done.returncode 3) done.stderr)
   (assert (in "版が違うので Program を解かない" done.stderr) done.stderr)
@@ -76,11 +76,11 @@
 
 (deftest test-the-probe-decodes-the-program-without-running-it [tmp-path]
   ;; probe は版と復元だけを確かめる(走らせない — handler の無い Program でも通る)。
-  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (current-versions)))
+  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (! (process-versions os.environ))))
   (<- ok (entry "doeff_cluster.job_entry" "probe" "--program" path))
   (assert (= ok.returncode 0) ok.stderr)
   (assert (in "を解けた" ok.stderr) ok.stderr)
-  (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (current-versions) {"doeff" "0.0.0"})))
+  (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (! (process-versions os.environ)) {"doeff" "0.0.0"})))
   (<- refused (entry "doeff_cluster.job_entry" "probe" "--program" other))
   (assert (= refused.returncode 1) refused.stderr)
   (assert (in "版が違う" refused.stderr) refused.stderr)
@@ -114,12 +114,12 @@
   (val recording (/ tmp-path "recording.jsonl"))
   (.write-text recording (+ (json.dumps {"k" "run" "format" 2 "startedMs" 0}) "\n") :encoding "utf-8")
   (val out (/ tmp-path "report.json"))
-  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (current-versions)))
+  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (! (process-versions os.environ))))
   (<- old (entry "doeff_cluster.shared.entry.replay_main" "--recording" (str recording) "--program" path "--out" (str out) "--config" "{}"))
   (assert (= old.returncode 2) old.stderr)
   (assert (in "--config は受け付けない" old.stderr) old.stderr)
   ;; 版の合わない Program の file(旧い記録・別の版の記録)は解かずに 3 で止まり、報告を書かない(改訂 1 の O)。
-  (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (current-versions) {"cloudpickle" "0.0.1"})))
+  (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (! (process-versions os.environ)) {"cloudpickle" "0.0.1"})))
   (<- refused (entry "doeff_cluster.shared.entry.replay_main" "--recording" (str recording) "--program" other "--out" (str out)))
   (assert (= refused.returncode 3) refused.stderr)
   (assert (in "版が違うので Program を解かない" refused.stderr) refused.stderr)

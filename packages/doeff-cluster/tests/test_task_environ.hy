@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.protocol.remote [task-submit-body])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.shared.entry.service_build [job system-of])
@@ -236,7 +236,7 @@
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
   (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ tmp-path "state" "tasks"))
-                             :versions (current-versions) :transport transport))
+                             :versions (! (process-versions os.environ)) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
                   (detached-submitted (route-cell) TEST-ROUTE (detached-sender "r") "job-env" (encode-program (environ-read URL-NAME)) LOCAL

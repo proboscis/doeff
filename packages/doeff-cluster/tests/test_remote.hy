@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram VersionMismatch RemoteJobFailed TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-program decode-outcome])
 (import doeff_cluster.shared.core.remote_rules [version-mismatch remote-job])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import tests.link_rig [write-program-file])
 (import doeff_cluster.sim.local [sim-cluster SharedRows ProcessesOf])
@@ -91,7 +91,7 @@
 
 
 (deftest test-version-mismatch-names-the-differing-key
-  (val mine (current-versions))
+  (val mine (! (process-versions os.environ)))
   (assert (is (version-mismatch mine mine) None))
   (val message (version-mismatch (| mine {"doeff" "0.0.0"}) mine))
   (assert (is-not message None) "版の違う鍵があるのに食い違いの文が無い")
@@ -121,7 +121,7 @@
 
 
 (deftest test-child-process-restores-the-program-and-runs-it-with-its-own-handlers [tmp-path]
-  (<- outcome (run-task-in-child tmp-path (counter-program "card") (current-versions)))
+  (<- outcome (run-task-in-child tmp-path (counter-program "card") (! (process-versions os.environ))))
   (assert (isinstance outcome TaskSucceeded) outcome)
   ;; base = 1 は Program が自分で並べた reader の答え(子は handler を足さない)。
   (assert (= outcome.value "card-1")))
@@ -129,13 +129,13 @@
 
 (deftest test-child-process-adds-no-handler-to-the-task [tmp-path]
   ;; 反例: handler を並べない Program の Ask は子の中で答えが無く、task は失敗として返る(子が既定の handler を足していない)。
-  (<- outcome (run-task-in-child tmp-path (bare-program 1) (current-versions)))
+  (<- outcome (run-task-in-child tmp-path (bare-program 1) (! (process-versions os.environ))))
   (assert (isinstance outcome TaskFailed) outcome)
   (assert (in "Ask" (str outcome.message)) outcome.message))
 
 
 (deftest test-child-process-returns-the-exception-itself [tmp-path]
-  (<- outcome (run-task-in-child tmp-path (boom-program) (current-versions)))
+  (<- outcome (run-task-in-child tmp-path (boom-program) (! (process-versions os.environ))))
   (assert (isinstance outcome TaskFailed))
   (assert (= outcome.kind "ValueError"))
   (assert (isinstance outcome.error ValueError))
@@ -144,7 +144,7 @@
 
 
 (deftest test-child-process-refuses-a-blob-from-a-different-version-without-restoring-it [tmp-path]
-  (<- outcome (run-task-in-child tmp-path (based-add 1) (| (current-versions) {"python" "3.9.6"})))
+  (<- outcome (run-task-in-child tmp-path (based-add 1) (| (! (process-versions os.environ)) {"python" "3.9.6"})))
   (assert (isinstance outcome TaskFailed))
   (assert (= outcome.kind "VersionMismatch"))
   (assert (in "python: 送り手 3.9.6" outcome.message)))

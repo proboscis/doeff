@@ -16,10 +16,11 @@
 (import typing [NoReturn])
 (import httpx)
 (import pytest)
-(import doeff [with_handlers Program])
+(import doeff [run with_handlers Program])
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import os)
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
@@ -74,7 +75,7 @@
   (defn #^ RigWorker fresh [self #^ str name #^ tuple provides #^ tuple exclusive]
     "名乗る担い手を新しく作る(作り直しは新しい世代 — coordinator の drain は新しい世代の heartbeat で解ける)。"
     (+= self.boots 1)
-    (setv worker (RigWorker "http://coordinator" (/ self.tmp-path (.format "tasks-{}-{}" name self.boots)) (current-versions)
+    (setv worker (RigWorker "http://coordinator" (/ self.tmp-path (.format "tasks-{}-{}" name self.boots)) (run (process-versions os.environ))
                             :transport self.transport :name name :provides provides :exclusive exclusive)
           (get self.workers name) worker)
     worker))

@@ -4,18 +4,17 @@
 ;;; 送り手は blob に添え、受け側は remote_model.version-diffs で突き合わせる。読むのは process の外の事実(入っている dist の版・
 ;;; source の file・環境変数)なので、送る形と判断を置く remote_model.hy(domain)から分けた(#1630 — 純粋な層の
 ;;; module が remote_model 経由で os・pathlib を読んでいた)。呼ぶのは送り手と受け側の入口と io の handler だけで、
-;;; 宣言の組み立て(service_build.system-declaration)には呼び手がこの値を渡す。
-(require doeff-hy.macros [deff defk val])
+;;; 宣言の組み立て(service_build.system-declaration)には呼び手がこの値を渡す。環境変数の置き場も呼び手が渡す(process の入口と宿の
+;;; handler は os.environ・sim の送り手は空 — 旧い current-versions は #2766 で消した)。
+(require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Mapping])
 (import functools [cache])
 (import hashlib)
 (import importlib.metadata)
-(import os)
 (import pathlib [Path])
 (import sys)
 (import types [MappingProxyType ModuleType])
-(import doeff [run])
 (import doeff.do)
 
 
@@ -62,10 +61,3 @@
   ;; 比べる(remote_model.version-diffs)。
   (val key (.get environ RUNTIME-ENV-KEY-VAR ""))
   {#** (_installed-versions) #** (if key {"envKey" key} {})})
-
-
-(deff current-versions []  ; defk にできない: 検と使い手の repo の呼び手(後半 #2766 で移して消す)が Program の外で素で呼ぶ
-  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
-  "この process の版の識別(process-versions に os.environ を渡した物)。本番の呼び手は process-versions と宿の契約の鍵 versions-key へ
-   移した(#2765)— 残る呼び手は検と使い手の repo だけで、後半(#2766)で移して消す。"
-  (run (process-versions os.environ)))

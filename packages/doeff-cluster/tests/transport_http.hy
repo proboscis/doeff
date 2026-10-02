@@ -5,11 +5,13 @@
 ;;; 使い手は答え手 (transport-http transport) を外側に、口の handler(宛先の入れ物 route-cell・送り方 TEST-ROUTE)を内側に並べる。
 (require doeff-hy.macros [defhandler deff val])
 (import httpx)
+(import doeff [run])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import os)
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.protocol.detached [DetachedSender])
 
@@ -50,7 +52,7 @@
   {:pre [(: revision str) (: runtime-env (| RuntimeEnv None)) (: deadline-seconds float)] :post [(: % DetachedSender)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "検の切り離した task の送り手(版の識別はこの process の版 — 本番の組み立ては宿の契約の Ask で読む)。"
-  (DetachedSender :revision revision :versions (current-versions) :runtime-env runtime-env :deadline-seconds deadline-seconds))
+  (DetachedSender :revision revision :versions (run (process-versions os.environ)) :runtime-env runtime-env :deadline-seconds deadline-seconds))
 
 
 (defn #^ None released-through [#^ httpx.BaseTransport transport #^ str job #^ str instance]  ; defk にできない: 検が Program の外から 1 回走らせる入口

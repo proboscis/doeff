@@ -38,7 +38,7 @@
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
-(import doeff_cluster.foundation.process_versions [current-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))
@@ -240,8 +240,8 @@
   (.mkdir tasks :parents True :exist-ok True)
   (val blob (encode-program (report)))
   (val sha (program-sha blob))
-  (write-program-file (Path rig.host.program-dir) sha blob (or versions (current-versions)))
-  (<- spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "program" sha
+  (write-program-file (Path rig.host.program-dir) sha blob (or versions (! (process-versions os.environ))))
+  (<- spec (task-spec {"id" task-id "revision" "" "versions" (or versions (! (process-versions os.environ))) "program" sha
                         "runtimeEnv" declared}
                        tasks))
   (<- key str (env-key env (current-platform)))
