@@ -157,14 +157,18 @@ def resumption_of(effect_type: type) -> Resumption:
 
 def runs_carried_of(effect_type: type) -> frozenset[str]:
     """The fields of ``effect_type`` holding a Program its handler runs where the effect was
-    performed — under the handlers around the performing site, as if written there.
+    performed — under the handlers around the performing site, as if written there — or a
+    function the handler calls to build each such Program (doeff-traverse's ``Traverse.f`` /
+    ``Reduce.f``, called once per item).
 
     An effect type declares them with the class attribute ``__doeff_runs_carried__``
     (``Try`` / ``Local`` / ``Listen`` run their ``program`` in place; ``Spawn``'s child task
     carries the spawner's handlers; ``SqlTransaction`` runs its ``program`` under the SQL
-    handler that answered it).  A type that declares none runs what it carries elsewhere,
+    handler that answered it; ``Traverse`` runs what its ``f`` builds under the inner
+    handlers it puts back).  A type that declares none runs what it carries elsewhere,
     if at all (a remote job).  A closure check reads the declared Programs as run at the
-    performing site (agora-redesign #1456).
+    performing site, and a declared function's body as the Program it builds
+    (agora-redesign #1456・#2973).
     """
     declared = getattr(effect_type, "__doeff_runs_carried__", frozenset())
     if not (isinstance(declared, frozenset) and all(isinstance(name, str) for name in declared)):

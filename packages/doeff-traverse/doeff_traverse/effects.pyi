@@ -8,7 +8,7 @@ Resume に渡す Collection)で、ここは型の宣言だけ。
 """
 
 from collections.abc import Callable, Iterable
-from typing import Any, Generic, Never, TypeVar
+from typing import Any, ClassVar, Generic, Never, TypeVar
 
 from _typeshed import SupportsRichComparison
 from doeff_vm import EffectBase
@@ -33,6 +33,8 @@ class Fail(EffectBase[Any]):
 class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
     """items の各件に f を当てる(順・並列は handler が決める)。答えは f の答えを有効な件の値に持つ Collection。"""
 
+    # f が作る Program を出した所の handler の下で走らせる宣言(閉じの検が f の本体を出した所で読む・agora-redesign #2973)。
+    __doeff_runs_carried__: ClassVar[frozenset[str]]
     f: Callable[[_Item], Program[_Answer, Any]]
     items: Iterable[_Item]
     label: str | None
@@ -46,6 +48,8 @@ class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
 class Reduce(EffectBase[_Acc], Generic[_Acc, _Item]):
     """有効な件を f で畳む。答えは init の型。"""
 
+    # Traverse と同じく、f が作る Program を出した所の handler の下で走らせる宣言(agora-redesign #2973)。
+    __doeff_runs_carried__: ClassVar[frozenset[str]]
     f: Callable[[_Acc, _Item], Program[_Acc, Any]]
     init: _Acc
     collection: Iterable[_Item]
