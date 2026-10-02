@@ -21,7 +21,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import click
 from rich.console import Console
@@ -457,9 +457,10 @@ def _show_progress_since(
         sys.exit(1)
 
 
-def _append_optional_line(lines: list[str], condition: bool, line: str) -> None:
+def _optional_line(condition: bool, line: str) -> tuple[str, ...]:
     if condition:
-        lines.append(line)
+        return (line,)
+    return ()
 
 
 def _workflow_detail_panel(workflow: object) -> Panel:
@@ -470,37 +471,43 @@ def _workflow_detail_panel(workflow: object) -> Panel:
     lines.append(f"[bold]ID:[/bold] {workflow_vars['id']}")
     lines.append(f"[bold]Name:[/bold] {workflow_vars['name']}")
     lines.append(f"[bold]Status:[/bold] [{status_color}]{workflow_status.value}[/{status_color}]")
-    _append_optional_line(
-        lines,
-        workflow_vars["template"] is not None,
-        f"[bold]Template:[/bold] {workflow_vars['template']}",
+    lines.extend(
+        _optional_line(
+            workflow_vars["template"] is not None,
+            f"[bold]Template:[/bold] {workflow_vars['template']}",
+        )
     )
-    _append_optional_line(
-        lines,
-        workflow_vars["issue_id"] is not None,
-        f"[bold]Issue:[/bold] {workflow_vars['issue_id']}",
+    lines.extend(
+        _optional_line(
+            workflow_vars["issue_id"] is not None,
+            f"[bold]Issue:[/bold] {workflow_vars['issue_id']}",
+        )
     )
     lines.append(f"[bold]Created:[/bold] {workflow_vars['created_at'].isoformat()}")
     lines.append(f"[bold]Updated:[/bold] {workflow_vars['updated_at'].isoformat()}")
-    _append_optional_line(
-        lines,
-        bool(workflow_vars["workspaces"]),
-        f"\n[bold]Workspaces:[/bold] {', '.join(workflow_vars['workspaces'])}",
+    lines.extend(
+        _optional_line(
+            bool(workflow_vars["workspaces"]),
+            f"\n[bold]Workspaces:[/bold] {', '.join(workflow_vars['workspaces'])}",
+        )
     )
-    _append_optional_line(
-        lines,
-        bool(workflow_vars["agents"]),
-        f"[bold]Agents:[/bold] {', '.join(workflow_vars['agents'])}",
+    lines.extend(
+        _optional_line(
+            bool(workflow_vars["agents"]),
+            f"[bold]Agents:[/bold] {', '.join(workflow_vars['agents'])}",
+        )
     )
-    _append_optional_line(
-        lines,
-        workflow_vars["pr_url"] is not None,
-        f"\n[bold]PR:[/bold] {workflow_vars['pr_url']}",
+    lines.extend(
+        _optional_line(
+            workflow_vars["pr_url"] is not None,
+            f"\n[bold]PR:[/bold] {workflow_vars['pr_url']}",
+        )
     )
-    _append_optional_line(
-        lines,
-        workflow_vars["error"] is not None,
-        f"\n[red]Error:[/red] {workflow_vars['error']}",
+    lines.extend(
+        _optional_line(
+            workflow_vars["error"] is not None,
+            f"\n[red]Error:[/red] {workflow_vars['error']}",
+        )
     )
     return Panel("\n".join(lines), title=f"Workflow: {workflow_vars['id']}")
 
@@ -621,13 +628,18 @@ def _wait_summary(payload: dict[str, object]) -> str:
     return f"status={status} gates={'; '.join(gate_parts)} waited_seconds={waited_seconds:.3f}"
 
 
+class _WaitOutcome(NamedTuple):
+    exit_code: int
+    payload: dict[str, object]
+
+
 def _wait_for_workflow(
     *,
     state_dir: str | None,
     workflow_id: str,
     timeout: float | None,
     poll_interval: float,
-) -> tuple[int, dict[str, object]]:
+) -> _WaitOutcome:
     from doeff_conductor.api import ConductorAPI
     from doeff_conductor.overseer import list_open_gates
 
@@ -651,17 +663,17 @@ def _wait_for_workflow(
         }
 
         if handle.status is WorkflowStatus.DONE:
-            return 0, payload
+            return _WaitOutcome(0, payload)
         if handle.status in (
             WorkflowStatus.ERROR,
             WorkflowStatus.STOPPED,
             WorkflowStatus.ABORTED,
         ):
-            return 1, payload
+            return _WaitOutcome(1, payload)
         if gate_payload:
-            return 2, payload
+            return _WaitOutcome(2, payload)
         if timeout is not None and waited_seconds >= timeout:
-            return 3, payload
+            return _WaitOutcome(3, payload)
 
         sleep_seconds = poll_interval
         if timeout is not None:

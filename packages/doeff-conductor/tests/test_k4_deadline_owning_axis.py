@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import pytest
 from doeff_agents import (
@@ -165,11 +165,19 @@ def _write_deadline_workflow(path: Path, *, deadline_seconds: float) -> None:
     )
 
 
+class _ParkedRun(NamedTuple):
+    api: ConductorAPI
+    state_dir: Path
+    session_id: str
+    scenario_handler: ScenarioAgentHandler
+    delegate_calls: list[str]
+
+
 def _park_run_on_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     run_id: str,
-) -> tuple[ConductorAPI, Path, str, ScenarioAgentHandler, list[str]]:
+) -> _ParkedRun:
     """Run a short-deadline workflow against a never-completing stub agent."""
     workflow_path = tmp_path / "deadline_live.hy"
     state_dir = tmp_path / "state"
@@ -193,7 +201,7 @@ def _park_run_on_deadline(
     api = ConductorAPI(state_dir=state_dir)
     handle = api.run_workflow(str(workflow_path), run_id=run_id)
     assert handle.status is WorkflowStatus.BLOCKED
-    return api, state_dir, session_id, scenario_handler, delegate_calls
+    return _ParkedRun(api, state_dir, session_id, scenario_handler, delegate_calls)
 
 
 def test_v1_deadline_exceeded_parks_k5_gate_with_journal_entry(
