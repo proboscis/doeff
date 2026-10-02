@@ -526,18 +526,20 @@
   (val again (report s (ready-report spec "1-a") 3000))
   (assert (= (. (get (.row again.observations.readiness "w") -1) origin at) 3000) (.row again.observations.readiness "w"))
   (assert (= #(again.revision again.audit-seq again.audit) #(s.revision s.audit-seq s.audit)))
-  (assert (= (durable-delta s again) {}) (durable-delta s again))
+  (<- again-delta dict (durable-delta s again))
+  (assert (= again-delta {}) again-delta)
   ;; 計器の報告も同じ(計器は資源の状態を変えない)。
   (val metered (report again (| (ready-report spec "1-a") {"metrics" {"counters" {"writes" 1.0}}}) 3500 :kind "metrics"))
   (assert (= (.size metered.observations.metrics) 1))
   (assert (= #(metered.revision metered.audit-seq metered.audit) #(s.revision s.audit-seq s.audit)))
-  (assert (= (durable-delta again metered) {}) (durable-delta again metered))
+  (<- metered-delta dict (durable-delta again metered))
+  (assert (= metered-delta {}) metered-delta)
   ;; 反例の対照: 判定を変える準備の報告(Ready → NotReady)は、同じ比べが Service の版と出来事を進める — 版の比べ(dirty-keys)は観測の表
   ;; readiness を読む(読まなければ status.ready の切り替わりを取りこぼす)。保存の差分に出るのは版の番号・版の記録・出来事だけ。
   (val refused (report metered (ready-report spec "1-a" :ready False) 4000))
   (assert (= (ready-of refused 4000) "NotReady"))
   (assert (> (rv refused "Service" "w") (rv s "Service" "w")))
   (assert (= (. (get refused.audit -1) changes) {"status.ready" ["Ready" "NotReady"]}) (get refused.audit -1))
-  (val stored (durable-delta metered refused))
+  (<- stored dict (durable-delta metered refused))
   (assert (in "counter" stored) stored)
   (assert (all (gfor key stored (or (= key "counter") (.startswith key "meta/") (.startswith key "audit/")))) stored))
