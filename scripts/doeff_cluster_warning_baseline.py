@@ -65,8 +65,16 @@ def _count(counts: Counts, rule: str, path: str) -> int:
     return counts.get(rule, {}).get(path, 0)
 
 
-def compare(baseline: Counts, current: Counts, measured: frozenset[str] | None) -> tuple[list[Finding], list[Finding]]:
-    """(増えた組, 下げ忘れの組)。measured = 測った file の集合(None = package 全体を測った)。"""
+@dataclass(frozen=True)
+class Comparison:
+    """比べの結末: grown = 基点より増えた組(新しい違反)・stale = 減ったのに基点が下がっていない組。"""
+
+    grown: tuple[Finding, ...]
+    stale: tuple[Finding, ...]
+
+
+def compare(baseline: Counts, current: Counts, measured: frozenset[str] | None) -> Comparison:
+    """基点と今の数を比べる。measured = 測った file の集合(None = package 全体を測った)。"""
     rules: set[str] = set(baseline) | set(current)
     pairs: set[tuple[str, str]] = {
         (rule, path)
@@ -78,9 +86,10 @@ def compare(baseline: Counts, current: Counts, measured: frozenset[str] | None) 
         (Finding(rule, path, _count(baseline, rule, path), _count(current, rule, path)) for rule, path in pairs),
         key=lambda f: (f.rule, f.path),
     )
-    grown: list[Finding] = [f for f in findings if f.current > f.baseline]
-    stale: list[Finding] = [f for f in findings if f.current < f.baseline]
-    return grown, stale
+    return Comparison(
+        grown=tuple(f for f in findings if f.current > f.baseline),
+        stale=tuple(f for f in findings if f.current < f.baseline),
+    )
 
 
 def lowered(baseline: Counts, current: Counts) -> Counts:
@@ -147,15 +156,15 @@ def main(argv: list[str]) -> int:
     paths: list[str] = _package_paths(argv[1:]) if len(argv) > 1 else []
     current = warning_counts(_run_linter(package_dir, paths), package_dir)
     measured: frozenset[str] | None = frozenset(paths) if paths else None
-    grown, stale = compare(baseline, current, measured)
-    if grown:
+    comparison: Comparison = compare(baseline, current, measured)
+    if comparison.grown:
         print(f"{PACKAGE} の warning が基点より増えた(新しい違反は直す — 基点に足さない):", file=sys.stderr)
-        print("\n".join(_line(f) for f in grown), file=sys.stderr)
-    if stale:
+        print("\n".join(_line(f) for f in comparison.grown), file=sys.stderr)
+    if comparison.stale:
         print(f"{PACKAGE} の warning が基点より減ったのに基点が下がっていない — "
               "`uv run --no-project python scripts/doeff_cluster_warning_baseline.py lower` を実行して stage する:", file=sys.stderr)
-        print("\n".join(_line(f) for f in stale), file=sys.stderr)
-    return 1 if grown or stale else 0
+        print("\n".join(_line(f) for f in comparison.stale), file=sys.stderr)
+    return 1 if comparison.grown or comparison.stale else 0
 
 
 if __name__ == "__main__":
