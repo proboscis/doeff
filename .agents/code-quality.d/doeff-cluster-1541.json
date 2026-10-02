@@ -139,10 +139,12 @@
       "layer": "io",
       "name": "doeff-cluster-cluster-foundation",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy"
+        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy",
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/cluster_foundation.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy"
+        "packages/doeff-cluster/src/doeff_cluster/cluster_foundation.hy",
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/cluster_foundation.hy"
       ],
       "responsibility": "本番の土台が並べる「coordinator に話す handler の組」(ADR-DOE-CLUSTER-001・計画 2.3)。",
       "typed": true

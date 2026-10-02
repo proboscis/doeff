@@ -5,7 +5,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.job_context [RunContext])
-(import doeff_cluster.cluster_foundation [cluster-handlers lease-holder-of])
+(import doeff_cluster.shared.entry.cluster_foundation [cluster-handlers lease-holder-of])
 (import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure closed?])
 (import tests.fixtures.cluster_foundation_programs [beacon-job production-foundation])
 

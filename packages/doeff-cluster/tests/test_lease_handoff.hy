@@ -8,7 +8,7 @@
 ;; 入れ替え(handoff)で旧い版が lease を持ったまま止まると、新しい版は lease の期限(TTL)まで取れなかった。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_time [Delay])
-(import doeff_cluster.cluster_foundation [lease-holder-of])
+(import doeff_cluster.shared.entry.cluster_foundation [lease-holder-of])
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
