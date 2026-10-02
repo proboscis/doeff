@@ -3,7 +3,6 @@
 
 import json
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,6 +17,7 @@ from doeff_conductor.effects.agent import (
     AgentEffect,
     AgentTask,
 )
+from doeff_conductor.env_places import xdg_state_home
 from doeff_conductor.exceptions import AgentError, JournalCorruptionError
 from doeff_conductor.replay_keying import (
     ResolvedIdentity,
@@ -538,10 +538,10 @@ class AgentReplaySession:
         self.previous_generation = (
             self.previous_entries[0].generation if self.previous_entries else 0
         )
-        self.current_generation = self.previous_generation
+        self._mut_current_generation = self.previous_generation
         self.current_keys: list[str] = []
         self.replayed_prefix_entries: list[AgentJournalEntry] = []
-        self.started_new_generation = False
+        self._mut_started_new_generation = False
 
     def run_or_replay(
         self,
@@ -560,7 +560,7 @@ class AgentReplaySession:
                 return self._run_delegate_and_append(effect, delegate, decision, entry_index)
             self._validate_replay_entry(previous_entry, effect, decision)
             self.replayed_prefix_entries.append(previous_entry)
-            if self.started_new_generation:
+            if self._mut_started_new_generation:
                 self._append_replayed_entry(previous_entry)
             # ADR 0002: a resumed cached-prefix node is already done — surface it
             # so the monitor shows DONE on replay (observational; resume itself
@@ -633,7 +633,7 @@ class AgentReplaySession:
             raise
         self.journal.append_entry(
             AgentJournalEntry(
-                generation=self.current_generation,
+                generation=self._mut_current_generation,
                 entry_index=entry_index,
                 cache_key=decision.cache_key,
                 resolved_identity_fingerprint=decision.resolved_identity_fingerprint,
@@ -688,7 +688,7 @@ class AgentReplaySession:
     ) -> None:
         self.journal.append_entry(
             AgentJournalEntry(
-                generation=self.current_generation,
+                generation=self._mut_current_generation,
                 entry_index=entry_index,
                 cache_key=decision.cache_key,
                 resolved_identity_fingerprint=decision.resolved_identity_fingerprint,
@@ -699,12 +699,12 @@ class AgentReplaySession:
         )
 
     def _start_new_generation(self) -> None:
-        if self.started_new_generation:
+        if self._mut_started_new_generation:
             return
-        self.current_generation = self.previous_generation + 1
+        self._mut_current_generation = self.previous_generation + 1
         for entry_index, previous_entry in enumerate(self.replayed_prefix_entries):
             self._append_replayed_entry(previous_entry, entry_index=entry_index)
-        self.started_new_generation = True
+        self._mut_started_new_generation = True
 
     def _append_replayed_entry(
         self,
@@ -714,7 +714,7 @@ class AgentReplaySession:
     ) -> None:
         self.journal.append_entry(
             AgentJournalEntry(
-                generation=self.current_generation,
+                generation=self._mut_current_generation,
                 entry_index=previous_entry.entry_index if entry_index is None else entry_index,
                 cache_key=previous_entry.cache_key,
                 resolved_identity_fingerprint=previous_entry.resolved_identity_fingerprint,
@@ -800,7 +800,7 @@ def _validate_delegate_result(effect: AgentEffect, result: object) -> None:
 def _state_dir(state_dir: str | Path | None) -> Path:
     if state_dir is not None:
         return Path(state_dir)
-    xdg_state = os.environ.get("XDG_STATE_HOME")
+    xdg_state = xdg_state_home()
     if xdg_state is not None:
         return Path(xdg_state) / "doeff-conductor"
     return Path.home() / ".local" / "state" / "doeff-conductor"

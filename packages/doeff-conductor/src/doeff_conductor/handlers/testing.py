@@ -95,8 +95,8 @@ class MockConductorRuntime:
         self._agent_prompts: dict[str, list[str]] = {}
         self._prs: dict[int, PRHandle] = {}
 
-        self._issue_counter = 0
-        self._pr_counter = 0
+        self._mut_issue_counter = 0
+        self._mut_pr_counter = 0
         self.pushed_branches: list[str] = []
 
     def close(self) -> None:
@@ -178,8 +178,8 @@ class MockConductorRuntime:
         return self._agent_invocation_counts.get(session_id, 0)
 
     def handle_create_issue(self, effect: CreateIssue) -> Issue:
-        self._issue_counter += 1
-        issue_id = f"ISSUE-{self._issue_counter:03d}"
+        self._mut_issue_counter += 1
+        issue_id = f"ISSUE-{self._mut_issue_counter:03d}"
         now = datetime.now(timezone.utc)
         issue = Issue(
             id=issue_id,
@@ -343,17 +343,17 @@ class MockConductorRuntime:
         self.pushed_branches.append(effect.workspace.ref)
 
     def handle_create_pr(self, effect: CreatePR) -> PRHandle:
-        self._pr_counter += 1
+        self._mut_pr_counter += 1
         pr = PRHandle(
-            url=f"https://github.com/mock/repo/pull/{self._pr_counter}",
-            number=self._pr_counter,
+            url=f"https://github.com/mock/repo/pull/{self._mut_pr_counter}",
+            number=self._mut_pr_counter,
             title=effect.title,
             branch=effect.workspace.ref,
             target=effect.target,
             status="open",
             created_at=datetime.now(timezone.utc),
         )
-        self._prs[self._pr_counter] = pr
+        self._prs[self._mut_pr_counter] = pr
         return pr
 
     def handle_merge_pr(self, effect: MergePR) -> None:

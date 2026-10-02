@@ -2,12 +2,12 @@
 
 
 import json
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from doeff_conductor.env_places import default_profile_name, profile_config_path, profiles_json
 from doeff_conductor.replay_keying import ResolvedIdentity, resolved_identity_fingerprint
 
 DEFAULT_SITE_CAPABILITIES: tuple[str, ...] = (
@@ -164,9 +164,9 @@ class ProfileRegistry:
 def load_profile_registry_from_env() -> ProfileRegistry:
     """Load minimal semantic profile bindings from env/config, or defaults."""
 
-    raw_json: str | None = os.environ.get("CONDUCTOR_PROFILES_JSON")
-    config_path_text: str | None = os.environ.get("CONDUCTOR_PROFILE_CONFIG")
-    raw_default_profile: str | None = os.environ.get("CONDUCTOR_DEFAULT_PROFILE")
+    raw_json: str | None = profiles_json()
+    config_path_text: str | None = profile_config_path()
+    raw_default_profile: str | None = default_profile_name()
 
     profile_data: Mapping[str, Any]
     if raw_json is not None:

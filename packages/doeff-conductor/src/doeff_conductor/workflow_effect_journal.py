@@ -1,7 +1,6 @@
 """Durable workflow effect journal for explicit time! and random! replay."""
 
 import json
-import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from random import SystemRandom
 from typing import Any
 
 from doeff_conductor.effects.dsl import RandomCall, TimeCall
+from doeff_conductor.env_places import xdg_state_home
 from doeff_conductor.exceptions import JournalCorruptionError
 from doeff_conductor.replay_keying import longest_valid_prefix, workflow_effect_cache_key
 
@@ -158,10 +158,10 @@ class WorkflowEffectReplaySession:
         self.previous_generation = (
             self.previous_entries[0].generation if self.previous_entries else 0
         )
-        self.current_generation = self.previous_generation
+        self._mut_current_generation = self.previous_generation
         self.current_keys: list[str] = []
         self.replayed_prefix_entries: list[WorkflowEffectJournalEntry] = []
-        self.started_new_generation = False
+        self._mut_started_new_generation = False
 
     def run_or_replay(
         self,
@@ -184,7 +184,7 @@ class WorkflowEffectReplaySession:
         value = produce_value()
         self.journal.append_entry(
             WorkflowEffectJournalEntry(
-                generation=self.current_generation,
+                generation=self._mut_current_generation,
                 entry_index=entry_index,
                 cache_key=decision.cache_key,
                 effect_kind=decision.effect_kind,
@@ -196,13 +196,13 @@ class WorkflowEffectReplaySession:
         return value
 
     def _start_new_generation(self) -> None:
-        if self.started_new_generation:
+        if self._mut_started_new_generation:
             return
-        self.current_generation = self.previous_generation + 1
+        self._mut_current_generation = self.previous_generation + 1
         for entry_index, previous_entry in enumerate(self.replayed_prefix_entries):
             self.journal.append_entry(
                 WorkflowEffectJournalEntry(
-                    generation=self.current_generation,
+                    generation=self._mut_current_generation,
                     entry_index=entry_index,
                     cache_key=previous_entry.cache_key,
                     effect_kind=previous_entry.effect_kind,
@@ -211,7 +211,7 @@ class WorkflowEffectReplaySession:
                     terminal_kind=previous_entry.terminal_kind,
                 )
             )
-        self.started_new_generation = True
+        self._mut_started_new_generation = True
 
     def _validate_replay_entry(
         self,
@@ -333,7 +333,7 @@ def evaluate_random_spec(spec: Any) -> Any:
 def _state_dir(state_dir: str | Path | None) -> Path:
     if state_dir is not None:
         return Path(state_dir)
-    xdg_state = os.environ.get("XDG_STATE_HOME")
+    xdg_state = xdg_state_home()
     if xdg_state is not None:
         return Path(xdg_state) / "doeff-conductor"
     return Path.home() / ".local" / "state" / "doeff-conductor"
