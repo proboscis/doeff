@@ -13,7 +13,9 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
 2. 当たる契約の組 = root の pyproject.toml の `[[tool.doeff.contract-tests]]`(path の接頭辞 → 検の列)のうち、
    接頭辞が変えた file に当たる行の検。表の読み手はここの `read_contract_table` の 1 か所で、形が違う・書いた検の
    file が無い時は止める(rc 2)。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で持つか木を歩くので、
-   import の逆依存では選べない — だから固定の組で先頭に置く。
+   import の逆依存では選べない — だから固定の組で先頭に置く。表は package(uv の workspace の member)ごとに、組か
+   「組の要らない理由」(`reason` の行)のどちらかを持つ。どちらも無い package は `table_gaps` が名指し、日次と表の
+   repo 全体の行で走る検(tests/test_contract_table_follows_packages.py)が赤にする(agora-redesign #2658)。
 3. 変えた検の file そのもの(検の file かは pytest の集め手と同じ名の規則 — root の ini の python_files・
    doeff_hy_test_files・doeff_adr_hy_files と doeff-adr の DEFAULT_FILE_PATTERNS)。
 4. 逆依存の検 = 変えた file を直接・間接に import(Hy は require も)する検の file を、doeff-linter の
@@ -70,7 +72,9 @@ PYTEST_MODE = "--as-pytest"
 DEFAULT_BUDGET_SECONDS = 60.0
 #: 上限の後、SIGTERM から SIGKILL までの猶予の秒。
 KILL_GRACE_SECONDS = 3.0
-ROW_KEYS = frozenset({"prefix", "tests"})
+#: 表の行の鍵: 契約の組(接頭辞と検の列)か、組の要らない package の除外(接頭辞と理由)のどちらか。
+CONTRACT_ROW_KEYS = frozenset({"prefix", "tests"})
+EXEMPTION_ROW_KEYS = frozenset({"prefix", "reason"})
 #: pytest の rc のうち、検の結末ではなく道具の誤り(3 = 内部の誤り・4 = 命令行の誤り)— 未測に畳まず止める。
 PYTEST_TOOL_FAILURES = frozenset({3, 4})
 #: 逆依存を問う linter の既定の命令(PATH の上の doeff-linter — `make lint-doeff` と同じ入れ方)。
@@ -102,8 +106,45 @@ class ContractRow:
 
 
 @dataclass(frozen=True)
+class ContractExemption:
+    """表の 1 行: 契約の組の要らない package(接頭辞 = その package の dir)と、要らない理由(空でない文)。
+    黙って外さないための行 — 理由の無い除外・package でない接頭辞の除外は読む時点で止める。"""
+
+    prefix: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class ContractTable:
     rows: tuple[ContractRow, ...]
+    exemptions: tuple[ContractExemption, ...]
+
+
+@dataclass(frozen=True)
+class PackageUnits:
+    """契約の表が覆う単位 — root の `[tool.uv.workspace]` の member の dir(`packages/<名>/` の形の接頭辞・名の順)。
+
+    表の package ごとの行の接頭辞は、どれも workspace の member の dir ちょうど(公開の形・stub・自分の pyproject を
+    持つ単位)なので、同じ単位で数える。workspace の宣言を読み、2 つ目の一覧を書かない。"""
+
+    prefixes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TableGaps:
+    """表と木のずれ — 契約の組も理由つきの除外も無い package の接頭辞(名の順)。"""
+
+    uncovered: tuple[str, ...]
+
+
+TableRow = ContractRow | ContractExemption
+
+
+@dataclass(frozen=True)
+class WorkspaceGlobs:
+    """`[tool.uv.workspace]` の glob の列 1 つ(members か exclude)。"""
+
+    globs: tuple[str, ...]
 
 
 def _test_path(test: str) -> str:
@@ -111,15 +152,74 @@ def _test_path(test: str) -> str:
     return test.split("::", 1)[0]
 
 
-def _parse_row(index: int, raw: object, repo: Path) -> ContractRow:
+def _workspace_globs(workspace: dict[str, object], key: str) -> WorkspaceGlobs:
+    """`[tool.uv.workspace]` の glob の列の鍵を 1 つ読む(無い鍵は空の列 — uv と同じ意味・文字列の列でなければ止める)。"""
+    match workspace.get(key, []):
+        case list() as values if all(isinstance(v, str) for v in values):
+            return WorkspaceGlobs(globs=tuple(values))
+        case other:
+            raise StopError(f"[tool.uv.workspace] の {key} が文字列の列でない: {other!r}")
+
+
+def workspace_packages(repo: Path) -> PackageUnits:
+    """root の pyproject.toml の `[tool.uv.workspace]` の members の glob に当たる dir から exclude に当たる dir を除き、
+    pyproject.toml を持つ物(uv が member と読む物)を package の単位にする。workspace の宣言の無い repo は member が
+    無い(uv と同じ意味)。pyproject.toml の無い dir(退役した crate の追跡外の残り)は package ではない。"""
+    config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    match config.get("tool", {}).get("uv", {}).get("workspace"):
+        case None:
+            return PackageUnits(prefixes=())
+        case dict() as workspace:
+            pass
+        case other:
+            raise StopError(f"[tool.uv.workspace] が表でない: {other!r}")
+    excluded = {
+        path
+        for pattern in _workspace_globs(workspace, "exclude").globs
+        for path in repo.glob(pattern)
+    }
+    members = {
+        path
+        for pattern in _workspace_globs(workspace, "members").globs
+        for path in repo.glob(pattern)
+        if path.is_dir() and path not in excluded and (path / "pyproject.toml").is_file()
+    }
+    return PackageUnits(
+        prefixes=tuple(sorted(f"{path.relative_to(repo).as_posix()}/" for path in members))
+    )
+
+
+def _parse_exemption(where: str, raw: dict[str, object], units: PackageUnits) -> ContractExemption:
+    """除外の行(prefix と reason)を読む — 理由が空・接頭辞が package の単位でない行は止める。"""
+    match raw["prefix"], raw["reason"]:
+        case str() as prefix, str() as reason if reason.strip():
+            pass
+        case _:
+            raise StopError(
+                f"{where}: 除外の行は prefix が文字列・reason が空でない理由の文: {raw!r}"
+            )
+    if prefix not in units.prefixes:
+        raise StopError(
+            f"{where}: 除外の接頭辞 {prefix!r} が package(uv の workspace の member の dir)でない"
+            f" — 除外は package ごとに書く(package: {list(units.prefixes)})"
+        )
+    return ContractExemption(prefix=prefix, reason=reason.strip())
+
+
+def _parse_row(index: int, raw: object, repo: Path, units: PackageUnits) -> TableRow:
     where = f"[[tool.doeff.contract-tests]] の {index + 1} 行目"
     match raw:
-        case dict() if set(raw) == ROW_KEYS:
+        case dict() if set(raw) == CONTRACT_ROW_KEYS:
             pass
+        case dict() if set(raw) == EXEMPTION_ROW_KEYS:
+            return _parse_exemption(where, raw, units)
         case dict():
-            raise StopError(f"{where}: 鍵は {sorted(ROW_KEYS)} だけ(実際 {sorted(raw)})")
+            raise StopError(
+                f"{where}: 鍵は {sorted(CONTRACT_ROW_KEYS)}(契約の組)か {sorted(EXEMPTION_ROW_KEYS)}"
+                f"(組の要らない package の理由つきの除外)だけ(実際 {sorted(raw)})"
+            )
         case _:
-            raise StopError(f"{where}: 表(prefix と tests)でない: {raw!r}")
+            raise StopError(f"{where}: 表(prefix と tests か、prefix と reason)でない: {raw!r}")
     match raw["prefix"], raw["tests"]:
         case str() as prefix, list() as tests if tests and all(isinstance(t, str) for t in tests):
             pass
@@ -141,7 +241,8 @@ def _parse_row(index: int, raw: object, repo: Path) -> ContractRow:
 
 
 def read_contract_table(repo: Path) -> ContractTable:
-    """root の pyproject.toml の `[[tool.doeff.contract-tests]]` を読む(読み手はこの 1 か所)。"""
+    """root の pyproject.toml の `[[tool.doeff.contract-tests]]` を読む(読み手はこの 1 か所)。組の行と除外の行の接頭辞は
+    重ねない(同じ package に組と除外の両方を書くと、どちらが本当かを黙って決めることになる)。"""
     pyproject = repo / "pyproject.toml"
     if not pyproject.is_file():
         raise StopError(f"{pyproject} が無い")
@@ -153,12 +254,24 @@ def read_contract_table(repo: Path) -> ContractTable:
             raise StopError(f"{pyproject} に [[tool.doeff.contract-tests]] の表が無い")
         case other:
             raise StopError(f"[[tool.doeff.contract-tests]] は空でない表の列: {other!r}")
-    rows = tuple(_parse_row(i, raw, repo) for i, raw in enumerate(raw_rows))
-    prefixes = [row.prefix for row in rows]
+    units = workspace_packages(repo)
+    parsed = tuple(_parse_row(i, raw, repo, units) for i, raw in enumerate(raw_rows))
+    prefixes = [row.prefix for row in parsed]
     duplicated = sorted({p for p in prefixes if prefixes.count(p) > 1})
     if duplicated:
         raise StopError(f"[[tool.doeff.contract-tests]] に同じ接頭辞の行が 2 つ以上: {duplicated}")
-    return ContractTable(rows=rows)
+    return ContractTable(
+        rows=tuple(row for row in parsed if isinstance(row, ContractRow)),
+        exemptions=tuple(row for row in parsed if isinstance(row, ContractExemption)),
+    )
+
+
+def table_gaps(table: ContractTable, units: PackageUnits) -> TableGaps:
+    """package の単位のうち、表に契約の組(接頭辞がその package の dir ちょうどの行)も理由つきの除外も無い物。
+    repo 全体の行("")や package の中の dir の行は、その package の組に数えない — package ごとに「何がその package の
+    公開の形を確かめるか」を決めた行だけを数える。純粋な関数(呼び手が読んだ表と単位を渡す)。"""
+    named = {row.prefix for row in table.rows} | {row.prefix for row in table.exemptions}
+    return TableGaps(uncovered=tuple(p for p in units.prefixes if p not in named))
 
 
 # ---------------------------------------------------------------------------

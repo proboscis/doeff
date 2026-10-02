@@ -165,8 +165,13 @@ disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None
 # 契約の検の固定の組(agora-redesign #2605): 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
 # 接頭辞に当たる行の検を、変えた検の file より先に必ず走らせる。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で
 # 持つか木を歩くので、import の逆依存では選べない(t135 の 5 commit は、これが無いと登記の前に赤にならなかった)。
-# 読み手は scripts/run_changed_tests.py の read_contract_table の 1 か所 — 鍵は prefix と tests だけ・書いた検の file が木に無いと止める。
+# 読み手は scripts/run_changed_tests.py の read_contract_table の 1 か所 — 書いた検の file が木に無いと止める。
+# 行は 2 種類: 契約の組 = prefix と tests・組の要らない package の除外 = prefix と reason(agora-redesign #2658)。
 # prefix = 接頭辞(dir は `/` で終える・"" は repo 全体)。tests = path か `path::検の名`(冊の検は 1 本に絞る)。
+# package(上の [tool.uv.workspace] の member の dir — `packages/<名>/`)は、どれも組か除外のどちらかを持つ。どちらも無い package は
+# tests/test_contract_table_follows_packages.py が名指して赤にする(日次と、下の repo 全体の行の両方で走る)。除外の reason には
+# 「その package の公開の形を全体で確かめる検(stub の突き合わせ・公開の名・木を歩く母集団の検)が無い」根拠を書く — 理由の無い除外・
+# package でない接頭辞の除外は読み手が止める。そういう検を足した時は除外の行を組の行に書き換える。
 # 註の秒は 1 file ずつ走らせた壁時計(起動を含む・2026-10-02 zeus・合計の上限は 60 秒)。行を足す時も 1 file ずつ測って書く。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-core-effects/"
@@ -207,11 +212,166 @@ tests = [
     "packages/doeff-vm/tests/test_package_exports.py",  # 1.0 秒 — doeff-vm の公開の名
 ]
 
+# ── 2026-10-02 に足した組(agora-redesign #2658 — 表に組の無かった 31 package の中身を読み、package の公開の形・木を歩く母集団を
+#    確かめる検の在った 8 package)。秒は同じ測り方(2 回目)。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-adr/"
+tests = [
+    "packages/doeff-adr/tests/test_lazy_public_api.py",  # 3.1 秒 — 公開の名(__all__)と TYPE_CHECKING の import の名の一致・値は registry の物
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-agents/"
+tests = [
+    "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy::test_adr_doe_agents_013_driver_layer_has_no_direct_io",  # 1.5 秒 — driver 層の木を歩き直接の I/O が 0 行
+    "packages/doeff-agents/tests/test_sessionhost_transaction_owner.py",  # 6.9 秒 — sessionhost の木を歩き transaction の開閉は許した定義だけ
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-claude-code/"
+tests = [
+    "packages/doeff-claude-code/tests/test_no_application_vocabulary.hy",  # 1.4 秒 — package の全 file の中身と名に業務の語が無い
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-conductor/"
+tests = [
+    "packages/doeff-conductor/tests/test_annotations_resolve.py",  # 2.3 秒 — 全 module を歩き、全関数の注釈が実行時に評価できる
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-docker/"
+tests = [
+    "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy::test_adr_doe_hy_005_macros_live_only_in_doeff_hy",  # 1.5 秒 — macro の凍結台帳(compose.hy が載る)と repo の .hy の defmacro の一致
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-hy-pytest/"
+tests = [
+    "packages/doeff-hy-pytest/tests/test_plugin_distribution.py",  # 0.9 秒 — pytest11 の entry point の持ち主・src に .hy が無い
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-traverse/"
+tests = [
+    "packages/doeff-traverse/tests/test_traverse_answer_types.py",  # 3.6 秒 — effect の答えの型を実行時と pyright(.pyi を読む)で
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-vm-core/"
+tests = [
+    # Rust の source の字面の検(.rs は import の逆依存に現れない — 8 本で合計 1.5 秒前後)
+    "tests/test_architecture_violations.py",  # 1.1 秒 — vm-core・doeff-vm の .rs の木を歩き禁じた形が 0 件
+    "packages/doeff-vm-core/tests/test_dispatch_id_elimination_architecture.py",
+    "packages/doeff-vm-core/tests/test_dispatch_origin_architecture.py",
+    "packages/doeff-vm-core/tests/test_frame_based_traceback_architecture.py",
+    "packages/doeff-vm-core/tests/test_lexical_scope_architecture.py",
+    "packages/doeff-vm-core/tests/test_move_semantics_architecture.py",
+    "packages/doeff-vm-core/tests/test_vm_module_split.py",
+    "packages/doeff-vm-core/tests/test_vm_unreachable_exhaustive.py",  # vm-core の tests の 7 本で 0.9 秒
+]
+
 [[tool.doeff.contract-tests]]
 prefix = ""
 tests = [
     "tests/test_daily_test_population.py",  # 7.5 秒 — 検の file の置き場と集め手(日次の母集団)
+    "tests/test_contract_table_follows_packages.py",  # 1.3 秒 — この表と package の増減のずれ(agora-redesign #2658)
 ]
+
+# ── 契約の組の要らない package(agora-redesign #2658 — 2026-10-02 に中身を読んで決めた 23 package)。
+#    「無い」の根拠 = stub(.pyi)が無いか突き合わせる相手が無い・公開の名の全体を確かめる検が無い・木を歩く検が無い。
+#    残る検は単体の振る舞い(変えた module を import するので、変えた所の検の逆依存が選ぶ)か、印 e2e の実 API の検。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-agentic/"
+reason = "stub が無く、__all__ の全体を確かめる検も木を歩く検も無い — 検は types・effects・handlers を import して作って確かめる単体だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-agentic-cli/"
+reason = "Rust の bin crate(src/main.rs だけ)で Python の公開面も Python の検も無い — maturin の build の宣言は repo 全体の tests/test_rust_build_target_outside_package.py が見る"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-effect-analyzer/"
+reason = "stub も公開の名の一覧も無い(analyze・analyze_symbol を遅延で出すだけ)— Python の検は使い捨ての package を作って解析する単体で、Rust の検は cargo(make test-rust)の範囲"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-events/"
+reason = "stub が無く、__all__ を確かめる検も無い — 検は publish・待ち・型ごとの配信の単体の振る舞いだけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-flow/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は数個の名の同一性の抜き取り)— 検は単体と CLI の振る舞いだけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-gemini/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は数個の名の同一性と継承の抜き取り)— 検は単体と、印 e2e の実 API の検だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-git/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い — 検は 1 本(3 名ずつの同一性の抜き取りと、実 git の handler の振る舞い)"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-google-secret-manager/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い — 検は非推奨の shim の警告と単体の振る舞い、印 e2e の実 API の検だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-image/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(公開の名の検は 3 名の同一性)— 検は単体と provider を重ねる統合の振る舞いだけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-indexer/"
+reason = "Rust の crate で、Python の公開面は Indexer・SymbolInfo の再輸出 2 名だけ・Python の検は 0 本(Rust の検は cargo の範囲)"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-jev/"
+reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は宛先の解き方・要求の形・答えの読みの単体だけ(台本の handler で答える)"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-linter/"
+reason = "Rust の crate で Python の公開面が無い — tests/ の Python は Rust の検体と conftest だけで、Rust の検は cargo の範囲"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-llm/"
+reason = "検が 0 本(tests の dir が無い)— 公開の effect は provider の package の検が import して使う(変えた所の検の逆依存が選ぶ)"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-ml-nexus/"
+reason = "stub も公開の名の一覧も無い — 検は Dockerfile の出力・依存・直列化・runner の単体と、手書きの 6 module の import の煙の検だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-notify/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は同じ module から取った 3 名の同一性で常に真)— 検は単体の振る舞いだけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-openai/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は 4 名の抜き取り)— 検は mock・本番の handler の単体と、印 e2e の実 API の検だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-openrouter/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は同一性と継承 3 本の抜き取り)— 検は単体と、印 e2e の実 API の検だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-secret/"
+reason = "stub が無く、公開の名を確かめる検も無い — 検は in-memory と環境変数の handler の単体の振る舞いだけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-seedream/"
+reason = "stub が無く、__all__ の全体を確かめる検も無い(export の検は同一性の抜き取り)— 検は mock の handler と client の単体だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-system-one/"
+reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は台本の handler と判定の関数の単体だけ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-test-target/"
+reason = "他の検の的(fixture)の package で、自分の公開の形を確かめる検は無い — 的を写して解析する使い手は doeff-effect-analyzer の Rust の検(cargo の範囲・この表に載せられない)"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-time/"
+reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 3 つの時計が同じ deftest を通る test_time_contract.hy は振る舞いの検で、doeff_time を import するので逆依存が選ぶ"
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-validation/"
+reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は Python の API と Hy の macro の展開の誤りの単体だけ"
 
 [dependency-groups]
 dev = [
