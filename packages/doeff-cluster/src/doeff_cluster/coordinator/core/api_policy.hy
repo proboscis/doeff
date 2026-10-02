@@ -44,7 +44,7 @@
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
-(import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
+(import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
 (import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
@@ -335,8 +335,10 @@
     (and (= method "POST") (= parts ["heartbeat"]))
       ;; settled = 呼び手が state を同じ now で調停済みと保証する(coordinator の 1 歩の中 — 拍の頭の tick の後)。その時だけ、静かな
       ;; heartbeat は調停を繰り返さない(quiet-heartbeat・#2655)。
+      ;; 止まり始めを名乗る heartbeat(#2819)は、写した後にその世代の drain の頼みとして通す — drain が増えた heartbeat は
+      ;; quiet-heartbeat の比べ(drains も見る)で静かでなくなり、同じ歩で調停が置き先を外す。
       (do (setv name body.name
-                heard (register-heartbeat state body now))
+                heard (absorb-stopping (register-heartbeat state body now) name body.boot body.stopping now))
           (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (settle state heard name now timing))
                 reply (heartbeat-reply after name timing (ready-instances after name now timing) :now now
                                        :boot body.boot :statuses body.statuses))

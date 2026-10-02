@@ -13,6 +13,8 @@
 ;;;      「移せない」と理由を名乗る(空白を作らない)。移す先が現れたら次の拍で並べる。
 ;;;   入れ替えでない Service は今までどおり止めて移す(cluster_policy.place-jobs — 他に置ける先が在る時だけ外す)。
 ;;;
+;;; drain の頼みは 2 つの道で来る: POST /workers/<名>/drain(本番の preStop・手の頼み)と、止まり始めを名乗る heartbeat
+;;; (absorb-stopping — sigterm などで preStop を通らずに止まる worker・#2819)。
 ;;; drain は期限(ttlSeconds・頼み直すたびに延びる)で消え、別の process の世代の heartbeat が来ても解ける
 ;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
 (require doeff-hy.macros [val])
@@ -48,6 +50,20 @@
                             {name (if (and current (> current.until-ms now))
                                       (replace current :until-ms until)
                                       (Drain name now until worker.boot actor))})))
+
+
+(val STOPPING-DRAIN-ACTOR "worker-stopping")   ; 止まり始めの名乗りから立てた drain の頼み手(GET /state の drains に出る)
+
+
+(defn #^ ClusterState absorb-stopping [#^ ClusterState state #^ str name #^ (| str None) boot #^ bool stopping #^ int now]
+  "heartbeat で止まり始めを名乗った世代(stopping — sigterm を受けた worker・#2819)を、その worker 自身の drain の頼みとして
+   request-drain に通し、新しい置き先と task をその世代へ置かないため。drain の頼み(本番の preStop)を通らない止め(機体の終了・
+   手の kill)でも、止まる途中の世代に置いた task が始まらずに lease まで止まる穴を塞ぐ。世代の扱い(今の世代でない名乗りは付けない)と
+   期限(既定の 300 秒)は request-drain のまま。既に drain の最中なら頼み直さない(明示の drain の期限を縮めない)。名乗りをやめても
+   解かない — 解くのは新しい世代の heartbeat(cluster_policy.absorb-boot)と期限(sweep-drains)。"
+  (if (and stopping (not-in name (draining-workers state now)))
+      (request-drain state name (DrainBody :boot boot) STOPPING-DRAIN-ACTOR now)
+      state))
 
 
 (defn #^ ClusterState cancel-drain [#^ ClusterState state #^ str name]

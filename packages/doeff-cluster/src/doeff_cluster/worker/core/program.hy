@@ -13,9 +13,10 @@
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None))
-  ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。
+  ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。止まり始めも渡す — heartbeat で名乗り、
+  ;; coordinator がこの世代へ新しく置かない(#2819)。
   (<- env-report (| dict None) (EnvReport))
-  (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report))
+  (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report :stopping stopping))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける。
   (setv desired (cond
     stopping #()

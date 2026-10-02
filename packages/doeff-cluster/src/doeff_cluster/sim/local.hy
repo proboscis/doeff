@@ -208,7 +208,8 @@
    壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)・retire-stops = 反例の
    世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob の handler が、外すと同時に旧を止める — 条 W1 の反例)・ignores-keep-marks =
    途絶しても動かし続けてよい印(#2804)を知らない古い版の worker の代役(heartbeat に keptWhenCutOff を載せず、返事の keepWhenCutOff を
-   読み捨てる — 新しい coordinator と古い worker の組を確かめるため)。"
+   読み捨てる — 新しい coordinator と古い worker の組を確かめるため)・silent-stop = 反例の世界だけの壊れた worker(宣言の読みの handler が
+   止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -221,7 +222,8 @@
   (setv #^ bool ignores-fence False)
   (setv #^ (| int None) beat-every-ms None)
   (setv #^ bool retire-stops False)
-  (setv #^ bool ignores-keep-marks False))
+  (setv #^ bool ignores-keep-marks False)
+  (setv #^ bool silent-stop False))
 
 
 (defrecord SimProcess
@@ -551,7 +553,9 @@
    (在れば拍ごとの heartbeat に戻る — 本番の coordinator への口の watching? が thread の死に気づくのと同じ)・tick-bell = 拍の間の
    眠りを起こす呼び鈴(#2692 — 待ちが「変わった」と答えた時に鳴らして手放し、次の宣言の読みが新しく掛ける。鳴るまでは拍をまたいで
    同じ物を渡す)・stalled-until-ms = 処理の止まり(StallWorker — #2804)の終わりの時刻(epoch ms・0 = 止まっていない)。この刻までは
-   heartbeat を送らず(送りの失敗も無いので fence も効かない — 本番の worker の処理が I/O で止まった形)、前の宣言のまま拍を回す。"
+   heartbeat を送らず(送りの失敗も無いので fence も効かない — 本番の worker の処理が I/O で止まった形)、前の宣言のまま拍を回す・
+   sent-stopping = 前に届けた heartbeat に載せた止まり始め(#2819 — 拍の Program が渡す止まりと違えば送る間隔を待たずに送る。
+   本番の coordinator への口の LinkState.sent-stopping と同じ)。"
   (#^ str boot)
   (#^ int boot-at)
   (#^ tuple processes)
@@ -580,7 +584,8 @@
   (setv #^ (| Promise None) tick-bell None)
   (setv #^ int stalled-until-ms 0)
   ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 本番の LinkState.keep-fence-ms と同じ・返事の timing が上書きする)。
-  (setv #^ int keep-fence-ms (. (ClusterTiming) keep-fence-ms)))
+  (setv #^ int keep-fence-ms (. (ClusterTiming) keep-fence-ms))
+  (setv #^ bool sent-stopping False))
 
 
 (defrecord HostTruthChange
@@ -1408,10 +1413,11 @@
   fetched)
 
 
-(defk heartbeat [worker boot]
-  {:pre [(: worker SimWorker) (: boot str)] :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "doeff-cluster" :role "protocol"}}
-  "本番の coordinator への口の polled の代役: 生存・能力・版・状態・root の名乗りを同じ本文(heartbeat-body・env-heartbeat-part)で送り、返事の
-   job と task と温める表の行を宣言として返す。届かなければ desired-when-unreachable(本番と同じ判断)。"
+(defk heartbeat [worker boot stopping]
+  {:pre [(: worker SimWorker) (: boot str) (: stopping bool)] :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "本番の coordinator への口の polled の代役: 生存・能力・版・状態・root の名乗り・止まり始め(stopping — 拍の Program が宣言の読みで渡した
+   止まり・#2819)を同じ本文(heartbeat-body・env-heartbeat-part)で送り、返事の job と task と温める表の行を宣言として返す。届かなければ
+   desired-when-unreachable(本番と同じ判断)。"
   (<- parts SimParts (PartsOf))
   (<- plan SimPlan (PlanOf))
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない — 本番の coordinator への口の beat と同じ)。読みと下ろしは世界への
@@ -1426,7 +1432,7 @@
   (val full (| (heartbeat-body :name worker.name :provides (tuple (sorted worker.provides)) :exclusive (tuple (sorted worker.exclusive))
                                :node worker.node :capacity worker.capacity :versions (or worker.versions plan.versions)
                                :statuses before.statuses :endpoint (+ "sim://" worker.name) :boot before.boot
-                               :boot-at before.boot-at :tools {} :kept kept)
+                               :boot-at before.boot-at :tools {} :kept kept :stopping stopping)
                (env-heartbeat-part (env-report views "ok") (current-platform))))
   (val body (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
@@ -1459,7 +1465,8 @@
                                             :results (dfor #(k v) (.items truth.results) :if (in k ids) k v)
                                             :task-echo echo
                                             ;; 次の拍の判断の材料(#1933 — 本番の coordinator への口の beat と同じ)。
-                                            :fresh True :sent-statuses before.statuses :beat-interval-ms (beat-interval-ms timing echo)
+                                            :fresh True :sent-statuses before.statuses :sent-stopping stopping
+                                            :beat-interval-ms (beat-interval-ms timing echo)
                                             :watch-after (reply-revision reply) :beat-bells #()))))
           ;; 起こした後の待ちに、版が進んだことを知らせる(鳴らすのは置き直す前に掛かっていた呼び鈴)。
           (for [bell written.before.beat-bells]
@@ -1544,21 +1551,26 @@
   ;; 本物の run-worker の effect に偽の宿で答える(本番の組 = worker/protocol の local-host・coordinator-link・
   ;; lease-release-coordinator・stop-flag)。宿の真実は世界の session に在り、HostTruthOf / PutHostTruth で読み書きする。どの節も先に
   ;; 世代が今のものかを確かめ(live-truth)、終わった世代の run-worker をその場で終わらせる。
-  (ReadDesired []
+  (ReadDesired [stopping]
     ;; heartbeat は送る拍(beat_policy.heartbeat-due — 本番の coordinator への口の polled と同じ判断)だけ送り、それ以外は前の返事の desired。
+    ;; 止まり始め(拍の Program が渡す)は状態の報告の違いと同じく、送る間隔を待たずに名乗る(#2819)。
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
     (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None)
                        (is truth.watch-failure None)))
+    ;; 名乗る止まり(反例の worker silent-stop は名乗らない — 条 C3 の失敗ケース)。
+    (val announced (and stopping (not worker.silent-stop)))
     ;; 処理の止まり(StallWorker — #2804)の間は送らない(送りの失敗も無いので fence の判断も走らない)。
     (val due (and (>= now truth.stalled-until-ms)
-                  (heartbeat-due watching truth.fresh truth.woken (!= truth.statuses truth.sent-statuses) (- now truth.last-ok-ms)
+                  (heartbeat-due watching truth.fresh truth.woken
+                                 (or (!= truth.statuses truth.sent-statuses) (!= announced truth.sent-stopping))
+                                 (- now truth.last-ok-ms)
                                  (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-tick-bell worker.name boot truth watching))
     (var read (DesiredJobs truth.last-desired :warm truth.last-warm))
     (when due
-      (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot))
+      (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot announced))
       (:= read beaten))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell read bell))
     (resume belled))

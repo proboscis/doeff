@@ -133,6 +133,7 @@ class SimWorker:
     beat_every_ms: int | None = None
     retire_stops: bool = False
     ignores_keep_marks: bool = False
+    silent_stop: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
@@ -384,6 +385,7 @@ class HostTruth:
     tick_bell: Promise[object] | None = None
     stalled_until_ms: int = 0
     keep_fence_ms: int = ...
+    sent_stopping: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:

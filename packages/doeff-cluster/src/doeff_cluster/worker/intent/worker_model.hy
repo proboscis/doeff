@@ -226,8 +226,10 @@
 
 (defclass [(dataclass :frozen True)] ReadDesired [EffectBase]
   "結果は DesiredJobs | DesiredUnreadable。env-report = heartbeat に載せる root の姿(拍の Program が EnvReport で問うて渡す — None = 実行環境の
-   root を名乗らない。#2427)。"
-  (setv #^ (| dict None) env-report None))
+   root を名乗らない。#2427)・stopping = この worker が止まり始めた(拍の Program が WorkerStopRequested で読んで渡す — heartbeat で名乗り、
+   coordinator はこの世代へ新しく置かない。止まり始めの拍は送る間隔を待たずに送る — #2819)。"
+  (setv #^ (| dict None) env-report None)
+  (setv #^ bool stopping False))
 
 
 (defclass [(dataclass :frozen True)] ObserveWorld [EffectBase]
