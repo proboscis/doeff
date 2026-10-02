@@ -1,88 +1,53 @@
-"""http_client.hy の公開面の型(記録の service の client — 型検査のための宣言・実行時は http_client.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = http_client.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-http_client.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、口の組 RecordsEndpoint・答え手 http-records-handler・
-計器の 0 置き zero-client-metrics が Unknown になる(使い手の job の土台が口を作って答え手を並べる所の strict の型検査で、書き手に
-直せない赤が連なる)。ここで型を宣言する。
-
-- `(defclass [(dataclass :frozen True)] …)` は位置でも渡せる frozen の dataclass。
-- defk は呼ぶと Program を返す(答えの型 = 実装の :post の型)。
-- defhandler(http-records-handler・http-table-records-handler)は引数を受け、本文の Program に被せる関数を返す。
-- RecordsEndpoint.meter は計器の答え手(CountMetric に答える handler — 形は答え手ごとに違うので、実装の注記と同じ Callable に留める)。
-- PublicEffect・WireAnswer は wire.hy の union(wire.hy には型の宣言が無いので、同じ並びを effects.pyi・values.pyi の名で書く)。
-- 実装との食い違いは packages/doeff-records/tests/test_static_stubs.py が名・欄の名と順・既定値の有無・引数の名・union の並びで検める。
-"""
-
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Protocol, TypeAlias, TypeVar
-
-from doeff_hy.json_value import JsonValue
-from doeff_records.effects import (
-    AppendEvent,
-    ListRows,
-    PutRow,
-    PutRows,
-    ReadEvents,
-    ReadRow,
-    ReadStreamEnd,
-    WatchChanges,
-)
-from doeff_records.values import (
-    Appended,
-    Changes,
-    Conflict,
-    Events,
-    EventsMoved,
-    EventsQuiet,
-    Missing,
-    NotIndexed,
-    Page,
-    Refused,
-    Reset,
-    Row,
-    RowsConflict,
-    RowsRefused,
-    StreamEmpty,
-    StreamEnd,
-    Unreachable,
-    Written,
-    WrittenRows,
-)
-from doeff_vm import WithHandler
-
-from doeff import Program
-
-_A = TypeVar("_A")
-
-PublicEffect: TypeAlias = (
-    ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd
-)
-WireAnswer: TypeAlias = (
-    Row
-    | Missing
-    | Page
-    | Written
-    | Conflict
-    | Refused
-    | NotIndexed
-    | Reset
-    | Changes
-    | Appended
-    | Events
-    | WrittenRows
-    | RowsConflict
-    | RowsRefused
-    | StreamEnd
-    | StreamEmpty
-)
-
+from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+from collections.abc import Callable as Callable
+from dataclasses import dataclass as dataclass
+import json as json
+from doeff import with_handlers as with_handlers
+from doeff_core_effects.http_effects import HttpRequest as HttpRequest
+from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects.http_effects import HttpFailed as HttpFailed
+from doeff_core_effects.meter_effects import CountMetric as CountMetric
+from doeff_records.values import EventsMoved as EventsMoved
+from doeff_records.values import EventsQuiet as EventsQuiet
+from doeff_records.values import Unreachable as Unreachable
+from doeff_records.effects import ReadRow as ReadRow
+from doeff_records.effects import ListRows as ListRows
+from doeff_records.effects import PutRow as PutRow
+from doeff_records.effects import PutRows as PutRows
+from doeff_records.effects import WatchChanges as WatchChanges
+from doeff_records.effects import WatchEvents as WatchEvents
+from doeff_records.effects import AppendEvent as AppendEvent
+from doeff_records.effects import ReadEvents as ReadEvents
+from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
+from doeff_records.watching import wait_for_changes as wait_for_changes
+from doeff_records.watching import moved_of as moved_of
+from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
+from doeff_records.wire import PublicEffect as PublicEffect
+from doeff_records.wire import WireAnswer as WireAnswer
+from doeff_records.wire import JsonValue as JsonValue
+from doeff_records.wire import encode_request as encode_request
+from doeff_records.wire import decode_answer as decode_answer
+from doeff_records.wire import refusal_from as refusal_from
+from doeff_records.wire import undeclared_refusal as undeclared_refusal
+from doeff_records.wire import CLIENT_ANSWER_METRICS as CLIENT_ANSWER_METRICS
+from doeff_records.wire import CLIENT_UNREACHABLE as CLIENT_UNREACHABLE
+from doeff_records.wire import client_answer_metric as client_answer_metric
+from doeff_records.wire import client_status_outcome as client_status_outcome
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
 DEFAULT_REQUEST_TIMEOUT: float
 DEFAULT_POLL_SECONDS: float
+
+class WireError(RuntimeError):
+    ...
+
+class RecordsUnauthorized(Exception):
+    ...
 IDENTITY_REFUSED_STATUSES: tuple[int, ...]
 REASON_MAX_CHARS: int
-
-class WireError(RuntimeError): ...
-class RecordsUnauthorized(Exception): ...
 
 @dataclass(frozen=True)
 class RecordsEndpoint:
@@ -90,33 +55,51 @@ class RecordsEndpoint:
     token: str
     request_timeout: float = ...
     poll_seconds: float = ...
-    meter: Callable[..., object] | None = ...
+    meter: Callable[..., object] | None = None
 
 @dataclass(frozen=True)
 class RawReply:
     status: int
     payload: bytes
 
-class _RecordsHandler(Protocol):
-    """本文の Program に記録の effect の答え手を被せる関数(答えの型は本文のまま)。"""
+def service_url(endpoint: RecordsEndpoint, operation: str) -> _Program[str, object]:
+    ...
 
-    def __call__(self, body: Program[_A, object], /) -> WithHandler[_A]: ...
+def request_headers(endpoint: RecordsEndpoint) -> _Program[dict[str, str], object]:
+    ...
 
-def service_url(endpoint: RecordsEndpoint, operation: str) -> Program[str, object]: ...
-def request_headers(endpoint: RecordsEndpoint) -> Program[dict[str, str], object]: ...
-def request_bytes(body: dict[str, object]) -> Program[bytes, object]: ...
-def reply_json(operation: str, reply: RawReply) -> Program[JsonValue, object]: ...
-def exchange_by_effect(
-    endpoint: RecordsEndpoint, operation: str, body: dict[str, object]
-) -> Program[RawReply | Unreachable, object]: ...
-def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object]) -> Program[RawReply | Unreachable, object]: ...
-def refused_reason(payload: bytes) -> Program[str, object]: ...
-def identity_refused(endpoint: RecordsEndpoint, operation: str, reply: RawReply) -> Program[RecordsUnauthorized, object]: ...
-def moved_by_reading(
-    endpoint: RecordsEndpoint, ask: ReadEvents
-) -> Program[EventsMoved | EventsQuiet | Unreachable, object]: ...
-def zero_client_metrics(endpoint: RecordsEndpoint) -> Program[None, object]: ...
-def counted_reply(endpoint: RecordsEndpoint, operation: str, reply: RawReply | Unreachable) -> Program[None, object]: ...
-def call_service(endpoint: RecordsEndpoint, ask: PublicEffect) -> Program[WireAnswer | Unreachable, object]: ...
-def http_records_handler(endpoint: RecordsEndpoint) -> _RecordsHandler: ...
-def http_table_records_handler(endpoint: RecordsEndpoint, served: frozenset[str]) -> _RecordsHandler: ...
+def request_bytes(body: dict[str, object]) -> _Program[bytes, object]:
+    ...
+
+def reply_json(operation: str, reply: RawReply) -> _Program[JsonValue, object]:
+    ...
+
+def exchange_by_effect(endpoint: RecordsEndpoint, operation: str, body: dict[str, object]) -> _Program[RawReply | Unreachable, object]:
+    ...
+
+def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object]) -> _Program[RawReply | Unreachable, object]:
+    ...
+
+def refused_reason(payload: bytes) -> _Program[str, object]:
+    ...
+
+def identity_refused(endpoint: RecordsEndpoint, operation: str, reply: RawReply) -> _Program[RecordsUnauthorized, object]:
+    ...
+
+def moved_by_reading(endpoint: RecordsEndpoint, ask: ReadEvents) -> _Program[EventsMoved | EventsQuiet | Unreachable, object]:
+    ...
+
+def zero_client_metrics(endpoint: RecordsEndpoint) -> _Program[None, object]:
+    ...
+
+def counted_reply(endpoint: RecordsEndpoint, operation: str, reply: RawReply | Unreachable) -> _Program[None, object]:
+    ...
+
+def call_service(endpoint: RecordsEndpoint, ask: PublicEffect) -> _Program[WireAnswer | Unreachable, object]:
+    ...
+
+def http_records_handler(endpoint: RecordsEndpoint) -> _Handler:
+    ...
+
+def http_table_records_handler(endpoint: RecordsEndpoint, served: frozenset[str]) -> _Handler:
+    ...

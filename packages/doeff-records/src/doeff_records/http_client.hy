@@ -88,14 +88,14 @@
 
 
 (defk request-headers [endpoint]
-  {:pre [(: endpoint RecordsEndpoint)] :post [(: % dict)]}
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % (get dict #(str str)))]}
   "要求の header(本文の型と身元の token)。"
   {"Content-Type" "application/json; charset=utf-8"
    "Authorization" (+ "Bearer " endpoint.token)})
 
 
 (defk request-bytes [body]
-  {:pre [(: body dict)] :post [(: % bytes)]}
+  {:pre [(: body (get dict #(str object)))] :post [(: % bytes)]}
   "要求の本文の綴り(どちらの送り方も同じ byte を送る)。"
   (.encode (json.dumps body :ensure-ascii False :separators #("," ":")) "utf-8"))
 
@@ -111,7 +111,7 @@
 
 
 (defk exchange-by-effect [endpoint operation body]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object)))] :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを HttpRequest の effect として出す。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
    Unreachable にする。"
   (<- url str (service-url endpoint operation))
@@ -126,7 +126,7 @@
 
 
 (defk exchange [endpoint operation body]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body dict)] :post [(: % (| RawReply Unreachable))]}
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object)))] :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は HttpRequest の effect 1 つ)。届かなければ Unreachable。"
   (! (exchange-by-effect endpoint operation body)))
 
@@ -241,7 +241,7 @@
     (resume answer)))
 
 
-(defhandler http-table-records-handler [#^ RecordsEndpoint endpoint #^ frozenset served]
+(defhandler http-table-records-handler [#^ RecordsEndpoint endpoint #^ (get frozenset str) served]
   ;; 引数に残す理由: 同じ handler を置き場ごとに別の口と表で 1 つの組に重ねる(Ask では区別できない)。
   ;; 表 served の読み書きだけに答える http-records-handler(他の表と追記の列は外側の handler へ渡す)— 記録が表ごとに別の service に
   ;; 在る時(例: 着地の列の台帳と業務の記録)、置き場ごとの handler を値の列を持たずに重ねるため(内側に表で絞った handler・外側に
