@@ -1,8 +1,8 @@
 ;;; 書きの許可・保持・索引・頁の判断(純関数・I/O なし)。handler の組(memory・PG・写し)は全部この 1 つを呼ぶ —
 ;;; 判断を handler ごとに写さない(写すと 1 つだけ古い答えを返す日が来る)。
 ;;;
-;;; 判断の順(PutRow): 期待(Conflict)→ 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え → 書き手 → 状態の語彙 →
-;;; operator の欄の主体 → 上限。PutRows の束は、全部の行の期待 → 全部の行の書きの判定(1 行ずつは PutRow と同じ判断)。
+;;; 判断の順(PutRow): 期待(Conflict)→ 宣言の外で値が None の欄を差分から落とす → 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え →
+;;; 書き手 → 状態の語彙 → operator の欄の主体 → 上限。PutRows の束は、全部の行の期待 → 全部の行の書きの判定(1 行ずつは PutRow と同じ判断)。
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
@@ -78,6 +78,17 @@
 
 (defn #^ bool terminal-row? [#^ TableDecl decl #^ FrozenMap value]
   (and (bool decl.terminal) (in (state-of decl value) decl.terminal)))
+
+
+(defn #^ FrozenMap judged-diff [#^ TableDecl decl #^ FrozenMap diff]  ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
+  "判定にかける差分: 書きの差分から、宣言に無い欄で値が None の物を落とす(残りの判定は全部この差分で判じる)。
+   None は「その欄を消す」なので、行に無い欄の None は確定する中身を変えない — 行の型に既定値 None の欄を足した書き手は、その欄を
+   宣言していない置き場にも書ける。宣言から外した欄が古い行に残っていても、その欄の None は落とすので欄は行に残り(消すのは欄を
+   宣言から外す前の書き直し)、書き手の名簿(宣言の外の欄には無い)で照らす欄にも入らない。値が None でない宣言の外の欄は残す
+   (shape-refusal が断る)・宣言に在る欄の None も残す(その欄を消す)。PutRows の束(judge-put-rows)も行ごとに judge-put を通るので、
+   落とすのはここ 1 か所。"
+  (frozen-json-object (FrozenMap (gfor #(name value) (.items diff) :if (or (is-not value None) (decl.declares name)) #(name value)))
+                      "判定にかける差分"))
 
 
 (defn #^ bool field-changes? [#^ (| Row None) current #^ str name #^ object value]
@@ -171,11 +182,13 @@
 (defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple key #^ FrozenMap diff
                                          * #^ tuple operators]
   "書きを許すか: Admitted(確定する値)か Refused(理由)。期待(judge-expect)は呼び手が先に見る。
-   operators = operator の主体の一覧(置き場の宣言の RecordsSchema.operators)— operator の宣言の欄の書きはこれで判定する。"
-  (setv shape (shape-refusal decl current key diff))
+   operators = operator の主体の一覧(置き場の宣言の RecordsSchema.operators)— operator の宣言の欄の書きはこれで判定する。
+   判定は差分から宣言の外で値が None の欄を落とした差分(judged-diff)で行う。"
+  (setv judged (judged-diff decl diff))
+  (setv shape (shape-refusal decl current key judged))
   (when shape (return shape))
-  (setv changed (changed-fields decl current diff)
-        value (landed-value decl current key diff))
+  (setv changed (changed-fields decl current judged)
+        value (landed-value decl current key judged))
   (or (writer-refusal decl writer current changed)
       (state-refusal decl value)
       (operator-refusal decl writer current changed operators)

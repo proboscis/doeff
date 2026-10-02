@@ -763,7 +763,8 @@
         "packages/doeff-records/src/doeff_records/admission.hy"
       ],
       "allow": [
-        "records-values"
+        "records-values",
+        "doeff-hy-frozen"
       ],
       "typed": true
     },
