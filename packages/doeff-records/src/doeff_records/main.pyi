@@ -92,7 +92,7 @@ def read_secret(path: str) -> _Program[str, object]:
 def origin_host() -> _Program[str, object]:
     ...
 
-def pg_handlers_of(schema: RecordsSchema, prefix: str, host: str) -> _Program[Callable, object]:
+def pg_handlers_of(schema: RecordsSchema, prefix: str, host: str) -> _Program[Callable[[str], object], object]:
     ...
 
 def printed_listening(prefix: str) -> _Handler:
@@ -104,7 +104,7 @@ def records_connected(settings: RecordsSettings, body: Program | EffectBase) -> 
 def records_foundation(settings: RecordsSettings, body: Program | EffectBase) -> _Program[int, object]:
     ...
 
-def records_settings(dsn_of: Callable) -> _Program[RecordsSettings, object]:
+def records_settings(dsn_of: Callable[[str], Program[str, object]]) -> _Program[RecordsSettings, object]:
     ...
 
 def store_reachable() -> _Program[bool, object]:
@@ -124,5 +124,5 @@ def records_serving(schema: RecordsSchema, settings: RecordsSettings, choice: St
 def records_process(foundation: Callable, serving: RecordsServing) -> _Program[int, object]:
     ...
 
-def serve_records_service(schema: RecordsSchema, dsn_of: Callable) -> _Program[int, object]:
+def serve_records_service(schema: RecordsSchema, dsn_of: Callable[[str], Program[str, object]]) -> _Program[int, object]:
     ...

@@ -20,7 +20,8 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
   計器の 0 置き zero-client-metrics が Unknown の赤になり、置くと消える。置いた側では口の欄の取り違え(float の上限の秒に文字列を足す)が
   赤になる(書き手の job の土台が口を作り、計器の系列を 0 で置いてから答え手を並べる形)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
-  型の並びが実装と同じ(宣言だけが先へ行かない)。
+  型の並びが実装と同じ(宣言だけが先へ行かない)。http_client.pyi は道具 doeff_hy.static_stub の出力に置き換えたので(#2844)、
+  この照らしからは外し、作り直し == commit の一致は tests/test_generated_stubs.py が検める(上の client の層の失敗ケースは残す)。
 """
 
 import ast
@@ -40,7 +41,6 @@ import pytest
 from doeff_records import (
     effects,
     faults,
-    http_client,
     http_server,
     memory,
     principals,
@@ -67,7 +67,6 @@ STUBBED: tuple[types.ModuleType, ...] = (
     service,
     http_server,
     schema_digest,
-    http_client,
 )
 
 MODULE = """\

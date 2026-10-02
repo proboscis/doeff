@@ -83,64 +83,64 @@ def as_writer(harness: LawHarness, writer: str, program: Incomplete) -> Incomple
 def collect_changes(harness: LawHarness, tables: tuple, cursor: WatchCursor, limit: int) -> _Program[tuple, object]:
     ...
 
-def collect_pages(harness: LawHarness, table: str, where: FrozenMap, limit: int) -> _Program[list, object]:
+def collect_pages(harness: LawHarness, table: str, where: FrozenMap, limit: int) -> _Program[list[object], object]:
     ...
 
-def law_stale_put_conflicts(harness: LawHarness) -> _Program[list, object]:
+def law_stale_put_conflicts(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_committed_changes_appear_once_in_order(harness: LawHarness) -> _Program[list, object]:
+def law_committed_changes_appear_once_in_order(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_epoch_change_resets(harness: LawHarness) -> _Program[list, object]:
+def law_epoch_change_resets(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_undeclared_writes_are_refused(harness: LawHarness) -> _Program[list, object]:
+def law_undeclared_writes_are_refused(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_operator_paths_need_an_operator(harness: LawHarness) -> _Program[list, object]:
+def law_operator_paths_need_an_operator(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_founders_write_only_at_birth(harness: LawHarness) -> _Program[list, object]:
+def law_founders_write_only_at_birth(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_transient_rows_expire(harness: LawHarness) -> _Program[list, object]:
+def law_transient_rows_expire(harness: LawHarness) -> _Program[list[object], object]:
     ...
 COLORS: tuple[str, ...]
 LABELS: tuple[str, ...]
 WHERES: list[FrozenMap]
 
-def law_indexed_list_equals_filtered_scan(harness: LawHarness) -> _Program[list, object]:
+def law_indexed_list_equals_filtered_scan(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_append_is_idempotent(harness: LawHarness) -> _Program[list, object]:
+def law_append_is_idempotent(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
 def late_write(harness: LawHarness) -> _Program[Written, object]:
     ...
 
-def law_watch_waits_for_a_change(harness: LawHarness) -> _Program[list, object]:
+def law_watch_waits_for_a_change(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
 def late_append(harness: LawHarness) -> _Program[Appended, object]:
     ...
 
-def law_watch_events_waits_for_an_append(harness: LawHarness) -> _Program[list, object]:
+def law_watch_events_waits_for_an_append(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_none_removes_a_field(harness: LawHarness) -> _Program[list, object]:
+def law_none_removes_a_field(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_maintenance_prunes_and_sweeps(harness: LawHarness) -> _Program[list, object]:
+def law_maintenance_prunes_and_sweeps(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_put_rows_is_all_or_nothing(harness: LawHarness) -> _Program[list, object]:
+def law_put_rows_is_all_or_nothing(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_grouped_events_expire_together(harness: LawHarness) -> _Program[list, object]:
+def law_grouped_events_expire_together(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
-def law_stream_end_is_the_last_sequence(harness: LawHarness) -> _Program[list, object]:
+def law_stream_end_is_the_last_sequence(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]
