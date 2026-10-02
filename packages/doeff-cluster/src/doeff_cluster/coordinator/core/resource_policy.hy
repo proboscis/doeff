@@ -104,11 +104,13 @@
   ;; 途絶しても動かし続けてよい印をこの担い手に渡してある job(#2804 — ClusterState.keep-marks)は、期限を過ぎても Unknown: 担い手は
   ;; fence でも止めず、coordinator も他へ移さないので、process は動き続けている見込み(監視が止まりと読まない)。印の無い job は担い手が
   ;; fence で止めているので、期限の後は NotReady のまま(他に置ける worker が無ければ置き先は保ち、担い手が戻ると起こし直す)。
+  ;; 印の在る job も、担い手は途絶が長い方の柵(ClusterTiming.keep-fence-ms)を越えたら止めるので、その後は NotReady。
   (when (or (is st None) (> (- now st.at) timing.lease-ms))
     (setv carrier (.get state.workers a.worker)
           silent (and carrier (alive now carrier timing.reassign-after-ms))
           mark (.get state.keep-marks name)
-          kept (and (is-not mark None) (= mark.worker a.worker)))
+          kept (and (is-not mark None) (= mark.worker a.worker) (is-not carrier None)
+                    (alive now carrier timing.keep-fence-ms)))
     (return (no (if (or warming silent kept) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
                 (if kept
                     (.format "担い手 {} の報告が無い・古い — 途絶しても動かし続けてよい印を渡してあるので、process は動き続けている見込み(担い手が戻るか Worker が消されるまで他へ移さない)"

@@ -578,7 +578,9 @@
   (setv #^ tuple beat-bells #())
   (setv #^ (| str None) watch-failure None)
   (setv #^ (| Promise None) tick-bell None)
-  (setv #^ int stalled-until-ms 0))
+  (setv #^ int stalled-until-ms 0)
+  ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 本番の LinkState.keep-fence-ms と同じ・返事の timing が上書きする)。
+  (setv #^ int keep-fence-ms (. (ClusterTiming) keep-fence-ms)))
 
 
 (defrecord HostTruthChange
@@ -768,12 +770,14 @@
   (SimParts :queue (RequestQueue :skip-idle plan.skip-idle) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))))
 
 
-(defk fresh-truth [name generation now fence-ms]
-  {:pre [(: name str) (: generation int) (: now int) (: fence-ms int)] :post [(: % HostTruth)]
+(defk fresh-truth [name generation now timing]
+  {:pre [(: name str) (: generation int) (: now int) (: timing ClusterTiming)] :post [(: % HostTruth)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker name の世代 generation の起きた時の宿の真実を作るため(起きた時刻を最後の連絡とみなす — 本番の coordinator への口 と同じ)。"
+  "worker name の世代 generation の起きた時の宿の真実を作るため(起きた時刻を最後の連絡とみなす — 本番の coordinator への口 と同じ)。
+   途絶の柵(fence と、印の在る job の長い方の柵)は sim の筋の時間の設定から(返事の timing が上書きする)。"
   (HostTruth :boot (.format "{}-boot{}" name generation) :boot-at now :processes #() :codes {} :probes {} :statuses []
-             :last-ok-ms now :fence-ms fence-ms :last-desired #() :last-warm #() :programs {} :results {} :task-echo {}))
+             :last-ok-ms now :fence-ms timing.fence-ms :keep-fence-ms timing.keep-fence-ms
+             :last-desired #() :last-warm #() :programs {} :results {} :task-echo {}))
 
 
 (defk fresh-hosts [plan]
@@ -781,7 +785,7 @@
   "worker ごとの最初の世代の宿の真実を作るため(starts-down の worker は止まったまま — StartWorker で起きる)。"
   (var hosts {})
   (for [w plan.workers]
-    (<- truth HostTruth (fresh-truth w.name 1 plan.start-ms plan.timing.fence-ms))
+    (<- truth HostTruth (fresh-truth w.name 1 plan.start-ms plan.timing))
     (:= hosts (| hosts {w.name (replace truth :down w.starts-down)})))
   hosts)
 
@@ -1447,6 +1451,9 @@
                                  (fn [truth]
                                    (replace truth :last-ok-ms now :last-desired (+ jobs tasks) :last-warm warm :beats (+ truth.beats 1)
                                             :fence-ms (if (and timing (in "fence_ms" timing)) (int (get timing "fence_ms")) truth.fence-ms)
+                                            :keep-fence-ms (if (and timing (in "keep_fence_ms" timing))
+                                                               (int (get timing "keep_fence_ms"))
+                                                               truth.keep-fence-ms)
                                             :programs (| truth.programs fetched)
                                             ;; 返事から外れた task の結果は落とす(本番の accept-tasks が結果の file を消すのと同じ)。
                                             :results (dfor #(k v) (.items truth.results) :if (in k ids) k v)
@@ -1463,7 +1470,7 @@
           (val truth unsent.before)
           (if worker.ignores-fence
               (DesiredJobs truth.last-desired :warm truth.last-warm)
-              (desired-when-unreachable (- now truth.last-ok-ms) truth.fence-ms truth.last-desired truth.last-warm
+              (desired-when-unreachable (- now truth.last-ok-ms) truth.fence-ms truth.keep-fence-ms truth.last-desired truth.last-warm
                                         (unreached-reason answer))))))
 
 
@@ -2206,7 +2213,7 @@
         (resume False)
         (do (<- now int (now-epoch-ms))
             (val generation (+ (get generations name) 1))
-            (<- fresh HostTruth (fresh-truth name generation now plan.timing.fence-ms))
+            (<- fresh HostTruth (fresh-truth name generation now plan.timing))
             (val revival (.get revivals name))
             (:= generations (| generations {name generation}))
             (:= hosts (| hosts {name fresh}))

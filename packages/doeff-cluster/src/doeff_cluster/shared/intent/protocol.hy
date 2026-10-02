@@ -18,8 +18,18 @@
   ;; task の lease とは別)。worker の Recreate の入れ替え(古い Pod の drain の最長 約 4 時間 + 新しい Pod の名乗り)を覆う 5 時間
   ;; (#2753 — 切り離した task の lease は積んだ時の 60 秒で、入れ替えの間に過ぎて「合う worker が無い」で落ちた)。
   (setv #^ int silent-worker-wait-ms (* 5 3600 1000))
+  ;; 途絶しても動かし続けてよい印(#2804)の在る job を、worker が途絶の後も動かし続ける上限(長い方の柵)。印の在る job は coordinator が
+  ;; 他の worker へ移さないので fence では止めないが、同じ名の worker の新しい世代(k8s が届かない node の Pod を追い出して作り直した物)
+  ;; とは重なりうるので、それより先に止める。前提の数: 本番の worker の Deployment は strategy = Recreate で not-ready / unreachable の
+  ;; tolerations を manifest に足していない → admission の既定 tolerationSeconds 300 秒 + k8s v1.32 の node-monitor-grace-period の既定
+  ;; 50 秒 → 届かない node の Pod の新しい世代が来るのは早くても約 350 秒後(2026-10-02 14:24 の実測 約 6.6 分)。keep-fence-ms 240 秒 +
+  ;; 停止の猶予 15 秒 = 255 秒 < 350 秒なので、分断の最中に新しい世代が来ても古い process とは重ならない。tolerations を短くする manifest の
+  ;; 変更はこの前提を崩す。worker は heartbeat の返事の timing から受け取る(欄の無い返事 = 古い coordinator は印も付けない)。
+  (setv #^ int keep-fence-ms 240000)
 
   (defn #^ None __post-init__ [self]
+    (when (<= self.keep-fence-ms self.fence-ms)
+      (raise (ValueError "印の在る job の長い方の柵(keep-fence-ms)は fence より長くなければならない")))
     (when (<= self.reassign-after-ms self.fence-ms)
       (raise (ValueError "移し替えは worker の自己停止より後でなければならない")))))
 

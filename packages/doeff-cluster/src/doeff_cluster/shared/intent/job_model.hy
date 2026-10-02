@@ -44,8 +44,8 @@
   (setv #^ tuple environ #())
   ;; 途絶しても動かし続けてよい印(#2804 — heartbeat の返事の job の行の keepWhenCutOff)。coordinator が「他に置ける worker が
   ;; 無い」と判じた入れ替えでない service の job に付け、印を渡した担い手からは、担い手が印を持たないと知らせるか Worker が消されるまで
-  ;; 他へ移さない(cluster_policy の keep-marks)。worker は印の在る job を coordinator との途絶(fence)でも止めない
-  ;; (worker_policy.kept-when-cut-off?)。欄の無い返事(古い coordinator)は偽 = 今までどおり fence で止める。比べない欄(印だけが変わっても
+  ;; 他へ移さない(cluster_policy の keep-marks)。worker は印の在る job を coordinator との途絶(fence)でも止めない — 長い方の柵
+  ;; ClusterTiming.keep-fence-ms(240 秒)を越えるまで(worker_policy.kept-when-cut-off?)。欄の無い返事(古い coordinator)は偽 = 今までどおり fence で止める。比べない欄(印だけが変わっても
   ;; process を起こし直さない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ bool keep-when-cut-off (field :default False :compare False))
 
