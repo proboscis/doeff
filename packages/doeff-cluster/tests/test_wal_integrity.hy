@@ -7,6 +7,7 @@
 (import json)
 (import pytest)
 (import pathlib [Path])
+(import doeff_hy.table [TableWrite])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.wal_format [WalCorrupted GoodLine DroppedTail LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
@@ -41,7 +42,7 @@
   (assert (= (sorted record) ["crc" "delta" "seq"]))
   (<- back GoodLine (read-line-record line))
   (assert back.checked)
-  (assert (= back.delta {"board/a" {"value" "日本語" "resourceVersion" 1}})))
+  (assert (= back.writes #((TableWrite "board/a" {"value" "日本語" "resourceVersion" 1})))))
 
 
 (deftest test-a-flipped-byte-in-the-last-line-is-dropped-and-the-log-truncated [tmp-path]
@@ -111,8 +112,9 @@
 (deftest test-lines-already-in-the-snapshot-are-not-applied-twice
   ;; snapshot を書いた後・log を空にする前に落ちた形: log の行は snapshot の seq 以下なので当てない。
   (val lines [(! (encode-line 1 {"a" 1})) (! (encode-line 2 {"a" None "b" 2})) (! (encode-line 3 {"c" 3}))])
-  (<- scan LogScan (scan-log lines 2 {"b" 2} "log"))
-  (assert (= scan.kv {"b" 2 "c" 3}))
+  (val table {"b" 2})
+  (<- scan LogScan (scan-log lines 2 table "log"))
+  (assert (= table {"b" 2 "c" 3}))
   (assert (= scan.seq 3))
   (assert (is scan.dropped None)))
 
@@ -121,11 +123,12 @@
 (deftest test-a-cut-last-line-is-reported-as-the-dropped-tail
   ;; 改行まで書けなかった最後の行: 当てずに、残す byte 数・捨てる byte 数・理由を返す(切り詰めるのは置き場の口)。
   (val lines [(! (encode-line 1 {"a" 1})) (cut (! (encode-line 2 {"b" 2})) 0 -3)])
-  (<- scan LogScan (scan-log lines 0 {} "log"))
-  (assert (= scan.kv {"a" 1}))
+  (val table {})
+  (<- scan LogScan (scan-log lines 0 table "log"))
+  (assert (= table {"a" 1}))
   (assert (= scan.seq 1))
   (assert (= scan.dropped (DroppedTail :kept (len (get lines 0)) :size (len (get lines 1)) :reason "改行が無い(途中で切れた)"))))
 
 (deftest test-sealed-snapshot-round-trips
   (<- back SnapshotRead (read-snapshot (! (sealed {"seq" 7 "kv" {"x" [1 2]}})) "s"))
-  (assert (= back (SnapshotRead :kv {"x" [1 2]} :seq 7))))
+  (assert (= back (SnapshotRead :seq 7 :rows #((TableWrite "x" [1 2]))))))

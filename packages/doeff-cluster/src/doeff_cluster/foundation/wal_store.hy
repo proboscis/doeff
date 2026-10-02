@@ -44,10 +44,9 @@
 
 (defclass WalStore []
   "dir の中の snapshot.json と wal.jsonl の byte の I/O。kv / seq = いま耐久になっている全部のキーと最後のまとまりの番号(まとめ直しの
-   材料 — 置き場の口が読み直しと書きの後に進める)。recovered = 読み直しで最後の読めない行を捨てた時の記録(捨てた byte 数・理由・
-   残した byte 数 — coordinator が起動の行と計器に出す)。fsync-seconds = 直近の fsync の時間(秒)の記録(log の遅さを測る)。"
-  (#^ (get dict #(str object)) kv)
-  (#^ (| (get dict #(str object)) None) recovered)
+   材料 — 置き場の口が読み直しと書きの後に進める。表は method table / replace-table で受け渡す)。recovered = 読み直しで最後の読めない
+   行を捨てた時の記録(捨てた byte 数・理由・残した byte 数 — coordinator が起動の行と計器に出す・method recovery)。fsync-seconds =
+   直近の fsync の時間(秒)の記録(log の遅さを測る)。"
   (defn #^ None __init__ [self #^ str directory #^ int [max-log-bytes MAX-LOG-BYTES] #^ Callable [fsync os.fsync]]
     (setv self.dir (Path directory) self.max-log-bytes max-log-bytes self.fsync fsync
           self.snapshot (/ self.dir "snapshot.json") self.log (/ self.dir "wal.jsonl")
@@ -55,6 +54,18 @@
           self.recovered None))
 
   (defn #^ bool exists [self] (or (.exists self.snapshot) (.exists self.log)))
+
+  (defn #^ (get dict #(str object)) table [self]
+    "いま耐久になっている全部のキーの表(写さない — 置き場の口がその場で当てて進める)。"
+    self.kv)
+
+  (defn #^ None replace-table [self #^ (get dict #(str object)) kv]
+    "表を置き換える — 置き場の口が読み直した表と、以前の形の file から移した表を置くため。"
+    (setv self.kv kv))
+
+  (defn #^ (| (get dict #(str (| int str))) None) recovery [self]
+    "読み直しで最後の読めない行を捨てた時の記録(捨てていなければ None)— 起動が 1 行の報告に出すため。"
+    self.recovered)
 
   (defn #^ None check-place [self]
     "読み直しの前に置き場の dir を作り、移した後の古い置き場なら起動を断る。中身は書き換えない。"
