@@ -13,6 +13,7 @@
 ;;   push していない commit: 本物の git の fetch の答えを翻訳が commit-missing と読む
 ;; 反例: 子に PYTHONPATH を残す / worker の再起動で走らせる実装 / 送り手の版の doeff をずらす。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import os)
 (import sys)

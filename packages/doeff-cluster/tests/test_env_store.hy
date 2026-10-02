@@ -3,6 +3,7 @@
 ;;   * coordinator への口(coordinator-link)は、実行環境を扱う worker の heartbeat に、拍の Program が EnvReport で問うて ReadDesired の欄で
 ;;     渡した名乗りを載せる。扱わない worker は載せない。
 (require doeff-hy.macros [defk deftest <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import httpx)
 (import pathlib [Path])

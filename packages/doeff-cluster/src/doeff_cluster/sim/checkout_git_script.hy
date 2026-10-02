@@ -14,6 +14,7 @@
 ;;;
 ;;;   (scripted-process-handler (ProcessScript :commands #((git-command #((GitCheckout :path "/src/app" :head sha …))))))
 (require doeff-hy.macros [defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import fnmatch)

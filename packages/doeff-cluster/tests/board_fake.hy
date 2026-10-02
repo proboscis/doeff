@@ -8,6 +8,7 @@
 ;;; 使い手は (board-handlers store) を with-handlers の list に展開する(外側に doeff-time の時計の handler が要る — 宛先の部品と lease の
 ;;; 判断が時刻を読む)。store = 盤の行 {鍵: 値}(検が中を見る・書き換える dict そのもの)。
 (require doeff-hy.macros [defk deff defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import json)

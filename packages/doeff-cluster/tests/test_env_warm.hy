@@ -11,6 +11,7 @@
 ;; 準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限。
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])
 (import json)

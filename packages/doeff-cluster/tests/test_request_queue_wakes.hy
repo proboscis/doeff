@@ -7,6 +7,7 @@
 ;;
 ;; 各の検は、同じ筋書きを反例の handler(前の見直しの形・待たずに答える形・後ろから取る形)でも回し、判定が赤になることを確かめる。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])

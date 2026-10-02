@@ -1,6 +1,7 @@
 ;;; 検の時計の道具。時計は doeff-time の仮想の時計(SimClock + sim-time-handler)ちょうど 1 つで、ここは時刻に答えない —
 ;;; 契約の物差し(epoch ミリ秒)で起点を置く・読むための換算と、眠りを数えて外側へ渡すだけの観測の handler。
-(require doeff-hy.macros [defhandler <-])
+(require doeff-hy.macros [defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_time [DelayEffect SimClock])
 (import doeff_cluster.shared.core.clock [epoch-ms-of datetime-of-epoch-ms])
 

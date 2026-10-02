@@ -5,6 +5,7 @@
 ;; 新しい script で起き、image を作り直さない。引き継いだ先では 2 度目の引き継ぎをしない(同じ script を回り続けない)。
 ;; 検は準備済みの root(完成の印を持つ)を tmp に作り、root の script が自分の名乗りを出して終わる形で確かめる。
 (require doeff-hy.macros [deftest defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import os)
 (import subprocess)
 (import pathlib [Path])

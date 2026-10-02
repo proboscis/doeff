@@ -37,15 +37,17 @@ doeff-time = { workspace = true }
 # root = "src": module の名を import の名(doeff_cluster.x)に揃える(この dir を根にすると src.doeff_cluster.x になる)。
 # include = ["tests"]: 根の外の検の dir も歩く範囲に入れ、下の [tool.doeff-linter.definitions] の定義の書き方の規則で判じる
 # (#2821 の案 A-1 — 以前は tests/ の .hy は linter の対象の外で、hook でも手元でも測られていなかった)。層の規則は
-# 根の下の層の置き場だけなので tests には当たらない。今は critical(DOEFF126 素の defk 呼び)と当たり 0 の規則だけを効かせる —
-# 当たりの在る major・minor(DOEFF110 defn・112 タグ・118 deftest でない検・119 class・125)は disable に置き、案 A-2 の子が数を 0 に
-# した変更で 1 つずつ外す(先に効かせて main を赤にしない・登録簿に載せて通さない)。
+# 根の下の層の置き場だけなので tests には当たらない。定義の書き方の規則の母集団は src と tests(#2908 で src を足した)。
+# 効かせるのは critical(DOEFF126 素の defk 呼び)・DOEFF112(タグ — 頭の MODULE-TAGS で補う・#2908)と当たり 0 の規則 —
+# 当たりの在る major・minor(DOEFF110 defn・111 deff の理由・118 deftest でない検・119 class・123・124・125)は disable に置き、
+# #2877 の子が数を 0 にした変更で 1 つずつ外す(先に効かせて main を赤にしない・登録簿に載せて通さない)。disable は package 全体で
+# 1 つなので、DOEFF110 は tests と src の defn が両方 0 になった変更で外す。minor(123・124・125)は今は扱わない。
 [tool.doeff-linter]
 root = "src"
 architecture = "architecture.hy"
 include = ["tests"]
-disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF112", "DOEFF118", "DOEFF119", "DOEFF125"]
+disable = ["DOEFF013", "DOEFF114", "DOEFF115", "DOEFF110", "DOEFF111", "DOEFF118", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125"]
 
 [tool.doeff-linter.definitions]
-paths = ["../tests"]
+paths = ["doeff_cluster", "../tests"]
 test_paths = ["../tests/**/test_*.hy"]

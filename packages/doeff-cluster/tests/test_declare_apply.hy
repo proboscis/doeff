@@ -6,6 +6,7 @@
 ;;; 失敗ケース: Program の置きが 300 以上なら行を 1 つも書かずに偽(代役は Program の置きが落ちた後の行の書きを断る)・行の書きが
 ;;; 300 以上なら偽。
 (require doeff-hy.macros [deftest defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with-handlers])
 (import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])

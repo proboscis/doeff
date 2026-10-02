@@ -9,6 +9,7 @@
 ;; 片方の組だけの性質は素の deftest のまま: scheduled だけでは別々に作った同じ名前は別物・cluster の worker を越えた排他と延長・
 ;; 死んだ worker の lease の期限の後の引き取り・失った lease の知らせ・書きの柵・lease の立場。
 (require doeff-hy.macros [deftest defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with_handlers Program])
 (import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])

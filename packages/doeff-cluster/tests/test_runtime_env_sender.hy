@@ -5,6 +5,7 @@
 ;; worker が取れない commit を送る前に断る: commit していない変更(dirty-tree)・push していない commit(commit-not-on-remote)・
 ;; 送り手自身の source が宣言の commit と違う(sender-source-differs)。通る時は uv.lock の sha256 を checkout から計算する。
 (require doeff-hy.macros [deftest defk handle <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import hashlib)
 (import subprocess)
 (import pathlib [Path])

@@ -14,6 +14,7 @@
 ;;;   * 外側: 両方とも一番外に同じ reader(OUTER — 置き場に無い名の Ask の答え手・無い名は KeyError で断る)と、検の effect Outside の答え手
 ;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
 (require doeff-hy.macros [defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])
 (import os)
 (import doeff [EffectBase Program with_handlers])

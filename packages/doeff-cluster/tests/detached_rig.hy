@@ -5,6 +5,7 @@
 ;;   MemoryCoordinator       … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置く
 ;;   RIG-PROVIDES            … 担い手の既定の能力(sim-cluster の組の worker も同じ能力を名乗る — 同じ needs の筋書きを回すため)
 (require doeff-hy.macros [defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import urllib.parse [urlsplit parse-qsl])
 (import pathlib [Path])

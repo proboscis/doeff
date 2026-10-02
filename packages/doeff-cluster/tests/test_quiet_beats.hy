@@ -6,6 +6,7 @@
 ;;   (準備の揃い・落ちた process の回収・起こし直しの間の終わりを含む)。
 ;; - 反例: 先の拍の刻で観測を読み直さない判断(眠る前の観測のまま試す)は、準備の揃いと process の終わりを見落として長く答え、食い違う。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
