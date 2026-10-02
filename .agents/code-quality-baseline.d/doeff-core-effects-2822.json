@@ -1,0 +1,1167 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_handler_static_stubs.py",
+      "reason": "registered-with-legacy",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_check.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/__init__.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_hy_module_stubs.py",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "importlib.import_module"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "hy-rebind",
+      "subject": "hy:rebind"
+    },
+    {
+      "count": 7,
+      "path": "packages/doeff-core-effects/doeff_core_effects/offloaded_call.hy",
+      "reason": "registered-with-legacy",
+      "rule": "hy-string-contract",
+      "subject": "hy:string-contract"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/pooled_postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "hy-string-contract",
+      "subject": "hy:string-contract"
+    },
+    {
+      "count": 11,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "hy-string-contract",
+      "subject": "hy:string-contract"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-core-effects/tests/http_server_contract_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "hy-string-contract",
+      "subject": "hy:string-contract"
+    },
+    {
+      "count": 6,
+      "path": "packages/doeff-core-effects/tests/test_postgres_statement_cancel.hy",
+      "reason": "registered-with-legacy",
+      "rule": "hy-string-contract",
+      "subject": "hy:string-contract"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_python_bytecode_records.py",
+      "reason": "registered-with-legacy",
+      "rule": "private-module",
+      "subject": "packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/process_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "pure-io-import",
+      "subject": "os"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[misc]"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_policy.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[misc]"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# pyright: ignore[reportIncompatibleMethodOverride]"
+    },
+    {
+      "count": 15,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 7,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 5,
+      "path": "packages/doeff-core-effects/doeff_core_effects/effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/file_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 6,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 8,
+      "path": "packages/doeff-core-effects/doeff_core_effects/http_handlers.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 7,
+      "path": "packages/doeff-core-effects/doeff_core_effects/http_server_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 8,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_policy.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 21,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-core-effects/doeff_core_effects/meter_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/meter_prometheus.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 15,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_file.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/process_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 11,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 12,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 6,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scripted_process.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 9,
+      "path": "packages/doeff-core-effects/doeff_core_effects/sql_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 18,
+      "path": "packages/doeff-core-effects/doeff_core_effects/sqlite_sql.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 6,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/__init__.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 5,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "http_fixture_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "http_production_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "lifecycle_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "recording_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_hy_submodules.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "find_spec"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers_impl.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "memo_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "cached_fn"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "cache_handler"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "in_memory_cache_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "make_memo_rewriter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "sqlite_cache_handler"
+    },
+    {
+      "count": 9,
+      "path": "packages/doeff-core-effects/doeff_core_effects/effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "attempt"
+    },
+    {
+      "count": 5,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "observer_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_coro"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "scope_reader"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "writer_log"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "raise_for_status"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "in_memory_memo_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "make_memo_rewriter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "memo_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "sqlite_memo_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "hyx_underXquestion_markX"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "add"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "drained"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "find"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "forget"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "give"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "start"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "take"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "texts"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "acquire"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "close"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "connection_options"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "names"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "release"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/process_latest.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "latest_board"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/process_meter.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "gc_pause_watch"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/process_meter.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "meter_place"
+    },
+    {
+      "count": 8,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 5,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "abandoned_ready_summary"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "alloc_promise"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "alloc_task"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "close_out"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "drain"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "enqueue"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "enqueue_raise"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "enqueue_resume"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "fail"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "fresh_id"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "grant_permit_to_next_waiter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "handle_scheduler_effect"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "has_live_ready_entry"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "has_pending_external_waiters"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "is_daemon"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "is_live_daemon_entry"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "is_owner_cancelled"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "live_parked_waiter_summary"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "live_semaphore_waiters"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "make_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "pick_next"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "pop_live_semaphore_waiter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "raise_if_semaphore_cycle_unresolvable"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "raw_handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "register_handle"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "register_pending_waiter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "remove_gather_waiters"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "remove_race_waiters"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "resolve_gather_with_error"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "resume_with_waitable_result"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "return_inflight_permit"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "root_close_out"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "sweep_terminal_unobserved_entries"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "task_priority"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "unreleasable_semaphores"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "waitable_key"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "waitable_status"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "wake_gather_waiter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "wake_race_waiter"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "wake_waiters"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "wrap_task"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "wrapped"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "scope"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "transaction_scope"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "forget"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "park"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "delete"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "exists"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "get"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "put"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "delete"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "exists"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "get"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "put"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_computed"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "settle"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/http_server_contract_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "contract_world"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/process_contract_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "contract_root"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/stop_contract_handlers.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "stop_handler_under_test"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_channel_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "on"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_channel_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_a_cancelled_waiter_does_not_lose_the_item"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_channel_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_take_waits_for_put_and_keeps_the_order"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_channel_effects.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_the_loop_reads_computed_answers_through_the_channel"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_process_meter.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "read_until_done"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_rooted_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "rooted"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_rooted_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_a_lock_round_trips_through_the_root"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_rooted_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_a_relative_path_is_refused"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_rooted_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_dot_dot_stops_at_the_inner_root"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_rooted_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_each_root_sees_its_own_file"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-core-effects/tests/test_rooted_file.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_writes_land_under_the_root_and_answers_show_inner_paths"
+    }
+  ],
+  "version": 1
+}

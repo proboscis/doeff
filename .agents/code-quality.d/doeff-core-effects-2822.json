@@ -1,0 +1,387 @@
+{
+  "exclude": [
+    "packages/doeff-core-effects/doeff_core_effects/sql_effects.hy",
+    "packages/doeff-core-effects/tests/test_compute_effects.hy",
+    "packages/doeff-core-effects/tests/test_http_failures.hy",
+    "packages/doeff-core-effects/tests/test_http_server.hy",
+    "packages/doeff-core-effects/tests/test_outcome_binds.hy",
+    "packages/doeff-core-effects/tests/test_outcomes.hy",
+    "packages/doeff-core-effects/tests/test_process_file_effects.hy",
+    "packages/doeff-core-effects/tests/test_sql_effects.hy",
+    "packages/doeff-core-effects/tests/test_sqlite_file_sql.hy"
+  ],
+  "include": [
+    "packages/doeff-core-effects/doeff_core_effects/*.hy",
+    "packages/doeff-core-effects/doeff_core_effects/*.py",
+    "packages/doeff-core-effects/doeff_core_effects/*.pyi",
+    "packages/doeff-core-effects/tests/*.hy",
+    "packages/doeff-core-effects/tests/*.py"
+  ],
+  "modules": [
+    {
+      "allow": [
+        "doeff-hy-frozen"
+      ],
+      "layer": "effects",
+      "name": "doeff-core-effects-effects",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/compute_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/compute_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/file_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/file_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/heap_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/http_server_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_server_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/latest_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/latest_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/meter_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/meter_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/process_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/process_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/random_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/random_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/sql_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sql_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.pyi"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/compute_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/compute_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/file_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/file_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/heap_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/http_server_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_server_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/latest_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/latest_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/meter_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/meter_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/process_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/process_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/random_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/random_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/sql_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sql_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.pyi"
+      ],
+      "responsibility": "doeff の土台の effect の宣言 — 読み書き・file・process・HTTP の要求と待ち受け・SQL・計量・乱数・時刻を使う計算・heap・stack の書き出し・停止の合図の、要求・答え・失敗の型(実行は handler の側)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects",
+        "doeff-core-effects-runtime",
+        "doeff-hy-frozen",
+        "hy-bytecode-import"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-handlers",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/aiohttp_http_server.hy",
+        "packages/doeff-core-effects/doeff_core_effects/clickhouse_http_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/faulthandler_stack_dump.hy",
+        "packages/doeff-core-effects/doeff_core_effects/faulthandler_stack_dump.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/gc_freeze.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/http_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/http_handlers.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/inline_compute.hy",
+        "packages/doeff-core-effects/doeff_core_effects/meter_prometheus.hy",
+        "packages/doeff-core-effects/doeff_core_effects/meter_prometheus.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/offloaded_call.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_random.hy",
+        "packages/doeff-core-effects/doeff_core_effects/pooled_postgres_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/process_latest.hy",
+        "packages/doeff-core-effects/doeff_core_effects/process_meter.hy",
+        "packages/doeff-core-effects/doeff_core_effects/python_bytecode.hy",
+        "packages/doeff-core-effects/doeff_core_effects/rooted_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/rooted_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scheduler_channel.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_sql.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/aiohttp_http_server.hy",
+        "packages/doeff-core-effects/doeff_core_effects/clickhouse_http_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/faulthandler_stack_dump.hy",
+        "packages/doeff-core-effects/doeff_core_effects/faulthandler_stack_dump.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/gc_freeze.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/http_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/http_handlers.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/inline_compute.hy",
+        "packages/doeff-core-effects/doeff_core_effects/meter_prometheus.hy",
+        "packages/doeff-core-effects/doeff_core_effects/meter_prometheus.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/offloaded_call.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_random.hy",
+        "packages/doeff-core-effects/doeff_core_effects/pooled_postgres_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/process_latest.hy",
+        "packages/doeff-core-effects/doeff_core_effects/process_meter.hy",
+        "packages/doeff-core-effects/doeff_core_effects/python_bytecode.hy",
+        "packages/doeff-core-effects/doeff_core_effects/rooted_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/rooted_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scheduler_channel.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_sql.hy",
+        "packages/doeff-core-effects/doeff_core_effects/sqlite_sql.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy"
+      ],
+      "responsibility": "土台の effect に本番で答える handler — OS の file・process・乱数、HTTP の要求(httpx)と待ち受け(aiohttp)、SQL(PostgreSQL・SQLite・ClickHouse)と transaction、計量の Prometheus の書き出し、stack の書き出し、停止の合図、計算の thread pool への逃がし。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-memo-policy"
+      ],
+      "layer": "effects",
+      "name": "doeff-core-effects-memo-effects",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/memo_effects.py"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/memo_effects.py"
+      ],
+      "responsibility": "cache と memo の effect の宣言 — 読み・書き・存在の確かめの要求と答えの型。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects",
+        "doeff-core-effects-memo-effects",
+        "doeff-core-effects-memo-policy",
+        "doeff-core-effects-storage"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-memo-handlers",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/cache.py",
+        "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_handlers_impl.hy"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/cache.py",
+        "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py"
+      ],
+      "responsibility": "cache と memo の effect に答える handler と、Program を memo する飾り — 置き場への読み書きを storage の口へ渡す。",
+      "typed": true
+    },
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-core-effects-memo-policy",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
+        "packages/doeff-core-effects/doeff_core_effects/memo_policy.py"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
+        "packages/doeff-core-effects/doeff_core_effects/memo_policy.py"
+      ],
+      "responsibility": "cache と memo の方策の型 — 鍵の作り方・寿命・置き場の選び方を、effect と handler が共有する値で表す(I/O はしない)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects",
+        "doeff-core-effects-handlers",
+        "doeff-core-effects-runtime"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-memory-handlers",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/memory_latest.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_latest.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/memory_meter.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_meter.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/memory_stack_dump.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_stack_dump.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_freeze.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_process.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_process.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/seeded_random.hy",
+        "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/memory_latest.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_latest.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/memory_meter.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_meter.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/memory_stack_dump.hy",
+        "packages/doeff-core-effects/doeff_core_effects/memory_stack_dump.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_freeze.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_process.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_process.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/seeded_random.hy",
+        "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi"
+      ],
+      "responsibility": "外の世界に触る土台の handler の差し替え — in-memory の file・最新の値・計量・stack の書き出し、台本の process・HTTP の待ち受け・heap の凍結、seed つきの乱数(本番と同じ effect に答え、検と模擬で使う)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects",
+        "doeff-core-effects-handlers",
+        "doeff-core-effects-runtime",
+        "hy-bytecode-import"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-package",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/__init__.py",
+        "packages/doeff-core-effects/doeff_core_effects/_hy_submodules.py"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/__init__.py"
+      ],
+      "responsibility": "doeff-core-effects の package の入口 — 基本の effect・handler・scheduler を名で並べ直して公開し、Hy の submodule を読む時だけ Hy の import の仕組みを入れる(判断を持たない)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-runtime",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+        "packages/doeff-core-effects/doeff_core_effects/outcomes.py",
+        "packages/doeff-core-effects/doeff_core_effects/channel_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+        "packages/doeff-core-effects/doeff_core_effects/outcomes.py",
+        "packages/doeff-core-effects/doeff_core_effects/channel_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi"
+      ],
+      "responsibility": "基本の handler(reader・state・writer)・協調 scheduler(Spawn・Wait・Promise・Semaphore ほか)と、その Promise を運ぶ channel の effect・不在と失敗の答えの開きと境目の handler(ADR-DOE-CORE-EFFECTS-003)。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-storage",
+      "paths": [
+        "packages/doeff-core-effects/doeff_core_effects/storage/__init__.py",
+        "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+        "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py"
+      ],
+      "public": [
+        "packages/doeff-core-effects/doeff_core_effects/storage/__init__.py",
+        "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+        "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py"
+      ],
+      "responsibility": "memo の答えを保つ耐久の置き場の口(DurableStorage)と、その実装 — in-memory(検用)と SQLite。",
+      "typed": true
+    },
+    {
+      "allow": [
+        "doeff-core-effects-effects",
+        "doeff-core-effects-handlers",
+        "doeff-core-effects-memo-effects",
+        "doeff-core-effects-memo-handlers",
+        "doeff-core-effects-memo-policy",
+        "doeff-core-effects-memory-handlers",
+        "doeff-core-effects-package",
+        "doeff-core-effects-runtime",
+        "doeff-core-effects-storage",
+        "doeff-hy-frozen",
+        "hy-bytecode-import"
+      ],
+      "layer": "io",
+      "name": "doeff-core-effects-tests",
+      "paths": [
+        "packages/doeff-core-effects/tests/conftest.py",
+        "packages/doeff-core-effects/tests/heap_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/http_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/http_server_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/latest_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/meter_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/process_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/random_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/stack_dump_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/stop_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/test_channel_effects.hy",
+        "packages/doeff-core-effects/tests/test_compute_effects.hy",
+        "packages/doeff-core-effects/tests/test_faulthandler_stack_dump.hy",
+        "packages/doeff-core-effects/tests/test_handler_static_stubs.py",
+        "packages/doeff-core-effects/tests/test_heap_freeze.hy",
+        "packages/doeff-core-effects/tests/test_http_failures.hy",
+        "packages/doeff-core-effects/tests/test_http_request_contract.hy",
+        "packages/doeff-core-effects/tests/test_http_server.hy",
+        "packages/doeff-core-effects/tests/test_http_server_contract.hy",
+        "packages/doeff-core-effects/tests/test_hy_module_stubs.py",
+        "packages/doeff-core-effects/tests/test_latest_contract.hy",
+        "packages/doeff-core-effects/tests/test_meter_contract.hy",
+        "packages/doeff-core-effects/tests/test_meter_prometheus.hy",
+        "packages/doeff-core-effects/tests/test_outcome_binds.hy",
+        "packages/doeff-core-effects/tests/test_outcomes.hy",
+        "packages/doeff-core-effects/tests/test_postgres_statement_cancel.hy",
+        "packages/doeff-core-effects/tests/test_process_contract.hy",
+        "packages/doeff-core-effects/tests/test_process_file_effects.hy",
+        "packages/doeff-core-effects/tests/test_process_latest.hy",
+        "packages/doeff-core-effects/tests/test_process_meter.hy",
+        "packages/doeff-core-effects/tests/test_process_streaming.hy",
+        "packages/doeff-core-effects/tests/test_python_bytecode_records.py",
+        "packages/doeff-core-effects/tests/test_random_effects.hy",
+        "packages/doeff-core-effects/tests/test_rooted_file.hy",
+        "packages/doeff-core-effects/tests/test_sql_effects.hy",
+        "packages/doeff-core-effects/tests/test_sqlite_file_sql.hy",
+        "packages/doeff-core-effects/tests/test_stack_dump_contract.hy",
+        "packages/doeff-core-effects/tests/test_stop_signal.hy",
+        "packages/doeff-core-effects/tests/test_stop_signal_contract.hy"
+      ],
+      "public": [],
+      "responsibility": "doeff-core-effects の検 — effect の契約の検(本物と差し替えの handler が同じ答えを返すか)と、各 handler・scheduler・memo・型の宣言(.pyi)の一致の検。",
+      "typed": true
+    }
+  ]
+}
