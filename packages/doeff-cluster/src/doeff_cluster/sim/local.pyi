@@ -356,7 +356,8 @@ class SimExit:
 @dataclass(frozen=True, kw_only=True)
 class HostTruth:
     """worker の宿 1 つの真実(世界の session に在る)。processes・probes・statuses・last_desired・last_warm・task_echo は
-    worker_model の観測の値(型の宣言が無い — 読まずに運ぶ)。"""
+    worker_model の観測の値(型の宣言が無い — 読まずに運ぶ)。rest_bell は静かな拍を眠る宿の呼び鈴(request_queue.RestBell —
+    型の宣言が無い・読まずに運ぶ — #2850)。"""
 
     boot: str
     boot_at: int
@@ -387,6 +388,8 @@ class HostTruth:
     stalled_until_ms: int = 0
     keep_fence_ms: int = ...
     sent_stopping: bool = False
+    rest_bell: object | None = None
+    rest_reach: int = ...
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:

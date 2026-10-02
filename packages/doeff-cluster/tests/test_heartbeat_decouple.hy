@@ -176,7 +176,13 @@
   ;; 30 秒で 40 回ほど)。
   (val beats (Counter))
   (val original local.heartbeat)
-  (.setattr monkeypatch local "heartbeat" (fn [worker boot] (.update beats [worker.name]) (original worker boot)))
+  (.setattr monkeypatch local "heartbeat"
+            (fn [worker boot stopping] (.update beats [worker.name]) (original worker boot stopping)))
+  ;; 模擬の時計の下で静かな拍を眠る宿は、静かな拍の heartbeat を仮の拍として列に預ける(#2850)— 列が受けて宿の真実へ写した仮の拍も、
+  ;; coordinator に届いた heartbeat として数える。
+  (val original-settle local.settle-beats)
+  (.setattr monkeypatch local "settle_beats"
+            (fn [worker boot sent] (.update beats (* [worker.name] (len sent))) (original-settle worker boot sent)))
   (<- (sim-cluster (beacons sim-foundation) (quiet-for 30.0 True) :workers (get PAIRS None)))
   (val without (.total beats))
   (.clear beats)
