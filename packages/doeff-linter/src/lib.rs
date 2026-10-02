@@ -843,5 +843,24 @@ p: Program = process()"#,
         let rule = Box::new(crate::rules::doeff010_test_file_placement::TestFilePlacementRule::new());
         assert_eq!(hits_of(rule, "src/test_example.py", code), 1);
     }
+
+    /// 本体の文ごとの再帰を通した DOEFF004 の当たりの数。規則 1 つ(自分では入れ子に降りない — agora-redesign #2832)を当てる。
+    fn environ_hits(code: &str) -> usize {
+        hits_of(Box::new(crate::rules::doeff004_no_os_environ::NoOsEnvironRule::new()), "test.py", code)
+    }
+
+    /// 関数・メソッドの中の読み 1 つは 1 度だけ数える(直す前は規則が入れ子へ降り、本体の再帰も同じ文を渡して 2 度)。
+    #[test]
+    fn a_read_inside_a_function_is_counted_once() {
+        let code = "import os\ndef store_root():\n    configured = os.environ.get(\"STORE\", \"\").strip()\n    return configured\nclass Settings:\n    def home(self):\n        if True:\n            return os.getenv(\"HOME\")\n";
+        assert_eq!(environ_hits(code), 2);
+    }
+
+    /// async def の中の await の中の読みにも当たる(本体の再帰が関数の本体を渡し、規則が await の中を辿る)。
+    #[test]
+    fn a_read_inside_await_in_an_async_function_is_seen() {
+        let code = "import os\nasync def g(h):\n    return await h(os.getenv(\"G\"))\n";
+        assert_eq!(environ_hits(code), 1);
+    }
 }
 
