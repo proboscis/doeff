@@ -175,3 +175,63 @@ fn within_the_cap_nothing_is_cleared_and_each_run_marks_its_root_used() {
     let live_dir = root_dir_of(cache.path(), live.path()).expect("根の dir");
     assert!(live_dir.join("used").is_file(), "実行は根の dir に使った印を付ける");
 }
+
+// ── 上限の片づけの番(agora-redesign #2725 の 2 便目)────────────────────────────────────
+// 上限の片づけは、根が消えた dir の片づけの記録 `.swept`(上限を持たない古い版の linter も書く)と番を分け合わない。終えた時刻
+// `.swept-cap` は片づけが終わってから書くので、打ち切られた実行は番だけ取って終わらない。
+
+/// 時刻 ago 秒前の file を path に置く(印の更新時刻を決める)。
+fn stamped(path: &Path, text: &str, ago: u64) {
+    std::fs::write(path, text).unwrap();
+    let at = std::time::SystemTime::now() - std::time::Duration::from_secs(ago);
+    std::fs::File::options().write(true).open(path).unwrap().set_modified(at).unwrap();
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
+#[test]
+fn an_old_linter_taking_the_vanished_root_turn_does_not_hold_back_the_cap_sweep() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let kept_root = repo();
+    let live = repo();
+    let old = stale_root_dir(cache.path(), "00000000000000d1", kept_root.path(), 8000, 30 * 86400);
+    // 上限を持たない古い版が、たった今 根が消えた dir の片づけの番を取った
+    std::fs::write(cache.path().join(".swept"), unix_now().to_string()).unwrap();
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(!old.exists(), "古い版が `.swept` の番を取った直後でも、上限の片づけは自分の記録で番を数えて走る");
+    assert!(cache.path().join(".swept-cap").is_file(), "上限の片づけを終えた時刻が記録される");
+    assert!(!cache.path().join(".swept-cap.lock").exists(), "片づけの最中の印は終わりに外れる");
+}
+
+#[test]
+fn a_cap_sweep_cut_off_midway_leaves_no_turn_so_the_next_run_redoes_it() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let kept_root = repo();
+    let live = repo();
+    let old = stale_root_dir(cache.path(), "00000000000000e1", kept_root.path(), 8000, 30 * 86400);
+    interval_passes(cache.path());
+    // 打ち切られた実行が最中の印だけを残した(終えた時刻の記録は無い)— 印が古ければ次の実行がやり直す
+    stamped(&cache.path().join(".swept-cap.lock"), "", 3600);
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(!old.exists(), "打ち切られた実行の古い最中の印は、次の実行の片づけを止めない");
+}
+
+#[test]
+fn a_cap_sweep_in_progress_or_done_within_the_interval_is_not_repeated() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let kept_root = repo();
+    let live = repo();
+    let old = stale_root_dir(cache.path(), "00000000000000f1", kept_root.path(), 8000, 30 * 86400);
+    interval_passes(cache.path());
+    // 並走する実行が、たった今 片づけを始めた
+    stamped(&cache.path().join(".swept-cap.lock"), "", 0);
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(old.exists(), "片づけの最中の印が新しい間は、別の実行は同じ片づけを重ねない");
+    std::fs::remove_file(cache.path().join(".swept-cap.lock")).unwrap();
+    // 上限の片づけを、たった今 終えた
+    std::fs::write(cache.path().join(".swept-cap"), unix_now().to_string()).unwrap();
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(old.exists(), "間隔の内(同じ 1 時間の中)は、上限の片づけを繰り返さない");
+}

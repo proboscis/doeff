@@ -162,9 +162,8 @@ fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
         mark_used(root_dir);
         // 時計が 1970 年より前を指す機体では間隔を測れないので走査しない
         if let Ok(now) = std::time::SystemTime::now().duration_since(UNIX_EPOCH) {
-            if sweep_vanished_roots(base, now.as_secs()) {
-                sweep_over_cap(base, root_dir, cache_cap_bytes(), now.as_secs());
-            }
+            sweep_vanished_roots(base, now.as_secs());
+            sweep_over_cap_when_due(base, root_dir, cache_cap_bytes(), now.as_secs());
         }
     });
 }
@@ -210,6 +209,36 @@ fn last_used(dir: &Path) -> u64 {
         .ok()
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_secs())
+}
+
+/// 上限の片づけの、前に終えた時刻(UNIX 秒)の記録。根が消えた dir の片づけの記録 `.swept` とは分ける — `.swept` は上限の片づけを
+/// 持たない古い版の linter も書くので、それと番を分け合うと、古い版が番を取った間は上限の片づけが走らない(zeus の 2026-10-02 12:50 の
+/// 走査で 63G のまま 0 件 — agora-redesign #2725)。
+const CAP_SWEEP_RECORD: &str = ".swept-cap";
+/// 上限の片づけの最中の印(中身は空)。並走する実行が同じ片づけを重ねないため。打ち切られた実行が残した印は、この秒を過ぎたら無いものとする。
+const CAP_SWEEP_LOCK: &str = ".swept-cap.lock";
+const CAP_SWEEP_LOCK_STALE_SECONDS: u64 = 600;
+
+/// 前に上限の片づけを終えてから間隔が過ぎていれば、上限の片づけをする。終えた時刻は片づけが終わってから書く — commit の hook の
+/// 秒の上限などで打ち切られた実行は記録を書かないので、次の実行がやり直す(番だけ取って終わる形を作らない)。
+fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64) {
+    let stamp = base.join(CAP_SWEEP_RECORD);
+    let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
+    if last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
+        return;
+    }
+    let lock = base.join(CAP_SWEEP_LOCK);
+    let held_by_other = std::fs::metadata(&lock)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .is_some_and(|at| now.saturating_sub(at.as_secs()) < CAP_SWEEP_LOCK_STALE_SECONDS);
+    if held_by_other || std::fs::create_dir_all(base).is_err() || std::fs::write(&lock, b"").is_err() {
+        return;
+    }
+    sweep_over_cap(base, root_dir, cap, now);
+    let _ = std::fs::write(&stamp, now.to_string());
+    let _ = std::fs::remove_file(&lock);
 }
 
 /// 置き場の全体が上限 cap を超えていれば、最後に使われた時刻の古い dir から消して上限の内へ戻す(agora-redesign #2725)。根が在り続ける
@@ -264,17 +293,17 @@ fn record_root(root_dir: &Path, root: &Path) {
 
 /// 前の走査から間隔が過ぎていれば、置き場の根の dir のうち、記録した根の path が無い(NotFound)dir を消す。記録の無い dir・記録を
 /// 読めない dir・根の有無を確かめられない dir は残す。時刻の記録を先に書き換えるので、並走する実行は同じ間隔の中で重ねて走査しない。
-/// 走査した時に真を返す(間隔の内・時刻の記録を書けない時は偽 — 上限の片づけ sweep_over_cap も同じ間隔で走らせるため)。
-fn sweep_vanished_roots(base: &Path, now: u64) -> bool {
+/// 上限の片づけは別の記録で番を数える(sweep_over_cap_when_due)。
+fn sweep_vanished_roots(base: &Path, now: u64) {
     let stamp = base.join(SWEEP_RECORD);
     let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
     if last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
-        return false;
+        return;
     }
     if std::fs::create_dir_all(base).is_err() || std::fs::write(&stamp, now.to_string()).is_err() {
-        return false;
+        return;
     }
-    let Ok(entries) = std::fs::read_dir(base) else { return true };
+    let Ok(entries) = std::fs::read_dir(base) else { return };
     for entry in entries.flatten() {
         let dir = entry.path();
         let Ok(recorded) = std::fs::read_to_string(dir.join(ROOT_RECORD)) else { continue };
@@ -284,7 +313,6 @@ fn sweep_vanished_roots(base: &Path, now: u64) -> bool {
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
-    true
 }
 
 fn load<T: DeserializeOwned + Send>(file: &Path, identity: &str, format: Format) -> HashMap<String, Entry<T>> {
