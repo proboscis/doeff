@@ -44,12 +44,14 @@
                                         base.node-capabilities)))
 
 
-(defn #^ dict task-record-to-json [#^ TaskRecord task]
+(deff task-record-to-json [#^ TaskRecord task]  ; defk にできない: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: task TaskRecord)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
   (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)}))
 
 
-(defn #^ TaskRecord task-record-from-json [#^ dict data]
+(deff task-record-from-json [#^ dict data]  ; defk にできない: 保存の読み直し(state_json・durable_kv — Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict)] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
    旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない
    (operator 2026-09-27)。旧い形 = TaskRecord に無い欄を持つ行(今の TaskRecord の欄の集合 1 つで判じる — 消した欄を 1 つずつ数えると、
