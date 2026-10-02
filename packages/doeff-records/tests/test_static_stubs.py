@@ -1,5 +1,5 @@
-"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
-store_choice.pyi・typed.pyi・principals.pyi・service.pyi)の検。
+"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口・client の型(values.pyi・effects.pyi・faults.pyi・memory.pyi・
+store_choice.pyi・typed.pyi・principals.pyi・service.pyi・http_client.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -13,6 +13,9 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - HTTP の口の層(service.pyi・principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
   respond の答えの `.status` が Unknown の赤になり、置くと消える。置いた側では答えの欄の取り違え(int の status に文字列を足す)が赤に
   なる(使い手の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形)。
+- client の層(http_client.pyi)の失敗ケース: http_client.pyi だけを外した写しでは、口の組 RecordsEndpoint・答え手 http-records-handler・
+  計器の 0 置き zero-client-metrics が Unknown の赤になり、置くと消える。置いた側では口の欄の取り違え(float の上限の秒に文字列を足す)が
+  赤になる(書き手の job の土台が口を作り、計器の系列を 0 で置いてから答え手を並べる形)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
   型の並びが実装と同じ(宣言だけが先へ行かない)。
 """
@@ -29,16 +32,36 @@ import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import pytest
+from doeff_records import (
+    effects,
+    faults,
+    http_client,
+    memory,
+    principals,
+    service,
+    store_choice,
+    typed,
+    values,
+)
+
 from doeff import EffectBase
-from doeff_records import effects, faults, memory, principals, service, store_choice, typed, values
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 PACKAGE = Path(values.__file__).parent
-STUBBED: tuple[types.ModuleType, ...] = (values, effects, faults, memory, store_choice, typed, principals, service)
+STUBBED: tuple[types.ModuleType, ...] = (
+    values,
+    effects,
+    faults,
+    memory,
+    store_choice,
+    typed,
+    principals,
+    service,
+    http_client,
+)
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
@@ -154,6 +177,32 @@ SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
     '"answer"',
 )
 
+#: client の層の検体 — 書き手の job の土台の形: 口の組 RecordsEndpoint を受け、計器の系列を 0 で置いてから、答え手
+#: http-records-handler の下で読みを 1 つ撃ち、口の欄を読む。
+CLIENT_MODULE = """\
+(require doeff-hy.macros [defk <-])
+(import doeff [with-handlers])
+(import doeff_records.effects [ReadRow])
+(import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
+
+(defk url-after-read [endpoint]
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % str)]}
+  (<- (zero-client-metrics endpoint))
+  (<- (with-handlers [(http-records-handler endpoint)] (ReadRow "t" #("k"))))
+  endpoint.base-url)
+
+(defk wrong-timeout [endpoint]
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % float)]}
+  (+ endpoint.request-timeout "x"))
+"""
+
+#: http_client.pyi を外すと Unknown になる名(import の行の名)。
+CLIENT_UNKNOWN_NAMES: tuple[str, ...] = (
+    '"RecordsEndpoint"',
+    '"http_records_handler"',
+    '"zero_client_metrics"',
+)
+
 
 @dataclass(frozen=True)
 class Run:
@@ -262,6 +311,25 @@ def test_with_the_service_stub_the_answer_is_an_http_answer(tmp_path: Path) -> N
     assert [e for e in run.errors() if e[1] in right] == [], run.errors()
     # int の status に文字列を足すと赤(stub が Program[HttpAnswer, …] を運ぶ)。
     wrong = _line_of('(+ answer.status "x")', SERVICE_MODULE)
+    assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
+
+
+@needs_pyright
+def test_without_the_client_stub_the_client_is_unknown(tmp_path: Path) -> None:
+    # 他の stub は置き、client の層の http_client.pyi だけを外す — 口の組・答え手・計器の 0 置きの名が Unknown になる。
+    unknown = _check(tmp_path, with_stubs=True, module=CLIENT_MODULE, omit=("http_client.pyi",)).unknown()
+    missing = [name for name in CLIENT_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
+    assert missing == [], unknown
+
+
+@needs_pyright
+def test_with_the_client_stub_the_endpoint_is_typed(tmp_path: Path) -> None:
+    run = _check(tmp_path, with_stubs=True, module=CLIENT_MODULE)
+    # 正しい使い(検体の頭から wrong-timeout の前まで)には赤が 1 つも無い — 口の組・答え手・計器の 0 置きの型が読める。
+    right = range(1, _line_of("(defk wrong-timeout", CLIENT_MODULE))
+    assert [e for e in run.errors() if e[1] in right] == [], run.errors()
+    # float の上限の秒に文字列を足すと赤(stub が RecordsEndpoint の欄の型を運ぶ)。
+    wrong = _line_of('(+ endpoint.request-timeout "x")', CLIENT_MODULE)
     assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()
 
 
