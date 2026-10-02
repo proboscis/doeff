@@ -20,7 +20,6 @@
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import importlib)
-(import os)
 (import uuid)
 (import doeff [EffectBase run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
@@ -38,7 +37,7 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import disposable_postgres [session-postgres-skip-reason])
+(import disposable_postgres [session-dsn session-postgres-skip-reason])
 
 (setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")
 (setv PG-DSN-VARIABLE "DOEFF_RECORDS_TEST_PG_DSN")
@@ -75,12 +74,12 @@
 (defn open-postgres []
   "psycopg は依存に無い(接続は composition root が開く)ので、ここで名指しで読む。自動 commit の接続(検が素の文を流す時だけ)。"
   (setv psycopg (importlib.import-module "psycopg"))
-  (psycopg.connect (get os.environ PG-DSN-VARIABLE) :autocommit True))
+  (psycopg.connect (session-dsn PG-DSN-VARIABLE) :autocommit True))
 
 
 (defn postgres-connections [[size 4]]
   "検の置き場の接続の貸し出し(SQL の effect の答え手に渡す)。"
-  (PostgresConnections #((PostgresDatabase :name DATABASE :dsn (get os.environ PG-DSN-VARIABLE))) :size size))
+  (PostgresConnections #((PostgresDatabase :name DATABASE :dsn (session-dsn PG-DSN-VARIABLE))) :size size))
 
 
 (defn fresh-prefix []

@@ -76,8 +76,7 @@ def _run_inner_pytest(directory: Path, probe_source: str) -> subprocess.Complete
     return run_under_root_conftest(
         directory,
         probe_source,
-        pytest_args=["--timeout=1"],
-        env={"PYTEST_DEADLINE_SCALE": "off", "PYTEST_WATCHDOG_TIMEOUT": "1"},
+        pytest_args=["--timeout=1", "-o", "deadline_scale=off", "-o", "watchdog_timeout=1"],
         budget=_INNER_RUN_BUDGET,
     )
 

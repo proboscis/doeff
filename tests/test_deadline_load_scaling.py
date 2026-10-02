@@ -46,11 +46,11 @@ def test_deadline_scales_with_oversubscription(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(conftest.os, "cpu_count", lambda: 10)
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (50.0, 0.0, 0.0))
-    assert conftest.deadline_scale() == pytest.approx(5.0)
+    assert conftest.deadline_scale("auto", 8.0) == pytest.approx(5.0)
 
     # An idle machine never SHRINKS the deadline — the floor is 1.
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (0.2, 0.0, 0.0))
-    assert conftest.deadline_scale() == pytest.approx(1.0)
+    assert conftest.deadline_scale("auto", 8.0) == pytest.approx(1.0)
 
 
 def test_scale_is_capped_so_a_real_hang_still_fails(
@@ -65,7 +65,7 @@ def test_scale_is_capped_so_a_real_hang_still_fails(
 
     monkeypatch.setattr(conftest.os, "cpu_count", lambda: 10)
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (10_000.0, 0.0, 0.0))
-    assert conftest.deadline_scale() == pytest.approx(conftest._DEADLINE_SCALE_CAP)
+    assert conftest.deadline_scale("auto", 8.0) == pytest.approx(8.0)
 
 
 def test_scaling_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,8 +74,7 @@ def test_scaling_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(conftest.os, "cpu_count", lambda: 10)
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (50.0, 0.0, 0.0))
-    monkeypatch.setenv("PYTEST_DEADLINE_SCALE", "off")
-    assert conftest.deadline_scale() == pytest.approx(1.0)
+    assert conftest.deadline_scale("off", 8.0) == pytest.approx(1.0)
 
 
 def test_watchdog_never_fires_before_the_per_test_deadline() -> None:

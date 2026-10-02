@@ -151,9 +151,9 @@
                "締切の係数の単一の家が root conftest に無い — ADR-DOE-ENFORCE-001 R6")
        (assert (in "os.getloadavg()" conftest)
                "係数が機械の過負荷率を読んでいない(定数へ退行している)")
-       (assert (in "PYTEST_DEADLINE_SCALE_CAP" conftest)
+       (assert (in "\"deadline_scale_cap\"" conftest)
                "係数に上限が無い — 真の hang が有界時間で落ちなくなる")
-       (assert (in "PYTEST_DEADLINE_SCALE" conftest)
+       (assert (in "\"deadline_scale\"" conftest)
                "無効化の口が無い(負荷を自分で制御する CI が締切を固定できない)")
        ;; 2 つの締切が一緒に動くこと — watchdog は per-test 締切から導出する。
        (assert (in "def scaled_watchdog_timeout(" conftest)

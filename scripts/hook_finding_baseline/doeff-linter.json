@@ -49,7 +49,6 @@
     "DOEFF007": {
       "packages/doeff-agentic/src/doeff_agentic/tui/widgets.py": 7,
       "packages/doeff-agents/src/doeff_agents/handlers/daemon.py": 4,
-      "packages/doeff-core-effects/tests/postgres_support/disposable_postgres.py": 1,
       "packages/doeff-events/src/doeff_events/handlers/memory.py": 2,
       "packages/doeff-flow/examples/04_concurrent_workflows.py": 1,
       "packages/doeff-llm/src/doeff_llm/effects/chat.py": 1,
