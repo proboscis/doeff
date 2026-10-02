@@ -46,6 +46,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from conformance_env import process_environment
 from doeff_agents.agentd_client import AgentdClient
 from harness import (
     AGENT_SCRIPT,
@@ -65,11 +66,10 @@ PROMPT = "park in the active state"
 def _clean_daemon_env() -> dict[str, str]:
     """Env for synthesizing the PRE-EXISTING population: plain tmux physics,
     explicitly WITHOUT the S28 self-exit knob — that is the whole point (the
-    leaked daemons predate the knob and can never receive it)."""
-    env = dict(os.environ)
-    env.pop("DOEFF_SESSIONHOST_BACKEND", None)
-    env.pop("DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED", None)
-    return env
+    leaked daemons predate the knob and can never receive it). The base is this
+    process's environment read through ReadEnvironment (conformance_env — #3012)."""
+    dropped = ("DOEFF_SESSIONHOST_BACKEND", "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED")
+    return {name: value for name, value in process_environment().items() if name not in dropped}
 
 
 def _daemon_argv(agentd_bin: Path, runtime_dir: Path) -> list[str]:

@@ -1,6 +1,5 @@
 """記録からの収集の最適化と、通常の pytest に戻す互換性の反例(#1551)。"""
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +73,6 @@ else:
 """
     result = subprocess.run(
         [sys.executable, "-c", script],
-        env=dict(os.environ),
         capture_output=True,
         text=True,
         timeout=30,

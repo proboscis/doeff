@@ -27,7 +27,8 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound])
+                                            ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound
+                                            environment-mapping])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
                                    NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES
                                    PROBE-MODULE NAMESPACE-MODULE MISSING-MODULE])
@@ -103,6 +104,14 @@
   (assert (= seen #((EnvEntry :name "DOEFF_SHADOWED" :value "親") (EnvEntry :name "DOEFF_INHERITED" :value "継いだ"))) seen)
   (<- none tuple (ReadEnvironment #() :prefixes #("DOEFF_NO_SUCH_")))
   (assert (= none #()) none))
+
+
+(deftest test-the-whole-own-environment-is-a-mapping
+  ;; environment-mapping(#3012)は ReadEnvironment の接頭辞 "" の答えを 名 → 値 の写像にする — 子 process の env の元に環境を丸ごと
+  ;; 渡す呼び手が os.environ を参照しないための 1 か所。呼び手の環境の名(契約の世界の 2 つを含む)が全部入る。
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  (<- mapping (get dict #(str str)) (environment-mapping))
+  (assert (= #((.get mapping "DOEFF_INHERITED") (.get mapping "DOEFF_SHADOWED")) #("継いだ" "親")) mapping))
 
 (deftest test-the-child-runs-in-the-given-directory
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
