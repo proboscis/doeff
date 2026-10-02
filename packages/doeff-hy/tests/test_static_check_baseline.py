@@ -188,3 +188,33 @@ def test_a_baseline_of_another_version_is_unreadable(tmp_path: Path) -> None:
     path.write_text(json.dumps({"version": 9, "errors": []}), encoding="utf-8")
     with pytest.raises(BaselineUnreadable):
         read_baseline(path)
+
+
+def test_the_require_scan_is_kept_by_the_source_text_and_redone_when_it_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 失敗ケース(agora-redesign #2675): 展開の cache の鍵を作るための require の読み(Hy の reader で source を全部読む)を毎回し直し、
+    # 依存 350 個の file の 1 回の測りの約 29 秒のほとんどがそれだった。読みの結果を source の中身の指紋ごとに保存して引く。
+    # 同じ中身は読み直さない・中身が変われば読み直す・鍵は保存の有無で変わらない(展開の保存はそのまま当たる)。
+    from doeff_hy import static_cache
+
+    cache = tmp_path / ".cache"
+    text = "(require probe_macros [m])\n(m 1)\n"
+    assert static_cache._required_modules(text, cache) == ("probe_macros",)
+    assert len(list((cache / "requires").rglob("*.txt"))) == 1
+    assert not list(cache.rglob("*.json"))  # 展開の保存(*.json)の数えに混ざらない
+
+    def unread(_text: str) -> tuple[str, ...]:
+        raise AssertionError("同じ中身を読み直した")
+
+    monkeypatch.setattr(static_cache, "_read_required_modules", unread)
+    assert static_cache._required_modules(text, cache) == ("probe_macros",)
+    monkeypatch.undo()
+    changed = "(require probe_macros [m])\n(require other_macros [n])\n"
+    assert static_cache._required_modules(changed, cache) == ("probe_macros", "other_macros")
+    source = tmp_path / "probe.hy"
+    source.write_text(text, encoding="utf-8")
+    roots = (tmp_path,)
+    assert static_cache.cache_key(roots, source, "probe", "probe.hy", cache) == static_cache.cache_key(
+        roots, source, "probe", "probe.hy"
+    )

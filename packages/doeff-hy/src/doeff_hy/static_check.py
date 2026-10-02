@@ -528,7 +528,7 @@ def project_cached(
     if cache_dir is None:
         return project(root, roots, source)
     module = module_name(roots, source)
-    key = cache_key(tuple(roots), source, module, str(source.relative_to(root)))
+    key = cache_key(tuple(roots), source, module, str(source.relative_to(root)), cache_dir)
     match load(cache_dir, key):
         case CachedProjection() as cached:
             return _from_cache(source, module, cached)
