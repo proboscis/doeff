@@ -82,15 +82,22 @@
 (setv ALIVE-MARK-MS 5000)
 
 (defn #^ ClusterState mark-alive [#^ ClusterState state #^ int now]
-  "純粋: ALIVE-MARK-MS 経っていれば生きていた時刻を進め、同じ拍の各 worker の最後の連絡の時刻を写した状態(耐久の鍵 counter と、
-   連絡のあった worker の worker/<名> が変わる = 次の Persist に載る。沈黙している worker の鍵は変わらない)。"
+  "純粋: ALIVE-MARK-MS 経っていれば生きていた時刻を進め、同じ拍の各 worker の最後の連絡の時刻を WorkerInfo.seen-mark に写した状態
+   (耐久の鍵 counter と、連絡のあった worker の worker/<名> が変わる = 次の Persist に載る。沈黙している worker の鍵は変わらない)。
+   印が最後の連絡の時刻と揃っている worker は同じ物のまま運び、全員が揃っていれば workers の写像も同じ物のまま — 沈黙している
+   worker の行と、版の比べ(resource_policy.dirty-keys の workers)を印の拍で動かさない(#2903)。"
   (if (>= (- now state.alive-ms) ALIVE-MARK-MS)
-      (replace state :alive-ms now :seen-marks (dfor #(n w) (.items state.workers) n w.last-seen-ms))
+      (replace state
+               :alive-ms now
+               :workers (if (all (gfor w (.values state.workers) (= w.seen-mark w.last-seen-ms)))
+                            state.workers
+                            (dfor #(n w) (.items state.workers)
+                                  n (if (= w.seen-mark w.last-seen-ms) w (replace w :seen-mark w.last-seen-ms)))))
       state))
 
 (defn #^ tuple resume-after-downtime [#^ ClusterState state #^ int now]
   "純粋: 読み直した状態 → #(時計をずらした状態 止まっていた長さ ms)。ずらすのは進行中の Rollout の段の起点(shift-clocks)と
-   task の lease の期限と、worker の最後の連絡の時刻(と、その写し seen-marks)と、Ready を待っている入れ替えの期限の起点
+   task の lease の期限と、worker の最後の連絡の時刻(と、その印 WorkerInfo.seen-mark)と、Ready を待っている入れ替えの期限の起点
    (HandoffWatch.since-ms — 止まっていた間は期限に数えない・2026-09-26)。生きていた時刻を知らない置き場(2026-09-25 より前)は 0。
    worker の最後の連絡の時刻は、止まる前の最後の印(alive-ms)の時点の沈黙を今から数え直した値になる: 止まる直前まで連絡のあった
    worker は起き直した直後も生きていて、その後に連絡が無ければ移し替えの期限の後に沈黙と判じる。止まる前から沈黙していた worker は
@@ -102,8 +109,10 @@
       #((replace state
                  :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
                  :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
-                 :workers (dfor #(k w) (.items state.workers) k (replace w :last-seen-ms (min now (+ w.last-seen-ms gap))))
-                 :seen-marks (dfor #(k v) (.items state.seen-marks) k (min now (+ v gap)))
+                 :workers (dfor #(k w) (.items state.workers)
+                                k (replace w
+                                           :last-seen-ms (min now (+ w.last-seen-ms gap))
+                                           :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
                  :handoffs (dfor #(k w) (.items state.handoffs)
                                  k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
                  :alive-ms now)

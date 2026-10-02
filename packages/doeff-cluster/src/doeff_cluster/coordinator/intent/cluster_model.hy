@@ -90,7 +90,13 @@
   ;; worker の置かれた node の名(heartbeat の node — k8s の downward API。k8s の外の機体は空)と、coordinator がその node の label から
   ;; 導いた能力(ClusterNaming の node-capabilities — worker の自己申告ではない)。置き先の判断は provides と derived の和を見る。
   (setv #^ str node "")
-  (setv #^ tuple derived #()))
+  (setv #^ tuple derived #())
+  ;; 最後の連絡の時刻(last-seen-ms)を、coordinator の生存の印と同じ拍(api_policy.mark-alive・ALIVE-MARK-MS ごと)で写した値 = 耐久の鍵
+  ;; worker/<名> の lastSeenMs(2026-09-25)。last-seen-ms は heartbeat ごとに進むが保存の行には入れない — 書きは印の拍ごと(5 秒に
+  ;; 1 回)。起動の時は、この値と alive-ms の差(止まる前の最後の印の時点の沈黙)を今から数え直す(api_policy.resume-after-downtime)。
+  ;; まだ印の拍を通っていない worker は None(lastSeenMs を書かない)。以前は ClusterState の写像 seen-marks(worker 名 → 時刻)に
+  ;; 持っていた — worker の保存の行の材料をこの記録 1 つに寄せた(#2903)。
+  (setv #^ (| int None) seen-mark None))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
@@ -932,12 +938,10 @@
   (setv #^ int rollout-tick-ms 0)                       ; Rollout を最後に調停した時刻
   ;; coordinator が生きていた最後の時刻(ALIVE-MARK-MS ごとに耐久の鍵 counter へ書く)。起動の時に「止まっていた長さ」を測り、
   ;; 進行中の Rollout の段の起点と task の lease を、その長さだけずらす(api_policy.resume-after-downtime・2026-09-25)。
-  (setv #^ int alive-ms 0)
-  ;; worker の名 → 最後の連絡の時刻を alive-ms と同じ拍(mark-alive)で写した値(耐久の鍵 worker/<名> の lastSeenMs・2026-09-25)。
-  ;; 起動の時は、この値と alive-ms の差(止まる前の最後の印の時点の沈黙)を今から数え直す(api_policy.resume-after-downtime)。
+  ;; 同じ拍(mark-alive)で、各 worker の最後の連絡の時刻を WorkerInfo の欄 seen-mark に写す(耐久の鍵 worker/<名> の lastSeenMs)。
   ;; 以前は最後の連絡の時刻を保存せず、読み直しのたびに全 worker を「いま連絡があった」とみなしていたので、32 時間沈黙した
-  ;; worker も coordinator が起き直すたびに生きていると出た(2026-09-25)。heartbeat ごとではなく印の拍ごとに写す = 書きは 5 秒に 1 回。
-  (setv #^ dict seen-marks (field :default-factory dict))
+  ;; worker も coordinator が起き直すたびに生きていると出た(2026-09-25)。
+  (setv #^ int alive-ms 0)
   ;; drain(2026-09-25): worker の名 → Drain と、入れ替えの Service を drain 中の worker から移す間の並べた置き先
   ;; (job の名 → Placement・surge)。surge の担い手は process を起こし(standby で待つ)、coordinator がそれを Ready と数えたら
   ;; placements をその置き先へ付け替える(旧い担い手は宣言から外れて止め、lease を返す)。どちらも保存する(durable_kv)。
