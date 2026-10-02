@@ -12,27 +12,17 @@ from pathlib import Path
 
 import maturin
 
-# build をしない hook は、共通の口のもの(maturin へそのまま渡す)を使う。
+# build をしない hook は、共通の口のもの(maturin へそのまま渡す)を使う。uv・pip はこの module の属性の名で hook を引くので、
+# `X as X` の形で名指しの再 export にする(__all__ は置かない — DOEFF021)。
 from doeff_cargo_backend import (
     ConfigSettings,
     cargo_target_dir,
-    get_requires_for_build_editable,
-    get_requires_for_build_sdist,
-    get_requires_for_build_wheel,
-    prepare_metadata_for_build_editable,
-    prepare_metadata_for_build_wheel,
 )
-
-__all__ = [
-    "build_editable",
-    "build_sdist",
-    "build_wheel",
-    "get_requires_for_build_editable",
-    "get_requires_for_build_sdist",
-    "get_requires_for_build_wheel",
-    "prepare_metadata_for_build_editable",
-    "prepare_metadata_for_build_wheel",
-]
+from doeff_cargo_backend import get_requires_for_build_editable as get_requires_for_build_editable
+from doeff_cargo_backend import get_requires_for_build_sdist as get_requires_for_build_sdist
+from doeff_cargo_backend import get_requires_for_build_wheel as get_requires_for_build_wheel
+from doeff_cargo_backend import prepare_metadata_for_build_editable as prepare_metadata_for_build_editable
+from doeff_cargo_backend import prepare_metadata_for_build_wheel as prepare_metadata_for_build_wheel
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _PYTHON_BIN_DIR = _PROJECT_ROOT / "python" / "doeff_indexer" / "bin"

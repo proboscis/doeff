@@ -337,26 +337,18 @@ fn is_symlink(path: &Path) -> bool {
     std::fs::symlink_metadata(path).map_or(false, |meta| meta.file_type().is_symlink())
 }
 
-/// path が除く pattern(file の名の一致・部分一致か、path の区切りの一致)に当たるか。
+/// path が除く pattern に当たるか — path の部品 1 つ(dir の名か file の名)が pattern と一致する時だけ。
+///
+/// 部分一致は見ない: 以前は file の名(dir の走査では dir の名も)に pattern を「含む」だけで外し、既定の
+/// `build`・`dist`・`.git` が `doeff_indexer_build_backend.py`・`verify_dist_metadata.py`・`.github/` のような名を黙って
+/// 判定の外にしていた(当たり 0 ではなく判定していない — agora-redesign #3012)。
 pub fn should_exclude(path: &Path, patterns: &[String]) -> bool {
-    for pattern in patterns {
-        if let Some(name) = path.file_name() {
-            if let Some(name_str) = name.to_str() {
-                if name_str == pattern || name_str.contains(pattern) {
-                    return true;
-                }
-            }
-        }
-        // Check if any path component matches
-        for component in path.components() {
-            if let Some(comp_str) = component.as_os_str().to_str() {
-                if comp_str == pattern {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .map_or(false, |part| patterns.iter().any(|pattern| part == pattern))
+    })
 }
 
 /// Lint multiple files in parallel
@@ -992,6 +984,55 @@ p: Program = process()"#,
         std::fs::write(&other, "x = 1\n").unwrap();
         let named = [dir.path().join("a").join("backend.py"), other.clone(), real.clone()];
         assert_eq!(one_path_per_file(named.to_vec()), vec![real, other]);
+    }
+
+    fn default_excludes() -> Vec<String> {
+        ["build", "dist", ".git", "fixtures"].map(String::from).to_vec()
+    }
+
+    #[test]
+    fn a_file_whose_name_only_contains_an_excluded_word_is_still_linted() {
+        // 反例(#3012): 名に build・dist を含むだけの file が、名指しても dir の走査でも判定の外になっていた
+        let dir = tempfile::TempDir::new().unwrap();
+        let backend = dir.path().join("doeff_indexer_build_backend.py");
+        let metadata = dir.path().join("verify_dist_metadata.py");
+        std::fs::write(&backend, ONE_ENVIRON_READ).unwrap();
+        std::fs::write(&metadata, "x = 1\n").unwrap();
+        let named = [&backend, &metadata].map(|p| p.to_string_lossy().to_string()).to_vec();
+        let forced = collect_python_files_with_options(&named, &default_excludes(), true);
+        assert_eq!(forced, vec![backend.clone(), metadata.clone()]);
+        assert_eq!(doeff004_hits(&forced), 1);
+        let mut walked = collect_python_files(&[dir.path().to_string_lossy().to_string()], &default_excludes());
+        walked.sort();
+        assert_eq!(walked, vec![backend, metadata]);
+    }
+
+    #[test]
+    fn a_dir_whose_name_only_contains_an_excluded_word_is_still_walked() {
+        // .github/ は .git を、fixtures_discovery/ は fixtures を含むだけ — 走査で dir ごと刈られていた
+        let dir = tempfile::TempDir::new().unwrap();
+        for sub in [".github", "fixtures_discovery"] {
+            std::fs::create_dir(dir.path().join(sub)).unwrap();
+            std::fs::write(dir.path().join(sub).join("m.py"), "x = 1\n").unwrap();
+        }
+        let walked = collect_python_files(&[dir.path().to_string_lossy().to_string()], &default_excludes());
+        assert_eq!(walked.len(), 2);
+    }
+
+    #[test]
+    fn a_dir_or_file_named_exactly_like_a_pattern_is_still_excluded() {
+        // 一致は今までどおり外す: dir の build/・fixtures/ の中と、名指しの file の部品が pattern と一致する時
+        let dir = tempfile::TempDir::new().unwrap();
+        for sub in ["build", "fixtures"] {
+            std::fs::create_dir(dir.path().join(sub)).unwrap();
+            std::fs::write(dir.path().join(sub).join("m.py"), ONE_ENVIRON_READ).unwrap();
+        }
+        let walked = collect_python_files(&[dir.path().to_string_lossy().to_string()], &default_excludes());
+        assert!(walked.is_empty());
+        let named = vec![dir.path().join("build").join("m.py").to_string_lossy().to_string()];
+        assert!(collect_python_files_with_options(&named, &default_excludes(), true).is_empty());
+        assert!(should_exclude(Path::new("pkg/dist/x.py"), &default_excludes()));
+        assert!(!should_exclude(Path::new("pkg/redistribute/x.py"), &default_excludes()));
     }
 }
 
