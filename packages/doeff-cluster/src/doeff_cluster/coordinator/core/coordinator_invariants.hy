@@ -18,6 +18,10 @@
 ;;; 止まり始めの後に新しい task を置かない。その世代は task を始めずに抜け、切り離した task は同じ名の新しい世代へ渡らないので、置かれた
 ;;; task は lease まで止まる(#2819)。判断は記録(止めた世代の列と、止めた後・戻す前に読めた task の置き先の列)を受けて破りの列を返す
 ;;; 純関数 1 つ。記録を集めるのは検(tests/test_detached_runners.hy の drain を頼まない止めの検)。
+;;;
+;;; 条 C5 revision-never-goes-back: GET /state の coordinator の版(revision)は、読んだ順に減らない — coordinator が止まり置き場から
+;;; 作り直されても(読み直せない置き場で空から起き直すと版が 0 へ戻り、worker と使い手が古い版の答えを新しいと取り違える)。判断は記録
+;;; (読んだ順の版の列)を受けて、それまでの最大より小さい読みの組の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
@@ -85,3 +89,30 @@
    (空なら緑)。coordinator が止まる途中の世代へ task を置かず、lease まで止まる task を作らないことを、止めの筋書きの記録から判じるため。"
   (val gone (frozenset (gfor g stopped #(g.worker g.boot))))
   (tuple (sorted (gfor p placed :if (in #(p.worker p.boot) gone) p.key))))
+
+
+(defrecord RevisionRead
+  "条 C5 の記録 1 つ = GET /state の 1 回の読み(at-ms = 読んだ時刻・revision = coordinator の版)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ int at-ms)
+  (#^ int revision))
+
+
+(defrecord RevisionDrop
+  "条 C5 の破り 1 つ = それまでの最大の読みより版が小さい読みの組(earlier = その最大の読み)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ RevisionRead earlier)
+  (#^ RevisionRead later))
+
+
+(defk revision-never-goes-back [reads]
+  {:pre [(: reads (get tuple #(RevisionRead ...)))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "条 C5: 読んだ順の版の読みの列(RevisionRead)から、それまでの最大の読みより版が小さい読みを、その最大の読みと組にした破りの列
+   (RevisionDrop)を返す(空なら緑)。coordinator の作り直しが置き場から版を読み直し、版を 0 へ戻さないことを、止まりの筋書きの記録から
+   判じるため。"
+  (val highest (fn [i] (max (cut reads 0 (+ i 1)) :key (fn [r] r.revision))))
+  (tuple (gfor i (range 1 (len reads))
+               :setv prior (highest (- i 1))
+               :setv read (get reads i)
+               :if (< read.revision prior.revision)
+               (RevisionDrop :earlier prior :later read))))
