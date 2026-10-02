@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState KeepMark Drain])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.cluster_policy [place-jobs reconcile unplaced-jobs])
+(import doeff_cluster.coordinator.core.cluster_policy [place-jobs reconcile unplaced-jobs state-view])
 (import doeff_cluster.coordinator.core.resource_policy [running-process delete-resource Refused])
 (import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
@@ -25,7 +25,7 @@
 (import doeff_cluster.worker.protocol.declared [declared-job-spec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess SimReadiness ProcessesOf ReadinessOf CutWorker StallWorker StartWorker
-                             DrainWorker Redeclare KillWorker])
+                             DrainWorker Redeclare KillWorker ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
 (import tests.program_rows [SAMPLE-RUN])
@@ -113,9 +113,12 @@
   (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
   (with [(pytest.raises Refused)]
     (delete-resource promised "Worker" "w1" {} "operator" 30000 T))
+  ;; 読みの口(#2883): 消す前は約束が 1 件出て、Worker を消した後は消える。
+  (assert (= (lfor m (. (state-view promised 60000 T) keep-marks) #(m.job m.worker)) [#("a" "w1")]))
   (val deleted (delete-resource promised "Worker" "w1" {} "operator" 60000 T))
   (val after (reconcile 60000 deleted T))
   (assert (= after.keep-marks #()) after.keep-marks)
+  (assert (= (. (state-view after 60000 T) keep-marks) #()))
   (assert (= (. (get after.placements "a") worker) "w2") after.placements))
 
 
@@ -178,6 +181,39 @@
   (<- old dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] None))
   (<- alone tuple (heard (get declared 0) old 1000))
   (assert (= (. (get alone 0) keep-marks) #()) (. (get alone 0) keep-marks)))
+
+
+(defk marks-in-state [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "GET /state の答えの keepMarks(途絶しても動かし続けてよい印の約束の読みの口 — #2883)を、受け口と同じ判断と綴りを通して読むため。"
+  (val answer (responded state (http-request "GET" "/state" {} None) now T))
+  (get answer 2 "keepMarks"))
+
+
+(deftest test-the-state-view-shows-a-promise-only-while-the-holder-may-keep-the-job
+  ;; 読みの口(#2883): GET /state の keepMarks に、移せる先の無い job に印を渡した約束が 1 件出る({job worker boot sinceMs} — 担い手と
+  ;; その世代と約束の始まり)。移せる先が出来て担い手が印の無い返事を受け、印を手放したと知らせた後は消える(移せる先の在る job には
+  ;; 出ない)。版上げの後と障害の時に、どの job が約束で担い手に留まっているかを外から確かめるため。
+  (<- empty dict (beat-body "w1" [] []))
+  (<- first tuple (heard (ClusterState) (| empty {"boot" "w1-boot1"}) 0))
+  (val declared (responded (get first 0) (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+                                                      :actor "test")
+                           0 T))
+  (<- running dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] []))
+  (<- marked tuple (heard (get declared 0) (| running {"boot" "w1-boot1"}) 1000))
+  (<- shown list (marks-in-state (get marked 0) 1500))
+  (assert (= shown [{"job" "s0" "worker" "w1" "boot" "w1-boot1" "sinceMs" 1000}]) shown)
+  ;; 2 台目が加わって移せる先が出来ても、担い手が印を持つと知らせる間は約束が残る(読みの口にも出続ける)。
+  (<- second dict (beat-body "w2" [] []))
+  (<- joined tuple (heard (get marked 0) second 2000))
+  (<- holding dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] ["s0"]))
+  (<- unmarked tuple (heard (get joined 0) (| holding {"boot" "w1-boot1"}) 3000))
+  (<- still list (marks-in-state (get unmarked 0) 3500))
+  (assert (= (lfor m still (get m "job")) ["s0"]) still)
+  ;; 担い手が印を手放したと知らせた後は消える — 移せる先の在る job には出ない。
+  (<- dropped tuple (heard (get unmarked 0) (| running {"boot" "w1-boot1"}) 4000))
+  (<- gone list (marks-in-state (get dropped 0) 4500))
+  (assert (= gone []) gone))
 
 
 (deftest test-a-silent-holder-of-a-marked-job-is-unknown-not-notready
@@ -461,6 +497,32 @@
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= broken #()) broken))
+
+
+(defrecord MarksSeen
+  "読みの口の筋書きの読み: alone = 担い手が 1 台の時の GET /state の keepMarks・joined = 置ける worker が加わった後の keepMarks。"
+  (#^ list alone)
+  (#^ list joined))
+
+
+(defk marks-before-and-after-join []
+  {:pre [] :post [(: % MarksSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(読みの口 — #2883): w1 の上の pulse(移せる先が無い)の約束を GET /state で読み、能力の合う w2 を起こして 15 秒後にもう一度読む。"
+  (<- (Delay 8.0))
+  (<- alone dict (ReadCoordinator "/state"))
+  (<- (StartWorker "w2"))
+  (<- (Delay 15.0))
+  (<- joined dict (ReadCoordinator "/state"))
+  (MarksSeen :alone (get alone "keepMarks") :joined (get joined "keepMarks")))
+
+
+(deftest test-the-state-view-shows-the-promise-on-the-emulated-cluster
+  ;; 読みの口(#2883)を模擬の世界の本物の coordinator で: 移せる先の無い pulse は担い手 w1 の今の世代への約束が 1 件出て、能力の合う w2 が
+  ;; 加わった後(w1 が印の無い返事を受けて手放した後)は消える。
+  (<- seen MarksSeen (sim-cluster (pulses sim-foundation) (marks-before-and-after-join) :workers JOINING))
+  (assert (= (lfor m seen.alone #((get m "job") (get m "worker") (get m "boot"))) [#("pulse" "w1" "w1-boot1")]) seen.alone)
+  (assert (isinstance (get seen.alone 0 "sinceMs") int) seen.alone)
+  (assert (= seen.joined []) seen.joined))
 
 
 (deftest test-an-old-worker-without-marks-still-stops-at-the-fence-and-is-restarted-in-place

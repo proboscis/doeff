@@ -224,6 +224,7 @@ class StateView:
     surges: dict[str, Placement]
     events: tuple[object, ...]
     revision: int
+    keep_marks: tuple[KeepMark, ...]
 
 class DrainPhase(StrEnum):
     DRAINING = "Draining"
