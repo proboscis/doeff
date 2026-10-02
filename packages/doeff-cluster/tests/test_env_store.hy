@@ -7,7 +7,7 @@
 (import json)
 (import httpx)
 (import pathlib [Path])
-(import doeff [run with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -36,9 +36,12 @@
   (EnvSettings :state (str (/ tmp "state")) :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL))
 
 
-(defn #^ object on-envs [#^ EnvSettings settings #^ object program #^ list [inner []]]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
-  "筋書きの Program を env-host と本物の答え手の下で 1 回の run で回す(inner = env-host の内側に置く handler)。"
-  (run (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings) #* inner] program)))
+(defk on-envs [settings program [inner []]]
+  {:pre [(: settings EnvSettings) (: program Program) (: inner list)] :post [(: % (| tuple DesiredJobs DesiredUnreadable))]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書きの Program を env-host と本物の答え手の下で回し、その答えを返すため(inner = env-host の内側に置く handler)。"
+  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings) #* inner] program))
+  answer)
 
 
 (defk observed-and-reported []
@@ -51,7 +54,7 @@
 
 (deftest test-only-roots-with-a-marker-are-ready-and-named [tmp-path]
   (<- settings EnvSettings (settings-in tmp-path))
-  (val got (on-envs settings (observed-and-reported)))
+  (val got (! (on-envs settings (observed-and-reported))))
   (val views (get got 0))
   (val report (get got 1))
   (assert (= (lfor v views #(v.revision v.state)) [#((+ "env-" READY-NAME) CodeState.READY)]) views)
@@ -78,8 +81,8 @@
   (val env-link (LinkRig "http://coord" "w" #() 1 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)
                          :handles-envs True))
   (<- settings EnvSettings (settings-in tmp-path))
-  (on-envs settings (desired-with-report)
-           [(transport-http env-link.transport) (coordinator-link env-link.state env-link.cell LINK-ROUTE env-link.watch-cell)])
+  (<- (on-envs settings (desired-with-report)
+               [(transport-http env-link.transport) (coordinator-link env-link.state env-link.cell LINK-ROUTE env-link.watch-cell)]))
   (assert (= (get sent 0 "envs" "ready") [READY-NAME]) sent)
   (assert (in "envCapacity" (get sent 0)) sent)
   ;; 扱わない worker は名乗らず、env-host が無くても heartbeat を送れる。

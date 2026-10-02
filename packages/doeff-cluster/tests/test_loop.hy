@@ -1,7 +1,7 @@
 ;; 調整ループ全体を仮想時計・偽の子 process・台本の宣言で決定的に動かす。
-(require doeff-hy.macros [deftest defhandler <- var val])
+(require doeff-hy.macros [deftest defk defhandler <- var val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import collections.abc [Callable])
+(import doeff [Program])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
@@ -63,23 +63,29 @@
   (SignalJob [name pid stage] (.signal world (SignalJob name pid stage)) (resume None))
   (ReapJob [name pid outcome exit-code] (.reap world (ReapJob name pid outcome exit-code)) (resume None)))
 
-(defn #^ Callable fake-host [#^ FakeWorld world #^ tuple script #^ int stop-at]
-  "台本の外側に仮想の時計(world の SimClock)と、拍の間の眠りの本番の答え手 tick-pauses を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
-  (fn [program] ((sim-time-handler :clock world.clock) (tick-pauses ((fake-host-script world script stop-at) program)))))
+(defk fake-host [world script stop-at program]
+  {:pre [(: world FakeWorld) (: script tuple) (: stop-at int) (: program Program)] :post [(: % WorkerState)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "program を台本の世界(fake-host-script)の下で走らせ、その答えを返すため。台本の外側に仮想の時計(world の SimClock)と、拍の間の
+   眠りの本番の答え手 tick-pauses を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
+  (<- answer WorkerState ((sim-time-handler :clock world.clock) (tick-pauses ((fake-host-script world script stop-at) program))))
+  answer)
 
-(defn #^ list events-of [#^ FakeWorld world #^ str name]
+(defk events-of [world name]
+  {:pre [(: world FakeWorld) (: name str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "世界の出来事のうち job name の物を、#(種類 名 版か止め方の語) の list で読むため(時刻は落とす)。"
   (lfor e world.events :if (= (get e 1) name) (cut e 0 3)))
 
 (deftest test-update-one-job-keeps-the-other-running
   (setv world (FakeWorld)
         script #(#(0 (DesiredJobs #(A1 B1))) #(1000 (DesiredJobs #(A2 B1)))))
-  (<- ((fake-host world script 3000) (run-worker POLICY)))
+  (<- (fake-host world script 3000 (run-worker POLICY)))
   ;; a は旧版を止めてから新版を起動する(同時稼働しない)。
-  (assert (= (events-of world "a")
+  (assert (= (! (events-of world "a"))
              [#("start" "a" "rev1") #("signal" "a" "term") #("reap" "a" "stopped")
               #("start" "a" "rev2") #("signal" "a" "term") #("reap" "a" "stopped")]))
   ;; b は worker の停止まで一度も触られない。
-  (assert (= (events-of world "b")
+  (assert (= (! (events-of world "b"))
              [#("start" "b" "rev1") #("signal" "b" "term") #("reap" "b" "stopped")]))
   (setv b-signal (lfor e world.events :if (= (cut e 0 2) #("signal" "b")) (get e 3)))
   (assert (>= (get b-signal 0) 3000))
@@ -88,8 +94,8 @@
 (deftest test-unreadable-declaration-does-not-stop-jobs
   (setv world (FakeWorld)
         script #(#(0 (DesiredJobs #(A1))) #(500 (DesiredUnreadable "JSON が壊れています"))))
-  (<- ((fake-host world script 2000) (run-worker POLICY)))
-  (assert (= (events-of world "a") [#("start" "a" "rev1") #("signal" "a" "term") #("reap" "a" "stopped")]))
+  (<- (fake-host world script 2000 (run-worker POLICY)))
+  (assert (= (! (events-of world "a")) [#("start" "a" "rev1") #("signal" "a" "term") #("reap" "a" "stopped")]))
   (setv signal-at (get (lfor e world.events :if (= (get e 0) "signal") (get e 3)) 0))
   (assert (>= signal-at 2000))
   ;; 読めない宣言の理由を状態表示に載せる。
@@ -98,8 +104,8 @@
 (deftest test-stubborn-job-escalates-and-unkillable-is-reported
   (setv world (FakeWorld :ignore-term #("a" "b") :unkillable #("b"))
         script #(#(0 (DesiredJobs #(A1 B1)))))
-  (<- final WorkerState ((fake-host world script 500) (run-worker POLICY)))
-  (setv a-events (events-of world "a"))
+  (<- final WorkerState (fake-host world script 500 (run-worker POLICY)))
+  (setv a-events (! (events-of world "a")))
   (assert (= a-events [#("start" "a" "rev1") #("signal" "a" "term") #("signal" "a" "kill") #("reap" "a" "stopped")]))
   ;; b は KILL でも終わらない。worker は猶予の後に諦めて終わり、停止未確認として報告する。
   (assert (in "b" world.procs))

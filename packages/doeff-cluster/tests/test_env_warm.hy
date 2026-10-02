@@ -239,12 +239,17 @@
   key)
 
 
-(defn #^ WorkerInfo worker-of [#^ str name #^ tuple provides #^ int seen #^ tuple [ready #()] #^ str [capacity "ok"] #^ int [load-capacity 2]]
+(defk worker-of [name provides seen [ready #()] [capacity "ok"] [load-capacity 2]]
+  {:pre [(: name str) (: provides tuple) (: seen int) (: ready tuple) (: capacity str) (: load-capacity int)] :post [(: % WorkerInfo)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "名乗った worker の事実(準備済みの root の鍵 ready・root の置き場の余地 capacity)を、盤の状態に置く形で組むため。"
   (WorkerInfo name provides load-capacity seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
               :env-capacity capacity))
 
 
-(defn #^ TaskRecord env-task [#^ str id #^ dict declared #^ tuple [needs #("net")]]
+(defk env-task [id declared [needs #("net")]]
+  {:pre [(: id str) (: declared dict) (: needs tuple)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "実行環境の宣言 declared を持つ task の行を、盤の状態に置く形で組むため。"
   (TaskRecord id "" SAMPLE-TASK-PROGRAM "" #() needs 60000 60000 0 :runtime-env declared))
 
 
@@ -350,14 +355,14 @@
 (deftest test-placement-prefers-a-warm-worker-and-marks-a-cold-start
   (<- declared dict (declared-of "app-1"))
   (<- key str (key-on declared "linux-x86_64"))
-  (val task (env-task "t1" declared))
+  (val task (! (env-task "t1" declared)))
   ;; 準備済みの w2 を、名前順で先の w1(空き同じ)より優先する
-  (val warm-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0) "w2" (worker-of "w2" #("net") 0 :ready #(key))}
+  (val warm-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}
                                 :tasks {"t1" task}))
   (val placed (get (place-tasks 10 warm-state {} TIMING) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "w2")) placed)
   ;; 準備済みが無ければ置くが phase は preparing(assigned と分ける)で、冷たい起動を数える
-  (val cold-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" task}))
+  (val cold-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks {"t1" task}))
   (val cold (get (place-tasks 10 cold-state {} TIMING) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks {"t1" cold}))
@@ -372,7 +377,7 @@
 
 (deftest test-cold-starts-are-counted-in-the-metrics
   (<- declared dict (declared-of "app-1"))
-  (<- placed tuple (program-placed (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)}
+  (<- placed tuple (program-placed (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks {"t1" (! (env-task "t1" declared))}
                                                  :next-task 2)
                                    {} :now 10))
   (val submitted (responded (get placed 0) (http-request "POST" "/tasks" {}
@@ -386,13 +391,13 @@
 (deftest test-an-exhausted-worker-gets-no-task-whose-env-it-has-not-prepared
   (<- declared dict (declared-of "app-1"))
   (<- key str (key-on declared "linux-x86_64"))
-  (val task (env-task "t1" declared))
-  (val two (ClusterState :workers {"w1" (worker-of "w1" #("net") 0 :capacity "exhausted") "w2" (worker-of "w2" #("net") 0)}
+  (val task (! (env-task "t1" declared)))
+  (val two (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}
                          :tasks {"t1" task}))
   (assert (= (. (get (place-tasks 10 two {} TIMING) "t1") worker) "w2") "空きの尽きた worker を避ける")
-  (val only (ClusterState :workers {"w1" (worker-of "w1" #("net") 0 :capacity "exhausted")} :tasks {"t1" task}))
+  (val only (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))} :tasks {"t1" task}))
   (assert (= (. (get (place-tasks 10 only {} TIMING) "t1") phase) "queued") "置ける先が無ければ待つ")
-  (val ready (ClusterState :workers {"w1" (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key))} :tasks {"t1" task}))
+  (val ready (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))} :tasks {"t1" task}))
   (assert (= (. (get (place-tasks 10 ready {} TIMING) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
 
 

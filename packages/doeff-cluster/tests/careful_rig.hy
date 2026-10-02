@@ -15,7 +15,7 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff [run with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -190,9 +190,12 @@
   (sum (gfor line lines :if (.startswith line "sync ") (int (get (.split line "downloads=") 1)))))
 
 
-(defn #^ object run-envs [#^ EnvSettings settings #^ object program]  ; defk にできない: 検が Program の外から本物の答え手の組で 1 回走らせる入口
-  "筋書きの Program を env-host と本物の答え手の下で 1 回の run で回す(with-handlers の並びは先頭が外側 — 準備の記録は外側の state が持つ)。"
-  (run (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings)] program)))
+(defk run-envs [settings program]
+  {:pre [(: settings EnvSettings) (: program Program)] :post [(: % (| float CodeView None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書きの Program を env-host と本物の答え手の下で回し、その答えを返すため(with-handlers の並びは先頭が外側 — 準備の記録は外側の
+   state が持つ)。"
+  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings)] program))
+  answer)
 
 
 (defk settled-env [key]
@@ -224,7 +227,8 @@
   "worker と同じ口(PrepareEnv)で root を準備し、READY か FAILED の観測(CodeView)まで待つ。"
   (<- key str (env-key env (current-platform)))
   (<- declared dict (runtime-env->json env))
-  (run-envs rig.envs (prepared-env (+ "env-" key) (json.dumps declared :sort-keys True :ensure-ascii False))))
+  (<- view CodeView (run-envs rig.envs (prepared-env (+ "env-" key) (json.dumps declared :sort-keys True :ensure-ascii False))))
+  view)
 
 
 (defk run-task [rig env task-id [versions None] [around #()]]
@@ -247,7 +251,7 @@
                        tasks))
   (<- key str (env-key env (current-platform)))
   (<- root str (env-root rig.envs (+ "env-" key)))
-  (val ended (run-on-host rig.host (job-ended spec root DEADLINE-SECONDS) :around around))
+  (val ended (! (run-on-host rig.host (job-ended spec root DEADLINE-SECONDS) :around around)))
   (val result (/ tasks (+ task-id ".result")))
   (assert (.is-file result) (.format "子が結果を書かなかった(終了 {})— log: {}" ended.exit-code
                                      (.read-text (next (.glob (/ rig.state "logs") (+ "task_" task-id "*"))) :errors "replace")))

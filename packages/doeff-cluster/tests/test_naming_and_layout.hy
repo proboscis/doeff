@@ -98,7 +98,7 @@
   (.write-text (/ tree "probe_entry.py")
                (+ "import os, pathlib\npathlib.Path(" (repr (str out)) ").write_text(os.environ['PYTHONPATH'] + '|' + os.getcwd())\n"))
   (<- settings (host-settings tmp-path :layout (CodeLayout :base-paths #("/opt/base"))))
-  (setv pid (run-on-host settings (started-and-reaped (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) tree out)))
+  (setv pid (! (run-on-host settings (started-and-reaped (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) tree out))))
   (setv [pythonpath cwd] (.split (.read-text out) "|"))
   (assert (= pythonpath (+ (str tree) ":/opt/base")))
   (assert (= cwd (str tree)))

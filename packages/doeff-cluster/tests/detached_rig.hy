@@ -70,8 +70,9 @@
     (setv #^ (get set str) self.done #{})))
 
 
-(defn #^ dict task-args [#^ tuple args]
-  "task の job の引数(\"task\" \"--result\" P)→ {欄: 値}。詰めた Program は引数でなく spec.program(置き場のキー)で運ばれる。"
+(defk task-args [args]
+  {:pre [(: args tuple)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "task の job の引数(\"task\" \"--result\" P)を {欄: 値} に読むため。詰めた Program は引数でなく spec.program(置き場のキー)で運ばれる。"
   (dfor i (range 1 (len args) 2) (cut (get args i) 2 None) (get args (+ i 1))))
 
 
@@ -92,7 +93,7 @@
           (raise))
         (except [error Exception]
           (:= outcome (failed-from error)))))
-  (.write-text (Path (get (task-args spec.args) "result")) (encode-outcome outcome) :encoding "ascii")
+  (.write-text (Path (get (! (task-args spec.args)) "result")) (encode-outcome outcome) :encoding "ascii")
   (.add worker.done spec.name)
   True)
 

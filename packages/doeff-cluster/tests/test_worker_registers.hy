@@ -102,7 +102,7 @@
   {:pre [(: tmp-path Path) (: old-store bool)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator と worker を本物の process で起こし、worker が名乗ることを確かめる(old-store = 旧い形の行を持つ置き場から起こす)。"
   (when old-store (<- (seed-old-store tmp-path)))
-  (val served (start-coordinator tmp-path))
+  (val served (! (start-coordinator tmp-path)))
   (val url (get served 0))
   (var worker None)
   (try

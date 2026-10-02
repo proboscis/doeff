@@ -3,8 +3,7 @@
 (require doeff-hy.macros [deftest defk deff <- val var])
 (import json)
 (import httpx)
-(import doeff [run with-handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff [with-handlers])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.worker.entry.drain_main [coordinator-calls])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell])
@@ -39,21 +38,23 @@
   answers)
 
 
-(defn #^ list called [#^ httpx.BaseTransport transport #^ RouteCell cell #^ int times]  ; defk にできない: 検が Program の外から 1 回走らせる入口
-  "同じ口で GET /workers/w を times 回問い、答えの列を返す。"
-  (run (scheduled (with-handlers [(transport-http transport) (sim-time-handler :clock (SimClock)) (coordinator-calls cell TEST-ROUTE)]
-                                 (calls times)))))
+(defk called [transport cell times]
+  {:pre [(: transport httpx.BaseTransport) (: cell RouteCell) (: times int)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "同じ口で GET /workers/w を times 回問い、答えの列を返すため(transport の後ろの検の HTTP の答え手と模擬の時計の下)。"
+  (<- answers list (with-handlers [(transport-http transport) (sim-time-handler :clock (SimClock)) (coordinator-calls cell TEST-ROUTE)]
+                                  (calls times)))
+  answers)
 
 
 (deftest test-the-calls-answer-the-status-and-body-and-keep-the-route
   (val cell (RouteCell (CoordinatorRoute :urls #(LAN TAILNET) :active 0 :switched-at-ms 0)))
-  (val answers (called (httpx.MockTransport answered) cell 2))
+  (val answers (! (called (httpx.MockTransport answered) cell 2)))
   (assert (= (get answers 0) {"status" 200 "body" {"path" "/workers/w" "actor" "test-sender"}}) answers)
   (assert (= (get answers 1) (get answers 0)) answers)
   ;; 届いた宛先(tailnet)を次の要求の宛先にする。
   (assert (= cell.route.active 1) cell.route)
   ;; 本文が dict でない断りは空の本文・どこにも届かなければ理由の値。
-  (val refusal (get (called (httpx.MockTransport refused) (RouteCell (CoordinatorRoute :urls #(TAILNET) :active 0 :switched-at-ms 0)) 1) 0))
+  (val refusal (get (! (called (httpx.MockTransport refused) (RouteCell (CoordinatorRoute :urls #(TAILNET) :active 0 :switched-at-ms 0)) 1)) 0))
   (assert (= refusal {"status" 404 "body" {}}) refusal)
-  (val nowhere (get (called (httpx.MockTransport answered) (RouteCell (CoordinatorRoute :urls #(LAN) :active 0 :switched-at-ms 0)) 1) 0))
+  (val nowhere (get (! (called (httpx.MockTransport answered) (RouteCell (CoordinatorRoute :urls #(LAN) :active 0 :switched-at-ms 0)) 1)) 0))
   (assert (in "error" nowhere) nowhere))

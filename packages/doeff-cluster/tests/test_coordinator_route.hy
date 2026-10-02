@@ -2,7 +2,7 @@
 ;;; 宛先の相手は HttpRequest に筋書きで答える fake(宛先ごとの答えの列)・時計は doeff-time の仮想の時計(sim-time-handler)。
 ;;; 失敗ケース: 接続できない時だけ次の宛先へ回る(途中の時間切れでは回らない)・先頭の試し直し・全部に届かない時の一巡し直しの間・
 ;;; 何度送っても同じ要求の期限までの送り直し。
-(require doeff-hy.macros [deftest defhandler <- val])
+(require doeff-hy.macros [deftest defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with-handlers])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
@@ -19,18 +19,21 @@
 (val OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
 
 
-(defn #^ HttpResponse ok [#^ str url]
-  "200 の返事(本文は空の JSON)。"
+(defk ok [url]
+  {:pre [(: url str)] :post [(: % HttpResponse)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "宛先 url が 200 の返事(本文は空の JSON)を返す筋書きを組むため。"
   (HttpResponse 200 {} b"{}" "{}" url 0.01))
 
 
-(defn #^ HttpFailed refused [#^ str url]
-  "接続できない失敗(要求はまだ相手に届いていない)。"
+(defk refused [url]
+  {:pre [(: url str)] :post [(: % HttpFailed)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "宛先 url に接続できない失敗(要求はまだ相手に届いていない)の筋書きを組むため。"
   (HttpFailed :url url :detail "ConnectError: refused" :kind HttpFailureKind.CONNECT-FAILED))
 
 
-(defn #^ HttpFailed read-timed-out [#^ str url]
-  "読みの時間切れ(要求は届いたかもしれない)。"
+(defk read-timed-out [url]
+  {:pre [(: url str)] :post [(: % HttpFailed)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "宛先 url の読みの時間切れ(要求は届いたかもしれない)の筋書きを組むため。"
   (HttpFailed :url url :detail "ReadTimeout: timed out" :kind HttpFailureKind.TIMED-OUT))
 
 
@@ -48,7 +51,7 @@
   (val clock (clock-at START-MS))
   (<- route CoordinatorRoute (route-of (+ LAN "," NET) START-MS))
   (<- reply RoutedReply (with-handlers [(sim-time-handler :clock clock)
-                                        (scripted-coordinator {LAN [(refused LAN)] NET [(ok NET)]} calls)]
+                                        (scripted-coordinator {LAN [(! (refused LAN))] NET [(! (ok NET))]} calls)]
                                        (routed-request route "GET" "/board" OPTIONS {"prefix" "a/"} None)))
   (assert (isinstance reply.answer HttpResponse) reply)
   (assert (= reply.route.active 1) reply.route)
@@ -56,7 +59,7 @@
   (assert (= (get calls 0 1) "job@w1/1") calls)
   ;; 次の要求は回った先から試す(LAN を試し直さない — recheck-ms の前)。
   (<- again RoutedReply (with-handlers [(sim-time-handler :clock clock)
-                                        (scripted-coordinator {LAN [(refused LAN)] NET [(ok NET)]} calls)]
+                                        (scripted-coordinator {LAN [(! (refused LAN))] NET [(! (ok NET))]} calls)]
                                        (routed-request reply.route "GET" "/board" OPTIONS None None)))
   (assert (= (lfor c (cut calls 2 None) (get c 0)) [NET]) calls)
   (assert (= again.route.active 1) again.route))
@@ -67,7 +70,7 @@
   (val calls [])
   (<- route CoordinatorRoute (route-of (+ LAN "," NET) START-MS))
   (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (clock-at START-MS))
-                                        (scripted-coordinator {LAN [(read-timed-out LAN)] NET [(ok NET)]} calls)]
+                                        (scripted-coordinator {LAN [(! (read-timed-out LAN))] NET [(! (ok NET))]} calls)]
                                        (routed-request route "PUT" "/board/k" OPTIONS None {"value" 1})))
   (assert (isinstance reply.answer HttpFailed) reply)
   (assert (= reply.answer.kind HttpFailureKind.TIMED-OUT) reply)
@@ -86,7 +89,7 @@
   ;; 先頭に戻れる時は戻る。
   (val calls [])
   (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (clock-at (+ START-MS 61000)))
-                                        (scripted-coordinator {LAN [(ok LAN)] NET [(ok NET)]} calls)]
+                                        (scripted-coordinator {LAN [(! (ok LAN))] NET [(! (ok NET))]} calls)]
                                        (routed-request on-net "GET" "/state" OPTIONS None None)))
   (assert (= reply.route.active 0) reply.route)
   (assert (= (lfor c calls (get c 0)) [LAN]) calls))
@@ -98,7 +101,7 @@
   (<- route CoordinatorRoute (route-of (+ LAN "," NET) START-MS))
   (<- reply RoutedReply (with-handlers [(sim-time-handler :clock (clock-at START-MS))
                                         (count-delays delays)
-                                        (scripted-coordinator {LAN [(refused LAN)] NET [(refused NET)]} calls)]
+                                        (scripted-coordinator {LAN [(! (refused LAN))] NET [(! (refused NET))]} calls)]
                                        (routed-request route "GET" "/board" OPTIONS None None)))
   (assert (= (len calls) 6) calls)
   (assert (= delays [0.25 0.5]) delays)
@@ -112,13 +115,13 @@
   (<- route CoordinatorRoute (route-of LAN START-MS))
   (<- answered RoutedReply (with-handlers [(sim-time-handler :clock (clock-at START-MS))
                                            (count-delays delays)
-                                           (scripted-coordinator {LAN [(read-timed-out LAN) (read-timed-out LAN) (ok LAN)]} calls)]
+                                           (scripted-coordinator {LAN [(! (read-timed-out LAN)) (! (read-timed-out LAN)) (! (ok LAN))]} calls)]
                                           (resent-request route "GET" "/board" OPTIONS None None 25.0 0.5)))
   (assert (isinstance answered.answer HttpResponse) answered)
   (assert (= (len calls) 3) calls)
   (val clock (clock-at START-MS))
   (<- gave-up RoutedReply (with-handlers [(sim-time-handler :clock clock)
-                                          (scripted-coordinator {LAN [(read-timed-out LAN)]} [])]
+                                          (scripted-coordinator {LAN [(! (read-timed-out LAN))]} [])]
                                          (resent-request route "GET" "/board" OPTIONS None None 2.0 0.5)))
   (assert (isinstance gave-up.answer HttpFailed) gave-up)
   (assert (<= (- (clock-ms clock) START-MS) 2000) (clock-ms clock)))

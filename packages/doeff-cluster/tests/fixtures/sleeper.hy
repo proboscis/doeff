@@ -1,6 +1,7 @@
 ;;; worker の smoke 用の job。拍を file へ書き続け、SIGTERM で後始末して終わる。
 ;;;
 ;;; 引数: <拍の file> [--ignore-term] [--grandchild]
+(require doeff-hy.macros [deff])
 (import os)
 (import signal)
 (import subprocess)
@@ -12,7 +13,9 @@
 (defclass Flag []
   (defn #^ None __init__ [self] (setv self.stopping False)))
 
-(defn #^ None main []
+(deff main []  ; defk にできない: 子の process の入口(`__main__` が素の関数として呼ぶ)
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "main"}}
+  "worker の smoke 用の job の本体: 拍を file へ書き続け、SIGTERM で後始末して終わるため。"
   (setv beat (Path (get sys.argv 1)) flag (Flag))
   (defn #^ None on-term [#^ int signum #^ (| FrameType None) frame] (setv flag.stopping True))
   (signal.signal signal.SIGTERM (if (in "--ignore-term" sys.argv) signal.SIG-IGN on-term))

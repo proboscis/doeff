@@ -15,7 +15,7 @@
 (import urllib.parse [parse-qsl])
 (import pathlib [Path])
 (import httpx)
-(import doeff [Program run with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -61,8 +61,9 @@
     n))
 
 
-(defn #^ LinkRig watching-link [#^ FakeCoordinator coordinator #^ Path tmp #^ bool [watch True]]
-  "待ちを使う(watch)本物の口を偽の coordinator へ向けて作る。"
+(defk watching-link [coordinator tmp [watch True]]
+  {:pre [(: coordinator FakeCoordinator) (: tmp Path) (: watch bool)] :post [(: % LinkRig)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "待ちを使う(watch)本物の口を、偽の coordinator へ向けて作るため。"
   (LinkRig "http://coord" "w" #() 1 20000 :task-dir (str (/ tmp "tasks")) :transport (httpx.MockTransport coordinator.handle) :watch watch))
 
 
@@ -75,11 +76,14 @@
     (resume answer)))
 
 
-(defn #^ object on-link [#^ LinkRig link #^ object scenario]  ; defk にできない: 検が Program の外から 1 回走らせる入口
-  "筋書きを、口の handler と検の答え手と非同期の時計の下で 1 回の run で回す(待ちの背景の task が筋書きの Delay の間に進む)。"
-  (run (scheduled (with-handlers [(await-handler) (async-time-handler) (transport-http link.transport) yielding-http os-file-handler slog-handler
-                                  (coordinator-link link.state link.cell LINK-ROUTE link.watch-cell)]
-                                 scenario))))
+(defk on-link [link scenario]
+  {:pre [(: link LinkRig) (: scenario Program)] :post [(: % (| bool tuple list dict None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書きを、口の handler と検の答え手と非同期の時計の下で回し、その答えを返すため(待ちの背景の task が筋書きの Delay の間に進む)。
+   scheduler は内側にもう 1 つ置く — 待ちの背景の task は筋書きの終わりで一緒に終わり、deftest の scheduler へ漏れない。"
+  (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler) (transport-http link.transport) yielding-http os-file-handler slog-handler
+                                        (coordinator-link link.state link.cell LINK-ROUTE link.watch-cell)]
+                                       scenario)))
+  answer)
 
 
 (defk polls [times]
@@ -111,8 +115,8 @@
 (deftest test-a-reply-without-a-revision-keeps-a-heartbeat-every-tick [tmp-path]
   ;; 版の欄の無い返事(待つ口の無い旧い coordinator)には背景の task を起こさず、拍ごとに送る。
   (val coordinator (FakeCoordinator "unchanged" :revision None))
-  (val link (watching-link coordinator tmp-path))
-  (on-link link (polls 5))
+  (val link (! (watching-link coordinator tmp-path)))
+  (<- (on-link link (polls 5)))
   (assert (= (.beat-count coordinator) 5) coordinator.beats)
   (assert (not link.state.watch.running))
   (assert (= coordinator.watches 0)))
@@ -129,8 +133,8 @@
 
 (deftest test-a-missing-watch-route-falls-back-to-a-heartbeat-every-tick [tmp-path capsys]
   (val coordinator (FakeCoordinator "missing"))
-  (val link (watching-link coordinator tmp-path))
-  (assert (on-link link (missing-route link)))
+  (val link (! (watching-link coordinator tmp-path)))
+  (assert (! (on-link link (missing-route link))))
   (assert (= (.beat-count coordinator) 5) coordinator.beats)
   (assert (in "待ちの口が無い" (. (.readouterr capsys) err))))
 
@@ -151,8 +155,8 @@
 (deftest test-a-confirmed-watch-skips-beats-inside-the-interval [tmp-path]
   ;; 待ちが答えた後: 間隔(100 ms)の内の拍は送らず、間隔が過ぎた拍で送る。反例 — 待ちを使わない口は拍ごとに送る。
   (val coordinator (FakeCoordinator "unchanged"))
-  (val link (watching-link coordinator tmp-path))
-  (val got (on-link link (confirmed-skips link coordinator)))
+  (val link (! (watching-link coordinator tmp-path)))
+  (val got (! (on-link link (confirmed-skips link coordinator))))
   (val watching (get got 0))
   (val inside (get got 1))
   (val total (get got 2))
@@ -162,8 +166,8 @@
   (assert (>= total 1) total)
   (assert stopped)
   (val plain (FakeCoordinator "unchanged"))
-  (val every (watching-link plain (/ tmp-path "plain") :watch False))
-  (on-link every (polls 3))
+  (val every (! (watching-link plain (/ tmp-path "plain") :watch False)))
+  (<- (on-link every (polls 3)))
   (assert (= (.beat-count plain) 3) plain.beats)
   (assert (not every.state.watch.running)))
 
@@ -182,8 +186,8 @@
 (deftest test-a-changed-watch-makes-the-next-tick-beat [tmp-path]
   ;; 待ちが「変わった」と答えたら、間隔の内でも次の拍で送る(desired の変化に拍 1 つの内に起きる)。
   (val coordinator (FakeCoordinator "changed"))
-  (val link (watching-link coordinator tmp-path))
-  (val got (on-link link (changed-beats link coordinator)))
+  (val link (! (watching-link coordinator tmp-path)))
+  (val got (! (on-link link (changed-beats link coordinator))))
   (val woken (get got 0))
   (val sent (get got 1))
   (val lowered (get got 2))
@@ -204,8 +208,8 @@
 (deftest test-a-dead-watch-task-is-told-and-falls-back [tmp-path capsys]
   ;; 背景の task が思わぬ例外で止まれば理由を出し、拍は気づいて拍ごとの heartbeat に戻る(黙って待ちを失わない)。
   (val coordinator (FakeCoordinator "broken"))
-  (val link (watching-link coordinator tmp-path))
-  (val got (on-link link (dead-watch link coordinator)))
+  (val link (! (watching-link coordinator tmp-path)))
+  (val got (! (on-link link (dead-watch link coordinator))))
   (val dead (get got 0))
   (val sent (get got 1))
   (assert dead)
@@ -254,8 +258,8 @@
   ;; 待ちの「変わった」で 1 度だけ鳴り、次の読みは新しい呼び鈴を添える。同じ眠りの間に変化が重なっても鳴らすのは 1 度(#2692)。
   ;; 反例: 呼び鈴を拍ごとに作る形は 1 つ目と 2 つ目の番号が違う・鳴らした呼び鈴を手放さない形は 2 度目で例外。
   (val coordinator (FakeCoordinator "gated"))
-  (val link (watching-link coordinator tmp-path))
-  (val got (on-link link (coalesced-bells link coordinator)))
+  (val link (! (watching-link coordinator tmp-path)))
+  (val got (! (on-link link (coalesced-bells link coordinator))))
   (val second (get got 0))
   (val first (get got 1))
   (val third (get got 2))

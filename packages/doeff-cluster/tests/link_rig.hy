@@ -2,20 +2,20 @@
 ;;; 本番と同じ入れ物 LinkState と宛先の入れ物を持ち、操作ごとに本番の Program(worker/protocol/coordinator_link)を 1 回の run で回す。
 ;;; 送りは検の HTTP の答え手 transport-http(transport を渡さなければ本物の網の transport)、file は本物の os-file-handler、時計は実時間。
 ;;; 名指しの待ちの背景の task は run をまたいで生きない — 待ちの性質は 1 回の run の筋書きで確かめる(test_heartbeat_link)。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [deff defk <- val])
 (import os)
 (import typing)
 (import time)
 (import uuid)
 (import pathlib [Path])
 (import httpx)
-(import doeff [run with-handlers])
+(import doeff [EffectBase Program run with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
-(import doeff_cluster.worker.intent.worker_model [ReadDesired])
+(import doeff_cluster.worker.intent.worker_model [ReadDesired DesiredJobs DesiredUnreadable])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link accepted-tasks fetched-programs status-rows])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import tests.transport_http [transport-http])
@@ -26,9 +26,11 @@
 (val LINK-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0 :recheck-ms 60000 :actor "test-worker"))
 
 
-(defn #^ RouteCell cell-of [#^ str url]  ; defk にできない: 組み立て(Program を走らせる前)が handler の引数を作る準備
-  "宛先の指定(`,` で並べた URL)から宛先の入れ物を作る。"
-  (RouteCell (run (route-of url 0))))
+(defk cell-of [url]
+  {:pre [(: url str)] :post [(: % RouteCell)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "宛先の指定(`,` で並べた URL)から、口の handler に渡す宛先の入れ物を作るため。"
+  (<- route CoordinatorRoute (route-of url 0))
+  (RouteCell route))
 
 
 (defclass LinkRig []
@@ -40,12 +42,12 @@
     (setv now-ms (int (* 1000 (time.time))))
     (setv self.state (LinkState name provides capacity fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
                                 :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch)
-          self.cell (cell-of url) self.watch-cell (cell-of url)
+          self.cell (run (cell-of url)) self.watch-cell (run (cell-of url))
           self.transport (or transport (httpx.HTTPTransport))))
 
   (defn #^ object on-link [self #^ object program]
     "program を口の handler と検の答え手の下で 1 回走らせる(本体は run-on-link)。"
-    (run-on-link self program))
+    (run (scheduled (run-on-link self program))))
 
   (defn #^ object poll [self]
     "拍 1 つの ReadDesired(root の名乗りは今の state.env-report のまま)。"
@@ -54,13 +56,13 @@
   ;; defk を呼んだ結果の Program は method の引数でなく run-on-link(Program を受けて走らせる関数)へ渡す — method の引数は答えとして
   ;; 使う所と区別できない(DOEFF126・#2821 の案 A-1 で検の dir も判じるようになった)。
   (defn #^ tuple accept-tasks [self #^ list tasks]
-    (run-on-link self (accepted-tasks self.state tasks)))
+    (run (scheduled (run-on-link self (accepted-tasks self.state tasks)))))
 
   (defn #^ None accept-programs [self #^ tuple specs]
-    (run-on-link self (fetched-programs self.state self.cell LINK-ROUTE specs)))
+    (run (scheduled (run-on-link self (fetched-programs self.state self.cell LINK-ROUTE specs)))))
 
   (defn #^ list report [self #^ tuple statuses]
-    (run-on-link self (status-rows self.state statuses)))
+    (run (scheduled (run-on-link self (status-rows self.state statuses)))))
 
   (defn #^ Path program-dir [self]
     (Path self.state.program-dir))
@@ -70,11 +72,15 @@
     (get self.cell.route.urls self.cell.route.active)))
 
 
-(defn #^ object run-on-link [#^ LinkRig rig #^ object program]
-  "program(defk を呼んだ結果の Program か effect)を rig の口の handler と検の答え手の下で 1 回走らせる。"
-  (run (scheduled (with-handlers [(await-handler) (transport-http rig.transport) os-file-handler slog-handler (sync-time-handler)
-                                  (coordinator-link rig.state rig.cell LINK-ROUTE rig.watch-cell)]
-                                 program))))
+(defk run-on-link [rig program]
+  {:pre [(: rig LinkRig) (: program (| Program EffectBase))] :post [(: % (| tuple list dict DesiredJobs DesiredUnreadable None))]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "program(defk を呼んだ結果の Program か effect)を rig の口の handler と検の答え手の下で回し、その答えを返すため(scheduler は呼び手が
+   被せる — LinkRig の method は (run (scheduled …)) で 1 回走らせる)。"
+  (<- answer (with-handlers [(await-handler) (transport-http rig.transport) os-file-handler slog-handler (sync-time-handler)
+                             (coordinator-link rig.state rig.cell LINK-ROUTE rig.watch-cell)]
+                            program))
+  answer)
 
 
 (deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str typing.Any)) versions]  ; defk にできない: 検が Program の外で file を置く道具
