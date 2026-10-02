@@ -743,7 +743,9 @@
     },
     {
       "allow": [
-        "doeff-cluster-kube-model"
+        "doeff-cluster-kube-model",
+        "doeff-hy-json-value",
+        "doeff-hy-frozen"
       ],
       "layer": "io",
       "name": "doeff-cluster-kube-handlers",
@@ -759,7 +761,10 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-hy-table",
+        "doeff-cluster-cluster-model"
+      ],
       "layer": "domain",
       "name": "doeff-cluster-kube-model",
       "paths": [
@@ -1495,7 +1500,8 @@
         "doeff-cluster-record-spec",
         "doeff-cluster-drain-policy",
         "doeff-cluster-promise-wait",
-        "doeff-cluster-watch-policy"
+        "doeff-cluster-watch-policy",
+        "doeff-cluster-kube-model"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

@@ -523,7 +523,7 @@
 ;; 資源の版も保存の行も動かない。k8s の JSON を型へ解くのは答え手(coordinator/protocol/kube)の 1 点で、core は型の値だけを読む。
 
 (defwire DeploymentReading
-  "k8s の Deployment を読んだ答え 1 つ(ReadDeployment の答え — Rollout が見る欄だけ): spec-replicas = 宣言の台数・replicas /
+  "k8s の Deployment を読んだ答え 1 つ(読みの束の答え — protocol/kube が k8s の JSON から解く・Rollout が見る欄だけ): spec-replicas = 宣言の台数・replicas /
    ready-replicas / available-replicas / updated-replicas = status の台数・generation = 宣言の世代・observed-generation = controller が
    見た世代・annotations = metadata.annotations(中を読まない — 資源の画面へそのまま写すだけ)。欄の名と順は GET /resources/Rollout の
    status.observed の行の形と同じ(coordinator/protocol/replies が dump で綴る)ので、既定値を持たせない(dump は既定値の欄を省く)。"

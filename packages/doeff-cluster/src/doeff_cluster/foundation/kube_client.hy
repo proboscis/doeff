@@ -1,14 +1,15 @@
 ;;; k8s の API の client(Pod の中から ServiceAccount の token で叩く汎用の I/O)。HTTP の client はこの module の中に閉じる。
 ;;; coordinator の kube_model の effect に答える handler は coordinator/protocol/kube.hy — この module は intent の型を読まない
 ;;; (層 foundation が読めるのは foundation だけ)ので、届かない・断られた時に投げる例外の型は組み立てる側(entry)が :fail で渡す。
-;;; Deployment の読みは API の JSON の本文を返すだけ — 観測の欄の読みは答え手の側(coordinator/protocol/kube.hy の deployment-view・
-;;; #2764)。
+;;; Deployment と Node の読みは API の JSON の本文を中を読まずに運ぶ値(OpaqueJson)で返すだけ — 観測の欄の読みは答え手の側
+;;; (coordinator/protocol/kube.hy の deployment-view・#2764・#2807)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import pathlib [Path])
 (import typing [Callable])
 (import httpx)
+(import doeff_hy.json_value [OpaqueJson])
 
 
 (setv SA-DIR "/var/run/secrets/kubernetes.io/serviceaccount")
@@ -48,13 +49,14 @@
       (raise (self.fail (.format "k8s の API が {} を返した: {}" response.status-code (cut response.text 0 300)))))
     (.json response))
 
-  (defn #^ dict node-labels [self #^ str node]
-    "Node の metadata.labels(能力の導出の材料)。"
-    (or (get (get (.call self "GET" (.format "{}/api/v1/nodes/{}" self.base node)) "metadata") "labels") {}))
+  (defn #^ OpaqueJson node-labels [self #^ str node]
+    "Node の metadata.labels(能力の導出の材料)を、中を読まずに運ぶ JSON の値で返す(解くのは coordinator/protocol/kube — #2807)。"
+    (OpaqueJson.of (or (get (get (.call self "GET" (.format "{}/api/v1/nodes/{}" self.base node)) "metadata") "labels") {})))
 
-  (defn #^ dict read [self #^ str namespace #^ str name]
-    "Deployment の object(API の JSON の本文のまま)。"
-    (.call self "GET" (.path self namespace name)))
+  (defn #^ OpaqueJson read [self #^ str namespace #^ str name]
+    "Deployment の object(API の JSON の本文)を、中を読まずに運ぶ JSON の値で返す(解くのは coordinator/protocol/kube の
+     deployment-view — #2764・#2807)。"
+    (OpaqueJson.of (.call self "GET" (.path self namespace name))))
 
   (defn #^ int scale [self #^ str namespace #^ str name #^ int replicas #^ bool dry-run]
     (setv body (.call self "PATCH" (.path self namespace name "/scale")

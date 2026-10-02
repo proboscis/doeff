@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.protocol.store [DurableStore durable-exists durable-load durable-persist durable-checkpoint])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.core.resource_policy [adopt-legacy])
-(import doeff_cluster.coordinator.protocol.kube [kube-api kube-unavailable] doeff_cluster.foundation.kube_client [KubeClient] doeff_cluster.coordinator.intent.kube_model [KubeUnavailable])
+(import doeff_cluster.coordinator.protocol.kube [KubeReadBatches kube-api kube-unavailable] doeff_cluster.foundation.kube_client [KubeClient] doeff_cluster.coordinator.intent.kube_model [KubeUnavailable])
 ;; HTTP の受付と停止の合図(coordinator_inbox — 以前の coordinator.hy の再輸出は #2022 で消した)。
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState])
 (import doeff_cluster.coordinator.entry.handler_sets [production-handlers])
@@ -132,10 +132,11 @@
   (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
   (.start inbox)
   ;; k8s の API は Pod の ServiceAccount の token が在る時だけ(手元の coordinator では Rollout の Deployment の観測が Unknown のまま)。
-  ;; 読みも台数の変更も 3 秒で打ち切る(読むのは進行中の Rollout の相手だけ・1 秒に 1 回)。
+  ;; 読みも台数の変更も 3 秒で打ち切る(読むのは進行中の Rollout の相手だけ・1 秒に 1 回)。読みは調停ループの外の thread で走り、
+  ;; ループは待たない(KubeReadBatches — 読みが詰まっても heartbeat に答え続ける・#2807)。
   (setv kube (if (KubeClient.available)
-                 (kube-api (KubeClient KubeUnavailable :timeout 3.0))
-                 (kube-unavailable "k8s の ServiceAccount の token が無い(Pod の外の coordinator)")))
+                 (kube-api (KubeClient KubeUnavailable :timeout 3.0) (KubeReadBatches))
+                 (kube-unavailable "k8s の ServiceAccount の token が無い(Pod の外の coordinator)" (KubeReadBatches))))
   (print (.format "coordinator: :{} で受けます(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {})"
                   args.port (len state.jobs) (len state.tasks) (len state.board) (len state.rollouts) state.revision
                   (if (KubeClient.available) "あり" "なし")) :file sys.stderr :flush True)

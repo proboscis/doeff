@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (val MODULE-TAGS {:context "coordinator" :role "main"})
 (import copy)
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
@@ -26,8 +26,9 @@
 
 
 (defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
-  "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。"
-  [(await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies
+  "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。slog-handler = 調停ループの 1 行の
+   報告(k8s の読みが答えない時の名指し — #2807)を stderr へ出す。"
+  [slog-handler (await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies
    durable-states reply-bodies])
 
 
@@ -73,5 +74,6 @@
 (defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube #^ list [watchers []]]
   "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
    (coordinator_inbox.StopState)。watchers = 置き場への書き(Persist)と要求の受け渡しを見張る handler の列(sim の落ちの注入と呼び鈴 —
-   本番の組と同じく保存の綴り durable-states をいちばん内側に置くので、見張りはその外で KV の差分を見る)。"
-  [(stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies #* watchers durable-states reply-bodies])
+   本番の組と同じく保存の綴り durable-states をいちばん内側に置くので、見張りはその外で KV の差分を見る)。slog-handler = 本番と同じ
+   1 行の報告の答え手。"
+  [slog-handler (stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies #* watchers durable-states reply-bodies])
