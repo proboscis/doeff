@@ -702,16 +702,19 @@ def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps
     result.stdout.fnmatch_lines(["*実行は doeff-vm の歩数で判じる*"])
 
 
-def test_steps_judge_without_the_counter_names_it_and_judges_seconds(pytester: pytest.Pytester) -> None:
+def test_steps_judge_without_the_counter_names_it_and_judges_seconds(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """数の口が無い build では、黙って通さず名指しの警告を出し、CPU 秒で判じる(遅い検は赤)。"""
+    import doeff_vm.doeff_vm as ext
+
     _steps_project(pytester, STEPS_FAIL_INI, {"test_slow": SLOW_CALL}, fake=False)
-    pytester.makeconftest(
-        CONFTEST + PIN_UNCHECKED_VM_BUILD + "\nimport doeff_vm.doeff_vm as _ext\n"
-        "if hasattr(_ext, 'vm_work_counts'):\n    del _ext.vm_work_counts\n"
-    )
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
+    # pytester は同じ process で走るので、口を消すのは monkeypatch で(検の終わりに戻り、後の検に残さない)
+    monkeypatch.delattr(ext, "vm_work_counts", raising=False)
     result = pytester.runpytest("-q", "-W", "default")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*doeff_test_call_budget_steps があるが歩数を測れない*CPU 秒で判じる*"])
+    result.stdout.fnmatch_lines(["実行は CPU 秒で判じる(doeff_test_call_budget_steps があるが歩数を測れない — *vm_work_counts が無い*)"])
 
 
 def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pytester) -> None:
