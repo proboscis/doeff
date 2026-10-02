@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import MARK, generated, stale_in, stub_of
+from doeff_hy.static_stub import MARK, UsedModule, generated, stale_in, stub_of, users_probe
 
 MODULE = """\
 (require doeff-hy.macros [defk deff defhandler val <-])
@@ -155,3 +155,16 @@ def test_a_hand_written_stub_is_not_checked(tmp_path: Path) -> None:
     source.with_suffix(".pyi").write_text("GREETING: str\n", encoding="utf-8")
     assert not generated(source.with_suffix(".pyi"))
     assert stale_in(tmp_path) == ()
+
+
+def test_the_users_probe_binds_each_name_on_its_own_line() -> None:
+    # 名を 1 つの tuple に束ねると、全く分からない名が「型の一部が分からない」に紛れる — 名ごとに別の名へ束ねる。
+    used = (UsedModule("a.b", ("Thing", "make-thing")), UsedModule("c", ("LIMIT",)))
+    assert users_probe("pkg", used).splitlines() == [
+        "(import pkg.a.b [Thing make-thing])",
+        "(import pkg.c [LIMIT])",
+        "",
+        "(setv used-0 Thing)",
+        "(setv used-1 make-thing)",
+        "(setv used-2 LIMIT)",
+    ]
