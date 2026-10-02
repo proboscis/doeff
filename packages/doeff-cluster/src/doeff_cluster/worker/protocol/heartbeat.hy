@@ -3,13 +3,13 @@
 (require doeff-hy.macros [defk deff <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
-(import doeff_cluster.worker.intent.worker_model [CodeState JobStatus])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView JobStatus])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.heartbeat_rules [finished-task-id])
 
 
-(deff env-report [#^ tuple views #^ str capacity]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: views tuple) (: capacity str)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
+(deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: views (get tuple #(CodeView ...))) (: capacity str)] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
   "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
    失敗のキーを env- を外して・disk の条件)にするため。"
   (let [roots (lfor v views :if (.startswith v.revision ENV-KEY-PREFIX) v)
@@ -22,18 +22,20 @@
      "capacity" capacity}))
 
 
-(deff env-heartbeat-part [#^ dict report #^ str platform]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: report dict) (: platform str)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
+(deff env-heartbeat-part [#^ (get dict #(str object)) report #^ str platform]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: report (get dict #(str object))) (: platform str)] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
   "root の姿(env-report)を heartbeat の本文に足す欄(platform・envs・envCapacity)にするため。"
   {"platform" platform
    "envs" {"ready" (get report "ready") "preparing" (get report "preparing") "failed" (get report "failed")}
    "envCapacity" (get report "capacity")})
 
 
-(deff heartbeat-body [* #^ str name #^ tuple provides #^ tuple exclusive #^ str node #^ int capacity #^ dict versions
-                      #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools #^ tuple kept #^ bool [stopping False]]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: name str) (: provides tuple) (: exclusive tuple) (: node str) (: capacity int) (: versions dict) (: statuses list)
-         (: endpoint str) (: boot str) (: boot-at int) (: tools dict) (: kept tuple) (: stopping bool)] :post [(: % dict)]
+(deff heartbeat-body [* #^ str name #^ (get tuple #(str ...)) provides #^ (get tuple #(str ...)) exclusive #^ str node #^ int capacity
+                      #^ (get dict #(str str)) versions #^ (get list (get dict #(str object))) statuses #^ str endpoint #^ str boot #^ int boot-at
+                      #^ (get dict #(str object)) tools #^ (get tuple #(str ...)) kept #^ bool [stopping False]]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str) (: capacity int)
+         (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
+         (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)] :post [(: % (get dict #(str object)))]
    :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印・止まり始め)を作るため。実行環境の root の名乗り(env-body)は
    本番の worker だけが足す。kept = 途絶しても動かし続けてよい印を今持っている job の名(worker_policy.keep-marks-held — #2804)。欄を毎回
@@ -48,10 +50,11 @@
 
 
 (defk status-report [statuses task-echo results]
-  {:pre [(: statuses tuple) (: task-echo dict) (: results dict)] :post [(: % list)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  {:pre [(: statuses (get tuple #(JobStatus ...))) (: task-echo (get dict #(str (get dict #(str object))))) (: results (get dict #(str (| str None))))]
+   :post [(: % (get list (get dict #(str object))))] :tags {:context "worker" :role "protocol" :spells "json"}}
   "状態の行の列を heartbeat の statuses にするため。終わった task には結果(results の task の id → 詰めた結果の文字列 か None =
    結果なし)を、切り離した task には置かれた時の返事の行(task-echo の id → 行 — 欄 task)を添える。"
-  (<- rows tuple (status-rows-json statuses))
+  (<- rows (get tuple #((get dict #(str object)) ...)) (status-rows-json statuses))
   (lfor #(s row) (zip statuses rows)
     :setv echo (if (.startswith s.name "task/") (.get task-echo (cut s.name 5 None)) None)
     :setv row (if (is echo None) row (| row {"task" echo}))
@@ -60,17 +63,17 @@
 
 
 (defk status-rows-json [statuses]
-  {:pre [(: statuses tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  {:pre [(: statuses (get tuple #(JobStatus ...)))] :post [(: % (get tuple #((get dict #(str object)) ...)))] :tags {:context "worker" :role "protocol" :spells "json"}}
   "状態の行の列を、行ごとの JSON の形(status-row)の列に綴るため(heartbeat の statuses と状態の file の jobs が同じ綴りを使う)。"
   (var rows #())
   (for [s statuses]
-    (<- row dict (status-row s))
+    (<- row (get dict #(str object)) (status-row s))
     (:= rows (+ rows #(row))))
   rows)
 
 
 (defk status-row [s]
-  {:pre [(: s JobStatus)] :post [(: % dict)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  {:pre [(: s JobStatus)] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol" :spells "json"}}
   "状態の行 1 つを、heartbeat と状態の file が載せる JSON の形に綴るため。"
   {"name" s.name "phase" s.phase.value "desiredRevision" s.desired-revision
    "runningRevision" s.running-revision "pid" s.pid "attempts" s.attempts "detail" s.detail
