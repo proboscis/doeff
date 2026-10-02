@@ -91,7 +91,7 @@
   {:pre [(: replies tuple) (: asks tuple)] :post [(: % ClientRun)] :tags {:context "records" :role "foundation"}}
   "計器を渡した endpoint の client を台本 replies の上で走らせ、ClientRun を run の結果として返すため。client に渡す計器と、断面を
    読む外側の計器は、同じ run の中の同じ答え手(memory-meter-handler の断面は run ごとに 1 つ)。"
-  (val endpoint (RecordsEndpoint "http://records.test" "token" :meter (memory-meter-handler (MeterSettings))))
+  (val endpoint (RecordsEndpoint "http://records.test" :meter (memory-meter-handler (MeterSettings))))
   (run (scheduled (with-handlers [(state) (memory-meter-handler (MeterSettings)) (scripted-records-http (list replies))
                                   (http-records-handler endpoint)]
                                  (metered-asks endpoint asks)))))
@@ -122,7 +122,7 @@
 
 (deftest test-an-endpoint-without-a-meter-emits-no-meter-effect
   ;; 計器を渡さない endpoint(今の使い手の形)は計器の effect を出さない — 計器の答え手を並べずに走り切る(出せば答え手の無い effect で落ちる)。
-  (val endpoint (RecordsEndpoint "http://records.test" "token"))
+  (val endpoint (RecordsEndpoint "http://records.test"))
   (val answers (run (scheduled (with-handlers [(state) (scripted-records-http [UNREACHABLE WRITTEN]) (http-records-handler endpoint)]
                                               (unmetered-asks endpoint #(WRITE WRITE))))))
   (assert (= answers #("Unreachable" "Written")) answers))
