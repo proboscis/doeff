@@ -1490,7 +1490,8 @@
         "doeff-cluster-state-json",
         "doeff-cluster-coordinator-replies",
         "doeff-cluster-record-spec",
-        "doeff-cluster-drain-policy"
+        "doeff-cluster-drain-policy",
+        "doeff-cluster-promise-wait"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -1584,6 +1585,7 @@
       "allow": [
         "doeff-cluster-clock",
         "doeff-cluster-job-model",
+        "doeff-cluster-promise-wait",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy"
       ],

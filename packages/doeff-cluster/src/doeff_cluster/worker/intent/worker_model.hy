@@ -13,6 +13,7 @@
 (import dataclasses [dataclass field])
 (import enum [Enum])
 (import doeff [EffectBase])
+(import doeff_core_effects.scheduler [Future])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 
@@ -178,7 +179,10 @@
   (setv #^ int stable-run-ms 60000)
   ;; コードの準備に失敗した版を作り直すまでの間(失敗が続く版で git と焼きを毎拍撃たない)。
   (setv #^ int code-retry-ms 30000)
-  (setv #^ float tick-seconds 0.5))
+  ;; 拍と拍の間の眠りの上限。宣言の変化の呼び鈴(DesiredJobs.changed)が鳴れば、上限を待たずに次の拍へ進む(#2692)。
+  (setv #^ float tick-seconds 0.5)
+  ;; 呼び鈴で起きる時も、拍の終わりからこの秒は空ける(変化が途切れなく続いても拍は 1 秒に 1 / wake-gap-seconds 回まで — #2692)。
+  (setv #^ float wake-gap-seconds 0.1))
 
 
 (defclass [(dataclass :frozen True)] JobStatus []
@@ -206,7 +210,11 @@
 (defclass [(dataclass :frozen True)] DesiredJobs []
   (#^ tuple jobs)
   ;; 温める env の列(WarmEnv — coordinator の温める表のうち、この worker の label に合う行)。宣言の file で動く worker は空。
-  (setv #^ tuple warm #()))
+  (setv #^ tuple warm #())
+  ;; 宣言の変化の呼び鈴(#2692): この読みの後に宣言が変わった(名指しの待ちが「変わった」と答えた)時に満ちる Future。拍の間の眠りは
+  ;; これと tick-seconds を競わせ、変化を次の拍の境まで待たない。None = 変化を知らせる口が無い(拍ごとに読む宿・待ちの口の無い
+  ;; coordinator)— 眠りは tick-seconds。値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
+  (setv #^ (| Future None) changed (field :default None :compare False)))
 
 
 (defclass [(dataclass :frozen True)] DesiredUnreadable []

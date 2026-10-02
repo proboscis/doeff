@@ -140,7 +140,7 @@
 (import doeff_cluster.worker.protocol.declared [declared-job-spec task-spec] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import doeff_cluster.worker.protocol.coordinator_link [watch-params])
+(import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.job_context [RunContext worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import doeff_cluster.worker.entry.job_entry [decoded-program])
@@ -529,7 +529,9 @@
    sent-statuses = 前に届けた状態の報告・beat-interval-ms = 送る間隔・watch-after = 次の名指しの待ちの版(返事に版が無ければ None)・
    watch-confirmed = 待ちが 1 度答えた・watch-unsupported = 待つ口が無い(404)・woken = 待ちが「変わった」と答えた印・beat-bells =
    heartbeat が届いた時に鳴らす呼び鈴(起こした後の待ちが次の版を待つ)・watch-failure = 待ちの task が思わぬ例外で止まった理由
-   (在れば拍ごとの heartbeat に戻る — 本番の coordinator への口の watching? が thread の死に気づくのと同じ)。"
+   (在れば拍ごとの heartbeat に戻る — 本番の coordinator への口の watching? が thread の死に気づくのと同じ)・tick-bell = 拍の間の
+   眠りを起こす呼び鈴(#2692 — 待ちが「変わった」と答えた時に鳴らして手放し、次の宣言の読みが新しく掛ける。鳴るまでは拍をまたいで
+   同じ物を渡す)。"
   (#^ str boot)
   (#^ int boot-at)
   (#^ tuple processes)
@@ -554,7 +556,8 @@
   (setv #^ bool watch-unsupported False)
   (setv #^ bool woken False)
   (setv #^ tuple beat-bells #())
-  (setv #^ (| str None) watch-failure None))
+  (setv #^ (| str None) watch-failure None)
+  (setv #^ (| Promise None) tick-bell None))
 
 
 (defrecord HostTruthChange
@@ -1462,6 +1465,20 @@
   None)
 
 
+(defk armed-tick-bell [name boot truth watching]
+  {:pre [(: name str) (: boot str) (: truth HostTruth) (: watching bool)] :post [(: % (| Promise None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "拍の間の眠りを宣言の変化で起こす呼び鈴を返すため(#2692 — 本番の coordinator への口の WatchCell.bell と同じ意味)。待ちの口を使えて
+   いない世代は None(拍ごとに heartbeat を送るので起こしは要らない)。まだ鳴っていない呼び鈴が在ればそれを渡し(拍ごとに作らない —
+   呼び鈴を作り直すのは鳴った後だけ)、無ければ新しく掛ける。"
+  (cond
+    (not watching) None
+    (is-not truth.tick-bell None) truth.tick-bell
+    True (do (<- bell Promise (CreatePromise))
+             (<- (change-live-truth name boot (fn [t] (replace t :tick-bell bell))))
+             bell)))
+
+
 (defhandler sim-host [#^ SimWorker worker #^ str boot]
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 同じ組の中で worker ごと・世代ごとに別の宿を並べる(run-worker は自分の名も世代も effect で問わない)ので Ask で
@@ -1477,10 +1494,14 @@
                        (is truth.watch-failure None)))
     (val due (heartbeat-due watching truth.fresh truth.woken (!= truth.statuses truth.sent-statuses) (- now truth.last-ok-ms)
                             (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms)))
-    (if due
-        (do (<- desired (| DesiredJobs DesiredUnreadable) (heartbeat worker boot))
-            (resume desired))
-        (resume (DesiredJobs truth.last-desired :warm truth.last-warm))))
+    ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
+    (<- bell (| Promise None) (armed-tick-bell worker.name boot truth watching))
+    (var read (DesiredJobs truth.last-desired :warm truth.last-warm))
+    (when due
+      (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot))
+      (:= read beaten))
+    (<- belled (| DesiredJobs DesiredUnreadable) (with-bell read bell))
+    (resume belled))
   (ObserveWorld []
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
@@ -1590,7 +1611,14 @@
                              False
                              (do (<- (Delay WATCH-RETRY-SECONDS))
                                  True)))
-    WatchKind.CHANGED (do (<- changed HostTruthChange (ChangeHostTruth name boot False (fn [truth] (replace truth :watch-confirmed True :woken True))))
+    ;; 「変わった」は拍に heartbeat を送らせ(woken)、拍の間の眠りの呼び鈴を鳴らして手放す(#2692 — 鳴らすのは書いた後: 世界の節は
+    ;; session の書きを scheduler の切り替わる effect より前に済ませる)。
+    WatchKind.CHANGED (do (<- changed HostTruthChange
+                              (ChangeHostTruth name boot False
+                                               (fn [truth] (replace truth :watch-confirmed True :woken True :tick-bell None))))
+                          (val bell changed.before.tick-bell)
+                          (when (and (is-not changed.after None) (is-not bell None))
+                            (<- (CompletePromise bell True)))
                           (is-not changed.after None))
     WatchKind.UNCHANGED (do (<- changed HostTruthChange
                                 (ChangeHostTruth name boot False

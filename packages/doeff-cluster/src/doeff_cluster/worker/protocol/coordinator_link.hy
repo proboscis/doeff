@@ -13,12 +13,13 @@
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import json)
+(import dataclasses [replace])
 (import os)
 (import pathlib [Path])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree file-done])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
-(import doeff_core_effects.scheduler [Spawn])
+(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
@@ -38,10 +39,12 @@
   "名指しの待ちの背景の task と拍が分ける値(#1933 — beat_policy)。after = 次の待ちの版(前の heartbeat の返事の版)・confirmed = 待ちが
    1 度答えた(口を確かめた)・unsupported = 待つ口が無い(404)・woken = 待ちが「変わった」と答えた印・beats = 届いた heartbeat の数
    (待ちが「変わった」の後、heartbeat が版を進めたかを見る)・running = 背景の task が走っている・closing = 止めの合図・failure = 背景の
-   task が止まった理由・told = 最後に出した 1 行の鍵。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   task が止まった理由・told = 最後に出した 1 行の鍵・bell = 拍の間の眠りを起こす呼び鈴(#2692 — 待ちが「変わった」と答えた時に鳴らして
+   手放し、次の宣言の読みが新しく掛ける。鳴るまでは拍をまたいで同じ物を渡す)。scheduler の task は 1 つの thread で交互に走るので錠は
+   要らない。"
   (defn #^ None __init__ [self]
     (setv self.after None self.confirmed False self.unsupported False self.woken False self.beats 0 self.running False
-          self.closing False self.failure "" self.told None)))
+          self.closing False self.failure "" self.told None self.bell None)))
 
 
 (defclass LinkState []
@@ -232,6 +235,40 @@
   None)
 
 
+(defk bell-rung [watch]
+  {:pre [(: watch WatchCell)] :post [(: % None)]}
+  "待ちが「変わった」と答えた時に、拍の間の眠りを起こす呼び鈴を鳴らして手放すため(#2692 — 眠っている拍が tick-seconds を待たずに
+   起きて heartbeat を送る)。1 回の眠りの間に変化が何度来ても鳴るのは掛かっていた 1 つだけ(次の宣言の読みが新しく掛ける)。"
+  (val bell watch.bell)
+  (when (is-not bell None)
+    (setv watch.bell None)
+    (<- (CompletePromise bell True)))
+  None)
+
+
+(defk armed-bell [state]
+  {:pre [(: state LinkState)] :post [(: % (| Promise None))]}
+  "拍の間の眠りを宣言の変化で起こす呼び鈴を返すため(#2692)。待ちの口を使えていない間は None(拍ごとに heartbeat を送るので起こしは
+   要らない)。まだ鳴っていない呼び鈴が在ればそれを渡し(拍ごとに作らない)、無ければ新しく掛ける。"
+  (<- watching bool (watching? state))
+  (val watch state.watch)
+  (cond
+    (not watching) None
+    (is-not watch.bell None) watch.bell
+    True (do (<- bell Promise (CreatePromise))
+             (setv watch.bell bell)
+             bell)))
+
+
+(defk with-bell [read bell]
+  {:pre [(: read (| DesiredJobs DesiredUnreadable)) (: bell (| Promise None))] :post [(: % (| DesiredJobs DesiredUnreadable))]}
+  "宣言の読みに拍の間の眠りを起こす呼び鈴を添えるため(読めた宣言だけ — 読めない時は拍の上限まで眠る)。この口と sim の宿が同じ添え方を
+   使う(#2692)。"
+  (match #(read bell)
+    #((DesiredJobs) (Promise)) (replace read :changed bell.future)
+    _ read))
+
+
 (defk watch-loop [state cell options]
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions)] :post [(: % None)]}
   "背景の task の本体: 前の heartbeat の版の後の変化を待ち、「変わった」なら拍に heartbeat を送らせ(woken)、その heartbeat が版を進めるまで
@@ -254,6 +291,7 @@
                       (<- (Delay WATCH-RETRY-SECONDS)))
                 (= reading.kind WatchKind.CHANGED)
                   (do (setv watch.confirmed True watch.woken True)
+                      (<- (bell-rung watch))
                       (<- (woken-held watch watch.beats)))
                 True
                   (do (setv watch.confirmed True)
@@ -355,8 +393,11 @@
     ;; heartbeat に載せる root の名乗りは、拍の Program が root の言い換えに問うて欄で渡す(#2467・#2427)。
     (when state.handles-envs
       (setv state.env-report env-report))
+    ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
+    (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))
-    (resume desired))
+    (<- belled (| DesiredJobs DesiredUnreadable) (with-bell desired bell))
+    (resume belled))
   (PublishStatus [statuses note]
     ;; 状態は次の heartbeat で送る。file にも書くので、同じ効果を外側の status-file へ回す。
     (<- rows list (status-rows state statuses))
