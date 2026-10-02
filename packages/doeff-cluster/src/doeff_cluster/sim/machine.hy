@@ -11,7 +11,11 @@
 ;;; 筋書きが出せる effect(machine-answers が答える):
 ;;;   ReadCoordinator path        coordinator の口の GET の本文(sim と同じ)。
 ;;;   ReadinessOf 名              GET /resources/Service/<名> の status の ready(無ければ Missing — sim と同じ答え)。
-;;;   KillWorker 名               worker の process を SIGKILL で落とす(答え = 落とした数 — もう居なければ 0)。
+;;;   AwaitReadiness 名 状態 秒    ReadinessOf と同じ読みを WAIT-PROBE-SECONDS ごとにして、状態になるか秒を過ぎるまで待つ(過ぎたら
+;;;                              ReadinessWaitExpired — 本物の coordinator は長い待ちの読みを持たないので、detached-cluster の
+;;;                              AwaitProcessEnded と同じく境界の handler が読む・#3053)。
+;;;   AwaitJobProcess job 除く 秒  GET /state に起こした worker が名乗った job の pid のうち、除く pid の外の物が出るまで同じ間隔で待つ。
+;;;   KillWorker 名              worker の process を SIGKILL で落とす(答え = 落とした数 — もう居なければ 0)。
 ;;;   StopWorker 名               worker を優雅に止める(SIGTERM → stop-grace 秒 → SIGKILL・抜けるまで待つ)。
 ;;;   StopCoordinator 秒          coordinator を優雅に止め、秒の間止めてから同じ置き場で作り直し、起き上がるまで待って答える。
 ;;;   CrashCoordinator 秒         coordinator を SIGKILL で落とし(返事をせずに落ちる)、秒の後に同じ置き場で作り直して答える。
@@ -56,13 +60,16 @@
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
-                                                     CrashCoordinator Redeclare Crash])
+                                                     CrashCoordinator Redeclare Crash AwaitReadiness ReadinessWaitExpired
+                                                     AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 
 ;; 配備と同じ起動の script(packages/doeff-cluster/deploy/boot.sh — この file は src/doeff_cluster/sim/ に在る)。
 (val BOOT-SCRIPT (str (/ (get (. (Path __file__) parents) 3) "deploy" "boot.sh")))
 ;; 起き上がりを問い直す間隔・SIGKILL の後に回収を問い直す間隔(秒)。
 (val PROBE-SECONDS 0.2)
+;; AwaitReadiness・AwaitJobProcess が coordinator を読み直す間隔(秒 — 筋書きの待ちは数十秒なので、読みの CPU を小さく保つ)。
+(val WAIT-PROBE-SECONDS 1.0)
 ;; Redeclare が宣言の書きに載せる送り手の名(宣言の CLI の --actor と同じ役 — 出来事の記録に残る名)。
 (val MACHINE-ACTOR "local-machine")
 
@@ -315,6 +322,59 @@
   None)
 
 
+(defk readiness-read [url name]
+  {:pre [(: url str) (: name str)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /resources/Service/<name> から準備の状態を読むため(ReadinessOf と AwaitReadiness の読み — 無ければ Missing)。"
+  (<- answer (HttpRequest "GET" (+ url "/resources/Service/" (url-quote name :safe "")) :timeout-seconds 10.0 :max-retries 0
+                          :failures-as-values True))
+  (when (not (isinstance answer HttpResponse))
+    (raise (RuntimeError (+ "coordinator に届かない: Service " name " — " (repr answer)))))
+  (if (= answer.status 200)
+      (do (val status (get (json.loads answer.text) "status"))
+          (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
+      (ServiceReadiness :state "Missing" :reason answer.text)))
+
+
+(defk readiness-awaited [url name state seconds]
+  {:pre [(: url str) (: name str) (: state str) (: seconds float)] :post [(: % (| ServiceReadiness ReadinessWaitExpired))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitReadiness に答えるため: 本物の coordinator は長い待ちの読みを持たないので、境界のこの handler が WAIT-PROBE-SECONDS ごとに
+   準備の状態を読み、state になるか seconds を過ぎたら答える(過ぎたら最後に読んだ状態を添えた ReadinessWaitExpired)。"
+  (<- first ServiceReadiness (readiness-read url name))
+  (var seen first)
+  (var waited 0.0)
+  (while (and (!= seen.state state) (< waited seconds))
+    (<- (Delay WAIT-PROBE-SECONDS))
+    (:= waited (+ waited WAIT-PROBE-SECONDS))
+    (<- again ServiceReadiness (readiness-read url name))
+    (:= seen again))
+  (if (= seen.state state)
+      seen
+      (ReadinessWaitExpired :name name :state state :last seen :waited-seconds waited)))
+
+
+(defk job-process-awaited [url cell job excluding seconds]
+  {:pre [(: url str) (: cell MachineCell) (: job str) (: excluding (get tuple #(int ...))) (: seconds float)]
+   :post [(: % (| JobProcessSeen JobProcessWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitJobProcess に答えるため: coordinator の GET /state に起こした worker が名乗った job の pid のうち、excluding の外の物(小さい順の
+   最初)が出るまで WAIT-PROBE-SECONDS ごとに読む(seconds を過ぎたら JobProcessWaitExpired・届かない読みは名乗り無しと数える)。"
+  (var found None)
+  (var waited 0.0)
+  (while (and (is found None) (<= waited seconds))
+    (<- state (| dict None) (state-of url))
+    (when (is-not state None)
+      (<- jobs tuple (running-jobs state job (tuple (lfor role cell.roles :if (!= role.name "coordinator") role))))
+      (val fresh (sorted (gfor one jobs :if (not-in one.pid excluding) one.pid)))
+      (when fresh
+        (:= found (get fresh 0))))
+    (when (is found None)
+      (<- (Delay WAIT-PROBE-SECONDS))
+      (:= waited (+ waited WAIT-PROBE-SECONDS))))
+  (if (is found None)
+      (JobProcessWaitExpired :job job :excluding excluding :waited-seconds waited)
+      (JobProcessSeen :job job :pid found)))
+
+
 ;; 引数に残す理由: 宛先の URL・役の入れ物・置き方は、この handler を積む組み立て(local-machine-cluster)が LocalMachine から作る
 ;; 値で、読む Ask の鍵が無い(本番の宛先の部品は RouteCell を引数で受ける — detached-cluster と同じ)。
 (defhandler machine-answers [#^ str url #^ MachineCell cell #^ LocalMachine machine]
@@ -326,14 +386,14 @@
                 (json.loads answer.text)
                 (PlainText answer.text))))
   (ReadinessOf [name]
-    (<- answer (HttpRequest "GET" (+ url "/resources/Service/" (url-quote name :safe "")) :timeout-seconds 10.0 :max-retries 0
-                            :failures-as-values True))
-    (when (not (isinstance answer HttpResponse))
-      (raise (RuntimeError (+ "coordinator に届かない: Service " name " — " (repr answer)))))
-    (resume (if (= answer.status 200)
-                (do (val status (get (json.loads answer.text) "status"))
-                    (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
-                (ServiceReadiness :state "Missing" :reason answer.text))))
+    (<- readiness ServiceReadiness (readiness-read url name))
+    (resume readiness))
+  (AwaitReadiness [name state timeout-seconds]
+    (<- awaited (| ServiceReadiness ReadinessWaitExpired) (readiness-awaited url name state (float timeout-seconds)))
+    (resume awaited))
+  (AwaitJobProcess [job excluding timeout-seconds]
+    (<- seen (| JobProcessSeen JobProcessWaitExpired) (job-process-awaited url cell job excluding (float timeout-seconds)))
+    (resume seen))
   (Redeclare [system]
     (<- versions dict (this-process-versions))
     (val declaration (system-declaration system machine.revision :runtime-env machine.runtime-env :versions versions))

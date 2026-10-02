@@ -51,6 +51,11 @@ from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopC
 from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
 from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
 from doeff_cluster.shared.intent.cluster_control import Crash as Crash
+from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
+from doeff_cluster.shared.intent.cluster_control import ReadinessWaitExpired as ReadinessWaitExpired
+from doeff_cluster.shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
+from doeff_cluster.shared.intent.cluster_control import JobProcessSeen as JobProcessSeen
+from doeff_cluster.shared.intent.cluster_control import JobProcessWaitExpired as JobProcessWaitExpired
 from doeff_cluster.sim.local import SimWorker as SimWorker
 from doeff_cluster.sim.local import ReadCoordinator as ReadCoordinator
 from doeff_cluster.sim.local import CutWorker as CutWorker
@@ -60,6 +65,7 @@ from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 BOOT_SCRIPT: str
 PROBE_SECONDS: float
+WAIT_PROBE_SECONDS: float
 MACHINE_ACTOR: str
 
 class MachineCannotAnswer(Exception):
@@ -147,6 +153,15 @@ def job_crashed(job: JobProcess) -> _Program[int, object]:
     ...
 
 def coordinator_remade(url: str, cell: MachineCell, machine: LocalMachine, down_seconds: float) -> _Program[None, object]:
+    ...
+
+def readiness_read(url: str, name: str) -> _Program[ServiceReadiness, object]:
+    ...
+
+def readiness_awaited(url: str, name: str, state: str, seconds: float) -> _Program[ServiceReadiness | ReadinessWaitExpired, object]:
+    ...
+
+def job_process_awaited(url: str, cell: MachineCell, job: str, excluding: tuple[int, ...], seconds: float) -> _Program[JobProcessSeen | JobProcessWaitExpired, object]:
     ...
 
 def machine_answers(url: str, cell: MachineCell, machine: LocalMachine) -> _Handler:

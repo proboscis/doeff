@@ -39,7 +39,9 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [StopProcess ProcessExited])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash])
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash
+                                                     AwaitReadiness ReadinessWaitExpired AwaitJobProcess JobProcessSeen
+                                                     JobProcessWaitExpired])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import tests.fixtures.machine_app [pings machine-foundation])
@@ -271,70 +273,45 @@
   (replace machine :revision repo.sha :runtime-env env))
 
 
-(defk ready-within [name seconds]
-  {:pre [(: name str) (: seconds float)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: Service name の準備の状態が Ready になるまで問い直すため(seconds を過ぎたら最後の答えを返す)。"
-  (<- first ServiceReadiness (ReadinessOf name))
-  (var seen first)
-  (var waited 0.0)
-  (while (and (!= seen.state "Ready") (< waited seconds))
-    (<- (Delay 0.5))
-    (:= waited (+ waited 0.5))
-    (<- again ServiceReadiness (ReadinessOf name))
-    (:= seen again))
-  seen)
-
-
-(defk job-pids [name]
-  {:pre [(: name str)] :post [(: % (get tuple #(int ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: coordinator の /state に worker が名乗っている job name の pid を並べるため。"
-  (<- state (ReadCoordinator "/state"))
-  (tuple (sorted (gfor status (.values (.get state "statuses" {}))
-                       row (.get status "jobs" [])
-                       :if (and (= (.get row "name") name) (isinstance (.get row "pid") int))
-                       (get row "pid")))))
-
-
-(defk pids-other-than [name before seconds]
-  {:pre [(: name str) (: before (get tuple #(int ...))) (: seconds float)] :post [(: % (get tuple #(int ...)))]
-   :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: job name に before に無い pid が名乗られるまで問い直すため(before が空なら、pid が 1 つでも名乗られるまで — 答え = その時の pid)。"
-  (<- first tuple (job-pids name))
-  (var seen first)
-  (var waited 0.0)
-  (while (and (not (- (set seen) (set before))) (< waited seconds))
-    (<- (Delay 0.5))
-    (:= waited (+ waited 0.5))
-    (<- again tuple (job-pids name))
-    (:= seen again))
-  seen)
-
-
 (defrecord CrashAnswers
-  "筋書き declared-and-crashed の答え: declared = Redeclare の答え・first-ready = 宣言の後の準備の状態・before = 落とす前の job の pid・
-   crashed = Crash の答え・after = 起こし直した後の job の pid・ready-again = 起こし直した後の準備の状態。"
+  "筋書き declared-and-crashed の答え: declared = Redeclare の答え・first = 宣言の後の準備の待ちの答え・before = 最初の process の待ちの
+   答え・crashed = Crash の答え・after = 起こし直しの次の process の待ちの答え・again = その後の準備の待ちの答え・never-ready = 来ない
+   状態(Missing)の待ちの答え・no-restart = 落としていない job の次の process の待ちの答え(後の 2 つは失敗ケース — 期限で値が返る)。"
   (#^ (get tuple #(str ...)) declared)
-  (#^ str first-ready)
-  (#^ (get tuple #(int ...)) before)
+  (#^ (| ServiceReadiness ReadinessWaitExpired) first)
+  (#^ (| JobProcessSeen JobProcessWaitExpired) before)
   (#^ int crashed)
-  (#^ (get tuple #(int ...)) after)
-  (#^ str ready-again))
+  (#^ (| JobProcessSeen JobProcessWaitExpired) after)
+  (#^ (| ServiceReadiness ReadinessWaitExpired) again)
+  (#^ (| ServiceReadiness ReadinessWaitExpired) never-ready)
+  (#^ (| JobProcessSeen JobProcessWaitExpired) no-restart))
+
+
+(defk seen-pid [seen]
+  {:pre [(: seen (| JobProcessSeen JobProcessWaitExpired))] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "待ちの答えから process の pid を引くため(名乗られずに期限が来ていれば、その答えを名指して止める — 後の待ちの前提が崩れている)。"
+  (match seen
+    (JobProcessSeen :pid pid) pid
+    (JobProcessWaitExpired) (raise (AssertionError (+ "job の process が名乗られない: " (repr seen))))))
 
 
 (defk declared-and-crashed [system]
   {:pre [(: system System)] :post [(: % CrashAnswers)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 系を宣言して Ready を待ち、job を落として worker が起こし直す(pid が替わる)のを見て、もう一度 Ready を待つため。"
+  "筋書き: 系を宣言して Ready を待ち、job を落として worker が起こし直す(pid が替わる)のを見て、もう一度 Ready を待つため。最後に、
+   来ない状態と起きない次の process を短く待って、期限で値が返ることを見る(読み直しのループは書かない — 待つのは cluster の handler・#3053)。"
   ;; 待ちの上限は、壊した答え手で assert が pytest の打ち切り(60 秒)より先に鳴る長さ(普通の走りは全体で十数秒)。
   (<- declared tuple (Redeclare system))
-  (<- first ServiceReadiness (ready-within JOB 30.0))
-  ;; Ready にならなければ落とさずに答える(落とす前提が崩れている — 検はその場の答えで赤になる)。
-  (when (!= first.state "Ready")
-    (return (CrashAnswers :declared declared :first-ready first.state :before #() :crashed 0 :after #() :ready-again first.state)))
-  (<- before tuple (pids-other-than JOB #() 10.0))
+  (<- first (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 30.0))
+  (<- before (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #() 10.0))
+  (<- before-pid int (seen-pid before))
   (<- crashed int (Crash JOB))
-  (<- after tuple (pids-other-than JOB before 20.0))
-  (<- again ServiceReadiness (ready-within JOB 15.0))
-  (CrashAnswers :declared declared :first-ready first.state :before before :crashed crashed :after after :ready-again again.state))
+  (<- after (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #(before-pid) 20.0))
+  (<- after-pid int (seen-pid after))
+  (<- again (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 15.0))
+  (<- never (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Missing" 2.0))
+  (<- none (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #(after-pid) 2.0))
+  (CrashAnswers :declared declared :first first :before before :crashed crashed :after after :again again :never-ready never
+                :no-restart none))
 
 
 ;; 壊した答え手: Redeclare に、宣言を coordinator へ送らずに「宣言した物は無い」と答える(宣言を忘れた手元の 1 台の代役)。
@@ -364,10 +341,13 @@
   (val system (pings machine-foundation))
   (<- answers CrashAnswers (local-machine-cluster (declared-and-crashed system) :machine machine))
   (assert (= answers.declared #(JOB)) answers)
-  (assert (= answers.first-ready "Ready") answers)
+  (assert (and (isinstance answers.first ServiceReadiness) (= answers.first.state "Ready")) answers)
   (assert (= answers.crashed 1) answers)
-  (assert (and answers.after (not (& (set answers.before) (set answers.after)))) answers)
-  (assert (= answers.ready-again "Ready") answers)
+  (assert (and (isinstance answers.after JobProcessSeen) (!= answers.after.pid answers.before.pid)) answers)
+  (assert (and (isinstance answers.again ServiceReadiness) (= answers.again.state "Ready")) answers)
+  ;; 失敗ケース: 来ない状態・起きない次の process の待ちは、期限で値が返る(黙って待ち続けない)。
+  (assert (and (isinstance answers.never-ready ReadinessWaitExpired) (= answers.never-ready.last.state "Ready")) answers.never-ready)
+  (assert (isinstance answers.no-restart JobProcessWaitExpired) answers.no-restart)
   (<- left tuple (leftover tmp-path))
   (assert (= left #()) left))
 

@@ -61,7 +61,10 @@
 ;;;   AwaitProcessStarted 名    その job の最初の process が起きるまで待ち、その記録を返す(世界が process を記録した時に起きる)。
 ;;;   AwaitProcessEnded 名      契約の effect(process_model.hy — 本番は detached-cluster が coordinator を読んで答える)。sim では世界が
 ;;;                             答え、job の今の最後の process の終わりを世界が書いた時に待ち手の Promise を満たす(読み直さない)。
-;;;   SharedRows 頭             coordinator の盤の行(鍵が頭で始まる物)。
+;;;   AwaitReadiness 名 状態 秒  契約の effect(cluster_control.hy)。ReadinessOf と同じ読みを、模擬の coordinator が書き終えた時(Persist)
+;;;                             にだけ 1 回し直し、状態になるか秒を過ぎたら答える(時計の刻みでは読み直さない・#3053)。
+;;;   AwaitJobProcess job 除く 秒 契約の effect。job の process のうち pid が除く物の外の最初の物を、世界が process を記録した時に答える。
+;;;   SharedRows 頭            coordinator の盤の行(鍵が頭で始まる物)。
 ;;;   ReadCoordinator path      coordinator の口の GET の本文(/state・/workers/<名>・/metrics など)。
 ;;;   StopCoordinator 秒        coordinator の Pod を優雅に止め(次の拍の止めの合図)、秒の間止めてから作り直す(置き場から読み直す)。
 ;;;   CrashCoordinator 秒       次の Persist を失敗させる(返事をせずに落ちる — 取った要求の送り手には接続の失敗)。秒の後に作り直す。
@@ -176,7 +179,8 @@
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [System Declaration])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare ReadinessOf Crash KillWorker StopWorker
-                                                     StopCoordinator CrashCoordinator])
+                                                     StopCoordinator CrashCoordinator AwaitReadiness ReadinessWaitExpired
+                                                     AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 (import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
@@ -639,6 +643,11 @@
 (defeffect NoteReports
   "coordinator に届いた報告を記録する。"
   {:fields [(: batch tuple)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect NoteCoordinatorWrite
+  "coordinator が置き場への書き(Persist)を終えたことを世界に知らせる — 準備の状態を待つ AwaitReadiness の待ち手を起こす(待ち手は
+   起きた時に 1 回だけ読み直す — 時計の刻みでは読み直さない・#3053)。"
+  {:fields [] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NotePreparation
   "worker の宿が起こした準備を記録する。"
@@ -2062,6 +2071,8 @@
     ;; 書き終えた書きで終わった切り離した task の待ち手を起こす(送り手は読み直さずに待っている — proboscis/doeff#631)。
     (<- parts SimParts (PartsOf))
     (<- (ring-ended-tasks parts.queue writes))
+    ;; 書き終えたことを世界に知らせ、準備の状態を待つ待ち手を起こす(AwaitReadiness — 読み直さずに書きで起きる・#3053)。
+    (<- (NoteCoordinatorWrite))
     (resume None))
   (CoordinatorStopRequested []
     (<- due bool (PauseDue PAUSE-STOP))
@@ -2186,6 +2197,33 @@
   (tuple (gfor row declaration.rows (get row "name"))))
 
 
+;; --- 準備の状態と job の次の process の待ち(AwaitReadiness・AwaitJobProcess — 書きで起こす・#3053)----------------
+
+(defrecord NextWaiter
+  "AwaitJobProcess の待ち手 1 つ(job の process のうち pid が excluding に無い物を待つ — 世界が process を記録した時に起こす)。"
+  (#^ str job)
+  (#^ (get tuple #(int ...)) excluding)
+  (#^ Promise promise))
+
+
+(defk job-process-outside [log job excluding]
+  {:pre [(: log tuple) (: job str) (: excluding (get tuple #(int ...)))] :post [(: % (| SimProcess None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "AwaitJobProcess の待つ相手(job の process のうち pid が excluding に無い最初の物 — 記録の順)が起きていればその記録を、まだなら None
+   を返すため。"
+  (next (gfor r log :if (and (= r.job job) (not-in r.pid excluding)) r) None))
+
+
+(defk readiness-read [link name]
+  {:pre [(: link SimLink) (: name str)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "模擬の coordinator の GET /resources/Service/<name> から準備の状態を読むため(ReadinessOf と AwaitReadiness の読み — 本番と同じ口)。"
+  (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
+  (match (get answer 0)
+    200 (ServiceReadiness :state (get (get answer 1) "status" "ready")
+                          :reason (str (.get (get (get answer 1) "status") "readyReason" "")))
+    _ (ServiceReadiness :state "Missing" :reason (str (get answer 1)))))
+
+
 ;; --- process の終わりの待ち(AwaitProcessEnded — 世界が書きで起こす)---------------------------------------------
 
 (defrecord DueWaiters
@@ -2261,6 +2299,8 @@
   (session var end-waiters {})
   (session var watch-failures #())
   (session var start-waiters {})
+  (session var ready-waiters #())
+  (session var next-waiters #())
   (PlanOf []
     (resume plan))
   (PartsOf []
@@ -2331,6 +2371,18 @@
     (<- first (| SimProcess None) (first-process log process.job))
     (for [promise starting]
       (<- (CompletePromise promise first)))
+    ;; job の次の process を待つ AwaitJobProcess の待ち手のうち、この process の pid が excluding の外の物を起こす(書きで起こす・#3053)。
+    (val woken (tuple (gfor w next-waiters :if (and (= w.job process.job) (not-in process.pid w.excluding)) w)))
+    (:= next-waiters (tuple (gfor w next-waiters :if (not (and (= w.job process.job) (not-in process.pid w.excluding))) w)))
+    (for [w woken]
+      (<- (CompletePromise w.promise (JobProcessSeen :job process.job :pid process.pid))))
+    (resume None))
+  (NoteCoordinatorWrite []
+    ;; coordinator が書き終えた時に、準備の状態を待つ待ち手を全部起こす(起きた待ち手が 1 回だけ読み直す・#3053)。
+    (val rung ready-waiters)
+    (:= ready-waiters #())
+    (for [bell rung]
+      (<- (CompletePromise bell True)))
     (resume None))
   (EndProcess [worker pid ended]
     (<- now int (now-epoch-ms))
@@ -2608,11 +2660,44 @@
                     (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))))
   (ReadinessOf [name]
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
-    (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
-    (resume (match (get answer 0)
-              200 (ServiceReadiness :state (get (get answer 1) "status" "ready")
-                                    :reason (str (.get (get (get answer 1) "status") "readyReason" "")))
-              _ (ServiceReadiness :state "Missing" :reason (str (get answer 1))))))
+    (<- readiness ServiceReadiness (readiness-read link name))
+    (resume readiness))
+  (AwaitReadiness [name state timeout-seconds]
+    ;; 読む前に呼び鈴を掛け(読みと次の書きの間の鳴らしを取りこぼさない)、state でなければ coordinator の次の書き(NoteCoordinatorWrite)
+    ;; か期限で起きて 1 回だけ読み直す。時計の刻みでは読み直さない(#3053)。
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- started int (now-epoch-ms))
+    (var answer None)
+    (while (is answer None)
+      (<- bell Promise (CreatePromise))
+      (:= ready-waiters (+ ready-waiters #(bell)))
+      (<- seen ServiceReadiness (readiness-read link name))
+      (<- now int (now-epoch-ms))
+      (val waited (/ (- now started) 1000.0))
+      (cond
+        (= seen.state state) (:= answer seen)
+        (>= waited timeout-seconds) (:= answer (ReadinessWaitExpired :name name :state state :last seen :waited-seconds waited))
+        True (<- (promise-or-timeout bell.future (- timeout-seconds waited))))
+      ;; 鳴らなかった呼び鈴を外す(期限で起きた Promise を後の書きで 2 度満たさない — 鳴った物は鳴らした側が外している)。
+      (:= ready-waiters (tuple (gfor b ready-waiters :if (is-not b bell) b))))
+    (resume answer))
+  (AwaitJobProcess [job excluding timeout-seconds]
+    ;; 待つ相手が起きていればすぐ答え、それ以外は Promise を掛けて、世界が process を記録した時(NoteProcess)に起きる。読み直さない(#3053)。
+    (<- seen (| SimProcess None) (job-process-outside log job excluding))
+    (cond
+      (is-not seen None)
+        (resume (JobProcessSeen :job job :pid seen.pid))
+      (<= timeout-seconds 0)
+        (resume (JobProcessWaitExpired :job job :excluding excluding :waited-seconds 0.0))
+      True
+        (do (<- promise Promise (CreatePromise))
+            (:= next-waiters (+ next-waiters #((NextWaiter :job job :excluding excluding :promise promise))))
+            (<- answer (promise-or-timeout promise.future timeout-seconds))
+            ;; 期限で起きた待ち手を外す(後の記録で 2 度満たさない — 起こした待ち手は起こした側が外している)。
+            (:= next-waiters (tuple (gfor w next-waiters :if (is-not w.promise promise) w)))
+            (resume (if (is answer None)
+                        (JobProcessWaitExpired :job job :excluding excluding :waited-seconds (float timeout-seconds))
+                        answer)))))
   (SharedRows [prefix]
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- answer tuple (send-shaped link (board-read-request prefix)))
