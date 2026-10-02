@@ -50,6 +50,7 @@
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE])
+(import doeff_records.store_choice [StorePressure PressureUnread])
 
 ;; 置き場に届くかを問う口。/healthz は process の生存だけを答え(liveness — 置き場が落ちている間に再起動を
 ;; 繰り返さない)、/readyz は置き場を問う(readiness)。問いの答えを待つ上限の秒 — 超えたら 503(固まった置き場で口を固めない)。
@@ -88,7 +89,8 @@
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
    検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
    drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
-   READINESS-SECONDS の上限で撃つ・None = 用意が済めば ready — memory の置き場)。"
+   READINESS-SECONDS の上限で撃つ・None = 用意が済めば ready — memory の置き場)・pressure = () → 置き場の詰まりの読み
+   (StorePressure | PressureUnread)の Program(/readyz が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
   (#^ Roster roster)
@@ -98,7 +100,8 @@
   (#^ (| MaintenancePlan None) maintenance)
   (#^ float stop-poll-seconds)
   (#^ float drain-seconds)
-  (setv #^ (| Callable None) readiness None))
+  (setv #^ (| Callable None) readiness None)
+  (setv #^ (| Callable None) pressure None))
 
 
 (defrecord ReadinessTimedOut
@@ -231,23 +234,52 @@
   (ReadinessTimedOut :seconds seconds))
 
 
+(defk store-pressure [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % (| StorePressure PressureUnread))] :tags {:context "records" :role "entry"}}
+  "置き場の詰まりを読むため(#1858): 問いの無い置き場(memory)は錠も transaction も持たないので 0・問いが在れば撃った答え。"
+  (if (is serving.pressure None)
+      (StorePressure :lock-waiters 0 :idle-in-transaction-max-seconds 0.0)
+      (! (serving.pressure))))
+
+
+(defk store-probe [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % (| StorePressure PressureUnread bool))] :tags {:context "records" :role "entry"}}
+  "/readyz の問いの本体: 置き場に届くかを問い(届かなければ False)、届けば詰まりを読む。1 つの task で撃つので、READINESS-SECONDS の
+   上限は届くかの問いと詰まりの読みの両方に掛かる。"
+  (<- reachable bool (serving.readiness))
+  (if reachable (! (store-pressure serving)) False))
+
+
+(defk ready-answer [pressure]
+  {:pre [(: pressure (| StorePressure PressureUnread))] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
+  "置き場に届いた時の 200 の本文を組むため: 錠を待つ本数と idle in transaction の最長の秒を載せる(#1858 — 錠の詰まりで 503 になる前に
+   見張りが数で気づくため)。読めなかった時は数を名乗らず理由を載せる(0 と読み違えない)。"
+  (match pressure
+    (StorePressure :lock-waiters waiters :idle-in-transaction-max-seconds idle)
+      (! (json-answer 200 {"status" "ready" "lockWaiters" waiters "idleInTransactionMaxSeconds" idle}))
+    (PressureUnread :reason reason)
+      (! (json-answer 200 {"status" "ready" "pressureUnread" reason}))))
+
+
 (defk readiness-answer [serving prepared]
   {:pre [(: serving RecordsServing) (: prepared (| Callable None))] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
-  "/readyz に答えるため: 用意の前は 503・問いが無ければ 200・問いを READINESS-SECONDS の上限で撃ち、True なら 200・False か時間切れ
-   なら 503 store-unavailable(問いの task は取り消す — 固まった置き場の問いを待ち続けない)。"
+  "/readyz に答えるため: 用意の前は 503・問いが無ければ 200(詰まりは store-pressure の読み)・問いを READINESS-SECONDS の上限で撃ち、
+   届けば 200(錠を待つ本数と idle in transaction の最長の秒を載せる・#1858)・False か時間切れなら 503 store-unavailable(問いの task は
+   取り消す — 固まった置き場の問いを待ち続けない)。"
   (when (is prepared None)
     (return (! (refusal-answer ERROR-STORE-UNAVAILABLE "表の用意が済んでいない"))))
   (when (is serving.readiness None)
-    (return (! (json-answer 200 {"status" "ready"}))))
-  (<- probe Task (Spawn (serving.readiness)))
+    (return (! (ready-answer (! (store-pressure serving))))))
+  (<- probe Task (Spawn (store-probe serving)))
   (<- timer Task (Spawn (readiness-timer READINESS-SECONDS)))
-  (<- first (| bool ReadinessTimedOut) (Race probe timer))
+  (<- first (| StorePressure PressureUnread bool ReadinessTimedOut) (Race probe timer))
   (<- (Cancel probe))
   (<- (Cancel timer))
   (match first
     (ReadinessTimedOut :seconds seconds)
       (! (refusal-answer ERROR-STORE-UNAVAILABLE (.format "置き場が {} 秒の内に答えない" seconds)))
-    True (! (json-answer 200 {"status" "ready"}))
+    (StorePressure) (! (ready-answer first))
+    (PressureUnread) (! (ready-answer first))
     _ (! (refusal-answer ERROR-STORE-UNAVAILABLE "置き場に届かない"))))
 
 

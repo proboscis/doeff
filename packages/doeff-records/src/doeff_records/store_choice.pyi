@@ -9,6 +9,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
+class StorePressure:
+    lock_waiters: int
+    idle_in_transaction_max_seconds: float
+
+@dataclass(frozen=True)
+class PressureUnread:
+    reason: str
+
+@dataclass(frozen=True)
 class StoreChoice:
     prepare_of: Callable[..., object]
     readiness: Callable[..., object] | None = None
+    pressure: Callable[..., object] | None = None

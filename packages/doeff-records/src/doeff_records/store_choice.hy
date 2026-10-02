@@ -7,8 +7,22 @@
 (import collections.abc [Callable])
 
 
+(defrecord StorePressure
+  "置き場の詰まりの読み(/readyz の答えに載せる — agora-redesign #1858): lock-waiters = 置き場の錠を待っている接続の本数・
+   idle-in-transaction-max-seconds = transaction を開いたまま止まっている接続のうち最も長い秒(無ければ 0.0)。"
+  (#^ int lock-waiters)
+  (#^ float idle-in-transaction-max-seconds))
+
+
+(defrecord PressureUnread
+  "置き場には届いたが、詰まりの読みが答えなかった(reason = 理由の 1 行)。読めなかった数を 0 と名乗らない。"
+  (#^ str reason))
+
+
 (defrecord StoreChoice
   "記録の置き場の選び: prepare-of = (schema prefix host) → 表を用意して「書き手の名 → 記録の handler」の関数を返す Program を作る関数
-   (入口の用意の task が 1 度だけ撃つ)・readiness = () → 置き場に届けば True の Program(/readyz が撃つ・None = 用意が済めば ready)。"
+   (入口の用意の task が 1 度だけ撃つ)・readiness = () → 置き場に届けば True の Program(/readyz が撃つ・None = 用意が済めば ready)・
+   pressure = () → StorePressure | PressureUnread の Program(/readyz が届いた後に撃つ・None = 詰まりの無い置き場 — memory は 0 と答える)。"
   (#^ Callable prepare-of)
-  (setv #^ (| Callable None) readiness None))
+  (setv #^ (| Callable None) readiness None)
+  (setv #^ (| Callable None) pressure None))

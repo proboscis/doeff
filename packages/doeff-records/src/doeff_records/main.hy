@@ -57,7 +57,7 @@
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase])
-(import doeff_core_effects.sql_effects [SqlQuery SqlRows])
+(import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
@@ -65,7 +65,7 @@
 (import doeff_records.pg [pg-records-handler prepare-records-store DEFAULT-POLL-SECONDS])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening REQUEST-MAX-BYTES serve-records])
-(import doeff_records.store_choice [StoreChoice])
+(import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -229,9 +229,40 @@
   (isinstance answer SqlRows))
 
 
-;; PostgreSQL の置き場の選び(表の用意 pg-handlers-of・/readyz の問い store-reachable)— 単独の本番と、PostgreSQL の土台の口を差す呼び手が
-;; records-serving に渡す(答える SQL の答え手は土台の口 records-connected が置く)。
-(val PG-STORE (StoreChoice :prepare-of pg-handlers-of :readiness store-reachable))
+;; /readyz の詰まりの読み(#1858): この置き場の database で錠(pg_advisory_xact_lock を含む)を待っている接続の本数と、transaction を開いた
+;; まま止まっている接続のうち最も長い秒。2026-10-01 19:4x の着地の台帳の事故では readyz が「1.0 秒の内に答えない」だけで、錠を待つ本数も
+;; 持ち主も見えなかった。
+(val PRESSURE-SQL
+  (+ "SELECT (SELECT count(DISTINCT l.pid) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid"
+     " WHERE NOT l.granted AND a.datname = current_database()),"
+     " (SELECT COALESCE(EXTRACT(EPOCH FROM max(now() - state_change)), 0)::float8 FROM pg_stat_activity"
+     " WHERE state IN ('idle in transaction', 'idle in transaction (aborted)') AND datname = current_database())"))
+
+
+(defk store-pressure-of-rows [answer]
+  {:pre [(: answer (| SqlRows SqlFailed SqlUnreachable))] :post [(: % (| StorePressure PressureUnread))] :tags {:context "records" :role "entry"}}
+  "詰まりの読みの SQL の答えを型へ読むため: 1 行 2 列(本数・秒)だけを StorePressure にし、それ以外(失敗・届かない・形の外)は理由を名乗る。"
+  (match answer
+    (SqlRows :rows #(#(waiters idle)))
+      (if (and (isinstance waiters int) (not (isinstance waiters bool)) (isinstance idle #(int float)) (not (isinstance idle bool)))
+          (StorePressure :lock-waiters waiters :idle-in-transaction-max-seconds (float idle))
+          (PressureUnread :reason (.format "詰まりの読みの答えの形が違う: {!r}" answer.rows)))
+    (SqlRows) (PressureUnread :reason (.format "詰まりの読みの答えが 1 行 2 列でない: {!r}" answer.rows))
+    (SqlFailed :reason reason) (PressureUnread :reason (+ "詰まりの読みが断られた: " reason))
+    (SqlUnreachable :reason reason) (PressureUnread :reason (+ "詰まりの読みが届かない: " reason))
+    _ (PressureUnread :reason (.format "詰まりの読みの知らない答え: {!r}" answer))))
+
+
+(defk store-pressure-pg []
+  {:pre [] :post [(: % (| StorePressure PressureUnread))] :tags {:context "records" :role "entry"}}
+  "/readyz の詰まりの読み(PostgreSQL): 錠を待つ接続の本数と idle in transaction の最長の秒を 1 本の SQL で読むため(#1858)。"
+  (<- answer (SqlQuery DATABASE PRESSURE-SQL #()))
+  (! (store-pressure-of-rows answer)))
+
+
+;; PostgreSQL の置き場の選び(表の用意 pg-handlers-of・/readyz の問い store-reachable・詰まりの読み store-pressure-pg)— 単独の本番と、
+;; PostgreSQL の土台の口を差す呼び手が records-serving に渡す(答える SQL の答え手は土台の口 records-connected が置く)。
+(val PG-STORE (StoreChoice :prepare-of pg-handlers-of :readiness store-reachable :pressure store-pressure-pg))
 
 
 (defk records-serving [schema settings choice]
@@ -243,7 +274,8 @@
   (RecordsServing :address settings.address :schema schema :roster settings.roster
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
-                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness))
+                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
+                  :pressure choice.pressure))
 
 
 (defk records-process [foundation serving]
