@@ -59,20 +59,25 @@
   done)
 
 
-(defn #^ dict intervals [#^ list log]
+(defk intervals [log]
+  {:pre [(: log list)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "log → {who: [(入った時刻 出た時刻) …]}"
-  (setv opened {} spans {})
+  (val opened {})
+  (val spans {})
   (for [#(kind who at) log]
     (if (= kind "in")
         (setv (get opened who) at)
         (.append (.setdefault spans who []) #((.pop opened who) at))))
   spans)
 
-(defn #^ int max-concurrency [#^ list log]
-  (setv inside 0 peak 0)
+(defk max-concurrency [log]
+  {:pre [(: log list)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "log の入った・出たの並びから、同時に中に居た数の最大を数えるため。"
+  (var inside 0)
+  (var peak 0)
   (for [#(kind _ _) log]
-    (+= inside (if (= kind "in") 1 -1))
-    (setv peak (max peak inside)))
+    (:= inside (+ inside (if (= kind "in") 1 -1)))
+    (:= peak (max peak inside)))
   peak)
 
 
@@ -88,7 +93,8 @@
 (defk spans-from [log start]
   {:pre [(: log list) (: start int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "log の入った・出た時刻を、Program の始まり start からのミリ秒に直した {who: [#(入 出) …]} にするため(組ごとに時計の起点が違う)。"
-  (dfor #(who spans) (.items (intervals log))
+  (<- by-who dict (intervals log))
+  (dfor #(who spans) (.items by-who)
         who (lfor #(entered left) spans #((- entered start) (- left start)))))
 
 
@@ -99,7 +105,7 @@
   (<- start int (now-epoch-ms))
   (<- (shared-handle log HOLD-SECONDS))
   (<- spans dict (spans-from log start))
-  (assert (= (max-concurrency log) 1) log)
+  (assert (= (! (max-concurrency log)) 1) log)
   (assert (= (get spans "a") [#(0 HOLD-MS)]) spans)
   (val b (get spans "b" 0))
   (assert (<= HOLD-MS (get b 0) (+ HOLD-MS WAKE-MS)) spans)
@@ -113,7 +119,7 @@
   (<- sem Semaphore (CreateNamedSemaphore "turn-lock" 2))
   (<- (run-all (lfor who ["a" "b" "c"] (critical sem who log HOLD-SECONDS))))
   (<- spans dict (spans-from log start))
-  (assert (= (max-concurrency log) 2) log)
+  (assert (= (! (max-concurrency log)) 2) log)
   (assert (= (sorted spans) ["a" "b" "c"]) spans)
   ;; 3 つ目は、先の 2 つが返してから(空き待ちの 1 周期の内に)入る。
   (val third (max (lfor spans-of (.values spans) (get spans-of 0)) :key (fn [span] (get span 0))))
@@ -124,7 +130,7 @@
   {:interpreters ["named-semaphore-local" "cluster-semaphore" "cluster-semaphore-http"]}
   (val log [])
   (<- (run-all [(named-user "a" log HOLD-SECONDS 1) (named-user "b" log HOLD-SECONDS 1)]))
-  (assert (= (max-concurrency log) 1) log))
+  (assert (= (! (max-concurrency log)) 1) log))
 
 
 ;; --- (1) scheduled だけ -----------------------------------------------------------------------
@@ -134,14 +140,17 @@
   (setv log [] clock (SimClock))
   (<- (with_handlers [(sim-time-handler :clock clock)]
         (run-all [(named-user "a" log 2 1) (named-user "b" log 2 1)])))
-  (assert (= (max-concurrency log) 2)))
+  (assert (= (! (max-concurrency log)) 2)))
 
 
 ;; --- (3) cluster(共有の保存の lease) ----------------------------------------------------------
 
-(defn #^ Program on-worker [#^ SemaphoreSession session #^ Program program]
-  "1 つの worker に見立てる: その worker の cluster-semaphore だけを被せる(保存と時計は共有)。"
-  (with_handlers [(cluster-semaphore session)] program))
+(defk on-worker [session program]
+  {:pre [(: session SemaphoreSession) (: program Program)] :post [(: % "program の答え(型は program ごと)")]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 つの worker に見立てる: その worker の cluster-semaphore だけを被せて program を走らせる(保存と時計は共有)。"
+  (<- answer (with_handlers [(cluster-semaphore session)] program))
+  answer)
 
 
 (deftest test-cluster-semaphore-excludes-across-workers-and-renews-past-the-ttl
@@ -151,8 +160,8 @@
         sb (SemaphoreSession "worker-b" :ttl-seconds 15.0 :poll-seconds 0.5))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
         (run-all [(on-worker sa (named-user "a" log 20 1)) (on-worker sb (named-user "b" log 20 1))])))
-  (assert (= (max-concurrency log) 1))
-  (setv spans (intervals log))
+  (assert (= (! (max-concurrency log)) 1))
+  (<- spans (intervals log))
   (setv #(a-in a-out) (get spans "a" 0) #(b-in b-out) (get spans "b" 0))
   (assert (= #(a-in a-out) #(0 20000)))
   ;; b は a が返してから待ちの 1 周期(0.5 秒)以内に入る。
@@ -167,7 +176,7 @@
   (setv sb (SemaphoreSession "worker-b" :ttl-seconds 15.0 :poll-seconds 0.5))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
         (on-worker sb (named-user "b" log 1 1))))
-  (setv #(b-in b-out) (get (intervals log) "b" 0))
+  (setv #(b-in b-out) (get (! (intervals log)) "b" 0))
   (assert (<= 15000 b-in 15500)))
 
 
@@ -261,15 +270,21 @@
         (.append attempts #(who now "fenced"))))
     (<- (Delay every))))
 
-(defn #^ Program fenced-worker [#^ SemaphoreSession session #^ Program program #^ (| int None) [cut None] #^ (| SimClock None) [clock None]]
-  "1 つの worker: (途絶) → cluster-semaphore → 書きの柵(一番内側)。"
-  (setv inner [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) 2000)])
-  (cond
-    (is cut None) (with_handlers inner program)
-    (is clock None) (raise (ValueError "途絶(cut)には仮想の時計(clock)が要る"))
-    True (with_handlers (+ [(cut-off-at clock cut)] inner) program)))
+(defk fenced-worker [session program [cut None] [clock None]]
+  {:pre [(: session SemaphoreSession) (: program Program) (: cut (| int None)) (: clock (| SimClock None))]
+   :post [(: % "program の答え(型は program ごと)")] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 つの worker: (途絶) → cluster-semaphore → 書きの柵(一番内側)の下で program を走らせる。"
+  (val inner [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) 2000)])
+  (val handlers (cond
+                  (is cut None) inner
+                  (is clock None) (raise (ValueError "途絶(cut)には仮想の時計(clock)が要る"))
+                  True (+ [(cut-off-at clock cut)] inner)))
+  (<- answer (with_handlers handlers program))
+  answer)
 
-(defn #^ list times-of [#^ list attempts #^ str who #^ str outcome]
+(defk times-of [attempts who outcome]
+  {:pre [(: attempts list) (: who str) (: outcome str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "書きの試しの記録から、書き手 who の結果 outcome の時刻だけを並べるため。"
   (lfor #(w at o) attempts :if (and (= w who) (= o outcome)) at))
 
 
@@ -282,7 +297,7 @@
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (run-all [(fenced-worker sa (lease-writer "a" attempts 1 40000) :cut 3000 :clock clock)
                   (fenced-worker sb (lease-writer "b" attempts 1 40000))])))
-  (setv a-ok (times-of attempts "a" "ok") a-fenced (times-of attempts "a" "fenced") b-ok (times-of attempts "b" "ok"))
+  (setv a-ok (! (times-of attempts "a" "ok")) a-fenced (! (times-of attempts "a" "fenced")) b-ok (! (times-of attempts "b" "ok")))
   ;; A は期限 15000 の余裕 2000 の手前まで書け、そこから先は 1 回も書けない(40 秒まで試し続けた)。
   (assert (= (max a-ok) 12000) a-ok)
   (assert (= (min a-fenced) 13000) a-fenced)
@@ -308,8 +323,8 @@
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (run-all [(fenced-worker sa (lease-writer "a" attempts 1 12000)) (steal)])))
   ;; 延長は TTL の 1/3 = 5 秒目。そこで失ったと分かり、5 秒目以降の書きは断られる。
-  (assert (= (max (times-of attempts "a" "ok")) 4000) attempts)
-  (assert (= (min (times-of attempts "a" "fenced")) 5000) attempts)
+  (assert (= (max (! (times-of attempts "a" "ok"))) 4000) attempts)
+  (assert (= (min (! (times-of attempts "a" "fenced"))) 5000) attempts)
   (assert (= (lfor #(_ at) written at) [0 1000 2000 3000 4000])))
 
 
@@ -318,7 +333,7 @@
   (setv sa (SemaphoreSession "w" :ttl-seconds 15.0 :poll-seconds 0.5))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (fenced-worker sa (lease-writer "a" attempts 1 3000 :acquire False))))
-  (assert (= (times-of attempts "a" "fenced") [0 1000 2000]))
+  (assert (= (! (times-of attempts "a" "fenced")) [0 1000 2000]))
   (assert (= written [])))
 
 
@@ -337,8 +352,8 @@
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (lease-fence "writer-a" #(FakeWrite) 2000)]
           (lease-writer "a" attempts 1 40000))))
-  (assert (= (times-of attempts "a" "fenced") []) attempts)
-  (assert (= (len (times-of attempts "a" "ok")) 40)))
+  (assert (= (! (times-of attempts "a" "fenced")) []) attempts)
+  (assert (= (len (! (times-of attempts "a" "ok"))) 40)))
 
 
 (defn #^ None test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock []
