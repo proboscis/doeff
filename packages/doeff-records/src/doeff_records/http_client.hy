@@ -25,14 +25,23 @@
 ;;; 要求の送り方は 1 つ: 要求を doeff-core-effects の HttpRequest の effect として出し、答えるのは呼び手の外側の
 ;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
 ;;; service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む。
+;;;
+;;; 計器(#2740): endpoint に計器の答え手(meter)を渡すと、送った要求 1 つごとに要求の種 × 結果(service の答えの status・届かない・
+;;; それ以外の status)を doeff の CountMetric で 1 つ数える(名の綴りは wire の CLIENT-ANSWER-METRIC)。記録の service に届かなかった
+;;; 要求は service の計器に出ないので、client の側でだけ数えられる。meter の無い endpoint は計器の effect を出さない(答え手を持たない
+;;; 使い手が壊れない)。書き手の job は、拍ごとに断面を送る計器と同じ答え手を渡す。
 (require doeff-hy.macros [defhandler defk <- val var])
+(import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import json)
+(import doeff [with-handlers])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
+(import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_records.values [EventsMoved EventsQuiet Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.watching [wait-for-changes moved-of])
-(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal])
+(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal
+                            CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 (setv DEFAULT-POLL-SECONDS 0.2)
@@ -56,11 +65,13 @@
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
   "記録の service 1 つへの接続の組: base-url = http://host:port / token = 呼び手の身元の token(Bearer)/
-   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。要求は常に HttpRequest の effect で出す(file の頭の註)。"
+   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。要求は常に HttpRequest の effect で出す(file の頭の註)。
+   meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)。"
   (#^ str base-url)
   (#^ str token)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
-  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS))
+  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
+  (setv #^ (| (get Callable #(... object)) None) meter None))
 
 
 (defclass [(dataclass :frozen True)] RawReply []
@@ -155,11 +166,34 @@
   moved)
 
 
+(defk zero-client-metrics [endpoint]
+  {:pre [(: endpoint RecordsEndpoint)] :post [(: % None)]}
+  "client の計器の閉じた系列(wire の CLIENT-ANSWER-METRICS)を全部 0 で置くため — 書き手の job が起動の時に 1 回呼び、読み手が「無い」と
+   「0」を区別しなくて済むようにする(service の口の起動の 0 と同じ)。計器の無い endpoint では何もしない。"
+  (when (is-not endpoint.meter None)
+    (for [name CLIENT-ANSWER-METRICS]
+      (<- (with-handlers [endpoint.meter] (CountMetric name 0.0)))))
+  None)
+
+
+(defk counted-reply [endpoint operation reply]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: reply (| RawReply Unreachable))] :post [(: % None)]}
+  "送った要求 1 つの結果(届かない・答えの status)を endpoint の計器に 1 つ数えるため(記録の service に届かなかった要求は service の
+   計器に出ないので、client の側でだけ数えられる — file の頭の註)。数えるのは答えを値や例外にする前の 1 か所で、身元の断り・JSON で
+   ない本文の断りも同じ所を通る。計器の無い endpoint では何もしない。"
+  (when (is-not endpoint.meter None)
+    (val outcome (if (isinstance reply Unreachable) CLIENT-UNREACHABLE (! (client-status-outcome reply.status))))
+    (<- name str (client-answer-metric operation outcome))
+    (<- (with-handlers [endpoint.meter] (CountMetric name))))
+  None)
+
+
 (defk call-service [endpoint ask]
   {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect)] :post [(: % (| WireAnswer Unreachable))]}
   "公開 effect(ask)1 つを service へ撃ち、答えの値にする(status の写し方は file の頭の表)。"
   (<- request (encode-request ask))
   (<- reply (exchange endpoint request.operation request.body))
+  (<- (counted-reply endpoint request.operation reply))
   (when (isinstance reply Unreachable) (return reply))
   (when (in reply.status IDENTITY-REFUSED-STATUSES)
     (raise (! (identity-refused endpoint request.operation reply))))
