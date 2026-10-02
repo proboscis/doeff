@@ -26,6 +26,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms readiness-refusal])
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
+(import doeff_cluster.shared.intent.readiness_model [ReadinessClaim])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
@@ -178,13 +179,11 @@
 
 (defk readiness-report [body now]
   {:pre [(: body ReadinessBody) (: now int)] :post [(: % ReadinessReport)] :tags {:context "coordinator" :role "judgment"}}
-  "準備の報告の本文を、観測の表 readiness に置く記録にするため。ready・reason・role は fake(readiness-memory)と同じ関数
-   (reported-readiness)で揃える — role = active(仕事をしている)か standby(lease を他が持つ間の待機)。旧い報告は active。
-   reported-readiness の答えは shared の口の形(3 欄の dict — 使い手の検が readiness-memory の記録として読む)のまま受ける。記録の型へ
-   移すのは使い手と同じ版で出す別の単位(#2756 の comment)。"
+  "準備の報告の本文を、観測の表 readiness に置く記録にするため。ready・reason・role は fake(readiness-claims)と同じ関数
+   (reported-readiness)で揃える — role = active(仕事をしている)か standby(lease を他が持つ間の待機)。旧い報告は active。"
   (<- origin ReportOrigin (report-origin body now))
-  (<- claim dict (reported-readiness body.ready body.reason body.role))
-  (ReadinessReport :origin origin :ready (get claim "ready") :reason (get claim "reason") :role (get claim "role")))
+  (<- claim ReadinessClaim (reported-readiness body.ready body.reason body.role))
+  (ReadinessReport :origin origin :ready claim.ready :reason claim.reason :role claim.role))
 
 
 (defn #^ dict service-readiness [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing
