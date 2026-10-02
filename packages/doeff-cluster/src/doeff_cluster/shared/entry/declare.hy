@@ -19,7 +19,7 @@
 ;;;
 ;;; 置き場(#2346): CLI と apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
 ;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import argparse)
 (import json)
@@ -65,7 +65,8 @@
   (when failed (sys.exit 1)))
 
 
-(defn #^ None main []  ; defk にできない: CLI の入口
+(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.shared.entry.declare` の __main__ が素の関数として呼ぶ)
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster" :role "main" :reads "json" :spells "json"}}
   "宣言の CLI。旧い引数は理由つきで断る。"
   (setv parser (argparse.ArgumentParser :description "系(defsystem の関数)→ coordinator の宣言"))
   (.add-argument parser "system" :help "module:attr(defsystem の関数の名)")

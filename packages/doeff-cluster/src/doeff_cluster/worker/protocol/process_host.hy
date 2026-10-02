@@ -55,7 +55,7 @@
 
 
 (defk start-job [settings action]
-  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % ProcessView)] :tags {:context "worker" :role "protocol"}}
+  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % ProcessView)] :tags {:context "worker" :role "protocol" :spells "env"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから、shim の下の子を専用の group に起こす。起こした子の観測(ProcessView)を返す。起こせなければ OSError(前の Popen と同じ)。"
   (val spec action.spec)

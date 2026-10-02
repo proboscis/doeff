@@ -65,7 +65,7 @@
 
 (defk launch-probe [settings batch specs n]
   {:pre [(: settings ProbeSettings) (: batch tuple) (: specs tuple) (: n int)] :post [(: % ProbeRun)]
-   :tags {:context "worker" :role "protocol"}}
+   :tags {:context "worker" :role "protocol" :spells "env"}}
   "束 1 本を起こすため: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。n = 出力の file の名の番号。"
   (val code-path (get batch 0))
   (val runtime-env (get batch 1))

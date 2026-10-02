@@ -94,7 +94,7 @@
 
 
 (defk known-roots [settings]
-  {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
+  {:pre [(: settings EnvSettings)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "完成した root の列(展開の複製と bytecode の引き継ぎの元)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path} で返すため。"
   (<- names tuple (root-dirs settings))
   (var known #())

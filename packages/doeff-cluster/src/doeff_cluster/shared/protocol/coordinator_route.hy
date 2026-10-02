@@ -110,7 +110,7 @@
 (defk routed-request [route method path options params body]
   {:pre [(: route CoordinatorRoute) (: method str) (: path str) (: options RouteOptions) (: params (| dict None))
          (: body (| dict list None))]
-   :post [(: % RoutedReply)] :tags {:context "doeff-cluster" :role "protocol"}}
+   :post [(: % RoutedReply)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "要求 1 つを宛先の順に送るため: 接続できない時(CONNECT-FAILED)だけ次の宛先へ回り、全部に届かなければ間を置いて
    connect-retries 回まで一巡し直す。答え = 最初に返った返事(4xx・5xx も返事)か、途中で切れた失敗か、最後の接続の失敗。"
   (var current route)

@@ -105,7 +105,7 @@
 
 
 (defk accepted-tasks [state tasks]
-  {:pre [(: state LinkState) (: tasks list)] :post [(: % tuple)]}
+  {:pre [(: state LinkState) (: tasks list)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "heartbeat の返事の task の行 → 1 度だけ走らせる job。task ごとに、その Program の置き場のキーを印の file <id>.program に残し
    (返事から外れた task の Program の cache を後で消すため — fetched-programs)、返事から外れた task の結果の file を消す(この worker が
    書いた物だけ)。切り離した task は返事の行をそのまま写しとして持つ(状態の報告に添える)。"
@@ -129,7 +129,8 @@
 
 
 (defk fetched-program [cell options program-dir sha]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: program-dir str) (: sha str)] :post [(: % None)]}
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: program-dir str) (: sha str)] :post [(: % None)]
+   :tags {:context "worker" :role "protocol" :reads "json"}}
   "詰めた Program 1 つを coordinator の /programs/<sha> から取り、子の入口が読む形の cache の file({\"blob\" \"versions\"})に置くため。中身の
    sha256 がキーと合わない物・取れない物は書かずに 1 行出す(次の拍で試し直す — 子は file が無いので起動の時に理由つきで落ちる)。"
   (<- reply RoutedReply (routed-request cell.route "GET" (+ "/programs/" sha) options None None))
@@ -306,7 +307,8 @@
 
 
 (defk beat [state cell options]
-  {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions)] :post [(: % (| DesiredJobs DesiredUnreadable))]}
+  {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions)] :post [(: % (| DesiredJobs DesiredUnreadable))]
+   :tags {:context "worker" :role "protocol" :spells "json" :reads "json"}}
   "heartbeat を 1 回送り、返事の job・task・温める表を desired にするため。届かなければ desired-when-unreachable(fence の判断)。"
   (val sending state.statuses)
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
@@ -375,7 +377,7 @@
 
 
 (defk status-rows [state statuses]
-  {:pre [(: state LinkState) (: statuses tuple)] :post [(: % list)]}
+  {:pre [(: state LinkState) (: statuses tuple)] :post [(: % list)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "状態の報告を作るため。終わった task には結果の file の中身(無ければ None = 結果なし)を、切り離した task には置かれた時の返事の行を
    添える(形は status-report — sim の宿と同じ関数)。"
   (val results {})

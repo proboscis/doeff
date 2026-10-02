@@ -9,7 +9,7 @@
 ;;;
 ;;; 入口の組み立ては 2 つに分ける: handler の組を選ぶ(production-handlers — 本番の組)と、その組の上で worker の
 ;;; Program を回す(worker-on)。模擬の環境(sim/local.hy の worker の世代)は、同じ worker-on を偽の宿の組(sim-host)の上で回す。
-(require doeff-hy.macros [defk <- val])
+(require doeff-hy.macros [deff defk <- val])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import os)
@@ -70,7 +70,9 @@
   (dfor n wanted n (get environ n)))
 
 
-(defn #^ dict parse-labels [#^ str text]
+(defk parse-labels [text]
+  {:pre [(: text str)] :post [(: % dict)] :tags {:context "worker" :role "main" :reads "env"}}
+  "起動の引数 `名=版,…`(--tools)を、heartbeat で名乗る道具の名 → 版にするため。"
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
@@ -95,7 +97,9 @@
   state)
 
 
-(defn #^ None main []
+(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.worker.entry.main` の __main__ と boot.sh の旧い名の入口が素の関数として呼ぶ)
+  {:pre [] :post [(: % None)] :tags {:context "worker" :role "main" :reads "env"}}
+  "worker の process の入口: 起動の引数と機体の環境変数から組み立て、本番の handler の組の上で調整ループを回すため。"
   (setv parser (argparse.ArgumentParser :description "doeff worker(実験)"))
   (.add-argument parser "--coordinator" :required True
                  :help "job を割り当てる coordinator の URL。`,` で並べると前から順に試す(Mac は LAN・tailnet の順)")
@@ -165,7 +169,7 @@
   (setv started-ms (int (* 1000 (time.time)))
         boot (. (uuid.uuid4) hex)
         link (LinkState args.name provides args.capacity (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot started-ms started-ms
-                        :versions (current-versions) :tools (parse-labels args.tools) :handles-envs True :exclusive exclusive
+                        :versions (current-versions) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。

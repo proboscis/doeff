@@ -67,7 +67,7 @@
 
 
 (deff read-program [#^ str path #^ str env-key]  ; defk にできない: process の入口(Program の外)が file を読む
-  {:pre [(: path str) (: env-key str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "worker" :role "main"}}
+  {:pre [(: path str) (: env-key str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "worker" :role "main" :reads "json"}}
   "Program の file → #(Program None) か #(None 断り)。service・task・probe が同じ読みを使うため(入口の形を分けない — R3・R3b)。
    断り = VersionMismatch(file の版がこの process の版と違う — 食い違った欄と env のキーを持ち、解かない)か RemoteJobFailed
    (file が無い・形が違う・解けない)。env-key = 子の実行環境のキー(env の job でなければ空)。"

@@ -108,7 +108,7 @@
 
 (deff detached-refusal [#^ (| int None) status #^ (| dict None) body]  ; defk にできない: 本番の client と sim の宿が同じ判断で返事を読む
   {:pre [(: status (| int None)) (: body (| dict None))] :post [(: % (| DetachedRefused None))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
   "返事が呼び手の誤り(400・409・413・429 — 形の誤り・同じ key の別の仕事・上限越え)なら、呼び手へ投げる DetachedRefused を作るため
    (それ以外は None)。"
   (if (in status REFUSED-STATUSES)
@@ -378,7 +378,7 @@
 (defk await-process-cluster [cell options sender job timeout-seconds poll-seconds]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: job str) (: timeout-seconds (| float int None))
          (: poll-seconds float)]
-   :post [(: % (| ProcessEnded ProcessWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
+   :post [(: % (| ProcessEnded ProcessWaitExpired))] :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
   "AwaitProcessEnded の本番の答え: coordinator の GET /state を poll-seconds ごとに読み、process-watch-step で終わりを決める(本番の
    coordinator は長い待ちの読みを持たないので読み直す — 契約の答え)。届かない読みは次の拍で読み直す。timeout-seconds を過ぎたら
    ProcessWaitExpired。眠りは Delay(同じ VM の他の task を塞がない)。"
