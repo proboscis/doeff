@@ -73,7 +73,7 @@
   (assert (in "doeff_time.effects.time:DelayEffect" names))
   ;; 記録の時刻(1000000 ms から 0.3 秒ごと)が再生でそのまま返る。
   (assert (in "a0@1000300" recorded) recorded)
-  (setv state (ReplayState (read-recording lines)))
+  (setv state (ReplayState (! (read-recording lines))))
   (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
   (assert (= replayed recorded) #(replayed recorded)))
 
@@ -127,11 +127,11 @@
 (deftest test-concurrent-order-is-kept-by-replay
   (setv #(lines program store) (record-system))
   (<- recorded list program)
-  (setv rec (read-recording lines))
+  (setv rec (! (read-recording lines)))
   (assert (= (sorted (.keys rec.queues)) ["root" "root.0" "root.1" "root.2"]) (sorted (.keys rec.queues)))
   (setv state (ReplayState rec))
   (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
-  (setv report (replay-report state "program-returned"))
+  (setv report (! (replay-report state "program-returned")))
   (assert (= replayed recorded) #(replayed recorded))
   (assert (get report "identical") report)
   (assert (= (get report "consumed") (get report "events")) report))
@@ -142,7 +142,7 @@
   ;; (deliver-recorded は Entry.value の写しを渡す — 写しを外すと 2 度目が書き換え済みの箱を受けて赤)。
   (setv #(lines program store) (record-system))
   (<- recorded list program)
-  (setv rec (read-recording lines))
+  (setv rec (! (read-recording lines)))
   (<- first list (with-handlers-list [(effect-replayer (ReplayState rec))] (system-program)))
   (<- second list (with-handlers-list [(effect-replayer (ReplayState rec))] (system-program)))
   (assert (= first recorded) #(first recorded))
@@ -153,10 +153,10 @@
   ;; 対照: 出来事の番号の順を待たない再生は、同じ答えを返しても task の交互の順が変わり、共有の箱の中身の順が記録と違う。
   (setv #(lines program store) (record-system))
   (<- recorded list program)
-  (setv state (ReplayState (read-recording lines) :ordered False))
+  (setv state (ReplayState (! (read-recording lines)) :ordered False))
   (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
   (assert (!= replayed recorded) replayed)
-  (assert (> (get (get (replay-report state "program-returned") "outputDiffCounts") "changed") 0)))
+  (assert (> (get (get (! (replay-report state "program-returned")) "outputDiffCounts") "changed") 0)))
 
 
 
@@ -173,7 +173,7 @@
     (for [#(old-expect new-expect) expects]
       (val line {"k" "call" "e" 0 "t" "root" "at" 0 "ty" (type-name WriteShared) "m" "output" "sj" "row/a"
                  "a" {"key" "row/a" "value" (encode-value old) "expect" old-expect} "ok" True "v" True})
-      (val rec (read-recording [{"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"} line]))
+      (val rec (! (read-recording [{"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"} line])))
       (val replayed (! (args-of (WriteShared "row/a" (OpaqueJson.of new) new-expect) (HandleTable))))
       (assert (= (. (get rec.entries 0) args-text) (canonical replayed)) #(old old-expect (. (get rec.entries 0) args-text) replayed)))))
 
@@ -186,9 +186,9 @@
   (assert (> (len writes) 4) (len writes))
   (for [l (cut writes 0 None 2)]
     (setv (get l "a" "value") {"$t" (get l "a" "value")}))
-  (setv state (ReplayState (read-recording lines)))
+  (setv state (ReplayState (! (read-recording lines))))
   (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
-  (setv report (replay-report state "program-returned"))
+  (setv report (! (replay-report state "program-returned")))
   (assert (= replayed recorded) #(replayed recorded))
   (assert (= (get report "outputDiffCounts") {"changed" 0 "missing" 0 "extra" 0}) report)
   (assert (get report "identical") report))
@@ -209,9 +209,9 @@
                                     l)))
   (assert (any (gfor #(a b) (zip before reordered) (!= (list (.get a "a" {})) (list (.get b "a" {}))))) "鍵の順を替えた行が無い")
   (for [written [before reordered]]
-    (val state (ReplayState (read-recording written)))
+    (val state (ReplayState (! (read-recording written))))
     (<- replayed list (with-handlers-list [(effect-replayer state)] (system-program)))
-    (val report (replay-report state "program-returned"))
+    (val report (! (replay-report state "program-returned")))
     (assert (= replayed recorded) #(replayed recorded))
     (assert (get report "identical") report)
     (assert (= (get report "consumed") (get report "events")) report)))
@@ -223,7 +223,7 @@
   (val head {"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"})
   (val failed {"k" "call" "e" 0 "t" "root" "at" 0 "ty" (type-name ReadShared) "m" "read" "a" {"prefix" "row/"} "ok" False
                "err" (encode-error (ValueError "盤に届かない"))})
-  (val rec (read-recording [head failed {"k" "end" "e" 2 "t" "root" "ok" False}]))
+  (val rec (! (read-recording [head failed {"k" "end" "e" 2 "t" "root" "ok" False}])))
   (val entry (get rec.entries 0))
   (assert (isinstance entry.error OpaqueJson) entry.error)
   (assert (= rec.ended (frozenset ["root"])) rec.ended)
@@ -272,7 +272,7 @@
   (val blobs (dfor l lines :if (= (.get l "k") "blob") (get l "h") (get l "v")))
   ;; 伏せた中身の blob の h は記録の規則どおり(内容の hash)
   (assert (all (gfor #(h v) (.items blobs) (= (content-hash (canonical v)) h))) blobs)
-  (val rec (read-recording lines))
+  (val rec (! (read-recording lines)))
   (for [l calls]
     (val entry (get rec.entries (get l "e")))
     (val value (resolve-refs (get l "a" "value") blobs))
@@ -294,7 +294,7 @@
     (val answers (dfor l lines :if (and (in (.get l "k") #("call" "ans")) (.get l "ok") (in "v" l))
                        (if (= (get l "k") "call") (get l "e") (get l "s")) (resolve-refs (get l "v") blobs)))
     (assert answers lines)
-    (val rec (read-recording lines))
+    (val rec (! (read-recording lines)))
     (for [#(e raw) (.items answers)]
       (val value (. (get rec.entries e) value))
       (match raw
@@ -318,7 +318,7 @@
              {"$c" (type-name WriteShared) "f" {"no_such_field" 1}}]]
     (val line {"k" "call" "e" 7 "t" "root" "at" 0 "ty" (type-name ReadShared) "m" "read" "a" {"key" "row/a"} "ok" True "v" bad})
     (var refused None)
-    (try (read-recording [head line])
+    (try (! (read-recording [head line]))
          (except [err ValueError] (:= refused (str err))))
     (assert (is-not refused None) #(bad "読めたことにしてはいけない"))
     (assert (in "問い 7" refused) refused)
@@ -535,7 +535,7 @@
   (assert (all (gfor l sink.lines (in "_chunk" l))) sink.lines)
   (assert (in "blob" (sfor l sink.lines (get l "k"))) (sfor l sink.lines (get l "k")))
   (assert (in "\"$ref\"" (json.dumps sink.lines)))
-  (val state (ReplayState (read-recording sink.lines)))
+  (val state (ReplayState (! (read-recording sink.lines))))
   (<- replayed dict (with-handlers-list [(effect-replayer state)] (read-after-writes)))
   (assert (= replayed rows) #(replayed rows))
-  (assert (get (replay-report state "program-returned") "identical")))
+  (assert (get (! (replay-report state "program-returned")) "identical")))
