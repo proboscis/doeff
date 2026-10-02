@@ -149,6 +149,7 @@ class SimWorker:
     claims_provides: AbstractSet[str] | None = None
     claims_exclusive: AbstractSet[str] | None = None
     fresh_boot_every_beat: bool = False
+    hides_retired: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:

@@ -233,7 +233,8 @@
    claims-exclusive = 反例の世界だけの壊れた worker(heartbeat で exclusive の代わりにこの専用の能力を名乗る — None = exclusive。本当の
    専用の能力は exclusive のまま — 条 C10 の反例・#1976)・fresh-boot-every-beat = 反例の世界だけの壊れた worker(heartbeat ごとに新しい
    世代を名乗る — 本当の process の世代は変わらない。coordinator は別の世代の heartbeat で drain を解くので、drain が効かない — 条 C11 の
-   反例・#1976)。"
+   反例・#1976)・hides-retired = 反例の世界だけの壊れた worker(観測の handler が入れ替えで名から外した旧の process を載せない —
+   worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)。"
   (#^ str name)
   (#^ frozenset provides)
   (setv #^ frozenset exclusive (frozenset))
@@ -252,7 +253,8 @@
   (setv #^ (| int None) overstates-capacity None)
   (setv #^ (| frozenset None) claims-provides None)
   (setv #^ (| frozenset None) claims-exclusive None)
-  (setv #^ bool fresh-boot-every-beat False))
+  (setv #^ bool fresh-boot-every-beat False)
+  (setv #^ bool hides-retired False))
 
 
 (defrecord SimProcess
@@ -1794,7 +1796,11 @@
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
     (<- view WorldView (view-of truth now))
-    (resume view))
+    ;; 壊れた worker hides-retired(条 C14 の反例)は、入れ替えで名から外した旧の process を観測に載せない — worker の判断は退いた
+    ;; process が無いと読み、旧を止める前に次の新を並べる。
+    (resume (if worker.hides-retired
+                (replace view :processes (tuple (gfor p view.processes :if (is p.retired-from None) p)))
+                view)))
   (PrepareCode [revision]
     (<- (prepare worker boot revision False False))
     (resume None))
