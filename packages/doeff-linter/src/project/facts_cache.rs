@@ -119,14 +119,24 @@ struct CompactStored {
     entries: Vec<CompactEntry>,
 }
 
-fn cache_file(root: &Path, kind: &str, format: Format) -> Option<PathBuf> {
-    if cfg!(test) || std::env::var_os(NO_CACHE_ENV).is_some() {
+/// 置き場の根(頭の註 — `$DOEFF_LINTER_CACHE_DIR`・`$XDG_CACHE_HOME/doeff-linter`・`~/.cache/doeff-linter` の順)。
+/// `DOEFF_LINTER_NO_CACHE` が在れば None。根の直下の dir は全部、上限の片づけ(sweep_over_cap)の対象 — 根の dir の外の置き場
+/// (commit の hook の HEAD の木の結果・agora-redesign #2723)も、根の直下に dir を置いて印 `used`(mark_used)を付ければ同じ上限に入る。
+pub fn cache_base() -> Option<PathBuf> {
+    if std::env::var_os(NO_CACHE_ENV).is_some() {
         return None;
     }
-    let base = std::env::var_os(DIR_ENV)
+    std::env::var_os(DIR_ENV)
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(|d| PathBuf::from(d).join("doeff-linter")))
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache").join("doeff-linter")))?;
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache").join("doeff-linter")))
+}
+
+fn cache_file(root: &Path, kind: &str, format: Format) -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let base = cache_base()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     root.hash(&mut hasher);
     let root_dir = base.join(format!("{:016x}", hasher.finish()));
@@ -171,8 +181,9 @@ fn cache_cap_bytes() -> u64 {
     std::env::var(CAP_ENV).ok().and_then(|text| text.trim().parse::<u64>().ok()).unwrap_or(DEFAULT_CAP_BYTES)
 }
 
-/// この実行が根の dir を使った印を付ける(1 つの実行で 1 度)。
-fn mark_used(root_dir: &Path) {
+/// この実行が根の dir を使った印を付ける(1 つの実行で 1 度)。commit の hook の HEAD の木の結果の dir も、読み書きのたびにこれで
+/// 印を付ける(agora-redesign #2723)。
+pub fn mark_used(root_dir: &Path) {
     if std::fs::create_dir_all(root_dir).is_ok() {
         let _ = std::fs::write(root_dir.join(USED_RECORD), b"");
     }

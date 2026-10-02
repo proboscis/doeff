@@ -13,6 +13,7 @@ pub mod baseline;
 pub mod commit_hook;
 pub mod config;
 pub mod editor;
+pub mod head_report_cache;
 pub mod logging;
 pub mod models;
 pub mod noqa;

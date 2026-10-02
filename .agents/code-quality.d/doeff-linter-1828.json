@@ -6,6 +6,7 @@
     "packages/doeff-linter/src/commit_hook.rs",
     "packages/doeff-linter/src/config.rs",
     "packages/doeff-linter/src/editor.rs",
+    "packages/doeff-linter/src/head_report_cache.rs",
     "packages/doeff-linter/src/lib.rs",
     "packages/doeff-linter/src/logging.rs",
     "packages/doeff-linter/src/main.rs",
@@ -125,6 +126,7 @@
         "packages/doeff-linter/src/commit_hook.rs",
         "packages/doeff-linter/src/config.rs",
         "packages/doeff-linter/src/editor.rs",
+        "packages/doeff-linter/src/head_report_cache.rs",
         "packages/doeff-linter/src/lib.rs",
         "packages/doeff-linter/src/logging.rs",
         "packages/doeff-linter/src/main.rs",
@@ -142,6 +144,7 @@
         "packages/doeff-linter/src/commit_hook.rs",
         "packages/doeff-linter/src/config.rs",
         "packages/doeff-linter/src/editor.rs",
+        "packages/doeff-linter/src/head_report_cache.rs",
         "packages/doeff-linter/src/lib.rs",
         "packages/doeff-linter/src/logging.rs",
         "packages/doeff-linter/src/main.rs",
@@ -153,7 +156,7 @@
         "packages/doeff-linter/src/stats.rs",
         "packages/doeff-linter/src/timing.rs"
       ],
-      "responsibility": "doeff-linter の crate の根(lib.rs・main.rs)と共有の部品: 設定の読み・診断の型(models・position)・報告の書き出し・基底・noqa・commit の hook・計時・統計。(agora-redesign #1828)",
+      "responsibility": "doeff-linter の crate の根(lib.rs・main.rs)と共有の部品: 設定の読み・診断の型(models・position)・報告の書き出し・基底・noqa・commit の hook(と HEAD の木の結果の置き場 — #2723)・計時・統計。(agora-redesign #1828)",
       "typed": false
     },
     {

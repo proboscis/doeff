@@ -18,8 +18,13 @@
 //!   行の名指す規則を enable に無くても同じ実行で当てるので、列だけで当たらない行を見逃さない(agora-redesign #1999・#2033 — それまでは
 //!   全部の規則で撃っていた・#1998)。
 //!
-//! 子の linter は 1 回ごとに上限(既定 20 秒)を持ち、越えたら「測れなかった」と 1 行出して止めない(速さが優先)。
-//! 純粋な部分(規則の分け・鍵の差・止める当たりの選び)は関数に分けて、単体の検で確かめる。
+//! 子の linter は 1 回ごとに上限(既定 20 秒)を持ち、越えたら止めずに通す(速さが優先)が、黙っては通さない — どの比べの、どの木で、
+//! どの規則を、何秒の上限で打ち切ったかを 1 行で名指す(agora-redesign #2723 — 以前の「終わらなかった」の 1 行は何を確かめずに
+//! 通したかを言わず、宣言の file を変えた commit の DOEFF167 の当たりが気づかれずに main に入った)。repo 全体の比べが打ち切られても、
+//! stage した file の当たりは捨てずに止める。
+//! repo 全体の比べの HEAD の木の結果は置き場(head_report_cache — HEAD の commit・子の linter の版・規則の組・木の中の設定が鍵)に残し、
+//! 同じ鍵の次の hook は先端の木だけを測る(上限の秒は上げない)。
+//! 純粋な部分(規則の分け・鍵の差・止める当たりの選び・測れなかった比べの名指し)は関数に分けて、単体の検で確かめる。
 
 use crate::config::{CommitHookSection, Config};
 use serde_json::Value;
@@ -258,6 +263,8 @@ pub struct CommitHookOptions {
     pub timeout: Duration,
     /// 子として撃つ linter(ふつうは今の binary)。
     pub linter: PathBuf,
+    /// HEAD の木の結果の置き場の根(facts_cache の根 — None なら置き場を使わずに毎回 HEAD の木を測る)。
+    pub cache: Option<PathBuf>,
 }
 
 impl CommitHookOptions {
@@ -276,30 +283,86 @@ impl CommitHookOptions {
             config: config.map(|(_, path)| path),
             root,
             linter,
+            cache: crate::project::facts_cache::cache_base(),
         }
     }
+}
+
+/// 子の linter を撃つ木。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// HEAD の木(一時の dir に書き出した基点)。
+    Head,
+    /// 先端の木(git の作業木そのもの)。
+    Tip,
+}
+
+impl Side {
+    fn name(self) -> &'static str {
+        match self {
+            Side::Head => "HEAD の木",
+            Side::Tip => "先端の木(作業木)",
+        }
+    }
+}
+
+/// 子の linter 1 回の頼み — どの木で、どの規則を当てるかと、子へ渡す引数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LintRun {
+    pub side: Side,
+    pub rules: Vec<String>,
+    pub args: Vec<String>,
+}
+
+/// 上限で打ち切った子の linter 1 回 — どの木で、どの規則を、何秒の上限で。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cut {
+    pub side: Side,
+    pub rules: Vec<String>,
+    pub limit: Duration,
+}
+
+/// 測れなかった比べ — 比べの名(「HEAD の木の repo 全体の比べ」など)と、打ち切った 1 回。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unmeasured {
+    pub what: String,
+    pub cut: Cut,
+}
+
+/// 純粋: 測れなかった比べを 1 行で名指す(何を確かめずに通したかを残す — agora-redesign #2723)。
+pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
+    let Cut { side, rules, limit } = &unmeasured.cut;
+    format!(
+        "{}を測れなかった — {}で当てた規則 {} 個({})の子の linter を上限 {} 秒で打ち切った。この規則の当たりは確かめないまま通す(上限 = 設定の [tool.doeff-linter.commit_hook] timeout_s)",
+        unmeasured.what,
+        side.name(),
+        rules.len(),
+        rules.join(","),
+        limit.as_secs()
+    )
 }
 
 /// 子の linter 1 回の答え。
 #[derive(Debug)]
 pub enum Measured {
     Report(Value),
-    /// 上限を越えた(止めずに通す)。
-    TimedOut,
+    /// 上限を越えた(止めずに通す — 打ち切った 1 回を名指す)。
+    TimedOut(Cut),
     /// 動かなかった・出力が JSON でない(理由)。
     Failed(String),
 }
 
 /// 子の linter を editor-json で撃ち、上限の中で終われば出力を読む。終了コード 0・1・3・4 は測れた(中身で判じる)とし、
 /// 他は理由つきの失敗。上限は撃つ前にも見る(0 秒なら撃たずに越えた扱い)。
-pub fn run_linter(linter: &Path, cwd: &Path, args: &[String], timeout: Duration) -> Measured {
+pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Duration) -> Measured {
     let deadline = Instant::now() + timeout;
+    let cut = || Measured::TimedOut(Cut { side: run.side, rules: run.rules.clone(), limit: timeout });
     if timeout.is_zero() {
-        return Measured::TimedOut;
+        return cut();
     }
     let spawned = Command::new(linter)
         .args(["--output-format", "editor-json", "--no-log"])
-        .args(args)
+        .args(&run.args)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -327,7 +390,7 @@ pub fn run_linter(linter: &Path, cwd: &Path, args: &[String], timeout: Duration)
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Measured::TimedOut;
+                return cut();
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(error) => return Measured::Failed(format!("子の linter を待てない: {}", error)),
@@ -440,36 +503,38 @@ fn config_args(options: &CommitHookOptions, tree: Option<&Path>) -> Vec<String> 
     vec!["--config".to_string(), chosen.to_string_lossy().into_owned()]
 }
 
-/// 子を撃つ引数を組む(設定・規則・続きの引数・path)。
-fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String], extra: &[String], paths: &[String]) -> Vec<String> {
-    let mut args = config_args(options, tree);
-    args.push("--enable".to_string());
-    args.push(rules.join(","));
-    args.extend(extra.iter().cloned());
-    args.push("--".to_string());
-    args.extend(paths.iter().cloned());
-    args
+/// 子を撃つ頼みを組む(設定・規則・続きの引数・path)。木(tree)が在れば HEAD の木、無ければ先端の木。
+fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String], extra: &[String], paths: &[String]) -> LintRun {
+    let args = config_args(options, tree)
+        .into_iter()
+        .chain(["--enable".to_string(), rules.join(",")])
+        .chain(extra.iter().cloned())
+        .chain(std::iter::once("--".to_string()))
+        .chain(paths.iter().cloned())
+        .collect();
+    LintRun { side: if tree.is_some() { Side::Head } else { Side::Tip }, rules: rules.to_vec(), args }
 }
 
-/// 止める物の一覧(種類ごと)。
+/// 止める物の一覧(種類ごと)と、repo 全体の比べを上限で測れなかった時の名指し(止めない)。
 #[derive(Debug, Default)]
 struct Blocking {
     staged: Vec<String>,
     fresh_critical: Vec<String>,
     grown_warnings: Vec<String>,
     whole: Vec<String>,
+    unmeasured: Option<Unmeasured>,
 }
 
-/// 途中で測れなかった理由(上限越えは止めない・失敗は終了コード 2)。
+/// 途中で測れなかった理由(上限越えは名指して止めない・失敗は終了コード 2)。
 enum Stop {
-    TimedOut,
+    TimedOut(Unmeasured),
     Failed(String),
 }
 
 fn measured(result: Measured, what: &str) -> Result<Value, Stop> {
     match result {
         Measured::Report(value) => Ok(value),
-        Measured::TimedOut => Err(Stop::TimedOut),
+        Measured::TimedOut(cut) => Err(Stop::TimedOut(Unmeasured { what: what.trim_end().to_string(), cut })),
         Measured::Failed(reason) => Err(Stop::Failed(format!("{}を doeff-linter で測れなかった: {}", what, reason))),
     }
 }
@@ -478,38 +543,47 @@ fn empty_report() -> Value {
     serde_json::json!({ "violations": [] })
 }
 
-/// hook の本体。終了コード 0 = 通す(測れなかった時を含む)・1 = 止める・2 = git・linter が動かなかった。
-pub fn run(options: &CommitHookOptions) -> u8 {
+/// hook の 1 回の判じ — 終了コードと、出す行(行の頭の `doeff-linter commit-hook: ` を除く)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assessment {
+    pub code: u8,
+    pub lines: Vec<String>,
+}
+
+/// hook の判じ(印字しない)。終了コード 0 = 通す(測れなかった時を含む — 測れなかった比べは名指す)・1 = 止める・
+/// 2 = git・linter が動かなかった。
+pub fn assess(options: &CommitHookOptions) -> Assessment {
     match judge(options) {
         Ok(blocking) => {
-            for line in &blocking.staged {
-                eprintln!("{}stage した file の破れ: {}", PREFIX, line);
-            }
-            for ident in &blocking.fresh_critical {
-                eprintln!("{}HEAD に無い critical: {}", PREFIX, ident);
-            }
-            for line in &blocking.grown_warnings {
-                eprintln!("{}major の warning が HEAD の版より増えた(stage した file の組の数): {}", PREFIX, line);
-            }
-            for ident in &blocking.whole {
-                eprintln!("{}repo 全体の規則の HEAD に無い当たり: {}", PREFIX, ident);
-            }
-            u8::from(
+            let code = u8::from(
                 !(blocking.staged.is_empty()
                     && blocking.fresh_critical.is_empty()
                     && blocking.grown_warnings.is_empty()
                     && blocking.whole.is_empty()),
-            )
+            );
+            let lines = blocking
+                .staged
+                .iter()
+                .map(|line| format!("stage した file の破れ: {}", line))
+                .chain(blocking.fresh_critical.iter().map(|ident| format!("HEAD に無い critical: {}", ident)))
+                .chain(blocking.grown_warnings.iter().map(|line| format!("major の warning が HEAD の版より増えた(stage した file の組の数): {}", line)))
+                .chain(blocking.whole.iter().map(|ident| format!("repo 全体の規則の HEAD に無い当たり: {}", ident)))
+                .chain(blocking.unmeasured.iter().map(unmeasured_line))
+                .collect();
+            Assessment { code, lines }
         }
-        Err(Stop::TimedOut) => {
-            eprintln!("{}doeff-linter が {} 秒で終わらなかった — 測れなかったまま通す", PREFIX, options.timeout.as_secs());
-            0
-        }
-        Err(Stop::Failed(reason)) => {
-            eprintln!("{}{}", PREFIX, reason);
-            2
-        }
+        Err(Stop::TimedOut(unmeasured)) => Assessment { code: 0, lines: vec![unmeasured_line(&unmeasured)] },
+        Err(Stop::Failed(reason)) => Assessment { code: 2, lines: vec![reason] },
     }
+}
+
+/// hook の本体 — 判じ(assess)の行を stderr に出し、終了コードを返す。
+pub fn run(options: &CommitHookOptions) -> u8 {
+    let assessment = assess(options);
+    for line in &assessment.lines {
+        eprintln!("{}{}", PREFIX, line);
+    }
+    assessment.code
 }
 
 fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
@@ -575,19 +649,68 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     }
 
     if !whole.is_empty() {
-        let dot = vec![".".to_string()];
-        let head = match tree {
-            Some(t) => {
-                let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), whole, &[], &dot), options.timeout), "HEAD の木の repo 全体の比べ")?;
-                rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
-                report
-            }
-            None => empty_report(),
-        };
-        let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, whole, &[], &dot), options.timeout), "repo 全体の比べ")?;
-        blocking.whole = fresh_whole_repo_hits(&head, &tip);
+        // 上限で打ち切られても、stage した file の当たりは捨てずに止め、測れなかった比べを名指す(agora-redesign #2723)。
+        match whole_repo_hits(options, tree, whole, &tip_root) {
+            Ok(hits) => blocking.whole = hits,
+            Err(Stop::TimedOut(unmeasured)) => blocking.unmeasured = Some(unmeasured),
+            Err(failed) => return Err(failed),
+        }
     }
     Ok(blocking)
+}
+
+/// repo 全体の比べ — 先端の木の当たりのうち HEAD の木に無い物。HEAD の木の結果は置き場から読めれば測らない(head_whole_report)。
+fn whole_repo_hits(options: &CommitHookOptions, tree: Option<&Path>, whole: &[String], tip_root: &Path) -> Result<Vec<String>, Stop> {
+    let head = match tree {
+        Some(t) => head_whole_report(options, t, whole, tip_root)?,
+        None => empty_report(),
+    };
+    let dot = vec![".".to_string()];
+    let tip = measured(run_linter(&options.linter, &options.root, &lint_args(options, None, whole, &[], &dot), options.timeout), "先端の木の repo 全体の比べ")?;
+    Ok(fresh_whole_repo_hits(&head, &tip))
+}
+
+/// HEAD の木の repo 全体の比べの結果(違反の path は先端の根へ付け替え済み)。置き場に同じ鍵の結果が在ればそれを使い、無ければ木を測って
+/// 置き場に残す(head_report_cache・agora-redesign #2723)。
+fn head_whole_report(options: &CommitHookOptions, tree: &Path, whole: &[String], tip_root: &Path) -> Result<Value, Stop> {
+    let place = options.cache.as_deref().and_then(|base| head_key(options, tree, whole).map(|key| (base, key)));
+    if let Some(stored) = place.as_ref().and_then(|(base, key)| crate::head_report_cache::load(base, key)) {
+        let mut report = stored.report;
+        rebase_paths(&mut report, &stored.tree, &tip_root.to_string_lossy());
+        return Ok(report);
+    }
+    let dot = vec![".".to_string()];
+    let mut report = measured(run_linter(&options.linter, tree, &lint_args(options, Some(tree), whole, &[], &dot), options.timeout), "HEAD の木の repo 全体の比べ")?;
+    if let Some((base, key)) = &place {
+        crate::head_report_cache::store(base, key, tree, &report);
+    }
+    rebase_paths(&mut report, &tree.to_string_lossy(), &tip_root.to_string_lossy());
+    Ok(report)
+}
+
+/// 純粋: 設定 file の、HEAD の木の中の相対 path — 設定 file が無ければ Some(None)、木の外(根の外・HEAD に無い)なら None
+/// (子は先端の設定を読むので、木の中身では答えが決まらない — config_args と同じ選び)。
+pub fn config_in_tree(options: &CommitHookOptions, tree: &Path) -> Option<Option<String>> {
+    match &options.config {
+        None => Some(None),
+        Some(config) => {
+            let rel = config.strip_prefix(&options.root).ok()?;
+            tree.join(rel).is_file().then(|| Some(rel.to_string_lossy().into_owned()))
+        }
+    }
+}
+
+/// HEAD の木の結果の鍵(HEAD の commit・子の linter の版・規則の組・木の中の設定)。鍵に入らない入力が答えを変えうる時は None
+/// (置き場を使わない): 基点へ今の宣言を写す 1 回限りの指定(Lint-Baseline)・設定 file が HEAD の木の外・HEAD や linter を読めない。
+fn head_key(options: &CommitHookOptions, tree: &Path, rules: &[String]) -> Option<crate::head_report_cache::HeadKey> {
+    if !options.overlay.is_empty() {
+        return None;
+    }
+    let config = config_in_tree(options, tree)?;
+    let head = git(&options.root, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
+    let head = String::from_utf8_lossy(&head).trim().to_string();
+    let linter = crate::head_report_cache::linter_identity(&options.linter)?;
+    Some(crate::head_report_cache::HeadKey { head, linter, rules: rules.to_vec(), config })
 }
 
 #[cfg(test)]
@@ -742,6 +865,43 @@ mod tests {
         assert_eq!(report["violations"][0]["path"], "/repo/a.hy");
         assert_eq!(report["violations"][1]["path"], "/tmp/t/treeish/b.hy");
         assert_eq!(report["violations"][2]["path"], "/elsewhere/c.hy");
+    }
+
+    #[test]
+    fn commit_hook_unmeasured_line_names_the_comparison_tree_rules_and_limit() {
+        let cut = Cut { side: Side::Head, rules: ids(&["DOEFF163", "DOEFF167"]), limit: Duration::from_secs(20) };
+        let line = unmeasured_line(&Unmeasured { what: "HEAD の木の repo 全体の比べ".to_string(), cut });
+        for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "上限 20 秒で打ち切った", "確かめないまま通す"] {
+            assert!(line.contains(part), "{:?} が無い: {}", part, line);
+        }
+        let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(0) };
+        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: tip }).contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter を上限 0 秒"));
+    }
+
+    #[test]
+    fn commit_hook_head_cache_is_used_only_when_the_tree_holds_the_config() {
+        let tree = tempfile::TempDir::new().unwrap();
+        std::fs::write(tree.path().join("pyproject.toml"), "").unwrap();
+        let options = |config: Option<&str>| CommitHookOptions {
+            root: PathBuf::from("/repo"),
+            config: config.map(PathBuf::from),
+            enabled: Vec::new(),
+            declarations: Declarations::default(),
+            overlay: Vec::new(),
+            timeout: Duration::from_secs(20),
+            linter: PathBuf::from("/bin/doeff-linter"),
+            cache: None,
+        };
+        // 設定が木の中に在れば木の中の相対 path・設定が無ければ Some(None)。
+        assert_eq!(config_in_tree(&options(Some("/repo/pyproject.toml")), tree.path()), Some(Some("pyproject.toml".to_string())));
+        assert_eq!(config_in_tree(&options(None), tree.path()), Some(None));
+        // 反例: HEAD の木に無い設定・根の外の設定は、子が先端の設定を読むので鍵で答えが決まらない(置き場を使わない)。
+        assert_eq!(config_in_tree(&options(Some("/repo/sub/pyproject.toml")), tree.path()), None);
+        assert_eq!(config_in_tree(&options(Some("/elsewhere/pyproject.toml")), tree.path()), None);
+        // 反例: 1 回限りの指定(Lint-Baseline)は今の宣言を基点の木へ写すので、置き場を使わない。
+        let mut overlaid = options(None);
+        overlaid.overlay = ids(&["architecture.hy"]);
+        assert!(head_key(&overlaid, tree.path(), &ids(&["DOEFF167"])).is_none());
     }
 
     #[test]
