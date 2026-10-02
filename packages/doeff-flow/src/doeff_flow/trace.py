@@ -20,7 +20,6 @@ Example usage:
 
 
 import json
-import os
 import re
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -30,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from doeff import Err, Ok
+from doeff_flow import env_places
 
 
 def get_default_trace_dir() -> Path:
@@ -44,14 +44,11 @@ def get_default_trace_dir() -> Path:
         Path to the default trace directory.
     """
     # Check for explicit override
-    if env_dir := os.environ.get("DOEFF_FLOW_TRACE_DIR"):
+    if env_dir := env_places.trace_dir_setting():
         return Path(env_dir)
 
     # Use XDG_STATE_HOME or default
-    xdg_state_home = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg_state_home) if xdg_state_home else Path.home() / ".local" / "state"
-
-    return base / "doeff-flow"
+    return env_places.state_home() / "doeff-flow"
 
 
 @dataclass

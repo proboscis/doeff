@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "count": 2,
+      "path": "packages/doeff-hy/src/doeff_hy/static_cache.py",
+      "reason": "registered-with-legacy",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-hy/src/doeff_hy/__init__.py"
+    }
+  ],
+  "version": 1
+}
