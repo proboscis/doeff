@@ -172,6 +172,10 @@
 (defclass [(dataclass :frozen True)] WorkerPolicy []
   (setv #^ int stop-grace-ms 10000)
   (setv #^ int kill-grace-ms 5000)
+  ;; 入れ物 shim の掃除の余裕(#2940): shim の猶予(止めの合図から shim が job の group を強いて止めるまで)は、停止の猶予から
+  ;; この余裕を引いた値(導く所は worker/core/shim_timing の shim-spans の 1 か所)。余裕は shim の掃除そのもの(ms の桁)と、拍の頭の時計の
+  ;; 読みから止めの合図を実際に送るまでの遅れを覆い、shim の期限(猶予 + 余裕)を worker の KILL(停止の猶予の後の拍)より前に置く。
+  (setv #^ int shim-sweep-margin-ms 1500)
   ;; 予期せず終わった job を起こし直すまでの間。続けて落ちるたびに倍にし(k8s の CrashLoopBackOff と同じ形)、上限で止める。
   ;; stable-run-ms より長く動いてから終わった時は 1 回目として数え直す。
   (setv #^ int restart-backoff-ms 2000)

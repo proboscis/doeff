@@ -23,13 +23,15 @@
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
 
 
 (defrecord HostSettings
   "job の子 process の置き場と起こし方の設定(worker の組み立ての入口 main が作る): log-dir = 子の出力の file の dir・jobs-dir = 実行環境の
    job の作業 dir の親・program-dir = 詰めた Program の cache の dir・python = shim を起こす interpreter・hy-command = 木の job の hy・
    uv = 実行環境の job の uv・extra-env = 子へ渡す worker の文脈(名前・coordinator — 資格は渡さない)・layout = 業務の repo の木の形・
-   program-env = 詰めた Program の file を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT)。"
+   program-env = 詰めた Program の file を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT)・shim = shim の時間の内訳(worker の方針から
+   shim_timing.shim-spans が導く — 子の shim の猶予と、回収の時に shim を待つ秒が同じ値を読む・#2940)。"
   (#^ str log-dir)
   (#^ str jobs-dir)
   (#^ str program-dir)
@@ -38,7 +40,8 @@
   (#^ str uv)
   (#^ (get tuple #(EnvEntry ...)) extra-env)
   (#^ CodeLayout layout)
-  (#^ str program-env))
+  (#^ str program-env)
+  (#^ ShimSpans shim))
 
 
 (defk job-work-dir [settings name]
@@ -73,7 +76,7 @@
                                  :uv settings.uv :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
                                  :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
-                                 :program-env settings.program-env :work-dir work))
+                                 :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms))
   (when plan.last-used
     ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
     (<- (file-done (WriteText plan.last-used "" :replace True))))
@@ -109,9 +112,12 @@
     (val view (.get table name))
     (when (and view (= view.pid pid))
       ;; 終わりを観測していない子(止め切れていない)は、止めて回収する(group の残りも — reap-group)。観測した子は回収の時に
-      ;; group の残りを止め、標準入力の pipe を閉じている。
+      ;; group の残りを止め、標準入力の pipe を閉じている。止めの合図から shim の期限(shim の猶予 + 掃除の余裕)まで待ってから
+      ;; group へ KILL を送る — shim が job の子孫を片づけ終える前に shim を殺さない(#2940)。拍の判断(policy の plan-job)は終わりを
+      ;; 観測した子にだけ ReapJob を出すので、本番の拍はこの枝を通らない(通るのは終わりを待たずに回収する呼び手だけ)。
       (when (is view.exit-code None)
-        (<- (StopProcess :pid pid :stop-grace 0.0)))
+        (<- deadline int (shim-deadline-ms settings.shim))
+        (<- (StopProcess :pid pid :stop-grace (/ deadline 1000))))
       ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に消す。
       (when view.spec.runtime-env
         (<- work str (job-work-dir settings name))

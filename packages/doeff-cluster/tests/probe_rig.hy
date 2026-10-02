@@ -14,19 +14,23 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeState ProbeView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeState ProbeView WorkerPolicy])
 (import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS])
+(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))
 
 
-(defk probe-settings [base [timeout-seconds PROBE-SECONDS]]
-  {:pre [(: base Path) (: timeout-seconds (| int float))] :post [(: % ProbeSettings)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "検の dir に入口の検めの設定を作るため(hy は検の venv の物・probe-dir は検の dir の下)。"
+(defk probe-settings [base [timeout-seconds PROBE-SECONDS] [policy (WorkerPolicy)]]
+  {:pre [(: base Path) (: timeout-seconds (| int float)) (: policy WorkerPolicy)] :post [(: % ProbeSettings)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "検の dir に入口の検めの設定を作るため(hy は検の venv の物・probe-dir は検の dir の下・shim の時間は main と同じく policy から
+   shim-spans で導く — 既定は本番の方針)。"
+  (<- shim ShimSpans (shim-spans policy))
   (ProbeSettings :python sys.executable :hy-command HY :uv "uv" :layout (CodeLayout) :probe-dir (str (/ base "probe"))
-                 :timeout-seconds timeout-seconds))
+                 :shim shim :timeout-seconds timeout-seconds))
 
 
 (defk observed [spec]

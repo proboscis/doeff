@@ -1,10 +1,10 @@
 ;;; worker の入口の検め(probe)の判断 — 検めの本体の program・束の並べ方・束の結果の読みと spec ごとの行き先・検めの子の起こし方
 ;;; (handlers.hy の ProbeStore から分けた・#2465)。I/O は呼び手(ProbeStore — 後に worker/protocol の言い換え)が行う。
 (require doeff-hy.macros [defk <- val])
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])
-(import enum [Enum])
+(import enum [Enum StrEnum])
 (import json)
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -22,8 +22,23 @@
 (setv PROBE-DETAIL-CHARS 480)
 
 
-;; 検めの process を包む shim の猶予(秒)。worker が消えた時(kill -9 を含む)に shim が検めの group を止める — job の子と同じ仕組み。
-(setv PROBE-STOP-GRACE "5")
+(defenum ProbeStep WAIT TERM KILL SETTLE)
+;; 走っている検めの束 1 本の、この観測での手(#2940): WAIT = 待つ・TERM = 時間切れなので group へ止めの合図を送る・KILL = 合図から
+;; shim の期限(shim の猶予 + 掃除の余裕)を過ぎても終わらないので強いて止めて片づける・SETTLE = 終わったので片づける。
+
+
+(defk probe-step [exited elapsed-ms timeout-ms stopping-for-ms deadline-ms]
+  {:pre [(: exited bool) (: elapsed-ms int) (: timeout-ms (| int float)) (: stopping-for-ms (| int None)) (: deadline-ms int)]
+   :post [(: % ProbeStep)] :tags {:context "worker" :role "judgment"}}
+  "走っている検めの束 1 本を、worker の拍を塞がずに止めるため(#2940): 時間切れでは group へ止めの合図だけを送り、shim の期限まで後の
+   観測で終わりを待ち、期限を過ぎても残る時だけ強いて止める — 合図と同時に KILL を送ると shim が子孫を片づける前に shim を殺し、合図の後に
+   期限まで待ち込むと同じ拍の job の止めの合図が遅れる。exited = 束が終わった・elapsed-ms = 起こしてからの ms・timeout-ms = 束の時間の
+   上限・stopping-for-ms = 止めの合図を送ってからの ms(送っていなければ None)・deadline-ms = shim の期限(shim_timing.shim-deadline-ms)。"
+  (cond
+    exited ProbeStep.SETTLE
+    (is-not stopping-for-ms None) (if (>= stopping-for-ms deadline-ms) ProbeStep.KILL ProbeStep.WAIT)
+    (> elapsed-ms timeout-ms) ProbeStep.TERM
+    True ProbeStep.WAIT))
 
 
 (defk probe-reason [code stderr]
