@@ -2,17 +2,33 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
 
 ROOT: Path = Path(__file__).resolve().parents[1]
+
+
+def _linter_locked() -> ModuleType:
+    """hook の doeff-linter の項が鍵を計算する module を読み、偽の crate の鍵を同じ計算で出すため。"""
+    spec = importlib.util.spec_from_file_location("doeff_linter_locked", ROOT / "scripts" / "doeff_linter_locked.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module: ModuleType = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclass は module を sys.modules から引く
+    spec.loader.exec_module(module)
+    return module
+
+
+LINTER_LOCKED: ModuleType = _linter_locked()
 
 
 FAKE_VERSIONS: dict[str, str] = {"semgrep": "0.0.0-fake", "doeff-linter": "doeff-linter 0.0.0 (fake)"}
@@ -54,6 +70,11 @@ FAKE_UV: str = (
 )
 
 
+def _uv_dir(uv: str, kind: str) -> str:
+    """本物の uv の置き場(`uv cache dir` / `uv python dir`)— HOME を替えた子にも同じ置き場を渡すため。"""
+    return subprocess.run([uv, kind, "dir"], capture_output=True, text=True, check=True).stdout.strip()
+
+
 def _environment(directory: Path) -> dict[str, str]:
     environment: dict[str, str] = dict(os.environ)
     real_uv: str | None = shutil.which("uv")
@@ -67,6 +88,12 @@ def _environment(directory: Path) -> dict[str, str]:
         "LINT_CALLS": str(directory / "calls.jsonl"),
         "PRE_COMMIT_HOME": str(directory / "pre-commit-cache"),
         "PRE_COMMIT_ALLOW_NO_CONFIG": "0",
+        # hook の doeff-linter の項は、基点の鍵の binary を HOME の下の land-arm の開発版 → 断面の置き場から探す(#2906)—
+        # HOME を一時の dir に向け(開発版は _repository が置く・断面の置き場は空 = 機体の物を読まない)、uv の cache と Python の
+        # 置き場は本物を指したままにする(HOME を替えても uv が取り直さない)。
+        "HOME": str(directory),
+        "UV_CACHE_DIR": _uv_dir(real_uv, "cache"),
+        "UV_PYTHON_INSTALL_DIR": _uv_dir(real_uv, "python"),
     })
     environment.pop("SKIP", None)
     return environment
@@ -103,6 +130,28 @@ def test_make_lint_doeff_propagates_missing_and_tool_failure(
             assert calls[2] == ["doeff-linter", "--no-log", "--output-format", "json"]  # warning の基点との比べ
 
 
+def _commit_fake_crate(repository: Path, directory: Path) -> str:
+    """偽の linter の crate を commit し、HOME(= directory)の下の偽の land-arm の開発版をその commit から組んだ物として置き
+    (探し道に置いた偽の linter の写しと記録 installed.json)、組み立ての入力の鍵を返す。"""
+    crate: Path = repository / "packages" / "doeff-linter"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "doeff-linter"\n', encoding="utf-8")
+    (crate / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    subprocess.run(["/usr/bin/git", "add", "packages"], cwd=repository, check=True)
+    subprocess.run(["/usr/bin/git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "crate"],
+                   cwd=repository, check=True)
+    commit: str = subprocess.run(["/usr/bin/git", "rev-parse", "HEAD"], cwd=repository,
+                                 capture_output=True, text=True, check=True).stdout.strip()
+    dev: Path = directory / ".local" / "share" / "doeff-linter-dev"
+    dev.mkdir(parents=True)
+    if (directory / "doeff-linter").is_file():
+        shutil.copy2(directory / "doeff-linter", dev / "doeff-linter")
+    (dev / "installed.json").write_text(json.dumps({"commit": commit}), encoding="utf-8")
+    key: str | None = LINTER_LOCKED.input_key(repository, commit)
+    assert key is not None
+    return key
+
+
 def _repository(directory: Path, changed: str, source: str) -> Path:
     repository: Path = directory / "repository"
     repository.mkdir()
@@ -110,13 +159,15 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     shutil.copyfile(ROOT / ".pre-commit-config.yaml", repository / ".pre-commit-config.yaml")
     # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
-    for script in ("hook_finding_baseline.py", "semgrep_locked.py"):
+    for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py"):
         shutil.copyfile(ROOT / "scripts" / script, repository / "scripts" / script)
     # semgrep の版は uv.lock が決める(#2906)— 偽の道具の版に合わせる。
     (repository / "uv.lock").write_text(
         f'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{FAKE_VERSIONS["semgrep"]}"\n', encoding="utf-8",
     )
-    for tool, version in FAKE_VERSIONS.items():
+    # doeff-linter の版は組み立ての入力の鍵(#2906)— 偽の crate を commit し、その鍵を基点に書き、偽の開発版の記録をその commit に。
+    linter_key: str = _commit_fake_crate(repository, directory)
+    for tool, version in (("semgrep", FAKE_VERSIONS["semgrep"]), ("doeff-linter", linter_key)):
         (repository / "scripts" / "hook_finding_baseline" / f"{tool}.json").write_text(
             json.dumps({"version": version, "counts": {}}), encoding="utf-8",
         )

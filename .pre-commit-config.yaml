@@ -3,7 +3,9 @@ repos:
     hooks:
       # Python の semgrep と doeff-linter は、hook を据え付ける前からの所見(2026-10-02 に semgrep 74 件・linter の error 約 1,170 件)を
       # 規則 × file の基点(scripts/hook_finding_baseline/)と比べ、増えた所見と基点の下げ忘れだけを止める(agora-redesign #2848)。
-      # doeff-linter の版が基点の版と違う時は「測れない」と名指して通す — verbose で、通った時もその 1 行を見せる。
+      # doeff-linter は、基点が名乗る組み立ての入力の鍵と同じ鍵の binary を land-arm の開発版 → 断面の置き場から探して呼ぶ
+      # (scripts/doeff_linter_locked.py・#2906 — 探し道の linter は見ない・hook の中では組まない)。置き場に無ければ「測れない」と
+      # 名指して通す — verbose で、通った時もその 1 行を見せる。
       # semgrep の 3 項は uv.lock の版を uv の道具の置き場から呼ぶ(scripts/semgrep_locked.py・#2906)— 探し道や作業木の .venv の
       # semgrep は機体と作業木の状態で版がずれ、.venv の無い作業木では uv が空の .venv を作っていた。
       - id: semgrep
