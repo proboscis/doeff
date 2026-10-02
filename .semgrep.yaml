@@ -2762,17 +2762,36 @@ rules:
   # TESTING PATTERNS
   # ---------------------------------------------------------------------------
 
+  # 実時間の並行そのもの(本物の thread・本物の asyncio の loop)が対象の検は、検の側で pytest の marker
+  # `realtime` を名乗る — 関数の @pytest.mark.realtime か、module の pytestmark = pytest.mark.realtime。
+  # 規則はその中を鳴らさない(名の一覧を持たない)。sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない
+  # (agora-redesign #2882)。極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
   - id: doeff-no-sleep-in-tests
     patterns:
       - pattern-either:
           - pattern: time.sleep(...)
           - pattern: await asyncio.sleep(...)
+      - pattern-not: time.sleep(0)
+      - pattern-not: await asyncio.sleep(0)
+      - pattern-not-inside: |
+          @pytest.mark.realtime
+          def $TEST(...):
+            ...
+      - pattern-not-inside: |
+          @pytest.mark.realtime
+          async def $TEST(...):
+            ...
+      - pattern-not-inside: |
+          pytestmark = pytest.mark.realtime
+          ...
     paths:
       include:
         - tests/
     message: |
       Avoid time.sleep() or asyncio.sleep() in tests. Use SimulationRuntime
-      with controlled time for deterministic testing.
+      with controlled time for deterministic testing. A test whose subject is
+      real-time concurrency (real threads, a real asyncio loop) declares it with
+      @pytest.mark.realtime (or a module-level pytestmark = pytest.mark.realtime).
     languages: [python]
     severity: WARNING
     metadata:

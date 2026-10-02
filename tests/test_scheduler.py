@@ -396,6 +396,7 @@ class TestRace:
 
         assert _run_race_with_timeout(body()) == "duplicate"
 
+    @pytest.mark.realtime
     def test_race_resolves_once_when_waitables_complete_back_to_back(self):
         """Back-to-back completions of both raced externals resolve once.
 
@@ -712,6 +713,7 @@ class TestExternalPromise:
 
         assert doeff_run(scheduled(body())) == "external_value"
 
+    @pytest.mark.realtime
     def test_100_threads_concurrent(self):
         """100 tasks each sleeping 0.1s in threads. Must finish in <2s, not 10s."""
         import threading
@@ -744,6 +746,7 @@ class TestExternalPromise:
         assert results == list(range(100))
         assert elapsed < 2.0, f"took {elapsed:.1f}s — not concurrent!"
 
+    @pytest.mark.realtime
     def test_resolved_external_wait_not_stalled_behind_unresolved_peer(self):
         """Regression for #490: a resolved external wait resumes promptly.
 
@@ -945,6 +948,7 @@ class TestPrioritySurvivesSuspension:
             f"woken HIGH task was not served before queued NORMAL backlog: {result}"
         )
 
+    @pytest.mark.realtime
     def test_idle_spawner_not_promoted_above_external_wait_shield(self):
         """Regression for #504: an IDLE task performing Spawn resumes at IDLE,
         below the PRIORITY_EXTERNAL_WAIT shield — not at a hard-coded NORMAL
@@ -1389,6 +1393,7 @@ class TestDeadlockDiagnostics:
 
         assert exc_info.value.semaphore_waiters
 
+    @pytest.mark.realtime
     def test_semaphore_holder_awaiting_external_event_blocks_quietly(self):
         """A permit holder parked on a live external completion is NOT a
         deadlock: the sem waiter must simply wait until the holder releases."""
@@ -1444,6 +1449,7 @@ class TestDeadlockDiagnostics:
         with pytest.raises(SchedulerDeadlockError):
             _run_scheduled_with_timeout(body(), timeout=2.0)
 
+    @pytest.mark.realtime
     def test_runnable_idle_releaser_not_diagnosed_as_deadlock(self):
         """A releaser sitting RUNNABLE in the ready heap disproves doom: the
         holder-model check must not fire while any live entry can still run
@@ -1482,6 +1488,7 @@ class TestDeadlockDiagnostics:
 
         assert _run_scheduled_with_timeout(body(), timeout=2.0) == ["H", "R"]
 
+    @pytest.mark.realtime
     def test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock(self):
         """Documents the #495c detection model: permits are released by their
         holders. A semaphore used as a cross-task SIGNAL — the only holder
@@ -1529,6 +1536,7 @@ class TestDeadlockDiagnostics:
             _run_scheduled_with_timeout(body(), timeout=2.0)
         assert exc_info.value.semaphore_waiters
 
+    @pytest.mark.realtime
     def test_stall_diagnostic_logged_while_blocking_on_external(self, monkeypatch, caplog):
         """#495b: a long block on external completions logs a stall warning
         with the parked-waiter summary, then keeps blocking (semantics
@@ -1570,6 +1578,7 @@ class TestRootCloseOut:
     """#501: root completion must not silently abandon in-flight work, and an
     empty Race() must fail loudly instead of leaking the caller continuation."""
 
+    @pytest.mark.realtime
     def test_root_return_dropping_queued_work_warns(self):
         """Repro E from the #501 report: root returns while another task's
         fully-runnable work (spawned at IDLE behind the external-wait shield)
@@ -1851,6 +1860,7 @@ class TestGatherRaceExternalWaitShield:
     completion) and always runs — see
     test_race_resolves_with_in_run_idle_completer below."""
 
+    @pytest.mark.realtime
     def test_gather_external_pending_blocks_idle_task(self):
         import time
 
@@ -1883,6 +1893,7 @@ class TestGatherRaceExternalWaitShield:
             f"(#505): {order}"
         )
 
+    @pytest.mark.realtime
     def test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder(self):
         """The winner's completion must resolve the race while the shield held
         the IDLE task back; the loser's placeholder must be dropped on
@@ -1959,6 +1970,7 @@ class TestGatherRaceExternalWaitShield:
 
         assert _run_scheduled_with_timeout(body(), timeout=2.0) == "from-idle-task"
 
+    @pytest.mark.realtime
     def test_gather_external_failure_drops_sibling_placeholder(self):
         """Fail-fast Gather resolution must drop the placeholders of its
         still-pending external siblings, or the run would block forever on a

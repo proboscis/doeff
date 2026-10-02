@@ -130,6 +130,7 @@ markers = [
     "stress: stress tests with high concurrency or iteration count",
     "pre_kleisli_behavior: characterization tests for pre-Kleisli handler behavior",
     "phase3_baseline: characterization tests for VM Kleisli Phase 3 behavior",
+    "realtime: tests whose subject is real-time concurrency (real threads, a real asyncio loop); the semgrep rule doeff-no-sleep-in-tests does not fire inside them (agora-redesign #2882)",
 ]
 
 [tool.ruff]
