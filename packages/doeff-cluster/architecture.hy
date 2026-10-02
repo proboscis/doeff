@@ -95,7 +95,7 @@
                 "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)。消す順などの条は後から足す。:entry-modules は worker の入口
-;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh が起こす旧い名 doeff_cluster.main は渡すだけの入口)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
+;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
 ;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)・intent(観測・記録・effect の型 — worker/intent)・
 ;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)・entry(worker の入口 main・drain の入口 drain_main(#2029)・子 process の入口
 ;; job_entry・見張り shim・実行環境の準備の入口 env_tool — worker/entry・#2028。bytecode の準備の道具 code_prepare(worker が file の path で起動する)も

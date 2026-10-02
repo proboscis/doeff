@@ -713,7 +713,7 @@ def _bytecode_settings_pinned():
 #
 # Under the pin above a subprocess writes no bytecode and looks for it only next
 # to the source, where nothing compiled the modules that only subprocesses import
-# (an entry point such as doeff_cluster.env_handlers), and where nothing is found
+# (an entry point such as doeff_cluster.worker.entry.env_tool), and where nothing is found
 # at all when the developer's PYTHONPYCACHEPREFIX took the collection's bytecode
 # elsewhere.  Each such subprocess compiled its Hy modules from source again:
 # 4-9 s per process on zeus, most of test_env_careful.hy's time (agora-redesign

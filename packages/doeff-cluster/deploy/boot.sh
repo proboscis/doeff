@@ -152,7 +152,7 @@ case "$role" in
   drain)
     # preStop の出力は kubelet が捨てるので、container の log(PID 1 = worker の stderr)へ出す。
     # 世代の file(worker が起動の時に書く — 下の DOEFF_WORKER_BOOT_FILE と同じ path)を渡し、頼みに世代を載せる。
-    exec hy -m doeff_cluster.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
+    exec hy -m doeff_cluster.worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
       --deadline "${DRAIN_DEADLINE:-90}" --boot-file "${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}" 2>>/proc/1/fd/2 ;;
   coordinator)
     mkdir -p "$WORK_DIR/coord"
@@ -205,7 +205,7 @@ if [ -n "${WORKER_LABELS:-}" ]; then
   echo "boot: WORKER_LABELS は受け付けない — WORKER_PROVIDES(と WORKER_EXCLUSIVE)で提供する能力を名乗る" >&2
   exit 2
 fi
-exec hy -m doeff_cluster.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
+exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
