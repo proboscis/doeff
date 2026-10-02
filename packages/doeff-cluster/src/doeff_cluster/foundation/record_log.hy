@@ -15,7 +15,7 @@
 ;;;
 ;;; 並行: 出来事の番号は問いと答えの両方に振る(scheduler が task を切り替える順 = 答えが返った順も再生で同じにするため)。
 ;;; task の名は親の名 + 「.」+ 親の中で何番目に Spawn したか(scheduler の番号に依らないので記録と再生で同じ)。根は "root"。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import collections.abc [Callable])
@@ -100,7 +100,8 @@
   value)
 
 
-(defn #^ list _expand-calls [#^ list lines]
+(deff _expand-calls [#^ list lines]  ; defk にできない: 再生の道具と再生係(handler)が Program の外で呼ぶ純粋な読み
+  {:pre [(: lines list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "call の行(問いと答えの 1 行)を req と ans の 2 行に戻す。他の行はそのまま。"
   (setv out [])
   (for [l lines]
@@ -114,7 +115,8 @@
   out)
 
 
-(defn #^ Recording read-recording [#^ list lines #^ (| int None) [until-ms None] #^ (| (get Callable #([str dict] str)) None) [mode-of-type None]]
+(deff read-recording [#^ list lines #^ (| int None) [until-ms None] #^ (| (get Callable #([str dict] str)) None) [mode-of-type None]]  ; defk にできない: 再生の道具と再生係(handler)が Program の外で呼ぶ純粋な読み
+  {:pre [(: lines list) (: until-ms (| int None)) (: mode-of-type (| Callable None))] :post [(: % Recording)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の行(dict の列・順不同でよい)→ Recording。until-ms = この時刻より後の出来事を捨てる(範囲の終わり)。
    mode-of-type = 型の名 → 登録の mode(再生の側の record_codec から渡す。無ければ行の mode 欄)。"
   (setv header None broken None events [] entries {} queues {} ended {} arg-bases {} val-bases {} muts [] blobs {} memo {})
@@ -234,7 +236,8 @@
 
 ;; --- 結果 -------------------------------------------------------------------------------------
 
-(defn #^ dict diff-row [#^ str kind #^ (| Entry None) entry #^ str type #^ (| str None) subject #^ str task #^ (| dict None) replayed-args #^ (| int None) [at None]]
+(deff diff-row [#^ str kind #^ (| Entry None) entry #^ str type #^ (| str None) subject #^ str task #^ (| dict None) replayed-args #^ (| int None) [at None]]  ; defk にできない: 再生係(handler)と再生の道具が Program の外で呼ぶ報告の純粋な綴り
+  {:pre [(: kind str) (: entry (| Entry None)) (: type str) (: subject (| str None)) (: task str) (: replayed-args (| dict None)) (: at (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "判断の違い 1 件。kind = changed / missing / extra。recorded = 記録の引数・replayed = 再生の引数・delta = 記録 → 再生の差分。"
   (setv recorded (if (is entry None) None entry.args))
   {"kind" kind "type" type "subject" subject "task" task
@@ -242,8 +245,9 @@
    "recorded" recorded "replayed" replayed-args
    "delta" (if (and (is-not recorded None) (is-not replayed-args None)) (delta-of recorded replayed-args) None)})
 
-(defn #^ dict summarize [#^ Recording rec #^ dict counts #^ list decisions #^ list outputs #^ (| dict None) divergence #^ str end #^ int consumed
-                         #^ (| int None) [from-ms None] #^ (| int None) [to-ms None]]
+(deff summarize [#^ Recording rec #^ dict counts #^ list decisions #^ list outputs #^ (| dict None) divergence #^ str end #^ int consumed
+                 #^ (| int None) [from-ms None] #^ (| int None) [to-ms None]]  ; defk にできない: 再生係(handler)と再生の道具が Program の外で呼ぶ報告の純粋な綴り
+  {:pre [(: rec Recording) (: counts dict) (: decisions list) (: outputs list) (: divergence (| dict None)) (: end str) (: consumed int) (: from-ms (| int None)) (: to-ms (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "再生の結果を 1 つの dict にまとめる。from-ms / to-ms = 報告の範囲(判断の違いを記録の時刻で絞る。再生そのものは run の始まりから)。"
   (defn #^ bool in-range [#^ dict row]
     (setv at (.get row "at"))

@@ -5,7 +5,7 @@
 ;;; source の file・環境変数)なので、送る形と判断を置く remote_model.hy(domain)から分けた(#1630 — 純粋な層の
 ;;; module が remote_model 経由で os・pathlib を読んでいた)。呼ぶのは送り手と受け側の入口と io の handler だけで、
 ;;; 宣言の組み立て(service_build.system-declaration)には呼び手がこの値を渡す。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import functools [cache])
 (import hashlib)
@@ -46,7 +46,8 @@
      "doeff-do" (_source-fingerprint (get sys.modules "doeff.do"))}))
 
 
-(defn #^ dict current-versions []
+(deff current-versions []  ; defk にできない: 送り手と宿が Program の外(blob を作る時・起動の時)で呼ぶ — 環境変数を毎回読む
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "この process の版の識別。送り手が blob に添え、受け側が突き合わせる。"
   {#** (_installed-versions)
    ;; env の root の中の子 process は、その env のキーを名乗る(worker が DOEFF_RUNTIME_ENV_KEY で渡す)。送り手が env の中で動いていれば

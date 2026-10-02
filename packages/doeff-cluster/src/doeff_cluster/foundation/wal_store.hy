@@ -12,7 +12,7 @@
 ;;;   後ろに別の行が続く行の破損・checksum の不一致・seq の飛び/逆行・壊れた snapshot は WalCorrupted で起動を断る(黙って
 ;;;   切り詰めると、返事を済ませた書き — 版の番号と lease の行を含む — が巻き戻った状態で起動してしまう)。
 ;;; I/O はこの module の中だけ(調停ループの Program は Persist の effect しか知らない)。scheduler の外の thread は作らない。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import os)
@@ -72,7 +72,8 @@
   (.encode (+ "{\"crc\":\"" (checksum text) "\"," (cut text 1 None)) "utf-8"))
 
 
-(defn #^ bytes encode-line [#^ int seq #^ dict delta]
+(deff encode-line [#^ int seq #^ dict delta]  ; defk にできない: WalStore の method(Program の外の I/O)が呼ぶ純粋な綴り
+  {:pre [(: seq int) (: delta dict)] :post [(: % bytes)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "log の 1 行(改行つき)。"
   (+ (sealed {"seq" seq "delta" delta}) b"\n"))
 
@@ -94,7 +95,8 @@
       #(None False "checksum が合わない")))
 
 
-(defn #^ dict scan-log [#^ list lines #^ int base #^ dict kv #^ str where]
+(deff scan-log [#^ list lines #^ int base #^ dict kv #^ str where]  ; defk にできない: WalStore の method(Program の外の I/O)が起動の読み直しで呼ぶ純粋な読み
+  {:pre [(: lines list) (: base int) (: kv dict) (: where str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "log の行(改行つきの byte の list)を snapshot の上(base = snapshot の seq・kv = その中身)へ当てる。
    返り値 = {\"kv\" \"seq\" \"good\"(残す byte 数)\"dropped\"(捨てた最後の行の byte 数)\"reason\"}。
    読めないのが最後の 1 行なら捨てる(返事をしていないまとまり)。それ以外の破損・seq の飛び/逆行は WalCorrupted。
