@@ -169,11 +169,16 @@ def _run(
     with_environment = 模型の環境として今の検の環境(sys.prefix)を UV_PROJECT_ENVIRONMENT で指すか。
     linter = 逆依存の代役(既定は模型の空の答え — 実の doeff-linter は呼ばない)。
     """
-    env = {
-        k: v for k, v in os.environ.items() if k not in {"UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV"}
-    }
+    # 子はこの process の環境を継ぐ — uv の環境の 2 つの名を外し(`env -u`)、with_environment の時だけ今の環境を指す。
+    environment = [f"UV_PROJECT_ENVIRONMENT={sys.prefix}"] if with_environment else []
     proc = subprocess.run(
         [
+            "env",
+            "-u",
+            "UV_PROJECT_ENVIRONMENT",
+            "-u",
+            "VIRTUAL_ENV",
+            *environment,
             "uv",
             "run",
             "--script",
@@ -186,7 +191,6 @@ def _run(
             str(linter if linter is not None else model.linter),
             *extra,
         ],
-        env={**env, "UV_PROJECT_ENVIRONMENT": sys.prefix} if with_environment else env,
         capture_output=True,
         text=True,
         timeout=120,
