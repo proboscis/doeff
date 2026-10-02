@@ -8,7 +8,9 @@
 ;;; effect の答えの失敗(Conflict・Refused・NotIndexed・Reset・Missing・RowsConflict・RowsRefused)は答えの値で、`kind` の欄で判別する。
 ;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(service.hy)。
 (require doeff-hy.macros [defk <- val])
+(require doeff-hy.record [defenum])
 (import dataclasses [dataclass])
+(import enum [StrEnum])
 (import doeff_hy.frozen [FrozenMap thaw-json])
 ;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ — ここは import して、この module の読み手へも同じ名で見せる。
 (import doeff_hy.json_value [JsonValue])
@@ -25,12 +27,43 @@
 ;; 追記の列の末尾の番号を 1 回で読む操作(本文 = {stream})。前の 7 つの綴りは変えずに足した。
 (val OP-READ-STREAM-END "read-stream-end")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END))
+;; 書きの操作(行か出来事を書く — 計器の要求の種 write)。OPERATIONS の残りは読み(read)。
+(val WRITE-OPERATIONS (frozenset #(OP-PUT-ROW OP-PUT-ROWS OP-APPEND-EVENT)))
+
+;; 要求の種(計器 /metrics の counter の名に畳む種 — #2709): WRITE = 書きの操作の route・READ = 残りの記録の操作の route・
+;; OTHER = 記録の操作でない route(/healthz・/readyz・/metrics・知らない route)。
+(defenum RequestKind WRITE READ OTHER)
 
 ;; 断りの語(契約 $defs.refusal の error の語彙のうち、この口が使う物)と HTTP の status。
 (setv ERROR-MALFORMED "malformed" ERROR-UNAUTHORIZED "unauthorized" ERROR-NOT-FOUND "not-found"
       ERROR-STORE-UNAVAILABLE "store-unavailable" ERROR-INTERNAL "internal")
 (setv STATUS-OF-ERROR {ERROR-MALFORMED 400 ERROR-UNAUTHORIZED 401 ERROR-NOT-FOUND 404 ERROR-STORE-UNAVAILABLE 503
                        ERROR-INTERNAL 500})
+
+;; 計器(GET /metrics)の counter の名の綴り(#2709): 要求の種 × 答えの status ごとに records_requests_<種>_<status>(描く名は末尾に
+;; _total)。label は使わず、種と status を名に畳む。系列は種 3 × status(200 と上の断りの status)で閉じていて、口は起動の時に全部を
+;; 0 で置く(読み手が「無い」と「0」を区別しなくて済み、区間の差が最初の 1 つ目の増えを取りこぼさない)。置き場に届かなかった数 =
+;; 503 の系列(store-unavailable — 表の用意の前と /readyz の不達を含む)・答えの途中で落ちた数 = 500 の系列(internal)— 断りの status は
+;; 語ごとに 1 つずつなので、別の counter を持たずに status の系列で読む。種 other には /healthz・/readyz・/metrics 自身の読み(kubelet の
+;; 見張りと計器の取り込み)が入る。
+(val ANSWER-METRIC "records_requests_{}_{}")
+(val ANSWER-STATUSES (tuple (sorted (| (frozenset #(200)) (frozenset (.values STATUS-OF-ERROR))))))
+(val ANSWER-METRICS (tuple (gfor kind RequestKind status ANSWER-STATUSES (.format ANSWER-METRIC kind status))))
+;; 各系列の # HELP の説明(名 → 説明)。
+(val ANSWER-METRIC-HELPS
+  (FrozenMap (gfor kind RequestKind status ANSWER-STATUSES
+                   #((.format ANSWER-METRIC kind status)
+                     (.format "記録の service が {}({})の要求に status {}{} で答えた数(起動からの累計){}"
+                              kind
+                              (cond (= kind RequestKind.WRITE) "書きの操作の route"
+                                    (= kind RequestKind.READ) "読みの操作の route"
+                                    True "記録の操作でない route — /healthz・/readyz・/metrics 自身の読みを含む")
+                              status
+                              (.join "" (gfor #(word code) (.items STATUS-OF-ERROR) :if (= code status) (+ " " word)))
+                              (cond (= status (get STATUS-OF-ERROR ERROR-STORE-UNAVAILABLE))
+                                      "・置き場に届かなかった(表の用意の前と /readyz の不達を含む)"
+                                    (= status (get STATUS-OF-ERROR ERROR-INTERNAL)) "・答えの途中で落ちた"
+                                    True ""))))))
 
 ;; 操作ごとに答えてよい kind(契約の records.routes の 200 の答えと同じ)。
 (setv ANSWER-KINDS {OP-READ-ROW #("row" "missing")
@@ -79,6 +112,26 @@
   "要求が名指す表と追記の列(置き場の宣言に在るかを service が effect を撃つ前に確かめるため)。"
   (#^ tuple tables)
   (#^ tuple streams))
+
+
+;; --- 要求の種と計器の counter の名 ---------------------------------------------------------------------------
+
+(defk request-kind [path]
+  {:pre [(: path str)] :post [(: % RequestKind)]}
+  "要求の path(query を除く)を要求の種にする(計器が書きと読みを分けて数えるため)。method は問わない — POST でない記録の操作の
+   400 も、その操作の種で数える。"
+  (val operation (if (.startswith path PATH-PREFIX) (cut path (len PATH-PREFIX) None) None))
+  (match operation
+    name :if (in name WRITE-OPERATIONS) RequestKind.WRITE
+    name :if (in name OPERATIONS) RequestKind.READ
+    _ RequestKind.OTHER))
+
+
+(defk answer-metric [path status]
+  {:pre [(: path str) (: status int)] :post [(: % str)]}
+  "path の要求に status で答えた数の counter の名を作るため(ANSWER-METRIC の綴り — 種は request-kind)。"
+  (<- kind RequestKind (request-kind path))
+  (.format ANSWER-METRIC kind status))
 
 
 ;; --- 境界の読みの部品 ---------------------------------------------------------------------------------------

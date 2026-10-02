@@ -9,6 +9,8 @@
 ;;;   - 本文の上限を宣言の長さで超える要求は、本文を読まずに 400 malformed
 ;;;   - 表の用意が済む前の記録の操作は 503 store-unavailable、/healthz は 200(口は用意の前に開く)
 ;;;   - 反例: 表の用意が落ちれば、run は例外で終わる(0 で終わらない — 半端に立ったまま答え続けない)
+;;;   - 計器(#2709): 実際に送った答えを札ごとにちょうど 1 つ、要求の種と status の counter に数える(400 の本文の断り・500 の落ちた札・
+;;;     用意の前の 503 も)。送りが落ちた札は 500 で送り直し、500 として数える(送れなかった答えは数えない)
 (require doeff-hy.macros [deftest defhandler defk <- val])
 (require doeff-hy.record [defrecord])
 (import json)
@@ -24,7 +26,13 @@
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServing RecordsListening])
+(import doeff_records.http_server [RecordsServing RecordsListening serve-records])
+(import doeff_records.wire [ANSWER-METRICS])
+(import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
+(import doeff_core_effects.memory_meter [memory-meter-handler])
+(import doeff_hy.frozen [FrozenMap])
+(import doeff_records.values [Row])
+(import doeff_records.effects [ReadRow])
 (import doeff_records.store_choice [StorePressure PressureUnread])
 (import doeff_records.main [records-process])
 (import tests.interpreters [LAW-TOKENS law-roster])
@@ -115,20 +123,22 @@
   (raise (ConnectionError "置き場に届かない(検の代役)")))
 
 
-(defk serving-of [prepare]
-  {:pre [(: prepare (| Program EffectBase))] :post [(: % RecordsServing)] :tags {:context "records" :role "judgment"}}
-  "入口の設定(本番の serve-records-service が env から作る物と同じ形 — 本文の上限だけ小さく・手入れは立てない)を作るため。"
+(defk serving-of [prepare meter]
+  {:pre [(: prepare (| Program EffectBase)) (: meter (| (get Callable #(... object)) None))] :post [(: % RecordsServing)] :tags {:context "records" :role "judgment"}}
+  "入口の設定(本番の serve-records-service が env から作る物と同じ形 — 本文の上限だけ小さく・手入れは立てない・meter = 計器の
+   差し替え(None = 既定の memory-meter-handler))を作るため。"
   (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :roster (law-roster) :prepare prepare
-                  :request-handlers #() :max-bytes MAX-BYTES :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0))
+                  :request-handlers #() :max-bytes MAX-BYTES :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0
+                  :meter meter))
 
 
-(defk run-entry [script broken prepare]
-  {:pre [(: script HttpScript) (: broken (| str None)) (: prepare (| Program EffectBase))] :post [(: % tuple)]
+(defk run-entry [script broken prepare meter]
+  {:pre [(: script HttpScript) (: broken (| str None)) (: prepare (| Program EffectBase)) (: meter (| (get Callable #(... object)) None))] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
   "入口の Program を本番と同じ records-process で、検の土台の上で 1 回走らせるため。答え = #(終わりの code 札 → 受けた命令の列)。"
   (val got [])
   (val parts (ScriptedParts :script script :broken broken :note (fn [c] (.append got c))))
-  (val code (run (records-process (fn [body] (scripted-foundation parts body)) (! (serving-of prepare)))))
+  (val code (run (records-process (fn [body] (scripted-foundation parts body)) (! (serving-of prepare meter)))))
   (val by-ticket {})
   (for [served (if got (get got 0) #())]
     (.setdefault by-ticket served.ticket [])
@@ -149,7 +159,7 @@
 (deftest test-every-scripted-request-is-answered-exactly-once-by-the-entry-program
   (<- script HttpScript (served-script))
   (val store (MemoryStore LAW-SCHEMA))
-  (val outcome (! (run-entry script BROKEN-TICKET (handlers-at-once store))))
+  (val outcome (! (run-entry script BROKEN-TICKET (handlers-at-once store) None)))
   (val by-ticket (get outcome 1))
   (assert (= (get outcome 0) 0) outcome)
   (assert (= (set (.keys by-ticket)) (set (gfor a script.arrivals a.ticket))) by-ticket)
@@ -164,12 +174,101 @@
   (<- script HttpScript (served-script))
   (val store (MemoryStore LAW-SCHEMA))
   ;; 用意は仮想の時計で 1 時間かかる — 台本の要求は全部その前に届き、台本が尽きて待ち受けが閉じると用意は取り消されて 0 で終わる。
-  (val outcome (! (run-entry script None (handlers-after store 3600.0))))
+  (val outcome (! (run-entry script None (handlers-after store 3600.0) None)))
   (val by-ticket (get outcome 1))
   (assert (= (get outcome 0) 0) outcome)
   (assert (= (! (status-of by-ticket "t-health")) #(200 None)) by-ticket)
   (assert (= (! (status-of by-ticket "t-put")) #(503 "store-unavailable")) by-ticket)
   (assert (= (! (status-of by-ticket "t-read")) #(503 "store-unavailable")) by-ticket))
+
+
+;; --- 計器(#2709)----------------------------------------------------------------------------------------------
+;; 入口は実際に送った答えを 1 つずつ、要求の種と status の counter(records_requests_<種>_<status>)に数える。数えるのは deliver の
+;; 1 か所で、通常の答え・本文の断り(上限を超えた本文の 400)・答えの途中で落ちた札の 500・送りが落ちて送り直した 500 のどれも同じ所を
+;; 通る(service.respond の中だけで数えると 400 と 500 を取りこぼす)。起動の時に閉じた系列を全部 0 で置く。
+;; 数えは run の外の入れ物へ積まず、走り終えた後に ReadMeter で読んだ断面を run の答えにする。
+
+(defrecord MeteredRun
+  "計器の台本を 1 回走らせた答え(run の結果): code = 入口の終わりの code・served = 台本の待ち受けが受けた命令(受けた順)・
+   snapshot = 走り終えた後に ReadMeter で読んだ計器の断面。"
+  (#^ int code)
+  (#^ tuple served)
+  (#^ MeterSnapshot snapshot))
+
+
+(defk served-then-read [serving broken]
+  {:pre [(: serving RecordsServing) (: broken (| str None))] :post [(: % MeteredRun)] :tags {:context "records" :role "foundation"}}
+  "入口の Program を走らせ、終わった後に台本の待ち受けが受けた命令と計器の断面を読んで、run の答えにするため。断面は、この run の中の
+   session の値(memory-meter-handler の断面は run ごとに 1 つ)— 入口の中の既定の計器が数えた物を、外側の同じ答え手が読む。"
+  (<- code int (with-handlers [(scripted-extras broken)] (serve-records serving)))
+  (<- served tuple (ReadHttpServed))
+  (<- snapshot MeterSnapshot (ReadMeter))
+  (MeteredRun :code code :served served :snapshot snapshot))
+
+
+(defk metered-entry [script broken prepare]
+  {:pre [(: script HttpScript) (: broken (| str None)) (: prepare (| Program EffectBase))] :post [(: % MeteredRun)]
+   :tags {:context "records" :role "foundation"}}
+  "台本を入口の Program(serve-records)で 1 回走らせ、MeteredRun を run の結果として返すため(土台は他の台本の検と同じ — scheduler・
+   session の値の置き場・仮想の時計・台本の止めの合図と待ち受け — に、断面を読むための計器の答え手を足した物)。"
+  (<- serving RecordsServing (serving-of prepare None))
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler (scripted-http-server script)
+                                  (memory-meter-handler (MeterSettings))]
+                                 (served-then-read serving broken)))))
+
+
+(defk answered-counts [snapshot]
+  {:pre [(: snapshot MeterSnapshot)] :post [(: % (get FrozenMap float))] :tags {:context "records" :role "judgment"}}
+  "計器の断面のうち、答えを 1 つ以上数えた系列(名 → 数)を読むため(起動の時に 0 で置いただけの系列を除く)。"
+  (FrozenMap (gfor #(name count) (.items snapshot.counters) :if (> count 0.0) #(name count))))
+
+
+(deftest test-every-answer-is-counted-once-by-its-kind-and-status
+  ;; 札 5 つ = 数え 5 つ: /healthz(other 200)・書き(write 200)・読み(read 200)・上限を超えた本文(read 400 — 本文の断りの出口)・
+  ;; 答えの途中で落ちた札(read 500 — 落ちた時の出口)。閉じた系列(種 3 × status 6)は全部、断面に在る(起動の時に 0 で置いた)。
+  (<- script HttpScript (served-script))
+  (<- ran MeteredRun (metered-entry script BROKEN-TICKET (handlers-at-once (MemoryStore LAW-SCHEMA))))
+  (assert (= ran.code 0) ran)
+  (assert (= (frozenset ran.snapshot.counters) (frozenset ANSWER-METRICS)) ran.snapshot)
+  (<- answered (get FrozenMap float) (answered-counts ran.snapshot))
+  (assert (= answered (FrozenMap {"records_requests_other_200" 1.0 "records_requests_write_200" 1.0 "records_requests_read_200" 1.0
+                                  "records_requests_read_400" 1.0 "records_requests_read_500" 1.0}))
+          answered)
+  ;; 表の用意の前(store-not-prepared)の記録の操作は 503 で数える(置き場に届かなかった数に入る)。壊す札は無い(読みとして 503)。
+  (<- unprepared MeteredRun (metered-entry script None (handlers-after (MemoryStore LAW-SCHEMA) 3600.0)))
+  (<- unprepared-answered (get FrozenMap float) (answered-counts unprepared.snapshot))
+  (assert (= unprepared-answered (FrozenMap {"records_requests_other_200" 1.0 "records_requests_write_503" 1.0
+                                             "records_requests_read_503" 2.0 "records_requests_read_400" 1.0}))
+          unprepared-answered))
+
+
+(defhandler unsendable-rows
+  "読みの答えの行の値に UTF-8 にできない文字(対の無い surrogate)を入れて答える置き場の代役(答えの本文を byte にする所で落ちる形)。"
+  {:tags {:context "records" :role "foundation"}}
+  (ReadRow [table key]
+    (resume (Row key (FrozenMap {"label" "\ud800"}) 1))))
+
+
+(defk unsendable-handlers []
+  {:pre [] :post [(: % Callable)] :tags {:context "records" :role "foundation"}}
+  "表の用意の代役: どの書き手にも unsendable-rows を答える 書き手の名 → handler の関数を返すため(用意の I/O は無い)。"
+  (fn [writer] unsendable-rows))
+
+
+(deftest test-an-answer-that-cannot-be-sent-is-resent-as-500-and-counted-as-500
+  ;; 失敗ケース(答えの組み立てが例外になる差し替え): 置き場の代役が、行の値に UTF-8 にできない文字を入れて読みに答える。答えの本文を
+  ;; byte にする所(send-answer)で落ち、入口は標準の誤りへ 1 行名指して 500 internal を 1 度だけ送り直し、相手は 500 を受け取る。
+  ;; 計器は実際に送った 500 を 1 つ数え、送れなかった 200 は数えない。
+  (val read (.encode (json.dumps {"table" "parts" "key" ["p1"]}) "utf-8"))
+  (val script (HttpScript :arrivals #((! (arrival "t-unsendable" "POST" READ-PATH "maker" (len read))))
+                          :bodies #((ScriptedBody :ticket "t-unsendable" :data read))))
+  (<- ran MeteredRun (metered-entry script None (unsendable-handlers)))
+  (assert (= ran.code 0) ran)
+  (val answers (tuple (gfor served ran.served :if (= served.ticket "t-unsendable") served)))
+  (assert (= (tuple (gfor served answers served.status)) #(500)) ran.served)
+  (assert (= (get (json.loads (. (get answers 0) body)) "reason") "答えを送る途中で落ちた") answers)
+  (<- answered (get FrozenMap float) (answered-counts ran.snapshot))
+  (assert (= answered (FrozenMap {"records_requests_read_500" 1.0})) answered))
 
 
 ;; --- /readyz --------------------------------------------------------------------------------------------------
@@ -284,7 +383,7 @@
   (<- script HttpScript (served-script))
   (var raised None)
   (try
-    (! (run-entry script None (failing-prepare)))
+    (! (run-entry script None (failing-prepare) None))
     (except [e ConnectionError]
       (:= raised e)))
   (assert (is-not raised None) "表の用意が落ちても run が 0 で終わった"))

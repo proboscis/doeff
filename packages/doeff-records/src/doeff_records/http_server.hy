@@ -23,6 +23,11 @@
 ;;;   - GET /readyz(#1479)は置き場を問う: 用意の前 = 503・serving.readiness の問いを READINESS-SECONDS の上限で撃ち、True = 200・
 ;;;     False か時間切れ = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の不調で再起動を繰り返さない)
 ;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む
+;;;   - 計器(#2709): 要求の task は答えを送った直後に、要求の種(wire の request-kind)と実際に送った答えの status の counter
+;;;     records_requests_<種>_<status> を doeff の計器の effect CountMetric で 1 つ数える(本文の断りの 400・落ちた時の 500・送りが落ちて
+;;;     送り直した 500 も同じ 1 か所 — 答えを受け取った呼び手が次に読む /metrics には、その答えがもう入っている)。答え手は serving.meter(None = doeff の
+;;;     memory-meter-handler — 検は壊した計器を差す)。名の綴りと閉じた系列は wire の ANSWER-METRICS で、起動の時に全部を 0 で置く。GET /metrics は
+;;;     身元を問わず(/readyz と同じく身元を引く前に答える)、ReadMeter の断面を doeff の render-prometheus で Prometheus の text に描く
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
 ;;; 要求の本文の上限は HttpReadBody の max-bytes(読む前に宣言の長さで、宣言の無い本文は流しながら判じる)だけが持つ。
@@ -49,13 +54,18 @@
 (import doeff_records.principals [Roster])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.service [HttpRequest HttpAnswer RecordsService respond refusal-answer json-answer])
-(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE])
+(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric])
 (import doeff_records.store_choice [StorePressure PressureUnread])
+(import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ReadMeter])
+(import doeff_core_effects.memory_meter [memory-meter-handler])
+(import doeff_core_effects.meter_prometheus [render-prometheus CONTENT-TYPE :as METRICS-CONTENT-TYPE])
 
 ;; 置き場に届くかを問う口。/healthz は process の生存だけを答え(liveness — 置き場が落ちている間に再起動を
 ;; 繰り返さない)、/readyz は置き場を問う(readiness)。問いの答えを待つ上限の秒 — 超えたら 503(固まった置き場で口を固めない)。
 (val PATH-READYZ "/readyz")
 (val READINESS-SECONDS 1.0)
+;; 計器の口(身元を問わない — 数だけを答え、行の中身を載せない・#2709)。
+(val PATH-METRICS "/metrics")
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -90,7 +100,8 @@
    検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
    drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
    READINESS-SECONDS の上限で撃つ・None = 用意が済めば ready — memory の置き場)・pressure = () → 置き場の詰まりの読み
-   (StorePressure | PressureUnread)の Program(/readyz が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)。"
+   (StorePressure | PressureUnread)の Program(/readyz が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
+   meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
   (#^ Roster roster)
@@ -101,7 +112,16 @@
   (#^ float stop-poll-seconds)
   (#^ float drain-seconds)
   (setv #^ (| Callable None) readiness None)
-  (setv #^ (| Callable None) pressure None))
+  (setv #^ (| Callable None) pressure None)
+  (setv #^ (| (get Callable #(... object)) None) meter None))
+
+
+(defrecord TextAnswer
+  "JSON でない本文の答え(/metrics の Prometheus の text): status・content-type = Content-Type の値・body = 本文。記録の操作と断りの
+   答えは service の HttpAnswer(JSON)。"
+  (#^ int status)
+  (#^ str content-type)
+  (#^ str body))
 
 
 (defrecord ReadinessTimedOut
@@ -144,6 +164,7 @@
 (defeffect PreparedHandlers
   "用意で置いた 書き手の名 → 記録の handler の関数を読む(用意の前は None)。"
   {:fields [] :answer (| Callable None) :tags {:context "records" :role "entry"}})
+
 
 
 (defhandler request-ledger
@@ -204,11 +225,14 @@
 
 
 (defk send-answer [ticket answer]
-  {:pre [(: ticket str) (: answer HttpAnswer)] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "答え(status と JSON の本文)を札の要求へ送るため。"
+  {:pre [(: ticket str) (: answer (| HttpAnswer TextAnswer))] :post [(: % None)] :tags {:context "records" :role "entry"}}
+  "答え(status と本文)を札の要求へ送るため。本文の種は答えの型が決める(記録の操作と断り = JSON・/metrics = 答えが名乗る text)。"
+  (val content-type (match answer
+                      (TextAnswer :content-type declared) declared
+                      (HttpAnswer) JSON-CONTENT-TYPE))
   (val data (.encode answer.body "utf-8"))
   (<- (HttpRespond :ticket ticket :status answer.status
-                   :headers #((HttpHeader :name "Content-Type" :value JSON-CONTENT-TYPE)
+                   :headers #((HttpHeader :name "Content-Type" :value content-type)
                               (HttpHeader :name "Content-Length" :value (str (len data))))
                    :body (HttpBodyBytes :data data)))
   None)
@@ -283,10 +307,21 @@
     _ (! (refusal-answer ERROR-STORE-UNAVAILABLE "置き場に届かない"))))
 
 
+(defk metrics-answer []
+  {:pre [] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
+  "GET /metrics に答えるため: 計器の断面(ReadMeter)を Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。"
+  (<- snapshot MeterSnapshot (ReadMeter))
+  (<- text str (render-prometheus snapshot ANSWER-METRIC-HELPS))
+  (TextAnswer :status 200 :content-type METRICS-CONTENT-TYPE :body text))
+
+
 (defk answer-with [serving request]
-  {:pre [(: serving RecordsServing) (: request HttpRequest)] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
+  {:pre [(: serving RecordsServing) (: request HttpRequest)] :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
   "要求 1 つを service.respond で答えるため: 用意が済んでいれば置き場の handler、済んでいなければ store-not-prepared の下で撃つ。
-   要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)を被せる。GET /readyz は置き場を問う(readiness-answer)。"
+   要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)を被せる。GET /readyz は置き場を問い(readiness-answer)、
+   GET /metrics は計器を描く(metrics-answer — どちらも身元を引く前に答える)。"
+  (when (and (= request.method "GET") (= request.path PATH-METRICS))
+    (return (! (metrics-answer))))
   (<- prepared (| Callable None) (PreparedHandlers))
   (when (and (= request.method "GET") (= request.path PATH-READYZ))
     (return (! (with-handlers [#* serving.request-handlers] (readiness-answer serving prepared)))))
@@ -296,28 +331,83 @@
   answer)
 
 
+(defk body-answer [serving arrival path body]
+  {:pre [(: serving RecordsServing) (: arrival HttpRequestArrived) (: path str) (: body (| bytes HttpAnswer))]
+   :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
+  "本文の読みの答えから要求の答えを決めるため: 入口が本文を断った答え(400)はそのまま、本文が読めれば answer-with で答える。"
+  (match body
+    (HttpAnswer) body
+    _ (! (answer-with serving (HttpRequest arrival.method path (! (header-value arrival.headers AUTH-HEADER)) body)))))
+
+
+(defk final-answer [decided]
+  {:pre [(: decided (| HttpAnswer TextAnswer None))] :post [(: % (| HttpAnswer TextAnswer))] :tags {:context "records" :role "entry"}}
+  "札に送る答えを決めるため: 決まった答えか、決まる前に落ちた札の 500 internal(答えの無い札を残さない)。"
+  (match decided
+    None (! (refusal-answer ERROR-INTERNAL "要求の task が答える前に落ちた"))
+    answer answer))
+
+
+(defk place-answer-metrics []
+  {:pre [] :post [(: % None)] :tags {:context "records" :role "entry"}}
+  "要求の数の系列(wire の ANSWER-METRICS)を全部 0 で置くため(起動の時 1 回 — 読み手が「無い」と「0」を区別しなくて済み、区間の差が最初の
+   1 つ目の増えを取りこぼさない)。"
+  (for [metric ANSWER-METRICS]
+    (<- (CountMetric :name metric :amount 0.0)))
+  None)
+
+
+(defk sent-answer [arrival answer]
+  {:pre [(: arrival HttpRequestArrived) (: answer (| HttpAnswer TextAnswer))] :post [(: % (| HttpAnswer TextAnswer))]
+   :tags {:context "records" :role "entry"}}
+  "答えを札へ送り、実際に送った答えを返すため。送りが例外になれば(答えを byte にする所・送りの effect の失敗)、標準の誤りへ 1 行
+   名指して 500 internal を 1 度だけ送り直す(答えの無い札を残さない)。"
+  (try
+    (<- (send-answer arrival.ticket answer))
+    (return answer)
+    (except [e Exception]
+      (print (.format "記録の service: {} {} の答えを送れなかった — 500 internal で送り直す: {}: {}"
+                      arrival.method arrival.target (. (type e) __name__) e)
+             :file sys.stderr :flush True)))
+  (<- internal HttpAnswer (refusal-answer ERROR-INTERNAL "答えを送る途中で落ちた"))
+  (<- (send-answer arrival.ticket internal))
+  internal)
+
+
+(defk deliver [arrival path answer]
+  {:pre [(: arrival HttpRequestArrived) (: path str) (: answer (| HttpAnswer TextAnswer))] :post [(: % None)]
+   :tags {:context "records" :role "entry"}}
+  "答え 1 つを札へ送り(sent-answer)、実際に送った答えの status を計器に 1 つ数え、台帳から外すため。数えるのはこの 1 か所で、
+   送り直した 500 も、ここで 500 として数える(送れなかった答えの status は数えない)。送りの effect は答えを待ち受けへ渡すだけで、
+   この task は同じ scheduler の上で続けて数えるので、答えを受け取った呼び手が次に送る要求より先に数えが済む。計器が落ちても
+   答えは送ってあり、台帳からは外す(誤りはそのまま上げる)。"
+  (try
+    (<- sent (| HttpAnswer TextAnswer) (sent-answer arrival answer))
+    (<- metric str (answer-metric path sent.status))
+    (<- (CountMetric :name metric :amount 1.0))
+    (finally
+      (<- (SettleRequest arrival.ticket))))
+  None)
+
+
 (defk answer-arrival [arrival serving]
   {:pre [(: arrival HttpRequestArrived) (: serving RecordsServing)] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "要求 1 つに答える task の本体: 本文を読み → answer-with → 答えを送る。例外でも必ず答える(答えていなければ 500 internal — 答えの無い
-   札を残さない)。実装の誤りの追跡は標準の誤りへ残す(黙って捨てない)。終われば台帳から外す。"
-  (var answered False)
+  "要求 1 つに答える task の本体: 本文を読み → answer-with で答えを決め → 送って計器に数える(deliver)。例外でも必ず答える(決まる前に
+   落ちれば 500 internal・送りが落ちれば 500 internal で送り直す — 答えの無い札を残さない)。数えるのは実際に送った答えの 1 か所だけ
+   (本文の断りの 400 も、落ちた時の 500 も同じ所)。実装の誤りの追跡は標準の誤りへ残す(黙って捨てない)。終われば台帳から外す。"
+  (val path (get (.split arrival.target "?" 1) 0))
+  (var decided None)
   (try
     (<- body (| bytes HttpAnswer) (request-body arrival serving.max-bytes))
-    (if (isinstance body HttpAnswer)
-        (<- (send-answer arrival.ticket body))
-        (do (<- answer HttpAnswer (answer-with serving (HttpRequest arrival.method (get (.split arrival.target "?" 1) 0)
-                                                                    (! (header-value arrival.headers AUTH-HEADER)) body)))
-            (<- (send-answer arrival.ticket answer))))
-    (:= answered True)
+    (<- answer (| HttpAnswer TextAnswer) (body-answer serving arrival path body))
+    (:= decided answer)
     (except [e Exception]
       (print (.format "記録の service: {} {} の答えの途中で落ちた: {}: {}" arrival.method arrival.target (. (type e) __name__) e)
              :file sys.stderr :flush True)
       (traceback.print-exc))
     (finally
-      (when (not answered)
-        (<- internal (refusal-answer ERROR-INTERNAL "要求の task が答える前に落ちた"))
-        (<- (send-answer arrival.ticket internal)))
-      (<- (SettleRequest arrival.ticket))))
+      (<- final (| HttpAnswer TextAnswer) (final-answer decided))
+      (<- (deliver arrival path final))))
   None)
 
 
@@ -379,14 +469,25 @@
 (defk serve-records [serving]
   {:pre [(: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
   "入口の Program(頭の註の「入口の形」): 待ち受けを開いて名乗り、用意・受けの loop・止めの見張りの task を立て、用意の失敗か待ち受けの
-   閉じまで見張って、process の終わりの code(0)を返すため。用意の失敗は例外のまま上げる。"
-  (<- code int (with-handlers [prepared-slot] (serving-body serving)))
+   閉じまで見張って、process の終わりの code(0)を返すため。用意の失敗は例外のまま上げる。計器は doeff の memory-meter-handler(この
+   run の中の断面・桁の表なし)を常に被せ、serving.meter が在ればその内側に被せる(metered-body — 差し替えの計器が先に答える)。
+   既定の計器を名で書くのは、答えの無い effect を実行せずに読む閉じの検(doeff-effect-analyzer)が、計器の effect の答え手を読めるように。"
+  (<- code int (with-handlers [prepared-slot (memory-meter-handler (MeterSettings))] (metered-body serving)))
   code)
+
+
+(defk metered-body [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
+  "差し替えの計器(serving.meter — 検が壊した計器を差す口)が在れば、既定の計器の内側に被せて本体を走らせるため(無ければそのまま)。"
+  (if (is serving.meter None)
+      (! (serving-body serving))
+      (! (with-handlers [serving.meter] (serving-body serving)))))
 
 
 (defk serving-body [serving]
   {:pre [(: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
-  "serve-records の本体(prepared-slot の内側 — 用意の task と要求の task が同じ session の値を読む)。"
+  "serve-records の本体(prepared-slot と計器の内側 — 用意の task と要求の task が同じ session の値と計器を読む)。"
+  (<- (place-answer-metrics))
   (<- bound HttpAddress (HttpListen :address serving.address))
   (<- (RecordsListening :address bound))
   ;; 用意を受けの loop より先に立てる(同じ拍に並んだ時に用意が先に走る)。
@@ -415,13 +516,15 @@
 
 (defclass [(dataclass :frozen True)] RecordsServerConfig []
   "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / roster = 身元の名簿 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
-   request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)。"
+   request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
+   meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)。"
   (#^ RecordsSchema schema)
   (#^ Roster roster)
   (#^ Callable handler-for)
   (setv #^ tuple request-handlers #())
   (setv #^ str host "127.0.0.1")
-  (setv #^ int port 0))
+  (setv #^ int port 0)
+  (setv #^ (| (get Callable #(... object)) None) meter None))
 
 
 (defclass [(dataclass :frozen True)] RunningServer []
@@ -472,7 +575,7 @@
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema :roster config.roster
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
-                                :drain-seconds 0.0))
+                                :drain-seconds 0.0 :meter config.meter))
   (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server
                                 (shell-control opened.put (fn [] (if (.is-set ended) SHELL-STOP-REASON None)))]
                                (serve-records serving)))
