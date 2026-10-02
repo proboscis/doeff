@@ -406,4 +406,6 @@ uv run --no-sync pytest packages/doeff-cluster/tests -q
 検は Hy の `test_*.hy`(deftest)で、`tests/conftest.py` が doeff-adr の Hy の file の収集をこの dir に掛けます(module 名は
 `tests.<名>`)。
 
-`tests/test_no_application_vocabulary.hy` は、この package(source・検・配備の材料・文書)に業務の系の語が混ざっていないことを確かめます。
+この package(source・検・配備の材料・文書)に業務の系の語が混ざっていないことは、repo の根の 2 か所が確かめます。file の中身は
+`.semgrep.yaml` の規則 `doeff-packages-have-no-application-vocabulary` が commit の hook で止め、file の名は
+`tests/test_package_file_names_have_no_application_vocabulary.py`(repo の根の `tests/`)が同じ規則の語の一覧で確かめます。
