@@ -8,6 +8,7 @@
 (import json)
 (import queue)
 (import signal)
+(import sys)
 (import typing [Callable Protocol runtime-checkable])
 (import threading)
 (import time)
@@ -98,7 +99,13 @@
         (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
                                       (.get self.headers "X-Actor") (str (get self.client-address 0))))
         (if (.wait slot.done 30.0)
-            (.send self slot.status slot.data slot.content-type)
+            (do
+              ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。版の変化を待つ読み(GET /watch)は
+              ;; 待つのが仕事なので出さない(#1933)。札を作った時刻と同じ単調な時計で、この thread が測る。
+              (setv waited (- (time.monotonic) slot.created))
+              (when (and (> waited 1.0) (!= split.path "/watch"))
+                (print (.format "coordinator: 遅い返事 {:.1f} 秒: {} {}" waited method split.path) :file sys.stderr :flush True))
+              (.send self slot.status slot.data slot.content-type))
             (.send self 503 #* (json-reply {"error" "調停ループが返事をしない"}))))
       (defn #^ None send [self #^ int status #^ bytes data #^ str content-type]
         (.send-response self status)

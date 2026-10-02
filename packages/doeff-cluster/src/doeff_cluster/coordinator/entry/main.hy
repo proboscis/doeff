@@ -9,9 +9,10 @@
 (import signal)
 (import types [FrameType])
 (import sys)
-(import time)
 (import pathlib [Path])
 (import doeff [run with_handlers])
+(import doeff_time [sync-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.file_effects [FileFailed ListDirectory PathKind ReadText StatPath file-done])
 (import doeff_core_effects.handlers [slog-handler])
@@ -108,6 +109,14 @@
   legacy)
 
 
+(defk state-on-start [state-file store]
+  {:pre [(: state-file str) (: store DurableStore)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "main"}}
+  "起動の時刻を時計の effect で読み、その時刻で置き場から状態を読み直すため(時計の答え手は入口が被せる)。"
+  (<- now int (now-epoch-ms))
+  (<- state ClusterState (load-state state-file store now))
+  state)
+
+
 ;; --- composition root ------------------------------------------------------------------
 
 
@@ -126,9 +135,9 @@
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
-  ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog が答える。
-  (setv state (run (scheduled (with_handlers [slog-handler os-file-handler]
-                                (load-state args.state-file store (int (* 1000 (time.time))))))))
+  ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog・起動の時刻は壁時計が答える。
+  (setv state (run (scheduled (with_handlers [slog-handler os-file-handler (sync-time-handler)]
+                                (state-on-start args.state-file store)))))
   (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
   (.start inbox)
   ;; k8s の API は Pod の ServiceAccount の token が在る時だけ(手元の coordinator では Rollout の Deployment の観測が Unknown のまま)。

@@ -6,8 +6,6 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.macros [defhandler defk <- var])
 (import json)
-(import sys)
-(import time)
 (import typing [Protocol runtime-checkable])
 (import urllib.parse [unquote :as url-unquote])
 (import doeff_core_effects.scheduler [Promise])
@@ -16,7 +14,7 @@
 
 (defclass [runtime-checkable] ReplyTarget [Protocol]
   "受付の箱の返事の札の形(foundation/coordinator_inbox の ReplySlot)。protocol が status・data・content-type を置いて done を立てる。"
-  (setv #^ object done None #^ int status 0 #^ float created 0.0 #^ bytes data b"" #^ str content-type ""))
+  (setv #^ object done None #^ int status 0 #^ bytes data b"" #^ str content-type ""))
 
 
 (defclass InboxQueue [Protocol]
@@ -67,11 +65,7 @@
   (Reply [request status body]
     (setv slot request.slot)
     (assert (isinstance slot ReplyTarget) "http-requests の要求の札は受付の箱の ReplySlot")
-    ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。版の変化を待つ読み(GET /watch)は
-    ;; 待つのが仕事なので出さない(#1933)。
-    (setv waited (- (time.monotonic) slot.created))
-    (when (and (> waited 1.0) (!= (tuple request.parts) #("watch")))
-      (print (.format "coordinator: 遅い返事 {:.1f} 秒: {} {}" waited request.method request.path) :file sys.stderr :flush True))
+    ;; 返事が遅かった時の 1 行は、札を作って返事を待つ受付の箱(foundation/coordinator_inbox)が出す。
     (setv #(data content-type) (encoded-reply body))
     (setv slot.status status slot.data data slot.content-type content-type)
     (.set slot.done)

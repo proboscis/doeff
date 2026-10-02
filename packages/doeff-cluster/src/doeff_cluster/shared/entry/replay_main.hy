@@ -16,25 +16,28 @@
 (import argparse)
 (import json)
 (import sys)
-(import time)
 (import doeff [Program run with_handlers])
+(import doeff_core_effects.file_effects [ReadText WriteText file-done])
 (import doeff_core_effects.handlers [reader])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_time [GetMonotonic sync-time-handler])
 (import doeff_cluster.foundation.record_log [Recording read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster.foundation.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
 (import doeff_cluster.worker.entry.job_entry [read-program])
 
 
-(defn #^ list read-lines [#^ str path]  ; defk にできない: 道具の入口(Program の外)が file を読む
-  "記録の file(JSON の行)を読む。"
-  (with [h (open path "r" :encoding "utf-8")]
-    (lfor line h :if (.strip line) (json.loads line))))
+(defk read-lines [path]
+  {:pre [(: path str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "main" :reads "json"}}
+  "記録の file(JSON の行)を file system の effect で読むため(答え手は入口が被せる・読めなければ OSError)。"
+  (<- text str (file-done (ReadText path)))
+  (lfor line (.splitlines text) :if (.strip line) (json.loads line)))
 
 
 (defk replayed [#^ Recording rec #^ Program program #^ argparse.Namespace args]
   {:pre [(: rec Recording) (: program Program) (: args argparse.Namespace)] :post [(: % int)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "読んだ記録の上で解いた Program を再生の mode で走らせ、再生の報告を --out へ書くため。答え = process の終わりの code(0)。"
   (val state (ReplayState rec :from-ms args.from-ms :to-ms args.to-ms))
-  (val started (time.monotonic))
+  (<- started float (GetMonotonic))
   ;; 終わり方 = #(end failure): 値で終わった・記録の終わりに着いた・記録と食い違った・それ以外の例外(業務コードが記録の終わりや
   ;; 分岐の例外を捕まえて別の例外に変えた時も、再生の状態から終わり方を読む)。failure = 例外の型と文(500 字まで)。
   (var ending #("program-returned" None))
@@ -46,9 +49,9 @@
       (:= ending #((cond (is-not state.divergence None) "diverged" state.finished "finished" True "program-failed")
                    (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 500))))))
   (<- replay dict (replay-report state (get ending 0)))
-  (val report (| replay {"seconds" (round (- (time.monotonic) started) 3) "failure" (get ending 1) "program" rec.header.program}))
-  (with [h (open args.out "w" :encoding "utf-8")]
-    (json.dump report h :ensure-ascii False :default str))
+  (<- finished float (GetMonotonic))
+  (val report (| replay {"seconds" (round (- finished started) 3) "failure" (get ending 1) "program" rec.header.program}))
+  (<- (file-done (WriteText args.out (json.dumps report :ensure-ascii False :default str))))
   (print (.format "replay: {}・出来事 {} のうち {}・判断の違い {}・分岐 {}" (get ending 0) (get report "events") (get report "consumed")
                   (get report "decisionDiffCounts") (if (get report "divergence") "あり" "なし"))
          :file sys.stderr :flush True)
@@ -59,7 +62,8 @@
   {:pre [(: args argparse.Namespace)] :post [(: % int)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "再生の道具の入口の Program: 記録と記録した Program を読み、Program を解けたら再生して報告を書くため。答え = process の終わりの
    code(0 = 報告を書いた・3 = Program を解けない — 版の違いなど)。"
-  (<- rec Recording (read-recording (read-lines args.recording) :until-ms args.to-ms))
+  (<- lines list (read-lines args.recording))
+  (<- rec Recording (read-recording lines :until-ms args.to-ms))
   ;; env のキーは空(再生の道具は実行環境の job ではない)。断り(VersionMismatch / RemoteJobFailed)は例外の値なので文へ整える。
   (val loaded (read-program args.program ""))
   (if (is-not (get loaded 1) None)
@@ -81,7 +85,9 @@
   (setv args (.parse-args parser))
   (when (is-not args.config None)
     (.error parser "--config は受け付けない — 再生は記録した Program をそのまま走らせる(設定は Program の中の Ask)"))
-  (setv code (run (replay args)))
+  ;; 記録と報告の file は os の file system・所要の秒は壁時計の単調な時計が答える。再生する Program の業務と時計の effect は、Program の
+  ;; 中の記録係が記録から答えるので、ここで被せる答え手には届かない。
+  (setv code (run (with_handlers [(sync-time-handler) os-file-handler] (replay args))))
   (when (!= code 0)
     (sys.exit code)))
 
