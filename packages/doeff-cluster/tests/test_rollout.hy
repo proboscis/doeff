@@ -6,7 +6,7 @@
 ;;   - 「書き手が居る」= Deployment の Pod(終了中を含む)か、新の process のどちらかが動いている。
 ;; 確かめること: どの段の失敗でも旧を先に戻してから新を止める(書き手が 0 の拍が無い)・coordinator が落ちても続きから進む・
 ;; 配備の流れが Deployment の台数を戻したら Rollout の状態に出る・dry-run は k8s に保存しない。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest defk <-])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -140,11 +140,15 @@
     (for [_ (range limit)]
       (self.step)
       (when (in (self.phase name) phases) (return (self.phase name))))
-    (raise (AssertionError (.format "{} が {} にならない: {}" name phases (. (get self.state.rollouts name) status)))))
+    (raise (AssertionError (.format "{} が {} にならない: {}" name phases (. (get self.state.rollouts name) status))))))
 
-  (defn #^ None restart-coordinator [self]
-    "coordinator の作り直し: 保存した形から読み直す(worker の報告・readiness・k8s の観測は失う)。"
-    (setv self.state (state-from-json (state-to-json self.state) self.now))))
+
+(defk restart-coordinator [sim]
+  {:pre [(: sim Sim)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "模擬の世界の coordinator を作り直すため: 保存した形から読み直す(worker の報告・readiness・k8s の観測は失う)。"
+  (<- state ClusterState (state-from-json (state-to-json sim.state) sim.now))
+  (setv sim.state state)
+  None)
 
 
 (defn #^ None assert-old-restored-before-new-stopped [#^ Sim sim #^ str name]
@@ -233,11 +237,11 @@
   (setv sim (Sim))
   (sim.rollout "to-worker" FORWARD)
   (sim.run-until "to-worker" #("StoppingOld"))
-  (sim.restart-coordinator)
+  (<- (restart-coordinator sim))
   (setv after-restart (. (get sim.state.rollouts "to-worker") status phase))
   (assert (= after-restart "StoppingOld"))
   (sim.run-until "to-worker" #("Observing"))
-  (sim.restart-coordinator)                     ; 観察の途中でもう一度(報告が揃うまで Unknown = 失敗と数えない)
+  (<- (restart-coordinator sim))                     ; 観察の途中でもう一度(報告が揃うまで Unknown = 失敗と数えない)
   (assert (= (sim.run-until "to-worker" #("Complete" "RolledBack")) "Complete"))
   (assert (= (phases-of sim "to-worker") ["WaitingNewReady" "StoppingOld" "Observing" "Complete"]))
   (assert (= (lfor c sim.kube.calls (get c "replicas")) [0]))   ; 旧を止める命令は 1 度だけ(冪等・観測が 0 なら出さない)

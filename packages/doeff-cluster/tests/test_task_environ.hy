@@ -198,9 +198,9 @@
   (val row (TaskRecord "t1" "n" (* "a" 64) "r" #() #("net") 1000 2000 0 :environ #(#(URL-NAME URL))))
   (val saved (task-record-to-json row))
   (assert (= (get saved "environ") {URL-NAME URL}) saved)
-  (assert (= (task-record-from-json (json.loads (json.dumps saved))) row))
+  (assert (= (! (task-record-from-json (json.loads (json.dumps saved)))) row))
   (val old (dfor #(k v) (.items saved) :if (!= k "environ") k v))
-  (val read (task-record-from-json old))
+  (val read (! (task-record-from-json old)))
   (assert (= read.environ #()) read)
   (assert (= read.phase "queued") read))
 
@@ -213,10 +213,10 @@
                             #("detached" "yes" "detached は真偽値") #("started_ms" True "started_ms は整数か null")
                             #("avoid" "w1" "avoid は配列") #("runtime_env" [] "runtime_env は object か null")]]
     (with [raised (pytest.raises ValueError)]
-      (task-record-from-json (| saved {key value})))
+      (<- (task-record-from-json (| saved {key value}))))
     (assert (in words (str raised.value)) #(key raised.value)))
   (with [raised (pytest.raises ValueError)]
-    (task-record-from-json (dfor #(k v) (.items saved) :if (!= k "submitted_ms") k v)))
+    (<- (task-record-from-json (dfor #(k v) (.items saved) :if (!= k "submitted_ms") k v))))
   (assert (in "submitted_ms が無い" (str raised.value)) raised.value))
 
 
