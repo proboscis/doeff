@@ -68,6 +68,10 @@ class ReadInterpreter(EffectBase):
     ...
 
 @dataclass(frozen=True)
+class ReadMachineName(EffectBase):
+    ...
+
+@dataclass(frozen=True)
 class ResolveModule(EffectBase):
     name: str
 
