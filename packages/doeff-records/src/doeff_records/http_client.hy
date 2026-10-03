@@ -39,6 +39,8 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_time [GetMonotonic])
+(import doeff_core_effects.effects [Ask])
+(import doeff_records.event_source [RECORDS-SIGNAL-SOURCE SignalSourceFactory])
 (import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal
@@ -232,6 +234,11 @@
 
 
 (defhandler http-records-handler [#^ RecordsEndpoint endpoint]
+  ;; 源の工場の鍵(SignalSourceFactory)には、記録の置き場の変化の待ちの long-poll で合図を発する本番の源 RECORDS-SIGNAL-SOURCE で答える
+  ;; (#3127 — 源の WatchChanges・WatchEvents はこの client が答える)。他の鍵の Ask は外へ流す。
+  (Ask [key]
+    :when (is key SignalSourceFactory)
+    (resume RECORDS-SIGNAL-SOURCE))
   (ReadRow [table key]
     (<- answer (call-service endpoint effect))
     (resume answer))

@@ -29,6 +29,7 @@
 (import dataclasses [dataclass])
 (import datetime [datetime timedelta])
 (import doeff [EffectBase Program with-handlers])
+(import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Race Spawn Task TaskCancelledError Wait Cancel])
 (import doeff_events.effects [PublishEffect])
 (import doeff_records.event_source [BodyWrapper ChangedRow SignalSourceFactory SignalTables checked-bindings first-seen stop-source
@@ -703,6 +704,12 @@
 
 (defhandler memory-records-handler [#^ MemoryStore store #^ str writer]
   ;; 各節の答えは answered の 1 点を通る — 届かない状態(faults.SetStoreOutage)と故障(faults.AddStoreFault)を見てから置き場に触る。
+  ;; 源の工場の鍵(SignalSourceFactory)には、この組で記録に答えている置き場 store の書きで鳴る模擬の源で答える(#3127 — 源は必ず同じ置き場に
+  ;; 結ばれる。組み立ての entry は鍵を問うだけで、本番と模擬の違いは記録の handler の差し替えだけになる)。他の鍵の Ask は外へ流す。
+  (Ask [key]
+    :when (is key SignalSourceFactory)
+    (<- source SignalSourceFactory (memory-signal-source store))
+    (resume source))
   (ReadRow [table key]
     (<- answer (answered store READ #(table) effect (at-now store (fn [now-ms] (memory-read-row store effect)))))
     (resume answer))
