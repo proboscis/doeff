@@ -2,9 +2,11 @@
 ;;; 載った型だけを外へ通す(載っていなければ本番の子と同じ未処理で落ちる)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_time [Delay])
-(import doeff_cluster.sim.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker])
+(import doeff [EffectBase])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.sim.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker Crash])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.outside_programs [shared-store last-words memory-store signed-puts StorePut StoreGet])
+(import tests.fixtures.outside_programs [shared-store last-words slow-last-words memory-store signed-puts StorePut StoreGet])
 
 
 (defk wait-seconds [seconds]
@@ -82,3 +84,38 @@
   (assert (>= (.get rows "count" 0) 5) rows)
   (assert (not-in "last-words" rows) rows)
   (assert (any (gfor p processes (= p.exit-code -9))) processes))
+
+
+(defk end-lag-after [kill]
+  {:pre [(: kill EffectBase)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "10 秒待って kill(KillWorker か Crash)を出した刻を控え、さらに 10 秒待ってから、殺された speaker の process の終わりの刻が殺した
+   刻からどれだけ遅れて記録されたかを返す。"
+  (<- (Delay 10.0))
+  (<- killed-ms int (now-epoch-ms))
+  (<- kill)
+  (<- (Delay 10.0))
+  (<- processes tuple (ProcessesOf "speaker"))
+  (val ended (next (gfor p processes :if (is-not p.ended-ms None) p)))
+  (- ended.ended-ms killed-ms))
+
+
+(deftest test-a-process-killed-with-its-worker-ends-when-it-is-killed
+  ;; 殺された process の終わりは殺した刻で記録する(本物の process は殺された時点で終わる — 巻き戻しの長さに依らない)。終わりを
+  ;; 書く 3 つの道(EndProcess・Crash・KillWorker)が同じ記録を書く(#3057)。前の形では、KillWorker が書いた刻を巻き戻しの後の
+  ;; EndProcess が 5 秒後で書き直していた。
+  (val rows {})
+  (<- lag int (sim-cluster (slow-last-words sim-foundation) (end-lag-after (KillWorker "w1"))
+                           :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                           :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
+  (assert (= lag 0) lag)
+  (assert (not-in "last-words" rows) rows))
+
+
+(deftest test-a-crashed-process-ends-when-it-is-crashed
+  ;; Crash も同じ: 前の形では、終わりを巻き戻しの後の EndProcess だけが 5 秒後で書いていた(Crash の後は worker が job を起こし
+  ;; 直し、その process は筋書きの終わりの優雅な停止で最後の言葉を書くので、ここでは書きの有無を問わない)。
+  (val rows {})
+  (<- lag int (sim-cluster (slow-last-words sim-foundation) (end-lag-after (Crash "speaker"))
+                           :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                           :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
+  (assert (= lag 0) lag))

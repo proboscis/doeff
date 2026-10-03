@@ -2289,6 +2289,74 @@
   (DueWaiters :remaining remaining :due due))
 
 
+(defrecord ProcessEnds
+  "process の終わりを世界に書いた後の、世界の欄の値と書いた後にする事(end-process の答え — 終わりを書く道 EndProcess・Crash・
+   KillWorker が同じ記録を書くための 1 か所)。hosts・log・handles・children・finished・end-waiters = 世界の session の同名の欄の新しい値・
+   stopped = 終わった process の中で Spawn した task(止める)・due = 起こす #(Promise 答え)・bells = 鳴らす宿の静かな拍の呼び鈴。
+   dict の欄は、世界の session がその形で持つ欄の値をそのまま運ぶ(形を変えるのはこの記録の役目の外)。"
+  (#^ dict hosts)
+  (#^ tuple log)
+  (#^ dict handles)
+  (#^ dict children)
+  (#^ frozenset finished)
+  (#^ dict end-waiters)
+  (#^ tuple stopped)
+  (#^ tuple due)
+  (#^ tuple bells))
+
+
+(defk end-process [ends worker pid ended now]
+  {:pre [(: ends ProcessEnds) (: worker str) (: pid int) (: ended SimExit) (: now int)] :post [(: % ProcessEnds)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "process pid の終わり ended を刻 now で世界に書いた形を求めるため(process が自分で終わった時も、殺された時も同じ記録): 宿の観測の
+   exit-code と task の結果・記録の終わり・把手と子の把手を外し・終わった印・待ち手の分け方。中で Spawn した task は止める物に、静かな
+   拍を眠っている宿の呼び鈴は鳴らす物に足す(#2790 — process の終わりは宿が次の拍で観測する出来事)。"
+  (val truth (get ends.hosts worker))
+  (val view (next (gfor p truth.processes :if (= p.pid pid) p) None))
+  (val task-id (if (and (is-not view None) view.spec.once) (cut view.spec.name 5 None) None))
+  (val hosts (| ends.hosts {worker (replace truth
+                                            :processes (tuple (gfor p truth.processes (if (= p.pid pid) (replace p :exit-code ended.code) p)))
+                                            :results (if (and task-id (is-not ended.result None))
+                                                         (| truth.results {task-id ended.result})
+                                                         truth.results)
+                                            :rest-bell None)}))
+  (val log (tuple (gfor r ends.log (if (= r.pid pid) (replace r :ended-ms now :exit-code ended.code :detail ended.detail :value ended.value) r))))
+  (<- woken DueWaiters (due-end-waiters log ends.end-waiters))
+  (ProcessEnds :hosts hosts :log log
+               :handles (dfor #(k v) (.items ends.handles) :if (!= k pid) k v)
+               :children (dfor #(k v) (.items ends.children) :if (!= k pid) k v)
+               :finished (| ends.finished (frozenset [pid]))
+               :end-waiters woken.remaining
+               :stopped (+ ends.stopped (.get ends.children pid #()))
+               :due (+ ends.due woken.due)
+               :bells (if (is truth.rest-bell None) ends.bells (+ ends.bells #(truth.rest-bell)))))
+
+
+(defk end-processes [ends victims ended now]
+  {:pre [(: ends ProcessEnds) (: victims tuple) (: ended SimExit) (: now int)] :post [(: % ProcessEnds)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "殺した process の組(SimProcess の tuple)の終わりを、殺した刻 now と同じ終わり方 ended で順に書いた形を求めるため(Crash・KillWorker
+   — 本物の process は殺された時点で終わる。巻き戻しの長さに依らない)。"
+  (var after ends)
+  (for [victim victims]
+    (<- step ProcessEnds (end-process after victim.worker victim.pid ended now))
+    (:= after step))
+  after)
+
+
+(defk settle-process-ends [ends]
+  {:pre [(: ends ProcessEnds)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "終わりを書いた後にする事をするため: process が終われば中で Spawn した task も止まり(本番は子 process ごと消える)、終わりを待つ
+   待ち手を起こし、静かな拍を眠っている宿を起こす。"
+  (for [task ends.stopped]
+    (<- (Cancel task)))
+  (for [#(promise answer) ends.due]
+    (<- (CompletePromise promise answer)))
+  (for [bell ends.bells]
+    (<- (ring-bell bell ROUSED)))
+  None)
+
+
 (defk pause-taken [pausing kind]
   {:pre [(: pausing SimPauses) (: kind str)] :post [(: % (| SimPauses None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "筋書きが頼んだ coordinator の止まり kind が待っていれば、それを頼みの列から外して止まっている秒を覚えた後の止まりの値を、待って
@@ -2381,9 +2449,10 @@
     (:= next-pid (+ next-pid 1))
     (resume next-pid))
   (KeepHandle [pid task]
-    (:= handles (| handles {pid task}))
-    (when (in pid kills)
-      (<- (Cancel task)))
+    ;; 把手を覚える前に殺された process(StartJob の Spawn と KeepHandle の間)は、殺した側が終わりを書き済み — 把手は覚えず、その場で止める。
+    (if (in pid kills)
+        (<- (Cancel task))
+        (:= handles (| handles {pid task})))
     (resume None))
   (HandleOf [pid]
     (resume (.get handles pid)))
@@ -2417,33 +2486,19 @@
       (<- (CompletePromise bell True)))
     (resume None))
   (EndProcess [worker pid ended]
-    (<- now int (now-epoch-ms))
-    (val truth (get hosts worker))
-    (val view (next (gfor p truth.processes :if (= p.pid pid) p) None))
-    (val task-id (if (and (is-not view None) view.spec.once) (cut view.spec.name 5 None) None))
-    (val spawned (.get children pid #()))
-    ;; 静かな拍を眠っている宿を起こす(#2790 — process の終わりは宿が次の拍で観測する出来事)。
-    (val resting truth.rest-bell)
-    (:= hosts (| hosts {worker (replace truth
-                                        :processes (tuple (gfor p truth.processes (if (= p.pid pid) (replace p :exit-code ended.code) p)))
-                                        :results (if (and task-id (is-not ended.result None))
-                                                     (| truth.results {task-id ended.result})
-                                                     truth.results)
-                                        :rest-bell None)}))
-    (:= log (tuple (gfor r log (if (= r.pid pid) (replace r :ended-ms now :exit-code ended.code :detail ended.detail :value ended.value) r))))
-    (:= handles (dfor #(k v) (.items handles) :if (!= k pid) k v))
-    (:= children (dfor #(k v) (.items children) :if (!= k pid) k v))
-    (:= finished (| finished (frozenset [pid])))
-    ;; 待つ相手の process が終わった AwaitProcessEnded の待ち手を起こす(読み直さない — 書きで起こす)。
-    (<- woken DueWaiters (due-end-waiters log end-waiters))
-    (:= end-waiters woken.remaining)
-    ;; process が終われば、中で Spawn した task も止まる(本番は子 process ごと消える)。
-    (for [task spawned]
-      (<- (Cancel task)))
-    (for [#(promise answer) woken.due]
-      (<- (CompletePromise promise answer)))
-    (when (is-not resting None)
-      (<- (ring-bell resting ROUSED)))
+    ;; 殺された process の終わりは、殺した側(Crash・KillWorker)が殺した刻で書き済み — 巻き戻しの後の知らせで書き直さない。
+    (when (not-in pid finished)
+      (<- now int (now-epoch-ms))
+      (<- ends ProcessEnds (end-process (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
+                                                     :end-waiters end-waiters :stopped #() :due #() :bells #())
+                                        worker pid ended now))
+      (:= hosts ends.hosts)
+      (:= log ends.log)
+      (:= handles ends.handles)
+      (:= children ends.children)
+      (:= finished ends.finished)
+      (:= end-waiters ends.end-waiters)
+      (<- (settle-process-ends ends)))
     (resume None))
   (NoteWatchFailure [failure]
     (:= watch-failures (+ watch-failures #(failure)))
@@ -2549,30 +2604,49 @@
     (resume None))
   ;; --- 検の effect ---
   (Crash [name]
-    (val victims (lfor r log :if (and (= r.job name) (is r.ended-ms None) (in r.pid handles)) r.pid))
-    (:= kills (| kills (dfor pid victims pid (SimExit :code 1 :result None :detail "Crash"))))
-    (for [pid victims]
-      (<- (Cancel (get handles pid))))
+    (<- now int (now-epoch-ms))
+    (val victims (tuple (gfor r log :if (and (= r.job name) (is r.ended-ms None) (in r.pid handles)) r)))
+    (val crashed (SimExit :code 1 :result None :detail "Crash"))
+    (val mains (tuple (gfor r victims (get handles r.pid))))
+    (:= kills (| kills (dfor r victims r.pid crashed)))
+    ;; 終わりは殺した刻で書く(end-processes)— 巻き戻しの後の EndProcess は書き直さない。
+    (<- ends ProcessEnds (end-processes (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
+                                                     :end-waiters end-waiters :stopped #() :due #() :bells #())
+                                        victims crashed now))
+    (:= hosts ends.hosts)
+    (:= log ends.log)
+    (:= handles ends.handles)
+    (:= children ends.children)
+    (:= finished ends.finished)
+    (:= end-waiters ends.end-waiters)
+    (for [task mains]
+      (<- (Cancel task)))
+    (<- (settle-process-ends ends))
     (resume (len victims)))
   (KillWorker [name]
     (<- now int (now-epoch-ms))
     (val truth (get hosts name))
-    (val victims (if truth.down [] (lfor r log :if (and (= r.worker name) (is r.ended-ms None)) r.pid)))
+    (val victims (if truth.down #() (tuple (gfor r log :if (and (= r.worker name) (is r.ended-ms None)) r))))
     (val killed (SimExit :code KILLED-CODE :result None :detail "worker が死んだ(node ごと止まった)"))
-    (:= kills (| kills (dfor pid victims pid killed)))
+    (val mains (tuple (gfor r victims :if (in r.pid handles) (get handles r.pid))))
+    (:= kills (| kills (dfor r victims r.pid killed)))
     ;; 静かな拍を眠っている宿を起こす(#2790 — 宿は死んだ刻より後の預けた拍を取り下げて終わる)。
     (val resting truth.rest-bell)
     (:= hosts (| hosts {name (replace truth :down True :rest-bell None)}))
-    ;; 記録の終わりはここで書く(走り出す前に取り消された process は EndProcess を書かない — 動いているように見せない)。
-    (:= log (tuple (gfor r log (if (in r.pid victims) (replace r :ended-ms now :exit-code killed.code :detail killed.detail) r))))
-    (<- woken DueWaiters (due-end-waiters log end-waiters))
-    (:= end-waiters woken.remaining)
-    ;; 把手がまだ無い process(StartJob の Spawn と KeepHandle の間)は KeepHandle がその場で取り消す。
-    (for [pid victims]
-      (when (in pid handles)
-        (<- (Cancel (get handles pid)))))
-    (for [#(promise answer) woken.due]
-      (<- (CompletePromise promise answer)))
+    ;; 終わりは殺した刻で書く(end-processes — 走り出す前に殺された process も、動いているように見せない)。把手がまだ無い process
+    ;; (StartJob の Spawn と KeepHandle の間)は KeepHandle がその場で止める。
+    (<- ends ProcessEnds (end-processes (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
+                                                     :end-waiters end-waiters :stopped #() :due #() :bells #())
+                                        victims killed now))
+    (:= hosts ends.hosts)
+    (:= log ends.log)
+    (:= handles ends.handles)
+    (:= children ends.children)
+    (:= finished ends.finished)
+    (:= end-waiters ends.end-waiters)
+    (for [task mains]
+      (<- (Cancel task)))
+    (<- (settle-process-ends ends))
     (when (is-not resting None)
       (<- (ring-bell resting ROUSED)))
     (resume (len victims)))
