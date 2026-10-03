@@ -96,3 +96,51 @@ def test_a_map_that_is_not_deeply_frozen_is_still_copied_deeply() -> None:
     assert copied["list"] is not inner
     inner.append(3)
     assert copied["list"] == [1, 2]
+
+
+# --- items・values は中の dict の眺め(agora-redesign #2670 の根 E (b))---------------------------------------------
+# Mapping の既定の ItemsView・ValuesView は鍵ごとに __getitem__ を撃つ。FrozenMap は中の dict の眺めを返す — 中身と順は既定と
+# 同じで、凍った値は写さずに同じ物を返し、眺めから中の dict を変えられない。
+
+
+class _CountingMap(FrozenMap):
+    """__getitem__ を呼んだ回数を数える FrozenMap(items・values が鍵ごとの __getitem__ を撃たない事を確かめるため)。"""
+
+    __slots__ = ("_calls",)
+
+    def __init__(self, source: dict[str, object]) -> None:
+        super().__init__(source)
+        object.__setattr__(self, "_calls", 0)
+
+    def __getitem__(self, key: str) -> object:
+        object.__setattr__(self, "_calls", self._calls + 1)
+        return super().__getitem__(key)
+
+
+def test_items_and_values_match_the_mapping_defaults_in_content_and_order() -> None:
+    frozen = freeze_json({"z": 1, "a": {"k": [1, 2]}, "m": None})
+    from collections.abc import ItemsView, ValuesView
+
+    assert list(frozen.items()) == list(ItemsView(frozen))
+    assert list(frozen.values()) == list(ValuesView(frozen))
+    assert [k for k, _ in frozen.items()] == ["z", "a", "m"]
+    # 凍った値は写さずに同じ物(深く凍った写像の中の写像)。
+    inner = frozen["a"]
+    assert next(v for k, v in frozen.items() if k == "a") is inner
+    assert list(frozen.values())[1] is inner
+    assert isinstance(frozen.items(), ItemsView) and isinstance(frozen.values(), ValuesView)
+
+
+def test_items_and_values_do_not_call_getitem_per_key() -> None:
+    counted = _CountingMap({str(i): i for i in range(50)})
+    assert sum(v for _, v in counted.items()) == sum(range(50))
+    assert sum(counted.values()) == sum(range(50))
+    assert counted._calls == 0
+
+
+def test_the_views_cannot_change_the_frozen_map() -> None:
+    frozen = FrozenMap({"a": 1})
+    view = frozen.items()
+    with pytest.raises(TypeError):
+        view.mapping["b"] = 2  # type: ignore[index]  # 眺めの mapping は読むだけ(MappingProxyType)— 書けない事を確かめる
+    assert dict(frozen) == {"a": 1}

@@ -11,7 +11,7 @@
 ;;;
 ;;; 等しさ: collections.abc.Mapping の等しさ(同じ鍵と値の組なら dict とも等しい)。hash は中の値が hash できる時だけ
 ;;; (freeze-json で凍らせた JSON の値は常に hash できる)。pickle・copy は作り直しで保つ。
-(import collections.abc [Mapping Iterator])
+(import collections.abc [ItemsView Mapping Iterator ValuesView])
 (import copy)
 (import json)
 (import typing [TypeVar])
@@ -47,6 +47,16 @@
 
   (defn #^ int __len__ [self]
     (len self._entries))
+
+  (defn #^ (get ItemsView #(str V)) items [self]
+    "鍵と値の対の眺め = 中の dict の眺め(中身と順は Mapping の既定と同じ・眺めは読むだけで中の dict を変えられない)。Mapping の既定の
+     ItemsView は鍵ごとに __getitem__ を Python で撃つので、凍った値を JSON へ戻す(thaw-json)所が鍵の数に比例して遅くなる
+     (agora-redesign #2670 の根 E (b) の実測: 画面の stats の場面で +299,152 回の __getitem__)。"
+    (.items self._entries))
+
+  (defn #^ (get ValuesView V) values [self]
+    "値の眺め = 中の dict の眺め(items と同じ訳)。"
+    (.values self._entries))
 
   (defn #^ "FrozenMap" updated [self #^ (get Mapping #(str V)) changes]
     "changes の鍵を置き換え・足した新しい写像(元は変えない)。中の dict を 1 度に写し、鍵の確かめは changes の鍵だけ — dict(写像) で写すと
