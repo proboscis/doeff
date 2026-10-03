@@ -302,11 +302,13 @@
 
 (defrecord HostHeard
   "宿 1 つの読み: name = worker の名・beats = 宿の真実の届いた heartbeat の数・last-ok-ms = 最後に届いた刻・consumed = 列が覚えている
-   その宿の届いた仮の拍(ProvisionalBeat の tuple)。"
+   その宿の届いた仮の拍(ProvisionalBeat の tuple)・reach = 宿の真実の rest-reach(起きた時に書く次の眠りの拍の上限 — 今の眠りの長さは
+   これ以下)。"
   (#^ str name)
   (#^ int beats)
   (#^ int last-ok-ms)
-  (#^ tuple consumed))
+  (#^ tuple consumed)
+  (#^ int reach))
 
 
 (defrecord HeardLedger
@@ -326,7 +328,8 @@
   (for [worker TWO-WORKERS]
     (<- truth HostTruth (HostTruthOf worker.name))
     (:= hosts (+ hosts #((HostHeard :name worker.name :beats truth.beats :last-ok-ms truth.last-ok-ms
-                                    :consumed (tuple (gfor beat consumed :if (= beat.name worker.name) beat)))))))
+                                    :consumed (tuple (gfor beat consumed :if (= beat.name worker.name) beat))
+                                    :reach truth.rest-reach)))))
   (HeardLedger :hosts hosts :remembered (len consumed) :queue link.queue))
 
 
@@ -353,10 +356,11 @@
   (assert (= resting.remembered (sum (gfor host resting.hosts (len host.consumed)))) resting)
   (assert (= (len resting.queue.consumed) 0) (tuple (gfor beat resting.queue.consumed #(beat.name beat.at))))
   ;; 写した heartbeat は、1 拍ずつの走りが届けた heartbeat の列の頭と同じ数・同じ刻(拍 10 秒の 5 分 — 1 拍ずつの走りは 31 回)。
-  ;; 眠っている宿は、列がまだ判じていない拍を写さずに次の拍か起きた時まで待つので、読む刻には数拍遅れていることがある。
+  ;; 眠っている宿は、通った拍を起きた時にまとめて写すので(#3066)、読む刻には今の眠りの分まで遅れていることがある — 遅れは宿の
+  ;; rest-reach(今の眠りの長さの上限)以下。
   (val tick-ms (int (* 1000 QUIET-POLICY.tick-seconds)))
   (val apart (lfor #(host reference) (zip resting.hosts reference-hosts)
-                   :if (or (< host.beats 25) (> host.last-ok-ms reference.last-ok-ms)
+                   :if (or (> (- reference.beats host.beats) host.reach) (> host.last-ok-ms reference.last-ok-ms)
                            (!= (- reference.beats host.beats) (// (- reference.last-ok-ms host.last-ok-ms) tick-ms)))
                    #(host reference)))
   (assert (= apart []) apart)

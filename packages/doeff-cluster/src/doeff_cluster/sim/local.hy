@@ -121,7 +121,7 @@
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError])
-(import doeff_time [Delay sim-time-handler async-time-handler])
+(import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleTaken ProvisionalBeat]
@@ -139,7 +139,7 @@
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch
                                                           deposit-beats withdraw-beats drop-beats BEAT RestBell ring-bell
-                                                          beat-heard forget-heard])
+                                                          forget-heard])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 (import doeff_cluster.shared.protocol.declaration_requests [create-body spec-for-update])
@@ -1630,8 +1630,8 @@
 (defk settle-beats [worker boot sent]
   {:pre [(: worker SimWorker) (: boot str) (: sent tuple)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
   "静かな拍を眠る宿が、届いた仮の拍 sent(1 拍ずつの走りで届いていた heartbeat — 列が静かと判じたので返事は前の返事と同じ)を宿の真実へ
-   写すため: 最後に届いた時刻・届いた数・届いた印と送った報告(1 拍ずつの走りの heartbeat が書く欄と同じ値)。眠りの拍ごとに写すので、
-   眠りの途中で宿の真実を読む者(筋書き・fence の判断)にも 1 拍ずつの走りと同じ値が見える。"
+   写すため: 最後に届いた時刻・届いた数・届いた印と送った報告(1 拍ずつの走りの heartbeat が書く欄と同じ値)。宿は起きた時にまとめて
+   写す(settle-rest)ので、眠りの途中で宿の真実を読む者には数拍遅れて見えるが、写した拍は 1 拍ずつの走りの列の頭と同じ(#3065・#3066)。"
   (when sent
     (<- (change-live-truth worker.name boot
                            (fn [truth]
@@ -1639,26 +1639,6 @@
                                       :sent-statuses truth.statuses :sent-stopping False)))))
   None)
 
-
-(defk settle-heard [worker boot queue beats written until]
-  {:pre [(: worker SimWorker) (: boot str) (: queue RequestQueue) (: beats tuple) (: written int) (: until int)] :post [(: % int)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
-  "静かな拍を眠る宿が拍 until を通った時に、預けた仮の拍 beats(刻の順)のうち written 番目から、until までの刻で列が静かと判じた拍を
-   続く限り届いたものとして宿の真実へ写すため(settle-beats — 列の覚えも外す)。答え = 写し終えた数(次の written)。列がまだ判じて
-   いない拍で止める(次の拍か起きた時に写す)。"
-  (val ready (tuple (gfor beat (cut beats written None) :if (<= beat.at until) beat)))
-  (var count 0)
-  (var going True)
-  (for [beat ready]
-    (when going
-      (<- heard bool (beat-heard queue beat))
-      (if heard
-          (:= count (+ count 1))
-          (:= going False))))
-  (val sent (tuple (cut ready 0 count)))
-  (<- (settle-beats worker boot sent))
-  (<- (forget-heard queue sent))
-  (+ written count))
 
 
 (defk settle-rest [worker boot sent reach]
@@ -1731,26 +1711,13 @@
       (:= resting True)
       (:= beats offered)
       (<- (deposit-beats parts.queue worker.name offered bell))
-      ;; 拍ごとに眠り直す: 静かな拍の timer も 1 拍ずつの走りと同じく前の拍の刻に登録する(起きても何もしない — 仕事も heartbeat も
-      ;; coordinator の歩も無い)。同じ刻の出来事(待ちの答え・process の終わり)と拍のどちらが先かは、timer を登録した刻で決まる
-      ;; ので、登録の刻を揃えて前後を 1 拍ずつの走りと同じにする(#2850 の Rollout の筋書きの 16.5 秒の w1)。passed = 通った最後の拍。
-      (var passed now)
-      (var written 0)
-      (var reason None)
-      (var going True)
-      (while going
-        (<- current int (now-epoch-ms))
-        (val target (+ passed tick-ms))
-        (<- answer (| str None) (promise-or-timeout promise.future (/ (max 0 (- target current)) 1000.0)))
-        (if (is answer None)
-            (do (:= passed target)
-                ;; 通った拍までの、列が静かと判じた仮の拍を届いたものとして写す(拍ごとに — 1 拍ずつの走りと同じ刻に宿の真実が動く)。
-                (<- moved int (settle-heard worker boot parts.queue beats written passed))
-                (:= written moved)
-                (when (>= passed (+ now (* ahead tick-ms)))
-                  (:= going False)))
-            (do (:= reason answer)
-                (:= going False))))
+      ;; 眠りは 1 回の待ち(WaitTicks — 呼び鈴か、ahead 拍の終わりまで)。拍ごとには起きないが、時計が拍の項を前の拍の刻に入れ直すので、
+      ;; 同じ刻の出来事(待ちの答え・process の終わり)と拍のどちらが先かは、1 拍ずつの走りと同じ(#2850 の Rollout の筋書きの 16.5 秒の
+      ;; w1・#3066)。通った拍の仮の拍は起きた時にまとめて写す — 眠りの途中で宿の真実を読む者には数拍遅れて見えるが、写した拍は 1 拍ずつの
+      ;; 走りが届けた heartbeat の列の頭と同じ(#3065 の検)。passed = 通った最後の拍。
+      (<- slept TicksOutcome (WaitTicks promise.future (/ tick-ms 1000.0) ahead))
+      (val passed (+ now (* slept.passed tick-ms)))
+      (val reason slept.value)
       (<- woke int (now-epoch-ms))
       ;; 列が静かでないと判じた拍(BEAT)は届いていない — 今その拍を本物で打つ。それ以外は通った拍までが届いた拍。
       (val sent-until (if (= reason BEAT) (- woke 1) passed))
@@ -1758,7 +1725,7 @@
       (val next-reach (cond (is-not reason None) FIRST-REST-BEATS
                             (= ahead reach) (min (* 2 reach) QUIET-BEATS-LIMIT)
                             True reach))
-      (val rest-sent (tuple (gfor beat (cut beats written None) :if (<= beat.at sent-until) beat)))
+      (val rest-sent (tuple (gfor beat beats :if (<= beat.at sent-until) beat)))
       (<- (settle-rest worker boot rest-sent next-reach))
       (<- (forget-heard parts.queue rest-sent))
       ;; 起きた後: BEAT・眠りの終わり・次の拍の刻ちょうどでその拍の timer より先の出来事なら、今その拍を打つ。それ以外(通った拍の後の
