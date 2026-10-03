@@ -205,6 +205,12 @@ def _cluster_repo(tmp_path: Path) -> ClusterRig:
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "はじめ"],
                    cwd=repo, check=True)
+    # 本物の repo と同じく根に .venv を置く: hook は script を `uv run --no-project python` で起こし、uv は今の dir の .venv を使う。
+    # 基点の script は doeff の効果で環境を読む(05a2a3f94)ので、doeff の入った venv が要る — この検を走らせている venv を結ぶ
+    # (#1201 — 結ばない rig では script が doeff を import できず、hook の性質でなく rig の欠けで赤だった)。
+    venv: Path = Path(sys.prefix)
+    assert (venv / "pyvenv.cfg").is_file(), f"検は venv の中で走らせる(rig の .venv に結ぶ): {venv}"
+    (repo / ".venv").symlink_to(venv, target_is_directory=True)
     tools: Path = tmp_path / "bin"
     tools.mkdir()
     (tools / "doeff-linter").write_text(f"#!/bin/sh\ntouch {tmp_path / 'path-linter-called'}\nexit 9\n", encoding="utf-8")

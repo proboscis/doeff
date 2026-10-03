@@ -18,8 +18,7 @@
 (import doeff_cluster.shared.intent.service_model [UPDATE-FORMS CallShape Job System Declaration])
 
 
-;; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-(deff job [#^ str name program * #^ CallShape call needs #^ (| dict None) [readiness None] #^ str [update "recreate"]
+(deff job [#^ str name program * #^ CallShape call needs #^ (| dict None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
            #^ (| dict None) [environ None]]
   {:pre [(: name str) (: program (| Program int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: readiness (| dict None)) (: update str) (: environ (| dict None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "main" :reads "env"}}

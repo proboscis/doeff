@@ -96,6 +96,19 @@ def test_the_batch_keeps_root_anchored_paths_inside_an_outer_git_repo(
         assert_semgrep_enforcement(f"batch_probe_{word}")
 
 
+def test_a_hit_fixture_under_a_tests_dir_is_read(tree: Path) -> None:
+    # 失敗ケース(#1201): 組の dir を渡すと、semgrep は dir の中の tests/ を既定で読み飛ばす(.semgrepignore の無い root)—
+    # tests/ の下の当たる例に規則が当たらず赤になった(doeff の enforce_002 の 4 本)。例の file は名指しで読む。
+    register_semgrep_enforcement(
+        "batch_probe_inside_tests",
+        rule_id="batch-probe-no-eval",
+        hit_fixtures=[{"relative-path": "pkg/tests/test_mod.py", "source": "eval('1')\n"}],
+        clean_fixtures=[{"relative-path": "pkg/tests/test_mod.py", "source": "print('1')\n"}],
+    )
+
+    assert_semgrep_enforcement("batch_probe_inside_tests")
+
+
 def test_a_rule_that_does_not_fire_on_its_hit_fixture_is_still_red(
     tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
