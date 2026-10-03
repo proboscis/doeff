@@ -28,7 +28,7 @@
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import traceback [extract-tb])
@@ -44,7 +44,7 @@
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
-(import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs])
+(import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-step rollout-targets target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
@@ -81,9 +81,17 @@
 
 (defk placement-due [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "置き先と入れ替えの判断(place-jobs の readiness の window・watch-handoffs の Ready の期限・台数の増やし)が、状態がこのままで答えを
-   変え得る最初の刻を知るため(#3060 — 今は行が在れば次の拍。刻を期限の値から求めるのは #3064)。"
-  (if (or state.jobs state.placements state.handoffs state.surges state.statuses state.meta state.refused) (+ now 1) None))
+  "置き先と入れ替えの判断が、状態がこのままで答えを変え得る最初の刻を知るため(#3064)。tick の中で worker の生死・task・盤・drain・
+   温める表・keep の印・Program の掃除(liveness-due・task-due・sweep-due)の外に残る時刻の比べは、入れ替えの見張り(watch-handoffs —
+   担い手の報告の古さ・readiness の判定・諦めの期限)だけ(place-jobs 自身は生死と drain の期限しか比べない)。入れ替えの Service ごとの
+   handoff_policy.handoff-due の最小。None = 状態がこのままなら、入れ替えの見張りは時刻では変わらない。"
+  (var first None)
+  (for [job state.jobs]
+    (when job.spec.handoff
+      (<- due (| int None) (handoff-due state job now timing))
+      (when (and (is-not due None) (or (is first None) (< due first)))
+        (:= first due))))
+  first)
 
 
 (defk tick-due [state now timing]
@@ -192,6 +200,12 @@
       None))
 
 
+(defn #^ int deployment-reread-from [#^ (| DeploymentSeen DeploymentUnreadable None) seen]  ; defk にできない: coordinator の純粋な判断(deployments-to-observe)が呼ぶ
+  "台数を持つ Rollout の相手の Deployment の観測 seen を読み直す最初の刻(読んだ刻 + 10 秒 + 1 ms・観測が無ければ 10 秒 + 1 ms)。
+   deployments-to-observe の境の定義点 — 静かな区間の次の期限(idle_policy.rollout-due・#3064)も同じ値を読む。"
+  (+ (if (is seen None) 0 seen.at) 10000 1))
+
+
 (defn #^ list deployments-to-observe [#^ ClusterState state #^ int now]
   "読むべき Deployment の「ns/名」: 進行中の Rollout の相手は毎拍、台数を持つ(Observing / Complete の)相手は 10 秒ごと。"
   (setv keys [])
@@ -202,9 +216,20 @@
           (.append keys (+ t.namespace "/" t.name))))))
   (for [key (deployment-owners state.rollouts)]
     (setv seen (.row state.observations.deployments key))
-    (when (> (- now (if (is seen None) 0 seen.at)) 10000)
+    (when (>= now (deployment-reread-from seen))
       (.append keys key)))
   (list (dict.fromkeys keys)))
+
+
+(defk deployment-reread-due [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "状態がこのままで deployments-to-observe が台数の持ち主の Deployment を新しく返し始める最初の刻(deployment-reread-from の now より後の
+   最小)を知るため(静かな区間の次の期限・#3064)。None = 読み直す持ち主が無い。"
+  (min (gfor key (deployment-owners state.rollouts)
+             :setv due (deployment-reread-from (.row state.observations.deployments key))
+             :if (> due now)
+             due)
+       :default None))
 
 
 (defk plan-rollouts [state now timing [naming (ClusterNaming)]]

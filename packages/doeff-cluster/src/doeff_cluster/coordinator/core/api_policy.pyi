@@ -69,6 +69,7 @@ from doeff_cluster.coordinator.core.drain_policy import worker_view as worker_vi
 from doeff_cluster.coordinator.core.drain_policy import superseded_worker_view as superseded_worker_view
 from doeff_cluster.coordinator.core.drain_policy import drains_view as drains_view
 from doeff_cluster.coordinator.core.handoff_policy import watch_handoffs as watch_handoffs
+from doeff_cluster.coordinator.core.handoff_policy import handoff_due as handoff_due
 from doeff_cluster.coordinator.intent.cluster_model import HandoffPhase as HandoffPhase
 from doeff_cluster.coordinator.core.detached_policy import Reply as Reply
 from doeff_cluster.coordinator.core.detached_policy import submit_detached as submit_detached
@@ -121,7 +122,13 @@ def ready_instances(state: ClusterState, worker: str, now: int, timing: ClusterT
 def ready_instance(state: ClusterState, name: str, now: int, timing: ClusterTiming) -> str | None:
     ...
 
+def deployment_reread_from(seen: DeploymentSeen | DeploymentUnreadable | None) -> int:
+    ...
+
 def deployments_to_observe(state: ClusterState, now: int) -> list:
+    ...
+
+def deployment_reread_due(state: ClusterState, now: int) -> _Program[int | None, object]:
     ...
 
 def plan_rollouts(state: ClusterState, now: int, timing: ClusterTiming, naming: ClusterNaming=...) -> _Program[tuple, object]:
