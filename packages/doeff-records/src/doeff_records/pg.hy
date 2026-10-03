@@ -26,6 +26,7 @@
 (import doeff [Program])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetTime])
+(import doeff_core_effects.scheduler [ExternalPromise])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable])
 (import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
@@ -138,7 +139,7 @@
 
 
 (defk hung-bell [store]
-  {:pre [(: store PreparedStore)] :post [(: % "呼び鈴(外の promise)| Unreachable")]
+  {:pre [(: store PreparedStore)] :post [(: % (| ExternalPromise Unreachable))]
    :tags {:context "records" :role "foundation"}}
   "置き場の通知の channel に呼び鈴を掛けるため(待ち受けに届かなければ Unreachable)。"
   (<- channel (notice-channel store))
@@ -149,7 +150,7 @@
 
 
 (defk dropped-bell [store bell]
-  {:pre [(: store PreparedStore) (: bell "呼び鈴(外の promise)")] :post [(: % None)]
+  {:pre [(: store PreparedStore) (: bell ExternalPromise)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
   "鳴らなかった呼び鈴を外すため。"
   (<- channel (notice-channel store))

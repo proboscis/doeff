@@ -8,9 +8,9 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass field])
 (import threading)
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlUnreachable])
+(import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlTransaction SqlUnreachable])
 (import doeff_core_effects.sql_transaction [run-in-transaction])
-(import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-notify postgres-begin postgres-control])
+(import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-begin postgres-control NOTICE-STATEMENT])
 
 
 (defclass StatementCounts []
@@ -66,6 +66,8 @@
                                      (fn [] (postgres-begin leased (if probe.keep-lock lock-key None)))
                                      (fn [] (postgres-control leased "COMMIT"))
                                      (fn [] (postgres-control leased "ROLLBACK"))
-                                     :execute-notify (fn [request] (postgres-notify leased request.channel))))
+                                     :execute-notify (fn [request]
+                                                      (postgres-query leased (SqlQuery database NOTICE-STATEMENT
+                                                                                       #((SqlParam :name "channel" :value request.channel)))))))
       (finally (.release connections database leased)))
     (resume answer)))
