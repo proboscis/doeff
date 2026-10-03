@@ -12,6 +12,7 @@ import pytest
 from doeff_hy_pytest.budget import (
     Budgets,
     DEFAULT_CALL_BUDGET_STEPS,
+    RUNAWAY_STEPS_MULTIPLIER,
     CompileCounter,
     CompileTally,
     ImportTally,
@@ -787,4 +788,108 @@ def test_a_test_that_takes_no_vm_steps_is_within_the_steps_budget(pytester: pyte
     no_steps = f"(require doeff-hy.macros [deftest])\n{SPIN}\n(deftest test-reads-only\n  (spin 0.3)\n  (assert True))\n"
     _steps_project(pytester, STEPS_FAIL_INI, {"test_reads": no_steps})
     result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1)
+
+
+# ── 走っている最中の歩の上限(#3143)──────────────────────────────────────────────────────────
+# 同じ刻に自分へ合図を出し続ける task(promise を作り、それを満たす task を起こして待つ)を doeff の scheduler の上で回す。
+# 歩は本物の数(vm_work_counts)で数える — 偽の数では scheduler が越えを見ないため。上の検の conftest が同じ process の
+# 数の口を偽の関数へ差し替えたまま残すので、ここの検は別の process で走らせる。
+
+SPIN_SCHEDULER = """\
+from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, Wait, scheduled
+
+from doeff import do, run
+
+
+@do
+def _signal(promise):
+    yield CompletePromise(promise, None)
+
+
+@do
+def _signal_and_wait():
+    promise = yield CreatePromise()
+    signaller = yield Spawn(_signal(promise))
+    yield Wait(promise.future)
+    yield Wait(signaller)
+
+
+@do
+def _spin(count):
+    index = 0
+    while count is None or index < count:
+        index += 1
+        yield _signal_and_wait()
+    return index
+
+
+def spin_forever():
+    return run(scheduled(_spin(None)))
+
+
+def spin(count):
+    return run(scheduled(_spin(count)))
+"""
+
+SPIN_FOREVER_HY = """\
+(require doeff-hy.macros [deftest])
+(import spin_scheduler)
+(deftest test-spin-forever
+  (spin_scheduler.spin_forever)
+  (assert True))
+"""
+
+# 1,000 回の合図は歩数の上限(1,000)× 倍率を十分に越える歩を回し、走り終わる。
+SPIN_BOUNDED_HY = """\
+(require doeff-hy.macros [deftest])
+(import spin_scheduler)
+(deftest test-spin-bounded
+  (assert (= (spin_scheduler.spin 1000) 1000)))
+"""
+
+SPIN_BOUNDED_PY = """\
+import spin_scheduler
+
+
+def test_spin_bounded_in_python():
+    assert spin_scheduler.spin(1000) == 1000
+"""
+
+
+def test_a_spin_that_never_ends_fails_by_name_while_it_runs(pytester: pytest.Pytester) -> None:
+    """歩数の上限がある repo の Hy の検: 走り終わらない空回りは、歩数の上限 × 倍率を越えた所で scheduler が名指しで落とす。
+    call の後は上限を外す — 同じ走行の Python の検(上限を入れない)は同じ空回りを 1,000 回回しても緑。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_spin": SPIN_FOREVER_HY}, fake=False)
+    pytester.makepyfile(spin_scheduler=SPIN_SCHEDULER, test_spin_after=SPIN_BOUNDED_PY)
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(
+        [f"*StepBudgetExceeded: step budget exceeded: * steps since the budget was armed, limit {1000 * RUNAWAY_STEPS_MULTIPLIER} *"]
+    )
+
+
+def test_the_runaway_budget_is_the_steps_budget_times_the_multiplier(pytester: pytest.Pytester) -> None:
+    """上限は歩数の上限 × 倍率: 同じ 1,000 回の合図が、上限 1,000 では赤・上限 100,000 では緑(歩数の判定も内)。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_spin": SPIN_BOUNDED_HY}, fake=False)
+    pytester.makepyfile(spin_scheduler=SPIN_SCHEDULER)
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["*StepBudgetExceeded*"])
+
+    _steps_project(
+        pytester,
+        'doeff_test_call_budget_seconds = 10\ndoeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "100000"\n',
+        {"test_spin": SPIN_BOUNDED_HY},
+        fake=False,
+    )
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1)
+
+
+def test_no_steps_setting_arms_no_runaway_budget(pytester: pytest.Pytester) -> None:
+    """歩数の上限の設定が無い repo(秒の上限だけ)では上限を入れない — 同じ 1,000 回の合図の Hy の検は緑(今までどおり)。"""
+    _steps_project(pytester, "doeff_test_call_budget_seconds = 10\n", {"test_spin": SPIN_BOUNDED_HY}, fake=False)
+    pytester.makepyfile(spin_scheduler=SPIN_SCHEDULER)
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=1)
