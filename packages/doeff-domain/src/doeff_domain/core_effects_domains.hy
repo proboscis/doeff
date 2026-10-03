@@ -25,7 +25,7 @@
                                          MemoDeleteEffect MemoExistsEffect])
 (import doeff_core_effects.cache-effects [CacheGetEffect CachePutEffect
                                           CacheDeleteEffect CacheExistsEffect])
-(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Cancel Race
+(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Cancel Discard Race
                                       CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore
                                       ReleaseSemaphore CreateExternalPromise
@@ -121,7 +121,7 @@
 ((handles Listen) listen-handler)
 ((handles Await) await-handler)
 ((handles CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect) cache-handler)
-((handles Spawn TaskCompleted Gather Wait Cancel Race
+((handles Spawn TaskCompleted Gather Wait Cancel Discard Race
           CreatePromise CompletePromise FailPromise
           CreateSemaphore AcquireSemaphore ReleaseSemaphore
           CreateExternalPromise _SchedulerIntrospection) scheduled)
@@ -210,7 +210,7 @@
 
 (defdomain doeff-scheduler
   :title "Scheduler 語彙 — タスク・promise・semaphore の実行基盤"
-  :effects [Spawn TaskCompleted Gather Wait Cancel Race
+  :effects [Spawn TaskCompleted Gather Wait Cancel Discard Race
             CreatePromise CompletePromise FailPromise
             CreateSemaphore AcquireSemaphore ReleaseSemaphore
             CreateExternalPromise _SchedulerIntrospection]
