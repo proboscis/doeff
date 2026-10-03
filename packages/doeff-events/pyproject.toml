@@ -10,6 +10,8 @@ authors = [
 ]
 dependencies = [
     "doeff>=0.1.0",
+    # The timer handler waits for its deadlines with doeff-time's WaitWithin (agora-redesign #3076).
+    "doeff-time>=0.1.0",
 ]
 
 [build-system]
@@ -21,3 +23,4 @@ packages = ["src/doeff_events"]
 
 [tool.uv.sources]
 doeff = { workspace = true }
+doeff-time = { workspace = true }
