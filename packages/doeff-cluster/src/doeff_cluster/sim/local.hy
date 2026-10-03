@@ -45,6 +45,12 @@
 ;;;     在るので世界の effect を出さず、要求の列を値で受けて scheduler と時計の effect だけで coordinator と話す。
 ;;;   - 柵(fence)= host_contract.SIM-PASSABLE(scheduler と doeff-time の時計の effect)だけを外へ通し、それ以外を本番の子と同じ
 ;;;     doeff.UnhandledEffect で Program へ投げ返す — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さない。
+;;;   - 止めの合図(process-signals — process ごと・柵のすぐ外)= 本番の子 process の SIGTERM の代役(#3145)。止めの問い StopRequested・
+;;;     止めの待ち AwaitStop に、本番の os-signal-stop-handler(doeff-core-effects)と同じ意味で答える: 問いを 1 度でも受けた process
+;;;     (本番なら信号の受け手を据えた process)には、worker の SignalJob TERM が止めの理由("signal 15")を立て、待ちを起こす — process は
+;;;     止めの節を回して自分で終わる。問いを受けていない process(受け手の無い process — 本番では既定の動きで終わる)と、KILL(猶予切れ)は、
+;;;     今までどおり取り消す(exit -15)。外の世界(SimOutside の process ごとの組)が止めの問いを通すなら、合図が立つまでは外の答え手に
+;;;     渡し(問いは外の答え・待ちは外の答えと TERM の先に来た方)、外の筋書きの止めもそのまま効く。
 ;;;   - 筋書き(scenario)は検の側の呼び手(本番の detached-cluster などを積む機体の外の process)として、同じ coordinator-answers(送り手 sim-client)
 ;;;     の下で走る。別の送り手(実行環境の宣言・版の違う呼び手)が要る筋書きは ClientLink の値を置き換えて coordinator-answers を自分で被せる。
 ;;;
@@ -117,6 +123,7 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import copy [deepcopy])
+(import signal)
 (import dataclasses [dataclass replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
@@ -125,6 +132,7 @@
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError Race])
+(import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
@@ -197,7 +205,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
-                       ReleaseLeases EnvReport AwaitNextTick] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+                       ReleaseLeases EnvReport AwaitNextTick StopStage] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 
 ;; load-state は置き場がまだ無い時だけ以前の形の file を探す。sim は置き場(MemoryWalStore)が在る時だけ load-state を呼ぶので読まれない。
 (val NO-STATE-FILE "/nonexistent/doeff-sim/coordinator/state.json")
@@ -212,6 +220,7 @@
 (val WORKER-WAIT-SECONDS 5.0)                ; 筋書きの前に worker が最初に名乗るのを待つ上限(名乗れない worker が在っても筋書きは始める)
 (val DRAIN-TTL-SECONDS (float (+ DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS)))  ; drain の期限(本番の preStop の頼みと同じ)
 (val REPORT-KINDS #("readiness" "metrics"))
+(val TERM-REASON (+ "signal " (str (int signal.SIGTERM))))  ; 止めの合図の理由(本番の os-signal-stop-handler の StopBox と同じ綴り)
 (val KILLED-CODE -9)                         ; node ごと死んだ worker の子 process の exit-code
 (val PAUSE-STOP "stop")                      ; coordinator の止まりの種類: 優雅な停止
 (val PAUSE-CRASH "crash")                    ;                         Persist の失敗(返事をせずに落ちる)
@@ -618,6 +627,20 @@
   (#^ (| HostTruth None) after))
 
 
+(defrecord SimStopBox
+  "process 1 つの止めの合図の受け手(世界の session の stop-boxes の値 — 在る = 止めの問いか待ちを受けた process・#3145)。reason = 立った
+   止めの理由(最初の 1 つ — None = まだ)・waiters = 止めを待つ Promise・bridged = 外の世界の止めの待ちを写す task を起こしたか。"
+  (setv #^ (| str None) reason None)
+  (setv #^ tuple waiters #())
+  (setv #^ bool bridged False))
+
+
+(defrecord SimStopWait
+  "止めの待ち(ProcessStopWait)の答え。promise = 止めの理由で満たされる Promise・bridge = 外の世界の止めの待ちを写す task を起こす番か。"
+  (#^ Promise promise)
+  (#^ bool bridge))
+
+
 (defrecord HostStop
   "worker の拍の止めの問い(WorkerStopRequested)に宿が答える材料(StopRequestOf の答え — 世代の確かめと全 worker の止まれを世界への
    問い 1 つで・#3054 の C-6)。truth = その worker の宿の真実・all-stopping = 全 worker が止まる時か。"
@@ -669,6 +692,22 @@
 (defeffect KeepChild
   "process pid の中で Spawn した task を覚える(process の終わりで一緒に取り消す)。process がもう終わっていれば、その場で取り消す。"
   {:fields [(: pid int) (: task Task)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ProcessStopAsked
+  "process pid の止めの問い(StopRequested)— 合図の受け手を据え(本番の os-signal-stop-handler が最初の問いで信号の受け手を据えるのと
+   同じ — 据えた process への TERM は取り消しでなく止めの合図になる)、立っている止めの理由を答える(無ければ None)。"
+  {:fields [(: pid int)] :answer (| str None) :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ProcessStopWait
+  "process pid の止めの待ち(AwaitStop)— 合図の受け手を据え、止めの理由で満たされる Promise を答える(既に立っていれば満たした物)。
+   bridge = 外の世界が止めの待ちを通すか。答え = SimStopWait(bridge が真なのはその process で初めての時だけ — 外の答えを写す task を
+   1 つだけ起こす)。"
+  {:fields [(: pid int) (: bridge bool)] :answer SimStopWait :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ProcessStopRaised
+  "process pid に止めの理由 reason を立てる(最初の理由だけを残す)— 待ちを起こす。答え = 合図が届いたか(受け手を据えていない process
+   には届かない — 呼び手の SignalJob が取り消す)。"
+  {:fields [(: pid int) (: reason str)] :answer bool :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NoteProcess
   "起こした process を記録する。"
@@ -1287,11 +1326,50 @@
                              :priority effect.priority :daemon effect.daemon)))
   (KeepChild []
     (reperform effect))
+  ;; 止めの問いと待ちは process の信号の口(柵のすぐ外の process-signals — 本番の子 process の SIGTERM の代役・#3145)へ通す。
+  (StopRequested []
+    (reperform effect))
+  (AwaitStop []
+    (reperform effect))
   (EffectBase []
     :when (not (isinstance effect passable))
     (raise (UnhandledEffect (.format "sim の柵: 答えの無い effect {} ({!r}) — 本番の子 process でも答える handler が無い"
                                      (. (type effect) __name__) effect)))))
 
+
+
+(defk stop-bridge [pid]
+  {:pre [(: pid int)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "process pid の外の世界の止めの待ち(AwaitStop — process-signals の外側の答え手が答える)を待ち、来た理由を process の止めの合図に
+   写すため(外の筋書きの止めと worker の TERM の先に来た方で、process の止めの待ちが起きる)。process の中の task として覚えられ、
+   process の終わりで一緒に止まる。"
+  (<- reason str (AwaitStop))
+  (<- (ProcessStopRaised pid reason))
+  None)
+
+
+(defhandler process-signals [#^ int pid #^ tuple passable]
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 引数に残す理由: 止めの合図は process ごと(番号で世界の受け手を引く)、外の世界が止めの問いを通すか(passable)は process ごとの
+  ;; 外の組で違う。柵より外に在り、Program の effect ではない番号を Ask で問えない。
+  ;; process の SIGTERM の代役(#3145): 本番の os-signal-stop-handler と同じ意味で StopRequested・AwaitStop に答える — 理由は worker の
+  ;; SignalJob TERM が世界の受け手に立てる。外の世界がその問いを通す(passable)なら、合図が立つまでは外の答え手の答えを使う(外の
+  ;; 筋書きの止めも効く)。通さなければ「まだ来ていない」(None)— 受け手を据えた process の止めの問いは本番でも答えがある。
+  (StopRequested []
+    (<- own (| str None) (ProcessStopAsked pid))
+    (if (or (is-not own None) (not (isinstance effect passable)))
+        (resume own)
+        (do (<- outer (| str None) effect)
+            (resume outer))))
+  (AwaitStop []
+    (<- wait SimStopWait (ProcessStopWait pid (isinstance effect passable)))
+    ;; 外の世界の止めの待ちを写す task は process で 1 つ(節の中から起こす — 外側の答え手だけを持つ)。process の中の task として覚え、
+    ;; process の終わりで一緒に止める。
+    (when wait.bridge
+      (<- bridge Task (Spawn (stop-bridge pid)))
+      (<- (KeepChild pid bridge)))
+    (<- reason str (Wait wait.promise.future))
+    (resume reason)))
 
 
 (defrecord SimChild
@@ -1412,12 +1490,16 @@
 (defk run-fenced [program child once]
   {:pre [(: program DoExpr) (: child SimChild) (: once bool)] :post [(: % SimExit)] :tags {:context "doeff-cluster" :role "program"}}
   "Program を柵と答えの中で走らせ、終わり方を決めるため(本番の job_entry の service / task の入口の終わり方と同じ: service は
-   値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15)。殺された process(Crash = 1・worker の死 = -9)はここへ戻らない —
+   値 = 0・例外 = 1、task は結果を書いて 0。取り消し(止めの合図の受け手を据えていない process への TERM・KILL)= -15 — 受け手を
+   据えた process は TERM で止めの節を回して自分で終わる・#3145)。殺された process(Crash = 1・worker の死 = -9)はここへ戻らない —
    本物の SIGKILL と同じく task ごと捨てられ(Discard — 巻き戻さない・finally の effect は走らない)、終わりは殺した側が書く。"
   (try
     ;; 出来事の待ちの印(business-wait-tap — 行き止まりの見張りの材料・#3078)は柵の外側に置く: 柵が外へ通した WaitForEvent だけを見て、
     ;; 印の知らせ(NoteEventWait)は柵を通らずに世界へ届く。
-    (<- value (with-handlers [#* child.outside (business-wait-tap child.pid) (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
+    ;; 止めの合図の口(process-signals — 本番の SIGTERM の代役・#3145)は柵のすぐ外: 柵が通した止めの問いと待ちに答え、外の世界が
+    ;; 通す時だけ外の答え手へ渡す。
+    (<- value (with-handlers [#* child.outside (business-wait-tap child.pid) (process-signals child.pid child.passable)
+                              (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
                               (environ-reader child.environ)]
                              program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
@@ -1927,10 +2009,17 @@
     (<- (KeepHandle pid task))
     (resume None))
   (SignalJob [name pid stage]
+    ;; 本番の SignalProcess の代役(#3145): TERM は process の止めの合図の受け手へ理由を立てる(本番の os-signal-stop-handler が SIGTERM で
+    ;; 理由を立てるのと同じ — process は止めの節を回して自分で終わる)。受け手を据えていない process(止めを問わない Program — 本番では
+    ;; SIGTERM の既定の動きで終わる)と KILL(猶予切れ)は取り消す(exit -15)。
     (<- (live-truth worker.name boot))
     (<- handle (| Task None) (HandleOf pid))
     (when (is-not handle None)
-      (<- (Cancel handle)))
+      (match stage
+        StopStage.TERM (do (<- delivered bool (ProcessStopRaised pid TERM-REASON))
+                           (when (not delivered)
+                             (<- (Cancel handle))))
+        StopStage.KILL (<- (Cancel handle))))
     (resume None))
   (ReapJob [name pid outcome exit-code]
     (<- (change-live-truth worker.name boot (fn [truth] (replace truth :processes (tuple (gfor p truth.processes :if (!= p.pid pid) p))))))
@@ -2515,6 +2604,8 @@
   (session var preparations #())
   (session var stopping False)
   (session var stop-waiters {})
+  ;; process ごとの止めの合図の受け手(pid → SimStopBox — 止めの問いか待ちを受けた process だけ・#3145)。
+  (session var stop-boxes {})
   (session var revivals {})
   ;; 要求の受付まわり(網の切れ・口の故障・返事の前の覚え・報告・区間の歩の書きの数)は 1 つの値(1 歩の問いが 1 度だけ読む・#3054 の C-6)。
   (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
@@ -2612,6 +2703,33 @@
     (resume None))
   (HandleOf [pid]
     (resume (.get handles pid)))
+  (ProcessStopAsked [pid]
+    ;; 止めの問いを受けた process に受け手を据える(据えた後の TERM は止めの合図になる)。
+    (val box (.get stop-boxes pid (SimStopBox)))
+    (:= stop-boxes (| stop-boxes {pid box}))
+    (resume box.reason))
+  (ProcessStopWait [pid bridge]
+    ;; 止めの待ちの Promise を受け手に掛ける(理由が立っていれば、その場で満たす)。外の待ちを写す task は process で 1 つ。
+    (<- promise Promise (CreatePromise))
+    (val box (.get stop-boxes pid (SimStopBox)))
+    (val pending (is box.reason None))
+    (val bridging (and bridge pending (not box.bridged)))
+    (:= stop-boxes (| stop-boxes {pid (if pending
+                                          (replace box :waiters (+ box.waiters #(promise)) :bridged (or box.bridged bridging))
+                                          box)}))
+    (when (not pending)
+      (<- (CompletePromise promise box.reason)))
+    (resume (SimStopWait :promise promise :bridge bridging)))
+  (ProcessStopRaised [pid reason]
+    ;; 受け手を据えた process にだけ届く(最初の理由を残す)。書きを済ませてから待ちを起こす。
+    (val box (.get stop-boxes pid None))
+    (val raising (and (is-not box None) (is box.reason None)))
+    (val waking (if raising box.waiters #()))
+    (when raising
+      (:= stop-boxes (| stop-boxes {pid (replace box :reason reason :waiters #())})))
+    (for [promise waking]
+      (<- (CompletePromise promise reason)))
+    (resume (is-not box None)))
   (KeepChild [pid task]
     ;; 終わった process の中で把手を覚える前だった task(Spawn した task が先に走り、KeepChild の前に process が終わった)は、その場で
     ;; 止める — 殺された process なら捨てる(Discard — 殺された後に走らせない)、自分で終わった process なら取り消す。
