@@ -46,8 +46,8 @@ if TYPE_CHECKING:
 
 RUN_TIMEOUT_SECONDS = 5.0
 
-# The Rust scheduler joins in #3056 (both implementations keep the same meaning).
-IMPLEMENTATIONS: tuple[SchedulerImplementation, ...] = ("python",)
+# Both implementations keep the same meaning (docs/25-rust-scheduler.md).
+IMPLEMENTATIONS: tuple[SchedulerImplementation, ...] = ("python", "rust")
 
 
 @dataclass(frozen=True)

@@ -115,6 +115,7 @@ enum Kind {
     Gather,
     Race,
     Cancel,
+    Discard,
     CreatePromise,
     CompletePromise,
     FailPromise,
@@ -125,13 +126,14 @@ enum Kind {
     ReleaseSemaphore,
 }
 
-const KINDS: [(Kind, &str); 14] = [
+const KINDS: [(Kind, &str); 15] = [
     (Kind::Spawn, "Spawn"),
     (Kind::TaskCompleted, "TaskCompleted"),
     (Kind::Wait, "Wait"),
     (Kind::Gather, "Gather"),
     (Kind::Race, "Race"),
     (Kind::Cancel, "Cancel"),
+    (Kind::Discard, "Discard"),
     (Kind::CreatePromise, "CreatePromise"),
     (Kind::CompletePromise, "CompletePromise"),
     (Kind::FailPromise, "FailPromise"),
@@ -1995,6 +1997,7 @@ impl Locked<'_> {
             Kind::Gather => self.on_gather(py, current, effect, k),
             Kind::Race => self.on_race(py, current, effect, k),
             Kind::Cancel => self.on_cancel(py, current, effect, k),
+            Kind::Discard => self.on_discard(py, current, effect, k),
             Kind::CreatePromise => {
                 let pid = self.alloc_promise(py, false);
                 let registrar = self.core.registrar(py)?;
@@ -2460,6 +2463,52 @@ impl Locked<'_> {
                 callbacks = self.cancel_abandoned_external_promises(py, &parked_keys)?;
             }
             _ => {}
+        }
+        if callbacks.is_empty() {
+            return self.resume_now(py, k, py.None());
+        }
+        Ok(Outcome::CancelCallbacks { k, callbacks })
+    }
+
+    /// A hard kill (the Python `Discard` branch, line for line): the task's
+    /// continuation is dropped, never resumed or thrown into, so no
+    /// except/finally runs.
+    fn on_discard(
+        &mut self,
+        py: Python<'_>,
+        current: Owner,
+        effect: &Bound<'_, PyAny>,
+        k: KRef,
+    ) -> PyResult<Outcome> {
+        let tid: Tid = effect
+            .getattr(pyo3::intern!(py, "task"))?
+            .getattr(pyo3::intern!(py, "task_id"))?
+            .extract()?;
+        let status = self.tasks.get(&tid).map(|t| t.status);
+        let mut callbacks = Vec::new();
+        match status {
+            Some(Status::Pending) | Some(Status::Running) | Some(Status::Cancelling) => {
+                if current == Some(tid) {
+                    // Self-discard: this Discard is where the task ends; its
+                    // continuation k is dropped and the next ready task runs.
+                    let error = self.spec().cancelled_error(py)?;
+                    self.finish_cancelled(py, tid, error)?;
+                    self.discard_k(k);
+                    return Ok(Outcome::Ctrl(self.pick_next(py)?));
+                }
+                // A pending task has no continuation yet (pick_next skips the
+                // start of a cancelled task); a started one is detached from
+                // wherever it is parked and dropped with it.
+                let parked_keys = self.keys_parked_by(tid);
+                if let Some(cont) = self.detach_parked_continuation(tid) {
+                    self.discard_k(cont);
+                }
+                let error = self.spec().cancelled_error(py)?;
+                self.finish_cancelled(py, tid, error)?;
+                // Stop the external work the task was parked on (#498).
+                callbacks = self.cancel_abandoned_external_promises(py, &parked_keys)?;
+            }
+            Some(Status::Completed) | Some(Status::Failed) | Some(Status::Cancelled) | None => {}
         }
         if callbacks.is_empty() {
             return self.resume_now(py, k, py.None());

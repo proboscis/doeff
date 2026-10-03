@@ -1,6 +1,6 @@
 # 25. Rust の scheduler
 
-`scheduled()` の scheduler(Spawn・Wait・Gather・Race・Cancel・Semaphore・Promise・
+`scheduled()` の scheduler(Spawn・Wait・Gather・Race・Cancel・Discard・Semaphore・Promise・
 ExternalPromise)は Rust の版と Python の版の 2 つを持つ。意味は同じで、既定は Python の版(Rust の版は選んで使う)。
 Rust の版は `packages/doeff-vm/src/scheduler.rs`、Python の版は
 `packages/doeff-core-effects/doeff_core_effects/scheduler.py` の `_scheduled_python`。
@@ -99,6 +99,9 @@ Python の版は `@do` の generator の handler、Rust の版は同期の handl
 - まだ動いていない task は本体を走らせずに取り消す。
 - 取り消した task だけが待っていた外部の Promise は `on_cancel` を呼んで取り消す
   (失敗は `ExternalPromiseCancelCallbackError` として Cancel を出した側へ)。
+
+Discard(巻き戻さずに捨てる・SIGKILL と同じ形)も Python の版と一行ずつ対応させてある(`scheduler.rs` の `on_discard`)。
+捨てた task の続きはどちらの版でも落とすだけで、finally の中の effect は走らない。
 
 Python の版から引き継いだ振る舞い(変えていない): root の本体が終わった時に置き去りに
 なった task(daemon の聞き手など)の継続は、実行の後も解放されず、その `finally` も走らない。
