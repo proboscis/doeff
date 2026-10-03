@@ -207,12 +207,17 @@
   (setv #(stop-pattern stop-body) (get stops 0))
   (setv stop-binding (if (= (len stop-pattern) 2) [`(setv ~(get stop-pattern 1) (. ~got reason))] []))
   ;; state の型を書いた形: 初期値は state の型・各節の値は state の型か (stop 値)・抜けた値は state の型で確かめる。
+  ;; 節の値は型を注記せずに束ね、実行時は assert で確かめる(静的には、値を state の名へ書き戻す所で state の型として読まれる)。
+  ;; 注記して束ねると、注記の型が Program の答えの型の推論へ逆に流れ込み、使い手の pyright strict に書き手に直せない
+  ;; Unknown の赤が出る(agora-redesign #3079 の手本で commit の hook が名指した)。
   (setv state-check (if state-type [state-type] [])
-        out-check (if state-type [`(| ~state-type ~loop-stop)] [])
+        out-check (if state-type [`(assert (isinstance ~out #(~state-type ~loop-stop))
+                                            (+ "event-loop: 節の値の型が state の型でない: " (repr ~out)))] [])
         result-check (if state-type [`(assert (isinstance ~result ~state-type)
                                                (+ "event-loop: 抜けた値の型が state の型でない: " (repr ~result)))] []))
   (setv arms (lfor [pattern body] events
-               [pattern `(~bind ~out ~@out-check (~program ~@(_el-body body loop-stop)))]))
+               [pattern `(do (~bind ~out (~program ~@(_el-body body loop-stop)))
+                             ~@out-check)]))
   (setv next-state (if state-name [`(setv ~state-name ~out)] []))
   (setv start-state (if state-name [`(~bind ~state-name ~@state-check (~program ~state-init))] []))
   `(do
@@ -225,7 +230,8 @@
          (~bind ~got (~next-of #(~@(lfor [pattern _body] events (get pattern 0))) ~watch))
          (when (isinstance ~got ~arrived)
            ~@stop-binding
-           (~bind ~out ~@out-check (~program ~@(_el-body stop-body loop-stop)))
+           (~bind ~out (~program ~@(_el-body stop-body loop-stop)))
+           ~@out-check
            (setv ~result (~value-of ~out))
            ~@result-check
            (break))
