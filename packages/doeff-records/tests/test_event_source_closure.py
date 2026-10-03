@@ -21,12 +21,16 @@ from doeff_events import EventBus, subscribed_event_handler
 from doeff_events.effects import WaitForEvent
 from doeff_records.effects import ListRows, ReadStreamEnd, WatchChanges, WatchEvents
 from doeff_records.event_source import (
+    READ_SIGNAL_EFFECTS,
     SOURCE_EFFECTS,
     ChangedRow,
+    ReadSignalSource,
     SignalTables,
+    read_signal_handler,
     records_signal_handler,
     run_signal_source,
 )
+from doeff_records.memory import MEMORY_SOURCE_EFFECTS
 from doeff_time import DelayEffect
 
 from doeff import EffectGenerator, do, with_handlers
@@ -95,3 +99,39 @@ def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
     coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     assert {gap.effect for gap in coverage.gaps} == {ListRows, ReadStreamEnd, WatchChanges, WatchEvents, DelayEffect}
+
+
+# --- entry が置く素の工場 read_signal_handler(源の工場を ReadSignalSource で問う — #3127)-------------------------------------
+
+
+@do
+def _read_job() -> EffectGenerator[Moved]:
+    """使い手の形: 購読者の列の内側に read_signal_handler を呼びの字面で置き、本体を包む(源の種類は名指さない)。"""
+    answer: Moved = yield with_handlers(
+        [subscribed_event_handler(BUS, "worker", (Moved,)), read_signal_handler(SIGNALS, "worker")], _waits()
+    )
+    return answer
+
+
+def test_the_analyzer_reads_read_signal_handler_from_its_declaration() -> None:
+    """解析器は read_signal_handler を宣言から読む(何にも答えず、本体の周りで READ_SIGNAL_EFFECTS を出す包み)。"""
+    handler = analyze_handler("doeff_records.event_source:read_signal_handler")
+    assert handler.basis is Basis.DECLARED, handler.unresolved
+    assert handler.handled == frozenset()
+    assert handler.performs is not None
+    assert handler.performs.effect_types == frozenset(READ_SIGNAL_EFFECTS)
+
+
+def test_read_signal_effects_cover_both_sources_and_the_question() -> None:
+    """宣言の effect は、問い(ReadSignalSource)と、答えうる 2 つの源(記録の置き場の源・memory の置き場の源)の effect の和ちょうど
+    (源の側が effect を足して宣言に無ければ赤 — 閉じの検が本番と模擬のどちらの源でも閉じる)。"""
+    assert set(READ_SIGNAL_EFFECTS) == {ReadSignalSource} | set(SOURCE_EFFECTS) | set(MEMORY_SOURCE_EFFECTS)
+
+
+def test_a_job_placing_read_signal_handler_leaves_no_unreadable_handler() -> None:
+    """使い手の形の job を読むと、読めない handler が残らない。残るのは源の工場の問い(ReadSignalSource — 本番の土台の記録の handler が
+    答える)と、記録と時計の effect だけ。"""
+    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    coverage = check_coverage(analyze_program(_read_job), [scheduler], include=runs_where_performed)
+    assert coverage.unknown_handlers == (), coverage.unknown_handlers
+    assert ReadSignalSource in {gap.effect for gap in coverage.gaps}, coverage.gaps

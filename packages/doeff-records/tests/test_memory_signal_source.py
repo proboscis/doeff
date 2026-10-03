@@ -26,7 +26,14 @@ from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handle
 from doeff_events.effects import WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
-from doeff_records.event_source import RECORDS_SIGNAL_SOURCE, ReadSignalSource, SignalSourceFactory, SignalTables, records_signal_handler
+from doeff_records.event_source import (
+    RECORDS_SIGNAL_SOURCE,
+    ReadSignalSource,
+    SignalSourceFactory,
+    SignalTables,
+    read_signal_handler,
+    records_signal_handler,
+)
 from doeff_records.memory import MemoryStore, memory_records_handler, memory_signal_handler, memory_signal_source
 from doeff_records.http_client import RecordsEndpoint, http_records_handler
 from doeff_records.values import ExpectAny, WrittenRows
@@ -270,5 +277,21 @@ def test_an_entry_that_asks_gets_signals_from_the_store_its_records_handler_serv
     """entry が問うだけで、その組の記録の handler の置き場の書きの合図を受ける(本番と模擬の違いは記録の handler の差し替えだけ)。"""
     store = MemoryStore(SCHEMA)
     signal = _run_on(store, _entry_shaped(CHANGED_ON_JOBS_AND_LANES))
+    assert isinstance(signal, Changed), signal
+    assert [(row.table, row.key) for row in signal.keys] == [("jobs", '["j2"]')], signal
+
+
+@do
+def _entry_with_read_signal_handler(bindings: tuple[SignalTables, ...]) -> EffectGenerator[object]:
+    """組み立ての entry の形(源の種類を名指さない): 購読者の列 → 期限 → read_signal_handler を被せた本体で書きの合図を受ける。"""
+    layer = (subscribed_event_handler(EventBus(), SUBSCRIBER, (Changed, TimerFired)), timer_handler(), read_signal_handler(bindings, SUBSCRIBER))
+    signal = yield _stacked(layer, _write_then_receive())
+    return signal
+
+
+def test_read_signal_handler_uses_the_source_of_the_records_handler_in_scope() -> None:
+    """entry が read_signal_handler を置くだけで、その組の記録の handler(ここでは memory)の置き場の書きの合図を受ける。"""
+    store = MemoryStore(SCHEMA)
+    signal = _run_on(store, _entry_with_read_signal_handler(CHANGED_ON_JOBS_AND_LANES))
     assert isinstance(signal, Changed), signal
     assert [(row.table, row.key) for row in signal.keys] == [("jobs", '["j2"]')], signal

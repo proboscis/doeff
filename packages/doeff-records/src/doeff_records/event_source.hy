@@ -38,7 +38,7 @@
 (import dataclasses [dataclass fields is-dataclass])
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects.scheduler [Cancel Race Spawn Task TaskCancelledError Wait])
+(import doeff_core_effects.scheduler [Cancel CreateExternalPromise Race Spawn Task TaskCancelledError Wait])
 (import doeff_events.effects [Publish PublishEffect WaitForEventEffect])
 (import doeff_time [Delay DelayEffect])
 (import doeff_records.admission [key-text])
@@ -358,6 +358,34 @@
    handler = 自分の置き場の書きで鳴る模擬の源・HTTP の client と PostgreSQL = RECORDS-SIGNAL-SOURCE)— 源は必ず問うた所の記録の handler の置き場に
    結ばれる。Ask にしないのは、組の内側の設定の読み手(決まった鍵だけを持ち、知らない鍵を断る)に横取りされうるため — 記録の effect なら
    設定の読み手は触らない。")
+
+
+(defk run-read-signal [bindings subscriber body]
+  {:tp [T] :pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str) (: body (| (get Program #(T object)) (get EffectBase T)))]
+   :post [(: % T)]}
+  "read-signal-handler の包み: 包んだ本体を走らせる頭で源の工場を ReadSignalSource で問い(その組で記録に答えている handler が答える)、
+   答えた工場の包みで本体を走らせるため。"
+  (<- source SignalSourceFactory (ReadSignalSource))
+  (<- answer (with-handlers [(source.make bindings subscriber)] body))
+  answer)
+
+
+;; read-signal-handler の包みが本体の周りで出す effect の全部(宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めないので宣言する):
+;; 源の工場の問い(ReadSignalSource)と、答えた源の包みが出しうる effect の和 = 記録の置き場の源(SOURCE-EFFECTS)と memory の置き場の源
+;; (呼び鈴の CreateExternalPromise と、SOURCE-EFFECTS に含まれる Publish・Spawn・Race・Cancel・Wait)。
+(val READ-SIGNAL-EFFECTS (+ #(ReadSignalSource CreateExternalPromise) SOURCE-EFFECTS))
+
+
+(deff read-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3127)
+  {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
+  "組み立ての entry が with-handlers の列に置く源の工場(素の工場 — #3127)。包んだ本体を走らせる頭で、その組で記録に答えている handler に
+   源の工場を ReadSignalSource で問い(本番 = 記録の HTTP の client・PostgreSQL が答える long-poll の源・模擬 = memory の記録の handler が答える
+   自分の置き場の源)、その源で本体を包む — entry は源の種類を名指さず、本番と模擬の違いは記録の handler の差し替えだけになる。"
+  (BodyWrapper run-read-signal bindings subscriber))
+
+;; 何にも答えず(__doeff_handles__ = ())、本体の周りで READ-SIGNAL-EFFECTS を出す、という宣言(doeff-effect-analyzer の body wrapper の読み)。
+(setv read-signal-handler.__doeff_handles__ #()
+      read-signal-handler.__doeff_effects__ READ-SIGNAL-EFFECTS)
 
 
 (defk records-signal-source [bindings subscriber]
