@@ -394,9 +394,11 @@
   (AwaitJobProcess [job excluding timeout-seconds]
     (<- seen (| JobProcessSeen JobProcessWaitExpired) (job-process-awaited url cell job excluding (float timeout-seconds)))
     (resume seen))
-  (Redeclare [system]
+  (Redeclare [system environ]
     (<- versions dict (this-process-versions))
-    (val declaration (system-declaration system machine.revision :runtime-env machine.runtime-env :versions versions))
+    ;; その宣言し直しの上書き(渡されなければ上書き無し — 本番の declare と同じく宣言ごとの上書き・#3131)。
+    (val declaration (system-declaration system machine.revision :runtime-env machine.runtime-env :versions versions
+                                         :environ (if (is environ None) {} environ)))
     (<- placed bool (apply-declaration url declaration MACHINE-ACTOR))
     (when (not placed)
       (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))

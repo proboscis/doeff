@@ -2870,8 +2870,9 @@
     (resume runs))
   (ClientLink []
     (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions)))
-  (Redeclare [system]
-    (<- declaration Declaration (declaration-of system plan.revision plan.environ plan.runtime-env plan.versions))
+  (Redeclare [system environ]
+    ;; その宣言し直しの上書き(渡されなければ最初の宣言の上書き)を新しい系に対して検めて重ねる(#3131 — 本番の declare と同じ 1 つの規則)。
+    (<- declaration Declaration (declaration-of system plan.revision (if (is environ None) plan.environ environ) plan.runtime-env plan.versions))
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- names tuple (apply-declaration link declaration))
     (resume names))
