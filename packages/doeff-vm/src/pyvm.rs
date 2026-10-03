@@ -406,6 +406,7 @@ pub fn register_pyvm(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<crate::do_expr::PyResumeThrow>()?;
     m.add_class::<crate::do_expr::PyTransferThrow>()?;
     m.add_class::<crate::do_expr::PyWithObserve>()?;
+    m.add_class::<crate::do_expr::PyWithBoundaries>()?;
     m.add_class::<crate::do_expr::PyGetTraceback>()?;
     m.add_class::<crate::do_expr::PyGetExecutionContext>()?;
     m.add_class::<crate::do_expr::PyGetHandlers>()?;

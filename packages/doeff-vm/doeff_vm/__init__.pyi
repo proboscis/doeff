@@ -1,6 +1,6 @@
 from collections.abc import Callable as _CallableT
 from collections.abc import Generator, Sequence
-from typing import Any, Generic, Protocol, SupportsIndex, overload
+from typing import Any, Generic, Literal, Protocol, SupportsIndex, overload
 
 from typing_extensions import Never, Self, TypeVar
 
@@ -213,6 +213,26 @@ class WithObserve(Generic[_T_co]):
     def __init__(self: WithObserve[_T], observer: Any, body: _ProgramLike[_T]) -> None: ...
     @overload
     def __init__(self: WithObserve[Any], observer: Any, body: object) -> None: ...
+    def __iter__(self) -> Generator[Any, Any, _T_co]: ...
+    def __repr__(self) -> str: ...
+
+class WithBoundaries(Generic[_T_co]):
+    """Install a captured boundary stack (innermost first) around body in one VM step (#3149)."""
+
+    boundaries: Sequence[tuple[Literal["handler", "observer"], Any]]
+    body: Any
+    @overload
+    def __init__(
+        self: WithBoundaries[_T],
+        boundaries: Sequence[tuple[Literal["handler", "observer"], Any]],
+        body: _ProgramLike[_T],
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: WithBoundaries[Any],
+        boundaries: Sequence[tuple[Literal["handler", "observer"], Any]],
+        body: object,
+    ) -> None: ...
     def __iter__(self) -> Generator[Any, Any, _T_co]: ...
     def __repr__(self) -> str: ...
 

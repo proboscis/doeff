@@ -25,6 +25,7 @@ CURRENT_RUNTIME_SYMBOLS = (
     "ResumeThrow",
     "TransferThrow",
     "WithObserve",
+    "WithBoundaries",
     "GetTraceback",
     "GetExecutionContext",
     "GetHandlers",
