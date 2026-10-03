@@ -28,7 +28,6 @@ from doeff_time import async_time_handler as async_time_handler
 from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.pg import pg_records_handler as pg_records_handler
 from doeff_records.pg import prepare_records_store as prepare_records_store
-from doeff_records.pg import DEFAULT_POLL_SECONDS as DEFAULT_POLL_SECONDS
 from doeff_records.pg_sql import DEFAULT_PREFIX as DEFAULT_PREFIX
 from doeff_records.http_server import MaintenancePlan as MaintenancePlan
 from doeff_records.http_server import RecordsServing as RecordsServing

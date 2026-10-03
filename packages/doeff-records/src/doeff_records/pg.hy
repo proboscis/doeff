@@ -13,6 +13,10 @@
 ;;; 書きの手順(PutRow・PutRows・AppendEvent・版の繰り上げ・期限切れの回収・刈り取り)は SqlTransaction の lock-key = 置き場の書きの錠
 ;;; (pg_sql.writer-lock-key — 旧い版と同じ錠の番号)の中で流す。transaction の中では SqlQuery と純粋な計算だけを出す(時刻は前に読んで渡す)。
 ;;; 読みの手順(行・一覧・変更の列・追記の読み)は SqlQuery を 1 文ずつ流す(自動 commit — 旧い版と同じ断面)。
+;;; 変化の待ち(WatchChanges・WatchEvents — #3073): 書きの錠の transaction は最後に置き場の通知の channel へ合図(SqlNotify)を
+;;; 出す(commit した時だけ届く — 巻き戻した書きの合図は届かない)。待ちは呼び鈴(SqlHangNotice)を掛けてから読み、静かなら呼び鈴か
+;;; timeout を待って読み直す(watching.wait-for-signal)。読み直しの間隔で起きない。合図は中身を運ばず、待ち手が変更の列から読み直す。
+;;; 待ち受けの接続が繋ぎ直した時も呼び鈴が鳴るので、その間の書きも読み直しで拾う。
 ;;; 読み手の窓の read-modify-write の競合(同じ読み手の位置を 2 つの要求が同時に読んで進める)は旧い版と同じで、ここでは直さない
 ;;; (#880 の構成のレビュー A4)。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -22,7 +26,8 @@
 (import doeff [Program])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetTime])
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlRows SqlFailed SqlUnreachable])
+(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
+                                        SqlUnreachable])
 (import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
@@ -31,7 +36,7 @@
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal
                                  listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
-(import doeff_records.watching [wait-for-changes moved-of])
+(import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key schema-statements drop-statements
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
@@ -41,7 +46,6 @@
                               find-retired-key-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
-(val DEFAULT-POLL-SECONDS 0.2)
 
 
 (defclass RecordsSqlFailed [RuntimeError]
@@ -103,13 +107,54 @@
     _ answer))
 
 
+(defk notice-channel [store]
+  {:pre [(: store PreparedStore)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の通知の channel の名(表の名の接頭辞ごとに 1 つ — 同じ database の別の置き場の書きで起きない)。"
+  (.format "{}changes" store.prefix))
+
+
+(defk signalled [store program]
+  {:pre [(: store PreparedStore) (: program Program)] :post [(: % "program の答え")]
+   :tags {:context "records" :role "foundation"}}
+  "program を流した後、同じ transaction の中で置き場の通知の channel へ合図を出すため(commit した時だけ届く — 頭の註)。"
+  (<- answer program)
+  (<- channel (notice-channel store))
+  (<- notified (SqlNotify store.database channel))
+  (match notified
+    (SqlUnreachable :reason reason) (raise (StoreUnreachable reason))
+    (SqlFailed :sqlstate sqlstate :reason reason) (raise (RecordsSqlFailed sqlstate reason))
+    _ answer))
+
+
 (defk writing [store program]
   {:pre [(: store PreparedStore) (: program Program)] :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "program を置き場の書きの錠の transaction で流すため(旧い版の lock-statement と同じ錠の番号 — pg_sql.hy の頭の註)。"
+  "program を置き場の書きの錠の transaction で流し、同じ transaction で書きの合図を出すため(旧い版の lock-statement と同じ錠の番号 —
+   pg_sql.hy の頭の註)。"
   (<- key (writer-lock-key store.prefix))
-  (<- answer (in-transaction store.database key program))
+  (<- answer (in-transaction store.database key (signalled store program)))
   answer)
+
+
+(defk hung-bell [store]
+  {:pre [(: store PreparedStore)] :post [(: % "呼び鈴(外の promise)| Unreachable")]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の通知の channel に呼び鈴を掛けるため(待ち受けに届かなければ Unreachable)。"
+  (<- channel (notice-channel store))
+  (<- bell (SqlHangNotice store.database channel))
+  (match bell
+    (SqlUnreachable :reason reason) (Unreachable (.format "PostgreSQL に届かない: {}" reason))
+    _ bell))
+
+
+(defk dropped-bell [store bell]
+  {:pre [(: store PreparedStore) (: bell "呼び鈴(外の promise)")] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "鳴らなかった呼び鈴を外すため。"
+  (<- channel (notice-channel store))
+  (<- (SqlDropNotice store.database channel bell))
+  None)
 
 
 (defk reached [program]
@@ -517,10 +562,10 @@
 
 ;; --- handler ------------------------------------------------------------------------------------------------
 
-(defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host #^ float poll-seconds]
+(defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host]
   ;; 引数に残す理由: store は用意し終えた置き場(prepare-records-store の答え — 表の用意を済ませた証)で、置き場ごとに違う。
-  ;; writer は呼び手が名乗った書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名、
-  ;; poll-seconds は WatchChanges / WatchEvents の読み直しの間隔で、どちらも組み立ての側の設定。
+  ;; writer は呼び手が名乗った書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名で、
+  ;; 組み立ての側の設定。
   "PostgreSQL の置き場の答え手(頭の註)。SqlQuery / SqlTransaction を外側の答え手へ出す。"
   {:tags {:context "records" :role "foundation"}}
   (ReadRow [table key]
@@ -542,14 +587,14 @@
                                       (writing store (put-rows-locked store origin-host writer effect (epoch-ms now))))))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
-    (<- answer (wait-for-changes (fn [now-ms] (reached (swept-before store now-ms (pg-watch-scan store effect))))
-                                 poll-seconds timeout))
+    (<- answer (wait-for-signal (fn [now-ms] (reached (swept-before store now-ms (pg-watch-scan store effect))))
+                                (fn [] (hung-bell store)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
   (WatchEvents [stream after timeout]
-    ;; 列の待ちは ReadEvents(limit 1)の読み直し(WatchChanges と同じ poll-seconds — LISTEN / NOTIFY は後の変更)。
+    ;; 列の待ちは呼び鈴が鳴るたびの ReadEvents(limit 1)の読み直し(WatchChanges と同じ呼び鈴 — 頭の註)。
     (val once (ReadEvents stream :after after :limit 1))
-    (<- answer (wait-for-changes (fn [now-ms] (moved-after (reached (swept-before store now-ms (pg-read-events store once)))))
-                                 poll-seconds timeout))
+    (<- answer (wait-for-signal (fn [now-ms] (moved-after (reached (swept-before store now-ms (pg-read-events store once)))))
+                                (fn [] (hung-bell store)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- now (GetTime))
