@@ -8,7 +8,7 @@
 ;; - 宣言してよいかの検め declaring-refusal は、系の関数の checkout が汚れておらず HEAD = 宣言の版であることと、土台の :needs ⊆ job の
 ;;   :needs を検め、外れれば理由の文を返す(計画 2.2 の E・9 節の P — 宣言の入口は利用側の道具が持つ・#3030)。
 ;; - 宣言した Program を実行先の入口(job_entry service)がそのまま走らせる(handler を足さない — Program が自分で並べる)。
-(require doeff-hy.macros [defk deftest <- val])
+(require doeff-hy.macros [defk deftest defhandler <- val])
 (import collections.abc [Callable])
 (import hashlib)
 (import json)
@@ -18,7 +18,7 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects.handlers [reader listen-handler slog-discard-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_cluster.shared.intent.service_model :as service-model)
 (import doeff_cluster.shared.core.service_rules :as service-rules)
@@ -31,6 +31,9 @@
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])
 (import doeff_cluster.shared.entry [declare :as declare-module])
+(import doeff_core_effects.effects [Listen])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_cluster.shared.protocol.declaration_requests [spec-for-update])
 (import doeff_cluster.shared.core.declaring [declaring-refusal])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
@@ -493,3 +496,41 @@
   (<- refused (| str None)
       (service-rules.foundation-needs-refusal narrow (PairFoundation :main plain-foundation :side wide-foundation :step 2)))
   (assert (and (is-not refused None) (in "wide_foundation" refused)) refused))
+
+
+;; --- 差分の宣言(#3115)— 宣言し直しは spec の変わらない Service に書きを送らず、書かない Service だけが名指す Program を置き直さない ------
+
+(val DIFF-BASE "http://coordinator.test")
+
+
+(defhandler coordinator-holding [#^ dict current]
+  ;; 偽の coordinator(外の世界の口 HttpRequest の答え手): GET /resources/Service/<名> は current に在る名の今の spec を版 3 で答え
+  ;; (無ければ 404)、書き(PUT・POST)は 200 で受ける。送った要求は検が Listen で値として拾う(ここでは控えない)。
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  (HttpRequest [method url]
+    (val name (get (.split url "/") -1))
+    (resume (cond
+              (and (= method "GET") (in name current))
+              (HttpResponse 200 {} b"" (json.dumps {"resourceVersion" 3 "spec" (get current name)}) url 0.0)
+              (= method "GET") (HttpResponse 404 {} b"" "" url 0.0)
+              True (HttpResponse 200 {} b"" "{}" url 0.0)))))
+
+
+(deftest test-a-redeclaration-writes-only-the-changed-service-and-places-only-its-program
+  ;; 系 lab-pair を宣言し直す: tally は今の spec が送る spec と同じ・greeter は古い版の spec。送る要求は Service 2 本の読みと、greeter が
+  ;; 名指す Program の置きと、greeter の書きだけ。失敗ケース = 変わらない tally に PUT が出る・tally だけが名指す Program を置き直す
+  ;; (前の形は全部の Program を置き、全部の Service に書きを送った)。greeter の書きは古い sha に戻す書き直しと同じ形で、Program を置き直す。
+  (val declaration (system-declaration (lab-pair plain-foundation) "rev1" :versions (! (process-versions os.environ))))
+  (val rows (dfor row declaration.rows (get row "name") row))
+  (val tally-now (! (spec-for-update (get rows "tally") {"owner" "lab" "replicas" 1})))
+  (val greeter-old (| (! (spec-for-update (get rows "greeter") {"owner" "lab" "replicas" 1})) {"revision" "rev0"}))
+  (<- heard tuple (with-handlers [slog-discard-handler (coordinator-holding {"tally" tally-now "greeter" greeter-old}) listen-handler]
+                    (Listen (declare-module.apply-declaration DIFF-BASE declaration "lab") :types #(HttpRequest))))
+  (val sent (lfor request (get heard 1) #(request.method request.url)))
+  (val greeter-sha (get (get (get rows "greeter") "run") "program"))
+  (assert (is (get heard 0) True) heard)
+  (assert (= sent [#("GET" (+ DIFF-BASE "/resources/Service/tally"))
+                   #("GET" (+ DIFF-BASE "/resources/Service/greeter"))
+                   #("PUT" (+ DIFF-BASE "/programs/" greeter-sha))
+                   #("PUT" (+ DIFF-BASE "/resources/Service/greeter"))])
+          sent))

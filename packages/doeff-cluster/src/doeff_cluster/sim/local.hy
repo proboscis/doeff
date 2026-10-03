@@ -147,7 +147,7 @@
                                                           forget-heard])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
-(import doeff_cluster.shared.protocol.declaration_requests [create-body spec-for-update])
+(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query])
@@ -2301,24 +2301,29 @@
 (defk apply-declaration [link declaration]
   {:pre [(: link SimLink) (: declaration Declaration)] :post [(: % tuple)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "宣言を本番の declare(declare.apply-declaration)と同じ順と本文で coordinator へ書くため: 詰めた Program を PUT /programs/<sha> で
-   置いてから、Service ごとに無ければ POST(create-body)・在れば読んだ版を付けて PUT(spec-for-update)。答え = 書いた Service の名。"
-  (for [#(sha blob) (sorted (.items declaration.programs))]
-    (<- put tuple (send-request link "PUT" (+ "/programs/" sha) {}
-                                {"blob" blob "versions" (get (get (get declaration.rows 0) "run") "versions")}))
-    (answered-body put (+ "program " sha)))
+  "宣言を本番の declare(declare.apply-declaration)と同じ順と本文で coordinator へ書くため: Service を全部読み、書く Service(無い・spec が
+   変わった)が名指す Program だけを PUT /programs/<sha> で置いてから、無ければ POST(create-body)・spec が変わった Service だけ読んだ版を
+   付けて PUT(差分の宣言の判断は本番と同じ declaration_requests の service-read・needed-programs)。答え = 宣言した Service の名(書かな
+   かった Service も含む)。"
+  (var reads #())
   (for [row declaration.rows]
     (val path (+ "/resources/Service/" (url-quote (get row "name") :safe "")))
     (<- current tuple (send-request link "GET" path {} None))
-    (var written None)
-    (if (= (get current 0) 404)
-        (do (<- created tuple (send-request link "POST" "/resources/Service" {} (create-body row None)))
-            (:= written created))
-        (do (val body (answered-object current (+ "Service " (get row "name"))))
-            (<- spec dict (spec-for-update row (get body "spec") None))
-            (<- updated tuple (send-request link "PUT" path {} {"resourceVersion" (get body "resourceVersion") "spec" spec}))
-            (:= written updated)))
-    (answered-body written (+ "Service " (get row "name"))))
+    (<- read ServiceRead (service-read (get row "name") row path
+                                       (if (= (get current 0) 404) None (answered-object current (+ "Service " (get row "name"))))
+                                       None))
+    (:= reads (+ reads #(read))))
+  (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
+  (for [sha needed]
+    (<- put tuple (send-request link "PUT" (+ "/programs/" sha) {}
+                                {"blob" (get declaration.programs sha) "versions" (get (get (get declaration.rows 0) "run") "versions")}))
+    (answered-body put (+ "program " sha)))
+  (for [read reads :if (is-not read.body None)]
+    (<- body dict (body-of read))
+    (<- written tuple (if (is read.version None)
+                          (send-request link "POST" "/resources/Service" {} body)
+                          (send-request link "PUT" read.target {} body)))
+    (answered-body written (+ "Service " read.name)))
   (tuple (gfor row declaration.rows (get row "name"))))
 
 

@@ -22,7 +22,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_cluster.shared.protocol.declaration_requests [spec-for-update create-body])
+(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 
 
@@ -40,43 +40,60 @@
   response)
 
 
-(defk service-written [base actor row replicas]
-  {:pre [(: base str) (: actor str) (: row (get Mapping #(str object))) (: replicas (| int None))] :post [(: % HttpResponse)]
+(defk service-read-at [base actor name row replicas]
+  {:pre [(: base str) (: actor str) (: name str) (: row (get Mapping #(str object))) (: replicas (| int None))] :post [(: % ServiceRead)]
    :tags {:context "doeff-cluster" :role "main" :reads "json"}}
-  "Service の行 1 つを資源の口へ書くため: 無ければ POST /resources/Service で作り(所有者 = 送り手)、在れば GET で読んだ resourceVersion を
-   付けて PUT する(読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。答え = 書きの返事。"
-  (val url (+ base "/resources/Service/" (url-quote (get row "name") :safe "")))
+  "Service の行 1 つの今の資源を資源の口で読み、送る書きを決めるため(差分の宣言の判断は declaration_requests.service-read)。"
+  (val url (+ base "/resources/Service/" (url-quote name :safe "")))
   (<- current HttpResponse (declare-request "GET" url actor None))
   (when (= current.status 404)
-    (<- created HttpResponse (declare-request "POST" (+ base "/resources/Service") actor (create-body row replicas)))
-    (return created))
+    (<- absent ServiceRead (service-read name row url None replicas))
+    (return absent))
   (.raise-for-status current)
-  (val body (json.loads current.text))
-  (<- spec dict (spec-for-update row (get body "spec") replicas))
-  (<- updated HttpResponse (declare-request "PUT" url actor {"resourceVersion" (get body "resourceVersion") "spec" spec}))
+  (<- read ServiceRead (service-read name row url (json.loads current.text) replicas))
+  read)
+
+
+(defk service-written [base actor read]
+  {:pre [(: base str) (: actor str) (: read ServiceRead)] :post [(: % HttpResponse)]
+   :tags {:context "doeff-cluster" :role "main"}}
+  "読んだ Service 1 つへ書きを送るため: 無ければ POST /resources/Service で作り(所有者 = 送り手)、在れば読んだ resourceVersion を付けて
+   PUT する(読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。答え = 書きの返事。"
+  (<- body dict (body-of read))
+  (when (is read.version None)
+    (<- created HttpResponse (declare-request "POST" (+ base "/resources/Service") actor body))
+    (return created))
+  (<- updated HttpResponse (declare-request "PUT" read.target actor body))
   updated)
 
 
 (defk apply-declaration [url declaration actor [replicas None]]
   {:pre [(: url str) (: declaration Declaration) (: actor str) (: replicas (| int None))] :post [(: % bool)]
    :tags {:context "doeff-cluster" :role "main" :spells "json"}}
-  "詰めた Program を置いてから、宣言の行を資源の口で書くため。HTTP は汎用の effect(HttpRequest)で送り、要求ごとの返事を 1 行出す(slog)。
-   答え = 全部が通ったか(Program の置きが 1 つでも落ちれば行は書かずに偽 — 入口が 1 で終わる)。"
+  "宣言の行を差分だけ資源の口で書くため: Service を全部読み、書く Service(無い・spec が変わった)が名指す Program だけを置いてから、
+   書く Service だけを書く(spec の変わらない Service には書きを送らない — declaration_requests の頭注)。HTTP は汎用の effect(HttpRequest)
+   で送り、要求ごとの返事を 1 行出す(slog)。答え = 全部が通ったか(Program の置きが 1 つでも落ちれば行は書かずに偽 — 入口が 1 で終わる)。"
   (val base (.rstrip url "/"))
   (val versions (get (get (get declaration.rows 0) "run") "versions"))
+  (var reads #())
+  (for [row declaration.rows]
+    (<- read ServiceRead (service-read-at base actor (get row "name") row replicas))
+    (:= reads (+ reads #(read))))
+  (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
   (var programs-placed True)
-  (for [#(sha blob) (sorted (.items declaration.programs))]
-    (<- placed HttpResponse (declare-request "PUT" (+ base "/programs/" sha) actor {"blob" blob "versions" versions}))
+  (for [sha needed]
+    (<- placed HttpResponse (declare-request "PUT" (+ base "/programs/" sha) actor {"blob" (get declaration.programs sha) "versions" versions}))
     (<- (slog (.format "program {}: {}" (cut sha 0 12) placed.status)))
     (when (>= placed.status 300)
       (:= programs-placed False)))
   (when (not programs-placed)
     (return False))
   (var rows-written True)
-  (for [row declaration.rows]
-    (val name (get row "name"))
-    (<- written HttpResponse (service-written base actor row replicas))
-    (<- (slog (.format "{}: {} {}" name written.status (cut written.text 0 300))))
-    (when (>= written.status 300)
-      (:= rows-written False)))
+  (for [read reads]
+    (if (is read.body None)
+        (<- (slog (.format "{}: unchanged" read.name)))
+        (do (<- written HttpResponse (service-written base actor read))
+            (<- (slog (.format "{}: {} {}" read.name written.status (cut written.text 0 300))))
+            (when (>= written.status 300)
+              (:= rows-written False)))))
   rows-written)
