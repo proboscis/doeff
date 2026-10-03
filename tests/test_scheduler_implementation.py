@@ -220,3 +220,103 @@ def test_stale_extension_is_named_not_silently_replaced(
     monkeypatch.delattr(extension, "SchedulerCore")
     with pytest.raises(ImportError, match="rebuild the Rust extension"):
         scheduled(_one(), implementation="rust")
+
+
+# --- A spawned task runs under the spawn site's handlers and observers (#3149) ---
+# The scheduler re-installs the boundaries captured at the spawn site around the
+# task's body. Whatever the VM instruction used for that (one layer at a time or
+# one WithBoundaries), the task must see exactly what the same body sees when run
+# in place under the same stack: the innermost handler answers first, effects
+# reach handlers and observers in the same order, and a task spawned inside the
+# task captures the same boundaries again.
+
+
+class Which(EffectBase[str]):
+    """Asks the nearest answering handler for its label."""
+
+
+def _answering(label: str, log: list[str]):
+    """A handler that records that it saw ``Which`` and answers with its label."""
+
+    @do
+    def answer(effect: Which, k: Any):
+        log.append(f"handler:{label}")
+        return (yield Resume(k, label))
+
+    return answer
+
+
+def _forwarding(label: str, log: list[str]):
+    """A handler that records that it saw ``Which`` and forwards it outward."""
+
+    @do
+    def forward(effect: Which, k: Any):
+        log.append(f"handler:{label}")
+        yield Pass(effect, k)
+
+    return forward
+
+
+def _observing(label: str, log: list[str]):
+    """An observer that records each ``Which`` it sees."""
+
+    def observe(effect: Any) -> None:
+        if isinstance(effect, Which):
+            log.append(f"observer:{label}")
+
+    return observe
+
+
+@do
+def _ask_twice():
+    first = yield Which()
+    second = yield Which()
+    return first, second
+
+
+@do
+def _spawn_twice_nested(program: Any):
+    """Spawns a task that itself spawns ``program`` and waits for it."""
+    outer = yield Spawn(_spawn_and_wait(program))
+    return (yield Wait(outer))
+
+
+def _under_mixed_stack(program: Any, log: list[str]) -> Any:
+    """Outer to inner: answering handler, observer, forwarding handler, observer."""
+    from doeff import WithObserve
+
+    inner = WithObserve(_observing("inner", log), program)
+    inner = install_handler(_forwarding("forward", log))(inner)
+    inner = WithObserve(_observing("outer", log), inner)
+    return install_handler(_answering("answer", log))(inner)
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_spawned_task_is_answered_by_the_innermost_handler(
+    implementation: SchedulerImplementation,
+) -> None:
+    log: list[str] = []
+    stack = install_handler(_answering("outer", log))(
+        install_handler(_answering("inner", log))(_spawn_and_wait(_ask_twice()))
+    )
+    assert run(scheduled(stack, implementation=implementation)) == ("inner", "inner")
+    assert log == ["handler:inner", "handler:inner"]
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+@pytest.mark.parametrize(
+    "launch", [_spawn_and_wait, _spawn_twice_nested], ids=["spawned", "spawned-inside-a-task"]
+)
+def test_spawned_task_sees_handlers_and_observers_as_in_place(
+    implementation: SchedulerImplementation, launch: Any
+) -> None:
+    in_place: list[str] = []
+    expected = run(
+        scheduled(_under_mixed_stack(_ask_twice(), in_place), implementation=implementation)
+    )
+    spawned: list[str] = []
+    answer = run(
+        scheduled(_under_mixed_stack(launch(_ask_twice()), spawned), implementation=implementation)
+    )
+    assert answer == expected == ("answer", "answer")
+    assert spawned == in_place
