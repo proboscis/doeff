@@ -64,19 +64,20 @@
   (assert (= born (TypedWritten 1 (Part :id "p1" :label "a" :note "n" :state "open"))) born)
   (<- read (as-maker (read-typed PARTS #("p1"))))
   (assert (and (isinstance read TypedRow) (isinstance read.value Part) (= read.version 1)) read)
-  ;; 塗る書き手は自分の欄だけを変えた像を書く(値の変わらない欄は名簿で照らさない)。
+  ;; 塗る書き手が欄 color を変えた像を書く。
   (<- painted (harness.as-writer PAINTER (put-typed PARTS #("p1") (.model-copy read.value :update {"color" "red"})
                                                     (ExpectVersion 1))))
   (assert (and (isinstance painted TypedWritten) (= painted.value.color "red") (= painted.value.label "a")) painted)
   ;; 値が None の欄は消える。
   (<- cleared (as-maker (put-typed PARTS #("p1") (.model-copy painted.value :update {"note" None}) (ExpectVersion 2))))
   (assert (and (isinstance cleared TypedWritten) (is cleared.value.note None) (= cleared.version 3)) cleared)
-  ;; 他人の欄を変える像は断る・古い版は今の行を行の型で返す。
-  (<- refused (harness.as-writer PAINTER (put-typed PARTS #("p1") (.model-copy cleared.value :update {"label" "z"})
-                                                    (ExpectVersion 3))))
-  (assert (isinstance refused Refused) refused)
+  ;; 置き場は書き手の名で断らない(#2994 で書き手の宣言による実行時の確かめを外した): 塗る書き手が、作る書き手の書いた欄
+  ;; label を変える像も、作る書き手の書きと同じに置ける。古い版は今の行を行の型で返す。
+  (<- relabeled (harness.as-writer PAINTER (put-typed PARTS #("p1") (.model-copy cleared.value :update {"label" "z"})
+                                                      (ExpectVersion 3))))
+  (assert (= relabeled (TypedWritten 4 (.model-copy cleared.value :update {"label" "z"}))) relabeled)
   (<- stale (as-maker (put-typed PARTS #("p1") cleared.value (ExpectVersion 1))))
-  (assert (and (isinstance stale TypedConflict) (isinstance stale.current TypedRow) (= stale.current.version 3)) stale)
+  (assert (and (isinstance stale TypedConflict) (isinstance stale.current TypedRow) (= stale.current.version 4)) stale)
   (<- nothing (as-maker (read-typed PARTS #("p-none"))))
   (assert (= nothing (Missing)))
   (<- ticket (as-maker (put-typed TICKETS #("g1" "t1") (Ticket "g1" "t1" :owner "o1") (ExpectAny))))
@@ -90,7 +91,7 @@
   (setv typed (lfor change changes.items (typed-change PARTS change)))
   (assert (and typed (all (gfor change typed (isinstance change TypedRowChanged)))) typed)
   (assert (= (lfor change typed change.at) (lfor change changes.items change.at)) "確定の刻 at を行の型へ運ぶ")
-  (assert (= (. (get typed -1) value) cleared.value)))
+  (assert (= (. (get typed -1) value) relabeled.value)))
 
 
 (deftest test-a-row-type-with-a-new-none-field-writes-to-a-store-that-does-not-declare-it
