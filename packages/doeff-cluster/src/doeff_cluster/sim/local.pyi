@@ -40,7 +40,7 @@ from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
 from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
 from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
-from doeff_cluster.coordinator.intent.cluster_model import ClusterState
+from doeff_cluster.coordinator.intent.cluster_model import ClusterState, QuietStep
 from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
@@ -57,10 +57,12 @@ _Answer = TypeVar("_Answer")
 # --- 型の宣言の無い module の値の、この module が読む欄 ----------------------------------------------------
 
 class _RequestQueueView(Protocol):
-    """coordinator の受け口(protocol.request_queue.RequestQueue)— up = 受け付けているか。"""
+    """coordinator の受け口(protocol.request_queue.RequestQueue)— up = 受け付けているか・ends_at_marks = 落ちの注入が待っているか。"""
 
     @property
     def up(self) -> bool: ...
+    @property
+    def ends_at_marks(self) -> bool: ...
 
 class _WalStoreView(Protocol):
     """coordinator の置き場(handler_sets.MemoryWalStore)— load = 置き場の鍵 → 値。"""
@@ -344,6 +346,10 @@ class CoordinatorStep:
 
 @dataclass(frozen=True)
 class CoordinatorSteps(EffectBase[tuple[CoordinatorStep, ...]]): ...
+
+def handed_quiet_steps(
+    queue: _RequestQueueView, steps: tuple[QuietStep, ...]
+) -> Program[tuple[QuietStep, ...], object]: ...
 
 @dataclass(frozen=True)
 class StartWorker(EffectBase[bool]):
