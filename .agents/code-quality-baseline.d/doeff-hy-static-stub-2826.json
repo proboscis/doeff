@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-hy/src/doeff_hy/static_types.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "pure-io-import",
+      "subject": "pathlib"
+    }
+  ],
+  "version": 1
+}

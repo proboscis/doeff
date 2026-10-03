@@ -234,6 +234,42 @@ def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mi
         assert errors == [], errors
 
 
+def _union_bind_first(mistake: bool) -> str:
+    """union の型の束ね(`(<- m (| int None) …)`)を module の中で最初に持ち、その後ろに int を答える defk の束ねを持つ検体。
+    mistake なら後ろの束ねの型を str と書く(型の食い違い)。"""
+    later = "str" if mistake else "int"
+    return (
+        "(require doeff-hy.macros [defk <-])\n\n"
+        "(defk maybe-step [x]\n  {:pre [(: x int)] :post [(: % (| int None))]}\n  \"maybe\"\n  None)\n\n"
+        "(defk union-first [x]\n  {:pre [(: x int)] :post [(: % (| int None))]}\n  \"union first\"\n"
+        "  (<- m (| int None) (maybe-step x))\n  m)\n\n"
+        "(defk one-step [x]\n  {:pre [(: x int)] :post [(: % int)]}\n  \"one step\"\n  (+ x 1))\n\n"
+        f"(defk later [x]\n  {{:pre [(: x int)] :post [(: % int)]}}\n  \"later bind\"\n  (<- v {later} (one-step x))\n  x)\n"
+    )
+
+
+@needs_pyright
+@pytest.mark.parametrize("mistake", [False, True])
+def test_a_bind_after_a_union_bind_keeps_its_answer_type(tmp_path: Path, mistake: bool) -> None:
+    """反例(agora-redesign #3116): `_doeff_perform` が `object -> Any` の受け皿の overload を持っていた頃、module の中で最初の
+    評価が union の期待型の下(`(<- m (| int None) …)`)だと、pyright が以後の `_doeff_perform` を全部受け皿へ落とし、答えが
+    Any になった — 後ろの束ねの型の食い違い(int を str と書く)が黙って通り、event-loop の節の値が Unknown になった。"""
+    import contextlib
+    import io
+
+    from doeff_hy.static_check import main
+
+    (tmp_path / "union_first.hy").write_text(_union_bind_first(mistake), encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(tmp_path), "--json", str(tmp_path / "union_first.hy")])
+    errors = [(d["rule"], d["message"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"]
+    if mistake:
+        assert [rule for rule, _ in errors] == ["reportAssignmentType"], errors
+    else:
+        assert errors == [], errors
+
+
 BINDINGS = """(require doeff-hy.macros [defk <-])
 
 (defk rebinds [x]
