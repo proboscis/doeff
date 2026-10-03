@@ -114,6 +114,7 @@ class MemoryStore:
     expiry_order: int
     groups: dict[tuple[str, str], StoredGroup]
     def __init__(self, schema: RecordsSchema) -> None: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MemoryStore: ...
 
 #: 公開 effect 8 つと WatchEvents の答えの型のどれか(answered・at-now の :post)。
 _StoreAnswer = (

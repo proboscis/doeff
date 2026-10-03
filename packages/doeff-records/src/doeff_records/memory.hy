@@ -138,7 +138,30 @@
     (when (not-in "expiry" state)
       (rebuild-expiry self)
       (when (in "purge_due_ms" state)
-        (setv self.purge-due-ms (get state "purge_due_ms"))))))
+        (setv self.purge-due-ms (get state "purge_due_ms")))))
+  (deff __deepcopy__ [self memo]  ; defk にできない: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
+    {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
+    "置き場の写しを作るため(使い手の模擬の検が、種を置いた置き場を検ごとに写す — 写しへの書きは元の置き場に届かない)。書き換える
+     入れ物だけを写し、中身の値は共有する: 表 → 鍵 → 置き場の行の 2 段の dict・変更の列と刻・出来事の列と冪等キーの引き・消した鍵の覚え・
+     期限の索引は写す。行 Row・置き場の行 StoredRow・変更・出来事・期限の項は作った後に変えない値(書きは新しい値で置き換える)なので
+     辿らない — 5 万行の置き場で行ごとに写しを作らない(#2670 根 E の (a))。組 StoredGroup は出来事を書き足し最後の刻を
+     進めるので組ごとに写す。錠と呼び鈴は運ばず新しく作る(__getstate__ / __setstate__ と同じ取り決め)。"
+    (setv copied (.__new__ MemoryStore MemoryStore))
+    (setv (get memo (id self)) copied)
+    (setv state (.__getstate__ self))
+    (setv (get state "rows") (dfor [table held] (.items self.rows) table (dict held)))
+    (for [name #("changes" "events" "expiry")]
+      (setv (get state name) (list (get state name))))
+    (for [name #("changed_at" "by_idempotency" "retired_keys")]
+      (setv (get state name) (dict (get state name))))
+    (setv groups {})
+    (for [[slot group] (.items self.groups)]
+      (setv held (StoredGroup group.last-at))
+      (setv held.events (list group.events))
+      (setv (get groups slot) held))
+    (setv (get state "groups") groups)
+    (.__setstate__ copied state)
+    copied))
 
 
 ;; --- 呼び鈴(WatchChanges と WatchEvents の待ち手を起こす)---------------------------------------------------

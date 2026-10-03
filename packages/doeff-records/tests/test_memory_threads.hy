@@ -11,7 +11,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [StreamDecl KeepFor ExpectAbsent])
+(import doeff_records.values [StreamDecl KeepFor ExpectAbsent ExpectAny])
 (import doeff_records.effects [AppendEvent ReadEvents PutRow])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
@@ -131,3 +131,76 @@
     (assert (is-not back.lock store.lock))
     ;; 戻した置き場の錠は使える(入れ子も通る RLock)。
     (with [back.lock] (with [back.lock] None))))
+
+
+;; --- 置き場の写しは書き換える入れ物だけを写す(#2670 根 E の (a)) --------------------------------------------------------
+;; 使い手の模擬の検は、種を置いた置き場を検ごとに deepcopy する。写しは書き換える入れ物(表 → 鍵 → 置き場の行・変更の列と刻・出来事の列と
+;; 冪等キーの引き・消した鍵の覚え・期限の索引・組)だけを写し、作った後に変えない値(置き場の行・行・出来事)は共有する。
+;; 反例 = 入れ物を 1 つでも元と共有すると、写しへの書きが元の置き場に漏れる(元への書きも写しに漏れる)。
+
+(defn #^ object written-in [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+  "置き場 store へ program の書きを、仮想の時計と memory の handler の下で撃つため。"
+  (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
+
+
+(defk seed-writes []
+  {:pre [] :post [(: % bool)]}
+  "写す前の置き場に、行 2 つ・出来事の列の出来事 1 つ・組で数える列(pairs — 鍵の区切りの前で組む)の出来事 1 つを書くため。"
+  (<- _first (PutRow "parts" #("p1") {"id" "p1" "label" "a"} (ExpectAbsent)))
+  (<- _second (PutRow "parts" #("p2") {"id" "p2" "label" "b"} (ExpectAbsent)))
+  (<- _journal (AppendEvent "journal" "j1" {"n" 1}))
+  (<- _pair (AppendEvent "pairs" "g1:a" {"n" 1}))
+  True)
+
+
+(defk later-writes []
+  {:pre [] :post [(: % bool)]}
+  "写した後に片方の置き場へだけ書くため(行の追加・行の書き換え・出来事・同じ組の出来事 — 入れ物のどれにも書く)。"
+  (<- _added (PutRow "parts" #("p3") {"id" "p3" "label" "c"} (ExpectAbsent)))
+  (<- _changed (PutRow "parts" #("p1") {"id" "p1" "label" "z"} (ExpectAny)))
+  (<- _journal (AppendEvent "journal" "j2" {"n" 2}))
+  (<- _pair (AppendEvent "pairs" "g1:b" {"n" 2}))
+  True)
+
+
+(defn #^ tuple contents-of [#^ MemoryStore store]  ; defk にできない: 検の入口で置き場の中身を同期に読む(Program を実行しない)
+  "置き場の中身を比べられる形で取り出すため(行・番号・変更・出来事・冪等キーの引き・組・索引の数)。"
+  #((rows-of store) store.head (len store.changes) (len store.changed-at) (tuple (lfor event store.events event.sequence))
+    (frozenset (.keys store.by-idempotency))
+    (dfor [slot group] (.items store.groups) slot #(group.last-at (len group.events)))
+    (len store.expiry)))
+
+
+(deftest test-a-deep-copy-of-a-store-reads-the-same-and-shares-only-the-unchanging-values
+  (setv store (MemoryStore LAW-SCHEMA))
+  (written-in store (seed-writes))
+  (setv copied (copy.deepcopy store))
+  (assert (= (contents-of copied) (contents-of store)) (contents-of copied))
+  ;; 書き換える入れ物は全部、元と別の object(欄を足した時に写し忘れると赤 — 錠と呼び鈴は新しく作る)。
+  (for [[name value] (.items (vars store))]
+    (when (isinstance value #(dict list set))
+      (assert (is-not (getattr copied name) value) name)))
+  (for [[table rows] (.items store.rows)]
+    (assert (is-not (get copied.rows table) rows) table))
+  (for [[slot group] (.items store.groups)]
+    (assert (is-not (get copied.groups slot) group) slot)
+    (assert (is-not (. (get copied.groups slot) events) group.events) slot))
+  ;; 作った後に変えない値(置き場の行)は辿らずに共有する — 5 万行の置き場で行ごとに写しを作らない。
+  (for [[key stored] (.items (get store.rows "parts"))]
+    (assert (is (get (get copied.rows "parts") key) stored) key)))
+
+
+(deftest test-writes-to-a-copied-store-stay-in-the-store-they-were-written-to
+  (setv store (MemoryStore LAW-SCHEMA))
+  (written-in store (seed-writes))
+  ;; 写しへの書きは元に届かない。
+  (setv copied (copy.deepcopy store)
+        before (contents-of store))
+  (written-in copied (later-writes))
+  (assert (= (contents-of store) before) (contents-of store))
+  (assert (!= (contents-of copied) before) "写しへの書きが写しに載っていない")
+  ;; 元への書きは写しに届かない。
+  (setv other (copy.deepcopy store)
+        kept (contents-of other))
+  (written-in store (later-writes))
+  (assert (= (contents-of other) kept) (contents-of other)))
