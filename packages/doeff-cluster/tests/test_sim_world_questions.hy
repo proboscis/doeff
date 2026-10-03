@@ -14,12 +14,12 @@
 (import doeff_time [sim-time-handler])
 (import doeff_core_effects.handlers [state :as session-store])
 (import doeff_core_effects.scheduler [CreatePromise Promise])
-(import doeff_cluster.shared.intent.protocol [NextRequests Request])
+(import doeff_cluster.shared.intent.protocol [NextRequests Request Reply CoordinatorStopRequested])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.worker.intent.worker_model [PublishStatus WorkerStopRequested ReadDesired])
-(import doeff_cluster.sim.local [SimPlan SimParts SimWorker HostTruth HostTruthOf PartsOf sim-plan sim-world sim-host
-                                 observe-requests])
+(import doeff_cluster.sim.local [SimPlan SimParts SimWorker HostTruth HostTruthOf PartsOf sim-plan sim-world sim-host StopCoordinator TakeHeldRequests
+                                 observe-requests StepBook])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 (import tests.clock_fixtures [clock-at])
@@ -62,7 +62,7 @@
   (<- plan SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter
-                                   (queued-requests (RequestQueue :skip-idle False)) observe-requests]
+                                   (queued-requests (RequestQueue :skip-idle False)) (observe-requests (StepBook))]
                      (quiet-steps n))))
   asked)
 
@@ -96,8 +96,12 @@
 ;; 世界の状態の読み書き Get 4,682 / Put 1,260)。
 ;; - 要求を取った歩: 篩い(網の切れ・口の故障・刻)と、service の報告の記録と、返事の前に落ちた時の覚えを、問い 1 つ(AdmitBatch)。
 ;;   反例: RouteFaultsNow・NoteReports・HoldRequests を別々に聞く形では 1 歩に 2〜3 つ(この検は赤)。
-;; - 書き(Persist)1 回: 落ちの注入の判断(区間の歩の書きの数え・止めの注入)を問い 1 つ(PersistCrashDue)、書き終えた知らせ(終わった
-;;   task と準備の待ち手を起こす)を問い 1 つ(NoteCoordinatorWrite)。反例: TakeReplayedWrite・PauseDue・PartsOf を別々に聞く形。
+;; - 書き(Persist)1 回: 落ちの注入の判断(区間の歩の書きの数え・止めの注入)を問い 1 つ(PersistCrashDue — 書きより前)。反例:
+;;   TakeReplayedWrite・PauseDue・PartsOf を別々に聞く形。書き終えた知らせ(終わった task と準備の待ち手を起こす)は歩の終わりの問いへ。
+;; - 歩の終わり(次の歩の頭の止まりの判定 CoordinatorStopRequested): この歩の返事の手放し・書きの知らせ・止まりの判定を問い 1 つ
+;;   (StepEnded — #2670 の根 A)。要求を 1 つ取った 1 歩は、取り・書き・歩の終わりの 3 つ。反例: 返事ごとの ReleaseRequest・書きごとの
+;;   NoteCoordinatorWrite・歩の頭の PauseDue を別々に聞く前の形は 1 歩に 5 つ(この検は赤)。止まった後の返事(止まる調停ループの待ちへの
+;;   返事 — 次の歩の頭が無い)はすぐ手放す(ReleaseRequest)。
 ;; - worker の拍の止めの問い(WorkerStopRequested): 世代の確かめと全 worker の止まれを問い 1 つ(StopRequestOf)。
 ;;   反例: HostTruthOf と WorkersStopping を別々に聞く形。
 ;; - heartbeat を送る拍: 筋(PlanOf)と部品(PartsOf)は宿の世代ごとに 1 度 — 拍ごとに世界へ聞かない。
@@ -125,7 +129,7 @@
   (<- slot Promise (CreatePromise))
   (<- (enqueue-request queue (Request :method "GET" :path "/state" :query {} :body None :parts #("state") :slot slot
                                      :peer HOST.name)))
-  (<- asked tuple (asked-during (with-handlers [(queued-requests queue) observe-requests] (NextRequests 1.0 10))))
+  (<- asked tuple (asked-during (with-handlers [(queued-requests queue) (observe-requests (StepBook))] (NextRequests 1.0 10))))
   asked)
 
 
@@ -136,12 +140,109 @@
   (assert (= asked #("AdmitBatch")) asked))
 
 
-(deftest test-a-persist-asks-the-world-once-before-and-once-after
+(defhandler never-stopped
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; observe-requests の外側の止めの合図の代役(本番の stop-flag): 止まりは頼まれていない、とだけ答える。
+  (CoordinatorStopRequested []
+    (resume False)))
+
+
+(defk persist-then-step-end []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "書きを 1 回出し、次の歩の頭の止まりの判定を出して、それぞれの間の世界への問いの列を読むため。"
+  (<- persisted tuple (asked-during (Persist :writes #())))
+  (<- ended tuple (asked-during (CoordinatorStopRequested)))
+  #(persisted ended))
+
+
+(deftest test-a-persist-asks-the-world-once-before-and-the-step-end-notes-it
   (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
-                   (with-handlers [(session-store) (sim-world plan) world-question-counter persist-written observe-requests]
-                     (asked-during (Persist :writes #())))))
-  (assert (= asked #("PersistCrashDue" "NoteCoordinatorWrite")) asked))
+                   (with-handlers [(session-store) (sim-world plan) world-question-counter never-stopped persist-written (observe-requests (StepBook))]
+                     (persist-then-step-end))))
+  ;; 書きの前に落ちの判断 1 つ・書き終えた知らせは歩の終わりの問い 1 つに入る。
+  (assert (= asked #(#("PersistCrashDue") #("StepEnded"))) asked))
+
+
+(defk step-of-one []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "調停ループの 1 歩と同じ順に効果を出すため: 要求を取り、書き、取った最初の要求へ返事をし(残りは返事を待たせる待ちと同じ)、次の歩の頭の
+   止まりの判定を出す。答え = #(止まるか 返事を待たせた要求の tuple)。"
+  (<- taken list (NextRequests 1.0 10))
+  (<- (Persist :writes #()))
+  (<- (Reply (get taken 0) 200 {}))
+  (<- stopping bool (CoordinatorStopRequested))
+  #(stopping (tuple (cut taken 1 None))))
+
+
+(defk state-request [slot]
+  {:pre [(: slot Promise)] :post [(: % Request)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "worker w1 からの状態の読みの要求 1 つを作るため。"
+  (Request :method "GET" :path "/state" :query {} :body None :parts #("state") :slot slot :peer HOST.name))
+
+
+(defk whole-step [stop-first]
+  {:pre [(: stop-first bool)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "列に要求を 2 つ積み、1 歩を回した間の世界への問いの列と止まりの答えと、止まった後に待たせた要求へ返事をした間の問いの列と、その後に
+   世界が覚えている要求の数を読むため。stop-first = 歩の前に止めを注入する(歩の終わりの判定が止まりと答え、その後の返事 — 止まる
+   調停ループの待ちへの返事 release-watchers と同じ — はすぐ手放す)。偽なら待たせた要求は返事をせずに残す。"
+  (val queue (RequestQueue :skip-idle False))
+  ;; 歩と止まった後の返事は同じ帳面(coordinator の一生 1 つ)を使う。
+  (val book (StepBook))
+  (<- first-slot Promise (CreatePromise))
+  (<- second-slot Promise (CreatePromise))
+  (<- first Request (state-request first-slot))
+  (<- second Request (state-request second-slot))
+  (<- (enqueue-request queue first))
+  (<- (enqueue-request queue second))
+  (when stop-first
+    (<- (StopCoordinator 5.0)))
+  (<- answer tuple (asked-during-with-answer (with-handlers [never-stopped (queued-requests queue) persist-written (observe-requests book)]
+                                                (step-of-one))))
+  (var late #())
+  (when stop-first
+    (for [waiting (get (get answer 1) 1)]
+      (<- asked tuple (asked-during (with-handlers [never-stopped (queued-requests queue) persist-written (observe-requests book)]
+                                      (Reply waiting 200 {}))))
+      (:= late (+ late asked))))
+  (<- held tuple (TakeHeldRequests))
+  #(#((get answer 0) (get (get answer 1) 0)) late (len held)))
+
+
+(defk asked-during-with-answer [program]
+  {:pre [(: program (| Program EffectBase))] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "program を走らせる間に世界へ出た問いの列と、program の答えを読むため。"
+  (<- before tuple (WorldQuestions))
+  (<- answer program)
+  (<- after tuple (WorldQuestions))
+  #((tuple (cut after (len before) None)) answer))
+
+
+(deftest test-a-step-that-takes-persists-and-replies-asks-the-world-three-times
+  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- seen tuple ((sim-time-handler :clock (! (clock-at 0)))
+                  (with-handlers [(session-store) (sim-world plan) world-question-counter] (whole-step False))))
+  (val answer (get seen 0))
+  (val late (get seen 1))
+  (val held (get seen 2))
+  ;; 取り・書きの前・歩の終わりの 3 つ。返事を済ませた要求は歩の終わりに覚えから外れ、返事を待たせた要求 1 つだけが残る(止まった時に
+  ;; 接続の失敗を返す相手)。
+  (assert (= answer #(#("AdmitBatch" "PersistCrashDue" "StepEnded") False)) answer)
+  (assert (= held 1) held))
+
+
+(deftest test-a-reply-after-the-stop-is-released-at-once
+  ;; 止めを注入した歩: 歩の終わりの判定が止まりと答える。その後の返事(止まる調停ループの待ちへの返事と同じ — 次の歩の頭が無い)は
+  ;; すぐ手放す(ReleaseRequest)— 溜めると、止まった後に接続の失敗を返す相手に残る。
+  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- seen tuple ((sim-time-handler :clock (! (clock-at 0)))
+                  (with-handlers [(session-store) (sim-world plan) world-question-counter] (whole-step True))))
+  (val answer (get seen 0))
+  (val late (get seen 1))
+  (val held (get seen 2))
+  (assert (= answer #(#("AdmitBatch" "PersistCrashDue" "StepEnded") True)) answer)
+  (assert (= late #("ReleaseRequest")) late)
+  (assert (= held 0) held))
 
 
 (defk under-host [plan program]
