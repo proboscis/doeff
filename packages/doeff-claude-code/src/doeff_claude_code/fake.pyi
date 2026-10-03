@@ -6,9 +6,11 @@ from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from dataclasses import replace as replace
-from doeff_time import Delay as Delay
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
+from doeff_time import WaitWithin as WaitWithin
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
 from doeff_claude_code.values import FreshSession as FreshSession
@@ -102,6 +104,7 @@ class FakeTurn:
     permission: str | None
     lines: list[ClaudeStreamLine]
     end: Completed | Failed | Interrupted | BackendLost | None
+    bells: tuple[ExternalPromise[None], ...]
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -138,6 +141,9 @@ class FakeClaudeWorld:
         ...
 
 def reply_of(world: FakeClaudeWorld, text: str, memory: tuple) -> _Program[FakeReply, object]:
+    ...
+
+def ring_turn(turn: FakeTurn) -> _Program[None, object]:
     ...
 
 def emit(session: FakeSession, turn: FakeTurn, kind: ClaudeLineKind) -> _Program[None, object]:
