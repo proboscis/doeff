@@ -474,6 +474,12 @@ def _run_installed_semgrep_batch(
     with tempfile.TemporaryDirectory(prefix="doeff-adr-installed-semgrep-") as tmp:
         root = Path(tmp)
         for case, key in cases.items():
+            (root / case).mkdir()
+            # 組の根に空の .semgrepignore を置く: 無いと semgrep は dir を歩く時に既定の除外(tests/・test/・build/ ほか)を
+            # 当て、tests/ の下の当たる例を黙って読まずに「規則が当たらない」赤にする(#1201 — 532225d21 で例を名指しから
+            # 組の dir 渡しにして enforce_002 の 4 本が赤)。名指しに戻すと root に固定した include が組の根で効かない。
+            # 例より先に書く — 例が同じ名を持てば _write_semgrep_structured_fixtures が FileExistsError で止める。
+            (root / case / ".semgrepignore").write_text("", encoding="utf-8")
             _write_semgrep_structured_fixtures(root / case, fixture_sets[key])
             # GIT_DIR が残ると git init は組の dir ではなく GIT_DIR の repo を初期化し直す。
             subprocess.run(
