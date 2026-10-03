@@ -21,7 +21,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.core.api_policy [tick respond plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
-(import doeff_cluster.coordinator.core.watch_policy [settle-watch])
+(import doeff_cluster.coordinator.core.watch_policy [settle-watch all-waiting-unchanged])
 
 (val MAX-QUIET-MS 3600000)    ; 一度に眠る区間の上限(仮想の 1 時間 — その刻の歩は静かでも本物の歩として回す)
 
@@ -53,7 +53,12 @@
    :tags {:context "coordinator" :role "judgment"}}
   "歩の後の待ちを、1 拍ずつの走りの歩と同じ判断(settle-watch)で判じるため。期限の来ていない待ちはそのまま並べ、期限の来た吸える待ちは
    送り直した待ち(版 = 今の版・期限 = at から引き直し・見え方は at で覚え直す — 1 拍ずつの走りで送り直しを受けた歩と同じ値)を後ろへ
-   並べる(返事の順)。「変わった」と答える待ちか、吸えない期限の待ちが在れば None(その歩は静かでない)。"
+   並べる(返事の順)。「変わった」と答える待ちか、吸えない期限の待ちが在れば None(その歩は静かでない)。
+   どの待ちにも settle-watch が答えない歩(版が動かず期限も来ていない — watch_policy.all-waiting-unchanged)は、1 件ずつ判じずに
+   そのまま持ち越す(答えは 1 件ずつ判じた時と同じ — #2670 の根 B)。"
+  (<- unchanged bool (all-waiting-unchanged watchers state at))
+  (when unchanged
+    (return watchers))
   (var kept #())
   (var again #())
   (var quiet True)

@@ -68,6 +68,17 @@
   (WatchStep :answer (if (>= now watcher.deadline-ms) (WatchAnswer state.revision False) None) :watcher watcher))
 
 
+(defk all-waiting-unchanged [watchers state now]
+  {:pre [(: watchers tuple) (: state ClusterState) (: now int)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "どの待ちにも settle-watch が答えず、待ちをそのまま返す時か(版が after のまま・worker を名指した待ちは見え方を覚え済み・期限の
+   前)を、見え方を作らずに知るため — 静かな区間の歩(idle_policy.renewed-watchers)が、この時は待ちを 1 件ずつ判じずに持ち越す
+   (#2670 の根 B)。条件は settle-watch の枝のうち「起きない・覚え直さない・期限で返さない」枝と同じ(同値の検 = tests/test_watch.hy)。"
+  (all (gfor watcher watchers
+             (and (= state.revision watcher.after)
+                  (or (is watcher.worker None) (is-not watcher.mark None))
+                  (< now watcher.deadline-ms)))))
+
+
 (defk settle-watch [watcher state now timing]
   {:pre [(: watcher Watcher) (: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % WatchStep)]
    :tags {:context "coordinator" :role "judgment"}}
