@@ -26,6 +26,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
 (import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
+(import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 
 (setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
 (setv MAX-EVENTS 200)
@@ -1040,9 +1041,17 @@
 
 (defk sweep-due [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "掃除の判断(盤の行・drain・温める表・途絶しても動かす印・詰めた Program・環境の冷えた起動の覚え)が、状態がこのままで答えを変え得る
-   最初の刻を知るため。"
-  (if (or state.board state.drains state.warms state.keep-marks state.programs state.env-cold-starts) (+ now 1) None))
+  "掃除の判断(盤の行・drain・温める表・詰めた Program)が、状態がこのままで答えを変え得る最初の刻を知るため(#3063)。値は各判断が
+   比べに使う期限と同じ: sweep-board = 行の expires-ms・sweep-drains(と advance-drains の drain 中の判定)= until-ms・sweep-warms = until-ms・
+   program_policy.sweep-programs = 参照の無い Program の put-ms + PROGRAM-GRACE-MS を過ぎた刻。途絶しても動かす印(sweep-keep-marks)は
+   worker の有無だけを見て時刻を見ない・冷えた起動の数は数えるだけなので、刻を持たない。"
+  (val used (if state.programs (program-refs state) (frozenset)))
+  (val deadlines (+ (lfor row (.values state.board) :if (is-not row.expires-ms None) row.expires-ms)
+                    (lfor d (.values state.drains) d.until-ms)
+                    (lfor w (.values state.warms) w.until-ms)
+                    (lfor #(sha row) (.items state.programs) :if (not-in sha used) (+ row.put-ms PROGRAM-GRACE-MS 1))))
+  ;; 掃いた後の状態なら期限はどれも now より後。掃く前の状態を渡されても、次の拍より前へは戻らない。
+  (if deadlines (max (+ now 1) (min deadlines)) None))
 
 
 (defk reconcile [now given timing]
