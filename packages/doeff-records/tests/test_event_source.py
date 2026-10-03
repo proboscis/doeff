@@ -17,6 +17,8 @@
   結んだ列への追記で合図が出る(結んでいない列の追記・組み立ての前の追記では出ない)。
   合図の型に結んでいない表の書きでは、その型の合図は出ない。
   置き場が Unreachable を返しても源が繋ぎ直し、本体には出さない。直らなければ名指して落ちる(faults.SetStoreOutage)。
+  届いていた置き場が届かなくなった変わり目では、結んだ型ごとに keys の空な合図(読み直し)を 1 度だけ発する — 撃ち直しの間・戻った時は
+  発さず、戻った後にまた届かなくなれば、その変わり目でまた 1 度発する(#3100 — 前は何も発さず、書きの無い不達の間、本体が読み直さなかった)。
 - 時間は仮想の時計(sim-time-handler)。筋書きが合図を受けられずに待ち続けると、仮想の時計の LIMIT_SECONDS 秒で赤にする(_bounded —
   源は待ちの上限ごとに待ち直すので、scheduler の行き止まりにならない)。
 """
@@ -434,22 +436,42 @@ def test_writes_to_tables_not_bound_to_the_signal_type_do_not_raise_it() -> None
 
 
 @do
-def _outage_then_recovery() -> EffectGenerator[Changed]:
+def _until_keyed_change() -> EffectGenerator[tuple[Changed, ...]]:
+    """受け手: keys の在る Changed が来るまで Changed を受け、受けた順に返す。"""
+    received: tuple[Changed, ...] = ()
+    while not received or not received[-1].keys:
+        signal: Changed = yield WaitForEvent(Changed)
+        received = (*received, signal)
+    return received
+
+
+@do
+def _outage_then_recovery() -> EffectGenerator[tuple[Changed, ...]]:
     """受け手が待ち始めた時には置き場に届かず、撃ち直しの 2 回半ぶん後に戻って jobs が書かれる。"""
     bus = EventBus()
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source: ProgramHandler = yield records_signal_source((CHANGED_ON_JOBS, LANE_ON_LANES), "worker")
     yield SetStoreOutage(DETAIL)
-    receiver = yield Spawn(with_handlers([waiting, source], _changed()))
+    receiver = yield Spawn(with_handlers([waiting, source], _until_keyed_change()))
     yield Delay(RECONNECT_SECONDS * 2.5)
     yield SetStoreOutage(None)
     yield _write("jobs", "j1")
-    signal: Changed = yield Wait(receiver)
-    return signal
+    signals: tuple[Changed, ...] = yield Wait(receiver)
+    return signals
 
 
 def test_an_unreachable_store_is_reconnected_inside_the_source() -> None:
-    assert _run_on(MemoryStore(SCHEMA), _outage_then_recovery()) == Changed((_row("jobs", "j1"),))
+    # 届かなくなった変わり目の読み直しの合図は 1 つだけ(届かない答えを 3 回受けて撃ち直しても 2 つ目は無い)で、戻った後の書きの合図が続く。
+    assert _run_on(MemoryStore(SCHEMA), _outage_then_recovery()) == (Changed(()), Changed((_row("jobs", "j1"),)))
+
+
+@do
+def _changed_after_a_reread() -> EffectGenerator[Changed]:
+    """受け手: 届かなくなった変わり目の読み直しの合図(keys の空な Changed)を受け、次の Changed を待つ。"""
+    reread: Changed = yield WaitForEvent(Changed)
+    assert reread == Changed(()), reread
+    signal: Changed = yield WaitForEvent(Changed)
+    return signal
 
 
 @do
@@ -459,7 +481,7 @@ def _outage_for_good() -> EffectGenerator[Changed]:
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source: ProgramHandler = yield records_signal_source((CHANGED_ON_JOBS, LANE_ON_LANES), "worker")
     yield SetStoreOutage(DETAIL)
-    signal: Changed = yield with_handlers([waiting, source], _changed())
+    signal: Changed = yield with_handlers([waiting, source], _changed_after_a_reread())
     return signal
 
 
@@ -469,6 +491,68 @@ def test_a_store_that_stays_unreachable_brings_the_process_down_by_name() -> Non
     message = str(raised.value)
     for named in ("worker", "jobs", "lanes", f"{RECONNECT_TRIES} 回", DETAIL):
         assert named in message, message
+
+
+# 2 度の不達の筋書きの秒: 1 秒に落ち、撃ち直しの 2 回半ぶん後に戻り、SECOND_FALL 秒にまた落ちて 2 秒後に戻る。受け手は LISTEN_SECONDS 秒の
+# 期限まで受ける。2 度目に落ちるのは、戻った後の撃ち直しの待ち(7 秒に撃つ long-poll — 待ちの上限で答える)が答えた後 — 答えの無い間に
+# 落ちた分は、源から見て届かない答えの続き(撃ち直しの数えに入る・変わり目ではない)。
+FIRST_FALL = 1.0
+SECOND_FALL = FIRST_FALL + RECONNECT_SECONDS * 3 + WATCH_SECONDS + 3.0
+OUTAGES = ((FIRST_FALL, DETAIL), (FIRST_FALL + RECONNECT_SECONDS * 2.5, None), (SECOND_FALL, DETAIL), (SECOND_FALL + 2.0, None))
+LISTEN_SECONDS = SECOND_FALL + 10.0
+
+
+@do
+def _outages() -> EffectGenerator[None]:
+    """筋書きの手: OUTAGES の秒に、置き場の全部を届かなくする・戻す。"""
+    start = yield GetTime()
+    for seconds, detail in OUTAGES:
+        now = yield GetTime()
+        yield Delay(seconds - (now - start).total_seconds())
+        yield SetStoreOutage(detail)
+
+
+@do
+def _received_until_the_deadline() -> EffectGenerator[tuple[tuple[float, object], ...]]:
+    """受け手: LISTEN_SECONDS 秒の期限を掛け、期限が来るまでに受けた合図を受けた秒と並べて返す(最後は期限)。"""
+    start = yield GetTime()
+    yield ArmTimer("listen", start + timedelta(seconds=LISTEN_SECONDS))
+    received: tuple[tuple[float, object], ...] = ()
+    while not received or not isinstance(received[-1][1], TimerFired):
+        signal = yield WaitForEvent(Changed, LaneMoved, IntakeMoved, TimerFired)
+        now = yield GetTime()
+        received = (*received, ((now - start).total_seconds(), signal))
+    return received
+
+
+@do
+def _signals_through_two_outages(build: Build) -> EffectGenerator[tuple[tuple[float, object], ...]]:
+    """表 2 つ(Changed・LaneMoved)と列 1 つ(IntakeMoved)に結んだ源の下で、受け手が待つ間に置き場が 2 度落ちて戻る(書きは無い)。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (Changed, LaneMoved, IntakeMoved, TimerFired))
+    source: ProgramHandler = yield build(BINDINGS, "worker")
+    receiver = yield Spawn(with_handlers([waiting, timer_handler(), source], _received_until_the_deadline()))
+    script = yield Spawn(_outages())
+    received: tuple[tuple[float, object], ...] = yield Wait(receiver)
+    yield Wait(script)
+    return received
+
+
+@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
+def test_each_fall_to_unreachable_signals_one_reread_per_bound_type(build: Build) -> None:
+    # 失敗ケース: 前の源は届かない間に何も発さず、書きの無い不達の間、受け手は期限まで起きなかった(#3100 — 画面の読み手が live = true の
+    # まま)。落ちた変わり目ごとに、表の待ちは表に結んだ型(Changed・LaneMoved)、列の待ちは列に結んだ型(IntakeMoved)の keys の空な合図を
+    # 1 つずつ発する。撃ち直しの間(1 秒の後の 3 秒・5 秒の Unreachable)と戻った時には発さない。
+    received = _run_on(MemoryStore(SCHEMA), _signals_through_two_outages(build))
+    assert isinstance(received, tuple), received
+    fall = sorted(type(signal).__name__ for signal in (Changed(()), LaneMoved(()), IntakeMoved(())))
+    by_time = sorted((seconds, type(signal).__name__) for seconds, signal in received)
+    assert by_time == [
+        *((FIRST_FALL, name) for name in fall),
+        *((SECOND_FALL, name) for name in fall),
+        (LISTEN_SECONDS, "TimerFired"),
+    ], received
+    assert all(signal.keys == () for _, signal in received if not isinstance(signal, TimerFired)), received
 
 
 # --- 置き場の作り直し(Reset)と組み立ての確かめ ----------------------------------------------------------
@@ -642,7 +726,7 @@ def _outage_while_waiting(build: Build) -> EffectGenerator[Changed]:
     bus = EventBus()
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
-    receiver = yield Spawn(with_handlers([waiting, source], _changed()))
+    receiver = yield Spawn(with_handlers([waiting, source], _changed_after_a_reread()))
     yield Delay(1.0)
     yield SetStoreOutage(DETAIL)
     signal: Changed = yield Wait(receiver)
