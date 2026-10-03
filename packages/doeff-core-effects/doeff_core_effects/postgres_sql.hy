@@ -120,7 +120,7 @@
           self.listeners {}
           self.listeners-lock (threading.Lock)))
 
-  (defn listener [self #^ str name #^ str channel]  ; defk にできない: 資源の待ち受けを引く(無ければ作って thread を起こす — VM の外の錠)
+  (defn #^ PostgresListener listener [self #^ str name #^ str channel]  ; defk にできない: 資源の待ち受けを引く(無ければ作って thread を起こす — VM の外の錠)
     "database name の channel の待ち受け(PostgresListener)を引くため(初めての channel なら作る)。"
     (with [_ self.listeners-lock]
       (setv key #(name channel))
@@ -128,7 +128,7 @@
         (setv (get self.listeners key) (PostgresListener self name channel)))
       (get self.listeners key)))
 
-  (defn ring-local [self #^ str name #^ str channel]  ; defk にできない: commit の後に答え手が呼ぶ(VM の外の錠)
+  (defn #^ None ring-local [self #^ str name #^ str channel]  ; defk にできない: commit の後に答え手が呼ぶ(VM の外の錠)
     "同じ process で channel に掛かっている呼び鈴をその場で鳴らすため(待ち受けがまだ無ければ掛かっている呼び鈴も無い)。"
     (with [_ self.listeners-lock]
       (setv listener (.get self.listeners #(name channel))))
@@ -210,7 +210,7 @@
    鳴らす。資源なので値の型ではない。listening = 今 LISTEN が張れているか・listened = 1 度でも張れたか・failure = 張れていない理由・
    settled = 最初の接続を試し終えた印。"
 
-  (defn __init__ [self #^ PostgresConnections connections #^ str name #^ str channel]  ; defk にできない: 資源の class の初期化
+  (defn #^ None __init__ [self #^ PostgresConnections connections #^ str name #^ str channel]  ; defk にできない: 資源の class の初期化
     "待ち受けを作り、LISTEN の thread を起こすため。"
     (setv self.connections connections
           self.name name
@@ -223,7 +223,7 @@
           self.settled (threading.Event))
     (.start (threading.Thread :target self.listen :name "doeff-postgres-listen" :daemon True)))
 
-  (defn ring [self]  ; defk にできない: 待ち受けの thread と commit の後の答え手が呼ぶ(VM の外)
+  (defn #^ None ring [self]  ; defk にできない: 待ち受けの thread と commit の後の答え手が呼ぶ(VM の外)
     "掛かっている呼び鈴を全部鳴らして外すため(鳴った呼び鈴は True で完了する — WaitWithin の時間切れの None と見分ける)。"
     (with [_ self.lock]
       (setv bells (tuple self.bells))
@@ -231,7 +231,7 @@
     (for [bell bells]
       (.complete bell True)))
 
-  (defn hang [self #^ ExternalPromise bell]  ; defk にできない: driver の thread で回す(最初の接続を待つ)
+  (defn #^ (| str None) hang [self #^ ExternalPromise bell]  ; defk にできない: driver の thread で回す(最初の接続を待つ)
     "1 度でも LISTEN が張れていれば呼び鈴を掛けて None を、1 度も張れていなければ理由の文を返すため(最初の接続を試し終えるまで待つ)。
      繋ぎ直しの最中に掛けた呼び鈴は、繋ぎ直した時に鳴る(その間の通知は届かないので、待ち手は鳴った後に読み直す)。"
     (.wait self.settled)
@@ -240,12 +240,12 @@
           (do (.add self.bells bell) None)
           (or self.failure "LISTEN が張れていない"))))
 
-  (defn drop [self #^ ExternalPromise bell]  ; defk にできない: 答え手の節と取り消しの後始末が呼ぶ(VM の外の錠)
+  (defn #^ None drop [self #^ ExternalPromise bell]  ; defk にできない: 答え手の節と取り消しの後始末が呼ぶ(VM の外の錠)
     "鳴らなかった呼び鈴を外すため(もう外れていれば何もしない)。"
     (with [_ self.lock]
       (.discard self.bells bell)))
 
-  (defn listen [self]  ; defk にできない: daemon の thread の本体(blocking に通知を待つ)
+  (defn #^ None listen [self]  ; defk にできない: daemon の thread の本体(blocking に通知を待つ)
     "LISTEN を張って通知ごとに呼び鈴を鳴らし、切れたら LISTEN-RETRY-SECONDS 置いて繋ぎ直すため(張った時にも鳴らす — 頭の註)。"
     (import psycopg)
     (import psycopg [sql])
@@ -413,12 +413,8 @@
   (if (isinstance answer SqlRows) None answer))
 
 
-(defk postgres-notify [connection channel]
-  {:pre [(: connection "psycopg の接続") (: channel str)] :post [(: % (| None SqlFailed SqlUnreachable))]
-   :tags {:context "sql" :role "foundation"}}
-  "channel へ合図を出す文を流すため(成功は None — transaction の中なら commit した時だけ届く)。"
-  (<- answer (postgres-run connection "SELECT pg_notify(%(channel)s, '')" #((SqlParam :name "channel" :value channel))))
-  (if (isinstance answer SqlRows) None answer))
+;; channel へ合図を出す文(中立の記法)— 答え手は他の文と同じ postgres-query で流す(transaction の中なら commit した時だけ届く)。
+(val NOTICE-STATEMENT "SELECT pg_notify(:channel, '')")
 
 
 (defk postgres-lease [connections database]
@@ -480,7 +476,12 @@
                                        (fn [] (offloaded pool (fn [] (run-detached (postgres-control leased "ROLLBACK"))) keep-nothing))
                                        :execute-notify (fn [request]
                                                          (.add channels request.channel)
-                                                         (offloaded pool (fn [] (run-detached (postgres-notify leased request.channel)))
+                                                         (offloaded pool
+                                                                    (fn [] (run-detached
+                                                                             (postgres-query leased
+                                                                                             (SqlQuery database NOTICE-STATEMENT
+                                                                                                       #((SqlParam :name "channel"
+                                                                                                                   :value request.channel))))))
                                                                     keep-nothing))))
         (when (not (isinstance answer #(SqlFailed SqlUnreachable)))
           (for [channel channels]
@@ -516,10 +517,12 @@
    :post [(: % (| None SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
   "transaction の外の SqlNotify に答えるため(合図を流してから、同じ process の呼び鈴を鳴らす)。"
-  (<- answer (offloaded-statement connections pool database (fn [leased] (postgres-notify leased channel))))
-  (when (is answer None)
-    (.ring-local connections database channel))
-  answer)
+  (val request (SqlQuery database NOTICE-STATEMENT #((SqlParam :name "channel" :value channel))))
+  (<- answer (offloaded-statement connections pool database (fn [leased] (postgres-query leased request))))
+  (if (isinstance answer SqlRows)
+      (do (.ring-local connections database channel)
+          None)
+      answer))
 
 
 (defk hung-notice [connections pool database channel]

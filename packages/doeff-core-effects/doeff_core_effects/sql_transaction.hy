@@ -32,9 +32,9 @@
   (#^ str reason))
 
 
-(defn transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert #^ (| Callable None) execute-notify]  ; defk にできない: 継続を捨てる handler の関数(頭の註)
+(defn #^ Callable transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert #^ (| Callable None) execute-notify]  ; defk にできない: 継続を捨てる handler の関数(頭の註)
   "接続 1 本に束ねた scope の handler を作るため。execute-query / execute-insert = (effect) → SqlRows | SqlFailed | SqlUnreachable の Program・
-   execute-notify = (effect) → None | SqlFailed | SqlUnreachable の Program か None(合図を受けない答え手)。"
+   execute-notify = (effect) → SqlRows | SqlFailed | SqlUnreachable の Program か None(合図を受けない答え手 — 成功は None で再開する)。"
   (defn [program-handler] scope [effect k]  ; defk にできない: handler の関数(effect と継続 k を受ける)
     (match effect
       (SqlQuery :database name) :if (= name database)
@@ -51,7 +51,7 @@
         (do (setv answer (yield (execute-notify effect)))
             (if (isinstance answer #(SqlFailed SqlUnreachable))
                 (return (TransactionAborted :failure answer))
-                (return (yield (Resume k answer)))))
+                (return (yield (Resume k None)))))
       (| (SqlQuery :database name) (SqlInsertRows :database name) (SqlNotify :database name)) :if (!= name database)
         (return (TransactionMisused :reason (.format "database {!r} の transaction の中で別の database {!r} へ問い合わせた" database name)))
       _
