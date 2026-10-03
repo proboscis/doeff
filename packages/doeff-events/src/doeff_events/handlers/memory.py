@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Final, Protocol, TypeGuard, final
 
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
 
-from doeff import EffectBase, K, Pass, Resume, ResumeThrow, do
+from doeff import K, Pass, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
 from doeff_events.effects import PublishEffect, SourceFailed, StopArrived, WaitForEventEffect
 
@@ -63,7 +63,7 @@ def event_handler():
     listeners: dict[type, list] = {}
 
     @do
-    def handler(effect, k):
+    def handler(effect: WaitForEventEffect | PublishEffect, k):
         if isinstance(effect, WaitForEventEffect):
             promise = yield CreatePromise()
             for event_type in effect.event_types:
@@ -294,8 +294,9 @@ def subscribed_event_handler(
     queue = bus.subscribe(subscriber, (*event_types, StopArrived, SourceFailed) if event_types else ())
 
     @do
-    def handler(effect: EffectBase, k: K) -> "EffectGenerator[object]":
-        """この購読者の Program の Publish・WaitForEvent に、bus と自分の列で答える。ほかの effect は外へ渡す。"""
+    def handler(effect: WaitForEventEffect | PublishEffect, k: K) -> "EffectGenerator[object]":
+        """この購読者の Program の Publish・WaitForEvent に、bus と自分の列で答える。effect の型の注記により、ほかの effect では
+        VM がこの handler を飛ばす(doeff-vm の _effect_types.py — 本体の全部の effect がここを Pass で通る歩を出さない)。"""
         match effect:
             case WaitForEventEffect(event_types=wanted):
                 outside = queue.outside(wanted)
