@@ -12,6 +12,7 @@
 ;;; 等しさ: collections.abc.Mapping の等しさ(同じ鍵と値の組なら dict とも等しい)。hash は中の値が hash できる時だけ
 ;;; (freeze-json で凍らせた JSON の値は常に hash できる)。pickle・copy は作り直しで保つ。
 (import collections.abc [Mapping Iterator])
+(import copy)
 (import json)
 (import typing [TypeVar])
 
@@ -76,7 +77,19 @@
     (raise (AttributeError (.format "FrozenMap は変えられない(欄 {!r} を消そうとした)" name))))
 
   (defn __reduce__ [self]
-    #(FrozenMap #((dict self._entries)))))
+    #(FrozenMap #((dict self._entries))))
+
+  (defn #^ "FrozenMap" __copy__ [self]
+    "浅い写し = 自分(写像そのものは変えられないので、写しと元を分ける必要が無い — str や tuple の写しと同じ)。"
+    self)
+
+  (defn #^ "FrozenMap" __deepcopy__ [self #^ (get dict #(int object)) memo]
+    "深い写し: 深く凍った写像(freeze-json・frozen-json-object が作った物)は中まで変えられないので自分を返し、そうでない写像は中の値を
+     深く写した新しい写像を作る(中に書き換えられる値を持ちうる)。深く凍った写像を写さずに共有するのは、検の土台が 5 万行の置き場を
+     検ごとに deepcopy する時に、変えられない行の値まで作り直していたため(#2670 — 写し 2 秒の約半分)。"
+    (if self._deep
+        self
+        (FrozenMap (copy.deepcopy self._entries memo)))))
 
 
 ;; JSON の葉の型(ちょうどこの型の値は凍らせる・戻すの両方でそのまま)— 部分型(bool の子など)は下の一般の分岐が見る。

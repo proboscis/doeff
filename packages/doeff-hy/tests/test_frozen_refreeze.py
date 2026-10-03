@@ -4,6 +4,7 @@
 毎回凍らせ直し(282 万回)、自動処理の係の模擬の検の本体の 4 割を占めた。
 """
 
+import copy
 import json
 
 import pytest
@@ -74,3 +75,24 @@ def test_freeze_json_text_keeps_leaves_and_arrays_and_refuses_broken_text() -> N
     assert freeze_json_text("[1, [2]]") == (1, (2,))
     with pytest.raises(json.JSONDecodeError):
         freeze_json_text("{broken")
+
+
+def test_a_deeply_frozen_map_is_shared_by_copy_and_deepcopy() -> None:
+    # 深く凍った写像は中まで変えられないので、写しは自分(#2670 — 置き場を丸ごと写す検の土台が変えられない値を作り直さない)。
+    frozen = freeze_json(SOURCE)
+    assert copy.copy(frozen) is frozen
+    assert copy.deepcopy(frozen) is frozen
+    held = {"row": frozen}
+    assert copy.deepcopy(held)["row"] is frozen
+
+
+def test_a_map_that_is_not_deeply_frozen_is_still_copied_deeply() -> None:
+    # 失敗ケース: 深く凍っていない写像(中に書き換えられる値を持つ)まで共有すると、写しの中の値を書き換えた時に元へ届く。
+    inner = [1, 2]
+    shallow = FrozenMap({"list": inner})
+    copied = copy.deepcopy(shallow)
+    assert copied is not shallow
+    assert copied == shallow
+    assert copied["list"] is not inner
+    inner.append(3)
+    assert copied["list"] == [1, 2]
