@@ -7,6 +7,8 @@
 - On the virtual clock a deadline a day away costs the same VM steps as one five minutes away: the clock
   moves to the next deadline in one step while every task waits.
 - The same timer handler runs on the wall clocks (async and sync).
+- Re-arming a tag with the deadline it already has keeps its waiting task — a worker that re-arms its deadlines
+  after every pass pays no new task for the ones that did not move (agora-redesign #3054 C).
 
 The counterexamples — a disarm that does nothing, a re-arm that keeps the earlier arming — fail the checks
 below (each check names the timer the broken form would have fired first).
@@ -16,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, scheduled
 from doeff_events import (
     ArmedTimer,
     ArmedTimers,
@@ -32,7 +34,9 @@ from doeff_time.handlers.async_time import async_time_handler
 from doeff_time.handlers.sync_time import sync_time_handler
 from doeff_vm.doeff_vm import vm_work_counts
 
-from doeff import do, run
+from doeff import Pass, do, run
+from doeff import handler as program_handler
+from doeff.program import ProgramHandler
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -152,6 +156,44 @@ def test_a_day_away_deadline_costs_no_more_steps_than_a_minutes_away_one() -> No
     minutes = _steps_to_a_deadline(timedelta(minutes=5))
     day = _steps_to_a_deadline(timedelta(hours=24))
     assert day == minutes
+
+
+def _counting_scheduler_effects(seen: dict[str, int]) -> ProgramHandler:
+    """A handler that counts the scheduler effects passing outward (the timer handler's task and promise work)."""
+
+    @do
+    def count(effect: Any, k: Any):
+        if isinstance(effect, Spawn | CreatePromise | CompletePromise):
+            name = type(effect).__name__
+            seen[name] = seen.get(name, 0) + 1
+        yield Pass(effect, k)
+
+    return program_handler(count)
+
+
+def test_re_arming_the_same_deadline_keeps_its_waiting_task() -> None:
+    # A worker re-arms its deadlines after every pass; the same deadline must not cost a new waiting task.
+    # A re-arm that always replaced the arming would spawn 3 tasks and complete 2 disarm promises here.
+    seen: dict[str, int] = {}
+
+    @do
+    def program():
+        for _ in range(3):
+            yield ArmTimer("reply", T0 + timedelta(minutes=5))
+        armed = yield ArmedTimers()
+        fired = yield first_timer_and_when()
+        return (armed, fired)
+
+    armed, fired = run(
+        scheduled(
+            sim_time_handler(start_time=T0)(
+                event_handler()(_counting_scheduler_effects(seen)(timer_handler()(program())))
+            )
+        )
+    )
+    assert armed == (ArmedTimer("reply", T0 + timedelta(minutes=5)),)
+    assert fired == (TimerFired("reply"), T0 + timedelta(minutes=5))
+    assert seen == {"CreatePromise": 1, "Spawn": 1}, seen
 
 
 @do
