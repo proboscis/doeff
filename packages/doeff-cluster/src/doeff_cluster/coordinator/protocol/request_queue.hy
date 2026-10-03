@@ -68,7 +68,8 @@
    skip-idle = 要求が無い間、静かな区間を一度に眠るか(idle_policy.quiet-stretch — 模擬の時計の下の入口だけが真にする・2026-09-30・
    #2790。偽なら本番と同じく timeout 秒ごとに起きる)。takes = 取り手が取った回数(coordinator の歩の数 — 検が読む)。
    absorbed = 区間の中で吸った名指しの待ち(返事の札の id → AbsorbedWatch — 送り手が打ち切りを数え直す)。ends-at-marks = 生存の印を
-   書く最初の歩で区間を切るか(落ちの注入が次の Persist を待つ間だけ真 — local.hy の CrashCoordinator が立て、落ちで下ろす)。
+   書く最初の歩で区間を切るか(落ちの注入が次の Persist を待つ間だけ真 — local.hy の CrashCoordinator が立て、落ちで下ろす)。模擬の
+   coordinator の書きの見張り(local.hy の observe-requests)は、これが偽の書きでは落ちの判断を世界へ問わない(#3132)。
    beats = worker の宿が預けた仮の拍(DepositedBeat の list — 刻の順・#2790)。replies = worker の名 → その worker が最後に受けた
    heartbeat の返事(JSON の本文 — 仮の拍の返事が同じかを比べる。返事の答え手 Reply が書く)。arrivals = 積んだ要求の id → 積んだ刻
    (同じ刻の要求を送り手の名の順に取る)。planned = 今の区間の試しが静かと判じた仮の拍(list)・consumed = 調停ループへ渡した

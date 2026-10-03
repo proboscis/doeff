@@ -24,7 +24,7 @@
 (defk intake-with [cuts failing]
   {:pre [(: cuts dict) (: failing dict)] :post [(: % SimIntake)] :tags {:context "doeff-cluster-test" :role "program"}}
   "網の切れ cuts と口の故障 failing だけを持つ受付の値を作るため(ほかの欄は空)。"
-  (SimIntake :cuts cuts :failing failing :held #() :reports #() :replayed 0))
+  (SimIntake :cuts cuts :failing failing :held #() :reports #()))
 
 
 (defk stalled-host [name until]
