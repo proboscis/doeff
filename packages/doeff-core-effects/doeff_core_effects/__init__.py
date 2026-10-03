@@ -4,7 +4,7 @@ doeff-core-effects — reference implementation of effects and handlers.
 This package provides:
 - Core effects: Ask, Get, Put, Tell
 - Core handlers: reader, state, writer
-- Scheduler: Spawn, Wait, Gather, Race, Cancel, Promise, ExternalPromise, Semaphore
+- Scheduler: Spawn, Wait, Gather, Race, Cancel, Discard, Promise, ExternalPromise, Semaphore
 """
 
 import importlib as _importlib
@@ -58,6 +58,7 @@ from doeff_core_effects.scheduler import (  # noqa: F401
     CreateExternalPromise,
     CreatePromise,
     CreateSemaphore,
+    Discard,
     ExternalPromise,
     ExternalPromiseCancelCallbackError,
     FailPromise,
