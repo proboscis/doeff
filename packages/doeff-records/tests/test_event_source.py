@@ -141,10 +141,16 @@ def _settle(program: Program[object], done: Promise[Settled]) -> EffectGenerator
 def _bounded(program: Program[object]) -> EffectGenerator[object]:
     """program を仮想の時計の LIMIT_SECONDS 秒まで待つ。終わらなければ赤(合図を受けられずに待ち続けている)。"""
     done: Promise[Settled] = yield CreatePromise()
-    yield Spawn(_settle(program, done))
-    settled = yield WaitWithin(done.future, LIMIT_SECONDS)
+    settling = yield Spawn(_settle(program, done))
+    try:
+        settled = yield WaitWithin(done.future, LIMIT_SECONDS)
+    except Exception:
+        # 例外を約束に渡し終えた task の終わりを待ってから上げる(走らせ手が終わる時に task を置き去りにしない)。
+        yield Wait(settling)
+        raise
     if settled is None:
         raise AssertionError(f"仮想の時計で {LIMIT_SECONDS} 秒待っても筋書きが終わらない — 合図を受けられずに待ち続けている")
+    yield Wait(settling)
     return settled.value
 
 

@@ -37,7 +37,7 @@ class ChangedRow:
 @dataclass(frozen=True, kw_only=True)
 class SignalTables:
     signal: type
-    tables: tuple
+    tables: tuple[str, ...]
 
     def __post_init__(self) -> None:
         ...
@@ -48,27 +48,27 @@ class SignalSourceUnreachable(RuntimeError):
 @dataclass()
 class Subscription:
     subscriber: str
-    bindings: tuple
-    tables: tuple
+    bindings: tuple[SignalTables, ...]
+    tables: tuple[str, ...]
     queue: SubscriberQueue
     cursor: WatchCursor | None
 
-def checked_bindings(bindings: tuple, subscriber: str) -> _Program[tuple, object]:
+def checked_bindings(bindings: tuple, subscriber: str) -> _Program[tuple[SignalTables, ...], object]:
     ...
 
-def bound_tables(bindings: tuple) -> _Program[tuple, object]:
+def bound_tables(bindings: tuple[SignalTables, ...]) -> _Program[tuple[str, ...], object]:
     ...
 
-def reachable(ask: ListRows | WatchChanges, subscriber: str, tables: tuple) -> _Program[Page | NotIndexed | Changes | Reset, object]:
+def reachable(ask: ListRows | WatchChanges, subscriber: str, tables: tuple[str, ...]) -> _Program[Page | NotIndexed | Changes | Reset, object]:
     ...
 
-def start_cursor(subscriber: str, tables: tuple) -> _Program[WatchCursor | None, object]:
+def start_cursor(subscriber: str, tables: tuple[str, ...]) -> _Program[WatchCursor | None, object]:
     ...
 
-def changed_rows(tables: tuple, changes: tuple) -> _Program[tuple, object]:
+def changed_rows(tables: tuple[str, ...], changes: tuple) -> _Program[tuple[ChangedRow, ...], object]:
     ...
 
-def signals_of(bindings: tuple, changes: tuple) -> _Program[tuple, object]:
+def signals_of(bindings: tuple[SignalTables, ...], changes: tuple) -> _Program[tuple, object]:
     ...
 
 def watch_once(subscription: Subscription) -> _Program[None, object]:

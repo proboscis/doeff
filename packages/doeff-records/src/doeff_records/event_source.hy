@@ -56,7 +56,7 @@
            (and (isinstance tables tuple) tables
                 (all (gfor name tables (checked-table-name name "SignalTables.tables の表"))))]}
   (#^ type signal)
-  (#^ tuple tables))
+  (#^ (get tuple #(str ...)) tables))
 
 
 (defclass SignalSourceUnreachable [RuntimeError]
@@ -68,14 +68,14 @@
    tables = 結んだ表の名前(初めて出た順・重ねない — WatchChanges に渡す)/ queue = 合図の列(doeff-events の SubscriberQueue)/
    cursor = 変更の列のどこまでを合図にしたか(None = 結んだ表が無い — 発するだけの購読者)。cursor だけが待ちのたびに進む(frozen にしない)。"
   (#^ str subscriber)
-  (#^ tuple bindings)
-  (#^ tuple tables)
+  (#^ (get tuple #(SignalTables ...)) bindings)
+  (#^ (get tuple #(str ...)) tables)
   (#^ SubscriberQueue queue)
   (#^ (| WatchCursor None) cursor))
 
 
 (defk checked-bindings [bindings subscriber]
-  {:pre [(: bindings tuple) (: subscriber str)] :post [(: % tuple)]}
+  {:pre [(: bindings tuple) (: subscriber str)] :post [(: % (get tuple #(SignalTables ...)))]}
   "組み立ての引数を確かめるため: 購読者の名前は空でない・要素は SignalTables・同じ合図の型は 1 度だけ(2 度出ると、どの表の組で
    起こすかが決まらない)。"
   (when (not subscriber)
@@ -92,14 +92,14 @@
 
 
 (defk bound-tables [bindings]
-  {:pre [(: bindings tuple)] :post [(: % tuple)]}
+  {:pre [(: bindings (get tuple #(SignalTables ...)))] :post [(: % (get tuple #(str ...)))]}
   "結んだ表の名前の組(初めて出た順・重ねない)— WatchChanges の tables と、始まりの位置を読む表。"
   (val names (tuple (gfor binding bindings name binding.tables name)))
   (tuple (gfor #(index name) (enumerate names) :if (not-in name (cut names index)) name)))
 
 
 (defk reachable [ask subscriber tables]
-  {:pre [(: ask (| ListRows WatchChanges)) (: subscriber str) (: tables tuple)] :post [(: % (| Page NotIndexed Changes Reset))]}
+  {:pre [(: ask (| ListRows WatchChanges)) (: subscriber str) (: tables (get tuple #(str ...)))] :post [(: % (| Page NotIndexed Changes Reset))]}
   "記録の置き場への読み ask を撃ち、答えが Unreachable の間は RECONNECT-SECONDS 秒ずつ間を置いて RECONNECT-TRIES 回まで撃ち直すため
    (繋ぎ直し)。直らなければ、購読者の名前・表・撃った回数・最後の detail を名指した SignalSourceUnreachable で落ちる。"
   (<- answered ask)
@@ -117,7 +117,7 @@
 
 
 (defk start-cursor [subscriber tables]
-  {:pre [(: subscriber str) (: tables tuple)] :post [(: % (| WatchCursor None))]}
+  {:pre [(: subscriber str) (: tables (get tuple #(str ...)))] :post [(: % (| WatchCursor None))]}
   "購読の始まりの位置を読むため: 結んだ表の先頭の 1 つを ListRows で 1 頁(1 行)読み、その頁の epoch と sequence を位置にする(変更の番号は
    置き場で 1 本なので、どの表の頁でも同じ位置 — Page の註「最初の頁の値から WatchChanges を始めると取りこぼしが無い」)。
    結んだ表が無ければ None(発するだけの購読者は待たない)。"
@@ -130,7 +130,7 @@
 
 
 (defk changed-rows [tables changes]
-  {:pre [(: tables tuple) (: changes tuple)] :post [(: % tuple)]}
+  {:pre [(: tables (get tuple #(str ...))) (: changes tuple)] :post [(: % (get tuple #(ChangedRow ...)))]}
   "変更の束のうち表 tables の変更の行(ChangedRow — 初めて出た順・束の中で同じ行が 2 度変わっても 1 つ)。"
   (val rows (tuple (gfor change changes
                          :if (in change.table tables)
@@ -140,7 +140,7 @@
 
 
 (defk signals-of [bindings changes]
-  {:pre [(: bindings tuple) (: changes tuple)] :post [(: % tuple)]}
+  {:pre [(: bindings (get tuple #(SignalTables ...))) (: changes tuple)] :post [(: % tuple)]}
   "変更の束 → 合図の型ごとに 1 つの合図(bindings の順・keys = その型に結んだ表の変わった行)。結んだ表の変更が無い型は合図にしない。"
   (var signals #())
   (for [binding bindings]
