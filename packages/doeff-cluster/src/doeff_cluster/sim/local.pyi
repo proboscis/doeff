@@ -44,7 +44,7 @@ from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy
-from doeff_core_effects.scheduler import Promise
+from doeff_core_effects.scheduler import Promise, Task
 from doeff_hy.json_value import JsonValue
 from doeff_vm import WithHandler
 
@@ -261,6 +261,13 @@ class ReportsOf(EffectBase[tuple[SimReport, ...]]):
 @dataclass(frozen=True)
 class ProcessesOf(EffectBase[tuple[SimProcess, ...]]):
     name: str
+
+# 柵の仕組みの effect(process の中で Spawn した task の把手を世界に覚えさせる)。検は、殺された process に後から task が
+# 覚えられる登録の隙間を作るために出す(#3057)。
+@dataclass(frozen=True)
+class KeepChild(EffectBase[None]):
+    pid: int
+    task: Task[object]
 
 @dataclass(frozen=True)
 class AwaitProcessStarted(EffectBase[SimProcess]):

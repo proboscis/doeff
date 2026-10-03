@@ -7,6 +7,7 @@
 (import doeff [EffectBase])
 (import doeff_time [Delay])
 (import doeff_core_effects.effects [Ask])
+(import doeff_core_effects.scheduler [Spawn])
 
 
 (defclass StorePut [EffectBase]
@@ -127,3 +128,30 @@
 (defsystem slow-last-words [foundation]
   "取り消しの巻き戻しで待ってから外の系へ書こうとする service 1 つ"
   (speaker (slow-last-words-program foundation) :needs #{"cluster-net"}))
+
+
+(defk child-last-words-loop []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "process の中で Spawn される子の task の本体: 待ち続け、取り消されると巻き戻しの中で子の最後の言葉を書こうとする。"
+  (try
+    (while True
+      (<- (Delay 1.0)))
+    (finally
+      (<- (StorePut "child-last-words" True)))))
+
+(defk spawning-last-words-loop []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "子の task を 1 つ Spawn してから、1 秒ごとに数を書き、取り消されると最後の言葉を書こうとする本体(殺された process の中で Spawn
+   した task の後始末も外へ届かないかを測る)。"
+  (<- (Spawn (child-last-words-loop)))
+  (<- (last-words-loop)))
+
+(defk spawning-last-words-program [foundation]
+  {:pre [(: foundation Callable)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "子の task を持ち、最後の言葉を書こうとする service。"
+  (<- (foundation (spawning-last-words-loop)))
+  None)
+
+(defsystem spawning-last-words [foundation]
+  "子の task を持ち、取り消しの巻き戻しで外の系へ書こうとする service 1 つ"
+  (speaker (spawning-last-words-program foundation) :needs #{"cluster-net"}))
