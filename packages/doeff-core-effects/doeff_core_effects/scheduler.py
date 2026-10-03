@@ -224,6 +224,36 @@ class Cancel(EffectBase[None]):
         self.task = task
 
 
+class Discard(EffectBase[None], Generic[_T]):
+    """Drop a task without unwinding it, like SIGKILL; the requester resumes immediately.
+
+    ``Cancel`` throws into the task so its ``except``/``finally`` run.
+    ``Discard`` does not: the task's continuation is dropped, so no effect of
+    the task is performed any more — not even one inside its ``finally``
+    blocks. Use it to model a hard kill (a process killed with SIGKILL), not
+    a graceful stop.
+
+    CPython closes a dropped generator (it throws ``GeneratorExit``), and no
+    Python API can drop a suspended generator without that. So the plain
+    Python statements of a ``finally`` still run, up to its first effect; that
+    effect is never performed (CPython reports "generator ignored
+    GeneratorExit" through ``sys.unraisablehook``).
+
+    - A task that never started ends without running its body (as Cancel).
+    - A started task ends at once: its continuation is dropped wherever it
+      is suspended (or, for a self-discard, at this Discard), it becomes
+      ``cancelled`` and its waiters wake with ``TaskCancelledError``. A task
+      that is already unwinding from a Cancel stops unwinding.
+    - Like Cancel, the external promises it was waiting on are stopped.
+    - What the task held is not given back (a semaphore permit it acquired
+      stays taken), exactly as with a killed process.
+    - Discarding a terminal task is a no-op.
+    """
+    def __init__(self, task: "Task[_T]") -> None:
+        super().__init__()
+        self.task = task
+
+
 class TaskCancelledError(Exception):
     """Thrown into a cancelled task, and raised to whoever waits on it."""
 
@@ -1973,6 +2003,35 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             if cancel_errors:
                 error = ExternalPromiseCancelCallbackError(cancel_errors)
                 error.__cause__ = cancel_errors[0]
+                return (yield ResumeThrow(k, error))
+            r = yield Resume(k, None)
+            return r
+
+        elif isinstance(effect, Discard):
+            # A hard kill (see Discard's docstring): the task's continuation is
+            # dropped, never resumed or thrown into, so no except/finally runs.
+            from doeff.program import ResumeThrow
+            tid = effect.task.task_id
+            task = tasks.get(tid)
+            discard_errors = []
+            live = task is not None and task["status"] in ("pending", "running", "cancelling")
+            if live and tid == current_tid:
+                # Self-discard: this Discard is where the task ends; its
+                # continuation k is dropped and the next ready task runs.
+                finish_cancelled(tid, TaskCancelledError())
+                return (yield TailEval(pick_next()))
+            if live:
+                # A pending task has no continuation yet (pick_next skips the
+                # start of a cancelled task); a started one is detached from
+                # wherever it is parked and dropped with it.
+                parked_keys = keys_parked_by(tid)
+                detach_parked_continuation(tid)
+                finish_cancelled(tid, TaskCancelledError())
+                # Stop the external work the task was parked on (#498).
+                discard_errors = cancel_abandoned_external_promises(parked_keys)
+            if discard_errors:
+                error = ExternalPromiseCancelCallbackError(discard_errors)
+                error.__cause__ = discard_errors[0]
                 return (yield ResumeThrow(k, error))
             r = yield Resume(k, None)
             return r
