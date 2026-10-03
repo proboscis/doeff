@@ -33,7 +33,7 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests http-request])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
-                             SimWorker Redeclare HostTruthOf HostTruth CoordinatorStep CoordinatorSteps])
+                             SimWorker Redeclare HostTruthOf HostTruth CoordinatorStep CoordinatorSteps handed-quiet-steps])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited DetachedSucceeded])
@@ -223,14 +223,30 @@
   (assert (= idle []) idle))
 
 
+(deftest test-a-quiet-stretch-is-handed-as-one-step-unless-a-crash-waits
+  ;; 調停ループへ渡す静かな区間の歩(#2670 の根 B): 落ちの注入が待っていない間は最後の歩 1 つにまとめ(刻・状態・待ちは最後の歩・生存の
+  ;; 印は区間のどれかが書いていれば立てる — 保存するかの判断と落ちの数えが読む)、待っている間(ends-at-marks)は歩ごとのまま。反例 —
+  ;; 待っている間もまとめる作り方・印を最後の歩の物だけにする作り方は赤。
+  (val start (ClusterState))
+  (val marked (replace start :alive-ms 5000))
+  (val steps #((QuietStep :at 1000 :state start :watchers #() :marked False)
+               (QuietStep :at 5000 :state marked :watchers #() :marked True)
+               (QuietStep :at 6000 :state marked :watchers #() :marked False)))
+  (val calm (RequestQueue :skip-idle True))
+  (<- folded tuple (handed-quiet-steps calm steps))
+  (assert (= (lfor step folded #(step.at step.state.alive-ms step.marked)) [#(6000 5000 True)]) folded)
+  (val waiting (RequestQueue :skip-idle True))
+  (setv waiting.ends-at-marks True)
+  (<- kept tuple (handed-quiet-steps waiting steps))
+  (assert (= kept steps) kept))
+
+
 (defk same-decisions [every skipped]
   {:pre [(: every Trace) (: skipped Trace)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "1 秒ごとの拍と飛ばす拍の走りの食い違い(置き場の書きの列・coordinator の耐久の状態の変わり目の列・置き場の最後の状態・筋書きの答え)を
-   並べるため(空 = 同じ判断を同じ刻に下し、同じ状態で終わった)。"
-  (val first-diff (next (gfor #(i #(a b)) (enumerate (zip every.deltas skipped.deltas)) :if (!= a b) i) None))
-  (+ (if (is first-diff None) [] [(.format "置き場の書きの {} 件目が食い違う" (+ first-diff 1))])
-     (if (= (len every.deltas) (len skipped.deltas)) [] [(.format "書きの数 {} と {}" (len every.deltas) (len skipped.deltas))])
-     (! (step-apart every.steps skipped.steps))
+  "1 秒ごとの拍と飛ばす拍の走りの食い違い(coordinator の耐久の状態の変わり目の列・置き場の最後の状態・筋書きの答え)を並べるため
+   (空 = 同じ判断を同じ刻に下し、同じ状態で終わった)。置き場への書きの列は比べない: 飛ばす走りは、落ちの注入が待っていない静かな区間を
+   1 回の保存にまとめる(#2670 の根 B — 決め cisco-c8 2026-10-03 17:1x・#2790 で残した書きの列の基準を替えた)。"
+  (+ (! (step-apart every.steps skipped.steps))
      (if (= every.final skipped.final) [] ["置き場の最後の状態が食い違う"])
      (if (= every.answer skipped.answer) [] [(.format "筋書きの答え {!r} と {!r}" every.answer skipped.answer)])))
 
@@ -252,7 +268,8 @@
 
 (deftest test-skipping-idle-ticks-keeps-every-decision-at-the-same-tick
   ;; worker の死(沈黙 → 移し替え)と coordinator の止まり(止めの合図 → 作り直し)を含む筋書き: 1 秒ごとの拍と、何も変えない拍を
-  ;; 飛ばす拍で、置き場への書きの列(判断とその刻)・coordinator の一生・process の列・盤の行が一致する。飛ばす側は拍の数が少ない。
+  ;; 飛ばす拍で、耐久の状態の変わり目の列(判断とその刻 — worker の沈黙を判じた刻を含む)・置き場の最後の状態・coordinator の一生・
+  ;; process の列・盤の行が一致する。飛ばす側は拍の数が少なく、静かな区間を 1 回の保存にまとめるので置き場への書きも少ない(#2670 の根 B)。
   (<- every Trace (trace-of (quitters sim-foundation) (kill-then-stop) False :workers TWO-WORKERS :policy QUIET-POLICY))
   (<- skipped Trace (trace-of (quitters sim-foundation) (kill-then-stop) True :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (> (len every.deltas) 10) (len every.deltas))
@@ -260,7 +277,8 @@
   (assert (= (len (get every.answer 0)) 2) every.answer)
   (<- breaches list (same-decisions every skipped))
   (assert (= breaches []) breaches)
-  (assert (< (* 2 skipped.takes) every.takes) #(skipped.takes every.takes)))
+  (assert (< (* 2 skipped.takes) every.takes) #(skipped.takes every.takes))
+  (assert (< (len skipped.deltas) (len every.deltas)) #((len skipped.deltas) (len every.deltas))))
 
 
 (defk stop-on-a-tick-boundary [gaps]
