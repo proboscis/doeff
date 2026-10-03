@@ -4,13 +4,17 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
+from dataclasses import replace as replace
 from doeff import with_handlers as with_handlers
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.meter_effects import CountMetric as CountMetric
+from doeff_time import GetMonotonic as GetMonotonic
+from doeff_records.values import Changes as Changes
 from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
+from doeff_records.values import Reset as Reset
 from doeff_records.values import Unreachable as Unreachable
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
@@ -21,8 +25,6 @@ from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
-from doeff_records.watching import wait_for_changes as wait_for_changes
-from doeff_records.watching import moved_of as moved_of
 from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
 from doeff_records.wire import PublicEffect as PublicEffect
 from doeff_records.wire import WireAnswer as WireAnswer
@@ -36,6 +38,7 @@ from doeff_records.wire import CLIENT_UNREACHABLE as CLIENT_UNREACHABLE
 from doeff_records.wire import client_answer_metric as client_answer_metric
 from doeff_records.wire import client_status_outcome as client_status_outcome
 from doeff_records.wire import WRITER_HEADER as WRITER_HEADER
+from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 DEFAULT_REQUEST_TIMEOUT: float
@@ -74,19 +77,19 @@ def request_bytes(body: dict[str, object]) -> _Program[bytes, object]:
 def reply_json(operation: str, reply: RawReply) -> _Program[JsonValue, object]:
     ...
 
-def exchange_by_effect(endpoint: RecordsEndpoint, operation: str, body: dict[str, object]) -> _Program[RawReply | Unreachable, object]:
+def exchange_by_effect(endpoint: RecordsEndpoint, operation: str, body: dict[str, object], waited: float) -> _Program[RawReply | Unreachable, object]:
     ...
 
-def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object]) -> _Program[RawReply | Unreachable, object]:
+def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object], waited: float) -> _Program[RawReply | Unreachable, object]:
+    ...
+
+def waited_seconds(ask: PublicEffect) -> _Program[float, object]:
     ...
 
 def refused_reason(payload: bytes) -> _Program[str, object]:
     ...
 
 def identity_refused(endpoint: RecordsEndpoint, operation: str, reply: RawReply) -> _Program[RecordsUnauthorized, object]:
-    ...
-
-def moved_by_reading(endpoint: RecordsEndpoint, ask: ReadEvents) -> _Program[EventsMoved | EventsQuiet | Unreachable, object]:
     ...
 
 def zero_client_metrics(endpoint: RecordsEndpoint) -> _Program[None, object]:
@@ -96,6 +99,9 @@ def counted_reply(endpoint: RecordsEndpoint, operation: str, reply: RawReply | U
     ...
 
 def call_service(endpoint: RecordsEndpoint, ask: PublicEffect) -> _Program[WireAnswer | Unreachable, object]:
+    ...
+
+def long_poll(endpoint: RecordsEndpoint, ask: WatchChanges | WatchEvents) -> _Program[Changes | Reset | EventsMoved | EventsQuiet | Unreachable, object]:
     ...
 
 def http_records_handler(endpoint: RecordsEndpoint) -> _Handler:

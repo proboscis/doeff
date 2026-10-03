@@ -17,9 +17,10 @@
 ;;;                          名指した名のうち断りの理由に載った物(wire.hy の undeclared-refusal — 本文の形は変えない)
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
 ;;;
-;;; WatchChanges の待ちは client の側で回す(service へは timeout 0 で撃ち、空なら poll-seconds 眠って撃ち直す — doeff-time の Delay)。
-;;; WatchEvents(列の頭が進むのを待つ — wire に載せない)も client の側で、ReadEvents(limit 1)を poll-seconds ごとに読み直して答える。
-;;; 時計は呼び手の時計なので、仮想の時計の下では memory の handler と同じに一瞬で進む。
+;;; WatchChanges と WatchEvents の待ちは service の long-poll(#3074): 待ちの秒(timeout)つきで service へ撃ち、待つのは service の中の
+;;; 置き場の待ち(memory の呼び鈴・PostgreSQL の待ち)。service は 1 回の要求で WATCH-MAX-SECONDS(wire)までしか待たないので、client は
+;;; 待ちをその秒ごとの要求に分け、変化の無い答えなら残りの秒でもう一度撃つ — 眠らず、読み直しを繰り返さない(前は timeout 0 の問いを
+;;; poll-seconds ごとに撃ち直し、列の待ちは ReadEvents を読み直していた)。待つ要求の時間切れの秒は、待ちの秒 + request-timeout。
 ;;;
 ;;; 要求の送り方は 1 つ: 要求を doeff-core-effects の HttpRequest の effect として出し、答えるのは呼び手の外側の
 ;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
@@ -32,16 +33,17 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import json)
 (import doeff [with-handlers])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects.meter_effects [CountMetric])
-(import doeff_records.values [EventsMoved EventsQuiet Unreachable])
+(import doeff_time [GetMonotonic])
+(import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
-(import doeff_records.watching [wait-for-changes moved-of])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal
-                            CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome WRITER-HEADER])
+                            CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome WRITER-HEADER
+                            WATCH-MAX-SECONDS])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 (setv DEFAULT-POLL-SECONDS 0.2)
@@ -64,7 +66,9 @@
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
   "記録の service 1 つへの接続の組: base-url = http://host:port /
-   request-timeout = 要求 1 つの上限の秒 / poll-seconds = WatchChanges の待ちの読み直しの間隔。要求は常に HttpRequest の effect で出す(file の頭の註)。
+   request-timeout = 要求 1 つの上限の秒(変化の待ちの要求は、待ちの秒をこれに足す)/ poll-seconds = 使わない(前の WatchChanges の
+   待ちの読み直しの間隔 — 待ちは long-poll になった・#3074。使い手の組み立てが渡すのをやめたら欄ごと消す)。要求は常に HttpRequest の
+   effect で出す(file の頭の註)。
    meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
    writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)。"
   (#^ str base-url)
@@ -110,25 +114,37 @@
       (raise (WireError (.format "{} の答え(status {})が JSON でない: {}" operation reply.status error))))))
 
 
-(defk exchange-by-effect [endpoint operation body]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object)))] :post [(: % (| RawReply Unreachable))]}
+(defk exchange-by-effect [endpoint operation body waited]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float)]
+   :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを HttpRequest の effect として出す。撃ち直しは呼び手の読みが決めるので 0 回、届かない失敗は値で受けて
-   Unreachable にする。"
+   Unreachable にする。時間切れの秒 = request-timeout + waited(service の中で待ち得る秒 — long-poll の待ちを届かないと読まない)。"
   (<- url str (service-url endpoint operation))
   (<- headers dict (request-headers endpoint))
   (<- data bytes (request-bytes body))
   (<- answer (| HttpResponse HttpFailed)
-      (HttpRequest "POST" url :headers headers :body data :timeout-seconds endpoint.request-timeout :max-retries 0
+      (HttpRequest "POST" url :headers headers :body data :timeout-seconds (+ endpoint.request-timeout waited) :max-retries 0
                    :follow-redirects False :failures-as-values True))
   (when (isinstance answer HttpFailed)
     (return (Unreachable (.format "記録の service に届かない: {}" answer.detail))))
   (RawReply answer.status answer.content))
 
 
-(defk exchange [endpoint operation body]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object)))] :post [(: % (| RawReply Unreachable))]}
+(defk exchange [endpoint operation body waited]
+  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: body (get dict #(str object))) (: waited float)]
+   :post [(: % (| RawReply Unreachable))]}
   "要求 1 つを送り、status と JSON の本文を受ける(HTTP の境界の 1 か所 — 送り方は HttpRequest の effect 1 つ)。届かなければ Unreachable。"
-  (! (exchange-by-effect endpoint operation body)))
+  (! (exchange-by-effect endpoint operation body waited)))
+
+
+(defk waited-seconds [ask]
+  {:pre [(: ask PublicEffect)] :post [(: % float)] :tags {:context "records" :role "foundation"}}
+  "要求 1 つが service の中で待ち得る秒を知るため(変化の待ちは timeout・他は 0)— 要求の時間切れの秒にこれを足し、long-poll の待ちを
+   届かない失敗と読まない。"
+  (match ask
+    (WatchChanges :timeout timeout) (float timeout)
+    (WatchEvents :timeout timeout) (float timeout)
+    _ 0.0))
 
 
 (defk refused-reason [payload]
@@ -154,15 +170,6 @@
   (RecordsUnauthorized
     (.format "記録の service {} の前に立つ口が要求を断った({} {}): {}"
              endpoint.base-url reply.status operation reason)))
-
-
-(defk moved-by-reading [endpoint ask]
-  {:pre [(: endpoint RecordsEndpoint) (: ask ReadEvents)] :post [(: % (| EventsMoved EventsQuiet Unreachable))]
-   :tags {:context "records" :role "foundation"}}
-  "WatchEvents の 1 回ぶんの答えを、service へ撃つ ReadEvents(limit 1)の答えから作るため(列の待ちの読み直しの 1 回)。"
-  (<- answer (call-service endpoint ask))
-  (<- moved (moved-of answer))
-  moved)
 
 
 (defk zero-client-metrics [endpoint]
@@ -191,7 +198,8 @@
   {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect)] :post [(: % (| WireAnswer Unreachable))]}
   "公開 effect(ask)1 つを service へ撃ち、答えの値にする(status の写し方は file の頭の表)。"
   (<- request (encode-request ask))
-  (<- reply (exchange endpoint request.operation request.body))
+  (<- waited float (waited-seconds ask))
+  (<- reply (exchange endpoint request.operation request.body waited))
   (<- (counted-reply endpoint request.operation reply))
   (when (isinstance reply Unreachable) (return reply))
   (when (in reply.status IDENTITY-REFUSED-STATUSES)
@@ -204,6 +212,26 @@
     "store-unavailable" (Unreachable refusal.reason)
     "not-found" (raise (! (undeclared-refusal ask refusal.reason)))
     _ (raise (WireError (.format "{} が {} で断られた: {} {}" request.operation reply.status refusal.error refusal.reason)))))
+
+
+(defk long-poll [endpoint ask]
+  {:pre [(: endpoint RecordsEndpoint) (: ask (| WatchChanges WatchEvents))]
+   :post [(: % (| Changes Reset EventsMoved EventsQuiet Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "変化の待ち ask(WatchChanges・WatchEvents)に service の long-poll で答えるため(#3074 — file の頭の註): 待ちを WATCH-MAX-SECONDS ごとの
+   要求に分けて撃ち、待つのは service の中の置き場の待ち。変化の無い答え(空の Changes・EventsQuiet)は、ask の timeout が残っていれば
+   同じ位置(cursor・after)からもう一度撃つ — 眠らない。変化の在る答え・Reset・Unreachable はすぐ返す(届かない時の撃ち直しは呼び手の
+   読みが決める — 呼び手が同じ位置から待ち直せば、接続が切れた間の変化も取りこぼさない)。"
+  (<- start float (GetMonotonic))
+  (while True
+    (<- now float (GetMonotonic))
+    (val left (max 0.0 (- ask.timeout (- now start))))
+    (val wait (min left WATCH-MAX-SECONDS))
+    (<- answer (call-service endpoint (replace ask :timeout wait)))
+    (val quiet (or (and (isinstance answer Changes) (not answer.items)) (isinstance answer EventsQuiet)))
+    ;; この要求が残りの秒を全部待った(wait = left)か、変化の在る答え・Reset・Unreachable なら返す。
+    (when (or (not quiet) (= wait left))
+      (return answer))))
 
 
 (defhandler http-records-handler [#^ RecordsEndpoint endpoint]
@@ -220,14 +248,12 @@
     (<- answer (call-service endpoint effect))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
-    ;; 待ちは client の時計で回す — service へは待たない問い(timeout 0)だけを撃つ。
-    (setv once (WatchChanges tables cursor :timeout 0.0 :limit limit))
-    (<- answer (wait-for-changes (fn [now-ms] (call-service endpoint once)) endpoint.poll-seconds timeout))
+    ;; 待ちは service の long-poll(service の中の置き場が待つ — 読み直しを繰り返さない)。
+    (<- answer (long-poll endpoint effect))
     (resume answer))
   (WatchEvents [stream after timeout]
-    ;; 列の待ちも client の時計で回す — service へは ReadEvents(limit 1)だけを撃つ(記録の service の口は変えない)。
-    (val once (ReadEvents stream :after after :limit 1))
-    (<- answer (wait-for-changes (fn [now-ms] (moved-by-reading endpoint once)) endpoint.poll-seconds timeout))
+    ;; 列の待ちも service の long-poll(wire の watch-events)。
+    (<- answer (long-poll endpoint effect))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- answer (call-service endpoint effect))
@@ -265,6 +291,5 @@
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
     :when (and tables (all (gfor t tables (in t served))))
-    (setv once (WatchChanges tables cursor :timeout 0.0 :limit limit))
-    (<- answer (wait-for-changes (fn [now-ms] (call-service endpoint once)) endpoint.poll-seconds timeout))
+    (<- answer (long-poll endpoint effect))
     (resume answer)))
