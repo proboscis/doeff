@@ -147,7 +147,8 @@
                                                           forget-heard])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
-(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of])
+;; 宣言の本文を組む body-of は別名で受ける — 同じ名の coordinator の body-of(要求の本文の解き・上の import)を上書きしないため。
+(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of :as service-body-of])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query])
@@ -2319,7 +2320,7 @@
                                 {"blob" (get declaration.programs sha) "versions" (get (get (get declaration.rows 0) "run") "versions")}))
     (answered-body put (+ "program " sha)))
   (for [read reads :if (is-not read.body None)]
-    (<- body dict (body-of read))
+    (<- body dict (service-body-of read))
     (<- written tuple (if (is read.version None)
                           (send-request link "POST" "/resources/Service" {} body)
                           (send-request link "PUT" read.target {} body)))
