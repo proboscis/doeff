@@ -6,11 +6,9 @@
 ;;; 宣言し、欄 keys(ChangedRow の tuple)を持たせる。どの合図の型をどの表・列の変化で起こすかは、組み立ての引数 bindings
 ;;; (SignalTables の tuple)の 1 か所に置き、Program には位置(cursor)・表と列の名前・購読者の名前を出さない。
 ;;;
-;;; 組み立ては 2 つの形で、どちらも本体を包む関数(with-handlers の列に置ける)を返し、包み方は 1 つ(run-with-sources)を共有する:
-;;;   records-signal-handler = 素の工場の関数(Program ではない — 使い手が with-handlers の列に呼びの字面で置き、閉じの検の道具
-;;;     doeff-effect-analyzer が工場の宣言 __doeff_handles__ = ()・__doeff_effects__ を読める形)。購読の始まりの位置は、包んだ本体を
-;;;     走らせる頭で読む(#3104)。
-;;;   records-signal-source = Program(使い手の付け替えまで 1 版残す)。位置を組み立ての時に読み、読んだ位置で同じ包み方を使う。
+;;; 組み立ては素の工場の関数 records-signal-handler 1 つで、本体を包む関数(with-handlers の列に置ける)を返す(Program ではない — 使い手が
+;;; with-handlers の列に呼びの字面で置き、閉じの検の道具 doeff-effect-analyzer が工場の宣言 __doeff_handles__ = ()・__doeff_effects__ を
+;;; 読める形)。購読の始まりの位置は、包んだ本体を走らせる頭で読む(#3104)。
 ;;; 購読の始まりの位置 = 結んだ表を ListRows で 1 頁(1 行)読んだ頁の epoch と sequence と、結んだ列の末尾(ReadStreamEnd・空なら 0)。
 ;;; 位置を読んでから源の task(表の分 1 つ = WatchChanges の long-poll・列 1 つにつき 1 つ = WatchEvents の long-poll)を Spawn し、その後に
 ;;; 本体を走らせるので、本体の最初の読みより前に購読が始まる(読みと待ちの間の書きを落とさない)。本体は包みを撃った task のまま走らせる
@@ -364,7 +362,7 @@
 
 (defclass BodyWrapper [partial]
   "本体を包む関数(partial)に、with-handlers が「本体を包む関数」として本体に当てる印を持たせるため(印が無いと effect の答え手として
-   包み直す)。2 つの組み立て方が同じ印の付け方を使う。"
+   包み直す)。源の工場(records-signal-handler・read-signal-handler)が同じ印の付け方を使う。"
   (setv _doeff_is_handler_fn True))
 
 
@@ -435,11 +433,3 @@
 (setv read-signal-handler.__doeff_handles__ #()
       read-signal-handler.__doeff_effects__ READ-SIGNAL-EFFECTS)
 
-
-(defk records-signal-source [bindings subscriber]
-  {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
-  "記録の変化を合図として発する源を組み立てるため(組み立ては Program — 外の記録の handler の下で走らせる。使い手が工場
-   records-signal-handler へ付け替えるまで 1 版残す)。結んだ表と列の始まりの位置を組み立ての時に読んでから、工場と同じ包み方
-   (run-with-sources)で本体を包む関数を返す — 包んだ本体の間だけ源の task が動く。"
-  (<- plan (plan-of bindings subscriber))
-  (BodyWrapper run-with-sources plan))

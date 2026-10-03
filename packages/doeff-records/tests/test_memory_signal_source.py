@@ -53,7 +53,7 @@ from tests.test_event_source import (
     _write,
 )
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, run, with_handlers
+from doeff import EffectBase, EffectGenerator, K, Pass, Program, Resume, do, run, with_handlers
 from doeff.program import ProgramHandler
 
 # 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。
@@ -66,13 +66,9 @@ def memory_world() -> SignalWorld:
     bus = EventBus()
     factory: SignalSourceFactory = run(memory_signal_source(store))
 
-    def build(bindings: tuple[SignalTables, ...], subscriber: str) -> Program[ProgramHandler]:
-        """模擬の源の工場の組み立て方(工場は Program ではないので答えを Pure で包む — 位置は本体の頭で読む)。"""
-        return Pure(factory.make(bindings, subscriber))
-
     def subscribe(subscriber: str, event_types: tuple[type, ...] = (), /) -> Program[ProgramHandler]:
-        """この世界の購読者の列と置き場の上で、購読者の組を組み立てる Program。"""
-        return _subscribe(build, bus, subscriber, event_types)
+        """この世界の購読者の列と置き場の上で、購読者の組を模擬の源の工場で組み立てる Program(位置は本体の頭で読む)。"""
+        return _subscribe(factory.make, bus, subscriber, event_types)
 
     return SignalWorld(subscribe=subscribe, run=partial(_run_on, store), row=partial(_row, "jobs"))
 
