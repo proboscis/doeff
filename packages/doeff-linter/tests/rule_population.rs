@@ -300,22 +300,28 @@ fn business_code_in_the_environment_module_is_red() {
     }
 }
 
-/// 名指しの module が `__init__.py` の無い dir に在る package(module の名 = file の名・agora-redesign #2861)— doeff の repo の宣言を
-/// そのまま一時の repo に置いて確かめる。(宣言の path・宣言・名指しの module の path・同じ dir のほかの module の path)
-const BARE_MODULE_PACKAGES: [(&str, &str, &str, &str); 2] = [
-    (
-        "packages/doeff-agents/architecture.hy",
-        include_str!("../../doeff-agents/architecture.hy"),
-        "packages/doeff-agents/tests/runner_env.py",
-        "packages/doeff-agents/tests/sessionhost_bin.py",
-    ),
-    (
-        "packages/doeff-openrouter/architecture.hy",
-        include_str!("../../doeff-openrouter/architecture.hy"),
-        "packages/doeff-openrouter/tests/local_dotenv.py",
-        "packages/doeff-openrouter/tests/conftest.py",
-    ),
-];
+/// 名指しの module が `__init__.py` の無い dir に在る package(module の名 = file の名・agora-redesign #2861)の宣言 —
+/// package の根に置き、tests の dir の素の module を名指して DOEFF004 を外す。
+/// 以前は doeff の repo の宣言(doeff-agents の runner-env・doeff-openrouter の local-dotenv)をそのまま読んでいたが、2 つとも
+/// 環境変数を ReadEnvironment で読む形になって DOEFF004 の外しを消した(agora-redesign #3012)。素の module を名指して外す仕組みは
+/// linter に残るので、同じ形の宣言をここに書いて確かめ続ける(agora-redesign #3023)。
+const BARE_MODULE_DECLARATION: &str = r#"
+(defarchitecture bare
+  :root "."
+  :layers [(layer local-env
+             :summary "走らせる人の手元の設定を読んで値を返す module"
+             :modules [local_env]
+             :exempt [(rule DOEFF004 "検の process の外の手元の設定を読む入口で、設定を Ask で受ける入口が無い")]
+             :forbid-modules [doeff doeff_hy])])
+"#;
+
+/// (宣言の path・宣言・名指しの module の path・同じ dir のほかの module の path)
+const BARE_MODULE_PACKAGES: [(&str, &str, &str, &str); 1] = [(
+    "packages/bare/architecture.hy",
+    BARE_MODULE_DECLARATION,
+    "packages/bare/tests/local_env.py",
+    "packages/bare/tests/conftest.py",
+)];
 
 /// 宣言・名指しの module(本文 `named`)・同じ dir のほかの module(環境を読む)を置いた一時の repo(`__init__.py` は置かない)。
 fn bare_module_package(declaration_path: &str, declaration: &str, named_path: &str, named: &str, sibling_path: &str) -> tempfile::TempDir {
