@@ -84,13 +84,13 @@ def test_taking_the_body_answer_as_another_type_is_red(tmp_path: Path) -> None:
     assert [e for e in errors if '"int"' in e and '"str"' in e]
 
 
-# 記録の合図の源を使い手の形で並べる(#3104): 工場 records-signal-handler を購読者の列と同じ with-handlers の列に呼びの字面で置く形と、
-# 1 版残す Program の records-signal-source の答えを受けて置く形。BINDINGS = 工場に渡す bindings の式。
+# 記録の合図の源を使い手の形で並べる(#3104): 工場 records-signal-handler を購読者の列と同じ with-handlers の列に呼びの字面で置く形。
+# BINDINGS = 工場に渡す bindings の式。
 SIGNAL_SOURCES = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Pure with-handlers])
 (import doeff_events [EventBus subscribed-event-handler])
-(import doeff_records.event_source [ChangedRow SignalTables records-signal-handler records-signal-source])
+(import doeff_records.event_source [ChangedRow SignalTables records-signal-handler])
 
 (defclass Moved []
   "合図の型(検の的)。"
@@ -101,13 +101,6 @@ SIGNAL_SOURCES = """\
   "工場を購読者の列の内側に呼びの字面で置くため。"
   (<- answer int (with-handlers [(subscribed-event-handler bus "worker" #(Moved)) (records-signal-handler BINDINGS "worker")]
                                 (Pure 1)))
-  answer)
-
-(defk by-program [bus]
-  {:pre [(: bus EventBus)] :post [(: % int)]}
-  "Program の形の答え(包む関数)を受けて列に置くため。"
-  (<- source (records-signal-source #((SignalTables :signal Moved :tables #("jobs"))) "worker"))
-  (<- answer int (with-handlers [(subscribed-event-handler bus "worker" #(Moved)) source] (Pure 1)))
   answer)
 """
 BOUND = '#((SignalTables :signal Moved :tables #("jobs")))'

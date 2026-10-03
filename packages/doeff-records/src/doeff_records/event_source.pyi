@@ -158,6 +158,3 @@ READ_SIGNAL_EFFECTS: tuple[type, ...]
 
 def read_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]:
     ...
-
-def records_signal_source(bindings: tuple[SignalTables, ...], subscriber: str) -> _Program[Callable[[object], Program], object]:
-    ...
