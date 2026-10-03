@@ -46,7 +46,6 @@
                             WATCH-MAX-SECONDS])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
-(setv DEFAULT-POLL-SECONDS 0.2)
 
 
 (defclass WireError [RuntimeError]
@@ -66,14 +65,12 @@
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
   "記録の service 1 つへの接続の組: base-url = http://host:port /
-   request-timeout = 要求 1 つの上限の秒(変化の待ちの要求は、待ちの秒をこれに足す)/ poll-seconds = 使わない(前の WatchChanges の
-   待ちの読み直しの間隔 — 待ちは long-poll になった・#3074。使い手の組み立てが渡すのをやめたら欄ごと消す)。要求は常に HttpRequest の
-   effect で出す(file の頭の註)。
+   request-timeout = 要求 1 つの上限の秒(変化の待ちの要求は、待ちの秒をこれに足す)。待ちの読み直しの間隔の欄は無い(待ちは
+   long-poll — #3074。前の欄 poll-seconds は使い手が渡すのをやめた後に消した)。要求は常に HttpRequest の effect で出す(file の頭の註)。
    meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
    writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)。"
   (#^ str base-url)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)
-  (setv #^ float poll-seconds DEFAULT-POLL-SECONDS)
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| str None) writer None))
 
