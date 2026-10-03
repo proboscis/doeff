@@ -125,9 +125,9 @@
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError Race])
-(import doeff_events [ArmedTimer WaitForEventEffect])
+(import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleTaken ProvisionalBeat]
         doeff_cluster.coordinator.intent.request_bodies [HeartbeatBody]
@@ -3065,12 +3065,33 @@
     (resume answer)))
 
 
+(defk earliest-due [world-due armed]
+  {:pre [(: world-due (| int None)) (: armed tuple)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "見張りが次に読み直す刻を決めるため: sim の世界の次の予定の刻と、最も早い業務の timer の刻(armed は刻の早い順)の早い方。どちらも
+   無ければ None(呼び鈴だけで起きる)。timer の発火は呼び鈴を鳴らさない — 誰も待っていない TimerFired は落ちるので、その刻に読み直す。"
+  (val timer-due (if armed (epoch-ms-of (. (get armed 0) at)) None))
+  (cond (is world-due None) timer-due
+        (is timer-due None) world-due
+        True (min world-due timer-due)))
+
+
+(defhandler no-business-timers
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 業務の timer の答え手(doeff-events の timer-handler)を sim の外の世界(SimOutside.handlers)に置かない走りで、見張りの ArmedTimers
+  ;; に「業務の timer は無い」と答える。外の世界の内側に置いた timer-handler が先に答えるので、置いた走りではこれに届かない。空と答えて
+  ;; よい理由: timer-handler の無い走りでは ArmTimer 自身が答え手の無い effect で落ちるので、積まれた timer は在り得ない(推し量りの
+  ;; 既定値ではなく、その走りの事実)。
+  (ArmedTimersEffect []
+    (resume #())))
+
+
 (defk deadlock-watch [link]
   {:pre [(: link SimLink)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "行き止まりの見張り: 呼び鈴を先に掛けてから材料を読み(読みと次の変化の間の鳴らしを取りこぼさない)、行き止まりなら SimDeadlockError を
    上げ、そうでなければ呼び鈴が鳴るまで眠る。時計の刻みでは起きない — 起こすのは世界(業務の待ち・筋書きの待ちの変化と、業務の task が
    待っている間の process の終わり・coordinator の書き)と、待ちがそろっている間の sim の世界の次の予定の刻(NextWorldDue — 網の切れが
-   明ける等。その刻に世界が変わるので 1 度だけ読み直す。予定の明けは呼び鈴を鳴らさない)だけ。"
+   明ける等。その刻に世界が変わるので 1 度だけ読み直す。予定の明けは呼び鈴を鳴らさない)と、最も早い業務の timer の刻(ArmedTimers —
+   timer が残る間は行き止まりにしない。発火は呼び鈴を鳴らさないので、その刻に 1 度だけ読み直す・#3093)だけ。"
   (var due None)
   (while True
     (<- bell Promise (ArmWaitChange))
@@ -3081,9 +3102,11 @@
     (when closed
       (<- settled bool (task-rows-settled link))
       (<- world-due (| int None) (NextWorldDue now))
-      (:= due world-due)
+      (<- armed tuple (ArmedTimers))
+      (<- next-due (| int None) (earliest-due world-due armed))
+      (:= due next-due)
       (<- found (| SimDeadlock None) (deadlock-of (WaitSnapshot :live seen.live :waits seen.waits :scenario-waiting seen.scenario-waiting
-                                                                :rows-settled settled :world-due world-due)))
+                                                                :rows-settled settled :armed-timers armed :world-due world-due)))
       (when (is-not found None)
         (val stamped (replace found :at-ms now))
         (<- text str (deadlock-text stamped))
@@ -3140,7 +3163,8 @@
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
   (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env skip-idle))
-  (<- answer (with-handlers [(session-store) #* (if (is outside None) [] outside.handlers) (sim-world plan)]
+  ;; no-business-timers は外の世界の外側: 外の世界に timer-handler を置いた走りでは、それが先に ArmedTimers に答える(#3093)。
+  (<- answer (with-handlers [(session-store) no-business-timers #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
   answer)
 
