@@ -29,6 +29,7 @@ WithHandler = _ext.WithHandler
 ResumeThrow = _ext.ResumeThrow
 TransferThrow = _ext.TransferThrow
 WithObserve = _ext.WithObserve
+WithBoundaries = _ext.WithBoundaries
 GetTraceback = _ext.GetTraceback
 GetExecutionContext = _ext.GetExecutionContext
 GetHandlers = _ext.GetHandlers

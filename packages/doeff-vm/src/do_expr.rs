@@ -692,6 +692,79 @@ impl PyWithObserve {
     }
 }
 
+/// WithBoundaries(boundaries, body) — install a captured boundary stack around
+/// body in one VM step, so a scheduler re-entering the handlers and observers
+/// captured at a spawn site does not pay a step per layer (agora-redesign
+/// #3149). `boundaries` is innermost first, each entry a `(kind, callable)`
+/// pair with kind `"handler"` or `"observer"` — the shape `GetBoundaries`
+/// returns. Each entry means the same as `WithHandler(callable, ...)` /
+/// `WithObserve(callable, ...)` nested in that order.
+#[pyclass(name = "WithBoundaries", frozen, dict, module = "doeff_vm.doeff_vm")]
+pub struct PyWithBoundaries {
+    #[pyo3(get)]
+    pub boundaries: Py<PyAny>,
+    #[pyo3(get)]
+    pub body: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyWithBoundaries {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
+    /// Check every entry's kind (and a handler's callability) up front, so a
+    /// bad stack is named where it is built rather than when the VM installs it.
+    #[new]
+    fn new(boundaries: Py<PyAny>, body: Py<PyAny>) -> PyResult<Self> {
+        Python::attach(|py| {
+            for (i, entry) in boundaries.bind(py).try_iter()?.enumerate() {
+                let entry = entry?;
+                let kind: String = entry.get_item(0)?.extract().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err(format!(
+                        "WithBoundaries: boundary[{i}] kind must be a str"
+                    ))
+                })?;
+                if kind != "handler" && kind != "observer" {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "WithBoundaries: boundary[{i}] kind must be 'handler' or 'observer', got {kind:?}"
+                    )));
+                }
+                // The same check WithHandler makes; an observer entry is taken as
+                // WithObserve takes it (a doeff_vm.Callable — converted at install).
+                if kind == "handler" && !entry.get_item(1)?.is_callable() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "WithBoundaries: boundary[{i}] handler must be callable"
+                    )));
+                }
+            }
+            Ok(Self { boundaries, body })
+        })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "WithBoundaries(boundaries, body)"
+    }
+
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>, Py<PyAny>))> {
+        let cls = py.get_type::<Self>().into_any().unbind();
+        Ok((cls, (self.boundaries.clone_ref(py), self.body.clone_ref(py))))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit_py_field(&visit, &self.boundaries)?;
+        visit_py_field(&visit, &self.body)
+    }
+}
+
 /// GetTraceback(k) — query traceback from continuation without consuming it.
 #[pyclass(name = "GetTraceback", frozen, dict, module = "doeff_vm.doeff_vm")]
 pub struct PyGetTraceback {
