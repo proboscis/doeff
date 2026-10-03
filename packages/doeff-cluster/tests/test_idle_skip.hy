@@ -453,17 +453,18 @@
 
 (deftest test-the-next-trial-is-the-earliest-due
   ;; 行の無い新しい状態で待ちも仮の拍も無ければ、試す歩は無い(None — 区間の終わりまで試さずに進む)。待ちが在れば待ちの期限、要求の無い
-  ;; 拍の判断の行(ここでは task)が在れば次の拍(今の行の有無の形 — 刻を期限から求めるのは #3061〜#3064)。反例 — いつも次の拍を返す形は
-  ;; 1 つ目と 2 つ目が赤・待ちを見ない形は 2 つ目が赤。
+  ;; 拍の判断の行(ここでは呼び手の問い合わせの止まった task — lease の期限 30 秒)が在れば、その判断の期限(task-due — #3062)。反例 — いつも
+  ;; 次の拍を返す形は 3 つとも赤・待ちを見ない形は 2 つ目が赤。
   (val state (ClusterState))
   (val probe (IdleProbe state (ClusterTiming) (ClusterNaming)))
   (<- reader (| Watcher WatchRefusal None) (watch-of (! (http-request "GET" "/watch" {"after" "0" "timeoutSeconds" "7.5"} None)) 0))
   (assert (isinstance reader Watcher) reader)
   (<- idle (| int None) (quiet-due (QuietStep :at 0 :state state :watchers #() :marked False) probe #()))
   (<- waiting (| int None) (quiet-due (QuietStep :at 0 :state state :watchers #(reader) :marked False) probe #()))
-  (val busy-state (replace state :tasks {"t1" None}))
+  (<- row TaskRecord (task-row "t1" "finished" 30000))
+  (val busy-state (replace state :tasks {"t1" row}))
   (<- busy (| int None) (quiet-due (QuietStep :at 0 :state busy-state :watchers #() :marked False) probe #()))
-  (assert (= #(idle waiting busy) #(None 7500 1)) #(idle waiting busy)))
+  (assert (= #(idle waiting busy) #(None 7500 30001)) #(idle waiting busy)))
 
 
 (defk never-due [last probe pending]
@@ -581,3 +582,75 @@
   ;; 1 秒ごとに試した歩で、行は 12 秒目の歩まで在り、行を消す 13 秒目の歩(静かでない歩)で区間が切れる(この検が期限の刻を通る事の確かめ)。
   (assert (= #(tried.end-at (len (. (get tried.steps -1) state board))) #(13000 1))
           #(tried.end-at (lfor s tried.steps #(s.at (len s.state.board))))))
+
+
+;; --- task の期限(#3062) -----------------------------------------------------------------------------------------------------------
+;; task の判断(cluster_policy.place-tasks)の次の刻(task-due)は、判断が比べる期限と同じ関数(task-lapse-at・wait-lapse-at)から求める。
+;; - task-due の刻は place-tasks の答えが変わる最初の刻そのもの(1 ms 前の place-tasks は task を変えず、その刻の place-tasks は変える):
+;;   lease の内に終わって保持の期限が来る切り離した task・lease の切れる置いた切り離した task・呼び手が問い合わせを止めた task・能力の
+;;   合う worker の沈黙を待つ task。反例 — 判断か task-due の片方だけ期限をずらすと赤(task-due を行の有無の形に戻しても赤)。
+;; - 静かな区間は task の期限より前の歩を試さずに作り、期限の後の最初の拍の書きで切れる(1 秒ごとに本番の判断で試した歩の列・切れる刻と
+;;   同じ)。期限の早い task の書きを遅い task の期限まで飛び越さない。反例 — task-due が期限より遅い刻を返すと、切れる刻が遅れて赤。
+
+(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord WorkerInfo ComponentVersion])
+(import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due])
+
+
+(defk task-row [id phase lease-until * [detached False] [worker None] [finished None] [needs #()]]
+  {:pre [(: id str) (: phase str) (: lease-until int) (: detached bool) (: worker (| str None)) (: finished (| int None)) (: needs tuple)]
+   :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "期限の筋書きの task の行(lease 15 秒・終わった後の保持 7 秒・python 3)を作るため。"
+  (TaskRecord id "digest" None "rev" #((ComponentVersion "python" "3")) needs 15000 lease-until 0
+              :phase phase :worker worker :finished-ms finished :detached detached :retain-ms 7000))
+
+
+(defk lapse-scenarios []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "task の期限の筋書き #(名 状態 起点の刻 期限の刻) を並べるため: lease の内(3 秒目)に終わった切り離した task の保持の期限・lease の切れる
+   置いた切り離した task(担い手は居ない)・呼び手が問い合わせを止めた task・その 2 本(早い方の期限)・唯一の能力の合う worker(最後の
+   連絡 0)の沈黙を待つ切り離した task(起点 15 秒目 — 生存の窓の外)。"
+  (<- retained TaskRecord (task-row "done" "finished" 15000 :detached True :worker "w1" :finished 3000))
+  (<- lost TaskRecord (task-row "lost" "assigned" 20000 :detached True :worker "w1"))
+  (<- dropped TaskRecord (task-row "call" "finished" 12000 :worker "w1" :finished 3000))
+  (<- waiting TaskRecord (task-row "wait" "queued" 20000 :detached True :needs #("verify")))
+  (val verify (replace (WorkerInfo "verify-1" #("verify") 1 0) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  #(#("lease の内に終わった task の保持" (ClusterState :tasks {"done" retained}) 5000 10001)
+    #("lease の切れる置いた task" (ClusterState :tasks {"lost" lost}) 5000 20001)
+    #("呼び手が問い合わせを止めた task" (ClusterState :tasks {"call" dropped}) 5000 12001)
+    #("保持の期限と lease の期限の 2 本" (ClusterState :tasks {"done" retained "lost" lost}) 5000 10001)
+    #("能力の合う worker の沈黙を待つ task" (ClusterState :workers {"verify-1" verify} :tasks {"wait" waiting}) 15000
+      (+ (. (ClusterTiming) silent-worker-wait-ms) 1))))
+
+
+(deftest test-the-task-due-is-the-tick-the-task-judgment-changes-at
+  (val timing (ClusterTiming))
+  (<- scenarios tuple (lapse-scenarios))
+  (for [#(name state start expected) scenarios]
+    ;; 起点の拍の後の状態(待つ task は待ちの理由を書いた後)から数える — 静かな区間の歩の前提。
+    (<- settled dict (place-tasks start state {} timing))
+    (val quiet (replace state :tasks settled))
+    (<- due (| int None) (task-due quiet start timing))
+    (assert (= due expected) #(name due expected))
+    (<- before dict (place-tasks (- due 1) quiet {} timing))
+    (<- at dict (place-tasks due quiet {} timing))
+    (assert (= before settled) #(name "期限の 1 ms 前に変わった" before))
+    (assert (!= at settled) #(name "期限の刻に変わらない" at))))
+
+
+(deftest test-a-quiet-stretch-stops-at-the-first-task-deadline-like-a-trial-every-tick
+  ;; 行が task だけの筋書き(起点 5 秒目)を 30 秒目まで: 区間は task の期限の後の最初の拍で切れる — 保持の期限(10001)は 11 秒目・lease の
+  ;; 期限(20001)は 21 秒目・呼び手の止まった task(12001)は 13 秒目・その 2 本は早い方の 11 秒目。次に試す刻(quiet-due)は最も早い task の期限。
+  (<- scenarios tuple (lapse-scenarios))
+  (for [#(name state start due) scenarios]
+    (when (not state.workers)
+      (val start-step (QuietStep :at start :state state :watchers #() :marked False))
+      (val probe (IdleProbe state (ClusterTiming) (ClusterNaming)))
+      (<- first (| int None) (quiet-due start-step probe #()))
+      (<- skipped QuietStretch (quiet-stretch probe start-step 30000))
+      (<- tried QuietStretch (tried-steps start-step 30000))
+      (val ending (* 1000 (// (+ due 999) 1000)))
+      (assert (= first due) #(name first due))
+      (assert (= skipped.end-at tried.end-at ending) #(name skipped.end-at tried.end-at ending))
+      (assert (= (len skipped.steps) (len tried.steps)) #(name (len skipped.steps) (len tried.steps)))
+      (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at a.state.alive-ms b.state.alive-ms)))
+      (assert (= apart []) #(name apart)))))

@@ -749,14 +749,15 @@
   (replace task :phase phase :finished-ms now :detail detail :result result))
 
 
-(defn #^ (| TaskRecord None) settle-detached [#^ TaskRecord task #^ int now]
-  "純粋: 切り離した task 1 本の期限の判断。保持の期限を過ぎた終わりの行は None(消す)。
+(defk settle-detached [task now lapsed]
+  {:pre [(: task TaskRecord) (: now int) (: lapsed bool)] :post [(: % (| TaskRecord None))] :tags {:context "coordinator" :role "judgment"}}
+  "純粋: 切り離した task 1 本の期限の判断。lapsed = 自分の期限(task-lapse-at の刻)が来た。保持の期限を過ぎた終わりの行は None(消す)。
    置いた task の lease(担い手の worker の heartbeat が延ばす)が切れた = worker の死 = lost(走らせ直さない)。
    呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
   (cond
     (in task.phase DETACHED-TERMINAL)
-      (if (> now (+ (or task.finished-ms now) task.retain-ms)) None task)
-    (and (in task.phase PLACED-PHASES) (> now task.lease-until-ms))
+      (if lapsed None task)
+    (and (in task.phase PLACED-PHASES) lapsed)
       (end-detached task "lost" now
                     (.format "担い手の worker {} の lease が切れた(worker の死とみなす — task は走らせ直さない)" task.worker))
     True task))
@@ -770,18 +771,44 @@
       "failed"))
 
 
+;; task の判断(place-tasks)が比べる期限の値の関数。静かな区間の次の刻(task-due — #3062)も同じ関数から読む。
+
+(defk task-lapse-at [task now]
+  {:pre [(: task TaskRecord) (: now int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "task 1 本が自分の期限の欄で変わる最初の刻を知るため(place-tasks はこの刻から変える・task-due は同じ値を次に試す刻にする)。
+   切り離していない task = lease の期限の次の ms(呼び手が問い合わせを止めた — 行を落とす)。切り離した task の終わりの行 = 保持の期限の
+   次の ms(行を消す — 終わった刻を持たない行は now から数える)。置いた切り離した task = lease の期限の次の ms(担い手の worker の死 —
+   lost)。待っている切り離した task は自分の期限では変わらない(None — 待ちの期限は wait-lapse-at)。"
+  (match task
+    (TaskRecord :detached False) (+ task.lease-until-ms 1)
+    (TaskRecord :phase phase) :if (in phase DETACHED-TERMINAL) (+ (or task.finished-ms now) task.retain-ms 1)
+    (TaskRecord :phase phase) :if (in phase PLACED-PHASES) (+ task.lease-until-ms 1)
+    _ None))
+
+
+(defk wait-lapse-at [capable timing]
+  {:pre [(: capable list) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "置ける worker の無い待っている task を、能力と版の合う worker capable がいま連絡していない間に待たせる期限が過ぎる最初の刻を知るため
+   (place-tasks はこの刻から待ちを終える・task-due は同じ値を次に試す刻にする): capable のうち最後の連絡が最も新しい物から
+   ClusterTiming.silent-worker-wait-ms の次の ms。capable が空なら None(待たずに終える)。"
+  (if capable (+ (max (gfor w capable w.last-seen-ms)) timing.silent-worker-wait-ms 1) None))
+
+
 (defk place-tasks [now state placements timing]
   {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % dict)]
    :tags {:context "coordinator" :role "judgment"}}
   "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。"
   (setv tasks {})
   (for [#(id task) (.items state.tasks)]
+    ;; 自分の期限(静かな区間の次の刻 task-due と同じ関数 task-lapse-at の刻)が来たか。
+    (<- lapse (| int None) (task-lapse-at task now))
+    (val lapsed (and (is-not lapse None) (>= now lapse)))
     (cond
       task.detached
-        (do (setv kept (settle-detached task now))
+        (do (<- kept (| TaskRecord None) (settle-detached task now lapsed))
             (when (is-not kept None) (setv (get tasks id) kept)))
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
-      (> now task.lease-until-ms) None
+      lapsed None
       (and (in task.phase PLACED-PHASES)
            (or (not-in task.worker state.workers)
                (not (alive now (get state.workers task.worker) timing.reassign-after-ms))))
@@ -837,11 +864,13 @@
         (not able)
           (let [capable (lfor w (.values state.workers) :if (can-run-task task w) w)
                 silence (if capable (- now (max (gfor w capable w.last-seen-ms))) None)
+                ;; 待ちの期限(task-due と同じ関数 wait-lapse-at の刻)。
+                waited (! (wait-lapse-at capable timing))
                 names (.join "・" (sorted (gfor w capable w.name)))
                 limit-s (// timing.silent-worker-wait-ms 1000)
                 ended (cond
                         (is silence None) (versions-note task state now timing)
-                        (> silence timing.silent-worker-wait-ms)
+                        (>= now waited)
                           (.format "要る能力 {} の worker {} が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)"
                                    (list task.needs) names (ceil (/ silence 1000)) limit-s)
                         True None)]
@@ -1061,8 +1090,24 @@
 
 (defk task-due [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "task の判断(place-tasks の lease の切れ・置き直し・切り離した task)が、状態がこのままで答えを変え得る最初の刻を知るため。"
-  (if state.tasks (+ now 1) None))
+  "task の判断(place-tasks の lease の切れ・置き直し・切り離した task)が、状態がこのままで答えを変え得る最初の刻を知るため(#3062)。
+   刻は place-tasks が比べる期限と同じ関数から求める: 各 task の自分の期限(task-lapse-at)と、置ける worker の無い待っている task の
+   待ちの期限(wait-lapse-at)の最小。置いた切り離していない task と、置ける worker の在る待っている task は次の拍。どの task も
+   期限を持たなければ None。期限が now 以前なら次の拍。"
+  (var dues #())
+  (for [task (.values state.tasks)]
+    (<- lapse (| int None) (task-lapse-at task now))
+    (val capable (if (= task.phase "queued") (lfor w (.values state.workers) :if (can-run-task task w) w) []))
+    (<- waited (| int None) (wait-lapse-at capable timing))
+    (val tried (match task
+                 ;; 置いた切り離していない task は、担い手の生死の窓(alive)で失敗にする — 次の拍で試す。
+                 (TaskRecord :detached False :phase phase) :if (in phase PLACED-PHASES) (+ now 1)
+                 ;; 待っている task は、置ける worker が在れば(空き・drain・生死の窓で置き先が変わる)次の拍、無ければ待ちの期限。
+                 (TaskRecord :phase "queued")
+                   (if (or (is waited None) (any (gfor w capable (alive now w timing.lease-ms)))) (+ now 1) waited)
+                 _ None))
+    (:= dues (+ dues (tuple (gfor due [lapse tried] :if (is-not due None) due)))))
+  (if dues (max (+ now 1) (min dues)) None))
 
 
 (defk sweep-due [state now timing]

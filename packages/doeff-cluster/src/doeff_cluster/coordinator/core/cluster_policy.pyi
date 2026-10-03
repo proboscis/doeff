@@ -255,10 +255,16 @@ ENV_RETRIES: int
 def end_detached(task: TaskRecord, phase: str, now: int, detail: str, result: str | None=None) -> TaskRecord:
     ...
 
-def settle_detached(task: TaskRecord, now: int) -> TaskRecord | None:
+def settle_detached(task: TaskRecord, now: int, lapsed: bool) -> _Program[TaskRecord | None, object]:
     ...
 
 def unplaceable_phase(task: TaskRecord, state: ClusterState, now: int, timing: ClusterTiming) -> str:
+    ...
+
+def task_lapse_at(task: TaskRecord, now: int) -> _Program[int | None, object]:
+    ...
+
+def wait_lapse_at(capable: list, timing: ClusterTiming) -> _Program[int | None, object]:
     ...
 
 def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[dict, object]:
