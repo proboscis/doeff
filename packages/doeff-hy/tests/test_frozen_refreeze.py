@@ -144,3 +144,66 @@ def test_the_views_cannot_change_the_frozen_map() -> None:
     with pytest.raises(TypeError):
         view.mapping["b"] = 2  # type: ignore[index]  # 眺めの mapping は読むだけ(MappingProxyType)— 書けない事を確かめる
     assert dict(frozen) == {"a": 1}
+
+
+# --- thaw-json は葉では自分を呼ばない(agora-redesign #2670 の根 E (b) の 3)----------------------------------------
+# thaw-json は JSON の節 1 つごとに自分を呼んでいた(葉の文字列・数にも 1 回ずつ)。記録の行を型へ読むたびに全体を戻すので、画面の
+# stats の場面で行 1 つあたり約 36 回の呼びになった。葉はその場で返し、自分を呼ぶのは入れ物(写像・列)の時だけにする。
+
+NESTED = {
+    "leaf": "s",
+    "n": 1,
+    "f": 2.5,
+    "t": True,
+    "none": None,
+    "map": {"k": [1, {"x": "y"}, []], "empty": {}},
+    "list": [[], {}, "z", [None, False]],
+}
+
+
+def test_thaw_answers_are_unchanged_for_nested_leaves_and_empty_values() -> None:
+    thawed = thaw_json(freeze_json(NESTED))
+    assert thawed == NESTED
+    assert json.dumps(thawed) == json.dumps(NESTED)  # 鍵の順も同じ
+    assert type(thawed["map"]) is dict and type(thawed["map"]["empty"]) is dict
+    assert type(thawed["map"]["k"]) is list and type(thawed["map"]["k"][2]) is list
+    assert type(thawed["list"][0]) is list and type(thawed["list"][1]) is dict
+    empty_map = thaw_json(FrozenMap())
+    assert empty_map == {} and type(empty_map) is dict
+    empty_list = thaw_json(())
+    assert empty_list == [] and type(empty_list) is list
+    assert thaw_json("x") == "x" and thaw_json(None) is None and thaw_json(2.5) == 2.5
+    # 凍っていない値(dict の中の tuple)も同じく戻す。
+    assert thaw_json({"a": (1, (2,), {"b": ()})}) == {"a": [1, [2], {"b": []}]}
+
+
+def test_thaw_answers_keep_leaf_subtypes_as_they_are() -> None:
+    import enum
+
+    class Level(enum.IntEnum):
+        HIGH = 2
+
+    class Tag(str):
+        pass
+
+    tag = Tag("t")
+    thawed = thaw_json(FrozenMap({"level": Level.HIGH, "tag": tag, "in": (Level.HIGH, tag)}))
+    assert thawed["level"] is Level.HIGH and thawed["tag"] is tag
+    assert thawed["in"][0] is Level.HIGH and thawed["in"][1] is tag
+
+
+def test_thaw_calls_itself_only_for_containers(monkeypatch: pytest.MonkeyPatch) -> None:
+    import doeff_hy.frozen as frozen_module
+
+    original = frozen_module.thaw_json
+    calls: list[object] = []
+
+    def counted(value: object) -> object:
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(frozen_module, "thaw_json", counted)
+    value = freeze_json({"a": 1, "b": "x", "c": {"d": True, "e": [1, 2, 3]}, "f": []})
+    assert original(value) == {"a": 1, "b": "x", "c": {"d": True, "e": [1, 2, 3]}, "f": []}
+    # 一番外は original を直に呼んだ。中で自分を呼ぶのは入れ物の c・e・f の 3 回だけ(葉の 1・"x"・True・1・2・3 では呼ばない)。
+    assert len(calls) == 3
