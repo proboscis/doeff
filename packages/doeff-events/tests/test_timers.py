@@ -9,9 +9,14 @@
 - The same timer handler runs on the wall clocks (async and sync).
 - Re-arming a tag with the deadline it already has keeps its waiting task — a worker that re-arms its deadlines
   after every pass pays no new task for the ones that did not move (agora-redesign #3054 C).
+- One task works every deadline of the handler (cisco-c8 2026-10-03 15:1x): arming many deadlines spawns one
+  task; deadlines of the same instant fire in arming order; an earlier deadline armed after a later one fires at
+  its own instant (the task waits again when the earliest deadline changes), and disarming the earliest wakes
+  the task to wait for the next one — on the virtual clock and on both wall clocks.
 
-The counterexamples — a disarm that does nothing, a re-arm that keeps the earlier arming — fail the checks
-below (each check names the timer the broken form would have fired first).
+The counterexamples — a disarm that does nothing, a re-arm that keeps the earlier arming, a task that keeps
+waiting for the deadline it chose before an earlier one was armed, a queue that fires same-instant deadlines
+out of arming order — fail the checks below (each check names the timer the broken form would have fired first).
 """
 
 from datetime import datetime, timedelta, timezone
@@ -217,3 +222,112 @@ def test_the_timer_handler_runs_on_the_async_wall_clock() -> None:
 
 def test_the_timer_handler_runs_on_the_sync_wall_clock() -> None:
     assert run(scheduled(sync_time_handler()(_on_events(keep_one_drop_one())))) == "kept"
+
+
+def _on_each_clock(program_of: Any) -> dict[str, Any]:
+    """Run the program ``program_of()`` builds on the virtual clock and on both wall clocks; answer each run's value."""
+    return {
+        "sim": run_on_sim(program_of()),
+        "async": run(scheduled(await_handler()(async_time_handler()(_on_events(program_of()))))),
+        "sync": run(scheduled(sync_time_handler()(_on_events(program_of())))),
+    }
+
+
+@do
+def fired_tags(count: int):
+    """Wait for ``count`` TimerFired events; answer their tags in the order they came."""
+    tags: tuple[Any, ...] = ()
+    for _ in range(count):
+        event = yield WaitForEvent(TimerFired)
+        tags = (*tags, event.tag)
+    return tags
+
+
+@do
+def same_instant_two():
+    """Arm two deadlines of the same instant (30 ms away) one after the other; answer the order they fire in."""
+    now = yield GetTime()
+    yield ArmTimer("armed-first", now + timedelta(milliseconds=30))
+    yield ArmTimer("armed-second", now + timedelta(milliseconds=30))
+    return (yield fired_tags(2))
+
+
+def test_deadlines_of_the_same_instant_fire_in_arming_order_on_every_clock() -> None:
+    # A queue that ordered same-instant deadlines by anything but arming order (the tag, the dict) could fire
+    # "armed-second" first.
+    assert _on_each_clock(same_instant_two) == {
+        "sim": ("armed-first", "armed-second"),
+        "async": ("armed-first", "armed-second"),
+        "sync": ("armed-first", "armed-second"),
+    }
+
+
+@do
+def earlier_armed_after_later():
+    """Arm a deadline 80 ms away, then one 30 ms away; answer which fires first and the instants relative to now."""
+    now = yield GetTime()
+    yield ArmTimer("later", now + timedelta(milliseconds=80))
+    yield ArmTimer("earlier", now + timedelta(milliseconds=30))
+    first = yield WaitForEvent(TimerFired)
+    at = yield GetTime()
+    return (first.tag, at - now < timedelta(milliseconds=80))
+
+
+def test_an_earlier_deadline_armed_after_a_later_one_fires_at_its_own_instant_on_every_clock() -> (
+    None
+):
+    # A task that kept waiting for the deadline it chose first ("later") would fire "earlier" only at 80 ms,
+    # after "later" or with it.
+    assert _on_each_clock(earlier_armed_after_later) == {
+        "sim": ("earlier", True),
+        "async": ("earlier", True),
+        "sync": ("earlier", True),
+    }
+
+
+def test_disarming_the_earliest_deadline_wakes_the_waiting_task() -> None:
+    # The task waits for "reply" (+5 min). Disarming it must wake the task to wait for "give-up" (+10 min): a task
+    # left waiting would wake at +5 min for nothing — the virtual clock would move to a disarmed deadline. The wake
+    # is the one CompletePromise; the task's one wake promise and its one Spawn are the rest.
+    seen: dict[str, int] = {}
+
+    @do
+    def program():
+        yield ArmTimer("reply", T0 + timedelta(minutes=5))
+        yield ArmTimer("give-up", T0 + timedelta(minutes=10))
+        yield DisarmTimer("reply")
+        return (yield first_timer_and_when())
+
+    fired = run(
+        scheduled(
+            sim_time_handler(start_time=T0)(
+                event_handler()(_counting_scheduler_effects(seen)(timer_handler()(program())))
+            )
+        )
+    )
+    assert fired == (TimerFired("give-up"), T0 + timedelta(minutes=10))
+    assert seen == {"CompletePromise": 1, "CreatePromise": 2, "Spawn": 1}, seen
+
+
+def test_many_deadlines_are_worked_by_one_task() -> None:
+    # A task per deadline (the shape before cisco-c8 15:1x) would spawn 30 tasks and create 30 promises here.
+    seen: dict[str, int] = {}
+
+    @do
+    def program():
+        for lap in range(30):
+            now = yield GetTime()
+            yield ArmTimer(("wake", lap), now + timedelta(minutes=1))
+            _ = yield WaitForEvent(TimerFired)
+        return (yield GetTime())
+
+    ended = run(
+        scheduled(
+            sim_time_handler(start_time=T0)(
+                event_handler()(_counting_scheduler_effects(seen)(timer_handler()(program())))
+            )
+        )
+    )
+    assert ended == T0 + timedelta(minutes=30)
+    assert seen["Spawn"] == 1, seen
+    assert seen.get("CreatePromise", 0) <= 2, seen
