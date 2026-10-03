@@ -1,19 +1,19 @@
 """合図の handler が守る不変条件の検(agora-redesign #3075・設計 #3072)。
 
 各関数は handler の組み立て方(``SignalWorld``)を引数に取り、筋書きを走らせて不変条件を確かめる。memory の
-``subscribed_event_handler`` も、記録の service から合図を受ける handler(agora-redesign #3077)も、同じ関数を自分の
-組み立て方で呼ぶ。pytest が直に集めないよう ``test_`` で始めない名の file に置く。
+``subscribed_event_handler`` も、その内側に記録の service の変化を合図として発する源を置いた組(agora-redesign #3077)も、
+同じ関数を自分の組み立て方で呼ぶ。pytest が直に集めないよう ``test_`` で始めない名の file に置く。
 
 合図は「どこが変わったか」(記録のキー)だけを運び、受け手は記録を読み直して状態を作る。筋書きの記録は
 ``RecordBook``(キー → 版の索引)で表す。時間で待たず、task どうしの順は約束(``CreatePromise``・``Wait``)で決める。
 
-#3077 の handler も呼べるように 3 点広げた(memory の組み立て方の意味は変えない):
+#3077 の組も呼べるように 3 点広げた(memory の組み立て方の意味は変えない):
 
-- 組み立ては Program(``subscribe`` の答え = handler を返す Program)— 記録の service を源にする handler は、購読の始まりの
-  位置を記録から読む(effect)ので、組み立てそのものが effect を出す。memory の組み立て方は ``Pure`` で包むだけ。
+- 組み立ては Program(``subscribe`` の答え = handler を返す Program)— 記録の service の源は、購読の始まりの位置を記録から
+  読む(effect)ので、組み立てそのものが effect を出す。memory の組み立て方は ``Pure`` で包むだけ。
 - 合図 ``Changed`` の欄は ``keys``(変わった所の tuple)で、筋書きのキーをその world の「所」へ写すのは ``SignalWorld.row``
   (memory は写さない — 既定)。記録の service の world では、所は記録の行(表の名前と鍵)になる。
-- (b) の 2 度目の合図は、受け手が 1 度目を受けた後に発する — 記録の service の handler は 1 回の変更の束の中の同じ型の合図を
+- (b) の 2 度目の合図は、受け手が 1 度目を受けた後に発する — 記録の service の源は 1 回の変更の束の中の同じ型の合図を
   1 つにまとめるので、続けて発した 2 つは 1 つの合図になり得る(重複を受け手に 2 度渡す筋書きは、束をまたぐ形で書く)。
 """
 
