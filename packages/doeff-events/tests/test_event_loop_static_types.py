@@ -32,6 +32,36 @@ MODULE = """\
                               (+ count 1))))
 """
 
+# durable の keeper の形(c3-w48 が #3102 で当たった形): state が record・節の本体が (do (<- …) …)・止めの節の本体が do。
+RECORD_MODULE = """\
+(require doeff-hy.macros [defk <-])
+(require doeff-hy.record [defrecord])
+(require doeff-events.macros [event-loop])
+(import dataclasses [dataclass])
+(import doeff_core_effects.effects [slog])
+(import doeff_events [TimerFired])
+
+(defrecord Lap
+  "周回の state(回った数)。"
+  (#^ int passes))
+
+(defk stepped [lap]
+  {:pre [(: lap Lap)] :post [(: % Lap)] :tags {:context "probe" :role "program"}}
+  "1 周回して次の state を返す。"
+  (Lap :passes (+ lap.passes 1)))
+
+(defk keeper []
+  {:pre [] :post [(: % Lap)] :tags {:context "probe" :role "program"}}
+  "期限ごとに 1 周回し、10 周か終わりの期限で抜ける係(record の state・do の本体・do の止めの節)。"
+  (event-loop [lap Lap (Lap :passes 0)]
+    (:stop reason)        (do (<- (slog "止め" :reason reason :passes lap.passes))
+                              lap)
+    (TimerFired :tag tag) (if (= tag "end")
+                              (stop lap)
+                              (do (<- timed Lap (stepped lap))
+                                  (if (> timed.passes 9) (stop timed) timed)))))
+"""
+
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
     # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ。
@@ -62,8 +92,9 @@ def _errors(root: Path) -> list[tuple[str, int, str]]:
 
 
 @needs_pyright
-def test_a_loop_with_a_typed_state_gets_no_type_errors_from_the_expansion(tmp_path: Path) -> None:
-    (tmp_path / "probe.hy").write_text(MODULE, encoding="utf-8")
+@pytest.mark.parametrize("source", [MODULE, RECORD_MODULE], ids=["int-state", "record-state-do-bodies"])
+def test_a_loop_with_a_typed_state_gets_no_type_errors_from_the_expansion(tmp_path: Path, source: str) -> None:
+    (tmp_path / "probe.hy").write_text(source, encoding="utf-8")
     errors = _errors(tmp_path)
     assert not [e for e in errors if e[0] == "hy-compile"], errors
     assert errors == [], errors
