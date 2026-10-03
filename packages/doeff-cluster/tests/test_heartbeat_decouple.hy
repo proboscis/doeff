@@ -176,8 +176,10 @@
   ;; 30 秒で 40 回ほど)。
   (val beats (Counter))
   (val original local.heartbeat)
-  ;; 差し替えは本物の heartbeat と同じ引数(止まり始め stopping を含む — #2819)を受けてそのまま渡す。
-  (.setattr monkeypatch local "heartbeat" (fn [worker boot stopping] (.update beats [worker.name]) (original worker boot stopping)))
+  ;; 差し替えは本物の heartbeat と同じ引数(止まり始め stopping・宿が運ぶ筋 plan と部品 parts を含む — #2819・#3054 の C-6)を受けて
+  ;; そのまま渡す。
+  (.setattr monkeypatch local "heartbeat" (fn [worker boot stopping plan parts] (.update beats [worker.name])
+                                            (original worker boot stopping plan parts)))
   ;; 模擬の時計の下で静かな拍を眠る宿は、静かな拍の heartbeat を仮の拍として列に預ける(#2850)— 列が受けて宿の真実へ写した仮の拍も、
   ;; coordinator に届いた heartbeat として数える。
   (val original-settle local.settle-beats)
