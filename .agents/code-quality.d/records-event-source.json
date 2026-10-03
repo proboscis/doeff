@@ -1,0 +1,31 @@
+{
+  "include": [
+    "packages/doeff-records/src/doeff_records/event_source.hy"
+  ],
+  "module_extensions": {
+    "records-memory": {
+      "allow": [
+        "records-event-source"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "records-values",
+        "records-effects",
+        "records-admission"
+      ],
+      "layer": "effects",
+      "name": "records-event-source",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/event_source.hy"
+      ],
+      "public": [
+        "packages/doeff-records/src/doeff_records/event_source.hy"
+      ],
+      "responsibility": "記録の変化を合図として発する源(records-signal-handler — 記録の置き場の変化の待ちの long-poll と繋ぎ直し)と、源の工場を土台が渡す鍵 SignalSourceFactory(本番の値 RECORDS-SIGNAL-SOURCE)。合図の型と結び SignalTables・ChangedRow(#3077・#3127)",
+      "typed": true
+    }
+  ]
+}

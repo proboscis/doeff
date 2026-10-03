@@ -339,6 +339,20 @@
       records-signal-handler.__doeff_effects__ SOURCE-EFFECTS)
 
 
+(defrecord SignalSourceFactory
+  "源の工場を土台が渡す値(Ask の鍵 — 鍵はこの型そのもの・答えはこの型の値・#3127): make = 結び(SignalTables の tuple)と
+   購読者の名前から、本体を包む関数を作る工場。本番の土台は RECORDS-SIGNAL-SOURCE(記録の置き場の変化の待ちの long-poll —
+   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records.memory の memory-signal-source)を同じ鍵で渡す —
+   組み立ての entry は鍵を問うて (make 結び 購読者) を with-handlers の列に置くだけで、本番と模擬の違いは土台の答えだけになる。"
+  {:tags {:context "records" :role "type"}
+   :check [(callable make)]}
+  (#^ (get Callable #([(get tuple #(SignalTables ...)) str] (get Callable #([object] Program)))) make))
+
+
+;; 本番の土台が鍵 SignalSourceFactory に答える値(記録の置き場の変化の待ちの long-poll で合図を発する源)。
+(val RECORDS-SIGNAL-SOURCE (SignalSourceFactory :make records-signal-handler))
+
+
 (defk records-signal-source [bindings subscriber]
   {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
   "記録の変化を合図として発する源を組み立てるため(組み立ては Program — 外の記録の handler の下で走らせる。使い手が工場

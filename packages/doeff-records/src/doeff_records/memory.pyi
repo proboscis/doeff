@@ -34,6 +34,7 @@ from doeff_records.effects import (
 from doeff_records.faults import SetStoreOutage, StoreFault
 from doeff_records.faults import StoreOperation as StoreOperation
 from doeff_records.store_choice import StoreChoice
+from doeff_records.event_source import ChangedRow, SignalSourceFactory, SignalTables
 from doeff_records.values import (
     Appended,
     Changes,
@@ -180,3 +181,29 @@ def memory_prepared(
     store: MemoryStore, schema: RecordsSchema, prefix: str, host: str
 ) -> Program[Callable[[str], _RecordsHandler], object]: ...
 def memory_store_choice(store: MemoryStore) -> Program[StoreChoice, object]: ...
+
+# --- 模擬の源(memory の置き場の書きで合図を発する — #3127)------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True)
+class MemoryMark:
+    epoch: int
+    sequence: int
+    event: int
+
+@dataclass(frozen=True, kw_only=True)
+class MemorySignals:
+    signals: tuple[object, ...]
+    mark: MemoryMark
+
+MEMORY_SOURCE_EFFECTS: tuple[type, ...]
+
+def memory_mark(store: MemoryStore) -> MemoryMark: ...
+def binding_keys(binding: SignalTables, changes: tuple[object, ...], events: tuple[object, ...]) -> tuple[ChangedRow, ...]: ...
+def memory_signals_since(store: MemoryStore, bindings: tuple[SignalTables, ...], mark: MemoryMark) -> MemorySignals: ...
+def memory_publish(
+    store: MemoryStore, bindings: tuple[SignalTables, ...], tables: tuple[str, ...], streams: tuple[str, ...], mark: MemoryMark
+) -> Program[None, object]: ...
+def run_memory_source[T](
+    store: MemoryStore, bindings: tuple[SignalTables, ...], subscriber: str, body: Program[T, object]
+) -> Program[T, object]: ...
+def memory_signal_handler(store: MemoryStore, bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]: ...
+def memory_signal_source(store: MemoryStore) -> Program[SignalSourceFactory, object]: ...
