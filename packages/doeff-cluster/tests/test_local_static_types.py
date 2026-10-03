@@ -200,5 +200,11 @@ def test_the_stub_declares_every_name_other_modules_use() -> None:
         "note_watch",
         "SIM_START_MS",
         "SIM_URL",
+        "SimDeadlockError",
+        "SimDeadlock",
+        "WaitSnapshot",
+        "LiveProcess",
+        "BusinessWait",
+        "deadlock_of",
     }
     assert sorted(used - declared) == []
