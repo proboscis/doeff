@@ -26,7 +26,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store DEFAULT-POLL-SECONDS])
+(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
@@ -97,8 +97,8 @@
 
 
 (defn records-handler-for [store]
-  "書き手の名 → その書き手の PostgreSQL の置き場の handler(検の値の機体の名と読み直しの間隔で)。"
-  (fn [writer] (pg-records-handler store writer ORIGIN-HOST DEFAULT-POLL-SECONDS)))
+  "書き手の名 → その書き手の PostgreSQL の置き場の handler(検の値の機体の名で)。"
+  (fn [writer] (pg-records-handler store writer ORIGIN-HOST)))
 
 
 (defn harness-of [wrap]

@@ -23,7 +23,7 @@
 (import doeff_records.values [ExpectAbsent Written])
 (import doeff_records.effects [PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables DEFAULT-POLL-SECONDS])
+(import doeff_records.pg [pg-records-handler drop-records-tables])
 (import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records.main [store-pressure-pg])
@@ -145,7 +145,7 @@
   (val answers [])
   (defn write []  ; defk にできない: thread の target
     (.append answers (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)
-                                                     (pg-records-handler store MAKER ORIGIN-HOST DEFAULT-POLL-SECONDS)]
+                                                     (pg-records-handler store MAKER ORIGIN-HOST)]
                                                     (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))))))
   (try
     (.execute old "BEGIN")

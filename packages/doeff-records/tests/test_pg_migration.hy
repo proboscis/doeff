@@ -13,7 +13,7 @@
 (import doeff_records.values [Missing])
 (import doeff_records.effects [ReadRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store RecordsSqlFailed DEFAULT-POLL-SECONDS])
+(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store RecordsSqlFailed])
 (import doeff_records.pg_sql [schema-statements])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
@@ -89,7 +89,7 @@
   (defn request []  ; defk にできない: thread の target
     (.wait start)
     (.append answers (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) counting
-                                                     (pg-records-handler store MAKER ORIGIN-HOST DEFAULT-POLL-SECONDS)]
+                                                     (pg-records-handler store MAKER ORIGIN-HOST)]
                                                     (ReadRow "parts" #("p1")))))))
   (try
     (val threads (lfor _ (range RACERS) (threading.Thread :target request)))
