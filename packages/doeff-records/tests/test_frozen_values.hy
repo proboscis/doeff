@@ -1,6 +1,7 @@
 ;; 行の値・書きの差分・出来事の本文は、作った後に変えられない(凍らせた写像)— 反例: 呼び手が答えの dict を書き換えると
 ;; 置き場の行まで変わる・effect を作った後に元の dict を書き換えると撃つ書きが変わる。
 (require doeff-hy.macros [deftest <-])
+(import copy)
 (import doeff_hy.frozen [FrozenMap thaw-json])
 (import doeff_records.values [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField])
 (import doeff_records.effects [PutRow ListRows AppendEvent ReadRow RowWrite])
@@ -59,3 +60,18 @@
   (assert (refuses? (fn [] (setv (get written.value "label") "tampered")) TypeError))
   (<- again (harness.as-writer MAKER (ReadRow "parts" #("p1"))))
   (assert (= (get again.value "label") "a")))
+
+
+(deftest test-a-row-is-shared-by-deepcopy-and-a-row-with-a-non-text-key-is-copied
+  ;; 行の値は作る時に深く凍り、鍵が文字列と整数だけなら行は中まで変えられない — 置き場を丸ごと写す使い手は行を作り直さない(#2670)。
+  ;; 失敗ケース: 鍵に書き換えられる値を持つ行まで共有すると、写しの鍵を書き換えた時に元へ届く — そういう行は鍵を深く写す。
+  (setv row (Row #("a" 1) {"id" "a" "n" [1 2]} 3))
+  (assert (is (copy.deepcopy row) row))
+  (assert (is (. (copy.deepcopy {"r" row}) ["r"]) row))
+  (setv inner ["k"]
+        odd (Row #(inner) {"id" "x"} 1)
+        copied (copy.deepcopy odd))
+  (assert (is-not copied odd))
+  (assert (= copied odd))
+  (assert (is-not (get copied.key 0) inner))
+  (assert (is copied.value odd.value)))
