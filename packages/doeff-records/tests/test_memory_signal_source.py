@@ -20,13 +20,13 @@ from functools import partial
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
-from doeff_core_effects.effects import Ask
+from doeff_core_effects.handlers import reader
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handler, timer_handler
 from doeff_events.effects import WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
-from doeff_records.event_source import RECORDS_SIGNAL_SOURCE, SignalSourceFactory, SignalTables, records_signal_handler
+from doeff_records.event_source import RECORDS_SIGNAL_SOURCE, ReadSignalSource, SignalSourceFactory, SignalTables, records_signal_handler
 from doeff_records.memory import MemoryStore, memory_records_handler, memory_signal_handler, memory_signal_source
 from doeff_records.http_client import RecordsEndpoint, http_records_handler
 from doeff_records.values import ExpectAny, WrittenRows
@@ -219,18 +219,18 @@ def test_the_factory_key_names_the_production_and_the_memory_sources() -> None:
     assert memory.make.func is memory_signal_handler and memory.make.args == (store,), memory.make
 
 
-# --- 鍵 SignalSourceFactory に答えるのは、その組で記録に答えている handler 自身(#3127)---------------------------------------
+# --- 源の工場の問い ReadSignalSource に答えるのは、その組で記録に答えている handler 自身(#3127)---------------------------
 
 
 @do
 def _asked_factory() -> EffectGenerator[object]:
-    """鍵を問うて答えを返す(組み立ての entry と同じ問い方)。"""
-    source = yield Ask(SignalSourceFactory)
+    """源の工場を問うて答えを返す(組み立ての entry と同じ問い方)。"""
+    source = yield ReadSignalSource()
     return source
 
 
-def test_the_memory_records_handler_answers_the_key_with_a_source_on_its_own_store() -> None:
-    """memory の記録の handler は、鍵に自分の置き場を閉じた模擬の源で答える(源が別の置き場に結ばれない)。"""
+def test_the_memory_records_handler_answers_with_a_source_on_its_own_store() -> None:
+    """memory の記録の handler は、自分の置き場を閉じた模擬の源で答える(外に別の置き場の handler が在っても内側の置き場 — 源が別の置き場に結ばれない)。"""
     store = MemoryStore(SCHEMA)
     other = MemoryStore(SCHEMA)
     source = run(with_handlers([memory_records_handler(other, WRITER), memory_records_handler(store, WRITER)], _asked_factory()))
@@ -238,50 +238,36 @@ def test_the_memory_records_handler_answers_the_key_with_a_source_on_its_own_sto
     assert source.make.func is memory_signal_handler and source.make.args == (store,), source.make
 
 
-def test_the_http_records_handler_answers_the_key_with_the_production_source() -> None:
-    """記録の HTTP の client は、鍵に本番の源 RECORDS_SIGNAL_SOURCE で答える(問いでは service を呼ばない)。"""
+def test_the_http_records_handler_answers_with_the_production_source() -> None:
+    """記録の HTTP の client は本番の源 RECORDS_SIGNAL_SOURCE で答える(問いでは service を呼ばない)。"""
     source = run(with_handlers([http_records_handler(RecordsEndpoint("http://records.invalid"))], _asked_factory()))
     assert source is RECORDS_SIGNAL_SOURCE, source
 
 
 @dataclass(frozen=True)
 class OtherKey:
-    """記録の handler が答えない鍵(外の答え手へ流れることを確かめる)。"""
+    """組の内側の設定の読み手が持つ鍵(源の工場の問いとは別の物)。"""
 
 
-@do
-def _other_answer(effect: EffectBase, k: K) -> EffectGenerator[object]:
-    """外の答え手: 鍵 OtherKey にだけ答える。"""
-    if isinstance(effect, Ask) and effect.key is OtherKey:
-        return (yield Resume(k, "外の答え"))
-    yield Pass(effect, k)
-
-
-@do
-def _asked_other() -> EffectGenerator[object]:
-    """記録の handler が答えない鍵を問う。"""
-    value = yield Ask(OtherKey)
-    return value
-
-
-def test_the_records_handlers_pass_other_keys_outward() -> None:
-    """記録の handler は鍵 SignalSourceFactory にだけ答え、他の鍵の Ask は外の答え手へ流す。"""
+def test_an_inner_settings_reader_does_not_swallow_the_question() -> None:
+    """組の内側に設定の読み手(決まった鍵だけを持ち、知らない鍵の Ask は断る reader)が居ても、源の工場の問いは記録の handler に届く
+    (記録の effect なので設定の読み手は触らない — Ask の鍵にすると、ここで断られた: 画面の模擬の土台で 124 本赤)。"""
     store = MemoryStore(SCHEMA)
-    assert run(with_handlers([_other_answer, memory_records_handler(store, WRITER)], _asked_other())) == "外の答え"
-    assert run(with_handlers([_other_answer, http_records_handler(RecordsEndpoint("http://records.invalid"))], _asked_other())) == "外の答え"
+    source = run(with_handlers([memory_records_handler(store, WRITER), reader({OtherKey: "設定"})], _asked_factory()))
+    assert isinstance(source, SignalSourceFactory) and source.make.args == (store,), source
 
 
 @do
 def _entry_shaped(bindings: tuple[SignalTables, ...]) -> EffectGenerator[object]:
-    """組み立ての entry の形: 鍵を問うて工場を得て、購読者の列 → 期限 → 源 を被せた本体で書きの合図を受ける。"""
-    source: SignalSourceFactory = yield Ask(SignalSourceFactory)
+    """組み立ての entry の形: 源の工場を問うて、購読者の列 → 期限 → 源 を被せた本体で書きの合図を受ける。"""
+    source: SignalSourceFactory = yield ReadSignalSource()
     layer = (subscribed_event_handler(EventBus(), SUBSCRIBER, (Changed, TimerFired)), timer_handler(), source.make(bindings, SUBSCRIBER))
     signal = yield _stacked(layer, _write_then_receive())
     return signal
 
 
-def test_an_entry_that_asks_the_key_gets_signals_from_the_store_its_records_handler_serves() -> None:
-    """entry が鍵を問うだけで、その組の記録の handler の置き場の書きの合図を受ける(本番と模擬の違いは記録の handler の差し替えだけ)。"""
+def test_an_entry_that_asks_gets_signals_from_the_store_its_records_handler_serves() -> None:
+    """entry が問うだけで、その組の記録の handler の置き場の書きの合図を受ける(本番と模擬の違いは記録の handler の差し替えだけ)。"""
     store = MemoryStore(SCHEMA)
     signal = _run_on(store, _entry_shaped(CHANGED_ON_JOBS_AND_LANES))
     assert isinstance(signal, Changed), signal

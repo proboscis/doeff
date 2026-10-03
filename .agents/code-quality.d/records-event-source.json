@@ -12,6 +12,11 @@
       "allow": [
         "records-event-source"
       ]
+    },
+    "records-pg": {
+      "allow": [
+        "records-event-source"
+      ]
     }
   },
   "modules": [
