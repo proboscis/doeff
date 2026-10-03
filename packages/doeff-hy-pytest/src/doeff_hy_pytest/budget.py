@@ -16,6 +16,10 @@
   agora-redesign #2670)。在れば実行は歩数で判じ、CPU 秒は測って報告に出すだけ。登録簿は秒の時と同じ dir(載った行は歩数で判じる)。
   doeff-vm に数の口が無い build・印ごとの秒の上限に当たる検(本物の I/O)は、今までどおり CPU 秒で判じる。歩数が 0 の検
   (VM を回さず木を読むだけの検)は上限の内。
+  歩数で判じる Hy の検は、call の間だけ doeff の scheduler に歩の上限(この値 × ``RUNAWAY_STEPS_MULTIPLIER``)を入れる
+  (#3143)。同じ仮想の刻で task を起こし続ける空回りは走り終わらないので、走り終えた後の判定には届かない — 上限を越えて
+  task を起こそうとした時に scheduler が ``StepBudgetExceeded`` を上げ、その検はその場で赤になる。設定が無い repo・
+  scheduler に口の無い版では入れない(今までどおり)。
 
 上限の 3 つ(実行・印ごとの実行・収集)がどれも無ければ何もしない。設計の決め:
 
@@ -78,6 +82,10 @@ CALL_STEPS_INI = "doeff_test_call_budget_steps"
 # 根 = vg-w43 の 65 本の測り(#2853 issuecomment-5952699812)の歩数 ÷ CPU 秒の中央値 95,574 歩/秒 × 1.0 秒を丸めた値。
 # 上限は上げない決め(#2670 issuecomment-5963008183)なので、静かな機体の比(より大きい)ではなく、この比を採る。
 DEFAULT_CALL_BUDGET_STEPS = 100_000
+# 走っている最中の歩の上限の倍率(#3143)— 歩数の上限 × この値を越えた検を、走り終わるのを待たずに doeff の scheduler が
+# 名指しの例外で落とす(同じ仮想の刻での空回りは走り終わらず、1 検 60 秒の上限も VM の歩の loop を止められないため)。
+# 走り終えた後の歩数の判定(上限そのもの)と分けるため大きく取る。設定の口は足さない(1 つの定数)。
+RUNAWAY_STEPS_MULTIPLIER = 10
 # 判定の単位(上限・登録・文の書き方が分かれる)。
 Unit = Literal["seconds", "steps"]
 
@@ -171,6 +179,38 @@ def read_work_source() -> WorkSource:
     return WorkReader(reader)
 
 
+@dataclass(frozen=True)
+class SchedulerStepGuard:
+    """doeff の scheduler の歩の上限の口(``doeff_core_effects.scheduler`` の ``arm_step_budget`` /
+    ``disarm_step_budget`` — #3143)。入れている間、上限を越えて task を起こそうとした走行は ``StepBudgetExceeded`` で落ちる。"""
+
+    arm: Callable[[int], object]
+    disarm: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class NoSchedulerStepGuard:
+    """scheduler に歩の上限の口が無い(理由つき — import できない・口より前の版)。走っている最中の上限は入れない。"""
+
+    reason: str
+
+
+StepGuard = SchedulerStepGuard | NoSchedulerStepGuard
+
+
+def read_step_guard() -> StepGuard:
+    """scheduler の歩の上限の口を session の始めに 1 回探す(この plugin は doeff に依らないので、無ければ入れないだけ)。"""
+    try:
+        import doeff_core_effects.scheduler as scheduler
+    except ImportError as exc:
+        return NoSchedulerStepGuard(f"doeff_core_effects.scheduler を import できない: {exc}")
+    arm = getattr(scheduler, "arm_step_budget", None)
+    disarm = getattr(scheduler, "disarm_step_budget", None)
+    if arm is None or disarm is None:
+        return NoSchedulerStepGuard("doeff_core_effects.scheduler に arm_step_budget が無い(歩の上限の口より前の版)")
+    return SchedulerStepGuard(arm, disarm)
+
+
 def vm_build_line(build: VmBuild) -> str:
     """終わりの要約の見出しに出す build の種類の 1 行。"""
     match build:
@@ -199,11 +239,21 @@ class Budgets:
     vm_build: VmBuild
     call_steps: int | None = None
     work_source: WorkSource = NoWorkReader("測っていない")
+    step_guard: StepGuard = NoSchedulerStepGuard("探していない")
 
     @property
     def judges_steps(self) -> bool:
         """実行を歩数で判じるか — 歩数の上限があり、数の口がある時だけ(口が無ければ秒で判じる)。"""
         return self.call_steps is not None and isinstance(self.work_source, WorkReader)
+
+    def runaway_steps_for(self, markers: Sequence[str]) -> int | None:
+        """その検の call の間に scheduler へ入れる歩の上限(#3143)— 歩数で判じる検だけ、歩数の上限 × 倍率。
+        印ごとの秒の上限に当たる検(本物の I/O)は秒で判じるので入れない。"""
+        if not self.judges_steps or self.call_steps is None:
+            return None
+        if any(name in self.call_seconds_by_marker for name in markers):
+            return None
+        return self.call_steps * RUNAWAY_STEPS_MULTIPLIER
 
     @property
     def fails_over_budget(self) -> bool:
@@ -718,6 +768,7 @@ def pytest_configure(config: pytest.Config) -> None:
         read_vm_build(),
         call_steps=call_steps,
         work_source=read_work_source(),
+        step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("歩数の上限の設定が無い"),
     )
     budgets = config.stash[_BUDGETS_KEY]
     if budgets.call_steps is not None and isinstance(budgets.work_source, NoWorkReader):
@@ -807,18 +858,30 @@ def pytest_doeff_import_hy_module(
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
-    """call の段階の CPU 秒と変換を測って item に置く(判定は makereport)。"""
+    """call の段階の CPU 秒と変換を測って item に置く(判定は makereport)。歩数で判じる Hy の検は、call の間だけ
+    scheduler に歩の上限(歩数の上限 × 倍率)を入れ、走り終わらない空回りを走っている最中に落とす(#3143)。"""
     counter = item.config.stash.get(_COUNTER_KEY, None)
     if counter is None:
         return (yield)
-    source = item.config.stash[_BUDGETS_KEY].work_source
+    budgets = item.config.stash[_BUDGETS_KEY]
+    source = budgets.work_source
+    guard = budgets.step_guard
+    runaway_steps = (
+        budgets.runaway_steps_for([marker.name for marker in item.iter_markers()])
+        if item.path.suffix == ".hy" and isinstance(guard, SchedulerStepGuard)
+        else None
+    )
     work_before = source.tally() if isinstance(source, WorkReader) else None
     compile_before = counter.tally()
     imports_before = counter.import_tally()
     cpu_started = time.process_time()
+    if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
+        guard.arm(runaway_steps)
     try:
         return (yield)
     finally:
+        if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
+            guard.disarm()
         cpu_seconds = time.process_time() - cpu_started
         work = source.tally().since(work_before) if isinstance(source, WorkReader) and work_before is not None else None
         item.stash[_CALL_MEASURED_KEY] = CallMeasured(

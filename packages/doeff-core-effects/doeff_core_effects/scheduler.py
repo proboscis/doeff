@@ -30,6 +30,7 @@ import time
 import warnings
 import weakref
 from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar
 
 from doeff_vm import Callable as _VmCallable
@@ -303,6 +304,101 @@ class SchedulerDeadlockError(RuntimeError):
                 f"{'; '.join(self.parked_waiters)}"
             )
         super().__init__("scheduler deadlock: " + "; ".join(parts))
+
+
+class StepBudgetExceeded(BaseException):
+    """Raised by the Python scheduler when an armed step budget is spent (#3143).
+
+    A run that keeps waking tasks without the virtual clock advancing (a
+    busy loop at one instant) never ends on its own and a wall-clock timeout
+    cannot interrupt the VM's step loop. With a budget armed
+    (``arm_step_budget``), the scheduler fails the run by name, while it is
+    still running, at the first wake after the budget is spent.
+
+    A ``BaseException`` (like ``KeyboardInterrupt``), not an ``Exception``:
+    ``Try`` reinstalls the scheduler's handlers around its program and
+    catches ``Exception``, so an ``Exception`` raised here would come back to
+    the spinning task as ``Err`` and the spin would go on. ``task_id`` is the
+    task about to wake (None = the root body). The scheduler does not read
+    the virtual clock, so the error does not name the last instant it moved.
+    """
+
+    def __init__(self, task_id: int | None, steps_taken: int, limit_steps: int) -> None:
+        self.task_id = task_id
+        self.steps_taken = steps_taken
+        self.limit_steps = limit_steps
+        target = "the root body" if task_id is None else f"task {task_id}"
+        super().__init__(
+            f"step budget exceeded: {steps_taken} doeff-vm steps since the budget was armed, "
+            f"limit {limit_steps} (while waking {target})"
+        )
+
+
+def _read_vm_steps() -> int:
+    """The doeff-vm steps taken so far by the whole process (a running total)."""
+    from doeff_vm.doeff_vm import vm_work_counts
+
+    steps, _handler_calls = vm_work_counts()
+    return steps
+
+
+@dataclass(frozen=True)
+class StepBudget:
+    """An armed step budget: the process step total when armed and the steps allowed after it."""
+
+    started_at_steps: int
+    limit_steps: int
+
+
+@dataclass(frozen=True)
+class SpentStepBudget:
+    """A step budget already spent: the error the first wake past the limit raised.
+
+    Every later wake raises the same error, so the run reports the first wake
+    past the limit even when unwinding the run wakes tasks again.
+    """
+
+    budget: StepBudget
+    error: StepBudgetExceeded
+
+
+ProcessStepBudget = StepBudget | SpentStepBudget
+
+# The one step budget of the process (#3143). None (the default) means the
+# scheduler never reads the step count: production runs are unchanged. Only
+# the Python scheduler checks it.
+_armed_step_budget: ProcessStepBudget | None = None
+
+
+def _check_step_budget(armed: ProcessStepBudget, task_id: int | None) -> None:
+    """Raise ``StepBudgetExceeded`` when the armed budget is spent (``task_id`` = the task about to wake)."""
+    global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
+    match armed:
+        case SpentStepBudget(error=error):
+            raise error
+        case StepBudget(started_at_steps=started_at_steps, limit_steps=limit_steps):
+            steps_taken = _read_vm_steps() - started_at_steps
+            if steps_taken > limit_steps:
+                error = StepBudgetExceeded(task_id, steps_taken, limit_steps)
+                _armed_step_budget = SpentStepBudget(armed, error)
+                raise error
+
+
+def arm_step_budget(limit_steps: int) -> StepBudget:
+    """Arm the process step budget: the scheduler fails a run that takes more than
+    ``limit_steps`` doeff-vm steps from now (``StepBudgetExceeded``)."""
+    global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
+    if limit_steps <= 0:
+        raise ValueError(f"step budget must be a positive number of steps, got {limit_steps}")
+    budget = StepBudget(started_at_steps=_read_vm_steps(), limit_steps=limit_steps)
+    _armed_step_budget = budget
+    return budget
+
+
+def disarm_step_budget() -> None:
+    """Remove the process step budget; the scheduler stops reading the step count."""
+    global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
+    _armed_step_budget = None
 
 
 class Race(EffectBase[_T], Generic[_T]):
@@ -1409,6 +1505,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 while ready:
                     heap_item = heapq.heappop(ready)
                     entry = heap_item[2]
+                    armed_step_budget = _armed_step_budget
+                    if armed_step_budget is not None:
+                        # Only when a budget is armed (#3143): the default
+                        # never reads the step count.
+                        _check_step_budget(armed_step_budget, entry[1])
                     if (
                         shield_deferred
                         and entry[0] != "wait_external"
