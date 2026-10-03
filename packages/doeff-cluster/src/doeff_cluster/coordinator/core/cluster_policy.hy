@@ -1020,6 +1020,31 @@
              id)))
 
 
+;; --- 静かな区間の次の期限(#3060) -------------------------------------------------------------------------------------------
+;; 模擬の時計の下の coordinator が、静かな区間をどの刻まで本番の判断で試さずに進めてよいかを知るための関数(idle_policy.quiet-due が集める)。
+;; どれも「状態がこのまま変わらない間に、その判断の答えが変わり得る最初の刻(epoch ms・now より後)」を返し、None = 状態がこのままなら
+;; その判断は何もしない。今は行の有無だけを見る(行が在れば (+ now 1) = 次の拍で試す — 今までの 1 秒ごとの試しと同じ)。行が在る時の
+;; 刻を、判断が比べに使う期限の値から求めるのは liveness-due = #3061・task-due = #3062・sweep-due = #3063。
+
+(defk liveness-due [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定)が、状態がこのままで答えを変え得る最初の刻を知るため。"
+  (if (or state.workers state.silent) (+ now 1) None))
+
+
+(defk task-due [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "task の判断(place-tasks の lease の切れ・置き直し・切り離した task)が、状態がこのままで答えを変え得る最初の刻を知るため。"
+  (if state.tasks (+ now 1) None))
+
+
+(defk sweep-due [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "掃除の判断(盤の行・drain・温める表・途絶しても動かす印・詰めた Program・環境の冷えた起動の覚え)が、状態がこのままで答えを変え得る
+   最初の刻を知るため。"
+  (if (or state.board state.drains state.warms state.keep-marks state.programs state.env-cold-starts) (+ now 1) None))
+
+
 (defk reconcile [now given timing]
   {:pre [(: now int) (: given ClusterState) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "1 拍の調停: 期限を過ぎた物(盤の行・drain・温める表の行・沈黙した worker・消えた Worker への約束)を掃いてから、job と task の
