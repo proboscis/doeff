@@ -188,7 +188,6 @@ class MemoryMark:
     epoch: int
     sequence: int
     event: int
-    outage: SetStoreOutage | None
 
 @dataclass(frozen=True, kw_only=True)
 class MemorySignals:

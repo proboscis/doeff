@@ -29,9 +29,6 @@
 ;;;              末尾の番号の 10 進の綴り — 受け手は自分の位置から ReadEvents で読み直す)。EventsQuiet なら待ち直すだけ。
 ;;;   Unreachable = 源の task の中で繋ぎ直す(RECONNECT-TRIES 回まで、RECONNECT-SECONDS 秒ずつ間を置いて撃ち直す)。直らなければ
 ;;;                 SignalSourceUnreachable で process を落とす(外の再起動が拾う)。業務の Program には Unreachable を見せない。
-;;;                 届いていた置き場が届かなくなった変わり目(待ちの読みの最初の Unreachable)では、その待ちに結んだ型ごとに keys の空な
-;;;                 合図(読み直し)を 1 度だけ発する — 届かない間は書きが無く合図が来ないので、本体は読み直して不達を自分で見る(#3100)。
-;;;                 撃ち直しの Unreachable では発さず、戻った時も発さない(戻りは本体の読み直しの期限が拾う)。
 ;;; 待ちの上限と繋ぎ直しの間は、記録の service との境界にあるこの源の中だけの待ち(業務の Program に時間の待ちを出さない)。
 ;;; 1 つの購読者の列(bus)に源を 1 つ置く形が前提 — 同じ bus に同じ表を見る源を 2 つ置くと、同じ変化の合図が 2 度届く(冪等なので壊れない)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
@@ -130,13 +127,12 @@
   (tuple (gfor #(index name) (enumerate names) :if (not-in name (cut names index)) name)))
 
 
-(defk reconnected [ask subscriber names answered]
-  {:pre [(: ask (| ListRows WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))
-         (: answered (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty Unreachable))]
+(defk reachable [ask subscriber names]
+  {:pre [(: ask (| ListRows WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))]
    :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
-  "記録の置き場への読み ask の最初の答え answered が Unreachable の間は、RECONNECT-SECONDS 秒ずつ間を置いて RECONNECT-TRIES 回(最初の
-   1 回を含む)まで撃ち直すため(繋ぎ直し)。直らなければ、購読者の名前・表か列の名前・撃った回数・最後の detail を名指した
-   SignalSourceUnreachable で落ちる。"
+  "記録の置き場への読み ask を撃ち、答えが Unreachable の間は RECONNECT-SECONDS 秒ずつ間を置いて RECONNECT-TRIES 回まで撃ち直すため
+   (繋ぎ直し)。直らなければ、購読者の名前・表か列の名前・撃った回数・最後の detail を名指した SignalSourceUnreachable で落ちる。"
+  (<- answered ask)
   (var answer answered)
   (var tries 1)
   (while (and (isinstance answer Unreachable) (< tries RECONNECT-TRIES))
@@ -147,30 +143,6 @@
   (when (isinstance answer Unreachable)
     (raise (SignalSourceUnreachable (.format "購読者 {!r} の合図の源(記録の {})に {} 回撃っても届かない: {}"
                                              subscriber (.join ", " names) tries answer.detail))))
-  answer)
-
-
-(defk reachable [ask subscriber names]
-  {:pre [(: ask (| ListRows WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))]
-   :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
-  "記録の置き場への読み ask を撃ち、答えが Unreachable なら繋ぎ直すため(reconnected)。"
-  (<- answered ask)
-  (<- answer (reconnected ask subscriber names answered))
-  answer)
-
-
-(defk watched [ask subscriber names signals]
-  {:pre [(: ask (| WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))
-         (: signals (get tuple #(type ...)))]
-   :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
-  "源の task の待ちの読み ask を撃ち、答えが Unreachable なら繋ぎ直すため。最初の答えが Unreachable なら(届いていた置き場が届かなく
-   なった変わり目 — 源の task は、前の読みが届いた後にしか次の読みを撃たない)、繋ぎ直す前に、その待ちに結んだ合図の型 signals ごとに
-   keys の空な合図(読み直し)を 1 度だけ Publish する(#3100)。撃ち直しの間の Unreachable では発さない。"
-  (<- answered ask)
-  (when (isinstance answered Unreachable)
-    (for [signal signals]
-      (<- (Publish (signal :keys #())))))
-  (<- answer (reconnected ask subscriber names answered))
   answer)
 
 
@@ -223,13 +195,11 @@
 
 (defk publish-changes [plan]
   {:pre [(: plan SourcePlan)] :post [(: % None)]}
-  "表の分の源の task: 位置から WatchChanges を出し(届かなければ繋ぎ直す — 届かなくなった変わり目では表に結んだ型ごとに読み直しの合図を
-   1 度発する)、変更の束を合図にして Publish し、位置を進めて繰り返す。
+  "表の分の源の task: 位置から WatchChanges を出し(届かなければ繋ぎ直す)、変更の束を合図にして Publish し、位置を進めて繰り返す。
    Reset なら位置を WatchCursor(epoch floor) へ戻す(次の回で残っている変更を頭から合図にする)。止めるのは Cancel だけ。"
-  (val table-signals (tuple (gfor binding plan.bindings :if binding.tables binding.signal)))
   (var cursor plan.cursor)
   (while True
-    (<- answer (watched (WatchChanges plan.tables cursor :timeout WATCH-SECONDS) plan.subscriber plan.tables table-signals))
+    (<- answer (reachable (WatchChanges plan.tables cursor :timeout WATCH-SECONDS) plan.subscriber plan.tables))
     (match answer
       (Changes :items items :cursor moved)
         (do (<- signals (signals-of plan.bindings items))
@@ -244,14 +214,13 @@
 
 (defk publish-appends [plan start]
   {:pre [(: plan SourcePlan) (: start StreamStart)] :post [(: % None)]}
-  "列 1 つの源の task: 列の頭が after より進むのを WatchEvents で待ち(届かなければ繋ぎ直す — 届かなくなった変わり目では列に結んだ型ごとに
-   読み直しの合図を 1 度発する)、進んだら末尾を ReadStreamEnd で読んで、
+  "列 1 つの源の task: 列の頭が after より進むのを WatchEvents で待ち(届かなければ繋ぎ直す)、進んだら末尾を ReadStreamEnd で読んで、
    列に結んだ型ごとに合図を 1 つ Publish し、after を末尾へ進めて繰り返す。静か(EventsQuiet)なら待ち直す。止めるのは Cancel だけ。"
   (var after start.after)
   (while True
-    (<- moved (watched (WatchEvents start.stream :after after :timeout WATCH-SECONDS) plan.subscriber #(start.stream) start.signals))
+    (<- moved (reachable (WatchEvents start.stream :after after :timeout WATCH-SECONDS) plan.subscriber #(start.stream)))
     (when (isinstance moved EventsMoved)
-      (<- end (watched (ReadStreamEnd start.stream) plan.subscriber #(start.stream) start.signals))
+      (<- end (reachable (ReadStreamEnd start.stream) plan.subscriber #(start.stream)))
       ;; 頭が進んだ後に保持の期限で列が空になったら(StreamEmpty)、合図にする出来事が無い — 待ち直す。
       (when (isinstance end StreamEnd)
         (for [signal start.signals]
