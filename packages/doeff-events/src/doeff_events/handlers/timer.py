@@ -5,7 +5,10 @@ the same timer handler runs on every clock — ``sim_time_handler`` puts the dea
 queue (when every task waits, the clock moves to the next deadline in one step, however far it is), and the
 wall-clock handlers sleep or start a timer. ``DisarmTimer`` completes the ``disarm`` promise: the wait ends
 before its deadline, which the clock handler withdraws (the virtual clock never moves to it), and nothing is
-published. When the deadline passes first, the task publishes ``TimerFired(tag)``.
+published. When the deadline passes first, the task publishes ``TimerFired(tag)``. Re-arming a tag with the
+deadline it already has keeps its waiting task: a worker that re-arms its deadlines after every pass pays no
+new task for the ones that did not move (agora-redesign #3054 C). Disarming a tag that is not armed completes
+nothing and costs the same VM steps as an ``ArmedTimers`` query.
 
 Install it inside the event handler and the clock handler (the timer task's ``Publish`` / ``WaitWithin`` /
 ``GetTime`` go to the handlers outside this one), inside ``scheduled``.
@@ -74,7 +77,13 @@ def timer_handler() -> ProgramHandler:
         # Every clause performs its final Transfer/Pass from THIS frame (ADR-DOE-CORE-EFFECTS-002);
         # the sub-programs above complete before it.
         if isinstance(effect, ArmTimerEffect):
-            _ = yield disarm_tag(effect.tag)
+            current = armed.get(effect.tag)
+            if current is not None and current.at == effect.at:
+                # The same deadline is already armed: keep its waiting task (a worker that re-arms its deadlines
+                # after every pass must not spawn a task per pass — agora-redesign #3054 C / cisco-c8 14:2x (c)).
+                return (yield Transfer(k, None))
+            if current is not None:
+                _ = yield disarm_tag(effect.tag)
             now = yield GetTime()
             disarm = yield CreatePromise()
             arming = _Arming(disarm=disarm, at=effect.at)
