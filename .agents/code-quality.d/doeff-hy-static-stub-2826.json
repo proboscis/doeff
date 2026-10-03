@@ -1,6 +1,7 @@
 {
   "include": [
     "packages/doeff-hy/src/doeff_hy/static_stub.py",
+    "packages/doeff-hy/src/doeff_hy/static_types.pyi",
     "packages/doeff-hy/tests/test_static_stub.py"
   ],
   "module_extensions": {
