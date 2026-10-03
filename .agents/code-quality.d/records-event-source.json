@@ -3,6 +3,11 @@
     "packages/doeff-records/src/doeff_records/event_source.hy"
   ],
   "module_extensions": {
+    "records-http-client": {
+      "allow": [
+        "records-event-source"
+      ]
+    },
     "records-memory": {
       "allow": [
         "records-event-source"

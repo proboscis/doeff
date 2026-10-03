@@ -20,6 +20,7 @@ from functools import partial
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
+from doeff_core_effects.effects import Ask
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handler, timer_handler
 from doeff_events.effects import WaitForEvent
@@ -27,6 +28,7 @@ from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
 from doeff_records.event_source import RECORDS_SIGNAL_SOURCE, SignalSourceFactory, SignalTables, records_signal_handler
 from doeff_records.memory import MemoryStore, memory_records_handler, memory_signal_handler, memory_signal_source
+from doeff_records.http_client import RecordsEndpoint, http_records_handler
 from doeff_records.values import ExpectAny, WrittenRows
 from doeff_time import Delay, DelayEffect, GetTime
 from tests.test_event_source import (
@@ -40,7 +42,7 @@ from tests.test_event_source import (
     _write,
 )
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, do, run, with_handlers
+from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, run, with_handlers
 from doeff.program import ProgramHandler
 
 # 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。
@@ -215,3 +217,72 @@ def test_the_factory_key_names_the_production_and_the_memory_sources() -> None:
     memory = run(memory_signal_source(store))
     assert isinstance(memory, SignalSourceFactory)
     assert memory.make.func is memory_signal_handler and memory.make.args == (store,), memory.make
+
+
+# --- 鍵 SignalSourceFactory に答えるのは、その組で記録に答えている handler 自身(#3127)---------------------------------------
+
+
+@do
+def _asked_factory() -> EffectGenerator[object]:
+    """鍵を問うて答えを返す(組み立ての entry と同じ問い方)。"""
+    source = yield Ask(SignalSourceFactory)
+    return source
+
+
+def test_the_memory_records_handler_answers_the_key_with_a_source_on_its_own_store() -> None:
+    """memory の記録の handler は、鍵に自分の置き場を閉じた模擬の源で答える(源が別の置き場に結ばれない)。"""
+    store = MemoryStore(SCHEMA)
+    other = MemoryStore(SCHEMA)
+    source = run(with_handlers([memory_records_handler(other, WRITER), memory_records_handler(store, WRITER)], _asked_factory()))
+    assert isinstance(source, SignalSourceFactory), source
+    assert source.make.func is memory_signal_handler and source.make.args == (store,), source.make
+
+
+def test_the_http_records_handler_answers_the_key_with_the_production_source() -> None:
+    """記録の HTTP の client は、鍵に本番の源 RECORDS_SIGNAL_SOURCE で答える(問いでは service を呼ばない)。"""
+    source = run(with_handlers([http_records_handler(RecordsEndpoint("http://records.invalid"))], _asked_factory()))
+    assert source is RECORDS_SIGNAL_SOURCE, source
+
+
+@dataclass(frozen=True)
+class OtherKey:
+    """記録の handler が答えない鍵(外の答え手へ流れることを確かめる)。"""
+
+
+@do
+def _other_answer(effect: EffectBase, k: K) -> EffectGenerator[object]:
+    """外の答え手: 鍵 OtherKey にだけ答える。"""
+    if isinstance(effect, Ask) and effect.key is OtherKey:
+        return (yield Resume(k, "外の答え"))
+    yield Pass(effect, k)
+
+
+@do
+def _asked_other() -> EffectGenerator[object]:
+    """記録の handler が答えない鍵を問う。"""
+    value = yield Ask(OtherKey)
+    return value
+
+
+def test_the_records_handlers_pass_other_keys_outward() -> None:
+    """記録の handler は鍵 SignalSourceFactory にだけ答え、他の鍵の Ask は外の答え手へ流す。"""
+    store = MemoryStore(SCHEMA)
+    assert run(with_handlers([_other_answer, memory_records_handler(store, WRITER)], _asked_other())) == "外の答え"
+    assert run(with_handlers([_other_answer, http_records_handler(RecordsEndpoint("http://records.invalid"))], _asked_other())) == "外の答え"
+
+
+@do
+def _entry_shaped(bindings: tuple[SignalTables, ...]) -> EffectGenerator[object]:
+    """組み立ての entry の形: 鍵を問うて工場を得て、購読者の列 → 期限 → 源 を被せた本体で書きの合図を受ける。"""
+    source: SignalSourceFactory = yield Ask(SignalSourceFactory)
+    layer = (subscribed_event_handler(EventBus(), SUBSCRIBER, (Changed, TimerFired)), timer_handler(), source.make(bindings, SUBSCRIBER))
+    signal = yield _stacked(layer, _write_then_receive())
+    return signal
+
+
+def test_an_entry_that_asks_the_key_gets_signals_from_the_store_its_records_handler_serves() -> None:
+    """entry が鍵を問うだけで、その組の記録の handler の置き場の書きの合図を受ける(本番と模擬の違いは記録の handler の差し替えだけ)。"""
+    store = MemoryStore(SCHEMA)
+    signal = _run_on(store, _entry_shaped(CHANGED_ON_JOBS_AND_LANES))
+    assert isinstance(signal, Changed), signal
+    assert [(row.table, row.key) for row in signal.keys] == [("jobs", '["j2"]')], signal
