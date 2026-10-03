@@ -42,3 +42,9 @@ def test_installed_plugin_entry_point_belongs_to_doeff_hy_pytest() -> None:
         if entry.group == "pytest11" and entry.name == "doeff_hy"
     ]
     assert owners == ["doeff-hy-pytest"], owners
+
+
+def test_the_plugin_package_ships_its_types() -> None:
+    """doeff_hy_pytest は型を持つ印 py.typed を持つ — 使い手の検が declare_step_budget を import した時に、pyright strict が
+    型の写しの無い module(reportMissingTypeStubs)として赤にしないため(agora-redesign #2670 の 3)。"""
+    assert (PACKAGES / "doeff-hy-pytest" / "src" / "doeff_hy_pytest" / "py.typed").is_file()
