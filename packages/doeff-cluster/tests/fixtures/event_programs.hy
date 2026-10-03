@@ -6,7 +6,9 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass field])  ; defrecord の展開が名指す
-(import doeff_events [WaitForEvent])
+(import datetime [datetime timedelta])
+(import doeff_events [ArmTimer TimerFired WaitForEvent])
+(import doeff_time [GetTime])
 
 
 (defrecord Ping
@@ -31,3 +33,27 @@
 (defsystem ping-waiters [foundation]
   "合図 Ping を待つ 1 つの service"
   (waiter (ping-waiter-program foundation) :needs #{"cluster-net"}))
+
+
+;; --- 業務の timer(#3093)— 期限を出来事にして待つ service ----------------------------------------------------
+
+(defk wait-for-own-deadline [seconds]
+  {:pre [(: seconds float)] :post [(: % TimerFired)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "自分の期限の timer を seconds 秒先に積み、その TimerFired を待つ(期限が来るまで出来事を待って止まる — 業務の timer が在るので
+   行き止まりではない。時間を直に待たず、期限を出来事にする形)。"
+  (<- now datetime (GetTime))
+  (<- (ArmTimer "deadline" (+ now (timedelta :seconds seconds))))
+  (<- fired TimerFired (WaitForEvent TimerFired))
+  fired)
+
+
+(defk deadline-waiter-program [foundation]
+  {:pre [(: foundation Callable)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "20 秒先の自分の期限を積み、その TimerFired を受けたら終わる service。"
+  (<- (foundation (wait-for-own-deadline 20.0)))
+  None)
+
+
+(defsystem deadline-waiters [foundation]
+  "自分の期限の timer を待つ 1 つの service"
+  (waiter (deadline-waiter-program foundation) :needs #{"cluster-net"}))

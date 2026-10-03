@@ -3,18 +3,18 @@
 ;;; 行き止まり = 生きている業務の task が全部 出来事(WaitForEvent)を待っていて、筋書きの本体も出来事か job の結末を期限なしで待ち、
 ;;; coordinator の task の行が全部 running か終わり(置き待ち・始まり待ち・置き直しの無い)の時。見張りは仮想の時計を進め続けずに、
 ;;; その場で sim-cluster を SimDeadlockError で終わらせる(待っている task の job と出来事の型を名指す)。sim の世界の予定の刻(#3094 の
-;;; NextWorldDue — 網の切れが明ける刻など)が残る間は行き止まりにせず、明けた後に終わらせる。業務の timer の条件(#3093)は、判じ
-;;; (deadlock-of)の欄 armed-timers に既定値で置き、子 2 が値を入れる。
+;;; NextWorldDue — 網の切れが明ける刻など)が残る間は行き止まりにせず、明けた後に終わらせる。業務の timer(#3093 — doeff-events の
+;;; ArmedTimers)が残る間も行き止まりにせず、見張りは最も早い timer の刻に読み直す。
 (require doeff-hy.macros [deftest defk <- val])
 (import pytest)
 (import doeff_time [Delay])
-(import doeff_events [ArmedTimer Publish WaitForEventEffect PublishEffect event-handler])
+(import doeff_events [ArmedTimer ArmTimerEffect DisarmTimerEffect Publish WaitForEventEffect PublishEffect event-handler timer-handler])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.sim.local [sim-cluster SimOutside SimDeadlockError SimDeadlock WaitSnapshot LiveProcess BusinessWait deadlock-of
-                                 AwaitProcessStarted CutWorker SimProcess SIM-START-MS])
+                                 AwaitProcessStarted CutWorker SimProcess SIM-START-MS earliest-due])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.event_programs [ping-waiters Ping])
+(import tests.fixtures.event_programs [ping-waiters Ping deadline-waiters])
 
 
 (defk events-outside []
@@ -114,3 +114,47 @@
   (val found (get raised.value.args 1))
   (assert (isinstance found SimDeadlock) found)
   (assert (>= (- found.at-ms SIM-START-MS) 30000) found))
+
+
+;; --- 業務の timer(#3093)------------------------------------------------------------------------------------
+
+(defk timers-outside []
+  {:pre [] :post [(: % SimOutside)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "sim の外の世界: memory の出来事の答え手と、その内側に業務の timer の答え手(doeff-events の timer-handler — TimerFired を出来事の
+   答え手へ発する)を置き、柵に出来事と timer の effect を通させる(走りごとに新しい答え手)。"
+  (SimOutside :handlers [(event-handler) (timer-handler)]
+              :effects #(WaitForEventEffect PublishEffect ArmTimerEffect DisarmTimerEffect)))
+
+
+(deftest test-the-next-read-is-the-earlier-of-the-world-plan-and-the-first-timer
+  ;; 見張りが次に読み直す刻: sim の世界の予定の刻と、最も早い業務の timer の刻の早い方(どちらも無ければ呼び鈴だけ)。
+  (val first (ArmedTimer :tag "a" :at (datetime-of-epoch-ms 3000)))
+  (val later (ArmedTimer :tag "b" :at (datetime-of-epoch-ms 9000)))
+  (for [[world-due armed want] [[None #() None] [5000 #() 5000] [None #(first later) 3000] [5000 #(first later) 3000]
+                                [2000 #(first later) 2000]]]
+    (<- got (| int None) (earliest-due world-due armed))
+    (assert (= got want) #(world-due armed got))))
+
+
+(defk await-the-deadline-waiter []
+  {:pre [] :post [(: % ProcessEnded)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: waiter の process の終わりを期限なしで待つ(waiter は自分の期限の TimerFired を待つ — 誰も Publish しない)。"
+  (<- ended (AwaitProcessEnded "waiter"))
+  ended)
+
+
+(deftest test-a-scenario-with-a-business-deadline-is-not-a-deadlock
+  ;; 失敗ケース: waiter は 20 秒先の自分の期限(ArmTimer)の TimerFired を、筋書きは waiter の終わりを、どちらも期限なしで待つ。業務の
+  ;; timer が残る間は行き止まりにしない — 期限が来て waiter が終わる。見張りが ArmedTimers を見なければ、待ちがそろった直後に
+  ;; SimDeadlockError で終わる。
+  (<- outside SimOutside (timers-outside))
+  (<- ended ProcessEnded (sim-cluster (deadline-waiters sim-foundation) (await-the-deadline-waiter) :outside outside))
+  (assert (= ended.job "waiter") ended))
+
+
+(deftest test-without-a-deadline-the-timer-handler-still-ends-the-run-as-a-deadlock
+  ;; timer の答え手を置いても、積まれた timer が無ければ今までどおり即 行き止まり(ArmedTimers の答えが空)。
+  (<- outside SimOutside (timers-outside))
+  (with [raised (pytest.raises SimDeadlockError)]
+    (<- (sim-cluster (ping-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
+  (assert (in "Ping" (str raised.value)) raised.value))

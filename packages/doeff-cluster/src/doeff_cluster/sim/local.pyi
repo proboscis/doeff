@@ -279,6 +279,7 @@ class SimDeadlockError(RuntimeError):
     """sim-cluster の行き止まり(args = 知らせの文と SimDeadlock)。"""
 
 def deadlock_of(snapshot: WaitSnapshot) -> Program[SimDeadlock | None, object]: ...
+def earliest_due(world_due: int | None, armed: tuple[ArmedTimer, ...]) -> Program[int | None, object]: ...
 
 # --- 検の effect(sim の世界が答える)---------------------------------------------------------------------
 
