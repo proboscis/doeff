@@ -715,6 +715,13 @@
   "coordinator の止まりの kind(stop | crash)が頼まれているか。頼まれていれば筋書きから外し、止まっている秒を覚える。"
   {:fields [(: kind str)] :answer bool :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect StepEnded
+  "調停ループの 1 歩の終わり(次の歩の頭 — 止まりを判じる刻・返事を済ませた後)の世界への問い 1 つ: 返事を済ませた要求 released を覚えから
+   外し(ReleaseRequest と同じ)、この歩の置き場への書き writes(Persist ごとの writes の列 — 書きの順)を終えたことを知らせ
+   (NoteCoordinatorWrite と同じ待ち手を書きの順に起こす)、止まり(stop)が頼まれているかを PauseDue と同じく判じる。返事ごと・書きごと・
+   歩の頭に別々に聞くと 1 歩に 3〜5 度(#2670 の根 A)。答え = 止まりが頼まれているか。"
+  {:fields [(: released tuple) (: writes tuple)] :answer bool :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect DowntimeOf
   "止まっている秒(None = 作り直さない)を取り出して空にする。"
   {:answer (| float None) :tags {:context "doeff-cluster" :role "intent"}})
@@ -2003,12 +2010,28 @@
 
 ;; --- coordinator の Pod ---------------------------------------------------------------------------------
 
-(defhandler observe-requests
+(defclass [dataclass] StepBook []
+  "coordinator の一生 1 つの、調停ループの 1 歩の間に observe-requests が溜める物(#2670 の根 A): released = この歩で返事を済ませた要求
+   (歩の終わりに覚えから外す)・noted = この歩の Persist の writes の列(書きの順 — 歩の終わりに知らせる)・stopped = 歩の頭の判定が
+   止まりと答えた(止まる調停ループの待ちへの返事 release-watchers はすぐ外す — 次の歩の頭は無い)。歩の頭ごとに空にする。session の値に
+   持たないのは、読み書きのたびに状態の答え手までの効果になり、世界への問い 1 つと同じ重さになるため(1 歩の世界への問いを減らした分が
+   消える — 9 file の歩が 4% 増えた)。"
+  (setv #^ tuple released #()
+        #^ tuple noted #()
+        #^ bool stopped False))
+
+
+(defhandler observe-requests [#^ StepBook book]
   {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 引数に残す理由: 1 歩の間に溜める帳面 book は coordinator の一生ごとに作る可変の箱(coordinator-life が作って渡す)— session の値に
+  ;; すると読み書きのたびに状態の答え手までの効果になる(StepBook の docstring)。一生をまたがない。
   ;; 調停ループの一番内側: 取った要求のうち網の切れた worker から届いた物を落とし(送り手には接続の失敗 — 本番では届かない)、故障を
   ;; 入れている口(FailRoute)への物に注入した status で答えて調停ループへ渡さず、service の
   ;; 報告(ReportReady・ReportMetrics)を世界へ記録し、返事の前に落ちた時に接続の失敗を返す相手として取った要求を覚える。筋書きの
   ;; 止まり(止めの合図)と落ち(Persist の失敗 — 返事をせずに落ちる)を注入する。効果はそのまま外側(本物の組)へ出し直す。
+  ;; 1 歩の世界への問いは 3 つ(#2670 の根 A): 取りの篩い(AdmitBatch)・書きの前の落ちの判断(PersistCrashDue — 書きより前に要る)・歩の
+  ;; 終わり(StepEnded — 次の歩の頭の止まりの判定の刻に、この歩の返事の手放しと書きの知らせと止まりの判定を 1 つで)。返事と書きは
+  ;; 帳面 book に溜める。
   (NextRequests [timeout-seconds limit]
     ;; 模擬の列は、眠った静かな区間の歩を添えて返す(IdleTaken — #2790)。篩うのは取った要求だけ。区間の歩の書き(生存の印の歩)は
     ;; 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
@@ -2026,24 +2049,36 @@
           (<- (CompletePromise r.slot #((get faults.failing #(r.method r.path)) {"error" FAULT-REASON})))))
     (resume (if (isinstance taken IdleTaken) (replace taken :batch kept) kept)))
   (Reply [request status body]
-    (<- (ReleaseRequest request))
+    ;; 返事を済ませた要求は歩の終わりに覚えから外す(止まる調停ループの返事は次の歩の頭が無いので、すぐ外す)。
+    (if book.stopped
+        (<- (ReleaseRequest request))
+        (setv book.released (+ book.released #(request))))
     (<- effect)
     (resume None))
   (Persist [writes]
-    ;; 落ちの注入の判断(まとめて保存する区間の歩の書きは落とさない・筋書きの落ちの頼み)を世界への問い 1 つで(#3054 の C-6)。
+    ;; 落ちの注入の判断(まとめて保存する区間の歩の書きは落とさない・筋書きの落ちの頼み)を世界への問い 1 つで(#3054 の C-6)。書きより前。
     (<- crash bool (PersistCrashDue))
     (when crash
+      ;; 落ちる前に、この歩で溜めた書きの知らせを出す(書き終えた書きの待ち手は、落ちても起こす)。
+      (for [done book.noted]
+        (<- (NoteCoordinatorWrite done)))
+      (setv book.noted #())
       (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))
     (<- effect)
-    ;; 書き終えたことを世界に知らせ、書きで終わった切り離した task の待ち手(proboscis/doeff#631)と準備の状態を待つ待ち手
-    ;; (AwaitReadiness・#3053)を起こす — 問い 1 つ。
-    (<- (NoteCoordinatorWrite writes))
+    ;; 書き終えたことは歩の終わり(StepEnded)に知らせる — 書きで終わった切り離した task の待ち手(proboscis/doeff#631)と準備の状態を
+    ;; 待つ待ち手(AwaitReadiness・#3053)を起こす。
+    (setv book.noted (+ book.noted #(writes)))
     (resume None))
   (CoordinatorStopRequested []
-    (<- due bool (PauseDue PAUSE-STOP))
+    ;; 歩の終わりの問い 1 つ: この歩の返事の手放し・書きの知らせ・止まりの判定。
+    (<- due bool (StepEnded book.released book.noted))
+    (setv book.released #()
+          book.noted #())
     (if due
-        (resume True)
+        (do (setv book.stopped True)
+            (resume True))
         (do (<- asked bool effect)
+            (setv book.stopped asked)
             (resume asked)))))
 
 
@@ -2071,7 +2106,7 @@
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
-    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [observe-requests])
+    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [(observe-requests (StepBook))])
           (run-coordinator state plan.timing plan.naming)))
     "stopped"
     (except [error OSError]
@@ -2517,6 +2552,25 @@
     (resume taken))
   (PauseDue [kind]
     (<- after (| SimPauses None) (pause-taken pausing kind))
+    (if (is after None)
+        (resume False)
+        (do (:= pausing after)
+            ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
+            (setattr parts.queue "ends-at-marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            (resume True))))
+  (StepEnded [released writes]
+    ;; 調停ループの 1 歩の終わりの問い 1 つ(#2670 の根 A): 返事を済ませた要求を覚えから外し(ReleaseRequest と同じ)、この歩の書きを
+    ;; 書きの順に知らせ(NoteCoordinatorWrite と同じ — 準備の状態の待ち手は最初の書きの知らせで起こす)、止まりを判じる(PauseDue と同じ)。
+    (when released
+      (:= intake (replace intake :held (tuple (gfor r intake.held :if (not (any (gfor done released (is done r)))) r)))))
+    (for [#(index done) (enumerate writes)]
+      (<- (ring-ended-tasks parts.queue done))
+      (when (= index 0)
+        (val rung ready-waiters)
+        (:= ready-waiters #())
+        (for [bell rung]
+          (<- (CompletePromise bell True)))))
+    (<- after (| SimPauses None) (pause-taken pausing PAUSE-STOP))
     (if (is after None)
         (resume False)
         (do (:= pausing after)
