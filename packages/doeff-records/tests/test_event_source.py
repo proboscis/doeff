@@ -1,11 +1,16 @@
-"""記録の変化を合図として発する源(event_source.records-signal-source)の検 — #3077・設計 #3072。
+"""記録の変化を合図として発する源(event_source の records-signal-handler・records-signal-source)の検 — #3077・#3104・設計 #3072。
 
 組み立ての形(外 → 内): subscribed_event_handler(購読者の列)→(timer_handler)→ 記録の合図の源 → 本体。待ちに答えるのは購読者の列
-1 つだけで、源は記録の変化を Publish する。
+1 つだけで、源は記録の変化を Publish する。組み立て方は 2 つ(Program の records-signal-source・素の工場 records-signal-handler — 工場は
+購読の始まりの位置を包んだ本体の頭で読む)で、包み方は 1 つを共有する。
 
-- 共有の不変条件: doeff-events の tests/event_signal_invariants の関数を、memory の記録の置き場の上で、この組み立て方で呼ぶ。合図を
+- 共有の不変条件: doeff-events の tests/event_signal_invariants の関数を、memory の記録の置き場の上で、2 つの組み立て方で呼ぶ。合図を
   「発する」所は、この world では「合図の所(結んだ表の行)へ書く」になる(_publish_as_write — 筋書きの書き手の側の代役)。
-  購読の外の型を待つと止まる件は、不変条件 (c)(subscribed_event_handler の実行時の ValueError)が受け持つ。
+  購読の外の型を待つと止まる件は、不変条件 (c)(subscribed_event_handler の実行時の ValueError)が受け持つ。購読の始まりを組み立ての
+  時に置く (d) の 2 つは Program の組だけで、工場の組では「本体の頭より前の書きは合図にならない」の検が受け持つ。
+- 本体は包みを撃った task のまま走る(2 つの組み立て方の両方): 外の task の Cancel の後の書きで本体が進まない・本体が外の Spawn の
+  優先のまま走る・待っている間に源が落ちれば本体が同じ例外で落ちる・最初の読みと待ちの間の書きを落とさない(位置を源の task の
+  中で読むと赤)。
 - 失敗ケース:
   待ち手の居ない間(本体が 1 拍を回している間)に書いた行の合図が、列に残って次の WaitForEvent で受かる。
   合図と期限(timer_handler の TimerFired)を同じ WaitForEvent の 1 回で待ち、先に来た方を受ける。
@@ -16,6 +21,7 @@
   源は待ちの上限ごとに待ち直すので、scheduler の行き止まりにならない)。
 """
 
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -26,25 +32,31 @@ from pathlib import Path
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
 from doeff_core_effects.scheduler import (
+    PRIORITY_HIGH,
+    PRIORITY_NORMAL,
+    Cancel,
     CompletePromise,
     CreatePromise,
     FailPromise,
     Promise,
     Spawn,
+    TaskCancelledError,
     Wait,
     scheduled,
 )
 from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handler, timer_handler
-from doeff_events.effects import PublishEffect, WaitForEvent
+from doeff_events.effects import Publish, PublishEffect, WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.admission import key_from_text, key_text
-from doeff_records.effects import AppendEvent, PutRow
+from doeff_records.effects import AppendEvent, PutRow, ReadRow
 from doeff_records.event_source import (
     RECONNECT_SECONDS,
     RECONNECT_TRIES,
+    WATCH_SECONDS,
     ChangedRow,
     SignalSourceUnreachable,
     SignalTables,
+    records_signal_handler,
     records_signal_source,
 )
 from doeff_records.faults import AdvanceStoreEpoch, SetStoreOutage
@@ -52,7 +64,7 @@ from doeff_records.memory import MemoryStore, memory_records_handler
 from doeff_records.values import Appended, ExpectAny, FieldDecl, RecordsSchema, StreamDecl, TableDecl, Written
 from doeff_time import Delay, GetTime, SimClock, WaitWithin, sim_time_handler
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Resume, do, run, with_handlers
+from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, run, with_handlers
 from doeff.program import ProgramHandler
 
 # 共有の不変条件の関数の置き場(doeff-events の tests — package ではないので path で読む)。
@@ -65,6 +77,8 @@ from event_signal_invariants import (  # noqa: E402 - sys.path の後
     Changed,
     Invariant,
     SignalWorld,
+    check_resubscribe_discards_previous_queue,
+    check_signal_before_subscription_is_not_kept,
 )
 
 WRITER = "writer"
@@ -140,15 +154,31 @@ def _stacked(handlers: tuple[ProgramHandler, ...], body: Program[object]) -> Pro
     return with_handlers(list(handlers), body)
 
 
+Build = Callable[[tuple[SignalTables, ...], str], Program[ProgramHandler]]
+"""源の組み立て方 1 つ: bindings と購読者の名前 → 本体を包む関数を返す Program。"""
+
+
+def _factory(bindings: tuple[SignalTables, ...], subscriber: str) -> Program[ProgramHandler]:
+    """素の工場 records_signal_handler の組み立て方(工場は Program ではないので答えを Pure で包む — 位置は本体の頭で読む)。"""
+    return Pure(records_signal_handler(bindings, subscriber))
+
+
+# 2 つの組み立て方(Program の records_signal_source は使い手の付け替えまで 1 版残す・工場 records_signal_handler — #3104)。
+BUILDS: tuple[Build, ...] = (records_signal_source, _factory)
+BUILD_IDS = ("program", "factory")
+
+
 @do
-def _subscribe(bus: EventBus, subscriber: str, event_types: tuple[type, ...]) -> EffectGenerator[ProgramHandler]:
+def _subscribe(
+    build: Build, bus: EventBus, subscriber: str, event_types: tuple[type, ...]
+) -> EffectGenerator[ProgramHandler]:
     """購読者の列(subscribed_event_handler)の内側に、event_types に結んだ表の源を置く組を組み立てる Program(不変条件の検の
     組み立て方)。結ぶ型の無い購読者(書き手)は、源の代わりに Publish を書きにする代役を置く。"""
     waiting = subscribed_event_handler(bus, subscriber, event_types)
     bindings = tuple(binding for binding in BINDINGS if binding.signal in event_types)
     if not bindings:
         return partial(_stacked, (waiting, _publish_as_write))
-    source: ProgramHandler = yield records_signal_source(bindings, subscriber)
+    source: ProgramHandler = yield build(bindings, subscriber)
     return partial(_stacked, (waiting, source))
 
 
@@ -193,22 +223,33 @@ def _run_on(store: MemoryStore, program: Program[object]) -> object:
     return run(scheduled(with_handlers(stack, _bounded(program))))
 
 
-def records_world() -> SignalWorld:
+def records_world(build: Build = records_signal_source) -> SignalWorld:
     """1 つの世界 = 新しい memory の記録の置き場 1 つと購読者の列の置き場(EventBus)1 つ。合図の所は表 jobs の行。"""
     store = MemoryStore(SCHEMA)
     bus = EventBus()
 
     def subscribe(subscriber: str, event_types: tuple[type, ...] = (), /) -> Program[ProgramHandler]:
         """この世界の購読者の列と置き場の上で、購読者の組を組み立てる Program。"""
-        return _subscribe(bus, subscriber, event_types)
+        return _subscribe(build, bus, subscriber, event_types)
 
     return SignalWorld(subscribe=subscribe, run=partial(_run_on, store), row=partial(_row, "jobs"))
 
 
-@pytest.mark.parametrize("invariant", INVARIANTS, ids=lambda invariant: invariant.__name__)
-def test_records_signal_source_keeps_invariant(invariant: Invariant) -> None:
-    """共有の不変条件を、記録の置き場を源にする組み立て方で 1 つずつ確かめる。"""
-    invariant(records_world())
+# 購読の始まりを「組み立て(subscribe)の時」と置く不変条件 — 工場は始まりを包んだ本体の頭に置く(#3104)ので、工場の組では
+# test_the_factory_starts_its_subscription_at_the_head_of_the_body が同じ性質(始まりより前の書きは合図にならない)を受け持つ。
+STARTS_AT_SUBSCRIBE = (check_signal_before_subscription_is_not_kept, check_resubscribe_discards_previous_queue)
+INVARIANT_CASES = tuple(
+    pytest.param(build, invariant, id=f"{build_id}-{invariant.__name__}")
+    for build, build_id in zip(BUILDS, BUILD_IDS, strict=True)
+    for invariant in INVARIANTS
+    if build is records_signal_source or invariant not in STARTS_AT_SUBSCRIBE
+)
+
+
+@pytest.mark.parametrize(("build", "invariant"), INVARIANT_CASES)
+def test_records_signal_source_keeps_invariant(build: Build, invariant: Invariant) -> None:
+    """共有の不変条件を、記録の置き場を源にする 2 つの組み立て方で 1 つずつ確かめる。"""
+    invariant(records_world(build))
 
 
 @do
@@ -476,3 +517,181 @@ def test_a_signal_type_bound_twice_is_refused_by_name() -> None:
     builder: Callable[[], object] = partial(_run_on, MemoryStore(SCHEMA), _twice_bound())
     with pytest.raises(ValueError, match="Changed"):
         builder()
+
+
+def test_the_factory_refuses_a_signal_type_bound_twice_at_the_head_of_the_body() -> None:
+    # 工場は Program ではないので、引数の確かめは位置の読みと同じく包んだ本体の頭で走る(本体は走らない)。
+    twice = (CHANGED_ON_JOBS, SignalTables(signal=Changed, tables=("notes",)))
+    wrapped = with_handlers([records_signal_handler(twice, "worker")], _changed())
+    with pytest.raises(ValueError, match="Changed"):
+        _run_on(MemoryStore(SCHEMA), wrapped)
+
+
+# --- 工場の購読は包んだ本体の頭で始まる(#3104)-------------------------------------------------------------
+
+
+@do
+def _early_then_late() -> EffectGenerator[Changed]:
+    """工場の組を作った後・本体が走る前に early を書き、本体が待ち始めてから late を書く。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (Changed,))
+    source = records_signal_handler((CHANGED_ON_JOBS,), "worker")
+    yield _write("jobs", "early")
+    receiver = yield Spawn(with_handlers([waiting, source], _changed()))
+    yield Delay(1.0)
+    yield _write("jobs", "late")
+    signal: Changed = yield Wait(receiver)
+    return signal
+
+
+def test_the_factory_starts_its_subscription_at_the_head_of_the_body() -> None:
+    # 始まりより前の書き(early)は合図にならず、本体が走り出した後の書き(late)が最初の合図になる。
+    assert _run_on(MemoryStore(SCHEMA), _early_then_late()) == Changed((_row("jobs", "late"),))
+
+
+@do
+def _read_then_wait(read_done: Promise[object]) -> EffectGenerator[Changed]:
+    """受け手: 記録を読み(本体の最初の読み)、読み終えたことを知らせてから Changed を待つ。"""
+    yield ReadRow("jobs", ("j1",))
+    yield CompletePromise(read_done, None)
+    signal: Changed = yield WaitForEvent(Changed)
+    return signal
+
+
+@do
+def _write_when_read(read_done: Promise[object]) -> EffectGenerator[None]:
+    """書き手: 受け手が最初の読みを終えたら jobs を書く。"""
+    yield Wait(read_done.future)
+    yield _write("jobs", "j1")
+
+
+@do
+def _write_between_read_and_wait(build: Build) -> EffectGenerator[Changed]:
+    """受け手の最初の読みと待ちの間に、書き手が jobs を書く。受け手と書き手は源の task(既定の優先)より高い優先で走るので、源の
+    task が回るより先に書きが終わる — 位置を源の task の中で読むと、その位置は書きの後になる。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (Changed,))
+    source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
+    read_done: Promise[object] = yield CreatePromise()
+    writer = yield Spawn(_write_when_read(read_done), priority=PRIORITY_HIGH)
+    receiver = yield Spawn(with_handlers([waiting, source], _read_then_wait(read_done)), priority=PRIORITY_HIGH)
+    signal: Changed = yield Wait(receiver)
+    yield Wait(writer)
+    return signal
+
+
+@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
+def test_a_write_between_the_first_read_and_the_wait_is_signalled(build: Build) -> None:
+    # 失敗ケース: 始まりの位置を源の task の中(Spawn の後)で読むと、位置が書きの後になり、この書きの合図を落として待ち続ける。
+    assert _run_on(MemoryStore(SCHEMA), _write_between_read_and_wait(build)) == Changed((_row("jobs", "j1"),))
+
+
+# --- 本体は包みを撃った task のまま走る(vg-w46 の指摘・#3100)----------------------------------------------
+
+
+@do
+def _first_signal(got: Promise[Changed]) -> EffectGenerator[None]:
+    """受け手: Changed を 1 つ受けたら約束 got に渡す(受けた = 本体が読みを進めた印)。"""
+    signal: Changed = yield WaitForEvent(Changed)
+    yield CompletePromise(got, signal)
+
+
+@dataclass(frozen=True)
+class CancelOutcome:
+    """seen = 外の task を Cancel した後に本体が受けた合図(None = 受けない)/ cancelled = 外の task が Cancel で終わったか。"""
+
+    seen: Changed | None
+    cancelled: bool
+
+
+@do
+def _write_after_cancel(build: Build) -> EffectGenerator[CancelOutcome]:
+    """本体が待ち始めた後に外の task を Cancel し、その直後に jobs を書いて、待ちの上限の 2 回ぶん本体の受けを待つ。外の task は通常
+    より低い優先(源の task より後に回る)— Cancel を受けた外が次に回るより先に、書きの合図が届く。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (Changed,))
+    source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
+    got: Promise[Changed] = yield CreatePromise()
+    receiver = yield Spawn(with_handlers([waiting, source], _first_signal(got)), priority=PRIORITY_NORMAL - 1)
+    yield Delay(1.0)
+    yield Cancel(receiver)
+    yield _write("jobs", "j1")
+    seen: Changed | None = yield WaitWithin(got.future, WATCH_SECONDS * 2)
+    try:
+        yield Wait(receiver)
+    except TaskCancelledError:
+        return CancelOutcome(seen=seen, cancelled=True)
+    return CancelOutcome(seen=seen, cancelled=False)
+
+
+@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
+def test_cancelling_the_outer_task_stops_the_body_before_a_later_write(build: Build) -> None:
+    # 失敗ケース: 本体を別の task にした包みでは、外の Cancel の後の書きの合図で本体が起きて読みを進めた(#3100 の画面の赤)。
+    assert _run_on(MemoryStore(SCHEMA), _write_after_cancel(build)) == CancelOutcome(seen=None, cancelled=True)
+
+
+@dataclass(frozen=True)
+class Woke:
+    """受け手 name が合図で起きた、という知らせ(起きた順を、知らせを受ける購読者の列の順で見る)。"""
+
+    name: str
+
+
+@do
+def _announce_wake(name: str) -> EffectGenerator[None]:
+    """受け手: Changed を 1 つ受けたら、起きたことを Woke(name) で知らせる。"""
+    yield WaitForEvent(Changed)
+    yield Publish(Woke(name))
+
+
+@do
+def _two_wakes() -> EffectGenerator[tuple[str, str]]:
+    """知らせの受け手: Woke を 2 つ、来た順に受けて名を返す。"""
+    first: Woke = yield WaitForEvent(Woke)
+    second: Woke = yield WaitForEvent(Woke)
+    return (first.name, second.name)
+
+
+@do
+def _wake_order(build: Build) -> EffectGenerator[tuple[str, str]]:
+    """本体を通常より低い優先で Spawn し、通常の優先の立ち会いと同じ書きの合図で起こして、起きた順を返す。本体の購読者を先に
+    作るので、合図は本体の待ちに先に渡る。"""
+    bus = EventBus()
+    worker = subscribed_event_handler(bus, "worker", (Changed,))
+    witness = subscribed_event_handler(bus, "witness", (Changed,))
+    recorder = subscribed_event_handler(bus, "recorder", (Woke,))
+    source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
+    receiver = yield Spawn(with_handlers([worker, source], _announce_wake("body")), priority=PRIORITY_NORMAL - 1)
+    other = yield Spawn(witness(_announce_wake("witness")))
+    yield Delay(1.0)
+    yield _write("jobs", "j1")
+    order: tuple[str, str] = yield recorder(_two_wakes())
+    yield Wait(receiver)
+    yield Wait(other)
+    return order
+
+
+@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
+def test_the_body_runs_at_the_priority_of_the_outer_spawn(build: Build) -> None:
+    # 失敗ケース: 包みが本体を既定の優先で Spawn し直すと、低い優先で Spawn した本体が通常の優先の立ち会いより先に起きた。
+    assert _run_on(MemoryStore(SCHEMA), _wake_order(build)) == ("witness", "body")
+
+
+@do
+def _outage_while_waiting(build: Build) -> EffectGenerator[Changed]:
+    """本体が待ち始めた後に置き場が落ち、戻らない(源の task が繋ぎ直しを使い切って落ちる)。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (Changed,))
+    source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
+    receiver = yield Spawn(with_handlers([waiting, source], _changed()))
+    yield Delay(1.0)
+    yield SetStoreOutage(DETAIL)
+    signal: Changed = yield Wait(receiver)
+    return signal
+
+
+@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
+def test_a_source_that_fails_while_the_body_waits_brings_the_body_down(build: Build) -> None:
+    # 本体は包みを撃った task のまま待つので、源の失敗は本体の待ち(waits-beside-sources の Race)に届いて同じ例外で落ちる。
+    with pytest.raises(SignalSourceUnreachable, match=re.escape(DETAIL)):
+        _run_on(MemoryStore(SCHEMA), _outage_while_waiting(build))

@@ -84,5 +84,47 @@ def test_taking_the_body_answer_as_another_type_is_red(tmp_path: Path) -> None:
     assert [e for e in errors if '"int"' in e and '"str"' in e]
 
 
+# 記録の合図の源を使い手の形で並べる(#3104): 工場 records-signal-handler を購読者の列と同じ with-handlers の列に呼びの字面で置く形と、
+# 1 版残す Program の records-signal-source の答えを受けて置く形。BINDINGS = 工場に渡す bindings の式。
+SIGNAL_SOURCES = """\
+(require doeff-hy.macros [defk <-])
+(import doeff [Pure with-handlers])
+(import doeff_events [EventBus subscribed-event-handler])
+(import doeff_records.event_source [ChangedRow SignalTables records-signal-handler records-signal-source])
+
+(defclass Moved []
+  "合図の型(検の的)。"
+  (setv #^ (get tuple #(ChangedRow ...)) keys #()))
+
+(defk by-factory [bus]
+  {:pre [(: bus EventBus)] :post [(: % int)]}
+  "工場を購読者の列の内側に呼びの字面で置くため。"
+  (<- answer int (with-handlers [(subscribed-event-handler bus "worker" #(Moved)) (records-signal-handler BINDINGS "worker")]
+                                (Pure 1)))
+  answer)
+
+(defk by-program [bus]
+  {:pre [(: bus EventBus)] :post [(: % int)]}
+  "Program の形の答え(包む関数)を受けて列に置くため。"
+  (<- source (records-signal-source #((SignalTables :signal Moved :tables #("jobs"))) "worker"))
+  (<- answer int (with-handlers [(subscribed-event-handler bus "worker" #(Moved)) source] (Pure 1)))
+  answer)
+"""
+BOUND = '#((SignalTables :signal Moved :tables #("jobs")))'
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_the_signal_source_in_the_users_shape_passes_strict(tmp_path: Path) -> None:
+    # 失敗ケース: 引数 tuple と答え Callable に型の引数が無かった .pyi では、使い手の strict の門が「一部分からない」で止めた。
+    assert strict_errors(tmp_path, SIGNAL_SOURCES.replace("BINDINGS", BOUND)) == ()
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_bindings_of_another_type_are_red_at_the_factory(tmp_path: Path) -> None:
+    # 工場の引数の型(tuple[SignalTables, ...])が使い手に届く — 表の名前を直に渡すと赤。
+    errors = strict_errors(tmp_path, SIGNAL_SOURCES.replace("BINDINGS", '"jobs"'))
+    assert [e for e in errors if "records_signal_handler" in e and "SignalTables" in e], errors
+
+
 def test_generated_stubs_are_what_the_tool_makes() -> None:
     assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []
