@@ -86,7 +86,12 @@ How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
   clauses cannot be read may declare them: `f.__doeff_handles__ = (E, …)` (what it
   answers) and `f.__doeff_effects__ = (…)` (what its clauses perform; both are
   needed). `HandlerEffects.basis` says which decided: `clauses`, `declared` or
-  `unread`; a declaration that disagrees with the clauses read is reported.
+  `unread`; a declaration that disagrees with the clauses read is reported. A
+  body wrapper that answers no effect but performs some itself around the body
+  (reads a start position, starts tasks, then runs the body — doeff-records'
+  `records-signal-handler`) declares `f.__doeff_handles__ = ()`: its
+  `__doeff_effects__` become `HandlerEffects.performs` and go to the handlers
+  outside it.
 - An env builder is a function — plain, `defk` or `deff` — returning a handler
   list, outermost first: a list literal, reached through the names it was bound
   to (`_contract_result`, `val`, `(<- base list (other-builder))`), with `*base`

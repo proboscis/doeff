@@ -26,7 +26,10 @@ cannot be read, a factory (or handler value) may declare them:
 
 Every answer says which decided it (``HandlerEffects.basis``: ``clauses`` /
 ``declared`` / ``unread``).  Both marks are needed: a handler that declares what it
-answers but not what it performs stays ``unread``.
+answers but not what it performs stays ``unread``.  A body wrapper that answers no
+effect but performs some itself around the body (reads a start position, starts
+tasks, then runs the body) declares ``__doeff_handles__ = ()``: what it declares in
+``__doeff_effects__`` is its ``performs`` and goes to the handlers outside it.
 
 ``analyze_env`` reads an env builder — a function (plain, ``defk`` or ``deff``)
 that returns a handler list, outermost first: a list literal, through the names
@@ -233,6 +236,12 @@ def _declared(obj: Any, label: str) -> HandlerEffects | None:
         target=f"{label} (declared)",
         effects=tuple(EffectUse(effect, location) for effect in performed.found),
     )
+    if _answers_nothing(holder):
+        # ``__doeff_handles__ = ()``: a body wrapper that answers no effect — what it
+        # declares it performs, it performs itself around the body (``performs``).
+        return HandlerEffects(
+            label, (), performed.problems, Basis.DECLARED, performs=emits
+        )
     clauses = tuple(Clause(cls, emits, location) for cls in handled.found)
     return HandlerEffects(
         label,
@@ -240,6 +249,13 @@ def _declared(obj: Any, label: str) -> HandlerEffects | None:
         (*handled.problems, *performed.problems),
         Basis.DECLARED if clauses else Basis.UNREAD,
     )
+
+
+def _answers_nothing(holder: Any) -> bool:
+    """Whether ``holder`` declares with an empty ``__doeff_handles__`` that it answers no
+    effect (a body wrapper) — not a declaration whose names all turned out not to be classes."""
+    value = getattr(holder, "__doeff_handles__")
+    return isinstance(value, (tuple, list, frozenset, set)) and len(value) == 0
 
 
 @dataclass(frozen=True)

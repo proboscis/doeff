@@ -142,12 +142,19 @@ class Clause:
 
 @dataclass(frozen=True)
 class HandlerEffects:
-    """What a handler handles (one clause per effect class) and how that was decided."""
+    """What a handler handles (one clause per effect class) and how that was decided.
+
+    ``performs`` = what the handler performs itself around the body it is placed over, not
+    in answer to an effect — a body wrapper that answers nothing (declared with
+    ``__doeff_handles__ = ()`` and ``__doeff_effects__``: e.g. it reads a start position,
+    starts tasks and then runs the body).  Those effects go to the handlers outside it.
+    """
 
     name: str
     clauses: tuple[Clause, ...] = ()
     unresolved: tuple[Unresolved, ...] = ()
     basis: Basis = Basis.UNREAD
+    performs: "ProgramEffects | None" = None
 
     @property
     def handled(self) -> frozenset[type]:
@@ -170,6 +177,7 @@ class HandlerEffects:
                 }
                 for clause in self.clauses
             ],
+            "performs": list(self.performs.effect_names) if self.performs is not None else [],
             "unresolved": [
                 {"reason": item.reason, "text": item.text, "at": str(item.location)}
                 for item in self.unresolved
@@ -353,7 +361,9 @@ def pass_through(
 
     A handled effect is replaced by the effects its clause performs (they go to
     the handlers outside it); a clause keyed on a parent class also handles its
-    subclasses (``isinstance`` semantics).  A handler that could not be read
+    subclasses (``isinstance`` semantics).  What a handler performs itself around the
+    body (``HandlerEffects.performs``) leaves it the same way, toward the handlers
+    outside it.  A handler that could not be read
     handles nothing here and is named in ``unknown_handlers``.  The result has one
     escape per effect class (the first place it was seen).  ``inner``'s unresolved
     places are kept, and so are the places a clause that answers here cannot follow
@@ -380,6 +390,12 @@ def pass_through(
             for escape in performed.escapes:
                 sent = _forwarded_as(escape, effect)
                 emitted.setdefault(sent.effect, replace(sent, by=escape.by or handler.name))
+        if handler.performs is not None:
+            own = handler.performs.residual_with(include)
+            unknown.extend(own.unknown_handlers)
+            unresolved.extend(replace(item, via=(handler.name, *item.via)) for item in own.unresolved)
+            for escape in own.escapes:
+                emitted.setdefault(escape.effect, replace(escape, by=escape.by or handler.name))
         for effect, escape in emitted.items():
             pending.setdefault(effect, escape)
     return Residual(
