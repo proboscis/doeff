@@ -104,6 +104,10 @@
 ;;;     job の Program が出すと柵で落ちる。
 ;;;   - AwaitDetached は読み直さず、模擬の coordinator がその task の終わりの phase を書いた時(Persist)に起きる(本番の detached-cluster は
 ;;;     poll-seconds ごとに読む — 答えの意味は同じ)。
+;;;   - 行き止まりの見張り(#3078 — 本番には無い・模擬の境界だけ): 業務の task が全部 出来事(WaitForEvent)を待って止まり、筋書きの本体も
+;;;     期限なしで待ち、coordinator の task の行が落ち着いていれば、仮想の時計を進め続けずに SimDeadlockError で終わる。数えるのは
+;;;     WaitForEvent の待ちだけ(Delay・記録の Watch の待ちは数えない)。process の中で Spawn した子は、終わっても process の終わりまで
+;;;     task の数に入る(その間は行き止まりと判じない — 見落としの向き)。
 ;;;
 ;;; 状態の置き場(ADR-DOE-HY-007): 世界の状態は世界の handler(sim-world)の session var に置き、値は defrecord、変化は effect で書く。
 ;;; 要求の列・memory の置き場・停止の合図・偽の k8s は coordinator_handler_sets の既存の資源(世界の session val が 1 回だけ作る)。
@@ -120,7 +124,8 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
-                                      Future TaskCancelledError])
+                                      Future TaskCancelledError Race])
+(import doeff_events [ArmedTimer WaitForEventEffect])
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
@@ -761,6 +766,68 @@
   {:fields [(: ms int) (: outcome str)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 
+;; --- 行き止まりの見張りの値と effect(#3078)----------------------------------------------------------------
+
+(defrecord BusinessWait
+  "出来事を待っている業務の task 1 つ: process の pid・job の名・待つ出来事の型の名(WaitForEvent の型の名を , で繋いだ物)。"
+  (#^ int pid)
+  (#^ str job)
+  (#^ str events))
+
+(defrecord LiveProcess
+  "生きている業務の process 1 つ: pid・job の名・task の数(主の task 1 + 中で Spawn した task の数 — 終わった子も process の終わりまで
+   数える)。"
+  (#^ int pid)
+  (#^ str job)
+  (#^ int tasks))
+
+(defrecord WaitsSeen
+  "世界が答える行き止まりの材料: live = 生きている業務の process・waits = 出来事を待っている業務の task(生きている process の物だけ)・
+   scenario-waiting = 筋書きの本体が出来事か job の結末を期限なしで待っているか。"
+  (#^ (get tuple #(LiveProcess ...)) live)
+  (#^ (get tuple #(BusinessWait ...)) waits)
+  (#^ bool scenario-waiting))
+
+(defrecord WaitSnapshot
+  "行き止まりの判じ(deadlock-of)の材料: WaitsSeen の 3 つ + rows-settled = coordinator の task の行が全部 running か終わりか・
+   armed-timers = 業務の timer(#3093 が ArmedTimers の答えを入れる — 既定は空)・world-due = sim の世界の次の予定の刻 ms(#3094 が
+   NextWorldDue の答えを入れる — 既定は None)。"
+  (#^ (get tuple #(LiveProcess ...)) live)
+  (#^ (get tuple #(BusinessWait ...)) waits)
+  (#^ bool scenario-waiting)
+  (#^ bool rows-settled)
+  (setv #^ (get tuple #(ArmedTimer ...)) armed-timers #())
+  (setv #^ (| int None) world-due None))
+
+(defrecord SimDeadlock
+  "行き止まり: waits = 出来事を待って止まっている業務の task の全部・at-ms = 見張りが見つけた仮想の時計の刻(判じ deadlock-of は時計を
+   読まないので None — 見張りが入れる)。"
+  (#^ (get tuple #(BusinessWait ...)) waits)
+  (setv #^ (| int None) at-ms None))
+
+(defclass SimDeadlockError [RuntimeError]  ; class にする理由: sim-cluster を終わらせる例外の型(検が pytest.raises で名指す — 欄も状態も足さない)
+  "sim-cluster の行き止まり: 業務の task が全部 出来事を待って止まり、それを起こす物(筋書き・timer・予定・置き直し)が無い。args = 知らせの文と
+   SimDeadlock。")
+
+(defeffect NoteEventWait
+  "業務の process pid の task 1 つが出来事の待ち(WaitForEvent)に入った(waiting 真 — events = 待つ型の名)か、出た(偽)かを世界に
+   知らせる(#3078)。"
+  {:fields [(: pid int) (: events str) (: waiting bool)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect NoteScenarioWait
+  "筋書きの本体が出来事か job の結末を期限なしで待ち始めた(真)か、待ち終えた(偽)かを世界に知らせる(#3078)。"
+  {:fields [(: waiting bool)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ArmWaitChange
+  "行き止まりの見張りの呼び鈴を掛ける(#3078)。答え = 呼び鈴(Promise)。世界は、業務の待ちか筋書きの待ちが変わった時と、業務の task が
+   出来事を待っている間に process が終わるか coordinator が書いた時に鳴らす — 時計の刻みでは鳴らさない。"
+  {:answer Promise :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect WaitsOf
+  "行き止まりの材料(WaitsSeen)を世界から読む(#3078)。"
+  {:answer WaitsSeen :tags {:context "doeff-cluster" :role "intent"}})
+
+
 ;; --- 筋の組み立て(純粋)--------------------------------------------------------------------------------
 
 (defk default-workers [system]
@@ -1336,7 +1403,9 @@
    値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15)。殺された process(Crash = 1・worker の死 = -9)はここへ戻らない —
    本物の SIGKILL と同じく task ごと捨てられ(Discard — 巻き戻さない・finally の effect は走らない)、終わりは殺した側が書く。"
   (try
-    (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
+    ;; 出来事の待ちの印(business-wait-tap — 行き止まりの見張りの材料・#3078)は柵の外側に置く: 柵が外へ通した WaitForEvent だけを見て、
+    ;; 印の知らせ(NoteEventWait)は柵を通らずに世界へ届く。
+    (<- value (with-handlers [#* child.outside (business-wait-tap child.pid) (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
                               (environ-reader child.environ)]
                              program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
@@ -2404,8 +2473,35 @@
   (session var start-waiters {})
   (session var ready-waiters #())
   (session var next-waiters #())
+  ;; 行き止まりの見張りの材料(#3078): 出来事を待っている業務の task(BusinessWait の組)・筋書きの本体の期限なしの待ち・見張りの呼び鈴。
+  (session var event-waits #())
+  (session var scenario-waiting False)
+  (session var change-bells #())
   (PlanOf []
     (resume plan))
+  (NoteEventWait [pid events waiting]
+    (val job (next (gfor r log :if (= r.pid pid) r.job) "?"))
+    (<- kept tuple (without-one-wait event-waits pid events))
+    (:= event-waits (if waiting (+ event-waits #((BusinessWait :pid pid :job job :events events))) kept))
+    (val rung change-bells)
+    (:= change-bells #())
+    (for [bell rung]
+      (<- (CompletePromise bell None)))
+    (resume None))
+  (NoteScenarioWait [waiting]
+    (:= scenario-waiting waiting)
+    (val rung change-bells)
+    (:= change-bells #())
+    (for [bell rung]
+      (<- (CompletePromise bell None)))
+    (resume None))
+  (ArmWaitChange []
+    (<- bell Promise (CreatePromise))
+    (:= change-bells (+ change-bells #(bell)))
+    (resume bell))
+  (WaitsOf []
+    (<- live tuple (live-processes handles children log))
+    (resume (WaitsSeen :live live :waits (tuple (gfor w event-waits :if (in w.pid handles) w)) :scenario-waiting scenario-waiting)))
   (PartsOf []
     (resume parts))
   (HostTruthOf [name]
@@ -2490,8 +2586,14 @@
     ;; coordinator が書き終えた時に、準備の状態を待つ待ち手を全部起こす(起きた待ち手が 1 回だけ読み直す・#3053)。
     (val rung ready-waiters)
     (:= ready-waiters #())
+    ;; 業務の task が出来事を待っている間は、行き止まりの見張りも起こす(task の行が落ち着いたかを 1 回だけ読み直す・#3078)。
+    (val watching (if (or event-waits scenario-waiting) change-bells #()))
+    (when watching
+      (:= change-bells #()))
     (for [bell rung]
       (<- (CompletePromise bell True)))
+    (for [bell watching]
+      (<- (CompletePromise bell None)))
     (resume None))
   (EndProcess [worker pid ended]
     ;; 終わりの記録の持ち主は 1 つ: 殺された process は捨てられて知らせを出さず、殺した側(Crash・KillWorker)が殺した刻で書く —
@@ -2508,6 +2610,12 @@
       (:= finished ends.finished)
       (:= end-waiters ends.end-waiters)
       (<- (settle-process-ends ends False)))
+    ;; 業務の task が出来事を待っている間に process が終われば、行き止まりの見張りを起こす(生きている task の数が変わる・#3078)。
+    (val watching (if (or event-waits scenario-waiting) change-bells #()))
+    (when watching
+      (:= change-bells #()))
+    (for [bell watching]
+      (<- (CompletePromise bell None)))
     (resume None))
   (NoteWatchFailure [failure]
     (:= watch-failures (+ watch-failures #(failure)))
@@ -2857,12 +2965,143 @@
     (resume (answered-body answer (+ "GET " path)))))
 
 
+;; --- 行き止まりの見張り(#3078 — 業務の task の待ちだけを見る・時計の刻みでは起きない)--------------------------------
+;; 今の scheduler の行き止まりの判定(SchedulerDeadlockError — 走れる task も外の約束の待ちも無い時)は sim-cluster では起きない: worker の
+;; 拍の timer がいつも時計の列に在り、列が空にならない。なので業務の task の出来事の待ち(WaitForEvent)だけを数え、それを起こす物
+;; (筋書きの本体・coordinator の置き直し・業務の timer・sim の世界の予定)が無い時にその場で SimDeadlockError で終わらせる。
+
+(defk event-names [event-types]
+  {:pre [(: event-types tuple)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "WaitForEvent の型の組を、名を , で繋いだ文にするため(行き止まりの知らせの名指し)。"
+  (.join "," (gfor t event-types t.__name__)))
+
+
+(defk without-one-wait [waits pid events]
+  {:pre [(: waits tuple) (: pid int) (: events str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "出来事の待ちの組から、process pid の events の待ち 1 つを外すため(同じ process の同じ型の待ちが 2 つ在れば 1 つだけ外す)。"
+  (var kept [])
+  (var dropped False)
+  (for [w waits]
+    (if (and (not dropped) (= w.pid pid) (= w.events events))
+        (:= dropped True)
+        (:= kept (+ kept [w]))))
+  (tuple kept))
+
+
+(defk live-processes [handles children log]
+  {:pre [(: handles dict) (: children dict) (: log tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "生きている業務の process(把手の在る pid)ごとに、job の名と task の数(主の task 1 + 中で Spawn した task の数)を読むため。"
+  (tuple (gfor r log :if (in r.pid handles)
+               (LiveProcess :pid r.pid :job r.job :tasks (+ 1 (len (.get children r.pid #())))))))
+
+
+(defk deadlock-of [snapshot]
+  {:pre [(: snapshot WaitSnapshot)] :post [(: % (| SimDeadlock None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "行き止まりかを判じるため: 生きている業務の process が 1 つ以上在り、どの process も task の数だけ出来事を待ち、筋書きの本体も期限なしで
+   待ち、coordinator の task の行が落ち着き、業務の timer も sim の世界の予定の刻も無い時だけ SimDeadlock(待っている task の全部)。"
+  (val all-waiting (and (bool snapshot.live)
+                        (all (gfor p snapshot.live
+                                   (>= (sum (gfor w snapshot.waits :if (= w.pid p.pid) 1)) p.tasks)))))
+  (if (and all-waiting snapshot.scenario-waiting snapshot.rows-settled (not snapshot.armed-timers) (is snapshot.world-due None))
+      (SimDeadlock :waits snapshot.waits)
+      None))
+
+
+(defk waits-closed [seen]
+  {:pre [(: seen WaitsSeen)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator を読む前の判じ: 業務の task が全部 出来事を待ち、筋書きの本体も期限なしで待っているか(開いていれば coordinator を
+   読まない — 見張りが要求の数を増やさない)。"
+  (<- found (| SimDeadlock None) (deadlock-of (WaitSnapshot :live seen.live :waits seen.waits :scenario-waiting seen.scenario-waiting
+                                                            :rows-settled True)))
+  (is-not found None))
+
+
+(defk task-rows-settled [link]
+  {:pre [(: link SimLink)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /state の task の行が全部 running か終わりの phase かを読むため(置き待ち・始まり待ち・置き直しの task が在れば偽 —
+   置かれて起きる task が新しく出来事を発し得る。読めなければ偽 = 判じない)。"
+  (<- read tuple (send-resent link "GET" "/state" {} None))
+  (if (is (get read 0) None)
+      False
+      (all (gfor row (.get (answered-object read "状態を読めない") "tasks" [])
+                 (or (= (.get row "phase") "running") (in (.get row "phase") ENDED-PHASES))))))
+
+
+(defk deadlock-text [found]
+  {:pre [(: found SimDeadlock)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "行き止まりの知らせの文を作るため(待っている task ごとに job・pid・出来事の型)。"
+  (+ "sim-cluster の行き止まり — 業務の task が全部 出来事を待って止まり、起こす物が無い: "
+     (.join "・" (gfor w found.waits (.format "{}(pid {})が {} を待つ" w.job w.pid w.events)))))
+
+
+(defhandler business-wait-tap [#^ int pid]
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 業務の process pid の出来事の待ち(WaitForEvent)の前後を世界に知らせる(行き止まりの見張りの材料)。待ちそのものは外側の出来事の
+  ;; 答え手がする(答えはそのまま返す)。殺された process(Discard)の待ちは「出た」の知らせが戻らないが、世界は生きている process の
+  ;; 待ちだけを数える。
+  ;; 引数に残す理由: process ごとに別の pid で同じ handler を並べる(柵 fence と同じ — Ask では process を区別できない)。
+  (WaitForEventEffect [event-types]
+    (<- events str (event-names event-types))
+    (<- (NoteEventWait pid events True))
+    (<- event (WaitForEventEffect event-types))
+    (<- (NoteEventWait pid events False))
+    (resume event)))
+
+
+(defhandler scenario-wait-tap
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 筋書きの本体の期限なしの待ち(出来事の待ち・job の process の終わりの期限なしの待ち)の前後を世界に知らせる。期限つきの待ちは期限で
+  ;; 起きるので知らせない(行き止まりにしない)。
+  (WaitForEventEffect [event-types]
+    (<- (NoteScenarioWait True))
+    (<- event (WaitForEventEffect event-types))
+    (<- (NoteScenarioWait False))
+    (resume event))
+  (AwaitProcessEnded [job timeout-seconds]
+    :when (is timeout-seconds None)
+    (<- (NoteScenarioWait True))
+    (<- answer (| ProcessEnded ProcessWaitExpired) (AwaitProcessEnded job :timeout-seconds None))
+    (<- (NoteScenarioWait False))
+    (resume answer)))
+
+
+(defk deadlock-watch [link]
+  {:pre [(: link SimLink)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "行き止まりの見張り: 呼び鈴を先に掛けてから材料を読み(読みと次の変化の間の鳴らしを取りこぼさない)、行き止まりなら SimDeadlockError を
+   上げ、そうでなければ呼び鈴が鳴るまで眠る。時計の刻みでは起きない — 起こすのは世界(業務の待ち・筋書きの待ちの変化と、業務の task が
+   待っている間の process の終わり・coordinator の書き)と、待ちがそろっている間の sim の世界の次の予定の刻(NextWorldDue — 網の切れが
+   明ける等。その刻に世界が変わるので 1 度だけ読み直す。予定の明けは呼び鈴を鳴らさない)だけ。"
+  (var due None)
+  (while True
+    (<- bell Promise (ArmWaitChange))
+    (<- seen WaitsSeen (WaitsOf))
+    (<- closed bool (waits-closed seen))
+    (<- now int (now-epoch-ms))
+    (:= due None)
+    (when closed
+      (<- settled bool (task-rows-settled link))
+      (<- world-due (| int None) (NextWorldDue now))
+      (:= due world-due)
+      (<- found (| SimDeadlock None) (deadlock-of (WaitSnapshot :live seen.live :waits seen.waits :scenario-waiting seen.scenario-waiting
+                                                                :rows-settled settled :world-due world-due)))
+      (when (is-not found None)
+        (val stamped (replace found :at-ms now))
+        (<- text str (deadlock-text stamped))
+        (raise (SimDeadlockError text stamped))))
+    ;; 予定の刻が今と同じ(止まりの頼みが次の歩で起きる)でも、仮想の時計を少なくとも 1 ms 進めて他の task に歩を譲る。
+    (if (is due None)
+        (<- (Wait bell.future))
+        (<- (promise-or-timeout bell.future (/ (max 1 (- due now)) 1000.0)))))
+  None)
+
+
 ;; --- 入口 -----------------------------------------------------------------------------------------------
 
 (defk sim-main [scenario]
   {:pre [(: scenario (| Program EffectBase))] :post [(: % "scenario の答え(型は筋書きごと)")] :tags {:context "doeff-cluster" :role "program"}}
   "coordinator の Pod を起こし、宣言を書き、worker を並べてから scenario を(筋書きの送り手の口の下で)走らせ、終われば worker・
-   coordinator の順に止めるため。"
+   coordinator の順に止めるため。scenario は行き止まりの見張り(deadlock-watch)と競わせ、見張りが行き止まりを見つければ scenario を
+   待たずに SimDeadlockError で終わる(#3078)。"
   (<- plan SimPlan (PlanOf))
   (<- parts SimParts (PartsOf))
   (<- pod Task (Spawn (coordinator-pod)))
@@ -2875,10 +3114,14 @@
     (:= keepers (+ keepers [t])))
   (<- (await-workers (tuple (gfor w plan.workers w.name))))
   (<- client SimLink (ClientLink))
+  (<- story Task (Spawn (with-handlers [(coordinator-answers client) scenario-wait-tap] scenario)))
+  (<- watch Task (Spawn (deadlock-watch control)))
   (try
-    (<- answer (with-handlers [(coordinator-answers client)] scenario))
+    (<- answer (Race story watch))
     answer
     (finally
+      (<- (Cancel watch))
+      (<- (Cancel story))
       (<- (StopWorkers))
       (<- (Gather #* keepers))
       (setattr parts.stop "requested" True)
