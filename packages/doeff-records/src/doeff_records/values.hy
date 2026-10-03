@@ -11,6 +11,7 @@
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が typed.hy に在る — 業務の呼び手はそちらを使う。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
+(import copy)
 (import dataclasses [dataclass field])
 (import re)
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
@@ -282,7 +283,14 @@
   (#^ tuple key)
   (#^ FrozenMap value)
   (#^ int version)
-  (defn #^ None __post_init__ [self] (freeze-field self "value" "Row.value")))
+  (defn #^ None __post_init__ [self] (freeze-field self "value" "Row.value"))
+  (defn #^ "Row" __deepcopy__ [self #^ (get dict #(int object)) memo]
+    "深い写し: 値は作る時に深く凍らせてあり(__post_init__)、鍵が文字列と整数だけなら行は中まで変えられないので自分を返す — 置き場を
+     丸ごと deepcopy する使い手(5 万行の memory の置き場を検ごとに写す検の土台)が、変えられない行を作り直さないため(#2670)。
+     鍵に他の型が在れば鍵を深く写した行を作る。"
+    (if (all (gfor part self.key (in (type part) #(str int))))
+        self
+        (Row (copy.deepcopy self.key memo) self.value self.version))))
 
 (defclass [(dataclass :frozen True)] Missing []
   "行が無い。")
