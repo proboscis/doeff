@@ -8,16 +8,20 @@
   yield の無い defk は普通の関数になる — の overload も core が持つ)。
 - `_doeff_perform(e)`: `(<- x e)` の x の型 = e の答えの型(Python の `@effectful` の
   `x = perform(e)` と同じ形・docs/24-effectful-perform.md)。effect は `EffectBase[T]` の T、
-  Program(defk を呼んだ結果など)は `Program[T, E]` の T。型の分からない値(`object`・Unknown)
-  は Any として通す — 誤検出を出さないことを優先する。Hy には effect の集合を宣言する口が
-  まだ無いので、`perform: Effects[E]` の E の突き合わせはしない。
+  Program(defk を呼んだ結果など)は `Program[T, E]` の T。宣言は `Program[_T, object] -> _T` の 1 つ
+  だけで、`object -> Any` の受け皿を持たない(agora-redesign #3116・cisco-c8 2026-10-03 16:3x の決め):
+  受け皿の overload が在ると、module の中で最初の評価が union の期待型の下(`(<- x (| int None) …)`)
+  だった時に pyright 1.1.414 が以後の `_doeff_perform` を全部受け皿へ落とし、答えが Any になって
+  束ねの型の食い違いを黙って通していた(順に依る — tests/test_static_check.py の
+  test_a_bind_after_a_union_bind_keeps_its_answer_type)。Program でない値を `<-` に渡すと赤になる。
+  Hy には effect の集合を宣言する口がまだ無いので、`perform: Effects[E]` の E の突き合わせはしない。
 - deftest の引数の型(`DeftestInterpreter` と pytest の組み込みの fixture の型・下の節)。
 - defhandler / handle の展開の型(節を回す関数・handler を被せる関数・節の終わり方の検め・末尾の節)。
 """
 
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, TypeAlias, TypeVar, overload
+from typing import Protocol, TypeAlias, TypeVar
 
 import pytest
 from doeff_vm import K, WithHandler
@@ -33,10 +37,7 @@ from doeff.do import do as do
 
 _T = TypeVar("_T")
 
-@overload
-def _doeff_perform(effect: Program[_T, Any], /) -> _T: ...
-@overload
-def _doeff_perform(effect: object, /) -> Any: ...
+def _doeff_perform(effect: Program[_T, object], /) -> _T: ...
 
 # for/do・traverse の件の引数の型(agora-redesign #2321)。型検査のための展開(macros.hy の _traverse-form)は、
 # 件ごとの関数の引数を `object` で受け、本体の前で `x = _doeff_traverse_item(items, 件)` と読み直す — 件は items の
