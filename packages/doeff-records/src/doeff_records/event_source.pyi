@@ -86,7 +86,13 @@ def checked_bindings(bindings: tuple, subscriber: str) -> _Program[tuple[SignalT
 def first_seen(names: tuple) -> _Program[tuple, object]:
     ...
 
+def reconnected(ask: ListRows | WatchChanges | WatchEvents | ReadStreamEnd, subscriber: str, names: tuple[str, ...], answered: Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty | Unreachable) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty, object]:
+    ...
+
 def reachable(ask: ListRows | WatchChanges | WatchEvents | ReadStreamEnd, subscriber: str, names: tuple[str, ...]) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty, object]:
+    ...
+
+def watched(ask: WatchChanges | WatchEvents | ReadStreamEnd, subscriber: str, names: tuple[str, ...], signals: tuple[type, ...]) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty, object]:
     ...
 
 def start_cursor(subscriber: str, tables: tuple[str, ...]) -> _Program[WatchCursor | None, object]:
