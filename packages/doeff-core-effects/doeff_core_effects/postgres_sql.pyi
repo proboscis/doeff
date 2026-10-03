@@ -13,10 +13,15 @@ from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
 from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
+from doeff_core_effects.sql_effects import SqlNotify as SqlNotify
+from doeff_core_effects.sql_effects import SqlHangNotice as SqlHangNotice
+from doeff_core_effects.sql_effects import SqlDropNotice as SqlDropNotice
 from doeff_core_effects.sql_effects import SqlRows as SqlRows
 from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
 from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
@@ -40,6 +45,7 @@ UNREACHABLE_SQLSTATE_CLASS: str
 UNREACHABLE_SQLSTATES: tuple[str, ...]
 DEFAULT_POOL_SIZE: int
 DRIVER_THREADS: ThreadPerCall
+LISTEN_RETRY_SECONDS: int
 POSTGRES_TYPES: dict[SqlColumnType, str]
 
 @dataclass(frozen=True, kw_only=True)
@@ -69,8 +75,16 @@ class PostgresConnections:
     databases: Incomplete
     idle: Incomplete
     permits: Incomplete
+    listeners: Incomplete
+    listeners_lock: Incomplete
 
     def __init__(self, databases: tuple, *, size: Incomplete=..., timeouts: Incomplete=...) -> None:
+        ...
+
+    def listener(self, name: str, channel: str) -> PostgresListener:
+        ...
+
+    def ring_local(self, name: str, channel: str) -> None:
         ...
 
     def names(self) -> Incomplete:
@@ -86,6 +100,32 @@ class PostgresConnections:
         ...
 
     def close(self) -> Incomplete:
+        ...
+
+class PostgresListener:
+    connections: PostgresConnections
+    name: str
+    channel: str
+    lock: Incomplete
+    bells: Incomplete
+    listening: Incomplete
+    listened: Incomplete
+    failure: Incomplete
+    settled: Incomplete
+
+    def __init__(self, connections: PostgresConnections, name: str, channel: str) -> None:
+        ...
+
+    def ring(self) -> None:
+        ...
+
+    def hang(self, bell: ExternalPromise) -> str | None:
+        ...
+
+    def drop(self, bell: ExternalPromise) -> None:
+        ...
+
+    def listen(self) -> None:
         ...
 
 def postgres_statement(statement: str, params: tuple) -> _Program[PostgresStatement, object]:
@@ -120,6 +160,7 @@ def postgres_begin(connection: Incomplete, lock_key: str | None) -> _Program[Sql
 
 def postgres_control(connection: Incomplete, statement: str) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
+NOTICE_STATEMENT: str
 
 def postgres_lease(connections: PostgresConnections, database: str) -> _Program[Incomplete, object]:
     ...
@@ -137,6 +178,12 @@ def offloaded_transaction(connections: PostgresConnections, pool: Executor, data
     ...
 
 def offloaded_statement(connections: PostgresConnections, pool: Executor, database: str, work: Incomplete) -> _Program[Incomplete, object]:
+    ...
+
+def notified(connections: PostgresConnections, pool: Executor, database: str, channel: str) -> _Program[None | SqlFailed | SqlUnreachable, object]:
+    ...
+
+def hung_notice(connections: PostgresConnections, pool: Executor, database: str, channel: str) -> _Program[ExternalPromise | SqlUnreachable, object]:
     ...
 
 def postgres_sql_handler(connections: PostgresConnections) -> _Handler:
