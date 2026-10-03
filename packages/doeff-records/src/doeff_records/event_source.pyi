@@ -13,13 +13,13 @@ from doeff import Program as Program
 from doeff import with_handlers as with_handlers
 from doeff_core_effects.scheduler import Cancel as Cancel
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import Race as Race
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import Task as Task
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.scheduler import Wait as Wait
 from doeff_events.effects import Publish as Publish
 from doeff_events.effects import PublishEffect as PublishEffect
+from doeff_events.effects import SourceFailed as SourceFailed
 from doeff_events.effects import WaitForEventEffect as WaitForEventEffect
 from doeff_time import Delay as Delay
 from doeff_time import DelayEffect as DelayEffect
@@ -107,16 +107,19 @@ def publish_changes(plan: SourcePlan) -> _Program[None, object]:
 def publish_appends(plan: SourcePlan, start: StreamStart) -> _Program[None, object]:
     ...
 
+def failure_announced(source: str, program: Program) -> _Program[None, object]:
+    ...
+
 def spawn_sources(plan: SourcePlan) -> _Program[tuple, object]:
     ...
 
 def stop_source(task: Task) -> _Program[None, object]:
     ...
 
-def wait_beside_sources(sources: tuple, event_types: tuple) -> _Program[Incomplete, object]:
+def wait_beside_sources(source: str, event_types: tuple) -> _Program[Incomplete, object]:
     ...
 
-def waits_beside_sources(sources: tuple) -> _Handler:
+def waits_beside_sources(source: str) -> _Handler:
     ...
 
 def run_with_sources[T](plan: SourcePlan, body: Program[T, object] | EffectBase[T]) -> _Program[T, object]:

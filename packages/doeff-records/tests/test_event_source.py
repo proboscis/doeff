@@ -31,6 +31,8 @@ from pathlib import Path
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
+from doeff_core_effects.effects import Listen
+from doeff_core_effects.handlers import listen_handler
 from doeff_core_effects.scheduler import (
     PRIORITY_HIGH,
     PRIORITY_NORMAL,
@@ -45,7 +47,7 @@ from doeff_core_effects.scheduler import (
     scheduled,
 )
 from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handler, timer_handler
-from doeff_events.effects import Publish, PublishEffect, WaitForEvent
+from doeff_events.effects import PublishEffect, WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.admission import key_from_text, key_text
 from doeff_records.effects import AppendEvent, PutRow, ReadRow
@@ -627,54 +629,11 @@ def _write_after_cancel(build: Build) -> EffectGenerator[CancelOutcome]:
 @pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
 def test_cancelling_the_outer_task_stops_the_body_before_a_later_write(build: Build) -> None:
     # 失敗ケース: 本体を別の task にした包みでは、外の Cancel の後の書きの合図で本体が起きて読みを進めた(#3100 の画面の赤)。
+    # 本体が外の task のまま走るので、本体は外の Spawn の優先のまま走る(包みが本体を別の task に立て直すと、この検が赤)。
+    # 以前ここに在った「本体と通常の優先の立ち会いの起きた順」の検は外した(#3135): scheduler は約束を完了するたびに起こした task を
+    # 完了した側より先に回すので(#493)、同じ合図で起きる 2 つの待ち手の順は購読の順で決まり、優先は効かない。その検が優先を
+    # 見分けられたのは、本体の待ちを子の task にして源と競わせていた 1 段の回り道があった間だけだった。
     assert _run_on(MemoryStore(SCHEMA), _write_after_cancel(build)) == CancelOutcome(seen=None, cancelled=True)
-
-
-@dataclass(frozen=True)
-class Woke:
-    """受け手 name が合図で起きた、という知らせ(起きた順を、知らせを受ける購読者の列の順で見る)。"""
-
-    name: str
-
-
-@do
-def _announce_wake(name: str) -> EffectGenerator[None]:
-    """受け手: Changed を 1 つ受けたら、起きたことを Woke(name) で知らせる。"""
-    yield WaitForEvent(Changed)
-    yield Publish(Woke(name))
-
-
-@do
-def _two_wakes() -> EffectGenerator[tuple[str, str]]:
-    """知らせの受け手: Woke を 2 つ、来た順に受けて名を返す。"""
-    first: Woke = yield WaitForEvent(Woke)
-    second: Woke = yield WaitForEvent(Woke)
-    return (first.name, second.name)
-
-
-@do
-def _wake_order(build: Build) -> EffectGenerator[tuple[str, str]]:
-    """本体を通常より低い優先で Spawn し、通常の優先の立ち会いと同じ書きの合図で起こして、起きた順を返す。本体の購読者を先に
-    作るので、合図は本体の待ちに先に渡る。"""
-    bus = EventBus()
-    worker = subscribed_event_handler(bus, "worker", (Changed,))
-    witness = subscribed_event_handler(bus, "witness", (Changed,))
-    recorder = subscribed_event_handler(bus, "recorder", (Woke,))
-    source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
-    receiver = yield Spawn(with_handlers([worker, source], _announce_wake("body")), priority=PRIORITY_NORMAL - 1)
-    other = yield Spawn(witness(_announce_wake("witness")))
-    yield Delay(1.0)
-    yield _write("jobs", "j1")
-    order: tuple[str, str] = yield recorder(_two_wakes())
-    yield Wait(receiver)
-    yield Wait(other)
-    return order
-
-
-@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
-def test_the_body_runs_at_the_priority_of_the_outer_spawn(build: Build) -> None:
-    # 失敗ケース: 包みが本体を既定の優先で Spawn し直すと、低い優先で Spawn した本体が通常の優先の立ち会いより先に起きた。
-    assert _run_on(MemoryStore(SCHEMA), _wake_order(build)) == ("witness", "body")
 
 
 @do
@@ -692,6 +651,46 @@ def _outage_while_waiting(build: Build) -> EffectGenerator[Changed]:
 
 @pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
 def test_a_source_that_fails_while_the_body_waits_brings_the_body_down(build: Build) -> None:
-    # 本体は包みを撃った task のまま待つので、源の失敗は本体の待ち(waits-beside-sources の Race)に届いて同じ例外で落ちる。
+    # 本体は包みを撃った task のまま待つので、源の失敗(源の task が同じ bus に発する SourceFailed)は本体の待ちに届いて同じ例外で
+    # 落ちる。
     with pytest.raises(SignalSourceUnreachable, match=re.escape(DETAIL)):
         _run_on(MemoryStore(SCHEMA), _outage_while_waiting(build))
+
+
+# --- 本体の待ちごとに task を立てない(#3135)--------------------------------------------------------------------
+
+
+@do
+def _receive_changed(count: int) -> EffectGenerator[int]:
+    """受け手: Changed を count 回受けて、受けた回数を返す。"""
+    for _ in range(count):
+        yield WaitForEvent(Changed)
+    return count
+
+
+@do
+def _spawns_while_receiving(build: Build, writes: int) -> EffectGenerator[tuple[int, int]]:
+    """本体が書きの合図を writes 回受ける間に、包みの中で出た Spawn の数を読む(源の task の分は寿命に決まった数だけ入る)。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, "worker", (Changed,))
+    source: ProgramHandler = yield build((CHANGED_ON_JOBS,), "worker")
+    listened = Listen(with_handlers([source], _receive_changed(writes)), types=(Spawn,))
+    receiver = yield Spawn(with_handlers([waiting, listen_handler], listened))
+    for n in range(writes):
+        yield Delay(1.0)
+        yield _write("jobs", f"j{n}")
+    received, spawns = yield Wait(receiver)
+    return (received, len(spawns))
+
+
+@pytest.mark.parametrize("build", BUILDS, ids=BUILD_IDS)
+def test_waiting_for_each_signal_spawns_no_task(build: Build) -> None:
+    # 失敗ケース: 本体の待ちを子の task にして源と Race する形では、受けた合図 1 つごとに Spawn が 1 つ増えた(automation の 1 本で
+    # 293 回)。源の失敗は bus の合図で届くので、Spawn は源の task の分だけ。
+    one = _run_on(MemoryStore(SCHEMA), _spawns_while_receiving(build, 1))
+    three = _run_on(MemoryStore(SCHEMA), _spawns_while_receiving(build, 3))
+
+    assert isinstance(one, tuple)
+    assert isinstance(three, tuple)
+    assert (one[0], three[0]) == (1, 3)
+    assert one[1] == three[1], (one, three)
