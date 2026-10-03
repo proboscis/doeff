@@ -12,7 +12,7 @@ dependencies = [
     "doeff>=0.2.0",
     # 記録の service の待ち受け(http_server.hy)は doeff の汎用の HTTP の待ち受けの本物の答え手 aiohttp-http-server を使う(#880 U7)。
     "doeff-core-effects[http-server]",
-    # 記録の変更を出来事の合図にする handler(event_source.hy)は、doeff-events の WaitForEvent に答え、購読者の列 SubscriberQueue を使う(#3077)。
+    # 記録の変化を出来事の合図として発する源(event_source.hy)は、doeff-events の Publish で合図を発する(待ちは購読者の列が答える・#3077)。
     "doeff-events",
     "doeff-hy",
     "doeff-time",
