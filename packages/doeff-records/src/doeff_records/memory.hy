@@ -28,8 +28,11 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import datetime [datetime timedelta])
-(import doeff [EffectBase Program])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff [EffectBase Program with-handlers])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Race Spawn Task TaskCancelledError Wait Cancel])
+(import doeff_events.effects [PublishEffect])
+(import doeff_records.event_source [BodyWrapper ChangedRow SignalSourceFactory SignalTables checked-bindings first-seen stop-source
+                                    waits-beside-sources])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
@@ -767,3 +770,124 @@
   "memory の置き場 store を使う置き場の選びを作るため(模擬・手元の 1 process・単体の検が records-serving に渡す。/readyz は用意の済みだけで
    ready)。PostgreSQL の選びは doeff_records.main の PG-STORE。"
   (StoreChoice :prepare-of (partial memory-prepared store) :readiness None))
+
+
+;; --- 模擬の源(memory の置き場の書きで合図を発する — #3127)-----------------------------------------------------------------
+;; 記録の置き場の源(event_source.hy の records-signal-handler — WatchChanges・WatchEvents の long-poll と繋ぎ直し)の模擬の組の代わり。置き場の
+;; 呼び鈴(hang-bell — 書きが鳴らす外の promise)で起きるので、時計を使わず(poll も Delay も無い)、始まりの位置も effect を出さずに置き場から
+;; 直に読む。呼び鈴は置き場 1 つを共有する全部の書き手が鳴らすので、別の handler の組(模擬の別の process)の書きでも起きる。合図の型と keys は
+;; 記録の置き場の源と同じ(結び SignalTables・ChangedRow)— 組み立ての違いは土台が鍵 SignalSourceFactory に答える値だけ。
+
+(defrecord MemoryMark
+  "模擬の源が読み終えた置き場の位置: epoch = 置き場の版 / sequence = 表の変更の番号 / event = 列の出来事の番号。"
+  #^ int epoch
+  #^ int sequence
+  #^ int event)
+
+
+(defrecord MemorySignals
+  "模擬の源が位置より後の書きを読んだ答え: signals = 発する合図(結びの順)/ mark = 読み終えた位置。"
+  #^ tuple signals
+  #^ MemoryMark mark)
+
+
+(deff memory-mark [store]  ; defk にできない: 錠の内で同期に置き場の位置を読む(置き場の書きと同じ作法 — effect を出さない)
+  {:pre [(: store MemoryStore)] :post [(: % MemoryMark)]}
+  "置き場の今の位置を読むため(模擬の源の始まり — 始まりの位置の effect を出さない)。"
+  (with [store.lock]
+    (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head)))
+
+
+(deff binding-keys [binding changes events]  ; defk にできない: 錠の外で同期に組む純粋な判断(memory-signals-since が内包表記の中で呼ぶ)
+  {:pre [(: binding SignalTables) (: changes tuple) (: events tuple)] :post [(: % tuple)]}
+  "結び 1 つの合図の keys を組むため: 結んだ表の変わった行(ChangedRow(表, 行の鍵の綴り)— 初めて出た順・同じ行は 1 つ)と、結んだ列の
+   追記の頭(ChangedRow(列, 頭の番号の綴り))。記録の置き場の源と同じ keys の形。"
+  (setv rows (tuple (gfor change changes :if (in change.table binding.tables) (ChangedRow :table change.table :key (key-text change.key))))
+        seen (set)
+        unique (tuple (gfor row rows :if (not-in row seen) :do (.add seen row) row))
+        heads (tuple (gfor stream binding.streams
+                           :setv last (max (gfor event events :if (= event.stream stream) event.sequence) :default 0)
+                           :if (> last 0)
+                           (ChangedRow :table stream :key (str last)))))
+  (+ unique heads))
+
+
+(deff memory-signals-since [store bindings mark]  ; defk にできない: 錠の内で同期に置き場を読む(置き場の書きと同じ作法)
+  {:pre [(: store MemoryStore) (: bindings tuple) (: mark MemoryMark)] :post [(: % MemorySignals)]}
+  "位置 mark より後の書きを、結びごとの合図にするため(結んだ表と列の書きの無い結びは出さない)。置き場の版が変わった・保持の刈りで位置が床より
+   前になった時は、結びごとに keys の空な合図を 1 つ発する(受け手は読み直す — 記録の置き場の源が Reset で読み直すのと同じ)。"
+  (with [store.lock]
+    (setv now (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head)
+          lost (or (!= mark.epoch store.epoch) (< mark.sequence store.floor))
+          changes (if lost #() (tuple (gfor change store.changes :if (> change.sequence mark.sequence) change)))
+          start (bisect.bisect-right store.events mark.event :key (fn [event] event.sequence))
+          events (tuple (cut store.events start None))))
+  (MemorySignals :signals (tuple (gfor binding bindings
+                                       :setv keys (binding-keys binding changes events)
+                                       :if (or lost keys)
+                                       (binding.signal :keys (if lost #() keys))))
+                 :mark now))
+
+
+(defk memory-publish [store bindings tables streams mark]
+  {:pre [(: store MemoryStore) (: bindings tuple) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...))) (: mark MemoryMark)]
+   :post [(: % None)] :tags {:context "records" :role "foundation"}}
+  "模擬の源の task: 結んだ表と列の呼び鈴を掛けてから位置より後の書きを読み(掛ける前の書きも拾う — 読みと待ちの間の書きを落とさない)、
+   合図が在れば外して Publish し、無ければ呼び鈴が鳴るのを待つ(時計を使わずに park — 模擬の時計は進める)— を繰り返す。止めるのは Cancel だけ。"
+  (var at mark)
+  (while True
+    (<- bell ExternalPromise (hang-bell store tables streams))
+    (val found (memory-signals-since store bindings at))
+    (:= at found.mark)
+    (if found.signals
+        (do (<- (drop-bell store bell))
+            (for [signal found.signals]
+              (<- (PublishEffect signal))))
+        ;; 取り消されたら(本体が終わった)掛けた呼び鈴を外してから解ける — 鳴らない呼び鈴を置き場に残さない。
+        (try
+          (<- _rang (Wait bell.future :priority PRIORITY-IDLE))
+          (except [cancelled TaskCancelledError]
+            (<- (drop-bell store bell))
+            (raise cancelled)))))
+  None)
+
+
+(defk run-memory-source [store bindings subscriber body]
+  {:tp [T] :pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: subscriber str) (: body (| (get Program #(T object)) (get EffectBase T)))]
+   :post [(: % T)] :tags {:context "records" :role "foundation"}}
+  "memory-signal-handler の包み: 包んだ本体を走らせる頭で置き場の今の位置を読み(effect を出さない)、源の task を Spawn してから本体をこの task の
+   まま(Spawn せずに)走らせ、本体が終われば答えでも例外でも源の task を止めるため(記録の置き場の源の包みと同じ形 — 本体の待ちに源の失敗が届く)。"
+  (<- checked (get tuple #(SignalTables ...)) (checked-bindings bindings subscriber))
+  (<- tables (get tuple #(str ...)) (first-seen (tuple (gfor binding checked name binding.tables name))))
+  (<- streams (get tuple #(str ...)) (first-seen (tuple (gfor binding checked name binding.streams name))))
+  (val mark (memory-mark store))
+  (<- source Task (Spawn (memory-publish store checked tables streams mark)))
+  (try
+    (<- answer (with-handlers [(waits-beside-sources #(source))] body))
+    (finally
+      (<- (stop-source source))))
+  answer)
+
+
+;; 模擬の源の包み 1 つが本体の周りで出す effect の全部(memory-signal-handler の宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めないので
+;; 宣言する)。源の task(Spawn と、その中の呼び鈴の CreateExternalPromise・鳴るまでの Wait・Publish)・本体の待ちと源の Race(Spawn・Race・Cancel)・
+;; 源の止め(Cancel・Wait)。WatchChanges・WatchEvents・Delay と位置の読みの effect は出さない。
+(val MEMORY-SOURCE-EFFECTS #(CreateExternalPromise PublishEffect Spawn Race Cancel Wait))
+
+
+(deff memory-signal-handler [store bindings subscriber]  ; defk にできない: with-handlers の列に置く素の工場の関数 — 閉じの検の道具が宣言を読む形(records-signal-handler と同じ)
+  {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
+  "memory の置き場 store の書きを合図として発する源で本体を包む関数を作るため(模擬の組の源 — 素の工場で、with-handlers の列に置く)。bindings =
+   SignalTables の tuple / subscriber = 購読者の名前。包んだ本体の間だけ源の task が動く。"
+  (BodyWrapper run-memory-source store bindings subscriber))
+
+;; 何にも答えず(__doeff_handles__ = ())、本体の周りで MEMORY-SOURCE-EFFECTS を出す、という宣言(doeff-effect-analyzer の body wrapper の読み)。
+(setv memory-signal-handler.__doeff_handles__ #()
+      memory-signal-handler.__doeff_effects__ MEMORY-SOURCE-EFFECTS)
+
+
+(defk memory-signal-source [store]
+  {:pre [(: store MemoryStore)] :post [(: % SignalSourceFactory)] :tags {:context "records" :role "foundation"}}
+  "模擬の土台が鍵 SignalSourceFactory に答える値を作るため: make = 置き場 store を閉じた memory-signal-handler(本番の土台の
+   RECORDS-SIGNAL-SOURCE と同じ鍵・同じ合図の形)。"
+  (SignalSourceFactory :make (partial memory-signal-handler store)))
