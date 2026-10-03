@@ -15,9 +15,12 @@ from doeff_hy_pytest.budget import (
     DEFAULT_RUNAWAY_STEPS_MULTIPLIER,
     CompileCounter,
     CompileTally,
+    DeclaredOverBudget,
     ImportTally,
     Measurement,
     OverBudget,
+    StaleDeclaration,
+    StepDeclaration,
     RegisteredOverBudget,
     RegisteredWithinBudget,
     RegistryError,
@@ -27,7 +30,10 @@ from doeff_hy_pytest.budget import (
     VmWork,
     WithinBudget,
     call_budget_for,
+    declare_step_budget,
+    declared_steps_of,
     judge,
+    judge_declared,
     judge_steps,
     load_registries,
     load_registry,
@@ -911,3 +917,79 @@ def test_no_steps_setting_arms_no_runaway_budget(pytester: pytest.Pytester) -> N
     pytester.makepyfile(spin_scheduler=SPIN_SCHEDULER)
     result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=1)
+
+
+# ── 検ごとの宣言(agora-redesign #2670 の 3・Mac の調整役の決め 2026-10-03 21:5x)──────────────────────────────
+# 既定の上限は変えず、縮められない検だけが検の定義の隣で要る歩数と理由を宣言する。宣言のある検は宣言の値で判じ、
+# 宣言の無い検は今までどおり既定の上限で判じる。
+
+
+def test_judge_declared_uses_the_declaration_and_reds_a_stale_one() -> None:
+    """宣言 5000 歩: 既定(1000)を超えても宣言の内なら内・宣言を超えれば赤・宣言の半分以下は古い宣言で赤。"""
+    declaration = StepDeclaration(5000, "筋書きの規模に断言が依る")
+    assert isinstance(judge_declared(_steps_measurement(3000), declaration), WithinBudget)
+    assert isinstance(judge_declared(_steps_measurement(5000), declaration), WithinBudget)
+    over = judge_declared(_steps_measurement(5001), declaration)
+    assert isinstance(over, DeclaredOverBudget) and over.declaration == declaration
+    assert isinstance(judge_declared(_steps_measurement(2500), declaration), StaleDeclaration)
+    assert isinstance(judge_declared(_steps_measurement(2501), declaration), WithinBudget)
+
+
+def test_declare_step_budget_attaches_the_declaration_and_refuses_bad_values() -> None:
+    """宣言は検の関数に付き、読める。歩数が正の整数でない・理由が空や 2 行の宣言は付ける時に止める。"""
+
+    def a_test() -> None: ...
+
+    declare_step_budget(a_test, 5000, " 筋書きの規模に断言が依る ")
+    assert declared_steps_of(a_test) == StepDeclaration(5000, "筋書きの規模に断言が依る")
+
+    def other() -> None: ...
+
+    assert declared_steps_of(other) is None
+    for steps, reason in ((0, "理由"), (-1, "理由"), (True, "理由"), (5000, ""), (5000, "1 行目\n2 行目")):
+        with pytest.raises(ValueError):
+            declare_step_budget(other, steps, reason)
+    assert declared_steps_of(other) is None
+
+
+DECLARED_STEPS = """\
+(require doeff-hy.macros [deftest])
+(import fake_work)
+(import doeff_hy_pytest.budget [declare-step-budget])
+(deftest test-declared-heavy
+  (fake_work.add 10000)
+  (assert True))
+(declare-step-budget test-declared-heavy 12000 "筋書きの規模に断言が依る(検の例)")
+(deftest test-undeclared-heavy
+  (fake_work.add 10000)
+  (assert True))
+(deftest test-stale-declaration
+  (fake_work.add 10)
+  (assert True))
+(declare-step-budget test-stale-declaration 12000 "前は重かった(検の例)")
+"""
+
+
+def test_a_declared_test_is_judged_by_its_declaration_and_the_failure_cases_stay_red(pytester: pytest.Pytester) -> None:
+    """既定 1000 歩の repo で、宣言 12000 歩の検の 10000 歩は緑。失敗ケース: 宣言の無い同じ重さの検は既定で赤・
+    宣言の半分以下(10 歩)で終わる検は古い宣言として赤。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_declared": DECLARED_STEPS})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1, failed=2)
+    result.stdout.fnmatch_lines(["*test_declared.hy::test_undeclared_heavy*歩数 10000*上限 歩数 1000*"])
+    result.stdout.fnmatch_lines(["*test_declared.hy::test_stale_declaration は歩数 12000 を宣言しているが*0.5 倍以下*"])
+    result.stdout.fnmatch_lines(["*古い宣言(宣言 歩数 12000 の 0.5 倍以下): test_declared.hy::test_stale_declaration*"])
+    assert "test_declared_heavy" not in "\n".join(line for line in result.stdout.lines if "上限を超えた" in line)
+
+
+def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
+    """宣言の値を超えた検は赤(宣言は上限を上げる口ではない — 宣言した値までしか通さない)。"""
+    over = (
+        "(require doeff-hy.macros [deftest])\n(import fake_work)\n(import doeff_hy_pytest.budget [declare-step-budget])\n"
+        "(deftest test-over\n  (fake_work.add 20000)\n  (assert True))\n"
+        '(declare-step-budget test-over 12000 "検の例")\n'
+    )
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_over": over})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["*宣言した歩数を超えた: test_over.hy::test_over*歩数 20000*宣言 歩数 12000*"])

@@ -20,6 +20,10 @@
   (#3143)。同じ仮想の刻で task を起こし続ける空回りは走り終わらないので、走り終えた後の判定には届かない — 上限を越えて
   task を起こそうとした時に scheduler が ``StepBudgetExceeded`` を上げ、その検はその場で赤になる。設定が無い repo・
   scheduler に口の無い版では入れない(今までどおり)。
+- 検ごとの宣言 ``declare_step_budget(検, 歩数, 理由)`` — 既定の上限は変えず、筋書きの規模に断言が依って縮められない検だけが
+  検の定義の隣で要る歩数と理由 1 行を宣言する(Mac の調整役の決め 2026-10-03 21:5x・agora-redesign #2670 の 3 — 別の file の
+  登録簿の代わり)。歩数で判じる時、宣言のある検は宣言の値で判じる: 超えれば赤・宣言の ``STALE_RATIO``(半分)以下で
+  終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
 
 上限の 3 つ(実行・印ごとの実行・収集)がどれも無ければ何もしない。設計の決め:
 
@@ -100,7 +104,10 @@ _BOOTSTRAP_MODULE = "importlib._bootstrap"
 _FIND_AND_LOAD = "_find_and_load"
 Mode = Literal["report", "fail"]
 # 登録簿に載った検を古い登録として赤にする秒の割合(上限 × この値以下で終わった時だけ — 上限の近くの揺れで赤と緑を行き来しない)。
+# 検の宣言(StepDeclaration)の古さも同じ割合で判じる。
 STALE_RATIO = 0.5
+# 検の関数に付ける「要る歩数」の宣言の属性 — declare_step_budget が付け、実行の判定が読む(agora-redesign #2670 の 3)。
+DECLARED_STEPS_ATTRIBUTE = "__doeff_step_budget__"
 
 
 @dataclass(frozen=True)
@@ -250,14 +257,14 @@ class Budgets:
         """実行を歩数で判じるか — 歩数の上限があり、数の口がある時だけ(口が無ければ秒で判じる)。"""
         return self.call_steps is not None and isinstance(self.work_source, WorkReader)
 
-    def runaway_steps_for(self, markers: Sequence[str]) -> int | None:
-        """その検の call の間に scheduler へ入れる歩の上限(#3143)— 歩数で判じる検だけ、歩数の上限 × 倍率。
-        印ごとの秒の上限に当たる検(本物の I/O)は秒で判じるので入れない。"""
+    def runaway_steps_for(self, markers: Sequence[str], declared_steps: int | None = None) -> int | None:
+        """その検の call の間に scheduler へ入れる歩の上限(#3143)— 歩数で判じる検だけ、歩数の上限(宣言のある検は
+        宣言の値と既定の大きい方)× 倍率。印ごとの秒の上限に当たる検(本物の I/O)は秒で判じるので入れない。"""
         if not self.judges_steps or self.call_steps is None:
             return None
         if any(name in self.call_seconds_by_marker for name in markers):
             return None
-        return self.call_steps * self.runaway_multiplier
+        return max(self.call_steps, declared_steps or 0) * self.runaway_multiplier
 
     @property
     def fails_over_budget(self) -> bool:
@@ -368,7 +375,58 @@ class RegisteredWithinBudget:
         return judged_value(self.measurement, self.unit) <= self.budget * STALE_RATIO
 
 
-Verdict = WithinBudget | OverBudget | RegisteredOverBudget | RegisteredWithinBudget
+@dataclass(frozen=True)
+class StepDeclaration:
+    """検 1 本に宣言した要る歩数と理由(1 行)— 既定の上限の外に残る検だけが、検の定義の隣に置く(agora-redesign #2670 の 3)。"""
+
+    steps: int
+    reason: str
+
+
+def declare_step_budget(test: Callable[..., object], steps: int, reason: str) -> None:
+    """検 1 本に要る歩数を宣言する — 予算の plugin はその検だけ、既定の上限の代わりに宣言の値で判じる。
+
+    既定の上限は変えず、筋書きの規模に断言が依って縮められない検だけに置く(Mac の調整役の決め 2026-10-03 21:5x・
+    agora-redesign #2670 issuecomment-5969293209 — 別の file の登録簿の代わり)。宣言の値を超えれば赤、宣言の値の
+    STALE_RATIO(半分)以下で終われば古い宣言として赤(登録簿の古い行と同じ規則)。Hy の検では deftest の直後に
+    ``(declare-step-budget test-名 歩数 "理由")`` と書く。読めない値は import の時に止める。"""
+    if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
+        raise ValueError(f"要る歩数は正の整数: {steps!r}")
+    if not isinstance(reason, str) or not reason.strip() or "\n" in reason.strip():
+        raise ValueError(f"理由は空でない 1 行: {reason!r}")
+    setattr(test, DECLARED_STEPS_ATTRIBUTE, StepDeclaration(steps, reason.strip()))
+
+
+def declared_steps_of(test: object) -> StepDeclaration | None:
+    """検の関数に付いた宣言(無ければ None)。"""
+    declaration = getattr(test, DECLARED_STEPS_ATTRIBUTE, None)
+    return declaration if isinstance(declaration, StepDeclaration) else None
+
+
+@dataclass(frozen=True)
+class DeclaredOverBudget:
+    """宣言した要る歩数を超えた(赤)。"""
+
+    measurement: Measurement
+    declaration: StepDeclaration
+
+
+@dataclass(frozen=True)
+class StaleDeclaration:
+    """宣言した要る歩数の STALE_RATIO 以下で終わった — 古い宣言(赤)。"""
+
+    measurement: Measurement
+    declaration: StepDeclaration
+
+
+Verdict = (
+    WithinBudget
+    | OverBudget
+    | RegisteredOverBudget
+    | RegisteredWithinBudget
+    | DeclaredOverBudget
+    | StaleDeclaration
+)
 
 
 class RegistryError(Exception):
@@ -424,6 +482,16 @@ def judge_steps(measurement: Measurement, budget_steps: int, registry: Mapping[s
     if measurement.key in registry:
         return RegisteredOverBudget(measurement, "steps")
     return OverBudget(measurement, float(budget_steps), "steps")
+
+
+def judge_declared(measurement: Measurement, declaration: StepDeclaration) -> Verdict:
+    """宣言のある検 1 本を、既定の上限でなく宣言の値で判じる — 超えれば赤・宣言の STALE_RATIO 以下なら古い宣言で赤。"""
+    steps = judged_value(measurement, "steps")
+    if steps > declaration.steps:
+        return DeclaredOverBudget(measurement, declaration)
+    if steps <= declaration.steps * STALE_RATIO:
+        return StaleDeclaration(measurement, declaration)
+    return WithinBudget(measurement)
 
 
 @dataclass(frozen=True)
@@ -509,6 +577,24 @@ def over_budget_message(verdict: OverBudget, registry_dirs: Sequence[str]) -> st
         f"doeff の検の時間の上限を超えた: {m.key} の{what}が {_seconds_text(m)}・上限 {_limit_text(verdict.budget, verdict.unit)}。"
         "検を速くする(模擬の世界を小さくする・待ちを書き込みで起こす)か、直せない理由があれば "
         f"{where} に鍵 {m.key!r} の file {registry_file_name(m.key)} を理由つきで足す(登録簿は縮める向きだけ)。"
+    )
+
+
+def declared_over_message(verdict: DeclaredOverBudget) -> str:
+    """宣言した要る歩数を超えた検の文(何歩か・宣言の値・宣言の理由)。"""
+    m = verdict.measurement
+    return (
+        f"doeff の検の宣言した歩数を超えた: {m.key} の実行(call)が {_seconds_text(m)}・宣言 歩数 {verdict.declaration.steps}"
+        f"(理由: {verdict.declaration.reason})。検を速くするか、断言が依る規模が増えた訳を確かめてから宣言の値を直す。"
+    )
+
+
+def stale_declaration_message(verdict: StaleDeclaration) -> str:
+    """古い宣言を赤にした時の文(どの検が・何歩で・宣言のいくらで)。"""
+    m = verdict.measurement
+    return (
+        f"{m.key} は歩数 {verdict.declaration.steps} を宣言しているが、実行(call)がその {STALE_RATIO:g} 倍以下"
+        f"({_seconds_text(m)})— 古い宣言なので、宣言を消すか値を下げる(既定の上限の内なら宣言は要らない)"
     )
 
 
@@ -836,17 +922,28 @@ def _record(config: pytest.Config, verdict: Verdict) -> bool:
             return False
         case RegisteredWithinBudget():
             return verdict.stale and budgets.fails_for(verdict.unit)
+        case DeclaredOverBudget():
+            if budgets.fails_for("steps"):
+                return True
+            warnings.warn(BudgetWarning(declared_over_message(verdict)), stacklevel=1)
+            return False
+        case StaleDeclaration():
+            return budgets.fails_for("steps")
         case WithinBudget() | RegisteredOverBudget():
             return False
 
 
 def _failure_message(verdict: Verdict, budgets: Budgets) -> str:
-    """赤にした判定の文(足し先・消す先は、判定した単位の登録簿)。"""
+    """赤にした判定の文(足し先・消す先は、判定した単位の登録簿・宣言なら検の定義の隣)。"""
     match verdict:
         case OverBudget():
             return over_budget_message(verdict, budgets.registry_dirs)
         case RegisteredWithinBudget():
             return stale_registration_message(verdict, budgets.registry_dirs)
+        case DeclaredOverBudget():
+            return declared_over_message(verdict)
+        case StaleDeclaration():
+            return stale_declaration_message(verdict)
         case WithinBudget() | RegisteredOverBudget():
             raise AssertionError(f"赤にしない判定の文を求めた: {verdict}")
 
@@ -890,8 +987,12 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     budgets = item.config.stash[_BUDGETS_KEY]
     source = budgets.work_source
     guard = budgets.step_guard
+    declaration = declared_steps_of(getattr(item, "obj", None))
     runaway_steps = (
-        budgets.runaway_steps_for([marker.name for marker in item.iter_markers()])
+        budgets.runaway_steps_for(
+            [marker.name for marker in item.iter_markers()],
+            declaration.steps if declaration is not None else None,
+        )
         if item.path.suffix == ".hy" and isinstance(guard, SchedulerStepGuard)
         else None
     )
@@ -946,7 +1047,12 @@ def pytest_runtest_makereport(
     # 印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、歩数に重さが出ないので秒で判じる。
     marked = any(name in budgets.call_seconds_by_marker for name in markers)
     if budgets.judges_steps and measured.work is not None and budgets.call_steps is not None and not marked:
-        verdict = judge_steps(measurement, budgets.call_steps, budgets.registry)
+        declaration = declared_steps_of(getattr(item, "obj", None))
+        verdict = (
+            judge_steps(measurement, budgets.call_steps, budgets.registry)
+            if declaration is None
+            else judge_declared(measurement, declaration)
+        )
     else:
         budget = call_budget_for(markers, budgets.call_seconds_by_marker, budgets.call_seconds)
         if budget is None:
@@ -982,8 +1088,10 @@ def pytest_terminal_summary(
     over = [v for v in verdicts if isinstance(v, OverBudget)]
     registered = [v for v in verdicts if isinstance(v, RegisteredOverBudget)]
     back_in_budget = sorted({v.measurement.key for v in verdicts if isinstance(v, RegisteredWithinBudget)})
+    declared_over = [v for v in verdicts if isinstance(v, DeclaredOverBudget)]
+    stale_declared = [v for v in verdicts if isinstance(v, StaleDeclaration)]
     worked = [v.measurement for v in verdicts if v.measurement.work is not None]
-    if not (over or registered or back_in_budget or worked):
+    if not (over or registered or back_in_budget or declared_over or stale_declared or worked):
         return
     terminalreporter.section("doeff の検の時間の上限")
     terminalreporter.line(vm_build_line(budgets.vm_build))
@@ -1008,4 +1116,15 @@ def pytest_terminal_summary(
     for key in back_in_budget:
         terminalreporter.line(
             f"上限の内に戻った登録: {key} — 登録簿の file {registry_file_name(key)} を消せる"
+        )
+    for verdict in declared_over:
+        m = verdict.measurement
+        label = "赤" if budgets.fails_for("steps") else "報告のみ"
+        terminalreporter.line(
+            f"宣言を超えた({label}・宣言 歩数 {verdict.declaration.steps}): {m.key}({m.phase} {_seconds_text(m)})"
+        )
+    for verdict in stale_declared:
+        m = verdict.measurement
+        terminalreporter.line(
+            f"古い宣言(宣言 歩数 {verdict.declaration.steps} の {STALE_RATIO:g} 倍以下): {m.key}({m.phase} {_seconds_text(m)})"
         )
