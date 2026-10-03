@@ -5,9 +5,11 @@
 ;;; queued-requests)は、要求が無い間、この判断が「静か」と言う歩を一度に眠り、起きた時に眠った間の歩を調停ループへ渡す(2026-09-30 の
 ;;; 決定・#2790 — 模擬の時計の下だけ・本番の拍の間隔 1 秒と判断の刻は変えない)。
 ;;;
-;;; 次の期限を別に見積もらない: 1 拍ずつの走りと同じ刻(直前の歩 + 1 拍)の歩を、本番の歩と同じ判断の関数(api_policy.tick・
-;;; rollout-quiet・mark-alive、watch_policy.settle-watch)で 1 歩ずつ試し、状態が変わる・k8s を読む・action を出す・待ちに「変わった」と
-;;; 答える最初の歩で区間を切る。期限の求め忘れは起こり得ない(判断そのものを試すので)。静かな歩に許す変化は 2 つだけ(#2790):
+;;; 1 拍ずつの走りと同じ刻(直前の歩 + 1 拍)の歩を、本番の歩と同じ判断の関数(api_policy.tick・rollout-quiet・mark-alive、
+;;; watch_policy.settle-watch)で試し、状態が変わる・k8s を読む・action を出す・待ちに「変わった」と答える最初の歩で区間を切る。
+;;; 試すのは次の期限(quiet-due — 判断ごとの「答えが変わり得る最初の刻」の関数の最小。値は判断が比べに使う期限の値から求める・#1383 の
+;;; 決めの条件 (1)・#3059)の刻からで、それより前の歩は試さずに生存の印だけを進めて作る(held-step — 試しても何も変えない歩と同じ値)。
+;;; 判断の刻の関数がまだ行の有無しか見ない間は、行が在る状態では毎歩試す(#3060 — 中身は #3061〜#3064)。静かな歩に許す変化は 2 つだけ(#2790):
 ;;; - 生存の印(mark-alive の alive-ms と WorkerInfo.seen-mark)と Rollout の拍の刻 — 歩の後の状態を QuietStep に持ち、調停ループが起きた時に
 ;;;   同じ順・同じ値で保存する(置き場の書きの列は 1 拍ずつの走りと同じ)。
 ;;; - 期限の来た名指しの待ちへの「変わっていない」の返事と、送り手(worker の宿の待ち)の送り直し — 同じ問いを同じ刻に送り直すので、
@@ -20,7 +22,8 @@
                                                        HeartbeatReply])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.coordinator.core.api_policy [tick respond plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
+(import doeff_cluster.coordinator.core.api_policy [tick tick-due respond plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS
+                                                   TICK-MS])
 (import doeff_cluster.coordinator.core.watch_policy [settle-watch all-waiting-unchanged])
 
 (val MAX-QUIET-MS 3600000)    ; 一度に眠る区間の上限(仮想の 1 時間 — その刻の歩は静かでも本物の歩として回す)
@@ -36,6 +39,14 @@
       (do (val before (with-derived-capabilities state naming.node-capabilities))
           (<- planned tuple (plan-rollouts before now timing naming))
           (if (get planned 1) None (stamp before (get planned 0) ROLLOUT-ACTOR now timing)))))
+
+
+(defk rollout-due [state now timing naming]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| int None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "Rollout の拍が、状態がこのままで k8s を読む・段を進める・action を出し得る最初の刻を知るため(#3060 — 今は Rollout か読む物が在れば
+   次の拍。刻を段の期限と観測の古さから求めるのは #3064)。None = 状態がこのままなら Rollout の拍は Rollout の拍の刻のほか何も変えない。"
+  (if (or state.rollouts (deployments-to-observe state now) (nodes-to-read state now)) (+ now 1) None))
 
 
 (defk absorbable [watcher state]
@@ -157,23 +168,58 @@
   (min (+ last.at TICK-MS) (if pending (. (get pending 0) at) (+ last.at TICK-MS))))
 
 
+(defk quiet-due [last probe pending]
+  {:pre [(: last QuietStep) (: probe IdleProbe) (: pending tuple)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "静かな区間が歩 last の後に本番の判断で試さなければならない最初の刻を知るため(#3060): 要求の無い拍(api_policy.tick-due)・Rollout の
+   拍(rollout-due)・待ち(答える・見え方を覚え直す歩なら次の拍、それ以外は期限の刻)・まだ受けていない仮の拍 pending の届く刻の最小。
+   それより前の歩は試しても何も変えない(held-step で作る)。None = 状態がこのままなら区間の終わりまで試す歩が無い。"
+  (val grid (+ last.at TICK-MS))
+  (<- ticking (| int None) (tick-due last.state last.at probe.timing))
+  (<- rolling (| int None) (rollout-due last.state last.at probe.timing probe.naming))
+  (<- unchanged bool (all-waiting-unchanged last.watchers last.state grid))
+  (val watching (if unchanged (min (gfor watcher last.watchers watcher.deadline-ms) :default None) grid))
+  (val arriving (if pending (. (get pending 0) at) None))
+  (min (gfor due [ticking rolling watching arriving] :if (is-not due None) due) :default None))
+
+
+(defk held-step [last at]
+  {:pre [(: last QuietStep) (: at int)] :post [(: % QuietStep)] :tags {:context "coordinator" :role "judgment"}}
+  "次の期限(quiet-due)より前の刻 at の歩を、本番の判断で試さずに作るため(#3060)。その刻の歩は、試せば tick も Rollout の拍も待ちも
+   何も変えず仮の拍も届かないので、状態の違いは Rollout の拍の刻と生存の印(mark-alive — 本番と同じ関数)だけ(quiet-step の静かな歩と
+   同じ値・同じ待ち)。"
+  (val state last.state)
+  (val rolled (if (>= (- at state.rollout-tick-ms) ROLLOUT-TICK-MS) (replace state :rollout-tick-ms at) state))
+  (val marked (mark-alive rolled at))
+  (QuietStep :at at :state marked :watchers last.watchers :marked (!= marked.alive-ms rolled.alive-ms)))
+
+
 (defk quiet-stretch [probe start horizon [same-reply None]]
   {:pre [(: probe IdleProbe) (: start QuietStep) (: horizon int) (: same-reply (| Callable None))] :post [(: % QuietStretch)]
    :tags {:context "coordinator" :role "judgment"}}
   "start の歩の後から、1 拍ずつの走りと同じ刻の歩(直前の歩 + 1 拍と、仮の拍の届く刻の早い方 — 同じ刻なら 1 つの歩で受ける)を、
    horizon の刻まで本番の判断で 1 歩ずつ試すため。答え = 静かだった歩の列と、最初の静かでない歩の刻(horizon までに無ければ None)。
    静かな歩は次の歩の起点になる(生存の印と引き直した待ちを持ち越す)。probe.beats = まだ受けていない仮の拍(刻の順 — start の刻と同じ
-   刻の拍は start の歩の後の歩で受ける)。same-reply = 仮の拍の返事を worker の最後の返事と比べる Program の関数(heard-beats)。"
+   刻の拍は start の歩の後の歩で受ける)。same-reply = 仮の拍の返事を worker の最後の返事と比べる Program の関数(heard-beats)。
+   次の期限(quiet-due)より前の歩は試さずに作る(held-step — 試した歩と同じ値・#3060)。"
   (var last start)
   (var pending probe.beats)
   (var steps #())
   (var end None)
   (var going True)
+  (<- first-due (| int None) (quiet-due start probe pending))
+  (var due (if (is first-due None) (+ horizon 1) first-due))
   (while going
     (val grid (+ last.at TICK-MS))
     (val at (if (and pending (<= (. (get pending 0) at) grid)) (. (get pending 0) at) grid))
-    (if (> at horizon)
+    (cond
+      (> at horizon)
         (:= going False)
+      ;; 次の期限より前の歩(仮の拍は期限に入るので、ここでは届かない)。
+      (< at due)
+        (do (<- held QuietStep (held-step last at))
+            (:= steps (+ steps #(held)))
+            (:= last held))
+      True
         (do ;; 同じ刻に届く仮の拍は送り手の名の順に受ける(模擬の列が同じ刻の要求を名の順に取るのと同じ — request_queue.take-requests)。
             (val arriving (tuple (sorted (gfor beat pending :if (= beat.at at) beat) :key (fn [beat] beat.name))))
             (<- stepped (| QuietStep None) (quiet-step last at arriving probe.timing probe.naming same-reply))
@@ -182,5 +228,7 @@
                     (:= going False))
                 (do (:= steps (+ steps #(stepped)))
                     (:= pending (tuple (gfor beat pending :if (> beat.at at) beat)))
-                    (:= last stepped))))))
+                    (:= last stepped)
+                    (<- next-due (| int None) (quiet-due stepped probe pending))
+                    (:= due (if (is next-due None) (+ horizon 1) next-due)))))))
   (QuietStretch :steps steps :end-at end))

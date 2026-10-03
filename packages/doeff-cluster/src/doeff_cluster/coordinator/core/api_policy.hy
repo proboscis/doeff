@@ -39,7 +39,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
-                         lease-write other-generation-boot alive remember-keep-marks])
+                         lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
@@ -77,6 +77,24 @@
   "要求の無い拍: 期限の経過だけで調停する(worker の沈黙・task の期限・readiness の window)。"
   (<- ticked ClusterState (settle state state COORDINATOR now timing))
   ticked)
+
+
+(defk placement-due [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "置き先と入れ替えの判断(place-jobs の readiness の window・watch-handoffs の Ready の期限・台数の増やし)が、状態がこのままで答えを
+   変え得る最初の刻を知るため(#3060 — 今は行が在れば次の拍。刻を期限の値から求めるのは #3064)。"
+  (if (or state.jobs state.placements state.handoffs state.surges state.statuses state.meta state.refused) (+ now 1) None))
+
+
+(defk tick-due [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "要求の無い拍(tick)が、状態がこのままで状態を変え得る最初の刻を知るため(#3060 — 静かな区間はそれより前の歩を試さずに進める)。
+   tick の中の期限で動く判断ごとの刻の最小。どれも None なら None(状態がこのままなら tick は何も変えない)。"
+  (<- living (| int None) (liveness-due state now timing))
+  (<- tasking (| int None) (task-due state now timing))
+  (<- sweeping (| int None) (sweep-due state now timing))
+  (<- placing (| int None) (placement-due state now timing))
+  (min (gfor due [living tasking sweeping placing] :if (is-not due None) due) :default None))
 
 
 ;; --- coordinator が止まっていた時間(2026-09-25) --------------------------------------------------

@@ -17,8 +17,12 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_core_effects.scheduler [CreatePromise Promise Spawn])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState QuietStep
+                                                       QuietStretch Watcher WatchRefusal])
 (import doeff_cluster.coordinator.core.program [coordinator-step])
+(import doeff_cluster.coordinator.core.idle_policy [quiet-stretch quiet-step quiet-due])
+(import dataclasses [replace])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of])
 (import doeff_core_effects.handlers [state :as session-store])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
@@ -395,3 +399,62 @@
   ;; まま)の保存。
   (assert (= (lfor state saved #(state.alive-ms state.rollout-tick-ms)) [#(5000 5000) #(10000 10000) #(10000 12000)])
           (lfor state saved #(state.alive-ms state.rollout-tick-ms))))
+
+
+;; --- 次の期限より前の歩は試さずに作る(#3060) ---------------------------------------------------------------------------
+;; 静かな区間は、次の期限(idle_policy.quiet-due — 判断ごとの「答えが変わり得る最初の刻」の最小)より前の歩を本番の判断で試さずに作る
+;; (held-step)。行の無い新しい状態では、要求の無い拍も Rollout の拍も何も変えないので、期限は待ちの期限と仮の拍だけになる。
+;; - 試さずに作った歩は、1 歩ずつ本番の判断(quiet-step)で試した歩と同じ値(刻・状態・待ち・生存の印)。反例 — 生存の印を進めない作り方は赤。
+;; - 待ちの期限(7.5 秒)の後の最初の歩(8 秒目)は試し、待ちに「変わっていない」と答える歩で区間が切れる。反例 — 待ちの期限を見ない
+;;   作り方は切れずに先へ進む(赤)。
+;; - 次に試す刻(quiet-due)は、行の無い状態では None・待ちが在れば待ちの期限・要求の無い拍の判断の行が在れば次の拍。
+
+(defk tried-steps [start horizon]
+  {:pre [(: start QuietStep) (: horizon int)] :post [(: % QuietStretch)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "start の歩の後から horizon まで、1 秒ごとに本番の判断(quiet-step)で試した歩の列と最初の静かでない歩の刻を返すため(比べの基準)。"
+  (var last start)
+  (var steps #())
+  (var end None)
+  (var at (+ start.at 1000))
+  (while (and (is end None) (<= at horizon))
+    (<- stepped (| QuietStep None) (quiet-step last at #() (ClusterTiming) (ClusterNaming)))
+    (if (is stepped None)
+        (:= end at)
+        (do (:= steps (+ steps #(stepped)))
+            (:= last stepped)
+            (:= at (+ at 1000)))))
+  (QuietStretch :steps steps :end-at end))
+
+
+(defk fresh-stretch [held horizon]
+  {:pre [(: held tuple) (: horizon int)] :post [(: % QuietStretch)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "行の無い新しい状態の静かな区間を、待ち held を持たせて刻 0 から horizon まで本番の進め方(quiet-stretch)で進めるため。"
+  (val state (ClusterState))
+  (<- stretch QuietStretch (quiet-stretch (IdleProbe state (ClusterTiming) (ClusterNaming) :watchers held)
+                                          (QuietStep :at 0 :state state :watchers held :marked False) horizon))
+  stretch)
+
+
+(deftest test-held-steps-are-the-steps-a-trial-would-make
+  (<- reader (| Watcher WatchRefusal None) (watch-of (! (http-request "GET" "/watch" {"after" "0" "timeoutSeconds" "7.5"} None)) 0))
+  (for [#(held ending) [#(#() None) #(#(reader) 8000)]]
+    (<- skipped QuietStretch (fresh-stretch held 30000))
+    (<- tried QuietStretch (tried-steps (QuietStep :at 0 :state (ClusterState) :watchers held :marked False) 30000))
+    (assert (= skipped.end-at tried.end-at ending) #(skipped.end-at tried.end-at))
+    (assert (= (len skipped.steps) (len tried.steps)) #((len skipped.steps) (len tried.steps)))
+    (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at a.state.alive-ms b.state.alive-ms)))
+    (assert (= apart []) apart)))
+
+
+(deftest test-the-next-trial-is-the-earliest-due
+  ;; 行の無い新しい状態で待ちも仮の拍も無ければ、試す歩は無い(None — 区間の終わりまで試さずに進む)。待ちが在れば待ちの期限、要求の無い
+  ;; 拍の判断の行(ここでは task)が在れば次の拍(今の行の有無の形 — 刻を期限から求めるのは #3061〜#3064)。反例 — いつも次の拍を返す形は
+  ;; 1 つ目と 2 つ目が赤・待ちを見ない形は 2 つ目が赤。
+  (val state (ClusterState))
+  (val probe (IdleProbe state (ClusterTiming) (ClusterNaming)))
+  (<- reader (| Watcher WatchRefusal None) (watch-of (! (http-request "GET" "/watch" {"after" "0" "timeoutSeconds" "7.5"} None)) 0))
+  (<- idle (| int None) (quiet-due (QuietStep :at 0 :state state :watchers #() :marked False) probe #()))
+  (<- waiting (| int None) (quiet-due (QuietStep :at 0 :state state :watchers #(reader) :marked False) probe #()))
+  (val busy-state (replace state :tasks {"t1" None}))
+  (<- busy (| int None) (quiet-due (QuietStep :at 0 :state busy-state :watchers #() :marked False) probe #()))
+  (assert (= #(idle waiting busy) #(None 7500 1)) #(idle waiting busy)))
