@@ -59,10 +59,11 @@ def test_invalid_handler_is_rejected_at_public_entry(invalid) -> None:
 
 @pytest.mark.parametrize("invalid", [None, 7, object()])
 def test_reinstall_still_rejects_an_unvalidated_non_callable(invalid) -> None:
-    # 内部の再設定へ不正な値を直接渡しても、WithHandler の VM 検証が
-    # 拒否する。形式判定の省略で callable の検証を迂回できない。
-    with pytest.raises(TypeError, match="WithHandler: handler must be callable"):
-        scheduler._reinstall_boundary(Pure(None), "handler", invalid)
+    # 内部の再設定へ不正な値を直接渡しても、WithBoundaries の VM 検証が
+    # 拒否する(WithHandler と同じ callable の検め — #3149 で 1 命令に)。
+    # 形式判定の省略で callable の検証を迂回できない。
+    with pytest.raises(TypeError, match=r"WithBoundaries: boundary\[0\] handler must be callable"):
+        scheduler._reinstall_boundaries(Pure(None), [("handler", invalid)])
 
 
 def test_wrong_handler_arity_is_still_rejected_by_vm() -> None:
@@ -73,7 +74,7 @@ def test_wrong_handler_arity_is_still_rejected_by_vm() -> None:
     # 元の入口と引き継ぎ先のどちらでも VM 実行時の TypeError を保つ。
     programs: tuple[object, ...] = (
         handler(wrong_arity)(read_number()),
-        scheduler._reinstall_boundary(read_number(), "handler", wrong_arity),
+        scheduler._reinstall_boundaries(read_number(), [("handler", wrong_arity)]),
     )
     for program in programs:
         with pytest.raises(TypeError, match="positional argument"):
