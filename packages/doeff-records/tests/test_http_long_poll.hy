@@ -10,6 +10,7 @@
 (require doeff-hy.macros [deftest defhandler defeffect defk <- val])
 (require doeff-hy.record [defrecord])
 (import json)
+(import pytest)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [with_handlers])
 (import doeff_core_effects.handlers [state])
@@ -21,6 +22,7 @@
 (import doeff_records.effects [ListRows PutRow WatchChanges WatchEvents AppendEvent])
 (import doeff_records.laws [LawHarness MAKER as-writer late-write])
 (import doeff_records.wire [WATCH-MAX-SECONDS])
+(import doeff_records.http_client [RecordsEndpoint])
 (import tests.interpreters [LawSetup])
 
 ;; 待ちの秒(上限 WATCH-MAX-SECONDS = 25 秒の 2 倍より長い — 要求が 3 つに分かれる)。
@@ -138,6 +140,14 @@
   (<- written (as-writer harness MAKER (PutRow "parts" #("during") (FrozenMap {"label" "d"}) (ExpectAbsent))))
   (<- again (as-writer harness MAKER (WatchChanges #("parts") cursor :timeout LONG-WAIT)))
   (Resumed :lost lost :written written :again again))
+
+
+(deftest test-the-endpoint-has-no-poll-interval
+  ;; 待ちの読み直しの間隔の欄は無い(待ちは long-poll)。欄 poll-seconds を渡す呼び手は組み立てで落ちる(型の検でも赤)— 間隔の設定を
+  ;; 黙って受け流さない。
+  (with [raised (pytest.raises TypeError)]
+    (RecordsEndpoint "http://records.in-process" :poll-seconds 1.0))
+  (assert (in "poll_seconds" (str raised.value)) raised.value))
 
 
 (deftest test-a-cut-wait-resumes-from-its-position-without-losing-a-write

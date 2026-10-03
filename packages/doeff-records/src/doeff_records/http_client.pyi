@@ -42,7 +42,6 @@ from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 DEFAULT_REQUEST_TIMEOUT: float
-DEFAULT_POLL_SECONDS: float
 
 class WireError(RuntimeError):
     ...
@@ -56,7 +55,6 @@ REASON_MAX_CHARS: int
 class RecordsEndpoint:
     base_url: str
     request_timeout: float = ...
-    poll_seconds: float = ...
     meter: Callable[..., object] | None = None
     writer: str | None = None
 
