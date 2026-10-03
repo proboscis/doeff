@@ -14,7 +14,8 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (import dataclasses [dataclass field replace])
 (import uuid)
-(import doeff_time [Delay GetMonotonic GetTime])
+(import doeff_time [GetMonotonic GetTime WaitWithin])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolResult InputFate PermissionRequested
@@ -69,7 +70,7 @@
 
 (defclass FakeTurn []
   "fake の手番 1 つ: phase = quick / tool / permission / done・permission = 答え待ちの許可の問いの id(無ければ None)・
-   end = 手番の終わり(まだなら None)。"
+   end = 手番の終わり(まだなら None)・bells = 出来事の読み(ClaudeReadTurnEvents)の待ち手が掛けた呼び鈴(新しい行か終わりで鳴らして外す)。"
   (defn __init__ [self #^ int seq #^ float started-at #^ FakeReply reply #^ (get tuple #(str ...)) refs]
     (setv #^ int self.seq seq)
     (setv #^ float self.started-at started-at)
@@ -81,7 +82,8 @@
     (setv #^ (get list FakeInjection) self.injections [])
     (setv #^ (| str None) self.permission None)
     (setv #^ (get list ClaudeStreamLine) self.lines [])
-    (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)))
+    (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
+    (setv #^ (get tuple #((get ExternalPromise None) ...)) self.bells #())))
 
 
 (defclass FakeSession []
@@ -131,11 +133,25 @@
 
 ;; --- 行を出す ------------------------------------------------------------------------------------
 
+;; 読みの待ち手の呼び鈴: 本番の CLI の行の流れは、行が出た時と process が終わった時(消えた・止めた・閉じた)にその場で読み手へ届く。
+;; fake の読みも、期限まで眠らずに、行を出した時と手番を終えた時に鳴らす呼び鈴で起きる(待ちの外から手番を終える故障の注入・止める・
+;; 閉じるでも、読み手は次の筋書きの刻まで眠り続けない — #3130)。
+
+(defk ring-turn [#^ FakeTurn turn]
+  {:pre [(: turn FakeTurn)] :post [(: % (type None))]}
+  "手番 turn に掛かった読みの呼び鈴を全部鳴らして外す(新しい行か終わりが出た)。"
+  (setv bells turn.bells)
+  (setv turn.bells #())
+  (for [bell bells]
+    (.complete bell None))
+  None)
+
 (defk emit [#^ FakeSession session #^ FakeTurn turn kind]
   {:pre [(: session FakeSession) (: turn FakeTurn) (: kind ClaudeLineKind)] :post [(: % (type None))]}
   (<- at (GetTime))
   (.append turn.lines (ClaudeStreamLine :seq session.next-line-seq :at at :kind kind :raw (repr kind)))
   (+= session.next-line-seq 1)
+  (<- (ring-turn turn))
   None)
 
 (defk emit-all [#^ FakeSession session #^ FakeTurn turn #^ list kinds]
@@ -146,6 +162,7 @@
 (defk finish [#^ FakeSession session #^ FakeTurn turn end]
   {:pre [(: session FakeSession) (: turn FakeTurn) (: end ClaudeTurnEnd)] :post [(: % (type None))]}
   (setv turn.end end turn.phase "done")
+  (<- (ring-turn turn))
   None)
 
 (defk complete-turn [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
@@ -339,7 +356,11 @@
     (setv wake (if (in turn.phase #("quick" "tool"))
                    (min turn.due-at deadline (if (is line-at None) deadline line-at))
                    deadline))
-    (<- (Delay (max MIN-SLEEP (- wake now))))))
+    ;; 筋書きの次の刻(行・期限)か、待ちの外で行か終わりが出て呼び鈴が鳴るまで眠る(呼び鈴は読み直す前に掛け、鳴らずに起きたら外す)。
+    (<- bell (CreateExternalPromise))
+    (setv turn.bells (+ turn.bells #(bell)))
+    (<- _woke (WaitWithin bell.future (max MIN-SLEEP (- wake now)) :park True))
+    (setv turn.bells (tuple (gfor other turn.bells :if (is-not other bell) other)))))
 
 (defk fake-answer [#^ FakeClaudeWorld world #^ ClaudeAnswerPermission request]
   {:pre [(: world FakeClaudeWorld) (: request ClaudeAnswerPermission)] :post [(: % (| Answered NoSuchRequest))]}

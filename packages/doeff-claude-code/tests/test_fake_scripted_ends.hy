@@ -5,10 +5,11 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [with_handlers Program EffectBase Ask])
 (import doeff_core_effects.handlers [reader])
-(import doeff_time [SimClock sim-time-handler GetMonotonic])
+(import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
+(import doeff_core_effects.scheduler [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
 (import doeff_claude_code.lines [AssistantMessage Completed Failed BackendLost Usage])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
+(import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
                                    SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning])
 (import doeff_claude_code.faults [ClaudeForgetSession])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
@@ -140,6 +141,34 @@
   (assert (isinstance status.transcript TranscriptAbsent) (repr status))
   (assert (isinstance refused SessionNotFound) (repr refused))
   (assert (isinstance done.end Completed) (repr done.end)))
+
+(defk forget-after [#^ str sid #^ float seconds]
+  {:pre [(: sid str) (: seconds float)] :post [(: % bool)]}
+  "seconds 秒の後に会話 sid を家から消す(読みの待ちの外から手番を終える故障の注入)。"
+  (<- (Delay seconds))
+  (<- forgot (ClaudeForgetSession sid))
+  forgot)
+
+(deftest test-a-waiting-read-wakes-when-the-turn-is-ended-from-outside
+  ;; 読みが長く待つ間に、待ちの外(別の task)が 2 秒後に家を空にして 30 秒の道具の手番を終える: 本番の CLI の行の流れと同じく、読みは
+  ;; 期限(60 秒)や筋書きの次の刻(道具の終わり 30 秒)まで眠らず、終わらせた刻に BackendLost の終わりを返す(#3130 —
+  ;; 眠り続けた読みの上で、機体の死を待っていた上の層の試行が先に止められ、手番を手放すのが 60 秒遅れた)。
+  (val world (FakeClaudeWorld scripted-reply))
+  (defk read-while-forgotten []
+    {:pre [] :post [(: % tuple)]}
+    "始めた手番の最初の行を読み切り、長い待ちの読みの間に会話を忘れさせ、読みが返った時の終わりと経った秒を返す。"
+    (val sid (new-id))
+    (<- started (begin "long" (FreshSession sid)))
+    (<- first (ClaudeReadTurnEvents started.turn -1 0.0))
+    (val after (. (get first.lines -1) seq))
+    (<- began (GetMonotonic))
+    (<- _forgetter (Spawn (forget-after sid 2.0)))
+    (<- page (ClaudeReadTurnEvents started.turn after 60.0))
+    (<- woke (GetMonotonic))
+    #(page.end (- woke began)))
+  (<- #(end waited) (on-fake world (read-while-forgotten)))
+  (assert (isinstance end BackendLost) (repr end))
+  (assert (< (abs (- waited 2.0)) 0.01) waited))
 
 (defk effectful-reply [text memory]
   {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)]}
