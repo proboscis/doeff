@@ -140,14 +140,22 @@
   "凍らせた JSON の値を json.dumps が受ける形へ戻す: 写像 → dict・tuple / list → list(新しい値 — 元は変えない)。
    JSON へ書く境界だけで撃つ。
    葉(文字列・数・真偽・None)と FrozenMap を具体の型で先に分ける — 抽象の Mapping への isinstance は 1 回ごとに ABC の判定を
-   通るので、記録の行を型へ写す読みのたびに深く歩くと遅い(2026-09-28 の実測: 自動処理の係の模擬の検 1 本で 420 万回)。"
+   通るので、記録の行を型へ写す読みのたびに深く歩くと遅い(2026-09-28 の実測: 自動処理の係の模擬の検 1 本で 420 万回)。
+   入れ物の中の葉(ちょうど JSON-LEAF-TYPES の型)はその場で返し、自分を呼ぶのは入れ物の時だけ — 葉ごとに自分を呼ぶと、記録の行を
+   型へ読むたびに JSON の節の数だけ関数を始める(agora-redesign #2670 の根 E (b) の 3: 画面の stats の場面で行 1 つあたり約 36 回)。
+   写像の枝と列の枝を 1 つずつにまとめ、判定の順(FrozenMap → 素の list・tuple → 抽象の Mapping → list・tuple の子)は変えない。"
   (setv kind (type value))
+  (when (in kind JSON-LEAF-TYPES)
+    (return value))
+  (setv entries (cond
+                  (is kind FrozenMap) value._entries
+                  (in kind #(list tuple)) None
+                  (isinstance value Mapping) value
+                  True None))
   (cond
-    (in kind JSON-LEAF-TYPES) value
-    (is kind FrozenMap) (dfor #(key item) (.items value._entries) key (thaw-json item))
-    (in kind #(list tuple)) (lfor item value (thaw-json item))
-    (isinstance value Mapping) (dfor #(key item) (.items value) key (thaw-json item))
-    (isinstance value #(list tuple)) (lfor item value (thaw-json item))
+    (is-not entries None) (dfor #(key item) (.items entries)
+                                key (if (in (type item) JSON-LEAF-TYPES) item (thaw-json item)))
+    (isinstance value #(list tuple)) (lfor item value (if (in (type item) JSON-LEAF-TYPES) item (thaw-json item)))
     True value))
 
 
