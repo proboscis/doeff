@@ -102,3 +102,28 @@
 (defsystem last-words [foundation]
   "取り消しの巻き戻しで外の系へ書こうとする service 1 つ"
   (speaker (last-words-program foundation) :needs #{"cluster-net"}))
+
+
+(defk slow-last-words-loop []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 秒ごとに数を書き、取り消されると巻き戻しの中で 5 秒待ってから最後の言葉を書こうとする本体(殺された process の終わりの刻が、
+   巻き戻しの長さに依らず殺した刻かを測る)。"
+  (var n 0)
+  (try
+    (while True
+      (:= n (+ n 1))
+      (<- (StorePut "count" n))
+      (<- (Delay 1.0)))
+    (finally
+      (<- (Delay 5.0))
+      (<- (StorePut "last-words" n)))))
+
+(defk slow-last-words-program [foundation]
+  {:pre [(: foundation Callable)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "巻き戻しで待ってから最後の言葉を書こうとする service。"
+  (<- (foundation (slow-last-words-loop)))
+  None)
+
+(defsystem slow-last-words [foundation]
+  "取り消しの巻き戻しで待ってから外の系へ書こうとする service 1 つ"
+  (speaker (slow-last-words-program foundation) :needs #{"cluster-net"}))
