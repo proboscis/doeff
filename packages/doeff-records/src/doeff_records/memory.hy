@@ -29,10 +29,10 @@
 (import dataclasses [dataclass])
 (import datetime [datetime timedelta])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Race Spawn Task TaskCancelledError Wait Cancel])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait Cancel])
 (import doeff_events.effects [PublishEffect])
-(import doeff_records.event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings first-seen stop-source
-                                    waits-beside-sources])
+(import doeff_records.event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
+                                    first-seen stop-source waits-beside-sources])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
@@ -866,18 +866,18 @@
   (<- tables (get tuple #(str ...)) (first-seen (tuple (gfor binding checked name binding.tables name))))
   (<- streams (get tuple #(str ...)) (first-seen (tuple (gfor binding checked name binding.streams name))))
   (val mark (memory-mark store))
-  (<- source Task (Spawn (memory-publish store checked tables streams mark)))
+  (<- source Task (Spawn (failure-announced subscriber (memory-publish store checked tables streams mark))))
   (try
-    (<- answer (with-handlers [(waits-beside-sources #(source))] body))
+    (<- answer (with-handlers [(waits-beside-sources subscriber)] body))
     (finally
       (<- (stop-source source))))
   answer)
 
 
 ;; 模擬の源の包み 1 つが本体の周りで出す effect の全部(memory-signal-handler の宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めないので
-;; 宣言する)。源の task(Spawn と、その中の呼び鈴の CreateExternalPromise・鳴るまでの Wait・Publish)・本体の待ちと源の Race(Spawn・Race・Cancel)・
-;; 源の止め(Cancel・Wait)。WatchChanges・WatchEvents・Delay と位置の読みの effect は出さない。
-(val MEMORY-SOURCE-EFFECTS #(CreateExternalPromise PublishEffect Spawn Race Cancel Wait))
+;; 宣言する)。源の task(Spawn と、その中の呼び鈴の CreateExternalPromise・鳴るまでの Wait・Publish — 源の失敗の合図も)・源の止め(Cancel・Wait)。
+;; 本体の待ちは源と競わない(#3135)。WatchChanges・WatchEvents・Delay と位置の読みの effect は出さない。
+(val MEMORY-SOURCE-EFFECTS #(CreateExternalPromise PublishEffect Spawn Cancel Wait))
 
 
 (deff memory-signal-handler [store bindings subscriber]  ; defk にできない: with-handlers の列に置く素の工場の関数 — 閉じの検の道具が宣言を読む形(records-signal-handler と同じ)

@@ -19,6 +19,20 @@ class StopArrived:
     reason: str
 
 
+@dataclass(frozen=True)
+class SourceFailed:
+    """A task that publishes signals on this bus failed: ``source`` names it (the subscriber its signals feed) and
+    ``error`` is the exception it ended with.
+
+    The task publishes it before it ends with ``error``, and the body the source feeds waits for it together with its
+    events in one ``WaitForEvent`` and raises ``error`` again (doeff-records' signal sources — the body never races the
+    source task per wait — agora-redesign #3135). ``subscribed_event_handler`` always subscribes it.
+    """
+
+    source: str
+    error: BaseException
+
+
 def _normalize_event_types(event_types: tuple[type[Any], ...]) -> tuple[type[Any], ...]:
     if not event_types:
         raise ValueError("WaitForEvent requires at least one event type")
@@ -74,6 +88,7 @@ WaitForEvent = wait_for_event
 __all__ = [
     "Publish",
     "PublishEffect",
+    "SourceFailed",
     "StopArrived",
     "WaitForEvent",
     "WaitForEventEffect",
