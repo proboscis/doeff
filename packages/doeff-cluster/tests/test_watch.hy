@@ -11,11 +11,13 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe QuietStep QuietStretch Watcher WatchRefusal])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe QuietStep QuietStretch Watcher WatchRefusal
+                                                       WatchStep])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.protocol.replies [reply-json])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch])
-(import doeff_cluster.coordinator.core.watch_policy [watch-of])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged])
+(import dataclasses [replace])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.sim.local [sim-cluster send-request ClientLink SimLink SimWorker ReadCoordinator DrainWorker StopCoordinator])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
@@ -222,3 +224,27 @@
   (val reply (! (heartbeat-reply (ClusterState :revision 7) "w1" (ClusterTiming))))
   (assert (= reply.revision 7) reply)
   (assert (= (get (! (reply-json reply)) "revision") 7) reply))
+
+
+;; --- 待ちを判じずに持ち越す条件(#2670 の根 B) ------------------------------------------------------------------------
+;; 静かな区間の歩は、どの待ちにも settle-watch が答えない時(watch_policy.all-waiting-unchanged)、待ちを 1 件ずつ判じずに持ち越す。
+;; この条件が真なら settle-watch は答えず、待ちを同じ物のまま返す。版が動いた待ち・見え方を覚える前の名指しの待ち・期限の来た待ちは
+;; 条件が偽で、settle-watch が判じる。反例 — 版を見ない条件では、版の動いた待ちを判じずに持ち越す(この検は赤)。
+
+(deftest test-watchers-carried-without-judging-are-exactly-those-settle-watch-leaves
+  (val state (ClusterState))
+  (val moved (replace state :revision 1))
+  (<- reader Watcher (watcher-of {"after" "0" "timeoutSeconds" "10"}))
+  (<- named Watcher (watcher-of {"after" "0" "timeoutSeconds" "10" "worker" "w1" "boot" "b1"}))
+  (<- first WatchStep (settle-watch named state 0 (ClusterTiming)))
+  (val marked first.watcher)
+  (assert (is-not marked.mark None) marked)
+  (val cases [#(reader state 5000 True) #(marked state 5000 True) #(reader moved 5000 False) #(marked moved 5000 False)
+              #(named state 5000 False) #(reader state 10000 False) #(marked state 10000 False)])
+  (for [#(watcher seen now expected) cases]
+    (<- unchanged bool (all-waiting-unchanged #(watcher) seen now))
+    (assert (= unchanged expected) #(watcher.worker (is-not watcher.mark None) seen.revision now))
+    (when unchanged
+      (<- judged WatchStep (settle-watch watcher seen now (ClusterTiming)))
+      (assert (is judged.answer None) judged)
+      (assert (is judged.watcher watcher) judged))))
