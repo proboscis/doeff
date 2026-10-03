@@ -18,9 +18,11 @@ from doeff_time.effects import (
     GetMonotonicEffect,
     GetTimeEffect,
     ScheduleAtEffect,
+    WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
 )
+from doeff_time.handlers._wall_ticks import timed_wait_answer, timed_wait_seconds
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -75,15 +77,17 @@ class AsyncTimeRuntime:
             return (yield Transfer(k, self._now()))
         if isinstance(effect, GetMonotonicEffect):
             return (yield Transfer(k, float(self._monotonic())))
-        if isinstance(effect, WaitWithinEffect):
+        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect)):
             # The deadline is a daemon task sleeping on the wall clock, raced against the future and
             # cancelled afterwards (daemon: abandoning it at root return is its lifecycle — #501).
-            timer = yield Spawn(self._expire_after(effect.seconds), daemon=True)
+            # WaitTicks' deadline is its last tick (agora-redesign #3066).
+            started = float(self._monotonic())
+            timer = yield Spawn(self._expire_after(timed_wait_seconds(effect)), daemon=True)
             try:
                 first = yield Race(effect.future, timer, priority=PRIORITY_IDLE if effect.park else None)
             finally:
                 yield Cancel(timer)
-            return (yield Transfer(k, first))
+            return (yield Transfer(k, timed_wait_answer(effect, first, float(self._monotonic()) - started)))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
             sleep = self._sleep

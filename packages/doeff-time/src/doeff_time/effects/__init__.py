@@ -10,10 +10,13 @@ from doeff_time.effects.time import ScheduleAt as ScheduleAt
 from doeff_time.effects.time import ScheduleAtEffect as ScheduleAtEffect
 from doeff_time.effects.time import SetTime as SetTime
 from doeff_time.effects.time import SetTimeEffect as SetTimeEffect
-from doeff_time.effects.time import WaitWithin as WaitWithin
-from doeff_time.effects.time import WaitWithinEffect as WaitWithinEffect
+from doeff_time.effects.time import TicksOutcome as TicksOutcome
+from doeff_time.effects.time import WaitTicks as WaitTicks
+from doeff_time.effects.time import WaitTicksEffect as WaitTicksEffect
 from doeff_time.effects.time import WaitUntil as WaitUntil
 from doeff_time.effects.time import WaitUntilEffect as WaitUntilEffect
+from doeff_time.effects.time import WaitWithin as WaitWithin
+from doeff_time.effects.time import WaitWithinEffect as WaitWithinEffect
 from doeff_time.effects.time import delay as delay
 from doeff_time.effects.time import get_monotonic as get_monotonic
 from doeff_time.effects.time import get_time as get_time

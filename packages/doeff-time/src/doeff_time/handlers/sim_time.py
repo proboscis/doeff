@@ -26,6 +26,8 @@ from doeff_time.effects import (
     GetTimeEffect,
     ScheduleAtEffect,
     SetTimeEffect,
+    TicksOutcome,
+    WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
 )
@@ -53,6 +55,36 @@ def _delay_span(seconds: float) -> timedelta:
     return span
 
 
+class _TickRun:
+    """A WaitTicks waiter's ticks on the virtual time queue (agora-redesign #3066): the spacing and the number
+    of ticks, how many have passed, and the sequence of the tick queued now (withdrawn when the future wins).
+    The clock driver advances it as each tick is taken off the queue; the waiting task reads ``passed``
+    once it is answered."""
+
+    def __init__(self, every: timedelta, count: int) -> None:
+        self.every = every
+        self.count = count
+        self._mut_passed = 0
+        self._mut_sequence = 0
+
+    @property
+    def passed(self) -> int:
+        return self._mut_passed
+
+    @property
+    def sequence(self) -> int:
+        return self._mut_sequence
+
+    def queued(self, sequence: int) -> None:
+        """Remember the sequence of the tick just queued."""
+        self._mut_sequence = sequence
+
+    def tick(self) -> bool:
+        """Count a tick taken off the queue; answers whether it was the last one."""
+        self._mut_passed += 1
+        return self._mut_passed >= self.count
+
+
 class SimTimeRuntime:
     """Runtime state for virtual-clock interpretation."""
 
@@ -64,6 +96,9 @@ class SimTimeRuntime:
     ) -> None:
         self._clock = clock
         self._time_queue = TimeQueue()
+        # Queued ticks of WaitTicks waiters, by queue sequence: such an entry's promise is the waiter's
+        # deadline, completed only at its last tick (agora-redesign #3066).
+        self._mut_tick_runs: dict[int, _TickRun] = {}
         self._mut_driver_running = False
         self._log_formatter = log_formatter
         self._mut_forwarding_tell = False
@@ -71,12 +106,24 @@ class SimTimeRuntime:
 
     @do
     def _clock_driver(self):
-        """Idle-priority daemon that advances time when normal tasks are parked."""
+        """Idle-priority daemon that advances time when normal tasks are parked.
+
+        A WaitTicks tick that is not the last is not completed: the next tick is queued the moment
+        this one is taken off — where a waiter re-registering WaitWithin at each tick would queue it,
+        since no other task runs between the pop and that waiter's re-registration — and the waiting
+        task is not woken (agora-redesign #3066)."""
 
         try:
             while not self._time_queue.empty():
                 entry = self._time_queue.pop()
                 self._clock.advance_to(entry.time)
+                if entry.sequence in self._mut_tick_runs:
+                    run = self._mut_tick_runs.pop(entry.sequence)
+                    if not run.tick():
+                        sequence = self._time_queue.push(entry.time + run.every, entry.promise)
+                        run.queued(sequence)
+                        self._mut_tick_runs[sequence] = run
+                        continue
                 yield CompletePromise(entry.promise, None)
         finally:
             self._mut_driver_running = False
@@ -125,6 +172,30 @@ class SimTimeRuntime:
         return first
 
     @do
+    def _wait_ticks(self, future: "Future[object]", every: float, count: int, park: bool):
+        """Answer ``future``'s value, or None once ``count`` ticks spaced ``every`` seconds pass first,
+        with how many ticks passed (agora-redesign #3066).
+
+        One tick at a time is on the time queue: the clock driver takes it off and queues the next
+        one at once, without waking this task (see _clock_driver), so a tick instant orders against
+        the other timers as if this task re-registered WaitWithin at each tick. The last tick
+        completes the deadline. A tick the future beat is withdrawn, as WaitWithin's deadline.
+        """
+        deadline = yield CreatePromise()
+        run = _TickRun(_delay_span(every), count)
+        sequence = self._time_queue.push(self._clock.current_time + run.every, deadline)
+        run.queued(sequence)
+        self._mut_tick_runs[sequence] = run
+        _ = yield self._ensure_clock_driver()
+        try:
+            first = yield Race(future, deadline.future, priority=PRIORITY_IDLE if park else None)
+        finally:
+            self._time_queue.withdraw(run.sequence)
+            if run.sequence in self._mut_tick_runs:
+                del self._mut_tick_runs[run.sequence]
+        return TicksOutcome(value=first, passed=run.passed)
+
+    @do
     def handle(
         self,
         effect: WriterTellEffect
@@ -134,7 +205,8 @@ class SimTimeRuntime:
         | GetMonotonicEffect
         | ScheduleAtEffect
         | SetTimeEffect
-        | WaitWithinEffect,
+        | WaitWithinEffect
+        | WaitTicksEffect,
         k: Any,
     ):
         # The annotation is the clause list below: the VM skips this handler for
@@ -173,9 +245,13 @@ class SimTimeRuntime:
             # differences between readings.
             reading = now if isinstance(effect, GetTimeEffect) else now.timestamp()
             return (yield Transfer(k, reading))
-        if isinstance(effect, WaitWithinEffect):
-            first = yield self._wait_within(effect.future, effect.seconds, effect.park)
-            return (yield Transfer(k, first))
+        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect)):
+            answer = yield (
+                self._wait_within(effect.future, effect.seconds, effect.park)
+                if isinstance(effect, WaitWithinEffect)
+                else self._wait_ticks(effect.future, effect.every, effect.count, effect.park)
+            )
+            return (yield Transfer(k, answer))
         if isinstance(effect, ScheduleAtEffect):
 
             @do
