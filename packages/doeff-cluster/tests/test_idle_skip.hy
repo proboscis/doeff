@@ -33,7 +33,8 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests http-request])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimLink
-                             SimWorker Redeclare HostTruthOf HostTruth])
+                             SimWorker Redeclare HostTruthOf HostTruth CoordinatorStep CoordinatorSteps])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited DetachedSucceeded])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
@@ -138,19 +139,25 @@
 
 
 (defrecord Trace
-  "1 回の走りの読み: deltas = coordinator の置き場への書きの列(書いた順 — 判断の結果と刻を含む)・answer = 筋書きの答え・
-   takes = coordinator の拍の数。"
+  "1 回の走りの読み: deltas = coordinator の置き場への書きの列(書いた順 — 判断の結果と刻を含む)・steps = coordinator の歩ごとの記録
+   (CoordinatorStep の tuple — 刻とその歩の後の状態・#2670 の根 B — 筋書きが読む刻までに coordinator が起きて記録した歩)・final =
+   走りが終わった後の置き場の鍵の表(耐久になった全部のキー — 記録の後の静かな区間の最後の状態も含む)・answer = 筋書きの答え・takes =
+   coordinator の拍の数。"
   (#^ list deltas)
+  (#^ (get tuple #(CoordinatorStep ...)) steps)
+  ;; 置き場の鍵の表をそのまま持つ(置き場の口 load の答えの形 — 2 つの走りの最後の状態を丸ごと比べるため)。
+  (#^ dict final)
   (#^ (| tuple None) answer)
   (#^ int takes))
 
 
 (defk ended-with-takes [scenario]
   {:pre [(: scenario Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書きを回し、その答えと、終わった時の coordinator の拍の数を返すため。"
+  "筋書きを回し、その答えと、終わった時の coordinator の拍の数と、coordinator の歩ごとの記録を返すため。"
   (<- answer (| tuple None) scenario)
   (<- link SimLink (ClientLink))
-  #(answer link.queue.takes))
+  (<- steps tuple (CoordinatorSteps))
+  #(answer link.queue.takes steps))
 
 
 (defk trace-of [system scenario skip-idle * [workers None] [policy None] [deployments None]]
@@ -162,15 +169,69 @@
   (<- seen tuple (sim-cluster system (ended-with-takes scenario) :workers workers :policy policy :deployments deployments
                               :skip-idle skip-idle
                               :store (fn [] (let [store (MemoryWalStore)] (.append made store) store))))
-  (Trace :deltas (. (get made 0) deltas) :answer (get seen 0) :takes (get seen 1)))
+  (Trace :deltas (. (get made 0) deltas) :steps (get seen 2) :final (.load (get made 0)) :answer (get seen 0) :takes (get seen 1)))
+
+
+(defk state-changes [steps]
+  {:pre [(: steps tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "coordinator の歩ごとの記録 steps から、耐久の状態(置き場の鍵の形 full-kv)が前の歩と変わった歩だけを #(刻 耐久の状態) の列にする
+   ため — 判断とその刻と最後の状態を、置き場への書きの列と同じだけ持つ(何も変えない歩は数えない — 1 拍ずつの走りと飛ばす走りで、
+   保存の無い歩の数は違ってよい)。"
+  (var last None)
+  (var changes #())
+  (for [step steps]
+    (<- kv dict (full-kv step.state))
+    (when (!= kv last)
+      (:= changes (+ changes #(#(step.at kv))))
+      (:= last kv)))
+  changes)
+
+
+(defk step-apart [every skipped]
+  {:pre [(: every tuple) (: skipped tuple)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "1 秒ごとの拍と飛ばす拍の coordinator の歩ごとの記録から、耐久の状態の変わり目の列(刻と状態)の食い違いを並べるため(空 = 同じ判断を
+   同じ刻に下した — 置き場への書きの列に依らない基準・#2670 の根 B)。比べるのは両方の走りが記録し終えた刻まで: 飛ばす走りは眠っている
+   静かな区間の歩を起きた時に記録するので、筋書きが読む刻に眠っていれば、その区間の歩はまだ無い(その先は最後の状態 final で比べる)。"
+  (val until (min (if every (. (get every -1) at) 0) (if skipped (. (get skipped -1) at) 0)))
+  (<- kept tuple (state-changes (tuple (gfor step every :if (<= step.at until) step))))
+  (<- seen tuple (state-changes (tuple (gfor step skipped :if (<= step.at until) step))))
+  (val first-diff (next (gfor #(i #(a b)) (enumerate (zip kept seen)) :if (!= a b) i) None))
+  (+ (if (is first-diff None)
+         []
+         [(.format "耐久の状態の変わり目の {} 件目(刻 {} と {})が食い違う" (+ first-diff 1) (get (get kept first-diff) 0)
+                   (get (get seen first-diff) 0))])
+     (if (= (len kept) (len seen)) [] [(.format "変わり目の数 {} と {}" (len kept) (len seen))])))
+
+
+(deftest test-the-step-criterion-names-a-change-at-another-tick-or-with-another-state
+  ;; 歩ごとの記録の基準(置き場への書きの列に依らない — #2670 の根 B)の失敗ケース: 生存の印の変わり目が 1 拍ずれた走り・同じ刻に
+  ;; 違う状態になった走りを名指す。何も変えない歩が片方に多いだけ(保存の無い歩の数の違い)は食い違いにしない。
+  (val start (ClusterState))
+  (val marked (replace start :alive-ms 5000))
+  (val reference #((CoordinatorStep :at 0 :state start) (CoordinatorStep :at 5000 :state marked) (CoordinatorStep :at 9000 :state marked)))
+  (<- late list (step-apart reference
+                            #((CoordinatorStep :at 0 :state start) (CoordinatorStep :at 6000 :state marked)
+                              (CoordinatorStep :at 9000 :state marked))))
+  (assert late late)
+  (<- other list (step-apart reference
+                             #((CoordinatorStep :at 0 :state start) (CoordinatorStep :at 5000 :state (replace start :alive-ms 4000))
+                               (CoordinatorStep :at 9000 :state marked))))
+  (assert other other)
+  (<- idle list (step-apart reference
+                            #((CoordinatorStep :at 0 :state start) (CoordinatorStep :at 0 :state start) (CoordinatorStep :at 5000 :state marked)
+                              (CoordinatorStep :at 7000 :state marked) (CoordinatorStep :at 9000 :state marked))))
+  (assert (= idle []) idle))
 
 
 (defk same-decisions [every skipped]
   {:pre [(: every Trace) (: skipped Trace)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "1 秒ごとの拍と飛ばす拍の走りの食い違い(置き場の書きの列・筋書きの答え)を並べるため(空 = 同じ判断を同じ刻に下した)。"
+  "1 秒ごとの拍と飛ばす拍の走りの食い違い(置き場の書きの列・coordinator の耐久の状態の変わり目の列・置き場の最後の状態・筋書きの答え)を
+   並べるため(空 = 同じ判断を同じ刻に下し、同じ状態で終わった)。"
   (val first-diff (next (gfor #(i #(a b)) (enumerate (zip every.deltas skipped.deltas)) :if (!= a b) i) None))
   (+ (if (is first-diff None) [] [(.format "置き場の書きの {} 件目が食い違う" (+ first-diff 1))])
      (if (= (len every.deltas) (len skipped.deltas)) [] [(.format "書きの数 {} と {}" (len every.deltas) (len skipped.deltas))])
+     (! (step-apart every.steps skipped.steps))
+     (if (= every.final skipped.final) [] ["置き場の最後の状態が食い違う"])
      (if (= every.answer skipped.answer) [] [(.format "筋書きの答え {!r} と {!r}" every.answer skipped.answer)])))
 
 
@@ -364,7 +425,7 @@
                            (!= (- reference.beats host.beats) (// (- reference.last-ok-ms host.last-ok-ms) tick-ms)))
                    #(host reference)))
   (assert (= apart []) apart)
-  (<- breaches list (same-decisions every (Trace :deltas skipped.deltas :answer every.answer :takes skipped.takes)))
+  (<- breaches list (same-decisions every (Trace :deltas skipped.deltas :steps skipped.steps :final skipped.final :answer every.answer :takes skipped.takes)))
   (assert (= breaches []) breaches))
 
 

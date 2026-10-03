@@ -129,7 +129,7 @@
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleTaken ProvisionalBeat]
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleNextRequests IdleTaken ProvisionalBeat]
         doeff_cluster.coordinator.intent.request_bodies [HeartbeatBody]
         doeff_cluster.coordinator.protocol.request_bodies [body-of]
         doeff_cluster.shared.intent.protocol [NextRequests])
@@ -343,6 +343,13 @@
    faults = 篩った時の網と口の故障の今・kept = 調停ループへ渡す要求(網の切れた worker からの物と、故障を入れた口への物を除いた物)。"
   (#^ RouteFaults faults)
   (#^ tuple kept))
+
+
+(defrecord CoordinatorStep
+  "coordinator の歩 1 つの記録(1 拍ずつの走りと飛ばす走りを歩ごとの状態で比べる基準 — #2670 の根 B): at = その歩の刻・state = その歩の
+   後の状態(本物の歩なら次の取りの材料 idle の状態、眠った区間の歩なら QuietStep の状態)。"
+  (#^ int at)
+  (#^ ClusterState state))
 
 
 (defrecord SimPauses
@@ -705,8 +712,15 @@
 (defeffect AdmitBatch
   "調停ループの 1 歩が取った要求 batch を、網の切れと口の故障の今で篩い、残した要求のうち service の報告を記録し、返事の前に落ちたら
    接続の失敗を返す相手として覚える — 1 歩の問いを世界への 1 つにする(篩い・報告・覚えを別々に聞くと 1 歩に 2〜3 度・#2668・
-   #3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空で聞く(何も書かない)。答え = Admission。"
-  {:fields [(: batch tuple)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
+   #3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空で聞く(何も書かない)。steps = coordinator の歩の記録(CoordinatorStep の
+   tuple — 前の本物の歩の後の状態と、眠った区間の歩の状態・刻の順)を世界の列に控える(CoordinatorSteps — 1 拍ずつの走りと飛ばす
+   走りを歩ごとの状態で比べる基準・#2670 の根 B — 問いを増やさずに同じ 1 つで運ぶ)。宿の篩いの読みは空。答え = Admission。"
+  {:fields [(: batch tuple) (: steps tuple)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect CoordinatorSteps
+  "検の effect: coordinator の歩ごとの記録(CoordinatorStep)の列(AdmitBatch が運んだ記録・刻の順 — 1 拍ずつの走りでは 1 拍ごと、
+   飛ばす走りでは眠った区間の歩と本物の歩)。最後の歩(止まる前の歩)は次の取りが無いので入らない。"
+  {:answer tuple :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ReleaseRequest
   "返事を済ませた要求を覚えから外す。"
@@ -1769,7 +1783,7 @@
   (<- truth HostTruth (checked-truth worker.name boot asked.truth))
   (val all-stopping asked.all-stopping)
   ;; 網の切れと口の故障の今(取った要求の無い篩い — 報告も覚えも書かない)。
-  (<- admitted Admission (AdmitBatch #()))
+  (<- admitted Admission (AdmitBatch #() #()))
   (val faults admitted.faults)
   (<- now int (now-epoch-ms))
   (val tick-ms (int (* 1000 policy.tick-seconds)))
@@ -2094,11 +2108,13 @@
    落ちの注入より前の刻の書きなので落とさない・#2790)。歩の頭では空にせず、書きごとに 1 減らす。一生ごとに作り直すので、前の一生が
    保存し終えずに落ちた数を持ち越さない(#3132 で世界の受付から移した — 書きごとに世界へ問わずに判じるため)。session の値に
    持たないのは、読み書きのたびに状態の答え手までの効果になり、世界への問い 1 つと同じ重さになるため(1 歩の世界への問いを減らした分が
-   消える — 9 file の歩が 4% 増えた)。"
+   消える — 9 file の歩が 4% 増えた)。real-at = 前の取りが起きた刻(その刻の本物の歩の後の状態を、次の取りの材料 idle から歩の記録へ
+   添える — #2670 の根 B)。一生の最初の取りの前は None。"
   (setv #^ tuple released #()
         #^ tuple noted #()
         #^ bool stopped False
-        #^ int replayed 0))
+        #^ int replayed 0
+        #^ (| int None) real-at None))
 
 
 (defhandler observe-requests [#^ StepBook book #^ RequestQueue queue]
@@ -2121,8 +2137,13 @@
     (<- batch list (taken-batch taken))
     (val marks (if (isinstance taken IdleTaken) (len (lfor step taken.steps :if step.marked step)) 0))
     (setv book.replayed (+ book.replayed marks))
-    ;; 篩い・報告の記録・覚えを、世界への問い 1 つで(#3054 の C-6)。
-    (<- admitted Admission (AdmitBatch (tuple batch)))
+    ;; 歩の記録(#2670 の根 B): 前の取りの刻の本物の歩の後の状態(この取りの材料 idle)と、眠った区間の歩を刻の順に。
+    (val idle (if (isinstance effect IdleNextRequests) effect.idle None))
+    (val stepped (+ (if (and (is-not book.real-at None) (is-not idle None)) #((CoordinatorStep :at book.real-at :state idle.state)) #())
+                    (if (isinstance taken IdleTaken) (tuple (gfor step taken.steps (CoordinatorStep :at step.at :state step.state))) #())))
+    ;; 篩い・報告の記録・覚え・歩の記録を、世界への問い 1 つで(#3054 の C-6)。
+    (<- admitted Admission (AdmitBatch (tuple batch) stepped))
+    (setv book.real-at admitted.faults.now-ms)
     (val faults admitted.faults)
     (val kept (list admitted.kept))
     (for [r batch]
@@ -2476,6 +2497,8 @@
   (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
   (session var pausing (SimPauses :queued #()))
   (session var runs #())
+  ;; coordinator の歩の記録(CoordinatorStep の tuple・刻の順 — AdmitBatch が運ぶ・検が CoordinatorSteps で読む・#2670 の根 B)。
+  (session var steps-seen #())
   (session var end-waiters {})
   (session var watch-failures #())
   (session var start-waiters {})
@@ -2673,9 +2696,12 @@
             (:= revivals (| revivals {name promise}))
             (resume promise))
         (resume None)))
-  (AdmitBatch [batch]
+  (AdmitBatch [batch steps]
     ;; 篩い(網の切れ・口の故障・刻)と、残した要求の service の報告の記録と、返事の前に落ちた時の覚えを 1 つの問いで(#3054 の C-6)—
-    ;; 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は書かない。
+    ;; 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は書かない。coordinator の歩の
+    ;; 記録 steps は列に控える(#2670 の根 B)。
+    (when steps
+      (:= steps-seen (+ steps-seen steps)))
     (<- now int (now-epoch-ms))
     (val faults (RouteFaults :cut (frozenset (gfor #(name until) (.items intake.cuts) :if (> until now) name))
                              :failing (dfor #(route #(status until)) (.items intake.failing) :if (> until now) route status)
@@ -2870,6 +2896,8 @@
     (resume None))
   (CoordinatorRuns []
     (resume runs))
+  (CoordinatorSteps []
+    (resume steps-seen))
   (ClientLink []
     (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions)))
   (Redeclare [system environ]

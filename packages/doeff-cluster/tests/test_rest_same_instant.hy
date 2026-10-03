@@ -167,7 +167,7 @@
   (<- truth list (truth-breaches every.answer skipped.answer))
   (assert (= truth []) truth)
   ;; 判断の比べは置き場の書きの列だけ(筋書きの答え = 見本の列は上の頭の比べで見る — 眠る走りは数拍遅れて見えてよい)。
-  (<- decisions list (same-decisions every (Trace :deltas skipped.deltas :answer every.answer :takes skipped.takes)))
+  (<- decisions list (same-decisions every (Trace :deltas skipped.deltas :steps skipped.steps :final skipped.final :answer every.answer :takes skipped.takes)))
   (assert (= decisions []) decisions)
   (assert (< skipped.takes every.takes) #(skipped.takes every.takes)))
 

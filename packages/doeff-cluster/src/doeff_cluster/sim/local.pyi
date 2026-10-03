@@ -40,6 +40,7 @@ from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
 from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
 from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
+from doeff_cluster.coordinator.intent.cluster_model import ClusterState
 from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
@@ -333,6 +334,16 @@ class FailRoute(EffectBase[None]):
 
 @dataclass(frozen=True)
 class CoordinatorRuns(EffectBase[tuple[SimCoordinatorRun, ...]]): ...
+
+@dataclass(frozen=True)
+class CoordinatorStep:
+    """coordinator の歩 1 つの記録(1 拍ずつの走りと飛ばす走りを歩ごとの状態で比べる基準 — #2670 の根 B)。"""
+
+    at: int
+    state: ClusterState
+
+@dataclass(frozen=True)
+class CoordinatorSteps(EffectBase[tuple[CoordinatorStep, ...]]): ...
 
 @dataclass(frozen=True)
 class StartWorker(EffectBase[bool]):
