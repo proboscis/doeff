@@ -18,9 +18,11 @@ from doeff_time.effects import (
     GetMonotonicEffect,
     GetTimeEffect,
     ScheduleAtEffect,
+    WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
 )
+from doeff_time.handlers._wall_ticks import timed_wait_answer, timed_wait_seconds
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -60,10 +62,12 @@ class SyncTimeRuntime:
             return (yield Transfer(k, self._now()))
         if isinstance(effect, GetMonotonicEffect):
             return (yield Transfer(k, float(self._monotonic())))
-        if isinstance(effect, WaitWithinEffect):
+        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect)):
             # The deadline is an external promise a wall-clock timer completes (the scheduler knows
             # when it wakes — #765), raced against the future; the timer is stopped afterwards.
-            seconds = max(0.0, effect.seconds)
+            # WaitTicks' deadline is its last tick (agora-redesign #3066).
+            started = float(self._monotonic())
+            seconds = timed_wait_seconds(effect)
             deadline = yield CreateExternalPromise(deadline=time.monotonic() + seconds)
 
             def _deadline_passed():
@@ -76,7 +80,7 @@ class SyncTimeRuntime:
                 first = yield Race(effect.future, deadline.future, priority=PRIORITY_IDLE if effect.park else None)
             finally:
                 timer.cancel()
-            return (yield Transfer(k, first))
+            return (yield Transfer(k, timed_wait_answer(effect, first, float(self._monotonic()) - started)))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
 

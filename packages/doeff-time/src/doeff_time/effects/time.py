@@ -108,6 +108,49 @@ class WaitWithinEffect(EffectBase, Generic[_T]):
 
 
 @dataclass(frozen=True)
+class TicksOutcome(Generic[_T]):
+    """The answer of WaitTicks: ``value`` = the future's value (None when the ticks ran out first) and
+    ``passed`` = how many ticks passed before the answer (0 to ``count``)."""
+
+    value: "_T | None"
+    passed: int
+
+
+@dataclass(frozen=True)
+class WaitTicksEffect(EffectBase, Generic[_T]):
+    """Wait for a scheduler future across a run of ``count`` ticks spaced ``every`` seconds, without waking
+    at each tick.
+
+    The ticks are at ``every``, ``2 * every`` … ``count * every`` seconds from now. Answers
+    ``TicksOutcome(value, passed)``: the future's value when it completes first (``passed`` = the ticks
+    that passed before it), or ``TicksOutcome(None, count)`` when the last tick passes first.
+
+    The order at a tick instant is that of a waiter that re-registers ``WaitWithin(future, every)`` at
+    each tick (agora-redesign #3066): tick k counts as passed before any other timer due at the same
+    instant that was registered after tick k-1 passed, and after one registered before it.
+    ``sim_time_handler`` keeps that order by re-queueing tick k+1 on its virtual time queue the moment
+    tick k is taken off it — the waiting task is not woken at the ticks. ``park`` is WaitWithin's.
+    """
+
+    future: "Future[_T]"
+    every: float
+    count: int
+    park: bool = False
+
+    def __post_init__(self) -> None:
+        every = _coerce_finite_float(self.every, name="every")
+        if every <= 0.0:
+            raise ValueError("every must be > 0.0")
+        if isinstance(self.count, bool) or not isinstance(self.count, int):
+            raise TypeError(f"count must be int, got {type(self.count).__name__}")
+        if self.count < 1:
+            raise ValueError("count must be >= 1")
+        if not isinstance(self.park, bool):
+            raise TypeError(f"park must be bool, got {type(self.park).__name__}")
+        object.__setattr__(self, "every", every)
+
+
+@dataclass(frozen=True)
 class SetTimeEffect(EffectBase):
     """Set current timezone-aware datetime (simulation handlers may support this effect)."""
 
@@ -171,4 +214,8 @@ def SetTime(time: datetime) -> EffectBase:  # noqa: N802
 
 def WaitWithin(future: "Future[_T]", seconds: float, *, park: bool = False) -> EffectBase:  # noqa: N802
     return WaitWithinEffect(future=future, seconds=seconds, park=park)
+
+
+# The effect's constructor under the name the other waits use (the class itself — a typed answer, no wrapper).
+WaitTicks = WaitTicksEffect
 
