@@ -18,7 +18,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_core_effects.scheduler [CreatePromise Promise Spawn])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState QuietStep
-                                                       QuietStretch Watcher WatchRefusal])
+                                                       QuietStretch Watcher WatchRefusal WorkerInfo])
+(import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive WORKER-FORGET-MS])
 (import doeff_cluster.coordinator.core.program [coordinator-step])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch quiet-step quiet-due])
 (import doeff_cluster.coordinator.core.idle_policy :as idle-policy)
@@ -477,3 +478,56 @@
   (assert (isinstance reader Watcher) reader)
   (<- stretch QuietStretch (fresh-stretch #(reader) 30000))
   (assert (= stretch.end-at 1000) stretch.end-at))
+
+
+;; --- worker の生死の期限(#3061) -----------------------------------------------------------------------------------
+;; liveness-due は、worker の生死の判断が比べる期限の値(cluster_policy.liveness-deadline = 最後の連絡 + 窓)から、答えが変わる最初の刻を返す。
+;; - 窓ごとに、本番の判断の答えは liveness-due の返す刻ちょうどで変わり、その 1 ms 前では変わらない。反例 — 判断と liveness-due が別の
+;;   比べ方を持つ形(alive を < にする・forget を >= にする・窓を 1 つ数え落とす)は、答えの変わる刻とずれて赤。
+;; - worker の居る静かな区間は、いちばん早い期限の後の最初の歩で試され、1 歩ずつ試した走りと同じ歩で切れる。反例 — 期限より後の刻を
+;;   返す形(遅い worker の期限・後の窓の期限)は、生死の変わる歩を試さずに飛び、切れる刻がずれて赤。
+
+(deftest test-liveness-due-is-the-deadline-the-judgments-compare
+  (val timing (ClusterTiming))
+  (val seen 1000000)
+  (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms seen))
+  (val start (ClusterState :workers {"w" worker}))
+  ;; lease-ms — note-liveness が生きていないと数え始める刻。
+  (<- lease-due (| int None) (liveness-due start seen timing))
+  (assert (= lease-due (+ seen timing.lease-ms 1)) lease-due)
+  (assert (is (note-liveness start (- lease-due 1) timing) start))
+  (val silent (note-liveness start lease-due timing))
+  (assert (= silent.silent (frozenset ["w"])) silent.silent)
+  ;; reassign-after-ms・keep-fence-ms — held-placements と資源の status が比べる alive の窓。
+  (<- reassign-due (| int None) (liveness-due silent lease-due timing))
+  (assert (= reassign-due (+ seen timing.reassign-after-ms 1)) reassign-due)
+  (assert (and (alive (- reassign-due 1) worker timing.reassign-after-ms) (not (alive reassign-due worker timing.reassign-after-ms))))
+  (<- fence-due (| int None) (liveness-due silent reassign-due timing))
+  (assert (= fence-due (+ seen timing.keep-fence-ms 1)) fence-due)
+  (assert (and (alive (- fence-due 1) worker timing.keep-fence-ms) (not (alive fence-due worker timing.keep-fence-ms))))
+  ;; WORKER-FORGET-MS — forget-silent-workers が忘れる刻。
+  (<- forget-due (| int None) (liveness-due silent fence-due timing))
+  (assert (= forget-due (+ seen WORKER-FORGET-MS 1)) forget-due)
+  (<- kept ClusterState (forget-silent-workers silent (- forget-due 1)))
+  (assert (is kept silent))
+  (<- forgotten ClusterState (forget-silent-workers silent forget-due))
+  (assert (= forgotten.workers {}) forgotten.workers)
+  ;; 忘れた後: 生きていないと数える名が残っていれば note-liveness が次の歩で外す(次の刻)・外した後は期限が無い(None)。
+  (<- left (| int None) (liveness-due forgotten forget-due timing))
+  (assert (= left (+ forget-due 1)) left)
+  (<- after (| int None) (liveness-due (note-liveness forgotten forget-due timing) forget-due timing))
+  (assert (is after None) after))
+
+
+(deftest test-a-quiet-stretch-with-workers-is-tried-at-the-first-liveness-deadline
+  ;; 2 台のうち早く黙った w2(最後の連絡 0)の lease の期限 10000 を越える最初の歩 11000 で note-liveness が答えを変え、区間が切れる
+  ;; (w1 の期限 15000 より前)。
+  (val state (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 5000)
+                                     "w2" (WorkerInfo :name "w2" :provides #("cpu") :capacity 1 :last-seen-ms 0)}))
+  (val start (QuietStep :at 0 :state state :watchers #() :marked False))
+  (<- skipped QuietStretch (quiet-stretch (IdleProbe state (ClusterTiming) (ClusterNaming)) start 30000))
+  (<- tried QuietStretch (tried-steps start 30000))
+  (assert (= skipped.end-at tried.end-at 11000) #(skipped.end-at tried.end-at))
+  (assert (= (len skipped.steps) (len tried.steps)) #((len skipped.steps) (len tried.steps)))
+  (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at b.at)))
+  (assert (= apart []) apart))
