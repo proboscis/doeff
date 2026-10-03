@@ -9,14 +9,16 @@
 ;;;   pg-pooled
 ;;;           pg と同じ置き場で、SQL の effect の答え手だけを pooled-postgres-sql-handler(scheduler を塞がない版)にする。
 ;;;   http-memory / http-pg
-;;;           記録の service の HTTP の口(127.0.0.1 の空き port)を memory / PostgreSQL の置き場の上に開き、法の Program は
-;;;           client の handler(http-records-handler)で公開 effect を撃つ。書き手の名は client の RecordsEndpoint の writer(X-Records-Writer)で運ぶ。
-;;;           service と client は同じ仮想の時計(SimClock 1 つ)を読む。検の口と手入れの effect(AdvanceStoreEpoch・SweepExpired・
-;;;           PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
-;;;           client の要求は HttpRequest の effect なので、答え手(await-handler と http-production-handler)を組の最も外側に置く。
+;;;           記録の service の HTTP の口越し(memory / PostgreSQL の置き場の上): 法の Program は client の handler(http-records-handler)で
+;;;           公開 effect を撃ち、client の要求(HttpRequest の effect)は in-process-records-http が同じ scheduler の中で service の respond に
+;;;           渡して答える — 通る綴りは本物の口と同じ(wire の要求と答え・status の写し・書き手の名の見出し X-Records-Writer)。
+;;;           socket と別の thread の run を通さないのは、変化の待ちが service の中で待つ long-poll だから(#3074): 待ち受けの外の I/O を
+;;;           抱えた run では仮想の時計が進まず、service の待ちが期限に届かない。1 つの scheduler なら、待ちも書きも 1 つの仮想の
+;;;           時計の上で進む。本物の口(socket・待ち受けの loop)は test_http_service.hy などが確かめる。検の口と手入れの effect
+;;;           (AdvanceStoreEpoch・SweepExpired・PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
 ;;;
 ;;; 法は LawSetup の effect で自分の LawHarness(書き手の名 → その書き手の handler で包む関数)を読む。
-(require doeff-hy.macros [defhandler])
+(require doeff-hy.macros [defhandler <-])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import importlib)
@@ -31,10 +33,11 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import urllib.parse [urlsplit])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
-(import doeff_core_effects.handlers [await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_records.service [RecordsService respond HttpRequest :as ServiceRequest])
+(import doeff_records.wire [WRITER-HEADER])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_hy.frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 
@@ -113,34 +116,41 @@
                     (fn [] harness)))
 
 
-(setv HTTP-POLL-SECONDS 0.05)
-
-
 (defn sim-request-handlers [clock [answerers []]]
   "service が要求ごとの答えの外側に被せる handler の列 — 法の側と同じ仮想の時計を読む。answerers = 置き場の外側に置く答え手(SQL の答え手)。"
   (tuple (+ [(sim-time-handler :clock clock)] answerers)))
 
 
+;; 同じ scheduler の中の口の名(socket を開かない — client が URL に書くだけ)。
+(setv IN-PROCESS-URL "http://records.in-process")
+
+
+(defhandler in-process-records-http [#^ RecordsService service]
+  ;; 引数に残す理由: 置き場ごと(memory・PostgreSQL)に別の service を渡す検の組の答え手(Ask では区別できない)。
+  ;; 外の世界(HTTP の通信)だけを差し替える答え手: client の HttpRequest を、同じ scheduler の中で記録の service の respond に渡して
+  ;; 答えるため(頭の註の http-memory / http-pg — service の中の待ちと法の書きを 1 つの仮想の時計の上で進める・#3074)。
+  (HttpRequest []
+    (<- answer (respond service (ServiceRequest effect.method (. (urlsplit effect.url) path) effect.body
+                                                (.get (or effect.headers {}) WRITER-HEADER))))
+    (resume (HttpResponse answer.status {} (.encode answer.body "utf-8") answer.body effect.url 0.0))))
+
+
 (defn http-interpreter [handler-for backing close-store [answerers []]]
-  "HTTP の口を開き、法の書き手を client の handler(その書き手の名を名乗る)で包む組。backing = 書き手の名 → 置き場の handler
-   (検の口と手入れの effect に直に答える — client の外側に被せる)。client の要求は HttpRequest の effect なので、答え手
-   await-handler と http-production-handler を組の最も外側に置く。"
+  "記録の service の HTTP の口越しの組(頭の註の http-memory / http-pg): 法の書き手を client の handler(その書き手の名を名乗る)で
+   包み、client の要求は in-process-records-http が service の respond に渡す。backing = 書き手の名 → 置き場の handler(検の口と
+   手入れの effect に直に答える — client の外側に被せる)。answerers = 置き場の外側に置く答え手(SQL の答え手)— 答え手と仮想の
+   時計は in-process-records-http の外側に置く(service の中の置き場の effect がそこへ届く)。"
   (setv clock (SimClock)
-        server (start-records-server (run (records-server-config LAW-SCHEMA handler-for
-                                                          :request-handlers (sim-request-handlers clock answerers))))
+        service (RecordsService LAW-SCHEMA handler-for)
         harness (LawHarness (fn [writer program]
                               (with_handlers [(backing writer)
-                                              (http-records-handler (RecordsEndpoint server.url :writer writer
-                                                                                     :poll-seconds HTTP-POLL-SECONDS))]
+                                              (http-records-handler (RecordsEndpoint IN-PROCESS-URL :writer writer))]
                                              program))))
-  (defn close []
-    (.close server)
-    (close-store))
   (BuiltInterpreter (fn [program]
-                      (run (scheduled (with_handlers (+ [(await-handler) (http-production-handler)]
-                                               [(sim-time-handler :clock clock)] answerers [(law-setup harness)])
+                      (run (scheduled (with_handlers (+ [(sim-time-handler :clock clock)] answerers
+                                                        [(in-process-records-http service) (law-setup harness)])
                                                      program))))
-                    close
+                    close-store
                     (fn [] harness)))
 
 

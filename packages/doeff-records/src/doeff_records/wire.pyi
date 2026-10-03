@@ -33,12 +33,15 @@ from doeff_records.values import RowsRefused as RowsRefused
 from doeff_records.values import StreamEnd as StreamEnd
 from doeff_records.values import StreamEmpty as StreamEmpty
 from doeff_records.values import UndeclaredTable as UndeclaredTable
+from doeff_records.values import EventsMoved as EventsMoved
+from doeff_records.values import EventsQuiet as EventsQuiet
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
 from doeff_records.effects import PutRows as PutRows
 from doeff_records.effects import RowWrite as RowWrite
 from doeff_records.effects import WatchChanges as WatchChanges
+from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
@@ -52,7 +55,9 @@ OP_APPEND_EVENT: str
 OP_READ_EVENTS: str
 OP_PUT_ROWS: str
 OP_READ_STREAM_END: str
+OP_WATCH_EVENTS: str
 OPERATIONS: tuple[str, ...]
+WATCH_MAX_SECONDS: float
 WRITE_OPERATIONS: frozenset[str]
 
 class RequestKind(StrEnum):
@@ -76,8 +81,8 @@ CLIENT_KINDS: tuple[RequestKind, ...]
 CLIENT_OUTCOMES: tuple[str, ...]
 CLIENT_ANSWER_METRICS: tuple[str, ...]
 ANSWER_KINDS: dict[str, tuple[str, ...]]
-PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd
-WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty
+PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents
+WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet
 
 class WireMalformed(ValueError):
     ...
