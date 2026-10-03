@@ -360,13 +360,12 @@
    済ませる・#3054 の C-6。節は本体で使う session の値を名ごとに節の頭で読むので、別々の名だと 1 歩で 5 度読む)。cuts = 網の切れている
    worker の名 → 切れが明ける刻(epoch ms)・failing = 故障を入れている口 #(method path) → #(答える status 明ける刻)(2 つの欄に写像を
    持つ理由: 筋書きの CutWorker・FailRoute が名ごと・口ごとに置く表をそのまま運ぶ — 引く側は名と口で引くだけ)・held = 取って返事を
-   まだしていない要求(返事の前に落ちたら接続の失敗を返す相手)・reports = 届いた service の報告(SimReport)・replayed = 眠った静かな
-   区間の歩をまとめて保存する Persist のうち、まだ来ていない数(#2790 — 落ちの注入で落とさない)。"
+   まだしていない要求(返事の前に落ちたら接続の失敗を返す相手)・reports = 届いた service の報告(SimReport)。眠った静かな区間の歩の
+   書きの数えは、coordinator の一生の帳面 StepBook が持つ(#3132)。"
   (#^ dict cuts)
   (#^ dict failing)
   (#^ tuple held)
-  (#^ tuple reports)
-  (#^ int replayed))
+  (#^ tuple reports))
 
 
 (defrecord SimLink
@@ -705,11 +704,9 @@
 
 (defeffect AdmitBatch
   "調停ループの 1 歩が取った要求 batch を、網の切れと口の故障の今で篩い、残した要求のうち service の報告を記録し、返事の前に落ちたら
-   接続の失敗を返す相手として覚え、眠った静かな区間の歩をまとめて保存する Persist の数 replayed(生存の印を書く歩の数 — その書きは
-   1 拍ずつの走りでは起きる前の刻の書きなので落ちの注入で落とさない・#2790)を覚える — 1 歩の問いを世界への 1 つにする(篩い・報告・
-   覚え・数えを別々に聞くと 1 歩に 2〜4 度・#2668・#3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空・replayed を 0 で聞く
-   (何も書かない)。答え = Admission。"
-  {:fields [(: batch tuple) (: replayed int)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
+   接続の失敗を返す相手として覚える — 1 歩の問いを世界への 1 つにする(篩い・報告・覚えを別々に聞くと 1 歩に 2〜3 度・#2668・
+   #3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空で聞く(何も書かない)。答え = Admission。"
+  {:fields [(: batch tuple)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ReleaseRequest
   "返事を済ませた要求を覚えから外す。"
@@ -735,9 +732,9 @@
   {:answer (| float None) :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect PersistCrashDue
-  "次の Persist で落ちを注入するか — まとめて保存する区間の歩の書きなら覚えた数を 1 減らして偽(その書きは 1 拍ずつの走りでは起きる前の
-   刻の書きなので落とさない・#2790)、そうでなければ筋書きの落ち(crash)が頼まれているかを PauseDue と同じく判じて筋書きから外す。
-   2 つの判断を世界への問い 1 つにする(#3054 の C-6)。"
+  "次の Persist で落ちを注入するか — 筋書きの落ち(crash)が頼まれているかを PauseDue と同じく判じて筋書きから外す。observe-requests は
+   注入が待っている時(列の ends-at-marks)だけ、区間の歩の書き(帳面 StepBook の replayed — 落とさない・#2790)でない書きの前に問う
+   (#3132 — 書きごとに問うと生存の印の書き 1 回 46 歩のうち 20 歩になった)。"
   {:answer bool :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NextWorldDue
@@ -1772,7 +1769,7 @@
   (<- truth HostTruth (checked-truth worker.name boot asked.truth))
   (val all-stopping asked.all-stopping)
   ;; 網の切れと口の故障の今(取った要求の無い篩い — 報告も覚えも書かない)。
-  (<- admitted Admission (AdmitBatch #() 0))
+  (<- admitted Admission (AdmitBatch #()))
   (val faults admitted.faults)
   (<- now int (now-epoch-ms))
   (val tick-ms (int (* 1000 policy.tick-seconds)))
@@ -2092,33 +2089,40 @@
 (defclass [dataclass] StepBook []
   "coordinator の一生 1 つの、調停ループの 1 歩の間に observe-requests が溜める物(#2670 の根 A): released = この歩で返事を済ませた要求
    (歩の終わりに覚えから外す)・noted = この歩の Persist の writes の列(書きの順 — 歩の終わりに知らせる)・stopped = 歩の頭の判定が
-   止まりと答えた(止まる調停ループの待ちへの返事 release-watchers はすぐ外す — 次の歩の頭は無い)。歩の頭ごとに空にする。session の値に
+   止まりと答えた(止まる調停ループの待ちへの返事 release-watchers はすぐ外す — 次の歩の頭は無い)。歩の頭ごとに空にする。replayed =
+   眠った静かな区間の歩をまとめて保存する Persist のうち、まだ来ていない数(生存の印を書く歩の数 — その書きは 1 拍ずつの走りでは
+   落ちの注入より前の刻の書きなので落とさない・#2790)。歩の頭では空にせず、書きごとに 1 減らす。一生ごとに作り直すので、前の一生が
+   保存し終えずに落ちた数を持ち越さない(#3132 で世界の受付から移した — 書きごとに世界へ問わずに判じるため)。session の値に
    持たないのは、読み書きのたびに状態の答え手までの効果になり、世界への問い 1 つと同じ重さになるため(1 歩の世界への問いを減らした分が
    消える — 9 file の歩が 4% 増えた)。"
   (setv #^ tuple released #()
         #^ tuple noted #()
-        #^ bool stopped False))
+        #^ bool stopped False
+        #^ int replayed 0))
 
 
-(defhandler observe-requests [#^ StepBook book]
+(defhandler observe-requests [#^ StepBook book #^ RequestQueue queue]
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 1 歩の間に溜める帳面 book は coordinator の一生ごとに作る可変の箱(coordinator-life が作って渡す)— session の値に
-  ;; すると読み書きのたびに状態の答え手までの効果になる(StepBook の docstring)。一生をまたがない。
+  ;; すると読み書きのたびに状態の答え手までの効果になる(StepBook の docstring)。一生をまたがない。queue = coordinator の要求の列
+  ;; (世界の部品 SimParts.queue と同じ物)— 落ちの注入が待っているか(ends-at-marks — 世界の CrashCoordinator が立て、落ちで下ろす)を
+  ;; 書きの前に読む(#3132)。
   ;; 調停ループの一番内側: 取った要求のうち網の切れた worker から届いた物を落とし(送り手には接続の失敗 — 本番では届かない)、故障を
   ;; 入れている口(FailRoute)への物に注入した status で答えて調停ループへ渡さず、service の
   ;; 報告(ReportReady・ReportMetrics)を世界へ記録し、返事の前に落ちた時に接続の失敗を返す相手として取った要求を覚える。筋書きの
   ;; 止まり(止めの合図)と落ち(Persist の失敗 — 返事をせずに落ちる)を注入する。効果はそのまま外側(本物の組)へ出し直す。
-  ;; 1 歩の世界への問いは 3 つ(#2670 の根 A): 取りの篩い(AdmitBatch)・書きの前の落ちの判断(PersistCrashDue — 書きより前に要る)・歩の
-  ;; 終わり(StepEnded — 次の歩の頭の止まりの判定の刻に、この歩の返事の手放しと書きの知らせと止まりの判定を 1 つで)。返事と書きは
-  ;; 帳面 book に溜める。
+  ;; 1 歩の世界への問いは 2〜3 つ(#2670 の根 A): 取りの篩い(AdmitBatch)・歩の終わり(StepEnded — 次の歩の頭の止まりの判定の刻に、
+  ;; この歩の返事の手放しと書きの知らせと止まりの判定を 1 つで)と、落ちの注入が待っている間だけ書きの前の落ちの判断(PersistCrashDue —
+  ;; 書きより前に要る・#3132)。返事と書きと区間の歩の書きの数えは帳面 book に溜める。
   (NextRequests [timeout-seconds limit]
     ;; 模擬の列は、眠った静かな区間の歩を添えて返す(IdleTaken — #2790)。篩うのは取った要求だけ。区間の歩の書き(生存の印の歩)は
     ;; 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
     (<- taken (| list IdleTaken) effect)
     (<- batch list (taken-batch taken))
     (val marks (if (isinstance taken IdleTaken) (len (lfor step taken.steps :if step.marked step)) 0))
-    ;; 篩い・報告の記録・覚え・区間の歩の書きの数を、世界への問い 1 つで(#3054 の C-6)。
-    (<- admitted Admission (AdmitBatch (tuple batch) marks))
+    (setv book.replayed (+ book.replayed marks))
+    ;; 篩い・報告の記録・覚えを、世界への問い 1 つで(#3054 の C-6)。
+    (<- admitted Admission (AdmitBatch (tuple batch)))
     (val faults admitted.faults)
     (val kept (list admitted.kept))
     (for [r batch]
@@ -2135,14 +2139,18 @@
     (<- effect)
     (resume None))
   (Persist [writes]
-    ;; 落ちの注入の判断(まとめて保存する区間の歩の書きは落とさない・筋書きの落ちの頼み)を世界への問い 1 つで(#3054 の C-6)。書きより前。
-    (<- crash bool (PersistCrashDue))
-    (when crash
-      ;; 落ちる前に、この歩で溜めた書きの知らせを出す(書き終えた書きの待ち手は、落ちても起こす)。
-      (for [done book.noted]
-        (<- (NoteCoordinatorWrite done)))
-      (setv book.noted #())
-      (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))
+    ;; 落ちの注入の判断(書きより前): まとめて保存する区間の歩の書きは落とさない(帳面で数える)。それ以外の書きは、落ちの注入が待って
+    ;; いる時だけ筋書きの落ちの頼みを世界への問い 1 つで判じる — 待っていない書き(生存の印の書きの大半)は世界へ問わない(#3132)。
+    (if (> book.replayed 0)
+        (setv book.replayed (- book.replayed 1))
+        (when queue.ends-at-marks
+          (<- crash bool (PersistCrashDue))
+          (when crash
+            ;; 落ちる前に、この歩で溜めた書きの知らせを出す(書き終えた書きの待ち手は、落ちても起こす)。
+            (for [done book.noted]
+              (<- (NoteCoordinatorWrite done)))
+            (setv book.noted #())
+            (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))))
     (<- effect)
     ;; 書き終えたことは歩の終わり(StepEnded)に知らせる — 書きで終わった切り離した task の待ち手(proboscis/doeff#631)と準備の状態を
     ;; 待つ待ち手(AwaitReadiness・#3053)を起こす。
@@ -2185,7 +2193,7 @@
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
-    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [(observe-requests (StepBook))])
+    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [(observe-requests (StepBook) parts.queue)])
           (run-coordinator state plan.timing plan.naming)))
     "stopped"
     (except [error OSError]
@@ -2465,7 +2473,7 @@
   (session var stop-waiters {})
   (session var revivals {})
   ;; 要求の受付まわり(網の切れ・口の故障・返事の前の覚え・報告・区間の歩の書きの数)は 1 つの値(1 歩の問いが 1 度だけ読む・#3054 の C-6)。
-  (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #() :replayed 0))
+  (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
   (session var pausing (SimPauses :queued #()))
   (session var runs #())
   (session var end-waiters {})
@@ -2665,18 +2673,17 @@
             (:= revivals (| revivals {name promise}))
             (resume promise))
         (resume None)))
-  (AdmitBatch [batch replayed]
-    ;; 篩い(網の切れ・口の故障・刻)と、残した要求の service の報告の記録と、返事の前に落ちた時の覚えと、眠った区間の歩の書きの数を
-    ;; 1 つの問いで(#3054 の C-6)— 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は
-    ;; 書かない。
+  (AdmitBatch [batch]
+    ;; 篩い(網の切れ・口の故障・刻)と、残した要求の service の報告の記録と、返事の前に落ちた時の覚えを 1 つの問いで(#3054 の C-6)—
+    ;; 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は書かない。
     (<- now int (now-epoch-ms))
     (val faults (RouteFaults :cut (frozenset (gfor #(name until) (.items intake.cuts) :if (> until now) name))
                              :failing (dfor #(route #(status until)) (.items intake.failing) :if (> until now) route status)
                              :now-ms now))
     (val kept (tuple (gfor r batch :if (and (not-in r.peer faults.cut) (not-in #(r.method r.path) faults.failing)) r)))
     (<- found tuple (reports-in (list kept) now))
-    (when (or kept found (> replayed 0))
-      (:= intake (replace intake :held (+ intake.held kept) :reports (+ intake.reports found) :replayed (+ intake.replayed replayed))))
+    (when (or kept found)
+      (:= intake (replace intake :held (+ intake.held kept) :reports (+ intake.reports found))))
     (resume (Admission :faults faults :kept kept)))
   (ReleaseRequest [request]
     (:= intake (replace intake :held (tuple (gfor r intake.held :if (is-not r request) r))))
@@ -2691,7 +2698,7 @@
         (resume False)
         (do (:= pausing after)
             ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
-            (setattr parts.queue "ends-at-marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            (setattr parts.queue "ends_at_marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
   (StepEnded [released writes]
     ;; 調停ループの 1 歩の終わりの問い 1 つ(#2670 の根 A): 返事を済ませた要求を覚えから外し(ReleaseRequest と同じ)、この歩の書きを
@@ -2710,20 +2717,16 @@
         (resume False)
         (do (:= pausing after)
             ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
-            (setattr parts.queue "ends-at-marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            (setattr parts.queue "ends_at_marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
   (PersistCrashDue []
-    ;; まとめて保存する区間の歩の書きは落とさない(落ちの注入より前の刻の書き — CrashCoordinator が区間を起こして切る)。それ以外は
-    ;; 筋書きの落ちの頼みを PauseDue と同じく判じる — 2 つの判断を 1 つの問いで(#3054 の C-6)。
-    (if (> intake.replayed 0)
-        (do (:= intake (replace intake :replayed (- intake.replayed 1)))
-            (resume False))
-        (do (<- after (| SimPauses None) (pause-taken pausing PAUSE-CRASH))
-            (if (is after None)
-                (resume False)
-                (do (:= pausing after)
-                    (setattr parts.queue "ends-at-marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
-                    (resume True))))))
+    ;; 筋書きの落ちの頼みを PauseDue と同じく判じる(区間の歩の書きを落とさない判断は observe-requests の帳面 — #3132)。
+    (<- after (| SimPauses None) (pause-taken pausing PAUSE-CRASH))
+    (if (is after None)
+        (resume False)
+        (do (:= pausing after)
+            (setattr parts.queue "ends_at_marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            (resume True))))
   (DowntimeOf []
     (val taken pausing.downtime)
     ;; 作り直す刻を覚える(coordinator の Pod の代役は取り出した秒だけ Delay で眠ってから作り直す — 次の予定の刻の問いが読む・#3094)。
@@ -2736,8 +2739,6 @@
   (CoordinatorStarted [ms]
     (:= runs (+ runs #((SimCoordinatorRun :started-ms ms))))
     (:= pausing (replace pausing :restart-ms None))
-    ;; 前の一生が区間の歩を保存し終えずに落ちていても(置き場の失敗の注入)、その数を新しい一生の書きへ持ち越さない。
-    (:= intake (replace intake :replayed 0))
     (resume None))
   (CoordinatorEnded [ms outcome]
     (:= runs (tuple (gfor #(i run) (enumerate runs) (if (= i (- (len runs) 1)) (replace run :ended-ms ms :outcome outcome) run))))
@@ -2863,7 +2864,8 @@
     (:= pausing (replace pausing :queued (+ pausing.queued #(#(PAUSE-CRASH (float seconds))))))
     ;; 落ちるのは次の Persist(1 拍ずつの走りでは、注入の後の最初の書き)。静かな区間を眠っている coordinator を起こし(注入の刻より前の
     ;; 歩をまとめて保存し、その後の最初の歩を本物の歩にする)、落ちるまでは生存の印を書く最初の歩で区間を切る(#2790)。
-    (setattr parts.queue "ends-at-marks" True)
+    ;; 欄の名は Hy が読む名(queue.ends-at-marks = ends_at_marks)で書く — 文字列の "ends-at-marks" は別の属性を作り、印が立たなかった(#3132)。
+    (setattr parts.queue "ends_at_marks" True)
     (<- (nudge-takers parts.queue))
     (resume None))
   (CoordinatorRuns []
