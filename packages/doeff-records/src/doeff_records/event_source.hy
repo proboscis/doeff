@@ -15,9 +15,11 @@
 ;;; 位置を読んでから源の task(表の分 1 つ = WatchChanges の long-poll・列 1 つにつき 1 つ = WatchEvents の long-poll)を Spawn し、その後に
 ;;; 本体を走らせるので、本体の最初の読みより前に購読が始まる(読みと待ちの間の書きを落とさない)。本体は包みを撃った task のまま走らせる
 ;;; (Spawn しない — 外の task の Cancel がそのまま本体に届き、外の Spawn の優先のまま走る)。task にするのは源だけで、本体が終われば
-;;; (答えでも例外でも)源の task を止める。源の失敗は本体の待ちに届ける: 本体の WaitForEvent を子の task で外の購読者の列へ出し、源の
-;;; task と Race する(waits-beside-sources)— 源が先に落ちれば本体は同じ例外で落ちる。今の task を引く effect が scheduler に無いので、
-;;; 源の側から本体の task を Cancel する形は採らない。WaitForEvent には答えない(答えは外の購読者の列から来る — 子に出し直すだけ)。
+;;; (答えでも例外でも)源の task を止める。源の失敗は本体の待ちに合図で届ける: 源の task は落ちたら例外を運ぶ合図 SourceFailed を同じ
+;;; bus に Publish してから落ち(failure-announced)、本体の WaitForEvent は本体の型に SourceFailed を足して外の購読者の列へ出す
+;;; (waits-beside-sources)— 自分の源の失敗を受けたら本体は同じ例外で落ちる。待ちごとに task を立てて源と競わせない(#3135 — 前は
+;;; 待ちを子の task にして源と Race し、起きるたびに Spawn した)。今の task を引く effect が scheduler に無いので、源の側から本体の
+;;; task を Cancel する形は採らない。WaitForEvent には答えない(答えは外の購読者の列から来る — 型を足して出し直すだけ)。
 ;;; 源は記録の置き場への接続を持たず、読みの effect を外へ出す — 外の記録の handler(memory・PostgreSQL・HTTP の口のどれでも)が答えるので、
 ;;; 手元の模擬と本番の違いは外の記録の handler の接続先だけになる。
 ;;;
@@ -38,8 +40,8 @@
 (import dataclasses [dataclass fields is-dataclass])
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects.scheduler [Cancel CreateExternalPromise Race Spawn Task TaskCancelledError Wait])
-(import doeff_events.effects [Publish PublishEffect WaitForEventEffect])
+(import doeff_core_effects.scheduler [Cancel CreateExternalPromise Spawn Task TaskCancelledError Wait])
+(import doeff_events.effects [Publish PublishEffect SourceFailed WaitForEventEffect])
 (import doeff_time [Delay DelayEffect])
 (import doeff_records.admission [key-text])
 (import doeff_records.effects [ListRows ReadSignalSource ReadStreamEnd WatchChanges WatchEvents])
@@ -229,15 +231,30 @@
   None)
 
 
+(defk failure-announced [source program]
+  {:pre [(: source str) (: program Program)] :post [(: % None)]}
+  "源の task の本体: program を走らせ、落ちたら(取り消しでない例外なら)その例外を運ぶ合図 SourceFailed を同じ bus に Publish して
+   から同じ例外で落ちるため — 本体の待ちは源の task と競わずに、合図として源の失敗を受ける(#3135)。source = 源の名(合図を受ける
+   購読者の名前 — 同じ bus の別の源の失敗と見分ける)。"
+  (try
+    (<- program)
+    (except [cancelled TaskCancelledError]
+      (raise cancelled))
+    (except [error Exception]
+      (<- (Publish (SourceFailed :source source :error error)))
+      (raise error)))
+  None)
+
+
 (defk spawn-sources [plan]
   {:pre [(: plan SourcePlan)] :post [(: % tuple)]}
-  "源の task を Spawn するため: 結んだ表があれば表の分を 1 つ、結んだ列ごとに 1 つ。"
+  "源の task を Spawn するため: 結んだ表があれば表の分を 1 つ、結んだ列ごとに 1 つ(どれも落ちたら失敗を合図で本体へ届ける)。"
   (var tasks #())
   (when plan.tables
-    (<- watching (Spawn (publish-changes plan)))
+    (<- watching (Spawn (failure-announced plan.subscriber (publish-changes plan))))
     (:= tasks (+ tasks #(watching))))
   (for [start plan.streams]
-    (<- appending (Spawn (publish-appends plan start)))
+    (<- appending (Spawn (failure-announced plan.subscriber (publish-appends plan start))))
     (:= tasks (+ tasks #(appending))))
   tasks)
 
@@ -253,37 +270,41 @@
   None)
 
 
-(defk wait-beside-sources [sources event-types]
-  {:pre [(: sources tuple) (: event-types tuple)] :post [(: % "受けた合図")]}
-  "本体の待ち 1 回に源の失敗を届けるため: 待ち(WaitForEvent)を子の task で外の購読者の列へ出し直し、源の task と Race する。合図が
-   先なら合図を返す。源が先に落ちれば(源は Cancel でしか終わらない)、待ちの子を止めて源と同じ例外で落ちる。本体の task が Cancel
-   されても(Race に TaskCancelledError が届く)、待ちの子を止めてから同じ例外で解ける。"
-  (<- waiting (Spawn (WaitForEventEffect event-types)))
-  (try
-    (<- answer (Race waiting #* sources))
-    (except [Exception]
-      (<- (Cancel waiting))
-      (raise)))
+(defk wait-beside-sources [source event-types]
+  {:pre [(: source str) (: event-types tuple)] :post [(: % "受けた合図")]}
+  "本体の待ち 1 回に源の失敗を届けるため: 本体の型と源の失敗の合図 SourceFailed を 1 つの WaitForEvent で外の購読者の列へ出す(源の task と
+   競わない・待ちごとの task は無い — #3135)。自分の源(source)の失敗なら、運ばれた例外で落ちる。同じ bus の別の源の失敗は、本体が
+   SourceFailed を待っていれば(源の包みが入れ子)そのまま返し、待っていなければ待ち直す。本体の task の Cancel は、この待ちにそのまま
+   届く。"
+  (val wants-failures (in SourceFailed event-types))
+  (var answer None)
+  (while True
+    (<- came (WaitForEventEffect (+ event-types #(SourceFailed))))
+    (:= answer came)
+    (when (or (not (isinstance came SourceFailed)) (= came.source source) wants-failures)
+      (break)))
+  (when (and (isinstance answer SourceFailed) (= answer.source source))
+    (raise answer.error))
   answer)
 
 
-(defhandler waits-beside-sources [#^ tuple sources]
-  "包んだ本体の WaitForEvent を、源の task と並べて待たせるため(答えは外の購読者の列のまま — 待ちを子の task に出し直すだけ)。"
+(defhandler waits-beside-sources [#^ str source]
+  "包んだ本体の WaitForEvent に源の失敗の合図を足して待たせるため(答えは外の購読者の列のまま — 待ちの型を足して出し直すだけ)。"
   {:tags {:context "records" :role "foundation"}}
-  ;; 引数に残す理由: sources はこの包みが Spawn した源の task(走らせた時に出来る値)で、設定ではないので Ask では読めない。
+  ;; 引数に残す理由: source はこの包みの源の名(組み立ての引数の購読者の名前)で、包み 1 つごとに違うので Ask では読めない。
   (WaitForEventEffect [event-types]
-    (<- answer (wait-beside-sources sources event-types))
+    (<- answer (wait-beside-sources source event-types))
     (resume answer)))
 
 
 (defk run-with-sources [plan body]
   {:tp [T] :pre [(: plan SourcePlan) (: body (| (get Program #(T object)) (get EffectBase T)))] :post [(: % T)]}
   "読んだ位置 plan で源の task を Spawn してから、本体をこの task のまま(Spawn せずに)走らせ、本体の答えを返すため(2 つの組み立て方の
-   共有の包み)。本体の待ちには源の失敗が届く(waits-beside-sources)。本体が終われば、答えでも例外でも源の task を止める(源が先に
+   共有の包み)。本体の待ちには源の失敗が合図で届く(waits-beside-sources)。本体が終われば、答えでも例外でも源の task を止める(源が先に
    落ちていれば、止める時の Wait がその例外を上げる — 待たずに終わった本体でも源の失敗を落とさない)。"
   (<- sources (spawn-sources plan))
   (try
-    (<- answer (with-handlers [(waits-beside-sources sources)] body))
+    (<- answer (with-handlers [(waits-beside-sources plan.subscriber)] body))
     (finally
       (for [task sources]
         (<- (stop-source task)))))
@@ -318,9 +339,9 @@
 
 ;; 源の包み 1 つが本体の周りで出す effect の全部(records-signal-handler の宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めない
 ;; ので宣言する)。位置の読み(ListRows・ReadStreamEnd)・源の task(Spawn と、その中の WatchChanges・WatchEvents・ReadStreamEnd・
-;; Publish・繋ぎ直しの間の Delay)・本体の待ちと源の Race(Spawn・Race・Cancel)・源の止め(Cancel・Wait)。本体の WaitForEvent は本体の
-;; effect のまま外へ出る(子の task に出し直すだけ)ので数えない。実際に出す effect との一致は test_event_source_closure.py が確かめる。
-(val SOURCE-EFFECTS #(ListRows ReadStreamEnd WatchChanges WatchEvents PublishEffect DelayEffect Spawn Race Cancel Wait))
+;; Publish — 源の失敗の合図も・繋ぎ直しの間の Delay)・源の止め(Cancel・Wait)。本体の WaitForEvent は本体の effect のまま外へ出る
+;; (型を足して出し直すだけ)ので数えない。実際に出す effect との一致は test_event_source_closure.py が確かめる。
+(val SOURCE-EFFECTS #(ListRows ReadStreamEnd WatchChanges WatchEvents PublishEffect DelayEffect Spawn Cancel Wait))
 
 
 ;; 包む関数の型 = doeff の ProgramHandler(doeff/program.py の Callable[[object], Program[Any]] — subscribed_event_handler・timer_handler と
@@ -368,7 +389,7 @@
 
 ;; read-signal-handler の包みが本体の周りで出す effect の全部(宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めないので宣言する):
 ;; 源の工場の問い(ReadSignalSource)と、答えた源の包みが出しうる effect の和 = 記録の置き場の源(SOURCE-EFFECTS)と memory の置き場の源
-;; (呼び鈴の CreateExternalPromise と、SOURCE-EFFECTS に含まれる Publish・Spawn・Race・Cancel・Wait)。
+;; (呼び鈴の CreateExternalPromise と、SOURCE-EFFECTS に含まれる Publish・Spawn・Cancel・Wait)。
 (val READ-SIGNAL-EFFECTS (+ #(ReadSignalSource CreateExternalPromise) SOURCE-EFFECTS))
 
 
