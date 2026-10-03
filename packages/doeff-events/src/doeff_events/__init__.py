@@ -16,7 +16,7 @@ from .effects import (
     publish,
     wait_for_event,
 )
-from .handlers import event_handler, timer_handler
+from .handlers import EventBus, SubscriberQueue, event_handler, subscribed_event_handler, timer_handler
 
 __all__ = [
     "ArmTimer",
@@ -26,13 +26,16 @@ __all__ = [
     "ArmedTimersEffect",
     "DisarmTimer",
     "DisarmTimerEffect",
+    "EventBus",
     "Publish",
     "PublishEffect",
+    "SubscriberQueue",
     "TimerFired",
     "WaitForEvent",
     "WaitForEventEffect",
     "event_handler",
     "publish",
+    "subscribed_event_handler",
     "timer_handler",
     "wait_for_event",
 ]
