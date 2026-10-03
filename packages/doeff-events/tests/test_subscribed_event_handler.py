@@ -159,7 +159,7 @@ def received_after_quiet_spell(published: tuple[object, ...], waited: tuple[type
         yield Wait((yield Spawn(sending(publish_all()))))
         return (yield receiving(receive_all()))
 
-    result = run_scheduled(main())
+    result: tuple[object, ...] = run_scheduled(main())
     assert isinstance(result, tuple), result
     return result
 
