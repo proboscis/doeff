@@ -8,7 +8,7 @@
 ;; - 系全体の静かな区間(worker の拍が状態を変えず、heartbeat が静かな早道に入り、coordinator の歩が生存の印のほか何も変えない間)も、
 ;;   切り離した task の lease・宣言し直し・worker の死・coordinator の止まりを挟んで、1 拍ずつ進めた走りと同じ判断を同じ刻に下す
 ;;   (#2781 — 下の「系全体の静かな区間」の節)。
-(require doeff-hy.macros [deftest defk <- val var])
+(require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [with-handlers Program])
@@ -17,7 +17,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_core_effects.scheduler [CreatePromise Promise Spawn])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests IdleTaken])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState])
+(import doeff_cluster.coordinator.core.program [coordinator-step])
+(import doeff_core_effects.handlers [state :as session-store])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox] doeff_cluster.shared.protocol.inbox [http-requests http-request])
@@ -351,3 +353,45 @@
   (assert (= apart []) apart)
   (<- breaches list (same-decisions every (Trace :deltas skipped.deltas :answer every.answer :takes skipped.takes)))
   (assert (= breaches []) breaches))
+
+
+;; --- 保存する物が無い静かな歩は保存を出さない(#2670 の根 B) ------------------------------------------------------------
+;; 起きた調停ループは、眠った区間の歩のうち生存の印か仮の拍を持つ歩だけを保存する(印も拍も無い歩は Rollout の拍の刻しか違わず、
+;; 差分が空)。書きの列は同じ — 上の同値の検(1 拍ずつの走りと置き場の書きの列が一致)が見る。
+;; - 新しい状態の模擬の列が 12.3 秒目の要求で起きる時(眠った歩 12 個・生存の印は 5 秒目と 10 秒目)、調停ループは印の 2 歩と本物の歩の
+;;   3 回だけ保存する。反例 — 歩ごとに保存する形では 13 回。印の歩(差分の在る歩)を保存しない形では、本物の歩の 1 回だけ(この検は赤)。
+
+(defeffect SavesSeen
+  "保存を覚える handler(saves-recorded)が受けた SaveState の後の状態の列(受けた順)。"
+  {:answer tuple :tags {:context "doeff-cluster-test" :role "intent"}})
+
+
+(defhandler saves-recorded
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 置き場の代役: 受けた保存(SaveState)の後の状態を順に覚える(置き場には書かない)。
+  (session var saved #())
+  (SavesSeen []
+    (resume saved))
+  (SaveState [before after]
+    (:= saved (+ saved #(after)))
+    (resume None)))
+
+
+(defk woken-step-saves [queue]
+  {:pre [(: queue RequestQueue)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "12.3 秒目に要求を積む送り手を走らせ、新しい状態から調停ループの 1 歩(coordinator-step — 模擬の列 queue が眠った区間の歩を添えて
+   起こす)を回し、その歩が出した保存の後の状態の列を読むため。"
+  (<- (Spawn (send-at queue 12.3)))
+  (<- (coordinator-step (ClusterState) (ClusterTiming) (ClusterNaming) #()))
+  (<- seen tuple (SavesSeen))
+  seen)
+
+
+(deftest test-a-woken-coordinator-saves-only-the-quiet-steps-that-change-something
+  (val queue (RequestQueue :skip-idle True))
+  (<- saved tuple ((sim-time-handler :clock (! (clock-at 0)))
+                   (with-handlers [(session-store) saves-recorded (queued-requests queue)] (woken-step-saves queue))))
+  ;; 生存の印の歩(5 秒目・10 秒目)を保存し、印も拍も無い 10 歩は保存しない。最後は本物の歩(12.3 秒目 — Rollout の拍は 12 秒目の
+  ;; まま)の保存。
+  (assert (= (lfor state saved #(state.alive-ms state.rollout-tick-ms)) [#(5000 5000) #(10000 10000) #(10000 12000)])
+          (lfor state saved #(state.alive-ms state.rollout-tick-ms))))

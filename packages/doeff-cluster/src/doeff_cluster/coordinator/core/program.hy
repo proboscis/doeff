@@ -165,13 +165,16 @@
   (<- taken (| list IdleTaken) (IdleNextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :watchers watchers)))
   ;; 模擬の時計の下の受け口は、眠った静かな区間の歩(1 拍ずつの走りが下したはずの歩 — 生存の印と、吸った待ちの期限の引き直し)を
   ;; 添えて返す(#2790)。歩ごとに保存して(置き場の書きの列は 1 拍ずつの走りと同じ)、その後の状態と待ちから本物の歩を回す。
+  ;; 生存の印も仮の拍も無い歩は、前の歩と Rollout の拍の刻(耐久の鍵の外)しか違わず差分が空なので、保存を出さない(#2670 の根 B —
+  ;; 書きの列は同じ)。状態はその歩へ進める(次の歩の差分は、鍵の部品が同じ物の前の状態から取っても同じ)。
   ;; 本番の受け口は要求の list だけを返す。
   (var base state)
   (var held watchers)
   (var batch [])
   (match taken
     (IdleTaken) (do (for [step taken.steps]
-                      (<- (SaveState base step.state))
+                      (when (or step.marked step.beats)
+                        (<- (SaveState base step.state)))
                       (:= base step.state)
                       (:= held step.watchers))
                     (:= batch taken.batch))
