@@ -121,6 +121,82 @@ def test_a_linter_not_naming_the_sha_is_not_placed(tmp_path: Path) -> None:
     assert [p for p in (tmp_path / "store").iterdir() if p.is_dir()] == []
 
 
+KEY_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "doeff_linter_locked.py"
+
+
+def commit_all(repo: Path, tmp_path: Path, message: str) -> str:
+    """仮の doeff の作業木の変更を全部 commit して、その sha を返すため。"""
+    git_env = ["env", "-i", f"PATH={os.pathsep.join(os.get_exec_path())}", f"HOME={tmp_path}"]
+    subprocess.run([*git_env, "git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run([*git_env, "git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message],
+                   check=True, capture_output=True)
+    return subprocess.run([*git_env, "git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+def stage_with_key(tmp_path: Path) -> Path:
+    """stage の仮の doeff に、組み立ての入力の鍵の口(本物の scripts/doeff_linter_locked.py)を commit した物 — 鍵で使い回す道を通すため。"""
+    repo = stage(tmp_path)
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "doeff_linter_locked.py").write_text(KEY_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    commit_all(repo, tmp_path, "key")
+    return repo
+
+
+def test_a_sha_whose_linter_inputs_did_not_change_is_copied_without_building(tmp_path: Path) -> None:
+    # 失敗ケース(agora-redesign #2383): linter の入力(crate の src・data・Cargo.toml・Cargo.lock・build.rs)に触れない commit の sha は、
+    # 置き場に同じ入力の鍵の linter が在れば組まずに写す — pin のたびに同じ linter を組み直さない。反例: sha だけを鍵にする前の形では
+    # 2 度組んで赤。写した linter は最初に組んだ commit を名乗り、2 つの断面の dir に同じ鍵が書かれる。
+    repo = stage_with_key(tmp_path)
+    env = environ(tmp_path, "")
+    first = Path(snapshot(repo, env).communicate(timeout=50)[0].strip())
+    first_sha = first.parent.name
+    (repo / "README.md").write_text("linter の入力の外の変更\n", encoding="utf-8")
+    second_sha = commit_all(repo, tmp_path, "outside")
+    proc = snapshot(repo, env)
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 0, err
+    second = Path(out.strip())
+    assert second.parent.name == second_sha != first_sha
+    assert (tmp_path / "count").read_text(encoding="utf-8") == "built\n"
+    printed = subprocess.run([str(second), "--version"], capture_output=True, text=True, check=True).stdout
+    assert first_sha in printed and "committed" in printed, printed
+    keys = {(d / "input_key").read_text(encoding="utf-8") for d in (first.parent, second.parent)}
+    assert len(keys) == 1 and next(iter(keys)).startswith("doeff-linter の組み立ての入力 "), keys
+    assert sorted(p.suffix for p in (tmp_path / "store").iterdir()) == ["", "", ".lock", ".lock"]
+
+
+def test_a_dir_built_before_keys_were_written_is_keyed_from_its_sha_and_reused(tmp_path: Path) -> None:
+    # 鍵の file を書く前の形で組んだ断面の dir(日次の機体の置き場に今ある物)も、dir の名の sha から鍵を問って照らし、鍵を書き足す —
+    # 直した後の最初の 1 回も組み直さない。
+    repo = stage_with_key(tmp_path)
+    env = environ(tmp_path, "")
+    first = Path(snapshot(repo, env).communicate(timeout=50)[0].strip())
+    (first.parent / "input_key").unlink()
+    (repo / "README.md").write_text("linter の入力の外の変更\n", encoding="utf-8")
+    commit_all(repo, tmp_path, "outside")
+    proc = snapshot(repo, env)
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 0, err
+    assert Path(out.strip()) != first
+    assert (tmp_path / "count").read_text(encoding="utf-8") == "built\n"
+    assert (first.parent / "input_key").read_text(encoding="utf-8").startswith("doeff-linter の組み立ての入力 ")
+
+
+def test_a_sha_whose_linter_inputs_changed_builds_again(tmp_path: Path) -> None:
+    # 入力(crate の Cargo.toml)に触れる commit の sha は、鍵が変わるので組み直す(写さない)。
+    repo = stage_with_key(tmp_path)
+    env = environ(tmp_path, "")
+    first = snapshot(repo, env).communicate(timeout=50)[0].strip()
+    (repo / "packages/doeff-linter/Cargo.toml").write_text('[package]\nname = "doeff-linter"\nversion = "0.2.1"\n', encoding="utf-8")
+    (repo / "packages/doeff-linter/marker").write_text("changed", encoding="utf-8")
+    commit_all(repo, tmp_path, "input")
+    second = snapshot(repo, env).communicate(timeout=50)[0].strip()
+    assert first != second
+    assert (tmp_path / "count").read_text(encoding="utf-8") == "built\nbuilt\n"
+    assert "changed" in subprocess.run([second], capture_output=True, text=True, check=True).stdout
+
+
 def test_a_missing_commit_is_unavailable(tmp_path: Path) -> None:
     # 反例: doeff に無い commit は組まずに理由を返す。
     repo = stage(tmp_path)

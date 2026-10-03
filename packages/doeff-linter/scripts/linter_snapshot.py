@@ -18,6 +18,13 @@
     packages/doeff-indexer)。作業木の file を読まないので、fast-forward の途中でも混ざらない。
   * 置き場 = `<store>/<40 桁の sha>/doeff-linter`(store の既定 = $XDG_CACHE_HOME/doeff-linter-snapshots、無ければ ~/.cache の下。
     env DOEFF_LINTER_SNAPSHOT_DIR で替える)。在れば組まずに返す。
+  * 入力の鍵で使い回す(agora-redesign #2383 — 2026-10-03 の pin 6ee873af3〜697796697 の 70 commit で linter の入力は 1 度も変わらないのに、
+    日次の機体が pin のたびに同じ linter を release・lto で組み直し〔1 回 約 8 分〕、最初に commit の hook を撃つ検が 300 秒の上限で切られた):
+    sha の組み立ての入力の鍵(決め方の 1 か所 = doeff の scripts/doeff_linter_locked.py の `key <commit>` の口 — crate と path 依存の
+    src・data・Cargo.toml・Cargo.lock・build.rs の object id)を問い、置き場に同じ鍵を書いた別の sha の linter が在れば、組まずに写して
+    返す。組んだ・写した断面の dir には鍵を file `input_key` に書く(doeff_linter_locked.py と dotfiles の doeff_linter_follow.py が読む
+    名)。鍵を書く前の形で組んだ dir は、dir の名の sha から鍵を問って書き足す。写した linter の `--version` は、その入力を最初に組んだ
+    commit を名乗る(入力が同じなら linter は同じ)。鍵の口が無い checkout(古い doeff)では鍵を問わず、sha ごとに組む。
   * 錠 = `<store>/<sha>.lock` の flock — path ではなく sha の単位。同じ sha を組む 2 本目は 1 本目を待ち、組まれた物を使う。
   * 組み方 = `cargo build --release --locked`。cargo の target は置き場の隣の共有の dir(`<store の親>/cargo-target/doeff-linter`・
     既定 = ~/.cache/cargo-target/doeff-linter)で、組んだ後も消さない — 依存の crate は sha をまたいで使い回し、新しい sha では
@@ -32,7 +39,8 @@
 使い方: uv run --script packages/doeff-linter/scripts/linter_snapshot.py <doeff の checkout> <commit>
   組めれば binary の path を 1 行印字して 0、組めなければ理由を stderr に 1 行出して 1(呼び手は自分の環境の linter へ戻る)、
   引数の誤りは 2。
-検 = tests/test_linter_snapshot.py(同時の 3 本が 1 度だけ組む・作業木の変更を読まない・sha を名乗らない linter を置かない)。
+検 = tests/test_linter_snapshot.py(同時の 3 本が 1 度だけ組む・作業木の変更を読まない・sha を名乗らない linter を置かない・
+入力の変わらない sha は組まずに写す・入力の変わった sha は組む)。
 """
 
 
@@ -57,6 +65,12 @@ BUILD_COMMIT_ENV = "DOEFF_LINTER_BUILD_COMMIT"
 BUILD_TIMEOUT_S = 1800
 # linter の `--version` の doeff の commit の綴り(build.rs の DOEFF_LINTER_COMMIT)。
 COMMIT_PATTERN = re.compile(r"\(doeff ([0-9a-f]{40})(\+dirty)?\)")
+# 組み立ての入力の鍵を答える口(doeff の checkout の根から — 鍵の決め方の 1 か所)と、断面の dir に鍵を書く file の名
+# (scripts/doeff_linter_locked.py の RECORDED_KEY と同じ綴り)。
+KEY_SCRIPT = "scripts/doeff_linter_locked.py"
+RECORDED_KEY = "input_key"
+KEY_TIMEOUT_S = 60
+SHA_NAME = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -156,8 +170,59 @@ def build_into(source: Path, sha: str, cargo_target: Path, target: Path, env: di
     return "組んだ linter が " + sha + " を名乗らない: " + printed.strip()
 
 
+def inputs_key(checkout: Path, sha: str, env: dict[str, str]) -> str | None:
+    """sha の組み立ての入力の鍵を、鍵の決め方の 1 か所(checkout の scripts/doeff_linter_locked.py の `key` の口)に問う — 入力の同じ
+    linter を組み直さないため。口が無い・答えない時は None(鍵で使い回さず sha ごとに組む)。"""
+    script = checkout / KEY_SCRIPT
+    if not script.is_file():
+        return None
+    try:
+        done = subprocess.run(
+            [sys.executable, str(script), "key", sha],
+            cwd=checkout, capture_output=True, text=True, check=False, timeout=KEY_TIMEOUT_S, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    key = done.stdout.strip()
+    return key if done.returncode == 0 and key else None
+
+
+def placed_key(checkout: Path, placed: Path, env: dict[str, str]) -> str | None:
+    """置き場の断面の dir の入力の鍵 — 書いてあればそれ、無ければ(鍵を書く前の形で組んだ dir)dir の名の sha から問い、書き足す
+    (scripts/doeff_linter_locked.py の candidate_key と同じ照らし方 — 次からは git を引かない)。"""
+    recorded = placed / RECORDED_KEY
+    if recorded.is_file():
+        return recorded.read_text(encoding="utf-8").strip()
+    key = inputs_key(checkout, placed.name, env)
+    if key is not None:
+        recorded.write_text(key + "\n", encoding="utf-8")
+    return key
+
+
+def same_inputs(checkout: Path, store: Path, key: str | None, env: dict[str, str]) -> Path | None:
+    """置き場の中で、同じ入力の鍵の別の sha の linter を探すため(無ければ None)。"""
+    if key is None:
+        return None
+    for placed in sorted(store.iterdir()):
+        if SHA_NAME.fullmatch(placed.name) and (placed / BIN_NAME).is_file() and placed_key(checkout, placed, env) == key:
+            return placed / BIN_NAME
+    return None
+
+
+def place(store: Path, sha: str, partial: Path, key: str | None) -> Path:
+    """一時の名 partial の linter を sha の断面の dir へ置き、入力の鍵を書く(鍵が先・binary は rename で最後に置く — binary が在る dir
+    には鍵も在る)。"""
+    (store / sha).mkdir(exist_ok=True)
+    if key is not None:
+        (store / sha / RECORDED_KEY).write_text(key + "\n", encoding="utf-8")
+    binary = store / sha / BIN_NAME
+    os.replace(partial, binary)
+    return binary
+
+
 def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> SnapshotReady | SnapshotUnavailable:
-    """doeff の rev の断面から組んだ linter を置き場から返す — 無ければ sha の錠を取って 1 度だけ組む(頭の註)。"""
+    """doeff の rev の断面から組んだ linter を置き場から返す — 無ければ sha の錠を取り、同じ入力の linter が在れば写し、無ければ 1 度だけ
+    組む(頭の註)。"""
     env = git_environ(environ)
     sha = resolve_commit(checkout, rev, env)
     if not sha:
@@ -172,17 +237,20 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> Snapsh
         fcntl.flock(lock, fcntl.LOCK_EX)
         if binary.exists():
             return SnapshotReady(binary, built=False)
+        partial = store / (sha + ".partial")
+        key = inputs_key(checkout, sha, env)
+        same = same_inputs(checkout, store, key, env)
+        if same is not None:
+            shutil.copy2(same, partial)
+            return SnapshotReady(place(store, sha, partial, key), built=False)
         work = Path(tempfile.mkdtemp(prefix="doeff-linter-snapshot-" + sha[:12] + "-"))
         try:
-            partial = store / (sha + ".partial")
             failure = extract_inputs(checkout, sha, work, env) or build_into(
                 work, sha, shared_cargo_target(store), partial, env
             )
             if failure:
                 return SnapshotUnavailable(failure)
-            (store / sha).mkdir(exist_ok=True)
-            os.replace(partial, binary)
-            return SnapshotReady(binary, built=True)
+            return SnapshotReady(place(store, sha, partial, key), built=True)
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
