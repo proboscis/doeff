@@ -207,3 +207,105 @@ def test_thaw_calls_itself_only_for_containers(monkeypatch: pytest.MonkeyPatch) 
     assert original(value) == {"a": 1, "b": "x", "c": {"d": True, "e": [1, 2, 3]}, "f": []}
     # 一番外は original を直に呼んだ。中で自分を呼ぶのは入れ物の c・e・f の 3 回だけ(葉の 1・"x"・True・1・2・3 では呼ばない)。
     assert len(calls) == 3
+
+
+# --- 凍らせ直しは深く凍った要素を辿らない(agora-redesign #2670 の根 E の残り)----------------------------------------
+# 記録の書きの道の層(行の型の dump → 判定の差分 → 確定する値 → 一覧の行)は、深く凍った値の要素から新しい写像を組み直して凍らせ
+# 直す。要素ごとに freeze-json を始めると、行 1 つで同じ値を 5 回辿る(画面の stats の場面で約 110 万回の関数の始まり)。
+# 葉と深く凍った写像は freeze-json を呼ばずにその場で返し、凍っていない入れ物は今までどおり全部辿る。
+
+
+def _counting_freeze(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """module の freeze_json を、受けた値を記録して元へ渡す物に差し替える(中からの呼びの数を数えるため)。"""
+    import doeff_hy.frozen as frozen_module
+
+    original = frozen_module.freeze_json
+    calls: list[object] = []
+
+    def counted(value: object) -> object:
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(frozen_module, "freeze_json", counted)
+    return calls
+
+
+def test_refreezing_a_map_rebuilt_from_frozen_values_does_not_walk_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    deep = freeze_json(SOURCE)
+    assert isinstance(deep, FrozenMap)
+    rebuilt = FrozenMap(dict(deep.items()))  # 判定の差分・確定する値と同じ — 深く凍った値の要素から組み直した、印の無い写像
+    calls = _counting_freeze(monkeypatch)
+    refrozen = frozen_json_object(rebuilt, "検")
+    # 葉の a と深く凍った写像の d では呼ばない。印を持てない列 b だけ 1 回呼び、その中の葉 1 と深く凍った写像 {c} では呼ばない。
+    assert calls == [deep["b"]]
+    assert refrozen == deep and refrozen is not rebuilt
+    assert refrozen["d"] is deep["d"] and refrozen["b"][1] is deep["b"][1]
+    assert freeze_json(refrozen) is refrozen
+
+
+def test_a_value_that_is_not_frozen_is_still_walked_into_every_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _counting_freeze(monkeypatch)
+    frozen = freeze_json(NESTED)
+    # 一番外は直に呼んだ。中で呼ぶのは入れ物の 9 つ(map・map.k・map.k[1]・map.k[2]・map.empty・list・list[0]・list[1]・list[3])。
+    assert len(calls) == 9
+    assert thaw_json(frozen) == NESTED
+    assert isinstance(frozen, FrozenMap) and frozen._deep  # pyright: ignore[reportAttributeAccessIssue] - the deep mark is what this test checks
+    inner = frozen["map"]
+    assert isinstance(inner, FrozenMap) and inner._deep  # pyright: ignore[reportAttributeAccessIssue] - the deep mark is what this test checks
+    assert frozen["list"] == ((), FrozenMap(), "z", (None, False))
+
+
+def _reference_freeze(value: object) -> object:
+    """直す前の freeze-json と同じ答えの、素直な定義(答えが変わらない事を比べるため)。"""
+    from collections.abc import Mapping
+
+    if isinstance(value, Mapping):
+        return FrozenMap({key: _reference_freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_reference_freeze(item) for item in value)
+    return value
+
+
+def _same_shape(left: object, right: object) -> bool:
+    """値と型が入れ子の全部で同じか(FrozenMap と tuple と葉の型まで)。"""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, FrozenMap):
+        assert isinstance(right, FrozenMap)
+        return list(left) == list(right) and all(_same_shape(left[key], right[key]) for key in left)
+    if isinstance(left, tuple):
+        assert isinstance(right, tuple)
+        return len(left) == len(right) and all(_same_shape(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def test_the_answers_are_the_same_as_the_plain_definition() -> None:
+    import collections
+    import enum
+    import types
+
+    class Level(enum.IntEnum):
+        HIGH = 2
+
+    class Tag(str):
+        pass
+
+    deep = freeze_json(SOURCE)
+    values: list[object] = [
+        SOURCE,
+        NESTED,
+        deep,
+        FrozenMap(dict(deep.items())),
+        FrozenMap({"list": [1, {"x": [2]}], "deep": deep}),
+        collections.OrderedDict([("b", [1]), ("a", {"c": Level.HIGH})]),
+        types.MappingProxyType({"p": (Tag("t"), [None])}),
+        [deep, {"q": deep}, (1, [2])],
+        (),
+        Level.HIGH,
+        Tag("t"),
+    ]
+    for value in values:
+        assert _same_shape(freeze_json(value), _reference_freeze(value)), value
+    assert _same_shape(frozen_json_object(FrozenMap({"k": [deep]}), "検"), _reference_freeze({"k": [deep]}))
+    with pytest.raises(TypeError):
+        frozen_json_object([1], "検")

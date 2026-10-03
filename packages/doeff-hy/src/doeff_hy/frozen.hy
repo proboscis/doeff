@@ -112,20 +112,37 @@
 
 
 (defn #^ FrozenMap deep-frozen-map [#^ object value]
-  "写像の中の値を深く凍らせた FrozenMap を作り、深く凍った印を付ける(freeze-json と frozen-json-object の 1 点)。"
-  (setv frozen (FrozenMap (gfor #(key item) (.items value) #(key (freeze-json item)))))
+  "写像の中の値を深く凍らせた FrozenMap を作り、深く凍った印を付ける(freeze-json と frozen-json-object の 1 点)。
+   中の値のうち葉(ちょうど JSON-LEAF-TYPES の型)と深く凍った FrozenMap はその場で返し、freeze-json を呼ぶのはそれ以外の時だけ —
+   書きの道の層(行の型の dump → 判定の差分 → 確定する値 → 一覧の行)は、深く凍った値の要素から新しい写像を組み直して凍らせ直すので、
+   要素ごとに freeze-json を始めると行 1 つで同じ値を 5 回辿る(agora-redesign #2670 の根 E の残り: 画面の stats の場面で約 110 万回の
+   関数の始まり)。判定の順は freeze-json と同じ。"
+  (setv frozen (FrozenMap (gfor #(key item) (.items value)
+                                #(key (if (or (in (type item) JSON-LEAF-TYPES)
+                                              (and (is (type item) FrozenMap) item._deep))
+                                          item
+                                          (freeze-json item))))))
   (object.__setattr__ frozen "_deep" True)
   frozen)
 
 
 (defn #^ object freeze-json [#^ object value]
   "JSON の値を深く凍らせる: object(写像)→ FrozenMap・array(list / tuple)→ tuple。ほかの値はそのまま。
-   既に凍った値を渡しても同じ形が返る(何度撃っても同じ)— 深く凍った FrozenMap は中を歩かずにそのまま返す。"
+   既に凍った値を渡しても同じ形が返る(何度撃っても同じ)— 深く凍った FrozenMap は中を歩かずにそのまま返す。
+   具体の型(FrozenMap・dict)を抽象の Mapping より先に見る — Mapping への isinstance は 1 回ごとに ABC の判定を Python で始める。
+   列の中の葉と深く凍った FrozenMap は deep-frozen-map と同じく自分を呼ばずに返す。"
+  (setv kind (type value))
   (cond
-    (in (type value) JSON-LEAF-TYPES) value
+    (in kind JSON-LEAF-TYPES) value
+    (is kind FrozenMap) (if value._deep value (deep-frozen-map value))
+    (is kind dict) (deep-frozen-map value)
     (deeply-frozen? value) value
     (isinstance value Mapping) (deep-frozen-map value)
-    (isinstance value #(list tuple)) (tuple (gfor item value (freeze-json item)))
+    (isinstance value #(list tuple)) (tuple (gfor item value
+                                                  (if (or (in (type item) JSON-LEAF-TYPES)
+                                                          (and (is (type item) FrozenMap) item._deep))
+                                                      item
+                                                      (freeze-json item))))
     True value))
 
 
@@ -162,9 +179,10 @@
 (defn #^ FrozenMap frozen-json-object [#^ object value #^ str what]
   "JSON の object(写像)を深く凍らせた FrozenMap。写像でなければ TypeError(what = 誤りの文の欄の名)。
    frozen の dataclass の __post_init__ が、受けた写像を凍らせる時に使う。"
-  (when (not (isinstance value Mapping))
+  (setv kind (type value))
+  (when (not (or (is kind FrozenMap) (is kind dict) (isinstance value Mapping)))
     (raise (TypeError (.format "{} は写像(欄の名 → JSON の値): {!r}" what value))))
-  (if (deeply-frozen? value) value (deep-frozen-map value)))
+  (if (if (is kind FrozenMap) value._deep (deeply-frozen? value)) value (deep-frozen-map value)))
 
 
 (defn #^ FrozenMap frozen-map-of [#^ object value #^ str what]
