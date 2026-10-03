@@ -29,14 +29,14 @@ import threading
 import time
 import warnings
 import weakref
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
+from doeff_vm import WithBoundaries as _WithBoundariesRaw
 from doeff_vm import WithHandler as _WithHandlerRaw
-from doeff_vm import WithObserve as _WithObserveRaw
 
 from doeff.do import do
 from doeff.handler_utils import get_inner_boundaries
@@ -71,20 +71,32 @@ HANDLE_SWEEP_INTERVAL = 1024
 HANDLE_REFS_PRUNE_MIN = 8
 
 
-def _reinstall_boundary(
-    prog: object, kind: str, boundary_callable: Callable[..., object]
-) -> _WithHandlerRaw | _WithObserveRaw:
-    """Re-wrap prog with one boundary captured at the spawn site."""
+def _boundary_callable(kind: str, boundary_callable: Callable[..., object]) -> object:
+    """The callable one captured boundary installs — the same one WithHandler / WithObserve took."""
     if kind == "handler":
         # GetBoundaries returns the raw dispatcher already accepted by the VM,
         # not a Program -> Program installer. Reuse that calling convention:
         # handler() would repeat its installer Protocol check and allocate a
         # throwaway closure for every inherited boundary (#1384).
-        # WithHandler still performs the normal VM callable/spec validation.
-        return _WithHandlerRaw(boundary_callable, prog)
+        # WithBoundaries still performs the normal VM callable/spec validation.
+        return boundary_callable
     if kind == "observer":
-        return _WithObserveRaw(_VmCallable(boundary_callable), prog)
+        return _VmCallable(boundary_callable)
     raise RuntimeError(f"unknown boundary kind: {kind!r}")
+
+
+def _reinstall_boundaries(
+    prog: object, boundaries: Iterable[tuple[str, Callable[..., object]]]
+) -> _WithBoundariesRaw:
+    """Re-wrap prog with the boundary stack captured at the spawn site (innermost first) in one VM step.
+
+    The same scope as one WithHandler / WithObserve per boundary, nested in that
+    order, without a VM step and an empty body fiber per layer (agora-redesign #3149).
+    """
+    return _WithBoundariesRaw(
+        [(kind, _boundary_callable(kind, boundary_callable)) for kind, boundary_callable in boundaries],
+        prog,
+    )
 
 
 def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
@@ -1529,9 +1541,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         prog = tasks[tid].pop("program")
                         # Re-wrap task with the boundary stack (handlers AND
                         # observers) captured at the spawn site, innermost first —
-                        # preserves handler/observer nesting order.
-                        for kind, boundary_callable in tasks[tid].pop("inner_boundaries", []):
-                            prog = _reinstall_boundary(prog, kind, boundary_callable)
+                        # preserves handler/observer nesting order, in one VM step.
+                        prog = _reinstall_boundaries(prog, tasks[tid].pop("inner_boundaries", []))
                         return make_handler(tid)(wrap_task(tid, prog))
                     if entry[0] == "resume":
                         _, owner_tid, cont, value = entry
