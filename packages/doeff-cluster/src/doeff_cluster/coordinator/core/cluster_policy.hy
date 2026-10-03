@@ -212,15 +212,30 @@
 
 ;; --- 割り当て ------------------------------------------------------------------------
 
+(deff liveness-deadline [#^ WorkerInfo worker #^ int window-ms]  ; defk にできない: 生死の比べ alive(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: worker WorkerInfo) (: window-ms int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker を窓 window-ms の内で生きていると数える最後の刻(epoch ms)を求めるため。生死の判断(alive・forget-silent-workers)と、その
+   答えが変わる最初の刻を求める liveness-due が同じこの値で比べる(#3061 — 片方だけ比べ方を変えると、模擬の静かな区間が判断の
+   変わる歩を試さずに飛ぶ)。"
+  (+ worker.last-seen-ms window-ms))
+
+
 (defn #^ bool alive [#^ int now #^ WorkerInfo worker #^ int window-ms]
-  (<= (- now worker.last-seen-ms) window-ms))
+  "worker が刻 now に窓 window-ms の内で生きているか(最後の連絡から window-ms 以内か)を判じるため。"
+  (<= now (liveness-deadline worker window-ms)))
+
+
+(deff silent-names [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: note-liveness(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % frozenset)] :tags {:context "coordinator" :role "judgment"}}
+  "刻 now に生きていないと数える worker の名を求めるため(note-liveness と liveness-due が同じ求め方を使う)。"
+  (frozenset (gfor w (.values state.workers) :if (not (alive now w timing.lease-ms)) w.name)))
 
 
 (deff note-liveness [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: 調停の純粋な判断(api_policy.settle — Program の外)が呼ぶ
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "生きていないと数える worker の名(ClusterState.silent)を今の時刻で求め直すため(#1934)。変わらなければ同じ値を返す(版を進めない)。
    変われば新しい値 — Worker の資源の status の live が変わり、stamp が版を進めて出来事を 1 行残す(死んだ拍と戻った拍だけ)。"
-  (let [silent (frozenset (gfor w (.values state.workers) :if (not (alive now w timing.lease-ms)) w.name))]
+  (let [silent (silent-names state now timing)]
     (if (= silent state.silent) state (replace state :silent silent))))
 
 
@@ -988,7 +1003,7 @@
   (setv busy (| (sfor a (+ (list (.values state.placements)) (list (.values state.surges))) a.worker)
                 ;; 終わって結果を持っているだけの切り離した task は worker を引き留めない。
                 (sfor t (.values state.tasks) :if (and t.worker (not (and t.detached (in t.phase DETACHED-TERMINAL)))) t.worker))
-        gone (lfor #(n w) (.items state.workers) :if (and (> (- now w.last-seen-ms) WORKER-FORGET-MS) (not-in n busy)) n))
+        gone (lfor #(n w) (.items state.workers) :if (and (> now (liveness-deadline w WORKER-FORGET-MS)) (not-in n busy)) n))
   (if (not gone)
       state
       (replace state :workers (dfor #(n w) (.items state.workers) :if (not-in n gone) n w)
@@ -1028,8 +1043,19 @@
 
 (defk liveness-due [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定)が、状態がこのままで答えを変え得る最初の刻を知るため。"
-  (if (or state.workers state.silent) (+ now 1) None))
+  "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定)が、状態がこのままで答えを変え得る最初の刻を知るため。
+   どの判断も、最後の連絡 + 窓(liveness-deadline)を今の刻が越えた時に答えを変える — 窓は lease-ms(note-liveness・place-jobs・drain・
+   見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・WORKER-FORGET-MS
+   (forget-silent-workers)。答え = worker ごと・窓ごとの「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば None)。
+   生きていないと数える名(silent)が今の刻の求め直しと違えば、note-liveness が次の歩で答えを変えるので次の刻。"
+  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms WORKER-FORGET-MS))
+  (if (!= (silent-names state now timing) state.silent)
+      (+ now 1)
+      (min (gfor w (.values state.workers) window windows
+                 :setv due (+ (liveness-deadline w window) 1)
+                 :if (> due now)
+                 due)
+           :default None)))
 
 
 (defk task-due [state now timing]
