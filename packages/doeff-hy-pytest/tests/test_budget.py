@@ -12,7 +12,7 @@ import pytest
 from doeff_hy_pytest.budget import (
     Budgets,
     DEFAULT_CALL_BUDGET_STEPS,
-    RUNAWAY_STEPS_MULTIPLIER,
+    DEFAULT_RUNAWAY_STEPS_MULTIPLIER,
     CompileCounter,
     CompileTally,
     ImportTally,
@@ -865,8 +865,26 @@ def test_a_spin_that_never_ends_fails_by_name_while_it_runs(pytester: pytest.Pyt
     result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(
-        [f"*StepBudgetExceeded: step budget exceeded: * steps since the budget was armed, limit {1000 * RUNAWAY_STEPS_MULTIPLIER} *"]
+        [f"*StepBudgetExceeded: step budget exceeded: * steps since the budget was armed, limit {1000 * DEFAULT_RUNAWAY_STEPS_MULTIPLIER} *"]
     )
+
+
+def test_the_runaway_multiplier_is_read_from_the_ini(pytester: pytest.Pytester) -> None:
+    """倍率は ini の step_budget_multiplier で替えられる(#3147): 3 にすると、同じ空回りが上限 1,000 × 3 = 3,000 歩で落ちる。
+    既定(書かない時)は 20 — 上の検。"""
+    _steps_project(pytester, STEPS_FAIL_INI + "step_budget_multiplier = \"3\"\n", {"test_spin": SPIN_FOREVER_HY}, fake=False)
+    pytester.makepyfile(spin_scheduler=SPIN_SCHEDULER)
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["*StepBudgetExceeded: step budget exceeded: * steps since the budget was armed, limit 3000 *"])
+
+
+def test_a_runaway_multiplier_that_is_not_a_positive_integer_stops_the_run(pytester: pytest.Pytester) -> None:
+    """倍率の読めない値は既定へ黙って倒さず止める。"""
+    _steps_project(pytester, STEPS_FAIL_INI + "step_budget_multiplier = \"0\"\n", {"test_ok": "(require doeff-hy.macros [deftest])\n(deftest test-ok (assert True))\n"})
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
+    assert result.ret != 0
+    result.stderr.fnmatch_lines(["*step_budget_multiplier は正の整数: '0'*"])
 
 
 def test_the_runaway_budget_is_the_steps_budget_times_the_multiplier(pytester: pytest.Pytester) -> None:

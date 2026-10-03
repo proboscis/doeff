@@ -16,7 +16,7 @@
   agora-redesign #2670)。在れば実行は歩数で判じ、CPU 秒は測って報告に出すだけ。登録簿は秒の時と同じ dir(載った行は歩数で判じる)。
   doeff-vm に数の口が無い build・印ごとの秒の上限に当たる検(本物の I/O)は、今までどおり CPU 秒で判じる。歩数が 0 の検
   (VM を回さず木を読むだけの検)は上限の内。
-  歩数で判じる Hy の検は、call の間だけ doeff の scheduler に歩の上限(この値 × ``RUNAWAY_STEPS_MULTIPLIER``)を入れる
+  歩数で判じる Hy の検は、call の間だけ doeff の scheduler に歩の上限(この値 × ``step_budget_multiplier``(既定 ``DEFAULT_RUNAWAY_STEPS_MULTIPLIER`` = 20))を入れる
   (#3143)。同じ仮想の刻で task を起こし続ける空回りは走り終わらないので、走り終えた後の判定には届かない — 上限を越えて
   task を起こそうとした時に scheduler が ``StepBudgetExceeded`` を上げ、その検はその場で赤になる。設定が無い repo・
   scheduler に口の無い版では入れない(今までどおり)。
@@ -78,14 +78,17 @@ COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
 MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
 CALL_STEPS_INI = "doeff_test_call_budget_steps"
+RUNAWAY_MULTIPLIER_INI = "step_budget_multiplier"
 # 歩数の既定の上限(設定に `default` と書いた時)— 前の CPU 1.0 秒の上限に当たる数(agora-redesign #2670 の 2)。
 # 根 = vg-w43 の 65 本の測り(#2853 issuecomment-5952699812)の歩数 ÷ CPU 秒の中央値 95,574 歩/秒 × 1.0 秒を丸めた値。
 # 上限は上げない決め(#2670 issuecomment-5963008183)なので、静かな機体の比(より大きい)ではなく、この比を採る。
 DEFAULT_CALL_BUDGET_STEPS = 100_000
 # 走っている最中の歩の上限の倍率(#3143)— 歩数の上限 × この値を越えた検を、走り終わるのを待たずに doeff の scheduler が
 # 名指しの例外で落とす(同じ仮想の刻での空回りは走り終わらず、1 検 60 秒の上限も VM の歩の loop を止められないため)。
-# 走り終えた後の歩数の判定(上限そのもの)と分けるため大きく取る。設定の口は足さない(1 つの定数)。
-RUNAWAY_STEPS_MULTIPLIER = 10
+# 走り終えた後の歩数の判定(上限そのもの)と分けるため大きく取る。既定は 20 — 登録簿に載った重い検(上限の 13.4 倍 = 2,282,746 歩・
+# #2670 issuecomment-5967500669)が 10 倍では赤になったため。空回りは 30 秒で数十億歩まで行くので、20 倍でも 1〜2 秒で捕まる。
+# repo は ini の step_budget_multiplier で替えられる(#3147)。
+DEFAULT_RUNAWAY_STEPS_MULTIPLIER = 20
 # 判定の単位(上限・登録・文の書き方が分かれる)。
 Unit = Literal["seconds", "steps"]
 
@@ -240,6 +243,7 @@ class Budgets:
     call_steps: int | None = None
     work_source: WorkSource = NoWorkReader("測っていない")
     step_guard: StepGuard = NoSchedulerStepGuard("探していない")
+    runaway_multiplier: int = DEFAULT_RUNAWAY_STEPS_MULTIPLIER
 
     @property
     def judges_steps(self) -> bool:
@@ -253,7 +257,7 @@ class Budgets:
             return None
         if any(name in self.call_seconds_by_marker for name in markers):
             return None
-        return self.call_steps * RUNAWAY_STEPS_MULTIPLIER
+        return self.call_steps * self.runaway_multiplier
 
     @property
     def fails_over_budget(self) -> bool:
@@ -686,6 +690,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "Hy の検 1 本の実行の上限の doeff-vm の歩数(正の整数・空 = CPU 秒で判じる)",
         default="",
     )
+    parser.addini(
+        RUNAWAY_MULTIPLIER_INI,
+        "走っている最中に検を落とす歩の上限の倍率(歩数の上限 × この値・正の整数・空 = 既定 20)",
+        default="",
+    )
 
 
 def _seconds(config: pytest.Config, name: str) -> float | None:
@@ -734,6 +743,20 @@ def _steps(config: pytest.Config) -> int | None:
             return value
 
 
+def _runaway_multiplier(config: pytest.Config) -> int:
+    """走っている最中の歩の上限の倍率を読む(空 = 既定)。正の整数でない値は既定へ黙って倒さず止める。"""
+    raw = str(config.getini(RUNAWAY_MULTIPLIER_INI)).strip()
+    if not raw:
+        return DEFAULT_RUNAWAY_STEPS_MULTIPLIER
+    try:
+        value = int(raw)
+    except ValueError:
+        raise pytest.UsageError(f"{RUNAWAY_MULTIPLIER_INI} は正の整数: {raw!r}") from None
+    if value <= 0:
+        raise pytest.UsageError(f"{RUNAWAY_MULTIPLIER_INI} は正の整数: {raw!r}")
+    return value
+
+
 def _mode(config: pytest.Config) -> Mode:
     """超えた時の扱いを読む。語彙の外は止める。"""
     raw = str(config.getini(MODE_INI)).strip()
@@ -769,6 +792,7 @@ def pytest_configure(config: pytest.Config) -> None:
         call_steps=call_steps,
         work_source=read_work_source(),
         step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("歩数の上限の設定が無い"),
+        runaway_multiplier=_runaway_multiplier(config),
     )
     budgets = config.stash[_BUDGETS_KEY]
     if budgets.call_steps is not None and isinstance(budgets.work_source, NoWorkReader):
