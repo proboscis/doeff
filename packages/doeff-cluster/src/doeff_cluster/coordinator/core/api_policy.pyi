@@ -41,6 +41,9 @@ from doeff_cluster.coordinator.core.cluster_policy import lease_write as lease_w
 from doeff_cluster.coordinator.core.cluster_policy import other_generation_boot as other_generation_boot
 from doeff_cluster.coordinator.core.cluster_policy import alive as alive
 from doeff_cluster.coordinator.core.cluster_policy import remember_keep_marks as remember_keep_marks
+from doeff_cluster.coordinator.core.cluster_policy import liveness_due as liveness_due
+from doeff_cluster.coordinator.core.cluster_policy import task_due as task_due
+from doeff_cluster.coordinator.core.cluster_policy import sweep_due as sweep_due
 from doeff_cluster.coordinator.core.resource_policy import Refused as Refused
 from doeff_cluster.coordinator.core.resource_policy import refuse as refuse
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
@@ -94,6 +97,12 @@ def settle(before: ClusterState, after: ClusterState, actor: str, now: int, timi
     ...
 
 def tick(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
+    ...
+
+def placement_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
+    ...
+
+def tick_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
     ...
 ALIVE_MARK_MS: int
 
