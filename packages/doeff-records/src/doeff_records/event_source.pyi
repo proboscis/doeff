@@ -12,6 +12,7 @@ from doeff import EffectBase as EffectBase
 from doeff import Program as Program
 from doeff import with_handlers as with_handlers
 from doeff_core_effects.scheduler import Cancel as Cancel
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import Race as Race
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import Task as Task
@@ -143,6 +144,13 @@ RECORDS_SIGNAL_SOURCE: SignalSourceFactory
 
 @dataclass(frozen=True)
 class ReadSignalSource(EffectBase):
+    ...
+
+def run_read_signal[T](bindings: tuple[SignalTables, ...], subscriber: str, body: Program[T, object] | EffectBase[T]) -> _Program[T, object]:
+    ...
+READ_SIGNAL_EFFECTS: tuple[type, ...]
+
+def read_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]:
     ...
 
 def records_signal_source(bindings: tuple[SignalTables, ...], subscriber: str) -> _Program[Callable[[object], Program], object]:
