@@ -19,12 +19,16 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.sim.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport ServiceReadiness
                              SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
-                             StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])
+                             StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker
+                             SimOutside ProcessOutside])
+(import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
+(import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
 (import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ReadinessWaitExpired AwaitJobProcess JobProcessSeen
                                                      JobProcessWaitExpired])
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [System CallShape])
 (import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.event_programs [stop-minders stop-ignorers])
 (import tests.fixtures.sim_programs [beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -1141,6 +1145,63 @@
   (assert (!= last.instance first.instance) seen.after)
   (assert (get seen.view "alive") seen.view)
   (assert (.endswith (get seen.view "boot") "-boot2") seen.view))
+
+
+(defrecord StopSeen
+  "筋書きが worker を優雅に止めた前後に読んだ job 1 つの姿(#3145): asked-ms = 止めを頼んだ刻・process = 止めた後の最初の process・
+   rows = 盤の stop/ の行。"
+  (#^ int asked-ms)
+  (#^ SimProcess process)
+  (#^ dict rows))
+
+
+(defk stop-host-of [job]
+  {:pre [(: job str)] :post [(: % StopSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って job の worker を優雅に止め(本番の SIGTERM — 抜けるまで待つ)、止めた後の process と盤の stop/ の行を読む。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf job))
+  (<- asked int (now-epoch-ms))
+  (<- (StopWorker (. (get before 0) worker)))
+  (<- after tuple (ProcessesOf job))
+  (<- rows dict (SharedRows "stop/"))
+  (StopSeen :asked-ms asked :process (get after 0) :rows rows))
+
+
+(deftest test-a-stopped-worker-hands-the-stop-signal-to-a-job-that-minds-it
+  ;; worker の TERM は、止めの合図の受け手を据えた job(event-loop の止めの節を持つ係)へ止めの合図として届く(本番の SIGTERM →
+  ;; os-signal-stop-handler → 止めの見張りの StopArrived と同じ道・#3145)— 係は止めの節で後始末の印を書いて自分で終わる(exit 0)。
+  ;; 取り消し(exit -15・印なし)で終わるのではない。
+  (<- seen StopSeen (sim-cluster (stop-minders sim-foundation) (stop-host-of "minder")))
+  (assert (= seen.process.exit-code 0) seen.process)
+  (assert (= (get seen.rows "stop/minder") {"reason" "signal 15"}) seen.rows)
+  ;; 猶予(本番の既定 stop-grace-ms 10 秒)を待たずに終わる。
+  (assert (< (- seen.process.ended-ms seen.asked-ms) 10000) #(seen.asked-ms seen.process)))
+
+
+;; process ごとの外の世界に、本番の土台の os-signal-stop-handler の位置の止めの答え手 scripted-stop-handler(筋書きが RaiseStop で
+;; 上げない限り合図は来ない)を置く組 — 使い手の模擬が job ごとに並べる組と同じ形(#3145)。
+(val SCRIPTED-STOP-OUTSIDE
+     (SimOutside :handlers [] :effects #()
+                 :per-process (fn [job worker] (ProcessOutside :handlers #(scripted-stop-handler)
+                                                               :effects #(StopRequested AwaitStop RaiseStop)))))
+
+
+(deftest test-a-stopped-worker-hands-the-stop-signal-through-an-outside-stop-answerer
+  ;; 外の世界が止めの問いに答える(使い手の模擬の組と同じ — 外の答え手の合図は来ない)job にも、worker の TERM は止めの合図として
+  ;; 届き、係は止めの節で自分で終わる(#3145 — 直す前の sim は TERM を取り消しに変え、exit -15・印なしで終わっていた)。
+  (<- seen StopSeen (sim-cluster (stop-minders sim-foundation) (stop-host-of "minder")
+                                 :outside SCRIPTED-STOP-OUTSIDE))
+  (assert (= seen.process.exit-code 0) seen.process)
+  (assert (= (get seen.rows "stop/minder") {"reason" "signal 15"}) seen.rows)
+  (assert (< (- seen.process.ended-ms seen.asked-ms) 10000) #(seen.asked-ms seen.process)))
+
+
+(deftest test-a-job-that-ignores-the-stop-signal-is-cancelled-after-the-grace
+  ;; 止めの問いを出した(受け手を据えた)が止めの合図を無視する job は、猶予(stop-grace-ms 10 秒)の後の KILL で取り消される
+  ;; (exit -15 — 今までの振る舞い・#3145)。
+  (<- seen StopSeen (sim-cluster (stop-ignorers sim-foundation) (stop-host-of "ignorer")))
+  (assert (= seen.process.exit-code -15) seen.process)
+  (assert (>= (- seen.process.ended-ms seen.asked-ms) 10000) #(seen.asked-ms seen.process)))
 
 
 (defk cut-host []
