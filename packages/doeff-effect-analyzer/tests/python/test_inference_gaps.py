@@ -147,6 +147,33 @@ declared_table_handler.__doeff_handles__ = (Unseen,)
 declared_table_handler.__doeff_effects__ = ()
 
 
+def opening_wrapper(name):
+    # A body wrapper: answers no effect, performs Tick before running the body it is given
+    # (the shape of doeff-records' records-signal-handler — clauses cannot be read).
+    @do
+    def wrap(body):
+        yield Tick()
+        return (yield body)
+
+    wrap._doeff_is_handler_fn = True
+    return wrap
+
+
+opening_wrapper.__doeff_handles__ = ()
+opening_wrapper.__doeff_effects__ = (Tick,)
+
+
+def undeclared_opening_wrapper(name):
+    # The same wrapper without the marks.
+    @do
+    def wrap(body):
+        yield Tick()
+        return (yield body)
+
+    wrap._doeff_is_handler_fn = True
+    return wrap
+
+
 def half_declared_table_handler():
     return _program_handler(do(_table_dispatch))
 
@@ -561,6 +588,22 @@ def test_a_factory_whose_clauses_cannot_be_read_uses_its_declaration(pkg: str) -
     # Declaring what it answers without what it performs is not enough.
     assert half.basis is Basis.UNREAD
     assert any("__doeff_effects__" in u.reason for u in half.unresolved)
+
+
+def test_a_body_wrapper_that_answers_nothing_declares_what_it_performs(pkg: str) -> None:
+    wrapper = analyze_handler(f"{pkg}.runtimes:opening_wrapper")
+    undeclared = analyze_handler(f"{pkg}.runtimes:undeclared_opening_wrapper")
+
+    # Counter-example: an empty __doeff_handles__ used to leave the wrapper unread (unknown).
+    assert wrapper.basis is Basis.DECLARED
+    assert wrapper.handled == frozenset()
+    assert wrapper.performs is not None
+    assert _short(wrapper.performs.effect_names) == {"Tick"}
+    assert undeclared.basis is Basis.UNREAD
+    # What it performs goes to the handlers outside it: a gap without one, closed with one.
+    assert _types(gap.effect for gap in check_coverage([], [wrapper]).gaps) == {"Tick"}
+    closed = check_coverage([], [analyze_handler(f"{pkg}.handlers:ticker"), wrapper])
+    assert closed.complete, closed
 
 
 def test_a_declaration_that_disagrees_with_the_clauses_is_reported(pkg: str) -> None:
