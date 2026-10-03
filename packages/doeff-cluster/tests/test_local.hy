@@ -322,6 +322,36 @@
   (assert (in "STEP" (str raised.value)) (str raised.value)))
 
 
+(defk redeclare-with-overrides [overrides]
+  {:pre [(: overrides (get dict #(str (get dict #(str str)))))] :post [(: % (get tuple #(Seen Seen)))]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って、beacon-b を足した系(beacons-plus)へ overrides つきで宣言し直し、さらに 12 秒待って 2 つの job を読む。"
+  (<- (Delay 8.0))
+  (<- _names (get tuple #(str ...)) (Redeclare (beacons-plus sim-foundation) :environ overrides))
+  (<- (Delay 12.0))
+  (<- a Seen (seen-of "beacon" "beacon/"))
+  (<- b Seen (seen-of "beacon-b" "beacon/"))
+  #(a b))
+
+
+(deftest test-a-redeclaration-carries-the-environ-override-of-a-job-it-adds
+  ;; 宣言し直し(Redeclare)はその宣言の environ の上書きを運ぶ(本番の declare と同じく、宣言ごとにその系への上書き — #3131)。
+  ;; 最初の宣言に無い job(beacon-b)を上書きつきで足すと、その job の process は上書きの値で起きる。前からの job(beacon)は上書きが
+  ;; 同じなので入れ替わらず、前の process が前の値のまま動く。新しい系に無い job の上書きは名指しで断る(最初の宣言と同じ規則)。
+  (<- seen (get tuple #(Seen Seen))
+      (sim-cluster (beacons sim-foundation) (redeclare-with-overrides {"beacon" {"STEP" "7"} "beacon-b" {"STEP" "5"}})
+                   :environ {"beacon" {"STEP" "7"}}))
+  (val a (get seen 0))
+  (val b (get seen 1))
+  (assert (= (get a.rows "beacon/b" "step") "5") a.rows)
+  (assert (= (get a.rows "beacon/a" "step") "7") a.rows)
+  (assert (= (len a.processes) 1) a.processes)
+  (assert (= (len b.processes) 1) b.processes)
+  (with [raised (pytest.raises ValueError)]
+    (<- (sim-cluster (beacons sim-foundation) (redeclare-with-overrides {"elsewhere" {"STEP" "5"}}))))
+  (assert (in "elsewhere" (str raised.value)) (str raised.value)))
+
+
 (defk watch-trainer []
   {:pre [] :post [(: % Seen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 8 秒待って trainer を読む。"

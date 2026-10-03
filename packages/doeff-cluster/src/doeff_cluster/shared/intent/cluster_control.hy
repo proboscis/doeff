@@ -2,6 +2,7 @@
 ;;; (2026-10-03・ADR-DOE-CLUSTER-001 R8 の追補 (1)・#3020 の決め 1・#3029)。
 ;;;
 ;;;   (<- names (Redeclare system))            ; 系を宣言し直す(答え = 宣言した Service の名の tuple)
+;;;   (<- names (Redeclare system :environ {"tally" {"STEP" "3"}}))  ; その宣言し直しの job ごとの environ の上書きつき(#3131)
 ;;;   (<- ready (ReadinessOf "tally"))         ; coordinator が数えている Service の準備の状態(ServiceReadiness)
 ;;;   (<- n (Crash "tally"))                   ; job の動いている process を全部 exit 1 で落とす(答え = 落とした数)
 ;;;   (<- r (AwaitReadiness "tally" "Ready" 60.0))      ; 準備の状態が Ready になるまで待つ(期限つき — 過ぎたら ReadinessWaitExpired)
@@ -33,8 +34,13 @@
 
 
 (defeffect Redeclare
-  "系を宣言し直す(版 = environ か引数を変えた系の値)。答え = 宣言した Service の名の tuple。"
-  {:fields [(: system System)]
+  "系を宣言し直す(版 = environ か引数を変えた系の値)。environ = その宣言し直しの job ごとの environ の上書き(job 名 → 名 → 値 —
+   本番の declare と同じく宣言ごとにその系への上書きの全部で、足し合わせない。新しい系に無い job・宣言の :environ に無い名・文字列で
+   ない値は断る — 最初の宣言と同じ規則・#3131)。dict のままなのは、sim-cluster の :environ と同じ形で、宣言を組む system-declaration
+   の :environ がそのまま受けるため(環境変数の名と値は名前の決まった欄ではない)。None = handler の既定(sim-cluster は最初の宣言の
+   上書き・手元の 1 台は上書き無し)。
+   答え = 宣言した Service の名の tuple。"
+  {:fields [(: system System) (: environ (| (get dict #(str (get dict #(str str)))) None) None)]
    :answer (get tuple #(str ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
