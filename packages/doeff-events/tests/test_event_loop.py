@@ -18,11 +18,11 @@ import hy
 import pytest
 from doeff_core_effects.effects import Listen, SlogEffect
 from doeff_core_effects.handlers import listen_handler, slog_discard_handler, state
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects.scheduler import Spawn, scheduled
 from doeff_core_effects.stop_signal_effects import RaiseStop
 from doeff_core_effects.stop_signal_handlers import scripted_stop_handler
 from doeff_events import EventBus, Publish, TimerFired, subscribed_event_handler, timer_handler
-from doeff_time import sim_time_handler
+from doeff_time import Delay, sim_time_handler
 
 from doeff import do, run, with_handlers
 
@@ -59,6 +59,7 @@ PRELUDE = """
 (import doeff_core_effects.stop_signal_effects [RaiseStop])
 (import doeff_events [ArmTimer TimerFired])
 (import datetime [datetime])
+(import doeff_time [GetTime])
 """
 
 LOOPS = """
@@ -118,6 +119,14 @@ LOOPS = """
     (TimerFired :tag tag) (match tag
                             "end" (stop #(#* seen tag))
                             _     seen)))
+
+(defk stopped-when []
+  {:pre [] :post [(: % tuple)]}
+  "止めの節で、止めの理由と、止めが届いた仮想の刻を返す(待っている間に来た止めがその刻に効くかを見る)。"
+  (event-loop
+    (:stop reason) #(reason (! (GetTime)))
+    (Added n)      n
+    (Done)         (stop #("done" None))))
 """
 
 
@@ -222,6 +231,63 @@ def test_a_deadline_armed_in_the_initial_state_reaches_the_timer_clause() -> Non
     ran = _run(_published_then((Added(1),), SCENES.until_deadline(T0 + timedelta(hours=6))))
 
     assert ran == Ran(value=(1, "end"), events=("Added", "TimerFired"))
+
+
+@do
+def _stop_raised_after(seconds: float, reason: str) -> Any:
+    """仮想の seconds 秒の後に止めを起こすため(ループの外の task — 本番の signal の受け手の代わり)。"""
+
+    yield Delay(seconds)
+    yield RaiseStop(reason)
+
+
+@do
+def _stopped_later(seconds: float, reason: str, program: Any) -> Any:
+    """後の刻に止めを起こす task を立ててから、何も来ない列で待つループを走らせるため。"""
+
+    yield Spawn(_stop_raised_after(seconds, reason))
+    return (yield program)
+
+
+def test_a_stop_that_comes_while_the_loop_waits_ends_it_at_that_moment() -> None:
+    # 待っている間に来た止めは、その刻に止めの節で抜ける(次の出来事や期限を待たない)。
+    ran = _run(_stopped_later(60.0, "later", SCENES.stopped_when()))
+
+    assert ran == Ran(value=("later", T0 + timedelta(seconds=60)), events=())
+
+
+@do
+def _spawns_during(program: Any) -> Any:
+    """Program の値と、その間に Program が出した Spawn の数を読むため(Listen — 出した effect を書き換えずに集める)。"""
+
+    value, spawns = yield Listen(program, types=(Spawn,))
+    return (value, len(spawns))
+
+
+def _spawned_by_folding(count: int) -> Any:
+    """Added を count 個と Done を流した folded の値と、その間の Spawn の数を読むため。
+
+    _run の Listen(slog を集める)と入れ子にしないため、同じ組み立てを Spawn を数える Listen だけで組む。
+    """
+
+    events = (*(Added(n) for n in range(1, count + 1)), Done())
+    bus = EventBus()
+    inner = with_handlers(
+        [state(), scripted_stop_handler, slog_discard_handler, listen_handler],
+        _spawns_during(_published_then(events, SCENES.folded())),
+    )
+    stack = subscribed_event_handler(bus, "loop", SUBSCRIBED)(timer_handler()(inner))
+    return run(scheduled(sim_time_handler(start_time=T0)(stack)))
+
+
+def test_waking_for_each_event_spawns_no_task() -> None:
+    # Spawn は寿命に決まった数(止めの見張りと、終わりのその片づけ)だけで、受けた出来事の数で増えない。起きるたびに待ちを task に
+    # して止めと競わせる形では、出来事 1 つ増えるごとに 1 つ増える(この検は赤)。
+    one = _spawned_by_folding(1)
+    five = _spawned_by_folding(5)
+
+    assert one[0] == (1,) and five[0] == (1, 2, 3, 4, 5)
+    assert one[1] == five[1], (one, five)
 
 
 @pytest.mark.parametrize(

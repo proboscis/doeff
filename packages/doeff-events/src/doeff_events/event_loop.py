@@ -4,11 +4,16 @@ The macro (``doeff_events/macros.hy``) writes the loop of a worker that waits fo
 then wait for the next event of the types its clauses name or for the stop signal, whichever comes first,
 and run the clause of what came. These parts own the waiting so every loop waits the same way:
 
-- ``begin_watch`` asks ``StopRequested`` once and, when no stop is requested yet, spawns one ``AwaitStop``
-  wait for the loop's whole life (the loop notices a stop without waking up to ask — agora-redesign #2205).
-- ``next_event`` races one ``WaitForEvent`` of the clause types against that stop wait, withdraws the event
-  wait when the stop comes first, and records each event it hands to a clause (``slog``).
-- ``end_watch`` withdraws the stop wait when the loop ends.
+- ``begin_watch`` asks ``StopRequested`` once and, when no stop is requested yet, spawns one stop watcher for the
+  loop's whole life: it waits for ``AwaitStop`` and publishes ``StopArrived`` on the loop's bus (the loop notices a
+  stop without waking up to ask — agora-redesign #2205).
+- ``next_event`` waits for one ``WaitForEvent`` of the clause types and ``StopArrived`` together and records each
+  event it hands to a clause (``slog``). Nothing is spawned, raced or withdrawn per wake — an earlier form raced a
+  spawned event wait against the stop wait on every wake (about 340 VM steps per wake — agora-redesign #3112).
+- ``end_watch`` withdraws the stop watcher when the loop ends.
+
+The bus handler must deliver ``StopArrived`` to the loop: ``subscribed_event_handler`` always subscribes it.
+Hand-written loops that wait for events use the same three parts.
 
 Design: agora-controllers docs/design/event-waits/README.md section 4.
 """
@@ -19,19 +24,17 @@ from typing import Any, Generic, TypeVar
 
 import hy  # noqa: F401 — stop_signal_effects below is a Hy module
 from doeff_core_effects.effects import slog
-from doeff_core_effects.scheduler import Cancel, Race, Spawn, Task, TaskCancelledError, Wait
+from doeff_core_effects.scheduler import Cancel, Spawn, Task, TaskCancelledError, Wait
 from doeff_core_effects.stop_signal_effects import AwaitStop, StopRequested
 
 from doeff import do
-from doeff_events.effects import WaitForEvent
+from doeff_events.effects import Publish, WaitForEvent
+
+# StopArrived is defined in doeff_events.effects; the explicit re-export keeps it importable from here for the loops
+# written before it moved.
+from doeff_events.effects import StopArrived as StopArrived
 
 T = TypeVar("T")
-
-@dataclass(frozen=True)
-class StopArrived:
-    """The stop signal came first: ``reason`` is the stop reason ``AwaitStop`` answered."""
-
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -44,30 +47,27 @@ class LoopStop(Generic[T]):
     value: T
 
 
-Watch = Task[StopArrived] | StopArrived
+Watch = Task[None] | StopArrived
 
 
 @do
-def _stop_arrived() -> Generator[Any, Any, StopArrived]:
+def _stop_announced() -> Generator[Any, Any, None]:
+    """Wait for the stop signal and publish it on the loop's bus as ``StopArrived`` (the loop's one stop watcher)."""
+
     reason = yield AwaitStop()
-    return StopArrived(reason)
+    yield Publish(StopArrived(reason))
+    return None
 
 
 @do
 def begin_watch() -> Generator[Any, Any, Watch]:
-    """Ask once whether a stop is already requested; otherwise spawn the loop's one ``AwaitStop`` wait."""
+    """Ask once whether a stop is already requested; otherwise spawn the loop's one stop watcher."""
 
     first = yield StopRequested()
     if first is not None:
         return StopArrived(first)
-    watcher = yield Spawn(_stop_arrived())
+    watcher = yield Spawn(_stop_announced())
     return watcher
-
-
-@do
-def _next_of(event_types: tuple[type[Any], ...]) -> Generator[Any, Any, object]:
-    event = yield WaitForEvent(*event_types)
-    return event
 
 
 @do
@@ -101,25 +101,19 @@ def next_event(event_types: tuple[type[Any], ...], watch: Watch) -> Generator[An
 
     ``watch`` is what ``begin_watch`` answered: a stop asked before the loop is answered at once. A stop raised while
     the previous event was being processed wins over an event already queued: the loop asks ``StopRequested`` once
-    before it waits (both would be ready at the same moment, and the race would hand the queued event to a clause
-    first)."""
+    before it waits (the queue would hand the event published first to the loop first). One ``WaitForEvent`` waits
+    for the clause types and the watcher's ``StopArrived`` together — no task per wake."""
 
     if isinstance(watch, StopArrived):
         return watch
     raised = yield StopRequested()
     if raised is not None:
         return StopArrived(raised)
-    waiting = yield Spawn(_next_of(event_types))
-    won: object = None
-    try:
-        won = yield Race(waiting, watch)
-    finally:
-        if not isinstance(won, event_types):
-            yield _withdrawn(waiting)
-    if isinstance(won, StopArrived):
-        return won
-    yield slog("event-loop", event=type(won).__name__)
-    return won
+    came = yield WaitForEvent(*event_types, StopArrived)
+    if isinstance(came, StopArrived):
+        return came
+    yield slog("event-loop", event=type(came).__name__)
+    return came
 
 
 @do

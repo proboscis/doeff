@@ -14,7 +14,7 @@ from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise
 
 from doeff import EffectBase, K, Pass, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
-from doeff_events.effects import PublishEffect, WaitForEventEffect
+from doeff_events.effects import PublishEffect, StopArrived, WaitForEventEffect
 
 if TYPE_CHECKING:
     from collections.abc import Hashable
@@ -278,8 +278,10 @@ def subscribed_event_handler(
     """購読者ごとの列を持つ memory の pub/sub handler を組み立てる。
 
     組み立てた時に ``bus`` へ ``subscriber`` の購読を始め、その時より後に発した ``event_types`` の合図だけを積む。
+    待つ型を持つ購読者は、止めの合図 ``StopArrived`` も必ず購読する — ループの止めの見張り(``event_loop.begin_watch``)が
+    同じ bus に発し、ループはそれを出来事と同じ ``WaitForEvent`` で待つ(待つ型の宣言に足し忘れても止まらない係にならない)。
     同じ ``subscriber`` の名で組み立て直すと、前の列を捨てて新しく始める(落ちた後の再起動 — 追いつくのは Program が
-    最初に記録を読むこと)。``event_types=()`` は発するだけの handler。
+    最初に記録を読むこと)。``event_types=()`` は発するだけの handler(止めの合図も積まない)。
 
     - ``Publish(event)``: ``bus`` の全購読者(自分を含む)の列へ渡し、起きる待ち手の約束を完了してから続ける。発した
       合図は、その時に待っていない購読者の列にも残る。
@@ -288,7 +290,7 @@ def subscribed_event_handler(
 
     購読者の名前・列・``bus`` はこの組み立ての引数だけに出て、Program には出ない。ack も cursor も無い。
     """
-    queue = bus.subscribe(subscriber, event_types)
+    queue = bus.subscribe(subscriber, (*event_types, StopArrived) if event_types else ())
 
     @do
     def handler(effect: EffectBase, k: K) -> "EffectGenerator[object]":
