@@ -14,6 +14,7 @@ from doeff_events.effects.timers import (
 from .events import (
     Publish,
     PublishEffect,
+    StopArrived,
     WaitForEvent,
     WaitForEventEffect,
     publish,
@@ -30,6 +31,7 @@ __all__ = [
     "DisarmTimerEffect",
     "Publish",
     "PublishEffect",
+    "StopArrived",
     "TimerFired",
     "WaitForEvent",
     "WaitForEventEffect",
