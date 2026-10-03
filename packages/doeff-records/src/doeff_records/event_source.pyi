@@ -141,5 +141,9 @@ class SignalSourceFactory:
         ...
 RECORDS_SIGNAL_SOURCE: SignalSourceFactory
 
+@dataclass(frozen=True)
+class ReadSignalSource(EffectBase):
+    ...
+
 def records_signal_source(bindings: tuple[SignalTables, ...], subscriber: str) -> _Program[Callable[[object], Program], object]:
     ...

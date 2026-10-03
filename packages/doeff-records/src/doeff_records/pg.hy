@@ -34,6 +34,7 @@
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
+(import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal
                                  listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
@@ -569,6 +570,9 @@
   ;; 組み立ての側の設定。
   "PostgreSQL の置き場の答え手(頭の註)。SqlQuery / SqlTransaction を外側の答え手へ出す。"
   {:tags {:context "records" :role "foundation"}}
+  ;; 源の工場の問い(ReadSignalSource)には本番の源 RECORDS-SIGNAL-SOURCE で答える(#3127 — 源の WatchChanges・WatchEvents はこの置き場が答える)。
+  (ReadSignalSource []
+    (resume RECORDS-SIGNAL-SOURCE))
   (ReadRow [table key]
     (<- now (GetTime))
     (<- answer (reached (swept-before store (epoch-ms now) (pg-read-row store effect))))

@@ -11,6 +11,8 @@ from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.meter_effects import CountMetric as CountMetric
 from doeff_time import GetMonotonic as GetMonotonic
+from doeff_records.event_source import RECORDS_SIGNAL_SOURCE as RECORDS_SIGNAL_SOURCE
+from doeff_records.event_source import ReadSignalSource as ReadSignalSource
 from doeff_records.values import Changes as Changes
 from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet

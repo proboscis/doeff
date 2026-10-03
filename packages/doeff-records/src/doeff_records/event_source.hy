@@ -353,6 +353,13 @@
 (val RECORDS-SIGNAL-SOURCE (SignalSourceFactory :make records-signal-handler))
 
 
+(defclass [(dataclass :frozen True)] ReadSignalSource [EffectBase]
+  "この組で記録に答えている置き場の、源の工場を問う記録の effect(#3127)。答え = SignalSourceFactory。答えるのは記録の handler 自身(memory の
+   handler = 自分の置き場の書きで鳴る模擬の源・HTTP の client と PostgreSQL = RECORDS-SIGNAL-SOURCE)— 源は必ず問うた所の記録の handler の置き場に
+   結ばれる。Ask にしないのは、組の内側の設定の読み手(決まった鍵だけを持ち、知らない鍵を断る)に横取りされうるため — 記録の effect なら
+   設定の読み手は触らない。")
+
+
 (defk records-signal-source [bindings subscriber]
   {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % (get Callable #([object] Program)))]}
   "記録の変化を合図として発する源を組み立てるため(組み立ては Program — 外の記録の handler の下で走らせる。使い手が工場
