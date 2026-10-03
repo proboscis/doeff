@@ -913,12 +913,14 @@ version = "0.1.0"
 source = { editable = "packages/doeff-events" }
 dependencies = [
     { name = "doeff" },
+    { name = "doeff-hy" },
     { name = "doeff-time" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "doeff", editable = "." },
+    { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
 ]
 
