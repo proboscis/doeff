@@ -2104,7 +2104,8 @@
   "coordinator の一生 1 つの、調停ループの 1 歩の間に observe-requests が溜める物(#2670 の根 A): released = この歩で返事を済ませた要求
    (歩の終わりに覚えから外す)・noted = この歩の Persist の writes の列(書きの順 — 歩の終わりに知らせる)・stopped = 歩の頭の判定が
    止まりと答えた(止まる調停ループの待ちへの返事 release-watchers はすぐ外す — 次の歩の頭は無い)。歩の頭ごとに空にする。replayed =
-   眠った静かな区間の歩をまとめて保存する Persist のうち、まだ来ていない数(生存の印を書く歩の数 — その書きは 1 拍ずつの走りでは
+   眠った静かな区間の歩をまとめて保存する Persist のうち、まだ来ていない数(調停ループへ渡した歩のうち生存の印を書く歩の数 — 落ちの
+   注入が待っていない間は区間をまとめた 1 歩・handed-quiet-steps。その書きは 1 拍ずつの走りでは
    落ちの注入より前の刻の書きなので落とさない・#2790)。歩の頭では空にせず、書きごとに 1 減らす。一生ごとに作り直すので、前の一生が
    保存し終えずに落ちた数を持ち越さない(#3132 で世界の受付から移した — 書きごとに世界へ問わずに判じるため)。session の値に
    持たないのは、読み書きのたびに状態の答え手までの効果になり、世界への問い 1 つと同じ重さになるため(1 歩の世界への問いを減らした分が
@@ -2115,6 +2116,20 @@
         #^ bool stopped False
         #^ int replayed 0
         #^ (| int None) real-at None))
+
+
+(defk handed-quiet-steps [queue steps]
+  {:pre [(: queue RequestQueue) (: steps tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "眠った静かな区間の歩 steps(QuietStep の tuple — 刻の順)のうち、調停ループへ渡して保存させる歩を決めるため(#2670 の根 B)。落ちの
+   注入が待っていない間は、区間を最後の歩 1 つにまとめる — 調停ループの保存は区間の前の状態から最後の状態への 1 回になり、置き場の
+   最後の状態と耐久の状態の変わり目の列(歩の記録 CoordinatorStep — まとめる前の歩から取る)は歩ごとの保存と同じ。まとめた歩の生存の
+   印と仮の拍は区間の全部の歩の物(保存するかの判断と落ちの注入の数え方が読む)。落ちの注入が待っている間(queue.ends-at-marks —
+   区間は生存の印の歩の手前で切れている)は歩ごとのまま渡す(落ちた後の再開の状態を 1 拍ずつの走りと同じ古さに保つ)。"
+  (if (or queue.ends-at-marks (<= (len steps) 1))
+      steps
+      #((replace (get steps -1)
+                 :marked (any (gfor step steps step.marked))
+                 :beats (tuple (gfor step steps beat step.beats beat))))))
 
 
 (defhandler observe-requests [#^ StepBook book #^ RequestQueue queue]
@@ -2131,11 +2146,13 @@
   ;; この歩の返事の手放しと書きの知らせと止まりの判定を 1 つで)と、落ちの注入が待っている間だけ書きの前の落ちの判断(PersistCrashDue —
   ;; 書きより前に要る・#3132)。返事と書きと区間の歩の書きの数えは帳面 book に溜める。
   (NextRequests [timeout-seconds limit]
-    ;; 模擬の列は、眠った静かな区間の歩を添えて返す(IdleTaken — #2790)。篩うのは取った要求だけ。区間の歩の書き(生存の印の歩)は
-    ;; 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
+    ;; 模擬の列は、眠った静かな区間の歩を添えて返す(IdleTaken — #2790)。篩うのは取った要求だけ。調停ループへ渡す歩は、落ちの注入が
+    ;; 待っていない間は区間の最後の歩 1 つにまとめる(handed-quiet-steps — 保存を区間で 1 回に・#2670 の根 B)。渡す歩の書き(生存の印の
+    ;; 歩)は 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
     (<- taken (| list IdleTaken) effect)
     (<- batch list (taken-batch taken))
-    (val marks (if (isinstance taken IdleTaken) (len (lfor step taken.steps :if step.marked step)) 0))
+    (<- handed tuple (handed-quiet-steps queue (if (isinstance taken IdleTaken) taken.steps #())))
+    (val marks (len (lfor step handed :if step.marked step)))
     (setv book.replayed (+ book.replayed marks))
     ;; 歩の記録(#2670 の根 B): 前の取りの刻の本物の歩の後の状態(この取りの材料 idle)と、眠った区間の歩を刻の順に。
     (val idle (if (isinstance effect IdleNextRequests) effect.idle None))
@@ -2151,7 +2168,7 @@
         (in r.peer faults.cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
         (in #(r.method r.path) faults.failing)
           (<- (CompletePromise r.slot #((get faults.failing #(r.method r.path)) {"error" FAULT-REASON})))))
-    (resume (if (isinstance taken IdleTaken) (replace taken :batch kept) kept)))
+    (resume (if (isinstance taken IdleTaken) (replace taken :batch kept :steps handed) kept)))
   (Reply [request status body]
     ;; 返事を済ませた要求は歩の終わりに覚えから外す(止まる調停ループの返事は次の歩の頭が無いので、すぐ外す)。
     (if book.stopped
