@@ -133,5 +133,13 @@ SOURCE_EFFECTS: tuple[type, ...]
 def records_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> Callable[[object], Program]:
     ...
 
+@dataclass(frozen=True, kw_only=True)
+class SignalSourceFactory:
+    make: Callable[[tuple[SignalTables, ...], str], Callable[[object], Program]]
+
+    def __post_init__(self) -> None:
+        ...
+RECORDS_SIGNAL_SOURCE: SignalSourceFactory
+
 def records_signal_source(bindings: tuple[SignalTables, ...], subscriber: str) -> _Program[Callable[[object], Program], object]:
     ...
