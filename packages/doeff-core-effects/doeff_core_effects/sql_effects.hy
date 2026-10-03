@@ -36,6 +36,11 @@
 ;;;   SqlEnsureTables  表・欄・索引の宣言(SqlTable)を方言の DDL に描いて流す(在れば何もしない)。答え = SqlSchemaApplied | SqlFailed |
 ;;;                    SqlUnreachable。PostgreSQL の DO $$・CONCURRENTLY、ClickHouse の engine の細目は宣言に載せない(共通の文にできない)
 ;;;
+;;;   SqlNotify        通知の channel へ合図を出す(transaction の中なら commit した時だけ届く)— PostgreSQL の pg_notify
+;;;                    — SqlTransaction の中で出せる(約束 (2) の例外)。答え手は commit の後に同じ process の呼び鈴をその場で鳴らす
+;;;   SqlHangNotice    通知の channel に呼び鈴(外の promise)を掛ける — PostgreSQL の LISTEN。答え = 呼び鈴 | SqlUnreachable。
+;;;                    SqlDropNotice = 鳴らなかった呼び鈴を外す。3 つとも答えるのは PostgreSQL の答え手 2 つだけ
+;;;
 ;;; I/O なしの置き場の語彙(本物には無い): SetSqlOutage = その database を不達にする / 戻す(sqlite-sql-handler だけが答える — 模擬の筋書きが
 ;;; 不達の枝を起こす口)。
 (require doeff-hy.macros [defk deff defeffect <- val var])
@@ -48,6 +53,7 @@
 (import enum [StrEnum])
 (import typing [TypeVar])
 (import doeff [Program])
+(import doeff_core_effects.scheduler [ExternalPromise])
 
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 
@@ -169,6 +175,36 @@
   {:fields [(: database str) (: tables (get tuple #(SqlTable ...)))]
    :pre [(: database str) (: tables tuple) (all (gfor t tables (isinstance t SqlTable)))]
    :answer (| SqlSchemaApplied SqlFailed SqlUnreachable)
+   :tags {:context "sql" :role "foundation"}})
+
+
+(defeffect SqlNotify
+  "database の通知の channel へ合図を出す(PostgreSQL の pg_notify — 中身を運ばない)。SqlTransaction の中で出せば commit した時だけ
+   届き、rollback した transaction の合図は届かない。答え手は commit の後に同じ process の呼び鈴(SqlHangNotice)をその場で鳴らし、他の
+   process へは NOTIFY が届く。答え = None | SqlFailed | SqlUnreachable(答えるのは PostgreSQL の答え手 2 つだけ)。"
+  {:fields [(: database str) (: channel str)]
+   :pre [(: database str) (: channel str)]
+   :answer (| None SqlFailed SqlUnreachable)
+   :tags {:context "sql" :role "foundation"}})
+
+
+(defeffect SqlHangNotice
+  "database の通知の channel に呼び鈴を掛ける(PostgreSQL の LISTEN / NOTIFY — 答えるのは postgres-sql-handler と
+   pooled-postgres-sql-handler だけ)。答えの外の promise は、掛けた後に channel へ通知が届くか、待ち受けの接続が繋ぎ直したら(その間の
+   通知は届かないので)True で完了する(doeff-time の WaitWithin の時間切れ None と見分けられる)。答えが返った時には LISTEN は張られている — 呼び手は掛けてから読み、静かなら呼び鈴を待てば、読みと
+   掛けの間の書きを取りこぼさない。合図は「変わったかもしれない」だけで中身を運ばない(受けた側が読み直す)。鳴らずに待ちを終える時は
+   SqlDropNotice で外す。"
+  {:fields [(: database str) (: channel str)]
+   :pre [(: database str) (: channel str)]
+   :answer (| ExternalPromise SqlUnreachable)
+   :tags {:context "sql" :role "foundation"}})
+
+
+(defeffect SqlDropNotice
+  "SqlHangNotice で掛けて鳴らなかった呼び鈴 bell を外す(鳴った後でも何もせずに答える)。"
+  {:fields [(: database str) (: channel str) (: bell ExternalPromise)]
+   :pre [(: database str) (: channel str) (: bell ExternalPromise)]
+   :answer (type None)
    :tags {:context "sql" :role "foundation"}})
 
 

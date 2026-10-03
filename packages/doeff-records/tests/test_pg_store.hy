@@ -12,7 +12,7 @@
 (import doeff_records.values [ExpectAbsent Written Conflict Row Unreachable Missing WrittenRows])
 (import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables DEFAULT-POLL-SECONDS])
+(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 
@@ -29,7 +29,7 @@
 (defn run-on [answerer store program]
   "答え手 answerer(SQL の effect の答え手)の上で、置き場 store の書き手 maker として program を 1 回走らせる。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) answerer
-                                  (pg-records-handler store MAKER ORIGIN-HOST DEFAULT-POLL-SECONDS)]
+                                  (pg-records-handler store MAKER ORIGIN-HOST)]
                                  program))))
 
 

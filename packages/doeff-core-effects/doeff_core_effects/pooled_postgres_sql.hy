@@ -10,6 +10,8 @@
 ;;;   - SqlTransaction = 許可を取り、接続を 1 本借りて、BEGIN(lock-key が在れば pg_advisory_xact_lock(hashtext(:key)) — postgres-sql-handler と
 ;;;     同じ文)→ program → COMMIT の各段を pool で流す。中の SqlQuery は transaction の scope の handler が同じ接続で pool へ回す(program 側の
 ;;;     約束は postgres-sql-handler と同じ)。
+;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice — agora-redesign #3073)は postgres-sql-handler と同じ手順(postgres_sql.hy の notified・
+;;;     hung-notice)。transaction の外の SqlNotify は接続の許可を取ってから流す。呼び鈴を掛けるのは待ち受けの接続で、許可を使わない。
 ;;;   - 取り消し: 待っている task が Cancel されたら、run-in-transaction が ROLLBACK を流し、接続を返し(返す時にも transaction の途中なら
 ;;;     rollback)、許可を返してから取り消しを通す。始まっていない pool の仕事は外し、取り消しの後に出来た答え(借りた接続)は pool で返す。
 ;;;     走り中の文は止めない(文が終わるまで ROLLBACK は driver の錠で待つ)。
@@ -25,9 +27,9 @@
 (import concurrent.futures [Executor])
 (import doeff [Program])
 (import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-ensure-tables offloaded-statement
-                                         offloaded-transaction])
+                                         offloaded-transaction notified hung-notice])
 
 
 (defk permit-for [permits database size]
@@ -82,4 +84,15 @@
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))
     (<- answer (permitted (get permits database) (offloaded-transaction connections pool database program lock-key)))
-    (resume answer)))
+    (resume answer))
+  (SqlNotify [database channel] :when (in database (.names connections))
+    (<- created (permit-for permits database connections.size))
+    (:= permits (| {database created} permits))
+    (<- answer (permitted (get permits database) (notified connections pool database channel)))
+    (resume answer))
+  (SqlHangNotice [database channel] :when (in database (.names connections))
+    (<- answer (hung-notice connections pool database channel))
+    (resume answer))
+  (SqlDropNotice [database channel bell] :when (in database (.names connections))
+    (.drop (.listener connections database channel) bell)
+    (resume None)))
