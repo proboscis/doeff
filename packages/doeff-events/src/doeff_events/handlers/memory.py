@@ -2,11 +2,13 @@
 
 ``event_handler()`` は、その時に待っている全員へ合図を同報し、待ち手が居なければ合図を捨てる(元の形のまま)。
 ``subscribed_event_handler()`` は購読者ごとの列を持ち、待ち手が居ない間に発した合図も列に積む — 状態を読んでから
-``WaitForEvent`` に入るまでの間に別の task が発した合図を落とさない(agora-redesign #3075・設計 #3072)。
+``WaitForEvent`` に入るまでの間に別の task が発した合図を落とさない(agora-redesign #3075・設計 #3072)。列に溜まった
+同じ型の「所が変わった」合図は 1 つにまとめる(agora-redesign #3079)。
 """
 
 import inspect
-from typing import TYPE_CHECKING, Final, final
+from dataclasses import fields, is_dataclass, replace
+from typing import TYPE_CHECKING, Final, Protocol, TypeGuard, final
 
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
 
@@ -15,8 +17,20 @@ from doeff import handler as _program_handler
 from doeff_events.effects import PublishEffect, WaitForEventEffect
 
 if TYPE_CHECKING:
+    from collections.abc import Hashable
+
+    from _typeshed import DataclassInstance
+
     from doeff import EffectGenerator
     from doeff.program import ProgramHandler
+
+    class _KeyedSignal(DataclassInstance, Protocol):
+        """まとめてよい合図の形: 欄 ``keys`` に変わった所の tuple を持つ frozen の dataclass。"""
+
+        @property
+        def keys(self) -> tuple[Hashable, ...]:
+            """変わった所(doeff-records の記録の合図の源では ``ChangedRow``)。"""
+            ...
 
 
 def _matching_promises(listeners, event):
@@ -115,13 +129,54 @@ def _require_types(event_types: tuple[type, ...]) -> tuple[type, ...]:
     return event_types
 
 
+_KEYS: Final = "keys"
+
+
+def _coalescible(event: object) -> "TypeGuard[_KeyedSignal]":
+    """``event`` を列の中で同じ型の合図とまとめてよいか — まとめる規則の判定はこの 1 か所。
+
+    まとめてよい = frozen の dataclass で、組み立ての欄 ``keys`` に tuple を持つ合図(doeff-records の記録の合図の源が
+    出す形 — 要素は hash できる所の値で、まとめる時に重なりを除くのに使う)。この形の合図は「所 ``keys`` が変わった」
+    だけを運び、受け手は所で記録を読み直すので、まだ渡していない同じ型の合図と ``keys`` を合わせて 1 つにしても受け手の
+    作る状態は変わらない。``keys`` を持たない合図(``TimerFired`` など — tag ごとに意味が違う)はまとめない。
+    """
+    if isinstance(event, type) or not is_dataclass(event):
+        return False
+    params: object = getattr(type(event), "__dataclass_params__", None)
+    if getattr(params, "frozen", False) is not True:
+        return False
+    if not any(field.name == _KEYS and field.init for field in fields(event)):
+        return False
+    keys: object = getattr(event, _KEYS)
+    return isinstance(keys, tuple)
+
+
+def _same_apart_from_keys(queued: "_KeyedSignal", arriving: "_KeyedSignal") -> bool:
+    """2 つの合図が同じ型で、``keys`` の外の欄が等しいか — 違う欄が在れば、まとめると片方の欄が消えるのでまとめない。"""
+    if type(queued) is not type(arriving):
+        return False
+    return all(
+        getattr(queued, field.name) == getattr(arriving, field.name)
+        for field in fields(queued)
+        if field.name != _KEYS
+    )
+
+
+def _with_keys_of(queued: "_KeyedSignal", arriving: "_KeyedSignal") -> "_KeyedSignal":
+    """``queued`` に ``arriving`` の ``keys`` を合わせた合図(来た順・重なりは最初の 1 つだけ残す)。"""
+    # dict.fromkeys は来た順を保って重なりを除く(値は使わない)。
+    return replace(queued, keys=tuple(dict.fromkeys((*queued.keys, *arriving.keys))))
+
+
 @final
 class SubscriberQueue:
     """購読者 1 人の合図の列。
 
     ``offer(event)`` は、購読の型に当たる合図を、型の合う待ち手が居ればその約束へ(来た順に 1 人)、居なければ
-    列の末尾へ渡す。購読の型に当たらない合図は捨てる。``take(types)`` は列の先頭から ``types`` に当たる最初の合図を
-    取り出す。1 つの合図は購読者ごとに 1 度だけ渡る(待ち手の 1 人か、列の 1 か所)。
+    列へ渡す。列に同じ型のまとめてよい合図(``_coalescible``)が既に在れば、その合図を ``keys`` を合わせた 1 つに
+    置き換え(先に来た方の位置のまま)、無ければ末尾に積む。購読の型に当たらない合図は捨てる。``take(types)`` は列の
+    先頭から ``types`` に当たる最初の合図を取り出す。1 つの合図は購読者ごとに 1 度だけ渡る(待ち手の 1 人か、列の
+    1 か所 — まとめた合図はその ``keys`` の中)。
 
     記録の service から合図を受ける handler(agora-redesign #3077)も、受けた合図をこの ``offer`` に渡せば、
     ``WaitForEvent`` の側の待ち方(``take`` → 無ければ待ち手として約束で待つ)を共有できる。
@@ -151,7 +206,8 @@ class SubscriberQueue:
     def offer(self, event: object) -> Promise[object] | None:
         """``event`` を列へ渡す。起こす待ち手の約束を返す(待ち手からは外す・呼び手が ``CompletePromise`` する)。
 
-        型の合う待ち手が居なければ列の末尾に積んで ``None``。購読の型に当たらなければ捨てて ``None``。
+        型の合う待ち手が居なければ列に置いて ``None`` — 同じ型のまとめてよい合図が列に在ればそれと 1 つにまとめ、
+        無ければ末尾に積む。購読の型に当たらなければ捨てて ``None``。
         """
         if not isinstance(event, self._event_types):
             return None
@@ -159,8 +215,17 @@ class SubscriberQueue:
             if isinstance(event, waiter.event_types):
                 self._waiters.remove(waiter)
                 return waiter.promise
-        self._pending.append(event)
+        self._place(event)
         return None
+
+    def _place(self, event: object) -> None:
+        """待ち手の居ない ``event`` を列に置く: 同じ型のまとめてよい合図が在ればその位置でまとめ、無ければ末尾に積む。"""
+        if _coalescible(event):
+            for index, queued in enumerate(self._pending):
+                if _coalescible(queued) and _same_apart_from_keys(queued, event):
+                    self._pending[index] = _with_keys_of(queued, event)
+                    return
+        self._pending.append(event)
 
     def take(self, wanted: tuple[type, ...]) -> object | Empty:
         """列の先頭から ``wanted`` に当たる最初の合図を取り出す。無ければ ``EMPTY``。"""
