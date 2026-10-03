@@ -29,8 +29,9 @@
 ;;;     handler の節の中から Spawn する。Spawn は節の外側の handler(世界・時計)だけを持ち運ぶので、run-worker の中の handler も、他の
 ;;;     job の handler も混ざらない(service ごとの別のスコープ)。終わり(値・例外・取り消し)は世界へ書き、ObserveWorld が exit-code として
 ;;;     返す。process の中で Spawn した task は柵が tracked-child で包み直して(元の継続のまま — 子の task は柵より内の handler を持ち
-;;;     運ぶ)把手を世界に覚えさせ、process の終わり(値・例外・止めの合図・Crash・worker の死)で一緒に取り消す(本番は子 process ごと
-;;;     消える)。task の process は終わりを書く前に、結果を coordinator へ直に届ける(本番の job_entry.run-task と同じ要求 —
+;;;     運ぶ)把手を世界に覚えさせ、process の終わり(値・例外・止めの合図)で一緒に取り消し、殺された時(Crash・worker の死)は
+;;;     一緒に捨てる(Discard — 巻き戻さない。本番は子 process ごと消える)。task の process は終わりを書く前に、結果を
+;;;     coordinator へ直に届ける(本番の job_entry.run-task と同じ要求 —
 ;;;     task_result.task-result-request・#1387。届かなければ worker の heartbeat が運ぶ)。
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台と同じ読みの定義 host_contract.environ-reader を子の spec.environ の上に並べる:
@@ -118,8 +119,8 @@
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
-(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Promise Task Future
-                                      TaskCancelledError])
+(import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
+                                      Future TaskCancelledError])
 (import doeff_time [Delay sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
@@ -664,10 +665,6 @@
   {:fields [(: worker str) (: pid int) (: ended SimExit)] :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
-(defeffect KillOf
-  "process pid の取り消しの終わり方(Crash = exit 1・worker の死 = exit -9 — 止めの合図なら None)。"
-  {:fields [(: pid int)] :answer (| SimExit None) :tags {:context "doeff-cluster" :role "intent"}})
-
 (defeffect NoteCoordinatorWrite
   "coordinator が置き場への書き(Persist の writes)を終えたことを世界に知らせる — 書きで終わった切り離した task の待ち手と、準備の状態を
    待つ AwaitReadiness の待ち手を起こす(待ち手は起きた時に 1 回だけ読み直す — 時計の刻みでは読み直さない・#3053)。書き 1 回の後の
@@ -1194,28 +1191,11 @@
                              :priority effect.priority :daemon effect.daemon)))
   (KeepChild []
     (reperform effect))
-  (KillOf []
-    ;; 一番内側の dead-process-gate が問う sim の仕組みの effect(KeepChild と同じく通す)。
-    (reperform effect))
   (EffectBase []
     :when (not (isinstance effect passable))
     (raise (UnhandledEffect (.format "sim の柵: 答えの無い effect {} ({!r}) — 本番の子 process でも答える handler が無い"
                                      (. (type effect) __name__) effect)))))
 
-
-(defhandler dead-process-gate [#^ int pid]
-  {:tags {:context "doeff-cluster" :role "protocol"}}
-  ;; 引数に残す理由: どの process が殺されたかを process の番号で問う(Program の effect ではない番号を Ask で問えない)。
-  ;; 殺された process(worker の死 = -9・Crash = 1)の取り消しの巻き戻しの中で撃たれた effect を、宿の答えにも外の世界にも届けない —
-  ;; 本物の機体の死と子 process の落ちでは、落ちた後の process から何も届かない。Program の一番内側に置き、scheduler と時計の effect
-  ;; (SIM-PASSABLE — 巻き戻しの Wait・Cancel)は通す。止めの合図(KillOf が None — 優雅な停止)の後の後始末は通す。
-  (EffectBase []
-    :when (not (isinstance effect SIM-PASSABLE))
-    (<- killed (| SimExit None) (KillOf pid))
-    (if (is killed None)
-        (reperform effect)
-        (raise (UnhandledEffect (.format "sim: 落ちた process {} の effect {} は届かない(exit {})" pid (. (type effect) __name__)
-                                         killed.code))))))
 
 
 (defrecord SimChild
@@ -1336,23 +1316,18 @@
 (defk run-fenced [program child once]
   {:pre [(: program DoExpr) (: child SimChild) (: once bool)] :post [(: % SimExit)] :tags {:context "doeff-cluster" :role "program"}}
   "Program を柵と答えの中で走らせ、終わり方を決めるため(本番の job_entry の service / task の入口の終わり方と同じ: service は
-   値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15・Crash = 1・worker の死 = -9)。"
+   値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15)。殺された process(Crash = 1・worker の死 = -9)はここへ戻らない —
+   本物の SIGKILL と同じく task ごと捨てられ(Discard — 巻き戻さない・finally の effect は走らない)、終わりは殺した側が書く。"
   (try
     (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
-                              (environ-reader child.environ) (dead-process-gate child.pid)]
+                              (environ-reader child.environ)]
                              program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
     (except [TaskCancelledError]
-      (<- killed (| SimExit None) (KillOf child.pid))
-      (if (is killed None) (SimExit :code -15 :result None :detail "止めの合図") killed))
+      (SimExit :code -15 :result None :detail "止めの合図"))
     (except [error Exception]
-      ;; 殺された process の巻き戻しの中で例外が出ても(落ちた後の effect を dead-process-gate が断る時を含む)、終わり方は殺された形
-      ;; (worker の死 = -9・Crash = 1)— 本番の子 process は殺された時点で終わっており、後の例外は外から見えない。
-      (<- killed (| SimExit None) (KillOf child.pid))
-      (if (is-not killed None)
-          killed
-          (SimExit :code (if once 0 1) :result (if once (encode-outcome (failed-from error)) None)
-                   :detail (.format "{}: {}" (. (type error) __name__) error))))))
+      (SimExit :code (if once 0 1) :result (if once (encode-outcome (failed-from error)) None)
+               :detail (.format "{}: {}" (. (type error) __name__) error)))))
 
 
 (defk refused-exit [refusal once]
@@ -2344,12 +2319,13 @@
   after)
 
 
-(defk settle-process-ends [ends]
-  {:pre [(: ends ProcessEnds)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
-  "終わりを書いた後にする事をするため: process が終われば中で Spawn した task も止まり(本番は子 process ごと消える)、終わりを待つ
-   待ち手を起こし、静かな拍を眠っている宿を起こす。"
+(defk settle-process-ends [ends killed]
+  {:pre [(: ends ProcessEnds) (: killed bool)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "終わりを書いた後にする事をするため: process が終われば中で Spawn した task も止まり(本番は子 process ごと消える — 殺された
+   process の task は巻き戻さずに捨てる(Discard)、自分で終わった process の task は取り消す)、終わりを待つ待ち手を起こし、静かな
+   拍を眠っている宿を起こす。"
   (for [task ends.stopped]
-    (<- (Cancel task)))
+    (<- (if killed (Discard task) (Cancel task))))
   (for [#(promise answer) ends.due]
     (<- (CompletePromise promise answer)))
   (for [bell ends.bells]
@@ -2449,19 +2425,22 @@
     (:= next-pid (+ next-pid 1))
     (resume next-pid))
   (KeepHandle [pid task]
-    ;; 把手を覚える前に殺された process(StartJob の Spawn と KeepHandle の間)は、殺した側が終わりを書き済み — 把手は覚えず、その場で止める。
+    ;; 把手を覚える前に殺された process(StartJob の Spawn と KeepHandle の間)は、殺した側が終わりを書き済み — 把手は覚えず、その場で
+    ;; 捨てる(Discard — 殺された後に走らせない)。
     (if (in pid kills)
-        (<- (Cancel task))
+        (<- (Discard task))
         (:= handles (| handles {pid task})))
     (resume None))
   (HandleOf [pid]
     (resume (.get handles pid)))
   (KeepChild [pid task]
-    (if (in pid finished)
-        (do (<- (Cancel task))
-            (resume None))
-        (do (:= children (| children {pid (+ (.get children pid #()) #(task))}))
-            (resume None))))
+    ;; 終わった process の中で把手を覚える前だった task(Spawn した task が先に走り、KeepChild の前に process が終わった)は、その場で
+    ;; 止める — 殺された process なら捨てる(Discard — 殺された後に走らせない)、自分で終わった process なら取り消す。
+    (cond
+      (in pid kills) (<- (Discard task))
+      (in pid finished) (<- (Cancel task))
+      True (:= children (| children {pid (+ (.get children pid #()) #(task))})))
+    (resume None))
   (NoteProcess [process]
     (:= log (+ log #(process)))
     ;; その job の最初の process を待つ AwaitProcessStarted の待ち手を起こす(読み直さない — 書きで起こす)。
@@ -2486,7 +2465,8 @@
       (<- (CompletePromise bell True)))
     (resume None))
   (EndProcess [worker pid ended]
-    ;; 殺された process の終わりは、殺した側(Crash・KillWorker)が殺した刻で書き済み — 巻き戻しの後の知らせで書き直さない。
+    ;; 終わりの記録の持ち主は 1 つ: 殺された process は捨てられて知らせを出さず、殺した側(Crash・KillWorker)が殺した刻で書く —
+    ;; 書き済みの pid には書き直さない。
     (when (not-in pid finished)
       (<- now int (now-epoch-ms))
       (<- ends ProcessEnds (end-process (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
@@ -2498,7 +2478,7 @@
       (:= children ends.children)
       (:= finished ends.finished)
       (:= end-waiters ends.end-waiters)
-      (<- (settle-process-ends ends)))
+      (<- (settle-process-ends ends False)))
     (resume None))
   (NoteWatchFailure [failure]
     (:= watch-failures (+ watch-failures #(failure)))
@@ -2512,8 +2492,6 @@
     (resume None))
   (WatchFailuresOf [name]
     (resume (tuple (gfor f watch-failures :if (= f.worker name) f))))
-  (KillOf [pid]
-    (resume (.get kills pid)))
   (NotePreparation [preparation]
     (:= preparations (+ preparations #(preparation)))
     (resume None))
@@ -2609,7 +2587,7 @@
     (val crashed (SimExit :code 1 :result None :detail "Crash"))
     (val mains (tuple (gfor r victims (get handles r.pid))))
     (:= kills (| kills (dfor r victims r.pid crashed)))
-    ;; 終わりは殺した刻で書く(end-processes)— 巻き戻しの後の EndProcess は書き直さない。
+    ;; 終わりは殺した刻で書く(end-processes — 殺された process は捨てられ、自分の終わりを書かない)。
     (<- ends ProcessEnds (end-processes (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
                                                      :end-waiters end-waiters :stopped #() :due #() :bells #())
                                         victims crashed now))
@@ -2619,9 +2597,10 @@
     (:= children ends.children)
     (:= finished ends.finished)
     (:= end-waiters ends.end-waiters)
+    ;; 殺された process は本物の SIGKILL と同じく巻き戻さずに捨てる(Discard — finally の effect は走らず、世界に何も届かない)。
     (for [task mains]
-      (<- (Cancel task)))
-    (<- (settle-process-ends ends))
+      (<- (Discard task)))
+    (<- (settle-process-ends ends True))
     (resume (len victims)))
   (KillWorker [name]
     (<- now int (now-epoch-ms))
@@ -2644,9 +2623,10 @@
     (:= children ends.children)
     (:= finished ends.finished)
     (:= end-waiters ends.end-waiters)
+    ;; 殺された process は本物の SIGKILL と同じく巻き戻さずに捨てる(Discard — finally の effect は走らず、世界に何も届かない)。
     (for [task mains]
-      (<- (Cancel task)))
-    (<- (settle-process-ends ends))
+      (<- (Discard task)))
+    (<- (settle-process-ends ends True))
     (when (is-not resting None)
       (<- (ring-bell resting ROUSED)))
     (resume (len victims)))

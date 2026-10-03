@@ -4,9 +4,11 @@
 (import doeff_time [Delay])
 (import doeff [EffectBase])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.sim.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker Crash])
+(import doeff_core_effects.scheduler [Spawn Task])
+(import doeff_cluster.sim.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker Crash KeepChild])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.outside_programs [shared-store last-words slow-last-words memory-store signed-puts StorePut StoreGet])
+(import tests.fixtures.outside_programs [shared-store last-words slow-last-words spawning-last-words memory-store signed-puts
+                                         StorePut StoreGet])
 
 
 (defk wait-seconds [seconds]
@@ -76,7 +78,7 @@
 
 (deftest test-a-process-killed-with-its-worker-reaches-nothing-while-it-unwinds
   ;; 本物の機体の死では、落ちた process の後始末から何も届かない。sim でも、殺された process の取り消しの巻き戻しの中の effect
-  ;; (finally の StorePut)は外の世界に届かない(dead-process-gate)。
+  ;; (finally の StorePut)は外の世界に届かない(殺された process は巻き戻さずに捨てる — Discard)。
   (val rows {})
   (<- processes tuple (sim-cluster (last-words sim-foundation) (kill-the-speaker "w1")
                                    :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
@@ -119,3 +121,49 @@
                            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
                            :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (= lag 0) lag))
+
+
+(deftest test-the-tasks-a-killed-process-spawned-leave-nothing-either
+  ;; 殺された process の中で Spawn した task も一緒に捨てる(本番は子 process ごと消える)— 子の task の後始末(finally の StorePut)も
+  ;; 外の世界に届かない(#3057)。
+  (val rows {})
+  (<- processes tuple (sim-cluster (spawning-last-words sim-foundation) (kill-the-speaker "w1")
+                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                                   :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
+  (assert (>= (.get rows "count" 0) 5) rows)
+  (assert (not-in "last-words" rows) rows)
+  (assert (not-in "child-last-words" rows) rows)
+  (assert (any (gfor p processes (= p.exit-code -9))) processes))
+
+
+(defk late-words []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "待ち続け、取り消されると巻き戻しの中で書こうとする task の本体(登録の隙間に居た task の後始末が外へ届くかを測る)。"
+  (try
+    (while True
+      (<- (Delay 1.0)))
+    (finally
+      (<- (StorePut "late-words" True)))))
+
+
+(defk register-after-the-kill [worker]
+  {:pre [(: worker str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "10 秒待って worker を殺し、その後で、殺された speaker の process の task として、finally で書こうとする task を世界に覚えさせ、
+   さらに 5 秒待つ(process の中で Spawn した task が先に走り、把手を覚える KeepChild の前に process が殺された隙間と同じ形)。"
+  (<- (Delay 10.0))
+  (<- (KillWorker worker))
+  (<- processes tuple (ProcessesOf "speaker"))
+  (<- late Task (Spawn (late-words)))
+  (<- (KeepChild (. (get processes 0) pid) late))
+  (<- (Delay 5.0))
+  None)
+
+
+(deftest test-a-task-registered-after-its-process-was-killed-is-dropped
+  ;; 登録の隙間: 殺された process の task が後から世界に覚えられたら、その場で捨てる(取り消して巻き戻させない)— 後始末
+  ;; (finally の StorePut)は外の世界に届かない(#3057 — 前は門が effect ごとに殺されたかを問うて断っていた)。
+  (val rows {})
+  (<- (sim-cluster (last-words sim-foundation) (register-after-the-kill "w1")
+                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                   :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
+  (assert (not-in "late-words" rows) rows))
