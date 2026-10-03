@@ -1,42 +1,34 @@
-"""service.hy の公開面の型(型検査のための宣言 — 実行時は service.hy を読む)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = service.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-service.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、HTTP の口の組 RecordsService と入口 respond が
-Unknown になる(使い手 — 模擬の記録の service の相手役 — の strict の型検査で、書き手に直せない赤が連なる)。ここで型を宣言する。
-
-- `(defclass [(dataclass :frozen True)] …)` は位置でも渡せる frozen の dataclass。
-- handler-for は「書き手の名 → その書き手の記録の handler」。handler の形は置き場ごとに違う(memory は defhandler・PG は defk の組み立て)
-  ので、答えは object に留める(実装の注記も素の Callable — store_choice.pyi と同じ扱い)。
-- defk は呼ぶと Program を返す(答えの型 = 実装の :post の型)。
-- PublicEffect は service.hy が wire.hy から import して使う公開 effect の union(undeclared-name の ask の型)。wire.hy には型の
-  宣言が無いので、同じ並びを effects.pyi の名で書く(並びが実装と同じことは packages/doeff-records/tests/test_static_stubs.py が検める)。
-- 実装との食い違いは同じ検が名・欄の名と順・既定値の有無・引数の名で検める。
-"""
-
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TypeAlias
-
-from doeff import Program
-from doeff_records.effects import (
-    AppendEvent,
-    ListRows,
-    PutRow,
-    PutRows,
-    ReadEvents,
-    ReadRow,
-    ReadStreamEnd,
-    WatchChanges,
-)
-from doeff_records.principals import Principal
-from doeff_records.values import RecordsSchema
-
+from doeff import Program as _Program
+from dataclasses import dataclass as dataclass
+from dataclasses import replace as replace
+from collections.abc import Callable as Callable
+from doeff import with_handlers as with_handlers
+from doeff_records.values import RecordsSchema as RecordsSchema
+from doeff_records.values import Unreachable as Unreachable
+from doeff_records.effects import WatchChanges as WatchChanges
+from doeff_records.effects import WatchEvents as WatchEvents
+from doeff_records.principals import Principal as Principal
+from doeff_records.principals import writer_of as writer_of
+from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
+from doeff_records.wire import OPERATIONS as OPERATIONS
+from doeff_records.wire import PublicEffect as PublicEffect
+from doeff_records.wire import WireRequest as WireRequest
+from doeff_records.wire import WireRefusal as WireRefusal
+from doeff_records.wire import WireMalformed as WireMalformed
+from doeff_records.wire import STATUS_OF_ERROR as STATUS_OF_ERROR
+from doeff_records.wire import ERROR_MALFORMED as ERROR_MALFORMED
+from doeff_records.wire import ERROR_NOT_FOUND as ERROR_NOT_FOUND
+from doeff_records.wire import ERROR_STORE_UNAVAILABLE as ERROR_STORE_UNAVAILABLE
+from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
+from doeff_records.wire import decode_request as decode_request
+from doeff_records.wire import encode_answer as encode_answer
+from doeff_records.wire import refusal_json as refusal_json
+from doeff_records.wire import undeclared_reason as undeclared_reason
 METHOD_GET: str
 METHOD_POST: str
 PATH_HEALTHZ: str
-
-PublicEffect: TypeAlias = (
-    ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd
-)
 
 @dataclass(frozen=True)
 class HttpRequest:
@@ -53,13 +45,22 @@ class HttpAnswer:
 @dataclass(frozen=True)
 class RecordsService:
     schema: RecordsSchema
-    handler_for: Callable[[str], object]
+    handler_for: Callable
 
-def records_service(schema: RecordsSchema, handler_for: Callable[[str], object]) -> Program[RecordsService, object]: ...
-def json_answer(status: int, body: dict[str, object]) -> Program[HttpAnswer, object]: ...
-def refusal_answer(error: str, reason: str) -> Program[HttpAnswer, object]: ...
-def undeclared_name(schema: RecordsSchema, ask: PublicEffect) -> Program[str | None, object]: ...
-def serve_operation(
-    service: RecordsService, principal: Principal, operation: str, body: bytes
-) -> Program[HttpAnswer, object]: ...
-def respond(service: RecordsService, request: HttpRequest) -> Program[HttpAnswer, object]: ...
+def records_service(schema: RecordsSchema, handler_for: Callable) -> _Program[RecordsService, object]:
+    ...
+
+def json_answer(status: int, body: dict) -> _Program[HttpAnswer, object]:
+    ...
+
+def refusal_answer(error: str, reason: str) -> _Program[HttpAnswer, object]:
+    ...
+
+def undeclared_name(schema: RecordsSchema, ask: PublicEffect) -> _Program[str | None, object]:
+    ...
+
+def serve_operation(service: RecordsService, principal: Principal, operation: str, body: bytes) -> _Program[HttpAnswer, object]:
+    ...
+
+def respond(service: RecordsService, request: HttpRequest) -> _Program[HttpAnswer, object]:
+    ...

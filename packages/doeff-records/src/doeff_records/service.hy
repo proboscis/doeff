@@ -10,14 +10,15 @@
 ;;; 綴りの正本 = wire.hy。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "protocol"})
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import collections.abc [Callable])
 (import json)
 (import doeff [with_handlers])
 (import doeff_records.values [RecordsSchema Unreachable])
+(import doeff_records.effects [WatchChanges WatchEvents])
 (import doeff_records.principals [Principal writer-of])
 (import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
-                            ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
+                            ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE WATCH-MAX-SECONDS
                             decode-request encode-answer refusal-json undeclared-reason])
 
 (setv METHOD-GET "GET" METHOD-POST "POST")
@@ -88,7 +89,14 @@
       (return (! (refusal-answer ERROR-MALFORMED (str error))))))
   (<- undeclared (undeclared-name service.schema decoded.effect))
   (when undeclared (return (! (refusal-answer ERROR-NOT-FOUND undeclared))))
-  (<- answer (with_handlers [(service.handler-for principal.name)] decoded.effect))
+  ;; 変化の待ち(WatchChanges・WatchEvents)は service の中で待つ秒を WATCH-MAX-SECONDS で切る(long-poll — #3074)。待ちは置き場の待ち
+  ;; (memory の呼び鈴・PostgreSQL の待ち)がそのまま答え、変化が無ければこの秒で空の答えを返す — client はそれを受けて撃ち直し、
+  ;; 間に立つ口の時間切れより先に答えが届く。他の effect はそのまま。
+  (val ask (match decoded.effect
+             (WatchChanges :timeout timeout) (replace decoded.effect :timeout (min timeout WATCH-MAX-SECONDS))
+             (WatchEvents :timeout timeout) (replace decoded.effect :timeout (min timeout WATCH-MAX-SECONDS))
+             effect effect))
+  (<- answer (with_handlers [(service.handler-for principal.name)] ask))
   (when (isinstance answer Unreachable)
     (return (! (refusal-answer ERROR-STORE-UNAVAILABLE answer.detail))))
   (<- encoded (encode-answer answer))

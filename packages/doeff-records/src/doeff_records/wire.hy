@@ -1,4 +1,5 @@
-;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 8 つの要求と答えを JSON の値へ写し、JSON の値から読む。
+;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 8 つと列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
+;;; 値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
 ;;; HTTP の口(service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
@@ -17,8 +18,8 @@
 (import doeff_hy.json_value [JsonValue])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              RowsConflict RowsRefused StreamEnd StreamEmpty UndeclaredTable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents ReadStreamEnd])
+                              RowsConflict RowsRefused StreamEnd StreamEmpty UndeclaredTable EventsMoved EventsQuiet])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 
 (setv PATH-PREFIX "/v1/records/")
 ;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りをそのまま書き手の名に使う・#2988)。
@@ -29,7 +30,15 @@
 (val OP-PUT-ROWS "put-rows")
 ;; 追記の列の末尾の番号を 1 回で読む操作(本文 = {stream})。前の 7 つの綴りは変えずに足した。
 (val OP-READ-STREAM-END "read-stream-end")
-(setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END))
+;; 追記の列の頭が after より進むのを待つ操作(本文 = {stream after timeout} — 答え = eventsMoved | eventsQuiet)。前の 8 つの綴りは
+;; 変えずに足した(#3074 — client が列の待ちを ReadEvents の読み直しでなく、service の中の置き場の待ちの long-poll で待つため)。
+(val OP-WATCH-EVENTS "watch-events")
+(setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END
+                   OP-WATCH-EVENTS))
+;; 変化の待ち(watch-changes・watch-events)1 回の要求で service が待つ秒の上限(#3074 の long-poll)。service は要求の timeout をこの秒で
+;; 切って置き場の待ちへ渡し、変化が無ければこの秒で空の答え(changes の空・eventsQuiet)を返す。client は待ちをこの秒ごとの要求に
+;; 分けて撃ち直す(眠らない)。間に立つ口の要求の時間切れより短く置く。
+(val WATCH-MAX-SECONDS 25.0)
 ;; 書きの操作(行か出来事を書く — 計器の要求の種 write)。OPERATIONS の残りは読み(read)。
 (val WRITE-OPERATIONS (frozenset #(OP-PUT-ROW OP-PUT-ROWS OP-APPEND-EVENT)))
 
@@ -89,12 +98,13 @@
                     OP-APPEND-EVENT #("appended" "refused")
                     OP-READ-EVENTS #("events")
                     OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")
-                    OP-READ-STREAM-END #("streamEnd" "streamEmpty")})
+                    OP-READ-STREAM-END #("streamEnd" "streamEmpty")
+                    OP-WATCH-EVENTS #("eventsMoved" "eventsQuiet")})
 
 ;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy.json_value)。
-(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd))
+(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
-                    WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty))
+                    WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet))
 
 
 (defclass WireMalformed [ValueError]
@@ -323,6 +333,8 @@
       (WireRequest OP-READ-EVENTS {"stream" stream "after" after "limit" limit})
     (ReadStreamEnd :stream stream)
       (WireRequest OP-READ-STREAM-END {"stream" stream})
+    (WatchEvents :stream stream :after after :timeout timeout)
+      (WireRequest OP-WATCH-EVENTS {"stream" stream "after" after "timeout" (float timeout)})
     (PutRows :writes writes)
       (do (val write-items [])
           (for [write writes] (.append write-items (! (row-write-json write))))
@@ -377,6 +389,11 @@
       "read-stream-end"
         (do (<- (object-of body "read-stream-end の本文" #("stream") #()))
             (ReadStreamEnd (! (string-of (get body "stream") "stream"))))
+      "watch-events"
+        ;; 新しい操作なので欄は 3 つとも必須(既定へ倒す読みを置かない — encode-request は常に 3 つを送る)。
+        (do (<- (object-of body "watch-events の本文" #("stream" "after" "timeout") #()))
+            (WatchEvents (! (string-of (get body "stream") "stream")) :after (! (integer-of (get body "after") "after"))
+                         :timeout (! (seconds-of (get body "timeout") "timeout"))))
       _ (raise (WireMalformed (.format "知らない操作: {!r}(操作 = {})" request.operation OPERATIONS)))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed request.operation error)))))
@@ -394,6 +411,7 @@
     (AppendEvent :stream stream) (NamedStores #() #(stream))
     (ReadEvents :stream stream) (NamedStores #() #(stream))
     (ReadStreamEnd :stream stream) (NamedStores #() #(stream))
+    (WatchEvents :stream stream) (NamedStores #() #(stream))
     (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())))
 
 
@@ -487,7 +505,9 @@
     (RowsRefused :index index :table table :key key :reason reason)
       {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
     (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}
-    (StreamEmpty) {"kind" "streamEmpty"}))
+    (StreamEmpty) {"kind" "streamEmpty"}
+    (EventsMoved) {"kind" "eventsMoved"}
+    (EventsQuiet) {"kind" "eventsQuiet"}))
 
 
 (defk row-from [value]
@@ -601,6 +621,8 @@
         (do (<- (object-of value "streamEnd" #("kind" "sequence") #()))
             (StreamEnd (! (integer-of (get value "sequence") "streamEnd.sequence"))))
       {"kind" "streamEmpty"} (do (<- (object-of value "streamEmpty" #("kind") #())) (StreamEmpty))
+      {"kind" "eventsMoved"} (do (<- (object-of value "eventsMoved" #("kind") #())) (EventsMoved))
+      {"kind" "eventsQuiet"} (do (<- (object-of value "eventsQuiet" #("kind") #())) (EventsQuiet))
       {"kind" "writtenRows"} (! (written-rows-from value))
       {"kind" "rowsConflict"} (! (rows-conflict-from value))
       {"kind" "rowsRefused"}
