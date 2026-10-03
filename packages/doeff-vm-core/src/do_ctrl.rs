@@ -5,7 +5,7 @@
 //!
 //! The VM is language-agnostic — no Python types here.
 
-use crate::continuation::Continuation;
+use crate::continuation::{BoundaryKind, Continuation};
 use crate::ids::VarId;
 use crate::value::Value;
 
@@ -74,6 +74,18 @@ pub enum DoCtrl {
     /// proceeds unchanged.
     /// body: DoExpr — evaluated under the observer.
     WithObserve { observer: Value, body: Box<DoCtrl> },
+
+    /// Install a stack of boundaries (handlers and observers) and execute body,
+    /// in one step — the same scope as nesting `WithHandler` / `WithObserve`
+    /// once per entry, so a task started by a scheduler gets the boundary stack
+    /// captured at its spawn site without paying a step per layer
+    /// (agora-redesign #3149).
+    /// boundaries: innermost first (the order `boundary_callables` returns);
+    /// each callable is a `Value::Callable`.
+    /// The boundary fibers are chained directly (outermost under the current
+    /// segment, each inner one's parent the next outer one) and a single body
+    /// fiber sits under the innermost — no empty body fiber between layers.
+    WithBoundaries { boundaries: Vec<(BoundaryKind, Value)>, body: Box<DoCtrl> },
 
     // --- Query ---
     /// Walk the fiber chain from a starting fiber, collect source locations.

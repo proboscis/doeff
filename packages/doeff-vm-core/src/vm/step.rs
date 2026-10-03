@@ -8,7 +8,7 @@
 //! The step machine is a simple loop: take Signal, process it, return next Signal.
 //! No implicit behavior. No Python. No trace state.
 
-use crate::continuation::Continuation;
+use crate::continuation::{BoundaryKind, Continuation};
 use crate::do_ctrl::DoCtrl;
 use crate::driver::{Signal, SignalAction, StepResult};
 use crate::error::VMError;
@@ -274,6 +274,10 @@ impl VM {
                 ),
                 error_context,
             ),
+
+            DoCtrl::WithBoundaries { boundaries, body } => {
+                self.eval_with_boundaries(boundaries, *body, error_context)
+            }
 
             DoCtrl::WithObserve { observer, body } => {
                 self.eval_with_observe(observer, *body, error_context)
@@ -903,6 +907,70 @@ impl VM {
         let body_fid = self.alloc_segment(body_fiber);
 
         // 3. Switch to body fiber and evaluate body DoExpr
+        self.current_segment = Some(body_fid);
+        continue_eval(body, error_context)
+    }
+
+    /// Install a whole boundary stack around `body` in one step, so a task
+    /// re-entering the handlers captured at its spawn site does not pay one
+    /// step and one empty body fiber per layer (agora-redesign #3149).
+    ///
+    /// `boundaries` is innermost first. The boundary fibers are created
+    /// outermost first, each one the parent of the next (`match_with` parents
+    /// the new boundary to the current segment and makes it current), and a
+    /// single body fiber is placed under the innermost boundary. The handler
+    /// and observer objects are the same ones `eval_with_handler` and
+    /// `eval_with_observe` build, so dispatch and `boundary_callables` see the
+    /// same stack as the nested form. Every entry is checked before any fiber
+    /// is created, so a bad entry installs nothing.
+    fn eval_with_boundaries(
+        &mut self,
+        boundaries: Vec<(BoundaryKind, Value)>,
+        body: DoCtrl,
+        error_context: Option<Vec<Value>>,
+    ) -> StepResult {
+        if boundaries.is_empty() {
+            return continue_eval(body, error_context);
+        }
+        let mut callables = Vec::with_capacity(boundaries.len());
+        for (kind, value) in boundaries {
+            match value {
+                Value::Callable(c) => callables.push((kind, c)),
+                other => {
+                    let role = match kind {
+                        BoundaryKind::Handler => "handler",
+                        BoundaryKind::Observer => "observer",
+                    };
+                    return error_result(
+                        VMError::type_error(format!(
+                            "WithBoundaries: {} must be Callable, got {:?}",
+                            role, other
+                        )),
+                        error_context,
+                    );
+                }
+            }
+        }
+
+        for (kind, callable) in callables.into_iter().rev() {
+            let marker = crate::ids::Marker::fresh();
+            let boundary = match kind {
+                BoundaryKind::Handler => {
+                    crate::segment::Handler::prompt(marker, marker, callable, None)
+                }
+                BoundaryKind::Observer => crate::segment::Handler::intercept(
+                    marker,
+                    callable,
+                    None,
+                    crate::segment::InterceptMode::Include,
+                    None,
+                ),
+            };
+            self.match_with(boundary);
+        }
+
+        let body_fiber = Fiber::new(self.current_segment);
+        let body_fid = self.alloc_segment(body_fiber);
         self.current_segment = Some(body_fid);
         continue_eval(body, error_context)
     }

@@ -1356,6 +1356,50 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
             body: Box::new(body_doctrl),
         });
     }
+    if let Ok(wb) = obj.downcast::<PyWithBoundaries>() {
+        let wb = wb.get();
+        let mut boundaries = Vec::new();
+        let entries = wb
+            .boundaries
+            .bind(py)
+            .try_iter()
+            .map_err(|e| format!("WithBoundaries: boundaries: {}", e))?;
+        for (i, entry) in entries.enumerate() {
+            let entry = entry.map_err(|e| format!("WithBoundaries: boundary[{}]: {}", i, e))?;
+            let kind: String = entry
+                .get_item(0)
+                .and_then(|k| k.extract())
+                .map_err(|e| format!("WithBoundaries: boundary[{}] kind: {}", i, e))?;
+            let callable = entry
+                .get_item(1)
+                .map_err(|e| format!("WithBoundaries: boundary[{}] callable: {}", i, e))?;
+            // The same conversions as WithHandler / WithObserve, so each entry
+            // installs exactly what the nested form would.
+            let boundary = match kind.as_str() {
+                "handler" => (
+                    doeff_vm_core::BoundaryKind::Handler,
+                    wrap_handler(py, &callable)?,
+                ),
+                "observer" => (
+                    doeff_vm_core::BoundaryKind::Observer,
+                    python_to_value(py, &callable),
+                ),
+                other => {
+                    return Err(format!(
+                        "WithBoundaries: boundary[{}] kind must be 'handler' or 'observer', got {:?}",
+                        i, other
+                    ))
+                }
+            };
+            boundaries.push(boundary);
+        }
+        let body_doctrl = classify_python_object(py, &wb.body.bind(py))
+            .map_err(|e| format!("WithBoundaries body: {}", e))?;
+        return Ok(DoCtrl::WithBoundaries {
+            boundaries,
+            body: Box::new(body_doctrl),
+        });
+    }
     if let Ok(gt) = obj.downcast::<PyGetTraceback>() {
         let value = continuation_traceback_value(py, &gt.get().continuation, "GetTraceback")?;
         return Ok(DoCtrl::Pure { value });
