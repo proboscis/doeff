@@ -113,7 +113,13 @@ def resource_version_of(state: ClusterState, key: str) -> int | None:
 def status_row_to_json(row: StatusRow) -> dict:
     ...
 
+def liveness_deadline(worker: WorkerInfo, window_ms: int) -> int:
+    ...
+
 def alive(now: int, worker: WorkerInfo, window_ms: int) -> bool:
+    ...
+
+def silent_names(state: ClusterState, now: int, timing: ClusterTiming) -> frozenset:
     ...
 
 def note_liveness(state: ClusterState, now: int, timing: ClusterTiming) -> ClusterState:
