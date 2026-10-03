@@ -784,12 +784,10 @@
 ;; 記録の置き場の源と同じ(結び SignalTables・ChangedRow)— 組み立ての違いは土台が鍵 SignalSourceFactory に答える値だけ。
 
 (defrecord MemoryMark
-  "模擬の源が読み終えた置き場の位置: epoch = 置き場の版 / sequence = 表の変更の番号 / event = 列の出来事の番号 / outage = 読んだ時の
-   届かない状態(faults.SetStoreOutage の値・None = 届く — 結んだ名が届く → 届かないに変わったことを次の読みで知るため・#3100)。"
+  "模擬の源が読み終えた置き場の位置: epoch = 置き場の版 / sequence = 表の変更の番号 / event = 列の出来事の番号。"
   #^ int epoch
   #^ int sequence
-  #^ int event
-  #^ (| SetStoreOutage None) outage)
+  #^ int event)
 
 
 (defrecord MemorySignals
@@ -802,7 +800,7 @@
   {:pre [(: store MemoryStore)] :post [(: % MemoryMark)]}
   "置き場の今の位置を読むため(模擬の源の始まり — 始まりの位置の effect を出さない)。"
   (with [store.lock]
-    (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head :outage store.outage)))
+    (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head)))
 
 
 (deff binding-keys [binding changes events]  ; defk にできない: 錠の外で同期に組む純粋な判断(memory-signals-since が内包表記の中で呼ぶ)
@@ -822,26 +820,17 @@
 (deff memory-signals-since [store bindings mark]  ; defk にできない: 錠の内で同期に置き場を読む(置き場の書きと同じ作法)
   {:pre [(: store MemoryStore) (: bindings tuple) (: mark MemoryMark)] :post [(: % MemorySignals)]}
   "位置 mark より後の書きを、結びごとの合図にするため(結んだ表と列の書きの無い結びは出さない)。置き場の版が変わった・保持の刈りで位置が床より
-   前になった時は、結びごとに keys の空な合図を 1 つ発する(受け手は読み直す — 記録の置き場の源が Reset で読み直すのと同じ)。結んだ名(表と列)の
-   どれかが届く → 届かないに変わった時(SetStoreOutage — 呼び鈴を全部鳴らすので源が起きて読む)も同じく keys の空な合図を 1 つずつ発する(届かない
-   間は書きが無く合図が来ないので、受け手は読み直して不達を自分で見る — 記録の置き場の源が待ちの最初の Unreachable で発するのと同じ・#3100)。
-   届かないまま・届く側へ戻った時は発さない(戻りは受け手の読み直しの期限が拾う)。"
+   前になった時は、結びごとに keys の空な合図を 1 つ発する(受け手は読み直す — 記録の置き場の源が Reset で読み直すのと同じ)。"
   (with [store.lock]
-    (setv now (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head :outage store.outage)
+    (setv now (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head)
           lost (or (!= mark.epoch store.epoch) (< mark.sequence store.floor))
           changes (if lost #() (tuple (gfor change store.changes :if (> change.sequence mark.sequence) change)))
           start (bisect.bisect-right store.events mark.event :key (fn [event] event.sequence))
           events (tuple (cut store.events start None))))
-  ;; 届かない状態 outage の下で届かない結んだ名(faults.SetStoreOutage の names が None なら全部)— 前の位置と今で比べ、新しく届かなくなった名が在れば変わり目。
-  (setv names (tuple (gfor binding bindings name (+ binding.tables binding.streams) name))
-        down-under (fn [outage] (frozenset (gfor name names
-                                                 :if (and (is-not outage None) (or (is outage.names None) (in name outage.names)))
-                                                 name)))
-        reread (or lost (bool (- (down-under now.outage) (down-under mark.outage)))))
   (MemorySignals :signals (tuple (gfor binding bindings
                                        :setv keys (binding-keys binding changes events)
-                                       :if (or reread keys)
-                                       (binding.signal :keys (if reread #() keys))))
+                                       :if (or lost keys)
+                                       (binding.signal :keys (if lost #() keys))))
                  :mark now))
 
 

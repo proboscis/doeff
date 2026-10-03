@@ -12,8 +12,6 @@ SignalSourceFactory の検 — #3127・設計 #3072。
   別の handler の組(模擬の別の process — 同じ置き場を別の memory_records_handler で書く)の書きでも合図が出る。
   poll の effect(WatchChanges・WatchEvents・Delay)を出さない。
   本体が終われば源の task が止まり、置き場に呼び鈴を残さない。
-  結んだ名が届く → 届かないに変わった時(faults.SetStoreOutage)だけ、keys の空な合図(読み直し)を 1 度発する — 結んでいない名だけの不達・
-  同じ不達の置き直し・戻った時には発さない(#3100 — 前は何も発さず、書きの無い不達の間、本体が読み直さなかった)。
 """
 
 from dataclasses import dataclass
@@ -28,7 +26,6 @@ from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handle
 from doeff_events.effects import WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
-from doeff_records.faults import SetStoreOutage
 from doeff_records.event_source import (
     RECORDS_SIGNAL_SOURCE,
     ReadSignalSource,
@@ -42,7 +39,6 @@ from doeff_records.http_client import RecordsEndpoint, http_records_handler
 from doeff_records.values import ExpectAny, WrittenRows
 from doeff_time import Delay, DelayEffect, GetTime
 from tests.test_event_source import (
-    DETAIL,
     SCHEMA,
     STARTS_AT_SUBSCRIBE,
     WRITER,
@@ -214,51 +210,6 @@ def test_the_source_stops_and_leaves_no_bell_when_the_body_ends() -> None:
     signal = _run_on(store, _stacked(_layer(store, CHANGED_ON_JOBS_AND_LANES), _receive_once()))
     assert isinstance(signal, Changed), signal
     assert store.bells == {}, store.bells
-
-
-# 不達の筋書き(秒 → 届かない名・None = 戻す): 結んでいない表 notes だけ → jobs も足す(結んだ名が落ちる)→ 同じ不達の置き直し(呼び鈴は
-# また鳴る)→ 戻す。受け手は 10 秒の期限まで受ける。
-OUTAGE_STEPS: tuple[tuple[float, frozenset[str] | None], ...] = (
-    (1.0, frozenset({"notes"})),
-    (2.0, frozenset({"notes", "jobs"})),
-    (3.0, frozenset({"notes", "jobs"})),
-    (4.0, None),
-)
-DEADLINE_SECONDS = 10.0
-
-
-@do
-def _set_outages() -> EffectGenerator[None]:
-    """筋書きの手(本体とは別の task): OUTAGE_STEPS の秒ごとに置き場の届かない状態を置く・戻す。"""
-    start = yield GetTime()
-    for seconds, names in OUTAGE_STEPS:
-        now = yield GetTime()
-        yield Delay(seconds - (now - start).total_seconds())
-        yield SetStoreOutage(None if names is None else DETAIL, names=names)
-
-
-@do
-def _received_through_outages() -> EffectGenerator[tuple[tuple[float, object], ...]]:
-    """本体: 期限を掛けて筋書きの手を Spawn し、期限が来るまでに受けた合図を受けた秒と並べて返す(最後は期限)。"""
-    start = yield GetTime()
-    yield ArmTimer("deadline", start + timedelta(seconds=DEADLINE_SECONDS))
-    script = yield Spawn(_set_outages())
-    received: tuple[tuple[float, object], ...] = ()
-    while not received or not isinstance(received[-1][1], TimerFired):
-        signal = yield WaitForEvent(Changed, TimerFired)
-        now = yield GetTime()
-        received = (*received, ((now - start).total_seconds(), signal))
-    yield Wait(script)
-    return received
-
-
-def test_a_bound_table_falling_unreachable_signals_one_reread() -> None:
-    # 失敗ケース: 前の模擬の源は置き場を直に読み、届かない状態を見なかった — 書きの無い不達の間は合図が来ず、受け手は期限まで起きなかった
-    # (#3100 の画面の読み手が live = true のまま)。結んだ表 jobs が落ちた 2 秒に keys の空な合図が 1 つだけ来て、notes だけの不達(1 秒)・
-    # 置き直し(3 秒)・戻り(4 秒)では来ない。
-    store = MemoryStore(SCHEMA)
-    received = _run_on(store, _stacked(_layer(store, CHANGED_ON_JOBS_AND_LANES), _received_through_outages()))
-    assert received == ((2.0, Changed(())), (DEADLINE_SECONDS, TimerFired("deadline"))), received
 
 
 def test_the_factory_key_names_the_production_and_the_memory_sources() -> None:
