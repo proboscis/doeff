@@ -23,6 +23,9 @@
 (import doeff_cluster.coordinator.core.program [coordinator-step])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch quiet-step quiet-due])
 (import doeff_cluster.coordinator.core.idle_policy :as idle-policy)
+(import doeff_cluster.coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms sweep-due])
+(import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
+(import doeff_cluster.coordinator.intent.cluster_model [BoardRow ProgramRow Drain WarmEntry])
 (import dataclasses [replace])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of])
 (import doeff_core_effects.handlers [state :as session-store])
@@ -531,3 +534,50 @@
   (assert (= (len skipped.steps) (len tried.steps)) #((len skipped.steps) (len tried.steps)))
   (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at b.at)))
   (assert (= apart []) apart))
+
+
+;; --- 掃除の期限(#3063) ---------------------------------------------------------------------------------------------------
+;; sweep-due は、掃除の判断(盤の行・drain・温める表・詰めた Program)が比べに使う期限と同じ値から次の刻を返す。
+;; - 判断ごとに: 返す刻 D の 1 ms 前では判断が状態を変えず、D で変える。反例 — sweep-due か判断の片方だけ期限の値を変えると赤。
+;; - 期限の 12.3 秒目の盤の行を持つ静かな区間は、試さずに進めても 1 秒ごとに試した歩と同じ(行は 13 秒目の歩で消える — 飛び越さない)。
+;;   反例 — 次の拍(行の有無)ではなく期限を遅く返す形は、行が消える歩を飛び越して赤。
+
+(defk swept-at [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "掃除の 4 つの判断(sweep-board・sweep-drains・sweep-warms・sweep-programs)を now で当てた状態を求めるため(どれも変えなければ同じ object)。"
+  (<- board ClusterState (sweep-board state now))
+  (<- drains ClusterState (sweep-drains board now))
+  (<- warms ClusterState (sweep-warms drains now))
+  (sweep-programs warms now))
+
+
+(deftest test-the-sweep-due-is-the-deadline-each-sweep-compares
+  (val due-at 12345)
+  (val states [(ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms due-at :size 1)})
+               (ClusterState :drains {"w" (Drain :worker "w" :since-ms 0 :until-ms due-at)})
+               (ClusterState :warms {"e" (WarmEntry :key "e" :runtime-env {} :needs #() :until-ms due-at :holder "w")})
+               (ClusterState :programs {"p" (ProgramRow :blob "" :versions {} :put-ms (- due-at PROGRAM-GRACE-MS 1))})])
+  (for [state states]
+    (<- due (| int None) (sweep-due state 0 (ClusterTiming)))
+    (<- before ClusterState (swept-at state (- due-at 1)))
+    (<- at ClusterState (swept-at state due-at))
+    (assert (= due due-at) due)
+    (assert (is before state) "期限の 1 ms 前に判断が状態を変えた")
+    (assert (is-not at state) "期限の刻に判断が状態を変えなかった"))
+  ;; 期限の無い盤の行だけの状態は、時刻では何も変わらない。
+  (<- none (| int None) (sweep-due (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms None :size 1)}) 0 (ClusterTiming)))
+  (assert (is none None) none))
+
+
+(deftest test-a-board-row-expiring-in-a-quiet-stretch-is-swept-on-the-same-step
+  (val state (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms 12300 :size 1)}))
+  (val start (QuietStep :at 0 :state state :watchers #() :marked False))
+  (<- skipped QuietStretch (quiet-stretch (IdleProbe state (ClusterTiming) (ClusterNaming)) start 30000))
+  (<- tried QuietStretch (tried-steps start 30000))
+  (assert (= skipped.end-at tried.end-at) #(skipped.end-at tried.end-at))
+  (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at (len a.state.board) (len b.state.board))))
+  (assert (= (len skipped.steps) (len tried.steps)) #((len skipped.steps) (len tried.steps)))
+  (assert (= apart []) apart)
+  ;; 1 秒ごとに試した歩で、行は 12 秒目の歩まで在り、行を消す 13 秒目の歩(静かでない歩)で区間が切れる(この検が期限の刻を通る事の確かめ)。
+  (assert (= #(tried.end-at (len (. (get tried.steps -1) state board))) #(13000 1))
+          #(tried.end-at (lfor s tried.steps #(s.at (len s.state.board))))))
