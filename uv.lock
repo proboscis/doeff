@@ -1301,6 +1301,7 @@ source = { editable = "packages/doeff-records" }
 dependencies = [
     { name = "doeff" },
     { name = "doeff-core-effects", extra = ["http-server"] },
+    { name = "doeff-events" },
     { name = "doeff-hy" },
     { name = "doeff-time" },
     { name = "hy" },
@@ -1316,6 +1317,7 @@ pg = [
 requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-core-effects", extras = ["http-server"], editable = "packages/doeff-core-effects" },
+    { name = "doeff-events", editable = "packages/doeff-events" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "hy", specifier = ">=1.3" },
