@@ -8,9 +8,13 @@ before its deadline, which the clock handler withdraws (the virtual clock never 
 published. When the deadline passes first, the task publishes ``TimerFired(tag)``.
 
 Install it inside the event handler and the clock handler (the timer task's ``Publish`` / ``WaitWithin`` /
-``GetTime`` go to the handlers outside this one), inside ``scheduled``. A ``TimerFired`` is delivered as the
-event handler delivers any event: the in-memory ``event_handler`` hands it to the programs waiting for it at
-that moment.
+``GetTime`` go to the handlers outside this one), inside ``scheduled``.
+
+A ``TimerFired`` is delivered as the event handler delivers any event. With the in-memory ``event_handler()``
+that means only to the programs waiting for it at that moment: **a fire while no program waits is lost**, so a
+worker that is busy (in another wait, or processing) when its deadline passes never sees that deadline. A
+worker must not rely on ``ArmTimer`` until its event handler keeps a queue per subscriber (agora-controllers
+docs/design/event-waits/README.md 2 (b) — agora-redesign #3075).
 """
 
 from collections.abc import Hashable
