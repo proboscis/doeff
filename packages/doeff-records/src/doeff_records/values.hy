@@ -9,7 +9,7 @@
 ;;; 値を持つ型は作る時に受けた写像を凍らせる(実行時は dict を渡しても、欄には FrozenMap が入る — 型の注記は FrozenMap なので、
 ;;; 静的な検査は呼び手に FrozenMap / frozen-json-object で包ませる)。JSON へ書く境界は thaw-json で戻す。
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が typed.hy に在る — 業務の呼び手はそちらを使う。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [val deff])
 (require doeff-hy.record [defrecord])
 (import copy)
 (import dataclasses [dataclass field])
@@ -135,6 +135,10 @@
     (setv names (lfor f self.fields f.name))
     (when (!= (len names) (len (set names)))
       (raise (ValueError (.format "TableDecl.fields の欄の名が重なる: {!r}" names))))
+    ;; 欄の名 → 欄の宣言の索引を宣言 1 つに 1 度だけ作る(下の declares・writers-of・founders-of が引く)— 書きの判断が行ごと・欄ごとに
+    ;; 欄の tuple を全部なめ直さないため(#2670 根 E — 5 万行の置き場への書きで欄の数の 2 乗の比べが走っていた)。dataclass の欄には
+    ;; しない(等しさ・hash・表示は宣言の欄だけで決まる)。pickle と copy は __setstate__ が作り直す。
+    (object.__setattr__ self "_by_name" (dict (zip names self.fields)))
     (for [name self.key-fields]
       (when (not (self.declares name))
         (raise (ValueError (.format "鍵の欄 {!r} の書き手(= 行を作ってよい書き手)が fields に無い" name)))))
@@ -169,21 +173,29 @@
     "宣言した欄の名(宣言の順)。"
     (tuple (gfor f self.fields f.name)))
 
+  (deff __setstate__ [self state]  ; defk にできない: pickle と copy が呼ぶ class の口(同期の呼び — Program を実行しない)
+    {:pre [(: self TableDecl) (: state dict)] :post [(: % None)] :tags {:context "records" :role "type"}}
+    "pickle / copy から戻す時に中身を入れ、欄の名の索引を作り直すため(索引を持つ前に pickle した宣言も引けるように)。"
+    (.update self.__dict__ state)
+    (object.__setattr__ self "_by_name" (dict (gfor f self.fields #(f.name f)))))
+
   (defn #^ bool declares [self #^ str name]
     "name が宣言した欄か。"
-    (any (gfor f self.fields (= f.name name))))
+    (in name self._by-name))
 
   (defn #^ tuple writers-of [self #^ str name]
     "欄 name を書いてよい書き手の名(宣言の外の欄は UndeclaredField)。"
-    (for [f self.fields]
-      (when (= f.name name) (return f.writers)))
-    (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
+    (setv found (.get self._by-name name))
+    (when (is found None)
+      (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
+    found.writers)
 
   (defn #^ tuple founders-of [self #^ str name]
     "欄 name を行の誕生の書きに限って書いてよい書き手の名(FieldDecl.founders・宣言の外の欄は UndeclaredField)。"
-    (for [f self.fields]
-      (when (= f.name name) (return f.founders)))
-    (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name)))))
+    (setv found (.get self._by-name name))
+    (when (is found None)
+      (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
+    found.founders))
 
 
 (defclass [(dataclass :frozen True)] StreamDecl []
