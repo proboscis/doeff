@@ -25,7 +25,7 @@
                                          MemoDeleteEffect MemoExistsEffect])
 (import doeff_core_effects.cache-effects [CacheGetEffect CachePutEffect
                                           CacheDeleteEffect CacheExistsEffect])
-(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Cancel Race
+(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Cancel Discard Race
                                       CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore
                                       ReleaseSemaphore CreateExternalPromise
@@ -67,7 +67,7 @@
                                                 AppendHttpScript ReadHttpServed])
 (import doeff_core_effects.aiohttp-http-server [aiohttp-http-server])
 (import doeff_core_effects.scripted-http-server [scripted-http-server])
-(import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables
+(import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlTransaction SetSqlOutage])
 (import doeff_core_effects.postgres-sql [postgres-sql-handler])
 (import doeff_core_effects.pooled-postgres-sql [pooled-postgres-sql-handler])
@@ -121,7 +121,7 @@
 ((handles Listen) listen-handler)
 ((handles Await) await-handler)
 ((handles CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect) cache-handler)
-((handles Spawn TaskCompleted Gather Wait Cancel Race
+((handles Spawn TaskCompleted Gather Wait Cancel Discard Race
           CreatePromise CompletePromise FailPromise
           CreateSemaphore AcquireSemaphore ReleaseSemaphore
           CreateExternalPromise _SchedulerIntrospection) scheduled)
@@ -210,7 +210,7 @@
 
 (defdomain doeff-scheduler
   :title "Scheduler 語彙 — タスク・promise・semaphore の実行基盤"
-  :effects [Spawn TaskCompleted Gather Wait Cancel Race
+  :effects [Spawn TaskCompleted Gather Wait Cancel Discard Race
             CreatePromise CompletePromise FailPromise
             CreateSemaphore AcquireSemaphore ReleaseSemaphore
             CreateExternalPromise _SchedulerIntrospection]
@@ -280,10 +280,10 @@
 
 (defdomain doeff-sql
   :title "SQL 語彙 — 汎用の SQL の問い合わせ・投入・transaction"
-  :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SetSqlOutage]
+  :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SetSqlOutage]
   :handlers [postgres-sql-handler pooled-postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "postgres-sql-handler(scheduler を塞がない — 呼び 1 つに thread 1 本)/ pooled-postgres-sql-handler(同じく塞がない — 呼び手の pool と scheduler の semaphore)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。")
+  :docs "postgres-sql-handler(scheduler を塞がない — 呼び 1 つに thread 1 本)/ pooled-postgres-sql-handler(同じく塞がない — 呼び手の pool と scheduler の semaphore)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。SqlNotify・SqlHangNotice・SqlDropNotice は LISTEN / NOTIFY の呼び鈴で、答えるのは PostgreSQL の答え手 2 つだけ。")
 
 
 (defdomain doeff-process

@@ -5,9 +5,9 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents ReadStreamEnd])
-(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS encode-request decode-request encode-answer decode-answer])
+                              WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
 
@@ -23,6 +23,7 @@
    (AppendEvent "journal" "k2" "a string body")
    (ReadEvents "journal" :after 4 :limit 2)
    (ReadStreamEnd "journal")
+   (WatchEvents "journal" :after 4 :timeout 2.5)
    (PutRows #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
               (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))
               (RowWrite "parts" #("p2") {} (ExpectAny))))])
@@ -47,6 +48,8 @@
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
    #("read-stream-end" (StreamEnd 7))
    #("read-stream-end" (StreamEmpty))
+   #("watch-events" (EventsMoved))
+   #("watch-events" (EventsQuiet))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
    #("put-rows" (RowsConflict 1 "tickets" #("g1" "t1") ROW))
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
@@ -74,6 +77,17 @@
              (set (gfor kinds (.values ANSWER-KINDS) kind kinds kind)))))
 
 
+(deftest test-a-wait-longer-than-the-limit-is-read-as-the-limit
+  ;; long-poll の取り決め(#3074): 待ちの要求の秒は 1 回の要求の上限 WATCH-MAX-SECONDS で切って読む(service はその秒までしか待たない)。
+  ;; 上限より短い待ちはそのまま。
+  (for [#(operation body) [#("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1 "sequence" 0} "timeout" 600.0})
+                           #("watch-events" {"stream" "journal" "after" 0 "timeout" 600.0})]]
+    (setv decoded (run (decode-request (WireRequest operation body))))
+    (assert (= decoded.effect.timeout WATCH-MAX-SECONDS) decoded))
+  (setv short (run (decode-request (WireRequest "watch-events" {"stream" "journal" "after" 0 "timeout" 1.5}))))
+  (assert (= short.effect.timeout 1.5) short))
+
+
 (deftest test-malformed-json-is-refused-not-defaulted
   (for [#(operation body) [#("read-row" {"table" "parts"})
                            #("read-row" {"table" "parts" "key" ["p1"] "extra" 1})
@@ -93,6 +107,11 @@
                            #("read-stream-end" {})
                            #("read-stream-end" {"stream" "journal" "after" 0})
                            #("read-stream-end" {"stream" "Journal!"})
+                           ;; 列の待ち(#3074)は 3 つの欄が必須 — 足りない欄を既定に倒さない・負の after と待ちの秒は断る。
+                           #("watch-events" {"stream" "journal" "after" 0})
+                           #("watch-events" {"stream" "journal" "timeout" 1.0})
+                           #("watch-events" {"stream" "journal" "after" -1 "timeout" 1.0})
+                           #("watch-events" {"stream" "journal" "after" 0 "timeout" -1.0})
                            #("put-rows" {"writes" []})
                            #("put-rows" {"writes" {"table" "parts"}})
                            #("put-rows" {"writes" [{"table" "parts" "key" ["p1"] "value" {}}]})
@@ -128,7 +147,10 @@
                            #("read-stream-end" {"kind" "streamEnd" "sequence" 0})
                            #("read-stream-end" {"kind" "streamEnd" "sequence" True})
                            #("read-stream-end" {"kind" "streamEmpty" "sequence" 3})
-                           #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})]]
+                           #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})
+                           ;; 列の待ちの答えは eventsMoved | eventsQuiet だけ(欄を持たない)。
+                           #("watch-events" {"kind" "eventsMoved" "sequence" 3})
+                           #("watch-events" {"kind" "events" "items" [] "lastSequence" 0})]]
     (try
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))

@@ -9,6 +9,8 @@
 ;;;   - 他の effect は同じく継続を捨てて TransactionMisused を答えにし、run-in-transaction が rollback してから SqlTransactionMisuse を投げる
 ;;;     (約束 2・入れ子の SqlTransaction も同じ — 約束 3 の入れ子の断り)。
 ;;;   - program が例外を投げたら rollback して例外を通す。
+;;;   - SqlNotify(同じ database への合図)は、答え手が execute-notify を渡した時だけ同じ接続で流す(PostgreSQL の答え手 — commit した時だけ
+;;;     届く)。渡さない答え手(sqlite)の下では他の禁じた effect と同じく TransactionMisused。
 ;;; 継続を捨てる handler は defhandler の終端の検め(どの枝も resume / transfer / reperform / raise で終わる)が受けないので、scope は
 ;;; 素の handler の関数で書く。
 (require doeff-hy.macros [defk <- val var])
@@ -17,7 +19,7 @@
 (import dataclasses [dataclass])
 (import doeff [do :as program-handler Resume Program])
 (import doeff_vm [WithHandler])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlFailed SqlUnreachable SqlTransactionMisuse])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlNotify SqlFailed SqlUnreachable SqlTransactionMisuse])
 
 
 (defrecord TransactionAborted
@@ -30,8 +32,9 @@
   (#^ str reason))
 
 
-(defn transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert]  ; defk にできない: 継続を捨てる handler の関数(頭の註)
-  "接続 1 本に束ねた scope の handler を作るため。execute-query / execute-insert = (effect) → SqlRows | SqlFailed | SqlUnreachable の Program。"
+(defn #^ Callable transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert #^ (| Callable None) execute-notify]  ; defk にできない: 継続を捨てる handler の関数(頭の註)
+  "接続 1 本に束ねた scope の handler を作るため。execute-query / execute-insert = (effect) → SqlRows | SqlFailed | SqlUnreachable の Program・
+   execute-notify = (effect) → SqlRows | SqlFailed | SqlUnreachable の Program か None(合図を受けない答え手 — 成功は None で再開する)。"
   (defn [program-handler] scope [effect k]  ; defk にできない: handler の関数(effect と継続 k を受ける)
     (match effect
       (SqlQuery :database name) :if (= name database)
@@ -44,17 +47,22 @@
             (if (isinstance answer #(SqlFailed SqlUnreachable))
                 (return (TransactionAborted :failure answer))
                 (return (yield (Resume k answer)))))
-      (| (SqlQuery :database name) (SqlInsertRows :database name))
+      (SqlNotify :database name) :if (and (= name database) (is-not execute-notify None))
+        (do (setv answer (yield (execute-notify effect)))
+            (if (isinstance answer #(SqlFailed SqlUnreachable))
+                (return (TransactionAborted :failure answer))
+                (return (yield (Resume k None)))))
+      (| (SqlQuery :database name) (SqlInsertRows :database name) (SqlNotify :database name)) :if (!= name database)
         (return (TransactionMisused :reason (.format "database {!r} の transaction の中で別の database {!r} へ問い合わせた" database name)))
       _
-        (return (TransactionMisused :reason (.format "database {!r} の transaction の中で {} を出した(出せるのは SqlQuery と SqlInsertRows と純粋な計算だけ)"
+        (return (TransactionMisused :reason (.format "database {!r} の transaction の中で {} を出した(出せるのは SqlQuery と SqlInsertRows と — 答え手が受ければ — SqlNotify と純粋な計算だけ)"
                                                      database (. (type effect) __name__))))))
   scope)
 
 
-(defk run-in-transaction [database program execute-query execute-insert begin commit rollback]
+(defk run-in-transaction [database program execute-query execute-insert begin commit rollback [execute-notify None]]
   {:pre [(: database str) (: program Program) (: execute-query Callable) (: execute-insert Callable) (: begin Callable) (: commit Callable)
-         (: rollback Callable)]
+         (: rollback Callable) (: execute-notify (| Callable None))]
    :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
   "program を 1 つの transaction の中で走らせるため(頭の註)。begin / commit = () → None | SqlFailed | SqlUnreachable の Program・rollback = () → None
@@ -63,7 +71,7 @@
   (when (is-not began None)
     (return began))
   (try
-    (<- value (WithHandler (transaction-scope database execute-query execute-insert) program))
+    (<- value (WithHandler (transaction-scope database execute-query execute-insert execute-notify) program))
     (except [Exception]
       (<- (rollback))
       (raise)))

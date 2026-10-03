@@ -45,6 +45,7 @@ from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy
 from doeff_core_effects.scheduler import Promise, Task
+from doeff_events import ArmedTimer
 from doeff_hy.json_value import JsonValue
 from doeff_vm import WithHandler
 
@@ -238,6 +239,47 @@ class SimOutside:
     effects: tuple[type[object], ...]
     per_process: Callable[[str, str], ProcessOutside] | None = None
 
+# --- 行き止まりの見張り(#3078)-----------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class BusinessWait:
+    """出来事を待っている業務の task 1 つ: process の pid・job の名・待つ出来事の型の名(, で繋いだ文)。"""
+
+    pid: int
+    job: str
+    events: str
+
+@dataclass(frozen=True, kw_only=True)
+class LiveProcess:
+    """生きている業務の process 1 つ: pid・job の名・task の数(主の task 1 + 中で Spawn した task の数)。"""
+
+    pid: int
+    job: str
+    tasks: int
+
+@dataclass(frozen=True, kw_only=True)
+class WaitSnapshot:
+    """行き止まりの判じ(deadlock_of)の材料。armed_timers = 業務の timer(#3093)・world_due = sim の世界の次の予定の刻(#3094)。"""
+
+    live: tuple[LiveProcess, ...]
+    waits: tuple[BusinessWait, ...]
+    scenario_waiting: bool
+    rows_settled: bool
+    armed_timers: tuple[ArmedTimer, ...] = ()
+    world_due: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class SimDeadlock:
+    """行き止まり: waits = 出来事を待って止まっている業務の task の全部・at_ms = 見張りが見つけた仮想の時計の刻。"""
+
+    waits: tuple[BusinessWait, ...]
+    at_ms: int | None = None
+
+class SimDeadlockError(RuntimeError):
+    """sim-cluster の行き止まり(args = 知らせの文と SimDeadlock)。"""
+
+def deadlock_of(snapshot: WaitSnapshot) -> Program[SimDeadlock | None, object]: ...
+
 # --- 検の effect(sim の世界が答える)---------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -304,6 +346,11 @@ class CutWorker(EffectBase[None]):
 class StallWorker(EffectBase[None]):
     name: str
     seconds: float
+
+@dataclass(frozen=True)
+class NextWorldDue(EffectBase[int | None]):
+    """sim の世界の次の予定の刻(行き止まりの見張りが問う・#3094)— now_ms より後の最も早い予定の刻か、頼まれた止まりが残れば now_ms・無ければ None。"""
+    now_ms: int
 
 @dataclass(frozen=True)
 class DrainWorker(EffectBase[dict[str, JsonValue]]):

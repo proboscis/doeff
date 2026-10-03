@@ -22,6 +22,7 @@ from doeff_vm import EffectBase
 from hy.models import Keyword
 
 from doeff import Program
+from doeff_core_effects.scheduler import ExternalPromise
 
 MODULE_TAGS: dict[Keyword, str]
 
@@ -123,6 +124,22 @@ class SqlTransaction(EffectBase[T | SqlFailed | SqlUnreachable], Generic[T]):
 class SqlEnsureTables(EffectBase[SqlSchemaApplied | SqlFailed | SqlUnreachable]):
     database: str
     tables: tuple[SqlTable, ...]
+
+@dataclass(frozen=True)
+class SqlNotify(EffectBase[None | SqlFailed | SqlUnreachable]):
+    database: str
+    channel: str
+
+@dataclass(frozen=True)
+class SqlHangNotice(EffectBase[ExternalPromise[bool] | SqlUnreachable]):
+    database: str
+    channel: str
+
+@dataclass(frozen=True)
+class SqlDropNotice(EffectBase[None]):
+    database: str
+    channel: str
+    bell: ExternalPromise[bool]
 
 @dataclass(frozen=True)
 class SetSqlOutage(EffectBase[None]):

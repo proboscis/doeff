@@ -60,7 +60,7 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.values [RecordsSchema])
-(import doeff_records.pg [pg-records-handler prepare-records-store DEFAULT-POLL-SECONDS])
+(import doeff_records.pg [pg-records-handler prepare-records-store])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening REQUEST-MAX-BYTES serve-records])
 (import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
@@ -159,7 +159,7 @@
   "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
    1 度だけ撃つ)。"
   (<- store (prepare-records-store DATABASE schema prefix))
-  (fn [writer] (pg-records-handler store writer host DEFAULT-POLL-SECONDS)))
+  (fn [writer] (pg-records-handler store writer host)))
 
 
 (defhandler printed-listening [#^ str prefix]

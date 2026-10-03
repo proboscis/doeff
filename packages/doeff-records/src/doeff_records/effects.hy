@@ -1,8 +1,9 @@
 ;;; 記録の仕組みの公開 effect 8 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
 ;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。
-;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(wire には載せない — 置き場の handler が自分の待ち方で答える:
-;;; memory = 列の呼び鈴・PostgreSQL と HTTP の口の client = ReadEvents の読み直し。出自の issue は #1019)。
+;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
+;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
+;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
 ;;;
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
 ;;; 欄 → 値の写像(PutRow.value・ListRows.where)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を渡してもよい)。

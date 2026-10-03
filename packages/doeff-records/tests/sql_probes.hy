@@ -4,13 +4,13 @@
 ;;;   keep-lock = False なら SqlTransaction の lock-key の錠を取らない(錠の検の反例)
 ;;;   barrier   = 行の錠(FOR UPDATE)の読みの後で待ち合わせる(2 本の書きが両方「行が無い」を読んでから書く反例)
 ;;;   fail-at   = state_rows への n 本目の INSERT を流さずに SqlUnreachable を答える(書きの途中で接続が落ちる代役)
-;;; counts = 流れた CREATE の文の数(thread の間で共有)。
+;;; counts = 流れた CREATE の文の数(thread の間で共有)。書きの合図(SqlNotify)は同じ接続で流す(呼び鈴は鳴らさない — 待ちの検はこの代役を使わない)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass field])
 (import threading)
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlUnreachable])
+(import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlTransaction SqlUnreachable])
 (import doeff_core_effects.sql_transaction [run-in-transaction])
-(import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-begin postgres-control])
+(import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-begin postgres-control NOTICE-STATEMENT])
 
 
 (defclass StatementCounts []
@@ -65,6 +65,9 @@
                                      (fn [request] (postgres-insert leased request))
                                      (fn [] (postgres-begin leased (if probe.keep-lock lock-key None)))
                                      (fn [] (postgres-control leased "COMMIT"))
-                                     (fn [] (postgres-control leased "ROLLBACK"))))
+                                     (fn [] (postgres-control leased "ROLLBACK"))
+                                     :execute-notify (fn [request]
+                                                      (postgres-query leased (SqlQuery database NOTICE-STATEMENT
+                                                                                       #((SqlParam :name "channel" :value request.channel)))))))
       (finally (.release connections database leased)))
     (resume answer)))
