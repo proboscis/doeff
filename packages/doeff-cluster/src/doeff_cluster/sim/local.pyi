@@ -306,6 +306,11 @@ class StallWorker(EffectBase[None]):
     seconds: float
 
 @dataclass(frozen=True)
+class NextWorldDue(EffectBase[int | None]):
+    """sim の世界の次の予定の刻(行き止まりの見張りが問う・#3094)— now_ms より後の最も早い予定の刻か、頼まれた止まりが残れば now_ms・無ければ None。"""
+    now_ms: int
+
+@dataclass(frozen=True)
 class DrainWorker(EffectBase[dict[str, JsonValue]]):
     name: str
     ttl_seconds: float = ...

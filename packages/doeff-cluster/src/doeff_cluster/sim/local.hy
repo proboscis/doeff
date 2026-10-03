@@ -342,9 +342,12 @@
 
 (defrecord SimPauses
   "筋書きが頼んだ coordinator の止まり(世界の session の値 1 つ — PauseDue が 1 度の読みで判じる・#2668)。queued = 頼まれた止まりの
-   #(kind 秒) の列・downtime = 最後に効いた止まりの止まっている秒(DowntimeOf が取り出す — None = 作り直さない)。"
+   #(kind 秒) の列・downtime = 最後に効いた止まりの止まっている秒(DowntimeOf が取り出す — None = 作り直さない)・restart-ms = 止まった
+   coordinator を作り直す刻(epoch ms — DowntimeOf が取り出した時に書き、CoordinatorStarted が消す・None = 作り直しを待っていない。
+   次の予定の刻の問い NextWorldDue が読む・#3094)。"
   (#^ tuple queued)
-  (setv #^ (| float None) downtime None))
+  (setv #^ (| float None) downtime None)
+  (setv #^ (| int None) restart-ms None))
 
 
 (defrecord SimIntake
@@ -731,6 +734,13 @@
    刻の書きなので落とさない・#2790)、そうでなければ筋書きの落ち(crash)が頼まれているかを PauseDue と同じく判じて筋書きから外す。
    2 つの判断を世界への問い 1 つにする(#3054 の C-6)。"
   {:answer bool :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect NextWorldDue
+  "sim の世界の次の予定の刻(行き止まりの見張りが問う — 業務の task が全部出来事を待って止まっていても、世界の予定がまだ来るなら
+   行き止まりにしない・#3078 の子 3 = #3094): 網の切れ・口の故障・worker の処理の止まりが明ける刻と、止まった coordinator を作り直す刻の
+   うち now-ms より後の最も早い刻(epoch ms)。筋書きが頼んだ coordinator の止まり・落ちが残っていれば now-ms(次の歩・次の保存で起きる
+   出来事で、刻を持たない)。何も無ければ None。"
+  {:fields [(: now-ms int)] :answer (| int None) :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect StopRequestOf
   "worker name の拍の止めの問い(WorkerStopRequested)に答える材料 — その worker の宿の真実と、全 worker が止まる時かを世界への問い
@@ -2345,6 +2355,23 @@
       (SimPauses :queued (tuple (gfor p pausing.queued :if (is-not p due) p)) :downtime (get due 1))))
 
 
+(defk next-world-due [intake hosts pausing now-ms]
+  {:pre [(: intake SimIntake) (: hosts dict) (: pausing SimPauses) (: now-ms int)] :post [(: % (| int None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "世界の次の予定の刻を求めるため(問い NextWorldDue の答え・#3094): 筋書きが頼んだ coordinator の止まり・落ち(queued)か、効いた止まりの
+   作り直しの秒(downtime — まだ取り出されていない)が残っていれば now-ms(次の歩・次の保存という出来事で起きる)。そうでなければ、網の
+   切れ(cuts)・口の故障(failing)・worker の処理の止まり(hosts の stalled-until-ms)が明ける刻と作り直しの刻(restart-ms)のうち now-ms より
+   後の最も早い刻。過ぎた刻は数えない(cuts と failing は明けても表に残る)。何も無ければ None。"
+  (if (or pausing.queued (is-not pausing.downtime None))
+      now-ms
+      (do (val ends (+ (list (.values intake.cuts))
+                       (lfor fault (.values intake.failing) (get fault 1))
+                       (lfor truth (.values hosts) truth.stalled-until-ms)
+                       (if (is pausing.restart-ms None) [] [pausing.restart-ms])))
+          (val ahead (lfor end ends :if (> end now-ms) end))
+          (if ahead (min ahead) None))))
+
+
 ;; --- 世界 -----------------------------------------------------------------------------------------------
 
 (defhandler sim-world [#^ SimPlan plan]
@@ -2591,10 +2618,16 @@
                     (resume True))))))
   (DowntimeOf []
     (val taken pausing.downtime)
-    (:= pausing (replace pausing :downtime None))
+    ;; 作り直す刻を覚える(coordinator の Pod の代役は取り出した秒だけ Delay で眠ってから作り直す — 次の予定の刻の問いが読む・#3094)。
+    (<- now int (now-epoch-ms))
+    (:= pausing (replace pausing :downtime None :restart-ms (if (is taken None) None (+ now (int (* 1000 taken))))))
     (resume taken))
+  (NextWorldDue [now-ms]
+    (<- due (| int None) (next-world-due intake hosts pausing now-ms))
+    (resume due))
   (CoordinatorStarted [ms]
     (:= runs (+ runs #((SimCoordinatorRun :started-ms ms))))
+    (:= pausing (replace pausing :restart-ms None))
     ;; 前の一生が区間の歩を保存し終えずに落ちていても(置き場の失敗の注入)、その数を新しい一生の書きへ持ち越さない。
     (:= intake (replace intake :replayed 0))
     (resume None))
