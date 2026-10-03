@@ -17,10 +17,10 @@
 (import doeff_hy.table [Table TableWrite])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord
-                                                       ReportOrigin ReadinessReport MetricsReport])
+                                                       ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
@@ -83,6 +83,29 @@
 (setv REPORTS-KEPT 4)            ; Service ごとに残す報告(process の世代ごとに最新 1 つ・直近の 4 世代)
 
 
+;; 判定の期限(#3064): readiness の判定が now と比べる期限の値の定義点。判定(running-process・service-readiness)はこの値と now を
+;; 比べ、静かな区間の次の期限(readiness-due)も同じ値を読む(#1383 の決めの条件 (1) — 模擬だけの見積もりを持たない)。
+
+(defn #^ int carrier-stale-from [#^ WorkerReport st #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(running-process・handoff_policy.carrier-rows)が呼ぶ
+  "担い手の worker の報告 st を古いと数える最初の刻(報告の刻 + lease-ms + 1 ms)。"
+  (+ st.at timing.lease-ms 1))
+
+
+(defn #^ int warm-until [#^ ClusterState state #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(running-process)が呼ぶ
+  "coordinator の起動の直後(担い手の報告が揃っていない間)を終える刻(起動の刻 + lease-ms)。"
+  (+ state.started-ms timing.lease-ms))
+
+
+(defn #^ int unreported-until [#^ ClusterState state #^ int window-ms]  ; defk にできない: coordinator の純粋な判断(service-readiness)が呼ぶ
+  "今の process の報告がまだ無い時に Unknown と言う間を終える刻(起動の刻 + window)。"
+  (+ state.started-ms window-ms))
+
+
+(defn #^ int report-expired-from [#^ ReadinessReport report #^ int window-ms]  ; defk にできない: coordinator の純粋な判断(service-readiness)が呼ぶ
+  "準備の報告 report を window の外と数える最初の刻(受けた刻 + window + 1 ms)。"
+  (+ report.origin.at window-ms 1))
+
+
 (defn #^ dict running-process [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing
                                #^ (| Placement None) [placement None]]
   "Service を今動かしている process。ok = 担い手の worker が今の宣言の spec(版と設定の指紋・割り当ての世代)で running と
@@ -99,7 +122,7 @@
   (when (is a None)
     (setv unplaced (unplaced-kind now state job timing))
     (return (no "NotReady" (unplaced-not-ready unplaced) (+ "置き先が無い: " (unplaced-text unplaced job)))))
-  (setv warming (< (- now state.started-ms) timing.lease-ms)
+  (setv warming (< now (warm-until state timing))
         st (.get state.statuses a.worker))
   ;; 担い手の報告が古い: 移し替えの期限(reassign-after-ms)の内なら「分からない」(Unknown — 途絶の間。Rollout は失敗と数えない)。
   ;; 期限を過ぎた担い手からは job を他へ移すので NotReady(2026-09-25: 以前は heartbeat が 10 秒途絶えただけで NotReady と言い、
@@ -108,7 +131,7 @@
   ;; fence でも止めず、coordinator も他へ移さないので、process は動き続けている見込み(監視が止まりと読まない)。印の無い job は担い手が
   ;; fence で止めているので、期限の後は NotReady のまま(他に置ける worker が無ければ置き先は保ち、担い手が戻ると起こし直す)。
   ;; 印の在る job も、担い手は途絶が長い方の柵(ClusterTiming.keep-fence-ms)を越えたら止めるので、その後は NotReady。
-  (when (or (is st None) (> (- now st.at) timing.lease-ms))
+  (when (or (is st None) (>= now (carrier-stale-from st timing)))
     (setv carrier (.get state.workers a.worker)
           silent (and carrier (alive now carrier timing.reassign-after-ms))
           mark (run (keep-mark-of state.keep-marks name))
@@ -199,12 +222,13 @@
   (setv window-ms (int (* 1000 (get job.readiness "windowSeconds")))
         report (current-report (.row state.observations.readiness name) proc))
   (when (is report None)
-    (return (verdict (if (< (- now state.started-ms) window-ms) "Unknown" "NotReady")
+    (return (verdict (if (< now (unreported-until state window-ms)) "Unknown" "NotReady")
                      (.format "今動いている process(世代 {})からの準備できたの報告がまだ無い" (get proc "instance")))))
   (setv age (- now report.origin.at))
   (setv role report.role)
   (cond
-    (> age window-ms) (verdict "NotReady" (.format "最後の報告から {} 秒(window {} 秒)" (// age 1000) (// window-ms 1000)))
+    (>= now (report-expired-from report window-ms))
+      (verdict "NotReady" (.format "最後の報告から {} 秒(window {} 秒)" (// age 1000) (// window-ms 1000)))
     (not report.ready) (| (verdict "NotReady" (+ "報告: " report.reason)) {"role" role})
     True (| (verdict "Ready" report.reason) {"role" role})))
 
@@ -225,6 +249,61 @@
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
   (and (or (is job None) (= job.replicas 0)) (not-in name state.placements)
        (not (still-live-somewhere now state name timing))))
+
+
+;; --- 静かな区間の次の期限(#3064)--------------------------------------------------------------
+;; 模擬の時計の下の coordinator は、試して静かだった歩の後、次の期限より前の歩を本番の判断で試さずに作る(idle_policy.quiet-stretch)。
+;; 下の 2 つは、状態がこのままで readiness の判定と止まりの判定が答えを変え得る最初の刻を、判定が比べに使う期限の値(上の
+;; carrier-stale-from ほかと cluster_policy.liveness-deadline)から返す。返すのは答えを変え得る刻の下限(早めに試すのは安全・遅らせない)。
+
+(defk readiness-due [state name now timing [placement None]]
+  {:pre [(: state ClusterState) (: name str) (: now int) (: timing ClusterTiming) (: placement (| Placement None))]
+   :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "Service name の readiness の判定(service-readiness・running-process)が、状態がこのままで答え(Ready | NotReady | Unknown)を変え得る
+   最初の刻を知るため — 入れ替えの見張り(api_policy.placement-due)・Rollout の相手の観測(idle_policy.rollout-due)・drain の並べ
+   (cluster_policy.sweep-due)が呼ぶ。担い手の報告が新しい間は、報告が古くなる刻と準備の報告の window の期限。古い間は、起動の直後の
+   猶予の終わりと、担い手の沈黙の窓 2 つ(移し替え・途絶の柵)。宣言・置き先が無い・replicas 0 の判定は時刻で変わらない(None)。
+   placement = 見る置き先(既定 = いまの置き先 — running-process と同じ)。"
+  (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (val a (if (is placement None) (.get state.placements name) placement))
+  (val st (if (is a None) None (.get state.statuses a.worker)))
+  (val carrier (if (is a None) None (.get state.workers a.worker)))
+  (val proc (running-process state name now timing placement))
+  (val watched (and (get proc "ok") (is-not job.readiness None)))
+  (val window-ms (if watched (int (* 1000 (get job.readiness "windowSeconds"))) 0))
+  (val report (if watched (current-report (.row state.observations.readiness name) proc) None))
+  (val dues
+    (cond
+      (or (is job None) (= job.replicas 0) (is a None)) #()
+      (and (is-not st None) (< now (carrier-stale-from st timing)))
+        (+ #((carrier-stale-from st timing))
+           (cond (not watched) #()
+                 (is report None) #((unreported-until state window-ms))
+                 True #((report-expired-from report window-ms))))
+      True
+        (+ #((warm-until state timing))
+           (if (is carrier None)
+               #()
+               #((+ (liveness-deadline carrier timing.reassign-after-ms) 1) (+ (liveness-deadline carrier timing.keep-fence-ms) 1))))))
+  (min (gfor due dues :if (> due now) due) :default None))
+
+
+(defk service-stopped-due [state name now timing]
+  {:pre [(: state ClusterState) (: name str) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "service-stopped が、状態がこのままで答えを変え得る最初の刻を知るため(Rollout の Service の相手の stopped — idle_policy.rollout-due)。
+   宣言が無いか replicas 0 で置き先も無い Service の行を載せた worker が、沈黙で母集団(cluster_policy.service-rows の lease-ms の窓)から
+   外れる刻の最小。それ以外は時刻で変わらない(None)。"
+  (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (if (and (or (is job None) (= job.replicas 0)) (not-in name state.placements))
+      (min (gfor #(wname st) (.items state.statuses)
+                 :setv w (.get state.workers wname)
+                 :if (and (is-not w None) (any (gfor row st.jobs (or (= row.name name) (= row.retired-from name)))))
+                 :setv due (+ (liveness-deadline w timing.lease-ms) 1)
+                 :if (> due now)
+                 due)
+           :default None)
+      None))
 
 
 (defn #^ tuple live-processes [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]

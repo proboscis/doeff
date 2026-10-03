@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark])
+(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen NodeLabelsUnreadable KeepMark])
 (import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
@@ -1514,14 +1514,34 @@
 (setv NODE-LABELS-TTL-MS 60000)
 
 
+(defn #^ int node-reread-from [#^ (| NodeLabelsSeen NodeLabelsUnreadable) seen]  ; defk にできない: coordinator の純粋な判断(nodes-to-read)が呼ぶ
+  "node の label の観測 seen を古いと数え、読み直す最初の刻(読んだ刻 + NODE-LABELS-TTL-MS + 1 ms)。nodes-to-read の境の定義点 —
+   静かな区間の次の期限(node-reread-due・#3064)も同じ値を読む。"
+  (+ seen.at NODE-LABELS-TTL-MS 1))
+
+
 (deff nodes-to-read [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "coordinator" :role "judgment"}}
   "label を読み直す node の名(整列)— node を名乗る worker の node のうち、観測が無いか古い物。能力の導出の材料を揃えるため。"
   (sorted (sfor w (.values state.workers)
                 :if w.node
                 :setv seen (.row state.observations.nodes w.node)
-                :if (or (is seen None) (> (- now seen.at) NODE-LABELS-TTL-MS))
+                :if (or (is seen None) (>= now (node-reread-from seen)))
                 w.node)))
+
+
+(defk node-reread-due [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "状態がこのままで nodes-to-read が node を新しく返し始める最初の刻(観測の在る node の読み直しの刻 node-reread-from の、now より後の
+   最小)を知るため(静かな区間の次の期限・#3064)。観測の無い node は今すでに読む物なので数えない。None = 読み直す node が無い。"
+  (min (gfor w (.values state.workers)
+             :if w.node
+             :setv seen (.row state.observations.nodes w.node)
+             :if (is-not seen None)
+             :setv due (node-reread-from seen)
+             :if (> due now)
+             due)
+       :default None))
 
 
 (deff derived-capabilities [#^ (get Table str) labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断

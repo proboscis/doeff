@@ -21,10 +21,11 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming IdleProbe QuietStep QuietStretch Watcher WatchStep
                                                        HeartbeatReply])
-(import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
-(import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.coordinator.core.api_policy [tick tick-due respond plan-rollouts deployments-to-observe mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS
-                                                   TICK-MS])
+(import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read node-reread-due with-derived-capabilities])
+(import doeff_cluster.coordinator.core.resource_policy [stamp readiness-due service-stopped-due])
+(import doeff_cluster.coordinator.core.rollout_policy [rollout-targets rollout-phase-due TERMINAL-PHASES])
+(import doeff_cluster.coordinator.core.api_policy [tick tick-due respond plan-rollouts deployments-to-observe deployment-reread-due mark-alive
+                                                   ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.watch_policy [settle-watch all-waiting-unchanged])
 
 (val MAX-QUIET-MS 3600000)    ; 一度に眠る区間の上限(仮想の 1 時間 — その刻の歩は静かでも本物の歩として回す)
@@ -45,9 +46,27 @@
 (defk rollout-due [state now timing naming]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| int None))]
    :tags {:context "coordinator" :role "judgment"}}
-  "Rollout の拍が、状態がこのままで k8s を読む・段を進める・action を出し得る最初の刻を知るため(#3060 — 今は Rollout か読む物が在れば
-   次の拍。刻を段の期限と観測の古さから求めるのは #3064)。None = 状態がこのままなら Rollout の拍は Rollout の拍の刻のほか何も変えない。"
-  (if (or state.rollouts (deployments-to-observe state now) (nodes-to-read state now)) (+ now 1) None))
+  "Rollout の拍(rollout-quiet と同じ判断)が、状態がこのままで k8s を読む・段を進める・action を出し得る最初の刻を知るため(#3064)。
+   今読む物が在れば次の拍(終わっていない Rollout の Deployment の相手は毎拍読む)。無ければ、台数の持ち主の Deployment と node の印の
+   読み直しの刻(deployment-reread-due・node-reread-due)と、終わっていない Rollout ごとの段の期限(rollout-phase-due)と、その Service の
+   相手の観測が変わる刻(readiness の判定 readiness-due・止まりの判定 service-stopped-due)の、now より後の最小。どれも判断が比べに使う
+   期限の値から求める(#1383 の決めの条件 (1))。試して静かだった歩の後の状態だけを前提にする(quiet-stretch は区間の起点の直後の歩を
+   必ず試す — 能力の導出・段の入り口のような時刻に依らない 1 度きりの変化は、その歩で済んでいる)。None = 時刻では変わらない。"
+  (<- deployments (| int None) (deployment-reread-due state now))
+  (<- nodes (| int None) (node-reread-due state now))
+  (var dues (tuple (gfor due [deployments nodes] :if (is-not due None) due)))
+  (for [#(_ r) (sorted (.items state.rollouts))]
+    (when (not-in r.status.phase TERMINAL-PHASES)
+      (<- phase (| int None) (rollout-phase-due r.spec r.status now))
+      (:= dues (+ dues (if (is-not phase None) #(phase) #())))
+      (for [target (rollout-targets r.spec)]
+        (when (= target.kind "Service")
+          (<- ready (| int None) (readiness-due state target.name now timing))
+          (<- stopped (| int None) (service-stopped-due state target.name now timing))
+          (:= dues (+ dues (tuple (gfor due [ready stopped] :if (is-not due None) due))))))))
+  (if (or (deployments-to-observe state now) (nodes-to-read state now))
+      (+ now 1)
+      (min (gfor due dues :if (> due now) due) :default None)))
 
 
 (defk absorbable [watcher state]

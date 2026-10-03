@@ -17,7 +17,7 @@
 ;;;
 ;;; 見張りは coordinator の状態(ClusterState.handoffs)に保存し、Service の資源の status.handoff に段と理由を出す(resource_policy.snapshot)。
 ;;; 期限の無い recreate の Service と、期限の内に Ready になった handoff の Service は見張りを残さない(今までと同じ振る舞い)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import hashlib)
@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState HandoffWatch HandoffPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
-(import doeff_cluster.coordinator.core.resource_policy [service-readiness])
+(import doeff_cluster.coordinator.core.resource_policy [service-readiness carrier-stale-from readiness-due])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 
@@ -43,7 +43,7 @@
    報告が無い・古い時は None(判じない — 作り直しの直後に「旧が居ない」と取り違えて諦めを捨てないため)。"
   (setv placed (.get state.placements name)
         st (if (is placed None) None (.get state.statuses placed.worker)))
-  (if (or (is st None) (> (- now st.at) timing.lease-ms))
+  (if (or (is st None) (>= now (carrier-stale-from st timing)))
       None
       st.jobs))
 
@@ -64,6 +64,12 @@
               :if (and (= report.origin.spec-hash want) (not report.ready))
               report.reason)
         None))
+
+
+(defn #^ int handoff-deadline [#^ HandoffWatch watch #^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(next-watch)が呼ぶ
+  "入れ替えの見張り watch を諦めてよい最初の刻(起点 + 宣言の handoffTimeoutSeconds)。next-watch の諦めの境の定義点 — 静かな区間の
+   次の期限(handoff-due・#3064)も同じ値を読む。"
+  (+ watch.since-ms (handoff-timeout-ms job.readiness)))
 
 
 (defn #^ (| HandoffWatch None) next-watch [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
@@ -87,12 +93,40 @@
             (= (get verdict "state") "Ready") None
             (is watch None)
               (if (new-generation-live rows name want) (HandoffWatch :declaration fingerprint :since-ms now) None)
-            (and (>= (- now watch.since-ms) timeout-ms) (= (get verdict "state") "NotReady"))
+            (and (>= now (handoff-deadline watch job)) (= (get verdict "state") "NotReady"))
               (replace watch :phase HandoffPhase.ABANDONED :abandoned-ms now
                        :reason (.format "新の世代が {:g} 秒の間 Ready にならなかった(新を止めて旧を残す): {}"
                                         (/ timeout-ms 1000) (get verdict "reason"))
                        :last-report (last-refusal state name want))
             True watch))))
+
+
+(defk handoff-due [state job now timing]
+  {:pre [(: state ClusterState) (: job ClusterJob) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "入れ替えの Service job の見張り(next-watch)が、状態がこのままで答えを変え得る最初の刻を知るため(api_policy.placement-due が集める・
+   #3064)。担い手の報告が古くなる刻(carrier-stale-from — 古くなると判じずに持ち越す)と、判じる間の readiness の判定の期限
+   (resource_policy.readiness-due)と、Ready を待っている見張りの諦めの期限(handoff-deadline)の最小。返すのは答えを変え得る刻の下限。
+   handoff でない・replicas 0・担い手の報告が無いか古い・戻る先が無い・諦めた後は、時刻では変わらない。"
+  (val name job.spec.name)
+  (val fingerprint (declaration-fingerprint job))
+  (val kept (.get state.handoffs name))
+  (val watch (if (and (is-not kept None) (= kept.declaration fingerprint)) kept None))
+  (val placed (.get state.placements name))
+  (val st (if (is placed None) None (.get state.statuses placed.worker)))
+  (val rows (carrier-rows state name now timing))
+  (val judging (and job.spec.handoff (> job.replicas 0) (is-not rows None) (retired-live rows name)
+                    (not (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED)))))
+  (var reading None)
+  (when judging
+    (<- read (| int None) (readiness-due state name now timing))
+    (:= reading read))
+  (val dues (+ (if (is-not rows None) #((carrier-stale-from st timing)) #())
+               (if (is-not reading None) #(reading) #())
+               (if (and judging (is-not watch None)) #((handoff-deadline watch job)) #())))
+  (if (and job.spec.handoff (> job.replicas 0))
+      (min (gfor due dues :if (> due now) due) :default None)
+      None))
 
 
 (defn #^ ClusterState watch-handoffs [#^ int now #^ ClusterState state #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(api_policy.settle)が呼ぶ

@@ -655,6 +655,7 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-resource-policy",
+        "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-watch-policy"
       ],
@@ -1488,7 +1489,8 @@
         "doeff-cluster-run-context-rules",
         "doeff-cluster-host-reader",
         "doeff-cluster-boundary-recorder",
-        "doeff-cluster-declaring"
+        "doeff-cluster-declaring",
+        "doeff-cluster-handoff-policy"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
