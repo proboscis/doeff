@@ -2716,21 +2716,23 @@ impl TaskWrapStream {
         boundaries: Vec<(BoundaryKind, CallableRef)>,
     ) -> StreamStep {
         match classify_python_object(py, program.bind(py)) {
-            Ok(mut body) => {
-                for (kind, callable) in boundaries {
-                    body = match kind {
-                        BoundaryKind::Handler => DoCtrl::WithHandler {
-                            handler: Value::Callable(callable),
-                            body: Box::new(body),
-                        },
-                        BoundaryKind::Observer => DoCtrl::WithObserve {
-                            observer: Value::Callable(callable),
-                            body: Box::new(body),
-                        },
-                    };
-                }
+            Ok(body) => {
                 self.phase = Phase::Body;
-                StreamStep::Instruction(body)
+                if boundaries.is_empty() {
+                    return StreamStep::Instruction(body);
+                }
+                // Re-install the spawn site's handlers and observers in one
+                // instruction (#3149): the VM builds the boundary fibers in one
+                // step, innermost first, with one body fiber under them —
+                // instead of one WithHandler / WithObserve (and an empty body
+                // fiber) per layer.
+                StreamStep::Instruction(DoCtrl::WithBoundaries {
+                    boundaries: boundaries
+                        .into_iter()
+                        .map(|(kind, callable)| (kind, Value::Callable(callable)))
+                        .collect(),
+                    body: Box::new(body),
+                })
             }
             Err(message) => {
                 // The Python wrapper's `yield prog` of a value that is not a
