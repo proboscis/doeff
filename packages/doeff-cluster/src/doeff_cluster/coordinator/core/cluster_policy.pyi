@@ -40,6 +40,7 @@ from doeff_cluster.coordinator.intent.cluster_model import UnplacedKind as Unpla
 from doeff_cluster.coordinator.intent.cluster_model import ACCEPTED_FORMATS as ACCEPTED_FORMATS
 from doeff_cluster.coordinator.intent.cluster_model import PLACED_PHASES as PLACED_PHASES
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
+from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_hy.table import Table as Table
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
@@ -65,6 +66,8 @@ from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as r
 from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
 from doeff_cluster.shared.core.runtime_env_rules import child_environ_refusal as child_environ_refusal
 from doeff_cluster.shared.core.readiness_rules import readiness_refusal as readiness_refusal
+from doeff_cluster.coordinator.core.program_policy import PROGRAM_GRACE_MS as PROGRAM_GRACE_MS
+from doeff_cluster.coordinator.core.program_policy import program_refs as program_refs
 JOB_ENTRY: str
 MAX_EVENTS: int
 BOARD_MAX_VALUE_BYTES: int
@@ -395,7 +398,13 @@ def board_write(state: ClusterState, key: str, write: BoardWrite, now: int=0) ->
     ...
 NODE_LABELS_TTL_MS: int
 
+def node_reread_from(seen: NodeLabelsSeen | NodeLabelsUnreadable) -> int:
+    ...
+
 def nodes_to_read(state: ClusterState, now: int) -> list:
+    ...
+
+def node_reread_due(state: ClusterState, now: int) -> _Program[int | None, object]:
     ...
 
 def derived_capabilities(labels: Table[str], table: tuple) -> tuple:

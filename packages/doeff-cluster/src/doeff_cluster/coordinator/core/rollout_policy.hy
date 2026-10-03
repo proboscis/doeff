@@ -32,10 +32,11 @@
 ;;; view(呼び手が作る): {"ready": Ready|NotReady|Unknown  "stopped": 真 / 偽 / None  "specReplicas": 宣言の台数 | None  "reason": …}
 ;;; Deployment の stopped は「宣言 0 かつ Pod 0(終了中を含む)」(api_policy.target-view)。
 ;;; spec の検め(validate-target・validate-rollout-spec)は送り手の本文の誤りを BodyInvalid(400 — cluster_model)で断る。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import dataclasses [replace])
+(import math)
 (import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView
                                                        DeploymentSeen DeploymentUnreadable])
 
@@ -174,6 +175,45 @@
   (if (or (is current None) (= current replicas)) [] [(scale target replicas)]))
 
 
+;; --- 段の期限(#3064)----------------------------------------------------------------------------
+;; rollout-step が now と比べる段の期限の値の定義点。段の判断はこの値と now を比べ、静かな区間の次の期限(rollout-phase-due)も同じ値を
+;; 読む(#1383 の決めの条件 (1))。秒の欄は小数を許すので、「長さを越えた最初の刻」は floor + 1、「長さに達した最初の刻」は ceil。
+
+(defn #^ int ms-past [#^ int start #^ (| int float) seconds]  ; defk にできない: coordinator の純粋な判断(段の期限)が呼ぶ
+  "start から seconds 秒を越えた(> の比べが真になる)最初の刻(ms)。"
+  (+ start (math.floor (* 1000 seconds)) 1))
+
+
+(defn #^ int ms-reached [#^ int start #^ (| int float) seconds]  ; defk にできない: coordinator の純粋な判断(段の期限)が呼ぶ
+  "start から seconds 秒に達した(>= の比べが真になる)最初の刻(ms)。"
+  (+ start (math.ceil (* 1000 seconds))))
+
+
+(defn #^ int ready-timeout-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+  "WaitingNewReady で新が Ready にならないまま時間切れと数える最初の刻(段の起点 since + readyTimeoutSeconds を越えた刻)。"
+  (ms-past since spec.ready-timeout-seconds))
+
+
+(defn #^ int stop-timeout-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+  "StoppingOld で旧が止まらないまま時間切れと数える最初の刻(段の起点 since + stopTimeoutSeconds を越えた刻)。"
+  (ms-past since spec.stop-timeout-seconds))
+
+
+(defn #^ int fail-after-from [#^ RolloutSpec spec #^ int down]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+  "Observing で新が NotReady のまま失敗と数える最初の刻(NotReady の起点 down + failAfterSeconds を越えた刻)。"
+  (ms-past down spec.fail-after-seconds))
+
+
+(defn #^ int observed-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+  "Observing で観察の期間を終えたと数える最初の刻(段の起点 since + observeSeconds に達した刻)。"
+  (ms-reached since spec.observe-seconds))
+
+
+(defn #^ int rollback-late-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+  "RollingBack で戻しが終わらないと印を付ける最初の刻(段の起点 since + rollbackTimeoutSeconds を越えた刻)。"
+  (ms-past since spec.rollback-timeout-seconds))
+
+
 (defn #^ tuple rollout-step [#^ RolloutSpec spec #^ RolloutStatus status #^ TargetView from-view #^ TargetView to-view #^ int now]
   "1 拍。返り値 #(次の status action の list)。"
   (setv phase status.phase since (if (is status.phase-since-ms None) now status.phase-since-ms)
@@ -202,7 +242,7 @@
       (cond
         (= to-view.ready "Ready")
           (rollout-step spec (enter status "StoppingOld" now "新が Ready になった") from-view to-view now)
-        (> (- now since) (* 1000 spec.ready-timeout-seconds))
+        (>= now (ready-timeout-from spec since))
           (fail (.format "新が {} 秒で Ready にならなかった: {}" spec.ready-timeout-seconds to-view.reason))
         True #((replace status :reason "新の Ready を待つ")
                (ensure-replicas new to-view (new-replicas new))))
@@ -216,7 +256,7 @@
         ;; 失敗とも数えない(時間切れだけは数える)。新が本当に落ちていたら、旧を止めた後で書き手が 0 になるため(2026-09-25)。
         (= to-view.ready "Unknown")
           #((replace status :reason "新の観測が Unknown の間は旧を止める命令を控える") [])
-        (> (- now since) (* 1000 spec.stop-timeout-seconds))
+        (>= now (stop-timeout-from spec since))
           (fail (.format "旧が {} 秒で止まらなかった: {}" spec.stop-timeout-seconds from-view.reason))
         True #((replace status :reason "旧が止まるのを待つ")
                (ensure-replicas old from-view 0)))
@@ -236,16 +276,16 @@
             (= state "Ready") (setv down None)
             (= state "NotReady") (setv down (or down now)))
           (cond
-            (and down (> (- now down) (* 1000 spec.fail-after-seconds)))
+            (and down (>= now (fail-after-from spec down)))
               (fail (.format "観察の間に新が {} 秒 Ready でなかった: {}" (// (- now down) 1000) to-view.reason))
-            (and (= state "Ready") (>= (- now since) (* 1000 spec.observe-seconds)))
+            (and (= state "Ready") (>= now (observed-from spec since)))
               #((enter (replace status :not-ready-since-ms None) "Complete" now "観察の期間を終えた" :completed-ms now) [])
             True #((replace status :not-ready-since-ms down :reason "観察中")
                    [])))
     (= phase "RollingBack")
       (do (setv step (or status.rollback-step "restoreOld") restore (or status.from-replicas 1)
                 limit spec.rollback-timeout-seconds
-                late (> (- now since) (* 1000 limit)))
+                late (>= now (rollback-late-from spec since)))
           (defn #^ tuple waiting [#^ str reason #^ str stuck-reason #^ list actions]
             ;; 時間切れの後も同じ action を出し続ける(新は止めない)。stuck は印を付けた拍と step が変わった拍だけ変わる。
             (setv current status.stuck
@@ -287,13 +327,45 @@
   (min RETRY-MAX-MS (* RETRY-FIRST-MS (** 2 (max 0 (- failures 1))))))
 
 
+(defn #^ int action-retry-from [#^ dict last]  ; defk にできない: coordinator の純粋な判断(action-due)が呼ぶ
+  "失敗した直前の action last と同じ action を、もう一度出してよい最初の刻(失敗の刻 + 失敗の数に応じた間)。action-due の境の定義点 —
+   静かな区間の次の期限(rollout-phase-due・#3064)も同じ値を読む。"
+  (+ (.get last "at" 0) (retry-delay-ms (.get last "count" 1))))
+
+
 (defn #^ bool action-due [#^ RolloutStatus status #^ dict action #^ int now]
   "純粋: この拍に action を出してよいか。直前の同じ action が失敗していれば、失敗の数に応じた間を空ける(k8s の API が
    断り続ける間、毎秒同じ書きを出して記録と版を進めない)。成功した・違う action は、すぐ出す。"
   (setv last status.last-action)
   (when (or (not last) (.get last "ok")) (return True))
   (when (!= (action-identity last) (action-identity action)) (return True))
-  (>= (- now (.get last "at" 0)) (retry-delay-ms (.get last "count" 1))))
+  (>= now (action-retry-from last)))
+
+
+(defk rollout-phase-due [spec status now]
+  {:pre [(: spec RolloutSpec) (: status RolloutStatus) (: now int)] :post [(: % (| int None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "Rollout 1 つの段の判断(rollout-step・action-due)が、相手の観測がこのままで答えを変え得る最初の刻を知るため(idle_policy.rollout-due が
+   集める・#3064)。段の起点からの期限(ready-timeout-from ほか — 段ごとに比べる物)と、失敗した action を出し直せる刻(action-retry-from)の、
+   now より後の最小。相手の観測が変わる刻は readiness の判定の期限(呼び手が足す)。終わった段・中止・起点の無い段・観察の Unknown の間は
+   時刻では変わらない(Unknown を抜けるのは観測の変化 — 呼び手の期限)。返すのは答えを変え得る刻の下限。"
+  (val since status.phase-since-ms)
+  (val phase-dues
+    (if (is since None)
+        #()
+        (match status.phase
+          "WaitingNewReady" #((ready-timeout-from spec since))
+          "StoppingOld" #((stop-timeout-from spec since))
+          "Observing" (if (is-not status.unknown-since-ms None)
+                          #()
+                          (+ #((observed-from spec since))
+                             (if status.not-ready-since-ms #((fail-after-from spec status.not-ready-since-ms)) #())))
+          "RollingBack" #((rollback-late-from spec since))
+          ;; 終わった段(Complete・RolledBack)と Pending・知らない段は時刻で変わらない(Pending を抜けるのは観測の変化)。
+          _ #())))
+  (val last status.last-action)
+  (val retry-dues (if (and last (not (.get last "ok"))) #((action-retry-from last)) #()))
+  (min (gfor due (+ phase-dues retry-dues) :if (> due now) due) :default None))
 
 
 ;; --- coordinator が止まっていた時間(2026-09-25) --------------------------------------------------
