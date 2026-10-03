@@ -1,0 +1,15 @@
+{
+  "module_extensions": {
+    "doeff-cluster-declaration-requests": {
+      "allow": [
+        "doeff-cluster-service-model",
+        "doeff-hy-json-value"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-declaration-requests"
+      ]
+    }
+  }
+}

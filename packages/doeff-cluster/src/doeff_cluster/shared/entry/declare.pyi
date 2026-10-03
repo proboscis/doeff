@@ -6,15 +6,20 @@ from urllib.parse import quote as url_quote
 from doeff_core_effects.effects import slog as slog
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
-from doeff_cluster.shared.protocol.declaration_requests import spec_for_update as spec_for_update
-from doeff_cluster.shared.protocol.declaration_requests import create_body as create_body
+from doeff_cluster.shared.protocol.declaration_requests import ServiceRead as ServiceRead
+from doeff_cluster.shared.protocol.declaration_requests import service_read as service_read
+from doeff_cluster.shared.protocol.declaration_requests import needed_programs as needed_programs
+from doeff_cluster.shared.protocol.declaration_requests import body_of as body_of
 from doeff_cluster.shared.intent.service_model import Declaration as Declaration
 DECLARE_REPLY_SECONDS: float
 
 def declare_request(method: str, url: str, actor: str, body: dict[str, object] | None) -> _Program[HttpResponse, object]:
     ...
 
-def service_written(base: str, actor: str, row: Mapping[str, object], replicas: int | None) -> _Program[HttpResponse, object]:
+def service_read_at(base: str, actor: str, name: str, row: Mapping[str, object], replicas: int | None) -> _Program[ServiceRead, object]:
+    ...
+
+def service_written(base: str, actor: str, read: ServiceRead) -> _Program[HttpResponse, object]:
     ...
 
 def apply_declaration(url: str, declaration: Declaration, actor: str, replicas: int | None=None) -> _Program[bool, object]:
