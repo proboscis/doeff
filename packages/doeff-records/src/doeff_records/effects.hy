@@ -168,3 +168,10 @@
   (#^ str stream)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadStreamEnd.stream")))
+
+
+(defclass [(dataclass :frozen True)] ReadSignalSource [EffectBase]
+  "この組で記録に答えている置き場の、源の工場を問う記録の effect(#3127)。答え = SignalSourceFactory(doeff_records.event_source の型)。答えるのは記録の handler 自身(memory の
+   handler = 自分の置き場の書きで鳴る模擬の源・HTTP の client と PostgreSQL = RECORDS-SIGNAL-SOURCE)— 源は必ず問うた所の記録の handler の置き場に
+   結ばれる。Ask にしないのは、組の内側の設定の読み手(決まった鍵だけを持ち、知らない鍵を断る)に横取りされうるため — 記録の effect なら
+   設定の読み手は触らない。")

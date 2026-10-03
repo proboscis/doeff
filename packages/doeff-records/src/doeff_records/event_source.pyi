@@ -25,6 +25,7 @@ from doeff_time import Delay as Delay
 from doeff_time import DelayEffect as DelayEffect
 from doeff_records.admission import key_text as key_text
 from doeff_records.effects import ListRows as ListRows
+from doeff_records.effects import ReadSignalSource as ReadSignalSource
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records.effects import WatchChanges as WatchChanges
 from doeff_records.effects import WatchEvents as WatchEvents
@@ -141,10 +142,6 @@ class SignalSourceFactory:
     def __post_init__(self) -> None:
         ...
 RECORDS_SIGNAL_SOURCE: SignalSourceFactory
-
-@dataclass(frozen=True)
-class ReadSignalSource(EffectBase):
-    ...
 
 def run_read_signal[T](bindings: tuple[SignalTables, ...], subscriber: str, body: Program[T, object] | EffectBase[T]) -> _Program[T, object]:
     ...

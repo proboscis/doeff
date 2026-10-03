@@ -295,3 +295,11 @@ def test_read_signal_handler_uses_the_source_of_the_records_handler_in_scope() -
     signal = _run_on(store, _entry_with_read_signal_handler(CHANGED_ON_JOBS_AND_LANES))
     assert isinstance(signal, Changed), signal
     assert [(row.table, row.key) for row in signal.keys] == [("jobs", '["j2"]')], signal
+
+
+def test_read_signal_source_lives_with_the_records_effects() -> None:
+    """源の工場の問いは記録の effect の置き場 doeff_records.effects に在り、event_source からも同じ型が読める(模擬の柵は effects と faults の
+    module の型を集めるので、ここに在れば柵が通す — #3127)。"""
+    from doeff_records import effects, event_source
+
+    assert effects.ReadSignalSource is event_source.ReadSignalSource

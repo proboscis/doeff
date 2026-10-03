@@ -7,6 +7,8 @@ effect は `EffectBase[答えの型]` の部分型として宣言する — `(<-
 
 from dataclasses import dataclass
 
+from typing import TYPE_CHECKING
+
 from doeff import EffectBase
 from doeff_hy.frozen import FrozenMap
 from doeff_records.values import (
@@ -90,3 +92,10 @@ class ReadEvents(EffectBase[ReadEventsAnswer]):
 @dataclass(frozen=True)
 class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
     stream: str
+
+# 源の工場の問い(#3127)— 答えは doeff_records.event_source の SignalSourceFactory。event_source は effects を読むので、ここでは型を文字列で名指す。
+@dataclass(frozen=True)
+class ReadSignalSource(EffectBase["SignalSourceFactory"]): ...
+
+if TYPE_CHECKING:
+    from doeff_records.event_source import SignalSourceFactory
