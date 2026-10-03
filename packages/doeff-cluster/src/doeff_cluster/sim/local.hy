@@ -324,7 +324,7 @@
 
 
 (defrecord RouteFaults
-  "調停ループの 1 歩が取った要求を篩うための、網と口の故障の今(RouteFaultsNow の答え — 世界へ 1 度だけ聞く・#2668)。cut = 今網の
+  "調停ループの 1 歩が取った要求を篩うための、網と口の故障の今(AdmitBatch の答え Admission の欄 — 世界へ 1 度だけ聞く・#2668)。cut = 今網の
    切れている worker の名・failing = 今故障を入れている coordinator の口 #(method path) → 答える status(欄に写像を持つ理由: 筋書きの
    FailRoute が口ごとに置く表をそのまま運ぶ — 引く側は口で引くだけ)・now-ms = 世界が答えた刻(epoch ms)。"
   (#^ frozenset cut)
@@ -332,11 +332,32 @@
   (#^ int now-ms))
 
 
+(defrecord Admission
+  "調停ループの 1 歩が取った要求を世界が篩った答え(AdmitBatch の答え — 篩いと報告の記録と覚えを世界への問い 1 つで・#3054 の C-6)。
+   faults = 篩った時の網と口の故障の今・kept = 調停ループへ渡す要求(網の切れた worker からの物と、故障を入れた口への物を除いた物)。"
+  (#^ RouteFaults faults)
+  (#^ tuple kept))
+
+
 (defrecord SimPauses
   "筋書きが頼んだ coordinator の止まり(世界の session の値 1 つ — PauseDue が 1 度の読みで判じる・#2668)。queued = 頼まれた止まりの
    #(kind 秒) の列・downtime = 最後に効いた止まりの止まっている秒(DowntimeOf が取り出す — None = 作り直さない)。"
   (#^ tuple queued)
   (setv #^ (| float None) downtime None))
+
+
+(defrecord SimIntake
+  "coordinator の要求の受付まわりの世界の値(世界の session の値 1 つ — 調停ループの 1 歩の問い AdmitBatch が 1 度の読みで篩い・記録・覚えを
+   済ませる・#3054 の C-6。節は本体で使う session の値を名ごとに節の頭で読むので、別々の名だと 1 歩で 5 度読む)。cuts = 網の切れている
+   worker の名 → 切れが明ける刻(epoch ms)・failing = 故障を入れている口 #(method path) → #(答える status 明ける刻)(2 つの欄に写像を
+   持つ理由: 筋書きの CutWorker・FailRoute が名ごと・口ごとに置く表をそのまま運ぶ — 引く側は名と口で引くだけ)・held = 取って返事を
+   まだしていない要求(返事の前に落ちたら接続の失敗を返す相手)・reports = 届いた service の報告(SimReport)・replayed = 眠った静かな
+   区間の歩をまとめて保存する Persist のうち、まだ来ていない数(#2790 — 落ちの注入で落とさない)。"
+  (#^ dict cuts)
+  (#^ dict failing)
+  (#^ tuple held)
+  (#^ tuple reports)
+  (#^ int replayed))
 
 
 (defrecord SimLink
@@ -581,6 +602,13 @@
   (#^ (| HostTruth None) after))
 
 
+(defrecord HostStop
+  "worker の拍の止めの問い(WorkerStopRequested)に宿が答える材料(StopRequestOf の答え — 世代の確かめと全 worker の止まれを世界への
+   問い 1 つで・#3054 の C-6)。truth = その worker の宿の真実・all-stopping = 全 worker が止まる時か。"
+  (#^ HostTruth truth)
+  (#^ bool all-stopping))
+
+
 (defclass WorkerDied [Exception]
   "偽の宿の世代が終わった(node ごと死んだ・止めた後に次の世代が起きた)— その世代の run-worker をその場で終わらせる。")
 
@@ -640,14 +668,11 @@
   "process pid の取り消しの終わり方(Crash = exit 1・worker の死 = exit -9 — 止めの合図なら None)。"
   {:fields [(: pid int)] :answer (| SimExit None) :tags {:context "doeff-cluster" :role "intent"}})
 
-(defeffect NoteReports
-  "coordinator に届いた報告を記録する。"
-  {:fields [(: batch tuple)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
-
 (defeffect NoteCoordinatorWrite
-  "coordinator が置き場への書き(Persist)を終えたことを世界に知らせる — 準備の状態を待つ AwaitReadiness の待ち手を起こす(待ち手は
-   起きた時に 1 回だけ読み直す — 時計の刻みでは読み直さない・#3053)。"
-  {:fields [] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+  "coordinator が置き場への書き(Persist の writes)を終えたことを世界に知らせる — 書きで終わった切り離した task の待ち手と、準備の状態を
+   待つ AwaitReadiness の待ち手を起こす(待ち手は起きた時に 1 回だけ読み直す — 時計の刻みでは読み直さない・#3053)。書き 1 回の後の
+   問いは世界への 1 つ(部品を別に聞かない・#3054 の C-6)。"
+  {:fields [(: writes tuple)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NotePreparation
   "worker の宿が起こした準備を記録する。"
@@ -673,14 +698,13 @@
   "worker name が止まっていれば、StartWorker で完了する Promise(動いていれば None — すぐ次の世代を起こす)。"
   {:fields [(: name str)] :answer (| Promise None) :tags {:context "doeff-cluster" :role "intent"}})
 
-(defeffect RouteFaultsNow
-  "今の網の切れと口の故障と刻(調停ループの 1 歩が取った要求を篩う 1 度の問い — 切れと故障と時計を別々に聞くと 1 歩ごとに世界を
-   2 度・時計を 3 度通る・#2668)。"
-  {:answer RouteFaults :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect HoldRequests
-  "coordinator が取った要求(返事の前に落ちたら接続の失敗を返す相手)を覚える。"
-  {:fields [(: batch tuple)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+(defeffect AdmitBatch
+  "調停ループの 1 歩が取った要求 batch を、網の切れと口の故障の今で篩い、残した要求のうち service の報告を記録し、返事の前に落ちたら
+   接続の失敗を返す相手として覚え、眠った静かな区間の歩をまとめて保存する Persist の数 replayed(生存の印を書く歩の数 — その書きは
+   1 拍ずつの走りでは起きる前の刻の書きなので落ちの注入で落とさない・#2790)を覚える — 1 歩の問いを世界への 1 つにする(篩い・報告・
+   覚え・数えを別々に聞くと 1 歩に 2〜4 度・#2668・#3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空・replayed を 0 で聞く
+   (何も書かない)。答え = Admission。"
+  {:fields [(: batch tuple) (: replayed int)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ReleaseRequest
   "返事を済ませた要求を覚えから外す。"
@@ -698,14 +722,16 @@
   "止まっている秒(None = 作り直さない)を取り出して空にする。"
   {:answer (| float None) :tags {:context "doeff-cluster" :role "intent"}})
 
-(defeffect NoteReplayedWrites
-  "調停ループが眠った静かな区間の歩をまとめて保存する Persist の数(生存の印を書く歩の数)を覚える(#2790 — その書きは 1 拍ずつの走りでは
-   起きる前の刻の書きなので、落ちの注入で落とさない)。"
-  {:fields [(: count int)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
-
-(defeffect TakeReplayedWrite
-  "次の Persist が、まとめて保存する区間の歩の書きか(真なら覚えた数を 1 減らす)。"
+(defeffect PersistCrashDue
+  "次の Persist で落ちを注入するか — まとめて保存する区間の歩の書きなら覚えた数を 1 減らして偽(その書きは 1 拍ずつの走りでは起きる前の
+   刻の書きなので落とさない・#2790)、そうでなければ筋書きの落ち(crash)が頼まれているかを PauseDue と同じく判じて筋書きから外す。
+   2 つの判断を世界への問い 1 つにする(#3054 の C-6)。"
   {:answer bool :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect StopRequestOf
+  "worker name の拍の止めの問い(WorkerStopRequested)に答える材料 — その worker の宿の真実と、全 worker が止まる時かを世界への問い
+   1 つで読む(#3054 の C-6)。答え = HostStop。"
+  {:fields [(: name str)] :answer HostStop :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect RestHost
   "静かな拍を一度に眠る宿 name が、読んだ宿の真実 seen のままなら眠りの呼び鈴 bell を掛ける(#2790)。答え = 掛けたか(読んだ後に真実が
@@ -1373,6 +1399,14 @@
   "worker name の世代 boot の宿の真実を読むため。その世代がもう終わっていれば(死んだ・止めた後に次の世代が起きた)WorkerDied で
    その世代の run-worker を終わらせる。"
   (<- truth HostTruth (HostTruthOf name))
+  (<- checked HostTruth (checked-truth name boot truth))
+  checked)
+
+
+(defk checked-truth [name boot truth]
+  {:pre [(: name str) (: boot str) (: truth HostTruth)] :post [(: % HostTruth)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "読んだ宿の真実 truth が worker name の世代 boot のまま動いているかを確かめるため。その世代がもう終わっていれば(死んだ・止めた後に
+   次の世代が起きた)WorkerDied でその世代の run-worker を終わらせる(live-truth と、別の問いで真実を読んだ節が同じ判断を使う)。"
   (when (or truth.down (!= truth.boot boot))
     (raise (WorkerDied (.format "worker {} の世代 {} は終わった(今は {}{})" name boot truth.boot (if truth.down "・止まっている" "")))))
   truth)
@@ -1411,12 +1445,12 @@
   fetched)
 
 
-(defk beat-body [worker truth sent-at stopping]
-  {:pre [(: worker SimWorker) (: truth HostTruth) (: sent-at int) (: stopping bool)] :post [(: % dict)]
+(defk beat-body [worker truth sent-at stopping plan]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: sent-at int) (: stopping bool) (: plan SimPlan)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "宿の真実 truth から、刻 sent-at に送る heartbeat の本文(本番の coordinator への口の polled と同じ heartbeat-body・env-heartbeat-part —
-   名乗る止まり始め stopping も載せる・#2819)を綴るため — 本物の heartbeat と、静かな拍を眠る宿が預ける仮の拍(#2790)が同じ綴りを使う。"
-  (<- plan SimPlan (PlanOf))
+   名乗る止まり始め stopping も載せる・#2819)を綴るため — 本物の heartbeat と、静かな拍を眠る宿が預ける仮の拍(#2790)が同じ綴りを使う。
+   plan = sim の筋(宿の世代の始めに 1 度読んだ物 — 拍ごとに世界へ聞かない・#3054 の C-6)。"
   (<- views tuple (codes-view truth.codes sent-at))
   ;; 今持っている印(#2804 — 本番の coordinator への口の beat と同じ判断)。印を知らない古い worker の代役は欄を載せない。
   (<- kept tuple (keep-marks-held truth.last-desired))
@@ -1433,20 +1467,19 @@
   (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
 
 
-(defk heartbeat [worker boot stopping]
-  {:pre [(: worker SimWorker) (: boot str) (: stopping bool)] :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk heartbeat [worker boot stopping plan parts]
+  {:pre [(: worker SimWorker) (: boot str) (: stopping bool) (: plan SimPlan) (: parts SimParts)]
+   :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "doeff-cluster" :role "protocol"}}
   "本番の coordinator への口の polled の代役: 生存・能力・版・状態・root の名乗り・止まり始め(stopping — 拍の Program が宣言の読みで渡した
    止まり・#2819)を同じ本文(beat-body — heartbeat-body・env-heartbeat-part)で送り、返事の job と task と温める表の行を宣言として返す。
-   届かなければ desired-when-unreachable(本番と同じ判断)。"
-  (<- parts SimParts (PartsOf))
-  (<- plan SimPlan (PlanOf))
+   届かなければ desired-when-unreachable(本番と同じ判断)。plan と parts は宿の世代の始めに 1 度読んだ物(#3054 の C-6)。"
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない — 本番の coordinator への口の beat と同じ)。読みと下ろしは世界への
   ;; 問い 1 つ(#2668)— 本文は下ろす前の真実から組む(下ろす欄 woken は本文に載らない)。
   (<- marked HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :woken False))))
   (val before marked.before)
   (<- sent-at int (now-epoch-ms))
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
-  (<- body dict (beat-body worker before sent-at stopping))
+  (<- body dict (beat-body worker before sent-at stopping plan))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
@@ -1577,8 +1610,8 @@
       before))
 
 
-(defk provisional-beats [worker truth now tick-ms count]
-  {:pre [(: worker SimWorker) (: truth HostTruth) (: now int) (: tick-ms int) (: count int)] :post [(: % tuple)]
+(defk provisional-beats [worker truth now tick-ms count plan]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: now int) (: tick-ms int) (: count int) (: plan SimPlan)] :post [(: % tuple)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "now の拍の後の静かな拍 count 個(1 拍ずつの走りで worker が打つ拍)のうち heartbeat を送る拍の heartbeat を、仮の拍(ProvisionalBeat の
    tuple — 刻の順)にするため。送るかは本物の拍と同じ判断(heartbeat-due — 前の仮の拍は届いたものとして数える)、本文は本物と同じ綴り
@@ -1602,7 +1635,7 @@
                (heartbeat-due watching fresh woken (or (!= truth.statuses sent) sent-stop) (- at last-ok) interval))
       (<- views tuple (codes-view truth.codes at))
       (when (or (is heard None) (!= views seen-views))
-        (<- body dict (beat-body worker truth at False))
+        (<- body dict (beat-body worker truth at False plan))
         (val request (! (http-request "POST" "/heartbeat" {} body :actor worker.name :peer worker.name)))
         (<- parsed (body-of request))
         (match parsed
@@ -1683,8 +1716,9 @@
   None)
 
 
-(defk rest-quietly [worker boot policy changed state]
-  {:pre [(: worker SimWorker) (: boot str) (: policy WorkerPolicy) (: changed (| Future None)) (: state WorkerState)] :post [(: % None)]
+(defk rest-quietly [worker boot policy changed state plan parts]
+  {:pre [(: worker SimWorker) (: boot str) (: policy WorkerPolicy) (: changed (| Future None)) (: state WorkerState) (: plan SimPlan)
+         (: parts SimParts)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "模擬の時計の下(旗 skip-idle)で、worker の拍と拍の間の眠りを静かな拍の分だけ一度に取るため。先の拍を本番の判断(quiet-beats — 観測は
    宿の真実をその刻で読む view-of)で試し、静かな拍の heartbeat を仮の拍として列に預けて(deposit-beats)、次に何かが変わる拍まで眠る。
@@ -1692,11 +1726,13 @@
    coordinator の止まり(DOWN)。起きた刻より前の仮の拍は届いたものとして写し(settle-rest)、後の拍は取り下げる。拍の刻でなく起きたら、
    1 拍ずつの走りの次の拍の刻まで本番と同じ待ちで眠る(rest-of-pause)。coordinator が止まっている・網が切れている・heartbeat の口が
    故障している・止まりが頼まれている(拍の Program が止まり始めを名乗る — #2819)間は預けない(本番と同じ拍の待ち)。"
-  (<- parts SimParts (PartsOf))
-  (<- truth HostTruth (live-truth worker.name boot))
-  (<- faults RouteFaults (RouteFaultsNow))
-  ;; 拍の Program が問う止まりの頼み(WorkerStopRequested の答えと同じ)。
-  (<- all-stopping bool (WorkersStopping))
+  ;; 宿の真実と、拍の Program が問う止まりの頼み(WorkerStopRequested の答えと同じ)を世界への問い 1 つで読む(#3054 の C-6)。
+  (<- asked HostStop (StopRequestOf worker.name))
+  (<- truth HostTruth (checked-truth worker.name boot asked.truth))
+  (val all-stopping asked.all-stopping)
+  ;; 網の切れと口の故障の今(取った要求の無い篩い — 報告も覚えも書かない)。
+  (<- admitted Admission (AdmitBatch #() 0))
+  (val faults admitted.faults)
   (<- now int (now-epoch-ms))
   (val tick-ms (int (* 1000 policy.tick-seconds)))
   ;; 一度に眠る拍の上限は、最後まで眠れた眠りごとに倍にし(上限 QUIET-BEATS-LIMIT)、途中で起こされたら最初の長さへ戻す — 出来事の多い
@@ -1712,7 +1748,7 @@
   (var resting False)
   (var beats #())
   (when (> ahead 1)
-    (<- offered tuple (provisional-beats worker truth now tick-ms (- ahead 1)))
+    (<- offered tuple (provisional-beats worker truth now tick-ms (- ahead 1) plan))
     (<- promise Promise (CreatePromise))
     (val bell (RestBell promise))
     (<- held bool (RestHost worker.name truth bell))
@@ -1760,10 +1796,11 @@
   None)
 
 
-(defhandler sim-host [#^ SimWorker worker #^ str boot]
+(defhandler sim-host [#^ SimWorker worker #^ str boot #^ SimPlan plan #^ SimParts parts]
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 同じ組の中で worker ごと・世代ごとに別の宿を並べる(run-worker は自分の名も世代も effect で問わない)ので Ask で
-  ;; 区別できない。
+  ;; 区別できない。plan と parts(sim の筋と coordinator の部品 — sim の間変わらない)は世代の始めに run-sim-worker が 1 度読んで運ぶ —
+  ;; 拍ごとに世界へ聞かない(#3054 の C-6)。session の値は鍵が宿ごとに分かれず、読むたびに状態の答え手を通る。
   ;; 本物の run-worker の effect に偽の宿で答える(本番の組 = worker/protocol の local-host・coordinator-link・
   ;; lease-release-coordinator・stop-flag)。宿の真実は世界の session に在り、HostTruthOf / PutHostTruth で読み書きする。どの節も先に
   ;; 世代が今のものかを確かめ(live-truth)、終わった世代の run-worker をその場で終わらせる。
@@ -1797,7 +1834,7 @@
       (do (<- (change-live-truth worker.name boot (fn [t] (replace t :fresh False))))
           (:= read silenced))
       due
-      (do (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot announced))
+      (do (<- beaten (| DesiredJobs DesiredUnreadable) (heartbeat worker boot announced plan parts))
           (:= read beaten)))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell read bell))
     (resume belled))
@@ -1828,7 +1865,6 @@
     (resume None))
   (StartJob [spec attempt code-path]
     (<- truth HostTruth (live-truth worker.name boot))
-    (<- parts SimParts (PartsOf))
     (<- now int (now-epoch-ms))
     (<- pid int (NextPid))
     (val instance (.format "{}-p{}" worker.name pid))
@@ -1842,7 +1878,6 @@
     (<- program-path str (program-path-of spec.program))
     ;; 子の送り手の口は本番の子の TaskSender・DetachedSender と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
     (<- child-env (| RuntimeEnv None) (runtime-env-of-context ctx))
-    (<- plan SimPlan (PlanOf))
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :versions plan.versions
                        :runtime-env child-env))
     (<- outside ProcessOutside (process-outside plan.per-process spec.name worker.name))
@@ -1871,8 +1906,6 @@
     (resume None))
   (ReleaseLeases [job instance]
     (<- (live-truth worker.name boot))
-    (<- parts SimParts (PartsOf))
-    (<- plan SimPlan (PlanOf))
     (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions)
                          job instance))
     (resume None))
@@ -1882,18 +1915,18 @@
     (<- (change-live-truth worker.name boot (fn [latest] (statuses-written latest statuses))))
     (resume None))
   (WorkerStopRequested []
-    (<- truth HostTruth (live-truth worker.name boot))
-    (<- stopping bool (WorkersStopping))
-    (resume (or stopping truth.stopping)))
+    ;; 世代の確かめと全 worker の止まれを世界への問い 1 つで読む(#3054 の C-6)。
+    (<- asked HostStop (StopRequestOf worker.name))
+    (<- truth HostTruth (checked-truth worker.name boot asked.truth))
+    (resume (or asked.all-stopping truth.stopping)))
   (EnvReport []
     ;; sim の宿は heartbeat の root の名乗りを世界の root から自分で作る(env-heartbeat-part)ので、拍の Program の問いには None で答える。
     (resume None))
   (AwaitNextTick [policy changed state]
     ;; 拍の間の待ち(#2790): 模擬の時計の下(旗 skip-idle)は静かな拍を一度に眠る(rest-quietly)。旗が偽なら本番の答え手
     ;; (worker/protocol/tick_pauses)と同じ tick-pause。
-    (<- plan SimPlan (PlanOf))
     (if plan.skip-idle
-        (<- (rest-quietly worker boot policy changed state))
+        (<- (rest-quietly worker boot policy changed state plan parts))
         (<- (tick-pause policy changed)))
     (resume None)))
 
@@ -1985,7 +2018,10 @@
   "worker の世代 1 つ: 本物の run-worker を、本番の入口と同じ組み立て(worker-on)で偽の宿の組の上で回す(止まれの合図で全 job を
    止めの手順で回収して終わる)。"
   ;; 拍の間の眠り(AwaitNextTick)は偽の宿が答える(旗が偽なら本番の答え手と同じ tick-pause・真なら静かな拍を一度に眠る — #2790)。
-  (<- (worker-on [(sim-host worker boot)] policy))
+  ;; sim の筋と coordinator の部品は世代の始めに 1 度読んで宿へ運ぶ(拍ごとに世界へ聞かない — #3054 の C-6)。
+  (<- plan SimPlan (PlanOf))
+  (<- parts SimParts (PartsOf))
+  (<- (worker-on [(sim-host worker boot plan parts)] policy))
   boot)
 
 
@@ -2036,18 +2072,11 @@
     ;; 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
     (<- taken (| list IdleTaken) effect)
     (<- batch list (taken-batch taken))
-    (when (isinstance taken IdleTaken)
-      (val marks (len (lfor step taken.steps :if step.marked step)))
-      (when (> marks 0)
-        (<- (NoteReplayedWrites marks))))
-    (<- faults RouteFaults (RouteFaultsNow))
-    (val kept (lfor r batch :if (and (not-in r.peer faults.cut) (not-in #(r.method r.path) faults.failing)) r))
-    (<- reports tuple (reports-in kept faults.now-ms))
-    (when reports
-      (<- (NoteReports reports)))
-    ;; 何も取らなかった歩(静かな拍)は覚えを変えない — 世界へ聞かない。
-    (when kept
-      (<- (HoldRequests (tuple kept))))
+    (val marks (if (isinstance taken IdleTaken) (len (lfor step taken.steps :if step.marked step)) 0))
+    ;; 篩い・報告の記録・覚え・区間の歩の書きの数を、世界への問い 1 つで(#3054 の C-6)。
+    (<- admitted Admission (AdmitBatch (tuple batch) marks))
+    (val faults admitted.faults)
+    (val kept (list admitted.kept))
     (for [r batch]
       (cond
         (in r.peer faults.cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
@@ -2059,20 +2088,14 @@
     (<- effect)
     (resume None))
   (Persist [writes]
-    ;; まとめて保存する区間の歩の書きは落とさない(落ちの注入より前の刻の書き — CrashCoordinator が区間を起こして切る)。
-    (<- replayed bool (TakeReplayedWrite))
-    (var crash False)
-    (when (not replayed)
-      (<- due bool (PauseDue PAUSE-CRASH))
-      (:= crash due))
+    ;; 落ちの注入の判断(まとめて保存する区間の歩の書きは落とさない・筋書きの落ちの頼み)を世界への問い 1 つで(#3054 の C-6)。
+    (<- crash bool (PersistCrashDue))
     (when crash
       (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))
     (<- effect)
-    ;; 書き終えた書きで終わった切り離した task の待ち手を起こす(送り手は読み直さずに待っている — proboscis/doeff#631)。
-    (<- parts SimParts (PartsOf))
-    (<- (ring-ended-tasks parts.queue writes))
-    ;; 書き終えたことを世界に知らせ、準備の状態を待つ待ち手を起こす(AwaitReadiness — 読み直さずに書きで起きる・#3053)。
-    (<- (NoteCoordinatorWrite))
+    ;; 書き終えたことを世界に知らせ、書きで終わった切り離した task の待ち手(proboscis/doeff#631)と準備の状態を待つ待ち手
+    ;; (AwaitReadiness・#3053)を起こす — 問い 1 つ。
+    (<- (NoteCoordinatorWrite writes))
     (resume None))
   (CoordinatorStopRequested []
     (<- due bool (PauseDue PAUSE-STOP))
@@ -2266,6 +2289,16 @@
   (DueWaiters :remaining remaining :due due))
 
 
+(defk pause-taken [pausing kind]
+  {:pre [(: pausing SimPauses) (: kind str)] :post [(: % (| SimPauses None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "筋書きが頼んだ coordinator の止まり kind が待っていれば、それを頼みの列から外して止まっている秒を覚えた後の止まりの値を、待って
+   いなければ None を返すため(世界の PauseDue と PersistCrashDue が同じ判断を使う)。"
+  (val due (next (gfor p pausing.queued :if (= (get p 0) kind) p) None))
+  (if (is due None)
+      None
+      (SimPauses :queued (tuple (gfor p pausing.queued :if (is-not p due) p)) :downtime (get due 1))))
+
+
 ;; --- 世界 -----------------------------------------------------------------------------------------------
 
 (defhandler sim-world [#^ SimPlan plan]
@@ -2285,16 +2318,13 @@
   (session var kills {})
   (session var next-pid 0)
   (session var log #())
-  (session var reports #())
   (session var preparations #())
   (session var stopping False)
   (session var stop-waiters {})
   (session var revivals {})
-  (session var cuts {})
-  (session var failing {})
-  (session var held #())
+  ;; 要求の受付まわり(網の切れ・口の故障・返事の前の覚え・報告・区間の歩の書きの数)は 1 つの値(1 歩の問いが 1 度だけ読む・#3054 の C-6)。
+  (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #() :replayed 0))
   (session var pausing (SimPauses :queued #()))
-  (session var replayed-writes 0)
   (session var runs #())
   (session var end-waiters {})
   (session var watch-failures #())
@@ -2377,7 +2407,9 @@
     (for [w woken]
       (<- (CompletePromise w.promise (JobProcessSeen :job process.job :pid process.pid))))
     (resume None))
-  (NoteCoordinatorWrite []
+  (NoteCoordinatorWrite [writes]
+    ;; 書き終えた書きで終わった切り離した task の待ち手を起こす(送り手は読み直さずに待っている — proboscis/doeff#631)。
+    (<- (ring-ended-tasks parts.queue writes))
     ;; coordinator が書き終えた時に、準備の状態を待つ待ち手を全部起こす(起きた待ち手が 1 回だけ読み直す・#3053)。
     (val rung ready-waiters)
     (:= ready-waiters #())
@@ -2427,14 +2459,14 @@
     (resume (tuple (gfor f watch-failures :if (= f.worker name) f))))
   (KillOf [pid]
     (resume (.get kills pid)))
-  (NoteReports [batch]
-    (:= reports (+ reports batch))
-    (resume None))
   (NotePreparation [preparation]
     (:= preparations (+ preparations #(preparation)))
     (resume None))
   (WorkersStopping []
     (resume stopping))
+  (StopRequestOf [name]
+    ;; 拍の止めの問いの材料(宿の真実と全 worker の止まれ)を 1 つの問いで(#3054 の C-6)。世代の確かめは宿の側(checked-truth)。
+    (resume (HostStop :truth (get hosts name) :all-stopping stopping)))
   (StopWorkers []
     (val waiting (list (.values revivals)))
     ;; 静かな拍を眠っている宿も起こす(止まれの合図は宿が次の拍で読む — #2790)。
@@ -2463,37 +2495,46 @@
             (:= revivals (| revivals {name promise}))
             (resume promise))
         (resume None)))
-  (RouteFaultsNow []
+  (AdmitBatch [batch replayed]
+    ;; 篩い(網の切れ・口の故障・刻)と、残した要求の service の報告の記録と、返事の前に落ちた時の覚えと、眠った区間の歩の書きの数を
+    ;; 1 つの問いで(#3054 の C-6)— 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は
+    ;; 書かない。
     (<- now int (now-epoch-ms))
-    (resume (RouteFaults :cut (frozenset (gfor #(name until) (.items cuts) :if (> until now) name))
-                         :failing (dfor #(route #(status until)) (.items failing) :if (> until now) route status)
-                         :now-ms now)))
-  (HoldRequests [batch]
-    (:= held (+ held batch))
-    (resume None))
+    (val faults (RouteFaults :cut (frozenset (gfor #(name until) (.items intake.cuts) :if (> until now) name))
+                             :failing (dfor #(route #(status until)) (.items intake.failing) :if (> until now) route status)
+                             :now-ms now))
+    (val kept (tuple (gfor r batch :if (and (not-in r.peer faults.cut) (not-in #(r.method r.path) faults.failing)) r)))
+    (<- found tuple (reports-in (list kept) now))
+    (when (or kept found (> replayed 0))
+      (:= intake (replace intake :held (+ intake.held kept) :reports (+ intake.reports found) :replayed (+ intake.replayed replayed))))
+    (resume (Admission :faults faults :kept kept)))
   (ReleaseRequest [request]
-    (:= held (tuple (gfor r held :if (is-not r request) r)))
+    (:= intake (replace intake :held (tuple (gfor r intake.held :if (is-not r request) r))))
     (resume None))
   (TakeHeldRequests []
-    (val taken held)
-    (:= held #())
+    (val taken intake.held)
+    (:= intake (replace intake :held #()))
     (resume taken))
   (PauseDue [kind]
-    (val due (next (gfor p pausing.queued :if (= (get p 0) kind) p) None))
-    (if (is due None)
+    (<- after (| SimPauses None) (pause-taken pausing kind))
+    (if (is after None)
         (resume False)
-        (do (:= pausing (SimPauses :queued (tuple (gfor p pausing.queued :if (is-not p due) p)) :downtime (get due 1)))
+        (do (:= pausing after)
             ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
-            (setattr parts.queue "ends-at-marks" (any (gfor p pausing.queued (= (get p 0) PAUSE-CRASH))))
+            (setattr parts.queue "ends-at-marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
-  (NoteReplayedWrites [count]
-    (:= replayed-writes (+ replayed-writes count))
-    (resume None))
-  (TakeReplayedWrite []
-    (if (> replayed-writes 0)
-        (do (:= replayed-writes (- replayed-writes 1))
-            (resume True))
-        (resume False)))
+  (PersistCrashDue []
+    ;; まとめて保存する区間の歩の書きは落とさない(落ちの注入より前の刻の書き — CrashCoordinator が区間を起こして切る)。それ以外は
+    ;; 筋書きの落ちの頼みを PauseDue と同じく判じる — 2 つの判断を 1 つの問いで(#3054 の C-6)。
+    (if (> intake.replayed 0)
+        (do (:= intake (replace intake :replayed (- intake.replayed 1)))
+            (resume False))
+        (do (<- after (| SimPauses None) (pause-taken pausing PAUSE-CRASH))
+            (if (is after None)
+                (resume False)
+                (do (:= pausing after)
+                    (setattr parts.queue "ends-at-marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+                    (resume True))))))
   (DowntimeOf []
     (val taken pausing.downtime)
     (:= pausing (replace pausing :downtime None))
@@ -2501,7 +2542,7 @@
   (CoordinatorStarted [ms]
     (:= runs (+ runs #((SimCoordinatorRun :started-ms ms))))
     ;; 前の一生が区間の歩を保存し終えずに落ちていても(置き場の失敗の注入)、その数を新しい一生の書きへ持ち越さない。
-    (:= replayed-writes 0)
+    (:= intake (replace intake :replayed 0))
     (resume None))
   (CoordinatorEnded [ms outcome]
     (:= runs (tuple (gfor #(i run) (enumerate runs) (if (= i (- (len runs) 1)) (replace run :ended-ms ms :outcome outcome) run))))
@@ -2564,7 +2605,7 @@
             (resume True))))
   (CutWorker [name seconds]
     (<- now int (now-epoch-ms))
-    (:= cuts (| cuts {name (+ now (int (* 1000 seconds)))}))
+    (:= intake (replace intake :cuts (| intake.cuts {name (+ now (int (* 1000 seconds)))})))
     ;; 静かな拍を眠っている宿を起こす(#2790 — 網の切れた worker の heartbeat は届かない。預けた拍は取り下げ、本物の拍で送り直す)。
     (val resting (. (get hosts name) rest-bell))
     (:= hosts (| hosts {name (replace (get hosts name) :rest-bell None)}))
@@ -2581,7 +2622,7 @@
     (resume None))
   (FailRoute [method path status seconds]
     (<- now int (now-epoch-ms))
-    (:= failing (| failing {#(method path) #(status (+ now (int (* 1000 seconds))))}))
+    (:= intake (replace intake :failing (| intake.failing {#(method path) #(status (+ now (int (* 1000 seconds))))})))
     ;; 静かな拍を眠っている宿を全部起こす(口の故障の間の heartbeat は本物で送る — 預けた拍は列が篩わない)。
     (val resting (tuple (gfor truth (.values hosts) :if (is-not truth.rest-bell None) truth.rest-bell)))
     (:= hosts (dfor #(key truth) (.items hosts) key (replace truth :rest-bell None)))
@@ -2628,7 +2669,7 @@
     (.settle parts.kube (+ namespace "/" name) ready)
     (resume None))
   (ReportsOf [name]
-    (resume (tuple (gfor r reports :if (= r.job name) r))))
+    (resume (tuple (gfor r intake.reports :if (= r.job name) r))))
   (ProcessesOf [name]
     (resume (tuple (gfor r log :if (= r.job name) r))))
   (AwaitProcessStarted [name]
