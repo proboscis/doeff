@@ -7,11 +7,12 @@ semgrep は中身しか見ないので、名だけをこの検が見る。語の
 
 from __future__ import annotations
 
+import fnmatch
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -82,16 +83,31 @@ def words_in_name(rule: VocabularyRule, name: str) -> list[str]:
     ]
 
 
-def tracked_names(package: str) -> list[str]:
-    """package の下の追跡されている file の、package の根からの path。"""
-    listed = subprocess.run(
-        ["git", "ls-files", "-z", "--", package],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    return [path.removeprefix(f"{package}/") for path in listed.split("\0") if path]
+def ignored_dirs(root: Path) -> tuple[str, ...]:
+    """semgrep が見ない dir の名の型(root の .semgrepignore の `<型>/` の行)— 名の検の母集団を、中身を見る semgrep の母集団と揃えるため。
+
+    .semgrepignore に dir の型の外の行(file の型・`!` の打ち消し)が来たら、この読みを広げずに止める(黙って母集団を変えない)。"""
+    lines = (root / ".semgrepignore").read_text(encoding="utf-8").splitlines()
+    patterns = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    odd = [pattern for pattern in patterns if not pattern.endswith("/") or pattern.startswith("!")]
+    assert odd == [], f".semgrepignore に dir の型の外の行がある(この検の読みを広げる): {odd}"
+    return tuple(pattern.removesuffix("/") for pattern in patterns)
+
+
+def scanned_names(root: Path, package: str) -> list[str]:
+    """package の下の file の、package の根からの path(semgrep が見ない dir を除く)— 名を検める母集団を作るため。
+
+    git の名簿(git ls-files)を使わず tree を歩く: 日次の全体検証は木を遠い機体へ git の名簿の file だけで写し、
+    .git を運ばない(dotfiles の agentcli/remote_check.py)ので、git に頼る読みは日次でだけ落ちる(#1201 — 終了コード 128)。
+    doeff-adr の semgrep の読みと同じ決まり(registry.py の _find_tree_root — 検の意味は tree だけで決まる)。"""
+    skipped = ignored_dirs(root)
+    base = root / package
+    return sorted(
+        str(path.relative_to(base))
+        for path in base.rglob("*")
+        if path.is_file()
+        and not any(fnmatch.fnmatch(part, pattern) for part in path.relative_to(root).parts[:-1] for pattern in skipped)
+    )
 
 
 def test_the_rule_names_the_three_packages() -> None:
@@ -117,9 +133,31 @@ def test_the_scan_covers_the_packages() -> None:
         "packages/doeff-claude-code": ["pyproject.toml"],
     }
     for package, names in wanted.items():
-        tracked = set(tracked_names(package))
+        scanned = set(scanned_names(REPO_ROOT, package))
         for name in names:
-            assert name in tracked, f"{package}/{name}"
+            assert name in scanned, f"{package}/{name}"
+
+
+def test_the_scan_reads_a_tree_without_git_and_skips_the_ignored_dirs(tmp_path: Path) -> None:
+    # 失敗ケース(#1201): 日次の全体検証の木は .git を持たない — git の名簿で読む形はここで終了コード 128 で落ちた。
+    # 名の検は tree だけで読み、semgrep が見ない dir(.semgrepignore)の中の file は数えない。
+    (tmp_path / ".semgrepignore").write_text("__pycache__/\n*.egg-info/\n", encoding="utf-8")
+    for name in ("src/doeff_cluster/kanban_view.hy", "src/doeff_cluster/__pycache__/agora.cpython-314.pyc",
+                 "src/doeff_cluster.egg-info/acp.txt", "README.md"):
+        (tmp_path / "packages/doeff-cluster" / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "packages/doeff-cluster" / name).write_text("", encoding="utf-8")
+    assert not (tmp_path / ".git").exists()
+    assert scanned_names(tmp_path, "packages/doeff-cluster") == ["README.md", "src/doeff_cluster/kanban_view.hy"]
+    rule = read_rule()
+    found = [word for name in scanned_names(tmp_path, "packages/doeff-cluster") for word in words_in_name(rule, name)]
+    assert found == ["kanban"]
+
+
+def test_a_semgrepignore_line_outside_the_dir_form_stops_the_scan(tmp_path: Path) -> None:
+    # dir の型の外の行(file の型・打ち消し)は読みを広げずに止める — 黙って母集団を変えない。
+    (tmp_path / ".semgrepignore").write_text("__pycache__/\n*.log\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"\*\.log"):
+        ignored_dirs(tmp_path)
 
 
 def test_no_file_name_in_the_packages_has_an_application_word() -> None:
@@ -127,7 +165,7 @@ def test_no_file_name_in_the_packages_has_an_application_word() -> None:
     found = [
         f"{package}/{name}: {word}"
         for package in rule.packages
-        for name in tracked_names(package)
+        for name in scanned_names(REPO_ROOT, package)
         for word in words_in_name(rule, name)
     ]
     assert found == [], "\n".join(found)
