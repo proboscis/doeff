@@ -6,7 +6,8 @@
 ;;;     (BoardMoved keys)       (! (read-board-at board keys))    ; 合図の所を読み直した盤 = 次の state
 ;;;     (TimerFired tag)        (if (= tag END) (stop board) board))
 ;;;
-;;; - 節の頭の型の組をそのまま WaitForEvent に渡す — 待つ型と扱う型はずれない。止めの合図(AwaitStop)と競わせ、先に来た方の節を回す。
+;;; - 節の頭の型の組をそのまま WaitForEvent に渡す — 待つ型と扱う型はずれない。止めの合図(止めの見張りが同じ bus に発する
+;;;   StopArrived)も同じ WaitForEvent で待ち、先に来た方の節を回す(起きるたびに task を立てて競わせない)。
 ;;; - 節の本体は do! の中(<- と ! が使える)。本体の値が次の state。(stop 値) は本体の最後の値の位置にだけ書け、ループを抜けて
 ;;;   event-loop の値になる。止めの節の値もそのまま event-loop の値になる。state を省いた形(節だけ)も同じ macro。
 ;;; - 展開の時に断る形: 止めの節が無い・2 つ在る / 待つ型の節が無い / 型を導けない節(_・名前だけ・| ・値の式)/ 同じ型の節が 2 つ /
@@ -165,16 +166,16 @@
 (defmacro event-loop [#* args]
   "出来事を待つ係のループ — (event-loop [state 型 初期値] (:stop 理由) 本体 (型 束縛 …) 本体 …)。
 
-   節の頭の型の組をそのまま WaitForEvent に渡し、止めの合図(AwaitStop)と競わせ、先に来た方の節を回す。
+   節の頭の型の組と止めの合図(StopArrived)を 1 つの WaitForEvent で待ち、先に来た方の節を回す。
    本体は do! の中(<- と ! が使える)。本体の値が次の state。(stop 値) を本体の最後の値の位置(do・if・cond・match・try の枝)に
    書くとループを抜けて値を返す。止めの節の値もそのまま event-loop の値。初期値も do! の中(読みは (! (Read…)) で書く)。
    state の型を書くと([名 型 初期値])、初期値・各節の値・抜けた値をその型で確かめ、型検査にも見える(書かない形 [名 初期値] も可)。
    state を省く形は束縛を書かず節だけを並べる(本体の値は捨てる・抜けるのは stop か止めの節)。本体で外の var を := で書き換えない。
    - 型の節は書いた順に当たる: 親の型の節を子の型の節より前に書くと、子の型の出来事も親の節が受ける。
-   - 止めの合図で抜ける時、待ちの途中で列から取り出された出来事が 1 つ捨てられることがある(合図は「どこが変わったか」だけなので、
-     次に起きた係が記録を読み直せば揃う)。
+   - 止めの合図で抜ける時、列に残った出来事は回さない(合図は「どこが変わったか」だけなので、次に起きた係が記録を読み直せば揃う)。
    - 出来事ごとに slog(\"event-loop\" :event 型の名)を出す — 外に slog の handler が要る。
-   待ちの部品 = doeff_events.event_loop(止めの待ちを係の寿命の間 1 つ・待つ前に StopRequested を 1 回)。"
+   - 外の bus の handler は StopArrived を係へ届ける物(subscribed_event_handler は必ず購読する)。
+   待ちの部品 = doeff_events.event_loop(止めの見張りを係の寿命の間 1 つ・待つ前に StopRequested を 1 回)。"
   (import doeff_hy.match_fields [mangle_match_fields])
   (setv #(state-name state-type state-init clauses) (_el-split-state args))
   (when (% (len clauses) 2)
@@ -222,7 +223,8 @@
   (setv start-state (if state-name [`(~bind ~state-name ~@state-check (~program ~state-init))] []))
   `(do
      (import doeff_events.event_loop [begin_watch :as ~begin next_event :as ~next-of end_watch :as ~end
-                                      StopArrived :as ~arrived LoopStop :as ~loop-stop stopped_value :as ~value-of])
+                                      LoopStop :as ~loop-stop stopped_value :as ~value-of]
+             doeff_events.effects [StopArrived :as ~arrived])
      ~@start-state
      (~bind ~watch (~begin))
      (try

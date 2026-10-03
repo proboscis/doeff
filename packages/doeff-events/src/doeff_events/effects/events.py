@@ -1,8 +1,22 @@
 """Publish/subscribe effects for event-driven doeff programs."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from doeff import EffectBase
+
+
+@dataclass(frozen=True)
+class StopArrived:
+    """The stop signal came: ``reason`` is the stop reason ``AwaitStop`` answered.
+
+    A loop's one stop watcher (``doeff_events.event_loop.begin_watch``) publishes it on the loop's bus, so the loop
+    waits for its events and for the stop with one ``WaitForEvent`` (agora-redesign #3080's follow-up). A bus is
+    shared only inside the reach of one stop signal (one job), so every loop on it stops on the same signal.
+    ``subscribed_event_handler`` always subscribes it.
+    """
+
+    reason: str
 
 
 def _normalize_event_types(event_types: tuple[type[Any], ...]) -> tuple[type[Any], ...]:
@@ -60,6 +74,7 @@ WaitForEvent = wait_for_event
 __all__ = [
     "Publish",
     "PublishEffect",
+    "StopArrived",
     "WaitForEvent",
     "WaitForEventEffect",
     "publish",
