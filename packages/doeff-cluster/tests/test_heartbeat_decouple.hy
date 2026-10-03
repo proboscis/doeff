@@ -199,14 +199,15 @@
 (defk cut-holder []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: pulse を持つ worker の網を 40 秒切り、切った時の最後に届いた heartbeat の刻と、その worker の pulse の process の
-   終わりの刻を返す。"
+   終わりの刻を返す。最後に届いた刻は、切って 30 秒後(網が切れている間 — 切った後の heartbeat は届かない)に宿の真実から読む:
+   静かな拍を眠っている宿は、通った拍を起きた時にまとめて写すので、切る前の眠りの途中に読むと、届いた拍がまだ写されていない(#3066)。"
   (<- (Delay SETTLE-SECONDS))
   (<- view dict (ReadCoordinator "/state"))
   (val holder (get (get (get view "placements") "pulse") "worker"))
-  (<- truth HostTruth (HostTruthOf holder))
   (<- cut-at int (now-epoch-ms))
   (<- (CutWorker holder 40.0))
   (<- (Delay 30.0))
+  (<- truth HostTruth (HostTruthOf holder))
   (<- processes tuple (ProcessesOf "pulse"))
   (val mine (lfor p processes :if (and (= p.worker holder) (< p.started-ms cut-at)
                                        (or (is p.ended-ms None) (>= p.ended-ms cut-at))) p))
