@@ -82,6 +82,11 @@
    機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
 
 
+(defclass [(dataclass :frozen True)] ReadServices [EffectBase]
+  "coordinator が預かる Service(常駐の job)の一覧と、置き先の担い手が報告した落ちた事実を読む(GET /resources/Service — #3479)。
+   呼び手が落ち続ける job を見つけるための読み。答え = ServiceFact の tuple(名の順)か ServicesUnreachable。")
+
+
 (defclass [(dataclass :frozen True)] AwaitRunnersChange [EffectBase]
   "名簿を写す呼び手が、coordinator の版(資源の spec / status が変わるたびに進む数 — GET /watch)が after から変わるまで待つ(上限
    timeout-seconds — coordinator の拍の刻で返るので、最大で拍 1 つ分長い)。名簿を周回ごとに読み直さず、変化で起きるための待ち(#1934)。
@@ -184,6 +189,24 @@
   #^ str detail)
 
 (val RunnersAnswer (| (get tuple #(RunnerFact ...)) RunnersUnreachable))
+
+;; --- Service の一覧(#3479) ---------------------------------------------------------------
+;; ServiceFact = Service 1 つ: name・replicas = 宣言の台数(宣言の行に無ければ None)・failures = 置き先の担い手が報告した続けて落ちた回数
+;;   (status.process.failures — 今の process が安定して動いていれば 0)・last-exit-code / last-exit-at-ms = 最後の終わりの code と時刻
+;;   (epoch ミリ秒)。担い手の報告が無い(置き先が無い・報告の行が無い・欄を載せない担い手)欄は None — 0 と黙って倒さない。
+;; ServicesUnreachable = coordinator に届かず一覧を読めなかった(落ちているかは分からない — 直ったとみなさない)。
+
+(defrecord ServiceFact
+  #^ str name
+  #^ (| int None) replicas
+  #^ (| int None) failures
+  #^ (| int None) last-exit-code
+  #^ (| int None) last-exit-at-ms)
+
+(defrecord ServicesUnreachable
+  #^ str detail)
+
+(val ServicesAnswer (| (get tuple #(ServiceFact ...)) ServicesUnreachable))
 
 ;; AwaitRunnersChange の答え(#1934): RunnersChange = 待ちが返った(revision = 今の版 — 次の after・changed = after から変わったか。偽は
 ;;   上限で返った)・RunnersWatchMissing = 待つ口の無い旧い coordinator(404 — detail = 理由)。
