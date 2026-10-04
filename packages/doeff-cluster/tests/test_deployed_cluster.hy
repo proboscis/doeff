@@ -80,10 +80,10 @@
   (<- spec dict (service-spec coordinator "ping"))
   (assert (= (get spec "replicas") 0) spec)
   (assert (= (get spec "run" "versions") PINNED-VERSIONS) spec)
-  ;; replicas を渡さない宣言し直しは今の値(0)を保つ。
-  (<- _again tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation))))
-  (<- kept dict (service-spec coordinator "ping"))
-  (assert (= (get kept "replicas") 0) kept))
+  ;; 起こし: replicas 1 で宣言し直すと Service の replicas は 1 に戻る(replicas は必ず書く欄 — 省略で 0 を保つ取り違えが起きない)。
+  (<- _again tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation) :replicas 1)))
+  (<- woken dict (service-spec coordinator "ping"))
+  (assert (= (get woken "replicas") 1) woken))
 
 
 (deftest test-the-deployed-handler-declares-and-reads-readiness-from-the-coordinator
@@ -93,7 +93,7 @@
   (<- before ServiceReadiness (asked coordinator clock (ReadinessOf "ping")))
   (assert (= before.state "Missing") before)
   ;; 宣言: 答えは宣言した Service の名・coordinator はその Service を数える(worker が居ないので Ready ではない)。
-  (<- declared tuple (asked coordinator clock (Redeclare (pings machine-foundation))))
+  (<- declared tuple (asked coordinator clock (Redeclare (pings machine-foundation) :replicas 1)))
   (assert (= declared #("ping")) declared)
   (<- after ServiceReadiness (asked coordinator clock (ReadinessOf "ping")))
   (assert (!= after.state "Missing") after)

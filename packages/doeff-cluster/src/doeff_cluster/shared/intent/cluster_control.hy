@@ -1,9 +1,9 @@
 ;;; cluster を外から動かす契約の effect — 系を宣言する・Service の準備の状態を読む・job を落とす・worker や coordinator を止める
 ;;; (2026-10-03・ADR-DOE-CLUSTER-001 R8 の追補 (1)・#3020 の決め 1・#3029)。
 ;;;
-;;;   (<- names (Redeclare system))            ; 系を宣言し直す(答え = 宣言した Service の名の tuple)
-;;;   (<- names (Redeclare system :environ {"tally" {"STEP" "3"}}))  ; その宣言し直しの job ごとの environ の上書きつき(#3131)
-;;;   (<- names (Redeclare system :replicas 0))  ; 宣言した Service の replicas を 0 にする(取り下げ — #3295)
+;;;   (<- names (Redeclare system :replicas 1))  ; 系を宣言し直して動かす(答え = 宣言した Service の名の tuple)
+;;;   (<- names (Redeclare system :replicas 0))  ; 系を宣言し直して取り下げる(replicas は必ず書く — #3295)
+;;;   (<- names (Redeclare system :replicas 1 :environ {"tally" {"STEP" "3"}}))  ; その宣言し直しの job ごとの environ の上書きつき(#3131)
 ;;;   (<- ready (ReadinessOf "tally"))         ; coordinator が数えている Service の準備の状態(ServiceReadiness)
 ;;;   (<- n (Crash "tally"))                   ; job の動いている process を全部 exit 1 で落とす(答え = 落とした数)
 ;;;   (<- r (AwaitReadiness "tally" "Ready" 60.0))      ; 準備の状態が Ready になるまで待つ(期限つき — 過ぎたら ReadinessWaitExpired)
@@ -39,11 +39,11 @@
    本番の declare と同じく宣言ごとにその系への上書きの全部で、足し合わせない。新しい系に無い job・宣言の :environ に無い名・文字列で
    ない値は断る — 最初の宣言と同じ規則・#3131)。dict のままなのは、sim-cluster の :environ と同じ形で、宣言を組む system-declaration
    の :environ がそのまま受けるため(環境変数の名と値は名前の決まった欄ではない)。None = handler の既定(sim-cluster は最初の宣言の
-   上書き・手元の 1 台は上書き無し)。replicas = 宣言する Service の replicas(0 = 取り下げ・1 = 動かす)。None = 今の値を保つ(まだ無い
-   Service は 1)— 本番の declare の apply-declaration の replicas と同じ意味で、3 つの handler(sim-cluster・手元の 1 台・配備)が同じく
-   coordinator の書きへ渡す(#3295)。
+   上書き・手元の 1 台は上書き無し)。replicas = 宣言する Service の replicas(0 = 取り下げ・1 = 動かす)で、**必ず書く** — 省略で今の値を
+   保つ形にすると、取り下げてあった Service へ replicas を書かずに宣言し直した時、宣言は通るのに job が起きない(2026-10-04 に実際に
+   起きた取り違え・#3295)。3 つの handler(sim-cluster・手元の 1 台・配備)が coordinator の書きへそのまま渡す。
    答え = 宣言した Service の名の tuple。"
-  {:fields [(: system System) (: environ (| (get dict #(str (get dict #(str str)))) None) None) (: replicas (| int None) None)]
+  {:fields [(: system System) (: replicas int) (: environ (| (get dict #(str (get dict #(str str)))) None) None)]
    :answer (get tuple #(str ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 

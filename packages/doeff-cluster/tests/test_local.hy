@@ -119,7 +119,7 @@
   "筋書き: 8 秒待って読み、系 system で宣言し直し、wait 秒待ってもう一度読む。"
   (<- (Delay 8.0))
   (<- before Seen (seen-of name prefix))
-  (<- names tuple (Redeclare system))
+  (<- names tuple (Redeclare system :replicas 1))
   (<- (Delay wait))
   (<- after Seen (seen-of name prefix))
   (Changed :answer names :before before :after after))
@@ -158,14 +158,15 @@
   (assert (= changed.after.readiness.state "Ready") changed.after.readiness))
 
 
-(defrecord Withdrawn
-  "取り下げの筋書きが読んだ姿: changed = 宣言し直しの前と後の job・replicas = 宣言し直しの後に coordinator の Service が持つ replicas。"
+(defrecord ReplicasSeen
+  "replicas を書く宣言し直しの筋書きが読んだ姿: changed = 宣言し直しの前と後の job・replicas = 最後の宣言し直しの後に coordinator の
+   Service が持つ replicas。"
   (#^ Changed changed)
   (#^ int replicas))
 
 
 (defk withdraw-and-watch [system name prefix]
-  {:pre [(: system System) (: name str) (: prefix str)] :post [(: % Withdrawn)] :tags {:context "doeff-cluster-test" :role "program"}}
+  {:pre [(: system System) (: name str) (: prefix str)] :post [(: % ReplicasSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "取り下げ(Redeclare の replicas 0 — #3295)が、動いている job を止めて起こし直さないかを読むため: 8 秒待って読み、同じ系を
    replicas 0 で宣言し直し、12 秒待ってもう一度読み、coordinator の Service の replicas を読む。"
   (<- (Delay 8.0))
@@ -174,35 +175,68 @@
   (<- (Delay 12.0))
   (<- after Seen (seen-of name prefix))
   (<- service dict (ReadCoordinator (+ "/resources/Service/" name)))
-  (Withdrawn :changed (Changed :answer names :before before :after after) :replicas (get service "spec" "replicas")))
+  (ReplicasSeen :changed (Changed :answer names :before before :after after) :replicas (get service "spec" "replicas")))
 
 
-(defhandler drops-replicas
-  ;; 失敗ケースのため: replicas を書きへ渡さない handler(#3295 の前の 3 つの handler と同じ振る舞い)を筋書きと sim の世界の間に挟む —
-  ;; Redeclare を受けて replicas を落とし、同じ系と environ で外の handler へ出し直す。
+(defk withdraw-wake-and-watch [system name prefix]
+  {:pre [(: system System) (: name str) (: prefix str)] :post [(: % ReplicasSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起こし(取り下げた系を Redeclare の replicas 1 で宣言し直す — #3295)が、job をもう一度起こすかを読むため: 8 秒待って replicas 0 で
+   取り下げ、12 秒待って読み、replicas 1 で宣言し直し、12 秒待ってもう一度読み、coordinator の Service の replicas を読む。"
+  (<- (Delay 8.0))
+  (<- _withdrawn tuple (Redeclare system :replicas 0))
+  (<- (Delay 12.0))
+  (<- before Seen (seen-of name prefix))
+  (<- names tuple (Redeclare system :replicas 1))
+  (<- (Delay 12.0))
+  (<- after Seen (seen-of name prefix))
+  (<- service dict (ReadCoordinator (+ "/resources/Service/" name)))
+  (ReplicasSeen :changed (Changed :answer names :before before :after after) :replicas (get service "spec" "replicas")))
+
+
+;; 引数に残す理由: 失敗ケースごとに違う固定の値(取り下げを無視する 1・起こしを無視する 0)を同じ handler で並べるため — Ask で区別する
+;; 鍵が無い(検の中だけの handler)。
+(defhandler fixes-replicas [#^ int fixed]
+  ;; 失敗ケースのため: 頼まれた replicas を無視して決まった値 fixed を書く handler を筋書きと sim の世界の間に挟む — Redeclare を受けて、
+  ;; 同じ系と environ を replicas fixed で外の handler へ出し直す(replicas を正しく運ばない答え手の代役)。
   {:tags {:context "doeff-cluster-test" :role "protocol"}}
   (Redeclare [system environ replicas]
-    (<- names tuple (Redeclare system :environ environ))
+    (<- names tuple (Redeclare system :replicas fixed :environ environ))
     (resume names)))
 
 
 (deftest test-a-redeclaration-with-zero-replicas-withdraws-the-service
   ;; 取り下げ(#3295): 同じ系を replicas 0 で宣言し直すと、coordinator の Service の replicas が 0 になり、動いていた process は止まって
   ;; 起こし直されない(本番の declare の --replicas 0 と同じ意味を、契約の effect が 3 つの handler で運ぶ)。
-  (<- withdrawn Withdrawn (sim-cluster (beacons sim-foundation) (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/")))
-  (assert (= withdrawn.changed.answer #("beacon")) withdrawn.changed.answer)
-  (assert (= (len withdrawn.changed.before.processes) 1) withdrawn.changed.before.processes)
-  (assert (= withdrawn.replicas 0) withdrawn)
-  (assert (all (gfor p withdrawn.changed.after.processes (is-not p.exit-code None))) withdrawn.changed.after.processes))
+  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation) (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/")))
+  (assert (= seen.changed.answer #("beacon")) seen.changed.answer)
+  (assert (= (len seen.changed.before.processes) 1) seen.changed.before.processes)
+  (assert (= seen.replicas 0) seen)
+  (assert (all (gfor p seen.changed.after.processes (is-not p.exit-code None))) seen.changed.after.processes))
 
 
-(deftest test-a-handler-that-drops-replicas-leaves-the-service-running
-  ;; 失敗ケース: replicas を書きへ渡さない handler では、同じ取り下げの筋書きで Service の replicas は 1 のまま・process は動き続ける
-  ;; (上の検が handler の欠けを赤にできることの確かめ)。
-  (<- withdrawn Withdrawn (sim-cluster (beacons sim-foundation)
-                                       (with-handlers [drops-replicas] (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/"))))
-  (assert (= withdrawn.replicas 1) withdrawn)
-  (assert (any (gfor p withdrawn.changed.after.processes (is p.exit-code None))) withdrawn.changed.after.processes))
+(deftest test-a-handler-that-ignores-the-requested-replicas-does-not-withdraw
+  ;; 失敗ケース(取り下げ): 頼まれた 0 を無視して 1 を書く handler では、同じ取り下げの筋書きで Service の replicas は 1 のまま・
+  ;; process は動き続ける(上の検が答え手の欠けを赤にできることの確かめ)。
+  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation)
+                                     (with-handlers [(fixes-replicas 1)] (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/"))))
+  (assert (= seen.replicas 1) seen)
+  (assert (any (gfor p seen.changed.after.processes (is p.exit-code None))) seen.changed.after.processes))
+
+
+(deftest test-a-redeclaration-with-one-replica-wakes-a-withdrawn-service
+  ;; 起こし(#3295): 取り下げた系を replicas 1 で宣言し直すと、Service の replicas が 1 に戻り、新しい process が起きる。
+  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation) (withdraw-wake-and-watch (beacons sim-foundation) "beacon" "beacon/")))
+  (assert (all (gfor p seen.changed.before.processes (is-not p.exit-code None))) seen.changed.before.processes)
+  (assert (= seen.replicas 1) seen)
+  (assert (any (gfor p seen.changed.after.processes (is p.exit-code None))) seen.changed.after.processes))
+
+
+(deftest test-a-handler-that-ignores-the-requested-replicas-does-not-wake
+  ;; 失敗ケース(起こし): 頼まれた 1 を無視して 0 を書く handler では、起こしの筋書きの後も Service の replicas は 0・動く process は無い。
+  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation)
+                                     (with-handlers [(fixes-replicas 0)] (withdraw-wake-and-watch (beacons sim-foundation) "beacon" "beacon/"))))
+  (assert (= seen.replicas 0) seen)
+  (assert (all (gfor p seen.changed.after.processes (is-not p.exit-code None))) seen.changed.after.processes))
 
 
 (deftest test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready
@@ -252,9 +286,9 @@
   "条 C14 の記録を集めるため: 8 秒待って系 first で宣言し直し、15 秒待って系 second で宣言し直し、15 秒待って beacon の子 process が
    本当に動いた区間を読む(入れ替えを 2 度通した JobProcess の列)。"
   (<- (Delay 8.0))
-  (<- _first tuple (Redeclare first))
+  (<- _first tuple (Redeclare first :replicas 1))
   (<- (Delay 15.0))
-  (<- _second tuple (Redeclare second))
+  (<- _second tuple (Redeclare second :replicas 1))
   (<- (Delay 15.0))
   (<- seen tuple (ProcessesOf "beacon"))
   (tuple (gfor p seen (JobProcess :job "beacon" :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
@@ -378,7 +412,7 @@
    :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 8 秒待って、beacon-b を足した系(beacons-plus)へ overrides つきで宣言し直し、さらに 12 秒待って 2 つの job を読む。"
   (<- (Delay 8.0))
-  (<- _names (get tuple #(str ...)) (Redeclare (beacons-plus sim-foundation) :environ overrides))
+  (<- _names (get tuple #(str ...)) (Redeclare (beacons-plus sim-foundation) :replicas 1 :environ overrides))
   (<- (Delay 12.0))
   (<- a Seen (seen-of "beacon" "beacon/"))
   (<- b Seen (seen-of "beacon-b" "beacon/"))
@@ -666,9 +700,9 @@
   "条 C15・C16 の記録を集めるため: beacon を版 2(盤の行の step = 2)へ宣言し直し、その後 beacon の居ない系(relay)へ宣言し直して
    beacon/ の行の書き手を止める。盤と Service の名を読み、coordinator を 10 秒止め、作り直しの後に 25 秒待ってもう 1 度読む。"
   (<- (Delay 8.0))
-  (<- _v2 tuple (Redeclare (beacons-v2 sim-foundation)))
+  (<- _v2 tuple (Redeclare (beacons-v2 sim-foundation) :replicas 1))
   (<- (Delay 10.0))
-  (<- _quiet tuple (Redeclare (relay sim-foundation)))
+  (<- _quiet tuple (Redeclare (relay sim-foundation) :replicas 1))
   (<- (Delay 10.0))
   (<- rows-before dict (SharedRows "beacon/"))
   (<- state-before dict (ReadCoordinator "/state"))
@@ -870,7 +904,7 @@
   (<- (Delay 2.0))
   (<- (StopCoordinator 2.0))
   (<- (Delay 11.0))
-  (<- (Redeclare (beacons-plus sim-foundation)))
+  (<- (Redeclare (beacons-plus sim-foundation) :replicas 1))
   (<- (Delay 0.5))
   (<- state dict (ReadCoordinator "/state"))
   (<- after tuple (ProcessesOf "beacon"))
@@ -1031,7 +1065,7 @@
   (<- since int (now-epoch-ms))
   (<- (DrainWorker worker DRAIN-TTL))
   (<- (Delay 2.0))
-  (<- (Redeclare (beacons-plus sim-foundation)))
+  (<- (Redeclare (beacons-plus sim-foundation) :replicas 1))
   (<- (Delay 2.0))
   (<- placements tuple (placements-after 0.0))
   (DrainedAndRedeclared :placements placements

@@ -59,7 +59,7 @@
     (<- running tuple (ProcessesOf "beacon"))
     (<- (just-heard (. (get running -1) worker))))
   (<- asked int (now-epoch-ms))
-  (<- (Redeclare (beacons-v2 sim-foundation)))
+  (<- (Redeclare (beacons-v2 sim-foundation) :replicas 1))
   (<- (Delay 10.0))
   (<- processes tuple (ProcessesOf "beacon"))
   (val old (lfor p processes :if (and (< p.started-ms asked) (is-not p.ended-ms None) (>= p.ended-ms asked)) p))

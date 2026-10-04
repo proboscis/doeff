@@ -454,7 +454,7 @@
   (<- (Delay 8.0))
   (<- (CutWorker "w1" 120.0))
   (<- (Delay 10.0))
-  (<- (Redeclare (wide-pulses sim-foundation)))
+  (<- (Redeclare (wide-pulses sim-foundation) :replicas 1))
   (<- (Delay 60.0))
   (<- mid tuple (ProcessesOf "pulse"))
   (<- readiness ServiceReadiness (ReadinessOf "pulse"))
