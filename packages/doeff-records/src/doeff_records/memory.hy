@@ -195,9 +195,12 @@
 (defk drop-bell [store bell]
   {:pre [(: store MemoryStore) (: bell ExternalPromise)] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
-  "掛けた呼び鈴 bell を置き場 store から外すため(鳴らずに待ちを終える時 — 鳴った呼び鈴は書きが外し済み・外し済みでも効かずに返る)。"
+  "掛けた呼び鈴 bell を置き場 store から外し、その外の promise を終わらせるため(鳴らずに待ちを終える時 — 鳴った呼び鈴は書きが外し済み・
+   外し済みでも効かずに返る)。待ち手はもう居ないので None で完了しても誰も起きない — 終わらせないと scheduler の promise の行が pending の
+   まま残る(#3508・#3494)。鳴って完了済みの呼び鈴への 2 度目の完了は scheduler が無視する。"
   (with [store.lock]
     (.pop store.bells bell None))
+  (.complete bell None)
   None)
 
 

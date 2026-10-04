@@ -241,9 +241,13 @@
           (or self.failure "LISTEN が張れていない"))))
 
   (defn #^ None drop [self #^ ExternalPromise bell]  ; defk にできない: 答え手の節と取り消しの後始末が呼ぶ(VM の外の錠)
-    "鳴らなかった呼び鈴を外すため(もう外れていれば何もしない)。"
+    "鳴らなかった呼び鈴を外し、その外の promise を終わらせるため(もう外れていれば外す所は何もしない)。待ち手はもう居ない(待ちを終えた
+     後か、掛けるのを取り消した時に呼ぶ)ので、None で完了しても誰も起きない — 終わらせないと scheduler の promise の行が pending の
+     まま残り、終わった物だけを消す掃除の外になる(#3508・#3494)。鳴って完了済みの呼び鈴への 2 度目の完了は scheduler が
+     無視する。"
     (with [_ self.lock]
-      (.discard self.bells bell)))
+      (.discard self.bells bell))
+    (.complete bell None))
 
   (defn #^ None listen [self]  ; defk にできない: daemon の thread の本体(blocking に通知を待つ)
     "LISTEN を張って通知ごとに呼び鈴を鳴らし、切れたら LISTEN-RETRY-SECONDS 置いて繋ぎ直すため(張った時にも鳴らす — 頭の註)。"
