@@ -96,7 +96,7 @@
                              "specHash" (spec-hash spec) "placement" spec.placement}])
                        []))
     (setv #(state _ reply) (responded self.state (run (http-request "POST" "/heartbeat" {}
-                                                        {"name" "atlas" "provides" ["net"] "capacity" 10 "versions" V
+                                                        {"name" "atlas" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V
                                                          "statuses" statuses})) self.now T))
     (setv self.state state)
     (setv want (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a")

@@ -181,13 +181,16 @@
 
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
-   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・capacity・versions / tools = 名 → 版・platform・
+   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・capacity・task-reserve = task のために空けておく数
+   (必ず書く欄・0 以上 capacity 以下 — 常駐の job と並べた置き先はこの分を使わない・欄の無い本文は形の誤りで断る)・versions / tools = 名 → 版・platform・
    envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(StatusRow)・
    endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版・kept-when-cut-off = 途絶しても動かし続けてよい印を
    今持っている job の名の列(#2804 — None = 欄の無い古い worker = 印を知らない)・stopping = この世代が止まり始めた
    (drain の頼みを通らない止めの名乗り — 判断はこの世代を drain に載せる・#2819。名乗らない旧い worker は偽)。"
-  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore :check [(> (len name) 0)]}
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
+   :check [(> (len name) 0) (<= 0 task-reserve capacity)]}
   (#^ str name)
+  (#^ int task-reserve)
   (setv #^ (| (get tuple #(str ...)) None) provides None)
   (setv #^ (| (get tuple #(str ...)) None) exclusive None)
   (setv #^ object labels None)

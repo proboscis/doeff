@@ -131,8 +131,8 @@
 
 ;; --- 同値: 1 秒ごとの拍と飛ばす拍で、判断の刻が同じ ----------------------------------------------------------------
 
-(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 
 ;; 仮想の長い時間を回す使い手の検と同じ worker の設定(拍 10 秒・起こし直しは待たせる)— 要求の無い拍が多い。
 (val QUIET-POLICY (WorkerPolicy :tick-seconds 10.0 :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
@@ -577,7 +577,7 @@
 (deftest test-liveness-due-is-the-deadline-the-judgments-compare
   (val timing (ClusterTiming))
   (val seen 1000000)
-  (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms seen))
+  (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms seen :task-reserve 0))
   (val start (ClusterState :workers {"w" worker}))
   ;; lease-ms — note-liveness が生きていないと数え始める刻。
   (<- lease-due (| int None) (liveness-due start seen timing))
@@ -609,8 +609,8 @@
 (deftest test-a-quiet-stretch-with-workers-is-tried-at-the-first-liveness-deadline
   ;; 2 台のうち早く黙った w2(最後の連絡 0)の lease の期限 10000 を越える最初の歩 11000 で note-liveness が答えを変え、区間が切れる
   ;; (w1 の期限 15000 より前)。
-  (val state (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 5000)
-                                     "w2" (WorkerInfo :name "w2" :provides #("cpu") :capacity 1 :last-seen-ms 0)}))
+  (val state (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 5000 :task-reserve 0)
+                                     "w2" (WorkerInfo :name "w2" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0)}))
   (val start (QuietStep :at 0 :state state :watchers #() :marked False))
   (<- skipped QuietStretch (quiet-stretch (IdleProbe state (ClusterTiming) (ClusterNaming)) start 30000))
   (<- tried QuietStretch (tried-steps start 30000))
@@ -696,7 +696,7 @@
   (<- lost TaskRecord (task-row "lost" "assigned" 20000 :detached True :worker "w1"))
   (<- dropped TaskRecord (task-row "call" "finished" 12000 :worker "w1" :finished 3000))
   (<- waiting TaskRecord (task-row "wait" "queued" 20000 :detached True :needs #("verify")))
-  (val verify (replace (WorkerInfo "verify-1" #("verify") 1 0) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (val verify (replace (WorkerInfo "verify-1" #("verify") 1 0 :task-reserve 0) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
   #(#("lease の内に終わった task の保持" (ClusterState :tasks {"done" retained}) 5000 10001)
     #("lease の切れる置いた task" (ClusterState :tasks {"lost" lost}) 5000 20001)
     #("呼び手が問い合わせを止めた task" (ClusterState :tasks {"call" dropped}) 5000 12001)

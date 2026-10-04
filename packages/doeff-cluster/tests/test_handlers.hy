@@ -8,7 +8,7 @@
 (deftest test-broken-declaration-is-reported-not-raised
   ;; worker が job を受けるのは coordinator の返事からだけ(宣言の file を直に読む口は無い)。読めない返事は例外を上げず「読めない」に
   ;; なる(fence の前は直前の宣言を続ける)。
-  (val link (LinkRig "http://coord" "w" #() 1 60000
+  (val link (LinkRig "http://coord" "w" #() 1 0 60000
                              :transport (httpx.MockTransport (fn [request] (httpx.Response 200 :text "{")))))
   (val result (.poll link))
   (assert (isinstance result DesiredUnreadable) result)
@@ -17,7 +17,7 @@
 (deftest test-unreachable-coordinator-is-unreadable-then-fences
   ;; 閉じた port へ向ける。fence 前は「読めない」(直前の宣言を続ける)、fence を超えたら途絶でも残す job(入れ替えの書き手・切り離した
   ;; task・途絶しても動かし続けてよい印の在る job — #2804)だけの宣言になる。ここは宣言を受け取っていないので空(全部止める)。
-  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 0 60000))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
   (assert (in "coordinator に届かない" first.reason))
@@ -31,7 +31,7 @@
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]
   (val tasks (/ tmp-path "tasks"))
-  (val link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000 :task-dir (str tasks)))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 1 0 60000 :task-dir (str tasks)))
   (val sha (* "d" 64))
   (val task {"id" "t7" "revision" "r" "versions" {"b" "2" "a" "1"} "program" sha})
   (val specs (.accept-tasks link [task]))
@@ -90,7 +90,7 @@
   (setv server (ThreadingHTTPServer #("127.0.0.1" 0) Reply))
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (try
-    (setv link (LinkRig f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 1 10000))
+    (setv link (LinkRig f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 1 0 10000))
     (assert (= (.poll link) (DesiredJobs #())))
     (assert (= link.state.fence-ms 20000))
     (finally (.shutdown server))))

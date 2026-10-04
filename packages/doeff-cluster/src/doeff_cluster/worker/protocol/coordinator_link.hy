@@ -52,15 +52,17 @@
 
 (defclass LinkState []
   "coordinator への口が拍から拍へ持ち越す値の入れ物(頭の註)。組み立て(main・検)が作り、handler coordinator-link と背景の待ちが書き換える。
-   name = worker の名・provides / exclusive = 提供する能力・専用の能力の名・capacity = 同時の job の上限・fence-ms = 途絶で止める長さ
+   name = worker の名・provides / exclusive = 提供する能力・専用の能力の名・capacity = 同時の job の上限・task-reserve = capacity のうち
+   task のために空けておく数(heartbeat で必ず名乗る — 常駐の job はこの分に置かれない)・fence-ms = 途絶で止める長さ
    (返事の timing が上書きする)・task-dir = task の印と結果の file の置き場・versions = 名乗る版・tools = 名乗る道具(名 → 版)・
    handles-envs = 実行環境の job を扱うか(真なら root の名乗りを heartbeat に載せ、温める表を受ける)・node = k8s の node の名・
    watch = 名指しの待ちを使うか(本番の入口が真にする)・boot = この process の世代・boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡と
    みなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)。"
-  (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int fence-ms #^ str task-dir #^ str boot #^ int boot-at
-                          #^ int started-ms * #^ (| dict None) [versions None] #^ (| dict None) [tools None] #^ bool [handles-envs False]
-                          #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]]
-    (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity self.tools (or tools {})
+  (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
+                          #^ int boot-at #^ int started-ms * #^ (| dict None) [versions None] #^ (| dict None) [tools None]
+                          #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]]
+    (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
+          self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
           self.fence-ms fence-ms self.statuses []
           ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 返事の timing の keep_fence_ms が上書きする。
@@ -329,7 +331,7 @@
   ;; 今持っている印 = 最後に届いた返事の job の印(#2804 — coordinator はこれで印の約束を外す)。
   (<- kept tuple (keep-marks-held state.last-jobs))
   (<- base dict (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
-                                :capacity state.capacity :versions state.versions :statuses sending
+                                :capacity state.capacity :task-reserve state.task-reserve :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
                                 :stopping stopping))
   (val body (| base

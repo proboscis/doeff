@@ -175,7 +175,8 @@
 
 ;; --- 担い手の名簿 --------------------------------------------------------------------------
 ;; RunnerFact = 担い手 1 つ: name = worker の名・provides / exclusive = 提供する能力・専用の能力の名の tuple(名の順)・live = coordinator の名簿で
-;;   生きている(heartbeat が lease の内)・draining = 新しい task を受けない。
+;;   生きている(heartbeat が lease の内)・draining = 新しい task を受けない・task-room = 今この担い手が受けられる task の数(coordinator が
+;;   task を置くのと同じ数え task-room-of — 使い手の置き手が満杯の担い手を候補から外すため・#3488)。
 ;; RunnersUnreachable = coordinator に届かず名簿を読めなかった(担い手の生死は分からない — 死んだとみなさない)。
 
 (defrecord RunnerFact
@@ -183,7 +184,8 @@
   #^ (get tuple #(str ...)) provides
   #^ (get tuple #(str ...)) exclusive
   #^ bool live
-  #^ bool draining)
+  #^ bool draining
+  #^ int task-room)
 
 (defrecord RunnersUnreachable
   #^ str detail)

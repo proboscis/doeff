@@ -24,8 +24,8 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons quitters])
 
-(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 ;; 系が落ち着くまで(beacon が置かれ、readiness の window 5 秒が埋まる)待つ秒。
 (val SETTLE-SECONDS 12.0)
 ;; heartbeat の間(4 秒)に coordinator が要求の無い拍を持つ worker の設定 — 模擬の列が何も変えない拍を飛ばす場面を作る(既定の 0.5 秒

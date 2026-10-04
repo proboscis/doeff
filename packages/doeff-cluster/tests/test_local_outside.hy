@@ -81,7 +81,7 @@
   ;; (finally の StorePut)は外の世界に届かない(殺された process は巻き戻さずに捨てる — Discard)。
   (val rows {})
   (<- processes tuple (sim-cluster (last-words sim-foundation) (kill-the-speaker "w1")
-                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                                    :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (>= (.get rows "count" 0) 5) rows)
   (assert (not-in "last-words" rows) rows)
@@ -107,7 +107,7 @@
   ;; EndProcess が 5 秒後で書き直していた。
   (val rows {})
   (<- lag int (sim-cluster (slow-last-words sim-foundation) (end-lag-after (KillWorker "w1"))
-                           :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                           :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                            :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (= lag 0) lag)
   (assert (not-in "last-words" rows) rows))
@@ -118,7 +118,7 @@
   ;; 直し、その process は筋書きの終わりの優雅な停止で最後の言葉を書くので、ここでは書きの有無を問わない)。
   (val rows {})
   (<- lag int (sim-cluster (slow-last-words sim-foundation) (end-lag-after (Crash "speaker"))
-                           :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                           :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                            :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (= lag 0) lag))
 
@@ -128,7 +128,7 @@
   ;; 外の世界に届かない(#3057)。
   (val rows {})
   (<- processes tuple (sim-cluster (spawning-last-words sim-foundation) (kill-the-speaker "w1")
-                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                                    :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (>= (.get rows "count" 0) 5) rows)
   (assert (not-in "last-words" rows) rows)
@@ -164,6 +164,6 @@
   ;; (finally の StorePut)は外の世界に届かない(#3057 — 前は門が effect ごとに殺されたかを問うて断っていた)。
   (val rows {})
   (<- (sim-cluster (last-words sim-foundation) (register-after-the-kill "w1")
-                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                    :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (not-in "late-words" rows) rows))

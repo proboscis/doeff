@@ -31,9 +31,11 @@
   (val store (WalStore (str (/ tmp-path "wal"))))
   ;; load-state は Program(1 行の報告は slog・以前の形の file の読みは file system の effect — 入口と同じ答え手を並べる)。
   (<- state ClusterState (with-handlers [slog-handler os-file-handler] (load-state (str (/ tmp-path "state.json")) store NOW)))
-  ;; 宣言した Service・名乗った worker・終えて保持中の切り離した task・盤の行が、旧い版の置き場から読める。
+  ;; 宣言した Service・終えて保持中の切り離した task・盤の行が、旧い版の置き場から読める。名乗った worker の行は、task のために空けて
+  ;; おく数 taskReserve(#3489 で足した必ずの欄)を持たないので読まない — 既定の値で埋めず、次の heartbeat の名乗りから作り直す
+  ;; (labels だけの旧い形の行と同じ扱い — state_json.state-from-json・durable_kv.state-from-kv)。
   (assert (= (lfor job state.jobs job.spec.name) ["beacon"]) (lfor job state.jobs job.spec.name))
-  (assert (in "sim-worker" state.workers) (sorted state.workers))
+  (assert (not-in "sim-worker" state.workers) (sorted state.workers))
   (val kept (lfor task (.values state.tasks) :if (= task.key "k-done") task))
   (assert (= (lfor task kept #(task.phase task.detached (is-not task.result None))) [#("finished" True True)]) kept)
   (assert (in "note/a" state.board) (sorted state.board))

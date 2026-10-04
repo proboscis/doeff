@@ -43,6 +43,11 @@
 ;;; 越えない。判断は記録(job の process ごとの生きていた区間と、worker ごとの本当の capacity)を受けて、越えた瞬間の列を返す純関数 1 つ。
 ;;; 記録を集めるのは検(tests/test_local.hy の容量の検)。
 ;;;
+;;; 条 C17 jobs-stay-out-of-the-task-reserve(#3489): どの worker でも、常駐の job の置き先と並べた置き先(surge)の数の和は、capacity から
+;;; task のために空けておく数(task-reserve)を引いた数を越えない — 常駐の job が枠を埋めても task の置き場が残る。判断は記録(GET /state の
+;;; 読みごとの worker の常駐の job と surge の数と、worker ごとの本当の capacity と task-reserve)を受けて、越えた読みの列を返す純関数 1 つ。
+;;; 記録を集めるのは検(tests/test_local.hy の予約の検)。
+;;;
 ;;; 条 C7 placed-only-where-eligible: 置き先の worker は、job の needs を本当に提供する。判断は記録(読めた置き先・job ごとの needs・worker
 ;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力の決まりは条 C10、drain の期限の
 ;;; 中の worker へ置かない事は別の条として後から足す(今の検は tests/test_drain.hy)。
@@ -265,6 +270,44 @@
                :setv running (len (lfor o spans :if (and (= o.worker c.worker) (<= o.started-ms at) (< at (ending o))) o))
                :if (> running c.capacity)
                (OverCapacity :worker c.worker :at-ms at :running running :capacity c.capacity))))
+
+
+(defrecord JobPlacesSeen
+  "条 C17 の記録 1 つ = GET /state の 1 回の読みの worker 1 台(at-ms = 読んだ時刻・worker = 名・jobs = その worker の上の常駐の job の
+   置き先と並べた置き先 surge の数の和)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ int at-ms)
+  (#^ str worker)
+  (#^ int jobs))
+
+
+(defrecord WorkerReserve
+  "条 C17 の記録 1 つ = worker 1 台の本当の capacity と、そのうち task のために空けておく数(task-reserve)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int capacity)
+  (#^ int task-reserve))
+
+
+(defrecord ReserveTaken
+  "条 C17 の破り 1 つ = 常駐の job と surge が task のために空けておく分に入っていた読み(seen = その読み・limit = capacity − task-reserve)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ JobPlacesSeen seen)
+  (#^ int limit))
+
+
+(defk jobs-stay-out-of-the-task-reserve [seen reserves]
+  {:pre [(: seen (get tuple #(JobPlacesSeen ...))) (: reserves (get tuple #(WorkerReserve ...)))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 C17: GET /state の読みごとの worker の常駐の job と surge の数(JobPlacesSeen)と、worker ごとの本当の capacity と task-reserve から、
+   数が capacity − task-reserve を越えた読み(ReserveTaken)を返す(空なら緑)。常駐の job(と入れ替えで並べた置き先)が worker の枠を
+   埋め切っても、task のために空けておく分が残る(手番の task が置き場を失わない)ことを、筋書きの記録から判じるため。本当の値の記録が
+   無い worker は判じない。"
+  (tuple (gfor r reserves
+               s seen
+               :setv limit (- r.capacity r.task-reserve)
+               :if (and (= s.worker r.worker) (> s.jobs limit))
+               (ReserveTaken :seen s :limit limit))))
 
 
 (defrecord PlacementSeen

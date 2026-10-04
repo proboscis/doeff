@@ -78,7 +78,7 @@
     (.append sent (json.loads request.content))
     (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" []}))
   ;; 拍の Program と同じく、root の言い換えに EnvReport を問うてから ReadDesired の欄で口へ渡す。
-  (val env-link (LinkRig "http://coord" "w" #() 1 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)
+  (val env-link (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)
                          :handles-envs True))
   (<- settings EnvSettings (settings-in tmp-path))
   (<- (on-envs settings (desired-with-report)
@@ -86,6 +86,6 @@
   (assert (= (get sent 0 "envs" "ready") [READY-NAME]) sent)
   (assert (in "envCapacity" (get sent 0)) sent)
   ;; 扱わない worker は名乗らず、env-host が無くても heartbeat を送れる。
-  (val plain-link (LinkRig "http://coord" "w" #() 1 60000 :task-dir (str (/ tmp-path "plain-tasks")) :transport (httpx.MockTransport handle)))
+  (val plain-link (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "plain-tasks")) :transport (httpx.MockTransport handle)))
   (.poll plain-link)
   (assert (not-in "envs" (get sent 1)) sent))

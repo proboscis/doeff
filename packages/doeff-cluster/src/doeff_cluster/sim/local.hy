@@ -1,8 +1,8 @@
 ;;; 手元の runner sim-cluster — 系(defsystem の関数を sim の土台で呼んだ System の値)を、本物の coordinator と本物の worker の上で、
 ;;; 1 process・仮想の時計で走らせる(ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5・5b)。同じ物を壁の時計で走らせる入口が wall-sim-cluster。
 ;;;
-;;;   (<- answer (sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"})) :environ {"tally" {"STEP" "3"}}))
-;;;   (<- answer (wall-sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"}))))
+;;;   (<- answer (sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"} :task-reserve 0)) :environ {"tally" {"STEP" "3"}}))
+;;;   (<- answer (wall-sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"} :task-reserve 0))))
 ;;;
 ;;; 時計(入口が選ぶ — 内側の仕組みは同じ):
 ;;;   sim-cluster       仮想の時計(doeff-time の sim-time-handler・起点 start-ms)。時計は scheduler の中の task が全部止まった時だけ進む
@@ -235,8 +235,9 @@
 ;; --- 公開の値 --------------------------------------------------------------------------------------------
 
 (defrecord SimWorker
-  "sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・node に当たる)。provides = 提供する能力の名・
-   exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・node = 置かれた k8s の node の名(空 = k8s の外)・
+  "sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・--task-reserve・node に当たる)。provides = 提供する能力の名・
+   exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・task-reserve = capacity のうち task のために空けておく数(必ず渡す —
+   本番の worker の --task-reserve と同じく既定の値は無い)・node = 置かれた k8s の node の名(空 = k8s の外)・
    versions = 名乗る版(None = 送り手と同じ筋の versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
    実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
    かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
@@ -255,9 +256,12 @@
    専用の能力は exclusive のまま — 条 C10 の反例・#1976)・fresh-boot-every-beat = 反例の世界だけの壊れた worker(heartbeat ごとに新しい
    世代を名乗る — 本当の process の世代は変わらない。coordinator は別の世代の heartbeat で drain を解くので、drain が効かない — 条 C11 の
    反例・#1976)・hides-retired = 反例の世界だけの壊れた worker(観測の handler が入れ替えで名から外した旧の process を載せない —
-   worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)。"
+   worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)・claims-task-reserve = 反例の世界だけの壊れた worker
+   (heartbeat で task-reserve の代わりにこの数を名乗る — None = task-reserve。本当に task のために空けておく数は task-reserve のまま —
+   条 C17 の反例・#3489)。"
   (#^ str name)
   (#^ frozenset provides)
+  (#^ int task-reserve)
   (setv #^ frozenset exclusive (frozenset))
   (setv #^ int capacity 10)
   (setv #^ str node "")
@@ -275,7 +279,8 @@
   (setv #^ (| frozenset None) claims-provides None)
   (setv #^ (| frozenset None) claims-exclusive None)
   (setv #^ bool fresh-boot-every-beat False)
-  (setv #^ bool hides-retired False))
+  (setv #^ bool hides-retired False)
+  (setv #^ (| int None) claims-task-reserve None))
 
 
 (defrecord SimProcess
@@ -884,9 +889,9 @@
 
 (defk default-workers [system]
   {:pre [(: system System)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker を名指さない時の既定 = 系の全 job の needs の和を提供する 1 台(どの job も置ける)。"
+  "worker を名指さない時の既定 = 系の全 job の needs の和を提供する 1 台(どの job も置ける・task のために空けておく分は無い)。"
   (val needs (frozenset (gfor j system.jobs n j.needs n)))
-  #((SimWorker :name "sim-worker" :provides needs)))
+  #((SimWorker :name "sim-worker" :provides needs :task-reserve 0)))
 
 
 (defk declaration-of [system revision environ runtime-env versions]
@@ -1650,6 +1655,7 @@
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node
                                 :capacity (if (is worker.overstates-capacity None) worker.capacity worker.overstates-capacity)
+                                :task-reserve (if (is worker.claims-task-reserve None) worker.task-reserve worker.claims-task-reserve)
                                 :versions (or worker.versions plan.versions)
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)

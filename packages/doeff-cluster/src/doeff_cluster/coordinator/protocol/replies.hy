@@ -89,7 +89,8 @@
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
    "workers" (dfor w view.workers
                    w.info.name {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
-                                "node" w.info.node "capacity" w.info.capacity "silentMs" w.silent-ms
+                                "node" w.info.node "capacity" w.info.capacity "taskReserve" w.info.task-reserve "taskRoom" w.task-room
+                                "silentMs" w.silent-ms
                                 "versions" (dict w.info.versions) "live" w.live "draining" w.draining})
    "placements" (dfor #(k v) (.items view.placements) k (asdict v))
    "unplaced" view.unplaced

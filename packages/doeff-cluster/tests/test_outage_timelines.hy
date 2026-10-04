@@ -86,7 +86,7 @@
 ;; heartbeat が戻る。置ける worker は担い手 1 台。
 (val STALL-1326
   (Timeline :name "13:26 処理の止まり 47 秒"
-            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
             :hosts #("w1") :standby #()
             :steps #((Stall :host "w1" :until 47.0))
             :silent 47.0 :mid-at 46.0 :settle 30.0 :probe-needs (frozenset ["cluster-net"])))
@@ -96,7 +96,7 @@
 (val STALL-PAST-REASSIGN-SECONDS (+ (/ T.reassign-after-ms 1000) 2.0))
 (val STALL-PAST-REASSIGN
   (Timeline :name "13:26 の形 処理の止まり 移し替え + 2 秒"
-            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
             :hosts #("w1") :standby #()
             :steps #((Stall :host "w1" :until STALL-PAST-REASSIGN-SECONDS))
             :silent STALL-PAST-REASSIGN-SECONDS :mid-at (- STALL-PAST-REASSIGN-SECONDS 1.0) :settle 30.0
@@ -109,11 +109,11 @@
 
 (val CUT-1353
   (Timeline :name "13:53 網の途絶 115 秒・その 34 秒目から coordinator の止まり 20.2 秒"
-            :workers #((SimWorker :name "w-a" :provides (frozenset ["solo-a" "cluster-net"]))
-                       (SimWorker :name "w-b" :provides (frozenset ["solo-b" "cluster-net"]))
-                       (SimWorker :name "w-c" :provides (frozenset ["solo-c" "cluster-net"]))
-                       (SimWorker :name "w-d" :provides (frozenset ["solo-d" "cluster-net"]))
-                       (SimWorker :name "w-spare" :provides (frozenset ["cluster-net"]) :starts-down True))
+            :workers #((SimWorker :name "w-a" :provides (frozenset ["solo-a" "cluster-net"]) :task-reserve 0)
+                       (SimWorker :name "w-b" :provides (frozenset ["solo-b" "cluster-net"]) :task-reserve 0)
+                       (SimWorker :name "w-c" :provides (frozenset ["solo-c" "cluster-net"]) :task-reserve 0)
+                       (SimWorker :name "w-d" :provides (frozenset ["solo-d" "cluster-net"]) :task-reserve 0)
+                       (SimWorker :name "w-spare" :provides (frozenset ["cluster-net"]) :starts-down True :task-reserve 0))
             :hosts CUT-HOSTS :standby #("w-spare")
             :steps #((Cut :hosts CUT-HOSTS :until 115.0) (PauseCoordinator :at 34.0 :seconds 20.2))
             :silent 115.0 :mid-at MID-AFTER-REASSIGN-SECONDS :settle 30.0 :probe-needs (frozenset ["solo-a"])))
@@ -122,8 +122,8 @@
 ;; 変わる(本番では起きていない形)。
 (val JOIN-DURING-1353
   (Timeline :name "13:53 の途絶の 30 秒目に 2 台目"
-            :workers #((SimWorker :name "w1" :provides (frozenset ["solo-a" "cluster-net"]))
-                       (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :starts-down True))
+            :workers #((SimWorker :name "w1" :provides (frozenset ["solo-a" "cluster-net"]) :task-reserve 0)
+                       (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :starts-down True :task-reserve 0))
             :hosts #("w1") :standby #()
             :steps #((Cut :hosts #("w1") :until 115.0) (Join :at 30.0 :name "w2") (PauseCoordinator :at 34.0 :seconds 20.2))
             :silent 115.0 :mid-at MID-AFTER-REASSIGN-SECONDS :settle 30.0 :probe-needs (frozenset ["solo-a"])))

@@ -32,7 +32,7 @@
 (defk beat [state name now [statuses None]]
   {:pre [(: state ClusterState) (: name str) (: now int) (: statuses (| list None))] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name の heartbeat(状態の行 statuses)を 1 つ受けた後の状態を返すため。"
-  (get (! (call state "POST" "/heartbeat" {"name" name "provides" ["net"] "capacity" 10 "versions" V "statuses" (or statuses [])}
+  (get (! (call state "POST" "/heartbeat" {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" (or statuses [])}
              :actor None :now now)) 0))
 
 (defk rv [state kind name]

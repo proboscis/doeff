@@ -80,7 +80,7 @@
   ;; 時刻は保存した印の時刻になり、読み直した状態の保存の鍵は元と同じ。heartbeat は本物の受け口(POST /heartbeat)を通す — 受け口は
   ;; heartbeat ごとに WorkerInfo を作り直すので、印を運び忘れると heartbeat のたびに行から lastSeenMs が消える(#2903 で一度そうなった)。
   (val beat (fn [state name now]
-              (get (responded state (run (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "capacity" 1 "statuses" []}
+              (get (responded state (run (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "capacity" 1 "taskReserve" 0 "statuses" []}
                                                   :actor "c-test"))
                               now T)
                    0)))

@@ -108,7 +108,7 @@
 
 
 (deftest test-a-task-runs-after-its-root-is-prepared-and-a-new-commit-prepares-a-new-root
-  (<- seen Sent (sim-cluster NO-JOBS (scenario-1-and-2) :workers #((SimWorker :name "w1" :provides LOCAL))))
+  (<- seen Sent (sim-cluster NO-JOBS (scenario-1-and-2) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= seen.outcomes {"job-1" (DetachedSucceeded 101) "job-2" (DetachedSucceeded 102)}) seen.outcomes)
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
@@ -131,7 +131,7 @@
 
 (deftest test-two-tasks-of-one-env-share-one-preparation
   ;; 準備は 1 本(worker は準備中・準備済みの root を準備し直さない)・2 本とも走る。準備に時間のかかる worker で確かめる。
-  (<- seen Sent (sim-cluster NO-JOBS (scenario-6) :workers #((SimWorker :name "w1" :provides LOCAL :prepare-seconds 3.0))))
+  (<- seen Sent (sim-cluster NO-JOBS (scenario-6) :workers #((SimWorker :name "w1" :provides LOCAL :prepare-seconds 3.0 :task-reserve 0))))
   (assert (= seen.outcomes {"a" (DetachedSucceeded 101) "b" (DetachedSucceeded 102)}) seen.outcomes)
   (assert (= (len (get seen.preparations "w1")) 1) seen.preparations))
 
@@ -149,7 +149,7 @@
   ;; 恒久の失敗は 1 回で答える(Program は走らない)。
   (val denied (EnvFailure :kind EnvFailureKind.REPO-DENIED :detail "許可表に無い" :retryable False))
   (<- seen Sent (sim-cluster NO-JOBS (failure-scenario #("w1"))
-                             :workers #((SimWorker :name "w1" :provides LOCAL :env-failure denied))))
+                             :workers #((SimWorker :name "w1" :provides LOCAL :env-failure denied :task-reserve 0))))
   (val outcome (get seen.outcomes "job"))
   (assert (isinstance outcome DetachedEnvUnavailable) outcome)
   (assert (= #(outcome.kind outcome.retryable) #(EnvFailureKind.REPO-DENIED.value False)) outcome)
@@ -159,7 +159,7 @@
   (val unreachable (EnvFailure :kind EnvFailureKind.REPO-UNREACHABLE :detail "届かない" :retryable True))
   (val names (tuple (gfor i (range (+ 1 ENV-RETRIES)) (.format "w{}" (+ i 1)))))
   (<- again Sent (sim-cluster NO-JOBS (failure-scenario names)
-                              :workers (tuple (gfor n names (SimWorker :name n :provides LOCAL :env-failure unreachable)))))
+                              :workers (tuple (gfor n names (SimWorker :name n :provides LOCAL :env-failure unreachable :task-reserve 0)))))
   (val temporary (get again.outcomes "job"))
   (assert (isinstance temporary DetachedEnvUnavailable) temporary)
   (assert (= #(temporary.kind temporary.retryable) #(EnvFailureKind.REPO-UNREACHABLE.value True)) temporary)
@@ -194,7 +194,7 @@
 (deftest test-env-tasks-are-placed-without-comparing-worker-versions
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- task TaskRecord (env-task env))
-  (val worker (WorkerInfo "w1" #("net") 1 0 #((ComponentVersion "doeff" "new"))))
+  (val worker (WorkerInfo "w1" #("net") 1 0 #((ComponentVersion "doeff" "new")) :task-reserve 0))
   (assert (can-run-task task worker) "env の task は worker の版と比べない")
   (assert (not (can-run-task (replace task :runtime-env None) worker)) "今の commit だけの task は今のまま版を比べる")
   (assert (not (can-run-task (replace task :avoid #("w1")) worker)) "準備に一時の失敗をした worker には置き直さない"))
@@ -218,7 +218,7 @@
   ;; 置き直せる別の worker が無ければ、最後の失敗で終える
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
-  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #())} :tasks {"t1" requeued}))
+  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)} :tasks {"t1" requeued}))
   (val placed (! (place-tasks 20 cluster {} timing)))
   (assert (= (. (get placed "t1") phase) "env-failed") (get placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})

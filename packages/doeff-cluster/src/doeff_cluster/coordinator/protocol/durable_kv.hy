@@ -13,6 +13,7 @@
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。
+;;; task のために空けておく数 taskReserve も必ず持つ(#3489 — この欄の無い行は読まず、次の heartbeat で作り直す)。
 ;;; 保存しない物(状態の報告・readiness・k8s の観測)は入れない。
 ;;;
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
@@ -60,6 +61,7 @@
   "鍵 worker/<名> の値。lastSeenMs は生存の印の拍で写した w.seen-mark(heartbeat ごとに進む last-seen-ms は書かない — 書きは
    印の拍ごと・#2903 の前は ClusterState.seen-marks から引いた)。"
   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
+      "taskReserve" w.task-reserve
       "versions" (dict w.versions)}
      (worker-generations-json w)
      (if (is w.seen-mark None) {} {"lastSeenMs" w.seen-mark})))
@@ -205,8 +207,9 @@
   (val unknown-seen (if (> alive-ms 0) alive-ms now))
   ;; 読めない Service の行(旧い宣言の形)は落とさず RefusedJob にする(改訂 1 の C)。
   (val service-rows (read-service-rows (lfor #(_ v) (part "service/") v)))
-  ;; 旧い形(labels だけ)の worker の行は読まない(state_json.state-from-json と同じ — 次の heartbeat で作り直す)。
-  (val stored-workers (tuple (gfor #(k w) (part "worker/") :if (in "provides" w) #(k w))))
+  ;; 旧い形(labels だけ・task のために空けておく数 taskReserve の無い行)の worker の行は読まない(state_json.state-from-json と同じ —
+  ;; 次の heartbeat で作り直す。taskReserve を既定の値で埋めない)。
+  (val stored-workers (tuple (gfor #(k w) (part "worker/") :if (and (in "provides" w) (in "taskReserve" w)) #(k w))))
   (<- generations tuple (read-each worker-generations-from-json stored-workers))
   (<- tasks tuple (read-each task-record-from-json (tuple (part "task/"))))
   (<- warms tuple (read-each warm-entry-from-json (tuple (part WARM))))
@@ -222,6 +225,7 @@
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
                                  :exclusive (get caps 1) :node (.get w "node" "")
+                                 :task-reserve (get w "taskReserve")
                                  :seen-mark (.get w "lastSeenMs")
                                  #** generation))
     :tasks (dict tasks)

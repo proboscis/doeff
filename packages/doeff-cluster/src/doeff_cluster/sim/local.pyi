@@ -132,10 +132,11 @@ FAULT_REASON: str
 
 @dataclass(frozen=True, kw_only=True)
 class SimWorker:
-    """sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・node に当たる)。"""
+    """sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・--task-reserve・node に当たる)。"""
 
     name: str
     provides: AbstractSet[str]
+    task_reserve: int
     exclusive: AbstractSet[str] = ...
     capacity: int = 10
     node: str = ""
@@ -154,6 +155,7 @@ class SimWorker:
     claims_exclusive: AbstractSet[str] | None = None
     fresh_boot_every_beat: bool = False
     hides_retired: bool = False
+    claims_task_reserve: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
