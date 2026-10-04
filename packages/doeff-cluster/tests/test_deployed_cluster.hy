@@ -1,0 +1,105 @@
+;;; 配備の cluster の handler(shared/entry/deployed_cluster.hy の deployed-cluster-answers — #3294・ADR-DOE-CLUSTER-001 R8 の追補 (3))の検。
+;;;
+;;; 相手 = 本物の coordinator の判断を httpx の MockTransport の後ろに置いた MemoryCoordinator(tests/detached_rig.hy)・HTTP の答え手 =
+;;; transport-http(tests/transport_http.hy — 本番の答え手と同じく届かない失敗を値で返す)・時計 = 仮想の時計。配備の handler は worker を
+;;; 起こさないので、この相手には worker が居ない — 宣言した Service は Ready にならず、job の process も名乗られない(待つ effect は期限の
+;;; 後に時間切れを値で返す)。worker の居る配備で Ready まで通すのは O の確かめ(cluster の上)で行う。
+;;;   (a) 宣言の前は Missing・Redeclare は宣言した Service の名を返し、coordinator がその Service を数える(Missing でなくなる)・
+;;;       Ready を待つと時間切れ(最後に読んだ状態つき)・job の process を待つと時間切れ。
+;;;   (b) 壊す effect(Crash・KillWorker・StopWorker・StopCoordinator・CrashCoordinator)は DeployedCannotAnswer で effect の名を出して止まる。
+;;;       失敗ケース: Crash に「落とした数 0」と答える壊した答え手を内側に置くと名指しの止まりが無くなり、同じ判じ(refusal-of)が None になる。
+;;;   (c) /state の job の pid の引き(job-pids-of)は、どの worker の上かを問わず、pid の無い行(起こす前・終わった後)を外す。
+(require doeff-hy.macros [deftest defk defhandler <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import datetime [datetime timezone])
+(import httpx)
+(import pytest)
+(import doeff [run with-handlers EffectBase Program])
+(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf ReadinessWaitExpired AwaitReadiness AwaitJobProcess
+                                                     JobProcessWaitExpired Redeclare Crash KillWorker StopWorker StopCoordinator
+                                                     CrashCoordinator])
+(import doeff_cluster.shared.entry.deployed_cluster [DeployedCluster DeployedCannotAnswer deployed-cluster-answers])
+(import doeff_cluster.shared.protocol.coordinator_reads [job-pids-of])
+(import tests.transport_http [transport-http COORDINATOR-URL])
+(import tests.detached_rig [MemoryCoordinator])
+(import tests.fixtures.machine_app [pings machine-foundation])
+
+;; 配備の cluster の値(宛先 = 検の coordinator の口・送り手の名・宣言の版 — 版の木の道なので実行環境は無し)。
+(val TARGET (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "a" 40) :runtime-env None))
+;; 仮想の時計の起点(epoch 秒 1790380800 = 2026-09-26)。
+(val START (datetime.fromtimestamp 1790380800 timezone.utc))
+
+
+(defk asked [coordinator clock step]
+  {:pre [(: coordinator MemoryCoordinator) (: clock SimClock) (: step (| EffectBase Program))] :post [(: % "step の答え")]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書きの effect 1 つを、配備の handler(内側)と検の coordinator の HTTP の答え手(外側)の組で答えさせるため(coordinator の状態は
+   MemoryCoordinator が effect をまたいで持つ)。"
+  (run (scheduled (with-handlers [(sim-time-handler :clock clock) slog-discard-handler
+                                  (transport-http (httpx.MockTransport coordinator.handle))
+                                  (deployed-cluster-answers TARGET)]
+                    step))))
+
+
+(deftest test-the-deployed-handler-declares-and-reads-readiness-from-the-coordinator
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  ;; 宣言の前: coordinator は Service を数えていない。
+  (<- before ServiceReadiness (asked coordinator clock (ReadinessOf "ping")))
+  (assert (= before.state "Missing") before)
+  ;; 宣言: 答えは宣言した Service の名・coordinator はその Service を数える(worker が居ないので Ready ではない)。
+  (<- declared tuple (asked coordinator clock (Redeclare (pings machine-foundation))))
+  (assert (= declared #("ping")) declared)
+  (<- after ServiceReadiness (asked coordinator clock (ReadinessOf "ping")))
+  (assert (!= after.state "Missing") after)
+  (assert (!= after.state "Ready") after)
+  ;; 待つ effect は期限の後に時間切れを値で返す(黙って待ち続けない)。
+  (<- ready-wait (asked coordinator clock (AwaitReadiness "ping" "Ready" 3.0)))
+  (assert (isinstance ready-wait ReadinessWaitExpired) ready-wait)
+  (assert (= ready-wait.last.state after.state) ready-wait)
+  (<- process-wait (asked coordinator clock (AwaitJobProcess "ping" #() 3.0)))
+  (assert (isinstance process-wait JobProcessWaitExpired) process-wait))
+
+
+(defhandler crash-answered
+  ;; 失敗ケースの壊した答え手: Crash に「落とした数 0」と答える(配備の cluster で壊す effect に答えてしまう handler の代役)。
+  (Crash [name]
+    (resume 0)))
+
+
+(defk refusal-of [coordinator clock step broken]
+  {:pre [(: coordinator MemoryCoordinator) (: clock SimClock) (: step (| EffectBase Program)) (: broken bool)] :post [(: % (| str None))]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "壊す effect を出した時に配備の handler が名指しで止めたかを判じるため: 止めた訳(DeployedCannotAnswer の文)か、止めずに答えたら None。
+   broken = 壊した答え手 crash-answered を配備の handler の内側に置く(失敗ケース)。"
+  (val handlers (if broken [crash-answered] []))
+  (try
+    (! (asked coordinator clock (with-handlers handlers step)))
+    None
+    (except [refused DeployedCannotAnswer]
+      (str refused))))
+
+
+(deftest test-the-deployed-handler-refuses-every-breaking-effect-by-name
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  (for [#(effect named) [#((Crash "ping") "Crash(ping)") #((KillWorker "w1") "KillWorker(w1)") #((StopWorker "w1") "StopWorker(w1)")
+                         #((StopCoordinator 1.0) "StopCoordinator") #((CrashCoordinator 1.0) "CrashCoordinator")]]
+    (<- refused (| str None) (refusal-of coordinator clock effect False))
+    (assert (and (is-not refused None) (in named refused)) #(named refused)))
+  ;; 失敗ケース: Crash に答える壊した答え手が内側に在ると、名指しの止まりが無い(判じが None)。
+  (<- answered (| str None) (refusal-of coordinator clock (Crash "ping") True))
+  (assert (is answered None) answered))
+
+
+(deftest test-job-pids-are-read-from-every-worker-and-pidless-rows-are-left-out
+  (val state {"statuses" {"w1" {"jobs" [{"name" "ping" "pid" 41} {"name" "other" "pid" 7}]}
+                          "w2" {"jobs" [{"name" "ping" "pid" 52} {"name" "ping"}]}
+                          "w3" {}}})
+  (<- pids (get tuple #(int ...)) (job-pids-of state "ping"))
+  (assert (= (sorted pids) [41 52]) pids)
+  (<- none (get tuple #(int ...)) (job-pids-of state "missing"))
+  (assert (= none #()) none))
