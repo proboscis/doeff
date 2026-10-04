@@ -2,6 +2,7 @@
 
 from _typeshed import Incomplete
 from collections.abc import Callable as Callable
+from collections.abc import Mapping as Mapping
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_time import sync_time_handler as sync_time_handler
 from doeff_claude_code.values import ClaudeHome as ClaudeHome
@@ -18,5 +19,5 @@ from doeff_agents.handlers.headless import headless_claude_handler as headless_c
 def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=...) -> list:
     ...
 
-def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, env: Incomplete=None, settings: Incomplete=None) -> list:
+def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, *, env: Mapping[str, str], settings: Mapping[str, object]) -> list:
     ...
