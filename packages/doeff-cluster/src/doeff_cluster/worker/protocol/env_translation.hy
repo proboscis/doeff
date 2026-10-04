@@ -611,12 +611,12 @@
   {:pre [(: data dict)] :post [(: % PrepareRequest)]}
   "要求の JSON(worker の env-host が書く)→ PrepareRequest。"
   (<- env RuntimeEnv (runtime-env-of-json (get data "env")))
-  (var known [])
+  (var known #())
   (for [k (.get data "known" [])]
     (<- known-env RuntimeEnv (runtime-env-of-json (get k "env")))
-    (.append known (KnownRoot :env known-env :root (get k "root"))))
+    (:= known (+ known #((KnownRoot :env known-env :root (get k "root") :made-ms (int (get k "madeMs")))))))
   (PrepareRequest :env env :key (get data "key") :platform (get data "platform") :root (get data "root")
-                  :known (tuple known) :min-free-bytes (int (.get data "minFreeBytes" 0))))
+                  :known known :min-free-bytes (int (.get data "minFreeBytes" 0))))
 
 
 (defk answer-json [answer]

@@ -107,14 +107,17 @@
 
 (defk known-roots [settings]
   {:pre [(: settings EnvSettings)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
-  "完成した root の列(展開の複製と bytecode の引き継ぎの元)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path} で返すため。"
+  "完成した root の列(展開の複製と bytecode の引き継ぎの元)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path \"madeMs\" 完成の時刻} で
+   返すため。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み — 引き継ぎ元を新しい物から選ぶ・#3515 の B)。マーカーを
+   読めても時刻を読めない root(読む間に掃除で消えた)は完成した root に数えない。"
   (<- names tuple (root-dirs settings))
   (var known #())
   (for [name names]
     (val root (+ settings.state "/roots/" name))
     (<- marker (read-marker root))
-    (when (is-not marker None)
-      (:= known (+ known #({"env" (get marker "env") "root" root})))))
+    (<- made (| int None) (modified-ms (+ root "/" ENV-MARKER)))
+    (when (and (is-not marker None) (is-not made None))
+      (:= known (+ known #({"env" (get marker "env") "root" root "madeMs" made})))))
   known)
 
 

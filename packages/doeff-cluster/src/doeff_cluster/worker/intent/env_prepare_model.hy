@@ -14,9 +14,11 @@
 ;; --- 要求と答え ---------------------------------------------------------------------------
 
 (defrecord KnownRoot
-  "worker が既に完成させた root(展開の複製と bytecode の引き継ぎの元の候補)。"
+  "worker が既に完成させた root(展開の複製と bytecode の引き継ぎの元の候補)。made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 —
+   bytecode の引き継ぎ元を、近い版の root が無い時に最も新しく完成した root から選ぶため・#3515 の B)。"
   (#^ RuntimeEnv env)
-  (#^ str root))
+  (#^ str root)
+  (#^ int made-ms))
 
 
 (defrecord PrepareRequest
