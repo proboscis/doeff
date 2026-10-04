@@ -3,22 +3,27 @@
 ;;;   (defsystem agora-land [foundation]
 ;;;     "着地の報せの系"
 ;;;     (land-notice (land-notice foundation)
-;;;       :needs #{"pg-network"} :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
+;;;       :needs #{"pg-network"} :replicas 1 :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
 ;;;
-;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・readiness・update・environ)の組を
+;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・replicas・readiness・update・environ)の組を
 ;;; 返す関数(baseFrom・overlay は Program の job に無い — 詰めた commit と別の commit で解くことになるため)。job の Program は doeff-cluster の job API が受ける値 1 つ(ADR-DOE-CLUSTER-001 R1)。
 ;;;
 ;;; 形は静的に決まる物だけを受ける(doeff-linter が実行せずに読めるように — ADR-DOE-CLUSTER-001 R4b):
 ;;;   job の行 = (名の記号 (関数の記号 引数…) :鍵 値 …)。引数は系の引数の記号か literal(文字列・数・keyword・True/False/None と、
 ;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数の dict、:environ は
 ;;;   文字列の鍵と文字列の値の dict、:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
+;;;   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)の整数の literal で、**必ず書く** — coordinator の Service は job 1 つに 1 つで、
+;;;   台数は job の性質。宣言し直しはこの値を書く(宣言の道具の引数で台数を持たない — 持つと、取り下げてあった Service へ台数を書かずに
+;;;   宣言し直した時に job が起きない取り違えが起きる)。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
 (import hy)
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
 (import doeff-hy.declarations [needs-names])
 
-(setv JOB-KEYS #(":needs" ":readiness" ":update" ":environ"))
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
+;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
+(setv REPLICAS-VALUES #(0 1))
 (setv CONSTANT-SYMBOLS #("True" "False" "None"))
 
 
@@ -80,6 +85,11 @@
         (do (setv names (needs-names v where))
             (setv (get values key) `(frozenset [~@(lfor n names (String n))])
                   (get static "needs") names))
+      ":replicas"
+        (do (when (not (and (isinstance v Integer) (in (int v) REPLICAS-VALUES)))
+              (raise (SyntaxError (.format "{}: :replicas は {} のどれかの整数(0 = 取り下げ・1 = 動かす): {}"
+                                           where (.join " / " (gfor r REPLICAS-VALUES (str r))) (hy.repr v)))))
+            (setv (get values key) v (get static "replicas") (int v)))
       ":update"
         (do (when (not (and (isinstance v String) (in (str v) UPDATE-FORMS)))
               (raise (SyntaxError (.format "{}: :update は {} のどれか: {}" where (.join " / " UPDATE-FORMS) (hy.repr v)))))
@@ -91,6 +101,8 @@
         (do (setv pairs (string-dict v where key String "文字列"))
             (setv (get values key) v
                   (get static (cut key 1 None)) (dfor #(a b) pairs (str a) (str b))))))
+  (when (not-in ":replicas" values)
+    (raise (SyntaxError (.format "{}: :replicas が無い — job の望む台数(0 = 取り下げ・1 = 動かす)を必ず書く" where))))
   #(name program values static))
 
 

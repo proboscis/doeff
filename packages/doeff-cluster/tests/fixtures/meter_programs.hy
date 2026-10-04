@@ -85,9 +85,9 @@
 
 (defsystem records-writers [foundation]
   "見本の系: 届かない窓(10 秒)の間に記録の client で書きを 3 件撃つ service 1 つ(本物の橋 with-meter-report)"
-  (writer (reporting-writer-program foundation 3 10.0) :needs #{"cluster-net"}))
+  (writer (reporting-writer-program foundation 3 10.0) :replicas 1 :needs #{"cluster-net"}))
 
 
 (defsystem silent-records-writers [foundation]
   "records-writers の反例: 橋が計器の断面を送らない"
-  (writer (silent-writer-program foundation 3 10.0) :needs #{"cluster-net"}))
+  (writer (silent-writer-program foundation 3 10.0) :replicas 1 :needs #{"cluster-net"}))

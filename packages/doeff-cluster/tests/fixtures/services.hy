@@ -76,15 +76,15 @@
 
 (defsystem lab-record [foundation]
   "見本の系: 土台を record 1 つで受ける"
-  (tally (tally-on foundation) :needs #{"cluster-net"}))
+  (tally (tally-on foundation) :replicas 1 :needs #{"cluster-net"}))
 
 
 (defsystem lab [foundation]
   "見本の系: tally 1 つ"
-  (tally (tally-program foundation 2) :needs #{"cluster-net"} :environ {"TALLY_BASE" "1"}))
+  (tally (tally-program foundation 2) :replicas 1 :needs #{"cluster-net"} :environ {"TALLY_BASE" "1"}))
 
 
 (defsystem lab-pair [foundation]
   "見本の系: tally と greeter"
-  (tally (tally-program foundation 2) :needs #{"cluster-net"})
-  (greeter (greeter-program foundation 3) :needs #{"cluster-net"} :readiness {"windowSeconds" 30} :update "handoff"))
+  (tally (tally-program foundation 2) :replicas 1 :needs #{"cluster-net"})
+  (greeter (greeter-program foundation 3) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 30} :update "handoff"))

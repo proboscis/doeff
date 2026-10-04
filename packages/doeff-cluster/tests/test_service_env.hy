@@ -59,7 +59,7 @@
   {:pre [(: update str) (: readiness (| dict None)) (: environ dict)] :post [(: % System)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "速い検の系(job quiet 1 つ — defsystem の展開と同じ呼び方で作る)。"
-  (system-of "lab" #((job "quiet" (quiet-program 1.0) :call (CallShape :function quiet-program :args [1.0] :kwargs {})
+  (system-of "lab" #((job "quiet" (quiet-program 1.0) :call (CallShape :function quiet-program :args [1.0] :kwargs {}) :replicas 1
                           :needs #{"net"} :update update :readiness readiness :environ environ))))
 
 
@@ -210,7 +210,7 @@
   ;; `module:attr` の名から関数を引く。
   (val report-service (resolve "appservice:report_service"))
   (val declared (job "reporter" (report-service (str out))
-                     :call (CallShape :function report-service :args [(str out)] :kwargs {})
+                     :call (CallShape :function report-service :args [(str out)] :kwargs {}) :replicas 1
                      :needs #{"net"}))
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (! (process-versions os.environ)) :runtime-env env))
   (val row (get declaration.rows 0))

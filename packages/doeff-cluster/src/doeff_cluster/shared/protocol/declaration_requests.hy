@@ -13,16 +13,15 @@
 (import doeff_cluster.shared.intent.service_model [Declaration])
 
 
-(defk spec-for-update [row current [replicas None]]
-  {:pre [(: row Mapping) (: current dict) (: replicas (| int None))] :post [(: % dict)]
+(defk spec-for-update [row current]
+  {:pre [(: row Mapping) (: current dict)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
-  "在る Service を書き直す PUT の spec を宣言の行から作るため(declare の CLI と手元の sim-cluster で同じ形)。所有者と replicas と
-   readiness の無い行の readiness はいまの資源の値を保つ。"
+  "在る Service を書き直す PUT の spec を宣言の行から作るため(declare の CLI と手元の sim-cluster で同じ形)。台数は行の値(job の
+   :replicas — #3487)を書く。所有者と、readiness の無い行の readiness はいまの資源の値を保つ。"
   (val spec (dfor #(k v) (.items row) :if (!= k "name") k v))
   (| {"readiness" (.get current "readiness")}
      spec
-     {"owner" (.get current "owner")
-      "replicas" (if (is replicas None) (.get current "replicas" 1) replicas)}))
+     {"owner" (.get current "owner")}))
 
 
 (defrecord ServiceRead
@@ -50,16 +49,16 @@
   (json.loads read.body.text))
 
 
-(defk service-read [name row target current replicas]
-  {:pre [(: name str) (: row Mapping) (: target str) (: current (| dict None)) (: replicas (| int None))] :post [(: % ServiceRead)]
+(defk service-read [name row target current]
+  {:pre [(: name str) (: row Mapping) (: target str) (: current (| dict None))] :post [(: % ServiceRead)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "読んだ今の資源 current(GET の本文・無い Service は None)から、その Service に送る書きを決めるため: 無ければ作る・書き直す spec が
-   今の spec と同じなら書かない・違えば読んだ版を付けて書き直す。"
+   今の spec と同じなら書かない・違えば読んだ版を付けて書き直す(台数が行の値と違う時も書き直す — 宣言し直しは台数を job の値へ戻す)。"
   (when (is current None)
-    (return (ServiceRead :name name :target target :version None :body (OpaqueJson.of (create-body row replicas)))))
+    (return (ServiceRead :name name :target target :version None :body (OpaqueJson.of (create-body row)))))
   (val now (get current "spec"))
   (val version (get current "resourceVersion"))
-  (<- spec dict (spec-for-update row now replicas))
+  (<- spec dict (spec-for-update row now))
   (when (= spec now)
     (return (ServiceRead :name name :target target :version version :body None)))
   (<- body dict (update-body version spec))
@@ -76,9 +75,9 @@
   (tuple (sorted (sfor row declaration.rows :if (in (get row "name") written) (get (get row "run") "program")))))
 
 
-(deff create-body [#^ Mapping row #^ (| int None) replicas]  ; defk にできない: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
-  {:pre [(: row Mapping) (: replicas (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "まだ無い Service を作る POST /resources/Service の本文を作るため(declare の CLI と手元の sim-cluster で同じ形)。replicas を付けなければ 1。"
+(deff create-body [#^ Mapping row]  ; defk にできない: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
+  {:pre [(: row Mapping)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "まだ無い Service を作る POST /resources/Service の本文を作るため(declare の CLI と手元の sim-cluster で同じ形)。台数は行の値(job の
+   :replicas)。"
   {"name" (get row "name")
-   "spec" (| (dfor #(k v) (.items row) :if (!= k "name") k v)
-             {"replicas" (if (is replicas None) 1 replicas)})})
+   "spec" (dfor #(k v) (.items row) :if (!= k "name") k v)})
