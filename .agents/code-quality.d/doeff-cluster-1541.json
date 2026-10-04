@@ -2225,6 +2225,7 @@
       "allow": [
         "doeff-cluster-clock",
         "doeff-cluster-env-marker-model",
+        "doeff-cluster-runtime-env-model",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-rules",
         "doeff-cluster-env-upkeep",

@@ -20,7 +20,8 @@
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
 ;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。
-;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で先読みの停滞を見分ける — env_upkeep.prepare-overdue)。
+;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で準備の停滞を見分ける — env_upkeep.prepare-overdue)。1 つが長い
+;;; bytecode の処理ステージは、repo の木 1 つを焼き終えるごとにも同じ名で出す(処理ステージの中でも進みが見える・#3515)。
 (require doeff-hy.macros [defk defeffect <- val var])
 (val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defenum defrecord])
@@ -231,6 +232,9 @@
   state)
 
 
+(val BYTECODE-STAGE "bytecode")   ; bytecode の処理ステージの名(計器・マーカー・進みの印)
+
+
 (defk stage-bytecode [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
   "焼く根(宣言の import の根と、venv に editable で入る dir)を持つ repo ごとに、root の venv の interpreter で bytecode を作る
@@ -238,7 +242,10 @@
    editable で入るだけの依存の repo には入口の module が無く、閉包が空になるので、その根の下を全部焼く(repo の根を指す editable
    — flat layout の package — も根の下を全部焼く: tests や docs も焼くが、冷えた root で 1 回だけ・以後は引き継ぐ)。
    editable で入るだけの repo の bytecode は最適化(子は import の時に compile する)なので、焼けない(焼く物が無い・全部焼けない)
-   時は PrepareNote に記録して続ける。宣言の根を持つ repo の失敗は今までどおり env の失敗(展開の失敗を捕まえるため)。"
+   時は PrepareNote に記録して続ける。宣言の根を持つ repo の失敗は今までどおり env の失敗(展開の失敗を捕まえるため)。
+   repo の木 1 つを焼き終えるごとに進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。この処理ステージは
+   macro の file が変わると全部を焼き直し、負荷の高い時に 267.9 秒かかった(#3515)— 頭の印だけでは、進んでいる準備も worker から
+   停滞に見える。"
   (<- pdir str (project-dir request.env request.root))
   (<- editable tuple (ReadEditableRoots pdir request.root))
   (var interpreter "")
@@ -251,6 +258,7 @@
       (<- report (| BytecodeReport EnvFailure)
           (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry
                        :entries (if declared request.env.bytecode-entries #())))
+      (<- (StageStarted BYTECODE-STAGE))
       (match report
         (EnvFailure) (if declared
                          (:= failure report)
@@ -295,7 +303,7 @@
                (Stage :name "tree" :run stage-trees) (Stage :name "lock" :run stage-lock)
                (Stage :name "native" :run stage-native) (Stage :name "sync" :run stage-sync)
                (Stage :name "wheels" :run stage-wheels) (Stage :name "roots" :run stage-roots)
-               (Stage :name "bytecode" :run stage-bytecode) (Stage :name "probe" :run stage-probe)))
+               (Stage :name BYTECODE-STAGE :run stage-bytecode) (Stage :name "probe" :run stage-probe)))
 
 
 ;; --- Program -----------------------------------------------------------------------------

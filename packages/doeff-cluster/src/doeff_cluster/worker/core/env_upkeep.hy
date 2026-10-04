@@ -2,7 +2,7 @@
 ;;;
 ;;; worker の root の言い換え(worker/protocol/env_store の env-host)が観測を集めて、ここで決め、I/O(dir の削除・準備の process の停止)を汎用の効果で出す。
 ;;;   sweep-choice     空きが下限を切った時に消す root の列(固定・project ごとの最新・worker が作っていない dir は消さない)
-;;;   prepare-overdue  準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限
+;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
 ;;;   env-capacity     heartbeat で名乗る disk の条件(準備を始める空きが無ければ exhausted)
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "program"})
@@ -27,10 +27,9 @@
 
 
 (defrecord PrepareLimits
-  "準備の期限の秒: cold-seconds = 冷たい job の準備(root も引き継げる root も無い)・warm-seconds = 温い job の準備・
-   stall-seconds = 先読みの停滞(処理ステージが進まない長さ)。既定は設計 U10(30 分 / 5 分 / 10 分)。"
-  (setv #^ float cold-seconds 1800.0)
-  (setv #^ float warm-seconds 300.0)
+  "準備の期限の秒: stall-seconds = 準備の停滞(進みの印が動かない長さ — 先読みも job の準備も同じ)。既定は設計 U10 の 10 分。
+   合計の時間の期限は持たない — 温い job の準備の期限 300 秒は、負荷の高い時の bytecode の処理ステージ(実測 267.9 秒)だけで
+   使い切られ、答えを書き終えた直後の準備まで止めていた(#3515)。"
   (setv #^ float stall-seconds 600.0))
 
 
@@ -65,16 +64,12 @@
           (tuple chosen))))
 
 
-(defk prepare-overdue [warm cold started progressed now limits]
-  {:pre [(: warm bool) (: cold bool) (: started float) (: progressed float) (: now float) (: limits PrepareLimits)]
-   :post [(: % bool)]}
+(defk prepare-overdue [progressed now limits]
+  {:pre [(: progressed float) (: now float) (: limits PrepareLimits)] :post [(: % bool)]}
   "準備を止める時か。止めた準備は prepare-timeout(一時)になる。
-   先読み(warm)は task を待たせないので期限を掛けず、処理ステージが stall-seconds 進まない(progressed から)時だけ止める。
-   job の準備は、冷たい(cold)なら cold-seconds・温いなら warm-seconds を started から数える。"
-  (cond
-    warm (> (- now progressed) limits.stall-seconds)
-    cold (> (- now started) limits.cold-seconds)
-    True (> (- now started) limits.warm-seconds)))
+   先読みも job の準備も、最後の進み(progressed — 進みの印の時刻)から stall-seconds 進まない時だけ止める。進んでいる準備は、
+   起こしてから長くても止めない。"
+  (> (- now progressed) limits.stall-seconds))
 
 
 (defk env-capacity [free min-free]
