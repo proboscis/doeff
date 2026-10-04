@@ -462,7 +462,8 @@
   (session val notes (! (asked-text "runtime-env.notes")))
 
   (StageStarted [name]
-    ;; 進みの印: worker の env-host は印の file の時刻で先読みの停滞を見分ける(空 = 印を書かない)。
+    ;; 進みの印: worker の env-host は印の file の時刻で準備の停滞を見分ける(空 = 印を書かない)。同じ名で
+    ;; 出し直すと中身は変わらず時刻だけ進む。
     (when progress
       (<- (write-replacing progress (+ name "\n"))))
     (resume None))

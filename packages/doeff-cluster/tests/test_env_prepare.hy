@@ -5,7 +5,7 @@
 ;;   3 lock を変える → 新しいキー・download が増える
 ;;   4 同じ lock・別の project の commit → 新しい root・download 0・native の build 0
 ;;   5 native の source を変える → build が 1 回だけ増え、次の root は wheel を使い回す
-;;   7 repo を 3 つ → 3 つのツリーが兄弟に並び、import の根の順が宣言どおり
+;;   7 repo を 3 つ → 3 つのツリーが兄弟に並び、import の根の順が宣言どおり・bytecode の処理ステージは repo の木ごとに進みの印を触る
 ;; 反例: キーから import の根を外すと根だけ違う宣言が同じ root になる・根と同じ最上位の名の第三者の package・失敗の組(節 3.6)。
 ;; 筋書き 1・2 の実行と 6(同時の準備)は worker と子の起動の検(E10 の便 2)で確かめる。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
@@ -24,7 +24,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key key-material runtime-env->json runtime-env-of-json])
-(import doeff_cluster.worker.core.env_prepare [prepare-env] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster.worker.core.env_prepare [prepare-env] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault])
 
@@ -384,6 +384,37 @@
                                                                                     :commits #(tools-commit)))))
                             (three-repos-scenario)))
   (assert ok))
+
+
+(defclass StageMarks []
+  "seen-stages の記録: names = 準備の Program が出した進みの印(StageStarted)の名(出した順)。"
+  (defn #^ None __init__ [self]
+    (setv #^ (get tuple #(str ...)) self.names #())
+    None))
+
+
+(defhandler seen-stages [#^ StageMarks marks]
+  ;; 引数に残す理由: 検ごとに別の記録を持つ。進みの印の名を数え、外側の翻訳(env-world の env-translation)へそのまま渡す。
+  (StageStarted [name]
+    (setv marks.names (+ marks.names #(name)))
+    (<- effect)
+    (resume None)))
+
+
+(deftest test-the-bytecode-stage-marks-progress-after-each-repo-tree
+  ;; bytecode の処理ステージは repo の木 1 つを焼き終えるごとに進みの印を触り直す(#3515 — 頭の印だけでは、bytecode を 267.9 秒
+  ;; 焼いている準備も worker から停滞に見えた)。焼く根を持つ repo 3 つ = 頭の印 1 つ + 木ごとの印 3 つ。ほかの処理ステージは頭の印だけ。
+  (<- world EnvWorld (base-world))
+  (<- tools WorldCommit (lib-commit "tools-1" ""))
+  (val tools-commit (replace tools :files #((WorldFile :path "src/tool/__init__.py" :text "Z = 3\n"))))
+  (val marks (StageMarks))
+  (<- handlers list (env-world (replace world :remotes (+ world.remotes #((WorldRemote :url "file:///remotes/tools.git"
+                                                                                       :commits #(tools-commit)))))))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (+ handlers [(seen-stages marks)]) (three-repos-scenario)))))
+  (assert ok)
+  (assert (= marks.names #("disk" "mirror" "tree" "lock" "native" "sync" "wheels" "roots" "bytecode" "bytecode" "bytecode" "bytecode"
+                           "probe"))
+          marks.names))
 
 
 ;; --- 失敗の組(節 3.6)と反例 ------------------------------------------------------------------

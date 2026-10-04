@@ -8,7 +8,8 @@
 ;;;     完成マーカーの在る root だけを READY として観測する。root は state/roots/<キー> の最終の path に作る(venv が絶対 path を持つので
 ;;;     rename しない)。マーカーの無い root は次に求められた時に脇へ退けて作り直す。準備は同時に max-parallel 本まで・同じキーは 1 本。
 ;;;   * 先読み(warm): 温める表の root は job の準備より後に起こし、同時の枠の 1 つを job に残す(起こす順と数は env_rules.launch-order)。
-;;;     期限は env_upkeep.prepare-overdue(先読みは停滞だけ・job は冷たい / 温い)。
+;;;     期限は env_upkeep.prepare-overdue(先読みも job の準備も、進みの印が動かない長さだけ)。期限を判じる前に答えの file を読み、
+;;;     完成を書いた準備(終わりの処理の途中)は止めない — 次の観測で終わりを読む。
 ;;;   * 掃除(sweep): 空きが下限を切ったら、固定されていない root を消す(選びは env_upkeep.sweep-choice)・uv の cache を prune(待たない)・
 ;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。
 ;;; 記録(待ち・準備中・失敗・固定の集合・掃除と prune の時刻・最後の観測)は handler の session の値で持つ。
@@ -25,12 +26,13 @@
                                             ProcessExited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
-(import doeff_cluster.worker.core.env_rules [launch-order cold-for prepare-request prepare-argv prepare-outcome overdue-failure root-project
-                                             floor-bytes])
+(import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
+                                             overdue-failure root-project floor-bytes])
 (import doeff_cluster.worker.protocol.heartbeat [env-report])
 
 
@@ -60,13 +62,12 @@
 
 (defrecord PendingEnv
   "走っている準備 1 本の記録: pid = 準備の子・started-ms = 起こした時刻・result = 答えの file・progress = 進みの印の file・
-   warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)・cold = 冷たい準備か(引き継げる root が無い)。"
+   warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)。"
   (#^ int pid)
   (#^ int started-ms)
   (#^ str result)
   (#^ str progress)
-  (#^ bool warm)
-  (#^ bool cold))
+  (#^ bool warm))
 
 
 (defk env-root [settings key]
@@ -82,6 +83,17 @@
   (if (isinstance text str)
       (try (json.loads text) (except [ValueError] None))
       None))
+
+
+(defk read-answer [path]
+  {:pre [(: path str)] :post [(: % (| EnvFailure ReadyAnswer None))]}
+  "準備の process が書いた答えの file を読むため(中身の読みは env_rules の answer-of-text)。file が無い・読めない(FileFailed)=
+   答えをまだ書いていない(None)。準備の process は答えを別名に書いてから置き換えるので、書きかけは読まない。"
+  (<- text (ReadText path))
+  (match text
+    (str) (do (<- answer (| EnvFailure ReadyAnswer) (answer-of-text text))
+              answer)
+    _ None))
 
 
 (defk root-dirs [settings]
@@ -126,7 +138,6 @@
   (<- (RemoveTree result))     ; 無い file の断りは捨てる
   (<- (RemoveTree progress))
   (<- known tuple (known-roots settings))
-  (<- cold bool (cold-for declared known))
   (<- body dict (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) settings.platform root known settings.min-free-bytes))
   (<- (file-done (WriteText request (json.dumps body :ensure-ascii False))))
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state settings.repo-keys settings.code-prepare
@@ -135,12 +146,13 @@
   (<- started (StartProcess :argv argv :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
     (raise (OSError started.detail)))
-  (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm :cold cold))
+  (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm))
 
 
 (defk progressed-ms [pending]
   {:pre [(: pending PendingEnv)] :post [(: % int)]}
-  "準備の最後の進み(処理ステージの頭の印の時刻・印が無ければ起こした時刻)を返すため。"
+  "準備の最後の進み(進みの印の時刻 — 準備の process は処理ステージの頭と、bytecode の処理ステージの中の repo の木ごとに印を触る・
+   印が無ければ起こした時刻)を返すため。"
   (<- seen (StatPath pending.progress))
   (if (or (isinstance seen FileFailed) (!= seen.kind PathKind.FILE))
       pending.started-ms
@@ -248,19 +260,22 @@
   (var failures failed)
   (for [#(key p) (.items pending)]
     (<- polled (PollProcess p.pid))
+    ;; 答えの file は期限を判じる前に読む: 完成を書き終えて終わりの処理の途中の準備を、期限の拍で止めない(#3515 — 完成を書いた
+    ;; 0.4 秒後に prepare-timeout にしていた)。答えの file が無い・読めない = 答えを書いていない(None)。
+    (<- answer (| EnvFailure ReadyAnswer None) (read-answer p.result))
     (if (isinstance polled ProcessRunning)
-        (do (<- progressed int (progressed-ms p))
-            (<- overdue bool (prepare-overdue p.warm p.cold (/ p.started-ms 1000.0) (/ progressed 1000.0) (/ now-ms 1000.0)
-                                              settings.limits))
-            (when overdue
-              (<- (StopProcess :pid p.pid :stop-grace 0.0))
-              (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
-              (<- failure (overdue-failure p.warm p.cold settings.limits))
-              (:= failures (| failures {key #(failure now-ms)}))))
+        (match answer
+          ;; 完成を書いた準備は止めない — 次の観測で終わり(ProcessExited)と答えを読む。
+          (ReadyAnswer) None
+          _ (do (<- progressed int (progressed-ms p))
+                (<- overdue bool (prepare-overdue (/ progressed 1000.0) (/ now-ms 1000.0) settings.limits))
+                (when overdue
+                  (<- (StopProcess :pid p.pid :stop-grace 0.0))
+                  (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
+                  (<- failure (overdue-failure p.warm settings.limits))
+                  (:= failures (| failures {key #(failure now-ms)})))))
         (do (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
-            (<- text (ReadText p.result))
-            ;; 答えの file が無い・読めない = 答えを書かずに終わった準備(prepare-outcome が log の在処を添えた失敗にする)。
-            (val answer (if (isinstance text str) (try (json.loads text) (except [ValueError] None)) None))
+            ;; 答えを書かずに終わった準備は、prepare-outcome が log の在処を添えた失敗にする。
             ;; 立てた覚えの無い子(ProcessNotChild)は終わりの番号が分からない — -1 で名指す。
             (val code (if (isinstance polled ProcessExited) polled.exit-code -1))
             (<- failure (prepare-outcome answer code (+ settings.state "/env-requests/" key ".log")))
@@ -290,8 +305,8 @@
   (session var pruning None)
   (session var views None)
   (PrepareEnv [key runtime-env warm]
-    ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(期限は job の物 — 起こした時刻から数える)、
-    ;; 待っていれば先読みの印を下ろす。
+    ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
+    ;; 先読みと同じ停滞の長さ)、待っていれば先読みの印を下ろす。
     (cond
       (in key pending)
         (when (and (. (get pending key) warm) (not warm))

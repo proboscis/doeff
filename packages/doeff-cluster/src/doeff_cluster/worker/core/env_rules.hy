@@ -2,9 +2,20 @@
 ;;; 掃除の下限(handlers.hy の EnvStore から分けた・#2467)。I/O は呼び手(worker/protocol/env_store の env-host)が行う。
 ;;; 期限そのもの・掃除の選び・disk の条件は env_upkeep。
 (require doeff-hy.macros [defk <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
+(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import json)
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.core.env_upkeep [PrepareLimits SWEEP-FLOOR-RATIO])
+
+(val ANSWER-HEAD-CHARS 200)   ; 形の読めない答えの file の中身を失敗の理由に載せる長さ
+
+
+(defrecord ReadyAnswer
+  "準備の process が答えの file に完成(ready)を書いた、という答え(root = 完成を書いた root の path)。失敗の答えは EnvFailure で表す
+   — 答えの file の中身を読むのは answer-of-text の 1 か所。"
+  (#^ str root))
 
 
 (defk launch-order [waiting running warm-running max-parallel]
@@ -25,16 +36,6 @@
   launched)
 
 
-(defk cold-for [declared known]
-  {:pre [(: declared dict) (: known tuple)] :post [(: % bool)]}
-  "準備が冷たいか(同じ lock と Python の完成した root が無い = 依存も bytecode も引き継げない)を決めるため(declared = 実行環境の宣言・
-   known = 完成した root の列 {\"env\" 宣言 \"root\" path})。job の準備の期限を分けるため。"
-  (val project (get declared "project"))
-  (not (any (gfor k known
-                  (and (= (get k "env" "project" "lockSha256") (get project "lockSha256"))
-                       (= (get k "env" "project" "python") (get project "python")))))))
-
-
 (defk prepare-request [declared name platform root known min-free-bytes]
   {:pre [(: declared dict) (: name str) (: platform str) (: root str) (: known tuple) (: min-free-bytes int)]
    :post [(: % dict)]}
@@ -51,27 +52,37 @@
     "--code-prepare" code-prepare "--uv" uv "--progress" progress))
 
 
+(defk answer-of-text [text]
+  {:pre [(: text str)] :post [(: % (| EnvFailure ReadyAnswer))] :tags {:context "worker" :role "judgment" :reads "json"}}
+  "準備の process が書いた答えの file の中身(env_translation の answer-json の JSON)を答えの型にするため — 終わった準備の結末
+   (prepare-outcome)と、走っている準備を期限で止めるか(env_store の observe-envs)が同じ読みを使う。失敗を先に読む。形の読めない
+   中身は、実行環境が合わない失敗(やり直さない)として中身の頭を添える(完成とは読まない)。"
+  (val data (try (json.loads text) (except [ValueError] None)))
+  (match data
+    {"failure" {"kind" kind "detail" detail "retryable" retryable}}
+      (EnvFailure :kind (EnvFailureKind kind) :detail detail :retryable retryable)
+    {"ready" {"root" root}} (ReadyAnswer :root root)
+    _ (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+                  :detail (.format "準備の答えの file の形を読めない: {}" (cut text 0 ANSWER-HEAD-CHARS)))))
+
+
 (defk prepare-outcome [answer exit-code log]
-  {:pre [(: answer (| dict None)) (: exit-code int) (: log str)] :post [(: % (| EnvFailure None))]}
-  "終わった準備の答え(答えの file の JSON — 読めなければ None)を読み、失敗なら理由を返すため(成功なら None)。答えを書かずに終わった
-   process は、実行環境が合わない失敗(やり直さない)として log の在処を添える。"
-  (cond
-    (and answer (in "failure" answer))
-      (EnvFailure :kind (EnvFailureKind (get answer "failure" "kind")) :detail (get answer "failure" "detail")
-                  :retryable (get answer "failure" "retryable"))
-    (and answer (in "ready" answer)) None
-    True
-      (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+  {:pre [(: answer (| EnvFailure ReadyAnswer None)) (: exit-code int) (: log str)] :post [(: % (| EnvFailure None))]}
+  "終わった準備の答え(answer-of-text で読んだ物 — 答えの file が無い・読めなければ None)から、失敗なら理由を返すため(完成なら None)。
+   答えを書かずに終わった process は、実行環境が合わない失敗(やり直さない)として log の在処を添える。"
+  (match answer
+    (EnvFailure) answer
+    (ReadyAnswer) None
+    _ (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
                   :detail (.format "準備の process が答えを書かずに終わった(終了 {})— log: {}" exit-code log))))
 
 
-(defk overdue-failure [warm cold limits]
-  {:pre [(: warm bool) (: cold bool) (: limits PrepareLimits)] :post [(: % EnvFailure)]}
-  "期限を過ぎて止めた準備の失敗(やり直してよい)を返すため。先読みは停滞・job の準備は冷たい / 温いの期限。"
+(defk overdue-failure [warm limits]
+  {:pre [(: warm bool) (: limits PrepareLimits)] :post [(: % EnvFailure)]}
+  "期限を過ぎて止めた準備の失敗(やり直してよい)を返すため。先読みも job の準備も、進みの印が stall-seconds 動かなかった準備
+   (warm = 先読みの準備か — 失敗の文で名指す)。"
   (EnvFailure :kind EnvFailureKind.PREPARE-TIMEOUT :retryable True
-              :detail (if warm
-                          (.format "先読みの準備が {} 秒進まない(止めた)" limits.stall-seconds)
-                          (.format "準備が期限({})を過ぎた(止めた)" (if cold "冷たい" "温い")))))
+              :detail (.format "{}準備が {} 秒進まない(止めた)" (if warm "先読みの" "") limits.stall-seconds)))
 
 
 (defk root-project [marker]
