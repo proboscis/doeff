@@ -275,15 +275,22 @@ The session host never launches an agent in print mode.
 returns the handler pair that answers the public effects for Claude by
 translating them into `doeff-claude-code`'s effects — no session-host socket,
 no sqlite: `doeff-claude-code`'s production handler and the headless adapter
-(`fake_headless_claude_agent_handlers(responder=...)` puts the same adapter over
-`doeff-claude-code`'s fake). Callers need not import `doeff-claude-code`; they
-install a doeff-time handler and the scheduler outside the pair.
+(`fake_headless_claude_agent_handlers(responder=..., env=..., settings=...)` puts
+the same adapter over `doeff-claude-code`'s fake). Callers need not import
+`doeff-claude-code`; they install a doeff-time handler and the scheduler
+outside the pair.
+
+The fake pairs take `env` (the home's process env, str → str) and `settings`
+(the CLI settings, a JSON mapping) with no default: they mean the same as for
+the production pair and ride on the launch declaration the fake layer 2
+receives, so an emulation can observe what its production path decided. A
+caller with nothing to declare passes empty mappings explicitly.
 
 Callers that must not name a substrate (agora keeps the substrate the
 library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=...)`
-and `fake_claude_agent_runtime_handlers(responder=...)`: the same pairs under
-names that say "the Claude agent runtime" and leave the choice of substrate
-to doeff-agents.
+and `fake_claude_agent_runtime_handlers(responder=..., env=..., settings=...)`:
+the same pairs under names that say "the Claude agent runtime" and leave the
+choice of substrate to doeff-agents.
 
 | Public effect | What the headless handler does |
 |---|---|
