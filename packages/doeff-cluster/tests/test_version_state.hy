@@ -272,6 +272,33 @@
   (assert (= (get (! (version-of quiet :now late)) "state") "Current")))
 
 
+(deftest test-status-failures-moves-the-revision-while-the-carrier-reports-failures
+  ;; 落ちた事実の欄(#3477): 担い手の行の failures・lastExitCode・lastExitAtMs は status.process に載る。failures が 1 以上の間だけ
+  ;; status.failures にも載り(snapshot の行)、回数が変わるたびに resourceVersion が進む — 版の変化の待ち(GET /watch)が、phase の
+  ;; 行き来を見逃しても落ち続けに起きる。0 に戻ると欄が消えて進む。欄を載せない行では足さない(0 と黙って倒さない)。
+  (val running (! (reporting)))
+  (assert (not-in "failures" (get (snapshot running START T) "Service/w" "status")))
+  (val failing (! (beat running "atlas" [(! (row-of running "backoff" {"failures" 3 "lastExitCode" 1 "lastExitAtMs" 990}))])))
+  (assert (= (get (snapshot failing START T) "Service/w" "status" "failures") 3))
+  (val body (get (responded failing (! (http-request "GET" "/resources/Service/w" {} None :actor None)) START T) 2))
+  (assert (= #((get body "status" "failures") (get body "status" "process" "failures")
+              (get body "status" "process" "lastExitCode") (get body "status" "process" "lastExitAtMs"))
+             #(3 3 1 990))
+          body)
+  ;; 同じ phase(backoff)のまま回数だけ増えても版が進む。
+  (val more (! (beat failing "atlas" [(! (row-of failing "backoff" {"failures" 4 "lastExitCode" 1 "lastExitAtMs" 995}))])))
+  (assert (> more.revision failing.revision) #(more.revision failing.revision))
+  ;; 安定して 0 と報告されると欄が消え、版が進む。
+  (val stable (! (beat more "atlas" [(! (row-of more "running" {"failures" 0}))])))
+  (assert (> stable.revision more.revision))
+  (assert (not-in "failures" (get (snapshot stable START T) "Service/w" "status")))
+  ;; 欄を載せない行: status.process の failures は None のまま・status には足さない。
+  (val unknown (! (beat stable "atlas" [(! (row-of stable "backoff"))])))
+  (val shown (get (responded unknown (! (http-request "GET" "/resources/Service/w" {} None :actor None)) START T) 2))
+  (assert (is (get shown "status" "process" "failures") None) shown)
+  (assert (not-in "failures" (get shown "status")) shown))
+
+
 (deftest test-a-refused-declaration-is-blocked-until-it-is-deleted
   ;; 受け付けていない宣言の行(state.refused)は、DELETE で消すまで Blocked の行として残る。既存の欄 refused は今までどおり。
   (val state (ClusterState :refused {"old" (RefusedJob :name "old" :row {"name" "old" "revision" "r9"} :reason "旧い形の行")}))
