@@ -24,10 +24,10 @@
 (import os)
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-cluster])
+(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-view])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
@@ -507,6 +507,50 @@
     (assert (isinstance sent DetachedUnreachable) sent)
     (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
     (assert (isinstance awaited DetachedUnreachable) awaited)
+    True)
+  (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http (httpx.MockTransport cut-off))
+                                   (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r" :deadline-seconds 0.2) :poll-seconds POLL)]
+                                  (scenario)))
+  (assert ok))
+
+
+;; --- Service の一覧(ReadServices — #3479): 置き先の担い手が報告した落ちた事実 -----------------------------------------------
+
+(deftest test-the-service-view-carries-reported-failures-and-leaves-unreported-ones-as-none
+  ;; 担い手の行(status.process)の failures・lastExitCode・lastExitAtMs を写す。行が無い(置き先が無い)・欄を載せない担い手の行・宣言の行に
+  ;; 台数が無い(受け付けない宣言)時は None — 0 と黙って倒さない(倒すと、読み手が「落ちていない」と読む)。名の順に並べる。
+  (val items [{"name" "w" "spec" {"replicas" 1} "status" {"failures" 5 "process" {"name" "w" "failures" 5 "lastExitCode" 1 "lastExitAtMs" 990}}}
+              {"name" "u" "spec" {"replicas" 0} "status" {"process" None}}
+              {"name" "v" "spec" {"replicas" 1} "status" {"process" {"name" "v" "attempts" 1}}}
+              {"name" "x" "spec" {"revision" "r9"} "status" {"refused" "旧い形の行"}}])
+  (assert (= (service-facts-of-view items)
+             #((ServiceFact :name "u" :replicas 0 :failures None :last-exit-code None :last-exit-at-ms None)
+               (ServiceFact :name "v" :replicas 1 :failures None :last-exit-code None :last-exit-at-ms None)
+               (ServiceFact :name "w" :replicas 1 :failures 5 :last-exit-code 1 :last-exit-at-ms 990)
+               (ServiceFact :name "x" :replicas None :failures None :last-exit-code None :last-exit-at-ms None)))))
+
+
+(defk services-listed []
+  {:pre [] :post [(: % bool)]}
+  ;; Service を宣言していない系では、どちらの組でも一覧は空(名簿の読みと同じ送り手の口で答える)。
+  (<- services (ReadServices))
+  (assert (= services #()) services)
+  True)
+
+(deftest test-both-rigs-answer-the-service-list-through-the-same-port [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (services-listed)))
+  (assert ok))
+
+
+(deftest test-the-real-client-answers-an-unreachable-service-list-as-a-value
+  ;; coordinator に届かない一覧の読みは ServicesUnreachable(落ちているかは分からない — 呼び手は直ったとみなさない)。
+  (defk scenario []
+    {:pre [] :post [(: % bool)]}
+    (<- services (ReadServices))
+    (assert (isinstance services ServicesUnreachable) services)
     True)
   (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http (httpx.MockTransport cut-off))
                                    (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r" :deadline-seconds 0.2) :poll-seconds POLL)]
