@@ -123,7 +123,9 @@
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.pyi",
         "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
-        "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/aiohttp_http_server.hy",
@@ -169,7 +171,9 @@
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.pyi",
         "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
-        "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.hy",
+        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi"
       ],
       "responsibility": "土台の effect に本番で答える handler — OS の file・process・乱数、HTTP の要求(httpx)と待ち受け(aiohttp)、SQL(PostgreSQL・SQLite・ClickHouse)と transaction、計量の Prometheus の書き出し、stack の書き出し、停止の合図、計算の thread pool への逃がし。",
       "typed": true
@@ -395,7 +399,8 @@
         "packages/doeff-core-effects/tests/test_sqlite_file_sql.hy",
         "packages/doeff-core-effects/tests/test_stack_dump_contract.hy",
         "packages/doeff-core-effects/tests/test_stop_signal.hy",
-        "packages/doeff-core-effects/tests/test_stop_signal_contract.hy"
+        "packages/doeff-core-effects/tests/test_stop_signal_contract.hy",
+        "packages/doeff-core-effects/tests/test_http_host_gate.hy"
       ],
       "public": [],
       "responsibility": "doeff-core-effects の検 — effect の契約の検(本物と差し替えの handler が同じ答えを返すか)と、各 handler・scheduler・memo・型の宣言(.pyi)の一致の検。",
