@@ -1,0 +1,27 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-service-back"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-detached-model",
+        "doeff-cluster-promise-wait"
+      ],
+      "layer": "pure",
+      "name": "doeff-cluster-service-back",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/service_back.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/service_back.hy"
+      ],
+      "responsibility": "依る Service の短い停止を越える戻りの待ち — 前に読んだ版から版が変わるのを上限まで待ってから Ready を読む service-back と、それを約束の待ち 1 つで上限つきにする service-back-within(#3490)。",
+      "typed": true
+    }
+  ]
+}
