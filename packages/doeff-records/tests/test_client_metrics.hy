@@ -17,6 +17,7 @@
 (import doeff_records.values [ExpectAny])
 (import doeff_records.wire [CLIENT-ANSWER-METRICS])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized WireError http-records-handler zero-client-metrics])
+(import doeff_records.event_source [records-unwaited])
 
 ;; 台本の答え 1 つ: 届かない(接続できない)か、#(status 本文)。本文 None = JSON でない本文(間の proxy や前に立つ口の HTML の代役)。
 (val UNREACHABLE "unreachable")
@@ -93,7 +94,7 @@
    読む外側の計器は、同じ run の中の同じ答え手(memory-meter-handler の断面は run ごとに 1 つ)。"
   (val endpoint (RecordsEndpoint "http://records.test" :meter (memory-meter-handler (MeterSettings))))
   (run (scheduled (with-handlers [(state) (memory-meter-handler (MeterSettings)) (scripted-records-http (list replies))
-                                  (http-records-handler endpoint)]
+                                  records-unwaited (http-records-handler endpoint)]
                                  (metered-asks endpoint asks)))))
 
 
@@ -123,6 +124,6 @@
 (deftest test-an-endpoint-without-a-meter-emits-no-meter-effect
   ;; 計器を渡さない endpoint(今の使い手の形)は計器の effect を出さない — 計器の答え手を並べずに走り切る(出せば答え手の無い effect で落ちる)。
   (val endpoint (RecordsEndpoint "http://records.test"))
-  (val answers (run (scheduled (with-handlers [(state) (scripted-records-http [UNREACHABLE WRITTEN]) (http-records-handler endpoint)]
+  (val answers (run (scheduled (with-handlers [(state) (scripted-records-http [UNREACHABLE WRITTEN]) records-unwaited (http-records-handler endpoint)]
                                               (unmetered-asks endpoint #(WRITE WRITE))))))
   (assert (= answers #("Unreachable" "Written")) answers))

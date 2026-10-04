@@ -35,6 +35,7 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import urllib.parse [urlsplit])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
+(import doeff_records.event_source [records-unwaited])
 (import doeff_records.service [RecordsService respond HttpRequest :as ServiceRequest])
 (import doeff_records.wire [WRITER-HEADER])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
@@ -146,9 +147,11 @@
                               (with_handlers [(backing writer)
                                               (http-records-handler (RecordsEndpoint IN-PROCESS-URL :writer writer))]
                                              program))))
+  ;; 止まりの上限は待たない 0 秒を名で選ぶ(法は届かない答えをそのまま読む — 止まりを越える待ちの検は test_client_rides_stall.hy が
+  ;; 自分の上限を内側に置く・#3557)。
   (BuiltInterpreter (fn [program]
                       (run (scheduled (with_handlers (+ [(sim-time-handler :clock clock)] answerers
-                                                        [(in-process-records-http service) (law-setup harness)])
+                                                        [records-unwaited (in-process-records-http service) (law-setup harness)])
                                                      program))))
                     close-store
                     (fn [] harness)))

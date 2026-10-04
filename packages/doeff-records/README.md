@@ -149,6 +149,11 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 (欄 = 要求が名指した名のうち断りの理由に載った物 — 断りの本文の形は変えない。理由の綴りは `wire.hy` の `undeclared-reason` と
 `undeclared-refusal` の 1 か所)。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
+置き場の止まり(#3557): 要求と答えの公開 effect 7 つは、届かない(`503` の `store-unavailable` を含む `Unreachable`)時に、止まりの上限まで
+置き場の戻りを待って同じ要求を撃ち直す。上限は要求のたびに `ReadSourcePatience` で問い、戻りは `AwaitRecordsBack` で待つ(合図の源と同じ 2 つの問い)。
+組み立ては client の外側に上限の答え手を必ず置き、名で選ぶ — 待つ秒(`doeff_records.event_source.source_patience_handler(SignalSourcePatience(seconds))`)か、
+待たない 0 秒(`records_unwaited`)。置かない組み立ては最初の要求で、答え手の無い `ReadSourcePatience` として落ちる。上限を越えたら、待った秒を
+名指した `Unreachable` を返す。変化の待ち 2 つ(`WatchChanges`・`WatchEvents`)は待たない — 合図の源が自分で越えて止まりの合図を出す。
 
 ## 置き場の手入れ(`doeff_records.maintenance`)
 
