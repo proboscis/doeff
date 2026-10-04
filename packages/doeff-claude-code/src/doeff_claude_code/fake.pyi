@@ -70,6 +70,7 @@ QUICK_TURN_SECONDS: float
 CLOCK_TICK: float
 MIN_SLEEP: float
 FAKE_CAPABILITIES: tuple[str, ...]
+NO_RECEIPT_CAPABILITIES: tuple[str, ...]
 
 @dataclass(frozen=True)
 class FakeReply:
@@ -82,6 +83,7 @@ class FakeReply:
     cost_usd: float | None = None
     lines: int = 0
     think_seconds: float = 0.0
+    interrupt_receipt: bool = True
 
     def __post_init__(self) -> None:
         ...
