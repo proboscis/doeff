@@ -5,7 +5,7 @@
 ;;   外した呼び鈴は置き場に残らず、後の書きも 2 度目の外しも効かずに通る
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers EffectBase])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.scheduler [scheduled HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent])
@@ -68,3 +68,25 @@
 (deftest test-a-dropped-bell-is-gone-and-later-writes-and-drops-pass
   (val store (MemoryStore LAW-SCHEMA))
   (assert (= (in-store store (dropped-then-written store)) #(0 0))))
+
+
+;; 反例(#3508・#3494): 鳴らずに外した呼び鈴の外の promise が終わらないと、scheduler の promise の行が pending のまま残り、終わった物
+;; だけを消す掃除の外になる — 外すたびに 1 行ずつ増える。
+(val UNRUNG-CYCLES (* 4 HANDLE-SWEEP-INTERVAL))
+
+
+(defk unrung-hangs [store]
+  {:pre [(: store MemoryStore)] :post [(: % dict)]}
+  "parts の呼び鈴を掛けて鳴らさずに外すのを UNRUNG-CYCLES 回繰り返し、scheduler の行の数を答えるため。"
+  (for [_ (range UNRUNG-CYCLES)]
+    (<- bell (hang-bell store #("parts") #()))
+    (<- (drop-bell store bell)))
+  (<- counts (_SchedulerIntrospection))
+  counts)
+
+
+(deftest test-unrung-dropped-bells-do-not-grow-scheduler-promises
+  (val store (MemoryStore LAW-SCHEMA))
+  (val counts (in-store store (unrung-hangs store)))
+  ;; 直す前は外した呼び鈴が全部 pending のまま残る(UNRUNG-CYCLES 行 = 掃除の間隔の 4 倍)。直した後は、掃除と掃除の間に溜まる分(1 回の掛けで割り当てを数個使う)だけ。
+  (assert (<= (get counts "promises") (* 2 HANDLE-SWEEP-INTERVAL)) counts))
