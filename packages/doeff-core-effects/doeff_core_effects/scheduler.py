@@ -925,10 +925,17 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         An entry is swept when it is terminal, has no registered waiter, is
         not referenced by a live Gather/Race resolution, and every handle
         (Task, Promise/ExternalPromise, and each Future minted from them) is
-        dead. Cancelled tasks are exempt: a task dropped by the Cancel
-        fallback (continuation not held by the scheduler) may still run to
-        its TaskCompleted, which re-reads tasks[tid]; ``cancelling`` tasks
-        are live. Semaphores are never swept:
+        dead. A cancelled task is swept only once it is ``settled`` — nothing
+        can re-read tasks[tid] any more: it ran to its TaskCompleted after
+        the Cancel, or it never started and pick_next skipped its start, or
+        a Discard dropped the continuation the scheduler held. Until then it
+        is exempt: a task dropped by the Cancel fallback (continuation not
+        held by the scheduler) may still run to its TaskCompleted, which
+        re-reads tasks[tid]; ``cancelling`` tasks are live. Without the
+        settled sweep every Cancel of a started task left its row and its
+        TaskCancelledError (whose traceback pins the task's frames) for the
+        life of the run (agora-redesign #3504 — a records service's
+        long-poll waits grew ~15 MB a minute). Semaphores are never swept:
         "no permits outstanding" is not trackable from handle liveness.
         """
         protected = set()
@@ -949,7 +956,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         for kind, store in (("task", tasks), ("promise", promises)):
             dead = []
             for wid, meta in store.items():
-                if meta["status"] not in sweepable[kind]:
+                settled_cancel = (
+                    kind == "task"
+                    and meta["status"] == "cancelled"
+                    and meta.get("settled", False)
+                )
+                if meta["status"] not in sweepable[kind] and not settled_cancel:
                     continue
                 key = (kind, wid)
                 if key in waiters or key in protected:
@@ -1536,6 +1548,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     if entry[0] == "new":
                         _, tid = entry
                         if tasks[tid]["status"] == "cancelled":
+                            # Never started: skipping its start is the last
+                            # read of its row.
+                            tasks[tid]["settled"] = True
                             continue  # skip cancelled tasks
                         tasks[tid]["status"] = "running"
                         prog = tasks[tid].pop("program")
@@ -1920,7 +1935,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 r.error if hasattr(r, "error") else r
             )
             if status == "cancelled":
+                # A task dropped by the Cancel fallback ran to its end after
+                # all: nothing re-reads its row any more.
                 _release_task_refs(tid)
+                tasks[tid]["settled"] = True
             elif status == "cancelling" and (
                 error is None or isinstance(error, TaskCancelledError)
             ):
@@ -1930,6 +1948,13 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 finish_cancelled(
                     tid, error if error is not None else TaskCancelledError()
                 )
+                tasks[tid]["settled"] = True
+                # The unwound TaskCancelledError's traceback holds the task's
+                # frames, and they hold its row and the handles it touched —
+                # a cycle that keeps those handles alive (so their entries
+                # unswept) until a gc pass. Waiters only need the error type.
+                if error is not None:
+                    error.__traceback__ = None
             else:
                 # A cancelling task whose cleanup raised something else is
                 # reported as failed with that error (it is not hidden).
@@ -2132,14 +2157,19 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 # Self-discard: this Discard is where the task ends; its
                 # continuation k is dropped and the next ready task runs.
                 finish_cancelled(tid, TaskCancelledError())
+                tasks[tid]["settled"] = True
                 return (yield TailEval(pick_next()))
             if live:
                 # A pending task has no continuation yet (pick_next skips the
                 # start of a cancelled task); a started one is detached from
                 # wherever it is parked and dropped with it.
                 parked_keys = keys_parked_by(tid)
-                detach_parked_continuation(tid)
+                dropped = detach_parked_continuation(tid)
                 finish_cancelled(tid, TaskCancelledError())
+                if dropped is not None:
+                    # The continuation the scheduler held is dropped, so the
+                    # task never runs again.
+                    tasks[tid]["settled"] = True
                 # Stop the external work the task was parked on (#498).
                 discard_errors = cancel_abandoned_external_promises(parked_keys)
             if discard_errors:
