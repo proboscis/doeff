@@ -23,6 +23,7 @@ from typing import Any, ClassVar, NotRequired, Protocol, TypedDict, runtime_chec
 from doeff_hy.json_value import JsonValue
 
 UPDATE_FORMS: tuple[str, ...]
+REPLICAS_VALUES: tuple[int, ...]
 
 class _EnvVarView(Protocol):
     """子の環境変数 1 つ(runtime_env_model.EnvVar の読む欄)。"""
@@ -60,6 +61,7 @@ class _DeclarationRow(TypedDict):
     name: str
     revision: str
     needs: list[str]
+    replicas: int
     run: _RunSpec
     environ: dict[str, str]
     readiness: NotRequired[dict[str, float]]
@@ -76,12 +78,13 @@ class CallShape:
 
 @dataclass(frozen=True, kw_only=True)
 class Job:
-    """系の job 1 つ(常駐の service)。program = Program の値・needs = 要る能力の名・environ = 子の環境変数(名の順)。"""
+    """系の job 1 つ(常駐の service)。program = Program の値・needs = 要る能力の名・replicas = 望む台数(0 / 1)・environ = 子の環境変数(名の順)。"""
 
     name: str
     program: object
     call: CallShape
     needs: frozenset[str]
+    replicas: int
     readiness: dict[str, float] | None
     update: str
     environ: tuple[_EnvVarView, ...]

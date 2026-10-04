@@ -43,4 +43,4 @@
 
 (defsystem pings [foundation]
   "手元の 1 台の検の系: 準備を報告し続ける service 1 つ"
-  (ping (ping-job foundation) :needs #{"local"} :readiness {"windowSeconds" 5}))
+  (ping (ping-job foundation) :replicas 1 :needs #{"local"} :readiness {"windowSeconds" 5}))

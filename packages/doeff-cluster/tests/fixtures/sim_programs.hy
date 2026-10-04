@@ -288,107 +288,107 @@
 
 (defsystem beacons [foundation]
   "見本の系: 拍ごとに盤へ書く service 1 つ(版 1 — STEP 1)"
-  (beacon (beacon-program foundation "beacon/a" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :environ {"STEP" "1"}))
 
 
 (defsystem beacons-v2 [foundation]
   "beacons の版 2(environ の STEP を変えた — 入れ替わる)"
-  (beacon (beacon-program foundation "beacon/a" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :environ {"STEP" "2"}))
 
 
 (defsystem beacons-plus [foundation]
   "beacons に service beacon-b を足した系(宣言し直すと新しい job の置き先が要る — 条 L1 の検)"
-  (beacon (beacon-program foundation "beacon/a" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :environ {"STEP" "1"})
-  (beacon-b (beacon-program foundation "beacon/b" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon-b (beacon-program foundation "beacon/b" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
             :environ {"STEP" "1"}))
 
 
 (defsystem handoff-beacons [foundation]
   "見本の系: handoff で入れ替える beacon(版 1)"
-  (beacon (beacon-program foundation "beacon/h" 1.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem handoff-beacons-v2 [foundation]
   "handoff-beacons の版 2(本体の引数 every を変えた — 入れ替わる)"
-  (beacon (beacon-program foundation "beacon/h" 2.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem handoff-beacons-v3 [foundation]
   "handoff-beacons の版 3(本体の引数 every を版 2 からも変えた — 入れ替えを 2 度通す条 C14 の検)"
-  (beacon (beacon-program foundation "beacon/h" 3.0) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/h" 3.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem relay [foundation]
   "見本の系: 盤に書く beacon と、それを読んで写す copier"
-  (beacon (beacon-program foundation "relay/source" 1.0) :needs #{"cluster-net"} :environ {"STEP" "9"})
-  (copier (copy-program foundation "relay/source" "relay/copy") :needs #{"cluster-net"}))
+  (beacon (beacon-program foundation "relay/source" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "9"})
+  (copier (copy-program foundation "relay/source" "relay/copy") :replicas 1 :needs #{"cluster-net"}))
 
 
 (defsystem flavors [foundation]
   "見本の系: 同じ Flavor に別の答えを持つ 2 つの service と、答えを持たない 1 つ"
-  (sweet (scoped-program foundation "sweet" "flavor/sweet") :needs #{"cluster-net"})
-  (sour (scoped-program foundation "sour" "flavor/sour") :needs #{"cluster-net"})
-  (plain (unscoped-program foundation "flavor/plain") :needs #{"cluster-net"}))
+  (sweet (scoped-program foundation "sweet" "flavor/sweet") :replicas 1 :needs #{"cluster-net"})
+  (sour (scoped-program foundation "sour" "flavor/sour") :replicas 1 :needs #{"cluster-net"})
+  (plain (unscoped-program foundation "flavor/plain") :replicas 1 :needs #{"cluster-net"}))
 
 
 (defsystem fenced [foundation]
   "見本の系: 柵を通る物だけを使う service と、sim の世界の effect を覗く service"
-  (passer (passable-program foundation "fence/passer") :needs #{"cluster-net"})
-  (peeker (peeking-program foundation) :needs #{"cluster-net"}))
+  (passer (passable-program foundation "fence/passer") :replicas 1 :needs #{"cluster-net"})
+  (peeker (peeking-program foundation) :replicas 1 :needs #{"cluster-net"}))
 
 
 (defsystem delegating [foundation]
   "見本の系: RemoteJob で task を出す service 1 つ"
-  (delegator (delegate-program foundation 3 "remote/result") :needs #{"cluster-net"}))
+  (delegator (delegate-program foundation 3 "remote/result") :replicas 1 :needs #{"cluster-net"}))
 
 
 (defsystem gpu-only [foundation]
   "見本の系: どの worker も提供しない能力を要る service"
-  (trainer (beacon-program foundation "gpu/beat" 1.0) :needs #{"gpu"} :environ {"STEP" "1"}))
+  (trainer (beacon-program foundation "gpu/beat" 1.0) :replicas 1 :needs #{"gpu"} :environ {"STEP" "1"}))
 
 (defsystem spawners [foundation]
   "見本の系: 子の task に盤へ書き続けさせる service 1 つ(止まらない)"
-  (spawner (spawning-program foundation "spawn/" 0) :needs #{"cluster-net"}))
+  (spawner (spawning-program foundation "spawn/" 0) :replicas 1 :needs #{"cluster-net"}))
 
 (defsystem quitters [foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 3 拍で値を返して抜ける service 1 つ"
-  (quitter (spawning-program foundation "quit/" 3) :needs #{"cluster-net"}))
+  (quitter (spawning-program foundation "quit/" 3) :replicas 1 :needs #{"cluster-net"}))
 
 (defsystem quitters-v2 [foundation]
   "quitters の版 2(抜けるまでの拍の数を変えた — 宣言し直すと入れ替わる・静かな区間の同値の検 tests/test_idle_skip.hy)"
-  (quitter (spawning-program foundation "quit/" 4) :needs #{"cluster-net"}))
+  (quitter (spawning-program foundation "quit/" 4) :replicas 1 :needs #{"cluster-net"}))
 
 (defsystem pulses [foundation]
   "見本の系: 準備できたと報告し続けるだけの service 1 つ"
-  (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+  (pulse (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 (defsystem solo-pulses [foundation]
   "見本の系: 置ける worker が 1 台ずつの service 4 つ(能力 solo-a〜solo-d — 1 台ずつの worker だけが持つ)と、能力 cluster-net を持つ
    worker ならどれにも置ける service 1 つ(#2805 — 置ける worker が 1 台の service が並ぶ形の途絶の筋書き・tests/test_outage_timelines.hy)"
-  (pulse-a (pulse-program foundation) :needs #{"solo-a"} :readiness {"windowSeconds" 5})
-  (pulse-b (pulse-program foundation) :needs #{"solo-b"} :readiness {"windowSeconds" 5})
-  (pulse-c (pulse-program foundation) :needs #{"solo-c"} :readiness {"windowSeconds" 5})
-  (pulse-d (pulse-program foundation) :needs #{"solo-d"} :readiness {"windowSeconds" 5})
-  (roamer (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+  (pulse-a (pulse-program foundation) :replicas 1 :needs #{"solo-a"} :readiness {"windowSeconds" 5})
+  (pulse-b (pulse-program foundation) :replicas 1 :needs #{"solo-b"} :readiness {"windowSeconds" 5})
+  (pulse-c (pulse-program foundation) :replicas 1 :needs #{"solo-c"} :readiness {"windowSeconds" 5})
+  (pulse-d (pulse-program foundation) :replicas 1 :needs #{"solo-d"} :readiness {"windowSeconds" 5})
+  (roamer (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 (defsystem lone-pulses [foundation]
   "pulses の needs を、1 台の worker だけが持つ能力 lone にした宣言(#2804 — 宣言の needs を広げて置ける worker が増える筋書きの前の宣言・
    tests/test_keep_when_cut_off.hy)"
-  (pulse (pulse-program foundation) :needs #{"lone"} :readiness {"windowSeconds" 5}))
+  (pulse (pulse-program foundation) :replicas 1 :needs #{"lone"} :readiness {"windowSeconds" 5}))
 
 (defsystem wide-pulses [foundation]
   "lone-pulses の needs を広げた宣言(#2804 — 能力 cluster-net を持つ worker ならどれにも置ける)"
-  (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+  (pulse (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 (defsystem detaching [foundation]
   "見本の系: 切り離した task を出して待つ service 1 つ"
-  (detacher (detaching-program foundation 3 "detached/result") :needs #{"cluster-net"}))
+  (detacher (detaching-program foundation 3 "detached/result") :replicas 1 :needs #{"cluster-net"}))
 
 
 ;; --- 終わりの待ちの検(test_local_wakes.hy — proboscis/doeff#631)------------------------------------------------
@@ -401,7 +401,7 @@
 
 (defsystem long-quitters [foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 120 拍で値を返して抜ける service 1 つ(process の終わりを待つ検)"
-  (long-quitter (spawning-program foundation "long/" 120) :needs #{"cluster-net"}))
+  (long-quitter (spawning-program foundation "long/" 120) :replicas 1 :needs #{"cluster-net"}))
 
 
 ;; --- 宣言の実行環境が子の run-context に届く検(test_local.hy)-------------------------------------------------------
@@ -420,4 +420,4 @@
 
 (defsystem context-env-readers [foundation]
   "見本の系: 自分の run-context の実行環境の宣言を値にして抜ける service 1 つ"
-  (context-env-reader (context-env-program foundation) :needs #{"cluster-net"}))
+  (context-env-reader (context-env-program foundation) :replicas 1 :needs #{"cluster-net"}))

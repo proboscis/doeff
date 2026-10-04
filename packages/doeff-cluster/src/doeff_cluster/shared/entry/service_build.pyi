@@ -22,6 +22,7 @@ def job(
     *,
     call: CallShape,
     needs: frozenset[str] | set[str] | list[str] | tuple[str, ...] | None,
+    replicas: int,
     readiness: dict[str, float] | None = None,
     update: str = "recreate",
     environ: dict[str, str] | None = None,

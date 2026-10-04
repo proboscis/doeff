@@ -13,7 +13,6 @@ class ServiceReadiness:
 @_doeff_dataclass(frozen=True)
 class Redeclare(_doeff_effect_base[tuple[str, ...]]):
     system: System
-    replicas: int
     environ: dict[str, dict[str, str]] | None = None
 
 @_doeff_dataclass(frozen=True)

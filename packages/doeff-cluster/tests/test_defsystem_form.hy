@@ -61,14 +61,14 @@
 (defsystem land [foundation]
   \"着地の系\"
   (land-notice (notice foundation 5.0)
-    :needs #{\"pg-network\"} :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
+    :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
 "))
   (val land (get ns "land"))
   (assert (= land.__doc__ "着地の系"))
   (assert (= land.__doeff_system__
              {"name" "land" "params" ["foundation"]
-              "jobs" [{"name" "land-notice" "function" "notice" "needs" ["pg-network"] "readiness" {"windowSeconds" 30}
-                       "update" "handoff" "environ" {"POLL" "5.0"}}]})
+              "jobs" [{"name" "land-notice" "function" "notice" "needs" ["pg-network"] "replicas" 1
+                       "readiness" {"windowSeconds" 30} "update" "handoff" "environ" {"POLL" "5.0"}}]})
           land.__doeff_system__)
   (assert (= land.__doeff_tags__.role "entry")))
 
@@ -80,7 +80,7 @@
   (<- ns (evaluate "
 (defk notice [foundation poll] {:pre [(: foundation Ping) (: poll float)] :post [(: % int)]} 1)
 (defsystem land [#^ Ping foundation extra]
-  (land-notice (notice foundation 5.0)))
+  (land-notice (notice foundation 5.0) :replicas 1))
 "))
   (val land (get ns "land"))
   (assert (= (get land.__doeff_system__ "params") ["foundation" "extra"]) land.__doeff_system__)
@@ -105,9 +105,19 @@
   (assert (in ":update は" c) c)
   (<- d (refusal "(defsystem s [foundation] (job (make foundation) :environ {\"POLL\" 5}))"))
   (assert (in ":environ の値は文字列" d) d)
-  (<- e (refusal "(defsystem s [foundation] (job (make foundation)) (job (make foundation)))"))
+  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1) (job (make foundation) :replicas 1))"))
   (assert (in "job の名 job が 2 回ある" e) e)
   (<- f (refusal "(defsystem s [foundation] (job make))"))
   (assert (in "Program は (関数の記号 引数…) の呼び出し" f) f)
   (<- g (refusal "(defsystem s [foundation] \"説明だけ\")"))
   (assert (in "job の行が 1 つも無い" g) g))
+
+
+(deftest test-defsystem-requires-the-replicas-of-every-job
+  ;; job の望む台数(:replicas)は必ず書く — 省くと宣言し直しの時に Service へ書く台数が決まらない(#3487)。0 / 1 の外の値・文字列も断る。
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :needs #{\"net\"}))"))
+  (assert (in ":replicas が無い" a) a)
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 2))"))
+  (assert (in ":replicas は 0 / 1 のどれか" b) b)
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas \"1\"))"))
+  (assert (in ":replicas は 0 / 1 のどれか" c) c))

@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.intent.service_model [Declaration])
 
 (val URL "http://coordinator.test")
-(val DECLARATION (Declaration :rows [{"name" "writer-a" "revision" "r1" "run" {"program" "sha-a" "versions" {"python" "3.14.0"}}}]
+(val DECLARATION (Declaration :rows [{"name" "writer-a" "revision" "r1" "replicas" 1 "run" {"program" "sha-a" "versions" {"python" "3.14.0"}}}]
                               :programs {"sha-a" "blob-a"}))
 
 
