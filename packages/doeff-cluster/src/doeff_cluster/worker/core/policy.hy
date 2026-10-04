@@ -367,6 +367,10 @@
     :setv probing (if (is want None) None (probe-status now world want))
     :setv handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None))
     :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
+    ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
+    ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
+    :setv stable (and (is-not process None) (is-not record.last-start-ms None)
+                      (>= (- now record.last-start-ms) policy.stable-run-ms))
     (JobStatus name (phase-of now want process world record policy)
       (if (is want None) None want.revision)
       (if (is process None) None process.spec.revision)
@@ -385,11 +389,15 @@
         ;; 入れ替えの途中(新のコードの準備・新の Ready 待ち)は、旧が動いていることを示す。
         handing-off
           (.format "入れ替えを待つ(新のコード {})" (if (is code None) "未準備" code.state.value))
+        ;; 終わりの code と続けて落ちた回数は欄(failures・last-exit-code)が運ぶので、文には載せない(#3477)。
         (and (is-not record.last-outcome None) (> record.failures 0))
-          f"last={record.last-outcome.value} code={record.last-exit-code} failures={record.failures} backoff={(backoff-ms record policy)}ms"
+          f"last={record.last-outcome.value} backoff={(backoff-ms record policy)}ms"
         (is-not record.last-outcome None)
-          f"last={record.last-outcome.value} code={record.last-exit-code}"
+          f"last={record.last-outcome.value}"
         True "")
+      :failures (if stable 0 record.failures)
+      :last-exit-code record.last-exit-code
+      :last-exit-at-ms record.last-exit-ms
       ;; 動いている process の世代(coordinator の readiness がこれと一致する報告だけを数える)。
       :instance (if (is process None) None process.instance)
       :spec-hash (if (is process None) None (spec-hash process.spec))

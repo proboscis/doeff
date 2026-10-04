@@ -157,7 +157,7 @@
   (assert (= #(record.last-outcome record.last-exit-code record.failures) #(Outcome.EXITED 0 0)) record)
   (val status (get (! (statuses 5000 #(task) (! (world)) done POLICY)) 0))
   (assert (= status.phase JobPhase.FINISHED) status)
-  (assert (= status.detail "last=exited code=0") status)
+  (assert (= #(status.detail status.failures status.last-exit-code) #("last=exited" 0 0)) status)
   (assert (= (! (plan 5000 #(task) (! (world)) done POLICY)) #())))
 
 (deftest test-task-that-exits-with-a-nonzero-code-is-still-counted
@@ -169,7 +169,9 @@
   (assert (= (. (get done "task/t1") failures) 1))
   (val status (get (! (statuses 5000 #(task) (! (world)) done POLICY)) 0))
   (assert (= status.phase JobPhase.FINISHED) status)
-  (assert (.startswith status.detail "last=exited code=1 failures=1 ") status)
+  ;; 回数と code は欄で運ぶ(#3477)。文は終わり方と起こし直しの間だけ。
+  (assert (.startswith status.detail "last=exited backoff=") status)
+  (assert (= #(status.failures status.last-exit-code status.last-exit-at-ms) #(1 1 1000)) status)
   (assert (= (! (plan 5000 #(task) (! (world)) done POLICY)) #())))
 
 (deftest test-service-that-keeps-exiting-with-code-0-keeps-its-growing-backoff
@@ -187,7 +189,7 @@
     (assert (= (! (plan (+ now wait -1) #(A1) (! (world)) records policy)) #()))
     (val status (get (! (statuses (+ now wait -1) #(A1) (! (world)) records policy)) 0))
     (assert (= status.phase JobPhase.BACKOFF) status)
-    (assert (= status.detail "last=exited code=0") status)
+    (assert (= #(status.detail status.failures status.last-exit-code) #("last=exited" 0 0)) status)
     (:= now (+ now wait)))
   (assert (= (. (get records "a") failures) 0))
   (assert (= (. (get records "a") attempts) 4))
@@ -204,7 +206,30 @@
   (assert (= (. (get r4 "a") failures) 1))
   (assert (= (! (plan 7999 #(A1) (! (world)) r4 policy)) #()))
   (val status (get (! (statuses 7999 #(A1) (! (world)) r4 policy)) 0))
-  (assert (= status.detail "last=exited code=1 failures=1 backoff=4000ms") status))
+  (assert (= status.detail "last=exited backoff=4000ms") status)
+  (assert (= #(status.failures status.last-exit-code status.last-exit-at-ms) #(1 1 4000)) status))
+
+(deftest test-status-carries-the-failure-streak-as-fields-and-reports-0-once-stable
+  ;; 落ちた事実は文でなく欄で運ぶ(#3477): exit code 1 で 5 回続けて終わると failures = 5・最後の code と時刻が欄に入る。起こし直した
+  ;; process が stable-run-ms 以上動いている間は 0 と報告する(記憶の failures は次の終わりまで 5 のまま — 数え直しは record-after)。
+  (val policy (replace POLICY :restart-backoff-max-ms 8000 :stable-run-ms 60000))
+  (var records {})
+  (var now 0)
+  (for [_ (range 5)]
+    (:= now (+ now 10000))
+    (val start (! (plan now #(A1) (! (world)) records policy)))
+    (assert (= (len start) 1) start)
+    (:= records (! (records-after now records start policy)))
+    (:= now (+ now 1000))
+    (:= records (! (records-after now records (! (plan now #(A1) (! (world (replace (! (running A1)) :exit-code 1))) records policy)) policy))))
+  (val failing (get (! (statuses now #(A1) (! (world)) records policy)) 0))
+  (assert (= #(failing.failures failing.last-exit-code failing.last-exit-at-ms) #(5 1 now)) failing)
+  (:= now (+ now 10000))
+  (:= records (! (records-after now records (! (plan now #(A1) (! (world)) records policy)) policy)))
+  (val alive (! (world (! (running A1)))))
+  (assert (= (. (get (! (statuses (+ now 59999) #(A1) alive records policy)) 0) failures) 5))
+  (assert (= (. (get (! (statuses (+ now 60000) #(A1) alive records policy)) 0) failures) 0))
+  (assert (= (. (get records "a") failures) 5)))
 
 
 ;; --- 入れ替え(handoff・2026-09-24): 新が Ready と数えられてから旧を止める ---------------------------------------

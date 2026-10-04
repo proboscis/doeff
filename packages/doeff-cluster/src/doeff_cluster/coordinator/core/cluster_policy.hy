@@ -204,7 +204,9 @@
   "worker の状態の報告の行 → 見せる JSON の形(GET /state の statuses と Service の status.process — worker/protocol/heartbeat の
    status-row と同じ欄。準備の失敗と入口の検めの欄は在る時だけ・結果と task の写しは持ち続けないので載せない)。"
   (| {"name" row.name "phase" row.phase "desiredRevision" row.desired-revision "runningRevision" row.running-revision
-      "pid" row.pid "attempts" row.attempts "detail" row.detail "instance" row.instance "specHash" row.spec-hash
+      "pid" row.pid "attempts" row.attempts "detail" row.detail
+      "failures" row.failures "lastExitCode" row.last-exit-code "lastExitAtMs" row.last-exit-at-ms
+      "instance" row.instance "specHash" row.spec-hash
       "placement" row.placement "retiredFrom" row.retired-from}
      (if (is row.failure-kind None) {} {"failureKind" row.failure-kind "retryable" row.retryable})
      (if (is row.probe None) {} {"probe" {"state" row.probe.state "elapsedSeconds" row.probe.elapsed-seconds
