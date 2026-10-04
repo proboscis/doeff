@@ -14,11 +14,13 @@
 //!       - shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。
 //!       - どの種類でも、1 行目の shebang(`#!`)の行は数える(退役語 direct-shebang の対象)。
 //!     記号・欄名と、docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)や env の key は実行される綴りなので。
-//!     群に :contract-files が在れば、契約の綴り(契約の file のキーの名と enum / const の値)に在る :words の語は、次の 2 か所でだけ
+//!     群に :contract-files が在れば、契約の綴り(契約の file のキーの名と enum / const の値)に在る :words の語は、次の 3 か所でだけ
 //!     数えない(agora-redesign #1893 — 契約と wire の欄名は契約の綴りのまま書く):
 //!       - 文字列で中身がその語ちょうどの物 — Hy の普通の文字列(`"mail"`)と、Python(`.py`・`.pyi`)の接頭辞の無い 1 行の文字列
 //!         (`"mail"`・`'mail'`)。
 //!       - Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)` — 欄の読み方は doeff-indexer の hy_index::fields)。
+//!       - Hy の defsystem の job の行の `:reads` / `:writes` の集合の文字列(`#{"record:mail"}` — 綴りは `<置き場>:<名>`)の、最初の
+//!         `:` の後の名の部分がその語ちょうどの物(agora-redesign #3506 — 名は記録の種類や表の名で、契約の綴りのまま書く)。
 //!     変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)は今どおり数え、:patterns は塗らない中身に当てる。
 //!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
 //!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
@@ -32,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use doeff_indexer::hy_index::fields::record_field_targets;
-use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
+use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader, StrKind};
 use doeff_indexer::hy_index::{matches_pattern, RawCatalog};
 use rayon::prelude::*;
 use regex::Regex;
@@ -453,10 +455,14 @@ fn counted_text(rel: &str, source: &str) -> Option<String> {
     Some(String::from_utf8(bytes).expect("文字の境目で塗った"))
 }
 
-/// Hy の form の木から、契約の綴りの候補の範囲を集める — 普通の文字列(`"…"`)の中身と、defwire の本体の欄の定義の名。
+/// Hy の form の木から、契約の綴りの候補の範囲を集める — 普通の文字列(`"…"`)の中身と、defwire の本体の欄の定義の名と、
+/// defsystem の job の行の `:reads` / `:writes` の文字列の名の部分。
 fn hy_contract_sites(source: &str, form: &Form, out: &mut Vec<(usize, usize)>) {
     if let Some(fields) = form.paren_items().and_then(|items| defwire_fields(source, items)) {
         out.extend(record_field_targets(source, &fields).into_iter().map(|target| (target.name.start, target.name.end)));
+    }
+    if let Some(items) = form.paren_items() {
+        system_io_name_sites(source, items, out);
     }
     match &form.node {
         Node::Str { kind: StrKind::Plain, body } => out.push((body.start, body.end)),
@@ -485,6 +491,32 @@ fn defwire_fields<'f>(source: &str, items: &'f [Form]) -> Option<Vec<&'f Form>> 
         rest = &rest[1..];
     }
     Some(rest.to_vec())
+}
+
+/// `(defsystem 名 [引数] "doc"? (job …) …)` の job の行の `:reads` / `:writes` の集合(`#{"<置き場>:<名>" …}` — doeff の欄
+/// agora-redesign #3495)の各文字列の、最初の `:` の後の名の範囲(defsystem でなければ何も足さない)。置き場の綴り(records・record・
+/// ledger)は契約の語ではないので、名の部分だけを契約の綴りの候補にする(#3506 — `"record:mail"` の名 mail は記録の種類の契約の綴り)。
+fn system_io_name_sites(source: &str, items: &[Form], out: &mut Vec<(usize, usize)>) {
+    let Some(head) = items.first() else { return };
+    if !matches!(head.node, Node::Symbol) || source.get(head.span.start..head.span.end) != Some("defsystem") {
+        return;
+    }
+    for row in items.iter().filter_map(Form::paren_items) {
+        for pair in row.windows(2) {
+            let key = source.get(pair[0].span.start..pair[0].span.end);
+            if !matches!(pair[0].node, Node::Keyword) || !matches!(key, Some(":reads" | ":writes")) {
+                continue;
+            }
+            let Node::Seq { delim: Delim::Set, items: spellings } = &pair[1].node else { continue };
+            for spelling in spellings {
+                if let Node::Str { kind: StrKind::Plain, body } = &spelling.node {
+                    if let Some(colon) = source.get(body.start..body.end).and_then(|text| text.find(':')) {
+                        out.push((body.start + colon + 1, body.end));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Python の、接頭辞の無い 1 行の文字列(`"…"`・`'…'`)の中身の範囲 — 註(`#` から行末)・三重引用符の文字列・接頭辞つきの文字列は除く。
@@ -518,7 +550,7 @@ fn python_contract_sites(source: &str) -> Vec<(usize, usize)> {
 }
 
 /// 契約の綴りの語 words を数えない所を空白で塗った中身(counted と同じ長さ・同じ行)— Hy は普通の文字列で中身がその語ちょうどの物と
-/// defwire の本体の欄の定義の名、Python(`.py`・`.pyi`)は接頭辞の無い 1 行の文字列で中身がその語ちょうどの物。契約の綴りの語が無い
+/// defwire の本体の欄の定義の名と defsystem の `:reads` / `:writes` の文字列の名の部分がその語ちょうどの物、Python(`.py`・`.pyi`)は接頭辞の無い 1 行の文字列で中身がその語ちょうどの物。契約の綴りの語が無い
 /// 群とほかの種類の file は None(塗らない)。
 fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&str>) -> Option<String> {
     if words.is_empty() {
@@ -836,6 +868,18 @@ mod tests {
         // 契約の綴りの無い群は、文字列も defwire の欄も今どおり数える。
         let plain = words(&["mail"], &[], WordPlace::Lines, &[]);
         assert_eq!(spelled("a.hy", "(defwire C (#^ str mail))\n(f \"mail\")\n", &plain), vec!["mail", "mail"]);
+    }
+
+    /// agora-redesign #3506: defsystem の job の行の `:reads` / `:writes` の文字列(`<置き場>:<名>`)は、名の部分が契約の綴りの語
+    /// ちょうどなら数えない。契約に無い語の名・欄の外の同じ文字列・defsystem でない form の同じ欄は今どおり数える。
+    #[test]
+    fn contract_spellings_skip_the_name_part_of_system_io_spellings_only() {
+        let group = with_contract(&["mail", "letter"], &["mail"]);
+        let quiet = "(defsystem s [#^ T f]\n  \"doc\"\n  (a (job-a f) :needs #{\"agent\"}\n     :reads #{\"record:mail\" \"records:message\"}\n     :writes #{\"record:mail\"}))\n";
+        assert!(spelled("a.hy", quiet, &group).is_empty(), "{:?}", spelled("a.hy", quiet, &group));
+        let loud = "(defsystem s [f]\n  (a (job-a f)\n     :reads #{\"record:letter\"}\n     :environ {\"record:mail\" \"\"}))\n\
+                    (val k \"record:mail\")\n(defk t [f] (a (job f) :reads #{\"record:mail\"}))\n";
+        assert_eq!(spelled("a.hy", loud, &group), vec!["letter", "mail", "mail", "mail"]);
     }
 
     /// agora-redesign #1893: Python(.py・.pyi)の接頭辞の無い 1 行の文字列で中身が契約の綴りの語ちょうどの物は数えない。名・属性・欄・
