@@ -2038,6 +2038,84 @@ class TestTerminalEntrySweep:
         assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
         assert counts["handle_refs"] <= 2 * HANDLE_SWEEP_INTERVAL, counts
 
+    def test_cancelling_started_tasks_does_not_grow_scheduler_state(self):
+        """Cancelling a task that already started must not leave its row (and
+        its TaskCancelledError, whose traceback pins the task's frames) for
+        the life of the run (agora-redesign #3504): once the task has unwound
+        to its TaskCompleted nothing re-reads tasks[tid], so it is swept like
+        a completed task. doeff-time's WaitWithin cancels its deadline timer
+        every time the awaited future wins — a records service's long-poll
+        waits grew ~15 MB a minute without this."""
+        from doeff_core_effects.scheduler import (
+            HANDLE_SWEEP_INTERVAL,
+            TaskCancelledError,
+            _SchedulerIntrospection,
+        )
+
+        cycles = 3000
+
+        @do
+        def parked(started, release):
+            # Signal that the body is running, then park until cancelled.
+            yield CompletePromise(started, None)
+            yield Wait(release.future)
+
+        @do
+        def body():
+            cancelled = 0
+            for _ in range(cycles):
+                started = yield CreatePromise()
+                release = yield CreatePromise()
+                t = yield Spawn(parked(started, release))
+                yield Wait(started.future)  # the child is now parked on release
+                yield Cancel(t)
+                try:
+                    yield Wait(t)
+                except TaskCancelledError:
+                    cancelled += 1
+                yield CompletePromise(release, None)
+            counts = yield _SchedulerIntrospection()
+            return cancelled, counts
+
+        cancelled, counts = doeff_run(scheduled(body()))
+        assert cancelled == cycles
+        # Without the settled sweep the tasks dict holds every cancelled child
+        # (~3000 rows).
+        assert counts["tasks"] <= HANDLE_SWEEP_INTERVAL, counts
+        assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
+
+    def test_live_handle_keeps_a_cancelled_task_readable_across_sweeps(self):
+        """A settled cancelled task whose Task handle is still alive must keep
+        raising TaskCancelledError on Wait across sweep boundaries."""
+        from doeff_core_effects.scheduler import TaskCancelledError
+
+        @do
+        def parked(started, release):
+            yield CompletePromise(started, None)
+            yield Wait(release.future)
+
+        @do
+        def noop():
+            return None
+
+        @do
+        def body():
+            started = yield CreatePromise()
+            release = yield CreatePromise()
+            t = yield Spawn(parked(started, release))
+            yield Wait(started.future)
+            yield Cancel(t)
+            for _ in range(1200):  # cross at least one sweep boundary
+                n = yield Spawn(noop())
+                _ = yield Wait(n)
+            try:
+                yield Wait(t)
+            except TaskCancelledError:
+                return "cancelled"
+            return "not cancelled"
+
+        assert doeff_run(scheduled(body())) == "cancelled"
+
     def test_repeated_future_minting_on_pending_promise_prunes_dead_refs(self):
         """Minting `.future` repeatedly from one long-lived PENDING promise
         must not accumulate dead weakrefs until terminality (adversarial
