@@ -776,9 +776,11 @@
 (defk slow-beside-ticks []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "遅い問い合わせ 1 つと、許可(接続 1 本)を待つ問い合わせ 1 つの横で、別の task が刻めるかを見るため。"
+  "許可(接続 1 本)を取り合う遅い問い合わせ 2 つの横で、別の task が刻めるかを見るため。2 つとも 1 秒眠るので、どちらが先に許可を
+   取っても、後の方は先の方が許可を返すまで待ち、終わりの刻が 1 秒離れる(2 本の接続で並んで走れば、ほぼ同じ刻に終わる)。許可を取る
+   順は driver の thread の起き方で決まり、決まらない — 先に spawn した方が先に取る、を断言の前提にしない(agora-redesign #3532)。"
   (<- slow (Spawn (finished-at "SELECT pg_sleep(1.0)")))
-  (<- queued (Spawn (finished-at "SELECT 1")))
+  (<- queued (Spawn (finished-at "SELECT pg_sleep(1.0)")))
   (<- seen (ticks 5 0.05))
   (<- finished (Gather slow queued))
   #(seen (tuple finished)))
@@ -852,13 +854,13 @@
     (<- answer (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (slow-beside-ticks)))
     (finally (.close connections) (.shutdown pool)))
   (val seen (get answer 0))
-  (val slow-done (get answer 1 0))
-  (val queued-done (get answer 1 1))
+  (val first-done (min (get answer 1)))
+  (val second-done (max (get answer 1)))
   (assert (= (len seen) 5))
-  ;; 刻みは全部、遅い問い合わせ(1 秒)が終わる前に済む。
-  (assert (< (max seen) slow-done) #(seen slow-done))
-  ;; 2 つ目は許可(接続 1 本)が返るまで待った。
-  (assert (>= queued-done slow-done) #(queued-done slow-done)))
+  ;; 刻みは全部、先に許可を取った問い合わせ(1 秒)が終わる前に済む。
+  (assert (< (max seen) first-done) #(seen first-done))
+  ;; 後の方は許可(接続 1 本)が返るまで待った(並んで走れば、ほぼ同じ刻に終わる)。
+  (assert (>= (- second-done first-done) 0.9) #(first-done second-done)))
 
 
 (deftest test-pooled-postgres-takes-the-same-advisory-lock-as-before
@@ -1028,13 +1030,13 @@
     (<- answer (with-handler [(postgres-sql-handler connections)] (slow-beside-ticks)))
     (finally (.close connections)))
   (val seen (get answer 0))
-  (val slow-done (get answer 1 0))
-  (val queued-done (get answer 1 1))
+  (val first-done (min (get answer 1)))
+  (val second-done (max (get answer 1)))
   (assert (= (len seen) 5))
-  ;; 刻みは全部、遅い問い合わせ(1 秒)が終わる前に済む(塞ぐ答え手なら刻みは遅い問い合わせの後になる)。
-  (assert (< (max seen) slow-done) #(seen slow-done))
-  ;; 2 つ目は接続(1 本)が返るまで待った。
-  (assert (>= queued-done slow-done) #(queued-done slow-done)))
+  ;; 刻みは全部、先に接続を取った問い合わせ(1 秒)が終わる前に済む(塞ぐ答え手なら刻みは遅い問い合わせの後になる)。
+  (assert (< (max seen) first-done) #(seen first-done))
+  ;; 後の方は接続(1 本)が返るまで待った(並んで走れば、ほぼ同じ刻に終わる)。
+  (assert (>= (- second-done first-done) 0.9) #(first-done second-done)))
 
 
 (deftest test-postgres-serializes-only-transactions-with-the-same-lock-key
