@@ -10,6 +10,7 @@
 ;;;   - 置き先 = 生きていて drain でない、能力の合う担い手(needs ⊆ provides・専用の能力)。合う担い手が全部 drain 中なら待つ・合う担い手が居なければ
 ;;;     DetachedUnrunnable(coordinator の place-tasks)
 ;;;   - 担い手の名簿(ReadRunners)= coordinator の名簿の生存と drain
+;;;   - Service の一覧(ReadServices)= coordinator の Service の宣言の台数と、置き先の担い手が報告した落ちた事実(#3479)
 ;;;
 ;;; 2026-09-28: 同じ VM の scheduler の task で走らせる模擬(detached-local・置き場 DetachedLocalStore・模擬の担い手)を消した。呼び手の
 ;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
@@ -20,6 +21,7 @@
 (import dataclasses [dataclass])
 (import urllib.parse [quote :as url-quote])
 (import json)
+(import operator [itemgetter])
 (import doeff_time [Delay])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
@@ -37,7 +39,7 @@
                          RunnerFact RunnersUnreachable OPEN-PHASES DetachedOutcome DetachedSucceeded DetachedFailed DetachedLost
                          DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
-                         ServiceViewWire])
+                         ServiceViewWire ReadServices ServiceFact ServicesUnreachable])
 (import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
@@ -224,6 +226,27 @@
   (RunnersUnreachable :detail (.format "coordinator に届かない: {}" reason)))
 
 
+(deff service-facts-of-view [#^ list items]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
+  {:pre [(: items list)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /resources/Service の items([{name spec status}])を Service の断面(ServiceFact の tuple・名の順)にするため。
+   落ちた事実は置き先の担い手の報告の行(status.process)の欄 — 行が無い・欄が無い時は None(0 と黙って倒さない・#3479)。"
+  (tuple (gfor item (sorted items :key (itemgetter "name"))
+               :setv spec (.get item "spec")
+               :setv status (.get item "status")
+               :setv row (if (isinstance status dict) (.get status "process") None)
+               :setv reported (isinstance row dict)
+               (ServiceFact :name (get item "name") :replicas (if (isinstance spec dict) (.get spec "replicas") None)
+                            :failures (if reported (.get row "failures") None)
+                            :last-exit-code (if reported (.get row "lastExitCode") None)
+                            :last-exit-at-ms (if reported (.get row "lastExitAtMs") None)))))
+
+
+(deff services-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+  {:pre [(: reason str)] :post [(: % ServicesUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "Service の一覧の読みが coordinator に届かなかった時の答えを作るため。"
+  (ServicesUnreachable :detail (.format "coordinator に届かない: {}" reason)))
+
+
 (deff warm-request-body [#^ dict runtime-env #^ frozenset needs #^ float ttl-seconds #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: runtime-env dict) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
@@ -357,6 +380,17 @@
   (runner-facts-of-view (get state "workers")))
 
 
+(defk services-read [cell options sender]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender)] :post [(: % (| tuple ServicesUnreachable))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "Service の一覧を読むため(coordinator の GET /resources/Service — #3479)。届かなければ ServicesUnreachable。"
+  (<- read (resent-answer cell options "GET" "/resources/Service" None None sender.deadline-seconds))
+  (when (isinstance read HttpFailed)
+    (return (services-unreachable read.detail)))
+  (<- body dict (answer-json read))
+  (service-facts-of-view (get body "items")))
+
+
 (defk runners-changed [cell options after timeout-seconds]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: after int) (: timeout-seconds float)] :post [(: % RunnersChangeAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
@@ -472,6 +506,9 @@
   (ReadRunners []
     (<- runners (runners-read cell options sender))
     (resume runners))
+  (ReadServices []
+    (<- services (services-read cell options sender))
+    (resume services))
   (AwaitRunnersChange [after timeout-seconds]
     (<- change (runners-changed cell options after (float timeout-seconds)))
     (resume change))

@@ -2,7 +2,7 @@
 ;;; (#2782 — 最初の使い手は、使い手の repo の日次の全体検証の「予定 1 つを今 1 回積む」手元の道具)。
 ;;;
 ;;;   with-detached-client [coordinator revision runtime-env body]
-;;;       本体の切り離した task の effect(SubmitDetached・AwaitDetached・CancelDetached・ReleaseDetached・ReadRunners・
+;;;       本体の切り離した task の effect(SubmitDetached・AwaitDetached・CancelDetached・ReleaseDetached・ReadRunners・ReadServices・
 ;;;       AwaitRunnersChange・AwaitProcessEnded)に、本番と同じ detached-cluster で答える。宛先 = coordinator(URL — `,` で並べれば
 ;;;       前ほど優先)・名乗り = revision(受け側はこの版のコードを準備してから task を復元する)と runtime-env(実行環境の宣言 — 在れば
 ;;;       worker は env の root の中の子 process で走らせる・None なら revision の木)。版の識別はこの process の版(process-versions)。

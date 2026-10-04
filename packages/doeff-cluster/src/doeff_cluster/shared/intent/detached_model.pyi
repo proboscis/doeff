@@ -108,6 +108,22 @@ class RunnersUnreachable:
 RunnersAnswer: TypeAlias = tuple[RunnerFact, ...] | RunnersUnreachable
 
 @dataclass(frozen=True, kw_only=True)
+class ServiceFact:
+    """Service 1 つ(担い手の報告が無い欄は None)。"""
+
+    name: str
+    replicas: int | None
+    failures: int | None
+    last_exit_code: int | None
+    last_exit_at_ms: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class ServicesUnreachable:
+    detail: str
+
+ServicesAnswer: TypeAlias = tuple[ServiceFact, ...] | ServicesUnreachable
+
+@dataclass(frozen=True, kw_only=True)
 class RunnersChange:
     revision: int
     changed: bool
@@ -189,6 +205,10 @@ class ReleaseDetached(EffectBase[bool]):
 @dataclass(frozen=True)
 class ReadRunners(EffectBase[RunnersAnswer]):
     """task を受ける担い手の名簿を読む。"""
+
+@dataclass(frozen=True)
+class ReadServices(EffectBase[ServicesAnswer]):
+    """coordinator の Service の一覧と、置き先の担い手が報告した落ちた事実を読む。"""
 
 @dataclass(frozen=True)
 class AwaitRunnersChange(EffectBase[RunnersChangeAnswer]):
