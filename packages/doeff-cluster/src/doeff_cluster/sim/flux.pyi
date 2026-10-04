@@ -30,6 +30,9 @@ from doeff_cluster.shared.intent.upgrade_model import UpgradeStateUnreachable as
 from doeff_cluster.shared.intent.upgrade_model import ReadUpgradeState as ReadUpgradeState
 from doeff_cluster.shared.intent.upgrade_model import PublishDeclarations as PublishDeclarations
 from doeff_cluster.shared.intent.upgrade_model import ApplyDeclarations as ApplyDeclarations
+from doeff_cluster.shared.intent.upgrade_model import ConfirmCleanBoot as ConfirmCleanBoot
+from doeff_cluster.shared.intent.upgrade_model import CleanBootPassed as CleanBootPassed
+from doeff_cluster.shared.intent.upgrade_model import CleanBootRefused as CleanBootRefused
 from doeff_cluster.sim.local import SimWorker as SimWorker
 from doeff_cluster.sim.local import HostTruth as HostTruth
 from doeff_cluster.sim.local import DrainWorker as DrainWorker
@@ -88,4 +91,10 @@ class UpgradeStartsSeen(_doeff_effect_base[tuple[UpgradeStart, ...]]):
     ...
 
 def flux_declarations(paths: tuple, drain: Callable, coordinator_seconds: float, initial: tuple) -> _Handler:
+    ...
+
+def launch_target(launch: WorkerLaunch | CoordinatorLaunch) -> _Program[str, object]:
+    ...
+
+def refused_clean_boots(targets: frozenset) -> _Handler:
     ...

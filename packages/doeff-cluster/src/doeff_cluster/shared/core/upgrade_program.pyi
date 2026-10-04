@@ -18,6 +18,10 @@ from doeff_cluster.shared.intent.upgrade_model import UpgradeStalled as UpgradeS
 from doeff_cluster.shared.intent.upgrade_model import ReadUpgradeState as ReadUpgradeState
 from doeff_cluster.shared.intent.upgrade_model import PublishDeclarations as PublishDeclarations
 from doeff_cluster.shared.intent.upgrade_model import ApplyDeclarations as ApplyDeclarations
+from doeff_cluster.shared.intent.upgrade_model import ConfirmCleanBoot as ConfirmCleanBoot
+from doeff_cluster.shared.intent.upgrade_model import CleanBootPassed as CleanBootPassed
+from doeff_cluster.shared.intent.upgrade_model import CleanBootRefused as CleanBootRefused
+from doeff_cluster.shared.intent.upgrade_model import UpgradeRefused as UpgradeRefused
 UNREACHABLE_RETRY_SECONDS: float
 WATCH_SECONDS: float
 
@@ -37,6 +41,9 @@ def all_live(state: UpgradeState) -> _Program[bool, object]:
     ...
 
 def await_until(step: str, done: Callable, limit_seconds: float) -> _Program[None, object]:
+    ...
+
+def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
     ...
 
 def upgrade_cluster(workers: tuple[WorkerLaunch, ...], coordinator: CoordinatorLaunch, limits: UpgradeLimits) -> _Program[None, object]:

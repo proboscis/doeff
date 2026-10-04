@@ -18,11 +18,12 @@
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
 (import doeff_cluster.shared.intent.upgrade_model [UpgradeLimits UpgradeStalled UpgradeState UpgradeStart RosterEntry PendingTask PendingPhase
-                                                   ReadUpgradeState PublishDeclarations ApplyDeclarations])
+                                                   ReadUpgradeState PublishDeclarations ApplyDeclarations ConfirmCleanBoot
+                                                   CleanBootPassed UpgradeRefused])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.core.upgrade_program [upgrade-cluster])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator])
-(import doeff_cluster.sim.flux [FluxPass manifest-state prestop-drain flux-declarations UpgradeStartsSeen])
+(import doeff_cluster.sim.flux [FluxPass manifest-state prestop-drain flux-declarations refused-clean-boots UpgradeStartsSeen])
 (import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS write-manifest breaches-of flux-outside])
 (import tests.detached_rig [slow-add])
 
@@ -95,6 +96,59 @@
   (assert (= #(a-commit b-commit) #(NEW NEW)) seen)
   ;; 1 台ずつ: worker a・b・coordinator の順に 1 つずつ入れ替えた。
   (assert (= (tuple (gfor s starts s.target)) #("a" "b" "coordinator")) starts))
+
+
+(defk upgrade-with-refused-boots [targets]
+  {:pre [(: targets frozenset)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(2026-10-05 07:1x の形 — 起動の時に読む物が壊れていて、空の Pod が起動で落ちる版): targets に名の在る入れ替え先の空の起動が
+   落ちる世界で Program を走らせる。答え = #(止まりの例外 止まった後の宣言 入れ替えの記録 a の版 b の版)。"
+  (<- (Delay 3.0))
+  (<- applied tuple (manifest-state PATHS))
+  (<- run tuple (with-handlers [(flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied) (refused-clean-boots targets)
+                                desire-by-manifest]
+                  (refusal-then-starts)))
+  (<- after tuple (manifest-state PATHS))
+  (<- a SimWorker (WorkerOf "a"))
+  (<- b SimWorker (WorkerOf "b"))
+  #((get run 0) #(applied after) (get run 1) a.doeff-commit b.doeff-commit))
+
+
+(defk refusal-then-starts []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "Program を走らせて空の起動の断りによる止まり(UpgradeRefused)を受け、模擬の Flux が当てた入れ替えの記録を読む。答え = #(止まり 記録)。"
+  (var refused None)
+  (try
+    (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))
+    (except [e UpgradeRefused]
+      (:= refused e)))
+  (<- starts tuple (UpgradeStartsSeen))
+  #(refused starts))
+
+
+(deftest test-a-worker-whose-clean-boot-fails-stops-the-upgrade-before-anything-is-written
+  ;; 失敗ケース(Mac の調整役の条件 3・今朝の形): 最初の worker a の入れ替え先の空の起動が落ちる — Program は a を名指して止まり、宣言を
+  ;; 書かず(置き場は始めと同じ)、何も入れ替えず、a・b は元の版のまま。
+  (<- outside SimOutside (flux-outside))
+  (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset ["a"])) :workers #(A B) :outside outside))
+  (val refused (get seen 0))
+  (assert (isinstance refused UpgradeRefused) seen)
+  (assert (= refused.target "a") refused)
+  (val manifests (get seen 1))
+  (assert (= (get manifests 0) (get manifests 1)) seen)
+  (assert (= (get seen 2) #()) seen)
+  (assert (= #((get seen 3) (get seen 4)) #(OLD OLD)) seen))
+
+
+(deftest test-a-coordinator-whose-clean-boot-fails-stops-after-the-workers-and-before-its-swap
+  ;; 失敗ケース: coordinator の入れ替え先の空の起動が落ちる — worker a・b は入れ替わり(新しい版)、coordinator の宣言は書かれず
+  ;; 入れ替えもしない(入れ替えの記録は a・b だけ)。止まりは coordinator を名指す。
+  (<- outside SimOutside (flux-outside))
+  (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset ["coordinator"])) :workers #(A B) :outside outside))
+  (val refused (get seen 0))
+  (assert (isinstance refused UpgradeRefused) seen)
+  (assert (= refused.target "coordinator") refused)
+  (assert (= (tuple (gfor s (get seen 2) s.target)) #("a" "b")) seen)
+  (assert (= #((get seen 3) (get seen 4)) #(NEW NEW)) seen))
 
 
 (defk upgrade-under-a-running-task [limits drain]
@@ -172,6 +226,8 @@
   (DesireCoordinator [launch]
     (:= coordinator-at reads)
     (resume #()))
+  (ConfirmCleanBoot [launch]
+    (resume (CleanBootPassed :target (if (isinstance launch WorkerLaunch) launch.name "coordinator"))))
   (PublishDeclarations []
     (resume None))
   (ApplyDeclarations []
