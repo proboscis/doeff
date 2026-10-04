@@ -10,7 +10,7 @@
   "requirements": "Q1〜Q5(design.md §1): 全手番の env に RECORD_SERVICE_URL = agentd 自身の記録の宛先(byte 同一)・Mac と pool で 32KB 超の ai tell が通る・上限内は不変・tell.py 不変・値の置き場は [record].url の 1 か所・継承を開けない",
   "design": {
     "path": "design.md",
-    "sha256": "5202d9b9aaeaf32c6e3cfcbc61367e67f31f841ad757cf8a6a425b3022bc2547"
+    "sha256": "b041e933e91c40dc2830f7a101244757480f5de13caa0bc6abbae12921208297"
   },
   "modules": [
     {
@@ -242,7 +242,7 @@
       "observation": "断られた(requestId ai-tell:35926257…・郵便は作られない)",
       "evidence": {
         "path": "evidence/pod-measurement.log",
-        "sha256": "06534a375ab4d07390f6f1905650b0c8fab5ff50ceed31c4f87e0ccbbdbcdcb7"
+        "sha256": "51f858551c2e40bc890601ebd65c7af5b071d6eb81c84e1d570a93c7d68755d4"
       },
       "status": "passed"
     },
@@ -256,7 +256,7 @@
       "observation": "lt-SAGPVFCCQ31D6D2W5746B1STXA delivered",
       "evidence": {
         "path": "evidence/pod-measurement.log",
-        "sha256": "06534a375ab4d07390f6f1905650b0c8fab5ff50ceed31c4f87e0ccbbdbcdcb7"
+        "sha256": "51f858551c2e40bc890601ebd65c7af5b071d6eb81c84e1d570a93c7d68755d4"
       },
       "status": "passed"
     },

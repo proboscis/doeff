@@ -10,7 +10,7 @@
   "requirements": "Q1〜Q5(design.md §2): 日次の 3 つの母集団は段ごとに独立・package の loop は全部を訪ね失敗を名指す・失敗名は repo の根から渡せて衝突しない・test 名の file は母集団か理由つきの除外・root の既定 pytest で固定・testpaths の元案は採らない",
   "design": {
     "path": "design.md",
-    "sha256": "42d8a57fdfbba8a1f962031cf6ea95a538c64fc3da1437f22f44114693315f88"
+    "sha256": "67a74064ffa42715d2277bf908a1596b401ed9931fe7d6c6016deab942d6ecaf"
   },
   "modules": [
     {
