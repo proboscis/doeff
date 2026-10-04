@@ -197,6 +197,11 @@
   (#^ (| int None) pid)
   (#^ int attempts)
   (setv #^ str detail "")
+  ;; 落ちた事実(#3477): 続けて exit code が 0 でなく終わった回数(今の process が stable-run-ms 以上動いていれば 0)と、
+  ;; 最後の終わりの code と時刻。coordinator は Service の status に欄で載せる(文の detail から読まない)。
+  (setv #^ int failures 0)
+  (setv #^ (| int None) last-exit-code None)
+  (setv #^ (| int None) last-exit-at-ms None)
   ;; 動いている process の世代(process が無ければ None): 起こした時に振った名・起こした spec の指紋・割り当ての世代。
   (setv #^ (| str None) instance None)
   (setv #^ (| str None) spec-hash None)

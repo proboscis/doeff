@@ -75,6 +75,8 @@
   "状態の行 1 つを、heartbeat と状態の file が載せる JSON の形に綴るため。"
   {"name" s.name "phase" s.phase.value "desiredRevision" s.desired-revision
    "runningRevision" s.running-revision "pid" s.pid "attempts" s.attempts "detail" s.detail
+   ;; 落ちた事実(#3477): 続けて落ちた回数と最後の終わりの code と時刻。
+   "failures" s.failures "lastExitCode" s.last-exit-code "lastExitAtMs" s.last-exit-at-ms
    ;; 動いている process の世代(coordinator の readiness と計器はこれと一致する報告だけを数える)。
    "instance" s.instance "specHash" s.spec-hash "placement" s.placement "retiredFrom" s.retired-from
    ;; 実行環境の準備の失敗(ENV-FAILED の行だけ): coordinator が置き直すか・答えの型を決める。
