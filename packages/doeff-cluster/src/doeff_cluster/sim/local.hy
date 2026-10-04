@@ -258,10 +258,12 @@
    反例・#1976)・hides-retired = 反例の世界だけの壊れた worker(観測の handler が入れ替えで名から外した旧の process を載せない —
    worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)・claims-task-reserve = 反例の世界だけの壊れた worker
    (heartbeat で task-reserve の代わりにこの数を名乗る — None = task-reserve。本当に task のために空けておく数は task-reserve のまま —
-   条 C17 の反例・#3489)。"
+   条 C17 の反例・#3489)・doeff-commit = この値で起きた worker が動いている doeff の版(本番の WORKER_DOEFF_COMMIT に当たる名札 —
+   置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)。"
   (#^ str name)
   (#^ frozenset provides)
   (#^ int task-reserve)
+  (setv #^ str doeff-commit "")
   (setv #^ frozenset exclusive (frozenset))
   (setv #^ int capacity 10)
   (setv #^ str node "")
@@ -472,6 +474,20 @@
   "検の effect: 死んだ・止めた worker name を新しい世代(boot)で起こす。答え = 起こしたか(動いている worker には偽)。"
   {:fields [(: name str)]
    :answer bool
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ReplaceWorker
+  "検の effect: 止まっている worker name の値(SimWorker — 能力・枠・取っておく数・版)を worker に差し替える。次の StartWorker から新しい
+   値で起きる(本番の Deployment の env を変えて Pod を作り直す Recreate の、作り直しの間に当たる — #3366)。答え = 差し替えたか(動いて
+   いる worker・名の違う worker には偽 — 動いている間に値を変えない)。"
+  {:fields [(: name str) (: worker SimWorker)]
+   :answer bool
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect WorkerOf
+  "検の effect: worker name の今の値(SimWorker — ReplaceWorker で差し替えた後はその値)。"
+  {:fields [(: name str)]
+   :answer SimWorker
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect CutWorker
@@ -2209,7 +2225,8 @@
 (defk worker-keeper [worker policy]
   {:pre [(: worker SimWorker) (: policy WorkerPolicy)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
   "worker 1 台の node の一生: 止まっていれば(死んだ・止めた・止まったまま始まる worker)StartWorker を待ち、今の世代の run-worker を
-   回す。抜ければ(死んだ・止めた)次の世代を待つ。全 worker の止まれの合図で抜ける。"
+   回す。抜ければ(死んだ・止めた)次の世代を待つ。全 worker の止まれの合図で抜ける。各世代は、その世代を起こす時の値(WorkerOf —
+   止まっている間に ReplaceWorker で差し替えた値)で回す(#3366)。"
   (var going True)
   (while going
     (<- revival (| Promise None) (RevivalOf worker.name))
@@ -2219,9 +2236,10 @@
     (if stopping
         (:= going False)
         (do (<- truth HostTruth (HostTruthOf worker.name))
-            (<- loop Task (Spawn (run-sim-worker worker policy truth.boot)))
+            (<- now-worker SimWorker (WorkerOf worker.name))
+            (<- loop Task (Spawn (run-sim-worker now-worker policy truth.boot)))
             ;; 世代ごとの名指しの待ち(本番の coordinator への口の背景の task に当たる — 世代の終わりで取り消す)。
-            (<- watcher Task (Spawn (guarded-watch worker truth.boot)))
+            (<- watcher Task (Spawn (guarded-watch now-worker truth.boot)))
             (<- (generation-end loop))
             (<- (Cancel watcher))
             (<- (WorkerEnded worker.name truth.boot))
@@ -2636,6 +2654,8 @@
   (session val parts !(parts-of plan))
   (session var hosts !(fresh-hosts plan))
   (session var generations (dfor w plan.workers w.name 1))
+  ;; worker の名 → 今の値(ReplaceWorker で差し替える — keeper は世代ごとにここから読む・#3366)。
+  (session var current (dfor w plan.workers w.name w))
   (session var handles {})
   (session var children {})
   (session var finished (frozenset))
@@ -3028,6 +3048,14 @@
             (when (is-not revival None)
               (<- (CompletePromise revival None)))
             (resume True))))
+  (ReplaceWorker [name worker]
+    ;; 止まっている間だけ値を差し替える(Recreate の作り直しの間)— 次の StartWorker の世代から keeper がこの値で起こす。
+    (if (and (in name current) (= worker.name name) (. (get hosts name) down))
+        (do (:= current (| current {name worker}))
+            (resume True))
+        (resume False)))
+  (WorkerOf [name]
+    (resume (get current name)))
   (CutWorker [name seconds]
     (<- now int (now-epoch-ms))
     (:= intake (replace intake :cuts (| intake.cuts {name (+ now (int (* 1000 seconds)))})))

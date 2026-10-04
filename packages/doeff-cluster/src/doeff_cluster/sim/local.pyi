@@ -137,6 +137,7 @@ class SimWorker:
     name: str
     provides: AbstractSet[str]
     task_reserve: int
+    doeff_commit: str = ""
     exclusive: AbstractSet[str] = ...
     capacity: int = 10
     node: str = ""
@@ -355,6 +356,15 @@ def handed_quiet_steps(
 
 @dataclass(frozen=True)
 class StartWorker(EffectBase[bool]):
+    name: str
+
+@dataclass(frozen=True)
+class ReplaceWorker(EffectBase[bool]):
+    name: str
+    worker: SimWorker
+
+@dataclass(frozen=True)
+class WorkerOf(EffectBase[SimWorker]):
     name: str
 
 @dataclass(frozen=True)
