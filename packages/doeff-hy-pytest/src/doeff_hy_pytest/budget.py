@@ -3,19 +3,21 @@
 模擬の handler で回す検は速いことが前提なので、遅くなった検に気づかせる(proboscis/agora-redesign#907)。
 利用側の pyproject の ``[tool.pytest.ini_options]`` に置く設定:
 
-- ``doeff_test_call_budget_seconds`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の CPU 秒。
+- ``doeff_test_call_budget_steps`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の doeff-vm の歩数
+  (正の整数 — 機体の負荷で揺れない決まった数・agora-redesign #2670)。実行の判定の本体で、歩数で判じ、CPU 秒は測って報告に出すだけ。
+  doeff-vm に数の口が無い build で在れば、秒へ倒さず ``pytest.UsageError`` で止める。
 - ``doeff_test_call_budget_by_marker`` — 印ごとの実行の上限(1 行 = ``印=秒``・例 ``real_world=10``)。検が持つ印
-  (``item.iter_markers()`` — module の頭の ``pytestmark`` を含む)に当たる行があればその秒、複数当たれば最も長い秒、
-  1 つも当たらなければ ``doeff_test_call_budget_seconds``。収集の上限は file 単位で印を持たないので 1 つの値のまま。
+  (``item.iter_markers()`` — module の頭の ``pytestmark`` を含む)に当たる行があればその秒、複数当たれば最も長い秒で判じる
+  (本物の I/O を持つ検は歩数に重さが出ないので、歩数の上限があっても秒のまま)。1 つも当たらない検は歩数の上限で判じ、
+  歩数の上限も無ければ実行を測らない。実行の秒の上限は印ごとの設定だけ(印の無い検の既定の秒 ``doeff_test_call_budget_seconds`` は
+  無くなった — 2026-10-04 の決め「後方互換は要らない」。書いても pytest が未登録の設定として警告するだけで、実行は秒で判じない)。
+  収集の上限は file 単位で印を持たないので 1 つの値。
 - ``doeff_test_collect_budget_seconds`` — Hy の検の file 1 本の module の import の上限の CPU 秒。
 - ``doeff_test_budget_mode`` — ``report``(既定・超えても赤にせず、警告と終わりの一覧だけ)か ``fail``(超えたら赤)。
 - ``doeff_test_budget_registry`` — 上限を超えてよい既存の検の登録簿の dir(rootdir からの相対・1 行 = 1 dir・
   1 つの値の書き方もそのまま読める)。どの dir に載った鍵も赤にしない。上限を超えた文が足し先に挙げるのは 1 行目の dir。
 
-- ``doeff_test_call_budget_steps`` — 検 1 本の実行の上限の doeff-vm の歩数(正の整数 — 機体の負荷で揺れない決まった数・
-  agora-redesign #2670)。在れば実行は歩数で判じ、CPU 秒は測って報告に出すだけ。登録簿は秒の時と同じ dir(載った行は歩数で判じる)。
-  doeff-vm に数の口が無い build・印ごとの秒の上限に当たる検(本物の I/O)は、今までどおり CPU 秒で判じる。歩数が 0 の検
-  (VM を回さず木を読むだけの検)は上限の内。
+- 歩数の上限の細目: 登録簿は秒の判定と同じ dir(載った行は、歩数で判じる検なら歩数で判じる)。歩数が 0 の検(VM を回さず木を読むだけの検)は上限の内。
   歩数で判じる Hy の検は、call の間だけ doeff の scheduler に歩の上限(この値 × ``step_budget_multiplier``(既定 ``DEFAULT_RUNAWAY_STEPS_MULTIPLIER`` = 20))を入れる
   (#3143)。同じ仮想の刻で task を起こし続ける空回りは走り終わらないので、走り終えた後の判定には届かない — 上限を越えて
   task を起こそうとした時に scheduler が ``StepBudgetExceeded`` を上げ、その検はその場で赤になる。設定が無い repo・
@@ -25,10 +27,10 @@
   登録簿の代わり)。歩数で判じる時、宣言のある検は宣言の値で判じる: 超えれば赤・宣言の ``STALE_RATIO``(半分)以下で
   終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
 
-上限の 3 つ(実行・印ごとの実行・収集)がどれも無ければ何もしない。設計の決め:
+上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
 
 - 対象は ``.hy`` の検の file(deftest と、同じ file の素の検)だけ。Python の検は模擬の handler の検とは限らないので外す。
-- 判定は CPU 時間(``time.process_time`` — process の全 thread の CPU 時間)で行い、壁時計を併記する。壁時計は機体の負荷
+- 秒で判じる物(印ごとの実行・収集)の判定は CPU 時間(``time.process_time`` — process の全 thread の CPU 時間)で行い、壁時計を併記する。壁時計は機体の負荷
   (並べて走る他の検・席)で伸び縮みし、同じ検の合否が機体の混み具合で変わるため。模擬の handler の検は本物の待ちを
   持たない前提なので、遅さはほぼ CPU 時間に出る。
 - 実行は call の段階だけを測り、setup と teardown(fixture)は含めない。session / module の範囲の fixture の準備は、
@@ -76,7 +78,6 @@ from typing import Literal
 
 import pytest
 
-CALL_BUDGET_INI = "doeff_test_call_budget_seconds"
 MARKER_CALL_BUDGET_INI = "doeff_test_call_budget_by_marker"
 COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
 MODE_INI = "doeff_test_budget_mode"
@@ -168,7 +169,7 @@ class WorkReader:
 
 @dataclass(frozen=True)
 class NoWorkReader:
-    """doeff-vm に積み上げの数の口が無い(理由つき — 古い build・import できない)。数は測れず、判定は秒で行う。"""
+    """doeff-vm に積み上げの数の口が無い(理由つき — 古い build・import できない)。数は測れないので、歩数の上限があれば止める。"""
 
     reason: str
 
@@ -237,10 +238,10 @@ def vm_build_line(build: VmBuild) -> str:
 
 @dataclass(frozen=True)
 class Budgets:
-    """設定から読んだ上限(None = その段階は測らない)・印ごとの実行の上限・超えた時の扱い・登録簿(全 dir の鍵 → 理由)・
-    登録簿の dir(設定の順)・doeff-vm の build の種類。"""
+    """設定から読んだ上限(収集の秒・歩数は None = その段階は測らない)・印ごとの実行の秒の上限・超えた時の扱い・
+    登録簿(全 dir の鍵 → 理由)・登録簿の dir(設定の順)・doeff-vm の build の種類。歩数の上限が在る時は、数の口が
+    在る(``work_source`` が ``WorkReader``)ことを ``pytest_configure`` が保証している。"""
 
-    call_seconds: float | None
     call_seconds_by_marker: Mapping[str, float]
     collect_seconds: float | None
     mode: Mode
@@ -252,15 +253,10 @@ class Budgets:
     step_guard: StepGuard = NoSchedulerStepGuard("探していない")
     runaway_multiplier: int = DEFAULT_RUNAWAY_STEPS_MULTIPLIER
 
-    @property
-    def judges_steps(self) -> bool:
-        """実行を歩数で判じるか — 歩数の上限があり、数の口がある時だけ(口が無ければ秒で判じる)。"""
-        return self.call_steps is not None and isinstance(self.work_source, WorkReader)
-
     def runaway_steps_for(self, markers: Sequence[str], declared_steps: int | None = None) -> int | None:
         """その検の call の間に scheduler へ入れる歩の上限(#3143)— 歩数で判じる検だけ、歩数の上限(宣言のある検は
         宣言の値と既定の大きい方)× 倍率。印ごとの秒の上限に当たる検(本物の I/O)は秒で判じるので入れない。"""
-        if not self.judges_steps or self.call_steps is None:
+        if self.call_steps is None:
             return None
         if any(name in self.call_seconds_by_marker for name in markers):
             return None
@@ -530,12 +526,28 @@ def parse_marker_budgets(lines: Sequence[str]) -> Mapping[str, float] | SettingE
     return table
 
 
-def call_budget_for(
-    markers: Iterable[str], by_marker: Mapping[str, float], default: float | None
-) -> float | None:
-    """検 1 本の実行の上限を選ぶ — 当たる印の秒のうち最も長い物、当たる印が無ければ既定(None = 測らない)。"""
+def call_budget_for(markers: Iterable[str], by_marker: Mapping[str, float]) -> float | None:
+    """検 1 本の実行の秒の上限を選ぶ — 当たる印の秒のうち最も長い物、当たる印が無ければ None(秒では判じない)。"""
     matched = [by_marker[name] for name in markers if name in by_marker]
-    return max(matched) if matched else default
+    return max(matched) if matched else None
+
+
+def judge_call(
+    budgets: Budgets, markers: Sequence[str], measurement: Measurement, declaration: StepDeclaration | None
+) -> Verdict | None:
+    """通った検 1 本の実行(call)を判じる(None = 測らない)。印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、
+    歩数に重さが出ないので秒で判じる。それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も当たらない
+    検は判じない。"""
+    marker_seconds = call_budget_for(markers, budgets.call_seconds_by_marker)
+    if marker_seconds is not None:
+        return judge(measurement, marker_seconds, budgets.registry)
+    match budgets.call_steps:
+        case None:
+            return None
+        case int() as steps:
+            if declaration is None:
+                return judge_steps(measurement, steps, budgets.registry)
+            return judge_declared(measurement, declaration)
 
 
 def load_registries(root: Path, directories: Sequence[str]) -> dict[str, str]:
@@ -747,11 +759,8 @@ _CALL_MEASURED_KEY = pytest.StashKey[CallMeasured]()
 def pytest_addoption(parser: pytest.Parser) -> None:
     """設定の名を pytest に登録する。"""
     parser.addini(
-        CALL_BUDGET_INI, "Hy の検 1 本の実行(call の段階)の上限の CPU 秒(空 = 測らない)", default=""
-    )
-    parser.addini(
         MARKER_CALL_BUDGET_INI,
-        "印ごとの Hy の検 1 本の実行の上限の CPU 秒(1 行 = 印=秒・複数の印に当たれば最も長い秒)",
+        "印ごとの Hy の検 1 本の実行の上限の CPU 秒(1 行 = 印=秒・複数の印に当たれば最も長い秒・当たる検は歩数の上限があっても秒で判じる)",
         type="linelist",
         default=[],
     )
@@ -773,7 +782,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addini(
         CALL_STEPS_INI,
-        "Hy の検 1 本の実行の上限の doeff-vm の歩数(正の整数・空 = CPU 秒で判じる)",
+        "Hy の検 1 本の実行の上限の doeff-vm の歩数(正の整数・default = 既定の上限・空 = 実行は印ごとの秒の上限だけ)",
         default="",
     )
     parser.addini(
@@ -854,13 +863,19 @@ def _mode(config: pytest.Config) -> Mode:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """上限が 1 つでも設定されていれば、登録簿を読み、変換の数えを差し込む。"""
-    call_seconds = _seconds(config, CALL_BUDGET_INI)
+    """上限が 1 つでも設定されていれば、登録簿を読み、変換の数えを差し込む。歩数の上限があるのに doeff-vm に数の口が無い build は、
+    秒へ倒さず名指しで止める。"""
     call_seconds_by_marker = _marker_seconds(config)
     collect_seconds = _seconds(config, COLLECT_BUDGET_INI)
     call_steps = _steps(config)
-    if call_seconds is None and not call_seconds_by_marker and collect_seconds is None and call_steps is None:
+    if not call_seconds_by_marker and collect_seconds is None and call_steps is None:
         return
+    work_source = read_work_source()
+    if call_steps is not None and isinstance(work_source, NoWorkReader):
+        raise pytest.UsageError(
+            f"{CALL_STEPS_INI} があるが歩数を測れない({work_source.reason})— 実行を歩数で判じられないので止める"
+            "(CPU 秒へは倒さない)。数の口のある doeff-vm の build で走らせるか、歩数の上限の設定を外す"
+        )
     mode = _mode(config)
     registry_dirs = tuple(str(line) for line in config.getini(REGISTRY_INI))
     try:
@@ -868,7 +883,6 @@ def pytest_configure(config: pytest.Config) -> None:
     except RegistryError as exc:
         raise pytest.UsageError(str(exc)) from None
     config.stash[_BUDGETS_KEY] = Budgets(
-        call_seconds,
         call_seconds_by_marker,
         collect_seconds,
         mode,
@@ -876,17 +890,10 @@ def pytest_configure(config: pytest.Config) -> None:
         registry_dirs,
         read_vm_build(),
         call_steps=call_steps,
-        work_source=read_work_source(),
+        work_source=work_source,
         step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("歩数の上限の設定が無い"),
         runaway_multiplier=_runaway_multiplier(config),
     )
-    budgets = config.stash[_BUDGETS_KEY]
-    if budgets.call_steps is not None and isinstance(budgets.work_source, NoWorkReader):
-        # 歩数の上限があるのに数の口が無い build — 黙って秒へ倒さず、名指して秒で判じる。
-        warnings.warn(
-            BudgetWarning(f"{CALL_STEPS_INI} があるが歩数を測れない({budgets.work_source.reason})— この走行は CPU 秒で判じる"),
-            stacklevel=1,
-        )
     counter = CompileCounter()
     counter.install()
     config.stash[_COUNTER_KEY] = counter
@@ -1021,7 +1028,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """通った Hy の検 1 本の call の段階を、その検の印で選んだ上限で判定する(落ちた検はその失敗のまま)。"""
+    """通った Hy の検 1 本の call の段階を、印ごとの秒の上限か歩数の上限で判定する(落ちた検はその失敗のまま)。"""
     report = yield
     config = item.config
     budgets = config.stash.get(_BUDGETS_KEY, None)
@@ -1044,20 +1051,9 @@ def pytest_runtest_makereport(
         imports=measured.imports,
         work=measured.work,
     )
-    # 印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、歩数に重さが出ないので秒で判じる。
-    marked = any(name in budgets.call_seconds_by_marker for name in markers)
-    if budgets.judges_steps and measured.work is not None and budgets.call_steps is not None and not marked:
-        declaration = declared_steps_of(getattr(item, "obj", None))
-        verdict = (
-            judge_steps(measurement, budgets.call_steps, budgets.registry)
-            if declaration is None
-            else judge_declared(measurement, declaration)
-        )
-    else:
-        budget = call_budget_for(markers, budgets.call_seconds_by_marker, budgets.call_seconds)
-        if budget is None:
-            return report
-        verdict = judge(measurement, budget, budgets.registry)
+    verdict = judge_call(budgets, markers, measurement, declared_steps_of(getattr(item, "obj", None)))
+    if verdict is None:
+        return report
     if _record(config, verdict):
         report.outcome = "failed"
         report.longrepr = _failure_message(verdict, budgets)
@@ -1065,15 +1061,12 @@ def pytest_runtest_makereport(
 
 
 def judging_line(budgets: Budgets) -> str:
-    """終わりの一覧に、この走行の実行を何で判じたかを 1 行で書く — 歩数の設定が在るのに秒で判じた時は、
-    その訳(数の口の無い build など)を名指し、黙って秒へ戻った事を読み手が見落とさないようにするため。"""
-    if budgets.judges_steps:
-        return "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)"
-    match budgets.work_source:
-        case NoWorkReader(reason=reason) if budgets.call_steps is not None:
-            return f"実行は CPU 秒で判じる({CALL_STEPS_INI} があるが歩数を測れない — {reason})"
-        case _:
-            return "実行は CPU 秒で判じる"
+    """終わりの一覧に、この走行の実行を何で判じたかを 1 行で書く(歩数の上限が在れば歩数・無ければ印ごとの秒だけ)。"""
+    match budgets.call_steps:
+        case int():
+            return "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)"
+        case None:
+            return f"実行の上限は印ごとの秒({MARKER_CALL_BUDGET_INI})だけ — 当たる印の無い検は測らない"
 
 
 def pytest_terminal_summary(

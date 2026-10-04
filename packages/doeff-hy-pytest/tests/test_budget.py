@@ -33,6 +33,7 @@ from doeff_hy_pytest.budget import (
     declare_step_budget,
     declared_steps_of,
     judge,
+    judge_call,
     judge_declared,
     judge_steps,
     load_registries,
@@ -70,6 +71,28 @@ SLOW_CALL = f"""\
 (deftest test-fast
   (assert True))
 """
+
+
+def _slow_call_marked_as(marker: str) -> str:
+    """SLOW_CALL と同じ 2 本(遅い test-slow・速い test-fast — 鍵も同じ)を、module の頭の pytestmark で印 marker の検にした file。"""
+    return f"""\
+(require doeff-hy.macros [deftest])
+(import pytest)
+(setv pytestmark [pytest.mark.{marker}])
+{SPIN}
+(deftest test-slow
+  (spin 0.3)
+  (assert True))
+(deftest test-fast
+  (assert True))
+"""
+
+
+# 実行の秒の上限は印ごとの設定(doeff_test_call_budget_by_marker)だけなので、秒の測りそのものを確かめる検は、検の file を
+# 印 real_world の検にして、その印に 0.05 秒の上限を置く。
+REAL_WORLD_SLOW_CALL = _slow_call_marked_as("real_world")
+REAL_WORLD_SECONDS_INI = 'markers = ["real_world: 本物の I/O"]\ndoeff_test_call_budget_by_marker = ["real_world=0.05"]\n'
+FAIL_MODE_INI = REAL_WORLD_SECONDS_INI + 'doeff_test_budget_mode = "fail"\n'
 
 SLOW_COLLECT = f"""\
 (require doeff-hy.macros [deftest])
@@ -186,8 +209,8 @@ def test_without_settings_nothing_is_measured(pytester: pytest.Pytester) -> None
 
 
 def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) -> None:
-    """報告のみの形(既定)は、超えた検を警告と一覧に出し、赤にしない。"""
-    _project(pytester, "doeff_test_call_budget_seconds = 0.05\n", {"test_slow": SLOW_CALL})
+    """報告のみの形(既定)は、印の秒の上限を超えた検を警告と一覧に出し、赤にしない。"""
+    _project(pytester, REAL_WORLD_SECONDS_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
@@ -211,17 +234,10 @@ def test_fail_mode_fails_the_slow_test_with_time_and_budget(
     import doeff_vm
 
     monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
-    _project(
-        pytester,
-        'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
-        {"test_slow": SLOW_CALL},
-    )
+    _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が CPU *上限 CPU 0.050 秒*"])
-
-
-FAIL_MODE_INI = 'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
 
 
 def test_checked_vm_build_reports_but_does_not_fail(
@@ -231,7 +247,7 @@ def test_checked_vm_build_reports_but_does_not_fail(
     import doeff_vm
 
     monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: True)
-    _project(pytester, FAIL_MODE_INI, {"test_slow": SLOW_CALL})
+    _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
@@ -248,7 +264,7 @@ def test_unchecked_vm_build_fails_and_names_the_build(
     import doeff_vm
 
     monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
-    _project(pytester, FAIL_MODE_INI, {"test_slow": SLOW_CALL})
+    _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(
@@ -263,19 +279,19 @@ def test_unknown_vm_build_is_named_and_judged_as_configured(
     import doeff_vm
 
     monkeypatch.delattr(doeff_vm, "invariant_checks_enabled")
-    _project(pytester, FAIL_MODE_INI, {"test_slow": SLOW_CALL})
+    _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(["*doeff-vm の build の種類は不明(*invariant_checks_enabled が無い*"])
 
 
 def _registered_project(pytester: pytest.Pytester, mode: str) -> None:
-    """遅い検 test_slow と速い検 test_fast の両方を登録簿に載せた project(上限 0.05 秒)。"""
+    """遅い検 test_slow と速い検 test_fast の両方を登録簿に載せた project(印 real_world の上限 0.05 秒)。"""
     _project(
         pytester,
-        f'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "{mode}"\n'
+        f'{REAL_WORLD_SECONDS_INI}doeff_test_budget_mode = "{mode}"\n'
         'doeff_test_budget_registry = "budget-breaches"\n',
-        {"test_slow": SLOW_CALL},
+        {"test_slow": REAL_WORLD_SLOW_CALL},
     )
     pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
     registry = pytester.mkdir("budget-breaches")
@@ -434,20 +450,19 @@ def test_import_budget_is_judged_at_setup_when_collected_from_records(
 
 # 印ごとの上限(agora-redesign #1296)。手元の検 1 秒・real_world の検 10 秒の設定で、測った値を判定の純粋な部分へ渡す
 # (実時計で 11 秒待たない)。
-LOCAL_AND_EDGE = {"real_world": 10.0}
+LOCAL_AND_EDGE = {"local": 1.0, "real_world": 10.0}
 
 
 def _judge_with_markers(
     markers: list[str], cpu: float, registry: dict[str, str] | None = None
 ) -> Verdict:
-    budget = call_budget_for(markers, LOCAL_AND_EDGE, 1.0)
+    budget = call_budget_for(markers, LOCAL_AND_EDGE)
     assert budget is not None
     return judge(_measurement(cpu), budget, registry or {})
 
 
 def _fail_mode_budgets(registry: dict[str, str]) -> Budgets:
     return Budgets(
-        call_seconds=1.0,
         call_seconds_by_marker=LOCAL_AND_EDGE,
         collect_seconds=None,
         mode="fail",
@@ -457,10 +472,10 @@ def _fail_mode_budgets(registry: dict[str, str]) -> Budgets:
     )
 
 
-def test_unmarked_test_over_one_second_is_red_in_fail_mode() -> None:
-    """印の無い検は既定の 1 秒で判定し、1 秒を超えれば fail の形で赤。"""
+def test_local_marked_test_over_one_second_is_red_in_fail_mode() -> None:
+    """印 local の検は印の 1 秒で判定し、1 秒を超えれば fail の形で赤。"""
     assert _fail_mode_budgets({}).fails_over_budget
-    verdict = _judge_with_markers([], 1.2)
+    verdict = _judge_with_markers(["local"], 1.2)
     assert verdict == OverBudget(_measurement(1.2), 1.0)
 
 
@@ -473,12 +488,12 @@ def test_real_world_test_of_eleven_seconds_is_red() -> None:
 
 
 def test_budget_is_the_longest_of_the_matching_markers() -> None:
-    """複数の印が当たる時は最も長い秒。当たらない印(parametrize など)は選びに効かない。"""
+    """複数の印が当たる時は最も長い秒。当たらない印(parametrize など)は選びに効かず、1 つも当たらなければ秒の上限は無い(None)。"""
     table = {"real_world": 10.0, "e2e": 30.0}
-    assert call_budget_for(["parametrize", "real_world", "e2e"], table, 1.0) == 30.0
-    assert call_budget_for(["parametrize"], table, 1.0) == 1.0
-    assert call_budget_for(["real_world"], table, None) == 10.0
-    assert call_budget_for([], table, None) is None
+    assert call_budget_for(["parametrize", "real_world", "e2e"], table) == 30.0
+    assert call_budget_for(["parametrize"], table) is None
+    assert call_budget_for(["real_world"], table) == 10.0
+    assert call_budget_for([], table) is None
 
 
 def test_test_listed_only_in_the_second_registry_is_reported_not_red(tmp_path) -> None:
@@ -491,7 +506,7 @@ def test_test_listed_only_in_the_second_registry_is_reported_not_red(tmp_path) -
     (second / registry_file_name(key)).write_text(f"{key}\n縁の検の既知の超過\n", encoding="utf-8")
     registry = load_registries(tmp_path, _fail_mode_budgets({}).registry_dirs)
     assert registry == {key: "縁の検の既知の超過"}
-    assert isinstance(_judge_with_markers([], 1.2, registry), RegisteredOverBudget)
+    assert isinstance(_judge_with_markers(["local"], 1.2, registry), RegisteredOverBudget)
 
 
 def test_marker_budget_lines_are_parsed_and_errors_are_values() -> None:
@@ -511,23 +526,19 @@ MARKED_SLOW_CALL = f"""\
   (assert True))
 """
 
-MARKER_INI = (
-    'markers = ["real_world: 縁の検"]\n'
-    'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
-)
-
-
 def test_marker_budget_is_chosen_from_the_item_markers(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """印 real_world の検は印の上限で、印の無い検は既定の上限で判定される(pytest の走行の中で item の印を読む)。"""
+    """検が持つ印ごとに違う上限で判定される(pytest の走行の中で item の印を読む): 同じ 0.3 秒の検が、印 real_world(5 秒)では緑・
+    印 e2e(0.05 秒)では赤。"""
     import doeff_vm
 
     monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
     _project(
         pytester,
-        MARKER_INI + 'doeff_test_call_budget_by_marker = ["real_world=5"]\n',
-        {"test_slow": SLOW_CALL, "test_edge": MARKED_SLOW_CALL},
+        'markers = ["real_world: 縁の検", "e2e: 結合の検"]\ndoeff_test_budget_mode = "fail"\n'
+        'doeff_test_call_budget_by_marker = ["real_world=5", "e2e=0.05"]\n',
+        {"test_slow": _slow_call_marked_as("e2e"), "test_edge": MARKED_SLOW_CALL},
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
@@ -551,6 +562,8 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
     result.stdout.fnmatch_lines(["*test_edge.hy::test_slow_edge の実行(call)が CPU *上限 CPU 0.050 秒*"])
+    # 歩数の上限が無い走行の終わりの一覧は、実行の上限が印ごとの秒だけである事を書く。
+    result.stdout.fnmatch_lines(["*実行の上限は印ごとの秒(doeff_test_call_budget_by_marker)だけ*"])
 
 
 def test_second_registry_dir_is_read_in_a_run(
@@ -562,8 +575,8 @@ def test_second_registry_dir_is_read_in_a_run(
     monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
     _project(
         pytester,
-        MARKER_INI + 'doeff_test_budget_registry = ["over-budget", "kind-breaches"]\n',
-        {"test_slow": SLOW_CALL},
+        FAIL_MODE_INI + 'doeff_test_budget_registry = ["over-budget", "kind-breaches"]\n',
+        {"test_slow": REAL_WORLD_SLOW_CALL},
     )
     pytester.mkdir("over-budget")
     second = pytester.mkdir("kind-breaches")
@@ -574,13 +587,15 @@ def test_second_registry_dir_is_read_in_a_run(
     result.stdout.fnmatch_lines(["*登録簿に載った超過: test_slow.hy::test_slow(call*"])
 
 
-def test_python_test_files_are_not_measured(pytester: pytest.Pytester) -> None:
+def test_python_test_files_are_not_measured(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
+    """印の上限に当たる印をつけた Python の検でも、測らない(.hy の検の file だけが対象)。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
     pytester.makeconftest(CONFTEST)
-    pytester.makepyprojecttoml(
-        '[tool.pytest.ini_options]\ndoeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
-    )
+    pytester.makepyprojecttoml("[tool.pytest.ini_options]\n" + FAIL_MODE_INI)
     pytester.makepyfile(
-        test_py="import time\n\ndef test_spin():\n    t0 = time.process_time()\n"
+        test_py="import time\n\nimport pytest\n\n\n@pytest.mark.real_world\ndef test_spin():\n    t0 = time.process_time()\n"
         "    while time.process_time() - t0 < 0.3:\n        pass\n"
     )
     result = pytester.runpytest("-q")
@@ -590,9 +605,9 @@ def test_python_test_files_are_not_measured(pytester: pytest.Pytester) -> None:
 @pytest.mark.parametrize(
     ("ini", "message"),
     [
-        ('doeff_test_call_budget_seconds = "abc"\n', "正の秒の数"),
-        ("doeff_test_call_budget_seconds = 0\n", "正の秒の数"),
-        ('doeff_test_call_budget_seconds = 1\ndoeff_test_budget_mode = "loud"\n', "report か fail"),
+        ('doeff_test_collect_budget_seconds = "abc"\n', "doeff_test_collect_budget_seconds は正の秒の数: 'abc'"),
+        ("doeff_test_collect_budget_seconds = 0\n", "doeff_test_collect_budget_seconds は正の秒の数: '0'"),
+        ('doeff_test_call_budget_by_marker = ["real_world=1"]\ndoeff_test_budget_mode = "loud"\n', "report か fail"),
         (
             'doeff_test_call_budget_by_marker = ["real_world=abc"]\n',
             "doeff_test_call_budget_by_marker の real_world は正の秒の数: 'abc'",
@@ -613,6 +628,31 @@ def test_unreadable_settings_stop_the_session(
     result = pytester.runpytest("-q")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines([f"*{message}*"])
+
+
+@pytest.mark.parametrize(
+    "other_ini",
+    ["", "doeff_test_collect_budget_seconds = 100\n"],
+    ids=["the-key-alone", "the-plugin-on-by-a-collect-budget"],
+)
+def test_the_removed_call_budget_seconds_setting_does_not_judge_the_run(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, other_ini: str
+) -> None:
+    """実行の秒の上限の設定 doeff_test_call_budget_seconds は無くなった(後方互換は要らない — 2026-10-04): ini に書いても実行は
+    秒で判じられない(印も歩数も無い検は測られない — fail の形・検査なしの build でも 0.3 秒の検は緑)。pytest は未登録の設定として
+    警告を出すだけで、走行は止まらない。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(
+        pytester,
+        'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n' + other_ini,
+        {"test_slow": SLOW_CALL},
+    )
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(["*PytestConfigWarning: Unknown config option: doeff_test_call_budget_seconds*"])
+    assert "上限を超えた" not in result.stdout.str()
 
 
 def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilation(
@@ -672,9 +712,7 @@ MANY_STEPS = """\
   (assert True))
 """
 
-STEPS_FAIL_INI = (
-    'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "1000"\n'
-)
+STEPS_FAIL_INI = 'doeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "1000"\n'
 
 
 def _steps_project(pytester: pytest.Pytester, ini: str, files: dict[str, str], *, fake: bool = True) -> None:
@@ -701,6 +739,34 @@ def test_judge_steps_uses_the_steps_not_the_cpu_seconds() -> None:
     assert not judge_steps(_steps_measurement(800), 1000, {"t.hy::test": "既存"}).stale
 
 
+def _call_budgets(*, steps: int | None) -> Budgets:
+    return Budgets(
+        call_seconds_by_marker={"real_world": 5.0},
+        collect_seconds=None,
+        mode="fail",
+        registry={},
+        registry_dirs=(),
+        vm_build=UncheckedVmBuild(),
+        call_steps=steps,
+    )
+
+
+def test_judge_call_takes_the_marker_seconds_first_then_the_steps_and_else_measures_nothing() -> None:
+    """実行の判定の分かれ目(CPU 9 秒・500 歩の検): 印の秒の上限に当たれば秒(歩数が内でも赤)・当たらなければ歩数(宣言のある検は
+    宣言の値)・歩数の上限も印の上限も当たらなければ測らない(None)。"""
+    measurement = _steps_measurement(500)
+    both = _call_budgets(steps=1000)
+    assert judge_call(both, ["real_world"], measurement, None) == OverBudget(measurement, 5.0)
+    assert isinstance(judge_call(both, ["parametrize"], measurement, None), WithinBudget)
+    assert isinstance(judge_call(both, [], _steps_measurement(1500), None), OverBudget)
+    declaration = StepDeclaration(5000, "筋書きの規模に断言が依る")
+    assert isinstance(judge_call(both, [], measurement, declaration), StaleDeclaration)
+    marker_only = _call_budgets(steps=None)
+    assert judge_call(marker_only, ["real_world"], measurement, None) == OverBudget(measurement, 5.0)
+    assert judge_call(marker_only, [], measurement, None) is None
+    assert judge_call(marker_only, ["parametrize"], measurement, declaration) is None
+
+
 def test_default_steps_budget_is_the_documented_number_and_judges_at_its_edge(pytester: pytest.Pytester) -> None:
     """`default` は既定の上限 DEFAULT_CALL_BUDGET_STEPS(10 万歩)— 上限ちょうどは緑・1 歩でも越えれば赤(#2670 の 2)。"""
     assert parse_positive_steps("default") == DEFAULT_CALL_BUDGET_STEPS == 100_000
@@ -709,7 +775,7 @@ def test_default_steps_budget_is_the_documented_number_and_judges_at_its_edge(py
         "(deftest test-at-the-edge\n  (fake_work.add 100000)\n  (assert True))\n"
         "(deftest test-one-over\n  (fake_work.add 100001)\n  (assert True))\n"
     )
-    ini = 'doeff_test_call_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "default"\n'
+    ini = 'doeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "default"\n'
     _steps_project(pytester, ini, {"test_edge": edge})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
@@ -726,19 +792,26 @@ def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps
     result.stdout.fnmatch_lines(["*実行は doeff-vm の歩数で判じる*"])
 
 
-def test_steps_judge_without_the_counter_names_it_and_judges_seconds(
+def test_a_steps_budget_without_the_counter_stops_the_run_by_name(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """数の口が無い build では、黙って通さず名指しの警告を出し、CPU 秒で判じる(遅い検は赤)。"""
+    """数の口が無い build で歩数の上限が在れば、秒へ倒さず UsageError で止める(赤・文に設定の名と数の口が無い理由が出る)。
+    遅い検が秒で判じられて赤になる(= 秒へ倒れる)のでも、黙って緑になるのでもない: 検は 1 本も走らない。"""
     import doeff_vm.doeff_vm as ext
 
     _steps_project(pytester, STEPS_FAIL_INI, {"test_slow": SLOW_CALL}, fake=False)
     pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
     # pytester は同じ process で走るので、口を消すのは monkeypatch で(検の終わりに戻り、後の検に残さない)
     monkeypatch.delattr(ext, "vm_work_counts", raising=False)
-    result = pytester.runpytest("-q", "-W", "default")
-    result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["実行は CPU 秒で判じる(doeff_test_call_budget_steps があるが歩数を測れない — *vm_work_counts が無い*)"])
+    result = pytester.runpytest("-q")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(
+        ["*doeff_test_call_budget_steps があるが歩数を測れない(*vm_work_counts が無い*)*CPU 秒へは倒さない*"]
+    )
+    output = result.stdout.str() + result.stderr.str()
+    assert "passed" not in output
+    assert "failed" not in output
+    assert "上限を超えた" not in output
 
 
 def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pytester) -> None:
@@ -780,7 +853,7 @@ def test_measured_steps_are_summed_and_listed_per_test_with_verbose(pytester: py
     """上限の内の検も、歩数を測れた検は終わりの一覧に合計を出し、-v なら検ごとに 1 行出す — 歩数の上限を決める材料(#2853)。"""
     _steps_project(
         pytester,
-        'doeff_test_call_budget_seconds = 10\ndoeff_test_call_budget_steps = "100000"\n',
+        'doeff_test_call_budget_steps = "100000"\n',
         {"test_steps": MANY_STEPS},
     )
     result = pytester.runpytest("-v")
@@ -903,7 +976,7 @@ def test_the_runaway_budget_is_the_steps_budget_times_the_multiplier(pytester: p
 
     _steps_project(
         pytester,
-        'doeff_test_call_budget_seconds = 10\ndoeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "100000"\n',
+        'doeff_test_budget_mode = "fail"\ndoeff_test_call_budget_steps = "100000"\n',
         {"test_spin": SPIN_BOUNDED_HY},
         fake=False,
     )
@@ -912,8 +985,10 @@ def test_the_runaway_budget_is_the_steps_budget_times_the_multiplier(pytester: p
 
 
 def test_no_steps_setting_arms_no_runaway_budget(pytester: pytest.Pytester) -> None:
-    """歩数の上限の設定が無い repo(秒の上限だけ)では上限を入れない — 同じ 1,000 回の合図の Hy の検は緑(今までどおり)。"""
-    _steps_project(pytester, "doeff_test_call_budget_seconds = 10\n", {"test_spin": SPIN_BOUNDED_HY}, fake=False)
+    """歩数の上限の設定が無い repo(印ごとの秒の上限だけ)では上限を入れない — 同じ 1,000 回の合図の Hy の検は緑(今までどおり)。"""
+    _steps_project(
+        pytester, 'doeff_test_call_budget_by_marker = ["real_world=10"]\n', {"test_spin": SPIN_BOUNDED_HY}, fake=False
+    )
     pytester.makepyfile(spin_scheduler=SPIN_SCHEDULER)
     result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=1)
