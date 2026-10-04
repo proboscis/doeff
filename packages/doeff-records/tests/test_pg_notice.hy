@@ -4,6 +4,7 @@
 ;;;   - 巻き戻した transaction の合図は呼び鈴を鳴らさない(commit した書きの合図だけが鳴らす)。
 ;;;   - 待ち受けの接続が切れたら、繋ぎ直して呼び鈴を鳴らす(切れていた間の通知は届かないので、待ち手に読み直させる)。
 (require doeff-hy.macros [deftest defk <- val])
+(import gc)
 (import uuid)
 (import doeff_core_effects.scheduler [Spawn Wait HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlParam SqlRows SqlFailed])
@@ -79,16 +80,22 @@
 
 ;; 反例(#3508・#3494): 鳴らずに外した呼び鈴の外の promise が終わらないと、scheduler の promise の行が pending のまま残る(本番の記録の
 ;; service では、静かに時間が尽きた待ちごとに 1 行)。
+;; 反例(#3532): 掛けた呼び鈴と、掛けるために thread へ逃がした仕事の promise の handle が循環の参照に入っていると、掃除はその行を
+;; 消せず、消えるかどうかが循環の回収(gc)の走る刻しだいになる(日次の回では同じ process の他の検で heap が大きく、回収がまれで赤)。
+;; 掛け外しの間は循環の回収を止め、参照の数だけで handle が消える事を確かめる。
 (val UNRUNG-CYCLES (* 4 HANDLE-SWEEP-INTERVAL))
 
 
 (deftest test-unrung-dropped-bells-do-not-grow-scheduler-promises
   {:interpreters ["pg" "pg-pooled"]}
   (<- channel (fresh-channel))
-  (for [_ (range UNRUNG-CYCLES)]
-    (<- bell (SqlHangNotice DATABASE channel))
-    (<- (SqlDropNotice DATABASE channel bell)))
-  (<- counts (_SchedulerIntrospection))
+  (gc.disable)
+  (try
+    (for [_ (range UNRUNG-CYCLES)]
+      (<- bell (SqlHangNotice DATABASE channel))
+      (<- (SqlDropNotice DATABASE channel bell)))
+    (<- counts (_SchedulerIntrospection))
+    (finally (gc.enable)))
   ;; 直す前は外した呼び鈴が全部 pending のまま残る(UNRUNG-CYCLES 行 = 掃除の間隔の 4 倍)。直した後は、掃除と掃除の間に溜まる分(1 回の掛けで割り当てを数個使う)だけ。
   (assert (<= (get counts "promises") (* 2 HANDLE-SWEEP-INTERVAL)) counts))
 
