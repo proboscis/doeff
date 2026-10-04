@@ -75,7 +75,7 @@ P3 席の env は `charter.session_env` だけが運ぶ。P4 宛先は起動時�
 - K5 semgrep `doeff-agents-runner-owned-seat-env-spelled-once`: `["'](RECORD_SERVICE_URL|AGORA_CONVERSATION_ID|AGORA_SEAT_OPENER)["']`
   を `packages/doeff-agents/src/**` から禁じ、`effects.py` だけ除く。
 - 既存: `test_sessionhost_headless.py` の継承の検、semgrep `doeff-agents-does-not-spell-seat-facing-env`
-  (`.semgrep.yaml` の同名の rule・`ACP_BASE|AGORA_BRAIN_URL|HERDR_HUD_STATE_BACKEND` を src から禁じる)。
+  (`.semgrep.yaml` の同名の rule・`ACP_BASE|AGORA_BRAIN_URL|AGORA_STATE_BACKEND` を src から禁じる)。
 
 ## 読むべき実コード(基準 commit・上の checkout の相対 path)
 

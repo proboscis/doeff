@@ -23,8 +23,8 @@
 実測(`evidence/pod-measurement.log`・pool pod `agentd-pool-0`・2026-09-24T15:48Z):
 
 - 手番の env に `RECORD_SERVICE_URL` の行は 0。同じ pod の `/etc/agentd/agentd.toml` には
-  `[record] url = "http://agora-record.herdr-hud.svc.cluster.local.:8874"` が在る。`seat_env` の名は
-  `ACP_BASE / AGORA_BRAIN_URL / HERDR_HUD_STATE_BACKEND / AGORA_CUSTODY_URL / AGORA_IMAGE_TOOLS`。
+  `[record] url = "http://agora-record.agora.svc.cluster.local.:8874"` が在る。`seat_env` の名は
+  `ACP_BASE / AGORA_BRAIN_URL / AGORA_STATE_BACKEND / AGORA_CUSTODY_URL / AGORA_IMAGE_TOOLS`。
 - 34,077 byte の本文の `ai tell` は、env が無いと段 record で断られ(郵便は作られない)、
   `RECORD_SERVICE_URL` を `[record].url` と同じ値で明示すると通った(郵便 `lt-SAGPVFCCQ31D6D2W5746B1STXA`・delivered)。
   ⇒ pod の席の札で記録サービスは追記を受ける。**欠けているのは宛先の値だけ**で、認証の問題は無い。
@@ -104,7 +104,7 @@ workload ごとの宣言には書かせない。
 ### 3.4 ADR R51 (4) との関係
 
 R51 (4) は「doeff-agents の src は席向けの名を綴らない」(semgrep `doeff-agents-does-not-spell-seat-facing-env` =
-`ACP_BASE / AGORA_BRAIN_URL / HERDR_HUD_STATE_BACKEND`)。理由は「宛先の定義点が宣言の側(k8s の Service と読み手の
+`ACP_BASE / AGORA_BRAIN_URL / AGORA_STATE_BACKEND`)。理由は「宛先の定義点が宣言の側(k8s の Service と読み手の
 dotfiles)に在るので、doeff が綴ると第 2 の既定が育つ」。`RECORD_SERVICE_URL` はこれと違い、**名も値も doeff が持つ**
 (名 = `effects.RECORD_URL_ENV`・値 = doeff の宣言の schema の `[record].url`)。doeff は既定の値を持たず、
 宣言された値を運ぶだけなので、R51 (4) の病(第 2 の既定)は起きない。実装はこの区別を ADR の条文に書く。

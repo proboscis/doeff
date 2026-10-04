@@ -12,5 +12,5 @@
 | 文脈の独立 | 新しい文脈(fork / resume なし)。親会話・設計本文・著者の評価は渡さず、`blind/input-common.md` だけを入力にし、同じ dir の他の file を読まないよう指示した。A と B は同じ応答の中で並べて起動し、互いの返答を見ていない | 同じ |
 | 起動 | 2026-09-24T15:52Z ごろ | 同じ |
 | 所要 | 605.7 秒・tool 44 回 | 964.1 秒・tool 49 回 |
-| 入力 | `blind/input-common.md`(sha256 `876ab0c11ee2cfb41966077f94d6a5cd49a2d41f7e333545c7a3b48022c6416d`)+ A / B の定型の依頼文(skill の `references/blind-counterexamples.md` の逐語)+ 読むだけの制約 | 同じ |
+| 入力 | `blind/input-common.md`(sha256 `31f3cad8185c259bbc6c1f805fb2a169105097bd1c223c7c7838957f8a51fdc4`)+ A / B の定型の依頼文(skill の `references/blind-counterexamples.md` の逐語)+ 読むだけの制約 | 同じ |
 | 返答 | `blind/A-raw.md`(harness の字下げを外しただけ・本文は無加工) | `blind/B-raw.md`(同じ)。B が /tmp に置いた差分と witness は `counterexamples/B_counterexample.diff`・`counterexamples/B_witness_continue.py` に写した |
