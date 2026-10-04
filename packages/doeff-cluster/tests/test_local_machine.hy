@@ -300,7 +300,7 @@
   "筋書き: 系を宣言して Ready を待ち、job を落として worker が起こし直す(pid が替わる)のを見て、もう一度 Ready を待つため。最後に、
    来ない状態と起きない次の process を短く待って、期限で値が返ることを見る(読み直しのループは書かない — 待つのは cluster の handler・#3053)。"
   ;; 待ちの上限は、壊した答え手で assert が pytest の打ち切り(60 秒)より先に鳴る長さ(普通の走りは全体で十数秒)。
-  (<- declared tuple (Redeclare system))
+  (<- declared tuple (Redeclare system :replicas 1))
   (<- first (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 30.0))
   (<- before (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #() 10.0))
   (<- before-pid int (seen-pid before))
@@ -329,7 +329,7 @@
 (defk declared-then-readiness [system]
   {:pre [(: system System)] :post [(: % DeclaredReadiness)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 系を宣言し、5 秒待って準備の状態を読むため(失敗ケース — 宣言が届かなければ Missing のまま)。"
-  (<- declared tuple (Redeclare system))
+  (<- declared tuple (Redeclare system :replicas 1))
   (<- (Delay 5.0))
   (<- seen ServiceReadiness (ReadinessOf JOB))
   (DeclaredReadiness :declared declared :state seen.state))
@@ -395,7 +395,7 @@
 (defk declared-and-preparing [system]
   {:pre [(: system System)] :post [(: % PrepareSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 実行環境を載せて系を宣言し、worker が準備で失敗を名乗るか 15 秒経つまで見るため(許可表の断りは取り込みの段で直ぐ名乗る)。"
-  (<- declared tuple (Redeclare system))
+  (<- declared tuple (Redeclare system :replicas 1))
   (<- kind str (failure-kind-within JOB 15.0))
   (PrepareSeen :declared declared :failure-kind kind))
 

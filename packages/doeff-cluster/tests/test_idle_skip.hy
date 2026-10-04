@@ -330,7 +330,7 @@
   (<- (submit-detached-task (slow-task sim-task-foundation 40.0) :key "stretch" :needs NET :name "slow" :lease-seconds 60.0))
   (<- answer DetachedAwaited (AwaitDetached "stretch" :timeout-seconds 120.0))
   (<- (Delay QUIET-SECONDS))
-  (<- (Redeclare (quitters-v2 sim-foundation)))
+  (<- (Redeclare (quitters-v2 sim-foundation) :replicas 1))
   (<- (Delay QUIET-SECONDS))
   (<- (KillWorker "w1"))
   (<- (Delay QUIET-SECONDS))
