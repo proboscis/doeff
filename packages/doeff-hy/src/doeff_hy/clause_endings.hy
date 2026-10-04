@@ -32,7 +32,7 @@
 
 (defrecord MatchArm
   #^ Object pattern
-  #^ bool guarded
+  #^ (| Object None) guard
   #^ Object body)
 
 
@@ -82,7 +82,7 @@
   (let [arms (match-arms form)]
     (and (is-not arms None)
          (bool arms)
-         (not (. (get arms -1) guarded))
+         (is (. (get arms -1) guard) None)
          (irrefutable-pattern? (. (get arms -1) pattern))
          (all (gfor arm arms (_terminates arm.body))))))
 
@@ -90,17 +90,19 @@
 (deff match-arms [form]  ; defk にできない: macro の展開の時に呼ぶ関数
   {:pre [(: form Expression)] :post [(: % (| list None))]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "(match 主題 パターン [:if 番] 本体 …) を枝の list に分けるため(本体の欠けた枝があれば None)。"
+  "(match 主題 パターン [:if 番] 本体 …) を枝の list に分けるため(本体の欠けた枝があれば None)。枝ごとの番の形も持つ —
+   節の終わり方の検め(match-terminates?)と、末尾の resume を transfer にする書き換え(handle.hy の _match-cases-to-transfer)が
+   同じ分け方を使う(分け方を 2 つにしない)。"
   (let [items (list (cut form 2 None))
         arms []]
     (while items
       (let [pattern (.pop items 0)
-            guarded (and (bool items) (isinstance (get items 0) Keyword) (= (str (get items 0)) ":if"))]
-        (when guarded
-          (.pop items 0)
-          (when items (.pop items 0)))
+            guarded (and (bool items) (isinstance (get items 0) Keyword) (= (str (get items 0)) ":if"))
+            guard (when guarded
+                    (.pop items 0)
+                    (when items (.pop items 0)))]
         (if items
-            (.append arms (MatchArm :pattern pattern :guarded guarded :body (.pop items 0)))
+            (.append arms (MatchArm :pattern pattern :guard guard :body (.pop items 0)))
             (return None))))
     arms))
 
