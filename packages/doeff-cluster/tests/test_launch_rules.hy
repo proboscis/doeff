@@ -3,9 +3,12 @@
 ;; 綴りが boot.sh の名と同じ事を確かめる。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import dataclasses)
 (import pytest)
+(import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
-(import doeff_cluster.shared.core.launch_rules [worker-launch-env coordinator-launch-env])
+(import doeff_cluster.shared.core.launch_rules [worker-launch-env coordinator-launch-env worker-launch-of-env coordinator-launch-of-env
+                                              LaunchEnvMissing WORKER-LAUNCH-FIELDS COORDINATOR-LAUNCH-FIELDS worker-launch-names])
 
 (val SHA "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
 
@@ -53,3 +56,36 @@
   (val launch (WorkerLaunch :name "w" :provides #("verify") :exclusive #() :capacity 1 :task-reserve 0 :doeff-commit SHA))
   (assert (is (. (DesireWorker launch) launch) launch))
   (assert (= (. (DesireCoordinator (CoordinatorLaunch :doeff-commit SHA)) launch doeff-commit) SHA)))
+
+
+(deftest test-reading-the-lines-back-gives-the-same-launch
+  ;; 模擬の Flux が Deployment の env から worker を作り直す読み(本番では boot.sh)は、宣言を書く写しと同じ表から引く — 往復で同じ値。
+  (for [launch #((WorkerLaunch :name "w2" :provides #("agent" "host-w2") :exclusive #() :capacity 19 :task-reserve 3 :doeff-commit SHA)
+                 (WorkerLaunch :name "web" :provides #("webapp" "host-web") :exclusive #("webapp") :capacity 2 :task-reserve 0
+                               :doeff-commit SHA))]
+    (<- env tuple (worker-launch-env launch))
+    ;; 起動の値の外の行(ROLE など)が混ざっても読まない。
+    (<- back WorkerLaunch (worker-launch-of-env (+ #((EnvEntry :name "ROLE" :value "worker")) env)))
+    (assert (= back launch) #(back launch)))
+  (<- coord-env tuple (coordinator-launch-env (CoordinatorLaunch :doeff-commit SHA)))
+  (<- coord CoordinatorLaunch (coordinator-launch-of-env (+ #((EnvEntry :name "ROLE" :value "coordinator")) coord-env)))
+  (assert (= coord.doeff-commit SHA)))
+
+
+(deftest test-a-missing-line-is-refused-not-defaulted
+  ;; 失敗ケース: 省けない行(取っておく数)が無い env を、既定の値で埋めて読まない。
+  (<- env tuple (worker-launch-env (WorkerLaunch :name "w" :provides #("verify") :exclusive #() :capacity 1 :task-reserve 0
+                                                 :doeff-commit SHA)))
+  (val without (tuple (gfor e env :if (!= e.name "WORKER_TASK_RESERVE") e)))
+  (with [(pytest.raises LaunchEnvMissing)]
+    (<- _ (worker-launch-of-env without))))
+
+
+(deftest test-the-table-covers-every-field-of-the-launch-types
+  ;; 失敗ケース: 起動の値の型に欄を足して表に足さないと、その欄は行にも読みにも出ない — ここで赤にする。
+  (assert (= (frozenset (gfor f WORKER-LAUNCH-FIELDS f.field)) (frozenset (gfor f (dataclasses.fields WorkerLaunch) f.name))))
+  (assert (= (frozenset (gfor f COORDINATOR-LAUNCH-FIELDS f.field))
+             (frozenset (gfor f (dataclasses.fields CoordinatorLaunch) f.name))))
+  (<- names (get frozenset str) (worker-launch-names))
+  (assert (= names (frozenset #("WORKER_DOEFF_COMMIT" "WORKER_NAME" "WORKER_PROVIDES" "WORKER_EXCLUSIVE" "WORKER_CAPACITY"
+                                "WORKER_TASK_RESERVE")))))
