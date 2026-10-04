@@ -15,10 +15,13 @@
 (import re)
 (import sys)
 (import pytest)
-(import doeff [run with_handlers])
+(import doeff [run with_handlers EffectBase])
+(import doeff_core_effects.handlers [state :as session-store])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 ;; 故障の注入の口だけは層 2 の検の effect を使う(公開 effect ではない — process の死を起こす手が公開面に無いため)。
 (import doeff_claude_code.faults [ClaudeDropProcess])
+;; fake の組に渡した env と settings が層 2 へ届く起動の宣言に載るかを見る口も、層 2 の effect を写す(#3327 — 公開面に宣言が出ないため)。
+(import doeff_claude_code.effects [ClaudeStartTurn])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.effects [
@@ -688,3 +691,56 @@
     (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))]
                                       (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home))
                                    (one-turn-then-resume setting))))))
+
+
+;; --- fake の組に渡した env と settings(agora-redesign #3327)---------------------------------------------------------
+
+(defclass [(dataclass :frozen True)] ReadLaunchSpecs [EffectBase]
+  "launch-specs が写した起動の宣言を読む(答え = ClaudeSessionSpec の tuple — 層 2 へ届いた順)。")
+
+(defhandler launch-specs
+  ;; 層 2 の fake と adapter の間に挟み、adapter が層 2 へ渡す起動の宣言(ClaudeSessionSpec)を写してから、そのまま層 2 へ渡すため。
+  ;; 写しは handler の session に積み、ReadLaunchSpecs で読む。
+  (session var seen #())
+  (ClaudeStartTurn [origin spec input]
+    (:= seen (+ seen #(spec)))
+    (reperform effect))
+  (ReadLaunchSpecs []
+    (resume seen)))
+
+(defk launch-then-read-specs [work name]
+  {:pre [(: work Path) (: name str)] :post [(: % tuple)]}
+  "1 手番を起こし、そこまでに層 2 へ届いた起動の宣言を読むため(launch-specs の内側で撃つ)。"
+  (<- _handle SessionHandle (launch-with-ref work name None))
+  (<- specs tuple (ReadLaunchSpecs))
+  specs)
+
+(defk launched-specs [work name runtime]
+  {:pre [(: work Path) (: name str) (: runtime list) (= (len runtime) 2)] :post [(: % tuple)]}
+  "fake の組 runtime(層 2 の fake → adapter)の間に写しを挟んで 1 手番を起こし、層 2 へ届いた起動の宣言の列を返すため。"
+  (<- specs tuple (with_handlers [(session-store) (get runtime 0) launch-specs (get runtime 1)] (launch-then-read-specs work name)))
+  specs)
+
+(deftest test-the-fake-runtime-carries-the-given-env-and-settings-on-the-launch [tmp-path]
+  ;; agora-redesign #3327: fake の組(fake_claude_agent_runtime_handlers)に渡した env と settings は、本番の組と同じく adapter が層 2 へ渡す
+  ;; 起動の宣言(home.env と settings)に載る — 上の層の模擬が、本番と同じ手順で決めた子の env と CLI の settings を起動ごとに観測するため。
+  ;; 渡さなければ今までどおり env も settings も空(今の使い手の振る舞いは変わらない)。
+  (import doeff_agents [fake-claude-agent-runtime-handlers])
+  (import doeff_hy.frozen [thaw-json])
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val env {"PATH" "/opt/agent-tools/bin:/usr/bin" "AGENT_SESSION_CLASS" "unattended"})
+  (val settings {"hooks" {"Stop" [{"matcher" "*" "hooks" [{"type" "command" "command" "true"}]}]}})
+  (val given (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))]
+                                            (launched-specs work "given"
+                                                            (fake-claude-agent-runtime-handlers :responder fake-responder
+                                                                                                :env env :settings settings))))))
+  (assert (= (len given) 1) given)
+  (assert (= (dict (. (get given 0) home env)) env))
+  (assert (= (thaw-json (. (get given 0) settings)) settings))
+  (val omitted (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))]
+                                              (launched-specs work "omitted"
+                                                              (fake-claude-agent-runtime-handlers :responder fake-responder))))))
+  (assert (= (len omitted) 1) omitted)
+  (assert (= (dict (. (get omitted 0) home env)) {}))
+  (assert (= (thaw-json (. (get omitted 0) settings)) {})))

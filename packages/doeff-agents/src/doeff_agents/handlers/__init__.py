@@ -1,6 +1,7 @@
 """Effect handlers for agent session management."""
 
 
+from collections.abc import Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -191,6 +192,8 @@ def fake_headless_claude_agent_handlers(
     responder: Any = None,
     config_dir: str = "fake-claude-home",
     world: Any = None,
+    env: Mapping[str, str] | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> list[Any]:
     """The same adapter over doeff-claude-code's fake handler (no process, no API).
 
@@ -198,9 +201,15 @@ def fake_headless_claude_agent_handlers(
     (``doeff_agents.handlers.headless_compose.FakeReply``). Pass ``world``
     (a ``FakeClaudeWorld`` the caller keeps — e.g. ``world.restarted()`` for a
     new process over the same home) instead of ``responder``; exactly one.
+    ``env`` / ``settings`` mean the same as for ``headless_claude_agent_handlers``
+    (the home's process env and the CLI settings — empty when omitted, as before):
+    a caller's emulation passes what its production path decided, so the launch
+    declaration the fake layer 2 receives carries them (agora-redesign #3327).
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
-    return _hy_headless_compose_module().fake_headless_claude_handlers(responder, config_dir, world)
+    return _hy_headless_compose_module().fake_headless_claude_handlers(
+        responder, config_dir, world, None if env is None else dict(env), settings
+    )
 
 
 def claude_agent_runtime_handlers(
@@ -233,15 +242,21 @@ def fake_claude_agent_runtime_handlers(
     responder: Any = None,
     config_dir: str = "fake-claude-home",
     world: Any = None,
+    env: Mapping[str, str] | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> list[Any]:
     """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
 
     ``responder(text, memory) -> FakeReply`` scripts each turn
     (``doeff_agents.handlers.headless_compose.FakeReply``), or ``world`` is a
     ``FakeClaudeWorld`` the caller keeps (exactly one of the two).
+    ``env`` / ``settings`` are the same home env and CLI settings the production
+    runtime takes (empty when omitted); they ride on the launch declaration only.
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
-    return fake_headless_claude_agent_handlers(responder=responder, config_dir=config_dir, world=world)
+    return fake_headless_claude_agent_handlers(
+        responder=responder, config_dir=config_dir, world=world, env=env, settings=settings
+    )
 
 
 _mock_effect_handler = MockAgentHandler()
