@@ -425,7 +425,7 @@ dev = [
     "doeff-domain[dogfood]",
     "doeff-system-one",
     "doeff-jev",
-    "doeff-cluster",
+    "doeff-cluster[sim]",
     "doeff-validation",
     "doeff-claude-code",
     "doeff-records",
