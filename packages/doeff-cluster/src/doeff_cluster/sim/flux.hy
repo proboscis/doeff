@@ -28,7 +28,8 @@
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 (import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart UpgradeState
-                                                   UpgradeStateUnreachable ReadUpgradeState PublishDeclarations ApplyDeclarations])
+                                                   UpgradeStateUnreachable ReadUpgradeState PublishDeclarations ApplyDeclarations
+                                                   ConfirmCleanBoot CleanBootPassed CleanBootRefused])
 (import doeff_cluster.sim.local [SimWorker HostTruth DrainWorker StopWorker ReplaceWorker StartWorker WorkerOf HostTruthOf
                                  StopCoordinator ReadCoordinator])
 
@@ -186,9 +187,13 @@
   ;; 模擬の世界そのもの)。
   ;; 版上げの Program の宣言の effect に sim で答えるため: 公開は何もしない(記憶の中の置き場がそのまま main)・当てるは模擬の Flux の
   ;; 1 回の当て(前に当てた物 applied は session に持つ — 初めは initial = 筋書きが Desire の前に読んだ manifest-state)・名簿の読みは
-  ;; upgrade-state。当てた瞬間の記録は session に積み、UpgradeStartsSeen で返す。
+  ;; upgrade-state。当てた瞬間の記録は session に積み、UpgradeStartsSeen で返す。空の機体の起動の確かめは、模擬の世界では通る
+  ;; (落ちる版の筋書きは refused-clean-boots を内側に置く)。
   (session var applied initial)
   (session var starts #())
+  (ConfirmCleanBoot [launch]
+    (<- target str (launch-target launch))
+    (resume (CleanBootPassed :target target)))
   (PublishDeclarations []
     (resume None))
   (ApplyDeclarations []
@@ -201,3 +206,21 @@
     (resume state))
   (UpgradeStartsSeen []
     (resume starts)))
+
+
+(defk launch-target [launch]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "入れ替え先の値が名指す物の名を、確かめの答えと止まりの訳に載せるため: worker なら名・coordinator なら \"coordinator\"。"
+  (match launch
+    (WorkerLaunch :name name) name
+    (CoordinatorLaunch) "coordinator"))
+
+
+(defhandler refused-clean-boots [#^ frozenset targets]
+  ;; 引数に残す理由: どの入れ替え先の空の起動が落ちるかは筋書きごとに違う値(模擬の世界そのもの)。
+  ;; 空の機体の起動が落ちる版の筋書きのため(2026-10-05 07:1x の形 — 起動の時に読む物が壊れていて、空の Pod が起動で落ちる): targets に
+  ;; 名の在る入れ替え先の確かめだけを断る。ほかの確かめは外側(flux-declarations)へ渡す。
+  (ConfirmCleanBoot [launch]
+    :when (in (if (isinstance launch WorkerLaunch) launch.name "coordinator") targets)
+    (resume (CleanBootRefused :target (if (isinstance launch WorkerLaunch) launch.name "coordinator")
+                              :reason "筋書き: 空の機体の起動が、起動の時に読む物で落ちる"))))

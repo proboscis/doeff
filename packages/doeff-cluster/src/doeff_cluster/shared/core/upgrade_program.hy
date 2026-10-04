@@ -1,9 +1,11 @@
 ;;; 版上げの Program(#3366 の単位 3)— worker を 1 台ずつ新しい版へ入れ替え、最後に coordinator を入れ替える。2026-10-05 の版上げ
 ;;; 12 回(#3156)で手でした順と待ちを、条 V1〜V4(coordinator/core/upgrade_invariants.hy)を自分で守る形にした:
 ;;;
-;;;   worker ごとに: その worker に置かれた task が終わるのを待つ(V2)→ DesireWorker → PublishDeclarations → ApplyDeclarations →
+;;;   worker ごとに: その worker に置かれた task が終わるのを待つ(V2)→ 空の機体の起動を確かめる(ConfirmCleanBoot — 断られたら
+;;;                  UpgradeRefused で止まる・単位 5a)→ DesireWorker → PublishDeclarations → ApplyDeclarations →
 ;;;                  新しい版で live に戻るのを待つ(V3 — 戻りが来なければ次へ進まない)
-;;;   最後に:       worker が全部新しい版で live(V1)・待ち行列が空(V4)を待つ → DesireCoordinator → 公開 → 当てる → 戻りを待つ
+;;;   最後に:       worker が全部新しい版で live(V1)・待ち行列が空(V4)を待つ → 空の起動を確かめる → DesireCoordinator → 公開 →
+;;;                  当てる → 戻りを待つ
 ;;;
 ;;; 待ちは時間で読み直さない — coordinator の版の変化(AwaitRunnersChange — task の phase と worker の変化で進む)で起きて読み直す。
 ;;; coordinator に届かない間だけ、上限の内で短く待ってから問い直す(版の変化を待つ口が無いため)。どの待ちも上限(UpgradeLimits —
@@ -17,7 +19,8 @@
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
 (import doeff_cluster.shared.intent.upgrade_model [PendingPhase UpgradeState UpgradeLimits UpgradeStalled ReadUpgradeState
-                                                   PublishDeclarations ApplyDeclarations])
+                                                   PublishDeclarations ApplyDeclarations ConfirmCleanBoot CleanBootPassed
+                                                   CleanBootRefused UpgradeRefused])
 
 
 ;; coordinator に届かない間に問い直すまでの秒(版の変化を待つ口が答えない時だけ — 上限の内)と、1 回の版の変化の待ちの上限の秒
@@ -83,13 +86,25 @@
   None)
 
 
+(defk confirm-clean-boot [launch target]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: target str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "入れ替え先の値で空の機体の起動が通る事を、宣言を書く前に確かめるため。断られたら UpgradeRefused で target を名指して止まる
+   (宣言を書かず公開もしない — cluster は変わらない)。"
+  (<- verdict (ConfirmCleanBoot launch))
+  (match verdict
+    (CleanBootPassed) None
+    (CleanBootRefused :reason reason) (raise (UpgradeRefused target reason))))
+
+
 (defk upgrade-cluster [workers coordinator limits]
   {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: coordinator CoordinatorLaunch) (: limits UpgradeLimits)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "program"}}
   "worker を 1 台ずつ新しい値へ入れ替え、最後に coordinator を入れ替えるため(条 V1〜V4 を守る順と待ち — 頭の註)。worker の値の
-   doeff-commit と coordinator の doeff-commit は同じ版を言う(V1 の「同じ版で live」)。"
+   doeff-commit と coordinator の doeff-commit は同じ版を言う(V1 の「同じ版で live」)。どの入れ替えも、宣言を書く前に空の機体の
+   起動を確かめる(confirm-clean-boot)。"
   (for [w workers]
     (<- (await-until (.format "worker {} に置かれた task が終わる" w.name) (partial no-task-on w.name) limits.drain-seconds))
+    (<- (confirm-clean-boot w w.name))
     (<- (DesireWorker w))
     (<- (PublishDeclarations))
     (<- (ApplyDeclarations))
@@ -98,6 +113,7 @@
   (<- (await-until (.format "worker が全部 版 {} で live" coordinator.doeff-commit) (partial all-back-on coordinator.doeff-commit)
                    limits.return-seconds))
   (<- (await-until "待ち行列が空" queue-empty limits.queue-seconds))
+  (<- (confirm-clean-boot coordinator "coordinator"))
   (<- (DesireCoordinator coordinator))
   (<- (PublishDeclarations))
   (<- (ApplyDeclarations))

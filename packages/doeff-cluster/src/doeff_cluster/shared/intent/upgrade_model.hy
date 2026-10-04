@@ -4,14 +4,17 @@
 ;;;   (<- state (ReadUpgradeState))       ; 名簿(worker ごとの live と動いている版)と、終わっていない task の写し
 ;;;   (<- (PublishDeclarations))          ; DesireWorker / DesireCoordinator で書いた宣言を公開する(本番 = commit と merge の列・sim = 何もしない)
 ;;;   (<- (ApplyDeclarations))            ; 公開した宣言を当てる(本番 = Flux の「すぐ読み直せ」の印・sim = 模擬の Flux の 1 回の当て)
+;;;   (<- (ConfirmCleanBoot launch))      ; 入れ替え先の値で、コピーも状態も無い空の機体の起動が通るか(Desire の前に・#3366 の単位 5a)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
+;;; 空の起動が断られたら UpgradeRefused で名指しで止まる(宣言を書かず公開もしない・自動で戻さない)。
 (require doeff-hy.macros [val defeffect])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import enum [StrEnum])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
 
 
 ;; 入れ替える物の種類。
@@ -95,4 +98,33 @@
   "公開した宣言を当てる(本番 = Flux の「すぐ読み直せ」の印・sim = 模擬の Flux の 1 回の当て)。答え = None(当たったかは
    ReadUpgradeState で読む)。"
   {:answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defrecord CleanBootPassed
+  "入れ替え先の値で、コピーも状態も無い空の機体の起動が通った: target = worker の名か \"coordinator\"。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target))
+
+
+(defrecord CleanBootRefused
+  "入れ替え先の値で、空の機体の起動が通らなかった: target = worker の名か \"coordinator\"・reason = どこで落ちたか。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ str reason))
+
+
+(defclass UpgradeRefused [RuntimeError]
+  "入れ替え先の値で空の機体の起動が通らないので、宣言を書かず公開もせずに止まった。target と reason を名指す(自動で戻さない)。"
+  (defn #^ None __init__ [self #^ str target #^ str reason]  ; defk にできない: 例外の構成子
+    (.__init__ (super) (.format "版上げを止めた: {} の入れ替え先の版で、空の機体の起動が通らない({})— 宣言は書いていない" target reason))
+    (setv self.target target self.reason reason)))
+
+
+(defeffect ConfirmCleanBoot
+  "入れ替え先の値(worker か coordinator)で、コピーも状態も無い空の機体の起動が通るかを確かめる — 起動の時に読む物(版の root・
+   dotfiles の master など)が壊れた版を入れ替えてから、空の Pod が起動で落ちる形(2026-10-05 07:1x に 15 本の job が約 20 分止まった)を
+   入れ替えの前に拾うため。本番 = 起動の道を空の環境で 1 回通す・sim = 筋書きの答え。答え = CleanBootPassed か CleanBootRefused。"
+  {:fields [(: launch (| WorkerLaunch CoordinatorLaunch))]
+   :answer (| CleanBootPassed CleanBootRefused)
    :tags {:context "doeff-cluster" :role "intent"}})

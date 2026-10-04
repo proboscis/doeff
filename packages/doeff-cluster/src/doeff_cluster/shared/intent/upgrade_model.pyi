@@ -4,6 +4,8 @@ from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
+from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
+from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 
 class UpgradeKind(StrEnum):
     WORKER = 'worker'
@@ -67,3 +69,23 @@ class PublishDeclarations(_doeff_effect_base[None]):
 @_doeff_dataclass(frozen=True)
 class ApplyDeclarations(_doeff_effect_base[None]):
     ...
+
+@dataclass(frozen=True, kw_only=True)
+class CleanBootPassed:
+    target: str
+
+@dataclass(frozen=True, kw_only=True)
+class CleanBootRefused:
+    target: str
+    reason: str
+
+class UpgradeRefused(RuntimeError):
+    target: str
+    reason: str
+
+    def __init__(self, target: str, reason: str) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class ConfirmCleanBoot(_doeff_effect_base[CleanBootPassed | CleanBootRefused]):
+    launch: WorkerLaunch | CoordinatorLaunch
