@@ -1,16 +1,33 @@
 """doeff-linter の置き場(packages/doeff-linter/scripts/linter_snapshot.py・agora-redesign #1582・#2001)の検。
 
 偽の cargo(PATH の先頭)で組み立てを模し、本物の git の repo から断面を取り出す。script は各 repo の hook が呼ぶ入口の形
-(`uv run --script <path> <checkout> <commit>`)で撃つ。
+(`uv run --script <path> <checkout> <commit>`)で撃つ。cargo の target の置き場(#3520)は、script を module として読み、env の
+写像から導く関数の答えだけを見る。
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 
 SCRIPT = Path(__file__).resolve().parent.parent / "packages" / "doeff-linter" / "scripts" / "linter_snapshot.py"
+
+
+def _module(name: str, path: Path) -> ModuleType:
+    """script を module として読み、純粋な関数(env の写像から置き場を導く物)を直に試すため。"""
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module: ModuleType = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+SNAPSHOT = _module("linter_snapshot", SCRIPT)
 
 # 偽の cargo — 断面の marker を読み、DOEFF_LINTER_BUILD_COMMIT(と FAKE_CARGO_SUFFIX)を名乗る linter を置く。組んだ回数を数える。
 FAKE_CARGO = """#!/bin/sh
@@ -44,11 +61,13 @@ def stage(tmp_path: Path) -> Path:
 
 
 def environ(tmp_path: Path, suffix: str) -> list[str]:
-    """子の命令の頭に付ける `env` — 子はこの process の環境を継ぎ、偽の cargo を PATH の先頭に置いて 3 つの名を足す。"""
+    """子の命令の頭に付ける `env` — 子はこの process の環境を継ぎ、偽の cargo を PATH の先頭に置いて 4 つの名を足す。cache の根
+    (XDG_CACHE_HOME)も tmp_path の下へ向け、偽の cargo が機体の本物の cargo の target に書かないようにする。"""
     return [
         "env",
         f"PATH={os.pathsep.join([str(tmp_path / 'bin'), *os.get_exec_path()])}",
         f"DOEFF_LINTER_SNAPSHOT_DIR={tmp_path / 'store'}",
+        f"XDG_CACHE_HOME={tmp_path / 'cache'}",
         f"FAKE_CARGO_COUNT={tmp_path / 'count'}",
         f"FAKE_CARGO_SUFFIX={suffix}",
     ]
@@ -93,8 +112,9 @@ def test_a_built_snapshot_is_reused_without_building(tmp_path: Path) -> None:
 
 
 def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
-    # 違う sha の 2 本は置き場の隣の同じ cargo の target(<store の親>/cargo-target/doeff-linter)で組み、target は組んだ後も残る —
+    # 違う sha の 2 本は cache の根の同じ cargo の target(<XDG_CACHE_HOME>/cargo-target/doeff-linter)で組み、target は組んだ後も残る —
     # 依存の crate を sha をまたいで使い回すため(#2977)。反例: 一時の dir に組んで消す前の形では、target が残らずこの検が赤。
+    # 置き場の隣(<store の親>/cargo-target)に組む前の形(#3520 の前)でも、cache の根の下に target が無く赤。
     repo = stage(tmp_path)
     env = environ(tmp_path, "")
     first = snapshot(repo, env).communicate(timeout=50)[0].strip()
@@ -105,9 +125,27 @@ def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
     second = snapshot(repo, env).communicate(timeout=50)[0].strip()
     assert first != second
     assert (tmp_path / "count").read_text(encoding="utf-8") == "built\nbuilt\n"
-    kept = tmp_path / "cargo-target" / "doeff-linter" / "release" / "doeff-linter"
+    kept = tmp_path / "cache" / "cargo-target" / "doeff-linter" / "release" / "doeff-linter"
     assert kept.exists()
     assert "second" in subprocess.run([str(kept)], capture_output=True, text=True, check=True).stdout
+
+
+def test_the_cargo_target_follows_the_cache_root_not_the_snapshot_store(tmp_path: Path) -> None:
+    # 失敗ケース(agora-redesign #3520): 置き場を読む側に合わせて DOEFF_LINTER_SNAPSHOT_DIR を <HOME>/.cache に留め、cache の根
+    # (XDG_CACHE_HOME)を別の disk へ向けた機体でも、cargo の target は cache の根の下へ行く。反例: target を置き場の隣
+    # (<store の親>/cargo-target)から導く前の形では <HOME>/.cache/cargo-target/doeff-linter になり赤。
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    pinned = {
+        "HOME": str(home),
+        "DOEFF_LINTER_SNAPSHOT_DIR": str(home / ".cache" / "doeff-linter-snapshots"),
+        "XDG_CACHE_HOME": str(xdg),
+    }
+    assert SNAPSHOT.snapshot_store(pinned) == home / ".cache" / "doeff-linter-snapshots"
+    assert SNAPSHOT.shared_cargo_target(pinned) == xdg / "cargo-target" / "doeff-linter"
+    # cache の根の宣言が無い機体では HOME の .cache の下。
+    unset = {"HOME": str(home), "DOEFF_LINTER_SNAPSHOT_DIR": str(home / ".cache" / "doeff-linter-snapshots")}
+    assert SNAPSHOT.shared_cargo_target(unset) == home / ".cache" / "cargo-target" / "doeff-linter"
 
 
 def test_a_linter_not_naming_the_sha_is_not_placed(tmp_path: Path) -> None:
