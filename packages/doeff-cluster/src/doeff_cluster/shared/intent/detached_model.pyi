@@ -118,6 +118,20 @@ class RunnersWatchMissing:
 
 RunnersChangeAnswer: TypeAlias = RunnersChange | RunnersWatchMissing | RunnersUnreachable
 
+# AwaitServiceReady の答えと、coordinator の GET /resources/Service/<名> の返事の読む欄(#3470)。
+@dataclass(frozen=True, kw_only=True)
+class ServiceReady:
+    name: str
+    revision: int
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceStatusWire:
+    ready: str
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceViewWire:
+    status: ServiceStatusWire
+
 DetachedOutcome: TypeAlias = (
     DetachedSucceeded
     | DetachedFailed
@@ -180,3 +194,7 @@ class ReadRunners(EffectBase[RunnersAnswer]):
 class AwaitRunnersChange(EffectBase[RunnersChangeAnswer]):
     after: int
     timeout_seconds: float = 1.0
+
+@dataclass(frozen=True)
+class AwaitServiceReady(EffectBase[ServiceReady]):
+    name: str

@@ -15,6 +15,7 @@ from doeff_cluster.shared.protocol.coordinator_route import resent_request as re
 from doeff_cluster.shared.protocol.coordinator_route import answer_json as answer_json
 from doeff_cluster.shared.protocol.remote import program_put as program_put
 from doeff_cluster.shared.intent.protocol import PROTOCOL_FORMAT as PROTOCOL_FORMAT
+from doeff_cluster.shared.intent.protocol import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
@@ -55,6 +56,11 @@ from doeff_cluster.shared.intent.detached_model import AwaitRunnersChange as Awa
 from doeff_cluster.shared.intent.detached_model import RunnersChange as RunnersChange
 from doeff_cluster.shared.intent.detached_model import RunnersWatchMissing as RunnersWatchMissing
 from doeff_cluster.shared.intent.detached_model import RunnersChangeAnswer as RunnersChangeAnswer
+from doeff_cluster.shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady
+from doeff_cluster.shared.intent.detached_model import ServiceReady as ServiceReady
+from doeff_cluster.shared.intent.detached_model import ServiceViewWire as ServiceViewWire
+from doeff_hy.wire import Malformed as Malformed
+from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
 from doeff_cluster.shared.intent.remote_model import TaskFailed as TaskFailed
 from doeff_cluster.shared.protocol.program_codec import encode_program as encode_program
@@ -94,6 +100,15 @@ def runners_change_of(status: int | None, body: dict | list | str | int | float 
     ...
 
 def watch_query(after: int, timeout_seconds: float) -> dict:
+    ...
+
+def service_ready_of(status: int | None, body: dict | list | str | int | float | bool | None) -> _Program[bool | None, object]:
+    ...
+
+def service_readiness(cell: RouteCell, options: RouteOptions, sender: DetachedSender, name: str) -> _Program[bool | None, object]:
+    ...
+
+def service_ready_awaited(cell: RouteCell, options: RouteOptions, sender: DetachedSender, name: str, poll_seconds: float) -> _Program[ServiceReady, object]:
     ...
 
 def runners_unreachable(reason: str) -> RunnersUnreachable:
