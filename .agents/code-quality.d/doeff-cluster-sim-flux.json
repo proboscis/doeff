@@ -7,7 +7,8 @@
         "doeff-cluster-launch-model",
         "doeff-cluster-launch-rules",
         "doeff-cluster-local",
-        "doeff-cluster-upgrade-invariants",
+        "doeff-cluster-remote-model",
+        "doeff-cluster-upgrade-model",
         "doeff-core-effects-effects",
         "doeff-core-effects-runtime"
       ],

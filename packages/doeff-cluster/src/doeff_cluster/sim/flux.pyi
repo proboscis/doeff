@@ -1,6 +1,9 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = flux.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
+from doeff_hy.static_types import Handler as _Handler
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
@@ -16,11 +19,17 @@ from doeff_cluster.shared.core.launch_rules import coordinator_launch_of_env as 
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
-from doeff_cluster.coordinator.core.upgrade_invariants import UpgradeKind as UpgradeKind
-from doeff_cluster.coordinator.core.upgrade_invariants import PendingPhase as PendingPhase
-from doeff_cluster.coordinator.core.upgrade_invariants import RosterEntry as RosterEntry
-from doeff_cluster.coordinator.core.upgrade_invariants import PendingTask as PendingTask
-from doeff_cluster.coordinator.core.upgrade_invariants import UpgradeStart as UpgradeStart
+from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
+from doeff_cluster.shared.intent.upgrade_model import UpgradeKind as UpgradeKind
+from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPhase
+from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
+from doeff_cluster.shared.intent.upgrade_model import PendingTask as PendingTask
+from doeff_cluster.shared.intent.upgrade_model import UpgradeStart as UpgradeStart
+from doeff_cluster.shared.intent.upgrade_model import UpgradeState as UpgradeState
+from doeff_cluster.shared.intent.upgrade_model import UpgradeStateUnreachable as UpgradeStateUnreachable
+from doeff_cluster.shared.intent.upgrade_model import ReadUpgradeState as ReadUpgradeState
+from doeff_cluster.shared.intent.upgrade_model import PublishDeclarations as PublishDeclarations
+from doeff_cluster.shared.intent.upgrade_model import ApplyDeclarations as ApplyDeclarations
 from doeff_cluster.sim.local import SimWorker as SimWorker
 from doeff_cluster.sim.local import HostTruth as HostTruth
 from doeff_cluster.sim.local import DrainWorker as DrainWorker
@@ -31,6 +40,10 @@ from doeff_cluster.sim.local import WorkerOf as WorkerOf
 from doeff_cluster.sim.local import HostTruthOf as HostTruthOf
 from doeff_cluster.sim.local import StopCoordinator as StopCoordinator
 from doeff_cluster.sim.local import ReadCoordinator as ReadCoordinator
+from doeff import Pass as Pass
+from doeff_vm import WithHandler as WithHandler
+from doeff import Some as Some
+from doeff_core_effects.effects import Put as Put
 WORKER_ROLE: str
 COORDINATOR_ROLE: str
 PLACED_PHASES: frozenset[str]
@@ -52,6 +65,9 @@ def deployed_envs(text: str) -> _Program[tuple[DeployedEnv, ...], object]:
 def manifest_state(paths: tuple[str, ...]) -> _Program[tuple[DeployedEnv, ...], object]:
     ...
 
+def upgrade_state() -> _Program[UpgradeState | UpgradeStateUnreachable, object]:
+    ...
+
 def roster_snapshot(kind: UpgradeKind, target: str, commit: str) -> _Program[UpgradeStart, object]:
     ...
 
@@ -65,4 +81,11 @@ def recreate_coordinator(deployed: DeployedEnv, seconds: float) -> _Program[Upgr
     ...
 
 def reconcile_manifests(paths: tuple[str, ...], applied: tuple[DeployedEnv, ...], drain: Callable, coordinator_seconds: float) -> _Program[FluxPass, object]:
+    ...
+
+@_doeff_dataclass(frozen=True)
+class UpgradeStartsSeen(_doeff_effect_base[tuple[UpgradeStart, ...]]):
+    ...
+
+def flux_declarations(paths: tuple, drain: Callable, coordinator_seconds: float, initial: tuple) -> _Handler:
     ...

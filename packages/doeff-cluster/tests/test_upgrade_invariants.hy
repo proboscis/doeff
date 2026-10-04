@@ -3,8 +3,8 @@
 ;; (tests/test_upgrade_swaps.hy)。模擬の Flux が当てた瞬間に同じ記録を写す筋書きは単位 2b の続き。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_cluster.coordinator.core.upgrade_invariants [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart
-                                                            coordinator-after-every-worker worker-swap-waits-for-its-tasks
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart])
+(import doeff_cluster.coordinator.core.upgrade_invariants [coordinator-after-every-worker worker-swap-waits-for-its-tasks
                                                             one-worker-at-a-time coordinator-swap-on-an-empty-queue])
 
 (val OLD "d563ab95a0000000000000000000000000000000")

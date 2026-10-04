@@ -13,7 +13,7 @@
 ;;; env から worker / coordinator の値への読みは launch_rules の表(worker-launch-of-env・coordinator-launch-of-env)だけを通す。表から
 ;;; 引けない欄 = ROLE(Deployment が worker か coordinator かの見分け — 起動の値ではない)。
 ;;; yaml を import するのはこの module だけ(依存の組 doeff-cluster[sim])— sim/__init__ と既存の sim の module はこの module を引かない。
-(require doeff-hy.macros [val var defk <-])
+(require doeff-hy.macros [val var defk defhandler defeffect <-])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import collections.abc [Callable])
@@ -26,7 +26,9 @@
 (import doeff_cluster.shared.core.launch_rules [worker-launch-of-env coordinator-launch-of-env])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached])
-(import doeff_cluster.coordinator.core.upgrade_invariants [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart])
+(import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart UpgradeState
+                                                   UpgradeStateUnreachable ReadUpgradeState PublishDeclarations ApplyDeclarations])
 (import doeff_cluster.sim.local [SimWorker HostTruth DrainWorker StopWorker ReplaceWorker StartWorker WorkerOf HostTruthOf
                                  StopCoordinator ReadCoordinator])
 
@@ -82,13 +84,16 @@
   found)
 
 
-(defk roster-snapshot [kind target commit]
-  {:pre [(: kind UpgradeKind) (: target str) (: commit str)] :post [(: % UpgradeStart)] :tags {:context "doeff-cluster" :role "program"}}
-  "入れ替えを始めた瞬間の記録を作るため(条 V1〜V4 が判じる写し)。名簿 = coordinator の状態の worker ごとの live と、その worker の今の
-   世代が動いている版(sim の WorkerOf)— live は、coordinator が live と答え、宿が止まっておらず、今の世代の heartbeat に coordinator が
-   1 度でも返事をした時(作り直した直後の新しい世代が名乗り終える前は live に数えない)。task = queued と、worker に置かれた物。"
-  (<- at int (now-epoch-ms))
-  (<- state dict (ReadCoordinator "/state"))
+(defk upgrade-state []
+  {:pre [] :post [(: % (| UpgradeState UpgradeStateUnreachable))] :tags {:context "doeff-cluster" :role "program"}}
+  "sim の世界で、版上げが次へ進むかを決める読み(ReadUpgradeState の sim の答え)を作るため。名簿 = coordinator の状態の worker ごとの
+   live と、その worker の今の世代が動いている版(sim の WorkerOf)— live は、coordinator が live と答え、宿が止まっておらず、今の世代の
+   heartbeat に coordinator が 1 度でも返事をした時(作り直した直後の新しい世代が名乗り終える前は live に数えない)。task = queued と、
+   worker に置かれた物。coordinator に届かなければ UpgradeStateUnreachable(作り直しの間)。"
+  (try
+    (<- state dict (ReadCoordinator "/state"))
+    (except [failed RemoteJobFailed]
+      (return (UpgradeStateUnreachable :reason (str failed)))))
   (var roster #())
   (for [#(name view) (.items (get state "workers"))]
     (<- truth HostTruth (HostTruthOf name))
@@ -100,7 +105,17 @@
                           (if (= (get t "phase") "queued")
                               (PendingTask :task (get t "id") :phase PendingPhase.QUEUED :worker None)
                               (PendingTask :task (get t "id") :phase PendingPhase.ASSIGNED :worker (get t "worker"))))))
-  (UpgradeStart :at-ms at :kind kind :target target :doeff-commit commit :roster roster :tasks tasks))
+  (UpgradeState :roster roster :tasks tasks))
+
+
+(defk roster-snapshot [kind target commit]
+  {:pre [(: kind UpgradeKind) (: target str) (: commit str)] :post [(: % UpgradeStart)] :tags {:context "doeff-cluster" :role "program"}}
+  "入れ替えを始めた瞬間(古い process が止まる瞬間)の記録を作るため(条 V1〜V4 が判じる写し — 読みは upgrade-state と同じ)。"
+  (<- at int (now-epoch-ms))
+  (<- state (| UpgradeState UpgradeStateUnreachable) (upgrade-state))
+  (when (isinstance state UpgradeStateUnreachable)
+    (raise (RuntimeError (.format "入れ替えの瞬間に coordinator の状態を読めない: {}" state.reason))))
+  (UpgradeStart :at-ms at :kind kind :target target :doeff-commit commit :roster state.roster :tasks state.tasks))
 
 
 (defk prestop-drain [name]
@@ -158,3 +173,31 @@
     (:= spawned (+ spawned #(task))))
   (<- starts list (Gather #* spawned))
   (FluxPass :applied desired :starts (tuple (sorted starts :key (fn [s] s.at-ms)))))
+
+
+(defeffect UpgradeStartsSeen
+  "検の effect: flux-declarations が当てた入れ替えの瞬間の記録の全部(始めた順)— 版上げの Program の後に条 V1〜V4 を判じるため。"
+  {:answer (get tuple #(UpgradeStart ...))
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defhandler flux-declarations [#^ tuple paths #^ Callable drain #^ float coordinator-seconds #^ tuple initial]
+  ;; 引数に残す理由: 置き場の path・drain(preStop の代わり)・coordinator の止まりの秒・初めの当てた物は筋書きごとに違う値(設定ではなく
+  ;; 模擬の世界そのもの)。
+  ;; 版上げの Program の宣言の effect に sim で答えるため: 公開は何もしない(記憶の中の置き場がそのまま main)・当てるは模擬の Flux の
+  ;; 1 回の当て(前に当てた物 applied は session に持つ — 初めは initial = 筋書きが Desire の前に読んだ manifest-state)・名簿の読みは
+  ;; upgrade-state。当てた瞬間の記録は session に積み、UpgradeStartsSeen で返す。
+  (session var applied initial)
+  (session var starts #())
+  (PublishDeclarations []
+    (resume None))
+  (ApplyDeclarations []
+    (<- pass FluxPass (reconcile-manifests paths applied drain coordinator-seconds))
+    (:= applied pass.applied)
+    (:= starts (+ starts pass.starts))
+    (resume None))
+  (ReadUpgradeState []
+    (<- state (upgrade-state))
+    (resume state))
+  (UpgradeStartsSeen []
+    (resume starts)))

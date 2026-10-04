@@ -1435,6 +1435,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-sim-flux",
         "doeff-cluster-upgrade-invariants",
+        "doeff-cluster-upgrade-model",
+        "doeff-cluster-upgrade-program",
         "doeff-cluster-wal-store",
         "doeff-cluster-warm-model",
         "doeff-cluster-worker",

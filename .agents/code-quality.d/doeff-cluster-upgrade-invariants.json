@@ -1,7 +1,9 @@
 {
   "modules": [
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-upgrade-model"
+      ],
       "layer": "pure",
       "name": "doeff-cluster-upgrade-invariants",
       "paths": [
