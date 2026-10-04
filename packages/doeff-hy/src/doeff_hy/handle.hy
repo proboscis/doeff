@@ -345,9 +345,27 @@
 ;; TCO: tail-position (resume expr) → (transfer expr)
 ;; ---------------------------------------------------------------------------
 
+(defn _match-cases-to-transfer [form]
+  "Rewrite the tail resume of every arm body of (match subject pattern [:if guard] body ...).
+   The arms are split by clause_endings' match-arms — the same split the clause-ending check
+   uses, so the two never disagree on where a body is. Only bodies are in tail position
+   (patterns and guards are left as written); a malformed match is left untouched."
+  (import doeff-hy.clause-endings [match-arms])
+  (setv arms (match-arms form))
+  (if (is arms None)
+      form
+      (Expression
+        (+ [(get form 0) (get form 1)]
+           (lfor arm arms
+                 part (+ [arm.pattern]
+                         (if (is arm.guard None) [] [(Keyword "if") arm.guard])
+                         [(_tail-resume-to-transfer arm.body)])
+                 part)))))
+
+
 (defn _tail-resume-to-transfer [form]
   "Replace tail-position (resume expr) with (transfer expr).
-   Recurses into if/cond/do/let but NOT into try (need frame for except)."
+   Recurses into if/cond/match/do/let but NOT into try (need frame for except)."
   (cond
     (not (isinstance form Expression)) form
     (= (len form) 0) form
@@ -386,6 +404,14 @@
             (Expression
               (+ (list (cut form 0 -1))
                  [(_tail-resume-to-transfer (get form -1))]))
+
+          ;; (match subject pattern [:as name] [:if guard] body ...) → optimize each case's body.
+          ;; Without this a resume at the end of a match branch stayed a Resume: the handler's
+          ;; generator frame was kept (holding the resumed value) for as long as the handled program
+          ;; ran — a long-running loop under the handler piled one frame per handled effect
+          ;; (agora-redesign #3530: an intake reader held every page it read).
+          (and (= hname "match") (>= (len form) 4))
+            (_match-cases-to-transfer form)
 
           ;; (try ...) → do NOT optimize (need frame for except)
           (= hname "try") form
