@@ -2388,20 +2388,20 @@
   None)
 
 
-(defk apply-declaration [link declaration]
-  {:pre [(: link SimLink) (: declaration Declaration)] :post [(: % tuple)]
+(defk apply-declaration [link declaration [replicas None]]
+  {:pre [(: link SimLink) (: declaration Declaration) (: replicas (| int None))] :post [(: % tuple)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "宣言を本番の declare(declare.apply-declaration)と同じ順と本文で coordinator へ書くため: Service を全部読み、書く Service(無い・spec が
    変わった)が名指す Program だけを PUT /programs/<sha> で置いてから、無ければ POST(create-body)・spec が変わった Service だけ読んだ版を
-   付けて PUT(差分の宣言の判断は本番と同じ declaration_requests の service-read・needed-programs)。答え = 宣言した Service の名(書かな
-   かった Service も含む)。"
+   付けて PUT(差分の宣言の判断は本番と同じ declaration_requests の service-read・needed-programs)。replicas は本番と同じく書きの本文へ
+   (None = 今の値を保つ・まだ無い Service は 1)。答え = 宣言した Service の名(書かなかった Service も含む)。"
   (var reads #())
   (for [row declaration.rows]
     (val path (+ "/resources/Service/" (url-quote (get row "name") :safe "")))
     (<- current tuple (send-request link "GET" path {} None))
     (<- read ServiceRead (service-read (get row "name") row path
                                        (if (= (get current 0) 404) None (answered-object current (+ "Service " (get row "name"))))
-                                       None))
+                                       replicas))
     (:= reads (+ reads #(read))))
   (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
   (for [sha needed]
@@ -3041,11 +3041,12 @@
     (resume steps-seen))
   (ClientLink []
     (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions)))
-  (Redeclare [system environ]
+  (Redeclare [system environ replicas]
     ;; その宣言し直しの上書き(渡されなければ最初の宣言の上書き)を新しい系に対して検めて重ねる(#3131 — 本番の declare と同じ 1 つの規則)。
+    ;; replicas は本番の declare と同じく書きの本文へ渡す(None = 今の値を保つ・0 = 取り下げ — #3295)。
     (<- declaration Declaration (declaration-of system plan.revision (if (is environ None) plan.environ environ) plan.runtime-env plan.versions))
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
-    (<- names tuple (apply-declaration link declaration))
+    (<- names tuple (apply-declaration link declaration replicas))
     (resume names))
   (DeclareRollout [name spec]
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))

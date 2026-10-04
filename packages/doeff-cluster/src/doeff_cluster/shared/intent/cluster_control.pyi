@@ -14,6 +14,7 @@ class ServiceReadiness:
 class Redeclare(_doeff_effect_base[tuple[str, ...]]):
     system: System
     environ: dict[str, dict[str, str]] | None = None
+    replicas: int | None = None
 
 @_doeff_dataclass(frozen=True)
 class ReadinessOf(_doeff_effect_base[ServiceReadiness]):

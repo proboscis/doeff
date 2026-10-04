@@ -1,16 +1,17 @@
 ;;; 配備の cluster(k3s の上で既に動いている coordinator と worker)に、契約の effect(shared/intent/cluster_control.hy)で話す handler と
 ;;; 入口(#3294・ADR-DOE-CLUSTER-001 R8 と追補 (3))。
 ;;;
-;;;   (deployed-cluster scenario :target (DeployedCluster :url "http://<配備の coordinator>:8080" :actor "<送り手の名>" :revision <sha> :runtime-env env))
+;;;   (deployed-cluster scenario :target (DeployedCluster :url "http://<配備の coordinator>:8080" :actor "<送り手の名>" :revision <sha> :runtime-env env
+;;;                                                       :versions-read <版の識別を読む Program | None>))
 ;;;
 ;;; sim-cluster(sim/local.hy)・手元の 1 台の cluster(sim/machine.hy の local-machine-cluster)と同じ入口の形で、同じ筋書きの Program を
 ;;; 動かす — 違いは土台の handler の組だけ(どの cluster に話すかを筋書きも命令の引数も知らない)。ここでは coordinator も worker も起こさず
 ;;; 止めない(配備してある物に話すだけ)。
 ;;;
 ;;; 筋書きが出せる effect(deployed-cluster-answers が答える):
-;;;   Redeclare 系               宣言の部品 system-declaration と apply-declaration で、配備の coordinator へ宣言を書く(版 = target の
-;;;                              revision・実行環境 = target の runtime-env・送り手 = target の actor — 手元の 1 台と同じ組み立て)。
-;;;                              答え = 宣言した Service の名。
+;;;   Redeclare 系 環境 replicas   宣言の部品 system-declaration と apply-declaration で、配備の coordinator へ宣言を書く(版 = target の
+;;;                              revision・実行環境 = target の runtime-env・版の識別 = target の versions-read の答え・送り手 = target の actor —
+;;;                              手元の 1 台と同じ組み立て・replicas は書きの本文へ)。答え = 宣言した Service の名。
 ;;;   ReadinessOf 名              GET /resources/Service/<名> の status の ready(無ければ Missing)。
 ;;;   AwaitReadiness 名 状態 秒    同じ読みを WAIT-PROBE-SECONDS ごとにして、状態になるか秒を過ぎるまで待つ(過ぎたら ReadinessWaitExpired)。
 ;;;   AwaitJobProcess job 除く 秒  GET /state に**どれかの** worker が名乗った job の pid のうち、除く pid の外の物が出るまで同じ間隔で待つ
@@ -46,11 +47,14 @@
 (defrecord DeployedCluster
   "配備の cluster に話す時の値(命令の引数にしない — 呼び手が 1 か所で持つ環境の値)。url = 配備の coordinator の口・actor = 宣言の書きに
    載せる送り手の名(出来事の記録に残る名)・revision = Redeclare が宣言に書く版・runtime-env = Redeclare が宣言に載せる実行環境(repo と
-   commit と uv の lock — 手元の 1 台の LocalMachine の同じ欄と同じ役。None = 版の木の道)。"
+   commit と uv の lock — 手元の 1 台の LocalMachine の同じ欄と同じ役。None = 版の木の道)・versions-read = Redeclare が宣言に載せる版の
+   識別を読む Program(答え = process-versions の答え — 配備の worker の環境の版を読む Program を呼び手が渡す。宣言する process の版は
+   呼び手の pin に従うので、配備の worker と違う版を当てる時はこの欄で渡す・#3295。None = 宣言する process の版 this-process-versions)。"
   (#^ str url)
   (#^ str actor)
   (#^ str revision)
-  (#^ (| RuntimeEnv None) runtime-env))
+  (#^ (| RuntimeEnv None) runtime-env)
+  (#^ (| Program None) versions-read))
 
 
 ;; 引数に残す理由: 宛先の URL・送り手・宣言の版は、この handler を積む組み立て(deployed-cluster)が呼び手から受ける値で、読む Ask の鍵が
@@ -65,12 +69,14 @@
   (AwaitJobProcess [job excluding timeout-seconds]
     (<- seen (| JobProcessSeen JobProcessWaitExpired) (job-process-awaited target.url job excluding (float timeout-seconds)))
     (resume seen))
-  (Redeclare [system environ]
-    (<- versions dict (this-process-versions))
-    ;; その宣言し直しの上書き(渡されなければ上書き無し — 本番の宣言と同じく宣言ごとの上書き・#3131)。
+  (Redeclare [system environ replicas]
+    ;; 版の識別は target の読み(配備の worker の環境の版)・None なら宣言する process の版(#3295)。
+    (<- versions dict (if (is target.versions-read None) (this-process-versions) target.versions-read))
+    ;; その宣言し直しの上書き(渡されなければ上書き無し — 本番の宣言と同じく宣言ごとの上書き・#3131)。replicas は書きの本文へ
+    ;; (None = 今の値を保つ・0 = 取り下げ — #3295)。
     (val declaration (system-declaration system target.revision :runtime-env target.runtime-env :versions versions
                                          :environ (if (is environ None) {} environ)))
-    (<- placed bool (apply-declaration target.url declaration target.actor))
+    (<- placed bool (apply-declaration target.url declaration target.actor replicas))
     (when (not placed)
       (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))
     (resume (tuple (lfor row declaration.rows (get row "name")))))
