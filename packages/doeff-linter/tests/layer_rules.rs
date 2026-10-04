@@ -2906,6 +2906,91 @@ fn services_without_a_declared_system_are_red() {
     assert!(outside["message"].as_str().unwrap().contains("entry の層に無い"), "{}", outside["message"]);
 }
 
+/// DOEFF207 の見本の repo: 本番の系 2 つ(billing・orders)と、本番の系でない模擬の系 1 つ。`outside` = architecture.hy に書く
+/// `:outside-writers` の値(None = 書かない)。
+fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
+    let job = |name: &str| format!("(defk {} [foundation]\n  {{:post [(: % int)] :tags {{:context \"app\" :role \"entry\"}}}}\n  \"job。\"\n  1)\n", name);
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/entry/system.hy",
+            tags("billing", "entry")
+                + &job("billing-job")
+                + &job("audit-job")
+                + &job("bare-job")
+                + "(defsystem billing-system [foundation]\n  \"請求の系\"\n\
+                   (billing (billing-job foundation) :needs #{\"pg\"} :reads #{\"store:orders\" \"store:audit\" \"ledger:items\"} :writes #{\"store:bills\"})\n\
+                   (audit (audit-job foundation) :needs #{\"pg\"} :reads #{} :writes #{\"store:audit\"})\n\
+                   (bare (bare-job foundation) :needs #{\"pg\"}))\n",
+        ),
+        (
+            "app/orders/entry/system.hy",
+            tags("orders", "entry")
+                + &job("orders-job")
+                + "(defsystem orders-system [foundation]\n  (orders (orders-job foundation) :needs #{\"pg\"} :reads #{\"store:bills\" \"record:turn\"} :writes #{\"store:orders\"}))\n",
+        ),
+        (
+            "app/sim/systems.hy",
+            // 模擬の系の job の書きは書き手に数えない(record:turn を書いても、本番の orders の読みは赤のまま)。
+            tags("sim", "entry")
+                + &job("stock-job")
+                + "(defsystem stock-system [foundation]\n  (stock (stock-job foundation) :needs #{\"pg\"} :reads #{\"store:nothing\"} :writes #{\"record:turn\"}))\n",
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF207\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declared = match outside {
+        Some(table) => format!(":foundation foundation\n  :outside-writers {}", table),
+        None => ":foundation foundation".to_string(),
+    };
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", &declared)
+        .replace("{:layers [core entry]})", "{:layers [core entry] :system \"app.billing.entry.system:billing-system\"})")
+        + "(defservice orders \"注文\" {:layers [core entry] :system \"app.orders.entry.system:orders-system\"})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// agora-redesign #3493・#3496(利用者 2026-10-04 "so this kind of violation, must be detected by doeff linter"): 本番の系の job が
+/// 読む組に、本番の job の :writes も :outside-writers の行も無ければ赤(新しい入口の画面が、本番に書き手の無い会話の記録を読んでいた形)。
+/// 本番の系の job に欄が無ければ赤。本番の系でない模擬の系は数えない。
+#[test]
+fn production_reads_without_a_writer_are_red() {
+    let dir = access_repo(Some("{\"ledger:items\" \"台帳の外の道具\"}"));
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF207"),
+        vec![
+            "app/billing/entry/system.hy::DOEFF207::billing-system::bare::reads",
+            "app/billing/entry/system.hy::DOEFF207::billing-system::bare::writes",
+            // 今夜の形: 本番の job が読む会話の記録の種類を、どの本番の job も書かない(書くのは模擬の系の job だけ)。
+            "app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn",
+        ]
+    );
+    let turn = violation(&report, "app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn");
+    assert!(turn["message"].as_str().unwrap().contains("書き手が無い"), "{}", turn["message"]);
+    assert_eq!(turn["level"], "critical", "{}", turn);
+    // 外の書き手の表に載せれば、同じ読みは緑。
+    let written = access_repo(Some("{\"ledger:items\" \"台帳の外の道具\" \"record:turn\" \"手番の task\"}"));
+    let (_, report) = editor(written.path());
+    assert_eq!(
+        keys(&report, "DOEFF207"),
+        vec![
+            "app/billing/entry/system.hy::DOEFF207::billing-system::bare::reads",
+            "app/billing/entry/system.hy::DOEFF207::billing-system::bare::writes",
+        ]
+    );
+}
+
+/// :outside-writers を書いていない repo には DOEFF207 を当てない(欄は doeff の defsystem では任意 — 求めるのは宣言した repo の本番の系だけ)。
+#[test]
+fn reads_are_not_judged_without_outside_writers() {
+    let dir = access_repo(None);
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF207").is_empty(), "{:?}", keys(&report, "DOEFF207"));
+}
+
 /// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
 /// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
 /// 母集団が 0 になり、条を消しても鳴らなかった。

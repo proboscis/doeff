@@ -116,6 +116,7 @@
     "packages/doeff-linter/tests/rule_population.rs",
     "packages/doeff-linter/src/project/affected_tests.rs",
     "packages/doeff-linter/src/project/system_decls.rs",
+    "packages/doeff-linter/src/project/system_access.rs",
     "packages/doeff-linter/tests/out_of_scope.rs"
   ],
   "modules": [
@@ -234,7 +235,8 @@
         "packages/doeff-linter/src/project/unreadable.rs",
         "packages/doeff-linter/src/project/world_catalog.rs",
         "packages/doeff-linter/src/project/affected_tests.rs",
-        "packages/doeff-linter/src/project/system_decls.rs"
+        "packages/doeff-linter/src/project/system_decls.rs",
+        "packages/doeff-linter/src/project/system_access.rs"
       ],
       "public": [
         "packages/doeff-linter/src/project/allowed_heads.rs",
