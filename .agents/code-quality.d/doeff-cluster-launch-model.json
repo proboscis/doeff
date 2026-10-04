@@ -1,0 +1,17 @@
+{
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-launch-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/launch_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/launch_model.hy"
+      ],
+      "responsibility": "worker と coordinator の起動の値の型(WorkerLaunch・CoordinatorLaunch — boot.sh の名乗りと自己起動の版)・書き換えた行の事実 LaunchLineChange・その望む状態を言う effect DesireWorker / DesireCoordinator(#3366 の単位 1)。",
+      "typed": true
+    }
+  ]
+}
