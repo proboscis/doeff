@@ -68,8 +68,9 @@
 (val BOOT-SCRIPT (str (/ (get (. (Path __file__) parents) 3) "deploy" "boot.sh")))
 ;; 起き上がりを問い直す間隔・SIGKILL の後に回収を問い直す間隔(秒)。
 (val PROBE-SECONDS 0.2)
-;; AwaitReadiness・AwaitJobProcess が coordinator を読み直す間隔(秒 — 筋書きの待ちは数十秒なので、読みの CPU を小さく保つ)。
-(val WAIT-PROBE-SECONDS 1.0)
+;; coordinator の口の読み(準備の状態の読みと待ち・/state の読み)と、待ちの読み直しの間隔 WAIT-PROBE-SECONDS は、配備の cluster の handler と
+;; 共有する部品(shared/protocol/coordinator_reads.hy — #3294 で移した)。job の process の待ちは、自分で起こした worker の行に絞るのでここに残す。
+(import doeff_cluster.shared.protocol.coordinator_reads [WAIT-PROBE-SECONDS readiness-read readiness-awaited state-of])
 ;; Redeclare が宣言の書きに載せる送り手の名(宣言の CLI の --actor と同じ役 — 出来事の記録に残る名)。
 (val MACHINE-ACTOR "local-machine")
 
@@ -215,16 +216,6 @@
     (ProcessNotStarted :detail detail) (raise (RuntimeError (+ name " を起こせない: " detail)))))
 
 
-(defk state-of [url]
-  {:pre [(: url str)] :post [(: % (| dict None))] :tags {:context "doeff-cluster" :role "program"}}
-  "coordinator の GET /state を 1 度読むため(届かない・200 でなければ None — 起き上がりの途中)。HTTP の答えを読む境界なので、
-   JSON の object を dict のまま返す(読む所は await-up の ready? だけ)。"
-  (<- answer (HttpRequest "GET" (+ url "/state") :timeout-seconds 5.0 :max-retries 0 :failures-as-values True))
-  (if (and (isinstance answer HttpResponse) (= answer.status 200))
-      (json.loads answer.text)
-      None))
-
-
 (defk still-running [role]
   {:pre [(: role MachineProcess)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "起き上がりを待つ間に役の process が終わっていたら、log の path を添えて止めるため(待ち続けない)。"
@@ -320,37 +311,6 @@
   (setv cell.roles (tuple (lfor role cell.roles (if (= role.name old.name) fresh role))))
   (<- (await-up url fresh (fn [_state] True) machine.boot-seconds))
   None)
-
-
-(defk readiness-read [url name]
-  {:pre [(: url str) (: name str)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "coordinator の GET /resources/Service/<name> から準備の状態を読むため(ReadinessOf と AwaitReadiness の読み — 無ければ Missing)。"
-  (<- answer (HttpRequest "GET" (+ url "/resources/Service/" (url-quote name :safe "")) :timeout-seconds 10.0 :max-retries 0
-                          :failures-as-values True))
-  (when (not (isinstance answer HttpResponse))
-    (raise (RuntimeError (+ "coordinator に届かない: Service " name " — " (repr answer)))))
-  (if (= answer.status 200)
-      (do (val status (get (json.loads answer.text) "status"))
-          (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
-      (ServiceReadiness :state "Missing" :reason answer.text)))
-
-
-(defk readiness-awaited [url name state seconds]
-  {:pre [(: url str) (: name str) (: state str) (: seconds float)] :post [(: % (| ServiceReadiness ReadinessWaitExpired))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
-  "AwaitReadiness に答えるため: 本物の coordinator は長い待ちの読みを持たないので、境界のこの handler が WAIT-PROBE-SECONDS ごとに
-   準備の状態を読み、state になるか seconds を過ぎたら答える(過ぎたら最後に読んだ状態を添えた ReadinessWaitExpired)。"
-  (<- first ServiceReadiness (readiness-read url name))
-  (var seen first)
-  (var waited 0.0)
-  (while (and (!= seen.state state) (< waited seconds))
-    (<- (Delay WAIT-PROBE-SECONDS))
-    (:= waited (+ waited WAIT-PROBE-SECONDS))
-    (<- again ServiceReadiness (readiness-read url name))
-    (:= seen again))
-  (if (= seen.state state)
-      seen
-      (ReadinessWaitExpired :name name :state state :last seen :waited-seconds waited)))
 
 
 (defk job-process-awaited [url cell job excluding seconds]

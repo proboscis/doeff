@@ -61,11 +61,14 @@ from doeff_cluster.sim.local import ReadCoordinator as ReadCoordinator
 from doeff_cluster.sim.local import CutWorker as CutWorker
 from doeff_cluster.sim.local import StallWorker as StallWorker
 from doeff_cluster.sim.local import FailRoute as FailRoute
+from doeff_cluster.shared.protocol.coordinator_reads import WAIT_PROBE_SECONDS as WAIT_PROBE_SECONDS
+from doeff_cluster.shared.protocol.coordinator_reads import readiness_read as readiness_read
+from doeff_cluster.shared.protocol.coordinator_reads import readiness_awaited as readiness_awaited
+from doeff_cluster.shared.protocol.coordinator_reads import state_of as state_of
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 BOOT_SCRIPT: str
 PROBE_SECONDS: float
-WAIT_PROBE_SECONDS: float
 MACHINE_ACTOR: str
 
 class MachineCannotAnswer(Exception):
@@ -128,9 +131,6 @@ def worker_boot_env(machine: LocalMachine, worker: SimWorker, url: str, home: Pa
 def started_role(name: str, home: str, env: tuple[EnvEntry, ...]) -> _Program[MachineProcess, object]:
     ...
 
-def state_of(url: str) -> _Program[dict | None, object]:
-    ...
-
 def still_running(role: MachineProcess) -> _Program[None, object]:
     ...
 
@@ -153,12 +153,6 @@ def job_crashed(job: JobProcess) -> _Program[int, object]:
     ...
 
 def coordinator_remade(url: str, cell: MachineCell, machine: LocalMachine, down_seconds: float) -> _Program[None, object]:
-    ...
-
-def readiness_read(url: str, name: str) -> _Program[ServiceReadiness, object]:
-    ...
-
-def readiness_awaited(url: str, name: str, state: str, seconds: float) -> _Program[ServiceReadiness | ReadinessWaitExpired, object]:
     ...
 
 def job_process_awaited(url: str, cell: MachineCell, job: str, excluding: tuple[int, ...], seconds: float) -> _Program[JobProcessSeen | JobProcessWaitExpired, object]:
