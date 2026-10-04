@@ -15,7 +15,7 @@
 | **sessionhost** | agent の process を起こす・見張る・止める汎用の runner | doeff-agents の中の module |
 | **doeff-agents** | 器の package(effect と型と CLI ごとの adapter) | `doeff` monorepo の 1 package |
 | **ACP** | 制御面の engine(kinds・行・watch・CAS・RBAC) | repo `agent-control-plane` |
-| **agora** | 製品の面(protocol / HUD / daemon / relay) | repo `agora`(旧 herdr-hud) |
+| **agora** | 製品の面(protocol / HUD / daemon / relay) | repo `agora` |
 | **agora-controllers** | agora の運転の controller 群(Hy + doeff) | repo `agora-controllers` |
 | custody | 資格の保管と貸与 | 別 repo・別 service |
 | doeff-agent-haskell | 器の薄い client(型つき) | 別 repo |

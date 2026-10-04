@@ -4,7 +4,7 @@
     4521.3u  28.3%  turns= 4207  ~/dotfiles
     4512.5u  28.2%  turns= 4295  ~/repos/agent-control-plane
     2316.0u  14.5%  turns= 2868  ~/repos
-    1330.8u   8.3%  turns= 1343  ~/repos/herdr-hud
+    1330.8u   8.3%  turns= 1343  ~/repos/agora
      630.1u   3.9%  turns=  522  ~/repos/code-quality
      500.4u   3.1%  turns=  474  ~/.worktrees/mediagen-wt-handover-control-0915
      443.9u   2.8%  turns=  497  ~/repos/mediagen
@@ -31,7 +31,7 @@
         a17b7bcd-4ed5-4042-a733-75b2fb556929.jsonl
     1034.7u   6.5%  turns= 1036 avgctx=   529k  p10172       ~/repos/agent-control-plane
         1b14d891-191a-4597-8aa2-25b5939342d1.jsonl
-     965.1u   6.0%  turns=  915 avgctx=   551k  p10177       ~/repos/herdr-hud
+     965.1u   6.0%  turns=  915 avgctx=   551k  p10177       ~/repos/agora
         345bcd2b-6efd-421f-b990-41e99e9241c0.jsonl
      922.2u   5.8%  turns=  785 avgctx=   585k  p10171       ~/dotfiles
         197619f7-6b93-43c7-a7e4-44961ec6b8ad.jsonl
@@ -55,7 +55,7 @@
         30ac5550-cf9b-452c-b1df-82eba50ec4bd.jsonl
      371.3u   2.3%  turns=  278 avgctx=   638k  p10175       ~/.worktrees/mediagen-wt-ikukyuu-36-0916
         d1c34d1d-a8e5-4289-81fd-2fef6635d4c3.jsonl
-     338.0u   2.1%  turns=  375 avgctx=   461k  cryptic-x    ~/repos/herdr-hud
+     338.0u   2.1%  turns=  375 avgctx=   461k  cryptic-x    ~/repos/agora
         ea36a066-2e11-4367-bbf7-c965fd815e8e.jsonl
      318.0u   2.0%  turns=  289 avgctx=   576k  p10174       ~/.worktrees/mediagen-wt-handover-control-0915
         934691a8-c083-4db1-b7ee-f077fc2fa59e.jsonl

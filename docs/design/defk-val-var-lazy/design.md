@@ -195,7 +195,7 @@ what's the point of having lazy val if it can't use effects... but yeah you are 
 **門へつないだ(2026-09-26 の続きの便)**: 推奨どおり code-quality の Hy の投影に規則 `hy-rebind`(subject `hy:rebind`)を足した
 (code-quality `aa2cbcc`・`quality/hy_rebind.py` = `binding_forms._Walker` の束縛の数え方と `module_findings` の赤の写し)。
 実 repo 6 つで `rewrite_body` と同じ本体に当てた件数を突き合わせて差 0。既存の件数は各 repo の基底へ先に登記した(doeff 100・
-agora-controllers 1,590・agent-control-plane 489・argus 70・herdr-hud 73・ai-cli 104・merge-queue 118・pr-review 177・custody 21・
+agora-controllers 1,590・agent-control-plane 489・argus 70・agora 73・ai-cli 104・merge-queue 118・pr-review 177・custody 21・
 kubeacp 14・dotfiles 131 — code-quality の投影で数え、module 契約の在る検査対象の file だけ)。その後に dotfiles の code-quality の
 pin を上げた(dotfiles `de88c0b0f`)。変更の走行では触った行に足した束縛し直しだけが赤、日次の全体検査は登記の件数で緑。
 
@@ -223,10 +223,10 @@ pin を上げた(dotfiles `de88c0b0f`)。変更の走行では触った行に足
 | doeff | 1,216 | 215 | 1,140 | 135 | 0 | 0 | 7 / 3 | 6,605 | 1,072 | 1,289 |
 | agent-control-plane | 1,305 | 167 | 1,372 | 0 | 0 | 0 | 0 / 0 | 5,864 | 2,389 | 702 |
 | argus | 814 | 114 | 848 | 0 | 0 | 0 | 0 / 0 | 3,499 | 725 | 483 |
-| herdr-hud | 11 | 0 | 318 | 0 | 0 | 0 | 0 / 0 | 3,206 | 310 | 77 |
+| agora | 11 | 0 | 318 | 0 | 0 | 0 | 0 / 0 | 3,206 | 310 | 77 |
 | 計 | 7,381 | 1,155(15.6%) | 6,746 | 598 | 0 | 0 | 115 / 61 | 36,827 | 9,996 | 4,984 |
 
-- reader が読めなかった file(agora-controllers 37・argus 3・agent-control-plane 4・herdr-hud 4・proboscis-ema 1 — shebang の file と reader macro の file)は
+- reader が読めなかった file(agora-controllers 37・argus 3・agent-control-plane 4・agora 4・proboscis-ema 1 — shebang の file と reader macro の file)は
   字面で `(lazy` 等を探し、コードの中の使用が 0 件であることを確かめた(文字列の中だけ)。
 - 既存の `(val …)` / `(var …)` / `(:= …)` / `(session val …)` の使用は 0 件(文字列の中の 3 件だけ)— 新しい構文と衝突する名前は無い。
 - 依頼の文の「defk の 13%(6,597 個中 856 個)」との違い: 今回の数え方は拡張代入を含み、互いに排他な枝を数えない(§5)。

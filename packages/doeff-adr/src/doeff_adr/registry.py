@@ -630,7 +630,7 @@ def _run_semgrep(
     if proc.returncode not in (0, 1):
         # --quiet --json では、規則の読みの失敗・対象の parse の失敗・時間切れの理由は stderr に出ず、
         # stdout の JSON の errors にだけ載る — stderr だけを名乗ると理由が空のまま落ちる
-        # (agora-redesign #2865: herdr-hud の日次で「semgrep failed with exit 2:」だけが残り、
+        # (agora-redesign #2865: agora の日次で「semgrep failed with exit 2:」だけが残り、
         # 規則の読みか semgrep の版かを名指せなかった)。
         raise AssertionError(
             f"semgrep failed with exit {proc.returncode}: {proc.stderr}\n"

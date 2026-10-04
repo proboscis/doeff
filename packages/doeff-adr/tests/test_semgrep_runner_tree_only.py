@@ -140,7 +140,7 @@ def test_run_semgrep_empty_stdout_with_exit_0_is_loud(tmp_path):
 def test_run_semgrep_failure_names_the_json_errors_not_only_stderr(tmp_path):
     """--quiet --json の semgrep は、失敗(exit 2)の理由を stdout の JSON の errors にだけ載せ、stderr は空。
 
-    反例 = agora-redesign #2865: herdr-hud の日次で「semgrep failed with exit 2:」だけが残り、規則の読みの失敗か
+    反例 = agora-redesign #2865: agora の日次で「semgrep failed with exit 2:」だけが残り、規則の読みの失敗か
     semgrep の版かを名指せなかった。失敗の文は errors の種類・規則・文言を名乗る。
     """
     verdict = {

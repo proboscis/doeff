@@ -148,7 +148,7 @@ doeff-linter の editor-json(file ごと)               [置き場の層]  Hy �
 - 外部の module は 10 個弱: httpx 11・pydantic 8・yaml 5・tomllib 4・websockets・aiohttp・jsonschema・sqlite3・certifi・pickle 各 1。重い Python(agent の起動・LLM の SDK)は doeff の package の側で、中身は subprocess と HTTP
 - 役割の分布: judgment 2,499・entry 1,435・program 705・foundation 701・protocol 649・type 272・intent 216。純粋な論理(judgment・protocol・type・intent)= 3,636(56%)
 - `:pre` / `:post` は見た限りほぼ `(: x T)` の型の注釈 — 静的な型があれば契約の仕組みと linter の契約の検査は消える
-- Hy の file は他にも agent-control-plane 240 以上・proboscis-ema 171 以上・pr-review 112 以上・argus 66 以上・herdr-hud ほか、10 repo 以上(深さ 4 までの数)。加えて defadr(ADR も Hy)・doeff-linter・VS Code 拡張・skill が Hy に結びついている
+- Hy の file は他にも agent-control-plane 240 以上・proboscis-ema 171 以上・pr-review 112 以上・argus 66 以上・agora ほか、10 repo 以上(深さ 4 までの数)。加えて defadr(ADR も Hy)・doeff-linter・VS Code 拡張・skill が Hy に結びついている
 - doeff-vm-core(Rust 7,099 行)は pyo3 が optional feature で、effect の runtime は既に Python から切り離せる設計
 
 ### 3.3 言語と runtime の分離 — 共通の物と backend ごとの物
