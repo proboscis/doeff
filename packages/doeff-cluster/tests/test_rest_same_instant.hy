@@ -109,7 +109,7 @@
   (<- redeclare-at int (beat-at 18))
   (<- (sleep-until (- redeclare-at (// TICK-MS 2))))
   (<- (sleep-until redeclare-at))
-  (<- (Redeclare (quitters-v2 sim-foundation) :replicas 1))
+  (<- (Redeclare (quitters-v2 sim-foundation)))
   (<- after TruthSample (sample "拍 18 の刻ちょうどの宣言し直しの直後"))
   (:= samples (+ samples #(after)))
   (for [step (range 3)]

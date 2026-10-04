@@ -33,7 +33,7 @@ MODULE = """\
 
 (defsystem lab [#^ Ping foundation]
   "見本の系"
-  (tally (tally 2) :needs #{"net"} :environ {"TALLY_BASE" "1"}))
+  (tally (tally 2) :needs #{"net"} :replicas 1 :environ {"TALLY_BASE" "1"}))
 
 (val declared (lab (Ping)))
 (val first-name (. (get declared.jobs 0) name))
@@ -109,8 +109,8 @@ EMPTY_NEEDS = """\
 
 (defsystem lab [#^ Ping foundation]
   "空の :needs の系"
-  (quiet (tally 1) :needs #{})
-  (noisy (tally 2) :needs #{"net" "pg"}))
+  (quiet (tally 1) :needs #{} :replicas 1)
+  (noisy (tally 2) :needs #{"net" "pg"} :replicas 1))
 """
 
 

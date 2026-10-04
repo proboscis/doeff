@@ -49,7 +49,7 @@
 (defk tally-job [environ]
   {:pre [(: environ dict)] :post [(: % Job)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "defsystem の展開と同じ呼び方で作った tally の job(environ だけを変える)。"
-  (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :needs #{"cluster-net"} :environ environ))
+  (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :replicas 1 :needs #{"cluster-net"} :environ environ))
 
 
 (defk only-row [system]
@@ -92,27 +92,27 @@
   ;; :needs の欠けは、job の引数の宣言で必須なので、型の検査が呼び出しの時点で断る(pyright reportCallIssue)。
   ;; 以前ここに在った「欠けた呼び出しが TypeError になる」の実行の確かめは、型の検査と同じ事を測っていたので外した(#1697)。
   (with [raised (pytest.raises ValueError)]
-    (job "nowhere" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{}))
+    (job "nowhere" (tally-program plain-foundation 1) :call TALLY-CALL :replicas 1 :needs #{}))
   (assert (in "nowhere" (str raised.value)))
   (assert (in ":needs が空" (str raised.value)))
   (with [raised (pytest.raises ValueError)]
-    (job "label" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"kind=k3s"}))
+    (job "label" (tally-program plain-foundation 1) :call TALLY-CALL :replicas 1 :needs #{"kind=k3s"}))
   (assert (in "kind=k3s" (str raised.value))))
 
 
 (deftest test-a-job-must-carry-a-program-value
   ;; job は Program の値 1 つを受ける(R1)。関数そのもの・呼び出しの結果でない値は断る。
   (with [raised (pytest.raises TypeError)]
-    (job "not-a-program" 3 :call TALLY-CALL :needs #{"net"}))
+    (job "not-a-program" 3 :call TALLY-CALL :replicas 1 :needs #{"net"}))
   (assert (in "not-a-program" (str raised.value))))
 
 
 (deftest test-an-unknown-update-form-and-a-bad-readiness-are-refused
   (with [raised (pytest.raises ValueError)]
-    (job "rolling" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"net"} :update "rolling"))
+    (job "rolling" (tally-program plain-foundation 1) :call TALLY-CALL :replicas 1 :needs #{"net"} :update "rolling"))
   (assert (in "rolling" (str raised.value)))
   (with [raised (pytest.raises ValueError)]
-    (job "no-window" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"net"} :update "handoff"
+    (job "no-window" (tally-program plain-foundation 1) :call TALLY-CALL :replicas 1 :needs #{"net"} :update "handoff"
          :readiness {"windowSeconds" "soon"}))
   (assert (in "no-window" (str raised.value))))
 
@@ -132,29 +132,29 @@
   ;; 値として運ぶか、実行先で引けない参照になるので、宣言の時点で断る(R3b・計画 6 節)。
   (val made (reader {"base" 1}))
   (with [raised (pytest.raises TypeError)]
-    (job "made-handler" (holding-program made 1) :call (CallShape :function holding-program :args [made 1] :kwargs {})
+    (job "made-handler" (holding-program made 1) :call (CallShape :function holding-program :args [made 1] :kwargs {}) :replicas 1
          :needs #{"net"}))
   (assert (in "made-handler" (str raised.value)))
   (assert (in "handler の値" (str raised.value)))
   ;; defhandler の値(module の最上位に在っても handler の値)。
   (with [raised (pytest.raises TypeError)]
-    (job "defhandler" (holding-program host-reader 1) :call (CallShape :function holding-program :args [host-reader 1] :kwargs {})
+    (job "defhandler" (holding-program host-reader 1) :call (CallShape :function holding-program :args [host-reader 1] :kwargs {}) :replicas 1
          :needs #{"net"}))
   (assert (in "handler の値" (str raised.value)))
   (defk inner-foundation []
     {:pre [] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "foundation"}}
     [])
   (with [raised (pytest.raises TypeError)]
-    (job "inner" (tally-program inner-foundation 1) :call (CallShape :function tally-program :args [inner-foundation 1] :kwargs {})
+    (job "inner" (tally-program inner-foundation 1) :call (CallShape :function tally-program :args [inner-foundation 1] :kwargs {}) :replicas 1
          :needs #{"net"}))
   (assert (in "最上位" (str raised.value)))
   (val anonymous (fn [] []))
   (with [(pytest.raises TypeError)]
-    (job "anonymous" (tally-program anonymous 1) :call (CallShape :function tally-program :args [anonymous 1] :kwargs {})
+    (job "anonymous" (tally-program anonymous 1) :call (CallShape :function tally-program :args [anonymous 1] :kwargs {}) :replicas 1
          :needs #{"net"}))
   ;; 呼んだ関数そのものが入れ子でも同じ。
   (with [(pytest.raises TypeError)]
-    (job "inner-call" (inner-foundation) :call (CallShape :function inner-foundation :args [] :kwargs {}) :needs #{"net"})))
+    (job "inner-call" (inner-foundation) :call (CallShape :function inner-foundation :args [] :kwargs {}) :replicas 1 :needs #{"net"})))
 
 
 ;; --- 土台の record --------------------------------------------------------------------------------
@@ -195,11 +195,11 @@
   ;; 凍っていない record・欄に handler の値を持つ record は、identity が値を表せないので宣言の前に断る。
   (with [raised (pytest.raises TypeError)]
     (job "loose" (tally-program plain-foundation 1)
-         :call (CallShape :function tally-program :args [(LooseFoundation :main plain-foundation)] :kwargs {}) :needs #{"net"}))
+         :call (CallShape :function tally-program :args [(LooseFoundation :main plain-foundation)] :kwargs {}) :replicas 1 :needs #{"net"}))
   (assert (in "凍っていない" (str raised.value)))
   (with [raised (pytest.raises TypeError)]
     (job "handler-field" (tally-program plain-foundation 1)
-         :call (CallShape :function tally-program :args [(PairFoundation :main host-reader :side plain-foundation :step 1)] :kwargs {})
+         :call (CallShape :function tally-program :args [(PairFoundation :main host-reader :side plain-foundation :step 1)] :kwargs {}) :replicas 1
          :needs #{"net"}))
   (assert (in "handler の値" (str raised.value))))
 
@@ -217,6 +217,7 @@
   (assert (= row {"name" "tally"
                   "revision" "rev1"
                   "needs" ["cluster-net"]
+                  "replicas" 1
                   "run" {"kind" "service"
                          "program" (get run "program")
                          "identity" identity
@@ -245,7 +246,7 @@
   (assert (not-in "readiness" (get rows "tally")))
   (assert (= (len declaration.programs) 2) "job ごとに詰めた Program")
   (val named (job "named" (tally-program :foundation plain-foundation :step 4)
-                  :call (CallShape :function tally-program :args [] :kwargs {"foundation" plain-foundation "step" 4})
+                  :call (CallShape :function tally-program :args [] :kwargs {"foundation" plain-foundation "step" 4}) :replicas 1
                   :needs #{"net"}))
   (<- row dict (only-row (system-of "named" #(named))))
   (assert (= (get row "run" "identity" "kwargs") {"foundation" {"ref" "tests.fixtures.envs:plain_foundation"} "step" 4}))
@@ -266,7 +267,7 @@
   (assert (= (. (job-from-json first) spec) (. (job-from-json moved) spec)))
   ;; 引数の値が変われば同一性も変わる。
   (val other (system-of "lab" #((job "tally" (tally-program plain-foundation 3)
-                                     :call (CallShape :function tally-program :args [plain-foundation 3] :kwargs {})
+                                     :call (CallShape :function tally-program :args [plain-foundation 3] :kwargs {}) :replicas 1
                                      :needs #{"cluster-net"} :environ {"TALLY_BASE" "1"}))))
   (<- changed dict (only-row other))
   (assert (!= (identity-hash (get first "run")) (identity-hash (get changed "run"))))
@@ -308,7 +309,7 @@
   ;; 入口 1: 旧い引数(:env・:config・:env-config・:requires)は構成子に無いので TypeError(名を出す)。
   (for [#(key value) [#("env" "m:e") #("config" {"step" 1}) #("env_config" {"greeting" "hi"}) #("requires" {"kind" "k3s"})]]
     (with [raised (pytest.raises TypeError)]
-      (job "old" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"net"} #** {key value}))
+      (job "old" (tally-program plain-foundation 1) :call TALLY-CALL :replicas 1 :needs #{"net"} #** {key value}))
     (assert (in key (str raised.value)) (str raised.value))))
 
 
@@ -461,10 +462,10 @@
   ;; 業務の系には家族ごとの土台を 6 つ受ける物がある)。2 つ目の土台の :needs が job の :needs に無ければ断る。
   (import tests.fixtures.declared_system [wide-foundation])
   (val narrow (system-of "two" #((job "tally" (two-foundations-job plain-foundation plain-foundation)
-                                      :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {})
+                                      :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {}) :replicas 1
                                       :needs #{"cluster-net"}))))
   (val wide (system-of "two" #((job "tally" (two-foundations-job plain-foundation wide-foundation)
-                                    :call (CallShape :function two-foundations-job :args [plain-foundation wide-foundation] :kwargs {})
+                                    :call (CallShape :function two-foundations-job :args [plain-foundation wide-foundation] :kwargs {}) :replicas 1
                                     :needs #{"cluster-net"}))))
   (<- ok (service-rules.foundation-needs-refusal narrow plain-foundation))
   (assert (is ok None) ok)
@@ -489,7 +490,7 @@
   ;; (#3030 — 型から本番の土台を引く道具は関数でなく record を渡す)。job の呼び出しの形に record が載っていない系でも見落とさない。
   (import tests.fixtures.declared_system [wide-foundation])
   (val narrow (system-of "two" #((job "tally" (two-foundations-job plain-foundation plain-foundation)
-                                      :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {})
+                                      :call (CallShape :function two-foundations-job :args [plain-foundation plain-foundation] :kwargs {}) :replicas 1
                                       :needs #{"cluster-net"}))))
   (<- ok (| str None) (service-rules.foundation-needs-refusal narrow PAIR))
   (assert (is ok None) ok)

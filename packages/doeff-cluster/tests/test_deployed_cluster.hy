@@ -26,6 +26,7 @@
 (import tests.transport_http [transport-http COORDINATOR-URL])
 (import tests.detached_rig [MemoryCoordinator])
 (import tests.fixtures.machine_app [pings machine-foundation])
+(import tests.fixtures.replicas [with-replicas])
 
 ;; 配備の cluster の値(宛先 = 検の coordinator の口・送り手の名・宣言の版 — 版の木の道なので実行環境は無し・版の識別は宣言する
 ;; process の物)。
@@ -69,19 +70,21 @@
 
 
 (deftest test-the-deployed-handler-carries-replicas-and-the-target-versions
-  ;; #3295: 取り下げ(Redeclare の replicas 0)と配備の worker の版(target の versions-read の答え)が coordinator の書きへ届く —
-  ;; replicas 0 は Service の replicas になり、宣言の run.versions には宣言する process の版ではなく target の読みの答えが載る。
+  ;; #3487: 取り下げ(job の :replicas 0 の系の宣言し直し)と配備の worker の版(target の versions-read の答え)が coordinator の書きへ
+  ;; 届く — 系の台数 0 は Service の replicas になり、宣言の run.versions には宣言する process の版ではなく target の読みの答えが載る。
   (val clock (SimClock START))
   (val coordinator (MemoryCoordinator clock))
   (val target (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "a" 40) :runtime-env None
                                :versions-read (pinned-versions)))
-  (<- declared tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation) :replicas 0)))
+  (<- withdrawn (with-replicas (pings machine-foundation) 0))
+  (<- declared tuple (asked-with target coordinator clock (Redeclare withdrawn)))
   (assert (= declared #("ping")) declared)
   (<- spec dict (service-spec coordinator "ping"))
   (assert (= (get spec "replicas") 0) spec)
   (assert (= (get spec "run" "versions") PINNED-VERSIONS) spec)
-  ;; 起こし: replicas 1 で宣言し直すと Service の replicas は 1 に戻る(replicas は必ず書く欄 — 省略で 0 を保つ取り違えが起きない)。
-  (<- _again tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation) :replicas 1)))
+  ;; 起こし: 元の系(job の :replicas 1)で宣言し直すと Service の replicas は 1 に戻る(台数は系の値が必ず持つ — 省略で 0 を保つ
+  ;; 取り違えが起きない)。
+  (<- _again tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation))))
   (<- woken dict (service-spec coordinator "ping"))
   (assert (= (get woken "replicas") 1) woken))
 
@@ -93,7 +96,7 @@
   (<- before ServiceReadiness (asked coordinator clock (ReadinessOf "ping")))
   (assert (= before.state "Missing") before)
   ;; 宣言: 答えは宣言した Service の名・coordinator はその Service を数える(worker が居ないので Ready ではない)。
-  (<- declared tuple (asked coordinator clock (Redeclare (pings machine-foundation) :replicas 1)))
+  (<- declared tuple (asked coordinator clock (Redeclare (pings machine-foundation))))
   (assert (= declared #("ping")) declared)
   (<- after ServiceReadiness (asked coordinator clock (ReadinessOf "ping")))
   (assert (!= after.state "Missing") after)

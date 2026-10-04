@@ -43,7 +43,7 @@
    答え = #(入れ替える前の盤の行 入れ替えた後の盤の行 process の列)。"
   (<- (Delay 8.0))
   (<- before dict (SharedRows HOLDER-ROW))
-  (<- (Redeclare (lease-writers-v2 lease-sim-foundation) :replicas 1))
+  (<- (Redeclare (lease-writers-v2 lease-sim-foundation)))
   (<- (Delay wait))
   (<- after dict (SharedRows HOLDER-ROW))
   (<- processes tuple (ProcessesOf "writer"))

@@ -16,11 +16,11 @@ DECLARE_REPLY_SECONDS: float
 def declare_request(method: str, url: str, actor: str, body: dict[str, object] | None) -> _Program[HttpResponse, object]:
     ...
 
-def service_read_at(base: str, actor: str, name: str, row: Mapping[str, object], replicas: int | None) -> _Program[ServiceRead, object]:
+def service_read_at(base: str, actor: str, name: str, row: Mapping[str, object]) -> _Program[ServiceRead, object]:
     ...
 
 def service_written(base: str, actor: str, read: ServiceRead) -> _Program[HttpResponse, object]:
     ...
 
-def apply_declaration(url: str, declaration: Declaration, actor: str, replicas: int | None=None) -> _Program[bool, object]:
+def apply_declaration(url: str, declaration: Declaration, actor: str) -> _Program[bool, object]:
     ...

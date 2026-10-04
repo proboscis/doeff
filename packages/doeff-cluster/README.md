@@ -97,7 +97,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (defsystem my-system [foundation]
   "書き手の系"
   (my-writer (my-writer foundation 5.0)
-    :needs #{"cluster-net"} :readiness {"windowSeconds" 30} :update "handoff" :environ {"WRITER_MODE" "apply"}))
+    :needs #{"cluster-net"} :replicas 1 :readiness {"windowSeconds" 30} :update "handoff" :environ {"WRITER_MODE" "apply"}))
 ```
 
 - job は Program の値 1 つです。`defsystem` の各行は `(名 (関数 引数…) :キー literal …)` で、引数は系の引数(土台)か literal だけ
@@ -105,6 +105,9 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - 土台は module の最上位の関数で渡します(宣言には `{"ref": "module:qualname"}` の参照で載ります)。handler の値・入れ子の関数・
   lambda は宣言の時点で断ります。handler は Program の本体の中で関数を呼んで作ります(値を詰めると `UnsendableProgram`)。
 - `:needs` は要る能力の名の空でない集合です(小文字・数字・`.`・`-`)。置き場所の名(`kind=k3s` の形の label・機体の名)は書きません。
+- `:replicas` は job の望む台数(`0` = 取り下げ・`1` = 動かす)で、必ず書きます(省けば展開の時点で `SyntaxError`)。宣言し直しは
+  Service の台数をこの値にするので、coordinator の Service の台数を手で替えても、次の宣言し直しで job の値に戻ります。取り下げは
+  `:replicas 0` に書き換えた系を宣言し直す事です。
 - `:readiness` は `{"windowSeconds" n}`(handoff の期限 `handoffTimeoutSeconds` も書ける)、`:update` は `"recreate"`(既定)か
   `"handoff"`、`:environ` は子 process の環境変数(名は `[A-Z][A-Z0-9_]*`・`DOEFF_`・`PYTHON`・`UV_` などの予約は不可・秘密は置かない)。
   設定は Program の中の `Ask` と、宣言の `:environ` を字面どおり読む handler(`host_contract.environ-reader`)で読みます。
@@ -178,11 +181,11 @@ environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べ
 - `declaring-refusal` は、系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が宣言の版と同じ commit の時だけ
   None を返します(詰める Program が参照するコードと、実行先が版で展開するコードを一致させるため)。外れれば理由の文を返します。
   土台の `:needs` が job の `:needs` に含まれない時も理由の文を返します。土台は関数でも、土台の関数を欄に持つ record でも渡せます。
-- `system-declaration` が宣言の行と詰めた Program を組みます。行は `{name revision needs run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
+- `system-declaration` が宣言の行と詰めた Program を組みます。行は `{name revision needs replicas run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
   同一性(入れ替えの要否を決める指紋)は、呼んだ関数の `module:qualname` と引数の正規の JSON・版・environ から作り、詰めた中身は
   比べません(cloudpickle の出力は同じ Program でも揺れるため)。
 - `apply-declaration` は、詰めた Program を `PUT /programs/<sha>` で先に置き、Service ごとに無ければ `POST`・在れば読んだ
-  `resourceVersion` を付けて `PUT` します(所有者と replicas は今の値を保ち、replicas を渡した時だけ変えます)。
+  `resourceVersion` を付けて `PUT` します(所有者は今の値を保ち、台数は行の値 = job の `:replicas` を書きます)。
 
 ### 業務の effect を記録に載せる
 

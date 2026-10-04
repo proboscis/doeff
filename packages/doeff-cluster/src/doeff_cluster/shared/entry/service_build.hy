@@ -15,16 +15,19 @@
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvVar])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.shared.intent.service_model [UPDATE-FORMS CallShape Job System Declaration])
+(import doeff_cluster.shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape Job System Declaration])
 
 
-(deff job [#^ str name program * #^ CallShape call needs #^ (| dict None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+(deff job [#^ str name program * #^ CallShape call needs #^ int replicas #^ (| dict None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
            #^ (| dict None) [environ None]]
-  {:pre [(: name str) (: program (| Program int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: readiness (| dict None)) (: update str) (: environ (| dict None))]
+  {:pre [(: name str) (: program (| Program int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: replicas int) (: readiness (| dict None)) (: update str) (: environ (| dict None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "main" :reads "env"}}
-  "job 1 つを検めて作る(defsystem の展開が呼ぶ)。旧い引数(:env・:config・:env-config・:requires)はこの関数に無いので TypeError。"
+  "job 1 つを検めて作る(defsystem の展開が呼ぶ)。replicas = 望む台数(必ず渡す — 0 = 取り下げ・1 = 動かす)。旧い引数(:env・:config・
+   :env-config・:requires)はこの関数に無いので TypeError。"
   (when (not (isinstance program DoExpr))
     (raise (TypeError (.format "job {}: Program の値(defk の関数を呼んだ結果)を渡す: {!r}" name program))))
+  (when (not-in replicas REPLICAS-VALUES)
+    (raise (ValueError (.format "job {} の :replicas は {} のどれか(0 = 取り下げ・1 = 動かす): {!r}" name REPLICAS-VALUES replicas))))
   (when (not-in update UPDATE-FORMS)
     (raise (ValueError (.format "job {} の :update は {} のどれか: {!r}" name UPDATE-FORMS update))))
   (setv refusal (readiness-refusal readiness update))
@@ -38,7 +41,8 @@
   (setv environ-given (if (is environ None) {} environ))
   (setv env-vars (tuple (gfor k (sorted environ-given) (EnvVar :name k :value (get environ-given k)))))
   (identity-of call (.format "job {}" name))
-  (Job :name name :program program :call call :needs (frozenset caps) :readiness readiness :update update :environ env-vars))
+  (Job :name name :program program :call call :needs (frozenset caps) :replicas replicas :readiness readiness :update update
+       :environ env-vars))
 
 
 (deff system-of [#^ str name #^ tuple jobs]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
@@ -54,7 +58,7 @@
 (deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions]  ; defk にできない: declare の CLI が呼ぶ
   {:pre [(: system System) (: revision str) (: versions dict) (: runtime-env (| RuntimeEnv None)) (: environ (| dict None))] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "系 → coordinator へ渡す宣言(改訂 1 の A・F・G)。job ごとに Program を詰めて sha を鍵に programs へ、行は sha と identity・
-   versions・describe・environ を持つ。versions = 送り手の版の識別(キーワード専用の必須 — 呼び手が io の層の process_versions.process-versions で綴って渡す —
+   versions・describe・environ と、job の望む台数 replicas を持つ(宣言し直しは書く Service の台数を job の値にする — #3487)。versions = 送り手の版の識別(キーワード専用の必須 — 呼び手が io の層の process_versions.process-versions で綴って渡す —
    宣言の組み立ては process を読まない・#1630)。runtime-env の env-vars と :environ で同じ名が在れば断る(子の環境変数の足し口を 1 つにする)。
    environ = job ごとの environ の上書き(配る先ごとの値 — 口の URL・下限の刻など。宣言の :environ に重ね、規則は environ-overlay-refusal。
    spec-hash に入るので、上書きを変えると入れ替わる)。"
@@ -78,6 +82,7 @@
              (| {"name" j.name
                  "revision" revision
                  "needs" (sorted j.needs)
+                 "replicas" j.replicas
                  "run" {"kind" "service" "program" sha "identity" identity "versions" versions
                         "describe" (describe-identity identity)}
                  "environ" (| (dfor v j.environ v.name v.value) (.get overlay j.name {}))}

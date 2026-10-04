@@ -10,8 +10,8 @@
 ;;;   - 宣言の行と詰めた Program を doeff_cluster.shared.entry.service_build の system-declaration で組む。
 ;;;   - ここの apply-declaration で書く: 先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で
 ;;;     書く — 無ければ POST /resources/Service で作る(所有者 = 送り手)。在れば GET で読んだ resourceVersion を付けて PUT する
-;;;     (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
-;;;     (replicas は Rollout が持つ。replicas を渡した時だけ変える)。一覧に無い Service には触らない。
+;;;     (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者はいまの値を保ち、台数は行の値
+;;;     (job の :replicas)を書く — 手で台数だけを替えた Service も、宣言し直すと job の値へ戻る(#3487)。一覧に無い Service には触らない。
 ;;;
 ;;; 置き場(#2346): apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
 ;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
@@ -40,17 +40,17 @@
   response)
 
 
-(defk service-read-at [base actor name row replicas]
-  {:pre [(: base str) (: actor str) (: name str) (: row (get Mapping #(str object))) (: replicas (| int None))] :post [(: % ServiceRead)]
+(defk service-read-at [base actor name row]
+  {:pre [(: base str) (: actor str) (: name str) (: row (get Mapping #(str object)))] :post [(: % ServiceRead)]
    :tags {:context "doeff-cluster" :role "main" :reads "json"}}
   "Service の行 1 つの今の資源を資源の口で読み、送る書きを決めるため(差分の宣言の判断は declaration_requests.service-read)。"
   (val url (+ base "/resources/Service/" (url-quote name :safe "")))
   (<- current HttpResponse (declare-request "GET" url actor None))
   (when (= current.status 404)
-    (<- absent ServiceRead (service-read name row url None replicas))
+    (<- absent ServiceRead (service-read name row url None))
     (return absent))
   (.raise-for-status current)
-  (<- read ServiceRead (service-read name row url (json.loads current.text) replicas))
+  (<- read ServiceRead (service-read name row url (json.loads current.text)))
   read)
 
 
@@ -67,8 +67,8 @@
   updated)
 
 
-(defk apply-declaration [url declaration actor [replicas None]]
-  {:pre [(: url str) (: declaration Declaration) (: actor str) (: replicas (| int None))] :post [(: % bool)]
+(defk apply-declaration [url declaration actor]
+  {:pre [(: url str) (: declaration Declaration) (: actor str)] :post [(: % bool)]
    :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "宣言の行を差分だけ資源の口で書くため: Service を全部読み、書く Service(無い・spec が変わった)が名指す Program だけを置いてから、
    書く Service だけを書く(spec の変わらない Service には書きを送らない — declaration_requests の頭注)。HTTP は汎用の effect(HttpRequest)
@@ -77,7 +77,7 @@
   (val versions (get (get (get declaration.rows 0) "run") "versions"))
   (var reads #())
   (for [row declaration.rows]
-    (<- read ServiceRead (service-read-at base actor (get row "name") row replicas))
+    (<- read ServiceRead (service-read-at base actor (get row "name") row))
     (:= reads (+ reads #(read))))
   (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
   (var programs-placed True)
