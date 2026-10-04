@@ -14,7 +14,8 @@
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
-;;;   9 bytecode  ReadEditableRoots / CompileTree            root の venv の interpreter で作る(引き継ぎ元は lock と Python が同じ root)。
+;;;   9 bytecode  ReadEditableRoots / CompileTree            root の venv の interpreter で作る(引き継ぎ元は lock と Python が同じ root の
+;;;                                                          うち近い版の物 — carry-source)。
 ;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
@@ -88,20 +89,62 @@
   found)
 
 
+;; Hy の macro(doeff-hy)を持つ repo の宣言の名(送り手は doeff の checkout をこの名で並べる)。Hy の .pyc は、使った macro の
+;; file が同じ時だけ使い回せる — この repo の commit が同じ root からの引き継ぎは、macro の file が同じなので安い(#3515 の B)。
+;; 宣言にこの名の repo が無ければ、引き継ぎ元の選びの macro の条件(1 番目と 2 番目)は使わない(3 番目と 4 番目の条件だけで選ぶ)。
+(val MACRO-REPO "doeff")
+
+
+(defrecord CarryCandidate
+  "bytecode の引き継ぎ元の候補 1 つ(lock の sha256 と Python が同じ完成済みの root の、同じ url の repo のツリー)。tree = ツリーの
+   path・root = root の path・made-ms = root の完成の時刻・same-commit = ツリーの commit が新しい宣言の同じ repo と同じ・
+   same-macros = macro の repo(MACRO-REPO)の commit が新しい宣言と同じ。"
+  (#^ str tree)
+  (#^ str root)
+  (#^ int made-ms)
+  (#^ bool same-commit)
+  (#^ bool same-macros))
+
+
+(defk carry-candidates [known env name]
+  {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % tuple)]
+   :tags {:context "worker" :role "program"}}
+  "repo name の bytecode の引き継ぎ元を選ぶ材料(候補の列・known の順)を作るため — lock の sha256 と Python が同じ完成済みの root
+   (Hy の macro の展開が同じ Hy と doeff-hy で固定される組に限るため)の、同じ url の repo のツリー。"
+  (val repo (next (gfor r env.repos :if (= r.name name) r)))
+  (val macros (next (gfor r env.repos :if (= r.name MACRO-REPO) r) None))
+  (tuple (gfor k known
+               :if (and (= k.env.project.lock-sha256 env.project.lock-sha256) (= k.env.project.python env.project.python))
+               r k.env.repos
+               :if (= r.url repo.url)
+               (CarryCandidate :tree (.format "{}/{}" k.root r.name) :root k.root :made-ms k.made-ms
+                               :same-commit (= r.commit repo.commit)
+                               :same-macros (and (is-not macros None)
+                                                 (any (gfor m k.env.repos (and (= m.url macros.url) (= m.commit macros.commit)))))))))
+
+
 (defk carry-source [known env name]
-  {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % (| str None))]}
-  "bytecode の引き継ぎ元 = lock の sha256 と Python が同じ完成済みの root の、同じ url の repo のツリー(Hy の macro の展開が
-   同じ Hy と doeff-hy で固定される組に限るため)。無ければ None。"
-  (val url (next (gfor r env.repos :if (= r.name name) r.url)))
-  (var found None)
-  (for [k known]
-    (when (and (is found None)
-               (= k.env.project.lock-sha256 env.project.lock-sha256)
-               (= k.env.project.python env.project.python))
-      (for [r k.env.repos]
-        (when (and (is found None) (= r.url url))
-          (:= found (.format "{}/{}" k.root r.name))))))
-  found)
+  {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % (| str None))]
+   :tags {:context "worker" :role "program"}}
+  "repo name の bytecode の引き継ぎ元のツリーの path を返すため(組み直す .pyc を少なくする — 候補は carry-candidates)。無ければ None。
+   候補が幾つも在れば、.pyc を使い回せる見込みの高い条件から順に選ぶ(#3515 の B — 前は dir の名の順で最初の root を選び、同じ commit
+   で組んだ root が在っても古い commit の root から引き継いで約 2000 個を組み直した):
+     1 その repo の commit も macro の repo(MACRO-REPO)の commit も同じ root(ツリーの file も macro の file も同じ)
+     2 macro の repo の commit が同じ root(macro の file が同じ — 変わった file の .pyc だけを組む)
+     3 その repo の commit が同じ root(Hy の .pyc は macro の file が変わると全部無効になるので、2 より後)
+     4 どれも無ければ、候補の全部
+   同じ条件に当たる候補の中では、完成の時刻が新しい root・同じ時刻なら root の path の順。宣言に macro の repo が無ければ 1 と 2 には
+   誰も当たらず、3 → 4 の順になる。"
+  (<- candidates tuple (carry-candidates known env name))
+  (val tier (next (gfor group #((tuple (gfor c candidates :if (and c.same-commit c.same-macros) c))
+                                (tuple (gfor c candidates :if c.same-macros c))
+                                (tuple (gfor c candidates :if c.same-commit c))
+                                candidates)
+                        :if group group)
+                  #()))
+  (if tier
+      (. (min tier :key (fn [c] #((- c.made-ms) c.root))) tree)
+      None))
 
 
 (defk env-marker->json [marker]
