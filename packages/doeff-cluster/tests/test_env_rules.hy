@@ -1,11 +1,13 @@
 ;; 実行環境の root の準備の判断(worker/core/env_rules — #2467)を、準備の process を起こさずに確かめる。
 ;;   * 起こす順: job の準備を先に・同時は max-parallel 本まで・先読みは枠の 1 つを job に残す。
-;;   * 準備の答えの読み: 失敗の答え・成功の答え・答えを書かずに終わった process・期限切れの理由。
-;;   * 冷たい準備の見分け・掃除の候補の project の名・掃除の下限。
+;;   * 準備の答えの読み: 答えの file の中身(失敗・完成・形の読めない中身)・失敗の答え・成功の答え・答えを書かずに終わった process・
+;;     期限切れの理由。
+;;   * 掃除の候補の project の名・掃除の下限・準備の process の起こし方。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailureKind])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.core.env_upkeep [PrepareLimits])
-(import doeff_cluster.worker.core.env_rules [launch-order cold-for prepare-argv prepare-outcome overdue-failure root-project floor-bytes])
+(import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-argv answer-of-text prepare-outcome overdue-failure
+                                             root-project floor-bytes])
 
 
 (deftest test-job-prepares-go-first-and-warm-ones-leave-a-slot
@@ -22,29 +24,40 @@
   (assert (= one-slot #("env-w1")) one-slot))
 
 
-(deftest test-prepare-answers-are-read-into-failures
-  (<- failed (prepare-outcome {"failure" {"kind" "disk-full" "detail" "空きが無い" "retryable" True}} 1 "/s/k.log"))
+(deftest test-answer-files-are-read-into-typed-answers
+  ;; 答えの file の中身(env_translation の answer-json の形): 失敗を先に読む・完成は ReadyAnswer・形の読めない中身は完成と読まない。
+  (<- failed (answer-of-text "{\"failure\": {\"kind\": \"disk-full\", \"detail\": \"空きが無い\", \"retryable\": true}}"))
   (assert (= #(failed.kind failed.detail failed.retryable) #(EnvFailureKind.DISK-FULL "空きが無い" True)) failed)
-  (<- ready (prepare-outcome {"ready" {}} 0 "/s/k.log"))
+  (<- ready (answer-of-text "{\"ready\": {\"key\": \"k\", \"root\": \"/s/roots/k\", \"interpreter\": \"\", \"downloaded\": 0, \"built\": 0}}"))
+  (assert (= ready (ReadyAnswer :root "/s/roots/k")) ready)
+  (for [text ["{\"ready\": {}}" "{}" "[]" "not json"]]
+    (<- odd (answer-of-text text))
+    (assert (and (isinstance odd EnvFailure) (= odd.kind EnvFailureKind.ENV-INCOMPATIBLE) (not odd.retryable)) #(text odd))
+    (assert (in text odd.detail) #(text odd))))
+
+
+(deftest test-prepare-answers-are-read-into-failures
+  (val written (EnvFailure :kind EnvFailureKind.DISK-FULL :detail "空きが無い" :retryable True))
+  (<- failed (prepare-outcome written 1 "/s/k.log"))
+  (assert (= failed written) failed)
+  (<- ready (prepare-outcome (ReadyAnswer :root "/s/roots/k") 0 "/s/k.log"))
   (assert (is ready None) ready)
   (<- silent (prepare-outcome None -9 "/s/k.log"))
   (assert (= silent.kind EnvFailureKind.ENV-INCOMPATIBLE) silent)
   (assert (not silent.retryable) silent)
   (assert (in "終了 -9" silent.detail) silent)
   (assert (in "/s/k.log" silent.detail) silent)
-  (<- warm (overdue-failure True False (PrepareLimits)))
-  (assert (= warm.kind EnvFailureKind.PREPARE-TIMEOUT) warm)
-  (assert (in "先読み" warm.detail) warm)
-  (<- cold (overdue-failure False True (PrepareLimits)))
-  (assert (in "冷たい" cold.detail) cold))
+  ;; 期限で止めた準備: 先読みも job の準備も停滞の秒で止めた失敗(やり直してよい)・先読みは名指す。
+  (<- warm (overdue-failure True (PrepareLimits :stall-seconds 600.0)))
+  (assert (= #(warm.kind warm.retryable) #(EnvFailureKind.PREPARE-TIMEOUT True)) warm)
+  (assert (and (in "先読み" warm.detail) (in "600" warm.detail)) warm)
+  (<- job (overdue-failure False (PrepareLimits :stall-seconds 600.0)))
+  (assert (= #(job.kind job.retryable) #(EnvFailureKind.PREPARE-TIMEOUT True)) job)
+  (assert (and (not-in "先読み" job.detail) (in "600" job.detail)) job))
 
 
-(deftest test-cold-project-floor-and-argv
+(deftest test-project-floor-and-argv
   (val declared {"project" {"lockSha256" "L" "python" "3.12" "repo" "r" "path" "p"} "repos" [{"name" "r" "url" "git@x:r"}]})
-  (<- cold bool (cold-for declared #()))
-  (assert cold)
-  (<- warm bool (cold-for declared #({"env" declared "root" "/s/roots/a"})))
-  (assert (not warm))
   (<- project str (root-project {"env" declared}))
   (assert (= project "git@x:r:p") project)
   (<- set-floor int (floor-bytes 5 100 1000))

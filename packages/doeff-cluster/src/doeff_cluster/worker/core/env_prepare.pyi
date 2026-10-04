@@ -91,6 +91,7 @@ def stage_wheels(request: PrepareRequest, state: PrepareState) -> _Program[Prepa
 
 def stage_roots(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState, object]:
     ...
+BYTECODE_STAGE: str
 
 def stage_bytecode(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:
     ...

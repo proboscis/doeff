@@ -8,18 +8,25 @@
 ;;   6 同じキーの準備を 2 回頼む: 準備の道具は 1 回だけ起き(走っている準備を起こし直さない)、終われば READY
 ;;   8 先読み: 温める表の env を job の前に準備し、task が来た最初の拍で子を起こす(準備を待たない)— 温めていない env は準備を起こす
 ;;   9 空きが下限を切る: 固定された root・project ごとの最新・worker が作っていない dir は残り、固定されていない古い root が消える
+;;   準備の期限(#3515): 進みの印が動いている job の準備は、起こしてから長くても止めない・完成の答えを書いて終わりの処理の途中の準備は
+;;     期限の拍で止めない・進みの印が停滞の秒(600 秒)動かない準備は今どおり止める。時計は仮想の時計(sim-time-handler)で、進みの印の
+;;     file の時刻は os.utime でその時計の物差しに置く。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import dataclasses [dataclass])  ; defrecord の展開が使う
 (import json)
 (import os)
 (import pathlib [Path])
-(import doeff [with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.file_effects [ReadText WriteText MakeDirectory file-done])
-(import doeff_core_effects.process_effects [StartProcess PollProcess ProcessStarted ProcessRunning ProcessExited])
-(import doeff_time [sync-time-handler])
+(import doeff_core_effects.process_effects [StartProcess PollProcess StopProcess ProcessStarted ProcessRunning ProcessExited])
+(import doeff_time [SetTime SimClock sim-time-handler sync-time-handler])
+(import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailureKind])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv CHILD-PROTOCOL])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json runtime-env-of-json env-key])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
@@ -36,18 +43,27 @@
 (import doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
+(import tests.clock_fixtures [clock-at])
 
 (val PLATFORM "linux-x86_64")
 (val FIRST-PID 70000)   ; 準備の道具の偽の pid の始まり(本物の子の pid と取り違えないよう、答え手が立てた物だけを数える)
 
 
+(defrecord ToolRun
+  "走っている準備の道具 1 本に env-host が渡した file(argv から読む): request = 頼みの file・result = 答えの file・progress = 進みの印の file。"
+  (#^ str request)
+  (#^ str result)
+  (#^ str progress))
+
+
 (defclass ToolRuns []
-  "inline-env-tool の記録: launches = 起こした準備の頼みの file の path(起こした順)・running = 偽の pid → #(頼みの file 答えの file)・
-   released = 走っている準備を終わらせてよいか(検が立てる)。"
+  "inline-env-tool の記録: launches = 起こした準備の頼みの file の path(起こした順)・running = 偽の pid → ToolRun・
+   released = 走っている準備を終わらせてよいか(検が立てる)・stopped = env-host が止めた準備の偽の pid(止めた順)。"
   (defn #^ None __init__ [self]
     (setv #^ (get tuple #(str ...)) self.launches #())
-    (setv #^ (get dict #(int (get tuple #(str str)))) self.running {})
+    (setv #^ (get dict #(int ToolRun)) self.running {})
     (setv #^ bool self.released False)
+    (setv #^ (get tuple #(int ...)) self.stopped #())
     None))
 
 
@@ -76,8 +92,9 @@
         (do (val pid (+ FIRST-PID (len runs.launches)))
             (val request (get argv (+ (.index argv "--request") 1)))
             (val result (get argv (+ (.index argv "--result") 1)))
+            (val progress (get argv (+ (.index argv "--progress") 1)))
             (setv runs.launches (+ runs.launches #(request)))
-            (setv runs.running (| runs.running {pid #(request result)}))
+            (setv runs.running (| runs.running {pid (ToolRun :request request :result result :progress progress)}))
             (resume (ProcessStarted :pid pid)))
         (do (<- answer (StartProcess :argv argv :cwd cwd :env env :env-mode env-mode :env-drop env-drop :stdout-path stdout-path
                                      :stderr-path stderr-path :process-group process-group :hold-stdin hold-stdin
@@ -89,11 +106,19 @@
         (do (<- answer (PollProcess pid))
             (resume answer))
       runs.released
-        (do (val paths (get runs.running pid))
-            (<- (finish-preparation (get paths 0) (get paths 1)))
+        (do (val run (get runs.running pid))
+            (<- (finish-preparation run.request run.result))
             (setv runs.running (dfor #(k v) (.items runs.running) :if (!= k pid) k v))
             (resume (ProcessExited :pid pid :exit-code 0)))
-      True (resume (ProcessRunning :pid pid)))))
+      True (resume (ProcessRunning :pid pid))))
+  (StopProcess [pid stop-grace]
+    ;; 期限で止めた準備を数え、終わった子として答える(SIGTERM の終わり)。ほかの子は外側の本物の答え手へ渡す。
+    (if (in pid runs.running)
+        (do (setv runs.stopped (+ runs.stopped #(pid)))
+            (setv runs.running (dfor #(k v) (.items runs.running) :if (!= k pid) k v))
+            (resume (ProcessExited :pid pid :exit-code -15)))
+        (do (<- answer (StopProcess :pid pid :stop-grace stop-grace))
+            (resume answer)))))
 
 
 (defk settings-at [base [sweep-floor-bytes None]]
@@ -272,3 +297,171 @@
   (assert (.exists c) "project ごとの最新の root(bytecode の引き継ぎ元)は残る")
   (assert (and (.exists foreign) (.exists notes)) "worker が作っていない dir は消さない")
   (assert (= runs.launches #()) runs.launches))
+
+
+;; --- 準備の期限(#3515)------------------------------------------------------------------------------
+;; 実例: 温い job の準備が 300 秒の期限(起こした時刻から数える合計)に掛かり、bytecode の処理ステージ(267.9 秒)の後の確かめを終えて
+;; 完成の答えを書いた 0.4 秒後に prepare-timeout で止められた。期限は進みの印の時刻から数える停滞(600 秒)だけで、完成の答えを
+;; 書いた準備は止めない。
+
+(val CLOCK-START-MS 1760000000000)   ; 仮想の時計の起点(epoch ミリ秒 — 進みの印の file の時刻もこの物差しで置く)
+(val ONE-SECOND-MS 1000)
+
+
+(defrecord DeadlineSeen
+  "期限の筋書きの観測: views = 期限を確かめた拍ごとの ObserveEnvs の答え(拍の順)・after = 子を終わらせた後の観測(終わらせない筋書きは #())。"
+  (#^ (get tuple #((get tuple #(CodeView ...)) ...)) views)
+  (#^ (get tuple #(CodeView ...)) after))
+
+
+(defk at-second [seconds]
+  {:pre [(: seconds int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "仮想の時計の起点から seconds 秒後の時刻(epoch ミリ秒)を返すため(筋書きの拍と進みの印の時刻を同じ物差しで書く)。"
+  (+ CLOCK-START-MS (* seconds ONE-SECOND-MS)))
+
+
+(defk move-clock [seconds]
+  {:pre [(: seconds int)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "仮想の時計を起点から seconds 秒後へ進めるため(env-host の今の時刻 = GetTime の答え)。"
+  (<- at int (at-second seconds))
+  (<- (SetTime (datetime-of-epoch-ms at)))
+  None)
+
+
+(defk running-tool [runs]
+  {:pre [(: runs ToolRuns)] :post [(: % ToolRun)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "走っている準備の道具 1 本の file を返すため(1 本でなければ — env-host が止めた時など — 止めた pid を添えて落ちる)。"
+  (val running (tuple (.values runs.running)))
+  (assert (= (len running) 1) (.format "走っている準備の道具が 1 本でない(env-host が止めた pid: {})" runs.stopped))
+  (get running 0))
+
+
+(defk touch-progress [runs seconds]
+  {:pre [(: runs ToolRuns) (: seconds int)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "走っている準備の道具(1 本)の代わりに進みの印を触るため — 中身は処理ステージの名のまま、時刻を起点から seconds 秒後に置く
+   (bytecode の処理ステージが repo の木ごとに印を触るのと同じ形)。"
+  (<- run ToolRun (running-tool runs))
+  (<- at int (at-second seconds))
+  (.write-text (Path run.progress) "bytecode\n")
+  (os.utime run.progress #((/ at 1000) (/ at 1000)))
+  None)
+
+
+(defk answer-while-running [runs]
+  {:pre [(: runs ToolRuns)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "走っている準備の道具(1 本)の代わりに、子を走らせたまま完成マーカーと完成の答えを書くため(答えを書き終えて終わりの処理の途中)。"
+  (<- run ToolRun (running-tool runs))
+  (<- (finish-preparation run.request run.result))
+  None)
+
+
+(defk observe-at [seconds]
+  {:pre [(: seconds int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "仮想の時計を起点から seconds 秒後へ進めて観測するため。"
+  (<- (move-clock seconds))
+  (<- views tuple (ObserveEnvs))
+  views)
+
+
+(defk deadline-on [settings runs program]
+  {:pre [(: settings EnvSettings) (: runs ToolRuns) (: program Program)] :post [(: % DeadlineSeen)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "期限の筋書き program を、仮想の時計(起点 CLOCK-START-MS)と tmp の dir の上の env-host の下で走らせるため。"
+  (<- clock SimClock (clock-at CLOCK-START-MS))
+  (<- seen DeadlineSeen (with-handlers [(state) (sim-time-handler :clock clock) slog-handler os-file-handler subprocess-handler
+                                        (inline-env-tool runs) (env-host settings)]
+                          program))
+  seen)
+
+
+(defk warm-job-root [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "同じ lock と Python の完成済みの root を 1 つ置くため(次の準備は温い job の準備 — 依存と bytecode を引き継げる)。"
+  (<- env RuntimeEnv (declared 1))
+  (<- (made-root settings "aaaaaaaaaaaaaaaaaaaaaaaa" env 100 100))
+  None)
+
+
+;; (a) 完成の答えを書いた準備は、期限の拍で止めない。
+
+(defk answered-scenario [runs key text]
+  {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % DeadlineSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "job の準備を起こし、子を走らせたまま完成の答えを書き、進みの印を触らずに起点から 2000 秒後(停滞の 600 秒も、前の冷たい期限の
+   1800 秒も越える)に観測し、子を終わらせてもう 1 回観測するため。"
+  (<- (PrepareEnv key text))
+  (<- (answer-while-running runs))
+  (<- during tuple (observe-at 2000))
+  (setv runs.released True)
+  (<- after tuple (observe-at 2001))
+  (DeadlineSeen :views #(during) :after after))
+
+
+(deftest test-a-preparation-that-wrote-ready-is-not-stopped-at-the-deadline [tmp-path]
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- env RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- seen DeadlineSeen (deadline-on settings runs (answered-scenario runs key text)))
+  (<- during (| CodeView None) (view-of (get seen.views 0) key))
+  (assert (= runs.stopped #()) (.format "完成の答えを書いた準備を止めた: {}" during))
+  (assert (and (is-not during None) (= during.state CodeState.PREPARING)) during)
+  (<- after (| CodeView None) (view-of seen.after key))
+  (<- root str (env-root settings key))
+  (assert (and (is-not after None) (= after.state CodeState.READY) (= after.path root)) after))
+
+
+;; (b) 進みの印が動いている job の準備は、起こしてから 300 秒・600 秒・1800 秒を越えても止めない。
+
+(defk moving-scenario [runs key text]
+  {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % DeadlineSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "温い job の準備を起こし、進みの印を触りながら(290 秒・690 秒・1790 秒)、前の温い期限 300 秒・停滞の 600 秒・前の冷たい期限
+   1800 秒を越えた拍(301 秒・700 秒・1801 秒)で観測するため。"
+  (<- (PrepareEnv key text))
+  (<- (touch-progress runs 290))
+  (<- past-warm tuple (observe-at 301))
+  (<- (touch-progress runs 690))
+  (<- past-stall tuple (observe-at 700))
+  (<- (touch-progress runs 1790))
+  (<- past-cold tuple (observe-at 1801))
+  (DeadlineSeen :views #(past-warm past-stall past-cold) :after #()))
+
+
+(deftest test-a-moving-job-preparation-is-not-stopped-however-long-it-runs [tmp-path]
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- (warm-job-root settings))
+  (<- env RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- seen DeadlineSeen (deadline-on settings runs (moving-scenario runs key text)))
+  (assert (= runs.stopped #()) (.format "進んでいる準備を止めた: {}" seen.views))
+  (for [views seen.views]
+    (<- view (| CodeView None) (view-of views key))
+    (assert (and (is-not view None) (= view.state CodeState.PREPARING)) view)))
+
+
+;; (c) 進みの印が停滞の秒(600 秒)動かない準備は、今どおり止める(止めなさすぎにしない)。
+
+(defk stalled-scenario [runs key text]
+  {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % DeadlineSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "温い job の準備を起こし、100 秒後に進みの印を 1 回だけ触り、それから 601 秒後(起点から 701 秒)に観測するため。"
+  (<- (PrepareEnv key text))
+  (<- (touch-progress runs 100))
+  (<- stalled tuple (observe-at 701))
+  (DeadlineSeen :views #(stalled) :after #()))
+
+
+(deftest test-a-preparation-whose-mark-stands-still-for-the-stall-is-stopped [tmp-path]
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- (warm-job-root settings))
+  (<- env RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- seen DeadlineSeen (deadline-on settings runs (stalled-scenario runs key text)))
+  (assert (= runs.stopped #(FIRST-PID)) runs.stopped)
+  (<- view (| CodeView None) (view-of (get seen.views 0) key))
+  (assert (and (is-not view None) (= view.state CodeState.FAILED) (is-not view.failure None)
+               (= view.failure.kind EnvFailureKind.PREPARE-TIMEOUT))
+          view))

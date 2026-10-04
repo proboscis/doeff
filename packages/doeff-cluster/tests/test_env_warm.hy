@@ -8,7 +8,7 @@
 ;; coordinator: 温める表(POST /warm・GET /warm/<キー>)・heartbeat の返事で label の合う worker にだけ配る・準備済みの worker を
 ;;   優先して置く・準備済みが無ければ phase preparing と計器 doeff_worker_env_cold_start_total・envCapacity=exhausted の worker を避ける。
 ;; worker: 温める env を job より後に準備する(PrepareEnv :warm True)・固定の集合を掃除の係へ渡す(SweepEnvs)。
-;; 準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限。
+;; 準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)。
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -197,18 +197,21 @@
 
 ;; --- 準備の期限と disk の状態(純粋) ------------------------------------------------------------
 
-(deftest test-prepare-deadlines-split-warm-stall-and-cold-or-warm-jobs
-  (val limits (PrepareLimits :cold-seconds 1800.0 :warm-seconds 300.0 :stall-seconds 600.0))
-  ;; 先読み: 期限を掛けない — 処理ステージが 10 分進まない時だけ
-  (<- long-but-moving bool (prepare-overdue True False 0.0 7000.0 7100.0 limits))
-  (assert (not long-but-moving) "先読みは長くても進んでいれば止めない")
-  (<- stalled bool (prepare-overdue True False 0.0 100.0 701.0 limits))
-  (assert stalled "先読みは 10 分進まなければ止める")
-  ;; job の準備: 冷たい(root も wheel も無い)は 30 分・温いは 5 分
-  (<- cold-ok bool (prepare-overdue False True 0.0 1000.0 1700.0 limits))
-  (<- cold-over bool (prepare-overdue False True 0.0 1700.0 1801.0 limits))
-  (<- warm-over bool (prepare-overdue False False 0.0 290.0 301.0 limits))
-  (assert (and (not cold-ok) cold-over warm-over)))
+(deftest test-prepare-deadline-is-the-stall-for-every-preparation
+  ;; 起こした時刻は 0 秒・引数は (最後の進み 今)。先読みも job の準備(冷たい・温い)も、最後の進みから 600 秒進まない時だけ止める。
+  (val limits (PrepareLimits :stall-seconds 600.0))
+  (<- long-but-moving bool (prepare-overdue 7000.0 7100.0 limits))
+  (assert (not long-but-moving) "長くても進んでいれば止めない")
+  ;; 実例(#3515): 温い job の準備が起こしてから 301 秒 — 最後の進み(bytecode の repo の木)から 11 秒なので止めない。
+  (<- past-warm bool (prepare-overdue 290.0 301.0 limits))
+  (assert (not past-warm) "起こしてから 300 秒を越えても、進んでいれば止めない")
+  (<- past-cold bool (prepare-overdue 1700.0 1801.0 limits))
+  (assert (not past-cold) "起こしてから 1800 秒を越えても、進んでいれば止めない")
+  ;; 止めなさすぎにしない: 進みの印が 600 秒を越えて動かなければ止める(600 秒ちょうどはまだ止めない)。
+  (<- edge bool (prepare-overdue 100.0 700.0 limits))
+  (assert (not edge) "600 秒ちょうどは止めない")
+  (<- stalled bool (prepare-overdue 100.0 701.0 limits))
+  (assert stalled "600 秒を越えて進まなければ止める"))
 
 
 (deftest test-env-capacity-is-exhausted-below-the-preparation-floor
