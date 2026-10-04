@@ -57,7 +57,7 @@ impl AccessFinding {
                 self.system, self.job, key
             ),
             AccessGap::ReadWithoutWriter { access } => format!(
-                "本番の系 {} の job {} が読む {} に書き手が無い — どの本番の job の :writes にも、architecture.hy の :outside-writers にも無い",
+                "本番の系 {} の job {} が読む {} に書き手が無い — どの本番の job の :writes にも、本番の入口から届く関数の定義の :writes にも、architecture.hy の :outside-writers にも無い",
                 self.system, self.job, access
             ),
         }
@@ -119,6 +119,28 @@ fn job_rows(source: &str, system: &str) -> Vec<JobAccess> {
         .collect()
 }
 
+/// 関数の定義 `(defk 名 [引数…] "説明"? {… :writes #{…} …} 本体…)`(deff も同じ)の契約の辞書の `:writes` の組(job でない書き手 —
+/// 系の job から送られる task の Program など — の名乗り・doeff-hy の FUNCTION-CONTRACT-KEYS)。定義が無い・辞書に :writes が無ければ None。
+pub fn function_writes(source: &str, name: &str) -> Option<BTreeSet<String>> {
+    let mut reader = Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    let items = forms.iter().find_map(|form| {
+        let items = items_of(form, Delim::Paren)?;
+        (items.len() >= 3 && matches!(symbol(source, &items[0]), Some("defk" | "deff")) && symbol(source, &items[1]) == Some(name))
+            .then_some(items)
+    })?;
+    // 引数の並びの後ろ、説明の文字列を飛ばした最初の辞書が契約(doeff-hy の _find-contract と同じ読み)。
+    let contract = items
+        .get(3..)?
+        .iter()
+        .find(|form| !matches!(form.node, Node::Str { .. }))
+        .and_then(|form| items_of(form, Delim::Brace))?;
+    contract.chunks(2).find_map(|pair| match pair {
+        [key, value] if source.get(key.span.start..key.span.end) == Some(":writes") => Some(strings_of(source, value)),
+        _ => None,
+    })
+}
+
 /// 本番の系の名指し(architecture.hy の宣言の順・同じ綴りは 1 度)。例外の宣言の service は系を持たない。
 fn production_systems(architecture: &Architecture) -> Vec<DefinitionRef> {
     let mut seen = BTreeSet::new();
@@ -134,8 +156,14 @@ fn production_systems(architecture: &Architecture) -> Vec<DefinitionRef> {
         .collect()
 }
 
-/// 本番の系の job の欠け(系の順・job の行の順)。`:outside-writers` を書いていない repo には当てない(空)。
-pub fn gaps(root_path: &Path, architecture: &Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<AccessFinding> {
+/// 本番の系の job の欠け(系の順・job の行の順)。`:outside-writers` を書いていない repo には当てない(空)。`function_writers` = 本番の入口
+/// から届く関数の定義が契約の `:writes` で名乗った組(job でない書き手 — 図を持つ呼び手が集める・届かない定義の名乗りは入らない)。
+pub fn gaps(
+    root_path: &Path,
+    architecture: &Architecture,
+    hy: &HashMap<String, HyFileIndex>,
+    function_writers: &BTreeSet<String>,
+) -> Vec<AccessFinding> {
     let Some(outside) = architecture.outside_writers.as_ref() else { return Vec::new() };
     let outside: BTreeSet<&str> = outside.iter().map(|writer| writer.access.as_str()).collect();
     let jobs: Vec<(String, String, JobAccess)> = production_systems(architecture)
@@ -149,7 +177,11 @@ pub fn gaps(root_path: &Path, architecture: &Architecture, hy: &HashMap<String, 
         })
         .flatten()
         .collect();
-    let written: BTreeSet<&str> = jobs.iter().flat_map(|(_, _, job)| job.writes.iter().flatten().map(String::as_str)).collect();
+    let written: BTreeSet<&str> = jobs
+        .iter()
+        .flat_map(|(_, _, job)| job.writes.iter().flatten().map(String::as_str))
+        .chain(function_writers.iter().map(String::as_str))
+        .collect();
     jobs.iter()
         .flat_map(|(rel, system, job)| {
             let finding = |gap: AccessGap| AccessFinding { rel: rel.clone(), line: job.line, system: system.clone(), job: job.name.clone(), gap };
@@ -184,5 +216,15 @@ mod tests {
         assert_eq!(rows[0].writes, Some(BTreeSet::new()));
         assert_eq!((rows[1].reads.clone(), rows[1].writes.clone()), (None, None));
         assert!(job_rows(source, "other").is_empty());
+    }
+
+    #[test]
+    fn function_writes_read_the_contract_after_the_docstring() {
+        let source = "(defk run-task [assignment]\n  \"task の Program。\"\n  {:post [(: % int)] :writes #{\"record:turn\" \"records:turn-event\"}}\n  1)\n\
+                      (deff plain [x] {:post [(: % int)]} x)\n(defk bare [x] x)\n";
+        assert_eq!(function_writes(source, "run-task"), Some(BTreeSet::from(["record:turn".to_string(), "records:turn-event".to_string()])));
+        assert_eq!(function_writes(source, "plain"), None);
+        assert_eq!(function_writes(source, "bare"), None);
+        assert_eq!(function_writes(source, "missing"), None);
     }
 }
