@@ -13,6 +13,11 @@
 //! DOEFF158(#1377 — 元の判定 G): 本番の入口から届く節のうち、intent の層(`:assembly-shape :intent-layer`)の効果に tap でなく
 //! 答えるのは、翻訳の層(`:translation-layer`)の handler 1 つだけ。翻訳の層の外の答え手と、同じ効果に答える翻訳の handler の 2 つ目以降を出す。
 //!
+//! DOEFF206(agora-redesign #3405・#3407・#3406): intent の層の効果には検証環境(`:verification-environment`)でも本番の翻訳の handler が
+//! 答える。検証環境の dir の節が intent の効果に狭い tap(出し直しの答えをそのまま resume)でなく答える所と、違反を通す表(外の世界の表・
+//! 下の層を通す表・検だけの偽物の表)の行が intent の効果を通す所を出す。登録簿で下げない(利用者 2026-10-04 "so this kind of violation,
+//! must be detected by doeff linter")。
+//!
 //! 届く先は DOEFF133・136 と同じ定義の辺の図(呼び出し・参照・入れ子)を根から前向きに辿る。全体の実行だけ(repo 全体の図が要る)。
 //! 模擬の根・本番の入口・業務の module・表の置き場は repo の宣言 `:business-fakes` から読み、ここには repo の名前を置かない。
 //!
@@ -144,6 +149,101 @@ pub fn taps_in(source: &str) -> HashMap<(String, String), bool> {
                     }
                     let tap = parts[2..].iter().any(|p| reissues(source, p, head));
                     *out.entry((handler.clone(), head.to_string())).or_insert(false) |= tap;
+                }
+            }
+            visit(source, items, out);
+        }
+    }
+    let mut out = HashMap::new();
+    visit(source, &read_forms(source), &mut out);
+    out
+}
+
+/// DOEFF206 の狭い tap: 節の本体が同じ効果を出し直し(`(<- 名 [型] effect)`・`(<- 名 [型] (頭 受けた引数 …))`・`(setv 名 (yield effect))`)、
+/// 本体の `(resume …)` の全部が、その出し直しで束ねた名**そのもの**を渡す節だけ。受けた effect の別名(`(val 名 effect)`・`(setv 名 effect)`)の
+/// 出し直しも同じに数える。出し直した答えの欄を書き換える・別の値を組む・枝の 1 つで自前の値を渡す・引数を変えて出し直す節は tap でない
+/// (DOEFF143 の `taps_in` は字面の出し直しだけを見る — そちらは変えない)。
+fn passes_reissue_through(source: &str, params: &[&str], body: &[Form], head: &str) -> bool {
+    /// 受けた effect の名と、その別名(`(val 名 X)`・`(setv 名 X)` の X が effect か別名 — 本体の全部から集める)。
+    fn aliases<'s>(source: &'s str, form: &Form, out: &mut Vec<&'s str>) -> bool {
+        let Node::Seq { items, .. } = &form.node else { return false };
+        let mut grew = false;
+        if let (Some("val" | "setv"), [_, name, value]) = (head_symbol(source, items), items.as_slice()) {
+            let (name, value) = (text(source, name), text(source, value));
+            if matches!(items[1].node, Node::Symbol) && matches!(items[2].node, Node::Symbol) && out.contains(&value) && !out.contains(&name) {
+                out.push(name);
+                grew = true;
+            }
+        }
+        items.iter().fold(grew, |grew, item| aliases(source, item, out) || grew)
+    }
+    let mut effect_names: Vec<&str> = vec!["effect"];
+    while body.iter().fold(false, |grew, form| aliases(source, form, &mut effect_names) || grew) {}
+    /// 出し直しの式か(effect の名か別名・節が受けた引数をそのまま並べた `(頭 …)` の呼び(`:欄` の語は数えない)・`(yield 出し直し)`)。
+    fn reissue(source: &str, form: &Form, head: &str, params: &[&str], effect_names: &[&str]) -> bool {
+        match &form.node {
+            Node::Symbol => effect_names.contains(&text(source, form)),
+            Node::Seq { delim: Delim::Paren, items } => match head_symbol(source, items) {
+                Some(h) if h == head => {
+                    let args: Vec<&str> = items[1..].iter().map(|f| text(source, f)).filter(|t| !t.starts_with(':')).collect();
+                    args == params
+                }
+                Some("yield") => items.len() == 2 && reissue(source, &items[1], head, params, effect_names),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+    let reissue = |form: &Form| reissue(source, form, head, params, &effect_names);
+    fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> bool, bound: &mut Vec<&'s str>, resumed: &mut Vec<Option<&'s str>>) {
+        let Node::Seq { delim, items } = &form.node else { return };
+        if *delim == Delim::Paren {
+            match head_symbol(source, items) {
+                // (<- 名 [型] 出し直し)
+                Some("<-") if items.len() >= 3 && matches!(items[1].node, Node::Symbol) && reissue(&items[items.len() - 1]) => {
+                    bound.push(text(source, &items[1]));
+                }
+                // (setv 名 (yield 出し直し))
+                Some("setv") if items.len() == 3 && matches!(items[1].node, Node::Symbol) => {
+                    if let Some(inner) = items[2].paren_items() {
+                        if head_symbol(source, inner) == Some("yield") && inner.len() == 2 && reissue(&inner[1]) {
+                            bound.push(text(source, &items[1]));
+                        }
+                    }
+                }
+                Some("resume") => {
+                    resumed.push(match items.as_slice() {
+                        [_, value] if matches!(value.node, Node::Symbol) => Some(text(source, value)),
+                        _ => None,
+                    });
+                    return;
+                }
+                _ => {}
+            }
+        }
+        items.iter().for_each(|item| walk(source, item, reissue, bound, resumed));
+    }
+    let mut bound = Vec::new();
+    let mut resumed = Vec::new();
+    body.iter().for_each(|form| walk(source, form, &reissue, &mut bound, &mut resumed));
+    !resumed.is_empty() && resumed.iter().all(|value| value.is_some_and(|name| bound.contains(&name)))
+}
+
+/// file の defhandler の節ごとの DOEFF206 の狭い tap(鍵 = (handler の名, 節の頭の名) — 同じ handler の同じ頭が 2 つ在れば、両方が tap の時だけ
+/// tap)。`taps_in` と同じ節の読み。
+pub fn pass_through_taps_in(source: &str) -> HashMap<(String, String), bool> {
+    fn visit(source: &str, forms: &[Form], out: &mut HashMap<(String, String), bool>) {
+        for form in forms {
+            let Node::Seq { delim, items } = &form.node else { continue };
+            if *delim == Delim::Paren && head_symbol(source, items) == Some("defhandler") && items.len() >= 2 {
+                let handler = text(source, &items[1]).to_string();
+                for clause in &items[2..] {
+                    let Some(parts) = clause.paren_items() else { continue };
+                    let Some(head) = head_symbol(source, parts) else { continue };
+                    let Some(params) = parts.get(1).and_then(Form::bracket_items) else { continue };
+                    let params: Vec<&str> = params.iter().map(|p| text(source, p)).collect();
+                    let tap = passes_reissue_through(source, &params, &parts[2..], head);
+                    *out.entry((handler.clone(), head.to_string())).or_insert(true) &= tap;
                 }
             }
             visit(source, items, out);
@@ -339,6 +439,55 @@ pub enum Verdict {
     UnusedExternal(String),
     /// 外の世界の表の行に本番の答え手が無い。
     UnservedExternal(String),
+    /// DOEFF206: 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す(添字は `PassRow` の順)。
+    IntentPassedByTable(usize),
+    /// DOEFF206: 検証環境の dir の中の handler の節が intent の層の効果に、出し直しの答えをそのまま渡す tap でなく答えを作る(Clause の添字)。
+    IntentAnsweredInVerification(usize),
+}
+
+/// 違反を通す表の行 1 つ(DOEFF206 の材料)。鍵は外の世界の表なら効果の完全名、ほかは `<path>::<handler>::<効果>`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassRow {
+    /// 表の dir(宣言の綴り)。
+    pub table: String,
+    pub key: String,
+    /// 行の file(root からの綴り)。
+    pub origin: String,
+}
+
+impl PassRow {
+    /// 行が通す効果(鍵の最後の `::` の後 — `::` の無い鍵はそのまま効果の完全名)。
+    pub fn effect(&self) -> &str {
+        self.key.rsplit_once("::").map(|(_, effect)| effect).unwrap_or(&self.key)
+    }
+}
+
+/// DOEFF206 の判定の材料。
+pub struct IntentFakeInputs<'a> {
+    pub clauses: &'a [Clause],
+    /// 節の効果が intent の層の効果か(Clause の順)。
+    pub intent_effect: &'a [bool],
+    /// 節が検証環境の dir の中の file に在るか。
+    pub in_verification: &'a [bool],
+    /// 節が狭い tap(同じ効果を出し直し、その答えをそのまま resume する)か。
+    pub pass_through: &'a [bool],
+    pub counterexamples: &'a BTreeMap<String, String>,
+    pub rows: &'a [PassRow],
+    /// 行の効果が intent の層の効果か(PassRow の順)。
+    pub row_intent: &'a [bool],
+}
+
+/// DOEFF206: intent の層の効果は、模擬でも本番の翻訳の handler が答える — 検証環境が自前で答える節と、それを通す表の行を出す。
+/// 外すのは狭い tap と、反例の表に鍵(`<path>::<handler>::<効果>`)の在る節だけ(登録簿では下げない — 規則の側で決める)。
+pub fn judge_intent_fakes(inputs: &IntentFakeInputs) -> Vec<Verdict> {
+    let IntentFakeInputs { clauses, intent_effect, in_verification, pass_through, counterexamples, rows, row_intent } = inputs;
+    let rows = rows.iter().enumerate().filter(|(i, _)| row_intent[*i]).map(|(i, _)| Verdict::IntentPassedByTable(i));
+    let answers = clauses
+        .iter()
+        .enumerate()
+        .filter(|(i, clause)| in_verification[*i] && intent_effect[*i] && !pass_through[*i] && !counterexamples.contains_key(&clause.key()))
+        .map(|(i, _)| Verdict::IntentAnsweredInVerification(i));
+    rows.chain(answers).collect()
 }
 
 pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
@@ -477,6 +626,8 @@ mod tests {
             external_effects: None,
             counterexamples: None,
             unserved: None,
+            lower_layer_passages: None,
+            test_only_fakes: None,
         }
     }
 
@@ -528,6 +679,39 @@ mod tests {
         assert_eq!(python_isinstance_effects(py, "app.screen.entry.values"), vec!["app.clock.Now".to_string(), "app.screen.effects.Log".to_string()]);
         let relative = "from ..effects import Log\ndef d(effect):\n    return isinstance(effect, Log)\n";
         assert_eq!(python_isinstance_effects(relative, "app.screen.entry.values"), vec!["app.screen.effects.Log".to_string()]);
+    }
+
+    /// DOEFF206 の狭い tap: 出し直した答えをそのまま resume する節だけ(DOEFF143 の taps_in より狭い)。
+    #[test]
+    fn pass_through_taps_resume_the_reissued_answer_unchanged() {
+        let source = r#"
+(defhandler h
+  (ReadRow [key] (<- row (ReadRow key)) (resume row))
+  (Tick [n] (<- seen int effect) (resume seen))
+  (Log [line] (setv answer (yield effect)) (resume answer))
+  (Bend [n] (<- seen effect) (resume (+ seen 1)))
+  (Swap [n] (<- seen effect) (<- other (Swap 2)) (resume other))
+  (Keyed [key n] (<- row (Keyed :key key :n n)) (resume row))
+  (Aliased [n] (val request effect) (<- seen datetime (GetTime)) (<- answer request) (resume answer))
+  (Split [n] (if n (resume 0) (do (<- seen effect) (resume seen))))
+  (Drop [n] (yield effect))
+  (Own [n] (resume n)))
+"#;
+        let taps = pass_through_taps_in(source);
+        let tap = |head: &str| taps.get(&("h".to_string(), head.to_string())).copied();
+        assert_eq!(tap("ReadRow"), Some(true));
+        assert_eq!(tap("Tick"), Some(true));
+        assert_eq!(tap("Log"), Some(true));
+        assert_eq!(tap("Bend"), Some(false)); // 答えを変えて resume
+        assert_eq!(tap("Swap"), Some(false)); // 引数を変えて出し直した答え(同じ効果の出し直しではない)
+        assert_eq!(tap("Aliased"), Some(true)); // 受けた effect の別名の出し直し
+        assert_eq!(tap("Keyed"), Some(true)); // :欄 の語つきでも、受けた引数をそのまま並べた出し直し
+        assert_eq!(tap("Split"), Some(false)); // 枝の 1 つで自前の値
+        assert_eq!(tap("Drop"), Some(false)); // resume が無い
+        assert_eq!(tap("Own"), Some(false));
+        // DOEFF143 の読み(taps_in)は字面の出し直しで tap に数えるまま。
+        let wide = taps_in(source);
+        assert_eq!(wide.get(&("h".to_string(), "Bend".to_string())), Some(&true));
     }
 
     #[test]

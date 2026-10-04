@@ -3332,6 +3332,133 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
     assert_eq!(known["registered"], true, "{}", known);
 }
 
+/// DOEFF206 の宣言(:verification-environment "sim"・:business-fakes の 4 つの表・:assembly-shape の intent の層)を書いた一時の repo。
+/// 請求の service は層 intent を持ち、効果 Charge・Refund・Settle・Ship は層 intent、Now は土台(foundation)の効果。
+fn intent_fake_repo(files: &[(&str, String)], registry: Option<(&str, &str)>) -> tempfile::TempDir {
+    let intent = |name: &str| format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name);
+    let mut all: Vec<(&str, String)> = vec![
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/foundation/clock_effects.hy", tags("shared", "foundation") + "(defeffect Now \"時計\" {:fields [] :answer int :tags {:context \"shared\" :role \"foundation\"}})\n"),
+        ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund") + &intent("Settle") + &intent("Ship")),
+    ];
+    all.extend(files.iter().cloned());
+    let dir = world_repo_with(&all, "", "[\"DOEFF206\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declarations = ":foundation foundation\n  :verification-environment \"sim\"\n  \
+                        :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] :tests [\"**/tests/**\"] \
+                        :production [\"app/**\"] :business-modules [\"app.billing\"] \
+                        :external-effects \"tables/EXTERNAL-EFFECTS\" :counterexamples \"tables/COUNTEREXAMPLES\" \
+                        :lower-layer-passages \"tables/LOWER-LAYER-PASSAGES\" :test-only-fakes \"tables/TEST-ONLY-FAKES\"}\n  \
+                        :assembly-shape {:translation-point \"with-*-translation\" :retired-function \"handlers-of\" \
+                        :translations \"TRANSLATION-HANDLERS\" :translation-layer \"entry\" :intent-layer \"intent\"}";
+    let text = std::fs::read_to_string(&arch_path)
+        .unwrap()
+        .replace(":foundation foundation", declarations)
+        .replace("(layer entry", "(layer intent :roles [intent] :imports [core intent])\n           (layer entry")
+        .replace("(defservice billing \"請求\" {:layers [core entry]})", "(defservice billing \"請求\" {:layers [core intent entry]})");
+    std::fs::write(&arch_path, text).unwrap();
+    for table in ["EXTERNAL-EFFECTS", "COUNTEREXAMPLES", "LOWER-LAYER-PASSAGES", "TEST-ONLY-FAKES"] {
+        std::fs::create_dir_all(dir.path().join("tables").join(table)).unwrap();
+    }
+    if let Some((name, key)) = registry {
+        let pyproject = dir.path().join("pyproject.toml");
+        let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\ndirs = [\"registry/BREACHES\"]\n";
+        std::fs::write(&pyproject, settings).unwrap();
+        let registry = dir.path().join("registry/BREACHES");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::write(registry.join(name), format!("{}\n既知の当たりとして載せてみる(下がらない事の見本)\n", key)).unwrap();
+    }
+    dir
+}
+
+/// agora-redesign #3405・#3407(DOEFF206 の (a)): 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を
+/// 通せば、その行の file の位置で critical。土台(foundation)の効果を通す行は鳴らない。
+#[test]
+fn tables_passing_intent_effects_are_critical_at_the_row() {
+    let files = [
+        ("tables/EXTERNAL-EFFECTS/charge.txt", "app.billing.intent.effects.Charge\n外の相手(と名乗った intent の効果)\n".to_string()),
+        ("tables/EXTERNAL-EFFECTS/now.txt", "app.foundation.clock_effects.Now\n時計(土台の効果 — 鳴らない)\n".to_string()),
+        (
+            "tables/LOWER-LAYER-PASSAGES/refund.txt",
+            "app/sim/route.hy::route-refund::app.billing.intent.effects.Refund\n振り分け(intent の効果 — 鳴る)\n".to_string(),
+        ),
+        (
+            "tables/TEST-ONLY-FAKES/settle.txt",
+            "app/billing/tests/test_settle.hy::fake-settle::app.billing.intent.effects.Settle\n検だけの偽物(intent の効果 — 鳴る)\n".to_string(),
+        ),
+        ("tables/TEST-ONLY-FAKES/now.txt", "app/billing/tests/test_clock.hy::fake-now::app.foundation.clock_effects.Now\n土台の効果(鳴らない)\n".to_string()),
+    ];
+    let dir = intent_fake_repo(&files, None);
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    let external = "tables/EXTERNAL-EFFECTS/charge.txt::DOEFF206::pass:app.billing.intent.effects.Charge";
+    let lower = "tables/LOWER-LAYER-PASSAGES/refund.txt::DOEFF206::pass:app/sim/route.hy::route-refund::app.billing.intent.effects.Refund";
+    let test_only = "tables/TEST-ONLY-FAKES/settle.txt::DOEFF206::pass:app/billing/tests/test_settle.hy::fake-settle::app.billing.intent.effects.Settle";
+    assert_eq!(keys(&report, "DOEFF206"), vec![external, lower, test_only], "{}", report);
+    for key in [external, lower, test_only] {
+        let found = violation(&report, key);
+        assert_eq!(found["severity"], "error", "{}", found);
+        assert_eq!(found["level"], "critical", "{}", found);
+    }
+    assert!(violation(&report, external)["message"].as_str().unwrap().contains("intent の層の効果 app.billing.intent.effects.Charge を通す"), "{}", report);
+}
+
+/// agora-redesign #3405・#3407(DOEFF206 の (b)): 検証環境の dir の handler が intent の層の効果に自前で答えれば critical。
+/// 鳴らない例: 出し直した答えをそのまま resume する tap(受けた effect の別名の出し直しを含む)・反例の表に鍵の在る壊した節・土台の効果に答える節・検証環境の外(本番の側)の同じ節。
+/// 鳴る例: 自前の値・出し直した答えを変えて resume・枝の 1 つで自前の値を渡す節。
+#[test]
+fn verification_handlers_answering_intent_effects_are_critical_except_pass_through_taps() {
+    let files = [
+        (
+            "app/sim/fake_billing.hy",
+            "(import app.billing.intent.effects [Charge Refund Settle Ship])\n(import app.foundation.clock_effects [Now])\n\
+             (defhandler fake-charge (Charge [amount] (resume 0)))\n\
+             (defhandler watch-refund (Refund [amount] (<- answer int effect) (resume answer)))\n\
+             (defhandler watch-settle (Settle [amount] (<- answer (Settle amount)) (resume answer)))\n\
+             (defhandler alias-charge (Charge [amount] (val request effect) (<- answer request) (resume answer)))\n\
+             (defhandler bend-settle (Settle [amount] (<- answer (Settle amount)) (resume (+ answer 1))))\n\
+             (defhandler swap-refund (Refund [amount] (<- answer effect) (<- other (Refund 1)) (resume other)))\n\
+             (defhandler maybe-refund (Refund [amount] (if (> amount 9) (resume 0) (do (<- answer effect) (resume answer)))))\n\
+             (defhandler broken-ship (Ship [amount] (resume 0)))\n\
+             (defhandler sim-clock (Now [] (resume 0)))\n"
+                .to_string(),
+        ),
+        (
+            "app/billing/entry/translate.hy",
+            tags("billing", "entry") + "(import app.billing.intent.effects [Charge])\n(defhandler charge-reads (Charge [amount] (resume 0)))\n",
+        ),
+        ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\n出荷を 0 で返す壊した handler\n".to_string()),
+    ];
+    let dir = intent_fake_repo(&files, None);
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    let key = |handler: &str, effect: &str| format!("app/sim/fake_billing.hy::DOEFF206::verification:{}::app.billing.intent.effects.{}", handler, effect);
+    let mut expected = vec![key("bend-settle", "Settle"), key("fake-charge", "Charge"), key("maybe-refund", "Refund")];
+    expected.push(key("swap-refund", "Refund"));
+    expected.sort();
+    assert_eq!(keys(&report, "DOEFF206"), expected, "{}", report);
+    let found = violation(&report, &key("fake-charge", "Charge"));
+    assert_eq!(found["level"], "critical", "{}", found);
+    assert!(found["message"].as_str().unwrap().contains("自前で答える"), "{}", found);
+}
+
+/// agora-redesign #3405(DOEFF206): 登録簿(既知の当たりの表)に鍵を載せても DOEFF206 の当たりは下がらない — error・critical・registered でない。
+#[test]
+fn intent_fakes_in_verification_are_not_lowered_by_the_registry() {
+    let files = [(
+        "app/sim/fake_billing.hy",
+        "(import app.billing.intent.effects [Charge])\n(defhandler fake-charge (Charge [amount] (resume 0)))\n".to_string(),
+    )];
+    let key = "app/sim/fake_billing.hy::DOEFF206::verification:fake-charge::app.billing.intent.effects.Charge";
+    let dir = intent_fake_repo(&files, Some(("charge.txt", key)));
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF206"), vec![key], "{}", report);
+    let found = violation(&report, key);
+    assert_eq!(found["severity"], "error", "{}", found);
+    assert_eq!(found["level"], "critical", "{}", found);
+    assert_eq!(found["registered"], false, "{}", found);
+}
+
 /// DOEFF150・151 の宣言を architecture.hy に足した一時の repo。語・呼びは agora-controllers の宣言(#1193 の移し元 check_vocabulary・
 /// check_controller_clock が数えていた物)と同じ綴りを検の材料として書く — linter の本体は語の表を持たない。
 fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
