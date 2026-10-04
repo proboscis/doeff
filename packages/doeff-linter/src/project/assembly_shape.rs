@@ -9,6 +9,10 @@
 //! * 組の file(`:business-fakes` の `:sets` に当たる本番の code の file)が残る
 //! * 組み立ての層に退役した組み立ての関数(`:retired-function`)が残る
 //! * 翻訳の列の 1 点が `#*` で翻訳の列でない import した名を並べる
+//! * 翻訳の列の 1 点が `#*` で自分の引数を並べる(呼び手が列を渡せると、模擬が本番と別の列を渡せる — 列は翻訳の層の定数だけ・
+//!   agora-redesign #3408)
+//! * 検証環境(architecture.hy の `:verification-environment` の dir)と検の file が、翻訳の列(1 点が並べてよい列)を `#*` で
+//!   開いて並べる — 模擬は本番と同じ翻訳の列の 1 点を呼び、列を自分で組まない(1 点が一緒に並べる別の列・順は写らない・#3408)
 //! * 列の並び: 列が出し直す別の service の intent の効果(`:intent-layer`)に答える列が、それより外側(前)に無い
 //! * 翻訳の列の定数が別の service の翻訳の層の定義を並べる
 //!
@@ -94,6 +98,27 @@ pub struct TranslationPoint {
     pub sequence: Vec<String>,
     /// `#*` で並べたのに翻訳の列でない import した名(書いた綴り)。
     pub strays: Vec<String>,
+    /// `#*` で並べた 1 点の defk の引数(書いた綴り)。
+    pub parameters: Vec<String>,
+}
+
+/// 翻訳の列の 1 点の読み(read_points の答え 1 つ)— 1 点の名・並べた翻訳の列・翻訳の列でない import した名・並べた引数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointRead {
+    pub name: String,
+    pub sequence: Vec<String>,
+    pub strays: Vec<String>,
+    pub parameters: Vec<String>,
+}
+
+/// 翻訳の列の 1 点の外で翻訳の列を `#*` で開いた所 1 つ(検証環境か検の file)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LooseList {
+    pub rel: String,
+    /// 開いた所を含む最上位の定義の完全名(定義の外なら None)。
+    pub at: Option<String>,
+    /// 開いた翻訳の列の完全名。
+    pub list: String,
 }
 
 /// 破れの種類(閉じた型 — 規則と鍵の細目と文はここから決まる)。
@@ -105,6 +130,10 @@ pub enum Law {
     Retired,
     /// 翻訳の列の 1 点が翻訳の列でない名を並べる。
     Stray { name: String },
+    /// 翻訳の列の 1 点が自分の引数 name を並べる。
+    Parameter { name: String },
+    /// 検証環境か検の file が翻訳の列 list を 1 点の外で開いて並べる。
+    Loose { list: String },
     /// 列 list が出し直す別の service の intent の効果 effect に答える列が外側に無い。
     Order { list: String, effect: String },
     /// 翻訳の列が別の service の翻訳 reference を並べる。
@@ -137,6 +166,8 @@ impl Breach {
             Law::SetFile => "set-file".to_string(),
             Law::Retired => "retired".to_string(),
             Law::Stray { name } => format!("stray:{}", name),
+            Law::Parameter { name } => format!("parameter:{}", name),
+            Law::Loose { list } => format!("loose:{}", list),
             Law::Order { list, effect } => format!("order:{}:{}", list, effect),
             Law::OwnTranslations { reference, .. } => format!("own:{}", reference),
             Law::GenericTarget { handler, effect } => format!("target:{}:{}", handler, effect),
@@ -162,6 +193,20 @@ impl Breach {
             Law::Stray { name } => (
                 format!("{} の翻訳の列の 1 点が並べる {}", self.rel, name),
                 format!("翻訳の列でない — #* で並べるのは翻訳の層から import した {}(か置き場を持たない service の持ち主の列)だけ。土台の handler は本体を包む字面に置く", shape.translations),
+            ),
+            Law::Parameter { name } => (
+                format!("{} の翻訳の列の 1 点が並べる引数 {}", self.rel, name),
+                format!(
+                    "翻訳の列を呼び手から受ける — 呼び手(模擬を含む)が本番と別の列を渡せる。#* で並べるのは翻訳の層から import した {} だけ。呼び手ごとに違う列は 1 点を分ける",
+                    shape.translations
+                ),
+            ),
+            Law::Loose { list } => (
+                format!("{} が開いて並べる翻訳の列 {}", self.rel, list),
+                format!(
+                    "翻訳の列の 1 点({})の外で翻訳の列を並べる — 模擬と検は本番と同じ 1 点を呼ぶ(列を自分で組むと、1 点が一緒に並べる別の列・順・設定の読みが写らず、本番と別の組み立てになる)",
+                    shape.translation_point
+                ),
             ),
             Law::Order { list, effect } => (
                 format!("{} の翻訳の列の 1 点が並べる列 {}", self.rel, list),
@@ -246,12 +291,13 @@ pub fn translation_list(model: &Model, shape: &AssemblyShape, target: &str) -> b
 }
 
 /// 判じる。retired = 組み立ての層に残る退役した関数の (file, 完全名)・points = 翻訳の列の 1 点の読み・
-/// orders = 翻訳の列の定数の完全名 → 要素の名 → 位置。
+/// loose = 検証環境と検の file が 1 点の外で開いた翻訳の列・orders = 翻訳の列の定数の完全名 → 要素の名 → 位置。
 pub fn judge(
     model: &Model,
     shape: &AssemblyShape,
     retired: &[(String, String)],
     points: &[TranslationPoint],
+    loose: &[LooseList],
     orders: &HashMap<String, HashMap<String, usize>>,
 ) -> Vec<Breach> {
     let mut out = Vec::new();
@@ -267,8 +313,10 @@ pub fn judge(
     // 翻訳の列の 1 点: 翻訳の列でない名と、列どうしの並び(同じ鍵は 2 度出さない)。
     let mut emitted: BTreeSet<(String, String)> = BTreeSet::new();
     for point in points {
-        for name in &point.strays {
-            let breach = Breach { rel: point.rel.clone(), at: Some(point.function.clone()), law: Law::Stray { name: name.clone() } };
+        let named = point.strays.iter().map(|name| Law::Stray { name: name.clone() });
+        let given = point.parameters.iter().map(|name| Law::Parameter { name: name.clone() });
+        for law in named.chain(given) {
+            let breach = Breach { rel: point.rel.clone(), at: Some(point.function.clone()), law };
             if emitted.insert((breach.rel.clone(), breach.detail())) {
                 out.push(breach);
             }
@@ -297,6 +345,13 @@ pub fn judge(
                 }
             }
             outside.extend(own);
+        }
+    }
+    // 1 点の外で開いた翻訳の列(同じ file の同じ列は 1 度だけ)。
+    for found in loose {
+        let breach = Breach { rel: found.rel.clone(), at: found.at.clone(), law: Law::Loose { list: found.list.clone() } };
+        if emitted.insert((breach.rel.clone(), breach.detail())) {
+            out.push(breach);
         }
     }
     let constant = hy_mangle(&shape.translations);
@@ -422,14 +477,19 @@ fn handler_list<'f>(source: &str, form: &'f Form) -> Option<&'f [Form]> {
     })
 }
 
+/// defk の引数の列(`[a #^ T b * c]`)の名(mangle した綴り)。
+fn parameter_names(source: &str, params: &Form) -> BTreeSet<String> {
+    params.bracket_items().unwrap_or(&[]).iter().filter_map(|p| symbol(source, p)).filter(|n| *n != "*" && *n != "/").map(hy_mangle).collect()
+}
+
 /// file の翻訳の列の 1 点を読む。resolve = import した名(mangle した dotted の綴り)→ 名指す先の完全名、
-/// accepts = 翻訳の列として受けるか。答え = (1 点の名, 並べた翻訳の列, 翻訳の列でない import した名) の列。
+/// accepts = 翻訳の列として受けるか。答え = 1 点ごとの読み(並べた翻訳の列・翻訳の列でない import した名・並べた引数)。
 pub fn read_points(
     source: &str,
     shape: &AssemblyShape,
     resolve: &dyn Fn(&str) -> Option<String>,
     accepts: &dyn Fn(&str) -> bool,
-) -> Vec<(String, Vec<String>, Vec<String>)> {
+) -> Vec<PointRead> {
     let forms = Reader::new(source, 0, source.len()).read_all();
     // 同じ module の直下で列を並べた val / setv(`#*` で開く)。
     let locals: HashMap<String, &[Form]> = forms
@@ -449,12 +509,18 @@ pub fn read_points(
             continue;
         }
         let Some(listed) = items[2..].iter().find_map(|item| handler_list(source, item)) else { continue };
-        let (mut sequence, mut strays) = (Vec::new(), Vec::new());
+        let parameters_of = items.get(2).map(|p| parameter_names(source, p)).unwrap_or_default();
+        let (mut sequence, mut strays, mut parameters) = (Vec::new(), Vec::new(), Vec::new());
         let mut pending: VecDeque<&Form> = listed.iter().collect();
         let mut opened: BTreeSet<String> = BTreeSet::new();
         while let Some(item) = pending.pop_front() {
             let Node::Prefixed { prefix: Prefix::Unpack, inner: Some(inner) } = &item.node else { continue };
             let Some(spelled) = symbol(source, inner).map(mangle_dotted) else { continue };
+            // 引数は同じ名の import・val より先に当たる(本体の中の名は引数を指す)。
+            if parameters_of.contains(&spelled) {
+                parameters.push(spelled);
+                continue;
+            }
             match (resolve(&spelled), locals.get(&spelled)) {
                 (Some(target), _) if accepts(&target) => sequence.push(target),
                 (_, Some(local)) => {
@@ -468,9 +534,42 @@ pub fn read_points(
                 (None, None) => {}
             }
         }
-        points.push((name, sequence, strays));
+        points.push(PointRead { name, sequence, strays, parameters });
     }
     points
+}
+
+/// form の中の `#* 名` のうち、resolve が完全名へ解き accepts が翻訳の列と受ける物を、見つけた順に集める。
+fn unpacked_lists(source: &str, form: &Form, resolve: &dyn Fn(&str) -> Option<String>, accepts: &dyn Fn(&str) -> bool, out: &mut Vec<String>) {
+    match &form.node {
+        Node::Prefixed { prefix: Prefix::Unpack, inner: Some(inner) } => {
+            if let Some(target) = symbol(source, inner).map(mangle_dotted).and_then(|spelled| resolve(&spelled)).filter(|t| accepts(t)) {
+                out.push(target);
+            }
+            unpacked_lists(source, inner, resolve, accepts, out);
+        }
+        Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } | Node::Annotated { target: Some(inner), .. } => {
+            unpacked_lists(source, inner, resolve, accepts, out)
+        }
+        Node::Seq { items, .. } => items.iter().for_each(|item| unpacked_lists(source, item, resolve, accepts, out)),
+        _ => {}
+    }
+}
+
+/// 検証環境か検の file で、翻訳の列を `#*` で開いて並べた所を読む(翻訳の列の 1 点の外 — 1 点は組み立ての層にだけ在る)。
+/// 答え = (開いた所を含む最上位の定義の名〔mangle した綴り・定義の外なら None〕, 開いた翻訳の列の完全名) の列。
+pub fn loose_lists(source: &str, resolve: &dyn Fn(&str) -> Option<String>, accepts: &dyn Fn(&str) -> bool) -> Vec<(Option<String>, String)> {
+    let mut found = Vec::new();
+    for form in Reader::new(source, 0, source.len()).read_all() {
+        let mut lists = Vec::new();
+        unpacked_lists(source, &form, resolve, accepts, &mut lists);
+        let defined = form.paren_items().and_then(|items| {
+            let head = symbol(source, items.first()?)?;
+            (head.starts_with("def") || matches!(head, "val" | "var" | "setv")).then(|| symbol(source, items.get(1)?)).flatten().map(hy_mangle)
+        });
+        found.extend(lists.into_iter().map(|list| (defined.clone(), list)));
+    }
+    found
 }
 
 /// 翻訳の列の定数の要素の並び(要素の名(記号か、handler を作る呼び出しの頭)→ 最初の位置)。literal でなければ None。
@@ -626,15 +725,49 @@ pub fn find(
         }
         let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
         let names = import_names(file);
-        let resolve = |spelled: &str| -> Option<String> {
-            names.get(spelled).cloned().or_else(|| {
-                let (head, rest) = spelled.split_once('.')?;
-                names.get(head).map(|module| format!("{}.{}", module, rest))
-            })
-        };
+        let resolve = |spelled: &str| resolved(&names, spelled);
         let accepts = |target: &str| translation_list(&model, shape, target);
-        for (name, sequence, strays) in read_points(&source, shape, &resolve, &accepts) {
-            points.push(TranslationPoint { rel: rel.to_string(), function: format!("{}.{}", module_of(rel), name), sequence, strays });
+        for read in read_points(&source, shape, &resolve, &accepts) {
+            points.push(TranslationPoint {
+                rel: rel.to_string(),
+                function: format!("{}.{}", module_of(rel), read.name),
+                sequence: read.sequence,
+                strays: read.strays,
+                parameters: read.parameters,
+            });
+        }
+    }
+    // 検証環境と検の file が 1 点の外で開いた翻訳の列(読むのは、翻訳の列か、それを持つ module を import した file だけ)。数える列 =
+    // 1 点が並べてよい列と、組み立ての層が翻訳の層の handler か翻訳の列を束ねた列(例 entry の <名>-TRANSLATIONS — 模擬がそれを開くと、
+    // 1 点の外で本番の列の一部を組む)。
+    let translation_layer = |name: &str| {
+        model.by_name.get(name).is_some_and(|&at| matches!(&model.tops[at].layer, Some((layer, _)) if *layer == shape.translation_layer))
+    };
+    let bundles = |top: &Top| {
+        business_fakes::role_of(&top.rel, decl) == FileRole::Assembly
+            && !name_matches(&shape.translation_point, &top.name)
+            && top.refs.iter().any(|r| r != &top.qualified && (translation_layer(r) || translation_list(&model, shape, r)))
+    };
+    let lists: BTreeSet<&str> =
+        model.tops.iter().filter(|t| translation_list(&model, shape, &t.qualified) || bundles(t)).map(|t| t.qualified.as_str()).collect();
+    let list_modules: BTreeSet<&str> = lists.iter().filter_map(|q| q.rsplit_once('.').map(|(m, _)| m)).collect();
+    let mut loose = Vec::new();
+    let mut checked: Vec<&String> = hy
+        .keys()
+        .filter(|r| r.ends_with(".hy") && (architecture.in_verification_environment(r) || business_fakes::role_of(r, decl) == FileRole::Test))
+        .collect();
+    checked.sort();
+    for rel in checked {
+        let file = &hy[rel.as_str()];
+        let names = import_names(file);
+        if !names.values().any(|target| lists.contains(target.as_str()) || list_modules.contains(target.as_str())) {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
+        let resolve = |spelled: &str| resolved(&names, spelled);
+        let accepts = |target: &str| lists.contains(target);
+        for (defined, list) in loose_lists(&source, &resolve, &accepts) {
+            loose.push(LooseList { rel: rel.to_string(), at: defined.map(|name| format!("{}.{}", module_of(rel), name)), list });
         }
     }
     // 翻訳の列の定数の要素の並び。
@@ -646,7 +779,15 @@ pub fn find(
             orders.insert(top.qualified.clone(), order);
         }
     }
-    (judge(&model, shape, &retired, &points, &orders), problems)
+    (judge(&model, shape, &retired, &points, &loose, &orders), problems)
+}
+
+/// import した名(mangle した dotted の綴り)を名指す先の完全名へ解く(`p.X` は import した module p の X)。
+fn resolved(names: &HashMap<String, String>, spelled: &str) -> Option<String> {
+    names.get(spelled).cloned().or_else(|| {
+        let (head, rest) = spelled.split_once('.')?;
+        names.get(head).map(|module| format!("{}.{}", module, rest))
+    })
 }
 
 #[cfg(test)]
@@ -713,7 +854,8 @@ mod tests {
         assert!(!name_matches("with-*-translation", "land_notice_translation"));
         let source = "(val LOCAL [#* ORDERS-LIST])\n\
                       (defk with-orders-translation [body]\n  \"doc\"\n  {:pre []}\n  (<- answer (with-handlers [#* p.TRANSLATION-HANDLERS #* LOCAL #* POSTING-HANDLERS (reader) #* unknown] body))\n  answer)\n\
-                      (defk other [body] (with-handlers [#* POSTING-HANDLERS] body))\n";
+                      (defk other [body] (with-handlers [#* POSTING-HANDLERS] body))\n\
+                      (defk with-given-translation [#^ list translations body] (with-handlers [#* p.TRANSLATION-HANDLERS #* translations] body))\n";
         let resolve = |spelled: &str| match spelled {
             "p.TRANSLATION_HANDLERS" => Some("app.a.protocol.t.TRANSLATION_HANDLERS".to_string()),
             "ORDERS_LIST" => Some("app.orders.handlers.ORDERS_LIST".to_string()),
@@ -724,11 +866,34 @@ mod tests {
         let points = read_points(source, &shape(), &resolve, &accepts);
         assert_eq!(
             points,
-            vec![(
-                "with_orders_translation".to_string(),
-                vec!["app.a.protocol.t.TRANSLATION_HANDLERS".to_string(), "app.orders.handlers.ORDERS_LIST".to_string()],
-                vec!["POSTING_HANDLERS".to_string()],
-            )]
+            vec![
+                PointRead {
+                    name: "with_orders_translation".to_string(),
+                    sequence: vec!["app.a.protocol.t.TRANSLATION_HANDLERS".to_string(), "app.orders.handlers.ORDERS_LIST".to_string()],
+                    strays: vec!["POSTING_HANDLERS".to_string()],
+                    parameters: vec![],
+                },
+                // 列を引数で受ける 1 点(#3408): 引数は翻訳の列でも import した名でもなく、引数として読む。
+                PointRead {
+                    name: "with_given_translation".to_string(),
+                    sequence: vec!["app.a.protocol.t.TRANSLATION_HANDLERS".to_string()],
+                    strays: vec![],
+                    parameters: vec!["translations".to_string()],
+                },
+            ]
+        );
+        // 1 点の外で開いた翻訳の列(#3408): 定義ごとに、翻訳の列だけを拾う(翻訳の列でない列と、開かない参照は拾わない)。
+        let loose_source = "(defk world [clock] (agent-world clock [#* lower #* p.TRANSLATION-HANDLERS]))\n\
+                            (deftest test-x (with-handlers [#* POSTING-HANDLERS (spy)] (run (get p.TRANSLATION-HANDLERS 0))))\n\
+                            (val ALL [#* ORDERS-LIST])\n\
+                            (with-handlers [#* p.TRANSLATION-HANDLERS] (body))\n";
+        assert_eq!(
+            loose_lists(loose_source, &resolve, &accepts),
+            vec![
+                (Some("world".to_string()), "app.a.protocol.t.TRANSLATION_HANDLERS".to_string()),
+                (Some("ALL".to_string()), "app.orders.handlers.ORDERS_LIST".to_string()),
+                (None, "app.a.protocol.t.TRANSLATION_HANDLERS".to_string()),
+            ]
         );
         let order = list_order("(val TRANSLATION-HANDLERS [h-one (h-two x) h-one])", "TRANSLATION-HANDLERS").unwrap();
         assert_eq!((order["h_one"], order["h_two"]), (0, 1));
@@ -743,13 +908,30 @@ mod tests {
         let retired = vec![("app/a/entry/old.hy".to_string(), "app.a.entry.old.handlers_of".to_string())];
         let points = vec![
             // A を B より外に並べると、A が出し直す b の intent I に答える列が外側に無い。
-            TranslationPoint { rel: "app/a/entry/x.hy".into(), function: "app.a.entry.x.with_a_translation".into(), sequence: vec![a.into(), b.into()], strays: vec!["POSTING_HANDLERS".into()] },
-            // B を外に並べれば並びは合う。
-            TranslationPoint { rel: "app/a/entry/y.hy".into(), function: "app.a.entry.y.with_a_translation".into(), sequence: vec![b.into(), a.into()], strays: vec![] },
+            TranslationPoint {
+                rel: "app/a/entry/x.hy".into(),
+                function: "app.a.entry.x.with_a_translation".into(),
+                sequence: vec![a.into(), b.into()],
+                strays: vec!["POSTING_HANDLERS".into()],
+                parameters: vec![],
+            },
+            // B を外に並べれば並びは合う。列を引数で受ける 1 点は、引数の名で破れ(#3408)。
+            TranslationPoint {
+                rel: "app/a/entry/y.hy".into(),
+                function: "app.a.entry.y.with_a_translation".into(),
+                sequence: vec![b.into(), a.into()],
+                strays: vec![],
+                parameters: vec!["translations".into()],
+            },
+        ];
+        // 検証環境が 1 点の外で開いた翻訳の列(同じ file の同じ列は 1 度だけ — #3408)。
+        let loose = vec![
+            LooseList { rel: "sim/world.hy".into(), at: Some("sim.world.world".into()), list: a.into() },
+            LooseList { rel: "sim/world.hy".into(), at: Some("sim.world.other".into()), list: a.into() },
         ];
         let orders: HashMap<String, HashMap<String, usize>> = [(a.to_string(), [("h1".to_string(), 0), ("h2".to_string(), 1)].into())].into();
         let mut found: Vec<(String, String, bool)> =
-            judge(&model, &shape(), &retired, &points, &orders).iter().map(|b| (b.rel.clone(), b.detail(), b.is_shape())).collect();
+            judge(&model, &shape(), &retired, &points, &loose, &orders).iter().map(|b| (b.rel.clone(), b.detail(), b.is_shape())).collect();
         found.sort();
         let t = "app/a/protocol/translations.hy";
         let mut wanted: Vec<(String, String, bool)> = vec![
@@ -757,6 +939,8 @@ mod tests {
             ("app/a/handler_sets.hy".into(), "foundation:production_handlers:fh:app.old.E1".into(), false),
             ("app/a/entry/old.hy".into(), "retired".into(), true),
             ("app/a/entry/x.hy".into(), "stray:POSTING_HANDLERS".into(), true),
+            ("app/a/entry/y.hy".into(), "parameter:translations".into(), true),
+            ("sim/world.hy".into(), format!("loose:{}", a), true),
             ("app/a/entry/x.hy".into(), format!("order:{}:app.b.intent.I", a), true),
             (t.into(), "own:app.b.protocol.translations.bi".into(), true),
             // intent の効果は常に・同じ列が答えない E3 も・旧い置き場の E2 は同じ列の h2 が答えるので出し直してよいが h2 は内側。
