@@ -15,6 +15,7 @@
 (import doeff_records.effects [PutRow])
 (import doeff_records.values [ExpectAny])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
+(import doeff_records.event_source [records-unwaited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.meter_report [with-meter-report])
 
@@ -64,7 +65,7 @@
   (val endpoint (RecordsEndpoint "http://records.test" :meter (memory-meter-handler (MeterSettings))))
   (<- n int (foundation (with-handlers [(memory-meter-handler (MeterSettings))
                                         (records-outage-http (+ start (int (* 1000 outage-seconds))))
-                                        (http-records-handler endpoint)]
+                                        records-unwaited (http-records-handler endpoint)]
                                        (bridge (writes-then-idle endpoint writes 1.0)))))
   n)
 

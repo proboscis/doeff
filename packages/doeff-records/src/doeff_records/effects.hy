@@ -178,10 +178,11 @@
 
 
 (defclass [(dataclass :frozen True)] AwaitRecordsBack [EffectBase]
-  "記録の置き場が、表か列 names に再び答えるようになるまで待つ記録の effect(#3469)— 合図の源が置き場に届かない(Unreachable)時に、撃ち直しを
-   時間で繰り返さず、戻りを出来事として待つため。答え = None(戻った)。期限は持たない — 待つ側(源)が上限つきで待ち、上限を過ぎれば源が
-   落ちる。答えるのは戻りを知る所: memory の handler = 止まり(faults.SetStoreOutage)が解けて呼び鈴が鳴った時・本番 = doeff-cluster の
-   coordinator が記録の service の Ready を知らせた時(#3470)。HTTP の client と PostgreSQL の handler は答えずに外へ通す。"
+  "記録の置き場が、表か列 names に再び答えるようになるまで待つ記録の effect(#3469)— 合図の源と HTTP の client(要求と答え・#3557)が置き場に
+   届かない(Unreachable)時に、撃ち直しを時間で繰り返さず、戻りを出来事として待つため。答え = None(戻った)。期限は持たない — 待つ側が
+   上限つきで待ち、上限を過ぎれば源は落ち、client は Unreachable を返す。答えるのは戻りを知る所: memory の handler = 止まり
+   (faults.SetStoreOutage)が解けて呼び鈴が鳴った時・本番 = doeff-cluster の coordinator が記録の service の Ready を知らせた時(#3470)。
+   HTTP の client と PostgreSQL の handler は答えずに外へ通す。"
   (#^ (get tuple #(str ...)) names)
   (defn #^ None __post_init__ [self]
     (when (or (not (isinstance self.names tuple)) (not self.names))
@@ -191,6 +192,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadSourcePatience [EffectBase]
-  "合図の源が記録の置き場の止まりを待つ上限を問う記録の effect(#3469)。答え = SignalSourcePatience(doeff_records.event_source の型)。
-   答えるのは土台が記録の handler の隣に 1 か所だけ置く source-patience-handler(既定の値は無い — 置き忘れは止まりの拍に、答え手の無い
-   effect として名指して落ちる)。Ask にしないのは ReadSignalSource と同じ理由(組の内側の設定の読み手に横取りされうる)。")
+  "記録の置き場の止まりを待つ上限を問う記録の effect(#3469)— 合図の源が止まりの拍に、HTTP の client が要求のたびに問う(#3557)。答え =
+   SignalSourcePatience(doeff_records.event_source の型・0 = 待たない)。答えるのは組み立てが記録の handler の外側に置く
+   source-patience-handler(既定の値は無い — 置き忘れは HTTP の client の最初の要求で、答え手の無い effect として名指して落ちる)。待てない
+   1 呼びは、その外側に 0 秒の答え手 records-unwaited を置いて選ぶ。Ask にしないのは ReadSignalSource と同じ理由(組の内側の設定の
+   読み手に横取りされうる)。")

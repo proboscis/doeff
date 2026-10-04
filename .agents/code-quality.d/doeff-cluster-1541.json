@@ -1498,7 +1498,8 @@
         "doeff-cluster-host-reader",
         "doeff-cluster-boundary-recorder",
         "doeff-cluster-declaring",
-        "doeff-cluster-handoff-policy"
+        "doeff-cluster-handoff-policy",
+        "records-event-source"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

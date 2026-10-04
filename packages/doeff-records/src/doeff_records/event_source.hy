@@ -57,19 +57,26 @@
 
 
 (defrecord SignalSourcePatience
-  "合図の源が記録の置き場の止まりを待つ上限(ReadSourcePatience の答え — #3469): seconds = 止まりの最初の拍から数えて、戻りを待つ秒。
-   これを過ぎても戻らなければ源が SignalSourceUnreachable で process を落とす。値は土台が 1 か所で宣言する(この module は既定を持たない)。"
+  "記録の置き場の止まりを待つ上限(ReadSourcePatience の答え — #3469・HTTP の client の要求と答えも同じ上限で待つ・#3557):
+   seconds = 止まりの最初の拍から数えて、戻りを待つ秒。これを過ぎても戻らなければ源は SignalSourceUnreachable で process を落とし、
+   client は待った秒を名指した Unreachable を返す。0 = 待たない(源は最初の止まりで落ち、client は最初の Unreachable をそのまま返す —
+   名のある答え手 records-unwaited)。値は組み立てが 1 か所で選ぶ(この module は既定を持たない)。"
   {:tags {:context "records" :role "type"}
-   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (> seconds 0))]}
+   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (>= seconds 0))]}
   (#^ float seconds))
 
 
 (defhandler source-patience-handler [#^ SignalSourcePatience patience]
-  "土台が宣言した止まりの上限を、合図の源の問い ReadSourcePatience に答えるため(土台が記録の handler の隣に 1 か所だけ置く)。"
+  "組み立てが選んだ止まりの上限を、問い ReadSourcePatience に答えるため(組み立てが記録の handler の外側に置く — 合図の源と HTTP の client が問う)。"
   {:tags {:context "records" :role "foundation"}}
   ;; 引数に残す理由: 上限は土台の宣言の値で、組み立ての 1 か所が渡す(Ask で読むと組の内側の設定の読み手に横取りされうる — ReadSourcePatience の註)。
   (ReadSourcePatience []
     (resume patience)))
+
+
+;; 待たない上限(0 秒)の名のある答え手 — 止まりを待てない組み立て(coordinator の居ない process)と、待てない 1 呼び(処理ループの中の
+;; 読み書き・合図の源が自分で越える読み)が、外側に置いて名で選ぶ(#3557)。
+(val records-unwaited (source-patience-handler (SignalSourcePatience :seconds 0.0)))
 
 
 (defrecord ChangedRow
@@ -200,11 +207,14 @@
 (defk reachable [ask subscriber names]
   {:pre [(: ask (| ListRows WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))]
    :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
-  "記録の置き場への読み ask を撃ち、答えが Unreachable なら落ちずに置き場の戻りを待って撃ち直すため(止まりの越え方は ride-out-stall の 1 つ)。"
-  (<- answered ask)
+  "記録の置き場への読み ask を撃ち、答えが Unreachable なら落ちずに置き場の戻りを待って撃ち直すため(止まりの越え方は ride-out-stall の 1 つ)。
+   読みは待たない上限 records-unwaited の下で撃つ — HTTP の client が黙って待つと、止まりの合図 SourceStalled を出すのが client の上限の後に
+   なり、待ちも 2 重になる(源は自分で越えて合図を出す・#3557)。"
+  (val bare (with-handlers [records-unwaited] ask))
+  (<- answered bare)
   (when (not (isinstance answered Unreachable))
     (return answered))
-  (<- reached (ride-out-stall subscriber names answered ask))
+  (<- reached (ride-out-stall subscriber names answered bare))
   ;; 真偽は memory の置き場の読み直し(memory-reach)だけの答えで、記録の置き場への読み ask の答えには来ない — 来たら配線の誤りとして名指す。
   (match reached
     (bool) (raise (TypeError (.format "購読者 {!r} の読み {!r} の答えに真偽が来た(真偽は memory の置き場の読み直しだけの答え)" subscriber ask)))

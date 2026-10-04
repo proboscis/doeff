@@ -15,6 +15,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records.event_source [records-unwaited])
 (import doeff_records.http_server [records-server-config RunningServer start-records-server])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
 (import tests.interpreters [sim-request-handlers])
@@ -35,7 +36,7 @@
 (defn run-as [server clock #^ (| str None) writer program]
   "writer を名乗る client の handler で Program を走らせる(None = 名乗らない — anonymous の書き手)。client は token を送らない(#2986)。"
   (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
-                                  (http-records-handler (RecordsEndpoint server.url :writer writer))]
+                                  records-unwaited (http-records-handler (RecordsEndpoint server.url :writer writer))]
                                  program))))
 
 
@@ -170,7 +171,7 @@
         (var said None)
         (try
           (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
-                                          (http-records-handler endpoint)]
+                                          records-unwaited (http-records-handler endpoint)]
                                          (ReadRow "parts" #("p1")))))
           (except [error RecordsUnauthorized]
             (:= said (str error))))
@@ -279,7 +280,7 @@
   ;; 処理ループと同じ scheduler の task が読む時に、記録の service の不達で task を落とさないため。
   (val closed (RecordsEndpoint "http://127.0.0.1:9" :request-timeout 2.0))
   (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
-                                              (http-records-handler closed)]
+                                              records-unwaited (http-records-handler closed)]
                                              (ReadRow "parts" #("p1"))))))
   (assert (isinstance answer Unreachable) (repr answer))
   (assert (in "記録の service に届かない" answer.detail) (repr answer)))
@@ -296,7 +297,7 @@
   (try
     (defn both [program]
       (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
-                                      (http-records-handler (RecordsEndpoint tickets-server.url :writer maker))
+                                      records-unwaited (http-records-handler (RecordsEndpoint tickets-server.url :writer maker))
                                       (http-table-records-handler (RecordsEndpoint parts-server.url :writer maker) (frozenset ["parts"]))]
                                      program))))
     (assert (isinstance (both (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Written))

@@ -26,6 +26,17 @@
 ;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
 ;;; service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む。
 ;;;
+;;; 置き場の止まり(#3557 — 記録の service の短い停止を越える 1 か所): 要求と答えの 7 つ(ReadRow・ListRows・PutRow・
+;;; PutRows・AppendEvent・ReadEvents・ReadStreamEnd)は、届かない(503 store-unavailable を含む Unreachable)時に、止まりの上限まで置き場の
+;;; 戻りを待って同じ要求を撃ち直す(answered-riding-stall)。上限は合図の源と同じ問い ReadSourcePatience の答え、戻りは同じ
+;;; came-back-within(AwaitRecordsBack を見張りの task で受ける — 時間で撃ち直さない)。上限の問いは止まった時だけでなく要求のたびに撃つ —
+;;; 答え手の無い組み立ては最初の要求で名指しで落ち、止まりの日まで隠れない。待つかどうかは組み立てが上限の値で名を選ぶ(待つ秒か、
+;;; 待たない 0 秒 = records-unwaited)— 待てない呼び(処理ループの中の 1 呼び・coordinator の居ない process)は、その呼びの外側に
+;;; 0 秒の答え手を置く。上限を越えたら、待った秒を名指した Unreachable を返す(呼び手の扱いは今までどおり)。撃ち直しの冪等: 書きは
+;;; 期待つき(ExpectVersion・ExpectAbsent — 1 回目が実は書けていれば Conflict)か冪等キーつき(AppendEvent — 同じ鍵・同じ本文は前の
+;;; 番号を返す・laws.hy の law-append-is-idempotent)。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない — 合図の源が自分で
+;;; 止まりを越え、SourceStalled・SourceResumed を bus に出す(event_source.hy の ride-out-stall)。
+;;;
 ;;; 計器(#2740): endpoint に計器の答え手(meter)を渡すと、送った要求 1 つごとに要求の種 × 結果(service の答えの status・届かない・
 ;;; それ以外の status)を doeff の CountMetric で 1 つ数える(名の綴りは wire の CLIENT-ANSWER-METRIC)。記録の service に届かなかった
 ;;; 要求は service の計器に出ないので、client の側でだけ数えられる。meter の無い endpoint は計器の effect を出さない(答え手を持たない
@@ -35,13 +46,15 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import json)
+(import datetime [datetime])
 (import doeff [with-handlers])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects.meter_effects [CountMetric])
-(import doeff_time [GetMonotonic])
-(import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
+(import doeff_time [GetMonotonic GetTime])
+(import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource SignalSourcePatience came-back-within first-seen])
 (import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadSourcePatience])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal
                             CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome WRITER-HEADER
                             WATCH-MAX-SECONDS])
@@ -212,6 +225,46 @@
     _ (raise (WireError (.format "{} が {} で断られた: {} {}" request.operation reply.status refusal.error refusal.reason)))))
 
 
+(defk stall-names [ask]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd))] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "要求と答えの要求 ask が触る表と列の名前を知るため(戻りの問い AwaitRecordsBack に渡す — 置き場は名ごとに止まり得る)。"
+  (match ask
+    (ReadRow :table table) #(table)
+    (ListRows :table table) #(table)
+    (PutRow :table table) #(table)
+    (PutRows :writes writes) (! (first-seen (tuple (gfor write writes write.table))))
+    (AppendEvent :stream stream) #(stream)
+    (ReadEvents :stream stream) #(stream)
+    (ReadStreamEnd :stream stream) #(stream)))
+
+
+(defk answered-riding-stall [endpoint ask]
+  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd))]
+   :post [(: % (| WireAnswer Unreachable))] :tags {:context "records" :role "foundation"}}
+  "要求と答えの要求 ask 1 つに、置き場の止まりを越えて答えるため(file の頭の註「置き場の止まり」— client の 1 か所)。上限を要求のたびに
+   問い、届けばその答え、届かなければ上限(0 秒なら待たない)の残りまで置き場の戻りを待って同じ要求を撃ち直す。上限を越えたら、待った秒と
+   上限と最後の届かなさを名指した Unreachable を返す。"
+  (<- patience SignalSourcePatience (ReadSourcePatience))
+  (<- first (| WireAnswer Unreachable) (call-service endpoint ask))
+  (when (or (not (isinstance first Unreachable)) (<= patience.seconds 0))
+    (return first))
+  (<- names (get tuple #(str ...)) (stall-names ask))
+  (<- since datetime (GetTime))
+  (var answer first)
+  (while (isinstance answer Unreachable)
+    (<- now datetime (GetTime))
+    (val waited (.total-seconds (- now since)))
+    (<- back bool (came-back-within names (- patience.seconds waited)))
+    (when (not back)
+      (<- ended datetime (GetTime))
+      (return (Unreachable (.format "記録の置き場({})が {:g} 秒 待っても戻らない(上限 {:g} 秒): {}"
+                                    (.join ", " names) (.total-seconds (- ended since)) patience.seconds answer.detail))))
+    (<- again (| WireAnswer Unreachable) (call-service endpoint ask))
+    (:= answer again))
+  answer)
+
+
 (defk long-poll [endpoint ask]
   {:pre [(: endpoint RecordsEndpoint) (: ask (| WatchChanges WatchEvents))]
    :post [(: % (| Changes Reset EventsMoved EventsQuiet Unreachable))]
@@ -238,16 +291,16 @@
   (ReadSignalSource []
     (resume RECORDS-SIGNAL-SOURCE))
   (ReadRow [table key]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ListRows [table where fields cursor limit]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (PutRow [table key value expect]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (PutRows [writes]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
     ;; 待ちは service の long-poll(service の中の置き場が待つ — 読み直しを繰り返さない)。
@@ -258,13 +311,13 @@
     (<- answer (long-poll endpoint effect))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ReadEvents [stream after limit]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ReadStreamEnd [stream]
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer)))
 
 
@@ -277,19 +330,19 @@
   ;; だけ答える(置き場をまたぐ束は 1 つの置き場では書けない — 外側で断られる)。
   (ReadRow [table key]
     :when (in table served)
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ListRows [table where fields cursor limit]
     :when (in table served)
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (PutRow [table key value expect]
     :when (in table served)
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (PutRows [writes]
     :when (and writes (all (gfor w writes (in w.table served))))
-    (<- answer (call-service endpoint effect))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
     :when (and tables (all (gfor t tables (in t served))))

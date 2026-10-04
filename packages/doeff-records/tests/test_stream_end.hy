@@ -14,6 +14,7 @@
 (import doeff_records.effects [AppendEvent ReadStreamEnd])
 (import doeff_records.faults [SetStoreOutage StoreFault StoreOperation AddStoreFault])
 (import doeff_records.laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
+(import doeff_records.event_source [records-unwaited])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [records-server-config start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
@@ -66,7 +67,7 @@
   (try
     (val endpoint (RecordsEndpoint server.url :writer MAKER))
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (count-http-requests sent)
-                                                (sim-time-handler :clock clock) (http-records-handler endpoint)]
+                                                (sim-time-handler :clock clock) records-unwaited (http-records-handler endpoint)]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (StreamEnd (get sequences -1))) (repr answer))
     (assert (= (len sent) 1) (repr sent))
@@ -97,7 +98,7 @@
                                                          :request-handlers (sim-request-handlers clock)))))
   (try
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
-                                                (http-records-handler (RecordsEndpoint server.url :writer MAKER))]
+                                                records-unwaited (http-records-handler (RecordsEndpoint server.url :writer MAKER))]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (Unreachable DETAIL)) (repr answer))
     (finally (.close server))))
