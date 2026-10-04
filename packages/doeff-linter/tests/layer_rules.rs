@@ -5079,6 +5079,77 @@ fn assembly_shape_breaks_are_red() {
     assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
 }
 
+/// agora-redesign #3408(DOEFF155・#3406 の層 3 — 模擬の組み立ての翻訳の handler は本番と同じ物): 翻訳の列の 1 点が列を引数で受ける・
+/// 検証環境(:verification-environment)か検の file が翻訳の列を 1 点の外で開いて並べる、のどちらも赤(鳴る例)。模擬と検が本番の
+/// 1 点を呼べば鳴らない(鳴らない例)。
+#[test]
+fn simulations_that_build_their_own_translation_list_are_red() {
+    let point = |params: &str, extra: &str| {
+        tags("billing", "entry")
+            + &format!(
+                "(import app.billing.protocol.translate [TRANSLATION-HANDLERS])\n\
+                 (defk with-billing-translation [{}] (with-handlers [#* TRANSLATION-HANDLERS{}] body))\n",
+                params, extra
+            )
+    };
+    let given = [("app/billing/protocol/translate.hy", translation_module()), ("app/billing/entry/assembly.hy", point("translations body", " #* translations"))];
+    let dir = assembly_repo(&given, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF155");
+    assert_eq!(hits.len(), 1, "{:?}\n{}", hits, report);
+    assert!(hits[0].starts_with("app/billing/entry/assembly.hy::") && hits[0].ends_with("parameter:translations"), "{:?}", hits);
+    assert_eq!(violation(&report, &hits[0])["severity"], "error");
+
+    let own_list = "(require doeff-hy.macros [defk])\n(import app.billing.protocol.translate [TRANSLATION-HANDLERS])\n\
+                    (defk emulated-world [body] (with-handlers [#* TRANSLATION-HANDLERS] body))\n";
+    let loose = [
+        ("app/billing/protocol/translate.hy", translation_module()),
+        ("app/billing/entry/assembly.hy", point("body", "")),
+        ("app/sim/world.hy", tags("sim", "foundation") + own_list),
+        ("app/billing/tests/test_world.hy", tags("billing", "test") + own_list),
+    ];
+    let dir = assembly_repo(&loose, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    let mut hits = keys(&report, "DOEFF155");
+    hits.sort();
+    assert_eq!(hits.len(), 2, "{:?}\n{}", hits, report);
+    let list = "loose:app.billing.protocol.translate.TRANSLATION_HANDLERS";
+    assert!(hits[0].starts_with("app/billing/tests/test_world.hy::") && hits[0].ends_with(list), "{:?}", hits);
+    assert!(hits[1].starts_with("app/sim/world.hy::") && hits[1].ends_with(list), "{:?}", hits);
+
+    // 組み立ての層が翻訳の層の handler を束ねた列(1 点が並べる列の一部)を、模擬が開いて並べても赤。
+    let bundled = [
+        ("app/billing/protocol/translate.hy", translation_module()),
+        (
+            "app/billing/entry/assembly.hy",
+            point("body", "")
+                + "(import app.billing.protocol.translate [charge-reads])\n(require doeff-hy.macros [val])\n(val BILLING-TRANSLATIONS [charge-reads])\n",
+        ),
+        (
+            "app/sim/world.hy",
+            tags("sim", "foundation")
+                + "(require doeff-hy.macros [defk])\n(import app.billing.entry.assembly [BILLING-TRANSLATIONS])\n\
+                   (defk emulated-world [body] (with-handlers [#* BILLING-TRANSLATIONS] body))\n",
+        ),
+    ];
+    let dir = assembly_repo(&bundled, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    let hits = keys(&report, "DOEFF155");
+    assert_eq!(hits, vec!["app/sim/world.hy::DOEFF155::loose:app.billing.entry.assembly.BILLING_TRANSLATIONS".to_string()], "{}", report);
+
+    let calls_the_point = "(require doeff-hy.macros [defk])\n(import app.billing.entry.assembly [with-billing-translation])\n\
+                           (defk emulated-world [body] (with-billing-translation body))\n";
+    let quiet = [
+        ("app/billing/protocol/translate.hy", translation_module()),
+        ("app/billing/entry/assembly.hy", point("body", "")),
+        ("app/sim/world.hy", tags("sim", "foundation") + calls_the_point),
+        ("app/billing/tests/test_world.hy", tags("billing", "test") + calls_the_point),
+    ];
+    let dir = assembly_repo(&quiet, "[\"DOEFF155\"]");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
+}
+
 /// 翻訳の層(protocol)の翻訳の列 TRANSLATION-HANDLERS を `order` の順に並べた file。charge-reads は Charge に答え、旧い置き場
 /// (intent でない業務の module)の効果 LegacyRow を出し直す。legacy-reads は LegacyRow に答える。refund-reads は Refund に答え、
 /// `refund_body` を本体に持つ。
