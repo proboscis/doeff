@@ -186,7 +186,8 @@ pub enum ProjectRule {
     /// (agora-redesign #1375)。宣言は architecture.hy の :business-fakes。
     BusinessEffectFake,
     /// DOEFF155: 組み立ての形の破れ — 組の file が残る・組み立ての 1 点の関数の形(土台の列 1 つ + 翻訳の層から import した翻訳の列)・
-    /// defk 以外で書いた組み立て・列の並び・翻訳の列が別の service の翻訳を並べる(agora-redesign #1376)。宣言は :assembly-shape。
+    /// defk 以外で書いた組み立て・列の並び・翻訳の列が別の service の翻訳を並べる(agora-redesign #1376)・1 点が列を引数で受ける・
+    /// 検証環境と検が翻訳の列を 1 点の外で並べる(#3408)。宣言は :assembly-shape。
     AssemblyShapeBroken,
     /// DOEFF156: 翻訳の handler が列の外の業務の効果を出し直す・土台の handler が業務の効果に答える(agora-redesign #1376)。
     AssemblyAnswerMisplaced,
