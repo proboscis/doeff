@@ -92,7 +92,8 @@
   "解釈器の handler の組(先頭が外側): 時間の handler → 層 2 の handler → headless の adapter。"
   (setv settings {"disableAllHooks" True})
   (cond
-    (= backend FAKE) (+ [(sim-time-handler :clock (SimClock))] (fake-headless-claude-handlers fake-responder home-dir))
+    ;; fake の層 2 は process を起こさないので子の env は空・CLI の settings は本番の 2 つと同じ宣言。
+    (= backend FAKE) (+ [(sim-time-handler :clock (SimClock))] (fake-headless-claude-handlers fake-responder home-dir :env {} :settings settings))
     (= backend STUB) (+ [(sync-time-handler)]
                         (headless-claude-handlers home-dir (child-env) :settings settings
                                                   :command #(sys.executable "-m" "hy" STUB-PATH)))
@@ -591,7 +592,7 @@
 (defn run-with-redeem [#^ Path tmp-path world #^ dict answers #^ list asked program]
   "fake の層 2(呼び手の world)+ headless の adapter の外側に、引き換えの答え手を置いて走らせる。"
   (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock)) (redeem-answers answers asked)]
-                                    (fake-headless-claude-handlers None (str (/ tmp-path "home")) :world world))
+                                    (fake-headless-claude-handlers None (str (/ tmp-path "home")) :world world :env {} :settings {}))
                                  program))))
 
 (deftest test-headless-redeems-the-credential-ref-into-the-turn-env [tmp-path]
@@ -689,7 +690,7 @@
   (setv setting (Setting work None 60.0 8))
   (check-one-turn-then-resume
     (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))]
-                                      (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home))
+                                      (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home :env {} :settings {}))
                                    (one-turn-then-resume setting))))))
 
 
@@ -724,7 +725,6 @@
 (deftest test-the-fake-runtime-carries-the-given-env-and-settings-on-the-launch [tmp-path]
   ;; agora-redesign #3327: fake の組(fake_claude_agent_runtime_handlers)に渡した env と settings は、本番の組と同じく adapter が層 2 へ渡す
   ;; 起動の宣言(home.env と settings)に載る — 上の層の模擬が、本番と同じ手順で決めた子の env と CLI の settings を起動ごとに観測するため。
-  ;; 渡さなければ今までどおり env も settings も空(今の使い手の振る舞いは変わらない)。
   (import doeff_agents [fake-claude-agent-runtime-handlers])
   (import doeff_hy.frozen [thaw-json])
   (val work (/ tmp-path "work"))
@@ -737,10 +737,18 @@
                                                                                                 :env env :settings settings))))))
   (assert (= (len given) 1) given)
   (assert (= (dict (. (get given 0) home env)) env))
-  (assert (= (thaw-json (. (get given 0) settings)) settings))
-  (val omitted (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))]
-                                              (launched-specs work "omitted"
-                                                              (fake-claude-agent-runtime-handlers :responder fake-responder))))))
-  (assert (= (len omitted) 1) omitted)
-  (assert (= (dict (. (get omitted 0) home env)) {}))
-  (assert (= (thaw-json (. (get omitted 0) settings)) {})))
+  (assert (= (thaw-json (. (get given 0) settings)) settings)))
+
+(deftest test-the-fake-runtime-refuses-a-call-that-drops-env-or-settings []
+  ;; agora-redesign #3387: env と settings は既定の無い引数 — 落とした呼びは組を作る前に、落とした名を名指す TypeError で落ちる
+  ;; (「渡さなければ空」の古い形を残さない。宣言する物の無い呼び手は空の写像を明示で渡す)。fake の 3 つの口(土台を名指さない名・
+  ;; headless の名・組み立ての部品)ごとに、片方ずつ落として呼ぶ。
+  (import doeff_agents [fake-claude-agent-runtime-handlers fake-headless-claude-agent-handlers])
+  (val dropped [#("'env'" {"settings" {}}) #("'settings'" {"env" {}})])
+  (for [make [fake-claude-agent-runtime-handlers fake-headless-claude-agent-handlers]]
+    (for [#(missing given) dropped]
+      (with [(pytest.raises TypeError :match missing)]
+        (make :responder fake-responder #** given))))
+  (for [#(missing given) dropped]
+    (with [(pytest.raises TypeError :match missing)]
+      (fake-headless-claude-handlers fake-responder #** given))))

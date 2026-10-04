@@ -5,7 +5,7 @@
 ;;; 知らない — 知るのはこの組み立ての module だけ。
 ;;; どちらの組も外側に doeff-time の時間の handler(本番 = sync-time-handler・模擬 = sim-time-handler)と scheduler を要る。
 ;;; 並びは with_handlers の順(先頭が外側): 層 2 の handler → adapter(Program に近い側)。
-(import collections.abc [Callable])
+(import collections.abc [Callable Mapping])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome])
@@ -26,17 +26,18 @@
   [(claude-code-handler (ClaudeCodeHost (tuple command) (clock-of (sync-time-handler))))
    (headless-claude-handler config (HeadlessState))])
 
-(defn #^ list fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None] [env None] [settings None]]
+(defn #^ list fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]
+                                             * #^ (get Mapping #(str str)) env #^ (get Mapping #(str object)) settings]
   "模擬の組: doeff-claude-code の fake の handler + headless の adapter(process も API も使わない)。
    responder = (入力の本文 それまでの入力の tuple) → FakeReply(返事の本文・道具の秒数・許可の問いの要否)。
    world = 呼び手が持つ fake の世界(FakeClaudeWorld — 検の口で家の中身を触る・同じ家の上で process を作り直す〔world.restarted〕
    模擬のため)。responder と world はちょうど 1 つ。
-   env / settings = 本番の組(headless-claude-handlers)と同じ意味の家の env と CLI の settings(None = 空 — 今までの fake と同じ)。
-   上の層の模擬が、本番と同じ手順で決めた env と settings を起動の宣言(層 2 へ渡る ClaudeSessionSpec の home.env と settings)に
-   載せて観測するため(agora-redesign #3327)。fake の層 2 はどちらも読まない。"
+   env / settings = 本番の組(headless-claude-handlers)と同じ意味の家の env(文字列 → 文字列の写像)と CLI の settings(JSON の写像)。
+   どちらも必ず渡す(既定の値は無い — 宣言する物の無い呼び手は空の写像を明示で渡す・agora-redesign #3387)。上の層の模擬が、本番と
+   同じ手順で決めた env と settings を起動の宣言(層 2 へ渡る ClaudeSessionSpec の home.env と settings)に載せて観測するため
+   (agora-redesign #3327)。fake の層 2 はどちらも読まない。どちらも宣言を作る時に凍らせる(ClaudeHome・HeadlessClaudeConfig)。"
   (when (= (is responder None) (is world None))
     (raise (ValueError "fake-headless-claude-handlers は responder と world のちょうど 1 つを受ける")))
   [(fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world))
-   (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir (if (is env None) (FrozenMap) env))
-                                                  :settings (if (is settings None) (FrozenMap) settings))
+   (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings)
                             (HeadlessState))])

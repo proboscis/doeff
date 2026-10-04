@@ -192,8 +192,8 @@ def fake_headless_claude_agent_handlers(
     responder: Any = None,
     config_dir: str = "fake-claude-home",
     world: Any = None,
-    env: Mapping[str, str] | None = None,
-    settings: Mapping[str, Any] | None = None,
+    env: Mapping[str, str],
+    settings: Mapping[str, object],
 ) -> list[Any]:
     """The same adapter over doeff-claude-code's fake handler (no process, no API).
 
@@ -202,13 +202,15 @@ def fake_headless_claude_agent_handlers(
     (a ``FakeClaudeWorld`` the caller keeps — e.g. ``world.restarted()`` for a
     new process over the same home) instead of ``responder``; exactly one.
     ``env`` / ``settings`` mean the same as for ``headless_claude_agent_handlers``
-    (the home's process env and the CLI settings — empty when omitted, as before):
-    a caller's emulation passes what its production path decided, so the launch
-    declaration the fake layer 2 receives carries them (agora-redesign #3327).
+    (the home's process env as a str → str mapping and the CLI settings as a
+    JSON mapping). Both are required (agora-redesign #3387): a caller's
+    emulation passes what its production path decided, so the launch
+    declaration the fake layer 2 receives carries them (agora-redesign #3327);
+    a caller with nothing to declare passes empty mappings explicitly.
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
     return _hy_headless_compose_module().fake_headless_claude_handlers(
-        responder, config_dir, world, None if env is None else dict(env), settings
+        responder, config_dir, world, env=env, settings=settings
     )
 
 
@@ -242,16 +244,18 @@ def fake_claude_agent_runtime_handlers(
     responder: Any = None,
     config_dir: str = "fake-claude-home",
     world: Any = None,
-    env: Mapping[str, str] | None = None,
-    settings: Mapping[str, Any] | None = None,
+    env: Mapping[str, str],
+    settings: Mapping[str, object],
 ) -> list[Any]:
     """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
 
     ``responder(text, memory) -> FakeReply`` scripts each turn
     (``doeff_agents.handlers.headless_compose.FakeReply``), or ``world`` is a
     ``FakeClaudeWorld`` the caller keeps (exactly one of the two).
-    ``env`` / ``settings`` are the same home env and CLI settings the production
-    runtime takes (empty when omitted); they ride on the launch declaration only.
+    ``env`` / ``settings`` are the same home env (str → str) and CLI settings
+    (a JSON mapping) the production runtime takes; both are required — pass
+    empty mappings explicitly when there is nothing to declare (agora-redesign
+    #3387). They ride on the launch declaration only.
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
     return fake_headless_claude_agent_handlers(
