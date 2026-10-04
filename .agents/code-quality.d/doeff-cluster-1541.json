@@ -1397,6 +1397,8 @@
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
         "doeff-cluster-kube-handlers",
+        "doeff-cluster-launch-model",
+        "doeff-cluster-launch-rules",
         "doeff-cluster-lease-rules",
         "doeff-cluster-local",
         "doeff-cluster-main",
