@@ -97,5 +97,13 @@ class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
 @dataclass(frozen=True)
 class ReadSignalSource(EffectBase["SignalSourceFactory"]): ...
 
+# 置き場の戻りを待つ問いと、止まりの上限の問い(#3469)— 上限の答えは doeff_records.event_source の SignalSourcePatience(型を文字列で名指す)。
+@dataclass(frozen=True)
+class AwaitRecordsBack(EffectBase[None]):
+    names: tuple[str, ...]
+
+@dataclass(frozen=True)
+class ReadSourcePatience(EffectBase["SignalSourcePatience"]): ...
+
 if TYPE_CHECKING:
-    from doeff_records.event_source import SignalSourceFactory
+    from doeff_records.event_source import SignalSourceFactory, SignalSourcePatience

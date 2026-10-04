@@ -11,8 +11,12 @@ from functools import partial as partial
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
 from doeff import with_handlers as with_handlers
+from datetime import datetime as datetime
 from doeff_core_effects.scheduler import Cancel as Cancel
+from doeff_core_effects.scheduler import CompletePromise as CompletePromise
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import CreatePromise as CreatePromise
+from doeff_core_effects.scheduler import Promise as Promise
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import Task as Task
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
@@ -20,12 +24,18 @@ from doeff_core_effects.scheduler import Wait as Wait
 from doeff_events.effects import Publish as Publish
 from doeff_events.effects import PublishEffect as PublishEffect
 from doeff_events.effects import SourceFailed as SourceFailed
+from doeff_events.effects import SourceResumed as SourceResumed
+from doeff_events.effects import SourceStalled as SourceStalled
 from doeff_events.effects import WaitForEventEffect as WaitForEventEffect
-from doeff_time import Delay as Delay
-from doeff_time import DelayEffect as DelayEffect
+from doeff_time import GetTime as GetTime
+from doeff_time import WaitWithin as WaitWithin
+from doeff_time.effects.time import GetTimeEffect as GetTimeEffect
+from doeff_time.effects.time import WaitWithinEffect as WaitWithinEffect
 from doeff_records.admission import key_text as key_text
+from doeff_records.effects import AwaitRecordsBack as AwaitRecordsBack
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import ReadSignalSource as ReadSignalSource
+from doeff_records.effects import ReadSourcePatience as ReadSourcePatience
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records.effects import WatchChanges as WatchChanges
 from doeff_records.effects import WatchEvents as WatchEvents
@@ -43,8 +53,16 @@ from doeff_records.values import checked_table_name as checked_table_name
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 WATCH_SECONDS: float
-RECONNECT_TRIES: int
-RECONNECT_SECONDS: float
+
+@dataclass(frozen=True, kw_only=True)
+class SignalSourcePatience:
+    seconds: float
+
+    def __post_init__(self) -> None:
+        ...
+
+def source_patience_handler(patience: SignalSourcePatience) -> _Handler:
+    ...
 
 @dataclass(frozen=True, kw_only=True)
 class ChangedRow:
@@ -84,6 +102,15 @@ def checked_bindings(bindings: tuple, subscriber: str) -> _Program[tuple[SignalT
     ...
 
 def first_seen(names: tuple) -> _Program[tuple, object]:
+    ...
+
+def back_announced(names: tuple[str, ...], promise: Promise) -> _Program[None, object]:
+    ...
+
+def came_back_within(names: tuple[str, ...], seconds: int | float) -> _Program[bool, object]:
+    ...
+
+def ride_out_stall(subscriber: str, names: tuple[str, ...], first: Unreachable, again: EffectBase | Program) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty | bool, object]:
     ...
 
 def reachable(ask: ListRows | WatchChanges | WatchEvents | ReadStreamEnd, subscriber: str, names: tuple[str, ...]) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty, object]:
