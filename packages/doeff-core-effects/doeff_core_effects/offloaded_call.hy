@@ -62,16 +62,17 @@
    いない仕事は外し、取り消しの前後に出来た答えは abandon(Executor で回す後始末 — 借りた接続を返す等)へ、走っていて答えのまだ無い仕事
    は interrupt(Executor で回す止め方)へ、どちらか 1 度だけ回す。"
 
-  (deff __init__ [self pool abandon interrupt job]  ; defk にできない: 資源の class の初期化
-    {:pre [(: self Handoff) (: pool Executor) (: abandon (get Callable #([object] None))) (: interrupt (get Callable #([] None)))
-           (: job Future)]
+  (deff __init__ [self pool abandon interrupt]  ; defk にできない: 資源の class の初期化
+    {:pre [(: self Handoff) (: pool Executor) (: abandon (get Callable #([object] None))) (: interrupt (get Callable #([] None)))]
      :post [(: % "None")]}
     ;; 錠は同じ thread から入り直せる RLock: give-up が錠を持ったまま始まっていない仕事を外すと、Future.cancel が同じ thread で完了の
     ;; callback(deliver)を呼ぶ。入り直せない錠だと scheduler の thread がそこで止まり、run 全体が固まった(agora-redesign #2792 の検で発見)。
+    ;; 仕事の Future は持たない: Future の完了の callback がこの係と promise を持つので、係が Future を持つと循環の参照になり、promise と
+    ;; abandon が抱える物(呼び鈴など)の handle が循環の回収(gc)まで消えず、scheduler の掃除がその行を消せなかった(agora-redesign #3532)。
+    ;; Future は give-up の引数で受ける(取り消しの callback と待ちの後始末が持つ — どちらも promise が終われば手放される)。
     (setv self.pool pool
           self.abandon abandon
           self.interrupt interrupt
-          self.job job
           self.lock (threading.RLock)
           self.abandoned False
           self.delivered NOT-DELIVERED))
@@ -87,15 +88,15 @@
         True (do (setv self.delivered (.result future))
                  (.complete promise self.delivered)))))
 
-  (deff give-up [self]  ; defk にできない: scheduler の取り消しの callback(on_cancel — VM の外)と、待ちが取り消しで抜けた時の後始末
-    {:pre [(: self Handoff)] :post [(: % "None")]}
+  (deff give-up [self job]  ; defk にできない: scheduler の取り消しの callback(on_cancel — VM の外)と、待ちが取り消しで抜けた時の後始末
+    {:pre [(: self Handoff) (: job Future)] :post [(: % "None")]}
     "待ち手が取り消されたら、始まっていない仕事を外し、もう渡した答えを後始末へ回し、走っていて答えのまだ無い仕事を止め方へ回すため
      (何度呼んでも、後始末か止め方のどちらかを 1 度)。止め方を Executor で回すのは、止めるのに待ち(猶予)が要っても scheduler の thread を
      塞がないため。走り終えて答えを渡す直前の仕事にも止め方は回るので、止め方は止める物が無ければ何もしない形にする。"
     (with [_ self.lock]
       (when (not self.abandoned)
         (setv self.abandoned True)
-        (setv removed (.cancel self.job))
+        (setv removed (.cancel job))
         (cond
           removed None
           (is-not self.delivered NOT-DELIVERED) (.submit self.pool self.abandon self.delivered)
@@ -111,12 +112,13 @@
    たら、始まっていない仕事は外し、届かなかった答えは abandon で後始末する(完了の値が届く前の取り消しも、届いた後で再開の前の取り消しも)。
    走っている仕事は interrupt で止める(既定 keep-going = 止めずに走り切らせる — 頭の註)。"
   (<- promise (CreateExternalPromise))
-  (val handoff (Handoff pool abandon interrupt (.submit pool call)))
-  (.on-cancel promise (fn [] (.give-up handoff)))
-  (.add-done-callback handoff.job (fn [done] (.deliver handoff promise done)))
+  (val handoff (Handoff pool abandon interrupt))
+  (val job (.submit pool call))
+  (.on-cancel promise (fn [] (.give-up handoff job)))
+  (.add-done-callback job (fn [done] (.deliver handoff promise done)))
   (try
     (<- outcome (Wait promise.future))
     (except [TaskCancelledError]
-      (.give-up handoff)
+      (.give-up handoff job)
       (raise)))
   outcome)
