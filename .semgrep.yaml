@@ -2073,8 +2073,10 @@ rules:
       category: architecture
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
+  # 許可の並びの WithBoundaries(1 歩で境の組を付ける命令・d0bbf9ea1 / 43ab0cf3c / 90fbae568・agora-redesign #3149)は利用者の承認
+  # 2026-10-04 11:1x(Mac の調整役が HTML の報告を作り、利用者が見た上で 逐語 "lgtm" — #3149・#1201)。戻し方 = この 1 語を外す。
   - id: doctrl-variants-require-approval
-    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Eval\b|Expand\b|Apply\b|Perform\b|Resume\b|Transfer\b|ResumeThrow\b|TransferThrow\b|WithHandler\b|Pass\b|Delegate\b|WithObserve\b|GetTraceback\b|GetExecutionContext\b|GetHandlers\b|GetOuterHandlers\b|TailEval\b|AllocVar\b|ReadVar\b|WriteVar\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
+    pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Eval\b|Expand\b|Apply\b|Perform\b|Resume\b|Transfer\b|ResumeThrow\b|TransferThrow\b|WithHandler\b|Pass\b|Delegate\b|WithObserve\b|WithBoundaries\b|GetTraceback\b|GetExecutionContext\b|GetHandlers\b|GetOuterHandlers\b|TailEval\b|AllocVar\b|ReadVar\b|WriteVar\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
       include:
         - "**/packages/doeff-vm-core/src/do_ctrl.rs"
