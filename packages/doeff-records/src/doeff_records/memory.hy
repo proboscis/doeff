@@ -126,22 +126,8 @@
   (defn #^ None __setstate__ [self #^ dict state]
     "pickle / copy から戻す時に中身を入れ、新しい錠を作るため。"
     (.update self.__dict__ state)
-    ;; 消え得る刻を持つ前に pickle した置き場は、次の操作で 1 度走査して刻を数え直す(0 = もう来ている)。
-    (when (not-in "purge_due_ms" state)
-      (setv self.purge-due-ms 0))
-    ;; 故障の列を持つ前に pickle した置き場は故障なし。
-    (when (not-in "faults" state)
-      (setv self.faults #()))
-    ;; 消した鍵の覚えを持つ前に pickle した置き場は、覚えが空(それより前に消した鍵は戻せない)。
-    (when (not-in "retired_keys" state)
-      (setv self.retired-keys {}))
     (setv self.lock (threading.RLock)
-          self.bells {})
-    ;; 期限の索引を持つ前に pickle した置き場は、行と出来事から 1 度だけ索引を作り直す。
-    (when (not-in "expiry" state)
-      (rebuild-expiry self)
-      (when (in "purge_due_ms" state)
-        (setv self.purge-due-ms (get state "purge_due_ms")))))
+          self.bells {}))
   (deff __deepcopy__ [self memo]  ; defk にできない: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
     {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
     "置き場の写しを作るため(使い手の模擬の検が、種を置いた置き場を検ごとに写す — 写しへの書きは元の置き場に届かない)。書き換える
@@ -262,20 +248,6 @@
   (when (or fresh (> event.at held.last-at))
     (setv held.last-at (max held.last-at event.at))
     (push-due store (+ held.last-at keep) (GroupDue :stream event.stream :group group :last-at held.last-at)))
-  None)
-
-
-(defn #^ None rebuild-expiry [#^ MemoryStore store]  ; defk にできない: pickle から戻す時(__setstate__)に同期に呼ぶ置き場の書き
-  "期限の索引を行と出来事の全部から作り直す(索引を持つ前に pickle した置き場を戻す時の 1 度だけ)。消え得る刻も数え直す。"
-  (setv store.expiry [] store.expiry-order 0 store.groups {} store.purge-due-ms None)
-  (for [#(name decl) (sorted (.items store.schema.tables)) :if (isinstance decl.retention KeepFor)]
-    (for [#(text stored) (sorted (.items (get store.rows name))) :if (terminal-row? decl stored.row.value)]
-      (push-due store (+ stored.updated-ms (keep-ms decl.retention)) (RowDue :table name :text text :stored stored))))
-  (for [event store.events]
-    (setv decl (store.schema.stream event.stream))
-    (when (isinstance decl.retention KeepFor)
-      (note-event-due store decl event)))
-  (setv store.purge-due-ms (next-purge-due store))
   None)
 
 
