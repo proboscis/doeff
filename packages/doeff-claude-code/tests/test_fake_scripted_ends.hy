@@ -8,12 +8,13 @@
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
-(import doeff_claude_code.lines [AssistantMessage Completed Failed BackendLost Usage])
+(import doeff_claude_code.lines [AssistantMessage Completed Failed BackendLost Interrupted Init InputFate Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
-                                   SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning])
+                                   SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning
+                                   ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
 (import doeff_claude_code.faults [ClaudeForgetSession])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
-(import tests.scenario_steps [TurnRecord read-to-end new-id typed kinds-of])
+(import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start new-id typed kinds-of])
 
 (val SPEC (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work"))
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))
@@ -28,6 +29,7 @@
     (= text "lines") (FakeReply "done" :tool-seconds 4.0 :lines 300)
     (= text "usage") (FakeReply "counted" :usage USAGE :cost-usd COST)
     (= text "think") (FakeReply "thought" :think-seconds 5.0)
+    (= text "no-receipt") (FakeReply "never" :tool-seconds 30.0 :interrupt-receipt False)
     True (FakeReply text :tool-seconds 30.0)))
 
 (defk on-fake [world program]
@@ -109,6 +111,32 @@
   (assert (isinstance record.end Completed) (repr record.end))
   (assert (>= seconds 5.0) seconds)
   (assert (= (lfor kind (kinds-of record.lines AssistantMessage) :if kind.tool-names kind) []) record.lines))
+
+(deftest test-an-interrupt-without-the-receipt-capability-drops-the-unread-input
+  ;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の手番に入力を足してから止める: 本物の handler(dialogue.hy の interrupt と
+  ;; on-result の StopSignal の道)と同じく SIGINT の形で止まり、読まれていない入力は捨てた入力(dropped-refs)— 持ち越さず、次の手番も
+  ;; 開かず、その入力の started も出ない。同じ会話は ResumeSession で続く。上の層の翻訳の「捨てた入力」の道を模擬で通すための口
+  ;; (#3467)。受理を名乗る既定の手番の持ち越しは test_scenarios.hy の 3 つの解釈器の筋書きが守る。
+  (val world (FakeClaudeWorld scripted-reply))
+  (defk inject-then-stop []
+    {:pre [] :post [(: % tuple)]}
+    "受理を名乗らない手番に入力を足して止め、終わりまで読んでから同じ会話を続ける。"
+    (val sid (new-id))
+    (<- started (begin "no-receipt" (FreshSession sid)))
+    (<- _opened (read-to-tool-start started.turn TIMEOUT))
+    (<- queued (ClaudeInjectInput started.turn (typed "extra" "inj-dropped")))
+    (<- asked (ClaudeInterruptTurn started.turn))
+    (<- stopped (read-to-end started.turn TIMEOUT))
+    (<- again (begin "usage" (ResumeSession sid)))
+    (<- done (read-to-end again.turn TIMEOUT))
+    #(queued asked stopped done))
+  (<- #(queued asked stopped done) (on-fake world (inject-then-stop)))
+  (assert (= queued (InputQueued "inj-dropped")) (repr queued))
+  (assert (isinstance asked InterruptRequested) (repr asked))
+  (assert (= stopped.end (Interrupted :dropped-refs #("inj-dropped"))) (repr stopped.end))
+  (assert (= (lfor kind (kinds-of stopped.lines Init) kind.capabilities) [#("msg_lifecycle_v1")]) stopped.lines)
+  (assert (not-in (InputFate "inj-dropped" "started") (kinds-of stopped.lines InputFate)) stopped.lines)
+  (assert (isinstance done.end Completed) (repr done.end)))
 
 (deftest test-fail-and-lose-together-are-refused
   ;; 終わり方は多くとも 1 つ。

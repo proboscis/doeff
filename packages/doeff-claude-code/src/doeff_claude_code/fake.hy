@@ -34,6 +34,8 @@
 (setv CLOCK-TICK 1e-6)
 (setv MIN-SLEEP 1e-3)
 (setv FAKE-CAPABILITIES #("msg_lifecycle_v1" "interrupt_receipt_v1"))
+;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の process の能力(FakeReply の interrupt-receipt が偽の手番)。
+(val NO-RECEIPT-CAPABILITIES #("msg_lifecycle_v1"))
 
 
 (defclass [(dataclass :frozen True)] FakeReply []
@@ -42,7 +44,10 @@
    BackendLost(detail = この文)で終わる(fail と lose は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
    cost-usd = Completed / Failed に載せる手番の額(USD — 本番の handler が累積の額の差から数える値の代わり。None = 名乗らない)・
    lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番)・
-   think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)。"
+   think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)・
+   interrupt-receipt = この手番の CLI の process が init で interrupt_receipt_v1 を名乗るか(本物の handler は手番ごとに process を
+   起こす)。偽 = 止めるは SIGINT の形で、読まれていない注入を捨てた入力(dropped-refs)として終える — 本物の対話の解釈
+   (dialogue.hy の interrupt と on-result)が受理を名乗らない CLI を止める道(#3467)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -53,6 +58,8 @@
   (setv #^ int lines 0)
   ;; 道具なしで考える秒(0 = 既定の短い手番)。本文の行だけで、道具の行を出さずにこの秒まで走る。
   (setv #^ float think-seconds 0.0)
+  ;; この手番の CLI が止めるの受理を名乗るか(偽 = 止めるは SIGINT の形で、読まれていない注入を捨てる)。
+  (setv #^ bool interrupt-receipt True)
   (defn #^ None __post-init__ [self]
     (when (and (is-not self.fail None) (is-not self.lose None))
       (raise (ValueError "FakeReply の fail と lose は多くとも 1 つ")))
@@ -239,7 +246,9 @@
   (for [ref refs]
     (when announce (<- (emit session turn (InputFate ref "queued"))))
     (<- (emit session turn (InputFate ref "started"))))
-  (<- (emit session turn (Init :session-id session.session-id :capabilities FAKE-CAPABILITIES :model "fake")))
+  (<- (emit session turn (Init :session-id session.session-id
+                               :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
+                               :model "fake")))
   (cond
     reply.needs-permission
       (do
@@ -319,23 +328,25 @@
 
 (defk fake-interrupt [#^ FakeClaudeWorld world #^ ClaudeInterruptTurn request]
   {:pre [(: world FakeClaudeWorld) (: request ClaudeInterruptTurn)] :post [(: % (| InterruptRequested NoTurnInFlight))]}
-  "止める: 読まれていない注入が在れば、それを生き残った入力として次の手番で走らせる(control_request の形)。
-   無ければ SIGINT の形(result は error_during_execution・aborted_streaming)で Interrupted。"
+  "止める(本物の対話の解釈 dialogue.hy の interrupt と同じ分け方): 読まれていない注入が在り、この手番の CLI が止めるの受理
+   (interrupt_receipt_v1)を名乗っていれば control_request の形 — 注入を生き残った入力として次の手番で走らせる。それ以外は SIGINT の形
+   (result は error_during_execution・aborted_streaming)で Interrupted — 読まれていない注入は捨てた入力(dropped-refs・on-result の
+   StopSignal の道)。捨てた注入の行方の行は出さない(SIGINT の時に CLI が名乗る行は実測に無く、本物の handler も終わりだけを使う)。"
   (setv turn (running-turn-of world request.turn))
   (when (is turn None) (return (NoTurnInFlight request.turn.session-id)))
   (setv session (get world.sessions request.turn.session-id))
-  (setv survivors (lfor injection turn.injections :if (= injection.fate "queued") injection))
-  (if survivors
+  (setv queued (lfor injection turn.injections :if (= injection.fate "queued") injection))
+  (if (and queued turn.reply.interrupt-receipt)
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_tools")))
         (setv memory (tuple (get world.transcripts (.transcript-key world session.home session.cwd session.session-id))))
-        (<- reply FakeReply (reply-of world (.join "\n" (lfor injection survivors injection.text)) memory))
-        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection survivors injection.ref)) False))
+        (<- reply FakeReply (reply-of world (.join "\n" (lfor injection queued injection.text)) memory))
+        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection queued injection.ref)) False))
         (<- (finish session turn (Interrupted :surviving-refs (tuple next-turn.refs)
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_streaming")))
-        (<- (finish session turn (Interrupted)))))
+        (<- (finish session turn (Interrupted :dropped-refs (tuple (lfor injection queued injection.ref)))))))
   (InterruptRequested))
 
 (defk fake-read-events [#^ FakeClaudeWorld world #^ ClaudeReadTurnEvents request]
