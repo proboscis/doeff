@@ -29,16 +29,19 @@
 (import dataclasses [dataclass])
 (import datetime [datetime timedelta])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait Cancel])
+(import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task
+                                      TaskCancelledError Wait Cancel])
 (import doeff_events.effects [PublishEffect])
 (import doeff_records.event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
-                                    first-seen stop-source waits-beside-sources])
+                                    first-seen ride-out-stall stop-source waits-beside-sources])
 (import doeff_time [GetTime WaitWithin])
+(import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd AwaitRecordsBack
+                               ReadSourcePatience])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.store_choice [StoreChoice])
@@ -673,6 +676,32 @@
 (val WRITE StoreOperation.WRITE)
 
 
+(defk memory-await-back [store names]
+  {:pre [(: store MemoryStore) (: names (get tuple #(str ...)))] :post [(: % None)] :tags {:context "records" :role "foundation"}}
+  "置き場の止まり(faults.SetStoreOutage)が names から外れるまで待つため(AwaitRecordsBack の memory の答え — #3469)。止まりを置く・外す
+   拍に呼び鈴が全部鳴るので、呼び鈴で眠って起きた回に止まりを読み直す(時計を使わずに park — 模擬の時計は進める)。取り消されたら掛けた
+   呼び鈴を外してから解ける。"
+  (while True
+    (<- bell ExternalPromise (hang-bell store names #()))
+    (when (is (unreachable-for store names) None)
+      (<- (drop-bell store bell))
+      (return None))
+    (try
+      (<- _rang (Wait bell.future :priority PRIORITY-IDLE))
+      (except [cancelled TaskCancelledError]
+        (<- (drop-bell store bell))
+        (raise cancelled))))
+  None)
+
+
+(defk memory-reach [store names]
+  {:pre [(: store MemoryStore) (: names (get tuple #(str ...)))] :post [(: % (| Unreachable bool))] :tags {:context "records" :role "foundation"}}
+  "memory の置き場が names に答えるかを読み直すため(模擬の源の止まりの越え方 ride-out-stall が、戻りの後に撃ち直す読み — 答える = True・
+   止まり = その Unreachable)。"
+  (val down (unreachable-for store names))
+  (if (is down None) True down))
+
+
 (defhandler memory-records-handler [#^ MemoryStore store #^ str writer]
   ;; 各節の答えは answered の 1 点を通る — 届かない状態(faults.SetStoreOutage)と故障(faults.AddStoreFault)を見てから置き場に触る。
   ;; 源の工場の問い(ReadSignalSource)には、この組で記録に答えている置き場 store の書きで鳴る模擬の源で答える(#3127 — 源は必ず同じ置き場に
@@ -709,6 +738,10 @@
   (ReadStreamEnd [stream]
     (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-stream-end store effect)))))
     (resume answer))
+  (AwaitRecordsBack [names]
+    ;; 合図の源の止まりの見張り(#3469)— 止まりが names から外れるまで呼び鈴で眠り、外れたら答える(期限は待つ側の源が持つ)。
+    (<- (memory-await-back store names))
+    (resume None))
   (SetStoreOutage [detail names]
     ;; 置いた(外した)時に待ち手を全部鳴らす — 眠っている待ちが次の走査で届かない状態を見て Unreachable で返るため(頭の註)。
     (with [store.lock]
@@ -806,26 +839,34 @@
                  :mark now))
 
 
-(defk memory-publish [store bindings tables streams mark]
-  {:pre [(: store MemoryStore) (: bindings tuple) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...))) (: mark MemoryMark)]
+(defk memory-publish [store bindings subscriber tables streams mark]
+  {:pre [(: store MemoryStore) (: bindings tuple) (: subscriber str) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...)))
+         (: mark MemoryMark)]
    :post [(: % None)] :tags {:context "records" :role "foundation"}}
   "模擬の源の task: 結んだ表と列の呼び鈴を掛けてから位置より後の書きを読み(掛ける前の書きも拾う — 読みと待ちの間の書きを落とさない)、
-   合図が在れば外して Publish し、無ければ呼び鈴が鳴るのを待つ(時計を使わずに park — 模擬の時計は進める)— を繰り返す。止めるのは Cancel だけ。"
+   合図が在れば外して Publish し、無ければ呼び鈴が鳴るのを待つ(時計を使わずに park — 模擬の時計は進める)— を繰り返す。止めるのは Cancel だけ。
+   置き場が結んだ名に答えない間(記録の service の止まりの模擬 — faults.SetStoreOutage は呼び鈴を全部鳴らす)は、本番の源と同じ越え方
+   ride-out-stall で戻りを待つ(#3469 — 模擬と本番で止まりの振る舞いを揃える)。"
   (var at mark)
+  (val names (+ tables streams))
   (while True
     (<- bell ExternalPromise (hang-bell store tables streams))
-    (val found (memory-signals-since store bindings at))
-    (:= at found.mark)
-    (if found.signals
+    (val down (unreachable-for store names))
+    (if (is-not down None)
         (do (<- (drop-bell store bell))
-            (for [signal found.signals]
-              (<- (PublishEffect signal))))
-        ;; 取り消されたら(本体が終わった)掛けた呼び鈴を外してから解ける — 鳴らない呼び鈴を置き場に残さない。
-        (try
-          (<- _rang (Wait bell.future :priority PRIORITY-IDLE))
-          (except [cancelled TaskCancelledError]
-            (<- (drop-bell store bell))
-            (raise cancelled)))))
+            (<- _reached (ride-out-stall subscriber names down (memory-reach store names))))
+        (do (val found (memory-signals-since store bindings at))
+            (:= at found.mark)
+            (if found.signals
+                (do (<- (drop-bell store bell))
+                    (for [signal found.signals]
+                      (<- (PublishEffect signal))))
+                ;; 取り消されたら(本体が終わった)掛けた呼び鈴を外してから解ける — 鳴らない呼び鈴を置き場に残さない。
+                (try
+                  (<- _rang (Wait bell.future :priority PRIORITY-IDLE))
+                  (except [cancelled TaskCancelledError]
+                    (<- (drop-bell store bell))
+                    (raise cancelled)))))))
   None)
 
 
@@ -838,7 +879,7 @@
   (<- tables (get tuple #(str ...)) (first-seen (tuple (gfor binding checked name binding.tables name))))
   (<- streams (get tuple #(str ...)) (first-seen (tuple (gfor binding checked name binding.streams name))))
   (val mark (memory-mark store))
-  (<- source Task (Spawn (failure-announced subscriber (memory-publish store checked tables streams mark))))
+  (<- source Task (Spawn (failure-announced subscriber (memory-publish store checked subscriber tables streams mark))))
   (try
     (<- answer (with-handlers [(waits-beside-sources subscriber)] body))
     (finally
@@ -847,9 +888,12 @@
 
 
 ;; 模擬の源の包み 1 つが本体の周りで出す effect の全部(memory-signal-handler の宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めないので
-;; 宣言する)。源の task(Spawn と、その中の呼び鈴の CreateExternalPromise・鳴るまでの Wait・Publish — 源の失敗の合図も)・源の止め(Cancel・Wait)。
-;; 本体の待ちは源と競わない(#3135)。WatchChanges・WatchEvents・Delay と位置の読みの effect は出さない。
-(val MEMORY-SOURCE-EFFECTS #(CreateExternalPromise PublishEffect Spawn Cancel Wait))
+;; 宣言する)。源の task(Spawn と、その中の呼び鈴の CreateExternalPromise・鳴るまでの Wait・Publish — 源の失敗・止まり・戻りの合図も)・
+;; 止まりの越え方 ride-out-stall(上限の問い ReadSourcePatience・GetTime・見張りの task の Spawn と約束の CreatePromise / CompletePromise・
+;; 戻りの問い AwaitRecordsBack・上限つきの待ち WaitWithin)・源と見張りの止め(Cancel・Wait)。本体の待ちは源と競わない(#3135)。
+;; WatchChanges・WatchEvents と位置の読みの effect は出さない。
+(val MEMORY-SOURCE-EFFECTS #(CreateExternalPromise PublishEffect ReadSourcePatience GetTimeEffect AwaitRecordsBack CreatePromise CompletePromise
+                             WaitWithinEffect Spawn Cancel Wait))
 
 
 (deff memory-signal-handler [store bindings subscriber]  ; defk にできない: with-handlers の列に置く素の工場の関数 — 閉じの検の道具が宣言を読む形(records-signal-handler と同じ)

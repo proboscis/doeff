@@ -1,6 +1,7 @@
 """Publish/subscribe effects for event-driven doeff programs."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from doeff import EffectBase
@@ -31,6 +32,31 @@ class SourceFailed:
 
     source: str
     error: BaseException
+
+
+@dataclass(frozen=True)
+class SourceStalled:
+    """A task that publishes signals on this bus lost its store: ``source`` names it (the subscriber its signals
+    feed), ``detail`` is the store's own words for why it is unreachable, and ``since`` is when it first was.
+
+    The task stays alive and waits for the store to come back (doeff-records' signal sources wait for it as an
+    event, up to the patience its foundation declares — agora-redesign #3469). It publishes ``SourceResumed``
+    when the store answers again, or ``SourceFailed`` when the patience runs out. Unlike ``SourceFailed`` it is
+    not always subscribed: a body that shows the stall (a screen telling its users the records are unreachable)
+    names it in its subscription; others never see it.
+    """
+
+    source: str
+    detail: str
+    since: datetime
+
+
+@dataclass(frozen=True)
+class SourceResumed:
+    """The task named ``source`` that published ``SourceStalled`` reached its store again and goes on publishing
+    signals. Not always subscribed, like ``SourceStalled``."""
+
+    source: str
 
 
 def _normalize_event_types(event_types: tuple[type[Any], ...]) -> tuple[type[Any], ...]:

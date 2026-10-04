@@ -8,7 +8,8 @@ analyzer が列の値を読めず、本番の土台で閉じているかの検(f
 - 閉じの検の形: 工場の宣言の effect と、包み(run_signal_source)が本体の周りで実際に出す effect が一致する。失敗ケース: 包みが
   出す effect を変えても、宣言を変えても赤。
 - 使い手の形の job(購読者の列と工場を並べた列)を scheduler の下で読むと、読めない handler が残らず、残るのは記録と時計の
-  effect(本番の土台の記録の handler と時計が答える物)だけ。
+  effect(本番の土台の記録の handler と時計が答える物)と、止まりを越える 2 つの問い(上限 ReadSourcePatience = 土台の
+  source_patience_handler が答える・戻り AwaitRecordsBack = 戻りを知る handler が答える — #3469)だけ。
 """
 
 import importlib.util
@@ -19,7 +20,7 @@ from pathlib import Path
 import hy  # noqa: F401  Hy の module を読むため
 from doeff_events import EventBus, subscribed_event_handler
 from doeff_events.effects import WaitForEvent
-from doeff_records.effects import ListRows, ReadStreamEnd, WatchChanges, WatchEvents
+from doeff_records.effects import AwaitRecordsBack, ListRows, ReadSourcePatience, ReadStreamEnd, WatchChanges, WatchEvents
 from doeff_records.event_source import (
     READ_SIGNAL_EFFECTS,
     SOURCE_EFFECTS,
@@ -31,7 +32,7 @@ from doeff_records.event_source import (
     run_signal_source,
 )
 from doeff_records.memory import MEMORY_SOURCE_EFFECTS
-from doeff_time import DelayEffect
+from doeff_time.effects.time import GetTimeEffect, WaitWithinEffect
 
 from doeff import EffectGenerator, do, with_handlers
 
@@ -98,7 +99,16 @@ def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
     scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
     coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
-    assert {gap.effect for gap in coverage.gaps} == {ListRows, ReadStreamEnd, WatchChanges, WatchEvents, DelayEffect}
+    assert {gap.effect for gap in coverage.gaps} == {
+        ListRows,
+        ReadStreamEnd,
+        WatchChanges,
+        WatchEvents,
+        AwaitRecordsBack,
+        ReadSourcePatience,
+        GetTimeEffect,
+        WaitWithinEffect,
+    }
 
 
 # --- entry が置く素の工場 read_signal_handler(源の工場を ReadSignalSource で問う — #3127)-------------------------------------

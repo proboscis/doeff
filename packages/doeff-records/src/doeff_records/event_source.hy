@@ -27,9 +27,13 @@
 ;;;              Reset = 位置を WatchCursor(epoch floor) に戻して読み直す(残っている変更をもう一度合図にする — 合図は冪等なので重なってよい)。
 ;;;   列の追記 = 列の頭が進んだら(EventsMoved)末尾を ReadStreamEnd で読み、その列に結んだ型ごとに合図を 1 つ発する(keys = 列の名前と
 ;;;              末尾の番号の 10 進の綴り — 受け手は自分の位置から ReadEvents で読み直す)。EventsQuiet なら待ち直すだけ。
-;;;   Unreachable = 源の task の中で繋ぎ直す(RECONNECT-TRIES 回まで、RECONNECT-SECONDS 秒ずつ間を置いて撃ち直す)。直らなければ
-;;;                 SignalSourceUnreachable で process を落とす(外の再起動が拾う)。業務の Program には Unreachable を見せない。
-;;; 待ちの上限と繋ぎ直しの間は、記録の service との境界にあるこの源の中だけの待ち(業務の Program に時間の待ちを出さない)。
+;;;   Unreachable = 落ちずに、置き場の戻りを出来事として待つ(#3469 — 記録の service の短い停止を越える)。止まりの最初の拍に合図
+;;;                 SourceStalled を同じ bus に Publish し、置き場の戻りを記録の effect AwaitRecordsBack の答えで知る(見張りの task が
+;;;                 答えを受けて約束を完了する — 撃ち直しを時間で繰り返さない)。源はその約束を、土台が宣言した上限(ReadSourcePatience の
+;;;                 答え — 止まりの最初の拍から数える)まで WaitWithin で待つ。戻れば読みを撃ち直し、届けば SourceResumed を Publish して
+;;;                 続ける(まだ届かなければ、同じ上限の残りで待ち直す)。上限を過ぎれば SignalSourceUnreachable で process を落とす
+;;;                 (外の再起動が拾う)。業務の Program には Unreachable を見せない。
+;;; 上限の待ちと long-poll の長さは、記録の service との境界にあるこの源の中だけの待ち(業務の Program に時間の待ちを出さない)。
 ;;; 1 つの購読者の列(bus)に源を 1 つ置く形が前提 — 同じ bus に同じ表を見る源を 2 つ置くと、同じ変化の合図が 2 度届く(冪等なので壊れない)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
@@ -38,19 +42,34 @@
 (import dataclasses [dataclass fields is-dataclass])
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects.scheduler [Cancel CreateExternalPromise Spawn Task TaskCancelledError Wait])
-(import doeff_events.effects [Publish PublishEffect SourceFailed WaitForEventEffect])
-(import doeff_time [Delay DelayEffect])
+(import datetime [datetime])
+(import doeff_core_effects.scheduler [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
+(import doeff_events.effects [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect])
+(import doeff_time [GetTime WaitWithin])
+(import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_records.admission [key-text])
-(import doeff_records.effects [ListRows ReadSignalSource ReadStreamEnd WatchChanges WatchEvents])
+(import doeff_records.effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
 (import doeff_records.values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
                               checked-table-name])
 
 ;; 記録の変化の待ちの上限(秒)— 変化が無ければこの秒で静かな答えが返り、同じ位置から待ち直す(long-poll の 1 回の長さ)。
 (val WATCH-SECONDS 30.0)
-;; 置き場が Unreachable を返した時に撃つ回数(最初の 1 回を含む)と、撃ち直しの間(秒)。設定の口にはしない。
-(val RECONNECT-TRIES 5)
-(val RECONNECT-SECONDS 2.0)
+
+
+(defrecord SignalSourcePatience
+  "合図の源が記録の置き場の止まりを待つ上限(ReadSourcePatience の答え — #3469): seconds = 止まりの最初の拍から数えて、戻りを待つ秒。
+   これを過ぎても戻らなければ源が SignalSourceUnreachable で process を落とす。値は土台が 1 か所で宣言する(この module は既定を持たない)。"
+  {:tags {:context "records" :role "type"}
+   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (> seconds 0))]}
+  (#^ float seconds))
+
+
+(defhandler source-patience-handler [#^ SignalSourcePatience patience]
+  "土台が宣言した止まりの上限を、合図の源の問い ReadSourcePatience に答えるため(土台が記録の handler の隣に 1 か所だけ置く)。"
+  {:tags {:context "records" :role "foundation"}}
+  ;; 引数に残す理由: 上限は土台の宣言の値で、組み立ての 1 か所が渡す(Ask で読むと組の内側の設定の読み手に横取りされうる — ReadSourcePatience の註)。
+  (ReadSourcePatience []
+    (resume patience)))
 
 
 (defrecord ChangedRow
@@ -127,23 +146,69 @@
   (tuple (gfor #(index name) (enumerate names) :if (not-in name (cut names index)) name)))
 
 
+(defk back-announced [names promise]
+  {:pre [(: names (get tuple #(str ...))) (: promise Promise)] :post [(: % None)]}
+  "止まりの見張りの task の本体: 記録の置き場が names に再び答えるまで AwaitRecordsBack で待ち、戻ったら約束 promise を完了するため
+   (源は約束を上限つきで待つ — 見張りは期限を持たない)。"
+  (<- (AwaitRecordsBack names))
+  (<- (CompletePromise promise True))
+  None)
+
+
+(defk came-back-within [names seconds]
+  {:pre [(: names (get tuple #(str ...))) (: seconds (| int float))] :post [(: % bool)]}
+  "置き場が names に戻るのを seconds 秒まで待つため(戻った = True・上限が先 = False)。見張りの task を 1 つ立てて AwaitRecordsBack の答えを
+   約束で受け、その約束を WaitWithin で待つ — 時間で撃ち直さない。待ち終えたら見張りを止める(戻らないまま上限が来た時に、答えの無い
+   見張りを残さない。見張りが答え手の無い effect などで落ちていれば、止める時の Wait がその例外を上げる)。"
+  (when (<= seconds 0)
+    (return False))
+  (<- promise Promise (CreatePromise))
+  (<- watcher Task (Spawn (back-announced names promise)))
+  (var came None)
+  (try
+    (<- waited (WaitWithin promise.future seconds))
+    (:= came waited)
+    (finally
+      (<- (stop-source watcher))))
+  (is-not came None))
+
+
+(defk ride-out-stall [subscriber names first again]
+  {:pre [(: subscriber str) (: names (get tuple #(str ...))) (: first Unreachable) (: again (| EffectBase Program))]
+   :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty bool))]}
+  "置き場の止まりを、落ちずに越えるため(#3469 — 記録の service の短い停止を越える・記録の置き場の源と memory の置き場の源が同じ 1 つを使う)。
+   first = 止まりを見た最初の答え / again = 置き場に届くかを読み直す effect か Program(答え = Unreachable か、届いた答え)。止まりの最初の拍に
+   SourceStalled を Publish し、戻りを上限(ReadSourcePatience の答え — 最初の拍から数える)まで待ち、戻ったら again を撃ち直す。届けば
+   SourceResumed を Publish して届いた答えを返し、まだ届かなければ同じ上限の残りで待ち直す。上限を過ぎれば、購読者の名前・表か列の名前・
+   待った秒・最後の detail を名指した SignalSourceUnreachable で落ちる。"
+  (<- patience SignalSourcePatience (ReadSourcePatience))
+  (<- since datetime (GetTime))
+  (<- (Publish (SourceStalled :source subscriber :detail first.detail :since since)))
+  (var answer first)
+  (while (isinstance answer Unreachable)
+    (<- now datetime (GetTime))
+    (<- back bool (came-back-within names (- patience.seconds (.total-seconds (- now since)))))
+    (when (not back)
+      (raise (SignalSourceUnreachable (.format "購読者 {!r} の合図の源(記録の {})が {} 秒 待っても届かない: {}"
+                                               subscriber (.join ", " names) patience.seconds answer.detail))))
+    (<- reread again)
+    (:= answer reread))
+  (<- (Publish (SourceResumed :source subscriber)))
+  answer)
+
+
 (defk reachable [ask subscriber names]
   {:pre [(: ask (| ListRows WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))]
    :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
-  "記録の置き場への読み ask を撃ち、答えが Unreachable の間は RECONNECT-SECONDS 秒ずつ間を置いて RECONNECT-TRIES 回まで撃ち直すため
-   (繋ぎ直し)。直らなければ、購読者の名前・表か列の名前・撃った回数・最後の detail を名指した SignalSourceUnreachable で落ちる。"
+  "記録の置き場への読み ask を撃ち、答えが Unreachable なら落ちずに置き場の戻りを待って撃ち直すため(止まりの越え方は ride-out-stall の 1 つ)。"
   (<- answered ask)
-  (var answer answered)
-  (var tries 1)
-  (while (and (isinstance answer Unreachable) (< tries RECONNECT-TRIES))
-    (<- (Delay RECONNECT-SECONDS))
-    (<- again ask)
-    (:= answer again)
-    (:= tries (+ tries 1)))
-  (when (isinstance answer Unreachable)
-    (raise (SignalSourceUnreachable (.format "購読者 {!r} の合図の源(記録の {})に {} 回撃っても届かない: {}"
-                                             subscriber (.join ", " names) tries answer.detail))))
-  answer)
+  (when (not (isinstance answered Unreachable))
+    (return answered))
+  (<- reached (ride-out-stall subscriber names answered ask))
+  ;; 真偽は memory の置き場の読み直し(memory-reach)だけの答えで、記録の置き場への読み ask の答えには来ない — 来たら配線の誤りとして名指す。
+  (match reached
+    (bool) (raise (TypeError (.format "購読者 {!r} の読み {!r} の答えに真偽が来た(真偽は memory の置き場の読み直しだけの答え)" subscriber ask)))
+    _ reached))
 
 
 (defk start-cursor [subscriber tables]
@@ -337,9 +402,12 @@
 
 ;; 源の包み 1 つが本体の周りで出す effect の全部(records-signal-handler の宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めない
 ;; ので宣言する)。位置の読み(ListRows・ReadStreamEnd)・源の task(Spawn と、その中の WatchChanges・WatchEvents・ReadStreamEnd・
-;; Publish — 源の失敗の合図も・繋ぎ直しの間の Delay)・源の止め(Cancel・Wait)。本体の WaitForEvent は本体の effect のまま外へ出る
-;; (型を足して出し直すだけ)ので数えない。実際に出す effect との一致は test_event_source_closure.py が確かめる。
-(val SOURCE-EFFECTS #(ListRows ReadStreamEnd WatchChanges WatchEvents PublishEffect DelayEffect Spawn Cancel Wait))
+;; Publish — 源の失敗・止まり・戻りの合図も)・止まりの待ち(上限の問い ReadSourcePatience・GetTime・見張りの task の Spawn と約束の
+;; CreatePromise / CompletePromise・戻りの問い AwaitRecordsBack・上限つきの待ち WaitWithin)・源と見張りの止め(Cancel・Wait)。本体の
+;; WaitForEvent は本体の effect のまま外へ出る(型を足して出し直すだけ)ので数えない。実際に出す effect との一致は
+;; test_event_source_closure.py が確かめる。
+(val SOURCE-EFFECTS #(ListRows ReadStreamEnd WatchChanges WatchEvents PublishEffect ReadSourcePatience GetTimeEffect AwaitRecordsBack
+                      CreatePromise CompletePromise WaitWithinEffect Spawn Cancel Wait))
 
 
 ;; 包む関数の型 = doeff の ProgramHandler(doeff/program.py の Callable[[object], Program[Any]] — subscribed_event_handler・timer_handler と
