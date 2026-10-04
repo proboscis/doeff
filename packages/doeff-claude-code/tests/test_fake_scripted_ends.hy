@@ -110,7 +110,7 @@
   (<- #(record seconds) (on-fake (FakeClaudeWorld scripted-reply) (think-and-time)))
   (assert (isinstance record.end Completed) (repr record.end))
   (assert (>= seconds 5.0) seconds)
-  (assert (= (lfor kind (kinds-of record.lines AssistantMessage) :if kind.tool-names kind) []) record.lines))
+  (assert (= (lfor kind (kinds-of record.lines AssistantMessage) :if kind.tool-calls kind) []) record.lines))
 
 (deftest test-an-interrupt-without-the-receipt-capability-drops-the-unread-input
   ;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の手番に入力を足してから止める: 本物の handler(dialogue.hy の interrupt と

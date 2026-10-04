@@ -18,7 +18,7 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolResult InputFate PermissionRequested
+(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -36,6 +36,9 @@
 (setv FAKE-CAPABILITIES #("msg_lifecycle_v1" "interrupt_receipt_v1"))
 ;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の process の能力(FakeReply の interrupt-receipt が偽の手番)。
 (val NO-RECEIPT-CAPABILITIES #("msg_lifecycle_v1"))
+;; 偽の手番が呼ぶ道具の 1 つの呼び(tool_use の id)。道具の結果の行(ToolResult)は同じ id を名指す。
+(val FAKE-TOOL-USE-ID "fake-tool")
+(val FAKE-TOOL-CALL (ToolCall FAKE-TOOL-USE-ID "Bash"))
 
 
 (defclass [(dataclass :frozen True)] FakeReply []
@@ -230,7 +233,7 @@
     (<- (emit-due-lines session turn now)))
   (when (and (in turn.phase #("quick" "tool")) (>= (+ now CLOCK-TICK) turn.due-at))
     (when (= turn.phase "tool")
-      (<- (emit-all session turn [(ToolResult :tool-use-ids #("fake-tool")) (TaskEvent "fake-task" "completed")])))
+      (<- (emit-all session turn [(ToolResult :tool-use-ids #(FAKE-TOOL-USE-ID)) (TaskEvent "fake-task" "completed")])))
     (if (or (is-not turn.reply.fail None) (is-not turn.reply.lose None))
         (<- (end-scripted session turn))
         (<- (complete-turn world session turn))))
@@ -254,12 +257,12 @@
       (do
         (setv request-id (str (uuid.uuid4)))
         (setv turn.phase "permission" turn.permission request-id)
-        (<- (emit-all session turn [(AssistantMessage :tool-names #("Bash"))
+        (<- (emit-all session turn [(AssistantMessage :tool-calls #(FAKE-TOOL-CALL))
                                     (PermissionRequested request-id "Bash" (FrozenMap {"command" "fake"}))])))
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
-        (<- (emit-all session turn [(AssistantMessage :tool-names #("Bash")) (TaskEvent "fake-task" "started")]))))
+        (<- (emit-all session turn [(AssistantMessage :tool-calls #(FAKE-TOOL-CALL)) (TaskEvent "fake-task" "started")]))))
   turn)
 
 

@@ -7,7 +7,7 @@
 (import doeff_claude_code.argv [launch-argv cold-resume-argv transcript-path process-env])
 (import doeff_claude_code.decision [SessionView Refuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
-(import doeff_claude_code.lines [classify-record Init AssistantMessage ToolResult InputFate PermissionRequested TaskEvent
+(import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
                                  RateLimit TurnResult PartialMessage Other ControlResponse Usage recorded-cost])
 (import doeff_claude_code.values [Allow])
 
@@ -100,13 +100,34 @@
   (assert (= (start-decision (ForkSession SID) (SessionView) False False) (Refuse (SessionNotFound SID)))))
 
 
+(deftest test-tool-use-blocks-keep-their-id-and-name-in-block-order
+  ;; #3518: tool_use の block の id は、続く tool_result の tool_use_id と突き合わせる鍵。名だけ読む分類は赤。
+  (val raw (json.dumps {"type" "assistant"
+                        "message" {"content" [{"type" "tool_use" "id" "toolu_1" "name" "Bash"}
+                                              {"type" "tool_use" "id" "toolu_2" "name" "Read"}]}}))
+  (val kind (classify-record (parse-record raw)))
+  (assert (isinstance kind AssistantMessage) (repr kind))
+  (assert (= kind.tool-calls #((ToolCall "toolu_1" "Bash") (ToolCall "toolu_2" "Read"))) (repr kind)))
+
+(deftest test-a-tool-use-block-without-an-id-is-refused-by-name
+  ;; id の無い・空の tool_use の block を空の id の呼びとして通さない — 名指しの Other で断る。
+  (for [block [{"type" "tool_use" "name" "Bash"} {"type" "tool_use" "id" "" "name" "Bash"}]]
+    (assert (= (classify-record {"type" "assistant"
+                                 "message" {"content" [{"type" "tool_use" "id" "toolu_1" "name" "Read"} block]}})
+               (Other "assistant" "tool_use_without_id"))
+            block))
+  (assert (= (classify-record {"type" "assistant" "message" {"content" [{"type" "tool_use" "id" "toolu_1"}]}})
+             (Other "assistant" "tool_use_without_name")))
+  (with [(pytest.raises ValueError :match "ToolCall.id")]
+    (ToolCall "" "Bash")))
+
 (deftest test-line-classification
   (assert (= (classify-record {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]
                                "model" "m" "permissionMode" "default" "mcp_servers" [{"name" "s"}]})
              (Init SID #("msg_lifecycle_v1") "m" "default" #("s"))))
   (assert (= (classify-record {"type" "assistant" "message" {"content" [{"type" "text" "text" "a"}
-                                                                        {"type" "tool_use" "name" "Bash"}]}})
-             (AssistantMessage "a" #("Bash"))))
+                                                                        {"type" "tool_use" "id" "toolu_a" "name" "Bash"}]}})
+             (AssistantMessage "a" #((ToolCall "toolu_a" "Bash")))))
   (assert (= (classify-record {"type" "user" "message" {"content" [{"type" "tool_result" "tool_use_id" "t1"}]}})
              (ToolResult #("t1"))))
   (assert (= (classify-record {"type" "command_lifecycle" "command_uuid" "r" "state" "started"}) (InputFate "r" "started")))
