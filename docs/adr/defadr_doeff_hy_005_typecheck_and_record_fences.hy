@@ -66,7 +66,11 @@
     "packages/doeff-hy/src/doeff_hy/record.hy"
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"
-    "packages/doeff-docker/src/doeff_docker/compose.hy"})
+    "packages/doeff-docker/src/doeff_docker/compose.hy"
+    ;; [removed]
+    ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。逐語 "eventloop sounds good"。
+    ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。
+    "packages/doeff-events/src/doeff_events/macros.hy"})
 
 ;; 走査から除く木(一時複製・生成物・環境)。
 (setv SCAN-SKIP-PARTS
