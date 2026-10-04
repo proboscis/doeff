@@ -136,7 +136,7 @@
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText WATCH-MAX-SECONDS])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleNextRequests IdleTaken ProvisionalBeat]
         doeff_cluster.coordinator.intent.request_bodies [HeartbeatBody]
         doeff_cluster.coordinator.protocol.request_bodies [body-of]
@@ -159,10 +159,11 @@
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of :as service-body-of])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
-                   warm-server-failure runners-change-of watch-query])
+                   warm-server-failure runners-change-of watch-query service-ready-of])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
-                         DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer])
+                         DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
+                         AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
@@ -1255,6 +1256,25 @@
   (runners-change-of (get answer 0) (if (is (get answer 0) None) (unreached-reason answer) (get answer 1))))
 
 
+(defk await-service-ready [link name]
+  {:pre [(: link SimLink) (: name str)] :post [(: % ServiceReady)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitServiceReady を本番の detached.service-ready-awaited と同じ読み(detached.service-ready-of の Service の読みと、GET /watch の版の
+   変化の待ち)で答えるため(#3470 — 模擬の job が依る service の止まりを、本番と同じ形で越える)。模擬の coordinator に届かない間だけ
+   1 秒の間を置いて問い直す(本番の答え手の poll-seconds の既定と同じ)。"
+  (var after 0)
+  (while True
+    (<- read tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
+    (<- ready (| bool None) (service-ready-of (get read 0) (if (is (get read 0) None) (unreached-reason read) (get read 1))))
+    (when (is ready True)
+      (return (ServiceReady :name name :revision after)))
+    (<- change (await-runners-change link after WATCH-MAX-SECONDS))
+    (match change
+      (RunnersChange :revision revision) (:= after revision)
+      (RunnersWatchMissing :detail detail)
+        (raise (RuntimeError (.format "Service {!r} の Ready を版の変化で待てない(coordinator に GET /watch が無い): {}" name detail)))
+      _ (<- (Delay 1.0)))))
+
+
 (deff warm-answer-of [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "judgment"}}
   "温める表の返事を、本番の warm-cluster と同じ読み(同じ定義 detached.warm-unconnected・warm-server-failure)で答えにするため:
@@ -1458,6 +1478,9 @@
   (AwaitRunnersChange [after timeout-seconds]
     (<- change (await-runners-change link after (float timeout-seconds)))
     (resume change))
+  (AwaitServiceReady [name]
+    (<- ready ServiceReady (await-service-ready link name))
+    (resume ready))
   (WarmRuntimeEnv [env needs ttl-seconds holder]
     (<- warmed WarmAnswer (warm-write link env needs (float ttl-seconds) holder))
     (resume warmed))

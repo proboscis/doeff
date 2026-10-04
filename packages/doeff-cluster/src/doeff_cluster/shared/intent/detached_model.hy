@@ -19,7 +19,7 @@
 ;;; (2026-09-28 — 同じ VM で走らせる模擬 detached-local は、呼び手の外側の handler を継いで足りない handler を黙って補うので消した)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defwire])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase Program])
 (import .runtime_env_model [EnvVar])
@@ -89,6 +89,17 @@
    (待つ口の無い旧い coordinator — 呼び手は周回に戻る)・RunnersUnreachable。after は前の答えの revision(最初は 0)。"
   (#^ int after)
   (setv #^ float timeout-seconds 1.0))
+
+
+(defclass [(dataclass :frozen True)] AwaitServiceReady [EffectBase]
+  "名を挙げた Service が Ready になるまで待つ(#3470 — 依る service の短い停止を落ちずに越える呼び手が、戻りを出来事として知るため。
+   使い手 = 依る service の変化を待つ合図の源・その service への追記の書き手)。coordinator の Service の status.ready を読み、Ready でなければ
+   coordinator の版(GET /watch)が変わるまで待って読み直す — 時間で起きて確かめない。上限は持たない(待つ側が上限つきで待つ)。
+   coordinator に届かない間も待ち続ける(間を置いて問い直すのは答え手の中だけ)。答え = ServiceReady。"
+  (#^ str name)
+  (defn #^ None __post_init__ [self]
+    (when (or (not (isinstance self.name str)) (not self.name))
+      (raise (ValueError (.format "AwaitServiceReady.name は空でない Service の名: {!r}" self.name))))))
 
 
 ;; --- 答え --------------------------------------------------------------------------
@@ -184,6 +195,24 @@
   #^ str detail)
 
 (val RunnersChangeAnswer (| RunnersChange RunnersWatchMissing RunnersUnreachable))
+
+;; AwaitServiceReady の答え(#3470): Service name が Ready と読めた時の coordinator の版 revision(最初の読みで Ready なら 0)。
+(defrecord ServiceReady
+  #^ str name
+  #^ int revision)
+
+
+(defwire ServiceStatusWire
+  "coordinator の GET /resources/Service/<名> の返事の status の欄のうち、AwaitServiceReady が読む所: ready = Ready | NotReady | Unknown
+   (coordinator の resource_policy.service-readiness の語)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str ready))
+
+
+(defwire ServiceViewWire
+  "coordinator の GET /resources/Service/<名> の返事のうち、AwaitServiceReady が読む欄(status)。ほかの欄(spec・世代など)は読まない。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ ServiceStatusWire status))
 
 
 (setv DetachedOutcome (| DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch
