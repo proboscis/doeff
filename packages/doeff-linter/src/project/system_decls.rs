@@ -100,7 +100,7 @@ impl SystemGap {
 }
 
 /// 名指した定義(file の相対 path・定義)。
-fn find<'h>(definition: &DefinitionRef, hy: &'h HashMap<String, HyFileIndex>) -> Option<(&'h str, &'h HyFileIndex, usize)> {
+pub(super) fn find<'h>(definition: &DefinitionRef, hy: &'h HashMap<String, HyFileIndex>) -> Option<(&'h str, &'h HyFileIndex, usize)> {
     let target = definition.target();
     hy.iter().find_map(|(rel, index)| {
         index.definitions.iter().position(|d| d.qualified_name == target).map(|at| (rel.as_str(), index, at))
@@ -115,14 +115,14 @@ fn in_entry(root: &str, service: &ArchService, rel: &str) -> bool {
     }
 }
 
-fn symbol<'s>(source: &'s str, form: &Form) -> Option<&'s str> {
+pub(super) fn symbol<'s>(source: &'s str, form: &Form) -> Option<&'s str> {
     match form.node {
         Node::Symbol => source.get(form.span.start..form.span.end),
         _ => None,
     }
 }
 
-fn items_of(form: &Form, want: Delim) -> Option<&[Form]> {
+pub(super) fn items_of(form: &Form, want: Delim) -> Option<&[Form]> {
     match &form.node {
         Node::Seq { delim, items } if *delim == want => Some(items),
         _ => None,

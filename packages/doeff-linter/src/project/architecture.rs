@@ -143,6 +143,13 @@ pub enum PublicContract {
     Http,
 }
 
+/// 外の書き手の表の行 1 つ(`:outside-writers` の `"<置き場>:<名>" "書き手"` — 組の綴りと、書き手の説明)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OutsideWriter {
+    pub access: String,
+    pub writer: String,
+}
+
 /// 素の関数(deff)を許す理由の種類 1 つ(`(reason 名 "説明")`)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReasonKind {
@@ -744,6 +751,10 @@ pub struct Architecture {
     /// 同じ理屈)。この dir の下の module は DOEFF114・115 で置き場所の違反にしない。ほかの規則は今までどおり当たる。
     /// 1 つだけ受ける(列は受けない — 何でも逃がせる欄にしない。:legacy を廃した理由と同じ)。
     pub verification_environment: Option<String>,
+    /// 本番の系の job でない書き手が書く外の置き場の組の表(`:outside-writers {"<置き場>:<名>" "書き手" …}` — 外の repo の道具・
+    /// 人の操作・job でない task)。書けば DOEFF207 が、本番の系(defservice の `:system`)の job に `:reads` / `:writes` を求め、
+    /// job が読む組に、本番の job の `:writes` かこの表の行が在るかを見る(agora-redesign #3493・#3496)。書かなければ当てない。
+    pub outside_writers: Option<Vec<OutsideWriter>>,
     pub open_layers: Vec<String>,
     /// 置き場の決まった module にだけ依存してよい層(`:placed-dependencies [core intent protocol]` — 空 = 宣言していない)。
     /// 書けば DOEFF140 が、service と shared のこの層の module が root の下の層の置き場の外の module を import するのを出す
@@ -1172,6 +1183,7 @@ impl<'a> Parser<'a> {
             shared: None,
             foundation: None,
             verification_environment: None,
+            outside_writers: None,
             open_layers: Vec::new(),
             placed_dependencies: Vec::new(),
             blind_definitions: Vec::new(),
@@ -1232,6 +1244,7 @@ impl<'a> Parser<'a> {
                 ":shared" => arch.shared = self.required_string(value, ":shared"),
                 ":foundation" => arch.foundation = self.name(value),
                 ":verification-environment" => arch.verification_environment = self.required_string(value, ":verification-environment"),
+                ":outside-writers" => arch.outside_writers = Some(self.outside_writers(value)),
                 ":open-layers" => {
                     arch.open_layers = self.names(value, ":open-layers");
                     open_given = true;
@@ -2770,6 +2783,37 @@ impl<'a> Parser<'a> {
                 continue;
             }
             out.push(part);
+        }
+        out
+    }
+
+    /// 外の書き手の表 `{"<置き場>:<名>" "書き手" …}` を読む(DOEFF207 の当たる repo を決める宣言)。組の綴りは `:` がちょうど 1 つで
+    /// 両側が空でない形・書き手の説明は空でない文字列。同じ組が 2 度あれば理由を積む。
+    fn outside_writers(&mut self, value: &Form) -> Vec<OutsideWriter> {
+        let Some(items) = self.brace(value) else {
+            self.problem(value, ":outside-writers は {\"<置き場>:<名>\" \"書き手\" …} の dict");
+            return Vec::new();
+        };
+        if items.len() % 2 != 0 {
+            self.problem(value, ":outside-writers の組と書き手が揃っていない");
+        }
+        let mut out: Vec<OutsideWriter> = Vec::new();
+        for pair in items.chunks(2) {
+            let [key, writer] = pair else { continue };
+            let access = self.string(key).filter(|a| a.split(':').count() == 2 && a.split(':').all(|part| !part.is_empty()));
+            let Some(access) = access else {
+                self.problem(key, ":outside-writers の鍵は \"<置き場>:<名>\" の文字列(`:` がちょうど 1 つ・両側が空でない)");
+                continue;
+            };
+            let Some(writer) = self.string(writer).filter(|w| !w.trim().is_empty()) else {
+                self.problem(writer, &format!(":outside-writers の {} の書き手は空でない文字列", access));
+                continue;
+            };
+            if out.iter().any(|w| w.access == access) {
+                self.problem(key, &format!(":outside-writers の {} が 2 度ある", access));
+                continue;
+            }
+            out.push(OutsideWriter { access, writer });
         }
         out
     }

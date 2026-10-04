@@ -60,6 +60,7 @@ pub mod spans;
 pub mod contract_breach;
 pub mod assembly_shape;
 pub mod invariants;
+pub mod system_access;
 pub mod system_decls;
 pub mod clause_coverage;
 pub mod python_reach;
@@ -534,6 +535,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if enabled.contains(&ProjectRule::ServiceSystemMissing) {
                         drafts.extend(judge_service_systems(root, architecture, hy));
+                    }
+                    if enabled.contains(&ProjectRule::SystemAccessUnwritten) {
+                        drafts.extend(judge_system_access(root, architecture, hy));
                     }
                     if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
                         let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
@@ -1027,6 +1031,7 @@ fn whole_hy_index(
         || (enabled.contains(&ProjectRule::ServiceUntestedOnSim) && settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()))
         || (enabled.contains(&ProjectRule::ServiceInvariantsMissing) && settings.architecture.is_some())
         || (enabled.contains(&ProjectRule::ServiceSystemMissing) && settings.architecture.is_some())
+        || (enabled.contains(&ProjectRule::SystemAccessUnwritten) && settings.architecture.as_ref().is_some_and(|a| a.outside_writers.is_some()))
         || (settings.raw.as_ref().is_some_and(|r| r.world_modules.is_some())
             && (enabled.contains(&ProjectRule::RawSideEffectDirect) || enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList)));
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
@@ -3428,6 +3433,28 @@ fn judge_service_systems(root: &Path, architecture: &architecture::Architecture,
                 }),
                 base: Severity::Error,
                 explain: Explain::ServiceSystemMissing { service: service.name.clone(), gap: message.clone() },
+                message,
+            }
+        })
+        .collect()
+}
+
+/// DOEFF207: 本番の系の job の読み書きの欄の欠けと、書き手の無い読みを、job の行の位置の下書きにする(鍵の細目 = 系::job::欄 か 系::job::組)。
+fn judge_system_access(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+    system_access::gaps(root, architecture, hy)
+        .into_iter()
+        .map(|found| {
+            let message = found.describe();
+            let start = Position { line: found.line, character: 0 };
+            Draft {
+                rule: ProjectRule::SystemAccessUnwritten,
+                layer: None,
+                path: root.join(&found.rel),
+                rel: found.rel.clone(),
+                range: Range { start, end: start },
+                detail: Some(found.detail()),
+                base: Severity::Error,
+                explain: Explain::SystemAccessUnwritten { subject: format!("{}::{}", found.system, found.job), reason: message.clone() },
                 message,
             }
         })
