@@ -2983,6 +2983,51 @@ fn production_reads_without_a_writer_are_red() {
     );
 }
 
+/// DOEFF207 の job でない書き手の見本(agora-redesign #3501): 本番の系 orders の job が record:turn を読み、task の Program run-task
+/// (app/orders/core/run.hy)が契約の `:writes` で書くと名乗る。`reached` = job が run-task を呼ぶか(本番の入口から届くか)・
+/// `declares` = run-task が :writes を書くか。本番の入口は :business-fakes の宣言(DOEFF143 と同じ)で決まる。
+fn task_writer_repo(reached: bool, declares: bool) -> tempfile::TempDir {
+    let writes = if declares { " :writes #{\"record:turn\"}" } else { "" };
+    let (import, call) = if reached { ("(import app.orders.core.run [run-task])\n", "(run-task 1)") } else { ("", "1") };
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/orders/core/run.hy", tags("orders", "judgment") + &format!("(defk run-task [x]\n  \"task の Program。\"\n  {{:post [(: % int)]{}}}\n  x)\n", writes)),
+        (
+            "app/orders/entry/system.hy",
+            tags("orders", "entry")
+                + import
+                + &format!("(defk orders-job [foundation]\n  {{:post [(: % int)] :tags {{:context \"app\" :role \"entry\"}}}}\n  \"job。\"\n  {})\n", call)
+                + "(defsystem orders-system [foundation]\n  (orders (orders-job foundation) :needs #{\"pg\"} :reads #{\"record:turn\"} :writes #{}))\n",
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF207\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let declared = ":foundation foundation\n  :outside-writers {\"ledger:items\" \"台帳の外の道具\"}\n  \
+                    :business-fakes {:simulation [\"app/sim/**\"] :tests [\"tests/**\"] :production [\"app/**\"] :business-modules [\"app.orders\"]}";
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declared)
+        + "(defservice orders \"注文\" {:layers [core entry] :system \"app.orders.entry.system:orders-system\"})\n";
+    std::fs::write(&arch_path, text).unwrap();
+    dir
+}
+
+/// 本番の入口(系の job の Program)から届く task の Program が :writes で名乗れば、その組の読みは緑。名乗りを外すと赤
+/// (task の code から書きが消えて名乗りも消えた形・agora-redesign #3501)。
+#[test]
+fn a_reached_function_that_declares_its_writes_is_a_writer() {
+    let (_, report) = editor(task_writer_repo(true, true).path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert!(keys(&report, "DOEFF207").is_empty(), "{:?}", keys(&report, "DOEFF207"));
+    let (_, report) = editor(task_writer_repo(true, false).path());
+    assert_eq!(keys(&report, "DOEFF207"), vec!["app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn"]);
+}
+
+/// 本番の入口から届かない定義の :writes は書き手に数えない(模擬だけの task や、使われていない定義が名乗っても読みは赤のまま)。
+#[test]
+fn an_unreached_function_that_declares_writes_is_not_a_writer() {
+    let (_, report) = editor(task_writer_repo(false, true).path());
+    assert_eq!(keys(&report, "DOEFF207"), vec!["app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn"]);
+}
+
 /// :outside-writers を書いていない repo には DOEFF207 を当てない(欄は doeff の defsystem では任意 — 求めるのは宣言した repo の本番の系だけ)。
 #[test]
 fn reads_are_not_judged_without_outside_writers() {
