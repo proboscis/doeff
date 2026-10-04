@@ -26,8 +26,10 @@
     名)。鍵を書く前の形で組んだ dir は、dir の名の sha から鍵を問って書き足す。写した linter の `--version` は、その入力を最初に組んだ
     commit を名乗る(入力が同じなら linter は同じ)。鍵の口が無い checkout(古い doeff)では鍵を問わず、sha ごとに組む。
   * 錠 = `<store>/<sha>.lock` の flock — path ではなく sha の単位。同じ sha を組む 2 本目は 1 本目を待ち、組まれた物を使う。
-  * 組み方 = `cargo build --release --locked`。cargo の target は置き場の隣の共有の dir(`<store の親>/cargo-target/doeff-linter`・
-    既定 = ~/.cache/cargo-target/doeff-linter)で、組んだ後も消さない — 依存の crate は sha をまたいで使い回し、新しい sha では
+  * 組み方 = `cargo build --release --locked`。cargo の target は機体の cache の根の下の共有の dir(`<cache の根>/cargo-target/doeff-linter`・
+    cache の根 = $XDG_CACHE_HOME、無ければ ~/.cache — 置き場の既定と同じ 1 か所の決まり `cache_root`)で、置き場(env
+    DOEFF_LINTER_SNAPSHOT_DIR)を替えても動かない — 置き場を読む側に合わせて ~/.cache に留める機体でも、大きな target は cache の
+    宣言の置き場へ行く(agora-redesign #3520)。組んだ後も消さない — 依存の crate は sha をまたいで使い回し、新しい sha では
     doeff-linter と doeff-indexer の crate と link だけを組む(以前は一時の dir で毎回冷えた所から組み、新しい pin の後で最初に
     commit した席が load の高い時に 9 分払った・agora-redesign #2977)。違う sha を同時に組む 2 本が同じ release/ の binary を
     上書きしないよう、組んで写すまでを `<target>.lock` の flock で 1 本ずつにする。
@@ -40,7 +42,7 @@
   組めれば binary の path を 1 行印字して 0、組めなければ理由を stderr に 1 行出して 1(呼び手は自分の環境の linter へ戻る)、
   引数の誤りは 2。
 検 = tests/test_linter_snapshot.py(同時の 3 本が 1 度だけ組む・作業木の変更を読まない・sha を名乗らない linter を置かない・
-入力の変わらない sha は組まずに写す・入力の変わった sha は組む)。
+入力の変わらない sha は組まずに写す・入力の変わった sha は組む・cargo の target は置き場でなく cache の根に従う)。
 """
 
 
@@ -93,14 +95,18 @@ def git_environ(environ: dict[str, str]) -> dict[str, str]:
     return {name: value for name, value in environ.items() if not name.startswith("GIT_")}
 
 
+def cache_root(environ: dict[str, str]) -> Path:
+    """機体の cache の根を env から決める(XDG_CACHE_HOME、無ければ HOME の .cache)— 置き場の既定と cargo の target が同じ 1 か所から導く。"""
+    cache = environ.get("XDG_CACHE_HOME", "")
+    return Path(cache) if cache else Path(environ.get("HOME", "~")).expanduser() / ".cache"
+
+
 def snapshot_store(environ: dict[str, str]) -> Path:
-    """置き場の dir を env から決める(DOEFF_LINTER_SNAPSHOT_DIR・XDG_CACHE_HOME・HOME の順)。"""
+    """置き場の dir を env から決める(DOEFF_LINTER_SNAPSHOT_DIR、無ければ cache の根の下)。"""
     given = environ.get(STORE_ENV, "")
     if given:
         return Path(given)
-    cache = environ.get("XDG_CACHE_HOME", "")
-    base = Path(cache) if cache else Path(environ.get("HOME", "~")).expanduser() / ".cache"
-    return base / "doeff-linter-snapshots"
+    return cache_root(environ) / "doeff-linter-snapshots"
 
 
 def names_commit(printed: str, sha: str) -> bool:
@@ -142,9 +148,9 @@ def find_cargo(env: dict[str, str]) -> str | None:
     return str(home_cargo) if home_cargo.exists() else None
 
 
-def shared_cargo_target(store: Path) -> Path:
-    """sha をまたいで使い回す cargo の target(置き場の隣・頭の註)。"""
-    return store.parent / "cargo-target" / BIN_NAME
+def shared_cargo_target(environ: dict[str, str]) -> Path:
+    """sha をまたいで使い回す cargo の target(cache の根の下・頭の註)— 置き場(DOEFF_LINTER_SNAPSHOT_DIR)には従わない。"""
+    return cache_root(environ) / "cargo-target" / BIN_NAME
 
 
 def build_into(source: Path, sha: str, cargo_target: Path, target: Path, env: dict[str, str]) -> str | None:
@@ -246,7 +252,7 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> Snapsh
         work = Path(tempfile.mkdtemp(prefix="doeff-linter-snapshot-" + sha[:12] + "-"))
         try:
             failure = extract_inputs(checkout, sha, work, env) or build_into(
-                work, sha, shared_cargo_target(store), partial, env
+                work, sha, shared_cargo_target(environ), partial, env
             )
             if failure:
                 return SnapshotUnavailable(failure)
