@@ -254,12 +254,18 @@
         (with [connection (psycopg.connect (. (get self.connections.databases self.name) dsn) :autocommit True
                                            #** (.connection-options self.connections self.name))]
           (.execute connection (.format (sql.SQL "LISTEN {}") (sql.Identifier self.channel)))
+          ;; 張った時に鳴らすのは、張った瞬間に掛かっていた呼び鈴(繋ぎ直しの間の通知を取りこぼした待ち手)だけ — 写しを錠の中で
+          ;; 取ってから settled を立てる。先に settled を立てて後から ring すると、最初の接続を待っていた hang が掛けたばかりの呼び鈴を
+          ;; 合図なしに鳴らしていた(rollback の後に鳴る・日次の test_pg_notice が時刻しだいで赤・agora-redesign #3210)。
           (with [_ self.lock]
             (setv self.listening True
                   self.listened True
-                  self.failure None))
+                  self.failure None)
+            (setv pending (tuple self.bells))
+            (.clear self.bells))
+          (for [bell pending]
+            (.complete bell True))
           (.set self.settled)
-          (.ring self)
           (for [_ (.notifies connection)]
             (.ring self)))
         (except [error psycopg.Error]
