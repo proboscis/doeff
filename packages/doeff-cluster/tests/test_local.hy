@@ -158,6 +158,53 @@
   (assert (= changed.after.readiness.state "Ready") changed.after.readiness))
 
 
+(defrecord Withdrawn
+  "取り下げの筋書きが読んだ姿: changed = 宣言し直しの前と後の job・replicas = 宣言し直しの後に coordinator の Service が持つ replicas。"
+  (#^ Changed changed)
+  (#^ int replicas))
+
+
+(defk withdraw-and-watch [system name prefix]
+  {:pre [(: system System) (: name str) (: prefix str)] :post [(: % Withdrawn)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "取り下げ(Redeclare の replicas 0 — #3295)が、動いている job を止めて起こし直さないかを読むため: 8 秒待って読み、同じ系を
+   replicas 0 で宣言し直し、12 秒待ってもう一度読み、coordinator の Service の replicas を読む。"
+  (<- (Delay 8.0))
+  (<- before Seen (seen-of name prefix))
+  (<- names tuple (Redeclare system :replicas 0))
+  (<- (Delay 12.0))
+  (<- after Seen (seen-of name prefix))
+  (<- service dict (ReadCoordinator (+ "/resources/Service/" name)))
+  (Withdrawn :changed (Changed :answer names :before before :after after) :replicas (get service "spec" "replicas")))
+
+
+(defhandler drops-replicas
+  ;; 失敗ケースのため: replicas を書きへ渡さない handler(#3295 の前の 3 つの handler と同じ振る舞い)を筋書きと sim の世界の間に挟む —
+  ;; Redeclare を受けて replicas を落とし、同じ系と environ で外の handler へ出し直す。
+  {:tags {:context "doeff-cluster-test" :role "protocol"}}
+  (Redeclare [system environ replicas]
+    (<- names tuple (Redeclare system :environ environ))
+    (resume names)))
+
+
+(deftest test-a-redeclaration-with-zero-replicas-withdraws-the-service
+  ;; 取り下げ(#3295): 同じ系を replicas 0 で宣言し直すと、coordinator の Service の replicas が 0 になり、動いていた process は止まって
+  ;; 起こし直されない(本番の declare の --replicas 0 と同じ意味を、契約の effect が 3 つの handler で運ぶ)。
+  (<- withdrawn Withdrawn (sim-cluster (beacons sim-foundation) (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/")))
+  (assert (= withdrawn.changed.answer #("beacon")) withdrawn.changed.answer)
+  (assert (= (len withdrawn.changed.before.processes) 1) withdrawn.changed.before.processes)
+  (assert (= withdrawn.replicas 0) withdrawn)
+  (assert (all (gfor p withdrawn.changed.after.processes (is-not p.exit-code None))) withdrawn.changed.after.processes))
+
+
+(deftest test-a-handler-that-drops-replicas-leaves-the-service-running
+  ;; 失敗ケース: replicas を書きへ渡さない handler では、同じ取り下げの筋書きで Service の replicas は 1 のまま・process は動き続ける
+  ;; (上の検が handler の欠けを赤にできることの確かめ)。
+  (<- withdrawn Withdrawn (sim-cluster (beacons sim-foundation)
+                                       (with-handlers [drops-replicas] (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/"))))
+  (assert (= withdrawn.replicas 1) withdrawn)
+  (assert (any (gfor p withdrawn.changed.after.processes (is p.exit-code None))) withdrawn.changed.after.processes))
+
+
 (deftest test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready
   ;; handoff: 新を旧と並べて起こし、coordinator が新の世代を Ready と数えた後に旧を止める(引数 every を変えた版)。
   (<- changed Changed (sim-cluster (handoff-beacons sim-foundation)

@@ -44,6 +44,7 @@ class DeployedCluster:
     actor: str
     revision: str
     runtime_env: RuntimeEnv | None
+    versions_read: Program | None
 
 def deployed_cluster_answers(target: DeployedCluster) -> _Handler:
     ...

@@ -27,8 +27,11 @@
 (import tests.detached_rig [MemoryCoordinator])
 (import tests.fixtures.machine_app [pings machine-foundation])
 
-;; 配備の cluster の値(宛先 = 検の coordinator の口・送り手の名・宣言の版 — 版の木の道なので実行環境は無し)。
-(val TARGET (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "a" 40) :runtime-env None))
+;; 配備の cluster の値(宛先 = 検の coordinator の口・送り手の名・宣言の版 — 版の木の道なので実行環境は無し・版の識別は宣言する
+;; process の物)。
+(val TARGET (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "a" 40) :runtime-env None :versions-read None))
+;; 配備の worker の版の識別の代役(宣言する process の版と違う値 — target の読みが宣言に載ることを見分けるため)。
+(val PINNED-VERSIONS {"doeff-cluster" "deployed-worker-pin"})
 ;; 仮想の時計の起点(epoch 秒 1790380800 = 2026-09-26)。
 (val START (datetime.fromtimestamp 1790380800 timezone.utc))
 
@@ -36,12 +39,51 @@
 (defk asked [coordinator clock step]
   {:pre [(: coordinator MemoryCoordinator) (: clock SimClock) (: step (| EffectBase Program))] :post [(: % "step の答え")]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "筋書きの effect 1 つを、配備の handler(内側)と検の coordinator の HTTP の答え手(外側)の組で答えさせるため(coordinator の状態は
-   MemoryCoordinator が effect をまたいで持つ)。"
+  "筋書きの effect 1 つを、既定の配備の値 TARGET で答えさせるため(asked-with の既定の宛先)。"
+  (<- answer (asked-with TARGET coordinator clock step))
+  answer)
+
+
+(defk asked-with [target coordinator clock step]
+  {:pre [(: target DeployedCluster) (: coordinator MemoryCoordinator) (: clock SimClock) (: step (| EffectBase Program))]
+   :post [(: % "step の答え")] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "筋書きの effect 1 つを、配備の値 target の配備の handler(内側)と検の coordinator の HTTP の答え手(外側)の組で答えさせるため
+   (coordinator の状態は MemoryCoordinator が effect をまたいで持つ)。"
   (run (scheduled (with-handlers [(sim-time-handler :clock clock) slog-discard-handler
                                   (transport-http (httpx.MockTransport coordinator.handle))
-                                  (deployed-cluster-answers TARGET)]
+                                  (deployed-cluster-answers target)]
                     step))))
+
+
+(defk service-spec [coordinator name]
+  {:pre [(: coordinator MemoryCoordinator) (: name str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "検の coordinator が持つ Service name の spec を、本番と同じ資源の口(GET /resources/Service/<名>)で読むため。"
+  (val response (coordinator.handle (httpx.Request "GET" (+ COORDINATOR-URL "/resources/Service/" name))))
+  (get (.json response) "spec"))
+
+
+(defk pinned-versions []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "配備の worker の環境の版を読む Program の代役として、PINNED-VERSIONS を答えるため。"
+  PINNED-VERSIONS)
+
+
+(deftest test-the-deployed-handler-carries-replicas-and-the-target-versions
+  ;; #3295: 取り下げ(Redeclare の replicas 0)と配備の worker の版(target の versions-read の答え)が coordinator の書きへ届く —
+  ;; replicas 0 は Service の replicas になり、宣言の run.versions には宣言する process の版ではなく target の読みの答えが載る。
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  (val target (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "a" 40) :runtime-env None
+                               :versions-read (pinned-versions)))
+  (<- declared tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation) :replicas 0)))
+  (assert (= declared #("ping")) declared)
+  (<- spec dict (service-spec coordinator "ping"))
+  (assert (= (get spec "replicas") 0) spec)
+  (assert (= (get spec "run" "versions") PINNED-VERSIONS) spec)
+  ;; replicas を渡さない宣言し直しは今の値(0)を保つ。
+  (<- _again tuple (asked-with target coordinator clock (Redeclare (pings machine-foundation))))
+  (<- kept dict (service-spec coordinator "ping"))
+  (assert (= (get kept "replicas") 0) kept))
 
 
 (deftest test-the-deployed-handler-declares-and-reads-readiness-from-the-coordinator
