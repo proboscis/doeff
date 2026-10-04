@@ -160,6 +160,9 @@ class JobStatus:
     pid: int | None
     attempts: int
     detail: str = ""
+    failures: int = 0
+    last_exit_code: int | None = None
+    last_exit_at_ms: int | None = None
     instance: str | None = None
     spec_hash: str | None = None
     placement: int | None = None
