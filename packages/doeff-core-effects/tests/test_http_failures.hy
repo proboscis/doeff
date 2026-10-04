@@ -110,3 +110,56 @@
   (val plain (get spy.timeouts 1))
   (assert (and (isinstance limited httpx.Timeout) (= limited.connect 2.0) (= limited.read 15.0)) limited)
   (assert (= plain 15.0) plain))
+
+
+(defclass Made []
+  "ClosingSpy を作った数と閉じた数(検の終わりに読む)。"
+  (defn #^ None __init__ [self]
+    "数えを 0 で始めるため。"
+    (setv self.opened 0)
+    (setv self.closed 0)))
+
+
+(defclass ClosingSpy []
+  "閉じた後の要求を断る client(範囲ごとの client の寿命の検 — httpx の client も閉じた後の要求を断る)。
+   作られた数と閉じられた数を、作り手の数え(Made)に控える。"
+  (defn #^ None __init__ [self #^ Made made]
+    "作られた事を数えに足して、開いた client として始めるため。"
+    (setv self.made made)
+    (setv self.closed False)
+    (setv made.opened (+ made.opened 1)))
+  (defn :async #^ httpx.Response request [self #^ str method #^ str url *
+                                         #^ (| (get dict #(str (| str int float bool None))) None) [params None]
+                                         #^ (| bytes None) [content None]
+                                         #^ (| (get dict #(str str)) None) [headers None]
+                                         #^ (| float httpx.Timeout None) [timeout None]
+                                         #^ bool [follow-redirects True]]
+    "閉じた後なら httpx と同じく断り、開いていれば送らずに 200 の返事を返すため。"
+    (when self.closed
+      (raise (RuntimeError "Cannot send a request, as the client has been closed.")))
+    (setv response (httpx.Response 200 :content b"ok" :request (httpx.Request method url)))
+    (setattr response "elapsed" (datetime.timedelta 0))
+    response)
+  (defn :async #^ None aclose [self]
+    "閉じた印を付け、閉じた数を数えに足すため。"
+    (setv self.closed True)
+    (setv self.made.closed (+ self.made.closed 1))))
+
+
+(defk ask-once [url]
+  {:pre [(: url str)] :post [(: % HttpResponse)] :tags {:context "http" :role "program"}}
+  "撃ち直しなしで GET を 1 回出すため。"
+  (<- answer HttpResponse (HttpRequest "GET" url :max-retries 0))
+  answer)
+
+
+(deftest test-one-handler-value-installed-around-two-scopes-answers-both
+  ;; 失敗ケース(agora-redesign #3415): 1 つの答え手の値を作って、別々の 2 つの範囲に被せる(値を持って要求ごとに被せる使い手の形)。
+  ;; 直す前は値を作った時の client 1 つを 2 つの範囲が使い、1 つ目の範囲の終わりで閉じたので、2 つ目の要求が「client が閉じた」で落ちた。
+  ;; 直した後は範囲ごとに client を作って閉じる: 2 つとも答え、作った数 = 閉じた数 = 2。
+  (val made (Made))
+  (val handler (http-production-handler :client-factory (fn [] (ClosingSpy made))))
+  (<- first HttpResponse (with-handler [(await-handler) handler] (ask-once "https://api.test/one")))
+  (<- second HttpResponse (with-handler [(await-handler) handler] (ask-once "https://api.test/two")))
+  (assert (= #(first.status second.status) #(200 200)) #(first second))
+  (assert (= #(made.opened made.closed) #(2 2)) #(made.opened made.closed)))

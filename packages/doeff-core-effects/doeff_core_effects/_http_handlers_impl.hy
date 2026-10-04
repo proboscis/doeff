@@ -8,6 +8,8 @@
 (import httpx)
 (import pathlib [Path])
 
+(import collections.abc [Callable])
+(import doeff [EffectBase Program])
 (import doeff_core_effects.effects [Await HttpRequest HttpResponse SlogEffect slog])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind])
 
@@ -40,10 +42,14 @@
 
 
 (defn http-production-handler [* [client-factory _default-client-factory] [sleep _asyncio-sleep]]
-  "Handle HttpRequest with a single async HTTP client and retry/backoff."
-  (setv client (client-factory))
-  (setv handler (_http-production-handler client sleep))
-  (_with-client-lifecycle handler client))
+  "Handle HttpRequest with retry/backoff through one async HTTP client per covered scope: each time the handler value is
+   installed around a program, a new client is made when that program starts and closed when it ends — the same value can
+   be installed around many scopes (agora-redesign #3415: a value made once and installed per request used to reuse the
+   client the first scope had already closed)."
+  (defn #^ Program scoped-handler [#^ (| Program EffectBase) program]
+    (_run-with-scoped-client client-factory sleep program))
+  (_copy-handler-metadata scoped-handler (_http-production-handler None sleep))
+  scoped-handler)
 
 ;; 節を静的に読めない(client の寿命を包む関数を返す)ので、答える効果と節が出す効果を宣言する(doeff-effect-analyzer の
 ;; __doeff_handles__ / __doeff_effects__ — 本番の土台の閉じ具合の検が「読めない handler」と数えないため・#2337)。
@@ -67,17 +73,12 @@
       (_http-fixture-replay-handler fixtures)))
 
 
-(defn _with-client-lifecycle [handler client]
-  (defn lifecycle-handler [program]
-    (_run-with-client-lifecycle handler client program))
-  (_copy-handler-metadata lifecycle-handler handler)
-  lifecycle-handler)
-
-
-(defn _run-with-client-lifecycle [handler client program]
+(defn #^ Program _run-with-scoped-client [#^ (get Callable #([] object)) client-factory #^ (get Callable #([float] object)) sleep #^ (| Program EffectBase) program]
+  "Run program under a client made for this scope only, and close that client when the scope ends."
   (do!
+    (setv client (client-factory))
     (try
-      (<- result (handler program))
+      (<- result ((_http-production-handler client sleep) program))
       result
       (finally
         (<- (Await (.aclose client)))))))
