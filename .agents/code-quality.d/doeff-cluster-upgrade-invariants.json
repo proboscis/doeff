@@ -1,10 +1,7 @@
 {
   "modules": [
     {
-      "allow": [
-        "doeff-cluster-cluster-model",
-        "doeff-cluster-cluster-policy"
-      ],
+      "allow": [],
       "layer": "pure",
       "name": "doeff-cluster-upgrade-invariants",
       "paths": [
@@ -13,7 +10,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/upgrade_invariants.hy"
       ],
-      "responsibility": "worker と coordinator を新しい版へ入れ替える順の条 V1〜V3(coordinator は worker 全部の後・合う task を受ける live な worker を残す・1 台ずつ)の記録の型と判定の純関数(#3366 の単位 2a)。「合う」は coordinator の置き場所の規則 placeable を呼ぶ。",
+      "responsibility": "worker と coordinator を新しい版へ入れ替える順の条 V1〜V4(coordinator は worker 全部の後・走り中の task の在る worker は空くのを待つ・1 台ずつ・coordinator は待ち行列が空の時)の記録の型と判定の純関数(#3366 — 落ち方は sim で測った物)。",
       "typed": true
     }
   ]

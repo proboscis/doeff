@@ -3,8 +3,6 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_cluster.coordinator.intent.cluster_model import WorkerInfo as WorkerInfo
-from doeff_cluster.coordinator.core.cluster_policy import placeable as placeable
 
 class UpgradeKind(StrEnum):
     WORKER = 'worker'
@@ -16,7 +14,7 @@ class PendingPhase(StrEnum):
 
 @dataclass(frozen=True, kw_only=True)
 class RosterEntry:
-    info: WorkerInfo
+    worker: str
     live: bool
     doeff_commit: str
 
@@ -24,7 +22,7 @@ class RosterEntry:
 class PendingTask:
     task: str
     phase: PendingPhase
-    needs: tuple[str, ...]
+    worker: str | None
 
 @dataclass(frozen=True, kw_only=True)
 class UpgradeStart:
@@ -45,8 +43,11 @@ class UpgradeBreach:
 def coordinator_after_every_worker(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
     ...
 
-def worker_swap_leaves_a_taker(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
+def worker_swap_waits_for_its_tasks(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
     ...
 
 def one_worker_at_a_time(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
+    ...
+
+def coordinator_swap_on_an_empty_queue(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
     ...
