@@ -18,7 +18,7 @@ enabled = true
 base = "main"
 # 区画の名前(着地の台帳の repo 鍵・pod の窓が公開の鍵を引く区画)— checkout の path に依らない綴り。
 # 宣言が無い時は checkout の basename に畳まれるので値は同じ(dotfiles agentcli land.partition_name の
-# ② が読む・③ が既定)。herdr-hud / dotfiles と同じく明示する(段 9 lane 9m 便 2d・agora-redesign #71)。
+# ② が読む・③ が既定)。agora / dotfiles と同じく明示する(段 9 lane 9m 便 2d・agora-redesign #71)。
 name = "doeff"
 
 [gate]
@@ -98,11 +98,11 @@ full = [
 full_timeout_s = 7200
 
 # R-7a95702d focus mode(operator 直接指示 2026-08-17「merge queue は 10 分以内・
-# 2700 秒の門は許容範囲外」— 先例 = herdr-hud D568 出荷 B / ACP 同日切替)。
+# 2700 秒の門は許容範囲外」— 先例 = agora D568 出荷 B / ACP 同日切替)。
 # operator 裁定 2026-08-17 逐語「mergeにテストは必須じゃない」: 着地の門は merge の
 # 力学(rebase 成立・patch-id 突合・受入検定)のみ。テストは全部事後 =
-# ① 日次全量検査(gate.full を ai land verify が使う — 運び手 = ns herdr-hud の
-#   CronJob `land-verify-doeff`・毎日 03:30 JST・宣言の正本 = herdr-hud
+# ① 日次全量検査(gate.full を ai land verify が使う — 運び手 = ns agora の
+#   CronJob `land-verify-doeff`・毎日 03:30 JST・宣言の正本 = agora
 #   deploy/periodic/jobs.json の state live)
 # ② 全走が緑の断面だけが stable ブランチ(policy.stable_branch)へ昇格
 # ③ 赤の復旧は fix-forward(容疑名指しの修理便の自動起票)— revert 自動化は不採。
@@ -113,14 +113,14 @@ full_timeout_s = 7200
 mode = "focus"
 # focus の恒常部は宣言しない(doeff に横断走査 script なし — 門は力学のみ)。
 # 着地の門 = git の衝突の印の走査ちょうど(agora-redesign #726・2026-09-28 c2-w25)。merge-queue の窓は
-#   focus_paths_runner の宣言が無い区画を開かないので、agora-controllers / herdr-hud と同じ 1 行を置く。
+#   focus_paths_runner の宣言が無い区画を開かないので、agora-controllers / agora と同じ 1 行を置く。
 #   行頭の `<<<<<<< ` / `>>>>>>> ` の一致なし(git grep の rc 1)だけを通し、一致(rc 0)と git の失敗(rc 128)は止める。
 #   「門は力学のみ」は変わらない(テストは足さない)。戻すには この行と下の runner を旧値へ戻す。
 focus_paths_runner = '''git grep -n -E '^(<<<<<<< |>>>>>>> )' -- . && exit 1 || test $? -eq 1'''
 # 方策宣言そのものへの変更だけは常時 full battery(自己参照の fail-closed)
 # ⚠ 2026-08-17 operator 逐語「全量検査を無効にしてくれ」: full_paths を空に —
 # 着地の窓はいかなる path でも全量検査(gate.full)を走らせない。gate.full の
-# 唯一の消費者 = 日次検証便(ai land verify・ns herdr-hud の CronJob land-verify-doeff・
+# 唯一の消費者 = 日次検証便(ai land verify・ns agora の CronJob land-verify-doeff・
 # 毎日 03:30 JST。2026-09-13 の退役までは Mac の launchd com.masui.land-verify-doeff が
 # 受けていた)。方策 toml の変更も
 # 窓では力学のみで着地する(検分は事後 + fix-forward)。復活は operator 裁定で。
@@ -128,7 +128,7 @@ full_paths = []
 
 # R-94ede4bc 投機列車(operator 直接指示 2026-08-17「merge queue の投機テストを
 # 全 repo で適用」— 連邦の機構 = dotfiles land.py・先例 = dotfiles 裁定 2026-08-16
-# decision-land-speculation-enable / herdr-hud D568)。窓は確定 train(消費済み
+# decision-land-speculation-enable / agora D568)。窓は確定 train(消費済み
 # 緑の先端・公開対象)と投機 tip を分け、gate の実行だけを backend へ並列に
 # 発注する(判定の消費は直列同値・赤 1 便で窓ごと abort する形の根治)。厳密 bool。
 # 戻し方 = この行を外す便を着地させる(既定 off・law opt-in-inert)。
@@ -142,7 +142,7 @@ join_s = 60
 
 [gate.tiers]
 # ⚠ mode = "focus" の間、この表は着地の解決に使われない(mode 未宣言への戻しだけが
-# 読む — herdr-hud / ACP と同じ移行残置。撤去は日次 verify 連続緑の再訪条件で別便)。
+# 読む — agora / ACP と同じ移行残置。撤去は日次 verify 連続緑の再訪条件で別便)。
 # lane 分離は [gate].full の註と同じ(convoy 根治)。
 "docs/adr/" = "UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
 "docs/" = "true"
@@ -164,13 +164,13 @@ issue_tracker_bare = false
 run_executors = ["landrun-doeff", "landrun-rollout", "machine", "land-runner@agora-1"]
 # 着地の窓を回す機体(dotfiles ADR-DOTFILES-017 law land-runner-by-repo-owner・段 9 lane 9m 便 2d・
 # agora-redesign #71・operator 裁定 2026-09-14 案 A)。この repo は個人の repo(会社 repo ではない)
-# なので、pod の service(herdr-hud deploy の container land-api・実行者 land-runner@agora-1)が
+# なので、pod の service(agora deploy の container land-api・実行者 land-runner@agora-1)が
 # 窓を回す。Mac 側の起こし口はこの宣言を**本線の先端から**読んで「この repo の窓は pod が回す」
 # と名乗って見送る。戻すには runner の行を消す(Mac の窓が再び回る・1 行の便)。押す鍵 =
-# Secret land-key-doeff(GitHub の deploy key `agora-1-pod (write) land-runner doeff`・herdr-hud
+# Secret land-key-doeff(GitHub の deploy key `agora-1-pod (write) land-runner doeff`・agora
 # deploy の env AGORA_LAND_SSH_KEYS の doeff の項 — 鍵は repo ごとに 1 つ・#71 便 2b)。
 # ⚠ `auto_run = true` は残す(pod の窓と `--machine` の資格の宣言 = 種別の照合)。
-# 2026-09-28 改訂(agora-redesign #726・c2-w25): 窓は merge-queue の Deployment `merge-queue-land`(ns herdr-hud)が回す。
+# 2026-09-28 改訂(agora-redesign #726・c2-w25): 窓は merge-queue の Deployment `merge-queue-land`(ns agora)が回す。
 #   agora-1 の land-api の窓は agora-controllers の本線の宣言(gate.full の鍵 parallel)を読めず、依存先の checkout を
 #   揃えられないまま L515 を保留し続けていた。押す鍵は同じ Secret land-key-doeff(merge-queue の deploy/land が載せる)。
 #   戻し方 = この値を "pod" に戻す(1 行の便)。
@@ -186,7 +186,7 @@ stable_branch = "stable"
 #   「承認してよい資格」であって宛先ではない(別の問い)ので、後退先にも使わない。
 # 宛先の会話 = c-D6AFCPB1VRMNTVN9ECSZMCAS3T = agora-redesign #467(日次の赤が見えない)の根の配り手で、この repo の日次を
 #   母集団に含める card ki-03598df36cce を開いて計画の依頼を出した会話。ACP の会話の行の status.turnRoute が agent-job
-#   なので ACP の郵便の経路が在る(pane の会話には経路が無い — herdr-hud の宣言 c-01M278C… がその形)。
+#   なので ACP の郵便の経路が在る(pane の会話には経路が無い — agora の宣言 c-01M278C… がその形)。
 #   選んだ根拠と代案 = card ki-03598df36cce のスレッド(計画段の裁定 2026-09-19)。
 # ⚠ 既知の滞留(R-55ee0b39 ⑧・card ki-9655dc6151b3): 差出人が land-queue(operator でも会話でもない)なので ACP の配達の
 #   判定は inReplyTo の無いこの報せを held にする。⇒ この宣言で台帳の結末は no-addressee(誰も呼ばれていない)から

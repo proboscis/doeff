@@ -133,8 +133,8 @@ pyright が型を追えるようにするため)。別名は `_doeff_validation*
 | ai-cli | 89(16) | 0 |
 | merge-queue | 82(12) | 0 |
 | kubeacp | 69(4) | 0 |
-| herdr-hud-deploy-snap | 12(4) | 0 |
-| herdr-hud | 6(2) | 0 |
+| agora-deploy-snap | 12(4) | 0 |
+| agora | 6(2) | 0 |
 
 ### 5.2 選択肢
 
