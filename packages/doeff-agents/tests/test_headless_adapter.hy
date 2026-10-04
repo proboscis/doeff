@@ -27,7 +27,7 @@
 (import doeff_agents.effects [
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
-  AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
+  AgentTextEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect])
@@ -139,7 +139,7 @@
 
 (defn ends-of [#^ tuple events] (lfor event events :if (isinstance event AgentTurnEndEvent) event.end))
 (defn tool-started [#^ tuple events end]
-  (or (any (gfor event events (and (isinstance event AgentToolUseEvent) (in "Bash" event.tool-names))))
+  (or (any (gfor event events (and (isinstance event AgentToolUseEvent) (in "Bash" (gfor call event.tool-calls call.name)))))
       (is-not end None)))
 
 (defk launch [#^ Setting s #^ str name #^ (| str None) prompt #^ (| str None) resume-from #^ (| str None) [snapshot None]]
@@ -192,6 +192,14 @@
   (<- record (read-until handle (fn [events end] (and (is-not end None) (= (len (ends-of events)) 2))) s.timeout -1))
   (<- (Stop handle))
   record)
+
+(defk tool-turn-to-the-end [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)]}
+  "道具を 1 度呼ぶ手番を最後まで読む(呼びの出来事と結果の出来事の id の突き合わせを見るため・agora-redesign #3518)。"
+  (<- handle (launch s "adapter-tool-ids" (sleep-prompt 1 "TOOLED") None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
 
 (defk injected-input-joins-the-running-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)]}
@@ -499,6 +507,30 @@
    :skip-if (not (.get os.environ "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR"))
    :skip-reason "本物の claude の筋書きは env DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR に個人の profile の CLAUDE_CONFIG_DIR を置いた時だけ走る"}
   (check-one-turn-then-resume (run-on REAL tmp-path one-turn-then-resume)))
+
+(defk check-tool-calls-meet-results [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "AgentToolUseEvent の tool_calls の id が、後に続く AgentToolResultEvent の tool_use_ids と突き合う(どの結果も前の呼びの id を
+   名指し、どの呼びにも結果が届く)。呼びの id を落とす adapter では突き合わず赤(agora-redesign #3518)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val uses (lfor event done.events :if (isinstance event AgentToolUseEvent) event))
+  (val results (lfor event done.events :if (isinstance event AgentToolResultEvent) event))
+  (assert (and uses results) (repr done.events))
+  (val called (lfor event uses call event.tool-calls call.id))
+  (assert (all called) (repr uses))
+  (val answered (lfor event results id event.tool-use-ids id))
+  (assert (= (sorted called) (sorted answered)) (repr #(uses results)))
+  (for [result results]
+    (assert (all (gfor id result.tool-use-ids
+                       (any (gfor use uses :if (< use.seq result.seq) call use.tool-calls (= call.id id)))))
+            (repr #(uses result))))
+  None)
+
+(deftest test-headless-tool-call-ids-meet-their-results-fake [tmp-path]
+  (<- (check-tool-calls-meet-results (run-on FAKE tmp-path tool-turn-to-the-end))))
+
+(deftest test-headless-tool-call-ids-meet-their-results-stub [tmp-path]
+  (<- (check-tool-calls-meet-results (run-on STUB tmp-path tool-turn-to-the-end))))
 
 (deftest test-headless-next-turn-input-waits-fake [tmp-path]
   (check-next-turn (run-on FAKE tmp-path next-turn-input-waits-for-the-running-turn)))

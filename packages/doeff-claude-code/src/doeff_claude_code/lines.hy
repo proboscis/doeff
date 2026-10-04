@@ -56,10 +56,21 @@
   (setv #^ str permission-mode "")
   (setv #^ (get tuple #(str ...)) mcp-servers #()))
 
+(defclass [(dataclass :frozen True)] ToolCall []
+  "assistant の message の tool_use の block 1 つ: id = block の id(続く user の行の tool_result の tool_use_id が同じ id で
+   結果を名指す)/ name = 道具の名。どちらも空でない文字列(空の欄は分類の段で Other として断る — 空文字で通さない)。"
+  (#^ str id)
+  (#^ str name)
+  (defn __post_init__ [self]
+    (when (not (and (isinstance self.id str) self.id))
+      (raise (ValueError (.format "ToolCall.id は空でない文字列: {!r}" self.id))))
+    (when (not (and (isinstance self.name str) self.name))
+      (raise (ValueError (.format "ToolCall.name は空でない文字列: {!r}" self.name))))))
+
 (defclass [(dataclass :frozen True)] AssistantMessage []
-  "assistant の message: 本文の text の block を連ねたものと、呼んだ道具の名。"
+  "assistant の message: 本文の text の block を連ねたものと、呼んだ道具(tool_use の block の id と名の組)の列。"
   (setv #^ str text "")
-  (setv #^ (get tuple #(str ...)) tool-names #()))
+  (setv #^ (get tuple #(ToolCall ...)) tool-calls #()))
 
 (defclass [(dataclass :frozen True)] ToolResult []
   "user の行の tool_result(道具の結果が model へ返った)。"
@@ -231,10 +242,17 @@
   (if (isinstance content list) (tuple (gfor block content :if (isinstance block dict) block)) #()))
 
 (defn classify-assistant [#^ dict record]
+  "assistant の行 → AssistantMessage。tool_use の block は id と name を読んで ToolCall にする。id か name が無い・空の
+   tool_use の block を 1 つでも持つ行は、名指しの Other(type = assistant・subtype = tool_use_without_id / tool_use_without_name)で
+   断る — 空の id の ToolCall を作らない(結果の tool_use_id と突き合わせられない呼びを通さない)。"
   (setv blocks (content-blocks record))
-  (AssistantMessage
-    :text (.join "" (gfor block blocks :if (= (.get block "type") "text") (text-at block "text")))
-    :tool-names (tuple (gfor block blocks :if (= (.get block "type") "tool_use") (text-at block "name")))))
+  (setv uses (tuple (gfor block blocks :if (= (.get block "type") "tool_use") block)))
+  (cond
+    (any (gfor block uses (not (text-at block "id")))) (Other :type "assistant" :subtype "tool_use_without_id")
+    (any (gfor block uses (not (text-at block "name")))) (Other :type "assistant" :subtype "tool_use_without_name")
+    True (AssistantMessage
+           :text (.join "" (gfor block blocks :if (= (.get block "type") "text") (text-at block "text")))
+           :tool-calls (tuple (gfor block uses (ToolCall :id (text-at block "id") :name (text-at block "name")))))))
 
 (defn classify-user [#^ dict record]
   (setv ids (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result")

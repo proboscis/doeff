@@ -16,7 +16,9 @@ from enum import Enum
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
+import hy  # noqa: F401  # .hy import hook — ToolCall lives in the Hy module doeff_claude_code.lines
 from doeff import EffectBase
+from doeff_claude_code.lines import ToolCall as ToolCall
 
 if TYPE_CHECKING:
     from doeff.mcp import McpToolDef
@@ -225,11 +227,12 @@ class AgentTextDeltaEvent:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
-    """The agent called tools (by name)."""
+    """The agent called tools: one ToolCall (tool_use block id + tool name) per call, in block order.
+    Each id is the one a later AgentToolResultEvent names in tool_use_ids."""
 
     seq: int
     at: datetime
-    tool_names: tuple[str, ...]
+    tool_calls: tuple[ToolCall, ...]
 
 
 @dataclass(frozen=True, kw_only=True)

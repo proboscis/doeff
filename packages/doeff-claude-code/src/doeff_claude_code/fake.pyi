@@ -22,6 +22,7 @@ from doeff_claude_code.values import IMAGE_MIMES as IMAGE_MIMES
 from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code.lines import Init as Init
 from doeff_claude_code.lines import AssistantMessage as AssistantMessage
+from doeff_claude_code.lines import ToolCall as ToolCall
 from doeff_claude_code.lines import ToolResult as ToolResult
 from doeff_claude_code.lines import InputFate as InputFate
 from doeff_claude_code.lines import PermissionRequested as PermissionRequested
@@ -71,6 +72,8 @@ CLOCK_TICK: float
 MIN_SLEEP: float
 FAKE_CAPABILITIES: tuple[str, ...]
 NO_RECEIPT_CAPABILITIES: tuple[str, ...]
+FAKE_TOOL_USE_ID: str
+FAKE_TOOL_CALL: ToolCall
 
 @dataclass(frozen=True)
 class FakeReply:

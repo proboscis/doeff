@@ -127,7 +127,7 @@
   (cond
     (isinstance kind AssistantMessage)
       (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
-         (if kind.tool-names [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-names kind.tool-names))] []))
+         (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] []))
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
     (isinstance kind ToolResult)
