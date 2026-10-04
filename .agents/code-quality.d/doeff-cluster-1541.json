@@ -349,7 +349,8 @@
         "doeff-cluster-remote",
         "doeff-cluster-program-codec",
         "doeff-cluster-runtime-env-rules",
-        "doeff-cluster-warm-rules"
+        "doeff-cluster-warm-rules",
+        "doeff-hy-wire"
       ],
       "layer": "io",
       "name": "doeff-cluster-detached",

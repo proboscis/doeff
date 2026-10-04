@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json])
 (import doeff_cluster.shared.protocol.remote [program-put])
-(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
+(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT WATCH-MAX-SECONDS])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
@@ -36,7 +36,9 @@
                          DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable DetachedSubmitAnswer
                          RunnerFact RunnersUnreachable OPEN-PHASES DetachedOutcome DetachedSucceeded DetachedFailed DetachedLost
                          DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
-                         AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer])
+                         AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
+                         ServiceViewWire])
+(import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 
@@ -165,6 +167,55 @@
   {:pre [(: after int) (: timeout-seconds float)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "AwaitRunnersChange の GET /watch の問いを作るため(worker を名指さない — coordinator 全体の版)。"
   {"after" (str (max 0 after)) "timeoutSeconds" (str timeout-seconds)})
+
+
+(defk service-ready-of [status body]
+  {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % (| bool None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitServiceReady が読む GET /resources/Service/<名> の返事を、Ready(True)・まだ Ready でない(False)・届かない(None)に分けるため
+   (本番の client と sim の宿が同じ読み — #3470)。200 の本文は ServiceViewWire に解く(形が違えば Malformed で名指して落ちる)。宣言の
+   無い 404 は False: 作り直しや置き場の移しの間も越えて待つ(待つ側の上限が切る)。それ以外の status(5xx など)は届かないと同じ。"
+  (match status
+    None None
+    200 (do (<- view (| ServiceViewWire Malformed) (parse ServiceViewWire body))
+            (match view
+              (Malformed :fields fields)
+                (raise (ValueError (.format "coordinator の Service の返事が ServiceViewWire の形でない: {}"
+                                            (.join "・" (gfor f fields (+ f.field " " f.reason))))))
+              _ (= view.status.ready "Ready")))
+    404 False
+    _ None))
+
+
+(defk service-readiness [cell options sender name]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: name str)] :post [(: % (| bool None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "名を挙げた Service が今 Ready かを coordinator の GET /resources/Service/<名> で読むため(AwaitServiceReady の 1 回の読み — 届かなければ None)。"
+  (<- read (resent-answer cell options "GET" (+ "/resources/Service/" (url-quote name :safe "")) None None sender.deadline-seconds))
+  (match read
+    (HttpResponse :status status)
+      (do (<- ready (| bool None) (service-ready-of status (try (json.loads read.text) (except [ValueError] read.text))))
+          ready)
+    _ None))
+
+
+(defk service-ready-awaited [cell options sender name poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: name str) (: poll-seconds float)]
+   :post [(: % ServiceReady)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "名を挙げた Service が Ready になるまで待つため(AwaitServiceReady の本番の答え — #3470)。Ready でなければ coordinator の版が変わるまで
+   GET /watch(long-poll・上限 WATCH-MAX-SECONDS)で待って読み直す — 時間で起きて確かめず、版の変化で起きる。coordinator に届かない間だけ
+   poll-seconds の間を置いて問い直す(境界の答え手の中だけの待ち)。待つ口の無い旧い coordinator は名指して落とす(後方互換を持たない)。"
+  (var after 0)
+  (while True
+    (<- ready (| bool None) (service-readiness cell options sender name))
+    (when (is ready True)
+      (return (ServiceReady :name name :revision after)))
+    (<- change (runners-changed cell options after WATCH-MAX-SECONDS))
+    (match change
+      (RunnersChange :revision revision) (:= after revision)
+      (RunnersWatchMissing :detail detail)
+        (raise (RuntimeError (.format "Service {!r} の Ready を版の変化で待てない(coordinator に GET /watch が無い): {}" name detail)))
+      _ (<- (Delay poll-seconds)))))
 
 
 (deff runners-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
@@ -424,6 +475,9 @@
   (AwaitRunnersChange [after timeout-seconds]
     (<- change (runners-changed cell options after (float timeout-seconds)))
     (resume change))
+  (AwaitServiceReady [name]
+    (<- ready ServiceReady (service-ready-awaited cell options sender name poll-seconds))
+    (resume ready))
   (AwaitProcessEnded [job timeout-seconds]
     (<- ended (await-process-cluster cell options sender job timeout-seconds poll-seconds))
     (resume ended)))
