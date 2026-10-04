@@ -15,12 +15,16 @@
 ;;;   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)の整数の literal で、**必ず書く** — coordinator の Service は job 1 つに 1 つで、
 ;;;   台数は job の性質。宣言し直しはこの値を書く(宣言の道具の引数で台数を持たない — 持つと、取り下げてあった Service へ台数を書かずに
 ;;;   宣言し直した時に job が起きない取り違えが起きる)。
+;;;   :reads / :writes は job が外の置き場(記録の service など)から読む・書く物の集合で、任意の欄 — 文字列の literal の集合で、綴りは
+;;;   <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。置き場の名の集合は使い手の repo の語彙なので doeff は持たない。静的な記述の
+;;;   job の dict にだけ載り、job の値(doeff-cluster の Job)と宣言の行には載らない(実行時に読む物が無い)。使い手の系の job に欄を
+;;;   求める・置き場の名を照らすのは使い手の側の doeff-linter の規則(#3495・#3496)。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
 (import hy)
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
 (import doeff-hy.declarations [needs-names])
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ"))
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
 (setv REPLICAS-VALUES #(0 1))
@@ -47,6 +51,21 @@
     (when (not (isinstance v value-types))
       (raise (SyntaxError (.format "{}: {} の値は{}の literal: {}" where key value-word (hy.repr v))))))
   pairs)
+
+
+(defn record-names [form #^ str where #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "`:reads` / `:writes` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
+   形は文字列の literal の集合だけ(空の集合 = 読み書きしないと宣言した)、綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。
+   置き場の名が何かは照らさない(使い手の repo の語彙 — 頭注)。"
+  (when (not (isinstance form Set))
+    (raise (SyntaxError (.format "{}: {} は置き場の名の文字列の集合 #{{\"<置き場>:<名>\" …}}: {}" where key (hy.repr form)))))
+  (for [item form]
+    (when (not (isinstance item String))
+      (raise (SyntaxError (.format "{}: {} の要素は文字列の literal: {}" where key (hy.repr item)))))
+    (setv parts (.split (str item) ":"))
+    (when (not (and (= (len parts) 2) (all parts)))
+      (raise (SyntaxError (.format "{}: {} の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない): {}" where key (hy.repr item))))))
+  (sorted (sfor item form (str item))))
 
 
 (defn static-value [form]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -78,9 +97,12 @@
     (setv key (str k))
     (when (not (and (isinstance k Keyword) (in key JOB-KEYS)))
       (raise (SyntaxError (.format "{}: 鍵 {} は受けない — 受ける鍵は {}" where (hy.repr k) (.join " " JOB-KEYS)))))
-    (when (in key values)
+    ;; 2 回目の鍵は静的な記述で見る(どの鍵も記述に載り、:reads / :writes は job の値に載らない)。
+    (when (in (cut key 1 None) static)
       (raise (SyntaxError (.format "{}: 鍵 {} が 2 回ある" where key))))
     (match key
+      (| ":reads" ":writes")
+        (setv (get static (cut key 1 None)) (record-names v where key))
       ":needs"
         (do (setv names (needs-names v where))
             (setv (get values key) `(frozenset [~@(lfor n names (String n))])

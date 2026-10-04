@@ -108,6 +108,9 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - `:replicas` は job の望む台数(`0` = 取り下げ・`1` = 動かす)で、必ず書きます(省けば展開の時点で `SyntaxError`)。宣言し直しは
   Service の台数をこの値にするので、coordinator の Service の台数を手で替えても、次の宣言し直しで job の値に戻ります。取り下げは
   `:replicas 0` に書き換えた系を宣言し直す事です。
+- `:reads` / `:writes` は job が外の置き場から読む・書く物の文字列の集合で、任意です(綴りは `<置き場>:<名>` — `:` がちょうど 1 つ・
+  両側が空でない。空の集合 `#{}` は「読み書きしない」の宣言)。静的な記述 `__doeff_system__` の job にだけ載り、Job と宣言の行には
+  載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。
 - `:readiness` は `{"windowSeconds" n}`(handoff の期限 `handoffTimeoutSeconds` も書ける)、`:update` は `"recreate"`(既定)か
   `"handoff"`、`:environ` は子 process の環境変数(名は `[A-Z][A-Z0-9_]*`・`DOEFF_`・`PYTHON`・`UV_` などの予約は不可・秘密は置かない)。
   設定は Program の中の `Ask` と、宣言の `:environ` を字面どおり読む handler(`host_contract.environ-reader`)で読みます。
