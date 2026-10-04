@@ -33,7 +33,11 @@
 (setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags" ":needs"))
 ;; 関数(deff・defk)の契約の辞書が受ける鍵 — CONTRACT-KEYS と型の引数 :tp(`:tp [T]`・型検査の展開で PEP 695 の `def f[T]`・
 ;; 実行時の確かめでは object に消す — doeff_hy/macros.hy の _type-params。agora-redesign #2893)。defp などは :tp を断る。
-(setv FUNCTION-CONTRACT-KEYS (+ CONTRACT-KEYS #(":tp")))
+;; :writes は、その定義(job でない書き手 — 系の job から送られる task の Program など)が外の置き場に書く物の集合で、defsystem の
+;; job の :writes と同じ形(文字列の literal の集合・綴り <置き場>:<名>)を展開の時に検め、実行時は何もしない。使い手の
+;; doeff-linter の規則 DOEFF207 が source の綴りを読み、本番の入口から届く定義の :writes を書き手に数える(agora-redesign #3501・
+;; #3496)。:reads は受けない(job でない定義の読みを照らす規則が無い)。
+(setv FUNCTION-CONTRACT-KEYS (+ CONTRACT-KEYS #(":tp" ":writes")))
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
 (setv DECLARATION-KEYS #(":effects" ":tags" ":needs"))
 (setv TAG-KEYS #(":context" ":role"))
