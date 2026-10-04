@@ -85,7 +85,7 @@
        "旧い lazy / lazy-val / lazy-var は defhandler でも defk でも「セッションをまたいで状態の効果に保存する値」の意味だった。defk の中の lazy は関数の約束に出ない隠れた状態で、新しい lazy val(その呼び出しの中の遅延)と同じ語で意味が衝突する。"
        :evidence "packages/doeff-hy/src/doeff_hy/macros.hy の defk(2026-09-26 以前の lazy の注入)・handle.hy の _build-lazy-init-forms")
      (fact
-       "本線 6 repo(agora-controllers・proboscis-ema・doeff・agent-control-plane・argus・herdr-hud)の実測: defk・deftest の中の旧い lazy / set! は 0 件、defhandler の旧い lazy 節 115・set! を持つ節 61。defk 7,381 個のうち 1,155 個(15.6%)が同じ名前を束縛し直している。"
+       "本線 6 repo(agora-controllers・proboscis-ema・doeff・agent-control-plane・argus・agora)の実測: defk・deftest の中の旧い lazy / set! は 0 件、defhandler の旧い lazy 節 115・set! を持つ節 61。defk 7,381 個のうち 1,155 個(15.6%)が同じ名前を束縛し直している。"
        :evidence "設計の記録 §10(新しい解析 binding_forms.rewrite_body を各 repo の origin/main にそのまま当てた)")
      (fact
        "Hy 1.3.0 の reader は !(f) を ! と (f) の 2 つの要素に読み、(:= x 1) の頭を Keyword として読む。module の直下の (:= x v) は macro を通らず keyword の呼び出しとして compile され、何も書き換えない。"
