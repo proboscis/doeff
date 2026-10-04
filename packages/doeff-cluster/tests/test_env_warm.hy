@@ -55,7 +55,7 @@
 ;; runtime-env — 本番の DetachedSender の runtime-env)が運ぶ。
 
 (val PREPARE-SECONDS 5.0)
-(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS)))
+(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS :task-reserve 0)))
 (val NO-JOBS (system-of "warm-scenarios" #()))
 (val COLD-STARTS-METRIC "doeff_worker_env_cold_start_total")
 
@@ -148,7 +148,7 @@
 
 (val SPLIT-ENV-SECONDS 30.0)
 (val SPLIT-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds 0.0
-                                :env-prepare-seconds SPLIT-ENV-SECONDS)))
+                                :env-prepare-seconds SPLIT-ENV-SECONDS :task-reserve 0)))
 
 
 (defrecord SplitMeasured
@@ -244,7 +244,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "名乗った worker の事実(準備済みの root の鍵 ready・root の置き場の余地 capacity)を、盤の状態に置く形で組むため。"
   (WorkerInfo name provides load-capacity seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
-              :env-capacity capacity))
+              :env-capacity capacity :task-reserve 0))
 
 
 (defk env-task [id declared [needs #("net")]]
@@ -264,7 +264,7 @@
   (assert (= warmed.until-ms 601000) warmed)
   (assert (= #(warmed.ready warmed.preparing) #(#() #())) warmed)
   ;; 能力の合う worker の heartbeat の返事にだけ載る(能力の足りない worker・専用の能力を持つ worker には載らない)
-  (val hb {"name" "w1" "provides" ["agent-cli"] "capacity" 2 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["agent-cli"] "capacity" 2 "taskReserve" 0 "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" []} "envCapacity" "ok"})
   (val s1 (! (register-heartbeat after (! (heartbeat-of hb)) 2000)))
   (val reply-1 (! (heartbeat-reply s1 "w1" TIMING :now 2000)))
@@ -367,10 +367,10 @@
   (val cold (get (! (place-tasks 10 cold-state {} TIMING)) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks {"t1" cold}))
-  (assert (= (get (load-of after {}) "w1") 1) "preparing の task も担い手の数に入る")
+  (assert (= (. (get (load-of after {}) "w1") tasks) 1) "preparing の task も担い手の数に入る")
   (assert (= (lfor t (tasks-for after "w1") t.id) ["t1"]) "preparing の task も worker へ送る")
   ;; worker が準備済みを名乗った拍に assigned へ進む
-  (val hb {"name" "w1" "provides" ["net"] "capacity" 2 "versions" {} "boot" None "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["net"] "capacity" 2 "taskReserve" 0 "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})
   (val promoted (! (register-heartbeat after (! (heartbeat-of hb)) 20)))
   (assert (= (. (get promoted.tasks "t1") phase) "assigned") (get promoted.tasks "t1")))

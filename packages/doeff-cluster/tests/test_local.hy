@@ -30,7 +30,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.replicas [with-replicas])
 (import tests.fixtures.event_programs [stop-minders stop-ignorers])
-(import tests.fixtures.sim_programs [beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
+(import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
@@ -40,6 +40,7 @@
                                                                  WorkerProbe alive-only-while-reachable
                                                                  PlacementSeen WorkerGone places-only-on-reachable
                                                                  ProcessSpan WorkerCapacity running-within-capacity
+                                                                 JobPlacesSeen WorkerReserve jobs-stay-out-of-the-task-reserve
                                                                  JobNeeds WorkerAbility placed-only-where-eligible
                                                                  JobProcess moves-to-a-live-worker
                                                                  WorkerExclusive exclusive-workers-take-only-their-jobs ran-only-where-eligible
@@ -276,7 +277,7 @@
 (deftest test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1
   ;; 反例(条 W1): 入れ替えで旧を名から外す handler(RetireJob)が外すと同時に旧を止める壊れた worker(retire-stops)では、新が Ready に
   ;; なるまで Ready の書き手が居ない区間ができ、W1 の判断が空白を返す — 本物の handler が旧を動かし続けていることの裏返し。
-  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :retire-stops True)))
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :retire-stops True :task-reserve 0)))
   (<- changed Changed (sim-cluster (handoff-beacons sim-foundation)
                                    (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)
                                    :workers workers))
@@ -317,7 +318,7 @@
   ;; 次の新が並び、2 度目の入れ替えで beacon が同時に 3 つ動き、条 C14 の判断がその process を名指す。
   (<- processes tuple (sim-cluster (handoff-beacons sim-foundation)
                                    (handed-off-twice (handoff-beacons-v2 sim-foundation) (handoff-beacons-v3 sim-foundation))
-                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :hides-retired True))))
+                                   :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :hides-retired True :task-reserve 0))))
   (<- over tuple (runs-within-their-limit processes HANDOFF-LIMIT))
   (assert over processes))
 
@@ -452,12 +453,12 @@
 (deftest test-a-job-whose-needs-no-worker-provides-is-not-placed
   ;; needs ⊆ provides: どの worker も gpu を提供しなければ置かれず(process が起きない・Ready にならない)、提供する worker が居れば
   ;; その worker に置かれる。
-  (val cpu (SimWorker :name "cpu-1" :provides (frozenset ["cluster-net"])))
+  (val cpu (SimWorker :name "cpu-1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
   (<- none Seen (sim-cluster (gpu-only sim-foundation) (watch-trainer) :workers #(cpu)))
   (assert (= none.processes #()) none.processes)
   (assert (!= none.readiness.state "Ready") none.readiness)
   (assert (not none.rows) none.rows)
-  (val gpu (SimWorker :name "gpu-1" :provides (frozenset ["cluster-net" "gpu"])))
+  (val gpu (SimWorker :name "gpu-1" :provides (frozenset ["cluster-net" "gpu"]) :task-reserve 0))
   (<- placed Seen (sim-cluster (gpu-only sim-foundation) (watch-trainer) :workers #(cpu gpu)))
   (assert (= (lfor p placed.processes p.worker) ["gpu-1"]) placed.processes)
   (assert (= (get placed.rows "gpu/beat" "step") "1") placed.rows))
@@ -944,7 +945,7 @@
   (tuple (gfor p (+ a b) (ProcessSpan :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
 
 
-(val ONE-SLOT (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1))
+(val ONE-SLOT (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :task-reserve 0))
 
 
 (deftest test-a-worker-runs-no-more-jobs-than-its-capacity
@@ -960,9 +961,71 @@
   ;; 条 C6 の失敗ケース: heartbeat で capacity を多く名乗る壊れた worker(SimWorker の overstates-capacity)では、coordinator が名乗りどおり
   ;; 2 つ置き、本当の capacity 1 を越えて動き、条 C6 の判断がその瞬間を名指す。
   (<- spans tuple (sim-cluster (beacons-plus sim-foundation) (spans-on-one-worker)
-                               :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :overstates-capacity 5))))
+                               :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :overstates-capacity 5 :task-reserve 0))))
   (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
   (assert (= (len over) 1) #(over spans)))
+
+
+(defrecord ReserveScene
+  "条 C17 の筋書きの読み: places = GET /state を読むたびの worker ごとの常駐の job と並べた置き先(surge)の数・unplaced = 最後の読みの
+   置き先の無い job と理由・workers = 最後の読みの worker の欄(taskReserve・taskRoom を見る)・rows = 盤の trio/ の行。"
+  (#^ (get tuple #(JobPlacesSeen ...)) places)
+  (#^ dict unplaced)
+  (#^ dict workers)
+  (#^ dict rows))
+
+
+(defk job-places-seen [state at]
+  {:pre [(: state dict) (: at int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "条 C17 の記録を GET /state の 1 回の読みから作るため: worker ごとに、置き先(placements)と並べた置き先(surges)のうちその worker の物の数。"
+  (val held (+ (lfor p (.values (get state "placements")) (get p "worker")) (lfor p (.values (get state "surges")) (get p "worker"))))
+  (tuple (gfor name (sorted (get state "workers"))
+               (JobPlacesSeen :at-ms at :worker name :jobs (len (lfor w held :if (= w name) w))))))
+
+
+(defk reserve-scene []
+  {:pre [] :post [(: % ReserveScene)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "条 C17 の記録を集めるため: 5 秒ごとに 4 回 GET /state を読み(常駐の job と surge の数)、最後に置き先の無い job・worker の欄・delegator が
+   task の答えを書いた盤の trio/ の行を読む。"
+  (var places #())
+  (for [_ (range 4)]
+    (<- (Delay 5.0))
+    (<- at int (now-epoch-ms))
+    (<- state dict (ReadCoordinator "/state"))
+    (<- seen tuple (job-places-seen state at))
+    (:= places (+ places seen)))
+  (<- state dict (ReadCoordinator "/state"))
+  (<- rows dict (SharedRows "trio/"))
+  (ReserveScene :places places :unplaced (get state "unplaced") :workers (get state "workers") :rows rows))
+
+
+(val RESERVED-ONE (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 3 :task-reserve 1))
+(val RESERVE-TRUTH #((WorkerReserve :worker "w1" :capacity 3 :task-reserve 1)))
+
+
+(deftest test-resident-jobs-leave-the-task-reserve-for-tasks
+  ;; 条 C17(architecture.hy の :invariants): capacity 3・task のために 1 つ空けておく worker 1 台に常駐の service を 3 つ宣言すると、
+  ;; coordinator は 2 つだけ置き(名の順に delegator と echo-a — echo-b は空きが無い)、delegator が出す手番の task は空けておいた分で走って
+  ;; 答える(add-task の答え 103 が盤に載る)。どの読みでも常駐の数は capacity − task-reserve = 2 を越えない。
+  (<- scene ReserveScene (sim-cluster (reserved-trio sim-foundation) (reserve-scene) :workers #(RESERVED-ONE)))
+  (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.places RESERVE-TRUTH))
+  (assert (= taken #()) #(taken scene))
+  (assert (= (lfor p scene.places p.jobs) [2 2 2 2]) scene.places)
+  (assert (= scene.unplaced {"echo-b" "置ける worker に空きが無い"}) scene.unplaced)
+  (assert (= #((get scene.workers "w1" "taskReserve") (get scene.workers "w1" "capacity")) #(1 3)) scene.workers)
+  (assert (= (get scene.rows "trio/result" "sum") 103) scene.rows))
+
+
+(deftest test-a-counterexample-worker-that-hides-its-task-reserve-breaks-c17
+  ;; 条 C17 の失敗ケース: heartbeat で task のために空けておく数を 0 と名乗る壊れた worker(SimWorker の claims-task-reserve)では、
+  ;; coordinator が名乗りどおり常駐を 3 つとも置き、本当の予約(1)に常駐が入り、条 C17 の判断がその読みを名指す(手番の task は置けずに待つ)。
+  (<- scene ReserveScene (sim-cluster (reserved-trio sim-foundation) (reserve-scene)
+                                      :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 3 :task-reserve 1
+                                                            :claims-task-reserve 0))))
+  (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.places RESERVE-TRUTH))
+  (assert taken #(taken scene))
+  (assert (all (gfor t taken (and (= t.seen.jobs 3) (= t.limit 2)))) taken)
+  (assert (not-in "trio/result" scene.rows) scene.rows))
 
 
 (defk placements-after [seconds]
@@ -981,7 +1044,7 @@
 (deftest test-a-job-is-not-placed-on-a-worker-without-its-needs
   ;; 条 C7(architecture.hy の :invariants): job の needs(cluster-net)を提供しない worker しか居なければ、coordinator はそこへ置かない。
   (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
-                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])))))
+                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"]) :task-reserve 0))))
   (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
   (assert (= wrong #()) #(wrong placements)))
 
@@ -991,7 +1054,7 @@
   ;; 条 C7 の判断がその置き先を名指す(本当の能力は gpu だけ)。
   (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
-                                                          :claims-provides (frozenset ["gpu" "cluster-net"])))))
+                                                          :claims-provides (frozenset ["gpu" "cluster-net"]) :task-reserve 0))))
   (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
   (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
 
@@ -1003,7 +1066,7 @@
   ;; 条 C10(architecture.hy の :invariants): gpu を専用の能力に持つ worker しか居なければ、gpu を要らない beacon はそこへ置かれない。
   (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["cluster-net" "gpu"])
-                                                          :exclusive (frozenset ["gpu"])))))
+                                                          :exclusive (frozenset ["gpu"]) :task-reserve 0))))
   (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
   (assert (= wrong #()) #(wrong placements)))
 
@@ -1013,7 +1076,7 @@
   ;; 要らない beacon をそこへ置き、条 C10 の判断がその置き先を名指す(本当の専用の能力は gpu)。
   (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["cluster-net" "gpu"])
-                                                          :exclusive (frozenset ["gpu"]) :claims-exclusive (frozenset)))))
+                                                          :exclusive (frozenset ["gpu"]) :claims-exclusive (frozenset) :task-reserve 0))))
   (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
   (assert (= (lfor p wrong p.job) ["beacon"]) #(wrong placements)))
 
@@ -1034,8 +1097,8 @@
 (deftest test-a-job-process-runs-only-on-an-eligible-worker
   ;; 条 C13(architecture.hy の :invariants): gpu だけを持つ g1 と cluster-net を持つ w1 が居れば、beacon の子 process は w1 でだけ動く。
   (<- processes tuple (sim-cluster (beacons sim-foundation) (beacon-processes-after 15.0)
-                                   :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"]))
-                                              (SimWorker :name "w1" :provides (frozenset ["cluster-net"])))))
+                                   :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"]) :task-reserve 0)
+                                              (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))))
   (assert processes processes)
   (<- wrong tuple (ran-only-where-eligible processes BEACON-NEEDS GPU-AND-NET-ABILITIES GPU-EXCLUSIVE))
   (assert (= wrong #()) #(wrong processes)))
@@ -1046,7 +1109,7 @@
   ;; 本当は cluster-net を持たない g1 で動き、条 C13 の判断がその process を名指す。
   (<- processes tuple (sim-cluster (beacons sim-foundation) (beacon-processes-after 15.0)
                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
-                                                         :claims-provides (frozenset ["gpu" "cluster-net"])))))
+                                                         :claims-provides (frozenset ["gpu" "cluster-net"]) :task-reserve 0))))
   (<- wrong tuple (ran-only-where-eligible processes BEACON-NEEDS GPU-AND-NET-ABILITIES #()))
   (assert wrong processes)
   (assert (all (gfor p wrong (= p.worker "g1"))) wrong))
@@ -1080,7 +1143,7 @@
   ;; 条 C11(architecture.hy の :invariants): drain を頼んだ worker 1 台の世界で系に service を足しても、coordinator は drain の期限の内に
   ;; そこへ置かない(beacon-b は置かれない)。
   (<- seen DrainedAndRedeclared (sim-cluster (beacons sim-foundation) (placements-during-a-drain "w1")
-                                             :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))))
+                                             :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))))
   (<- wrong tuple (no-new-place-while-draining seen.placements seen.drains))
   (assert (= wrong #()) #(wrong seen)))
 
@@ -1090,7 +1153,7 @@
   ;; 別の世代の頼みとして付けないか解き、足した beacon-b を drain の期限の内にそこへ置き、条 C11 の判断がその置き先を名指す。
   (<- seen DrainedAndRedeclared (sim-cluster (beacons sim-foundation) (placements-during-a-drain "w1")
                                              :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])
-                                                                   :fresh-boot-every-beat True))))
+                                                                   :fresh-boot-every-beat True :task-reserve 0))))
   (<- wrong tuple (no-new-place-while-draining seen.placements seen.drains))
   (assert (in "beacon-b" (lfor p wrong p.job)) #(wrong seen)))
 
@@ -1137,8 +1200,8 @@
   ;; 条 C8 の失敗ケース: もう 1 台が heartbeat で能力を名乗らない壊れた worker(SimWorker の claims-provides = 空)だと、coordinator は
   ;; 移せる先が無いと読んで job を担い手から動かさず、本当は受けられる w2 が生きているのに期限を過ぎ、条 C8 の判断がその job を名指す。
   (<- seen KilledCarrier (sim-cluster (beacons sim-foundation) (carrier-killed-then-waited)
-                                      :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-                                                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :claims-provides (frozenset)))))
+                                      :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                                                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :claims-provides (frozenset) :task-reserve 0))))
   (assert (= seen.host "w1") seen)
   (<- stranded tuple (moves-to-a-live-worker seen.processes seen.deaths (frozenset ["w2"]) FAILOVER-DEADLINE-MS))
   (assert (= (lfor s stranded s.job) ["beacon"]) #(stranded seen)))
@@ -1153,8 +1216,8 @@
 
 ;; --- worker の死・止め・網の切断・drain(段 5b の 4)----------------------------------------------------
 
-(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 
 
 (defrecord Moved
@@ -1351,8 +1414,8 @@
 (deftest test-a-counterexample-worker-that-ignores-the-fence-leaves-two-live-processes
   ;; 反例(fence の意味): coordinator に届かない間も job を止めない壊れた worker(ignores-fence)では、移し替えの後に同じ job の process が
   ;; 2 つ同時に動く — 本物の worker_policy の fence がそれを防いでいることの裏返し。
-  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True)
-                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True)))
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)
+                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)))
   (<- seen Moved (sim-cluster (pulses sim-foundation) (cut-host) :workers workers))
   (val live (lfor p seen.after :if (is p.exit-code None) p))
   (assert (= (sorted (sfor p live p.worker)) ["w1" "w2"]) seen.after))
@@ -1373,7 +1436,7 @@
 (deftest test-a-worker-that-starts-down-takes-the-job-only-after-it-is-started
   ;; starts-down: 後から加わる node。起こすまで job は置かれず(process が無い)、StartWorker の後に名乗って job を受ける。
   (<- seen Moved (sim-cluster (pulses sim-foundation) (start-late)
-                              :workers #((SimWorker :name "late" :provides (frozenset ["cluster-net"]) :starts-down True))))
+                              :workers #((SimWorker :name "late" :provides (frozenset ["cluster-net"]) :starts-down True :task-reserve 0))))
   (assert (= seen.before #()) seen.before)
   (assert (= seen.answer 1) seen.answer)
   (assert (= (lfor p seen.after p.worker) ["late"]) seen.after)

@@ -69,7 +69,7 @@
 (deftest test-heartbeat-silence-is-counted-across-an-address-switch
   ;; 自己停止の数え方(最後に届いた時刻)は宛先と無関係。宛先を替えても続き、替えた先で届けば 0 に戻る。
   (import time)
-  (setv net (FakeNet) link (LinkRig f"{LAN},{TS}" "w" #() 1 20000 :transport (.transport net)))
+  (setv net (FakeNet) link (LinkRig f"{LAN},{TS}" "w" #() 1 0 20000 :transport (.transport net)))
   (.update net.down #{"lan" "tailnet"})
   (setv link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 5))))
   (setv first (.poll link))
@@ -96,7 +96,7 @@
   (setv refusal (httpx.Response 400 :json {"error" "TypeError: 'NoneType' object is not subscriptable"})
         accepted (httpx.Response 200 :json {"jobs" [] "tasks" []})
         coordinator (ScriptedCoordinator [refusal refusal accepted accepted])
-        link (LinkRig LAN "w" #() 1 20000 :transport (.transport coordinator)))
+        link (LinkRig LAN "w" #() 1 0 20000 :transport (.transport coordinator)))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
   (assert (in "400" first.reason) first.reason)

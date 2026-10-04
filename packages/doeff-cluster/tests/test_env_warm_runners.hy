@@ -16,8 +16,8 @@
 (import tests.env_fixtures [LOCK env-of])
 
 ;; gpu-1 は gpu を専用の能力に持つ(gpu を要らない行を受けない)・cpu-1 は一般の担い手。
-(val WORKERS #((SimWorker :name "gpu-1" :provides (frozenset ["gpu" "net"]) :exclusive (frozenset ["gpu"]))
-               (SimWorker :name "cpu-1" :provides (frozenset ["net"]))))
+(val WORKERS #((SimWorker :name "gpu-1" :provides (frozenset ["gpu" "net"]) :exclusive (frozenset ["gpu"]) :task-reserve 0)
+               (SimWorker :name "cpu-1" :provides (frozenset ["net"]) :task-reserve 0)))
 (val NO-JOBS (system-of "warm-scenarios" #()))
 ;; 行を頼んでから準備済みと名乗られるまで待つ上限(仮想の秒 — 配る heartbeat・準備・名乗る heartbeat の数拍)。
 (val SETTLE-SECONDS 20)

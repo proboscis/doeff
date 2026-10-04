@@ -76,7 +76,7 @@
   {:pre [(: state ClusterState) (: worker str) (: rows (| (get list (get dict #(str object))) None)) (: now int) (: capacity int)] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker の heartbeat(rows = 担い手の行)。"
-  (! (call state "POST" "/heartbeat" {"name" worker "provides" ["net"] "capacity" capacity "versions" {} "statuses" (or rows [])}
+  (! (call state "POST" "/heartbeat" {"name" worker "provides" ["net"] "capacity" capacity "taskReserve" 0 "versions" {} "statuses" (or rows [])}
            :now now :actor None)))
 
 

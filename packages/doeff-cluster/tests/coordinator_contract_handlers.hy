@@ -86,7 +86,7 @@
 (val WORKER-POLL-SECONDS 0.5)
 (val WARM-DEADLINE-SECONDS 0.2)
 ;; sim-cluster の担い手: 本物の側の RigWorker と同じ名と能力(同じ needs の task が両方で置かれる)。
-(val SIM-WORKERS #((SimWorker :name "w1" :provides (frozenset RIG-PROVIDES))))
+(val SIM-WORKERS #((SimWorker :name "w1" :provides (frozenset RIG-PROVIDES) :task-reserve 0)))
 (val NO-JOBS (system-of "contract-scenarios" #()))
 ;; sim-cluster で coordinator を切る時に止めておく秒(契約の Program の残りより十分長い — 切ったら戻さない)。
 (val SIM-DOWN-SECONDS 3600.0)

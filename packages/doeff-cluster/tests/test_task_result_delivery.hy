@@ -35,7 +35,7 @@
 (defk beat-body [worker statuses]
   {:pre [(: worker str) (: statuses list)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker の heartbeat の本文(能力 net・版 V・状態の報告 statuses)を作るため。"
-  {"name" worker "provides" ["net"] "capacity" 10 "versions" V "statuses" statuses})
+  {"name" worker "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" statuses})
 
 
 (defk placed-task [worker]

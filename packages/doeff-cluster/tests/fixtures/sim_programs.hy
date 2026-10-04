@@ -386,6 +386,14 @@
   "lone-pulses の needs を広げた宣言(#2804 — 能力 cluster-net を持つ worker ならどれにも置ける)"
   (pulse (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
+(defsystem reserved-trio [foundation]
+  "見本の系: task を出す service 1 つと、拍ごとに盤へ書く service 2 つ(#3489 — capacity 3・task のために 1 つ空けておく worker に常駐を
+   3 つ宣言すると、名の順に delegator と echo-a が置かれ echo-b は空きが無く、delegator の出す task は空けておいた分で走る・条 C17 の検
+   tests/test_local.hy)"
+  (delegator (delegate-program foundation 3 "trio/result") :replicas 1 :needs #{"cluster-net"})
+  (echo-a (beacon-program foundation "trio/a" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "1"})
+  (echo-b (beacon-program foundation "trio/b" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "1"}))
+
 (defsystem detaching [foundation]
   "見本の系: 切り離した task を出して待つ service 1 つ"
   (detacher (detaching-program foundation 3 "detached/result") :replicas 1 :needs #{"cluster-net"}))

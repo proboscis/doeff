@@ -18,7 +18,7 @@
 (defk worker [name seen [capacity 10] #* provides]
   {:pre [(: name str) (: seen int) (: capacity int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "最後の連絡が seen で能力 provides を持つ worker の記録を作るため。"
-  (WorkerInfo name (tuple (sorted provides)) capacity seen))
+  (WorkerInfo name (tuple (sorted provides)) capacity seen :task-reserve 0))
 
 (deftest test-spreads-and-respects-capabilities-and-pins
   (setv state (ClusterState
@@ -268,7 +268,7 @@
 (defk named [name node]
   {:pre [(: name str) (: node str)] :post [(: % dict)]}
   "company-machine を自分で名乗る worker の heartbeat の本文(node = 置かれた k8s の node)。"
-  {"name" name "provides" ["net" COMPANY] "capacity" 10 "versions" {} "boot" "b1" "node" node "statuses" []})
+  {"name" name "provides" ["net" COMPANY] "capacity" 10 "taskReserve" 0 "versions" {} "boot" "b1" "node" node "statuses" []})
 
 (defk beat-as [state name node now]
   {:pre [(: state ClusterState) (: name str) (: node str) (: now int)] :post [(: % ClusterState)]}
@@ -531,3 +531,102 @@
   (assert (> (. (stamp settled moved "c-test" later T) revision) settled.revision))
   (<- moved-delta dict (durable-delta settled moved))
   (assert (in "worker/at-home" moved-delta) moved-delta))
+
+
+;; --- task のために空けておく数(task-reserve — #3489)------------------------------------------------------------------------
+;; worker は capacity のうち task のために空けておく数を名乗る。常駐の job と並べた置き先(surge)は capacity − task-reserve までしか置かず
+;; (job-room-of)、task は capacity 全体まで置ける(task-room-of — 予約を使い切ったら job の残りへはみ出してよい)。置けない task は
+;; 理由の閉じた語 TASK-NO-ROOM の固定の文で待つ。
+
+(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster.coordinator.intent.cluster_model [Drain TaskUnplacedKind])
+(import doeff_cluster.coordinator.core.cluster_policy [load-of job-room-of task-room-of task-unplaced-text durable-changed])
+(import doeff_cluster.coordinator.core.drain_policy [advance-drains drain-view])
+(import doeff_cluster.coordinator.core.api_policy [tick])
+
+(defk reserved [name seen capacity reserve]
+  {:pre [(: name str) (: seen int) (: capacity int) (: reserve int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "capacity のうち reserve を task のために空けておく worker の記録(最後の連絡 seen・能力なし・task と同じ版 python 3)を作るため。"
+  (replace (! (worker name seen capacity)) :task-reserve reserve :versions #((ComponentVersion "python" "3"))))
+
+(deftest test-resident-jobs-stop-at-the-task-reserve-and-tasks-use-the-rest
+  ;; capacity 3・task-reserve 1 の worker に常駐の job を 3 本: 2 本だけ置き、残る 1 本の理由は「空きが無い」。job の側の空きは 0・task の
+  ;; 空きは 1 で、手番の task は空けておいた分へ置かれる。
+  (val state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) {"mac" (! (reserved "mac" 0 3 1))}))
+  (val placed (! (place-jobs 0 state T)))
+  (assert (= (sorted placed) ["a" "b"]) placed)
+  (val after (replace state :placements placed))
+  (assert (= (get (unplaced-jobs 0 after T) "c") "置ける worker に空きが無い") (unplaced-jobs 0 after T))
+  (val load (load-of after placed))
+  (val mac (get after.workers "mac"))
+  (assert (= #((! (job-room-of mac load)) (! (task-room-of mac load))) #(0 1)) load)
+  (val tasks (! (place-tasks 0 (replace after :tasks {"t1" (! (task "t1" #()))}) placed T)))
+  (assert (= #((. (get tasks "t1") phase) (. (get tasks "t1") worker)) #("assigned" "mac")) (get tasks "t1")))
+
+(deftest test-tasks-may-spill-from-the-reserve-into-the-room-jobs-left
+  ;; 予約(1)を使い切った task は、常駐の job が使っていない残り(capacity 3 − 常駐 1 − 予約 1 = 1)へはみ出してよい — task の空きは
+  ;; capacity 全体から数える。3 本目は空きが無く待つ。
+  (val state (ClusterState #((! (job "a"))) {"mac" (! (reserved "mac" 0 3 1))} {"a" (Placement "a" "mac" 1 0)}
+                           {"t1" (! (task "t1" #())) "t2" (! (task "t2" #())) "t3" (! (task "t3" #()))}))
+  (val tasks (! (place-tasks 0 state state.placements T)))
+  (assert (= (lfor id ["t1" "t2" "t3"] (. (get tasks id) phase)) ["assigned" "assigned" "queued"]) tasks))
+
+(deftest test-a-task-without-room-waits-with-the-same-reason-on-every-reconcile
+  ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、常駐の job で capacity が埋まり task の空きが 0。
+  ;; task は queued のまま、detail に TASK-NO-ROOM の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに保存しない)。
+  (val full (ClusterState #((! (job "a")) (! (job "b"))) {"mac" (! (reserved "mac" 0 2 0))}
+                          {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}
+                          {"t1" (replace (! (task "t1" #())) :detached True)}))
+  (val once (! (tick full 1000 T)))
+  (val waiting (get once.tasks "t1"))
+  (assert (= #(waiting.phase waiting.worker) #("queued" None)) waiting)
+  (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) waiting.detail)
+  (val twice (! (tick once 2000 T)))
+  (assert (is (get twice.tasks "t1") waiting) (get twice.tasks "t1"))
+  (assert (= twice.revision once.revision) #(once.revision twice.revision))
+  (assert (not (durable-changed once twice)))
+  ;; 常駐の job が 1 本消えて空きができたら置かれる。
+  (val freed (! (tick (replace twice :jobs #((! (job "a"))) :placements {"a" (Placement "a" "mac" 1 0)}) 3000 T)))
+  (assert (= #((. (get freed.tasks "t1") phase) (. (get freed.tasks "t1") worker)) #("assigned" "mac")) (get freed.tasks "t1")))
+
+(deftest test-a-task-on-a-draining-worker-only-still-waits-without-the-room-reason
+  ;; 置ける先が drain 中の worker だけの task は、今までどおり理由を書かずに待つ(空きの話ではない — TASK-NO-ROOM にしない)。
+  (val state (ClusterState #() {"mac" (! (reserved "mac" 0 2 0))} {} {"t1" (replace (! (task "t1" #())) :detached True)}
+                           :drains {"mac" (Drain "mac" 0 600000)}))
+  (val waiting (get (! (place-tasks 1000 state {} T)) "t1"))
+  (assert (= #(waiting.phase waiting.detail) #("queued" "")) waiting))
+
+(deftest test-a-surge-waits-while-the-job-side-is-full-and-leaves-the-task-reserve-open
+  ;; drain 中の atlas の上の入れ替えの job w を並べたいが、移せる先 zeus は job の側が満杯(capacity 2・task-reserve 1・常駐 1)。surge は
+  ;; job の側で数えるので置かれず(入れ替えは空くまで待つ)、zeus の task のために空けておく分は空いたまま。予約が 0 なら同じ状態で zeus へ
+  ;; 並べる(予約が理由で待つことの対照)。
+  (val handoff-job (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True)))
+  (val state (ClusterState #(handoff-job (! (job "x")))
+                           {"atlas" (! (reserved "atlas" 0 10 0)) "zeus" (! (reserved "zeus" 0 2 1))}
+                           {"w" (Placement "w" "atlas" 1 0) "x" (Placement "x" "zeus" 1 0)}
+                           :drains {"atlas" (Drain "atlas" 0 600000)}))
+  (val waited (advance-drains 1000 state T))
+  (assert (= waited.surges {}) waited.surges)
+  (val load (load-of waited waited.placements))
+  (val zeus (get waited.workers "zeus"))
+  (assert (= #((! (job-room-of zeus load)) (! (task-room-of zeus load))) #(0 1)) load)
+  (assert (in "w" (. (drain-view waited "atlas" 1000 T) blocked)) (drain-view waited "atlas" 1000 T))
+  (val open (replace state :workers (| state.workers {"zeus" (replace (get state.workers "zeus") :task-reserve 0)})))
+  (assert (= (. (get (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
+
+(deftest test-a-heartbeat-names-the-task-reserve-and-the-saved-rows-keep-it
+  ;; heartbeat の taskReserve は worker の記録へ写り、保存の行(state file と durable の KV)も同じ値を持って読み直せる。この欄の無い保存の
+  ;; 行(欄より前の版が書いた行)は読まない — 既定の値で埋めず、次の heartbeat の名乗りから作り直す(labels だけの旧い形の行と同じ)。
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "kept" "provides" ["net"] "capacity" 4 "taskReserve" 2})) 10)))
+  (assert (= (. (get heard.workers "kept") task-reserve) 2) (get heard.workers "kept"))
+  (val state (replace heard :workers (| heard.workers {"old" (! (reserved "old" 0 4 1))})))
+  (val data (! (state-to-json state)))
+  (val stripped (lfor w (get data "workers")
+                      (if (= (get w "name") "old") (dfor #(k v) (.items w) :if (!= k "taskReserve") k v) w)))
+  (val from-file (! (state-from-json (| data {"workers" stripped}) 5000)))
+  (assert (= (sorted from-file.workers) ["kept"]) from-file.workers)
+  (assert (= (. (get from-file.workers "kept") task-reserve) 2) (get from-file.workers "kept"))
+  (val kv (! (full-kv state)))
+  (val from-kv (! (state-from-kv (| kv {"worker/old" (dfor #(k v) (.items (get kv "worker/old")) :if (!= k "taskReserve") k v)}) 5000)))
+  (assert (= (sorted from-kv.workers) ["kept"]) from-kv.workers)
+  (assert (= (. (get from-kv.workers "kept") task-reserve) 2) (get from-kv.workers "kept")))

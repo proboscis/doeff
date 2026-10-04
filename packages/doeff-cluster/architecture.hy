@@ -79,6 +79,13 @@
 ;;;   test-a-worker-runs-no-more-jobs-than-its-capacity(capacity 1 の worker に service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは
 ;;;   同じ file の test-a-counterexample-worker-that-overstates-its-capacity-breaks-c6(heartbeat で capacity を多く名乗る壊れた worker — SimWorker
 ;;;   の overstates-capacity — で 2 つ置かれて C6 が名指す)。
+;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster.coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489)—
+;;;   どの worker でも、常駐の job の置き先と並べた置き先(surge)の数の和は capacity − task-reserve(worker が名乗る task のために空けておく数)を
+;;;   越えない(常駐が枠を埋めても task の置き場が残る)。確かめるのは tests/test_local.hy の
+;;;   test-resident-jobs-leave-the-task-reserve-for-tasks(capacity 3・task-reserve 1 の worker に常駐の service 3 つと task を出す service の系を
+;;;   置き、GET /state の読みごとの常駐の数を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-hides-its-task-reserve-breaks-c17(heartbeat で task-reserve を 0 と名乗る壊れた worker — SimWorker の
+;;;   claims-task-reserve — で常駐が 3 つ置かれて C17 が名指す)。
 ;;;   C7 placed-only-where-eligible(doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
 ;;;   worker は job の needs を本当に提供する。確かめるのは tests/test_local.hy の test-a-job-is-not-placed-on-a-worker-without-its-needs
 ;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の
@@ -178,6 +185,7 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:places-only-on-reachable"
                 "doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity"
+                "doeff_cluster.coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve"
                 "doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible"
                 "doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker"
                 "doeff_cluster.coordinator.core.coordinator_invariants:tasks-answered-in-time"

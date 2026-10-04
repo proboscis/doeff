@@ -69,7 +69,7 @@
                       #^ bool [stopping False]]
     "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)・stopping = 止まり始めた worker の名乗り(#2819)。"
     (setv (get self.boots worker) (or boot (.get self.boots worker "b1")))
-    (self.call "POST" "/heartbeat" {"name" worker "provides" provides "capacity" 10 "versions" {}
+    (self.call "POST" "/heartbeat" {"name" worker "provides" provides "capacity" 10 "taskReserve" 0 "versions" {}
                                     "boot" (get self.boots worker)
                                     "statuses" (lfor n (or running []) (self.row worker n))
                                     "stopping" stopping}
@@ -370,7 +370,7 @@
   (assert (= (get view "drain" "remaining") [(+ "task/" task.id)]))
   ;; 新しい世代には drain を付けない。
   (assert (not-in "zeus" c.state.drains))
-  (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "capacity" 10 "versions" {} "boot" "old"
+  (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
                                "statuses" [{"name" (+ "task/" task.id) "phase" "finished" "result" "R" "detail" ""}]}
           :actor None)
   (assert (= (. (get c.state.tasks task.id) phase) "finished"))

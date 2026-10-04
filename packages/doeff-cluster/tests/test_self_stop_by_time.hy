@@ -22,8 +22,8 @@
 ;; 本番と同じ時間の設定(fence 20 秒)。
 (val T (ClusterTiming))
 ;; 能力 cluster-net を持つ worker 2 台 — pulse は移せる先の在る job になり、印が付かない。
-(val TWO-CAPABLE #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+(val TWO-CAPABLE #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 
 
 ;; --- 判断 ---------------------------------------------------------------------------------------------------------

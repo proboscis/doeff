@@ -143,7 +143,7 @@
                                                        {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
                                                "tasks" [] "timing" {"fence_ms" 20000}})
                     (raise (httpx.ConnectError "coordinator を作り直している")))))
-  (val link (LinkRig "http://coord" "atlas" #() 10 20000 :transport (httpx.MockTransport handle)
+  (val link (LinkRig "http://coord" "atlas" #() 10 0 20000 :transport (httpx.MockTransport handle)
                      :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))
   ;; poll の答えは DesiredJobs か DesiredUnreadable — jobs を読む前に DesiredJobs であることを確かめる(読めない答えから jobs を
   ;; 読めば属性の誤りで落ちるだけで、確かめたい「読めた」を確かめない)。

@@ -45,7 +45,7 @@
 (deftest test-the-link-fetches-only-programs-whose-content-matches-the-key [tmp-path]
   (val seen [])
   (<- transport (served-programs seen))
-  (val link (LinkRig "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "zeus" #("net") 1 0 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
   (<- good (service-spec "good" SHA))
   (<- forged (service-spec "forged" FORGED))
   (<- absent (service-spec "absent" ABSENT))
@@ -67,7 +67,7 @@
   (val state-dir (/ tmp-path "state"))
   ;; main と同じ置き方(state dir の logs・tasks)で、取る側と渡す側が同じ programs の dir を指す。
   (<- host (host-settings state-dir))
-  (val link (LinkRig "http://coord" "zeus" #("net") 1 60000 :task-dir (str (/ state-dir "tasks"))))
+  (val link (LinkRig "http://coord" "zeus" #("net") 1 0 60000 :task-dir (str (/ state-dir "tasks"))))
   (assert (= (Path host.program-dir) (.program-dir link) (/ state-dir "programs")))
   (<- spec JobSpec (service-spec "svc" SHA))
   (<- planned tuple (launched host spec (str tmp-path) "1-1" 1))

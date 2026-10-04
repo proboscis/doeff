@@ -65,7 +65,7 @@
 (defk watching-link [coordinator tmp [watch True]]
   {:pre [(: coordinator FakeCoordinator) (: tmp Path) (: watch bool)] :post [(: % LinkRig)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "待ちを使う(watch)本物の口を、偽の coordinator へ向けて作るため。"
-  (LinkRig "http://coord" "w" #() 1 20000 :task-dir (str (/ tmp "tasks")) :transport (httpx.MockTransport coordinator.handle) :watch watch))
+  (LinkRig "http://coord" "w" #() 1 0 20000 :task-dir (str (/ tmp "tasks")) :transport (httpx.MockTransport coordinator.handle) :watch watch))
 
 
 (defhandler yielding-http

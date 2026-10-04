@@ -99,8 +99,8 @@
   None)
 
 
-(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 
 
 (deftest test-touched-only-stamp-matches-the-every-key-stamp-on-every-settle [monkeypatch]
@@ -111,8 +111,8 @@
   (<- (sim-cluster (handoff-beacons sim-foundation)
                    (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)))
   (<- (sim-cluster (gpu-only sim-foundation) (watch-trainer)
-                   :workers #((SimWorker :name "cpu-1" :provides (frozenset ["cluster-net"]))
-                              (SimWorker :name "gpu-1" :provides (frozenset ["cluster-net" "gpu"])))))
+                   :workers #((SimWorker :name "cpu-1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                              (SimWorker :name "gpu-1" :provides (frozenset ["cluster-net" "gpu"]) :task-reserve 0))))
   (<- (sim-cluster (detaching sim-foundation) (watch-rows 15.0 "detached/")))
   (<- (sim-cluster (beacons sim-foundation) (kill-drain-restart) :workers TWO-WORKERS))
   (assert (> (get SEEN 0) 100) SEEN)

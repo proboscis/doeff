@@ -35,13 +35,14 @@
 
 
 (defclass LinkRig []
-  "検の coordinator への口: state = 本番と同じ入れ物・cell / watch-cell = heartbeat と待ちの宛先・transport = 送り先(None = 本物の網)。"
-  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int fence-ms
+  "検の coordinator への口: state = 本番と同じ入れ物・cell / watch-cell = heartbeat と待ちの宛先・transport = 送り先(None = 本物の網)。
+   task-reserve = heartbeat で名乗る task のために空けておく数(本番の --task-reserve と同じく必ず渡す)。"
+  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms
                           #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None]
                           #^ (| dict None) [tools None] #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""]
                           #^ bool [watch False]]
     (setv now-ms (int (* 1000 (time.time))))
-    (setv self.state (LinkState name provides capacity fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
+    (setv self.state (LinkState name provides capacity task-reserve fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
                                 :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch)
           self.cell (run (cell-of url)) self.watch-cell (run (cell-of url))
           self.transport (or transport (httpx.HTTPTransport))))

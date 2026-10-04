@@ -100,6 +100,7 @@ class RunnerFact:
     exclusive: tuple[str, ...]
     live: bool
     draining: bool
+    task_room: int
 
 @dataclass(frozen=True, kw_only=True)
 class RunnersUnreachable:

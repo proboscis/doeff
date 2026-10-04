@@ -74,7 +74,7 @@
   (assert (= asked (* #("AdmitBatch") 5)) asked))
 
 
-(val HOST (SimWorker :name "w1" :provides #{"net"}))
+(val HOST (SimWorker :name "w1" :provides #{"net"} :task-reserve 0))
 
 
 (defk publish-once [plan]

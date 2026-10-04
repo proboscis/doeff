@@ -18,7 +18,7 @@
 (defk beat-body [name statuses]
   {:pre [(: name str) (: statuses list)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker name の heartbeat の本文(報告の行 statuses)を組むため。"
-  {"name" name "provides" ["net"] "capacity" 10 "versions" V "statuses" statuses})
+  {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" statuses})
 
 
 (defk answered [state body now settled]
