@@ -12,6 +12,8 @@ SignalSourceFactory の検 — #3127・設計 #3072。
   別の handler の組(模擬の別の process — 同じ置き場を別の memory_records_handler で書く)の書きでも合図が出る。
   poll の effect(WatchChanges・WatchEvents・Delay)を出さない。
   本体が終われば源の task が止まり、置き場に呼び鈴を残さない。
+  置き場の止まり(faults.SetStoreOutage)を、記録の置き場の源と同じ越え方で越える — 止まりと戻りの合図を出し、戻れば合図が続く・上限を
+  過ぎれば名指して落ちる(#3469 — 模擬と本番で止まりの振る舞いを揃える。旧い模擬の源は止まりを見ずに待ち続けた)。
 """
 
 from dataclasses import dataclass
@@ -22,29 +24,44 @@ import hy  # noqa: F401  Hy の module を読むため
 import pytest
 from doeff_core_effects.handlers import reader
 from doeff_core_effects.scheduler import Spawn, Wait
-from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handler, timer_handler
+from doeff_events import (
+    ArmTimer,
+    EventBus,
+    SourceResumed,
+    SourceStalled,
+    TimerFired,
+    subscribed_event_handler,
+    timer_handler,
+)
 from doeff_events.effects import WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
 from doeff_records.event_source import (
     RECORDS_SIGNAL_SOURCE,
+    SignalSourceUnreachable,
     ReadSignalSource,
     SignalSourceFactory,
     SignalTables,
     read_signal_handler,
     records_signal_handler,
 )
+from doeff_records.faults import SetStoreOutage
 from doeff_records.memory import MemoryStore, memory_records_handler, memory_signal_handler, memory_signal_source
 from doeff_records.http_client import RecordsEndpoint, http_records_handler
 from doeff_records.values import ExpectAny, WrittenRows
 from doeff_time import Delay, DelayEffect, GetTime
 from tests.test_event_source import (
+    DETAIL,
+    OUTAGE_SECONDS,
+    PATIENCE,
     SCHEMA,
+    STARTED_AFTER,
     STARTS_AT_SUBSCRIBE,
     WRITER,
     _row,
     _run_on,
     _stacked,
+    _stall_and_resume,
     _subscribe,
     _write,
 )
@@ -299,3 +316,54 @@ def test_read_signal_source_lives_with_the_records_effects() -> None:
     from doeff_records import effects, event_source
 
     assert effects.ReadSignalSource is event_source.ReadSignalSource
+
+
+# --- 模擬の源も、置き場の止まりを記録の置き場の源と同じ越え方で越える(#3469)--------------------------------------
+
+
+@do
+def _memory_outage(store: MemoryStore, *, recover: bool) -> EffectGenerator[tuple[object, object]]:
+    """受け手(模擬の源で包んだ本体)が待ち始めた後に置き場が止まる。recover なら OUTAGE_SECONDS 秒の後に戻して jobs を書き、本体が
+    受けた合図と、画面の代役が受けた止まりと戻りの合図を返す。recover でなければ止まったまま、本体の答え(源の失敗)を待つ。"""
+    bus = EventBus()
+    screen = subscribed_event_handler(bus, "screen", (SourceStalled, SourceResumed))
+    waiting = subscribed_event_handler(bus, SUBSCRIBER, (Changed,))
+    observer = yield Spawn(with_handlers([screen], _stall_and_resume()))
+    source = memory_signal_handler(store, CHANGED_ON_JOBS_AND_LANES, SUBSCRIBER)
+    receiver = yield Spawn(with_handlers([waiting, source], WaitForEvent(Changed)))
+    yield Delay(STARTED_AFTER)
+    yield SetStoreOutage(DETAIL)
+    if not recover:
+        signal = yield Wait(receiver)
+        return (signal, None)
+    yield Delay(OUTAGE_SECONDS)
+    yield SetStoreOutage(None)
+    yield _write("jobs", "j1")
+    signal = yield Wait(receiver)
+    seen = yield Wait(observer)
+    return (signal, seen)
+
+
+def test_the_memory_source_waits_out_a_store_outage_like_the_production_source() -> None:
+    # 失敗ケース: 旧い模擬の源は置き場の止まりを見ず、止まりと戻りの合図を出さなかった(模擬で止まりの振る舞いを確かめられない)。
+    store = MemoryStore(SCHEMA)
+    signal, seen = _run_on(store, _memory_outage(store, recover=True))
+
+    assert isinstance(signal, Changed), signal
+    assert _row("jobs", "j1") in signal.keys, signal
+    assert isinstance(seen, tuple), seen
+    stalled, resumed = seen
+    assert isinstance(stalled, SourceStalled), seen
+    assert (stalled.source, stalled.detail) == (SUBSCRIBER, DETAIL)
+    assert resumed == SourceResumed(source=SUBSCRIBER)
+    assert store.bells == {}, store.bells
+
+
+def test_the_memory_source_brings_the_body_down_by_name_past_the_patience() -> None:
+    # 失敗ケース: 期限の無い源は戻らない止まりで永遠に待ち、検の期限で赤になる。
+    store = MemoryStore(SCHEMA)
+    with pytest.raises(SignalSourceUnreachable) as raised:
+        _run_on(store, _memory_outage(store, recover=False))
+    message = str(raised.value)
+    for named in (SUBSCRIBER, "jobs", "lanes", f"{PATIENCE.seconds} 秒", DETAIL):
+        assert named in message, message

@@ -15,7 +15,9 @@
   合図と期限(timer_handler の TimerFired)を同じ WaitForEvent の 1 回で待ち、先に来た方を受ける。
   結んだ列への追記で合図が出る(結んでいない列の追記・組み立ての前の追記では出ない)。
   合図の型に結んでいない表の書きでは、その型の合図は出ない。
-  置き場が Unreachable を返しても源が繋ぎ直し、本体には出さない。直らなければ名指して落ちる(faults.SetStoreOutage)。
+  置き場が Unreachable を返しても源は落ちず、止まりの合図 SourceStalled を出して戻りを出来事として待ち(AwaitRecordsBack — 撃ち直しを
+  時間で繰り返さない)、戻れば SourceResumed を出して続ける。本体には Unreachable を出さない。上限(ReadSourcePatience)を過ぎれば名指して
+  落ちる。上限の答え手を置き忘れると、止まりの拍に答え手の無い問いで落ちる(faults.SetStoreOutage・#3469)。
 - 時間は仮想の時計(sim-time-handler)。筋書きが合図を受けられずに待ち続けると、仮想の時計の LIMIT_SECONDS 秒で赤にする(_bounded —
   源は待ちの上限ごとに待ち直すので、scheduler の行き止まりにならない)。
 """
@@ -45,24 +47,33 @@ from doeff_core_effects.scheduler import (
     Wait,
     scheduled,
 )
-from doeff_events import ArmTimer, EventBus, TimerFired, subscribed_event_handler, timer_handler
+from doeff_events import (
+    ArmTimer,
+    EventBus,
+    SourceResumed,
+    SourceStalled,
+    TimerFired,
+    subscribed_event_handler,
+    timer_handler,
+)
 from doeff_events.effects import PublishEffect, WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.admission import key_from_text, key_text
 from doeff_records.effects import AppendEvent, PutRow, ReadRow
 from doeff_records.event_source import (
-    RECONNECT_SECONDS,
-    RECONNECT_TRIES,
     WATCH_SECONDS,
     ChangedRow,
+    SignalSourcePatience,
     SignalSourceUnreachable,
     SignalTables,
     records_signal_handler,
+    source_patience_handler,
 )
 from doeff_records.faults import AdvanceStoreEpoch, SetStoreOutage
 from doeff_records.memory import MemoryStore, memory_records_handler
 from doeff_records.values import Appended, ExpectAny, FieldDecl, RecordsSchema, StreamDecl, TableDecl, Written
 from doeff_time import Delay, GetTime, SimClock, WaitWithin, sim_time_handler
+from doeff_time.effects.time import WaitWithinEffect
 
 from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, run, with_handlers
 from doeff.program import ProgramHandler
@@ -87,6 +98,8 @@ DETAIL = "記録の service が落ちている(筋書き)"
 LIMIT_SECONDS = 600.0
 # 受け手を Spawn してから筋書きの書きまでの仮想の秒 — その間に受け手の本体の頭が購読の始まりの位置を読み、源の task が立つ。
 STARTED_AFTER = 1.0
+# 源が置き場の止まりを待つ上限(土台が宣言する値の代役 — 検の期限 LIMIT_SECONDS より短い)。
+PATIENCE = SignalSourcePatience(seconds=120.0)
 
 
 def _table(name: str) -> TableDecl:
@@ -209,8 +222,8 @@ def _bounded(program: Program[object]) -> EffectGenerator[object]:
 
 
 def _run_on(store: MemoryStore, program: Program[object]) -> object:
-    """仮想の時計と memory の記録の置き場(書き手 WRITER)の下で、program を期限つきで走らせる。"""
-    stack = [sim_time_handler(clock=SimClock()), memory_records_handler(store, WRITER)]
+    """仮想の時計と memory の記録の置き場(書き手 WRITER)と止まりの上限 PATIENCE の下で、program を期限つきで走らせる。"""
+    stack = [sim_time_handler(clock=SimClock()), memory_records_handler(store, WRITER), source_patience_handler(PATIENCE)]
     return run(scheduled(with_handlers(stack, _bounded(program))))
 
 
@@ -420,32 +433,68 @@ def test_writes_to_tables_not_bound_to_the_signal_type_do_not_raise_it() -> None
     ), outcome
 
 
-# --- 置き場に届かない時は繋ぎ直し、本体には出さない ------------------------------------------------------
+# --- 置き場に届かない時は落ちずに戻りを出来事として待ち、本体には出さない(#3469)----------------------------------
+
+
+# 筋書きの止まりの長さ(仮想の秒)— 旧い形(2 秒おきに 5 回撃って諦める)なら落ちる長さで、上限 PATIENCE の内。
+OUTAGE_SECONDS = 100.0
 
 
 @do
-def _outage_then_recovery() -> EffectGenerator[Changed]:
-    """受け手が待ち始めた後に置き場に届かなくなり、撃ち直しの 2 回半ぶん後に戻って jobs が書かれる。"""
+def _stall_and_resume() -> EffectGenerator[tuple[object, object]]:
+    """画面の代役: 止まりと戻りの合図を購読して、来た順に 2 つ受ける。"""
+    first = yield WaitForEvent(SourceStalled, SourceResumed)
+    second = yield WaitForEvent(SourceStalled, SourceResumed)
+    return (first, second)
+
+
+@dataclass(frozen=True)
+class StallOutcome:
+    """止まりを越えた筋書きの結果: 本体が受けた合図・画面の代役が受けた 2 つの合図・源が出した上限つきの待ち(WaitWithin)の数。"""
+
+    signal: Changed
+    seen: tuple[object, object]
+    stall_waits: int
+
+
+@do
+def _outage_then_recovery() -> EffectGenerator[StallOutcome]:
+    """受け手が待ち始めた後に置き場に OUTAGE_SECONDS 秒届かなくなり、戻ってから jobs が書かれる。画面の代役が止まりと戻りの合図を購読し、
+    源の包みの中で出た WaitWithin を Listen で集める(記録の handler の long-poll の WaitWithin は包みの外で出るので入らない)。"""
     bus = EventBus()
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
+    screen = subscribed_event_handler(bus, "screen", (SourceStalled, SourceResumed))
     source = records_signal_handler((CHANGED_ON_JOBS, LANE_ON_LANES), "worker")
-    receiver = yield Spawn(with_handlers([waiting, source], _changed()))
+    observer = yield Spawn(with_handlers([screen], _stall_and_resume()))
+    listened = Listen(with_handlers([source], _changed()), types=(WaitWithinEffect,))
+    receiver = yield Spawn(with_handlers([waiting, listen_handler], listened))
     yield Delay(STARTED_AFTER)
     yield SetStoreOutage(DETAIL)
-    yield Delay(RECONNECT_SECONDS * 2.5)
+    yield Delay(OUTAGE_SECONDS)
     yield SetStoreOutage(None)
     yield _write("jobs", "j1")
-    signal: Changed = yield Wait(receiver)
-    return signal
+    signal, waits = yield Wait(receiver)
+    seen: tuple[object, object] = yield Wait(observer)
+    return StallOutcome(signal=signal, seen=seen, stall_waits=len(waits))
 
 
-def test_an_unreachable_store_is_reconnected_inside_the_source() -> None:
-    assert _run_on(MemoryStore(SCHEMA), _outage_then_recovery()) == Changed((_row("jobs", "j1"),))
+def test_an_unreachable_store_is_waited_out_inside_the_source_as_an_event() -> None:
+    # 失敗ケース: 旧い形(撃ち直しの回数で諦める)は 100 秒の止まりで落ちる。時間で起きて確かめる形は、止まりの間に待ちを何度も出す
+    # (100 秒の止まりを越える待ちは、戻りの約束を上限つきで待つ 1 回ちょうど)。
+    outcome = _run_on(MemoryStore(SCHEMA), _outage_then_recovery())
+
+    assert isinstance(outcome, StallOutcome), outcome
+    assert outcome.signal == Changed((_row("jobs", "j1"),))
+    stalled, resumed = outcome.seen
+    assert isinstance(stalled, SourceStalled), outcome.seen
+    assert (stalled.source, stalled.detail) == ("worker", DETAIL)
+    assert resumed == SourceResumed(source="worker")
+    assert outcome.stall_waits == 1, outcome
 
 
 @do
 def _outage_for_good() -> EffectGenerator[Changed]:
-    """受け手が走り出す時から置き場に届かないまま戻らない(包んだ本体の頭の、購読の始まりの位置の読みが繋ぎ直しを使い切る)。"""
+    """受け手が走り出す時から置き場に届かないまま戻らない(包んだ本体の頭の、購読の始まりの位置の読みが上限まで待って落ちる)。"""
     bus = EventBus()
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source = records_signal_handler((CHANGED_ON_JOBS, LANE_ON_LANES), "worker")
@@ -454,12 +503,20 @@ def _outage_for_good() -> EffectGenerator[Changed]:
     return signal
 
 
-def test_a_store_that_stays_unreachable_brings_the_process_down_by_name() -> None:
+def test_a_store_that_stays_unreachable_past_the_patience_brings_the_process_down_by_name() -> None:
+    # 失敗ケース: 期限の無い源は戻らない止まりで永遠に待ち、検の期限(LIMIT_SECONDS)で赤になる。
     with pytest.raises(SignalSourceUnreachable) as raised:
         _run_on(MemoryStore(SCHEMA), _outage_for_good())
     message = str(raised.value)
-    for named in ("worker", "jobs", "lanes", f"{RECONNECT_TRIES} 回", DETAIL):
+    for named in ("worker", "jobs", "lanes", f"{PATIENCE.seconds} 秒", DETAIL):
         assert named in message, message
+
+
+def test_a_foundation_that_forgets_the_patience_is_named_at_the_stall() -> None:
+    # 上限の答え手(source_patience_handler)を置き忘れた組は、既定の値で黙って待たず、止まりの拍に答え手の無い問い ReadSourcePatience で落ちる。
+    stack = [sim_time_handler(clock=SimClock()), memory_records_handler(MemoryStore(SCHEMA), WRITER)]
+    with pytest.raises(Exception, match="ReadSourcePatience"):
+        run(scheduled(with_handlers(stack, _bounded(_outage_for_good()))))
 
 
 # --- 置き場の作り直し(Reset)と組み立ての確かめ ----------------------------------------------------------
@@ -615,7 +672,7 @@ def test_cancelling_the_outer_task_stops_the_body_before_a_later_write() -> None
 
 @do
 def _outage_while_waiting() -> EffectGenerator[Changed]:
-    """本体が待ち始めた後に置き場が落ち、戻らない(源の task が繋ぎ直しを使い切って落ちる)。"""
+    """本体が待ち始めた後に置き場が落ち、戻らない(源の task が上限まで待って落ちる)。"""
     bus = EventBus()
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source = records_signal_handler((CHANGED_ON_JOBS,), "worker")
