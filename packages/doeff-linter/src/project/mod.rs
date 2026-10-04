@@ -2920,53 +2920,24 @@ struct FakesJudgement {
     notes: Vec<String>,
 }
 
-/// DOEFF143 の判定(`FakesJudgement` を返す)。
-fn judge_business_fakes(
+/// 本番の入口(DOEFF143・164・165 と DOEFF207 が読む 1 か所): 本番の code の組の file の本番の組の関数・defsystem・__main__ の節が
+/// 名指す定義・入口の文字列が指す定義(agora-redesign #1375・#3496)。図の節の添字で返す(同じ節が 2 度入ることがある)。
+fn production_entry_roots(
     root: &Path,
-    architecture: &architecture::Architecture,
-    layers: Option<&LayerSettings>,
     decl: &architecture::BusinessFakes,
-    shape: Option<&architecture::AssemblyShape>,
+    graph: &DefinitionGraph,
     hy: &HashMap<String, HyFileIndex>,
-    enabled: &BTreeSet<ProjectRule>,
-) -> FakesJudgement {
-    use business_fakes::{FileRole, Verdict};
-    let mut problems = Vec::new();
-    let mut notes = Vec::new();
-    let mut table = |dir: &Option<String>, absent: registry::Absent| -> BTreeMap<String, String> {
-        let Some(dir) = dir else { return BTreeMap::new() };
-        let judged = registry::JudgedKeys::load(root, std::slice::from_ref(dir), absent);
-        problems.extend(judged.problems);
-        notes.extend(judged.notes);
-        judged.reasons
-    };
-    // 外の世界の表と反例の表は宣言(無い dir は綴りの誤り)・:unserved は違反を固定する縮める向きの表(無い dir = 空 — #1918)
-    let external = table(&decl.external_effects, registry::Absent::Unreadable);
-    let counterexamples = table(&decl.counterexamples, registry::Absent::Unreadable);
-    let unserved = table(&decl.unserved, registry::Absent::Empty);
-    let graph = definition_graph(architecture, hy);
-    let count = graph.nodes.len();
-    let callees = forward_edges(&graph);
+) -> Vec<usize> {
     let definition = |node: usize| {
         let (rel, index) = graph.nodes[node];
         &hy[rel].definitions[index]
     };
-    let role = |node: usize| business_fakes::role_of(graph.nodes[node].0, decl);
     let mut by_name: HashMap<&str, usize> = HashMap::new();
-    for node in 0..count {
+    for node in 0..graph.nodes.len() {
         by_name.entry(definition(node).qualified_name.as_str()).or_insert(node);
     }
-    // 模擬の根: 模擬の環境と組み立ての層の定義・組の file の模擬の組の関数。
-    let simulation_roots: Vec<usize> = (0..count)
-        .filter(|&n| {
-            let (rel, _) = graph.nodes[n];
-            matches!(role(n), FileRole::Simulation | FileRole::Assembly)
-                || (role(n) == FileRole::Production && business_fakes::set_member(rel, &definition(n).name, decl.simulation_prefix.as_deref(), decl))
-        })
-        .collect();
-    // 本番の入口: 本番の code の組の file の本番の組の関数・defsystem・__main__ の節が名指す定義・入口の文字列が指す定義。
     let production_code = |rel: &str| business_fakes::production_code(rel, decl);
-    let mut production_roots: Vec<usize> = (0..count)
+    let mut production_roots: Vec<usize> = (0..graph.nodes.len())
         .filter(|&n| {
             let (rel, _) = graph.nodes[n];
             let d = definition(n);
@@ -3015,20 +2986,72 @@ fn judge_business_fakes(
             }
         }
     }
-    let reach = |roots: &[usize]| -> Vec<bool> {
-        let mut seen = vec![false; count];
-        let mut queue: std::collections::VecDeque<usize> = roots.iter().copied().collect();
-        roots.iter().for_each(|&n| seen[n] = true);
-        while let Some(node) = queue.pop_front() {
-            for &next in &callees[node] {
-                if !seen[next] {
-                    seen[next] = true;
-                    queue.push_back(next);
-                }
+    production_roots
+}
+
+/// `roots` から前向きの辺(`forward_edges`)で届く節(根そのものを含む)。
+fn reached_from(callees: &[Vec<usize>], roots: &[usize]) -> Vec<bool> {
+    let mut seen = vec![false; callees.len()];
+    let mut queue: std::collections::VecDeque<usize> = roots.iter().copied().collect();
+    roots.iter().for_each(|&n| seen[n] = true);
+    while let Some(node) = queue.pop_front() {
+        for &next in &callees[node] {
+            if !seen[next] {
+                seen[next] = true;
+                queue.push_back(next);
             }
         }
-        seen
+    }
+    seen
+}
+
+/// DOEFF143 の判定(`FakesJudgement` を返す)。
+fn judge_business_fakes(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    layers: Option<&LayerSettings>,
+    decl: &architecture::BusinessFakes,
+    shape: Option<&architecture::AssemblyShape>,
+    hy: &HashMap<String, HyFileIndex>,
+    enabled: &BTreeSet<ProjectRule>,
+) -> FakesJudgement {
+    use business_fakes::{FileRole, Verdict};
+    let mut problems = Vec::new();
+    let mut notes = Vec::new();
+    let mut table = |dir: &Option<String>, absent: registry::Absent| -> BTreeMap<String, String> {
+        let Some(dir) = dir else { return BTreeMap::new() };
+        let judged = registry::JudgedKeys::load(root, std::slice::from_ref(dir), absent);
+        problems.extend(judged.problems);
+        notes.extend(judged.notes);
+        judged.reasons
     };
+    // 外の世界の表と反例の表は宣言(無い dir は綴りの誤り)・:unserved は違反を固定する縮める向きの表(無い dir = 空 — #1918)
+    let external = table(&decl.external_effects, registry::Absent::Unreadable);
+    let counterexamples = table(&decl.counterexamples, registry::Absent::Unreadable);
+    let unserved = table(&decl.unserved, registry::Absent::Empty);
+    let graph = definition_graph(architecture, hy);
+    let count = graph.nodes.len();
+    let callees = forward_edges(&graph);
+    let definition = |node: usize| {
+        let (rel, index) = graph.nodes[node];
+        &hy[rel].definitions[index]
+    };
+    let role = |node: usize| business_fakes::role_of(graph.nodes[node].0, decl);
+    let mut by_name: HashMap<&str, usize> = HashMap::new();
+    for node in 0..count {
+        by_name.entry(definition(node).qualified_name.as_str()).or_insert(node);
+    }
+    // 模擬の根: 模擬の環境と組み立ての層の定義・組の file の模擬の組の関数。
+    let simulation_roots: Vec<usize> = (0..count)
+        .filter(|&n| {
+            let (rel, _) = graph.nodes[n];
+            matches!(role(n), FileRole::Simulation | FileRole::Assembly)
+                || (role(n) == FileRole::Production && business_fakes::set_member(rel, &definition(n).name, decl.simulation_prefix.as_deref(), decl))
+        })
+        .collect();
+    let production_code = |rel: &str| business_fakes::production_code(rel, decl);
+    let production_roots = production_entry_roots(root, decl, &graph, hy);
+    let reach = |roots: &[usize]| reached_from(&callees, roots);
     let simulated_nodes = reach(&simulation_roots);
     let produced_nodes = reach(&production_roots);
     // 検の根: 検の file の定義の全部(検だけが使う本番の code の置き場の業務の写しも、ここから届く)。
@@ -3439,9 +3462,34 @@ fn judge_service_systems(root: &Path, architecture: &architecture::Architecture,
         .collect()
 }
 
+/// DOEFF207 の job でない書き手: 本番の入口(DOEFF143 と同じ `production_entry_roots`)から前向きに届く defk・deff が、契約の `:writes`
+/// で名乗った組(agora-redesign #3501 — 系の job から土台の値で渡る task の Program)。本番の入口は `:business-fakes` の宣言で決まるので、
+/// 宣言の無い repo・`:outside-writers` を書いていない repo では空(job の :writes だけを数える)。模擬だけの定義は届かないので数えない。
+fn reachable_function_writers(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> BTreeSet<String> {
+    let (Some(_), Some(decl)) = (architecture.outside_writers.as_ref(), architecture.business_fakes.as_ref()) else {
+        return BTreeSet::new();
+    };
+    let graph = definition_graph(architecture, hy);
+    let callees = forward_edges(&graph);
+    let reached = reached_from(&callees, &production_entry_roots(root, decl, &graph, hy));
+    let mut sources: HashMap<&str, Option<String>> = HashMap::new();
+    let mut writers = BTreeSet::new();
+    for (node, &(rel, index)) in graph.nodes.iter().enumerate() {
+        let definition = &hy[rel].definitions[index];
+        if !reached[node] || !matches!(definition.kind, DefinitionKind::Defk | DefinitionKind::Deff) {
+            continue;
+        }
+        let source = sources.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).ok());
+        if let Some(written) = source.as_deref().and_then(|text| system_access::function_writes(text, &definition.name)) {
+            writers.extend(written);
+        }
+    }
+    writers
+}
+
 /// DOEFF207: 本番の系の job の読み書きの欄の欠けと、書き手の無い読みを、job の行の位置の下書きにする(鍵の細目 = 系::job::欄 か 系::job::組)。
 fn judge_system_access(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    system_access::gaps(root, architecture, hy)
+    system_access::gaps(root, architecture, hy, &reachable_function_writers(root, architecture, hy))
         .into_iter()
         .map(|found| {
             let message = found.describe();

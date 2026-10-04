@@ -81,6 +81,27 @@ def test_an_unknown_key_is_refused_instead_of_dropped() -> None:
     assert ":context" in message and "defk f" in message
 
 
+def test_a_function_declares_what_it_writes_and_nothing_happens_at_run_time() -> None:
+    # agora-redesign #3501・#3496: job でない書き手(系の job から送られる task の Program)が、外の置き場に書く物を defsystem の job の
+    # :writes と同じ形で名乗る(使い手の doeff-linter DOEFF207 が source の綴りを読む)。以前は知らない鍵として SyntaxError(反例)。
+    ns = evaluate("""
+(defk run-task [x] {:pre [(: x int)] :post [(: % int)] :writes #{"record:turn" "records:turn-event"}} x)
+(deff count-rows [x] {:pre [(: x int)] :post [(: % int)] :writes #{}} x)
+""")
+    assert ns["count_rows"](3) == 3
+    assert not hasattr(ns["run_task"], "__doeff_writes__")
+
+
+def test_the_writes_of_a_function_are_checked_like_a_system_job() -> None:
+    # 形は defsystem の job の :writes と同じ確かめ(system_form.record-names)— 集合でない値・綴りの誤りは展開が断る。
+    assert "文字列の集合" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes ["record:turn"]} x)')
+    assert "<置き場>:<名>" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes #{"turn"}} x)')
+    assert "<置き場>:<名>" in refused('(deff f [x] {:pre [(: x int)] :post [(: % int)] :writes #{"a:b:c"}} x)')
+    # :reads は受けない(job でない定義の読みを照らす規則が無い)。defp も :writes を受けない(関数の契約だけの鍵)。
+    assert ":reads" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :reads #{"record:turn"}} x)')
+    assert ":writes" in refused('(defp g {:post [(: % int)] :writes #{"record:turn"}} 1)')
+
+
 def test_the_tags_are_checked_when_compiling() -> None:
     assert "io-effect" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "io-effect"}} x)')
     assert ":role" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k"}} x)')

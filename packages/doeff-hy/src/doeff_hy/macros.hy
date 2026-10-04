@@ -32,6 +32,7 @@
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
 (import doeff [DoExpr EffectBase])
 (import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
+(import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
 
 ;; Re-export handle macros so users only need one require line.
@@ -106,7 +107,10 @@
       (when (= (str k) ":pre")
         (setv pre-checks (list v)))
       (when (= (str k) ":post")
-        (setv post-checks (list v)))))
+        (setv post-checks (list v)))
+      ;; :writes は形だけを検め、展開に何も残さない(linter が source の綴りを読む — doeff_hy/declarations.hy の FUNCTION-CONTRACT-KEYS)。
+      (when (= (str k) ":writes")
+        (record-names v where ":writes"))))
   #(pre-checks post-checks real-body))
 
 (defn _is-type-check [form]
