@@ -35,9 +35,17 @@ class Init:
     mcp_servers: tuple[str, ...] = ...
 
 @dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
 class AssistantMessage:
     text: str = ''
-    tool_names: tuple[str, ...] = ...
+    tool_calls: tuple[ToolCall, ...] = ...
 
 @dataclass(frozen=True)
 class ToolResult:

@@ -25,7 +25,7 @@
   (TurnInput text (or ref (new-id))))
 
 (defn #^ bool tool-started [line]
-  (and (isinstance line.kind AssistantMessage) (in "Bash" line.kind.tool-names)))
+  (and (isinstance line.kind AssistantMessage) (in "Bash" (gfor call line.kind.tool-calls call.name))))
 
 (defn kinds-of [#^ tuple lines kind-type]
   (lfor line lines :if (isinstance line.kind kind-type) line.kind))
