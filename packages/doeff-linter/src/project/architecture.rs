@@ -707,6 +707,11 @@ pub struct BusinessFakes {
     pub counterexamples: Option<String>,
     /// 本番の答え手がまだ無い外の世界の効果の表の dir(鍵 = 効果の完全名)。
     pub unserved: Option<String>,
+    /// 下の層の効果に答えるが置き場を持たない振り分けと断りの表の dir(鍵 = `<path>::<handler>::<効果>`)。DOEFF206 が、intent の層の
+    /// 効果を通す行を出す。
+    pub lower_layer_passages: Option<String>,
+    /// 検だけから届く偽物を固定する表の dir(鍵 = `<path>::<handler>::<効果>`)。DOEFF206 が、intent の層の効果を通す行を出す。
+    pub test_only_fakes: Option<String>,
 }
 
 /// 組み立ての形の決まり(`:assembly-shape {…}` — DOEFF155・156)。組み立ての層・組の file・業務の module・外の世界の表は
@@ -967,6 +972,17 @@ impl Architecture {
             }
         }
         out
+    }
+
+    /// 検証環境(`:verification-environment`)の dir — root の直下の `<root>/<名>`(書いていなければ None)。置き場の免除(DOEFF114・115)と
+    /// 同じ読み: root の下の最初の dir の名が宣言の名に等しい所。DOEFF206 と、層 3 の規則(DOEFF155・156)がこの 1 つの読みを使う。
+    pub fn verification_environment_dir(&self) -> Option<String> {
+        self.verification_environment.as_deref().map(|place| format!("{}/{}", normalize_dir(&self.root), place))
+    }
+
+    /// root からの path が検証環境の dir の中の file か(dir そのものは数えない)。
+    pub fn in_verification_environment(&self, rel: &str) -> bool {
+        self.verification_environment_dir().is_some_and(|dir| rel.starts_with(&format!("{}/", dir)))
     }
 
     /// service の宣言を dir の名から引く。
@@ -2059,6 +2075,8 @@ impl<'a> Parser<'a> {
                 ":external-effects" => decl.external_effects = self.required_string(field, ":business-fakes :external-effects"),
                 ":counterexamples" => decl.counterexamples = self.required_string(field, ":business-fakes :counterexamples"),
                 ":unserved" => decl.unserved = self.required_string(field, ":business-fakes :unserved"),
+                ":lower-layer-passages" => decl.lower_layer_passages = self.required_string(field, ":business-fakes :lower-layer-passages"),
+                ":test-only-fakes" => decl.test_only_fakes = self.required_string(field, ":business-fakes :test-only-fakes"),
                 _ => self.unknown_key(key, ":business-fakes"),
             }
         }

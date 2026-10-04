@@ -508,6 +508,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         ProjectRule::ServiceWithoutCounterexample,
                         ProjectRule::ClauseWithoutCounterexample,
                         ProjectRule::IntentEffectUncovered,
+                        ProjectRule::IntentFakedInVerification,
                     ];
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| fake_rules.iter().any(|r| enabled.contains(r))) {
                         let judged = crate::timing::timed("business-fakes", || {
@@ -1017,6 +1018,7 @@ fn whole_hy_index(
         || enabled.contains(&ProjectRule::ServiceWithoutCounterexample)
         || enabled.contains(&ProjectRule::ClauseWithoutCounterexample)
         || enabled.contains(&ProjectRule::IntentEffectUncovered)
+        || enabled.contains(&ProjectRule::IntentFakedInVerification)
         || enabled.contains(&ProjectRule::AssemblyShapeBroken)
         || enabled.contains(&ProjectRule::AssemblyAnswerMisplaced))
         && settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()))
@@ -3033,14 +3035,13 @@ fn judge_business_fakes(
     let tested: Vec<bool> = clauses.iter().map(|c| tested_nodes[c.node]).collect();
     // 層の名(intent と翻訳)は :assembly-shape から読む。効果の層は定義元の module の置き場で決める。
     let layer_of = |rel: &str| layers.and_then(|l| classify_layer_file(rel, l).map(|(site, _)| l.layers[site.layer.0].name.clone()));
-    let intent_effect: Vec<bool> = clauses
-        .iter()
-        .map(|c| {
-            let base = business_fakes::module_of_effect(&c.effect).replace('.', "/");
-            let layer = layer_of(&format!("{}.hy", base)).or_else(|| layer_of(&format!("{}.py", base)));
-            shape.is_some_and(|s| layer.as_deref() == Some(s.intent_layer.as_str()))
-        })
-        .collect();
+    // 効果(完全名)が intent の層の効果か — DOEFF158・165 の節の読みと DOEFF206 の節と表の行の読みが同じ 1 つを使う。
+    let effect_in_intent = |effect: &str| {
+        let base = business_fakes::module_of_effect(effect).replace('.', "/");
+        let layer = layer_of(&format!("{}.hy", base)).or_else(|| layer_of(&format!("{}.py", base)));
+        shape.is_some_and(|s| layer.as_deref() == Some(s.intent_layer.as_str()))
+    };
+    let intent_effect: Vec<bool> = clauses.iter().map(|c| effect_in_intent(&c.effect)).collect();
     let translation_file: Vec<bool> =
         clauses.iter().map(|c| shape.is_some_and(|s| layer_of(&c.rel).as_deref() == Some(s.translation_layer.as_str()))).collect();
     // 本番の code の Python の handler(索引の図の外)が isinstance で答える効果。
@@ -3163,8 +3164,60 @@ fn judge_business_fakes(
                 .collect()
         }
     };
+    // DOEFF206(agora-redesign #3405・#3407): 違反を通す表の行(1 鍵 1 file — 行の file に当てる)と、検証環境の dir の中の節。
+    let pass_rows: Vec<business_fakes::PassRow> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
+        let mut rows = Vec::new();
+        // 外の世界の表の読みの誤りは上の table が出す。下の層を通す表と検だけの偽物の表は無い dir を空と読む(Registry の読み)。
+        for (dir, report) in [(&decl.external_effects, false), (&decl.lower_layer_passages, true), (&decl.test_only_fakes, true)] {
+            let Some(dir) = dir else { continue };
+            let read = Registry::load(root, std::slice::from_ref(dir), &[]);
+            if report {
+                problems.extend(read.problems);
+                notes.extend(read.notes);
+            }
+            rows.extend(read.keys.into_iter().map(|key| business_fakes::PassRow {
+                origin: read.origins.get(&key).cloned().unwrap_or_else(|| dir.clone()),
+                table: dir.clone(),
+                key,
+            }));
+        }
+        rows
+    } else {
+        Vec::new()
+    };
+    let intent_fakes: Vec<Verdict> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
+        let row_intent: Vec<bool> = pass_rows.iter().map(|row| effect_in_intent(row.effect())).collect();
+        let in_verification: Vec<bool> = clauses.iter().map(|c| architecture.in_verification_environment(&c.rel)).collect();
+        let mut taps: HashMap<&str, HashMap<(String, String), bool>> = HashMap::new();
+        let pass_through: Vec<bool> = clauses
+            .iter()
+            .zip(&in_verification)
+            .map(|(c, inside)| {
+                if !inside {
+                    return false;
+                }
+                let file_taps = taps
+                    .entry(c.rel.as_str())
+                    .or_insert_with(|| std::fs::read_to_string(root.join(&c.rel)).map(|s| business_fakes::pass_through_taps_in(&s)).unwrap_or_default());
+                let head = definition(c.node).handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
+                file_taps.get(&(c.handler.clone(), head)).copied().unwrap_or(false)
+            })
+            .collect();
+        business_fakes::judge_intent_fakes(&business_fakes::IntentFakeInputs {
+            clauses: &clauses,
+            intent_effect: &intent_effect,
+            in_verification: &in_verification,
+            pass_through: &pass_through,
+            counterexamples: &counterexamples,
+            rows: &pass_rows,
+            row_intent: &row_intent,
+        })
+    } else {
+        Vec::new()
+    };
     let mut drafts: Vec<Draft> = business_fakes::judge(&inputs, decl)
         .into_iter()
+        .chain(intent_fakes)
         .map(|verdict| match verdict {
             Verdict::Fake(i) => clause_draft(
                 ProjectRule::BusinessEffectFake,
@@ -3213,6 +3266,41 @@ fn judge_business_fakes(
                 format!("外の世界の表の {} にどの偽物も答えない", effect),
                 "外の世界の表は偽物が答える外の世界の効果の宣言 — 答える偽物が無い行は表から外す(表を腐らせない)。",
             ),
+            Verdict::IntentPassedByTable(r) => {
+                let row = &pass_rows[r];
+                let subject = format!("表 {} の行 {}", row.table, row.key);
+                Draft {
+                    rule: ProjectRule::IntentFakedInVerification,
+                    layer: None,
+                    path: root.join(&row.origin),
+                    rel: row.origin.clone(),
+                    range: zero_range(),
+                    message: format!("{} が intent の層の効果 {} を通す(検証環境の自前の答えを許す表の行)", subject, row.effect()),
+                    detail: Some(format!("pass:{}", row.key)),
+                    base: Severity::Error,
+                    explain: Explain::IntentFakedInVerification {
+                        subject,
+                        reason: "intent の層の効果は表で外の世界と名乗らせない — 外の世界に触るのは土台の効果で、intent の効果には検証環境でも本番の翻訳の handler(層 protocol)が答える。表の行を消し、翻訳の下の土台の handler を差し替える。".to_string(),
+                    },
+                }
+            }
+            Verdict::IntentAnsweredInVerification(i) => {
+                let clause = &clauses[i];
+                Draft {
+                    rule: ProjectRule::IntentFakedInVerification,
+                    layer: None,
+                    path: root.join(&clause.rel),
+                    rel: clause.rel.clone(),
+                    range: definition(clause.node).range,
+                    message: format!("{} の {} が intent の層の効果 {} に自前で答える(検証環境の中)", clause.rel, clause.handler, clause.effect),
+                    detail: Some(format!("verification:{}::{}", clause.handler, clause.effect)),
+                    base: Severity::Error,
+                    explain: Explain::IntentFakedInVerification {
+                        subject: format!("検証環境の handler {} の節 {}", clause.handler, clause.effect),
+                        reason: "検証環境が intent の効果に答えると、本番の翻訳の handler が手元で 1 度も走らないまま緑になる。答えは本番の翻訳の handler に任せ、その下の土台の handler だけを差し替える。出し直しの答えをそのまま resume する tap と、反例の表に載せたわざと壊した節だけは外す。".to_string(),
+                    },
+                }
+            }
             Verdict::UnservedExternal(effect) => table_draft(
                 &decl.external_effects,
                 format!("external-unserved::{}", effect),
@@ -5238,7 +5326,8 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, f
                 dropped += 1;
                 return None;
             }
-            let registered = registry.keys.contains(&key);
+            // DOEFF206 は登録簿で下げない(載っても手つかずの当たりのまま — agora-redesign #3405)。
+            let registered = registry.keys.contains(&key) && draft.rule.lowered_by_registry();
             let base = settings.severity.get(&draft.rule).copied().unwrap_or(draft.base);
             let reconciling = settings.registry.reconciling.contains(&draft.rule);
             let severity = if reconciling {
