@@ -2,36 +2,11 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-from enum import StrEnum as StrEnum
-
-class UpgradeKind(StrEnum):
-    WORKER = 'worker'
-    COORDINATOR = 'coordinator'
-
-class PendingPhase(StrEnum):
-    QUEUED = 'queued'
-    ASSIGNED = 'assigned'
-
-@dataclass(frozen=True, kw_only=True)
-class RosterEntry:
-    worker: str
-    live: bool
-    doeff_commit: str
-
-@dataclass(frozen=True, kw_only=True)
-class PendingTask:
-    task: str
-    phase: PendingPhase
-    worker: str | None
-
-@dataclass(frozen=True, kw_only=True)
-class UpgradeStart:
-    at_ms: int
-    kind: UpgradeKind
-    target: str
-    doeff_commit: str
-    roster: tuple[RosterEntry, ...]
-    tasks: tuple[PendingTask, ...]
+from doeff_cluster.shared.intent.upgrade_model import UpgradeKind as UpgradeKind
+from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPhase
+from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
+from doeff_cluster.shared.intent.upgrade_model import PendingTask as PendingTask
+from doeff_cluster.shared.intent.upgrade_model import UpgradeStart as UpgradeStart
 
 @dataclass(frozen=True, kw_only=True)
 class UpgradeBreach:

@@ -1,7 +1,7 @@
 ;;; worker と coordinator を新しい版へ入れ替える順の条 V1〜V4(#3366 — 2026-10-05 の版上げ 12 回(#3156)で通した順を条にし、sim で
 ;;; 測った落ち方(tests/test_upgrade_swaps.hy)に合わせた)。
 ;;;
-;;; 判じる物 = 入れ替えを始めた瞬間の記録(UpgradeStart)の列: 何を(worker の名か coordinator)・どの版へ・その瞬間の名簿の写し
+;;; 判じる物 = 入れ替えを始めた瞬間の記録(UpgradeStart — 型は shared/intent/upgrade_model.hy)の列: 何を(worker の名か coordinator)・どの版へ・その瞬間の名簿の写し
 ;;; (worker ごとの live と動いている版)と、終わっていない task の写し(queued か、どの worker に置かれた assigned か)。記録を作るのは、
 ;;; 版上げの Program を走らせる筋書き(模擬の Flux が当てた瞬間に名簿と task を写す)か、同じ形の合成の列(検の失敗ケース)。
 ;;;
@@ -21,47 +21,10 @@
 ;;;   V4 coordinator-swap-on-an-empty-queue — coordinator の入れ替えを始めるのは、queued の task が無い時だけ(作り直した coordinator が
 ;;;      worker の行を読めないと、queued は即 落ちる — 版を上げる作り直しでは行の形が変わり得る)。
 (require doeff-hy.macros [val defk])
-(require doeff-hy.record [defenum defrecord])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [dataclass])
-(import enum [StrEnum])
-
-
-;; 入れ替える物の種類。
-(defenum UpgradeKind WORKER COORDINATOR)
-
-;; 写しに載せる task の phase(coordinator の /resources/Task の queued と assigned — assigned は置かれた・走り中)。
-(defenum PendingPhase QUEUED ASSIGNED)
-
-
-(defrecord RosterEntry
-  "入れ替えを始めた瞬間の名簿の 1 台の写し: worker = 名・live = その瞬間に生きていたか・doeff-commit = その worker が動いている
-   doeff の版。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ str worker)
-  (#^ bool live)
-  (#^ str doeff-commit))
-
-
-(defrecord PendingTask
-  "入れ替えを始めた瞬間の、まだ終わっていない task の写し: phase = queued か assigned・worker = assigned の時に置かれた worker の名
-   (queued は None — まだどこにも置かれていない)。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ str task)
-  (#^ PendingPhase phase)
-  (#^ (| str None) worker))
-
-
-(defrecord UpgradeStart
-  "入れ替えを始めた瞬間の記録 1 つ: kind と target(worker の名・coordinator なら \"coordinator\")・doeff-commit = 入れ替え先の版・
-   roster と tasks = その瞬間の写し。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ int at-ms)
-  (#^ UpgradeKind kind)
-  (#^ str target)
-  (#^ str doeff-commit)
-  (#^ (get tuple #(RosterEntry ...)) roster)
-  (#^ (get tuple #(PendingTask ...)) tasks))
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart])
 
 
 (defrecord UpgradeBreach

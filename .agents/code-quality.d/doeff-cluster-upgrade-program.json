@@ -1,0 +1,22 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-clock",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-launch-model",
+        "doeff-cluster-upgrade-model"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-upgrade-program",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/upgrade_program.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/upgrade_program.hy"
+      ],
+      "responsibility": "版上げの Program(#3366 の単位 3): worker を 1 台ずつ(置かれた task の終わりを待つ → Desire → 公開 → 当てる → 新しい版で戻るのを待つ)、最後に coordinator(worker 全部が新しい版・待ち行列が空)。待ちは coordinator の版の変化で起き、上限を越えたら UpgradeStalled で名指しで落ちる。",
+      "typed": true
+    }
+  ]
+}

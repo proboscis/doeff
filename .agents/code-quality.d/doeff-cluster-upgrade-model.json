@@ -1,0 +1,17 @@
+{
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-upgrade-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/upgrade_model.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/intent/upgrade_model.hy"
+      ],
+      "responsibility": "版上げの型と effect(#3366 の単位 3): 名簿と task の写し(RosterEntry・PendingTask・UpgradeState)・入れ替えの瞬間の記録 UpgradeStart・待ちの上限 UpgradeLimits と止まりの例外 UpgradeStalled・effect ReadUpgradeState / PublishDeclarations / ApplyDeclarations(答え手は本番と sim で分かれる)。",
+      "typed": true
+    }
+  ]
+}
