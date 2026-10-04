@@ -13,6 +13,7 @@ ROOTS_PTH: str
 class KnownRoot:
     env: RuntimeEnv
     root: str
+    made_ms: int
 
 @dataclass(frozen=True, kw_only=True)
 class PrepareRequest:
