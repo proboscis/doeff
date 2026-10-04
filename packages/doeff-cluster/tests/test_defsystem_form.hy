@@ -121,3 +121,36 @@
   (assert (in ":replicas は 0 / 1 のどれか" b) b)
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas \"1\"))"))
   (assert (in ":replicas は 0 / 1 のどれか" c) c))
+
+
+(deftest test-defsystem-keeps-the-store-reads-and-writes-in-the-static-description
+  ;; job が外の置き場から読む・書く物(:reads / :writes — 任意の欄・#3495)は静的な記述の job の dict に整列した名の列で載り
+  ;; (doeff-linter が綴りで読む)、書かない job の dict には鍵が無い。空の集合は「読み書きしない」の宣言として載る。
+  (<- ns (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem shop [foundation]
+  (reader (notice foundation) :replicas 1 :reads #{\"store:orders\" \"events:audit\"} :writes #{})
+  (quiet (notice foundation) :replicas 0))
+"))
+  (val jobs (get (. (get ns "shop") __doeff_system__) "jobs"))
+  (assert (= (get jobs 0) {"name" "reader" "function" "notice" "replicas" 1
+                           "reads" ["events:audit" "store:orders"] "writes" []})
+          jobs)
+  (assert (= (get jobs 1) {"name" "quiet" "function" "notice" "replicas" 0}) jobs))
+
+
+(deftest test-defsystem-refuses-store-names-that-are-not-store-colon-name
+  ;; 反例: `:` の無い綴り・2 つある綴り・片側が空の綴り・集合でない値・文字列でない要素・同じ鍵の 2 回目は展開で断る — linter が
+  ;; 実行せずに読める綴りだけを通すため(#3495)。置き場の名そのものは照らさない(使い手の語彙)。
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{\"orders\"}))"))
+  (assert (in ":reads の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)" a) a)
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :writes #{\"store:\"}))"))
+  (assert (in ":writes の綴りは <置き場>:<名>" b) b)
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :writes #{\"store:orders:x\"}))"))
+  (assert (in ":writes の綴りは <置き場>:<名>" c) c)
+  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads [\"store:orders\"]))"))
+  (assert (in ":reads は置き場の名の文字列の集合" d) d)
+  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{orders}))"))
+  (assert (in ":reads の要素は文字列の literal" e) e)
+  (<- f (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{} :reads #{}))"))
+  (assert (in "鍵 :reads が 2 回ある" f) f))
