@@ -15,7 +15,7 @@
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord defwire])
 (val MODULE-TAGS {:context "coordinator" :role "intent"})
-(import dataclasses [dataclass field])
+(import dataclasses [dataclass field KW_ONLY])
 (import enum [StrEnum])
 (import functools [partial])
 (import typing [NamedTuple])
@@ -96,7 +96,21 @@
   ;; 1 回)。起動の時は、この値と alive-ms の差(止まる前の最後の印の時点の沈黙)を今から数え直す(api_policy.resume-after-downtime)。
   ;; まだ印の拍を通っていない worker は None(lastSeenMs を書かない)。以前は ClusterState の写像 seen-marks(worker 名 → 時刻)に
   ;; 持っていた — worker の保存の行の材料をこの記録 1 つに寄せた(#2903)。
-  (setv #^ (| int None) seen-mark None))
+  (setv #^ (| int None) seen-mark None)
+  ;; task のために空けておく数(heartbeat の taskReserve — 0 以上 capacity 以下・必ず名乗る)。常駐の job と並べた置き先(surge)は
+  ;; capacity からこの分を引いた数までしか置かない(cluster_policy.job-room-of)。task は予約を使い切ったら job の残りへはみ出してよい
+  ;; (cluster_policy.task-room-of は capacity 全体から数える)。保存する。位置で渡す欄の後ろに置くので、KW_ONLY の印の後の名で渡す
+  ;; 必ずの欄(既定の値なし — 型の宣言 .pyi でも必ずの欄として読まれる)。
+  (#^ KW_ONLY _)
+  (#^ int task-reserve))
+
+
+(defrecord WorkerLoad
+  "worker 1 台の担っている数(cluster_policy.load-of の値): jobs = 常駐の job の置き先と並べた置き先(surge)の数・tasks = 置かれた task
+   (PLACED-PHASES)の数。置ける空き(job-room-of・task-room-of)はこの 2 つと worker の capacity・task-reserve から求める。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ int jobs)
+  (#^ int tasks))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
@@ -280,11 +294,12 @@
 
 (defrecord WorkerView
   "状態の画面の worker 1 つ: info = 名乗り・silent-ms = 最後の連絡からの長さ・live = heartbeat が lease の内か・draining = 期限の内の drain
-   か(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)。"
+   か(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)・task-room = いま task を置ける空き(cluster_policy.task-room-of の答え)。"
   (#^ WorkerInfo info)
   (#^ int silent-ms)
   (#^ bool live)
-  (#^ bool draining))
+  (#^ bool draining)
+  (#^ int task-room))
 
 
 (defrecord StatusView
@@ -486,6 +501,14 @@
 
 ;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
 ;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
+
+
+(defenum TaskUnplacedKind TASK-NO-ROOM)
+
+
+;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
+;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも task を置ける空き
+;; (task-room-of)が 0(常駐の job と置かれた task で capacity が埋まっている)。
 
 
 (defenum NotReadyKind

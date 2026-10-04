@@ -30,7 +30,7 @@ MODULE = """\
 (defk probe-workers [names]
   {:pre [(: names (get tuple #(str ...)))] :post [(: % (get list SimWorker))] :tags {:context "probe" :role "judgment"}}
   "名の列から担い手の列を作る(欄の型が読める)。"
-  (lfor n names (SimWorker :name n :provides (frozenset ["net"]) :prepare-seconds 1.0)))
+  (lfor n names (SimWorker :name n :provides (frozenset ["net"]) :task-reserve 0 :prepare-seconds 1.0)))
 
 (defk probe-per-process [effects]
   {:pre [(: effects (get tuple #(type ...)))] :post [(: % (get Callable #([str str] ProcessOutside)))] :tags {:context "probe" :role "foundation"}}

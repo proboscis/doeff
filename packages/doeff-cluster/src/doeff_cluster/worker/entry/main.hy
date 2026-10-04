@@ -163,6 +163,8 @@
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
   (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
   (.add-argument parser "--capacity" :type int :default 10)
+  (.add-argument parser "--task-reserve" :type int :required True
+                 :help "capacity のうち task のために空けておく数(0 以上 capacity 以下)— coordinator は常駐の job をこの分に置かない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
   (.add-argument parser "--repo" :required True :help "コードを取り出す git repo")
@@ -191,6 +193,9 @@
       (.error parser (str error))))
   (when (not (<= (set exclusive) (set provides)))
     (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
+  ;; task のために空けておく数を起動の時点で検める(coordinator の heartbeat の本文の型と同じ範囲 — 外れた値で名乗り続けて断られない)。
+  (when (not (<= 0 args.task-reserve args.capacity))
+    (.error parser (.format "--task-reserve {} は 0 以上 --capacity {} 以下で名乗る" args.task-reserve args.capacity)))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
@@ -227,7 +232,8 @@
   ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         boot (run (with-handlers [os-random-handler] (boot-name)))
-        link (LinkState args.name provides args.capacity (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot started-ms started-ms
+        link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot
+                        started-ms started-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator

@@ -47,7 +47,7 @@
 (defk worker-of [name seen provides]
   {:pre [(: name str) (: seen int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "program"}}
   "検の worker 1 台(最後の連絡の時刻 seen・提供する能力 provides)を作るため。"
-  (WorkerInfo name provides 10 seen))
+  (WorkerInfo name provides 10 seen :task-reserve 0))
 
 
 (defk promise-to [job worker]
@@ -147,7 +147,7 @@
 (defk beat-body [name statuses kept]
   {:pre [(: name str) (: statuses list) (: kept (| list None))] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "heartbeat の本文 1 つ(kept = 今持っている印の名の列 — None なら欄を書かない古い worker)を組むため。"
-  (| {"name" name "provides" ["net"] "capacity" 10 "versions" {"python" "3.14.0"} "statuses" statuses}
+  (| {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" {"python" "3.14.0"} "statuses" statuses}
      (if (is kept None) {} {"keptWhenCutOff" kept})))
 
 
@@ -426,8 +426,8 @@
   (CutSeen :host "w1" :mid mid :readiness readiness :after after))
 
 
-(val JOINING #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
-               (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :starts-down True)))
+(val JOINING #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+               (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :starts-down True :task-reserve 0)))
 
 
 (deftest test-a-capable-worker-joining-during-a-cut-does-not-run-the-job-twice
@@ -463,8 +463,8 @@
   (CutSeen :host "w1" :mid mid :readiness readiness :after after))
 
 
-(val WIDENING #((SimWorker :name "w1" :provides (frozenset ["lone" "cluster-net"]))
-                (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+(val WIDENING #((SimWorker :name "w1" :provides (frozenset ["lone" "cluster-net"]) :task-reserve 0)
+                (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 
 
 (deftest test-widened-needs-during-a-cut-do-not-run-the-job-twice
@@ -534,7 +534,7 @@
   ;; 受入 4(古い worker と新しい coordinator の組): 印を知らない worker は今までどおり fence で止める。coordinator は移せる先が無いので
   ;; 置き先を保ち、明けた後に同じ worker で起こし直す(以前と同じ止まりと起こし直し)— 2 か所では走らない。
   (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 120.0)
-                                :workers #((SimWorker :name "old" :provides (frozenset ["cluster-net"]) :ignores-keep-marks True))))
+                                :workers #((SimWorker :name "old" :provides (frozenset ["cluster-net"]) :ignores-keep-marks True :task-reserve 0))))
   (val stopped (get seen.after 0))
   (val again (get seen.after -1))
   (assert (= #(stopped.worker stopped.exit-code) #("old" -15)) seen.after)
@@ -548,8 +548,8 @@
 (deftest test-a-counterexample-worker-that-ignores-the-fence-breaks-c2
   ;; 失敗ケース(条 C2): 印の無い job も途絶で止めない壊れた worker(ignores-fence)では、移せる先の在る job が移し替えの後に 2 か所で
   ;; 走り、C2 が重なりを名指す — 本物の worker の fence(印の無い job は止める)がそれを防いでいることの裏返し。
-  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True)
-                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True)))
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)
+                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)))
   (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 90.0) :workers workers))
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))

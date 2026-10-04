@@ -38,7 +38,7 @@
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False)
                 (RunnerFact :name "b" :provides #("y-tool") :exclusive #() :live True :draining False)))
-(val SIM-RUNNERS (tuple (gfor f RUNNERS (SimWorker :name f.name :provides (frozenset f.provides) :exclusive (frozenset f.exclusive)))))
+(val SIM-RUNNERS (tuple (gfor f RUNNERS (SimWorker :name f.name :provides (frozenset f.provides) :exclusive (frozenset f.exclusive) :task-reserve 0))))
 (val NO-JOBS (system-of "runner-scenarios" #()))
 (val ON-X (frozenset ["x-tool"]))
 (val ON-Y (frozenset ["y-tool"]))

@@ -81,17 +81,40 @@
 
 (deftest test-a-heartbeat-body-is-read-into-its-type-and-refused-before-the-decision
   ;; heartbeat の本文の形の検め(前は判断の中の手書きの検め)は解く所で: 空の名・欠けた失敗の行の kind・文字列の容量は 400。旧い labels は判断が断る。
-  (<- beat (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "envs" {"ready" ["k1"]} "statuses" [{"name" "a"}]}))))
-  (assert (= #(beat.name beat.provides beat.envs.ready beat.capacity (len beat.statuses)) #("w" #("net") #("k1") 10 1)) beat)
-  (<- nameless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "" "provides" ["net"]}))))
+  (<- beat (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "taskReserve" 2 "envs" {"ready" ["k1"]}
+                                                             "statuses" [{"name" "a"}]}))))
+  (assert (= #(beat.name beat.provides beat.envs.ready beat.capacity beat.task-reserve (len beat.statuses)) #("w" #("net") #("k1") 10 2 1)) beat)
+  (<- nameless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "" "provides" ["net"] "taskReserve" 0}))))
   (assert (isinstance nameless BodyMalformed) nameless)
-  (<- kindless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "envs" {"failed" [{"key" "k"}]}}))))
+  (<- kindless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "taskReserve" 0 "envs" {"failed" [{"key" "k"}]}}))))
   (assert (in "kind" kindless.reason) kindless)
-  (<- wordy (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "capacity" "10"}))))
+  (<- wordy (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "capacity" "10" "taskReserve" 0}))))
   (assert (in "capacity" wordy.reason) wordy)
-  (val old (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "w" "labels" {"kind" "mac"}})) 1000 T))
+  (val old (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "w" "taskReserve" 0 "labels" {"kind" "mac"}})) 1000 T))
   (assert (= (get old 1) 400) old)
   (assert (in "labels" (get old 2 "error")) old))
+
+
+(deftest test-a-heartbeat-without-its-task-reserve-or-outside-its-range-is-refused-before-the-decision
+  ;; task のために空けておく数 taskReserve は heartbeat の必ずの欄(既定の値は無い)。欄の無い本文・capacity を越える数・負の数・数でない値は
+  ;; 解く所で 400(判断に入らず、状態を変えない)— 欄を知らない worker を黙って予約 0 と読まない。
+  (<- missing (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 3}))))
+  (assert (isinstance missing BodyMalformed) missing)
+  (assert (in "taskReserve" missing.reason) missing)
+  (<- over (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 3 "taskReserve" 4}))))
+  (assert (isinstance over BodyMalformed) over)
+  (<- negative (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 3 "taskReserve" -1}))))
+  (assert (isinstance negative BodyMalformed) negative)
+  (<- worded (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 3 "taskReserve" "1"}))))
+  (assert (in "taskReserve" worded.reason) worded)
+  ;; 端の値(0 と capacity と同じ数)は受ける。
+  (<- whole (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 3 "taskReserve" 3}))))
+  (assert (= whole.task-reserve 3) whole)
+  (val state (ClusterState))
+  (val answer (responded state (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 3})) 1000 T))
+  (assert (is (get answer 0) state) answer)
+  (assert (= (get answer 1) 400) answer)
+  (assert (in "taskReserve" (get answer 2 "error")) answer))
 
 
 (deftest test-a-resource-declaration-envelope-is-read-into-its-type

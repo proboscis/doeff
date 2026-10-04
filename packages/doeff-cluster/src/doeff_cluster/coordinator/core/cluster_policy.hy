@@ -13,7 +13,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen NodeLabelsUnreadable KeepMark])
 (import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
@@ -368,10 +368,12 @@
 
 (defn #^ bool can-take [#^ int now #^ ClusterState state #^ ClusterJob job #^ WorkerInfo w #^ dict load #^ ClusterTiming timing
                         #^ (| frozenset None) [draining None]]
-  "job を新しく置ける worker か(生きている・条件を満たす・drain 中でない・空きがある)。"
+  "job(と並べた置き先 surge)を新しく置ける worker か(生きている・条件を満たす・drain 中でない・job の側の空き job-room-of と全体の
+   空き task-room-of の両方が在る — task のために空けておく分 task-reserve には置かない)。load = load-of の答え(worker の名 → WorkerLoad)。"
   (and (alive now w timing.lease-ms) (eligible job w)
        (not-in w.name (if (is draining None) (draining-workers state now) draining))
-       (< (.get load w.name 0) w.capacity)))
+       (> (run (job-room-of w load)) 0)
+       (> (run (task-room-of w load)) 0)))
 
 
 ;; --- 同じ名の process の世代(2026-09-27) ------------------------------------------------
@@ -442,13 +444,33 @@
 
 
 (defn #^ dict load-of [#^ ClusterState state #^ dict placements]
-  "worker ごとの担っている数(job・並べた置き先(surge)・実行中の task)。"
-  (setv load (dfor name state.workers name 0))
+  "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
+   task(PLACED-PHASES)。置ける空きは job-room-of・task-room-of がこの値から求める(数え方を 1 か所にする)。"
+  (setv jobs (dfor name state.workers name 0) tasks (dfor name state.workers name 0))
   (for [a (+ (list (.values placements)) (list (.values state.surges)))]
-    (when (in a.worker load) (+= (get load a.worker) 1)))
+    (when (in a.worker jobs) (+= (get jobs a.worker) 1)))
   (for [t (.values state.tasks)]
-    (when (and (in t.phase PLACED-PHASES) (in t.worker load)) (+= (get load t.worker) 1)))
-  load)
+    (when (and (in t.phase PLACED-PHASES) (in t.worker tasks)) (+= (get tasks t.worker) 1)))
+  (dfor name state.workers name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name))))
+
+
+(defk job-room-of [worker load]
+  {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker に常駐の job と並べた置き先(surge)をあと幾つ置けるかを知るため: (capacity − task-reserve) − (job の置き先 + surge の数)。
+   task のために空けておく分(task-reserve)は job の側から引く — 常駐の job が枠を埋めても task の置き場が残る。load = load-of の答え
+   (worker の名 → WorkerLoad)。0 以下なら job の側に空きが無い(置き先の判断 place-jobs・movable?・drain の move-target はどれも can-take を
+   通してこの値を読む)。"
+  (val used (get load worker.name))
+  (- (- worker.capacity worker.task-reserve) used.jobs))
+
+
+(defk task-room-of [worker load]
+  {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker に task(と job)をあと幾つ置けるかを知るため: capacity − (job の置き先 + surge の数 + 置かれた task の数)。task は予約
+   (task-reserve)を使い切ったら job の残りへはみ出してよいので、capacity 全体から数える。job と surge を置くにも、この値が 0 より大きい事が
+   要る(can-take)。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom はこの値を読む。"
+  (val used (get load worker.name))
+  (- worker.capacity (+ used.jobs used.tasks)))
 
 
 (defn #^ tuple active-jobs [#^ ClusterState state]
@@ -604,7 +626,8 @@
   ;;    古い宣言の process が動いているかもしれない — 宣言から消えて置き先を外した後に宣言し直した job など・#2804)。
   ;;    drain で並べた置き先(surge)を持つ job は、その置き先へ付け替える(そこで動いている process をそのまま使う — 旧い担い手が
   ;;    沈黙して外れた時)。
-  ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。
+  ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。置けるかは job の側の空きと
+  ;; 全体の空きの両方(can-take — task のために空けておく分には置かない)・並びは担っている数(job と task の和)の少ない順。
   (setv load (if (all (gfor job jobs (in job.spec.name kept))) {} (load-of state kept)))
   (setv result (dict kept))
   (for [job (sorted jobs :key (fn [j] j.spec.name))]
@@ -621,11 +644,12 @@
             :if (and (can-take now state job w load timing draining)
                      (or (is mark None) (= w.name mark.worker)))
             w)
-      :key (fn [w] #((get load w.name) w.name))))
+      :key (fn [w] #((+ (. (get load w.name) jobs) (. (get load w.name) tasks)) w.name))))
     (when candidates
       (setv chosen (get candidates 0)
-            previous (.get state.placements job.spec.name))
-      (+= (get load chosen.name) 1)
+            previous (.get state.placements job.spec.name)
+            used (get load chosen.name)
+            (get load chosen.name) (replace used :jobs (+ used.jobs 1)))
       (setv (get result job.spec.name)
         (Placement job.spec.name chosen.name (if previous (+ previous.generation 1) 1) now))))
   ;; 宣言から消えた job の割り当ては残さない(担い手は次の heartbeat で止める)。
@@ -740,6 +764,15 @@
         (unplaced-text (unplaced-kind now state job timing) job)))
 
 
+(defk task-unplaced-text [kind]
+  {:pre [(: kind TaskUnplacedKind)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "待っている task を置けない理由の種類 → task の detail に書く文を決めるため(place-tasks が書く・GET /state の task の detail に出る)。
+   文は種類ごとに固定 — 待つ間に調停が拍ごとに書き換えて保存の版を進めない。"
+  (match kind
+    TaskUnplacedKind.TASK-NO-ROOM
+      "能力と版の合う worker は在るが、どれも task を置ける空きが無い(常駐の job と置かれた task で capacity が埋まっている)— 空くまで待つ"))
+
+
 (setv DETACHED-TERMINAL #("finished" "code-failed" "env-failed" "failed" "version-mismatch" "lost" "cancelled"))
 ;; 実行環境の準備の一時の失敗を、別の worker へ置き直す回数の上限(起動前なので同じ task を 2 度実行しない)。
 (setv ENV-RETRIES 2)
@@ -831,20 +864,34 @@
       (setv able (lfor w (.values state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
+      ;; task を置けるのは task の空き(task-room-of — capacity 全体から job・surge・置かれた task を引いた数)の在る worker だけ。
+      (setv roomy #())
+      (for [w able-now]
+        (<- room int (task-room-of w load))
+        (when (> room 0) (setv roomy (+ roomy #(w)))))
       ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
-      (setv free (sorted (lfor w able-now :if (< (get load w.name) w.capacity) w)
-                         :key (fn [w] #((not (env-ready-on task.runtime-env w)) (get load w.name) w.name))))
+      ;; 次は担っている数(job と task の和)の少ない順。
+      (setv free (sorted roomy :key (fn [w] #((not (env-ready-on task.runtime-env w))
+                                              (+ (. (get load w.name) jobs) (. (get load w.name) tasks)) w.name))))
       (cond
         free (do (setv chosen (get free 0)
                        ;; 準備済みの worker が無い置き先 = 冷たい起動(worker が準備してから走る)。phase を preparing にして assigned と分ける。
                        phase (if (and (is-not task.runtime-env None) (not (env-ready-on task.runtime-env chosen)))
-                                 "preparing" "assigned"))
-                 (+= (get load chosen.name) 1)
+                                 "preparing" "assigned")
+                       used (get load chosen.name)
+                       (get load chosen.name) (replace used :tasks (+ used.tasks 1)))
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
                  (setv (get tasks id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
                                           (replace task :phase phase :worker chosen.name :started-ms now))))
+        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれも task を置ける空き(task-room-of)が 0: 失敗にせず待つ。
+        ;; 理由は閉じた語 TASK-NO-ROOM の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
+        ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
+        able-now
+          (let [text (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))]
+            (when (!= task.detail text)
+              (setv (get tasks id) (replace task :detail text))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
           (setv (get tasks id) (end-env-failed task now task.detail))
@@ -913,7 +960,8 @@
 (defn #^ tuple tasks-for [#^ ClusterState state #^ str worker #^ (| str None) [boot None]]
   "heartbeat の返事で worker の process へ走らせる task を渡すため。切り離した task は、置いた時と同じ process の世代にだけ送る
    (作り直した worker の process で走らせ直さない)。boot = 返事を受ける process の世代(渡さなければ coordinator の見る今の世代)。"
-  (setv boot (if (is boot None) (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot) boot))
+  (setv known (.get state.workers worker)
+        boot (cond (is-not boot None) boot (is known None) None True known.boot))
   ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
   ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す — adopt-running-detached・
   ;; 2026-09-27)。子の環境変数は service の job の行の environ と同じ欄(切り離した task は写しにも残る)。JSON は protocol/replies。
@@ -1170,8 +1218,8 @@
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
-                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.versions b.boot b.retired b.boot-at)
-                                     #(w.provides w.exclusive w.derived w.node w.capacity w.versions w.boot w.retired w.boot-at)))))))
+                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.task-reserve b.versions b.boot b.retired b.boot-at)
+                                     #(w.provides w.exclusive w.derived w.node w.capacity w.task-reserve w.versions w.boot w.retired w.boot-at)))))))
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
@@ -1217,6 +1265,8 @@
                          (component-versions-of (or body.versions {}))
                          boot
                          (component-versions-of (or body.tools {}))
+                         ;; task のために空けておく数(本文の必ずの欄 — 0 以上 capacity 以下は本文の型が検める)。
+                         :task-reserve body.task-reserve
                          :platform body.platform
                          :env-ready (frozenset envs.ready)
                          :env-preparing (frozenset envs.preparing)
@@ -1395,13 +1445,18 @@
 
 (defk state-view [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % StateView)] :tags {:context "coordinator" :role "judgment"}}
-  "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。"
-  (setv draining (draining-workers state now))
+  "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。worker ごとの taskRoom は置き先の判断と同じ数え
+   (load-of と task-room-of)から読む。"
+  (setv draining (draining-workers state now)
+        load (load-of state state.placements)
+        workers #())
+  (for [#(n w) (.items state.workers)]
+    (<- room int (task-room-of w load))
+    (setv workers (+ workers #((WorkerView :info w :silent-ms (- now w.last-seen-ms) :live (alive now w timing.lease-ms)
+                                           :draining (in n draining) :task-room room)))))
   (StateView :now now
              :services (tuple (gfor j state.jobs (ServiceView :job j :resource-version (resource-version-of state (+ "Service/" j.spec.name)))))
-             :workers (tuple (gfor #(n w) (.items state.workers)
-                                   (WorkerView :info w :silent-ms (- now w.last-seen-ms) :live (alive now w timing.lease-ms)
-                                               :draining (in n draining))))
+             :workers workers
              :placements (dict state.placements)
              :unplaced (unplaced-jobs now state timing)
              :statuses (dfor #(n st) (.items state.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))

@@ -37,6 +37,8 @@ from doeff_cluster.coordinator.intent.cluster_model import TaskRecord as TaskRec
 from doeff_cluster.coordinator.intent.cluster_model import EnvFailed as EnvFailed
 from doeff_cluster.coordinator.intent.cluster_model import HandoffPhase as HandoffPhase
 from doeff_cluster.coordinator.intent.cluster_model import UnplacedKind as UnplacedKind
+from doeff_cluster.coordinator.intent.cluster_model import TaskUnplacedKind as TaskUnplacedKind
+from doeff_cluster.coordinator.intent.cluster_model import WorkerLoad as WorkerLoad
 from doeff_cluster.coordinator.intent.cluster_model import ACCEPTED_FORMATS as ACCEPTED_FORMATS
 from doeff_cluster.coordinator.intent.cluster_model import PLACED_PHASES as PLACED_PHASES
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
@@ -187,6 +189,12 @@ def absorb_boot(state: ClusterState, name: str, boot: str | None) -> ClusterStat
 def load_of(state: ClusterState, placements: dict) -> dict:
     ...
 
+def job_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
+    ...
+
+def task_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
+    ...
+
 def active_jobs(state: ClusterState) -> tuple:
     ...
 
@@ -248,6 +256,9 @@ def unplaced_text(kind: UnplacedKind, job: ClusterJob) -> str:
     ...
 
 def unplaced_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:
+    ...
+
+def task_unplaced_text(kind: TaskUnplacedKind) -> _Program[str, object]:
     ...
 DETACHED_TERMINAL: tuple[str, ...]
 ENV_RETRIES: int

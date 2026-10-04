@@ -67,7 +67,7 @@
   (val base (/ tmp-path key))
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ base "state" "tasks"))
+  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 0 60000 :task-dir (str (/ base "state" "tasks"))
                              :versions (! (process-versions os.environ)) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
@@ -116,7 +116,7 @@
   ;; sim の宿は本番の土台と同じ読みの定義(environ-reader)を子の spec.environ の上に並べるので、(environ-reader) で読む Program は本番の子と
   ;; 同じ字面を返す。反例の見本(env_var_ask)も sim では字面どおり返る — 環境に無い名を外へ通し sim の宿が答えるため。本番の子でだけ
   ;; 落ちる食い違いは sim の検では見えない(だから本番の土台は env_var_ask ではなく (environ-reader) を並べる)。
-  (<- answer tuple (sim-cluster NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL))))
+  (<- answer tuple (sim-cluster NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= answer #(POLICY POLICY)) answer))
 
 

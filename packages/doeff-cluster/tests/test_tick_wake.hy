@@ -128,7 +128,7 @@
   ;; 置いた task は拍の境(tick-seconds = 500 ms)を待たずに起きる: どの位相で置いても開始まで wake-gap-seconds(100 ms)+ 送りの数 ms の内。
   ;; 反例: 眠りが無条件の形では、置いた刻の位相しだいで 300 ms 以上待つ(最大は拍 1 つ近く)。
   (<- latencies tuple (sim-cluster (beacons sim-foundation) (start-latencies)
-                                   :workers #((SimWorker :name "w1" :provides NET))))
+                                   :workers #((SimWorker :name "w1" :provides NET :task-reserve 0))))
   (assert (= (len latencies) (len PAUSES)) latencies)
   (assert (all (gfor ms latencies (< ms 150))) latencies))
 
@@ -164,7 +164,7 @@
   ;; 準備がその拍のうちに揃う worker(prepare-seconds = 0): 最初の task も、呼び鈴で起きた拍のうちに起きる(2 番目以降の task と同じ尺の内)。
   ;; 反例: 揃いを次の拍まで見ない形は 500 ms 前後。
   (<- first FirstStart (sim-cluster NO-JOBS (first-start)
-                                    :workers #((SimWorker :name "w1" :provides NET))))
+                                    :workers #((SimWorker :name "w1" :provides NET :task-reserve 0))))
   (assert (= first.outcome.value 0.2) first)
   (assert (< first.ms 150) first))
 
@@ -172,6 +172,6 @@
 (deftest test-a-task-that-arrives-before-its-tree-is-ready-starts-after-the-preparation
   ;; 準備に 1 秒かかる worker: task は落ちずに待ち、準備が揃った後の最初の拍で起きる(揃う前には起きない・拍 1 つより遅れない)。
   (<- first FirstStart (sim-cluster NO-JOBS (first-start)
-                                    :workers #((SimWorker :name "w1" :provides NET :prepare-seconds 1.0))))
+                                    :workers #((SimWorker :name "w1" :provides NET :prepare-seconds 1.0 :task-reserve 0))))
   (assert (= first.outcome.value 0.2) first)
   (assert (<= 1000 first.ms (+ 1000 500 150)) first))

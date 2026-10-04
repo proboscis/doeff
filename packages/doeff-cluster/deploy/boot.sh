@@ -7,6 +7,7 @@
 #   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_PROVIDES(提供する能力の名 a,b)・
 #                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・NODE_NAME(k8s の downward API の spec.nodeName —
 #                      coordinator が node の label から company-machine などの能力を導く)・WORKER_CAPACITY・
+#                      WORKER_TASK_RESERVE = capacity のうち task のために空けておく数(必ず渡す — 無ければ起動しない)・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
 #                      import の根(`,` で並べる・既定 .)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
@@ -205,8 +206,14 @@ if [ -n "${WORKER_LABELS:-}" ]; then
   echo "boot: WORKER_LABELS は受け付けない — WORKER_PROVIDES(と WORKER_EXCLUSIVE)で提供する能力を名乗る" >&2
   exit 2
 fi
+# task のために空けておく数(WORKER_TASK_RESERVE)は必ず渡す — 既定の値で埋めない(範囲 0 以上 capacity 以下は worker の入口が検める)。
+if [ -z "${WORKER_TASK_RESERVE:-}" ]; then
+  echo "boot: WORKER_TASK_RESERVE が無い — capacity のうち task のために空けておく数(0 以上 WORKER_CAPACITY 以下)を渡す" >&2
+  exit 2
+fi
 exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --capacity "${WORKER_CAPACITY:-10}" \
+  --task-reserve "${WORKER_TASK_RESERVE}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}"

@@ -61,7 +61,7 @@
                   #^ tuple [provides RIG-PROVIDES] #^ tuple [exclusive #()]]
     ;; name / provides / exclusive = worker の名乗り(既定 = sim の組の worker と同じ能力 local の w1 — sim と coordinator の組で同じ
     ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
-    (setv self.link (LinkRig url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
+    (setv self.link (LinkRig url name provides 10 0 20000 :task-dir (str task-dir) :versions versions :transport transport
                                      :exclusive exclusive)
           self.handles {} self.dead False)
     ;; heartbeat のループの task(走らせるまでは None)。

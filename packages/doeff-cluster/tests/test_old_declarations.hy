@@ -201,10 +201,36 @@
 (deftest test-entry-10-a-worker-started-with-old-labels-does-not-start
   ;; 入口 10: 旧い --labels(置き場所の label)で起こした worker は argparse の error で止まり、理由を stderr に出す。
   (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
-                             "--name" "w" "--labels" "kind=k3s" "--repo" "." "--state-dir" "/nonexistent"]
+                             "--name" "w" "--task-reserve" "0" "--labels" "kind=k3s" "--repo" "." "--state-dir" "/nonexistent"]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)
   (assert (in "旧い --labels は受け付けない" done.stderr) done.stderr))
+
+
+(deftest test-a-worker-without-its-task-reserve-or-outside-its-range-does-not-start
+  ;; task のために空けておく数 --task-reserve は必ずの引数(既定の値は無い)。無ければ argparse の error、capacity を越える数は起動の
+  ;; 検めで止まり、どちらも理由を stderr に出す(coordinator に断られる名乗りで動き続けない)。
+  (val missing (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
+                                "--name" "w" "--provides" "net" "--repo" "." "--state-dir" "/nonexistent"]
+                               :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
+  (assert (= missing.returncode 2) missing.stderr)
+  (assert (in "--task-reserve" missing.stderr) missing.stderr)
+  (val over (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
+                             "--name" "w" "--provides" "net" "--capacity" "2" "--task-reserve" "3" "--repo" "." "--state-dir" "/nonexistent"]
+                            :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
+  (assert (= over.returncode 2) over.stderr)
+  (assert (in "--task-reserve 3 は 0 以上 --capacity 2 以下で名乗る" over.stderr) over.stderr))
+
+
+(deftest test-boot-without-worker-task-reserve-does-not-start-the-worker [tmp-path]
+  ;; 配備の起動(deploy/boot.sh の ROLE=worker)も WORKER_TASK_RESERVE を既定の値で埋めない — 無ければ worker を起こさずに理由を出して
+  ;; 止まる(版の木の job を受けない worker の形 — CODE_REPO_URL 無し・空の bare repo を作るところまでは進む)。
+  (val done (subprocess.run ["sh" (str (/ PACKAGE-ROOT "deploy" "boot.sh"))]
+                            :env {"PATH" (os.environ.get "PATH" "") "HOME" (str tmp-path) "ROLE" "worker" "WORK_DIR" (str tmp-path)
+                                  "COORDINATOR_URL" "http://127.0.0.1:9" "WORKER_NAME" "w" "WORKER_CAPACITY" "2"}
+                            :capture-output True :text True :timeout 120))
+  (assert (= done.returncode 2) done.stderr)
+  (assert (in "WORKER_TASK_RESERVE が無い" done.stderr) done.stderr))
 
 
 (defk old-task-rows []
@@ -265,7 +291,7 @@
   (val state (! (state-from-kv kv 5000)))
   (assert (not-in "w1" state.workers) "旧い形の worker の行は読まない")
   (<- beat tuple (call state "POST" "/heartbeat"
-                       {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "capacity" 1 "versions" {}
+                       {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "capacity" 1 "taskReserve" 0 "versions" {}
                         "statuses" [] "boot" "b1" "format" 1} 6000))
   (assert (= (get beat 1) 200) beat)
   (assert (in "w1" (. (get beat 0) workers)))

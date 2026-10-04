@@ -70,7 +70,7 @@
   {:pre [(: state ClusterState) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(能力 net・版 V・世代 b1)の heartbeat 1 回 → #(次の状態 status 返事)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" "w" "provides" ["net"] "capacity" 10 "versions" V "boot" "b1" "statuses" []} now))
+                         {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "boot" "b1" "statuses" []} now))
   answer)
 
 
@@ -237,7 +237,7 @@
   ;; Program の名の Ask に (environ-reader)(本番の土台の読み)が environ の値で答える。
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 60000 :task-dir (str (/ tmp-path "state" "tasks"))
+  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks"))
                              :versions (! (process-versions os.environ)) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
@@ -276,7 +276,7 @@
 
 (deftest test-a-sim-task-child-answers-the-environ-name-from-the-host
   ;; sim の子では (environ-reader) が環境に無い名を外へ通し、sim の宿が同じ読みの定義で spec.environ から答える(本番と同じ Program・同じ :environ)。
-  (<- answer tuple (sim-cluster NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL))))
+  (<- answer tuple (sim-cluster NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= (get answer 0) URL) answer)
   (assert (= (get answer 1) (DetachedSubmitted "sim-env" True)) answer)
   (assert (= (get answer 2) (DetachedSucceeded "http://detached.invalid")) answer))

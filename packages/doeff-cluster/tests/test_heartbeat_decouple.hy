@@ -25,8 +25,8 @@
 
 ;; heartbeat の間隔 → worker 2 台(None = 本番の判断・数 = 反例の世界の壊れた間隔 ms)。
 (val PAIRS (dfor every-ms [None 5000 8000 12000]
-                 every-ms #((SimWorker :name "w1" :provides NET :beat-every-ms every-ms)
-                            (SimWorker :name "w2" :provides NET :beat-every-ms every-ms))))
+                 every-ms #((SimWorker :name "w1" :provides NET :beat-every-ms every-ms :task-reserve 0)
+                            (SimWorker :name "w2" :provides NET :beat-every-ms every-ms :task-reserve 0))))
 
 
 ;; --- desired の変化に遅れず起きる ------------------------------------------------------------------------

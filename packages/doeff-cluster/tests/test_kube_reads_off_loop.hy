@@ -28,7 +28,7 @@
 (val FORWARD {"from" {"kind" "Deployment" "namespace" "prod" "name" "old-beacon"}
               "to" {"kind" "Service" "name" "beacon"}
               "readyTimeoutSeconds" 90 "stopTimeoutSeconds" 30 "observeSeconds" 1})
-(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}))))
+(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}) :task-reserve 0)))
 ;; Rollout を宣言する仮想の刻と、k8s の読みが答えない区間の終わり(どちらも起点からの秒)— 区間は宣言から 35 秒(本番の止まり 20 秒・
 ;; worker の fence 20 秒を超える)。
 (val DECLARE-AT-SECONDS 10.0)

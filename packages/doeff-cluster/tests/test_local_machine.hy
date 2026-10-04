@@ -65,7 +65,7 @@
   {:pre [(: tmp-path Path)] :post [(: % LocalMachine)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "検ごとの作業の dir と空いた port で、worker 1 つの手元の 1 台を組むため。"
   (<- port int (free-port))
-  (LocalMachine :work-dir (str tmp-path) :port port :workers #((SimWorker :name WORKER :provides (frozenset ["local"])))
+  (LocalMachine :work-dir (str tmp-path) :port port :workers #((SimWorker :name WORKER :provides (frozenset ["local"]) :task-reserve 0))
                 :boot-seconds 120.0 :stop-grace 15.0))
 
 

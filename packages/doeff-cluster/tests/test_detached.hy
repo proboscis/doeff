@@ -114,7 +114,7 @@
    送る Program が自分の handler を並べる(sim の宿は柵の中で走らせ、足りない handler を補わない)。task の始まりは worker の拍(0.5 秒)と
    コードの準備の拍を挟むので、slow は他の組より長く取る(仮想の時計なので走る時間は増えない)。"
   (Rig :kind "sim" :handlers [] :worker None :slow 6.0 :lease 5.0 :poll 1.0
-       :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions))))
+       :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions :task-reserve 0))))
 
 
 (defk coordinator-rig [tmp-path runner-versions]
@@ -667,7 +667,7 @@
          (: provides (| (get list str) None))]
    :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker name の heartbeat を 1 回送るため(版 V・能力 provides・世代 boot・起動時刻 boot-at・状態の報告 statuses): 返り値 #(状態 status 本文)。"
-  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "versions" V "boot" boot
+  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "taskReserve" 0 "versions" V "boot" boot
                                                           "statuses" (or statuses [])}
                                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
   reply)
@@ -951,7 +951,7 @@
   (val reply-43 (! (beat s "w" 100 :boot-at 1000)))
   (:= s (get reply-43 0))
   (var body (get reply-43 2))
-  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 0 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(before) (.accept-tasks link (get body "tasks")))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
@@ -1002,7 +1002,7 @@
   (val id (get (get put 2) "task"))
   (assert (isinstance id str) put)
   (<- seen (get tuple #(ClusterState int (get dict #(str object)))) (beat (get put 0) "w" 100 :boot-at 1000 :provides caps))
-  (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 0 60000 :task-dir (str (/ tmp-path "tasks"))))
   (val specs (.accept-tasks link (get (get seen 2) "tasks")))
   (assert (= (len specs) 1) specs)
   #((get seen 0) id link (get specs 0)))
@@ -1214,7 +1214,7 @@
         plain (JobSpec "plain" "doeff_cluster.worker.entry.job_entry" #() "r"))
   (assert (= (kept-when-cut-off #(detached remote writer plain) 60000 240000) #(detached writer)))
   ;; coordinator への口: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
-  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 60000))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 0 60000))
   (setv link.state.last-tasks #(detached remote) link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))
   (assert (= (.poll link) (DesiredJobs #(detached)))))
 
@@ -1316,7 +1316,7 @@
 (deftest test-a-heartbeat-with-only-labels-is-refused
   ;; 旧い worker の名乗り(labels だけ・provides が無い)は 400 で理由を返し、worker を名簿に載せない。
   (val reply-88 (! (call (ClusterState) "POST" "/heartbeat" 0
-                                   {"name" "old" "labels" {"kind" "k3s"} "capacity" 10 "versions" V "boot" "b1" "statuses" []})))
+                                   {"name" "old" "labels" {"kind" "k3s"} "capacity" 10 "taskReserve" 0 "versions" V "boot" "b1" "statuses" []})))
   (val after (get reply-88 0))
   (var status (get reply-88 1))
   (var body (get reply-88 2))
@@ -1325,12 +1325,12 @@
   (assert (not-in "old" after.workers))
   ;; provides の外の exclusive・label の形の名も断る。
   (val reply-89 (! (call (ClusterState) "POST" "/heartbeat" 0
-                               {"name" "w" "provides" ["net"] "exclusive" ["gpu"] "capacity" 10 "versions" V "statuses" []})))
+                               {"name" "w" "provides" ["net"] "exclusive" ["gpu"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" []})))
   (:= status (get reply-89 1))
   (:= body (get reply-89 2))
   (assert (= status 400) body)
   (val reply-90 (! (call (ClusterState) "POST" "/heartbeat" 0
-                               {"name" "w" "provides" ["kind=k3s"] "capacity" 10 "versions" V "statuses" []})))
+                               {"name" "w" "provides" ["kind=k3s"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" []})))
   (:= status (get reply-90 1))
   (:= body (get reply-90 2))
   (assert (= status 400) body))

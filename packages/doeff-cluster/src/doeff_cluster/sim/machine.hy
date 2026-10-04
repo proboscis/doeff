@@ -1,12 +1,12 @@
 ;;; 手元の 1 台の cluster(#3031・#3032・ADR-DOE-CLUSTER-001 R8 と追補): coordinator 1 つと worker を、この機体の子 process として
 ;;; 起こし、筋書き(scenario の Program)を走らせ、終わりに全部止める。
 ;;;
-;;;   (local-machine-cluster scenario :machine (LocalMachine :work-dir "/tmp/x" :port 18080 :workers #((SimWorker :name "w1" :provides #{"a"}))))
+;;;   (local-machine-cluster scenario :machine (LocalMachine :work-dir "/tmp/x" :port 18080 :workers #((SimWorker :name "w1" :provides #{"a"} :task-reserve 0))))
 ;;;
 ;;; sim-cluster(local.hy・1 process の中の本物の coordinator と、偽の機体の上の本物の worker)と同じ入口の形で、違いは土台の handler の組
 ;;; だけ: ここでは本物の process・本物の HTTP・本物の時計。起こし方は配備と同じ deploy/boot.sh を、配備と同じ環境変数(ROLE・LISTEN_PORT・
 ;;; WORK_DIR・COORDINATOR_URL・WORKER_NAME・WORKER_PROVIDES ほか)で起こす — 2 つ目の起こし方を作らない。worker の顔ぶれは sim と同じ値
-;;; (SimWorker の name・provides・exclusive・capacity・node)で渡し、命令の引数を足さない。
+;;; (SimWorker の name・provides・exclusive・capacity・task-reserve・node)で渡し、命令の引数を足さない。
 ;;;
 ;;; 筋書きが出せる effect(machine-answers が答える):
 ;;;   ReadCoordinator path        coordinator の口の GET の本文(sim と同じ)。
@@ -192,6 +192,7 @@
     (EnvEntry :name "WORKER_PROVIDES" :value (.join "," (sorted worker.provides)))
     (EnvEntry :name "WORKER_EXCLUSIVE" :value (.join "," (sorted worker.exclusive)))
     (EnvEntry :name "WORKER_CAPACITY" :value (str worker.capacity))
+    (EnvEntry :name "WORKER_TASK_RESERVE" :value (str worker.task-reserve))
     (EnvEntry :name "NODE_NAME" :value worker.node)
     (EnvEntry :name "WORK_DIR" :value (str home))
     (EnvEntry :name "CODE_REPO_URL" :value machine.code-repo)

@@ -66,7 +66,7 @@
   (assert (= stored.status-code 200) stored.text)
   (assert (= (get (.json stored) "blob") (get declaration.programs sha)))
   ;; worker: 本物の coordinator への口 の heartbeat → 返事の job に置き場のキー → cache の file。
-  (val link (LinkRig served-coordinator WORKER #(NEED) 10 60000
+  (val link (LinkRig served-coordinator WORKER #(NEED) 10 0 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (! (process-versions os.environ))))
   (try
     (do

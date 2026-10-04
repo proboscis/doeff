@@ -479,7 +479,8 @@
 
 (defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w]
   "worker 1 つの {spec status}。"
-  {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "versions" (dict w.versions)}
+  {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "taskReserve" w.task-reserve
+           "versions" (dict w.versions)}
    ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
    ;; 版の変化の待ち(GET /watch・AwaitRunnersChange)で worker の死と戻りに即座に起きるため。最後の連絡の時刻そのものは変わりやすい
    ;; 観測なので入れない(生きている間の heartbeat では版は進まない)。
