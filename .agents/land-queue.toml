@@ -92,6 +92,17 @@ full = [
   { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"" },
   { name = "lint", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-lint --sync-timeout 900 --run-timeout 900 --fallback-local -- sh -c \"uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep\"" }
 ]
+# ⚠ 日次の全体検証に入れない印 e2e のテストと、その訳(Mac の調整役の決め 2026-10-05「集めていないテストは、日次に入れるか、
+#   入れない訳を 1 行」・agora-redesign #3167)。root と packages の処理ステージは -m 'not e2e' で外す:
+#   packages/doeff-agents/tests の test_agentd_byte_faithful_transport_e2e.py・test_agentd_result_retry_e2e.py = 替え玉の agent と tmux だけで
+#     実 API は使わない。日次の worker の Pod に tmux が在るかが未測定 — conformance の 33 file と同じ card ki-2832a04913cc が決める。
+#   packages/doeff-agents/tests の test_agentd_real_agent_result_retry_e2e.py・test_mcp_live_e2e.py・test_headless_adapter.hy の 1 本、
+#   packages/doeff-claude-code/tests/test_scenarios.hy の real の 9 本、packages/doeff-conductor/tests/test_agent_effect_c1.py の 1 本 =
+#     login 済みの本物の claude / codex を呼んで利用枠を使う(走らせた機体の既定の login を使う — 会社機体なら会社の profile になり得る)。
+#   packages/doeff-openai/tests/e2e/test_effect_handlers_e2e.py と test_openai_api.py の印 real_openai の 2 本、
+#   packages/doeff-gemini/tests/e2e/test_gemini_live.py の 1 本、packages/doeff-openrouter/tests/e2e/test_openrouter_integration.py の 1 本、
+#   packages/doeff-google-secret-manager/tests/e2e/test_access_secret_e2e.py = 本物の外の API(費用・資格・GCP の secret)を呼ぶ。
+#   tests/cli/test_cli_runbox_e2e.py の 8 本 = runbox の CLI が要る(zeus に無い — 入れても常に skip)。手の入口は make test-e2e。
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 # 2026-10-02(agora-redesign #2589): 日次の全体検証の予算を別の鍵 full_timeout_s へ移した(merge-queue L195 で予算と窓の門の上限を別の
