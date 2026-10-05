@@ -79,6 +79,20 @@
   (#^ str ready))
 
 
+(defrecord WarmChildFlags
+  "待ちの子を起こす StartProcess の flag 3 つ: process-group = 専用の process group・hold-stdin = 標準入力の pipe を worker が握る(worker が
+   消えると EOF で待ちの子も終わる)・reap-group = 終わりを回収する時に group の残りを止める。argv の頭は uv(uv run は python の子を
+   自分の group に置く)なので、uv だけが外から KILL されても、worker が終わりを観測して回収する時に group に残った待ちの子が止まる
+   (2026-10-05 cc2-w50 の問い・検 test_warm_child_uv_reap)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ bool process-group)
+  (#^ bool hold-stdin)
+  (#^ bool reap-group))
+
+;; 待ちの子の起こし方の flag の定義点(宿 warm_host と検 test_warm_child_uv_reap が読む)。
+(val WARM-CHILD-FLAGS (WarmChildFlags :process-group True :hold-stdin True :reap-group True))
+
+
 (defk warm-dir-of [state]
   {:pre [(: state str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "待ちの子の置き場の根(<state-dir>/warm)を、起こす宿・分ける宿・掃除の係が同じ綴りで作るため。"

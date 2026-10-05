@@ -40,6 +40,13 @@ class WarmPlace:
     socket: str
     ready: str
 
+@dataclass(frozen=True, kw_only=True)
+class WarmChildFlags:
+    process_group: bool
+    hold_stdin: bool
+    reap_group: bool
+WARM_CHILD_FLAGS: WarmChildFlags
+
 def warm_dir_of(state: str) -> _Program[str, object]:
     ...
 
