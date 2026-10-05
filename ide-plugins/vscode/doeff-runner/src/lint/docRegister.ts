@@ -57,6 +57,7 @@ export function registerDocLint(context: vscode.ExtensionContext, store: LintSto
     if (!isRules && !supported(uri)) { return; }
     const mode = docMode(root);
     if (mode === 'off' || mode === undefined || (mode === 'openFiles' && !isRules && !opened.get(root)?.includes(uri.fsPath))) { return; }
+    if (isRules && mode === 'openFiles' && (opened.get(root)?.length ?? 0) === 0) { return; }
     const paths = pending.get(root) ?? new Set<string>();
     if (isRules) { changedRules.add(root); } else { paths.add(uri.fsPath); }
     pending.set(root, paths);
