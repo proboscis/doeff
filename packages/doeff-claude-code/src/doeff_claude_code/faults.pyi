@@ -21,8 +21,10 @@ class ClaudeLiveProcess(EffectBase):
     session_id: str
 
 class StopReason(StrEnum):
-    TURN_END = 'turn-end'
+    SESSION_CLOSED = 'session-closed'
+    LAUNCH_CHANGED = 'launch-changed'
     OUTSIDE_TURN_OUTPUT = 'outside-turn-output'
+    INTERRUPT_SIGNAL = 'interrupt-signal'
 
 @dataclass(frozen=True, kw_only=True)
 class LiveProcess:

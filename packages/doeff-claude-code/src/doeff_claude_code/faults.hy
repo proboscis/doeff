@@ -37,8 +37,11 @@
   (#^ str session-id))
 
 
-;; process を降ろした訳: TURN-END = 手番の終わり(#517 の形 — 手番ごとに降ろす)/ OUTSIDE-TURN-OUTPUT = 手番の外で出力した(守り)。
-(defenum StopReason TURN-END OUTSIDE-TURN-OUTPUT)
+;; process を降ろした訳(会話の process は手番をまたいで生き、次の 4 つの時だけ降ろす — #3672): SESSION-CLOSED = 会話を閉じた /
+;; LAUNCH-CHANGED = 次の手番の起こした時の条件の鍵(argv.hy の launch-key)が違う / OUTSIDE-TURN-OUTPUT = 手番の外で出力した(守り)/
+;; INTERRUPT-SIGNAL = 止めるを SIGINT で伝えた(CLI は result の後に自分で降りる — 2.1.282。降りる途中の process を次の手番が使い回さ
+;; ない)。process が自分で終わった時(落ちた・消された)は訳を付けない。
+(defenum StopReason SESSION-CLOSED LAUNCH-CHANGED OUTSIDE-TURN-OUTPUT INTERRUPT-SIGNAL)
 
 
 (defrecord LiveProcess
