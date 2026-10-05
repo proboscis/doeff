@@ -1,10 +1,19 @@
-(require doeff-hy.macros [defk <- do! val])
+;;; HttpRequest の本物の答え手(http-production-handler)・記録と再生の答え手(http-fixture-handler)と、本物の client の作り方
+;;; (http-client-factory)。
+;;;
+;;; 使われない接続の持ち方の契約(agora-redesign #3688): client は使われない接続を CLIENT-KEEPALIVE-SECONDS(60 秒)まで持ち、相手の server は
+;;; それより長く持つ(server の切り > client の上限 — doeff の待ち受け aiohttp-http-server は IDLE-CONNECTION-SECONDS の 3630 秒・
+;;; doeff-cluster の受け口は 120 秒)。だから server が先に閉じた接続へ client が書く形は、server の再起動などの時だけ起きる。その時、
+;;; 相手の閉じ(FIN)が届いていれば httpcore は送る前にその接続を捨てて張り直す。送った後に閉じられた要求は httpx も httpcore も送り直さず、
+;;; 送り直すかは HttpRequest の max-retries だけが決める(冪等でない書きは 0 回で出す)。
+(require doeff-hy.macros [defk deff <- do! val])
 (val MODULE-TAGS {:context "http" :role "foundation"})
 (require doeff-hy.handle [defhandler])
 
 (import hashlib)
 (import json)
 (import pickle)
+(import ssl)
 (import httpx)
 (import pathlib [Path])
 
@@ -32,8 +41,24 @@
     _ HttpFailureKind.OTHER))
 
 
-(defn _default-client-factory []
-  (httpx.AsyncClient))
+;; 使われない接続を client が持つ秒(頭の註の契約)。呼びの間より長くし、呼びのたびに TCP を張り直して名前を引き直さない — 記録の service
+;; への書きは数十秒空き(本番の画面の job の計時で 10〜30 秒)、httpx の既定 5 秒では 5 秒を越えて空いた書きが毎回張り直した(26〜30 秒
+;; 空くと書き 1 回が 165〜190 ms・service の中は 14〜22 ms)。相手の server が使われない接続を閉じる秒より短く保つ。
+(val CLIENT-KEEPALIVE-SECONDS 60.0)
+;; 接続の数の上限と、使われない接続を持つ数の上限 — httpx 0.28 の AsyncClient の既定と同じ値(変える訳が無い)。
+(val CLIENT-MAX-CONNECTIONS 100)
+(val CLIENT-MAX-KEEPALIVE-CONNECTIONS 20)
+(val CLIENT-LIMITS (httpx.Limits :max-connections CLIENT-MAX-CONNECTIONS :max-keepalive-connections CLIENT-MAX-KEEPALIVE-CONNECTIONS
+                                 :keepalive-expiry CLIENT-KEEPALIVE-SECONDS))
+
+
+(deff http-client-factory [* #^ bool [trust-env True] #^ (| ssl.SSLContext bool) [verify True]]  ; defk にできない: 答え手が範囲の初めに Program の外で素の関数として呼ぶ client の作り手(client-factory の値)
+  {:pre [(: trust-env bool) (: verify (| ssl.SSLContext bool))] :post [(: % httpx.AsyncClient)]}
+  "本物の HTTP の client を 1 つ作るため: 使われない接続の持ち方は CLIENT-LIMITS(頭の註の契約)、それ以外は httpx の既定のまま。
+   trust-env = proxy の env と .netrc を読むか・verify = 相手の証明書を何で検めるか(SSLContext か真偽)— どちらも既定は httpx と同じ。
+   http-production-handler と http-fixture-handler の client-factory の既定。自前の引数で作る組み立ては、
+   :client-factory (fn [] (http-client-factory :trust-env False)) の形で同じ持ち方を受ける。"
+  (httpx.AsyncClient :limits CLIENT-LIMITS :trust-env trust-env :verify verify))
 
 
 (defn _asyncio-sleep [delay]
@@ -41,7 +66,8 @@
   (asyncio.sleep delay))
 
 
-(defn http-production-handler [* [client-factory _default-client-factory] [sleep _asyncio-sleep]]
+(defn #^ (get Callable #([(| Program EffectBase)] Program)) http-production-handler
+  [* #^ (get Callable #([] object)) [client-factory http-client-factory] #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
   "Handle HttpRequest with retry/backoff through one async HTTP client per covered scope: each time the handler value is
    installed around a program, a new client is made when that program starts and closed when it ends — the same value can
    be installed around many scopes (agora-redesign #3415: a value made once and installed per request used to reuse the
@@ -57,8 +83,9 @@
       http-production-handler.__doeff_effects__ #(Await SlogEffect))
 
 
-(defn http-fixture-handler [fixture-path * mode [client-factory _default-client-factory]
-                            [sleep _asyncio-sleep]]
+(defn #^ (get Callable #([(| Program EffectBase)] Program)) http-fixture-handler
+  [#^ (| str Path) fixture-path * #^ str mode #^ (get Callable #([] object)) [client-factory http-client-factory]
+   #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
   "Record or replay HttpRequest responses from a pickle fixture file."
   (when (not-in mode ["record" "replay"])
     (raise (ValueError (+ "Unsupported HTTP fixture mode: " (repr mode)))))

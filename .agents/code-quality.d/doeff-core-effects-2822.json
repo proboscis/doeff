@@ -387,6 +387,7 @@
         "packages/doeff-core-effects/tests/test_http_request_contract.hy",
         "packages/doeff-core-effects/tests/test_http_server.hy",
         "packages/doeff-core-effects/tests/test_http_server_contract.hy",
+        "packages/doeff-core-effects/tests/test_http_keepalive.hy",
         "packages/doeff-core-effects/tests/test_hy_module_stubs.py",
         "packages/doeff-core-effects/tests/test_latest_contract.hy",
         "packages/doeff-core-effects/tests/test_meter_contract.hy",

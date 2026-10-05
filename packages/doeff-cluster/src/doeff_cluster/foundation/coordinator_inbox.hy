@@ -80,7 +80,8 @@
     (defclass Handler [BaseHTTPRequestHandler]
       ;; HTTP/1.1 = 接続を使い回す。HTTP/1.0 では要求ごとに接続を閉じ、client は毎回 TCP を張り直していた
       ;; (tailnet の経路が数秒途絶えると新しい接続は必ず失敗する — coordinator_http.py の説明)。
-      ;; 使われなくなった接続の thread は timeout 秒で終わる(client の側は 5 秒で手放す)。
+      ;; 使われなくなった接続の thread は timeout 秒で終わる。client の側(doeff の http-client-factory)は 60 秒で手放すので、timeout は
+      ;; それより長く置く — client が先に閉じられた接続へ書く形を起こさない(doeff-core-effects の _http_handlers_impl.hy の頭の註の契約)。
       (setv protocol-version "HTTP/1.1" timeout 120)
       (defn #^ None log-message [self #^ str format #^ object #* args] None)
       (defn #^ None _handle [self #^ str method]
