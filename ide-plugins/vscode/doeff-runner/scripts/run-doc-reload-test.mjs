@@ -31,7 +31,7 @@ exports.activate = async () => {
   await vscode.commands.executeCommand('workbench.action.quit');
 };\n`);
   fs.mkdirSync(path.join(root, '.vscode'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.vscode', 'settings.json'), JSON.stringify({ 'doeff-runner.docLint.binary': binary }));
+  fs.writeFileSync(path.join(root, '.vscode', 'settings.json'), JSON.stringify({ 'doeff-runner.docLint.binary': binary, 'doeff-runner.docLint.mode': 'workspace' }));
   for (let file = 0; file < 100; file++) {
     fs.writeFileSync(path.join(root, `document-${file}.md`), Array.from({ length: 100 }, (_, i) =>
       `文書${file}の項目${i}は、再読み込み後もキャッシュから診断を復元するための検査です。`).join('\n\n'));

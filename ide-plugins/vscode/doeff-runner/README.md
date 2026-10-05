@@ -2,9 +2,18 @@
 
 Run `doeff` `Program` values directly from VS Code. The extension mirrors the PyCharm plugin: it detects annotated `Program[...]` bindings, looks up interpreters/kleisli/transformers via `doeff-indexer`, and launches `doeff run` under the Python debugger.
 
-## 文章・用語を workspace 全体で検査する
+## 文章・用語の検査範囲を選ぶ
 
-0.7.0 以降は Rust の doc-linter 0.3.0 以降を使い、開いていない文書も含めて検査します。
+0.8.2 以降はパネル右上のフィルターボタンで、検査範囲を3つから選べます。
+選択はプロジェクトに保存され、ウィンドウを再読み込みしても維持されます。
+
+| 選択 | 動作 |
+|---|---|
+| 開いているファイルのみ（既定） | タブで開いている文書と、その編集だけを検査。閉じると対象から外す |
+| プロジェクト全体 | 全対応ファイルを検査し、その後は変更ファイルだけ更新 |
+| オフ | 実行中と予約中の検査を停止。永続キャッシュは保持 |
+
+Rust の doc-linter 0.4.0 以降が必要です。
 「Doeff Hy」の「文章・用語（doc-linter）」パネルで、対象ファイル数、検査の完了数、
 キャッシュ利用数、未測定数、用語と指摘を確認できます。文章の指摘は従来の
 「違反（Linter）」と「問題」パネルにも診断元 doc-linter として表示します。
@@ -27,10 +36,11 @@ Jev の接続設定と永続キャッシュは CLI と共有します。本文�
 かかりますが、保存済みの結果の表示はその通信を待ちません。
 
 対象は .hy / .py / .pyi / .md / .markdown / .txt。Git の無視設定と依存物のディレクトリを
-除く全対応ファイルを、信頼済み workspace の起動時に検査します。作成・変更・削除や
-未保存の編集後は2秒待って再検査し、古いストリームを破棄します。Rust プロセスは
-同時に1つ、内部問い合わせは最大4件です。doeff-runner.docLint.enabled で停止できます。
-命令「doeff: 文章の説明を再検査する（doc-linter）」も workspace 全体を対象にします。
+除き、信頼済み workspace で選択した範囲だけを検査します。変更パスは300ミリ秒ごとに
+まとめ、実行中の検査を編集のたびにやり直さず、次の差分検査へ渡します。Rust プロセスは
+同時に1つ、内部問い合わせは最大4件です。設定は doeff-runner.docLint.mode です。
+右上の再検査ボタンも選択中の範囲に従い、オフのときは検査を開始しません。
+開いているファイルのみの場合、用語の定義・参照もその範囲に限ります。
 
 用語は Markdown の見出し \## 表示名 {#term:安定ID} とその本文、または Hy の
 (defterm identifier "表示名" "説明") で定義します。Hy では doeff-hy.macros から defterm を

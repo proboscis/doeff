@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -485,9 +485,16 @@
         "title": "doeff: 呼びを f(a, b) の形で見せる表示の入り切り"
       },
       {
+        "command": "doeff-runner.docLint.selectMode",
+        "title": "文章の検査範囲を選択",
+        "category": "doeff",
+        "icon": "$(filter)"
+      },
+      {
         "command": "doeff-runner.docLint.rerun",
         "title": "文章の説明を再検査する（doc-linter）",
-        "category": "doeff"
+        "category": "doeff",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": {
@@ -735,17 +742,27 @@
           ],
           "description": "カーソルが入った時に、defk の見出しを元の lisp の文字に戻す範囲"
         },
-        "doeff-runner.docLint.enabled": {
-          "type": "boolean",
-          "default": true,
+        "doeff-runner.docLint.mode": {
+          "type": "string",
+          "enum": [
+            "openFiles",
+            "workspace",
+            "off"
+          ],
+          "enumDescriptions": [
+            "開いているファイルのみ検査",
+            "プロジェクト全体を検査し、以後は差分を更新",
+            "文章検査を停止"
+          ],
+          "default": "openFiles",
           "scope": "resource",
-          "description": "workspace の全対応ファイルを検査し、文章・用語パネルと問題一覧に表示する。Git の無視設定と依存物は除外する。説明と参照用語を設定済みの Jev に送り、永続キャッシュを再利用する。"
+          "description": "文章・用語タブの右上から検査範囲を選択できます。Git の無視設定と依存物は除外し、Jev の永続キャッシュを再利用します。開いているファイルのみの場合、用語の定義・参照もその範囲が対象です。"
         },
         "doeff-runner.docLint.binary": {
           "type": "string",
           "default": "doc-linter",
           "scope": "machine-overridable",
-          "description": "Rust 製 doc-linter 0.3.0 以降の実行ファイル。引数を含めず名前か絶対パスを指定する。"
+          "description": "Rust 製 doc-linter 0.4.0 以降の実行ファイル。引数を含めず名前か絶対パスを指定する。"
         }
       }
     },
@@ -775,6 +792,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "doeff-runner.docLint.selectMode",
+          "when": "view == doeff-doc-linter",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.docLint.rerun",
+          "when": "view == doeff-doc-linter",
+          "group": "navigation@1"
+        },
         {
           "command": "doeff-runner.toggleDebugMode",
           "when": "view == doeff-programs",

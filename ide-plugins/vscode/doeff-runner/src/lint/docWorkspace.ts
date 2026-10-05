@@ -21,12 +21,12 @@ export class WorkspaceJudge {
       const documents = new Map(previous.documents.map((d) => [d.path, d]));
       for (const file of request.paths) { documents.delete(file); }
       for (const doc of request.documents) { documents.set(doc.path, doc); }
-      request = previous.kind === 'initial'
+      request = previous.kind !== 'changed'
         ? { ...previous, documents: [...documents.values()] }
         : { ...request, paths: [...new Set([...previous.paths, ...request.paths])], documents: [...documents.values()] };
     }
     this.pending.set(request.root, request);
-    if (request.kind === 'initial' && this.active?.request.root === request.root) {
+    if (request.kind !== 'changed' && this.active?.request.root === request.root) {
       this.active.abort.abort();
     }
     const current = this.store.docWorkspaces().get(request.root);
@@ -59,7 +59,7 @@ export class WorkspaceJudge {
       this.pending.delete(root);
       const abort = new AbortController();
       this.active = { request, abort };
-      if (request.kind === 'initial') { this.store.clearDocumentRoot(root); }
+      if (request.kind !== 'changed') { this.store.clearDocumentRoot(root); }
       const results = new Map<string, Map<string, readonly LintViolation[]>>();
       let counts: Counts = EMPTY_COUNTS;
       let index = EMPTY_INDEX;
