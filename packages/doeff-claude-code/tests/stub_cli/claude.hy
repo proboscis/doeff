@@ -135,10 +135,16 @@
              (= (.get (.get record "response" {}) "request_id") request-id))
           (return (.get (.get (.get record "response" {}) "response" {}) "behavior")))))
 
-  (defn result [self #^ str text #^ list refs #^ int deltas]
+  (defn result [self #^ str text #^ list refs #^ int deltas #^ float think-seconds]
     ;; deltas > 0 なら、確定の本文の前に本文を deltas 片の差分(--include-partial-messages の stream_event の text_delta)で出す。
     ;; 片は字数でほぼ等分(片の連結 = 本文 — fake の FakeReply.deltas と同じ分け方)。実物と同じく差分の列を content_block_start と
-    ;; content_block_stop(text_delta でない stream_event)で挟む。
+    ;; content_block_stop(text_delta でない stream_event)で挟む。think-seconds > 0 なら、実物が考える時と同じく、先に message_start
+    ;; (text_delta でない stream_event)を出し、その秒だけ待ってから本文を出す(#3696)。
+    (when (> think-seconds 0)
+      (import time)
+      (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+             "event" {"type" "message_start" "message" {"role" "assistant" "content" []}}})
+      (time.sleep think-seconds))
     (when (> deltas 0)
       (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
              "event" {"type" "content_block_start" "index" 0 "content_block" {"type" "text" "text" ""}}})
@@ -200,7 +206,7 @@
       (.lifecycle self (.get record "uuid") "started")
       (.append words (get (reply-for (user-text record) (memory-of self.path)) "text")))
     (.result self (.join " " words) (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))
-             (get rule "deltas"))
+             (get rule "deltas") (get rule "think_seconds"))
     (for [ref (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))]
       (.lifecycle self ref "completed")))
 

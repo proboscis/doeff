@@ -10,6 +10,9 @@
 ;; 最後の本文を何片の差分(stream_event の text_delta)に分けて出させるかの言い方。本物の claude は片の数を選べない(言葉どおりの
 ;; 本文を返すだけ)ので、片の数を当てにする検は替え玉の CLI と fake だけに置く(#3628)。
 (setv STREAM-PHRASE "Stream the reply in {} pieces.")
+;; 答え始めの前にモデルが考える秒を替え玉の CLI に作らせる言い方(stream の message_start を先に出し、その秒だけ待ってから本文の差分を
+;; 流す — #3696)。本物の claude は考える秒を選べないので、秒を当てにする検は替え玉の CLI だけに置く。
+(setv THINK-PHRASE "Think for {} seconds before replying.")
 
 (defn #^ str remember-prompt [#^ str word]
   (.format "Remember the codeword {}. Reply with exactly: {}" CODEWORD word))
@@ -32,12 +35,14 @@
 
 (defn #^ dict reply-for [#^ str text #^ tuple memory]
   "prompt → {\"text\" 返事の本文 \"tool_seconds\" 道具の秒数 \"permission\" 道具の前に許可を問うか \"touch\" 触る path
-   \"deltas\" 最後の本文を分ける差分の片の数(STREAM-PHRASE・無ければ 0 = 差分を出さない)}。memory = それまでの入力の本文(会話の記憶)。"
+   \"deltas\" 最後の本文を分ける差分の片の数(STREAM-PHRASE・無ければ 0 = 差分を出さない)
+   \"think_seconds\" 本文の差分の前に考える秒(THINK-PHRASE・無ければ 0.0 — 替え玉の CLI だけが読む)}。memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
   (setv exact (re.search r"[Rr]eply with exactly: (\S+)" text))
   (setv extra (re.search r"include the word (\S+)" text))
   (setv streamed (re.search r"Stream the reply in (\d+) pieces" text))
+  (setv think (re.search r"Think for (\d+(?:\.\d+)?) seconds before replying" text))
   (setv word
         (cond
           (in "What was the codeword" text)
@@ -52,4 +57,5 @@
    "tool_seconds" (cond sleep (float (.group sleep 1)) touch 0.2 True 0.0)
    "permission" (is-not touch None)
    "touch" (if touch (.group touch 1) None)
-   "deltas" (if streamed (int (.group streamed 1)) 0)})
+   "deltas" (if streamed (int (.group streamed 1)) 0)
+   "think_seconds" (if think (float (.group think 1)) 0.0)})
