@@ -41,7 +41,7 @@
   (+ greeting (str step)))
 
 
-(defsystem pair [foundation]
+(defsystem pair [#^ Callable foundation]
   "見本の系: tally と greeter"
   (tally (tally-program foundation 2) :replicas 1 :needs #{"cluster-net"})
   (greeter (greeter-program foundation 3) :replicas 1 :needs #{"cluster-net"}))
