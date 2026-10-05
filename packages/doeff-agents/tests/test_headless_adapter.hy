@@ -33,7 +33,7 @@
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
-(import doeff_agents.handlers.headless_compose [FakeReply headless-claude-handlers fake-headless-claude-handlers])
+(import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
 
 (setv FAKE "fake" STUB "stub" REAL "real")
 (setv REAL-CONFIG-ENV "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR")
@@ -838,3 +838,44 @@
   (for [#(missing given) dropped]
     (with [(pytest.raises TypeError :match missing)]
       (fake-headless-claude-handlers fake-responder #** given))))
+
+
+;; --- 層 2 だけ・adapter だけの入口(agora-redesign #3507)------------------------------------------------------------
+
+(deftest test-the-split-entries-build-the-same-handlers-as-the-pairs [tmp-path]
+  ;; agora-redesign #3507: 層 2 だけ(本番・fake)と adapter だけの入口は、対の入口と同じ種類の handler を同じ順で作り、並べると同じ
+  ;; 筋書きが通る — 呼び手が層 2 を土台の外側に、adapter を Program の近くに置き分けても、組の中身は対の入口と同じ。
+  (import doeff_agents [claude-agent-runtime-handlers fake-claude-agent-runtime-handlers claude-process-layer-handler
+                        fake-claude-process-layer-handler claude-agent-adapter-handler])
+  (import doeff_hy.frozen [thaw-json])
+  (setv home (str (/ tmp-path "home")))
+  (assert (= (lfor h [(claude-process-layer-handler) (claude-agent-adapter-handler :config-dir home :env {} :settings {})] (. (type h) __name__))
+             (lfor h (claude-agent-runtime-handlers :config-dir home :env {}) (. (type h) __name__))))
+  (assert (= (lfor h [(fake-claude-process-layer-handler :responder fake-responder) (claude-agent-adapter-handler :config-dir home :env {} :settings {})]
+                   (. (type h) __name__))
+             (lfor h (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home :env {} :settings {}) (. (type h) __name__))))
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (check-one-turn-then-resume
+    (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (fake-claude-process-layer-handler :responder fake-responder)
+                                    (claude-agent-adapter-handler :config-dir home :env {} :settings {})]
+                                   (one-turn-then-resume (Setting work None 60.0 8))))))
+  ;; adapter だけの入口に渡した家・env・settings は、対の入口と同じく層 2 へ渡る起動の宣言に載る。
+  (val env {"PATH" "/opt/agent-tools/bin:/usr/bin" "AGENT_SESSION_CLASS" "unattended"})
+  (val settings {"hooks" {"Stop" [{"matcher" "*" "hooks" [{"type" "command" "command" "true"}]}]}})
+  (val given (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))]
+                                            (launched-specs work "split"
+                                                            [(fake-claude-process-layer-handler :responder fake-responder)
+                                                             (claude-agent-adapter-handler :config-dir home :env env :settings settings)])))))
+  (assert (= (len given) 1) given)
+  (assert (= (. (get given 0) home config-dir) home))
+  (assert (= (dict (. (get given 0) home env)) env))
+  (assert (= (thaw-json (. (get given 0) settings)) settings)))
+
+(deftest test-the-fake-process-layer-takes-exactly-one-of-responder-and-world []
+  ;; agora-redesign #3507: fake の層 2 だけの入口も、対の入口と同じく responder と world のちょうど 1 つを受ける(両方・どちらも無しは断る)。
+  (import doeff_agents [fake-claude-process-layer-handler])
+  (with [(pytest.raises ValueError :match "ちょうど 1 つ")]
+    (fake-claude-process-layer-handler))
+  (with [(pytest.raises ValueError :match "ちょうど 1 つ")]
+    (fake-claude-process-layer-handler :responder fake-responder :world (FakeClaudeWorld fake-responder))))

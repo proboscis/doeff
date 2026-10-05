@@ -6,6 +6,7 @@
 ;;; どちらの組も外側に doeff-time の時間の handler(本番 = sync-time-handler・模擬 = sim-time-handler)と scheduler を要る。
 ;;; 本番の組は加えて slog の答え手を要る(層 2 の本番の handler が CLI の起動の計時の行を slog で出す — agora-redesign #3605)。
 ;;; 並びは with_handlers の順(先頭が外側): 層 2 の handler → adapter(Program に近い側)。
+(require doeff-hy.macros [defk])
 (import collections.abc [Callable Mapping])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
@@ -42,3 +43,30 @@
   [(fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world))
    (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings)
                             (HeadlessState))])
+
+
+;; --- 層 2 と adapter を別々に作る入口(agora-redesign #3507)--------------------------------------------------------------------------
+;; 呼び手が層 2(CLI の process の寿命)と adapter(agent の寿命)を別の段に置くため — 層 2 を土台の外側(本番 = process を起こす土台・
+;; 模擬 = 外の世界の相手役)に置き、adapter だけを Program に近い側に置く。上の対の入口と同じ handler を同じ設定で作る(対の入口は変えない)。
+
+(defk claude-process-layer [command]
+  {:pre [(: command tuple) (all (gfor part command (isinstance part str)))] :post [(: % Callable)]}
+  "層 2 の本番の handler だけ(手番ごとに CLI を起こす — headless-claude-handlers の対の 1 つ目と同じ物)を作るため。command = CLI の実行の
+   引数の頭。行の時刻は壁の時計で刻む。外側に doeff-time の時間の handler・scheduler・slog の答え手を要る。"
+  (claude-code-handler (ClaudeCodeHost command (clock-of (sync-time-handler)))))
+
+(defk fake-claude-process-layer [responder world]
+  {:pre [(: responder (| Callable None)) (: world (| FakeClaudeWorld None))] :post [(: % Callable)]}
+  "層 2 の fake の handler だけ(process も API も使わない — fake-headless-claude-handlers の対の 1 つ目と同じ物)を作るため。
+   responder / world の意味と「ちょうど 1 つ」は対の入口と同じ。"
+  (when (= (is responder None) (is world None))
+    (raise (ValueError "fake-claude-process-layer は responder と world のちょうど 1 つを受ける")))
+  (fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world)))
+
+(defk claude-adapter [config-dir env settings cold-resume-prompt]
+  {:pre [(: config-dir str) (: env Mapping) (: settings Mapping) (: cold-resume-prompt (| str None))] :post [(: % Callable)]}
+  "headless の adapter だけ(doeff-agents の公開 effect を層 2 の effect へ写す — 対の入口の 2 つ目と同じ物。層 2 が本物でも fake でも同じ
+   adapter)を作るため。config-dir / env = claude の家(凍らせる)・settings = CLI の settings の JSON の写像・cold-resume-prompt = 冷えた
+   続きの前の 1 回きりの process に渡す文(None = 渡さない)。"
+  (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :cold-resume-prompt cold-resume-prompt)
+                           (HeadlessState)))
