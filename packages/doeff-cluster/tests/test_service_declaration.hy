@@ -351,7 +351,9 @@
 
 (defk declared-checkout [base]
   {:pre [(: base Path)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "bare の remote と、見本の系(declared_system.hy)を 1 commit 持つ push 済みの clone を base の下に作り、clone の path を返すため。"
+  "bare の remote と、見本の系(declared_system.hy)を 1 commit 持つ push 済みの clone を base の下に作り、clone の path を返すため。
+   origin の url は別の機体の worker が取れる形(https://example.invalid/declared.git — 手元の path の remote は宣言の前の検めが断る・
+   #3167)に替え、push の行き先(pushurl)だけを手元の bare に残す(後から push すると追跡の ref も進む)。"
   (val remote (/ base "declared.git"))
   (val work (/ base "declared"))
   (<- (git-in base "init" "-q" "--bare" (str remote)))
@@ -361,6 +363,8 @@
   (<- (git-in work "commit" "-q" "-m" "first"))
   (<- (git-in work "push" "-q" "origin" "HEAD:main"))
   (<- (git-in work "fetch" "-q" "origin"))
+  (<- (git-in work "remote" "set-url" "origin" "https://example.invalid/declared.git"))
+  (<- (git-in work "remote" "set-url" "--push" "origin" (str remote)))
   work)
 
 
@@ -415,7 +419,6 @@
   (<- (git-in work "add" "-A"))
   (<- (git-in work "commit" "-q" "-m" "second"))
   (<- (git-in work "push" "-q" "origin" "HEAD:main"))
-  (<- (git-in work "fetch" "-q" "origin"))
   (<- (declared-in work monkeypatch))
   (<- refusal (| str None) (refusal-at declared-fixture.pair declared-fixture.net-foundation first))
   (assert (and (is-not refusal None) (in "revision-differs" refusal) (in first refusal)) refusal))
