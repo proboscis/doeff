@@ -12,6 +12,7 @@ export function registerDocLint(context: vscode.ExtensionContext, store: LintSto
   const judge = new WorkspaceJudge(runner, store);
   const timers = new Map<string, NodeJS.Timeout>();
   const pending = new Map<string, Set<string>>();
+  const changedRules = new Set<string>();
   const dirty = new Set<string>();
   const opened = new Map<string, readonly string[]>();
   const supported = (uri: vscode.Uri): boolean => uri.scheme === 'file' && /\.(hy|py|pyi|md|markdown|txt)$/i.test(uri.fsPath)
@@ -29,6 +30,7 @@ export function registerDocLint(context: vscode.ExtensionContext, store: LintSto
     const timer = timers.get(root);
     if (timer !== undefined) { clearTimeout(timer); timers.delete(root); }
     pending.delete(root);
+    changedRules.delete(root);
   };
   const run = (folder: vscode.WorkspaceFolder): void => {
     const root = folder.uri.fsPath;
@@ -49,12 +51,14 @@ export function registerDocLint(context: vscode.ExtensionContext, store: LintSto
   };
   const changed = (uri: vscode.Uri): void => {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (folder === undefined || !supported(uri) || !vscode.workspace.isTrusted) { return; }
+    if (folder === undefined || !vscode.workspace.isTrusted) { return; }
     const root = folder.uri.fsPath;
+    const isRules = path.relative(root, uri.fsPath) === '.doc-linter.json';
+    if (!isRules && !supported(uri)) { return; }
     const mode = docMode(root);
-    if (mode === 'off' || mode === undefined || (mode === 'openFiles' && !opened.get(root)?.includes(uri.fsPath))) { return; }
+    if (mode === 'off' || mode === undefined || (mode === 'openFiles' && !isRules && !opened.get(root)?.includes(uri.fsPath))) { return; }
     const paths = pending.get(root) ?? new Set<string>();
-    paths.add(uri.fsPath);
+    if (isRules) { changedRules.add(root); } else { paths.add(uri.fsPath); }
     pending.set(root, paths);
     // 固定した短い窓で集約する。連続編集で送信時刻を延ばし続けない。
     if (timers.has(root)) { return; }
@@ -62,8 +66,9 @@ export function registerDocLint(context: vscode.ExtensionContext, store: LintSto
       timers.delete(root);
       const files = [...(pending.get(root) ?? [])];
       pending.delete(root);
+      const rulesChanged = changedRules.delete(root);
       output.appendLine(`[doc-linter] 差分検査を予約: ${files.length}ファイル`);
-      judge.submit({ kind: 'changed', root, paths: files, documents: overlays(folder).filter((d) => files.includes(d.path)) });
+      judge.submit({ kind: 'changed', root, paths: files, rulesChanged, documents: overlays(folder).filter((d) => files.includes(d.path)) });
     }, 300));
   };
   const changedTabs = (): void => {
@@ -75,7 +80,9 @@ export function registerDocLint(context: vscode.ExtensionContext, store: LintSto
     }
   };
   const watcher = vscode.workspace.createFileSystemWatcher('**/*.{hy,py,pyi,md,markdown,txt}');
+  const rulesWatcher = vscode.workspace.createFileSystemWatcher('**/.doc-linter.json');
   context.subscriptions.push(watcher, watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed),
+    rulesWatcher, rulesWatcher.onDidCreate(changed), rulesWatcher.onDidChange(changed), rulesWatcher.onDidDelete(changed),
     vscode.window.tabGroups.onDidChangeTabs(changedTabs),
     vscode.window.tabGroups.onDidChangeTabGroups(changedTabs),
     vscode.workspace.onDidChangeTextDocument((e) => {

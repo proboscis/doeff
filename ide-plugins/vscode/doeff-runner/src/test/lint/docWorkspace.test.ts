@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { WorkspaceJudge } from '../../lint/docWorkspace';
 import { readWorkspaceEvent, type WorkspaceEvent, type DocIndex } from '../../lint/docWorkspaceContract';
 import { LintStore } from '../../lint/store';
-import type { WorkspaceRunner } from '../../lint/docWorkspaceProcess';
+import type { WorkspaceRunner, WorkspaceRequest } from '../../lint/docWorkspaceProcess';
 import { termLinks } from '../../read/termLinks';
 import { docFailure } from '../../lint/docContract';
 
@@ -44,6 +44,36 @@ function events(): WorkspaceEvent[] {
 }
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 suite('workspace の全文章・用語・キャッシュ進捗', () => {
+  test('文書規則の指紋と用語違反を保持し、未測定として表示しない', () => {
+    const event = readWorkspaceEvent(JSON.stringify({ event: 'index', schema_version: 1, total: 0, snapshot: {
+      files: [{ path: FILE, text: '土台オブジェクト' }],
+      index: { definitions: [], references: [], document_policies: { [FILE]: 'a'.repeat(64) }, issues: [
+        { rule: 'DOC201', message: '依存オブジェクトと記述してください', location: { path: FILE, start: { line: 0, character: 0 }, end: { line: 0, character: 8 } } },
+      ] },
+    } }), ROOT);
+    assert.strictEqual(event.event, 'index');
+    if (event.event !== 'index') { throw new Error('index'); }
+    assert.strictEqual(event.snapshot.index.documentPolicies?.[FILE], 'a'.repeat(64));
+    assert.strictEqual(event.snapshot.issues[0].message, '依存オブジェクトと記述してください');
+    assert.throws(() => readWorkspaceEvent(rawIndex.replace('"issues":[]', '"issues":[],"document_policies":{"/elsewhere.md":""}'), ROOT));
+    assert.throws(() => readWorkspaceEvent(rawIndex.replace('"issues":[]', '"issues":[],"document_policies":{"/repo/a.md":"invalid"}'), ROOT));
+  });
+  test('設定変更の後に本文変更をまとめても規則の再確認を省略しない', async () => {
+    const calls: WorkspaceRequest[] = [];
+    const finishes: Array<() => void> = [];
+    const runner: WorkspaceRunner = { run(request) { calls.push(request); return new Promise(resolve => finishes.push(resolve)); } };
+    const judge = new WorkspaceJudge(runner, new LintStore());
+    judge.submit({ kind: 'selected', root: ROOT, paths: [FILE], documents: [] });
+    judge.submit({ kind: 'changed', root: ROOT, paths: [], documents: [], rulesChanged: true });
+    judge.submit({ kind: 'changed', root: ROOT, paths: [FILE], documents: [{ path: FILE, text: '変更' }] });
+    finishes[0]();
+    await tick();
+    assert.strictEqual(calls[1].rulesChanged, true);
+    assert.strictEqual(calls[1].documents[0].text, '変更');
+    finishes[1]();
+    await tick();
+    judge.dispose();
+  });
   test('大量の結果をまとめて通知し、診断の全体走査を結果の件数だけ繰り返さない', async () => {
     const store = new LintStore();
     let notifications = 0;

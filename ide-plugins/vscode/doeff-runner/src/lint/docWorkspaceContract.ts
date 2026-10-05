@@ -26,6 +26,7 @@ export interface TermReference {
 export interface DocIndex {
   readonly definitions: readonly TermDefinition[];
   readonly references: readonly TermReference[];
+  readonly documentPolicies?: Readonly<Record<string, string>>;
 }
 export interface Counts {
   readonly files: number;
@@ -141,17 +142,23 @@ export function readWorkspaceEvent(raw: string, root: string, snapshot?: DocSnap
       const r = row(rawRef);
       return { id: string(r.id), label: string(r.label), location: location(root, r.location, files) };
     });
+    const documentPolicies: Record<string, string> = {};
+    for (const [file, fingerprint] of Object.entries(index.document_policies === undefined ? {} : row(index.document_policies))) {
+      const value = string(fingerprint);
+      if (value !== '' && !/^[a-f0-9]{64}$/.test(value)) { throw new Error('文書規則の指紋が不正です'); }
+      documentPolicies[inside(root, file)] = value;
+    }
     const issues = array(index.issues).map((rawIssue): LintViolation => {
       const i = row(rawIssue);
       const loc = location(root, i.location, files);
       const rule = string(i.rule);
-      if (!['DOC000', 'DOC101', 'DOC102', 'DOC103', 'DOC104'].includes(rule)) {
+      if (!['DOC000', 'DOC101', 'DOC102', 'DOC103', 'DOC104', 'DOC201', 'DOC202'].includes(rule)) {
         throw new Error('用語の規則が不正です');
       }
-      return { ...docFailure(loc.path, string(i.message)), rule, range: { start: loc.start, end: loc.end } };
+      return { ...docFailure(loc.path, string(i.message)), message: rule === 'DOC000' ? `未測定: ${string(i.message)}` : string(i.message), rule, range: { start: loc.start, end: loc.end } };
     });
     const affected = s.affected === undefined ? undefined : array(s.affected).map((p) => inside(root, p));
-    return { event: 'index', snapshot: { files, index: { definitions, references }, issues, total: count(v.total), affected } };
+    return { event: 'index', snapshot: { files, index: { definitions, references, documentPolicies }, issues, total: count(v.total), affected } };
   }
   if (snapshot === undefined) {
     throw new Error('索引より先に判定が届きました');

@@ -23,7 +23,7 @@ export class WorkspaceJudge {
       for (const doc of request.documents) { documents.set(doc.path, doc); }
       request = previous.kind !== 'changed'
         ? { ...previous, documents: [...documents.values()] }
-        : { ...request, paths: [...new Set([...previous.paths, ...request.paths])], documents: [...documents.values()] };
+        : { ...request, rulesChanged: previous.rulesChanged || request.rulesChanged, paths: [...new Set([...previous.paths, ...request.paths])], documents: [...documents.values()] };
     }
     this.pending.set(request.root, request);
     if (request.kind !== 'changed' && this.active?.request.root === request.root) {
