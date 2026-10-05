@@ -1,15 +1,19 @@
 """The macro-expanded tree of a Hy module is cached on disk under its exact inputs.
 
 Expansion is most of an analysis' time and every process used to redo it for each
-Hy module it read. The cache key is the source, the module name and path, the
-macro modules the source requires, the Hy / Python versions and the reader's own
-source — so a changed source, macro module or reader is expanded again, and an
-unreadable cache file only costs one expansion.
+Hy module it read. The cache key is the source's content (never its path), the
+module name, the macro modules the source requires, the Hy / Python versions and
+the reader's own source — so a changed source, macro module or reader is expanded
+again, the same source in another checkout is not, and an unreadable cache file
+only costs one expansion.
 """
 
 import ast
+import importlib
 import pickle
-from dataclasses import replace
+import sys
+import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,10 +68,114 @@ def test_a_changed_source_is_expanded_again(cache_dir: Path, monkeypatch: pytest
     assert seen == ["m", "m"]
 
 
+@dataclass(frozen=True)
+class TwoCheckouts:
+    """One module file written into two directories — the same file in two checkouts of one repo."""
+
+    first: Path
+    second: Path
+
+
+def written_file(directory: Path, name: str, text: str) -> Path:
+    """``directory/name`` holding ``text`` (the directory is made here)."""
+    directory.mkdir()
+    (directory / name).write_text(text, encoding="utf-8")
+    return directory / name
+
+
+def two_checkouts(tmp_path: Path, name: str, first: str, second: str) -> TwoCheckouts:
+    """Write ``first`` as ``checkout_a/<name>`` and ``second`` as ``checkout_b/<name>``."""
+    return TwoCheckouts(
+        first=written_file(tmp_path / "checkout_a", name, first),
+        second=written_file(tmp_path / "checkout_b", name, second),
+    )
+
+
+def compile_file(path: Path) -> "pe._WholeTree | pe._ChunkedTree":
+    """Expand the file as the reader does (``_module_source`` reads the text and passes its path)."""
+    return pe._compile_hy(path.read_text(encoding="utf-8"), str(path), "m")
+
+
+def test_the_same_source_in_another_directory_is_read_from_the_cache(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agora-redesign #3598: the key named the file's absolute path, so every new worktree expanded
+    every Hy module again although its source was the same (a closure test of the screen job: 120.7 s
+    cold, 5.9 s warm, 71 % of the cold samples in ``_expand_hy``). The tree depends on the source,
+    not on where it lies: the same source in another directory is read from the cache."""
+    seen = expansions(monkeypatch)
+    files = two_checkouts(tmp_path, "m.hy", SOURCE, SOURCE)
+    compile_file(files.first)
+    a_new_process()
+    read = compile_file(files.second)
+    assert seen == ["m"]
+    assert isinstance(read.tree, ast.Module)
+    assert len(list(cache_dir.glob("*.pickle"))) == 1
+
+
+def test_one_changed_character_in_another_directory_is_expanded_again(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = expansions(monkeypatch)
+    files = two_checkouts(tmp_path, "m.hy", SOURCE, SOURCE.replace("42", "43"))
+    compile_file(files.first)
+    a_new_process()
+    compile_file(files.second)
+    assert seen == ["m", "m"]
+    assert len(list(cache_dir.glob("*.pickle"))) == 2
+
+
+ASKING = """
+(require doeff-hy.macros [defk <-])
+(import doeff_core_effects.effects [Ask])
+
+(defk asks [conv]
+  {:pre [(: conv str)] :post [(: % str)]}
+  (<- who str (Ask "worker"))
+  (+ conv who))
+"""
+
+
+def analyzed_from(file: Path, monkeypatch: pytest.MonkeyPatch) -> pe.ProgramEffects:
+    """Import the module of ``file`` from its directory, as a process of that checkout does, and
+    analyze its ``asks`` in a new process's memory (only the disk cache is shared)."""
+    name = file.stem
+    monkeypatch.syspath_prepend(str(file.parent))
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(name)
+        assert module.__file__ == str(file)
+        a_new_process()
+        return pe.analyze_program(f"{name}:asks")
+    finally:
+        sys.modules.pop(name, None)
+        sys.path.remove(str(file.parent))
+
+
+def test_a_tree_read_from_the_cache_reports_the_path_it_was_read_for(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tree expanded for one checkout and read for another reports the other checkout's path: the
+    cached tree and its body facts hold no path, and the report takes the path of the module it
+    reads (``_ModuleSource.filename``)."""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")  # each checkout compiles its own module
+    seen = expansions(monkeypatch)
+    name = f"tree_cache_{uuid.uuid4().hex[:8]}"
+    files = two_checkouts(tmp_path, f"{name}.hy", ASKING, ASKING)
+    first = analyzed_from(files.first, monkeypatch)
+    second = analyzed_from(files.second, monkeypatch)
+    assert seen == [name]
+    assert [use.effect.__name__ for use in first.effects] == ["Ask"]
+    assert [use.effect.__name__ for use in second.effects] == ["Ask"]
+    assert {use.location.file for use in first.effects} == {str(files.first)}
+    assert {use.location.file for use in second.effects} == {str(files.second)}
+    assert str(files.first.parent) not in repr(second)
+
+
 def test_the_key_names_the_required_macro_module_by_its_digest() -> None:
     digests = pe._required_macro_digests(SOURCE)
-    assert len(digests) == 1 and digests[0].startswith("doeff-hy.macros=")
-    assert not digests[0].endswith("=?")
+    assert [digest.module for digest in digests] == ["doeff-hy.macros"]
+    assert digests[0].sha256 is not None
 
 
 def test_off_turns_the_cache_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,7 +361,7 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     monkeypatch.setattr(pe, "_reader_digest", reader)
     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
     assert seen == ["r", "r"]
-    path = pe._hy_cache_path(REWRAPPED, "/src/r.hy", "r")
+    path = pe._hy_cache_path(REWRAPPED, "r")
     assert path is not None
     assert path != entry
     written = pickle.loads(path.read_bytes())

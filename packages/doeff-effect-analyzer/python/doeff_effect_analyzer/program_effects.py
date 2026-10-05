@@ -469,7 +469,7 @@ def _module_source(module: types.ModuleType) -> _ModuleSource:
 
 def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _ChunkedTree":
     """The macro-expanded tree of a Hy module (from the disk cache when the same inputs were expanded before)."""
-    cache_path = _hy_cache_path(source, filename, module_name)
+    cache_path = _hy_cache_path(source, module_name)
     if cache_path is not None:
         cached = _read_cached_tree(cache_path)
         if cached is not None:
@@ -525,11 +525,62 @@ def _expand_hy(source: str, filename: str, module_name: str) -> ast.Module:
 
 # Macro expansion is most of the analysis time: every process re-expands each Hy
 # module it reads (0.5–1 s per module). The expanded tree depends only on the
-# source, the macro modules it requires, and the Hy / Python versions, and what is
-# stored with it on the reader's code, so it is cached on disk under a key made of
-# exactly those. DOEFF_EFFECT_ANALYZER_CACHE
-# names the directory; "off" disables the cache.
+# source's content, the module name, the macro modules it requires, and the Hy /
+# Python versions, and what is stored with it on the reader's code, so it is cached
+# on disk under a key made of exactly those (``_TreeKey``) — not of the file's path,
+# so the same source in another worktree reads the same entry (agora-redesign #3598).
+# DOEFF_EFFECT_ANALYZER_CACHE names the directory; "off" disables the cache.
 _REQUIRE = re.compile(r"\(require\s+([A-Za-z_][\w.\-]*)")
+
+# The shape of the key; a new shape names other entries, and the old ones are never read.
+# v2: the tree is stored with what is derived from it alone. v3: cut into top-level
+# definitions that are built only when followed (_CachedTree — agora-redesign #1591).
+# v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
+# v5: the key names the reader's source (_reader_digest), so a change of what is
+# derived no longer waits for this tag to be bumped by hand (#2973 changed the shape
+# of _BodyFacts.rewraps and kept v4 — the newer reader read v4 entries and raised).
+# v6: the key names the source by its content and not by its path (_TreeKey — #3598).
+_TREE_KEY_FORMAT = "v6"
+
+
+@dataclass(frozen=True)
+class _MacroDigest:
+    """A macro module the source requires, and the sha256 of its file (None = not found)."""
+
+    module: str
+    sha256: str | None
+
+
+@dataclass(frozen=True)
+class _TreeKey:
+    """What an expanded tree is a function of. The file's path is not one of them: the expansion
+    reads the path only for its suffix (``.hyk`` / ``.hyp`` decide whether ``defp`` is refused or
+    ``defk`` warned about, never the tree), nothing derived from the tree holds it, and the reader takes
+    the path it reports from the module it reads (``_ModuleSource.filename``) — so a worktree
+    whose file has the same content reads the entry another worktree wrote (agora-redesign
+    #3598: a closure test of the screen job took 120.7 s in a new worktree and 5.9 s after)."""
+
+    python: str
+    hy: str
+    reader: str
+    module_name: str
+    source_sha256: str
+    macros: tuple[_MacroDigest, ...]
+
+    def entry_name(self) -> str:
+        """The name of the cache file: the digest of every field, so any change misses."""
+        text = "\n".join(
+            [
+                _TREE_KEY_FORMAT,
+                self.python,
+                self.hy,
+                self.reader,
+                self.module_name,
+                self.source_sha256,
+                *(f"{macro.module}={macro.sha256 or '?'}" for macro in self.macros),
+            ]
+        )
+        return f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}.pickle"
 
 
 def _hy_cache_dir() -> Path | None:
@@ -542,48 +593,43 @@ def _hy_cache_dir() -> Path | None:
     return env_places.cache_home() / "doeff-effect-analyzer" / "hy-trees"
 
 
-def _required_macro_digests(source: str) -> list[str]:
+def _required_macro_digests(source: str) -> tuple[_MacroDigest, ...]:
     """Digests of the macro modules the source requires (their expansion shapes the tree)."""
-    digests = []
-    for name in sorted(set(_REQUIRE.findall(source))):
-        try:
-            spec = importlib.util.find_spec(name.replace("-", "_"))
-        except (ImportError, ValueError):
-            spec = None
-        origin = spec.origin if spec is not None else None
-        if origin and Path(origin).is_file():
-            digests.append(f"{name}={hashlib.sha256(Path(origin).read_bytes()).hexdigest()}")
-        else:
-            digests.append(f"{name}=?")
-    return digests
+    return tuple(_macro_digest(name) for name in sorted(set(_REQUIRE.findall(source))))
 
 
-def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
+def _macro_digest(name: str) -> _MacroDigest:
+    """The sha256 of the file the macro module ``name`` is found in (None when it is not found)."""
+    try:
+        spec = importlib.util.find_spec(name.replace("-", "_"))
+    except (ImportError, ValueError):
+        spec = None
+    origin = spec.origin if spec is not None else None
+    if origin and Path(origin).is_file():
+        return _MacroDigest(module=name, sha256=hashlib.sha256(Path(origin).read_bytes()).hexdigest())
+    return _MacroDigest(module=name, sha256=None)
+
+
+def _tree_key(source: str, module_name: str) -> _TreeKey:
+    """The key of the tree ``source`` expands to as ``module_name`` (see ``_TreeKey``)."""
+    import hy
+
+    return _TreeKey(
+        python=sys.version,
+        hy=hy.__version__,
+        reader=_reader_digest(),
+        module_name=module_name,
+        source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        macros=_required_macro_digests(source),
+    )
+
+
+def _hy_cache_path(source: str, module_name: str) -> Path | None:
     """The cache file for these exact inputs, so a changed source or macro module never reuses an old tree."""
     directory = _hy_cache_dir()
     if directory is None:
         return None
-    import hy
-
-    key = "\n".join(
-        [
-            # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
-            # definitions that are built only when followed (_CachedTree — agora-redesign #1591).
-            # v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
-            # v5: the key names the reader's source (_reader_digest), so a change of what is
-            # derived no longer waits for this tag to be bumped by hand (#2973 changed the shape
-            # of _BodyFacts.rewraps and kept v4 — the newer reader read v4 entries and raised).
-            "v5",
-            sys.version,
-            hy.__version__,
-            _reader_digest(),
-            module_name,
-            filename,
-            hashlib.sha256(source.encode("utf-8")).hexdigest(),
-            *_required_macro_digests(source),
-        ]
-    )
-    return directory / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.pickle"
+    return directory / _tree_key(source, module_name).entry_name()
 
 
 @functools.cache
