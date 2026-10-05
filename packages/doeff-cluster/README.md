@@ -284,7 +284,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 | `POST /leases/<名>` | 名前付きの lease(`op` = claim / renew / release / drop) |
 | `POST /tasks`・`GET /tasks/<id>`・`DELETE /tasks/<id>` | task を出す(`{program(sha) revision needs name leaseSeconds format runtimeEnv?}`)・問い合わせる(lease を延ばす)・落とす |
 | `POST /tasks/<id>/result` | task の子 process が終わる前に結果を送る(`{worker instance result format}`)。置いた worker からなら task を終える・終わった task には何もしない(200)・別の worker は 409・知らない task は 404 |
-| `POST /warm`・`GET /warm/<キー>` | 実行環境の root を温める頼み(`{runtimeEnv needs ttlSeconds holder}`) |
+| `POST /warm`・`GET /warm/<キー>` | 実行環境の root を温める頼み(`{runtimeEnv needs ttlSeconds holder}`)。組みの完成を待つ効果 `AwaitWarm` は `GET /warm/<キー>` と `GET /watch` で待つ — worker の組みの進み(準備済み・準備中・失敗の root のキー)は Worker の行の `status.env` に載り、版を進める |
 
 書く時に守ること:
 

@@ -489,6 +489,14 @@
    "status" (| {"live" (not-in w.name state.silent)}
                (if (in w.name state.drains)
                    {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
+                   {})
+               ;; 実行環境の root の組みの進み(#3668 (b)・2026-10-06)— heartbeat が名乗る準備済み・準備中・失敗の root のキー。組みが進んだ拍に
+               ;; 版と出来事が進み、組みの完成を待つ送り手(AwaitWarm)が GET /watch で起きる。名乗る root が在る間だけ載せる(無い worker の
+               ;; status の形・版は以前と同じ)。失敗の理由の文(detail)は揺れるので載せない — 種類と一時かだけ。
+               (if (or w.env-ready w.env-preparing w.env-failed)
+                   {"env" {"ready" (sorted w.env-ready) "preparing" (sorted w.env-preparing)
+                           "failed" (sorted (lfor f w.env-failed {"key" f.key "kind" f.kind "retryable" f.retryable})
+                                            :key (fn [row] #((get row "key") (get row "kind"))))}}
                    {}))})
 
 

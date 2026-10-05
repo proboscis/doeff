@@ -5,7 +5,8 @@
 (import hashlib)
 (import json)
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.intent.warm_model [WARM-KEY-LENGTH WarmFailure WarmState WarmRuntimeEnv WarmAnswer])
+(import doeff_cluster.shared.intent.warm_model [WARM-KEY-LENGTH WarmFailure WarmState WarmRuntimeEnv WarmAnswer WarmUnreachable
+                                                WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key])
 (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 
@@ -47,3 +48,17 @@
                                   (WarmFailure :worker (get f "worker") :kind (get f "kind") :detail (get f "detail")
                                                :retryable (bool (get f "retryable")))))
              :until-ms (int (get value "untilMs"))))
+
+
+(defk warm-wait-answer [read key waited timeout-seconds]
+  {:pre [(: read WarmAnswer) (: key str) (: waited float) (: timeout-seconds float)] :post [(: % (| WarmReady WarmFailed WarmWaitExpired None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "AwaitWarm の 1 回の読み(read)を答えにするため(本番の warm-cluster と sim の宿が同じ判断を呼ぶ — 定義点は 1 つ): 準備済みが 1 台以上 =
+   WarmReady・準備済みも準備中も無く失敗が在り、全部 retryable でない = WarmFailed・待った秒が期限に届いた = WarmWaitExpired(最後の読み
+   つき)・それ以外(準備中・retryable の失敗・表に無い行・届かない)= None(待ち続ける)。"
+  (match read
+    (WarmState) :if read.ready (WarmReady :state read)
+    (WarmState) :if (and (not read.preparing) read.failed (not (any (gfor f read.failed f.retryable)))) (WarmFailed :state read)
+    _ (if (>= waited timeout-seconds)
+          (WarmWaitExpired :key key :last read :waited-seconds waited)
+          None)))

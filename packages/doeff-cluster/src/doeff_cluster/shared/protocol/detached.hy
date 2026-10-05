@@ -31,8 +31,10 @@
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer])
-(import doeff_cluster.shared.core.warm_rules [warm-state-of-json])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer AwaitWarm WarmReady WarmFailed
+                                                WarmWaitExpired])
+(import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners WARMING-PHASE
                          DetachedSubmitted DetachedPending DetachedRefused DetachedAwaited DetachedUnreachable DetachedSubmitAnswer
@@ -559,6 +561,38 @@
   state)
 
 
+;; 組みの待ち(AwaitWarm)が coordinator に届かない間に問い直す間(秒 — detached-cluster の poll-seconds の既定と同じ)。
+(val WARM-UNREACHED-PAUSE-SECONDS 1.0)
+
+
+(defk warm-awaited [cell options key timeout-seconds poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: key str) (: timeout-seconds float) (: poll-seconds float)]
+   :post [(: % (| WarmReady WarmFailed WarmWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "温める表の行 key が組み上がるか落ちるまで待つため(AwaitWarm の本番の答え — #3668 (b))。GET /warm/<key> で読み、答えの判断
+   (warm_rules.warm-wait-answer — sim の宿と同じ物)が待ちを言えば、coordinator の版が変わるまで GET /watch(long-poll・残りの秒と
+   WATCH-MAX-SECONDS の小さい方)で待って読み直す — 時間で起きて確かめず、版の変化で起きる(worker の組みの進みは Worker の行の
+   status の env に載り版を進める)。coordinator に届かない間だけ poll-seconds の間を置いて問い直す。待つ口の無い旧い coordinator は
+   名指して落とす(後方互換を持たない)。"
+  (<- started int (now-epoch-ms))
+  (var after 0)
+  (var answer None)
+  (while (is answer None)
+    (<- read WarmAnswer (warm-read cell options options.resend-deadline-seconds key))
+    (<- now int (now-epoch-ms))
+    (val waited (/ (- now started) 1000.0))
+    (<- step (| WarmReady WarmFailed WarmWaitExpired None) (warm-wait-answer read key waited timeout-seconds))
+    (val left (max 0.0 (- timeout-seconds waited)))
+    (if (is-not step None)
+        (:= answer step)
+        (do (<- change (runners-changed cell options after (min WATCH-MAX-SECONDS left)))
+            (match change
+              (RunnersChange :revision revision) (:= after revision)
+              (RunnersWatchMissing :detail detail)
+                (raise (RuntimeError (.format "温める表の行 {!r} の組みを版の変化で待てない(coordinator に GET /watch が無い): {}" key detail)))
+              _ (<- (Delay (min poll-seconds left)))))))
+  answer)
+
+
 ;; 本物の温める表: coordinator の /warm へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に持っていた WarmClient を替えた)。
 ;; 答えは WarmAnswer(coordinator に届かなければ WarmUnreachable — 例外で呼び手を落とさない)。書きの送り手の名は options の actor。
 (defhandler warm-cluster [#^ RouteCell cell #^ RouteOptions options]
@@ -567,4 +601,7 @@
     (resume state))
   (ReadWarmState [key]
     (<- state (warm-read cell options options.resend-deadline-seconds key))
-    (resume state)))
+    (resume state))
+  (AwaitWarm [key timeout-seconds]
+    (<- answer (warm-awaited cell options key (float timeout-seconds) WARM-UNREACHED-PAUSE-SECONDS))
+    (resume answer)))
