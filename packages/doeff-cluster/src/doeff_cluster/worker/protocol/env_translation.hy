@@ -40,7 +40,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])
+                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。
@@ -54,10 +54,12 @@
 (val NETWORK-PATTERN (re.compile r"(?i)failed to fetch|error sending request|dns error|connection (?:refused|reset)|timed out|could not resolve|temporary failure|could not read from remote"))
 (val PYTHON-PATTERN (re.compile r"(?i)no interpreter found|failed to download .*python|python .*not found|no python"))
 (val PREPARED-PATTERN (re.compile r"Prepared (\d+) package"))
-;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(頭が carried=… compiled=…・carry_s= を持つのは全体の行だけ)と、
-;; 木ごとの行(tree=<--tree の綴り> … problem=<文|->)。行の頭には slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。
-(val COMPILED-PATTERN (re.compile r"carried=(\d+) compiled=(\d+) failed=\d+ carry_s="))
-(val TREE-PATTERN (re.compile r"(?m)tree=(\S+) carried=\d+ compiled=\d+ failed=\d+ problem=(.*)$"))
+;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(carried=… compiled=… failed=… carry_s=… compile_s=… closure_s=…
+;; scan_s=… — 全部の欄を読む・#3607 の H2)と、木ごとの行(tree=<--tree の綴り> carried=… compiled=… failed=… problem=<文|->)。行の頭には
+;; slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。秒は道具が小数 2 桁に丸めて書く。
+(val COMPILED-PATTERN
+  (re.compile r"carried=(\d+) compiled=(\d+) failed=(\d+) carry_s=([0-9.]+) compile_s=([0-9.]+) closure_s=([0-9.]+) scan_s=([0-9.]+)"))
+(val TREE-PATTERN (re.compile r"(?m)tree=(\S+) carried=(\d+) compiled=(\d+) failed=(\d+) problem=(.*)$"))
 (val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
 ;; file system の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
@@ -441,23 +443,46 @@
      (tuple (gfor t trees a #("--tree" t.tree "--roots" (.join "," t.roots) "--from" (or t.carry-from "")) a))))
 
 
+(defk reported-counts [text trees]
+  {:pre [(: text str) (: trees tuple)] :post [(: % (| BytecodeCounts None))]}
+  "焼く道具の stderr の全体の行と木ごとの行を、完成マーカーに載せる数と秒にするため(全体の行が無い・欄が欠けていれば None — 0 で
+   埋めない)。木ごとの数は要求の木の順で、木の名は root の下の dir の名(path は載せない)。"
+  (val total (.search COMPILED-PATTERN text))
+  (if (is total None)
+      None
+      (do (val lines (tuple (.finditer TREE-PATTERN text)))
+          (BytecodeCounts :carried (int (.group total 1)) :compiled (int (.group total 2)) :failed (int (.group total 3))
+                          :carry-seconds (float (.group total 4)) :compile-seconds (float (.group total 5))
+                          :closure-seconds (float (.group total 6)) :scan-seconds (float (.group total 7))
+                          :trees (tuple (gfor t trees m lines :if (= (.group m 1) t.tree)
+                                              (TreeCounts :name (posixpath.basename t.tree) :carried (int (.group m 2))
+                                                          :compiled (int (.group m 3)) :failed (int (.group m 4)))))))))
+
+
 (defk compile-answer [result trees project-dir]
   {:pre [(: result CommandResult) (: trees tuple) (: project-dir str)] :post [(: % (| BytecodeReport EnvFailure))]}
-  "焼く道具の終わりと stderr を CompileTrees の答えにするため: 全体の報告の行が在り、終わりが 0(全部の木の検めが通った)か 1(検めの
-   通らない木が在る)なら BytecodeReport(木ごとの行の problem を TreeProblem に — 行の無い木も問題)。それ以外(起こせない・途中で落ちた・
-   使い方の誤り)は道具そのものの失敗の EnvFailure。"
-  (val total (.search COMPILED-PATTERN result.stderr))
-  (if (and total (in result.code #(0 1)))
-      (do (val said (tuple (gfor m (.finditer TREE-PATTERN result.stderr) #((.group m 1) (.strip (.group m 2))))))
+  "焼く道具の終わりと stderr を CompileTrees の答えにするため: 全体の報告の行を全部の欄まで読め、終わりが 0(全部の木の検めが通った)か
+   1(検めの通らない木が在る)なら BytecodeReport(数と秒・木ごとの行の problem を TreeProblem に — 行の無い木も問題)。道具は終わったが
+   全体の行を読めない時は、その事を名指した EnvFailure(数を黙って 0 にしない)。それ以外(起こせない・途中で落ちた・使い方の誤り)は
+   道具そのものの失敗の EnvFailure。"
+  (<- counts (| BytecodeCounts None) (reported-counts result.stderr trees))
+  (<- detail str (tail-of result))
+  (cond
+    (and (in result.code #(0 1)) (is-not counts None))
+      (do (val said (tuple (gfor m (.finditer TREE-PATTERN result.stderr) #((.group m 1) (.strip (.group m 5))))))
           (<- interpreter str (interpreter-of project-dir))
-          (BytecodeReport :interpreter interpreter :compiled (int (.group total 2)) :carried (int (.group total 1))
+          (BytecodeReport :interpreter interpreter :counts counts
                           :problems (tuple (gfor t trees
                                                  :setv line (next (gfor s said :if (= (get s 0) t.tree) (get s 1)) None)
                                                  :if (!= line "-")
                                                  (TreeProblem :tree t.tree :detail (if (is line None) NO-TREE-LINE line))))))
-      (do (<- detail str (tail-of result))
-          (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
-                      :detail (.format "root の interpreter で bytecode を作れない: {}" detail)))))
+    (in result.code #(0 1))
+      (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+                  :detail (.format "焼く道具の全体の報告の行(carried=… compiled=… failed=… carry_s=… compile_s=… closure_s=… scan_s=…)を読めない: {}"
+                                   detail))
+    True
+      (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+                  :detail (.format "root の interpreter で bytecode を作れない: {}" detail))))
 
 
 (defk write-replacing [path text]

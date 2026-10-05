@@ -17,8 +17,9 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key])
 (import doeff_cluster.worker.core.env_prepare [env-marker->json] doeff_cluster.worker.intent.env_prepare_model [EnvMarker])
-(import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts RuntimeIdentity RuntimeIdentityMismatch RepoCommit])
-(import doeff_cluster.shared.core.runtime_identity [check-runtime-identity])
+(import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts RootMarker RuntimeIdentity RuntimeIdentityMismatch RepoCommit])
+(import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts TreeCounts])
+(import doeff_cluster.shared.core.runtime_identity [check-runtime-identity decode-marker])
 (import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])
 
 (val AC-COMMIT (* "a" 40))
@@ -209,3 +210,35 @@
   (val got (! (mismatch-of (! (read-of scene :origins (cut scene.in-root 2))))))
   (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
   (assert (in "import できない" got.detail)))
+
+
+;; --- 完成の印の bytecode の欄(#3607 の H2)-------------------------------------------------------------
+;; 印の JSON に欄を足しただけ(形式の版は 1 のまま)なので、読み手は欄の無い前の形の印も、知らない欄を足した後の形の印も断らずに読む。
+
+(deftest test-a-marker-written-before-the-bytecode-field-still-reads-as-a-prepared-root
+  ;; 失敗ケース: bytecode の欄の無い印(足す前に書かれた印)でも root は準備済みとして読め、欄は None(記録が無い — 0 で埋めない)。
+  ;; 欄が在る物として読む形(get)に戻すと読めずに落ち、0 で埋める形に戻すと None でなくなって赤。
+  (<- scene Declared (declared-scene))
+  (val raw (json.loads (! (env-marker-json scene.env))))
+  (del (get raw "bytecode"))
+  (val old (json.dumps raw))
+  (<- verdict (| RuntimeIdentity RuntimeIdentityMismatch) (judged (! (read-of scene :marker-json old))))
+  (assert (isinstance verdict RuntimeIdentity) verdict)
+  (<- marker (| RootMarker None) (decode-marker old))
+  (assert (and (is-not marker None) (is marker.bytecode None)) marker))
+
+
+(deftest test-the-marker-bytecode-field-reads-back-and-unknown-fields-are-dropped
+  ;; 書き手(env-marker->json)が綴った bytecode の欄は同じ値に読み戻せ、印と欄に足された知らない欄は読み捨てる(断らない)。
+  (<- scene Declared (declared-scene))
+  (val counts (BytecodeCounts :compiled 3 :carried 1 :failed 0 :scan-seconds 0.5 :closure-seconds 0.75 :carry-seconds 0.25
+                              :compile-seconds 1.5 :trees #((TreeCounts :name "app" :compiled 3 :carried 1 :failed 0))))
+  (<- raw dict (env-marker->json (EnvMarker :env scene.env :key scene.key :platform PLATFORM :stages #() :downloaded 0 :built 0
+                                            :interpreter "/usr/bin/python3" :child-protocol 1 :bytecode counts)))
+  (setv (get raw "laterField") {"anything" 1})
+  (setv (get (get raw "bytecode") "laterField") 2)
+  (val text (json.dumps raw))
+  (<- verdict (| RuntimeIdentity RuntimeIdentityMismatch) (judged (! (read-of scene :marker-json text))))
+  (assert (isinstance verdict RuntimeIdentity) verdict)
+  (<- marker (| RootMarker None) (decode-marker text))
+  (assert (and (is-not marker None) (= marker.bytecode counts)) marker))

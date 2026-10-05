@@ -4,6 +4,9 @@ from doeff import Program as _Program
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
+from doeff_cluster.shared.intent.env_marker_model import BytecodeCounts as BytecodeCounts
+from doeff_hy.wire import Malformed as Malformed
+from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.intent.runtime_identity_model import IdentityFailureKind as IdentityFailureKind
 from doeff_cluster.shared.intent.runtime_identity_model import ModuleOrigin as ModuleOrigin
 from doeff_cluster.shared.intent.runtime_identity_model import RootMarker as RootMarker
@@ -23,6 +26,9 @@ def judge_identity(facts: RuntimeFacts, pid: int) -> _Program[RuntimeIdentity | 
     ...
 
 def decode_env(text: str) -> _Program[RuntimeEnv | None, object]:
+    ...
+
+def marker_bytecode(raw: dict) -> _Program[BytecodeCounts | None, object]:
     ...
 
 def decode_marker(text: str) -> _Program[RootMarker | None, object]:

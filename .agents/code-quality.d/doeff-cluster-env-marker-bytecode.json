@@ -1,0 +1,19 @@
+{
+  "module_extensions": {
+    "doeff-cluster-env-prepare-model": {
+      "allow": [
+        "doeff-cluster-env-marker-model"
+      ]
+    },
+    "doeff-cluster-runtime-identity": {
+      "allow": [
+        "doeff-hy-wire"
+      ]
+    },
+    "doeff-cluster-runtime-identity-model": {
+      "allow": [
+        "doeff-cluster-env-marker-model"
+      ]
+    }
+  }
+}

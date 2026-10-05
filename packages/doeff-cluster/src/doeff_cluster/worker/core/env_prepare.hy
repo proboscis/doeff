@@ -17,7 +17,8 @@
 ;;;   9 bytecode  ReadEditableRoots / CompileTrees           root の venv の interpreter で、焼く根を持つ repo の木の全部を 1 回で作る
 ;;;                                                          (引き継ぎ元は lock と Python が同じ root のうち近い版の物 — carry-source)。
 ;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
-;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)
+;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)。
+;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
@@ -150,12 +151,22 @@
 
 (defk env-marker->json [marker]
   {:pre [(: marker EnvMarker)] :post [(: % dict)]}
-  "完成マーカーを file に書く JSON の値にする(file の境界の 1 か所)。"
+  "完成マーカーを file に書く JSON の値にする(file の境界の 1 か所)。bytecode の欄は焼いた数と処理ごとの秒(綴りは読み手の defwire
+   BytecodeCounts の camel の名と同じ — 読み戻しは test_runtime_identity が確かめる・焼く木が無かった準備は null = 記録が無い — #3607 の H2)。
+   dump を使わないのは、生成の型の宣言(.pyi)の defwire の型が dump の受ける型(WireValue)に当たらず、型の検査が通らないため。"
   (<- declared dict (runtime-env->json marker.env))
+  (val counts marker.bytecode)
+  (val bytecode (if (is counts None)
+                    None
+                    {"compiled" counts.compiled "carried" counts.carried "failed" counts.failed
+                     "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
+                     "carrySeconds" counts.carry-seconds "compileSeconds" counts.compile-seconds
+                     "trees" (lfor t counts.trees {"name" t.name "compiled" t.compiled "carried" t.carried "failed" t.failed})}))
   {"format" ENV-MARKER-FORMAT "key" marker.key "platform" marker.platform "env" declared
    "stages" (lfor s marker.stages {"name" s.name "seconds" (round s.seconds 3)})
    "downloaded" marker.downloaded "built" marker.built
-   "interpreter" marker.interpreter "childProtocol" marker.child-protocol})
+   "interpreter" marker.interpreter "childProtocol" marker.child-protocol
+   "bytecode" bytecode})
 
 
 ;; --- 処理ステージ ---------------------------------------------------------------------------
@@ -304,7 +315,7 @@
           (do (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                         (.join " " (gfor t trees t.tree)) report.detail)))
               state))
-    (BytecodeReport :interpreter used :problems problems)
+    (BytecodeReport :interpreter used :counts counts :problems problems)
       (do (val fatal (tuple (gfor p problems :if (in p.tree declared) p)))
           (if fatal
               (do (<- failure EnvFailure
@@ -315,7 +326,7 @@
               (do (for [p problems]
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
-                  (replace state :interpreter used))))))
+                  (replace state :interpreter used :bytecode counts))))))
 
 
 (defk stage-bytecode [request state]
@@ -397,6 +408,7 @@
     _ (do (<- (WriteEnvMarker request.root
                               (EnvMarker :env request.env :key request.key :platform request.platform
                                          :stages outcome.stages :downloaded outcome.downloaded :built outcome.built
-                                         :interpreter outcome.interpreter :child-protocol CHILD-PROTOCOL)))
+                                         :interpreter outcome.interpreter :child-protocol CHILD-PROTOCOL
+                                         :bytecode outcome.bytecode)))
           (EnvReady :env request.env :key request.key :root request.root :stages outcome.stages
                     :downloaded outcome.downloaded :built outcome.built :interpreter outcome.interpreter))))

@@ -6,6 +6,7 @@
 (import enum [StrEnum])  ; defenum の展開が使う
 (import doeff [EffectBase])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
+(import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts])
 
 
 (val ROOTS-PTH "_doeff_cluster_roots.pth")
@@ -54,7 +55,8 @@
 
 
 (defrecord EnvMarker
-  "完成マーカーの中身: 宣言・キー・処理ステージの秒・bytecode を作った interpreter・子の約束の版。"
+  "完成マーカーの中身: 宣言・キー・処理ステージの秒・bytecode を作った interpreter・子の約束の版・bytecode の処理ステージの数と秒
+   (bytecode — 焼く木が無かった準備は None = 記録が無い。印の JSON に欄を足しただけなので、欄を書かない作り手の印も同じ形式の版のまま)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -62,7 +64,8 @@
   (#^ int downloaded)
   (#^ int built)
   (#^ str interpreter)
-  (#^ int child-protocol))
+  (#^ int child-protocol)
+  (setv #^ (| BytecodeCounts None) bytecode None))
 
 
 (defrecord WheelReady
@@ -93,11 +96,11 @@
 
 
 (defrecord BytecodeReport
-  "bytecode を作った結果。interpreter = 作った interpreter の path(root の venv の物であることを完成マーカーで読む)・compiled と
-   carried = 全部の木の合計・problems = 焼き終えたが検めの通らない木の TreeProblem の列(要求の木の順)。"
+  "bytecode を作った結果。interpreter = 作った interpreter の path(root の venv の物であることを完成マーカーで読む)・counts = 焼く道具が
+   報告した数と秒(全部の木の合計・処理ごとの秒・木ごとの数 — 完成マーカーに載せる)・problems = 焼き終えたが検めの通らない木の
+   TreeProblem の列(要求の木の順)。"
   (#^ str interpreter)
-  (#^ int compiled)
-  (#^ int carried)
+  (#^ BytecodeCounts counts)
   (#^ tuple problems))
 
 
@@ -126,7 +129,8 @@
   (setv #^ int downloaded 0)
   (setv #^ int built 0)
   (setv #^ str interpreter "")
-  (setv #^ tuple stages #()))
+  (setv #^ tuple stages #())
+  (setv #^ (| BytecodeCounts None) bytecode None))
 
 
 ;; --- effect ------------------------------------------------------------------------------

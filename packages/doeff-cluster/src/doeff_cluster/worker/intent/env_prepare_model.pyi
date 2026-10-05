@@ -5,6 +5,7 @@ from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
+from doeff_cluster.shared.intent.env_marker_model import BytecodeCounts as BytecodeCounts
 ROOTS_PTH: str
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,6 +52,7 @@ class EnvMarker:
     built: int
     interpreter: str
     child_protocol: int
+    bytecode: BytecodeCounts | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WheelReady:
@@ -76,8 +78,7 @@ class TreeProblem:
 @dataclass(frozen=True, kw_only=True)
 class BytecodeReport:
     interpreter: str
-    compiled: int
-    carried: int
+    counts: BytecodeCounts
     problems: tuple
 
 @dataclass(frozen=True, kw_only=True)
@@ -103,6 +104,7 @@ class PrepareState:
     built: int = 0
     interpreter: str = ''
     stages: tuple = ...
+    bytecode: BytecodeCounts | None = None
 
 @dataclass(frozen=True)
 class StageStarted(EffectBase):
