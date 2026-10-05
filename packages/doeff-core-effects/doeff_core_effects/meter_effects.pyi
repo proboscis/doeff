@@ -32,6 +32,11 @@ class MeterSettings:
     inf_label: str = 'le_inf'
     gc_pause_name: str | None = None
 
+@dataclass(frozen=True, kw_only=True)
+class SecondsObservation:
+    name: str
+    seconds: float
+
 @_doeff_dataclass(frozen=True)
 class CountMetric(_doeff_effect_base[None]):
     name: str
@@ -41,6 +46,13 @@ class CountMetric(_doeff_effect_base[None]):
 class ObserveSeconds(_doeff_effect_base[None]):
     name: str
     seconds: float
+
+@_doeff_dataclass(frozen=True)
+class ObserveSecondsBatch(_doeff_effect_base[None]):
+    observations: tuple[SecondsObservation, ...]
+
+    def __post_init__(self) -> None:
+        ...
 
 @_doeff_dataclass(frozen=True)
 class SetGauge(_doeff_effect_base[None]):
@@ -55,6 +67,9 @@ def counted(snapshot: MeterSnapshot, name: str, amount: float) -> _Program[Meter
     ...
 
 def gauged(snapshot: MeterSnapshot, name: str, value: float) -> _Program[MeterSnapshot, object]:
+    ...
+
+def observed_batch(snapshot: MeterSnapshot, settings: MeterSettings, observations: tuple[SecondsObservation, ...]) -> _Program[MeterSnapshot, object]:
     ...
 
 def observed(snapshot: MeterSnapshot, settings: MeterSettings, name: str, seconds: float) -> _Program[MeterSnapshot, object]:

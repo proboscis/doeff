@@ -8,6 +8,8 @@
 ;;     含めてちょうど 1 つずつ増え、wait は書くまで待った秒(WAIT-FLOOR 以上)・起きてから送るまでの秒(woke)は待ちより
 ;;     短い。queue〜send と wait の秒の和は total に等しい(handler に待ちを混ぜると和が total を超える)
 ;;   - 同じことが PostgreSQL の置き場(使い捨て)でも成り立つ(置き場の待ちは LISTEN の呼び鈴と WaitWithin)
+;;   - 記録の操作の要求 1 件の区間の秒は、計器の効果 1 回(ObserveSecondsBatch)で積む — 秒の観測の効果に入った回数を数える計器を差すと、
+;;     書き 1 件で 1 回・変化の待ちの筋書き(待ちの要求と、待ちを起こす書き)で 2 回(区間ごとに撃つと 1 要求で 7〜9 回 — #3688 の観測の束ね)
 ;;   - 反例: 秒の観測を捨てる計器・区間 decode だけを捨てる計器を差すと、同じ確かめが観測の欠けを名指しで赤にする(計時を外した形)
 (require doeff-hy.macros [deftest defhandler defk <- val])
 (require doeff-hy.record [defrecord])
@@ -20,7 +22,7 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_core_effects.meter_effects [ObserveSeconds])
+(import doeff_core_effects.meter_effects [CountMetric ObserveSeconds ObserveSecondsBatch])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
@@ -54,6 +56,9 @@
 (val STAGES-ADD-UP "区間の秒の和が total(受けた → 送った)に等しい")
 (val TOTAL-OBSERVED "受けた → 答えが決まった(total − send)が 0 より長く、client の往復の秒を超えない")
 (val WAIT-SEPARATED "待った秒と、起きている秒・起きてからの秒が分かれている")
+
+;; 秒の観測の効果に入った回数を数える計器(observation-counting-meter)が数える counter の名(描く名は末尾に _total)。
+(val OBSERVE-EFFECTS "records_test_observe_effects")
 
 
 (defrecord StageGrowth
@@ -202,6 +207,16 @@
   (sum (gfor growth grown :if (= growth.stage stage) growth.seconds)))
 
 
+(defk observe-effects-grown [before after]
+  {:pre [(: before str) (: after str)] :post [(: % float)] :tags {:context "records" :role "judgment"}}
+  "2 つの拍の間に、秒の観測の効果に入った回数(数える計器の counter OBSERVE-EFFECTS)が増えた分を読み、要求ごとに計器の効果を何回
+   撃ったかを確かめるため。"
+  (<- earlier (get FrozenMap float) (series-values before))
+  (<- later (get FrozenMap float) (series-values after))
+  (val name (+ OBSERVE-EFFECTS "_total"))
+  (- (.get later name 0.0) (.get earlier name 0.0)))
+
+
 (defk summed-seconds [grown]
   {:pre [(: grown (get tuple #(StageGrowth ...)))] :post [(: % float)] :tags {:context "records" :role "judgment"}}
   "total の内訳の区間(SUMMED-STAGES)の秒の和を読むため。"
@@ -264,16 +279,36 @@
 
 
 (defhandler unobserving-meter
-  "秒を観測しない計器(計時を外した形の代役): ObserveSeconds を受け流す。数え(CountMetric)と断面の読みは外側の既定の計器へ回す。"
+  "秒を観測しない計器(計時を外した形の代役): 秒の観測の列(ObserveSecondsBatch)を受け流す。数え(CountMetric)と断面の読みは外側の
+   既定の計器へ回す。"
   {:tags {:context "records" :role "foundation"}}
-  (ObserveSeconds [name seconds]
+  (ObserveSecondsBatch [observations]
     (resume None)))
 
 
 (defhandler decode-dropping-meter
-  "区間 decode の秒だけを観測しない計器(刻を 1 つ打ち忘れた形の代役): 名が _decode で終わる ObserveSeconds を受け流し、他は外側へ回す。"
+  "区間 decode の秒だけを観測しない計器(刻を 1 つ打ち忘れた形の代役): 秒の観測の列から名が _decode で終わる観測を外し、残りを外側の
+   既定の計器へ回す。"
   {:tags {:context "records" :role "foundation"}}
-  (ObserveSeconds [name seconds] :when (.endswith name "_decode")
+  (ObserveSecondsBatch [observations]
+    (<- (ObserveSecondsBatch :observations (tuple (gfor observation observations
+                                                        :if (not (.endswith observation.name "_decode"))
+                                                        observation))))
+    (resume None)))
+
+
+(defhandler observation-counting-meter
+  "秒の観測の効果に入った回数を数える計器(要求ごとの効果の回数を確かめる代役): ObserveSeconds と ObserveSecondsBatch のどちらも、
+   入るたびに counter OBSERVE-EFFECTS へ 1 つ数え、効果はそのまま外側の既定の計器へ回す(区間の観測の約束は既定の計器が守る)。
+   ObserveSeconds も数えるのは、区間ごとに撃つ形へ戻った時に回数の増えとして赤にするため。"
+  {:tags {:context "records" :role "foundation"}}
+  (ObserveSeconds [name seconds]
+    (<- (CountMetric :name OBSERVE-EFFECTS :amount 1.0))
+    (<- effect)
+    (resume None))
+  (ObserveSecondsBatch [observations]
+    (<- (CountMetric :name OBSERVE-EFFECTS :amount 1.0))
+    (<- effect)
     (resume None)))
 
 
@@ -309,6 +344,20 @@
       (.close connections)))
   (<- write-broken-checks (get tuple #(Expectation ...)) (write-broken write))
   (<- watch-broken-checks (get tuple #(Expectation ...)) (watch-broken watch))
+  (assert (= write-broken-checks #()) write-broken-checks)
+  (assert (= watch-broken-checks #()) watch-broken-checks))
+
+
+(deftest test-a-request-observes-its-stages-in-one-meter-effect
+  ;; #3688 の観測の束ね: 書き 1 件で秒の観測の効果に入るのは 1 回(区間ごとに撃つと 7 回)・変化の待ちの筋書き(待ちの要求と、待ちを
+  ;; 起こす書きの 2 要求)で 2 回(区間ごとなら 9 + 7 回)。数える計器は効果を外側の既定の計器へ回すので、区間の観測の約束もそのまま守られる。
+  (<- runs TimedRuns (memory-timed-runs observation-counting-meter))
+  (<- write-effects float (observe-effects-grown runs.write.before runs.write.after))
+  (<- watch-effects float (observe-effects-grown runs.watch.before runs.watch.after))
+  (assert (= #(write-effects watch-effects) #(1.0 2.0))
+          (.format "秒の観測の効果に入った回数: 書き 1 件で {}(1 のはず)・変化の待ちの筋書きで {}(2 のはず)" write-effects watch-effects))
+  (<- write-broken-checks (get tuple #(Expectation ...)) (write-broken runs.write))
+  (<- watch-broken-checks (get tuple #(Expectation ...)) (watch-broken runs.watch))
   (assert (= write-broken-checks #()) write-broken-checks)
   (assert (= watch-broken-checks #()) watch-broken-checks))
 

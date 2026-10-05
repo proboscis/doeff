@@ -102,7 +102,7 @@
 (import doeff_core_effects.stack-dump-effects [ArmStackDump DisarmStackDump ReadStackDumps])
 (import doeff_core_effects.faulthandler-stack-dump [faulthandler-stack-dump-handler])
 (import doeff_core_effects.memory-stack-dump [memory-stack-dump-handler])
-(import doeff_core_effects.meter-effects [CountMetric ObserveSeconds SetGauge ReadMeter])
+(import doeff_core_effects.meter-effects [CountMetric ObserveSeconds ObserveSecondsBatch SetGauge ReadMeter])
 (import doeff_core_effects.process-meter [process-meter-handler])
 (import doeff_core_effects.memory-meter [memory-meter-handler])
 (import doeff_core_effects.random-effects [RandomBytes])
@@ -357,10 +357,10 @@
 
 (defdomain doeff-meter
   :title "Meter 語彙 — 数・秒・値の計器"
-  :effects [CountMetric ObserveSeconds SetGauge ReadMeter]
+  :effects [CountMetric ObserveSeconds ObserveSecondsBatch SetGauge ReadMeter]
   :handlers [process-meter-handler memory-meter-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "process-meter-handler(本物・process の中の計器)と memory-meter-handler(I/O なし)が 4 effect 全てに答える。")
+  :docs "process-meter-handler(本物・process の中の計器)と memory-meter-handler(I/O なし)が 5 effect 全てに答える。")
 
 
 (defdomain doeff-random
