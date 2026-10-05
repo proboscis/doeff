@@ -290,7 +290,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 
 - 書き込みには header `X-Actor: $ME` が要ります(無いと 400)。
 - 書き換えは版つきです。`GET` で読んだ `resourceVersion` を付けて `PUT` します。読んだ後に誰かが書いていれば 409 で何も書かれません。
-- Service を消すのは所有者の `DELETE` だけです(所有者でなければ `?force=true`)。進行中の Rollout が扱っている Service は消せません。
+- Service と Rollout の `DELETE`・所有者(`owner`)の書き換えは、送り手が誰でも通ります。所有者は誰が宣言したかの記録で、書き・消しを断る照合には使いません(`X-Actor` の名乗りは確かめないので守りにならないため、2026-10-05 に外しました)。進行中の Rollout が扱っている Service と、進行中の Rollout は `?force=true` を付けた時だけ消えます。
 - Worker を消す(`DELETE /resources/Worker/<名>`)のは、機体が落ちた事を確かめてから、または沈黙が keep-fence-ms(既定 240 秒)+ 停止の猶予 15 秒を過ぎてからにします。他に置ける worker が無い job は、担い手が途絶しても止めずに動かし続けてよい印を持ちます。Worker を消すと coordinator はその job を他の worker へ置くので、担い手がまだ動いていると 2 か所で走ります。
 - task と切り離した task の本文は Program の sha だけを運びます。先に `PUT /programs/<sha>` で置いてから送ります(置き場に無い sha は 400)。
 - 盤の行に `"ttlSeconds": n` を付けると n 秒後に消えます。上限: 1 行 1 MiB・20,000 行・合計 64 MiB(越える書きは 507)。

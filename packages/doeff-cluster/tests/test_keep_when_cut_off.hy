@@ -116,11 +116,11 @@
   (<- mark KeepMark (promise-to "a" "w1"))
   (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
   (with [(pytest.raises Refused)]
-    (delete-resource promised "Worker" "w1" {} "operator" 30000 T))
+    (delete-resource promised "Worker" "w1" {} 30000 T))
   ;; 読みの口(#2883): 消す前は約束が 1 件出て、Worker を消した後は消える。
   (val view (! (state-view promised PAST-DEADLINE T)))
   (assert (= (lfor m view.keep-marks #(m.job m.worker)) [#("a" "w1")]))
-  (val deleted (delete-resource promised "Worker" "w1" {} "operator" PAST-DEADLINE T))
+  (val deleted (delete-resource promised "Worker" "w1" {} PAST-DEADLINE T))
   (val after (! (reconcile PAST-DEADLINE deleted T)))
   (assert (= after.keep-marks #()) after.keep-marks)
   (assert (= (. (! (state-view after PAST-DEADLINE T)) keep-marks) #()))

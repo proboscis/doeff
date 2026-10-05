@@ -8,7 +8,7 @@
 ;;;   GET    /resources/<Kind>/<名>        1 つ(resourceVersion・generation・所有者・作った / 書いた送り手・spec・status)
 ;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service と Rollout)。在れば 409
 ;;;   PUT    /resources/<Kind>/<名>        書き換える {"spec", "resourceVersion"}。版が古ければ 409・版が無ければ 400
-;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(Service と Rollout は所有者か force だけ)
+;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(送り手が誰でも消せる。進行中の Rollout が扱う Service・進行中の Rollout は force でだけ消す)
 ;;;   POST   /resources/Service/<名>/readiness   ReportReady の報告 {worker pid revision instance attempt specHash placement ready reason}
 ;;;   POST   /resources/Service/<名>/metrics     ReportMetrics の報告 {worker … placement metrics}(資源の状態は変えない)
 ;;;   GET    /metrics                            Prometheus の text: 今動いている process の計器(label service・worker)
@@ -340,7 +340,7 @@
           #(after 200 (get-resource after (get parts 1) (get parts 2) now timing)))
     (and (= head "resources") (= (len parts) 3) (= method "DELETE"))
       (do (setv actor (require-actor request.actor))
-          (setv after (! (settle state (delete-resource state (get parts 1) (get parts 2) request.query actor now timing)
+          (setv after (! (settle state (delete-resource state (get parts 1) (get parts 2) request.query now timing)
                                  actor now timing)))
           #(after 200 {"deleted" (+ (get parts 1) "/" (get parts 2)) "revision" after.revision}))
     (and (= head "resources") (= (len parts) 4) (= (get parts 1) "Service") (= (get parts 3) "readiness") (= method "POST"))
