@@ -65,7 +65,6 @@ class RequestKind(StrEnum):
     READ = 'read'
     OTHER = 'other'
 ERROR_MALFORMED: str
-ERROR_UNAUTHORIZED: str
 ERROR_NOT_FOUND: str
 ERROR_STORE_UNAVAILABLE: str
 ERROR_INTERNAL: str

@@ -138,7 +138,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   1 つ数える(本文の断りの 400・答えの途中で落ちた 500 も同じ 1 か所)。答えの送りが例外になれば、標準の誤りへ 1 行名指して 500 internal を
   1 度だけ送り直し、500 として数える(送れなかった答えの status は数えない)。`GET /metrics` は身元を引く前に答え、`ReadMeter` の断面を
   `doeff_core_effects.meter_prometheus.render_prometheus` で描く(名は末尾に `_total`・label なし)。系列は種 3 × status(200 と断りの
-  status)の 18 本で閉じていて、起動の時に全部を 0 で置く。置き場に届かなかった数 = `*_503_total`(表の用意の前と `/readyz` の不達を
+  status)の 15 本で閉じていて、起動の時に全部を 0 で置く。置き場に届かなかった数 = `*_503_total`(表の用意の前と `/readyz` の不達を
   含む)・答えの途中で落ちた数 = `*_500_total`。`other` には kubelet の `/healthz`・`/readyz` と `/metrics` 自身の読みが入る。値は
   process の再起動で 0 に戻る(読み手は区間の差で数える)。計器の答え手は doeff の `memory-meter-handler`(差し替えの欄 `RecordsServing.meter` が在れば、その内側に被せる)。
 - 走っている木と表の要約(#2742): `GET /served` は、動いている process が走っている木の commit と世代(`RecordsServing.served` の
@@ -152,10 +152,10 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, writer=…))` は、同じ公開 effect に口越しで
-答える(書き手の名 `writer` を平文の見出し `X-Records-Writer`(綴りは `doeff_records.wire` の `WRITER-HEADER`)で送る。欄 `token` は移行の間だけ残り、在れば `Authorization` で送る)。`401` / `403`(口は出さない — 前に立つ口が出した時)は操作を問わず `RecordsUnauthorized` を上げる — 組み立ての誤りで、
-時間を置いても晴れないので `Unreachable`(撃ち直してよい届かなさ)にも `Refused`(宣言がその書きを断った)にもしない。`404` は `UndeclaredTable` を上げる
+答える(書き手の名 `writer` を平文の見出し `X-Records-Writer`(綴りは `doeff_records.wire` の `WRITER-HEADER`)で送る。`Authorization` は送らない)。`404` は `UndeclaredTable` を上げる
 (欄 = 要求が名指した名のうち断りの理由に載った物 — 断りの本文の形は変えない。理由の綴りは `wire.hy` の `undeclared-reason` と
-`undeclared-refusal` の 1 か所)。
+`undeclared-refusal` の 1 か所)。`400` / `500` と、ほかの status(`401` / `403`・間の proxy の `502` など — status ごとの枝は持たない)は
+一般の失敗で `WireError` を上げる(本文が契約の断りの形でない JSON の時だけ `WireMalformed`。口は `401` / `403` を出さない)。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
 置き場の止まり(#3557): 要求と答えの公開 effect 7 つは、届かない(`503` の `store-unavailable` を含む `Unreachable`)時に、待つ時間まで
 置き場の戻りを待って同じ要求を撃ち直す。待つ時間は要求のたびに client だけが問う `ReadRequestPatience` で問い、戻りは合図の源と同じ

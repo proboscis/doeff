@@ -224,7 +224,7 @@
 
 (deftest test-every-answer-is-counted-once-by-its-kind-and-status
   ;; 札 5 つ = 数え 5 つ: /healthz(other 200)・書き(write 200)・読み(read 200)・上限を超えた本文(read 400 — 本文の断りの出口)・
-  ;; 答えの途中で落ちた札(read 500 — 落ちた時の出口)。閉じた系列(種 3 × status 6)は全部、断面に在る(起動の時に 0 で置いた)。
+  ;; 答えの途中で落ちた札(read 500 — 落ちた時の出口)。閉じた系列(種 3 × status 5)は全部、断面に在る(起動の時に 0 で置いた)。
   (<- script HttpScript (served-script))
   (<- ran MeteredRun (metered-entry script BROKEN-TICKET (handlers-at-once (MemoryStore LAW-SCHEMA))))
   (assert (= ran.code 0) ran)

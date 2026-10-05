@@ -17,7 +17,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_client [records-unwaited])
 (import doeff_records.http_server [records-server-config RunningServer start-records-server])
-(import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
+(import doeff_records.http_client [RecordsEndpoint WireError http-records-handler http-table-records-handler])
 (import tests.interpreters [sim-request-handlers])
 
 
@@ -53,7 +53,7 @@
 
 
 (deftest test-an-unnamed-caller-is-served-as-anonymous-and-writes
-  ;; 呼び手を断らない(#2988): 名乗らない呼び手の読みは答えの値になり(RecordsUnauthorized を上げない)、書きも anonymous の書き手として
+  ;; 呼び手を断らない(#2988): 名乗らない呼び手の読みは答えの値になり(例外を上げない)、書きも anonymous の書き手として
   ;; 通る(置き場は書き手の名では断らない — #2994)。口が 401 で断る形・置き場が書き手で断る形に戻ると赤。
   (val store (MemoryStore LAW-SCHEMA))
   (val opened (open-service (memory-lease store)))
@@ -132,11 +132,11 @@
     (finally (.close server))))
 
 
-(defclass FrontRefusal [BaseHTTPRequestHandler]
-  "記録の service の前に立つ口の代役: どの要求にも server.status と本文 server.payload で答える(前に立つ口の身元の断りの本文は、
+(defclass FixedStatusPage [BaseHTTPRequestHandler]
+  "記録の service との間に立つ口(proxy)の代役: どの要求にも server.status と HTML の本文 server.payload で答える(間の口の本文は、
    記録の service の JSON の断りとは限らない)。"
   (deff do-POST [self]  ; defk にできない: http.server が要求ごとの thread で呼ぶ素の method
-    {:pre [(: self FrontRefusal)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
+    {:pre [(: self FixedStatusPage)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
     (.read self.rfile (int (.get self.headers "Content-Length" "0")))
     (.send-response self self.server.status)
     (.send-header self "Content-Type" "text/html")
@@ -145,40 +145,40 @@
     (.write self.wfile self.server.payload)
     None)
   (deff log-message [self #* args]  ; defk にできない: http.server が要求ごとに呼ぶ log の口(検の出力を要求の行で埋めない)
-    {:pre [(: self FrontRefusal) (: args tuple)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
+    {:pre [(: self FixedStatusPage) (: args tuple)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
     None))
 
 
-(defk front-refusal-server [status payload]
+(defk fixed-status-server [status payload]
   {:pre [(: status int) (: payload bytes)] :post [(: % ThreadingHTTPServer)] :tags {:context "records" :role "foundation"}}
-  "前に立つ口の代役(127.0.0.1 の空き port)を立てるため: どの要求にも status と HTML の本文 payload で答える。"
-  (val server (ThreadingHTTPServer #("127.0.0.1" 0) FrontRefusal))
+  "間に立つ口の代役(127.0.0.1 の空き port)を立てるため: どの要求にも status と HTML の本文 payload で答える。"
+  (val server (ThreadingHTTPServer #("127.0.0.1" 0) FixedStatusPage))
   (setv server.status status server.payload payload)
   (.start (threading.Thread :target server.serve-forever :daemon True))
   server)
 
 
-(deftest test-an-identity-refusal-with-a-non-json-body-raises-by-status
-  ;; 前に立つ口の 401 / 403 は本文が HTML でも status で身元の断りと読む(本文を JSON として読んで WireError にしない)。
-  ;; 理由は本文の頭だけを写す。
-  (val page (+ b"<html><body>" (* b"x" 2000) b"</body></html>"))
+(deftest test-a-401-or-403-is-the-general-failure
+  ;; 401 / 403 は他の 4xx と同じ一般の失敗: 本文が JSON でなければ WireError(status ごとの枝も、身元の断りの名の付いた例外も持たない —
+  ;; 頼まれていない security の名残を外した #2986)。読みも書きも同じ。401 / 403 だけを別の例外(WireError の子を含む)や答えの値
+  ;; (Unreachable・Refused)へ写す枝が戻ると赤。
+  (val page b"<html><body>refused</body></html>")
   (for [status [401 403]]
-    (val server (! (front-refusal-server status page)))
+    (val server (! (fixed-status-server status page)))
     (val url (+ "http://127.0.0.1:" (str (get server.server-address 1))))
     (try
       (do
         (val endpoint (RecordsEndpoint url :request-timeout 5.0))
-        (var said None)
-        (try
-          (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
-                                          records-unwaited (http-records-handler endpoint)]
-                                         (ReadRow "parts" #("p1")))))
-          (except [error RecordsUnauthorized]
-            (:= said (str error))))
-        (assert (is-not said None) (.format "{} の前の口の断りが答えの値になった" status))
-        (assert (in (.format "({} read-row)" status) said) said)
-        (assert (in "<html>" said) said)
-        (assert (< (len said) 1000) said))
+        (for [ask [(ReadRow "parts" #("p1")) (PutRow "parts" #("p1") {"label" "a"} (ExpectAny))]]
+          (var raised None)
+          (try
+            (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+                                            records-unwaited (http-records-handler endpoint)]
+                                           ask)))
+            (except [error WireError]
+              (:= raised error)))
+          (assert (is (type raised) WireError) (.format "status {} の {} が一般の失敗にならない: {!r}" status ask raised))
+          (assert (in (.format "(status {})" status) (str raised)) (str raised))))
       (finally (.shutdown server) (.server-close server)))))
 
 

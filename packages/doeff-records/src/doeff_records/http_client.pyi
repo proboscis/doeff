@@ -53,11 +53,6 @@ DEFAULT_REQUEST_TIMEOUT: float
 class WireError(RuntimeError):
     ...
 
-class RecordsUnauthorized(Exception):
-    ...
-IDENTITY_REFUSED_STATUSES: tuple[int, ...]
-REASON_MAX_CHARS: int
-
 @dataclass(frozen=True)
 class RecordsEndpoint:
     base_url: str
@@ -89,12 +84,6 @@ def exchange(endpoint: RecordsEndpoint, operation: str, body: dict[str, object],
     ...
 
 def waited_seconds(ask: PublicEffect) -> _Program[float, object]:
-    ...
-
-def refused_reason(payload: bytes) -> _Program[str, object]:
-    ...
-
-def identity_refused(endpoint: RecordsEndpoint, operation: str, reply: RawReply) -> _Program[RecordsUnauthorized, object]:
     ...
 
 def zero_client_metrics(endpoint: RecordsEndpoint) -> _Program[None, object]:
