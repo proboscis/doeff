@@ -16,16 +16,16 @@
 (import doeff_records.effects [PutRow ReadRow])
 (import doeff_records.values [ExpectAny])
 (import doeff_records.wire [CLIENT-ANSWER-METRICS])
-(import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized WireError http-records-handler zero-client-metrics])
+(import doeff_records.http_client [RecordsEndpoint WireError http-records-handler zero-client-metrics])
 (import doeff_records.http_client [records-unwaited])
 
-;; 台本の答え 1 つ: 届かない(接続できない)か、#(status 本文)。本文 None = JSON でない本文(間の proxy や前に立つ口の HTML の代役)。
+;; 台本の答え 1 つ: 届かない(接続できない)か、#(status 本文)。本文 None = JSON でない本文(間の proxy の HTML の代役)。
 (val UNREACHABLE "unreachable")
 (val WRITTEN #(200 {"kind" "written" "version" 1 "value" {"note" "a"}}))
 (val MISSING #(200 {"kind" "missing"}))
 (val STORE-UNAVAILABLE #(503 {"error" "store-unavailable" "reason" "置き場に届かない(検)"}))
 (val BAD-GATEWAY #(502 None))
-(val FORBIDDEN #(403 None))
+(val HTML-401 #(401 None))
 
 (val WRITE (PutRow "notes" #("a") (FrozenMap {"note" "a"}) (ExpectAny)))
 (val READ (ReadRow "notes" #("a")))
@@ -59,11 +59,11 @@
 
 (defk attempted [ask]
   {:pre [(: ask EffectBase)] :post [(: % str)] :tags {:context "records" :role "foundation"}}
-  "公開 effect を 1 つ撃ち、答えの型の名か、上がった例外の型の名を返すため(client は 502・403 などの断りを例外にする)。"
+  "公開 effect を 1 つ撃ち、答えの型の名か、上がった例外の型の名を返すため(client は 502・401 などの断りを一般の失敗 WireError にする)。"
   (try
     (do (<- answer ask)
         (. (type answer) __name__))
-    (except [problem #(WireError RecordsUnauthorized)]
+    (except [problem WireError]
       (. (type problem) __name__))))
 
 
@@ -108,17 +108,18 @@
 
 (deftest test-the-client-counts-each-request-by-kind-and-outcome
   ;; 届かない窓の書き 3 件は unreachable に 3(service の計器には出ない数)。service の 503(置き場に届かない)は 503・間の proxy の
-  ;; 502 と前に立つ口の 403 は閉じた系列の外なので other。読みは read で数える。閉じた系列(種 2 × 結果 8)は全部、断面に在る。
-  (<- ran ClientRun (metered-client-run #(UNREACHABLE UNREACHABLE UNREACHABLE WRITTEN STORE-UNAVAILABLE BAD-GATEWAY MISSING FORBIDDEN)
+  ;; 502 と 401 は閉じた系列の外なので other で、どちらも一般の失敗 WireError(401 の系列も名の付いた例外も無い — #2986)。読みは read で
+  ;; 数える。閉じた系列(種 2 × 結果 7)は全部、断面に在る。
+  (<- ran ClientRun (metered-client-run #(UNREACHABLE UNREACHABLE UNREACHABLE WRITTEN STORE-UNAVAILABLE BAD-GATEWAY MISSING HTML-401)
                                         #(WRITE WRITE WRITE WRITE WRITE WRITE READ READ)))
-  (assert (= ran.answers #("Unreachable" "Unreachable" "Unreachable" "Written" "Unreachable" "WireError" "Missing" "RecordsUnauthorized"))
+  (assert (= ran.answers #("Unreachable" "Unreachable" "Unreachable" "Written" "Unreachable" "WireError" "Missing" "WireError"))
           ran.answers)
   (assert (= ran.counted (FrozenMap {"records_client_requests_write_unreachable" 3.0 "records_client_requests_write_200" 1.0
                                      "records_client_requests_write_503" 1.0 "records_client_requests_write_other" 1.0
                                      "records_client_requests_read_200" 1.0 "records_client_requests_read_other" 1.0}))
           ran.counted)
   (assert (= ran.names (frozenset CLIENT-ANSWER-METRICS)) ran.names)
-  (assert (= (len CLIENT-ANSWER-METRICS) 16) CLIENT-ANSWER-METRICS))
+  (assert (= (len CLIENT-ANSWER-METRICS) 14) CLIENT-ANSWER-METRICS))
 
 
 (deftest test-an-endpoint-without-a-meter-emits-no-meter-effect
