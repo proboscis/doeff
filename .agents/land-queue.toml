@@ -103,6 +103,10 @@ full = [
 #   packages/doeff-gemini/tests/e2e/test_gemini_live.py の 1 本、packages/doeff-openrouter/tests/e2e/test_openrouter_integration.py の 1 本、
 #   packages/doeff-google-secret-manager/tests/e2e/test_access_secret_e2e.py = 本物の外の API(費用・資格・GCP の secret)を呼ぶ。
 #   tests/cli/test_cli_runbox_e2e.py の 8 本 = runbox の CLI が要る(zeus に無い — 入れても常に skip)。手の入口は make test-e2e。
+# ⚠ テストを 1 本も持たない test_ の file 8 つ(集めると 0 件 — 日次に入れても何も走らない。消す・移す・改名は持ち主を利用者に伺って決める
+#   — agora-redesign #3167): tests/core/test_doeff_markers.py・tests/core/test_map_flatmap_callback_metadata.py・
+#   tests/core/test_spec_trace_001_examples.py・tests/core/test_trace_coercion_strict.py・tests/effects/test_ask_lazy_evaluation.py・
+#   tests/test_await_http_memory.py・tests/test_pass_dispatch_context_regression.py・packages/doeff-test-target/tests/test_target_run_support.py。
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 # 2026-10-02(agora-redesign #2589): 日次の全体検証の予算を別の鍵 full_timeout_s へ移した(merge-queue L195 で予算と窓の門の上限を別の
