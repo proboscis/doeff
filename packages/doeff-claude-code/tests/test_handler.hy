@@ -7,19 +7,20 @@
 (import sys)
 (import uuid)
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects.effects [Listen SlogEffect])
+(import doeff_core_effects.handlers [listen-handler slog-discard-handler])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
-(import doeff_claude_code.lines [BackendLost Completed Failed Interrupted Usage])
+(import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession TurnStarted
                                    LaunchFailed SessionExported SessionNotFound])
 (import doeff_claude_code.faults [ClaudeDropProcess])
 (import doeff_claude_code.argv [transcript-path])
 (import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
 (import tests.interpreters [STUB-PATH child-env])
-(import tests.scenario_rules [reply-prompt sleep-prompt])
-(import tests.scenario_steps [read-to-end read-to-tool-start])
+(import tests.scenario_rules [STREAM-PHRASE reply-prompt sleep-prompt])
+(import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start])
 
 
 (defn host-of [command]
@@ -253,3 +254,43 @@
   (assert (= blank (SessionNotFound empty)) (repr blank))
   (<- absent (with-real-handler host (ClaudeExportSession spec.home spec.cwd missing)))
   (assert (= absent (SessionNotFound missing)) (repr absent)))
+
+
+;; 替え玉の CLI が最後の本文を何片の差分で流すか(#3628)と、その本文(片の数以上の字数)。
+(val STREAMED-PIECES 5)
+(val STREAMED-WORD "PIECEWISE-REPLY")
+
+(defk streamed-then-plain [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % list)] :tags {:context "claude-code" :role "program"}}
+  "最後の本文を STREAMED-PIECES 片の差分で流す手番と、差分を流さない手番を同じ会話で続けて最後まで読む。答え = 2 つの手番の読み。"
+  (<- streamed (ClaudeStartTurn (FreshSession sid) spec
+                                (TurnInput (+ (reply-prompt STREAMED-WORD) " . " (.format STREAM-PHRASE STREAMED-PIECES))
+                                           (str (uuid.uuid4)))))
+  (<- streamed-read TurnRecord (read-to-end streamed.turn 30.0))
+  (<- plain (ClaudeStartTurn (ResumeSession sid) spec (TurnInput (reply-prompt "PLAIN") (str (uuid.uuid4)))))
+  (<- plain-read TurnRecord (read-to-end plain.turn 30.0))
+  [streamed-read plain-read])
+
+
+(deftest test-the-turn-end-timing-line-counts-the-text-deltas-the-cli-sent [tmp-path]
+  ;; 手番の終わりを上の層へ渡した所の計時の行(event turn-end — #3628)は、その手番で CLI から受けた本文の差分の行(text_delta)の数
+  ;; partial_lines と、process を起こし始めてから最初の差分の行を読むまでの ms first_partial_since_launch_ms を持つ — 手番の文の途中が
+  ;; 画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で運ばれなかったのかを分けるため。替え玉の CLI が 5 片で流した手番は
+  ;; 5(差分を挟む content_block_start / stop は text_delta でないので数えない)・差分の無い手番は 0 と None。上の層へ渡した頁の差分の
+  ;; 行の数とも同じ。失敗ケース = 変更前は手番の終わりの計時の行が無い(欄が無い)。
+  (val host (host-of STUB-COMMAND))
+  (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler host)]
+              (Listen (streamed-then-plain (spec-in tmp-path) (str (uuid.uuid4))) :types #(SlogEffect))))
+  (val reads (get heard 0))
+  (val ends (lfor effect (get heard 1) :if (and (= effect.msg CLI-TIMING-LOG) (= (.get effect.kwargs "event") "turn-end"))
+                  effect.kwargs))
+  (assert (= (lfor end ends (.get end "partial_lines")) [STREAMED-PIECES 0]) (repr ends))
+  (val delivered (lfor read reads
+                       (len (lfor line read.lines :if (and (isinstance line.kind PartialMessage) line.kind.text-delta) line))))
+  (assert (= delivered [STREAMED-PIECES 0]) (repr delivered))
+  (val streamed (get ends 0))
+  (val plain (get ends 1))
+  (val first-partial (.get streamed "first_partial_since_launch_ms"))
+  (assert (isinstance first-partial int) (repr streamed))
+  (assert (<= 0 first-partial (.get streamed "since_launch_ms")) (repr streamed))
+  (assert (is (.get plain "first_partial_since_launch_ms") None) (repr plain)))

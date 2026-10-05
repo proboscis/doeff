@@ -135,7 +135,20 @@
              (= (.get (.get record "response" {}) "request_id") request-id))
           (return (.get (.get (.get record "response" {}) "response" {}) "behavior")))))
 
-  (defn result [self #^ str text #^ list refs]
+  (defn result [self #^ str text #^ list refs #^ int deltas]
+    ;; deltas > 0 なら、確定の本文の前に本文を deltas 片の差分(--include-partial-messages の stream_event の text_delta)で出す。
+    ;; 片は字数でほぼ等分(片の連結 = 本文 — fake の FakeReply.deltas と同じ分け方)。実物と同じく差分の列を content_block_start と
+    ;; content_block_stop(text_delta でない stream_event)で挟む。
+    (when (> deltas 0)
+      (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+             "event" {"type" "content_block_start" "index" 0 "content_block" {"type" "text" "text" ""}}})
+      (for [piece (range deltas)]
+        (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+               "event" {"type" "content_block_delta" "index" 0
+                        "delta" {"type" "text_delta"
+                                 "text" (cut text (// (* piece (len text)) deltas) (// (* (+ piece 1) (len text)) deltas))}}}))
+      (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+             "event" {"type" "content_block_stop" "index" 0}}))
     (emit {"type" "assistant" "session_id" self.session-id
            "message" {"role" "assistant" "content" [{"type" "text" "text" text}]}})
     (+= self.cost TURN-COST)
@@ -186,7 +199,8 @@
     (for [record injections]
       (.lifecycle self (.get record "uuid") "started")
       (.append words (get (reply-for (user-text record) (memory-of self.path)) "text")))
-    (.result self (.join " " words) (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid"))))
+    (.result self (.join " " words) (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))
+             (get rule "deltas"))
     (for [ref (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))]
       (.lifecycle self ref "completed")))
 
