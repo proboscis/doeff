@@ -4,8 +4,9 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import hashlib)
 (import json)
-(import platform)
-(import doeff_cluster.shared.intent.runtime_env_model [RUNTIME-ENV-FORMAT ENV-KEY-LENGTH InvalidKind RuntimeEnvInvalid RepoCheckout
+(import doeff_cluster.shared.core [native_wheel])
+(import doeff_cluster.shared.core.native_wheel [ENV-KEY-LENGTH])
+(import doeff_cluster.shared.intent.runtime_env_model [RUNTIME-ENV-FORMAT InvalidKind RuntimeEnvInvalid RepoCheckout
                                                        NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        EnvFailureKind RETRYABLE-KINDS EnvFailure])
 
@@ -32,13 +33,6 @@
   #((get parts 0) (get parts 2)))
 
 
-;; 読むのはこの process の機体の固定の事実(process の間は変わらない)。本来は foundation の読みだが、読み手に protocol の層
-;; (worker の declared・coordinator_link)が在り、protocol は foundation を import できないので、キーの材料の隣に置く。
-(defn #^ str current-platform []  ; defk にできない: worker と送り手の composition(Program の外)が読む
-  "この機体の platform の名(env のキーの材料 — 例 linux-x86_64)。root の中の native の wheel と venv は platform ごとに違う。"
-  (.format "{}-{}" (.lower (platform.system)) (.lower (platform.machine))))
-
-
 (defk key-material [env platform]
   {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
   "キーの材料(root の中身を決める物だけ)。env-vars・tools・準備の手順の版は入れない。"
@@ -63,13 +57,10 @@
   {:pre [(: wheel NativeWheel) (: tree-hashes tuple) (: python str) (: platform str)
          (= (len tree-hashes) (len wheel.paths))]
    :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
-  "native の wheel のキー(定義点はここ 1 つ)= package・wheel の中身を決める dir ごとの git の tree hash・Python・platform の
-   正規化した JSON の sha256 の頭 24 桁。tree-hashes は wheel.paths と同じ順。"
-  (val material {"package" wheel.package
-                 "trees" (lfor #(path tree) (zip wheel.paths tree-hashes) [path tree])
-                 "python" python "platform" platform})
-  (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
-  (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
+  "native の wheel のキー = package・wheel の中身を決める dir ごとの git の tree hash・Python・platform の正規化した JSON の sha256 の
+   頭 24 桁。tree-hashes は wheel.paths と同じ順。定義点は native_wheel.native_key の 1 つ — 起動の script(worker/entry/boot_wheel)も
+   同じ関数で鍵を求め、実行環境の準備が置いた wheel を使う。"
+  (native_wheel.native-key wheel.package wheel.paths tree-hashes python platform))
 
 
 (defk runtime-env->json [env]

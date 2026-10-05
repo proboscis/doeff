@@ -21,7 +21,6 @@ from enum import StrEnum
 RUNTIME_ENV_FORMAT: int
 CHILD_PROTOCOL: int
 SUPPORTED_CHILD_PROTOCOLS: frozenset[int]
-ENV_KEY_LENGTH: int
 NAME_PATTERN: re.Pattern[str]
 COMMIT_PATTERN: re.Pattern[str]
 SHA256_PATTERN: re.Pattern[str]

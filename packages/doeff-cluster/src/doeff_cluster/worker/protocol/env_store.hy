@@ -25,6 +25,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
                                             ProcessExited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.native_wheel [wheels-root])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
@@ -229,11 +230,11 @@
     (for [entry roots]
       (when (and (.startswith entry.name ".") (in ".broken." entry.name))
         (<- (RemoveTree (+ settings.state "/roots/" entry.name))))))
-  (<- wheels (ListDirectory (+ settings.state "/wheels")))
+  (<- wheels (ListDirectory (wheels-root settings.state)))
   (when (not (isinstance wheels FileFailed))
     (for [entry wheels]
       (when (= entry.kind PathKind.DIRECTORY)
-        (val path (+ settings.state "/wheels/" entry.name))
+        (val path (+ (wheels-root settings.state) "/" entry.name))
         (<- at (modified-ms path))
         (when (and (is-not at None) (> (- now-ms at) (* 1000 WHEEL-UNUSED-SECONDS)))
           (<- (RemoveTree path))))))

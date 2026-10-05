@@ -16,7 +16,8 @@
 ;;; キー env-key は root の中身を決める物(repos・project・import-roots・format)と platform だけから作る。env-vars と tools は
 ;;; file を変えないのでキーに入れない。準備の手順の版もキーに入れない(coordinator と worker の版が違っても同じ宣言が同じキーになる)。
 ;;; ここは型と定数だけ。キー・JSON の往復・失敗の値の組み立て・子の環境変数の組の検め(env-key・runtime-env->json・
-;;; runtime-env-of-json・env-failure・child-environ-refusal・current-platform ほか)は doeff_cluster.shared.core.runtime_env_rules。
+;;; runtime-env-of-json・env-failure・child-environ-refusal ほか)は doeff_cluster.shared.core.runtime_env_rules、鍵の長さ・platform の名・
+;;; native の wheel の鍵と置き場(ENV_KEY_LENGTH・current_platform・native_key ほか)は doeff_cluster.shared.core.native_wheel。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defenum defrecord])
@@ -30,7 +31,6 @@
 ;; env-incompatible で断る。
 (val CHILD-PROTOCOL 1)
 (val SUPPORTED-CHILD-PROTOCOLS (frozenset #(1)))
-(val ENV-KEY-LENGTH 24)
 
 (val NAME-PATTERN (re.compile r"[a-z0-9][a-z0-9._-]*"))
 (val COMMIT-PATTERN (re.compile r"[0-9a-f]{40}"))

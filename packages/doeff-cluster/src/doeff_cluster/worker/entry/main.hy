@@ -51,7 +51,7 @@
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
 (import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
-(import doeff_cluster.shared.core.runtime_env_rules [current-platform])
+(import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.core.run_context_rules [worker-context-environ])

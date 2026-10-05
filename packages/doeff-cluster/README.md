@@ -393,8 +393,13 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   `--build-arg BASE=<業務の image>`。
 - `deploy/base/Dockerfile` — 土台だけの image(OS・git・ssh・uv・Rust の toolchain・tini・`boot.sh`)。doeff も Python も持たず、
   `boot.sh` が `WORKER_DOEFF_COMMIT` の doeff を展開して `uv sync --locked --package doeff-cluster` した venv から coordinator / worker を
-  起動します(自己起動)。worker のコードを変える時は commit を変えて入れ替え、image は作り直しません。root を用意した後は、起動の
-  script も root の中の同じ commit の `deploy/boot.sh` へ引き継ぐので、起動の script を直した時も image は作り直しません。作り直す理由は頭の註の 2 種類
+  起動します(自己起動)。doeff-vm(Rust)は uv sync で組まず(`--no-install-package doeff-vm`)、実行環境の準備と同じ鍵・同じ置き場
+  (`$WORK_DIR/state/wheels/doeff-vm-<鍵>`)の組み済みの wheel を `python -m doeff_cluster.worker.entry.boot_wheel` で用意して venv へ
+  入れます(無ければ組んで置く — 鍵と置き場の定義点は `shared/core/native_wheel.py` の 1 つ)。doeff-vm の source が同じ commit への
+  入れ替えでは、起動も実行環境の準備も Rust を組み直しません。worker のコードを変える時は commit を変えて入れ替え、image は作り直しません。image に
+  焼いた `boot.sh` は root の展開(印 `.doeff-boot-extracted`)だけをして、root の中の同じ commit の `deploy/boot.sh` へ必ず引き継ぎ
+  (中身が同じでも)、venv と wheel の準備(印 `.doeff-boot-ready`)と役の起動は引き継いだ先がします。だから準備の手順を含めて起動の script を
+  直した時も image は作り直しません(2026-10-06 より前の image は準備まで自分でしてから引き継ぎ、引き継いだ先は印を見て準備済みとして続けます)。作り直す理由は頭の註の 2 種類
   だけで、それ以外の変更は `hy -m doeff_cluster.shared.entry.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
   この表は url に鍵を結ぶだけで、url を断りません。表に無い url は worker が鍵なしで clone します(公開の repo は通り、読めない非公開の

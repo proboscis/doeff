@@ -497,7 +497,8 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-env-prepare-model",
         "doeff-cluster-env-marker-model",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-env-handlers",
@@ -817,7 +818,8 @@
         "doeff-cluster-wal-store",
         "doeff-cluster-main",
         "doeff-cluster-run-context",
-        "doeff-cluster-run-context-rules"
+        "doeff-cluster-run-context-rules",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -857,7 +859,8 @@
         "doeff-cluster-worker-tick-pauses",
         "doeff-cluster-run-context-rules",
         "doeff-cluster-worker-warm-host",
-        "doeff-cluster-worker-warm-rules"
+        "doeff-cluster-worker-warm-rules",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1502,7 +1505,8 @@
         "doeff-cluster-boundary-recorder",
         "doeff-cluster-declaring",
         "doeff-cluster-handoff-policy",
-        "records-event-source"
+        "records-event-source",
+        "doeff-cluster-native-wheel"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2244,7 +2248,8 @@
         "doeff-cluster-env-upkeep",
         "doeff-cluster-worker-env-rules",
         "doeff-cluster-worker-heartbeat",
-        "doeff-cluster-worker-observations"
+        "doeff-cluster-worker-observations",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-env-store",
@@ -2332,7 +2337,8 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-job-model",
         "doeff-cluster-worker-rules",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-declared",
@@ -2359,7 +2365,8 @@
         "doeff-cluster-worker-heartbeat",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-remote-rules",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-coordinator-link",
@@ -2515,7 +2522,8 @@
     },
     {
       "allow": [
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "domain",
       "name": "doeff-cluster-runtime-env-rules",

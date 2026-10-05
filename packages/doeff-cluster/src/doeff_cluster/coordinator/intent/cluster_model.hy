@@ -72,7 +72,7 @@
   ;; worker が名乗る道具(外部の CLI・OS の library — 名と版・2026-09-26)。実行環境の宣言の tools と照らして置き先を選ぶ。
   (setv #^ (get tuple #(ComponentVersion ...)) tools #())
   ;; 実行環境の root の名乗り(2026-09-26・heartbeat の platform・envs・envCapacity)。保存しない(次の heartbeat で埋まる)。
-  ;; platform = root のキーの材料(runtime_env_model.current-platform)・env-ready / env-preparing = 準備済み / 準備中の root のキー・
+  ;; platform = root のキーの材料(shared/core/native_wheel の current_platform)・env-ready / env-preparing = 準備済み / 準備中の root のキー・
   ;; env-failed = 準備に失敗した root(EnvFailed の tuple)・env-capacity = "ok" か "exhausted"(準備を始める空きが無い)。
   (setv #^ str platform "")
   (setv #^ (get frozenset str) env-ready (frozenset))
