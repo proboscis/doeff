@@ -32,9 +32,6 @@
     ;; 欄は __init__ の引数(キーワードだけ)なので、例外の既定の写し(args だけで作り直す)では落ちる — 欄を状態として運ぶ。
     #(UndeclaredTable #((get self.args 0)) {"tables" self.tables "streams" self.streams})))
 
-(defclass UndeclaredField [ValueError]
-  "表の宣言に無い欄の書き手を尋ねた(組み立ての誤り — 書きの断りは admission が Refused で返す)。")
-
 
 (defn #^ str checked-table-name [#^ str name #^ str what]
   (when (not (and (isinstance name str) (.match TABLE-NAME-PATTERN name)))
@@ -98,27 +95,19 @@
 ;; --- 表の宣言 ------------------------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] FieldDecl []
-  "表の欄 1 つの宣言: name = 欄の名 / writers = その欄を書いてよい書き手の名(空でない文字列の空でない tuple)/
-   founders = 行の誕生の書き(行がまだ無い時)に限ってその欄を書いてよい書き手(空でない文字列の tuple・既定 = 無し)。
-   writers と founders は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
+  "表の欄 1 つの宣言: name = 欄の名。欄ごとの書き手は宣言しない — 置き場は書き手の名で書きを断らず(#2994)、書いてよい program は
+   linter の規則と模擬環境の失敗ケースで守る(admission.hy の頭の註)。"
   (#^ str name)
-  (#^ tuple writers)
-  (setv #^ tuple founders #())
   (defn #^ None __post_init__ [self]
-    (checked-field-name self.name "FieldDecl.name")
-    (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
-      (raise (ValueError (.format "FieldDecl.writers[{!r}] は空でない文字列の空でない tuple: {!r}" self.name self.writers))))
-    (when (not (and (isinstance self.founders tuple) (all (gfor n self.founders (and (isinstance n str) n)))))
-      (raise (ValueError (.format "FieldDecl.founders[{!r}] は空でない文字列の tuple: {!r}" self.name self.founders))))))
+    (checked-field-name self.name "FieldDecl.name")))
 
 
 (defclass [(dataclass :frozen True)] TableDecl []
   "表の宣言(composition root で渡す data)。
-   name = 表の名 / key-fields = 鍵の欄(順つき)/ fields = 欄の宣言(FieldDecl — 欄の名とその欄を書いてよい書き手)の tuple
-   (宣言した欄はこれで全部。行を作る = 鍵の欄を書く、なので鍵の欄の書き手 = 行を作ってよい書き手)/
+   name = 表の名 / key-fields = 鍵の欄(順つき)/ fields = 欄の宣言(FieldDecl)の tuple(宣言した欄はこれで全部 — 鍵の欄も含む)/
    indexes = ListRows の where に使える欄(鍵の欄は常に使える)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
-   operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
+   retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
   (#^ str name)
   (#^ tuple key-fields)
   (#^ tuple fields)
@@ -127,7 +116,6 @@
   (setv #^ tuple states #())
   (setv #^ tuple terminal #())
   (setv #^ (| str None) initial None)
-  (setv #^ tuple operator-paths #())
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
   (defn #^ None __post_init__ [self]
@@ -139,20 +127,16 @@
     (setv names (lfor f self.fields f.name))
     (when (!= (len names) (len (set names)))
       (raise (ValueError (.format "TableDecl.fields の欄の名が重なる: {!r}" names))))
-    ;; 欄の名 → 欄の宣言の索引を宣言 1 つに 1 度だけ作る(下の declares・writers-of・founders-of が引く)— 書きの判断が行ごと・欄ごとに
+    ;; 欄の名 → 欄の宣言の索引を宣言 1 つに 1 度だけ作る(下の declares が引く)— 書きの判断が行ごと・欄ごとに
     ;; 欄の tuple を全部なめ直さないため(#2670 根 E — 5 万行の置き場への書きで欄の数の 2 乗の比べが走っていた)。dataclass の欄には
     ;; しない(等しさ・hash・表示は宣言の欄だけで決まる)。pickle と copy は __setstate__ が作り直す。
     (object.__setattr__ self "_by_name" (dict (zip names self.fields)))
     (for [name self.key-fields]
       (when (not (self.declares name))
-        (raise (ValueError (.format "鍵の欄 {!r} の書き手(= 行を作ってよい書き手)が fields に無い" name)))))
+        (raise (ValueError (.format "鍵の欄 {!r} が fields に無い" name)))))
     (checked-names self.indexes "TableDecl.indexes")
     (for [name self.indexes]
       (when (not (self.declares name)) (raise (ValueError (.format "索引の欄 {!r} が fields に無い(宣言の外の欄)" name)))))
-    (checked-names self.operator-paths "TableDecl.operator_paths")
-    (for [name self.operator-paths]
-      (when (not (self.declares name)) (raise (ValueError (.format "承認の欄 {!r} が fields に無い" name))))
-      (when (in name self.key-fields) (raise (ValueError (.format "鍵の欄 {!r} を承認の欄にはできない" name)))))
     (checked-field-name self.state-field "TableDecl.state_field")
     (when self.states
       (when (not (all (gfor s self.states (and (isinstance s str) s)))) (raise (ValueError "TableDecl.states は空でない文字列")))
@@ -185,36 +169,19 @@
 
   (defn #^ bool declares [self #^ str name]
     "name が宣言した欄か。"
-    (in name self._by-name))
-
-  (defn #^ tuple writers-of [self #^ str name]
-    "欄 name を書いてよい書き手の名(宣言の外の欄は UndeclaredField)。"
-    (setv found (.get self._by-name name))
-    (when (is found None)
-      (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
-    found.writers)
-
-  (defn #^ tuple founders-of [self #^ str name]
-    "欄 name を行の誕生の書きに限って書いてよい書き手の名(FieldDecl.founders・宣言の外の欄は UndeclaredField)。"
-    (setv found (.get self._by-name name))
-    (when (is found None)
-      (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
-    found.founders))
+    (in name self._by-name)))
 
 
 (defclass [(dataclass :frozen True)] StreamDecl []
-  "追記の列の宣言。writers = 積んでよい書き手の名 / retention = KeepForever | KeepFor(積んでから秒)/
+  "追記の列の宣言。name = 列の名 / retention = KeepForever | KeepFor(積んでから秒)/
    size-budget = 本文の JSON の byte の上限(None = 無し)/ retention-group = 保持を数える単位(EachEvent | ByKeySuffix — ByKeySuffix は
-   KeepFor の列だけ)。"
+   KeepFor の列だけ)。積んでよい書き手は宣言しない — 置き場は書き手の名で追記を断らない(#2994)。"
   (#^ str name)
-  (#^ tuple writers)
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
   (setv #^ object retention-group (EachEvent))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
-    (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
-      (raise (ValueError (.format "StreamDecl.writers は空でない文字列の空でない tuple: {!r}" self.writers))))
     (when (not (isinstance self.retention #(KeepForever KeepFor)))
       (raise (TypeError "StreamDecl.retention は KeepForever | KeepFor")))
     (when (not (isinstance self.retention-group #(EachEvent ByKeySuffix)))
@@ -228,25 +195,16 @@
 
 (defclass [(dataclass :frozen True)] RecordsSchema []
   "置き場 1 つの宣言の全部: tables = 表の名 → TableDecl・streams = 列の名 → StreamDecl(どちらも凍らせた写像 —
-   作る時に受けた写像を写し取る)/ operators = operator の主体の名(身元の名簿の名 = 書き手の名)の tuple。
-   operators と表の operator-paths は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
+   作る時に受けた写像を写し取る)。operator の主体と operator だけが書く欄は宣言しない — 置き場は書き手の名で書きを断らず(#2994)、
+   operator の宣言の欄を守るのは、業務の命令にその欄を書く入口を出さないこと(使い手の側の検査と助言)。"
   (setv #^ (get FrozenMap TableDecl) tables (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap StreamDecl) streams (field :default-factory FrozenMap))
-  (setv #^ tuple operators #())
   (defn #^ None __post_init__ [self]
     (object.__setattr__ self "tables" (frozen-map-of self.tables "RecordsSchema.tables"))
     (object.__setattr__ self "streams" (frozen-map-of self.streams "RecordsSchema.streams"))
-    (when (not (and (isinstance self.operators tuple)
-                    (all (gfor n self.operators (and (isinstance n str) n (not-in ":" n))))))
-      (raise (ValueError (.format "RecordsSchema.operators は「:」を含まない空でない文字列の tuple: {!r}" self.operators))))
     (for [#(name decl) (.items self.tables)]
       (when (not (and (isinstance decl TableDecl) (= decl.name name)))
-        (raise (ValueError (.format "RecordsSchema.tables[{!r}] は同じ名の TableDecl" name))))
-      ;; operator の欄の書き手に operator の主体が 1 人も居ない宣言は、誰も書けない欄を黙って作る — 宣言の時に止める。
-      (for [path decl.operator-paths]
-        (when (not (& (set (decl.writers-of path)) (set self.operators)))
-          (raise (ValueError (.format "表 {} の operator の欄 {!r} の書き手 {!r} に operator の主体 {!r} が居ない"
-                                      name path (decl.writers-of path) self.operators))))))
+        (raise (ValueError (.format "RecordsSchema.tables[{!r}] は同じ名の TableDecl" name)))))
     (for [#(name decl) (.items self.streams)]
       (when (not (and (isinstance decl StreamDecl) (= decl.name name)))
         (raise (ValueError (.format "RecordsSchema.streams[{!r}] は同じ名の StreamDecl" name))))))

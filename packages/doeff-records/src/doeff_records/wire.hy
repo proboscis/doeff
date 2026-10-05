@@ -363,10 +363,10 @@
             (ListRows (! (string-of (get body "table") "table")) #** keywords))
       "put-row"
         (do (<- (object-of body "put-row の本文" #("table" "key" "value" "expect") #("approval")))
-            ;; approval は契約で deprecated(承認トークンは廃止 — operator の宣言の欄は書き手の主体で判じる)。前の版の client が
+            ;; approval は契約で deprecated(承認トークンは廃止 — 置き場は書き手の名でも印でも書きを断らない・#2994)。前の版の client が
             ;; 添える null だけを読み飛ばし、値のある印は効かない承認を黙って捨てないよう malformed で断る。次の契約の版で鍵ごと消す。
             (when (is-not (.get body "approval") None)
-              (raise (WireMalformed "put-row の approval は廃止(operator の宣言の欄は書き手の主体で判じる — 印は効かない)")))
+              (raise (WireMalformed "put-row の approval は廃止(置き場は印で書きを断らない — 印は効かない)")))
             (PutRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))
                     (! (json-object-in (get body "value") "value")) (! (expect-from (get body "expect")))))
       "watch-changes"

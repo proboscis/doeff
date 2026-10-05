@@ -49,22 +49,21 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 ## 表の定義
 
-`TableDecl(name, key_fields, fields, indexes, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
+`TableDecl(name, key_fields, fields, indexes, state_field, states, terminal, initial, retention, size_budget)`
 
-- `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書く書き手の名の tuple)の tuple。定義した欄はこれで全部
-  (載っていない欄への書きは断る)。`writers` は宣言だけで、置き場の書きの判断は書き手の名では断らない(#2994)。
-  定義を尋ねる口は `decl.declares(name)`・`decl.writers_of(name)`・`decl.field_names()`。
+- `fields`: 欄の定義 `FieldDecl(name)` の tuple。定義した欄はこれで全部(載っていない欄への書きは断る)。
+  定義を尋ねる口は `decl.declares(name)`・`decl.field_names()`。
+- 欄ごと・列ごとの書き手と operator だけが書く欄は定義に持たない — 置き場は書き手の名で書きを断らず(#2994)、書いてよい program は
+  linter の規則と模擬環境の失敗ケースで守る。
 - `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
   終端の行はもう書けない。
-- `operator_paths`: operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)。
 - `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に読みに出なくなり、その後の最初の書きか
   `SweepExpired` の回収が消して変更の列に `RowRemoved` を出す — 上の保持の期限の項)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
-追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
+追記の列は `StreamDecl(name, retention, size_budget, retention_group)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
 番号と本文の指紋だけを残して忘れない — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。
-置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
-operator の主体の名の tuple。`operator_paths` の欄の書き手に operator の主体が 1 人も居ない宣言は、作る時に `ValueError`)。
+置き場 1 つの定義は `RecordsSchema(tables, streams)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像)。
 
 ## 表ごとの行の型で読み書きする(`doeff_records.typed`)
 

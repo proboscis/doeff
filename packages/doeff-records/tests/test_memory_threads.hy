@@ -25,7 +25,7 @@
 (val THREAD-SCHEMA
   (dataclasses.replace LAW-SCHEMA
     :streams (FrozenMap {"journal" (get LAW-SCHEMA.streams "journal")
-                         "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor 60))})))
+                         "pulses" (StreamDecl :name "pulses" :retention (KeepFor 60))})))
 
 
 (defk append-journal [count]
