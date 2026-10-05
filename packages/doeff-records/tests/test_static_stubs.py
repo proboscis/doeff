@@ -499,7 +499,7 @@ def test_effects_are_effects_and_methods_exist() -> None:
             isinstance(b, ast.Subscript) and isinstance(b.value, ast.Name) and b.value.id == "EffectBase" for b in node.bases
         ):
             assert issubclass(getattr(effects, node.name), EffectBase), node.name
-    # class の中の関数(TableDecl.declares など)は実装の class に在る。
+    # class の中の関数(TableDecl.writers-of など)は実装の class に在る。
     for module in STUBBED:
         for node in _stub_of(module).body:
             if isinstance(node, ast.ClassDef):

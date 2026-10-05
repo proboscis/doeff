@@ -103,13 +103,13 @@ PATIENCE = SignalSourcePatience(seconds=120.0)
 
 
 def _table(name: str) -> TableDecl:
-    """鍵の欄 id と欄 note だけの表。"""
-    return TableDecl(name=name, key_fields=("id",), fields=(FieldDecl("id"), FieldDecl("note")))
+    """鍵の欄 id と欄 note だけの表(書き手 WRITER)。"""
+    return TableDecl(name=name, key_fields=("id",), fields=(FieldDecl("id", (WRITER,)), FieldDecl("note", (WRITER,))))
 
 
 SCHEMA = RecordsSchema(
     tables=FrozenMap({name: _table(name) for name in ("jobs", "lanes", "notes")}),
-    streams=FrozenMap({name: StreamDecl(name=name) for name in ("intake", "journal")}),
+    streams=FrozenMap({name: StreamDecl(name=name, writers=(WRITER,)) for name in ("intake", "journal")}),
 )
 
 
