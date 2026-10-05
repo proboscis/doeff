@@ -2,6 +2,7 @@
   "modules": [
     {
       "allow": [
+        "doeff-cluster-job-model",
         "doeff-cluster-service-model"
       ],
       "layer": "domain",

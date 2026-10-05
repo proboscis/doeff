@@ -23,7 +23,7 @@
                              SimOutside ProcessOutside])
 (import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
-(import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ReadinessWaitExpired AwaitJobProcess JobProcessSeen
+(import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen
                                                      JobProcessWaitExpired])
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [System CallShape])
@@ -994,9 +994,9 @@
     (<- state dict (ReadCoordinator "/state"))
     (<- seen tuple (job-places-seen state at))
     (:= places (+ places seen)))
-  (<- state dict (ReadCoordinator "/state"))
+  (<- last-state dict (ReadCoordinator "/state"))
   (<- rows dict (SharedRows "trio/"))
-  (ReserveScene :places places :unplaced (get state "unplaced") :workers (get state "workers") :rows rows))
+  (ReserveScene :places places :unplaced (get last-state "unplaced") :workers (get last-state "workers") :rows rows))
 
 
 (val RESERVED-ONE (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 3 :task-reserve 1))
@@ -1449,11 +1449,11 @@
 (defrecord Recovered
   "待つ effect だけで見た job 1 つの起こし直し: first = 宣言の後の準備・before = 最初の process・crashed = Crash の答え・after = 起こし
    直しの次の process・again = その後の準備。"
-  (#^ (| ServiceReadiness ReadinessWaitExpired) first)
+  (#^ (| ServiceReadiness ServiceFailed ReadinessWaitExpired) first)
   (#^ (| JobProcessSeen JobProcessWaitExpired) before)
   (#^ int crashed)
   (#^ (| JobProcessSeen JobProcessWaitExpired) after)
-  (#^ (| ServiceReadiness ReadinessWaitExpired) again)
+  (#^ (| ServiceReadiness ServiceFailed ReadinessWaitExpired) again)
   (#^ float first-wait-seconds))
 
 
@@ -1462,14 +1462,14 @@
   "筋書き: job name が Ready になるのを待ち、最初の process を待ち、Crash で落として次の process ともう一度の Ready を待つため(どの待ちも
    読み直しのループを書かない — 答えるのは cluster の handler)。"
   (<- asked int (now-epoch-ms))
-  (<- first (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness name "Ready" seconds))
+  (<- first (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness name "Ready" seconds))
   (<- answered int (now-epoch-ms))
   (<- before (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #() seconds))
   (when (not (isinstance before JobProcessSeen))
     (raise (AssertionError (+ "最初の process が名乗られない: " (repr before)))))
   (<- n int (Crash name))
   (<- after (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #(before.pid) seconds))
-  (<- again (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness name "Ready" seconds))
+  (<- again (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness name "Ready" seconds))
   (Recovered :first first :before before :crashed n :after after :again again
              :first-wait-seconds (/ (- answered asked) 1000.0)))
 
@@ -1488,7 +1488,7 @@
 
 (defrecord Expired
   "起きない事を待った答え: never-ready = 来ない準備の状態の待ち・no-restart = 落としていない job の次の process の待ち。"
-  (#^ (| ServiceReadiness ReadinessWaitExpired) never-ready)
+  (#^ (| ServiceReadiness ServiceFailed ReadinessWaitExpired) never-ready)
   (#^ (| JobProcessSeen JobProcessWaitExpired) no-restart))
 
 
@@ -1500,7 +1500,7 @@
   (<- first (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #() 30.0))
   (when (not (isinstance first JobProcessSeen))
     (raise (AssertionError (+ "最初の process が名乗られない: " (repr first)))))
-  (<- never (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness name "Missing" seconds))
+  (<- never (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness name "Missing" seconds))
   (<- none (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess name #(first.pid) seconds))
   (Expired :never-ready never :no-restart none))
 

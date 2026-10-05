@@ -4,6 +4,7 @@ from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff_cluster.shared.intent.service_model import System as System
+from doeff_cluster.shared.intent.job_model import JobPhase as JobPhase
 
 @dataclass(frozen=True, kw_only=True)
 class ServiceReadiness:
@@ -25,6 +26,17 @@ class ReadinessWaitExpired:
     state: str
     last: ServiceReadiness
     waited_seconds: float
+FAILED_PHASES: frozenset[JobPhase]
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceFailed:
+    name: str
+    state: str
+    phase: JobPhase
+    failure_kind: str | None
+    reason: str
+    last: ServiceReadiness
+    waited_seconds: float
 
 @dataclass(frozen=True, kw_only=True)
 class JobProcessSeen:
@@ -38,7 +50,7 @@ class JobProcessWaitExpired:
     waited_seconds: float
 
 @_doeff_dataclass(frozen=True)
-class AwaitReadiness(_doeff_effect_base[ServiceReadiness | ReadinessWaitExpired]):
+class AwaitReadiness(_doeff_effect_base[ServiceReadiness | ServiceFailed | ReadinessWaitExpired]):
     name: str
     state: str
     timeout_seconds: float

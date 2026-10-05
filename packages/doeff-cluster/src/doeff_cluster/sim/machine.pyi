@@ -52,6 +52,7 @@ from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as Cras
 from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
 from doeff_cluster.shared.intent.cluster_control import Crash as Crash
 from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
+from doeff_cluster.shared.intent.cluster_control import ServiceFailed as ServiceFailed
 from doeff_cluster.shared.intent.cluster_control import ReadinessWaitExpired as ReadinessWaitExpired
 from doeff_cluster.shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
 from doeff_cluster.shared.intent.cluster_control import JobProcessSeen as JobProcessSeen
