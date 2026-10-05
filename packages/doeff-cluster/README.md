@@ -172,6 +172,9 @@ Program は `(<- told (AwaitRetirement))` で、名から外された時点(新�
 無い止め(宣言から外れた・recreate・worker の停止・途絶)では何も返りません(止めは `AwaitStop` で知ります)。本番の路 = worker の
 `process-host` が shim の標準入力へ 1 行を書き、shim(`--notice-env`)が job に継がせた知らせの pipe へ中継し、job の中の
 `pipe-retirement-notices` の読みの thread が待ちを起こします(間隔で読み直しません)。`sim-cluster` では偽の実行先が世界の受け手で答えます。
+版を上げる順は worker が先です: この知らせを送らない古い worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WORKER_NOTICE_FD`)が
+無く、`AwaitRetirement` は何も返さずに待ち続けます(SIGTERM の止めは今までどおり届きます)。知らせを読まない job(答え手を組まない job・
+`AwaitRetirement` を一度も問わない job)の下で pipe が満ちても、shim は知らせを捨てて標準入力を読み続けます(worker の消失を見落としません)。
 
 ### 宣言する(declare)
 
