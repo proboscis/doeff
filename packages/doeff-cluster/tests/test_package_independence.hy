@@ -98,8 +98,9 @@
 
 (defk named-packages [path names]
   {:pre [(: path Path) (: names frozenset)] :post [(: % tuple)]}
-  "file の中の文字列のうち、package の名に等しい物(doeff-linter の文脈の宣言 MODULE-TAGS の :context は package の名ではないので外して読む)。"
-  (val text (re.sub r"\(val MODULE-TAGS \{[^}]*\}\)" "" (.read-text path :encoding "utf-8")))
+  "file の中の文字列のうち、package の名に等しい物(doeff-linter の文脈の宣言 :context は package の名ではないので外して読む —
+   MODULE-TAGS でも defwire・defk の :tags でも同じ意味 #3676)。"
+  (val text (re.sub r":context\s+\"[^\"]*\"" "" (.read-text path :encoding "utf-8")))
   (tuple (lfor m (.finditer QUOTED text) :if (in (.group m 1) names)
                (.format "{}: {}" path.name (.group m 1)))))
 
