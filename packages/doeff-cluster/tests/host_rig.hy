@@ -32,7 +32,8 @@
   (HostSettings :log-dir (str (/ state "logs")) :jobs-dir (str (/ state "jobs")) :program-dir (str (/ state "programs"))
                 :python sys.executable :hy-command hy-command :uv uv
                 :extra-env (tuple (gfor k (sorted extra-env) (EnvEntry :name k :value (get extra-env k))))
-                :layout layout :program-env HOST-CONTRACT.program-env :shim shim :warm-dir (str (/ state "warm"))))
+                :layout layout :program-env HOST-CONTRACT.program-env :shim shim :warm-dir (str (/ state "warm"))
+                :notice-env HOST-CONTRACT.notice-env))
 
 
 (defk launched [settings spec code-path instance attempt]
@@ -48,7 +49,7 @@
                                  :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
                                  :program-env settings.program-env
                                  :work-dir (+ settings.jobs-dir "/" (.replace spec.name "/" "_"))
-                                 :shim-grace-ms settings.shim.shim-grace-ms))
+                                 :shim-grace-ms settings.shim.shim-grace-ms :notice-env settings.notice-env))
   (val overlay (dfor e plan.env e.name e.value))
   #((list plan.argv) plan.cwd (if (= plan.env-mode EnvMode.EXTEND) (| (dict os.environ) overlay) overlay)))
 

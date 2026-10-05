@@ -20,8 +20,8 @@
 ;;; (process-meter-handler)で、1 つの run の中の答え手(memory-meter-handler)を渡しても要求の run の断面には出ない。
 ;;; offloaded-subprocess-handler は計器の無い形(数えず、log にだけ出す — 計器の答え手の無い使い手が「答え手が無い」で落ちない)。
 ;;; 取り消しの前に子が終わっていれば何も送らず数えない。subprocess-handler(thread で回さない)の待ちは取り消しで抜けない(子を待ち切る)。
-;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)・SignalProcess(#2461)は、立てた子を process に 1 つの表 STARTED-CHILDREN で
-;;; 持つ。立てる・問う・signal を送るは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
+;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)・SignalProcess(#2461)・WriteProcessInput(#3672)は、立てた子を process に 1 つの表
+;;; STARTED-CHILDREN で持つ。立てる・問う・signal を送る・握った標準入力へ短い行を書くは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
 ;;; では thread で回す。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defenum defrecord])
@@ -50,6 +50,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
+                                            WriteProcessInput ProcessInputWritten
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer environment-answer])
 
@@ -619,6 +620,27 @@
                 (ProcessSignalled :pid pid :delivered True))))))
 
 
+(defk write-child-input [pid text]
+  {:pre [(: pid int) (: text str)] :post [(: % (| ProcessInputWritten ProcessNotChild))] :tags {:context "process" :role "foundation"}}
+  "WriteProcessInput に本物の子で答えるため(#3672): 表に無い pid は ProcessNotChild。終わっていた子(表に残し、終わりは PollProcess が
+   答えて回収する)・標準入力の pipe を握っていない子(hold-stdin でない)・読み手の居ない pipe には書かず delivered False。走っていれば
+   text を utf-8 と surrogateescape で書いて flush し、待たずに delivered True(頭の註の bytes の約束と同じ作法)。"
+  (val found (.find STARTED-CHILDREN pid))
+  (if (is found None)
+      (ProcessNotChild :pid pid)
+      (do
+        (val child (get found 0))
+        (if (or (is-not (.poll child) None) (is child.stdin None))
+            (ProcessInputWritten :pid pid :delivered False)
+            (try
+              (do (.write child.stdin (.encode text "utf-8" "surrogateescape"))
+                  (.flush child.stdin)
+                  (ProcessInputWritten :pid pid :delivered True))
+              ;; 読み手の居ない pipe(BrokenPipeError)・回収で閉じた後の pipe(ValueError)。
+              (except [#(BrokenPipeError ValueError)]
+                (ProcessInputWritten :pid pid :delivered False)))))))
+
+
 (defhandler subprocess-handler
   ;; 本物の子 process と自分の process の環境(頭の註)。
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
@@ -652,6 +674,9 @@
   (SignalProcess [pid signal]
     (<- answer (signal-child-process pid signal))
     (resume answer))
+  (WriteProcessInput [pid text]
+    (<- written (write-child-input pid text))
+    (resume written))
   (StopProcess [pid stop-grace]
     (<- stopped (stop-child-process pid (float stop-grace)))
     (resume stopped)))
@@ -712,6 +737,10 @@
   (SignalProcess [pid signal]
     (<- answer (signal-child-process pid signal))
     (resume answer))
+  ;; 書くは待たない(短い行 — 頭の註)のでその場で答える。
+  (WriteProcessInput [pid text]
+    (<- written (write-child-input pid text))
+    (resume written))
   (StopProcess [pid stop-grace]
     (<- stopped (offloaded PROCESS-THREADS (fn [] (run-detached (stop-child-process pid (float stop-grace)))) keep-nothing))
     (resume stopped)))

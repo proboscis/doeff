@@ -20,6 +20,8 @@
 ;;;                     終了 code。どれも表から外す。group と猶予は台本の世界に無い。
 ;;;   SignalProcess     表に無い pid = ProcessNotChild・走り続ける子はその signal で終わった形にする(TERM = -15・KILL = -9 — 本物と同じ負の
 ;;;                     値。終わりは PollProcess が答えて回収する)・終わっていた子には送らない(delivered False)(#2461)。
+;;;   WriteProcessInput 表に無い pid = ProcessNotChild・hold-stdin で立てて走り続ける子 = 書いた形(delivered True — 台本の世界に pipe は無く、
+;;;                     中身はどこにも残らない)・それ以外(終わった子・hold-stdin でない子)= 書かない(delivered False)(#3672)。
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
@@ -41,6 +43,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
+                                            WriteProcessInput ProcessInputWritten
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             not-started-outcome start-refusal executable-file-answer environment-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
@@ -160,6 +163,8 @@
   (session var jobs 0)
   ;; 立てたらすぐ返す子(StartProcess)の表(pid → 終了 code か SCRIPTED-RUNNING)と、次に配る pid。
   (session val started {})
+  ;; hold-stdin で立てた子の pid(WriteProcessInput が書いた形で答える子 — #3672)。
+  (session var held (frozenset))
   (session var next-pid SCRIPTED-FIRST-PID)
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
     ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
@@ -194,7 +199,8 @@
     (resume script.machine-name))
   (ResolveModule [name]
     (resume (next (gfor m script.modules :if (= m.name name) m) (ModuleNotFound :name name))))
-  ;; hold-stdin と reap-group(#2471)は台本の世界に無い(標準入力の pipe と group が無い)— 受けて振る舞いは変えない。
+  ;; hold-stdin と reap-group(#2471)は台本の世界に無い(標準入力の pipe と group が無い)— 受けて振る舞いは変えない。hold-stdin の子の pid だけは
+  ;; 覚える(WriteProcessInput が書いた形で答える子 — #3672)。
   (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
     (<- refused (| ProcessNotStarted None) (scripted-open-outputs #(stdout-path stderr-path)))
     (if (is-not refused None)
@@ -211,6 +217,8 @@
                 (val pid next-pid)
                 (:= next-pid (+ next-pid 1))
                 (setv (get started pid) (if outcome.timed-out SCRIPTED-RUNNING outcome.exit-code))
+                (when hold-stdin
+                  (:= held (| held (frozenset #(pid)))))
                 (resume (ProcessStarted :pid pid)))))))
   (PollProcess [pid]
     (match (.get started pid)
@@ -228,4 +236,8 @@
       None (resume (ProcessNotChild :pid pid))
       state :if (= state SCRIPTED-RUNNING) (do (setv (get started pid) (match signal ProcessSignal.TERM -15 ProcessSignal.KILL -9))  ; 本物の子が signal で終わった時と同じ負の値
                                               (resume (ProcessSignalled :pid pid :delivered True)))
-      _ (resume (ProcessSignalled :pid pid :delivered False)))))
+      _ (resume (ProcessSignalled :pid pid :delivered False))))
+  (WriteProcessInput [pid text]
+    (match (.get started pid)
+      None (resume (ProcessNotChild :pid pid))
+      state (resume (ProcessInputWritten :pid pid :delivered (and (= state SCRIPTED-RUNNING) (in pid held)))))))
