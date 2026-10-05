@@ -195,8 +195,10 @@
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [System Declaration])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare ReadinessOf Crash KillWorker StopWorker
-                                                     StopCoordinator CrashCoordinator AwaitReadiness ReadinessWaitExpired
-                                                     AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
+                                                     StopCoordinator CrashCoordinator AwaitReadiness ServiceFailed
+                                                     ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
+;; 準備の状態の読みと待ちの判断は本番の境界の handler と同じ 1 つ(写しを 2 か所に持たない — #3668 の (a))。
+(import doeff_cluster.shared.protocol.coordinator_reads [readiness-of-body readiness-wait-answer])
 (import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
@@ -2530,14 +2532,12 @@
   (next (gfor r log :if (and (= r.job job) (not-in r.pid excluding)) r) None))
 
 
-(defk readiness-read [link name]
-  {:pre [(: link SimLink) (: name str)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "模擬の coordinator の GET /resources/Service/<name> から準備の状態を読むため(ReadinessOf と AwaitReadiness の読み — 本番と同じ口)。"
+(defk service-answer-of [link name]
+  {:pre [(: link SimLink) (: name str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "模擬の coordinator の GET /resources/Service/<name> を 1 回読むため(本番と同じ口 — 答え = (code 本文)・本文は 200 なら JSON の
+   object)。準備の状態と待ちの答えは、本番と同じ readiness-of-body・readiness-wait-answer が読む。"
   (<- answer tuple (send-request link "GET" (+ "/resources/Service/" (url-quote name :safe "")) {} None))
-  (match (get answer 0)
-    200 (ServiceReadiness :state (get (get answer 1) "status" "ready")
-                          :reason (str (.get (get (get answer 1) "status") "readyReason" "")))
-    _ (ServiceReadiness :state "Missing" :reason (str (get answer 1)))))
+  answer)
 
 
 ;; --- process の終わりの待ち(AwaitProcessEnded — 世界が書きで起こす)---------------------------------------------
@@ -3196,24 +3196,26 @@
                     (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))))
   (ReadinessOf [name]
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
-    (<- readiness ServiceReadiness (readiness-read link name))
+    (<- answer tuple (service-answer-of link name))
+    (<- readiness ServiceReadiness (readiness-of-body (get answer 0) (get answer 1)))
     (resume readiness))
   (AwaitReadiness [name state timeout-seconds]
-    ;; 読む前に呼び鈴を掛け(読みと次の書きの間の鳴らしを取りこぼさない)、state でなければ coordinator の次の書き(NoteCoordinatorWrite)
-    ;; か期限で起きて 1 回だけ読み直す。時計の刻みでは読み直さない(#3053)。
+    ;; 読む前に呼び鈴を掛け(読みと次の書きの間の鳴らしを取りこぼさない)、答えが出なければ coordinator の次の書き(NoteCoordinatorWrite)
+    ;; か期限で起きて 1 回だけ読み直す。時計の刻みでは読み直さない(#3053)。答えの判断(届いた・落ちた・期限)は本番と同じ readiness-wait-answer。
     (<- link SimLink (control-link parts.queue plan.revision plan.versions))
     (<- started int (now-epoch-ms))
     (var answer None)
     (while (is answer None)
       (<- bell Promise (CreatePromise))
       (:= ready-waiters (+ ready-waiters #(bell)))
-      (<- seen ServiceReadiness (readiness-read link name))
+      (<- read tuple (service-answer-of link name))
       (<- now int (now-epoch-ms))
       (val waited (/ (- now started) 1000.0))
-      (cond
-        (= seen.state state) (:= answer seen)
-        (>= waited timeout-seconds) (:= answer (ReadinessWaitExpired :name name :state state :last seen :waited-seconds waited))
-        True (<- (promise-or-timeout bell.future (- timeout-seconds waited))))
+      (<- step (| ServiceReadiness ServiceFailed ReadinessWaitExpired None)
+          (readiness-wait-answer name state (get read 0) (get read 1) waited (float timeout-seconds)))
+      (if (is-not step None)
+          (:= answer step)
+          (<- (promise-or-timeout bell.future (- timeout-seconds waited))))
       ;; 鳴らなかった呼び鈴を外す(期限で起きた Promise を後の書きで 2 度満たさない — 鳴った物は鳴らした側が外している)。
       (:= ready-waiters (tuple (gfor b ready-waiters :if (is-not b bell) b))))
     (resume answer))

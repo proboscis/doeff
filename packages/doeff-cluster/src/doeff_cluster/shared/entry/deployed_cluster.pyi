@@ -17,6 +17,7 @@ from doeff_cluster.shared.entry.declare import apply_declaration as apply_declar
 from doeff_cluster.shared.entry.service_build import system_declaration as system_declaration
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
+from doeff_cluster.shared.intent.cluster_control import ServiceFailed as ServiceFailed
 from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
 from doeff_cluster.shared.intent.cluster_control import ReadinessWaitExpired as ReadinessWaitExpired
 from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness

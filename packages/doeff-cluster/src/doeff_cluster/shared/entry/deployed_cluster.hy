@@ -13,7 +13,8 @@
 ;;;                              revision・実行環境 = target の runtime-env・版の識別 = target の versions-read の答え・送り手 = target の actor —
 ;;;                              手元の 1 台と同じ組み立て・台数は各 job の :replicas が行に載る)。答え = 宣言した Service の名。
 ;;;   ReadinessOf 名              GET /resources/Service/<名> の status の ready(無ければ Missing)。
-;;;   AwaitReadiness 名 状態 秒    同じ読みを WAIT-PROBE-SECONDS ごとにして、状態になるか秒を過ぎるまで待つ(過ぎたら ReadinessWaitExpired)。
+;;;   AwaitReadiness 名 状態 秒    同じ読みを WAIT-PROBE-SECONDS ごとにして、状態になるか秒を過ぎるまで待つ(過ぎたら ReadinessWaitExpired・
+;;;                              担い手が落ちたと分かれば期限を待たずに ServiceFailed)。
 ;;;   AwaitJobProcess job 除く 秒  GET /state に**どれかの** worker が名乗った job の pid のうち、除く pid の外の物が出るまで同じ間隔で待つ
 ;;;                              (手元の 1 台は自分で起こした worker に絞る — 配備では worker を起こさない)。
 ;;;   壊す effect(Crash・KillWorker・StopWorker・StopCoordinator・CrashCoordinator)には答えない — DeployedCannotAnswer で、その effect の名と
@@ -34,7 +35,7 @@
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf ReadinessWaitExpired AwaitReadiness
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ServiceFailed ReadinessOf ReadinessWaitExpired AwaitReadiness
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired Redeclare
                                                      Crash KillWorker StopWorker StopCoordinator CrashCoordinator])
 (import doeff_cluster.shared.protocol.coordinator_reads [readiness-read readiness-awaited job-process-awaited])
@@ -64,7 +65,7 @@
     (<- readiness ServiceReadiness (readiness-read target.url name))
     (resume readiness))
   (AwaitReadiness [name state timeout-seconds]
-    (<- awaited (| ServiceReadiness ReadinessWaitExpired) (readiness-awaited target.url name state (float timeout-seconds)))
+    (<- awaited (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (readiness-awaited target.url name state (float timeout-seconds)))
     (resume awaited))
   (AwaitJobProcess [job excluding timeout-seconds]
     (<- seen (| JobProcessSeen JobProcessWaitExpired) (job-process-awaited target.url job excluding (float timeout-seconds)))
