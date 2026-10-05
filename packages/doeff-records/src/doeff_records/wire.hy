@@ -144,15 +144,23 @@
 
 ;; --- 要求の種と計器の counter の名 ---------------------------------------------------------------------------
 
+(defk operation-of [path]
+  {:pre [(: path str)] :post [(: % (| str None))]}
+  "要求の path(query を除く)が名指す記録の操作の名(OPERATIONS の 1 つ)を読むため。記録の操作の route でなければ None(計器が要求の種を
+   決め、操作ごとに区間の秒を積むため — #2709・#3688)。"
+  (val named (if (.startswith path PATH-PREFIX) (cut path (len PATH-PREFIX) None) None))
+  (if (in named OPERATIONS) named None))
+
+
 (defk request-kind [path]
   {:pre [(: path str)] :post [(: % RequestKind)]}
   "要求の path(query を除く)を要求の種にする(計器が書きと読みを分けて数えるため)。method は問わない — POST でない記録の操作の
    400 も、その操作の種で数える。"
-  (val operation (if (.startswith path PATH-PREFIX) (cut path (len PATH-PREFIX) None) None))
+  (<- operation (| str None) (operation-of path))
   (match operation
+    None RequestKind.OTHER
     name :if (in name WRITE-OPERATIONS) RequestKind.WRITE
-    name :if (in name OPERATIONS) RequestKind.READ
-    _ RequestKind.OTHER))
+    _ RequestKind.READ))
 
 
 (defk answer-metric [path status]
