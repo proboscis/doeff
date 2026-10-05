@@ -30,6 +30,7 @@ from doeff_time import GetTimeEffect as GetTimeEffect
 from doeff_time import GetMonotonicEffect as GetMonotonicEffect
 from doeff_time import DelayEffect as DelayEffect
 from doeff_hy.json_value import OpaqueJson as OpaqueJson
+from doeff_hy.frozen import FrozenMap as FrozenMap
 FORMAT_VERSION: int
 READABLE_FORMATS: tuple[int, ...]
 DELTA_MIN_CHARS: int
@@ -90,7 +91,8 @@ def handle_for(kind: str, ref: str) -> ReplayHandle:
 @runtime_checkable
 class DataclassValue(Protocol):
     __dataclass_fields__: ClassVar[dict]
-RestoredValue: TypeAlias = None | bool | int | float | str | bytes | datetime | ReplayHandle | list | tuple | dict | BaseException | DataclassValue
+FROZEN_MARKS: tuple[tuple[str | type, ...], ...]
+RestoredValue: TypeAlias = None | bool | int | float | str | bytes | datetime | ReplayHandle | list | tuple | dict | FrozenMap | BaseException | DataclassValue
 
 class RecordedError(Exception):
     type_name: str
