@@ -15,7 +15,9 @@
 ;;; 計時の行(#3605): 送ってから CLI が答え始めるまでの秒を分けて測るため、手番の process を起こした所・init の行を受けた
 ;;; 所・init の後の最初の行を上の層へ初めて渡した所で、slog を 1 行ずつ出す。欄は名と壁の時刻(GetTime の epoch ミリ秒)と経過のミリ秒
 ;;; (GetMonotonic の差)だけで、本文・資格・env・argv は載せない。外側に時間の handler に加えて slog の答え手(本番 = doeff_core_effects の
-;;; slog-handler・検 = slog-discard-handler)が要る。
+;;; slog-handler・検 = slog-discard-handler)が要る。手番の終わりを上の層へ初めて渡した所でも 1 行出し(#3628)、その手番で CLI から
+;;; 受けた本文の差分の行(text_delta)の数を載せる — 手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で
+;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。
 (require doeff-hy.macros [defhandler defk <- val])
 (import collections.abc [Callable])
 (import dataclasses [replace])
@@ -30,8 +32,8 @@
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init parse-record classify-record
-                                 recorded-cost])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage parse-record
+                                 classify-record recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -57,12 +59,15 @@
 
 (defclass TurnLog []
   "1 つの手番の行と終わり(まだ終わっていなければ end は None)。launched-at = この手番で process を起こし始めた刻(GetMonotonic の
-   読み — process を起こさずに続いた手番は None)・reply-noted = init の後の最初の行の計時の行を出したか(頭の註の計時の行)。"
+   読み — process を起こさずに続いた手番は None)・launched-wall = 同じ刻の壁の時刻(GetTime の読み — 読み手の thread が行に刻む at と
+   比べる)・reply-noted = init の後の最初の行の計時の行を出したか・end-noted = 手番の終わりの計時の行を出したか(頭の註の計時の行)。"
   (defn __init__ [self]
     (setv #^ (get list ClaudeStreamLine) self.lines [])
     (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
     (setv #^ (| float None) self.launched-at None)
-    (setv #^ bool self.reply-noted False)))
+    (setv #^ (| datetime None) self.launched-wall None)
+    (setv #^ bool self.reply-noted False)
+    (setv #^ bool self.end-noted False)))
 
 (defclass Binding []
   "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
@@ -296,19 +301,21 @@
   "GetMonotonic の 2 つの読みの差を、計時の行の経過の欄のミリ秒の整数で綴るため(起点が無ければ None)。"
   (if (is since None) None (round (* (- until since) 1000))))
 
-(defk note-spawned [runtime turn-seq origin requested launching]
+(defk note-spawned [runtime turn-seq origin requested launching launching-wall]
   {:pre [(: runtime SessionRuntime) (: turn-seq int) (: origin (| FreshSession ResumeSession ForkSession)) (: requested float)
-         (: launching float)]
+         (: launching float) (: launching-wall datetime)]
    :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
-  "手番の process を起こした刻を手番の記録に置き(init と最初の行の経過の起点)、起こした所の計時の行を出すため。requested = 手番を
-   頼まれた刻・launching = process を起こし始めた刻(どちらも GetMonotonic の読み)。before-spawn-ms = 頼まれてから起こし始めるまで
-   (降りるのの待ち・冷えた続きの前の命令・transcript の読みを含む)・spawn-ms = 起こすのに掛かった時間。"
+  "手番の process を起こした刻を手番の記録に置き(init・最初の行・最初の差分の行の経過の起点)、起こした所の計時の行を出すため。
+   requested = 手番を頼まれた刻・launching = process を起こし始めた刻(どちらも GetMonotonic の読み)・launching-wall = launching と
+   同じ刻の GetTime の読み。before-spawn-ms = 頼まれてから起こし始めるまで(降りるのの待ち・冷えた続きの前の命令・transcript の読みを
+   含む)・spawn-ms = 起こすのに掛かった時間。"
   (<- launched (GetMonotonic))
   (<- at (GetTime))
   (with [runtime.lock]
     (val log (.get runtime.turns turn-seq))
     (when (is-not log None)
-      (setv log.launched-at launching)))
+      (setv log.launched-at launching)
+      (setv log.launched-wall launching-wall)))
   (<- wall-ms (epoch-ms-of at))
   (<- before-spawn-ms (elapsed-ms requested launching))
   (<- spawn-ms (elapsed-ms launching launched))
@@ -371,6 +378,50 @@
   (<- line-at-ms (epoch-ms-of reply.at))
   (<- (slog CLI-TIMING-LOG :level "info" :event "first-reply" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :line-at-ms line-at-ms :kind (. (type reply.kind) __name__) :session-id turn.session-id :turn-seq turn.turn-seq))
+  None)
+
+(defk wall-elapsed-ms [since until]
+  {:pre [(: since (| datetime None)) (: until (| datetime None))] :post [(: % (| int None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "GetTime の読み(手番の記録の起こし始めの壁の時刻)と、読み手の thread が行に刻んだ壁の時刻の差を、計時の行の経過の欄のミリ秒の
+   整数で綴るため(どちらかが無ければ None)。epoch の秒で引くので、時差の付き方が違う 2 つの読みでも例外にしない。"
+  (if (or (is since None) (is until None)) None (round (* (- (.timestamp until) (.timestamp since)) 1000))))
+
+(defk claimed-turn-end [runtime log]
+  {:pre [(: runtime SessionRuntime) (: log TurnLog)] :post [(: % (| (get tuple #(ClaudeStreamLine ...)) None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた本文の差分の行(text_delta の本文を持つ PartialMessage —
+   doeff-agents の headless が AgentTextDeltaEvent へ写す行と同じ)を受けた順に 1 度だけ取り出すため(取り出したら手番の記録に印を
+   付け、2 度目からは None)。"
+  (with [runtime.lock]
+    (when log.end-noted
+      (return None))
+    (setv log.end-noted True)
+    (tuple (gfor line log.lines :if (and (isinstance line.kind PartialMessage) line.kind.text-delta) line))))
+
+(defk note-turn-end [runtime turn page]
+  {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "手番の終わりを上の層へ初めて渡した所の計時の行を出すため(どの手番でも 1 度だけ — #3628)。partial-lines = その手番で CLI から
+   受けた本文の差分の行の数(手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で運ばれなかったのかを
+   分ける)・first-partial-since-launch-ms = process を起こし始めてから読み手の thread が最初の差分の行を読むまで(差分が無い・
+   process を起こさずに続いた手番は None)・since-launch-ms = process を起こし始めてから終わりを渡すまで。差分の本文は載せない。"
+  (when (is page.end None)
+    (return None))
+  (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
+  (when (is log None)
+    (return None))
+  (<- partials (claimed-turn-end runtime log))
+  (when (is partials None)
+    (return None))
+  (<- now (GetMonotonic))
+  (<- at (GetTime))
+  (<- wall-ms (epoch-ms-of at))
+  (<- since-launch-ms (elapsed-ms log.launched-at now))
+  (<- first-partial-since-launch-ms (wall-elapsed-ms log.launched-wall (if partials (. (get partials 0) at) None)))
+  (<- (slog CLI-TIMING-LOG :level "info" :event "turn-end" :wall-ms wall-ms :since-launch-ms since-launch-ms
+            :partial-lines (len partials) :first-partial-since-launch-ms first-partial-since-launch-ms
+            :session-id turn.session-id :turn-seq turn.turn-seq))
   None)
 
 
@@ -472,11 +523,12 @@
                                   :cost-mark (if (isinstance origin FreshSession) 0.0 None)))
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
   (<- launching (GetMonotonic))
+  (<- launching-wall (GetTime))
   (setv spawned (spawn-turn host runtime spec origin input recorded))
   (when (isinstance spawned LaunchFailed)
     (when fresh-runtime (.forget host target-id runtime))
     (return spawned))
-  (<- (note-spawned runtime spawned origin requested launching))
+  (<- (note-spawned runtime spawned origin requested launching launching-wall))
   (<- outcome (await-init host runtime spawned fresh-runtime))
   (<- (note-init runtime spawned outcome))
   outcome)
@@ -538,7 +590,8 @@
                   (float request.wait-up-to)))
   (setv page (page-of runtime turn request.after-seq))
   (when (is-not page None)
-    (<- (note-first-reply runtime turn page)))
+    (<- (note-first-reply runtime turn page))
+    (<- (note-turn-end runtime turn page)))
   (if (is page None) (UnknownTurn turn) page))
 
 (defk close-session [#^ ClaudeCodeHost host #^ ClaudeCloseSession request]

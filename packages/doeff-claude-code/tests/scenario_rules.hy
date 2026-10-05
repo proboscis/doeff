@@ -7,6 +7,9 @@
 
 (setv CODEWORD "OKAPI-77")
 (setv EXTRA-WORD "EXTRA-9")
+;; 最後の本文を何片の差分(stream_event の text_delta)に分けて出させるかの言い方。本物の claude は片の数を選べない(言葉どおりの
+;; 本文を返すだけ)ので、片の数を当てにする検は替え玉の CLI と fake だけに置く(#3628)。
+(setv STREAM-PHRASE "Stream the reply in {} pieces.")
 
 (defn #^ str remember-prompt [#^ str word]
   (.format "Remember the codeword {}. Reply with exactly: {}" CODEWORD word))
@@ -28,12 +31,13 @@
 
 
 (defn #^ dict reply-for [#^ str text #^ tuple memory]
-  "prompt → {\"text\" 返事の本文 \"tool_seconds\" 道具の秒数 \"permission\" 道具の前に許可を問うか \"touch\" 触る path}。
-   memory = それまでの入力の本文(会話の記憶)。"
+  "prompt → {\"text\" 返事の本文 \"tool_seconds\" 道具の秒数 \"permission\" 道具の前に許可を問うか \"touch\" 触る path
+   \"deltas\" 最後の本文を分ける差分の片の数(STREAM-PHRASE・無ければ 0 = 差分を出さない)}。memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
   (setv exact (re.search r"[Rr]eply with exactly: (\S+)" text))
   (setv extra (re.search r"include the word (\S+)" text))
+  (setv streamed (re.search r"Stream the reply in (\d+) pieces" text))
   (setv word
         (cond
           (in "What was the codeword" text)
@@ -47,4 +51,5 @@
   {"text" word
    "tool_seconds" (cond sleep (float (.group sleep 1)) touch 0.2 True 0.0)
    "permission" (is-not touch None)
-   "touch" (if touch (.group touch 1) None)})
+   "touch" (if touch (.group touch 1) None)
+   "deltas" (if streamed (int (.group streamed 1)) 0)})

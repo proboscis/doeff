@@ -74,7 +74,8 @@
 
 (defn fake-responder [#^ str text #^ tuple memory]
   (setv rule (reply-for text memory))
-  (FakeReply (get rule "text") :tool-seconds (get rule "tool_seconds") :needs-permission (get rule "permission")))
+  (FakeReply (get rule "text") :tool-seconds (get rule "tool_seconds") :needs-permission (get rule "permission")
+             :deltas (get rule "deltas")))
 
 (defn handlers-for [#^ str name]
   ;; 本番の handler は計時の行(slog)を出すので、その外側に slog の答え手を置く(本番の組の slog-handler の代わり — #3605)。
