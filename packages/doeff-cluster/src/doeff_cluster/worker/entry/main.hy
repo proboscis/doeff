@@ -231,7 +231,8 @@
         host (HostSettings :log-dir (str (/ state-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
                            :program-dir (str (/ state-dir "programs")) :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
-                           :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir)
+                           :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
+                           :notice-env HOST-CONTRACT.notice-env)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ state-dir "logs")) :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。

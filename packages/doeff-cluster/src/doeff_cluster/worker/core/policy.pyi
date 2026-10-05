@@ -50,6 +50,7 @@ from doeff_cluster.worker.core.worker_rules import RETIRED_MARK as RETIRED_MARK
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
+from doeff_cluster.worker.intent.worker_model import NoticeJob as NoticeJob
 from doeff_cluster.worker.core.warm_rules import forks_from_warm_child as forks_from_warm_child
 from doeff_cluster.worker.core.warm_rules import warm_key_of as warm_key_of
 from doeff_cluster.worker.core.warm_rules import warm_mark_clean as warm_mark_clean
@@ -166,6 +167,12 @@ def sweep_actions(desired: tuple, world: WorldView, warm: tuple) -> _Program[tup
     ...
 
 def forget_probe_actions(desired: tuple, world: WorldView) -> _Program[tuple, object]:
+    ...
+
+def wanted_notice(want: JobSpec | None) -> _Program[Retired | HandoffAbandoned, object]:
+    ...
+
+def notice_actions(desired: tuple, world: WorldView) -> _Program[tuple, object]:
     ...
 
 def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=..., absent: StopReason=...) -> _Program[tuple, object]:

@@ -91,8 +91,9 @@
   (val out (.format "{}/{}.out" runs-dir n))
   (val err (.format "{}/{}.err" runs-dir n))
   (<- started-ms int (now-epoch-ms))
-  ;; 検めの出力はそのまま(stdout の行を finish-probe が読んで判じる — 刻を付けるのは job の log だけ・#3714)。
-  (<- shim (get tuple #(str ...)) (shim-argv settings.python settings.shim.shim-grace-ms :stamp-lines False))
+  ;; 検めの出力はそのまま(stdout の行を finish-probe が読んで判じる — 刻を付けるのは job の log だけ・#3714)。検めは退きの知らせを
+  ;; 受けない(#3672)。
+  (<- shim (get tuple #(str ...)) (shim-argv settings.python settings.shim.shim-grace-ms :stamp-lines False :notice-env None))
   (<- answer (StartProcess :argv (+ shim plan.argv)
                            :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path out :stderr-path err
                            :process-group True :hold-stdin True :reap-group True))

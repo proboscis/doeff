@@ -28,6 +28,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
+                                            WriteProcessInput ProcessInputWritten
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound
                                             ModuleNotFound environment-mapping])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
@@ -411,6 +412,43 @@
   (<- init bool (ProcessAlive 1))
   (assert (= answer (ProcessNotChild :pid 1)) answer)
   (assert init "init(pid 1)が生きていない答え"))
+
+;; ---- 握った標準入力の pipe へ書く(WriteProcessInput — #3672)-------------------------------------------------------------------
+;; 消費者 = doeff-cluster の worker(shim の標準入力へ job の退きの知らせの行を送る — shim が job の知らせの pipe へ中継する)。
+
+(deftest test-a-line-written-to-a-held-stdin-reaches-the-child
+  ;; 台本の世界に標準入力の pipe は無いので本物の答え手だけ。hold-stdin の子は、書いた行をその場で読める(子が終わるまで待たない)。
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (<- root str (ContractRoot))
+  (val out (+ root "/line"))
+  (<- started (StartProcess :argv #("/bin/sh" "-c" "read line; echo \"got $line\"; cat >/dev/null") :stdout-path out :hold-stdin True))
+  (assert (isinstance started ProcessStarted) started)
+  (<- written (WriteProcessInput :pid started.pid :text "retired\n"))
+  (<- line str (first-line-of out))
+  (assert (= written (ProcessInputWritten :pid started.pid :delivered True)) written)
+  (assert (= line "got retired") line)
+  (<- stopped (StopProcess :pid started.pid :stop-grace 2.0))
+  (assert (isinstance stopped ProcessExited) stopped))
+
+
+(deftest test-input-is-not-written-without-a-held-stdin-or-after-the-child-ended
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; pipe を握っていない子(DEVNULL)には書かない。
+  (<- free (StartProcess :argv #("sleep" "30")))
+  (<- unheld (WriteProcessInput :pid free.pid :text "retired\n"))
+  (assert (= unheld (ProcessInputWritten :pid free.pid :delivered False)) unheld)
+  (<- (StopProcess :pid free.pid :stop-grace 2.0))
+  ;; 終わっていた子には書かず、終わりは PollProcess のために残す。
+  (<- ended (StartProcess :argv #("/bin/sh" "-c" OUT-ERR-EXIT) :hold-stdin True))
+  (<- (RunProcess :argv #("sleep" "0.3")))
+  (<- late (WriteProcessInput :pid ended.pid :text "retired\n"))
+  (<- exited (PollProcess ended.pid))
+  (assert (= late (ProcessInputWritten :pid ended.pid :delivered False)) late)
+  (assert (= exited (ProcessExited :pid ended.pid :exit-code 3)) exited)
+  ;; 立てていない pid(init = 1)には書かない。
+  (<- stranger (WriteProcessInput :pid 1 :text "retired\n"))
+  (assert (= stranger (ProcessNotChild :pid 1)) stranger))
+
 
 (deftest test-stopping-a-group-stops-what-the-child-left-behind
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}

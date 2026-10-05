@@ -49,13 +49,17 @@
   (json.dumps {"blob" blob "versions" versions}))
 
 
-(defk shim-argv [python grace-ms * stamp-lines]
-  {:pre [(: python str) (: grace-ms int) (: stamp-lines bool)] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
+(defk shim-argv [python grace-ms * stamp-lines notice-env]
+  {:pre [(: python str) (: grace-ms int) (: stamp-lines bool) (: notice-env (| str None))] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "worker" :role "judgment"}}
   "job の子と入口の検めを shim の下で起こす命令の頭を 1 つの形にするため(猶予は shim が秒の小数で読む — 値は worker の方針から
    worker/core/shim_timing の shim-spans が導く・#2940)。stamp-lines = 子の出力の 1 行ごとに壁の時計の刻の頭を付けるか(#3714 — job の
-   log は人が刻で読むので True・入口の検めは worker が stdout の行を読んで判じるので False)。"
+   log は人が刻で読むので True・入口の検めは worker が stdout の行を読んで判じるので False)。notice-env = 退きの知らせの pipe の読み口の
+   fd の番号を job へ渡す環境変数の名(#3672 — 宿の契約 HOST-CONTRACT の notice-env・呼び手が名を渡す。shim は worker が標準入力へ
+   書いた行をその pipe へ中継する)— 入口の検めは知らせを受けないので None。"
   (+ #(python "-B" "-m" "doeff_cluster.worker.entry.shim" (str (/ grace-ms 1000)))
      (if stamp-lines #("--stamp-lines") #())
+     (if (is notice-env None) #() #("--notice-env" notice-env))
      #("--")))
 
 
@@ -77,10 +81,10 @@
 
 
 (defk job-launch [spec code-path instance attempt * python hy-command uv extra-env layout allowed-env worker-pid program-path program-env work-dir
-                  shim-grace-ms]
+                  shim-grace-ms notice-env]
   {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: python str) (: hy-command str) (: uv str)
          (: extra-env dict) (: layout CodeLayout) (: allowed-env dict) (: worker-pid int) (: program-path (| str None)) (: program-env str) (: work-dir str)
-         (: shim-grace-ms int)]
+         (: shim-grace-ms int) (: notice-env str)]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "job の子 process の起こし方を、渡された値だけから決めるため(ProcessHost と、後の言い換えの handler が同じ形で起こす)。
    子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが DOEFF_RUNTIME_ENV・
@@ -88,14 +92,16 @@
    HOST-CONTRACT の program-env — 呼び手が名を渡す。core は foundation の宿の契約を読まない)で渡す。実行環境の job は root の venv の uv run(PYTHONPATH を置かない・子の環境変数は許可表で組む・cwd = work-dir)、
    それ以外は木の PYTHONPATH(layout)を足して worker の環境を継ぐ(EXTEND)。allowed-env = worker の環境のうち許可表の名と LC_* の分
    (実行環境の job だけが読む — 読むのは呼び手: ReadEnvironment の names = CHILD-ENV-ALLOWED・prefixes = CHILD-ENV-PREFIXES)。
-   shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。"
+   shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
+   fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。"
   (<- context dict (process-context-environ spec instance attempt))
   (val worker-env (| context {"DOEFF_WORKER_PID" (str worker-pid)}
                      (if program-path {program-env program-path} {})))
   (val program-args (if program-path #("--program" program-path) #()))
   (val environ (dict spec.environ))
   ;; job の log は 1 行ごとに刻を付ける(待ちの子から分ける task の log も、分かれた子 A が同じ部品で付ける — worker/entry/warm_child)。
-  (<- shim (get tuple #(str ...)) (shim-argv python shim-grace-ms :stamp-lines True))
+  ;; job は退きの知らせの pipe を受ける(shim が worker の標準入力の行を中継する — #3672)。
+  (<- shim (get tuple #(str ...)) (shim-argv python shim-grace-ms :stamp-lines True :notice-env notice-env))
   (if spec.runtime-env
       (do (val declared (json.loads spec.runtime-env))
           (<- child-env dict (child-environment allowed-env extra-env (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
