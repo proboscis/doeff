@@ -63,7 +63,6 @@ class SignalSourcePatience:
 
 def source_patience_handler(patience: SignalSourcePatience) -> _Handler:
     ...
-records_unwaited: _Handler
 
 @dataclass(frozen=True, kw_only=True)
 class ChangedRow:

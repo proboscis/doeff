@@ -14,7 +14,7 @@
 (import doeff_records.effects [AppendEvent ReadStreamEnd])
 (import doeff_records.faults [SetStoreOutage StoreFault StoreOperation AddStoreFault])
 (import doeff_records.laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
-(import doeff_records.event_source [records-unwaited])
+(import doeff_records.http_client [records-unwaited])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [records-server-config start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])

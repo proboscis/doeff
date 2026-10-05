@@ -15,7 +15,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.event_source [records-unwaited])
+(import doeff_records.http_client [records-unwaited])
 (import doeff_records.http_server [records-server-config RunningServer start-records-server])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized http-records-handler http-table-records-handler])
 (import tests.interpreters [sim-request-handlers])
