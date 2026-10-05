@@ -17,6 +17,7 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
@@ -195,8 +196,8 @@
 (defk run-envs [settings program]
   {:pre [(: settings EnvSettings) (: program Program)] :post [(: % (| float CodeView None))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "筋書きの Program を env-host と本物の答え手の下で回し、その答えを返すため(with-handlers の並びは先頭が外側 — 準備の記録は外側の
-   state が持つ)。"
-  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings)] program))
+   state が持つ)。掃除の数えと消しは env-host が task で走らせる(#3715)ので scheduled の下で回す。"
+  (<- answer (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (env-host settings)] program)))
   answer)
 
 

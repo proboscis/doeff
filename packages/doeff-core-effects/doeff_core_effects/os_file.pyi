@@ -35,9 +35,11 @@ from doeff_core_effects.python_bytecode import compile_python_sources as compile
 from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
+from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 LOCK_THREADS: ThreadPerCall
+TREE_THREADS: ThreadPerCall
 
 def failed(path: str, error: OSError) -> _Program[FileFailed, object]:
     ...
@@ -97,3 +99,4 @@ os_file_handler: _Handler
 def release_abandoned(answer: LockHeld | FileFailed) -> None:
     ...
 offloaded_lock_handler: _Handler
+offloaded_tree_handler: _Handler
