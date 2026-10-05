@@ -216,3 +216,8 @@ The following patterns are banned in production code. Agents must avoid these; r
 
 ## Commit & Pull Request Guidelines
 Recent history favors concise, imperative summaries (for example, `Fix cache invalidation` or `Add Gemini structured support`). Reference related issues in the body, note behavioral risks, and list validation commands you ran. Pull requests should describe the effect on core `doeff/` APIs versus optional `packages/` integrations, attach screenshots or traces when diagnostics change, and mention follow-up work in a checklist so maintainers can track it.
+# VS Code 拡張の更新
+
+- doeff の VS Code 拡張を更新したら、変更範囲の検証・依存物を含む VSIX の作成・ローカル VS Code へのインストールまで行う。インストールされた成果物で動作と版を確認し、再読み込みが必要なら伝える。ユーザーに毎回インストールを依頼させない。
+- 未 merge の開発版は、main を配る `agentcli.vsix_follow` と競合しない専用プロファイルにもインストールし、使用するプロファイルを明示する。自動配布の記録を偽装したり、他の拡張の更新を無断で停止したりしない。
+- 出自: operator 2026-10-04「can you install the plugin as you update?」。CLAUDE.md はこのファイルへの symlink なので両ランタイムへ適用する。

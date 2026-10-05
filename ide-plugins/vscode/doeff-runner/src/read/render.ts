@@ -20,6 +20,8 @@ import { NAMES_ONLY_PARAMS, TALL_SIGNATURE_CHARS, TALL_SIGNATURE_PARAMS } from '
 import { axisKey, axisTitle, facets, SEARCH_KEY, visibleCards, worstLevel, type Card, type CardPlacement, type Facet, type Selection } from './model';
 import { relationOf, type CallGraph, type CallTree } from './tree';
 import { renderTree, type TreeRenderContext } from './treeRender';
+import { termLinks } from './termLinks';
+import type { DocIndex } from '../lint/docWorkspaceContract';
 
 /** 1 行の切り替えの欄の見出し(labels の表から)。 */
 const LINE_FIELD_LABEL: Readonly<Record<LineField, string>> = {
@@ -153,6 +155,7 @@ function lineArgs(card: Card, graph: CallGraph): string {
 
 /** カードを描く材料(カード以外)。 */
 export interface CardContext {
+  readonly termsOf?: (file: string) => DocIndex;
   readonly glyphs: Glyphs;
   readonly fold: FoldState;
   /** 索引の全 file の呼び出しの表(関係の数と木の材料) */
@@ -439,12 +442,13 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
   const band = relationBand(card, ctx.graph);
   const location = `${escapeHtml(card.place)}:${card.firstLine}`;
   const doc = docFirstLine(d.docstring);
+  const docMarks = marks.filter((m)=>m.violation.source==='doc-linter' && m.violation.documentKind==='function');
   const effects = card.signature === undefined ? declaredEffectChips(d, ctx) : effectChips(card.signature, d.effects, ctx);
   const line = [
     lineArgs(card, ctx.graph),
     effects === '' ? '' : `<span class="f f-effects">${effects}</span>`,
     d.tags === null ? '' : `<span class="f f-tags">${tagChips('mini')}</span>`,
-    doc === '' ? '' : `<span class="f f-doc">${escapeHtml(doc)}</span>`,
+    doc === '' ? '' : `<span class="f f-doc">${underlined(escapeHtml(doc),docMarks)}</span>`,
     `<span class="f f-relations">${relationText}</span>`,
     `<span class="f f-location loc">${location}</span>`
   ].join('');
@@ -456,8 +460,10 @@ export function renderCard(card: Card, ctx: CardContext, hidden: boolean): strin
       : typed
         ? indexSignatureRows(d, ctx)
         : entityRows(card, ctx)) + contractRow(d);
-  const docBlock = d.docstring === null ? '' : `<div class="doc">${escapeHtml(d.docstring)}</div>`;
-  const usedBy = usedByRow(card, ctx.graph);
+  const docBlock = d.docstring === null ? '' : `<div class="doc">${underlined(escapeHtml(d.docstring),docMarks)}${docMarks.map((m)=>markBadge(m)).join('')}</div>`;
+  const filePath = ctx.graph.definitions.get(d.qualifiedName)?.path;
+  const terms = termLinks(filePath === undefined ? undefined : ctx.termsOf?.(filePath), filePath, d.fullRange.start.line, d.fullRange.end.line);
+  const usedBy = terms + usedByRow(card, ctx.graph);
   const body = card.body === undefined ? '' : bodyBlock(card.body, ctx, marks, nameScope(card.bindings, card.signature));
   const level = worstLevel(card.violations.map((p) => p.violation));
   const violations =
@@ -521,6 +527,7 @@ export function renderWorkspaceCards(state: WorkspaceState, ctx: CardContext): {
 
 /** 面の頁の材料。 */
 export interface PageInput {
+  readonly termsOf?: (file: string) => DocIndex;
   /** workspace の root から見た file の path(置き場の表示) */
   readonly place: string;
   readonly state: PlaneState;
@@ -595,6 +602,7 @@ function searchOf(state: PlaneState): ReadonlySet<string> {
 /** 頁の全体(左に軸・上に 1 行の切り替え・右に実体のカード)。 */
 export function renderPage(input: PageInput): string {
   const ctx: CardContext = {
+    termsOf: input.termsOf,
     glyphs: input.glyphs,
     fold: input.fold,
     graph: input.graph,
@@ -888,6 +896,8 @@ window.addEventListener('scroll', () => {
   scrollTimer = setTimeout(() => { view.scrollY = window.scrollY; vscode.setState(view); }, 100);
 });
 document.addEventListener('click', (event) => {
+  const term = event.target instanceof Element ? event.target.closest('[data-term-id]') : null;
+  if (term !== null) { event.preventDefault(); vscode.postMessage({ type: 'term', id: term.getAttribute('data-term-id'), file: term.getAttribute('data-term-file'), references: term.hasAttribute('data-term-refs') }); return; }
   const target = event.target instanceof Element ? event.target.closest('[data-vopen],[data-vlist],[data-axis],[data-line],[data-src],[data-fold],[data-tree-root],[data-tree-dir],[data-reveal],[data-node-toggle],#clear,#fold-all,#unfold-all,#tree-more,#tree-close') : null;
   if (target === null) { return; }
   event.preventDefault();

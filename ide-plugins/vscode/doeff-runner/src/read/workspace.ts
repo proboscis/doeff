@@ -1,3 +1,4 @@
+import { termMessage } from '../lint/termViews';
 // 定義を読む面の repo 全体の入口(agora-redesign #910 U9)— file を開かずに、索引の全 file の定義を 1 つの面で軸から絞る。
 // operator の裁定「単位は定義。入口は木ではなく tag の複数の軸」「file を跨ぐという概念は面に無い」(v1)の本来の形。
 // 全カードは索引だけから作り(source を持たない = 軽い)、カードを開く・source を押した時にその file だけを読み込む
@@ -97,7 +98,7 @@ export class WorkspacePlane implements vscode.Disposable {
         this.hydrated.clear();
         this.schedule(false);
       }),
-      panel.webview.onDidReceiveMessage((raw: unknown) => void this.receive(readMessage(raw)))
+      panel.webview.onDidReceiveMessage((raw: unknown) => { termMessage(raw); void this.receive(readMessage(raw)); })
     );
     panel.onDidDispose(() => this.close());
     this.lastHtml = '';
@@ -151,7 +152,7 @@ export class WorkspacePlane implements vscode.Disposable {
 
   /** カードを描く材料。 */
   private context(): CardContext {
-    return { glyphs: this.glyphs, fold: this.fold, graph: this.graphs.graph, coloringOf: (card) => this.coloringOf(card), ruleTitles: ruleTitles(this.lint.rules()) };
+    return { glyphs: this.glyphs, fold: this.fold, graph: this.graphs.graph, coloringOf: (card) => this.coloringOf(card), ruleTitles: ruleTitles(this.lint.rules()), termsOf: (file) => this.lint.termIndex(file) };
   }
 
   /** 木の今の形。 */
@@ -176,6 +177,7 @@ export class WorkspacePlane implements vscode.Disposable {
       graph: this.graphs.graph,
       tree: this.treePart(),
       coloring: undefined,
+      termsOf: (file) => this.lint.termIndex(file),
       ruleTitles: ruleTitles(this.lint.rules()),
       cspSource: this.panel.webview.cspSource,
       nonce

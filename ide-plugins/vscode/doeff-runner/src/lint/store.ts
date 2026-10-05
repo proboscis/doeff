@@ -5,6 +5,7 @@
 // 前と同じ違反の差し替えで木を出し直すと、展開と選択が初期に戻る — agora-redesign #2162)。
 
 import * as path from 'path';
+import type { DocIndex, DocProgress } from './docWorkspaceContract';
 import type {
   LintBinding,
   LintBody,
@@ -122,7 +123,8 @@ const VIOLATION_FIELDS: FieldEquality<LintViolation> = {
   level: sameValue,
   explanation: nullable((a, b) => sameByFields(EXPLANATION_FIELDS, a, b)),
   source: sameValue,
-  probability: sameValue
+  probability: sameValue,
+  documentKind: sameValue
 };
 const MODULE_FIELDS: FieldEquality<LintModule> = {
   path: sameValue,
@@ -299,6 +301,64 @@ interface PathTables {
 
 /** linter の結果の置き場。書き換えのたびに、変わった側(違反か見出し)の購読者へ知らせる。 */
 export class LintStore {
+  private readonly documentWorkspaces = new Map<string, { readonly index: DocIndex; readonly progress: DocProgress }>();
+  private readonly documentWorkspaceListeners = new Set<() => void>();
+  setDocumentWorkspace(root: string, index: DocIndex, progress: DocProgress): void {
+    this.updateDocumentWorkspace(root, index, progress, new Map());
+  }
+  /** 逐次結果をまとめて反映する。件数だけの変化で全診断・読む面を再描画しない。 */
+  updateDocumentWorkspace(root: string, index: DocIndex, progress: DocProgress, findings: ReadonlyMap<string, readonly LintViolation[]>): void {
+    let changed = this.documentWorkspaces.get(root)?.index !== index;
+    this.documentWorkspaces.set(root, { index, progress });
+    for (const [file, violations] of findings) {
+      const old = this.documentFindings.get(key(file));
+      this.documentFindings.set(key(file), { root, violations });
+      changed = !sameViolations(old?.violations ?? [], violations) || changed;
+    }
+    if (changed) { this.emit(); }
+    this.emitDocumentWorkspace();
+  }
+  removeDocumentWorkspace(root: string): void {
+    if (this.documentWorkspaces.delete(root)) { this.emit(); this.emitDocumentWorkspace(); }
+  }
+  onDidChangeDocumentWorkspace(listener: () => void): () => void {
+    this.documentWorkspaceListeners.add(listener);
+    return () => this.documentWorkspaceListeners.delete(listener);
+  }
+  private emitDocumentWorkspace(): void {
+    for (const listener of this.documentWorkspaceListeners) { listener(); }
+  }
+  docWorkspaces(): ReadonlyMap<string, { readonly index: import('./docWorkspaceContract').DocIndex; readonly progress: import('./docWorkspaceContract').DocProgress }> { return this.documentWorkspaces; }
+  termIndex(file?: string): import('./docWorkspaceContract').DocIndex {
+    if (file !== undefined) {
+      const root = [...this.documentWorkspaces.keys()].filter((r) => key(file).startsWith(`${key(r)}${path.sep}`)).sort((a,b) => b.length-a.length)[0];
+      return root === undefined ? {definitions:[], references:[]} : (this.documentWorkspaces.get(root)?.index ?? {definitions:[], references:[]});
+    }
+    return { definitions: [...this.documentWorkspaces.values()].flatMap((s) => s.index.definitions), references: [...this.documentWorkspaces.values()].flatMap((s) => s.index.references) };
+  }
+  /** doc-linter の結果は検出元ごとに保持し、doeff-linter の再実行では消さない。 */
+  private readonly documentFindings = new Map<string, { readonly root: string; readonly violations: readonly LintViolation[] }>();
+
+  /** 1ファイルの文章の診断を置き換える。構造の診断や型の表示は変更しない。 */
+  replaceDocumentFindings(root: string, filePath: string, violations: readonly LintViolation[]): void {
+    const old = this.documentFindings.get(key(filePath));
+    this.documentFindings.set(key(filePath), {root, violations});
+    if (!sameViolations(old?.violations ?? [], violations)) {this.emit();}
+  }
+
+  /** 編集や無効化で文章の位置が無効になったとき、その検出元の診断だけを消す。 */
+  clearDocumentFindings(filePath: string): void {
+    if (this.documentFindings.delete(key(filePath))) {this.emit();}
+  }
+
+  /** workspace から外れたフォルダーの文章診断を片付ける。 */
+  clearDocumentRoot(root: string): void {
+    let changed = false;
+    for (const [file, findings] of this.documentFindings) {
+      if (key(findings.root) === key(root)) {this.documentFindings.delete(file);changed = true;}
+    }
+    if (changed) {this.emit();}
+  }
   private readonly roots = new Map<string, RootState>();
   /** 違反の側の購読者 */
   private readonly listeners = new Set<() => void>();
@@ -475,7 +535,7 @@ export class LintStore {
    * 前の結果も無い実行中・失敗の root は数えない)。
    */
   violations(): LintViolation[] {
-    const found: LintViolation[] = [];
+    const found: LintViolation[] = [...this.documentFindings.values()].flatMap((entry) => entry.violations);
     for (const state of this.roots.values()) {
       const base = reportOf(state.run);
       if (base === undefined) {
@@ -498,7 +558,9 @@ export class LintStore {
         const k = key(module.path);
         const override = state.overrides.get(k);
         // 差し替えた file の要約は合成した物(違反の数は全体の結果に残した分を含む — shownFile)。
-        found.push({ root: base.root, module: override === undefined ? module : (shownFile(base, k, override).module ?? module) });
+        const current = override === undefined ? module : (shownFile(base, k, override).module ?? module);
+        const extra = this.documentFindings.get(k)?.violations.length ?? 0;
+        found.push({ root: base.root, module: extra === 0 ? current : {...current,violations:current.violations+extra} });
       }
     }
     return found;

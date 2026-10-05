@@ -54,6 +54,8 @@ export interface LintViolation {
   readonly source: LintSource;
   /** Jev の判定の確率(Jev の違反だけ。他は null) */
   readonly probability: number | null;
+  /** doc-linter が検査した文章の種類。関数の説明は読む面の docstring にも印を付ける。 */
+  readonly documentKind?: 'function' | 'comment' | 'document';
 }
 
 /** 規則の重大さ(更新 7)— repo が規則ごとに宣言する方針(無い規則は linter が規則そのものの重さから決める)。登録簿で下げない。 */
@@ -81,7 +83,7 @@ export const LINT_STANDINGS = ['new', 'registered', 'reconciling'] as const;
 export type LintStanding = (typeof LINT_STANDINGS)[number];
 
 /** 違反の出どころ(更新 5)— 決定的な規則か、Jev の意味の判定か。 */
-export const LINT_SOURCES = ['linter', 'jev'] as const;
+export const LINT_SOURCES = ['linter', 'jev', 'doc-linter'] as const;
 export type LintSource = (typeof LINT_SOURCES)[number];
 
 /** 較正の見張りの結果(更新 5)。 */

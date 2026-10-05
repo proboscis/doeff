@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import { LintDecorations } from './decorations';
+import { registerDocLint } from './docRegister';
 import { LayerFileDecorations, LayerHover, LayerStatusBar, showLayerTable } from './layerViews';
 import { LintMapTree, LintViolationsTree, type TreePixels } from './panel';
 import type { IconSource } from '../pixel/icons';
@@ -157,7 +158,6 @@ export function registerLint(
   });
   context.subscriptions.push(treeSetting);
   context.subscriptions.push(
-    diagnostics,
     service,
     violations,
     map,
@@ -226,5 +226,6 @@ export function registerLint(
   );
   decorations.start();
   service.start();
-  return { store, watch: (document) => service.watch(document) };
+  const watchDocs = registerDocLint(context,store,output);
+  return { store, watch: (document) => {service.watch(document);watchDocs(document);} };
 }

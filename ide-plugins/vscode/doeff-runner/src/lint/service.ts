@@ -60,6 +60,7 @@ function openDocument(filePath: string): OpenDocument | undefined {
  * (SemanticJudge)。
  */
 export class LintService implements vscode.Disposable {
+  private disposed = false;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly debounces = new Map<string, NodeJS.Timeout>();
   private readonly lastFailure = new Map<string, string>();
@@ -148,6 +149,8 @@ export class LintService implements vscode.Disposable {
 
   /** 購読と保留中の debounce を止め、波線を消す。 */
   dispose(): void {
+    if (this.disposed) { return; }
+    this.disposed = true;
     for (const timer of this.debounces.values()) {
       clearTimeout(timer);
     }
@@ -156,7 +159,7 @@ export class LintService implements vscode.Disposable {
     for (const d of this.disposables) {
       d.dispose();
     }
-    this.diagnostics.clear();
+    this.diagnostics.dispose();
   }
 
   /** root の全体を linter に聞く。聞き終わるまで store には「実行中」を置く(agora-redesign #1650)。 */
@@ -194,6 +197,7 @@ export class LintService implements vscode.Disposable {
 
   /** linter の結果を置き場へ入れる。失敗は理由を Output に出す(同じ理由は続けて出さない)。 */
   private apply(request: LintRequest, outcome: LintOutcome): void {
+    if (this.disposed) { return; }
     switch (outcome.tag) {
       case 'disabled':
         this.store.removeRoot(request.root);
@@ -265,7 +269,7 @@ export class LintService implements vscode.Disposable {
           spec.message,
           toSeverity(spec.severity)
         );
-        diagnostic.source = 'doeff-linter';
+        diagnostic.source = spec.violation.source === 'doc-linter' ? 'doc-linter' : 'doeff-linter';
         diagnostic.code = spec.code;
         return diagnostic;
       });
