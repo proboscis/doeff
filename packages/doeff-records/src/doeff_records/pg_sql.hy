@@ -14,7 +14,7 @@
 ;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。
 ;;; 旧い版より後に足した索引(#3614 — どれも宣言から作る CREATE INDEX IF NOT EXISTS・旧い版の文の後ろ):
 ;;;   append_rows (ledger, at)        期限の境(at <= 境)で引く文 — 回収の候補の読み・組の「新しい出来事」の照らし・読みの期限の条件
-;;;   append_rows (ledger, 組の名の式) 組で数える列(ByKeySuffix)の区切りごとに 1 つ — 書きが触る組の片付け(expire-touched-events-statement)と
+;;;   append_rows (ledger, 組の名の式) 組で数える列(ByKeySuffix)の区切りごとに 1 つ — 書きが触る組の読み(touched-events-statement)と
 ;;;                                  組の照らし(expired-event-condition)が引く。式は key-suffix-expression の 1 か所から作り、区切りは宣言の値を
 ;;;                                  文に直に置く(引数にすると文の式が索引の式と揃わず、索引に当たらない — 区切りの字は values.SEPARATOR-PATTERN)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
@@ -38,7 +38,7 @@
 ;;; 保持の期限(#3561): 読みの文(行・一覧・変更の列・追記の読み・列の末尾)は、回収を待たずに期限を過ぎた行と出来事を文の条件で除く
 ;;; (RowExpiry・EventExpiry の境 — 境の刻は admission.retention-cutoff-ms)。出来事の期限の条件は回収と読みで同じ expired-event-condition の
 ;;; 1 つ。期限の無い表と列では条件を足さない(文は前と同じ)。書き(#3605 の D)は回収の文を流さず、自分が触る単位の期限を過ぎた出来事だけを
-;;; 同じ条件で捨てる(expire-touched-events-statement)。
+;;; 同じ条件で読み(touched-events-statement — 書きの 1 往復目)、読んだ番号で捨てる(delete-events-statement — 2 往復目)。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -602,7 +602,7 @@
   {:pre [(: key str) (: separator str) (.match SEPARATOR-PATTERN separator)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "冪等キーの式 key の最初の区切り separator より後ろ・区切りを含まないキーはキー全体(admission.retention-group-of と同じ組の名)の
-   式を作るため。出来事の冪等キー(key-suffix-expression)と、書きが触る鍵の引数(expire-touched-events-statement)が同じ 1 つを使う。
+   式を作るため。出来事の冪等キー(key-suffix-expression)と、書きが触る鍵の引数(touched-events-statement)が同じ 1 つを使う。
    区切りは宣言の値を文字列の literal で文に直に置く(引数にすると、文の式が組の名の式の索引 group-index-statement の式と揃わず索引に
    当たらない — #3614)。置けるのは values.SEPARATOR-PATTERN の字(引用符・逆斜線・空白・ASCII の外を含まない)だけで、区切りの長さは
    文字の数 = Python の len と同じ。"
@@ -615,7 +615,7 @@
   {:pre [(: payload str) (: separator str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "出来事の payload の列(綴り payload — 索引は payload・文は old.payload / young.payload)の冪等キーの組の名の式を作るため(key-suffix-of)。
-   組の名の式の索引(group-index-statement)と、組を照らす文(expired-event-condition・expire-touched-events-statement)がこの 1 つを使う。"
+   組の名の式の索引(group-index-statement)と、組を照らす文(expired-event-condition・touched-events-statement)がこの 1 つを使う。"
   (<- suffix (key-suffix-of (.format "(({}::jsonb) ->> 'idempotencyKey')" payload) separator))
   suffix)
 
@@ -632,14 +632,15 @@
              :params params))
 
 
-(defk expire-touched-events-statement [prefix stream before-at separator idempotency-key]
+(defk touched-events-statement [prefix stream before-at separator idempotency-key]
   {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: idempotency-key str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "書き(AppendEvent)が触る単位の保持の期限を過ぎた出来事を捨て、捨てた出来事(番号・刻・payload)を返す文を作るため(#3605 の D — 書きは
-   置き場の全部を回収せず、自分が触る単位だけを片付ける)。単位 = 出来事ごとに数える列(separator None)は冪等キー idempotency-key の
-   出来事・組で数える列(ByKeySuffix)はその鍵の組の出来事(組の名の式 key-suffix-of を鍵の引数にも当てる)。期限の条件は回収と読みと同じ
-   expiring-where。返した行は回収と同じく鍵の覚えになる(retire-keys-statement)。単位の照らしは索引に当たる: 出来事ごとは冪等キーの一意の
-   索引・組は (ledger, 組の名の式) の索引(#3614 — 受付の列への追記ごとに流れるので、列の全部を読まない事が要る)。"
+  "書き(AppendEvent)が触る単位の保持の期限を過ぎた出来事(番号・刻・payload — read-events-statement と同じ列の並び)を読む文を作るため
+   (#3605 の D — 書きは置き場の全部を回収せず、自分が触る単位だけを片付ける。書きの錠の transaction の 1 往復目に読み、読んだ物を 2 往復目の
+   delete-events-statement で捨てて鍵の覚えへ移す — 同じ錠の中なので、読んだ物がそのまま捨てる物)。単位 = 出来事ごとに数える列
+   (separator None)は冪等キー idempotency-key の出来事・組で数える列(ByKeySuffix)はその鍵の組の出来事(組の名の式 key-suffix-of を鍵の
+   引数にも当てる)。期限の条件は回収と読みと同じ expiring-where。単位の照らしは索引に当たる: 出来事ごとは冪等キーの一意の索引・組は
+   (ledger, 組の名の式) の索引(#3614 — 受付の列への追記ごとに流れるので、列の全部を読まない事が要る)。"
   (<- where (expiring-where prefix separator))
   (<- params (expiring-params stream before-at))
   (val unit (if (is separator None)
@@ -647,6 +648,16 @@
                 (.format "{} = {}" (! (key-suffix-expression "old.payload" separator))
                          (! (key-suffix-of "CAST(:idempotency_key AS text)" separator)))))
   (<- named (params-of #(#("idempotency_key" idempotency-key))))
-  (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE {w} AND {u} RETURNING old.seq, old.at, old.payload"
+  (Statement :text (.format "SELECT old.seq, old.at, old.payload FROM {p}append_rows AS old WHERE {w} AND {u} ORDER BY old.seq"
                             :p prefix :w where :u unit)
              :params (+ params named)))
+
+
+(defk delete-events-statement [prefix stream sequences]
+  {:pre [(: prefix str) (: stream str) (: sequences tuple) (> (len sequences) 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "書き(AppendEvent)が 1 往復目に読んだ、触る単位の期限を過ぎた出来事(番号 sequences — touched-events-statement の答え)を捨てる文を作るため
+   (#3605 — 同じ書きの錠の transaction の 2 往復目に流す。番号は主鍵で引く)。空の組は文にできないので :pre が断る(呼び手が枝で避ける)。"
+  (<- numbers (in-list "s" sequences))
+  (Statement :text (.format "DELETE FROM {p}append_rows WHERE ledger = :ledger AND seq IN ({s})" :p prefix :s numbers.text)
+             :params (+ (! (params-of #(#("ledger" stream)))) numbers.params)))

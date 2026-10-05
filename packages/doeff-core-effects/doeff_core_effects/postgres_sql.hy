@@ -14,6 +14,14 @@
 ;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError・接続できない時・
 ;;;     接続の例外の SQLSTATE(class 08 と 57P01・57P02・57P03)は SqlUnreachable(postgres-failure)。
 ;;;   - SqlTransaction = 接続 1 本で BEGIN → lock-key が在れば pg_advisory_xact_lock(hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
+;;;     既定(batched = False)は文 1 つを 1 回ずつ流す(run-in-transaction — BEGIN・錠・文・合図・COMMIT がそれぞれ往復 1 回)。
+;;;     batched = True を選んだ transaction だけ(agora-redesign #3605): 往復 1 回(TransactionFlush — BEGIN と錠・文・合図・COMMIT)を psycopg 3 の
+;;;     pipeline mode の 1 つの pipeline で送り、出口の sync 1 度で答えを順に受ける(postgres-flush・run-in-batched-transaction)。途中の文が
+;;;     落ちると PostgreSQL は次の sync までの文を流さないので、答えは最初に落ちた文の失敗(TransactionAborted へ写る)で、ROLLBACK は
+;;;     run-in-batched-transaction が流す。pipeline の出入りは with で必ず閉じ、返す接続が pipeline mode のまま残っていれば捨てる(release)。
+;;;     借りた接続への driver の呼び(文・往復・ROLLBACK・返却)は transaction ごとの錠で 1 本ずつ(offloaded-transaction — 取り消された往復の
+;;;     thread が走り切る前に ROLLBACK が割り込まない)。pipeline mode を持たない psycopg / libpq(libpq 14 未満)では、接続の貸し出しを作る時
+;;;     (起動の時)に名を挙げて落ちる — batched の transaction を文 1 つずつ流す道へ黙って倒さない。
 ;;;   - scheduler を塞がない(agora-redesign #1215): postgres-sql-handler は driver の I/O(接続の許可を待つ・接続を開く・文を流す・COMMIT・
 ;;;     ROLLBACK・接続を返す)を scheduler の thread で撃たず、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回し、撃った task
 ;;;     だけが外から完了させる promise で待つ。遅い文の間も同じ run の他の task(待ち受けの /healthz・時計の刻み)は回る。同時に使う接続の
@@ -37,15 +45,18 @@
 (import threading)
 (import time)
 (import concurrent.futures [Executor])
+(import collections.abc [Callable])
+(import contextlib [AbstractContextManager])
+(import typing [Protocol runtime-checkable])
 (import dataclasses [dataclass field])
 (import doeff [Program])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlParam SqlColumnType SqlText SqlPlaceholder split-statement checked-params
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
-(import doeff_core_effects.sql_transaction [run-in-transaction])
+(import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
 
 ;; SQLSTATE を持たない driver の誤りの類 → その類の SQLSTATE の class の code(psycopg が SQLSTATE から類を選ぶ表の逆)。
 (val DRIVER-CLASS-SQLSTATES {"DataError" "22000" "IntegrityError" "23000" "ProgrammingError" "42000" "NotSupportedError" "0A000"
@@ -111,7 +122,13 @@
    (pooled-postgres-sql-handler が scheduler の許可の数として読む)・timeouts = 開く接続に付ける上限。"
 
   (defn __init__ [self #^ tuple databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; defk にできない: 資源の class の初期化
-    "database の宣言の列と、database ごとに同時に貸す接続の上限と、接続の上限を受けるため。"
+    "database の宣言の列と、database ごとに同時に貸す接続の上限と、接続の上限を受けるため。transaction の往復は pipeline mode で送る
+     (頭の註)ので、psycopg と libpq が pipeline mode を持たなければ、ここ(組み立ての側が起動の時に作る所)で名を挙げて落ちる。"
+    (import psycopg)
+    (when (not (psycopg.Pipeline.is-supported))
+      (raise (RuntimeError (.format (+ "PostgreSQL の答え手は transaction の往復を psycopg の pipeline mode で送るが、この環境は pipeline mode を"
+                                       " 持たない(psycopg {} の実装 {}・libpq {} — libpq 14 以上が要る)")
+                                    psycopg.__version__ psycopg.pq.__impl__ (psycopg.pq.version)))))
     (setv self.size size
           self.timeouts timeouts
           self.databases (dfor d databases d.name d)
@@ -185,11 +202,13 @@
         (raise))))
 
   (defn release [self #^ str name connection]  ; defk にできない: 資源の返却(with / finally から呼ぶ)
-    "借りた接続を返すため(切れていれば捨てる・transaction の途中なら rollback し、できなければ捨てる)。"
+    "借りた接続を返すため(切れていれば捨てる・pipeline mode のまま残っていれば捨てる — 頭の註・transaction の途中なら rollback し、
+     できなければ捨てる)。"
     (import psycopg)
     (try
       (cond
         (or connection.closed connection.broken) (.close connection)
+        (!= connection.pgconn.pipeline-status psycopg.pq.PipelineStatus.OFF) (.close connection)
         (!= connection.info.transaction-status psycopg.pq.TransactionStatus.IDLE)
           (try
             (.rollback connection)
@@ -402,16 +421,162 @@
   (SqlSchemaApplied :statements statements))
 
 
+;; 同じ鍵の transaction を直列にする錠の文(中立の記法)— transaction の最初の往復で BEGIN の次に流す。
+(val LOCK-STATEMENT "SELECT pg_advisory_xact_lock(hashtext(:key))")
+
+
+(defrecord PostgresStep
+  "pipeline に積む文 1 つ(postgres-flush の往復の中の順): text = psycopg へ渡す文 / params = 名つきの引数(None = 引数の書き換えを
+   通さない文 — BEGIN・COMMIT)/ rows = executemany で流す行(None = 文 1 つ)/ answered = その答えを往復の答え(requests の答え)に
+   載せるか(BEGIN・錠・合図・COMMIT は載せない)。"
+  (#^ str text)
+  (#^ (| (get tuple #(SqlParam ...)) None) params)
+  (#^ (| (get tuple #((get tuple #((| int float str bytes bool None) ...)) ...)) None) rows)
+  (#^ bool answered))
+
+
+(defk request-step [request]
+  {:pre [(: request (| SqlQuery SqlInsertRows))] :post [(: % (| PostgresStep None))]
+   :tags {:context "sql" :role "foundation"}}
+  "transaction の中の文 1 つ(SqlQuery | SqlInsertRows)を pipeline の文にするため(引数と行の検めは送る前 — 誤りは ValueError / TypeError)。
+   行の無い SqlInsertRows は文を流さないので None(答えは SqlRows の 0 行)。"
+  (match request
+    (SqlQuery :statement statement :params params)
+      (do (<- bound (postgres-statement statement params))
+          (PostgresStep :text bound.text :params bound.params :rows None :answered True))
+    (SqlInsertRows :table table :columns columns :rows rows)
+      (do (<- (checked-rows columns rows))
+          (<- text (postgres-insert-statement table columns))
+          (if rows (PostgresStep :text text :params None :rows rows :answered True) None))))
+
+
+(defk flush-steps [lock-key flush]
+  {:pre [(: lock-key (| str None)) (: flush TransactionFlush)] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
+  "transaction の往復 1 回(TransactionFlush)を pipeline に積む文の並びにするため(順 = BEGIN・錠・文・合図・COMMIT)。requests の位置は
+   答えの順と同じで、文を流さない request(行の無い SqlInsertRows)は None のまま並べる。"
+  (var opening #())
+  (when flush.opening
+    (:= opening #((PostgresStep :text "BEGIN" :params None :rows None :answered False)))
+    (when (is-not lock-key None)
+      (<- lock (postgres-statement LOCK-STATEMENT #((SqlParam :name "key" :value lock-key))))
+      (:= opening (+ opening #((PostgresStep :text lock.text :params lock.params :rows None :answered False))))))
+  (var requests #())
+  (for [request flush.requests]
+    (<- step (request-step request))
+    (:= requests (+ requests #(step))))
+  (var notices #())
+  (for [channel flush.notices]
+    (<- notice (postgres-statement NOTICE-STATEMENT #((SqlParam :name "channel" :value channel))))
+    (:= notices (+ notices #((PostgresStep :text notice.text :params notice.params :rows None :answered False)))))
+  (+ opening requests notices
+     (if flush.closing #((PostgresStep :text "COMMIT" :params None :rows None :answered False)) #())))
+
+
+(defclass [runtime-checkable] StatementCursor [Protocol]
+  "pipeline に積んだ文 1 つの答えを受ける driver の cursor の形(psycopg 3 の Cursor がこの形を持つ — psycopg はこの module の I/O の関数の
+   中でだけ読むので、契約は psycopg の型でなくこの形で書く)。description = 行を返す文の欄の並び(返さない文は None)・rowcount = engine が
+   数えた行の数・fetchall = 行を読む・close = 閉じる・executemany = 同じ文を行ごとに積む。"
+  #^ (| tuple list None) description
+  #^ int rowcount
+  #^ (get Callable #([] list)) fetchall
+  #^ (get Callable #([] None)) close
+  #^ (get Callable #([str list] None)) executemany)
+
+
+(defclass [runtime-checkable] PipelineConnection [Protocol]
+  "transaction の往復を 1 つの pipeline で流す driver の接続の形(psycopg 3 の Connection がこの形を持つ — StatementCursor と同じ理由で
+   psycopg の型を契約に書かない)。pipeline = pipeline mode の出入り(with)・execute = 文 1 つを積んで cursor を返す・cursor = executemany
+   を積む cursor を作る。"
+  #^ (get Callable #([] AbstractContextManager)) pipeline
+  #^ (get Callable #([str (| dict None)] StatementCursor)) execute
+  #^ (get Callable #([] StatementCursor)) cursor)
+
+
+(defk pipelined [connection step]
+  {:pre [(: connection PipelineConnection) (: step (| PostgresStep None))] :post [(: % (| StatementCursor None))]
+   :tags {:context "sql" :role "foundation"}}
+  "pipeline mode の接続に文 1 つを積み、答えを受ける cursor を返すため(答えは sync の後に読む・文を流さない request は None)。"
+  (cond
+    (is step None) None
+    (is step.rows None) (.execute connection step.text (if (is step.params None) None (dfor p step.params p.name p.value)))
+    True (do (val cursor (.cursor connection))
+             (.executemany cursor step.text (list step.rows))
+             cursor)))
+
+
+(defk step-answer [step cursor]
+  {:pre [(: step (| PostgresStep None)) (: cursor (| StatementCursor None))] :post [(: % SqlRows)]
+   :tags {:context "sql" :role "foundation"}}
+  "pipeline の sync の後に、文 1 つの答えを cursor から読むため(文を流さなかった request は 0 行)。"
+  (cond
+    (is cursor None) (SqlRows :rows #() :rowcount 0)
+    (is cursor.description None) (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
+    True (do (val rows (! (normalized-rows (.fetchall cursor))))
+             (SqlRows :rows rows :rowcount (len rows)))))
+
+
+(defk first-failure [error]
+  {:pre [(: error Exception)] :post [(: % Exception)]
+   :tags {:context "sql" :role "foundation"}}
+  "pipeline の出口が上げた失敗から、最初に落ちた文の失敗を取り出すため: 出口の後始末が、落ちた文の後ろの文の PipelineAborted で先の失敗を
+   上書きして上げた時(psycopg は上書きした例外の __context__ に先の失敗を持つ)は先の失敗・他はそのまま。"
+  (import psycopg)
+  (val earlier error.__context__)
+  (if (and (isinstance error psycopg.errors.PipelineAborted) (isinstance earlier psycopg.Error))
+      earlier
+      error))
+
+
+(defk postgres-flush [connection lock-key flush]
+  {:pre [(: connection PipelineConnection) (: lock-key (| str None)) (: flush TransactionFlush)]
+   :post [(: % (| tuple SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "transaction の往復 1 回(TransactionFlush)を 1 つの pipeline で送り、答えを順に受けるため(頭の註)。答え = requests と同じ順の SqlRows の
+   tuple | 最初に落ちた文の失敗(BEGIN・錠・合図・COMMIT を含む — PostgreSQL は落ちた文から sync までを流さない)。driver の I/O なので
+   driver の thread で回す。
+   sync は pipeline の出口(with の終わり)の 1 度だけ — 中で sync を呼ぶと出口がもう 1 度 sync して往復が 1 回増える。文を積む間に先の文の
+   失敗が届けば、その場で積むのを止めて覚え、例外を with の外へ抜かない(抜くと psycopg が出口の後始末の失敗を warning の log に出す)。
+   出口が上げる失敗は、最初に落ちた文の失敗か、それを __context__ に持つ後ろの文の PipelineAborted(first-failure)。pipeline は with で
+   必ず出る(失敗の道でも — 出られずに残った接続は返す時に捨てる)。"
+  (import psycopg)
+  (<- steps (flush-steps lock-key flush))
+  (var cursors #())
+  (var failed None)
+  (try
+    (with [_ (.pipeline connection)]
+      (try
+        (for [step steps]
+          (<- cursor (pipelined connection step))
+          (:= cursors (+ cursors #(cursor))))
+        (except [error psycopg.Error]
+          (:= failed error))))
+    (except [error psycopg.Error]
+      (when (is failed None)
+        (<- first (first-failure error))
+        (:= failed first))))
+  (when (is-not failed None)
+    (<- failure (postgres-error failed))
+    (return failure))
+  (var answers #())
+  (for [#(step cursor) (zip steps cursors :strict True)]
+    (when (or (is step None) step.answered)
+      (<- answer (step-answer step cursor))
+      (:= answers (+ answers #(answer))))
+    (when (is-not cursor None)
+      (.close cursor)))
+  answers)
+
+
 (defk postgres-begin [connection lock-key]
   {:pre [(: connection "psycopg の接続") (: lock-key (| str None))] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction を始め、lock-key が在れば同じ鍵の transaction を直列にする錠を取るため(成功は None)。"
+  "transaction を始め、lock-key が在れば同じ鍵の transaction を直列にする錠を取るため(成功は None — 既定の手順の BEGIN と錠の 2 往復)。"
   (<- began (postgres-run connection "BEGIN" None))
   (cond
     (not (isinstance began SqlRows)) began
     (is lock-key None) None
-    True (do (<- locked (postgres-query connection (SqlQuery "" "SELECT pg_advisory_xact_lock(hashtext(:key))"
-                                                             #((SqlParam :name "key" :value lock-key)))))
+    True (do (<- locked (postgres-query connection (SqlQuery "" LOCK-STATEMENT #((SqlParam :name "key" :value lock-key)))))
              (if (isinstance locked SqlRows) None locked))))
 
 
@@ -430,8 +595,8 @@
 (defk postgres-lease [connections database]
   {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "psycopg の接続 | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "接続を 1 本借りるため(開けなければ SqlUnreachable)。psycopg は借りが誤りで終わった時の読み分けでだけ読む — driver を読むのは貸し出しの
-   acquire なので、借りが通る道は psycopg の無い環境でも偽の貸し出しで撃てる(agora-redesign #2792 の検)。"
+  "接続を 1 本借りるため(開けなければ SqlUnreachable)。psycopg は借りが誤りで終わった時の読み分けでだけ読む — driver を開くのは貸し出しの
+   acquire なので、借りが通る道は偽の貸し出しで撃てる(agora-redesign #2792 の検)。"
   (try
     (.acquire connections database)
     (except [error Exception]
@@ -466,39 +631,59 @@
       (finally (.release connections database leased)))))
 
 
-(defk offloaded-transaction [connections pool database program lock-key]
-  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None))]
+(defk driven [pool guard work]
+  {:pre [(: pool Executor) (: guard AbstractContextManager) (: work (get Callable #([] Program)))] :post [(: % "work の答え")]
+   :tags {:context "sql" :role "foundation"}}
+  "transaction の接続 1 本への driver の呼び 1 つを、pool の thread で錠 guard を取って回し、撃った task だけが待つため(offloaded-transaction の
+   註)。"
+  (<- answer (offloaded pool (fn [] (with [_ guard] (run-detached (work)))) keep-nothing))
+  answer)
+
+
+(defk offloaded-transaction [connections pool database program lock-key batched]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None)) (: batched bool)]
    :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "接続 1 本を借りて program を 1 つの transaction で回し、必ず接続を返すため(各段の driver の I/O は pool の thread で — 頭の註)。
-   postgres-sql-handler と pooled-postgres-sql-handler が共に使う。"
+  "接続 1 本を借りて program を 1 つの transaction で回し、必ず接続を返すため(driver の I/O は pool の thread で — 頭の註)。postgres-sql-handler と
+   pooled-postgres-sql-handler が共に使う。batched = False(既定)は文 1 つを 1 回ずつ流す run-in-transaction・True は往復 1 回を pipeline 1 つで
+   送る run-in-batched-transaction(頭の註)。
+   借りた接続への driver の呼び(文・往復・ROLLBACK・返却)は錠 guard で 1 本ずつ回す(driven): 待ち手が取り消されても走り出した呼びの thread は
+   走り切るので、その後の ROLLBACK と返却が別の thread から同じ接続に来る。psycopg の接続の錠は pipeline の文を積む間と出口の間で外れる
+   ので、guard が無いと ROLLBACK が pipeline を出る前の接続に積まれ、接続は pipeline mode のまま返って捨てられた(#3605 の検で発見)。
+   文 1 つずつの手順では psycopg の接続の錠が同じ順を守るので、guard は流す文と順を変えない。"
   (<- leased (offloaded pool (fn [] (lease-now connections database)) (fn [value] (return-abandoned connections database value))))
   ;; channels = この transaction が合図を出した channel(commit の後に同じ process の呼び鈴を鳴らす — 頭の註)。
   (val channels (set))
+  (val guard (threading.Lock))
   (if (isinstance leased SqlUnreachable)
       leased
       (try
-        (<- answer (run-in-transaction database program
-                                       (fn [request] (offloaded pool (fn [] (run-detached (postgres-query leased request))) keep-nothing))
-                                       (fn [request] (offloaded pool (fn [] (run-detached (postgres-insert leased request))) keep-nothing))
-                                       (fn [] (offloaded pool (fn [] (run-detached (postgres-begin leased lock-key))) keep-nothing))
-                                       (fn [] (offloaded pool (fn [] (run-detached (postgres-control leased "COMMIT"))) keep-nothing))
-                                       (fn [] (offloaded pool (fn [] (run-detached (postgres-control leased "ROLLBACK"))) keep-nothing))
-                                       :execute-notify (fn [request]
-                                                         (.add channels request.channel)
-                                                         (offloaded pool
-                                                                    (fn [] (run-detached
-                                                                             (postgres-query leased
-                                                                                             (SqlQuery database NOTICE-STATEMENT
-                                                                                                       #((SqlParam :name "channel"
-                                                                                                                   :value request.channel))))))
-                                                                    keep-nothing))))
+        (<- answer (if batched
+                       (run-in-batched-transaction database program
+                                                   (fn [flush]
+                                                     (.update channels flush.notices)
+                                                     (driven pool guard (fn [] (postgres-flush leased lock-key flush))))
+                                                   (fn [] (driven pool guard (fn [] (postgres-control leased "ROLLBACK"))))
+                                                   :accepts-notices True)
+                       (run-in-transaction database program
+                                           (fn [request] (driven pool guard (fn [] (postgres-query leased request))))
+                                           (fn [request] (driven pool guard (fn [] (postgres-insert leased request))))
+                                           (fn [] (driven pool guard (fn [] (postgres-begin leased lock-key))))
+                                           (fn [] (driven pool guard (fn [] (postgres-control leased "COMMIT"))))
+                                           (fn [] (driven pool guard (fn [] (postgres-control leased "ROLLBACK"))))
+                                           :execute-notify (fn [request]
+                                                             (.add channels request.channel)
+                                                             (driven pool guard
+                                                                     (fn [] (postgres-query leased
+                                                                                            (SqlQuery database NOTICE-STATEMENT
+                                                                                                      #((SqlParam :name "channel"
+                                                                                                                  :value request.channel))))))))))
         (when (not (isinstance answer #(SqlFailed SqlUnreachable)))
           (for [channel channels]
             (.ring-local connections database channel)))
         answer
         (finally
-          (<- (offloaded pool (fn [] (.release connections database leased)) keep-nothing))))))
+          (<- (offloaded pool (fn [] (with [_ guard] (.release connections database leased))) keep-nothing))))))
 
 
 (defk offloaded-statement [connections pool database work]
@@ -564,9 +749,13 @@
   (SqlEnsureTables [database tables] :when (in database (.names connections))
     (<- answer (offloaded-statement connections DRIVER-THREADS database (fn [leased] (postgres-ensure-tables leased tables))))
     (resume answer))
-  (SqlTransaction [database program lock-key] :when (in database (.names connections))
-    (<- answer (offloaded-transaction connections DRIVER-THREADS database program lock-key))
+  (SqlTransaction [database program lock-key batched] :when (in database (.names connections))
+    (<- answer (offloaded-transaction connections DRIVER-THREADS database program lock-key batched))
     (resume answer))
+  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  (SqlBatch [database queries commit] :when (in database (.names connections))
+    (<- refusal (stray-batch database))
+    (raise refusal))
   (SqlNotify [database channel] :when (in database (.names connections))
     (<- answer (notified connections DRIVER-THREADS database channel))
     (resume answer))

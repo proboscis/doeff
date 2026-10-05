@@ -119,6 +119,13 @@ class SqlTransaction(EffectBase[T | SqlFailed | SqlUnreachable], Generic[T]):
     database: str
     program: Program[T, Any]
     lock_key: str | None = None
+    batched: bool = False
+
+@dataclass(frozen=True)
+class SqlBatch(EffectBase[tuple[SqlRows, ...]]):
+    database: str
+    queries: tuple[SqlQuery, ...]
+    commit: bool = False
 
 @dataclass(frozen=True)
 class SqlEnsureTables(EffectBase[SqlSchemaApplied | SqlFailed | SqlUnreachable]):

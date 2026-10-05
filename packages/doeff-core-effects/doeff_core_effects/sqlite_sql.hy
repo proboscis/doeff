@@ -6,7 +6,9 @@
 ;;;   - 失敗は例外の類 → SQLSTATE の類の表(SQLITE-CLASS-SQLSTATES)で SqlFailed にする — 模擬で「断り(22 / 23)」と「一時的(40)」の
 ;;;     分岐を起こせるように。閉じた接続は SqlUnreachable。SetSqlOutage で database を不達にでき、その間は全部 SqlUnreachable。
 ;;;   - SqlTransaction の lock-key は使わない: 接続は 1 本で、transaction の中は同じ database の問い合わせと純粋な計算だけなので
-;;;     scheduler の別の task が割り込まない(sql_transaction.hy)。
+;;;     scheduler の別の task が割り込まない(sql_transaction.hy)。既定は文 1 つずつ(BEGIN IMMEDIATE → 文 → COMMIT / ROLLBACK)。batched を
+;;;     選んだ transaction の往復 1 回(TransactionFlush — BEGIN IMMEDIATE・文・COMMIT)は順に流す(sqlite-flush — 往復の考えが無いのでまとめない。
+;;;     答えは PostgreSQL の答え手と同じ)。transaction の外の SqlBatch は名指して断る。
 ;;;   - 欄の型 BOOLEAN は sqlite に無いので、宣言の型の名で読み戻しを bool へ写す(本物の PostgreSQL と同じ値を返す)。
 ;;; 方言の差(sqlite で通らない PostgreSQL / ClickHouse の文)はこの答え手の外: 呼び手は両方で通る文を書く(#802 便 3 の案 A)。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -14,11 +16,11 @@
 (import sqlite3)
 (import dataclasses [dataclass])
 (import doeff [Program])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
-                                        SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
-                                        checked-identifier checked-identifiers checked-rows normalized-rows SqlTable SqlParam
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed
+                                        SqlUnreachable SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params
+                                        param-value checked-identifier checked-identifiers checked-rows normalized-rows SqlTable SqlParam
                                         SqlValue])
-(import doeff_core_effects.sql_transaction [run-in-transaction])
+(import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
 
 ;; 例外の類 → SQLSTATE の類(psycopg が SQLSTATE から類を選ぶ表の逆 — agora-controllers services/record/handlers_wire.hy の
 ;; DRIVER-CLASS-SQLSTATES と同じ類)。OperationalError は文で分ける(sqlite-failure)。
@@ -160,6 +162,31 @@
   (if (isinstance answer SqlRows) None answer))
 
 
+(defk sqlite-flush [connection flush]
+  {:pre [(: connection sqlite3.Connection) (: flush TransactionFlush) (not flush.notices)] :post [(: % (| tuple SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "transaction の往復 1 回(TransactionFlush)に、PostgreSQL の答え手と同じ答えを返すため(頭の註 — sqlite に往復は無いので順に流す):
+   opening = BEGIN IMMEDIATE・requests を順に・closing = COMMIT。答え = requests と同じ順の SqlRows の tuple | 最初の失敗(後ろは流さない)。
+   合図は受けない(run-in-transaction が SqlNotify を断るので notices は空)。"
+  (when flush.opening
+    (<- began (sqlite-control connection "BEGIN IMMEDIATE"))
+    (when (is-not began None)
+      (return began)))
+  (var answers #())
+  (for [request flush.requests]
+    (<- answer (match request
+                 (SqlQuery) (sqlite-query connection request)
+                 (SqlInsertRows) (sqlite-insert connection request)))
+    (when (isinstance answer #(SqlFailed SqlUnreachable))
+      (return answer))
+    (:= answers (+ answers #(answer))))
+  (when flush.closing
+    (<- committed (sqlite-control connection "COMMIT"))
+    (when (is-not committed None)
+      (return committed)))
+  answers)
+
+
 (defk sqlite-connection [target uri]
   {:pre [(: target str) (: uri bool)] :post [(: % sqlite3.Connection)]
    :tags {:context "sql" :role "foundation"}}
@@ -238,21 +265,26 @@
   answer)
 
 
-(defk sqlite-answer-transaction [connection unreachable database program]
+(defk sqlite-answer-transaction [connection unreachable database program batched]
   {:tp [A]
-   :pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: program (of Program A object))]
+   :pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: program (of Program A object)) (: batched bool)]
    :post [(: % (| A SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlTransaction 1 つを接続 1 本の BEGIN IMMEDIATE … COMMIT / ROLLBACK で答えるため(不達の印を見てから・手順は sql_transaction.hy)。"
+  "SqlTransaction 1 つを接続 1 本の BEGIN IMMEDIATE … COMMIT / ROLLBACK で答えるため(不達の印を見てから・手順は sql_transaction.hy —
+   既定は文 1 つずつ・batched を選んだ transaction は往復 1 回を sqlite-flush で順に流す)。"
   (<- down (outage-of unreachable database))
   (when (is-not down None)
     (return down))
-  (<- answer (run-in-transaction database program
-                                 (fn [request] (sqlite-query connection request))
-                                 (fn [request] (sqlite-insert connection request))
-                                 (fn [] (sqlite-control connection "BEGIN IMMEDIATE"))
-                                 (fn [] (sqlite-control connection "COMMIT"))
-                                 (fn [] (sqlite-control connection "ROLLBACK"))))
+  (<- answer (if batched
+                 (run-in-batched-transaction database program
+                                             (fn [flush] (sqlite-flush connection flush))
+                                             (fn [] (sqlite-control connection "ROLLBACK")))
+                 (run-in-transaction database program
+                                     (fn [request] (sqlite-query connection request))
+                                     (fn [request] (sqlite-insert connection request))
+                                     (fn [] (sqlite-control connection "BEGIN IMMEDIATE"))
+                                     (fn [] (sqlite-control connection "COMMIT"))
+                                     (fn [] (sqlite-control connection "ROLLBACK")))))
   answer)
 
 
@@ -286,9 +318,13 @@
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-tables connection unreachable database tables))
     (resume answer))
-  (SqlTransaction [database program lock-key] :when (in database databases)
+  (SqlTransaction [database program lock-key batched] :when (in database databases)
     (<- opened (with-connection connections database))
     (when (is-not opened connections) (:= connections opened))
     (<- connection (connection-of connections database))
-    (<- answer (sqlite-answer-transaction connection unreachable database program))
-    (resume answer)))
+    (<- answer (sqlite-answer-transaction connection unreachable database program batched))
+    (resume answer))
+  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  (SqlBatch [database queries commit] :when (in database databases)
+    (<- refusal (stray-batch database))
+    (raise refusal)))

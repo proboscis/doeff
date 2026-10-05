@@ -7,6 +7,7 @@ from dataclasses import dataclass as dataclass
 from doeff import Program as Program
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects.sql_effects import SqlBatch as SqlBatch
 from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
 from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
 from doeff_core_effects.sql_effects import SetSqlOutage as SetSqlOutage
@@ -27,7 +28,10 @@ from doeff_core_effects.sql_effects import normalized_rows as normalized_rows
 from doeff_core_effects.sql_effects import SqlTable as SqlTable
 from doeff_core_effects.sql_effects import SqlParam as SqlParam
 from doeff_core_effects.sql_effects import SqlValue as SqlValue
+from doeff_core_effects.sql_transaction import TransactionFlush as TransactionFlush
 from doeff_core_effects.sql_transaction import run_in_transaction as run_in_transaction
+from doeff_core_effects.sql_transaction import run_in_batched_transaction as run_in_batched_transaction
+from doeff_core_effects.sql_transaction import stray_batch as stray_batch
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 from doeff import Some as Some
@@ -73,6 +77,9 @@ def sqlite_ensure_tables(connection: sqlite3.Connection, tables: tuple[SqlTable,
 def sqlite_control(connection: sqlite3.Connection, statement: str) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
 
+def sqlite_flush(connection: sqlite3.Connection, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+    ...
+
 def sqlite_connection(target: str, uri: bool) -> _Program[sqlite3.Connection, object]:
     ...
 
@@ -97,7 +104,7 @@ def sqlite_answer_insert(connection: sqlite3.Connection, unreachable: tuple[str,
 def sqlite_answer_tables(connection: sqlite3.Connection, unreachable: tuple[str, ...], database: str, tables: tuple[SqlTable, ...]) -> _Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, object]:
     ...
 
-def sqlite_answer_transaction[A](connection: sqlite3.Connection, unreachable: tuple[str, ...], database: str, program: Program[A, object]) -> _Program[A | SqlFailed | SqlUnreachable, object]:
+def sqlite_answer_transaction[A](connection: sqlite3.Connection, unreachable: tuple[str, ...], database: str, program: Program[A, object], batched: bool) -> _Program[A | SqlFailed | SqlUnreachable, object]:
     ...
 
 def sqlite_sql_handler(databases: tuple[str, ...]) -> _Handler:

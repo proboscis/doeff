@@ -27,17 +27,29 @@
 ;;;   SqlQuery         文 1 つ。答え = SqlRows | SqlFailed | SqlUnreachable
 ;;;   SqlInsertRows    表へ行をまとめて入れる(PostgreSQL / sqlite = executemany・ClickHouse = JSONCompactEachRow の本文 1 つ)。答えは同じ
 ;;;   SqlTransaction   program を 1 つの transaction の中で走らせる。答え = program の答え | SqlFailed | SqlUnreachable。約束:
-;;;                      (1) 中の SqlQuery / SqlInsertRows が最初に失敗したら rollback し、program を再開せずにその失敗を答えにする
-;;;                      (2) 中で出せるのは同じ database への SqlQuery と SqlInsertRows と純粋な計算だけ。他の effect(入れ子の SqlTransaction・
-;;;                          別の database・scheduler・状態)は答え手が被せる handler が断り、rollback して SqlTransactionMisuse を投げる
+;;;                      (1) 中の SqlQuery / SqlInsertRows(/ SqlBatch)が最初に失敗したら rollback し、program を再開せずにその失敗を答えにする
+;;;                      (2) 中で出せるのは同じ database への SqlQuery と SqlInsertRows(batched なら SqlBatch も)と純粋な計算だけ。他の effect
+;;;                          (入れ子の SqlTransaction・別の database・scheduler・状態)は答え手が被せる handler が断り、rollback して
+;;;                          SqlTransactionMisuse を投げる
 ;;;                      (3) program が例外を投げたら rollback して例外を通す
 ;;;                    lock-key(str | None)= 同じ鍵の transaction を直列にする(PostgreSQL = pg_advisory_xact_lock(hashtext(鍵))・
 ;;;                    sqlite = 1 接続で transaction が割り込まれないので要らない)。ClickHouse の答え手は SqlFailed(0A000)で断る。
+;;;                    batched(bool・既定 False)= 文の流し方の宣言(手順は sql_transaction.hy の頭の註):
+;;;                      False  文 1 つを 1 回ずつ流す — BEGIN → 錠 → 文を出た順に → SqlNotify もその場で → COMMIT / ROLLBACK(SQL を出さない
+;;;                             program でも BEGIN・錠・COMMIT を流す)
+;;;                      True   往復をまとめる(agora-redesign #3605)— BEGIN と錠は最初の文と同じ往復・SqlNotify は覚えて COMMIT と同じ往復・
+;;;                             commit の束(SqlBatch の commit = True)は COMMIT と同じ往復・SQL を 1 つも出さない program は往復 0
+;;;   SqlBatch         batched = True の SqlTransaction の program の中で、文の並び queries を 1 回の往復でまとめて流す(PostgreSQL = 1 つの
+;;;                    pipeline・sqlite = 順に流す)。答え = queries と同じ順の SqlRows の tuple(どれかが落ちれば約束 (1) — program は再開
+;;;                    されない)。commit = True なら、同じ往復の最後に COMMIT を流して transaction を終える(その後に SQL の effect を出すと
+;;;                    約束 (2) の断り)。batched でない transaction の中・transaction の外で出せば SqlTransactionMisuse で名指して断る。
+;;;                    ClickHouse の答え手は答えない。
 ;;;   SqlEnsureTables  表・欄・索引の宣言(SqlTable)を方言の DDL に描いて流す(在れば何もしない)。答え = SqlSchemaApplied | SqlFailed |
 ;;;                    SqlUnreachable。PostgreSQL の DO $$・CONCURRENTLY、ClickHouse の engine の細目は宣言に載せない(共通の文にできない)
 ;;;
 ;;;   SqlNotify        通知の channel へ合図を出す(transaction の中なら commit した時だけ届く)— PostgreSQL の pg_notify
-;;;                    — SqlTransaction の中で出せる(約束 (2) の例外)。答え手は commit の後に同じ process の呼び鈴をその場で鳴らす
+;;;                    — SqlTransaction の中で出せる(約束 (2) の例外 — batched なら覚えて COMMIT と同じ往復で流す)。答え手は commit の後に
+;;;                    同じ process の呼び鈴をその場で鳴らす
 ;;;   SqlHangNotice    通知の channel に呼び鈴(外の promise)を掛ける — PostgreSQL の LISTEN。答え = 呼び鈴 | SqlUnreachable。
 ;;;                    SqlDropNotice = 鳴らなかった呼び鈴を外す。3 つとも答えるのは PostgreSQL の答え手 2 つだけ
 ;;;
@@ -162,11 +174,21 @@
 
 
 (defeffect SqlTransaction
-  "program を 1 つの transaction の中で走らせる(頭の註の約束 3 つ)。答え = program の答え(commit した後)| SqlFailed | SqlUnreachable。"
-  {:fields [(: database str) (: program Program) (: lock-key (| str None) None)]
-   :pre [(: database str) (: program Program) (: lock-key (| str None))]
+  "program を 1 つの transaction の中で走らせる(頭の註の約束 3 つ)。答え = program の答え(commit した後)| SqlFailed | SqlUnreachable。
+   batched = 文の流し方の宣言(既定 False = 文 1 つを 1 回ずつ・True = 往復をまとめる — 頭の註)。"
+  {:fields [(: database str) (: program Program) (: lock-key (| str None) None) (: batched bool False)]
+   :pre [(: database str) (: program Program) (: lock-key (| str None)) (: batched bool)]
    :answer (| T SqlFailed SqlUnreachable)
    :runs-carried [program]
+   :tags {:context "sql" :role "foundation"}})
+
+
+(defeffect SqlBatch
+  "batched = True の SqlTransaction の program の中で、同じ database への文の並び queries を 1 回の往復でまとめて流す(頭の註)。答え = queries と
+   同じ順の SqlRows の tuple。commit = True なら同じ往復の最後に COMMIT を流す(その後に SQL の effect を出すと SqlTransactionMisuse)。"
+  {:fields [(: database str) (: queries (get tuple #(SqlQuery ...))) (: commit bool False)]
+   :pre [(: database str) (: queries tuple) (: commit bool) (all (gfor q queries (and (isinstance q SqlQuery) (= q.database database))))]
+   :answer (get tuple #(SqlRows ...))
    :tags {:context "sql" :role "foundation"}})
 
 

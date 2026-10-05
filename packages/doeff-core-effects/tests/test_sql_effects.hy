@@ -8,6 +8,10 @@
 ;;;     transaction の錠の番号が旧い書き方の hashtext と同じ・取り消しで rollback して接続と許可を返す。
 ;;;   - postgres-sql-handler も scheduler を塞がない(#1215)ことを実 PG で: 遅い問い合わせの横で別の task が進む・同じ lock-key の transaction
 ;;;     だけが直列で、違う鍵は並ぶ。
+;;;   - 往復のまとめ(SqlBatch — #3605): BEGIN と錠は最初の文と同じ往復・合図と commit の束は COMMIT と同じ往復・SQL を出さない program は
+;;;     往復 0(偽の答え手で数える)。束の途中の文が落ちたら後ろは流れず ROLLBACK・commit の束の後の SQL は断る・transaction の外の束は断る
+;;;     (sqlite と実 PG)。pipeline の中で文が落ちた接続を、次の transaction が同じ接続のまま使える(pooled)。pipeline mode の無い環境では
+;;;     接続の貸し出しを作る所で落ちる。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import os)
 (import json)
@@ -21,10 +25,11 @@
 (import decimal [Decimal])
 (import doeff [Program])
 (import doeff_core_effects.handlers [state])
-(import doeff_core_effects.effects [Get])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
-                                        SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex
+(import doeff_core_effects.effects [Get Put])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SetSqlOutage SqlParam SqlRows
+                                        SqlFailed SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex
                                         normalized-value normalized-rows split-statement])
+(import doeff_core_effects.sql_transaction [TransactionFlush run-in-batched-transaction])
 (import doeff_core_effects.sqlite_sql [sqlite-sql-handler sqlite-statement sqlite-failure])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement postgres-insert-statement postgres-failure
                                          postgres-schema-statements PostgresDatabase PostgresConnections PostgresTimeouts])
@@ -1067,3 +1072,280 @@
           (.connection-options connections DB))
   (assert (= (get (.connection-options connections "plain") "options") "-c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000")
           (.connection-options connections "plain")))
+
+
+;; --- 往復のまとめ(SqlBatch・BEGIN と COMMIT の相乗り — agora-redesign #3605)--------------------------------------------------------------
+
+(defk recorded-flush [flush]
+  {:pre [(: flush TransactionFlush)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "偽の答え手の往復 1 回: 流す物を状態の flushes に覚え、requests ごとに 0 行の答えを返すため(往復の数え方の検 — DB を使わない)。"
+  (<- seen (Get "flushes"))
+  (<- (Put "flushes" (+ seen #(flush))))
+  (tuple (gfor _ flush.requests (SqlRows :rows #() :rowcount 0))))
+
+
+(defk recorded-rollback []
+  {:pre [] :post [(: % None)]
+   :tags {:context "sql" :role "program"}}
+  "偽の答え手の ROLLBACK: 状態の rollbacks を 1 増やすため。"
+  (<- seen (Get "rollbacks"))
+  (<- (Put "rollbacks" (+ seen 1)))
+  None)
+
+
+(defk recorded-transaction [program]
+  {:pre [(: program Program)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "program を偽の答え手(合図を受ける — PostgreSQL の答え手と同じ)の transaction で走らせ、#(答え 往復の tuple ROLLBACK の数) を返すため。"
+  (<- (Put "flushes" #()))
+  (<- (Put "rollbacks" 0))
+  (<- answer (run-in-batched-transaction DB program (fn [flush] (recorded-flush flush)) (fn [] (recorded-rollback)) :accepts-notices True))
+  (<- flushes (Get "flushes"))
+  (<- rollbacks (Get "rollbacks"))
+  #(answer flushes rollbacks))
+
+
+(defk computed-only []
+  {:pre [] :post [(: % int)]
+   :tags {:context "sql" :role "program"}}
+  "SQL を 1 つも出さない program(純粋な計算だけ)。"
+  (+ 1 2))
+
+
+(defk one-query []
+  {:pre [] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "文 1 つを流して commit の束を出さずに終わる program。"
+  (<- (SqlQuery DB "SELECT 1" #()))
+  "読んだ")
+
+
+(defk notified-batch []
+  {:pre [] :post [(: % int)]
+   :tags {:context "sql" :role "program"}}
+  "合図を出し、文 2 つの commit の束で終わる program(答え = 束の答えの数)。"
+  (<- (SqlNotify DB "changes"))
+  (<- answers (SqlBatch DB #((SqlQuery DB "SELECT 1" #()) (SqlQuery DB "SELECT 2" #())) :commit True))
+  (len answers))
+
+
+(defk notified-only []
+  {:pre [] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "合図だけを出す program。"
+  (<- (SqlNotify DB "changes"))
+  "合図だけ")
+
+
+(defk empty-commit []
+  {:pre [] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "文の無い commit の束だけを出す program(流す物が無い)。"
+  (<- answers (SqlBatch DB #() :commit True))
+  (assert (= answers #()) answers)
+  "空の束")
+
+
+(defk round-trip-shapes []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "往復の形の筋書きを偽の答え手で順に撃つため。"
+  (<- pure (recorded-transaction (computed-only)))
+  (<- single (recorded-transaction (one-query)))
+  (<- batched (recorded-transaction (notified-batch)))
+  (<- signal (recorded-transaction (notified-only)))
+  (<- empty (recorded-transaction (empty-commit)))
+  #(pure single batched signal empty))
+
+
+(deftest test-a-transaction-shares-round-trips-with-begin-and-commit
+  ;; 失敗ケース(#3605): SQL を出さない program は往復 0(BEGIN も COMMIT も流さない)。BEGIN と錠は最初の文と同じ往復・commit の束と覚えた
+  ;; 合図は COMMIT と同じ往復。
+  (<- shapes (with-handler [(state)] (round-trip-shapes)))
+  (val pure (get shapes 0))
+  (val single (get shapes 1))
+  (val batched (get shapes 2))
+  (val signal (get shapes 3))
+  (val empty (get shapes 4))
+  (assert (= pure #(3 #() 0)) pure)
+  (assert (= (get single 0) "読んだ") single)
+  (assert (= (get single 1) #((TransactionFlush :opening True :requests #((SqlQuery DB "SELECT 1" #())) :notices #() :closing False)
+                              (TransactionFlush :opening False :requests #() :notices #() :closing True)))
+          single)
+  (assert (= (get batched 0) 2) batched)
+  (assert (= (get batched 1) #((TransactionFlush :opening True :requests #((SqlQuery DB "SELECT 1" #()) (SqlQuery DB "SELECT 2" #()))
+                                                 :notices #("changes") :closing True)))
+          batched)
+  (assert (= (get signal 1) #((TransactionFlush :opening True :requests #() :notices #("changes") :closing True))) signal)
+  (assert (= empty #("空の束" #() 0)) empty)
+  (assert (all (gfor shape shapes (= (get shape 2) 0))) shapes))
+
+
+(defk failing-batch [database third]
+  {:pre [(: database str) (: third str)] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "束の 2 文目が一意の違反で落ちる program(third = 束の 3 文目)。束の答えは来ない — 来れば program が答えを返して commit する。"
+  (<- (SqlBatch database #((SqlQuery database "INSERT INTO items (id, label) VALUES (70, 'x')" #())
+                           (SqlQuery database "INSERT INTO items (id, label) VALUES (70, 'y')" #())
+                           (SqlQuery database third #()))
+                :commit True))
+  "束の後に再開された")
+
+
+(defk query-after-commit [database]
+  {:pre [(: database str)] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "commit の束の後に文を出す program。"
+  (<- (SqlBatch database #((SqlQuery database "INSERT INTO items (id, label) VALUES (80, 'c')" #())) :commit True))
+  (<- (SqlQuery database "SELECT 1" #()))
+  "来ない")
+
+
+(defk stray-batch-refusal [database]
+  {:pre [(: database str)] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "transaction の外で束を出し、断りの文を返すため。"
+  (try
+    (<- (SqlBatch database #((SqlQuery database "SELECT 1" #()))))
+    "断られていない"
+    (except [error SqlTransactionMisuse]
+      (str error))))
+
+
+(defk batch-in-default-transaction [database]
+  {:pre [(: database str)] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "batched を選んでいない transaction の中で束を出す program(断られて、束の文は流れない)。"
+  (<- (SqlBatch database #((SqlQuery database "INSERT INTO items (id, label) VALUES (81, 'u')" #())) :commit True))
+  "来ない")
+
+
+(defk misuse-under [database program batched]
+  {:pre [(: database str) (: program Program) (: batched bool)] :post [(: % str)]
+   :tags {:context "sql" :role "program"}}
+  "batched を選んだ / 選ばない transaction が SqlTransactionMisuse で断られることを、断りの文にして返す筋書き。"
+  (try
+    (<- (SqlTransaction database program :lock-key None :batched batched))
+    "断られていない"
+    (except [error SqlTransactionMisuse]
+      (str error))))
+
+
+(defk batch-promises [database third]
+  {:pre [(: database str) (: third str)] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "束の約束を順に撃つ筋書き: 途中の文が落ちる束(1 文目も戻る)・commit の束の後の文(断り — commit は残る)・batched を選ばない transaction の
+   中の束(断り — 何も書かない)・transaction の外の束(断り)。"
+  (<- (seeded database))
+  (<- failed (SqlTransaction database (failing-batch database third) :lock-key "batch-lock" :batched True))
+  (<- after-failure (count-items database))
+  (<- refused (misuse-under database (query-after-commit database) True))
+  (<- after-misuse (count-items database))
+  (<- unbatched (misuse-under database (batch-in-default-transaction database) False))
+  (<- after-unbatched (count-items database))
+  (<- stray (stray-batch-refusal database))
+  #(failed after-failure refused after-misuse stray unbatched after-unbatched))
+
+
+(defk asserted-batch-promises [promises]
+  {:pre [(: promises tuple)] :post [(: % None)]
+   :tags {:context "sql" :role "program"}}
+  "batch-promises の答えを sqlite と実 PG で同じ判定にかけるため。"
+  (val failed (get promises 0))
+  (assert (and (isinstance failed SqlFailed) (.startswith (or failed.sqlstate "") "23")) failed)
+  (assert (= (get promises 1) 0) promises)
+  (assert (in "commit の束で終わった後に SqlQuery" (get promises 2)) promises)
+  (assert (= (get promises 3) 1) promises)
+  (assert (in "transaction の外" (get promises 4)) promises)
+  (assert (in "batched を選んでいない" (get promises 5)) promises)
+  (assert (= (get promises 6) 1) promises)
+  None)
+
+
+(deftest test-sqlite-batch-stops-at-the-first-failure-and-refuses-sql-after-commit
+  ;; 失敗ケース(#3605): 束の途中の文が落ちたら transaction は戻り program は再開されない・commit の束の後の SQL は断る(commit は残る)・
+  ;; transaction の外の束は断る。sqlite は束を順に流す(答えは PostgreSQL の答え手と同じ)。
+  (<- promises (with-handler [(state) (sqlite-sql-handler #(DB))] (batch-promises DB "INSERT INTO items (id, label) VALUES (71, 'z')")))
+  (<- (asserted-batch-promises promises)))
+
+
+(defk postgres-batch-promises []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "束の約束を本物の PostgreSQL で撃ち、束の 3 文目(sequence を進める — sequence は rollback で戻らない)が流れたかを添えるため。"
+  (<- (fresh DB))
+  (<- (SqlQuery DB "DROP SEQUENCE IF EXISTS batch_probe" #()))
+  (<- (SqlQuery DB "CREATE SEQUENCE batch_probe" #()))
+  (<- promises (batch-promises DB "SELECT nextval('batch_probe')"))
+  (<- probe SqlRows (SqlQuery DB "SELECT is_called FROM batch_probe" #()))
+  #(promises (get probe.rows 0 0)))
+
+
+(deftest test-postgres-batch-stops-at-the-first-failure-and-refuses-sql-after-commit
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
+  ;; 失敗ケース(#3605): 束は 1 つの pipeline で送る。途中の文が落ちたら PostgreSQL は後ろの文(sequence を進める 3 文目・COMMIT)を流さず、
+  ;; 答えは最初に落ちた文の失敗で、ROLLBACK で 1 文目も戻る。commit の束の後の SQL と transaction の外の束は断る。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (try
+    (<- answer (with-handler [(postgres-sql-handler connections)] (postgres-batch-promises)))
+    (finally (.close connections)))
+  (<- (asserted-batch-promises (get answer 0)))
+  (assert (is (get answer 1) False) "落ちた文の後ろの文が流れた(sequence が進んだ)"))
+
+
+(defk failed-pipeline []
+  {:pre [] :post [(: % "SqlTransaction の答え")]
+   :tags {:context "sql" :role "program"}}
+  "表を用意し、束の途中の文が落ちる transaction を撃つため(pipeline の中の失敗)。"
+  (<- (fresh DB))
+  (<- (seeded DB))
+  (<- failed (SqlTransaction DB (failing-batch DB "SELECT 1") :lock-key "pooled-batch" :batched True))
+  failed)
+
+
+(defk counted-after-insert []
+  {:pre [] :post [(: % int)]
+   :tags {:context "sql" :role "program"}}
+  "1 行を入れて数える commit の束 1 つの program(答え = 入れた後の行の数)。"
+  (<- answers (SqlBatch DB #((SqlQuery DB "INSERT INTO items (id, label) VALUES (90, 'n')" #())
+                             (SqlQuery DB "SELECT count(*) FROM items" #()))
+                :commit True))
+  (get (. (get answers 1) rows) 0 0))
+
+
+(deftest test-pooled-postgres-reuses-the-connection-after-a-failed-pipeline
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
+  ;; 失敗ケース(#3605・cisco-c8 の条件 2): pipeline の中で文が落ちた transaction の接続は、pipeline mode を出て transaction を戻した形で
+  ;; 返り、次の transaction が同じ接続のまま普通に使える(pipeline を開いたまま返した接続は、返す時に捨てられて別の接続になる)。接続 1 本。
+  (import psycopg)
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (val pool (ThreadPoolExecutor :max-workers 1))
+  (try
+    (<- failed (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (failed-pipeline)))
+    ;; 返った接続の形は貸し出しを閉じる前に読む(閉じると状態は UNKNOWN)。
+    (val first (list (. (get connections.idle DB) queue)))
+    (val returned (tuple (gfor c first #(c.pgconn.pipeline-status c.info.transaction-status))))
+    (<- counted (with-handler [(state) (pooled-postgres-sql-handler connections pool)]
+                  (SqlTransaction :database DB :program (counted-after-insert) :lock-key "pooled-batch" :batched True)))
+    (val second (list (. (get connections.idle DB) queue)))
+    (finally (.close connections) (.shutdown pool)))
+  (assert (and (isinstance failed SqlFailed) (.startswith (or failed.sqlstate "") "23")) failed)
+  (assert (= returned #(#(psycopg.pq.PipelineStatus.OFF psycopg.pq.TransactionStatus.IDLE))) returned)
+  (assert (= counted 1) counted)
+  (assert (and (= (len second) 1) (is (get second 0) (get first 0))) "落ちた pipeline の後の接続が使い続けられず、捨てられた"))
+
+
+(deftest test-postgres-connections-refuse-an-environment-without-pipeline-mode [monkeypatch]
+  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
+  ;; 失敗ケース(#3605・cisco-c8 の条件 1): psycopg / libpq が pipeline mode を持たない環境では、接続の貸し出しを作る所(起動の時)で名を
+  ;; 挙げて落ちる — 文を 1 つずつ流す道へ黙って倒さない。
+  (import psycopg)
+  (.setattr monkeypatch psycopg.Pipeline "is_supported" (classmethod (fn [cls] False)))
+  (var refused "")
+  (try
+    (PostgresConnections #((PostgresDatabase :name DB :dsn "")))
+    (except [error RuntimeError]
+      (:= refused (str error))))
+  (assert (in "pipeline mode" refused) refused)
+  (assert (in "libpq" refused) refused))

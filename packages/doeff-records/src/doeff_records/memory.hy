@@ -589,7 +589,7 @@
 (defn #^ None retire-touched-events [#^ MemoryStore store #^ StreamDecl decl #^ str idempotency-key #^ int now-ms]
   "追記が触る単位(出来事ごとに数える列は冪等キーの出来事・組で数える列は鍵の組)の保持の期限を過ぎた出来事を、回収と同じく捨てて冪等キーの
    覚えへ移すため(#3605 の D — 書きは置き場の全部を回収しない。答えは回収の後の追記と同じ: 期限を過ぎた鍵は覚えで判じ、期限を過ぎた組に
-   新しい鍵を積んでも組の古い出来事は読みに戻らない。PostgreSQL の handler の retire-touched-events と同じ単位)。期限の判定は読みと回収と
+   新しい鍵を積んでも組の古い出来事は読みに戻らない。PostgreSQL の handler の earlier-use と同じ単位)。期限の判定は読みと回収と
    同じ(出来事は stored-event-expired?・組は組の最後の刻の event-expired?)。期限の無い列では何もしない。"
   (when (not (isinstance decl.retention KeepFor))
     (return None))

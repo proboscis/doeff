@@ -9,7 +9,9 @@
 ;;;   - SqlQuery / SqlInsertRows / SqlEnsureTables = 許可を取り、pool の仕事 1 つで「接続を借りる → 流す → 返す」。
 ;;;   - SqlTransaction = 許可を取り、接続を 1 本借りて、BEGIN(lock-key が在れば pg_advisory_xact_lock(hashtext(:key)) — postgres-sql-handler と
 ;;;     同じ文)→ program → COMMIT の各段を pool で流す。中の SqlQuery は transaction の scope の handler が同じ接続で pool へ回す(program 側の
-;;;     約束は postgres-sql-handler と同じ)。
+;;;     約束は postgres-sql-handler と同じ)。batched = True を選んだ transaction だけは postgres-sql-handler と同じ往復のまとめ方(BEGIN と錠は
+;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)。transaction の外の SqlBatch は名指して断る
+;;;     (stray-batch)。
 ;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice — agora-redesign #3073)は postgres-sql-handler と同じ手順(postgres_sql.hy の notified・
 ;;;     hung-notice)。transaction の外の SqlNotify は接続の許可を取ってから流す。呼び鈴を掛けるのは待ち受けの接続で、許可を使わない。
 ;;;   - 取り消し: 待っている task が Cancel されたら、run-in-transaction が ROLLBACK を流し、接続を返し(返す時にも transaction の途中なら
@@ -27,7 +29,8 @@
 (import concurrent.futures [Executor])
 (import doeff [Program])
 (import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice])
+(import doeff_core_effects.sql_transaction [stray-batch])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-ensure-tables offloaded-statement
                                          offloaded-transaction notified hung-notice])
 
@@ -80,11 +83,15 @@
     (<- answer (permitted (get permits database)
                           (offloaded-statement connections pool database (fn [leased] (postgres-ensure-tables leased tables)))))
     (resume answer))
-  (SqlTransaction [database program lock-key] :when (in database (.names connections))
+  (SqlTransaction [database program lock-key batched] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))
-    (<- answer (permitted (get permits database) (offloaded-transaction connections pool database program lock-key)))
+    (<- answer (permitted (get permits database) (offloaded-transaction connections pool database program lock-key batched)))
     (resume answer))
+  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  (SqlBatch [database queries commit] :when (in database (.names connections))
+    (<- refusal (stray-batch database))
+    (raise refusal))
   (SqlNotify [database channel] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))

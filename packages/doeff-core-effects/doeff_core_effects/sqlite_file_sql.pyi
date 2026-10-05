@@ -6,9 +6,11 @@ from pathlib import Path as Path
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects.sql_effects import SqlBatch as SqlBatch
 from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
 from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
 from doeff_core_effects.sql_effects import SetSqlOutage as SetSqlOutage
+from doeff_core_effects.sql_transaction import stray_batch as stray_batch
 from doeff_core_effects.sqlite_sql import SqliteConnection as SqliteConnection
 from doeff_core_effects.sqlite_sql import sqlite_connection as sqlite_connection
 from doeff_core_effects.sqlite_sql import connection_of as connection_of
