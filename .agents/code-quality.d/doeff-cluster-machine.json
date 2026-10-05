@@ -3,6 +3,7 @@
     {
       "allow": [
         "doeff-cluster-cluster-control",
+        "doeff-cluster-coordinator-reads",
         "doeff-cluster-declare",
         "doeff-cluster-local",
         "doeff-cluster-process-versions",
