@@ -177,13 +177,11 @@
   (for [f clause-forms]
     (walk f)))
 
-(setv _lazy-counter 0)
-
 (defn _fresh-lazy-tmp [lazy-name suffix]
-  "Generate a unique temp var for lazy init."
-  (global _lazy-counter)
-  (setv _lazy-counter (+ _lazy-counter 1))
-  (Symbol (+ "_lazy_" (str lazy-name) "_" suffix "_" (str _lazy-counter))))
+  "lazy の初期化の一時の名を作るため。Hy の gensym で作る — 名の番号は compile の口の正準化
+   (doeff_hy_bytecode_guard.records.canonical_gensyms)が module の中の順へ振り直すので、compile の順に依らない
+   (自前の数えを持つと、その番号が compile の順で変わっていた — agora-redesign #3667)。"
+  (hy.gensym (+ "lazy_" (str lazy-name) "_" suffix)))
 
 (defn _references-symbol [form sym-name]
   "Check if form's AST contains a Symbol with the given name.

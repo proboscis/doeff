@@ -157,7 +157,7 @@ def file_sha256(path: str) -> str | None:
 # 戻り値の型は内側の関数の推論に任せる — ``SourceFileLoader.source_to_code`` と引数の名まで同じ形なので、そのまま口へ戻せる
 # (Callable の別名で書くと引数の名が消え、口への代入が型の食い違いになる)。
 def _recording_source_to_code(previous: SourceToCode):
-    """compile の口の包み — Hy の module を compile した直後に、展開が依った macro の記録を code に足すため。"""
+    """compile の口の包み — Hy の module を compile した直後に、gensym の名を正準化し、展開が依った macro の記録を code に足すため。"""
 
     def source_to_code(
         self: importlib.machinery.SourceFileLoader,
@@ -169,6 +169,12 @@ def _recording_source_to_code(previous: SourceToCode):
         code = previous(self, data, path, *args, **kwargs)
         if not isinstance(path, str) or not is_hy_source(path):
             return code
+        from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
+
+        # Hy の source の compile は import・作り直し・前もって作る道具(source_to_code_as_import)・image の組み立て(source_to_code を
+        # 直に呼ぶ)のどれもこの口を通る — Hy の口の上でも下でも、ここが受けるのは compile の済んだ code。gensym の名を module の
+        # 中の順の通し番号にし、compile の順・process・thread に依らない code にする(agora-redesign #3667)。
+        code = records.canonical_gensyms(code)
         counts = _counts()
         counts[path] = counts.get(path, 0) + 1
         module = _module_being_loaded(self, path)
@@ -183,8 +189,6 @@ def _recording_source_to_code(previous: SourceToCode):
             # 記録を付けない。記録の無い code は共有の置き場に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
             # compile し直す(_record_is_current_here)。付けると普通の展開と同じ鍵で残り、普通の import が読んで落ちた(I-3)。
             return code
-        from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
-
         return records.with_record(code, current_record(module, path))
 
     return source_to_code

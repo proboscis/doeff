@@ -9,6 +9,8 @@ Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包�
 
 - ``source_to_code``(compile の口): Hy の module を compile した直後に、その module の macro の提供元の file と
   sha256 の一覧を、code object の定数の末尾に 1 つ足す。.pyc は標準の形のまま(隣に別の file を書かない)。
+  その前に code の Hy の gensym の名を module の中の順の通し番号へ振り直す(``records.canonical_gensyms`` —
+  同じ source の code を compile の順・process・thread に依らず同じにする・agora-redesign #3667)。
 - ``get_code``(読みの口): .pyc から読んだ Hy の module の code に載った一覧を、提供元の module 名から今の環境で
   引いた file と突き合わせ、1 つでも変わっていれば source から compile し直して .pyc を書き直す(記録の path は作った木の
   物なので、別の木から引き継いだ .pyc も今の木の macro で照らす — agora-redesign #2598)。

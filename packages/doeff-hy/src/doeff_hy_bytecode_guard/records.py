@@ -2,21 +2,28 @@
 
 記録は Hy の module の code object の定数の末尾に 1 つ置く組:
 
-    ("doeff-hy/macro-dependencies/1", <Hy の版>, ((<module 名>, <file の path>, <sha256>), ...))
+    ("doeff-hy/macro-dependencies/2", <Hy の版>, ((<module 名>, <file の path>, <sha256>), ...))
 
 code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
 image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
+
+compile した code の Hy の gensym の名は :func:`canonical_gensyms` で module の中の順の通し番号へ振り直す(agora-redesign #3667)。
 """
 
 import importlib.util
 import inspect
 import marshal
+import re
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import CodeType, FunctionType, ModuleType
 
 #: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
-RECORD_TAG = "doeff-hy/macro-dependencies/1"
+#: 2 = gensym の名を正準化した code の記録(agora-redesign #3667)。1 の記録の code は gensym の番号が compile の順で決まって
+#: いるので、1 度 compile し直させる。共有の置き場の鍵の印(STORE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
+#: 判じられて使われず(loader_hooks._from_shared_store)、compile し直した code が同じ鍵の entry を上書きするので、古い世代の
+#: file が置き場に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
+RECORD_TAG = "doeff-hy/macro-dependencies/2"
 
 #: PEP 552 の .pyc の頭(magic 4 byte・flags 4 byte・mtime と size か source の hash の 8 byte)。
 PYC_HEADER_BYTES = 16
@@ -87,6 +94,119 @@ def record_is_current(
     return all(
         sha256_of(dependency.file) == dependency.sha256 for dependency in record.dependencies
     )
+
+
+#: Hy の gensym の名の形(Hy 1.3.1 の ``hy.core.util.gensym`` = ``_hy_gensym_<mangle した base>_<数え>``)。数えは process に 1 つで、
+#: gensym を呼ぶたびに進む — 同じ source でも、先に何を compile したか(別の module・require 先の .pyc の有無・別の thread)で
+#: 番号が変わる。名の最後の数字が数え。
+GENSYM_NAME = re.compile(r"(_hy_gensym_.*_)([0-9]+)")
+
+#: Hy が束縛を改めた名(``HyASTCompiler.get_anon_var`` の ``_hy_<種>_<元の名>_<数>`` — let と except の束縛)。元の名が gensym の
+#: 名なら、その数えが名の中に埋まる(absent-as の let = ``_hy_let__hy_gensym_absent_token_<数え>_<数>``)。最後の <数> は compile
+#: 1 回ごとの数え(module の中で決まる)なので替えない。
+RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
+
+
+def canonical_gensyms(code: CodeType) -> CodeType:
+    """Hy の module の code の木の gensym の名を、module の中の数えの順に 1 から振り直した名へ替えた code を返す — 同じ source の
+    code を、compile の順・process・thread に依らず同じにするため(agora-redesign #3667: 詰めた Program の指紋・.pyc・共有の
+    置き場の中身が、どの process が先に何を compile したかで変わっていた)。
+
+    名の表(局所・cell・free・大域と属性の名・関数の名と qualname)と文字列の定数(呼び出しの keyword の名・注記の鍵)に現れる
+    gensym の名を集め、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直し、全部の場所で同時に替える。替え方は 1 対 1 なので、
+    module の中の名の一意性はそのまま保たれる。module の中の gensym の呼びの順は compile の順に依らないので、振り直した名も
+    依らない。Hy の数えそのものには触らない(並行する compile と食い合わない)。"""
+    found: dict[str, re.Match[str]] = {}
+    for text in _texts(code):
+        match = _gensym_match(text)
+        if match is not None:
+            found[match.group(0)] = match
+    ordered = sorted(found.values(), key=lambda match: int(match.group(2)))
+    names = {match.group(0): f"{match.group(1)}{rank}" for rank, match in enumerate(ordered, 1)}
+    if all(old == new for old, new in names.items()):
+        return code
+    return _rewritten(code, names)
+
+
+def unread_gensym_texts(code: CodeType) -> tuple[str, ...]:
+    """code の木の名と文字列の定数のうち、gensym の名を含むのに :func:`canonical_gensyms` が読めない物(文の中に埋まった名など)—
+    正準化の外に残り、番号が compile の順で変わる。検がこれを空と確かめ、読めない埋まり方が macro に現れたら名指して落とすため。"""
+    return tuple(
+        sorted(
+            {text for text in _texts(code) if "_hy_gensym_" in text and _gensym_match(text) is None}
+        )
+    )
+
+
+def _gensym_match(text: str) -> "re.Match[str] | None":
+    """名 1 つに入った gensym の名の一致(名そのものか、Hy が改めた束縛の名に埋まった物 — 無ければ None)。"""
+    whole = GENSYM_NAME.fullmatch(text)
+    if whole is not None:
+        return whole
+    renamed = RENAMED_BINDING.fullmatch(text)
+    return None if renamed is None else _gensym_match(renamed.group(2))
+
+
+def _texts(code: CodeType) -> Iterator[str]:
+    """code とその入れ子の code の名の表と文字列の定数を挙げる(gensym の名が現れうる場所の全部)。"""
+    yield from (*code.co_varnames, *code.co_cellvars, *code.co_freevars, *code.co_names)
+    yield code.co_name
+    yield from code.co_qualname.split(".")
+    for constant in code.co_consts:
+        yield from _constant_texts(constant)
+
+
+def _constant_texts(value: object) -> Iterator[str]:
+    """定数 1 つの中の文字列(組・集合の中も)と、入れ子の code の名を挙げる。"""
+    match value:
+        case CodeType():
+            yield from _texts(value)
+        case str():
+            yield value
+        case tuple() | frozenset():
+            for item in value:
+                yield from _constant_texts(item)
+        case _:
+            return
+
+
+def _renamed(text: str, names: Mapping[str, str]) -> str:
+    """名 1 つの gensym の名を振り直した名(Hy が改めた束縛の名なら、埋まった gensym の名だけを替える)。"""
+    replaced = names.get(text)
+    if replaced is not None:
+        return replaced
+    renamed = RENAMED_BINDING.fullmatch(text)
+    if renamed is None:
+        return text
+    return renamed.group(1) + _renamed(renamed.group(2), names) + renamed.group(3)
+
+
+def _rewritten(code: CodeType, names: Mapping[str, str]) -> CodeType:
+    """code とその入れ子の code の名の表と文字列の定数の gensym の名を、names の名へ替えた写しを作る(元の code は替えない)。"""
+    return code.replace(
+        co_varnames=tuple(_renamed(name, names) for name in code.co_varnames),
+        co_cellvars=tuple(_renamed(name, names) for name in code.co_cellvars),
+        co_freevars=tuple(_renamed(name, names) for name in code.co_freevars),
+        co_names=tuple(_renamed(name, names) for name in code.co_names),
+        co_name=_renamed(code.co_name, names),
+        co_qualname=".".join(_renamed(part, names) for part in code.co_qualname.split(".")),
+        co_consts=tuple(_rewritten_constant(constant, names) for constant in code.co_consts),
+    )
+
+
+def _rewritten_constant(value: object, names: Mapping[str, str]) -> object:
+    """定数 1 つの gensym の名を替えた値(文字列・組・集合の中・入れ子の code — それ以外はそのまま)。"""
+    match value:
+        case CodeType():
+            return _rewritten(value, names)
+        case str():
+            return _renamed(value, names)
+        case tuple():
+            return tuple(_rewritten_constant(item, names) for item in value)
+        case frozenset():
+            return frozenset(_rewritten_constant(item, names) for item in value)
+        case _:
+            return value
 
 
 #: 作業木をまたいで共有する code の置き場の鍵の印(形を変えたら末尾の番号を上げる — 古い鍵の entry は当たらなくなる)。
