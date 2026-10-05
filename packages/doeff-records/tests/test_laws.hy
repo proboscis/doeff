@@ -7,7 +7,8 @@
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
-                            law-grouped-events-expire-together law-expired-keys-are-remembered])
+                            law-grouped-events-expire-together law-expired-keys-are-remembered
+                            law-expired-records-are-unseen-before-a-sweep])
 (import tests.interpreters [LawSetup])
 
 
@@ -52,6 +53,13 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-expired-keys-are-remembered harness))
+  (assert transcript))
+
+(deftest test-expired-records-are-unseen-before-a-sweep
+  ;; #3561: 保持の期限を過ぎた行と出来事は回収の前でも読みに出ず、消えた は次の書きの回収が 1 回だけ積む(memory と PostgreSQL)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-expired-records-are-unseen-before-a-sweep harness))
   (assert transcript))
 
 (deftest test-indexed-list-equals-filtered-scan

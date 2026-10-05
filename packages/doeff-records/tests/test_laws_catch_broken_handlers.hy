@@ -10,13 +10,14 @@
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty])
 (import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadStreamEnd])
+(import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
-                            law-expired-keys-are-remembered])
+                            law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -156,3 +157,18 @@
   (assert (not (breaks? law-expired-keys-are-remembered (broken-harness (MemoryStore LAW-SCHEMA) None))))
   ;; 壊していない handler では同じ法が緑(反例の包みが無ければ通る — 比べの基準)。
   (assert (not (breaks? law-stale-put-conflicts (broken-harness (MemoryStore LAW-SCHEMA) None)))))
+
+
+(defn test-the-unseen-law-turns-red-when-reads-stop-judging-expiry [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+  ;; #3561: 読みの側の期限の判定を外した memory の置き場(読みの関数が使う判定 stored-row-expired? / stored-event-expired? を「期限を
+  ;; 過ぎていない」に差し替えた源)では法 15 が赤になる。読みは回収しないので、回収の前の期限を過ぎた行と出来事を読みから隠すのは読みの判定
+  ;; 1 か所だけ — 回収を読みの前に重ねて、判定を外しても破れない形にしない。行の判定と出来事の判定を 1 つずつ外し、どちらでも赤。
+  (assert (not (breaks? law-expired-records-are-unseen-before-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "hyx_stored_row_expiredXquestion_markX" (fn [decl stored now-ms] False))
+    (assert (breaks? law-expired-records-are-unseen-before-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "行の期限の判定を外した置き場"))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "hyx_stored_event_expiredXquestion_markX" (fn [store decl event now-ms] False))
+    (assert (breaks? law-expired-records-are-unseen-before-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "出来事の期限の判定を外した置き場")))

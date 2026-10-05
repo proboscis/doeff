@@ -16,7 +16,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `WatchChanges(tables, cursor, timeout, limit)` | 表の列・位置・待つ秒 | `Changes(items, cursor)` | `Reset(epoch, floor)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
 | `ReadEvents(stream, after, limit)` | 追記の列・この番号より後・上限 | `Events(items, last_sequence)` | `Unreachable` |
-| `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence)`(列に今ある最後の出来事の番号 — 保持で刈った後の断面)か `StreamEmpty()`(出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
+| `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence)`(列に今ある、保持の期限を過ぎていない最後の出来事の番号)か `StreamEmpty()`(そういう出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
 | `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
@@ -37,6 +37,13 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   transaction 1 つの中で全部の行を検めてから書くので、書きの途中の失敗は transaction ごと戻る。
 - `WatchChanges` は確定した変更を、番号の順にちょうど 1 回ずつ返す(断られた書き・衝突した書きは出ない)。位置の `epoch` が置き場の版と
   違えば `Reset` を返すので、一覧から読み直す。
+- 保持の期限(`KeepFor`)を過ぎた行と出来事は、その刻からどの読みにも出ない: `ReadRow` は `Missing`、`ListRows` と `ReadEvents` は除き、
+  `WatchChanges` は行の今の値が期限を過ぎた終端の行である、その行の変わり(`RowChanged`)を出さず、`WatchEvents` は動かず、`ReadStreamEnd` は
+  数えない。読みは置き場を変えない(期限の判定は読みが持つ)。置き場から消して変更の列に `RowRemoved` を積み、出来事を冪等キーの覚えへ移す
+  回収は、書き(`PutRow`・`PutRows`・`AppendEvent`)の前と `SweepExpired` の時だけ走る。だから期限を過ぎた行の `RowRemoved` は、期限の刻でも
+  読みの時でもなく、期限の後の最初の書き(どの表・列への書きでもよい)か `SweepExpired` の時に積まれる(記録の service では手入れの係が
+  `RECORDS_MAINTENANCE_SECONDS` ごと — 既定 60 秒 — に `SweepExpired` を撃つ)— 既に `WatchChanges` で行を受け取って写しを持つ読み手は、
+  その時まで写しに行を持ち得る(#3561。前は読みを含むどの要求も答える前に回収していた)。
 - 例外で上がるのは組み立ての誤り(定義に無い表・列を名指した = `UndeclaredTable`)と実装の誤りだけ。`UndeclaredTable` の欄
   `tables`・`streams` は定義に無いと分かった名(分からない時は空)— 読み手はどの表の断りかを欄で照らし、文の綴りを読まない。
 
@@ -50,10 +57,11 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 - `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
   終端の行はもう書けない。
 - `operator_paths`: operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)。
-- `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に消し、変更の列に `RowRemoved` を出す)。
+- `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に読みに出なくなり、その後の最初の書きか
+  `SweepExpired` の回収が消して変更の列に `RowRemoved` を出す — 上の保持の期限の項)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
-追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に消す。消した出来事の冪等キーは
+追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
 番号と本文の指紋だけを残して忘れない — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。
 置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
 operator の主体の名の tuple。`operator_paths` の欄の書き手に operator の主体が 1 人も居ない宣言は、作る時に `ValueError`)。
@@ -159,8 +167,8 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 
 公開 effect ではない 2 つの effect と、それを回す Program。memory と PostgreSQL の handler が答える。
 
-- `SweepExpired()` → `Swept(rows)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨てる(読み書きの前にも
-  同じ回収が走るが、誰も触らない置き場でも行が残らないように手入れの係が実行する)。
+- `SweepExpired()` → `Swept(rows)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨てる(書きの前にも
+  同じ回収が走る — 読みは回収せず期限を自分で見る。誰も書かない置き場でも行が残らないように手入れの係が実行する)。
 - `PruneChanges(keep_seconds)` → `Pruned(floor, removed)` — `keep_seconds` より古い変更を変更の列から消し、floor を上げる。
   floor より前の位置の `WatchChanges` は `Reset(epoch, floor)`(`WatchCursor(epoch, floor)` から読めば残った変更を頭から全部読める)。
 - `maintenance_loop(interval_seconds, keep_seconds, ticks)` — 手入れの係の本体(`ticks=None` で止めるまで)。
@@ -205,7 +213,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_committed_changes_appear_once_in_order` | 確定した変更は `WatchChanges` にちょうど 1 回・順序どおり |
 | `law_epoch_change_resets` | 置き場の版が変わると `Reset`・読み直した一覧から続けられる |
 | `law_undeclared_writes_are_refused` | 定義に無い欄・状態・上限・終端の行・キーの書き換えは `Refused` で、行を変えない。書き手の名では断らない |
-| `law_transient_rows_expire` | `KeepFor` の終端の行は期限で消え、`KeepForever` の行は消えない |
+| `law_transient_rows_expire` | `KeepFor` の終端の行は期限で読みに出なくなり、次の書きの後の変更に `RowRemoved` が 1 回出る。`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
@@ -213,6 +221,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
 | `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
 | `law_expired_keys_are_remembered` | 保持の期限で出来事を消した後も冪等キーは忘れない: 同じ本文の再送は前の番号で列の出来事を増やさず、別の本文は `Refused` |
+| `law_expired_records_are_unseen_before_a_sweep` | 保持の期限を過ぎた行と出来事(出来事ごと・組ごとの列)は、回収の前でも 6 つの読みのどれにも出ない。期限を過ぎた行の `RowRemoved` は次の書き(別の表への書き)の回収が 1 回だけ積む |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも

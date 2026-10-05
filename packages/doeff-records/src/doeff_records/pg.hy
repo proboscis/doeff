@@ -19,6 +19,11 @@
 ;;; 待ち受けの接続が繋ぎ直した時も呼び鈴が鳴るので、その間の書きも読み直しで拾う。
 ;;; 読み手の窓の read-modify-write の競合(同じ読み手の位置を 2 つの要求が同時に読んで進める)は旧い版と同じで、ここでは直さない
 ;;; (#880 の構成のレビュー A4)。
+;;; 保持の期限(#3561): 読みの効果(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd)は回収を流さず、期限を
+;;; 過ぎた行と出来事を読みの文の条件で除く(回収と同じ境 — row-expiry・event-expiry・pg_sql の頭の註)。読み 1 回が流すのは読みの文だけ。
+;;; 回収(期限を過ぎた行を消して変更の列に「消えた」を積み、出来事を冪等キーの覚えへ移す — purge-expired)は書き(PutRow・PutRows・
+;;; AppendEvent)の前と SweepExpired の時だけ流す。期限を過ぎた行の「消えた」の変更は次の書き(か SweepExpired)の時に積まれる。
+;;; 時間で起きて回収する loop は持たない。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import json)
@@ -29,17 +34,18 @@
 (import doeff_core_effects.scheduler [ExternalPromise])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable])
-(import doeff_records.values [RecordsSchema KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
+(import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
+                              RowRemoved Changes Appended Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
-(import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal
-                                 listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
+(import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
+                                 where-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
-(import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key schema-statements drop-statements
+(import doeff_records.pg_sql [Statement RowExpiry EventExpiry DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
+                              schema-statements drop-statements
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
@@ -251,6 +257,31 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
+(defk row-expiry [decl now-ms]
+  {:pre [(: decl TableDecl) (: now-ms int)] :post [(: % (| RowExpiry None))]
+   :tags {:context "records" :role "foundation"}}
+  "表 decl の行の保持の期限の境(読みの文の条件 — pg_sql.RowExpiry)を、刻 now-ms で作るため(None = 期限の無い表・終端の語の無い表 —
+   読みの文に条件を足さない)。境の刻は admission.retention-cutoff-ms(回収の row-expired? と同じ 1 つ)。"
+  (val cutoff (retention-cutoff-ms decl now-ms))
+  (if (and (is-not cutoff None) decl.terminal)
+      (RowExpiry :table decl.name :state-field decl.state-field :terminal decl.terminal :before-at cutoff)
+      None))
+
+
+(defk event-expiry [decl now-ms]
+  {:pre [(: decl StreamDecl) (: now-ms int)] :post [(: % (| EventExpiry None))]
+   :tags {:context "records" :role "foundation"}}
+  "追記の列 decl の出来事の保持の期限の境(pg_sql.EventExpiry — 境の刻と組で数える列の区切り)を、刻 now-ms で作るため(None = 期限の
+   無い列)。読みの文の条件と回収の文(purge-expired)がこの 1 つを使う。境の刻は admission.retention-cutoff-ms。"
+  (val cutoff (retention-cutoff-ms decl now-ms))
+  (if (is cutoff None)
+      None
+      (EventExpiry :before-at cutoff
+                   :separator (match decl.retention-group
+                                (ByKeySuffix :separator text) text
+                                _ None))))
+
+
 (defk expired-rows [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
@@ -310,30 +341,29 @@
 (defk purge-expired [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため。候補が無ければ錠を取らない
-   (行も出来事も、候補の読み 1 文の後に、候補が在る時だけ書きの錠の transaction を開く)。答え = 消した行の数。"
+  "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため(書きの前と SweepExpired の
+   掃除 — 読みは回収を待たずに期限を自分で見る・頭の註)。候補が無ければ錠を取らない(行も出来事も、候補の読み 1 文の後に、候補が在る
+   時だけ書きの錠の transaction を開く)。答え = 消した行の数。"
   (<- candidates (expired-rows store now-ms))
   (var removed 0)
   (when candidates
     (<- count (writing store (remove-expired-rows store now-ms)))
     (:= removed count))
   (for [#(name decl) (sorted (.items store.schema.streams))]
-    (when (isinstance decl.retention KeepFor)
-      (val before-at (- now-ms (int (* 1000 decl.retention.seconds))))
-      (val separator (match decl.retention-group
-                       (ByKeySuffix :separator text) text
-                       _ None))
-      (<- probe (expiring-events-statement store.prefix name before-at separator))
+    (<- expiry (event-expiry decl now-ms))
+    (when (is-not expiry None)
+      (<- probe (expiring-events-statement store.prefix name expiry.before-at expiry.separator))
       (<- due (query-rows store.database probe))
       (when due
-        (<- (writing store (retire-expired-events store name before-at separator))))))
+        (<- (writing store (retire-expired-events store name expiry.before-at expiry.separator))))))
   removed)
 
 
 (defk swept-before [store now-ms program]
   {:pre [(: store PreparedStore) (: now-ms int) (: program Program)] :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "期限切れを回収してから program を流すため(公開 effect はどれも答える前に回収する — memory の handler と同じ順)。"
+  "期限切れを回収してから program を流すため(書きの効果 PutRow・PutRows・AppendEvent の前だけ — memory の handler と同じ順。読みの効果は
+   回収を流さず、読みの文の条件で期限を見る・#3561)。"
   (<- (purge-expired store now-ms))
   (<- answer program)
   answer)
@@ -341,30 +371,33 @@
 
 ;; --- 行 --------------------------------------------------------------------------------------------------
 
-(defk pg-read-row [store ask]
-  {:pre [(: store PreparedStore) (: ask ReadRow)] :post [(: % (| Row Missing))]
+(defk pg-read-row [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadRow) (: now-ms int)] :post [(: % (| Row Missing))]
    :tags {:context "records" :role "foundation"}}
-  "ReadRow に答えるため。"
-  (store.schema.table ask.table)
-  (<- statement (read-row-statement store.prefix ask.table (key-text ask.key)))
+  "ReadRow に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも Missing — 文の条件・頭の註)。"
+  (val decl (store.schema.table ask.table))
+  (<- expiry (row-expiry decl now-ms))
+  (<- statement (read-row-statement store.prefix ask.table (key-text ask.key) expiry))
   (<- records (query-rows store.database statement))
   (if records (! (row-of (get records 0))) (Missing)))
 
 
-(defk pg-list-rows [store ask]
-  {:pre [(: store PreparedStore) (: ask ListRows)] :post [(: % (| Page Reset NotIndexed))]
+(defk pg-list-rows [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int)] :post [(: % (| Page Reset NotIndexed))]
    :tags {:context "records" :role "foundation"}}
-  "ListRows に答えるため。"
+  "ListRows に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない — 文の条件・頭の註)。"
   (val decl (store.schema.table ask.table))
   (<- head (store-head store))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch head.epoch))
     (return (Reset head.epoch head.floor)))
   (val refusal (where-refusal decl ask.where))
   (when refusal (return refusal))
+  (<- expiry (row-expiry decl now-ms))
   (<- statement (list-rows-statement store.prefix ask.table
                                      (if (is ask.cursor None) None ask.cursor.after-key)
                                      (dfor #(name value) (.items ask.where) name (canonical-json value))
-                                     ask.limit))
+                                     ask.limit
+                                     expiry))
   (<- records (query-rows store.database statement))
   (val taken (cut records ask.limit))
   (var rows [])
@@ -440,11 +473,24 @@
   (WrittenRows (tuple written)))
 
 
-(defk pg-watch-scan [store ask]
-  {:pre [(: store PreparedStore) (: ask WatchChanges)] :post [(: % (| Changes Reset))]
+(defk table-expiries [store tables now-ms]
+  {:pre [(: store PreparedStore) (: tables tuple) (: now-ms int)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "WatchChanges の 1 回ぶんの読み(待たない)を流すため。頼んだ表が空なら文を流さない(`IN ()` は文にできない — WatchChanges は
-   空の組を作る時に断るので、今は起きない)。"
+  "表 tables のうち保持の期限の在る表の境(RowExpiry の組 — 頼んだ表の順)を刻 now-ms で作るため(変更の列の読みの条件)。"
+  (var expiries #())
+  (for [name tables]
+    (<- expiry (row-expiry (store.schema.table name) now-ms))
+    (when (is-not expiry None)
+      (:= expiries (+ expiries #(expiry)))))
+  expiries)
+
+
+(defk pg-watch-scan [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask WatchChanges) (: now-ms int)] :post [(: % (| Changes Reset))]
+   :tags {:context "records" :role "foundation"}}
+  "WatchChanges の 1 回ぶんの読み(待たない)を流すため。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の変わりは、回収の
+   前でも出さない(文の条件・頭の註)。頼んだ表が空なら文を流さない(`IN ()` は文にできない — WatchChanges は空の組を作る時に断るので、
+   今は起きない)。"
   (for [name ask.tables] (store.schema.table name))
   (<- head (store-head store))
   (val cursor ask.cursor)
@@ -452,7 +498,8 @@
     (return (Reset head.epoch head.floor)))
   (var items [])
   (when ask.tables
-    (<- statement (changes-statement store.prefix cursor.sequence head.head ask.tables ask.limit))
+    (<- expiries (table-expiries store (tuple ask.tables) now-ms))
+    (<- statement (changes-statement store.prefix cursor.sequence head.head ask.tables ask.limit expiries))
     (<- records (query-rows store.database statement))
     (for [record records]
       (<- change (change-of record))
@@ -497,12 +544,13 @@
   (Appended (int (get (get inserted 0) 0))))
 
 
-(defk pg-read-events [store ask]
-  {:pre [(: store PreparedStore) (: ask ReadEvents)] :post [(: % Events)]
+(defk pg-read-events [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadEvents) (: now-ms int)] :post [(: % Events)]
    :tags {:context "records" :role "foundation"}}
-  "ReadEvents に答えるため。"
-  (store.schema.stream ask.stream)
-  (<- statement (read-events-statement store.prefix ask.stream ask.after ask.limit))
+  "ReadEvents に答えるため(刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない — 文の条件・頭の註)。"
+  (val decl (store.schema.stream ask.stream))
+  (<- expiry (event-expiry decl now-ms))
+  (<- statement (read-events-statement store.prefix ask.stream ask.after ask.limit expiry))
   (<- records (query-rows store.database statement))
   (var items [])
   (for [record records]
@@ -511,12 +559,14 @@
   (Events (tuple items) (if items (. (get items -1) sequence) ask.after)))
 
 
-(defk pg-read-stream-end [store ask]
-  {:pre [(: store PreparedStore) (: ask ReadStreamEnd)] :post [(: % (| StreamEnd StreamEmpty))]
+(defk pg-read-stream-end [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadStreamEnd) (: now-ms int)] :post [(: % (| StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
-  "ReadStreamEnd に答えるため: 列の max(seq) を 1 文で読む(期限切れの回収の後の断面 — 出来事が無ければ StreamEmpty)。"
-  (store.schema.stream ask.stream)
-  (<- statement (stream-end-statement store.prefix ask.stream))
+  "ReadStreamEnd に答えるため: 列の生きた出来事の max(seq) を 1 文で読む(刻 now-ms で保持の期限を過ぎた出来事は回収の前でも数えない —
+   ReadEvents と同じ条件。生きた出来事が無ければ StreamEmpty)。"
+  (val decl (store.schema.stream ask.stream))
+  (<- expiry (event-expiry decl now-ms))
+  (<- statement (stream-end-statement store.prefix ask.stream expiry))
   (<- records (query-rows store.database statement))
   (val last (get (get records 0) 0))
   (if (is last None) (StreamEmpty) (StreamEnd (int last))))
@@ -573,13 +623,14 @@
   ;; 源の工場の問い(ReadSignalSource)には本番の源 RECORDS-SIGNAL-SOURCE で答える(#3127 — 源の WatchChanges・WatchEvents はこの置き場が答える)。
   (ReadSignalSource []
     (resume RECORDS-SIGNAL-SOURCE))
+  ;; 読みの節は回収を流さず、刻を読みの文の条件へ渡す。書きの節(PutRow・PutRows・AppendEvent)と SweepExpired だけが回収する(頭の註)。
   (ReadRow [table key]
     (<- now (GetTime))
-    (<- answer (reached (swept-before store (epoch-ms now) (pg-read-row store effect))))
+    (<- answer (reached (pg-read-row store effect (epoch-ms now))))
     (resume answer))
   (ListRows [table where fields cursor limit]
     (<- now (GetTime))
-    (<- answer (reached (swept-before store (epoch-ms now) (pg-list-rows store effect))))
+    (<- answer (reached (pg-list-rows store effect (epoch-ms now))))
     (resume answer))
   (PutRow [table key value expect]
     (<- now (GetTime))
@@ -592,13 +643,13 @@
                                       (writing store (put-rows-locked store origin-host writer effect (epoch-ms now))))))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
-    (<- answer (wait-for-signal (fn [now-ms] (reached (swept-before store now-ms (pg-watch-scan store effect))))
+    (<- answer (wait-for-signal (fn [now-ms] (reached (pg-watch-scan store effect now-ms)))
                                 (fn [] (hung-bell store)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
   (WatchEvents [stream after timeout]
     ;; 列の待ちは呼び鈴が鳴るたびの ReadEvents(limit 1)の読み直し(WatchChanges と同じ呼び鈴 — 頭の註)。
     (val once (ReadEvents stream :after after :limit 1))
-    (<- answer (wait-for-signal (fn [now-ms] (moved-after (reached (swept-before store now-ms (pg-read-events store once)))))
+    (<- answer (wait-for-signal (fn [now-ms] (moved-after (reached (pg-read-events store once now-ms))))
                                 (fn [] (hung-bell store)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
@@ -608,11 +659,11 @@
     (resume answer))
   (ReadEvents [stream after limit]
     (<- now (GetTime))
-    (<- answer (reached (swept-before store (epoch-ms now) (pg-read-events store effect))))
+    (<- answer (reached (pg-read-events store effect (epoch-ms now))))
     (resume answer))
   (ReadStreamEnd [stream]
     (<- now (GetTime))
-    (<- answer (reached (swept-before store (epoch-ms now) (pg-read-stream-end store effect))))
+    (<- answer (reached (pg-read-stream-end store effect (epoch-ms now))))
     (resume answer))
   (AdvanceStoreEpoch []
     ;; 検の口: 届かなければ StoreUnreachable を上げる(答えの型は int だけ — 旧い版と同じ)。
