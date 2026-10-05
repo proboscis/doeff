@@ -39,7 +39,7 @@ MODULE = """\
 """
 
 # 宣言の名の全部。宣言に名を足したら、ここにも足す(実装に在るかは _mismatch が検める)。
-DECLARED = {"RUNTIME_ENV_KEY_VAR", "process_versions", "this_process_versions", "this_process_environ"}
+DECLARED = {"RUNTIME_ENV_KEY_VAR", "process_versions", "this_process_versions", "this_process_environ", "clock_ticks"}
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:

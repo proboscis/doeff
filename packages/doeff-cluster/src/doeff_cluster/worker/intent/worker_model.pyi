@@ -242,6 +242,18 @@ class PublishStatus(EffectBase[None]):
     statuses: tuple[JobStatus, ...]
     note: str = ""
 
+@dataclass(frozen=True)
+class BootMarks:
+    pod_ms: int | None = None
+    script_ms: int | None = None
+    exec_ms: int | None = None
+    process_ms: int | None = None
+    imported_ms: int | None = None
+
+@dataclass(frozen=True)
+class ProcessStartedMs(EffectBase[int | None]):
+    pid: str
+
 # --- action(判断の結果。そのまま effect として実行する) -------------------------
 
 @dataclass(frozen=True)

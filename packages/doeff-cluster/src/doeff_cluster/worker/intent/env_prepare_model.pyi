@@ -22,11 +22,28 @@ class PrepareRequest:
     root: str
     known: tuple = ...
     min_free_bytes: int = 0
+    launched_ms: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class StagePart:
+    name: str
+    how: str
+    seconds: float
+TREE_COPY: str
+TREE_EXPAND: str
 
 @dataclass(frozen=True, kw_only=True)
 class StageTime:
     name: str
     seconds: float
+    files: int | None = None
+    parts: tuple = ...
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeKind:
+    fs_type: str
+    device: str
+    mount: str
 
 @dataclass(frozen=True, kw_only=True)
 class MirrorReady:
@@ -53,6 +70,8 @@ class EnvMarker:
     interpreter: str
     child_protocol: int
     bytecode: BytecodeCounts | None = None
+    volume: VolumeKind | None = None
+    startup_seconds: float | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WheelReady:
@@ -105,6 +124,9 @@ class PrepareState:
     interpreter: str = ''
     stages: tuple = ...
     bytecode: BytecodeCounts | None = None
+    written: int | None = None
+    parts: tuple = ...
+    volume: VolumeKind | None = None
 
 @dataclass(frozen=True)
 class StageStarted(EffectBase):
@@ -116,6 +138,10 @@ class PrepareNote(EffectBase):
 
 @dataclass(frozen=True)
 class DiskFree(EffectBase):
+    path: str
+
+@dataclass(frozen=True)
+class ReadVolume(EffectBase):
     path: str
 
 @dataclass(frozen=True)

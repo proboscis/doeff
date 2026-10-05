@@ -12,6 +12,7 @@
 ;;;   uv-failure  = uv の失敗を 1 つ起こす(UvFailure — uv の側の語で宣言する。sync の失敗は sync で・build の失敗は build で返る。
 ;;;                 業務の kind と一時かは翻訳 env-translation が出力と終わりから読み分ける — 世界は業務の語を持たない)。
 ;;;   disk-free   = 空き(byte)。child-protocol = root の中の子の入口の約束の版。
+;;;   mounts      = この process の mount の表(/proc/self/mountinfo の中身 — 置き場の disk の種類を読む・#3676)。
 ;;; 模擬の uv.lock の書き方: 1 行 1 package で `名==版`、第三者の package の最上位の import の名は ` top=a,b` で添える
 ;;; (処理ステージ 10 の名前の影を起こすため)。editable で入る package は ` editable=<project の dir からの相対 path>` を添える
 ;;; (sync が venv の site-packages に本物の uv と同じ形の .pth — 中身は dir の絶対 path 1 行 — を置く)。`#` で始まる行は読まない。
@@ -60,6 +61,10 @@
 (val FAILURE-PATH "/world/uv-failure.json")
 (val UNREACHABLE-PATH "/world/unreachable.json")
 (val CODE-PREPARE "/tools/code_prepare.hy")
+(val MOUNT-TABLE "/proc/self/mountinfo")
+;; 模擬の mount の表: 根は overlay・state の置き場は block device の ext4(本番の worker の /work と同じ形)。
+(val SIM-MOUNTS (+ "1 0 0:30 / / rw - overlay overlay rw\n"
+                   "2 1 259:2 /kento/work /state rw,relatime - ext4 /dev/nvme0n1p2 rw\n"))
 ;; 本物の git・uv と同じ終わり(届かない・無い物 = 128・使い方の誤り = 129)と、失敗の出力の語(翻訳が本物と同じく読み分ける)。
 (val GIT-FATAL 128)
 (val BAD-USAGE 129)
@@ -113,6 +118,7 @@
   (setv #^ (| UvFailure None) uv-failure None)
   (setv #^ int disk-free (** 2 40))
   (setv #^ int child-protocol CHILD-PROTOCOL)
+  (setv #^ str mounts SIM-MOUNTS)
   (setv #^ float cold-seconds 60.0)
   (setv #^ float warm-seconds 5.0))
 
@@ -604,12 +610,13 @@
   {:pre [(: world EnvWorld)] :post [(: % MemoryFiles)] :tags {:context "runtime-env" :role "entry"}}
   "memory の置き場の初めの中身(state と world の dir・今の uv の失敗・今届かない url・空き)。"
   (val failure world.uv-failure)
-  (MemoryFiles :dirs #(STATE-DIR WORLD-DIR)
+  (MemoryFiles :dirs #(STATE-DIR WORLD-DIR "/proc" "/proc/self")
                :files (+ (if (is failure None)
                              #()
                              ;; 世界の file の JSON は UvFailure の欄そのまま(fault は StrEnum なので文字で書かれる)。
                              #((MemoryFile :path FAILURE-PATH :content (.encode (json.dumps (asdict failure))))))
-                         #((MemoryFile :path UNREACHABLE-PATH :content (.encode (json.dumps (sorted world.unreachable))))))
+                         #((MemoryFile :path UNREACHABLE-PATH :content (.encode (json.dumps (sorted world.unreachable))))
+                           (MemoryFile :path MOUNT-TABLE :content (.encode world.mounts))))
                :free world.disk-free))
 
 
