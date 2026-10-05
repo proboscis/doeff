@@ -1,3 +1,4 @@
+import { termMessage } from '../lint/termViews';
 // 定義を読む面の VS Code の層 — `.hy` を webview(custom text editor)で開き、model.ts が組むカードと軸を render.ts の
 // HTML で描く。読むためだけの面で、document を書き換えない(operator は source を手で編集しない)。
 // 定義の一覧は hy-index の置き場だけから読み、面が自分で file を歩かない。型・effect・違反は linter の置き場から添える。
@@ -342,7 +343,7 @@ class PlanePanel implements vscode.Disposable {
         this.coloring = undefined;
         this.schedule();
       }),
-      panel.webview.onDidReceiveMessage((raw: unknown) => this.receive(readMessage(raw)))
+      panel.webview.onDidReceiveMessage((raw: unknown) => { termMessage(raw); void this.receive(readMessage(raw)); })
     );
     panel.onDidDispose(() => this.dispose());
     this.redraw();
@@ -466,6 +467,7 @@ class PlanePanel implements vscode.Disposable {
       graph: this.graphs.graph,
       tree: this.treePart(),
       coloring: this.currentColoring(),
+      termsOf: (file) => this.lint.termIndex(file),
       ruleTitles: ruleTitles(this.lint.rules()),
       cspSource: this.panel.webview.cspSource,
       nonce

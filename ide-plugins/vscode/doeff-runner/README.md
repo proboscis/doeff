@@ -2,7 +2,46 @@
 
 Run `doeff` `Program` values directly from VS Code. The extension mirrors the PyCharm plugin: it detects annotated `Program[...]` bindings, looks up interpreters/kleisli/transformers via `doeff-indexer`, and launches `doeff run` under the Python debugger.
 
-## Requirements
+## 文章・用語を workspace 全体で検査する
+
+0.7.0 以降は Rust の doc-linter 0.3.0 以降を使い、開いていない文書も含めて検査します。
+「Doeff Hy」の「文章・用語（doc-linter）」パネルで、対象ファイル数、検査の完了数、
+キャッシュ利用数、未測定数、用語と指摘を確認できます。文章の指摘は従来の
+「違反（Linter）」と「問題」パネルにも診断元 doc-linter として表示します。
+
+| 指摘 | 意味 |
+|---|---|
+| DOC001〜004 | 文章の説明不足。助言として表示 |
+| DOC101〜104 | 用語の未定義・重複・循環・不正な宣言 |
+| DOC000 | 検査できなかった理由 |
+
+Rust の実行ファイルを ~/.local/bin、PATH、~/.cargo/bin、/opt/homebrew/bin から探します。
+設定 doeff-runner.docLint.binary に絶対パスを指定することもできます。
+Jev の接続設定と永続キャッシュは CLI と共有します。本文と参照した用語の説明を
+設定済みの Jev に送信します。同じ入力は再推論せず、定義変更時は参照する本文だけを
+再測定します。拡張は全体検査に fresh を指定しません。
+
+0.7.1 は逐次結果を最大200ミリ秒ごとにまとめて反映し、進捗だけの変化で全診断を
+再描画しません。doc-linter 0.3.1 では再読み込み時にキャッシュの結果を先に復元し、
+未測定の文章への通信はその後に開始します。初回の全件検査には対象数に応じた時間が
+かかりますが、保存済みの結果の表示はその通信を待ちません。
+
+対象は .hy / .py / .pyi / .md / .markdown / .txt。Git の無視設定と依存物のディレクトリを
+除く全対応ファイルを、信頼済み workspace の起動時に検査します。作成・変更・削除や
+未保存の編集後は2秒待って再検査し、古いストリームを破棄します。Rust プロセスは
+同時に1つ、内部問い合わせは最大4件です。doeff-runner.docLint.enabled で停止できます。
+命令「doeff: 文章の説明を再検査する（doc-linter）」も workspace 全体を対象にします。
+
+用語は Markdown の見出し \## 表示名 {#term:安定ID} とその本文、または Hy の
+(defterm identifier "表示名" "説明") で定義します。Hy では doeff-hy.macros から defterm を
+require します。参照は [表示名](term:安定ID) です。用語を定義しても関数の用途そのものは
+コメントに書く必要があります。説明同士の循環は診断し、無限に展開しません。
+
+通常のエディタでは参照にマウスを重ねると説明が出て、F12で定義、Shift+F12で使用箇所へ
+移動できます。doeff viewer ではカードの「用語の説明」のボタンから定義と使用箇所を
+開けます。文章・用語パネルの用語をクリックしても定義へ移動できます。
+
+## 実行機能の要件
 
 - VS Code Python extension
 - `doeff` installed in the active Python environment (`pip install doeff`)

@@ -93,6 +93,23 @@ function names(cards: readonly Card[]): string[] {
   return cards.map((c) => c.definition.name);
 }
 
+suite('読む面に二つの linter の結果を表示',()=>{
+  test('docstring と既存の構造違反を同じカードでハイライトする',()=>{
+    const original=planeCards().find((c)=>c.definition.docstring!==null && c.definition.kind==='defk');
+    assert.ok(original);
+    const parsed=parseLintJson(fs.readFileSync(path.join(FIXTURES,'../lint/report.json'),'utf8'));
+    if(parsed.tag!=='ok'){assert.fail(parsed.reason);}
+    const template=parsed.report.violations[0];assert.ok(template);
+    const doc={...template,source:'doc-linter' as const,rule:'DOC002',documentKind:'function' as const,
+      message:'用語の説明がありません',range:original.definition.range,path:FILE};
+    const code={...template,rule:'DOEFF101',range:original.definition.range,path:FILE};
+    const card=planeCards([doc,code]).find((c)=>c.definition.qualifiedName===original.definition.qualifiedName);assert.ok(card);
+    const html=renderCard(card,{glyphs:{effect:()=>undefined},fold:INITIAL_FOLD,graph:buildCallGraph([planeIndex()]),coloringOf:()=>undefined,ruleTitles:new Map()},false);
+    assert.match(html,/<div class="doc"><span class="vmark/);
+    assert.ok(html.includes('DOC002'));assert.ok(html.includes('DOEFF101'));assert.ok(html.includes('doc-linter'));
+  });
+});
+
 /** 軸の値を選んだ選択。 */
 function select(pairs: ReadonlyArray<readonly [PlaneAxis, string]>): Selection {
   return pairs.reduce<Selection>((s, [axis, value]) => toggle(s, axis, value), new Map());

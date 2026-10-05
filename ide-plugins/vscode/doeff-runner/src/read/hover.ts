@@ -105,6 +105,7 @@ export function violationTipHtml(violation: LintViolation, title: string | null)
   const named = title === null ? '' : `<span class="vt-t">${escapeHtml(title)}</span>`;
   const head = `<div class="vt-h"><b>${escapeHtml(violation.rule)}</b>${named}<span class="viol viol-${violation.level}">${violation.level}</span></div>`;
   const jev = violation.probability === null ? [] : [`Jev p=${violation.probability.toFixed(2)}`];
+  if (violation.source === 'doc-linter') {jev.unshift('doc-linter（文章の検査・説明は規則の固定文）');}
   const meta = [standingLabel(violation.standing), ...jev].join(' · ');
   const explanation = violation.explanation;
   const rows = [
