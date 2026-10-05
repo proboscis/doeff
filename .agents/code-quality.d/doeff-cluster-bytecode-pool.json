@@ -2,7 +2,8 @@
   "modules": [
     {
       "allow": [
-        "doeff-core-effects-handlers"
+        "doeff-core-effects-handlers",
+        "hy-bytecode-import"
       ],
       "layer": "io",
       "name": "doeff-cluster-bytecode-pool",
@@ -12,7 +13,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
       ],
-      "responsibility": "焼く物の列(標準入力の行)を 1 つの process の pool(fork・1 つずつ・渡された順)で checked hash の .pyc に焼き、焼けなかった物を標準出力の行で返す console の道具。bytecode の準備の道具が準備する root の venv の python で子 process として起こす。副作用 = process の pool と、焼く木の __pycache__ への書き込み(python_bytecode の compile-one)。",
+      "responsibility": "焼く物の列(標準入力の行)のうち、在る .pyc が今の source の hash と今の環境の macro の記録に合う物を除き(doeff-hy の bytecode-is-current で照らす)、残りを 1 つの process の pool(fork・1 つずつ・渡された順)で checked hash の .pyc に焼いて、焼けなかった物と焼かずに残した物を標準出力の行で返す console の道具。bytecode の準備の道具が準備する root の venv の python で子 process として起こす。副作用 = process の pool と、焼く木の __pycache__ への書き込み(python_bytecode の compile-one)・.pyc と source の読み。",
       "typed": true
     }
   ]

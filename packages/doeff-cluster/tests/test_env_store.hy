@@ -19,7 +19,13 @@
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.intent.worker_model [CodeState EnvReport ReadDesired DesiredJobs DesiredUnreadable])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host known-roots])
+(import doeff_cluster.worker.protocol.env_translation [request-of-json])
+(import doeff_cluster.worker.core.env_prepare [carry-source env-marker->json])
+(import doeff_cluster.worker.intent.env_prepare_model [CarryFrom EnvMarker PrepareRequest])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import tests.env_fixtures [LOCK env-of])
 
 (val READY-NAME "0123456789abcdef01234567")
 (val HALF-NAME "89abcdef0123456789abcdef")
@@ -89,3 +95,24 @@
   (val plain-link (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "plain-tasks")) :transport (httpx.MockTransport handle)))
   (.poll plain-link)
   (assert (not-in "envs" (get sent 1)) sent))
+
+
+;; 失敗ケース(#3675 の読み手の条件): #3675 より前の worker が書いた完成マーカー(bytecode の欄が compiled・carried・failed の形)の root も、
+;; 新しい worker の完成した root の列(known-roots)に入り、準備の要求の JSON を通して引き継ぎ元の選び(carry-source)が選べる — 置き場の
+;; 名指しは宣言の欄だけを読み、数の欄(報告と log の値)に依らない。数の欄を読む形にすると、前の形の印の root が列から落ちて赤。
+(deftest test-a-root-marked-with-the-earlier-bytecode-counts-is-still-a-carry-source [tmp-path]
+  (<- settings EnvSettings (settings-in tmp-path))
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (val root (/ tmp-path "state" "roots" READY-NAME))
+  (<- raw dict (env-marker->json (EnvMarker :env env :key READY-NAME :platform "test" :stages #() :downloaded 0 :built 0
+                                            :interpreter "/usr/bin/python3" :child-protocol 1)))
+  (setv (get raw "bytecode") {"compiled" 3 "carried" 1 "failed" 0 "scanSeconds" 0.5 "closureSeconds" 0.75 "carrySeconds" 0.25
+                              "compileSeconds" 1.5 "trees" [{"name" "app" "compiled" 3 "carried" 1 "failed" 0}]})
+  (.write-text (/ root ENV-MARKER) (json.dumps raw))
+  (<- known tuple (with-handlers [os-file-handler] (known-roots settings)))
+  (assert (= (tuple (gfor k known (get k "root"))) #((str root))) known)
+  (<- next-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- declared dict (runtime-env->json next-env))
+  (<- request PrepareRequest (request-of-json {"env" declared "key" "k" "platform" "test" "root" (str (/ tmp-path "new")) "known" known}))
+  (<- picked (| CarryFrom None) (carry-source request.known request.env "app"))
+  (assert (= picked (CarryFrom :tree (.format "{}/app" root) :commit (. (get env.repos 0) commit))) picked))

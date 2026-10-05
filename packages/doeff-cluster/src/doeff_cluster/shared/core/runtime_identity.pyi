@@ -28,7 +28,7 @@ def judge_identity(facts: RuntimeFacts, pid: int) -> _Program[RuntimeIdentity | 
 def decode_env(text: str) -> _Program[RuntimeEnv | None, object]:
     ...
 
-def marker_bytecode(raw: dict) -> _Program[BytecodeCounts | None, object]:
+def marker_bytecode(raw: dict) -> _Program[BytecodeCounts | Malformed | None, object]:
     ...
 
 def decode_marker(text: str) -> _Program[RootMarker | None, object]:

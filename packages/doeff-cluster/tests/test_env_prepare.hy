@@ -26,7 +26,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key key-material runtime-env->json runtime-env-of-json])
-(import doeff_cluster.worker.core.env_prepare [prepare-env carry-source] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster.worker.core.env_prepare [prepare-env carry-source] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted CarryFrom] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-CARRY-SECONDS BAKE-COMPILE-SECONDS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
@@ -267,10 +267,11 @@
   (<- files dict (files-under ready.root))
   (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
   (assert (= (get marker "bytecode")
-             {"compiled" 4 "carried" 0 "failed" 0
+             {"carried" 0 "rebuilt" 4 "reused" 0 "failed" 0
               "scanSeconds" BAKE-SCAN-SECONDS "closureSeconds" BAKE-CLOSURE-SECONDS
               "carrySeconds" BAKE-CARRY-SECONDS "compileSeconds" BAKE-COMPILE-SECONDS
-              "trees" [{"name" "app" "compiled" 2 "carried" 0 "failed" 0} {"name" "lib" "compiled" 2 "carried" 0 "failed" 0}]})
+              "trees" [{"name" "app" "carried" 0 "rebuilt" 2 "reused" 0 "failed" 0}
+                       {"name" "lib" "carried" 0 "rebuilt" 2 "reused" 0 "failed" 0}]})
           (get marker "bytecode"))
   True)
 
@@ -314,6 +315,36 @@
 (deftest test-changing-only-the-project-commit-makes-a-warm-root
   (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (commit-only-scenario)))
+  (assert ok))
+
+
+;; 失敗ケース(#3675): 前の root から bytecode を引き継ぐ準備は、焼く道具に「引き継ぎ元の commit から変わった path の一覧」(git diff)を
+;; 渡す。渡さないと道具は変わった file の .pyc も持ち越し、Python の source は焼く計画から外れ(.pyc が在る)・Hy の source は全部を pool で
+;; 照らし直す(本番の agent-worker-2 の印で compiled = 計画の数)。版ごとのコードの木の準備(worker/core/code_rules)は前から git diff を渡している。
+;; 翻訳が --changed を渡さない形に戻すと、模擬の道具が受けた一覧が空になって赤。一覧の file は焼いた後に消える。
+(defk changed-list-scenario []
+  {:pre [] :post [(: % bool)]}
+  "app の commit だけ変えた 2 つ目の準備で、焼く道具が app の木の変わった path(app/__init__.py)だけを一覧で受け、引き継ぎの無い 1 つ目の
+   準備では空の一覧を受ける事を確かめるため。"
+  (<- first-env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- first EnvReady (prepare first-env #()))
+  (<- before EnvWorldLog (read-world-log))
+  (assert (= (tuple (gfor #(_ paths) before.changed paths)) #(#())) before.changed)
+  (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- known tuple (known-of first))
+  (<- second (prepare second-env known))
+  (assert (isinstance second EnvReady) second)
+  (<- after EnvWorldLog (read-world-log))
+  (val given (cut after.changed (len before.changed) None))
+  (assert (= given #(#((.format "{}/app" second.root) #("app/__init__.py")))) given)
+  (<- left tuple (world-files "/state/changed/"))
+  (assert (= left #()) left)
+  True)
+
+
+(deftest test-a-carried-bake-is-given-the-paths-changed-since-the-carry-source
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (changed-list-scenario)))
   (assert ok))
 
 
@@ -479,6 +510,20 @@
   (replace base :repos #((get base.repos 0) (RepoCheckout :name "doeff" :url DOEFF-URL :commit doeff-sha))))
 
 
+(defk picked-tree [known env name]
+  {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % (| str None))]}
+  "引き継ぎ元の選び(carry-source)が選んだ木の path を読むため(選ばなければ None)— 選んだ木の commit は、その木を展開した commit で
+   ある事も確かめる(変わった file を決める git diff の片側 — #3675)。"
+  (<- picked (| CarryFrom None) (carry-source known env name))
+  (match picked
+    None None
+    (CarryFrom :tree tree :commit commit)
+      (do (val root (next (gfor k known :if (.startswith tree (+ k.root "/")) k)))
+          (val repo (next (gfor r root.env.repos :if (= r.name name) r)))
+          (assert (= commit repo.commit) #(picked repo))
+          tree)))
+
+
 (defk carry-root [dir app doeff made-ms]
   {:pre [(: dir str) (: app str) (: doeff str) (: made-ms int)] :post [(: % KnownRoot)]}
   "完成済みの root 1 つ(/state/roots/<dir>・app と doeff の commit・完成の時刻)を引き継ぎ元の候補として作るため。"
@@ -492,16 +537,16 @@
   (<- env RuntimeEnv (carry-env "app-new" "doeff-new"))
   (<- older KnownRoot (carry-root "aaaa" "app-old" "doeff-old" 1000))
   (<- same KnownRoot (carry-root "bbbb" "app-new" "doeff-new" 2000))
-  (<- picked (| str None) (carry-source #(older same) env "app"))
+  (<- picked (| str None) (picked-tree #(older same) env "app"))
   (assert (= picked "/state/roots/bbbb/app") picked)
   ;; 両方の commit が同じ root は、doeff の commit だけ・app の commit だけが同じで後から完成した root より先(完成の時刻より
   ;; commit の一致が先)。
   (<- newer KnownRoot (carry-root "cccc" "app-other" "doeff-new" 3000))
   (<- same-app KnownRoot (carry-root "dddd" "app-new" "doeff-old" 4000))
-  (<- still (| str None) (carry-source #(older same newer same-app) env "app"))
+  (<- still (| str None) (picked-tree #(older same newer same-app) env "app"))
   (assert (= still "/state/roots/bbbb/app") still)
   ;; doeff のツリーは、同じ doeff の commit の root が 2 つ在るので、後から完成した方(cccc)。
-  (<- macros-tree (| str None) (carry-source #(older same newer) env "doeff"))
+  (<- macros-tree (| str None) (picked-tree #(older same newer) env "doeff"))
   (assert (= macros-tree "/state/roots/cccc/doeff") macros-tree)
   ;; lock か Python が違う root は、同じ commit で後から完成していても候補にしない(macro の展開が同じ Hy と doeff-hy で固定される組に
   ;; 限る — 前からの条件)。
@@ -509,7 +554,7 @@
                                 :env (replace same.env :project (replace same.env.project :lock-sha256 (* "c" 64)))))
   (val other-python (replace same :root "/state/roots/0001" :made-ms 4000
                                   :env (replace same.env :project (replace same.env.project :python "3.13"))))
-  (<- kept (| str None) (carry-source #(other-lock other-python older same) env "app"))
+  (<- kept (| str None) (picked-tree #(other-lock other-python older same) env "app"))
   (assert (= kept "/state/roots/bbbb/app") kept))
 
 
@@ -519,7 +564,7 @@
   (<- env RuntimeEnv (carry-env "app-new" "doeff-new"))
   (<- older KnownRoot (carry-root "aaaa" "app-old" "doeff-old" 3000))
   (<- macros KnownRoot (carry-root "bbbb" "app-other" "doeff-new" 1000))
-  (<- picked (| str None) (carry-source #(older macros) env "app"))
+  (<- picked (| str None) (picked-tree #(older macros) env "app"))
   (assert (= picked "/state/roots/bbbb/app") picked))
 
 
@@ -530,7 +575,7 @@
   (<- env RuntimeEnv (carry-env "app-new" "doeff-new"))
   (<- same-app KnownRoot (carry-root "aaaa" "app-new" "doeff-old" 3000))
   (<- same-macros KnownRoot (carry-root "bbbb" "app-other" "doeff-new" 1000))
-  (<- picked (| str None) (carry-source #(same-app same-macros) env "app"))
+  (<- picked (| str None) (picked-tree #(same-app same-macros) env "app"))
   (assert (= picked "/state/roots/bbbb/app") picked))
 
 
@@ -541,11 +586,11 @@
   (<- oldest KnownRoot (carry-root "aaaa" "app-old" "doeff-old" 1000))
   (<- newest KnownRoot (carry-root "bbbb" "app-other" "doeff-other" 3000))
   (<- middle KnownRoot (carry-root "cccc" "app-third" "doeff-third" 2000))
-  (<- picked (| str None) (carry-source #(oldest newest middle) env "app"))
+  (<- picked (| str None) (picked-tree #(oldest newest middle) env "app"))
   (assert (= picked "/state/roots/bbbb/app") picked)
   ;; 完成の時刻が同じなら root の path の順(known の並びに依らない)。
   (<- twin KnownRoot (carry-root "0000" "app-twin" "doeff-twin" 3000))
-  (<- tied (| str None) (carry-source #(oldest newest twin middle) env "app"))
+  (<- tied (| str None) (picked-tree #(oldest newest twin middle) env "app"))
   (assert (= tied "/state/roots/0000/app") tied)
   ;; 宣言に doeff の repo が無ければ doeff の条件は使わず、app の commit が同じ root(bbbb — dir の名で aaaa より後・aaaa より前に完成)
   ;; → 最も新しく完成した root の順。
@@ -555,12 +600,12 @@
   (val plain-older (KnownRoot :env plain-old :root "/state/roots/aaaa" :made-ms 2000))
   (val plain-same (KnownRoot :env plain :root "/state/roots/bbbb" :made-ms 1000))
   (val plain-newest (KnownRoot :env plain-other :root "/state/roots/cccc" :made-ms 3000))
-  (<- plain-picked (| str None) (carry-source #(plain-older plain-same plain-newest) plain "app"))
+  (<- plain-picked (| str None) (picked-tree #(plain-older plain-same plain-newest) plain "app"))
   (assert (= plain-picked "/state/roots/bbbb/app") plain-picked)
-  (<- plain-newer (| str None) (carry-source #(plain-older plain-newest) plain "app"))
+  (<- plain-newer (| str None) (picked-tree #(plain-older plain-newest) plain "app"))
   (assert (= plain-newer "/state/roots/cccc/app") plain-newer)
   ;; 候補が無ければ引き継がない。
-  (<- nothing (| str None) (carry-source #() env "app"))
+  (<- nothing (| str None) (picked-tree #() env "app"))
   (assert (is nothing None) nothing))
 
 

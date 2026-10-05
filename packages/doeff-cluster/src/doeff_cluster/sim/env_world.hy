@@ -126,7 +126,8 @@
 (defrecord EnvWorldLog
   "世界に起きた事の回数(筋書きの確かめに使う)。compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
    ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・carried = 引き継いだ
-   .pyc の数(木ごとに足す)・entries = 最後の bytecode の焼く範囲の入口・notes = 準備の記録の行。"
+   .pyc の数(木ごとに足す)・entries = 最後の bytecode の焼く範囲の入口・changed = 焼く道具に渡した木ごとの変わった path の一覧
+   (#(木 path の tuple) の列・焼いた順 — 引き継がない木は空・#3675)・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
   (setv #^ int archives 0)
@@ -138,6 +139,7 @@
   (setv #^ int carried 0)
   (setv #^ tuple entries #())
   (setv #^ tuple compiled-trees #())
+  (setv #^ tuple changed #())
   (setv #^ tuple notes #()))
 
 
@@ -235,12 +237,12 @@
 
 (defk bump [changes]
   {:pre [(: changes dict)] :post [(: % None)]}
-  "世界の log の回数を足し、列の欄(entries は置き換え・compiled-trees は後ろへ足す)を書くため。"
+  "世界の log の回数を足し、列の欄(entries は置き換え・compiled-trees と changed は後ろへ足す)を書くため。"
   (<- log dict (read-json LOG-PATH {}))
   (for [#(k v) (.items changes)]
     (cond
       (in k LOG-FIELDS) (setv (get log k) (+ (.get log k 0) v))
-      (= k "compiled-trees") (setv (get log k) (+ (.get log k []) [v]))
+      (in k #("compiled-trees" "changed")) (setv (get log k) (+ (.get log k []) [v]))
       True (setv (get log k) v)))
   (<- (write-json LOG-PATH log))
   None)
@@ -369,9 +371,23 @@
           (ProcessOutcome :stdout (+ (.hexdigest (hashlib.sha1 (.encode (.join "\n" parts)))) "\n") :stderr "" :exit-code 0))))
 
 
+(defk git-diff [world args]
+  {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
+  "git diff --name-only --no-renames <sha> <sha> に答えるため(2 つの commit の木で、片方にだけ在るか中身の違う file の path — 名の順)。
+   どちらかの commit が世界に無ければ本物と同じく終わり 128。"
+  (<- old (| WorldCommit None) (commit-of world (get args -2)))
+  (<- new (| WorldCommit None) (commit-of world (get args -1)))
+  (if (or (is old None) (is new None))
+      (ProcessOutcome :stdout "" :stderr "fatal: bad revision\n" :exit-code GIT-FATAL)
+      (do (val before (dfor f old.files f.path f.text))
+          (val after (dfor f new.files f.path f.text))
+          (val changed (sorted (gfor path (| (set before) (set after)) :if (!= (.get before path) (.get after path)) path)))
+          (ProcessOutcome :stdout (.join "" (gfor path changed (+ path "\n"))) :stderr "" :exit-code 0))))
+
+
 (defk git-script [world commands request]
   {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive・rev-parse)に世界から答える台本。"
+  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive・rev-parse・diff)に世界から答える台本。"
   (val argv (tuple request.argv))
   (val args (if (in "-C" argv) (cut argv 3 None) (cut argv 1 None)))
   (<- answer ProcessOutcome
@@ -382,6 +398,7 @@
         "fetch" (git-fetch world argv args)
         "archive" (git-archive world args)
         "rev-parse" (git-rev-parse world args)
+        "diff" (git-diff world args)
         _ (ProcessOutcome :stdout "" :stderr (.format "usage: git の台本が知らない形: {}\n" argv) :exit-code BAD-USAGE)))
   answer)
 
@@ -519,36 +536,48 @@
 
 (defk uv-compile [args]
   {:pre [(: args tuple)] :post [(: % ProcessOutcome)]}
-  "uv run … hy <code_prepare> --revision … [--entries …] --tree <木> --roots <根,…> [--from <前の木|\"\">] … に答える: 本物の道具と同じく
-   全部の木を 1 回の呼びで焼いた形の報告(木ごとの行と全体の行)を返し、根の下に焼く source が 1 つも無い木はその木の問題の行で返す
-   (どれかの木に問題が在れば終わり 1)。数え: compiles = 焼きの呼びの回数(1 回の呼びで 1)・compiled-trees と carried は木ごと。"
+  "uv run … hy <code_prepare> --revision … [--entries …] --tree <木> --roots <根,…> [--from <前の木|\"\">] [--changed <一覧の file|\"\">] … に
+   答える: 本物の道具と同じく全部の木を 1 回の呼びで焼いた形の報告(木ごとの行と全体の行)を返し、根の下に焼く source が 1 つも無い木は
+   その木の問題の行で返す(どれかの木に問題が在れば終わり 1)。引き継ぐ木は、変わった path の一覧に載る source を焼き(rebuilt)、残りを
+   引き継ぐ(carried)— 模擬は .pyc を持たないので reused は 0。数え: compiles = 焼きの呼びの回数(1 回の呼びで 1)・compiled-trees と
+   carried は木ごと・changed = 木ごとに渡された変わった path の一覧(#3675)。"
   (<- trees tuple (options-of args "--tree"))
   (<- roots-texts tuple (options-of args "--roots"))
   (<- froms tuple (options-of args "--from"))
+  (<- changes tuple (options-of args "--changed"))
   (<- entries-text (| str None) (option-of args "--entries"))
   (val entries (if entries-text (tuple (.split entries-text ",")) #()))
-  ;; 木ごとの引数の揃え方は本物の道具と同じ(--roots は木ごとに 1 つ・--from は無いか木ごとに 1 つ)— 揃わない命令は翻訳の誤りなので名指しで落とす。
-  (when (or (not trees) (!= (len roots-texts) (len trees)) (not-in (len froms) #(0 (len trees))))
-    (raise (ValueError (.format "台本が知らない形: --tree と --roots・--from の数が揃わない: {}" args))))
+  ;; 木ごとの引数の揃え方は本物の道具と同じ(--roots は木ごとに 1 つ・--from と --changed は無いか木ごとに 1 つ)— 揃わない命令は翻訳の
+  ;; 誤りなので名指しで落とす。
+  (when (or (not trees) (!= (len roots-texts) (len trees)) (not-in (len froms) #(0 (len trees)))
+            (not-in (len changes) #(0 (len trees))))
+    (raise (ValueError (.format "台本が知らない形: --tree と --roots・--from・--changed の数が揃わない: {}" args))))
   (<- (bump {"compiles" 1 "entries" (list entries)}))
   (var lines #())
   (var carried 0)
-  (var compiled 0)
+  (var rebuilt 0)
   (for [#(i tree) (enumerate trees)]
     (val roots (tuple (.split (get roots-texts i) ",")))
     (val carry (if froms (get froms i) ""))
+    (val listed-at (if changes (get changes i) ""))
+    (var listed "")
+    (when listed-at
+      (<- read str (read-or-empty listed-at))
+      (:= listed read))
+    (val changed (frozenset (.split listed)))
     (<- sources tuple (sources-under tree))
     (val under-roots (lfor p sources
                            :if (any (gfor r roots (or (= r ".") (.startswith p (.format "{}/{}/" tree r)))))
                            p))
-    (val tree-carried (if (and under-roots carry) (len sources) 0))
-    (val tree-compiled (if (and under-roots (not carry)) (len sources) 0))
-    (<- (bump {"compiled-trees" [tree (list roots)] "carried" tree-carried}))
+    (val fresh (lfor p sources :if (or (not carry) (in (cut p (+ (len tree) 1) None) changed)) p))
+    (val tree-carried (if under-roots (- (len sources) (len fresh)) 0))
+    (val tree-rebuilt (if under-roots (len fresh) 0))
+    (<- (bump {"compiled-trees" [tree (list roots)] "carried" tree-carried "changed" [tree (sorted changed)]}))
     (:= carried (+ carried tree-carried))
-    (:= compiled (+ compiled tree-compiled))
-    (:= lines (+ lines #((.format "tree={} carried={} compiled={} failed=0 problem={}" tree tree-carried tree-compiled
+    (:= rebuilt (+ rebuilt tree-rebuilt))
+    (:= lines (+ lines #((.format "tree={} carried={} rebuilt={} reused=0 failed=0 problem={}" tree tree-carried tree-rebuilt
                                   (if under-roots "-" "木に焼くべき source が 1 つも無い"))))))
-  (val total (.format "carried={} compiled={} failed=0 carry_s={} compile_s={} closure_s={} scan_s={}" carried compiled
+  (val total (.format "carried={} rebuilt={} reused=0 failed=0 carry_s={} compile_s={} closure_s={} scan_s={}" carried rebuilt
                       BAKE-CARRY-SECONDS BAKE-COMPILE-SECONDS BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS))
   (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ lines #(total)) (+ line "\n")))
                   :exit-code (if (any (gfor line lines (not (.endswith line "problem=-")))) 1 0)))
@@ -642,6 +671,7 @@
   (EnvWorldLog #** (dfor k LOG-FIELDS (.replace k "-" "_") (.get log k 0))
                :entries (tuple (.get log "entries" []))
                :compiled-trees (tuple (gfor #(tree roots) (.get log "compiled-trees" []) #(tree (tuple roots))))
+               :changed (tuple (gfor #(tree paths) (.get log "changed" []) #(tree (tuple paths))))
                :notes (tuple (gfor line (.splitlines notes) :if line (.removeprefix line "env: ")))))
 
 
