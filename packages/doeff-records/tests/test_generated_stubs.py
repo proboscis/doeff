@@ -25,6 +25,8 @@ USED = (
         ("RecordsSettings", "MaintenancePlan", "records-settings", "records-connected", "pg-handlers-of", "records-serving", "PG-STORE"),
     ),
     UsedModule("admission", ("key-text", "row-matches?", "retention-group-of", "key-from-text")),
+    # 手入れの回収を effect で出す使い手(使い手の repo の写しの検 — 期限の後に SweepExpired を名で出す・2026-10-05)。
+    UsedModule("maintenance", ("SweepExpired", "Swept", "PruneChanges", "Pruned")),
     UsedModule(
         "laws",
         (
