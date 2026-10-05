@@ -865,10 +865,10 @@
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
       ;; task を置けるのは task の空き(task-room-of — capacity 全体から job・surge・置かれた task を引いた数)の在る worker だけ。
-      (setv roomy #())
+      (var roomy #())
       (for [w able-now]
         (<- room int (task-room-of w load))
-        (when (> room 0) (setv roomy (+ roomy #(w)))))
+        (when (> room 0) (:= roomy #(#* roomy w))))
       ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
       ;; 次は担っている数(job と task の和)の少ない順。
       (setv free (sorted roomy :key (fn [w] #((not (env-ready-on task.runtime-env w))
@@ -1448,12 +1448,12 @@
   "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。worker ごとの taskRoom は置き先の判断と同じ数え
    (load-of と task-room-of)から読む。"
   (setv draining (draining-workers state now)
-        load (load-of state state.placements)
-        workers #())
+        load (load-of state state.placements))
+  (var workers #())
   (for [#(n w) (.items state.workers)]
     (<- room int (task-room-of w load))
-    (setv workers (+ workers #((WorkerView :info w :silent-ms (- now w.last-seen-ms) :live (alive now w timing.lease-ms)
-                                           :draining (in n draining) :task-room room)))))
+    (:= workers #(#* workers (WorkerView :info w :silent-ms (- now w.last-seen-ms) :live (alive now w timing.lease-ms)
+                                           :draining (in n draining) :task-room room))))
   (StateView :now now
              :services (tuple (gfor j state.jobs (ServiceView :job j :resource-version (resource-version-of state (+ "Service/" j.spec.name)))))
              :workers workers
