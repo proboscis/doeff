@@ -1,0 +1,19 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-core-effects-handlers"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-bytecode-pool",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
+      ],
+      "responsibility": "焼く物の列(標準入力の行)を 1 つの process の pool(fork・1 つずつ・渡された順)で checked hash の .pyc に焼き、焼けなかった物を標準出力の行で返す console の道具。bytecode の準備の道具が準備する root の venv の python で子 process として起こす。副作用 = process の pool と、焼く木の __pycache__ への書き込み(python_bytecode の compile-one)。",
+      "typed": true
+    }
+  ]
+}

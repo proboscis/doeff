@@ -20,7 +20,7 @@
 ;;; --frozen は入れる行の先にだけ届こうとする — 届かない先(unreachable)なら sync が終わる。
 ;;;
 ;;; 世界の移ろう物は全部 memory の置き場の /world の下の file に置く(台本は状態を持たない):
-;;;   log.json        clone・fetch・展開・複製・sync・download・build・bytecode の回数(read-world-log で読む)
+;;;   log.json        clone・fetch・展開・複製・sync・download・build・bytecode の焼きの呼びの回数(read-world-log で読む)
 ;;;   notes.log       準備の記録の行(設定 runtime-env.notes)
 ;;;   uv-cache.json   取りに行った package の名(同じ lock の 2 回目は download 0)
 ;;;   uv-failure.json 今の uv の失敗(set-uv-failure で差し替える)
@@ -118,8 +118,9 @@
 
 
 (defrecord EnvWorldLog
-  "世界に起きた事の回数(筋書きの確かめに使う)。compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・
-   焼いた順)・entries = 最後の bytecode の焼く範囲の入口・notes = 準備の記録の行。"
+  "世界に起きた事の回数(筋書きの確かめに使う)。compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
+   ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・carried = 引き継いだ
+   .pyc の数(木ごとに足す)・entries = 最後の bytecode の焼く範囲の入口・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
   (setv #^ int archives 0)
@@ -504,24 +505,38 @@
 
 (defk uv-compile [args]
   {:pre [(: args tuple)] :post [(: % ProcessOutcome)]}
-  "uv run … hy <code_prepare> <tree> --import-roots … に答える: 本物の道具と同じく、根の下に焼く source が 1 つも無い木は失敗で返す。"
-  (val at (.index args "hy"))
-  (val tree (get args (+ at 2)))
-  (<- roots-text str (required-option-of args "--import-roots"))
-  (val roots (tuple (.split roots-text ",")))
-  (<- carry (| str None) (option-of args "--from"))
+  "uv run … hy <code_prepare> --revision … [--entries …] --tree <木> --roots <根,…> [--from <前の木|\"\">] … に答える: 本物の道具と同じく
+   全部の木を 1 回の呼びで焼いた形の報告(木ごとの行と全体の行)を返し、根の下に焼く source が 1 つも無い木はその木の問題の行で返す
+   (どれかの木に問題が在れば終わり 1)。数え: compiles = 焼きの呼びの回数(1 回の呼びで 1)・compiled-trees と carried は木ごと。"
+  (<- trees tuple (options-of args "--tree"))
+  (<- roots-texts tuple (options-of args "--roots"))
+  (<- froms tuple (options-of args "--from"))
   (<- entries-text (| str None) (option-of args "--entries"))
   (val entries (if entries-text (tuple (.split entries-text ",")) #()))
-  (<- sources tuple (sources-under tree))
-  (val under-roots (lfor p sources
-                         :if (any (gfor r roots (or (= r ".") (.startswith p (.format "{}/{}/" tree r)))))
-                         p))
-  (if (not under-roots)
-      (do (<- (bump {"compiled-trees" [tree (list roots)]}))
-          (ProcessOutcome :stdout "" :stderr "木に焼くべき source が 1 つも無い\n" :exit-code 1))
-      (do (<- (bump {"compiles" 1 "entries" (list entries) "compiled-trees" [tree (list roots)]
-                     "carried" (if (is carry None) 0 (len sources))}))
-          (ProcessOutcome :stdout "" :stderr (.format "carried={} compiled={}\n" (if (is carry None) 0 (len sources)) (if (is carry None) (len sources) 0)) :exit-code 0))))
+  ;; 木ごとの引数の揃え方は本物の道具と同じ(--roots は木ごとに 1 つ・--from は無いか木ごとに 1 つ)— 揃わない命令は翻訳の誤りなので名指しで落とす。
+  (when (or (not trees) (!= (len roots-texts) (len trees)) (not-in (len froms) #(0 (len trees))))
+    (raise (ValueError (.format "台本が知らない形: --tree と --roots・--from の数が揃わない: {}" args))))
+  (<- (bump {"compiles" 1 "entries" (list entries)}))
+  (var lines #())
+  (var carried 0)
+  (var compiled 0)
+  (for [#(i tree) (enumerate trees)]
+    (val roots (tuple (.split (get roots-texts i) ",")))
+    (val carry (if froms (get froms i) ""))
+    (<- sources tuple (sources-under tree))
+    (val under-roots (lfor p sources
+                           :if (any (gfor r roots (or (= r ".") (.startswith p (.format "{}/{}/" tree r)))))
+                           p))
+    (val tree-carried (if (and under-roots carry) (len sources) 0))
+    (val tree-compiled (if (and under-roots (not carry)) (len sources) 0))
+    (<- (bump {"compiled-trees" [tree (list roots)] "carried" tree-carried}))
+    (:= carried (+ carried tree-carried))
+    (:= compiled (+ compiled tree-compiled))
+    (:= lines (+ lines #((.format "tree={} carried={} compiled={} failed=0 problem={}" tree tree-carried tree-compiled
+                                  (if under-roots "-" "木に焼くべき source が 1 つも無い"))))))
+  (val total (.format "carried={} compiled={} failed=0 carry_s=0.0 compile_s=0.0 closure_s=0.0 scan_s=0.0" carried compiled))
+  (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ lines #(total)) (+ line "\n")))
+                  :exit-code (if (any (gfor line lines (not (.endswith line "problem=-")))) 1 0)))
 
 
 (defk uv-probe [world args]

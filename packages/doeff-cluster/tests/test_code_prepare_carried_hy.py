@@ -68,7 +68,7 @@ def _prepare(tree: Path, store: Path, old: Path | None = None) -> None:
     """本番の準備の処理ステージと同じ引数の形で道具を起こす(前の木 old から引き継ぐ・変わった file の一覧は渡さない)。"""
     carry = [] if old is None else ["--from", str(old)]
     _child(
-        [sys.executable, "-m", "hy", str(TOOL), str(tree), "--revision", "r", "--import-roots", ".",
+        [sys.executable, "-m", "hy", str(TOOL), "--revision", "r", "--tree", str(tree), "--roots", ".",
          "--jobs", "1", *carry],
         tree,
         store,

@@ -62,10 +62,23 @@ class SyncReport:
     downloaded: int
 
 @dataclass(frozen=True, kw_only=True)
+class BytecodeTree:
+    tree: str
+    roots: tuple
+    carry_from: str | None
+    declared: bool
+
+@dataclass(frozen=True, kw_only=True)
+class TreeProblem:
+    tree: str
+    detail: str
+
+@dataclass(frozen=True, kw_only=True)
 class BytecodeReport:
     interpreter: str
     compiled: int
     carried: int
+    problems: tuple
 
 @dataclass(frozen=True, kw_only=True)
 class ProbeReport:
@@ -154,12 +167,10 @@ class ReadEditableRoots(EffectBase):
     root: str
 
 @dataclass(frozen=True)
-class CompileTree(EffectBase):
+class CompileTrees(EffectBase):
     project_dir: str
-    tree: str
-    roots: tuple
-    carry_from: str | None
-    entries: tuple = ...
+    trees: tuple
+    entries: tuple
 
 @dataclass(frozen=True)
 class ProbeImports(EffectBase):
