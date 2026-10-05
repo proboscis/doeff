@@ -1217,7 +1217,8 @@
         "doeff-cluster-checkout-model",
         "doeff-cluster-env-prepare",
         "doeff-cluster-runtime-env-model",
-        "doeff-cluster-env-marker-model"
+        "doeff-cluster-env-marker-model",
+        "doeff-cluster-runtime-env-rules"
       ],
       "layer": "domain",
       "name": "doeff-cluster-runtime-env",

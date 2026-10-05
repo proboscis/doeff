@@ -45,6 +45,7 @@ class InvalidKind(StrEnum):
     BAD_JSON = "bad-json"
     DIRTY_TREE = "dirty-tree"
     COMMIT_NOT_ON_REMOTE = "commit-not-on-remote"
+    LOCAL_REMOTE = "local-remote"
     SENDER_SOURCE_DIFFERS = "sender-source-differs"
     NOT_IN_CHECKOUT = "not-in-checkout"
     REVISION_DIFFERS = "revision-differs"
