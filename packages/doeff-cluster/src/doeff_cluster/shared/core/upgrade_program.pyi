@@ -12,6 +12,7 @@ from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as Coordi
 from doeff_cluster.shared.intent.launch_model import DesireWorker as DesireWorker
 from doeff_cluster.shared.intent.launch_model import DesireCoordinator as DesireCoordinator
 from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPhase
+from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
 from doeff_cluster.shared.intent.upgrade_model import UpgradeState as UpgradeState
 from doeff_cluster.shared.intent.upgrade_model import UpgradeLimits as UpgradeLimits
 from doeff_cluster.shared.intent.upgrade_model import UpgradeStalled as UpgradeStalled
@@ -40,7 +41,28 @@ def queue_empty(state: UpgradeState) -> _Program[bool, object]:
 def all_live(state: UpgradeState) -> _Program[bool, object]:
     ...
 
-def await_until(step: str, done: Callable, limit_seconds: float) -> _Program[None, object]:
+def entry_line(e: RosterEntry) -> _Program[str, object]:
+    ...
+
+def joined_lines(entries: tuple[RosterEntry, ...]) -> _Program[str, object]:
+    ...
+
+def tasks_on_line(name: str, state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def worker_line(name: str, state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def not_back_line(commit: str, state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def queued_line(state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def not_live_line(state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def await_until(step: str, done: Callable, observe: Callable, limit_seconds: float) -> _Program[None, object]:
     ...
 
 def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:

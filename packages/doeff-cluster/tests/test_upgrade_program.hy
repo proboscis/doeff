@@ -307,3 +307,44 @@
     (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (unreadable-roster WITH-UNREADABLE)]
             (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
   (assert (= caught.value.step (.format "worker が全部 版 {} で live" NEW)) caught.value.step))
+
+
+;; a を入れ替えた後、a は live だが版を読めない(読み手が訳を書いた — 新しい世代が準備完了でない)まま戻らない。
+(val A-STUCK-REASON "新しい世代が準備完了でない(準備完了の判定 = その上の job が答える事)")
+(val A-STUCK (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit None :unread-reason A-STUCK-REASON)
+                                     (RosterEntry :worker "b" :live True :doeff-commit OLD))
+                           :tasks #()))
+
+
+(defhandler stuck-after-drain [#^ UpgradeState settled]
+  ;; 引数に残す理由: 戻らない名簿は検ごとに違う値(外の世界そのもの)。
+  ;; drain の読み(最初の 1 回)は旧い版の名簿で答え、その後は名簿 settled を返し続け、版の変化の待ちは上限まで時間を進めるため。
+  (session var reads 0)
+  (ReadUpgradeState []
+    (val at reads)
+    (:= reads (+ reads 1))
+    (resume (if (= at 0) ALL-OLD settled)))
+  (AwaitRunnersChange [after timeout-seconds]
+    (<- (Delay timeout-seconds))
+    (resume (RunnersChange :revision (+ after 1) :changed True)))
+  (DesireWorker [launch]
+    (resume #()))
+  (ConfirmCleanBoot [launch]
+    (resume (CleanBootPassed :target launch.name)))
+  (PublishDeclarations []
+    (resume None))
+  (ApplyDeclarations []
+    (resume None)))
+
+
+(deftest test-a-stalled-return-names-the-last-reading-of-the-worker
+  ;; 失敗ケース(#3366 — 止まった時の文を分ける): a の戻りの待ちが上限で止まった時、文は待ちの名だけでなく、最後に読んだ a の行
+  ;; (live=True・版を読めない訳)を載せる — 「worker は起きたが、上の job が答えない」と分かる。observe の文を載せない形にすると赤。
+  (with [caught (pytest.raises UpgradeStalled)]
+    (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (stuck-after-drain A-STUCK)]
+            (upgrade-workers #(TARGET-A) LIMITS))))
+  (assert (= caught.value.step (.format "worker a が版 {} で live に戻る" NEW)) caught.value.step)
+  (val text (str caught.value))
+  (assert (in "live=True" text) text)
+  (assert (in A-STUCK-REASON text) text)
+  (assert (in A-STUCK-REASON caught.value.observed) caught.value.observed))

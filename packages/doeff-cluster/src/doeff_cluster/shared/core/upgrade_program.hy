@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
-(import doeff_cluster.shared.intent.upgrade_model [PendingPhase UpgradeState UpgradeLimits UpgradeStalled ReadUpgradeState
+(import doeff_cluster.shared.intent.upgrade_model [PendingPhase RosterEntry UpgradeState UpgradeLimits UpgradeStalled ReadUpgradeState
                                                    PublishDeclarations ApplyDeclarations ConfirmCleanBoot CleanBootPassed
                                                    CleanBootRefused UpgradeRefused])
 
@@ -62,25 +62,88 @@
   (and (bool state.roster) (all (gfor e state.roster e.live))))
 
 
-(defk await-until [step done limit-seconds]
-  {:pre [(: step str) (: done Callable) (: limit-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+(defk entry-line [e]
+  {:pre [(: e RosterEntry)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名簿の 1 台を、止まった時の文に載せる 1 句にするため — live と版、版を読めない時はその訳(何が戻らないのかを名指す)。"
+  (if (is e.doeff-commit None)
+      (.format "{}(live={}・版を読めない: {})" e.worker e.live (or e.unread-reason "訳は読み手が書いていない"))
+      (.format "{}(live={}・版 {})" e.worker e.live (cut e.doeff-commit 0 10))))
+
+
+(defk joined-lines [entries]
+  {:pre [(: entries (get tuple #(RosterEntry ...)))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名簿の何台かを、止まった時の文の 1 つの句にするため(「・」で並べる)。"
+  (var lines #())
+  (for [e entries]
+    (<- line str (entry-line e))
+    (:= lines (+ lines #(line))))
+  (.join "・" lines))
+
+
+(defk tasks-on-line [name state]
+  {:pre [(: name str) (: state UpgradeState)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "no-task-on の待ちが止まった時に、worker name に置かれたままの task を名指すため。"
+  (val placed (tuple (gfor t state.tasks :if (and (= t.phase PendingPhase.ASSIGNED) (= t.worker name)) t.task)))
+  (.format "worker {} に置かれた task {}" name (.join "・" placed)))
+
+
+(defk worker-line [name state]
+  {:pre [(: name str) (: state UpgradeState)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "back-on の待ちが止まった時に、戻らない worker の最後の読み(live・版・版を読めない訳)を名指すため。"
+  (val found (tuple (gfor e state.roster :if (= e.worker name) e)))
+  (if found
+      (do (<- line str (joined-lines found)) line)
+      (.format "worker {} は名簿に居ない" name)))
+
+
+(defk not-back-line [commit state]
+  {:pre [(: commit str) (: state UpgradeState)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "all-back-on の待ちが止まった時に、版 commit で live でない worker を名指すため。"
+  (if (not state.roster)
+      "名簿が空"
+      (do (<- line str (joined-lines (tuple (gfor e state.roster :if (not (and e.live (= e.doeff-commit commit))) e))))
+          line)))
+
+
+(defk queued-line [state]
+  {:pre [(: state UpgradeState)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "queue-empty の待ちが止まった時に、待ち行列に残る task を名指すため。"
+  (.format "queued の task {}" (.join "・" (gfor t state.tasks :if (= t.phase PendingPhase.QUEUED) t.task))))
+
+
+(defk not-live-line [state]
+  {:pre [(: state UpgradeState)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "all-live の待ちが止まった時に、名乗り直していない worker を名指すため。"
+  (if (not state.roster)
+      "名簿が空"
+      (do (<- line str (joined-lines (tuple (gfor e state.roster :if (not e.live) e)))) line)))
+
+
+(defk await-until [step done observe limit-seconds]
+  {:pre [(: step str) (: done Callable) (: observe Callable) (: limit-seconds float)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "program"}}
   "版上げの次の手の前の条件 done(UpgradeState → bool の Program)が真になるまで待つため。coordinator の版の変化で起きて読み直し、
-   届かない間は UNREACHABLE-RETRY-SECONDS だけ待って問い直す。limit-seconds を越えたら UpgradeStalled(step を名指す)。"
+   届かない間は UNREACHABLE-RETRY-SECONDS だけ待って問い直す。limit-seconds を越えたら UpgradeStalled(step を名指し、最後の読みを
+   observe(UpgradeState → str の Program)で文にして載せる — 待ちの名だけでは何が戻らないのか分からないため・#3366)。"
   (<- started int (now-epoch-ms))
   (val deadline (+ started (int (* limit-seconds 1000))))
   (var revision 0)
   (var reached False)
+  (var last "まだ 1 度も読めていない")
   (while (not reached)
     (<- state (ReadUpgradeState))
     (var ok False)
-    (when (isinstance state UpgradeState)
-      (<- judged bool (done state))
-      (:= ok judged))
+    (if (isinstance state UpgradeState)
+        (do (<- judged bool (done state))
+            (:= ok judged)
+            (<- seen str (observe state))
+            (:= last seen))
+        (:= last (.format "名簿を読めなかった: {}" state.reason)))
     (if ok
         (:= reached True)
         (do (<- now int (now-epoch-ms))
             (when (>= now deadline)
-              (raise (UpgradeStalled step limit-seconds)))
+              (raise (UpgradeStalled step limit-seconds last)))
             (val remaining (/ (- deadline now) 1000.0))
             (<- change (AwaitRunnersChange revision :timeout-seconds (min remaining WATCH-SECONDS)))
             (if (isinstance change RunnersChange)
@@ -106,13 +169,14 @@
    (coordinator が今の版のまま新しい worker を受ける版の組)と、upgrade-cluster の前半の両方がこれを通る(#3366)。どの入れ替えも、
    宣言を書く前に空の機体の起動を確かめる(confirm-clean-boot)。"
   (for [w workers]
-    (<- (await-until (.format "worker {} に置かれた task が終わる" w.name) (partial no-task-on w.name) limits.drain-seconds))
+    (<- (await-until (.format "worker {} に置かれた task が終わる" w.name) (partial no-task-on w.name) (partial tasks-on-line w.name)
+                     limits.drain-seconds))
     (<- (confirm-clean-boot w w.name))
     (<- (DesireWorker w))
     (<- (PublishDeclarations))
     (<- (ApplyDeclarations))
     (<- (await-until (.format "worker {} が版 {} で live に戻る" w.name w.doeff-commit) (partial back-on w.name w.doeff-commit)
-                     limits.return-seconds)))
+                     (partial worker-line w.name) limits.return-seconds)))
   None)
 
 
@@ -124,11 +188,11 @@
    判じる — 版の読めない worker(RosterEntry の doeff-commit が None)は新しい版と数えないので、その待ちで名指しで止まる。"
   (<- (upgrade-workers workers limits))
   (<- (await-until (.format "worker が全部 版 {} で live" coordinator.doeff-commit) (partial all-back-on coordinator.doeff-commit)
-                   limits.return-seconds))
-  (<- (await-until "待ち行列が空" queue-empty limits.queue-seconds))
+                   (partial not-back-line coordinator.doeff-commit) limits.return-seconds))
+  (<- (await-until "待ち行列が空" queue-empty queued-line limits.queue-seconds))
   (<- (confirm-clean-boot coordinator "coordinator"))
   (<- (DesireCoordinator coordinator))
   (<- (PublishDeclarations))
   (<- (ApplyDeclarations))
-  (<- (await-until "coordinator が戻り worker が全部 live" all-live limits.return-seconds))
+  (<- (await-until "coordinator が戻り worker が全部 live" all-live not-live-line limits.return-seconds))
   None)
