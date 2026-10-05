@@ -6,6 +6,9 @@
 ;; 知らせの pipe が無い)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "program"})
+(import os)
+(import signal)
+(import subprocess)
 (import sys)
 (import time)
 (import pathlib [Path])
@@ -32,6 +35,13 @@
 (val NOTICE-SECONDS 10.0)
 (val SILENCE-SECONDS 3.0)
 (val NOTICE-FLAG "--notice-env")
+(val SHIM "doeff_cluster.worker.entry.shim")
+;; 読まない job へ書く知らせの量(知らせの pipe の容量 約 64 KiB と shim の標準入力の pipe の容量を合わせた数倍)・書きを続ける上限(秒)・
+;; 標準入力を閉じてから shim の終わりを待つ上限(秒 — shim の猶予 0.5 秒 + 片づけ)・1 行の知らせ。
+(val FLOOD-BYTES (* 512 1024))
+(val FLOOD-SECONDS 5.0)
+(val SHIM-END-SECONDS 10.0)
+(val FLOOD-LINE b"retired\n")
 
 
 (defk lines-of [path count seconds]
@@ -102,3 +112,41 @@
   (<- spec JobSpec (listener-spec out))
   (<- got tuple (run-on-host settings (notices-through-the-pipe spec out SILENCE-SECONDS) :around #(notice-flag-dropped)))
   (assert (= got #(#("Listening") #("Listening"))) got))
+
+
+(defk flooded-bytes [fd total seconds]
+  {:pre [(: fd int) (: total int) (: seconds float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "読み手の止まらない shim の標準入力(non-blocking の書き口 fd)へ知らせの行を total byte まで書き、書けた byte 数を返すため(shim が
+   読まずに書けないまま seconds を過ぎたら、その時の数)。"
+  (val deadline (+ (time.monotonic) seconds))
+  (var written 0)
+  (while (and (< written total) (< (time.monotonic) deadline))
+    (try
+      (:= written (+ written (os.write fd FLOOD-LINE)))
+      (except [BlockingIOError]
+        (time.sleep 0.01))))
+  written)
+
+
+(deftest test-a-job-that-never-reads-the-notice-pipe-does-not-stall-the-shim [tmp-path]
+  {:skip-if (not LINUX) :skip-reason NOT-LINUX}
+  ;; 中継の書きが詰まらない(#3672・vg-w45 の読み): 知らせを一度も読まない job(答え手を組まない古い job・AwaitRetirement を問わない
+  ;; job — 読みの thread は最初の問いで立つ)の下で、worker が知らせの pipe の容量を超えて書いても、shim は標準入力を読み続け(書けない
+  ;; 知らせは捨てる — worker の WriteProcessInput も止まらない)、標準入力の EOF(worker の消失)で job を止めて終わる(#2464 の守り)。
+  ;; 以前は中継の書きが blocking で、知らせの pipe が満ちると標準入力を読む thread が os.write で止まり、EOF を読めずに job を止めなかった。
+  ;; shim は worker と同じ持ち方(標準入力を pipe・自分の session)で、知らせを読まない python の 1 本を下に起こす。
+  (val log (/ tmp-path "job.1.log"))
+  (val argv [sys.executable "-B" "-m" SHIM "0.5" NOTICE-FLAG "DOEFF_TEST_NOTICE_FD" "--" sys.executable "-B" "-c" "import time; time.sleep(60)"])
+  (val shim (with [out (open log "ab") err (open log "ab")]
+              (subprocess.Popen argv :stdin subprocess.PIPE :stdout out :stderr err :start-new-session True)))
+  (try
+    (os.set-blocking (.fileno shim.stdin) False)
+    (<- written int (flooded-bytes (.fileno shim.stdin) FLOOD-BYTES FLOOD-SECONDS))
+    (.close shim.stdin)
+    (val code (try (.wait shim :timeout SHIM-END-SECONDS) (except [subprocess.TimeoutExpired] None)))
+    (assert (= written FLOOD-BYTES) #("shim が標準入力を読み続けない(知らせの pipe が満ちて中継の書きが止まった)" written))
+    (assert (= code (+ 128 signal.SIGTERM)) #("標準入力を閉じても shim が job を止めて終わらない" code (.read-text log :encoding "utf-8")))
+    (finally
+      (when (is (.poll shim) None)
+        (os.killpg shim.pid signal.SIGKILL)
+        (.wait shim)))))
