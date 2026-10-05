@@ -3,7 +3,9 @@
 ;;   - 表の用意の DDL は旧い版と同じ字面(tests/pg_ddl_before_880.json = 旧い版の schema-statements の "records_" の答えの写し)。
 ;;     答え手の方言への書き換え(postgres-statement)を通した後の、driver に渡る字面で比べる。旧い版より後に足した表と索引の文
 ;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022 と、期限の境と組と変更の列の刻と状態の欄の索引・#3614)は旧い版の文の後ろにだけ並び、
-;;     旧い版の文の字面と順を変えない。
+;;     旧い版の文の字面と順を変えない。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632 — 行を作った時の
+;;     server の時計の ms)。ON CONFLICT DO NOTHING なので既に在る置き場の行(旧い版が作った epoch 1 を含む)には触らず、表の形も
+;;     変わらない(既に在る置き場の版が 1 のままなことは test_pg_store_epoch.hy が実 PostgreSQL で確かめる)。
 ;;   - 書きの錠と移行の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / "records-migrate" — 区切りなし)で、
 ;;     PostgreSQL の hashtext が同じ整数を返す(= 同じ advisory lock の番号)。
 ;;   - 旧い版の錠の文(`SELECT pg_advisory_xact_lock(hashtext(%s))`)を別の接続で取っている間、新しい版の書きは待つ
@@ -34,6 +36,13 @@
 ;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
 (val PG-SKIP-REASON (pg-skip-reason))
 (val BEFORE-880-DDL (json.loads (.read-text (/ (. (Path __file__) parent) "pg_ddl_before_880.json") :encoding "utf-8")))
+;; 旧い版の文のうち、store_epoch の行を作る文だけは版の初めの値を替えた(頭の註・#3632)。旧い版の写しの json はそのまま残し、
+;; 替えた 1 文だけをここで名指す(他の文の字面と順は旧い版のまま)。
+(val BEFORE-880-EPOCH-ROW "INSERT INTO records_store_epoch (id, epoch, floor) VALUES (1, 1, 0) ON CONFLICT (id) DO NOTHING")
+(val UNIQUE-EPOCH-ROW (+ "INSERT INTO records_store_epoch (id, epoch, floor)\n"
+                         "           VALUES (1, (extract(epoch from clock_timestamp()) * 1000)::bigint, 0) ON CONFLICT (id) DO NOTHING"))
+(val EPOCH-ROW-AT (.index BEFORE-880-DDL BEFORE-880-EPOCH-ROW))
+(val EXPECTED-DDL (+ (cut BEFORE-880-DDL EPOCH-ROW-AT) [UNIQUE-EPOCH-ROW] (cut BEFORE-880-DDL (+ EPOCH-ROW-AT 1) None)))
 ;; 旧い版より後に足した表と索引の文("records_" の答え・旧い版の文の後ろに足した順)。索引は #3614: 列の期限の境 (ledger, at)・
 ;; 組で数える列 pairs の区切り「:」の組の名の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(どの表の索引の欄にも無い)。
 (val ADDED-AFTER-880
@@ -58,8 +67,8 @@
   (for [statement statements]
     (<- bound (postgres-statement statement.text statement.params))
     (.append texts bound.text))
-  (assert (= (cut texts (len BEFORE-880-DDL)) BEFORE-880-DDL) (repr texts))
-  (assert (= (cut texts (len BEFORE-880-DDL) None) ADDED-AFTER-880) (repr texts)))
+  (assert (= (cut texts (len EXPECTED-DDL)) EXPECTED-DDL) (repr texts))
+  (assert (= (cut texts (len EXPECTED-DDL) None) ADDED-AFTER-880) (repr texts)))
 
 
 (deftest test-the-lock-keys-have-the-text-of-the-version-before-880
