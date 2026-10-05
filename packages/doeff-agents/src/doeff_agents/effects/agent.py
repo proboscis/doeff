@@ -184,10 +184,17 @@ class AgentTurnFailed:
 class AgentTurnInterrupted:
     """The turn was stopped (``Interrupt`` / ``Stop``); the context stays.
 
+    ``cli_kept`` tells whether the same agent CLI process stays with the
+    session and runs its next turn (a stop that interrupts only the turn) or
+    went down with the stop (a signal-form interrupt, ``Stop``, or the process
+    exiting while stopping) — the caller must not keep resources (e.g. a
+    borrowed credential) for a CLI that is gone.  It has no default: every
+    producer states it.
     ``surviving_refs`` inputs run on as the next turn of the same session;
     ``dropped_refs`` inputs were never read.
     """
 
+    cli_kept: bool
     surviving_refs: tuple[str, ...] = ()
     dropped_refs: tuple[str, ...] = ()
     resume_from: str

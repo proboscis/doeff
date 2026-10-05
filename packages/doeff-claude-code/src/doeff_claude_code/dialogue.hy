@@ -220,7 +220,7 @@
 (defn close-session [#^ DialogueState state]
   "会話を閉じる: 走っている手番は Interrupted(読まれていない注入は捨てた側)で終わる。"
   (if state.in-flight
-      (ended state (Interrupted :dropped-refs (queued-refs state)))
+      (ended state (Interrupted :process-kept False :dropped-refs (queued-refs state)))
       (Transition :state (closed-turn state))))
 
 (defn on-exit [#^ DialogueState state #^ (| int None) exit-code #^ str stderr-tail]
@@ -229,7 +229,7 @@
   (cond
     (not state.in-flight) (Transition :state state)
     (not (isinstance state.stop NoStop))
-      (ended state (Interrupted :dropped-refs (queued-refs state)))
+      (ended state (Interrupted :process-kept False :dropped-refs (queued-refs state)))
     (is-not state.deferred-result None)
       (ended state (end-of-result state.deferred-result state) :priced-by state.deferred-result)
     True
@@ -289,7 +289,7 @@
   (setv stop open-closed.stop)
   (cond
     (isinstance stop StopSignal)
-      (ended open-closed (Interrupted :dropped-refs queued) :priced-by result :retire StopReason.INTERRUPT-SIGNAL)
+      (ended open-closed (Interrupted :process-kept False :dropped-refs queued) :priced-by result :retire StopReason.INTERRUPT-SIGNAL)
     (isinstance stop StopControl)
       (do
         (setv survivors (if (is stop.still-queued None) queued
@@ -299,9 +299,9 @@
             (Transition :state (replace (closed-turn open-closed) :in-flight True :turn-refs survivors
                                         :injections (tuple (gfor ref survivors (Injection ref "queued")))
                                         :cost-mark result.cost-usd)
-                        :end (Interrupted :surviving-refs survivors :dropped-refs dropped)
+                        :end (Interrupted :process-kept True :surviving-refs survivors :dropped-refs dropped)
                         :continues True)
-            (ended open-closed (Interrupted :dropped-refs dropped) :priced-by result)))
+            (ended open-closed (Interrupted :process-kept True :dropped-refs dropped) :priced-by result)))
     queued
       (Transition :state (replace open-closed :deferred-result result))
     True

@@ -178,8 +178,11 @@
   (setv #^ (get tuple #(str ...)) input-refs #()))
 
 (defclass [(dataclass :frozen True)] Interrupted []
-  "止めた手番の終わり。surviving-refs = CLI が次の手番として走らせる入力(continued-by がその手番)・
-   dropped-refs = 読まれずに捨てられた入力。"
+  "止めた手番の終わり。process-kept = 同じ CLI の process が会話に残り次の手番も使うか(control の止め — 真)、止めと一緒に
+   process が降りたか(SIGINT の形・会話を閉じる止め・止めの途中で process が消えた — 偽。#3672 の決め 6)— 既定値を置かない
+   (作り手が必ず名乗る)・surviving-refs = CLI が次の手番として走らせる入力(continued-by がその手番)・dropped-refs = 読まれずに
+   捨てられた入力。"
+  (#^ bool process-kept)
   (setv #^ (get tuple #(str ...)) surviving-refs #())
   (setv #^ (get tuple #(str ...)) dropped-refs #())
   (setv #^ (| ClaudeTurn None) continued-by None))

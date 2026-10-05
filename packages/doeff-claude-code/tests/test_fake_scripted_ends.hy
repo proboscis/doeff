@@ -134,7 +134,7 @@
   (<- #(queued asked stopped done) (on-fake world (inject-then-stop)))
   (assert (= queued (InputQueued "inj-dropped")) (repr queued))
   (assert (isinstance asked InterruptRequested) (repr asked))
-  (assert (= stopped.end (Interrupted :dropped-refs #("inj-dropped"))) (repr stopped.end))
+  (assert (= stopped.end (Interrupted :process-kept False :dropped-refs #("inj-dropped"))) (repr stopped.end))
   (assert (= (lfor kind (kinds-of stopped.lines Init) kind.capabilities) [#("msg_lifecycle_v1")]) stopped.lines)
   (assert (not-in (InputFate "inj-dropped" "started") (kinds-of stopped.lines InputFate)) stopped.lines)
   (assert (isinstance done.end Completed) (repr done.end)))
