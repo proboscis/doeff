@@ -110,7 +110,9 @@
   "会話を起こす時の宣言。settings は 1 つの --settings へ合流する(handler が置く鍵と合流する — argv.hy)。
    settings = CLI の settings の JSON(鍵の集合は CLI が決めるので深く凍らせた写像)/ mcp-servers = 名 → McpSse / McpStdio。
    cold-resume-prompt = 降りた会話を --resume で起こす前に 1 回だけ走らせる print mode の prompt(例: 圧縮の plugin の命令)。
-   None なら走らせない。"
+   None なら走らせない。credential-expires-at = 家の env の資格(借りた access token)を使ってよい期限の刻(epoch 秒・汎用 — 誰から
+   借りたかは知らない)。その刻から host の床(ClaudeCodeHost の credential-floor-seconds)を引いた刻を過ぎた生きた process は、
+   手番を走らせていなければ止め、走らせていれば手番の境で止める(#3672 の D2・訳 CREDENTIAL-FLOOR)。None = 期限を知らない。"
   (#^ ClaudeHome home)
   (#^ str cwd)
   (setv #^ (| str None) model None)
@@ -121,7 +123,11 @@
   (setv #^ (| AutocompactAuto AutocompactTokens None) autocompact None)
   (setv #^ (| str None) system-prompt-append None)
   (setv #^ (| str None) cold-resume-prompt None)
+  (setv #^ (| float None) credential-expires-at None)
   (defn __post_init__ [self]
+    ;; 数の型は注記が持つ。bool は int の子なので名指しで断る。
+    (when (isinstance self.credential-expires-at bool)
+      (raise (TypeError (.format "ClaudeSessionSpec.credential_expires_at は epoch 秒の数か None: {!r}" self.credential-expires-at))))
     (when (not (isinstance self.home ClaudeHome))
       (raise (TypeError "ClaudeSessionSpec.home は ClaudeHome")))
     (when (not (and (isinstance self.cwd str) self.cwd))

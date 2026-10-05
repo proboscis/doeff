@@ -516,11 +516,16 @@
 
 (defk fake-drop [#^ FakeClaudeWorld world #^ str session-id]
   {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)]}
+  "会話の process を消すため(検の口 — 本番の答え手と同じく、手番を走らせていない生きた process も消す。走っている手番は
+   BackendLost で終わる)。自分で消えた扱いで、降ろした訳は付けない。答え = 消す process が在ったか。"
   (setv session (.get world.sessions session-id))
   (when (is session None) (return False))
   (setv running (.running session))
-  (when (is running None) (return False))
-  (<- (finish session running (BackendLost "process killed (fake)")))
+  (when (is-not running None)
+    (<- (finish session running (BackendLost "process killed (fake)")))
+    (return True))
+  (when (not session.alive) (return False))
+  (setv session.alive False)
   True)
 
 (defk fake-forget [#^ FakeClaudeWorld world #^ str session-id]

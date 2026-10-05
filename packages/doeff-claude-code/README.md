@@ -26,7 +26,7 @@
 
 ## handler
 
-- `doeff_claude_code.handler.claude-code-handler(host)` — 本番。`ClaudeCodeHost(command, clock)` を composition root が 1 つ作る。
+- `doeff_claude_code.handler.claude-code-handler(host)` — 本番。`ClaudeCodeHost(command, clock, live_limit, credential_floor_seconds)` を composition root が 1 つ作る(生かす CLI の本数の上限と、借りた資格の期限の手前で止める床の秒 — どちらも既定なし・#3672)。
   `command` = 実行ファイルと前置きの引数(例 `#("claude")`)、`clock` = 行の時刻を刻む関数(`doeff_claude_code.clock.clock-of` に
   doeff-time の時間の handler を渡して作る)。手番ごとに process を起こし、手番の終わりの行で降ろす。
 - `doeff_claude_code.fake.fake-claude-code-handler(world)` — fake。`FakeClaudeWorld(responder)` の筋書き(入力の本文 → `FakeReply`)
