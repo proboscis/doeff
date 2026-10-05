@@ -302,3 +302,35 @@
              #((SignalJob "a" 10 StopStage.TERM)))))
 
 
+;; --- 版の据え置き(#3684): drain 中の worker は、drain の間に宣言し直された新しい版を受けない ---------------------------------
+
+(deftest test-a-held-job-takes-no-action-on-a-changed-spec
+  ;; 失敗ケース(#3684): 返事の draining が真の拍(宣言が版を据え置く印 hold-version を持つ)では、spec が変わっても、入れ替えの job の
+  ;; 新しい版の準備(PrepareCode)も退かせ(RetireJob)も、入れ替えでない job の止め(SignalJob)も出さず、旧い版を動かし続ける。直す前は
+  ;; 印を見ずに、印の無い拍と同じ action を出していた。状態の行は「drain 中 — 新しい版は drain の後」。
+  (val old-handoff (! (proc H1 10 "1-old")))
+  (val held-handoff (replace H2 :hold-version True))
+  (assert (= (! (plan 0 #(held-handoff) (! (world old-handoff :codes #(READY1))) {} POLICY)) #()))
+  (assert (= (! (plan 0 #(held-handoff) (! (world old-handoff :codes #(READY1 READY2))) {"a" (JobRecord "a" :attempts 1)} POLICY)) #()))
+  (val held-recreate (replace A2 :hold-version True))
+  (val old-recreate (! (world (! (proc A1 10 "1-old")) :codes #(READY1 READY2))))
+  (assert (= (! (plan 0 #(held-recreate) old-recreate {} POLICY)) #()))
+  (val status (get (! (statuses 0 #(held-recreate) old-recreate {} POLICY)) 0))
+  (assert (= status.phase JobPhase.RUNNING) status)
+  (assert (= status.detail "drain 中 — 新しい版は drain の後") status)
+  ;; 印は比べない欄: 印だけが違う宣言は同じ spec(据え置きの印で process を起こし直さない・指紋も同じ)。
+  (assert (= (replace A1 :hold-version True) A1))
+  ;; drain が解けた(印が偽に戻った)拍から、普通の入れ替えへ進む(溜めた物は無い)。
+  (assert (= (! (plan 1 #(H2) (! (world old-handoff :codes #(READY1))) {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 1 #(A2) old-recreate {} POLICY)) #((SignalJob "a" 10 StopStage.TERM))))
+  ;; 印の前に止め始めた process は止め終える(据え置くのは止めていない process だけ)。
+  (val stopping {"a" (JobRecord "a" :attempts 1 :stopping (StopProgress 0 StopStage.TERM 0))})
+  (assert (= (! (plan 1000 #(held-recreate) old-recreate stopping POLICY)) #((SignalJob "a" 10 StopStage.KILL)))))
+
+(deftest test-a-job-that-left-the-declaration-is-stopped-even-while-draining
+  ;; 据え置くのは宣言に在る job の版だけ: drain 中の拍(残る job が印を持つ)でも、宣言から消えた job(移し先で新しい版が Ready になった
+  ;; job など)は今までどおり止める。残る job には何もしない。
+  (val w (! (world (! (running A1 10)) (! (running B1 11)))))
+  (assert (= (! (plan 0 #((replace B1 :hold-version True)) w {} POLICY)) #((SignalJob "a" 10 StopStage.TERM)))))
+
+

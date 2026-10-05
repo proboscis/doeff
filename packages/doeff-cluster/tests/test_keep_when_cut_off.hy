@@ -250,8 +250,8 @@
 (deftest test-a-worker-keeps-a-marked-job-through-a-two-minute-cut-and-stops-an-unmarked-one-after-the-fence
   ;; 受入 3: 印の在る job は coordinator に 2 分届かなくても止めない。印の無い job は今までどおり fence(20 秒)を越えたら止める。
   ;; 返事の行に欄が無ければ(古い coordinator)印は無い = 今までどおり。
-  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True}))
-  (<- plain JobSpec (declared-job-spec {"name" "b" "entry" "m" "revision" "r"}))
+  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True} False))
+  (<- plain JobSpec (declared-job-spec {"name" "b" "entry" "m" "revision" "r"} False))
   (assert (and marked.keep-when-cut-off (not plain.keep-when-cut-off)))
   ;; fence の判断(heartbeat_rules.desired-when-unreachable)が fence を越えた途絶で残す job を選ぶ述語 — 印の無い job は fence を越えたら
   ;; 止める(残らない)。今持っている印の知らせ(heartbeat の keptWhenCutOff)は模擬の筋書きと返事の検が通しで確かめる。
@@ -267,7 +267,7 @@
 (deftest test-a-marked-job-is-stopped-once-the-cut-outlasts-the-long-fence
   ;; 長い方の柵(査読の決め): 印の在る job も、途絶が keep-fence-ms(240 秒)を越えたら止める — 2 分の途絶では止めず、241 秒の途絶では
   ;; 止める(同じ名の worker の新しい世代が来る約 350 秒後より先)。長い方の柵は fence より長くなければ時間の設定として受けない。
-  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True}))
+  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True} False))
   (assert (= (kept-when-cut-off #(marked) 120000 T.keep-fence-ms) #(marked)))
   (assert (= (kept-when-cut-off #(marked) 241000 T.keep-fence-ms) #()))
   (assert (= T.keep-fence-ms 240000))

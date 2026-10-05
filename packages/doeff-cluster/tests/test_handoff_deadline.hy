@@ -19,7 +19,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
-(import doeff_cluster.worker.protocol.declared [declared-job-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json])
+(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json])
 (import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.entry.service_build [job])
@@ -141,7 +141,8 @@
   (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
                        :actor None))
   (.append sim.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
-  (<- desired tuple (declared-job-specs (get reply "jobs")))
+  (<- declared DeclaredReply (declared-reply-of-json reply))
+  (<- desired tuple (declared-job-specs declared))
   (setv sim.desired desired)
   None)
 

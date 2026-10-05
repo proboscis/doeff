@@ -29,7 +29,7 @@ PROBE = """\
 (import pathlib [Path])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.service_model [Declaration])
-(import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json heartbeat-body])
+(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json heartbeat-body])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 
 (defk probe-beat []
@@ -38,7 +38,8 @@ PROBE = """\
   (<- rows (get tuple #((get dict #(str object)) ...)) (status-rows-json #()))
   (<- body (get dict #(str object)) (heartbeat-body :name "w" :provides #("probe") :exclusive #() :node "n" :capacity 1 :task-reserve 0 :versions {}
                                                     :statuses (list rows) :endpoint "probe://w" :boot "b" :boot-at 0 :tools {} :kept #()))
-  (<- desired (get tuple #(JobSpec ...)) (declared-job-specs [{"name" "web" "entry" "probe" "revision" "r"}]))
+  (<- declared DeclaredReply (declared-reply-of-json {"jobs" [{"name" "web" "entry" "probe" "revision" "r"}] "draining" False}))
+  (<- desired (get tuple #(JobSpec ...)) (declared-job-specs declared))
   (<- tasks (get tuple #(JobSpec ...)) (task-specs [] (Path "tasks")))
   (+ (len body) (len desired) (len tasks)))
 

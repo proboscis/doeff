@@ -81,7 +81,7 @@
     (defn #^ None log-message [self #^ str format #^ object #* args] None)
     (defn #^ None do-POST [self]
       (.read self.rfile (int (get self.headers "Content-Length")))
-      (setv data (.encode (json.dumps {"jobs" [] "tasks" [] "timing" {"fence_ms" 20000 "reassign_after_ms" 45000}})))
+      (setv data (.encode (json.dumps {"jobs" [] "tasks" [] "timing" {"fence_ms" 20000 "reassign_after_ms" 45000} "draining" False})))
       (.send-response self 200)
       (.send-header self "Content-Length" (str (len data)))
       (.end-headers self)
