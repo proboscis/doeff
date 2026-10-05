@@ -10,6 +10,7 @@ from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
+from doeff_cluster.shared.intent.runtime_env_model import RepoLocation as RepoLocation
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
 from doeff_cluster.shared.intent.runtime_env_model import CHILD_PROTOCOL as CHILD_PROTOCOL
@@ -18,6 +19,7 @@ from doeff_cluster.shared.core.runtime_env_rules import env_failure as env_failu
 from doeff_cluster.shared.core.runtime_env_rules import native_key as native_key
 from doeff_cluster.shared.core.runtime_env_rules import root_split as root_split
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
+from doeff_cluster.shared.core.runtime_env_rules import url_location as url_location
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
 from doeff_cluster.worker.intent.env_prepare_model import PrepareRequest as PrepareRequest
 from doeff_cluster.worker.intent.env_prepare_model import StageTime as StageTime
@@ -80,6 +82,9 @@ class CarryCandidate:
     made_ms: int
     same_commit: bool
     same_macros: bool
+
+def located_repos(repos: tuple) -> _Program[tuple, object]:
+    ...
 
 def carry_candidates(known: tuple, env: RuntimeEnv, name: str) -> _Program[tuple, object]:
     ...

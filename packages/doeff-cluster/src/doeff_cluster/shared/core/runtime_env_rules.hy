@@ -1,5 +1,6 @@
 ;;; 実行環境の宣言(runtime env)の純粋な判断: キー(env-key・native-key)・JSON の往復(runtime-env->json・runtime-env-of-json)・
-;;; 準備の失敗の値(env-failure)・子の環境変数の組の検め(child-environ-refusal)。型と定数は doeff_cluster.shared.intent.runtime_env_model。
+;;; 準備の失敗の値(env-failure)・子の環境変数の組の検め(child-environ-refusal)・repo の url の正体(url-location)。
+;;; 型と定数は doeff_cluster.shared.intent.runtime_env_model。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import hashlib)
@@ -7,6 +8,7 @@
 (import doeff_cluster.shared.core [native_wheel])
 (import doeff_cluster.shared.core.native_wheel [ENV-KEY-LENGTH])
 (import doeff_cluster.shared.intent.runtime_env_model [RUNTIME-ENV-FORMAT InvalidKind RuntimeEnvInvalid RepoCheckout
+                                                       LocalPath RemoteRepo RepoLocation
                                                        NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        EnvFailureKind RETRYABLE-KINDS EnvFailure])
 
@@ -31,6 +33,25 @@
   "import の根 \"<repo>/<相対の dir>\" → #(repo の名 相対の dir)。"
   (val parts (.partition root "/"))
   #((get parts 0) (get parts 2)))
+
+
+(defk url-location [url]
+  {:pre [(: url str)] :post [(: % RepoLocation)]}
+  "repo の url を 1 度だけ読み、綴りに依らない正体にするため(同じ repo かを見る所はこの答えで比べる — #3693)。手元の path かの読み分けは
+   git の url_is_local_not_ssh と同じ(file:// で始まる・`:` を含まない・最初の `/` が最初の `:` より前 → LocalPath・綴りのまま)。
+   残りは網の url: `scheme://[user@]host[:port]/owner/name` と scp の形 `[user@]host:owner/name` を、小文字の host・owner・
+   末尾の `.git` と前後の `/` を外した name の RemoteRepo にする(https・ssh://・git@host: は同じ正体)。"
+  (val colon (.find url ":"))
+  (val slash (.find url "/"))
+  (if (or (.startswith url "file://") (< colon 0) (and (>= slash 0) (< slash colon)))
+      (LocalPath :path url)
+      (do (val url-form (= (cut url colon (+ colon 3)) "://"))
+          (val after (if url-form (cut url (+ colon 3) None) (cut url (+ colon 1) None)))
+          (val authority (if url-form (get (.partition after "/") 0) (cut url 0 colon)))
+          (val path (if url-form (get (.partition after "/") 2) after))
+          (val host (get (.partition (get (.rpartition authority "@") 2) ":") 0))
+          (val parts (.rpartition (.removesuffix (.strip path "/") ".git") "/"))
+          (RemoteRepo :host (.lower host) :owner (.strip (get parts 0) "/") :name (get parts 2)))))
 
 
 (defk key-material [env platform]

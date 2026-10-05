@@ -5,7 +5,7 @@ Unknown になる。SubmitDetached.environ(EnvVar の組)を使い手が組む�
 (Type of "EnvVar" is unknown・Argument type is unknown ほか)が使い手の file ごとに出た。
 ここで型を宣言する(service_model.pyi・doeff_hy/wire.pyi と同じ形)。
 
-- defrecord(RepoCheckout・NativeWheel・PythonProject・ToolRequirement・EnvVar・RuntimeEnv・EnvFailure)は凍った・キーワード
+- defrecord(RepoCheckout・LocalPath・RemoteRepo・NativeWheel・PythonProject・ToolRequirement・EnvVar・RuntimeEnv・EnvFailure)は凍った・キーワード
   引数だけの dataclass。欄の型は runtime_env_model.hy の注記と __post_init__ の検めに合わせる(注記が素の tuple の所は、
   検めが入れさせる要素の型で書く)。
 - defenum(InvalidKind・EnvFailureKind)は StrEnum。値は名の小文字・`-` 区切り。
@@ -16,6 +16,7 @@ Unknown になる。SubmitDetached.environ(EnvVar の組)を使い手が組む�
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TypeAlias
 
 
 RUNTIME_ENV_FORMAT: int
@@ -68,6 +69,22 @@ class RepoCheckout:
     name: str
     url: str
     commit: str
+
+@dataclass(frozen=True, kw_only=True)
+class LocalPath:
+    """手元の path を名指す url(綴りのまま)。"""
+
+    path: str
+
+@dataclass(frozen=True, kw_only=True)
+class RemoteRepo:
+    """網の上の repo の正体(小文字の host・owner・`.git` を外した name)。"""
+
+    host: str
+    owner: str
+    name: str
+
+RepoLocation: TypeAlias = LocalPath | RemoteRepo
 
 @dataclass(frozen=True, kw_only=True)
 class NativeWheel:
