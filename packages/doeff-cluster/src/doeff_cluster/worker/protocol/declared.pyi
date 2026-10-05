@@ -7,7 +7,7 @@ from pathlib import Path as Path
 from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
 from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
-from doeff_cluster.shared.core.runtime_env_rules import current_platform as current_platform
+from doeff_cluster.shared.core.native_wheel import current_platform as current_platform
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX

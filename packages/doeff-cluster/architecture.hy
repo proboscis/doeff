@@ -184,7 +184,12 @@
            (layer foundation
              :summary "汎用の I/O(環境で差し替えるのはここだけ)— まだ src/doeff_cluster/ に平たく在る coordinator・worker・土台の handler は移しの子で分ける"
              :roles [foundation]
-             :imports [foundation])
+             :imports [foundation]
+             ;; process_environ = 起動の script の入口(worker/entry/boot_wheel)が uv build の子へ渡す環境を、この process の環境変数から組む
+             ;; 読み。doeff-vm を入れる前の venv の python で走るので doeff を import できず、Python の module(DOEFF004 の母集団)になる。
+             ;; doeff_cluster は __init__.py の無い namespace package で module の名が素の stem になるので、file を path で名指す(#2934 の形)。
+             :files ["src/doeff_cluster/foundation/process_environ.py"]
+             :exempt [(rule DOEFF004 "起動の script が doeff-vm を入れる前の venv の python で読む Program の外の code で、子 process の環境を組む生の環境変数の読みそのもの(生の副作用に触ってよい foundation の層の役目)— 設定を Ask で受ける入口が無い")])
            (layer entry
              :summary "入口 — 系の宣言・handler の並び・薄い main"
              :roles [system process main]

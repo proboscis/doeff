@@ -1,0 +1,23 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
+  ],
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-native-wheel",
+        "doeff-cluster-process-environ"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-boot-wheel",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
+      ],
+      "responsibility": "起動の script(deploy/boot.sh)の自己起動が root の venv へ入れる doeff-vm の wheel を、実行環境の準備と同じ鍵・同じ置き場・同じ錠から用意する入口(無ければ組んで置く)。",
+      "typed": true
+    }
+  ]
+}

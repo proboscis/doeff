@@ -19,7 +19,8 @@
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key current-platform])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key])
+(import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedEnvUnavailable
                                                     DetachedVersionMismatch])
 (import doeff_cluster.shared.protocol.detached [outcome-of-view])
