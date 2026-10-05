@@ -70,3 +70,38 @@
   "温める表の行 key の今の姿を読む。答え = WarmAnswer(WarmState — 表に無い行は ready も preparing も空・until-ms = 0 — か、
    coordinator に届かなかった WarmUnreachable)。"
   (#^ str key))
+
+
+;; --- 組みの完成を待つ(#3668 (b)・2026-10-06) ---------------------------------------------------------------
+;; 送り手(回の Program など)は頼んだ行が組み上がるまで待つ: 準備済みが 1 台以上なら WarmReady・準備中の台が無く恒久の失敗だけが残れば
+;; WarmFailed・期限で WarmWaitExpired。待ちは coordinator の版の変化(GET /watch の long-poll)で起き、間隔で起きて確かめない — worker の
+;; 組みの進み(heartbeat が名乗る env-ready・env-preparing・env-failed)は Worker の資源の行の status の env に載り、版を進める。
+;; memory の線(anon の量・memory 不足の止め)で組みを始めるか止めるかの判断は、この効果の外(WarmRuntimeEnv を頼むかを決める使い手の側)—
+;; AwaitWarm は coordinator の見え方を待つだけ。
+
+(defrecord WarmReady
+  "待った行が組み上がった(行の needs に合う worker の 1 台以上で準備済み)。state = その時の行の姿。"
+  (#^ WarmState state))
+
+
+(defrecord WarmFailed
+  "待った行の組みが落ちた: 準備済みも準備中も無く、準備の失敗(state.failed)が全部 retryable でない。state = その時の行の姿
+   (failed の各行に worker・kind・detail)。"
+  (#^ WarmState state))
+
+
+(defrecord WarmWaitExpired
+  "期限まで組み上がりも落ちもしなかった。last = 最後に読んだ行の姿(WarmState か、届かなかった WarmUnreachable)・waited-seconds = 待った秒。"
+  (#^ str key)
+  (#^ (| WarmState WarmUnreachable) last)
+  (#^ float waited-seconds))
+
+;; AwaitWarm の答え。
+(val WarmWaitAnswer (| WarmReady WarmFailed WarmWaitExpired))
+
+
+(defclass [(dataclass :frozen True)] AwaitWarm [EffectBase]
+  "温める表の行 key が組み上がるか落ちるまで、timeout-seconds を上限に待つ。答え = WarmWaitAnswer(WarmReady・WarmFailed・WarmWaitExpired)。
+   表に無い行・coordinator に届かない間・準備中・retryable の失敗は待ち続ける(期限で WarmWaitExpired)。"
+  (#^ str key)
+  (#^ float timeout-seconds))
