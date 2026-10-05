@@ -201,8 +201,8 @@
 (import doeff_cluster.shared.protocol.coordinator_reads [readiness-of-body readiness-wait-answer])
 (import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer])
-(import doeff_cluster.shared.core.warm_rules [warm-state-of-json])
+(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
+(import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
 ;; worker の世代は入口の組み立て(doeff_cluster.worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster.worker.entry.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
@@ -1346,6 +1346,32 @@
       (warm-answer-of read "温める表を読めない")))
 
 
+(defk await-warm [link key timeout-seconds]
+  {:pre [(: link SimLink) (: key str) (: timeout-seconds float)] :post [(: % (| WarmReady WarmFailed WarmWaitExpired))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitWarm を本番の warm-cluster(warm-awaited)と同じ形で答えるため(#3668 (b)): GET /warm/<キー> で読み、同じ判断(warm_rules.
+   warm-wait-answer)が待ちを言えば GET /watch(本番の detached.runners-changed と同じ読み)で版の変化まで待って読み直す。模擬の
+   coordinator に届かない間だけ 1 秒の間を置いて問い直す(本番の答え手の既定と同じ)。"
+  (<- started int (now-epoch-ms))
+  (var after 0)
+  (var answer None)
+  (while (is answer None)
+    (<- read WarmAnswer (warm-read link key))
+    (<- now int (now-epoch-ms))
+    (val waited (/ (- now started) 1000.0))
+    (<- step (| WarmReady WarmFailed WarmWaitExpired None) (warm-wait-answer read key waited timeout-seconds))
+    (val left (max 0.0 (- timeout-seconds waited)))
+    (if (is-not step None)
+        (:= answer step)
+        (do (<- change (await-runners-change link after (min WATCH-MAX-SECONDS left)))
+            (match change
+              (RunnersChange :revision revision) (:= after revision)
+              (RunnersWatchMissing :detail detail)
+                (raise (RuntimeError (.format "温める表の行 {!r} の組みを版の変化で待てない(coordinator に GET /watch が無い): {}" key detail)))
+              _ (<- (Delay (min 1.0 left)))))))
+  answer)
+
+
 ;; --- 柵と答え(process ごと・Program のすぐ外)--------------------------------------------------------------
 
 (defclass TrackedSpawn [Spawn]  ; class にする理由: scheduler が isinstance で Spawn と読む印つきの形(外の基底を継ぐ — 欄も状態も足さない)
@@ -1526,7 +1552,10 @@
     (resume warmed))
   (ReadWarmState [key]
     (<- warm WarmAnswer (warm-read link key))
-    (resume warm)))
+    (resume warm))
+  (AwaitWarm [key timeout-seconds]
+    (<- awaited (await-warm link key (float timeout-seconds)))
+    (resume awaited)))
 
 
 (defrecord ProcessOutside

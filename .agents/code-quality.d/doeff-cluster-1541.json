@@ -350,6 +350,7 @@
         "doeff-cluster-program-codec",
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
+        "doeff-cluster-clock",
         "doeff-hy-wire"
       ],
       "layer": "io",
