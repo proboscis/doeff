@@ -30,7 +30,8 @@
 ;;;   Unreachable = 落ちずに、置き場の戻りを出来事として待つ(#3469 — 記録の service の短い停止を越える)。止まりの最初の拍に合図
 ;;;                 SourceStalled を同じ bus に Publish し、置き場の戻りを記録の effect AwaitRecordsBack の答えで知る(見張りの task が
 ;;;                 答えを受けて約束を完了する — 撃ち直しを時間で繰り返さない)。源はその約束を、土台が宣言した上限(ReadSourcePatience の
-;;;                 答え — 止まりの最初の拍から数える)まで WaitWithin で待つ。戻れば読みを撃ち直し、届けば SourceResumed を Publish して
+;;;                 答え — 止まりの最初の拍から数える)まで WaitWithin で待つ。戻れば読みを撃ち直し(変化の待ちは同じ位置の待たない読み —
+;;;                 戻った後に書きが無くても long-poll を待ち切らない)、届けば SourceResumed を Publish して
 ;;;                 続ける(まだ届かなければ、同じ上限の残りで待ち直す)。上限を過ぎれば SignalSourceUnreachable で process を落とす
 ;;;                 (外の再起動が拾う)。業務の Program には Unreachable を見せない。
 ;;; 上限の待ちと long-poll の長さは、記録の service との境界にあるこの源の中だけの待ち(業務の Program に時間の待ちを出さない)。
@@ -39,7 +40,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
-(import dataclasses [dataclass fields is-dataclass])
+(import dataclasses [dataclass fields is-dataclass replace])
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
 (import datetime [datetime])
@@ -183,7 +184,8 @@
   {:pre [(: subscriber str) (: names (get tuple #(str ...))) (: first Unreachable) (: again (| EffectBase Program))]
    :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty bool))]}
   "置き場の止まりを、落ちずに越えるため(#3469 — 記録の service の短い停止を越える・記録の置き場の源と memory の置き場の源が同じ 1 つを使う)。
-   first = 止まりを見た最初の答え / again = 置き場に届くかを読み直す effect か Program(答え = Unreachable か、届いた答え)。止まりの最初の拍に
+   first = 止まりを見た最初の答え / again = 置き場に届くかを読み直す effect か Program(答え = Unreachable か、届いた答え — 戻りの知らせの
+   後にすぐ答える形で渡す。変化の待ちは同じ位置の timeout 0 の読み・reachable の註)。止まりの最初の拍に
    SourceStalled を Publish し、戻りを上限(ReadSourcePatience の答え — 最初の拍から数える)まで待ち、戻ったら again を撃ち直す。届けば
    SourceResumed を Publish して届いた答えを返し、まだ届かなければ同じ上限の残りで待ち直す。上限を過ぎれば、購読者の名前・表か列の名前・
    待った秒・最後の detail を名指した SignalSourceUnreachable で落ちる。"
@@ -211,11 +213,18 @@
    ReadStreamEnd)は、client の要求を待つ時間(ReadRequestPatience の答え — 組み立てが client の外側で選ぶ)だけ client の中で待ってから
    Unreachable を返す。だから止まりの最中に源が立つと、合図 SourceStalled はその待ちの後になり、待ちは client の分と源の分の 2 段になる。
    変化の待ち(WatchChanges・WatchEvents)は client が待たないので、走っている源の止まりの合図はすぐ出る。前はここで読みを 0 秒の答え手で
-   包んでいたが、client は上限の問いを自分の外側へ出すので client の内側の包みは効かず、消した(#3557 — 位置に依る答え分けを置かない)。"
+   包んでいたが、client は上限の問いを自分の外側へ出すので client の内側の包みは効かず、消した(#3557 — 位置に依る答え分けを置かない)。
+   戻りの知らせの後に撃ち直す読みは、変化の待ちなら同じ位置の待たない読み(timeout 0 — 置き場はすぐ答える)にする。元の long-poll の
+   ままだと、戻った後に書きが無い間はその秒(WATCH-SECONDS)を待ち切ってから SourceResumed が出た(受信停止の戻りの遅れ・W の条件 5)。
+   待たない読みの答え(変化が在れば Changes・EventsMoved、無ければ空の Changes・EventsQuiet、Reset)は long-poll の答えと同じ型なので、
+   呼び手は今までどおり答えの位置から long-poll に戻る。他の読み(ListRows・ReadStreamEnd)は待たないので、そのまま撃ち直す。"
   (<- answered ask)
   (when (not (isinstance answered Unreachable))
     (return answered))
-  (<- reached (ride-out-stall subscriber names answered ask))
+  (val again (match ask
+               (| (WatchChanges) (WatchEvents)) (replace ask :timeout 0.0)
+               _ ask))
+  (<- reached (ride-out-stall subscriber names answered again))
   ;; 真偽は memory の置き場の読み直し(memory-reach)だけの答えで、記録の置き場への読み ask の答えには来ない — 来たら配線の誤りとして名指す。
   (match reached
     (bool) (raise (TypeError (.format "購読者 {!r} の読み {!r} の答えに真偽が来た(真偽は memory の置き場の読み直しだけの答え)" subscriber ask)))
