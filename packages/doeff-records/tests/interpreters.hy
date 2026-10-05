@@ -18,7 +18,11 @@
 ;;;           (AdvanceStoreEpoch・SweepExpired・PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
 ;;;
 ;;; 法は LawSetup の effect で自分の LawHarness(書き手の名 → その書き手の handler で包む関数)を読む。
-(require doeff-hy.macros [defhandler <-])
+;;;
+;;; build-interpreter の :aligned-epoch True(test_parity_memory_pg だけが渡す)は、PostgreSQL の置き場の版の行を用意の直後に memory の
+;;; 置き場の初めの版(memory.hy の MemoryStore の epoch 1)にする。PostgreSQL の置き場の版は作った時の server の時計の ms で始まる
+;;; (pg_sql.hy の頭の註・#3632)ので、揃えないと版の値だけで答えの列が食い違う。仮想の時計で時刻を揃えるのと同じ、始まりの状態の揃え。
+(require doeff-hy.macros [defhandler defk <-])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import importlib)
@@ -28,8 +32,9 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store])
+(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
 (import doeff_core_effects.handlers [state])
+(import doeff_core_effects.sql_effects [SqlQuery])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
@@ -100,6 +105,16 @@
   (run-sql connections (prepare-records-store DATABASE LAW-SCHEMA prefix)))
 
 
+(defk prepared-fresh-store [aligned-epoch]
+  {:pre [(: aligned-epoch bool)] :post [(: % PreparedStore)]
+   :tags {:context "records" :role "foundation"}}
+  "検ごとの接頭辞の置き場を用意して返すため。aligned-epoch なら、用意の直後に版の行を memory の置き場の初めの版 1 にする(頭の註)。"
+  (<- store (prepare-records-store DATABASE LAW-SCHEMA (fresh-prefix)))
+  (when aligned-epoch
+    (<- (SqlQuery DATABASE (.format "UPDATE {}store_epoch SET epoch = 1 WHERE id = 1" store.prefix) #())))
+  store)
+
+
 (defn records-handler-for [store]
   "書き手の名 → その書き手の PostgreSQL の置き場の handler(検の値の機体の名で)。"
   (fn [writer] (pg-records-handler store writer ORIGIN-HOST)))
@@ -157,14 +172,14 @@
                     (fn [] harness)))
 
 
-(defn build-interpreter [#^ str name]
+(defn build-interpreter [#^ str name * [aligned-epoch False]]
   (cond
     (= name MEMORY)
       (do (setv store (MemoryStore LAW-SCHEMA))
           (interpreter-over (harness-of (fn [writer] (memory-records-handler store writer))) [] (fn [] None)))
     (= name PG)
       (do (setv connections (postgres-connections)
-                store (prepared-store connections (fresh-prefix)))
+                store (run-sql connections (prepared-fresh-store aligned-epoch)))
           (defn close []
             (run-sql connections (drop-records-tables store))
             (.close connections))
@@ -172,7 +187,7 @@
     (= name PG-POOLED)
       (do (setv connections (postgres-connections)
                 pool (ThreadPoolExecutor :max-workers 4)
-                store (prepared-store connections (fresh-prefix)))
+                store (run-sql connections (prepared-fresh-store aligned-epoch)))
           (defn close []
             (run-sql connections (drop-records-tables store))
             (.shutdown pool)
@@ -184,7 +199,7 @@
           (http-interpreter handler-for handler-for (fn [] None)))
     (= name HTTP-PG)
       (do (setv connections (postgres-connections)
-                store (prepared-store connections (fresh-prefix))
+                store (run-sql connections (prepared-fresh-store aligned-epoch))
                 handler-for (records-handler-for store))
           (defn close-pg []
             (run-sql connections (drop-records-tables store))
