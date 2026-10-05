@@ -1,6 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = aiohttp_http_server.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
+from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 import asyncio as asyncio
 from collections import deque as deque
@@ -62,6 +63,7 @@ from doeff import Some as Some
 from doeff_core_effects.effects import Put as Put
 FILE_CHUNK_BYTES: int
 BODY_CHUNK_BYTES: int
+PREFETCH_BYTES: int
 CONNECT_SECONDS: float
 HTTP_READ_SECONDS: float
 HOP_BY_HOP: frozenset[str]
@@ -121,6 +123,7 @@ class WebEdge:
     runner: Incomplete
     waiting: Incomplete
     unread: Incomplete
+    prefetched: Incomplete
     oversized: Incomplete
     peers: Incomplete
     shut: Incomplete
@@ -195,12 +198,24 @@ class WebEdge:
     def read_body(self, ticket: str, max_bytes: int) -> HttpBodyOutcome:
         ...
 
+    def prefetch(self, ticket: str, request: web.Request) -> HttpBodyOutcome | None:
+        ...
+
+    def take_prefetched(self, ticket: str, max_bytes: int) -> HttpBodyOutcome | None:
+        ...
+
+    def drain_body(self, ticket: str, request: web.Request, max_bytes: int) -> HttpBodyOutcome:
+        ...
+
     def respond(self, request: web.Request, status: int, headers: tuple, body: HttpBodyBytes | HttpBodyFileRange | HttpNoBody, cut_off: bool) -> web.StreamResponse:
         ...
 
-    def relay_http(self, request: web.Request, url: str) -> web.StreamResponse:
+    def relay_http(self, request: web.Request, url: str, unclaimed: HttpBodyOutcome | None) -> web.StreamResponse:
         ...
 
     def relay_ws(self, request: web.Request, url: str) -> web.StreamResponse:
         ...
+
+def read_on_edge(edge: WebEdge, ticket: str, max_bytes: int) -> _Program[HttpBodyOutcome, object]:
+    ...
 aiohttp_http_server: _Handler
