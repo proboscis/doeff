@@ -15,7 +15,7 @@
 (import doeff_records.effects [PutRow])
 (import doeff_records.values [ExpectAny])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
-(import doeff_records.event_source [records-unwaited])
+(import doeff_records.http_client [records-unwaited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.meter_report [with-meter-report])
 

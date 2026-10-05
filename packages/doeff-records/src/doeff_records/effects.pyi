@@ -97,7 +97,8 @@ class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
 @dataclass(frozen=True)
 class ReadSignalSource(EffectBase["SignalSourceFactory"]): ...
 
-# 置き場の戻りを待つ問いと、止まりの上限の問い(#3469)— 上限の答えは doeff_records.event_source の SignalSourcePatience(型を文字列で名指す)。
+# 置き場の戻りを待つ問いと、合図の源が止まりに耐える時間の問い(#3469)・HTTP の client が要求を待つ時間の問い(#3557)— 答えは
+# doeff_records.event_source の SignalSourcePatience と doeff_records.http_client の RequestPatience(型を文字列で名指す)。
 @dataclass(frozen=True)
 class AwaitRecordsBack(EffectBase[None]):
     names: tuple[str, ...]
@@ -105,5 +106,9 @@ class AwaitRecordsBack(EffectBase[None]):
 @dataclass(frozen=True)
 class ReadSourcePatience(EffectBase["SignalSourcePatience"]): ...
 
+@dataclass(frozen=True)
+class ReadRequestPatience(EffectBase["RequestPatience"]): ...
+
 if TYPE_CHECKING:
     from doeff_records.event_source import SignalSourceFactory, SignalSourcePatience
+    from doeff_records.http_client import RequestPatience

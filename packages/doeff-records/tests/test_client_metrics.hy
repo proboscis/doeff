@@ -17,7 +17,7 @@
 (import doeff_records.values [ExpectAny])
 (import doeff_records.wire [CLIENT-ANSWER-METRICS])
 (import doeff_records.http_client [RecordsEndpoint RecordsUnauthorized WireError http-records-handler zero-client-metrics])
-(import doeff_records.event_source [records-unwaited])
+(import doeff_records.http_client [records-unwaited])
 
 ;; 台本の答え 1 つ: 届かない(接続できない)か、#(status 本文)。本文 None = JSON でない本文(間の proxy や前に立つ口の HTML の代役)。
 (val UNREACHABLE "unreachable")
