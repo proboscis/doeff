@@ -1,0 +1,33 @@
+{
+  "dynamic_imports": [
+    {
+      "function": "module_named",
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/entry/warm_child.py",
+      "reason": "待ちの子は、実行環境の宣言(bytecodeEntries)と頼みから名で届く入口と module を前もって読み込み、分かれた子でその入口の main を走らせるのが役目の口 — 名は宣言の値で、doeff-cluster は利用側の module を静的に知らない(#3646)。"
+    }
+  ],
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/worker/entry/warm_child.py"
+  ],
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-child-environ",
+        "doeff-cluster-shim",
+        "doeff-core-effects-effects",
+        "doeff-core-effects-handlers",
+        "doeff-hy-wire"
+      ],
+      "layer": "runtime",
+      "name": "doeff-cluster-warm-child",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/warm_child.py"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/warm_child.py"
+      ],
+      "responsibility": "待ちの子(#3646): 実行環境の root ごとに 1 つ、入口と前もって読む module の読み込みだけを済ませて unix socket で待ち、頼みが来たら fork した子で shim と同じ見張りをして、読み込み済みの入口を同じ process の中で走らせる常駐の process の入口。",
+      "typed": true
+    }
+  ]
+}
