@@ -12,8 +12,9 @@
 ;;;     約束は postgres-sql-handler と同じ)。batched = True を選んだ transaction だけは postgres-sql-handler と同じ往復のまとめ方(BEGIN と錠は
 ;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)。transaction の外の SqlBatch は名指して断る
 ;;;     (stray-batch)。
-;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice — agora-redesign #3073)は postgres-sql-handler と同じ手順(postgres_sql.hy の notified・
-;;;     hung-notice)。transaction の外の SqlNotify は接続の許可を取ってから流す。呼び鈴を掛けるのは待ち受けの接続で、許可を使わない。
+;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice — agora-redesign #3073・名で絞る形は #3688)は postgres-sql-handler と同じ手順
+;;;     (postgres_sql.hy の notified・hung-notice — 名の重なる呼び鈴だけを、接続を返した後に鳴らす)。transaction の外の SqlNotify は接続の
+;;;     許可を取ってから流す。呼び鈴を掛けるのは待ち受けの接続で、許可を使わない。
 ;;;   - 取り消し: 待っている task が Cancel されたら、run-in-transaction が ROLLBACK を流し、接続を返し(返す時にも transaction の途中なら
 ;;;     rollback)、許可を返してから取り消しを通す。始まっていない pool の仕事は外し、取り消しの後に出来た答え(借りた接続)は pool で返す。
 ;;;     走り中の文は止めない(文が終わるまで ROLLBACK は driver の錠で待つ)。
@@ -92,13 +93,13 @@
   (SqlBatch [database queries commit] :when (in database (.names connections))
     (<- refusal (stray-batch database))
     (raise refusal))
-  (SqlNotify [database channel] :when (in database (.names connections))
+  (SqlNotify [database channel topics] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
     (:= permits (| {database created} permits))
-    (<- answer (permitted (get permits database) (notified connections pool database channel)))
+    (<- answer (permitted (get permits database) (notified connections pool database effect)))
     (resume answer))
-  (SqlHangNotice [database channel] :when (in database (.names connections))
-    (<- answer (hung-notice connections pool database channel))
+  (SqlHangNotice [database channel topics] :when (in database (.names connections))
+    (<- answer (hung-notice connections pool database channel topics))
     (resume answer))
   (SqlDropNotice [database channel bell] :when (in database (.names connections))
     (.drop (.listener connections database channel) bell)

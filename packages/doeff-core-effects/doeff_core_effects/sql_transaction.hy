@@ -112,10 +112,11 @@
 
 (defrecord TransactionFlush
   "束ねた transaction で、答え手が 1 回の往復で流す物(流す順に — 頭の註): opening = 先に BEGIN と錠を流す / requests = 文(SqlQuery |
-   SqlInsertRows — 答えはこの順の SqlRows の tuple)/ notices = 合図を出す channel(closing の時だけ載る)/ closing = 最後に COMMIT を流す。"
+   SqlInsertRows — 答えはこの順の SqlRows の tuple)/ notices = 出す合図(SqlNotify の順 — channel と関わる名・closing の時だけ載る)/
+   closing = 最後に COMMIT を流す。"
   (#^ bool opening)
   (#^ (get tuple #((| SqlQuery SqlInsertRows) ...)) requests)
-  (#^ (get tuple #(str ...)) notices)
+  (#^ (get tuple #(SqlNotify ...)) notices)
   (#^ bool closing))
 
 
@@ -126,10 +127,10 @@
 
 (defclass [(dataclass :kw-only True)] TransactionProgress []
   "束ねた transaction 1 つの進み(頭の註 — 書き換えるのは scope だけなので値の型ではない): opened = BEGIN を流した(流そうとした)/ closed =
-   COMMIT を流した(流そうとした — 後の SQL の effect は断る)/ notices = まだ流していない合図の channel(SqlNotify の順)。"
+   COMMIT を流した(流そうとした — 後の SQL の effect は断る)/ notices = まだ流していない合図(SqlNotify の順)。"
   (setv #^ bool opened False)
   (setv #^ bool closed False)
-  (setv #^ (get tuple #(str ...)) notices #()))
+  (setv #^ (get tuple #(SqlNotify ...)) notices #()))
 
 
 (defk planned-flush [progress requests closing]
@@ -162,8 +163,8 @@
         :if (and (= name database) progress.closed)
         (return (TransactionMisused :reason (.format "database {!r} の transaction は commit の束で終わった後に {} を出した"
                                                      database (. (type effect) __name__))))
-      (SqlNotify :database name :channel channel) :if (and (= name database) accepts-notices)
-        (do (setv progress.notices (+ progress.notices #(channel)))
+      (SqlNotify :database name) :if (and (= name database) accepts-notices)
+        (do (setv progress.notices (+ progress.notices #(effect)))
             (return (yield (Resume k None))))
       (| (SqlQuery :database name) (SqlInsertRows :database name) (SqlBatch :database name)) :if (= name database)
         (do (setv batch (isinstance effect SqlBatch)

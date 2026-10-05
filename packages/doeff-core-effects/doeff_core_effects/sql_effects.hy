@@ -47,11 +47,11 @@
 ;;;   SqlEnsureTables  表・欄・索引の宣言(SqlTable)を方言の DDL に描いて流す(在れば何もしない)。答え = SqlSchemaApplied | SqlFailed |
 ;;;                    SqlUnreachable。PostgreSQL の DO $$・CONCURRENTLY、ClickHouse の engine の細目は宣言に載せない(共通の文にできない)
 ;;;
-;;;   SqlNotify        通知の channel へ合図を出す(transaction の中なら commit した時だけ届く)— PostgreSQL の pg_notify
-;;;                    — SqlTransaction の中で出せる(約束 (2) の例外 — batched なら覚えて COMMIT と同じ往復で流す)。答え手は commit の後に
-;;;                    同じ process の呼び鈴をその場で鳴らす
-;;;   SqlHangNotice    通知の channel に呼び鈴(外の promise)を掛ける — PostgreSQL の LISTEN。答え = 呼び鈴 | SqlUnreachable。
-;;;                    SqlDropNotice = 鳴らなかった呼び鈴を外す。3 つとも答えるのは PostgreSQL の答え手 2 つだけ
+;;;   SqlNotify        通知の channel へ、関わる名(topics — None = 名の分からない合図 = 全部に関わる)の合図を出す(transaction の中なら
+;;;                    commit した時だけ届く)— PostgreSQL の pg_notify。SqlTransaction の中で出せる(約束 (2) の例外 — batched なら覚えて
+;;;                    COMMIT と同じ往復で流す)。答え手は接続を返した後に、同じ process の名の重なる呼び鈴をその場で鳴らす
+;;;   SqlHangNotice    通知の channel に、待つ名(topics — None = 全部の合図)の呼び鈴(外の promise)を掛ける — PostgreSQL の LISTEN。
+;;;                    答え = 呼び鈴 | SqlUnreachable。SqlDropNotice = 鳴らなかった呼び鈴を外す。3 つとも答えるのは PostgreSQL の答え手 2 つだけ
 ;;;
 ;;; I/O なしの置き場の語彙(本物には無い): SetSqlOutage = その database を不達にする / 戻す(sqlite-sql-handler だけが答える — 模擬の筋書きが
 ;;; 不達の枝を起こす口)。
@@ -201,23 +201,27 @@
 
 
 (defeffect SqlNotify
-  "database の通知の channel へ合図を出す(PostgreSQL の pg_notify — 中身を運ばない)。SqlTransaction の中で出せば commit した時だけ
-   届き、rollback した transaction の合図は届かない。答え手は commit の後に同じ process の呼び鈴(SqlHangNotice)をその場で鳴らし、他の
-   process へは NOTIFY が届く。答え = None | SqlFailed | SqlUnreachable(答えるのは PostgreSQL の答え手 2 つだけ)。"
-  {:fields [(: database str) (: channel str)]
-   :pre [(: database str) (: channel str)]
+  "database の通知の channel へ合図を出す(PostgreSQL の pg_notify — 中身の行を運ばない)。topics = 合図が関わる名(呼び手の決めた語 — 記録の
+   置き場なら書きが触った表と列の名)の並び。名の重なる呼び鈴(SqlHangNotice)だけが鳴る。None = 名の分からない合図 = 全部の呼び鈴に
+   関わる合図(絞れない合図で待ち手を起こし損ねない — 名の写しを間違えると永久に起きない待ち手ができる)。SqlTransaction の中で出せば
+   commit した時だけ届き、rollback した transaction の合図は届かない。答え手は接続を返した後に同じ process の呼び鈴をその場で鳴らし、他の
+   process へは NOTIFY が届く(自分の NOTIFY では同じ process の呼び鈴を鳴らし直さない)。答え = None | SqlFailed | SqlUnreachable(答える
+   のは PostgreSQL の答え手 2 つだけ)。"
+  {:fields [(: database str) (: channel str) (: topics (| (get tuple #(str ...)) None))]
+   :pre [(: database str) (: channel str) (: topics (| tuple None))]
    :answer (| None SqlFailed SqlUnreachable)
    :tags {:context "sql" :role "foundation"}})
 
 
 (defeffect SqlHangNotice
-  "database の通知の channel に呼び鈴を掛ける(PostgreSQL の LISTEN / NOTIFY — 答えるのは postgres-sql-handler と
-   pooled-postgres-sql-handler だけ)。答えの外の promise は、掛けた後に channel へ通知が届くか、待ち受けの接続が繋ぎ直したら(その間の
-   通知は届かないので)True で完了する(doeff-time の WaitWithin の時間切れ None と見分けられる)。答えが返った時には LISTEN は張られている — 呼び手は掛けてから読み、静かなら呼び鈴を待てば、読みと
+  "database の通知の channel に、名 topics を待つ呼び鈴を掛ける(PostgreSQL の LISTEN / NOTIFY — 答えるのは postgres-sql-handler と
+   pooled-postgres-sql-handler だけ)。答えの外の promise は、掛けた後に channel へ topics と名の重なる合図(か名の分からない合図)が届くか、
+   待ち受けの接続が繋ぎ直したら(その間の通知は届かないので)True で完了する(doeff-time の WaitWithin の時間切れ None と見分けられる)。
+   topics = None は全部の合図で鳴る。答えが返った時には LISTEN は張られている — 呼び手は掛けてから読み、静かなら呼び鈴を待てば、読みと
    掛けの間の書きを取りこぼさない。合図は「変わったかもしれない」だけで中身を運ばない(受けた側が読み直す)。鳴らずに待ちを終える時は
    SqlDropNotice で外す。"
-  {:fields [(: database str) (: channel str)]
-   :pre [(: database str) (: channel str)]
+  {:fields [(: database str) (: channel str) (: topics (| (get tuple #(str ...)) None))]
+   :pre [(: database str) (: channel str) (: topics (| tuple None))]
    :answer (| ExternalPromise SqlUnreachable)
    :tags {:context "sql" :role "foundation"}})
 

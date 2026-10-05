@@ -1125,7 +1125,7 @@
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
   "合図を出し、文 2 つの commit の束で終わる program(答え = 束の答えの数)。"
-  (<- (SqlNotify DB "changes"))
+  (<- (SqlNotify DB "changes" #("table:parts")))
   (<- answers (SqlBatch DB #((SqlQuery DB "SELECT 1" #()) (SqlQuery DB "SELECT 2" #())) :commit True))
   (len answers))
 
@@ -1134,7 +1134,7 @@
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
   "合図だけを出す program。"
-  (<- (SqlNotify DB "changes"))
+  (<- (SqlNotify DB "changes" #("table:parts")))
   "合図だけ")
 
 
@@ -1175,9 +1175,9 @@
           single)
   (assert (= (get batched 0) 2) batched)
   (assert (= (get batched 1) #((TransactionFlush :opening True :requests #((SqlQuery DB "SELECT 1" #()) (SqlQuery DB "SELECT 2" #()))
-                                                 :notices #("changes") :closing True)))
+                                                 :notices #((SqlNotify DB "changes" #("table:parts"))) :closing True)))
           batched)
-  (assert (= (get signal 1) #((TransactionFlush :opening True :requests #() :notices #("changes") :closing True))) signal)
+  (assert (= (get signal 1) #((TransactionFlush :opening True :requests #() :notices #((SqlNotify DB "changes" #("table:parts"))) :closing True))) signal)
   (assert (= empty #("空の束" #() 0)) empty)
   (assert (all (gfor shape shapes (= (get shape 2) 0))) shapes))
 
