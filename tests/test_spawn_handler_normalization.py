@@ -66,16 +66,15 @@ def test_reinstall_still_rejects_an_unvalidated_non_callable(invalid) -> None:
         scheduler._reinstall_boundaries(Pure(None), [("handler", invalid)])
 
 
-def test_wrong_handler_arity_is_still_rejected_by_vm() -> None:
+def test_wrong_handler_arity_is_rejected_at_entry_and_by_vm_on_reinstall() -> None:
     def wrong_arity(effect: object) -> Pure[object]:
         return Pure(effect)
 
-    # callable でも dispatcher の引数 (effect, k) を受け取れなければ、
-    # 元の入口と引き継ぎ先のどちらでも VM 実行時の TypeError を保つ。
-    programs: tuple[object, ...] = (
-        handler(wrong_arity)(read_number()),
-        scheduler._reinstall_boundaries(read_number(), [("handler", wrong_arity)]),
-    )
-    for program in programs:
-        with pytest.raises(TypeError, match="positional argument"):
-            run(program)
+    # callable でも dispatcher の引数 (effect, k) を受け取れなければ、元の入口は
+    # 組む時に名指しで断る(agora-redesign #3724)。引き継ぎ先は形式判定を省くが、
+    # VM 実行時の TypeError を保つ — 省略で引数の数の誤りを迂回できない。
+    with pytest.raises(TypeError, match=r"without the handler marker: .*wrong_arity"):
+        handler(wrong_arity)
+    reinstalled = scheduler._reinstall_boundaries(read_number(), [("handler", wrong_arity)])
+    with pytest.raises(TypeError, match="positional argument"):
+        run(reinstalled)
