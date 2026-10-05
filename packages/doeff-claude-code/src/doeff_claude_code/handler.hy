@@ -574,7 +574,7 @@
       (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
       (except [error OSError]
         (setv runtime.binding None)
-        (setv (. (.open-log runtime) end) (Interrupted))
+        (setv (. (.open-log runtime) end) (Interrupted :process-kept False))
         (return (LaunchFailed :stderr-tail (str error)))))
     (apply-transition runtime binding transition)
     turn-seq))
@@ -597,7 +597,7 @@
         (.drop process)
         (with [runtime.lock]
           (setv log (get runtime.turns turn-seq))
-          (when (is log.end None) (setv log.end (Interrupted))))
+          (when (is log.end None) (setv log.end (Interrupted :process-kept False))))
         (when fresh-runtime (.forget host runtime.session-id runtime))
         (LaunchFailed :exit-code (.exit-code process)
                       :stderr-tail (if seen (.stderr-tail process)

@@ -435,11 +435,11 @@
         (setv memory (tuple (get world.transcripts (.transcript-key world session.home session.cwd session.session-id))))
         (<- reply FakeReply (reply-of world (.join "\n" (lfor injection queued injection.text)) memory))
         (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection queued injection.ref)) False False))
-        (<- (finish session turn (Interrupted :surviving-refs (tuple next-turn.refs)
+        (<- (finish session turn (Interrupted :process-kept True :surviving-refs (tuple next-turn.refs)
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_streaming")))
-        (<- (finish session turn (Interrupted :dropped-refs (tuple (lfor injection queued injection.ref)))))
+        (<- (finish session turn (Interrupted :process-kept False :dropped-refs (tuple (lfor injection queued injection.ref)))))
         ;; SIGINT の形の CLI は result の後に自分で降りる(本番の handler も降ろす — 訳 INTERRUPT-SIGNAL)。
         (setv session.alive False session.stopped-because StopReason.INTERRUPT-SIGNAL)))
   (InterruptRequested))
@@ -486,7 +486,7 @@
   (when (is session None) (return (SessionClosed False)))
   (setv running (.running session))
   (when (is-not running None)
-    (<- (finish session running (Interrupted :dropped-refs (tuple (gfor injection running.injections
+    (<- (finish session running (Interrupted :process-kept False :dropped-refs (tuple (gfor injection running.injections
                                                                        :if (= injection.fate "queued")
                                                                        injection.ref))))))
   (setv session.closed True)

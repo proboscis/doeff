@@ -69,7 +69,7 @@
   (<- asked (ClaudeInterruptTurn started.turn))
   (assert (isinstance asked InterruptRequested) (repr asked))
   (<- stopped (read-to-end started.turn s.turn-timeout))
-  (assert (= stopped.end (Interrupted)) (repr stopped.end))
+  (assert (= stopped.end (Interrupted :process-kept False)) (repr stopped.end))
   (<- after (start (ResumeSession sid) s.base (reply-prompt "AFTER")))
   (<- done (read-to-end after.turn s.turn-timeout))
   (assert (isinstance done.end Completed) (repr done.end))
@@ -302,6 +302,8 @@
   (<- stopped (read-to-end started.turn s.turn-timeout))
   (assert (isinstance stopped.end Interrupted) (repr stopped.end))
   (assert (= stopped.end.surviving-refs #("inj-survivor")) (repr stopped.end))
+  ;; 終わりは process が会話に残る事を運ぶ(層 3 の AgentTurnInterrupted.cli_kept の源)。
+  (assert (is stopped.end.process-kept True) (repr stopped.end))
   (<- next-turn (read-to-end stopped.end.continued-by s.turn-timeout))
   (assert (isinstance next-turn.end Completed) (repr next-turn.end))
   (<- after-continue (ClaudeLiveProcess sid))

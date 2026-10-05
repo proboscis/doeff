@@ -163,7 +163,8 @@
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
                        :usage (usage-of end.usage end.cost-usd))
     (isinstance end Interrupted)
-      (AgentTurnInterrupted :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs :resume-from context-id)
+      (AgentTurnInterrupted :cli-kept end.process-kept :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs
+                            :resume-from context-id)
     (isinstance end BackendLost)
       (AgentTurnLost :detail end.detail :resume-from context-id)
     True (raise (TypeError (.format "層 2 の手番の終わりが閉語彙の外: {!r}" end)))))

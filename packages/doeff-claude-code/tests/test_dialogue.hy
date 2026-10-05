@@ -55,7 +55,7 @@
   (assert (= plan.sends #()))
   (assert (isinstance plan.state.stop StopSignal))
   (setv read (read-record plan.state SIGINT-RESULT))
-  (assert (= read.end (Interrupted)) (repr read.end))
+  (assert (= read.end (Interrupted :process-kept False)) (repr read.end))
   ;; SIGINT の形の CLI は result の後に自分で降りるので、使い回さずに降ろす(#3672)。
   (assert (= read.retire StopReason.INTERRUPT-SIGNAL) (repr read.retire))
   (assert (not read.state.in-flight)))
@@ -221,7 +221,7 @@
   (assert (= answered.state.stop (StopControl "rid-2" #("inj-1"))))
   (setv aborted (read-record answered.state {"type" "result" "subtype" "error_during_execution" "is_error" True
                                                     "terminal_reason" "aborted_tools"}))
-  (assert (= aborted.end (Interrupted :surviving-refs #("inj-1"))) (repr aborted.end))
+  (assert (= aborted.end (Interrupted :process-kept True :surviving-refs #("inj-1"))) (repr aborted.end))
   (assert aborted.continues)
   (assert (is aborted.retire None))
   (assert aborted.state.in-flight)
@@ -229,6 +229,25 @@
   (setv finished (read-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"]})))
   (assert (= finished.end.input-refs #("inj-1")))
   (assert (is finished.retire None)))
+
+
+(deftest test-an-interrupted-end-tells-whether-the-process-stays
+  ;; 止めた手番の終わりは、同じ CLI の process が会話に残るかを運ぶ(#3672 の決め 6 — control の止めは手番だけを止めて process を残し、
+  ;; SIGINT の形と会話を閉じる止めは process を降ろす)。使い手(層 3 の AgentTurnInterrupted.cli_kept)はこの欄で、降りた CLI の貸与を
+  ;; 持ち続けない。SIGINT の形・生き残りの在る control の形・process が降りた形は上と下の検が確かめる。
+  ;; control の止めで生き残りが無い: 手番は終わり、process は残る。
+  (setv injected (dialogue.inject (started) (TurnInput "also this" "inj-1")))
+  (setv plan (dialogue.interrupt injected.state "rid-4"))
+  (setv answered (read-record plan.state {"type" "control_response"
+                                                 "response" {"subtype" "success" "request_id" "rid-4"
+                                                             "response" {"still_queued" []}}}))
+  (setv ended (read-record answered.state {"type" "result" "subtype" "error_during_execution" "is_error" True
+                                                  "terminal_reason" "aborted_tools"}))
+  (assert (= ended.end (Interrupted :process-kept True :dropped-refs #("inj-1"))) (repr ended.end))
+  (assert (is ended.retire None))
+  ;; 会話を閉じる: 走っている手番は、降りる process の上で終わる。
+  (setv closed (dialogue.close-session (started)))
+  (assert (= closed.end (Interrupted :process-kept False)) (repr closed.end)))
 
 
 (deftest test-a-refused-control-request-falls-back-to-sigint
@@ -263,7 +282,7 @@
   (setv lost (dialogue.on-exit (started) -9 "killed"))
   (assert (= lost.end (BackendLost "process exited with code -9 before the turn ended: killed")))
   (setv stopped (dialogue.on-exit (. (dialogue.interrupt (started) "rid") state) 0 ""))
-  (assert (= stopped.end (Interrupted)))
+  (assert (= stopped.end (Interrupted :process-kept False)))
   (setv idle (dialogue.on-exit (DialogueState) 0 ""))
   (assert (is idle.end)))
 

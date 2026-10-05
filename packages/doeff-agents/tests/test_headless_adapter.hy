@@ -224,6 +224,17 @@
   (<- (Stop handle))
   {"asked" asked "stopped" stopped "idle-ask" idle-ask "after" after})
 
+(defk interrupt-after-inject-keeps-the-cli [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "読まれていない注入の在る割り込み(control の止め — #3672 の決め 6): 手番だけを止め、同じ CLI が生き残った注入を次の手番で走らせる。"
+  (<- handle (launch s "adapter-interrupt-inject" (sleep-prompt 40 "NEVER") None))
+  (<- started (read-until handle tool-started s.timeout -1))
+  (<- _ (FollowUp handle (reply-prompt "KEPT") :mode TurnInputMode.INJECT :input-ref "ref-kept"))
+  (<- asked (Interrupt handle))
+  (<- after (read-until handle (fn [events end] (= (len (ends-of events)) 2)) s.timeout started.after))
+  (<- (Stop handle))
+  {"asked" asked "after" after})
+
 (defk stop-discards-waiting-inputs [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)]}
   (<- handle (launch s "adapter-stop" (sleep-prompt 40 "NEVER") None))
@@ -412,6 +423,9 @@
   (setv ends (ends-of events))
   (assert (= (len ends) 2) (repr ends))
   (assert (isinstance (get ends 0) AgentTurnInterrupted) (repr ends))
+  ;; 次の手番の入力(FollowUp の既定 — 注入ではない)は読まれていない注入に数えないので、割り込みは SIGINT の形 — CLI は降り、次の手番は
+  ;; 新しい CLI が続きから走らせる(残る形は check-interrupt-after-inject)。
+  (assert (is (. (get ends 0) cli-kept) False) (repr ends))
   (assert (isinstance (get ends 1) AgentTurnCompleted) (repr ends))
   (assert (in "ref-next" (. (get ends 1) input-refs)) (repr ends)))
 
@@ -447,14 +461,28 @@
 (defn check-interrupt [#^ dict seen]
   (assert (is (get seen "asked") True))
   (assert (isinstance (. (get seen "stopped") end) AgentTurnInterrupted) (repr (get seen "stopped")))
+  ;; 読まれていない入力の無い割り込みは SIGINT の形 — CLI は降り、会話の文脈だけが残る(次の手番は新しい CLI が続きから)。
+  (assert (is (. (get seen "stopped") end cli-kept) False) (repr (get seen "stopped")))
   (assert (is (get seen "idle-ask") False))
   (setv after (. (get seen "after") end))
   (assert (isinstance after AgentTurnCompleted) (repr after))
   (assert (in "AFTER" after.result-text) after.result-text))
 
+(defn check-interrupt-after-inject [#^ dict seen]
+  (assert (is (get seen "asked") True))
+  (setv ends (ends-of (. (get seen "after") events)))
+  (assert (= (len ends) 2) (repr ends))
+  (assert (isinstance (get ends 0) AgentTurnInterrupted) (repr ends))
+  ;; 同じ CLI が会話に残る — 使い手は CLI と、その CLI の借りた資格を持ち続けてよい。
+  (assert (is (. (get ends 0) cli-kept) True) (repr ends))
+  (assert (= (. (get ends 0) surviving-refs) #("ref-kept")) (repr ends))
+  (assert (isinstance (get ends 1) AgentTurnCompleted) (repr ends)))
+
 (defn check-stop [#^ dict seen]
   (setv events (. (get seen "page") events))
   (assert (any (gfor end (ends-of events) (isinstance end AgentTurnInterrupted))) (repr events))
+  ;; 止め(Stop)は会話の CLI を降ろす。
+  (assert (all (gfor end (ends-of events) :if (isinstance end AgentTurnInterrupted) (is end.cli-kept False))) (repr events))
   (assert (in #("ref-waiting" InputFateState.DISCARDED)
               (lfor event events :if (isinstance event AgentInputFateEvent) #(event.input-ref event.state)))
           (repr events))
@@ -550,6 +578,12 @@
 
 (deftest test-headless-interrupt-stub [tmp-path]
   (check-interrupt (run-on STUB tmp-path interrupt-keeps-the-session)))
+
+(deftest test-headless-interrupt-after-inject-keeps-the-cli-fake [tmp-path]
+  (check-interrupt-after-inject (run-on FAKE tmp-path interrupt-after-inject-keeps-the-cli)))
+
+(deftest test-headless-interrupt-after-inject-keeps-the-cli-stub [tmp-path]
+  (check-interrupt-after-inject (run-on STUB tmp-path interrupt-after-inject-keeps-the-cli)))
 
 (deftest test-headless-stop-discards-waiting-fake [tmp-path]
   (check-stop (run-on FAKE tmp-path stop-discards-waiting-inputs)))
