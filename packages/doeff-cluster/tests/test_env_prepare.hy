@@ -198,6 +198,30 @@
   (assert ok))
 
 
+;; 反例(2026-10-05 の本番 — #3695・cc1-w22 の実測): 準備の sync が --compile-bytecode を付けず、venv の第三者の package(.py 約 1,228)
+;; は焼かれなかった。job が最初の import で焼き(4 回目の画面の job で 163 件)、起動の約 13.5 秒の過半を占めた。準備の sync が入れる時に
+;; 焼けば、job は焼かずに読むだけになる。
+(defk site-bytecode-scenario []
+  {:pre [] :post [(: % bool)]}
+  "準備した root の venv で、lock の第三者の package の最上位の名ごとに bytecode が在る事を確かめるため。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (<- files dict (files-under ready.root))
+  (val site (.format "{}/app/.venv/lib/python3.14/site-packages" ready.root))
+  (val unbaked (lfor top ["httpx" "hy" "click"]
+                     :if (not-in (.format "{}/{}/__pycache__/__init__.cpython-314.pyc" site top) files)
+                     top))
+  (assert (= unbaked []) (.format "準備の sync が焼いていない第三者の package: {}" unbaked))
+  True)
+
+
+(deftest test-the-prepare-sync-compiles-the-third-party-packages
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (site-bytecode-scenario)))
+  (assert ok))
+
+
 ;; 反例(2026-09-27 の本番): 宣言の import の根は業務の repo だけで、venv に editable で入る依存の package(lib の木の中)は焼かれず、
 ;; 子と入口の検めが毎回 source から compile した(Hy の macro の展開で import が壁時計 240 秒)。editable の .pth が root の中の
 ;; repo を指すなら、その dir も焼く範囲に入る。
