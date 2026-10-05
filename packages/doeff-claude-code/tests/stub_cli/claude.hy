@@ -170,6 +170,11 @@
            "model" "stub" "permissionMode" (if self.ask "default" "bypassPermissions") "mcp_servers" []})
     (setv text (.join "\n" (gfor record records (user-text record))))
     (setv rule (reply-for text (memory-of self.path)))
+    (when (> (get rule "hook_seconds") 0)
+      ;; 実物と同じく、init の直後に入力ごとの hook の知らせ(stream でない system の行)を出し、hook の秒だけ待ってから答え始める(#3696 の直し)。
+      (import time)
+      (emit {"type" "system" "subtype" "hook_response" "session_id" self.session-id "hook_event" "UserPromptSubmit"})
+      (time.sleep (get rule "hook_seconds")))
     (remember self.path text)
     (setv injections [])
     (setv words [(get rule "text")])

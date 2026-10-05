@@ -20,7 +20,8 @@
 ;;; slog-handler・検 = slog-discard-handler)が要る。手番の終わりを上の層へ初めて渡した所でも 1 行出し(#3628)、その手番で CLI から
 ;;; 受けた本文の差分の行(text_delta)の数を載せる — 手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で
 ;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。本文の最初の差分を上の層へ初めて渡した所でも 1 行出し(#3696)、
-;;; init の次の行(実物では message_start)からその差分までの ms を載せる — モデルが考えた秒と、最初の文字が画面に出るまでの起点を割るため。
+;;; init の後の最初の stream の行(実物では message_start — init の次の行は hook の知らせなどで、それではない)の刻と、そこから最初の差分
+;;; までの ms を載せる — 入力ごとの hook と API へ出すまで・モデルが考えた秒・最初の文字が画面に出るまでの起点を割るため。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
@@ -436,18 +437,20 @@
   None)
 
 (defrecord FirstTextLines
-  "本文の最初の差分の計時の行の材料: text = 本文の最初の差分の行・reply = init の行の次の行(first-reply の行 — 実物では message_start・
-   無ければ None)。2 つの行を読み手の thread が読んだ刻の差がモデルの考えた秒になる。"
+  "本文の最初の差分の計時の行の材料: text = 本文の最初の差分の行・stream-start = init の後の最初の stream の行(PartialMessage — 実物では
+   message_start = モデルが答え始めた刻・無ければ None)。2 つの行を読み手の thread が読んだ刻の差がモデルの考えた秒になる。init の
+   次の行(first-reply の行)は hook の知らせなど API へ出す前の行なので起点にしない(#3696 の直し — cluster の task の log の実測で kind
+   = Other・init の 7〜8 ms 後だった)。"
   (#^ ClaudeStreamLine text)
-  (#^ (| ClaudeStreamLine None) reply))
+  (#^ (| ClaudeStreamLine None) stream-start))
 
 (defk claimed-first-text [runtime log next-seq]
   {:pre [(: runtime SessionRuntime) (: log TurnLog) (: next-seq int)]
    :post [(: % (| FirstTextLines None))]
    :tags {:context "claude-code" :role "foundation"}}
   "手番の本文の最初の差分の行(text_delta の本文を持つ PartialMessage)が、上の層へ渡す頁の範囲(next-seq まで)に初めて入った時に、
-   その行と init の行の次の行の組を 1 度だけ取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。起点の刻の無い手番
-   (launched-at が None)は取り出さない。"
+   その行と、init の後の最初の stream の行の組を 1 度だけ取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。起点の
+   刻の無い手番(launched-at が None)は取り出さない。"
   (with [runtime.lock]
     (when (or (is log.launched-at None) log.text-noted)
       (return None))
@@ -456,17 +459,20 @@
     (when (or (is text None) (> text.seq next-seq))
       (return None))
     (val init-index (next (gfor #(index line) (enumerate lines) :if (isinstance line.kind Init) index) None))
-    (val reply (if (and (is-not init-index None) (< (+ init-index 1) (len lines))) (get lines (+ init-index 1)) None))
+    (val stream-start (if (is init-index None)
+                          None
+                          (next (gfor line (cut lines (+ init-index 1) None) :if (isinstance line.kind PartialMessage) line) None)))
     (setv log.text-noted True)
-    (FirstTextLines :text text :reply reply)))
+    (FirstTextLines :text text :stream-start stream-start)))
 
 (defk note-first-text [runtime turn page]
   {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
    :tags {:context "claude-code" :role "foundation"}}
   "本文の最初の差分を上の層へ初めて渡した所の計時の行を出すため(手番ごとに 1 度だけ・起こした手番と使い回しの手番の両方 — #3696)。
    since-launch-ms = 手番の起点(process を起こし始めた刻か、使い回しなら入力を書いた刻)から渡すまで・line-at-ms = 読み手の thread が
-   その差分の行を読んだ壁の時刻・after-first-reply-ms = init の次の行(実物では message_start)を読んでからその差分の行を読むまで
-   (モデルが考えた秒 — init の次の行が無ければ None)。差分の本文は載せない。"
+   その差分の行を読んだ壁の時刻・stream-start-at-ms = init の後の最初の stream の行(実物では message_start)を読んだ壁の時刻(first-reply
+   の line-at-ms との差 = 入力ごとの hook と API へ出して最初の 1 バイトまで)・after-stream-start-ms = その行からその差分の行を読むまで
+   (モデルが考えた秒)。stream の行が無ければ後の 2 つは None。差分の本文は載せない。"
   (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
   (when (is log None)
     (return None))
@@ -478,9 +484,12 @@
   (<- wall-ms (epoch-ms-of at))
   (<- since-launch-ms (elapsed-ms log.launched-at now))
   (<- line-at-ms (epoch-ms-of claimed.text.at))
-  (<- after-first-reply-ms (wall-elapsed-ms (if (is claimed.reply None) None claimed.reply.at) claimed.text.at))
+  (val stream-start claimed.stream-start)
+  (<- stream-start-at-ms (if (is stream-start None) None (epoch-ms-of stream-start.at)))
+  (<- after-stream-start-ms (wall-elapsed-ms (if (is stream-start None) None stream-start.at) claimed.text.at))
   (<- (slog CLI-TIMING-LOG :level "info" :event "first-text" :wall-ms wall-ms :since-launch-ms since-launch-ms
-            :line-at-ms line-at-ms :after-first-reply-ms after-first-reply-ms :session-id turn.session-id :turn-seq turn.turn-seq))
+            :line-at-ms line-at-ms :stream-start-at-ms stream-start-at-ms :after-stream-start-ms after-stream-start-ms
+            :session-id turn.session-id :turn-seq turn.turn-seq))
   None)
 
 (defk wall-elapsed-ms [since until]
