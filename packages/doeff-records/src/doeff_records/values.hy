@@ -67,7 +67,11 @@
   "行・出来事を消さない(record)。")
 
 (defclass [(dataclass :frozen True)] KeepFor []
-  "表: 終端の状態になった行を seconds 秒の後に消す(transient)。追記の列: 積んでから seconds 秒の後に消す。"
+  "表: 終端の状態になった行を seconds 秒の後に消す(transient)。追記の列: 積んでから seconds 秒の後に消す。
+   期限を過ぎた行と出来事は、その刻からどの読みにも出ない(ReadRow は Missing・ListRows と ReadEvents は除く・WatchChanges は行の今の値が
+   期限を過ぎた行の変わりを出さない・WatchEvents は動かない・ReadStreamEnd は数えない)。置き場から消して変更の列に RowRemoved を積むのは
+   回収で、回収は書き(PutRow・PutRows・AppendEvent)の前と SweepExpired の時だけ走る — RowRemoved は期限の刻でも読みの時でもなく、
+   期限の後の最初の書き(か SweepExpired)の時に積まれ、既に WatchChanges で行を受け取った読み手の写しにはその時まで行が残り得る(#3561)。"
   (#^ float seconds)
   (defn #^ None __post_init__ [self]
     (when (or (isinstance self.seconds bool) (not (isinstance self.seconds #(int float))) (<= self.seconds 0))
@@ -340,7 +344,7 @@
   (defn #^ None __post_init__ [self] (freeze-field self "value" "RowChanged.value")))
 
 (defclass [(dataclass :frozen True)] RowRemoved []
-  "変更 1 つ: 行が保持の期限で消えた。"
+  "変更 1 つ: 行が保持の期限で消えた。積むのは回収(期限の後の最初の書きの前か SweepExpired)— 期限の刻でも読みの時でもない(KeepFor の註)。"
   (#^ str table)
   (#^ tuple key)
   (#^ int sequence))
@@ -386,14 +390,15 @@
   "WatchEvents の答え: timeout まで列の頭が after より進まなかった(読み手は読み直さずに待ちを掛け直す)。")
 
 (defclass [(dataclass :frozen True)] StreamEnd []
-  "ReadStreamEnd の答え: sequence = 列に今ある最後の出来事の番号(保持で刈った後の断面 — 1 以上)。"
+  "ReadStreamEnd の答え: sequence = 列に今ある、保持の期限を過ぎていない最後の出来事の番号(期限を過ぎた出来事は回収の前でも数えない —
+   1 以上)。"
   (#^ int sequence)
   (defn #^ None __post_init__ [self]
     (when (or (isinstance self.sequence bool) (not (isinstance self.sequence int)) (< self.sequence 1))
       (raise (ValueError (.format "StreamEnd.sequence は 1 以上の整数: {!r}" self.sequence))))))
 
 (defclass [(dataclass :frozen True)] StreamEmpty []
-  "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・保持で全部刈った)— 番号 0 と混ぜずに型で分ける。")
+  "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・全部が保持の期限を過ぎた)— 番号 0 と混ぜずに型で分ける。")
 
 
 ;; --- 失敗の答え --------------------------------------------------------------------------------------------

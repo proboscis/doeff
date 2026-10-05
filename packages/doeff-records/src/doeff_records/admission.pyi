@@ -77,6 +77,9 @@ def judge_put(decl: TableDecl, current: Row | None, key: tuple, diff: FrozenMap)
 def judge_put_rows(schema: RecordsSchema, writes: tuple, currents: tuple) -> tuple | RowsConflict | RowsRefused:
     ...
 
+def retention_cutoff_ms(decl: TableDecl | StreamDecl, now_ms: int) -> int | None:
+    ...
+
 def hyx_row_expiredXquestion_markX(decl: TableDecl, value: FrozenMap, updated_ms: int, now_ms: int) -> bool:
     ...
 

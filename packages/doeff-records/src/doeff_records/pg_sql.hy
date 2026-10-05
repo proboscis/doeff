@@ -26,6 +26,10 @@
 ;;;
 ;;; 配列の引数は持たない(SqlValue の閉じた集合に配列は無い): `= ANY(配列)` は `IN (:t0, :t1, …)` に展げる。空の組は文にできない
 ;;; (`IN ()` は構文の誤り)ので、in-list は空の組を断り、呼び手(pg.hy)が空の組なら文を流さない枝を持つ。
+;;;
+;;; 保持の期限(#3561): 読みの文(行・一覧・変更の列・追記の読み・列の末尾)は、回収を待たずに期限を過ぎた行と出来事を文の条件で除く
+;;; (RowExpiry・EventExpiry の境 — 境の刻は admission.retention-cutoff-ms)。出来事の期限の条件は回収と読みで同じ expired-event-condition の
+;;; 1 つ。期限の無い表と列では条件を足さない(文は前と同じ)。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -53,6 +57,34 @@
   "`IN (…)` に展げた組(text = `:t0, :t1, …`・params = その SqlParam の並び)。"
   (#^ str text)
   (#^ (get tuple #(SqlParam ...)) params))
+
+
+(defrecord Clause
+  "文の条件の断片(text = 中立の記法の条件の綴り・params = その `:name` に当たる SqlParam の並び)。読みの文が WHERE の後ろに足す
+   保持の期限の条件(空の text = 足す条件が無い — 文を変えない)。"
+  (#^ str text)
+  (#^ (get tuple #(SqlParam ...)) params))
+
+
+(defrecord RowExpiry
+  "表 1 つの行の保持の期限の境(読みの文の条件 — 回収の判定 admission.row-expired? の文の形・#3561): table = 表の名 /
+   state-field = 状態の欄 / terminal = 終端の語(空でない)/ before-at = 境の刻(admission.retention-cutoff-ms — 最後に書いた刻がこれ以下の
+   終端の行は期限を過ぎた)。"
+  (#^ str table)
+  (#^ str state-field)
+  (#^ tuple terminal)
+  (#^ int before-at))
+
+
+(defrecord EventExpiry
+  "追記の列 1 つの出来事の保持の期限の境(読みの文の条件 — 回収と同じ expired-event-condition・#3561): before-at = 境の刻
+   (admission.retention-cutoff-ms — 積んだ刻〔組で数える列は組の最後の出来事の刻〕がこれ以下の出来事は期限を過ぎた)/
+   separator = 組で数える列(ByKeySuffix)の区切り(None = 出来事ごとに数える)。"
+  (#^ int before-at)
+  (#^ (| str None) separator))
+
+
+(val NO-CLAUSE (Clause :text "" :params #()))
 
 
 (defk params-of [pairs]
@@ -158,12 +190,54 @@
              :params #()))
 
 
-(defk read-row-statement [prefix table key]
-  {:pre [(: prefix str) (: table str) (: key str)] :post [(: % Statement)]
+(defk expired-row-clause [alias expiries]
+  {:pre [(: alias str) (: expiries tuple) (> (len expiries) 0) (all (gfor expiry expiries (isinstance expiry RowExpiry)))]
+   :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
-  "行 1 つを読む文を作るため。"
-  (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows WHERE ledger = :ledger AND key = :key" :p prefix)
-             :params (! (params-of #(#("ledger" table) #("key" key))))))
+  "state_rows の行 alias が保持の期限を過ぎた終端の行である条件(表ごとの境 expiries の OR — 回収の判定 admission.row-expired? の文の形)を
+   作るため。空の組は文にできないので :pre が断る(呼び手が枝で避ける)。"
+  (var texts #())
+  (var params #())
+  (for [#(index expiry) (enumerate expiries)]
+    (<- part (expired-row-part alias (.format "x{}" index) expiry))
+    (:= texts (+ texts #(part.text)))
+    (:= params (+ params part.params)))
+  (Clause :text (.format "({})" (.join " OR " texts)) :params params))
+
+
+(defk expired-row-part [alias stem expiry]
+  {:pre [(: alias str) (: stem str) (: expiry RowExpiry)] :post [(: % Clause)]
+   :tags {:context "records" :role "foundation"}}
+  "表 1 つ(expiry)について、行 alias がその表の保持の期限を過ぎた終端の行である条件を作るため。終端の語の照らしは回収の候補の読み
+   terminal-rows-statement と同じ `(payload::jsonb) ->> 状態の欄 IN (…)`・刻の照らしは最後に書いた刻 ≦ 境の刻。引数の名は stem
+   (表ごとに x0・x1 …)を頭に付ける(同じ文の他の引数と混ざらない)。"
+  (<- states (in-list (+ stem "t") expiry.terminal))
+  (<- named (params-of #(#((+ stem "l") expiry.table) #((+ stem "f") expiry.state-field) #((+ stem "b") expiry.before-at))))
+  (Clause :text (.format "({a}.ledger = :{s}l AND ({a}.payload::jsonb) ->> :{s}f IN ({t}) AND {a}.updated_at <= :{s}b)"
+                         :a alias :s stem :t states.text)
+          :params (+ named states.params)))
+
+
+(defk unexpired-rows-filter [alias expiries]
+  {:pre [(: alias str) (: expiries tuple)] :post [(: % Clause)]
+   :tags {:context "records" :role "foundation"}}
+  "行の読みの文の WHERE の後ろに足す「保持の期限を過ぎた終端の行を除く」条件を作るため(expiries が空なら空の断片 — 文を変えない)。
+   条件の値が NULL(状態の欄の無い行)の行は除かない(IS NOT TRUE)。"
+  (when (not expiries)
+    (return NO-CLAUSE))
+  (<- expired (expired-row-clause alias expiries))
+  (Clause :text (.format " AND {} IS NOT TRUE" expired.text) :params expired.params))
+
+
+(defk read-row-statement [prefix table key expiry]
+  {:pre [(: prefix str) (: table str) (: key str) (: expiry (| RowExpiry None))] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "行 1 つを読む文を作るため。expiry = 表の保持の期限の境(None = 期限の無い表)— 期限を過ぎた終端の行は、回収の前でも読みに出さない
+   (#3561)。"
+  (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
+  (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows AS r WHERE ledger = :ledger AND key = :key{u}"
+                            :p prefix :u unexpired.text)
+             :params (+ (! (params-of #(#("ledger" table) #("key" key)))) unexpired.params)))
 
 
 (defk lock-row-statement [prefix table key]
@@ -175,11 +249,13 @@
              :params (! (params-of #(#("ledger" table) #("key" key))))))
 
 
-(defk list-rows-statement [prefix table after-key where-json limit]
-  {:pre [(: prefix str) (: table str) (: after-key (| str None)) (: where-json dict) (: limit int)] :post [(: % Statement)]
+(defk list-rows-statement [prefix table after-key where-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: after-key (| str None)) (: where-json dict) (: limit int) (: expiry (| RowExpiry None))]
+   :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "鍵の綴りの順(COLLATE \"C\" = 符号点の順・鍵の綴りは ASCII だけ)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため。
-   where-json = 欄 → 値の JSON の綴り(欄の名は宣言を通った英数字)。"
+   where-json = 欄 → 値の JSON の綴り(欄の名は宣言を通った英数字)。expiry = 表の保持の期限の境(None = 期限の無い表)— 期限を過ぎた
+   終端の行は、回収の前でも頁に出さない(頁の上限の前に除く — 頁の続きの位置がずれない・#3561)。"
   (var clauses ["ledger = :ledger"])
   (var pairs [#("ledger" table)])
   (when (is-not after-key None)
@@ -189,9 +265,10 @@
     (.append clauses (.format "(payload::jsonb) -> '{}' = :w{}::jsonb" name i))
     (.append pairs #((.format "w{}" i) encoded)))
   (.append pairs #("limit" (+ limit 1)))
-  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows WHERE {w} ORDER BY key COLLATE \"C\" LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses))
-             :params (! (params-of (tuple pairs)))))
+  (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
+  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u} ORDER BY key COLLATE \"C\" LIMIT :limit"
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text)
+             :params (+ (! (params-of (tuple pairs))) unexpired.params)))
 
 
 (defk terminal-rows-statement [prefix table state-field terminal]
@@ -239,14 +316,34 @@
                                      #("epoch" epoch))))))
 
 
-(defk changes-statement [prefix after head tables limit]
-  {:pre [(: prefix str) (: after int) (: head int) (: tables tuple) (> (len tables) 0) (: limit int)] :post [(: % Statement)]
+(defk hidden-changes-filter [prefix expiries]
+  {:pre [(: prefix str) (: expiries tuple)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
-  "変更の列の after より後・head まで・頼んだ表の分を読む文を作るため(tables が空なら呼ばない)。"
+  "変更の列の読み(changes-statement)の WHERE の後ろに足す「行の今の値が保持の期限を過ぎた終端の行である、その行の変わり(RowChanged)を
+   除く」条件を作るため(expiries が空なら空の断片 — 文を変えない)。行の今の値は state_rows の行で判じ(条件は expired-row-clause)、
+   消えた(payload が NULL の RowRemoved)は除かない — 期限を過ぎた行の消えた は次の書きの回収が積む(#3561)。"
+  (when (not expiries)
+    (return NO-CLAUSE))
+  (<- expired (expired-row-clause "r" expiries))
+  (Clause :text (.format " AND NOT (c.payload IS NOT NULL AND EXISTS (SELECT 1 FROM {p}state_rows AS r
+                                                              WHERE r.ledger = c.ledger AND r.key = c.key AND {x}))"
+                         :p prefix :x expired.text)
+          :params expired.params))
+
+
+(defk changes-statement [prefix after head tables limit expiries]
+  {:pre [(: prefix str) (: after int) (: head int) (: tables tuple) (> (len tables) 0) (: limit int) (: expiries tuple)]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "変更の列の after より後・head まで・頼んだ表の分を読む文を作るため(tables が空なら呼ばない)。expiries = 頼んだ表のうち保持の期限の
+   在る表の境(RowExpiry の組・空 = 無し)— 行の今の値が期限を過ぎた終端の行である行の変わりは、回収の前でも出さない(上限の前に除く —
+   次の位置がずれない・hidden-changes-filter)。"
   (<- ledgers (in-list "t" tables))
-  (Statement :text (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes
-                       WHERE seq > :after AND seq <= :head AND ledger IN ({t}) ORDER BY seq LIMIT :limit" :p prefix :t ledgers.text)
-             :params (+ (! (params-of #(#("after" after) #("head" head) #("limit" limit)))) ledgers.params)))
+  (<- hidden (hidden-changes-filter prefix expiries))
+  (Statement :text (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes AS c
+                       WHERE seq > :after AND seq <= :head AND ledger IN ({t}){h} ORDER BY seq LIMIT :limit"
+                            :p prefix :t ledgers.text :h hidden.text)
+             :params (+ (! (params-of #(#("after" after) #("head" head) #("limit" limit)))) ledgers.params hidden.params)))
 
 
 (defk advance-epoch-statement [prefix]
@@ -301,21 +398,39 @@
              :params (! (params-of #(#("ledger" stream) #("at" at) #("payload" payload) #("origin_host" origin-host) #("epoch" epoch))))))
 
 
-(defk read-events-statement [prefix stream after limit]
-  {:pre [(: prefix str) (: stream str) (: after int) (: limit int)] :post [(: % Statement)]
+(defk living-events-filter [prefix expiry]
+  {:pre [(: prefix str) (: expiry (| EventExpiry None))] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
-  "追記の列の after より後を読む文を作るため。"
-  (Statement :text (.format "SELECT seq, at, payload FROM {p}append_rows WHERE ledger = :ledger AND seq > :after ORDER BY seq LIMIT :limit"
-                            :p prefix)
-             :params (! (params-of #(#("ledger" stream) #("after" after) #("limit" limit))))))
+  "追記の列の読みの文(出来事 old)の WHERE の後ろに足す「保持の期限を過ぎた出来事を除く」条件を作るため(expiry = None は期限の無い列 —
+   空の断片で文を変えない)。条件は回収と同じ expired-event-condition(#3561 — 読みは回収を待たずに同じ境で期限を見る)。"
+  (when (is expiry None)
+    (return NO-CLAUSE))
+  (<- expired (expired-event-condition prefix expiry.separator))
+  (<- named (params-of (+ #(#("before_at" expiry.before-at)) (if (is expiry.separator None) #() #(#("separator" expiry.separator))))))
+  (Clause :text (.format " AND NOT ({})" expired) :params named))
 
 
-(defk stream-end-statement [prefix stream]
-  {:pre [(: prefix str) (: stream str)] :post [(: % Statement)]
+(defk read-events-statement [prefix stream after limit expiry]
+  {:pre [(: prefix str) (: stream str) (: after int) (: limit int) (: expiry (| EventExpiry None))] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "追記の列の最後の出来事の番号(出来事が無ければ NULL)を 1 文で読む文を作るため(ReadStreamEnd)。"
-  (Statement :text (.format "SELECT max(seq) FROM {p}append_rows WHERE ledger = :ledger" :p prefix)
-             :params (! (params-of #(#("ledger" stream))))))
+  "追記の列の after より後を読む文を作るため。expiry = 列の保持の期限の境(None = 期限の無い列)— 期限を過ぎた出来事は、回収の前でも
+   読みに出さない(上限の前に除く)。"
+  (<- living (living-events-filter prefix expiry))
+  (Statement :text (.format "SELECT old.seq, old.at, old.payload FROM {p}append_rows AS old
+                       WHERE old.ledger = :ledger AND old.seq > :after{l} ORDER BY old.seq LIMIT :limit"
+                            :p prefix :l living.text)
+             :params (+ (! (params-of #(#("ledger" stream) #("after" after) #("limit" limit)))) living.params)))
+
+
+(defk stream-end-statement [prefix stream expiry]
+  {:pre [(: prefix str) (: stream str) (: expiry (| EventExpiry None))] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "追記の列の最後の出来事の番号(出来事が無ければ NULL)を 1 文で読む文を作るため(ReadStreamEnd)。末尾は保持の期限で変わる(期限を
+   過ぎた出来事は数えない — 全部過ぎれば NULL = StreamEmpty)ので、ReadEvents と同じ条件で期限を過ぎた出来事を除く(expiry = None は
+   期限の無い列)。"
+  (<- living (living-events-filter prefix expiry))
+  (Statement :text (.format "SELECT max(old.seq) FROM {p}append_rows AS old WHERE old.ledger = :ledger{l}" :p prefix :l living.text)
+             :params (+ (! (params-of #(#("ledger" stream)))) living.params)))
 
 
 (defk find-retired-key-statement [prefix stream idempotency-key]
@@ -344,18 +459,29 @@
              :params (! (params-of #(#("ledger" stream) #("retired" retired))))))
 
 
-(defk expiring-where [prefix separator]
+(defk expired-event-condition [prefix separator]
   {:pre [(: prefix str) (: separator (| str None))] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "保持の期限を過ぎた出来事 old の条件の文を作るため(引数 :ledger・:before_at・組で数える列は :separator)。separator = None は出来事ごとに
-   数える列・str は組で数える列(ByKeySuffix)の区切りで、組の出来事が全部 before-at 以下に積まれた組だけ(= 組の最後の出来事から保持の秒)。
-   刈りの候補の読み(expiring-events-statement)と刈り(expire-events-statement・expire-event-groups-statement)が同じ条件を使う。"
+  "出来事 old が保持の期限を過ぎた条件の文を作るため(引数 :before_at・組で数える列は :separator — 列の照らし old.ledger は含まない)。
+   separator = None は出来事ごとに数える列(積んだ刻 ≦ 境の刻)・str は組で数える列(ByKeySuffix)の区切りで、組の出来事が全部 before-at
+   以下に積まれた組だけ(= 組の最後の出来事から保持の秒 — admission.event-expired? と retention-group-of と同じ境)。回収(expiring-where)と
+   読み(living-events-filter)がこの 1 つを使う(#3561)。"
   (if (is separator None)
-      "old.ledger = :ledger AND old.at <= :before_at"
-      (.format "old.ledger = :ledger AND old.at <= :before_at AND NOT EXISTS (
+      "old.at <= :before_at"
+      (.format "old.at <= :before_at AND NOT EXISTS (
                          SELECT 1 FROM {p}append_rows AS young
                           WHERE young.ledger = old.ledger AND young.at > :before_at AND {young} = {old})"
                :p prefix :young (! (key-suffix-expression "young")) :old (! (key-suffix-expression "old")))))
+
+
+(defk expiring-where [prefix separator]
+  {:pre [(: prefix str) (: separator (| str None))] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "保持の期限を過ぎた列 :ledger の出来事 old の条件の文を作るため(引数 :ledger・:before_at・組で数える列は :separator — 期限の条件は
+   expired-event-condition)。刈りの候補の読み(expiring-events-statement)と刈り(expire-events-statement・expire-event-groups-statement)が
+   同じ条件を使う。"
+  (<- expired (expired-event-condition prefix separator))
+  (+ "old.ledger = :ledger AND " expired))
 
 
 (defk expiring-params [stream before-at separator]

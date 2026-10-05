@@ -9,15 +9,21 @@
 ;;; 届かない状態(検の口 faults.SetStoreOutage)を置くと待ち手を全部鳴らし、待ちの各回の走査が待つ名の届かない状態を見て Unreachable で
 ;;; 返る — HTTP と PostgreSQL の口の待ちが読み直しの次の問いで不達を知るのと同じ(待ちの頭だけで見ると、待ちの最中に置いた窓に上限まで
 ;;; 気づかない — 出自の issue は #1020・使い手の画面の読み手で上限を 30 秒に延ばした時に出た)。
-;;; 期限(timeout と、保持の期限で行が消え得る刻の早い方)は doeff-time の期限つきの待ち WaitWithin の 1 つ(呼び鈴か期限の早い方 —
-;;; 仮想の時計の下では task を作らない・#3054)。呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
+;;; 期限(timeout)は doeff-time の期限つきの待ち WaitWithin の 1 つ(呼び鈴か期限の早い方 — 仮想の時計の下では task を作らない・#3054)。
+;;; 保持の期限の刻には起きない(期限を過ぎた行の「消えた」は次の書きの回収が積み、その書きが待ち手を鳴らす — 下の保持の註)。
+;;; 呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
 ;;; thread の書きからも鳴らせるため。待ちは park で待つ(仮想の時計を止めない — 期限の刻まで時計が進める)。
+;;; 保持の期限(#3561 — PostgreSQL の handler と同じ形): 読み(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd)は
+;;; 回収を走らせず、読みの関数が刻を受けて期限を過ぎた行と出来事を出さない(回収と同じ判定 admission.row-expired? / event-expired?)。
+;;; 回収(purge-expired — 期限を過ぎた行を消して変更の列に RowRemoved を積み、出来事を冪等キーの覚えへ移す)は書き(PutRow・PutRows・
+;;; AppendEvent)の前と SweepExpired の時だけ走る。消え得る最も早い刻(purge-due-ms)より前なら回収は索引を見ない。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 ;;;
 ;;; 置き場は thread の間で共有してよい(書き手の thread と実況の読みの thread が同じ MemoryStore を使う — この系の Python は GIL の無い
 ;;; free-threaded)。置き場の不変条件(列・番号・索引)の持ち主は MemoryStore なので、錠(MemoryStore.lock・RLock)も置き場が持ち、
-;;; handler の各節は「保持の刈り(purge-expired)と操作」の組を錠の内で 1 つずつ行う(guarded)。WatchChanges と WatchEvents の待ち(呼び鈴で眠る間)は
+;;; handler の書きの節は「保持の刈り(purge-expired)と操作」の組を(at-now)、読みの節は操作を(read-at-now)、錠の内で 1 つずつ行う
+;;; (guarded)。WatchChanges と WatchEvents の待ち(呼び鈴で眠る間)は
 ;;; 錠を持たない — 走査と呼び鈴を掛けるのを同じ錠の内で 1 回にする(間に積まれた変更を取りこぼさない・持ったまま眠ると他の書きが止まる)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "records" :role "foundation"})
@@ -27,7 +33,7 @@
 (import threading)
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
-(import datetime [datetime timedelta])
+(import datetime [timedelta])
 (import doeff [EffectBase Program with-handlers])
 (import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task
                                       TaskCancelledError Wait Cancel])
@@ -37,7 +43,7 @@
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [KeepFor RecordsSchema StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
+(import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd AwaitRecordsBack
@@ -48,7 +54,7 @@
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
                                  retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
-                                 epoch-ms terminal-row? body-digest])
+                                 epoch-ms terminal-row? body-digest row-expired? event-expired?])
 
 (defclass StoredRow []
   "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
@@ -212,9 +218,38 @@
 
 
 (defn #^ int purge-expired [#^ MemoryStore store #^ int now-ms]
-  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(どの操作の前にも呼ぶ — 読みに期限切れが見えない)。
-   答え = 消した行の数。錠の内で走る(単独で呼ばれても — RLock なので guarded の内からの入れ子も通る)。"
+  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(書きの前と SweepExpired の掃除 — 読みは回収を待たずに
+   期限を自分で見る・頭の註)。答え = 消した行の数。錠の内で走る(単独で呼ばれても — RLock なので guarded の内からの入れ子も通る)。"
   (with [store.lock] (purge-expired-locked store now-ms)))
+
+
+(defn #^ bool stored-row-expired? [#^ TableDecl decl #^ StoredRow stored #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
+  "置き場の行 stored(表 decl)が刻 now-ms で保持の期限を過ぎた終端の行か — 回収の前の読みに出さないため(回収と同じ判定
+   admission.row-expired?)。読みの関数(行・一覧・変更の列)の期限の見えはこの 1 つ。"
+  (row-expired? decl stored.row.value stored.updated-ms now-ms))
+
+
+(defn #^ bool stored-event-expired? [#^ MemoryStore store #^ StreamDecl decl #^ Event event #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で出来事ごとに呼ぶ)
+  "置き場の出来事 event(列 decl)が刻 now-ms で保持の期限を過ぎたか — 回収の前の読みに出さないため(回収と同じ判定
+   admission.event-expired?。組で数える列は組の最後の出来事の刻 StoredGroup.last-at で数える — 回収の GroupDue と同じ)。読みの関数
+   (追記の読み・列の待ち・列の末尾)の期限の見えはこの 1 つ。"
+  (when (not (isinstance decl.retention KeepFor))
+    (return False))
+  (setv group (retention-group-of decl event.idempotency-key))
+  (event-expired? decl (if (is group None) event.at (. (get store.groups #(event.stream group)) last-at)) now-ms))
+
+
+(defn #^ bool hidden-change? [#^ MemoryStore store #^ (| RowChanged RowRemoved) change #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(memory-watch-scan が内包表記の中で変更ごとに呼ぶ)
+  "変更 change を WatchChanges の答えから外すか: 行の変わり(RowChanged)で、その行の今の値が刻 now-ms で保持の期限を過ぎた終端の行
+   (回収の前 — 消えた の変更は次の書きの回収が積む)。消えた(RowRemoved)と期限の無い表の変わりは外さない(PostgreSQL の
+   pg_sql.hidden-changes-filter と同じ判定)。"
+  (when (not (isinstance change RowChanged))
+    (return False))
+  (setv decl (store.schema.table change.table))
+  (when (not (isinstance decl.retention KeepFor))
+    (return False))
+  (setv stored (.get (get store.rows change.table) (key-text change.key)))
+  (and (is-not stored None) (stored-row-expired? decl stored now-ms)))
 
 
 (defn #^ int keep-ms [#^ KeepFor retention]
@@ -338,13 +373,15 @@
 
 ;; --- 行 --------------------------------------------------------------------------------------------------
 
-(defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask]
-  (store.schema.table ask.table)
-  (setv stored (.get (get store.rows ask.table) (key-text ask.key)))
-  (if (is stored None) (Missing) stored.row))
+(defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "ReadRow に答えるため: 行が無いか、刻 now-ms で保持の期限を過ぎた終端の行(回収の前でも)なら Missing。"
+  (setv decl (store.schema.table ask.table)
+        stored (.get (get store.rows ask.table) (key-text ask.key)))
+  (if (or (is stored None) (stored-row-expired? decl stored now-ms)) (Missing) stored.row))
 
 
-(defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask]
+(defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "ListRows に答えるため: 刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない(頁の上限の前に除く — 続きの位置がずれない)。"
   (setv decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
     (return (Reset store.epoch store.floor)))
@@ -353,7 +390,8 @@
   (setv after (if (is ask.cursor None) None ask.cursor.after-key)
         table (get store.rows ask.table)
         matching (lfor text (sorted table)
-                       :if (and (or (is after None) (> text after)) (row-matches? ask.where (. (get table text) row value)))
+                       :if (and (or (is after None) (> text after)) (row-matches? ask.where (. (get table text) row value))
+                                (not (stored-row-expired? decl (get table text) now-ms)))
                        text)
         taken (cut matching ask.limit)
         rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
@@ -406,25 +444,29 @@
                             (memory-store-row store write.table write.key current admitted.value now-ms)))))
 
 
-(defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask]
-  "今ある変更から 1 回ぶんの答え(待たない)。位置が今の版の外なら Reset。"
+(defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査
+  "今ある変更から 1 回ぶんの答え(待たない)。位置が今の版の外なら Reset。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の
+   変わりは、回収の前でも出さない(上限の前に除く — 次の位置がずれない・hidden-change?)。"
   (for [name ask.tables] (store.schema.table name))
   (setv cursor ask.cursor)
   (when (or (!= cursor.epoch store.epoch) (< cursor.sequence store.floor) (> cursor.sequence store.head))
     (return (Reset store.epoch store.floor)))
   (setv items (tuple (cut (lfor change store.changes
-                                :if (and (> change.sequence cursor.sequence) (in change.table ask.tables))
+                                :if (and (> change.sequence cursor.sequence) (in change.table ask.tables)
+                                         (not (hidden-change? store change now-ms)))
                                 change)
                           ask.limit)))
   (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head))))
 
 
-(defn #^ (| EventsMoved EventsQuiet) memory-events-scan [#^ MemoryStore store #^ WatchEvents ask]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査(memory-watch-scan と同じ作法)
-  "WatchEvents の今の答え(待たない): 列 ask.stream に after より後の出来事が在れば EventsMoved。出来事の列は番号の順なので、after の
-   位置から後ろだけを見る(番号は全部の列で 1 本 — 他の列の出来事は読み捨てる)。"
-  (store.schema.stream ask.stream)
-  (setv start (bisect.bisect-right store.events ask.after :key (fn [event] event.sequence)))
-  (if (any (gfor event (cut store.events start None) (= event.stream ask.stream)))
+(defn #^ (| EventsMoved EventsQuiet) memory-events-scan [#^ MemoryStore store #^ WatchEvents ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査(memory-watch-scan と同じ作法)
+  "WatchEvents の今の答え(待たない): 列 ask.stream に after より後の、刻 now-ms で保持の期限を過ぎていない出来事が在れば EventsMoved
+   (回収の前の期限を過ぎた出来事では動かない)。出来事の列は番号の順なので、after の位置から後ろだけを見る(番号は全部の列で 1 本 —
+   他の列の出来事は読み捨てる)。"
+  (setv decl (store.schema.stream ask.stream)
+        start (bisect.bisect-right store.events ask.after :key (fn [event] event.sequence)))
+  (if (any (gfor event (cut store.events start None)
+                 (and (= event.stream ask.stream) (not (stored-event-expired? store decl event now-ms)))))
       (EventsMoved)
       (EventsQuiet)))
 
@@ -432,50 +474,36 @@
 ;; --- WatchChanges と WatchEvents の待ち ---------------------------------------------------------------------
 
 (defrecord WatchRound
-  "待ちの 1 周の走査: answer = 今の答え(Changes | Reset | EventsMoved | EventsQuiet | Unreachable — 待つ名が届かない状態)/ quiet = 待ち続ける答え(空の Changes か EventsQuiet)か /
-   due-ms = 保持の期限で行が消え得る最も早い刻(epoch ミリ秒・None = 無い — WatchChanges の待ちはこの刻にも起きて刈りを走らせる。
-   WatchEvents の待ちは None — 出来事が消えても列の頭は進まない)。"
+  "待ちの 1 周の走査: answer = 今の答え(Changes | Reset | EventsMoved | EventsQuiet | Unreachable — 待つ名が届かない状態)/ quiet = 待ち続ける答え(空の Changes か EventsQuiet)か。"
   #^ object answer
-  #^ bool quiet
-  #^ (| int None) due-ms)
+  #^ bool quiet)
 
 
 (deff watch-round [store ask now-ms bell]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の走査と呼び鈴の掛け
   {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents)) (: now-ms int) (: bell (| ExternalPromise None))] :post [(: % WatchRound)]
    :tags {:context "records" :role "foundation"}}
-  "保持の刈りの後に 1 回走査し、待ち続ける答えなら呼び鈴 bell を待つ名(WatchChanges = 頼んだ表・WatchEvents = その列)と一緒に掛ける
-   (None = 掛けない)。走査と掛けを同じ錠の内で行うのは、その間に積まれた書きの鳴らしを取りこぼさないため。待つ名のどれかが届かない
-   状態(SetStoreOutage)なら、走査の前に Unreachable を答える(待ちの最中に置いた窓も、起きた回で不達として返す — 頭の註)。"
+  "刻 now-ms の断面を 1 回走査し(回収は走らせない — 期限を過ぎた行と出来事は走査が自分で除く・頭の註)、待ち続ける答えなら呼び鈴 bell を
+   待つ名(WatchChanges = 頼んだ表・WatchEvents = その列)と一緒に掛ける(None = 掛けない)。走査と掛けを同じ錠の内で行うのは、その間に
+   積まれた書きの鳴らしを取りこぼさないため。待つ名のどれかが届かない状態(SetStoreOutage)なら、走査の前に Unreachable を答える(待ちの
+   最中に置いた窓も、起きた回で不達として返す — 頭の註)。"
   (with [store.lock]
-    (purge-expired store now-ms)
     (setv down (unreachable-for store (match ask
                                         (WatchChanges :tables tables) (tuple tables)
                                         (WatchEvents :stream stream) #(stream))))
     (when (is-not down None)
-      (return (WatchRound :answer down :quiet False :due-ms None)))
+      (return (WatchRound :answer down :quiet False)))
     (match ask
       (WatchChanges :tables tables)
-        (setv answer (memory-watch-scan store ask)
+        (setv answer (memory-watch-scan store ask now-ms)
               quiet (and (isinstance answer Changes) (not answer.items))
-              names (_bell-names (tuple tables) #())
-              due-ms store.purge-due-ms)
+              names (_bell-names (tuple tables) #()))
       (WatchEvents :stream stream)
-        (setv answer (memory-events-scan store ask)
+        (setv answer (memory-events-scan store ask now-ms)
               quiet (isinstance answer EventsQuiet)
-              names (_bell-names #() #(stream))
-              due-ms None))
+              names (_bell-names #() #(stream))))
     (when (and quiet (is-not bell None))
       (setv (get store.bells bell) names))
-    (WatchRound :answer answer :quiet quiet :due-ms due-ms)))
-
-
-(defk wake-time [now deadline due-ms]
-  {:pre [(: now datetime) (: deadline datetime) (: due-ms (| int None))] :post [(: % datetime)]
-   :tags {:context "records" :role "foundation"}}
-  "待ち手が起きる刻 = timeout の刻と、保持の期限で行が消え得る刻の早い方(消え得る刻が今以前なら 1 ミリ秒先 — 刈りは走査の度に済む)。"
-  (if (is due-ms None)
-      deadline
-      (min deadline (+ now (timedelta :milliseconds (max 1 (- due-ms (epoch-ms now))))))))
+    (WatchRound :answer answer :quiet quiet)))
 
 
 (defk bell-or-timer [store bell seconds]
@@ -510,8 +538,9 @@
   {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents))] :post [(: % (| Changes Reset EventsMoved EventsQuiet Unreachable))]
    :tags {:context "records" :role "foundation"}}
   "WatchChanges と WatchEvents の答え: 待つ名(頼んだ表・列)に書きが来るか timeout 秒が過ぎるまで待つ(Reset はすぐ返す)。読み直しを
-   繰り返さず、その名の書きが鳴らす呼び鈴と、期限(timeout・保持の期限)の 1 回の鳴らしで起きる。timeout を過ぎたら最後に 1 回走査した
-   答えを返す。待ちの最中に待つ名が届かない状態になれば(SetStoreOutage が待ち手を鳴らす)、起きた回で Unreachable を返す。"
+   繰り返さず、その名の書きが鳴らす呼び鈴と、timeout の 1 回の鳴らしで起きる(保持の期限の刻には起きない — 期限を過ぎた行の消えた は
+   次の書きの回収が積み、その書きが鳴らす)。timeout を過ぎたら最後に 1 回走査した答えを返す。待ちの最中に待つ名が届かない状態になれば
+   (SetStoreOutage が待ち手を鳴らす)、起きた回で Unreachable を返す。"
   (<- started (GetTime))
   (<- span (wait-span ask.timeout))
   (val deadline (+ started span))
@@ -521,8 +550,7 @@
     (<- bell (CreateExternalPromise))
     (:= round (guarded store (fn [] (watch-round store ask (epoch-ms now) bell))))
     (when round.quiet
-      (<- at (wake-time now deadline round.due-ms))
-      (<- (bell-or-timer store bell (.total-seconds (- at now))))
+      (<- (bell-or-timer store bell (.total-seconds (- deadline now))))
       (<- woke (GetTime))
       (:= now woke)
       (when (>= now deadline)
@@ -552,20 +580,23 @@
              (Appended event.sequence))))
 
 
-(defn #^ Events memory-read-events [#^ MemoryStore store #^ ReadEvents ask]
-  (store.schema.stream ask.stream)
-  (setv items (tuple (cut (lfor event store.events
-                                :if (and (= event.stream ask.stream) (> event.sequence ask.after))
+(defn #^ Events memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "ReadEvents に答えるため: 刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない(上限の前に除く)。"
+  (setv decl (store.schema.stream ask.stream)
+        items (tuple (cut (lfor event store.events
+                                :if (and (= event.stream ask.stream) (> event.sequence ask.after)
+                                         (not (stored-event-expired? store decl event now-ms)))
                                 event)
                           ask.limit)))
   (Events items (if items (. (get items -1) sequence) ask.after)))
 
 
-(defn #^ (| StreamEnd StreamEmpty) memory-read-stream-end [#^ MemoryStore store #^ ReadStreamEnd ask]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(at-now の operation)
-  "ReadStreamEnd に答えるため: 保持で刈った後の今の断面で、列 stream の最後の出来事の番号(列の出来事は番号の昇順に並ぶので後ろから探す)。"
-  (store.schema.stream ask.stream)
+(defn #^ (| StreamEnd StreamEmpty) memory-read-stream-end [#^ MemoryStore store #^ ReadStreamEnd ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
+  "ReadStreamEnd に答えるため: 刻 now-ms の断面で、列 stream の保持の期限を過ぎていない最後の出来事の番号(末尾は期限で変わる — 回収の前の
+   期限を過ぎた出来事は数えない・全部過ぎれば StreamEmpty。列の出来事は番号の昇順に並ぶので後ろから探す)。"
+  (setv decl (store.schema.stream ask.stream))
   (for [event (reversed store.events)]
-    (when (= event.stream ask.stream)
+    (when (and (= event.stream ask.stream) (not (stored-event-expired? store decl event now-ms)))
       (return (StreamEnd event.sequence))))
   (StreamEmpty))
 
@@ -667,10 +698,23 @@
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
                   Changes Appended Events StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
-  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で保持の刈りの後に operation(刻 → 答え)を呼ぶ(各節の置き場の操作の 1 つの形)。"
+  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で保持の刈りの後に operation(刻 → 答え)を呼ぶため(書きの節 PutRow・PutRows・
+   AppendEvent の置き場の操作の形 — 回収のきっかけは書きと SweepExpired だけ。読みの節は read-at-now)。"
   (<- now (GetTime))
   (val now-ms (epoch-ms now))
   (guarded store (fn [] (purge-expired store now-ms) (operation now-ms))))
+
+
+(defk read-at-now [store operation]
+  {:pre [(: store MemoryStore) (: operation Callable)]
+   ;; 答え = 置き場の読みの答え(読みの公開 effect の答えの型のどれか)。
+   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty))]
+   :tags {:context "records" :role "foundation"}}
+  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(読みの節 ReadRow・ListRows・ReadEvents・
+   ReadStreamEnd の置き場の操作の形)。回収は走らせない — 読みの関数が刻を受けて期限を過ぎた行と出来事を自分で除く(頭の註・#3561)。"
+  (<- now (GetTime))
+  (val now-ms (epoch-ms now))
+  (guarded store (fn [] (operation now-ms))))
 
 
 ;; --- handler ------------------------------------------------------------------------------------------------
@@ -712,11 +756,12 @@
   (ReadSignalSource []
     (<- source SignalSourceFactory (memory-signal-source store))
     (resume source))
+  ;; 読みの節は回収を走らせず(read-at-now)、刻を読みの関数へ渡す。書きの節(at-now)と SweepExpired だけが回収する(頭の註)。
   (ReadRow [table key]
-    (<- answer (answered store READ #(table) effect (at-now store (fn [now-ms] (memory-read-row store effect)))))
+    (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-read-row store effect now-ms)))))
     (resume answer))
   (ListRows [table where fields cursor limit]
-    (<- answer (answered store READ #(table) effect (at-now store (fn [now-ms] (memory-list-rows store effect)))))
+    (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-list-rows store effect now-ms)))))
     (resume answer))
   (PutRow [table key value expect]
     (<- answer (answered store WRITE #(table) effect (at-now store (fn [now-ms] (memory-put-row store writer effect now-ms)))))
@@ -736,10 +781,10 @@
     (<- answer (answered store WRITE #(stream) effect (at-now store (fn [now-ms] (memory-append store writer effect now-ms)))))
     (resume answer))
   (ReadEvents [stream after limit]
-    (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-events store effect)))))
+    (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-events store effect now-ms)))))
     (resume answer))
   (ReadStreamEnd [stream]
-    (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-stream-end store effect)))))
+    (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-stream-end store effect now-ms)))))
     (resume answer))
   (AwaitRecordsBack [names]
     ;; 合図の源の止まりの見張り(#3469)— 止まりが names から外れるまで呼び鈴で眠り、外れたら答える(期限は待つ側の源が持つ)。

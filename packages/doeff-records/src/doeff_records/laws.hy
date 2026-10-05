@@ -7,7 +7,8 @@
 ;;; Program)を渡す。書き手の名は宣言の欄の書き手の名(maker / painter / closer)と、どこにも載らない stranger。
 ;;; 保持の法(law-transient-rows-expire)は doeff-time の Delay で時間を進めるので、仮想の時計(sim-time-handler)の下で回す。
 ;;; 待ちの法(law-watch-waits-for-a-change・law-watch-events-waits-for-an-append)は doeff の scheduler の Spawn を使う。
-;;; 手入れの法(law-maintenance-prunes-and-sweeps)は手入れの effect(maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
+;;; 手入れの法(law-maintenance-prunes-and-sweeps)と保持の読みの法(law-expired-records-are-unseen-before-a-sweep)は手入れの effect
+;;; (maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
@@ -28,6 +29,8 @@
 ;; OVERSEER = 宣言の operators に入る書き手(宣言の形の例 — 置き場は書き手の名では断らない・#2994)。
 (setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
 (setv TICKET-KEEP-SECONDS 60 PAIR-KEEP-SECONDS 60)
+;; pulses = 出来事ごとに数える期限つきの列(法 15 — 組で数える列 pairs と並べて、出来事ごとの境も読みが見ることを確かめる)。
+(val PULSE-KEEP-SECONDS 60)
 
 (setv LAW-SCHEMA
   (RecordsSchema
@@ -50,10 +53,11 @@
                                              (FieldDecl "rule" #(OVERSEER) :founders #(MAKER))
                                              (FieldDecl "note" #(OVERSEER)))
                                    :operator-paths #("rule" "note"))})
-    ;; pairs = 保持の組(ByKeySuffix「:」)の列 — 法 12。
+    ;; pairs = 保持の組(ByKeySuffix「:」)の列 — 法 12。pulses = 出来事ごとに数える期限つきの列 — 法 15。
     :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)
                          "pairs" (StreamDecl :name "pairs" :writers #(MAKER) :retention (KeepFor PAIR-KEEP-SECONDS)
-                                             :retention-group (ByKeySuffix ":"))})
+                                             :retention-group (ByKeySuffix ":"))
+                         "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor PULSE-KEEP-SECONDS))})
     :operators #(OVERSEER)))
 
 
@@ -246,15 +250,17 @@
   (<- (require-law (= gone (Missing)) law (.format "期限を過ぎても残る: {!r}" gone)))
   (<- listed (as-writer harness MAKER (ListRows "tickets")))
   (<- (require-law (= (lfor row listed.rows row.key) [#("g1" "t2")]) law (.format "一覧に期限切れが残る・終端でない行が消えた: {!r}" listed)))
+  ;; 消えた行の「消えた」の変更は回収が積み、回収のきっかけは書き(別の表への書きでもよい)と SweepExpired(#3561 — 読みは回収しない)。
+  (<- nudge (as-writer harness MAKER (PutRow "parts" #("p-nudge") (FrozenMap {"label" "n"}) (ExpectAbsent))))
   (<- removed (as-writer harness MAKER (WatchChanges #("tickets") (WatchCursor start.epoch start.sequence))))
   (<- (require-law (and (isinstance removed Changes) (= (lfor item removed.items #((type item) item.key)) [#(RowRemoved #("g1" "t1"))]))
-               law (.format "消えた行が変更に 1 回だけ出ない: {!r}" removed)))
+               law (.format "消えた行が書きの後の変更に 1 回だけ出ない: {!r}" removed)))
   (<- (Delay (* 100 TICKET-KEEP-SECONDS)))
   (<- kept (as-writer harness MAKER (ReadRow "parts" #("p1"))))
   (<- (require-law (and (isinstance kept Row) (= (get kept.value "state") "closed")) law (.format "record の行が消えた: {!r}" kept)))
   (<- open-kept (as-writer harness MAKER (ReadRow "tickets" #("g1" "t2"))))
   (<- (require-law (isinstance open-kept Row) law (.format "終端でない transient の行が消えた: {!r}" open-kept)))
-  [t1 t2 p1 done start before gone listed removed kept open-kept])
+  [t1 t2 p1 done start before gone listed nudge removed kept open-kept])
 
 
 ;; --- 法 6: 索引の ListRows は全件を読んで絞った結果と同じ -------------------------------------------------
@@ -600,6 +606,59 @@
   [solo ask done gone other-solo other-done again-solo again-ask after end fresh])
 
 
+;; --- 法 15: 保持の期限を過ぎた行と出来事は、回収の前でも読みに出ない ---------------------------------------------------------
+
+(defk law-expired-records-are-unseen-before-a-sweep [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "保持の期限の読みの法(#3561): 期限を過ぎた終端の行と出来事は、回収(書きの前と SweepExpired)が走る前でも、どの読み(ReadRow・ListRows・
+   WatchChanges・ReadEvents・WatchEvents・ReadStreamEnd)にも出ない — 期限の判定は読みが自分で持ち、回収は掃除だけ。行の今の値が期限を
+   過ぎた終端の行である行の変わりは WatchChanges に出ず、その行の「消えた」は次の書き(別の表への書きでもよい)の回収が 1 回だけ積む。
+   出来事は出来事ごとに数える列(pulses)と組で数える列(pairs)の両方で見る。どの置き場の handler も同じ答えを返すことを確かめるため。"
+  (val law "保持の期限を過ぎた行と出来事は回収の前でも読みに出ず、消えた は次の書きの回収が 1 回だけ積む")
+  (<- start (as-writer harness MAKER (ListRows "tickets")))
+  (val cursor (WatchCursor start.epoch start.sequence))
+  (<- born (as-writer harness MAKER (PutRow "tickets" #("g5" "u1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
+  (<- open (as-writer harness MAKER (PutRow "tickets" #("g5" "u2") (FrozenMap {"owner" "o2"}) (ExpectAbsent))))
+  (<- closed (as-writer harness MAKER (PutRow "tickets" #("g5" "u1") (FrozenMap {"state" "done"}) (ExpectVersion 1))))
+  (<- pulse (as-writer harness MAKER (AppendEvent "pulses" "pulse-1" {"n" 1})))
+  (<- ask (as-writer harness MAKER (AppendEvent "pairs" "ask:unseen" {"n" 2})))
+  (<- (Delay (- TICKET-KEEP-SECONDS 1)))
+  ;; 境の 1 秒前: 終端の行はまだ見える。
+  (<- before (as-writer harness MAKER (ReadRow "tickets" #("g5" "u1"))))
+  (<- (require-law (and (isinstance before Row) (= before.version 2)) law (.format "期限の前に行が見えない: {!r}" before)))
+  (<- (Delay 2))
+  ;; 境を過ぎた: 書きも SweepExpired も撃たずに、全部の読みで見る。
+  (<- row (as-writer harness MAKER (ReadRow "tickets" #("g5" "u1"))))
+  (<- (require-law (= row (Missing)) law (.format "回収の前の ReadRow に期限を過ぎた行が出た: {!r}" row)))
+  (<- listed (as-writer harness MAKER (ListRows "tickets")))
+  (<- (require-law (and (isinstance listed Page) (= (lfor r listed.rows r.key) [#("g5" "u2")])) law
+               (.format "回収の前の ListRows に期限を過ぎた行が出た・終端でない行が消えた: {!r}" listed)))
+  (<- watched (as-writer harness MAKER (WatchChanges #("tickets") cursor :timeout 0.0)))
+  (<- (require-law (and (isinstance watched Changes) (= (lfor item watched.items #(item.key item.version)) [#(#("g5" "u2") 1)]))
+               law (.format "回収の前の WatchChanges に期限を過ぎた行の変わりが出た: {!r}" watched)))
+  (<- pulses (as-writer harness MAKER (ReadEvents "pulses")))
+  (<- pairs (as-writer harness MAKER (ReadEvents "pairs")))
+  (<- (require-law (and (isinstance pulses Events) (= pulses.items #()) (isinstance pairs Events) (= pairs.items #())) law
+               (.format "回収の前の ReadEvents に期限を過ぎた出来事が出た: {!r} {!r}" pulses pairs)))
+  (<- pulse-moved (as-writer harness MAKER (WatchEvents "pulses" :after 0 :timeout 0.0)))
+  (<- pair-moved (as-writer harness MAKER (WatchEvents "pairs" :after 0 :timeout 0.0)))
+  (<- (require-law (and (= pulse-moved (EventsQuiet)) (= pair-moved (EventsQuiet))) law
+               (.format "回収の前の WatchEvents が期限を過ぎた出来事で動いた: {!r} {!r}" pulse-moved pair-moved)))
+  (<- pulse-end (as-writer harness MAKER (ReadStreamEnd "pulses")))
+  (<- pair-end (as-writer harness MAKER (ReadStreamEnd "pairs")))
+  (<- (require-law (and (= pulse-end (StreamEmpty)) (= pair-end (StreamEmpty))) law
+               (.format "回収の前の ReadStreamEnd が期限を過ぎた出来事を数えた: {!r} {!r}" pulse-end pair-end)))
+  ;; 書き(別の表への書き)の前に回収が走り、期限を過ぎた行の「消えた」が 1 回だけ積まれる。
+  (<- nudge (as-writer harness MAKER (PutRow "parts" #("p-nudge") (FrozenMap {"label" "n"}) (ExpectAbsent))))
+  (<- removed (as-writer harness MAKER (WatchChanges #("tickets") watched.cursor :timeout 0.0)))
+  (<- (require-law (and (isinstance removed Changes) (= (lfor item removed.items #((type item) item.key)) [#(RowRemoved #("g5" "u1"))]))
+               law (.format "書きの後の変更に期限を過ぎた行の消えた が 1 回だけ出ない: {!r}" removed)))
+  (<- swept (as-writer harness MAKER (SweepExpired)))
+  (<- (require-law (= swept (Swept 0)) law (.format "書きの前の回収の後に、回収する行が残る: {!r}" swept)))
+  [start born open closed pulse ask before row listed watched pulses pairs pulse-moved pair-moved pulse-end pair-end nudge removed swept])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -617,6 +676,7 @@
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing
             "grouped-events-expire-together" law-grouped-events-expire-together
             "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence
-            "expired-keys-are-remembered" law-expired-keys-are-remembered})
+            "expired-keys-are-remembered" law-expired-keys-are-remembered
+            "expired-records-are-unseen-before-a-sweep" law-expired-records-are-unseen-before-a-sweep})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))
