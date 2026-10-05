@@ -731,12 +731,72 @@
       (finally (.release connections database leased)))))
 
 
-(defk driven [pool guard work]
-  {:pre [(: pool Executor) (: guard AbstractContextManager) (: work (get Callable #([] Program)))] :post [(: % "work の答え")]
+(defclass [(dataclass :kw-only True)] TransactionLease []
+  "transaction 1 つが借りた接続の覚え(offloaded-transaction の註 — 接続を借りる仕事を最初の driver の呼びと、返す仕事を最後の呼びと同じ
+   仕事にするため)。書き換えるのは答え手の手順と、錠 guard を握った driver の thread だけなので値の型ではない。connection = 借りた接続 |
+   SqlUnreachable(借りられなかった)| None(まだ借りていない)/ submitted = driver の呼びを 1 つでも撃った / returned = 接続を返した
+   (借りられなかった時も、もう借りない印として立てる)/ abandoned = 待ち手が去った(この後に撃たれた呼びは流さない)。"
+  (setv #^ (| PipelineConnection SqlUnreachable None) connection None)
+  (setv #^ bool submitted False)
+  (setv #^ bool returned False)
+  (setv #^ bool abandoned False))
+
+
+(defrecord TransactionDriver
+  "transaction 1 つの driver の呼びの道具(offloaded-transaction の註): connections = 接続の貸し出し・pool = driver の thread・database = 名・
+   lease = 借りた接続の覚え・guard = 接続 1 本への driver の呼びを 1 本ずつ回す錠。"
+  (#^ PostgresConnections connections)
+  (#^ Executor pool)
+  (#^ str database)
+  (#^ TransactionLease lease)
+  (#^ AbstractContextManager guard))
+
+
+(deff drive-leased [driver work closing]  ; defk にできない: driver の thread で回す入口(VM の外)
+  {:pre [(: driver TransactionDriver) (: work "(接続) → Program の callable") (: closing bool)]
+   :post [(: % "work の答え | SqlUnreachable | None")]}
+  "driver の thread の仕事 1 つで、錠 guard の下で、まだ借りていなければ接続を借り、work(接続 → Program)を流し、closing(COMMIT・ROLLBACK を
+   流す最後の呼び)なら同じ仕事で接続を返すため(offloaded-transaction の註)。待ち手が去った後・返した後の呼びは流さない(None — 答えは誰にも
+   届かない)。借りられなかった後の呼びは流さずに SqlUnreachable を返す。"
+  (setv lease driver.lease)
+  (with [_ driver.guard]
+    (when (or lease.abandoned lease.returned)
+      (return None))
+    (when (is lease.connection None)
+      (setv lease.connection (lease-now driver.connections driver.database)))
+    (setv held lease.connection)
+    (when (isinstance held SqlUnreachable)
+      (when closing
+        (setv lease.returned True))
+      (return held))
+    (try
+      (run-detached (work held))
+      (finally
+        (when closing
+          (.release driver.connections driver.database held)
+          (setv lease.returned True))))))
+
+
+(deff abandon-lease [driver]  ; defk にできない: driver の thread で回す後始末の入口
+  {:pre [(: driver TransactionDriver)] :post [(: % "None")]}
+  "最後の呼びが返さなかった接続を返すため(錠 guard の下 — 走っている呼びの後・offloaded-transaction の註)。印 abandoned を立てるので、まだ
+   始まっていない呼びは流さずに終わる(接続を借りる前の呼びなら、借りもしない)。"
+  (setv lease driver.lease)
+  (with [_ driver.guard]
+    (setv lease.abandoned True)
+    (setv held lease.connection)
+    (when (and (not lease.returned) (is-not held None) (not (isinstance held SqlUnreachable)))
+      (.release driver.connections driver.database held))
+    (setv lease.returned True)))
+
+
+(defk driven [driver work closing]
+  {:pre [(: driver TransactionDriver) (: work Callable) (: closing bool)] :post [(: % "work の答え | SqlUnreachable | None")]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の接続 1 本への driver の呼び 1 つを、pool の thread で錠 guard を取って回し、撃った task だけが待つため(offloaded-transaction の
-   註)。"
-  (<- answer (offloaded pool (fn [] (with [_ guard] (run-detached (work)))) keep-nothing))
+  "transaction の接続 1 本への driver の呼び 1 つを、pool の thread の仕事 1 つ(まだなら借りる・流す・closing なら返す — drive-leased)で回し、
+   撃った task だけが待つため(offloaded-transaction の註)。"
+  (setv driver.lease.submitted True)
+  (<- answer (offloaded driver.pool (fn [] (drive-leased driver work closing)) keep-nothing))
   answer)
 
 
@@ -751,69 +811,69 @@
    走り切るので、その後の ROLLBACK と返却が別の thread から同じ接続に来る。psycopg の接続の錠は pipeline の文を積む間と出口の間で外れる
    ので、guard が無いと ROLLBACK が pipeline を出る前の接続に積まれ、接続は pipeline mode のまま返って捨てられた(#3605 の検で発見)。
    文 1 つずつの手順では psycopg の接続の錠が同じ順を守るので、guard は流す文と順を変えない。
+   接続を借りる仕事は最初の driver の呼び(BEGIN か、束ねた transaction の最初の往復)と、返す仕事は最後の呼び(COMMIT か ROLLBACK を流す
+   呼び)と同じ pool の仕事にする(#3688 の子 (3) — 別の仕事にすると、共有の loop と driver の thread の間の乗り換えが書き 1 回に 2 つ増える)。
+   文を 1 つも流さない program は接続を借りない。借りられなければ、最初の呼びの答えが SqlUnreachable になり、transaction の答えもそれになる。
+   最後の呼びまで来なかった transaction(取り消し・BEGIN の失敗・例外)は、finally が返しの仕事 abandon-lease を 1 つ撃つ — guard の下なので
+   走っている呼びの後に返し、まだ始まっていない呼びは流さずに終わる。
    合図(頭の註): transaction が出した合図を覚え(raised)、接続を返した後に同じ process の呼び鈴を鳴らす — COMMIT を流した(流そうとした)
    transaction だけ。鳴らすのは finally の中なので、COMMIT の答えを受ける前・返却を待つ間に取り消されても鳴らす。"
-  (<- leased (offloaded pool (fn [] (lease-now connections database)) (fn [value] (return-abandoned connections database value))))
   (val raised (RaisedNotices))
-  (val guard (threading.Lock))
-  (if (isinstance leased SqlUnreachable)
-      leased
+  (val driver (TransactionDriver :connections connections :pool pool :database database :lease (TransactionLease) :guard (threading.Lock)))
+  (try
+    (<- answer (if batched
+                   (run-in-batched-transaction database program
+                                               (fn [flush] (raised-flush driver lock-key connections.origin raised flush))
+                                               (fn [] (driven driver (fn [leased] (postgres-control leased "ROLLBACK")) True))
+                                               :accepts-notices True)
+                   (run-in-transaction database program
+                                       (fn [request] (driven driver (fn [leased] (postgres-query leased request)) False))
+                                       (fn [request] (driven driver (fn [leased] (postgres-insert leased request)) False))
+                                       (fn [] (driven driver (fn [leased] (postgres-begin leased lock-key)) False))
+                                       (fn [] (raised-commit driver raised))
+                                       (fn [] (driven driver (fn [leased] (postgres-control leased "ROLLBACK")) True))
+                                       :execute-notify (fn [request] (raised-notice driver connections.origin raised request)))))
+    answer
+    (finally
       (try
-        (<- answer (if batched
-                       (run-in-batched-transaction database program
-                                                   (fn [flush] (raised-flush pool guard leased lock-key connections.origin raised flush))
-                                                   (fn [] (driven pool guard (fn [] (postgres-control leased "ROLLBACK"))))
-                                                   :accepts-notices True)
-                       (run-in-transaction database program
-                                           (fn [request] (driven pool guard (fn [] (postgres-query leased request))))
-                                           (fn [request] (driven pool guard (fn [] (postgres-insert leased request))))
-                                           (fn [] (driven pool guard (fn [] (postgres-begin leased lock-key))))
-                                           (fn [] (raised-commit pool guard leased raised))
-                                           (fn [] (driven pool guard (fn [] (postgres-control leased "ROLLBACK"))))
-                                           :execute-notify (fn [request]
-                                                             (raised-notice pool guard leased database connections.origin raised request)))))
-        answer
+        (when (and driver.lease.submitted (not driver.lease.returned))
+          (<- (offloaded pool (fn [] (abandon-lease driver)) keep-nothing)))
         (finally
-          (try
-            (<- (offloaded pool (fn [] (with [_ guard] (.release connections database leased))) keep-nothing))
-            (finally
-              (.ring-local connections database raised)))))))
+          (.ring-local connections database raised))))))
 
 
-(defk raised-flush [pool guard leased lock-key origin raised flush]
-  {:pre [(: pool Executor) (: guard AbstractContextManager) (: leased PipelineConnection) (: lock-key (| str None)) (: origin str)
-         (: raised RaisedNotices) (: flush TransactionFlush)]
-   :post [(: % (| tuple SqlFailed SqlUnreachable))]
+(defk raised-flush [driver lock-key origin raised flush]
+  {:pre [(: driver TransactionDriver) (: lock-key (| str None)) (: origin str) (: raised RaisedNotices) (: flush TransactionFlush)]
+   :post [(: % (| tuple SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
   "束ねた transaction の往復 1 回を流すため(offloaded-transaction の註): 往復に載る合図を覚え、COMMIT を載せる往復なら、流す前に「届く所まで
-   流した」の印を立てる(往復の答えを受ける前に取り消されても、接続を返した後に鳴らす)。"
+   流した」の印を立て(往復の答えを受ける前に取り消されても、接続を返した後に鳴らす)、同じ driver の仕事で接続を返す。"
   (for [notify flush.notices]
     (<- (noted-notice raised notify)))
   (when flush.closing
     (setv raised.sent True))
-  (<- answer (driven pool guard (fn [] (postgres-flush leased lock-key origin flush))))
+  (<- answer (driven driver (fn [leased] (postgres-flush leased lock-key origin flush)) flush.closing))
   answer)
 
 
-(defk raised-commit [pool guard leased raised]
-  {:pre [(: pool Executor) (: guard AbstractContextManager) (: leased PipelineConnection) (: raised RaisedNotices)]
+(defk raised-commit [driver raised]
+  {:pre [(: driver TransactionDriver) (: raised RaisedNotices)]
    :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つずつの transaction の COMMIT を流すため(offloaded-transaction の註): 流す前に「届く所まで流した」の印を立てる(COMMIT の答えを受ける
-   前に取り消されても、接続を返した後に鳴らす)。"
+  "文 1 つずつの transaction の COMMIT を流すため(offloaded-transaction の註): 流す前に「届く所まで流した」の印を立て(COMMIT の答えを受ける
+   前に取り消されても、接続を返した後に鳴らす)、同じ driver の仕事で接続を返す。"
   (setv raised.sent True)
-  (<- answer (driven pool guard (fn [] (postgres-control leased "COMMIT"))))
+  (<- answer (driven driver (fn [leased] (postgres-control leased "COMMIT")) True))
   answer)
 
 
-(defk raised-notice [pool guard leased database origin raised request]
-  {:pre [(: pool Executor) (: guard AbstractContextManager) (: leased PipelineConnection) (: database str) (: origin str)
-         (: raised RaisedNotices) (: request SqlNotify)]
-   :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+(defk raised-notice [driver origin raised request]
+  {:pre [(: driver TransactionDriver) (: origin str) (: raised RaisedNotices) (: request SqlNotify)]
+   :post [(: % (| SqlRows SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
   "文 1 つずつの transaction の中の SqlNotify を同じ接続で流し(commit した時だけ届く)、接続を返した後に鳴らすために覚えるため。"
   (<- (noted-notice raised request))
-  (<- answer (driven pool guard (fn [] (postgres-notice leased database origin request))))
+  (<- answer (driven driver (fn [leased] (postgres-notice leased driver.database origin request)) False))
   answer)
 
 

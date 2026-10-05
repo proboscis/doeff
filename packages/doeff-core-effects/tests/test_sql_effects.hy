@@ -1336,6 +1336,60 @@
   (assert (and (= (len second) 1) (is (get second 0) (get first 0))) "落ちた pipeline の後の接続が使い続けられず、捨てられた"))
 
 
+(defclass CountingPool [ThreadPoolExecutor]
+  "driver の pool に出した仕事の数を数える pool(#3688 の子 (3) — transaction 1 つの driver の thread への乗り換えの数)。"
+  (defn __init__ [self]  ; defk にできない: Executor の初期化(concurrent.futures の約束 — VM の外)
+    (.__init__ (super) :max-workers 2)
+    (setv self.submitted 0))
+  (defn submit [self call #* args #** kwargs]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
+    (setv self.submitted (+ self.submitted 1))
+    (.submit (super) call #* args #** kwargs)))
+
+
+(defk fresh-seeded []
+  {:pre [] :post [(: % SqlSchemaApplied)]
+   :tags {:context "sql" :role "program"}}
+  "検の表を消して作り直すため(数える前の用意 — transaction の外の文)。"
+  (<- (fresh DB))
+  (<- applied (seeded DB))
+  applied)
+
+
+(defk read-then-commit []
+  {:pre [] :post [(: % int)]
+   :tags {:context "sql" :role "program"}}
+  "1 往復目で行を数え、2 往復目の commit の束で 1 行を入れる program(記録の置き場の書きと同じ 2 往復 — 答え = 入れた後の行の数)。"
+  (<- (SqlQuery DB "SELECT count(*) FROM items" #()))
+  (<- answers (SqlBatch DB #((SqlQuery DB "INSERT INTO items (id, label) VALUES (91, 'r')" #())
+                             (SqlQuery DB "SELECT count(*) FROM items" #()))
+                :commit True))
+  (get (. (get answers 1) rows) 0 0))
+
+
+(deftest test-pooled-postgres-drives-a-batched-transaction-in-one-job-per-round-trip
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
+  ;; 失敗ケース(#3688 の子 (3)): 束ねた transaction は、接続を借りる仕事を最初の往復と、接続を返す仕事を最後の往復と、同じ driver の仕事に
+  ;; まとめる — 2 往復の書きで pool に出す仕事は 2 つ・往復 1 回で済む transaction は 1 つ(前は借りる・往復ごと・返すが別の仕事で 4 と 3)。
+  ;; 答えと、接続が 1 本のまま返ることも見る。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (val pool (CountingPool))
+  (try
+    (<- (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (fresh-seeded)))
+    (val before-two pool.submitted)
+    (<- two (with-handler [(state) (pooled-postgres-sql-handler connections pool)]
+              (SqlTransaction :database DB :program (read-then-commit) :lock-key "pooled-jobs" :batched True)))
+    (val two-trips (- pool.submitted before-two))
+    (val before-one pool.submitted)
+    (<- one (with-handler [(state) (pooled-postgres-sql-handler connections pool)]
+              (SqlTransaction :database DB :program (counted-after-insert) :lock-key "pooled-jobs" :batched True)))
+    (val one-trip (- pool.submitted before-one))
+    (val idle (list (. (get connections.idle DB) queue)))
+    (finally (.close connections) (.shutdown pool)))
+  (assert (= #(two one) #(1 2)) #(two one))
+  (assert (= #(two-trips one-trip) #(2 1)) #(two-trips one-trip))
+  (assert (= (len idle) 1) idle))
+
+
 (deftest test-postgres-connections-refuse-an-environment-without-pipeline-mode [monkeypatch]
   {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
   ;; 失敗ケース(#3605・cisco-c8 の条件 1): psycopg / libpq が pipeline mode を持たない環境では、接続の貸し出しを作る所(起動の時)で名を

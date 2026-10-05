@@ -252,19 +252,40 @@ def return_abandoned(connections: PostgresConnections, database: str, leased: In
 def run_then_return(connections: PostgresConnections, database: str, leased: Incomplete, claim: Incomplete, work: Incomplete) -> Incomplete:
     ...
 
-def driven(pool: Executor, guard: AbstractContextManager, work: Callable[[], Program]) -> _Program[Incomplete, object]:
+@dataclass(kw_only=True)
+class TransactionLease:
+    connection: PipelineConnection | SqlUnreachable | None = None
+    submitted: bool = False
+    returned: bool = False
+    abandoned: bool = False
+
+@dataclass(frozen=True, kw_only=True)
+class TransactionDriver:
+    connections: PostgresConnections
+    pool: Executor
+    database: str
+    lease: TransactionLease
+    guard: AbstractContextManager
+
+def drive_leased(driver: TransactionDriver, work: Incomplete, closing: bool) -> Incomplete:
+    ...
+
+def abandon_lease(driver: TransactionDriver) -> Incomplete:
+    ...
+
+def driven(driver: TransactionDriver, work: Callable, closing: bool) -> _Program[Incomplete, object]:
     ...
 
 def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None, batched: bool) -> _Program[Incomplete, object]:
     ...
 
-def raised_flush(pool: Executor, guard: AbstractContextManager, leased: PipelineConnection, lock_key: str | None, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+def raised_flush(driver: TransactionDriver, lock_key: str | None, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable | None, object]:
     ...
 
-def raised_commit(pool: Executor, guard: AbstractContextManager, leased: PipelineConnection, raised: RaisedNotices) -> _Program[SqlFailed | SqlUnreachable | None, object]:
+def raised_commit(driver: TransactionDriver, raised: RaisedNotices) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
 
-def raised_notice(pool: Executor, guard: AbstractContextManager, leased: PipelineConnection, database: str, origin: str, raised: RaisedNotices, request: SqlNotify) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
+def raised_notice(driver: TransactionDriver, origin: str, raised: RaisedNotices, request: SqlNotify) -> _Program[SqlRows | SqlFailed | SqlUnreachable | None, object]:
     ...
 
 def offloaded_statement(connections: PostgresConnections, pool: Executor, database: str, work: Incomplete) -> _Program[Incomplete, object]:
