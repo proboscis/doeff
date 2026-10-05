@@ -271,7 +271,7 @@ The session host never launches an agent in print mode.
 
 ## Headless handler without the session host
 
-`doeff_agents.handlers.headless_claude_agent_handlers(config_dir=..., env=...)`
+`doeff_agents.handlers.headless_claude_agent_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
 returns the handler pair that answers the public effects for Claude by
 translating them into `doeff-claude-code`'s effects — no session-host socket,
 no sqlite: `doeff-claude-code`'s production handler and the headless adapter
@@ -287,7 +287,7 @@ receives, so an emulation can observe what its production path decided. A
 caller with nothing to declare passes empty mappings explicitly.
 
 Callers that must not name a substrate (agora keeps the substrate the
-library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=...)`
+library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
 and `fake_claude_agent_runtime_handlers(responder=..., env=..., settings=...)`:
 the same pairs under names that say "the Claude agent runtime" and leave the
 choice of substrate to doeff-agents.

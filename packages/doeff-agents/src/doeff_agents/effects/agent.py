@@ -603,15 +603,27 @@ class TurnCredential:
     (which stays a non-auth overlay). Only the access token travels — a
     refresh token is never carried. The token is kept out of ``repr`` so
     effects, answers and errors never print it.
+
+    ``expires_at`` is when this credential may no longer be used (epoch
+    seconds; generic — the answer does not say who lent it), or ``None`` when
+    the redeemer does not know. The launch handler copies it to the session
+    declaration so the process layer can stop a live process before it (the
+    credential floor — agora-redesign #3672 D2); the lender is told through
+    the process layer's stop reason, never by this value.
     """
 
     oauth_token: str = field(repr=False)
+    expires_at: float | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.oauth_token, str) or not self.oauth_token:
             raise ValueError("TurnCredential.oauth_token must be a non-empty string")
         if any(ch in self.oauth_token for ch in "\r\n\x00"):
             raise ValueError("TurnCredential.oauth_token must be a single line")
+        if self.expires_at is not None and (
+            isinstance(self.expires_at, bool) or not isinstance(self.expires_at, int | float)
+        ):
+            raise TypeError("TurnCredential.expires_at must be epoch seconds or None")
 
 
 @dataclass(frozen=True)

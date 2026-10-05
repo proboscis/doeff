@@ -9,12 +9,12 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [listen-handler slog-discard-handler])
-(import doeff_time [Delay sync-time-handler])
+(import doeff_time [Delay GetTime sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
-                                   TurnStarted LaunchFailed SessionExported SessionNotFound SessionClosed])
-(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess])
+                                   ClaudeSessionStatus TurnStarted LaunchFailed SessionExported SessionNotFound SessionClosed])
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.argv [transcript-path])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
@@ -23,8 +23,9 @@
 (import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start])
 
 
-(defn host-of [command]
-  (ClaudeCodeHost command (clock-of (sync-time-handler)) :launch-timeout 30.0))
+(defn host-of [command [live-limit 8] [floor 7200.0] [launch-timeout 30.0]]
+  ;; 検の host(上限の本数と資格の床は、それを撃つ検だけが小さくする — #3672 の D2)。
+  (ClaudeCodeHost command (clock-of (sync-time-handler)) live-limit floor :launch-timeout launch-timeout))
 
 (defn spec-in [#^ Path tmp-path [cold None]]
   (setv work (/ tmp-path "work"))
@@ -312,3 +313,131 @@
   (assert (isinstance first-partial int) (repr streamed))
   (assert (<= 0 first-partial (.get streamed "since_launch_ms")) (repr streamed))
   (assert (is (.get plain "first_partial_since_launch_ms") None) (repr plain)))
+
+
+;; --- 生かす本数の上限と資格の床で降ろす(#3672 の D2 — 止める判断は host の 1 か所)------------------------------------------
+
+(defk one-turn [#^ ClaudeSessionSpec spec origin #^ str word]
+  {:pre [(: spec ClaudeSessionSpec) (: origin (| FreshSession ResumeSession)) (: word str)]
+   :post [(: % (| Completed Failed Interrupted BackendLost))]}
+  "検の会話の手番を 1 つ始めて最後まで読むため。答え = 手番の終わり。"
+  (<- started (ClaudeStartTurn origin spec (TurnInput (reply-prompt word) (str (uuid.uuid4)))))
+  (assert (isinstance started TurnStarted) (repr started))
+  (<- done (read-to-end started.turn 30.0))
+  done.end)
+
+(defk three-sessions-over-a-limit-of-two [#^ ClaudeSessionSpec spec #^ tuple ids]
+  {:pre [(: spec ClaudeSessionSpec) (: ids tuple)] :post [(: % tuple)]}
+  "上限 2 の host で会話 3 つの手番を 1 つずつ順に走らせるため。答え = 3 つの会話の process の見え方。"
+  (for [sid ids]
+    (<- end (one-turn spec (FreshSession sid) "X"))
+    (assert (isinstance end Completed) (repr end)))
+  (<- first-view (ClaudeLiveProcess (get ids 0)))
+  (<- second-view (ClaudeLiveProcess (get ids 1)))
+  (<- third-view (ClaudeLiveProcess (get ids 2)))
+  #(first-view second-view third-view))
+
+
+(deftest test-the-least-recently-used-idle-process-goes-down-at-the-live-limit [tmp-path]
+  ;; 生かす本数が上限(2)に来たら、新しく起こす前に、手番を走らせていない物のうち一番長く使われていない物(一番前に手番を始めた
+  ;; 会話)を降ろす(訳 LIVE-LIMIT)。ほかの生きた process は残る。
+  (val ids (tuple (gfor _ (range 3) (str (uuid.uuid4)))))
+  (val host (host-of STUB-COMMAND :live-limit 2))
+  (<- views (with-real-handler host (three-sessions-over-a-limit-of-two (spec-in tmp-path) ids)))
+  (assert (= (get views 0) (NoLiveProcess :launches 1 :stopped-because StopReason.LIVE-LIMIT)) (repr views))
+  (assert (= (get views 1) (LiveProcess :launches 1)) (repr views))
+  (assert (= (get views 2) (LiveProcess :launches 1)) (repr views)))
+
+
+(defk second-session-while-the-first-runs [#^ ClaudeSessionSpec spec #^ str first-id #^ str second-id]
+  {:pre [(: spec ClaudeSessionSpec) (: first-id str) (: second-id str)] :post [(: % tuple)]}
+  "上限 1 の host で、1 つ目の会話の長い手番の途中に 2 つ目の会話の手番を頼むため。答え = 2 つ目の始まりの答え・1 つ目の手番の
+   終わり・2 つ目を頼んだ時に 1 つ目の手番が終わっていたか・1 つ目の process の見え方。"
+  (<- started (ClaudeStartTurn (FreshSession first-id) spec (TurnInput (sleep-prompt 3 "SLOW") "slow-1")))
+  (<- (read-to-tool-start started.turn 30.0))
+  (<- second (ClaudeStartTurn (FreshSession second-id) spec (TurnInput (reply-prompt "NEXT") "next-1")))
+  (<- first-end (read-to-end started.turn 30.0))
+  (<- first-view (ClaudeLiveProcess first-id))
+  #(second first-end.end first-view))
+
+
+(deftest test-a-launch-at-the-live-limit-waits-for-a-turn-to-end-and-never-stops-a-running-turn [tmp-path]
+  ;; 上限に来た時に全部の process が手番を走らせていれば、空く(手番が終わる)まで起こすのを待つ。走っている手番は止めない —
+  ;; 1 つ目の手番は Completed で終わり、終わった後に一番長く使われていない物として降りる(訳 LIVE-LIMIT)。
+  (val host (host-of STUB-COMMAND :live-limit 1))
+  (<- seen (with-real-handler host (second-session-while-the-first-runs (spec-in tmp-path) (str (uuid.uuid4)) (str (uuid.uuid4)))))
+  (assert (isinstance (get seen 0) TurnStarted) (repr seen))
+  (assert (isinstance (get seen 1) Completed) (repr seen))
+  (assert (= (get seen 2) (NoLiveProcess :launches 1 :stopped-because StopReason.LIVE-LIMIT)) (repr seen)))
+
+
+(deftest test-a-launch-that-waits-past-the-limit-is-a-named-launch-failure [tmp-path]
+  ;; 空きを待つのは launch-timeout まで。越えたら起こさず、上限で待ったことを名指した LaunchFailed。
+  (val host (host-of STUB-COMMAND :live-limit 1 :launch-timeout 2.0))
+  (val first-id (str (uuid.uuid4)))
+  (<- outcome (with-real-handler host
+                (launch-over-a-busy-limit (spec-in tmp-path) first-id (str (uuid.uuid4)))))
+  (assert (isinstance outcome LaunchFailed) (repr outcome))
+  (assert (in "live-limit" outcome.stderr-tail) (repr outcome)))
+
+
+(defk launch-over-a-busy-limit [#^ ClaudeSessionSpec spec #^ str first-id #^ str second-id]
+  {:pre [(: spec ClaudeSessionSpec) (: first-id str) (: second-id str)] :post [(: % (| TurnStarted LaunchFailed))]}
+  "上限 1 の host で 1 つ目の会話に長い手番を走らせたまま 2 つ目を頼み、その答えを返すため(終わりに 1 つ目の会話を閉じる)。"
+  (<- started (ClaudeStartTurn (FreshSession first-id) spec (TurnInput (sleep-prompt 20 "LONG") "long-1")))
+  (<- (read-to-tool-start started.turn 30.0))
+  (<- outcome (ClaudeStartTurn (FreshSession second-id) spec (TurnInput (reply-prompt "WAIT") "wait-1")))
+  (<- (ClaudeCloseSession first-id "test"))
+  outcome)
+
+
+(defk expiring-in [#^ ClaudeSessionSpec base #^ float seconds]
+  {:pre [(: base ClaudeSessionSpec) (: seconds float)] :post [(: % ClaudeSessionSpec)]}
+  "検の spec に、今から seconds 秒後に切れる資格の期限を添えるため(時刻は時間の答え手の内側で読む)。"
+  (<- now (GetTime))
+  (replace base :credential-expires-at (+ (.timestamp now) seconds)))
+
+(defk turn-then-resume-under-the-floor [#^ ClaudeSessionSpec base #^ str sid]
+  {:pre [(: base ClaudeSessionSpec) (: sid str)] :post [(: % tuple)]}
+  "資格の期限が床の内側(100 秒後に切れる・床 200 秒)の spec で手番を 1 つ走らせ、続けて同じ会話を続けるため。答え = 1 手番目の
+   後の見え方・続きの後の見え方。"
+  (<- spec (expiring-in base 100.0))
+  (<- end (one-turn spec (FreshSession sid) "ONE"))
+  (assert (isinstance end Completed) (repr end))
+  (<- after-first (ClaudeLiveProcess sid))
+  (<- again (one-turn spec (ResumeSession sid) "TWO"))
+  (assert (isinstance again Completed) (repr again))
+  (<- after-second (ClaudeLiveProcess sid))
+  #(after-first after-second))
+
+
+(deftest test-a-process-whose-credential-is-under-the-floor-goes-down-at-the-turn-boundary [tmp-path]
+  ;; 資格の期限 − 床 を過ぎた process は、手番の境で止める(訳 CREDENTIAL-FLOOR — 呼び手はこの訳を読んで借りた資格を返す)。
+  ;; 次の手番は起こし直す(使い回さない)。
+  (val host (host-of STUB-COMMAND :floor 200.0))
+  (<- views (with-real-handler host (turn-then-resume-under-the-floor (spec-in tmp-path) (str (uuid.uuid4)))))
+  (assert (= (get views 0) (NoLiveProcess :launches 1 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views))
+  (assert (= (get views 1) (NoLiveProcess :launches 2 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views)))
+
+
+(defk idle-until-the-floor [#^ ClaudeSessionSpec base #^ str sid #^ float wait-seconds]
+  {:pre [(: base ClaudeSessionSpec) (: sid str) (: wait-seconds float)] :post [(: % tuple)]}
+  "手番の後に生きて待つ process の資格が、待つ間に床を切る筋書きのため(20 秒後に切れる・床 15 秒 — 手番の後はまだ床の外)。答え =
+   手番の後の見え方・待った後に host を呼んだ後の見え方。"
+  (<- spec (expiring-in base 20.0))
+  (<- end (one-turn spec (FreshSession sid) "ONE"))
+  (assert (isinstance end Completed) (repr end))
+  (<- after-turn (ClaudeLiveProcess sid))
+  (<- (Delay wait-seconds))
+  (<- (ClaudeSessionStatus spec.home spec.cwd sid))
+  (<- after-wait (ClaudeLiveProcess sid))
+  #(after-turn after-wait))
+
+
+(deftest test-an-idle-process-whose-credential-crosses-the-floor-goes-down-at-the-next-call [tmp-path]
+  ;; 手番を走らせていない process の資格が待つ間に床を切ったら、host が次に呼ばれた時(手番を始める・行を読む・会話の状態を読む)に
+  ;; 止める(訳 CREDENTIAL-FLOOR)。
+  (val host (host-of STUB-COMMAND :floor 15.0))
+  (<- views (with-real-handler host (idle-until-the-floor (spec-in tmp-path) (str (uuid.uuid4)) 7.0)))
+  (assert (= (get views 0) (LiveProcess :launches 1)) (repr views))
+  (assert (= (get views 1) (NoLiveProcess :launches 1 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views)))

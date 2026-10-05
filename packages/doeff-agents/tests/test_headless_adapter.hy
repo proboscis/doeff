@@ -96,9 +96,9 @@
     ;; fake の層 2 は process を起こさないので子の env は空・CLI の settings は本番の 2 つと同じ宣言。
     (= backend FAKE) (+ [(sim-time-handler :clock (SimClock))] (fake-headless-claude-handlers fake-responder home-dir :env {} :settings settings))
     (= backend STUB) (+ [(sync-time-handler) slog-discard-handler]
-                        (headless-claude-handlers home-dir (child-env) :settings settings
+                        (headless-claude-handlers home-dir (child-env) :settings settings :live-limit 8 :credential-floor-seconds 7200.0
                                                   :command #(sys.executable "-m" "hy" STUB-PATH)))
-    (= backend REAL) (+ [(sync-time-handler) slog-discard-handler] (headless-claude-handlers home-dir (child-env) :settings settings))
+    (= backend REAL) (+ [(sync-time-handler) slog-discard-handler] (headless-claude-handlers home-dir (child-env) :settings settings :live-limit 8 :credential-floor-seconds 7200.0))
     True (raise (ValueError backend))))
 
 (defn run-on [#^ str backend #^ Path tmp-path #^ Callable scenario [home-name "home"]]
@@ -694,7 +694,7 @@
   (.mkdir work :parents True :exist-ok True)
   (assert (in TURN-CREDENTIAL-ENV TURN-AUTH-ENV-KEYS))
   (setv world (FakeClaudeWorld fake-responder) asked [])
-  (setv answers {"lease-borrowed" (TurnCredential token) "lease-home" (HomeTurnCredential)})
+  (setv answers {"lease-borrowed" (TurnCredential token None) "lease-home" (HomeTurnCredential)})
   (for [#(name ref) [#("borrowed" "lease-borrowed") #("home" "lease-home") #("plain" None)]]
     (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
   ;; 引き換えは参照のある起動だけ・1 回ずつ。
@@ -705,10 +705,13 @@
   ;; 資格の入口は引き換えの答え 1 つ: session_env から資格を入れる路は断られ、宣言の repr に token は写らない。
   (setv config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"}))
         launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-borrowed")
-        spec (spec-of config launch (TurnCredential token)))
+        spec (spec-of config launch (TurnCredential token 1234.5)))
   (assert (= (get spec.home.env TURN-CREDENTIAL-ENV) token))
   (assert (= (get spec.home.env "PATH") "/usr/bin"))
-  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr (TurnCredential token))
+  ;; 借りた資格の期限は層 2 の宣言へ写る(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
+  (assert (= spec.credential-expires-at 1234.5) spec.credential-expires-at)
+  (assert (is (. (spec-of config launch) credential-expires-at) None))
+  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr (TurnCredential token None))
                (repr (RedeemTurnCredentialEffect :credential-ref "lease-borrowed"))]]
     (assert (not-in token shown)))
   (with [(pytest.raises ValueError)]
@@ -716,7 +719,10 @@
                                   :session-env {TURN-CREDENTIAL-ENV token})))
   (for [bad ["" "a\nb"]]
     (with [(pytest.raises ValueError)]
-      (TurnCredential bad)))
+      (TurnCredential bad None)))
+  (for [bad-expiry [True "1234"]]
+    (with [(pytest.raises TypeError)]
+      (TurnCredential token bad-expiry)))
   (with [(pytest.raises ValueError)]
     (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "")))
 
@@ -753,8 +759,8 @@
   (import doeff_agents.effects [TurnCredential])
   (setv token "sk-ant-oat01-must-not-leak-665" work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
-  (setv handlers (+ [(sync-time-handler) (redeem-answers {"lease-1" (TurnCredential token)} [])]
-                    (headless-claude-handlers (str (/ tmp-path "home")) (child-env)
+  (setv handlers (+ [(sync-time-handler) (redeem-answers {"lease-1" (TurnCredential token None)} [])]
+                    (headless-claude-handlers (str (/ tmp-path "home")) (child-env) :live-limit 8 :credential-floor-seconds 7200.0
                                               :command #((str (/ tmp-path "no-such-claude"))))))
   (with [info (pytest.raises Exception)]
     (run (scheduled (with_handlers handlers (launch-with-credential work)))))
@@ -769,8 +775,8 @@
   ;; (print mode の adapter)の組と同じ種類の handler を同じ順で返し、fake の名で同じ筋書きが通る。
   (import doeff_agents [claude-agent-runtime-handlers fake-claude-agent-runtime-handlers])
   (setv home (str (/ tmp-path "home")))
-  (assert (= (lfor h (claude-agent-runtime-handlers :config-dir home :env {}) (. (type h) __name__))
-             (lfor h (headless-claude-handlers home {}) (. (type h) __name__))))
+  (assert (= (lfor h (claude-agent-runtime-handlers :config-dir home :env {} :live-limit 8 :credential-floor-seconds 7200.0) (. (type h) __name__))
+             (lfor h (headless-claude-handlers home {} :live-limit 8 :credential-floor-seconds 7200.0) (. (type h) __name__))))
   (setv work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (setv setting (Setting work None 60.0 8))
@@ -849,8 +855,8 @@
                         fake-claude-process-layer-handler claude-agent-adapter-handler])
   (import doeff_hy.frozen [thaw-json])
   (setv home (str (/ tmp-path "home")))
-  (assert (= (lfor h [(claude-process-layer-handler) (claude-agent-adapter-handler :config-dir home :env {} :settings {})] (. (type h) __name__))
-             (lfor h (claude-agent-runtime-handlers :config-dir home :env {}) (. (type h) __name__))))
+  (assert (= (lfor h [(claude-process-layer-handler :live-limit 8 :credential-floor-seconds 7200.0) (claude-agent-adapter-handler :config-dir home :env {} :settings {})] (. (type h) __name__))
+             (lfor h (claude-agent-runtime-handlers :config-dir home :env {} :live-limit 8 :credential-floor-seconds 7200.0) (. (type h) __name__))))
   (assert (= (lfor h [(fake-claude-process-layer-handler :responder fake-responder) (claude-agent-adapter-handler :config-dir home :env {} :settings {})]
                    (. (type h) __name__))
              (lfor h (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home :env {} :settings {}) (. (type h) __name__))))

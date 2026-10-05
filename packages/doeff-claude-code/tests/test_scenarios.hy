@@ -285,3 +285,24 @@
   (assert (in CODEWORD two.end.result-text) two.end.result-text)
   (<- after (ClaudeLiveProcess sid))
   (assert (= after (LiveProcess :launches 2)) after))
+
+
+(deftest test-dropping-an-idle-live-process-lets-the-next-turn-relaunch
+  ;; 手番を走らせていない生きた process も落とせる(本番の答え手の ClaudeDropProcess は走っていなくても process を消す — fake も同じ。
+  ;; 模擬の相手役が、待っている CLI の消え方を作るため・#3672)。自分で消えた扱いで訳は付けず、次の続きの手番は起こし直して続く。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- first (start (FreshSession sid) s.base (remember-prompt "ALPHA-1")))
+  (<- one (read-to-end first.turn s.turn-timeout))
+  (assert (isinstance one.end Completed) (repr one.end))
+  (<- dropped (ClaudeDropProcess sid))
+  (assert dropped "手番の無い生きた process を落とせる")
+  (<- gone (live-process-until sid (fn [view] (isinstance view NoLiveProcess)) s.turn-timeout))
+  (assert (= gone (NoLiveProcess :launches 1 :stopped-because None)) gone)
+  (<- second (start (ResumeSession sid) s.base (recall-prompt)))
+  (<- two (read-to-end second.turn s.turn-timeout))
+  (assert (isinstance two.end Completed) (repr two.end))
+  (assert (in CODEWORD two.end.result-text) two.end.result-text)
+  (<- after (ClaudeLiveProcess sid))
+  (assert (= after (LiveProcess :launches 2)) after))

@@ -115,12 +115,14 @@
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
   (when (is-not credential None)
     (setv (get env TURN-CREDENTIAL-ENV) credential.oauth-token))
+  ;; 借りた資格の期限は層 2 の宣言へ写す(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)
                      :model effect.model
                      :effort effect.effort
                      :settings config.settings
-                     :cold-resume-prompt config.cold-resume-prompt))
+                     :cold-resume-prompt config.cold-resume-prompt
+                     :credential-expires-at (if (is credential None) None credential.expires-at)))
 
 (defn #^ list event-builders-of [kind #^ datetime at]
   "層 2 の行の型 → 層 3 の出来事を作る関数(seq → 出来事)の列。出来事はその型の欄で直接作る(語彙の外の行は空)。"

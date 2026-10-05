@@ -36,6 +36,17 @@
 (setv StartDecision (| Refuse Reuse Launch))
 
 
+(defn #^ (| float None) retire-time [#^ (| float None) credential-expires-at #^ float floor-seconds]
+  "生きた process を止める刻(資格の期限 − 床・epoch 秒)を、起こした・使い回した手番の spec から決めるため(#3672 の D2)。期限を
+   知らなければ None(床で止めない)。"
+  (if (is credential-expires-at None) None (- credential-expires-at floor-seconds)))
+
+(defn #^ bool credential-due [#^ (| float None) retire-after #^ float now]
+  "その process を資格の床で止める時か(止める刻を過ぎたか)を判じるため — 手番の境と、手番を走らせていない process の見回りの
+   どちらもこの 1 点で判じる(D2)。"
+  (and (is-not retire-after None) (>= now retire-after)))
+
+
 (defn start-decision [origin #^ SessionView view #^ bool transcript-present #^ bool has-cold-resume-prompt #^ str wanted-key]
   "7 節の表。ForkSession は親の transcript だけを見る(親の手番が走っていても枝は別の会話・親の生きた process は使わない)。
    続き(ResumeSession)は、生きて待つ process の鍵が wanted-key と同じ時だけ使い回す。違えば降ろしてから起こす。"
