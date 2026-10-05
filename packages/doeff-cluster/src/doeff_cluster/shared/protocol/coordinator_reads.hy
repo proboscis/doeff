@@ -14,41 +14,97 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessWaitExpired JobProcessSeen JobProcessWaitExpired])
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ServiceFailed ReadinessWaitExpired FAILED-PHASES
+                                                     JobProcessSeen JobProcessWaitExpired])
 
 ;; AwaitReadiness・AwaitJobProcess が coordinator を読み直す間隔(秒 — 筋書きの待ちは数十秒なので、読みの CPU を小さく保つ)。
 (val WAIT-PROBE-SECONDS 1.0)
 
 
-(defk readiness-read [url name]
-  {:pre [(: url str) (: name str)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "coordinator の GET /resources/Service/<name> から準備の状態を読むため(ReadinessOf と AwaitReadiness の読み — 無ければ Missing)。"
+(defk readiness-of-body [code body]
+  {:pre [(: code int) (: body (| dict str))] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "GET /resources/Service/<名> の答え(code・200 なら JSON の object・それ以外は本文)→ 準備の状態(無ければ Missing)。本番の読みと
+   sim の読み(sim/local.hy)が同じこの 1 つを通る — 読みの写しを 2 か所に持たない。"
+  (if (and (= code 200) (isinstance body dict))
+      (do (val status (get body "status"))
+          (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
+      (ServiceReadiness :state "Missing" :reason (str body))))
+
+
+(defk failure-of-body [name state code body last waited]
+  {:pre [(: name str) (: state str) (: code int) (: body (| dict str)) (: last ServiceReadiness) (: waited float)]
+   :post [(: % (| ServiceFailed None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "同じ答えから、担い手が落ちたと数えるか(ServiceFailed)を読むため: coordinator の版の判定(status.version.state)が Blocked で、担い手の行
+   (status.process)の phase が FAILED-PHASES の時だけ。前の版の行・置き先の無さは coordinator が Blocked に数えないので、ここでは版を
+   比べない(判断の写しを作らない)。"
+  (val status (if (and (= code 200) (isinstance body dict)) (.get body "status") None))
+  (val version (if (isinstance status dict) (.get status "version") None))
+  (val process (if (isinstance status dict) (.get status "process") None))
+  (val spelled (if (isinstance process dict) (.get process "phase") None))
+  ;; 行の phase の綴り → FAILED-PHASES の JobPhase(落ちたと数えない phase・知らない綴りは None)。
+  (val phase (next (gfor p FAILED-PHASES :if (= p.value spelled) p) None))
+  (if (and (isinstance version dict) (= (.get version "state") "Blocked") (is-not phase None))
+      (ServiceFailed :name name :state state :phase phase :failure-kind (.get process "failureKind")
+                     :reason (str (.get version "reason" "")) :last last :waited-seconds waited)
+      None))
+
+
+(defk readiness-wait-answer [name state code body waited seconds]
+  {:pre [(: name str) (: state str) (: code int) (: body (| dict str)) (: waited float) (: seconds float)]
+   :post [(: % (| ServiceReadiness ServiceFailed ReadinessWaitExpired None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "AwaitReadiness の 1 回の読みの答え → 待ちの答え(None = まだ待つ)。state に届いたらその準備の状態・届く前に落ちたと分かれば
+   ServiceFailed・waited が seconds に届いたら ReadinessWaitExpired。本番の待ち(readiness-awaited)と sim の待ちが同じこの判断を通る。"
+  (<- seen ServiceReadiness (readiness-of-body code body))
+  (<- failed (| ServiceFailed None) (failure-of-body name state code body seen waited))
+  (cond
+    (= seen.state state) seen
+    (is-not failed None) failed
+    (>= waited seconds) (ReadinessWaitExpired :name name :state state :last seen :waited-seconds waited)
+    True None))
+
+
+(defk service-answer [url name]
+  {:pre [(: url str) (: name str)] :post [(: % HttpResponse)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /resources/Service/<name> を 1 回読むため(届かなければ名指して落ちる — 値ではない)。"
   (<- answer (HttpRequest "GET" (+ url "/resources/Service/" (url-quote name :safe "")) :timeout-seconds 10.0 :max-retries 0
                           :failures-as-values True))
   (when (not (isinstance answer HttpResponse))
     (raise (RuntimeError (+ "coordinator に届かない: Service " name " — " (repr answer)))))
-  (if (= answer.status 200)
-      (do (val status (get (json.loads answer.text) "status"))
-          (ServiceReadiness :state (get status "ready") :reason (str (.get status "readyReason" ""))))
-      (ServiceReadiness :state "Missing" :reason answer.text)))
+  answer)
+
+
+(defk answer-body [answer]
+  {:pre [(: answer HttpResponse)] :post [(: % (| dict str))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "HTTP の答え → 読みの部品が受ける本文(200 なら JSON の object・それ以外は本文の字のまま)。"
+  (if (= answer.status 200) (json.loads answer.text) answer.text))
+
+
+(defk readiness-read [url name]
+  {:pre [(: url str) (: name str)] :post [(: % ServiceReadiness)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /resources/Service/<name> から準備の状態を読むため(ReadinessOf の読み — 無ければ Missing)。"
+  (<- answer HttpResponse (service-answer url name))
+  (<- body (| dict str) (answer-body answer))
+  (<- readiness ServiceReadiness (readiness-of-body answer.status body))
+  readiness)
 
 
 (defk readiness-awaited [url name state seconds]
-  {:pre [(: url str) (: name str) (: state str) (: seconds float)] :post [(: % (| ServiceReadiness ReadinessWaitExpired))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: url str) (: name str) (: state str) (: seconds float)]
+   :post [(: % (| ServiceReadiness ServiceFailed ReadinessWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
   "AwaitReadiness に答えるため: 本物の coordinator は長い待ちの読みを持たないので、境界のこの handler が WAIT-PROBE-SECONDS ごとに
-   準備の状態を読み、state になるか seconds を過ぎたら答える(過ぎたら最後に読んだ状態を添えた ReadinessWaitExpired)。"
-  (<- first ServiceReadiness (readiness-read url name))
-  (var seen first)
+   読み、readiness-wait-answer が答えを出したら返す(state に届いた・落ちたと分かった・seconds を過ぎた)。間隔の読み直しは今までどおり
+   (この変更で足した loop ではない)。"
   (var waited 0.0)
-  (while (and (!= seen.state state) (< waited seconds))
-    (<- (Delay WAIT-PROBE-SECONDS))
-    (:= waited (+ waited WAIT-PROBE-SECONDS))
-    (<- again ServiceReadiness (readiness-read url name))
-    (:= seen again))
-  (if (= seen.state state)
-      seen
-      (ReadinessWaitExpired :name name :state state :last seen :waited-seconds waited)))
+  (var answered None)
+  (while (is answered None)
+    (<- answer HttpResponse (service-answer url name))
+    (<- body (| dict str) (answer-body answer))
+    (<- step (| ServiceReadiness ServiceFailed ReadinessWaitExpired None) (readiness-wait-answer name state answer.status body waited seconds))
+    (:= answered step)
+    (when (is answered None)
+      (<- (Delay WAIT-PROBE-SECONDS))
+      (:= waited (+ waited WAIT-PROBE-SECONDS))))
+  answered)
 
 
 (defk state-of [url]

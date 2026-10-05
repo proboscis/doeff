@@ -5,7 +5,8 @@
 ;;;   (<- names (Redeclare system :environ {"tally" {"STEP" "3"}}))  ; その宣言し直しの job ごとの environ の上書きつき(#3131)
 ;;;   (<- ready (ReadinessOf "tally"))         ; coordinator が数えている Service の準備の状態(ServiceReadiness)
 ;;;   (<- n (Crash "tally"))                   ; job の動いている process を全部 exit 1 で落とす(答え = 落とした数)
-;;;   (<- r (AwaitReadiness "tally" "Ready" 60.0))      ; 準備の状態が Ready になるまで待つ(期限つき — 過ぎたら ReadinessWaitExpired)
+;;;   (<- r (AwaitReadiness "tally" "Ready" 60.0))      ; 準備の状態が Ready になるまで待つ(期限つき — 過ぎたら ReadinessWaitExpired・
+;;;                                                      ;   担い手が落ちたと分かれば期限を待たずに ServiceFailed)
 ;;;   (<- p (AwaitJobProcess "tally" #(41) 60.0))       ; job の process のうち pid 41 の外の物が名乗られるまで待つ(起こし直しの次の process)
 ;;;
 ;;; 待つ effect は読み直しのループを Program に書かせないため(#3053 — 検と模擬は Delay を挟んで読み直さない)。期限は必ず
@@ -24,6 +25,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster.shared.intent.job_model [JobPhase])
 
 
 (defrecord ServiceReadiness
@@ -61,6 +63,28 @@
   (#^ float waited-seconds))
 
 
+;; AwaitReadiness が「落ちた」と数える担い手の行の phase(#3668 の (a)・cisco-c8 の可 2026-10-05 23:2x)。coordinator が版の判定を
+;; Blocked にした時(status.version.state — 前の版の行・置き先の無さは Blocked に数えない判断を coordinator が先にしている)だけ読む。
+;; 落ちて起こし直す途中(backoff)・止めを確かめられない(stop-unconfirmed)・終わった(finished)は数えない — Crash の後に Ready の戻りを
+;; 待つ筋書きが早まって「落ちた」を受けないため。worker が撃ち直す env-failed(retryable)は coordinator が Updating と数えるので届かない。
+(val FAILED-PHASES (frozenset #(JobPhase.ENV-FAILED JobPhase.CODE-FAILED JobPhase.PROBE-FAILED JobPhase.HANDOFF-ABANDONED)))
+
+
+(defrecord ServiceFailed
+  "Service name の担い手の行が、待っている間に FAILED-PHASES の phase で止まり、coordinator が版の判定を Blocked にした(AwaitReadiness の
+   答え — 期限を待たずに、分かった時点で返す)。state = 待っていた準備の状態・phase = 担い手の行の phase(FAILED-PHASES のどれか)・
+   failure-kind = env-failed の
+   失敗の種類(EnvFailureKind の綴り — 他の phase では None)・reason = coordinator の版の判定の理由(status.version.reason)・last = 最後に
+   読んだ準備の状態・waited-seconds = 待った秒。続けるか戻すかは使い手(回の Program)が決める。"
+  (#^ str name)
+  (#^ str state)
+  (#^ JobPhase phase)
+  (#^ (| str None) failure-kind)
+  (#^ str reason)
+  (#^ ServiceReadiness last)
+  (#^ float waited-seconds))
+
+
 (defrecord JobProcessSeen
   "job の process が名乗られた(AwaitJobProcess の答え)。pid = その process の番号(sim = sim の中の番号・手元の 1 台 = coordinator の
    /state に worker が名乗った pid)。"
@@ -77,9 +101,10 @@
 
 (defeffect AwaitReadiness
   "Service name の準備の状態(ReadinessOf と同じ読み)が state になるまで待つ。timeout-seconds = 待つ上限の秒(0 = 待たずに今の姿を
-   読む)。答え = state になった時の ServiceReadiness か ReadinessWaitExpired。"
+   読む)。答え = state になった時の ServiceReadiness・state になる前に担い手が落ちたと分かった時の ServiceFailed(期限を待たない)・
+   ReadinessWaitExpired のどれか。"
   {:fields [(: name str) (: state str) (: timeout-seconds float)]
-   :answer (| ServiceReadiness ReadinessWaitExpired)
+   :answer (| ServiceReadiness ServiceFailed ReadinessWaitExpired)
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect AwaitJobProcess

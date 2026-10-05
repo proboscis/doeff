@@ -60,7 +60,7 @@
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
-                                                     CrashCoordinator Redeclare Crash AwaitReadiness ReadinessWaitExpired
+                                                     CrashCoordinator Redeclare Crash AwaitReadiness ServiceFailed ReadinessWaitExpired
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 
@@ -351,7 +351,7 @@
     (<- readiness ServiceReadiness (readiness-read url name))
     (resume readiness))
   (AwaitReadiness [name state timeout-seconds]
-    (<- awaited (| ServiceReadiness ReadinessWaitExpired) (readiness-awaited url name state (float timeout-seconds)))
+    (<- awaited (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (readiness-awaited url name state (float timeout-seconds)))
     (resume awaited))
   (AwaitJobProcess [job excluding timeout-seconds]
     (<- seen (| JobProcessSeen JobProcessWaitExpired) (job-process-awaited url cell job excluding (float timeout-seconds)))

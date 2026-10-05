@@ -40,7 +40,7 @@
 (import doeff_core_effects.process_effects [StopProcess ProcessExited])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash
-                                                     AwaitReadiness ReadinessWaitExpired AwaitJobProcess JobProcessSeen
+                                                     AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen
                                                      JobProcessWaitExpired])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
@@ -278,12 +278,12 @@
    答え・crashed = Crash の答え・after = 起こし直しの次の process の待ちの答え・again = その後の準備の待ちの答え・never-ready = 来ない
    状態(Missing)の待ちの答え・no-restart = 落としていない job の次の process の待ちの答え(後の 2 つは失敗ケース — 期限で値が返る)。"
   (#^ (get tuple #(str ...)) declared)
-  (#^ (| ServiceReadiness ReadinessWaitExpired) first)
+  (#^ (| ServiceReadiness ServiceFailed ReadinessWaitExpired) first)
   (#^ (| JobProcessSeen JobProcessWaitExpired) before)
   (#^ int crashed)
   (#^ (| JobProcessSeen JobProcessWaitExpired) after)
-  (#^ (| ServiceReadiness ReadinessWaitExpired) again)
-  (#^ (| ServiceReadiness ReadinessWaitExpired) never-ready)
+  (#^ (| ServiceReadiness ServiceFailed ReadinessWaitExpired) again)
+  (#^ (| ServiceReadiness ServiceFailed ReadinessWaitExpired) never-ready)
   (#^ (| JobProcessSeen JobProcessWaitExpired) no-restart))
 
 
@@ -301,14 +301,14 @@
    来ない状態と起きない次の process を短く待って、期限で値が返ることを見る(読み直しのループは書かない — 待つのは cluster の handler・#3053)。"
   ;; 待ちの上限は、壊した答え手で assert が pytest の打ち切り(60 秒)より先に鳴る長さ(普通の走りは全体で十数秒)。
   (<- declared tuple (Redeclare system))
-  (<- first (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 30.0))
+  (<- first (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 30.0))
   (<- before (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #() 10.0))
   (<- before-pid int (seen-pid before))
   (<- crashed int (Crash JOB))
   (<- after (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #(before-pid) 20.0))
   (<- after-pid int (seen-pid after))
-  (<- again (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 15.0))
-  (<- never (| ServiceReadiness ReadinessWaitExpired) (AwaitReadiness JOB "Missing" 2.0))
+  (<- again (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 15.0))
+  (<- never (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness JOB "Missing" 2.0))
   (<- none (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #(after-pid) 2.0))
   (CrashAnswers :declared declared :first first :before before :crashed crashed :after after :again again :never-ready never
                 :no-restart none))
