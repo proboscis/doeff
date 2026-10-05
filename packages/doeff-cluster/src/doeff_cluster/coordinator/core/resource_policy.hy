@@ -4,7 +4,8 @@
 ;;;   generation も)、送り手・時刻・前後の版を出来事の記録へ足す。変化を起こした経路(API・heartbeat・調停・Rollout)を問わず
 ;;;   ここ 1 か所で付くので、版の付け忘れ・記録の漏れが起きない。
 ;;; - 書きの口: Service と Rollout は資源 1 つずつの compare-and-set(PUT は resourceVersion 必須・古ければ 409)。
-;;;   一覧の丸ごとの上書きはしない。宣言を消せるのは所有者か、明示の force つきの delete だけ。
+;;;   一覧の丸ごとの上書きはしない。所有者(owner)は誰が宣言したかの記録で、書き・消しを断る照合には使わない(名乗りの X-Actor は
+;;;   確かめないので守りにならない — 2026-10-05 に照合して断る分岐を外した)。force は進行中の Rollout が扱う資源を消す時だけに効く。
 ;;; - readiness: Service が Ready か(service-readiness)。process の生存(worker の報告の running)と、宣言が readiness を
 ;;;   持てば ReportReady の直近の報告の両方で決める。
 ;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
@@ -28,7 +29,7 @@
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
 (import doeff_cluster.shared.intent.readiness_model [ReadinessClaim])
 
-(setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
+(setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者の記録(本当の持ち主は coordinator には分からない)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
 (setv MIGRATION "migration")              ; 旧い形の状態の file に版を振った送り手
 (setv AUDIT-PER-KIND 300)                 ; 出来事の記録の上限(kind ごと)
@@ -764,11 +765,6 @@
     True (refuse 405 (+ "この kind は API から作れない: " kind))))
 
 
-(defn #^ None check-owner-change [#^ (| str None) current-owner #^ (| str None) new-owner #^ str actor]
-  (when (and new-owner (!= new-owner current-owner) (!= actor current-owner) (!= current-owner LEGACY-OWNER))
-    (refuse 403 (.format "所有者を変えられるのは所有者({})だけ" current-owner))))
-
-
 (defn #^ ClusterState update-resource [#^ ClusterState state #^ str kind #^ str name #^ (| ResourceBody ServiceBody) body #^ str actor]
   (setv key (key-of kind name))
   (cond
@@ -783,7 +779,7 @@
                                    :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (check-version state key body.resource-version)
-          (check-owner-change current.owner body.owner actor)
+          ;; 所有者は本文の owner の記録(無ければ今の値)。送り手が誰でも書き換える — 名乗りを照合して断らない(2026-10-05)。
           (setv job (replace body.job :owner (or (valid-actor body.owner) current.owner)))
           (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) job j)))))
     (= kind "Rollout")
@@ -803,7 +799,7 @@
     True (refuse 405 (+ "この kind は API から書けない: " kind))))
 
 
-(defn #^ ClusterState delete-resource [#^ ClusterState state #^ str kind #^ str name #^ dict query #^ str actor
+(defn #^ ClusterState delete-resource [#^ ClusterState state #^ str kind #^ str name #^ dict query
                                       #^ int now #^ ClusterTiming timing]
   (setv key (key-of kind name) force (in (.get query "force" "") #("true" "1"))
         version (if (in "resourceVersion" query) (int-field query "resourceVersion" None) None))
@@ -814,8 +810,6 @@
           (when (and (is current None) (in name state.refused))
             (return (replace state :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
-          (when (and (!= actor current.owner) (not force))
-            (refuse 403 (.format "宣言を消せるのは所有者({})か、明示の force つきの delete だけ" current.owner)))
           (setv busy (active-rollouts-touching state [(target-key (RolloutTarget :kind "Service" :name name))]))
           (when (and busy (not force)) (refuse 409 (+ "この Service を扱う Rollout が進行中: " (.join ", " busy))))
           ;; 消した Service の準備と計器の報告も観測の表から外す(同じ名で作り直した Service に前の process の報告を数えない)。
@@ -827,9 +821,6 @@
     (= kind "Rollout")
       (do (setv current (.get state.rollouts name))
           (when (is current None) (refuse 404 (+ "無い Rollout: " name)))
-          (setv owner current.spec.owner)
-          (when (and (!= actor owner) (not force))
-            (refuse 403 (.format "Rollout を消せるのは所有者({})か、明示の force つきの delete だけ" owner)))
           (when (and (not-in current.status.phase TERMINAL-PHASES) (not force))
             (refuse 409 "進行中の Rollout は消せない(中止は abort を書く。旧を先に戻してから新を止める)"))
           (replace state :rollouts (dfor #(k v) (.items state.rollouts) :if (!= k name) k v)))
@@ -878,8 +869,6 @@
       (!= version (resource-version-of state (key-of "Service" name)))
         (.append conflicts (RowConflict :name name :message "版が古い"
                                          :current (resource-version-of state (key-of "Service" name))))
-      (and (is-not row.owner None) (!= row.owner have.owner) (!= actor have.owner) (!= have.owner LEGACY-OWNER))
-        (.append conflicts (RowConflict :name name :message (.format "所有者を変えられるのは所有者({})だけ" have.owner)))
       True
         (do (setv jobs (lfor j jobs (if (= j.spec.name name) job j)))
             (setv (get results name) "updated"))))

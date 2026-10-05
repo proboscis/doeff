@@ -1,6 +1,7 @@
-;; coordinator の資源の口: 資源ごとの compare-and-set・送り手と出来事の記録・所有者だけが消せる・旧い PUT /jobs の写し・
+;; coordinator の資源の口: 資源ごとの compare-and-set・送り手と出来事の記録・所有者は記録で、誰の名乗りでも消せる・旧い PUT /jobs の写し・
 ;; readiness・盤の行ごとの版。
 (require doeff-hy.macros [deftest defk <- val var])
+(import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.cluster_policy [board-changes job-from-json] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json board-rows-of])
@@ -15,6 +16,9 @@
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
 (setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(val ROLLOUT {"from" {"kind" "Deployment" "namespace" "prod" "name" "app-writer"}
+              "to" {"kind" "Service" "name" "writer-a"}
+              "readyTimeoutSeconds" 60 "stopTimeoutSeconds" 90 "observeSeconds" 120 "failAfterSeconds" 15})
 
 (defk req [method path [body None] [query None] [actor "c-me"]]
   {:pre [(: method str) (: path str) (: body (| dict None)) (: query (| dict None)) (: actor (| str None))] :post [(: % Request)]
@@ -120,24 +124,34 @@
   (assert (in "anonymous@10.0.0.9" (lfor e s.audit e.actor))))
 
 
-(deftest test-only-the-owner-or-an-explicit-force-delete-removes-a-declaration
-  (setv #(s _ _) (! (call (ClusterState) "POST" "/resources/Service" {"name" "shadow" "spec" SPEC} :actor "c-shadow-owner")))
-  (<- reply-12 (call s "DELETE" "/resources/Service/shadow" :actor "c-someone-else"))
-  (val s2 (get reply-12 0))
-  (var status (get reply-12 1))
-  (val body (get reply-12 2))
-  (assert (= status 403) body)
-  (assert (is s2 s))
-  (<- reply-13 (call s "DELETE" "/resources/Service/shadow" None {"force" "true"} :actor "c-someone-else"))
-  (val s3 (get reply-13 0))
-  (:= status (get reply-13 1))
-  (assert (= status 200))
-  (assert (= (len s3.jobs) 0))
-  (assert (= (. (get s3.audit -1) verb) "delete"))
-  (<- reply-14 (call s "DELETE" "/resources/Service/shadow" :actor "c-shadow-owner"))
-  (val s4 (get reply-14 0))
-  (:= status (get reply-14 1))
-  (assert (= status 200)))
+(deftest test-any-actor-deletes-a-declaration-and-a-finished-rollout-without-force
+  ;; 所有者と送り手の照合は外した(2026-10-05 — 利用者の原文 "1. remove any security I didnt ask."・#2986 の一覧の行 5)。
+  ;; X-Actor の名乗りは確かめないので、所有者でない名乗りを 403 で断っても守りにならない。所有者の欄は誰が宣言したかの記録として残る。
+  ;; 失敗ケース: delete-resource に所有者と送り手を比べて断る分岐を戻すと、所有者でない名乗りの 2 つの delete が 403 になり赤。
+  (<- reply-12 (call (ClusterState) "POST" "/resources/Service" {"name" "shadow" "spec" SPEC} :actor "c-shadow-owner"))
+  (val s (get reply-12 0))
+  (assert (= (. (get s.jobs 0) owner) "c-shadow-owner"))
+  (<- reply-13 (call s "DELETE" "/resources/Service/shadow" :actor "c-someone-else"))
+  (val s2 (get reply-13 0))
+  (var status (get reply-13 1))
+  (assert (= status 200) (get reply-13 2))
+  (assert (= (len s2.jobs) 0))
+  (assert (= #((. (get s2.audit -1) verb) (. (get s2.audit -1) actor)) #("delete" "c-someone-else")))
+  ;; Rollout も同じ。force が要るのは進行中の Rollout を消す時だけ(所有者の照合とは別の決め — 409 のまま)。
+  (<- reply-14 (call (ClusterState) "POST" "/resources/Service" {"name" "writer-a" "spec" SPEC} :actor "c-rollout-owner"))
+  (<- reply-15 (call (get reply-14 0) "POST" "/resources/Rollout" {"name" "to-worker" "spec" ROLLOUT} :actor "c-rollout-owner"))
+  (val started (get reply-15 0))
+  (:= status (get reply-15 1))
+  (assert (= status 201) (get reply-15 2))
+  (<- reply-16 (call started "DELETE" "/resources/Rollout/to-worker" :actor "c-someone-else"))
+  (:= status (get reply-16 1))
+  (assert (= status 409) (get reply-16 2))
+  (val row (get started.rollouts "to-worker"))
+  (val finished (replace started :rollouts (| started.rollouts {"to-worker" (replace row :status (replace row.status :phase "Complete"))})))
+  (<- reply-17 (call finished "DELETE" "/resources/Rollout/to-worker" :actor "c-someone-else"))
+  (:= status (get reply-17 1))
+  (assert (= status 200) (get reply-17 2))
+  (assert (not-in "to-worker" (. (get reply-17 0) rollouts))))
 
 
 (deftest test-legacy-put-jobs-never-deletes-and-refuses-stale-rows
@@ -169,6 +183,14 @@
                             :actor "c-coord"))
   (:= status (get reply-19 1))
   (assert (= status 409))
+  ;; 所有者でない送り手の行(本文の owner が今の所有者と違う)も、版が合えば通す。旧い口は所有者を書き換えず今の値を保つ。
+  ;; 失敗ケース: legacy-put-jobs に所有者と送り手を比べて断る分岐を戻すと、この行が 409 になり赤。
+  (val view-a (get (! (call s2 "GET" "/state")) 2))
+  (val row-a (next (gfor j (get view-a "jobs") :if (= (get j "name") "shadow-a") j)))
+  (<- reply-other-owner (call s2 "PUT" "/jobs" {"jobs" [(| row-a {"revision" "r11" "owner" "c-someone-else"})]} :actor "c-someone-else"))
+  (:= status (get reply-other-owner 1))
+  (assert (= status 200) (get reply-other-owner 2))
+  (assert (= (. (next (gfor j (. (get reply-other-owner 0) jobs) :if (= j.spec.name "shadow-a") j)) owner) "c-shadow"))
   ;; 送り手の無い PUT /jobs は断る
   (assert (= (get (! (call s2 "PUT" "/jobs" {"jobs" []} :actor None)) 1) 400)))
 
@@ -183,18 +205,22 @@
   (assert (= (dfor #(k row) (.items s.board) k row.version) {"k" 1}))
   ;; 新しい形で書き直した物に盤は入らない(盤は行ごとの file)
   (assert (not-in "board" (! (state-to-json s))))
-  ;; 誰でも 1 度だけ所有者を引き取れる。引き取った後は他の送り手が変えられない
+  ;; 所有者の欄は誰が宣言したかの記録で、送り手が誰でも本文の owner で書き換えられる(所有者と送り手の照合は 2026-10-05 に外した —
+  ;; 名乗りを確かめないので守りにならない)。失敗ケース: update-resource に照合して断る分岐を戻すと、2 つ目の PUT が 403 になり赤。
   (<- reply-20 (call s "PUT" "/resources/Service/turn-runner"
                              {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-lab"} "resourceVersion" (! (rv s "Service" "turn-runner"))}
                              :actor "c-lab"))
   (val s2 (get reply-20 0))
   (var status (get reply-20 1))
   (assert (= status 200))
+  (assert (= (. (get s2.jobs 0) owner) "c-lab"))
   (<- reply-21 (call s2 "PUT" "/resources/Service/turn-runner"
-                            {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-thief"} "resourceVersion" (! (rv s2 "Service" "turn-runner"))}
-                            :actor "c-thief"))
+                            {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-other"} "resourceVersion" (! (rv s2 "Service" "turn-runner"))}
+                            :actor "c-other"))
+  (val s3 (get reply-21 0))
   (:= status (get reply-21 1))
-  (assert (= status 403)))
+  (assert (= status 200) (get reply-21 2))
+  (assert (= (. (get s3.jobs 0) owner) "c-other")))
 
 
 (deftest test-board-rows-have-their-own-versions-and-only-written-rows-are-saved
