@@ -110,13 +110,14 @@
 (defk drain-progress-json [#^ DrainProgress drain]
   {:pre [(: drain DrainProgress)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "drain の進み → JSON の形(#2595 の前に drain_policy.drain-view・superseded-worker-view が組んでいた形と同じ — 頼みの記録は退いた世代の
-   答えに無く、superseded は退いた世代の答えにだけ書く)。"
+   答えに無く、superseded は退いた世代の答えにだけ書く)。unmovable = 待っても移せないので待たない job の名の列(#3669)。"
   (| {"worker" drain.worker}
      (if drain.superseded
          {"boot" drain.boot "superseded" True}
          {"sinceMs" drain.since-ms "untilMs" drain.until-ms "boot" drain.boot "actor" drain.actor})
      {"phase" drain.phase.value "drained" (= drain.phase DrainPhase.DRAINED) "remaining" (list drain.remaining)
-      "moving" (dict drain.moving) "blocked" (dict drain.blocked) "movingReady" (dict drain.moving-ready)}))
+      "moving" (dict drain.moving) "blocked" (dict drain.blocked) "unmovable" (list drain.unmovable)
+      "movingReady" (dict drain.moving-ready)}))
 
 
 (defk worker-drain-view-json [#^ WorkerDrainView view]

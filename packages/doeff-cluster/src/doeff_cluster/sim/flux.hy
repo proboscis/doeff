@@ -26,8 +26,10 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.launch_rules [worker-launch-of-env coordinator-launch-of-env])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached])
+(import doeff [with-handlers])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
+(import doeff_cluster.worker.core.drain_client [await-drained DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
+(import doeff_cluster.worker.intent.drain_model [AskDrain])
 (import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart UpgradeState
                                                    UpgradeStateUnreachable ReadUpgradeState PublishDeclarations ApplyDeclarations
                                                    ConfirmCleanBoot CleanBootPassed CleanBootRefused])
@@ -129,17 +131,23 @@
   (UpgradeStart :at-ms at :kind kind :target target :doeff-commit commit :roster state.roster :tasks state.tasks))
 
 
+(defhandler drain-asks-on-sim
+  ;; 本番の preStop の Program(drain_client.await-drained)が出す drain の頼み(AskDrain)に、sim の DrainWorker で答えるため。DrainWorker は
+  ;; 本番の答え手(drain_requests.coordinator-calls)と同じ要求の形(drain-request)で頼み、sim の宿の今の世代の boot を載せる(頼みの
+  ;; own-boot は読まない)。答えの形も本番と同じ {status body} / {error}。
+  (AskDrain [name ttl-seconds own-boot]
+    (<- answer dict (DrainWorker name ttl-seconds))
+    (resume answer)))
+
+
 (defk prestop-drain [name]
   {:pre [(: name str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
-  "本番の preStop(drain_main の await-drained — drain を頼み、空くのを待ってから止める)の代わり: drain を頼み、その worker に置かれた
-   切り離した task が終わるのを待つため(sim の DrainWorker は頼むだけで空くのを待たない — 本物と違う所を、ここで埋める)。"
-  (<- asked dict (DrainWorker name))
-  (when (!= (.get asked "status") 200)
-    (raise (RuntimeError (.format "worker {} の drain が断られた: {}" name asked))))
-  (<- state dict (ReadCoordinator "/state"))
-  (for [t (get state "tasks")]
-    (when (and (= (.get t "worker") name) (in (get t "phase") PLACED-PHASES) (.get t "detached"))
-      (<- (AwaitDetached (get t "key")))))
+  "本番の preStop(drain_main の await-drained)と同じ待ちをするため: drain を DRAIN-INTERVAL-SECONDS ごとに頼み直し、coordinator が
+   drained と答えるか、上限 DRAIN-DEADLINE-SECONDS に達するまで待つ。待つ Program は本番の await-drained そのもので、drain の頼みにだけ
+   sim の DrainWorker で答える(drain-asks-on-sim)。本番と同じく、上限で諦めても・断られても止めへ進む(待った秒は入れ替えの記録の
+   at-ms に出る)。#3669 の前は置かれた切り離した task だけを待ち、coordinator の drained を読まなかった — 移す先の無い job の drain が
+   上限まで待つ形が模擬に出なかった。"
+  (<- (with-handlers [drain-asks-on-sim] (await-drained name DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS)))
   None)
 
 
