@@ -62,7 +62,7 @@ suite('workspace の全文章・用語・キャッシュ進捗', () => {
       },
     };
     const judge = new WorkspaceJudge(runner, store);
-    judge.submit({ root: ROOT, documents: [] });
+    judge.submit({ kind: 'initial', root: ROOT, documents: [] });
     await tick();
     assert.strictEqual(store.violations().length, 10000);
     assert.strictEqual(store.docWorkspaces().get(ROOT)?.progress.completed, 10000);
@@ -96,7 +96,7 @@ suite('workspace の全文章・用語・キャッシュ進捗', () => {
       },
     };
     const judge = new WorkspaceJudge(runner, store);
-    judge.submit({ root: ROOT, documents: [] });
+    judge.submit({ kind: 'initial', root: ROOT, documents: [] });
     await partial;
     await tick();
     assert.strictEqual(store.docWorkspaces().get(ROOT)?.progress.phase, 'failed');
@@ -111,7 +111,7 @@ suite('workspace の全文章・用語・キャッシュ進捗', () => {
     };
     const store = new LintStore();
     const judge = new WorkspaceJudge(runner, store);
-    judge.submit({ root: ROOT, documents: [] });
+    judge.submit({ kind: 'initial', root: ROOT, documents: [] });
     await tick();
     assert.strictEqual(store.violationsIn(FILE)[0].rule, 'DOC000');
     assert.strictEqual(store.docWorkspaces().get(ROOT)?.progress.unmeasured, 1);
@@ -120,7 +120,7 @@ suite('workspace の全文章・用語・キャッシュ進捗', () => {
     assert.strictEqual(store.violations().length, 0);
     judge.dispose();
   });
-  test('編集後に古いストリームを捨て、最新の未保存本文を実行する', async () => {
+  test('編集が続いても進行中の検査を中断せず、変更をまとめて後続の差分を実行する', async () => {
     const calls: Array<{ observe: (e: WorkspaceEvent) => void; signal: AbortSignal; finish: () => void; text: string }> = [];
     const runner: WorkspaceRunner = {
       run(request, observe, signal) {
@@ -129,11 +129,12 @@ suite('workspace の全文章・用語・キャッシュ進捗', () => {
     };
     const store = new LintStore();
     const judge = new WorkspaceJudge(runner, store);
-    judge.submit({ root: ROOT, documents: [] });
-    judge.submit({ root: ROOT, documents: [{ path: FILE, text: '最新' }] });
-    assert.strictEqual(calls[0].signal.aborted, true);
+    judge.submit({ kind: 'initial', root: ROOT, documents: [] });
+    judge.submit({ kind: 'changed', root: ROOT, paths: [FILE], documents: [{ path: FILE, text: '途中' }] });
+    judge.submit({ kind: 'changed', root: ROOT, paths: [FILE], documents: [{ path: FILE, text: '最新' }] });
+    assert.strictEqual(calls[0].signal.aborted, false);
     events().forEach(calls[0].observe);
-    assert.strictEqual(store.violations().length, 0);
+    assert.strictEqual(store.violations().length, 1);
     calls[0].finish();
     await tick();
     assert.strictEqual(calls[1].text, '最新');
@@ -152,7 +153,7 @@ suite('workspace の全文章・用語・キャッシュ進捗', () => {
       },
     };
     const judge = new WorkspaceJudge(runner, store);
-    judge.submit({ root: ROOT, documents: [] });
+    judge.submit({ kind: 'initial', root: ROOT, documents: [] });
     await tick();
     assert.strictEqual(store.docWorkspaces().get(ROOT)?.progress.phase, 'failed');
     judge.dispose();
