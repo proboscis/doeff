@@ -24,19 +24,45 @@
 
 (defrecord PrepareRequest
   "root 1 つの準備の要求。root = 最終の path(tmp から rename しない — venv が絶対 path を持つので)・known = 完成済みの root・
-   min-free-bytes = 準備を始めてよい空きの下限。"
+   min-free-bytes = 準備を始めてよい空きの下限・launched-ms = 準備の process を起こした刻(epoch ミリ秒 — 入口が要求の JSON の
+   mtime から読む・None = 読めない。起こしてから最初の処理ステージまでの秒を印に載せるため・#3676)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
   (#^ str root)
   (setv #^ tuple known #())
-  (setv #^ int min-free-bytes 0))
+  (setv #^ int min-free-bytes 0)
+  (setv #^ (| int None) launched-ms None))
+
+
+(defrecord StagePart
+  "処理ステージの中の 1 区切りの秒(#3676 — 木の処理ステージの repo ごと)。name = repo の名・how = 置き方(TREE-COPY = 同じ commit の
+   別の root からの写し・TREE-EXPAND = mirror からの展開)・seconds = 経過の秒。"
+  (#^ str name)
+  (#^ str how)
+  (#^ float seconds))
+
+
+(val TREE-COPY "copy")
+(val TREE-EXPAND "expand")
 
 
 (defrecord StageTime
-  "処理ステージ 1 つの経過の秒(計器とマーカーに載せる)。"
+  "処理ステージ 1 つの経過の秒(計器とマーカーに載せる)。files = その処理ステージが root に書いた file の数(翻訳が既に知っている数 —
+   bytecode = 焼いた数 + 引き継いだ数・roots = .pth の 1 つ。数を知らない処理ステージは None = 数えていない・0 ではない — #3676)・
+   parts = 処理ステージの中の区切りの秒(StagePart の列 — 今は木の処理ステージの repo ごとだけ)。"
   (#^ str name)
-  (#^ float seconds))
+  (#^ float seconds)
+  (setv #^ (| int None) files None)
+  (setv #^ tuple parts #()))
+
+
+(defrecord VolumeKind
+  "root の置き場の disk の種類(#3676 — /proc/self/mountinfo の、root を含む最も深い mount の行): fs-type = file system の型の名
+   (ext4・xfs・overlay 等)・device = mount の元(block device の名 — /dev/nvme0n1p2 等。網や仮想の fs は fs の言う名)・mount = mount の点。"
+  (#^ str fs-type)
+  (#^ str device)
+  (#^ str mount))
 
 
 (defrecord MirrorReady
@@ -56,7 +82,9 @@
 
 (defrecord EnvMarker
   "完成マーカーの中身: 宣言・キー・処理ステージの秒・bytecode を作った interpreter・子の約束の版・bytecode の処理ステージの数と秒
-   (bytecode — 焼く木が無かった準備は None = 記録が無い。印の JSON に欄を足しただけなので、欄を書かない作り手の印も同じ形式の版のまま)。"
+   (bytecode — 焼く木が無かった準備は None = 記録が無い。印の JSON に欄を足しただけなので、欄を書かない作り手の印も同じ形式の版のまま)・
+   volume = root の置き場の disk の種類(読めなければ None)・startup-seconds = 準備の process を起こしてから最初の処理ステージまでの秒
+   (起こした刻を読めなければ None — #3676)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -65,7 +93,9 @@
   (#^ int built)
   (#^ str interpreter)
   (#^ int child-protocol)
-  (setv #^ (| BytecodeCounts None) bytecode None))
+  (setv #^ (| BytecodeCounts None) bytecode None)
+  (setv #^ (| VolumeKind None) volume None)
+  (setv #^ (| float None) startup-seconds None))
 
 
 (defrecord WheelReady
@@ -130,7 +160,11 @@
   (setv #^ int built 0)
   (setv #^ str interpreter "")
   (setv #^ tuple stages #())
-  (setv #^ (| BytecodeCounts None) bytecode None))
+  (setv #^ (| BytecodeCounts None) bytecode None)
+  ;; 今の処理ステージが root に書いた file の数と区切りの秒(prepare-env が StageTime へ移して次の処理ステージの前に空ける — #3676)。
+  (setv #^ (| int None) written None)
+  (setv #^ tuple parts #())
+  (setv #^ (| VolumeKind None) volume None))
 
 
 ;; --- effect ------------------------------------------------------------------------------
@@ -148,6 +182,11 @@
 
 (defclass [(dataclass :frozen True)] DiskFree [EffectBase]
   "path を含む volume の空き(byte)。答え = int。"
+  (#^ str path))
+
+
+(defclass [(dataclass :frozen True)] ReadVolume [EffectBase]
+  "path を含む volume の disk の種類(#3676)。答え = VolumeKind か None(mount の表を読めない)。"
   (#^ str path))
 
 

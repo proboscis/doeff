@@ -22,7 +22,9 @@
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
-;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。
+;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。#3676 から、印の処理ステージに書いた file の数と
+;;; 区切りの秒(木の repo ごとの写し・展開)、印に置き場の disk の種類(ReadVolume)と起こしてから最初の処理ステージまでの秒(GetTime と
+;;; 要求の launched-ms)を載せ、同じ値を計時の 1 行(PrepareNote)で記録する。
 ;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で準備の停滞を見分ける — env_upkeep.prepare-overdue)。1 つが長い
 ;;; bytecode の処理ステージは、1 回の焼きの前と後にも同じ名で出す(処理ステージの中でも進みが見える・#3515)。
 (require doeff-hy.macros [defk defeffect <- val var])
@@ -30,12 +32,14 @@
 (require doeff-hy.record [defenum defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が使う
-(import doeff_time [GetMonotonic])
+(import datetime [datetime])
+(import re)
+(import doeff_time [GetMonotonic GetTime])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -162,11 +166,62 @@
                      "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
                      "carrySeconds" counts.carry-seconds "compileSeconds" counts.compile-seconds
                      "trees" (lfor t counts.trees {"name" t.name "compiled" t.compiled "carried" t.carried "failed" t.failed})}))
+  ;; 処理ステージの files(root に書いた file の数 — 数えない処理ステージは null)・parts(区切りの秒)・volume(disk の種類)・
+  ;; startupSeconds(起こしてから最初の処理ステージまで)は #3676 で足した欄(読み手の置き場の名指しは読まない — 報告だけ)。
+  (val volume marker.volume)
   {"format" ENV-MARKER-FORMAT "key" marker.key "platform" marker.platform "env" declared
-   "stages" (lfor s marker.stages {"name" s.name "seconds" (round s.seconds 3)})
+   "stages" (lfor s marker.stages {"name" s.name "seconds" (round s.seconds 3) "files" s.files
+                                   "parts" (lfor p s.parts {"name" p.name "how" p.how "seconds" (round p.seconds 3)})})
    "downloaded" marker.downloaded "built" marker.built
    "interpreter" marker.interpreter "childProtocol" marker.child-protocol
-   "bytecode" bytecode})
+   "bytecode" bytecode
+   "volume" (if (is volume None) None {"fsType" volume.fs-type "device" volume.device "mount" volume.mount})
+   "startupSeconds" (if (is marker.startup-seconds None) None (round marker.startup-seconds 3))})
+
+
+;; /proc/self/mountinfo の 1 行: `<id> <親> <major:minor> <根> <mount の点> <選択> [<任意の欄>…] - <fs の型> <mount の元> <super の選択>`。
+;; 名の中の空白・tab・改行・\ は 8 進の \ooo で書かれる。
+(setv #^ (get re.Pattern str) MOUNT-ESCAPE (re.compile r"\\([0-7]{3})"))
+
+
+(defk mount-unescaped [text]
+  {:pre [(: text str)] :post [(: % str)]}
+  "mountinfo の 8 進の書き換え(\\040 = 空白)を戻すため。"
+  (.sub MOUNT-ESCAPE (fn [m] (chr (int (.group m 1) 8))) text))
+
+
+(defk volume-of-mountinfo [text path]
+  {:pre [(: text str) (: path str)] :post [(: % (| VolumeKind None))]}
+  "mountinfo の中身から path を含む最も深い mount の fs の型と mount の元を返すため(#3676 — root の置き場が何の disk かを印に残す)。
+   path は呼び手が symlink を解いた実の path で渡す。形の崩れた行は読まない・当たる行が無ければ None。"
+  (var best None)
+  (for [line (.splitlines text)]
+    (val fields (.split line " "))
+    (when (and (in "-" fields) (>= (len fields) 5))
+      (val dash (.index fields "-"))
+      (when (>= (len fields) (+ dash 3))
+        (<- point str (mount-unescaped (get fields 4)))
+        (val inside (or (= point "/") (= path point) (.startswith path (+ point "/"))))
+        (when (and inside (or (is best None) (>= (len point) (len best.mount))))
+          (<- device str (mount-unescaped (get fields (+ dash 2))))
+          (:= best (VolumeKind :fs-type (get fields (+ dash 1)) :device device :mount point))))))
+  best)
+
+
+(defk timing-line [stages volume startup]
+  {:pre [(: stages tuple) (: volume (| VolumeKind None)) (: startup (| float None))] :post [(: % str)]}
+  "準備の計時の 1 行(準備の記録 — env_tool の log へ出る・#3676): 起こしてから最初の処理ステージまでの秒・disk の種類・処理ステージごとの
+   秒と書いた file の数と区切り。読めない値は `-`。"
+  (val parts (lfor s stages
+                   (.format "{}={:.3f}s{}{}" s.name s.seconds
+                            (if (is s.files None) "" (.format "/{}files" s.files))
+                            (if s.parts
+                                (.format "({})" (.join "," (gfor p s.parts (.format "{}:{}={:.3f}s" p.name p.how p.seconds))))
+                                ""))))
+  (.format "計時: 起動→最初の処理ステージ {} 秒・disk {}・処理ステージ {}"
+           (if (is startup None) "-" (.format "{:.3f}" startup))
+           (if (is volume None) "-" (.format "{} {} ({})" volume.fs-type volume.device volume.mount))
+           (.join " " parts)))
 
 
 ;; --- 処理ステージ ---------------------------------------------------------------------------
@@ -174,13 +229,14 @@
 
 (defk stage-disk [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "空きが下限を切っていれば準備を始めない(途中の ENOSPC で壊れた root を作らないため)。"
+  "空きが下限を切っていれば準備を始めない(途中の ENOSPC で壊れた root を作らないため)。置き場の disk の種類も読んで印へ渡す(#3676)。"
   (<- free int (DiskFree request.root))
+  (<- volume (| VolumeKind None) (ReadVolume request.root))
   (if (< free request.min-free-bytes)
       (do (<- failure EnvFailure (env-failure EnvFailureKind.DISK-FULL
                                               (.format "空き {} byte が下限 {} byte を切る" free request.min-free-bytes)))
           failure)
-      state))
+      (replace state :volume volume)))
 
 
 (defk stage-mirrors [request state]
@@ -209,12 +265,17 @@
 
 (defk stage-trees [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
-  "repo ごとのツリーを root の下に兄弟で並べる(同じ commit のツリーが既にあれば複製で済ませる)。"
+  "repo ごとのツリーを root の下に兄弟で並べる(同じ commit のツリーが既にあれば複製で済ませる)。repo ごとの秒と置き方(写し・展開)を
+   区切りとして印へ渡す(#3676)。"
   (val mirrors (dfor m state.mirrors m.name m.mirror))
+  (var parts #())
   (for [repo request.env.repos]
     (<- reuse (reuse-tree request.known repo))
-    (<- (MaterializeTree (get mirrors repo.name) repo.commit (.format "{}/{}" request.root repo.name) reuse)))
-  state)
+    (<- started float (GetMonotonic))
+    (<- (MaterializeTree (get mirrors repo.name) repo.commit (.format "{}/{}" request.root repo.name) reuse))
+    (<- ended float (GetMonotonic))
+    (:= parts (+ parts #((StagePart :name repo.name :how (if (is reuse None) TREE-EXPAND TREE-COPY) :seconds (- ended started))))))
+  (replace state :parts parts))
 
 
 (defk stage-lock [request state]
@@ -277,11 +338,11 @@
 
 (defk stage-roots [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
-  "import の根を venv の .pth に宣言の順で並べる(子に PYTHONPATH を置かずに根を解くため)。"
+  "import の根を venv の .pth に宣言の順で並べる(子に PYTHONPATH を置かずに根を解くため)。書く file は .pth の 1 つ(#3676)。"
   (<- pdir str (project-dir request.env request.root))
   (<- roots tuple (absolute-roots request.env request.root))
   (<- (WriteImportRoots pdir roots))
-  state)
+  (replace state :written 1))
 
 
 (val BYTECODE-STAGE "bytecode")   ; bytecode の処理ステージの名(計器・マーカー・進みの印)
@@ -326,7 +387,8 @@
               (do (for [p problems]
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
-                  (replace state :interpreter used :bytecode counts))))))
+                  ;; 書いた file の数 = 焼いた .pyc と引き継いだ .pyc(#3676)。
+                  (replace state :interpreter used :bytecode counts :written (+ counts.compiled counts.carried)))))))
 
 
 (defk stage-bytecode [request state]
@@ -392,8 +454,16 @@
 
 (defk prepare-env [request]
   {:pre [(: request PrepareRequest)] :post [(: % (| EnvReady EnvFailure))]}
-  "宣言から root 1 つを準備する。どの処理ステージの失敗も値で返し、完成マーカーは全部が通った時にだけ最後に置く。"
+  "宣言から root 1 つを準備する。どの処理ステージの失敗も値で返し、完成マーカーは全部が通った時にだけ最後に置く。処理ステージごとの秒・
+   書いた file の数・区切りの秒と、起こしてから最初の処理ステージまでの秒を印に載せ、同じ値を計時の 1 行で記録する(#3676 — 失敗した
+   準備も、通った処理ステージまでの 1 行を出す)。"
+  (<- first-at datetime (GetTime))
+  (val startup (if (is request.launched-ms None)
+                   None
+                   (/ (- (* 1000 (.timestamp first-at)) request.launched-ms) 1000.0)))
   (var outcome (PrepareState))
+  (var done #())
+  (var volume None)
   (for [stage STAGES]
     (when (isinstance outcome PrepareState)
       (<- (StageStarted stage.name))
@@ -402,13 +472,19 @@
       (<- ended float (GetMonotonic))
       (:= outcome (match after
                     (EnvFailure) after
-                    _ (replace after :stages (+ after.stages #((StageTime :name stage.name :seconds (- ended started)))))))))
+                    _ (do (val timed (StageTime :name stage.name :seconds (- ended started) :files after.written :parts after.parts))
+                          (replace after :stages (+ after.stages #(timed)) :written None :parts #()))))
+      (match outcome
+        (PrepareState :stages stages :volume v) (do (:= done stages) (:= volume v))
+        _ None)))
+  (<- line str (timing-line done volume startup))
+  (<- (PrepareNote line))
   (match outcome
     (EnvFailure) outcome
     _ (do (<- (WriteEnvMarker request.root
                               (EnvMarker :env request.env :key request.key :platform request.platform
                                          :stages outcome.stages :downloaded outcome.downloaded :built outcome.built
                                          :interpreter outcome.interpreter :child-protocol CHILD-PROTOCOL
-                                         :bytecode outcome.bytecode)))
+                                         :bytecode outcome.bytecode :volume outcome.volume :startup-seconds startup)))
           (EnvReady :env request.env :key request.key :root request.root :stages outcome.stages
                     :downloaded outcome.downloaded :built outcome.built :interpreter outcome.interpreter))))

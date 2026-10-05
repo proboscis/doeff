@@ -33,7 +33,8 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks])
+(import doeff_cluster.worker.core.boot_timing [boot-line])
 (import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 
@@ -57,10 +58,12 @@
    (返事の timing が上書きする)・task-dir = task の印と結果の file の置き場・versions = 名乗る版・tools = 名乗る道具(名 → 版)・
    handles-envs = 実行環境の job を扱うか(真なら root の名乗りを heartbeat に載せ、温める表を受ける)・node = k8s の node の名・
    watch = 名指しの待ちを使うか(本番の入口が真にする)・boot = この process の世代・boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡と
-   みなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)。"
+   みなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に
+   1 行で出す — None = 出さない・#3676)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms * #^ (| dict None) [versions None] #^ (| dict None) [tools None]
-                          #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]]
+                          #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
+                          #^ (| BootMarks None) [boot-marks None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
           self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -86,7 +89,9 @@
           self.last-desired None self.sent-statuses None self.beat-interval-ms (beat-interval-ms None {})
           ;; 止まり始め(#2819): stopping = 拍の Program が渡した止まり・sent-stopping = 前に届けた heartbeat に載せた止まり(違えば
           ;; 送る間隔を待たずに送る — 状態の報告の違いと同じ扱い)。
-          self.stopping False self.sent-stopping False)))
+          self.stopping False self.sent-stopping False
+          ;; 起動の内訳の刻(#3676 — 本番の入口が渡す・None = 出さない)と、その 1 行を出したか(最初の heartbeat の答えの後に 1 度だけ)。
+          self.boot-marks boot-marks self.boot-told False)))
 
 
 
@@ -362,6 +367,11 @@
     (setv state.last-warm warm)
     ;; 返事を読み終えてから出す(返事の読みが毎回落ちる時に、名乗れた・名乗れないの 2 行を拍ごとに繰り返さない)。
     (<- (told-once state "" (.format "worker: coordinator {} に名乗りました" endpoint)))
+    ;; 起動の内訳の 1 行(#3676): 最初に返事を読み終えた拍で 1 度だけ — Pod の起動 → boot.sh → exec → import → この答え。
+    (when (and (is-not state.boot-marks None) (not state.boot-told))
+      (setv state.boot-told True)
+      (<- line str (boot-line state.boot-marks now-ms))
+      (<- (slog line)))
     ;; 次の拍の判断の材料(#1933): 届けた状態の報告・送る間隔・待ちの after(返事の版 — 無ければ旧い coordinator)。
     (setv state.sent-statuses sending
           state.sent-stopping stopping
