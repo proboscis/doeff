@@ -168,7 +168,7 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 ;; 期限の判定は読みと回収の両方が使う(#3561): 読み(memory の読みの関数・PostgreSQL の読みの文の条件)は回収を待たずに期限を過ぎた
-;; 行と出来事を出さず、回収(書きの前と SweepExpired)は同じ境で消す。境の刻は retention-cutoff-ms の 1 か所。
+;; 行と出来事を出さず、回収(SweepExpired)と書きが触る物の片付け(#3605 の D)は同じ境で消す。境の刻は retention-cutoff-ms の 1 か所。
 
 (defn #^ (| int None) retention-cutoff-ms [#^ (| TableDecl StreamDecl) decl #^ int now-ms]  ; defk にできない: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ境の計算(この file の判断はすべて純関数の defn)
   "保持の期限の境の刻(epoch ミリ秒): KeepFor の宣言なら 今 − 保持の秒(ミリ秒へ切り捨て)— 数え始める刻がこれ以下の物は期限を過ぎた。

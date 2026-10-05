@@ -8,7 +8,8 @@
                             law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-expired-keys-are-remembered
-                            law-expired-records-are-unseen-before-a-sweep])
+                            law-expired-records-are-unseen-before-a-sweep law-a-write-clears-the-expired-row-it-touches
+                            law-an-expired-key-answers-the-same-before-and-after-a-sweep])
 (import tests.interpreters [LawSetup])
 
 
@@ -56,10 +57,25 @@
   (assert transcript))
 
 (deftest test-expired-records-are-unseen-before-a-sweep
-  ;; #3561: 保持の期限を過ぎた行と出来事は回収の前でも読みに出ず、消えた は次の書きの回収が 1 回だけ積む(memory と PostgreSQL)。
+  ;; #3561: 保持の期限を過ぎた行と出来事は回収の前でも読みに出ず、消えた は回収(SweepExpired)が 1 回だけ積む — 別の表への書きは積まない
+  ;; (#3605 の D・memory と PostgreSQL)。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-expired-records-are-unseen-before-a-sweep harness))
+  (assert transcript))
+
+(deftest test-a-write-clears-the-expired-row-it-touches
+  ;; #3605 の D: 回収されていない期限を過ぎた行への書きは、その行を消して 消えた を積んでから無い行として判じる(回収の後と同じ答え)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-a-write-clears-the-expired-row-it-touches harness))
+  (assert transcript))
+
+(deftest test-an-expired-key-answers-the-same-before-and-after-a-sweep
+  ;; #3605 の D: 回収されていない期限を過ぎた鍵への追記は、回収の後と同じ答え・期限を過ぎた組の古い出来事は新しい鍵の追記で読みに戻らない。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-an-expired-key-answers-the-same-before-and-after-a-sweep harness))
   (assert transcript))
 
 (deftest test-indexed-list-equals-filtered-scan

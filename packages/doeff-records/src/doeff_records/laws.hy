@@ -9,7 +9,7 @@
 ;;; 待ちの法(law-watch-waits-for-a-change・law-watch-events-waits-for-an-append)は doeff の scheduler の Spawn を使う。
 ;;; 手入れの法(law-maintenance-prunes-and-sweeps)と保持の読みの法(law-expired-records-are-unseen-before-a-sweep)は手入れの effect
 ;;; (maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
-(require doeff-hy.macros [defk <- val])
+(require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
@@ -250,17 +250,19 @@
   (<- (require-law (= gone (Missing)) law (.format "期限を過ぎても残る: {!r}" gone)))
   (<- listed (as-writer harness MAKER (ListRows "tickets")))
   (<- (require-law (= (lfor row listed.rows row.key) [#("g1" "t2")]) law (.format "一覧に期限切れが残る・終端でない行が消えた: {!r}" listed)))
-  ;; 消えた行の「消えた」の変更は回収が積み、回収のきっかけは書き(別の表への書きでもよい)と SweepExpired(#3561 — 読みは回収しない)。
-  (<- nudge (as-writer harness MAKER (PutRow "parts" #("p-nudge") (FrozenMap {"label" "n"}) (ExpectAbsent))))
+  ;; 消えた行の「消えた」の変更は回収(SweepExpired — 手入れの係が撃つ)が積む(読みは回収しない — #3561・書きは自分が触る行だけを片付ける
+  ;; — #3605 の D)。
+  (<- swept (as-writer harness MAKER (SweepExpired)))
+  (<- (require-law (= swept (Swept 1)) law (.format "期限を過ぎた行 1 つを回収しない: {!r}" swept)))
   (<- removed (as-writer harness MAKER (WatchChanges #("tickets") (WatchCursor start.epoch start.sequence))))
   (<- (require-law (and (isinstance removed Changes) (= (lfor item removed.items #((type item) item.key)) [#(RowRemoved #("g1" "t1"))]))
-               law (.format "消えた行が書きの後の変更に 1 回だけ出ない: {!r}" removed)))
+               law (.format "消えた行が回収の後の変更に 1 回だけ出ない: {!r}" removed)))
   (<- (Delay (* 100 TICKET-KEEP-SECONDS)))
   (<- kept (as-writer harness MAKER (ReadRow "parts" #("p1"))))
   (<- (require-law (and (isinstance kept Row) (= (get kept.value "state") "closed")) law (.format "record の行が消えた: {!r}" kept)))
   (<- open-kept (as-writer harness MAKER (ReadRow "tickets" #("g1" "t2"))))
   (<- (require-law (isinstance open-kept Row) law (.format "終端でない transient の行が消えた: {!r}" open-kept)))
-  [t1 t2 p1 done start before gone listed nudge removed kept open-kept])
+  [t1 t2 p1 done start before gone listed swept removed kept open-kept])
 
 
 ;; --- 法 6: 索引の ListRows は全件を読んで絞った結果と同じ -------------------------------------------------
@@ -611,11 +613,12 @@
 (defk law-expired-records-are-unseen-before-a-sweep [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "保持の期限の読みの法(#3561): 期限を過ぎた終端の行と出来事は、回収(書きの前と SweepExpired)が走る前でも、どの読み(ReadRow・ListRows・
+  "保持の期限の読みの法(#3561): 期限を過ぎた終端の行と出来事は、回収(SweepExpired)が走る前でも、どの読み(ReadRow・ListRows・
    WatchChanges・ReadEvents・WatchEvents・ReadStreamEnd)にも出ない — 期限の判定は読みが自分で持ち、回収は掃除だけ。行の今の値が期限を
-   過ぎた終端の行である行の変わりは WatchChanges に出ず、その行の「消えた」は次の書き(別の表への書きでもよい)の回収が 1 回だけ積む。
-   出来事は出来事ごとに数える列(pulses)と組で数える列(pairs)の両方で見る。どの置き場の handler も同じ答えを返すことを確かめるため。"
-  (val law "保持の期限を過ぎた行と出来事は回収の前でも読みに出ず、消えた は次の書きの回収が 1 回だけ積む")
+   過ぎた終端の行である行の変わりは WatchChanges に出ず、その行の「消えた」は回収が 1 回だけ積む — 別の表への書きは積まない(書きは自分が
+   触る行だけを片付ける・#3605 の D — 触る行は法 16)。出来事は出来事ごとに数える列(pulses)と組で数える列(pairs)の両方で
+   見る。どの置き場の handler も同じ答えを返すことを確かめるため。"
+  (val law "保持の期限を過ぎた行と出来事は回収の前でも読みに出ず、消えた は別の表への書きでなく回収が 1 回だけ積む")
   (<- start (as-writer harness MAKER (ListRows "tickets")))
   (val cursor (WatchCursor start.epoch start.sequence))
   (<- born (as-writer harness MAKER (PutRow "tickets" #("g5" "u1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
@@ -649,14 +652,107 @@
   (<- pair-end (as-writer harness MAKER (ReadStreamEnd "pairs")))
   (<- (require-law (and (= pulse-end (StreamEmpty)) (= pair-end (StreamEmpty))) law
                (.format "回収の前の ReadStreamEnd が期限を過ぎた出来事を数えた: {!r} {!r}" pulse-end pair-end)))
-  ;; 書き(別の表への書き)の前に回収が走り、期限を過ぎた行の「消えた」が 1 回だけ積まれる。
+  ;; 別の表への書きは期限を過ぎた行を消さない(変更の列に 消えた が出ない)。回収(SweepExpired)が行を消し、消えた を 1 回だけ積む。
   (<- nudge (as-writer harness MAKER (PutRow "parts" #("p-nudge") (FrozenMap {"label" "n"}) (ExpectAbsent))))
+  (<- quiet (as-writer harness MAKER (WatchChanges #("tickets") watched.cursor :timeout 0.0)))
+  (<- (require-law (and (isinstance quiet Changes) (= quiet.items #())) law
+               (.format "別の表への書きが期限を過ぎた行の消えた を積んだ: {!r}" quiet)))
+  (<- swept (as-writer harness MAKER (SweepExpired)))
+  (<- (require-law (= swept (Swept 1)) law (.format "回収が期限を過ぎた行 1 つを消さない: {!r}" swept)))
   (<- removed (as-writer harness MAKER (WatchChanges #("tickets") watched.cursor :timeout 0.0)))
   (<- (require-law (and (isinstance removed Changes) (= (lfor item removed.items #((type item) item.key)) [#(RowRemoved #("g5" "u1"))]))
-               law (.format "書きの後の変更に期限を過ぎた行の消えた が 1 回だけ出ない: {!r}" removed)))
+               law (.format "回収の後の変更に期限を過ぎた行の消えた が 1 回だけ出ない: {!r}" removed)))
+  [start born open closed pulse ask before row listed watched pulses pairs pulse-moved pair-moved pulse-end pair-end nudge quiet swept
+   removed])
+
+
+;; --- 法 16: 期限を過ぎた行への書きは、その行を消してから無い行として判じる ------------------------------------------------
+
+(defk law-a-write-clears-the-expired-row-it-touches [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "書きが触る期限を過ぎた行の法(#3605 の D): 期限を過ぎて回収(SweepExpired)されていない終端の行へ書く PutRow・PutRows は、
+   その行を消して変更の列に「消えた」を積んでから無い行として判じる — 回収の後の書きと同じ答え(ExpectAbsent は版 1 で生まれ、消えた行の版を
+   期待する ExpectVersion は Conflict(Missing)で、行は消えたまま)。行ごとの変更の列は 消えた → 新しい版 の順。書きの前に置き場の全部を
+   回収していた形(#3605 の前)と同じ答えを、どの置き場の handler も返すことを確かめるため。"
+  (val law "期限を過ぎた行への書きは、その行を消して 消えた を積んでから無い行として判じる")
+  (var closed #())
+  (for [name #("u1" "u2" "u3")]
+    (<- born (as-writer harness MAKER (PutRow "tickets" #("g7" name) (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
+    (<- done (as-writer harness MAKER (PutRow "tickets" #("g7" name) (FrozenMap {"state" "done"}) (ExpectVersion born.version))))
+    (:= closed (+ closed #(born done))))
+  (<- mark (as-writer harness MAKER (ListRows "tickets" :limit 1)))
+  (<- (Delay (+ TICKET-KEEP-SECONDS 1)))
+  ;; ExpectAbsent の書き: 無い行として版 1 で生まれる。
+  (<- reborn (as-writer harness MAKER (PutRow "tickets" #("g7" "u1") (FrozenMap {"owner" "o2"}) (ExpectAbsent))))
+  (<- (require-law (= reborn (Written 1 (FrozenMap {"group" "g7" "id" "u1" "owner" "o2" "state" "open"}))) law
+               (.format "期限を過ぎた行への ExpectAbsent の書き: {!r}" reborn)))
+  ;; 消えた行の版(2)を期待する書き: Conflict(Missing)で、行は戻らない。
+  (<- stale (as-writer harness MAKER (PutRow "tickets" #("g7" "u2") (FrozenMap {"owner" "o3"}) (ExpectVersion 2))))
+  (<- (require-law (= stale (Conflict (Missing))) law (.format "期限を過ぎた行の版を期待する書き: {!r}" stale)))
+  (<- gone (as-writer harness MAKER (ReadRow "tickets" #("g7" "u2"))))
+  (<- (require-law (= gone (Missing)) law (.format "Conflict の後に期限を過ぎた行が読めた: {!r}" gone)))
+  ;; PutRows の束の行も同じ。
+  (<- batch (as-writer harness MAKER (PutRows #((RowWrite "tickets" #("g7" "u3") (FrozenMap {"owner" "o4"}) (ExpectAbsent))))))
+  (<- (require-law (= batch (WrittenRows #((Written 1 (FrozenMap {"group" "g7" "id" "u3" "owner" "o4" "state" "open"}))))) law
+               (.format "期限を過ぎた行への束の書き: {!r}" batch)))
+  (<- collected (collect-changes harness #("tickets") (WatchCursor mark.epoch mark.sequence) 100))
+  (val items (tuple (gfor answer (get collected 0) :if (isinstance answer Changes) item answer.items item)))
+  (val per-key (dfor name #("u1" "u2" "u3")
+                     name (lfor item items :if (= item.key #("g7" name))
+                                #((. (type item) __name__) (if (isinstance item RowChanged) item.version None)))))
+  (<- (require-law (= per-key {"u1" [#("RowRemoved" None) #("RowChanged" 1)] "u2" [#("RowRemoved" None)]
+                               "u3" [#("RowRemoved" None) #("RowChanged" 1)]})
+               law (.format "行ごとの変更の列が 消えた → 新しい版 の順でない: {!r}" items)))
+  (+ (list closed) [mark reborn stale gone batch] (get collected 0)))
+
+
+;; --- 法 17: 期限を過ぎた鍵への追記は、回収の前でも後でも同じ答え -------------------------------------------------------
+
+(defk expired-key-answers [harness]
+  {:pre [(: harness LawHarness)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "法 17 の追記 4 つ(出来事ごとに数える列 pulses と組で数える列 pairs の期限を過ぎた鍵へ、前と同じ本文と別の本文)を撃ち、答えを並べるため。"
+  (<- beat (as-writer harness MAKER (AppendEvent "pulses" "beat-17" {"n" 1})))
+  (<- beat-other (as-writer harness MAKER (AppendEvent "pulses" "beat-17" {"n" 9})))
+  (<- ask (as-writer harness MAKER (AppendEvent "pairs" "ask:t17" {"n" 2})))
+  (<- ask-other (as-writer harness MAKER (AppendEvent "pairs" "ask:t17" {"n" 9})))
+  #(beat beat-other ask ask-other))
+
+
+(defk law-an-expired-key-answers-the-same-before-and-after-a-sweep [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "書きが触る期限を過ぎた出来事の法(#3605 の D): 保持の期限を過ぎて回収(SweepExpired)されていない出来事の冪等キーへの
+   追記は、回収の後の追記と同じ答え — 同じ本文は前の番号・別の本文は同じ文の断り(出来事ごとに数える列 pulses と組で数える列 pairs の両方)。
+   期限を過ぎた組に新しい鍵を積んでも、組の古い出来事は読みに戻らない(新しい出来事が組の最後の刻を延ばしても、前の出来事は回収の後と同じく
+   消えたまま・鍵は覚えている)。書きの前に置き場の全部を回収していた形(#3605 の前)と同じ答えを、どの置き場の handler も返すことを確かめるため。"
+  (val law "期限を過ぎた鍵への追記は回収の前でも後でも同じ答えで、期限を過ぎた組の古い出来事は新しい鍵の追記で読みに戻らない")
+  (<- beat (as-writer harness MAKER (AppendEvent "pulses" "beat-17" {"n" 1})))
+  (<- ask (as-writer harness MAKER (AppendEvent "pairs" "ask:t17" {"n" 2})))
+  (<- side (as-writer harness MAKER (AppendEvent "pairs" "ask:u17" {"n" 3})))
+  (<- (Delay (+ (max PULSE-KEEP-SECONDS PAIR-KEEP-SECONDS) 1)))
+  ;; 回収の前(期限を過ぎた出来事が置き場に残る)の答え。
+  (<- before (expired-key-answers harness))
+  (<- (require-law (and (= (get before 0) beat) (= (get before 2) ask)) law
+               (.format "期限を過ぎた鍵の同じ本文の再送が前の番号でない: {!r} {!r} {!r}" before beat ask)))
+  (<- (require-law (all (gfor answer #((get before 1) (get before 3)) (and (isinstance answer Refused) (in "冪等キー" answer.reason))))
+               law (.format "期限を過ぎた鍵の別の本文が断られない: {!r}" before)))
+  ;; 期限を過ぎた組 u17 に新しい鍵を積む: 新しい出来事で、組の古い出来事(ask:u17)は読みに戻らない。
+  (<- done (as-writer harness MAKER (AppendEvent "pairs" "done:u17" {"n" 4})))
+  (<- (require-law (and (isinstance done Appended) (> done.sequence side.sequence)) law (.format "新しい鍵が新しい出来事でない: {!r}" done)))
+  (<- read (as-writer harness MAKER (ReadEvents "pairs")))
+  (<- (require-law (and (isinstance read Events) (= (lfor e read.items e.idempotency-key) ["done:u17"])) law
+               (.format "期限を過ぎた組の古い出来事が新しい鍵の追記で読みに戻った: {!r}" read)))
   (<- swept (as-writer harness MAKER (SweepExpired)))
-  (<- (require-law (= swept (Swept 0)) law (.format "書きの前の回収の後に、回収する行が残る: {!r}" swept)))
-  [start born open closed pulse ask before row listed watched pulses pairs pulse-moved pair-moved pulse-end pair-end nudge removed swept])
+  ;; 回収の後(鍵の覚えで答える)の答えは、回収の前と同じ。
+  (<- after (expired-key-answers harness))
+  (<- (require-law (= after before) law (.format "回収の前と後で期限を過ぎた鍵の答えが違う: 前 {!r} / 後 {!r}" before after)))
+  (<- side-again (as-writer harness MAKER (AppendEvent "pairs" "ask:u17" {"n" 3})))
+  (<- (require-law (= side-again side) law (.format "新しい鍵の追記の前に消えた鍵の再送が前の番号でない: {!r} {!r}" side-again side)))
+  (<- end (as-writer harness MAKER (ReadStreamEnd "pairs")))
+  (<- (require-law (= end (StreamEnd done.sequence)) law (.format "列の末尾が新しい鍵の出来事でない: {!r}" end)))
+  (+ [beat ask side] (list before) [done read swept] (list after) [side-again end]))
 
 
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
@@ -677,6 +773,8 @@
             "grouped-events-expire-together" law-grouped-events-expire-together
             "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence
             "expired-keys-are-remembered" law-expired-keys-are-remembered
-            "expired-records-are-unseen-before-a-sweep" law-expired-records-are-unseen-before-a-sweep})
+            "expired-records-are-unseen-before-a-sweep" law-expired-records-are-unseen-before-a-sweep
+            "a-write-clears-the-expired-row-it-touches" law-a-write-clears-the-expired-row-it-touches
+            "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

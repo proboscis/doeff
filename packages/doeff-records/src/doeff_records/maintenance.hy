@@ -3,9 +3,9 @@
 ;;; どちらも公開 effect ではない(業務の Program は撃たない)。記録の service の composition root が手入れの係を 1 つ立て、
 ;;; maintenance-loop を回す。handler の組(memory・PostgreSQL)はどれもこの 2 つに答える。
 ;;;
-;;;   SweepExpired   期限を過ぎた行を消して変更の列に RowRemoved を積み、期限を過ぎた出来事を捨てる。書き(PutRow・PutRows・
-;;;                  AppendEvent)の前にも同じ回収が走るが(読みは回収せず期限を自分で見る — #3561)、誰も書かない置き場でも行が
-;;;                  残り続けないように係が撃つ
+;;;   SweepExpired   期限を過ぎた行を消して変更の列に RowRemoved を積み、期限を過ぎた出来事を捨てる。回収はこの effect の時だけ
+;;;                  走る — 読みは回収せず期限を自分で見て(#3561)、書き(PutRow・PutRows・AppendEvent)は自分が触る行と出来事だけを
+;;;                  片付ける(#3605 の D)。触られない期限を過ぎた行の RowRemoved は、係が撃つこの回収が積む
 ;;;   PruneChanges   keep-seconds より古い変更を変更の列から消し、floor(これより前の位置は Reset)を上げる。変更の列が際限なく
 ;;;                  伸びないようにする。floor より前の位置で WatchChanges を頼んだ読み手は Reset を受けて一覧から読み直す
 ;;;                  (keep-seconds は読み手の遅れの許容 — これより遅れた読み手だけが読み直す)

@@ -17,7 +17,8 @@
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
-                            law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep])
+                            law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
+                            law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -172,3 +173,20 @@
     (.setattr patched memory "hyx_stored_event_expiredXquestion_markX" (fn [store decl event now-ms] False))
     (assert (breaks? law-expired-records-are-unseen-before-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))
             "出来事の期限の判定を外した置き場")))
+
+
+(defn test-the-touched-write-laws-turn-red-when-writes-leave-expired-records-in-place [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+  ;; #3605 の D: 書きの前の回収を外した memory の置き場で、書きが触る期限を過ぎた物を片付けない形は法 16・17 で赤になる — 行の書きが
+  ;; 期限を過ぎた行をそのまま判定に渡す(writable-row を素の行の引き memory-current-row に差し替える)と、ExpectAbsent が Conflict になる。
+  ;; 追記が期限を過ぎた出来事を片付けない(retire-touched-events を何もしない関数に差し替える)と、回収の前の断りの文が回収の後と違い、期限を
+  ;; 過ぎた組の古い出来事が新しい鍵の追記で読みに戻る。片付けを外さない置き場では緑(比べの基準)。
+  (assert (not (breaks? law-a-write-clears-the-expired-row-it-touches (broken-harness (MemoryStore LAW-SCHEMA) None))))
+  (assert (not (breaks? law-an-expired-key-answers-the-same-before-and-after-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "writable_row" (fn [store decl key now-ms] (memory.memory-current-row store decl.name key)))
+    (assert (breaks? law-a-write-clears-the-expired-row-it-touches (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "期限を過ぎた行を片付けない書き"))
+  (with [patched (.context monkeypatch)]
+    (.setattr patched memory "retire_touched_events" (fn [store decl idempotency-key now-ms] None))
+    (assert (breaks? law-an-expired-key-answers-the-same-before-and-after-a-sweep (broken-harness (MemoryStore LAW-SCHEMA) None))
+            "期限を過ぎた出来事を片付けない追記")))

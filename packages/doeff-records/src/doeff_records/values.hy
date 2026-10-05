@@ -70,8 +70,10 @@
   "表: 終端の状態になった行を seconds 秒の後に消す(transient)。追記の列: 積んでから seconds 秒の後に消す。
    期限を過ぎた行と出来事は、その刻からどの読みにも出ない(ReadRow は Missing・ListRows と ReadEvents は除く・WatchChanges は行の今の値が
    期限を過ぎた行の変わりを出さない・WatchEvents は動かない・ReadStreamEnd は数えない)。置き場から消して変更の列に RowRemoved を積むのは
-   回収で、回収は書き(PutRow・PutRows・AppendEvent)の前と SweepExpired の時だけ走る — RowRemoved は期限の刻でも読みの時でもなく、
-   期限の後の最初の書き(か SweepExpired)の時に積まれ、既に WatchChanges で行を受け取った読み手の写しにはその時まで行が残り得る(#3561)。"
+   回収で、回収は SweepExpired(手入れの係)の時だけ走る。書き(PutRow・PutRows・AppendEvent)は自分が触る行と出来事だけを回収と同じく
+   片付けてから判じる(#3605 の D — 期限を過ぎた行への書きは、その行の RowRemoved を積んでから無い行として判じる)。RowRemoved は期限の刻
+   でも読みの時でもなく、期限の後の SweepExpired(かその行への書き)の時に積まれ、既に WatchChanges で行を受け取った読み手の写しには
+   その時まで行が残り得る(#3561)。"
   (#^ float seconds)
   (defn #^ None __post_init__ [self]
     (when (or (isinstance self.seconds bool) (not (isinstance self.seconds #(int float))) (<= self.seconds 0))
@@ -344,7 +346,7 @@
   (defn #^ None __post_init__ [self] (freeze-field self "value" "RowChanged.value")))
 
 (defclass [(dataclass :frozen True)] RowRemoved []
-  "変更 1 つ: 行が保持の期限で消えた。積むのは回収(期限の後の最初の書きの前か SweepExpired)— 期限の刻でも読みの時でもない(KeepFor の註)。"
+  "変更 1 つ: 行が保持の期限で消えた。積むのは回収(期限の後の SweepExpired か、その行への書き)— 期限の刻でも読みの時でもない(KeepFor の註)。"
   (#^ str table)
   (#^ tuple key)
   (#^ int sequence))

@@ -170,8 +170,10 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 
 公開 effect ではない 2 つの effect と、それを回す Program。memory と PostgreSQL の handler が答える。
 
-- `SweepExpired()` → `Swept(rows)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨てる(書きの前にも
-  同じ回収が走る — 読みは回収せず期限を自分で見る。誰も書かない置き場でも行が残らないように手入れの係が実行する)。
+- `SweepExpired()` → `Swept(rows)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨てる。回収はこの
+  effect の時だけ走る(手入れの係が実行する)。読みは回収せず期限を自分で見る。書き(`PutRow`・`PutRows`・`AppendEvent`)も回収せず、
+  自分が触る行と出来事だけを同じ transaction で片付けてから判じる — 期限を過ぎた行への書きはその行の `RowRemoved` を積んでから無い行として
+  判じ、期限を過ぎた鍵への追記は鍵の覚えで答える(答えは回収の後の書きと同じ)。PostgreSQL の書き 1 回は書きの transaction の文だけを流す。
 - `PruneChanges(keep_seconds)` → `Pruned(floor, removed)` — `keep_seconds` より古い変更を変更の列から消し、floor を上げる。
   floor より前の位置の `WatchChanges` は `Reset(epoch, floor)`(`WatchCursor(epoch, floor)` から読めば残った変更を頭から全部読める)。
 - `maintenance_loop(interval_seconds, keep_seconds, ticks)` — 手入れの係の本体(`ticks=None` で止めるまで)。
@@ -216,7 +218,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_committed_changes_appear_once_in_order` | 確定した変更は `WatchChanges` にちょうど 1 回・順序どおり |
 | `law_epoch_change_resets` | 置き場の版が変わると `Reset`・読み直した一覧から続けられる |
 | `law_undeclared_writes_are_refused` | 定義に無い欄・状態・上限・終端の行・キーの書き換えは `Refused` で、行を変えない。書き手の名では断らない |
-| `law_transient_rows_expire` | `KeepFor` の終端の行は期限で読みに出なくなり、次の書きの後の変更に `RowRemoved` が 1 回出る。`KeepForever` の行は消えない |
+| `law_transient_rows_expire` | `KeepFor` の終端の行は期限で読みに出なくなり、回収(`SweepExpired`)の後の変更に `RowRemoved` が 1 回出る。`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
@@ -224,7 +226,9 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
 | `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
 | `law_expired_keys_are_remembered` | 保持の期限で出来事を消した後も冪等キーは忘れない: 同じ本文の再送は前の番号で列の出来事を増やさず、別の本文は `Refused` |
-| `law_expired_records_are_unseen_before_a_sweep` | 保持の期限を過ぎた行と出来事(出来事ごと・組ごとの列)は、回収の前でも 6 つの読みのどれにも出ない。期限を過ぎた行の `RowRemoved` は次の書き(別の表への書き)の回収が 1 回だけ積む |
+| `law_expired_records_are_unseen_before_a_sweep` | 保持の期限を過ぎた行と出来事(出来事ごと・組ごとの列)は、回収の前でも 6 つの読みのどれにも出ない。期限を過ぎた行の `RowRemoved` は別の表への書きでは積まれず、回収(`SweepExpired`)が 1 回だけ積む |
+| `law_a_write_clears_the_expired_row_it_touches` | 回収されていない期限を過ぎた行への `PutRow`・`PutRows` は、その行を消して `RowRemoved` を積んでから無い行として判じる(`ExpectAbsent` は版 1 で生まれ、消えた行の版の `ExpectVersion` は `Conflict(Missing)`)— 回収の後の書きと同じ答え |
+| `law_an_expired_key_answers_the_same_before_and_after_a_sweep` | 回収されていない期限を過ぎた冪等キーへの追記は、回収の後と同じ答え(同じ本文は前の番号・別の本文は同じ文の断り)。期限を過ぎた組に新しい鍵を積んでも、組の古い出来事は読みに戻らない |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも
