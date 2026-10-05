@@ -33,6 +33,8 @@ export interface Counts {
   readonly completed: number;
   readonly cacheHits: number;
   readonly unmeasured: number;
+  readonly pendingChanges?: boolean;
+  readonly incremental?: boolean;
 }
 export type DocProgress = Counts &
   ({ readonly phase: 'queued' | 'running' | 'complete' } | { readonly phase: 'failed'; readonly reason: string });
@@ -43,6 +45,7 @@ export interface DocSnapshot {
   readonly index: DocIndex;
   readonly issues: readonly LintViolation[];
   readonly total: number;
+  readonly affected?: readonly string[];
 }
 export type WorkspaceEvent =
   | { readonly event: 'index'; readonly snapshot: DocSnapshot }
@@ -147,7 +150,8 @@ export function readWorkspaceEvent(raw: string, root: string, snapshot?: DocSnap
       }
       return { ...docFailure(loc.path, string(i.message)), rule, range: { start: loc.start, end: loc.end } };
     });
-    return { event: 'index', snapshot: { files, index: { definitions, references }, issues, total: count(v.total) } };
+    const affected = s.affected === undefined ? undefined : array(s.affected).map((p) => inside(root, p));
+    return { event: 'index', snapshot: { files, index: { definitions, references }, issues, total: count(v.total), affected } };
   }
   if (snapshot === undefined) {
     throw new Error('索引より先に判定が届きました');
