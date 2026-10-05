@@ -684,7 +684,10 @@
                                  #(UvFault.INDEX-UNREACHABLE EnvFailureKind.SYNC-FAILED True)
                                  #(UvFault.SDIST-BUILD-ERROR EnvFailureKind.SYNC-FAILED False)
                                  #(UvFault.NO-INTERPRETER EnvFailureKind.PYTHON-UNAVAILABLE True)
+                                 ;; signal 9 で殺されたが cgroup の oom_kill は増えない = 今までどおり一時の native-build-failed
                                  #(UvFault.BUILD-KILLED EnvFailureKind.NATIVE-BUILD-FAILED True)
+                                 ;; cgroup の memory の上限で殺された(signal 9・oom_kill が増えた)= 恒久の memory-killed(#3668)
+                                 #(UvFault.BUILD-MEMORY-KILLED EnvFailureKind.MEMORY-KILLED False)
                                  #(UvFault.BUILD-ERROR EnvFailureKind.NATIVE-BUILD-FAILED False)]]
     (<- (expect-failure (replace world :uv-failure (UvFailure :fault fault :detail "uv の失敗")) env kind retryable)))
   ;; 空きを 0 にする
