@@ -27,7 +27,7 @@
 (import doeff_agents.effects [
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
-  AgentTextEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
+  AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect])
@@ -571,6 +571,59 @@
 
 (deftest test-headless-concurrent-reader-and-interrupt-fake [tmp-path]
   (check-concurrent (run-on FAKE tmp-path concurrent-reader-and-interrupt)))
+
+
+;; --- 最後の本文の差分(agora-redesign #3628)--------------------------------------------------------------------
+
+(val STREAMED-TEXT "streamed final reply")
+(val STREAMED-PIECES 5)
+
+(defk streamed-reply [#^ str text #^ tuple memory]
+  {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)] :tags {:context "doeff-agents" :role "judgment"}}
+  "fake の返事(respond の形): 道具を 1 度呼んでから、最後の本文を STREAMED-PIECES 片の差分で出す手番 — 上の層の模擬が、書きかけの本文の
+   出来事を確定の本文より先に読めるかを確かめる材料を、この adapter が行の写しのまま運ぶかを見るため。本文の語 plain は差分なし(既定の返事)。"
+  (if (= text "plain")
+      (FakeReply STREAMED-TEXT :tool-seconds 1.0)
+      (FakeReply STREAMED-TEXT :tool-seconds 1.0 :deltas STREAMED-PIECES)))
+
+(defk streamed-turn [#^ Path work #^ str prompt]
+  {:pre [(: work Path) (: prompt str)] :post [(: % Read)] :tags {:context "doeff-agents" :role "program"}}
+  "本文 prompt の 1 手番を公開 effect だけで最後まで読んで止める(差分の出来事と確定の本文の出来事の並びを見るため)。"
+  (<- handle (Launch (+ "adapter-streamed-" prompt) :agent-type AgentType.CLAUDE :work-dir work :prompt prompt
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN))
+  (<- done (read-until handle (fn [events end] (is-not end None)) 60.0 -1))
+  (<- (Stop handle))
+  done)
+
+(deftest test-headless-carries-the-final-text-deltas-before-the-final-text-fake [tmp-path]
+  ;; fake の返事が最後の本文を deltas 片の差分(層 2 の PartialMessage の text_delta)で出すと、adapter の行の写しを通って、上の層は
+  ;; 書きかけの本文の出来事(AgentTextDeltaEvent)を片の数だけ、確定の本文の出来事(AgentTextEvent — 1 つ)より前に読む。片の連結は
+  ;; 確定の本文と同じ。既定の返事(deltas 0)は差分の出来事を 1 つも出さない(agora-redesign #3628 — 上の層の模擬が「文の途中を画面へ
+  ;; 流す」を確かめる材料)。
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val world (FakeClaudeWorld :respond streamed-reply))
+  (val run-turn (fn [prompt]
+                  (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))]
+                                                    (fake-headless-claude-handlers None (str (/ tmp-path "home")) :world world
+                                                                                   :env {} :settings {}))
+                                                 (streamed-turn work prompt))))))
+  (val streamed (run-turn "streamed"))
+  (val plain (run-turn "plain"))
+  (assert (isinstance streamed.end AgentTurnCompleted) (repr streamed.end))
+  (assert (= streamed.end.result-text STREAMED-TEXT) (repr streamed.end))
+  (val events streamed.events)
+  (val delta-indexes (lfor #(index event) (enumerate events) :if (isinstance event AgentTextDeltaEvent) index))
+  (val text-indexes (lfor #(index event) (enumerate events) :if (isinstance event AgentTextEvent) index))
+  (assert (= (len delta-indexes) STREAMED-PIECES) events)
+  (assert (= (.join "" (lfor index delta-indexes (. (get events index) text))) STREAMED-TEXT) events)
+  (assert (= (lfor index text-indexes (. (get events index) text)) [STREAMED-TEXT]) events)
+  (assert (< (max delta-indexes) (get text-indexes 0)) events)
+  ;; 既定の返事: 差分の出来事 0・確定の本文の出来事 1 つ。
+  (assert (isinstance plain.end AgentTurnCompleted) (repr plain.end))
+  (assert (= (lfor event plain.events :if (isinstance event AgentTextDeltaEvent) event) []) plain.events)
+  (assert (= (lfor event plain.events :if (isinstance event AgentTextEvent) event.text) [STREAMED-TEXT]) plain.events))
 
 
 (deftest test-headless-adapter-knows-no-process-and-no-session-host []

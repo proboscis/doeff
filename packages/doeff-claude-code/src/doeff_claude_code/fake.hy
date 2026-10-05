@@ -2,8 +2,8 @@
 ;;;
 ;;; 時刻は doeff-time(GetMonotonic で手番の筋書きを進め、GetTime で行の at を刻む)。仮想の時計(sim-time-handler)の下では
 ;;; 道具の秒数も待ちも一瞬で進む。筋書き = 入力の本文と会話の記憶(それまでの入力)→ FakeReply(返事の本文・道具の秒数・
-;;; 許可の問いの要否・終わり方〔完了・失敗・process が消える〕・usage・途中の本文の行の数)。行は本番と同じ ClaudeStreamLine /
-;;; ClaudeLineKind の型で出す(型を 2 つ作らない)。
+;;; 許可の問いの要否・終わり方〔完了・失敗・process が消える〕・usage・途中の本文の行の数・最後の本文を分ける差分の片の数)。
+;;; 行は本番と同じ ClaudeStreamLine / ClaudeLineKind の型で出す(型を 2 つ作らない)。
 ;;;
 ;;; 世界 = 家の中身(transcripts・activity — disk の上の物)と process の中の会話(sessions)。restarted は同じ家の上で process だけを
 ;;; 作り直した世界(前の process の会話は前の世界で走り続け、新しい世界からは見えない — 上の層の process の作り直しの模擬)。
@@ -18,7 +18,7 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested
+(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -33,6 +33,9 @@
 ;; 期限の比べに刻み 1 つ分の余裕を置き、眠りは刻み以上にする。
 (setv CLOCK-TICK 1e-6)
 (setv MIN-SLEEP 1e-3)
+;; 最後の本文の差分(PartialMessage の text_delta)どうしの間隔の秒。本物の CLI(--include-partial-messages)は生成の途中の本文を
+;; 数十ミリ秒ごとの片で出し、確定の本文(assistant の行)はその後に出す。
+(val DELTA-SECONDS 0.05)
 (setv FAKE-CAPABILITIES #("msg_lifecycle_v1" "interrupt_receipt_v1"))
 ;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の process の能力(FakeReply の interrupt-receipt が偽の手番)。
 (val NO-RECEIPT-CAPABILITIES #("msg_lifecycle_v1"))
@@ -50,7 +53,10 @@
    think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)・
    interrupt-receipt = この手番の CLI の process が init で interrupt_receipt_v1 を名乗るか(本物の handler は手番ごとに process を
    起こす)。偽 = 止めるは SIGINT の形で、読まれていない注入を捨てた入力(dropped-refs)として終える — 本物の対話の解釈
-   (dialogue.hy の interrupt と on-result)が受理を名乗らない CLI を止める道(#3467)。"
+   (dialogue.hy の interrupt と on-result)が受理を名乗らない CLI を止める道(#3467)・
+   deltas = 最後の本文を何片の差分(PartialMessage の text_delta)に分けて、確定の本文(AssistantMessage)の前に DELTA-SECONDS ごとに
+   出すか(0 = 差分を出さない。本物の CLI の --include-partial-messages の行の順 — 差分の列 → 確定の本文 → result)。片の連結は
+   確定の本文と同じで、どの片も空でない(deltas は本文の字数以下)。失敗と消失(fail・lose)の手番は本文を出さないので組まない。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -63,11 +69,20 @@
   (setv #^ float think-seconds 0.0)
   ;; この手番の CLI が止めるの受理を名乗るか(偽 = 止めるは SIGINT の形で、読まれていない注入を捨てる)。
   (setv #^ bool interrupt-receipt True)
+  ;; 最後の本文を分ける差分の片の数(0 = 差分を出さない)。
+  (setv #^ int deltas 0)
   (defn #^ None __post-init__ [self]
     (when (and (is-not self.fail None) (is-not self.lose None))
       (raise (ValueError "FakeReply の fail と lose は多くとも 1 つ")))
     (when (< self.lines 0)
-      (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))))
+      (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))
+    (when (< self.deltas 0)
+      (raise (ValueError (+ "FakeReply の deltas は 0 以上: " (str self.deltas)))))
+    (when (> self.deltas (len self.text))
+      (raise (ValueError (.format "FakeReply の deltas は本文の字数以下(どの片も空でない): deltas {} / 本文 {} 字"
+                                  self.deltas (len self.text)))))
+    (when (and (> self.deltas 0) (or (is-not self.fail None) (is-not self.lose None)))
+      (raise (ValueError "FakeReply の deltas は本文で終わる手番だけ(fail・lose の手番は本文を出さない)")))))
 
 
 (defclass [(dataclass :frozen True)] FakeInjection []
@@ -79,7 +94,8 @@
 
 
 (defclass FakeTurn []
-  "fake の手番 1 つ: phase = quick / tool / permission / done・permission = 答え待ちの許可の問いの id(無ければ None)・
+  "fake の手番 1 つ: phase = quick / tool / permission / text(最後の本文を差分で書いている — 期限 due-at は確定の本文を出す時刻)/ done・
+   permission = 答え待ちの許可の問いの id(無ければ None)・text = 最後の本文(text の相に入る時に決まる)・deltas-emitted = 出した差分の片の数・
    end = 手番の終わり(まだなら None)・bells = 出来事の読み(ClaudeReadTurnEvents)の待ち手が掛けた呼び鈴(新しい行か終わりで鳴らして外す)。"
   (defn __init__ [self #^ int seq #^ float started-at #^ FakeReply reply #^ (get tuple #(str ...)) refs]
     (setv #^ int self.seq seq)
@@ -89,6 +105,8 @@
     (setv #^ str self.phase "quick")
     (setv #^ float self.due-at (+ started-at (max QUICK-TURN-SECONDS reply.think-seconds)))
     (setv #^ int self.lines-emitted 0)
+    (setv #^ str self.text "")
+    (setv #^ int self.deltas-emitted 0)
     (setv #^ (get list FakeInjection) self.injections [])
     (setv #^ (| str None) self.permission None)
     (setv #^ (get list ClaudeStreamLine) self.lines [])
@@ -175,18 +193,63 @@
   (<- (ring-turn turn))
   None)
 
-(defk complete-turn [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
-  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
-  "道具の境界(か手番の終わり)で、読まれていない注入を読み、本文の返事で手番を終える。"
-  (setv memory (tuple (.get world.transcripts (.transcript-key world session.home session.cwd session.session-id) [])))
-  (setv extra [])
+(defk read-injections [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
+  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % tuple)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "読まれていない注入(queued)を読む — 本物の CLI が道具の境界と本文の後に足された入力を読むのと同じに、注入の started の行を出し、
+   それぞれの筋書きの返事の本文を足された順に返す(最後の本文へ続けるため)。"
+  (val memory (tuple (.get world.transcripts (.transcript-key world session.home session.cwd session.session-id) [])))
+  (var extra #())
   (for [#(index injection) (enumerate turn.injections)]
     (when (= injection.fate "queued")
       (setv (get turn.injections index) (replace injection :fate "started"))
       (<- (emit session turn (InputFate injection.ref "started")))
       (<- extra-reply FakeReply (reply-of world injection.text memory))
-      (.append extra extra-reply.text)))
-  (setv text (.join " " (+ [turn.reply.text] extra)))
+      (:= extra (+ extra #(extra-reply.text)))))
+  extra)
+
+(defk begin-text [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn #^ float now]
+  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn) (: now float)] :post [(: % (type None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "道具の境界(か手番の終わり)で最後の本文を決め、本文を書く相(text)に入る — 本物の CLI が最後の本文を差分で流してから確定するのを
+   模すため。本文 = 返事の本文 + 読まれていない注入の返事。確定の本文は deltas 片の差分を DELTA-SECONDS ごとに出し終えた刻
+   (deltas = 0 なら今)に出す。"
+  (<- extra (read-injections world session turn))
+  (setv turn.text (.join " " (+ #(turn.reply.text) extra))
+        turn.phase "text"
+        turn.due-at (+ now (* DELTA-SECONDS turn.reply.deltas)))
+  None)
+
+(defk next-delta-at [#^ FakeTurn turn]
+  {:pre [(: turn FakeTurn)] :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
+  "まだ出していない次の差分の時刻(本文を書く相の外か、出し終えていれば None)— 差分を出す刻と、読みの待ち手が起きる刻を 1 か所で決めるため。
+   差分 k(0 から)は確定の本文の時刻 due-at の (deltas − k) × DELTA-SECONDS 前(最初の片は相に入った刻)。"
+  (if (and (= turn.phase "text") (< turn.deltas-emitted turn.reply.deltas))
+      (- turn.due-at (* DELTA-SECONDS (- turn.reply.deltas turn.deltas-emitted)))
+      None))
+
+(defk emit-due-deltas [#^ FakeSession session #^ FakeTurn turn #^ float now]
+  {:pre [(: session FakeSession) (: turn FakeTurn) (: now float)] :post [(: % (type None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "now までに来た本文の差分を PartialMessage の text_delta で出す — 上の層が確定の本文より先に書きかけの本文を読めるように。本文を
+   deltas 片に字数でほぼ等分する(片 k = 本文の [k × 字数 / deltas, (k + 1) × 字数 / deltas) — 片の連結は本文と同じ・どの片も空でない)。"
+  (val pieces turn.reply.deltas)
+  (val size (len turn.text))
+  (var due (! (next-delta-at turn)))
+  (while (and (is-not due None) (>= (+ now CLOCK-TICK) due))
+    (<- (emit session turn (PartialMessage :text-delta (cut turn.text
+                                                            (// (* turn.deltas-emitted size) pieces)
+                                                            (// (* (+ turn.deltas-emitted 1) size) pieces)))))
+    (setv turn.deltas-emitted (+ turn.deltas-emitted 1))
+    (<- following (next-delta-at turn))
+    (:= due following))
+  None)
+
+(defk complete-turn [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
+  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
+  "本文を書き終えた刻に、確定の本文の返事で手番を終える。本文を書く間に足された注入もここで読み、その返事を本文の後に続ける。"
+  (<- late (read-injections world session turn))
+  (val text (.join " " (+ #(turn.text) late)))
   (<- (emit-all session turn [(AssistantMessage :text text)
                               (TurnResult "success" False :terminal-reason "completed" :usage turn.reply.usage)]))
   (for [injection turn.injections]
@@ -236,7 +299,11 @@
       (<- (emit-all session turn [(ToolResult :tool-use-ids #(FAKE-TOOL-USE-ID)) (TaskEvent "fake-task" "completed")])))
     (if (or (is-not turn.reply.fail None) (is-not turn.reply.lose None))
         (<- (end-scripted session turn))
-        (<- (complete-turn world session turn))))
+        (<- (begin-text world session turn now))))
+  (when (= turn.phase "text")
+    (<- (emit-due-deltas session turn now))
+    (when (>= (+ now CLOCK-TICK) turn.due-at)
+      (<- (complete-turn world session turn))))
   None)
 
 (defk begin-fake-turn [#^ FakeClaudeWorld world #^ FakeSession session reply #^ tuple refs #^ bool announce]
@@ -366,9 +433,12 @@
     (<- now (GetMonotonic))
     (when (or lines (is-not turn.end None) (>= now deadline))
       (return (TurnEventPage lines (if lines (. (get lines -1) seq) request.after-seq) turn.end)))
+    ;; 次の刻 = 本文の行(quick・tool の相)か差分(text の相)の次の時刻(無ければ期限)と、相の期限 due-at の早い方。
     (setv line-at (next-line-at turn))
-    (setv wake (if (in turn.phase #("quick" "tool"))
-                   (min turn.due-at deadline (if (is line-at None) deadline line-at))
+    (<- delta-at (next-delta-at turn))
+    (setv next-at (if (is line-at None) delta-at line-at))
+    (setv wake (if (in turn.phase #("quick" "tool" "text"))
+                   (min turn.due-at deadline (if (is next-at None) deadline next-at))
                    deadline))
     ;; 筋書きの次の刻(行・期限)か、待ちの外で行か終わりが出て呼び鈴が鳴るまで眠る(呼び鈴は読み直す前に掛け、鳴らずに起きたら外す)。
     (<- bell (CreateExternalPromise))
