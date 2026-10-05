@@ -21,7 +21,7 @@ from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION
 TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
-    from doeff_hy_bytecode_guard.records import MacroDependency
+    from doeff_hy_bytecode_guard.records import MacroDependency, MacroRecord
 
 #: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる — doeff_hy/__init__.py)。
 HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")
@@ -80,6 +80,28 @@ def macro_dependencies(module: ModuleType, path: str) -> "list[MacroDependency]"
         records.MacroDependency(name, file, file_sha256(file) or records.UNREADABLE)
         for name, file in records.macro_provider_files(module, path, sys.modules).items()
     ]
+
+
+def current_record(module: ModuleType, path: str) -> "MacroRecord":
+    """Hy の module(path の file を展開した物)の展開が依った物の記録 — 今の Hy の版と、macro の提供元の file と今の sha256。
+    compile の口が code に足す記録と、展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)が同じ 1 つの作り方を
+    使うための公開の口。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    return records.MacroRecord(_hy_version(), tuple(macro_dependencies(module, path)))
+
+
+def record_is_current_here(record: "MacroRecord") -> bool:
+    """記録が、今の Hy の版と今の環境の macro の file に合うか。
+
+    記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
+    そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
+    共有の置き場の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。.pyc の記録と、展開した木の
+    cache(doeff-effect-analyzer — agora-redesign #3598)の記録が同じ 1 つの照らし方を使うための公開の口。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    current = records.rebased_record(record, _current_file_of)
+    return current is not None and records.record_is_current(current, _hy_version(), file_sha256)
 
 
 def source_to_code_as_import(
@@ -163,9 +185,7 @@ def _recording_source_to_code(previous: SourceToCode):
             return code
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
-        return records.with_record(
-            code, records.MacroRecord(_hy_version(), tuple(macro_dependencies(module, path)))
-        )
+        return records.with_record(code, current_record(module, path))
 
     return source_to_code
 
@@ -229,16 +249,12 @@ def _checking_get_code(previous: GetCode):
 
 
 def _record_is_current_here(code: CodeType) -> bool:
-    """code に載った記録が、今の Hy の版と今の環境の macro の file に合うか(記録が無ければ偽)。
-
-    記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
-    そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
-    共有の置き場の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。"""
+    """code に載った記録が、今の Hy の版と今の環境の macro の file に合うか(記録が無ければ偽・照らし方は
+    record_is_current_here)。"""
     from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
     record = records.record_of(code)
-    current = None if record is None else records.rebased_record(record, _current_file_of)
-    return current is not None and records.record_is_current(current, _hy_version(), file_sha256)
+    return record is not None and record_is_current_here(record)
 
 
 def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:

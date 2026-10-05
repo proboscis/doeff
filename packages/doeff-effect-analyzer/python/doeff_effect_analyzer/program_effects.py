@@ -54,12 +54,10 @@ import contextlib
 import functools
 import hashlib
 import importlib
-import importlib.util
 import inspect
 import itertools
 import os
 import pickle
-import re
 import sys
 import tempfile
 import types
@@ -67,9 +65,13 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from doeff_effect_analyzer import env_places
+
+if TYPE_CHECKING:
+    # Read at run time only where a Hy module is expanded or its cached tree read.
+    from doeff_hy_bytecode_guard.records import MacroRecord
 
 
 @dataclass(frozen=True)
@@ -469,9 +471,9 @@ def _module_source(module: types.ModuleType) -> _ModuleSource:
 
 def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _ChunkedTree":
     """The macro-expanded tree of a Hy module (from the disk cache when the same inputs were expanded before)."""
-    cache_path = _hy_cache_path(source, filename, module_name)
-    if cache_path is not None:
-        cached = _read_cached_tree(cache_path)
+    place = _hy_cache_place(source, module_name)
+    if place is not None:
+        cached = _find_cached_tree(place)
         if cached is not None:
             return cached
     # The whole miss is observed: the expansion, and building and writing what is cached
@@ -480,10 +482,10 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
     with contextlib.ExitStack() as observed:
         for observer in tuple(_EXPANSION_OBSERVERS):
             observed.enter_context(observer())
-        compiled = _expand_hy(source, filename, module_name)
-        if cache_path is not None:
-            _write_cached_tree(cache_path, compiled)
-    return _WholeTree(compiled)
+        expanded = _expand_hy(source, filename, module_name)
+        if place is not None:
+            _write_cached_tree(place, expanded)
+    return _WholeTree(expanded.tree)
 
 
 # Who wants to know when an expansion missed the cache (the expansion and writing the
@@ -506,10 +508,22 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
     return stop
 
 
-def _expand_hy(source: str, filename: str, module_name: str) -> ast.Module:
+@dataclass(frozen=True)
+class _Expanded:
+    """A Hy module expanded in this process, and the record of what the expansion used: the Hy
+    version and every macro file it went through — the macro modules the source requires, the ones
+    they require in turn, and the helpers their macros call (``current_record``, the record the
+    import side puts on the module's bytecode)."""
+
+    tree: ast.Module
+    macros: "MacroRecord"
+
+
+def _expand_hy(source: str, filename: str, module_name: str) -> _Expanded:
     """Expand a Hy module with Hy's own compiler so user macros become the Python AST the reader walks."""
     import hy
     import hy.compiler
+    from doeff_hy_bytecode_guard import current_record
 
     # A fresh module object: expansion registers macros on it and must not
     # disturb the imported module whose globals resolve names.
@@ -520,16 +534,81 @@ def _expand_hy(source: str, filename: str, module_name: str) -> ast.Module:
     )
     if not isinstance(compiled, ast.Module):
         raise TypeError(f"{filename}: Hy compiled to {type(compiled)!r}, expected a module")
-    return compiled
+    return _Expanded(tree=compiled, macros=current_record(scratch, filename))
 
 
 # Macro expansion is most of the analysis time: every process re-expands each Hy
 # module it reads (0.5–1 s per module). The expanded tree depends only on the
-# source, the macro modules it requires, and the Hy / Python versions, and what is
-# stored with it on the reader's code, so it is cached on disk under a key made of
-# exactly those. DOEFF_EFFECT_ANALYZER_CACHE
-# names the directory; "off" disables the cache.
-_REQUIRE = re.compile(r"\(require\s+([A-Za-z_][\w.\-]*)")
+# source's content, the module name, the macro files the expansion goes through, and
+# the Hy / Python versions, and what is stored with it on the reader's code, so it is
+# cached on disk under a key made of exactly those — not of the file's path, so the
+# same source in another worktree reads the same entry (agora-redesign #3598).
+# DOEFF_EFFECT_ANALYZER_CACHE names the directory; "off" disables the cache.
+#
+# Which macro files an expansion goes through is known only after it (a macro module
+# requires others; its macros call helpers of its package), so the key has two levels,
+# as the import side's shared code store keys the code by the source and checks the
+# record it stores with it (doeff_hy_bytecode_guard): ``_TreeKey`` names the place of
+# a source, and in it each entry is named by the digests of the macro files it was
+# expanded with and starts with their record. An entry is read only when its record is
+# this environment's (``record_is_current_here`` — the files found again by module name,
+# since the paths in a record are the writing worktree's). Worktrees of different doeff
+# versions keep their own entries side by side instead of overwriting one.
+
+# The shape of the key; a new shape names other entries, and the old ones are never read.
+# v2: the tree is stored with what is derived from it alone. v3: cut into top-level
+# definitions that are built only when followed (_CachedTree — agora-redesign #1591).
+# v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
+# v5: the key names the reader's source (_reader_digest), so a change of what is
+# derived no longer waits for this tag to be bumped by hand (#2973 changed the shape
+# of _BodyFacts.rewraps and kept v4 — the newer reader read v4 entries and raised).
+# v6: the key names the source by its content and not by its path (_TreeKey — #3598).
+# v7: the macro files are every one the expansion went through, not only the modules the
+# source requires itself (_Expanded.macros — #3598).
+_TREE_KEY_FORMAT = "v7"
+
+
+@dataclass(frozen=True)
+class _TreeKey:
+    """What the place of an expanded tree is a function of. The file's path is not one of them:
+    the expansion reads the path only for its suffix (``.hyk`` / ``.hyp`` decide whether ``defp``
+    is refused or ``defk`` warned about, never the tree), nothing derived from the tree holds it,
+    and the reader takes the path it reports from the module it reads
+    (``_ModuleSource.filename``) — so a worktree whose file has the same content reads the entry
+    another worktree wrote (agora-redesign #3598: a closure test of the screen job took 120.7 s
+    in a new worktree and 5.9 s after). The macro files name the entry within the place
+    (``_entry_name``)."""
+
+    python: str
+    hy: str
+    reader: str
+    record_format: str
+    module_name: str
+    source_sha256: str
+
+    def place(self, directory: Path) -> Path:
+        """The directory of this source's entries: the digest of every field, so any change misses."""
+        text = "\n".join(
+            [
+                _TREE_KEY_FORMAT,
+                self.python,
+                self.hy,
+                self.reader,
+                self.record_format,
+                self.module_name,
+                self.source_sha256,
+            ]
+        )
+        return directory / hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _entry_name(macros: "MacroRecord") -> str:
+    """The entry of one set of macro files: the digest of their module names and contents (not of
+    their paths — those are the writing worktree's)."""
+    text = "\n".join(
+        [macros.hy_version, *(f"{used.module}={used.sha256}" for used in macros.dependencies)]
+    )
+    return f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}.pickle"
 
 
 def _hy_cache_dir() -> Path | None:
@@ -542,48 +621,28 @@ def _hy_cache_dir() -> Path | None:
     return env_places.cache_home() / "doeff-effect-analyzer" / "hy-trees"
 
 
-def _required_macro_digests(source: str) -> list[str]:
-    """Digests of the macro modules the source requires (their expansion shapes the tree)."""
-    digests = []
-    for name in sorted(set(_REQUIRE.findall(source))):
-        try:
-            spec = importlib.util.find_spec(name.replace("-", "_"))
-        except (ImportError, ValueError):
-            spec = None
-        origin = spec.origin if spec is not None else None
-        if origin and Path(origin).is_file():
-            digests.append(f"{name}={hashlib.sha256(Path(origin).read_bytes()).hexdigest()}")
-        else:
-            digests.append(f"{name}=?")
-    return digests
+def _tree_key(source: str, module_name: str) -> _TreeKey:
+    """The key of the place of the trees ``source`` expands to as ``module_name`` (see ``_TreeKey``)."""
+    import hy
+    from doeff_hy_bytecode_guard.records import RECORD_TAG
+
+    return _TreeKey(
+        python=sys.version,
+        hy=hy.__version__,
+        reader=_reader_digest(),
+        record_format=RECORD_TAG,
+        module_name=module_name,
+        source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    )
 
 
-def _hy_cache_path(source: str, filename: str, module_name: str) -> Path | None:
-    """The cache file for these exact inputs, so a changed source or macro module never reuses an old tree."""
+def _hy_cache_place(source: str, module_name: str) -> Path | None:
+    """The directory of the entries for these exact inputs (None = caching turned off); an entry in
+    it is read only while the macro files it was expanded with are unchanged."""
     directory = _hy_cache_dir()
     if directory is None:
         return None
-    import hy
-
-    key = "\n".join(
-        [
-            # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
-            # definitions that are built only when followed (_CachedTree — agora-redesign #1591).
-            # v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
-            # v5: the key names the reader's source (_reader_digest), so a change of what is
-            # derived no longer waits for this tag to be bumped by hand (#2973 changed the shape
-            # of _BodyFacts.rewraps and kept v4 — the newer reader read v4 entries and raised).
-            "v5",
-            sys.version,
-            hy.__version__,
-            _reader_digest(),
-            module_name,
-            filename,
-            hashlib.sha256(source.encode("utf-8")).hexdigest(),
-            *_required_macro_digests(source),
-        ]
-    )
-    return directory / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.pickle"
+    return _tree_key(source, module_name).place(directory)
 
 
 @functools.cache
@@ -686,10 +745,27 @@ class _ChunkedTree:
         return read.definitions
 
 
+def _find_cached_tree(place: Path) -> _ChunkedTree | None:
+    """The tree of the entry in ``place`` whose macro files are this environment's (None when no
+    entry is — the caller expands again)."""
+    return next(
+        (tree for entry in sorted(place.glob("*.pickle")) if (tree := _read_cached_tree(entry)) is not None),
+        None,
+    )
+
+
 def _read_cached_tree(path: Path) -> _ChunkedTree | None:
-    """The cached tree, or None when absent or unreadable (the caller expands again)."""
+    """The entry's tree when the macro files it was expanded with are this environment's; None when
+    they are not, or the entry is absent or unreadable. The entry starts with the record of those
+    files, so an entry of other files is not read past it."""
+    from doeff_hy_bytecode_guard import record_is_current_here
+    from doeff_hy_bytecode_guard.records import MacroRecord
+
     try:
         with path.open("rb") as handle:
+            macros = pickle.load(handle)
+            if not isinstance(macros, MacroRecord) or not record_is_current_here(macros):
+                return None
             cached = pickle.load(handle)
     except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError):
         return None
@@ -748,15 +824,17 @@ def _derived(tree: ast.Module) -> _CachedTree:
     )
 
 
-def _write_cached_tree(path: Path, tree: ast.Module) -> None:
-    """Write atomically; a cache that cannot be written only costs the next expansion."""
+def _write_cached_tree(place: Path, expanded: _Expanded) -> None:
+    """Write the entry of the expansion's macro files in ``place`` — their record, then the tree —
+    atomically; a cache that cannot be written only costs the next expansion."""
     try:
-        cached = _derived(tree)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handle, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        cached = _derived(expanded.tree)
+        place.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=place, suffix=".tmp")
         with os.fdopen(handle, "wb") as out:
+            pickle.dump(expanded.macros, out, protocol=pickle.HIGHEST_PROTOCOL)
             pickle.dump(cached, out, protocol=pickle.HIGHEST_PROTOCOL)
-        os.replace(temporary, path)
+        os.replace(temporary, place / _entry_name(expanded.macros))
     except (OSError, pickle.PicklingError, RecursionError):
         return
 
