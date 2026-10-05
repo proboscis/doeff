@@ -21,7 +21,7 @@
                                                   ForgetWarmChild StopProgress StopStage])
 (import doeff_cluster.worker.protocol.observations [ObserveWarmChildren])
 (import doeff_cluster.worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
-(import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place warm-child-argv])
+(import doeff_cluster.worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
 
 
 (defrecord WarmSettings
@@ -78,7 +78,8 @@
   (<- now int (now-epoch-ms))
   (<- answer (| ProcessStarted ProcessNotStarted)
       (StartProcess :argv argv :cwd launch.root :env allowed :env-mode EnvMode.REPLACE :stdout-path log :stderr-path log
-                    :process-group True :hold-stdin True :reap-group True))
+                    :process-group WARM-CHILD-FLAGS.process-group :hold-stdin WARM-CHILD-FLAGS.hold-stdin
+                    :reap-group WARM-CHILD-FLAGS.reap-group))
   (match answer
     (ProcessNotStarted) (WarmChildView :key key :pid 0 :started-ms now :exit-code -1 :ended-ms now
                                        :detail (+ "待ちの子を起こせない: " answer.detail))
