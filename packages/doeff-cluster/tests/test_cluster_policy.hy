@@ -818,6 +818,37 @@
   (val beaten (! (generation-beat back "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 30))))
   (assert (= (get (! (full-kv beaten)) "worker/atlas" "knownExits") row)))
 
+(defk restarted-and-beaten [kv]
+  {:pre [(: kv dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "保存の行 kv から coordinator を作り直し(本番の load-state と同じ state-from-kv と止まっていた長さのずらし)、atlas の同じ世代 b1 が
+   w を pid 100 で走らせていると報告した heartbeat と、1 拍の調停を受けた後の状態を求めるため。"
+  (val again (get (resume-after-downtime (! (state-from-kv kv (+ BOOT-1 30))) (+ BOOT-1 30)) 0))
+  (assert (in "atlas" again.workers) (sorted again.workers))
+  (! (tick (! (generation-beat again "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 40))) (+ BOOT-1 41) (ClusterTiming))))
+
+(deftest test-an-old-saved-worker-row-keeps-the-running-service-in-place-after-the-coordinator-restarts
+  ;; (d) の続き(cisco-c8 10-06 08:2x): 欄 knownExits の無い保存の行(前の版の coordinator が書いた WAL)から作り直した coordinator は、
+  ;; worker の行を捨てない — 同じ世代の heartbeat を受けた後も、置き先(担い手と generation)・その worker へ返す job の行・報告の pid が、
+  ;; 同じ保存の行に knownExits が在る時と同じ = Service の job を止めず・起こし直さず・置き直さない(10-05 の taskReserve の版上げでは、
+  ;; 欄の無い行を読まずに全 Service が 1 回 起き直した)。
+  (val T (ClusterTiming))
+  (val joined (! (generation-beat (! (saved-w)) "b1" BOOT-1 [] (+ BOOT-1 10))))
+  (val placed (! (tick joined (+ BOOT-1 11) T)))
+  (val running (! (tick (! (generation-beat placed "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 20)))
+                        (+ BOOT-1 21) T)))
+  (val before (get running.placements "w"))
+  (assert (= before.worker "atlas") running.placements)
+  (val kv (! (full-kv running)))
+  (assert (in "knownExits" (get kv "worker/atlas")) (get kv "worker/atlas"))
+  (val old-kv (| kv {"worker/atlas" (dfor #(k v) (.items (get kv "worker/atlas")) :if (!= k "knownExits") k v)}))
+  (val from-old (! (restarted-and-beaten old-kv)))
+  (val from-new (! (restarted-and-beaten kv)))
+  (for [state [from-old from-new]]
+    (val after (get state.placements "w"))
+    (assert (= #(after.worker after.generation) #(before.worker before.generation)) #(before after))
+    (assert (= (lfor r (. (get state.statuses "atlas") jobs) #(r.name r.pid)) [#("w" 100)]) (. (get state.statuses "atlas") jobs)))
+  (assert (= (jobs-for from-old "atlas") (jobs-for from-new "atlas")) #((jobs-for from-new "atlas") (jobs-for from-old "atlas"))))
+
 (defk beat-without-rewrite [state row now]
   {:pre [(: state ClusterState) (: row dict) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "atlas の 1 世代目が w の行 row を載せた heartbeat を受けた状態を求め、保存の差分(durable-delta)が空 = 保存の行を書かないと確かめるため。"
