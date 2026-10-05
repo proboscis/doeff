@@ -136,6 +136,7 @@ class Failed:
 
 @dataclass(frozen=True)
 class Interrupted:
+    process_kept: bool
     surviving_refs: tuple[str, ...] = ...
     dropped_refs: tuple[str, ...] = ...
     continued_by: ClaudeTurn | None = None
