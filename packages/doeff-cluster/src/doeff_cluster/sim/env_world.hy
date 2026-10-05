@@ -503,6 +503,14 @@
   (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
 
 
+;; 模擬の焼く道具が全体の行で報告する処理ごとの秒(本物の道具と同じ形・小数 2 桁まで)。準備が印へそのまま写すかを検で見分けるため、どれも
+;; 違う 0 でない値にする(0 で埋める写し間違いと区別できる)。
+(val BAKE-CARRY-SECONDS 0.25)
+(val BAKE-COMPILE-SECONDS 1.5)
+(val BAKE-CLOSURE-SECONDS 0.75)
+(val BAKE-SCAN-SECONDS 0.5)
+
+
 (defk uv-compile [args]
   {:pre [(: args tuple)] :post [(: % ProcessOutcome)]}
   "uv run … hy <code_prepare> --revision … [--entries …] --tree <木> --roots <根,…> [--from <前の木|\"\">] … に答える: 本物の道具と同じく
@@ -534,7 +542,8 @@
     (:= compiled (+ compiled tree-compiled))
     (:= lines (+ lines #((.format "tree={} carried={} compiled={} failed=0 problem={}" tree tree-carried tree-compiled
                                   (if under-roots "-" "木に焼くべき source が 1 つも無い"))))))
-  (val total (.format "carried={} compiled={} failed=0 carry_s=0.0 compile_s=0.0 closure_s=0.0 scan_s=0.0" carried compiled))
+  (val total (.format "carried={} compiled={} failed=0 carry_s={} compile_s={} closure_s={} scan_s={}" carried compiled
+                      BAKE-CARRY-SECONDS BAKE-COMPILE-SECONDS BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS))
   (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ lines #(total)) (+ line "\n")))
                   :exit-code (if (any (gfor line lines (not (.endswith line "problem=-")))) 1 0)))
 

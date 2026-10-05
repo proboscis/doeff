@@ -28,7 +28,8 @@
 (import doeff_cluster.shared.core.runtime_env_rules [env-key key-material runtime-env->json runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [prepare-env carry-source] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
-                                set-uv-failure set-unreachable UvFailure UvFault])
+                                set-uv-failure set-unreachable UvFailure UvFault BAKE-CARRY-SECONDS BAKE-COMPILE-SECONDS
+                                BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
 
 (setv PLATFORM "linux-x86_64")
 (import tests.env_fixtures [LOCK APP-URL LIB-URL sha-of lock-sha app-commit lib-commit env-of base-world])
@@ -251,6 +252,35 @@
   (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
                                                                  (if (= r.url APP-URL) (replace r :commits (+ r.commits #(app))) r))))
                             (editable-scenario)))
+  (assert ok))
+
+
+;; 失敗ケース(#3607 の H2): 準備の後の完成マーカーに、bytecode の処理ステージの焼いた数と処理ごとの秒が、焼く道具の報告(模擬の道具の
+;; 全体の行と木ごとの行)と同じ値で載る — 次に準備が長い時、どの処理で時間を使ったかを印 1 つで読むため。印に書く所(prepare-env の
+;; EnvMarker の bytecode・env-marker->json の欄)を外すと、欄が null か無くなって赤。木は名と数だけ(path は載せない)。
+(defk bytecode-marker-scenario []
+  {:pre [] :post [(: % bool)]}
+  "業務の木(app)と editable の木(lib)を焼く準備の完成マーカーの bytecode の欄が、模擬の焼く道具の報告と同じ値である事を確かめるため。"
+  (<- env RuntimeEnv (env-of "app-editable" "lib-1" EDITABLE-LOCK))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (<- files dict (files-under ready.root))
+  (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
+  (assert (= (get marker "bytecode")
+             {"compiled" 4 "carried" 0 "failed" 0
+              "scanSeconds" BAKE-SCAN-SECONDS "closureSeconds" BAKE-CLOSURE-SECONDS
+              "carrySeconds" BAKE-CARRY-SECONDS "compileSeconds" BAKE-COMPILE-SECONDS
+              "trees" [{"name" "app" "compiled" 2 "carried" 0 "failed" 0} {"name" "lib" "compiled" 2 "carried" 0 "failed" 0}]})
+          (get marker "bytecode"))
+  True)
+
+
+(deftest test-the-ready-marker-carries-the-bytecode-counts-and-seconds-the-baker-reported
+  (<- world EnvWorld (base-world))
+  (<- app WorldCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(app))) r))))
+                            (bytecode-marker-scenario)))
   (assert ok))
 
 
