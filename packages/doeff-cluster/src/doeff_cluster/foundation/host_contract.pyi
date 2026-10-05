@@ -32,6 +32,7 @@ class HostContract:
     program_key: str
     versions_key: str
     program_env: str
+    notice_env: str
 HOST_CONTRACT: HostContract
 SIM_PASSABLE: tuple[type, ...]
 

@@ -820,7 +820,8 @@
         "doeff-cluster-main",
         "doeff-cluster-run-context",
         "doeff-cluster-run-context-rules",
-        "doeff-cluster-native-wheel"
+        "doeff-cluster-native-wheel",
+        "doeff-cluster-retirement-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1351,7 +1352,9 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-process-environ"
+      ],
       "layer": "runtime",
       "name": "doeff-cluster-shim",
       "paths": [
@@ -1508,7 +1511,9 @@
         "doeff-cluster-declaring",
         "doeff-cluster-handoff-policy",
         "records-event-source",
-        "doeff-cluster-native-wheel"
+        "doeff-cluster-native-wheel",
+        "doeff-cluster-retirement-model",
+        "doeff-cluster-retirement-notices"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

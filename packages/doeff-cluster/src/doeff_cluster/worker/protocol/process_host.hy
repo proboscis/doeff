@@ -1,10 +1,12 @@
-;;; worker の job の子 process の言い換え(handlers.hy の ProcessHost を置き換えた・#2464)— StartJob・SignalJob・ReapJob・RetireJob と
-;;; 観測 ObserveProcesses を、汎用の子 process の効果(StartProcess・PollProcess・SignalProcess・StopProcess・ReadEnvironment・
+;;; worker の job の子 process の言い換え(handlers.hy の ProcessHost を置き換えた・#2464)— StartJob・SignalJob・ReapJob・RetireJob・NoticeJob と
+;;; 観測 ObserveProcesses を、汎用の子 process の効果(StartProcess・PollProcess・SignalProcess・StopProcess・WriteProcessInput・ReadEnvironment・
 ;;; ReadInterpreter)と file system の効果(MakeDirectory・RemoveTree・WriteText)へ言い換える。I/O を持たない — 本物は外側の
 ;;; subprocess-handler と os-file-handler、模擬は台本と memory の答え手。
 ;;;
 ;;; 子は shim の下で専用の process group に起こし(process-group)、標準入力の pipe をこの worker の答え手が握る(hold-stdin — worker が
 ;;; kill -9 で死ぬと pipe が閉じ、shim が job の group を止める)。終わりを回収する時に group の残りを止める(reap-group)。
+;;; 同じ pipe は退きの知らせ(#3672)も運ぶ: RetireJob・NoticeJob が 1 行(retirement-line)を書き、shim が job の知らせの pipe へ中継する
+;;; (job の中の答え手 = worker/entry/retirement_notices の pipe-retirement-notices)。
 ;;; 起こし方(命令の並び・cwd・子の環境変数)の判断は worker/core/launch の job-launch。
 ;;;
 ;;; process の世代の名(instance): <試行の番号>-<12 桁>。12 桁は worker の pid・起こした時刻・job の名・試行の番号の sha256 の頭
@@ -19,7 +21,9 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [MakeDirectory RemoveTree WriteText file-done])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess
-                                            ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
+                                            ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild
+                                            WriteProcessInput ProcessInputWritten])
+(import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
                                                  Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
@@ -48,7 +52,10 @@
   (#^ ShimSpans shim)
   ;; 待ちの子の置き場の根(#3646 — warm_rules.warm-dir-of・待ちの子を起こす宿 warm_host と同じ値)。task を分ける頼みの socket を root の
   ;; キーから導く(warm_rules.warm-place)。
-  (#^ str warm-dir))
+  (#^ str warm-dir)
+  ;; 退きの知らせの pipe の読み口の fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — #3672)。shim がこの名で
+  ;; job へ渡し、worker が標準入力へ書いた行をその pipe へ中継する。
+  (#^ str notice-env))
 
 
 (defrecord ForkedFrom
@@ -93,6 +100,32 @@
     (WorkerStopping) "worker-stopping"))
 
 
+;; 退きの知らせになる止めの訳(#3672 — retirement_model の AwaitRetirement の答えの値)。
+(val RETIREMENT-NOTICES #((Retired) (HandoffAbandoned)))
+
+
+(defk retirement-line [notice]
+  {:pre [(: notice (| Retired HandoffAbandoned))] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "退きの知らせを、worker が shim の標準入力へ書く 1 行にするため(#3672 — 語は止めの訳の語 stop-reason-word と同じ綴り・行の終わりは改行。
+   shim は行をそのまま job の知らせの pipe へ中継し、job の中の答え手 pipe-retirement-notices が retirement-of-word で読む)。"
+  (<- word str (stop-reason-word notice))
+  (+ word "\n"))
+
+
+(defk retirement-of-word [word]
+  {:pre [(: word str)] :post [(: % (| Retired HandoffAbandoned))] :tags {:context "worker" :role "protocol"}}
+  "知らせの pipe の 1 行の語(改行を除いた物)を退きの知らせに読むため(retirement-line の逆 — 綴りは stop-reason-word の 1 か所)。知らない
+   語は名指しで断る(ValueError — 黙って既定の知らせに倒れない)。"
+  (var found None)
+  (for [notice RETIREMENT-NOTICES]
+    (<- spelled str (stop-reason-word notice))
+    (when (= spelled word)
+      (:= found notice)))
+  (when (is found None)
+    (raise (ValueError (.format "退きの知らせの語ではない: {!r}" word))))
+  found)
+
+
 (defk silent-ms-of [reason]
   {:pre [(: reason StopReason)] :post [(: % (| int None))] :tags {:context "worker" :role "protocol"}}
   "途絶で止めた時だけ、最後に届いた coordinator の返事からの ms を計時の行に載せるため(他の訳は None)。"
@@ -112,6 +145,17 @@
   (<- (slog STOP-TIMING-LOG :level "info" :stage moment.value :job name :pid pid :wall-ms now-ms :elapsed-ms (- now-ms asked.requested-ms)
             :killed asked.killed :reason word :silent-ms silent))
   None)
+
+
+(defk tell-retirement [started notice]
+  {:pre [(: started Started) (: notice (| Retired HandoffAbandoned))] :post [(: % Started)] :tags {:context "worker" :role "protocol"}}
+  "退きの知らせ notice を子へ送り、観測の notice に残した子を返すため(#3672): shim の下の子は shim の標準入力の pipe へ 1 行
+   (retirement-line)を書く — shim がその行を job の知らせの pipe へ中継する。待ちの子から分けた子(task — 入れ替えの対象でない)は知らせの
+   口を持たないので書かない。書けなかった(子が終わっていた)時も観測には残す — 終わりは ObserveProcesses が運ぶ。"
+  (when (is started.fork None)
+    (<- line str (retirement-line notice))
+    (<- (WriteProcessInput :pid started.view.pid :text line)))
+  (replace started :view (replace started.view :notice notice)))
 
 
 (defk job-work-dir [settings name]
@@ -148,7 +192,8 @@
                                  :uv settings.uv :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
                                  :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
-                                 :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms))
+                                 :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms
+                                 :notice-env settings.notice-env))
   (when plan.last-used
     ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
     (<- (file-done (WriteText plan.last-used "" :replace True))))
@@ -234,10 +279,18 @@
     (resume None))
   (RetireJob [name pid new-name]
     ;; 入れ替え: 動いている process を止めずに名から外す(表の鍵と観測の名を new-name へ移す)。同じ名で新しい process を起こせる。
+    ;; 外すと同時に子へ「退く」を知らせる(#3672 — 新の起動・新の Ready・旧の止めの合図のどれよりも前)。
     (val started (.get table name))
     (when (and started (= started.view.pid pid))
-      (:= table (| (dfor #(k v) (.items table) :if (!= k name) k v)
-                   {new-name (replace started :view (replace started.view :name new-name :retired-from name))})))
+      (<- told Started (tell-retirement (replace started :view (replace started.view :name new-name :retired-from name)) (Retired)))
+      (:= table (| (dfor #(k v) (.items table) :if (!= k name) k v) {new-name told})))
+    (resume None))
+  (NoticeJob [name pid notice]
+    ;; 退いた子への知らせの変わり目(入れ替えの諦めの取り消し・諦めが解けた後の もう一度の退き — #3672)。
+    (val started (.get table name))
+    (when (and started (= started.view.pid pid))
+      (<- told Started (tell-retirement started notice))
+      (:= table (| table {name told})))
     (resume None))
   (ObserveProcesses []
     ;; 終わりを観測していない子だけを問う(終わりを答えた子は答え手が回収して忘れるので、ここに exit-code を残す)。待ちの子から分けた子は

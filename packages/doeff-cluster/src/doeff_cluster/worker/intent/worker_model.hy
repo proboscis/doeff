@@ -81,7 +81,11 @@
   (setv #^ str instance "")
   ;; 入れ替え(handoff)で退いた process: 元の job の名。退いた process は名を「<元の名>#retired-<世代の名>」へ移して動かし続け、
   ;; 新しい process が Ready と数えられた後に止める。None = 退いていない。
-  (setv #^ (| str None) retired-from None))
+  (setv #^ (| str None) retired-from None)
+  ;; この process へ最後に知らせた退きの知らせ(#3672 — retirement_model の AwaitRetirement の答え): Retired = 退く(RetireJob が名から
+  ;; 外す時に送る)・HandoffAbandoned = 退きを取り消した(入れ替えの諦め — NoticeJob)。None = 何も知らせていない。型は下の止めの訳の
+  ;; 値なので文字列の注記(この class を作る時に名がまだ無い)。
+  (setv #^ "Retired | HandoffAbandoned | None" notice None))
 
 
 (defclass ProbeState [Enum]
@@ -408,10 +412,20 @@
 
 (defclass [(dataclass :frozen True)] RetireJob [EffectBase]
   "動いている process を止めずに job の名から外す(名を new-name へ移す)。入れ替え(handoff)で新しい process を同じ名で並べて
-   起こすため。退いた process は new-name の job として観測に残り、止めるのは方針の判断(新が Ready になった後)。"
+   起こすため。退いた process は new-name の job として観測に残り、止めるのは方針の判断(新が Ready になった後)。名から外すと同時に
+   その process へ退く知らせ(Retired — retirement_model の AwaitRetirement の答え)を送り、観測の notice に残す(#3672)。"
   (#^ str name)
   (#^ int pid)
   (#^ str new-name))
+
+
+(defclass [(dataclass :frozen True)] NoticeJob [EffectBase]
+  "退いた process(name = 退いた後の名)へ退きの知らせ notice を送り、観測の notice に残す(#3672): HandoffAbandoned = 退きを取り消した
+   (入れ替えの諦めで旧が動き続ける)・Retired = もう一度退く(宣言が変わって諦めが解けた)。最初の退く知らせは RetireJob が送る。
+   送れなくても(process が終わっていた)失敗にしない — 止めと落ちは別の観測が運ぶ。"
+  (#^ str name)
+  (#^ int pid)
+  (#^ "Retired | HandoffAbandoned" notice))
 
 
 (defclass [(dataclass :frozen True)] ProbeEntry [EffectBase]
@@ -459,7 +473,7 @@
   "終わりを観測した待ちの子を観測の表から外す(もう要らない root の待ちの子 — 要る root は StartWarmChild が置き換える)。"
   (#^ str key))
 
-(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry ForgetProbes
+(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob NoticeJob ReleaseLeases ProbeEntry ForgetProbes
                 StartWarmChild StopWarmChild ForgetWarmChild))
 
 

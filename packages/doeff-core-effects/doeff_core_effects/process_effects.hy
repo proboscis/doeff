@@ -70,6 +70,10 @@
 ;;;                     worker の子の止め方: 拍ごとに TERM を送り、止まらなければ次の段で KILL を送り、終わりは PollProcess で確かめる)。
 ;;;                     process-group で立てた子は group へ、そうでなければ子へ送る(StopProcess と同じ)。答え = ProcessSignalled(delivered =
 ;;;                     送ったか — 既に終わっていた子には送らず、回収は PollProcess)か ProcessNotChild(他人の process には送らない)。
+;;;   WriteProcessInput hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(#3672 — 消費者 = doeff-cluster の worker が shim へ
+;;;                     job の退きの知らせの行を送る)。答え = ProcessInputWritten(delivered = 書いたか — 終わっていた子・pipe を握っていない子
+;;;                     〔hold-stdin でない〕・読み手の居ない pipe には書かない)か ProcessNotChild(立てていない pid)。書くのは短い行に限る
+;;;                     (pipe の容量 約 64 KB を超えると、読み手が読むまで書きが待つ)。
 ;;;   本物の答え手は、立てた子の表を process に 1 つ持つ(子は OS の process ごとの資源 — 答え手を積み直しても同じ子を問える)。
 ;;;
 ;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
@@ -259,6 +263,19 @@
 (defrecord ProcessSignalled
   "SignalProcess の答え: delivered = 走っている子へ送った(True)・既に終わっていた子なので送らなかった(False — 終わりは PollProcess が
    答えて回収する)。送った後に子が終わったかは PollProcess で問う。"
+  (#^ int pid)
+  (#^ bool delivered))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] WriteProcessInput [EffectBase]
+  "hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(頭の註)。答え = ProcessInputWritten か ProcessNotChild。"
+  #^ int pid
+  #^ str text)
+
+
+(defrecord ProcessInputWritten
+  "WriteProcessInput の答え: delivered = 子の標準入力の pipe へ書いた(True)・書かなかった(False — 終わっていた子・pipe を握っていない子・
+   読み手の居ない pipe。終わりは PollProcess が答えて回収する)。"
   (#^ int pid)
   (#^ bool delivered))
 

@@ -24,7 +24,7 @@ def program_file(program_dir: Path, sha: str) -> Path:
 def program_file_text(blob: str, versions: Mapping[str, object]) -> str:
     ...
 
-def shim_argv(python: str, grace_ms: int, *, stamp_lines: bool) -> _Program[tuple[str, ...], object]:
+def shim_argv(python: str, grace_ms: int, *, stamp_lines: bool, notice_env: str | None) -> _Program[tuple[str, ...], object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,5 +37,5 @@ class JobLaunch:
     last_used: str | None
     entry_args: tuple = ...
 
-def job_launch(spec: JobSpec, code_path: str, instance: str, attempt: int, *, python: str, hy_command: str, uv: str, extra_env: dict, layout: CodeLayout, allowed_env: dict, worker_pid: int, program_path: str | None, program_env: str, work_dir: str, shim_grace_ms: int) -> _Program[JobLaunch, object]:
+def job_launch(spec: JobSpec, code_path: str, instance: str, attempt: int, *, python: str, hy_command: str, uv: str, extra_env: dict, layout: CodeLayout, allowed_env: dict, worker_pid: int, program_path: str | None, program_env: str, work_dir: str, shim_grace_ms: int, notice_env: str) -> _Program[JobLaunch, object]:
     ...
