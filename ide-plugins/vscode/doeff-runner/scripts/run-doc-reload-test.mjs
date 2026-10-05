@@ -1,10 +1,10 @@
 // 通信先だけをローカル HTTP に置き換え、実 CLI・永続キャッシュ・配布済み拡張を通す。
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const http = require('http');
-const { spawn } = require('child_process');
-const assert = require('assert');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+import assert from 'node:assert';
 
 async function main() {
   const extension = process.env.DOC_RELOAD_EXTENSION;
@@ -26,7 +26,7 @@ async function main() {
   fs.writeFileSync(path.join(driver, 'driver.cjs'), `
 const vscode = require('vscode');
 exports.activate = async () => {
-  try { await require(${JSON.stringify(path.join(__dirname, 'test-doc-reload.cjs'))}).run(); }
+  try { await (await import(${JSON.stringify(new URL('test-doc-reload.mjs', import.meta.url).href)})).run(); }
   catch (error) { require('fs').writeFileSync(${JSON.stringify(failure)}, String(error.stack || error)); }
   await vscode.commands.executeCommand('workbench.action.quit');
 };\n`);
@@ -37,12 +37,21 @@ exports.activate = async () => {
       `文書${file}の項目${i}は、再読み込み後もキャッシュから診断を復元するための検査です。`).join('\n\n'));
   }
   let requests = 0;
+  const editedRequests = [];
   const body = JSON.stringify({ model: 'reload-test', answers: Object.fromEntries(
     ['DOC001', 'DOC002', 'DOC003', 'DOC004'].map(rule => [rule, { type: 'noul', noul: rule === 'DOC001' ? 0.9 : 0.1 }])
   ), usage: { input_tokens: 1 } });
   const server = http.createServer((request, response) => {
+    const capture = requests >= 10000;
+    let sent = '';
+    request.setEncoding('utf8');
+    request.on('data', chunk => { if (capture) sent += chunk; });
     request.resume();
-    request.on('end', () => { requests++; response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(body); });
+    request.on('end', () => {
+      requests++;
+      if (capture) editedRequests.push(JSON.parse(sent).state);
+      response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(body);
+    });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -69,10 +78,22 @@ exports.activate = async () => {
       child.on('exit', code => { clearTimeout(deadline); code === 0 ? resolve() : reject(new Error(`VS Code 終了コード: ${code}`)); });
     });
     if (fs.existsSync(failure)) { throw new Error(fs.readFileSync(failure, 'utf8')); }
-    assert.strictEqual(requests, 10000, '再読み込み時に保存済みの本文を再測定しない');
+    // Markdown は直前の段落を文脈に含むため、編集した段落と次の段落の計2件が失効する。
+    assert.strictEqual(requests, 10004, '2回の編集で失効した計4段落だけを測定する');
+    for (const stage of [0, 1]) {
+      const replacement = '変更した段落だけを差分検査する。'.repeat(5 + stage);
+      assert(editedRequests.some(state => state.text === replacement && state.context === ''));
+      assert(editedRequests.some(state => state.text === '文書0の項目1は、再読み込み後もキャッシュから診断を復元するための検査です。' && state.context === replacement));
+    }
     const stages = JSON.parse(fs.readFileSync(evidence, 'utf8'));
     assert.strictEqual(stages.length, 2, '実際のウィンドウ再読み込みまで検査する');
-    console.log(JSON.stringify({ stages, requests, temp }, null, 2));
+    const logFiles = fs.readdirSync(path.join(temp, 'profile', 'logs'), { recursive: true })
+      .filter(file => file.endsWith('.log'));
+    const logs = logFiles.map(file => fs.readFileSync(path.join(temp, 'profile', 'logs', file), 'utf8')).join('\n');
+    const initialRuns = (logs.match(/\[doc-linter\] 初回・明示要求の全体検査:/g) ?? []).length;
+    assert.strictEqual(initialRuns, 2, '全体検査は2回の起動時だけ。編集では再実行しない');
+    assert(!logs.includes('Set maximum size exceeded'), 'Set の上限エラーがないこと');
+    console.log(JSON.stringify({ stages, requests, initialRuns, temp }, null, 2));
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

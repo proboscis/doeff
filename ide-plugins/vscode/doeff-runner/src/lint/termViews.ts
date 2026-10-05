@@ -2,6 +2,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { LintStore } from './store';
+import { lintChildren, violationRoots, type LintNode } from './view';
+import { lintTreeItem } from './panel';
 import type { TermLocation, TermDefinition, DocProgress } from './docWorkspaceContract';
 
 export const TERM_OPEN = 'doeff-runner.terms.open';
@@ -37,74 +39,94 @@ function progressText(p: DocProgress): string {
           : p.unmeasured > 0
             ? '未測定あり'
             : '検査終了';
-  return `${state} ${p.completed}/${p.total}件 · ${p.files}ファイル · キャッシュ ${p.cacheHits} · 未測定 ${p.unmeasured}`;
+  return `${p.incremental ? '差分 ' : ''}${state}${p.pendingChanges ? '（変更反映待ち）' : ''} ${p.completed}/${p.total}件 · ${p.files}ファイル · キャッシュ ${p.cacheHits} · 未測定 ${p.unmeasured}`;
 }
-class DocTree implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
-  private readonly change = new vscode.EventEmitter<void>();
+type DocNode = LintNode | { readonly tag: 'progress'; readonly root: string }
+  | { readonly tag: 'terms'; readonly definitions: readonly TermDefinition[] }
+  | { readonly tag: 'term'; readonly definition: TermDefinition };
+
+/** 既存の違反パネルと同じ規則・ファイル・指摘の木を使う。進捗だけでは木を作り直さない。 */
+export class DocTree implements vscode.TreeDataProvider<DocNode>, vscode.Disposable {
+  private readonly change = new vscode.EventEmitter<DocNode | undefined>();
   readonly onDidChangeTreeData = this.change.event;
   private readonly off: () => void;
   private readonly offProgress: () => void;
   private timer: NodeJS.Timeout | undefined;
+  private roots: DocNode[] | undefined;
+  private readonly children = new WeakMap<DocNode, DocNode[]>();
+  private readonly parents = new WeakMap<DocNode, DocNode>();
   constructor(private readonly store: LintStore) {
-    const refresh = (): void => {
-      if (this.timer === undefined) {
-        this.timer = setTimeout(() => {
-          this.timer = undefined;
-          this.change.fire();
-        }, 150);
+    this.off = store.onDidChange(() => {
+      if (this.timer !== undefined) { return; }
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        this.roots = undefined;
+        this.change.fire(undefined);
+      }, 200);
+    });
+    this.offProgress = store.onDidChangeDocumentWorkspace(() => {
+      for (const node of this.roots ?? []) { if (node.tag === 'progress') { this.change.fire(node); } }
+    });
+  }
+  getTreeItem(node: DocNode): vscode.TreeItem {
+    switch (node.tag) {
+      case 'progress': {
+        const p = this.store.docWorkspaces().get(node.root)?.progress;
+        const item = new vscode.TreeItem(path.basename(node.root));
+        item.id = 'doc:progress:' + node.root;
+        item.description = p === undefined ? '未測定' : progressText(p);
+        item.tooltip = node.root + (p?.phase === 'failed' ? '\n' + p.reason : '');
+        item.iconPath = new vscode.ThemeIcon(p?.phase === 'running' ? 'sync~spin' : p?.phase === 'failed' ? 'warning' : 'checklist');
+        return item;
       }
-    };
-    this.off = store.onDidChange(refresh);
-    this.offProgress = store.onDidChangeDocumentWorkspace(refresh);
+      case 'terms': {
+        const item = new vscode.TreeItem('用語の定義', vscode.TreeItemCollapsibleState.Collapsed);
+        item.id = 'doc:terms'; item.description = node.definitions.length + '件'; return item;
+      }
+      case 'term': {
+        const d = node.definition;
+        const item = new vscode.TreeItem(d.title);
+        item.id = 'doc:term:' + JSON.stringify([d.location.path, d.location.start, d.id]);
+        item.description = d.id; item.tooltip = d.explanation;
+        item.command = { command: TERM_OPEN, title: '用語を開く', arguments: [d.id, d.location.path] };
+        item.iconPath = new vscode.ThemeIcon('book'); return item;
+      }
+      default: {
+        const item = lintTreeItem(node, this.store.layers());
+        item.id = 'doc:' + item.id;
+        return item;
+      }
+    }
   }
-  getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
-    return item;
-  }
-  getChildren(): vscode.TreeItem[] {
-    const rows: vscode.TreeItem[] = [];
-    for (const [root, s] of this.store.docWorkspaces()) {
-      const item = new vscode.TreeItem(path.basename(root));
-      item.description = progressText(s.progress);
-      item.tooltip = `${root}\nGit の無視設定と依存物を除く全対応ファイル\n${progressText(s.progress)}${s.progress.phase === 'failed' ? `\n${s.progress.reason}` : ''}`;
-      item.iconPath = new vscode.ThemeIcon(
-        s.progress.phase === 'running' ? 'sync~spin' : s.progress.phase === 'failed' ? 'warning' : 'checklist',
-      );
-      rows.push(item);
+  getChildren(node?: DocNode): DocNode[] {
+    if (node === undefined) {
+      if (this.roots === undefined) {
+        const findings = this.store.violations().filter((v) => v.source === 'doc-linter');
+        this.roots = [
+          ...[...this.store.docWorkspaces().keys()].map((root): DocNode => ({ tag: 'progress', root })),
+          { tag: 'terms', definitions: this.store.termIndex().definitions },
+          ...(findings.length === 0 ? [{ tag: 'message' as const, label: '文書の指摘はありません（検査状態は上段に表示）' }]
+            : violationRoots(findings, this.store.rules())),
+        ];
+      }
+      return this.roots;
     }
-    const findings = this.store.violations().filter((v) => v.source === 'doc-linter');
-    const summary = new vscode.TreeItem(`文章の指摘 ${findings.length}件（違反一覧にも表示）`);
-    summary.iconPath = new vscode.ThemeIcon('comment-discussion');
-    rows.push(summary);
-    for (const d of this.store.termIndex().definitions) {
-      const item = new vscode.TreeItem(d.title);
-      item.description = d.id;
-      item.tooltip = d.explanation;
-      item.command = { command: TERM_OPEN, title: '用語を開く', arguments: [d.id, d.location.path] };
-      item.iconPath = new vscode.ThemeIcon('book');
-      rows.push(item);
+    const cached = this.children.get(node);
+    if (cached !== undefined) { return cached; }
+    let rows: DocNode[];
+    switch (node.tag) {
+      case 'progress': case 'term': rows = []; break;
+      case 'terms': rows = node.definitions.map((definition) => ({ tag: 'term', definition })); break;
+      default: rows = lintChildren(node);
     }
-    for (const v of findings) {
-      const item = new vscode.TreeItem(`${v.rule} ${path.basename(v.path)}:${v.range.start.line + 1}`);
-      item.description = v.message.split('\n')[0];
-      item.tooltip = v.message;
-      item.command = {
-        command: 'vscode.open',
-        title: '指摘を開く',
-        arguments: [
-          vscode.Uri.file(v.path),
-          { selection: new vscode.Range(v.range.start.line, v.range.start.character, v.range.end.line, v.range.end.character) },
-        ],
-      };
-      rows.push(item);
-    }
+    this.children.set(node, rows);
+    for (const child of rows) { this.parents.set(child, node); }
     return rows;
   }
+  getParent(node: DocNode): DocNode | undefined { return this.parents.get(node); }
   dispose(): void {
-    this.off();
-    this.offProgress();
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-    }
+    this.off(); this.offProgress();
+    if (this.timer !== undefined) { clearTimeout(this.timer); }
     this.change.dispose();
   }
 }
