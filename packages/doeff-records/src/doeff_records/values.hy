@@ -448,6 +448,12 @@
   (#^ int epoch)
   (#^ int floor))
 
+(defrecord WaitsClosed
+  "置き場の変化の待ち(WatchChanges・WatchEvents の呼び鈴の待ち)を起こした止めの印(#3713): 待ちを抱える記録の service の入口が止めの
+   合図を受けた — 待ち手は読み直さず、手元の静かな答え(空の Changes・EventsQuiet)で直ぐに返る。reason = 止めの理由。呼び鈴の待ち
+   (doeff-time の WaitWithin)の答えとして届き、呼び鈴の値(memory の None・PostgreSQL の True)とも時間切れの None とも型で見分ける。"
+  #^ str reason)
+
 
 (setv ReadRowAnswer (| Row Missing Unreachable))
 (setv ListRowsAnswer (| Page Reset Unreachable NotIndexed))

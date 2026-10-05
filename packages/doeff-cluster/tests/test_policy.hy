@@ -1,8 +1,8 @@
 (require doeff-hy.macros [deftest defk val var <-])
 
 (import dataclasses [replace])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage StopProgress
-  Outcome JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage JobStop
+  Outcome JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob SpecChanged Undeclared Retired CutOff WorkerStopping] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)
@@ -56,20 +56,20 @@
   ;; b だけ版を変えても a の process には何もしない。
   (setv w (! (world (! (running A1 10)) (! (running B1 11)))))
   (setv b2 (replace B1 :revision "rev2"))
-  (assert (= (! (plan 0 #(A1 b2) w {} POLICY)) #((SignalJob "b" 11 StopStage.TERM)))))
+  (assert (= (! (plan 0 #(A1 b2) w {} POLICY)) #((SignalJob "b" 11 StopStage.TERM (SpecChanged))))))
 
 (deftest test-update-stops-old-before-starting-new
   (setv w (! (world (! (running A1)) :codes #(READY1 READY2))))
   (setv actions (! (plan 0 #(A2) w {} POLICY)))
-  (assert (= actions #((SignalJob "a" 10 StopStage.TERM))))
+  (assert (= actions #((SignalJob "a" 10 StopStage.TERM (SpecChanged)))))
   (var records (! (records-after 0 {"a" (JobRecord "a" :attempts 1)} actions)))
   ;; 猶予の間は待つ。新版は起動しない。
   (assert (= (! (plan 999 #(A2) w records POLICY)) #()))
   ;; 猶予切れで KILL。
   (setv kill (! (plan 1000 #(A2) w records POLICY)))
-  (assert (= kill #((SignalJob "a" 10 StopStage.KILL))))
+  (assert (= kill #((SignalJob "a" 10 StopStage.KILL (SpecChanged)))))
   (:= records (! (records-after 1000 records kill)))
-  (assert (= (. (get records "a") stopping) (StopProgress 0 StopStage.KILL 1000)))
+  (assert (= (. (get records "a") stopping) (JobStop :requested-ms 0 :stage StopStage.KILL :signalled-ms 1000 :reason (SpecChanged))))
   ;; KILL の後も終了を観測できない → 置き換えを起動しない・停止未確認と表示する。
   (assert (= (! (plan 5000 #(A2) w records POLICY)) #()))
   (assert (= (. (get (! (statuses 5000 #(A2) w records POLICY)) 0) phase) JobPhase.STOP-UNCONFIRMED))
@@ -83,7 +83,7 @@
 
 (deftest test-removed-job-is-stopped-not-forgotten
   (setv w (! (world (! (running A1)))))
-  (assert (= (! (plan 0 #() w {} POLICY)) #((SignalJob "a" 10 StopStage.TERM))))
+  (assert (= (! (plan 0 #() w {} POLICY)) #((SignalJob "a" 10 StopStage.TERM (Undeclared)))))
   (assert (= (! (statuses 0 #() (! (world)) {} POLICY)) #())))
 
 (deftest test-crash-restarts-after-backoff
@@ -97,7 +97,7 @@
 
 (deftest test-requested-stop-exit-is-not-restarted-with-backoff
   ;; 停止を求めて終わった job は、宣言が残っていれば backoff なしで次版を起動する。
-  (var records {"a" (JobRecord "a" :attempts 1 :stopping (StopProgress 0 StopStage.TERM 0))})
+  (var records {"a" (JobRecord "a" :attempts 1 :stopping (JobStop :requested-ms 0 :stage StopStage.TERM :signalled-ms 0 :reason (SpecChanged)))})
   (setv reap (! (plan 10 #(A2) (! (world (replace (! (running A1)) :exit-code 0) :codes #(READY1 READY2))) records POLICY)))
   (:= records (! (records-after 10 records reap)))
   (assert (= (. (get records "a") last-outcome) Outcome.STOPPED))
@@ -269,7 +269,7 @@
   (assert (= (! (plan 2 #((replace H2 :ready-instance "1-old")) w3 {} POLICY)) #()) "前の process の世代の名では止めない")
   ;; 新の世代の名が Ready と返ってきたら旧を止める(TERM → 猶予 → KILL の同じ手順)。
   (setv ready (replace H2 :ready-instance "2-new"))
-  (assert (= (! (plan 3 #(ready) w3 {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM))))
+  (assert (= (! (plan 3 #(ready) w3 {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired)))))
   ;; 状態の報告: 退いた旧は元の名つきで running の行に載る(coordinator はその job がまだ動いていると数える)。
   (setv rows (! (statuses 2 #(H2) w3 {} POLICY)))
   (setv by-name (dfor r rows r.name r))
@@ -279,7 +279,7 @@
 (deftest test-reaping-a-process-returns-its-leases-and-forgets-the-retired-record
   (setv name (retired-name "a" "1-old"))
   (setv dead (replace (! (proc H1 10 "1-old" :retired-from "a" :name name)) :exit-code -15))
-  (setv records {name (JobRecord name :stopping (StopProgress 0 StopStage.TERM 0))})
+  (setv records {name (JobRecord name :stopping (JobStop :requested-ms 0 :stage StopStage.TERM :signalled-ms 0 :reason (Retired)))})
   (setv actions (! (plan 5 #(H2) (! (world dead (! (proc H2 11 "2-new")) :codes #(READY1 READY2))) records POLICY)))
   ;; 担い手の job の名は子が名乗った名(起こした spec の名 "a" — 退いた後の名ではない)。
   (assert (= actions #((ReapJob name 10 Outcome.STOPPED -15) (ReleaseLeases "a" "1-old"))))
@@ -290,15 +290,28 @@
   (setv H3 (replace A1 :revision "rev3" :handoff True))
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
   (setv w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))))
-  (assert (= (! (plan 0 #(H3) w {} POLICY)) #((SignalJob "a" 11 StopStage.TERM)))))
+  (assert (= (! (plan 0 #(H3) w {} POLICY)) #((SignalJob "a" 11 StopStage.TERM (SpecChanged))))))
 
 (deftest test-handoff-stops-the-retired-process-when-the-service-goes-away
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
-  (assert (= (! (plan 0 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM)))))
+  (assert (= (! (plan 0 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))
 
 (deftest test-recreate-jobs-keep-stopping-before-starting
   ;; handoff でない job は今までどおり(旧を止めてから新)。
   (assert (= (! (plan 0 #(A2) (! (world (! (proc A1 10 "1-old")) :codes #(READY1 READY2))) {} POLICY))
-             #((SignalJob "a" 10 StopStage.TERM)))))
+             #((SignalJob "a" 10 StopStage.TERM (SpecChanged))))))
 
 
+
+(deftest test-a-job-left-out-by-the-cut-off-or-the-worker-stop-is-stopped-with-that-reason-through-the-kill
+  ;; 宣言に無い job を止める訳は、拍の Program が渡す訳(#3713): 途絶で絞った宣言なら CutOff(最後の返事からの ms つき)・worker の停止なら
+  ;; WorkerStopping。KILL も最初の TERM の訳を持ち回る(記憶の JobStop の訳)。
+  (setv w (! (world (! (running A1)))))
+  (val cut (CutOff :silent-ms 21000))
+  (val term (! (plan 0 #() w {} POLICY :absent cut)))
+  (assert (= term #((SignalJob "a" 10 StopStage.TERM cut))) term)
+  (val records (! (records-after 0 {"a" (JobRecord "a" :attempts 1)} term)))
+  ;; 猶予切れの KILL の拍には、宣言の読みが戻って(訳の既定 = 宣言から外れた)いても最初の訳を名乗る。
+  (val kill (! (plan 1000 #() w records POLICY)))
+  (assert (= kill #((SignalJob "a" 10 StopStage.KILL cut))) kill)
+  (assert (= (! (plan 0 #() w {} POLICY :absent (WorkerStopping))) #((SignalJob "a" 10 StopStage.TERM (WorkerStopping))))))

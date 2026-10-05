@@ -3,16 +3,19 @@
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "program"})
 (import doeff_time [Delay GetMonotonic])
+(import doeff_core_effects [slog])
 (import doeff_core_effects.scheduler [Future])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
-  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
+  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records])
 
 ;; 拍の action の後に、同じ拍のうちに揃いを追う回数の上限(#2719・#3646): 1 回目 = 木が揃った job と root の待ちの子の起こし・2 回目 =
 ;; 起こした刻に揃った待ちの子から分ける task。揃いの連なりはこれより長くならない(3 回目に進める物の形が無い)。
 (val FOLLOWUP-ROUNDS 2)
+;; 起こしの見送りの行の名(#3713 — 名 + 欄 job・reason の形。reason = StartHold の値)。
+(val START-HOLD-LOG "worker: job の起こしの見送り")
 
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
@@ -26,10 +29,15 @@
     stopping #()
     (isinstance read DesiredJobs) read.jobs
     True state.desired))
+  ;; 宣言に無い job を止める訳(#3713): worker の停止・途絶で宣言を絞った(返事の宣言の cut-off)・それ以外は宣言から外れた。
+  (val absent (match read
+    _ :if stopping (WorkerStopping)
+    (DesiredJobs :cut-off (CutOff)) read.cut-off
+    _ (Undeclared)))
   (<- now int (now-epoch-ms))
   (<- world WorldView (ObserveWorld))
   (setv warm (cond stopping #() (isinstance read DesiredJobs) read.warm True state.warm))
-  (<- actions tuple (plan now desired world state.records policy :warm warm))
+  (<- actions tuple (plan now desired world state.records policy :warm warm :absent absent))
   (for [action actions] (<- action))
   (<- counted dict (records-after now state.records actions policy))
   (var records counted)
@@ -42,7 +50,7 @@
     ;; 待ちの子を起こし、その待ちの子が揃って task を分ける(#3646 — 起こした刻に揃う宿の時だけ 2 段目が在る)。
     (var before world)
     (for [_ (range FOLLOWUP-ROUNDS)]
-      (<- followups tuple (ready-followups now desired before after records policy :warm warm))
+      (<- followups tuple (ready-followups now desired before after records policy :warm warm :absent absent))
       (when (not followups) (break))
       (for [action followups] (<- action))
       (<- followed dict (records-after now records followups policy))
@@ -50,6 +58,14 @@
       (:= before after)
       (<- settled WorldView (ObserveWorld))
       (:= after settled)))
+  ;; 起こしの見送り(#3713): 拍の終わりの観測で起こさない・起こせない宣言の job を、訳が前の拍と替わった時だけ 1 行にし、訳を記憶に書く
+  ;; (同じ訳が続く間は出さない)。
+  (<- holds tuple (start-holds now desired after records policy))
+  (<- fresh tuple (noted-holds records holds))
+  (for [h fresh]
+    (<- (slog START-HOLD-LOG :level "info" :job h.name :reason h.hold.value)))
+  (<- held dict (held-records records holds))
+  (:= records held)
   (<- report tuple (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
   #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)

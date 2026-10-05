@@ -49,7 +49,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
-                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty])
+                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty WaitsClosed])
+(import doeff_records.watching [closing-wake?])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd AwaitRecordsBack
                                ReadSourcePatience])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
@@ -533,18 +534,20 @@
 
 
 (defk bell-or-timer [store bell seconds]
-  {:pre [(: store MemoryStore) (: bell ExternalPromise) (: seconds float)] :post [(: % None)]
+  {:pre [(: store MemoryStore) (: bell ExternalPromise) (: seconds float)] :post [(: % (| WaitsClosed None))]
    :tags {:context "records" :role "foundation"}}
   "掛けた呼び鈴 bell が鳴るか、seconds 秒が過ぎるまで眠るため。待ちは doeff-time の期限つきの待ち WaitWithin の 1 つ(仮想の時計の下では
    期限は時計の列の 1 項で、task を作らない・呼び鈴が先に鳴れば列から外す — #3054。前は期限の鳴らしを ScheduleAt の task に
    し、起きた後にその取り消しを別の片付けの task で待っていた — 待ち 1 回に task 2 本)。park = 外の promise を仮想の時計を止めずに待つ
-   (既定の待ちは時計を止め、期限の刻へ進めなくなる)。起きた後(と、待ち手が取り消された時)は呼び鈴を外す。どちらで起きたかは見ない —
-   呼び手は起きた後に走査し直す。"
+   (既定の待ちは時計を止め、期限の刻へ進めなくなる)。起きた後(と、待ち手が取り消された時)は呼び鈴を外す。呼び鈴と期限のどちらで
+   起きたかは見ない — 呼び手は起きた後に走査し直す。待ちの答えが止めの印(watching.closing-wake? — 待ちを抱える入口が止まる・#3713)
+   なら印を返し(呼び手は読み直さずに返る)、他は None。"
   (try
-    (<- _woke (WaitWithin bell.future seconds :park True))
+    (<- woke (WaitWithin bell.future seconds :park True))
+    (<- closing (closing-wake? woke))
+    (if closing woke None)
     (finally
-      (<- (drop-bell store bell))))
-  None)
+      (<- (drop-bell store bell)))))
 
 
 (val CLOCK-TICK (timedelta :microseconds 1))
@@ -566,7 +569,8 @@
   "WatchChanges と WatchEvents の答え: 待つ名(頼んだ表・列)に書きが来るか timeout 秒が過ぎるまで待つ(Reset はすぐ返す)。読み直しを
    繰り返さず、その名の書きが鳴らす呼び鈴と、timeout の 1 回の鳴らしで起きる(保持の期限の刻には起きない — 期限を過ぎた行の消えた は
    回収 SweepExpired か、その行への書きが積み、積んだ時に鳴らす)。timeout を過ぎたら最後に 1 回走査した答えを返す。待ちの最中に待つ名が届かない状態になれば
-   (SetStoreOutage が待ち手を鳴らす)、起きた回で Unreachable を返す。"
+   (SetStoreOutage が待ち手を鳴らす)、起きた回で Unreachable を返す。待ちの最中に止めの印が届けば(待ちを抱える入口が止まる・#3713)、
+   読み直さずに手元の静かな答え(空の Changes・EventsQuiet)を返す。"
   (<- started (GetTime))
   (<- span (wait-span ask.timeout))
   (val deadline (+ started span))
@@ -576,7 +580,9 @@
     (<- bell (CreateExternalPromise))
     (:= round (guarded store (fn [] (watch-round store ask (epoch-ms now) bell))))
     (when round.quiet
-      (<- (bell-or-timer store bell (.total-seconds (- deadline now))))
+      (<- closed (| WaitsClosed None) (bell-or-timer store bell (.total-seconds (- deadline now))))
+      (when (is-not closed None)
+        (return round.answer))
       (<- woke (GetTime))
       (:= now woke)
       (when (>= now deadline)
