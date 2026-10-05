@@ -1639,6 +1639,7 @@
       "allow": [
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
+        "doeff-cluster-runtime-env-model",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-rules",
         "doeff-cluster-worker-warm-rules"

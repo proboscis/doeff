@@ -3,12 +3,23 @@
 ;;; memory-watch)。HTTP の口の client も使わない(待ちは service の中の置き場の待ちへ渡す long-poll — #3074。前は間隔で読み直す
 ;;; wait-for-changes を使っていた — 使い手が無くなったので消した)。WatchEvents は ReadEvents(limit 1)の読みを moved-of で答えにする。
 ;;; 時計は doeff-time(GetMonotonic で経過を測り、GetTime で保持の期限を刻む)。
+;;; 止めの印(closing-wake? — #3713): 待ちを抱える記録の service の入口が止まる時、呼び鈴の待ちの答えに values.WaitsClosed が届く。
+;;; 待ち手は読み直さず手元の静かな答えで返る(memory の置き場の memory-watch もこの判断を使う)。
 (require doeff-hy.macros [defk <- var val])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
 (import doeff_time [GetMonotonic GetTime WaitWithin])
-(import doeff_records.values [Changes Events EventsMoved EventsQuiet Reset Unreachable])
+(import doeff_records.values [Changes Events EventsMoved EventsQuiet Reset Unreachable WaitsClosed])
 (import doeff_records.admission [epoch-ms])
+
+
+(defk closing-wake? [woke]
+  {:pre [(: woke (| WaitsClosed bool None))] :post [(: % bool)]
+   :tags {:context "records" :role "foundation"}}
+  "呼び鈴の待ち(WaitWithin)の答え woke が止めの印か — 待ちを抱える記録の service の入口が止まる(#3713)。印なら待ち手は読み直さず、
+   手元の静かな答えで返る。memory と PostgreSQL の置き場の待ちが、この 1 か所の判断を使う(呼び鈴の値 None・True と時間切れの None は
+   印ではない)。"
+  (isinstance woke WaitsClosed))
 
 
 (defk moved-of [answer]
@@ -38,7 +49,8 @@
   ;; drop = (呼び鈴) → None の Program(鳴らなかった呼び鈴を外す)。
   "置き場の書きの合図(呼び鈴)が鳴るか timeout 秒が過ぎるまで待つため。読む前に呼び鈴を掛ける(読みと掛けの間の書きを取りこぼさない)。
    鳴ったら読み直す — 合図は「変わったかもしれない」だけで中身を運ばない。時間が尽きたら最後に 1 度読んで返す。待ちは doeff-time の
-   期限つきの待ち WaitWithin の 1 つ(仮想の時計の下でも期限が来る — park)。"
+   期限つきの待ち WaitWithin の 1 つ(仮想の時計の下でも期限が来る — park)。待ちの答えが止めの印(closing-wake? — 待ちを抱える入口が
+   止まる・#3713)なら、読み直さずに手元の静かな答えで返る。"
   (<- start (GetMonotonic))
   (while True
     (<- bell (hang))
@@ -52,5 +64,8 @@
     (when (or (not still) (<= left 0))
       (<- (drop bell))
       (return answer))
-    (<- _woke (WaitWithin bell.future left :park True))
-    (<- (drop bell))))
+    (<- woke (WaitWithin bell.future left :park True))
+    (<- (drop bell))
+    (<- closing (closing-wake? woke))
+    (when closing
+      (return answer))))

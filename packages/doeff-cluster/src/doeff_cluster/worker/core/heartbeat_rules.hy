@@ -6,7 +6,7 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key])
-(import doeff_cluster.worker.intent.worker_model [WarmEnv JobStatus DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.intent.worker_model [WarmEnv JobStatus DesiredJobs DesiredUnreadable CutOff])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
 
@@ -41,7 +41,7 @@
    lease はこの worker の heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。途絶しても動かし続けてよい印の在る job は、
    途絶が長い方の柵 keep-fence-ms を越えるまで動かし続ける(#2804)。fence の内なら「読めない」(直前の宣言を使い続ける)。"
   (if (> silent-ms fence-ms)
-      (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm)
+      (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm :cut-off (CutOff :silent-ms silent-ms))
       (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {reason}")))
 
 
@@ -55,5 +55,5 @@
    返した後・届かなかった後は持たない — 次の周期は heartbeat を送って返事で戻すか、届かなければ desired-when-unreachable が判じる)。
    答え None = 止めない(fence の内・もう止めてある)— heartbeat の判断へ進む。"
   (if (and holding (> silent-ms fence-ms))
-      (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm)
+      (DesiredJobs (kept-when-cut-off last silent-ms keep-fence-ms) :warm warm :cut-off (CutOff :silent-ms silent-ms))
       None))

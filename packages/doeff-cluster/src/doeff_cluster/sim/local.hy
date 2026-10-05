@@ -129,7 +129,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [state :as session-store await-handler slog-handler])
+(import doeff_core_effects.handlers [state :as session-store await-handler slog-handler slog-discard-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError Race])
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
@@ -2280,7 +2280,9 @@
   ;; sim の筋と coordinator の部品は世代の始めに 1 度読んで宿へ運ぶ(拍ごとに世界へ聞かない — #3054 の C-6)。
   (<- plan SimPlan (PlanOf))
   (<- parts SimParts (PartsOf))
-  (<- (worker-on [(sim-host worker boot plan parts)] policy))
+  ;; worker の調整ループ自身の行(起こしの見送り — #3713・本番は入口の slog-handler が出す)は sim-host の内側で捨てる。job の Program は
+  ;; sim-host の節の中から Spawn され、節の外側の handler だけを持つので、job の slog はこの捨てる handler に当たらず外の受け手へ届く。
+  (<- (worker-on [(sim-host worker boot plan parts) slog-discard-handler] policy))
   boot)
 
 

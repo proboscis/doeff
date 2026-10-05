@@ -31,7 +31,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
+(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-candidates sweep-choice prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project floor-bytes])
 (import doeff_cluster.worker.protocol.heartbeat [env-report])
@@ -41,6 +41,8 @@
 (val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 (val SWEEP-EVERY-MS 30000)      ; 空きが下限を切っている間の掃除の間隔(固定の集合が変わった時はすぐ)
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
+;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes・floor-bytes・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数)。
+(val SWEEP-LOG "worker: 掃除の選び")
 
 
 (defrecord EnvSettings
@@ -361,7 +363,11 @@
       ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。
       (val busy (| held (frozenset pending) (frozenset waiting)))
       (<- infos tuple (root-infos settings))
+      (<- candidates tuple (sweep-candidates infos busy))
       (<- chosen (sweep-choice infos busy disk.free disk.floor))
+      ;; 掃除の頭の 1 行(#3713 — 何も選ばなかった回も出す): 空き・下限・固定の数・候補の数・選んだ数。
+      (<- (slog SWEEP-LOG :level "info" :free-bytes disk.free :floor-bytes disk.floor :pinned (len busy) :candidates (len candidates)
+                :chosen (len chosen)))
       (for [key chosen]
         (<- root str (env-root settings key))
         (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(空き {} byte < 下限 {} byte)" (cut key (len ENV-KEY-PREFIX) None)

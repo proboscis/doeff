@@ -1,6 +1,7 @@
 ;;; 実行環境の root の手入れの純粋な判断(2026-09-26・設計 worker-runtime-env.md 節 3.2 の期限・節 3.6 の掃除と disk の条件)。
 ;;;
 ;;; worker の root の言い換え(worker/protocol/env_store の env-host)が観測を集めて、ここで決め、I/O(dir の削除・準備の process の停止)を汎用の効果で出す。
+;;;   sweep-candidates 掃除で消してよい root の列(古い順 — 選びと掃除の頭の行が読む)
 ;;;   sweep-choice     空きが下限を切った時に消す root の列(固定・project ごとの最新・worker が作っていない dir は消さない)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
 ;;;   env-capacity     heartbeat で名乗る disk の条件(準備を始める空きが無ければ exhausted)
@@ -45,6 +46,15 @@
   (frozenset (gfor r (.values latest) r.key)))
 
 
+(defk sweep-candidates [roots pinned]
+  {:pre [(: roots tuple) (: pinned frozenset)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "掃除で消してよい root(RootInfo)を、最後に使った時刻の古い順に求めるため(掃除の選び sweep-choice と、掃除の頭の行の候補の数が同じ
+   集合を読む — #3713)。消さない物: 固定(pinned)・project ごとの最新・worker が作っていない dir。"
+  (<- keep frozenset (latest-per-project roots))
+  (tuple (sorted (gfor r roots :if (and r.owned (not-in r.key pinned) (not-in r.key keep)) r)
+                 :key (fn [r] #(r.last-used-ms r.key)))))
+
+
 (defk sweep-choice [roots pinned free floor]
   {:pre [(: roots tuple) (: pinned frozenset) (: free int) (: floor int)] :post [(: % tuple)]}
   "空き free が下限 floor を切った時に消す root のキーの列(消す順)。disk を空けて次の準備を通すため。
@@ -52,9 +62,7 @@
    残りを最後に使った時刻の古い順に、空きが下限を越えるまで選ぶ。越えられなくても選べる物は全部選ぶ。"
   (if (>= free floor)
       #()
-      (do (<- keep frozenset (latest-per-project roots))
-          (val candidates (sorted (gfor r roots :if (and r.owned (not-in r.key pinned) (not-in r.key keep)) r)
-                                  :key (fn [r] #(r.last-used-ms r.key))))
+      (do (<- candidates tuple (sweep-candidates roots pinned))
           (var chosen [])
           (var gained free)
           (for [r candidates]

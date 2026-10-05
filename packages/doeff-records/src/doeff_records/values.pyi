@@ -248,6 +248,10 @@ class Reset:
     epoch: int
     floor: int
 
+@dataclass(frozen=True, kw_only=True)
+class WaitsClosed:
+    reason: str
+
 ReadRowAnswer: TypeAlias = Row | Missing | Unreachable
 ListRowsAnswer: TypeAlias = Page | Reset | Unreachable | NotIndexed
 PutRowAnswer: TypeAlias = Written | Conflict | Refused | Unreachable

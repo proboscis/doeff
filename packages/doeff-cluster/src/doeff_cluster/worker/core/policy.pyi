@@ -1,6 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = policy.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
+from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from doeff import run as run
 from doeff_cluster.worker.intent.worker_model import Action as Action
@@ -9,7 +10,7 @@ from doeff_cluster.worker.intent.worker_model import CodeView as CodeView
 from doeff_cluster.worker.intent.worker_model import ProcessView as ProcessView
 from doeff_cluster.worker.intent.worker_model import WorldView as WorldView
 from doeff_cluster.worker.intent.worker_model import StopStage as StopStage
-from doeff_cluster.worker.intent.worker_model import StopProgress as StopProgress
+from doeff_cluster.worker.intent.worker_model import JobStop as JobStop
 from doeff_cluster.worker.intent.worker_model import ProbeState as ProbeState
 from doeff_cluster.worker.intent.worker_model import ProbeView as ProbeView
 from doeff_cluster.worker.intent.worker_model import ProbeStatus as ProbeStatus
@@ -32,6 +33,12 @@ from doeff_cluster.worker.intent.worker_model import WarmLaunch as WarmLaunch
 from doeff_cluster.worker.intent.worker_model import StartWarmChild as StartWarmChild
 from doeff_cluster.worker.intent.worker_model import StopWarmChild as StopWarmChild
 from doeff_cluster.worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
+from doeff_cluster.worker.intent.worker_model import StopReason as StopReason
+from doeff_cluster.worker.intent.worker_model import SpecChanged as SpecChanged
+from doeff_cluster.worker.intent.worker_model import Undeclared as Undeclared
+from doeff_cluster.worker.intent.worker_model import HandoffAbandoned as HandoffAbandoned
+from doeff_cluster.worker.intent.worker_model import Retired as Retired
+from doeff_cluster.worker.intent.worker_model import StartHold as StartHold
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.job_model import JobPhase as JobPhase
 from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
@@ -41,6 +48,8 @@ from doeff_cluster.worker.core.worker_rules import retired_name as retired_name
 from doeff_cluster.worker.core.worker_rules import ready_path as ready_path
 from doeff_cluster.worker.core.worker_rules import RETIRED_MARK as RETIRED_MARK
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX
+from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
+from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
 from doeff_cluster.worker.core.warm_rules import forks_from_warm_child as forks_from_warm_child
 from doeff_cluster.worker.core.warm_rules import warm_key_of as warm_key_of
 from doeff_cluster.worker.core.warm_rules import warm_mark_clean as warm_mark_clean
@@ -94,7 +103,7 @@ def backoff_ms(record: JobRecord, policy: WorkerPolicy) -> int:
 def in_backoff(now: int, record: JobRecord, policy: WorkerPolicy) -> bool:
     ...
 
-def stop_actions(now: int, process: ProcessView, record: JobRecord, policy: WorkerPolicy) -> tuple:
+def stop_actions(now: int, process: ProcessView, record: JobRecord, policy: WorkerPolicy, reason: StopReason) -> tuple:
     ...
 
 def prepare_action(spec: JobSpec) -> PrepareCode | PrepareEnv:
@@ -103,10 +112,27 @@ def prepare_action(spec: JobSpec) -> PrepareCode | PrepareEnv:
 def prepare_actions(now: int, spec: JobSpec, world: WorldView, policy: WorkerPolicy) -> tuple:
     ...
 
-def start_actions(now: int, spec: JobSpec, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> tuple:
+@dataclass(frozen=True, kw_only=True)
+class StartStep:
+    actions: tuple
+    hold: StartHold | None
+
+@dataclass(frozen=True, kw_only=True)
+class JobHold:
+    name: str
+    hold: StartHold | None
+RETRYING_HOLDS: tuple[StartHold, ...]
+
+def prepare_hold(code: CodeView | None, record: JobRecord) -> _Program[StartHold, object]:
     ...
 
-def start_on_ready_tree(now: int, spec: JobSpec, tree: str, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> tuple:
+def probe_hold(probe: ProbeView | None) -> _Program[StartHold, object]:
+    ...
+
+def ready_tree_step(now: int, spec: JobSpec, tree: str, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> _Program[StartStep, object]:
+    ...
+
+def start_step(now: int, spec: JobSpec, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> _Program[StartStep, object]:
     ...
 
 def handoff_actions(now: int, want: JobSpec, process: ProcessView, world: WorldView, policy: WorkerPolicy) -> tuple:
@@ -115,7 +141,7 @@ def handoff_actions(now: int, want: JobSpec, process: ProcessView, world: WorldV
 def retired_actions(now: int, process: ProcessView, origin: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> tuple:
     ...
 
-def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> tuple:
+def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy, absent: StopReason) -> tuple:
     ...
 
 def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
@@ -142,16 +168,25 @@ def sweep_actions(desired: tuple, world: WorldView, warm: tuple) -> _Program[tup
 def forget_probe_actions(desired: tuple, world: WorldView) -> _Program[tuple, object]:
     ...
 
-def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=...) -> _Program[tuple, object]:
+def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=..., absent: StopReason=...) -> _Program[tuple, object]:
     ...
 
-def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=...) -> _Program[tuple, object]:
+def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=..., absent: StopReason=...) -> _Program[tuple, object]:
     ...
 
 def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPolicy=...) -> JobRecord:
     ...
 
 def records_after(now: int, records: dict, actions: tuple, policy: WorkerPolicy=...) -> _Program[dict, object]:
+    ...
+
+def start_holds(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
+    ...
+
+def noted_holds(records: dict, holds: tuple) -> _Program[tuple, object]:
+    ...
+
+def held_records(records: dict, holds: tuple) -> _Program[dict, object]:
     ...
 
 def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> JobPhase:

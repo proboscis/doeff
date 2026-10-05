@@ -8,10 +8,10 @@
 ;;; job の宣言 JobSpec と段階 JobPhase は coordinator と共有の部品なので doeff_cluster.shared.intent.job_model、指紋 spec-hash は
 ;;; doeff_cluster.shared.core.job_rules に在る(#2025)。
 (require doeff-hy.macros [val])
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "intent"})
 (import dataclasses [dataclass field])
-(import enum [Enum])
+(import enum [Enum StrEnum])  ; StrEnum = defenum の展開が名指す
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [Future])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
@@ -149,6 +149,46 @@
   (#^ int signalled-ms))
 
 
+;; --- 止めの訳(#3713)— worker が job の process を止める訳の閉じた和。判断(policy の plan-job)が SignalJob に載せ、止めの計時の行が名乗る。
+(defrecord SpecChanged
+  "宣言の spec が、動いている process を起こした spec と違う(版・入口・引数ほか)— 旧を止めてから新を起こす。")
+
+(defrecord Undeclared
+  "job が宣言から外れた(coordinator の返事・宣言の file に無い)。")
+
+(defrecord HandoffAbandoned
+  "入れ替えの諦め(coordinator が期限で決めた)— 今の宣言の spec の新の process を止める。")
+
+(defrecord Retired
+  "入れ替えで退いた旧の process — 新が Ready と数えられた・元の job が宣言から消えた・handoff でなくなった。")
+
+(defrecord CutOff
+  "coordinator との連絡が柵(fence — 途絶しても動かし続けてよい印の在る job は keep-fence)を越えて途絶え、宣言を絞った
+   (heartbeat_rules の desired-after-silence・desired-when-unreachable)。silent-ms = 最後に届いた返事からの ms。"
+  (#^ int silent-ms))
+
+(defrecord WorkerStopping
+  "worker 自身の停止(止まれの合図)— 宣言を空として全 job を止める(core/program の worker-tick)。")
+
+(val StopReason (| SpecChanged Undeclared HandoffAbandoned Retired CutOff WorkerStopping))
+
+
+(defrecord JobStop
+  "job の止めの進み(JobRecord.stopping): requested-ms = 最初に止めを求めた刻・stage = 最後に送った合図・signalled-ms = その刻・
+   reason = 止める訳(KILL も最初の TERM と同じ訳を持ち回る — #3713)。"
+  (#^ int requested-ms)
+  (#^ StopStage stage)
+  (#^ int signalled-ms)
+  (#^ StopReason reason))
+
+
+;; 起こしの見送りの訳(#3713): 宣言の job を、動いている process が無いのにこの拍で起こさない・起こせない訳。
+;;   PREPARING = 木・root の準備待ち・PREPARE-FAILED = 準備の失敗(code-retry-ms の後の撃ち直しの間も)・DISK-FULL = 準備が disk の空き不足で
+;;   失敗・PROBING = 入口の検め待ち・PROBE-FAILED = 入口の検めの失敗(撃ち直しの間も)・BACKOFF = 落ちた後の起こし直しの間・
+;;   WARM-CHILD = 分かれ元の待ちの子の準備待ち・HANDOFF-ABANDONED = 入れ替えの諦め(宣言が変わるまで起こさない)。
+(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED)
+
+
 ;; --- 待ちの子(#3646)-------------------------------------------------------------
 ;; 実行環境の root ごとに、その root の venv で module を前もって読み込み、まだ VM を起こさずに待つ常駐の子 process(入口 =
 ;; worker/entry/warm_child)。実行環境の task は、その root の待ちの子から fork で分かれて走る(読み込みの秒を task ごとに払わない)。
@@ -201,14 +241,16 @@
   (setv #^ (| int None) last-exit-ms None)
   (setv #^ (| Outcome None) last-outcome None)
   (setv #^ (| int None) last-exit-code None)
-  (setv #^ (| StopProgress None) stopping None)
+  (setv #^ (| JobStop None) stopping None)
   ;; 続けて exit code が 0 でなく終わった回数(失敗の数え方・状態の表示に使う)。exit code 0 の終わりは失敗ではないので 0 に戻す。
   (setv #^ int failures 0)
   ;; 最後に起動した時刻(十分長く動いた後の終了は数え直す)。
   (setv #^ (| int None) last-start-ms None)
   ;; 停止を求めずに続けて終わった回数(exit code を問わない — 起こし直しの間 backoff を伸ばす)。失敗の数え方とは別に持つ
   ;; (exit code 0 で終わってすぐ起こし直すサービスも、間を伸ばして起こし直しの連打を避ける)。
-  (setv #^ int unexpected-exits 0))
+  (setv #^ int unexpected-exits 0)
+  ;; 最後に名乗った起こしの見送りの訳(#3713 — 同じ訳が続く間は行を出さない・None = 見送っていない)。拍の Program が拍の終わりに書く。
+  (setv #^ (| StartHold None) held None))
 
 
 (defclass [(dataclass :frozen True)] WorkerPolicy []
@@ -262,6 +304,8 @@
   (#^ tuple jobs)
   ;; 温める env の列(WarmEnv — coordinator の温める表のうち、この worker の label に合う行)。宣言の file で動く worker は空。
   (setv #^ tuple warm #())
+  ;; coordinator との途絶で宣言を絞った(#3713 — 絞りで外れた job を止める訳 CutOff)。None = 返事の宣言そのまま。
+  (setv #^ (| CutOff None) cut-off None)
   ;; 宣言の変化の呼び鈴(#2692): この読みの後に宣言が変わった(名指しの待ちが「変わった」と答えた)時に満ちる Future。拍の間の眠りは
   ;; これと tick-seconds を競わせ、変化を次の拍の境まで待たない。None = 変化を知らせる口が無い(拍ごとに読む宿・待ちの口の無い
   ;; coordinator)— 眠りは tick-seconds。値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
@@ -347,10 +391,11 @@
 
 
 (defclass [(dataclass :frozen True)] SignalJob [EffectBase]
-  "process group 全体へ signal を送る。受理は終了の確認ではない。"
+  "process group 全体へ signal を送る。受理は終了の確認ではない。reason = 止める訳(KILL も TERM と同じ訳 — #3713)。"
   (#^ str name)
   (#^ int pid)
-  (#^ StopStage stage))
+  (#^ StopStage stage)
+  (#^ StopReason reason))
 
 
 (defclass [(dataclass :frozen True)] ReapJob [EffectBase]

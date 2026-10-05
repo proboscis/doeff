@@ -10,9 +10,10 @@
 ;;; process の世代の名(instance): <試行の番号>-<12 桁>。12 桁は worker の pid・起こした時刻・job の名・試行の番号の sha256 の頭
 ;;; (前の uuid4 の頭 12 桁と同じ形 — 乱数の効果を使わず、再起動した worker でも pid が違うので重ならない)。
 (require doeff-hy.macros [defhandler defk <- val var])
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass replace])
+(import enum [StrEnum])  ; defenum の展開が名指す
 (import hashlib)
 (import pathlib [Path])
 (import doeff_core_effects [slog])
@@ -20,7 +21,8 @@
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess
                                             ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
+                                                 Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
@@ -56,10 +58,60 @@
   (#^ str exit-path))
 
 
+(defrecord StopAsked
+  "起こした子へ送った止めの合図の記録(#3713): requested-ms = 最初の合図(SignalJob)を送った刻(epoch ms)・killed = KILL まで送ったか
+   (= 猶予を使い切った)・reason = 止める訳(最初の合図の訳 — KILL も同じ訳)。止めの計時の行が、合図から終わりまでの秒・猶予の使い切り・
+   訳を名乗るため。"
+  (#^ int requested-ms)
+  (#^ bool killed)
+  (#^ StopReason reason))
+
+
 (defrecord Started
-  "StartJob で起こした子: view = 観測・fork = 待ちの子から分けた子の印(入れ物 shim で起こした子は None)。"
+  "StartJob で起こした子: view = 観測・fork = 待ちの子から分けた子の印(入れ物 shim で起こした子は None)・stop = 止めの合図の記録
+   (None = まだ止めていない — #3713)。"
   (#^ ProcessView view)
-  (#^ (| ForkedFrom None) fork))
+  (#^ (| ForkedFrom None) fork)
+  (setv #^ (| StopAsked None) stop None))
+
+
+;; 止めの計時の行(#3713)の段: TERM / KILL = 止めの合図を送った刻・REAPED = 終わった子を回収した刻。
+(defenum StopMoment TERM KILL REAPED)
+;; 止めの計時の行の名(他の計時の行と同じく、名 + 欄の形 — 本文は持たない)。
+(val STOP-TIMING-LOG "worker: job の止めの計時")
+
+
+(defk stop-reason-word [reason]
+  {:pre [(: reason StopReason)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "止めの訳を計時の行の reason の語にするため(#3713 — 語の綴りはここ 1 か所)。"
+  (match reason
+    (SpecChanged) "spec-changed"
+    (Undeclared) "undeclared"
+    (HandoffAbandoned) "handoff-abandoned"
+    (Retired) "retired"
+    (CutOff) "cut-off"
+    (WorkerStopping) "worker-stopping"))
+
+
+(defk silent-ms-of [reason]
+  {:pre [(: reason StopReason)] :post [(: % (| int None))] :tags {:context "worker" :role "protocol"}}
+  "途絶で止めた時だけ、最後に届いた coordinator の返事からの ms を計時の行に載せるため(他の訳は None)。"
+  (match reason
+    (CutOff) reason.silent-ms
+    _ None))
+
+
+(defk noted-stop [moment name pid asked now-ms]
+  {:pre [(: moment StopMoment) (: name str) (: pid int) (: asked StopAsked) (: now-ms int)] :post [(: % None)]
+   :tags {:context "worker" :role "protocol"}}
+  "job の止めの 1 刻を計時の行 1 つにするため(#3713 — 止めの合図から子の終わりまでの秒・KILL まで行ったか・止めた訳を worker の log で読む):
+   stage = 段・job = job の名・pid = 子の pid・wall-ms = この刻(epoch ms)・elapsed-ms = 最初の止めの合図からの ms・killed = KILL を送ったか・
+   reason = 止めた訳の語・silent-ms = 途絶で止めた時の、最後に届いた coordinator の返事からの ms(他の訳は None)。"
+  (<- word str (stop-reason-word asked.reason))
+  (<- silent (| int None) (silent-ms-of asked.reason))
+  (<- (slog STOP-TIMING-LOG :level "info" :stage moment.value :job name :pid pid :wall-ms now-ms :elapsed-ms (- now-ms asked.requested-ms)
+            :killed asked.killed :reason word :silent-ms silent))
+  None)
 
 
 (defk job-work-dir [settings name]
@@ -137,7 +189,7 @@
     (<- begun Started (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
     (:= table (| table {spec.name begun}))
     (resume None))
-  (SignalJob [name pid stage]
+  (SignalJob [name pid stage reason]
     ;; 孫 process まで届くよう process group へ送る(group で起こした子 — SignalProcess は立てた時の表で group へ送る)。待ちの子から
     ;; 分けた子は、分けた子 A(group の先頭)へ起動の刻を照らしてから送る(使い回された pid へ送らない)。
     (val started (.get table name))
@@ -145,6 +197,17 @@
     (if (and started (is-not started.fork None) (= started.view.pid pid))
         (<- (SignalWarmChild :pid pid :start-ticks started.fork.start-ticks :signal signal))
         (<- (SignalProcess :pid pid :signal signal)))
+    ;; 止めの計時(#3713): 最初の合図の刻・KILL を送ったか・止めた訳を子の表に残し、合図ごとに 1 行。表に無い子(別の世代の pid)は
+    ;; この合図の刻と訳から数える。
+    (<- now int (now-epoch-ms))
+    (val ours (and started (= started.view.pid pid)))
+    (val killed (= stage StopStage.KILL))
+    (val asked (if (and ours (is-not started.stop None))
+                   (replace started.stop :killed (or started.stop.killed killed))
+                   (StopAsked :requested-ms now :killed killed :reason reason)))
+    (when ours
+      (:= table (| table {name (replace started :stop asked)})))
+    (<- (noted-stop (if killed StopMoment.KILL StopMoment.TERM) name pid asked now))
     (resume None))
   (ReapJob [name pid outcome exit-code]
     (val started (.get table name))
@@ -159,6 +222,10 @@
             (<- (SignalWarmChild :pid pid :start-ticks started.fork.start-ticks :signal ProcessSignal.KILL))
             (do (<- deadline int (shim-deadline-ms settings.shim))
                 (<- (StopProcess :pid pid :stop-grace (/ deadline 1000))))))
+      ;; 止めの計時(#3713): 止めの合図を送った子の回収(= 終わりを観測した後)を 1 行 — 合図からの ms・KILL まで行ったか・止めた訳。
+      (when (is-not started.stop None)
+        (<- now int (now-epoch-ms))
+        (<- (noted-stop StopMoment.REAPED name pid started.stop now)))
       ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に消す。
       (when started.view.spec.runtime-env
         (<- work str (job-work-dir settings name))

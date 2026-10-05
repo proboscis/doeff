@@ -19,7 +19,11 @@
 ;;;   - 表の用意は task(prepare-store — serving.prepare の Program が 書き手の名 → handler の関数を返す)。本体が Race(用意 / 受けの loop の
 ;;;     終わり)で見張る: 用意が落ちれば例外が run を 0 以外で終える(再起動が繋ぎ直す)。止めの合図で loop が先に終われば用意を取り消して
 ;;;     0 で終わる。用意の間も口は開いていて、/healthz = 200・記録の操作 = 503 store-unavailable(用意の済みは prepared-slot の session の値)
-;;;   - 止めの見張り(watch-stop)は StopRequested を問い、合図で HttpShutdown を撃つ
+;;;   - 止めの見張り(watch-stop)は StopRequested を問い、合図で保留中の置き場の待ちを止めの印で起こし(CloseWaits)、HttpShutdown を撃つ。
+;;;     止めの印(#3713): 入口の session(waits-closing)が印を持ち、要求ごとの記録の handler の中の待ち(WaitWithin — 変化の待ちの long-poll の
+;;;     呼び鈴の待ち)を切り手(closing-cuts-waits)が呼び鈴・期限・止めの門の早い方で起こす。印を受けた待ち手は読み直さずに静かな答え
+;;;     (空の changes・eventsQuiet — 位置は頼んだ位置のまま)で返り、client は今の取り決めのまま次の置き場へ撃ち直す。止めた後に来た待ちは
+;;;     待たずに印で答える。置き場(memory・PostgreSQL)の呼び鈴そのものは鳴らさない — 待ち手が外す(置き場は他の入口と共有してよい)
 ;;;   - GET /readyz(#1479)は置き場を問う: 用意の前 = 503・serving.readiness の問いを READINESS-SECONDS の上限で撃ち、True = 200・
 ;;;     False か時間切れ = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の不調で再起動を繰り返さない)
 ;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む
@@ -54,16 +58,17 @@
 (import dataclasses [dataclass])
 (import doeff [Program EffectBase run with-handlers])
 (import doeff_core_effects.handlers [await-handler state])
-(import doeff_core_effects.scheduler [Cancel Gather Race Spawn Task TaskCancelledError Wait scheduled])
+(import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError
+                                      Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader
                                                 HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed
                                                 HttpShutdown])
-(import doeff_time [Delay GetMonotonic async-time-handler])
+(import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time.effects.time [WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [RecordsSchema Unreachable])
+(import doeff_records.values [RecordsSchema Unreachable WaitsClosed])
 (import doeff_records.schema_digest [schema-digests])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.event_source [BodyWrapper])
@@ -205,6 +210,14 @@
   "札 ticket の要求に刻 mark を打つ(刻の控え request-stamps が、今の単調時計の秒と組にして控える — 頭の註の要求ごとの計時)。答えは None。"
   {:fields [(: ticket str) (: mark RequestMark)] :answer None :tags {:context "records" :role "entry"}})
 
+(defeffect CloseWaits
+  "入口が止まる — 要求の task の中の置き場の待ちを止めの印(理由 reason)で起こし、以後の待ちを待たせない(#3713)。答えは None。"
+  {:fields [(: reason str)] :answer None :tags {:context "records" :role "entry"}})
+
+(defeffect ClosingWaits
+  "止めの印を読む: 止めた後なら印(WaitsClosed)・止めの前なら印で完了する門(promise)。"
+  {:fields [] :answer (| WaitsClosed Promise) :tags {:context "records" :role "entry"}})
+
 (defeffect TakeMarks
   "札 ticket の要求に打った刻の列(打った順の MarkAt)を読み、控えから外す(答え終えた要求の刻を残さない)。"
   {:fields [(: ticket str)] :answer (get tuple #(MarkAt ...)) :tags {:context "records" :role "entry"}})
@@ -230,6 +243,47 @@
     (resume None))
   (PendingRequests []
     (resume (tuple (.values held)))))
+
+
+(defhandler waits-closing
+  "止めの合図を受けた入口が、要求の task の中の置き場の待ち(変化の待ちの long-poll の呼び鈴の待ち)を直ぐに終わらせられるよう、止めの印
+   (WaitsClosed)を入口の session に持つため(頭の註の止めの形・#3713)。CloseWaits が印を置いて門(promise)を印で完了し、待ちの切り手
+   (closing-cuts-waits)は ClosingWaits で印か門を読む。serve-records が用意・受けの loop・止めの見張りの全部の外側に 1 つ被せる。"
+  {:tags {:context "records" :role "entry"}}
+  ;; closed = 置いた止めの印(None = まだ止めていない)・gate = 止めの前の待ちが印を待つ門(最初の ClosingWaits が作る)。
+  (session var closed None)
+  (session var gate None)
+  (ClosingWaits []
+    (when (is-not closed None)
+      (return (resume closed)))
+    (when (is gate None)
+      (<- made (CreatePromise))
+      (:= gate made))
+    (resume gate))
+  (CloseWaits [reason]
+    (when (is closed None)
+      (val mark (WaitsClosed :reason reason))
+      (:= closed mark)
+      (when (is-not gate None)
+        (<- (CompletePromise gate mark))))
+    (resume None)))
+
+
+(defhandler closing-cuts-waits
+  "要求の記録の handler の中の待ち(doeff-time の WaitWithin — 記録の handler が撃つ待ちは変化の待ちの呼び鈴の待ちだけ: memory の
+   bell-or-timer・PostgreSQL の wait-for-signal)を、入口の止めの印でも起こすため(#3713)。止めた後の待ちは待たずに印で答え、止めの前の
+   待ちは呼び鈴・期限・止めの門の早い方で起きる。印を受けた待ち手は読み直さずに静かな答えで返る(watching.closing-wake?)。"
+  {:tags {:context "records" :role "entry"}}
+  (WaitWithinEffect []
+    (<- closing (| WaitsClosed Promise) (ClosingWaits))
+    (match closing
+      (WaitsClosed) (resume closing)
+      _ (do ;; 期限と止めの門を 1 本の待ちにまとめ(門の値 = 印・期限 = None)、呼び鈴と早い方を取る。呼び鈴の park はそのまま Race の
+            ;; 待ち方にする(仮想の時計を止めない — doeff-time の WaitWithin と同じ)。
+            (<- deadline Task (Spawn (WaitWithin closing.future effect.seconds)))
+            (<- first (Race effect.future deadline :priority (if effect.park PRIORITY-IDLE None)))
+            (<- (Cancel deadline))
+            (resume first)))))
 
 
 (defhandler prepared-slot
@@ -406,7 +460,8 @@
   "記録の handler record-handler の下で body(札 ticket の要求の公開 effect)を撃ち、handler の入りと出に刻を打つため(handler の中の
    待ちの刻は wait-stamps — 頭の註の要求ごとの計時)。answer-with が書き手の名ごとの handler をこの包み(BodyWrapper)にして service へ渡す。"
   (<- (StampRequest :ticket ticket :mark RequestMark.HANDLER-IN))
-  (<- answer (with-handlers [(wait-stamps ticket) record-handler] body))
+  ;; 待ちの切り手は刻の控えの外側(刻の控えが待ちの入りと起きを、切り手の Race ごと測る)。
+  (<- answer (with-handlers [closing-cuts-waits (wait-stamps ticket) record-handler] body))
   (<- (StampRequest :ticket ticket :mark RequestMark.HANDLER-OUT))
   answer)
 
@@ -563,10 +618,13 @@
 
 (defk watch-stop [poll-seconds drain-seconds]
   {:pre [(: poll-seconds float) (: drain-seconds float)] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "止めの合図を poll-seconds ごとに問い、合図を見たら待ち受けを閉じるため(受けの loop が HttpServerClosed を受けて終わる)。"
+  "止めの合図を poll-seconds ごとに問い、合図を見たら保留中の置き場の待ちを止めの印で起こしてから(CloseWaits — 変化の待ちの long-poll が
+   上限の秒を待たずに空の答えを返す・#3713)待ち受けを閉じるため(受けの loop が HttpServerClosed を受けて終わる)。印を閉じより先に置くのは、
+   待ち受けの閉じ(aiohttp の後始末)が答え途中の要求の答えを待つため — 先に閉じると long-poll の答えまで閉じが終わらない。"
   (while True
     (<- reason (| str None) (StopRequested))
     (when (is-not reason None)
+      (<- (CloseWaits :reason reason))
       (<- (HttpShutdown :reason reason :drain-seconds drain-seconds))
       (return None))
     (<- (Delay poll-seconds))))
@@ -603,7 +661,7 @@
    閉じまで見張って、process の終わりの code(0)を返すため。用意の失敗は例外のまま上げる。計器は doeff の memory-meter-handler(この
    run の中の断面・桁の表なし)を常に被せ、serving.meter が在ればその内側に被せる(metered-body — 差し替えの計器が先に答える)。
    既定の計器を名で書くのは、答えの無い effect を実行せずに読む閉じの検(doeff-effect-analyzer)が、計器の effect の答え手を読めるように。"
-  (<- code int (with-handlers [prepared-slot (memory-meter-handler (MeterSettings))] (metered-body serving)))
+  (<- code int (with-handlers [prepared-slot waits-closing (memory-meter-handler (MeterSettings))] (metered-body serving)))
   code)
 
 
