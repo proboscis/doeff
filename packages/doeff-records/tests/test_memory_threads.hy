@@ -21,7 +21,8 @@
 (val ROW-COUNT 1000)
 (val ROUNDS 5)
 
-;; 期限つきの列を 1 つ足した宣言 — 列に KeepFor が 1 つでも在ると、どの操作の前の刈りも出来事の列を走査する。
+;; 期限つきの列を 1 つ足した宣言 — 出自の不具合の形(列に KeepFor が 1 つでも在ると、どの操作の前の刈りも出来事の列を走査した)を残す。
+;; 刈りは今は SweepExpired の時だけ(#3561・#3605 の D)。
 (val THREAD-SCHEMA
   (dataclasses.replace LAW-SCHEMA
     :streams (FrozenMap {"journal" (get LAW-SCHEMA.streams "journal")

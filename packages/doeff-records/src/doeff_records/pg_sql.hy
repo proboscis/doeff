@@ -29,7 +29,8 @@
 ;;;
 ;;; 保持の期限(#3561): 読みの文(行・一覧・変更の列・追記の読み・列の末尾)は、回収を待たずに期限を過ぎた行と出来事を文の条件で除く
 ;;; (RowExpiry・EventExpiry の境 — 境の刻は admission.retention-cutoff-ms)。出来事の期限の条件は回収と読みで同じ expired-event-condition の
-;;; 1 つ。期限の無い表と列では条件を足さない(文は前と同じ)。
+;;; 1 つ。期限の無い表と列では条件を足さない(文は前と同じ)。書き(#3605 の D)は回収の文を流さず、自分が触る単位の期限を過ぎた出来事だけを
+;;; 同じ条件で捨てる(expire-touched-events-statement)。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -321,7 +322,8 @@
    :tags {:context "records" :role "foundation"}}
   "変更の列の読み(changes-statement)の WHERE の後ろに足す「行の今の値が保持の期限を過ぎた終端の行である、その行の変わり(RowChanged)を
    除く」条件を作るため(expiries が空なら空の断片 — 文を変えない)。行の今の値は state_rows の行で判じ(条件は expired-row-clause)、
-   消えた(payload が NULL の RowRemoved)は除かない — 期限を過ぎた行の消えた は次の書きの回収が積む(#3561)。"
+   消えた(payload が NULL の RowRemoved)は除かない — 期限を過ぎた行の消えた は回収(SweepExpired)か、その行への書きが積む(#3561・
+   #3605 の D)。"
   (when (not expiries)
     (return NO-CLAUSE))
   (<- expired (expired-row-clause "r" expiries))
@@ -513,15 +515,22 @@
              :params params))
 
 
+(defk key-suffix-of [key]
+  {:pre [(: key str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "冪等キーの式 key の最初の区切り(引数 :separator)より後ろ・区切りを含まないキーはキー全体(admission.retention-group-of と同じ組の名)の
+   式を作るため。出来事の冪等キー(key-suffix-expression)と、書きが触る鍵の引数(expire-touched-events-statement)が同じ 1 つを使う。"
+  (.format "(CASE WHEN strpos({k}, :separator) > 0
+                 THEN substr({k}, strpos({k}, :separator) + length(:separator))
+                 ELSE {k} END)" :k key))
+
+
 (defk key-suffix-expression [alias]
   {:pre [(: alias str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "出来事 alias の冪等キーの最初の区切り(引数 :separator)より後ろ・区切りを含まないキーはキー全体(admission.retention-group-of と
-   同じ組の名)の式を作るため。"
-  (.format "(CASE WHEN strpos(({a}.payload::jsonb) ->> 'idempotencyKey', :separator) > 0
-                 THEN substr(({a}.payload::jsonb) ->> 'idempotencyKey',
-                             strpos(({a}.payload::jsonb) ->> 'idempotencyKey', :separator) + length(:separator))
-                 ELSE ({a}.payload::jsonb) ->> 'idempotencyKey' END)" :a alias))
+  "出来事 alias の冪等キーの組の名の式を作るため(key-suffix-of)。"
+  (<- suffix (key-suffix-of (.format "(({}.payload::jsonb) ->> 'idempotencyKey')" alias)))
+  suffix)
 
 
 (defk expire-event-groups-statement [prefix stream before-at separator]
@@ -534,3 +543,23 @@
   (<- params (expiring-params stream before-at separator))
   (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE {w} RETURNING old.seq, old.at, old.payload" :p prefix :w where)
              :params params))
+
+
+(defk expire-touched-events-statement [prefix stream before-at separator idempotency-key]
+  {:pre [(: prefix str) (: stream str) (: before-at int) (: separator (| str None)) (: idempotency-key str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "書き(AppendEvent)が触る単位の保持の期限を過ぎた出来事を捨て、捨てた出来事(番号・刻・payload)を返す文を作るため(#3605 の D — 書きは
+   置き場の全部を回収せず、自分が触る単位だけを片付ける)。単位 = 出来事ごとに数える列(separator None)は冪等キー idempotency-key の
+   出来事・組で数える列(ByKeySuffix)はその鍵の組の出来事(組の名の式 key-suffix-of を鍵の引数にも当てる)。期限の条件は回収と読みと同じ
+   expiring-where。返した行は回収と同じく鍵の覚えになる(retire-keys-statement)。"
+  (<- where (expiring-where prefix separator))
+  (<- params (expiring-params stream before-at separator))
+  (<- old-group (key-suffix-expression "old"))
+  (<- key-group (key-suffix-of "CAST(:idempotency_key AS text)"))
+  (val unit (if (is separator None)
+                "(old.payload::jsonb) ->> 'idempotencyKey' = :idempotency_key"
+                (.format "{} = {}" old-group key-group)))
+  (<- named (params-of #(#("idempotency_key" idempotency-key))))
+  (Statement :text (.format "DELETE FROM {p}append_rows AS old WHERE {w} AND {u} RETURNING old.seq, old.at, old.payload"
+                            :p prefix :w where :u unit)
+             :params (+ params named)))

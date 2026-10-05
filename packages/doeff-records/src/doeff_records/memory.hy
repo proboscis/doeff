@@ -10,19 +10,23 @@
 ;;; 返る — HTTP と PostgreSQL の口の待ちが読み直しの次の問いで不達を知るのと同じ(待ちの頭だけで見ると、待ちの最中に置いた窓に上限まで
 ;;; 気づかない — 出自の issue は #1020・使い手の画面の読み手で上限を 30 秒に延ばした時に出た)。
 ;;; 期限(timeout)は doeff-time の期限つきの待ち WaitWithin の 1 つ(呼び鈴か期限の早い方 — 仮想の時計の下では task を作らない・#3054)。
-;;; 保持の期限の刻には起きない(期限を過ぎた行の「消えた」は次の書きの回収が積み、その書きが待ち手を鳴らす — 下の保持の註)。
+;;; 保持の期限の刻には起きない(期限を過ぎた行の「消えた」は回収 SweepExpired か、その行への書きが積み、積んだ時に待ち手を鳴らす — 下の
+;;; 保持の註)。
 ;;; 呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
 ;;; thread の書きからも鳴らせるため。待ちは park で待つ(仮想の時計を止めない — 期限の刻まで時計が進める)。
 ;;; 保持の期限(#3561 — PostgreSQL の handler と同じ形): 読み(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd)は
 ;;; 回収を走らせず、読みの関数が刻を受けて期限を過ぎた行と出来事を出さない(回収と同じ判定 admission.row-expired? / event-expired?)。
-;;; 回収(purge-expired — 期限を過ぎた行を消して変更の列に RowRemoved を積み、出来事を冪等キーの覚えへ移す)は書き(PutRow・PutRows・
-;;; AppendEvent)の前と SweepExpired の時だけ走る。消え得る最も早い刻(purge-due-ms)より前なら回収は索引を見ない。
+;;; 回収(purge-expired — 期限を過ぎた行を消して変更の列に RowRemoved を積み、出来事を冪等キーの覚えへ移す)は SweepExpired の時だけ走る。
+;;; 消え得る最も早い刻(purge-due-ms)より前なら回収は索引を見ない。書き(PutRow・PutRows・AppendEvent — #3605 の D)は回収を走らせず、
+;;; 自分が触る物だけを回収と同じく片付けてから判じる(PostgreSQL の handler と同じ順): 行の書きは今の行が期限を過ぎていれば消して
+;;; RowRemoved を積み、無い行として判じる(writable-row)。追記は冪等キーの単位(出来事ごとに数える列は鍵の出来事・組で数える列は鍵の組)の
+;;; 期限を過ぎた出来事を捨てて覚えへ移してから、前の使いを引く(retire-touched-events)。触らない物は SweepExpired まで残る(読みには出ない)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 ;;;
 ;;; 置き場は thread の間で共有してよい(書き手の thread と実況の読みの thread が同じ MemoryStore を使う — この系の Python は GIL の無い
 ;;; free-threaded)。置き場の不変条件(列・番号・索引)の持ち主は MemoryStore なので、錠(MemoryStore.lock・RLock)も置き場が持ち、
-;;; handler の書きの節は「保持の刈り(purge-expired)と操作」の組を(at-now)、読みの節は操作を(read-at-now)、錠の内で 1 つずつ行う
+;;; handler の書きの節(at-now)と読みの節(read-at-now)は操作を、SweepExpired は保持の刈り(purge-expired)を、錠の内で 1 つずつ行う
 ;;; (guarded)。WatchChanges と WatchEvents の待ち(呼び鈴で眠る間)は
 ;;; 錠を持たない — 走査と呼び鈴を掛けるのを同じ錠の内で 1 回にする(間に積まれた変更を取りこぼさない・持ったまま眠ると他の書きが止まる)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
@@ -218,8 +222,9 @@
 
 
 (defn #^ int purge-expired [#^ MemoryStore store #^ int now-ms]
-  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(書きの前と SweepExpired の掃除 — 読みは回収を待たずに
-   期限を自分で見る・頭の註)。答え = 消した行の数。錠の内で走る(単独で呼ばれても — RLock なので guarded の内からの入れ子も通る)。"
+  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(SweepExpired の掃除 — 読みは回収を待たずに期限を自分で
+   見て、書きは自分が触る物だけを片付ける・頭の註)。答え = 消した行の数。錠の内で走る(単独で呼ばれても — RLock なので guarded の内からの
+   入れ子も通る)。"
   (with [store.lock] (purge-expired-locked store now-ms)))
 
 
@@ -241,7 +246,7 @@
 
 (defn #^ bool hidden-change? [#^ MemoryStore store #^ (| RowChanged RowRemoved) change #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(memory-watch-scan が内包表記の中で変更ごとに呼ぶ)
   "変更 change を WatchChanges の答えから外すか: 行の変わり(RowChanged)で、その行の今の値が刻 now-ms で保持の期限を過ぎた終端の行
-   (回収の前 — 消えた の変更は次の書きの回収が積む)。消えた(RowRemoved)と期限の無い表の変わりは外さない(PostgreSQL の
+   (回収の前 — 消えた の変更は回収 SweepExpired か、その行への書きが積む)。消えた(RowRemoved)と期限の無い表の変わりは外さない(PostgreSQL の
    pg_sql.hidden-changes-filter と同じ判定)。"
   (when (not (isinstance change RowChanged))
     (return False))
@@ -337,18 +342,23 @@
         ;; 組の出来事は同時に消える — 組を外すので、同じ組の残りの項は読み捨てになる。
         (GroupDue :stream stream :group group) (.extend events (. (.pop store.groups #(stream group)) events))
         _ (raise (TypeError (.format "期限の索引の項ではない: {!r}" item))))))
-  (setv removed 0)
   (for [item (sorted rows :key (fn [item] #(item.table item.text)))]
-    (.pop (get store.rows item.table) item.text)
-    (+= store.head 1)
-    (+= removed 1)
-    (setv (get store.changed-at store.head) now-ms)
-    (.append store.changes (RowRemoved item.table item.stored.row.key store.head)))
-  (when removed
+    (remove-stored-row store item.table item.text now-ms))
+  (when rows
     (ring-bells store (_bell-names (tuple (gfor item rows item.table)) #())))
   (when events
     (drop-events store events))
-  removed)
+  (len rows))
+
+
+(defn #^ None remove-stored-row [#^ MemoryStore store #^ str table #^ str text #^ int now-ms]
+  "保持の期限を過ぎた行 1 つ(表 table の鍵の文字列 text)を置き場から消し、変更の列に RowRemoved を積む — 回収(purge-expired-scan)と、
+   期限を過ぎた行へ書く書きの片付け(writable-row)が同じ 1 つを使う。呼び鈴は鳴らさない(呼び手が鳴らす — 回収は消した表をまとめて 1 回)。"
+  (setv stored (.pop (get store.rows table) text))
+  (+= store.head 1)
+  (setv (get store.changed-at store.head) now-ms)
+  (.append store.changes (RowRemoved table stored.row.key store.head))
+  None)
 
 
 (defn #^ None drop-events [#^ MemoryStore store #^ list events]  ; defk にできない: purge-expired-scan が錠の内で同期に呼ぶ置き場の書き
@@ -424,9 +434,24 @@
   (Written version value))
 
 
+(defn #^ (| Row None) writable-row [#^ MemoryStore store #^ TableDecl decl #^ tuple key #^ int now-ms]
+  "書きの判定に渡す今の行(無ければ None)を置き場から引くため。今の行が刻 now-ms で保持の期限を過ぎた終端の行なら(読みと回収と同じ判定
+   stored-row-expired?)、回収と同じくその行を消して RowRemoved を積み、その表の待ち手を鳴らして None を返す — 書きは回収の後と同じく
+   無い行として判じる(#3605 の D・頭の註。PostgreSQL の handler の locked-row と同じ片付け)。"
+  (setv text (key-text key)
+        stored (.get (get store.rows decl.name) text))
+  (cond
+    (is stored None) None
+    (stored-row-expired? decl stored now-ms)
+      (do (remove-stored-row store decl.name text now-ms)
+          (ring-bells store (_bell-names #(decl.name) #()))
+          None)
+    True stored.row))
+
+
 (defn #^ object memory-put-row [#^ MemoryStore store #^ str writer #^ PutRow ask #^ int now-ms]
   (setv decl (store.schema.table ask.table)
-        current (memory-current-row store ask.table ask.key))
+        current (writable-row store decl ask.key now-ms))
   (setv conflict (judge-expect ask.expect current))
   (when conflict (return conflict))
   (setv verdict (judge-put decl current ask.key ask.value))
@@ -435,9 +460,10 @@
 
 
 (defn #^ (| WrittenRows RowsConflict RowsRefused) memory-put-rows [#^ MemoryStore store #^ str writer #^ PutRows ask #^ int now-ms]  ; defk にできない: memory の handler が同期に呼ぶ置き場の書き(memory-put-row と同じ作法)
-  "PutRows の束を全部か 0 で書く: 全部の行の判定(admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積む。"
+  "PutRows の束を全部か 0 で書く: 全部の行を束の順に引き(期限を過ぎた行は消して無い行として — writable-row)、判定
+   (admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積む。"
   (for [write ask.writes] (store.schema.table write.table))
-  (setv currents (tuple (gfor write ask.writes (memory-current-row store write.table write.key)))
+  (setv currents (tuple (gfor write ask.writes (writable-row store (store.schema.table write.table) write.key now-ms)))
         verdict (judge-put-rows store.schema ask.writes currents))
   (when (not (isinstance verdict tuple)) (return verdict))
   (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
@@ -539,7 +565,7 @@
    :tags {:context "records" :role "foundation"}}
   "WatchChanges と WatchEvents の答え: 待つ名(頼んだ表・列)に書きが来るか timeout 秒が過ぎるまで待つ(Reset はすぐ返す)。読み直しを
    繰り返さず、その名の書きが鳴らす呼び鈴と、timeout の 1 回の鳴らしで起きる(保持の期限の刻には起きない — 期限を過ぎた行の消えた は
-   次の書きの回収が積み、その書きが鳴らす)。timeout を過ぎたら最後に 1 回走査した答えを返す。待ちの最中に待つ名が届かない状態になれば
+   回収 SweepExpired か、その行への書きが積み、積んだ時に鳴らす)。timeout を過ぎたら最後に 1 回走査した答えを返す。待ちの最中に待つ名が届かない状態になれば
    (SetStoreOutage が待ち手を鳴らす)、起きた回で Unreachable を返す。"
   (<- started (GetTime))
   (<- span (wait-span ask.timeout))
@@ -560,11 +586,32 @@
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
 
+(defn #^ None retire-touched-events [#^ MemoryStore store #^ StreamDecl decl #^ str idempotency-key #^ int now-ms]
+  "追記が触る単位(出来事ごとに数える列は冪等キーの出来事・組で数える列は鍵の組)の保持の期限を過ぎた出来事を、回収と同じく捨てて冪等キーの
+   覚えへ移すため(#3605 の D — 書きは置き場の全部を回収しない。答えは回収の後の追記と同じ: 期限を過ぎた鍵は覚えで判じ、期限を過ぎた組に
+   新しい鍵を積んでも組の古い出来事は読みに戻らない。PostgreSQL の handler の retire-touched-events と同じ単位)。期限の判定は読みと回収と
+   同じ(出来事は stored-event-expired?・組は組の最後の刻の event-expired?)。期限の無い列では何もしない。"
+  (when (not (isinstance decl.retention KeepFor))
+    (return None))
+  (setv group (retention-group-of decl idempotency-key))
+  (if (is group None)
+      (do (setv event (.get store.by-idempotency #(decl.name idempotency-key)))
+          (when (and (is-not event None) (stored-event-expired? store decl event now-ms))
+            (drop-events store [event])))
+      (do (setv held (.get store.groups #(decl.name group)))
+          (when (and (is-not held None) (event-expired? decl held.last-at now-ms))
+            (.pop store.groups #(decl.name group))
+            (drop-events store held.events))))
+  None)
+
+
 (defn #^ object memory-append [#^ MemoryStore store #^ str writer #^ AppendEvent ask #^ int now-ms]
-  "AppendEvent に答えるため: 冪等キーの前の使い(生きた出来事・無ければ保持の期限で消した鍵の覚え)を引いて判じ、新しければ積む。"
+  "AppendEvent に答えるため: 触る単位の期限を過ぎた出来事を片付け(retire-touched-events)、冪等キーの前の使い(生きた出来事・無ければ保持の
+   期限で消した鍵の覚え)を引いて判じ、新しければ積む。"
   (setv decl (store.schema.stream ask.stream)
-        slot #(ask.stream ask.idempotency-key)
-        earlier (.get store.by-idempotency slot)
+        slot #(ask.stream ask.idempotency-key))
+  (retire-touched-events store decl ask.idempotency-key now-ms)
+  (setv earlier (.get store.by-idempotency slot)
         verdict (judge-append decl ask.body (if (is earlier None) (.get store.retired-keys slot) earlier)))
   (cond
     (isinstance verdict Refused) verdict
@@ -698,11 +745,12 @@
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
                   Changes Appended Events StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
-  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で保持の刈りの後に operation(刻 → 答え)を呼ぶため(書きの節 PutRow・PutRows・
-   AppendEvent の置き場の操作の形 — 回収のきっかけは書きと SweepExpired だけ。読みの節は read-at-now)。"
+  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(書きの節 PutRow・PutRows・AppendEvent の置き場の
+   操作の形 — 回収は走らせない。書きの操作が自分の触る物だけを片付ける・頭の註・#3605 の D。回収は SweepExpired だけ。読みの節は
+   read-at-now)。"
   (<- now (GetTime))
   (val now-ms (epoch-ms now))
-  (guarded store (fn [] (purge-expired store now-ms) (operation now-ms))))
+  (guarded store (fn [] (operation now-ms))))
 
 
 (defk read-at-now [store operation]
@@ -756,7 +804,8 @@
   (ReadSignalSource []
     (<- source SignalSourceFactory (memory-signal-source store))
     (resume source))
-  ;; 読みの節は回収を走らせず(read-at-now)、刻を読みの関数へ渡す。書きの節(at-now)と SweepExpired だけが回収する(頭の註)。
+  ;; 読みの節(read-at-now)と書きの節(at-now)は回収を走らせず、刻を置き場の関数へ渡す(書きは自分が触る物だけを片付ける)。回収するのは
+  ;; SweepExpired だけ(頭の註・#3605 の D)。
   (ReadRow [table key]
     (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-read-row store effect now-ms)))))
     (resume answer))
