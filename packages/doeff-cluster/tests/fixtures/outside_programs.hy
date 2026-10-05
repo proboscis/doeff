@@ -67,7 +67,7 @@
     (<- (Delay 1.0))))
 
 
-(defsystem shared-store [foundation]
+(defsystem shared-store [#^ Callable foundation]
   "外の系の store を effect で共有する 2 つの service"
   (writer (writer-program foundation) :replicas 1 :needs #{"cluster-net"})
   (reader (reader-program foundation) :replicas 1 :needs #{"cluster-net"}))
@@ -100,7 +100,7 @@
   (<- (foundation (last-words-loop)))
   None)
 
-(defsystem last-words [foundation]
+(defsystem last-words [#^ Callable foundation]
   "取り消しの巻き戻しで外の系へ書こうとする service 1 つ"
   (speaker (last-words-program foundation) :replicas 1 :needs #{"cluster-net"}))
 
@@ -125,7 +125,7 @@
   (<- (foundation (slow-last-words-loop)))
   None)
 
-(defsystem slow-last-words [foundation]
+(defsystem slow-last-words [#^ Callable foundation]
   "取り消しの巻き戻しで待ってから外の系へ書こうとする service 1 つ"
   (speaker (slow-last-words-program foundation) :replicas 1 :needs #{"cluster-net"}))
 
@@ -152,6 +152,6 @@
   (<- (foundation (spawning-last-words-loop)))
   None)
 
-(defsystem spawning-last-words [foundation]
+(defsystem spawning-last-words [#^ Callable foundation]
   "子の task を持ち、取り消しの巻き戻しで外の系へ書こうとする service 1 つ"
   (speaker (spawning-last-words-program foundation) :replicas 1 :needs #{"cluster-net"}))

@@ -196,11 +196,11 @@
 
 ;; --- 系 ------------------------------------------------------------------------------------------------
 
-(defsystem submitters [foundation]
+(defsystem submitters [#^ Callable foundation]
   "見本の系: 0.5 秒かかる task を切り離して出し、答えを待つ service 1 つ"
   (submitter (submitter-program foundation 0.5 3 "wall/task") :replicas 1 :needs #{"cluster-net"}))
 
 
-(defsystem listeners [foundation]
+(defsystem listeners [#^ Callable foundation]
   "見本の系: 本物の待ち受けで外の客と話す service 1 つ(道具は 1 秒)"
   (listener (listener-program foundation "wall/address" 1.0) :replicas 1 :needs #{"cluster-net"}))

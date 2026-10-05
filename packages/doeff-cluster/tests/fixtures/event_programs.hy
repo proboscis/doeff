@@ -35,7 +35,7 @@
   None)
 
 
-(defsystem ping-waiters [foundation]
+(defsystem ping-waiters [#^ Callable foundation]
   "合図 Ping を待つ 1 つの service"
   (waiter (ping-waiter-program foundation) :replicas 1 :needs #{"cluster-net"}))
 
@@ -59,7 +59,7 @@
   None)
 
 
-(defsystem deadline-waiters [foundation]
+(defsystem deadline-waiters [#^ Callable foundation]
   "自分の期限の timer を待つ 1 つの service"
   (waiter (deadline-waiter-program foundation) :replicas 1 :needs #{"cluster-net"}))
 
@@ -115,11 +115,11 @@
   None)
 
 
-(defsystem stop-minders [foundation]
+(defsystem stop-minders [#^ Callable foundation]
   "止めの節を持つ 1 つの service(止めの合図で後始末の印を書いて終わる)"
   (minder (stop-minder-program foundation "stop/minder") :replicas 1 :needs #{"cluster-net"}))
 
 
-(defsystem stop-ignorers [foundation]
+(defsystem stop-ignorers [#^ Callable foundation]
   "止めの合図を無視する 1 つの service(止めの問いを 1 度だけ出し、来ない合図を待ち続ける)"
   (ignorer (stop-ignorer-program foundation) :replicas 1 :needs #{"cluster-net"}))

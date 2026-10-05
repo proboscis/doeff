@@ -1,0 +1,24 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-hy-declarations"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-hy-declarations",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/declarations.hy"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/declarations.hy"
+      ],
+      "responsibility": "定義の頭の :effects と :tags を定義の属性(DefinitionTags など)として残す — defsystem の展開が系の関数の役を書く時に import する(#3366)",
+      "typed": true
+    }
+  ]
+}

@@ -82,11 +82,11 @@
   n)
 
 
-(defsystem cancel-reporters [foundation pid-file]
+(defsystem cancel-reporters [#^ Callable foundation #^ str pid-file]
   "見本の系: 子 process の要求を 1 回取り消し、止めた子の数えを橋で coordinator へ送る service 1 つ"
   (stopper (counting-stopper-program foundation pid-file) :replicas 1 :needs #{"cluster-net"}))
 
 
-(defsystem uncounted-cancel-reporters [foundation pid-file]
+(defsystem uncounted-cancel-reporters [#^ Callable foundation #^ str pid-file]
   "cancel-reporters の反例: 子 process の答え手に計器を渡さない"
   (stopper (uncounted-stopper-program foundation pid-file) :replicas 1 :needs #{"cluster-net"}))
