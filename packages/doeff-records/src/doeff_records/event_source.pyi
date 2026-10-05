@@ -7,6 +7,7 @@ from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import fields as fields
 from dataclasses import is_dataclass as is_dataclass
+from dataclasses import replace as replace
 from functools import partial as partial
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program

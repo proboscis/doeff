@@ -164,7 +164,9 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 置かない組み立ては最初の要求で、答え手の無い `ReadRequestPatience` として落ちる。待つ時間を越えたら、待った秒を名指した `Unreachable` を返す。
 合図の源が止まりに耐える時間は別の問い `ReadSourcePatience`(`source_patience_handler(SignalSourcePatience(seconds))`)で、client は問わない —
 同じ組の中で「client は待たない・源は耐える」を、handler を並べる位置に依らずに選べる。変化の待ち 2 つ(`WatchChanges`・`WatchEvents`)は
-待たない — 合図の源が自分で越えて止まりの合図を出す。源の始まりの読み(`ListRows`・`ReadStreamEnd`)は client の待つ時間に乗る。
+待たない — 合図の源が自分で越えて止まりの合図を出す。源は戻りの知らせの後に、同じ位置から待たない読み(`timeout` 0)を 1 回撃って戻りの
+合図を出し、その答えの位置から long-poll に戻る(戻った後に書きが無くても long-poll の 1 回ぶんを待ち切らない)。源の始まりの読み
+(`ListRows`・`ReadStreamEnd`)は client の待つ時間に乗る。
 
 ## 置き場の手入れ(`doeff_records.maintenance`)
 

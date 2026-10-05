@@ -18,6 +18,8 @@
   置き場が Unreachable を返しても源は落ちず、止まりの合図 SourceStalled を出して戻りを出来事として待ち(AwaitRecordsBack — 撃ち直しを
   時間で繰り返さない)、戻れば SourceResumed を出して続ける。本体には Unreachable を出さない。上限(ReadSourcePatience)を過ぎれば名指して
   落ちる。上限の答え手を置き忘れると、止まりの拍に答え手の無い問いで落ちる(faults.SetStoreOutage・#3469)。
+  置き場が戻った後に誰も書かなくても、戻りの合図は戻りの知らせの後の読み直し 1 往復で出る(読み直しが long-poll を待ち切らない —
+  受信停止の戻りの遅れ・W の条件 5)。その読み直しの答えで位置を誤らない(止まりの前の書きの合図が重ならず、戻りの後の書きを落とさない)。
 - 時間は仮想の時計(sim-time-handler)。筋書きが合図を受けられずに待ち続けると、仮想の時計の LIMIT_SECONDS 秒で赤にする(_bounded —
   源は待ちの上限ごとに待ち直すので、scheduler の行き止まりにならない)。
 """
@@ -517,6 +519,125 @@ def test_a_foundation_that_forgets_the_patience_is_named_at_the_stall() -> None:
     stack = [sim_time_handler(clock=SimClock()), memory_records_handler(MemoryStore(SCHEMA), WRITER)]
     with pytest.raises(Exception, match="ReadSourcePatience"):
         run(scheduled(with_handlers(stack, _bounded(_outage_for_good()))))
+
+
+# --- 戻った後に書きが無くても、戻りの合図は戻りの知らせから読み直し 1 往復で出る(受信停止の戻りの遅れ・W の条件 5)------------------
+
+
+# 置き場が戻ってから戻りの合図までに許す仮想の秒 — 戻りの知らせの後の読み直し 1 往復ぶん(long-poll の 1 回 WATCH_SECONDS より十分短い)。
+RESUME_WITHIN_SECONDS = 1.0
+
+
+@do
+def _touch_jobs(key: str) -> EffectGenerator[ChangedRow]:
+    """表 jobs の鍵 key の行を書き、その合図が運ぶ所を返す。"""
+    yield _write("jobs", key)
+    return _row("jobs", key)
+
+
+@do
+def _touch_intake(key: str) -> EffectGenerator[ChangedRow]:
+    """列 intake に冪等キー key の出来事を積み、その合図が運ぶ所(列の名前と積んだ番号)を返す。"""
+    sequence = yield _append("intake", key)
+    return ChangedRow(table="intake", key=str(sequence))
+
+
+@dataclass(frozen=True)
+class QuietCase:
+    """戻った後に書きの無い止まりの筋書き 1 つ: signal = 本体が待つ合図の型 / bindings = 源に結ぶ組 / touch = 鍵を 1 つ書いて(積んで)、
+    その合図が運ぶ所を返す Program の工場。"""
+
+    signal: type
+    bindings: tuple[SignalTables, ...]
+    touch: Callable[[str], Program[ChangedRow]]
+
+
+# 表の分の源(WatchChanges の long-poll)と列の分の源(WatchEvents の long-poll)の 2 つ。
+QUIET_CASES = (
+    pytest.param(QuietCase(signal=Changed, bindings=(CHANGED_ON_JOBS, LANE_ON_LANES), touch=_touch_jobs), id="table"),
+    pytest.param(QuietCase(signal=IntakeMoved, bindings=(INTAKE_ON_INTAKE,), touch=_touch_intake), id="stream"),
+)
+
+
+@do
+def _resumed_at() -> EffectGenerator[tuple[object, object, object]]:
+    """画面の代役: 止まりと戻りの合図を来た順に 2 つ受け、2 つ目を受けた刻(仮想の時計)を添えて返す。"""
+    first = yield WaitForEvent(SourceStalled, SourceResumed)
+    second = yield WaitForEvent(SourceStalled, SourceResumed)
+    at = yield GetTime()
+    return (first, second, at)
+
+
+@do
+def _two_signals(signal: type) -> EffectGenerator[tuple[object, object]]:
+    """受け手: 型 signal の合図を 2 つ受けて返す。"""
+    first = yield WaitForEvent(signal)
+    second = yield WaitForEvent(signal)
+    return (first, second)
+
+
+@dataclass(frozen=True)
+class QuietResumeOutcome:
+    """戻った後に書きの無い止まりの結果: seen = 画面の代役が受けた止まりと戻りの合図 / resumed_after = 置き場が戻った刻から戻りの合図を
+    受けた刻までの仮想の秒 / received = 本体が受けた 2 つの合図 / expected = 止まりの前の書きと戻りの合図の後の書きが運ぶ所(順)。"""
+
+    seen: tuple[object, object]
+    resumed_after: float
+    received: tuple[object, object]
+    expected: tuple[ChangedRow, ChangedRow]
+
+
+@do
+def _outage_then_silence(case: QuietCase, source: ProgramHandler, subscriber: str) -> EffectGenerator[QuietResumeOutcome]:
+    """受け手(源 source で包んだ本体)が待ち始めた後に 1 つ書き(合図を 1 つ受ける)、置き場が OUTAGE_SECONDS 秒止まる。戻った後は誰も
+    書かずに画面の代役が戻りの合図を受けるのを待ち、受けてから 2 つ目を書く(戻りの後の読み直しの答えで位置を誤れば、1 つ目の合図が
+    重なるか 2 つ目を落とす)。"""
+    bus = EventBus()
+    waiting = subscribed_event_handler(bus, subscriber, (case.signal,))
+    screen = subscribed_event_handler(bus, "screen", (SourceStalled, SourceResumed))
+    observer = yield Spawn(with_handlers([screen], _resumed_at()))
+    receiver = yield Spawn(with_handlers([waiting, source], _two_signals(case.signal)))
+    yield Delay(STARTED_AFTER)
+    before: ChangedRow = yield case.touch("before")
+    yield Delay(STARTED_AFTER)
+    yield SetStoreOutage(DETAIL)
+    yield Delay(OUTAGE_SECONDS)
+    yield SetStoreOutage(None)
+    back = yield GetTime()
+    stalled, resumed, resumed_at = yield Wait(observer)
+    after: ChangedRow = yield case.touch("after")
+    received = yield Wait(receiver)
+    return QuietResumeOutcome(
+        seen=(stalled, resumed),
+        resumed_after=(resumed_at - back).total_seconds(),
+        received=received,
+        expected=(before, after),
+    )
+
+
+def assert_resumed_promptly(outcome: object, case: QuietCase, subscriber: str) -> None:
+    """戻った後に書きの無い止まりの結果を確かめる(記録の置き場の源と模擬の源が同じ形で使う): 戻りの合図は置き場が戻ってから
+    RESUME_WITHIN_SECONDS 秒の内・本体は止まりの前の書きの合図と戻りの後の書きの合図を 1 つずつ順に受ける(重ならず落とさない)。"""
+    assert isinstance(outcome, QuietResumeOutcome), outcome
+    stalled, resumed = outcome.seen
+    assert isinstance(stalled, SourceStalled), outcome.seen
+    assert (stalled.source, stalled.detail) == (subscriber, DETAIL)
+    assert resumed == SourceResumed(source=subscriber)
+    assert outcome.resumed_after <= RESUME_WITHIN_SECONDS, (
+        f"置き場が戻ってから戻りの合図まで {outcome.resumed_after} 秒(上限 {RESUME_WITHIN_SECONDS} 秒)"
+        " — 戻りの知らせの後の読み直しが long-poll を待ち切っている"
+    )
+    before, after = outcome.expected
+    assert outcome.received == (case.signal((before,)), case.signal((after,))), outcome
+
+
+@pytest.mark.parametrize("case", QUIET_CASES)
+def test_the_resumed_signal_follows_the_store_coming_back_without_a_write(case: QuietCase) -> None:
+    # 失敗ケース: 戻りの知らせの後の読み直しが元と同じ long-poll(WatchChanges・WatchEvents の timeout = WATCH_SECONDS)だと、戻った後に
+    # 書きが無い間はその秒を待ち切ってから戻りの合図を出す(本番の 2026-10-06 の朝: 記録の service が戻ってから画面が「合図の源が
+    # 戻った」を名乗るまで +38 秒)。
+    outcome = _run_on(MemoryStore(SCHEMA), _outage_then_silence(case, records_signal_handler(case.bindings, "worker"), "worker"))
+    assert_resumed_promptly(outcome, case, "worker")
 
 
 # --- 置き場の作り直し(Reset)と組み立ての確かめ ----------------------------------------------------------

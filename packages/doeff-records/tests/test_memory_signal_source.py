@@ -14,6 +14,7 @@ SignalSourceFactory の検 — #3127・設計 #3072。
   本体が終われば源の task が止まり、置き場に呼び鈴を残さない。
   置き場の止まり(faults.SetStoreOutage)を、記録の置き場の源と同じ越え方で越える — 止まりと戻りの合図を出し、戻れば合図が続く・上限を
   過ぎれば名指して落ちる(#3469 — 模擬と本番で止まりの振る舞いを揃える。旧い模擬の源は止まりを見ずに待ち続けた)。
+  戻った後に誰も書かなくても、記録の置き場の源と同じく戻りの合図が戻った刻に出る(受信停止の戻りの遅れ・W の条件 5)。
 """
 
 from dataclasses import dataclass
@@ -54,16 +55,20 @@ from tests.test_event_source import (
     DETAIL,
     OUTAGE_SECONDS,
     PATIENCE,
+    QUIET_CASES,
     SCHEMA,
     STARTED_AFTER,
     STARTS_AT_SUBSCRIBE,
     WRITER,
+    QuietCase,
+    _outage_then_silence,
     _row,
     _run_on,
     _stacked,
     _stall_and_resume,
     _subscribe,
     _write,
+    assert_resumed_promptly,
 )
 
 from doeff import EffectBase, EffectGenerator, K, Pass, Program, Resume, do, run, with_handlers
@@ -356,6 +361,17 @@ def test_the_memory_source_waits_out_a_store_outage_like_the_production_source()
     assert isinstance(stalled, SourceStalled), seen
     assert (stalled.source, stalled.detail) == (SUBSCRIBER, DETAIL)
     assert resumed == SourceResumed(source=SUBSCRIBER)
+    assert store.bells == {}, store.bells
+
+
+@pytest.mark.parametrize("case", QUIET_CASES)
+def test_the_memory_source_resumes_right_after_the_store_comes_back_without_a_write(case: QuietCase) -> None:
+    # 記録の置き場の源と同じ筋書き(test_event_source の test_the_resumed_signal_follows_the_store_coming_back_without_a_write): 模擬の源の
+    # 戻りの後の読み直しは置き場の止まりを見るだけ(memory-reach — 変化を待たない)なので、戻りの合図は戻った刻に出て、位置は戻りの前の
+    # まま(止まりの前の書きの合図を重ねず、戻りの後の書きを落とさない)。
+    store = MemoryStore(SCHEMA)
+    outcome = _run_on(store, _outage_then_silence(case, memory_signal_handler(store, case.bindings, SUBSCRIBER), SUBSCRIBER))
+    assert_resumed_promptly(outcome, case, SUBSCRIBER)
     assert store.bells == {}, store.bells
 
 
