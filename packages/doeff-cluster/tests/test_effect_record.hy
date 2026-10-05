@@ -20,6 +20,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy.frozen [FrozenMap])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster.foundation.record_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical
@@ -83,6 +84,22 @@
   (var raised False)
   (try (encode-value (object)) (except [TypeError] (:= raised True)))
   (assert raised "知らない値は投げる"))
+
+(deftest test-frozen-maps-round-trip-as-frozen-maps
+  ;; doeff_hy.frozen の凍った写像 FrozenMap(業務の答えが運ぶ記録の行の値 — doeff-records の Row・Written の value)を、記録の形を通しても
+  ;; 同じ値・同じ型で戻す(dict に化けない)。入れ子(FrozenMap の中の FrozenMap・tuple の中の FrozenMap)も同じ型で戻る。
+  ;; 失敗ケース(直す前の形): encode-value が「記録の形にできない値の型: doeff_hy.frozen:FrozenMap」で投げて赤(#3687 の続き — 業務の答えが
+  ;; 書けた行の値を運ぶ形で、本番の記録係の記録がその答えで止まった欠け)。
+  (val inner (FrozenMap {"k" #(1 2) "s" "x"}))
+  (val v (FrozenMap {"inner" inner "pair" #(inner "y") "n" 3 "$weird" None}))
+  (val j (encode-value v))
+  (json.dumps j)                                       ; JSON にできる
+  (val back (decode-value (json.loads (json.dumps j))))
+  (assert (= back v) back)
+  (assert (isinstance back FrozenMap) (type back))
+  (assert (isinstance (get back "inner") FrozenMap) (type (get back "inner")))
+  (assert (isinstance (get (get back "pair") 0) FrozenMap) (type (get (get back "pair") 0)))
+  (assert (isinstance (get back "pair") tuple) (type (get back "pair"))))
 
 (deftest test-delta-round-trip
   (setv prev {"items" (lfor i (range 300) {"id" i "t" (* "x" 20)}) "n" 1}
@@ -566,4 +583,35 @@
   (val state (ReplayState (! (read-recording sink.lines))))
   (<- replayed dict (with-handlers-list [(effect-replayer state)] (read-after-writes)))
   (assert (= replayed rows) #(replayed rows))
+  (assert (get (! (replay-report state "program-returned")) "identical")))
+
+;; 答えに凍った写像を運ぶ読みの effect(記録の形は型の宣言 — 業務の答えが記録の行の値を FrozenMap のまま運ぶ形の代わり)。
+(defclass [(dataclass :frozen True)] FrozenRowRead [EffectBase]
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ :args #("key")))
+  (#^ str key))
+
+(defhandler frozen-rows
+  ;; 行の値を凍った写像で答える(入れ子の写像も凍らせたまま)。
+  (FrozenRowRead [key]
+    (resume (FrozenMap {"key" key "row" (FrozenMap {"version" 1 "fields" #("a" "b")})}))))
+
+(defk frozen-row-reads []
+  {:pre [] :post [(: % list)]}
+  ;; 凍った写像の答えを 2 つ読んで並べる(記録と再生で同じ答えか・同じ型かを比べる材料)。
+  (<- a FrozenMap (FrozenRowRead "row/a"))
+  (<- b FrozenMap (FrozenRowRead "row/b"))
+  [a b])
+
+(deftest test-a-frozen-map-answer-is-recorded-by-the-strict-recorder-and-replayed-as-a-frozen-map
+  ;; strict の記録係(テストの形 — 記録できない値は業務へ投げる)が、凍った写像の答えを業務へ投げずに記録し、再生は同じ値・同じ型
+  ;; (入れ子も FrozenMap)を返して違い 0。記録を読む側(read-recording・effect-replayer)は書いた側と同じ版の codec で読む。
+  ;; 失敗ケース(直す前の形): 答えの符号化が UnencodableValue で落ち、strict の記録係が業務へ投げて赤。
+  (val sink (MemorySink))
+  (val log (EffectLog sink {"service" "s" "run" "r1"} :strict True :wall-ms (fn [] 0)))
+  (<- rows list (with-handlers-list [frozen-rows (effect-recorder log)] (frozen-row-reads)))
+  (assert (is log.broken None) log.broken)
+  (val state (ReplayState (! (read-recording sink.lines))))
+  (<- replayed list (with-handlers-list [(effect-replayer state)] (frozen-row-reads)))
+  (assert (= replayed rows) #(replayed rows))
+  (assert (all (gfor row replayed (and (isinstance row FrozenMap) (isinstance (get row "row") FrozenMap)))) (lfor row replayed (type row)))
   (assert (get (! (replay-report state "program-returned")) "identical")))
