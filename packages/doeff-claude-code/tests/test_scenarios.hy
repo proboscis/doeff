@@ -287,6 +287,33 @@
   (assert (= after (LiveProcess :launches 2)) after))
 
 
+(deftest test-an-interrupt-that-continues-keeps-the-process-and-the-next-turn-reuses-it
+  ;; 止めの受理(interrupt_receipt_v1)を名乗る CLI に、足してから止める(control_request の形): 止めは手番だけの止めで process は殺さない。
+  ;; 生き残った入力の続きの手番(continued-by)は同じ process で終わり、その後も process は生きて待ち、次の手番も同じ process を使い回す
+  ;; (#3672 の決め 10-06 — 止めた直後の入力を起こし直し 1.6〜2.6 秒なしで答える)。続きの行を手番の外の出力と数えて降ろすと赤。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- started (start (FreshSession sid) s.base (sleep-prompt LONG-SLEEP "NEVER")))
+  (<- _ (read-to-tool-start started.turn s.turn-timeout))
+  (<- _ (ClaudeInjectInput started.turn (typed (extra-prompt) "inj-survivor")))
+  (<- asked (ClaudeInterruptTurn started.turn))
+  (assert (isinstance asked InterruptRequested) (repr asked))
+  (<- stopped (read-to-end started.turn s.turn-timeout))
+  (assert (isinstance stopped.end Interrupted) (repr stopped.end))
+  (assert (= stopped.end.surviving-refs #("inj-survivor")) (repr stopped.end))
+  (<- next-turn (read-to-end stopped.end.continued-by s.turn-timeout))
+  (assert (isinstance next-turn.end Completed) (repr next-turn.end))
+  (<- after-continue (ClaudeLiveProcess sid))
+  (assert (= after-continue (LiveProcess :launches 1)) after-continue)
+  (<- again (start (ResumeSession sid) s.base (reply-prompt "AFTER")))
+  (<- done (read-to-end again.turn s.turn-timeout))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (in "AFTER" done.end.result-text) done.end.result-text)
+  (<- after-again (ClaudeLiveProcess sid))
+  (assert (= after-again (LiveProcess :launches 1)) after-again))
+
+
 (deftest test-dropping-an-idle-live-process-lets-the-next-turn-relaunch
   ;; 手番を走らせていない生きた process も落とせる(本番の答え手の ClaudeDropProcess は走っていなくても process を消す — fake も同じ。
   ;; 模擬の相手役が、待っている CLI の消え方を作るため・#3672)。自分で消えた扱いで訳は付けず、次の続きの手番は起こし直して続く。
