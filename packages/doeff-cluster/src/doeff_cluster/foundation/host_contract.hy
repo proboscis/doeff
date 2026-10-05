@@ -6,6 +6,10 @@
 ;;;   1. run-context  = Ask HOST-CONTRACT.run-context-key の答え(shared/intent/run_context の RunContext — coordinator の URL・worker・job・世代)
 ;;;   2. environ      = 宣言の :environ(子の環境変数)。Program は名の Ask で読み、値は字面どおりの文字列(下の environ-reader)
 ;;;   3. program-path = Ask HOST-CONTRACT.program-key の答え(この job の詰めた Program の file の path — 記録係が header に載せる)
+;;;   4. 退きの知らせ = AwaitRetirement(worker/intent/retirement_model — #3672)の答え。本番の宿は worker の shim が job へ知らせの pipe の
+;;;      読み口を継がせ、その fd の番号を環境変数 HOST-CONTRACT.notice-env で渡す(worker が shim の標準入力へ書いた行を shim が中継する)。
+;;;      答え手は入口の側の土台の handler pipe-retirement-notices(worker/entry/retirement_notices — 業務の側が土台の組に並べる)。sim の偽の宿は
+;;;      世界の受け手で答える(local.hy の process-notices)。
 ;;;
 ;;; 本番では、入口の側の土台の handler host-reader(shared/entry/host_reader — #2981 でここから移した)が os.environ から 1 と 3 に答え、
 ;;; (environ-reader) が 2 に答える(業務の側が土台の組に並べる)。host-reader は session val を使うので、その外側に状態の handler
@@ -42,19 +46,22 @@
 
 (defrecord HostContract
   "宿が提供する物の鍵。run-context-key / program-key / versions-key = Ask の鍵・program-env = 子の process に Program の path を渡す
-   環境変数の名。versions-key の答え = この process の版の識別(foundation/process_versions.process-versions の dict — 記録係が
+   環境変数の名・notice-env = 子の process に退きの知らせの pipe の読み口の fd の番号を渡す環境変数の名(shim が置く — #3672)。
+   versions-key の答え = この process の版の識別(foundation/process_versions.process-versions の dict — 記録係が
    header に載せる・送り手の client が blob に添える。protocol の層は自分で読まない — #2345)。"
   {:tags {:context "doeff-cluster" :role "foundation"}}
   (#^ str run-context-key)
   (#^ str program-key)
   (#^ str versions-key)
-  (#^ str program-env))
+  (#^ str program-env)
+  (#^ str notice-env))
 
 
 (val HOST-CONTRACT (HostContract :run-context-key "doeff.cluster.run-context"
                                  :program-key "doeff.cluster.program"
                                  :versions-key "doeff.cluster.versions"
-                                 :program-env "DOEFF_WORKER_PROGRAM"))
+                                 :program-env "DOEFF_WORKER_PROGRAM"
+                                 :notice-env "DOEFF_WORKER_NOTICE_FD"))
 
 
 ;; sim の柵が外へ通す effect の型(頭の註)。scheduler の effect と doeff-time の時計の effect だけ。

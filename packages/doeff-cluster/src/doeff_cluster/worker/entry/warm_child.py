@@ -193,7 +193,8 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int) -> 
     run(replace_environ(tuple((item.name, item.value) for item in request.env)))
     os.chdir(request.cwd)
     spawner = EntrySpawner(request.entry, tuple(request.args), lines.writer_descriptors)
-    code = shim_code(request.grace_seconds, spawner, lines, become_subreaper)
+    # 分かれた task は入れ替えの対象でない(service だけが入れ替わる)— 退きの知らせを中継しない(#3672)。
+    code = shim_code(request.grace_seconds, spawner, lines, become_subreaper, relay=None)
     write_replacing(request.exit_path, str(code))
     sys.stderr.flush()
     os._exit(exit_status(code))

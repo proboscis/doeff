@@ -25,8 +25,13 @@ job の出力(#3714): --stamp-lines の時は、job の stdout・stderr(worker �
 時計の刻の頭を付けて log へ書く(部品 worker/entry/line_stamp — 待ちの子から分かれた子 A と同じ部品)。旗が無ければ、job の出力は
 worker の向け替えのまま(入口の検め — worker が stdout の行を読んで判じる)。
 
-使い方: python -m doeff_cluster.worker.entry.shim <猶予秒> [--stamp-lines] -- <job の命令…>(#2028 でここへ移した — 旧い path の
-doeff_cluster.shim は #2113 で消し、worker が送る名もこの名にした)
+退きの知らせ(#3672): --notice-env <名> の時は、job へ知らせの pipe の読み口を継がせ(fd の番号を環境変数 <名> で渡す — 宿の契約
+HOST-CONTRACT の notice-env)、worker が標準入力へ書いた行(入れ替えで退く・その取り消し — worker/protocol/process_host の
+retirement-line)をそのまま pipe へ中継する。行の中身は読まない(語を読むのは job の中の答え手)。job が pipe を閉じた・終わった後の
+行は捨てる。旗が無ければ(入口の検め・待ちの子から分かれた子)標準入力の行は読み捨てる。標準入力の EOF は今までどおり (b) の道。
+
+使い方: python -m doeff_cluster.worker.entry.shim <猶予秒> [--stamp-lines] [--notice-env <名>] -- <job の命令…>(#2028 でここへ移した —
+旧い path の doeff_cluster.shim は #2113 で消し、worker が送る名もこの名にした)
 """
 
 import contextlib
@@ -42,6 +47,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import FrameType
 
+from doeff_cluster.foundation.process_environ import child_environ
 from doeff_cluster.worker.entry.line_stamp import OutputLines, RawLines, stamped_lines
 
 # 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
@@ -69,6 +75,39 @@ class NotAdopting:
 
 
 Adoption = Adopting | NotAdopting
+
+
+@dataclass(frozen=True)
+class NoticeRelay:
+    """退きの知らせの中継の口(#3672): env_name = job へ読み口の fd の番号を渡す環境変数の名・read_fd = job へ継がせる読み口(shim は job を
+    起こした後に自分の写しを閉じる)・write_fd = shim が標準入力の行を書く口。"""
+
+    env_name: str
+    read_fd: int
+    write_fd: int
+
+
+@dataclass(frozen=True)
+class NoticeVariable:
+    """job へ足す環境変数 1 つ(知らせの pipe の印 — name = 環境変数の名・value = <fd の番号>:<pipe の inode>)。"""
+
+    name: str
+    value: str
+
+
+@dataclass(frozen=True)
+class ShimFlags:
+    """猶予と「--」の間の旗の読み: stamp_lines = job の出力の 1 行ごとに刻を付けるか・notice_env = 知らせの pipe の fd を渡す環境変数の名
+    (None = 中継しない)。"""
+
+    stamp_lines: bool
+    notice_env: str | None
+
+
+def open_relay(env_name: str) -> NoticeRelay:
+    """知らせの pipe を作るため(読み口だけを job へ継がせる — os.pipe の口は継がない設定で作られ、Popen の pass_fds が読み口だけを継がせる)。"""
+    read_fd, write_fd = os.pipe()
+    return NoticeRelay(env_name=env_name, read_fd=read_fd, write_fd=write_fd)
 
 
 @dataclass(frozen=True)
@@ -231,10 +270,21 @@ def settled(job: int, job_code: int | None, adoption: Adoption, leads_group: boo
             return job_code if job_code is not None else group_killed(job, leads_group)
 
 
-def watch_parent(leads_group: bool) -> None:
-    """worker の消失(stdin の EOF — kill -9 を含む)を待ち、止めの合図を自分へ送る(group の先頭なら group へ — job にも届く)。期限と
-    片づけは main thread が受け持つ(この thread は回収しない)。"""
-    sys.stdin.buffer.read()
+def relayed(relay: NoticeRelay | None, line: bytes) -> None:
+    """標準入力の 1 行を知らせの pipe へそのまま書くため(#3672 — 中継しない shim は捨てる)。job が pipe を閉じた・終わった後の行は捨てる
+    (知らせを受ける相手が居ない — 止めと終わりは worker が別の観測で運ぶ)。"""
+    if relay is None:
+        return
+    with contextlib.suppress(BrokenPipeError):
+        os.write(relay.write_fd, line)
+
+
+def watch_parent(leads_group: bool, relay: NoticeRelay | None) -> None:
+    """worker の標準入力を行ごとに読み、退きの知らせの行を job の知らせの pipe へ中継し(#3672)、worker の消失(stdin の EOF — kill -9 を
+    含む)で止めの合図を自分へ送る(group の先頭なら group へ — job にも届く)。期限と片づけは main thread が受け持つ(この thread は
+    回収しない)。"""
+    for line in iter(sys.stdin.buffer.readline, b""):
+        relayed(relay, line)
     print("shim: worker が消えたので job を止めます", file=sys.stderr, flush=True)
     if leads_group:
         os.killpg(os.getpid(), signal.SIGTERM)
@@ -244,27 +294,44 @@ def watch_parent(leads_group: bool) -> None:
 
 class PopenSpawner:
     """job の命令を exec で起こす部品(本物の shim の起こし方)。呼ぶと job の pid を返す。起こした Popen の object は部品の中に終わりまで
-    持つ(捨てると後始末が job を回収し、終了コードを奪う)— 部品は shim-code の呼びの間、呼び手が持っている。"""
+    持つ(捨てると後始末が job を回収し、終了コードを奪う)— 部品は shim-code の呼びの間、呼び手が持っている。relay = 退きの知らせの
+    中継の口(#3672 — 在れば読み口を job へ継がせ、fd の番号を環境変数で渡し、起こした後に shim の写しを閉じる)。"""
 
-    def __init__(self, command: list[str]) -> None:
-        """job の命令を持ち、まだ起こしていない状態で始めるため。"""
+    def __init__(self, command: list[str], relay: NoticeRelay | None) -> None:
+        """job の命令と知らせの中継の口を持ち、まだ起こしていない状態で始めるため。"""
         self.command = command
+        self.relay = relay
         self._mut_child: subprocess.Popen[bytes] | None = None
 
     def __call__(self) -> int:
         """job を同じ process group に起こし、pid を返すため(1 つの部品で 1 度だけ)。"""
         if self._mut_child is not None:
             raise RuntimeError("shim: 同じ部品で job を 2 度起こそうとした")
-        self._mut_child = subprocess.Popen(self.command, stdin=subprocess.DEVNULL)
+        match self.relay:
+            case None:
+                self._mut_child = subprocess.Popen(self.command, stdin=subprocess.DEVNULL)
+            case NoticeRelay(env_name=name, read_fd=read_fd):
+                # 値は <fd の番号>:<pipe の inode>(環境変数は job の子孫にも継がれるので、受け手は fd が同じ pipe の時だけ読む —
+                # foundation/notice_pipe の open-notice-box)。
+                # 環境の組は foundation の生の読み(child_environ — この process の環境に名を足す)が組む(入口は環境変数に直に触らない)。
+                notice = NoticeVariable(name=name, value=f"{read_fd}:{os.fstat(read_fd).st_ino}")
+                self._mut_child = subprocess.Popen(
+                    self.command, stdin=subprocess.DEVNULL, pass_fds=(read_fd,), env=child_environ((), (notice,))
+                )
+                # 読み口は job だけが持つ(shim が写しを持ち続けると、job が終わった後も書きが詰まらずに溜まる)。
+                os.close(read_fd)
         return self._mut_child.pid
 
 
-def shim_code(grace: float, spawn: Callable[[], int], lines: OutputLines, adopt: Callable[[], Adoption] = become_subreaper) -> int:
+def shim_code(
+    grace: float, spawn: Callable[[], int], lines: OutputLines, adopt: Callable[[], Adoption], *, relay: NoticeRelay | None
+) -> int:
     """job を起こし、3 つの道のどれかで片づけるまで見張って、job の終了コード(signal で終わったなら負)を返すため。grace = 止めの合図から
     job を待つ猶予(秒)・spawn = job を起こして pid を返す部品(本物の shim は PopenSpawner — 待ちの子から分かれた子は、読み込み済みの
     入口を fork で起こす部品を渡す)・lines = job の出力の書き手(刻を付ける StampedLines か、そのまま運ぶ RawLines — 書き手の thread は
     job を起こした後に始め、片づけの後に残りを読み切ってから止める。job の終わりの判定と止めの合図には触れない)・adopt = 子孫の引き取りを
-    有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)。signal の据え付け(TERM・SIGCHLD・起こしの
+    有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)・relay = 退きの知らせの中継の口(#3672 —
+    標準入力の行をそこへ流す。None = 読み捨てる — 入口の検めと待ちの子から分かれた子)。signal の据え付け(TERM・SIGCHLD・起こしの
     fd)は process 全体の設定なので、1 つの process で 1 回だけ、main thread から呼ぶ。返った後も stdin を読む補助の thread が残るので、
     呼び手は終了処理を経ずに os._exit で抜ける(exit-status)。"""
     try:
@@ -283,7 +350,7 @@ def shim_code(grace: float, spawn: Callable[[], int], lines: OutputLines, adopt:
         # job は同じ process group に入る。書き手の thread は job を起こした後(fork の時の thread を 1 本に保つ)。
         job = spawn()
         lines.begin()
-        threading.Thread(target=watch_parent, args=(leads_group,), daemon=True).start()
+        threading.Thread(target=watch_parent, args=(leads_group, relay), daemon=True).start()
         return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group)
     finally:
         lines.end()
@@ -294,16 +361,25 @@ def exit_status(code: int) -> int:
     return code if code >= 0 else 128 - code
 
 
-def output_of(flags: list[str]) -> OutputLines:
-    """猶予と「--」の間の旗から job の出力の書き手を決めるため(--stamp-lines = 1 行ごとに刻を付ける job の log・無し = そのまま)。
-    知らない旗は名を挙げて断る(黙ってそのままの形に倒れない)。"""
+def shim_flags(flags: list[str]) -> ShimFlags:
+    """猶予と「--」の間の旗を読むため(--stamp-lines = job の出力の 1 行ごとに刻を付ける・--notice-env <名> = 退きの知らせの pipe の fd を
+    その名の環境変数で job へ渡して中継する — #3672。順は問わない)。知らない旗・名の無い --notice-env・同じ旗の 2 度目は名を挙げて断る
+    (黙ってそのままの形に倒れない)。"""
     match flags:
         case []:
-            return RawLines()
-        case ["--stamp-lines"]:
-            return stamped_lines()
+            return ShimFlags(stamp_lines=False, notice_env=None)
+        case ["--stamp-lines", *rest]:
+            tail = shim_flags(rest)
+            if tail.stamp_lines:
+                raise SystemExit(f"shim: 旗 --stamp-lines が 2 度ある {flags}")
+            return ShimFlags(stamp_lines=True, notice_env=tail.notice_env)
+        case ["--notice-env", name, *rest] if not name.startswith("--"):
+            tail = shim_flags(rest)
+            if tail.notice_env is not None:
+                raise SystemExit(f"shim: 旗 --notice-env が 2 度ある {flags}")
+            return ShimFlags(stamp_lines=tail.stamp_lines, notice_env=name)
         case _:
-            raise SystemExit(f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines だけ)")
+            raise SystemExit(f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines と --notice-env <名> だけ)")
 
 
 def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
@@ -311,8 +387,10 @@ def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
     有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)。"""
     grace = float(sys.argv[1])
     split = sys.argv.index("--")
-    lines = output_of(sys.argv[2:split])
-    code = shim_code(grace, PopenSpawner(sys.argv[split + 1 :]), lines, adopt)
+    flags = shim_flags(sys.argv[2:split])
+    lines = stamped_lines() if flags.stamp_lines else RawLines()
+    relay = None if flags.notice_env is None else open_relay(flags.notice_env)
+    code = shim_code(grace, PopenSpawner(sys.argv[split + 1 :], relay), lines, adopt, relay=relay)
     # 終了処理を経ずに抜ける: stdin を読んでいる補助の thread が残ったまま終了処理に入ると、Python が
     # abort して終了コードが -6 に化ける(job 自身の終了コードを worker へ正しく返せない — 実測 2026-09-23)。
     sys.stderr.flush()

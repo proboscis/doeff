@@ -3,6 +3,9 @@
 ;; 入れ替え(handoff・2026-09-24): spec の変わった job が handoff を宣言していれば、旧を止めずに名から外し(RetireJob)、新を同じ名で
 ;; 起こす。退いた旧は、coordinator が新の process を Ready と数えた(宣言の ready-instance = 新の世代の名)後に止める。新のコードの
 ;; 準備の間も旧は動かし続ける。並べるのは 1 つまで(退いた process が既に在る間の次の変更は、止めてから起こす)。
+;; 退きの知らせ(#3672): 名から外す RetireJob が旧へ「退く」(Retired)を送る — 新の起動・新の Ready・旧の止めのどれよりも前。その後に
+;; 入れ替えが諦められたら(旧は動き続ける)同じ旧へ「退きを取り消した」(HandoffAbandoned)、諦めが解けたらもう一度「退く」を NoticeJob で
+;; 送る(notice-actions — 観測の notice と今の知らせの食い違いだけ)。
 ;;
 ;; 入口の検め(probe・2026-09-25): service の job は、木が揃った後に「worker の実行環境でその木の入口(factory と env)を読み込めるか」を
 ;; 先に試し(ProbeEntry)、PASSED になるまで起こさない(StartJob)・旧を名から外さない(RetireJob)。業務コード・定義・実行環境の組が崩れた
@@ -21,6 +24,7 @@
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
   StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
   warm-launch])
 
@@ -394,6 +398,26 @@
   (val keep (frozenset (gfor spec desired (spec-hash spec))))
   (if (any (gfor probe world.probes (not-in probe.spec-hash keep))) #((ForgetProbes keep)) #()))
 
+(defk wanted-notice [want]
+  {:pre [(: want (| JobSpec None))] :post [(: % (| Retired HandoffAbandoned))] :tags {:context "worker" :role "judgment"}}
+  "退いた process に今知らせておく退きの知らせを、元の job の宣言 want から決めるため(#3672): 入れ替えが諦められていれば
+   HandoffAbandoned(旧は止められずに動き続ける — plan-job の諦めの枝と retired-actions)、それ以外(新の Ready を待つ・元の job が宣言から
+   消えた・handoff でなくなった — どれも旧は止められる)は Retired。"
+  (if (and (is-not want None) want.handoff want.handoff-abandoned) (HandoffAbandoned) (Retired)))
+
+(defk notice-actions [desired world]
+  {:pre [(: desired tuple) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "退いた process へ退きの知らせの変わり目を送る action を求めるため(#3672): 動いている退いた process のうち、既に知らせを受けていて
+   (最初の「退く」は名から外す RetireJob が送る)、今の知らせ(wanted-notice)が観測の notice(最後に送った知らせ)と違う物へ NoticeJob。
+   同じ知らせを 2 度送らない(送った事は次の観測の notice に出る)。"
+  (var actions #())
+  (for [p world.processes]
+    (when (and (is-not p.retired-from None) (is p.exit-code None) (is-not p.notice None))
+      (<- wanted (| Retired HandoffAbandoned) (wanted-notice (desired-of desired p.retired-from)))
+      (when (!= wanted p.notice)
+        (:= actions (+ actions #((NoticeJob p.name p.pid wanted)))))))
+  actions)
+
 (defk plan [now desired world records policy [warm #()] [absent (Undeclared)]]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple) (: absent StopReason)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
@@ -408,7 +432,9 @@
   (<- warming tuple (warm-actions now warm world jobs policy))
   (<- children tuple (warm-child-actions now desired world warm policy))
   (<- forgetting tuple (forget-probe-actions desired world))
-  (+ jobs warming children forgetting))
+  ;; 退いた process への退きの知らせの変わり目(入れ替えの諦めと、その解け — #3672)。
+  (<- noticing tuple (notice-actions desired world))
+  (+ jobs warming children forgetting noticing))
 
 (defk ready-followups [now desired before after records policy [warm #()] [absent (Undeclared)]]
   {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple)

@@ -63,6 +63,7 @@ class ProcessView:
     exit_code: int | None = None
     instance: str = ""
     retired_from: str | None = None
+    notice: Retired | HandoffAbandoned | None = None
 
 class ProbeState(Enum):
     QUEUED = "queued"
@@ -351,6 +352,12 @@ class RetireJob(EffectBase[None]):
     new_name: str
 
 @dataclass(frozen=True)
+class NoticeJob(EffectBase[None]):
+    name: str
+    pid: int
+    notice: Retired | HandoffAbandoned
+
+@dataclass(frozen=True)
 class ProbeEntry(EffectBase[None]):
     spec: JobSpec
     code_path: str
@@ -387,6 +394,7 @@ Action = (
     | SignalJob
     | ReapJob
     | RetireJob
+    | NoticeJob
     | ReleaseLeases
     | ProbeEntry
     | ForgetProbes

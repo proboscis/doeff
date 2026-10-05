@@ -210,7 +210,8 @@
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases EnvReport AwaitNextTick StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
-                       ForgetWarmChild] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+                       ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
 
 ;; load-state は置き場がまだ無い時だけ以前の形の file を探す。sim は置き場(MemoryWalStore)が在る時だけ load-state を呼ぶので読まれない。
 (val NO-STATE-FILE "/nonexistent/doeff-sim/coordinator/state.json")
@@ -262,7 +263,8 @@
    反例・#1976)・hides-retired = 反例の世界だけの壊れた worker(観測の handler が入れ替えで名から外した旧の process を載せない —
    worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)・claims-task-reserve = 反例の世界だけの壊れた worker
    (heartbeat で task-reserve の代わりにこの数を名乗る — None = task-reserve。本当に task のために空けておく数は task-reserve のまま —
-   条 C17 の反例・#3489)・doeff-commit = この値で起きた worker が動いている doeff の版(本番の WORKER_DOEFF_COMMIT に当たる名札 —
+   条 C17 の反例・#3489)・silent-notices = 反例の世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob と取り消しの NoticeJob が、
+   観測の notice を書くだけで process へ退きの知らせを送らない — 条 W2 の反例・#3672)・doeff-commit = この値で起きた worker が動いている doeff の版(本番の WORKER_DOEFF_COMMIT に当たる名札 —
    置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)。"
   (#^ str name)
   (#^ frozenset provides)
@@ -286,7 +288,8 @@
   (setv #^ (| frozenset None) claims-exclusive None)
   (setv #^ bool fresh-boot-every-beat False)
   (setv #^ bool hides-retired False)
-  (setv #^ (| int None) claims-task-reserve None))
+  (setv #^ (| int None) claims-task-reserve None)
+  (setv #^ bool silent-notices False))
 
 
 (defrecord SimProcess
@@ -670,6 +673,20 @@
   (#^ bool bridge))
 
 
+(defrecord SimNoticeWaiter
+  "退きの知らせの待ち 1 つ(#3672 — AwaitRetirement): after = 待ち手が前に受けた知らせ(None = まだ何も)・promise = 今の知らせが after と
+   違う値になった時に、その知らせで満たされる Promise。"
+  (#^ (| Retired HandoffAbandoned None) after)
+  (#^ Promise promise))
+
+
+(defrecord SimNoticeBox
+  "process 1 つの退きの知らせの受け手(世界の session の notice-boxes の値 — #3672)。notice = worker が最後に送った知らせ(None = まだ)・
+   waiters = 待ち(SimNoticeWaiter)の列。"
+  (setv #^ (| Retired HandoffAbandoned None) notice None)
+  (setv #^ tuple waiters #()))
+
+
 (defrecord HostStop
   "worker の拍の止めの問い(WorkerStopRequested)に宿が答える材料(StopRequestOf の答え — 世代の確かめと全 worker の止まれを世界への
    問い 1 つで・#3054 の C-6)。truth = その worker の宿の真実・all-stopping = 全 worker が止まる時か。"
@@ -737,6 +754,16 @@
   "process pid に止めの理由 reason を立てる(最初の理由だけを残す)— 待ちを起こす。答え = 合図が届いたか(受け手を据えていない process
    には届かない — 呼び手の SignalJob が取り消す)。"
   {:fields [(: pid int) (: reason str)] :answer bool :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ProcessNoticeWait
+  "process pid の退きの知らせの待ち(AwaitRetirement — #3672)。今の知らせが after と違えば(まだ何も来ていない時を除く)その知らせで満たした
+   Promise を、同じなら次の知らせで満たされる Promise を答える。"
+  {:fields [(: pid int) (: after (| Retired HandoffAbandoned None))] :answer Promise :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ProcessNoticeRaised
+  "process pid へ退きの知らせ notice を立てる(今の知らせを置き換える — 本番の worker が shim の標準入力へ書く行の代役)。after が notice と
+   違う待ちを起こす。"
+  {:fields [(: pid int) (: notice (| Retired HandoffAbandoned))] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NoteProcess
   "起こした process を記録する。"
@@ -1415,6 +1442,9 @@
     (reperform effect))
   (AwaitStop []
     (reperform effect))
+  ;; 退きの知らせの待ちは process の知らせの口(柵のすぐ外の process-notices — 本番の子 process の知らせの pipe の代役・#3672)へ通す。
+  (AwaitRetirement []
+    (reperform effect))
   (EffectBase []
     :when (not (isinstance effect passable))
     (raise (UnhandledEffect (.format "sim の柵: 答えの無い effect {} ({!r}) — 本番の子 process でも答える handler が無い"
@@ -1454,6 +1484,18 @@
       (<- (KeepChild pid bridge)))
     (<- reason str (Wait wait.promise.future))
     (resume reason)))
+
+
+(defhandler process-notices [#^ int pid]
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 引数に残す理由: 退きの知らせは process ごと(番号で世界の受け手を引く)。柵より外に在り、Program の effect ではない番号を Ask で
+  ;; 問えない。
+  ;; process の知らせの pipe の代役(#3672): 本番の pipe-retirement-notices と同じ意味で AwaitRetirement に答える — 知らせは偽の宿の
+  ;; RetireJob(退く)と NoticeJob(取り消し・もう一度退く)が世界の受け手に立てる。待ちは書きで起きる(読み直さない)。
+  (AwaitRetirement [after]
+    (<- promise Promise (ProcessNoticeWait pid after))
+    (<- notice (| Retired HandoffAbandoned) (Wait promise.future))
+    (resume notice)))
 
 
 (defrecord SimChild
@@ -1591,7 +1633,9 @@
     ;; 印の知らせ(NoteEventWait)は柵を通らずに世界へ届く。
     ;; 止めの合図の口(process-signals — 本番の SIGTERM の代役・#3145)は柵のすぐ外: 柵が通した止めの問いと待ちに答え、外の世界が
     ;; 通す時だけ外の答え手へ渡す。
+    ;; 退きの知らせの口(process-notices — 本番の知らせの pipe の代役・#3672)も柵のすぐ外。
     (<- value (with-handlers [#* child.outside (business-wait-tap child.pid) (process-signals child.pid child.passable)
+                              (process-notices child.pid)
                               (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
                               (environ-reader child.environ)]
                              program))
@@ -2155,13 +2199,28 @@
     (<- (change-live-truth worker.name boot (fn [truth] (replace truth :processes (tuple (gfor p truth.processes :if (!= p.pid pid) p))))))
     (resume None))
   (RetireJob [name pid new-name]
+    ;; 名から外すと同時に、観測の notice に「退く」を残し、process の知らせの口へ「退く」を立てる(本番の process-host が shim の標準入力へ
+    ;; 書く行の代役・#3672)。壊れた worker silent-notices(条 W2 の反例)は観測だけ書いて知らせない。
     (<- (change-live-truth worker.name boot
                            (fn [truth] (replace truth :processes (tuple (gfor p truth.processes
-                                                                              (if (= p.pid pid) (replace p :name new-name :retired-from name) p)))))))
+                                                                              (if (= p.pid pid)
+                                                                                  (replace p :name new-name :retired-from name :notice (Retired))
+                                                                                  p)))))))
+    (when (not worker.silent-notices)
+      (<- (ProcessNoticeRaised pid (Retired))))
     (when worker.retire-stops
       (<- handle (| Task None) (HandleOf pid))
       (when (is-not handle None)
         (<- (Cancel handle))))
+    (resume None))
+  (NoticeJob [name pid notice]
+    ;; 退いた process への知らせの変わり目(入れ替えの諦め・その解け — #3672): 観測の notice を書き、process の知らせの口へ立てる
+    ;; (RetireJob と同じく、壊れた worker silent-notices は観測だけ書く)。
+    (<- (change-live-truth worker.name boot
+                           (fn [truth] (replace truth :processes (tuple (gfor p truth.processes
+                                                                              (if (= p.pid pid) (replace p :notice notice) p)))))))
+    (when (not worker.silent-notices)
+      (<- (ProcessNoticeRaised pid notice)))
     (resume None))
   (ReleaseLeases [job instance]
     (<- (live-truth worker.name boot))
@@ -2739,6 +2798,8 @@
   (session var stop-waiters {})
   ;; process ごとの止めの合図の受け手(pid → SimStopBox — 止めの問いか待ちを受けた process だけ・#3145)。
   (session var stop-boxes {})
+  ;; process ごとの退きの知らせの受け手(pid → SimNoticeBox — 知らせを受けたか待ちを受けた process だけ・#3672)。
+  (session var notice-boxes {})
   (session var revivals {})
   ;; 要求の受付まわり(網の切れ・口の故障・返事の前の覚え・報告・区間の歩の書きの数)は 1 つの値(1 歩の問いが 1 度だけ読む・#3054 の C-6)。
   (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
@@ -2863,6 +2924,25 @@
     (for [promise waking]
       (<- (CompletePromise promise reason)))
     (resume (is-not box None)))
+  (ProcessNoticeWait [pid after]
+    ;; 退きの知らせの待ちの Promise を受け手に掛ける(今の知らせが after と違えば、その場で満たす — #3672)。
+    (<- promise Promise (CreatePromise))
+    (val box (.get notice-boxes pid (SimNoticeBox)))
+    (val ready (and (is-not box.notice None) (!= box.notice after)))
+    (:= notice-boxes (| notice-boxes {pid (if ready
+                                              box
+                                              (replace box :waiters (+ box.waiters #((SimNoticeWaiter :after after :promise promise)))))}))
+    (when ready
+      (<- (CompletePromise promise box.notice)))
+    (resume promise))
+  (ProcessNoticeRaised [pid notice]
+    ;; 知らせを置き換え、after が新しい知らせと違う待ちを起こす(同じ待ちは次の知らせまで残す)。書きを済ませてから待ちを起こす。
+    (val box (.get notice-boxes pid (SimNoticeBox)))
+    (val waking (tuple (gfor w box.waiters :if (!= w.after notice) w.promise)))
+    (:= notice-boxes (| notice-boxes {pid (replace box :notice notice :waiters (tuple (gfor w box.waiters :if (= w.after notice) w)))}))
+    (for [promise waking]
+      (<- (CompletePromise promise notice)))
+    (resume None))
   (KeepChild [pid task]
     ;; 終わった process の中で把手を覚える前だった task(Spawn した task が先に走り、KeepChild の前に process が終わった)は、その場で
     ;; 止める — 殺された process なら捨てる(Discard — 殺された後に走らせない)、自分で終わった process なら取り消す。
