@@ -67,6 +67,7 @@ STRANGER: str
 OVERSEER: str
 TICKET_KEEP_SECONDS: int
 PAIR_KEEP_SECONDS: int
+PULSE_KEEP_SECONDS: int
 LAW_SCHEMA: RecordsSchema
 
 class LawBroken(AssertionError):
@@ -140,6 +141,9 @@ def law_stream_end_is_the_last_sequence(harness: LawHarness) -> _Program[list[ob
     ...
 
 def law_expired_keys_are_remembered(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_expired_records_are_unseen_before_a_sweep(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

@@ -4,7 +4,8 @@
 ;;;   keep-lock = False なら SqlTransaction の lock-key の錠を取らない(錠の検の反例)
 ;;;   barrier   = 行の錠(FOR UPDATE)の読みの後で待ち合わせる(2 本の書きが両方「行が無い」を読んでから書く反例)
 ;;;   fail-at   = state_rows への n 本目の INSERT を流さずに SqlUnreachable を答える(書きの途中で接続が落ちる代役)
-;;; counts = 流れた CREATE の文の数(thread の間で共有)。書きの合図(SqlNotify)は同じ接続で流す(呼び鈴は鳴らさない — 待ちの検はこの代役を使わない)。
+;;; counts = 流れた CREATE の文の数と、流れた文の綴りの全部(thread の間で共有)。書きの合図(SqlNotify)は同じ接続で流す(呼び鈴は鳴らさない —
+;;; 待ちの検は、この代役の外側に postgres-sql-handler を置いて呼び鈴をそちらへ渡す)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass field])
 (import threading)
@@ -14,12 +15,14 @@
 
 
 (defclass StatementCounts []
-  "流れた文の数え(thread の間で共有): creates = CREATE の文の数 / upserts = state_rows への INSERT の数。"
+  "流れた文の数え(thread の間で共有): creates = CREATE の文の数 / upserts = state_rows への INSERT の数 / texts = 流れた文の綴り(流れた順の
+   tuple — 効果 1 回が流した文を、前後の長さの差で切り出すため・#3561)。"
   (defn __init__ [self]  ; defk にできない: 検の資源の class の初期化
-    (setv self.lock (threading.Lock) self.creates 0 self.upserts 0))
+    (setv self.lock (threading.Lock) self.creates 0 self.upserts 0 self.texts #()))
   (defn record [self #^ str statement]  ; defk にできない: 複数の thread の run から同期に数える
     "文 1 つを数え、それが state_rows への何本目の INSERT か(INSERT でなければ 0)を返す。"
     (with [self.lock]
+      (setv self.texts (+ self.texts #(statement)))
       (when (.startswith (.lstrip statement) "CREATE") (+= self.creates 1))
       (if (in "state_rows (ledger" statement)
           (do (+= self.upserts 1) self.upserts)

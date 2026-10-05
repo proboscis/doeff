@@ -1,6 +1,7 @@
 ;; memory の置き場の保持の刈り(purge-expired)は、消え得る刻(MemoryStore.purge-due-ms)より前なら行と出来事を走査しない。
 ;; 出自 = 2026-09-27 の保持の刈りの性能の直し: 刈りはどの操作の前にも呼ばれ、期限つきの列が 1 本でも在ると毎回すべての出来事を読み直していた —
 ;; 出来事 1 万を積む模擬の筋書き 1 つが 5 分を越えた(出来事の数の 2 乗)。消える物は変わらない(法 12 などの保持の法が memory と pg で守る)。
+;; #3561 から刈りは書きの前と SweepExpired の時だけ走り、読みは刈らずに期限を自分で見る(期限を過ぎた物を出さない)— 読みは走査しない。
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses)
 (import doeff [run with_handlers])
@@ -9,6 +10,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [StreamDecl KeepFor ExpectAbsent ExpectVersion Row Missing RowRemoved])
 (import doeff_records.effects [AppendEvent ReadEvents PutRow ReadRow ListRows])
+(import doeff_records.maintenance [SweepExpired])
+(import doeff_records.admission [key-text])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA MAKER TICKET-KEEP-SECONDS PAIR-KEEP-SECONDS])
@@ -56,12 +59,24 @@
   (assert (= scans []) (len scans)))
 
 
+(defk pulses-then-wait-then-write [count wait-seconds]
+  {:pre [(: count int) (: wait-seconds (| int float))] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "pulses-then-wait の後に、期限の無い列 journal へ 1 つ積むため(その書きの前の刈りが、期限を過ぎた pulses の出来事を消す)。
+   答え = pulses-then-wait の答え。"
+  (<- got (pulses-then-wait count wait-seconds))
+  (<- (AppendEvent "journal" "after-wait" {"n" 0}))
+  got)
+
+
 (defn test-the-events-still-expire-when-the-due-time-comes [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
-  ;; 期限を過ぎた最初の操作で 1 度だけ走査し、全部消える。その後は消え得る物が無いので走査しない。
+  ;; 期限を過ぎた後の読みは走査せずに期限を過ぎた出来事を出さず(#3561)、期限を過ぎた後の最初の書きで 1 度だけ走査して全部消す。その後は
+  ;; 消え得る物が無いので走査しない。
   (setv scans (count-scans monkeypatch) store (MemoryStore SCHEMA))
-  (setv got (run-on store (pulses-then-wait EVENT-COUNT (+ PULSE-KEEP-SECONDS 1))))
+  (setv got (run-on store (pulses-then-wait-then-write EVENT-COUNT (+ PULSE-KEEP-SECONDS 1))))
   (assert (= got #(EVENT-COUNT 0)) got)
   (assert (= (len scans) 1) scans)
+  (assert (= (lfor event store.events event.idempotency-key) ["after-wait"]) (len store.events))
   (assert (is store.purge-due-ms None) store.purge-due-ms))
 
 
@@ -81,12 +96,14 @@
 
 
 (defn test-a-row-that-becomes-terminal-later-expires-from-its-terminal-write [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
-  ;; 開けた行は消え得ない(終端でない)ので刻を持たない。閉じた書きが刻を足し、閉じた刻から保持の秒を過ぎて初めて消える。
-  (setv scans (count-scans monkeypatch))
-  (setv got (run-on (MemoryStore LAW-SCHEMA)
+  ;; 開けた行は消え得ない(終端でない)ので刻を持たない。閉じた書きが刻を足し、閉じた刻から保持の秒を過ぎて初めて読みに出なくなる。
+  ;; 読みは走査しない(期限の見えは読みが持つ — #3561)ので、行は次の書きまで置き場に残る。
+  (setv scans (count-scans monkeypatch) store (MemoryStore LAW-SCHEMA))
+  (setv got (run-on store
                     (ticket-closed-late (* 3 TICKET-KEEP-SECONDS) #(1 (- TICKET-KEEP-SECONDS 1) (+ TICKET-KEEP-SECONDS 1)))))
   (assert (= got [True True False]) got)
-  (assert (= (len scans) 1) scans))
+  (assert (= scans []) scans)
+  (assert (in (key-text #("g" "t1")) (get store.rows "tickets")) store.rows))
 
 
 ;; --- 期限の索引(2026-09-29・#907)--------------------------------------------------------------------------------------
@@ -132,18 +149,21 @@
   (.clear calls)
   (setv big (run-on big-store (journal-then-rolling-pairs 3000 260)))
   (setv big-calls (len calls))
-  ;; 積んだ刻から保持の秒(60 秒)を過ぎた物は消え、読んだ刻(最後に積んでから 1 秒後)より前の 59 秒に積んだ物だけが残る。
+  ;; 積んだ刻から保持の秒(60 秒)を過ぎた物は読みに出ず、読んだ刻(最後に積んでから 1 秒後)より前の 59 秒に積んだ物だけが見える。
   (assert (= small big #((- PAIR-KEEP-SECONDS 1) (- TICKET-KEEP-SECONDS 1))) #(small big))
   (assert (= small-calls big-calls) #(small-calls big-calls))
-  ;; 判定は書き 1 つにつき定数回(組の名 1 回・終端か 数回)— 刈りの回数 × 置き場の大きさにならない。
+  ;; 判定は書き 1 つにつき定数回(組の名 1 回・終端か 数回)と読み 1 つにつき見る物の数 — 刈りの回数 × 置き場の大きさにならない。
   (assert (<= big-calls (* 4 260)) big-calls)
-  (assert (= (len big-store.events) (+ 3000 (- PAIR-KEEP-SECONDS 1))) (len big-store.events))
-  (assert (= (len big-store.groups) (- PAIR-KEEP-SECONDS 1)) (len big-store.groups)))
+  ;; 置き場に残るのは最後の書き(最後に積んだ刻)の前の刈りの後の物 — 最後の書きの刻より前の 60 秒に積んだ物(読みの刻に期限を迎えた
+  ;; 1 つは、読みが出さないまま次の書きまで残る — 読みは刈らない・#3561)。
+  (assert (= (len big-store.events) (+ 3000 PAIR-KEEP-SECONDS)) (len big-store.events))
+  (assert (= (len big-store.groups) PAIR-KEEP-SECONDS) (len big-store.groups)))
 
 
 (defk group-extended-then-read [offsets]
   {:pre [(: offsets tuple)] :post [(: % list)]}
-  "組 x の ask を 0 秒・done を 50 秒に積み(組の最後の刻が 50 秒へ延びる)、各 offsets 秒で pairs を読む。答え = 各読みの冪等キーの列。"
+  "組 x の ask を 0 秒・done を 50 秒に積み(組の最後の刻が 50 秒へ延びる)、各 offsets 秒で刈り(SweepExpired — 読みは刈らない・#3561)の
+   後に pairs を読む。答え = 各読みの冪等キーの列。"
   (<- (AppendEvent "pairs" "ask:x" {"n" 1}))
   (<- (Delay 50))
   (<- (AppendEvent "pairs" "done:x" {"n" 2}))
@@ -152,14 +172,15 @@
   (for [offset offsets]
     (<- (Delay (- offset waited)))
     (:= waited offset)
+    (<- (SweepExpired))
     (<- read (ReadEvents "pairs"))
     (.append seen (lfor event read.items event.idempotency-key)))
   seen)
 
 
 (defn test-a-group-whose-last-event-moves-later-is-not-purged-early []  ; defk にできない: 検の入口で Program を run する
-  ;; 反例: 組の最初の出来事の期限(60 秒)は索引の先頭に残るが、組の最後の刻が 50 秒へ動いたので読み捨てる — 61 秒ではまだ 2 つとも残り、
-  ;; 組の最後の出来事から保持の秒を過ぎた 111 秒に組ごと消える。
+  ;; 反例: 組の最初の出来事の期限(60 秒)は索引の先頭に残るが、組の最後の刻が 50 秒へ動いたので読み捨てる — 61 秒の刈りの後もまだ 2 つとも
+  ;; 残り、組の最後の出来事から保持の秒を過ぎた 111 秒の刈りで組ごと消える。
   (setv store (MemoryStore LAW-SCHEMA))
   (setv got (run-on store (group-extended-then-read #(61 109 111))))
   (assert (= got [["ask:x" "done:x"] ["ask:x" "done:x"] []]) got)
@@ -169,12 +190,12 @@
 
 (defk tickets-closed-out-of-order []
   {:pre [] :post [(: % None)]}
-  "tickets の行 t2 を 0 秒・t1 を 1 秒に終端で書き、両方の期限が過ぎた刻に 1 度だけ読む(1 回の刈りで 2 行が消える)。"
+  "tickets の行 t2 を 0 秒・t1 を 1 秒に終端で書き、両方の期限が過ぎた刻に 1 度だけ刈る(1 回の刈りで 2 行が消える — 読みは刈らない・#3561)。"
   (<- (PutRow "tickets" #("g" "t2") {"group" "g" "id" "t2" "state" "done"} (ExpectAbsent)))
   (<- (Delay 1))
   (<- (PutRow "tickets" #("g" "t1") {"group" "g" "id" "t1" "state" "done"} (ExpectAbsent)))
   (<- (Delay (+ TICKET-KEEP-SECONDS 1)))
-  (<- (ReadRow "tickets" #("g" "t1")))
+  (<- (SweepExpired))
   None)
 
 

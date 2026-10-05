@@ -24,7 +24,7 @@
 (import doeff_records.effects [PutRow])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables])
-(import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement])
+(import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement RowExpiry])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records.main [store-pressure-pg])
 (import doeff_records.store_choice [StorePressure])
@@ -66,9 +66,15 @@
   (<- expanded (in-list "t" #("a" "b" "c")))
   (assert (= expanded.text ":t0, :t1, :t2"))
   (assert (= (lfor p expanded.params #(p.name p.value)) [#("t0" "a") #("t1" "b") #("t2" "c")]))
-  (<- changes (changes-statement "records_" 0 9 #("parts" "tickets") 50))
+  (<- changes (changes-statement "records_" 0 9 #("parts" "tickets") 50 #()))
   (<- bound (postgres-statement changes.text changes.params))
   (assert (in "ledger IN (%(t0)s, %(t1)s)" bound.text) bound.text)
+  ;; 保持の期限の在る表の境(#3561)は、終端の語を表ごとの頭(x0 …)の付いた IN に展げる(頼んだ表の IN と名が混ざらない)。
+  (<- hiding (changes-statement "records_" 0 9 #("parts" "tickets") 50
+                                #((RowExpiry :table "tickets" :state-field "state" :terminal #("done") :before-at 5))))
+  (<- hidden (postgres-statement hiding.text hiding.params))
+  (assert (in "ledger IN (%(t0)s, %(t1)s)" hidden.text) hidden.text)
+  (assert (in "IN (%(x0t0)s)" hidden.text) hidden.text)
   (<- terminal (terminal-rows-statement "records_" "parts" "state" #("closed")))
   (assert (in "IN (:t0)" terminal.text) terminal.text)
   ;; 空の組は `IN ()`(構文の誤り)にしない — 組み立てが断り、呼び手の枝(pg.hy)が文を流さない。

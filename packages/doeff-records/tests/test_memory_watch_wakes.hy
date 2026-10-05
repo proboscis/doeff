@@ -1,8 +1,8 @@
 ;; memory の置き場の WatchChanges の待ちは、読み直しの繰り返し(ポーリング)ではなく呼び鈴で起きる — 変更の列を動かす書きが待ち手を起こし、
-;; 期限(timeout・保持の期限)は 1 回だけ鳴らす。答えの意味(変更の来た時に返る・来なければ timeout で空の Changes)は前と同じ。
+;; 期限(timeout)は 1 回だけ鳴らす。答えの意味(変更の来た時に返る・来なければ timeout で空の Changes)は前と同じ。
 ;; 出自 = 使い手の模擬の検の実行時間の約 4 割が、仮想の時計の 0.05 秒ごとの読み直し(1 回の走行で
 ;; 約 19 万回)だった。確かめること: 読み直さない・同期の書き(handler の外から置き場を直に書く)と別の thread の書きでも起きる・
-;; 待っている間に保持の期限が来た行の消えが timeout を待たずに届く。
+;; 待っている間に保持の期限が来た行の消えは、期限の刻ではなく次の書き(その書きの前の回収が積む)の刻に timeout を待たずに届く(#3561)。
 ;; 列の待ち WatchEvents も同じ呼び鈴で起き、呼び鈴は待つ名ごと — 行の書きは表の待ち手だけ・追記は列の待ち手だけを起こす(出自の issue は #1019)。
 (require doeff-hy.macros [defk <- val])
 (import threading)
@@ -33,9 +33,9 @@
 (defn count-scans [monkeypatch]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
   "memory-watch-scan を包み、呼ばれた回数を数える箱(list の長さ)を返すため。"
   (setv calls [] original memory.memory-watch-scan)
-  (defn counted [store ask]
+  (defn counted [store ask now-ms]
     (.append calls ask)
-    (original store ask))
+    (original store ask now-ms))
   (.setattr monkeypatch memory "memory_watch_scan" counted)
   calls)
 
@@ -92,24 +92,41 @@
   (assert (= at 5.0) at))
 
 
+;; 保持の期限の刻から、別の表(parts)へ書くまでの秒(期限の刻には誰も書かない)。
+(val NUDGE-AFTER-EXPIRY 40)
+
+
+(defk nudge-later [seconds]
+  {:pre [(: seconds (| int float))] :post [(: % Written)]
+   :tags {:context "records" :role "program"}}
+  "seconds 秒後に、待ち手の待つ表の外(parts)へ 1 行書くため(その書きの前の回収が、期限を過ぎた tickets の行の消えた を積む)。"
+  (<- (Delay seconds))
+  (<- written (PutRow "parts" #("nudge") (FrozenMap {"label" "n"}) (ExpectAbsent)))
+  written)
+
+
 (defk wait-for-expiry []
   {:pre [] :post [(: % tuple)]}
-  "tickets の行を終端にしてから、変更の無い tickets を保持の期限より長く待つ。答え = #(答え 起きた刻の秒 終端にした刻の秒)。"
+  "tickets の行を終端にしてから、変更の無い tickets を保持の期限より長く待つ(期限の NUDGE-AFTER-EXPIRY 秒後に parts へ 1 行書く)。
+   答え = #(答え 起きた刻の秒 終端にした刻の秒)。"
   (<- (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent)))
   (<- (Delay 1))
   (<- (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1)))
   (<- done-at (seconds-now))
   (<- start (ListRows "tickets"))
+  (<- writer (Spawn (nudge-later (+ TICKET-KEEP-SECONDS NUDGE-AFTER-EXPIRY))))
   (<- answer (WatchChanges #("tickets") (WatchCursor start.epoch start.sequence) :timeout (* 10 TICKET-KEEP-SECONDS)))
   (<- at (seconds-now))
+  (<- (Wait writer))
   #(answer at done-at))
 
 
-(defn test-a-row-expiring-during-the-wait-is-delivered-at-its-due-time []  ; defk にできない: 検の入口で Program を run する
-  ;; 待っている間に保持の期限が来た行の消え(RowRemoved)は、期限の刻に届く(timeout の 600 秒を待たない — 誰も書かなくても起きる)。
+(defn test-a-row-expiring-during-the-wait-is-delivered-at-the-next-write []  ; defk にできない: 検の入口で Program を run する
+  ;; 待っている間に保持の期限が来た行の消え(RowRemoved)は、期限の刻には届かず(時間で起きて回収しない — #3561)、次の書き(待つ表の外への
+  ;; 書きでもよい)の前の回収が積んだ刻に届く(timeout の 600 秒を待たない)。
   (setv #(answer at done-at) (run-on (MemoryStore LAW-SCHEMA) (wait-for-expiry)))
   (assert (and (isinstance answer Changes) (= (lfor item answer.items #((type item) item.key)) [#(RowRemoved #("g1" "t1"))])) answer)
-  (assert (= at (+ done-at TICKET-KEEP-SECONDS)) #(at done-at)))
+  (assert (= at (+ done-at TICKET-KEEP-SECONDS NUDGE-AFTER-EXPIRY)) #(at done-at)))
 
 
 (defk watch-parts [timeout]
@@ -259,9 +276,9 @@
 (defn count-events-scans [monkeypatch]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
   "memory-events-scan を包み、呼ばれた回数を数える箱(list の長さ)を返すため。"
   (setv calls [] original memory.memory-events-scan)
-  (defn counted [store ask]
+  (defn counted [store ask now-ms]
     (.append calls ask)
-    (original store ask))
+    (original store ask now-ms))
   (.setattr monkeypatch memory "memory_events_scan" counted)
   calls)
 
