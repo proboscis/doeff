@@ -66,7 +66,7 @@
 
 
 (defhandler source-patience-handler [#^ SignalSourcePatience patience]
-  "組み立てが選んだ、合図の源が止まりに耐える時間を、問い ReadSourcePatience に答えるため(問うのは合図の源だけ)。"
+  "組み立てが選んだ、合図の源が止まりに耐える時間を、問い ReadSourcePatience に答えるため(問うのは止まりに耐える物 — client の要求の待ちは問わない)。"
   {:tags {:context "records" :role "foundation"}}
   ;; 引数に残す理由: 上限は土台の宣言の値で、組み立ての 1 か所が渡す(Ask で読むと組の内側の設定の読み手に横取りされうる — ReadSourcePatience の註)。
   (ReadSourcePatience []

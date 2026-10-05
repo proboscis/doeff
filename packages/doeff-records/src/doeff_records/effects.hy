@@ -192,7 +192,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadSourcePatience [EffectBase]
-  "合図の源が置き場の止まりに耐える時間を問う記録の effect(#3469)— 問うのは合図の源だけ(止まりの拍に)。答え = SignalSourcePatience
+  "置き場の止まりに耐える時間を問う記録の effect(#3469)— 問うのは止まりに耐える物(合図の源の止まりの拍・止まりの間も書き手の入力を
+   process の中に持ち、戻りの合図で撃ち直す物 — client の要求の待ちは問わない・#3557)。答え = SignalSourcePatience
    (doeff_records.event_source の型・0 = 耐えない)。答えるのは組み立てが置く source-patience-handler(既定の値は無い)。HTTP の client の
    要求を待つ時間は別の問い ReadRequestPatience(#3557 — 2 つの違う問いを 1 つに載せると、handler を並べる位置で答え分けるしかなくなる)。
    Ask にしないのは ReadSignalSource と同じ理由(組の内側の設定の読み手に横取りされうる)。")
