@@ -393,7 +393,8 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   `WORKER_LABELS` は起動しない)、`CODE_REPO_URL` の bare mirror を用意してその版を展開します。env は script の先頭の註。
 - `deploy/Dockerfile` — 業務の image(doeff の venv を持つ物・この package を含む)に git と ssh を足し、`boot.sh` を置くだけの image。
   `--build-arg BASE=<業務の image>`。
-- `deploy/base/Dockerfile` — 土台だけの image(OS・git・ssh・uv・Rust の toolchain・tini・`boot.sh`)。doeff も Python も持たず、
+- `deploy/base/Dockerfile` — 土台だけの image(OS・git・ssh・uv・Rust の toolchain・tini・`boot.sh` と、業務の Python の package が
+  実行時に読む OS の library — 頭の註の表の理由 (2)・今は psycopg が読む `libpq5`)。doeff も Python も持たず、
   `boot.sh` が `WORKER_DOEFF_COMMIT` の doeff を展開して `uv sync --locked --package doeff-cluster` した venv から coordinator / worker を
   起動します(自己起動)。doeff-vm(Rust)は uv sync で組まず(`--no-install-package doeff-vm`)、実行環境の準備と同じ鍵・同じ置き場
   (`$WORK_DIR/state/wheels/doeff-vm-<鍵>`)の組み済みの wheel を `python -m doeff_cluster.worker.entry.boot_wheel` で用意して venv へ
