@@ -45,6 +45,59 @@ program = job.sample_job(1) if name == 'sample-job' else job.sample_boom()
 print(json.dumps({'blob': encode_program(program), 'warm': warm}))
 ")
 
+;; gensym を使う見本(#3667): `<-` の束ねは Hy の gensym の名(`_hy_gensym_bound_<数え>`)を局所変数にする。数えは
+;; process に 1 つなので、先に別の module を compile した process では番号が進み、値ごと詰まる関数の co_varnames が変わっていた。
+(val BIND-SOURCE
+  "(require doeff-hy.macros [defk <-])
+
+(defk bind-step [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context \"doeff-cluster-test\" :role \"entry\"}}
+  \"1 を足す。\"
+  (+ n 1))
+
+(defk bind-job [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context \"doeff-cluster-test\" :role \"entry\"}}
+  \"束ね 2 つの job(gensym の名が局所変数になる)。\"
+  (<- a (bind-step n))
+  (<- b (bind-step a))
+  b)
+")
+
+;; 先に compile して gensym の数えを進める別の module。
+(val OTHER-SOURCE
+  "(require doeff-hy.macros [defk <-])
+
+(defk other-step [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context \"doeff-cluster-test\" :role \"entry\"}}
+  \"1 を足す。\"
+  (+ n 1))
+
+(defk other-job [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context \"doeff-cluster-test\" :role \"entry\"}}
+  \"束ね 3 つ。\"
+  (<- a (other-step n))
+  (<- b (other-step a))
+  (<- c (other-step b))
+  c)
+")
+
+;; 束ねの見本の送り手の子: 名指した module を先に import してから bind-job を詰める。共有の code の置き場は切る(置き場から引くと
+;; 見本の compile が起きず、先に何を compile したかの違いを測れない)。答え = {blob compiled}(compiled = 見本の .pyc が無く、今
+;; compile したか)。
+(val BIND-SENDER-SCRIPT
+  "import importlib, importlib.util, json, os, sys
+os.environ['DOEFF_HY_CODE_STORE'] = 'off'
+root, first = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root)
+import hy
+compiled = not os.path.exists(importlib.util.cache_from_source(os.path.join(root, 'fp_sample', 'bind.hy')))
+for name in filter(None, first.split(',')):
+    importlib.import_module(name)
+import fp_sample.bind as bind
+from doeff_cluster.shared.protocol.program_codec import encode_program
+print(json.dumps({'blob': encode_program(bind.bind_job(1)), 'compiled': compiled}))
+")
+
 ;; 受け側の子(worker の子と同じく、自分の checkout の根を sys.path に持つ): 詰めた Program を解いて走らせ、答えか traceback を返す。
 (val RECEIVER-SCRIPT
   "import json, sys, traceback
@@ -66,6 +119,8 @@ except ValueError:
   (.mkdir (/ root "fp_sample") :parents True)
   (.write-text (/ root "fp_sample" "__init__.hy") "" :encoding "utf-8")
   (.write-text (/ root "fp_sample" "job.hy") SAMPLE-SOURCE :encoding "utf-8")
+  (.write-text (/ root "fp_sample" "bind.hy") BIND-SOURCE :encoding "utf-8")
+  (.write-text (/ root "fp_sample" "other.hy") OTHER-SOURCE :encoding "utf-8")
   root)
 
 
@@ -104,6 +159,18 @@ except ValueError:
   (val there (! (send (! (checkout-at (/ tmp-path "far" "away" "there"))) "sample-job" (/ tmp-path "pyc-there"))))
   (assert (= (get here "sha") (get there "sha")) #((get here "sha") (get there "sha")))
   (assert (not-in (.encode (str tmp-path) "utf-8") (base64.b64decode (get here "blob"))) "詰めた bytes に checkout の path が残っている"))
+
+
+(deftest test-the-fingerprint-is-the-same-whether-another-module-was-compiled-first [tmp-path]
+  ;; 失敗ケース(#3667): gensym の名を局所変数に持つ job を、別の module を先に compile した process と単独の process で詰めて、
+  ;; 指紋が同じ。.pyc の置き場は 2 つの子で共有し(見本は別の根に置くので、どちらの子も見本を今 compile する)、共有の code の置き場は切る。
+  (val pycache (/ tmp-path "pyc"))
+  (val after-other (! (child BIND-SENDER-SCRIPT [(str (! (checkout-at (/ tmp-path "after")))) "fp_sample.other"]
+                             pycache tmp-path "")))
+  (val alone (! (child BIND-SENDER-SCRIPT [(str (! (checkout-at (/ tmp-path "alone")))) ""] pycache tmp-path "")))
+  (assert (and (get after-other "compiled") (get alone "compiled")) "見本を今 compile していない子がある(数えの違いを測れていない)")
+  (assert (= (program-sha (get after-other "blob")) (program-sha (get alone "blob")))
+          #((program-sha (get after-other "blob")) (program-sha (get alone "blob")))))
 
 
 (deftest test-the-fingerprint-is-the-same-whether-equal-strings-are-one-object-or-two
