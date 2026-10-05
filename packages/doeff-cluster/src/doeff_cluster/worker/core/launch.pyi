@@ -24,7 +24,7 @@ def program_file(program_dir: Path, sha: str) -> Path:
 def program_file_text(blob: str, versions: Mapping[str, object]) -> str:
     ...
 
-def shim_argv(python: str, grace_ms: int) -> _Program[tuple[str, ...], object]:
+def shim_argv(python: str, grace_ms: int, *, stamp_lines: bool) -> _Program[tuple[str, ...], object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
