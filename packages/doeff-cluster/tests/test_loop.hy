@@ -4,6 +4,7 @@
 (import doeff [Program run])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
+(import doeff_core_effects.handlers [slog-discard-handler])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
@@ -60,7 +61,7 @@
   (PrepareCode [revision]
     (setv (get world.codes revision) CodeState.PREPARING) (resume None))
   (StartJob [spec attempt code-path] (.start world (StartJob spec attempt code-path)) (resume None))
-  (SignalJob [name pid stage] (.signal world (SignalJob name pid stage)) (resume None))
+  (SignalJob [name pid stage reason] (.signal world (SignalJob name pid stage reason)) (resume None))
   (ReapJob [name pid outcome exit-code] (.reap world (ReapJob name pid outcome exit-code)) (resume None)))
 
 (defk fake-host [world script stop-at program]
@@ -68,7 +69,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を台本の世界(fake-host-script)の下で走らせ、その答えを返すため。台本の外側に仮想の時計(world の SimClock)と、拍の間の
    眠りの本番の答え手 tick-pauses を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
-  (<- answer WorkerState ((sim-time-handler :clock world.clock) (tick-pauses ((fake-host-script world script stop-at) program))))
+  (<- answer WorkerState ((sim-time-handler :clock world.clock) (tick-pauses (slog-discard-handler ((fake-host-script world script stop-at) program)))))
   answer)
 
 (defk events-of [world name]

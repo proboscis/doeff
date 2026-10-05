@@ -17,8 +17,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from doeff_core_effects.http_server_effects import HttpAddress
+from doeff_core_effects.scheduler import Promise
+from doeff_hy.static_types import Handler as _Handler
 from doeff_records.service import HttpAnswer, HttpRequest
-from doeff_records.values import RecordsSchema
+from doeff_records.values import RecordsSchema, WaitsClosed
 
 from doeff import EffectBase, Program
 
@@ -66,6 +68,17 @@ class RecordsListening(EffectBase[None]):
 
 @dataclass(frozen=True)
 class PreparedHandlers(EffectBase[Callable[[str], object] | None]): ...
+
+@dataclass(frozen=True)
+class CloseWaits(EffectBase[None]):
+    reason: str
+
+@dataclass(frozen=True)
+class ClosingWaits(EffectBase[WaitsClosed | Promise[WaitsClosed]]): ...
+
+# 止めの印(#3713): 入口の session に印を持つ handler と、要求の記録の handler の中の待ちを印でも起こす handler。
+waits_closing: _Handler
+closing_cuts_waits: _Handler
 
 def answer_with(serving: RecordsServing, ticket: str, request: HttpRequest) -> Program[HttpAnswer | TextAnswer, object]: ...
 def serve_records(serving: RecordsServing) -> Program[int, object]: ...

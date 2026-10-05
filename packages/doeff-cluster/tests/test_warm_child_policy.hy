@@ -6,7 +6,7 @@
 (import json)
 (import dataclasses [replace])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StopProgress
-  StartJob SignalJob WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
+  StartJob SignalJob Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
         doeff_cluster.shared.intent.job_model [JobSpec JobPhase]
         doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv]
         doeff_cluster.shared.core.runtime_env_rules [runtime-env->json]
@@ -188,7 +188,7 @@
   (<- base tuple (warm-child-actions now desired observed warm policy))
   (+ base (tuple (gfor view observed.warm-children :if (is-not view.exit-code None)
                        p observed.processes :if (and (is p.exit-code None) (= (code-key p.spec) view.key))
-                       (SignalJob p.name p.pid StopStage.TERM)))))
+                       (SignalJob p.name p.pid StopStage.TERM (Undeclared))))))
 
 
 (deftest test-stopping-forked-tasks-with-their-warm-child-breaks-wc2 [monkeypatch]
@@ -199,7 +199,7 @@
   (<- variant tuple (plan NOW #(ta) (! (world :children #((! (child KEY-A :exit-code -9 :ended-ms NOW))) :processes #(running)))
                           {} POLICY))
   (<- broken tuple (warm-child-state-leaves-running-tasks baseline variant))
-  (assert (= broken #((SignalJob "ta" 50 StopStage.TERM))) broken))
+  (assert (= broken #((SignalJob "ta" 50 StopStage.TERM (Undeclared)))) broken))
 
 
 (deftest test-counting-a-mark-with-a-live-vm-as-ready-breaks-wc3 [monkeypatch]

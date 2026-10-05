@@ -7,16 +7,17 @@ runtime_env_model.pyi と同じ形)。
 
 - 値(CodeLayout・CodeView・ProcessView・ProbeView・EnvDisk・WarmEnv・WorldView・StopProgress・JobRecord・WorkerPolicy・JobStatus・
   DesiredJobs・DesiredUnreadable・WorkerState)は凍った dataclass(キーワード引数に限らない — 実装は位置でも作る)。ProbeStatus は
-  defrecord なのでキーワード引数だけ。欄の型は worker_model.hy の注記と、組み手(worker の handler・判断)が入れる要素の型
+  defrecord なのでキーワード引数だけ(止めの訳 SpecChanged・Undeclared・HandoffAbandoned・Retired・CutOff・WorkerStopping と JobStop も
+  defrecord — #3713)。欄の型は worker_model.hy の注記と、組み手(worker の handler・判断)が入れる要素の型
   (WorldView.codes = CodeView の組・WorkerState.records = job の名 → JobRecord ほか)。
-- CodeState・ProbeState・StopStage・Outcome は Enum。
+- CodeState・ProbeState・StopStage・Outcome は Enum、StartHold は defenum(StrEnum)。StopReason は止めの訳の和の型。
 - effect は凍った dataclass の EffectBase[答えの型]。答えは worker の handler が返す物(ReadDesired = DesiredJobs か DesiredUnreadable・
   ObserveWorld = WorldView・WorkerStopRequested = bool・残りの action と PublishStatus = None)。
 - Action は action の effect の和の型。
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 
 from doeff_cluster.shared.intent.job_model import JobPhase, JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure
@@ -122,6 +123,55 @@ class StopProgress:
     stage: StopStage
     signalled_ms: int
 
+# --- 止めの訳(#3713)— 閉じた和 StopReason -------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class SpecChanged:
+    """宣言の spec が、動いている process を起こした spec と違う。"""
+
+@dataclass(frozen=True, kw_only=True)
+class Undeclared:
+    """job が宣言から外れた。"""
+
+@dataclass(frozen=True, kw_only=True)
+class HandoffAbandoned:
+    """入れ替えの諦め。"""
+
+@dataclass(frozen=True, kw_only=True)
+class Retired:
+    """入れ替えで退いた旧の process。"""
+
+@dataclass(frozen=True, kw_only=True)
+class CutOff:
+    """coordinator との途絶で宣言を絞った(silent_ms = 最後に届いた返事からの ms)。"""
+
+    silent_ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class WorkerStopping:
+    """worker 自身の停止。"""
+
+StopReason = SpecChanged | Undeclared | HandoffAbandoned | Retired | CutOff | WorkerStopping
+
+@dataclass(frozen=True, kw_only=True)
+class JobStop:
+    """job の止めの進み(JobRecord.stopping)。"""
+
+    requested_ms: int
+    stage: StopStage
+    signalled_ms: int
+    reason: StopReason
+
+class StartHold(StrEnum):
+    PREPARING = "preparing"
+    PREPARE_FAILED = "prepare-failed"
+    DISK_FULL = "disk-full"
+    PROBING = "probing"
+    PROBE_FAILED = "probe-failed"
+    BACKOFF = "backoff"
+    WARM_CHILD = "warm-child"
+    HANDOFF_ABANDONED = "handoff-abandoned"
+
 # --- 待ちの子(#3646)-------------------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,10 +221,11 @@ class JobRecord:
     last_exit_ms: int | None = None
     last_outcome: Outcome | None = None
     last_exit_code: int | None = None
-    stopping: StopProgress | None = None
+    stopping: JobStop | None = None
     failures: int = 0
     last_start_ms: int | None = None
     unexpected_exits: int = 0
+    held: StartHold | None = None
 
 @dataclass(frozen=True)
 class WorkerPolicy:
@@ -213,6 +264,7 @@ class JobStatus:
 class DesiredJobs:
     jobs: tuple[JobSpec, ...]
     warm: tuple[WarmEnv, ...] = ()
+    cut_off: CutOff | None = None
     changed: Future[bool] | None = field(default=None, compare=False)
 
 @dataclass(frozen=True)
@@ -282,6 +334,7 @@ class SignalJob(EffectBase[None]):
     name: str
     pid: int
     stage: StopStage
+    reason: StopReason
 
 @dataclass(frozen=True)
 class ReapJob(EffectBase[None]):

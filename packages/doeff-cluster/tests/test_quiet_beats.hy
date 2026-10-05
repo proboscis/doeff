@@ -9,6 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
+(import doeff_core_effects.handlers [slog-discard-handler])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView WorkerPolicy DesiredJobs JobStatus ReadDesired ObserveWorld
@@ -106,7 +107,7 @@
   {:pre [(: stale bool)] :post [(: % TimedWorld)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の run-worker を偽の世界(準備 3.3 秒・process は 4.5 秒で落ちる)の上で STOP-MS まで 1 拍ずつ回し、記録の残った世界を返すため。"
   (val world (TimedWorld 3300 4500 stale))
-  (<- ((sim-time-handler :clock world.clock) ((timed-host world) (run-worker POLICY))))
+  (<- ((sim-time-handler :clock world.clock) (slog-discard-handler ((timed-host world) (run-worker POLICY)))))
   world)
 
 

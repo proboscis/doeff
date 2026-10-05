@@ -2,7 +2,7 @@
 (require doeff-hy.macros [deftest val])
 (import time)
 (import httpx)
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable CutOff])
 (import tests.link_rig [LinkRig])
 
 (deftest test-broken-declaration-is-reported-not-raised
@@ -22,7 +22,10 @@
   (assert (isinstance first DesiredUnreadable))
   (assert (in "coordinator に届かない" first.reason))
   (setv link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))
-  (assert (= (.poll link) (DesiredJobs #()))))
+  (val cut (.poll link))
+  ;; 途絶で絞った宣言は、止めの訳 CutOff を運ぶ(#3713 — worker が止めた job の行に cut-off と黙った秒を出す)
+  (assert (= cut.jobs #()))
+  (assert (isinstance cut.cut-off CutOff)))
 
 (import pathlib [Path])
 (import doeff_cluster.worker.intent.worker_model [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])

@@ -37,7 +37,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus CutOff] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
 (import doeff_cluster.shared.core.remote_rules [failed-from])
@@ -1216,7 +1216,10 @@
   ;; coordinator への口: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
   (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 0 60000))
   (setv link.state.last-tasks #(detached remote) link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))
-  (assert (= (.poll link) (DesiredJobs #(detached)))))
+  (val cut (.poll link))
+  ;; 途絶で絞った宣言は、止めの訳 CutOff を運ぶ(#3713 — worker が止めた job の行に cut-off と黙った秒を出す)
+  (assert (= cut.jobs #(detached)))
+  (assert (isinstance cut.cut-off CutOff)))
 
 
 (deftest test-detached-task-keeps-typed-needs-and-versions-through-the-saved-state
