@@ -23,11 +23,15 @@
 ;;;   4 焼き      焼く物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
 ;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits)。
+;;;               焼く物のうち、引き継いだ .pyc が今の source の hash と今の環境の macro の記録に合う物は、道具が pool へ送らずに残す
+;;;               (reused — #3675)。
 ;;;   5 検めと印   木ごとに焼いた後を走査し直し、焼くべき source ごとに .pyc が在ること(焼けなかった file は理由つきで印に載せる)を
 ;;;               検めてから、木の根に完成の印(MARKER)を置く。検めが通らない木には印を置かない。
 ;;;
-;;; 報告(stderr の slog の行): 木ごとに `tree=<--tree の綴り> carried=N compiled=N failed=N problem=<文|->`、最後に全体の
-;;; `carried=N compiled=N failed=N carry_s=… compile_s=… closure_s=… scan_s=…`(scan_s = 木の走査・closure_s = 閉包の歩み)。検めの通らない
+;;; 報告(stderr の slog の行): 木ごとに `tree=<--tree の綴り> carried=N rebuilt=N reused=N failed=N problem=<文|->`、最後に全体の
+;;; `carried=N rebuilt=N reused=N failed=N carry_s=… compile_s=… closure_s=… scan_s=…`(carried = 前の木から hardlink した .pyc・焼く計画の
+;;; file のうち rebuilt = 焼いた・reused = 焼かずに残した・failed = 焼けなかった — 3 つの和が焼く計画の数・scan_s = 木の走査・closure_s =
+;;; 閉包の歩み)。検めの通らない
 ;;; 木が 1 つでも在れば終わり 1(ほかの木の印は置く)。
 ;;; 実行環境の準備(worker/protocol/env_translation)は木ごとの行を読み、版ごとのコードの木の準備(worker/core/code_rules の script)は印の
 ;;; 有無を確かめる。
@@ -123,7 +127,8 @@
 
 (defclass [(dataclass :frozen True)] BakeSources [EffectBase]
   "焼く物を 1 つの process の pool で焼く。items = #(木の path 相対 path module 名) の列(この順に pool へ渡す)・jobs = 並列数・
-   paths = 焼く process の import の路の先頭に足す dir(前が先)。答え = 焼けなかった物の #(木の path 相対 path 理由) の tuple。"
+   paths = 焼く process の import の路の先頭に足す dir(前が先)。答え = bake_plan の BakeAnswer(焼けなかった物と、在る .pyc が今の source
+   と macro に合うので焼かずに残した物)。"
   (#^ tuple items)
   (#^ int jobs)
   (#^ tuple paths))
@@ -210,7 +215,8 @@
       (:= items (+ items #((plan.BakeItem :tree tree.path :rel rel :name name :size (match stat (PathStat :size size) size _ 0)))))))
   (<- order tuple (plan.bake-order items))
   (<- paths tuple (plan.trees-import-path trees))
-  (<- failures tuple (BakeSources order jobs paths))
+  (<- answer plan.BakeAnswer (BakeSources order jobs paths))
+  (val failures answer.failed)
   (<- baked float (GetMonotonic))
   (for [#(path rel reason) (cut failures 0 20)]
     (<- (Note f"  焼けない: {path}/{rel}: {reason}")))
@@ -226,8 +232,9 @@
         (do (<- marker dict (marker-content revision True after-sources after-pycs failed tree.roots))
             (<- (WriteMarker tree.path marker)))
         (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem))))
-    (val outcome (plan.TreeOutcome :named tree.named :carried tree-carried :compiled (- (len tree-plan) (len failed))
-                                   :failed (len failed) :problem problem))
+    (<- reused int (plan.tree-reused answer.reused tree.path))
+    (val outcome (plan.TreeOutcome :named tree.named :carried tree-carried :rebuilt (- (len tree-plan) (len failed) reused)
+                                   :reused reused :failed (len failed) :problem problem))
     (<- line str (plan.tree-line outcome))
     (<- (Note line))
     (:= outcomes (+ outcomes #(outcome))))
@@ -254,8 +261,8 @@
     (when (!= outcome.exit-code 0)
       (raise (RuntimeError (.format "焼きの道具が終わり {} で止まった: {}" outcome.exit-code
                                     (cut (+ outcome.stderr outcome.start-error) -2000 None)))))
-    (<- failures tuple (plan.bake-failures outcome.stdout))
-    (resume failures)))
+    (<- answer plan.BakeAnswer (plan.bake-answer outcome.stdout))
+    (resume answer)))
 
 
 ;; --- 入口 --------------------------------------------------------------------------------

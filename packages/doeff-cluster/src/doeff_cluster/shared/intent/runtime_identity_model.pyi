@@ -4,7 +4,6 @@ from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
-from doeff_cluster.shared.intent.env_marker_model import BytecodeCounts as BytecodeCounts
 
 class IdentityFailureKind(StrEnum):
     UNDECLARED = 'undeclared'
@@ -23,7 +22,6 @@ class RootMarker:
     key: str
     platform: str
     env: RuntimeEnv | None
-    bytecode: BytecodeCounts | None
 
 @dataclass(frozen=True, kw_only=True)
 class RuntimeFacts:

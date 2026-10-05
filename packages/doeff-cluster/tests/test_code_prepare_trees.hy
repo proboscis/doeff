@@ -52,7 +52,7 @@
       (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler subprocess-handler tree-files
                       pool-tool-baker]
         (prepare-all shaped 2 #("app.main"))))
-  (assert (= (tuple (gfor t outcomes #(t.named t.compiled t.failed t.problem))) #(#((str app) 2 0 None) #((str lib) 2 0 None)))
+  (assert (= (tuple (gfor t outcomes #(t.named t.rebuilt t.reused t.failed t.problem))) #(#((str app) 2 0 0 None) #((str lib) 2 0 0 None)))
           outcomes)
   (assert (.exists (/ lib (cache-rel "src/libpkg/used.hy")))
           "業務の木の入口が import する依存の木の module が焼かれていない(閉包が木をまたいでいない)")
@@ -80,10 +80,10 @@
 
 (defhandler recorded-bakes [#^ BakeLog log]
   ;; 引数に残す理由: 検ごとに別の記録を持つ。焼きの効果(外の process を起こす答え手の代わり)が受けた焼く物を覚え、焼かずに「焼けなかった
-  ;; 物は無い」と答える。
+  ;; 物も焼かずに残した物も無い」と答える。
   (BakeSources [items jobs paths]
     (setv log.items items)
-    (resume #())))
+    (resume (plan.BakeAnswer :failed #() :reused #()))))
 
 
 (deftest test-the-prepare-program-hands-the-pool-the-largest-sources-first [#^ Path tmp-path]

@@ -100,33 +100,29 @@
 
 
 (defk marker-bytecode [raw]
-  {:pre [(: raw dict)] :post [(: % (| BytecodeCounts None))]}
-  "完成の印の JSON の object(raw)の bytecode の欄を、準備の bytecode の数と秒として読むため(形は defwire の BytecodeCounts の parse —
-   知らない欄は読み捨てる)。欄が無い・null(#3607 の H2 より前に書かれた印・焼く木が無かった準備)は None(記録が無い — 0 で埋めない)。
-   在る欄の形が違えば、名指して ValueError(書き手は env_prepare の env-marker->json の 1 か所なので、形の違いは書き手の誤り)。"
+  {:pre [(: raw dict)] :post [(: % (| BytecodeCounts Malformed None))]}
+  "完成の印の JSON の object(raw)の bytecode の欄を、準備の bytecode の数と秒として読むため(報告と log の読み手 — 置き場の名指しの
+   decode-marker は読まない・形は defwire の BytecodeCounts の parse — 知らない欄は読み捨てる)。欄が無い・null(#3607 の H2 より前に
+   書かれた印・焼く木が無かった準備)は None(記録が無い — 0 で埋めない)。今の形でない欄(#3675 より前の worker が書いた compiled の形が
+   PVC の置き場に残る)は Malformed のまま返す(読み手が「前の形の印」と名乗る — 0 にも None にも畳まない)。"
   (val written (.get raw "bytecode"))
   (if (is written None)
       None
       (do (<- parsed (| BytecodeCounts Malformed) (parse BytecodeCounts written))
-          (match parsed
-            (Malformed :fields fields)
-              (raise (ValueError (.format "完成の印の bytecode の欄の形が違う: {}" (.join "・" (gfor f fields (.format "{} {}" f.field f.reason))))))
-            _ parsed))))
+          parsed)))
 
 
 (defk decode-marker [text]
   {:pre [(: text str)] :post [(: % (| RootMarker None))]}
-  "完成の印の file の中身 → 印(空なら None)。形式の版が違えば宣言は読まない。知らない欄は読まずに落とす。bytecode の欄の無い印
-   (#3607 の H2 より前に書かれた印)は bytecode = None(記録が無い)として読む — 準備済みの root として読める。"
+  "完成の印の file の中身 → 置き場の同一性の印(空なら None)。形式の版が違えば宣言は読まない。知らない欄は読まずに落とす。bytecode の欄
+   (焼いた数と秒)は読まない — 欄の無い印(#3607 の H2 より前)も前の形の欄の印(#3675 より前の compiled)も、準備済みの root として読める。"
   (if text
       (do (val raw (json.loads text))
           (val version (.get raw "format" 0))
           (if (= version ENV-MARKER-FORMAT)
               (do (<- env RuntimeEnv (runtime-env-of-json (get raw "env")))
-                  (<- bytecode (| BytecodeCounts None) (marker-bytecode raw))
-                  (RootMarker :format version :key (str (get raw "key")) :platform (str (get raw "platform")) :env env
-                              :bytecode bytecode))
-              (RootMarker :format (if (isinstance version int) version 0) :key "" :platform "" :env None :bytecode None)))
+                  (RootMarker :format version :key (str (get raw "key")) :platform (str (get raw "platform")) :env env))
+              (RootMarker :format (if (isinstance version int) version 0) :key "" :platform "" :env None)))
       None))
 
 

@@ -9,14 +9,16 @@ ENV_MARKER_FORMAT: int
 @dataclass(frozen=True, kw_only=True)
 class TreeCounts:
     name: str
-    compiled: int
     carried: int
+    rebuilt: int
+    reused: int
     failed: int
 
 @dataclass(frozen=True, kw_only=True)
 class BytecodeCounts:
-    compiled: int
     carried: int
+    rebuilt: int
+    reused: int
     failed: int
     scan_seconds: float
     closure_seconds: float
