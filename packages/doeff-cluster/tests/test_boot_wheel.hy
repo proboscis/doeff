@@ -15,10 +15,23 @@
 ;;     効かなかった)。
 ;;   6 準備は引き継いだ先(DOEFF_BOOT_FROM_ROOT=1)がする — 引き継ぐ先の script が image の script と同じ中身でも、違う中身でも。
 ;;   7 drain の役は root を展開も準備もしない(preStop で組まない)。
+;;   8 新しい root の準備は uv sync に --compile-bytecode を付け(site-packages の .pyc)、root の中の source は焼く道具(root の
+;;     worker/entry/code_prepare.hy)を root の venv の hy で 1 回起こして BOOT_ENTRIES の閉包だけを検める方式(PEP 552 の checked
+;;     hash)で焼く。焼く根は venv の .pth が書く root の中の dir だけ(import の行と root の外の dir は根にしない・末尾の改行の無い
+;;     .pth も読む)。閉包の外の module は焼かない。準備の行に焼いた数を載せる(#3725 — 前は起動の exec から import の終わりまでに
+;;     15〜20 秒、全部の Hy の module を import の時に compile していた)。
+;;   9 次の版の root は、前の準備済みの root(完成の印と焼く道具の印が在り、Python と Hy の版が同じ)から、変わっていない file の .pyc を
+;;     hardlink で引き継ぎ、変わった file(前の sha との git diff)だけを焼く。変わった path の一覧の file は焼いた後に消す。
+;;  10 BOOT_ENTRIES は、boot.sh が root の venv の hy で起こす module の全部と、worker が同じ venv で起こす準備の process(env_tool)・
+;;     shim・job の子の入口(job_entry)と、workspace の package が site-packages へ入れる .pth の import の行が起こす module
+;;     (doeff-hy の doeff_hy_bytecode_guard — interpreter の起動ごとに import される)を名指す。boot.sh に綴った焼く道具の印の名は
+;;     code_plan の MARKER と同じ。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import hashlib)
+(import importlib.util)
 (import os)
+(import re)
 (import shutil)
 (import subprocess)
 (import sys)
@@ -31,22 +44,61 @@
 (import doeff_cluster.shared.core.native_wheel :as native-wheel)
 (import doeff_cluster.shared.core.runtime_env_rules [native-key])
 (import doeff_cluster.shared.intent.runtime_env_model [NativeWheel EnvFailure])
+(import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
+(import doeff_cluster.worker.core.launch [shim-argv])
 (import doeff_cluster.worker.intent.env_prepare_model [EnsureNativeWheel WheelReady])
+(import doeff_cluster.worker.protocol.declared [JOB-ENTRY])
+(import doeff_cluster.worker.protocol.env_store [ENV-TOOL])
 (import doeff_cluster.worker.protocol.env_translation [env-translation])
 
 (val BOOT-SH (str (/ (. (Path __file__) (resolve) parent parent) "deploy" "boot.sh")))
+;; この検の木の doeff_cluster(焼く道具の本物の file を検の doeff の root へ写すため)と、root の中の doeff_cluster の置き場。
+(val CLUSTER-SRC (/ (. (Path __file__) (resolve) parent parent) "src" "doeff_cluster"))
+;; workspace の package の dir の並ぶ所(doeff の repo の packages)。
+(val PACKAGES (. (Path __file__) (resolve) parent parent parent))
+(val ROOT-CLUSTER "packages/doeff-cluster/src/doeff_cluster")
+;; 焼く道具の file(入口・判断の module・焼きの道具 — 入口は後の 2 つを自分の位置から求めた path で読む)。
+(val TOOL-FILES #("worker/entry/code_prepare.hy" "worker/core/bake_plan.hy" "foundation/bytecode_pool.hy"))
+;; 起動の入口と同じ名の小さな module(worker/entry/main は worker/core/boot_helper を import する — 閉包)と、どこからも import されない
+;; worker/core/unused(閉包の外)。
+(val ENTRY-MODULES {"worker/entry/main.hy" "(import doeff_cluster.worker.core.boot_helper [answer])\n(setv V answer)\n"
+                    "worker/core/boot_helper.hy" "(setv answer 1)\n"
+                    "worker/entry/drain_main.hy" "(setv V 1)\n"
+                    "coordinator/entry/main.hy" "(setv V 1)\n"
+                    "record_store/entry/main.hy" "(setv V 1)\n"
+                    "worker/entry/env_tool.hy" "(setv V 1)\n"
+                    "worker/entry/job_entry.hy" "(setv V 1)\n"
+                    "worker/entry/shim.py" "V = 1\n"
+                    "worker/core/unused.hy" "(setv U 2)\n"})
+(val OUTSIDE-CLOSURE "worker/core/unused.hy")
+(val BAKED (tuple (gfor rel ENTRY-MODULES :if (!= rel OUTSIDE-CLOSURE) rel)))
+;; PEP 552 の hash 方式の .pyc の頭の flags(bit 0 = hash 方式・bit 1 = import の時に source の hash を検める)。
+(val CHECKED-HASH 0b11)
 (val PYTHON "3.14.3t")
 (val WHEEL-NAME "doeff_vm-0.1.0-cp314-cp314t-linux_x86_64.whl")
 ;; doeff の native の package を宣言する実行環境の native の欄(doeff を repo の名 doeff で並べる宣言の形)。
 (val DOEFF-VM (NativeWheel :package native-wheel.DOEFF-VM-PACKAGE :repo "doeff" :paths native-wheel.DOEFF-VM-PATHS))
-;; 偽の uv: 呼ばれた引数と、子が継いだ VIRTUAL_ENV・UV_CACHE_DIR・DOEFF_BOOT_FROM_ROOT(引き継いだ先の script か)を log へ 1 行。sync は root の venv の python(検の python へ渡すだけ)を
-;; 置き、build は --out-dir に wheel を 1 つ置く。pip は何もしない。
+;; 偽の uv: 呼ばれた引数と、子が継いだ VIRTUAL_ENV・UV_CACHE_DIR・DOEFF_BOOT_FROM_ROOT(引き継いだ先の script か)を log へ 1 行。sync は root の venv の python(検の python へ渡すだけ)・
+;; hy(引数を FAKE_HY_LOG へ 1 行書き、file を起こす時 = 焼く道具は検の python の hy へ渡す・-m で役を起こす時は終わり 3 で止まる — 検の役の起動は
+;; root の準備の後で落ちる)・Hy の dist-info と、uv と同じく末尾に改行の無い .pth(root そのもの・root の中の dir・root の外の dir・import の行だけの
+;; 物)を置き、build は --out-dir に wheel を 1 つ置く。pip は何もしない。
 (val FAKE-UV (+ "#!/bin/sh\n"
                 "echo \"$* venv=${VIRTUAL_ENV:-} cache=${UV_CACHE_DIR:-} from=${DOEFF_BOOT_FROM_ROOT:-}\" >>\"$FAKE_UV_LOG\"\n"
                 "case \"$1\" in\n"
-                "  sync) mkdir -p .venv/bin\n"
+                "  sync) site=.venv/lib/python3.14t/site-packages\n"
+                "        mkdir -p .venv/bin \"$site/hy-1.0.0.dist-info\"\n"
                 "        printf '#!/bin/sh\\nexec %s \"$@\"\\n' \"$FAKE_UV_PYTHON\" >.venv/bin/python\n"
-                "        chmod 755 .venv/bin/python ;;\n"
+                "        printf '#!/bin/sh\\necho \"$*\" >>\"$FAKE_HY_LOG\"\\n[ \"$1\" != -m ] || exit 3\\nexec %s -m hy \"$@\"\\n' \"$FAKE_UV_PYTHON\" >.venv/bin/hy\n"
+                "        chmod 755 .venv/bin/python .venv/bin/hy\n"
+                "        printf '%s' \"$PWD\" >\"$site/_editable_impl_doeff.pth\"\n"
+                "        printf '%s/packages/doeff-cluster/src' \"$PWD\" >\"$site/_editable_impl_doeff_cluster.pth\"\n"
+                "        printf '%s' /usr >\"$site/_outside_root.pth\"\n"
+                "        printf '%s' 'import doeff_hy_bytecode_guard; doeff_hy_bytecode_guard.install()' >\"$site/doeff_hy_bytecode_guard.pth\"\n"
+                ;; uv の焼きの子と同じく、venv の .pth が名指す root の中の module(ここでは shim)を import の口(SourceFileLoader)で
+                ;; 読む — 呼び手が PYTHONDONTWRITEBYTECODE を立てていなければ、その source の隣に timestamp の方式の .pyc が書かれる。
+                ;; package の名で引かず path で読む(検の環境の doeff_cluster に解けて検の外の木へ書かないため)。
+                "        shim=packages/doeff-cluster/src/doeff_cluster/worker/entry/shim.py\n"
+                "        [ ! -f \"$shim\" ] || \"$FAKE_UV_PYTHON\" -c 'import importlib.machinery as m, sys; m.SourceFileLoader(\"shim\", sys.argv[1]).get_code(\"shim\")' \"$shim\" ;;\n"
                 "  build) out=''; prev=''\n"
                 "         for a in \"$@\"; do [ \"$prev\" = --out-dir ] && out=$a; prev=$a; done\n"
                 "         mkdir -p \"$out\" && : >\"$out/" WHEEL-NAME "\" ;;\n"
@@ -63,15 +115,20 @@
   (.strip done.stdout))
 
 
-(defk doeff-source [tmp [root-script None]]
-  {:pre [(: tmp Path) (: root-script (| str None))] :post [(: % tuple)]}
+(defk doeff-source [tmp [root-script None] * [bake False]]
+  {:pre [(: tmp Path) (: root-script (| str None)) (: bake bool)] :post [(: % tuple)]}
   "doeff の形の repo(.python-version・doeff-vm の 2 つの dir・起動の script)を commit し、bare の mirror を作る。起動の script は
-   root-script(None = この検の木の deploy/boot.sh そのもの — image の script と同じ中身)。答え = #(repo mirror sha)。"
+   root-script(None = この検の木の deploy/boot.sh そのもの — image の script と同じ中身)。bake = 焼く道具の本物の file と起動の入口と
+   同じ名の小さな module も commit する(偽なら root の準備は焼く道具が無いので焼かずに注記だけ — 焼きの検の外の検の秒を
+   増やさない)。答え = #(repo mirror sha)。"
   (val src (/ tmp "doeff"))
-  (for [#(rel text) (.items {".python-version" (+ PYTHON "\n")
-                             "packages/doeff-vm/Cargo.toml" "[package]\nname = \"doeff-vm\"\n"
-                             "packages/doeff-vm-core/src/lib.rs" "// core\n"
-                             "packages/doeff-cluster/deploy/boot.sh" (if (is root-script None) (.read-text (Path BOOT-SH)) root-script)})]
+  (val tools (if bake (dfor rel TOOL-FILES (.format "{}/{}" ROOT-CLUSTER rel) (.read-text (/ CLUSTER-SRC rel) :encoding "utf-8")) {}))
+  (val modules (if bake (dfor #(rel text) (.items ENTRY-MODULES) (.format "{}/{}" ROOT-CLUSTER rel) text) {}))
+  (for [#(rel text) (.items (| {".python-version" (+ PYTHON "\n")
+                                "packages/doeff-vm/Cargo.toml" "[package]\nname = \"doeff-vm\"\n"
+                                "packages/doeff-vm-core/src/lib.rs" "// core\n"
+                                "packages/doeff-cluster/deploy/boot.sh" (if (is root-script None) (.read-text (Path BOOT-SH)) root-script)}
+                               tools modules))]
     (val path (/ src rel))
     (.mkdir path.parent :parents True :exist-ok True)
     (.write-text path text :encoding "utf-8"))
@@ -108,6 +165,39 @@
   "偽の uv の log の行(呼ばれた順)。"
   (val path (/ tmp "uv.log"))
   (tuple (if (.is-file path) (.splitlines (.read-text path)) [])))
+
+
+(defk hy-log [tmp]
+  {:pre [(: tmp Path)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "root の venv の偽の hy が受けた引数の行(呼ばれた順・log は tmp/hy.log)— 焼く道具へ渡した --roots などを外から読むため。"
+  (val path (/ tmp "hy.log"))
+  (tuple (if (.is-file path) (.splitlines (.read-text path)) [])))
+
+
+(defk argument-of [line flag]
+  {:pre [(: line str) (: flag str)] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "偽の hy の log の 1 行(空白で並べた引数)から flag の次の値を読むため(無ければ None)。"
+  (val words (.split line))
+  (val at (next (gfor #(i w) (enumerate words) :if (= w flag) i) None))
+  (if (or (is at None) (>= (+ at 1) (len words))) None (get words (+ at 1))))
+
+
+(defk prepared-line [stderr]
+  {:pre [(: stderr str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "boot.sh の stderr から「root を準備した」の行を読むため(無ければ空文字 — 断言が stderr を名指す)。"
+  (next (gfor line (.splitlines stderr) :if (in "root を準備した" line) line) ""))
+
+
+(defk pyc-of [root rel]
+  {:pre [(: root Path) (: rel str)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "root の中の doeff_cluster の source(rel)の .pyc の path を求めるため(import が探す __pycache__ の名)。"
+  (/ root ROOT-CLUSTER (cache-rel rel)))
+
+
+(defk pyc-flags [path]
+  {:pre [(: path Path)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "焼いた .pyc の頭の flags(PEP 552 — magic の後の 4 byte)を読むため。"
+  (int.from-bytes (cut (.read-bytes path) 4 8) "little"))
 
 
 (defk ensure-wheel [key source-dir]
@@ -181,13 +271,15 @@
 
 ;; --- 4 boot.sh の 2 回 --------------------------------------------------------------------------
 
-(defk boot-once [tmp sha [role "records"]]
-  {:pre [(: tmp Path) (: sha str) (: role str)] :post [(: % subprocess.CompletedProcess)]}
-  "image の起動の script を role の役(既定 records)で起こす(root の準備の後は、検の PATH に hy が無いので役の起動で落ちる)。"
+(defk boot-once [tmp sha [role "records"] * [writes-bytecode False]]
+  {:pre [(: tmp Path) (: sha str) (: role str) (: writes-bytecode bool)] :post [(: % subprocess.CompletedProcess)]}
+  "image の起動の script を role の役(既定 records)で起こす(root の準備の後は、root の venv の偽の hy が役の起動を断るので落ちる)。
+   writes-bytecode = 呼び手の PYTHONDONTWRITEBYTECODE を空にする(本番の Pod と同じ — 準備の間の Python に立てるのは boot.sh の受け持ち)。"
   (subprocess.run ["sh" BOOT-SH]
                   :env {"PATH" (+ (str (/ tmp "bin")) ":/usr/bin:/bin") "HOME" (str tmp) "ROLE" role
                         "WORK_DIR" (str (/ tmp "work")) "WORKER_DOEFF_COMMIT" sha "WORKER_DOEFF_URL" (str (/ tmp "doeff"))
-                        "FAKE_UV_LOG" (str (/ tmp "uv.log")) "FAKE_UV_PYTHON" sys.executable "PYTHONDONTWRITEBYTECODE" "1"
+                        "FAKE_UV_LOG" (str (/ tmp "uv.log")) "FAKE_HY_LOG" (str (/ tmp "hy.log"))
+                        "FAKE_UV_PYTHON" sys.executable "PYTHONDONTWRITEBYTECODE" (if writes-bytecode "" "1")
                         ;; 呼び手の venv(uv build の子へ継がせない物)
                         "VIRTUAL_ENV" (str (/ tmp "caller-venv"))}
                   :capture-output True :text True :timeout 60))
@@ -205,6 +297,8 @@
   (<- first subprocess.CompletedProcess (boot-once tmp-path sha))
   (assert (in "root を準備した" first.stderr) first.stderr)
   (assert (in "組んだ" first.stderr) first.stderr)
+  ;; 焼く道具の無い root(この検の doeff の root)は焼かずに注記だけで準備を終える。
+  (assert (in "bytecode を焼かない" first.stderr) first.stderr)
   (<- once tuple (uv-log tmp-path))
   (val syncs (lfor line once :if (.startswith line "sync") line))
   (assert (and (= (len syncs) 1) (in "--no-install-package doeff-vm" (get syncs 0))) once)
@@ -268,3 +362,99 @@
   (<- log tuple (uv-log tmp-path))
   (assert (= log #()) log)
   (assert (= (list (.iterdir (/ tmp-path "work" "boot" "roots"))) []) "drain は展開もしない"))
+
+
+;; --- 8・9・10 起動の root の bytecode -----------------------------------------------------------------
+
+(deftest test-boot-sh-bakes-the-entry-closure-of-the-new-root [tmp-path]
+  (<- made tuple (doeff-source tmp-path :bake True))
+  (val sha (get made 2))
+  (<- (fake-uv tmp-path))
+  ;; 呼び手は PYTHONDONTWRITEBYTECODE を立てない(本番の Pod と同じ)— uv の焼きの子が .pth の module を timestamp の方式で先に書くと、
+  ;; 焼く道具がその .py を焼く物から外す(下の flags の断言が赤になる)。
+  (<- done subprocess.CompletedProcess (boot-once tmp-path sha :writes-bytecode True))
+  (<- log tuple (uv-log tmp-path))
+  (val syncs (lfor line log :if (.startswith line "sync") line))
+  (assert (and (= (len syncs) 1) (in "--compile-bytecode" (get syncs 0))) #("uv sync が site-packages の .pyc を焼かない" log))
+  (assert (= (len log) 3) #("焼きは uv を通さない(sync・build・pip の 3 回だけ)" log))
+  (val root (/ tmp-path "work" "boot" "roots" sha))
+  (for [rel BAKED]
+    (<- pyc Path (pyc-of root rel))
+    (assert (.is-file pyc) #("入口の閉包の module が焼かれていない" rel done.stderr))
+    (<- flags int (pyc-flags pyc))
+    (assert (= flags CHECKED-HASH) #("import の時に source の hash を検める方式でない" rel flags)))
+  (<- outside Path (pyc-of root OUTSIDE-CLOSURE))
+  (assert (not (.exists outside)) "閉包の外の module まで焼いた")
+  (assert (.is-file (/ root MARKER)) #("焼く道具の完成の印が無い" done.stderr))
+  (<- line str (prepared-line done.stderr))
+  (assert (in "rebuilt=" line) #("準備の行に焼いた数が無い" done.stderr))
+  (assert (in "引き継ぎ元 なし" line) line)
+  ;; 焼く道具は 1 回だけ起こし、根は venv の .pth が書く root の中の dir だけ(root そのものは `.`)— import の行と root の外の dir を
+  ;; 根と読まない。末尾に改行の無い .pth の行も読む。
+  (<- calls tuple (hy-log tmp-path))
+  (val bakes (lfor c calls :if (in "code_prepare.hy" c) c))
+  (assert (= (len bakes) 1) calls)
+  (<- roots (| str None) (argument-of (get bakes 0) "--roots"))
+  (assert (= (frozenset (.split (or roots "") ",")) (frozenset #("." "packages/doeff-cluster/src"))) #("焼く根の読みが違う" roots))
+  (<- entries (| str None) (argument-of (get bakes 0) "--entries"))
+  (assert (is-not entries None) bakes)
+  (<- revision (| str None) (argument-of (get bakes 0) "--revision"))
+  (assert (= revision sha) bakes))
+
+
+(deftest test-boot-sh-carries-the-previous-root-bytecode-by-hardlink [tmp-path]
+  (<- made tuple (doeff-source tmp-path :bake True))
+  (val src (get made 0))
+  (val sha1 (get made 2))
+  (<- (fake-uv tmp-path))
+  (<- first subprocess.CompletedProcess (boot-once tmp-path sha1))
+  (<- first-line str (prepared-line first.stderr))
+  (assert (in "rebuilt=" first-line) first.stderr)
+  ;; 1 file だけ変えた次の版(同じ /work — 前の版の root が残る)。変える file は Python の source: Python の source は .pyc が在れば
+  ;; 焼く物に入らない(code_plan の compile-plan)ので、変わった path の一覧(--changed)を渡さないと前の root の .pyc を引き継いだまま
+  ;; 焼かれない(Hy の source は .pyc が在っても焼きの道具が source と照らし直す)。
+  (val changed-rel "worker/entry/shim.py")
+  (val changed-text "V = 2\n")
+  (.write-text (/ src ROOT-CLUSTER changed-rel) changed-text :encoding "utf-8")
+  (<- (git src "commit" "-q" "-a" "-m" "1 file を変える"))
+  (<- sha2 str (git src "rev-parse" "HEAD"))
+  (<- second subprocess.CompletedProcess (boot-once tmp-path sha2))
+  (val root1 (/ tmp-path "work" "boot" "roots" sha1))
+  (val root2 (/ tmp-path "work" "boot" "roots" sha2))
+  (for [rel (gfor r BAKED :if (!= r changed-rel) r)]
+    (<- old Path (pyc-of root1 rel))
+    (<- new Path (pyc-of root2 rel))
+    (assert (and (.is-file new) (os.path.samefile old new)) #("変えていない file の .pyc を前の root から hardlink で引き継いでいない" rel second.stderr)))
+  (<- old-changed Path (pyc-of root1 changed-rel))
+  (<- new-changed Path (pyc-of root2 changed-rel))
+  (assert (.is-file new-changed) #("変えた file が焼かれていない" second.stderr))
+  (assert (not (os.path.samefile old-changed new-changed)) "変えた file の .pyc を前の root から引き継いだ")
+  (assert (= (cut (.read-bytes new-changed) 8 16) (importlib.util.source-hash (.encode changed-text "utf-8")))
+          "変えた file の .pyc の頭の hash が新しい source と合わない")
+  (<- line str (prepared-line second.stderr))
+  (assert (in (.format "引き継ぎ元 {}" (cut sha1 0 12)) line) #("準備の行に引き継ぎ元が無い" second.stderr))
+  (val carried (re.search r"carried=(\d+)" line))
+  (assert (and (is-not carried None) (>= (int (.group carried 1)) 1)) line)
+  (assert (not (.exists (/ tmp-path "work" "state" "changed" (.format "boot-{}.txt" sha2)))) "変わった path の一覧の file を消していない"))
+
+
+(deftest test-the-boot-entries-name-every-module-the-root-venv-starts []
+  (val text (.read-text (Path BOOT-SH) :encoding "utf-8"))
+  (val listed (re.search r"(?m)^BOOT_ENTRIES=(\S+)$" text))
+  (assert (is-not listed None) "boot.sh の頭に BOOT_ENTRIES が無い")
+  (val entries (frozenset (.split (.group listed 1) ",")))
+  ;; boot.sh が root の venv の hy で起こす役の module の全部(`hy -m <module>`)と、worker が同じ venv で起こす入口。
+  (val started (frozenset (re.findall r"\bhy -m (doeff_cluster(?:\.\w+)+)" text)))
+  (assert (>= (len started) 4) started)
+  (<- shim tuple (shim-argv "python" 1000 :stamp-lines False))
+  ;; workspace の package の .pth(packages/<名>/src/*.pth — site-packages へ入る)の import の行が起こす module。
+  (val pth-imports (frozenset (gfor pth (.glob PACKAGES "*/src/*.pth")
+                                    line (.splitlines (.read-text pth :encoding "utf-8"))
+                                    :setv found (re.match r"import\s+([\w.]+)" line)
+                                    :if (is-not found None)
+                                    (.group found 1))))
+  (assert (in "doeff_hy_bytecode_guard" pth-imports) pth-imports)
+  (val wanted (| started pth-imports (frozenset #(ENV-TOOL JOB-ENTRY (get shim 3)))))
+  (assert (<= wanted entries) #("BOOT_ENTRIES に無い入口" (sorted (- wanted entries))))
+  (val marker (re.search r"(?m)^CODE_MARKER=(\S+)$" text))
+  (assert (and (is-not marker None) (= (.group marker 1) MARKER)) #("boot.sh の焼く道具の印の名が code_plan の MARKER と違う" MARKER)))
