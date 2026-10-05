@@ -19,9 +19,10 @@ async function main() {
   const failure = path.join(temp, 'failure.txt');
   const calls = path.join(temp, 'calls.jsonl');
   const requests = path.join(temp, 'requests.jsonl');
+  const cancelled = path.join(temp, 'cancelled.jsonl');
   for (const dir of [driver, path.join(root, '.vscode')]) fs.mkdirSync(dir, { recursive: true });
   for (const name of ['a', 'b', 'closed', 'other']) fs.writeFileSync(path.join(root, name + '.md'), `${name} の説明を検査する文書です。`);
-  fs.writeFileSync(calls, ''); fs.writeFileSync(requests, '');
+  fs.writeFileSync(calls, ''); fs.writeFileSync(requests, ''); fs.writeFileSync(cancelled, '');
   const wrapper = path.join(temp, 'doc-linter.cjs');
   fs.writeFileSync(wrapper, `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -30,7 +31,7 @@ let input = ''; process.stdin.setEncoding('utf8');
 process.stdin.on('data', s => { input += s; });
 process.stdin.on('end', () => { fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ args: process.argv.slice(2), body: JSON.parse(input) })+'\\n'); child.stdin.end(input); });
 child.stdin.on('error', () => {});
-process.on('SIGTERM', () => child.kill());
+process.on('SIGTERM', () => { fs.appendFileSync(${JSON.stringify(cancelled)}, 'cancelled\\n'); child.kill(); });
 child.on('exit', (code, signal) => process.exit(signal ? 143 : code));
 child.on('error', () => process.exit(127));
 `, { mode: 0o755 });
@@ -42,7 +43,7 @@ try { await (await import(${JSON.stringify(new URL('test-doc-modes.mjs', import.
 catch(e) { require('fs').writeFileSync(${JSON.stringify(failure)}, String(e.stack || e)); }
 await v.commands.executeCommand('workbench.action.quit'); };`);
   const body = JSON.stringify({ model: 'modes-test', answers: Object.fromEntries(
-    ['DOC001', 'DOC002', 'DOC003', 'DOC004'].map(rule => [rule, { type: 'noul', noul: rule === 'DOC001' ? 0.9 : 0.1 }])) });
+    ['DOC001', 'DOC002', 'DOC003', 'DOC004'].map(rule => [rule, { type: 'noul', noul: rule === 'DOC001' ? 0.9 : 0.1 }])), usage: { input_tokens: 1 } });
   const server = http.createServer((request, response) => {
     let sent = ''; request.setEncoding('utf8');
     request.on('data', chunk => { sent += chunk; });
@@ -60,7 +61,7 @@ await v.commands.executeCommand('workbench.action.quit'); };`);
   const address = server.address(); assert(address && typeof address !== 'string');
   const env = { ...process.env, JEV_BASE_URL: `http://127.0.0.1:${address.port}`, JEV_WIRE: 'direct', JEV_MODEL: 'modes-test',
     JEV_API_KEY: 'local-test', DOC_LINTER_CACHE_DIR: path.join(temp, 'cache'),
-    DOC_MODES_ROOT: root, DOC_MODES_EVIDENCE: evidence, DOC_MODES_CALLS: calls, DOC_MODES_REQUESTS: requests };
+    DOC_MODES_ROOT: root, DOC_MODES_EVIDENCE: evidence, DOC_MODES_CALLS: calls, DOC_MODES_REQUESTS: requests, DOC_MODES_CANCELLED: cancelled };
   console.log(`3モードの実機検証: ${temp}`);
   try {
     await new Promise((resolve, reject) => {

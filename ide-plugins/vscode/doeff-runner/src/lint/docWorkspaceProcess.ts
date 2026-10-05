@@ -1,16 +1,16 @@
-// Rust へ初回の全体検査、以後の差分だけを渡す I/O。本文と用語索引は workspace ごとに保持する。
+// Rust へ選択された範囲と差分を渡す I/O。本文と用語索引は workspace ごとに保持する。
 import * as cp from 'child_process';
 import * as fs from 'fs/promises';
 import * as readline from 'readline';
 import * as path from 'path';
 import { docBinaryCandidates } from './docRunner';
-import { readWorkspaceEvent, type DocSnapshot, type WorkspaceEvent } from './docWorkspaceContract';
+import { EMPTY_INDEX, readWorkspaceEvent, type DocSnapshot, type WorkspaceEvent } from './docWorkspaceContract';
 
 type Document = { readonly path: string; readonly text: string };
 export type WorkspaceRequest = {
   readonly root: string;
   readonly documents: readonly Document[];
-} & ({ readonly kind: 'initial' } | { readonly kind: 'changed'; readonly paths: readonly string[] });
+} & ({ readonly kind: 'initial' } | { readonly kind: 'selected' | 'changed'; readonly paths: readonly string[] });
 export interface WorkspaceRunner {
   run(request: WorkspaceRequest, observe: (event: WorkspaceEvent) => void, signal: AbortSignal): Promise<void>;
 }
@@ -44,7 +44,9 @@ export class RustWorkspaceRunner implements WorkspaceRunner {
   constructor(private readonly binary: (root: string) => string) {}
   forget(root: string): void { this.snapshots.delete(root); }
   async run(request: WorkspaceRequest, observe: (event: WorkspaceEvent) => void, signal: AbortSignal): Promise<void> {
-    const previous = this.snapshots.get(request.root);
+    const previous = request.kind === 'selected'
+      ? { files: new Map<string, string>(), index: EMPTY_INDEX, issues: [], total: 0 }
+      : this.snapshots.get(request.root);
     if (request.kind === 'initial') {
       await this.execute(request.root, { documents: request.documents }, [], (event) => {
         if (event.event === 'index') { this.snapshots.set(request.root, event.snapshot); }
@@ -76,6 +78,10 @@ export class RustWorkspaceRunner implements WorkspaceRunner {
     }
     if (signal.aborted) { return; }
     if (documents.length === 0 && removed.length === 0) {
+      if (request.kind === 'selected') {
+        this.snapshots.set(request.root, previous);
+        observe({ event: 'index', snapshot: previous });
+      }
       // 同じ内容の保存や重複通知では Rust の起動も結果の再描画もしない。
       observe({ event: 'done', code: 0, completed: 0, cacheHits: 0, unmeasured: 0 });
       return;

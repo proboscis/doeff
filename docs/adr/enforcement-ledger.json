@@ -1,6 +1,7 @@
 {
   "_comment": "生成物 — 手で書かない。`make enforcement-ledger`(= scripts/check_enforcement_ledger.py --write)が木から作る(ADR-DOE-ENFORCE-001 R5 / R9)。各項目は enforcement 資産 1 つの名で、減った項目はこの file の差分に名前で残る。commit の hook と既定 pytest がこの一覧と木の一致を検める。",
   "defadr_files": [
+    "defadr_doc_linter_modes.hy",
     "defadr_doeff_adr_001_wiring_selfcheck.hy",
     "defadr_doeff_agents_001_await_result_public_boundary.hy",
     "defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy",
@@ -313,6 +314,9 @@
     "vm-traceback-no-event-driven-active-chain-state"
   ],
   "adr_laws": [
+    "ADR-DOC-LINTER-SELECTABLE-SCOPE off-cancels-work",
+    "ADR-DOC-LINTER-SELECTABLE-SCOPE selected-files-only",
+    "ADR-DOC-LINTER-SELECTABLE-SCOPE selection-survives-reload",
     "ADR-DOE-ADR-001 every-executable-adr-is-collected",
     "ADR-DOE-ADR-001 gate-test-reads-the-sessions-own-collection",
     "ADR-DOE-ADR-001 strict-wiring-fails-closed",
@@ -467,6 +471,7 @@
     "ADR-DOE-RUNNER-001 reading-plane-reads-only-the-index"
   ],
   "adr_deftest_enforcements": [
+    "ADR-DOC-LINTER-SELECTABLE-SCOPE test-doc-lint-modes-in-vscode",
     "ADR-DOE-ADR-001 test-adr-doe-adr-001-gate-test-spawns-no-nested-collection",
     "ADR-DOE-AGENTS-002 test-adr-doe-agents-002-conversation-evidence-vocabulary",
     "ADR-DOE-AGENTS-004 test-adr-doe-agents-004-capacity-denominator-is-launch-owned",

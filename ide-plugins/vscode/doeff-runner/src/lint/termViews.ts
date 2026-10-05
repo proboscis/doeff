@@ -5,6 +5,7 @@ import type { LintStore } from './store';
 import { lintChildren, violationRoots, type LintNode } from './view';
 import { lintTreeItem } from './panel';
 import type { TermLocation, TermDefinition, DocProgress } from './docWorkspaceContract';
+import { docMode, docModeLabel, SELECT_DOC_MODE } from './docMode';
 
 export const TERM_OPEN = 'doeff-runner.terms.open';
 export const TERM_REFERENCES = 'doeff-runner.terms.references';
@@ -42,6 +43,7 @@ function progressText(p: DocProgress): string {
   return `${p.incremental ? '差分 ' : ''}${state}${p.pendingChanges ? '（変更反映待ち）' : ''} ${p.completed}/${p.total}件 · ${p.files}ファイル · キャッシュ ${p.cacheHits} · 未測定 ${p.unmeasured}`;
 }
 type DocNode = LintNode | { readonly tag: 'progress'; readonly root: string }
+  | { readonly tag: 'mode'; readonly root: string; readonly name: string }
   | { readonly tag: 'terms'; readonly definitions: readonly TermDefinition[] }
   | { readonly tag: 'term'; readonly definition: TermDefinition };
 
@@ -51,11 +53,17 @@ export class DocTree implements vscode.TreeDataProvider<DocNode>, vscode.Disposa
   readonly onDidChangeTreeData = this.change.event;
   private readonly off: () => void;
   private readonly offProgress: () => void;
+  private readonly settings: vscode.Disposable[];
   private timer: NodeJS.Timeout | undefined;
   private roots: DocNode[] | undefined;
   private readonly children = new WeakMap<DocNode, DocNode[]>();
   private readonly parents = new WeakMap<DocNode, DocNode>();
   constructor(private readonly store: LintStore) {
+    const refresh = (): void => { this.roots = undefined; this.change.fire(undefined); };
+    this.settings = [
+      vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('doeff-runner.docLint')) { refresh(); } }),
+      vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+    ];
     this.off = store.onDidChange(() => {
       if (this.timer !== undefined) { return; }
       this.timer = setTimeout(() => {
@@ -70,6 +78,15 @@ export class DocTree implements vscode.TreeDataProvider<DocNode>, vscode.Disposa
   }
   getTreeItem(node: DocNode): vscode.TreeItem {
     switch (node.tag) {
+      case 'mode': {
+        const item = new vscode.TreeItem(`検査範囲：${node.name}`);
+        item.id = 'doc:mode:' + node.root;
+        item.description = docModeLabel(docMode(node.root));
+        item.iconPath = new vscode.ThemeIcon('filter');
+        item.command = { command: SELECT_DOC_MODE, title: '検査範囲を選択', arguments: [node.root] };
+        item.tooltip = '開いているファイルのみ／プロジェクト全体／オフを選択します。開いているファイルのみの場合、用語の定義・参照もその範囲が対象です。';
+        return item;
+      }
       case 'progress': {
         const p = this.store.docWorkspaces().get(node.root)?.progress;
         const item = new vscode.TreeItem(path.basename(node.root));
@@ -103,9 +120,10 @@ export class DocTree implements vscode.TreeDataProvider<DocNode>, vscode.Disposa
       if (this.roots === undefined) {
         const findings = this.store.violations().filter((v) => v.source === 'doc-linter');
         this.roots = [
+          ...(vscode.workspace.workspaceFolders ?? []).map((folder): DocNode => ({ tag: 'mode', root: folder.uri.fsPath, name: folder.name })),
           ...[...this.store.docWorkspaces().keys()].map((root): DocNode => ({ tag: 'progress', root })),
           { tag: 'terms', definitions: this.store.termIndex().definitions },
-          ...(findings.length === 0 ? [{ tag: 'message' as const, label: '文書の指摘はありません（検査状態は上段に表示）' }]
+          ...(findings.length === 0 ? [{ tag: 'message' as const, label: this.emptyMessage() }]
             : violationRoots(findings, this.store.rules())),
         ];
       }
@@ -115,7 +133,7 @@ export class DocTree implements vscode.TreeDataProvider<DocNode>, vscode.Disposa
     if (cached !== undefined) { return cached; }
     let rows: DocNode[];
     switch (node.tag) {
-      case 'progress': case 'term': rows = []; break;
+      case 'mode': case 'progress': case 'term': rows = []; break;
       case 'terms': rows = node.definitions.map((definition) => ({ tag: 'term', definition })); break;
       default: rows = lintChildren(node);
     }
@@ -124,8 +142,19 @@ export class DocTree implements vscode.TreeDataProvider<DocNode>, vscode.Disposa
     return rows;
   }
   getParent(node: DocNode): DocNode | undefined { return this.parents.get(node); }
+  private emptyMessage(): string {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) { return 'プロジェクトを開くと検査範囲を選択できます'; }
+    if (!vscode.workspace.isTrusted) { return '文章検査は workspace の信頼後に実行できます'; }
+    const modes = folders.map(f => docMode(f.uri.fsPath));
+    if (modes.some(mode => mode === undefined)) { return '検査範囲の設定が不正です。右上のボタンから選択してください'; }
+    if (modes.every(mode => mode === 'off')) { return '文章検査はオフです'; }
+    if (this.store.docWorkspaces().size === 0) { return '検査する文書をタブで開いてください'; }
+    return '文書の指摘はありません（検査状態は上段に表示）';
+  }
   dispose(): void {
     this.off(); this.offProgress();
+    for (const setting of this.settings) { setting.dispose(); }
     if (this.timer !== undefined) { clearTimeout(this.timer); }
     this.change.dispose();
   }

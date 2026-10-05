@@ -18,11 +18,14 @@ export async function run() {
   const calls = () => lines(process.env.DOC_MODES_CALLS);
   const requests = () => lines(process.env.DOC_MODES_REQUESTS);
   const uri = name => v.Uri.file(path.join(root, name + '.md'));
-  const findings = name => v.languages.getDiagnostics(uri(name)).filter(d => d.source === 'doc-linter');
+  const findings = name => v.languages.getDiagnostics(uri(name)).filter(d => d.source === 'doc-linter' && d.code === 'DOC001');
   const allFindings = () => v.languages.getDiagnostics().flatMap(([, ds]) => ds.filter(d => d.source === 'doc-linter'));
   const mode = value => v.commands.executeCommand('doeff-runner.docLint.selectMode', root, value);
   const config = () => v.workspace.getConfiguration('doeff-runner.docLint', v.Uri.file(root));
   const extension = v.extensions.getExtension('proboscis.doeff-runner'); assert(extension); await extension.activate();
+  const contributions = extension.packageJSON.contributes;
+  assert(contributions.menus['view/title'].some(item => item.command === 'doeff-runner.docLint.selectMode' && item.when === 'view == doeff-doc-linter' && item.group.startsWith('navigation')));
+  assert.equal(contributions.commands.find(item => item.command === 'doeff-runner.docLint.selectMode').icon, '$(filter)');
   assert.equal(config().get('mode'), 'openFiles', '既定は開いているファイルのみ');
   if (fs.existsSync(evidence)) {
     const before = JSON.parse(fs.readFileSync(evidence, 'utf8'));
@@ -65,7 +68,13 @@ export async function run() {
   assert.equal(requests().length, 3, '再び開いてもキャッシュを使う');
   assert(calls().every(c => c.args.includes('--incremental')), '開いたファイルのモードでは全体走査しない');
   assert(calls().every(c => c.body.documents.every(d => [uri('a').fsPath, uri('b').fsPath].includes(d.path))), '閉じたファイルを CLI に渡さない');
-  await mode('workspace');
+  // 右上のボタンと同じコマンドで選択 UI を開き、2番目の「全体」を選ぶ。
+  const choosing = v.commands.executeCommand('doeff-runner.docLint.selectMode', root);
+  await wait(200);
+  await v.commands.executeCommand('workbench.action.quickOpenSelectNext');
+  await v.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+  await choosing;
+  assert.equal(config().get('mode'), 'workspace', '実際の選択 UI から全体を選ぶ');
   await until(() => allFindings().length === 4, '全体モードでは閉じたファイルも検査する');
   assert.equal(requests().length, 5);
   fs.writeFileSync(uri('closed').fsPath, '全体モードで変更した一つの文章を検査する。');
@@ -76,7 +85,9 @@ export async function run() {
   assert.equal(requests().length, 6);
   await replace(a, 'SLOW 実行中にオフへ切り替える検査です。');
   await until(() => requests().length === 7, '通信中になる');
+  const previousCancellations = fs.readFileSync(process.env.DOC_MODES_CANCELLED, 'utf8').length;
   await mode('off'); await until(() => allFindings().length === 0, '通信中の検査を停止');
+  await until(() => fs.readFileSync(process.env.DOC_MODES_CANCELLED, 'utf8').length > previousCancellations, '実際の CLI プロセスに停止が届く');
   const stoppedCalls = calls().length;
   await replace(a, '停止中に変更した本文は再開するまで検査しません。');
   fs.writeFileSync(uri('other').fsPath, '停止中に閉じた文書を変更した。');
@@ -99,6 +110,7 @@ export async function run() {
   assert.equal(config().inspect('mode').workspaceValue, 'openFiles', '選択は workspace へ保存');
   fs.writeFileSync(evidence, JSON.stringify({ stage: 'reload', requests: requests().length, wholeScans: 1, closedFileRequestsInOpenMode: 0,
     modes: ['openFiles', 'workspace', 'off'], cancellation: true, unsavedChanges: true }, null, 2));
-  await v.commands.executeCommand('workbench.action.reloadWindow');
+  try { await v.commands.executeCommand('workbench.action.reloadWindow'); }
+  catch (error) { if (error.name !== 'Canceled') throw error; }
   await new Promise(() => {});
 }
