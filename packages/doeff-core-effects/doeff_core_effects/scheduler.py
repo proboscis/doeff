@@ -564,6 +564,9 @@ class ExternalPromise(Generic[_T]):
     shield, #505). Minting ``.future`` and registering ``on_cancel`` must
     happen on the scheduler thread: handle registration (#502) and the
     promise state are scheduler-thread-confined.
+
+    ``complete``/``fail`` は scheduler の thread に割り込む signal の受け手からも呼んでよい
+    (python の実装の外からの完了の列は put が reentrant な ``queue.SimpleQueue`` — agora-redesign #3584)。
     """
     def __init__(self, promise_id, queue, _register=None, _bind_cancel=None) -> None:
         self.promise_id = promise_id
@@ -608,11 +611,11 @@ class ExternalPromise(Generic[_T]):
         return future
 
     def complete(self, value: _T) -> None:
-        """Complete the promise with a value. Thread-safe, wakes scheduler via Queue."""
+        """値で完了する。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
         self._queue.put(("complete", self.promise_id, value))
 
     def fail(self, error):
-        """Fail the promise with an error. Thread-safe, wakes scheduler via Queue."""
+        """error で失敗にする。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
         self._queue.put(("fail", self.promise_id, error))
 
     def __repr__(self):
@@ -894,7 +897,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
     waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
     ready = []           # heapq: (-priority, seq, entry)
-    external_queue = queue_mod.Queue()  # thread-safe, blocking get()
+    # 外からの完了の列。SimpleQueue の put は reentrant(Python の文書 — signal の受け手・__del__ から呼んでよい)。
+    # 止めの合図の受け手(stop_signal_handlers の StopBox.receive)は主 thread の上で bytecode の区切りに割り込み、
+    # ExternalPromise.complete からこの列へ put する。主 thread がこの列の empty / get の中に居ても put は止まらない
+    # (queue.Queue は入れ子で取れない lock を持ち、その lock の中に合図が当たると put が同じ thread を待って止まった —
+    # agora-redesign #3584)。
+    external_queue = queue_mod.SimpleQueue()  # thread-safe, blocking get()
     handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
     handle_prune_at = {}  # waitable_key → refs length that triggers a dead-ref prune
 
