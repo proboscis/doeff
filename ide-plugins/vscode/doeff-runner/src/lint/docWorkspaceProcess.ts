@@ -10,12 +10,13 @@ type Document = { readonly path: string; readonly text: string };
 export type WorkspaceRequest = {
   readonly root: string;
   readonly documents: readonly Document[];
+  readonly rulesChanged?: boolean;
 } & ({ readonly kind: 'initial' } | { readonly kind: 'selected' | 'changed'; readonly paths: readonly string[] });
 export interface WorkspaceRunner {
   run(request: WorkspaceRequest, observe: (event: WorkspaceEvent) => void, signal: AbortSignal): Promise<void>;
 }
 function wireIndex(snapshot: DocSnapshot): object {
-  return { ...snapshot.index, issues: snapshot.issues.map((v) => ({
+  return { definitions: snapshot.index.definitions, references: snapshot.index.references, document_policies: snapshot.index.documentPolicies ?? {}, issues: snapshot.issues.map((v) => ({
     rule: v.rule, message: v.message, location: { path: v.path, ...v.range },
   })) };
 }
@@ -77,7 +78,7 @@ export class RustWorkspaceRunner implements WorkspaceRunner {
       if (previous.files.get(file) !== text) { documents.push({ path: file, text }); }
     }
     if (signal.aborted) { return; }
-    if (documents.length === 0 && removed.length === 0) {
+    if (documents.length === 0 && removed.length === 0 && !request.rulesChanged) {
       if (request.kind === 'selected') {
         this.snapshots.set(request.root, previous);
         observe({ event: 'index', snapshot: previous });
