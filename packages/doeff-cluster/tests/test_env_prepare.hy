@@ -19,7 +19,7 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_cluster.worker.protocol.env_translation [editable-dirs repo-identity])
+(import doeff_cluster.worker.protocol.env_translation [editable-dirs])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
@@ -609,6 +609,40 @@
   (assert (is nothing None) nothing))
 
 
+;; 反例(2026-10-06 の cluster・#3693): 同じ repo を https(https://github.com/o/r.git)と scp の形
+;; (git@github.com:o/r.git)で宣言した root どうしが、url の綴りの比べで候補にならず、全部を焼き直した。
+;; 候補の比べは url の正体(url-location — host・owner・name)の一致で、手元の path どうしだけが綴りの一致。
+
+(defk spelled-env [app app-url doeff doeff-url]
+  {:pre [(: app str) (: app-url str) (: doeff str) (: doeff-url str)] :post [(: % RuntimeEnv)]}
+  "carry-env の app と doeff の url を、渡した綴りに置き換えた宣言を作るため(lock と Python は carry-env と同じ)。"
+  (<- base RuntimeEnv (carry-env app doeff))
+  (replace base :repos #((replace (get base.repos 0) :url app-url) (replace (get base.repos 1) :url doeff-url))))
+
+
+(deftest test-the-bytecode-carry-matches-a-repo-spelled-another-way
+  ;; 失敗ケース(直す前は赤): 引き継ぎ元の root は scp の形(git@github.com:o/app)、新しい宣言は https(…/o/app.git)で同じ repo を
+  ;; 名指す — 引き継ぎ元に選ばれる。
+  (<- env RuntimeEnv (spelled-env "app-new" "https://github.com/o/app.git" "doeff-new" "https://github.com/o/doeff.git"))
+  (<- env-scp RuntimeEnv (spelled-env "app-new" "git@github.com:o/app" "doeff-new" "git@github.com:o/doeff"))
+  (val scp-root (KnownRoot :env env-scp :root "/state/roots/aaaa" :made-ms 1000))
+  (<- picked (| str None) (picked-tree #(scp-root) env "app"))
+  (assert (= picked "/state/roots/aaaa/app") picked)
+  ;; macro の repo(doeff)も綴りに依らず同じ repo と読む: doeff の commit だけが同じ scp の形の root(bbbb)は、後から完成した
+  ;; どの commit も違う root(cccc)より先。
+  (<- env-macros RuntimeEnv (spelled-env "app-other" "ssh://git@github.com/o/app.git" "doeff-new" "git@github.com:o/doeff.git"))
+  (<- env-none RuntimeEnv (spelled-env "app-third" "https://github.com/o/app" "doeff-old" "https://github.com/o/doeff"))
+  (val macros-root (KnownRoot :env env-macros :root "/state/roots/bbbb" :made-ms 1000))
+  (val none-root (KnownRoot :env env-none :root "/state/roots/cccc" :made-ms 2000))
+  (<- by-macros (| str None) (picked-tree #(none-root macros-root) env "app"))
+  (assert (= by-macros "/state/roots/bbbb/app") by-macros)
+  ;; 反例: owner か name か host が違えば別の repo — 候補にしない。
+  (for [other ["git@github.com:p/app" "git@github.com:o/app2" "git@gitlab.com:o/app"]]
+    (<- other-env RuntimeEnv (spelled-env "app-new" other "doeff-new" "git@github.com:o/doeff"))
+    (<- other-picked (| str None) (picked-tree #((KnownRoot :env other-env :root "/state/roots/dddd" :made-ms 1000)) env "app"))
+    (assert (is other-picked None) #(other other-picked))))
+
+
 ;; --- 失敗の組(節 3.6)と反例 ------------------------------------------------------------------
 
 (defk failure-of [env]
@@ -690,17 +724,6 @@
 ;; repo-denied を外した): 表に無い url は宣言の綴りのまま鍵なしで clone へ進む。
 
 (val LIB-HTTPS "https://github.com/o/lib.git")
-
-
-(deftest test-a-git-url-names-its-repo-regardless-of-spelling
-  (for [spelling ["https://github.com/o/lib.git" "https://github.com/o/lib" "https://github.com/o/lib/" "git@github.com:o/lib.git"
-                  "ssh://git@github.com/o/lib.git" "ssh://git@github.com:22/o/lib.git" "https://GitHub.com/o/lib.git"]]
-    (<- identity str (repo-identity spelling))
-    (assert (= identity "github.com/o/lib") (.format "{} → {}" spelling identity)))
-  ;; 反例: 別の owner・別の host・別の名は別の repo。
-  (for [other ["git@github.com:p/lib.git" "https://gitlab.com/o/lib.git" "git@github.com:o/lib2.git"]]
-    (<- other-identity str (repo-identity other))
-    (assert (!= other-identity "github.com/o/lib") other)))
 
 
 (defk https-lib-world []
