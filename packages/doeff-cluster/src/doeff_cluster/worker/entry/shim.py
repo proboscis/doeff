@@ -236,11 +236,29 @@ def watch_parent(leads_group: bool) -> None:
         os.kill(os.getpid(), signal.SIGTERM)
 
 
-def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
-    """argv の猶予と job の命令で job を起こし、3 つの道のどれかで片づけてから job と同じ終了コードで終わる。adopt = 子孫の引き取りを
-    有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)。"""
-    grace = float(sys.argv[1])
-    command = sys.argv[sys.argv.index("--") + 1 :]
+class PopenSpawner:
+    """job の命令を exec で起こす部品(本物の shim の起こし方)。呼ぶと job の pid を返す。起こした Popen の object は部品の中に終わりまで
+    持つ(捨てると後始末が job を回収し、終了コードを奪う)— 部品は shim-code の呼びの間、呼び手が持っている。"""
+
+    def __init__(self, command: list[str]) -> None:
+        """job の命令を持ち、まだ起こしていない状態で始めるため。"""
+        self.command = command
+        self._mut_child: subprocess.Popen[bytes] | None = None
+
+    def __call__(self) -> int:
+        """job を同じ process group に起こし、pid を返すため(1 つの部品で 1 度だけ)。"""
+        if self._mut_child is not None:
+            raise RuntimeError("shim: 同じ部品で job を 2 度起こそうとした")
+        self._mut_child = subprocess.Popen(self.command, stdin=subprocess.DEVNULL)
+        return self._mut_child.pid
+
+
+def shim_code(grace: float, spawn: Callable[[], int], adopt: Callable[[], Adoption] = become_subreaper) -> int:
+    """job を起こし、3 つの道のどれかで片づけるまで見張って、job の終了コード(signal で終わったなら負)を返すため。grace = 止めの合図から
+    job を待つ猶予(秒)・spawn = job を起こして pid を返す部品(本物の shim は PopenSpawner — 待ちの子から分かれた子は、読み込み済みの
+    入口を fork で起こす部品を渡す)・adopt = 子孫の引き取りを有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/
+    shim_without_adoption)。signal の据え付け(TERM・SIGCHLD・起こしの fd)は process 全体の設定なので、1 つの process で 1 回だけ、
+    main thread から呼ぶ。返った後も stdin を読む補助の thread が残るので、呼び手は終了処理を経ずに os._exit で抜ける(exit-status)。"""
     adoption = adopt()
     match adoption:
         case NotAdopting(reason=reason):
@@ -253,14 +271,27 @@ def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
     clock = StopClock(grace)
     wake = signal_wakeups()
     signal.signal(signal.SIGTERM, clock.begin)
-    # job は同じ process group に入る。Popen の object は終わりまで持つ(捨てると後始末が job を回収し、終了コードを奪う)。
-    child = subprocess.Popen(command, stdin=subprocess.DEVNULL)
+    # job は同じ process group に入る。
+    job = spawn()
     threading.Thread(target=watch_parent, args=(leads_group,), daemon=True).start()
-    code = settled(child.pid, awaited(child.pid, clock, wake, leads_group), adoption, leads_group)
+    return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group)
+
+
+def exit_status(code: int) -> int:
+    """job の終了コード(signal なら負)を、shim が os._exit に渡す 0〜255 の値にするため(signal は 128 + 番号)。"""
+    return code if code >= 0 else 128 - code
+
+
+def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
+    """argv の猶予と job の命令で job を起こし、3 つの道のどれかで片づけてから job と同じ終了コードで終わる。adopt = 子孫の引き取りを
+    有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)。"""
+    grace = float(sys.argv[1])
+    command = sys.argv[sys.argv.index("--") + 1 :]
+    code = shim_code(grace, PopenSpawner(command), adopt)
     # 終了処理を経ずに抜ける: stdin を読んでいる補助の thread が残ったまま終了処理に入ると、Python が
     # abort して終了コードが -6 に化ける(job 自身の終了コードを worker へ正しく返せない — 実測 2026-09-23)。
     sys.stderr.flush()
-    os._exit(code if code >= 0 else 128 - code)
+    os._exit(exit_status(code))
 
 
 if __name__ == "__main__":
