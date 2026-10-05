@@ -145,5 +145,14 @@ def law_expired_keys_are_remembered(harness: LawHarness) -> _Program[list[object
 
 def law_expired_records_are_unseen_before_a_sweep(harness: LawHarness) -> _Program[list[object], object]:
     ...
+
+def law_a_write_clears_the_expired_row_it_touches(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def expired_key_answers(harness: LawHarness) -> _Program[tuple, object]:
+    ...
+
+def law_an_expired_key_answers_the_same_before_and_after_a_sweep(harness: LawHarness) -> _Program[list[object], object]:
+    ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

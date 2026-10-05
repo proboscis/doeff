@@ -2,7 +2,8 @@
 ;; 期限(timeout)は 1 回だけ鳴らす。答えの意味(変更の来た時に返る・来なければ timeout で空の Changes)は前と同じ。
 ;; 出自 = 使い手の模擬の検の実行時間の約 4 割が、仮想の時計の 0.05 秒ごとの読み直し(1 回の走行で
 ;; 約 19 万回)だった。確かめること: 読み直さない・同期の書き(handler の外から置き場を直に書く)と別の thread の書きでも起きる・
-;; 待っている間に保持の期限が来た行の消えは、期限の刻ではなく次の書き(その書きの前の回収が積む)の刻に timeout を待たずに届く(#3561)。
+;; 待っている間に保持の期限が来た行の消えは、期限の刻ではなく次の回収(SweepExpired — 書きは触る行だけを片付ける・#3605 の D)の刻に
+;; timeout を待たずに届く(#3561)。
 ;; 列の待ち WatchEvents も同じ呼び鈴で起き、呼び鈴は待つ名ごと — 行の書きは表の待ち手だけ・追記は列の待ち手だけを起こす(出自の issue は #1019)。
 (require doeff-hy.macros [defk <- val])
 (import threading)
@@ -14,7 +15,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written EventsMoved EventsQuiet])
 (import doeff_records.effects [PutRow ListRows WatchChanges WatchEvents AppendEvent])
-(import doeff_records.maintenance [PruneChanges Pruned])
+(import doeff_records.maintenance [PruneChanges Pruned SweepExpired Swept])
 (import doeff_records.admission [epoch-ms])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler memory-put-row memory-append])
@@ -92,41 +93,45 @@
   (assert (= at 5.0) at))
 
 
-;; 保持の期限の刻から、別の表(parts)へ書くまでの秒(期限の刻には誰も書かない)。
+;; 保持の期限の刻から、別の表(parts)へ書くまでの秒と、回収(SweepExpired — 手入れの係が撃つ)までの秒(期限の刻には誰も書かず、誰も回収しない)。
 (val NUDGE-AFTER-EXPIRY 40)
+(val SWEEP-AFTER-EXPIRY 70)
 
 
-(defk nudge-later [seconds]
-  {:pre [(: seconds (| int float))] :post [(: % Written)]
+(defk nudge-then-sweep [seconds]
+  {:pre [(: seconds (| int float))] :post [(: % Swept)]
    :tags {:context "records" :role "program"}}
-  "seconds 秒後に、待ち手の待つ表の外(parts)へ 1 行書くため(その書きの前の回収が、期限を過ぎた tickets の行の消えた を積む)。"
-  (<- (Delay seconds))
-  (<- written (PutRow "parts" #("nudge") (FrozenMap {"label" "n"}) (ExpectAbsent)))
-  written)
+  "終端にした刻から seconds 秒(保持の期限)の後、待ち手の待つ表の外(parts)へ 1 行書き(書きは期限を過ぎた tickets の行を消さない —
+   書きは自分が触る行だけを片付ける・#3605 の D)、さらに後で回収を撃つため(回収が期限を過ぎた tickets の行の消えた を積む)。"
+  (<- (Delay (+ seconds NUDGE-AFTER-EXPIRY)))
+  (<- (PutRow "parts" #("nudge") (FrozenMap {"label" "n"}) (ExpectAbsent)))
+  (<- (Delay (- SWEEP-AFTER-EXPIRY NUDGE-AFTER-EXPIRY)))
+  (<- swept (SweepExpired))
+  swept)
 
 
 (defk wait-for-expiry []
   {:pre [] :post [(: % tuple)]}
-  "tickets の行を終端にしてから、変更の無い tickets を保持の期限より長く待つ(期限の NUDGE-AFTER-EXPIRY 秒後に parts へ 1 行書く)。
-   答え = #(答え 起きた刻の秒 終端にした刻の秒)。"
+  "tickets の行を終端にしてから、変更の無い tickets を保持の期限より長く待つ(期限の NUDGE-AFTER-EXPIRY 秒後に parts へ 1 行書き、
+   SWEEP-AFTER-EXPIRY 秒後に回収する)。答え = #(答え 起きた刻の秒 終端にした刻の秒)。"
   (<- (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent)))
   (<- (Delay 1))
   (<- (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1)))
   (<- done-at (seconds-now))
   (<- start (ListRows "tickets"))
-  (<- writer (Spawn (nudge-later (+ TICKET-KEEP-SECONDS NUDGE-AFTER-EXPIRY))))
+  (<- writer (Spawn (nudge-then-sweep TICKET-KEEP-SECONDS)))
   (<- answer (WatchChanges #("tickets") (WatchCursor start.epoch start.sequence) :timeout (* 10 TICKET-KEEP-SECONDS)))
   (<- at (seconds-now))
   (<- (Wait writer))
   #(answer at done-at))
 
 
-(defn test-a-row-expiring-during-the-wait-is-delivered-at-the-next-write []  ; defk にできない: 検の入口で Program を run する
-  ;; 待っている間に保持の期限が来た行の消え(RowRemoved)は、期限の刻には届かず(時間で起きて回収しない — #3561)、次の書き(待つ表の外への
-  ;; 書きでもよい)の前の回収が積んだ刻に届く(timeout の 600 秒を待たない)。
+(defn test-a-row-expiring-during-the-wait-is-delivered-at-the-next-sweep []  ; defk にできない: 検の入口で Program を run する
+  ;; 待っている間に保持の期限が来た行の消え(RowRemoved)は、期限の刻には届かず(時間で起きて回収しない — #3561)、待つ表の外への書きでも
+  ;; 届かず(書きは触る行だけを片付ける — #3605 の D)、回収(SweepExpired)が積んだ刻に届く(timeout の 600 秒を待たない)。
   (setv #(answer at done-at) (run-on (MemoryStore LAW-SCHEMA) (wait-for-expiry)))
   (assert (and (isinstance answer Changes) (= (lfor item answer.items #((type item) item.key)) [#(RowRemoved #("g1" "t1"))])) answer)
-  (assert (= at (+ done-at TICKET-KEEP-SECONDS NUDGE-AFTER-EXPIRY)) #(at done-at)))
+  (assert (= at (+ done-at TICKET-KEEP-SECONDS SWEEP-AFTER-EXPIRY)) #(at done-at)))
 
 
 (defk watch-parts [timeout]

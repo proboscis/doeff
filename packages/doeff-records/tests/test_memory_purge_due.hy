@@ -1,7 +1,8 @@
 ;; memory の置き場の保持の刈り(purge-expired)は、消え得る刻(MemoryStore.purge-due-ms)より前なら行と出来事を走査しない。
 ;; 出自 = 2026-09-27 の保持の刈りの性能の直し: 刈りはどの操作の前にも呼ばれ、期限つきの列が 1 本でも在ると毎回すべての出来事を読み直していた —
 ;; 出来事 1 万を積む模擬の筋書き 1 つが 5 分を越えた(出来事の数の 2 乗)。消える物は変わらない(法 12 などの保持の法が memory と pg で守る)。
-;; #3561 から刈りは書きの前と SweepExpired の時だけ走り、読みは刈らずに期限を自分で見る(期限を過ぎた物を出さない)— 読みは走査しない。
+;; #3561 から読みは刈らずに期限を自分で見(期限を過ぎた物を出さない)、#3605 の D から書きも刈らない(書きは自分が触る行と出来事だけを
+;; 片付ける)— 刈りは SweepExpired の時だけ走り、読みと書きは走査しない。
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses)
 (import doeff [run with_handlers])
@@ -59,21 +60,22 @@
   (assert (= scans []) (len scans)))
 
 
-(defk pulses-then-wait-then-write [count wait-seconds]
+(defk pulses-then-wait-then-sweep [count wait-seconds]
   {:pre [(: count int) (: wait-seconds (| int float))] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
-  "pulses-then-wait の後に、期限の無い列 journal へ 1 つ積むため(その書きの前の刈りが、期限を過ぎた pulses の出来事を消す)。
-   答え = pulses-then-wait の答え。"
+  "pulses-then-wait の後に回収(SweepExpired — 期限を過ぎた pulses の出来事を消す)を撃ち、期限の無い列 journal へ 1 つ積むため(書きは
+   刈らない — #3605 の D)。答え = pulses-then-wait の答え。"
   (<- got (pulses-then-wait count wait-seconds))
+  (<- (SweepExpired))
   (<- (AppendEvent "journal" "after-wait" {"n" 0}))
   got)
 
 
 (defn test-the-events-still-expire-when-the-due-time-comes [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
-  ;; 期限を過ぎた後の読みは走査せずに期限を過ぎた出来事を出さず(#3561)、期限を過ぎた後の最初の書きで 1 度だけ走査して全部消す。その後は
-  ;; 消え得る物が無いので走査しない。
+  ;; 期限を過ぎた後の読みは走査せずに期限を過ぎた出来事を出さず(#3561)、期限を過ぎた後の回収(SweepExpired)で 1 度だけ走査して全部消す。
+  ;; その後の書きは走査しない(書きは刈らない — #3605 の D・消え得る物も無い)。
   (setv scans (count-scans monkeypatch) store (MemoryStore SCHEMA))
-  (setv got (run-on store (pulses-then-wait-then-write EVENT-COUNT (+ PULSE-KEEP-SECONDS 1))))
+  (setv got (run-on store (pulses-then-wait-then-sweep EVENT-COUNT (+ PULSE-KEEP-SECONDS 1))))
   (assert (= got #(EVENT-COUNT 0)) got)
   (assert (= (len scans) 1) scans)
   (assert (= (lfor event store.events event.idempotency-key) ["after-wait"]) (len store.events))
@@ -97,7 +99,7 @@
 
 (defn test-a-row-that-becomes-terminal-later-expires-from-its-terminal-write [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
   ;; 開けた行は消え得ない(終端でない)ので刻を持たない。閉じた書きが刻を足し、閉じた刻から保持の秒を過ぎて初めて読みに出なくなる。
-  ;; 読みは走査しない(期限の見えは読みが持つ — #3561)ので、行は次の書きまで置き場に残る。
+  ;; 読みは走査しない(期限の見えは読みが持つ — #3561)ので、行は回収(SweepExpired)まで置き場に残る。
   (setv scans (count-scans monkeypatch) store (MemoryStore LAW-SCHEMA))
   (setv got (run-on store
                     (ticket-closed-late (* 3 TICKET-KEEP-SECONDS) #(1 (- TICKET-KEEP-SECONDS 1) (+ TICKET-KEEP-SECONDS 1)))))
@@ -125,11 +127,13 @@
 
 (defk journal-then-rolling-pairs [journal-count pair-count]
   {:pre [(: journal-count int) (: pair-count int)] :post [(: % tuple)]}
-  "期限の無い列 journal へ journal-count 個を積み、期限つきの組の列 pairs と期限つきの表 tickets へ 1 秒おきに pair-count 回ずつ積む
-   (保持 60 秒 — 60 回目から先は積むたびに前の組と行が期限を迎え、毎回刈りが走る)。答え = #(残った pairs の数 残った tickets の数)。"
+  "期限の無い列 journal へ journal-count 個を積み、期限つきの組の列 pairs と期限つきの表 tickets へ 1 秒おきに pair-count 回ずつ、回収
+   (SweepExpired — 手入れの係の役)を撃ってから積む(保持 60 秒 — 60 回目から先は回収のたびに前の組と行が期限を迎えて消える)。
+   答え = #(残った pairs の数 残った tickets の数)。"
   (for [i (range journal-count)]
     (<- (AppendEvent "journal" (.format "j{}" i) {"n" i})))
   (for [i (range pair-count)]
+    (<- (SweepExpired))
     (<- (AppendEvent "pairs" (.format "ask:p{}" i) {"n" i}))
     (<- (PutRow "tickets" #("g" (str i)) {"group" "g" "id" (str i) "state" "done"} (ExpectAbsent)))
     (<- (Delay 1)))
@@ -139,7 +143,7 @@
 
 
 (defn test-the-cost-of-a-purge-does-not-grow-with-the-events-in-the-store [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
-  ;; 反例: 期限の無い列に出来事が 0 個の置き場と 3000 個の置き場で、同じ 200 回の刈り(組と行が 1 秒ごとに期限を迎える)が
+  ;; 反例: 期限の無い列に出来事が 0 個の置き場と 3000 個の置き場で、同じ 200 回の回収(組と行が 1 秒ごとに期限を迎える)が
   ;; 行と出来事 1 つずつの判定(組の名・終端か)を呼ぶ回数は同じ — 前の形は刈りのたびに全部の出来事の組の名を引き直していた
   ;; (3000 個の置き場で 1 刈り 3000 回以上)。
   (setv calls (count-calls monkeypatch #("retention_group_of" "hyx_terminal_rowXquestion_markX")))
@@ -154,8 +158,8 @@
   (assert (= small-calls big-calls) #(small-calls big-calls))
   ;; 判定は書き 1 つにつき定数回(組の名 1 回・終端か 数回)と読み 1 つにつき見る物の数 — 刈りの回数 × 置き場の大きさにならない。
   (assert (<= big-calls (* 4 260)) big-calls)
-  ;; 置き場に残るのは最後の書き(最後に積んだ刻)の前の刈りの後の物 — 最後の書きの刻より前の 60 秒に積んだ物(読みの刻に期限を迎えた
-  ;; 1 つは、読みが出さないまま次の書きまで残る — 読みは刈らない・#3561)。
+  ;; 置き場に残るのは最後の回収(最後に積んだ刻)の後の物 — 最後の回収の刻より前の 60 秒に積んだ物(読みの刻に期限を迎えた 1 つは、読みが
+  ;; 出さないまま次の回収まで残る — 読みも書きも刈らない・#3561・#3605 の D)。
   (assert (= (len big-store.events) (+ 3000 PAIR-KEEP-SECONDS)) (len big-store.events))
   (assert (= (len big-store.groups) PAIR-KEEP-SECONDS) (len big-store.groups)))
 

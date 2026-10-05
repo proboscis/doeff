@@ -2,41 +2,30 @@
 ;; (候補の読みと回収の transaction)を流さず、読みの文だけを流す — 置き場が別の拠点に在ると文 1 つが数十 ms 掛かり、読みのたびの回収の文が
 ;; 呼び手の待ちに乗っていた。期限を過ぎた終端の行と出来事(出来事ごとに数える列 pulses・組で数える列 pairs)を置いた置き場で、読みの効果 1 回ずつ
 ;; 流れた文を数える(検の代役の SQL の答え手 probe-sql-handler — tests/sql_probes.hy。前の形なら、読みのたびに候補の読み 3 文と回収の
-;; transaction の文が足される)。期限を過ぎた物は、回収の前でも答えに出ない。
-;; 残る側: 書きの効果は今までどおり回収してから書く — 期限を過ぎた後の最初の書きが、期限を過ぎた行と出来事を消す文を流す。
+;; transaction の文が足される)。期限を過ぎた物は、回収の前でも答えに出ない。書きの効果の文の数は test_pg_write_statements.hy(#3605 の D)。
 ;; 実 PostgreSQL の検は env DOEFF_RECORDS_TEST_PG_DSN の物(無ければ conftest が使い捨ての PostgreSQL を立てて置く — #2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [deftest defk <- val var])
-(import doeff [EffectBase run with_handlers])
+(import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty WatchCursor Written])
+(import doeff_records.values [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty WatchCursor])
 (import doeff_records.effects [ReadRow ListRows WatchChanges WatchEvents ReadEvents ReadStreamEnd PutRow AppendEvent])
 (import doeff_records.laws [MAKER TICKET-KEEP-SECONDS])
 (import doeff_records.pg [pg-records-handler drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
-(import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
+(import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler effect-statements])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
 ;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
 (val PG-SKIP-REASON (pg-skip-reason))
 
 
-(defk effect-statements [counts ask]
-  {:pre [(: counts StatementCounts) (: ask EffectBase)] :post [(: % tuple)]
-   :tags {:context "records" :role "program"}}
-  "効果 ask を 1 回撃ち、その間に流れた文を切り出すため。答え = #(答え 流れた文の綴りの tuple)。"
-  (val mark (len counts.texts))
-  (<- answer ask)
-  #(answer (tuple (cut counts.texts mark None))))
-
-
 (defk reads-past-expiry [counts]
   {:pre [(: counts StatementCounts)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
-  "期限を過ぎた終端の行と出来事を置き、書きも SweepExpired も撃たずに読みの効果を 1 つずつ撃ち、最後に別の表へ 1 行書くため。
-   答え = #(読みの #(名 答え 流れた文) の tuple・書きの #(答え 流れた文))。"
+  "期限を過ぎた終端の行と出来事を置き、書きも SweepExpired も撃たずに読みの効果を 1 つずつ撃つため。答え = 読みの #(名 答え 流れた文) の tuple。"
   (<- start (ListRows "tickets"))
   (<- (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent)))
   (<- (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1)))
@@ -54,23 +43,20 @@
   (for [#(name ask) reads]
     (<- run-of (effect-statements counts ask))
     (:= seen (+ seen #(#(name #* run-of)))))
-  (<- written (effect-statements counts (PutRow "parts" #("p-nudge") (FrozenMap {"label" "n"}) (ExpectAbsent))))
-  #(seen written))
+  seen)
 
 
-(deftest test-read-effects-run-only-their-read-statements-and-the-next-write-sweeps
+(deftest test-read-effects-run-only-their-read-statements
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   (val connections (postgres-connections))
   (val store (prepared-store connections (fresh-prefix)))
   (val counts (StatementCounts))
   (try
     ;; 呼び鈴(WatchChanges・WatchEvents の待ち)は代役の外側の postgres-sql-handler が答える。
-    (val outcome (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)
-                                                 (probe-sql-handler connections DATABASE (QueryProbe counts))
-                                                 (pg-records-handler store MAKER ORIGIN-HOST)]
-                                                (reads-past-expiry counts)))))
-    (val seen (get outcome 0))
-    (val written (get outcome 1))
+    (val seen (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)
+                                              (probe-sql-handler connections DATABASE (QueryProbe counts))
+                                              (pg-records-handler store MAKER ORIGIN-HOST)]
+                                             (reads-past-expiry counts)))))
     (val answers (dfor #(name answer _) seen name answer))
     (val ran (dfor #(name _ statements) seen name statements))
     ;; 期限を過ぎた物は、回収の前でもどの読みにも出ない。
@@ -82,18 +68,11 @@
     (assert (= (get answers "WatchEvents") (EventsQuiet)) answers)
     (assert (= (get answers "ReadStreamEnd") (StreamEmpty)) answers)
     ;; 読み 1 回が流す文は読みの文だけ: 行・追記の読みは 1 文、置き場の頭を読む一覧と変更の列は 2 文(頭 + 読み)。回収の候補の読み
-    ;; (終端の行の読み・期限を過ぎた出来事の在るかの読み)も回収の transaction の文(DELETE)も流れない。
+    ;; (終端の行の読み・期限を過ぎた出来事の在るかの読み)も回収の transaction の文(BEGIN・DELETE)も流れない。
     (assert (= (dfor #(name statements) (.items ran) name (len statements))
                {"ReadRow" 1 "ListRows" 2 "WatchChanges" 2 "ReadEvents pulses" 1 "ReadEvents pairs" 1 "WatchEvents" 1 "ReadStreamEnd" 1})
             ran)
     (assert (not (any (gfor #(_ statements) (.items ran) text statements (in "DELETE" text)))) ran)
-    ;; 残る側: 期限を過ぎた後の最初の書き(別の表への書き)は、書く前に期限を過ぎた行(state_rows)と出来事(append_rows — 2 つの列)を消す。
-    (val answer (get written 0))
-    (val write-statements (get written 1))
-    (assert (isinstance answer Written) answer)
-    (val deletes (lfor text write-statements :if (.startswith (.lstrip text) "DELETE FROM") (get (.split (.lstrip text)) 2)))
-    (assert (= (sorted deletes) (sorted [(+ store.prefix "append_rows") (+ store.prefix "append_rows") (+ store.prefix "state_rows")]))
-            write-statements)
     (finally
       (run-sql connections (drop-records-tables store))
       (.close connections))))
