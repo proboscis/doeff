@@ -8,7 +8,8 @@
 ;;;   - 本体と同じく WAL(`PRAGMA journal_mode=WAL` — 答えが wal でなければ開く所で断る)で、database ごとに接続 1 本・書きは直列
 ;;;     (scheduler の thread で順に流す)。
 ;;;   - 答え方は memory の DB の答え手(sqlite_sql.hy)と同じ道(sqlite-answer-query・-insert・-tables・-transaction)を通る: `:name` の引数の書き換え・失敗は SqlFailed(SQLSTATE の類の
-;;;     表)/ SqlUnreachable の値(例外を呼び手へ抜かない)・BOOLEAN の読み戻し・SqlTransaction は BEGIN IMMEDIATE … COMMIT / ROLLBACK。
+;;;     表)/ SqlUnreachable の値(例外を呼び手へ抜かない)・BOOLEAN の読み戻し・SqlTransaction は BEGIN IMMEDIATE … COMMIT / ROLLBACK
+;;;     (中の SqlBatch は順に流す — sqlite-flush・外の SqlBatch は名指して断る)。
 ;;;     文の中で時計を読まない(刻は呼び手が引数で渡す)。SqlTransaction の lock-key は使わない(接続 1 本で直列)。
 ;;;   - SetSqlOutage で database を不達にでき、その間は全部 SqlUnreachable(不達の印は session の値 — 置き場の state が外側に要る)。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -16,7 +17,8 @@
 (import sqlite3)
 (import pathlib [Path])
 (import dataclasses [dataclass])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage])
+(import doeff_core_effects.sql_transaction [stray-batch])
 (import doeff_core_effects.sqlite_sql [SqliteConnection sqlite-connection connection-of outage-marked
                                        sqlite-answer-query sqlite-answer-insert sqlite-answer-tables sqlite-answer-transaction])
 
@@ -95,7 +97,11 @@
     (<- connection (connection-of files.connections database))
     (<- answer (sqlite-answer-tables connection unreachable database tables))
     (resume answer))
-  (SqlTransaction [database program lock-key] :when (any (gfor c files.connections (= c.name database)))
+  (SqlTransaction [database program lock-key batched] :when (any (gfor c files.connections (= c.name database)))
     (<- connection (connection-of files.connections database))
-    (<- answer (sqlite-answer-transaction connection unreachable database program))
-    (resume answer)))
+    (<- answer (sqlite-answer-transaction connection unreachable database program batched))
+    (resume answer))
+  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  (SqlBatch [database queries commit] :when (any (gfor c files.connections (= c.name database)))
+    (<- refusal (stray-batch database))
+    (raise refusal)))

@@ -68,7 +68,7 @@
 (import doeff_core_effects.aiohttp-http-server [aiohttp-http-server])
 (import doeff_core_effects.scripted-http-server [scripted-http-server])
 (import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
-                                        SqlTransaction SetSqlOutage])
+                                        SqlTransaction SqlBatch SetSqlOutage])
 (import doeff_core_effects.postgres-sql [postgres-sql-handler])
 (import doeff_core_effects.pooled-postgres-sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.clickhouse-http-sql [clickhouse-http-sql-handler])
@@ -280,10 +280,10 @@
 
 (defdomain doeff-sql
   :title "SQL 語彙 — 汎用の SQL の問い合わせ・投入・transaction"
-  :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SetSqlOutage]
+  :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SqlBatch SqlNotify SqlHangNotice SqlDropNotice SetSqlOutage]
   :handlers [postgres-sql-handler pooled-postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "postgres-sql-handler(scheduler を塞がない — 呼び 1 つに thread 1 本)/ pooled-postgres-sql-handler(同じく塞がない — 呼び手の pool と scheduler の semaphore)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。SqlNotify・SqlHangNotice・SqlDropNotice は LISTEN / NOTIFY の呼び鈴で、答えるのは PostgreSQL の答え手 2 つだけ。")
+  :docs "postgres-sql-handler(scheduler を塞がない — 呼び 1 つに thread 1 本)/ pooled-postgres-sql-handler(同じく塞がない — 呼び手の pool と scheduler の semaphore)/ clickhouse-http-sql-handler(本物)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SqlTransaction の欄 batched(既定 False)を選んだ transaction だけが往復をまとめる(手順は run-in-batched-transaction)。SqlBatch はその中の往復をまとめる束で、答えるのは run-in-batched-transaction が被せる scope — batched でない transaction の中・transaction の外で出した束は名指して断る(ClickHouse の答え手は答えない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。SqlNotify・SqlHangNotice・SqlDropNotice は LISTEN / NOTIFY の呼び鈴で、答えるのは PostgreSQL の答え手 2 つだけ。")
 
 
 (defdomain doeff-process

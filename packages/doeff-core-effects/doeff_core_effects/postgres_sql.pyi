@@ -6,6 +6,10 @@ from doeff_hy.static_types import Handler as _Handler
 from queue import Queue as Queue
 from queue import Empty as Empty
 from concurrent.futures import Executor as Executor
+from collections.abc import Callable as Callable
+from contextlib import AbstractContextManager as AbstractContextManager
+from typing import Protocol as Protocol
+from typing import runtime_checkable as runtime_checkable
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import Program as Program
@@ -17,6 +21,7 @@ from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternal
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects.sql_effects import SqlBatch as SqlBatch
 from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
 from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
 from doeff_core_effects.sql_effects import SqlNotify as SqlNotify
@@ -36,7 +41,10 @@ from doeff_core_effects.sql_effects import checked_identifier as checked_identif
 from doeff_core_effects.sql_effects import checked_identifiers as checked_identifiers
 from doeff_core_effects.sql_effects import checked_rows as checked_rows
 from doeff_core_effects.sql_effects import normalized_rows as normalized_rows
+from doeff_core_effects.sql_transaction import TransactionFlush as TransactionFlush
 from doeff_core_effects.sql_transaction import run_in_transaction as run_in_transaction
+from doeff_core_effects.sql_transaction import run_in_batched_transaction as run_in_batched_transaction
+from doeff_core_effects.sql_transaction import stray_batch as stray_batch
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 DRIVER_CLASS_SQLSTATES: dict[str, str]
@@ -154,6 +162,46 @@ def postgres_insert(connection: Incomplete, request: SqlInsertRows) -> _Program[
 
 def postgres_ensure_tables(connection: Incomplete, tables: tuple) -> _Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, object]:
     ...
+LOCK_STATEMENT: str
+
+@dataclass(frozen=True, kw_only=True)
+class PostgresStep:
+    text: str
+    params: tuple[SqlParam, ...] | None
+    rows: tuple[tuple[int | float | str | bytes | bool | None, ...], ...] | None
+    answered: bool
+
+def request_step(request: SqlQuery | SqlInsertRows) -> _Program[PostgresStep | None, object]:
+    ...
+
+def flush_steps(lock_key: str | None, flush: TransactionFlush) -> _Program[tuple, object]:
+    ...
+
+@runtime_checkable
+class StatementCursor(Protocol):
+    description: tuple | list | None
+    rowcount: int
+    fetchall: Callable[[], list]
+    close: Callable[[], None]
+    executemany: Callable[[str, list], None]
+
+@runtime_checkable
+class PipelineConnection(Protocol):
+    pipeline: Callable[[], AbstractContextManager]
+    execute: Callable[[str, dict | None], StatementCursor]
+    cursor: Callable[[], StatementCursor]
+
+def pipelined(connection: PipelineConnection, step: PostgresStep | None) -> _Program[StatementCursor | None, object]:
+    ...
+
+def step_answer(step: PostgresStep | None, cursor: StatementCursor | None) -> _Program[SqlRows, object]:
+    ...
+
+def first_failure(error: Exception) -> _Program[Exception, object]:
+    ...
+
+def postgres_flush(connection: PipelineConnection, lock_key: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+    ...
 
 def postgres_begin(connection: Incomplete, lock_key: str | None) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
@@ -174,7 +222,10 @@ def return_abandoned(connections: PostgresConnections, database: str, leased: In
 def run_then_return(connections: PostgresConnections, database: str, leased: Incomplete, claim: Incomplete, work: Incomplete) -> Incomplete:
     ...
 
-def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None) -> _Program[Incomplete, object]:
+def driven(pool: Executor, guard: AbstractContextManager, work: Callable[[], Program]) -> _Program[Incomplete, object]:
+    ...
+
+def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None, batched: bool) -> _Program[Incomplete, object]:
     ...
 
 def offloaded_statement(connections: PostgresConnections, pool: Executor, database: str, work: Incomplete) -> _Program[Incomplete, object]:
