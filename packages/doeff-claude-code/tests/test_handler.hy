@@ -7,6 +7,7 @@
 (import sys)
 (import uuid)
 (import doeff [with_handlers])
+(import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted Usage])
@@ -31,7 +32,8 @@
                      :cwd (str work) :settings {"disableAllHooks" True} :cold-resume-prompt cold))
 
 (defn with-real-handler [host program]
-  (with_handlers [(sync-time-handler) (claude-code-handler host)] program))
+  ;; 本番の handler の計時の行(slog)の答え手を外側に置く(#3605)。
+  (with_handlers [(sync-time-handler) slog-discard-handler (claude-code-handler host)] program))
 
 
 (defk turn-then-wait-down [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]

@@ -11,19 +11,26 @@
 ;;; 状態は ClaudeCodeHost(composition root が 1 つ作って handler に渡す)が持つ。読み手の thread と handler の節は
 ;;; 会話ごとの lock で状態機械(dialogue.hy)の値を差し替える。待つ所(init・出来事・降りるの待ち)は doeff-time の
 ;;; GetMonotonic / Delay で刻む(VM の thread を眠らせない)。
+;;;
+;;; 計時の行(#3605): 送ってから CLI が答え始めるまでの秒を分けて測るため、手番の process を起こした所・init の行を受けた
+;;; 所・init の後の最初の行を上の層へ初めて渡した所で、slog を 1 行ずつ出す。欄は名と壁の時刻(GetTime の epoch ミリ秒)と経過のミリ秒
+;;; (GetMonotonic の差)だけで、本文・資格・env・argv は載せない。外側に時間の handler に加えて slog の答え手(本番 = doeff_core_effects の
+;;; slog-handler・検 = slog-discard-handler)が要る。
 (require doeff-hy.macros [defhandler defk <- val])
 (import collections.abc [Callable])
 (import dataclasses [replace])
+(import datetime [datetime])
 (import os)
 (import os.path)
 (import pathlib [Path])
 (import signal)
 (import threading)
 (import uuid)
-(import doeff_time [Delay GetMonotonic])
+(import doeff_core_effects.effects [slog])
+(import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost parse-record classify-record
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init parse-record classify-record
                                  recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -42,15 +49,20 @@
 (setv KEPT-TURNS 16)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 (setv COLD-RESUME-TIMEOUT-SECONDS 600.0)
+;; 計時の行の名(頭の註 — #3605)。行を拾う時はこの名と欄 event で引く。
+(val CLI-TIMING-LOG "claude CLI の起動の計時")
 
 
 ;; --- 状態 ---------------------------------------------------------------------------------------
 
 (defclass TurnLog []
-  "1 つの手番の行と終わり(まだ終わっていなければ end は None)。"
+  "1 つの手番の行と終わり(まだ終わっていなければ end は None)。launched-at = この手番で process を起こし始めた刻(GetMonotonic の
+   読み — process を起こさずに続いた手番は None)・reply-noted = init の後の最初の行の計時の行を出したか(頭の註の計時の行)。"
   (defn __init__ [self]
     (setv #^ (get list ClaudeStreamLine) self.lines [])
-    (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)))
+    (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
+    (setv #^ (| float None) self.launched-at None)
+    (setv #^ bool self.reply-noted False)))
 
 (defclass Binding []
   "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
@@ -272,6 +284,96 @@
   finished)
 
 
+;; --- 計時の行(頭の註 — #3605) --------------------------------------------------------------
+
+(defk epoch-ms-of [at]
+  {:pre [(: at (| datetime None))] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
+  "計時の行の壁の時刻の欄を、他の process の行と並べられる epoch ミリ秒の整数で綴るため(時刻が無ければ None)。"
+  (if (is at None) None (round (* (.timestamp at) 1000))))
+
+(defk elapsed-ms [since until]
+  {:pre [(: since (| float None)) (: until float)] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
+  "GetMonotonic の 2 つの読みの差を、計時の行の経過の欄のミリ秒の整数で綴るため(起点が無ければ None)。"
+  (if (is since None) None (round (* (- until since) 1000))))
+
+(defk note-spawned [runtime turn-seq origin requested launching]
+  {:pre [(: runtime SessionRuntime) (: turn-seq int) (: origin (| FreshSession ResumeSession ForkSession)) (: requested float)
+         (: launching float)]
+   :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
+  "手番の process を起こした刻を手番の記録に置き(init と最初の行の経過の起点)、起こした所の計時の行を出すため。requested = 手番を
+   頼まれた刻・launching = process を起こし始めた刻(どちらも GetMonotonic の読み)。before-spawn-ms = 頼まれてから起こし始めるまで
+   (降りるのの待ち・冷えた続きの前の命令・transcript の読みを含む)・spawn-ms = 起こすのに掛かった時間。"
+  (<- launched (GetMonotonic))
+  (<- at (GetTime))
+  (with [runtime.lock]
+    (val log (.get runtime.turns turn-seq))
+    (when (is-not log None)
+      (setv log.launched-at launching)))
+  (<- wall-ms (epoch-ms-of at))
+  (<- before-spawn-ms (elapsed-ms requested launching))
+  (<- spawn-ms (elapsed-ms launching launched))
+  (<- (slog CLI-TIMING-LOG :level "info" :event "spawned" :wall-ms wall-ms :before-spawn-ms before-spawn-ms :spawn-ms spawn-ms
+            :session-id runtime.session-id :turn-seq turn-seq :origin (. (type origin) __name__)))
+  None)
+
+(defk note-init [runtime turn-seq outcome]
+  {:pre [(: runtime SessionRuntime) (: turn-seq int) (: outcome (| TurnStarted LaunchFailed))] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "init の行を受けた(か受けずに起動を諦めた)所の計時の行を出すため。since-launch-ms = process を起こし始めてから待ちが init を見るまで
+   (待ちは POLL-SECONDS ごとに見るので、その分だけ遅れ得る)・line-at-ms = 読み手の thread が init の行を読んだ壁の時刻(無ければ None)。"
+  (<- now (GetMonotonic))
+  (<- at (GetTime))
+  (val log (with [runtime.lock] (.get runtime.turns turn-seq)))
+  (val launched (if (is log None) None log.launched-at))
+  (val init-at (if (is log None)
+                   None
+                   (with [runtime.lock] (next (gfor line log.lines :if (isinstance line.kind Init) line.at) None))))
+  (<- wall-ms (epoch-ms-of at))
+  (<- since-launch-ms (elapsed-ms launched now))
+  (<- line-at-ms (epoch-ms-of init-at))
+  (<- (slog CLI-TIMING-LOG :level "info" :event (if (isinstance outcome TurnStarted) "init" "launch-failed") :wall-ms wall-ms
+            :since-launch-ms since-launch-ms :line-at-ms line-at-ms :session-id runtime.session-id :turn-seq turn-seq))
+  None)
+
+(defk claimed-first-reply [runtime log next-seq]
+  {:pre [(: runtime SessionRuntime) (: log TurnLog) (: next-seq int)] :post [(: % (| ClaudeStreamLine None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "process を起こした手番の、init の行の次の行(CLI が答え始めた印)が上の層へ渡す頁の範囲(next-seq まで)に初めて入った時に、その行を
+   1 度だけ取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。"
+  (with [runtime.lock]
+    (when (or (is log.launched-at None) log.reply-noted)
+      (return None))
+    (val lines (tuple log.lines))
+    (val init-index (next (gfor #(index line) (enumerate lines) :if (isinstance line.kind Init) index) None))
+    (when (or (is init-index None) (>= (+ init-index 1) (len lines)))
+      (return None))
+    (val reply (get lines (+ init-index 1)))
+    (when (> reply.seq next-seq)
+      (return None))
+    (setv log.reply-noted True)
+    reply))
+
+(defk note-first-reply [runtime turn page]
+  {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "init の後の最初の行を上の層へ初めて渡した所の計時の行を出すため(process を起こした手番で 1 度だけ)。since-launch-ms = process を
+   起こし始めてから渡すまで・line-at-ms = 読み手の thread がその行を読んだ壁の時刻・kind = その行の種類の名(中身は載せない)。"
+  (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
+  (when (is log None)
+    (return None))
+  (<- reply (claimed-first-reply runtime log page.next-seq))
+  (when (is reply None)
+    (return None))
+  (<- now (GetMonotonic))
+  (<- at (GetTime))
+  (<- wall-ms (epoch-ms-of at))
+  (<- since-launch-ms (elapsed-ms log.launched-at now))
+  (<- line-at-ms (epoch-ms-of reply.at))
+  (<- (slog CLI-TIMING-LOG :level "info" :event "first-reply" :wall-ms wall-ms :since-launch-ms since-launch-ms
+            :line-at-ms line-at-ms :kind (. (type reply.kind) __name__) :session-id turn.session-id :turn-seq turn.turn-seq))
+  None)
+
+
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
 (defn spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
@@ -336,6 +438,8 @@
 
 (defk start-turn [#^ ClaudeCodeHost host #^ ClaudeStartTurn request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeStartTurn)] :post [(: % "StartTurnOutcome")]}
+  ;; 計時の行の起点(頼まれた刻 — 頭の註)。
+  (<- requested (GetMonotonic))
   (setv origin request.origin spec request.spec input request.input)
   (setv refused (refused-attachment input))
   (when (is-not refused None) (return refused))
@@ -367,11 +471,14 @@
     (setv runtime (SessionRuntime (if (isinstance origin ForkSession) "" target-id) spec.home canonical
                                   :cost-mark (if (isinstance origin FreshSession) 0.0 None)))
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
+  (<- launching (GetMonotonic))
   (setv spawned (spawn-turn host runtime spec origin input recorded))
   (when (isinstance spawned LaunchFailed)
     (when fresh-runtime (.forget host target-id runtime))
     (return spawned))
+  (<- (note-spawned runtime spawned origin requested launching))
   (<- outcome (await-init host runtime spawned fresh-runtime))
+  (<- (note-init runtime spawned outcome))
   outcome)
 
 (defn in-flight-log [runtime #^ ClaudeTurn turn]
@@ -430,6 +537,8 @@
                          (or (is page None) (bool page.lines) (is-not page.end None)))
                   (float request.wait-up-to)))
   (setv page (page-of runtime turn request.after-seq))
+  (when (is-not page None)
+    (<- (note-first-reply runtime turn page)))
   (if (is page None) (UnknownTurn turn) page))
 
 (defk close-session [#^ ClaudeCodeHost host #^ ClaudeCloseSession request]

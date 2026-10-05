@@ -16,7 +16,7 @@
 (import sys)
 (import pytest)
 (import doeff [run with_handlers EffectBase])
-(import doeff_core_effects.handlers [state :as session-store])
+(import doeff_core_effects.handlers [state :as session-store slog-discard-handler])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 ;; 故障の注入の口だけは層 2 の検の effect を使う(公開 effect ではない — process の死を起こす手が公開面に無いため)。
 (import doeff_claude_code.faults [ClaudeDropProcess])
@@ -89,15 +89,16 @@
   (dfor #(key value) (.items os.environ) :if (not (.startswith key INHERITED-PREFIXES)) key value))
 
 (defn handlers-for [#^ str backend #^ str home-dir]
-  "解釈器の handler の組(先頭が外側): 時間の handler → 層 2 の handler → headless の adapter。"
+  "解釈器の handler の組(先頭が外側): 時間の handler → 層 2 の handler → headless の adapter。本番の層 2 の外側には、計時の行(slog)の
+   答え手も置く(agora-redesign #3605)。"
   (setv settings {"disableAllHooks" True})
   (cond
     ;; fake の層 2 は process を起こさないので子の env は空・CLI の settings は本番の 2 つと同じ宣言。
     (= backend FAKE) (+ [(sim-time-handler :clock (SimClock))] (fake-headless-claude-handlers fake-responder home-dir :env {} :settings settings))
-    (= backend STUB) (+ [(sync-time-handler)]
+    (= backend STUB) (+ [(sync-time-handler) slog-discard-handler]
                         (headless-claude-handlers home-dir (child-env) :settings settings
                                                   :command #(sys.executable "-m" "hy" STUB-PATH)))
-    (= backend REAL) (+ [(sync-time-handler)] (headless-claude-handlers home-dir (child-env) :settings settings))
+    (= backend REAL) (+ [(sync-time-handler) slog-discard-handler] (headless-claude-handlers home-dir (child-env) :settings settings))
     True (raise (ValueError backend))))
 
 (defn run-on [#^ str backend #^ Path tmp-path #^ Callable scenario [home-name "home"]]
