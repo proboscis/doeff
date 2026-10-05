@@ -4,8 +4,11 @@
 ;;; impls/claude_code.hy(build-claude-argv の旗の並び・transcript の置き場の綴り)。doeff-agents の側は #604 で付け替えるまで残る。
 ;;;
 ;;; prompt は argv に載せない(stdin の user の行 — dialogue.hy)。例外は冷えた続きの前の 1 回きりの process だけ。
+(require doeff-hy.macros [defk val])
 (import collections.abc [Mapping])
+(import hashlib)
 (import json)
+(import os)
 (import re)
 (import doeff_hy.frozen [FrozenMap thaw-json])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome BypassAll AskHost DenyUnlisted McpSse McpStdio
@@ -14,10 +17,14 @@
 (setv STREAM-FLAGS ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
                     "--include-partial-messages"])
 
-;; 手番ごとに process を降ろす handler の物理: CLI に手番の外へ持ち越す仕事(background の subagent・Bash の
-;; run_in_background・Monitor)を持たせない。持たせると、降ろした process と一緒にその仕事が死に、完了の合図で起きる
-;; 続きの手番は誰も起こさない(doeff-agents 2026-09-23 の実測)。運ぶ口は --settings の env。
+;; 手番の外で CLI に仕事をさせない handler の物理: 手番の間に置いた仕事(background の subagent・Bash の run_in_background・
+;; Monitor)の完了の合図で、CLI は host の頼みなしに次の手番を起こし model を動かす(#517 の事故の形)。会話の process を手番を
+;; またいで生かす形(#3672)では、その手番は誰の物でもない出力になる。背景の仕事を消す環境変数(--settings の env)は Bash の
+;; run_in_background の引数だけを消し、Monitor は残す(2.1.289 の実測)ので、Monitor は起こす引数でツールから外す
+;; (--disallowedTools は --allowedTools と settings の許可より先に効く)。それでも手番の外で出力した process は handler が降ろす
+;; (dialogue.hy の on-record)。
 (setv PER-TURN-SETTINGS-ENV (FrozenMap {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "1"}))
+(setv OUTSIDE-TURN-TOOLS #("Monitor"))
 (setv DISABLE-ALL-HOOKS "disableAllHooks")
 
 
@@ -31,7 +38,7 @@
 (defn #^ str transcript-path [#^ str config-dir #^ str canonical-cwd #^ str session-id]
   (.format "{}/{}.jsonl" (transcript-dir config-dir canonical-cwd) session-id))
 
-(defn #^ dict process-env [#^ ClaudeHome home]
+(defn #^ (get dict #(str str)) process-env [#^ ClaudeHome home]
   "起こす process の env: 家の env ちょうど + CLAUDE_CONFIG_DIR(os.environ は足さない)。"
   (| (dict home.env) {"CLAUDE_CONFIG_DIR" home.config-dir}))
 
@@ -96,11 +103,28 @@
     (isinstance origin ForkSession) ["--resume" origin.parent-session-id "--fork-session"]
     True (raise (TypeError (.format "会話の始まり方が閉語彙の外: {!r}" origin)))))
 
-(defn #^ list launch-argv [#^ tuple command #^ ClaudeSessionSpec spec origin]
-  "手番の process の argv: command(実行ファイルと前置きの引数)+ stream-json の旗 + 基礎の旗 + 会話の始まり方。"
+(defn #^ (get list str) launch-flags [#^ (get tuple #(str ...)) command #^ ClaudeSessionSpec spec]
+  "会話の process の argv の、会話の始まり方を除いた部分: command(実行ファイルと前置きの引数)+ stream-json の旗 + 基礎の旗 +
+   手番の外の仕事を置く道具を外す旗。"
   (+ (list command) STREAM-FLAGS
      (base-flags spec (merged-settings spec.settings PER-TURN-SETTINGS-ENV))
-     (origin-flags origin)))
+     ["--disallowedTools" (.join "," OUTSIDE-TURN-TOOLS)]))
+
+(defn #^ list launch-argv [#^ tuple command #^ ClaudeSessionSpec spec origin]
+  "会話の process の argv: launch-flags + 会話の始まり方。"
+  (+ (launch-flags command spec) (origin-flags origin)))
+
+(defk launch-key [#^ (get tuple #(str ...)) command #^ ClaudeSessionSpec spec]
+  {:pre [(: command tuple) (: spec ClaudeSessionSpec)] :post [(: % str)] :tags {:context "claude-code" :role "judgment"}}
+  "起こした時の条件の鍵: 生きた process を次の手番に使い回してよいかを決める 1 点(#3672)。argv(会話の始まり方を除く — 実行ファイル・
+   model・effort・settings・MCP・許可・圧縮・system prompt の追記)・cwd の実体・起こす env(家の置き場と資格を含む)の sha256 の 16 進。
+   資格の値は指紋の中にだけ入る(鍵から値は戻らない)。会話の始まり方を除くのは、同じ会話の続き(ResumeSession)だけが使い回すので、
+   どの手番の続きかは会話の id が決めるため。指紋の材料の写像は JSON の境界(sha256 へ渡す綴り)。"
+  (val material {"argv" (launch-flags command spec)
+                 "cwd" (os.path.realpath spec.cwd)
+                 "env" (sorted (.items (process-env spec.home)))})
+  (.hexdigest (hashlib.sha256 (.encode (json.dumps material :separators #("," ":") :sort-keys True :ensure-ascii False)
+                                       "utf-8"))))
 
 (defn #^ list cold-resume-argv [#^ tuple command #^ ClaudeSessionSpec spec #^ str session-id]
   "降りた会話を --resume で起こす前の 1 回きりの print mode の argv(spec.cold-resume-prompt)。

@@ -71,6 +71,7 @@ from doeff_claude_code.faults import ClaudeEmitOutsideTurn as ClaudeEmitOutsideT
 from doeff_claude_code.faults import LiveProcess as LiveProcess
 from doeff_claude_code.faults import NoLiveProcess as NoLiveProcess
 from doeff_claude_code.faults import StopReason as StopReason
+from doeff_claude_code.argv import launch_key as launch_key
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 QUICK_TURN_SECONDS: float
@@ -132,6 +133,8 @@ class FakeSession:
     next_line_seq: Incomplete
     closed: Incomplete
     launches: int
+    alive: bool
+    launch_key: str | None
     stopped_because: StopReason | None
     turns: dict[int, FakeTurn]
 
@@ -146,7 +149,7 @@ class FakeClaudeWorld:
     respond: Incomplete
     transcripts: Incomplete
     activity: Incomplete
-    sessions: Incomplete
+    sessions: dict[str, FakeSession]
 
     def __init__(self, responder: Incomplete=None, *, respond: Incomplete=None) -> None:
         ...
@@ -202,7 +205,7 @@ def end_scripted(session: FakeSession, turn: FakeTurn) -> _Program[None, object]
 def advance(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
     ...
 
-def begin_fake_turn(world: FakeClaudeWorld, session: FakeSession, reply: FakeReply, refs: tuple, announce: bool) -> _Program[FakeTurn, object]:
+def begin_fake_turn(world: FakeClaudeWorld, session: FakeSession, reply: FakeReply, refs: tuple, announce: bool, launched: bool) -> _Program[FakeTurn, object]:
     ...
 
 def transcript_of(world: FakeClaudeWorld, home: Incomplete, cwd: str, session_id: str) -> Incomplete:
