@@ -4,7 +4,7 @@
 - 契約テスト(agora-redesign #1159)は deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
   stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy・http_server_contract_handlers.hy・
   meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy(agora-redesign #1440)・
-  stack_dump_contract_handlers.hy(agora-redesign #2748)が持ち、ここはその表を
+  stack_dump_contract_handlers.hy(agora-redesign #2748)・warm_contract_handlers.hy(待ちの子の効果)が持ち、ここはその表を
   引いて scheduler つきで 1 回回すだけ。外の module が要る解釈器(REQUIRES)は、その module の無い環境では skip する。
 - 実 PostgreSQL の検(test_sql_effects.hy)の DSN の env は、pytest_configure(検の module の import より前)で
   postgres_support/disposable_postgres.py が用意する — env が無ければ使い捨ての PostgreSQL を立てる(agora-redesign #2830・
@@ -66,6 +66,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     from random_contract_handlers import INTERPRETERS as RANDOM_INTERPRETERS
     from stack_dump_contract_handlers import INTERPRETERS as STACK_DUMP_INTERPRETERS
     from stop_contract_handlers import INTERPRETERS as STOP_INTERPRETERS
+    from warm_contract_handlers import INTERPRETERS as WARM_INTERPRETERS
 
     compositions: dict[str, Callable[[Program], Program]] = {
         PLAIN: lambda program: program,
@@ -78,6 +79,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         **HEAP_INTERPRETERS,
         **RANDOM_INTERPRETERS,
         **STACK_DUMP_INTERPRETERS,
+        **WARM_INTERPRETERS,
     }
     required = HTTP_SERVER_REQUIRES.get(doeff_interpreter_name)
     if required is not None and importlib.util.find_spec(required) is None:
