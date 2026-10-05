@@ -38,7 +38,9 @@
         "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/warm_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/warm_effects.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/effects.py",
@@ -75,6 +77,7 @@
         "doeff-core-effects-effects",
         "doeff-core-effects-runtime",
         "doeff-hy-frozen",
+        "doeff-hy-wire",
         "hy-bytecode-import"
       ],
       "layer": "io",
@@ -125,7 +128,9 @@
         "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
         "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.pyi",
         "packages/doeff-core-effects/doeff_core_effects/http_host_gate.hy",
-        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/os_warm_process.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_warm_process.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/aiohttp_http_server.hy",
@@ -256,6 +261,8 @@
         "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.pyi",
         "packages/doeff-core-effects/doeff_core_effects/scripted_process.hy",
         "packages/doeff-core-effects/doeff_core_effects/scripted_process.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_warm_process.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_warm_process.pyi",
         "packages/doeff-core-effects/doeff_core_effects/seeded_random.hy",
         "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi"
       ],
@@ -354,6 +361,7 @@
         "doeff-core-effects-storage",
         "doeff-hy-frozen",
         "doeff-hy-static-check",
+        "doeff-hy-wire",
         "hy-bytecode-import"
       ],
       "layer": "io",
@@ -400,7 +408,10 @@
         "packages/doeff-core-effects/tests/test_stack_dump_contract.hy",
         "packages/doeff-core-effects/tests/test_stop_signal.hy",
         "packages/doeff-core-effects/tests/test_stop_signal_contract.hy",
-        "packages/doeff-core-effects/tests/test_http_host_gate.hy"
+        "packages/doeff-core-effects/tests/test_http_host_gate.hy",
+        "packages/doeff-core-effects/tests/warm_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/test_warm_process_contract.hy",
+        "packages/doeff-core-effects/tests/fake_warm_child.py"
       ],
       "public": [],
       "responsibility": "doeff-core-effects の検 — effect の契約の検(本物と差し替えの handler が同じ答えを返すか)と、各 handler・scheduler・memo・型の宣言(.pyi)の一致の検。",
