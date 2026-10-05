@@ -20,6 +20,7 @@ class RosterEntry:
     worker: str
     live: bool
     doeff_commit: str | None
+    unread_reason: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class PendingTask:
@@ -54,8 +55,9 @@ class UpgradeLimits:
 class UpgradeStalled(RuntimeError):
     step: str
     limit_seconds: float
+    observed: str
 
-    def __init__(self, step: str, limit_seconds: float) -> None:
+    def __init__(self, step: str, limit_seconds: float, observed: str) -> None:
         ...
 
 @_doeff_dataclass(frozen=True)

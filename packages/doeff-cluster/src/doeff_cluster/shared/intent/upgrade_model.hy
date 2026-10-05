@@ -27,11 +27,14 @@
 (defrecord RosterEntry
   "名簿の 1 台の写し: worker = 名・live = 生きていたか(作り直した直後の新しい世代が名乗り終える前は数えない)・doeff-commit = その
    worker の今の世代が動いている doeff の版。None = 読み手がその worker の版を読めない(配備する側が宣言を書けない worker)— 名簿には
-   coordinator の知る worker を全部 載せ、版の読めない worker は条 V1 で新しい版と数えない(#3366)。"
+   coordinator の知る worker を全部 載せ、版の読めない worker は条 V1 で新しい版と数えない(#3366)。unread-reason = 版を読めない訳
+   (読み手が書く汎用の文 — 入れ替えの途中で新しい世代が準備完了でない・宣言を書けない worker など。版を読めた時は None)。待ちが上限で
+   止まった時の文に載り、何が戻らないのかを名指す。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str worker)
   (#^ bool live)
-  (#^ (| str None) doeff-commit))
+  (#^ (| str None) doeff-commit)
+  (setv #^ (| str None) unread-reason None))
 
 
 (defrecord PendingTask
@@ -78,10 +81,11 @@
 
 (defclass UpgradeStalled [RuntimeError]
   "版上げの待ちが上限を越えた(置かれた task が終わらない・worker が戻らない・待ち行列が空にならない)。step = どの待ちで止まったか・
-   limit-seconds = その上限。黙って待ち続けない。"
-  (defn #^ None __init__ [self #^ str step #^ float limit-seconds]  ; defk にできない: 例外の構成子
-    (.__init__ (super) (.format "版上げが止まった: {}(上限 {} 秒を越えた)" step limit-seconds))
-    (setv self.step step self.limit-seconds limit-seconds)))
+   limit-seconds = その上限・observed = 最後に読んだ物のうちその待ちに効く所(戻らない worker の live・版・版を読めない訳 など —
+   待ちの名だけでは何が戻らないのか分からないため・#3366)。黙って待ち続けない。"
+  (defn #^ None __init__ [self #^ str step #^ float limit-seconds #^ str observed]  ; defk にできない: 例外の構成子
+    (.__init__ (super) (.format "版上げが止まった: {}(上限 {} 秒を越えた)— 最後の読み: {}" step limit-seconds observed))
+    (setv self.step step self.limit-seconds limit-seconds self.observed observed)))
 
 
 (defeffect ReadUpgradeState
