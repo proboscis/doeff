@@ -3,7 +3,7 @@
 ;; 土台の async-time-handler の GetMonotonic、受けた刻は待ち受けの time.monotonic(同じ物差し)。
 ;;   - 書き(put-row)1 件で、put-row の区間 queue・body・decode・handler・encode・send・total の観測がちょうど 1 つずつ増え、待ちの区間
 ;;     (wait・woke)は増えない。queue〜send の秒の和は total と ADD-UP-SECONDS の内で等しく、受けた → 答えが決まった(total − send)は
-;;     client が測った往復の秒を超えない(送った刻は答えを待ち受けへ渡した後の要求の task の刻で、client が答えを受けた後になり得る)
+;;     client が測った往復の秒を超えない(送った刻は答えを待ち受けの loop へ積んだ後の要求の task の刻で、client が答えを受けた後になり得る)
 ;;   - 変化の待ち(watch-changes)の long-poll が、待ちの WRITE-AFTER 秒目の書きで 1 回答えると、watch-changes の区間の観測が wait と woke を
 ;;     含めてちょうど 1 つずつ増え、wait は書くまで待った秒(WAIT-FLOOR 以上)・起きてから送るまでの秒(woke)は待ちより
 ;;     短い。queue〜send と wait の秒の和は total に等しい(handler に待ちを混ぜると和が total を超える)

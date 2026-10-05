@@ -16,6 +16,9 @@
 ;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
 ;;;                 aiohttp の lingering で読み捨てさせない)
 ;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)。
+;;;                 答え手の節は命令を待ち受けの loop へ積むだけで戻る(共有の loop を経ず、往復を待たない — agora-redesign #3688 の子 (3)
+;;;                 の 3b)。積んだ順に渡るので、後から撃った読み・閉じより先に渡る。札が待ち受けに無い(2 度目・知らない札)命令は、積んだ
+;;;                 側がもう戻っているので、待ち受けの loop で 1 行名乗って捨てる。
 ;;;                 相手が先に切った後の書き込みの失敗(答えが遅れ、相手の上限が先に来た — ConnectionError)は aiohttp へ上げず、1 行で
 ;;;                 名乗って待ち受けごとに数える(上げると aiohttp が 1 件ごとに traceback を書く — 2026-10-02 の record の止まりで約 2.2KB ×
 ;;;                 265 本・agora-redesign #2757)。待ち受けを閉じる時に、届かなかった答えの合計を 1 行名乗る
@@ -265,7 +268,32 @@
 
   (defn :async #^ None settle [self #^ str ticket #^ HttpCommand command]
     "本体の命令を札の要求へ渡すため(同じ札へ 2 度渡すと KeyError — 判断は要求ごとに 1 つ)。"
-    (.set-result (.pop self.waiting ticket) command)
+    (self.hand-over ticket command)
+    None)
+
+  (defn #^ None hand-over [self #^ str ticket #^ HttpCommand command]
+    "本体の命令を札の要求へ渡し、その札の本文をもう読ませないため(待ち受けの loop の上で — 受けの coroutine が起きる前に積まれた本文の
+     読みも HttpBodyFailed になる)。同じ札へ 2 度渡すと KeyError。"
+    (setv waiting (.pop self.waiting ticket))
+    (.pop self.unread ticket None)
+    (.set-result waiting command)
+    None)
+
+  (defn #^ None posted [self #^ str ticket #^ HttpCommand command]
+    "積まれた命令(post)を待ち受けの loop の上で札へ渡すため。札が待ち受けに無い(2 度目・知らない札)か、相手が先に去って札の待ちが
+     取り消されていれば、1 行名乗って捨てる — 積んだ側はもう戻っていて上げる先が無く、待ち受けの loop へ上げると callback の traceback に
+     なる(頭の註の応答の送出・#2757)。"
+    (try
+      (self.hand-over ticket command)
+      (except [error #(KeyError asyncio.InvalidStateError)]
+        (relay-failed (.format "札 {} への命令 {} は、待ち受けに無い札(2 度目か知らない札)か相手が先に去った札へ積まれたので捨てた: {!r}"
+                               ticket (. (type command) __name__) error))))
+    None)
+
+  (defn #^ None post [self #^ str ticket #^ HttpCommand command]
+    "本体の命令を待ち受けの loop へ積むだけで戻るため(答えの送り — 共有の loop を経ず、往復を待たない・agora-redesign #3688 の子 (3) の
+     3b)。待ち受けの loop は積まれた順に回すので、後から撃った across の coroutine より先に渡る。"
+    (.call-soon-threadsafe (self.edge-loop) self.posted ticket command)
     None)
 
   (defn :async #^ web.StreamResponse receive [self #^ web.Request request]
@@ -281,8 +309,7 @@
                                          :received-at (time.monotonic)
                                          :remote request.remote)))
     (setv command (await waiting))
-    ;; 命令を受けた札の本文はもう読ませない。本文を上限で断った札は、答えを送った後に接続を閉じる。
-    (.pop self.unread ticket None)
+    ;; 命令を受けた札の本文はもう読ませない(渡した拍に hand-over が外した)。本文を上限で断った札は、答えを送った後に接続を閉じる。
     (setv cut-off (in ticket self.oversized))
     (.discard self.oversized ticket)
     (match command
@@ -566,7 +593,8 @@
     (<- outcome HttpBodyOutcome (Await (.across edge (.read-body edge ticket max-bytes))))
     (resume outcome))
   (HttpRespond [ticket status headers body]
-    (<- (Await (.across edge (.settle edge ticket effect))))
+    ;; 答えは待ち受けの loop へ積むだけ(共有の loop を経ない — 頭の註の応答の送出)。
+    (.post edge ticket effect)
     (resume None))
   (HttpForward [ticket url]
     (<- (Await (.across edge (.settle edge ticket effect))))
