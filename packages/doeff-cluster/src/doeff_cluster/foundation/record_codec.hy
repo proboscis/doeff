@@ -51,6 +51,7 @@
                                       CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
 (import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy.frozen [FrozenMap])
 
 (setv FORMAT-VERSION 2)
 ;; 読める形の版(1 = 差分・2 = 内容参照と問いと答えの 1 行)。
@@ -115,9 +116,15 @@
   #^ (get ClassVar dict) __dataclass_fields__)
 
 
+;; 凍った写像の型と記録の印の表(doeff_hy.frozen の型の一族 — 1 か所の表。型が足されたらここに足し、encode-value と decode-value は
+;; この表だけを読む・型ごとの if を散らさない)。値は鍵と値の対の列で綴る(鍵が印の綴り $… でも素の dict の読みと混ざらない)。
+;; 以前は記録の形にできない型として断っていた — 業務の答えが記録の行の値(doeff-records の Row・Written の value)をそのまま運ぶと、
+;; 本番の記録係はその答えで記録を止め、strict の記録係は業務へ投げた(#3687 の続き)。
+(setv FROZEN-MARKS #(#("$fm" FrozenMap)))
+
 ;; 記録から復元した値(decode-value の答え)の型 — encode-value が受けて印を付けた種類ちょうど(#1693 — 以前は object で宣言していた)。
 ;; handle は再生の札 ReplayHandle になり、Task・Promise など生の handle には戻らない。
-(setv RestoredValue (| None bool int float str bytes datetime ReplayHandle list tuple dict BaseException DataclassValue))
+(setv RestoredValue (| None bool int float str bytes datetime ReplayHandle list tuple dict FrozenMap BaseException DataclassValue))
 
 
 (defclass RecordedError [Exception]
@@ -236,6 +243,10 @@
       (raise (UnencodableValue (.format "名の無い handle: {!r}" v)))
     (isinstance v list) (lfor x v (encode-value x handles))
     (isinstance v tuple) {"$t" (lfor x v (encode-value x handles))}
+    ;; 凍った写像(表 FROZEN-MARKS の型)は印つきの鍵と値の対の列で綴る(dict の枝より前 — Mapping であっても dict に化けさせない)。
+    ;; FrozenMap の鍵は作りが str に限る(doeff_hy/frozen.hy:37)ので素のまま書く。
+    (setx frozen-mark (next (gfor #(mark cls) FROZEN-MARKS :if (isinstance v cls) mark) None))
+      {frozen-mark (lfor #(k x) (.items v) [k (encode-value x handles)])}
     (isinstance v dict)
       (if (all (gfor k v (_plain-key? k)))
           (dfor #(k x) (.items v) k (encode-value x handles))
@@ -271,6 +282,10 @@
       (in "$dt" j) (datetime.fromisoformat (get j "$dt"))
       (in "$h" j) (handle-for (get j "$h") (get j "id"))
       (in "$t" j) (tuple (lfor x (get j "$t") (restored x)))
+      ;; 凍った写像の印(表 FROZEN-MARKS)— 同じ型へ戻す。
+      (setx frozen (next (gfor #(mark cls) FROZEN-MARKS :if (in mark j) #(mark cls)) None))
+        (do (setv #(mark cls) frozen)
+            (cls (lfor #(k x) (get j mark) #(k (restored x)))))
       (in "$d" j) (dfor #(k x) (get j "$d") (restored k) (restored x))
       (in "$e" j) (decode-error j)
       (in "$repr" j) (get j "$repr")
