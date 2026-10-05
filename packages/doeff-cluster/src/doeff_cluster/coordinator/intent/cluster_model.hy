@@ -57,6 +57,19 @@
 ;; NEWER = 新しい世代(今の世代を退かせる)。
 
 
+(defwire KnownExit
+  "worker の上の宣言の在る job 1 つの、最後に終わったと知れた刻と今の世代の process(WorkerInfo.known-exits の 1 行 — 保存する・#3672):
+   job = job の名(状態の報告の行の name)・at-ms = 最後に終わったと知れた刻(epoch ms・まだ知らなければ None)・has-process = 今の世代の
+   最新の報告でこの job の行が pid を持つ(process が在る)か。作るのは cluster_policy.known-exits-after。機体が死んで世代が入れ替わった
+   時は、process を持っていた job を新しい世代の起動の刻までに終わったと数える(実の終わりはそれ以前)。at-ms が None の行は has-process が
+   真の行だけ(何も知らない job は列に載せない)。保存の行 worker/<名> の knownExits の 1 行 {job atMs hasProcess} はこの型で解く
+   (coordinator/protocol/state_json.worker-generations-from-json)。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :reject}
+  (#^ str job)
+  (#^ (| int None) at-ms)
+  (#^ bool has-process))
+
+
 (defclass [(dataclass :frozen True)] WorkerInfo []
   (#^ str name)
   (#^ (get tuple #(str ...)) provides)                 ; 提供する能力の名(名の順 — クラスタの設定で名乗る)
@@ -102,7 +115,13 @@
   ;; (cluster_policy.task-room-of は capacity 全体から数える)。保存する。位置で渡す欄の後ろに置くので、KW_ONLY の印の後の名で渡す
   ;; 必ずの欄(既定の値なし — 型の宣言 .pyi でも必ずの欄として読まれる)。
   (#^ KW_ONLY _)
-  (#^ int task-reserve))
+  (#^ int task-reserve)
+  ;; 宣言の在る job ごとの、最後に終わったと知れた刻と今の世代の報告で process を持つか(KnownExit の列・job の名の順 — #3672)。
+  ;; heartbeat ごとに cluster_policy.known-exits-after が作り直す。保存する(worker/<名> の knownExits — 状態の報告 statuses は保存しないので、
+  ;; coordinator を作り直した後に最初に来る新しい世代の heartbeat も、前の世代で process を持っていた job をこの列から数える)。
+  ;; 中身が替わるのは process の起き・終わり・世代の入れ替わりの時だけ(同じ世代の heartbeat をくり返しても保存の行は変わらない)。
+  ;; 欄の無い保存の行は空の列として読む。
+  (setv #^ (get tuple #(KnownExit ...)) known-exits #()))
 
 
 (defrecord WorkerLoad
@@ -393,25 +412,14 @@
   (#^ (get dict #(str DrainProgress)) drains))
 
 
-(defrecord KnownExit
-  "worker の上の job 1 つの、最後に終わったと知れた刻(WorkerReport.last-exits の 1 行): job = job の名(状態の報告の行の name)・
-   at-ms = その刻(epoch ms)。worker の世代の入れ替わりで知った刻は新しい世代の起動の刻 — 実の終わりはそれ以前。"
-  (#^ str job)
-  (#^ int at-ms))
-
-
 (defrecord WorkerReport
   "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
-   欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。
-   last-exits = job ごとの最後に終わったと知れた刻(KnownExit の列・job の名の順 — 作るのは cluster_policy.worker-report)。jobs の行の
-   last-exit-at-ms はこの刻で、同じ worker・同じ job の名では前に知っていた刻から戻さない。worker の世代の入れ替わりでは、前の世代で
-   process を持っていた job を新しい世代の起動の刻までに終わったと数える(実の終わりはそれ以前・#3672)。新しい世代の最初の heartbeat は
-   行を載せないので、行の無い名も宣言の在る job の間は持ち、次に載る同じ名の行へ運ぶ。何も知らない報告は空の列。"
+   欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。jobs の行の last-exit-at-ms は
+   最後に終わったと知れた刻(WorkerInfo.known-exits の刻と行の刻の大きい方 — cluster_policy.worker-report・#3672)。"
   (#^ int at)
   (#^ (| str None) endpoint)
-  (#^ (get tuple #(StatusRow ...)) jobs)
-  (setv #^ (get tuple #(KnownExit ...)) last-exits #()))
+  (#^ (get tuple #(StatusRow ...)) jobs))
 
 
 (defrecord ServiceBody

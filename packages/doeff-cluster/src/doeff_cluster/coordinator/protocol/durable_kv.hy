@@ -14,6 +14,8 @@
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。
 ;;; task のために空けておく数 taskReserve も必ず持つ(#3489 — この欄の無い行は読まず、次の heartbeat で作り直す)。
+;;; 最後に終わったと知れた刻と今の世代で process を持つ job の列 knownExits も持つ(#3672 — state_json.worker-generations-json。
+;;; 中身が替わるのは process の起き・終わり・世代の入れ替わりの時だけで、heartbeat ごとには書かない。無い行は空の列として読む)。
 ;;; 保存しない物(状態の報告・readiness・k8s の観測)は入れない。
 ;;;
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
