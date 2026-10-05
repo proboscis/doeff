@@ -1,15 +1,20 @@
 """The macro-expanded tree of a Hy module is cached on disk under its exact inputs.
 
 Expansion is most of an analysis' time and every process used to redo it for each
-Hy module it read. The cache key is the source, the module name and path, the
-macro modules the source requires, the Hy / Python versions and the reader's own
-source — so a changed source, macro module or reader is expanded again, and an
-unreadable cache file only costs one expansion.
+Hy module it read. The cache key is the source's content (never its path), the
+module name, every macro file the expansion went through (the modules the source
+requires and the ones they require in turn), the Hy / Python versions and the
+reader's own source — so a changed source, macro file or reader is expanded again,
+the same source in another checkout is not, and an unreadable cache file only
+costs one expansion.
 """
 
 import ast
+import importlib
 import pickle
-from dataclasses import replace
+import sys
+import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,12 +43,17 @@ def expansions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seen: list[str] = []
     real = pe._expand_hy
 
-    def counting(source: str, filename: str, module_name: str) -> ast.Module:
+    def counting(source: str, filename: str, module_name: str) -> pe._Expanded:
         seen.append(module_name)
         return real(source, filename, module_name)
 
     monkeypatch.setattr(pe, "_expand_hy", counting)
     return seen
+
+
+def entries(cache_dir: Path) -> list[Path]:
+    """Every entry of the cache: one directory per source, one entry in it per set of macro files."""
+    return sorted(cache_dir.glob("*/*.pickle"))
 
 
 def test_the_second_read_of_the_same_source_comes_from_the_cache(
@@ -54,7 +64,7 @@ def test_the_second_read_of_the_same_source_comes_from_the_cache(
     second = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m"]
     assert ast.dump(first.tree) == ast.dump(second.tree)
-    assert len(list(cache_dir.glob("*.pickle"))) == 1
+    assert len(entries(cache_dir)) == 1
 
 
 def test_a_changed_source_is_expanded_again(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,10 +74,176 @@ def test_a_changed_source_is_expanded_again(cache_dir: Path, monkeypatch: pytest
     assert seen == ["m", "m"]
 
 
-def test_the_key_names_the_required_macro_module_by_its_digest() -> None:
-    digests = pe._required_macro_digests(SOURCE)
-    assert len(digests) == 1 and digests[0].startswith("doeff-hy.macros=")
-    assert not digests[0].endswith("=?")
+@dataclass(frozen=True)
+class TwoCheckouts:
+    """One module file written into two directories — the same file in two checkouts of one repo."""
+
+    first: Path
+    second: Path
+
+
+def written_file(directory: Path, name: str, text: str) -> Path:
+    """``directory/name`` holding ``text`` (the directory is made here)."""
+    directory.mkdir()
+    (directory / name).write_text(text, encoding="utf-8")
+    return directory / name
+
+
+def two_checkouts(tmp_path: Path, name: str, first: str, second: str) -> TwoCheckouts:
+    """Write ``first`` as ``checkout_a/<name>`` and ``second`` as ``checkout_b/<name>``."""
+    return TwoCheckouts(
+        first=written_file(tmp_path / "checkout_a", name, first),
+        second=written_file(tmp_path / "checkout_b", name, second),
+    )
+
+
+def compile_file(path: Path) -> "pe._WholeTree | pe._ChunkedTree":
+    """Expand the file as the reader does (``_module_source`` reads the text and passes its path)."""
+    return pe._compile_hy(path.read_text(encoding="utf-8"), str(path), "m")
+
+
+def test_the_same_source_in_another_directory_is_read_from_the_cache(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agora-redesign #3598: the key named the file's absolute path, so every new worktree expanded
+    every Hy module again although its source was the same (a closure test of the screen job: 120.7 s
+    cold, 5.9 s warm, 71 % of the cold samples in ``_expand_hy``). The tree depends on the source,
+    not on where it lies: the same source in another directory is read from the cache."""
+    seen = expansions(monkeypatch)
+    files = two_checkouts(tmp_path, "m.hy", SOURCE, SOURCE)
+    compile_file(files.first)
+    a_new_process()
+    read = compile_file(files.second)
+    assert seen == ["m"]
+    assert isinstance(read.tree, ast.Module)
+    assert len(entries(cache_dir)) == 1
+
+
+def test_one_changed_character_in_another_directory_is_expanded_again(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = expansions(monkeypatch)
+    files = two_checkouts(tmp_path, "m.hy", SOURCE, SOURCE.replace("42", "43"))
+    compile_file(files.first)
+    a_new_process()
+    compile_file(files.second)
+    assert seen == ["m", "m"]
+    assert len(entries(cache_dir)) == 2
+
+
+ASKING = """
+(require doeff-hy.macros [defk <-])
+(import doeff_core_effects.effects [Ask])
+
+(defk asks [conv]
+  {:pre [(: conv str)] :post [(: % str)]}
+  (<- who str (Ask "worker"))
+  (+ conv who))
+"""
+
+
+def analyzed_from(file: Path, monkeypatch: pytest.MonkeyPatch) -> pe.ProgramEffects:
+    """Import the module of ``file`` from its directory, as a process of that checkout does, and
+    analyze its ``asks`` in a new process's memory (only the disk cache is shared)."""
+    name = file.stem
+    monkeypatch.syspath_prepend(str(file.parent))
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(name)
+        assert module.__file__ == str(file)
+        a_new_process()
+        return pe.analyze_program(f"{name}:asks")
+    finally:
+        sys.modules.pop(name, None)
+        sys.path.remove(str(file.parent))
+
+
+def test_a_tree_read_from_the_cache_reports_the_path_it_was_read_for(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tree expanded for one checkout and read for another reports the other checkout's path: the
+    cached tree and its body facts hold no path, and the report takes the path of the module it
+    reads (``_ModuleSource.filename``)."""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")  # each checkout compiles its own module
+    seen = expansions(monkeypatch)
+    name = f"tree_cache_{uuid.uuid4().hex[:8]}"
+    files = two_checkouts(tmp_path, f"{name}.hy", ASKING, ASKING)
+    first = analyzed_from(files.first, monkeypatch)
+    second = analyzed_from(files.second, monkeypatch)
+    assert seen == [name]
+    assert [use.effect.__name__ for use in first.effects] == ["Ask"]
+    assert [use.effect.__name__ for use in second.effects] == ["Ask"]
+    assert {use.location.file for use in first.effects} == {str(files.first)}
+    assert {use.location.file for use in second.effects} == {str(files.second)}
+    assert str(files.first.parent) not in repr(second)
+
+
+TWICE = "(defmacro twice [x] `(* 2 ~x))\n"
+ANSWER = "(require {pkg}.b [twice])\n(defmacro answer [] (twice 21))\n"
+USES_ANSWER = "(require {pkg}.a [answer])\n(setv value (answer))\n"
+
+
+def macro_package(root: Path, package: str, twice: str) -> Path:
+    """A package in ``root``: ``m`` requires ``a``'s macro, which is written with ``b``'s macro."""
+    directory = root / package
+    directory.mkdir(parents=True)
+    (directory / "__init__.py").write_text("", encoding="utf-8")
+    (directory / "b.hy").write_text(twice, encoding="utf-8")
+    (directory / "a.hy").write_text(ANSWER.replace("{pkg}", package), encoding="utf-8")
+    (directory / "m.hy").write_text(USES_ANSWER.replace("{pkg}", package), encoding="utf-8")
+    return root
+
+
+def expanded_value(root: Path, package: str, monkeypatch: pytest.MonkeyPatch) -> object:
+    """Import ``m`` from ``root`` (and so its macro modules), expand it in a new process's memory,
+    and return the value ``value`` is set to in its tree."""
+    monkeypatch.syspath_prepend(str(root))
+    importlib.invalidate_caches()
+    try:
+        module = importlib.import_module(f"{package}.m")
+        path = Path(str(module.__file__))
+        a_new_process()
+        tree = pe._compile_hy(path.read_text(encoding="utf-8"), str(path), module.__name__).tree
+        return next(
+            node.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        )
+    finally:
+        for name in [name for name in sys.modules if name == package or name.startswith(f"{package}.")]:
+            sys.modules.pop(name)
+        sys.path.remove(str(root))
+
+
+def test_a_changed_macro_module_that_a_required_macro_module_requires_is_expanded_again(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agora-redesign #3598: without the path in the key, checkouts of different doeff versions share
+    entries, so the key must name every macro file the expansion used — not only the modules the
+    source requires itself. ``m`` requires ``a``; ``a``'s macro is written with ``b``'s; the two
+    checkouts differ only in one character of ``b``, and ``m`` is expanded again with it."""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")  # each checkout compiles its own modules
+    seen = expansions(monkeypatch)
+    package = f"tree_macros_{uuid.uuid4().hex[:8]}"
+    first = macro_package(tmp_path / "checkout_a", package, TWICE)
+    second = macro_package(tmp_path / "checkout_b", package, TWICE.replace("2", "3"))
+    values = [expanded_value(root, package, monkeypatch) for root in (first, second)]
+    assert seen == [f"{package}.m", f"{package}.m"]
+    assert values == [42, 63]
+
+
+def test_an_expansion_records_every_macro_file_it_went_through_by_its_digest() -> None:
+    """The source requires ``doeff-hy.macros``, which requires ``doeff-hy.handle`` in turn: both files
+    are in the record an entry is named by and read under (the record the import side keeps)."""
+    import doeff_hy.handle
+    import doeff_hy.macros
+    from doeff_hy_bytecode_guard import file_sha256
+    from doeff_hy_bytecode_guard.records import MacroDependency
+
+    record = pe._expand_hy(SOURCE, "/src/m.hy", "m").macros
+    for module in (doeff_hy.macros, doeff_hy.handle):
+        file = str(module.__file__)
+        assert MacroDependency(module.__name__, file, str(file_sha256(file))) in record.dependencies
 
 
 def test_off_turns_the_cache_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,7 +259,7 @@ def test_an_unreadable_cache_file_is_expanded_again_and_rewritten(
 ) -> None:
     seen = expansions(monkeypatch)
     pe._compile_hy(SOURCE, "/src/m.hy", "m")
-    (cached,) = cache_dir.glob("*.pickle")
+    (cached,) = entries(cache_dir)
     cached.write_bytes(b"not a pickle")
     tree = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m", "m"]
@@ -232,6 +408,25 @@ def as_the_older_reader_wrote(raw: bytes) -> bytes:
     return pickle.dumps(replace(chunk, body_facts=older_facts), protocol=pickle.HIGHEST_PROTOCOL)
 
 
+@dataclass(frozen=True)
+class StoredEntry:
+    """What one entry file holds, in its order: the record of the macro files, then the tree."""
+
+    macros: object
+    tree: object
+
+
+def read_entry(path: Path) -> StoredEntry:
+    with path.open("rb") as handle:
+        return StoredEntry(macros=pickle.load(handle), tree=pickle.load(handle))
+
+
+def write_entry(path: Path, entry: StoredEntry) -> None:
+    with path.open("wb") as handle:
+        pickle.dump(entry.macros, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(entry.tree, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
 def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """agora-redesign #2973: the body facts stored with a tree are built by the reader's code.
     #2973 changed ``_BodyFacts.rewraps`` from one first value per local to a tuple of them and
@@ -244,19 +439,21 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     reader = pe._reader_digest
     monkeypatch.setattr(pe, "_reader_digest", lambda: "reader=an older reader")
     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
-    (entry,) = cache_dir.glob("*.pickle")
-    stored = pickle.loads(entry.read_bytes())
-    assert isinstance(stored, pe._CachedTree)
-    older_chunks = tuple(as_the_older_reader_wrote(raw) for raw in stored.chunks)
-    entry.write_bytes(pickle.dumps(replace(stored, chunks=older_chunks), protocol=pickle.HIGHEST_PROTOCOL))
+    (entry,) = entries(cache_dir)
+    stored = read_entry(entry)
+    assert isinstance(stored.tree, pe._CachedTree)
+    older_chunks = tuple(as_the_older_reader_wrote(raw) for raw in stored.tree.chunks)
+    write_entry(entry, replace(stored, tree=replace(stored.tree, chunks=older_chunks)))
     a_new_process()
     monkeypatch.setattr(pe, "_reader_digest", reader)
     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
     assert seen == ["r", "r"]
-    path = pe._hy_cache_path(REWRAPPED, "/src/r.hy", "r")
-    assert path is not None
-    assert path != entry
-    written = pickle.loads(path.read_bytes())
+    place = pe._hy_cache_place(REWRAPPED, "r")
+    assert place is not None
+    assert place != entry.parent
+    (path,) = sorted(place.glob("*.pickle"))
+    written = read_entry(path).tree
+    assert isinstance(written, pe._CachedTree)
     rewraps = [facts.rewraps for raw in written.chunks for _, facts in pickle.loads(raw).body_facts]
     assert rewraps == [{"prog": rewraps[0]["prog"]}], rewraps
     assert isinstance(rewraps[0]["prog"], tuple), rewraps
