@@ -18,8 +18,9 @@
    立てる。revision = worker_model.code-key = 1 つの commit。前の木から引き継ぐ時の「変わった file」は前の木の名(版)と revision の
    git diff。前の木の版をこの repo で解けない時は引き継がずに全部を焼く — 引き継ぎは速さのためだけで、引き継げないことを準備の失敗に
    しない(set -e は if の条件の失敗を拾わない)。"
-  (val prepare-tool (+ f"PYTHONDONTWRITEBYTECODE=1 \"{hy-command}\" \"{tool}\" \"$T\" --revision \"{revision}\""
-                       f" --import-roots \"{(.roots-arg layout)}\""))
+  ;; 焼く木は 1 つ(--tree・--roots を 1 つずつ — 引き継ぐ時は --from と --changed も 1 つずつ・道具の引数の揃え方)。
+  (val prepare-tool (+ f"PYTHONDONTWRITEBYTECODE=1 \"{hy-command}\" \"{tool}\" --revision \"{revision}\""
+                       f" --tree \"$T\" --roots \"{(.roots-arg layout)}\""))
   (val previous-name (if (is previous None) None (get (.split (.rstrip previous "/") "/") -1)))
   (val prepare (cond
                  (not hy-command)

@@ -42,7 +42,7 @@
                                     EnvDisk] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys])
 (import doeff_cluster.worker.protocol.declared [task-spec])
-(import doeff_cluster.worker.entry.code_prepare [cpu-limit-of])
+(import doeff_cluster.worker.core.bake_plan [cpu-limit-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])
@@ -454,10 +454,10 @@
 ;; --- bytecode の焼き(#664 の実測から) -------------------------------------------------------------
 
 (deftest test-compile-parallelism-follows-the-cgroup-cpu-limit
-  (assert (= (cpu-limit-of "400000 100000\n" 16) 4) "pod の上限 4 CPU は node の 16 より優先")
-  (assert (= (cpu-limit-of "150000 100000\n" 16) 2) "端数は切り上げる")
-  (assert (= (cpu-limit-of "max 100000\n" 16) 16) "上限の無い cgroup は使える CPU の数")
-  (assert (= (cpu-limit-of None 3) 3) "cgroup の file が無ければ使える CPU の数"))
+  (assert (= (! (cpu-limit-of "400000 100000\n" 16)) 4) "pod の上限 4 CPU は node の 16 より優先")
+  (assert (= (! (cpu-limit-of "150000 100000\n" 16)) 2) "端数は切り上げる")
+  (assert (= (! (cpu-limit-of "max 100000\n" 16)) 16) "上限の無い cgroup は使える CPU の数")
+  (assert (= (! (cpu-limit-of None 3)) 3) "cgroup の file が無ければ使える CPU の数"))
 
 
 (deftest test-bytecode-entries-travel-in-the-declaration-but-not-in-the-key

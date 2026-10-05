@@ -76,11 +76,29 @@
   (#^ int downloaded))
 
 
+(defrecord BytecodeTree
+  "bytecode を焼く木 1 つ(CompileTrees の欄)。tree = repo の木の path・roots = 木の中の焼く根(宣言の import の根と、venv に editable で
+   入る dir)・carry-from = 引き継ぎ元の同じ repo の木か None・declared = 宣言の import の根を持つ repo の木か(その木の問題は env の失敗・
+   editable で入るだけの木の問題は記録だけ)。"
+  (#^ str tree)
+  (#^ tuple roots)
+  (#^ (| str None) carry-from)
+  (#^ bool declared))
+
+
+(defrecord TreeProblem
+  "1 回の焼きの、木 1 つの問題(tree = BytecodeTree の tree・detail = 焼く道具が言う理由 — その木には完成の印が無い)。"
+  (#^ str tree)
+  (#^ str detail))
+
+
 (defrecord BytecodeReport
-  "bytecode を作った結果。interpreter = 作った interpreter の path(root の venv の物であることを完成マーカーで読む)。"
+  "bytecode を作った結果。interpreter = 作った interpreter の path(root の venv の物であることを完成マーカーで読む)・compiled と
+   carried = 全部の木の合計・problems = 焼き終えたが検めの通らない木の TreeProblem の列(要求の木の順)。"
   (#^ str interpreter)
   (#^ int compiled)
-  (#^ int carried))
+  (#^ int carried)
+  (#^ tuple problems))
 
 
 (defrecord ProbeReport
@@ -195,15 +213,14 @@
   (#^ str root))
 
 
-(defclass [(dataclass :frozen True)] CompileTree [EffectBase]
-  "tree の bytecode を root の venv の interpreter で作る(project-dir = その venv の project・roots = tree の中の import の根・
-   carry-from = 引き継ぎ元の同じ repo のツリーか None・entries = 焼く範囲の入口の module(空 = 根の下を全部 — 宣言の
-   bytecode-entries))。答え = BytecodeReport か EnvFailure。"
+(defclass [(dataclass :frozen True)] CompileTrees [EffectBase]
+  "焼く根を持つ repo の木の全部の bytecode を、root の venv の interpreter で 1 回の焼きで作る(project-dir = その venv の project・
+   trees = BytecodeTree の列・entries = 焼く範囲の入口の module — 全部の木に共通で、import を木をまたいで辿った閉包だけを焼く・空 = 全部の
+   木の根の下を全部 — 宣言の bytecode-entries)。答え = BytecodeReport(木ごとの問題は problems)か EnvFailure(焼く道具そのものが
+   答えを返さなかった)。"
   (#^ str project-dir)
-  (#^ str tree)
-  (#^ tuple roots)
-  (#^ (| str None) carry-from)
-  (setv #^ tuple entries #()))
+  (#^ tuple trees)
+  (#^ tuple entries))
 
 
 (defclass [(dataclass :frozen True)] ProbeImports [EffectBase]

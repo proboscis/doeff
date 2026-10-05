@@ -14,15 +14,16 @@
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
-;;;   9 bytecode  ReadEditableRoots / CompileTree            root の venv の interpreter で作る(引き継ぎ元は lock と Python が同じ root の
-;;;                                                          うち近い版の物 — carry-source)。
+;;;   9 bytecode  ReadEditableRoots / CompileTrees           root の venv の interpreter で、焼く根を持つ repo の木の全部を 1 回で作る
+;;;                                                          (引き継ぎ元は lock と Python が同じ root のうち近い版の物 — carry-source)。
 ;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
+;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
 ;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。
 ;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で準備の停滞を見分ける — env_upkeep.prepare-overdue)。1 つが長い
-;;; bytecode の処理ステージは、repo の木 1 つを焼き終えるごとにも同じ名で出す(処理ステージの中でも進みが見える・#3515)。
+;;; bytecode の処理ステージは、1 回の焼きの前と後にも同じ名で出す(処理ステージの中でも進みが見える・#3515)。
 (require doeff-hy.macros [defk defeffect <- val var])
 (val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defenum defrecord])
@@ -33,7 +34,7 @@
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -275,37 +276,67 @@
 (val BYTECODE-STAGE "bytecode")   ; bytecode の処理ステージの名(計器・マーカー・進みの印)
 
 
-(defk stage-bytecode [request state]
-  {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "焼く根(宣言の import の根と、venv に editable で入る dir)を持つ repo ごとに、root の venv の interpreter で bytecode を作る
-   (worker の Hy で作ると macro の展開が違い得るため)。焼く範囲の入口(bytecode-entries)は宣言の根を持つ repo にだけ当てる —
-   editable で入るだけの依存の repo には入口の module が無く、閉包が空になるので、その根の下を全部焼く(repo の根を指す editable
-   — flat layout の package — も根の下を全部焼く: tests や docs も焼くが、冷えた root で 1 回だけ・以後は引き継ぐ)。
-   editable で入るだけの repo の bytecode は最適化(子は import の時に compile する)なので、焼けない(焼く物が無い・全部焼けない)
-   時は PrepareNote に記録して続ける。宣言の根を持つ repo の失敗は今までどおり env の失敗(展開の失敗を捕まえるため)。
-   repo の木 1 つを焼き終えるごとに進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。この処理ステージは
-   macro の file が変わると全部を焼き直し、負荷の高い時に 267.9 秒かかった(#3515)— 頭の印だけでは、進んでいる準備も worker から
-   停滞に見える。"
-  (<- pdir str (project-dir request.env request.root))
-  (<- editable tuple (ReadEditableRoots pdir request.root))
-  (var interpreter "")
-  (var failure None)
+(defk bytecode-trees [request editable]
+  {:pre [(: request PrepareRequest) (: editable tuple)] :post [(: % tuple)]}
+  "焼く根を持つ repo ごとの焼く木(BytecodeTree の列・宣言の repo の順)を作るため — 焼く根 = 宣言の import の根と venv に editable で
+   入る dir(bytecode-roots)・引き継ぎ元 = carry-source・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。"
+  (var trees #())
   (for [repo request.env.repos]
     (<- roots tuple (bytecode-roots request.env editable repo.name))
-    (<- declared tuple (repo-roots request.env repo.name))
-    (when (and roots (is failure None))
-      (<- carry (carry-source request.known request.env repo.name))
-      (<- report (| BytecodeReport EnvFailure)
-          (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry
-                       :entries (if declared request.env.bytecode-entries #())))
-      (<- (StageStarted BYTECODE-STAGE))
-      (match report
-        (EnvFailure) (if declared
-                         (:= failure report)
-                         (<- (PrepareNote (.format "editable で入るだけの repo {} の bytecode を焼けない(import の時に作られる): {}"
-                                                   repo.name report.detail))))
-        (BytecodeReport :interpreter used) (:= interpreter used))))
-  (if (is failure None) (replace state :interpreter interpreter) failure))
+    (when roots
+      (<- declared tuple (repo-roots request.env repo.name))
+      (<- carry (| str None) (carry-source request.known request.env repo.name))
+      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots :carry-from carry
+                                         :declared (bool declared)))))))
+  trees)
+
+
+(defk bytecode-outcome [trees report state]
+  {:pre [(: trees tuple) (: report (| BytecodeReport EnvFailure)) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
+  "1 回の焼きの答えを次の state か EnvFailure にするため: 宣言の根を持つ木の問題は env の失敗(展開の失敗を捕まえるため)、editable で
+   入るだけの木の問題は PrepareNote に記録して続ける(その bytecode は最適化 — 子は import の時に compile する)。焼く道具そのものが答えを
+   返さなかった時(EnvFailure)も、宣言の根を持つ木が在れば env の失敗、editable で入るだけの木しか無ければ記録して続ける。"
+  (val declared (frozenset (gfor t trees :if t.declared t.tree)))
+  (match report
+    (EnvFailure)
+      (if declared
+          report
+          (do (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
+                                        (.join " " (gfor t trees t.tree)) report.detail)))
+              state))
+    (BytecodeReport :interpreter used :problems problems)
+      (do (val fatal (tuple (gfor p problems :if (in p.tree declared) p)))
+          (if fatal
+              (do (<- failure EnvFailure
+                      (env-failure EnvFailureKind.ENV-INCOMPATIBLE
+                                   (.format "root の interpreter で bytecode を作れない: {}"
+                                            (.join "; " (gfor p fatal (.format "{}: {}" p.tree p.detail))))))
+                  failure)
+              (do (for [p problems]
+                    (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
+                                              p.tree p.detail))))
+                  (replace state :interpreter used))))))
+
+
+(defk stage-bytecode [request state]
+  {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
+  "焼く根(宣言の import の根と、venv に editable で入る dir)を持つ repo の木の全部を、root の venv の interpreter で 1 回の焼きで作る
+   (worker の Hy で作ると macro の展開が違い得るため)。木ごとに起こすと、木 1 つの終わりを待つ間ほかの core が遊ぶ — 焼く道具が全部の木の
+   焼く物を 1 つの pool に大きい順に渡す。焼く範囲の入口(bytecode-entries)は全部の木に共通で、import を木をまたいで辿った閉包だけを
+   焼く(業務の repo の module が import する依存の repo の module も入る — 入口が無ければ全部の木の根の下を全部焼く: repo の根を指す
+   editable — flat layout の package — は tests や docs も焼くが、冷えた root で 1 回だけ・以後は引き継ぐ)。木の問題の扱いは
+   bytecode-outcome。1 回の焼きの前と後に進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。この処理ステージは
+   macro の file が変わると全部を焼き直し、負荷の高い時に 267.9 秒かかった(#3515)。"
+  (<- pdir str (project-dir request.env request.root))
+  (<- editable tuple (ReadEditableRoots pdir request.root))
+  (<- trees tuple (bytecode-trees request editable))
+  (if (not trees)
+      state
+      (do (<- (StageStarted BYTECODE-STAGE))
+          (<- report (| BytecodeReport EnvFailure) (CompileTrees pdir trees request.env.bytecode-entries))
+          (<- (StageStarted BYTECODE-STAGE))
+          (<- outcome (| PrepareState EnvFailure) (bytecode-outcome trees report state))
+          outcome)))
 
 
 (defk stage-probe [request state]

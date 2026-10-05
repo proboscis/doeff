@@ -14,7 +14,7 @@
   (assert (= (get lines -1) "mv \"$T\" \"$F\"") lines)
   (assert (in (.format "test -f \"$T/{}\"" MARKER) script) script)
   (assert (in "git -C \"/repo\" archive --format=tar -o \"$T.tar\" \"rev9\"" script) script)
-  (assert (in "PYTHONDONTWRITEBYTECODE=1 \"/bin/hy\" \"/w/code_prepare.hy\" \"$T\" --revision \"rev9\" --import-roots \".\"" script) script))
+  (assert (in "PYTHONDONTWRITEBYTECODE=1 \"/bin/hy\" \"/w/code_prepare.hy\" --revision \"rev9\" --tree \"$T\" --roots \".\"" script) script))
 
 
 (deftest test-the-script-carries-the-previous-tree-and-falls-back-to-a-full-bake

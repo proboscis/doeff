@@ -40,7 +40,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])
+                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])
 
 (val DETAIL-CHARS 600)
 ;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。
@@ -54,7 +54,11 @@
 (val NETWORK-PATTERN (re.compile r"(?i)failed to fetch|error sending request|dns error|connection (?:refused|reset)|timed out|could not resolve|temporary failure|could not read from remote"))
 (val PYTHON-PATTERN (re.compile r"(?i)no interpreter found|failed to download .*python|python .*not found|no python"))
 (val PREPARED-PATTERN (re.compile r"Prepared (\d+) package"))
-(val COMPILED-PATTERN (re.compile r"carried=(\d+) compiled=(\d+)"))
+;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(頭が carried=… compiled=…・carry_s= を持つのは全体の行だけ)と、
+;; 木ごとの行(tree=<--tree の綴り> … problem=<文|->)。行の頭には slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。
+(val COMPILED-PATTERN (re.compile r"carried=(\d+) compiled=(\d+) failed=\d+ carry_s="))
+(val TREE-PATTERN (re.compile r"(?m)tree=(\S+) carried=\d+ compiled=\d+ failed=\d+ problem=(.*)$"))
+(val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
 ;; file system の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
 
@@ -428,6 +432,34 @@
   stat.real-path)
 
 
+(defk compile-argv [uv code-prepare project-dir trees entries]
+  {:pre [(: uv str) (: code-prepare str) (: project-dir str) (: trees tuple) (: entries tuple)] :post [(: % tuple)]}
+  "焼く道具(worker 自身の code の code_prepare.hy)を root の venv の hy で 1 回起こす命令を組むため: 木ごとに --tree・--roots・--from を
+   木の順に並べる(道具の揃え方 — --from は木ごとに 1 つ書き、引き継がない木は空文字)。entries は全部の木に共通。"
+  (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare "--revision" "env")
+     (if entries #("--entries" (.join "," entries)) #())
+     (tuple (gfor t trees a #("--tree" t.tree "--roots" (.join "," t.roots) "--from" (or t.carry-from "")) a))))
+
+
+(defk compile-answer [result trees project-dir]
+  {:pre [(: result CommandResult) (: trees tuple) (: project-dir str)] :post [(: % (| BytecodeReport EnvFailure))]}
+  "焼く道具の終わりと stderr を CompileTrees の答えにするため: 全体の報告の行が在り、終わりが 0(全部の木の検めが通った)か 1(検めの
+   通らない木が在る)なら BytecodeReport(木ごとの行の problem を TreeProblem に — 行の無い木も問題)。それ以外(起こせない・途中で落ちた・
+   使い方の誤り)は道具そのものの失敗の EnvFailure。"
+  (val total (.search COMPILED-PATTERN result.stderr))
+  (if (and total (in result.code #(0 1)))
+      (do (val said (tuple (gfor m (.finditer TREE-PATTERN result.stderr) #((.group m 1) (.strip (.group m 2))))))
+          (<- interpreter str (interpreter-of project-dir))
+          (BytecodeReport :interpreter interpreter :compiled (int (.group total 2)) :carried (int (.group total 1))
+                          :problems (tuple (gfor t trees
+                                                 :setv line (next (gfor s said :if (= (get s 0) t.tree) (get s 1)) None)
+                                                 :if (!= line "-")
+                                                 (TreeProblem :tree t.tree :detail (if (is line None) NO-TREE-LINE line))))))
+      (do (<- detail str (tail-of result))
+          (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+                      :detail (.format "root の interpreter で bytecode を作れない: {}" detail)))))
+
+
 (defk write-replacing [path text]
   {:pre [(: path str) (: text str)] :post [(: % None)]}
   "file を別名に書いてから置き換えるため(書きかけを読ませない)。"
@@ -560,22 +592,13 @@
         (do (<- found tuple (editable-dirs site root))
             (resume found))))
 
-  (CompileTree [project-dir tree roots carry-from entries]
+  (CompileTrees [project-dir trees entries]
+    ;; 焼く道具は全部の木を 1 回で焼く(cwd = project の dir — 木はどれも絶対 path で渡す)。
     (<- env tuple (uv-environment state-dir))
-    (val args (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare tree
-                   "--revision" "env" "--import-roots" (.join "," roots))
-                 (if (is carry-from None) #() #("--from" carry-from))
-                 (if entries #("--entries" (.join "," entries)) #())))
-    (<- result CommandResult (uv-command args tree (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
-    (if (= result.code 0)
-        (do (val found (.search COMPILED-PATTERN result.stderr))
-            (<- interpreter str (interpreter-of project-dir))
-            (resume (BytecodeReport :interpreter interpreter
-                                    :compiled (if found (int (.group found 2)) 0)
-                                    :carried (if found (int (.group found 1)) 0))))
-        (do (<- detail str (tail-of result))
-            (resume (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
-                                :detail (.format "root の interpreter で bytecode を作れない: {}" detail))))))
+    (<- args tuple (compile-argv uv code-prepare project-dir trees entries))
+    (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
+    (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees project-dir))
+    (resume compiled))
 
   (ProbeImports [project-dir roots]
     (<- env tuple (uv-environment state-dir))

@@ -44,7 +44,7 @@
     (.join ":" (+ (lfor root self.import-roots (if (= root ".") tree (+ tree "/" root))) (list self.base-paths))))
 
   (defn #^ str roots-arg [self]
-    "code_prepare の --import-roots の値。"
+    "code_prepare の木 1 つの --roots の値。"
     (.join "," self.import-roots)))
 
 

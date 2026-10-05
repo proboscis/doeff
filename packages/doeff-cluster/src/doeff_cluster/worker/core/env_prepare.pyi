@@ -24,6 +24,7 @@ from doeff_cluster.worker.intent.env_prepare_model import RepoMirror as RepoMirr
 from doeff_cluster.worker.intent.env_prepare_model import EnvMarker as EnvMarker
 from doeff_cluster.worker.intent.env_prepare_model import WheelReady as WheelReady
 from doeff_cluster.worker.intent.env_prepare_model import SyncReport as SyncReport
+from doeff_cluster.worker.intent.env_prepare_model import BytecodeTree as BytecodeTree
 from doeff_cluster.worker.intent.env_prepare_model import BytecodeReport as BytecodeReport
 from doeff_cluster.worker.intent.env_prepare_model import ProbeReport as ProbeReport
 from doeff_cluster.worker.intent.env_prepare_model import EnvReady as EnvReady
@@ -40,7 +41,7 @@ from doeff_cluster.worker.intent.env_prepare_model import SyncProject as SyncPro
 from doeff_cluster.worker.intent.env_prepare_model import InstallWheels as InstallWheels
 from doeff_cluster.worker.intent.env_prepare_model import WriteImportRoots as WriteImportRoots
 from doeff_cluster.worker.intent.env_prepare_model import ReadEditableRoots as ReadEditableRoots
-from doeff_cluster.worker.intent.env_prepare_model import CompileTree as CompileTree
+from doeff_cluster.worker.intent.env_prepare_model import CompileTrees as CompileTrees
 from doeff_cluster.worker.intent.env_prepare_model import ProbeImports as ProbeImports
 from doeff_cluster.worker.intent.env_prepare_model import WriteEnvMarker as WriteEnvMarker
 from doeff_cluster.shared.intent.env_marker_model import ENV_MARKER_FORMAT as ENV_MARKER_FORMAT
@@ -103,6 +104,12 @@ def stage_wheels(request: PrepareRequest, state: PrepareState) -> _Program[Prepa
 def stage_roots(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState, object]:
     ...
 BYTECODE_STAGE: str
+
+def bytecode_trees(request: PrepareRequest, editable: tuple) -> _Program[tuple, object]:
+    ...
+
+def bytecode_outcome(trees: tuple, report: BytecodeReport | EnvFailure, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:
+    ...
 
 def stage_bytecode(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:
     ...

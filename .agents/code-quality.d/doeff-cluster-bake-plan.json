@@ -1,0 +1,39 @@
+{
+  "dynamic_imports": [
+    {
+      "function": "module_at",
+      "path": "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy",
+      "reason": "bytecode の準備の道具は準備する root の venv の python で走るので、判断の module bake_plan.hy を package の名で import すると root の版の doeff の物になり、この module を持たない古い版の root で落ちる。道具の file の位置から求めた path で、package と重ならない名(doeff_cluster_worker_bake_plan)の module として読む(#3607 の H1)。"
+    }
+  ],
+  "module_extensions": {
+    "doeff-cluster-code-prepare": {
+      "allow": [
+        "doeff-cluster-bake-plan",
+        "doeff-cluster-bytecode-pool"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-bake-plan"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-code-plan"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-bake-plan",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
+      ],
+      "responsibility": "bytecode の準備の道具が全部の木を 1 回で焼く段取りの純粋な判断と record(命令の木ごとの引数の揃え・焼きの並列数・木をまたいだ import の閉包の歩み・焼く順・焼きの道具への受け渡しの行・報告の行)。I/O と効果を持たない。道具が path で読むので、import は版で変わらない部品(code_plan の module-name・imported-names)と標準 library だけ。層は依存先の code_plan の契約(io)に合わせる。",
+      "typed": true
+    }
+  ]
+}
