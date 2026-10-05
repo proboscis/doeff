@@ -19,7 +19,8 @@
 ;;; (GetMonotonic の差)だけで、本文・資格・env・argv は載せない。外側に時間の handler に加えて slog の答え手(本番 = doeff_core_effects の
 ;;; slog-handler・検 = slog-discard-handler)が要る。手番の終わりを上の層へ初めて渡した所でも 1 行出し(#3628)、その手番で CLI から
 ;;; 受けた本文の差分の行(text_delta)の数を載せる — 手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で
-;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。
+;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。本文の最初の差分を上の層へ初めて渡した所でも 1 行出し(#3696)、
+;;; init の次の行(実物では message_start)からその差分までの ms を載せる — モデルが考えた秒と、最初の文字が画面に出るまでの起点を割るため。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
@@ -64,13 +65,15 @@
 (defclass TurnLog []
   "1 つの手番の行と終わり(まだ終わっていなければ end は None)。launched-at = この手番で process を起こし始めた刻(GetMonotonic の
    読み — process を起こさずに続いた手番は None)・launched-wall = 同じ刻の壁の時刻(GetTime の読み — 読み手の thread が行に刻む at と
-   比べる)・reply-noted = init の後の最初の行の計時の行を出したか・end-noted = 手番の終わりの計時の行を出したか(頭の註の計時の行)。"
+   比べる)・reply-noted = init の後の最初の行の計時の行を出したか・text-noted = 本文の最初の差分の計時の行を出したか・end-noted = 手番の
+   終わりの計時の行を出したか(頭の註の計時の行)。"
   (defn __init__ [self]
     (setv #^ (get list ClaudeStreamLine) self.lines [])
     (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
     (setv #^ (| float None) self.launched-at None)
     (setv #^ (| datetime None) self.launched-wall None)
     (setv #^ bool self.reply-noted False)
+    (setv #^ bool self.text-noted False)
     (setv #^ bool self.end-noted False)))
 
 (defclass Binding []
@@ -432,6 +435,54 @@
             :line-at-ms line-at-ms :kind (. (type reply.kind) __name__) :session-id turn.session-id :turn-seq turn.turn-seq))
   None)
 
+(defrecord FirstTextLines
+  "本文の最初の差分の計時の行の材料: text = 本文の最初の差分の行・reply = init の行の次の行(first-reply の行 — 実物では message_start・
+   無ければ None)。2 つの行を読み手の thread が読んだ刻の差がモデルの考えた秒になる。"
+  (#^ ClaudeStreamLine text)
+  (#^ (| ClaudeStreamLine None) reply))
+
+(defk claimed-first-text [runtime log next-seq]
+  {:pre [(: runtime SessionRuntime) (: log TurnLog) (: next-seq int)]
+   :post [(: % (| FirstTextLines None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "手番の本文の最初の差分の行(text_delta の本文を持つ PartialMessage)が、上の層へ渡す頁の範囲(next-seq まで)に初めて入った時に、
+   その行と init の行の次の行の組を 1 度だけ取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。起点の刻の無い手番
+   (launched-at が None)は取り出さない。"
+  (with [runtime.lock]
+    (when (or (is log.launched-at None) log.text-noted)
+      (return None))
+    (val lines (tuple log.lines))
+    (val text (next (gfor line lines :if (and (isinstance line.kind PartialMessage) line.kind.text-delta) line) None))
+    (when (or (is text None) (> text.seq next-seq))
+      (return None))
+    (val init-index (next (gfor #(index line) (enumerate lines) :if (isinstance line.kind Init) index) None))
+    (val reply (if (and (is-not init-index None) (< (+ init-index 1) (len lines))) (get lines (+ init-index 1)) None))
+    (setv log.text-noted True)
+    (FirstTextLines :text text :reply reply)))
+
+(defk note-first-text [runtime turn page]
+  {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "本文の最初の差分を上の層へ初めて渡した所の計時の行を出すため(手番ごとに 1 度だけ・起こした手番と使い回しの手番の両方 — #3696)。
+   since-launch-ms = 手番の起点(process を起こし始めた刻か、使い回しなら入力を書いた刻)から渡すまで・line-at-ms = 読み手の thread が
+   その差分の行を読んだ壁の時刻・after-first-reply-ms = init の次の行(実物では message_start)を読んでからその差分の行を読むまで
+   (モデルが考えた秒 — init の次の行が無ければ None)。差分の本文は載せない。"
+  (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
+  (when (is log None)
+    (return None))
+  (<- claimed (claimed-first-text runtime log page.next-seq))
+  (when (is claimed None)
+    (return None))
+  (<- now (GetMonotonic))
+  (<- at (GetTime))
+  (<- wall-ms (epoch-ms-of at))
+  (<- since-launch-ms (elapsed-ms log.launched-at now))
+  (<- line-at-ms (epoch-ms-of claimed.text.at))
+  (<- after-first-reply-ms (wall-elapsed-ms (if (is claimed.reply None) None claimed.reply.at) claimed.text.at))
+  (<- (slog CLI-TIMING-LOG :level "info" :event "first-text" :wall-ms wall-ms :since-launch-ms since-launch-ms
+            :line-at-ms line-at-ms :after-first-reply-ms after-first-reply-ms :session-id turn.session-id :turn-seq turn.turn-seq))
+  None)
+
 (defk wall-elapsed-ms [since until]
   {:pre [(: since (| datetime None)) (: until (| datetime None))] :post [(: % (| int None))]
    :tags {:context "claude-code" :role "foundation"}}
@@ -776,6 +827,7 @@
   (setv page (page-of runtime turn request.after-seq))
   (when (is-not page None)
     (<- (note-first-reply runtime turn page))
+    (<- (note-first-text runtime turn page))
     (<- (note-turn-end runtime turn page)))
   (if (is page None) (UnknownTurn turn) page))
 
