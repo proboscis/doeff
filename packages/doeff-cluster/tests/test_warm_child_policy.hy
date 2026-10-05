@@ -6,7 +6,7 @@
 (import json)
 (import dataclasses [replace])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StopProgress
-  StartJob SignalJob WarmEnv WarmChildMark WarmChildView StartWarmChild StopWarmChild ForgetWarmChild]
+  StartJob SignalJob WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
         doeff_cluster.shared.intent.job_model [JobSpec JobPhase]
         doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv]
         doeff_cluster.shared.core.runtime_env_rules [runtime-env->json]
@@ -26,6 +26,8 @@
 (val ROOT-B "/roots/env-b")
 (val CLEAN (WarmChildMark :threads 1 :vm-live #(0 0 0)))
 (val PRELOAD #("app.jobs" "app.models"))
+;; root A の待ちの子の起こし方(宣言の project は repo app の根 — env_fixtures の env-of)。
+(val LAUNCH-A (WarmLaunch :root ROOT-A :project (+ ROOT-A "/app") :preload PRELOAD))
 
 
 (defk task-on [name key [entries PRELOAD] [once True]]
@@ -38,7 +40,7 @@
 
 
 (defk child [key [mark CLEAN] [exit-code None] [ended-ms None] [stop None] [detail ""]]
-  {:pre [(: key str) (: mark (| WarmChildMark None)) (: exit-code (| int None)) (: ended-ms (| int None)) (: stop (| StopProgress None))
+  {:pre [(: key str) (: mark (| WarmChildMark WarmMarkUnreadable None)) (: exit-code (| int None)) (: ended-ms (| int None)) (: stop (| StopProgress None))
          (: detail str)]
    :post [(: % WarmChildView)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "root のキー key の待ちの子の観測を組むため(既定 = 走っていて、印が分かれる前の形)。"
@@ -70,20 +72,22 @@
   (val bad-vm (WarmChildMark :threads 1 :vm-live #(1 0 0)))
   (val rows
     #(;; 要る root
-      #("要る・無い → 起こす" ROOT-A None #((StartWarmChild KEY-A ROOT-A PRELOAD)))
-      #("要る・起こし中(印なし)→ 待つ" ROOT-A (! (child KEY-A :mark None)) #())
-      #("要る・準備済み → 何もしない" ROOT-A (! (child KEY-A)) #())
-      #("要る・印の thread が 2 → 止める" ROOT-A (! (child KEY-A :mark bad-threads))
+      #("要る・無い → 起こす" LAUNCH-A None #((StartWarmChild KEY-A LAUNCH-A)))
+      #("要る・起こし中(印なし)→ 待つ" LAUNCH-A (! (child KEY-A :mark None)) #())
+      #("要る・準備済み → 何もしない" LAUNCH-A (! (child KEY-A)) #())
+      #("要る・印の thread が 2 → 止める" LAUNCH-A (! (child KEY-A :mark bad-threads))
         #((StopWarmChild KEY-A StopStage.TERM "準備完了の印が分かれる前の形でない(threads=2 vmLive=[0, 0, 0])")))
-      #("要る・印の VM が生きている → 止める" ROOT-A (! (child KEY-A :mark bad-vm))
+      #("要る・印の VM が生きている → 止める" LAUNCH-A (! (child KEY-A :mark bad-vm))
         #((StopWarmChild KEY-A StopStage.TERM "準備完了の印が分かれる前の形でない(threads=1 vmLive=[1, 0, 0])")))
-      #("要る・終わったばかり → 待つ" ROOT-A (! (child KEY-A :exit-code 3 :ended-ms (- NOW 1))) #())
-      #("要る・終わって間が過ぎた → 起こし直す" ROOT-A (! (child KEY-A :exit-code 3 :ended-ms (- NOW 30000)))
-        #((StartWarmChild KEY-A ROOT-A PRELOAD)))
-      #("要る・止めの合図の後・猶予の内 → 待つ" ROOT-A (! (child KEY-A :stop term-now)) #())
-      #("要る・止めの合図の後・猶予を過ぎた → KILL" ROOT-A (! (child KEY-A :stop term-old))
+      #("要る・印が読めない → 止める" LAUNCH-A (! (child KEY-A :mark (WarmMarkUnreadable :detail "JSON でない: JSONDecodeError")))
+        #((StopWarmChild KEY-A StopStage.TERM "準備完了の印が読めない: JSON でない: JSONDecodeError")))
+      #("要る・終わったばかり → 待つ" LAUNCH-A (! (child KEY-A :exit-code 3 :ended-ms (- NOW 1))) #())
+      #("要る・終わって間が過ぎた → 起こし直す" LAUNCH-A (! (child KEY-A :exit-code 3 :ended-ms (- NOW 30000)))
+        #((StartWarmChild KEY-A LAUNCH-A)))
+      #("要る・止めの合図の後・猶予の内 → 待つ" LAUNCH-A (! (child KEY-A :stop term-now)) #())
+      #("要る・止めの合図の後・猶予を過ぎた → KILL" LAUNCH-A (! (child KEY-A :stop term-old))
         #((StopWarmChild KEY-A StopStage.KILL "止めの合図の後も終わらない")))
-      #("要る・KILL の後 → 待つ" ROOT-A (! (child KEY-A :stop killed)) #())
+      #("要る・KILL の後 → 待つ" LAUNCH-A (! (child KEY-A :stop killed)) #())
       ;; 要らない root(分かれる task も温める表も無い・root が READY でない)
       #("要らない・無い → 何もしない" None None #())
       #("要らない・走っている → 止める" None (! (child KEY-A))
@@ -93,7 +97,7 @@
       #("要らない・止めの合図の後・猶予の内 → 待つ" None (! (child KEY-A :stop term-now)) #())
       #("要らない・終わった → 観測から外す" None (! (child KEY-A :exit-code 0 :ended-ms (- NOW 1))) #((ForgetWarmChild KEY-A)))))
   (for [#(label root view expected) rows]
-    (<- got tuple (warm-child-step NOW KEY-A root view PRELOAD POLICY))
+    (<- got tuple (warm-child-step NOW KEY-A root view POLICY))
     (assert (= got expected) (.format "{}: {}" label got))))
 
 
@@ -110,7 +114,7 @@
   (<- both WorldView (world :children #((! (child KEY-A)) (! (child KEY-B)))))
   (<- preparing WorldView (world :codes #((CodeView KEY-A CodeState.PREPARING))))
   (val rows
-    #(#("待ちの子が無い → 待ちの子を起こし、task は起こさない" #(ta) bare #((StartWarmChild KEY-A ROOT-A PRELOAD)))
+    #(#("待ちの子が無い → 待ちの子を起こし、task は起こさない" #(ta) bare #((StartWarmChild KEY-A LAUNCH-A)))
       #("起こし中 → 何もしない" #(ta) starting #())
       #("準備済み → 自分の root の待ちの子から分ける" #(ta) ready #((StartJob ta 1 ROOT-A :warm-key KEY-A)))
       #("印に VM → 起こさずに待ちの子を止める" #(ta) dirty
@@ -131,7 +135,7 @@
   (<- ta JobSpec (task-on "ta" KEY-A :entries #("app.warm")))
   (val warm #((WarmEnv KEY-A ta.runtime-env)))
   (<- got tuple (warm-child-actions NOW #() (! (world)) warm POLICY))
-  (assert (= got #((StartWarmChild KEY-A ROOT-A #("app.warm"))))))
+  (assert (= got #((StartWarmChild KEY-A (WarmLaunch :root ROOT-A :project (+ ROOT-A "/app") :preload #("app.warm")))))))
 
 
 (deftest test-a-task-waiting-for-its-warm-child-is-preparing-with-the-reason

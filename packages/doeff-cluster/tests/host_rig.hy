@@ -32,7 +32,7 @@
   (HostSettings :log-dir (str (/ state "logs")) :jobs-dir (str (/ state "jobs")) :program-dir (str (/ state "programs"))
                 :python sys.executable :hy-command hy-command :uv uv
                 :extra-env (tuple (gfor k (sorted extra-env) (EnvEntry :name k :value (get extra-env k))))
-                :layout layout :program-env HOST-CONTRACT.program-env :shim shim))
+                :layout layout :program-env HOST-CONTRACT.program-env :shim shim :warm-dir (str (/ state "warm"))))
 
 
 (defk launched [settings spec code-path instance attempt]

@@ -24,6 +24,8 @@
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
+(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmRefused WarmRunning WarmExited WarmLost])
+(import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
 
 
 (defrecord HostSettings
@@ -41,7 +43,23 @@
   (#^ (get tuple #(EnvEntry ...)) extra-env)
   (#^ CodeLayout layout)
   (#^ str program-env)
-  (#^ ShimSpans shim))
+  (#^ ShimSpans shim)
+  ;; 待ちの子の置き場の根(#3646 — warm_rules.warm-dir-of・待ちの子を起こす宿 warm_host と同じ値)。task を分ける頼みの socket を root の
+  ;; キーから導く(warm_rules.warm-place)。
+  (#^ str warm-dir))
+
+
+(defrecord ForkedFrom
+  "待ちの子から分けて起こした子の印(#3646): start-ticks = 分かれた子 A の /proc の起動の刻(pid の使い回しを見分ける)・exit-path = A が
+   終了コードを書く file。観測・止め・回収は pid とこの印で問う(汎用の子 process の効果ではなく、待ちの子の効果)。"
+  (#^ int start-ticks)
+  (#^ str exit-path))
+
+
+(defrecord Started
+  "StartJob で起こした子: view = 観測・fork = 待ちの子から分けた子の印(入れ物 shim で起こした子は None)。"
+  (#^ ProcessView view)
+  (#^ (| ForkedFrom None) fork))
 
 
 (defk job-work-dir [settings name]
@@ -58,9 +76,11 @@
 
 
 (defk start-job [settings action]
-  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % ProcessView)] :tags {:context "worker" :role "protocol" :spells "env"}}
+  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % Started)] :tags {:context "worker" :role "protocol" :spells "env"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
-   作ってから、shim の下の子を専用の group に起こす。起こした子の観測(ProcessView)を返す。起こせなければ OSError(前の Popen と同じ)。"
+   作ってから起こす。道は判断が決めた欄のとおり(黙って別の道へ倒れない): warm-key の在る task は、その root の待ちの子へ頼んで分ける
+   (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と env と入口の後ろの引数は shim の道と同じ job-launch の値)、
+   それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ OSError(前の Popen と同じ)。"
   (val spec action.spec)
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- facts (ReadInterpreter))
@@ -83,61 +103,92 @@
   (when plan.work-dir
     (<- (RemoveTree plan.work-dir))  ; 無い dir の断りは捨てる(前の job の作業 dir が在れば消す)
     (<- (file-done (MakeDirectory plan.work-dir))))
-  (val log (.format "{}/{}.{}.log" settings.log-dir (.replace spec.name "/" "_") action.attempt))  ; task の名前は task/<id>
-  (<- answer (StartProcess :argv plan.argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
-                           :process-group True :hold-stdin True :reap-group True))
-  (when (isinstance answer ProcessNotStarted)
-    (raise (OSError answer.detail)))
+  (val stem (.format "{}/{}.{}" settings.log-dir (.replace spec.name "/" "_") action.attempt))  ; task の名前は task/<id>
+  (val log (+ stem ".log"))
+  (var started None)
+  (if (is-not action.warm-key None)
+      (do (<- place WarmPlace (warm-place settings.warm-dir action.warm-key))
+          (val exit-path (+ stem ".exit"))
+          (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.env
+                                   :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)))
+          (when (isinstance forked WarmRefused)
+            (raise (OSError (+ "待ちの子が分けるのを断った: " forked.detail))))
+          (:= started (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
+                               :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path))))
+      (do (<- answer (StartProcess :argv plan.argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
+                                   :process-group True :hold-stdin True :reap-group True))
+          (when (isinstance answer ProcessNotStarted)
+            (raise (OSError answer.detail)))
+          (:= started (Started :view (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance) :fork None))))
   ;; 起こした job の記録(新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走ることを worker の記録で示すため):
-  ;; job の名・版・木の path・子の pid・worker の pid を 1 行。env と引数の値は書かない(資格を運びうる)。
-  (<- (slog (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={}"
-                     spec.name spec.revision action.code-path answer.pid facts.pid)))
-  (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance))
+  ;; job の名・版・木の path・子の pid・worker の pid・道(shim か待ちの子か)を 1 行。env と引数の値は書かない(資格を運びうる)。
+  (<- (slog (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={} via={}"
+                     spec.name spec.revision action.code-path started.view.pid facts.pid
+                     (if (is action.warm-key None) "shim" (+ "warm:" action.warm-key)))))
+  started)
 
 
 (defhandler process-host [#^ HostSettings settings]
   ;; 引数に残す理由: 置き場の dir と起こし方は worker の process ごとの設定(main が引数から作る)。
-  ;; 起こした子の表(job の名 → ProcessView — 終わりを観測した子は exit-code を持つ)。
+  ;; 起こした子の表(job の名 → Started — 観測と、待ちの子から分けた子の印。終わりを観測した子の観測は exit-code を持つ)。
   (session var table {})
-  (StartJob [spec attempt code-path]
+  (StartJob [spec attempt code-path warm-key]
     (when (in spec.name table) (raise (RuntimeError f"{spec.name} は既に動いています")))
-    (<- view ProcessView (start-job settings (StartJob spec attempt code-path)))
-    (:= table (| table {spec.name view}))
+    (<- begun Started (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
+    (:= table (| table {spec.name begun}))
     (resume None))
   (SignalJob [name pid stage]
-    ;; 孫 process まで届くよう process group へ送る(group で起こした子 — SignalProcess は立てた時の表で group へ送る)。
-    (<- (SignalProcess :pid pid :signal (if (= stage StopStage.TERM) ProcessSignal.TERM ProcessSignal.KILL)))
+    ;; 孫 process まで届くよう process group へ送る(group で起こした子 — SignalProcess は立てた時の表で group へ送る)。待ちの子から
+    ;; 分けた子は、分けた子 A(group の先頭)へ起動の刻を照らしてから送る(使い回された pid へ送らない)。
+    (val started (.get table name))
+    (val signal (if (= stage StopStage.TERM) ProcessSignal.TERM ProcessSignal.KILL))
+    (if (and started (is-not started.fork None) (= started.view.pid pid))
+        (<- (SignalWarmChild :pid pid :start-ticks started.fork.start-ticks :signal signal))
+        (<- (SignalProcess :pid pid :signal signal)))
     (resume None))
   (ReapJob [name pid outcome exit-code]
-    (val view (.get table name))
-    (when (and view (= view.pid pid))
+    (val started (.get table name))
+    (when (and started (= started.view.pid pid))
       ;; 終わりを観測していない子(止め切れていない)は、止めて回収する(group の残りも — reap-group)。観測した子は回収の時に
       ;; group の残りを止め、標準入力の pipe を閉じている。止めの合図から shim の期限(shim の猶予 + 掃除の余裕)まで待ってから
       ;; group へ KILL を送る — shim が job の子孫を片づけ終える前に shim を殺さない(#2940)。拍の判断(policy の plan-job)は終わりを
-      ;; 観測した子にだけ ReapJob を出すので、本番の拍はこの枝を通らない(通るのは終わりを待たずに回収する呼び手だけ)。
-      (when (is view.exit-code None)
-        (<- deadline int (shim-deadline-ms settings.shim))
-        (<- (StopProcess :pid pid :stop-grace (/ deadline 1000))))
+      ;; 観測した子にだけ ReapJob を出すので、本番の拍はこの枝を通らない(通るのは終わりを待たずに回収する呼び手だけ)。待ちの子から
+      ;; 分けた子は、分けた子 A が shim と同じ見張りで子孫を片づけるので、group へ KILL を送るだけ(終わりは exit の file が残す)。
+      (when (is started.view.exit-code None)
+        (if (is-not started.fork None)
+            (<- (SignalWarmChild :pid pid :start-ticks started.fork.start-ticks :signal ProcessSignal.KILL))
+            (do (<- deadline int (shim-deadline-ms settings.shim))
+                (<- (StopProcess :pid pid :stop-grace (/ deadline 1000))))))
       ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に消す。
-      (when view.spec.runtime-env
+      (when started.view.spec.runtime-env
         (<- work str (job-work-dir settings name))
         (<- (RemoveTree work)))
       (:= table (dfor #(k v) (.items table) :if (!= k name) k v)))
     (resume None))
   (RetireJob [name pid new-name]
     ;; 入れ替え: 動いている process を止めずに名から外す(表の鍵と観測の名を new-name へ移す)。同じ名で新しい process を起こせる。
-    (val view (.get table name))
-    (when (and view (= view.pid pid))
+    (val started (.get table name))
+    (when (and started (= started.view.pid pid))
       (:= table (| (dfor #(k v) (.items table) :if (!= k name) k v)
-                   {new-name (replace view :name new-name :retired-from name)})))
+                   {new-name (replace started :view (replace started.view :name new-name :retired-from name))})))
     (resume None))
   (ObserveProcesses []
-    ;; 終わりを観測していない子だけを問う(終わりを答えた子は答え手が回収して忘れるので、ここに exit-code を残す)。
+    ;; 終わりを観測していない子だけを問う(終わりを答えた子は答え手が回収して忘れるので、ここに exit-code を残す)。待ちの子から分けた子は
+    ;; 起動の刻と exit の file で問う(A の終わり = exit の file の値・印の無い終わりは -1)。
     (var seen {})
-    (for [#(name view) (.items table)]
-      (if (is-not view.exit-code None)
-          (setv (get seen name) view)
-          (do (<- polled (PollProcess view.pid))
-              (setv (get seen name) (if (isinstance polled ProcessExited) (replace view :exit-code polled.exit-code) view)))))
+    (for [#(name started) (.items table)]
+      (cond
+        (is-not started.view.exit-code None) (setv (get seen name) started)
+        (is-not started.fork None)
+          (do (<- polled (PollWarmChild :pid started.view.pid :start-ticks started.fork.start-ticks :exit-path started.fork.exit-path))
+              (setv (get seen name) (match polled
+                                      (WarmExited) (replace started :view (replace started.view :exit-code polled.exit-code))
+                                      (WarmLost) (replace started :view (replace started.view :exit-code -1))
+                                      (WarmRunning) started)))
+        True
+          (do (<- polled (PollProcess started.view.pid))
+              (setv (get seen name) (if (isinstance polled ProcessExited)
+                                        (replace started :view (replace started.view :exit-code polled.exit-code))
+                                        started)))))
     (:= table seen)
-    (resume (tuple (.values seen)))))
+    (resume (tuple (gfor started (.values seen) started.view)))))

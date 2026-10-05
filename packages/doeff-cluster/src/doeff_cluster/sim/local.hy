@@ -206,7 +206,8 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
-                       ReleaseLeases EnvReport AwaitNextTick StopStage] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+                       ReleaseLeases EnvReport AwaitNextTick StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
+                       ForgetWarmChild] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 
 ;; load-state は置き場がまだ無い時だけ以前の形の file を探す。sim は置き場(MemoryWalStore)が在る時だけ load-state を呼ぶので読まれない。
 (val NO-STATE-FILE "/nonexistent/doeff-sim/coordinator/state.json")
@@ -640,7 +641,10 @@
   (setv #^ int keep-fence-ms (. (ClusterTiming) keep-fence-ms))
   (setv #^ bool sent-stopping False)
   (setv #^ (| RestBell None) rest-bell None)
-  (setv #^ int rest-reach FIRST-REST-BEATS))
+  (setv #^ int rest-reach FIRST-REST-BEATS)
+  ;; root ごとの待ちの子の観測(#3646 — WarmChildView の列)。模擬の待ちの子は読み込みの秒を持たず、起こした刻に準備済み(印は分かれる前の
+  ;; 形)で、分かれる task は今までどおり世界の task として走る(fork の代役は Spawn)。
+  (setv #^ tuple warm-children #()))
 
 
 (defrecord HostTruthChange
@@ -1006,9 +1010,9 @@
 
 (defk view-of [truth now]
   {:pre [(: truth HostTruth) (: now int)] :post [(: % WorldView)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "宿の真実 → worker の観測(準備・子 process・入口の検め)にするため。"
+  "宿の真実 → worker の観測(準備・子 process・入口の検め・待ちの子)にするため。"
   (<- codes tuple (codes-view truth.codes now))
-  (WorldView codes truth.processes (tuple (.values truth.probes))))
+  (WorldView codes truth.processes (tuple (.values truth.probes)) :warm-children truth.warm-children))
 
 
 (defk run-context-of [worker spec attempt instance]
@@ -2051,6 +2055,30 @@
     (resume None))
   (ForgetProbes [keep]
     (<- (change-live-truth worker.name boot (fn [truth] (replace truth :probes (dfor #(k v) (.items truth.probes) :if (in k keep) k v)))))
+    (resume None))
+  ;; 待ちの子(#3646)の代役: 起こした刻に準備済み(模擬に読み込みの秒も thread も VM も無い)・止めは合図の刻に終わる(TERM = -15・
+  ;; KILL = -9)・忘れると観測から外す。分かれた task は待ちの子と別に走る(本番の A が別の session なのと同じ — 止めても task に触れない)。
+  (StartWarmChild [key launch]
+    (<- now int (now-epoch-ms))
+    (<- pid int (NextPid))
+    (val started (WarmChildView :key key :pid pid :started-ms now :mark (WarmChildMark :threads 1 :vm-live #(0 0 0))))
+    (<- (change-live-truth worker.name boot
+                           (fn [truth] (replace truth :warm-children (+ (tuple (gfor v truth.warm-children :if (!= v.key key) v)) #(started))))))
+    (resume None))
+  (StopWarmChild [key stage reason]
+    (<- now int (now-epoch-ms))
+    (val code (if (= stage StopStage.TERM) -15 -9))
+    (<- (change-live-truth worker.name boot
+                           (fn [truth] (replace truth :warm-children
+                                                (tuple (gfor v truth.warm-children
+                                                             (if (and (= v.key key) (is v.exit-code None))
+                                                                 (replace v :exit-code code :ended-ms now :detail reason
+                                                                          :stop (StopProgress now stage now))
+                                                                 v)))))))
+    (resume None))
+  (ForgetWarmChild [key]
+    (<- (change-live-truth worker.name boot
+                           (fn [truth] (replace truth :warm-children (tuple (gfor v truth.warm-children :if (!= v.key key) v))))))
     (resume None))
   (StartJob [spec attempt code-path]
     (<- truth HostTruth (live-truth worker.name boot))

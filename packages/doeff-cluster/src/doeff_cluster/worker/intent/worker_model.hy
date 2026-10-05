@@ -161,6 +161,20 @@
   (#^ tuple vm-live))
 
 
+(defrecord WarmMarkUnreadable
+  "準備完了の印の file は在るが、印の形に読めない(detail = 読めない訳)。入口は印を置き換えで書くので起きないはずの形 — 準備済みに
+   数えず、待ちの子を止める(黙って「起こし中」のまま待たない)。"
+  (#^ str detail))
+
+
+(defrecord WarmLaunch
+  "要る root の待ちの子の起こし方(判断の層が宣言から決める): root = READY の root の path・project = uv の --project(task の子と同じ規則
+   launch.env-project-dir)・preload = 起動で読み込む module の名(名の順)。"
+  (#^ str root)
+  (#^ str project)
+  (#^ tuple preload))
+
+
 (defrecord WarmChildView
   "root ごとの待ちの子 1 つの観測。key = root のキー(env-<キー>)・pid = 待ちの子の process・started-ms = 起こした刻・mark = 準備完了の印
    (まだ書いていなければ None)・exit-code = 終わりを観測した code(走っていれば None)・ended-ms = 終わりを観測した刻・detail = 終わりの理由
@@ -168,7 +182,7 @@
   (#^ str key)
   (#^ int pid)
   (#^ int started-ms)
-  (setv #^ (| WarmChildMark None) mark None)
+  (setv #^ (| WarmChildMark WarmMarkUnreadable None) mark None)
   (setv #^ (| int None) exit-code None)
   (setv #^ (| int None) ended-ms None)
   (setv #^ str detail "")
@@ -363,11 +377,10 @@
   (#^ str instance))
 
 (defclass [(dataclass :frozen True)] StartWarmChild [EffectBase]
-  "root の待ちの子を起こし始める(#3646): key = root のキー・root = READY の root の path・preload = 起動で読み込む module の名(名の順)。
-   終わった前の待ちの子が観測に残っていれば置き換える。準備完了は ObserveWorld の WarmChildView の印で観測する。"
+  "root の待ちの子を起こし始める(#3646): key = root のキー・launch = 起こし方(root・uv の --project・起動で読む module)。終わった前の
+   待ちの子が観測に残っていれば置き換える。準備完了は ObserveWorld の WarmChildView の印で観測する。"
   (#^ str key)
-  (#^ str root)
-  (#^ tuple preload))
+  (#^ WarmLaunch launch))
 
 
 (defclass [(dataclass :frozen True)] StopWarmChild [EffectBase]

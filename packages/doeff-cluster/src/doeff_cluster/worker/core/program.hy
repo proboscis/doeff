@@ -10,6 +10,10 @@
   ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
 
+;; 拍の action の後に、同じ拍のうちに揃いを追う回数の上限(#2719・#3646): 1 回目 = 木が揃った job と root の待ちの子の起こし・2 回目 =
+;; 起こした刻に揃った待ちの子から分ける task。揃いの連なりはこれより長くならない(3 回目に進める物の形が無い)。
+(val FOLLOWUP-ROUNDS 2)
+
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None))
@@ -34,12 +38,16 @@
   (when actions
     (<- observed WorldView (ObserveWorld))
     (:= after observed)
-    ;; この拍の準備で木が揃った job は、同じ拍のうちに起こす(最初の task が拍 1 つ待たない — #2719)。
-    (<- followups tuple (ready-followups now desired world after records policy))
-    (for [action followups] (<- action))
-    (<- followed dict (records-after now records followups policy))
-    (:= records followed)
-    (when followups
+    ;; この拍の準備で揃った物は、同じ拍のうちに進める(最初の task が拍 1 つ待たない — #2719)。揃いは 2 段まで続けて追う: 木が揃って
+    ;; 待ちの子を起こし、その待ちの子が揃って task を分ける(#3646 — 起こした刻に揃う宿の時だけ 2 段目が在る)。
+    (var before world)
+    (for [_ (range FOLLOWUP-ROUNDS)]
+      (<- followups tuple (ready-followups now desired before after records policy :warm warm))
+      (when (not followups) (break))
+      (for [action followups] (<- action))
+      (<- followed dict (records-after now records followups policy))
+      (:= records followed)
+      (:= before after)
       (<- settled WorldView (ObserveWorld))
       (:= after settled)))
   (<- report tuple (statuses now desired after records policy))

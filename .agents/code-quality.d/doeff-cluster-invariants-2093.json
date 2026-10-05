@@ -8,7 +8,10 @@
   },
   "modules": [
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-rules"
+      ],
       "layer": "pure",
       "name": "doeff-cluster-worker-invariants",
       "paths": [
