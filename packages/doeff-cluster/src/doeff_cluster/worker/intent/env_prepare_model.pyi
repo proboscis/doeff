@@ -13,6 +13,7 @@ class KnownRoot:
     env: RuntimeEnv
     root: str
     made_ms: int
+    hy_version: str | None
 
 @dataclass(frozen=True, kw_only=True)
 class PrepareRequest:
@@ -72,6 +73,7 @@ class EnvMarker:
     bytecode: BytecodeCounts | None = None
     volume: VolumeKind | None = None
     startup_seconds: float | None = None
+    hy_version: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WheelReady:
@@ -134,6 +136,7 @@ class PrepareState:
     written: int | None = None
     parts: tuple = ...
     volume: VolumeKind | None = None
+    hy_version: str | None = None
 
 @dataclass(frozen=True)
 class StageStarted(EffectBase):
@@ -200,6 +203,10 @@ class WriteImportRoots(EffectBase):
 class ReadEditableRoots(EffectBase):
     project_dir: str
     root: str
+
+@dataclass(frozen=True)
+class ReadHyVersion(EffectBase):
+    project_dir: str
 
 @dataclass(frozen=True)
 class CompileTrees(EffectBase):

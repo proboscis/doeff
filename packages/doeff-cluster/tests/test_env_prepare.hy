@@ -19,7 +19,8 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
-(import doeff_cluster.worker.protocol.env_translation [editable-dirs])
+(import doeff_cluster.worker.protocol.env_translation [editable-dirs hy-dist-version])
+(import doeff_core_effects.file_effects [ListDirectory])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
@@ -32,7 +33,7 @@
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
 
 (setv PLATFORM "linux-x86_64")
-(import tests.env_fixtures [LOCK APP-URL LIB-URL sha-of lock-sha app-commit lib-commit env-of base-world])
+(import tests.env_fixtures [LOCK HY-2-LOCK APP-URL LIB-URL sha-of lock-sha app-commit lib-commit env-of base-world])
 
 
 (defk prepare [env known]
@@ -45,12 +46,25 @@
   result)
 
 
+(defk marker-hy-version [ready]
+  {:pre [(: ready EnvReady)] :post [(: % (| str None))]}
+  "完成した root の印に書いた Hy の compiler の版を読むため(worker の known-roots と同じく、次の準備の known へ印の値を渡す — #3706)。"
+  (<- files tuple (world-files ready.root))
+  (val marker (json.loads (next (gfor f files :if (= f.path (.format "{}/{}" ready.root ENV-MARKER)) f.text))))
+  (get marker "hyVersion"))
+
+
 (defk known-of [#* ready]
   {:pre [(: ready tuple)] :post [(: % tuple)]}
-  "完成した root の列 → 次の準備の known(どれも完成した root(EnvReady)であることを確かめてから読む・完成の時刻は列の順)。"
+  "完成した root の列 → 次の準備の known(どれも完成した root(EnvReady)であることを確かめてから読む・完成の時刻は列の順・Hy の版は
+   印から読む)。"
   (for [r ready]
     (assert (isinstance r EnvReady) r))
-  (tuple (gfor #(made r) (enumerate ready) (KnownRoot :env r.env :root r.root :made-ms made))))
+  (var known #())
+  (for [#(made r) (enumerate ready)]
+    (<- hy-version (| str None) (marker-hy-version r))
+    (:= known (+ known #((KnownRoot :env r.env :root r.root :made-ms made :hy-version hy-version)))))
+  known)
 
 
 ;; --- 宣言の型・キー ------------------------------------------------------------------------
@@ -220,6 +234,27 @@
   (assert (= dirs #("lib" "lib/packages/core/src"))))
 
 
+(defk listed-hy-version [site]
+  {:pre [(: site str)] :post [(: % (| str None))]}
+  "本物の file の一覧(ListDirectory)から翻訳の Hy の版の読み(hy-dist-version)の答えを返すため。"
+  (<- entries tuple (ListDirectory site))
+  (<- version (| str None) (hy-dist-version entries))
+  version)
+
+
+(deftest test-the-hy-version-is-read-from-the-venv-dist-info [#^ Path tmp-path]
+  ;; 本物の handler の読み(#3706): site-packages の `hy-<版>.dist-info` の dir の名から版を読む。名が hy で始まる別の package
+  ;; (hy_extra・hyperlink)と、同じ名の file は読まない。Hy の dist-info が無ければ None(引き継ぎ元を選ばない)。
+  (val site (/ tmp-path "site-packages"))
+  (for [d ["hy_extra-2.0.dist-info" "hyperlink-21.0.dist-info" "httpx-0.28.1.dist-info"]] (.mkdir (/ site d) :parents True))
+  (.write-text (/ site "hy-9.9.dist-info") "")
+  (<- missing (| str None) (with-handlers [os-file-handler] (listed-hy-version (str site))))
+  (assert (is missing None) missing)
+  (.mkdir (/ site "hy-1.1.0.dist-info"))
+  (<- found (| str None) (with-handlers [os-file-handler] (listed-hy-version (str site))))
+  (assert (= found "1.1.0") found))
+
+
 ;; 反例(構成レビュー 2026-09-27): editable で入るだけの依存の repo の bytecode は最適化で、焼けなくても env は作れる(子は import の時に
 ;; compile する)。source を持たない editable の根(native だけの package の dir)しか持たない repo で、焼く道具の「焼く物が無い」を
 ;; env の失敗にしない。宣言の根を持つ repo の失敗は今までどおり env の失敗(展開の失敗を捕まえるため)。
@@ -350,7 +385,9 @@
 
 (defk lock-change-scenario []
   {:pre [] :post [(: % bool)]}
-  "筋書き 3: lock を変える → 新しいキー・増えた package だけ download・bytecode は引き継がない(Hy と doeff-hy が変わり得る)。"
+  "筋書き 3: lock を変える(Hy の版は同じ)→ 新しいキー・増えた package だけ download・bytecode は前の root から引き継ぎ、変わった
+   source だけを焼く(#3706 — 失敗ケース: 引き継ぎ元の候補の条件に lock の一致を残すと、依存を 1 本足しただけで木の全部を焼き直し、
+   carried が 0 で赤)。"
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- first EnvReady (prepare env-1 #()))
   (<- known tuple (known-of first))
@@ -361,13 +398,44 @@
   (assert (isinstance changed EnvReady) changed)
   (assert (!= changed.key first.key))
   (assert (= changed.downloaded 1))
-  (assert (= (- after.carried before.carried) 0))
+  (assert (> (- after.carried before.carried) 0) "lock だけ違う前の root から bytecode を引き継ぐ")
+  ;; app の木で焼くのは、app-1 から変わった source(app/__init__.py)の 1 つだけ — 変わらない vendor/tool.py は引き継ぐ。
+  (<- hy-version (| str None) (marker-hy-version changed))
+  (assert (= hy-version HY-VERSION) hy-version)
+  (<- files tuple (world-files changed.root))
+  (val marker (json.loads (next (gfor f files :if (= f.path (.format "{}/{}" changed.root ENV-MARKER)) f.text))))
+  (val app-tree (next (gfor t (get marker "bytecode" "trees") :if (= (get t "name") "app") t)))
+  (assert (= #((get app-tree "rebuilt") (get app-tree "carried")) #(1 1)) app-tree)
   True)
 
 
 (deftest test-changing-the-lock-downloads-only-the-new-packages
   (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (lock-change-scenario)))
+  (assert ok))
+
+
+(defk hy-change-scenario []
+  {:pre [] :post [(: % bool)]}
+  "lock の hy の行の版を変える → venv の Hy の compiler の版が違うので、前の root から bytecode を引き継がない(#3706 — 反例: Hy の版を
+   比べずに候補にすると、別の compiler で焼いた .pyc を持ち越して carried が 0 でなく赤)。"
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- first EnvReady (prepare env-1 #()))
+  (<- known tuple (known-of first))
+  (<- before EnvWorldLog (read-world-log))
+  (<- env-hy RuntimeEnv (env-of "app-hy" "lib-1" HY-2-LOCK))
+  (<- changed (prepare env-hy known))
+  (<- after EnvWorldLog (read-world-log))
+  (assert (isinstance changed EnvReady) changed)
+  (<- hy-version (| str None) (marker-hy-version changed))
+  (assert (= hy-version "1.2.0") hy-version)
+  (assert (= (- after.carried before.carried) 0))
+  True)
+
+
+(deftest test-changing-the-hy-version-does-not-carry-bytecode
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (hy-change-scenario)))
   (assert ok))
 
 
@@ -510,11 +578,16 @@
   (replace base :repos #((get base.repos 0) (RepoCheckout :name "doeff" :url DOEFF-URL :commit doeff-sha))))
 
 
+;; 新しい root の venv の Hy の compiler の版(LOCK の hy の行の版 — 引き継ぎ元の候補は同じ版の root に限る・#3706)。
+(val HY-VERSION "1.1.0")
+
+
 (defk picked-tree [known env name]
   {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % (| str None))]}
-  "引き継ぎ元の選び(carry-source)が選んだ木の path を読むため(選ばなければ None)— 選んだ木の commit は、その木を展開した commit で
+  "引き継ぎ元の選び(carry-source — 新しい root の Hy の版は HY-VERSION)が選んだ木の path を読むため(選ばなければ None)— 選んだ木の
+   commit は、その木を展開した commit で
    ある事も確かめる(変わった file を決める git diff の片側 — #3675)。"
-  (<- picked (| CarryFrom None) (carry-source known env name))
+  (<- picked (| CarryFrom None) (carry-source known env name HY-VERSION))
   (match picked
     None None
     (CarryFrom :tree tree :commit commit)
@@ -526,9 +599,10 @@
 
 (defk carry-root [dir app doeff made-ms]
   {:pre [(: dir str) (: app str) (: doeff str) (: made-ms int)] :post [(: % KnownRoot)]}
-  "完成済みの root 1 つ(/state/roots/<dir>・app と doeff の commit・完成の時刻)を引き継ぎ元の候補として作るため。"
+  "完成済みの root 1 つ(/state/roots/<dir>・app と doeff の commit・完成の時刻・Hy の版は HY-VERSION)を引き継ぎ元の候補として
+   作るため。"
   (<- env RuntimeEnv (carry-env app doeff))
-  (KnownRoot :env env :root (.format "/state/roots/{}" dir) :made-ms made-ms))
+  (KnownRoot :env env :root (.format "/state/roots/{}" dir) :made-ms made-ms :hy-version HY-VERSION))
 
 
 (deftest test-the-bytecode-carry-prefers-a-root-at-the-same-commits
@@ -548,14 +622,31 @@
   ;; doeff のツリーは、同じ doeff の commit の root が 2 つ在るので、後から完成した方(cccc)。
   (<- macros-tree (| str None) (picked-tree #(older same newer) env "doeff"))
   (assert (= macros-tree "/state/roots/cccc/doeff") macros-tree)
-  ;; lock か Python が違う root は、同じ commit で後から完成していても候補にしない(macro の展開が同じ Hy と doeff-hy で固定される組に
-  ;; 限る — 前からの条件)。
-  (val other-lock (replace same :root "/state/roots/0000" :made-ms 4000
-                                :env (replace same.env :project (replace same.env.project :lock-sha256 (* "c" 64)))))
+  ;; Python か venv の Hy の compiler の版が違う root と、Hy の版が分からない root(印に欄の無い前の root)は、同じ commit で後から
+  ;; 完成していても候補にしない(.pyc の magic と abi は Python で、Hy の展開は Hy の compiler で決まる — #3706)。
   (val other-python (replace same :root "/state/roots/0001" :made-ms 4000
                                   :env (replace same.env :project (replace same.env.project :python "3.13"))))
-  (<- kept (| str None) (picked-tree #(other-lock other-python older same) env "app"))
-  (assert (= kept "/state/roots/bbbb/app") kept))
+  (val other-hy (replace same :root "/state/roots/0002" :made-ms 4000 :hy-version "1.2.0"))
+  (val unknown-hy (replace same :root "/state/roots/0003" :made-ms 4000 :hy-version None))
+  (<- kept (| str None) (picked-tree #(other-python other-hy unknown-hy older same) env "app"))
+  (assert (= kept "/state/roots/bbbb/app") kept)
+  ;; 新しい root の Hy の版が分からない時(venv に Hy が無い)は、どの root からも引き継がない。
+  (<- unknown-new (| CarryFrom None) (carry-source #(older same) env "app" None))
+  (assert (is unknown-new None) unknown-new))
+
+
+(deftest test-the-bytecode-carry-ignores-a-lock-that-differs
+  ;; 失敗ケース(直す前は赤 — #3706・記録の表の service の worker で 228.6 秒・compiled 1102・carried 0): 依存を 1 本上げただけで
+  ;; lock の sha256 だけが違う root(Python・Hy の版・repo の正体・commit は同じ)は引き継ぎ元に選ばれる。lock の一致を条件に残すと、
+  ;; 後から完成した lock 違いの root(0000)でなく bbbb を選び、bbbb も lock 違いなら候補が無くなって赤。
+  (<- env RuntimeEnv (carry-env "app-new" "doeff-new"))
+  (<- same KnownRoot (carry-root "bbbb" "app-new" "doeff-new" 2000))
+  (val other-lock (replace same :root "/state/roots/0000" :made-ms 4000
+                                :env (replace same.env :project (replace same.env.project :lock-sha256 (* "c" 64)))))
+  (<- picked (| str None) (picked-tree #(same other-lock) env "app"))
+  (assert (= picked "/state/roots/0000/app") picked)
+  (<- only (| str None) (picked-tree #(other-lock) env "app"))
+  (assert (= only "/state/roots/0000/app") only))
 
 
 (deftest test-the-bytecode-carry-falls-back-to-a-root-with-the-same-macros
@@ -597,9 +688,9 @@
   (<- plain RuntimeEnv (env-of "app-new" "lib-1" LOCK))
   (<- plain-old RuntimeEnv (env-of "app-old" "lib-1" LOCK))
   (<- plain-other RuntimeEnv (env-of "app-other" "lib-1" LOCK))
-  (val plain-older (KnownRoot :env plain-old :root "/state/roots/aaaa" :made-ms 2000))
-  (val plain-same (KnownRoot :env plain :root "/state/roots/bbbb" :made-ms 1000))
-  (val plain-newest (KnownRoot :env plain-other :root "/state/roots/cccc" :made-ms 3000))
+  (val plain-older (KnownRoot :env plain-old :root "/state/roots/aaaa" :made-ms 2000 :hy-version HY-VERSION))
+  (val plain-same (KnownRoot :env plain :root "/state/roots/bbbb" :made-ms 1000 :hy-version HY-VERSION))
+  (val plain-newest (KnownRoot :env plain-other :root "/state/roots/cccc" :made-ms 3000 :hy-version HY-VERSION))
   (<- plain-picked (| str None) (picked-tree #(plain-older plain-same plain-newest) plain "app"))
   (assert (= plain-picked "/state/roots/bbbb/app") plain-picked)
   (<- plain-newer (| str None) (picked-tree #(plain-older plain-newest) plain "app"))
@@ -625,21 +716,22 @@
   ;; 名指す — 引き継ぎ元に選ばれる。
   (<- env RuntimeEnv (spelled-env "app-new" "https://github.com/o/app.git" "doeff-new" "https://github.com/o/doeff.git"))
   (<- env-scp RuntimeEnv (spelled-env "app-new" "git@github.com:o/app" "doeff-new" "git@github.com:o/doeff"))
-  (val scp-root (KnownRoot :env env-scp :root "/state/roots/aaaa" :made-ms 1000))
+  (val scp-root (KnownRoot :env env-scp :root "/state/roots/aaaa" :made-ms 1000 :hy-version HY-VERSION))
   (<- picked (| str None) (picked-tree #(scp-root) env "app"))
   (assert (= picked "/state/roots/aaaa/app") picked)
   ;; macro の repo(doeff)も綴りに依らず同じ repo と読む: doeff の commit だけが同じ scp の形の root(bbbb)は、後から完成した
   ;; どの commit も違う root(cccc)より先。
   (<- env-macros RuntimeEnv (spelled-env "app-other" "ssh://git@github.com/o/app.git" "doeff-new" "git@github.com:o/doeff.git"))
   (<- env-none RuntimeEnv (spelled-env "app-third" "https://github.com/o/app" "doeff-old" "https://github.com/o/doeff"))
-  (val macros-root (KnownRoot :env env-macros :root "/state/roots/bbbb" :made-ms 1000))
-  (val none-root (KnownRoot :env env-none :root "/state/roots/cccc" :made-ms 2000))
+  (val macros-root (KnownRoot :env env-macros :root "/state/roots/bbbb" :made-ms 1000 :hy-version HY-VERSION))
+  (val none-root (KnownRoot :env env-none :root "/state/roots/cccc" :made-ms 2000 :hy-version HY-VERSION))
   (<- by-macros (| str None) (picked-tree #(none-root macros-root) env "app"))
   (assert (= by-macros "/state/roots/bbbb/app") by-macros)
   ;; 反例: owner か name か host が違えば別の repo — 候補にしない。
   (for [other ["git@github.com:p/app" "git@github.com:o/app2" "git@gitlab.com:o/app"]]
     (<- other-env RuntimeEnv (spelled-env "app-new" other "doeff-new" "git@github.com:o/doeff"))
-    (<- other-picked (| str None) (picked-tree #((KnownRoot :env other-env :root "/state/roots/dddd" :made-ms 1000)) env "app"))
+    (<- other-picked (| str None) (picked-tree #((KnownRoot :env other-env :root "/state/roots/dddd" :made-ms 1000 :hy-version HY-VERSION))
+                                                 env "app"))
     (assert (is other-picked None) #(other other-picked))))
 
 

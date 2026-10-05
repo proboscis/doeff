@@ -52,6 +52,7 @@ from doeff_cluster.worker.intent.env_prepare_model import SyncProject as SyncPro
 from doeff_cluster.worker.intent.env_prepare_model import InstallWheels as InstallWheels
 from doeff_cluster.worker.intent.env_prepare_model import WriteImportRoots as WriteImportRoots
 from doeff_cluster.worker.intent.env_prepare_model import ReadEditableRoots as ReadEditableRoots
+from doeff_cluster.worker.intent.env_prepare_model import ReadHyVersion as ReadHyVersion
 from doeff_cluster.worker.intent.env_prepare_model import CompileTrees as CompileTrees
 from doeff_cluster.worker.intent.env_prepare_model import ProbeImports as ProbeImports
 from doeff_cluster.worker.intent.env_prepare_model import WriteEnvMarker as WriteEnvMarker
@@ -86,10 +87,10 @@ class CarryCandidate:
 def located_repos(repos: tuple) -> _Program[tuple, object]:
     ...
 
-def carry_candidates(known: tuple, env: RuntimeEnv, name: str) -> _Program[tuple, object]:
+def carry_candidates(known: tuple, env: RuntimeEnv, name: str, hy_version: str | None) -> _Program[tuple, object]:
     ...
 
-def carry_source(known: tuple, env: RuntimeEnv, name: str) -> _Program[CarryFrom | None, object]:
+def carry_source(known: tuple, env: RuntimeEnv, name: str, hy_version: str | None) -> _Program[CarryFrom | None, object]:
     ...
 
 def hyx_env_marker_XgreaterHthan_signXjson(marker: EnvMarker) -> _Program[dict, object]:
