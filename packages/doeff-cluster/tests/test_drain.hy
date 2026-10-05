@@ -21,6 +21,9 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_cluster.worker.protocol.coordinator_link [ready-file-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
+(import tests.env_fixtures [LOCK env-of])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff [run])
 (import os)
 (import subprocess)
@@ -183,6 +186,75 @@
   (assert (is (c.surge "w") None))
   (c.call "DELETE" "/workers/zeus/drain" :actor "c-test")
   (assert (= (c.surge "w") "zeus")))
+
+
+(deftest test-a-job-no-other-listed-worker-can-hold-does-not-hold-the-drain
+  ;; 失敗ケース(#3669 — 2026-10-05 の記録の表の service): 能力の合う別の worker が名簿に 1 台も無い job は、待っても移す先が来ない。
+  ;; drain はそれを待たず、残りが 0 なら drained を返す(preStop は上限 90 秒を待たずに終わる)。job は外さず並べず、この worker の
+  ;; 上で止まるまで動かす。切り離した task は今どおり終わるまで待つ。直す前は Blocked・drained 偽(上限まで待つ)。
+  (val c (Coord #("atlas")))
+  (c.beat "mac" :provides ["mac-desk"])
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
+  (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
+  (c.beat "atlas" ["w" "r"])
+  (val view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (assert (= #((get view "drain" "phase") (get view "drain" "drained") (get view "drain" "remaining")) #("Drained" True [])) view)
+  (assert (= #((get view "drain" "unmovable") (get view "drain" "blocked")) #(["r" "w"] {})) view)
+  ;; 移せない job は外さず並べず、この worker の上で動かし続ける(置き先は atlas のまま・返事に載る)。
+  (assert (is (c.surge "w") None))
+  (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
+  (assert (= (sorted (c.names-for "atlas")) ["r" "w"]))
+  ;; 頼み直しても drained のまま。
+  (c.advance 5)
+  (c.beat "atlas" ["w" "r"])
+  (assert (get (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas") "drain" "drained"))
+  ;; 切り離した task は今どおり、終わるまで待つ(残りに載る・drained にならない)。
+  (val d (Coord #("atlas")))
+  (d.beat "mac" :provides ["mac-desk"])
+  (d.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
+  (d.call "PUT" "/detached/job-24" (d.task-body K3S {"revision" "r" "leaseSeconds" 60}) :actor "c-test")
+  (val task (next (gfor t (.values d.state.tasks) :if (= t.key "job-24") t)))
+  (val waiting (d.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (assert (= #((get waiting "drain" "drained") (get waiting "drain" "remaining")) #(False [(+ "task/" task.id)])) waiting)
+  (assert (= (get waiting "drain" "unmovable") ["w"]) waiting))
+
+
+(deftest test-a-job-whose-other-eligible-worker-is-dead-or-draining-still-holds-the-drain
+  ;; 待つ物を外しすぎない(#3669): 能力の合う別の worker が名簿に居るなら、今は死んでいる・drain 中でも待つ(待てば移す先が来うる)。
+  ;; 空きの無い場合は tests/test_cluster_policy.hy の test-a-surge-waits-while-the-job-side-is-full-and-leaves-the-task-reserve-open。
+  (<- dead (running-writer))
+  (dead.advance 12)
+  (dead.beat "atlas" ["w"])
+  (val silent (dead.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (assert (= #((get silent "drain" "phase") (get silent "drain" "drained") (get silent "drain" "remaining")) #("Blocked" False ["w"]))
+          silent)
+  (assert (= (get silent "drain" "unmovable") []) silent)
+  (<- busy (running-writer))
+  (busy.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
+  (val draining (busy.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (assert (= #((get draining "drain" "phase") (get draining "drain" "drained") (get draining "drain" "remaining")) #("Blocked" False ["w"]))
+          draining)
+  (assert (= (get draining "drain" "unmovable") []) draining))
+
+
+(deftest test-a-draining-worker-gets-no-warm-until-the-drain-ends
+  ;; 失敗ケース(#3669): drain 中の worker への heartbeat の返事には、温める表の行(新しい版の実行環境の準備)を載せない — 送り手の
+  ;; warm-view が drain 中の worker を数えないのと同じ判断。drain が解けた新しい世代には行が届く。直す前は drain 中の atlas にも行が届いた。
+  (<- c (running-writer))
+  (c.advance 12)
+  (c.beat "atlas" ["w"])
+  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
+  (<- env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- declared dict (runtime-env->json env))
+  (c.call "POST" "/warm" {"runtimeEnv" declared "needs" K3S "ttlSeconds" 600 "holder" "c-test"} :actor "c-test")
+  (val reply (c.beat "atlas" ["w"]))
+  (assert (= (get reply "warm") []) reply)
+  ;; 作り直した Pod の worker(別の世代)の heartbeat で drain が解ける → 温める表の行が届く。
+  (val fresh (c.beat "atlas" :boot "b2"))
+  (assert (not-in "atlas" c.state.drains))
+  (assert (= (len (get fresh "warm")) 1) fresh))
 
 
 (deftest test-cancelling-the-drain-drops-the-surge-and-keeps-the-old

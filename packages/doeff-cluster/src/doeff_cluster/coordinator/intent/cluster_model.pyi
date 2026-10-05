@@ -249,6 +249,7 @@ class DrainProgress:
     remaining: tuple[str, ...]
     moving: dict[str, str]
     blocked: dict[str, str]
+    unmovable: tuple[str, ...]
     moving_ready: dict[str, str]
 
 @dataclass(frozen=True, kw_only=True)

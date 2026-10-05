@@ -18,8 +18,12 @@ from doeff_cluster.shared.core.launch_rules import worker_launch_of_env as worke
 from doeff_cluster.shared.core.launch_rules import coordinator_launch_of_env as coordinator_launch_of_env
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
-from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
+from doeff import with_handlers as with_handlers
 from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
+from doeff_cluster.worker.core.drain_client import await_drained as await_drained
+from doeff_cluster.worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
+from doeff_cluster.worker.core.drain_client import DRAIN_INTERVAL_SECONDS as DRAIN_INTERVAL_SECONDS
+from doeff_cluster.worker.intent.drain_model import AskDrain as AskDrain
 from doeff_cluster.shared.intent.upgrade_model import UpgradeKind as UpgradeKind
 from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPhase
 from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
@@ -77,6 +81,7 @@ def upgrade_state() -> _Program[UpgradeState | UpgradeStateUnreachable, object]:
 
 def roster_snapshot(kind: UpgradeKind, target: str, commit: str) -> _Program[UpgradeStart, object]:
     ...
+drain_asks_on_sim: _Handler
 
 def prestop_drain(name: str) -> _Program[None, object]:
     ...

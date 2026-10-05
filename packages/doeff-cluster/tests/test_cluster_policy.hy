@@ -539,7 +539,7 @@
 ;; 理由の閉じた語 TASK-NO-ROOM の固定の文で待つ。
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.intent.cluster_model [Drain TaskUnplacedKind])
+(import doeff_cluster.coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind])
 (import doeff_cluster.coordinator.core.cluster_policy [load-of job-room-of task-room-of task-unplaced-text durable-changed])
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains drain-view])
 (import doeff_cluster.coordinator.core.api_policy [tick])
@@ -611,6 +611,9 @@
   (val zeus (get waited.workers "zeus"))
   (assert (= #((! (job-room-of zeus load)) (! (task-room-of zeus load))) #(0 1)) load)
   (assert (in "w" (. (drain-view waited "atlas" 1000 T) blocked)) (drain-view waited "atlas" 1000 T))
+  ;; 空きの無い zeus も能力の合う worker なので、w は待つ物に残る(移せないと確定しない — #3669)。
+  (val full (drain-view waited "atlas" 1000 T))
+  (assert (= #(full.remaining full.unmovable full.phase) #(#("w") #() DrainPhase.BLOCKED)) full)
   (val open (replace state :workers (| state.workers {"zeus" (replace (get state.workers "zeus") :task-reserve 0)})))
   (assert (= (. (get (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
 

@@ -9,9 +9,15 @@
 ;;;   3. coordinator が並べた先の process を Ready と数えたら(standby の Ready でよい — 同じ worker の中の入れ替えと同じ判定)、
 ;;;      置き先(placements)を並べた先へ付け替える。旧い担い手は次の heartbeat で宣言から外れた job を止め、lease を返す
 ;;;      (worker_policy の ReleaseLeases)。新は空いた lease を取る。どの拍でも lease を持てる Ready の process が 1 つ以上在る。
-;;;   4. 移す先が無い(もう 1 台が死んでいる・drain 中・条件を満たさない・空きが無い)なら、並べず・旧を止めず、drain の進みに
-;;;      「移せない」と理由を名乗る(空白を作らない)。移す先が現れたら次の拍で並べる。
+;;;   4. 能力(と固定)の合う別の worker は名簿に居るが、今は移せない(死んでいる・drain 中・空きが無い)なら、並べず・旧を止めず、drain の
+;;;      進みに blocked と理由を名乗って待つ(空白を作らない)。移す先が現れたら次の拍で並べる。
+;;;   5. 能力(と固定)の合う別の worker が名簿に 1 台も無い job は、待っても移す先が来ない — 移せないと確定し(unmovable)、drain の
+;;;      残りに数えない。残りが 0 なら drained を返し、preStop は上限を待たずに終わる(job はこの worker の上で止まるまで動き、Pod を
+;;;      作り直した新しい世代が同じ置き先で動かし直す・#3669 — 2026-10-05 に記録の表の service の worker の preStop が上限 90 秒まで
+;;;      待ち、その間 service に届かなかった)。判断はここ(drain-view)の 1 か所 — preStop・版上げ・readiness は同じ答えを読む。
 ;;;   入れ替えでない Service は今までどおり止めて移す(cluster_policy.place-jobs — 他に置ける先が在る時だけ外す)。
+;;;   drain の間、この worker には温める表の行(warm)を配らない(cluster_policy.warms-for)— 空ける worker に新しい版の実行環境の
+;;;   準備を置かない(#3669)。
 ;;;
 ;;; drain の頼みは 2 つの道で来る: POST /workers/<名>/drain(本番の preStop・手の頼み)と、止まり始めを名乗る heartbeat
 ;;; (absorb-stopping — sigterm などで preStop を通らずに止まる worker・#2819)。
@@ -159,31 +165,45 @@
 
 
 (defn #^ (| DrainProgress None) drain-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  "drain の進み。remaining = まだこの worker に置かれている job と、この worker の上でまだ動いている job と、この worker に置いた
-   終わっていない切り離した task(全部が 0 で drained)。
-   moving = 並べた先の worker(Ready 待ち)。blocked = 移せない job と理由。drain が無ければ None。"
+  "drain の進み — 空けてよいかの判断の 1 か所(preStop の drain_client.drain-outcome が drained を読み、GET /workers/<名> と GET /state の
+   drains も同じ答えを出す)。
+   remaining = まだこの worker に置かれている job と、この worker の上でまだ動いている job と、この worker に置いた終わっていない
+   切り離した task から、移せないと確定した job(unmovable)を除いた物(0 で drained)。
+   unmovable = この worker に置かれた job のうち、能力(と固定)の合う別の worker が名簿に 1 台も無い物の名(生死・drain・空きを問わない —
+   待っても移す先は来ないので待たず、この worker の上で止まるまで動かす・#3669)。
+   moving = 並べた先の worker(Ready 待ち)。blocked = 能力の合う別の worker は名簿に居るが、今は死んでいる・drain 中・空きが無いので
+   移せず待っている job と理由(待てば移す先が来うる)。drain が無ければ None。"
   (setv d (.get state.drains name))
   (when (or (is d None) (<= d.until-ms now)) (return None))
   (setv draining (draining-workers state now)
         jobs (dfor j state.jobs j.spec.name j)
         load (load-of state state.placements)
         placed (sorted (gfor #(n a) (.items state.placements) :if (= a.worker name) n))
+        ;; 能力の合う別の worker が名簿に 1 台も無い job は、待っても移せない(2026-10-05 の記録の表の service — 記録の能力を名乗る
+        ;; worker が 1 台だけで、preStop が上限 90 秒まで待ち、その間 service に届かなかった)。待たずに drained へ進め、この worker の
+        ;; 上で止まるまで動かす。
+        unmovable (tuple (gfor n placed
+                               :setv job (.get jobs n)
+                               :if (and (is-not job None)
+                                        (not (any (gfor w (.values state.workers) (and (!= w.name name) (eligible job w))))))
+                               n))
         ;; 切り離した task(2026-09-25)は移せない(走らせ直さない)ので、この worker の上で終わるまで drain を待たせる。
-        remaining (sorted (| (set placed) (set (live-rows state name)) (set (detached-rows state name))))
+        remaining (sorted (- (| (set placed) (set (live-rows state name)) (set (detached-rows state name))) (set unmovable)))
         moving (dfor n placed :if (in n state.surges) n (. (get state.surges n) worker))
         blocked {})
   (for [n placed]
     (setv job (.get jobs n))
-    (when (and (is-not job None) (not-in n moving)
+    (when (and (is-not job None) (not-in n moving) (not-in n unmovable)
                (is (move-target now state job name timing draining load) None))
       (setv (get blocked n)
-            (.format "移す先が無い(要る能力 {}・固定 {}。生きていて drain 中でなく空きの在る別の worker が無い)— 旧を止めずに待つ"
+            (.format "移す先が無い(要る能力 {}・固定 {}。能力の合う別の worker は名簿に居るが、生きていて drain 中でなく空きの在る物が無い)— 旧を止めずに待つ"
                      (list job.needs) job.pin))))
   (DrainProgress :worker name :boot d.boot :superseded False :since-ms d.since-ms :until-ms d.until-ms :actor d.actor
                  :phase (cond (not remaining) DrainPhase.DRAINED (and blocked (not moving)) DrainPhase.BLOCKED True DrainPhase.DRAINING)
                  :remaining (tuple remaining)
                  :moving moving
                  :blocked blocked
+                 :unmovable unmovable
                  :moving-ready (dfor #(n w) (.items moving)
                                      n (get (service-readiness state n now timing (get state.surges n)) "reason"))))
 
@@ -209,7 +229,7 @@
   (WorkerDrainView :info w :alive (alive now w timing.lease-ms) :silent-ms (- now w.last-seen-ms) :superseded True
                    :drain (DrainProgress :worker name :boot boot :superseded True :since-ms None :until-ms None :actor None
                                          :phase (if remaining DrainPhase.DRAINING DrainPhase.DRAINED) :remaining (tuple remaining)
-                                         :moving {} :blocked {} :moving-ready {})
+                                         :moving {} :blocked {} :unmovable #() :moving-ready {})
                    :ready False))
 
 

@@ -69,7 +69,7 @@
   (setv old (! (reply-json (superseded-worker-view s "w1" "b1" 2000 T))))
   (assert (= #((get old "superseded") (get old "draining") (get old "ready")) #(True True False)) old)
   (assert (= (sorted (get old "drain"))
-             ["blocked" "boot" "drained" "moving" "movingReady" "phase" "remaining" "superseded" "worker"])
+             ["blocked" "boot" "drained" "moving" "movingReady" "phase" "remaining" "superseded" "unmovable" "worker"])
           old)
   (assert (= #((get old "drain" "phase") (get old "drain" "drained") (get old "drain" "boot")) #("Drained" True "b1")) old))
 

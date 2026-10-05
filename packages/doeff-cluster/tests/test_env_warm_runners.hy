@@ -9,7 +9,7 @@
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker PreparationsOf])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState])
 (import doeff_cluster.shared.core.warm_rules [warm-runtime-env])
@@ -67,3 +67,35 @@
   (assert (and (= seen.none.ready #()) (= seen.none.preparing #())) seen.none)
   ;; drain した担い手は数えない。
   (assert (= seen.drained.ready #()) seen.drained))
+
+
+(defrecord DrainedWarm
+  "drain の後に温めた新しい版の行の筋書きの読み(#3669): before / after = drain の前・drain の後に新しい版の行を温めて待った後に、gpu-1 が
+   起こした先読みの準備の数・row = 新しい版の行の姿。"
+  (#^ int before)
+  (#^ int after)
+  (#^ WarmState row))
+
+
+(defk warm-a-newer-version-after-the-drain []
+  {:pre [] :post [(: % DrainedWarm)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(#3669 — 2026-10-05 に drain 中の旧い worker が新しい版の準備を始めて捨てた形): gpu の行を温めて gpu-1 で準備済みにし、gpu-1 を
+   drain してから、新しい版(app-2)の gpu の行を温めて待つ。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- (warm-until-ready env (frozenset ["gpu"])))
+  (<- seen tuple (PreparationsOf "gpu-1"))
+  (<- asked dict (DrainWorker "gpu-1"))
+  (assert (= (get asked "status") 200) asked)
+  (<- newer RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- row WarmState (warm-until-ready newer (frozenset ["gpu"])))
+  (<- after tuple (PreparationsOf "gpu-1"))
+  (DrainedWarm :before (len (lfor p seen :if p.warm p)) :after (len (lfor p after :if p.warm p)) :row row))
+
+
+(deftest test-a-draining-runner-is-not-handed-a-newer-warm-row
+  ;; 失敗ケース(#3669): drain 中の担い手には、温める表の行を heartbeat の返事で配らない(送り手の warm-view が drain 中の担い手を数えない
+  ;; のと同じ判断)— 新しい版の行を温めても、gpu-1 は先読みの準備を起こさない。直す前は行が配られ、gpu-1 が準備を起こした(after が 1 増えた)。
+  (<- seen DrainedWarm (sim-cluster NO-JOBS (warm-a-newer-version-after-the-drain) :workers WORKERS))
+  (assert (= seen.before 1) seen)
+  (assert (= seen.after seen.before) seen)
+  (assert (= #(seen.row.ready seen.row.preparing) #(#() #())) seen.row))

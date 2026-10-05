@@ -1,16 +1,21 @@
 ;; 模擬の Flux(sim/flux.hy — #3366 の単位 2b)の検: 宣言の置き場(記憶の中の file)に manifest を書き、模擬の Flux で当てると、
 ;; 2026-10-05 の版上げの順(1 台ずつ・前の 1 台が戻ってから次・coordinator は最後・待ち行列が空の時)では条 V1〜V4 が緑で、
 ;; 壊した書き方・壊した drain では破った条の名で赤になる。manifest の env の行は本番が宣言を書く時と同じ写し(launch_rules)で作る。
+;; worker の drain は本番の preStop と同じ待ち(prestop-drain — coordinator が drained と答えるか上限まで頼み直す・#3669)。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedLost DetachedSucceeded])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside DrainWorker WorkerOf])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside DrainWorker WorkerOf ProcessesOf])
 (import doeff_cluster.sim.flux [FluxPass manifest-state reconcile-manifests prestop-drain])
+(import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
 (import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS write-manifest await-back breaches-of flux-outside])
 (import tests.detached_rig [slow-add])
+(import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.sim_programs [host-a-pulses])
 
 (defk upgrade-in-order []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
@@ -101,6 +106,38 @@
   (<- waited tuple (sim-cluster NO-JOBS (swap-a-under-a-running-task prestop-drain) :workers #(A B)
                                 :outside outside))
   (assert (= waited #(#() (DetachedSucceeded 104))) waited))
+
+
+(defk swap-a-under-a-job-only-a-can-hold []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(#3669 — 2026-10-05 の記録の表の service の入れ替えの形): a だけが持つ能力 host-a を要る service pulse が a で動く中、a を新しい
+   版にして当て、a が戻るのを待つ。答え = #(破りの条の名 drain の待ちの秒 a が戻ったか 戻った後の pulse の process の worker と exit-code)。
+   待ちの秒 = 当てを始めてから入れ替えを始めた瞬間(古い process が止まる瞬間 — drain の後)までの仮想の秒。"
+  (<- (Delay 5.0))
+  (<- applied tuple (manifest-state PATHS))
+  (<- (write-manifest NEW OLD OLD))
+  (<- asked int (now-epoch-ms))
+  (<- pass FluxPass (reconcile-manifests PATHS applied prestop-drain COORDINATOR-SECONDS))
+  (<- back bool (await-back "a" NEW))
+  (<- (Delay 5.0))
+  (<- processes tuple (ProcessesOf "pulse"))
+  (val last (get processes -1))
+  (<- rules tuple (breaches-of pass.starts))
+  #(rules (/ (- (. (get pass.starts 0) at-ms) asked) 1000.0) back #(last.worker last.exit-code)))
+
+
+(deftest test-a-drain-whose-job-no-other-worker-can-hold-does-not-wait-for-the-deadline
+  ;; 失敗ケース(#3669): 能力の合う別の worker が名簿に無い job(host-a は a だけが持つ)を持つ worker の drain は、待っても移す先が来ない。
+  ;; 本番の preStop と同じ待ち(prestop-drain)で、上限(DRAIN-DEADLINE-SECONDS)を待たずに drained で終わり、a の入れ替えへ進む。
+  ;; job は a の上で止まるまで動き、新しい世代の a で動き直す(移せる先は無いので、置き先は a のまま)。
+  (<- outside SimOutside (flux-outside))
+  (<- seen tuple (sim-cluster (host-a-pulses sim-foundation) (swap-a-under-a-job-only-a-can-hold) :workers #(A B) :outside outside))
+  (assert (= (get seen 0) #()) seen)
+  ;; 直す前は上限まで待って timeout(待ちの秒 = 90.0)。直した後は 1 回目の頼みの答えが drained(頼み直しの間隔より短い)。
+  (assert (< (get seen 1) DRAIN-DEADLINE-SECONDS) seen)
+  (assert (< (get seen 1) DRAIN-INTERVAL-SECONDS) seen)
+  (assert (get seen 2) seen)
+  (assert (= (get seen 3) #("a" None)) seen))
 
 
 (defk coordinator-with-a-queued-task []
