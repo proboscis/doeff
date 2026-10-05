@@ -37,11 +37,13 @@
   (#^ str session-id))
 
 
-;; process を降ろした訳(会話の process は手番をまたいで生き、次の 4 つの時だけ降ろす — #3672): SESSION-CLOSED = 会話を閉じた /
+;; process を降ろした訳(会話の process は手番をまたいで生き、次の時だけ降ろす — #3672): SESSION-CLOSED = 会話を閉じた /
 ;; LAUNCH-CHANGED = 次の手番の起こした時の条件の鍵(argv.hy の launch-key)が違う / OUTSIDE-TURN-OUTPUT = 手番の外で出力した(守り)/
 ;; INTERRUPT-SIGNAL = 止めるを SIGINT で伝えた(CLI は result の後に自分で降りる — 2.1.282。降りる途中の process を次の手番が使い回さ
-;; ない)。process が自分で終わった時(落ちた・消された)は訳を付けない。
-(defenum StopReason SESSION-CLOSED LAUNCH-CHANGED OUTSIDE-TURN-OUTPUT INTERRUPT-SIGNAL)
+;; ない)/ LIVE-LIMIT = 生かす本数の上限(ClaudeCodeHost の live-limit)に来て、手番を走らせていない物のうち一番長く使われていない物
+;; として降ろした(D2)/ CREDENTIAL-FLOOR = 資格の期限 − 床(ClaudeCodeHost の credential-floor-seconds)を過ぎた(D2 — 呼び手は
+;; この訳を読んで借りた資格を返す)。process が自分で終わった時(落ちた・消された)は訳を付けない。
+(defenum StopReason SESSION-CLOSED LAUNCH-CHANGED OUTSIDE-TURN-OUTPUT INTERRUPT-SIGNAL LIVE-LIMIT CREDENTIAL-FLOOR)
 
 
 (defrecord LiveProcess
