@@ -6,12 +6,14 @@
 ;;   - prune は別の process として起こし、worker は待たない(掃除は数秒で返る)
 ;;   - 前の prune が走っている間は次を起こさない
 ;;   - root の準備が走っている間は起こさない(lock で準備と競わない)
-;; 検は uv の代わりに、起きた印を書いて眠る script を渡す。
-(require doeff-hy.macros [deftest defk <- val])
+;; 検は uv の代わりに、起きた印を書いて眠る script を渡す。掃除の数えと消しはループの外の task で走り、prune は消しの終わった拍で起きる
+;; (#3715)ので、筋書きは SweepEnvs を短い間を置いて撃ち続ける(worker の拍の代わり)。
+(require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import os)
 (import time)
 (import pathlib [Path])
+(import doeff_time [Delay])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.intent.worker_model [PrepareEnv SweepEnvs])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings])
@@ -42,22 +44,37 @@
   (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :sweep-floor-bytes (** 10 18)))
 
 
+(val SWEEP-PAUSE-SECONDS 0.02)   ; 撃つ SweepEnvs の間(worker の拍の代わり)
+(val SWEEP-SECONDS 1.0)          ; 1 つの固定の集合で撃ち続ける秒(掃除 1 回が数え・消し・prune の起こしまで進む長さ)
+
+
+(defk sweep-for [pinned seconds]
+  {:pre [(: pinned frozenset) (: seconds float)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "固定の集合 pinned で seconds 秒の間 SweepEnvs を撃ち続け、1 回の SweepEnvs にかかったいちばん長い秒を返すため。"
+  (val until (+ (time.monotonic) seconds))
+  (var longest 0.0)
+  (while (< (time.monotonic) until)
+    (val started (time.monotonic))
+    (<- (SweepEnvs pinned))
+    (:= longest (max longest (- (time.monotonic) started)))
+    (<- (Delay SWEEP-PAUSE-SECONDS)))
+  longest)
+
+
 (defk sweep-twice [pinned]
-  {:pre [(: pinned frozenset)] :post [(: % float)]}
-  "掃除を 1 回して、かかった秒を返し、固定の集合を pinned に変えてすぐの掃除をもう 1 回起こすため(同じ記録の上で)。"
-  (val started (time.monotonic))
-  (<- (SweepEnvs (frozenset)))
-  (val took (- (time.monotonic) started))
-  (time.sleep 0.5)
-  (<- (SweepEnvs pinned))
-  took)
+  {:pre [(: pinned frozenset)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "固定の無い掃除を撃ち続け、固定の集合を pinned に変えてすぐの掃除をもう 1 つ撃ち続けて、1 回の SweepEnvs のいちばん長い秒を返すため
+   (同じ記録の上で)。"
+  (<- first float (sweep-for (frozenset) SWEEP-SECONDS))
+  (<- second float (sweep-for pinned SWEEP-SECONDS))
+  (max first second))
 
 
 (deftest test-the-prune-does-not-block-the-worker-loop [tmp-path]
   (<- uv str (sleeping-uv tmp-path))
   ;; 前の prune が走っている間は次を起こさない(固定の集合を変えて、すぐの掃除を起こしても)。
   (val took (! (run-envs (! (sweeping tmp-path uv)) (sweep-twice (frozenset #("env-other"))))))
-  (assert (< took 5) "掃除は prune を待たずに返る")
+  (assert (< took 1) "掃除は prune を待たずに返る")
   (time.sleep 0.3)
   (<- again list (calls tmp-path))
   (assert (= again ["cache prune"]) again))
@@ -67,7 +84,7 @@
   {:pre [(: declared str)] :post [(: % None)]}
   "root の準備を 1 本起こし、走っている間に掃除するため。"
   (<- (PrepareEnv "env-0123456789abcdef01234567" declared))
-  (<- (SweepEnvs (frozenset)))
+  (<- (sweep-for (frozenset) SWEEP-SECONDS))
   None)
 
 

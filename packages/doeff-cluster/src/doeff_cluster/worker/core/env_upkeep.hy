@@ -3,6 +3,7 @@
 ;;; worker の root の言い換え(worker/protocol/env_store の env-host)が観測を集めて、ここで決め、I/O(dir の削除・準備の process の停止)を汎用の効果で出す。
 ;;;   sweep-candidates 掃除で消してよい root の列(古い順 — 選びと掃除の頭の行が読む)
 ;;;   sweep-choice     空きが下限を切った時に消す root の列(固定・project ごとの最新・worker が作っていない dir は消さない)
+;;;   sweep-due        新しい掃除を始める時か(空きが下限を切り、固定が変わったか前の掃除の終わりから SWEEP-EVERY-MS — #3715)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
 ;;;   env-capacity     heartbeat で名乗る disk の条件(準備を始める空きが無ければ exhausted)
 (require doeff-hy.macros [defk <- val var])
@@ -13,6 +14,7 @@
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val SWEEP-FLOOR-RATIO 0.15)            ; 空きの下限 = volume の 15%
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
+(val SWEEP-EVERY-MS 30000)              ; 空きが下限を切っている間の掃除の間隔(前の掃除の終わりから — 固定の集合が変わった時はすぐ)
 
 
 (defrecord RootInfo
@@ -70,6 +72,13 @@
               (.append chosen r.key)
               (:= gained (+ gained r.bytes))))
           (tuple chosen))))
+
+
+(defk sweep-due [free floor changed now-ms swept-ms]
+  {:pre [(: free int) (: floor int) (: changed bool) (: now-ms int) (: swept-ms int)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "新しい掃除を始める時かを判じるため: 空き free が下限 floor を切っていて、固定の集合が変わったか・まだ掃除していないか(swept-ms = 0)・前の掃除の
+   終わりから SWEEP-EVERY-MS が経った時。走っている掃除が在る間は呼び手が判じない(同時に 1 つ)。"
+  (and (< free floor) (or changed (= swept-ms 0) (>= (- now-ms swept-ms) SWEEP-EVERY-MS))))
 
 
 (defk prepare-overdue [progressed now limits]

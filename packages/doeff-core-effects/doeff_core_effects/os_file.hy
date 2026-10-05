@@ -6,6 +6,9 @@
 ;;; 塞がり、錠を持つ task が戻れず錠を返せない(agora-redesign #3051 — 着地の service の口を 1 つの scheduler の Program にする時に見つけた)。
 ;;; offloaded-lock-handler は錠の取りだけを呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で待ち、他の task を回し続ける —
 ;;; os-file-handler の内側に置き、外側に scheduled が要る。待つ task が取り消された後に取れた錠は、その場で返す(持ち主の無い錠を残さない)。
+;;; offloaded-tree-handler は木の数え(MeasureTree)と消し(RemoveTree)を同じく呼び 1 つに thread 1 本で待つ(agora-redesign #3715 — worker の
+;;; 掃除が数千の file の木を数え・消す間、詰まった disk の上でも他の task(worker の調整ループ)を回し続ける)。置き場は offloaded-lock-handler
+;;; と同じ(os-file-handler の内側・外側に scheduled)。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import fcntl)
@@ -20,10 +23,12 @@
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources])
 (import doeff_core_effects.python_bytecode [compile-python-sources])
-(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached])
+(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
 ;; offloaded-lock-handler の thread(錠の取り 1 つに thread 1 本 — 同時の数の上限は錠を取りに来る task の数)。
 (val LOCK-THREADS (ThreadPerCall))
+;; offloaded-tree-handler の thread(木の数え・消し 1 つに thread 1 本)。
+(val TREE-THREADS (ThreadPerCall))
 
 
 (defk failed [path error]
@@ -305,4 +310,15 @@
   ;; 錠の取りだけを thread で待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。
   (AcquireLock [path]
     (<- answer (| LockHeld FileFailed) (offloaded LOCK-THREADS (fn [] (run-detached (acquire-lock path))) release-abandoned))
+    (resume answer)))
+
+
+(defhandler offloaded-tree-handler
+  ;; 木の数え(MeasureTree)と消し(RemoveTree)だけを thread で待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。
+  ;; 待つ task が取り消された後の答えは何も持たない(数えは数・消しは終わった印)— 後始末は要らない。
+  (MeasureTree [path]
+    (<- answer (| int FileFailed) (offloaded TREE-THREADS (fn [] (run-detached (measure-tree path))) keep-nothing))
+    (resume answer))
+  (RemoveTree [path]
+    (<- answer (| FileFailed None) (offloaded TREE-THREADS (fn [] (run-detached (remove-tree path))) keep-nothing))
     (resume answer)))

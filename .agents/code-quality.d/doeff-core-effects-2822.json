@@ -393,6 +393,7 @@
         "packages/doeff-core-effects/tests/test_meter_contract.hy",
         "packages/doeff-core-effects/tests/test_meter_prometheus.hy",
         "packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy",
+        "packages/doeff-core-effects/tests/test_offloaded_tree.hy",
         "packages/doeff-core-effects/tests/test_outcome_binds.hy",
         "packages/doeff-core-effects/tests/test_outcomes.hy",
         "packages/doeff-core-effects/tests/test_postgres_statement_cancel.hy",

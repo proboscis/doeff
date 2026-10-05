@@ -11,7 +11,10 @@
 ;;;     期限は env_upkeep.prepare-overdue(先読みも job の準備も、進みの印が動かない長さだけ)。期限を判じる前に答えの file を読み、
 ;;;     完成を書いた準備(終わりの処理の途中)は止めない — 次の観測で終わりを読む。
 ;;;   * 掃除(sweep): 空きが下限を切ったら、固定されていない root を消す(選びは env_upkeep.sweep-choice)・uv の cache を prune(待たない)・
-;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。
+;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
+;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
+;;;     worker が自分で job を止めた)。選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
+;;;     選んだ root はその拍で . で始まる脇の名へ退けてから消す(消している間は選びにも完成品の観測にも出ない)。走っている掃除は同時に 1 つ。
 ;;; 記録(待ち・準備中・失敗・固定の集合・掃除と prune の時刻・最後の観測)は handler の session の値で持つ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -20,6 +23,8 @@
 (import json)
 (import re)
 (import doeff_core_effects [slog])
+(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise FailPromise Promise])
+(import doeff_time [WaitWithin])
 (import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
@@ -31,7 +36,8 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-candidates sweep-choice prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
+(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-candidates sweep-choice sweep-due prepare-overdue env-capacity
+                                              WHEEL-UNUSED-SECONDS])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project floor-bytes])
 (import doeff_cluster.worker.protocol.heartbeat [env-report])
@@ -39,10 +45,15 @@
 
 (val ENV-TOOL "doeff_cluster.worker.entry.env_tool")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
 (val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
-(val SWEEP-EVERY-MS 30000)      ; 空きが下限を切っている間の掃除の間隔(固定の集合が変わった時はすぐ)
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
 ;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes・floor-bytes・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数)。
 (val SWEEP-LOG "worker: 掃除の選び")
+;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
+;; took-ms = 数えの始めから消しの終わりまでの ms)。
+(val SWEEP-DONE-LOG "worker: 掃除の終わり")
+;; 消すと選んだ root を退ける脇の名の印(.<名>.swept.<時刻> — . で始まる名は完成品としても掃除の候補としても読まれない。worker が
+;; 消しの途中で止まって残った脇の dir は、次の掃除の残りの片づけが消す)。
+(val SWEPT-MARK ".swept.")
 
 
 (defrecord EnvSettings
@@ -224,24 +235,150 @@
   infos)
 
 
+(defrecord MeasuredRoots
+  "掃除の数え(ループの外の task)の答え: infos = root ごとの観測(大きさは MeasureTree で数えた byte)。"
+  (#^ (get tuple #(RootInfo ...)) infos))
+
+
+(defrecord RemovedRoots
+  "掃除の消し(ループの外の task)の答え: paths = 消した dir(脇へ退けた root・途中で止まった準備の残り・7 日使われない wheel)。"
+  (#^ (get tuple #(str ...)) paths))
+
+
+(defrecord SweepMeasuring
+  "走っている掃除の数え: done = 答え(MeasuredRoots)を受ける Promise・started-ms = 掃除を始めた時刻。"
+  (#^ Promise done)
+  (#^ int started-ms))
+
+
+(defrecord SweepRemoving
+  "走っている掃除の消し: done = 答え(RemovedRoots)を受ける Promise・started-ms = 掃除を始めた時刻(数えの始め)・keys = 脇へ退けた root の
+   キー(脇の名は . で始まるので、消している間は選びにも完成品の観測にも出ない)。"
+  (#^ Promise done)
+  (#^ int started-ms)
+  (#^ (get tuple #(str ...)) keys))
+
+
+(defrecord PruneState
+  "uv の cache の prune の記録: pid = 走っている prune の子(None = 走っていない)・started-ms = 最後に起こした時刻(0 = まだ起こしていない)。"
+  (setv #^ (| int None) pid None)
+  (setv #^ int started-ms 0))
+
+
 (defk sweep-leftovers [settings now-ms]
-  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % None)]}
-  "途中で止まった準備の残り(.<キー>.broken.<時刻> — worker が退けた物)と、7 日使われない native の wheel(使うたびに dir の中の印の
-   file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)を消すため。"
+  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
+  "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
+   wheel(使うたびに dir の中の印の file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)を消し、消した path の列を
+   返すため。"
   (<- roots (ListDirectory (+ settings.state "/roots")))
-  (when (not (isinstance roots FileFailed))
-    (for [entry roots]
-      (when (and (.startswith entry.name ".") (in ".broken." entry.name))
-        (<- (RemoveTree (+ settings.state "/roots/" entry.name))))))
+  (val aside (if (isinstance roots FileFailed)
+                 #()
+                 (tuple (gfor entry roots :if (and (.startswith entry.name ".") (or (in ".broken." entry.name) (in SWEPT-MARK entry.name)))
+                              (+ settings.state "/roots/" entry.name)))))
   (<- wheels (ListDirectory (wheels-root settings.state)))
+  (var stale #())
   (when (not (isinstance wheels FileFailed))
     (for [entry wheels]
       (when (= entry.kind PathKind.DIRECTORY)
         (val path (+ (wheels-root settings.state) "/" entry.name))
         (<- at (modified-ms path))
         (when (and (is-not at None) (> (- now-ms at) (* 1000 WHEEL-UNUSED-SECONDS)))
-          (<- (RemoveTree path))))))
+          (:= stale (+ stale #(path)))))))
+  (val doomed (+ aside stale))
+  (for [target doomed]
+    (<- (RemoveTree target)))
+  doomed)
+
+
+(defk measuring-roots [settings done]
+  {:pre [(: settings EnvSettings) (: done Promise)] :post [(: % None)]}
+  "掃除の数え(root ごとの MeasureTree — root 1 つが数千の file の木)をループの外の task で行い、答えを done へ渡すため(#3715)。
+   失敗も done へ渡す(渡さないと掃除が走り続けていると読まれ、次の掃除が起きない — 失敗はループが答えを読んだ拍で上がる)。"
+  (try
+    (<- infos tuple (root-infos settings))
+    (<- (CompletePromise done (MeasuredRoots :infos infos)))
+    (except [error Exception]
+      (<- (FailPromise done error))))
   None)
+
+
+(defk removing-leftovers [settings now-ms done]
+  {:pre [(: settings EnvSettings) (: now-ms int) (: done Promise)] :post [(: % None)]}
+  "掃除の消し(脇へ退けた root の木と残りの片づけ — sweep-leftovers)をループの外の task で行い、答えを done へ渡すため(#3715)。
+   失敗も done へ渡す(measuring-roots と同じ訳)。"
+  (try
+    (<- removed tuple (sweep-leftovers settings now-ms))
+    (<- (CompletePromise done (RemovedRoots :paths removed)))
+    (except [error Exception]
+      (<- (FailPromise done error))))
+  None)
+
+
+(defk start-measuring [settings now-ms]
+  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % SweepMeasuring)]}
+  "掃除の数えをループの外の task として起こし、走っている数えの記録を返すため(ループは待たない — 答えは後の拍で sweep-answer が読む)。"
+  (<- done Promise (CreatePromise))
+  (<- (Spawn (measuring-roots settings done) :daemon True))
+  (SweepMeasuring :done done :started-ms now-ms))
+
+
+(defk sweep-answer [work]
+  {:pre [(: work (| SweepMeasuring SweepRemoving))] :post [(: % (| MeasuredRoots RemovedRoots None))]}
+  "走っている掃除の答えを待たずに読むため(まだなら None — 待つ秒 0 の WaitWithin)。task が渡した失敗はここで上がる。"
+  (<- answer (WaitWithin work.done.future 0.0))
+  answer)
+
+
+(defk set-aside [settings key now-ms]
+  {:pre [(: settings EnvSettings) (: key str) (: now-ms int)] :post [(: % bool)]}
+  "消すと選んだ root を . で始まる脇の名へ退けるため(名の付け替え 1 回 — 木の消しはループの外の task)。答え = 退けたか(root が
+   もう無ければ False)。"
+  (<- root str (env-root settings key))
+  (<- moved (RenamePath root (.format "{}/roots/.{}{}{}" settings.state (cut key (len ENV-KEY-PREFIX) None) SWEPT-MARK now-ms)))
+  (not (isinstance moved FileFailed)))
+
+
+(defk start-removing [settings measured busy started-ms]
+  {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: started-ms int)] :post [(: % SweepRemoving)]}
+  "数えの答えが届いた拍で、その拍の固定(busy — 数えの間に固定になった root も入る)と空きで消す root を選び、脇へ退け、消しをループの
+   外の task として起こすため。答え = 走っている消しの記録。"
+  (<- disk EnvDisk (disk-view settings busy))
+  (<- candidates tuple (sweep-candidates measured.infos busy))
+  (<- chosen tuple (sweep-choice measured.infos busy disk.free disk.floor))
+  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・下限・固定の数・候補の数・選んだ数。
+  (<- (slog SWEEP-LOG :level "info" :free-bytes disk.free :floor-bytes disk.floor :pinned (len busy) :candidates (len candidates)
+            :chosen (len chosen)))
+  (<- now-ms int (now-epoch-ms))
+  (var aside #())
+  (for [key chosen]
+    (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(空き {} byte < 下限 {} byte)" (cut key (len ENV-KEY-PREFIX) None)
+                       disk.free disk.floor)))
+    (<- moved bool (set-aside settings key now-ms))
+    (when moved
+      (:= aside (+ aside #(key)))))
+  (<- done Promise (CreatePromise))
+  (<- (Spawn (removing-leftovers settings now-ms done) :daemon True))
+  (SweepRemoving :done done :started-ms started-ms :keys aside))
+
+
+(defk pruned-after [settings prune preparing now-ms]
+  {:pre [(: settings EnvSettings) (: prune PruneState) (: preparing bool) (: now-ms int)] :post [(: % PruneState)]}
+  "消しの終わった拍で、まだ下限を切っていれば uv の cache を prune するため(venv の中の file は hardlink なので残る)。答え = 次の prune の
+   記録。prune は uv の cache の lock を取るので、待つと root の準備の uv run が終わるまで worker のループ(heartbeat)が止まる — 別の
+   process として起こして待たない。前の prune が走っている間と、root の準備が走っている間(preparing)と、前の prune から
+   PRUNE-EVERY-MS の間は起こさない(準備と lock を競わない・他の物が使う node の disk では prune で下限に戻らないので、掃除ごとに
+   起こし続けない)。"
+  (var pid prune.pid)
+  (when (is-not pid None)
+    (<- polled (PollProcess pid))
+    (when (not (isinstance polled ProcessRunning)) (:= pid None)))
+  (<- after EnvDisk (disk-view settings (frozenset)))
+  (if (and (< after.free after.floor) (is pid None) (not preparing)
+           (or (= prune.started-ms 0) (>= (- now-ms prune.started-ms) PRUNE-EVERY-MS)))
+      (do (<- started (StartProcess :argv #(settings.uv "cache" "prune") :env-mode EnvMode.EXTEND
+                                    :env #((EnvEntry :name "UV_CACHE_DIR" :value (+ settings.state "/uv-cache"))) :process-group True))
+          (PruneState :pid (if (isinstance started ProcessNotStarted) None started.pid) :started-ms now-ms))
+      (PruneState :pid pid :started-ms prune.started-ms)))
 
 
 (defk launch-waiting [settings waiting pending]
@@ -302,14 +439,14 @@
 (defhandler env-host [#^ EnvSettings settings]
   ;; 引数に残す理由: root の置き場と準備の道具は worker の process ごとの設定(main が引数から作る)。
   ;; 記録: 待ち(キー → #(宣言の JSON 先読みか) — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
-  ;; 固定の集合 held・最後の掃除と prune の時刻・走っている prune の pid・最後の観測(heartbeat の名乗りが読む)。
+  ;; 固定の集合 held・最後の掃除の終わりの時刻・走っている掃除(数えか消し — 同時に 1 つ)・prune の記録・最後の観測(heartbeat の名乗りが読む)。
   (session var waiting {})
   (session var pending {})
   (session var failed {})
   (session var held (frozenset))
   (session var swept-ms 0)
-  (session var pruned-ms 0)
-  (session var pruning None)
+  (session var sweeping None)
+  (session var prune (PruneState))
   (session var views None)
   (PrepareEnv [key runtime-env warm]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
@@ -353,40 +490,33 @@
     (<- capacity str (env-capacity disk.free settings.min-free-bytes))
     (resume (env-report (or views #()) capacity)))
   (SweepEnvs [pinned]
-    ;; 固定の集合を持ち替え、空きが下限を切っていれば掃除する(下限を切っている間は SWEEP-EVERY-MS ごと・固定が変わればすぐ)。
+    ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
+    ;;   走っていない → 始める時(sweep-due)なら数えを起こす
+    ;;   数えている   → 答えが届いていれば、この拍の固定で選び、選んだ root を脇へ退けて消しを起こす
+    ;;   消している   → 終わっていれば終わりの 1 行を出し、まだ下限を切っていれば uv の cache の prune を起こす
     (val changed (!= pinned held))
     (:= held pinned)
-    (<- disk EnvDisk (disk-view settings held))
     (<- now-ms int (now-epoch-ms))
-    (when (not (or (>= disk.free disk.floor) (and (not changed) (< (- now-ms swept-ms) SWEEP-EVERY-MS) (> swept-ms 0))))
-      (:= swept-ms now-ms)
-      ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。
-      (val busy (| held (frozenset pending) (frozenset waiting)))
-      (<- infos tuple (root-infos settings))
-      (<- candidates tuple (sweep-candidates infos busy))
-      (<- chosen (sweep-choice infos busy disk.free disk.floor))
-      ;; 掃除の頭の 1 行(#3713 — 何も選ばなかった回も出す): 空き・下限・固定の数・候補の数・選んだ数。
-      (<- (slog SWEEP-LOG :level "info" :free-bytes disk.free :floor-bytes disk.floor :pinned (len busy) :candidates (len candidates)
-                :chosen (len chosen)))
-      (for [key chosen]
-        (<- root str (env-root settings key))
-        (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(空き {} byte < 下限 {} byte)" (cut key (len ENV-KEY-PREFIX) None)
-                           disk.free disk.floor)))
-        (<- (RemoveTree root)))
-      (<- (sweep-leftovers settings now-ms))
-      ;; まだ下限を切っていれば uv の cache を prune する(venv の中の file は hardlink なので残る)。prune は uv の cache の lock を取るので、
-      ;; 待つと root の準備の uv run が終わるまで worker のループ(heartbeat)が止まる — 別の process として起こして待たない。前の prune が
-      ;; 走っている間と、root の準備が走っている間と、前の prune から PRUNE-EVERY-MS の間は起こさない(準備と lock を競わない・
-      ;; 他の物が使う node の disk では prune で下限に戻らないので、拍ごとに起こし続けない)。
-      (when (is-not pruning None)
-        (<- polled (PollProcess pruning))
-        (when (not (isinstance polled ProcessRunning)) (:= pruning None)))
-      (<- after EnvDisk (disk-view settings held))
-      (when (and (< after.free disk.floor) (is pruning None) (not pending) (not waiting)
-                 (or (= pruned-ms 0) (>= (- now-ms pruned-ms) PRUNE-EVERY-MS)))
-        (:= pruned-ms now-ms)
-        (<- prune (StartProcess :argv #(settings.uv "cache" "prune") :env-mode EnvMode.EXTEND
-                                :env #((EnvEntry :name "UV_CACHE_DIR" :value (+ settings.state "/uv-cache"))) :process-group True))
-        (when (not (isinstance prune ProcessNotStarted))
-          (:= pruning prune.pid))))
+    (match sweeping
+      None
+        (do (<- disk EnvDisk (disk-view settings held))
+            (<- due bool (sweep-due disk.free disk.floor changed now-ms swept-ms))
+            (when due
+              (<- measuring SweepMeasuring (start-measuring settings now-ms))
+              (:= sweeping measuring)))
+      (SweepMeasuring)
+        (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
+            (when (is-not measured None)
+              ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
+              (<- removing SweepRemoving (start-removing settings measured (| held (frozenset pending) (frozenset waiting)) sweeping.started-ms))
+              (:= sweeping removing)))
+      (SweepRemoving)
+        (do (<- removed (| RemovedRoots None) (sweep-answer sweeping))
+            (when (is-not removed None)
+              (<- (slog SWEEP-DONE-LOG :level "info" :removed (len sweeping.keys) :leftovers (- (len removed.paths) (len sweeping.keys))
+                        :took-ms (- now-ms sweeping.started-ms)))
+              (<- next-prune PruneState (pruned-after settings prune (bool (or pending waiting)) now-ms))
+              (:= prune next-prune)
+              (:= swept-ms now-ms)
+              (:= sweeping None))))
     (resume None)))

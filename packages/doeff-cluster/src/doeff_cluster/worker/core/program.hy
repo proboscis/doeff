@@ -1,7 +1,9 @@
 ;; worker の調整ループ。毎拍「宣言・観測・記憶」から action を導いて実行する。
 ;; 子 process もコードの準備も観測で追うので、どの job の処理もループ(停止の経路)を塞がない。
 (require doeff-hy.macros [defk <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "program"})
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_time [Delay GetMonotonic])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.scheduler [Future])
@@ -16,14 +18,41 @@
 (val FOLLOWUP-ROUNDS 2)
 ;; 起こしの見送りの行の名(#3713 — 名 + 欄 job・reason の形。reason = StartHold の値)。
 (val START-HOLD-LOG "worker: job の起こしの見送り")
+;; 拍の遅れの行の名と閾(#3715 — 名 + 欄 elapsed-ms = 拍の頭から終わりまでの ms・slowest = その拍でいちばん長く待った effect の名・
+;; slowest-ms = その待ちの ms)。閾は coordinator との途絶の柵(本番 20 秒)より小さく、柵を越える前に遅れを名指す。
+(val TICK-LAG-LOG "worker: 拍の遅れ")
+(val TICK-LAG-MS 5000)
+
+
+(defrecord TickLap
+  "拍の中の待ちの計り: at = 最後に刻んだ時刻(epoch ms)・slowest = ここまででいちばん長く待った effect の名・slowest-ms = その待ちの ms。"
+  (#^ int at)
+  (setv #^ str slowest "")
+  (setv #^ int slowest-ms 0))
+
+
+(defk lap-after [lap name]
+  {:pre [(: lap TickLap) (: name str)] :post [(: % TickLap)]}
+  "拍の中で 1 つの effect(name)を待ち終えた所で時刻を刻み、いちばん長い待ちを持ち替えるため(拍の遅れの行がどの待ちで遅れたかを名指す)。"
+  (<- now int (now-epoch-ms))
+  (val took (- now lap.at))
+  (if (> took lap.slowest-ms)
+      (TickLap :at now :slowest name :slowest-ms took)
+      (TickLap :at now :slowest lap.slowest :slowest-ms lap.slowest-ms)))
+
 
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None))
   ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。止まり始めも渡す — heartbeat で名乗り、
   ;; coordinator がこの世代へ新しく置かない(#2819)。
+  ;; 拍の遅れの計り(#3715): 拍の頭から effect を 1 つ待ち終えるごとに刻み、拍が TICK-LAG-MS を越えたらいちばん長い待ちを名指す。
+  (<- began int (now-epoch-ms))
+  (var lap (TickLap :at began))
   (<- env-report (| dict None) (EnvReport))
+  (:= lap (! (lap-after lap "EnvReport")))
   (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report :stopping stopping))
+  (:= lap (! (lap-after lap "ReadDesired")))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける。
   (setv desired (cond
     stopping #()
@@ -34,17 +63,21 @@
     _ :if stopping (WorkerStopping)
     (DesiredJobs :cut-off (CutOff)) read.cut-off
     _ (Undeclared)))
-  (<- now int (now-epoch-ms))
+  (val now lap.at)
   (<- world WorldView (ObserveWorld))
+  (:= lap (! (lap-after lap "ObserveWorld")))
   (setv warm (cond stopping #() (isinstance read DesiredJobs) read.warm True state.warm))
   (<- actions tuple (plan now desired world state.records policy :warm warm :absent absent))
-  (for [action actions] (<- action))
+  (for [action actions]
+    (<- action)
+    (:= lap (! (lap-after lap (. (type action) __name__)))))
   (<- counted dict (records-after now state.records actions policy))
   (var records counted)
   ;; 状態の表示は action の後の観測から作る(起動・回収を 1 拍遅れで見せない)。
   (var after world)
   (when actions
     (<- observed WorldView (ObserveWorld))
+    (:= lap (! (lap-after lap "ObserveWorld")))
     (:= after observed)
     ;; この拍の準備で揃った物は、同じ拍のうちに進める(最初の task が拍 1 つ待たない — #2719)。揃いは 2 段まで続けて追う: 木が揃って
     ;; 待ちの子を起こし、その待ちの子が揃って task を分ける(#3646 — 起こした刻に揃う宿の時だけ 2 段目が在る)。
@@ -52,11 +85,14 @@
     (for [_ (range FOLLOWUP-ROUNDS)]
       (<- followups tuple (ready-followups now desired before after records policy :warm warm :absent absent))
       (when (not followups) (break))
-      (for [action followups] (<- action))
+      (for [action followups]
+        (<- action)
+        (:= lap (! (lap-after lap (. (type action) __name__)))))
       (<- followed dict (records-after now records followups policy))
       (:= records followed)
       (:= before after)
       (<- settled WorldView (ObserveWorld))
+      (:= lap (! (lap-after lap "ObserveWorld")))
       (:= after settled)))
   ;; 起こしの見送り(#3713): 拍の終わりの観測で起こさない・起こせない宣言の job を、訳が前の拍と替わった時だけ 1 行にし、訳を記憶に書く
   ;; (同じ訳が続く間は出さない)。
@@ -68,6 +104,9 @@
   (:= records held)
   (<- report tuple (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
+  (:= lap (! (lap-after lap "PublishStatus")))
+  (when (> (- lap.at began) TICK-LAG-MS)
+    (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms (- lap.at began) :slowest lap.slowest :slowest-ms lap.slowest-ms)))
   #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))

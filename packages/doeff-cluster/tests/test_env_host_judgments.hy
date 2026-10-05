@@ -20,11 +20,12 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.file_effects [ReadText WriteText MakeDirectory file-done])
 (import doeff_core_effects.process_effects [StartProcess PollProcess StopProcess ProcessStarted ProcessRunning ProcessExited])
-(import doeff_time [SetTime SimClock sim-time-handler sync-time-handler])
+(import doeff_time [Delay SetTime SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailureKind])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv CHILD-PROTOCOL])
@@ -277,6 +278,20 @@
   root)
 
 
+;; 掃除の数えと消しはループの外の task で走る(#3715)— 筋書きは SweepEnvs を短い間を置いて撃ち続ける(worker の拍の代わり)。
+(val SWEEP-ROUNDS 50)
+(val SWEEP-PAUSE-SECONDS 0.02)
+
+
+(defk swept-rounds [pinned]
+  {:pre [(: pinned frozenset)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "固定の集合 pinned で SweepEnvs を SWEEP-ROUNDS 回、SWEEP-PAUSE-SECONDS の間を置いて撃つため(掃除 1 回が数え・選び・消しまで進む)。"
+  (for [_ (range SWEEP-ROUNDS)]
+    (<- (SweepEnvs pinned))
+    (<- (Delay SWEEP-PAUSE-SECONDS)))
+  None)
+
+
 (deftest test-scenario-9-the-sweep-keeps-pinned-latest-and-foreign-dirs [tmp-path]
   ;; 同じ project の root 3 つ: a(固定・最も古い)・b・c(最後に作った = project の最新)。worker が作っていない dir(キーの形の名で
   ;; 完成マーカーの無い dir と、別の名の dir)。空きの下限を空きより上に置く(下限を切った状態)。
@@ -293,9 +308,9 @@
   (.write-text (/ foreign "keep.txt") "not ours\n")
   (val notes (/ (Path settings.state) "roots" "notes"))
   (.mkdir notes)
-  (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
-                      (env-host settings)]
-        (SweepEnvs (frozenset #((+ "env-" a.name))))))
+  (<- (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                 (env-host settings)]
+                   (swept-rounds (frozenset #((+ "env-" a.name)))))))
   (assert (.exists a) "固定された root は残る")
   (assert (not (.exists b)) "固定されていない古い root は消える")
   (assert (.exists c) "project ごとの最新の root(bytecode の引き継ぎ元)は残る")

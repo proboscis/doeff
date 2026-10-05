@@ -17,7 +17,7 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects.handlers [await-handler slog-handler state :as session-store])
 (import doeff_core_effects.file_effects [WriteText file-done])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
 (import doeff_core_effects.os_random [os-random-handler])
@@ -119,9 +119,11 @@
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
    code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
-   (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。"
+   (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消し
+   (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
+   調整ループ(heartbeat)は回り続ける(#3715)。"
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-warm-process-handler
-   os-file-handler (session-store) (env-host envs) (code-host codes) (status-file status-path)
+   os-file-handler offloaded-tree-handler (session-store) (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
    (probe-host probes) (warm-host warm) (process-host host) local-host tick-pauses])
 
