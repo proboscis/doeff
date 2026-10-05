@@ -41,7 +41,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | 共有の保存(盤) | coordinator の `/board`。どの worker で動いても同じ値が読める key-value(compare-and-set つき)。effect `ReadShared` / `WriteShared` |
 | lease | 名前付きの排他(effect `CreateNamedSemaphore` → `AcquireSemaphore`)。期限は coordinator の時計だけで書き・判じる |
 | handoff | 版か環境変数が変わった時の入れ替え方。新しい process を旧と並べて起動し、新が Ready になってから旧を止める |
-| drain | worker を空けてよいかを問う印。handoff の service は別の worker へ並べて Ready を待ってから移す |
+| drain | worker を空けてよいかを問う印。handoff の service は別の worker へ並べて Ready を待ってから移す。drain 中の worker は、drain の間に宣言し直された新しい版を準備も起動もせず、旧い版を動かし続ける(新しい版は移し先か、drain が解けた後) |
 
 ## module の地図
 

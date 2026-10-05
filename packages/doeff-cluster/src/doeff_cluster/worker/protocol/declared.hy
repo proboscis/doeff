@@ -1,11 +1,13 @@
 ;;; coordinator の heartbeat の返事の job と task の行を、worker が起こす JobSpec へ読む口(handlers.hy から移した・#2427)。
 ;;; worker の拍(coordinator への口)と、検・使い手の repo の模擬の世界が同じ読みを使う(handlers.hy は同じ名を読み直して残す)。
+;;; 返事のうち宣言の部分(job の行と draining)は、JSON の境界 declared-reply-of-json で 1 度だけ型 DeclaredReply へ解く(#3684)。
 (require doeff-hy.macros [defk <- val var])
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defwire])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import dataclasses [dataclass replace])  ; defrecord の展開が名指す
+(import dataclasses [dataclass replace])  ; defrecord と defwire の展開が名指す
 (import json)
 (import pathlib [Path])
+(import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
@@ -36,10 +38,12 @@
                         :runtime-env (json.dumps declared :sort-keys True :ensure-ascii False) :env-key key))))
 
 
-(defk declared-job-spec [job]
-  {:pre [(: job (get dict #(str object)))] :post [(: % JobSpec)] :tags {:context "worker" :role "protocol" :reads "json"}}
+(defk declared-job-spec [job draining]
+  {:pre [(: job (get dict #(str object))) (: draining bool)] :post [(: % JobSpec)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。worker が job を受けるのは
-   coordinator からだけ(宣言の file を直に読む口は無い — ADR-DOE-CLUSTER-001 R1)。"
+   coordinator からだけ(宣言の file を直に読む口は無い — ADR-DOE-CLUSTER-001 R1)。draining = 同じ返事の draining(この worker が drain
+   中か)— 版を据え置く印 hold-version に写す(#3684)。既定の値は持たない: 既定があると、新しい読み手が渡し忘れた時に drain 中の
+   worker が新しい版を黙って起こす(既定が無ければ、渡し忘れは呼んだ所で引数の不足として止まる)。"
   (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) placed.revision
            :once (.get job "once" False) :placement (.get job "placement")
@@ -51,15 +55,45 @@
            :program (.get job "program")
            :environ (environ-pairs (.get job "environ" {}))
            ;; 途絶しても動かし続けてよい印(#2804 — 移せる先の無い job だけが持つ・無ければ偽 = 古い coordinator の返事も同じ)。
-           :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)))
+           :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)
+           ;; 版を据え置く印(#3684 — drain 中の worker は、drain の間に宣言し直された新しい版を準備も起動もしない・worker_policy.plan-job)。
+           :hold-version draining))
 
 
-(defk declared-job-specs [jobs]
-  {:pre [(: jobs (get list (get dict #(str object))))] :post [(: % (get tuple #(JobSpec ...)))] :tags {:context "worker" :role "protocol" :reads "json"}}
-  "heartbeat の返事の job の行の列を、worker が起動する形の列に読むため(worker の拍と sim の宿が同じ読みを使う)。"
+(defwire DeclaredReply
+  "heartbeat の返事のうち、worker が起こす宣言の部分(#3684): jobs = job の行の列(1 行ずつ declared-job-spec が JobSpec へ読む)・
+   draining = この worker が drain 中か(ready の file と、版を据え置く印 hold-version が同じ値を読む)。どちらも省けない欄 — coordinator は
+   2026-09-25 から返事に draining を必ず載せ、旧い形の返事を作る相手はもう無いので、欄の無い返事は誤り(DeclaredReplyMalformed)。
+   ほかの欄(tasks・warm・timing・revision など)はここでは読まない。JSON の綴りは coordinator/protocol/replies の heartbeat-reply-json。"
+  {:tags {:context "worker" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (#^ (get tuple #((get dict #(str object)) ...)) jobs)
+  (#^ bool draining))
+
+
+(defclass DeclaredReplyMalformed [ValueError]  ; class にする理由: 返事の読めない形を名指す例外の型(拍の except と検が型で名指す — 欄も状態も足さない)
+  "heartbeat の返事が DeclaredReply の形でない(jobs か draining が無い・jobs が job の行の列でない・draining が真偽でない)。読みを黙って
+   既定の値で埋めない — 埋めると drain 中の worker が新しい版を起こす(#3684)。")
+
+
+(defk declared-reply-of-json [reply]
+  {:pre [(: reply (get dict #(str object)))] :post [(: % DeclaredReply)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "heartbeat の返事(本文の JSON の object)を、JSON の境界で 1 度だけ DeclaredReply へ解くため(本番の coordinator への口・sim の宿・
+   使い手の repo の模擬の世界が同じ読みを使う)。欄の形が違えば DeclaredReplyMalformed(どの欄が・なぜ)で落ちる。"
+  (<- read (| DeclaredReply Malformed) (parse DeclaredReply reply))
+  (match read
+    (Malformed :fields fields)
+      (raise (DeclaredReplyMalformed (.format "heartbeat の返事が DeclaredReply の形でない: {}"
+                                              (.join "・" (gfor f fields (+ f.field " " f.reason))))))
+    _ read))
+
+
+(defk declared-job-specs [reply]
+  {:pre [(: reply DeclaredReply)] :post [(: % (get tuple #(JobSpec ...)))] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "heartbeat の返事の宣言の部分(declared-reply-of-json で解いた物)の job の行の列を、worker が起動する形の列に読むため(worker の拍と
+   sim の宿が同じ読みを使う)。同じ返事の draining(この worker が drain 中か)を全部の job の版を据え置く印 hold-version に写す(#3684)。"
   (var specs #())
-  (for [job jobs]
-    (<- spec JobSpec (declared-job-spec job))
+  (for [job reply.jobs]
+    (<- spec JobSpec (declared-job-spec job reply.draining))
     (:= specs (+ specs #(spec))))
   specs)
 

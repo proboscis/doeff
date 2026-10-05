@@ -2340,7 +2340,8 @@
         "doeff-cluster-job-model",
         "doeff-cluster-worker-rules",
         "doeff-cluster-runtime-env-rules",
-        "doeff-cluster-native-wheel"
+        "doeff-cluster-native-wheel",
+        "doeff-hy-wire"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-declared",

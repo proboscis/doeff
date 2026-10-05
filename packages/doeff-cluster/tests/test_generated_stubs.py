@@ -53,7 +53,7 @@ USED = (
     UsedModule("shared.protocol.program_codec", ("decode-outcome", "encode-program")),
     UsedModule("worker.core.worker_rules", ("code-key",)),
     # worker の拍の読みと綴り・宣言の送り(#2824 — 使い手の模擬の世界の 1 拍と宣言の命令が `<-` で受ける defk)。
-    UsedModule("worker.protocol.declared", ("declared-job-specs",)),
+    UsedModule("worker.protocol.declared", ("DeclaredReply", "declared-job-specs", "declared-reply-of-json")),
     UsedModule("worker.protocol.heartbeat", ("status-rows-json",)),
     UsedModule("shared.entry.declare", ("apply-declaration",)),
     # coordinator と worker の判断・入口(#2841 の残り — 並走の便 #2804・#2819・#2760 の着地の後に道具で作った)。

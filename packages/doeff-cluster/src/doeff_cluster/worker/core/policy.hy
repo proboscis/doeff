@@ -226,6 +226,10 @@
           (stop-actions now process record policy)
           #())
     (and (= want process.spec) (is record.stopping None)) #()
+    ;; 版を据え置く(#3684 — この worker が drain 中): spec が変わっても、止めていない process をそのまま動かす(新しい版の準備・入口の検め・
+    ;; 退かせ・止めをしない)。移し先で新しい版が Ready になれば宣言から消え(want が None)、下の止めへ進む。drain が解けて印が偽に戻った
+    ;; 拍から、下の入れ替えへ進む。宣言から消えた job(want が None)は今までどおり止める。
+    (and (is-not want None) want.hold-version (is record.stopping None)) #()
     ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在る間は、並べずに止めてから起こす)。
     (and (is-not want None) want.handoff (is record.stopping None) (not (retired-exists world name)))
       (handoff-actions now want process world policy)
@@ -455,6 +459,8 @@
     :setv probing (if (is want None) None (probe-status now world want))
     :setv handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None))
     :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
+    ;; 版を据え置いている(#3684 — drain 中で、新しい版を受けずに旧い版を動かしている — plan-job の据え置きと同じ形)。
+    :setv held (and (is-not process None) (is-not want None) want.hold-version (!= process.spec want) (is record.stopping None))
     :setv warm-wait (warm-wait-detail world want process record)
     ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
     ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
@@ -468,6 +474,8 @@
       (cond
         ;; 入れ替えの諦め(coordinator の期限)。Service の status.handoff に期限と理由が出る。
         abandoned "入れ替えを諦めた(新の process は止めて起こし直さない・旧は動かしたまま — 宣言が変わるまで)"
+        ;; drain 中で新しい版を受けていない(#3684)。新しい版の準備・検めの姿はこの worker では進めないので、ここで止める。
+        held "drain 中 — 新しい版は drain の後"
         (and (is-not code None) (= code.state CodeState.FAILED)) code.detail
         ;; 新の入口を読み込めない(入口の検めの理由)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probe None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— 新の入口を読み込めない: {}" probe.detail)

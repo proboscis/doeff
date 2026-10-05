@@ -141,7 +141,7 @@
                 (if up
                     (httpx.Response 200 :json {"jobs" [{"name" "writer-a" "entry" "m" "args" [] "revision" "r" "handoff" True}
                                                        {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
-                                               "tasks" [] "timing" {"fence_ms" 20000}})
+                                               "tasks" [] "timing" {"fence_ms" 20000} "draining" False})
                     (raise (httpx.ConnectError "coordinator を作り直している")))))
   (val link (LinkRig "http://coord" "atlas" #() 10 0 20000 :transport (httpx.MockTransport handle)
                      :task-dir (str (/ (Path (tempfile.mkdtemp)) "tasks"))))

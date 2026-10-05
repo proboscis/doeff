@@ -35,7 +35,7 @@
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks])
 (import doeff_cluster.worker.core.boot_timing [boot-line])
-(import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs])
+(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 
 
@@ -350,7 +350,11 @@
   (try
     (<- answered (answer-json reply.answer))
     (setv state.last-ok-ms now-ms)
-    (<- (ready-file-written (bool (.get answered "draining" False))))
+    ;; 返事の宣言の部分(job の行と draining)を JSON の境界で 1 度だけ解く(#3684)— ready の file と、返事の job の版を据え置く印
+    ;; (declared-job-specs)が同じ draining を読む。形の違う返事(draining の無い返事など)は DeclaredReplyMalformed で落ち、下の except が
+    ;; 「名乗れない」の 1 行にして「読めない」を返す(拍は前の宣言のまま動かし、ready の file は書かない — 読めない返事で版を入れ替えない)。
+    (<- declared DeclaredReply (declared-reply-of-json answered))
+    (<- (ready-file-written declared.draining))
     ;; 自己停止の時間は coordinator の ClusterTiming が持つ(移し替えの時間と組で決まる)。受け取った値に合わせる。
     (val timing (.get answered "timing"))
     (when (and timing (in "fence_ms" timing))
@@ -358,7 +362,7 @@
     ;; 印の在る job の長い方の柵(#2804)も同じく受け取る。
     (when (and timing (in "keep_fence_ms" timing))
       (setv state.keep-fence-ms (int (get timing "keep_fence_ms"))))
-    (<- jobs tuple (declared-job-specs (get answered "jobs")))
+    (<- jobs tuple (declared-job-specs declared))
     (setv state.last-jobs jobs)
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
     (setv state.last-tasks tasks)
