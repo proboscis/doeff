@@ -24,6 +24,9 @@ from doeff_core_effects.process_effects import ProcessNotStarted as ProcessNotSt
 from doeff_core_effects.process_effects import ProcessRunning as ProcessRunning
 from doeff_core_effects.process_effects import ProcessExited as ProcessExited
 from doeff_core_effects.process_effects import ProcessNotChild as ProcessNotChild
+from doeff_core_effects.process_effects import WriteProcessInput as WriteProcessInput
+from doeff_core_effects.process_effects import ProcessInputWritten as ProcessInputWritten
+from doeff_cluster.worker.intent.worker_model import NoticeJob as NoticeJob
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.worker.intent.worker_model import CodeLayout as CodeLayout
 from doeff_cluster.worker.intent.worker_model import ProcessView as ProcessView
@@ -74,6 +77,7 @@ class HostSettings:
     program_env: str
     shim: ShimSpans
     warm_dir: str
+    notice_env: str
 
 @dataclass(frozen=True, kw_only=True)
 class ForkedFrom:
@@ -100,11 +104,21 @@ STOP_TIMING_LOG: str
 
 def stop_reason_word(reason: StopReason) -> _Program[str, object]:
     ...
+RETIREMENT_NOTICES: tuple[Retired | HandoffAbandoned, ...]
+
+def retirement_line(notice: Retired | HandoffAbandoned) -> _Program[str, object]:
+    ...
+
+def retirement_of_word(word: str) -> _Program[Retired | HandoffAbandoned, object]:
+    ...
 
 def silent_ms_of(reason: StopReason) -> _Program[int | None, object]:
     ...
 
 def noted_stop(moment: StopMoment, name: str, pid: int, asked: StopAsked, now_ms: int) -> _Program[None, object]:
+    ...
+
+def tell_retirement(started: Started, notice: Retired | HandoffAbandoned) -> _Program[Started, object]:
     ...
 
 def job_work_dir(settings: HostSettings, name: str) -> _Program[str, object]:

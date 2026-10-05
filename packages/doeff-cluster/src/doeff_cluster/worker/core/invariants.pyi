@@ -13,6 +13,16 @@ def handoff_keeps_a_ready_writer(lifetimes: tuple) -> _Program[tuple, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
+class RetirementSeen:
+    instance: str
+    told_ms: int | None
+    successor_ready_ms: int | None
+    stopped_ms: int | None
+
+def retiring_process_hears_first(seen: tuple[RetirementSeen, ...]) -> _Program[tuple[RetirementSeen, ...], object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
 class DescendantLife:
     pid: int
     label: str

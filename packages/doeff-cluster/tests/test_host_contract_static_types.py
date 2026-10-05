@@ -128,5 +128,5 @@ def test_a_dropped_record_field_is_found() -> None:
             node.body = [
                 s for s in node.body if not (isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name) and s.target.id == "versions_key")
             ]
-    assert _mismatches(stub) == ["record HostContract の欄 ['run_context_key', 'program_key', 'program_env'] が実装 "
-                                 "['run_context_key', 'program_key', 'versions_key', 'program_env'] と違う"]
+    assert _mismatches(stub) == ["record HostContract の欄 ['run_context_key', 'program_key', 'program_env', 'notice_env'] が実装 "
+                                 "['run_context_key', 'program_key', 'versions_key', 'program_env', 'notice_env'] と違う"]

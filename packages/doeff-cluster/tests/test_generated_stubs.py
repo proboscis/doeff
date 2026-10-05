@@ -74,6 +74,9 @@ USED = (
     UsedModule("sim.machine", ("GitSource", "LocalMachine", "local-machine-cluster")),
     # 時刻の物差し(#3366 — 使い手の版上げの名簿の読みが Program で今の時刻を取る)。
     UsedModule("shared.core.clock", ("now-epoch-ms",)),
+    # 退きの知らせ(#3672 — 使い手の常駐の job が入れ替えで退く事を出来事で知り、本番の答え手を土台に並べる)。
+    UsedModule("worker.intent.retirement_model", ("AwaitRetirement", "Retirement")),
+    UsedModule("worker.entry.retirement_notices", ("pipe-retirement-notices",)),
 )
 
 

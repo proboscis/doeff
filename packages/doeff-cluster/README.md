@@ -149,17 +149,29 @@ worker の子 process の入口は `hy -m doeff_cluster.worker.entry.job_entry s
 0 以外で終わります(worker が理由つきで起動し直します)。task の入口は結果を `--result` の file に書いた後、終わる前に coordinator の
 `POST /tasks/<id>/result` へ結果を直接送ります。届かなかった時だけ、worker が file を読んで次の heartbeat で運びます(子が終了コード 0 で
 終わった直後に worker が死んでも、結果は失われず、task は 2 回実行されません)。実行先が Program に提供するのは
-`host_contract.HOST-CONTRACT` の 3 つだけです:
+`host_contract.HOST-CONTRACT` の 4 つだけです:
 
 | 提供する物 | Program での読み方 |
 |---|---|
 | run-context(coordinator の URL・worker・job・process の世代) | `Ask HOST-CONTRACT.run-context-key`(`"doeff.cluster.run-context"`)→ `shared.intent.run_context.RunContext` |
 | environ(宣言の `:environ`) | 子の環境変数。名の `Ask` に、値を字面どおりの文字列で答える(読みの定義 = `environ-reader` の 1 つ) |
 | Program の path(記録の header に載せる) | `Ask HOST-CONTRACT.program-key`(`"doeff.cluster.program"`) |
+| 退きの知らせ(入れ替えで退く・その取り消し) | effect `AwaitRetirement`(`worker.intent.retirement_model`)→ `worker.intent.worker_model` の `Retired` か `HandoffAbandoned` |
 
-本番では土台に並べる `host-reader`(`shared.entry.host_reader`)が 1 と 3 に、`(environ-reader)`(子の `os.environ` の上の読み)が 2 に答えます
-(`host-reader` は session の値を使うので、その外側に `(state)` を置きます)。`sim-cluster` の偽の実行先は同じキーに同じ型で答え、
-environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
+本番では土台に並べる `host-reader`(`shared.entry.host_reader`)が 1 と 3 に、`(environ-reader)`(子の `os.environ` の上の読み)が 2 に、
+`pipe-retirement-notices`(`worker.entry.retirement_notices`)が 4 に答えます(`host-reader` と `pipe-retirement-notices` は session の値を使うので、
+その外側に `(state)` を、`pipe-retirement-notices` の待ちは外部の Promise なので scheduler を置きます)。`sim-cluster` の偽の実行先は同じキーに
+同じ型で答え、environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
+
+退きの知らせ(#3672): `:update "handoff"` の service の spec が変わると、worker は新のコードが揃い新の入口の検めが通った拍で旧を名から外し
+(`RetireJob`)、次の拍で新を起こし、coordinator が新を Ready と数えた後に旧へ SIGTERM を送り、停止の猶予(10 秒)の後に止めます。旧の
+Program は `(<- told (AwaitRetirement))` で、名から外された時点(新の起動・新の Ready・自分の SIGTERM のどれよりも前)に `Retired` を受け
+ます — 新しい仕事を取らずに今の仕事を終える(drain する)時間を、SIGTERM の猶予の外に持てます(条 W2)。入れ替えが期限で諦められると
+(新が Ready にならない)旧は止められずに動き続け、`(AwaitRetirement :after told)` が `HandoffAbandoned`(退きの取り消し)を返します。宣言が
+変わって諦めが解ければ、もう一度 `Retired` を受けます。1 回の待ちで 1 つの知らせで、答えは今の知らせが `after` と違う時に返ります。入れ替えの
+無い止め(宣言から外れた・recreate・worker の停止・途絶)では何も返りません(止めは `AwaitStop` で知ります)。本番の路 = worker の
+`process-host` が shim の標準入力へ 1 行を書き、shim(`--notice-env`)が job に継がせた知らせの pipe へ中継し、job の中の
+`pipe-retirement-notices` の読みの thread が待ちを起こします(間隔で読み直しません)。`sim-cluster` では偽の実行先が世界の受け手で答えます。
 
 ### 宣言する(declare)
 

@@ -1,0 +1,19 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-core-effects-runtime"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-notice-pipe",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/notice_pipe.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/notice_pipe.hy"
+      ],
+      "responsibility": "宿(worker の shim)が子 process へ継がせた知らせの pipe の行を読む thread を立て、語が前に受けた語と違うまでの待ちを外部の Promise で起こす汎用の I/O(#3672)。副作用 = 環境変数と fd の読み・読みの thread。",
+      "typed": true
+    }
+  ]
+}

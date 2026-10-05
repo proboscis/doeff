@@ -127,6 +127,16 @@ class ProcessSignalled:
     delivered: bool
 
 @dataclass(frozen=True, kw_only=True)
+class WriteProcessInput(EffectBase):
+    pid: int
+    text: str
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessInputWritten:
+    pid: int
+    delivered: bool
+
+@dataclass(frozen=True, kw_only=True)
 class ProcessStarted:
     pid: int
 

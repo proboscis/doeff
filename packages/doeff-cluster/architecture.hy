@@ -148,6 +148,14 @@
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1(sim の宿の RetireJob の handler を
 ;;;   「外すと同時に旧を止める」形に壊した worker — SimWorker の retire-stops — で、同じ筋書きに W1 の空白が出る)。
+;;;   W2 retiring-process-hears-first(doeff_cluster.worker.core.invariants:retiring-process-hears-first — #3672)— 入れ替え(handoff)で退く
+;;;   process は、後を継ぐ世代の最初の Ready の報告と、自分が受ける止めの合図(SIGTERM)のどちらよりも前に、出来事で「退く」の知らせ
+;;;   (worker/intent/retirement_model の AwaitRetirement の答え Retired)を受ける — 退く process が新しい仕事を取らずに今の仕事を終える
+;;;   (drain する)時間を、止めの猶予の外に持てる。守りは worker が名から外す RetireJob の 1 か所(本番 = process-host が shim の標準入力へ
+;;;   書き、shim が job の知らせの pipe へ中継する・模擬 = 偽の宿が世界の受け手へ立てる)。確かめるのは tests/test_retirement_notice.hy の
+;;;   test-the-retiring-process-hears-it-before-the-new-ready-and-its-own-stop(知らせ・新の Ready・旧の止めの合図の刻を判断に渡す)。失敗
+;;;   ケースは同じ file の test-a-counterexample-worker-that-does-not-tell-the-retiring-process-breaks-w2(RetireJob が観測だけ書いて知らせない
+;;;   壊れた worker — SimWorker の silent-notices — で、同じ筋書きに W2 の破りが出る)。
 ;;;   WC1 warm-fork-uses-its-own-root(doeff_cluster.worker.core.invariants:warm-fork-uses-its-own-root — #3646)— 待ちの子から分けて起こす
 ;;;   task は、その task 自身の env の root の待ちの子からだけ分かれる(古い root・別の root の venv で走らない)。守りは warm_rules の
 ;;;   warm-key-of の 1 か所。確かめるのは tests/test_warm_child_policy.hy の判断の表(2 つの root の task を並べた行を含む)。失敗ケース =
@@ -231,7 +239,7 @@
                 "doeff_cluster.coordinator.core.upgrade_invariants:one-worker-at-a-time"
                 "doeff_cluster.coordinator.core.upgrade_invariants:coordinator-swap-on-an-empty-queue"]})
 
-;; worker の条は W1(入れ替えの間も書き手が居続ける)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
+;; worker の条は W1(入れ替えの間も書き手が居続ける)・W2(退く process は新の Ready と自分の止めより前に退く知らせを受ける — #3672)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
 ;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)・intent(観測・記録・effect の型 — worker/intent)・
 ;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)・entry(worker の入口 main・drain の入口 drain_main(#2029)・子 process の入口
@@ -243,6 +251,7 @@
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.worker.entry.main"]
    :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"
+                "doeff_cluster.worker.core.invariants:retiring-process-hears-first"
                 "doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant"
                 "doeff_cluster.worker.core.invariants:warm-fork-uses-its-own-root"
                 "doeff_cluster.worker.core.invariants:warm-child-state-leaves-running-tasks"

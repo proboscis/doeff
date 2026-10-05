@@ -20,13 +20,14 @@
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
   (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {"DOEFF_WORKER_NAME" "w1"}
                                  :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
-                                 :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms))
+                                 :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (val env (dfor e plan.env e.name e.value))
   ;; shim の猶予の引数は、shim が読む形(秒の小数 — shim.py の float)で方針の値に戻る。
   (assert (= (float (get plan.argv 4)) (/ shim.shim-grace-ms 1000)) plan.argv)
   ;; job の log は 1 行ごとに壁の時計の刻を付ける(shim の旗 --stamp-lines・#3714)。
   (assert (= (+ (cut plan.argv 0 4) (cut plan.argv 5 None))
-             #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "--stamp-lines" "--" "/bin/hy" "-m" "app.main" "service"))
+             #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--" "/bin/hy" "-m" "app.main"
+               "service"))
           plan.argv)
   (assert (= plan.cwd "/cache/rev1") plan.cwd)
   (assert (= #((get env "PYTHONPATH") (get env "MODE") (get env "DOEFF_WORKER_PID") (get env "DOEFF_WORKER_NAME")) #("/cache/rev1" "fast" "42" "w1")) env)
@@ -41,14 +42,15 @@
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
   (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
-                                 :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/task_t1" :shim-grace-ms shim.shim-grace-ms))
+                                 :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/task_t1" :shim-grace-ms shim.shim-grace-ms
+                                 :notice-env "DOEFF_NOTICE_FD"))
   (val env (dfor e plan.env e.name e.value))
   ;; 許可表の名と LC_* だけを継ぎ、資格を運びうる名・venv の名・PYTHONPATH は置かない。宣言の env-vars と Program の file を足す。
   (assert (= #((get env "PATH") (get env "LC_ALL") (get env "DECLARED") (get env "DOEFF_PROGRAM_FILE")) #("/usr/bin" "C.UTF-8" "1" "/state/programs/s.json")) env)
   (assert (not (& (set env) #{"SECRET_TOKEN" "VIRTUAL_ENV" "PYTHONPATH"})) env)
   (assert (= plan.env-mode EnvMode.REPLACE) plan.env-mode)
-  (assert (= (cut plan.argv 5 7) #("--stamp-lines" "--")) plan.argv)
-  (assert (= (cut plan.argv 7 None) #("uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-k1/app" "hy" "-m" "doeff_cluster.worker.entry.job_entry"
+  (assert (= (cut plan.argv 5 9) #("--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) plan.argv)
+  (assert (= (cut plan.argv 9 None) #("uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-k1/app" "hy" "-m" "doeff_cluster.worker.entry.job_entry"
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
@@ -57,8 +59,8 @@
 
 (deftest test-the-job-log-is-stamped-and-the-probe-output-is-carried-as-is
   ;; job の log(人が刻で読む)は shim の旗で 1 行ごとに刻を付け、入口の検め(worker が stdout の行を読んで判じる)は旗なしでそのまま
-  ;; 運ぶ(#3714)— 旗は命令の頭の猶予と区切りの間。
-  (<- job (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines True))
-  (<- probe (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines False))
-  (assert (= job #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "0.5" "--stamp-lines" "--")) job)
+  ;; 運ぶ(#3714)— 旗は命令の頭の猶予と区切りの間。job は退きの知らせの pipe を受け(--notice-env と環境変数の名 — #3672)、検めは受けない。
+  (<- job (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines True :notice-env "DOEFF_NOTICE_FD"))
+  (<- probe (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines False :notice-env None))
+  (assert (= job #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "0.5" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) job)
   (assert (= probe #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "0.5" "--")) probe))

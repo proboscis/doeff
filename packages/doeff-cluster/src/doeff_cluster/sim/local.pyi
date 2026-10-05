@@ -157,6 +157,7 @@ class SimWorker:
     fresh_boot_every_beat: bool = False
     hides_retired: bool = False
     claims_task_reserve: int | None = None
+    silent_notices: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:

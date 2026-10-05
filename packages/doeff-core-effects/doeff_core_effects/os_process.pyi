@@ -37,6 +37,8 @@ from doeff_core_effects.process_effects import ProcessNotChild as ProcessNotChil
 from doeff_core_effects.process_effects import SignalProcess as SignalProcess
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.process_effects import ProcessSignalled as ProcessSignalled
+from doeff_core_effects.process_effects import WriteProcessInput as WriteProcessInput
+from doeff_core_effects.process_effects import ProcessInputWritten as ProcessInputWritten
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
 from doeff_core_effects.process_effects import ReadMachineName as ReadMachineName
 from doeff_core_effects.process_effects import ResolveModule as ResolveModule
@@ -193,6 +195,9 @@ def stop_child_process(pid: int, stop_grace: float) -> _Program[ProcessExited | 
     ...
 
 def signal_child_process(pid: int, sent: ProcessSignal) -> _Program[ProcessSignalled | ProcessNotChild, object]:
+    ...
+
+def write_child_input(pid: int, text: str) -> _Program[ProcessInputWritten | ProcessNotChild, object]:
     ...
 subprocess_handler: _Handler
 
