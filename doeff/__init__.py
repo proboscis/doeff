@@ -42,6 +42,7 @@ from doeff.program import (
 from doeff.program import WithObserve as WithObserveRaw
 from doeff.program import handler as handler
 from doeff.program import program as program
+from doeff.program import stacked_handlers as stacked_handlers
 from doeff.program import typed_resume as typed_resume
 from doeff.program import typed_transfer as typed_transfer
 from doeff.program import with_handlers as with_handlers
