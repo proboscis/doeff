@@ -179,8 +179,9 @@ def headless_claude_agent_handlers(
     Returns ``[doeff-claude-code production handler, headless adapter]`` in
     ``with_handlers`` order (outer first). ``config_dir`` / ``env`` are the
     Claude home (credentials are placed in ``env`` by the composition root).
-    Install a doeff-time handler and the scheduler outside them. No
-    session-host socket is opened (agora-redesign #604).
+    Install a doeff-time handler, a slog handler (the production handler
+    emits CLI launch timing lines — agora-redesign #3605) and the scheduler
+    outside them. No session-host socket is opened (agora-redesign #604).
     """
     return _hy_headless_compose_module().headless_claude_handlers(
         config_dir, dict(env), settings, cold_resume_prompt, tuple(command)
@@ -229,7 +230,8 @@ def claude_agent_runtime_handlers(
     effects is decided here. Today it is the print-mode adapter over
     ``doeff-claude-code`` (the same pair as ``headless_claude_agent_handlers``).
     ``config_dir`` / ``env`` are the Claude home (credentials are placed by the
-    composition root). Install a doeff-time handler and the scheduler outside.
+    composition root). Install a doeff-time handler, a slog handler and the
+    scheduler outside.
     """
     return headless_claude_agent_handlers(
         config_dir=config_dir,

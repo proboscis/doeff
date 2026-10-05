@@ -12,6 +12,7 @@
 (import pathlib [Path])
 (import sys)
 (import doeff [EffectBase run with_handlers])
+(import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec])
@@ -76,12 +77,13 @@
   (FakeReply (get rule "text") :tool-seconds (get rule "tool_seconds") :needs-permission (get rule "permission")))
 
 (defn handlers-for [#^ str name]
+  ;; 本番の handler は計時の行(slog)を出すので、その外側に slog の答え手を置く(本番の組の slog-handler の代わり — #3605)。
   (cond
     (= name FAKE) [(sim-time-handler :clock (SimClock)) (fake-claude-code-handler (FakeClaudeWorld fake-responder))]
-    (= name STUB) [(sync-time-handler)
+    (= name STUB) [(sync-time-handler) slog-discard-handler
                    (claude-code-handler (ClaudeCodeHost #(sys.executable "-m" "hy" STUB-PATH) (clock-of (sync-time-handler))
                                                         :launch-timeout 60.0))]
-    (= name REAL) [(sync-time-handler)
+    (= name REAL) [(sync-time-handler) slog-discard-handler
                    (claude-code-handler (ClaudeCodeHost #("claude") (clock-of (sync-time-handler)) :launch-timeout 120.0))]
     True []))
 

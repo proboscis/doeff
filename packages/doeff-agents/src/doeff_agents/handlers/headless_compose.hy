@@ -4,6 +4,7 @@
 ;;; headless の adapter(handlers/headless.hy・層 3)の対をここで作る。adapter の module は層 2 の handler も CLI の実行ファイルも
 ;;; 知らない — 知るのはこの組み立ての module だけ。
 ;;; どちらの組も外側に doeff-time の時間の handler(本番 = sync-time-handler・模擬 = sim-time-handler)と scheduler を要る。
+;;; 本番の組は加えて slog の答え手を要る(層 2 の本番の handler が CLI の起動の計時の行を slog で出す — agora-redesign #3605)。
 ;;; 並びは with_handlers の順(先頭が外側): 層 2 の handler → adapter(Program に近い側)。
 (import collections.abc [Callable Mapping])
 (import doeff_hy.frozen [FrozenMap])
