@@ -22,7 +22,7 @@
 ;;;   Redeclare 系               宣言の CLI と同じ system-declaration と apply-declaration で、起こした coordinator へ宣言を書く(答え =
 ;;;                              宣言した Service の名 — sim と同じ)。版は LocalMachine の revision・job の code は worker が code-repo
 ;;;                              (配備と同じ CODE_REPO_URL — 版の木)からその版で取り出す(#3040)。LocalMachine に実行環境
-;;;                              (runtime-env)が在れば宣言に載せ、worker は配備と同じく許可表(WORKER_REPOS)でその repo を受け、
+;;;                              (runtime-env)が在れば宣言に載せ、worker は配備と同じ鍵の表(WORKER_REPOS)の道でその repo を取り込み、
 ;;;                              root を用意して job を動かす(#3042 — 入口の検めを通る本番の土台の job はこの道でだけ起きる)。
 ;;;   Crash 名                   worker が動かしている job の process を group ごと SIGKILL で落とす(答え = 落とした数)。worker は 0 以外の
 ;;;                              終わりとして本物の判断で起こし直す(sim の Crash は exit 1・ここは signal の終わり — worker の数え方は同じ)。
@@ -93,7 +93,7 @@
    SIGKILL までの猶予の秒。job の code の道(#3040): code-repo = 版の木の git(worker の CODE_REPO_URL — 配備と同じ名。空 = 版の木を
    持たない worker)・revision = Redeclare が宣言に書く版(code-repo の commit — sim-cluster の revision と同じ役)・runtime-env =
    Redeclare が宣言に載せる実行環境(repo と commit と uv の lock — sim-cluster の runtime-env と同じ役。None = 版の木の道。#3042):
-   worker は配備と同じく、その repo を許可表(WORKER_REPOS)で受け、root を用意して job を動かす。git-sources = 宣言の remote の url を
+   worker は配備と同じ鍵の表(WORKER_REPOS)の道でその repo を取り込み、root を用意して job を動かす。git-sources = 宣言の remote の url を
    手元の checkout から読ませる組(GitSource の列 — 空 = 宣言の url をそのまま読む): 宣言は配備と同じ remote の綴りのまま置き(送り手の
    宣言の組み立てを手元用に分けない)、この機体の worker の git にだけ url.<path>.insteadOf を環境変数で渡す — 手元の 1 台の worker は
    配備の鍵を持たないので、remote へは取りに行かない。"
@@ -146,10 +146,11 @@
     (EnvEntry :name "WORK_DIR" :value (str (/ (Path machine.work-dir) "coordinator")))))
 
 
-(defk repo-allowlist [machine]
+(defk repo-key-table [machine]
   {:pre [(: machine LocalMachine)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker の許可表(boot.sh の WORKER_REPOS — 空白で並べた「<url>=<鍵の名>」)を、実行環境の repo の url を鍵なしで並べて組むため
-   (手元の repo は鍵なしで読む。実行環境が無ければ空 = どの url も断る — 配備と同じ既定)。"
+  "worker の鍵の表(boot.sh の WORKER_REPOS — 空白で並べた「<url>=<鍵の名>」)を、実行環境の repo の url を鍵なしで並べて組むため
+   (手元の repo は鍵なしで読む。表は鍵を結ぶだけで url を断らない — 載せるのは配備と同じ表の置き場の道(WORKER_ACCESS_DIR)を
+   通すため。実行環境が無ければ空)。"
   (if (is machine.runtime-env None)
       ""
       (.join " " (lfor repo machine.runtime-env.repos (+ repo.url "=")))))
@@ -173,10 +174,10 @@
   {:pre [(: machine LocalMachine) (: worker SimWorker) (: url str)] :post [(: % (get tuple #(EnvEntry ...)))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "boot.sh の ROLE=worker に渡す環境変数を組むため(配備の worker と同じ名。世代と準備の file は worker ごとの dir に置く — 既定の
-   /tmp の file は同じ機体の worker どうしで重なる)。許可表と git の設定の置き場 WORKER_ACCESS_DIR も worker ごとの dir に置く — 既定の
-   $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の許可表と重なり、上書きする(#3042)。"
+   /tmp の file は同じ機体の worker どうしで重なる)。鍵の表と git の設定の置き場 WORKER_ACCESS_DIR も worker ごとの dir に置く — 既定の
+   $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の鍵の表と重なり、上書きする(#3042)。"
   (val home (/ (Path machine.work-dir) "workers" worker.name))
-  (<- repos str (repo-allowlist machine))
+  (<- repos str (repo-key-table machine))
   (<- sources (get tuple #(EnvEntry ...)) (git-source-env machine.git-sources))
   (<- boot (get tuple #(EnvEntry ...)) (worker-boot-env machine worker url home repos))
   (+ boot sources))

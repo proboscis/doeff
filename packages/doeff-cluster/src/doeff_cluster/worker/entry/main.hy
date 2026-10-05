@@ -176,7 +176,7 @@
   (.add-argument parser "--base-pythonpath" :default ""
                  :help "土台の import の路(機体の絶対 path を `,` で並べる・木の根の後ろ)— worker_model.CodeLayout(pod は空)")
   (.add-argument parser "--repo-keys" :default ""
-                 :help "実行環境の task の許可表(JSON の file — clone してよい URL → deploy key の file。空 = どの URL も断る)")
+                 :help "実行環境の task の鍵の表(JSON の file — URL → deploy key の file。表に無い URL は鍵なしで clone する・空 = 鍵を使わない)")
   (.add-argument parser "--uv" :default "uv" :help "実行環境の準備と子の起動に使う uv の命令")
   (.add-argument parser "--env-min-free" :type int :default 0 :help "実行環境の準備を始める空きの下限(byte)")
   (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")

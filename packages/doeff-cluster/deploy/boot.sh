@@ -14,7 +14,7 @@
 #                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
-#   ROLE=access      … 読み取りの許可表(WORKER_REPOS)の git / ssh の設定と許可表の JSON だけを書き、JSON の path を出す
+#   ROLE=access      … 読み取りの鍵の表(WORKER_REPOS)の git / ssh の設定と鍵の表の JSON だけを書き、JSON の path を出す
 #   ROLE=ready       … worker の Pod の readinessProbe: coordinator の見る worker がこの Pod の worker(世代が一致)で、生きていて
 #                      drain 中でなければ 0
 # 環境: WORK_DIR(既定 /work)。
@@ -25,12 +25,13 @@
 #   uv の cache と Python は実行環境の root と同じ $WORK_DIR/state の下(uv-cache・python)。crate の取得先は $WORK_DIR/state/cargo。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
 #
-# 読み取りの許可表(WORKER_REPOS が在る時 — 設計 U5・U6):
+# 読み取りの鍵の表(WORKER_REPOS が在る時 — 設計 U5・U6):
 #   WORKER_REPOS = 空白で並べた「<url>=<鍵の名>」(鍵の名が空 = 鍵なしで読む公開の repo)。鍵の file = $WORKER_REPO_KEYS_DIR/<鍵の名>
-#   (既定 /etc/worker-repos・known_hosts も同じ dir)。worker の許可表の JSON(--repo-keys)と、git / ssh の設定(url ごとに別の
+#   (既定 /etc/worker-repos・known_hosts も同じ dir)。worker の鍵の表の JSON(--repo-keys)と、git / ssh の設定(url ごとに別の
 #   Host の別名へ書き換え、その Host に鍵を結ぶ)を $WORKER_ACCESS_DIR(既定 $HOME/.doeff-worker-repos)に書き、GIT_CONFIG_GLOBAL と
 #   GIT_SSH_COMMAND(ssh -F)でそこへ向ける(機体の ~/.gitconfig と ~/.ssh/config は読まない・書かない)。GitHub の deploy key は repo ごとなので、鍵を 1 本しか渡さない
-#   GIT_SSH_COMMAND では uv の git の依存(別の非公開 repo)を読めない。表に無い url は worker が repo-denied で断る。
+#   GIT_SSH_COMMAND では uv の git の依存(別の非公開 repo)を読めない。表は url に鍵を結ぶだけで url を断らない — 表に無い url は
+#   worker が鍵なしで clone する(公開の repo は通り、読めない非公開の repo は clone の失敗 repo-unreachable で返る)。
 #   WORKER_REPOS が無く /etc/worker-git/id が在れば、今までどおりそれを唯一の deploy key として使う。
 set -eu
 WORK_DIR=${WORK_DIR:-/work}
@@ -77,7 +78,7 @@ doeff_root() {
   export PATH="$root/.venv/bin:$PATH"
 }
 
-# 読み取りの許可表から、worker の許可表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
+# 読み取りの鍵の表から、worker の鍵の表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
 # (export するので subshell で呼ばない)。JSON の path は repo_keys に置く。
 repo_access() {
   keys=${WORKER_REPO_KEYS_DIR:-/etc/worker-repos}
@@ -94,7 +95,7 @@ repo_access() {
     key=""
     if [ -n "$name" ]; then
       key=$keys/$name
-      [ -f "$key" ] || { echo "boot: 許可表の鍵 $key が無い" >&2; exit 1; }
+      [ -f "$key" ] || { echo "boot: 鍵の表の鍵 $key が無い" >&2; exit 1; }
       n=$((n + 1))
       alias=doeff-repo-$n
       # url の形: ssh://git@<host>/<path> か git@<host>:<path>
@@ -134,7 +135,7 @@ fi
 
 case "$role" in
   access)
-    # 許可表の設定(git / ssh の設定と worker の許可表の JSON)だけを書き、JSON の path を出す — 手元の機体と検で確かめるため。
+    # 鍵の表の設定(git / ssh の設定と worker の鍵の表の JSON)だけを書き、JSON の path を出す — 手元の機体と検で確かめるため。
     repo_access
     echo "$repo_keys"
     exit 0 ;;

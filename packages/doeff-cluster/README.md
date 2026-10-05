@@ -397,6 +397,8 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   script も root の中の同じ commit の `deploy/boot.sh` へ引き継ぐので、起動の script を直した時も image は作り直しません。作り直す理由は頭の註の 2 種類
   だけで、それ以外の変更は `hy -m doeff_cluster.shared.entry.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
+  この表は url に鍵を結ぶだけで、url を断りません。表に無い url は worker が鍵なしで clone します(公開の repo は通り、読めない非公開の
+  repo は clone の失敗 `repo-unreachable` で返ります)。
 
 manifest(namespace・node・Secret・Role)は配備する側の repo が持ちます。coordinator の ServiceAccount には、Rollout が扱う
 Deployment の get・scale と、能力を導くための nodes の get が要ります。

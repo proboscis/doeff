@@ -153,7 +153,7 @@
 
 
 (defclass [(dataclass :frozen True)] DetachedEnvUnavailable []
-  "実行環境(runtime env)を準備できなかった。kind = runtime_env_model.EnvFailureKind の値(repo-denied・commit-missing・
+  "実行環境(runtime env)を準備できなかった。kind = runtime_env_model.EnvFailureKind の値(repo-unreachable・commit-missing・
    lock-mismatch 等)・retryable = 一時の失敗だった(coordinator は起動前の task を別の worker へ 2 回まで置き直した上での答え)。
    どれも子 process を起こす前に起きるので、Program は 1 度も走っていない。"
   (#^ str kind)

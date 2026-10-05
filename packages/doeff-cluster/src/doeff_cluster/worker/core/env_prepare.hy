@@ -7,7 +7,7 @@
 ;;;
 ;;; 処理ステージ(失敗はその場で EnvFailure を値で返し、後の処理ステージを走らせない — どれも子 process を起こす前):
 ;;;   1 空き      DiskFree                                   空きが下限を切れば disk-full
-;;;   2 mirror    RepoAllowed / EnsureMirror / FetchCommit   worker の許可表に無い URL = repo-denied・repo-unreachable・commit-missing
+;;;   2 mirror    EnsureMirror / FetchCommit                 repo-unreachable・commit-missing(URL は断らない — 鍵の表に無い URL は鍵なしで clone)
 ;;;   3 展開      MaterializeTree                            同じ commit のツリーを持つ別の root があれば複製(.venv・マーカー・__pycache__ を除く)
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   5 native    TreeHash / EnsureNativeWheel               キーの wheel が無ければ build(native-build-failed)
@@ -33,7 +33,7 @@
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -173,16 +173,13 @@
 
 (defk stage-mirrors [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "宣言した repo ごとに mirror を用意して commit を揃える(worker の許可表に無い URL と、worker が取れない commit はここで断る)。"
+  "宣言した repo ごとに mirror を用意して commit を揃える(clone / fetch できない repo と、worker が取れない commit はここで止める —
+   URL そのものは断らない)。"
   (var mirrors [])
   (var failure None)
   (for [repo request.env.repos]
     (when (is failure None)
-      (<- allowed bool (RepoAllowed repo.url))
-      (<- ready (| MirrorReady EnvFailure)
-          (if allowed
-              (EnsureMirror repo.url)
-              (env-failure EnvFailureKind.REPO-DENIED (.format "worker の許可表に無い URL: {}" repo.url))))
+      (<- ready (| MirrorReady EnvFailure) (EnsureMirror repo.url))
       (match ready
         (EnvFailure) (:= failure ready)
         (MirrorReady :path path)
