@@ -70,7 +70,11 @@
               "jobs" [{"name" "land-notice" "function" "notice" "needs" ["pg-network"] "replicas" 1
                        "readiness" {"windowSeconds" 30} "update" "handoff" "environ" {"POLL" "5.0"}}]})
           land.__doeff_system__)
-  (assert (= land.__doeff_tags__.role "entry")))
+  (assert (= land.__doeff_tags__.role "entry"))
+  ;; 系の関数の答えの型の注記は System — 型検査が系の値を System と読み、使い手の検査器が「公開の関数に答えの型が無い」と
+  ;; 言わないため(#3366 — 注記の無い展開では、使い手の検査器の「公開の関数に型の注記が無い」の規則が全部の defsystem に当たった)。
+  (import doeff_cluster.shared.intent.service_model [System])
+  (assert (is (get land.__annotations__ "return") System) land.__annotations__))
 
 
 (deftest test-defsystem-keeps-the-type-of-a-typed-foundation

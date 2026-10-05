@@ -191,11 +191,13 @@
             `(| ~(hy.models.as-model static)
                 {"param_types" {~@(sum (lfor #(n t) typed [(String n) `(+ (. ~t __module__) ":" (. ~t __qualname__))]) [])}})
             (hy.models.as-model static)))
+  ;; 系の関数の答えの型は System(service_build.system-of の答え)— 注記を展開に書く。型検査が系の値を System と読み、
+  ;; 書き手に直せない「公開の関数に答えの型が無い」の所見を出さないため(agora-redesign #3366 — 道具がこの展開に委ねる)。
   `(do
      (import doeff_cluster.shared.intent.service_model)
      (import doeff_cluster.shared.entry.service_build)
      (import doeff_hy.declarations)
-     (defn ~name [~@params]
+     (defn #^ doeff_cluster.shared.intent.service_model.System ~name [~@params]
        ~@(if (is doc None) [] [doc])
        (doeff_cluster.shared.entry.service_build.system-of ~(String system) #(~@job-forms)))
      (setattr ~name "__doeff_system__" ~description)
