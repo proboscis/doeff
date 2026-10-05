@@ -34,11 +34,11 @@ def probe_listener(connections: PostgresConnections, channel: str, bell: Bell, h
     """鳴らす瞬間の入口で、まだなら呼び鈴を掛ける待ち受け — settled の後に hang が割り込む並びを毎回起こすため。"""
 
     class Probe(PostgresListener):
-        def ring(self) -> None:
+        def ring(self, topics: frozenset[str] | None) -> None:
             if not hung.is_set():
-                assert self.hang(bell) is None  # type: ignore[arg-type]  # 呼び鈴は complete だけを持てば足りる
+                assert self.hang(bell, None) is None  # type: ignore[arg-type]  # 呼び鈴は complete だけを持てば足りる
                 hung.set()
-            super().ring()
+            super().ring(topics)
 
     return Probe(connections, DATABASE, channel)
 
@@ -75,7 +75,7 @@ def test_a_bell_hung_right_after_the_first_listen_is_not_rung_without_a_signal(e
     listener = probe_listener(connections, f"t{uuid.uuid4().hex[:12]}", bell, hung)
     assert entered_notifies.wait(30.0), "listener が通知の待ちに入らなかった"
     if not hung.is_set():
-        assert listener.hang(bell) is None  # type: ignore[arg-type]  # 張った後に掛ける(直した code は張った時に ring を呼ばない)
+        assert listener.hang(bell, None) is None  # type: ignore[arg-type]  # 張った後に掛ける(直した code は張った時に ring を呼ばない)
         hung.set()
     rang = bell.rang.is_set()
     connections.close()

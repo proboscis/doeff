@@ -9,15 +9,16 @@
 ;;; transaction の外の文 1 つと、既定の transaction(batched でない)の BEGIN・錠・文・合図・COMMIT はそれぞれ往復 1 回。batched の transaction
 ;;; は答え手が往復 1 回にまとめた物(BEGIN・錠・文・合図・COMMIT)が往復 1 回(#3605)。効果 1 回の往復の数と文の数を、前後の往復の列の差で
 ;;; 測る(effect-round-trips)。
-;;; 書きの合図は同じ接続で流す(呼び鈴は鳴らさない — 待ちの検は、この代役の外側に postgres-sql-handler を置いて呼び鈴をそちらへ渡す)。
+;;; 書きの合図は同じ接続で流す(呼び鈴は鳴らさない — 待ちの検は、この代役の外側に postgres-sql-handler を置いて呼び鈴をそちらへ渡す。
+;;; 合図に貸し出しの印を載せないので、待ち受けは他の書き手の合図として名の重なる呼び鈴を鳴らす)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass field])
 (import threading)
 (import doeff [EffectBase])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlParam SqlUnreachable])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlUnreachable])
 (import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-insert-statement postgres-begin postgres-flush
-                                         postgres-control LOCK-STATEMENT NOTICE-STATEMENT])
+                                         postgres-control postgres-notice LOCK-STATEMENT NOTICE-STATEMENT])
 
 
 (defclass StatementCounts []
@@ -91,9 +92,10 @@
 (defk probed-notice [probe leased database request]
   {:pre [(: probe QueryProbe) (: leased "psycopg の接続") (: database str) (: request SqlNotify)] :post [(: % "SqlRows | SqlFailed | SqlUnreachable")]
    :tags {:context "records" :role "foundation"}}
-  "既定の transaction の中の書きの合図(SqlNotify — 往復 1 回)を数えて同じ接続で流すため。"
+  "既定の transaction の中の書きの合図(SqlNotify — 往復 1 回)を数えて同じ接続で流すため(この代役は同じ process の呼び鈴を鳴らさないので、
+   合図に貸し出しの印を載せない — どの待ち受けも他の書き手の合図として鳴らす)。"
   (.record probe.counts #(NOTICE-STATEMENT))
-  (<- answer (postgres-query leased (SqlQuery database NOTICE-STATEMENT #((SqlParam :name "channel" :value request.channel)))))
+  (<- answer (postgres-notice leased database None request))
   answer)
 
 
@@ -125,7 +127,7 @@
   (val nth (.record probe.counts texts))
   (when (and (is-not probe.fail-at None) (in probe.fail-at nth))
     (return (SqlUnreachable :reason "検の代役: 書きの途中で接続が落ちた")))
-  (<- answer (postgres-flush leased held flush))
+  (<- answer (postgres-flush leased held None flush))
   (when (and (is-not probe.barrier None) (any (gfor text texts (.endswith (.rstrip text) "FOR UPDATE"))))
     (.wait probe.barrier))
   answer)

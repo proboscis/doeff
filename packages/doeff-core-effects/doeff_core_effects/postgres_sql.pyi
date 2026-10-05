@@ -13,6 +13,9 @@ from typing import runtime_checkable as runtime_checkable
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import Program as Program
+from doeff_hy.wire import Malformed as Malformed
+from doeff_hy.wire import dump_json as dump_json
+from doeff_hy.wire import parse_json as parse_json
 from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
@@ -54,6 +57,7 @@ UNREACHABLE_SQLSTATES: tuple[str, ...]
 DEFAULT_POOL_SIZE: int
 DRIVER_THREADS: ThreadPerCall
 LISTEN_RETRY_SECONDS: int
+NOTICE_PAYLOAD_LIMIT: int
 POSTGRES_TYPES: dict[SqlColumnType, str]
 
 @dataclass(frozen=True, kw_only=True)
@@ -77,9 +81,15 @@ class PostgresStatement:
     text: str
     params: tuple
 
+@dataclass(kw_only=True)
+class RaisedNotices:
+    topics: dict = ...
+    sent: bool = False
+
 class PostgresConnections:
     size: Incomplete
     timeouts: Incomplete
+    origin: Incomplete
     databases: Incomplete
     idle: Incomplete
     permits: Incomplete
@@ -92,7 +102,7 @@ class PostgresConnections:
     def listener(self, name: str, channel: str) -> PostgresListener:
         ...
 
-    def ring_local(self, name: str, channel: str) -> None:
+    def ring_local(self, name: str, raised: RaisedNotices) -> None:
         ...
 
     def names(self) -> Incomplete:
@@ -124,10 +134,10 @@ class PostgresListener:
     def __init__(self, connections: PostgresConnections, name: str, channel: str) -> None:
         ...
 
-    def ring(self) -> None:
+    def ring(self, topics: frozenset | None) -> None:
         ...
 
-    def hang(self, bell: ExternalPromise) -> str | None:
+    def hang(self, bell: ExternalPromise, topics: frozenset | None) -> str | None:
         ...
 
     def drop(self, bell: ExternalPromise) -> None:
@@ -163,6 +173,27 @@ def postgres_insert(connection: Incomplete, request: SqlInsertRows) -> _Program[
 def postgres_ensure_tables(connection: Incomplete, tables: tuple) -> _Program[SqlSchemaApplied | SqlFailed | SqlUnreachable, object]:
     ...
 LOCK_STATEMENT: str
+NOTICE_STATEMENT: str
+
+@dataclass(frozen=True, kw_only=True)
+class NoticeWire:
+    origin: str | None = None
+    topics: tuple[str, ...] | None = None
+
+def notice_payload(origin: str | None, topics: tuple | None) -> _Program[str, object]:
+    ...
+
+def heard_notice(payload: str) -> _Program[NoticeWire, object]:
+    ...
+
+def notice_params(origin: str | None, notify: SqlNotify) -> _Program[tuple, object]:
+    ...
+
+def postgres_notice(connection: PipelineConnection, database: str, origin: str | None, notify: SqlNotify) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
+    ...
+
+def noted_notice(raised: RaisedNotices, notify: SqlNotify) -> _Program[None, object]:
+    ...
 
 @dataclass(frozen=True, kw_only=True)
 class PostgresStep:
@@ -174,7 +205,7 @@ class PostgresStep:
 def request_step(request: SqlQuery | SqlInsertRows) -> _Program[PostgresStep | None, object]:
     ...
 
-def flush_steps(lock_key: str | None, flush: TransactionFlush) -> _Program[tuple, object]:
+def flush_steps(lock_key: str | None, origin: str | None, flush: TransactionFlush) -> _Program[tuple, object]:
     ...
 
 @runtime_checkable
@@ -200,7 +231,7 @@ def step_answer(step: PostgresStep | None, cursor: StatementCursor | None) -> _P
 def first_failure(error: Exception) -> _Program[Exception, object]:
     ...
 
-def postgres_flush(connection: PipelineConnection, lock_key: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+def postgres_flush(connection: PipelineConnection, lock_key: str | None, origin: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
     ...
 
 def postgres_begin(connection: Incomplete, lock_key: str | None) -> _Program[SqlFailed | SqlUnreachable | None, object]:
@@ -208,7 +239,6 @@ def postgres_begin(connection: Incomplete, lock_key: str | None) -> _Program[Sql
 
 def postgres_control(connection: Incomplete, statement: str) -> _Program[SqlFailed | SqlUnreachable | None, object]:
     ...
-NOTICE_STATEMENT: str
 
 def postgres_lease(connections: PostgresConnections, database: str) -> _Program[Incomplete, object]:
     ...
@@ -228,13 +258,22 @@ def driven(pool: Executor, guard: AbstractContextManager, work: Callable[[], Pro
 def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None, batched: bool) -> _Program[Incomplete, object]:
     ...
 
+def raised_flush(pool: Executor, guard: AbstractContextManager, leased: PipelineConnection, lock_key: str | None, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+    ...
+
+def raised_commit(pool: Executor, guard: AbstractContextManager, leased: PipelineConnection, raised: RaisedNotices) -> _Program[SqlFailed | SqlUnreachable | None, object]:
+    ...
+
+def raised_notice(pool: Executor, guard: AbstractContextManager, leased: PipelineConnection, database: str, origin: str, raised: RaisedNotices, request: SqlNotify) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
+    ...
+
 def offloaded_statement(connections: PostgresConnections, pool: Executor, database: str, work: Incomplete) -> _Program[Incomplete, object]:
     ...
 
-def notified(connections: PostgresConnections, pool: Executor, database: str, channel: str) -> _Program[None | SqlFailed | SqlUnreachable, object]:
+def notified(connections: PostgresConnections, pool: Executor, database: str, notify: SqlNotify) -> _Program[None | SqlFailed | SqlUnreachable, object]:
     ...
 
-def hung_notice(connections: PostgresConnections, pool: Executor, database: str, channel: str) -> _Program[ExternalPromise | SqlUnreachable, object]:
+def hung_notice(connections: PostgresConnections, pool: Executor, database: str, channel: str, topics: tuple | None) -> _Program[ExternalPromise | SqlUnreachable, object]:
     ...
 
 def postgres_sql_handler(connections: PostgresConnections) -> _Handler:
