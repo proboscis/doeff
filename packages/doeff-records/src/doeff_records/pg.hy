@@ -24,6 +24,11 @@
 ;;; だけ届く — 巻き戻した書きの合図は届かない。batched の書きでは答え手が COMMIT と同じ往復で流す)。待ちは呼び鈴(SqlHangNotice)を掛けてから読み、静かなら呼び鈴か
 ;;; timeout を待って読み直す(watching.wait-for-signal)。読み直しの間隔で起きない。合図は中身を運ばず、待ち手が変更の列から読み直す。
 ;;; 待ち受けの接続が繋ぎ直した時も呼び鈴が鳴るので、その間の書きも読み直しで拾う。
+;;; 合図と呼び鈴は名で絞る(#3688 — 前は書き 1 回が置き場の待ち手を全部起こした): 名 = 表は "table:" + 表の名・列は "stream:" + 列の名
+;;; (notice-topics の 1 か所で綴る — 表と列が同じ綴りでも混ざらない)。書きは触った名を合図し(行の書き = その表・追記 = その列・保持の
+;;; 刈り = 期限の在る表とその列)、待ちは待つ名で呼び鈴を掛ける(WatchChanges = 頼んだ表・WatchEvents = その列)。版の繰り上げと変更の
+;;; 刈り取り(PruneChanges)は全部の待ち手に関わる(版と床は全部の表の位置を変える — 名の分からない合図 None)。memory の置き場の呼び鈴と
+;;; 同じ分け方(memory.hy の ring-bells)。
 ;;; 読み手の窓の read-modify-write の競合(同じ読み手の位置を 2 つの要求が同時に読んで進める)は旧い版と同じで、ここでは直さない
 ;;; (#880 の構成のレビュー A4)。
 ;;; 保持の期限(#3561): 読みの効果(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd)は回収を流さず、期限を
@@ -175,6 +180,14 @@
   (.format "{}changes" store.prefix))
 
 
+(defk notice-topics [tables streams]
+  {:pre [(: tables tuple) (: streams tuple)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "表 tables と列 streams を、合図と呼び鈴の名の並び(表 = \"table:\" + 表の名・列 = \"stream:\" + 列の名 — 名の順・重ねない)にするため
+   (頭の註 — 書きの合図の名と待ちの呼び鈴の名をこの 1 か所で綴る)。"
+  (tuple (sorted (| (sfor table tables (+ "table:" table)) (sfor stream streams (+ "stream:" stream))))))
+
+
 (defk notice-raised [notified]
   {:pre [(: notified (| None SqlFailed SqlUnreachable))] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
@@ -185,55 +198,58 @@
     _ None))
 
 
-(defk signalled [store program]
-  {:pre [(: store PreparedStore) (: program Program)] :post [(: % "program の答え")]
+(defk signalled [store topics program]
+  {:pre [(: store PreparedStore) (: topics (| tuple None)) (: program Program)] :post [(: % "program の答え")]
    :tags {:context "records" :role "foundation"}}
-  "program を流した後、同じ transaction の中で置き場の通知の channel へ合図を出すため(commit した時だけ届く — 頭の註)。"
+  "program を流した後、同じ transaction の中で置き場の通知の channel へ、名 topics(None = 全部に関わる)の合図を出すため(commit した時だけ
+   届く — 頭の註)。"
   (<- answer program)
   (<- channel (notice-channel store))
-  (<- notified (SqlNotify store.database channel))
+  (<- notified (SqlNotify store.database channel topics))
   (<- (notice-raised notified))
   answer)
 
 
-(defk signalled-ahead [store program]
-  {:pre [(: store PreparedStore) (: program Program)] :post [(: % "program の答え")]
+(defk signalled-ahead [store topics program]
+  {:pre [(: store PreparedStore) (: topics (| tuple None)) (: program Program)] :post [(: % "program の答え")]
    :tags {:context "records" :role "foundation"}}
-  "batched の transaction の中で、置き場の通知の channel へ合図を出してから program を流すため(答え手は合図を覚えて COMMIT と同じ往復で流し、
-   commit した時だけ届く — 頭の註。program が commit の束で終わるので、合図は program の前に出す)。"
+  "batched の transaction の中で、置き場の通知の channel へ名 topics の合図を出してから program を流すため(答え手は合図を覚えて COMMIT と
+   同じ往復で流し、commit した時だけ届く — 頭の註。program が commit の束で終わるので、合図は program の前に出す)。"
   (<- channel (notice-channel store))
-  (<- notified (SqlNotify store.database channel))
+  (<- notified (SqlNotify store.database channel topics))
   (<- (notice-raised notified))
   (<- answer program)
   answer)
 
 
-(defk writing [store program]
-  {:pre [(: store PreparedStore) (: program Program)] :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
+(defk writing [store topics program]
+  {:pre [(: store PreparedStore) (: topics (| tuple None)) (: program Program)]
+   :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "program を置き場の書きの錠の transaction で流し、同じ transaction で書きの合図を出すため(旧い版の lock-statement と同じ錠の番号 —
-   pg_sql.hy の頭の註)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
+  "program を置き場の書きの錠の transaction で流し、同じ transaction で名 topics(None = 全部に関わる)の書きの合図を出すため(旧い版の
+   lock-statement と同じ錠の番号 — pg_sql.hy の頭の註)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
   (<- key (writer-lock-key store.prefix))
-  (<- answer (in-transaction store.database key (signalled store program)))
+  (<- answer (in-transaction store.database key (signalled store topics program)))
   answer)
 
 
-(defk batched-writing [store program]
-  {:pre [(: store PreparedStore) (: program Program)] :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
+(defk batched-writing [store topics program]
+  {:pre [(: store PreparedStore) (: topics tuple) (: program Program)]
+   :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "書きの効果(PutRow・PutRows・AppendEvent)の program を、往復をまとめる(batched)書きの錠の transaction で流し、同じ transaction で書きの
-   合図を出すため(頭の註の「書きの往復」— 錠の番号は writing と同じ)。"
+  "書きの効果(PutRow・PutRows・AppendEvent)の program を、往復をまとめる(batched)書きの錠の transaction で流し、同じ transaction で書きが
+   触る名 topics の合図を出すため(頭の註の「書きの往復」— 錠の番号は writing と同じ)。"
   (<- key (writer-lock-key store.prefix))
-  (<- answer (in-transaction store.database key (signalled-ahead store program) :batched True))
+  (<- answer (in-transaction store.database key (signalled-ahead store topics program) :batched True))
   answer)
 
 
-(defk hung-bell [store]
-  {:pre [(: store PreparedStore)] :post [(: % (| ExternalPromise Unreachable))]
+(defk hung-bell [store topics]
+  {:pre [(: store PreparedStore) (: topics tuple)] :post [(: % (| ExternalPromise Unreachable))]
    :tags {:context "records" :role "foundation"}}
-  "置き場の通知の channel に呼び鈴を掛けるため(待ち受けに届かなければ Unreachable)。"
+  "置き場の通知の channel に、名 topics を待つ呼び鈴を掛けるため(待ち受けに届かなければ Unreachable)。"
   (<- channel (notice-channel store))
-  (<- bell (SqlHangNotice store.database channel))
+  (<- bell (SqlHangNotice store.database channel topics))
   (match bell
     (SqlUnreachable :reason reason) (Unreachable (.format "PostgreSQL に届かない: {}" reason))
     _ bell))
@@ -459,7 +475,12 @@
   (<- candidates (expired-rows store now-ms))
   (var removed 0)
   (when candidates
-    (<- count (writing store (remove-expired-rows store now-ms)))
+    ;; 合図の名 = 行を消し得る表(期限と終端の語の在る表 — 消す行は transaction の中で読み直すので、候補の表でなく、読み直しが読む表の全部)。
+    (<- row-topics (notice-topics (tuple (gfor #(name decl) (sorted (.items store.schema.tables))
+                                               :if (and (isinstance decl.retention KeepFor) decl.terminal)
+                                               name))
+                                  #()))
+    (<- count (writing store row-topics (remove-expired-rows store now-ms)))
     (:= removed count))
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (<- expiry (event-expiry decl now-ms))
@@ -467,7 +488,8 @@
       (<- probe (expiring-events-statement store.prefix name expiry.before-at expiry.separator))
       (<- due (query-rows store.database probe))
       (when due
-        (<- (writing store (retire-expired-events store name expiry.before-at expiry.separator))))))
+        (<- stream-topics (notice-topics #() #(name)))
+        (<- (writing store stream-topics (retire-expired-events store name expiry.before-at expiry.separator))))))
   removed)
 
 
@@ -814,27 +836,33 @@
     (<- now (GetTime))
     (<- answer (reached (pg-list-rows store effect (epoch-ms now))))
     (resume answer))
+  ;; 書きの節は触る名(表 | 列)の合図を、待ちの節は待つ名の呼び鈴を使う(頭の註 — notice-topics)。
   (PutRow [table key value expect]
     (<- now (GetTime))
-    (<- answer (reached (batched-writing store (put-row-locked store origin-host writer effect (epoch-ms now)))))
+    (<- topics (notice-topics #(table) #()))
+    (<- answer (reached (batched-writing store topics (put-row-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (PutRows [writes]
     (<- now (GetTime))
-    (<- answer (reached (batched-writing store (put-rows-locked store origin-host writer effect (epoch-ms now)))))
+    (<- topics (notice-topics (tuple (gfor write writes write.table)) #()))
+    (<- answer (reached (batched-writing store topics (put-rows-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
+    (<- topics (notice-topics (tuple tables) #()))
     (<- answer (wait-for-signal (fn [now-ms] (reached (pg-watch-scan store effect now-ms)))
-                                (fn [] (hung-bell store)) (fn [bell] (dropped-bell store bell)) timeout))
+                                (fn [] (hung-bell store topics)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
   (WatchEvents [stream after timeout]
-    ;; 列の待ちは呼び鈴が鳴るたびの ReadEvents(limit 1)の読み直し(WatchChanges と同じ呼び鈴 — 頭の註)。
+    ;; 列の待ちは呼び鈴が鳴るたびの ReadEvents(limit 1)の読み直し(WatchChanges と同じ呼び鈴の仕組みで、待つ名はその列 — 頭の註)。
     (val once (ReadEvents stream :after after :limit 1))
+    (<- topics (notice-topics #() #(stream)))
     (<- answer (wait-for-signal (fn [now-ms] (moved-after (reached (pg-read-events store once now-ms))))
-                                (fn [] (hung-bell store)) (fn [bell] (dropped-bell store bell)) timeout))
+                                (fn [] (hung-bell store topics)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- now (GetTime))
-    (<- answer (reached (batched-writing store (append-locked store origin-host writer effect (epoch-ms now)))))
+    (<- topics (notice-topics #() #(stream)))
+    (<- answer (reached (batched-writing store topics (append-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (ReadEvents [stream after limit]
     (<- now (GetTime))
@@ -845,8 +873,8 @@
     (<- answer (reached (pg-read-stream-end store effect (epoch-ms now))))
     (resume answer))
   (AdvanceStoreEpoch []
-    ;; 検の口: 届かなければ StoreUnreachable を上げる(答えの型は int だけ — 旧い版と同じ)。
-    (<- epoch (writing store (advance-epoch-locked store)))
+    ;; 検の口: 届かなければ StoreUnreachable を上げる(答えの型は int だけ — 旧い版と同じ)。版は全部の待ち手に関わる(名の分からない合図)。
+    (<- epoch (writing store None (advance-epoch-locked store)))
     (resume epoch))
   (SweepExpired []
     (<- now (GetTime))
@@ -854,6 +882,7 @@
     (resume answer))
   (PruneChanges [keep-seconds]
     (<- now (GetTime))
-    (<- answer (reached (writing store (prune-locked store effect (epoch-ms now)))))
+    ;; 床は全部の表の待ち手の位置に関わる(名の分からない合図)。
+    (<- answer (reached (writing store None (prune-locked store effect (epoch-ms now)))))
     (resume answer)))
 

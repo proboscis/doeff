@@ -136,11 +136,13 @@ class SqlEnsureTables(EffectBase[SqlSchemaApplied | SqlFailed | SqlUnreachable])
 class SqlNotify(EffectBase[None | SqlFailed | SqlUnreachable]):
     database: str
     channel: str
+    topics: tuple[str, ...] | None
 
 @dataclass(frozen=True)
 class SqlHangNotice(EffectBase[ExternalPromise[bool] | SqlUnreachable]):
     database: str
     channel: str
+    topics: tuple[str, ...] | None
 
 @dataclass(frozen=True)
 class SqlDropNotice(EffectBase[None]):

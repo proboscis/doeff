@@ -7,7 +7,9 @@
 ;;; 代表の program: 文 2 本と SqlInsertRows(2 行)と SqlNotify(錠の鍵あり)・SQL を出さない program(錠の鍵あり / なし)・途中で落ちて
 ;;; ROLLBACK・預かり所の本体の commit-rows の形(controllers/custody_body/protocol/store.hy — 錠の鍵つきで version の SELECT × 2 → UPSERT × 2)・
 ;;; sqlite が断る SqlNotify(ROLLBACK)。
-;;; この file は基点に在る名だけを使う — 基点の答え手の源に差し替えても同じ期待で緑になる事を、変更の時に確かめた。
+;;; この file は基点に在る名だけを使う — 基点の答え手の源に差し替えても同じ期待で緑になる事を、変更の時に確かめた。合図だけは
+;;; agora-redesign #3688 で形が変わった: SqlNotify が関わる名(topics)を持ち、pg_notify の本文が空でなく引数($2)になった(往復の数と
+;;; 順は変わらない)。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import queue)
 (import sqlite3)
@@ -41,7 +43,7 @@
 (val LOCK-WIRE "SELECT pg_advisory_xact_lock(hashtext($1))")
 (val BASE-POSTGRES-ROUND-TRIPS
   {"文と SqlInsertRows と合図(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #(INSERT-PARAMS) #(INSERT-PARAMS INSERT-PARAMS)
-                                        #("SELECT count(*) FROM items") #("SELECT pg_notify($1, '')") #("COMMIT"))
+                                        #("SELECT count(*) FROM items") #("SELECT pg_notify($1, $2)") #("COMMIT"))
    "SQL を出さない(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #("COMMIT"))
    "SQL を出さない(錠なし)" #(#("BEGIN") #("COMMIT"))
    "途中で落ちて ROLLBACK" #(#("BEGIN") #("INSERT INTO items (id, label) VALUES (110, 'x')")
@@ -76,7 +78,7 @@
   (<- (SqlInsertRows DB "items" #("id" "label") #(#(101 "b") #(102 "c"))))
   (<- (SqlQuery DB "SELECT count(*) FROM items" #()))
   (when notice
-    (<- (SqlNotify DB "invariant")))
+    (<- (SqlNotify DB "invariant" #("table:items"))))
   "流した")
 
 
@@ -113,7 +115,7 @@
    :tags {:context "sql" :role "program"}}
   "1 行入れてから合図を出す program(sqlite の答え手は合図を受けないので断る)。"
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (120, 'n')" #()))
-  (<- (SqlNotify DB "invariant"))
+  (<- (SqlNotify DB "invariant" #("table:items")))
   "来ない")
 
 
