@@ -25,10 +25,13 @@
 #   packages/doeff-cluster/deploy/boot.sh へ exec で引き継ぐ(DOEFF_BOOT_FROM_ROOT=1 — 中身が同じでも引き継ぐ)。root の準備(venv と
 #   doeff-vm の wheel・完成の印 .doeff-boot-ready)と役の起動は引き継いだ先 — 宣言した commit の script — がする。だから準備の手順を
 #   直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい手順で準備され、image を作り直さない。
-#   準備: `uv sync --locked --package doeff-cluster --no-install-package doeff-vm` した venv に doeff-vm の wheel を入れて、その venv の
-#   hy で起こす。wheel は実行環境の準備(worker)と同じ鍵・同じ置き場($WORK_DIR/state/wheels/doeff-vm-<鍵>)の物を使い、無ければ組んで
-#   置く(python -m doeff_cluster.worker.entry.boot_wheel — 鍵と置き場の定義点は doeff_cluster/shared/core/native_wheel.py の 1 つ)。
-#   doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
+#   準備: `uv sync --locked --compile-bytecode --package doeff-cluster --no-install-package doeff-vm` した venv に doeff-vm の wheel を
+#   入れて、その venv の hy で起こす。wheel は実行環境の準備(worker)と同じ鍵・同じ置き場($WORK_DIR/state/wheels/doeff-vm-<鍵>)の物を
+#   使い、無ければ組んで置く(python -m doeff_cluster.worker.entry.boot_wheel — 鍵と置き場の定義点は doeff_cluster/shared/core/native_wheel.py
+#   の 1 つ)。doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。続けて root の中の source(venv に editable で入る
+#   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ焼く(doeff_bake —
+#   前の準備済みの root から、変わっていない file の .pyc を hardlink で引き継ぐ)。焼けなくても起動は続ける(import の時に作られる)。
+#   同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
 #   uv の cache と Python は実行環境の root と同じ $WORK_DIR/state の下(uv-cache・python)。crate の取得先は $WORK_DIR/state/cargo。
 #   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
@@ -44,6 +47,12 @@
 set -eu
 WORK_DIR=${WORK_DIR:-/work}
 role=${ROLE:-worker}
+# 自己起動の root に bytecode を焼く範囲の入口(`,` で並べる・役で分けない): 下の役が root の venv の hy で起こす module の全部と、worker が
+# 同じ venv で起こす準備の process(env_tool)・shim・job の子の入口(job_entry)と、venv の .pth が interpreter の起動ごとに import する
+# doeff-hy の doeff_hy_bytecode_guard(どこからも import の文で辿れない)。焼くのはこの入口から import を辿った閉包だけ。
+BOOT_ENTRIES=doeff_cluster.worker.entry.main,doeff_cluster.worker.entry.drain_main,doeff_cluster.coordinator.entry.main,doeff_cluster.record_store.entry.main,doeff_cluster.worker.entry.env_tool,doeff_cluster.worker.entry.shim,doeff_cluster.worker.entry.job_entry,doeff_hy_bytecode_guard
+# 焼く道具が焼き終えた木の根に置く完成の印(doeff_cluster/worker/core/code_plan.hy の MARKER と同じ名)。
+CODE_MARKER=.doeff-code-ready.json
 
 # 今の刻(epoch ミリ秒)。GNU の date は %3N でミリ秒を出す・BSD(macOS の worker)は出さないので秒の 1000 倍。
 boot_ms() {
@@ -113,21 +122,134 @@ doeff_prepare() {
     started=$(date +%s)
     # 完成の印の無い venv は準備が途中で止まった残り — 作り直す。
     rm -rf "$root/.venv"
-    # doeff-vm(Rust)は uv sync で source から組まず、実行環境の準備と同じ鍵の組み済みの wheel を入れる(下)。
-    (cd "$root" && uv sync --locked --package doeff-cluster --no-dev --no-install-package doeff-vm >&2)
+    # doeff-vm(Rust)は uv sync で source から組まず、実行環境の準備と同じ鍵の組み済みの wheel を入れる(下)。第三者の package の
+    # .pyc は uv が焼く(--compile-bytecode — 実行環境の準備の uv sync と同じ)。
+    # 準備の間の Python は、root の中の source に timestamp の方式の .pyc を書かない(PYTHONDONTWRITEBYTECODE — 書くと焼く道具がその .py を
+    # 焼く物から外す・下の doeff_bake)。uv の焼きの子も venv の .pth を読んで doeff_hy_bytecode_guard を import する(立てないと、その
+    # 3 file が焼く前に timestamp の方式で書かれていた — 2026-10-06 の docker の空の /work の回で測った)。uv 自身の焼き(site-packages)は
+    # 明示の compile なので、この変数で止まらない。
+    (cd "$root" && PYTHONDONTWRITEBYTECODE=1 uv sync --locked --compile-bytecode --package doeff-cluster --no-dev \
+      --no-install-package doeff-vm >&2)
     synced=$(date +%s)
     # 答え = 1 行「<組んだ|使った> <wheel の path>」(組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
-    answer=$("$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" --mirror "$boot/doeff.git" \
-      --commit "$sha" --state "$WORK_DIR/state")
+    answer=$(PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" \
+      --mirror "$boot/doeff.git" --commit "$sha" --state "$WORK_DIR/state")
     how=${answer%% *}
     wheel=${answer#* }
     wheeled=$(date +%s)
-    uv pip install --no-deps --python "$root/.venv/bin/python" "$wheel" >&2
+    PYTHONDONTWRITEBYTECODE=1 uv pip install --no-deps --python "$root/.venv/bin/python" "$wheel" >&2
+    installed=$(date +%s)
+    doeff_bake
     touch "$root/.doeff-boot-ready"
-    echo "boot: doeff $sha の root を準備した(uv sync $((synced - started)) 秒・doeff-vm の wheel を${how} $((wheeled - synced)) 秒・wheel の install $(( $(date +%s) - wheeled )) 秒)" >&2
+    echo "boot: doeff $sha の root を準備した(uv sync $((synced - started)) 秒・doeff-vm の wheel を${how} $((wheeled - synced)) 秒・wheel の install $((installed - wheeled)) 秒・${baked})" >&2
   fi
   exec 8>&-
   export PATH="$root/.venv/bin:$PATH"
+}
+
+# 準備する root の中の source(venv の .pth が書く root の中の dir — editable で入る package)の bytecode を焼く(doeff_prepare が
+# boot.lock を持ったまま呼ぶ・#3725)。焼くのは実行環境の準備(worker/protocol/env_translation の CompileTrees)と同じ焼く道具 — root の
+# 版の worker/entry/code_prepare.hy を root の venv の hy で 1 回起こし、BOOT_ENTRIES の閉包だけを、import の時に source の hash を検める
+# 方式で焼く(引数の意味と揃え方は道具の頭の註)。引き継ぎ元 = 同じ $boot/roots の準備済みの root のうち、焼く道具の完成の印が在り、Python
+# と venv の Hy の compiler の版が同じで、準備の済んだのが最も新しい物(実行環境の準備の引き継ぎ元の条件と同じ — #3706)。引き継ぐ時は
+# 引き継ぎ元の sha からの git diff を --changed で渡す(載った file の .pyc は引き継がない)。焼けなくても起動は続ける — 焼かれなかった
+# module は import の時に作られる(遅くなるだけ)。結果は準備の行に載せる 1 句(baked)。
+doeff_bake() {
+  tool=$root/packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy
+  if [ ! -f "$tool" ] || [ ! -x "$root/.venv/bin/hy" ]; then
+    baked="bytecode を焼かない(焼く道具か venv の hy が root に無い — import の時に作られる)"
+    return 0
+  fi
+  real=$(cd "$root" && pwd -P)
+  # 焼く根: site-packages の .pth の行のうち root の中の dir(root からの相対 path・root そのものは `.`)。site の規則どおり、空行と #
+  # の行は読まず、import で始まる行は実行される code なので根にしない。相対の行は site-packages からの path。uv は末尾に改行を書かない。
+  roots=""
+  for pth in "$root"/.venv/lib/python*/site-packages/*.pth; do
+    [ -f "$pth" ] || continue
+    site=${pth%/*}
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        ''|'#'*|'import '*|'import	'*) continue ;;
+        /*) dir=$line ;;
+        *) dir=$site/$line ;;
+      esac
+      [ -d "$dir" ] || continue
+      dir=$(cd "$dir" && pwd -P) || continue
+      case "$dir" in
+        "$real") rel=. ;;
+        "$real"/*) rel=${dir#"$real"/} ;;
+        *) continue ;;
+      esac
+      case ",$roots," in
+        *",$rel,"*) ;;
+        *) roots=${roots:+$roots,}$rel ;;
+      esac
+    done <"$pth"
+  done
+  if [ -z "$roots" ]; then
+    baked="bytecode を焼かない(venv の .pth に root の中の dir が無い)"
+    return 0
+  fi
+  python_version=$root/.python-version
+  hy_version=$(hy_dist "$root")
+  from=""
+  if [ -n "$hy_version" ]; then
+    for candidate in "$boot"/roots/*; do
+      [ -d "$candidate" ] && [ ! -L "$candidate" ] && [ "$candidate" != "$root" ] || continue
+      [ -f "$candidate/.doeff-boot-ready" ] && [ -f "$candidate/$CODE_MARKER" ] || continue
+      cmp -s "$candidate/.python-version" "$python_version" || continue
+      [ "$(hy_dist "$candidate")" = "$hy_version" ] || continue
+      if [ -z "$from" ] || [ "$candidate/.doeff-boot-ready" -nt "$from/.doeff-boot-ready" ]; then
+        from=$candidate
+      fi
+    done
+  fi
+  set -- --revision "$sha" --entries "$BOOT_ENTRIES" --tree "$root" --roots "$roots"
+  carried="なし"
+  changed=""
+  if [ -n "$from" ]; then
+    previous=${from##*/}
+    changed=$WORK_DIR/state/changed/boot-$sha.txt
+    mkdir -p "$WORK_DIR/state/changed"
+    # 変わった path の一覧(実行環境の準備の changed-list と同じ命令・同じ置き場)。読めなければ引き継がずに全部を焼く。
+    if diff_error=$(git -C "$boot/doeff.git" diff --name-only --no-renames "$previous" "$sha" 2>&1 >"$changed"); then
+      set -- "$@" --from "$from" --changed "$changed"
+      carried=$(printf '%.12s' "$previous")
+    else
+      echo "boot: 引き継ぎ元 $previous と $sha の差を読めない — 引き継がずに全部を焼く: $diff_error" >&2
+      rm -f "$changed"
+      changed=""
+    fi
+  fi
+  bake_started=$(date +%s)
+  # 焼く道具そのもの(Hy)の import が timestamp の方式の .pyc を root へ書かないよう PYTHONDONTWRITEBYTECODE を立てる(道具の頭の註)。
+  # 道具は stderr に報告の行を書く — 全体の行(carried=… rebuilt=… reused=… failed=… carry_s=…)から数を読む。
+  if report=$(cd "$root" && PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/hy" "$tool" "$@" 2>&1); then
+    counts=$(printf '%s\n' "$report" |
+      sed -n 's/.*\(carried=[0-9]* rebuilt=[0-9]* reused=[0-9]* failed=[0-9]*\) carry_s=.*/\1/p' | tail -n 1)
+  else
+    counts=""
+  fi
+  if [ -n "$counts" ]; then
+    baked="bytecode $(( $(date +%s) - bake_started )) 秒(${counts}・引き継ぎ元 ${carried})"
+  else
+    baked="bytecode を焼けない(import の時に作られる): $(printf '%s\n' "$report" | tail -n 3 | tr '\n' ' ')"
+  fi
+  [ -z "$changed" ] || rm -f "$changed"
+}
+
+# root の venv に入った Hy の compiler の版(site-packages の hy-<版>.dist-info の名・無ければ空 — 終わりは常に 0: 呼び手は
+# `x=$(hy_dist …)` で受け、set -e で止めない)。
+hy_dist() {
+  for info in "$1"/.venv/lib/python*/site-packages/hy-*.dist-info; do
+    if [ -d "$info" ]; then
+      info=${info##*/}
+      info=${info#hy-}
+      echo "${info%.dist-info}"
+      return 0
+    fi
+  done
+  return 0
 }
 
 # 読み取りの鍵の表から、worker の鍵の表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
