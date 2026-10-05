@@ -6,6 +6,8 @@
 (import dataclasses [replace])
 (import functools)
 (import hashlib)
+(import itertools [groupby])
+(import operator [attrgetter])
 (import json)
 (import math [ceil])
 (import re)
@@ -14,7 +16,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen NodeLabelsUnreadable KeepMark])
+(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen NodeLabelsUnreadable KeepMark KnownExit])
 (import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
@@ -202,7 +204,9 @@
 
 (defn #^ dict status-row-to-json [#^ StatusRow row]
   "worker の状態の報告の行 → 見せる JSON の形(GET /state の statuses と Service の status.process — worker/protocol/heartbeat の
-   status-row と同じ欄。準備の失敗と入口の検めの欄は在る時だけ・結果と task の写しは持ち続けないので載せない)。"
+   status-row と同じ欄。準備の失敗と入口の検めの欄は在る時だけ・結果と task の写しは持ち続けないので載せない)。lastExitAtMs は
+   最後に終わったと知れた刻 — worker の世代の入れ替わりでは、新しい世代の起動の刻を上限として数える(実の終わりはそれ以前・
+   worker-report)。"
   (| {"name" row.name "phase" row.phase "desiredRevision" row.desired-revision "runningRevision" row.running-revision
       "pid" row.pid "attempts" row.attempts "detail" row.detail
       "failures" row.failures "lastExitCode" row.last-exit-code "lastExitAtMs" row.last-exit-at-ms
@@ -1239,12 +1243,49 @@
   (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
 
 
+;; --- 最後に終わったと知れた刻(lastExitAtMs — #3672) ------------------------------------------------------------------
+;; 使い手は担い手の行の lastExitAtMs が進んだ事で、担い手の上の process が終わったと知る。worker の機体が丸ごと死んで新しい世代
+;; (heartbeat の bootAt が新しい)で戻ると、前の世代の process は終わっているのに、新しい世代はその終わりを知らない(記憶ごと消えた)。
+;; 以前は heartbeat ごとに行を丸ごと置き換えたので、新しい世代の行(lastExitAtMs 無し)が前の値を消し、刻は進まなかった。
+;; 新しい世代の最初の heartbeat は行を載せない(worker は返事の宣言を受けてから行を作る — 本番の LinkState.statuses も sim の宿の
+;; 真実も初めは空)ので、数えた刻は宣言の在る job の間は行の外(WorkerReport.last-exits)に持ち、次に載る同じ名の行へ運ぶ。
+
+(defk worker-report [previous rows now endpoint order boot-at declared]
+  {:pre [(: previous (| WorkerReport None)) (: rows tuple) (: now int) (: endpoint (| str None)) (: order GenerationOrder)
+         (: boot-at (| int None)) (: declared frozenset)]
+   :post [(: % WorkerReport)] :tags {:context "coordinator" :role "judgment"}}
+  "今の世代か新しい世代の heartbeat の状態の報告の行 rows から、worker の最新の報告(ClusterState.statuses の値)を作るため。行は結果の
+   欄 result と task の写しを外し(持ち続けるのは process の姿だけ)、last-exit-at-ms を最後に終わったと知れた刻にする: 同じ worker・
+   同じ job の名では前に知っていた刻(previous)から戻さない(報告の刻との大きい方)。新しい世代(order が NEWER)の heartbeat では、
+   前の世代の報告で process を持っていた(pid の在る)job を、新しい世代の起動の刻 boot-at までに終わったと数える(実の終わりはそれ
+   以前)。process を持っていなかった job(起動の前)と、起動の刻を名乗らない世代では進めない(推測で刻を作らない)。行の無い名の刻は
+   宣言の在る job(declared)の間だけ持つ(task・退いた行の名を世代ごとに溜めない)。"
+  ;; 刻の候補 = 前に知っていた刻・この報告の刻・(新しい世代なら)前の世代で process を持っていた job の起動の刻。名ごとに大きい方を取る。
+  (val ended (if (and (= order GenerationOrder.NEWER) (is-not boot-at None) (is-not previous None))
+                 (lfor row previous.jobs :if (is-not row.pid None) (KnownExit :job row.name :at-ms boot-at))
+                 []))
+  (val noted (sorted (+ (list (if (is previous None) #() previous.last-exits))
+                        (lfor row rows :if (is-not row.last-exit-at-ms None) (KnownExit :job row.name :at-ms row.last-exit-at-ms))
+                        ended)
+                     :key (attrgetter "job")))
+  (val reported (frozenset (gfor row rows row.name)))
+  (val known (tuple (gfor #(job group) (groupby noted :key (attrgetter "job"))
+                          :if (or (in job reported) (in job declared))
+                          (KnownExit :job job :at-ms (max (gfor e group e.at-ms))))))
+  (WorkerReport :at now :endpoint endpoint
+                :jobs (tuple (gfor row rows (replace row :result None :task None
+                                                     :last-exit-at-ms (next (gfor e known :if (= e.job row.name) e.at-ms) None))))
+                :last-exits known))
+
+
 (defk register-heartbeat [given body now]
   {:pre [(: given ClusterState) (: body HeartbeatBody) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "heartbeat の中身(worker の能力・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
    = coordinator として調停する)。古い世代の heartbeat(generation-order が OLDER)は名乗りとして受けず、その世代を退いた世代の
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
    知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。
+   job の行は worker-report が持ち続ける形にする(最後に終わったと知れた刻を前の報告から戻さず、新しい世代の heartbeat では前の世代の
+   process の終わりを新しい世代の起動の刻までと数える — #3672)。
    本文の形の誤りは本文を解く所(coordinator/protocol/request_bodies — #2445)が 400 で断る。"
   (setv name body.name boot body.boot boot-at body.boot-at statuses body.statuses
         previous (.get given.workers name)
@@ -1286,10 +1327,12 @@
                          ;; heartbeat ごとに worker/<名> の行から lastSeenMs が消え、書きが印の拍ごとでなくなる・#2903)。世代を問わない
                          ;; (#2903 の前の ClusterState.seen-marks も名ごとで、heartbeat が触らなかった)。
                          :seen-mark (if (is previous None) None previous.seen-mark))
+        ;; job の行の最後に終わったと知れた刻は、前の報告と世代の比べから数える(worker-report — #3672)。
+        report (! (worker-report (.get adopted.statuses name) statuses now body.endpoint order boot-at
+                                 (frozenset (gfor j adopted.jobs j.spec.name))))
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
-                     :statuses (| adopted.statuses {name (WorkerReport :at now :endpoint body.endpoint
-                                                                       :jobs (tuple (gfor s statuses (replace s :result None :task None))))})))
+                     :statuses (| adopted.statuses {name report})))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
   ;; 置き直しの待ちへ戻す(absorb-task-reports・#2976 の I-3 の赤 R5)— 退いた世代の heartbeat はここへ来ないので戻さない。

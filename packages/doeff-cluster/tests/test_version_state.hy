@@ -72,11 +72,14 @@
   (get answered 0))
 
 
-(defk beat [state worker [rows None] [now START] [capacity 10]]
-  {:pre [(: state ClusterState) (: worker str) (: rows (| (get list (get dict #(str object))) None)) (: now int) (: capacity int)] :post [(: % ClusterState)]
+(defk beat [state worker [rows None] [now START] [capacity 10] [boot None] [boot-at None]]
+  {:pre [(: state ClusterState) (: worker str) (: rows (| (get list (get dict #(str object))) None)) (: now int) (: capacity int)
+         (: boot (| str None)) (: boot-at (| int None))] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker の heartbeat(rows = 担い手の行)。"
-  (! (call state "POST" "/heartbeat" {"name" worker "provides" ["net"] "capacity" capacity "taskReserve" 0 "versions" {} "statuses" (or rows [])}
+  "worker の heartbeat(rows = 担い手の行・boot / boot-at = process の世代と起動の刻 — None は名乗らない)。"
+  (val generation (| (if (is boot None) {} {"boot" boot}) (if (is boot-at None) {} {"bootAt" boot-at})))
+  (! (call state "POST" "/heartbeat" (| {"name" worker "provides" ["net"] "capacity" capacity "taskReserve" 0 "versions" {} "statuses" (or rows [])}
+                                        generation)
            :now now :actor None)))
 
 
@@ -297,6 +300,28 @@
   (val shown (get (responded unknown (! (http-request "GET" "/resources/Service/w" {} None :actor None)) START T) 2))
   (assert (is (get shown "status" "process" "failures") None) shown)
   (assert (not-in "failures" (get shown "status")) shown))
+
+
+(defk process-of [state [name "w"] [now START]]
+  {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % (| (get dict #(str object)) None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "資源の口(GET /resources/Service/<名>)の status.process(担い手の行の見せる形)。"
+  (val answered (responded state (! (http-request "GET" (+ "/resources/Service/" name) {} None :actor None)) now T))
+  (assert (= (get answered 1) 200) (get answered 2))
+  (get answered 2 "status" "process"))
+
+
+(deftest test-status-process-shows-the-previous-generation-ended-by-the-new-boot
+  ;; 担い手 atlas の機体が丸ごと死に、知らせの無いまま新しい世代(起動の刻 reborn-at)で戻った(#3672)。新しい世代は前の世代の
+  ;; process の終わりを報告しない(最初の heartbeat は行を載せず、次の heartbeat で w の行を lastExitAtMs 無しで載せる)。Service の
+  ;; status.process.lastExitAtMs は新しい世代の起動の刻 — 使い手はこの刻が進んだ事で、担い手の上の process が終わったと知る。
+  (val born-at (- START 60000))
+  (val reborn-at (- START 1000))
+  (val placed (! (beat (! (declared)) "atlas" [] :boot "b1" :boot-at born-at)))
+  (val running (! (beat placed "atlas" [(! (row-of placed))] :boot "b1" :boot-at born-at)))
+  (assert (is (get (! (process-of running)) "lastExitAtMs") None) (! (process-of running)))
+  (val reborn (! (beat running "atlas" [] :boot "b2" :boot-at reborn-at)))
+  (val again (! (beat reborn "atlas" [(! (row-of reborn "starting" {"pid" None "instance" None}))] :boot "b2" :boot-at reborn-at)))
+  (assert (= (get (! (process-of again)) "lastExitAtMs") reborn-at) (! (process-of again))))
 
 
 (deftest test-a-refused-declaration-is-blocked-until-it-is-deleted
