@@ -82,6 +82,9 @@
 ;; 導出には factory を挙げる(agora-redesign #2847)。
 (import doeff_core_effects.os-process [subprocess-handler metered-offloaded-subprocess-handler])
 (import doeff_core_effects.scripted-process [scripted-process-handler])
+(import doeff_core_effects.warm-effects [ForkFromWarm PollWarmChild SignalWarmChild])
+(import doeff_core_effects.os-warm-process [os-warm-process-handler])
+(import doeff_core_effects.scripted-warm-process [scripted-warm-process-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
 (import doeff_core_effects.scheduler-channel [scheduler-channel-handler])
 (import doeff_core_effects.compute-effects [Compute])
@@ -294,6 +297,14 @@
   :handlers [subprocess-handler metered-offloaded-subprocess-handler scripted-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "subprocess-handler(本物)・metered-offloaded-subprocess-handler(本物 — 計器の無い形が offloaded-subprocess-handler)と scripted-process-handler(I/O なし・台本)が 12 effect 全てに答える。")
+
+
+(defdomain doeff-warm-process
+  :title "待ちの子の語彙 — 読み込みを済ませた子 process に仕事を頼み、終わりを読む"
+  :effects [ForkFromWarm PollWarmChild SignalWarmChild]
+  :handlers [os-warm-process-handler scripted-warm-process-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "os-warm-process-handler(本物 — 待ちの子の unix socket に頼み、/proc の start-ticks で照らして読む・送る)と scripted-warm-process-handler(I/O なし・台本)が 3 effect 全てに答える。頼んだ子は頼み手の子ではないので、子 process の語彙(doeff-process)の PollProcess では終わりを読めない — この語彙で読む。")
 
 
 (defdomain doeff-channel
