@@ -105,14 +105,47 @@
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val root (/ tmp-path "state" "roots" READY-NAME))
   (<- raw dict (env-marker->json (EnvMarker :env env :key READY-NAME :platform "test" :stages #() :downloaded 0 :built 0
-                                            :interpreter "/usr/bin/python3" :child-protocol 1)))
+                                            :interpreter "/usr/bin/python3" :child-protocol 1 :hy-version HY-VERSION)))
   (setv (get raw "bytecode") {"compiled" 3 "carried" 1 "failed" 0 "scanSeconds" 0.5 "closureSeconds" 0.75 "carrySeconds" 0.25
                               "compileSeconds" 1.5 "trees" [{"name" "app" "compiled" 3 "carried" 1 "failed" 0}]})
   (.write-text (/ root ENV-MARKER) (json.dumps raw))
+  (<- picked (| CarryFrom None) (carry-source-through-store settings tmp-path))
+  (assert (= picked (CarryFrom :tree (.format "{}/app" root) :commit (. (get env.repos 0) commit))) picked))
+
+
+;; 新しい root の venv の Hy の compiler の版(引き継ぎ元の候補を比べる版 — #3706)。
+(val HY-VERSION "1.1.0")
+
+
+(defk carry-source-through-store [settings tmp]
+  {:pre [(: settings EnvSettings) (: tmp Path)] :post [(: % (| CarryFrom None))]}
+  "worker の完成した root の列(known-roots)を準備の要求の JSON に通して、app-2 の宣言の引き継ぎ元の選び(carry-source・新しい root の
+   Hy の版は HY-VERSION)の答えを返すため — 置き場に完成した root が 1 つ在る事も確かめる。"
   (<- known tuple (with-handlers [os-file-handler] (known-roots settings)))
-  (assert (= (tuple (gfor k known (get k "root"))) #((str root))) known)
+  (assert (= (tuple (gfor k known (get k "root"))) #((str (/ tmp "state" "roots" READY-NAME)))) known)
   (<- next-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (<- declared dict (runtime-env->json next-env))
-  (<- request PrepareRequest (request-of-json {"env" declared "key" "k" "platform" "test" "root" (str (/ tmp-path "new")) "known" known}))
-  (<- picked (| CarryFrom None) (carry-source request.known request.env "app"))
-  (assert (= picked (CarryFrom :tree (.format "{}/app" root) :commit (. (get env.repos 0) commit))) picked))
+  (<- request PrepareRequest (request-of-json {"env" declared "key" "k" "platform" "test" "root" (str (/ tmp "new")) "known" known}))
+  (<- picked (| CarryFrom None) (carry-source request.known request.env "app" HY-VERSION))
+  picked)
+
+
+;; 失敗ケース(#3706): Hy の版の欄(hyVersion)の無い前の印の root と、別の Hy の版の印の root は、完成した root の列には入るが
+;; (置き場の名指しは新しい欄を読まない)、引き継ぎ元には選ばれない(版の分からない compiler で焼いた .pyc を持ち越さない)。
+;; 同じ版の印の root は、lock が違っても(依存を 1 本上げた)選ばれる — lock の一致を条件に残すと赤。
+(deftest test-the-carry-source-reads-the-hy-version-of-the-marker [tmp-path]
+  (<- settings EnvSettings (settings-in tmp-path))
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (val marker-path (/ tmp-path "state" "roots" READY-NAME ENV-MARKER))
+  (<- raw dict (env-marker->json (EnvMarker :env env :key READY-NAME :platform "test" :stages #() :downloaded 0 :built 0
+                                            :interpreter "/usr/bin/python3" :child-protocol 1 :hy-version HY-VERSION)))
+  (.write-text marker-path (json.dumps raw))
+  (<- same (| CarryFrom None) (carry-source-through-store settings tmp-path))
+  (assert (= same (CarryFrom :tree (.format "{}/app" (/ tmp-path "state" "roots" READY-NAME)) :commit (. (get env.repos 0) commit)))
+          same)
+  (.write-text marker-path (json.dumps (dfor #(k v) (.items raw) :if (!= k "hyVersion") k v)))
+  (<- unknown (| CarryFrom None) (carry-source-through-store settings tmp-path))
+  (assert (is unknown None) unknown)
+  (.write-text marker-path (json.dumps (| raw {"hyVersion" "1.2.0"})))
+  (<- other (| CarryFrom None) (carry-source-through-store settings tmp-path))
+  (assert (is other None) other))

@@ -102,7 +102,8 @@
   (assert (in "app:expand=" (get lines 0)) lines)
   ;; 温い準備: 変わらない lib の木は前の root から写す。
   (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
-  (<- second (prepare-launched second-env #((KnownRoot :env ready.env :root ready.root :made-ms 0)) (- now LAUNCH-LEAD-MS)))
+  (<- second (prepare-launched second-env #((KnownRoot :env ready.env :root ready.root :made-ms 0 :hy-version (get marker "hyVersion")))
+                               (- now LAUNCH-LEAD-MS)))
   (assert (isinstance second EnvReady) second)
   (<- again dict (marker-of second))
   (val warm-tree (next (gfor s (get again "stages") :if (= (get s "name") "tree") s)))

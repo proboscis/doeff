@@ -502,6 +502,13 @@
           (for [#(name rel) editables]
             (<- (WriteText (posixpath.join site (.format "_editable_impl_{}.pth" (.replace name "-" "_")))
                            (posixpath.normpath (posixpath.join pdir rel)))))
+          ;; 入れた package ごとに、本物の uv と同じ名の dist-info の dir(`<正規化した名>-<版>.dist-info/METADATA`)を置く(翻訳は
+          ;; venv の Hy の版をこの名から読む — #3706)。版の無い行(`==` の無い行)は置かない。
+          (val installed (tuple (gfor line wanted :setv parts (.partition line "==") :if (get parts 2)
+                                      #((.replace (.lower (get parts 0)) "-" "_") (get parts 2)))))
+          (for [#(package version) installed]
+            (<- (write-file (posixpath.join site (.format "{}-{}.dist-info" package version) "METADATA")
+                            (.format "Name: {}\nVersion: {}\n" package version))))
           (<- (bump {"syncs" 1 "downloads" (len missing)}))
           (ProcessOutcome :stdout "" :stderr (.format "Prepared {} packages in 1ms\n" (len missing)) :exit-code 0))))
 
