@@ -36,9 +36,10 @@
 ;;;     変化の待ちの long-poll)の入りと起きにも刻を打つ。刻は受けの loop に request-ledger と並べて被せた控え(request-stamps)が、自分の
 ;;;     外側の時計(土台の GetMonotonic — 要求ごとの外側の handler serving.request-handlers の時計ではない)で読んで札ごとに控えるので、受けた
 ;;;     刻(received-at)と同じ物差しにそろう。送った後に札の刻を控えから外し(TakeMarks)、記録の操作の要求だけ、区間ごとの秒
-;;;     (request_timing.hy — queue・body・decode・handler・wait・encode・send・total・woke)を doeff の計器の効果 ObserveSeconds で
-;;;     records_stage_<操作>_<区間> に積む。GET /metrics が区間ごとの秒の和と数を描く。log には書かない(本番の書きと待ちの要求の数で行が
-;;;     積もり、log の file を切り替える仕組みが無いため)
+;;;     (request_timing.hy — queue・body・decode・handler・wait・encode・send・total・woke)を records_stage_<操作>_<区間> の観測の列にし、
+;;;     doeff の計器の効果 ObserveSecondsBatch 1 回で積む(区間ごとに ObserveSeconds を撃つと 1 要求で 7〜9 回 — 書きのたびに起きた待ちの
+;;;     要求が波で並ぶ時、その 1 本ずつの後ろに観測の往復が乗っていた・#3688)。GET /metrics が区間ごとの秒の和と数を描く。log には書かない
+;;;     (本番の書きと待ちの要求の数で行が積もり、log の file を切り替える仕組みが無いため)
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
 ;;; 要求の本文の上限は HttpReadBody の max-bytes(読む前に宣言の長さで、宣言の無い本文は流しながら判じる)だけが持つ。
@@ -73,7 +74,7 @@
                             operation-of])
 (import doeff_records.wire [WRITER-HEADER])
 (import doeff_records.store_choice [StorePressure PressureUnread])
-(import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSeconds ReadMeter])
+(import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
 (import doeff_core_effects.meter_prometheus [render-prometheus CONTENT-TYPE :as METRICS-CONTENT-TYPE])
 
@@ -479,15 +480,18 @@
 (defk observe-stages [path received-at marks]
   {:pre [(: path str) (: received-at (| float None)) (: marks (get tuple #(MarkAt ...)))] :post [(: % None)]
    :tags {:context "records" :role "entry"}}
-  "記録の操作の要求 1 つの区間の秒(request_timing の request-stages)を、操作ごと・区間ごとの秒の観測(ObserveSeconds)に積み、GET /metrics で
-   どの区間が遅いかを読めるようにするため(頭の註の要求ごとの計時 — 記録の操作でない route は積まない)。"
+  "記録の操作の要求 1 つの区間の秒(request_timing の request-stages)を、操作ごと・区間ごとの秒の観測の列にして計器の効果 1 回
+   (ObserveSecondsBatch)で積み、GET /metrics でどの区間が遅いかを読めるようにするため(頭の註の要求ごとの計時 — 記録の操作でない route は
+   積まない)。"
   (<- operation (| str None) (operation-of path))
   (when (is operation None)
     (return None))
   (<- stages (get tuple #(StageSeconds ...)) (request-stages received-at marks))
+  (var observations #())
   (for [stage stages]
     (<- name str (stage-metric operation stage.stage))
-    (<- (ObserveSeconds :name name :seconds stage.seconds)))
+    (:= observations (+ observations #((SecondsObservation :name name :seconds stage.seconds)))))
+  (<- (ObserveSecondsBatch :observations observations))
   None)
 
 

@@ -1,13 +1,14 @@
-;;; 計器の本物の答え手 process-meter-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・SetGauge・
-;;; ReadMeter に、process に 1 つの置き場で答える。
+;;; 計器の本物の答え手 process-meter-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・
+;;; ObserveSecondsBatch・SetGauge・ReadMeter に、process に 1 つの置き場で答える。
 ;;;
 ;;; 何のためか: 動き続ける process では、処理ループの run が計器へ積み、別の run(probe の HTTP — 処理ループが計算している間も答える)が
 ;;; 同じ計器を読む。session の値は 1 つの run の中にしか無いので、この module が「名前 → 置き場」を process に 1 つ持ち、同じ名前で入れた
 ;;; 答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。class は作らない(ADR-DOE-HY-007 R3・R4)— 置き場の中身は
 ;;; 変わらない値の断面と、書き手の lock と、GC の停止の箱だけ。process に 1 つの物を module が持つ先例 = handlers.py の Await の橋。
 ;;;
-;;;   書き  lock を取り、GC の停止の箱を畳んでから、純関数(meter_effects.hy の counted・observed・gauged)で新しい断面を作って差し替える。
-;;;         差し替えは 1 回の書きで 1 度だけ — 1 つの名の中(秒の合計・回数・桁の counter)は 1 度に見える。
+;;;   書き  lock を取り、GC の停止の箱を畳んでから、純関数(meter_effects.hy の counted・observed・observed-batch・gauged)で新しい断面を
+;;;         作って差し替える。差し替えは 1 回の書きで 1 度だけ — 1 つの名の中(秒の合計・回数・桁の counter)は 1 度に見える
+;;;         (ObserveSecondsBatch の列も 1 回の書き — lock を 1 度取り、1 度だけ差し替える)。
 ;;;   読み  書き手の lock を待たずに今の断面の参照を 1 つ取る(読みが塞がった書き手の後ろに並ばない)。lock が空いていれば GC の停止の箱を
 ;;;         畳んでから読む(空いていなければ畳まずに読む)。
 ;;;   GC    設定に gc-pause-name があれば、置き場を作る時に gc.callbacks へ 1 つ繋ぎ、回収 1 回の start → stop の秒を箱へ積む。callback は
@@ -25,8 +26,8 @@
 (import gc)
 (import threading)
 (import time)
-(import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ObserveSeconds ReadMeter SetGauge
-                                         counted gauged observed])
+(import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter
+                                         SetGauge counted gauged observed observed-batch])
 
 
 (defrecord MeterPlace
@@ -102,7 +103,7 @@
 
 
 (defhandler process-meter-handler [#^ str place-name #^ MeterSettings settings]
-  "CountMetric・ObserveSeconds・SetGauge・ReadMeter に、process に 1 つの置き場 place-name で答える(頭の註)。"
+  "CountMetric・ObserveSeconds・ObserveSecondsBatch・SetGauge・ReadMeter に、process に 1 つの置き場 place-name で答える(頭の註)。"
   ;; 引数に残す理由: place-name は別の run と同じ置き場を共有する鍵、settings は置き場を作る時の桁の表と GC の停止の名 — どちらも入れる所ごとに
   ;; 決まる値で、Ask では区別できない(1 つの組に名前の違う計器を並べられる)。
   (session val place (! (meter-place place-name settings)))
@@ -111,6 +112,9 @@
     (resume None))
   (ObserveSeconds [name seconds]
     (<- (rewritten place-name place (fn [snapshot] (observed snapshot place.settings name seconds))))
+    (resume None))
+  (ObserveSecondsBatch [observations]
+    (<- (rewritten place-name place (fn [snapshot] (observed-batch snapshot place.settings observations))))
     (resume None))
   (SetGauge [name value]
     (<- (rewritten place-name place (fn [snapshot] (gauged snapshot name value))))
