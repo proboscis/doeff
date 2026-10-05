@@ -13,7 +13,7 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables])
 (import doeff_records.pg_sql [Statement expiring-events-statement expire-events-statement expire-event-groups-statement
-                              expire-touched-events-statement prune-changes-statement terminal-rows-statement])
+                              touched-events-statement prune-changes-statement terminal-rows-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -100,14 +100,14 @@
   (<- pulse-probe (expiring-events-statement prefix "pulses" BEFORE None))
   (<- pair-probe (expiring-events-statement prefix "pairs" BEFORE ":"))
   (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done")))
-  (<- touched (expire-touched-events-statement prefix "pairs" BEFORE ":" "done:m-1"))
+  (<- touched (touched-events-statement prefix "pairs" BEFORE ":" "done:m-1"))
   (<- pulse-sweep (expire-events-statement prefix "pulses" BEFORE))
   (<- pair-sweep (expire-event-groups-statement prefix "pairs" BEFORE ":"))
   (<- prune (prune-changes-statement prefix BEFORE))
   #(#("出来事ごとの列の回収の候補の読み" pulse-probe)
     #("組で数える列の回収の候補の読み" pair-probe)
     #("期限の在る表の終端の行の読み" terminal)
-    #("組で数える列への追記が触る組の片付け" touched)
+    #("組で数える列への追記が触る組の読み" touched)
     #("出来事ごとの列の回収" pulse-sweep)
     #("組で数える列の回収" pair-sweep)
     #("変更の列の刈り" prune)))
