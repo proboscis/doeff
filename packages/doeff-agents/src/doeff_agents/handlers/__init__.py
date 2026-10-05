@@ -1,13 +1,16 @@
 """Effect handlers for agent session management."""
 
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # activate Hy import hook for handler modules
 from doeff_time import sync_time_handler
+
+if TYPE_CHECKING:
+    from doeff_claude_code.fake import FakeClaudeWorld, FakeReply
 
 from doeff_agents.agentd_client import LazyAgentdClient
 from doeff_agents.effects import (
@@ -262,6 +265,58 @@ def fake_claude_agent_runtime_handlers(
     """
     return fake_headless_claude_agent_handlers(
         responder=responder, config_dir=config_dir, world=world, env=env, settings=settings
+    )
+
+
+def claude_process_layer_handler(*, command: tuple[str, ...] = ("claude",)) -> Callable[..., object]:
+    """Layer 2 alone: the production handler that starts one CLI process per turn.
+
+    The same handler ``claude_agent_runtime_handlers`` returns first. For a
+    caller that places layer 2 and the adapter at different depths
+    (agora-redesign #3507): layer 2 belongs to the foundation that owns real
+    processes (an emulation answers layer 2 outside instead), the adapter sits
+    next to the program. Install a doeff-time handler, the scheduler and a
+    slog handler outside it. The pair entries above are unchanged.
+    """
+    from doeff import run
+
+    return run(_hy_headless_compose_module().claude_process_layer(tuple(command)))
+
+
+def fake_claude_process_layer_handler(
+    *,
+    responder: Callable[[str, tuple[str, ...]], "FakeReply"] | None = None,
+    world: "FakeClaudeWorld | None" = None,
+) -> Callable[..., object]:
+    """Layer 2 alone, fake (no process, no API) — the first of ``fake_claude_agent_runtime_handlers``.
+
+    ``responder`` / ``world`` mean the same as for the fake pair (exactly one).
+    """
+    from doeff import run
+
+    return run(_hy_headless_compose_module().fake_claude_process_layer(responder, world))
+
+
+def claude_agent_adapter_handler(
+    *,
+    config_dir: str,
+    env: Mapping[str, str],
+    settings: Mapping[str, object],
+    cold_resume_prompt: str | None = None,
+) -> Callable[..., object]:
+    """The headless adapter alone: the public effects onto layer-2 effects.
+
+    The same adapter both pair entries return second — whether layer 2 is
+    the production handler or the fake. ``config_dir`` / ``env`` are the
+    Claude home, ``settings`` the CLI settings (a JSON mapping — pass an
+    empty mapping explicitly when there is nothing to declare). Layer 2 must
+    be answered outside it (``claude_process_layer_handler``, the fake, or an
+    emulation's peer).
+    """
+    from doeff import run
+
+    return run(
+        _hy_headless_compose_module().claude_adapter(config_dir, env, settings, cold_resume_prompt)
     )
 
 
