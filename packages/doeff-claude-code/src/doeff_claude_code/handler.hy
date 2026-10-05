@@ -40,7 +40,8 @@
                                    SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
                                    ProcessStillAlive])
-(import doeff_claude_code.faults [ClaudeDropProcess])
+(import json)
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState])
 (import doeff_claude_code.decision [SessionView Refuse start-decision])
@@ -96,6 +97,10 @@
           self.next-line-seq 0
           self.init-seen False
           self.closed False)
+    ;; launches = この会話で手番のために起こした process の数・stopped-because = 最後の process を降ろした訳(検の口 ClaudeLiveProcess が
+    ;; 読む — 会話ごとに process を生かしたまま待たせる形の使い回しと守りを確かめるため・#3672)。
+    (setv #^ int self.launches 0)
+    (setv #^ (| StopReason None) self.stopped-because None)
     (setv #^ (| Binding None) self.binding None)
     (setv #^ (get dict #(int TurnLog)) self.turns {}))
 
@@ -177,7 +182,9 @@
       (setv end (replace end :continued-by (ClaudeTurn runtime.session-id next-seq))))
     (when (and (is-not log None) (is log.end None))
       (setv log.end end)))
-  (when transition.close (.retire (process-of binding))))
+  (when transition.close
+    (setv runtime.stopped-because StopReason.TURN-END)
+    (.retire (process-of binding))))
 
 (defn on-line [#^ SessionRuntime runtime #^ Binding binding clock #^ str raw]
   (setv record (parse-record raw))
@@ -456,6 +463,7 @@
             (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
                            (fn [raw] (on-line runtime binding host.clock raw))
                            (fn [code tail] (on-exit runtime binding code tail))))
+      (+= runtime.launches 1)
       (except [error OSError]
         (setv runtime.binding None)
         (setv (. (.open-log runtime) end) (Interrupted))
@@ -642,6 +650,31 @@
   (setv process (if (is runtime None) None runtime.process))
   (and (is-not process None) (.drop process)))
 
+(defk live-process [#^ ClaudeCodeHost host #^ str session-id]
+  {:pre [(: host ClaudeCodeHost) (: session-id str)] :post [(: % (| LiveProcess NoLiveProcess))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の process の見え方を答えるため(fake と同じ筋書きで、使い回しと守りを確かめる口 — #3672)。生きた process =
+   起こした process が生きていて、降りる途中でない物。"
+  (val runtime (.runtime host session-id))
+  (when (is runtime None) (return (NoLiveProcess :launches 0 :stopped-because None)))
+  (with [runtime.lock]
+    (val process runtime.process)
+    (if (and (is-not process None) (.alive process) (is process.retiring None))
+        (LiveProcess :launches runtime.launches)
+        (NoLiveProcess :launches runtime.launches :stopped-because runtime.stopped-because))))
+
+(defk emit-outside [#^ ClaudeCodeHost host #^ str session-id]
+  {:pre [(: host ClaudeCodeHost) (: session-id str)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
+  "生きていて手番を走らせていない process に、手番の外の出力をさせるため(守りの筋書きの口 — 替え玉の CLI だけが読む行
+   stub_emit_outside を stdin へ書く。本物の claude には撃たない)。答え = 出させる process が在ったか。"
+  (<- view (live-process host session-id))
+  (val runtime (.runtime host session-id))
+  (when (or (is runtime None) (not (isinstance view LiveProcess))) (return False))
+  (with [runtime.lock]
+    (when (is-not (.running-turn runtime) None) (return False))
+    (.send (.bound-process runtime) (+ (json.dumps {"type" "stub_emit_outside"}) "\n")))
+  True)
+
 
 ;; --- handler -----------------------------------------------------------------------------------
 
@@ -667,4 +700,10 @@
     (<- exported (export-session effect))
     (resume exported))
   (ClaudeDropProcess [session-id]
-    (resume (drop-process host session-id))))
+    (resume (drop-process host session-id)))
+  (ClaudeLiveProcess [session-id]
+    (<- view (live-process host session-id))
+    (resume view))
+  (ClaudeEmitOutsideTurn [session-id]
+    (<- emitted (emit-outside host session-id))
+    (resume emitted)))
