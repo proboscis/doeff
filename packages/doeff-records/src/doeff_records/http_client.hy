@@ -8,14 +8,12 @@
 ;;; 答えの写し方:
 ;;;   200                    wire の本文の答え(Row・Page・Written・Conflict・Refused・Changes・WrittenRows・RowsConflict・RowsRefused …)
 ;;;   503 / 届かない          Unreachable(読みは撃ち直してよい・書きは期待つきなら撃ち直してよい)
-;;;   401 / 403              RecordsUnauthorized を上げる(操作を問わない — 組み立ての誤り): 前に立つ口が要求を断った。
-;;;                          時間を置いて撃ち直しても晴れないので Unreachable(時間で晴れる届かなさ)と読ませない — 読みを
-;;;                          Unreachable に写していた時は、呼び手が落ちずに「届かなかった」として読みを撃ち直し続け、設定の誤りが
-;;;                          見えなかった。書きを Refused にもしない — Refused は宣言がその書きを断った答え(200 の本文・memory の
-;;;                          handler と同じ)。status だけで決める(前に立つ口の 403 の本文は JSON の断りとは限らない)
 ;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)。欄 tables・streams は、撃った要求が
 ;;;                          名指した名のうち断りの理由に載った物(wire.hy の undeclared-refusal — 本文の形は変えない)
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
+;;;   ほかの status          400 / 500 と同じ一般の失敗で WireError(401 / 403・間の proxy の 502 など — status ごとの枝を持たない。
+;;;                          本文が契約の断りの形でない JSON の時だけ WireMalformed)。記録の service は 401 / 403 を出さない
+;;;                          (呼び手を断らない — #2988・#3007)ので、身元の断りの名の付いた例外も持たない(#2986)
 ;;;
 ;;; WatchChanges と WatchEvents の待ちは service の long-poll(#3074): 待ちの秒(timeout)つきで service へ撃ち、待つのは service の中の
 ;;; 置き場の待ち(memory の呼び鈴・PostgreSQL の待ち)。service は 1 回の要求で WATCH-MAX-SECONDS(wire)までしか待たないので、client は
@@ -65,18 +63,8 @@
 
 
 (defclass WireError [RuntimeError]
-  "service が 400 / 500 で答えた(client か service の実装の誤り — 値の失敗ではない)。")
-
-
-(defclass RecordsUnauthorized [Exception]
-  "記録の service の前に立つ口が要求を断った(401 / 403 — 組み立ての誤り。値の失敗ではない)。時間を置いて撃ち直しても
-   晴れないので、答えの値(Unreachable・Refused)にせず上げる — 読み手は撃ち直しを続けずに名指しで落ちる(file の頭の註)。Exception を直に継ぐ: 読み手が ValueError・RuntimeError・
-   OSError を受ける所(値の検め・file の読み)で黙って呑まれないため。")
-
-;; 身元の断りの status(file の頭の表)。
-(val IDENTITY-REFUSED-STATUSES #(401 403))
-;; 身元の断りの理由を例外の文へ写す字数の上限(前に立つ口の HTML の本文を丸ごと写さない)。
-(val REASON-MAX-CHARS 300)
+  "service が 400 / 500 で答えた(client か service の実装の誤り — 値の失敗ではない)。ほかの status(401 / 403・間の proxy の 502 など)の
+   本文が JSON でない時も同じ(file の頭の表)。")
 
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
@@ -92,8 +80,7 @@
 
 
 (defclass [(dataclass :frozen True)] RawReply []
-  "service の答え 1 つの生の形: status と本文の byte(JSON として読むかは status を見てから決める — 身元の断りの本文は JSON とは
-   限らない)。"
+  "service の答え 1 つの生の形: status と本文の byte(JSON として読むのは計器に数えた後 — 間の proxy の本文は JSON とは限らない)。"
   (#^ int status)
   (#^ bytes payload))
 
@@ -160,31 +147,6 @@
     _ 0.0))
 
 
-(defk refused-reason [payload]
-  {:pre [(: payload bytes)] :post [(: % str)] :tags {:context "records" :role "foundation"}}
-  "身元の断りの本文から人の読む理由を取り出す: 記録の service の断り(JSON の {error reason})なら reason、ほか(前に立つ口の本文)は
-   頭の REASON-MAX-CHARS 字。"
-  (val text (.strip (.decode payload "utf-8" :errors "replace")))
-  (var body None)
-  (try
-    (:= body (json.loads text))
-    (except [json.JSONDecodeError]
-      (return (cut text 0 REASON-MAX-CHARS))))
-  (if (and (isinstance body dict) (isinstance (.get body "reason") str))
-      (get body "reason")
-      (cut text 0 REASON-MAX-CHARS)))
-
-
-(defk identity-refused [endpoint operation reply]
-  {:pre [(: endpoint RecordsEndpoint) (: operation str) (: reply RawReply)] :post [(: % RecordsUnauthorized)]
-   :tags {:context "records" :role "foundation"}}
-  "前に立つ口の断り(401 / 403)を、読み手が名指しで落ちる例外にする — 口・status・操作・理由を文に置く。"
-  (<- reason str (refused-reason reply.payload))
-  (RecordsUnauthorized
-    (.format "記録の service {} の前に立つ口が要求を断った({} {}): {}"
-             endpoint.base-url reply.status operation reason)))
-
-
 (defk zero-client-metrics [endpoint]
   {:pre [(: endpoint RecordsEndpoint)] :post [(: % None)]}
   "client の計器の閉じた系列(wire の CLIENT-ANSWER-METRICS)を全部 0 で置くため — 書き手の job が起動の時に 1 回呼び、読み手が「無い」と
@@ -198,7 +160,7 @@
 (defk counted-reply [endpoint operation reply]
   {:pre [(: endpoint RecordsEndpoint) (: operation str) (: reply (| RawReply Unreachable))] :post [(: % None)]}
   "送った要求 1 つの結果(届かない・答えの status)を endpoint の計器に 1 つ数えるため(記録の service に届かなかった要求は service の
-   計器に出ないので、client の側でだけ数えられる — file の頭の註)。数えるのは答えを値や例外にする前の 1 か所で、身元の断り・JSON で
+   計器に出ないので、client の側でだけ数えられる — file の頭の註)。数えるのは答えを値や例外にする前の 1 か所で、JSON で
    ない本文の断りも同じ所を通る。計器の無い endpoint では何もしない。"
   (when (is-not endpoint.meter None)
     (val outcome (if (isinstance reply Unreachable) CLIENT-UNREACHABLE (! (client-status-outcome reply.status))))
@@ -215,8 +177,6 @@
   (<- reply (exchange endpoint request.operation request.body waited))
   (<- (counted-reply endpoint request.operation reply))
   (when (isinstance reply Unreachable) (return reply))
-  (when (in reply.status IDENTITY-REFUSED-STATUSES)
-    (raise (! (identity-refused endpoint request.operation reply))))
   (<- body (reply-json request.operation reply))
   (when (= reply.status 200)
     (return (! (decode-answer request.operation body))))

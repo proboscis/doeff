@@ -19,7 +19,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src"
 
 # 使い手の repo の main が import する名(module ごと・2026-10-02 の数え)。
 USED = (
-    UsedModule("http_client", ("RecordsEndpoint", "http-records-handler", "http-table-records-handler", "RecordsUnauthorized")),
+    UsedModule("http_client", ("RecordsEndpoint", "http-records-handler", "http-table-records-handler")),
     UsedModule(
         "main",
         ("RecordsSettings", "MaintenancePlan", "records-settings", "records-connected", "pg-handlers-of", "records-serving", "PG-STORE"),

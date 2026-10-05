@@ -46,11 +46,13 @@
 ;; OTHER = 記録の操作でない route(/healthz・/readyz・/metrics・知らない route)。
 (defenum RequestKind WRITE READ OTHER)
 
-;; 断りの語(契約 $defs.refusal の error の語彙のうち、この口が使う物)と HTTP の status。
-(setv ERROR-MALFORMED "malformed" ERROR-UNAUTHORIZED "unauthorized" ERROR-NOT-FOUND "not-found"
-      ERROR-STORE-UNAVAILABLE "store-unavailable" ERROR-INTERNAL "internal")
-(setv STATUS-OF-ERROR {ERROR-MALFORMED 400 ERROR-UNAUTHORIZED 401 ERROR-NOT-FOUND 404 ERROR-STORE-UNAVAILABLE 503
-                       ERROR-INTERNAL 500})
+;; 断りの語(契約 $defs.refusal の error の語彙のうち、この口が使う物)と HTTP の status。口は呼び手を断らないので、身元の断りの語と
+;; 401 は持たない(#2988・#3007・#2986)。
+(val ERROR-MALFORMED "malformed")
+(val ERROR-NOT-FOUND "not-found")
+(val ERROR-STORE-UNAVAILABLE "store-unavailable")
+(val ERROR-INTERNAL "internal")
+(val STATUS-OF-ERROR {ERROR-MALFORMED 400 ERROR-NOT-FOUND 404 ERROR-STORE-UNAVAILABLE 503 ERROR-INTERNAL 500})
 
 ;; 計器(GET /metrics)の counter の名の綴り(#2709): 要求の種 × 答えの status ごとに records_requests_<種>_<status>(描く名は末尾に
 ;; _total)。label は使わず、種と status を名に畳む。系列は種 3 × status(200 と上の断りの status)で閉じていて、口は起動の時に全部を
@@ -80,8 +82,8 @@
 ;; 記録の client の計器の counter の名の綴り(#2740): client が送った要求 1 つごとに、要求の種 × 結果で records_client_requests_<種>_<結果>
 ;; (描く名は末尾に _total — 上の service の系列と並べて読む)。種は write と read(client は記録の操作だけを送る — other は無い)。
 ;; 結果 = service が答えた status(ANSWER-STATUSES — 503 は service に届いたが置き場に届かなかった)・unreachable(要求が service に
-;; 届かなかった — 接続できない・時間切れ。service の計器には出ない数)・other(それ以外の status — 間の proxy の 502 / 504・前に立つ口の
-;; 403 など)。頁送りの読み直しの合図(Reset)は 200 の本文の答えなので 200 に入る(Conflict・Refused と同じ)。系列は閉じていて、使い手は
+;; 届かなかった — 接続できない・時間切れ。service の計器には出ない数)・other(それ以外の status — 間の proxy の 502 / 504・
+;; 401 / 403 など)。頁送りの読み直しの合図(Reset)は 200 の本文の答えなので 200 に入る(Conflict・Refused と同じ)。系列は閉じていて、使い手は
 ;; 起動の時に全部を 0 で置ける(http_client.zero-client-metrics)。
 (val CLIENT-ANSWER-METRIC "records_client_requests_{}_{}")
 (val CLIENT-UNREACHABLE "unreachable")
@@ -659,7 +661,7 @@
 (defk refusal-from [value]
   {:pre [(: value JsonValue)] :post [(: % WireRefusal)]}
   "HTTP の断りの本文を読む(client の handler が status と合わせて答えへ写すため)。"
-  (<- body (object-of value "断り" #("error" "reason") #("principal")))
+  (<- body (object-of value "断り" #("error" "reason") #()))
   (<- error (string-of (get body "error") "error"))
   (<- reason (string-of (get body "reason") "reason"))
   (try (WireRefusal error reason) (except [problem ValueError] (raise (! (malformed "断り" problem))))))
