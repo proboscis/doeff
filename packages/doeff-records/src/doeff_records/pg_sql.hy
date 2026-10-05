@@ -17,6 +17,9 @@
 ;;;   append_rows (ledger, 組の名の式) 組で数える列(ByKeySuffix)の区切りごとに 1 つ — 書きが触る組の片付け(expire-touched-events-statement)と
 ;;;                                  組の照らし(expired-event-condition)が引く。式は key-suffix-expression の 1 か所から作り、区切りは宣言の値を
 ;;;                                  文に直に置く(引数にすると文の式が索引の式と揃わず、索引に当たらない — 区切りの字は values.SEPARATOR-PATTERN)
+;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
+;;;   state_rows (ledger, 状態の欄の式) 保持の期限の在る表の状態の欄が、どの表の索引の欄にも無い時だけ(名と式は宣言した索引の欄と同じ — 終端の行の
+;;;                                  読み terminal-rows-statement が引く)
 ;;; 表の名は接頭辞つき(既定 records_)— 同じ database に在る別の置き場の同名の表と混ざらない。
 ;;; DDL は SqlEnsureTables の宣言に書き換えない(式の索引と bigserial を宣言で表せない)— 旧い版と同じ字面のまま流す
 ;;; (検 test_pg_sql.hy が旧い版の字面と比べる)。どれも IF NOT EXISTS / ON CONFLICT DO NOTHING なので、字面が変わっても
@@ -43,7 +46,7 @@
 (import json)
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
-(import doeff_records.values [RecordsSchema RetiredKey ByKeySuffix SEPARATOR-PATTERN])
+(import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix FIELD-NAME-PATTERN SEPARATOR-PATTERN])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
@@ -140,6 +143,25 @@
   (+ prefix "ix_" (cut (.hexdigest (hashlib.sha1 (.encode field-name "utf-8"))) 12)))
 
 
+(defk field-expression [payload field-name]
+  {:pre [(: payload str) (: field-name str) (.match FIELD-NAME-PATTERN field-name)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "行の欄 field-name の値(jsonb)の式を作るため — 欄の式の索引(field-index-statement)と、その索引で引く文の条件(terminal-state-condition)が
+   この 1 つを使い、索引の式と文の式の字面を揃える(欄の名は宣言を通った英数字 — 文に直に置く)。payload = payload の列の綴り(索引は
+   payload・文は別名つきでもよい)。"
+  (.format "(({}::jsonb) -> '{}')" payload field-name))
+
+
+(defk field-index-statement [prefix field-name]
+  {:pre [(: prefix str) (: field-name str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "state_rows の欄 field-name の式の索引 (ledger, 欄の式) を作る文を作るため(宣言した索引の欄と、索引の欄に無い保持の期限の在る表の状態の欄 —
+   名も字面も旧い版の宣言した索引の欄の文と同じ)。"
+  (<- name (index-name prefix field-name))
+  (<- expression (field-expression "payload" field-name))
+  (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows (ledger, {e})" :i name :p prefix :e expression) :params #()))
+
+
 (defk group-index-statement [prefix separator]
   {:pre [(: prefix str) (: separator str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
@@ -157,34 +179,34 @@
    (移行の錠の transaction の中で・process ごとに 1 度)。字面は旧い版と同じ(頭の註)。"
   (val p prefix)
   (val fields (sorted (sfor decl (.values schema.tables) name decl.indexes name)))
-  (var statements
-    [(Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}state_rows (
+  (val tables
+    #((Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}state_rows (
            ledger text NOT NULL, key text NOT NULL, payload text NOT NULL, version bigint NOT NULL,
            updated_at bigint NOT NULL, updated_by text NOT NULL, origin_host text NOT NULL, epoch bigint NOT NULL,
            PRIMARY KEY (ledger, key))" :p p) :params #())
-     (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}append_rows (
+      (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}append_rows (
            seq bigserial PRIMARY KEY, ledger text NOT NULL, at bigint NOT NULL, payload text NOT NULL,
            origin_host text NOT NULL, epoch bigint NOT NULL)" :p p) :params #())
-     (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger ON {p}append_rows (ledger, seq)" :p p) :params #())
-     (Statement :text (.format "CREATE UNIQUE INDEX IF NOT EXISTS {p}append_rows_idempotency
+      (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger ON {p}append_rows (ledger, seq)" :p p) :params #())
+      (Statement :text (.format "CREATE UNIQUE INDEX IF NOT EXISTS {p}append_rows_idempotency
            ON {p}append_rows (ledger, ((payload::jsonb) ->> 'idempotencyKey'))" :p p) :params #())
-     (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}row_changes (
+      (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}row_changes (
            seq bigserial PRIMARY KEY, ledger text NOT NULL, key text NOT NULL, version bigint NOT NULL,
            payload text, at bigint NOT NULL, epoch bigint NOT NULL)" :p p) :params #())
-     (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_ledger ON {p}row_changes (ledger, seq)" :p p) :params #())
-     (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}store_epoch (
+      (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_ledger ON {p}row_changes (ledger, seq)" :p p) :params #())
+      (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}store_epoch (
            id smallint PRIMARY KEY CHECK (id = 1), epoch bigint NOT NULL, floor bigint NOT NULL)" :p p) :params #())
-     (Statement :text (.format "INSERT INTO {p}store_epoch (id, epoch, floor) VALUES (1, 1, 0) ON CONFLICT (id) DO NOTHING" :p p)
-                :params #())])
+      (Statement :text (.format "INSERT INTO {p}store_epoch (id, epoch, floor) VALUES (1, 1, 0) ON CONFLICT (id) DO NOTHING" :p p)
+                 :params #())))
   ;; 宣言した索引の欄ごとに式の索引 1 つ(欄の名は FIELD-NAME-PATTERN を通った英数字だけ — 文に直に置ける)。
+  (var indexes #())
   (for [name fields]
-    (<- index (index-name p name))
-    (.append statements (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows (ledger, ((payload::jsonb) -> '{f}'))"
-                                                  :i index :p p :f name)
-                                   :params #())))
+    (<- statement (field-index-statement p name))
+    (:= indexes (+ indexes #(statement))))
   ;; 旧い版より後に足した表と索引は旧い版の文の後ろに足した順に並べる(旧い版の文の字面と順はそのまま — 検 test_pg_sql.hy)。
   (<- added (added-index-statements p schema))
-  (+ (tuple statements)
+  (+ tables
+     indexes
      #((Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
            PRIMARY KEY (ledger, idempotency_key))" :p p) :params #()))
@@ -194,17 +216,29 @@
 (defk added-index-statements [prefix schema]
   {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "旧い版より後に足した索引の文の列を宣言 schema から作るため(#3614 — 頭の註の索引。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
-   データに触らない)。並びは (ledger, at)・区切りの順の組の名の式。"
+  "旧い版より後に足した索引の文の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
+   データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・変更の列の刻・欄の名の順の状態の欄の式。状態の欄の索引は、保持の期限の在る
+   表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄のうち、どの表の索引の欄にも無い物だけ
+   (在る欄は旧い版の文が同じ名で作る)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
+  (val indexed (sfor decl (.values schema.tables) name decl.indexes name))
+  (val state-fields (sorted (sfor decl (.values schema.tables)
+                                  :if (and (isinstance decl.retention KeepFor) decl.terminal (not-in decl.state-field indexed))
+                                  decl.state-field)))
   (var groups #())
   (for [separator separators]
     (<- statement (group-index-statement p separator))
     (:= groups (+ groups #(statement))))
+  (var states #())
+  (for [field state-fields]
+    (<- state-index (field-index-statement p field))
+    (:= states (+ states #(state-index))))
   (+ #((Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger_at ON {p}append_rows (ledger, at)" :p p) :params #()))
-     groups))
+     groups
+     #((Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_at ON {p}row_changes (at)" :p p) :params #()))
+     states))
 
 
 (defk drop-statements [prefix]
@@ -243,13 +277,25 @@
   {:pre [(: alias str) (: stem str) (: expiry RowExpiry)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
   "表 1 つ(expiry)について、行 alias がその表の保持の期限を過ぎた終端の行である条件を作るため。終端の語の照らしは回収の候補の読み
-   terminal-rows-statement と同じ `(payload::jsonb) ->> 状態の欄 IN (…)`・刻の照らしは最後に書いた刻 ≦ 境の刻。引数の名は stem
+   terminal-rows-statement と同じ terminal-state-condition・刻の照らしは最後に書いた刻 ≦ 境の刻。引数の名は stem
    (表ごとに x0・x1 …)を頭に付ける(同じ文の他の引数と混ざらない)。"
-  (<- states (in-list (+ stem "t") expiry.terminal))
-  (<- named (params-of #(#((+ stem "l") expiry.table) #((+ stem "f") expiry.state-field) #((+ stem "b") expiry.before-at))))
-  (Clause :text (.format "({a}.ledger = :{s}l AND ({a}.payload::jsonb) ->> :{s}f IN ({t}) AND {a}.updated_at <= :{s}b)"
-                         :a alias :s stem :t states.text)
+  (<- states (terminal-state-condition (+ alias ".payload") expiry.state-field (+ stem "t") expiry.terminal))
+  (<- named (params-of #(#((+ stem "l") expiry.table) #((+ stem "b") expiry.before-at))))
+  (Clause :text (.format "({a}.ledger = :{s}l AND {t} AND {a}.updated_at <= :{s}b)" :a alias :s stem :t states.text)
           :params (+ named states.params)))
+
+
+(defk terminal-state-condition [payload state-field stem terminal]
+  {:pre [(: payload str) (: state-field str) (: stem str) (: terminal tuple) (> (len terminal) 0)] :post [(: % Clause)]
+   :tags {:context "records" :role "foundation"}}
+  "行の状態の欄 state-field が終端の語 terminal のどれかである条件を作るため(回収の候補の読み terminal-rows-statement と、読みの文の期限の
+   条件 expired-row-part の 1 つの形)。欄の式は field-expression(欄の式の索引 field-index-statement と同じ字面 — 索引に当たる)で、
+   終端の語は JSON の値(jsonb)の引数 `:{stem}0::jsonb, …` にして比べる(memory の判定 admission.terminal-row? と同じく値そのものを比べる)。
+   payload = payload の列の綴り(別名つきでもよい)。"
+  (<- expression (field-expression payload state-field))
+  (<- states (in-list stem (tuple (gfor word terminal (json.dumps word :ensure-ascii False)))))
+  (Clause :text (.format "{e} IN ({s})" :e expression :s (.join ", " (gfor param states.params (.format ":{}::jsonb" param.name))))
+          :params states.params))
 
 
 (defk unexpired-rows-filter [alias expiries]
@@ -308,12 +354,14 @@
 (defk terminal-rows-statement [prefix table state-field terminal]
   {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "終端の状態の行(保持の期限の候補 — 期限の判断は admission.row-expired?)を読む文を作るため(terminal が空なら呼ばない)。"
-  (<- states (in-list "t" terminal))
+  "終端の状態の行(保持の期限の候補 — 期限の判断は admission.row-expired?)を読む文を作るため(terminal が空なら呼ばない)。状態の欄の条件は
+   (ledger, 状態の欄の式) の索引に当たる形(terminal-state-condition — 索引は宣言した索引の欄か added-index-statements が作る)で、表の
+   終端でない行を読まない(#3614)。"
+  (<- states (terminal-state-condition "payload" state-field "t" terminal))
   (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
-                       WHERE ledger = :ledger AND (payload::jsonb) ->> :state_field IN ({s}) ORDER BY key COLLATE \"C\""
+                       WHERE ledger = :ledger AND {s} ORDER BY key COLLATE \"C\""
                             :p prefix :s states.text)
-             :params (+ (! (params-of #(#("ledger" table) #("state_field" state-field)))) states.params)))
+             :params (+ (! (params-of #(#("ledger" table)))) states.params)))
 
 
 (defk upsert-row-statement [prefix table key payload version at writer origin-host epoch]
