@@ -18,6 +18,10 @@
 
 (setv TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
 (setv FIELD-NAME-PATTERN (re.compile "^[A-Za-z_][A-Za-z0-9_]{0,62}$"))
+;; 組で数える列の区切り(ByKeySuffix.separator)の字 — PostgreSQL の置き場は区切りを組の名の式の索引と文の式に文字列の literal で直に置く
+;; (pg_sql.key-suffix-of・#3614)ので、引用符・逆斜線・空白・%・$・波括弧・ASCII の外を含まない 1〜16 字だけを許す(欄の名の FIELD-NAME-PATTERN と
+;; 同じ考え — 宣言で断り、文の組み立ては検めた値だけを受ける)。
+(val SEPARATOR-PATTERN (re.compile "^[A-Za-z0-9_.:;,/|#@=+~^!?*&<>-]{1,16}$"))
 
 
 (defclass UndeclaredTable [ValueError]
@@ -88,11 +92,11 @@
 (defclass [(dataclass :frozen True)] ByKeySuffix []
   "冪等キーの区切り separator より後ろが同じ出来事を 1 組にし、組の最後の出来事を積んだ刻から保持の秒を数える — 組の出来事は
    同時に消える(例: 区切り「:」で request:<id> と settled:<id> を 1 組にすると、結末が残る間は要求も残る)。区切りを含まない冪等キーは
-   キー全体が組の名。"
+   キー全体が組の名。区切りの字は SEPARATOR-PATTERN(英数字と記号 _.:;,/|#@=+~^!?*&<>- の 1〜16 字)。"
   (#^ str separator)
   (defn #^ None __post_init__ [self]
-    (when (not (and (isinstance self.separator str) self.separator))
-      (raise (ValueError (.format "ByKeySuffix.separator は空でない文字列: {!r}" self.separator))))))
+    (when (not (and (isinstance self.separator str) (.match SEPARATOR-PATTERN self.separator)))
+      (raise (ValueError (.format "ByKeySuffix.separator は英数字と記号 _.:;,/|#@=+~^!?*&<>- の 1〜16 字: {!r}" self.separator))))))
 
 (setv RetentionGroup (| EachEvent ByKeySuffix))
 
