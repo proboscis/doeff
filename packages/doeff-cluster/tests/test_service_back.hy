@@ -7,7 +7,11 @@
 ;; - 戻らない Service は、上限 seconds ちょうどで None(見張りは止める)。
 ;; - 落ちた Service は、別の worker へ置き直されて Ready に戻った拍で戻る。
 (require doeff-hy.macros [deftest defk <- val var])
+(import gc)
+(import pytest)
+(import sys)
 (import doeff_time [Delay])
+(import doeff_core_effects.scheduler [Spawn Wait Cancel Discard])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.service_back [SERVICE-BACK-CHANGE-SECONDS service-back service-back-within])
 (import doeff_cluster.shared.intent.detached_model [ServiceReady])
@@ -105,3 +109,45 @@
   (assert (> waited 0) seen)
   (assert (< waited 120000) seen)
   (assert (= back "Ready") seen))
+
+
+;; --- 待っている task を止める(#3557)— 取り消しは片付けまで走り、殺された task は「generator ignored GeneratorExit」を名乗らない ---------
+
+(defk stopped-while-waiting [kill]
+  {:pre [(: kill bool)] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 宣言の無い Service missing の戻りを待つ task を立て、待ちに入った後に kill なら Discard・さもなくば Cancel して、その task の
+   Wait で上がった例外の型の名を返す。"
+  (<- (Delay 12.0))
+  (<- waiter (Spawn (service-back-within "missing" 25.0)))
+  (<- (Delay 5.0))
+  (if kill (<- (Discard waiter)) (<- (Cancel waiter)))
+  (var ended None)
+  (try
+    (<- (Wait waiter))
+    (except [error Exception]
+      (:= ended (. (type error) __name__))))
+  ended)
+
+
+(defk unraisable-while [kill monkeypatch]
+  {:pre [(: kill bool) (: monkeypatch pytest.MonkeyPatch)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "止める筋書きを模擬の cluster で回し、#(Wait の例外の型の名 CPython が名乗った unraisable の文の列)を返す(走行の終わりに GC を回して
+   捨てた generator の閉じを拾う)。"
+  (setv seen [])
+  (monkeypatch.setattr sys "unraisablehook" (fn [unraisable] (.append seen (.format "{} — {}" unraisable.exc-value unraisable.err-msg))))
+  (<- ended (| str None) (sim-cluster (beacons sim-foundation) (stopped-while-waiting kill) :workers WORKERS))
+  (gc.collect)
+  #(ended (tuple seen)))
+
+
+(deftest test-a-cancelled-wait-ends-cancelled-without-an-unraisable [monkeypatch]
+  ;; 取り消し(Cancel)は TaskCancelledError を投げ込み、見張りを止める片付けまで走る — CPython の名乗りは 0。
+  (<- seen tuple (unraisable-while False monkeypatch))
+  (assert (= seen #("TaskCancelledError" #())) seen))
+
+
+(deftest test-a-discarded-wait-closes-without-an-unraisable [monkeypatch]
+  ;; 失敗ケース: 見張りを止める効果を finally に置くと、捨てた(Discard)待ちの generator を CPython が閉じる時に finally の中で yield し、
+  ;; 「generator ignored GeneratorExit」を unraisable として名乗る(#3557 の前の形)。
+  (<- seen tuple (unraisable-while True monkeypatch))
+  (assert (= seen #("TaskCancelledError" #())) seen))

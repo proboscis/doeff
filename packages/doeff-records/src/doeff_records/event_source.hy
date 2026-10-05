@@ -166,11 +166,16 @@
   (<- promise Promise (CreatePromise))
   (<- watcher Task (Spawn (back-announced names promise)))
   (var came None)
+  ;; 見張りを止める効果は、待ちの例外(取り消しの TaskCancelledError を含む Exception)と通常の終わりでだけ撃つ。finally に置かない:
+  ;; process が殺された時(Discard・世界の終わりの GC)に CPython が送る GeneratorExit の中で効果を yield すると「generator ignored
+  ;; GeneratorExit」になる(Exception の外なので受けずに上げ、殺された process は見張りごと消える — #3557)。
   (try
     (<- waited (WaitWithin promise.future seconds))
     (:= came waited)
-    (finally
-      (<- (stop-source watcher))))
+    (except [error Exception]
+      (<- (stop-source watcher))
+      (raise error)))
+  (<- (stop-source watcher))
   (is-not came None))
 
 
@@ -372,11 +377,16 @@
    共有の包み)。本体の待ちには源の失敗が合図で届く(waits-beside-sources)。本体が終われば、答えでも例外でも源の task を止める(源が先に
    落ちていれば、止める時の Wait がその例外を上げる — 待たずに終わった本体でも源の失敗を落とさない)。"
   (<- sources (spawn-sources plan))
+  ;; 源を止める効果は、本体の例外(取り消しを含む Exception)と通常の終わりでだけ撃つ(came-back-within と同じ訳 — GeneratorExit の中で
+  ;; yield しない・#3557)。
   (try
     (<- answer (with-handlers [(waits-beside-sources plan.subscriber)] body))
-    (finally
+    (except [error Exception]
       (for [task sources]
-        (<- (stop-source task)))))
+        (<- (stop-source task)))
+      (raise error)))
+  (for [task sources]
+    (<- (stop-source task)))
   answer)
 
 
