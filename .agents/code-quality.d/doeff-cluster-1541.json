@@ -2587,7 +2587,8 @@
         "doeff-cluster-cluster-json",
         "doeff-cluster-rollout-policy",
         "doeff-cluster-cluster-policy",
-        "doeff-cluster-shared-capabilities"
+        "doeff-cluster-shared-capabilities",
+        "doeff-hy-wire"
       ],
       "layer": "pure",
       "name": "doeff-cluster-state-json",

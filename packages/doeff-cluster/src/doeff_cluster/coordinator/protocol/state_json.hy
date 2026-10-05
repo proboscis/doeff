@@ -5,8 +5,9 @@
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import collections.abc [Callable])
 (import dataclasses [asdict])
-(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain])
+(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain KnownExit])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
+(import doeff_hy.wire [parse Malformed])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of])
@@ -57,18 +58,33 @@
 
 (deff worker-generations-json [#^ WorkerInfo worker]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: worker WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "worker の世代の順(今の世代と退いた世代)を保存の形へ写すため(state file と durable の KV が使う)。読み直した後も、退いた世代の
-   heartbeat を新しい世代と取り違えない。世代を知らない worker は欄を持たない(2026-09-27 より前の形と同じ)。
-   bootAt = 今の世代の起動時刻(知る時だけ — generation-order)。"
+  "worker の世代の順(今の世代と退いた世代)と、世代をまたいで数える最後に終わったと知れた刻を保存の形へ写すため(state file と
+   durable の KV が使う)。読み直した後も、退いた世代の heartbeat を新しい世代と取り違えず、coordinator の作り直しの後に来る新しい世代の
+   heartbeat でも前の世代で process を持っていた job を数える(#3672)。世代を知らない worker は欄を持たない(2026-09-27 より前の形と同じ)。
+   bootAt = 今の世代の起動時刻(知る時だけ — generation-order)。knownExits = WorkerInfo.known-exits の列 [{job atMs hasProcess}]
+   (job の名の順・atMs は知れた刻か null — 空の列は書かない)。中身は heartbeat ごとには替わらないので、保存の行の書きは増えない。"
   (| (if (is worker.boot None) {} {"boot" worker.boot})
      (if worker.retired {"retired" (list worker.retired)} {})
-     (if (is worker.boot-at None) {} {"bootAt" worker.boot-at})))
+     (if (is worker.boot-at None) {} {"bootAt" worker.boot-at})
+     (if worker.known-exits
+         {"knownExits" (lfor e worker.known-exits {"job" e.job "atMs" e.at-ms "hasProcess" e.has-process})}
+         {})))
 
 
 (defk worker-generations-from-json [data]
   {:pre [(: data dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
-  "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代・起動時刻を知らない。"
-  {"boot" (.get data "boot") "retired" (tuple (.get data "retired" [])) "boot_at" (boot-at-of data)})
+  "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代・起動時刻を知らない。knownExits の無い行は
+   空の列(この欄より前の版が書いた行 — 次に書く時から新しい形)。knownExits の 1 行は型 KnownExit で解き、形の合わない行は名指して
+   落ちる(自分の書いた行が壊れている — 黙って捨てると前の世代の process を数え損なう)。"
+  (var known #())
+  (for [raw (.get data "knownExits" [])]
+    (<- parsed (parse KnownExit raw))
+    (match parsed
+      (Malformed :fields fields)
+        (raise (ValueError (.format "保存の worker {} の knownExits の行の形が違う: {}" (.get data "name")
+                                    (.join "・" (gfor f fields (.format "{}: {}" (or f.field "行") f.reason))))))
+      _ (:= known (+ known #(parsed)))))
+  {"boot" (.get data "boot") "retired" (tuple (.get data "retired" [])) "boot_at" (boot-at-of data) "known_exits" known})
 
 
 (deff resource-meta-to-json [#^ ResourceMeta meta]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り

@@ -205,8 +205,11 @@
 (defn #^ dict status-row-to-json [#^ StatusRow row]
   "worker の状態の報告の行 → 見せる JSON の形(GET /state の statuses と Service の status.process — worker/protocol/heartbeat の
    status-row と同じ欄。準備の失敗と入口の検めの欄は在る時だけ・結果と task の写しは持ち続けないので載せない)。lastExitAtMs は
-   最後に終わったと知れた刻 — worker の世代の入れ替わりでは、新しい世代の起動の刻を上限として数える(実の終わりはそれ以前・
-   worker-report)。"
+   最後に終わったと知れた刻(worker-report・known-exits-after)— 機体が死んで世代が入れ替わった時は、新しい世代の起動の刻を上限として
+   数える(実の終わりはそれ以前)。世代が重なる時(退いた世代の process がまだ走る)は、退いた世代が報告した終わりの刻も大きい方の候補に
+   入れる。coordinator を作り直しても戻らない(worker/<名> の保存の行の knownExits から運ぶ)。注記: Service が別の worker へ置き直されると
+   Service の status.process は新しい担い手の行で、前の担い手の刻は出ない・沈黙が 7 日続いた worker を忘れると(forget-silent-workers)
+   その worker の刻も消える・刻はその worker の node の時計(generation-order と同じ前提)。"
   (| {"name" row.name "phase" row.phase "desiredRevision" row.desired-revision "runningRevision" row.running-revision
       "pid" row.pid "attempts" row.attempts "detail" row.detail
       "failures" row.failures "lastExitCode" row.last-exit-code "lastExitAtMs" row.last-exit-at-ms
@@ -1222,8 +1225,10 @@
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
-                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.task-reserve b.versions b.boot b.retired b.boot-at)
-                                     #(w.provides w.exclusive w.derived w.node w.capacity w.task-reserve w.versions w.boot w.retired w.boot-at)))))))
+                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.task-reserve b.versions b.boot b.retired b.boot-at
+                                       b.known-exits)
+                                     #(w.provides w.exclusive w.derived w.node w.capacity w.task-reserve w.versions w.boot w.retired w.boot-at
+                                       w.known-exits)))))))
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
@@ -1248,34 +1253,62 @@
 ;; (heartbeat の bootAt が新しい)で戻ると、前の世代の process は終わっているのに、新しい世代はその終わりを知らない(記憶ごと消えた)。
 ;; 以前は heartbeat ごとに行を丸ごと置き換えたので、新しい世代の行(lastExitAtMs 無し)が前の値を消し、刻は進まなかった。
 ;; 新しい世代の最初の heartbeat は行を載せない(worker は返事の宣言を受けてから行を作る — 本番の LinkState.statuses も sim の宿の
-;; 真実も初めは空)ので、数えた刻は宣言の在る job の間は行の外(WorkerReport.last-exits)に持ち、次に載る同じ名の行へ運ぶ。
+;; 真実も初めは空)ので、数えた刻は宣言の在る job の間は行の外(WorkerInfo.known-exits)に持ち、次に載る同じ名の行へ運ぶ。
+;; 状態の報告(ClusterState.statuses)は保存しないが、known-exits は worker/<名> の行に保存する: 機体が丸ごと死ぬと同じ機体の coordinator も
+;; 一緒に作り直されうるので、作り直しの後に最初に来る新しい世代の heartbeat でも、前の世代で process を持っていた job を数え、進めた刻を
+;; 戻さない(以前は報告ごと失い、刻は進まず・None へ戻った)。
+;; 世代が重なる時(旧い Pod が preStop の drain の間も process を動かし、新旧の世代が交互に heartbeat を送る — 上の 2026-09-27 の註)は、
+;; 退いた世代の process の実の終わりが新しい世代の起動の刻より後になる。退いた世代(OLDER)の報告の行の終わりの刻も大きい方の候補に入れ、
+;; 実の終わりが届けばその刻を載せる(起動の刻を上限と言えるのは機体が死んで世代が入れ替わった時だけ)。
 
-(defk worker-report [previous rows now endpoint order boot-at declared]
-  {:pre [(: previous (| WorkerReport None)) (: rows tuple) (: now int) (: endpoint (| str None)) (: order GenerationOrder)
-         (: boot-at (| int None)) (: declared frozenset)]
+(defk known-exits-after [previous rows order boot-at declared]
+  {:pre [(: previous (| WorkerInfo None)) (: rows tuple) (: order GenerationOrder) (: boot-at (| int None)) (: declared frozenset)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の heartbeat 1 つ(世代の比べ order・起動の刻 boot-at・状態の報告の行 rows)を受けた後の、宣言の在る job(declared)ごとの最後に
+   終わったと知れた刻と、今の世代の報告で process を持つか(WorkerInfo.known-exits の新しい値)を求めるため。前の値は previous の
+   known-exits。刻は名ごとに候補の大きい方 = 前に知っていた刻・この報告の行の刻(退いた世代の行も — 世代が重なる時の実の終わり)・
+   新しい世代(NEWER)なら前の世代で process を持っていた job の新しい世代の起動の刻(実の終わりはそれ以前)。process を持っていなかった
+   job(起動の前)と、起動の刻を名乗らない世代では進めない(推測で刻を作らない)。process を持つかは、今の世代か新しい世代の報告なら
+   行の pid、退いた世代の報告なら前のまま(退いた世代の process は今の世代の物でない)。宣言の無い名(task・消した Service)は持たない。"
+  (val prior (if (is previous None) #() previous.known-exits))
+  (val holding (if (= order GenerationOrder.OLDER)
+                   (lfor e prior :if e.has-process (KnownExit :job e.job :at-ms None :has-process True))
+                   (lfor row rows :if (is-not row.pid None) (KnownExit :job row.name :at-ms None :has-process True))))
+  (val ended (if (and (= order GenerationOrder.NEWER) (is-not boot-at None))
+                 (lfor e prior :if e.has-process (KnownExit :job e.job :at-ms boot-at :has-process False))
+                 []))
+  (val noted (sorted (gfor e (+ (lfor e prior :if (is-not e.at-ms None) (KnownExit :job e.job :at-ms e.at-ms :has-process False))
+                                (lfor row rows :if (is-not row.last-exit-at-ms None)
+                                      (KnownExit :job row.name :at-ms row.last-exit-at-ms :has-process False))
+                                ended
+                                holding)
+                           :if (in e.job declared)
+                           e)
+                     :key (attrgetter "job")))
+  (tuple (gfor #(job group) (groupby noted :key (attrgetter "job"))
+               :setv members (tuple group)
+               :setv times (lfor e members :if (is-not e.at-ms None) e.at-ms)
+               (KnownExit :job job :at-ms (if times (max times) None) :has-process (any (gfor e members e.has-process))))))
+
+
+(defk rows-with-known-exits [rows known]
+  {:pre [(: rows tuple) (: known tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "状態の報告の行 rows の last-exit-at-ms を、行の刻と知れた刻(known — known-exits-after)の大きい方にするため(宣言の無い名の行は
+   行の刻のまま)。"
+  (tuple (gfor row rows
+               :setv times (+ (if (is row.last-exit-at-ms None) [] [row.last-exit-at-ms])
+                              (lfor e known :if (and (= e.job row.name) (is-not e.at-ms None)) e.at-ms))
+               (replace row :last-exit-at-ms (if times (max times) None)))))
+
+
+(defk worker-report [rows now endpoint known]
+  {:pre [(: rows tuple) (: now int) (: endpoint (| str None)) (: known tuple)]
    :post [(: % WorkerReport)] :tags {:context "coordinator" :role "judgment"}}
   "今の世代か新しい世代の heartbeat の状態の報告の行 rows から、worker の最新の報告(ClusterState.statuses の値)を作るため。行は結果の
-   欄 result と task の写しを外し(持ち続けるのは process の姿だけ)、last-exit-at-ms を最後に終わったと知れた刻にする: 同じ worker・
-   同じ job の名では前に知っていた刻(previous)から戻さない(報告の刻との大きい方)。新しい世代(order が NEWER)の heartbeat では、
-   前の世代の報告で process を持っていた(pid の在る)job を、新しい世代の起動の刻 boot-at までに終わったと数える(実の終わりはそれ
-   以前)。process を持っていなかった job(起動の前)と、起動の刻を名乗らない世代では進めない(推測で刻を作らない)。行の無い名の刻は
-   宣言の在る job(declared)の間だけ持つ(task・退いた行の名を世代ごとに溜めない)。"
-  ;; 刻の候補 = 前に知っていた刻・この報告の刻・(新しい世代なら)前の世代で process を持っていた job の起動の刻。名ごとに大きい方を取る。
-  (val ended (if (and (= order GenerationOrder.NEWER) (is-not boot-at None) (is-not previous None))
-                 (lfor row previous.jobs :if (is-not row.pid None) (KnownExit :job row.name :at-ms boot-at))
-                 []))
-  (val noted (sorted (+ (list (if (is previous None) #() previous.last-exits))
-                        (lfor row rows :if (is-not row.last-exit-at-ms None) (KnownExit :job row.name :at-ms row.last-exit-at-ms))
-                        ended)
-                     :key (attrgetter "job")))
-  (val reported (frozenset (gfor row rows row.name)))
-  (val known (tuple (gfor #(job group) (groupby noted :key (attrgetter "job"))
-                          :if (or (in job reported) (in job declared))
-                          (KnownExit :job job :at-ms (max (gfor e group e.at-ms))))))
+   欄 result と task の写しを外し(持ち続けるのは process の姿だけ)、last-exit-at-ms を最後に終わったと知れた刻にする(known =
+   この heartbeat の後の WorkerInfo.known-exits — 同じ worker・同じ job の名では前に知っていた刻から戻さない)。"
   (WorkerReport :at now :endpoint endpoint
-                :jobs (tuple (gfor row rows (replace row :result None :task None
-                                                     :last-exit-at-ms (next (gfor e known :if (= e.job row.name) e.at-ms) None))))
-                :last-exits known))
+                :jobs (! (rows-with-known-exits (tuple (gfor row rows (replace row :result None :task None))) known))))
 
 
 (defk register-heartbeat [given body now]
@@ -1285,18 +1318,28 @@
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
    知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。
    job の行は worker-report が持ち続ける形にする(最後に終わったと知れた刻を前の報告から戻さず、新しい世代の heartbeat では前の世代の
-   process の終わりを新しい世代の起動の刻までと数える — #3672)。
+   process の終わりを新しい世代の起動の刻までと数える — #3672)。知れた刻と今の世代で process を持つ job は WorkerInfo.known-exits に
+   持つ(known-exits-after — 保存する)。退いた世代の heartbeat は、その行の終わりの刻だけを知れた刻の候補に入れる(世代が重なる時)。
    本文の形の誤りは本文を解く所(coordinator/protocol/request_bodies — #2445)が 400 で断る。"
   (setv name body.name boot body.boot boot-at body.boot-at statuses body.statuses
         previous (.get given.workers name)
         order (generation-order previous boot boot-at)
-        adopted (adopt-running-detached given name boot statuses now))
+        adopted (adopt-running-detached given name boot statuses now)
+        declared (frozenset (gfor j adopted.jobs j.spec.name))
+        known (! (known-exits-after previous statuses order boot-at declared)))
   (when (= order GenerationOrder.OLDER)
     ;; OLDER は今の世代と boot の両方が在る時だけ(generation-order の最初の枝が、どちらかの無い時を CURRENT にする)。
     (when (or (is previous None) (is boot None))
       (raise (RuntimeError (.format "世代の比べが OLDER なのに今の世代か boot が無い: {}" name))))
+    ;; 退いた世代の行の終わりの刻で知れた刻が進んだ時だけ、今の世代の報告の行へも写す(進まなければ報告は同じ object のまま)。
+    (setv current-report (.get adopted.statuses name))
     (return (absorb-superseded-heartbeat
-              (replace adopted :workers (| adopted.workers {name (replace previous :retired (retired-with previous.retired boot))}))
+              (replace adopted
+                       :workers (| adopted.workers {name (replace previous :retired (retired-with previous.retired boot) :known-exits known)})
+                       :statuses (if (or (is current-report None) (= known previous.known-exits))
+                                     adopted.statuses
+                                     (| adopted.statuses
+                                        {name (replace current-report :jobs (! (rows-with-known-exits current-report.jobs known)))})))
               name boot statuses now)))
   (setv envs (or body.envs (EnvsReport))
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
@@ -1326,10 +1369,11 @@
                          ;; 生存の印(保存の lastSeenMs)は印の拍(api_policy.mark-alive)だけが進める — heartbeat は前の印を運ぶ(運ばないと
                          ;; heartbeat ごとに worker/<名> の行から lastSeenMs が消え、書きが印の拍ごとでなくなる・#2903)。世代を問わない
                          ;; (#2903 の前の ClusterState.seen-marks も名ごとで、heartbeat が触らなかった)。
-                         :seen-mark (if (is previous None) None previous.seen-mark))
-        ;; job の行の最後に終わったと知れた刻は、前の報告と世代の比べから数える(worker-report — #3672)。
-        report (! (worker-report (.get adopted.statuses name) statuses now body.endpoint order boot-at
-                                 (frozenset (gfor j adopted.jobs j.spec.name))))
+                         :seen-mark (if (is previous None) None previous.seen-mark)
+                         ;; 最後に終わったと知れた刻と今の世代で process を持つ job(#3672 — 保存の行の knownExits)。
+                         :known-exits known)
+        ;; job の行の最後に終わったと知れた刻は、known-exits-after が前の知れた刻と世代の比べから数えた known(worker-report — #3672)。
+        report (! (worker-report statuses now body.endpoint known))
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
                      :statuses (| adopted.statuses {name report})))

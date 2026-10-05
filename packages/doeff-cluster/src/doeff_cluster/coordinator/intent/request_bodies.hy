@@ -145,8 +145,10 @@
   "heartbeat の状態の報告の行 1 つ(worker/protocol/heartbeat の status-row と同じ形 — #2447 で dict からこの型にした): name = job の名
    (task は task/<id>)・phase・desired-revision / running-revision・pid・attempts・detail・failures = 続けて落ちた回数(#3477)・
    last-exit-code / last-exit-at-ms = 最後の終わりの code と時刻(coordinator が持ち続ける行の last-exit-at-ms は最後に終わったと
-   知れた刻 — worker の世代の入れ替わりでは、新しい世代の起動の刻を上限として数える〔実の終わりはそれ以前〕・
-   cluster_policy.worker-report)・instance = process の世代・spec-hash・
+   知れた刻 — 機体が死んで worker の世代が入れ替わった時は、新しい世代の起動の刻を上限として数える〔実の終わりはそれ以前〕。世代が
+   重なる時〔退いた世代の process がまだ走る〕は、退いた世代の行のこの欄も大きい方の候補に入れる。coordinator を作り直しても戻らない
+   〔worker の保存の行の knownExits から運ぶ〕。注記: Service が別の worker へ置き直されると前の担い手の刻は出ない・沈黙が 7 日続いた
+   worker を忘れるとその刻も消える・刻は worker の node の時計・cluster_policy.known-exits-after と worker-report)・instance = process の世代・spec-hash・
    placement = 割り当ての世代・retired-from = 入れ替えで退いた process の元の名・failure-kind / retryable = 実行環境の準備の失敗
    (env-failed の行だけ)・probe = 入口の検めの姿・result = 終わった task の詰めた結果・task = 切り離した task の写し(引き取りが
    読む — 形の検めは cluster_policy.adopted-task)。worker の載せない欄は None(黙って既定の値へ倒さない)。"
