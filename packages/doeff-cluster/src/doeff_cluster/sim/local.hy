@@ -152,7 +152,7 @@
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch
                                                           deposit-beats withdraw-beats drop-beats BEAT RestBell ring-bell
-                                                          forget-heard])
+                                                          forget-heard take-injected-watches])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 ;; 宣言の本文を組む body-of は別名で受ける — 同じ名の coordinator の body-of(要求の本文の解き・上の import)を上書きしないため。
@@ -2400,7 +2400,9 @@
     (<- outcome str (coordinator-life plan parts))
     (setattr parts.queue "up" False)
     (<- held tuple (TakeHeldRequests))
-    (<- (fail-open-requests parts.queue held "coordinator が止まった・落ちた(返事なし)"))
+    ;; 列が積み直して待ちとして渡した名指しの待ち(取りの記録に無い — request_queue.absorb-rearmed)にも同じ失敗を返す。
+    (<- injected tuple (take-injected-watches parts.queue))
+    (<- (fail-open-requests parts.queue (+ held injected) "coordinator が止まった・落ちた(返事なし)"))
     ;; 預けた仮の拍は止まった coordinator には届かない — 捨てて宿を起こす(宿は次の拍から本物の heartbeat を送る — #2790)。
     (<- (drop-beats parts.queue))
     (<- ended int (now-epoch-ms))

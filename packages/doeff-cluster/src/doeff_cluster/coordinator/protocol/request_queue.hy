@@ -9,12 +9,13 @@
 (import doeff_time [Delay])
 ;; 模擬の列は、要求の無い間の静かな区間を本番の判断の関数で試す(idle_policy)。
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch next-step-at MAX-QUIET-MS])
-(import doeff_cluster.coordinator.core.api_policy [TICK-MS])
+(import doeff_cluster.coordinator.core.api_policy [TICK-MS tick])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch query-revision query-seconds])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
 (import dataclasses [replace])
 (import doeff_cluster.coordinator.intent.cluster_model [IdleProbe IdleNextRequests IdleTaken QuietStep QuietStretch ProvisionalBeat
-                                                       HeartbeatReply CoordinatorFault]
+                                                       HeartbeatReply CoordinatorFault Watcher WatchRefusal WatchStep ClusterState]
         doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.coordinator.protocol.replies [reply-json])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
@@ -79,11 +80,14 @@
    最後の仮の拍の刻(forget-heard が書く)。宿は預けの拍を刻の順に写し、写し終えた刻より後の拍だけを beat-heard で問う(新しい預けの
    拍は今より後の刻)ので、consumed はその刻より後の拍だけを持つ: 調停ループへ渡した拍のうち、既に写した拍(今の区間の試し planned で
    写した拍・起きた宿が残りをまとめて写した拍)は覚えない。宿が起きた(withdraw-beats)・預け直した(deposit-beats)時は、その宿の
-   覚えを外す(#2769 — 前は外す者の無い覚えが走りの長さに比例して伸び、宿の拍ごとの問いと外しの費用が窓の長さの 2 乗になった)。"
+   覚えを外す(#2769 — 前は外す者の無い覚えが走りの長さに比例して伸び、宿の拍ごとの問いと外しの費用が窓の長さの 2 乗になった)。
+   rearmed = 本物の歩が期限で「変わっていない」と答えた名指しの待ちのうち、列が送り手に代わって同じ問いを積み直した要求(list —
+   pending に在る間)・injected = そのうち次の取りで待ちとして調停ループへ渡した要求(list — 調停ループが答えるまで)。どちらも
+   rearm-watch と absorb-rearmed が読み書きする(期限が本物の要求の刻と重なった待ちを、静かな区間の中と同じく吸う)。"
   (defn #^ None __init__ [self #^ bool [skip-idle False]]
     (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.skip-idle skip-idle self.takes 0
           self.absorbed {} self.ends-at-marks False self.beats [] self.replies {} self.arrivals {} self.planned []
-          self.consumed [] self.settled {})
+          self.consumed [] self.settled {} self.rearmed [] self.injected [])
     None))
 
 
@@ -388,6 +392,91 @@
   steps)
 
 
+;; --- 期限が本物の歩と重なった名指しの待ち ---------------------------------------------------------------------------
+;; 休んでいる worker の名指しの待ち(GET /watch)の期限が本物の歩(要求・静かでない歩)の刻と重なると、その歩の coordinator-step が
+;; 本当に「変わっていない」と答え、送り手は同じ刻に同じ問いを送り直す(1 拍ずつの走りの値)。静かな区間の中なら同じ送り直しを吸う
+;; (idle_policy.renewed-watchers)ので、期限の刻が本物の歩と重なるかどうかの運で、送り手の起き・送り直しと調停ループの歩が増えた
+;; (使い手の模擬の検の 1 本で、期限が x0.5 秒に揃うと歩数 1,203,544 → 1,493,659)。列は、本番の判断の
+;; 答え(返事)を見た後で、送り手に代わって同じ問いを同じ刻に積み直し(rearm-watch)、次の取りでそれだけが並んでいれば、1 拍ずつの
+;; 走りの送り直しの歩と同じ判断(watch-of・settle-watch — 見え方はその刻の状態で覚え直す)で待ちにして、区間の歩と一緒に渡す
+;; (absorb-rearmed)。coordinator-step の判断は変えない。
+
+(defk rearmable [request status unchanged]
+  {:pre [(: request Request) (: status int) (: unchanged (| int None))] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
+  "本物の歩の返事が、送り手が同じ刻に同じ問いを送り直す返事か(列が送り手に代わって積み直してよいか)を知るため: worker を名指し、
+   待つ秒が 0 でない GET /watch への 200 の「変わっていない」(unchanged = その返事の版・それ以外の返事は None)で、返事の版が問いの
+   after と同じ物(idle_policy.absorbable と同じ条件 — 版が動いていないので、宿の知る版も after のまま、送り直しは同じ問い)。"
+  (if (not (and (= request.method "GET") (= (tuple request.parts) #("watch")) (= status 200) (is-not unchanged None)
+                (is-not (.get request.query "worker") None)))
+      False
+      (do (<- after (| int None) (query-revision (.get request.query "after")))
+          (<- seconds (| float None) (query-seconds (.get request.query "timeoutSeconds")))
+          (and (is-not after None) (is-not seconds None) (> seconds 0.0) (= after unchanged)))))
+
+
+(defk rearm-watch [queue request status unchanged]
+  {:pre [(: queue RequestQueue) (: request Request) (: status int) (: unchanged (| int None))] :post [(: % bool)]
+   :tags {:context "coordinator" :role "protocol"}}
+  "模擬の時計の下(skip-idle)で、本物の歩が期限で「変わっていない」と答えた名指しの待ちを、送り手に返さず同じ問いのまま列に積み直す
+   ため(1 拍ずつの走りで送り手が同じ刻に送り直す要求と同じ — 送り手は起きない)。送り手の返事の打ち切りは積み直した刻から数え直す
+   (AbsorbedWatch)。答え = 積み直したか(偽なら返事は送り手へ届ける)。"
+  (<- can bool (rearmable request status unchanged))
+  (when (and queue.skip-idle can)
+    (<- now int (now-epoch-ms))
+    (<- (enqueue-request queue request))
+    (setv queue.rearmed (+ queue.rearmed [request]))
+    (setv (get queue.absorbed (id request.slot)) (AbsorbedWatch :slot request.slot :at now)))
+  (and queue.skip-idle can))
+
+
+(defk absorb-rearmed [queue idle]
+  {:pre [(: queue RequestQueue) (: idle (| IdleProbe None))] :post [(: % (| QuietStep None))]
+   :tags {:context "coordinator" :role "protocol"}}
+  "列に並んでいるのが今の刻に積み直した待ち(rearm-watch)だけの時、1 拍ずつの走りの送り直しの歩(その刻に取り、watch-of で待ちにし、
+   settle-watch で見え方を覚える — tick は同じ刻の 2 度目で何も変えない)を本物の歩にせず、その歩の後の待ちを持つ歩(QuietStep — 刻 =
+   今・状態 = 調停ループの今の状態)にするため。答え = その歩(取りは静かな区間と同じに続け、区間の歩が無ければこの歩を渡す)。並んで
+   いる物にほかの要求が混じる・tick が状態を変える・どれかの待ちが今答える時は None(要求として取る — 1 拍ずつの走りと同じ歩)。"
+  (<- now int (now-epoch-ms))
+  (var held None)
+  (when (and queue.skip-idle (is-not idle None) queue.pending
+             (all (gfor request queue.pending (any (gfor armed queue.rearmed (is armed request)))))
+             (all (gfor request queue.pending (= (.get queue.arrivals (id request)) now))))
+    (<- ticked ClusterState (tick idle.state now idle.timing))
+    (when (= ticked idle.state)
+      (var watchers #())
+      (var quiet True)
+      (for [request (sorted queue.pending :key (fn [request] request.peer))]
+        (when quiet
+          (<- watch (| Watcher WatchRefusal None) (watch-of request now))
+          (match watch
+            (Watcher) (do (<- judged WatchStep (settle-watch watch idle.state now idle.timing))
+                          (if (is judged.answer None)
+                              (:= watchers (+ watchers #(judged.watcher)))
+                              (:= quiet False)))
+            _ (:= quiet False))))
+      (when quiet
+        (val taken (tuple queue.pending))
+        (setv queue.pending [])
+        (for [request taken]
+          (.pop queue.arrivals (id request) None))
+        (setv queue.rearmed (lfor armed queue.rearmed :if (not (any (gfor request taken (is request armed)))) armed)
+              queue.injected (+ queue.injected (list taken)))
+        (:= held (QuietStep :at now :state idle.state :watchers (+ idle.watchers watchers) :marked False)))))
+  held)
+
+
+(defk take-injected-watches [queue]
+  {:pre [(: queue RequestQueue)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
+  "coordinator が止まった・落ちた時に、列が待ちとして調停ループへ渡した積み直しの待ち(injected — 取りの記録に無いので、返事の無い
+   要求として世界が覚えていない)を外して返すため — 止まった coordinator の Pod が、返事の無い要求と同じ接続の失敗を返す(1 拍ずつの
+   走りでは、送り直しは取った要求として同じ失敗を受ける)。並んでいる積み直し(rearmed)は pending として失敗を受けるので覚えだけ外す。"
+  (val injected (tuple queue.injected))
+  (setv queue.injected [] queue.rearmed [])
+  (for [request injected]
+    (.pop queue.absorbed (id request.slot) None))
+  injected)
+
+
 (defk take-requests [queue timeout-seconds limit idle]
   {:pre [(: queue RequestQueue) (: timeout-seconds float) (: limit int) (: idle (| IdleProbe None))] :post [(: % (| list IdleTaken))]
    :tags {:context "coordinator" :role "protocol"}}
@@ -398,10 +487,16 @@
    回す。はさまないと、同じ刻の出来事と拍の順が時計の timer の登録順で決まり、1 秒ごとの拍と飛ばす拍で順が違う(拍の timer の有無が
    違うため — 2026-09-30 のレビューの再現)。"
   (var steps #())
-  (if (and queue.skip-idle (is-not idle None) (not queue.pending))
-      (do (<- slept tuple (await-idle queue idle))
+  ;; 今の刻に積み直した待ち(rearm-watch)だけが並んでいれば、送り直しの歩を本物の歩にせず、待ちを持つ歩にして区間を続ける。
+  (<- rearmed (| QuietStep None) (absorb-rearmed queue idle))
+  (val probe (if (is rearmed None) idle (replace idle :watchers rearmed.watchers)))
+  (if (and queue.skip-idle (is-not probe None) (not queue.pending))
+      (do (<- slept tuple (await-idle queue probe))
           (:= steps slept))
       (<- (await-first-request queue timeout-seconds)))
+  ;; 区間の歩が無ければ(要求ですぐ起きた)、待ちを持つ歩をそのまま渡す(調停ループは渡された最後の歩の待ちを持ち越す)。
+  (when (and (is-not rearmed None) (not steps))
+    (:= steps #(rearmed)))
   (when (not queue.pending)
     (<- (Delay 0.0)))
   ;; 同じ仮想の刻に届いた要求は送り手の名の順に並べる(同じ送り手の中の順は保つ — 並べ替えは安定)。模擬の時計では、同じ刻に起きる
@@ -411,6 +506,8 @@
   (setv queue.pending (cut queue.pending limit None))
   (for [request batch]
     (.pop queue.arrivals (id request) None))
+  ;; 要求として取った積み直しは、もう列の覚えに無い(調停ループが 1 拍ずつの走りと同じ送り直しの歩で受ける)。
+  (setv queue.rearmed (lfor armed queue.rearmed :if (not (any (gfor request batch (is request armed)))) armed))
   (+= queue.takes 1)
   (if steps (IdleTaken :steps steps :batch batch) batch))
 
@@ -459,12 +556,17 @@
     ;; 札が Promise でなければ、別の受け口の要求がこの組に来た誤り — 返事を落とさず名指して落ちる。
     (when (not (isinstance request.slot Promise))
       (raise (TypeError (.format "返事の札が Promise でない({}): {} {}" (type request.slot) request.method request.path))))
-    ;; 返事をした待ちは、もう吸っていない(送り手は返事を受ける)。
+    ;; 返事をした待ちは、もう吸っていない(送り手は返事を受ける)。積み直して渡した待ち(injected)も、調停ループが答えた。
     (.pop queue.absorbed (id request.slot) None)
+    (setv queue.injected (lfor armed queue.injected :if (is-not armed.slot request.slot) armed))
     ;; worker が最後に受けた heartbeat の返事を覚える(仮の拍の返事が同じかを比べる — same-reply)。
     (when (and (= status 200) (= request.path "/heartbeat") (isinstance request.actor str))
       (setv (get queue.replies request.actor) body))
-    (<- (CompletePromise request.slot #(status body)))
+    ;; 期限で「変わっていない」と答えた名指しの待ちは、送り手に代わって同じ問いを積み直す(模擬の時計の下だけ — rearm-watch)。
+    (val unchanged (if (and (isinstance body dict) (is (.get body "changed") False)) (.get body "revision") None))
+    (<- rearmed bool (rearm-watch queue request status unchanged))
+    (when (not rearmed)
+      (<- (CompletePromise request.slot #(status body))))
     (resume None))
   (CoordinatorFault [fault]
     (.append queue.faults fault)

@@ -737,3 +737,42 @@
       (assert (= (len skipped.steps) (len tried.steps)) #(name (len skipped.steps) (len tried.steps)))
       (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at a.state.alive-ms b.state.alive-ms)))
       (assert (= apart []) #(name apart)))))
+
+
+;; --- 期限が本物の歩と重なった名指しの待ち ---------------------------------------------------------------------------
+;; 休んでいる worker の名指しの待ち(期限 10 秒)の期限が、ほかの本物の要求の刻とちょうど重なると、その歩の coordinator-step が本当に
+;; 「変わっていない」と答え、worker は同じ刻に同じ問いを送り直す。静かな区間の中なら同じ送り直しを吸うので、重なるかどうかの運で歩が
+;; 増えた(使い手の模擬の検の 1 本で、期限が x0.5 秒に揃うと歩数 1,203,544 → 1,493,659)。模擬の列は答えを
+;; 見た後で送り手に代わって同じ問いを積み直し、次の取りで待ちにして区間を続ける(request_queue.rearm-watch・absorb-rearmed)。
+;; - worker 1 台(拍 10 秒 — 待ちの期限は worker の拍の刻 x0 秒)に、読みの要求を 10 秒ごとに 20 回、待ちの期限ちょうど(x0 秒)と 0.1 秒
+;;   後(x0.1 秒)に送る。どちらも 1 拍ずつの走りと耐久の状態の変わり目・置き場の最後の状態・筋書きの答えが一致する。
+;; - 重なった走りの coordinator の歩は、0.1 秒ずらした走りの歩より多くない。反例 — 重なった刻の待ちを本物の答えのまま送り手へ返す形
+;;   (直す前)は、重なった走り 51 歩・ずらした走り 40 歩で赤。
+
+(val ONE-WORKER #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+
+
+(defk reads-at [offsets]
+  {:pre [(: offsets tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 起動の刻を含む 10 秒の区切りの頭から数えた秒 offsets の刻ちょうどに読みの要求を 1 件ずつ送り、終わりの一生を読むため。"
+  (<- started int (now-epoch-ms))
+  (val origin (- started (% started 10000)))
+  (for [offset offsets]
+    (<- now int (now-epoch-ms))
+    (<- (Delay (/ (- (+ origin (int (* 1000 offset))) now) 1000.0)))
+    (<- (ReadCoordinator "/state")))
+  (<- runs tuple (CoordinatorRuns))
+  runs)
+
+
+(deftest test-a-watch-deadline-on-a-real-step-is-absorbed-like-in-a-quiet-stretch
+  (var takes {})
+  (for [first [20.0 20.1]]
+    (val scenario (fn [] (reads-at (tuple (gfor k (range 20) (+ first (* 10.0 k)))))))
+    (<- every Trace (trace-of (quitters sim-foundation) (scenario) False :workers ONE-WORKER :policy QUIET-POLICY))
+    (<- skipped Trace (trace-of (quitters sim-foundation) (scenario) True :workers ONE-WORKER :policy QUIET-POLICY))
+    (assert (is-not every.answer None) "走りは答えを返している")
+    (<- breaches list (same-decisions every skipped))
+    (assert (= breaches []) #(first breaches))
+    (:= takes (| takes {first skipped.takes})))
+  (assert (<= (get takes 20.0) (get takes 20.1)) takes))
