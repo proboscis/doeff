@@ -1,8 +1,10 @@
 ;;; 本番の handler — 公開 effect 8 つ(と検の口 ClaudeDropProcess)に、claude の print mode の子 process で答える。
 ;;;
-;;; 方針 = 手番ごとに process を起こす(手番の終わりの result の行で stdin に EOF を出して降ろす — #517)。次の手番は
-;;; `--resume <id>` の新しい process。起こし直しの判断は ClaudeStartTurn の中の 1 か所(decision.start-decision)だけで、
-;;; 上の層は会話の id と手番の参照しか持たない。
+;;; 方針 = 会話の process は手番をまたいで生かし、次の手番(同じ会話の続き)の入力をその process へ書く(#3672 — 起こし直しと記録の
+;;; 読み直しの 1.6〜2.6 秒を消す)。使い回すのは、起こした時の条件の鍵(argv.hy の launch-key — argv・cwd・env の指紋)が同じ時だけ。
+;;; 違えば降ろしてから `--resume <id>` の新しい process を起こす。手番の外で出力した process は降ろす(dialogue.hy の on-record —
+;;; #517 の事故の形の守り)。起こすか使い回すかの判断は ClaudeStartTurn の中の 1 か所(decision.start-decision)だけで、上の層は会話の
+;;; id と手番の参照しか持たない。
 ;;;
 ;;; 不変条件(fake と共通 — tests/test_scenarios.hy が両方に当てる):
 ;;;   1 つの会話に走っている手番は多くとも 1 つ・生きた process は多くとも 1 つ(降りる途中の process は待ってから起こす)。
@@ -18,7 +20,7 @@
 ;;; slog-handler・検 = slog-discard-handler)が要る。手番の終わりを上の層へ初めて渡した所でも 1 行出し(#3628)、その手番で CLI から
 ;;; 受けた本文の差分の行(text_delta)の数を載せる — 手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で
 ;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。
-(require doeff-hy.macros [defhandler defk <- val])
+(require doeff-hy.macros [defhandler defk <- val var])
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import datetime [datetime])
@@ -44,8 +46,8 @@
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState])
-(import doeff_claude_code.decision [SessionView Refuse start-decision])
-(import doeff_claude_code.argv [transcript-dir transcript-path launch-argv cold-resume-argv process-env])
+(import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
+(import doeff_claude_code.argv [transcript-dir transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 
 (setv POLL-SECONDS 0.05)
@@ -98,9 +100,11 @@
           self.init-seen False
           self.closed False)
     ;; launches = この会話で手番のために起こした process の数・stopped-because = 最後の process を降ろした訳(検の口 ClaudeLiveProcess が
-    ;; 読む — 会話ごとに process を生かしたまま待たせる形の使い回しと守りを確かめるため・#3672)。
+    ;; 読む — 会話ごとに process を生かしたまま待たせる形の使い回しと守りを確かめるため・#3672)・launch-key = 今の process の起こした時の
+    ;; 条件の鍵(argv.hy の launch-key — 次の手番で使い回してよいかを決める)。
     (setv #^ int self.launches 0)
     (setv #^ (| StopReason None) self.stopped-because None)
+    (setv #^ (| str None) self.launch-key None)
     (setv #^ (| Binding None) self.binding None)
     (setv #^ (get dict #(int TurnLog)) self.turns {}))
 
@@ -165,7 +169,7 @@
 ;; --- 読み手の thread からの呼び(lock の中で状態機械を進める) ------------------------------------------
 
 (defn apply-transition [#^ SessionRuntime runtime #^ Binding binding transition]
-  "遷移の答えを運ぶ: 状態を差し替え、stdin へ書き、SIGINT を送り、手番の終わりを記し、close なら process を降ろし始める。
+  "遷移の答えを運ぶ: 状態を差し替え、stdin へ書き、SIGINT を送り、手番の終わりを記し、降ろす訳が在れば記して process を降ろし始める。
    runtime.lock の中で呼ぶ。"
   (setv runtime.state transition.state)
   (for [line transition.sends] (.send (process-of binding) line))
@@ -182,22 +186,24 @@
       (setv end (replace end :continued-by (ClaudeTurn runtime.session-id next-seq))))
     (when (and (is-not log None) (is log.end None))
       (setv log.end end)))
-  (when transition.close
-    (setv runtime.stopped-because StopReason.TURN-END)
+  (when (is-not transition.retire None)
+    (setv runtime.stopped-because transition.retire)
     (.retire (process-of binding))))
 
 (defn on-line [#^ SessionRuntime runtime #^ Binding binding clock #^ str raw]
+  "stdout の 1 行を、今の process の行なら手番の記録に足して状態機械を進めるため。host の手番の外の行(前の process の行・手番の
+   外の出力)は手番の記録に足さない — 終わった手番の頁に誰の物でもない行を混ぜない(手番の外の出力は状態機械が降ろす訳に変える)。"
   (setv record (parse-record raw))
   (when (is record None) (return None))
   (setv kind (classify-record record))
   (setv at (clock))
   (with [runtime.lock]
+    (when (is-not runtime.binding binding) (return None))
     (setv log (.get runtime.turns binding.turn-seq))
-    (when (is-not log None)
+    (when (and (is-not log None) runtime.state.in-flight)
       (.append log.lines (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
       (+= runtime.next-line-seq 1))
-    (when (is runtime.binding binding)
-      (apply-transition runtime binding (dialogue.on-record runtime.state kind)))))
+    (apply-transition runtime binding (dialogue.on-record runtime.state kind))))
 
 (defn on-exit [#^ SessionRuntime runtime #^ Binding binding exit-code #^ str stderr-tail]
   (with [runtime.lock]
@@ -258,12 +264,19 @@
   None)
 
 (defn session-view [runtime]
+  "起こすか使い回すかの判断(decision.start-decision)へ渡す、会話の今の観測。生きて降りる途中でなく手番を走らせていない process が
+   在れば、その起こした時の条件の鍵(idle-key)。"
   (if (is runtime None)
       (SessionView)
       (with [runtime.lock]
-        (SessionView :known True
-                     :running-turn (.running-turn runtime)
-                     :retiring (and (is-not runtime.process None) (.alive runtime.process))))))
+        (setv process runtime.process)
+        (setv running (.running-turn runtime))
+        (if (or (is process None) (not (.alive process)))
+            (SessionView :known True :running-turn running)
+            (SessionView :known True
+                         :running-turn running
+                         :retiring (is-not process.retiring None)
+                         :idle-key (if (and (is process.retiring None) (is running None)) runtime.launch-key None))))))
 
 (defn refused-attachment [#^ TurnInput input]
   (setv refused (lfor item input.attachments :if (not-in item.mime IMAGE-MIMES) item.mime))
@@ -328,6 +341,17 @@
   (<- spawn-ms (elapsed-ms launching launched))
   (<- (slog CLI-TIMING-LOG :level "info" :event "spawned" :wall-ms wall-ms :before-spawn-ms before-spawn-ms :spawn-ms spawn-ms
             :session-id runtime.session-id :turn-seq turn-seq :origin (. (type origin) __name__)))
+  None)
+
+(defk note-reused [runtime turn-seq requested writing writing-wall]
+  {:pre [(: runtime SessionRuntime) (: turn-seq int) (: requested float) (: writing float) (: writing-wall datetime)]
+   :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
+  "生きた process を使い回した手番の、入力を書いた所の計時の行を出すため(起こした所の行 spawned の代わり — #3672。その手番の
+   最初の行・終わりの経過の起点は入力を書いた刻)。before-write-ms = 頼まれてから書き始めるまで。"
+  (<- wall-ms (epoch-ms-of writing-wall))
+  (<- before-write-ms (elapsed-ms requested writing))
+  (<- (slog CLI-TIMING-LOG :level "info" :event "reused" :wall-ms wall-ms :before-write-ms before-write-ms
+            :session-id runtime.session-id :turn-seq turn-seq))
   None)
 
 (defk note-init [runtime turn-seq outcome]
@@ -435,8 +459,9 @@
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
 (defn spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
-                  #^ (| float None) recorded]
-  "手番の process を起こして入力を書く。答え = 手番の番号か LaunchFailed(実行ファイルが無い等)。
+                  #^ (| float None) recorded #^ str key]
+  "手番の process を起こして入力を書く。key = この process の起こした時の条件の鍵(次の手番の使い回しの判断が読む)。
+   答え = 手番の番号か LaunchFailed(実行ファイルが無い等)。
    新しい process の状態機械へ引き継ぐのは会話の id と手番の額の起点だけ。CLI は降りる時に会話の累積の額を transcript に記し、
    --resume・--fork-session の process は最後に記した額から数え続ける(実測 2.1.283・#883 — 手番ごとには記さず、降りる時に 1 回)。
    起点は recorded(transcript の最後の cost-state の額 — CLI が数え始める額そのもの)が在ればそれ。無ければ前の process の降り方で
@@ -464,6 +489,7 @@
                            (fn [raw] (on-line runtime binding host.clock raw))
                            (fn [code tail] (on-exit runtime binding code tail))))
       (+= runtime.launches 1)
+      (setv runtime.launch-key key)
       (except [error OSError]
         (setv runtime.binding None)
         (setv (. (.open-log runtime) end) (Interrupted))
@@ -495,6 +521,38 @@
                       :stderr-tail (if seen (.stderr-tail process)
                                        (.format "no init line within {} seconds" host.launch-timeout))))))
 
+(defk reuse-turn [#^ SessionRuntime runtime #^ TurnInput input #^ float requested]
+  {:pre [(: runtime SessionRuntime) (: input TurnInput) (: requested float)] :post [(: % (| TurnStarted None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "生きて手番を待つ process に、この手番の入力を書くため(#3672 — 起こさず init も待たない。CLI は入力ごとに init を出し直すが、
+   書いた後なので手番の中の行として受ける)。経過の起点は入力を書いた刻。判断の後に process が降りた・降り始めた・手番を走らせて
+   いるなら None(呼び手が降りるのを待って起こす)。"
+  (<- writing (GetMonotonic))
+  (<- writing-wall (GetTime))
+  (with [runtime.lock]
+    (setv binding runtime.binding)
+    (setv process runtime.process)
+    (when (or (is binding None) (is process None) (not (.alive process)) (is-not process.retiring None)
+              (is-not (.running-turn runtime) None))
+      (return None))
+    (setv turn-seq (.open-turn runtime))
+    (setv binding.turn-seq turn-seq)
+    (setv log (.open-log runtime))
+    (setv log.launched-at writing log.launched-wall writing-wall)
+    (apply-transition runtime binding (dialogue.begin-turn runtime.state input)))
+  (<- (note-reused runtime turn-seq requested writing writing-wall))
+  (TurnStarted (ClaudeTurn runtime.session-id turn-seq) runtime.session-id))
+
+(defk retire-idle [#^ SessionRuntime runtime]
+  {:pre [(: runtime SessionRuntime)] :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
+  "生きて待つ process を、次の手番の起こした時の条件が違うので降ろし始めるため(訳 LAUNCH-CHANGED を記す — 降りるのは呼び手が待つ)。"
+  (with [runtime.lock]
+    (setv process runtime.process)
+    (when (and (is-not process None) (.alive process) (is process.retiring None))
+      (setv runtime.stopped-because StopReason.LAUNCH-CHANGED)
+      (.retire process)))
+  None)
+
 (defk start-turn [#^ ClaudeCodeHost host #^ ClaudeStartTurn request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeStartTurn)] :post [(: % "StartTurnOutcome")]}
   ;; 計時の行の起点(頼まれた刻 — 頭の註)。
@@ -507,10 +565,23 @@
   (setv carried (apply-carry spec.home canonical target-id (if (isinstance origin FreshSession) None origin.carry)))
   (when (is-not carried None) (return carried))
   (setv runtime (if (isinstance origin ForkSession) None (.runtime host target-id)))
-  (setv decision (start-decision origin (session-view runtime)
-                                 (file-present (transcript-path spec.home.config-dir canonical target-id))
-                                 (is-not spec.cold-resume-prompt None)))
+  (<- key (launch-key host.command spec))
+  (var decision (start-decision origin (session-view runtime)
+                                (file-present (transcript-path spec.home.config-dir canonical target-id))
+                                (is-not spec.cold-resume-prompt None)
+                                key))
   (when (isinstance decision Refuse) (return decision.outcome))
+  (when (isinstance decision Reuse)
+    (when (is runtime None)
+      (raise (RuntimeError (.format "使い回す会話 {} の状態が無い(start-decision の誤り)" target-id))))
+    (<- reused (reuse-turn runtime input requested))
+    (when (is-not reused None) (return reused))
+    ;; 判断の後に process が降りた・降り始めた(手番の外で出力した)— 降りるのを待ってから起こす。
+    (:= decision (Launch :wait-retire True)))
+  (when decision.retire-idle
+    (when (is runtime None)
+      (raise (RuntimeError (.format "生きた process を降ろす会話 {} の状態が無い(start-decision の誤り)" target-id))))
+    (<- (retire-idle runtime)))
   (when decision.wait-retire
     (when (is runtime None)
       (raise (RuntimeError (.format "降りるのを待つ会話 {} の状態が無い(start-decision の誤り)" target-id))))
@@ -532,7 +603,7 @@
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
   (<- launching (GetMonotonic))
   (<- launching-wall (GetTime))
-  (setv spawned (spawn-turn host runtime spec origin input recorded))
+  (setv spawned (spawn-turn host runtime spec origin input recorded key))
   (when (isinstance spawned LaunchFailed)
     (when fresh-runtime (.forget host target-id runtime))
     (return spawned))
@@ -613,7 +684,9 @@
     (when (is-not transition.end None)
       (setv (. (.open-log runtime) end) transition.end))
     (setv runtime.closed True)
-    (setv process runtime.process))
+    (setv process runtime.process)
+    (when (and (is-not process None) (.alive process))
+      (setv runtime.stopped-because StopReason.SESSION-CLOSED)))
   (when (and (is-not process None) (.alive process))
     (.retire process)
     (<- (wait-until (fn [] (or (not (.alive process)) (.retire-finished process))) RETIRE-WAIT-SECONDS))

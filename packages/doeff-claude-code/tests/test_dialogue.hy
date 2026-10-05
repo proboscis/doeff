@@ -6,6 +6,7 @@
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Usage classify-record])
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState StopSignal StopControl NoStop])
+(import doeff_claude_code.faults [StopReason])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
 (setv INIT {"type" "system" "subtype" "init" "session_id" SID
@@ -55,7 +56,8 @@
   (assert (isinstance plan.state.stop StopSignal))
   (setv read (read-record plan.state SIGINT-RESULT))
   (assert (= read.end (Interrupted)) (repr read.end))
-  (assert read.close)
+  ;; SIGINT の形の CLI は result の後に自分で降りるので、使い回さずに降ろす(#3672)。
+  (assert (= read.retire StopReason.INTERRUPT-SIGNAL) (repr read.retire))
   (assert (not read.state.in-flight)))
 
 
@@ -67,10 +69,25 @@
   (assert (= read.end.detail "error_during_execution")))
 
 
-(deftest test-a-success-result-completes-the-turn-and-closes-the-process
+(deftest test-a-success-result-completes-the-turn-and-keeps-the-process
+  ;; 手番の終わりで process を降ろさない — 次の手番まで生きて待つ(#3672)。
   (setv read (read-record (started) SUCCESS-RESULT))
   (assert (= read.end (Completed :result-text "OKAPI-77" :usage (Usage :output-tokens 7) :cost-usd 0.04 :input-refs #("msg-1"))))
-  (assert read.close))
+  (assert (is read.retire None) (repr read.retire)))
+
+
+(deftest test-a-line-outside-the-turn-retires-the-process-except-the-protocol-lines
+  ;; 守り(#3672・#517 の事故の形): host の手番の外で CLI が出した行(手番の外で起きた model の出力)を読んだら、その process を
+  ;; 降ろす。host が書いた入力の運命と control の答えは作法の行なので降ろさない。
+  (setv idle (. (read-record (started) SUCCESS-RESULT) state))
+  (assert (not idle.in-flight))
+  (setv woke (read-record idle INIT))
+  (assert (= woke.retire StopReason.OUTSIDE-TURN-OUTPUT) (repr woke.retire))
+  (setv spoke (read-record idle {"type" "assistant" "message" {"role" "assistant" "content" [{"type" "text" "text" "x"}]}}))
+  (assert (= spoke.retire StopReason.OUTSIDE-TURN-OUTPUT) (repr spoke.retire))
+  (assert (is (. (read-record idle (lifecycle "msg-1" "completed")) retire) None))
+  (assert (is (. (read-record idle {"type" "control_response" "response" {"subtype" "success" "request_id" "rid-9"}}) retire)
+              None)))
 
 
 (deftest test-a-failed-result-carries-the-cli-text-and-the-api-status
@@ -206,12 +223,12 @@
                                                     "terminal_reason" "aborted_tools"}))
   (assert (= aborted.end (Interrupted :surviving-refs #("inj-1"))) (repr aborted.end))
   (assert aborted.continues)
-  (assert (not aborted.close))
+  (assert (is aborted.retire None))
   (assert aborted.state.in-flight)
   (setv running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
   (setv finished (read-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"]})))
   (assert (= finished.end.input-refs #("inj-1")))
-  (assert finished.close))
+  (assert (is finished.retire None)))
 
 
 (deftest test-a-refused-control-request-falls-back-to-sigint

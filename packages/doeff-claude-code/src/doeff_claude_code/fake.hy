@@ -28,6 +28,7 @@
                                    UnknownTurn NoSuchRequest])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
+(import doeff_claude_code.argv [launch-key])
 
 (setv QUICK-TURN-SECONDS 0.1)
 ;; 仮想の時計は datetime(マイクロ秒の刻み)なので、秒の小数の足し算の端数で「期限の直前」に留まらないように
@@ -116,12 +117,15 @@
 
 
 (defclass FakeSession []
-  "launches = この会話で起こした process の数(手番を頼まれるたびに起こす — 生き残った入力の手番は同じ process)・
-   stopped-because = 最後の process を降ろした訳(手番の終わりで降ろす — #517 の形)。"
+  "launches = この会話で起こした process の数(本番の handler と同じ規則 — 同じ起こした時の条件の鍵の続きは生きた process を使い回し、
+   生き残った入力の手番も同じ process)・alive = process が生きている(手番をまたいで生きて待つ — #3672)・launch-key = 今の process の
+   起こした時の条件の鍵・stopped-because = 最後の process を降ろした訳。"
   (defn __init__ [self #^ str session-id home #^ str cwd]
     (setv self.session-id session-id self.home home self.cwd cwd
           self.current-seq 0 self.next-line-seq 0 self.closed False)
     (setv #^ int self.launches 0)
+    (setv #^ bool self.alive False)
+    (setv #^ (| str None) self.launch-key None)
     (setv #^ (| StopReason None) self.stopped-because None)
     (setv #^ (get dict #(int FakeTurn)) self.turns {}))
 
@@ -141,8 +145,8 @@
     (setv self.responder responder
           self.respond respond
           self.transcripts {}
-          self.activity {}
-          self.sessions {}))
+          self.activity {})
+    (setv #^ (get dict #(str FakeSession)) self.sessions {}))
 
   (defn restarted [self]
     "同じ家の上で process を作り直した世界: transcript と activity(家の中身)は同じ物を共有し、会話(process の中の状態)は空。
@@ -194,7 +198,10 @@
 
 (defk finish [#^ FakeSession session #^ FakeTurn turn end]
   {:pre [(: session FakeSession) (: turn FakeTurn) (: end ClaudeTurnEnd)] :post [(: % (type None))]}
-  (setv turn.end end turn.phase "done" session.stopped-because StopReason.TURN-END)
+  "手番を end で閉じるため。process は手番の終わりで降ろさない(次の手番まで生きて待つ)— 消えた process の終わり(BackendLost)だけ
+   process が無くなる(訳は付けない — 降ろしたのでなく自分で消えた)。"
+  (setv turn.end end turn.phase "done")
+  (when (isinstance end BackendLost) (setv session.alive False))
   (<- (ring-turn turn))
   None)
 
@@ -311,13 +318,15 @@
       (<- (complete-turn world session turn))))
   None)
 
-(defk begin-fake-turn [#^ FakeClaudeWorld world #^ FakeSession session reply #^ tuple refs #^ bool announce]
-  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: reply FakeReply) (: refs tuple) (: announce bool)] :post [(: % FakeTurn)]}
-  "手番を開いて最初の行を出す。announce = 入力の行の運命と init を出す(生き残った入力の手番は started から)。"
+(defk begin-fake-turn [#^ FakeClaudeWorld world #^ FakeSession session reply #^ tuple refs #^ bool announce #^ bool launched]
+  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: reply FakeReply) (: refs tuple) (: announce bool) (: launched bool)]
+   :post [(: % FakeTurn)]}
+  "手番を開いて最初の行を出す。announce = 入力の行の運命と init を出す(頼まれた手番 — 使い回した process も入力ごとに init を出す。
+   生き残った入力の手番は started から)/ launched = この手番のために process を起こした(使い回し・生き残った入力の手番は起こさない)。"
   (<- now (GetMonotonic))
   (+= session.current-seq 1)
-  ;; 頼まれた手番(announce)は process を起こす。生き残った入力の手番は同じ process が続ける。
-  (when announce (+= session.launches 1))
+  (when launched (+= session.launches 1))
+  (setv session.alive True)
   (setv turn (FakeTurn session.current-seq now reply refs))
   (setv (get session.turns turn.seq) turn)
   (for [ref refs]
@@ -381,12 +390,19 @@
   (setv session (or existing (FakeSession session-id spec.home spec.cwd)))
   (setv session.closed False)
   (setv (get world.sessions session-id) session)
+  ;; 本番の handler と同じ規則(decision.start-decision): 続き(ResumeSession)で、生きて待つ process の起こした時の条件の鍵が同じなら
+  ;; 使い回す。違えば降ろしてから起こす(訳 LAUNCH-CHANGED)。fake の process に実行ファイルは無いので command は空。
+  (<- wanted (launch-key #() spec))
+  (setv reuse (and (isinstance origin ResumeSession) session.alive (= session.launch-key wanted)))
+  (when (and session.alive (not reuse))
+    (setv session.alive False session.stopped-because StopReason.LAUNCH-CHANGED))
+  (setv session.launch-key wanted)
   (setv memory (tuple (get world.transcripts key)))
   (.append (get world.transcripts key) input.text)
   (<- now-time (GetTime))
   (setv (get world.activity key) (.timestamp now-time))
   (<- reply FakeReply (reply-of world input.text memory))
-  (<- turn (begin-fake-turn world session reply #(input.ref) True))
+  (<- turn (begin-fake-turn world session reply #(input.ref) True (not reuse)))
   (TurnStarted (ClaudeTurn session-id turn.seq) session-id))
 
 (defn running-turn-of [#^ FakeClaudeWorld world #^ ClaudeTurn turn]
@@ -418,12 +434,14 @@
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_tools")))
         (setv memory (tuple (get world.transcripts (.transcript-key world session.home session.cwd session.session-id))))
         (<- reply FakeReply (reply-of world (.join "\n" (lfor injection queued injection.text)) memory))
-        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection queued injection.ref)) False))
+        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection queued injection.ref)) False False))
         (<- (finish session turn (Interrupted :surviving-refs (tuple next-turn.refs)
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_streaming")))
-        (<- (finish session turn (Interrupted :dropped-refs (tuple (lfor injection queued injection.ref)))))))
+        (<- (finish session turn (Interrupted :dropped-refs (tuple (lfor injection queued injection.ref)))))
+        ;; SIGINT の形の CLI は result の後に自分で降りる(本番の handler も降ろす — 訳 INTERRUPT-SIGNAL)。
+        (setv session.alive False session.stopped-because StopReason.INTERRUPT-SIGNAL)))
   (InterruptRequested))
 
 (defk fake-read-events [#^ FakeClaudeWorld world #^ ClaudeReadTurnEvents request]
@@ -472,6 +490,8 @@
                                                                        :if (= injection.fate "queued")
                                                                        injection.ref))))))
   (setv session.closed True)
+  (when session.alive
+    (setv session.alive False session.stopped-because StopReason.SESSION-CLOSED))
   (SessionClosed (is-not running None)))
 
 (defn fake-status [#^ FakeClaudeWorld world #^ ClaudeSessionStatus request]
@@ -521,19 +541,22 @@
 (defk fake-live-process [#^ FakeClaudeWorld world #^ str session-id]
   {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % (| LiveProcess NoLiveProcess))]
    :tags {:context "claude-code" :role "foundation"}}
-  "会話の process の見え方を答えるため(本番の handler と同じ筋書きで、使い回しと守りを確かめる口 — #3672)。
-   fake の process は手番が走っている間だけ生きる(手番の終わりで降ろす — #517 の形)。"
+  "会話の process の見え方を答えるため(本番の handler と同じ筋書きで、使い回しと守りを確かめる口 — #3672)。"
   (val session (.get world.sessions session-id))
   (cond
     (is session None) (NoLiveProcess :launches 0 :stopped-because None)
-    (is-not (.running session) None) (LiveProcess :launches session.launches)
+    session.alive (LiveProcess :launches session.launches)
     True (NoLiveProcess :launches session.launches :stopped-because session.stopped-because)))
 
 (defk fake-emit-outside [#^ FakeClaudeWorld world #^ str session-id]
   {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
-  "生きていて手番を走らせていない process に手番の外の出力をさせるため(守りの筋書きの口)。fake は手番の終わりで process を
-   降ろすので、手番を走らせていない生きた process は無い(答えは常に偽 — 生かしたまま待たせる形が入るまで)。"
-  False)
+  "生きていて手番を走らせていない process に手番の外の出力をさせるため(守りの筋書きの口)。本番の handler と同じく、手番の外で
+   出力した process は降ろす(訳 OUTSIDE-TURN-OUTPUT)。答え = 出させる process が在ったか。"
+  (val session (.get world.sessions session-id))
+  (when (or (is session None) (not session.alive) (is-not (.running session) None))
+    (return False))
+  (setv session.alive False session.stopped-because StopReason.OUTSIDE-TURN-OUTPUT)
+  True)
 
 
 ;; --- handler -----------------------------------------------------------------------------------

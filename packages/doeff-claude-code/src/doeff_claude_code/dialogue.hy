@@ -12,8 +12,11 @@
 ;;; - #603 の直し: claude 2.1.282 の SIGINT は result(subtype error_during_execution・terminal_reason aborted_streaming)を出して
 ;;;   から降りる。止めるを求めた後の result は失敗ではなく Interrupted に写す(求めていない aborted_streaming は Failed のまま・
 ;;;   terminal_reason つき)。
-;;; - 手番の終わり = process を降ろす(close)。手番の境界の所有者は host — CLI に result の後の手番を持たせない(#517)。
-;;;   control_request で止めて注入が生き残った時だけ、process は生き残った入力の手番を走らせてから降りる(continues)。
+;;; - 手番の境界の所有者は host — CLI に result の後の手番を持たせない(#517)。会話の process は手番の終わりで降ろさず、次の手番まで
+;;;   生かして待たせる(#3672 — 起こし直しと記録の読み直しの 1.6〜2.6 秒を消す)。host の手番の外で CLI が出した行(手番の外で起きた
+;;;   model の出力)を読んだら、その process を降ろす(retire = OUTSIDE-TURN-OUTPUT)— host の頼みの無い手番は誰の物でもない。
+;;;   外とみなさない行は、host が書いた入力の運命と control の答え(OUTSIDE-TURN-QUIET-KINDS — model を動かさない作法の行)だけ。
+;;;   control_request で止めて注入が生き残った時は、生き残った入力の手番が同じ process で続く(continues)。
 ;;; - 手番の額(#883): result の行の total_cost_usd は会話の累積で、usage はその CLI の手番 1 回分(実測 2.1.283 —
 ;;;   同じ process の 2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は前の process が降りる時に
 ;;;   transcript へ記した額から数え続ける)。だから host の手番の額 = 手番を閉じた result の行の累積 − 手番の起点(cost-mark = 前の手番を
@@ -29,12 +32,15 @@
 (import doeff_claude_code.values [TurnInput Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  TurnResult Usage INPUT-FATES INPUT-FATE-TERMINAL])
+(import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
 (setv LIFECYCLE-CAPABILITY "msg_lifecycle_v1")
 (setv INTERRUPT-RECEIPT-CAPABILITY "interrupt_receipt_v1")
 ;; CLI が自分で起こした手番の result の origin.kind(本文の手番の result は origin を持たない)。
 (setv CLI-OWN-TURN-ORIGINS (frozenset #{"task-notification"}))
+;; host の手番の外で読んでも、手番の外の出力とみなさない行の型: host が書いた入力の運命と control の答え(model を動かさない作法の行)。
+(setv OUTSIDE-TURN-QUIET-KINDS #(InputFate ControlResponse))
 
 
 ;; --- 状態 ---------------------------------------------------------------------------------------
@@ -78,13 +84,13 @@
   (setv #^ Usage turn-usage (field :default-factory Usage)))
 
 (defclass [(dataclass :frozen True)] Transition []
-  "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・close(この行で process を降ろす)・
-   continues(終わった手番の後に、生き残った入力の手番が同じ process で続く)・signal(SIGINT を送る)・
+  "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・retire(この行で process を降ろす訳 — 無ければ
+   None)・continues(終わった手番の後に、生き残った入力の手番が同じ process で続く)・signal(SIGINT を送る)・
    session-id(この行で知った会話の id)。"
   (#^ DialogueState state)
   (setv #^ (get tuple #(str ...)) sends #())
   (setv #^ (| Completed Failed Interrupted BackendLost None) end None)
-  (setv #^ bool close False)
+  (setv #^ (| StopReason None) retire None)
   (setv #^ bool continues False)
   (setv #^ bool signal False)
   (setv #^ (| str None) session-id None))
@@ -161,12 +167,13 @@
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
            :deferred-result None :permissions #() :turn-usage (Usage)))
 
-(defn ended [#^ DialogueState state end [close True] #^ (| TurnResult None) [priced-by None]]
-  "host の手番を end で閉じる遷移。priced-by = 手番を閉じた result の行(在ればその行の累積の額が次の手番の額の起点 —
-   止めた手番の額は数えずに捨て、次の手番へ混ぜない。行が無い終わりは起点を動かさない)。"
+(defn ended [#^ DialogueState state end #^ (| TurnResult None) [priced-by None] #^ (| StopReason None) [retire None]]
+  "host の手番を end で閉じる遷移(process は降ろさない — 次の手番まで生きて待つ。retire が在れば、その訳で降ろす)。priced-by = 手番を
+   閉じた result の行(在ればその行の累積の額が次の手番の額の起点 — 止めた手番の額は数えずに捨て、次の手番へ混ぜない。行が無い
+   終わりは起点を動かさない)。"
   (setv closed (closed-turn state))
   (Transition :state (if (is priced-by None) closed (replace closed :cost-mark priced-by.cost-usd))
-              :end end :close close))
+              :end end :retire retire))
 
 
 ;; --- 遷移(呼び手の操作) -----------------------------------------------------------------------------
@@ -213,7 +220,7 @@
 (defn close-session [#^ DialogueState state]
   "会話を閉じる: 走っている手番は Interrupted(読まれていない注入は捨てた側)で終わる。"
   (if state.in-flight
-      (ended state (Interrupted :dropped-refs (queued-refs state)) :close False)
+      (ended state (Interrupted :dropped-refs (queued-refs state)))
       (Transition :state (closed-turn state))))
 
 (defn on-exit [#^ DialogueState state #^ (| int None) exit-code #^ str stderr-tail]
@@ -222,13 +229,12 @@
   (cond
     (not state.in-flight) (Transition :state state)
     (not (isinstance state.stop NoStop))
-      (ended state (Interrupted :dropped-refs (queued-refs state)) :close False)
+      (ended state (Interrupted :dropped-refs (queued-refs state)))
     (is-not state.deferred-result None)
-      (ended state (end-of-result state.deferred-result state) :close False :priced-by state.deferred-result)
+      (ended state (end-of-result state.deferred-result state) :priced-by state.deferred-result)
     True
       (ended state (BackendLost :detail (.format "process exited with code {} before the turn ended{}" exit-code
-                                                 (if stderr-tail (+ ": " stderr-tail) "")))
-             :close False)))
+                                                 (if stderr-tail (+ ": " stderr-tail) ""))))))
 
 
 ;; --- 遷移(stdout の 1 行) ------------------------------------------------------------------------
@@ -283,7 +289,7 @@
   (setv stop open-closed.stop)
   (cond
     (isinstance stop StopSignal)
-      (ended open-closed (Interrupted :dropped-refs queued) :priced-by result)
+      (ended open-closed (Interrupted :dropped-refs queued) :priced-by result :retire StopReason.INTERRUPT-SIGNAL)
     (isinstance stop StopControl)
       (do
         (setv survivors (if (is stop.still-queued None) queued
@@ -302,8 +308,11 @@
       (ended open-closed (end-of-result result open-closed) :priced-by result)))
 
 (defn on-record [#^ DialogueState state kind]
-  "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。"
+  "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。
+   host の手番の外で読んだ行は、作法の行(OUTSIDE-TURN-QUIET-KINDS)を除いて、process を降ろす訳 OUTSIDE-TURN-OUTPUT(頭の註)。"
   (cond
+    (and (not state.in-flight) (not (isinstance kind OUTSIDE-TURN-QUIET-KINDS)))
+      (Transition :state state :retire StopReason.OUTSIDE-TURN-OUTPUT)
     (isinstance kind Init) (on-init state kind)
     (isinstance kind InputFate) (on-lifecycle state kind)
     (isinstance kind ControlResponse) (on-control-response state kind)

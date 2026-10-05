@@ -4,8 +4,8 @@
 (import pytest)
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted McpSse McpStdio
                                   AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession TurnInput])
-(import doeff_claude_code.argv [launch-argv cold-resume-argv transcript-path process-env])
-(import doeff_claude_code.decision [SessionView Refuse Launch start-decision])
+(import doeff_claude_code.argv [launch-argv launch-key cold-resume-argv transcript-path process-env])
+(import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 (import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
                                  RateLimit TurnResult PartialMessage Other ControlResponse Usage recorded-cost])
@@ -25,7 +25,7 @@
                              "--include-partial-messages"]))
   (assert (= (cut argv 8 9) ["--dangerously-skip-permissions"]))
   (setv settings (json.loads (get argv (+ (.index argv "--settings") 1))))
-  ;; 手番ごとに降ろす handler の物理: background の仕事を持たせない(宣言の env と合流する)。
+  ;; 手番の外で CLI に仕事をさせない handler の物理: background の仕事を持たせない(宣言の env と合流する)。
   (assert (= settings {"disableAllHooks" True "env" {"A" "1" "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "1"}}))
   (assert (= (get argv (+ (.index argv "--model") 1)) "haiku"))
   (assert (= (get argv (+ (.index argv "--autocompact") 1)) "400000"))
@@ -33,6 +33,33 @@
   (assert (= (cut argv -2 None) ["--session-id" SID]))
   (assert (= (cut (launch-argv #("claude") spec (ResumeSession SID)) -2 None) ["--resume" SID]))
   (assert (= (cut (launch-argv #("claude") spec (ForkSession SID)) -3 None) ["--resume" SID "--fork-session"])))
+
+
+(deftest test-the-launch-argv-takes-monitor-out-of-the-tools
+  ;; 守り(#3672・#517 の事故の形): 背景の仕事を消す環境変数は Monitor を残す(2.1.289 の実測)ので、Monitor は起こす引数で外す。
+  ;; 名簿の許可(DenyUnlisted の --allowedTools)と重ねても外れる形(--disallowedTools は許可より先に効く)。
+  (for [policy [(BypassAll) (AskHost) (DenyUnlisted #("Read" "Monitor"))]]
+    (val argv (launch-argv #("claude") (ClaudeSessionSpec :home HOME :cwd "/w" :permission policy) (FreshSession SID)))
+    (assert (in "--disallowedTools" argv) argv)
+    (assert (in "Monitor" (.split (get argv (+ (.index argv "--disallowedTools") 1)) ",")) argv)))
+
+
+(deftest test-the-launch-key-follows-the-launch-conditions
+  ;; 起こした時の条件の鍵(#3672): argv(会話の始まり方を除く)・cwd・env が同じなら同じ鍵、どれかが違えば違う鍵。資格の値は鍵に
+  ;; 文字として残らない(指紋だけ)。
+  (val base (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"CLAUDE_CODE_OAUTH_TOKEN" "secret-token-1"}) :cwd "/w" :model "opus"))
+  (<- same (launch-key #("claude") base))
+  (<- again (launch-key #("claude") (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus")))
+  (assert (= same again))
+  (assert (not-in "secret-token-1" same))
+  (for [other [(ClaudeSessionSpec :home base.home :cwd "/w" :model "haiku")
+               (ClaudeSessionSpec :home base.home :cwd "/w2" :model "opus")
+               (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"CLAUDE_CODE_OAUTH_TOKEN" "secret-token-2"}) :cwd "/w" :model "opus")
+               (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus" :effort "high")]]
+    (<- differs (launch-key #("claude") other))
+    (assert (!= same differs) other))
+  (<- other-command (launch-key #("claude-2") base))
+  (assert (!= same other-command)))
 
 
 (deftest test-the-launch-argv-never-inherits-home-mcp
@@ -85,19 +112,25 @@
 
 
 (deftest test-the-start-decision-table
-  ;; 設計 7 節の表: 起こし直しの判断はここ 1 か所。
+  ;; 設計 7 節の表: 起こすか使い回すかの判断はここ 1 か所。続き(ResumeSession)は、生きて待つ process の起こした時の条件の鍵が
+  ;; この手番の鍵と同じ時だけ使い回す(#3672)。違えば降ろしてから起こす。枝(ForkSession)・新しい会話は使い回さない。
   (setv turn (ClaudeTurn SID 3))
-  (assert (= (start-decision (FreshSession SID) (SessionView) False False) (Launch)))
-  (assert (= (start-decision (FreshSession SID) (SessionView :known True) False False) (Refuse (SessionIdInUse SID))))
-  (assert (= (start-decision (FreshSession SID) (SessionView) True False) (Refuse (SessionIdInUse SID))))
-  (assert (= (start-decision (ResumeSession SID) (SessionView) True False) (Launch)))
-  (assert (= (start-decision (ResumeSession SID) (SessionView) False False) (Refuse (SessionNotFound SID))))
-  (assert (= (start-decision (ResumeSession SID) (SessionView :known True :running-turn turn) True False)
+  (setv key "k1")
+  (assert (= (start-decision (FreshSession SID) (SessionView) False False key) (Launch)))
+  (assert (= (start-decision (FreshSession SID) (SessionView :known True) False False key) (Refuse (SessionIdInUse SID))))
+  (assert (= (start-decision (FreshSession SID) (SessionView) True False key) (Refuse (SessionIdInUse SID))))
+  (assert (= (start-decision (ResumeSession SID) (SessionView) True False key) (Launch)))
+  (assert (= (start-decision (ResumeSession SID) (SessionView) False False key) (Refuse (SessionNotFound SID))))
+  (assert (= (start-decision (ResumeSession SID) (SessionView :known True :running-turn turn) True False key)
              (Refuse (TurnInFlight turn))))
-  (assert (= (start-decision (ResumeSession SID) (SessionView :known True :retiring True) True True)
+  (assert (= (start-decision (ResumeSession SID) (SessionView :known True :retiring True) True True key)
              (Launch :wait-retire True :cold-resume True)))
-  (assert (= (start-decision (ForkSession SID) (SessionView :known True :running-turn turn) True False) (Launch)))
-  (assert (= (start-decision (ForkSession SID) (SessionView) False False) (Refuse (SessionNotFound SID)))))
+  (assert (= (start-decision (ResumeSession SID) (SessionView :known True :idle-key key) True True key) (Reuse)))
+  (assert (= (start-decision (ResumeSession SID) (SessionView :known True :idle-key "k0") True True key)
+             (Launch :wait-retire True :retire-idle True :cold-resume True)))
+  (assert (= (start-decision (ForkSession SID) (SessionView :known True :idle-key key) True False key) (Launch)))
+  (assert (= (start-decision (ForkSession SID) (SessionView :known True :running-turn turn) True False key) (Launch)))
+  (assert (= (start-decision (ForkSession SID) (SessionView) False False key) (Refuse (SessionNotFound SID)))))
 
 
 (deftest test-tool-use-blocks-keep-their-id-and-name-in-block-order

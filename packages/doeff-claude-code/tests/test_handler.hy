@@ -1,5 +1,5 @@
 ;; 本番の handler だけの検(替え玉の CLI)— 共通の筋書きに載らない handler の内側の約束:
-;; 手番の終わりで process が降りる(#517)・冷えた続きの前の 1 回きりの命令・起動の失敗の型。
+;; 会話の process は手番をまたいで生き、閉じると降りる(#3672)・冷えた続きの前の 1 回きりの命令・起動の失敗の型。
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import os.path)
@@ -12,9 +12,9 @@
 (import doeff_time [Delay sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession TurnStarted
-                                   LaunchFailed SessionExported SessionNotFound])
-(import doeff_claude_code.faults [ClaudeDropProcess])
+(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
+                                   TurnStarted LaunchFailed SessionExported SessionNotFound SessionClosed])
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess])
 (import doeff_claude_code.argv [transcript-path])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
@@ -37,24 +37,33 @@
   (with_handlers [(sync-time-handler) slog-discard-handler (claude-code-handler host)] program))
 
 
-(defk turn-then-wait-down [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
-  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % bool)]}
-  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "DOWN") "r1")))
+(defk two-turns-then-close [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % tuple)]}
+  "同じ会話を 2 手番続けてから閉じる。答え = 2 手番目の後の process の見え方・2 つの手番の process が同じだったか・閉じた後に
+   process が降りたか。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "ONE") "r1")))
   (<- done (read-to-end started.turn 30.0))
   (assert (isinstance done.end Completed) (repr done.end))
-  (setv process (. (.runtime host sid) process))
-  (setv waited 0)
-  (while (and (.alive process) (< waited 100))
-    (<- (Delay 0.1))
-    (+= waited 1))
-  (not (.alive process)))
+  (val first-process (. (.runtime host sid) process))
+  (<- again (ClaudeStartTurn (ResumeSession sid) spec (TurnInput (reply-prompt "TWO") "r2")))
+  (<- second (read-to-end again.turn 30.0))
+  (assert (isinstance second.end Completed) (repr second.end))
+  (<- view (ClaudeLiveProcess sid))
+  (val same (is (. (.runtime host sid) process) first-process))
+  (<- closed (ClaudeCloseSession sid "test"))
+  (assert (isinstance closed SessionClosed) (repr closed))
+  #(view same (not (.alive first-process))))
 
 
-(deftest test-the-process-goes-down-at-the-end-of-the-turn [tmp-path]
-  ;; 手番の境界の持ち主は host: result の行で stdin に EOF を出し、process は降りる(次の手番は --resume の新しい process)。
+(deftest test-the-process-stays-for-the-next-turn-and-goes-down-when-closed [tmp-path]
+  ;; 会話の process は手番をまたいで生き、同じ起こした時の条件の鍵の続きはその process へ入力を書く(#3672 — 起こし直さない)。
+  ;; 会話を閉じると降りる(訳 SESSION-CLOSED)。
   (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
-  (<- down (with-real-handler host (turn-then-wait-down host (spec-in tmp-path) (str (uuid.uuid4)))))
-  (assert down))
+  (<- outcome (with-real-handler host (two-turns-then-close host (spec-in tmp-path) (str (uuid.uuid4)))))
+  (val view (get outcome 0))
+  (assert (= view (LiveProcess :launches 1)) (repr view))
+  (assert (get outcome 1) "2 手番目が別の process で走った")
+  (assert (get outcome 2) "会話を閉じても process が降りない"))
 
 
 (defk two-turns [#^ ClaudeSessionSpec spec #^ str sid]
@@ -67,12 +76,23 @@
   ends)
 
 
+(defk two-turns-closed-between [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % list)]}
+  "1 手番目の後に会話を閉じて(process が降りる)から続ける。答え = 2 つの手番の終わり。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "ONE") (str (uuid.uuid4)))))
+  (<- one (read-to-end started.turn 30.0))
+  (<- (ClaudeCloseSession sid "test"))
+  (<- again (ClaudeStartTurn (ResumeSession sid) spec (TurnInput (reply-prompt "TWO") (str (uuid.uuid4)))))
+  (<- two (read-to-end again.turn 30.0))
+  [one.end two.end])
+
+
 (deftest test-the-cold-resume-command-runs-once-before-a-resume [tmp-path]
-  ;; spec.cold-resume-prompt が在れば、降りた会話を --resume で起こす前に 1 回きりの print mode の命令を走らせる。
-  ;; 替え玉はその命令を transcript に 1 行記す(新しい会話の最初の手番では走らせない)。
+  ;; spec.cold-resume-prompt が在れば、降りた会話を --resume で起こす前に 1 回きりの print mode の命令を走らせる(生きて待つ process を
+  ;; 使い回す続きでは走らせない — #3672)。替え玉はその命令を transcript に 1 行記す(新しい会話の最初の手番では走らせない)。
   (setv spec (spec-in tmp-path "/compact if-cold"))
   (setv sid (str (uuid.uuid4)))
-  (<- ends (with-real-handler (host-of #(sys.executable "-m" "hy" STUB-PATH)) (two-turns spec sid)))
+  (<- ends (with-real-handler (host-of #(sys.executable "-m" "hy" STUB-PATH)) (two-turns-closed-between spec sid)))
   (assert (all (gfor end ends (isinstance end Completed))) (repr ends))
   (setv lines (.splitlines (.read-text (Path (transcript-path spec.home.config-dir (os.path.realpath spec.cwd) sid)))))
   (assert (= (lfor line lines :if (in "one-shot" line) line)
@@ -149,17 +169,15 @@
   {:pre [(: host ClaudeCodeHost) (: origin (| FreshSession ResumeSession ForkSession)) (: spec ClaudeSessionSpec)
          (: word str)]
    :post [(: % (| Completed Failed Interrupted BackendLost))]}
-  "手番を 1 つ最後まで読み、その process が降りる(CLI が会話の累積の額を transcript に記す)まで待つ — 次の手番を別の host で
-   起こす検のため。答え = 手番の終わり。"
+  "手番を 1 つ最後まで読み、会話を閉じて process が降りる(CLI が会話の累積の額を transcript に記す)まで待つ — 次の手番を別の host
+   で起こす検のため(process は手番をまたいで生きるので、閉じて降ろす — #3672)。答え = 手番の終わり。"
   (<- started (ClaudeStartTurn origin spec (TurnInput (reply-prompt word) (str (uuid.uuid4)))))
   (assert (isinstance started TurnStarted) (repr started))
   (<- done (read-to-end started.turn 30.0))
   (val process (. (.runtime host started.session-id) process))
-  (var waited 0)
-  (while (and (.alive process) (< waited 100))
-    (<- (Delay 0.1))
-    (:= waited (+ waited 1)))
-  (assert (not (.alive process)) "手番の process が降りない")
+  (<- closed (ClaudeCloseSession started.session-id "test"))
+  (assert (isinstance closed SessionClosed) (repr closed))
+  (assert (not (.alive process)) "会話を閉じても手番の process が降りない")
   done.end)
 
 ;; 替え玉の CLI を撃つ命令(host をこの命令で作り直すと、手番ごとに handler を作り直す使い手の形 — 前の process を見ていない)。
