@@ -39,6 +39,8 @@ name = "doeff"
 # run-timeout 1800 = 実測の約 4 倍(timeout_s 7200 は fallback の local 実走まで収まる)。
 # 内側の UV_CACHE_DIR lane(上の convoy 根治)はそのまま重ねる — \$HOME は Mac 側で
 # 展開させず、実行機(zeus / fallback 時はこの機体)の sh が解く。
+# lane の根は ${XDG_CACHE_HOME:-$HOME/.cache}(agora-redesign #3520・2026-10-05): zeus へは ssh の zsh が ~/.zshenv で
+# 置き場の変数(速い SSD)を持つので SSD へ、変数の無い所(pod の中の倒し込み)は今までどおり $HOME/.cache へ倒れる。
 # ⚠ pytest は --no-sync(2026-08-17 zeus 実測): 素の uv run は暗黙の再 sync で
 # make sync の maturin build(--features invariant-checks)を素の wheel(検査なし)で
 # 上書きし得る — 冷えた cache lane で顕在化し test_vm_built_with_invariant_checks が
@@ -83,10 +85,10 @@ name = "doeff"
 # に写す: build の段の make sync が作る .venv などが混ざらない(git の無い木では dir を歩いて名簿を作るため)。make sync は要らない。
 # 戻すには lint の段の 1 行を消す。
 full = [
-  { name = "build", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync\"", blocks_rest = true },
-  { name = "root", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\"" },
-  { name = "packages", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\"" },
-  { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make test-rust\"" },
+  { name = "build", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync\"", blocks_rest = true },
+  { name = "root", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\"" },
+  { name = "packages", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\"" },
+  { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make test-rust\"" },
   { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"" },
   { name = "lint", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-lint --sync-timeout 900 --run-timeout 900 --fallback-local -- sh -c \"uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep\"" }
 ]
@@ -144,7 +146,7 @@ join_s = 60
 # ⚠ mode = "focus" の間、この表は着地の解決に使われない(mode 未宣言への戻しだけが
 # 読む — agora / ACP と同じ移行残置。撤去は日次 verify 連続緑の再訪条件で別便)。
 # lane 分離は [gate].full の註と同じ(convoy 根治)。
-"docs/adr/" = "UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
+"docs/adr/" = "UV_CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run pytest -q docs/adr"
 "docs/" = "true"
 "notes/" = "true"
 "README.md" = "true"
