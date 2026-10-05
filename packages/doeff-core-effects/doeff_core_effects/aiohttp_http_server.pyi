@@ -64,6 +64,7 @@ from doeff_core_effects.effects import Put as Put
 FILE_CHUNK_BYTES: int
 BODY_CHUNK_BYTES: int
 PREFETCH_BYTES: int
+IDLE_CONNECTION_SECONDS: float
 CONNECT_SECONDS: float
 HTTP_READ_SECONDS: float
 HOP_BY_HOP: frozenset[str]

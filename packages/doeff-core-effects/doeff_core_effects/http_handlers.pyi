@@ -1,9 +1,14 @@
+import ssl
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+import httpx
+
 FixtureMode = Literal["record", "replay"]
 SleepFn = Callable[[float], Awaitable[None]]
+
+CLIENT_KEEPALIVE_SECONDS: float
 
 
 class HttpAsyncClient(Protocol):
@@ -23,6 +28,13 @@ class HttpAsyncClient(Protocol):
 
 
 AsyncClientFactory = Callable[[], HttpAsyncClient]
+
+
+def http_client_factory(
+    *,
+    trust_env: bool = ...,
+    verify: ssl.SSLContext | bool = ...,
+) -> httpx.AsyncClient: ...
 
 
 def http_production_handler(
