@@ -7,6 +7,9 @@
 ;;;   最後に:       worker が全部新しい版で live(V1)・待ち行列が空(V4)を待つ → 空の起動を確かめる → DesireCoordinator → 公開 →
 ;;;                  当てる → 戻りを待つ
 ;;;
+;;; worker の輪だけの upgrade-workers は、coordinator を入れ替えない回(今の coordinator が新しい worker を受ける版の組)の入口でもある。
+;;; V1 は名簿の worker の全部で判じる — 読み手が版を読めない worker(RosterEntry の doeff-commit が None)は新しい版と数えない(#3366)。
+;;;
 ;;; 待ちは時間で読み直さない — coordinator の版の変化(AwaitRunnersChange — task の phase と worker の変化で進む)で起きて読み直す。
 ;;; coordinator に届かない間だけ、上限の内で短く待ってから問い直す(版の変化を待つ口が無いため)。どの待ちも上限(UpgradeLimits —
 ;;; 宣言の値)を持ち、越えたら UpgradeStalled で、どの待ちで止まったかを名指しで落ちる(黙って待ち続けない)。
@@ -96,12 +99,12 @@
     (CleanBootRefused :reason reason) (raise (UpgradeRefused target reason))))
 
 
-(defk upgrade-cluster [workers coordinator limits]
-  {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: coordinator CoordinatorLaunch) (: limits UpgradeLimits)] :post [(: % None)]
+(defk upgrade-workers [workers limits]
+  {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: limits UpgradeLimits)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "program"}}
-  "worker を 1 台ずつ新しい値へ入れ替え、最後に coordinator を入れ替えるため(条 V1〜V4 を守る順と待ち — 頭の註)。worker の値の
-   doeff-commit と coordinator の doeff-commit は同じ版を言う(V1 の「同じ版で live」)。どの入れ替えも、宣言を書く前に空の機体の
-   起動を確かめる(confirm-clean-boot)。"
+  "worker を 1 台ずつ新しい値へ入れ替えるため(条 V2・V3 の待ち — 頭の註)。coordinator は入れ替えない — worker だけを上げる回
+   (coordinator が今の版のまま新しい worker を受ける版の組)と、upgrade-cluster の前半の両方がこれを通る(#3366)。どの入れ替えも、
+   宣言を書く前に空の機体の起動を確かめる(confirm-clean-boot)。"
   (for [w workers]
     (<- (await-until (.format "worker {} に置かれた task が終わる" w.name) (partial no-task-on w.name) limits.drain-seconds))
     (<- (confirm-clean-boot w w.name))
@@ -110,6 +113,16 @@
     (<- (ApplyDeclarations))
     (<- (await-until (.format "worker {} が版 {} で live に戻る" w.name w.doeff-commit) (partial back-on w.name w.doeff-commit)
                      limits.return-seconds)))
+  None)
+
+
+(defk upgrade-cluster [workers coordinator limits]
+  {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: coordinator CoordinatorLaunch) (: limits UpgradeLimits)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "worker を 1 台ずつ新しい値へ入れ替え(upgrade-workers)、最後に coordinator を入れ替えるため(条 V1〜V4 を守る順と待ち — 頭の註)。
+   worker の値の doeff-commit と coordinator の doeff-commit は同じ版を言う(V1 の「同じ版で live」)。V1 は名簿の worker の全部で
+   判じる — 版の読めない worker(RosterEntry の doeff-commit が None)は新しい版と数えないので、その待ちで名指しで止まる。"
+  (<- (upgrade-workers workers limits))
   (<- (await-until (.format "worker が全部 版 {} で live" coordinator.doeff-commit) (partial all-back-on coordinator.doeff-commit)
                    limits.return-seconds))
   (<- (await-until "待ち行列が空" queue-empty limits.queue-seconds))

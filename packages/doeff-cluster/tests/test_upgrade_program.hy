@@ -21,7 +21,7 @@
                                                    ReadUpgradeState PublishDeclarations ApplyDeclarations ConfirmCleanBoot
                                                    CleanBootPassed UpgradeRefused])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
-(import doeff_cluster.shared.core.upgrade_program [upgrade-cluster])
+(import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-workers])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator])
 (import doeff_cluster.sim.flux [FluxPass manifest-state prestop-drain flux-declarations refused-clean-boots UpgradeStartsSeen])
 (import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS write-manifest breaches-of flux-outside])
@@ -249,3 +249,61 @@
   ;; DesireCoordinator を出す。待ちを外すと 5 番目の読みの後に出る(赤)。
   (<- seen ScriptLog (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)] (scripted-run)))
   (assert (= seen.coordinator-at QUEUE-EMPTY-READ) seen))
+
+
+;; --- worker だけの回(upgrade-workers)と、版の読めない worker の在る名簿(#3366 — 本番の入口の前に要る 2 つ)--------------------
+
+;; 読みの台本: a の drain → a の戻り → b の drain → b の戻り(coordinator の待ちは無い)。
+(val WORKERS-ONLY-SCRIPT #(ALL-OLD A-NEW A-NEW ALL-NEW))
+
+
+(defk workers-only-run []
+  {:pre [] :post [(: % ScriptLog)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "台本の読みで worker だけの回を 1 回走らせ、覚えた事を返す。"
+  (<- (upgrade-workers #(TARGET-A TARGET-B) LIMITS))
+  (<- seen ScriptLog (ScriptLogSeen))
+  seen)
+
+
+(deftest test-a-workers-only-upgrade-never-touches-the-coordinator
+  ;; worker だけの回は a・b を 1 台ずつ入れ替え(読み 4 回 = drain と戻りを 2 台分)、coordinator に Desire を出さない。
+  (<- seen ScriptLog (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)] (workers-only-run)))
+  (assert (is seen.coordinator-at None) seen)
+  (assert (= seen.reads (len WORKERS-ONLY-SCRIPT)) seen))
+
+
+;; a・b は新しい版で戻ったが、名簿には版の読めない worker c(配備する側が宣言を書けない worker — doeff-commit None)も居る。
+(val WITH-UNREADABLE (UpgradeState :roster (+ ALL-NEW.roster #((RosterEntry :worker "c" :live True :doeff-commit None))) :tasks #()))
+
+
+(defhandler unreadable-roster [#^ UpgradeState settled]
+  ;; 引数に残す理由: a・b を入れ替えた後の名簿は検ごとに違う値(外の世界そのもの)。
+  ;; a・b の drain と戻りまでは台本どおりに答え、その後は名簿 settled を返し続け、版の変化の待ちは上限まで時間を進めるため
+  ;; (coordinator を入れ替えようとしたら、その場で検を落とす)。
+  (session var reads 0)
+  (ReadUpgradeState []
+    (val at reads)
+    (:= reads (+ reads 1))
+    (resume (if (< at (len WORKERS-ONLY-SCRIPT)) (get WORKERS-ONLY-SCRIPT at) settled)))
+  (AwaitRunnersChange [after timeout-seconds]
+    (<- (Delay timeout-seconds))
+    (resume (RunnersChange :revision (+ after 1) :changed True)))
+  (DesireWorker [launch]
+    (resume #()))
+  (DesireCoordinator [launch]
+    (raise (AssertionError "版の読めない worker c を新しい版と数え、coordinator を入れ替えた")))
+  (ConfirmCleanBoot [launch]
+    (resume (CleanBootPassed :target (if (isinstance launch WorkerLaunch) launch.name "coordinator"))))
+  (PublishDeclarations []
+    (resume None))
+  (ApplyDeclarations []
+    (resume None)))
+
+
+(deftest test-a-worker-whose-version-cannot-be-read-stops-the-coordinator-swap-by-name
+  ;; 失敗ケース(条 V1): 名簿の worker c の版が読めない(None)— Program は c を新しい版と数えず、「worker が全部 版 NEW で live」の
+  ;; 待ちで上限を越えて名指しで止まり、coordinator を入れ替えない。None を新しい版と数える形にすると DesireCoordinator で赤。
+  (with [caught (pytest.raises UpgradeStalled)]
+    (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (unreadable-roster WITH-UNREADABLE)]
+            (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
+  (assert (= caught.value.step (.format "worker が全部 版 {} で live" NEW)) caught.value.step))
