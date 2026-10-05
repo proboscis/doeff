@@ -105,8 +105,11 @@ class ShimFlags:
 
 
 def open_relay(env_name: str) -> NoticeRelay:
-    """知らせの pipe を作るため(読み口だけを job へ継がせる — os.pipe の口は継がない設定で作られ、Popen の pass_fds が読み口だけを継がせる)。"""
+    """知らせの pipe を作るため(読み口だけを job へ継がせる — os.pipe の口は継がない設定で作られ、Popen の pass_fds が読み口だけを継がせる)。
+    書き口は待たない口にする: 知らせを読まない job(答え手を組まない古い job・AwaitRetirement を一度も問わない job)で pipe(約 64 KiB)が
+    満ちても、標準入力を読む thread(watch_parent)が止まらず、worker の消失(標準入力の EOF)を読める。"""
     read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
     return NoticeRelay(env_name=env_name, read_fd=read_fd, write_fd=write_fd)
 
 
@@ -271,11 +274,13 @@ def settled(job: int, job_code: int | None, adoption: Adoption, leads_group: boo
 
 
 def relayed(relay: NoticeRelay | None, line: bytes) -> None:
-    """標準入力の 1 行を知らせの pipe へそのまま書くため(#3672 — 中継しない shim は捨てる)。job が pipe を閉じた・終わった後の行は捨てる
-    (知らせを受ける相手が居ない — 止めと終わりは worker が別の観測で運ぶ)。"""
+    """標準入力の 1 行を知らせの pipe へそのまま書くため(#3672 — 中継しない shim は捨てる)。job が pipe を閉じた・終わった後の行と、
+    pipe が満ちている(job が読まない)時の行は捨てる(知らせを受ける相手が居ない・読まない — 止めと終わりは worker が別の観測で運ぶ)。
+    書き口は待たない口(open_relay)なので、満ちた pipe で標準入力の読みを止めない。行は短い(PIPE_BUF 以下)ので、書きは全部か
+    BlockingIOError かのどちらか(途中で切れない)。"""
     if relay is None:
         return
-    with contextlib.suppress(BrokenPipeError):
+    with contextlib.suppress(BrokenPipeError, BlockingIOError):
         os.write(relay.write_fd, line)
 
 
