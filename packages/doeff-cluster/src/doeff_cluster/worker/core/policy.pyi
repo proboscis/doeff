@@ -39,6 +39,8 @@ from doeff_cluster.worker.intent.worker_model import Undeclared as Undeclared
 from doeff_cluster.worker.intent.worker_model import HandoffAbandoned as HandoffAbandoned
 from doeff_cluster.worker.intent.worker_model import Retired as Retired
 from doeff_cluster.worker.intent.worker_model import StartHold as StartHold
+from doeff_cluster.worker.intent.worker_model import NotYetRead as NotYetRead
+from doeff_cluster.worker.intent.worker_model import DeclarationRead as DeclarationRead
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.job_model import JobPhase as JobPhase
 from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
@@ -162,7 +164,13 @@ def warm_child_actions(now: int, desired: tuple, world: WorldView, warm: tuple, 
 def pinned_env_keys(desired: tuple, world: WorldView, warm: tuple) -> _Program[frozenset, object]:
     ...
 
-def sweep_actions(desired: tuple, world: WorldView, warm: tuple) -> _Program[tuple, object]:
+def declared_jobs(declaration: NotYetRead | DeclarationRead) -> _Program[tuple, object]:
+    ...
+
+def declared_warm(declaration: NotYetRead | DeclarationRead) -> _Program[tuple, object]:
+    ...
+
+def sweep_actions(declaration: NotYetRead | DeclarationRead, world: WorldView) -> _Program[tuple, object]:
     ...
 
 def forget_probe_actions(desired: tuple, world: WorldView) -> _Program[tuple, object]:

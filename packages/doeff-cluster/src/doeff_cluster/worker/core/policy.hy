@@ -19,7 +19,7 @@
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
-  StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
+  StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
   warm-launch])
@@ -359,14 +359,32 @@
                 (lfor w warm w.key)
                 (lfor c world.codes :if (and (.startswith c.revision ENV-KEY-PREFIX) (= c.state CodeState.PREPARING)) c.revision))))
 
-(defk sweep-actions [desired world warm]
-  {:pre [(: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+(defk declared-jobs [declaration]
+  {:pre [(: declaration (| NotYetRead DeclarationRead))] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "最後に読めた宣言の job の列を返すため(まだ一度も読めていなければ空 — 起こす job が無い)。"
+  (match declaration
+    (NotYetRead) #()
+    (DeclarationRead :jobs jobs) jobs))
+
+(defk declared-warm [declaration]
+  {:pre [(: declaration (| NotYetRead DeclarationRead))] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "最後に読めた宣言の温める env の列を返すため(まだ一度も読めていなければ空)。"
+  (match declaration
+    (NotYetRead) #()
+    (DeclarationRead :warm warm) warm))
+
+(defk sweep-actions [declaration world]
+  {:pre [(: declaration (| NotYetRead DeclarationRead)) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "掃除の係へ固定の集合を渡す action を求めるため(固定の集合が変わった時と、空きが下限を切った時だけ)。実行環境を扱わない worker は
-   撃たない。"
+   撃たない。declaration = 最後に読めた宣言(拍の Program が worker の停止で空にした列ではない — 止まる worker も次に起きた時の宣言の
+   root を消さない)。宣言をまだ一度も読めていない間(起き直した直後・DesiredUnreadable が続く間 — #3731)は撃たない: 固定の集合が
+   宣言の root を含まず、止まった job の root を消して起こし直しが root の作り直しになる。一度読めた後の途絶は最後に読めた宣言で判じる。"
   (val disk world.env-disk)
-  (if (is disk None)
-      #()
-      (do (<- pinned frozenset (pinned-env-keys desired world warm))
+  (match #(declaration disk)
+    #((NotYetRead) _) #()
+    #(_ None) #()
+    #((DeclarationRead :jobs jobs :warm warm) _)
+      (do (<- pinned frozenset (pinned-env-keys jobs world warm))
           (if (or (!= pinned disk.pinned) (< disk.free disk.floor)) #((SweepEnvs pinned)) #()))))
 
 (defk forget-probe-actions [desired world]
@@ -379,8 +397,9 @@
 (defk plan [now desired world records policy [warm #()] [absent (Undeclared)]]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple) (: absent StopReason)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
-  "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 待ちの子の起こしと止め(#3646)→ 掃除の
-   係への固定の集合 → 検めの記録の片づけ。job ごとの判断 plan-job は列の中で要素ごとに呼ぶので素の関数のまま(列を順に走らせる道具
+  "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 待ちの子の起こしと止め(#3646)→ 検めの
+   記録の片づけ。掃除の係への固定の集合は最後に読めた宣言で判じる sweep-actions(#3731 — この拍の列は宣言を読めていない拍と読んだ空の
+   宣言を分けない)。job ごとの判断 plan-job は列の中で要素ごとに呼ぶので素の関数のまま(列を順に走らせる道具
    #2812 を待つ)。absent = 宣言に無い job を止める訳(既定 = 宣言から外れた・拍の Program が途絶の絞りと worker の停止を渡す — #3713)。"
   (<- names tuple (job-names desired world))
   (val jobs (tuple (gfor name names
@@ -388,9 +407,8 @@
                          action)))
   (<- warming tuple (warm-actions now warm world jobs policy))
   (<- children tuple (warm-child-actions now desired world warm policy))
-  (<- sweeping tuple (sweep-actions desired world warm))
   (<- forgetting tuple (forget-probe-actions desired world))
-  (+ jobs warming children sweeping forgetting))
+  (+ jobs warming children forgetting))
 
 (defk ready-followups [now desired before after records policy [warm #()] [absent (Undeclared)]]
   {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple)

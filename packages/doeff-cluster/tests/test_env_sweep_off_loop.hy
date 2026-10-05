@@ -29,7 +29,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy DesiredJobs ReadDesired ObserveWorld
+(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
                                                  WorkerStopRequested EnvReport PublishStatus PrepareCode ReleaseLeases SweepEnvs EnvDisk])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveEnvDisk])
 (import doeff_cluster.worker.protocol.process_host [HostSettings STOP-TIMING-LOG process-host])
@@ -289,7 +289,9 @@
   "program を env-host・process-host と台本の子 process・遅い木の memory の file system・仮想の時計の下で回すため(行は外側の
    run-lines-noted が受ける)。inner = env-host の内側に置く handler(調整ループを回す筋書きは宿の代役と拍の間の眠り)。"
   (<- host HostSettings (host-settings (Path STATE) :policy POLICY))
-  (val script (ProcessScript :commands #((ScriptedCommand :name (. (Path host.python) name) :run runs-until-stopped))))
+  ;; root の準備(env-host の PrepareEnv が nice で起こす)も止めるまで走る — 消えた root の作り直しは終わらず、観測の準備中に残る。
+  (val script (ProcessScript :commands #((ScriptedCommand :name (. (Path host.python) name) :run runs-until-stopped)
+                                         (ScriptedCommand :name "nice" :run runs-until-stopped))))
   (<- settings EnvSettings (sweep-settings))
   (<- files MemoryFiles (roots-on-disk))
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) tree-load run-lines-noted (memory-file-handler files)
@@ -384,3 +386,48 @@
   ;; 4 秒の待ちは閾の内 — 行を出さない。
   (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world 60000 (SlowPublish :at-ms 30000 :seconds 4.0)) tick-pauses]))
   (assert (= got.lags #()) got.lags))
+
+
+;; --- 起き直して宣言をまだ読めていない間の掃除(#3731)------------------------------------------------------------------------------
+;; 起き直した worker は最初の宣言を読むまで、最後に読んだ宣言が「まだ読んでいない」(NotYetRead)。この間の固定の集合は準備中の root だけで、
+;; 下限を切った disk では止まった job の root(宣言に在る・まだ起こし直していない)まで消し、起こし直しが root の作り直しになった。
+;; 反例 = 直す前の形(WorkerState の宣言の初期値が空の列で、掃除の判断が空の宣言と読んでいない宣言を区別しない)は、読めない 30 秒の間に
+;; b と c を消す — 下の断言が赤(2026-10-06 に直す前の worker で確かめた)。
+
+;; 止まった job: 実行環境の job で、root は b(env のキー = b)。宣言に在るが起こし直していない(root の準備の観測を返さない)。
+(val ENV-SPEC (JobSpec "env-job" "jobs.env" #() "rev-e" :runtime-env "{}" :env-key ROOT-B))
+
+
+(defhandler restart-world [#^ int read-from-ms #^ int stop-ms]
+  "起き直した worker の宿の代役: read-from-ms までは coordinator に届かない(DesiredUnreadable)・その後は毎拍 ENV-SPEC を宣言する。観測は
+   子 process と root の disk(root の準備の観測は返さない — job は起こし直さない)。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 検ごとに読める刻と止める刻を変える(Ask で区別できない)。
+  (ReadDesired [env-report stopping]
+    (<- now int (now-epoch-ms))
+    (resume (if (< now read-from-ms) (DesiredUnreadable "coordinator に届かない") (DesiredJobs #(ENV-SPEC)))))
+  (WorkerStopRequested []
+    (<- now int (now-epoch-ms))
+    (resume (>= now stop-ms)))
+  (EnvReport [] (resume None))
+  (PublishStatus [statuses note] (resume None))
+  (ReleaseLeases [job instance] (resume None))
+  (NotedBeats [] (resume (Beats :widest-ms 0 :cut-offs 0)))
+  (ObserveWorld []
+    (<- processes tuple (ObserveProcesses))
+    (<- disk EnvDisk (ObserveEnvDisk))
+    (resume (WorldView #() processes :env-disk disk))))
+
+
+(deftest test-a-restarted-worker-does-not-sweep-before-the-first-declaration
+  ;; 起き直してから 30 秒、宣言が読めない(読めるのは筋書きの後)。下限を切った disk でも掃除しない — 止まった job の root b も c も残る。
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world (* 2 RUN-MS) 30000) tick-pauses]))
+  (assert (= got.swept 0) got)
+  (assert (= got.left #(ROOT-A ROOT-B ROOT-C)) got.left))
+
+
+(deftest test-the-first-declaration-starts-the-sweep-and-pins-the-declared-root
+  ;; 30 秒目に最初の宣言を読んだ拍から今までどおり掃除する: 宣言の job の root b は固定で残り、固定でない c は消える(a は project の最新)。
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world 30000 60000) tick-pauses]))
+  (assert (>= got.swept 1) got)
+  (assert (= got.left #(ROOT-A ROOT-B)) got.left))

@@ -10,8 +10,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
-  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records])
+  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
+  declared-warm sweep-actions])
 
 ;; 拍の action の後に、同じ拍のうちに揃いを追う回数の上限(#2719・#3646): 1 回目 = 木が揃った job と root の待ちの子の起こし・2 回目 =
 ;; 起こした刻に揃った待ちの子から分ける task。揃いの連なりはこれより長くならない(3 回目に進める物の形が無い)。
@@ -53,11 +54,13 @@
   (:= lap (! (lap-after lap "EnvReport")))
   (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report :stopping stopping))
   (:= lap (! (lap-after lap "ReadDesired")))
-  ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける。
-  (setv desired (cond
-    stopping #()
-    (isinstance read DesiredJobs) read.jobs
-    True state.desired))
+  ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける(#3731 — 読めた拍だけ持ち替え、途絶で絞った宣言も読んだ側。まだ一度も
+  ;; 読めていなければ NotYetRead のまま)。
+  (val declaration (match read
+    (DesiredJobs) (DeclarationRead :jobs read.jobs :warm read.warm)
+    _ state.declaration))
+  (<- jobs tuple (declared-jobs declaration))
+  (val desired (if stopping #() jobs))
   ;; 宣言に無い job を止める訳(#3713): worker の停止・途絶で宣言を絞った(返事の宣言の cut-off)・それ以外は宣言から外れた。
   (val absent (match read
     _ :if stopping (WorkerStopping)
@@ -66,8 +69,12 @@
   (val now lap.at)
   (<- world WorldView (ObserveWorld))
   (:= lap (! (lap-after lap "ObserveWorld")))
-  (setv warm (cond stopping #() (isinstance read DesiredJobs) read.warm True state.warm))
-  (<- actions tuple (plan now desired world state.records policy :warm warm :absent absent))
+  (<- warm-read tuple (declared-warm declaration))
+  (val warm (if stopping #() warm-read))
+  (<- planned tuple (plan now desired world state.records policy :warm warm :absent absent))
+  ;; 掃除は最後に読めた宣言で判じる(まだ読めていない拍は撃たない・止まる拍も宣言の root を消さない — #3731)。
+  (<- sweeping tuple (sweep-actions declaration world))
+  (val actions (+ planned sweeping))
   (for [action actions]
     (<- action)
     (:= lap (! (lap-after lap (. (type action) __name__)))))
@@ -107,7 +114,7 @@
   (:= lap (! (lap-after lap "PublishStatus")))
   (when (> (- lap.at began) TICK-LAG-MS)
     (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms (- lap.at began) :slowest lap.slowest :slowest-ms lap.slowest-ms)))
-  #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
+  #((WorkerState :declaration declaration :records records)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
     ;; 宣言の変化の呼び鈴(読めた宣言の物だけ — 拍の間の眠りが競わせる・#2692)。

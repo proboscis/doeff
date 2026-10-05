@@ -467,11 +467,21 @@
                 StartWarmChild StopWarmChild ForgetWarmChild))
 
 
+;; 最後に読めた宣言(#3731)。起き直した worker は最初の宣言を読むまで NotYetRead — 読んだ空の宣言(DeclarationRead の空の列)と
+;; 型で分ける。最初の DesiredJobs で DeclarationRead へ移り、途絶で絞った宣言(cut-off)も読んだ側のまま、DesiredUnreadable の拍は
+;; 前の値のまま。掃除の判断(policy.sweep-actions)は NotYetRead の間 root を消さない(固定の集合が宣言の root を含まないため)。
+(defrecord NotYetRead
+  "worker が起きてから宣言をまだ一度も読めていない(最初の heartbeat の答えを読む前・DesiredUnreadable が続く間)。")
+
+(defrecord DeclarationRead
+  "最後に読めた宣言: jobs = JobSpec の列・warm = 温める env の列(WarmEnv)。宣言が読めない拍もこれを使い続ける。"
+  (#^ tuple jobs)
+  (#^ tuple warm))
+
+
 (defclass [(dataclass :frozen True)] WorkerState []
-  (setv #^ tuple desired #())
-  (setv #^ dict records (field :default-factory dict))
-  ;; 最後に読めた温める env の列(宣言が読めない拍もこれを使い続ける — desired と同じ)。
-  (setv #^ tuple warm #()))
+  (setv #^ (| NotYetRead DeclarationRead) declaration (field :default-factory NotYetRead))
+  (setv #^ dict records (field :default-factory dict)))
 
 
 ;; --- 拍と拍の間の待ち(#2781)-----------------------------------------------------

@@ -439,11 +439,12 @@
 (defhandler env-host [#^ EnvSettings settings]
   ;; 引数に残す理由: root の置き場と準備の道具は worker の process ごとの設定(main が引数から作る)。
   ;; 記録: 待ち(キー → #(宣言の JSON 先読みか) — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
-  ;; 固定の集合 held・最後の掃除の終わりの時刻・走っている掃除(数えか消し — 同時に 1 つ)・prune の記録・最後の観測(heartbeat の名乗りが読む)。
+  ;; 固定の集合 pinned-roots(最後に受けた SweepEnvs の固定 — 判断の側の statuses の held と別の物)・最後の掃除の終わりの時刻・
+  ;; 走っている掃除(数えか消し — 同時に 1 つ)・prune の記録・最後の観測(heartbeat の名乗りが読む)。
   (session var waiting {})
   (session var pending {})
   (session var failed {})
-  (session var held (frozenset))
+  (session var pinned-roots (frozenset))
   (session var swept-ms 0)
   (session var sweeping None)
   (session var prune (PruneState))
@@ -475,7 +476,7 @@
     (:= views (get observed 3))
     (resume views))
   (ObserveEnvDisk []
-    (<- disk EnvDisk (disk-view settings held))
+    (<- disk EnvDisk (disk-view settings pinned-roots))
     (resume disk))
   (EnvReport []
     ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件
@@ -486,7 +487,7 @@
       (:= pending (get observed 1))
       (:= failed (get observed 2))
       (:= views (get observed 3)))
-    (<- disk EnvDisk (disk-view settings held))
+    (<- disk EnvDisk (disk-view settings pinned-roots))
     (<- capacity str (env-capacity disk.free settings.min-free-bytes))
     (resume (env-report (or views #()) capacity)))
   (SweepEnvs [pinned]
@@ -494,12 +495,14 @@
     ;;   走っていない → 始める時(sweep-due)なら数えを起こす
     ;;   数えている   → 答えが届いていれば、この拍の固定で選び、選んだ root を脇へ退けて消しを起こす
     ;;   消している   → 終わっていれば終わりの 1 行を出し、まだ下限を切っていれば uv の cache の prune を起こす
-    (val changed (!= pinned held))
-    (:= held pinned)
+    ;; 初期値の空との比べで「変わった」と判じる最初の SweepEnvs は、worker が最初の宣言を読んだ拍の物(読む前は判断の側
+    ;; policy.sweep-actions が撃たない — #3731)。ここで二重に止めない。
+    (val changed (!= pinned pinned-roots))
+    (:= pinned-roots pinned)
     (<- now-ms int (now-epoch-ms))
     (match sweeping
       None
-        (do (<- disk EnvDisk (disk-view settings held))
+        (do (<- disk EnvDisk (disk-view settings pinned-roots))
             (<- due bool (sweep-due disk.free disk.floor changed now-ms swept-ms))
             (when due
               (<- measuring SweepMeasuring (start-measuring settings now-ms))
@@ -508,7 +511,7 @@
         (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
             (when (is-not measured None)
               ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
-              (<- removing SweepRemoving (start-removing settings measured (| held (frozenset pending) (frozenset waiting)) sweeping.started-ms))
+              (<- removing SweepRemoving (start-removing settings measured (| pinned-roots (frozenset pending) (frozenset waiting)) sweeping.started-ms))
               (:= sweeping removing)))
       (SweepRemoving)
         (do (<- removed (| RemovedRoots None) (sweep-answer sweeping))

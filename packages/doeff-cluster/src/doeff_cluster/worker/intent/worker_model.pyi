@@ -6,7 +6,8 @@ worker_model.hy は Hy の module なので、pyright は中を読めず、`doef
 runtime_env_model.pyi と同じ形)。
 
 - 値(CodeLayout・CodeView・ProcessView・ProbeView・EnvDisk・WarmEnv・WorldView・StopProgress・JobRecord・WorkerPolicy・JobStatus・
-  DesiredJobs・DesiredUnreadable・WorkerState)は凍った dataclass(キーワード引数に限らない — 実装は位置でも作る)。ProbeStatus は
+  DesiredJobs・DesiredUnreadable・WorkerState)は凍った dataclass(キーワード引数に限らない — 実装は位置でも作る)。ProbeStatus・
+  NotYetRead・DeclarationRead(最後に読めた宣言の和 — #3731)は
   defrecord なのでキーワード引数だけ(止めの訳 SpecChanged・Undeclared・HandoffAbandoned・Retired・CutOff・WorkerStopping と JobStop も
   defrecord — #3713)。欄の型は worker_model.hy の注記と、組み手(worker の handler・判断)が入れる要素の型
   (WorldView.codes = CodeView の組・WorkerState.records = job の名 → JobRecord ほか)。
@@ -394,11 +395,21 @@ Action = (
     | ForgetWarmChild
 )
 
+@dataclass(frozen=True, kw_only=True)
+class NotYetRead:
+    """worker が起きてから宣言をまだ一度も読めていない(#3731)。"""
+
+@dataclass(frozen=True, kw_only=True)
+class DeclarationRead:
+    """最後に読めた宣言(jobs = JobSpec の列・warm = 温める env の列)。"""
+
+    jobs: tuple[JobSpec, ...]
+    warm: tuple[WarmEnv, ...]
+
 @dataclass(frozen=True)
 class WorkerState:
-    desired: tuple[JobSpec, ...] = ()
+    declaration: NotYetRead | DeclarationRead = ...
     records: dict[str, JobRecord] = ...
-    warm: tuple[WarmEnv, ...] = ()
 
 # --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
 
