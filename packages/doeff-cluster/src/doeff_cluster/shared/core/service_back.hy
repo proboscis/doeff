@@ -75,9 +75,14 @@
   (<- promise Promise (CreatePromise))
   (<- watcher Task (Spawn (back-announced name promise)))
   (var came None)
+  ;; 見張りを止める効果は、待ちの例外(取り消しの TaskCancelledError を含む Exception)と通常の終わりでだけ撃つ。finally に置かない:
+  ;; process が殺された時(Discard・世界の終わりの GC)に CPython が送る GeneratorExit の中で効果を yield すると「generator ignored
+  ;; GeneratorExit」になる(Exception の外なので受けずに上げ、殺された process は見張りごと消える — #3557)。
   (try
     (<- waited (| ServiceReady None) (promise-or-timeout promise.future seconds))
     (:= came waited)
-    (finally
-      (<- (stopped watcher))))
+    (except [error Exception]
+      (<- (stopped watcher))
+      (raise error)))
+  (<- (stopped watcher))
   came)

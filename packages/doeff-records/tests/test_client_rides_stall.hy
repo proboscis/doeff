@@ -14,7 +14,10 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import typing [get-args])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_core_effects.scheduler [scheduled Spawn Wait Cancel Discard])
+(import gc)
+(import sys)
+(import pytest)
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent Unreachable])
@@ -24,7 +27,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.service [RecordsService])
 (import doeff_records.wire [PublicEffect])
-(import doeff_records.event_source [SignalSourcePatience source-patience-handler])
+(import doeff_records.event_source [SignalSourcePatience source-patience-handler came-back-within])
 (import doeff_records.http_client [RecordsEndpoint RequestPatience http-records-handler request-patience-handler records-unwaited])
 (import tests.interpreters [LawSetup IN-PROCESS-URL in-process-records-http])
 
@@ -143,3 +146,47 @@
                                                 (http-records-handler (RecordsEndpoint IN-PROCESS-URL :writer MAKER))]
                                                (ReadRow "parts" #("p1"))))))
   (assert (not (isinstance answered Unreachable)) answered))
+
+
+;; --- 戻りを待っている task を止める(#3557)— 取り消しは片付けまで走り、殺された task は「generator ignored GeneratorExit」を名乗らない ---
+
+(defk stopped-while-coming-back [store kill]
+  {:pre [(: store MemoryStore) (: kill bool)] :post [(: % (| str None))] :tags {:context "records" :role "program"}}
+  "筋書き: 置き場を止め(戻さない)、戻りを待つ came-back-within の task を立て、待ちに入った後に kill なら Discard・さもなくば Cancel して、
+   その task の Wait で上がった例外の型の名を返す。"
+  (<- (SetStoreOutage DETAIL))
+  (<- waiter (Spawn (came-back-within #("parts") 60.0)))
+  (<- (Delay 5.0))
+  (if kill (<- (Discard waiter)) (<- (Cancel waiter)))
+  (var ended None)
+  (try
+    (<- (Wait waiter))
+    (except [error Exception]
+      (:= ended (. (type error) __name__))))
+  ended)
+
+
+(defk unraisable-while-coming-back [kill monkeypatch]
+  {:pre [(: kill bool) (: monkeypatch pytest.MonkeyPatch)] :post [(: % tuple)] :tags {:context "records" :role "foundation"}}
+  "止める筋書きを置き場の memory の handler の上で回し、#(Wait の例外の型の名 CPython が名乗った unraisable の文の列)を返す(走行の終わりに
+   GC を回して捨てた generator の閉じを拾う)。"
+  (setv seen [])
+  (monkeypatch.setattr sys "unraisablehook" (fn [unraisable] (.append seen (.format "{} — {}" unraisable.exc-value unraisable.err-msg))))
+  (val store (MemoryStore LAW-SCHEMA))
+  (val ended (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)]
+                               (stopped-while-coming-back store kill)))))
+  (gc.collect)
+  #(ended (tuple seen)))
+
+
+(deftest test-a-cancelled-come-back-wait-ends-cancelled-without-an-unraisable [monkeypatch]
+  ;; 取り消し(Cancel)は TaskCancelledError を投げ込み、見張りを止める片付けまで走る — CPython の名乗りは 0。
+  (<- seen tuple (unraisable-while-coming-back False monkeypatch))
+  (assert (= seen #("TaskCancelledError" #())) seen))
+
+
+(deftest test-a-discarded-come-back-wait-closes-without-an-unraisable [monkeypatch]
+  ;; 失敗ケース: 見張りを止める効果を finally に置くと、捨てた(Discard)待ちの generator を CPython が閉じる時に finally の中で yield し、
+  ;; 「generator ignored GeneratorExit」を unraisable として名乗る(#3557 の前の形)。
+  (<- seen tuple (unraisable-while-coming-back True monkeypatch))
+  (assert (= seen #("TaskCancelledError" #())) seen))
