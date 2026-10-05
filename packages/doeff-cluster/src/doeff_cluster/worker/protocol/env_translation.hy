@@ -36,6 +36,9 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText
                                          MakeDirectory ListDirectory WalkTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
+;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の置き場と錠と使った印は、起動の script(worker/entry/boot_wheel)と
+;; 共有する定義点 native_wheel の物。
+(import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-USED uv-environment :as uv-variables wheel-dir wheel-lock wheel-tmp])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [
@@ -47,10 +50,6 @@
 (val MOUNT-TABLE "/proc/self/mountinfo")
 ;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。
 (val NOT-COPIED (frozenset #(".venv" "__pycache__")))
-;; uv の子に継がせない呼び手の環境変数の型(呼び手の venv と uv・Python の設定)。
-(val UV-DROP #("UV_*" "PYTHON*" "VIRTUAL_ENV"))
-;; native の wheel の dir の使った印(掃除は dir の mtime を読む — 名を変えて置く書き直しで dir の mtime が進む)。
-(val WHEEL-USED ".used")
 ;; uv の出力で「lock が古い」と「一時の失敗(network)」を見分ける語。
 (val LOCK-STALE-PATTERN (re.compile r"(?i)lockfile .*needs to be updated|lock file .*needs to be updated|--locked"))
 (val NETWORK-PATTERN (re.compile r"(?i)failed to fetch|error sending request|dns error|connection (?:refused|reset)|timed out|could not resolve|temporary failure|could not read from remote"))
@@ -125,10 +124,9 @@
 
 (defk uv-environment [state-dir]
   {:pre [(: state-dir str)] :post [(: % tuple)]}
-  "uv の子の環境へ足す変数を作るため: 共有の cache と Python を state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。"
-  #((EnvEntry :name "UV_CACHE_DIR" :value (posixpath.join state-dir "uv-cache"))
-    (EnvEntry :name "UV_PYTHON_INSTALL_DIR" :value (posixpath.join state-dir "python"))
-    (EnvEntry :name "UV_NO_PROGRESS" :value "1")))
+  "uv の子の環境へ足す変数を作るため: 共有の cache と Python を state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。
+   変数の定義点は native_wheel.uv-environment の 1 つ — 起動の script が doeff-vm の wheel を組む時も同じ環境で組む。"
+  (tuple (gfor v (uv-variables state-dir) (EnvEntry :name v.name :value v.value))))
 
 
 (defk uv-command [args cwd env]
@@ -355,7 +353,7 @@
   (<- existing (| str None) (wheel-in target))
   (if (is-not existing None)
       (WheelReady :path existing :built False)
-      (do (val tmp (posixpath.join (posixpath.dirname target) (.format ".{}.tmp" (posixpath.basename target))))
+      (do (val tmp (wheel-tmp target))
           (<- (remove-if-present tmp))
           (<- env tuple (uv-environment state-dir))
           (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" tmp source-dir) source-dir env))
@@ -577,13 +575,13 @@
     (resume (.strip result.stdout)))
 
   (EnsureNativeWheel [key package source-dir]
-    (val wheel-dir (posixpath.join state-dir "wheels" (.format "{}-{}" package key)))
+    (val target (wheel-dir state-dir package key))
     (<- wheel (| WheelReady EnvFailure)
-        (locked (posixpath.join state-dir "locks" (+ "wheel-" key))
-                (wheel-of package source-dir wheel-dir state-dir uv)))
+        (locked (wheel-lock state-dir key)
+                (wheel-of package source-dir target state-dir uv)))
     ;; 使った印(掃除は 7 日使われない wheel の dir を消す — env_upkeep.WHEEL-UNUSED-SECONDS)。
     (when (isinstance wheel WheelReady)
-      (<- (write-replacing (posixpath.join wheel-dir WHEEL-USED) "")))
+      (<- (write-replacing (posixpath.join target WHEEL-USED) "")))
     (resume wheel))
 
   (SyncProject [project-dir python groups no-install]

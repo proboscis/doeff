@@ -20,9 +20,17 @@
 # 環境: WORK_DIR(既定 /work)。
 #
 # 自己起動(WORKER_DOEFF_COMMIT が在る時 — 土台だけの image・deploy/base/Dockerfile。設計 D13・E13):
-#   WORKER_DOEFF_URL(既定 https://github.com/proboscis/doeff.git)の WORKER_DOEFF_COMMIT を $WORK_DIR/boot/roots/<sha> に展開し、
-#   `uv sync --locked --package doeff-cluster` した venv の hy で起こす。同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
+#   image に焼いた script の受け持ちは展開と引き継ぎだけ: WORKER_DOEFF_URL(既定 https://github.com/proboscis/doeff.git)の
+#   WORKER_DOEFF_COMMIT を $WORK_DIR/boot/roots/<sha> に展開し(展開の済んだ印 .doeff-boot-extracted)、root の中の同じ commit の
+#   packages/doeff-cluster/deploy/boot.sh へ exec で引き継ぐ(DOEFF_BOOT_FROM_ROOT=1 — 中身が同じでも引き継ぐ)。root の準備(venv と
+#   doeff-vm の wheel・完成の印 .doeff-boot-ready)と役の起動は引き継いだ先 — 宣言した commit の script — がする。だから準備の手順を
+#   直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい手順で準備され、image を作り直さない。
+#   準備: `uv sync --locked --package doeff-cluster --no-install-package doeff-vm` した venv に doeff-vm の wheel を入れて、その venv の
+#   hy で起こす。wheel は実行環境の準備(worker)と同じ鍵・同じ置き場($WORK_DIR/state/wheels/doeff-vm-<鍵>)の物を使い、無ければ組んで
+#   置く(python -m doeff_cluster.worker.entry.boot_wheel — 鍵と置き場の定義点は doeff_cluster/shared/core/native_wheel.py の 1 つ)。
+#   doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
 #   uv の cache と Python は実行環境の root と同じ $WORK_DIR/state の下(uv-cache・python)。crate の取得先は $WORK_DIR/state/cargo。
+#   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
 #
 # 読み取りの鍵の表(WORKER_REPOS が在る時 — 設計 U5・U6):
@@ -52,15 +60,14 @@ if [ -z "${DOEFF_BOOT_STARTED_MS:-}" ]; then
 fi
 export DOEFF_BOOT_STARTED_MS
 
-# 自己起動の root を用意して PATH の頭に置く。drain は準備せず、完成した root を使うだけ(preStop で build しない)。
-doeff_root() {
+# 自己起動の root を展開する(image に焼いた script の受け持ち — 準備はしない)。引き継いだ先も sha と root を求めるために呼ぶ(展開の済んだ
+# root には何もしない)。drain は展開しない(preStop で clone も展開もしない — 準備の済んだ root を使うだけ)。
+doeff_extract() {
   commit=$WORKER_DOEFF_COMMIT
   url=${WORKER_DOEFF_URL:-https://github.com/proboscis/doeff.git}
   boot=$WORK_DIR/boot
-  export UV_CACHE_DIR="$WORK_DIR/state/uv-cache" UV_PYTHON_INSTALL_DIR="$WORK_DIR/state/python" CARGO_HOME="$WORK_DIR/state/cargo"
-  export UV_NO_PROGRESS=1
   mkdir -p "$boot/roots" "$WORK_DIR/state"
-  # 同じ node の dir を使う次の Pod と重ならないよう、root の準備は排他(fd 8・準備が済めば離す)。
+  # 同じ node の dir を使う次の Pod と重ならないよう、展開と準備は排他(fd 8・済めば離す)。
   exec 8>"$boot/boot.lock"
   flock 8
   if [ ! -d "$boot/doeff.git" ]; then
@@ -73,8 +80,8 @@ doeff_root() {
   fi
   sha=$(git -C "$boot/doeff.git" rev-parse --verify "$commit^{commit}")
   root=$boot/roots/$sha
-  if [ -f "$root/.doeff-boot-ready" ]; then
-    echo "boot: doeff $sha の root を使う(準備済み)" >&2
+  if [ -f "$root/.doeff-boot-ready" ] || [ -f "$root/.doeff-boot-extracted" ]; then
+    :
   elif [ "$role" = drain ]; then
     echo "boot: doeff $sha の root が無い(drain は準備しない)" >&2
     exit 1
@@ -84,10 +91,40 @@ doeff_root() {
     rm -rf "$root"
     mkdir -p "$root"
     git -C "$boot/doeff.git" archive --format=tar "$sha" | tar -x -C "$root"
-    extracted=$(date +%s)
-    (cd "$root" && uv sync --locked --package doeff-cluster --no-dev >&2)
+    touch "$root/.doeff-boot-extracted"
+    echo "boot: doeff $sha を展開した($(( $(date +%s) - started )) 秒)" >&2
+  fi
+  exec 8>&-
+}
+
+# 展開した root を準備して PATH の頭に置く(引き継いだ先 — 宣言した commit の script — の受け持ち)。drain は準備せず、完成した root を
+# 使うだけ(preStop で build しない)。
+doeff_prepare() {
+  export UV_CACHE_DIR="$WORK_DIR/state/uv-cache" UV_PYTHON_INSTALL_DIR="$WORK_DIR/state/python" CARGO_HOME="$WORK_DIR/state/cargo"
+  export UV_NO_PROGRESS=1
+  exec 8>"$boot/boot.lock"
+  flock 8
+  if [ -f "$root/.doeff-boot-ready" ]; then
+    echo "boot: doeff $sha の root を使う(準備済み)" >&2
+  elif [ "$role" = drain ]; then
+    echo "boot: doeff $sha の root が準備されていない(drain は準備しない)" >&2
+    exit 1
+  else
+    started=$(date +%s)
+    # 完成の印の無い venv は準備が途中で止まった残り — 作り直す。
+    rm -rf "$root/.venv"
+    # doeff-vm(Rust)は uv sync で source から組まず、実行環境の準備と同じ鍵の組み済みの wheel を入れる(下)。
+    (cd "$root" && uv sync --locked --package doeff-cluster --no-dev --no-install-package doeff-vm >&2)
+    synced=$(date +%s)
+    # 答え = 1 行「<組んだ|使った> <wheel の path>」(組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
+    answer=$("$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" --mirror "$boot/doeff.git" \
+      --commit "$sha" --state "$WORK_DIR/state")
+    how=${answer%% *}
+    wheel=${answer#* }
+    wheeled=$(date +%s)
+    uv pip install --no-deps --python "$root/.venv/bin/python" "$wheel" >&2
     touch "$root/.doeff-boot-ready"
-    echo "boot: doeff $sha の root を準備した(展開 $((extracted - started)) 秒・uv sync $(( $(date +%s) - extracted )) 秒)" >&2
+    echo "boot: doeff $sha の root を準備した(uv sync $((synced - started)) 秒・doeff-vm の wheel を${how} $((wheeled - synced)) 秒・wheel の install $(( $(date +%s) - wheeled )) 秒)" >&2
   fi
   exec 8>&-
   export PATH="$root/.venv/bin:$PATH"
@@ -136,16 +173,21 @@ repo_access() {
 
 # ready は hy を起こさないので root を要らない。
 if [ -n "${WORKER_DOEFF_COMMIT:-}" ] && [ "$role" != ready ] && [ "$role" != access ]; then
-  doeff_root
-  # 起動の script も宣言した commit の物で続ける: image に焼いた script は最初の自己起動(root を用意するまで)だけを受け持つ。
-  # だから起動の script を直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい script で起き、image を作り直さない。
-  # 引き継いだ先(DOEFF_BOOT_FROM_ROOT)ではもう引き継がない。
-  next=$root/packages/doeff-cluster/deploy/boot.sh
-  if [ -z "${DOEFF_BOOT_FROM_ROOT:-}" ] && [ -f "$next" ] && ! cmp -s "$next" "$0"; then
+  doeff_extract
+  # image に焼いた script は展開までを受け持ち、準備と役の起動は宣言した commit の script へ引き継ぐ — 中身が同じでも引き継ぐ(準備の手順の
+  # 持ち主は commit の側)。だから起動の script(準備の手順を含む)を直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい script で
+  # 準備して起き、image を作り直さない。引き継いだ先(DOEFF_BOOT_FROM_ROOT)ではもう引き継がない。
+  if [ -z "${DOEFF_BOOT_FROM_ROOT:-}" ]; then
+    next=$root/packages/doeff-cluster/deploy/boot.sh
+    if [ ! -f "$next" ]; then
+      echo "boot: doeff $sha の root に起動の script(packages/doeff-cluster/deploy/boot.sh)が無い" >&2
+      exit 1
+    fi
     echo "boot: 起動の script を doeff $sha の物へ引き継ぐ" >&2
     export DOEFF_BOOT_FROM_ROOT=1
     exec sh "$next"
   fi
+  doeff_prepare
 fi
 
 case "$role" in
