@@ -92,6 +92,15 @@ full = [
   { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"" },
   { name = "lint", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-lint --sync-timeout 900 --run-timeout 900 --fallback-local -- sh -c \"uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep\"" }
 ]
+# 日次の外の物(Mac の調整役の決め (b)・cisco-c8 の中継 2026-10-05 18:3x・agora-redesign #3167・#3571): 名と未実行の種類の両方が一致した
+# 申告だけを、検証の本体(merge-queue の verify_main — L274)が結論の計算の直前に分け、残りの処理ステージの結果で結論を出す。分けた物は
+# 結末と台帳の欄 outside に載り、日次の回の終わりの表の 6 列目に「外の物 1(VS Code)」と毎回出る。宣言に無い未実行・種類の違う未実行は
+# 今までどおり行の全体を未実行にする。test_doc_lint_modes_in_vscode は実物の VS Code と組んだ拡張を通す確かめ(利用者がその会話で決めた形)で、
+# VS Code の無い機体では tool-absent の未実行と名乗る(L1662)。取らなかった 2 つ = 検を VS Code の要らない形に書き直す(確かめ方を変える)・
+# 日次の worker の image に VS Code を入れる(重い)。戻し方 = この outside の行を消す(外の物 0 = 今までどおり)。
+outside = [
+  { test = "docs/adr/defadr_doc_linter_modes.hy::test_doc_lint_modes_in_vscode", kind = "tool-absent", label = "VS Code", reason = "実物の VS Code と組んだ拡張が要る(利用者がその会話で決めた確かめ方・日次の verify-worker に VS Code は無い)" },
+]
 # ⚠ 日次の全体検証に入れない印 e2e のテストと、その訳(Mac の調整役の決め 2026-10-05「集めていないテストは、日次に入れるか、
 #   入れない訳を 1 行」・agora-redesign #3167)。root と packages の処理ステージは -m 'not e2e' で外す:
 #   packages/doeff-agents/tests の test_agentd_byte_faithful_transport_e2e.py・test_agentd_result_retry_e2e.py = 替え玉の agent と tmux だけで
