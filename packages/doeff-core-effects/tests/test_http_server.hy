@@ -5,7 +5,8 @@
 ;;;     溜まって切られる勘定・走っている台本への後足し・読みの途中で相手が切った本文。
 ;;;   - 本物の答え手(aiohttp-http-server): HTTP の中継の本文と X-Forwarded-Proto・ws の中継(frame の往復と close の状態符)・相手が先に
 ;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
-;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)
+;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)・
+;;;     答え(HttpRespond)と宣言の小さい本文の読み(HttpReadBody)が共有の event loop へ入らない(#3688 の子 (3) の 3b・3c)
 ;;;     (aiohttp の無い venv では skip)。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
@@ -31,7 +32,7 @@
                                                 HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
                                                 ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText
                                                 HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed
-                                                WsCloseSent AppendHttpScript HttpReadBody HttpBodyFailed HttpBodyOutcome ScriptedBody
+                                                WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyFailed HttpBodyOutcome ScriptedBody
                                                 WS-CUT-REASON HttpProbe HttpProbeAnswer])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
 
@@ -585,3 +586,77 @@
   (assert (= done "returned"))
   (assert (in "札 no-such への命令 HttpRespond" err) err)
   (assert (not-in "Traceback" err) err))
+
+
+;; --- 宣言の小さい本文は待ち受けの loop が先に読む(agora-redesign #3688 の子 (3) の 3c)-----------------------------------------
+
+;; 相手が送る本文(宣言の長さつき)と、読みの上限。
+(val SMALL-BODY b"small body")
+(val READ-LIMIT 64)
+
+
+(defk read-awaits [box]
+  {:pre [(: box queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "port 0 で開いて結んだ宛先を box へ置き、要求 1 つの本文を読み(HttpReadBody 1 回)、読めた本文で答えるため。答え = #(読みの間に
+   共有の event loop へ入った回数 読みの答え)。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (.put box bound)
+  (<- arrived HttpRequestArrived (HttpNextRequest))
+  (<- before int (ReadAwaits))
+  (<- outcome HttpBodyOutcome (HttpReadBody :ticket arrived.ticket :max-bytes READ-LIMIT))
+  (<- after int (ReadAwaits))
+  (val data (match outcome
+              (HttpBodyRead :data read) read
+              _ b"unread"))
+  (<- (HttpRespond :ticket arrived.ticket :status 200 :headers #() :body (HttpBodyBytes :data data)))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  #((- after before) outcome))
+
+
+(defk post-body [address path body seconds]
+  {:pre [(: address HttpAddress) (: path str) (: body bytes) (: seconds float)] :post [(: % Fetched)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "相手の要求 1 つ: 宣言の長さ(Content-Length)つきの本文で POST を送り、seconds 秒の内の答えを読む(来なければ status None)。"
+  (val connection (http.client.HTTPConnection address.host address.port :timeout seconds))
+  (try
+    (.request connection "POST" path :body body)
+    (val response (.getresponse connection))
+    (Fetched :status response.status :body (.decode (.read response) "utf-8"))
+    (except [TimeoutError]
+      (Fetched :status None :body ""))
+    (finally
+      (.close connection))))
+
+
+(deff send-once [box answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "待ち受けが開いたら本文つきの POST を 1 つ送り、答えを answers へ置くため(失敗なら例外を置く)。"
+  (try
+    (.put answers (run (post-body (.get box :timeout HOLD-SECONDS) "/one" SMALL-BODY WORK-SECONDS)))
+    (except [error Exception]
+      (.put answers error)))
+  None)
+
+
+(defk read-body-awaits []
+  {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で read-awaits を走らせ、#(共有の loop へ入った回数 読みの答え 相手が受けた答え) を返すため(aiohttp の無い venv では
+   skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (val box (queue.Queue))
+  (val answers (queue.Queue))
+  (.start (threading.Thread :target send-once :args #(box answers) :daemon True))
+  (<- read tuple (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (read-awaits box)))
+  (val got (.get answers :timeout HOLD-SECONDS))
+  (when (isinstance got Exception)
+    (raise got))
+  (+ read #(got)))
+
+
+(deftest test-the-aiohttp-server-reads-a-small-declared-body-without-a-round-trip
+  ;; 宣言の長さが小さい本文は、待ち受けの loop が到着を並べる前に読み切り、HttpReadBody は共有の event loop へ入らずに答える(直す前は
+  ;; Await 1 回 — 共有の loop → 待ち受けの loop → 戻りの往復)。読めた本文はそのまま相手へ戻る。
+  (<- got tuple (read-body-awaits))
+  (assert (= got #(0 (HttpBodyRead :data SMALL-BODY) (Fetched :status 200 :body "small body"))) got))
