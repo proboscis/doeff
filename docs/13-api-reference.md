@@ -389,6 +389,24 @@ prog = reader(env={"key": "value"})(prog)
 result = run(scheduled(prog))
 ```
 
+### with_handlers(handlers, program) and stacked_handlers(*handlers)
+
+`with_handlers([h1, h2], program)` applies a handler list in scope order: `h1` is outermost,
+`h2` innermost. An entry that carries the handler marker (made by `defhandler` or
+`doeff.handler()`) is called with the program; an entry without it is a raw effect dispatcher
+and is called with `(effect, k)`. A `Program -> Program` function passed without the marker —
+`lambda program: ...`, or a factory that returns one — is refused with a `TypeError` naming it
+when the list is applied, before anything runs. To pass several handlers as one, bundle them with
+`stacked_handlers(h1, h2)`: the result is a marked installer with the same order, and an
+empty `stacked_handlers()` is the identity.
+
+```python
+from doeff import stacked_handlers, with_handlers
+
+test_handlers = stacked_handlers(reader(env={"key": "value"}), state())
+result = run(scheduled(with_handlers([test_handlers, writer], my_program())))
+```
+
 ---
 
 ## Async and Concurrency Effects
