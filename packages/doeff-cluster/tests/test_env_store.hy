@@ -82,7 +82,7 @@
   (val sent [])
   (defn #^ httpx.Response handle [#^ httpx.Request request]
     (.append sent (json.loads request.content))
-    (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" []}))
+    (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" [] "draining" False}))
   ;; 拍の Program と同じく、root の言い換えに EnvReport を問うてから ReadDesired の欄で口へ渡す。
   (val env-link (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)
                          :handles-envs True))

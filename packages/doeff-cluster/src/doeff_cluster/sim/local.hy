@@ -166,7 +166,7 @@
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServicesUnreachable])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
-(import doeff_cluster.worker.protocol.declared [declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
+(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
@@ -1739,7 +1739,10 @@
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
       (do (val reply (get answer 1))
-          (<- read-jobs tuple (declared-job-specs (get reply "jobs")))
+          ;; 返事の宣言の部分(job の行と draining)を本番の coordinator への口の beat と同じ JSON の境界で 1 度だけ解き、draining を
+          ;; 版を据え置く印へ写す(#3684)。
+          (<- declared DeclaredReply (declared-reply-of-json reply))
+          (<- read-jobs tuple (declared-job-specs declared))
           ;; 印を知らない古い worker の代役は返事の印を読み捨てる(欄を知らない版の読みと同じ = 印の無い宣言)。
           (val jobs (if worker.ignores-keep-marks
                         (tuple (gfor s read-jobs (replace s :keep-when-cut-off False)))

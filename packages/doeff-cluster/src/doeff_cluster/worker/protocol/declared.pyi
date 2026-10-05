@@ -4,6 +4,8 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from pathlib import Path as Path
+from doeff_hy.wire import Malformed as Malformed
+from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
 from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
@@ -21,10 +23,21 @@ class EnvPlacement:
 def env_placement(declared: dict[str, object] | None, revision: str | None) -> _Program[EnvPlacement, object]:
     ...
 
-def declared_job_spec(job: dict[str, object]) -> _Program[JobSpec, object]:
+def declared_job_spec(job: dict[str, object], draining: bool) -> _Program[JobSpec, object]:
     ...
 
-def declared_job_specs(jobs: list[dict[str, object]]) -> _Program[tuple[JobSpec, ...], object]:
+@dataclass(frozen=True, kw_only=True)
+class DeclaredReply:
+    jobs: tuple[dict[str, object], ...]
+    draining: bool
+
+class DeclaredReplyMalformed(ValueError):
+    ...
+
+def declared_reply_of_json(reply: dict[str, object]) -> _Program[DeclaredReply, object]:
+    ...
+
+def declared_job_specs(reply: DeclaredReply) -> _Program[tuple[JobSpec, ...], object]:
     ...
 JOB_ENTRY: str
 

@@ -63,7 +63,7 @@
     (when (in host self.down) (raise (httpx.ConnectTimeout "timed out" :request request)))
     (when (in host self.read-fails) (raise (httpx.ReadTimeout "timed out" :request request)))
     (.append self.sent #(host request.url.path))
-    (httpx.Response 200 :json {"jobs" [] "tasks" [] "host" host}))
+    (httpx.Response 200 :json {"jobs" [] "tasks" [] "draining" False "host" host}))
   (defn #^ httpx.MockTransport transport [self] (httpx.MockTransport self.handle)))
 
 (deftest test-heartbeat-silence-is-counted-across-an-address-switch
@@ -94,7 +94,7 @@
   ;; 32 分 log に何も出さなかった(断りを「届かない」と同じに数え、fence を越えると状態の file の note も空になる)。
   ;; 名乗れない理由(status と coordinator の返した本文)は変わり目ごとに 1 行、名乗れた時に 1 行出す。同じ理由の繰り返しは出さない。
   (setv refusal (httpx.Response 400 :json {"error" "TypeError: 'NoneType' object is not subscriptable"})
-        accepted (httpx.Response 200 :json {"jobs" [] "tasks" []})
+        accepted (httpx.Response 200 :json {"jobs" [] "tasks" [] "draining" False})
         coordinator (ScriptedCoordinator [refusal refusal accepted accepted])
         link (LinkRig LAN "w" #() 1 0 20000 :transport (.transport coordinator)))
   (setv first (.poll link))
