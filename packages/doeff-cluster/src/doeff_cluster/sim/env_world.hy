@@ -38,6 +38,7 @@
 (import functools [partial])
 (import hashlib)
 (import json)
+(import re)
 (import posixpath)
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
@@ -79,11 +80,15 @@
 ;;   NO-INTERPRETER      sync が「Python の interpreter が無い」で終わる
 ;;   INDEX-UNREACHABLE   sync が package の index に届かない
 ;;   SDIST-BUILD-ERROR   sync が source の配布物の build に失敗する
-;;   BUILD-KILLED        build が signal で殺される(負の終わり)
+;;   BUILD-KILLED        build が signal で殺される(負の終わり — cgroup の oom_kill は増えない)
+;;   BUILD-MEMORY-KILLED build が cgroup の memory の上限で殺される(signal 9 の終わり・cgroup の memory.events の oom_kill が 1 増える — #3668)
 ;;   BUILD-ERROR         build が compiler の誤りで終わる(終わり 1)
-(defenum UvFault LOCK-OUTDATED NO-INTERPRETER INDEX-UNREACHABLE SDIST-BUILD-ERROR BUILD-KILLED BUILD-ERROR)
+(defenum UvFault LOCK-OUTDATED NO-INTERPRETER INDEX-UNREACHABLE SDIST-BUILD-ERROR BUILD-KILLED BUILD-MEMORY-KILLED BUILD-ERROR)
 (val SYNC-FAULTS #(UvFault.LOCK-OUTDATED UvFault.NO-INTERPRETER UvFault.INDEX-UNREACHABLE UvFault.SDIST-BUILD-ERROR))
-(val BUILD-FAULTS #(UvFault.BUILD-KILLED UvFault.BUILD-ERROR))
+(val BUILD-FAULTS #(UvFault.BUILD-KILLED UvFault.BUILD-MEMORY-KILLED UvFault.BUILD-ERROR))
+;; 模擬の worker の container の cgroup の memory の出来事の数え(本物と同じ path・同じ形 — 翻訳が子の前後で oom_kill を読む)。
+(val CGROUP-DIR "/sys/fs/cgroup")
+(val CGROUP-EVENTS-PATH "/sys/fs/cgroup/memory.events")
 
 
 (defrecord UvFailure
@@ -501,13 +506,34 @@
           (ProcessOutcome :stdout "" :stderr (.format "Prepared {} packages in 1ms\n" (len missing)) :exit-code 0))))
 
 
+(defk cgroup-events-text [oom-kills]
+  {:pre [(: oom-kills int)] :post [(: % str)]}
+  "模擬の cgroup の memory.events の中身を本物と同じ行の形で作るため(oom_kill の数だけが動く)。"
+  (.format "low 0\nhigh 0\nmax 0\noom {}\noom_kill {}\noom_group_kill 0\n" oom-kills oom-kills))
+
+
+(defk count-oom-kill []
+  {:pre [] :post [(: % None)]}
+  "模擬の kernel が cgroup の memory の上限で子を殺した印を残すため: memory.events の oom_kill を 1 増やす(本物と同じ形の行)。"
+  (<- seen (| str FileFailed) (ReadText CGROUP-EVENTS-PATH))
+  (val text (if (isinstance seen str) seen ""))
+  (val found (re.search r"(?m)^oom_kill (\d+)$" text))
+  (val count (if found (int (.group found 1)) 0))
+  (<- (WriteText CGROUP-EVENTS-PATH (! (cgroup-events-text (+ count 1)))))
+  None)
+
+
 (defk uv-build [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "uv build --wheel --out-dir <dir> <source> に答える: native の build(冷たい秒)で dir に wheel を 1 つ置く。"
   (<- failure (| UvFailure None) (uv-failure-now))
   (if (and failure (in failure.fault BUILD-FAULTS))
-      ;; signal での終了は負の終わり、compiler の誤りは 1 — 一時か恒久かは翻訳が本物と同じく終わりで読み分ける。
-      (ProcessOutcome :stdout "" :stderr (+ failure.detail "\n") :exit-code (if (= failure.fault UvFault.BUILD-KILLED) -9 1))
+      ;; signal での終了は負の終わり、compiler の誤りは 1 — 一時か恒久かは翻訳が本物と同じく終わりで読み分ける。memory の上限で殺された
+      ;; 時は、本物の kernel と同じく cgroup の oom_kill を 1 増やしてから signal 9 で終わる。
+      (do (when (= failure.fault UvFault.BUILD-MEMORY-KILLED)
+            (<- (count-oom-kill)))
+          (ProcessOutcome :stdout "" :stderr (+ failure.detail "\n")
+                          :exit-code (if (in failure.fault #(UvFault.BUILD-KILLED UvFault.BUILD-MEMORY-KILLED)) -9 1)))
       (do (<- (Delay world.cold-seconds))
           (<- out str (required-option-of args "--out-dir"))
           (<- (write-file (posixpath.join out (+ (posixpath.basename (get args -1)) ".whl")) ""))
@@ -637,15 +663,17 @@
 
 (defk world-files-of [world]
   {:pre [(: world EnvWorld)] :post [(: % MemoryFiles)] :tags {:context "runtime-env" :role "entry"}}
-  "memory の置き場の初めの中身(state と world の dir・今の uv の失敗・今届かない url・空き)。"
+  "memory の置き場の初めの中身(state と world の dir・今の uv の失敗・今届かない url・空き・cgroup の memory の出来事の数え)。"
   (val failure world.uv-failure)
-  (MemoryFiles :dirs #(STATE-DIR WORLD-DIR "/proc" "/proc/self")
+  (<- events str (cgroup-events-text 0))
+  (MemoryFiles :dirs #(STATE-DIR WORLD-DIR "/proc" "/proc/self" CGROUP-DIR)
                :files (+ (if (is failure None)
                              #()
                              ;; 世界の file の JSON は UvFailure の欄そのまま(fault は StrEnum なので文字で書かれる)。
                              #((MemoryFile :path FAILURE-PATH :content (.encode (json.dumps (asdict failure))))))
                          #((MemoryFile :path UNREACHABLE-PATH :content (.encode (json.dumps (sorted world.unreachable))))
-                           (MemoryFile :path MOUNT-TABLE :content (.encode world.mounts))))
+                           (MemoryFile :path MOUNT-TABLE :content (.encode world.mounts))
+                           (MemoryFile :path CGROUP-EVENTS-PATH :content (.encode events))))
                :free world.disk-free))
 
 

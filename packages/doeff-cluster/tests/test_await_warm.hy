@@ -27,6 +27,9 @@
 ;; = 10 秒)で起きて読み直すだけの待ちは入らない — Worker の行に env を載せないと、測って約 11 秒遅れ(30 秒の組みで 41 秒)て赤になる。
 (val READY-SLACK-SECONDS 5.0)
 (val FAILURE (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail "compiler の誤り(模擬)" :retryable False))
+;; 組みの子が cgroup の memory の上限で殺された worker の名乗り(worker の翻訳が signal 9 と oom_kill の増えから作る形 — test_env_prepare が持つ)。
+(val MEMORY-FAILURE (EnvFailure :kind EnvFailureKind.MEMORY-KILLED :retryable False
+                                :detail "native の build が signal 9 で終わり、cgroup の memory.events の oom_kill が 1 増えた(memory の上限で殺された)"))
 
 
 (defrecord Awaited
@@ -69,6 +72,17 @@
   (assert (isinstance seen.answer WarmFailed) seen)
   (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable))
              [#("gpu-1" EnvFailureKind.NATIVE-BUILD-FAILED.value False)])
+          seen)
+  (assert (< seen.waited (+ PREPARE-SECONDS READY-SLACK-SECONDS)) seen))
+
+
+(deftest test-a-warm-row-killed-by-the-memory-limit-answers-failed-as-memory-killed
+  ;; 組みの子が cgroup の memory の上限で殺された worker(memory-killed・恒久)は、待ち続けず WarmFailed で返り、種類 memory-killed が読める
+  ;; — 回の Program は memory を読まずに「先の組みを取り消して止まりの中で宣言する形へ」を決められる(vg-w45・cisco-c8 の可 10-06 00:3x)。
+  (<- seen Awaited (sim-cluster NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS MEMORY-FAILURE))))
+  (assert (isinstance seen.answer WarmFailed) seen)
+  (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable))
+             [#("gpu-1" EnvFailureKind.MEMORY-KILLED.value False)])
           seen)
   (assert (< seen.waited (+ PREPARE-SECONDS READY-SLACK-SECONDS)) seen))
 

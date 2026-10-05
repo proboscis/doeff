@@ -55,6 +55,12 @@
 (val NETWORK-PATTERN (re.compile r"(?i)failed to fetch|error sending request|dns error|connection (?:refused|reset)|timed out|could not resolve|temporary failure|could not read from remote"))
 (val PYTHON-PATTERN (re.compile r"(?i)no interpreter found|failed to download .*python|python .*not found|no python"))
 (val PREPARED-PATTERN (re.compile r"Prepared (\d+) package"))
+;; worker の container の cgroup(v2)の memory の出来事の数え(oom_kill = memory の上限で殺した process の数)。組みの子の終わりが memory の
+;; 上限によるかを、子の前後のこの数の差で読む(#3668・memory-killed)。読めない機体(cgroup v1・file が無い)では差を 0 と読む。
+(val CGROUP-MEMORY-EVENTS "/sys/fs/cgroup/memory.events")
+(val OOM-KILL-PATTERN (re.compile r"(?m)^oom_kill (\d+)$"))
+;; signal 9(SIGKILL)での子の終わりの番号(子 process の答えは負の signal の番号)。
+(val KILLED-CODE -9)
 ;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(carried=… rebuilt=… reused=… failed=… carry_s=… compile_s=…
 ;; closure_s=… scan_s=… — 全部の欄を読む・#3607 の H2・#3675)と、木ごとの行(tree=<--tree の綴り> carried=… rebuilt=… reused=… failed=…
 ;; problem=<文|->)。行の頭には slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。秒は道具が小数 2 桁に丸めて書く。
@@ -100,7 +106,9 @@
   "外の命令 1 回の結果(準備の要求の答えを作るため)。"
   (#^ int code)
   (#^ str stdout)
-  (#^ str stderr))
+  (#^ str stderr)
+  ;; 子の間に cgroup の memory の上限で殺された process の数(uv の子だけが数える — 他の子は 0)。
+  (setv #^ int oom-kills 0))
 
 
 ;; --- 汎用の effect を出す道具 ------------------------------------------------------------------
@@ -129,12 +137,38 @@
   (tuple (gfor v (uv-variables state-dir) (EnvEntry :name v.name :value v.value))))
 
 
+(defk oom-kills-now []
+  {:pre [] :post [(: % (| int None))]}
+  "worker の container の cgroup の oom_kill の数を読むため(組みの子が memory の上限で殺されたかを前後の差で知る)。読めなければ None。"
+  (<- read (| str FileFailed) (ReadText CGROUP-MEMORY-EVENTS))
+  (match read
+    (FileFailed) None
+    _ (let [found (.search OOM-KILL-PATTERN read)]
+        (if found (int (.group found 1)) None))))
+
+
 (defk uv-command [args cwd env]
   {:pre [(: args tuple) (: cwd str) (: env tuple)] :post [(: % CommandResult)]}
-  "uv を 1 回起こして結果を読むため(env = 親の環境から UV-DROP を外して足す変数)。"
+  "uv を 1 回起こして結果を読むため(env = 親の環境から UV-DROP を外して足す変数)。組みの子が memory の上限で殺されたかを名乗る所は
+   ここ 1 つ: 子の前後で cgroup の oom_kill を読み、差を結果に載せる(判断は memory-killed-of)。"
+  (<- before (| int None) (oom-kills-now))
   (<- outcome ProcessOutcome (RunProcess :argv args :cwd cwd :env env :env-mode EnvMode.EXTEND :env-drop UV-DROP))
-  (<- result CommandResult (outcome-result outcome))
-  result)
+  (<- after (| int None) (oom-kills-now))
+  (<- plain CommandResult (outcome-result outcome))
+  (CommandResult :code plain.code :stdout plain.stdout :stderr plain.stderr
+                 :oom-kills (if (and (is-not before None) (is-not after None)) (max 0 (- after before)) 0)))
+
+
+(defk memory-killed-of [result what]
+  {:pre [(: result CommandResult) (: what str)] :post [(: % (| EnvFailure None))]}
+  "組みの子の終わりが cgroup の memory の上限によるなら memory-killed の失敗にするため(恒久 — 同じ上限の下で組み直しても殺される):
+   signal 9 で終わり、子の間に oom_kill が増えた時だけ。それ以外(増えていない signal 9 を含む)は None — 呼び手が今の種類で答える。"
+  (if (and (= result.code KILLED-CODE) (> result.oom-kills 0))
+      (EnvFailure :kind EnvFailureKind.MEMORY-KILLED
+                  :detail (.format "{} が signal 9 で終わり、cgroup の memory.events の oom_kill が {} 増えた(memory の上限で殺された)"
+                                   what result.oom-kills)
+                  :retryable False)
+      None))
 
 
 (defk git-environment [key-file]
@@ -348,7 +382,10 @@
                   (WheelReady :path (posixpath.join target (posixpath.basename made)) :built True))
               (do (<- detail str (tail-of built))
                   (<- (remove-if-present tmp))
-                  (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail detail :retryable (< built.code 0)))))))
+                  (<- killed (| EnvFailure None) (memory-killed-of built "native の build"))
+                  (if (is-not killed None)
+                      killed
+                      (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail detail :retryable (< built.code 0))))))))
 
 
 (defk site-packages [project-dir]
@@ -400,10 +437,12 @@
 
 (defk sync-failure [result]
   {:pre [(: result CommandResult)] :post [(: % EnvFailure)]}
-  "uv sync の失敗を kind に分ける: lock が古い = lock-stale・Python を取れない = python-unavailable・network = 一時の sync-failed・
-   それ以外(sdist の build の失敗・解けない依存)= 恒久の sync-failed。"
+  "uv sync の失敗を kind に分ける: cgroup の memory の上限で殺された = memory-killed・lock が古い = lock-stale・Python を取れない =
+   python-unavailable・network = 一時の sync-failed・それ以外(sdist の build の失敗・解けない依存)= 恒久の sync-failed。"
   (<- detail str (tail-of result))
+  (<- killed (| EnvFailure None) (memory-killed-of result "uv sync"))
   (cond
+    (is-not killed None) killed
     (.search LOCK-STALE-PATTERN detail) (EnvFailure :kind EnvFailureKind.LOCK-STALE :detail detail :retryable False)
     (.search PYTHON-PATTERN detail) (EnvFailure :kind EnvFailureKind.PYTHON-UNAVAILABLE :detail detail :retryable True)
     (.search NETWORK-PATTERN detail) (EnvFailure :kind EnvFailureKind.SYNC-FAILED :detail detail :retryable True)

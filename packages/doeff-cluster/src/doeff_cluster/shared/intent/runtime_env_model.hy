@@ -236,7 +236,7 @@
 
 ;; --- 準備の失敗(worker の側・値で返す) ----------------------------------------------------
 
-;; 準備の失敗の種類(答えの 11 種。宣言の誤りの env-invalid は答えではなく送り手の例外 RuntimeEnvInvalid)。どれも子 process を
+;; 準備の失敗の種類(答えの 12 種。宣言の誤りの env-invalid は答えではなく送り手の例外 RuntimeEnvInvalid)。どれも子 process を
 ;; 起こす前に起きるので、置き直しても同じ task を 2 度実行しない。worker は URL を断らない — 鍵の表に無い URL は鍵なしで clone し、
 ;; 読めない非公開の repo は clone の失敗(repo-unreachable)で返る(2026-10-05 に断る種類 repo-denied を外した)。
 ;;   repo-unreachable    clone / fetch の失敗(一時 — network・読む資格の無い非公開の repo)
@@ -245,9 +245,12 @@
 ;;   lock-stale          uv sync が「lock が古い」で断る(worker の準備は --frozen なので今は出ない — #2730。翻訳の読み分けと共に残す)
 ;;   sync-failed         uv sync のその他の失敗(一時 / 恒久は uv の出力で分ける)
 ;;   env-incompatible    名前の影・子の約束の版の外
+;;   memory-killed       組みの子(uv の build・sync)が cgroup の memory の上限で殺された: signal 9 で終わり、cgroup の memory.events の
+;;                       oom_kill が子を起こす前より増えた(恒久 — 同じ上限の下で組み直しても同じく殺される。増えていない signal 9 は
+;;                       今までどおり native-build-failed / sync-failed の一時の失敗・#3668・cisco-c8 の可 2026-10-06 00:3x)
 (defenum EnvFailureKind
   REPO-UNREACHABLE COMMIT-MISSING LOCK-MISMATCH LOCK-STALE SYNC-FAILED NATIVE-BUILD-FAILED
-  PYTHON-UNAVAILABLE TOOL-MISSING DISK-FULL ENV-INCOMPATIBLE PREPARE-TIMEOUT)
+  PYTHON-UNAVAILABLE TOOL-MISSING DISK-FULL ENV-INCOMPATIBLE PREPARE-TIMEOUT MEMORY-KILLED)
 
 
 ;; kind の既定の「一時か」。sync-failed と native-build-failed は起きた所の handler が値で決める。
