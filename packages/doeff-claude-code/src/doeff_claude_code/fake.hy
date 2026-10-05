@@ -26,7 +26,8 @@
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest])
-(import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession])
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
+                                  NoLiveProcess StopReason])
 
 (setv QUICK-TURN-SECONDS 0.1)
 ;; 仮想の時計は datetime(マイクロ秒の刻み)なので、秒の小数の足し算の端数で「期限の直前」に留まらないように
@@ -115,9 +116,13 @@
 
 
 (defclass FakeSession []
+  "launches = この会話で起こした process の数(手番を頼まれるたびに起こす — 生き残った入力の手番は同じ process)・
+   stopped-because = 最後の process を降ろした訳(手番の終わりで降ろす — #517 の形)。"
   (defn __init__ [self #^ str session-id home #^ str cwd]
     (setv self.session-id session-id self.home home self.cwd cwd
           self.current-seq 0 self.next-line-seq 0 self.closed False)
+    (setv #^ int self.launches 0)
+    (setv #^ (| StopReason None) self.stopped-because None)
     (setv #^ (get dict #(int FakeTurn)) self.turns {}))
 
   (defn running [self]
@@ -189,7 +194,7 @@
 
 (defk finish [#^ FakeSession session #^ FakeTurn turn end]
   {:pre [(: session FakeSession) (: turn FakeTurn) (: end ClaudeTurnEnd)] :post [(: % (type None))]}
-  (setv turn.end end turn.phase "done")
+  (setv turn.end end turn.phase "done" session.stopped-because StopReason.TURN-END)
   (<- (ring-turn turn))
   None)
 
@@ -311,6 +316,8 @@
   "手番を開いて最初の行を出す。announce = 入力の行の運命と init を出す(生き残った入力の手番は started から)。"
   (<- now (GetMonotonic))
   (+= session.current-seq 1)
+  ;; 頼まれた手番(announce)は process を起こす。生き残った入力の手番は同じ process が続ける。
+  (when announce (+= session.launches 1))
   (setv turn (FakeTurn session.current-seq now reply refs))
   (setv (get session.turns turn.seq) turn)
   (for [ref refs]
@@ -511,6 +518,23 @@
     (.pop world.activity key None))
   (bool keys))
 
+(defk fake-live-process [#^ FakeClaudeWorld world #^ str session-id]
+  {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % (| LiveProcess NoLiveProcess))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の process の見え方を答えるため(本番の handler と同じ筋書きで、使い回しと守りを確かめる口 — #3672)。
+   fake の process は手番が走っている間だけ生きる(手番の終わりで降ろす — #517 の形)。"
+  (val session (.get world.sessions session-id))
+  (cond
+    (is session None) (NoLiveProcess :launches 0 :stopped-because None)
+    (is-not (.running session) None) (LiveProcess :launches session.launches)
+    True (NoLiveProcess :launches session.launches :stopped-because session.stopped-because)))
+
+(defk fake-emit-outside [#^ FakeClaudeWorld world #^ str session-id]
+  {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
+  "生きていて手番を走らせていない process に手番の外の出力をさせるため(守りの筋書きの口)。fake は手番の終わりで process を
+   降ろすので、手番を走らせていない生きた process は無い(答えは常に偽 — 生かしたまま待たせる形が入るまで)。"
+  False)
+
 
 ;; --- handler -----------------------------------------------------------------------------------
 
@@ -541,6 +565,12 @@
   (ClaudeDropProcess [session-id]
     (<- dropped (fake-drop world session-id))
     (resume dropped))
+  (ClaudeLiveProcess [session-id]
+    (<- view (fake-live-process world session-id))
+    (resume view))
+  (ClaudeEmitOutsideTurn [session-id]
+    (<- emitted (fake-emit-outside world session-id))
+    (resume emitted))
   (ClaudeForgetSession [session-id]
     (<- forgotten (fake-forget world session-id))
     (resume forgotten)))

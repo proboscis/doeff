@@ -207,9 +207,16 @@
   (defn serve [self]
     (while True
       (setv record (.read-record self 60.0))
-      (when (and (is-not record None) (= (.get record "type") "user"))
-        (.lifecycle self (.get record "uuid") "queued")
-        (.run-turn self [record])))))
+      (cond
+        (and (is-not record None) (= (.get record "type") "user"))
+          (do
+            (.lifecycle self (.get record "uuid") "queued")
+            (.run-turn self [record]))
+        ;; 検だけの行(本物の claude には書かない — faults.ClaudeEmitOutsideTurn): 手番の外で本文を 1 行出す。背景の仕事の完了で
+        ;; result の後の CLI が手番の外に動いた形(#517 の事故・#3672 の守り)を模す。
+        (and (is-not record None) (= (.get record "type") "stub_emit_outside"))
+          (emit {"type" "assistant" "session_id" self.session-id
+                 "message" {"role" "assistant" "content" [{"type" "text" "text" "outside the turn"}]}})))))
 
 
 (defn open-session [#^ list args]

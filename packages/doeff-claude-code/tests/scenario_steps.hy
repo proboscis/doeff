@@ -3,13 +3,16 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import uuid)
-(import doeff_time [GetMonotonic])
+(import doeff_time [Delay GetMonotonic])
 (import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession])
 (import doeff_claude_code.lines [AssistantMessage PermissionRequested])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents TurnStarted TurnEventPage])
+(import doeff_claude_code.faults [ClaudeLiveProcess LiveProcess NoLiveProcess])
 (import tests.interpreters [ScenarioSettings Settings])
 
 (setv PAGE-WAIT-SECONDS 5.0)
+;; process の見え方を読み直す間隔(秒)— 本番の handler の降ろし始めは読み手の thread の 1 行の処理の内なので、短くてよい。
+(setv VIEW-POLL-SECONDS 0.05)
 
 
 (defclass [(dataclass :frozen True)] TurnRecord []
@@ -58,6 +61,18 @@
     (when (stop (tuple lines) end) (return (TurnRecord (tuple lines) end after)))
     (<- now (GetMonotonic))
     (assert (< (- now started) timeout) (.format "{} 秒の内に読み終わらない: {!r}" timeout (lfor line lines line.kind)))))
+
+(defk live-process-until [#^ str session-id #^ Callable stop #^ float timeout]
+  {:pre [(: session-id str) (: stop Callable) (: timeout float)] :post [(: % (| LiveProcess NoLiveProcess))]}
+  "会話の process の見え方が stop を満たすまで読む(上限 timeout 秒)— 本番の handler は手番の外の出力を読み手の thread で受けて
+   process を降ろすので、出力させた直後には見え方がまだ替わっていない事がある(fake の仮想の時計では一瞬で進む)。"
+  (<- started (GetMonotonic))
+  (while True
+    (<- view (ClaudeLiveProcess session-id))
+    (when (stop view) (return view))
+    (<- now (GetMonotonic))
+    (assert (< (- now started) timeout) (.format "{} 秒の内に process の見え方が替わらない: {!r}" timeout view))
+    (<- (Delay VIEW-POLL-SECONDS))))
 
 (defk read-to-end [#^ ClaudeTurn turn #^ float timeout]
   {:pre [(: turn ClaudeTurn) (: timeout float)] :post [(: % TurnRecord)]}
