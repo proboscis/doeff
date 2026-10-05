@@ -1,8 +1,8 @@
 """契約 `(: % (get tuple #(X ...)))` / `(: % (of dict K V))` と型付き束縛が実行時に通ること。
 
 要素の型つきの総称型は isinstance に渡せない(`TypeError: isinstance() argument 2 cannot be a
-parameterized generic`)。契約と `<-` の型付き束縛は `_runtime-type` の 1 点で外側の型(tuple・dict)
-へ写し、実行時には外側の型だけを確かめる(要素の型は静的な型検査が見る — agora-redesign #1790)。
+parameterized generic`)。契約と `<-` の型付き束縛は `doeff_hy.type_forms.runtime_type_form` の 1 点で外側の型(tuple・dict)
+へ写し、実行時には外側の型だけを確かめる(要素の型は静的な型検査が見る — #1790)。
 """
 
 from __future__ import annotations
@@ -81,9 +81,14 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
 
 
 def _run(program: object) -> object:
-    from doeff import run
+    """読み込んだ Hy の module の Program を走らせる(module の属性は型の上では object なので Program に絞る)。"""
+    from doeff import Program, run
 
-    return run(program)
+    match program:
+        case Program():
+            return run(program)
+        case _:
+            raise TypeError(f"Program でない値を走らせようとした: {program!r}")
 
 
 def test_generic_tuple_return_contract_accepts_a_tuple(mod: ModuleType) -> None:
