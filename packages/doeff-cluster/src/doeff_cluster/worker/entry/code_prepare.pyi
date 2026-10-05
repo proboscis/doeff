@@ -14,6 +14,7 @@ from doeff_time import sync_time_handler as sync_time_handler
 from doeff_core_effects.handlers import slog_handler as slog_handler
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathStat as PathStat
+from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import WriteText as WriteText
@@ -24,7 +25,6 @@ from doeff_core_effects.process_effects import InterpreterFacts as InterpreterFa
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
 from doeff_core_effects.process_effects import RunProcess as RunProcess
-from doeff_cluster.worker.core.code_plan import carry_pairs as carry_pairs
 from doeff_cluster.worker.core.code_plan import compile_plan as compile_plan
 from doeff_cluster.worker.core.code_plan import marker_content as marker_content
 from doeff_cluster.worker.core.code_plan import tree_problem as tree_problem
@@ -60,6 +60,9 @@ def bake_trees(shaped: tuple) -> _Program[tuple, object]:
     ...
 
 def old_import_table(old: str | None) -> _Program[plan.ImportTable, object]:
+    ...
+
+def old_pyc_heads(old: str, pycs: tuple) -> _Program[tuple, object]:
     ...
 
 def closure_of_trees(trees: tuple, sources: tuple, entries: tuple) -> _Program[tuple, object]:

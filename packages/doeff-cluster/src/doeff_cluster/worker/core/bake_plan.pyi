@@ -2,6 +2,8 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
+from enum import StrEnum as StrEnum
+from doeff_cluster.worker.core.code_plan import carry_pairs as carry_pairs
 from doeff_cluster.worker.core.code_plan import imported_names as imported_names
 from doeff_cluster.worker.core.code_plan import module_name as module_name
 
@@ -35,6 +37,18 @@ class ImportRow:
 class ImportTable:
     rows: tuple
     problem: str | None
+
+class PycScheme(StrEnum):
+    CHECKED_HASH = 'checked-hash'
+    UNCHECKED_HASH = 'unchecked-hash'
+    TIMESTAMP = 'timestamp'
+    UNREADABLE = 'unreadable'
+
+@dataclass(frozen=True, kw_only=True)
+class PycHead:
+    path: str
+    scheme: PycScheme
+    magic: bytes
 
 @dataclass(frozen=True, kw_only=True)
 class BakeItem:
@@ -116,6 +130,13 @@ def tree_failures(failures: tuple, tree: str) -> _Program[list, object]:
     ...
 
 def tree_reused(reused: tuple, tree: str) -> _Program[int, object]:
+    ...
+PYC_HEAD_BYTES: int
+
+def pyc_head_of(path: str, head: bytes | None) -> _Program[PycHead, object]:
+    ...
+
+def carried_pycs(heads: tuple, magic: bytes, old_sources: frozenset, new_sources: frozenset, new_pycs: frozenset, changed: frozenset) -> _Program[list, object]:
     ...
 
 def bake_order(items: tuple) -> _Program[tuple, object]:
