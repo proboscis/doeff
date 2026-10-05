@@ -11,25 +11,28 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import collections.abc [Callable])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView])
-(import doeff_cluster.worker.core.policy [plan statuses])
+(import doeff_cluster.worker.core.policy [plan statuses sweep-actions declared-jobs declared-warm])
 
 
 (defk quiet-beats [state policy world-at now limit]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: world-at Callable) (: now int) (: limit int) (>= limit 1)]
    :post [(: % int) (<= 1 % limit)] :tags {:context "worker" :role "judgment"}}
   "now の拍の後、次に何かが変わる拍まで眠ってよい拍の数(1 以上 limit 以下 — 1 拍 = tick-seconds)を知るため。1 拍先から 1 拍ずつ、
-   本番の拍と同じ判断(plan・statuses)を試し、action が出るか、状態の報告が now の拍の報告と違う最初の拍までの数を答える。limit 拍の
+   本番の拍と同じ判断(plan・sweep-actions・statuses)を試し、action が出るか、状態の報告が now の拍の報告と違う最初の拍までの数を答える。limit 拍の
    内に無ければ limit(その拍は試さずに打つ)。間の拍は何も変えないので、次に打つ拍とそこでの判断は 1 拍ずつ打った時と同じになる。"
   (val tick-ms (int (* 1000 policy.tick-seconds)))
+  (<- desired tuple (declared-jobs state.declaration))
+  (<- warm tuple (declared-warm state.declaration))
   (<- here WorldView (world-at now))
-  (<- reported tuple (statuses now state.desired here state.records policy))
+  (<- reported tuple (statuses now desired here state.records policy))
   (var beats 1)
   (var found None)
   (while (and (is found None) (< beats limit))
     (val at (+ now (* beats tick-ms)))
     (<- seen WorldView (world-at at))
-    (if (or (! (plan at state.desired seen state.records policy :warm state.warm))
-            (!= (! (statuses at state.desired seen state.records policy)) reported))
+    (if (or (! (plan at desired seen state.records policy :warm warm))
+            (! (sweep-actions state.declaration seen))
+            (!= (! (statuses at desired seen state.records policy)) reported))
         (:= found beats)
         (:= beats (+ beats 1))))
   (if (is found None) limit found))

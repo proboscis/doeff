@@ -40,8 +40,8 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv StartWarmChild WarmChildView WarmChildMark
-                                    EnvDisk] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.core.policy [plan pinned-env-keys])
+                                    EnvDisk NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
+(import doeff_cluster.worker.core.policy [plan pinned-env-keys sweep-actions])
 (import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.worker.core.bake_plan [cpu-limit-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
@@ -448,13 +448,15 @@
                         :env-disk (EnvDisk :free 10 :floor 100 :pinned (frozenset))))
   (val pinned (! (pinned-env-keys #(spec) world #(warm))))
   (assert (= pinned (frozenset #((code-key spec) warm.key "env-preparing"))) pinned)
-  (val policy (WorkerPolicy))
-  (val actions (! (plan 0 #(spec) world {} policy :warm #(warm))))
-  (assert (in (SweepEnvs pinned) actions) "空きが下限を切れば固定の集合を渡して掃除する")
+  (val declaration (DeclarationRead :jobs #(spec) :warm #(warm)))
+  (assert (= (! (sweep-actions declaration world)) #((SweepEnvs pinned))) "空きが下限を切れば固定の集合を渡して掃除する")
   (val roomy (replace world :env-disk (EnvDisk :free 1000 :floor 100 :pinned pinned)))
-  (<- roomy-actions tuple (plan 0 #(spec) roomy {} policy :warm #(warm)))
-  (assert (not (any (gfor a roomy-actions (isinstance a SweepEnvs))))
-          "空きが足り、固定の集合が変わらなければ掃除の係を呼ばない"))
+  (assert (= (! (sweep-actions declaration roomy)) #()) "空きが足り、固定の集合が変わらなければ掃除の係を呼ばない")
+  ;; 宣言をまだ一度も読めていない間(起き直した直後 — #3731)は、空きが下限を切っていても掃除の係を呼ばない。
+  (assert (= (! (sweep-actions (NotYetRead) world)) #()) "宣言を読む前は掃除しない")
+  (<- planned tuple (plan 0 #(spec) world {} (WorkerPolicy) :warm #(warm)))
+  (assert (not (any (gfor a planned (isinstance a SweepEnvs))))
+          "掃除は plan でなく最後に読めた宣言で判じる sweep-actions が出す"))
 
 
 ;; --- bytecode の焼き(#664 の実測から) -------------------------------------------------------------
