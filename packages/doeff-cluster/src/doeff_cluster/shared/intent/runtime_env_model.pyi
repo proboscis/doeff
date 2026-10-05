@@ -116,7 +116,6 @@ class RuntimeEnv:
     bytecode_entries: tuple[str, ...] = ()
 
 class EnvFailureKind(StrEnum):
-    REPO_DENIED = "repo-denied"
     REPO_UNREACHABLE = "repo-unreachable"
     COMMIT_MISSING = "commit-missing"
     LOCK_MISMATCH = "lock-mismatch"

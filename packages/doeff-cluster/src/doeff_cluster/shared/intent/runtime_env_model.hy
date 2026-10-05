@@ -215,17 +215,17 @@
 
 ;; --- 準備の失敗(worker の側・値で返す) ----------------------------------------------------
 
-;; 準備の失敗の種類(答えの 12 種。宣言の誤りの env-invalid は答えではなく送り手の例外 RuntimeEnvInvalid)。どれも子 process を
-;; 起こす前に起きるので、置き直しても同じ task を 2 度実行しない。
-;;   repo-denied         worker の許可表に URL が無い・鍵が無い(その worker では恒久)
-;;   repo-unreachable    clone / fetch の network の失敗(一時)
+;; 準備の失敗の種類(答えの 11 種。宣言の誤りの env-invalid は答えではなく送り手の例外 RuntimeEnvInvalid)。どれも子 process を
+;; 起こす前に起きるので、置き直しても同じ task を 2 度実行しない。worker は URL を断らない — 鍵の表に無い URL は鍵なしで clone し、
+;; 読めない非公開の repo は clone の失敗(repo-unreachable)で返る(2026-10-05 に断る種類 repo-denied を外した)。
+;;   repo-unreachable    clone / fetch の失敗(一時 — network・読む資格の無い非公開の repo)
 ;;   commit-missing      fetch の後も commit が無い(送り手が push していない)
 ;;   lock-mismatch       展開した uv.lock の sha256 が宣言と違う
 ;;   lock-stale          uv sync が「lock が古い」で断る(worker の準備は --frozen なので今は出ない — #2730。翻訳の読み分けと共に残す)
 ;;   sync-failed         uv sync のその他の失敗(一時 / 恒久は uv の出力で分ける)
 ;;   env-incompatible    名前の影・子の約束の版の外
 (defenum EnvFailureKind
-  REPO-DENIED REPO-UNREACHABLE COMMIT-MISSING LOCK-MISMATCH LOCK-STALE SYNC-FAILED NATIVE-BUILD-FAILED
+  REPO-UNREACHABLE COMMIT-MISSING LOCK-MISMATCH LOCK-STALE SYNC-FAILED NATIVE-BUILD-FAILED
   PYTHON-UNAVAILABLE TOOL-MISSING DISK-FULL ENV-INCOMPATIBLE PREPARE-TIMEOUT)
 
 

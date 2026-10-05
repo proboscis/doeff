@@ -10,8 +10,9 @@
 ;;;                   RemoveTree・AcquireLock・ReleaseLock・ReadDiskFree — 本番 = os-file-handler・模擬 = memory-file-handler
 ;;; 設定は Ask で読む:
 ;;;   runtime-env.state         worker の state dir(mirrors/・wheels/・uv-cache/・python/・locks/・probe/ を置く)
-;;;   runtime-env.repo-keys     許可表 = clone してよい URL → deploy key の file(空文字 = 鍵なし)。表に無い URL を断るのは prepare-env(RepoAllowed)。
-;;;                             宣言の url は同じ repo の別の綴り(ssh と https)でも表の項目に引き当て、clone と deploy key は表の綴りで引く(allowed-url)
+;;;   runtime-env.repo-keys     鍵の表 = URL → deploy key の file(空文字 = 鍵なし)。URL を断る表ではない — 表に無い URL は宣言の綴りのまま
+;;;                             鍵なしで clone する。宣言の url は同じ repo の別の綴り(ssh と https)でも表の項目に引き当て、clone と deploy key は
+;;;                             表の綴りで引く(listed-url)
 ;;;   runtime-env.code-prepare  bytecode を作る道具(worker 自身の code の code_prepare.hy)の path
 ;;;   runtime-env.uv            uv の命令(既定 "uv" — PATH で引く)
 ;;;   runtime-env.progress      処理ステージの進みの印の file(空 = 書かない)
@@ -39,7 +40,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree RepoAllowed EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])
+                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [FileSha256 ENV-MARKER])
 
 (val DETAIL-CHARS 600)
 ;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。
@@ -182,12 +183,12 @@
                (.removesuffix (.strip (or (.group found 2) "") "/") ".git"))))
 
 
-(defk allowed-url [url repo-keys]
+(defk listed-url [url repo-keys]
   {:pre [(: url str) (: repo-keys dict)] :post [(: % (| str None))]}
-  "宣言の url が名指す repo の、許可表の綴り(表の項目の URL)を引くため。完全一致が先・無ければ repo-identity が等しい項目がちょうど 1 つの時
-   その項目。0 個・2 個以上(同じ repo を表が 2 つの綴りで持つ — どちらで取るか決められない)は None(断る)。
-   表は許可表 1 つ: 宣言の側は送り手の checkout の remote の綴りのまま送り、worker が自分の表の綴りで取りに行く(2026-09-28 の事故 —
-   ssh の remote の checkout から宣言した daily-verify が「許可表に無い URL」で 10 分落ちた)。"
+  "宣言の url が名指す repo の、鍵の表の綴り(表の項目の URL)を引くため。完全一致が先・無ければ repo-identity が等しい項目がちょうど 1 つの時
+   その項目。0 個・2 個以上(同じ repo を表が 2 つの綴りで持つ — どちらで取るか決められない)は None(宣言の綴りのまま鍵なしで取る)。
+   表は鍵の表 1 つ: 宣言の側は送り手の checkout の remote の綴りのまま送り、worker が自分の表の綴りで取りに行く(2026-09-28 の事故 —
+   ssh の remote の checkout から宣言した daily-verify が「表に無い URL」で 10 分落ちた)。"
   (if (in url repo-keys)
       url
       (do (<- wanted str (repo-identity url))
@@ -473,14 +474,10 @@
     (<- free int (settled seen "空きを読めない"))
     (resume free))
 
-  (RepoAllowed [url]
-    ;; 同じ repo の別の綴り(ssh と https)も許可表の項目に引き当てる(allowed-url)。
-    (<- source (| str None) (allowed-url url repo-keys))
-    (resume (is-not source None)))
-
   (EnsureMirror [url]
-    ;; mirror の名・deploy key・clone の URL は許可表の綴り(完全一致の宣言では今までと同じ値 — 既存の mirror をそのまま使う)。
-    (<- source (| str None) (allowed-url url repo-keys))
+    ;; mirror の名・deploy key・clone の URL は鍵の表の綴り(同じ repo の別の綴り — ssh と https — も表の項目に引き当てる。完全一致の宣言では
+    ;; 今までと同じ値 — 既存の mirror をそのまま使う)。表に無い URL は宣言の綴りのまま鍵なしで clone する(断らない)。
+    (<- source (| str None) (listed-url url repo-keys))
     (val chosen (if (is source None) url source))
     (<- name str (digest16 chosen))
     (<- env tuple (git-environment (.get repo-keys chosen "")))

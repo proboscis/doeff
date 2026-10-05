@@ -1,5 +1,5 @@
 ;;; 実行環境の root の準備(env_prepare)の型・effect・定数 — 準備の Program(worker/core/env_prepare)が出し、worker の準備の係が答える(#2025 の 3 本目で分けた)。
-(require doeff-hy.macros [defk defeffect <- val var])
+(require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "intent"})
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass])
@@ -129,16 +129,9 @@
   (#^ str path))
 
 
-(defeffect RepoAllowed
-  "url が名指す repo が worker の許可表(clone してよい URL)に在るか(綴りが違っても同じ repo なら在る — 取りに行く綴りは表の側)。
-   答え = bool。断る判断(repo-denied)は prepare-env が持つ。"
-  {:fields [(: url str)]
-   :answer bool
-   :tags {:context "worker" :role "intent"}})
-
-
 (defclass [(dataclass :frozen True)] EnsureMirror [EffectBase]
-  "url の bare mirror を用意する(無ければ clone・url ごとに排他)。答え = MirrorReady か EnvFailure(repo-unreachable)。"
+  "url の bare mirror を用意する(無ければ clone・url ごとに排他)。答え = MirrorReady か EnvFailure(repo-unreachable)。worker は url を
+   断らない — worker の鍵の表に同じ repo が在れば表の綴りと鍵で、無ければ宣言の綴りのまま鍵なしで clone する。"
   (#^ str url))
 
 

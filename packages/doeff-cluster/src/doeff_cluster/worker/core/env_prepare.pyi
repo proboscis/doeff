@@ -31,7 +31,6 @@ from doeff_cluster.worker.intent.env_prepare_model import PrepareState as Prepar
 from doeff_cluster.worker.intent.env_prepare_model import StageStarted as StageStarted
 from doeff_cluster.worker.intent.env_prepare_model import PrepareNote as PrepareNote
 from doeff_cluster.worker.intent.env_prepare_model import DiskFree as DiskFree
-from doeff_cluster.worker.intent.env_prepare_model import RepoAllowed as RepoAllowed
 from doeff_cluster.worker.intent.env_prepare_model import EnsureMirror as EnsureMirror
 from doeff_cluster.worker.intent.env_prepare_model import FetchCommit as FetchCommit
 from doeff_cluster.worker.intent.env_prepare_model import MaterializeTree as MaterializeTree

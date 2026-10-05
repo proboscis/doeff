@@ -45,7 +45,7 @@
 (defrecord EnvSettings
   "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(root は state/roots の下)・
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
-   repo-keys = 許可表の JSON の file(clone してよい URL → deploy key)・uv = uv の命令・min-free-bytes = 準備を始める空きの下限・
+   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・min-free-bytes = 準備を始める空きの下限・
    limits = 準備の期限・max-parallel = 同時の準備の上限・tool = 準備の process の入口・sweep-floor-bytes = 掃除の下限(None = volume の割合)。"
   (#^ str state)
   (#^ str hy-command)
