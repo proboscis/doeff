@@ -183,6 +183,8 @@ environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べ
 
 - `declaring-refusal` は、系の関数の module の在る git の checkout が汚れておらず push 済みで、HEAD が宣言の版と同じ commit の時だけ
   None を返します(詰める Program が参照するコードと、実行先が版で展開するコードを一致させるため)。外れれば理由の文を返します。
+  checkout の remote の url が手元の path か `file://` の時も断ります(別の機体の worker はその url から取れないため — remote を
+  `git@github.com:…` か `https://…` にした clone から宣言します)。
   土台の `:needs` が job の `:needs` に含まれない時も理由の文を返します。土台は関数でも、土台の関数を欄に持つ record でも渡せます。
 - `system-declaration` が宣言の行と詰めた Program を組みます。行は `{name revision needs replicas run{kind program identity versions describe} environ readiness? update? runtimeEnv?}` です。
   同一性(入れ替えの要否を決める指紋)は、呼んだ関数の `module:qualname` と引数の正規の JSON・版・environ から作り、詰めた中身は
