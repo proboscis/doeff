@@ -59,3 +59,32 @@ class ReadWarmState(EffectBase[WarmAnswer]):
     """温める表の行 key の今の姿を読む。"""
 
     key: str
+
+@dataclass(frozen=True, kw_only=True)
+class WarmReady:
+    """待った行が組み上がった(1 台以上で準備済み — #3668 (b))。"""
+
+    state: WarmState
+
+@dataclass(frozen=True, kw_only=True)
+class WarmFailed:
+    """待った行の組みが落ちた(準備済みも準備中も無く、失敗が全部 retryable でない)。"""
+
+    state: WarmState
+
+@dataclass(frozen=True, kw_only=True)
+class WarmWaitExpired:
+    """期限まで組み上がりも落ちもしなかった(last = 最後に読んだ行の姿)。"""
+
+    key: str
+    last: WarmState | WarmUnreachable
+    waited_seconds: float
+
+WarmWaitAnswer: TypeAlias = WarmReady | WarmFailed | WarmWaitExpired
+
+@dataclass(frozen=True)
+class AwaitWarm(EffectBase[WarmWaitAnswer]):
+    """温める表の行 key が組み上がるか落ちるまで、timeout_seconds を上限に待つ。"""
+
+    key: str
+    timeout_seconds: float

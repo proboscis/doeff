@@ -25,7 +25,13 @@ from doeff_cluster.shared.intent.warm_model import ReadWarmState as ReadWarmStat
 from doeff_cluster.shared.intent.warm_model import WarmState as WarmState
 from doeff_cluster.shared.intent.warm_model import WarmUnreachable as WarmUnreachable
 from doeff_cluster.shared.intent.warm_model import WarmAnswer as WarmAnswer
+from doeff_cluster.shared.intent.warm_model import AwaitWarm as AwaitWarm
+from doeff_cluster.shared.intent.warm_model import WarmReady as WarmReady
+from doeff_cluster.shared.intent.warm_model import WarmFailed as WarmFailed
+from doeff_cluster.shared.intent.warm_model import WarmWaitExpired as WarmWaitExpired
 from doeff_cluster.shared.core.warm_rules import warm_state_of_json as warm_state_of_json
+from doeff_cluster.shared.core.warm_rules import warm_wait_answer as warm_wait_answer
+from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
 from doeff_cluster.shared.intent.process_model import ProcessEnded as ProcessEnded
 from doeff_cluster.shared.intent.process_model import ProcessWaitExpired as ProcessWaitExpired
@@ -197,6 +203,10 @@ def warm_written(cell: RouteCell, options: RouteOptions, deadline_seconds: float
     ...
 
 def warm_read(cell: RouteCell, options: RouteOptions, deadline_seconds: float, key: str) -> _Program[WarmAnswer, object]:
+    ...
+WARM_UNREACHED_PAUSE_SECONDS: float
+
+def warm_awaited(cell: RouteCell, options: RouteOptions, key: str, timeout_seconds: float, poll_seconds: float) -> _Program[WarmReady | WarmFailed | WarmWaitExpired, object]:
     ...
 
 def warm_cluster(cell: RouteCell, options: RouteOptions) -> _Handler:
