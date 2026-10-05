@@ -451,7 +451,8 @@
   "宣言した Service 1 つの {spec status}(snapshot の行)。"
   (setv a (.get state.placements job.spec.name)
         carrier (if a (job-status-row state a.worker job.spec.name) None)
-        failures (if (is carrier None) None carrier.failures))
+        failures (if (is carrier None) None carrier.failures)
+        last-exit (if (is carrier None) None carrier.last-exit-at-ms))
   {"spec" (service-spec job)
    "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
                 "ready" (get (service-readiness state job.spec.name now timing) "state")
@@ -461,6 +462,11 @@
                ;; 続けて落ちた回数(#3477)。置き先の担い手の行が 1 以上を報告している間だけ載せる — 落ちるたびと、安定して 0 に戻った時に
                ;; 出来事と resourceVersion が進み、版の変化の待ち(GET /watch)が起きる。無い Service の status の形・版は以前と同じ。
                (if failures {"failures" failures} {})
+               ;; 最後に終わったと知れた刻(#3672)。置き先の担い手の行が刻を持つ間だけ載せる — process が終わるたびと worker の世代の
+               ;; 入れ替わり(cluster_policy.worker-report が新しい世代の起動の刻まで進める)に出来事と resourceVersion が進み、版の変化の待ち
+               ;; (GET /watch)が刻だけの変化にも起きる。heartbeat ごとには替わらない(同じ世代の拍では刻は前のまま)。無い Service の
+               ;; status の形・版は以前と同じ。
+               (if (is-not last-exit None) {"lastExitAtMs" last-exit} {})
                ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
                (if (in job.spec.name state.surges)
                    {"surge" (. (get state.surges job.spec.name) worker)}
