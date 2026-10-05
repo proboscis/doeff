@@ -1,13 +1,13 @@
 ;;; bytecode の準備の道具(worker/entry/code_prepare.hy)が全部の木を 1 回で焼く段取りの純粋な判断と、その record — 命令の木ごとの引数の
-;;; 揃え・焼きの並列数・木をまたいだ import の閉包の歩み・import の名の表(閉包の読みの使い回し)・焼く順(大きい順)・焼きの道具への受け渡しの
-;;; 行・報告の行。I/O と効果は持たない。
+;;; 揃え・焼きの並列数・木をまたいだ import の閉包の歩み・import の名の表(閉包の読みの使い回し)・前の木から引き継ぐ .pyc(頭の検めの方式と
+;;; magic)・焼く順(大きい順)・焼きの道具への受け渡しの行・報告の行。I/O と効果は持たない。
 ;;;
 ;;; 読まれ方: 入口はこの file を package の import でなく、入口の file の位置から求めた path で読む(module 名 doeff_cluster_worker_bake_plan
 ;;; — 入口は準備する root の venv の python で走るので、package で引くと root の版の doeff の物になり、この file を持たない古い版の root で
 ;;; 落ちる)。だからこの file が import してよいのも、cluster で動く job の doeff の版から変わっていない部品(code_plan の module-name・
-;;; imported-names と doeff-hy の macro)と標準 library だけ。検は package の名で普通に import して判断を検める。
-(require doeff-hy.macros [defk val])
-(require doeff-hy.record [defrecord])
+;;; imported-names・carry-pairs と doeff-hy の macro)と標準 library だけ。検は package の名で普通に import して判断を検める。
+(require doeff-hy.macros [defk val <-])
+(require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import bisect)
 (import hashlib)
@@ -15,7 +15,8 @@
 (import math)
 (import posixpath)
 (import dataclasses [dataclass])  ; dataclass は defrecord の展開が使う
-(import doeff_cluster.worker.core.code_plan [imported-names module-name])
+(import enum [StrEnum])  ; StrEnum は defenum の展開が使う
+(import doeff_cluster.worker.core.code_plan [carry-pairs imported-names module-name])
 
 
 ;; --- record ------------------------------------------------------------------------------
@@ -59,6 +60,19 @@
    引く)・problem = 表を使えない理由(行 0 — 全部を読み直す)か None。"
   (#^ tuple rows)
   (#^ (| str None) problem))
+
+
+(defenum PycScheme CHECKED-HASH UNCHECKED-HASH TIMESTAMP UNREADABLE)
+;; .pyc の検めの方式(PEP 552 の頭の flags — 0 = timestamp・0b01 = unchecked hash・0b11 = checked hash)。UNREADABLE = 頭の 16 byte を
+;; 読めない・足りない・flags がどれでもない .pyc(#3727)。
+
+
+(defrecord PycHead
+  "引き継ぎ元の木の .pyc 1 つの頭を読んだ結果(#3727): path = 木の中の相対 path・scheme = 検めの方式・magic = 頭の magic 4 byte(頭を
+   読めない・16 byte に足りなければ空)。"
+  (#^ str path)
+  (#^ PycScheme scheme)
+  (#^ bytes magic))
 
 
 (defrecord BakeItem
@@ -299,6 +313,42 @@
   {:pre [(: reused tuple) (: tree str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "1 回の焼きの焼かずに残した物(#(木の path 相対 path) の列)のうち、木 1 つの物の数を求めるため(報告の行の reused)。"
   (sum (gfor r reused :if (= (get r 0) tree) 1)))
+
+
+;; --- 前の木から引き継ぐ .pyc(#3727)---------------------------------------------------------------
+;; 引き継ぎ元の木の .pyc には、道具が焼いた checked hash の物と、閉包の外の module を子が import した時に Python が書いた timestamp の物
+;; (と、古い Python が焼いた物)が混ざる。新しい木は展開し直すので source の mtime が違い、timestamp の .pyc は import の時に古いと判じられ
+;; その場で compile される。magic の違う .pyc も同じ。だから引き継ぐのは、import が新しい木でそのまま使う checked hash で magic が今の
+;; Python と同じ物だけにし、ほかは焼く一覧に残す(焼いた数 rebuilt に入る)。
+
+(val PYC-HEAD-BYTES 16)
+
+
+(defk pyc-head-of [path head]
+  {:pre [(: path str) (: head (| bytes None))] :post [(: % PycHead)] :tags {:context "worker" :role "judgment"}}
+  "引き継ぎ元の木の .pyc 1 つの頭(head — 先頭の PYC-HEAD-BYTES byte・読めなければ None)を PycHead にするため(PEP 552 — magic 4 byte・
+   flags 4 byte・残りは timestamp と大きさか source の hash)。足りない頭と、flags がどの方式でもない頭は UNREADABLE。"
+  (match head
+    (bytes) :if (>= (len head) PYC-HEAD-BYTES)
+      (PycHead :path path
+               :scheme (match (int.from-bytes (cut head 4 8) "little")
+                         0 PycScheme.TIMESTAMP
+                         0b01 PycScheme.UNCHECKED-HASH
+                         0b11 PycScheme.CHECKED-HASH
+                         _ PycScheme.UNREADABLE)
+               :magic (cut head 0 4))
+    _ (PycHead :path path :scheme PycScheme.UNREADABLE :magic b"")))
+
+
+(defk carried-pycs [heads magic old-sources new-sources new-pycs changed]
+  {:pre [(: heads tuple) (: magic bytes) (: old-sources frozenset) (: new-sources frozenset) (: new-pycs frozenset) (: changed frozenset)]
+   :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "前の木から hardlink で引き継ぐ .pyc(相対 path の列)を決めるため: 引き継ぎ元の木の .pyc の頭(heads — PycHead の列)のうち checked hash
+   の方式で magic が今の Python(magic)と同じ物から、code_plan の carry-pairs が source で選ぶ物(source が変わっておらず新しい木にも在り、
+   新しい木にまだ .pyc の無い物)。"
+  (<- pairs list (carry-pairs (lfor head heads :if (and (= head.scheme PycScheme.CHECKED-HASH) (= head.magic magic)) head.path)
+                              old-sources new-sources new-pycs changed))
+  pairs)
 
 
 ;; --- 焼く順と焼きの道具への受け渡し --------------------------------------------------------------

@@ -23,7 +23,10 @@
 ;;;               import の名の表(bake_plan の IMPORT-TABLE — source の相対 path → その source の sha256 と import の名)を残し、次の版は
 ;;;               引き継ぎ元(--from)の表のうち --changed に無く sha256 が今の source と合う行を使い回して、変わった file だけを読む
 ;;;               (#3694)。表の無い引き継ぎ元・形の違う表・表に無い file は今どおり読む。
-;;;   3 引き継ぎ   木ごとに前の木から .pyc を hardlink する(LinkPycs)
+;;;   3 引き継ぎ   木ごとに前の木から .pyc を hardlink する(LinkPycs)。前の木の .pyc ごとに頭の 16 byte(PEP 552 の magic と flags)を
+;;;               読み(汎用の file の効果 ReadBytes)、import が新しい木でそのまま使う物 — checked hash の方式で magic が今の Python と同じ
+;;;               物 — だけを引き継ぐ(#3727 — 子が import の時に書いた timestamp の方式の物や古い Python の物は、新しい木では import の
+;;;               時に compile される。引き継がずに焼く一覧に残し、焼いた数 rebuilt に入る)。
 ;;;   4 焼き      焼く物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
 ;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits)。
@@ -40,18 +43,19 @@
 ;;; 実行環境の準備(worker/protocol/env_translation)は木ごとの行を読み、版ごとのコードの木の準備(worker/core/code_rules の script)は印の
 ;;; 有無を確かめる。
 ;;;
-;;; 形: 純粋な判断と record(引数の揃え・閉包の歩み・焼く順・報告の行)は worker/core/bake_plan.hy、走査・hardlink・印は木の効果
+;;; 形: 純粋な判断と record(引数の揃え・閉包の歩み・引き継ぐ .pyc・焼く順・報告の行)は worker/core/bake_plan.hy、走査・hardlink・印は木の効果
 ;;; (worker/protocol/tree_files の tree-files が汎用の file の効果へ出し直す — #2468)、焼きはこの file の効果 BakeSources(答え手
 ;;; pool-tool-baker が焼きの道具を汎用の子 process の効果 RunProcess で起こす — 生の process の pool は foundation の層だけが持つ)。
 ;;; main が本物の os-file-handler と subprocess-handler を被せる。経過の秒は doeff-time の GetMonotonic(main が sync-time-handler を被せる)。
 ;;;
 ;;; 版に依らず効く形: この file は worker の版の file だが、準備する root の venv の python と import の路で走る(import する doeff は
 ;;; root の版)。だから段取りはこの file に置き、root の側から import するのは、cluster で動く job の doeff の版から変わっていない部品の
-;;; 名前と引数の形だけ(code_plan の carry-pairs・compile-plan・marker-content・tree-problem、code_model の ScanTree・LinkPycs・
-;;; WriteMarker・Note、tree_files の tree-files、file_effects・process_effects の効果と file-done、os_file・os_process・handlers・doeff-time の
-;;; 答え手)。判断の module bake_plan と焼きの道具 bytecode_pool も worker の版の file なので、package の import でなく、この file の位置から
-;;; 求めた path で読む・起こす(package の名 doeff_cluster.worker.core.bake_plan で引くと root の版の doeff の物になり、この module を持たない
-;;; 古い版の root で落ちる)。
+;;; 名前と引数の形だけ(code_plan の compile-plan・marker-content・tree-problem と bake_plan が読む carry-pairs、code_model の ScanTree・
+;;; LinkPycs・WriteMarker・Note、tree_files の tree-files、file_effects・process_effects の効果と file-done、os_file・os_process・handlers・
+;;; doeff-time の答え手)— 引き継ぐ .pyc の頭の判断(#3727)も、root の側の carry-pairs と ScanTree の答えの形を変えずに足した(頭は
+;;; この file が ReadBytes で読み、bake_plan の carried-pycs が頭で絞ってから carry-pairs へ渡す)。判断の module bake_plan と焼きの道具
+;;; bytecode_pool も worker の版の file なので、package の import でなく、この file の位置から求めた path で読む・起こす(package の名
+;;; doeff_cluster.worker.core.bake_plan で引くと root の版の doeff の物になり、この module を持たない古い版の root で落ちる)。
 ;;; 古い入口: root の側の worker/core/code_prepare の prepare-tree と python_bytecode の compile-python-sources・prepare-compile-path は、
 ;;; 版を上げていない worker の古い entry が呼ぶので名前と引数の形を変えない(消すのは全 worker の版上げの後の別の変更)。
 ;;;
@@ -71,11 +75,11 @@
 (import doeff [EffectBase run with-handlers])
 (import doeff_time [GetMonotonic sync-time-handler])
 (import doeff_core_effects.handlers [slog-handler])
-(import doeff_core_effects.file_effects [FileFailed PathStat ReadText StatPath WriteText file-done])
+(import doeff_core_effects.file_effects [FileFailed PathStat ReadBytes ReadText StatPath WriteText file-done])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [InterpreterFacts ProcessOutcome ReadInterpreter RunProcess])
-(import doeff_cluster.worker.core.code_plan [carry-pairs compile-plan marker-content tree-problem])
+(import doeff_cluster.worker.core.code_plan [compile-plan marker-content tree-problem])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs WriteMarker Note])
 (import doeff_cluster.worker.protocol.tree_files [tree-files])
 
@@ -173,6 +177,18 @@
   table)
 
 
+(defk old-pyc-heads [old pycs]
+  {:pre [(: old str) (: pycs tuple)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "引き継ぎ元の木(old)の .pyc(pycs — 走査の相対 path の列)ごとに頭の 16 byte を読み、PycHead の列(pycs の順)にするため — 引き継ぐ
+   物を検めの方式と magic で選ぶ材料(#3727)。読めない .pyc は方式 UNREADABLE(引き継がない)。"
+  (var heads #())
+  (for [rel pycs]
+    (<- read (| bytes FileFailed) (ReadBytes (posixpath.join old rel) :limit plan.PYC-HEAD-BYTES))
+    (<- head plan.PycHead (plan.pyc-head-of rel (match read (FileFailed) None found found)))
+    (:= heads (+ heads #(head))))
+  heads)
+
+
 (defk closure-of-trees [trees sources entries]
   {:pre [(: trees tuple) (: sources tuple) (: entries tuple)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
   "木ごとの焼く範囲(trees と同じ順の、相対 path の frozenset か None = 根の下を全部)を求めるため。entries が在れば、entries から import を
@@ -245,7 +261,9 @@
     (var carried 0)
     (when (is-not tree.old None)
       (<- old-scan tuple (ScanTree tree.old))
-      (<- pairs list (carry-pairs (list (get old-scan 1)) (frozenset (get old-scan 0)) (frozenset sources) (frozenset pycs) tree.changed))
+      (<- heads tuple (old-pyc-heads tree.old (tuple (get old-scan 1))))
+      (<- pairs list (plan.carried-pycs heads importlib.util.MAGIC-NUMBER (frozenset (get old-scan 0)) (frozenset sources) (frozenset pycs)
+                                        tree.changed))
       (<- hardlinked int (LinkPycs tree.old tree.path (tuple pairs)))
       (:= carried hardlinked)
       (:= pycs (+ pycs pairs)))
