@@ -101,9 +101,9 @@
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA
                                :prepare (ready-handlers (fn [writer] None)) :request-handlers #() :max-bytes REQUEST-MAX-BYTES
                                :maintenance None :stop-poll-seconds 0.1 :drain-seconds 0.0 :served BUILD))
-  (<- answer (with_handlers [prepared-handlers-fail] (answer-with serving (ServiceRequest "GET" "/served" b""))))
+  (<- answer (with_handlers [prepared-handlers-fail] (answer-with serving "t-served" (ServiceRequest "GET" "/served" b""))))
   (assert (= answer.status 200) answer)
   (assert (= (get (json.loads answer.body) "instance") "3-0123456789ab") answer)
   (import pytest)
   (with [(pytest.raises RuntimeError)]
-    (<- _ (with_handlers [prepared-handlers-fail] (answer-with serving (ServiceRequest "GET" "/readyz" b""))))))
+    (<- _ (with_handlers [prepared-handlers-fail] (answer-with serving "t-ready" (ServiceRequest "GET" "/readyz" b""))))))

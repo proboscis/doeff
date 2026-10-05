@@ -1,0 +1,31 @@
+{
+  "include": [
+    "packages/doeff-records/src/doeff_records/request_timing.hy"
+  ],
+  "module_extensions": {
+    "records-http-server": {
+      "allow": [
+        "records-event-source",
+        "records-request-timing"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "records-wire",
+        "doeff-hy-frozen"
+      ],
+      "layer": "pure",
+      "name": "records-request-timing",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/request_timing.hy"
+      ],
+      "public": [
+        "packages/doeff-records/src/doeff_records/request_timing.hy"
+      ],
+      "responsibility": "記録の service の要求ごとの計時の計算と綴り(#3688): 要求 1 つの刻(単調時計の秒)を区間(queue・body・decode・handler・wait・encode・send・total・woke)の秒に割り、計器の秒の観測の名 records_stage_<操作>_<区間> と # HELP を綴る。刻を打つのは入口(http_server)で、ここは I/O なし",
+      "typed": true
+    }
+  ]
+}

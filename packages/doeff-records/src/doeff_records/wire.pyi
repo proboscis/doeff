@@ -111,6 +111,9 @@ class NamedStores:
     tables: tuple
     streams: tuple
 
+def operation_of(path: str) -> _Program[str | None, object]:
+    ...
+
 def request_kind(path: str) -> _Program[RequestKind, object]:
     ...
 
