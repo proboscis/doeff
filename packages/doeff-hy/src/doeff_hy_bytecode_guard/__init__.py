@@ -28,10 +28,12 @@ import の外で bytecode を前もって作る道具は :func:`source_to_code_a
 
 from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION as TYPE_CHECK_EXPANSION
 from doeff_hy_bytecode_guard.loader_hooks import bytecode_is_current as bytecode_is_current
+from doeff_hy_bytecode_guard.loader_hooks import current_record as current_record
 from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed
 from doeff_hy_bytecode_guard.loader_hooks import macro_dependencies as macro_dependencies
+from doeff_hy_bytecode_guard.loader_hooks import record_is_current_here as record_is_current_here
 from doeff_hy_bytecode_guard.loader_hooks import (
     source_to_code_as_import as source_to_code_as_import,
 )
