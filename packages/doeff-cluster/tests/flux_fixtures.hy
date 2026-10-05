@@ -1,6 +1,6 @@
 ;; 模擬の Flux と版上げの Program の検が共に使う道具(#3366): worker a・b と coordinator の manifest を本番が宣言を書く時と同じ写し
 ;; (launch_rules)で作る・宣言の置き場(記憶の中の file)を sim の外の世界に置く・条 V1〜V4 を全部当てる。
-(require doeff-hy.macros [defk <- val var])
+(require doeff-hy.macros [defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
 (import yaml)
@@ -14,7 +14,7 @@
 (import doeff_cluster.coordinator.core.upgrade_invariants [coordinator-after-every-worker worker-swap-waits-for-its-tasks
                                                             one-worker-at-a-time coordinator-swap-on-an-empty-queue])
 (import doeff_cluster.sim.local [SimWorker SimOutside])
-(import doeff_cluster.sim.flux [roster-snapshot])
+(import doeff_cluster.sim.flux [roster-snapshot ManifestDocuments])
 
 (val OLD "d563ab95a0000000000000000000000000000000")
 (val NEW "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
@@ -82,11 +82,19 @@
   (tuple (sorted (set rules))))
 
 
+(defhandler yaml-manifest-documents
+  ;; 模擬の Flux の ManifestDocuments に、この package の検で答えるため — manifest の書式(YAML)は配備する側の物で、doeff-cluster の
+  ;; source は読まない(#3566)。検は manifest を yaml で書くので、yaml で文書の列にして返す。
+  (ManifestDocuments [text]
+    (resume (tuple (yaml.safe-load-all text)))))
+
+
 (defk flux-outside []
   {:pre [] :post [(: % SimOutside)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "宣言の置き場(記憶の中の file — 初めの中身は a・b・coordinator が全部旧い版の manifest)を sim の外の世界として置くため — 模擬の
-   Flux と筋書きが ReadText・WriteText で読み書きする。"
+  "宣言の置き場(記憶の中の file — 初めの中身は a・b・coordinator が全部旧い版の manifest)と manifest の文書の読み手を、sim の外の世界
+   として置くため — 模擬の Flux と筋書きが ReadText・WriteText で読み書きし、ManifestDocuments で文書にする。"
   (<- text str (manifest-of OLD OLD OLD))
   (SimOutside :handlers [(memory-file-handler (MemoryFiles :files #((MemoryFile :path MANIFEST :content (.encode text "utf-8")))
-                                                           :dirs #("/flux")))]
-              :effects #(ReadText WriteText)))
+                                                           :dirs #("/flux")))
+                         yaml-manifest-documents]
+              :effects #(ReadText WriteText ManifestDocuments)))

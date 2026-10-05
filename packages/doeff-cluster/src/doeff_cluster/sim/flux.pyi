@@ -62,7 +62,11 @@ class FluxPass:
     applied: tuple[DeployedEnv, ...]
     starts: tuple[UpgradeStart, ...]
 
-def deployed_envs(text: str) -> _Program[tuple[DeployedEnv, ...], object]:
+@_doeff_dataclass(frozen=True)
+class ManifestDocuments(_doeff_effect_base[tuple[dict, ...]]):
+    text: str
+
+def deployed_envs(documents: tuple[dict, ...]) -> _Program[tuple[DeployedEnv, ...], object]:
     ...
 
 def manifest_state(paths: tuple[str, ...]) -> _Program[tuple[DeployedEnv, ...], object]:

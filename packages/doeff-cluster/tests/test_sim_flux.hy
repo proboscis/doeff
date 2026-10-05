@@ -128,3 +128,14 @@
   (<- outside SimOutside (flux-outside))
   (<- rules tuple (sim-cluster NO-JOBS (coordinator-with-a-queued-task) :workers #(A B) :outside outside))
   (assert (= rules #("V4 coordinator-swap-on-an-empty-queue")) rules))
+
+
+(deftest test-the-emulated-flux-imports-without-yaml
+  ;; #3566: doeff-cluster の source は manifest の書式(YAML)を読まない — 模擬の Flux そのものが、yaml を塞いだ process で import できる
+  ;; (書式を文書にするのは配備する側が ManifestDocuments に答える handler)。新しい process で、yaml の import を塞いでから読む。
+  (import subprocess)
+  (import sys)
+  (val code "import sys; sys.modules['yaml'] = None; import hy; import doeff_cluster.sim.flux; print('ok')")
+  (val done (subprocess.run [sys.executable "-c" code] :capture-output True :text True))
+  (assert (= done.returncode 0) done.stderr)
+  (assert (= (.strip done.stdout) "ok") done.stdout))

@@ -12,13 +12,14 @@
 ;;;
 ;;; env から worker / coordinator の値への読みは launch_rules の表(worker-launch-of-env・coordinator-launch-of-env)だけを通す。表から
 ;;; 引けない欄 = ROLE(Deployment が worker か coordinator かの見分け — 起動の値ではない)。
-;;; yaml を import するのはこの module だけ(依存の組 doeff-cluster[sim])— sim/__init__ と既存の sim の module はこの module を引かない。
+;;; manifest の書式(YAML)は読まない — manifest は配備する側の repo の物(README の「manifest は配備する側の repo が持つ」)。text を
+;;; 文書(dict の列)にするのは、配備する側が ManifestDocuments に答える handler(配備する側の検と、この package の検は yaml で答える)。
+;;; doeff-cluster の source は yaml を import しない(test_package_independence の許可表のまま — #3566)。
 (require doeff-hy.macros [val var defk defhandler defeffect <-])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
-(import yaml)
 (import doeff_core_effects.file_effects [ReadText FileFailed])
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [Spawn Gather Task])
@@ -57,11 +58,19 @@
   (#^ (get tuple #(UpgradeStart ...)) starts))
 
 
-(defk deployed-envs [text]
-  {:pre [(: text str)] :post [(: % (get tuple #(DeployedEnv ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "manifest の YAML の text から、ROLE が worker か coordinator の Deployment の env を読むため(本物の Flux と k8s が Pod の env にする
-   物の代わり)。YAML の文書は dict の JSON の境界として読み、ここで型の付いた DeployedEnv にする。"
-  (val docs (tuple (gfor d (yaml.safe-load-all text) :if (and (isinstance d dict) (= (.get d "kind") "Deployment")) d)))
+(defeffect ManifestDocuments
+  "manifest の text 1 つを、文書(dict の列 — k8s の object 1 つが 1 つ)にしてもらうため。書式は配備する側の物なので、答えるのは配備する側の
+   handler(この package は書式を知らない — 頭の註)。dict は JSON の境界の値で、deployed-envs が型の付いた DeployedEnv にする。"
+  {:fields [(: text str)]
+   :answer (get tuple #(dict ...))
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defk deployed-envs [documents]
+  {:pre [(: documents (get tuple #(dict ...)))] :post [(: % (get tuple #(DeployedEnv ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "manifest の文書(ManifestDocuments の答え)から、ROLE が worker か coordinator の Deployment の env を読むため(本物の Flux と k8s が
+   Pod の env にする物の代わり)。文書は dict の JSON の境界として読み、ここで型の付いた DeployedEnv にする。"
+  (val docs (tuple (gfor d documents :if (and (isinstance d dict) (= (.get d "kind") "Deployment")) d)))
   (tuple (gfor d docs
                c (get (get (get (get d "spec") "template") "spec") "containers")
                :setv env (tuple (gfor e (.get c "env" []) :if (in "value" e)
@@ -80,7 +89,8 @@
     (<- text (ReadText path))
     (when (isinstance text FileFailed)
       (raise (RuntimeError (.format "宣言 {} を読めない: {}" path text))))
-    (<- envs (get tuple #(DeployedEnv ...)) (deployed-envs text))
+    (<- documents (get tuple #(dict ...)) (ManifestDocuments text))
+    (<- envs (get tuple #(DeployedEnv ...)) (deployed-envs documents))
     (:= found (+ found envs)))
   found)
 

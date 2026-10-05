@@ -19,11 +19,6 @@ dependencies = [
     "cloudpickle>=3.0",
 ]
 
-[project.optional-dependencies]
-# 模擬の Flux(src/doeff_cluster/sim/flux.hy — manifest の YAML を読む)だけが要る組(#3366)。worker と coordinator の入口は sim を
-# import しないので実行時の依存ではない。sim/__init__ と既存の sim の module は flux を引かない — 使う側が doeff-cluster[sim] を書く。
-sim = ["pyyaml>=6.0"]
-
 [tool.hatch.build.targets.wheel]
 # import 名 doeff_cluster は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
 packages = ["src/doeff_cluster"]

@@ -20,7 +20,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/sim/flux.hy"
       ],
-      "responsibility": "模擬の Flux(#3366 の単位 2b): 宣言の置き場(記憶の中の file)の manifest を読み、Deployment の env が前に当てた物と違う worker / coordinator を本番の Recreate と同じ順で作り直し、入れ替えを始めた瞬間の記録(条 V1〜V4 の入力)を残す。env の読みは launch_rules の表だけ・yaml を import するのはこの module だけ(依存の組 doeff-cluster[sim])。",
+      "responsibility": "模擬の Flux(#3366 の単位 2b): 宣言の置き場(記憶の中の file)の manifest を読み、Deployment の env が前に当てた物と違う worker / coordinator を本番の Recreate と同じ順で作り直し、入れ替えを始めた瞬間の記録(条 V1〜V4 の入力)を残す。env の読みは launch_rules の表だけ・manifest の書式は読まない(text を文書にするのは配備する側が ManifestDocuments に答える handler — #3566)。",
       "typed": true
     }
   ]
