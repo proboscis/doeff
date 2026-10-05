@@ -7,7 +7,9 @@
 ;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り
 ;;; 足した物(この package の意味に要る物だけ):
 ;;;   row_changes  変更の列(WatchChanges が読む)— seq = bigserial・payload NULL = 行が消えた
-;;;   store_epoch  置き場の版と、変更の列を忘れた位置(floor)の 1 行
+;;;   store_epoch  置き場の版と、変更の列を忘れた位置(floor)の 1 行。版の初めの値は行を作った時の server の時計の ms
+;;;                (#3632 — 空から作り直した置き場の版が前の置き場の版と重ならず、前の置き場の位置 (epoch, sequence) で読む読み手は
+;;;                新しい置き場の番号が古い位置を越えた後でも Reset になる)。版を進める文(advance-epoch-statement)は +1 のまま。
 ;;;   冪等キーの一意の索引(append_rows の ledger × payload の idempotencyKey)と、宣言した索引の欄の式の索引
 ;;;   retired_keys 保持の期限で出来事を消した冪等キーの覚え — PK = (ledger, idempotency_key)・seq = 消した出来事の番号・
 ;;;                body_digest = 本文の指紋(admission.body-digest)。出来事を消す transaction が同じ transaction で入れ、消さない(#3022)。
@@ -22,8 +24,9 @@
 ;;;                                  読み terminal-rows-statement が引く)
 ;;; 表の名は接頭辞つき(既定 records_)— 同じ database に在る別の置き場の同名の表と混ざらない。
 ;;; DDL は SqlEnsureTables の宣言に書き換えない(式の索引と bigserial を宣言で表せない)— 旧い版と同じ字面のまま流す
-;;; (検 test_pg_sql.hy が旧い版の字面と比べる)。どれも IF NOT EXISTS / ON CONFLICT DO NOTHING なので、字面が変わっても
-;;; 旧い版へ戻せる(表の形は変わらない)。
+;;; (検 test_pg_sql.hy が旧い版の字面と比べる)。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632)。
+;;; どれも IF NOT EXISTS / ON CONFLICT DO NOTHING なので、字面が変わっても旧い版へ戻せ(表の形は変わらない)、既に在る置き場の
+;;; store_epoch の行(旧い版が作った epoch 1 を含む)には触らない。
 ;;;
 ;;; 書きは置き場ごとの advisory lock 1 つで直列にする: bigserial の番号は commit の順と揃わない(番号 5 を取った書きより先に
 ;;; 番号 6 の書きが commit すると、6 まで読んだ読み手は 5 を永久に取りこぼす)。番号を取ってから commit するまでを 1 つの lock の中に
@@ -196,7 +199,9 @@
       (Statement :text (.format "CREATE INDEX IF NOT EXISTS {p}row_changes_ledger ON {p}row_changes (ledger, seq)" :p p) :params #())
       (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}store_epoch (
            id smallint PRIMARY KEY CHECK (id = 1), epoch bigint NOT NULL, floor bigint NOT NULL)" :p p) :params #())
-      (Statement :text (.format "INSERT INTO {p}store_epoch (id, epoch, floor) VALUES (1, 1, 0) ON CONFLICT (id) DO NOTHING" :p p)
+      ;; 版の初めの値 = 行を作った時の server の時計の ms(頭の註の store_epoch・#3632)。行が在れば版に触らない。
+      (Statement :text (.format "INSERT INTO {p}store_epoch (id, epoch, floor)
+           VALUES (1, (extract(epoch from clock_timestamp()) * 1000)::bigint, 0) ON CONFLICT (id) DO NOTHING" :p p)
                  :params #())))
   ;; 宣言した索引の欄ごとに式の索引 1 つ(欄の名は FIELD-NAME-PATTERN を通った英数字だけ — 文に直に置ける)。
   (var indexes #())
