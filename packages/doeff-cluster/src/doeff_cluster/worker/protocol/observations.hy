@@ -34,3 +34,8 @@
 (defclass [(dataclass :frozen True)] ObserveProbes [EffectBase]
   "入口の検めの観測(ProbeView の tuple — 待ち・走っている・答えの出た検め)。世界の観測のまとめ(local-host)が、検めの言い換え
    (worker/protocol/probes)へ問う。問われた拍に、待っている束を起こし・終わった束と時間切れの束を片づける(#2465)。")
+
+
+(defclass [(dataclass :frozen True)] ObserveWarmChildren [EffectBase]
+  "root ごとの待ちの子の観測(WarmChildView の tuple — 起こし中・準備済み・終わった・止め中)。世界の観測のまとめ(local-host)が、
+   待ちの子の言い換え(worker/protocol/warm_host)へ問う(#3646)。")

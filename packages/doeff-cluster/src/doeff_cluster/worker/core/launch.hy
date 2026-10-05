@@ -67,7 +67,10 @@
   (#^ (get tuple #(EnvEntry ...)) env)
   (#^ EnvMode env-mode)
   (#^ (| str None) work-dir)
-  (#^ (| str None) last-used))
+  (#^ (| str None) last-used)
+  ;; 入口の module の後ろに並べる引数(job の args と詰めた Program の --program)。待ちの子から分ける task(#3646)は argv を使わず、
+  ;; 読み込み済みの入口をこの引数で走らせる(ForkFromWarm の args)— 2 つの道が同じ引数を読む。入口の検めは使わない(空)。
+  (setv #^ tuple entry-args #()))
 
 
 (defk job-launch [spec code-path instance attempt * python hy-command uv extra-env layout allowed-env worker-pid program-path program-env work-dir
@@ -100,11 +103,13 @@
                      :env (tuple (gfor k (sorted child-env) (EnvEntry :name k :value (get child-env k))))
                      :env-mode EnvMode.REPLACE
                      :work-dir work-dir
-                     :last-used (+ code-path "/.last-used")))
+                     :last-used (+ code-path "/.last-used")
+                     :entry-args (+ spec.args program-args)))
       (do (val tree-env (| extra-env environ {"PYTHONPATH" (.pythonpath layout code-path)} worker-env))
           (JobLaunch :argv (+ shim #(hy-command "-m" spec.entry) spec.args program-args)
                      :cwd code-path
                      :env (tuple (gfor k (sorted tree-env) (EnvEntry :name k :value (get tree-env k))))
                      :env-mode EnvMode.EXTEND
                      :work-dir None
-                     :last-used None))))
+                     :last-used None
+                     :entry-args (+ spec.args program-args)))))

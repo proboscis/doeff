@@ -17,9 +17,9 @@
 (import doeff [run])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
-  ProbeEntry ForgetProbes WarmChildView StartWarmChild StopWarmChild ForgetWarmChild] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
+  ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
-  warm-preload])
+  warm-launch])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -253,29 +253,36 @@
       #((StopWarmChild view.key StopStage.KILL "止めの合図の後も終わらない"))
       #()))
 
-(defk warm-child-step [now key root view preload policy]
-  {:pre [(: now int) (: key str) (: root (| str None)) (: view (| WarmChildView None)) (: preload tuple) (: policy WorkerPolicy)]
+(defk warm-child-step [now key launch view policy]
+  {:pre [(: now int) (: key str) (: launch (| WarmLaunch None)) (: view (| WarmChildView None)) (: policy WorkerPolicy)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "root のキー 1 つの待ちの子の action を決めるため(判断の表 — tests/test_warm_child_policy.hy が全行を撃つ)。root = 要る root の READY
-   の path(要らない・READY でなければ None)・view = 待ちの子の観測・preload = 起動で読む module の名。観測が変わらない限り同じ action を
-   2 度出さない(起こした・止め始めた・忘れた事は次の観測に出る)。走っている task には何もしない(条 WC2)。"
+  "root のキー 1 つの待ちの子の action を決めるため(判断の表 — tests/test_warm_child_policy.hy が全行を撃つ)。launch = 要る root の待ちの子の
+   起こし方(要らない・root が READY でなければ None)・view = 待ちの子の観測。観測が変わらない限り同じ action を 2 度出さない(起こした・
+   止め始めた・忘れた事は次の観測に出る)。走っている task には何もしない(条 WC2)。"
   (cond
     ;; 要らない root: 走っていれば止め、終わっていれば観測から外す。
-    (is root None)
+    (is launch None)
       (cond
         (is view None) #()
         (is-not view.exit-code None) #((ForgetWarmChild key))
         (is view.stop None) #((StopWarmChild key StopStage.TERM "root の待ちの子が要らなくなった"))
         True (! (warm-stop-step now view policy)))
-    (is view None) #((StartWarmChild key root preload))
+    (is view None) #((StartWarmChild key launch))
     ;; 終わった待ちの子は、準備の失敗と同じ間(code-retry-ms)を置いてから起こし直す(落ちる入口を毎拍起こさない)。
     (is-not view.exit-code None)
-      (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key root preload)) #())
+      (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key launch)) #())
     (is-not view.stop None) (! (warm-stop-step now view policy))
     ;; 印が分かれる前の形でない(条 WC3)待ちの子は、準備済みに数えずに止める(終わった後に起こし直す)。
     (and (is-not view.mark None) (not (warm-mark-clean view.mark)))
-      #((StopWarmChild key StopStage.TERM (mark-refusal view.mark)))
+      #((StopWarmChild key StopStage.TERM (! (mark-refusal view.mark))))
     True #()))
+
+(defk launch-of [key wanted desired world warm]
+  {:pre [(: key str) (: wanted frozenset) (: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % (| WarmLaunch None))]
+   :tags {:context "worker" :role "judgment"}}
+  "root のキーの待ちの子の起こし方を求めるため(要らない root・READY でない root は None — 判断の 1 歩はそれを「要らない」と読む)。"
+  (val root (if (in key wanted) (ready-path (code-of world key)) None))
+  (if (is root None) None (! (warm-launch key root desired warm))))
 
 (defk warm-child-actions [now desired world warm policy]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy)] :post [(: % tuple)]
@@ -287,9 +294,8 @@
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
   (var actions #())
   (for [key keys]
-    (<- preload tuple (warm-preload key desired warm))
-    (<- step tuple (warm-child-step now key (if (in key wanted) (ready-path (code-of world key)) None)
-                                    (warm-child-of world key) preload policy))
+    (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm))
+    (<- step tuple (warm-child-step now key launch (warm-child-of world key) policy))
     (:= actions (+ actions step)))
   actions)
 
@@ -335,18 +341,26 @@
   (<- forgetting tuple (forget-probe-actions desired world))
   (+ jobs warming children sweeping forgetting))
 
-(defk ready-followups [now desired before after records policy]
-  {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy)]
+(defk ready-followups [now desired before after records policy [warm #()]]
+  {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "拍の action の後の観測(after)で木が揃った job を、次の拍を待たずに同じ判断(plan-job)で進める action を求めるため(#2719)。
-   対象は拍の頭の観測(before)で木が READY でなく、after で READY になった宣言の job だけ — 準備がその拍のうちに揃う宿(模擬の
-   prepare-seconds = 0・cache に完成品の在る版)で、最初の task の起動が拍 1 つ遅れる形をやめる。揃っていなければ空(今までどおり後の拍で
-   揃いを観測してから起こす)。records = 拍の action を数えた後の記憶。"
-  (tuple (gfor spec desired
-               :if (and (is (ready-path (code-of before (code-key spec))) None)
-                        (is-not (ready-path (code-of after (code-key spec))) None))
-               action (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy)
-               action)))
+  "拍の action の後の観測(after)で揃った物を、次の拍を待たずに同じ判断で進める action を求めるため(#2719)。対象は 2 つ:
+   拍の頭の観測(before)で木が READY でなく after で READY になった・または待ちの子が準備済みでなく after で準備済みになった宣言の
+   job(plan-job)と、after で READY になった root の待ちの子の起こし(warm-child-actions のうち StartWarmChild — #3646)。準備がその拍の
+   うちに揃う宿(模擬の prepare-seconds = 0・起こした刻に準備済みの模擬の待ちの子・cache に完成品の在る版)で、最初の task の起動が拍
+   1 つ遅れる形をやめる。揃っていなければ空(今までどおり後の拍で揃いを観測してから起こす)。records = 拍の action を数えた後の記憶。"
+  (val jobs (tuple (gfor spec desired
+                         :if (and (is-not (ready-path (code-of after (code-key spec))) None)
+                                  (or (is (ready-path (code-of before (code-key spec))) None)
+                                      (and (forks-from-warm-child spec)
+                                           (not (warm-child-ready (warm-child-of before (warm-key-of spec))))
+                                           (warm-child-ready (warm-child-of after (warm-key-of spec))))))
+                         action (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy)
+                         action)))
+  (<- children tuple (warm-child-actions now desired after warm policy))
+  (+ jobs (tuple (gfor action children
+                       :if (and (isinstance action StartWarmChild) (is (ready-path (code-of before action.key)) None))
+                       action))))
 
 (defn #^ JobRecord record-after [#^ int now #^ JobRecord record #^ Action action #^ WorkerPolicy [policy (WorkerPolicy)]]
   (cond

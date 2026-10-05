@@ -19,6 +19,7 @@
 (import doeff_core_effects.file_effects [WriteText file-done])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.os_warm_process [os-warm-process-handler])
 (import doeff_core_effects.os_random [os-random-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.random_effects [RandomBytes])
@@ -42,6 +43,8 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState CodeLayout])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
+(import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
+(import doeff_cluster.worker.core.warm_rules [warm-dir-of])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
@@ -106,17 +109,19 @@
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
-(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs stop]
+(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs stop warm]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
-         (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings) (: stop StopState)]
+         (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings) (: stop StopState)
+         (: warm WarmSettings)]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
-  "本番の handler の組(外側が先 — with-handlers の順)。process-host・probe-host・code-host・env-host の session の値(子の表・検めの記録・
-   木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、code-host はその外側に
-   置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。"
-  [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-file-handler
-   (session-store) (env-host envs) (code-host codes) (status-file status-path)
+  "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
+   待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
+   code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
+   (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。"
+  [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-warm-process-handler
+   os-file-handler (session-store) (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (process-host host) local-host tick-pauses])
+   (probe-host probes) (warm-host warm) (process-host host) local-host tick-pauses])
 
 
 (defk timing-checked [fence-ms policy timing]
@@ -212,11 +217,15 @@
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name)))
+        ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
+        warm-dir (run (warm-dir-of (str state-dir)))
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
         host (HostSettings :log-dir (str (/ state-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
                            :program-dir (str (/ state-dir "programs")) :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
-                           :program-env HOST-CONTRACT.program-env :shim shim)
+                           :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir)
+        ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
+        warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ state-dir "logs")) :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
@@ -247,7 +256,7 @@
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
-                                           (str (/ state-dir "status.json")) codes envs stop)))
+                                           (str (/ state-dir "status.json")) codes envs stop warm)))
   (print "worker: 起動します" :file sys.stderr :flush True)
   (try
     (run (scheduled (worker-on handlers policy)))

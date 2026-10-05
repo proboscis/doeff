@@ -6,6 +6,7 @@ from doeff_cluster.worker.intent.worker_model import StartJob as StartJob
 from doeff_cluster.worker.intent.worker_model import SignalJob as SignalJob
 from doeff_cluster.worker.intent.worker_model import ReapJob as ReapJob
 from doeff_cluster.worker.intent.worker_model import WorldView as WorldView
+from doeff_cluster.worker.intent.worker_model import WarmChildMark as WarmChildMark
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX
 
 def handoff_keeps_a_ready_writer(lifetimes: tuple) -> _Program[tuple, object]:

@@ -854,7 +854,9 @@
         "doeff-cluster-worker-coordinator-link",
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-worker-tick-pauses",
-        "doeff-cluster-run-context-rules"
+        "doeff-cluster-run-context-rules",
+        "doeff-cluster-worker-warm-host",
+        "doeff-cluster-worker-warm-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1631,7 +1633,8 @@
         "doeff-cluster-job-model",
         "doeff-cluster-job-rules",
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-rules"
+        "doeff-cluster-worker-rules",
+        "doeff-cluster-worker-warm-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker-policy",
@@ -2108,7 +2111,8 @@
         "doeff-cluster-clock",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-launch",
-        "doeff-cluster-worker-observations"
+        "doeff-cluster-worker-observations",
+        "doeff-cluster-worker-warm-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-process-host",
