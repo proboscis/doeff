@@ -21,8 +21,12 @@ job が終わらなければ group へ KILL を送る(shim 自身も止まる)�
 残る穴: shim 自身が外から KILL された時(worker の停止の猶予の後の KILL・手の kill -9)は、引き取った子孫が PID 1 へ逃げる。
 macOS には親の死を子へ知らせる仕組み(Linux の PR_SET_PDEATHSIG)が無いので、worker の消失はパイプの EOF で知る。
 
-使い方: python -m doeff_cluster.worker.entry.shim <猶予秒> -- <job の命令…>(#2028 でここへ移した — 旧い path の doeff_cluster.shim は
-#2113 で消し、worker が送る名もこの名にした)
+job の出力(#3714): --stamp-lines の時は、job の stdout・stderr(worker が同じ log の file へ向けた物)を pipe で受け、1 行ごとに壁の
+時計の刻の頭を付けて log へ書く(部品 worker/entry/line_stamp — 待ちの子から分かれた子 A と同じ部品)。旗が無ければ、job の出力は
+worker の向け替えのまま(入口の検め — worker が stdout の行を読んで判じる)。
+
+使い方: python -m doeff_cluster.worker.entry.shim <猶予秒> [--stamp-lines] -- <job の命令…>(#2028 でここへ移した — 旧い path の
+doeff_cluster.shim は #2113 で消し、worker が送る名もこの名にした)
 """
 
 import contextlib
@@ -37,6 +41,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import FrameType
+
+from doeff_cluster.worker.entry.line_stamp import OutputLines, RawLines, stamped_lines
 
 # 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
 # 版をまたいで名前で読む)。
@@ -253,28 +259,34 @@ class PopenSpawner:
         return self._mut_child.pid
 
 
-def shim_code(grace: float, spawn: Callable[[], int], adopt: Callable[[], Adoption] = become_subreaper) -> int:
+def shim_code(grace: float, spawn: Callable[[], int], lines: OutputLines, adopt: Callable[[], Adoption] = become_subreaper) -> int:
     """job を起こし、3 つの道のどれかで片づけるまで見張って、job の終了コード(signal で終わったなら負)を返すため。grace = 止めの合図から
     job を待つ猶予(秒)・spawn = job を起こして pid を返す部品(本物の shim は PopenSpawner — 待ちの子から分かれた子は、読み込み済みの
-    入口を fork で起こす部品を渡す)・adopt = 子孫の引き取りを有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/
-    shim_without_adoption)。signal の据え付け(TERM・SIGCHLD・起こしの fd)は process 全体の設定なので、1 つの process で 1 回だけ、
-    main thread から呼ぶ。返った後も stdin を読む補助の thread が残るので、呼び手は終了処理を経ずに os._exit で抜ける(exit-status)。"""
-    adoption = adopt()
-    match adoption:
-        case NotAdopting(reason=reason):
-            print(f"shim: 子孫の引き取りを使えないので、process group への合図だけで止めます({reason})", file=sys.stderr, flush=True)
-        case Adopting():
-            pass
-    # group へ送ってよいのは shim が group の先頭の時だけ(worker は start_new_session で起動する)。
-    # 先頭でなければ group は起動した側と共有なので、送ると起動した側まで止めてしまう — 子だけを止める。
-    leads_group = os.getpgid(0) == os.getpid()
-    clock = StopClock(grace)
-    wake = signal_wakeups()
-    signal.signal(signal.SIGTERM, clock.begin)
-    # job は同じ process group に入る。
-    job = spawn()
-    threading.Thread(target=watch_parent, args=(leads_group,), daemon=True).start()
-    return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group)
+    入口を fork で起こす部品を渡す)・lines = job の出力の書き手(刻を付ける StampedLines か、そのまま運ぶ RawLines — 書き手の thread は
+    job を起こした後に始め、片づけの後に残りを読み切ってから止める。job の終わりの判定と止めの合図には触れない)・adopt = 子孫の引き取りを
+    有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)。signal の据え付け(TERM・SIGCHLD・起こしの
+    fd)は process 全体の設定なので、1 つの process で 1 回だけ、main thread から呼ぶ。返った後も stdin を読む補助の thread が残るので、
+    呼び手は終了処理を経ずに os._exit で抜ける(exit-status)。"""
+    try:
+        adoption = adopt()
+        match adoption:
+            case NotAdopting(reason=reason):
+                print(f"shim: 子孫の引き取りを使えないので、process group への合図だけで止めます({reason})", file=sys.stderr, flush=True)
+            case Adopting():
+                pass
+        # group へ送ってよいのは shim が group の先頭の時だけ(worker は start_new_session で起動する)。
+        # 先頭でなければ group は起動した側と共有なので、送ると起動した側まで止めてしまう — 子だけを止める。
+        leads_group = os.getpgid(0) == os.getpid()
+        clock = StopClock(grace)
+        wake = signal_wakeups()
+        signal.signal(signal.SIGTERM, clock.begin)
+        # job は同じ process group に入る。書き手の thread は job を起こした後(fork の時の thread を 1 本に保つ)。
+        job = spawn()
+        lines.begin()
+        threading.Thread(target=watch_parent, args=(leads_group,), daemon=True).start()
+        return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group)
+    finally:
+        lines.end()
 
 
 def exit_status(code: int) -> int:
@@ -282,12 +294,25 @@ def exit_status(code: int) -> int:
     return code if code >= 0 else 128 - code
 
 
+def output_of(flags: list[str]) -> OutputLines:
+    """猶予と「--」の間の旗から job の出力の書き手を決めるため(--stamp-lines = 1 行ごとに刻を付ける job の log・無し = そのまま)。
+    知らない旗は名を挙げて断る(黙ってそのままの形に倒れない)。"""
+    match flags:
+        case []:
+            return RawLines()
+        case ["--stamp-lines"]:
+            return stamped_lines()
+        case _:
+            raise SystemExit(f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines だけ)")
+
+
 def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
-    """argv の猶予と job の命令で job を起こし、3 つの道のどれかで片づけてから job と同じ終了コードで終わる。adopt = 子孫の引き取りを
+    """argv の猶予・旗・job の命令で job を起こし、3 つの道のどれかで片づけてから job と同じ終了コードで終わる。adopt = 子孫の引き取りを
     有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)。"""
     grace = float(sys.argv[1])
-    command = sys.argv[sys.argv.index("--") + 1 :]
-    code = shim_code(grace, PopenSpawner(command), adopt)
+    split = sys.argv.index("--")
+    lines = output_of(sys.argv[2:split])
+    code = shim_code(grace, PopenSpawner(sys.argv[split + 1 :]), lines, adopt)
     # 終了処理を経ずに抜ける: stdin を読んでいる補助の thread が残ったまま終了処理に入ると、Python が
     # abort して終了コードが -6 に化ける(job 自身の終了コードを worker へ正しく返せない — 実測 2026-09-23)。
     sys.stderr.flush()

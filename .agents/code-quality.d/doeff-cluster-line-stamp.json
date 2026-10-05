@@ -1,0 +1,37 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/worker/entry/line_stamp.py"
+  ],
+  "module_extensions": {
+    "doeff-cluster-shim": {
+      "allow": [
+        "doeff-cluster-line-stamp"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-line-stamp"
+      ]
+    },
+    "doeff-cluster-warm-child": {
+      "allow": [
+        "doeff-cluster-line-stamp"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "runtime",
+      "name": "doeff-cluster-line-stamp",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/line_stamp.py"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/entry/line_stamp.py"
+      ],
+      "responsibility": "job の log の 1 行ごとに壁の時計の刻の頭を付ける書き手(#3714): shim と、待ちの子から分かれた子が、job の stdout・stderr を 1 本の pipe で受け、行を切らずに刻を差し込んで log の file へ書く。",
+      "typed": true
+    }
+  ]
+}

@@ -6,6 +6,9 @@ worker は root が READY になったら、この入口を root の venv で起
 socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ = task の子 1 本:
   待ちの子 ── fork ──▶ A(setsid で group の先頭・子孫の引き取り手・log へ dup2・env と cwd を整え、shim と同じ見張り shim_code)
                           └ fork ──▶ B(読み込み済みの入口の main を同じ process の中で走らせる)
+  A の log は task の log なので、shim の --stamp-lines と同じ部品(worker/entry/line_stamp)で 1 行ごとに壁の時計の刻を付ける(#3714)。
+  B は書き手の fd を閉じてから入口を走らせる。待ちの子自身の log(warm-<root のキー>.log)には付けない — 待ちの子は fork のために
+  thread を 1 本に保つので、書き手の thread を置けない。
   A は setsid を済ませたら待ちの子へ 1 byte で知らせ、job の終了コードを exit の file へ置き換えで書いてから、shim と同じ値で終わる。
   待ちの子は、その知らせを受けてから A の pid と起動の刻(/proc の starttime — pid の使い回しを見分ける)を答える(答えの直後の
   合図が、まだ group の先頭でない A に届いて ESRCH にならないように)。
@@ -48,6 +51,7 @@ from doeff_core_effects.warm_effects import WarmForked, WarmRefused
 from doeff_hy.wire import Malformed
 
 from doeff_cluster.foundation.child_environ import replace_environ
+from doeff_cluster.worker.entry.line_stamp import stamped_lines
 from doeff_cluster.worker.entry.shim import become_subreaper, exit_status, shim_code
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の shim.py と同じ。
@@ -150,25 +154,30 @@ def run_entry(entry: str, args: tuple[str, ...]) -> NoReturn:
 class EntrySpawner:
     """読み込み済みの入口を fork で起こす部品(shim_code の spawn)。呼ぶと B の pid を返す。"""
 
-    def __init__(self, entry: str, args: tuple[str, ...]) -> None:
-        """走らせる入口と引数を持つため。"""
+    def __init__(self, entry: str, args: tuple[str, ...], closing: tuple[int, ...]) -> None:
+        """走らせる入口と引数と、B が継がずに閉じる fd(A の log の書き手の fd — line_stamp の writer_descriptors)を持つため。"""
         self.entry = entry
         self.args = args
+        self.closing = closing
 
     def __call__(self) -> int:
         """TERM を block してから B を fork して pid を返すため(B は戻らない)。A は fork の後に元の mask へ戻し、block の間に届いた
-        TERM は、その時に A の止めの期限として受ける。"""
+        TERM は、その時に A の止めの期限として受ける。B は書き手の fd を閉じてから入口を走らせる(B が pipe の読み口を持つと、A が
+        先に落ちた時に B の書きが EPIPE にならず詰まる)。"""
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         pid = os.fork()
         if pid == 0:
+            for descriptor in self.closing:
+                os.close(descriptor)
             run_entry(self.entry, self.args)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
         return pid
 
 
 def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int) -> NoReturn:
-    """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になったら待ちの子へ知らせ(led へ 1 byte)、log・env・cwd を
-    整えてから、shim と同じ見張りで B を起こして待つ。job の終了コードを exit の file に書いてから、shim と同じ値で終わる。"""
+    """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になったら待ちの子へ知らせ(led へ 1 byte)、log(1 行ごとに
+    刻を付ける書き手を通す)・env・cwd を整えてから、shim と同じ見張りで B を起こして待つ。job の終了コードを exit の file に書いてから、
+    shim と同じ値で終わる(exit の file を書く時には、書き手が log を書き終えている)。"""
     for descriptor in closing:
         with contextlib.suppress(OSError):
             os.close(descriptor)
@@ -179,10 +188,12 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int) -> 
     os.dup2(log, 1)
     os.dup2(log, 2)
     os.close(log)
+    lines = stamped_lines()
     # 環境の置き換えは foundation の 1 か所(生の環境変数に触ってよい層)— B は fork で A の環境を継ぎ、入口が自分の文脈を環境から読む。
     run(replace_environ(tuple((item.name, item.value) for item in request.env)))
     os.chdir(request.cwd)
-    code = shim_code(request.grace_seconds, EntrySpawner(request.entry, tuple(request.args)), become_subreaper)
+    spawner = EntrySpawner(request.entry, tuple(request.args), lines.writer_descriptors)
+    code = shim_code(request.grace_seconds, spawner, lines, become_subreaper)
     write_replacing(request.exit_path, str(code))
     sys.stderr.flush()
     os._exit(exit_status(code))

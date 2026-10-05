@@ -49,11 +49,14 @@
   (json.dumps {"blob" blob "versions" versions}))
 
 
-(defk shim-argv [python grace-ms]
-  {:pre [(: python str) (: grace-ms int)] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
+(defk shim-argv [python grace-ms * stamp-lines]
+  {:pre [(: python str) (: grace-ms int) (: stamp-lines bool)] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
   "job の子と入口の検めを shim の下で起こす命令の頭を 1 つの形にするため(猶予は shim が秒の小数で読む — 値は worker の方針から
-   worker/core/shim_timing の shim-spans が導く・#2940)。"
-  #(python "-B" "-m" "doeff_cluster.worker.entry.shim" (str (/ grace-ms 1000)) "--"))
+   worker/core/shim_timing の shim-spans が導く・#2940)。stamp-lines = 子の出力の 1 行ごとに壁の時計の刻の頭を付けるか(#3714 — job の
+   log は人が刻で読むので True・入口の検めは worker が stdout の行を読んで判じるので False)。"
+  (+ #(python "-B" "-m" "doeff_cluster.worker.entry.shim" (str (/ grace-ms 1000)))
+     (if stamp-lines #("--stamp-lines") #())
+     #("--")))
 
 
 (defrecord JobLaunch
@@ -91,7 +94,8 @@
                      (if program-path {program-env program-path} {})))
   (val program-args (if program-path #("--program" program-path) #()))
   (val environ (dict spec.environ))
-  (<- shim (get tuple #(str ...)) (shim-argv python shim-grace-ms))
+  ;; job の log は 1 行ごとに刻を付ける(待ちの子から分ける task の log も、分かれた子 A が同じ部品で付ける — worker/entry/warm_child)。
+  (<- shim (get tuple #(str ...)) (shim-argv python shim-grace-ms :stamp-lines True))
   (if spec.runtime-env
       (do (val declared (json.loads spec.runtime-env))
           (<- child-env dict (child-environment allowed-env extra-env (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)

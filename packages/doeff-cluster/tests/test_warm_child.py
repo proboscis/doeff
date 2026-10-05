@@ -14,12 +14,14 @@ tests/fixtures/warm_job(前もって読む module として名指す)。範囲�
 - 待ちの子は env の値を持たない(頼みの env は分かれた子にだけ在り、待ちの子の環境と log と断りの文に出ない)
 - 前もって読めない module は、名を挙げて起動を断る
 - worker が消えたら(stdin の EOF)待ちの子は終わる
+- 分かれた子の log(task の log)は、shim の道と同じ部品で 1 行ごとに壁の時計の刻の頭を持つ(#3714)
 """
 
 import ctypes
 import errno
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -50,6 +52,8 @@ END_LIMIT_SECONDS = 20.0
 PIDFD_OPEN = 434
 SECRET_NAME = "WARM_CHILD_TEST_SECRET"
 SECRET_VALUE = "s3cr3t-value-that-must-not-leak"
+# 刻の頭の形(ISO 8601 の日時・ms・時差・空白 1 つ — tests/test_line_stamp.py と同じ形を検が自分で綴る)。
+STAMP = re.compile(rb"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} ")
 
 
 @dataclass(frozen=True)
@@ -364,5 +368,19 @@ def test_the_warm_child_ends_when_the_worker_goes(place: Path) -> None:
         assert warm.process.stdin is not None
         warm.process.stdin.close()
         assert warm.process.wait(timeout=10) == 0
+    finally:
+        stopped(warm)
+
+
+def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path) -> None:
+    """分かれた子の log(task の log — worker の job-start の via=warm)も、1 行ごとに刻の頭を持つ(中身はそのまま)。"""
+    warm = started(place)
+    try:
+        readied(warm)
+        ended(forked_job(warm, "stamped", ["exit", "5"]))
+        assert (place / "stamped.exit").read_text() == "5"
+        lines = (place / "stamped.log").read_bytes().splitlines()
+        assert lines and all(STAMP.match(line) for line in lines), lines
+        assert [STAMP.sub(b"", line) for line in lines] == [b"warm_job: exit 5"], lines
     finally:
         stopped(warm)
