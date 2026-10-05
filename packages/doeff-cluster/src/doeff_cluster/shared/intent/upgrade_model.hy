@@ -26,11 +26,12 @@
 
 (defrecord RosterEntry
   "名簿の 1 台の写し: worker = 名・live = 生きていたか(作り直した直後の新しい世代が名乗り終える前は数えない)・doeff-commit = その
-   worker の今の世代が動いている doeff の版。"
+   worker の今の世代が動いている doeff の版。None = 読み手がその worker の版を読めない(配備する側が宣言を書けない worker)— 名簿には
+   coordinator の知る worker を全部 載せ、版の読めない worker は条 V1 で新しい版と数えない(#3366)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str worker)
   (#^ bool live)
-  (#^ str doeff-commit))
+  (#^ (| str None) doeff-commit))
 
 
 (defrecord PendingTask

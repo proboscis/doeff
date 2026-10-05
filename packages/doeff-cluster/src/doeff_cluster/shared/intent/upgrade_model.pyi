@@ -19,7 +19,7 @@ class PendingPhase(StrEnum):
 class RosterEntry:
     worker: str
     live: bool
-    doeff_commit: str
+    doeff_commit: str | None
 
 @dataclass(frozen=True, kw_only=True)
 class PendingTask:
