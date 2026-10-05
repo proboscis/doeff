@@ -6,7 +6,9 @@
 ;;;
 ;;; ClaudeForgetSession は家を空にした形(上の層の Pod を作り直して claude の家が消えた — 上の層が記憶の写しを持ち込んで続ける筋書きの口)。
 ;;; fake だけが答える(本番の handler は家の file を消さない)。
+(require doeff-hy.record [defrecord defenum])
 (import dataclasses [dataclass])
+(import enum [StrEnum])
 (import doeff [EffectBase])
 
 
@@ -18,3 +20,34 @@
 (defclass [(dataclass :frozen True)] ClaudeForgetSession [EffectBase]
   "家から会話を消す(走っている手番は BackendLost で終わる)。答え = 忘れた物が在ったか(bool)。fake だけが答える。"
   (#^ str session-id))
+
+
+;; 会話ごとに CLI の process を生かしたまま待たせる形(#3672)の守りを、fake と本番の handler の両方で同じ筋書きで
+;; 確かめる口。手番の外で CLI が出力したら host はその process を降ろして訳を残す(#517 の事故 = result の後も stdin が開いた
+;; CLI が、背景の仕事の完了で手番の外に動いた形を、生かしたままの形で再び起こさないため)。業務の Program はこの 2 つを使わない。
+
+(defclass [(dataclass :frozen True)] ClaudeEmitOutsideTurn [EffectBase]
+  "生きていて手番を走らせていない process に、手番の外の出力を 1 行させる(本番の handler は替え玉の CLI へ検だけの行を書く —
+   本物の claude には撃たない)。答え = 出させる process が在ったか(bool)。"
+  (#^ str session-id))
+
+
+(defclass [(dataclass :frozen True)] ClaudeLiveProcess [EffectBase]
+  "会話の process の見え方を読む。答え = LiveProcess(生きて降りる途中でない process が在る)か NoLiveProcess。"
+  (#^ str session-id))
+
+
+;; process を降ろした訳: TURN-END = 手番の終わり(#517 の形 — 手番ごとに降ろす)/ OUTSIDE-TURN-OUTPUT = 手番の外で出力した(守り)。
+(defenum StopReason TURN-END OUTSIDE-TURN-OUTPUT)
+
+
+(defrecord LiveProcess
+  "会話に生きた process が在る。launches = この会話でこれまでに起こした process の数(使い回しなら増えない)。"
+  (#^ int launches))
+
+
+(defrecord NoLiveProcess
+  "会話に生きた process が無い。launches = これまでに起こした数・stopped-because = 最後の process を降ろした訳(まだ 1 つも
+   起こしていなければ None)。"
+  (#^ int launches)
+  (#^ (| StopReason None) stopped-because))

@@ -66,6 +66,11 @@ from doeff_claude_code.effects import UnknownTurn as UnknownTurn
 from doeff_claude_code.effects import NoSuchRequest as NoSuchRequest
 from doeff_claude_code.faults import ClaudeDropProcess as ClaudeDropProcess
 from doeff_claude_code.faults import ClaudeForgetSession as ClaudeForgetSession
+from doeff_claude_code.faults import ClaudeLiveProcess as ClaudeLiveProcess
+from doeff_claude_code.faults import ClaudeEmitOutsideTurn as ClaudeEmitOutsideTurn
+from doeff_claude_code.faults import LiveProcess as LiveProcess
+from doeff_claude_code.faults import NoLiveProcess as NoLiveProcess
+from doeff_claude_code.faults import StopReason as StopReason
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 QUICK_TURN_SECONDS: float
@@ -126,6 +131,8 @@ class FakeSession:
     current_seq: Incomplete
     next_line_seq: Incomplete
     closed: Incomplete
+    launches: int
+    stopped_because: StopReason | None
     turns: dict[int, FakeTurn]
 
     def __init__(self, session_id: str, home: Incomplete, cwd: str) -> None:
@@ -235,6 +242,12 @@ def fake_drop(world: FakeClaudeWorld, session_id: str) -> _Program[bool, object]
     ...
 
 def fake_forget(world: FakeClaudeWorld, session_id: str) -> _Program[bool, object]:
+    ...
+
+def fake_live_process(world: FakeClaudeWorld, session_id: str) -> _Program[LiveProcess | NoLiveProcess, object]:
+    ...
+
+def fake_emit_outside(world: FakeClaudeWorld, session_id: str) -> _Program[bool, object]:
     ...
 
 def fake_claude_code_handler(world: Incomplete) -> _Handler:

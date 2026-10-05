@@ -12,10 +12,11 @@
                                    SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest])
-(import doeff_claude_code.faults [ClaudeDropProcess])
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import tests.scenario_rules [CODEWORD EXTRA-WORD remember-prompt recall-prompt reply-prompt sleep-prompt
                               touch-prompt extra-prompt])
-(import tests.scenario_steps [settings start read-to-end read-to-tool-start read-until-permission new-id typed kinds-of])
+(import tests.scenario_steps [settings start read-to-end read-to-tool-start read-until-permission new-id typed kinds-of
+                              live-process-until])
 
 (setv LONG-SLEEP 40)
 
@@ -241,3 +242,46 @@
   (assert (in CODEWORD done.end.result-text) done.end.result-text)
   (<- again (ClaudeExportSession s.other-home s.base.cwd sid))
   (assert (.startswith again.jsonl-text exported.jsonl-text) (repr again)))
+
+
+;; --- 会話ごとに process を生かしたまま待たせる形(#3672)の使い回しと守り ------------------------------------
+;; 今の handler は手番の終わりで process を降ろす(#517)ので、次の 2 本は使い回しと守りが入るまで赤(先に書く失敗ケース)。
+;; 替え玉の CLI だけが手番の外の出力の検の行を読むので、本物の claude の解釈器には当てない。
+
+(deftest test-the-process-stays-alive-after-a-turn-and-the-next-turn-reuses-it
+  ;; 手番の後も process は生き(手番を走らせていない)、同じ条件の次の手番は process を起こし直さずに続ける(起こした数は 1 のまま)。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- first (start (FreshSession sid) s.base (remember-prompt "ALPHA-1")))
+  (<- one (read-to-end first.turn s.turn-timeout))
+  (assert (isinstance one.end Completed) (repr one.end))
+  (<- after-one (ClaudeLiveProcess sid))
+  (assert (= after-one (LiveProcess :launches 1)) after-one)
+  (<- second (start (ResumeSession sid) s.base (recall-prompt)))
+  (<- two (read-to-end second.turn s.turn-timeout))
+  (assert (isinstance two.end Completed) (repr two.end))
+  (assert (in CODEWORD two.end.result-text) two.end.result-text)
+  (<- after-two (ClaudeLiveProcess sid))
+  (assert (= after-two (LiveProcess :launches 1)) after-two))
+
+
+(deftest test-output-outside-a-turn-stops-the-process-and-names-why
+  ;; 守り: 手番を走らせていない生きた process が手番の外で出力したら、host はその process を降ろし、降ろした訳(手番の外の出力)を
+  ;; 残す。次の手番は process を起こし直して続く(#517 の事故 = 背景の仕事の完了で手番の外に動いた CLI が、記録の無いまま道具を撃つ形)。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- first (start (FreshSession sid) s.base (remember-prompt "ALPHA-1")))
+  (<- one (read-to-end first.turn s.turn-timeout))
+  (assert (isinstance one.end Completed) (repr one.end))
+  (<- emitted (ClaudeEmitOutsideTurn sid))
+  (assert emitted "手番の後も生きた process が在り、手番の外の出力をさせられる")
+  (<- stopped (live-process-until sid (fn [view] (isinstance view NoLiveProcess)) s.turn-timeout))
+  (assert (= stopped (NoLiveProcess :launches 1 :stopped-because StopReason.OUTSIDE-TURN-OUTPUT)) stopped)
+  (<- second (start (ResumeSession sid) s.base (recall-prompt)))
+  (<- two (read-to-end second.turn s.turn-timeout))
+  (assert (isinstance two.end Completed) (repr two.end))
+  (assert (in CODEWORD two.end.result-text) two.end.result-text)
+  (<- after (ClaudeLiveProcess sid))
+  (assert (= after (LiveProcess :launches 2)) after))
