@@ -688,8 +688,9 @@
   (assert (= (. (get reborn.statuses "atlas") jobs) #()))
   (val again (! (generation-beat reborn "b2" BOOT-2 [{"name" "w" "phase" "starting"}] (+ BOOT-2 20))))
   (assert (= (! (exit-of again "w")) BOOT-2) (. (get again.statuses "atlas") jobs))
-  ;; 持ち続けるのは宣言の在る job の名だけ(task や退いた行の名を世代ごとに溜めない)。
-  (assert (= (. (get reborn.statuses "atlas") last-exits) #((KnownExit :job "w" :at-ms BOOT-2))) (get reborn.statuses "atlas")))
+  ;; 持ち続けるのは宣言の在る job の名だけ(task や退いた行の名を世代ごとに溜めない)。2 世代目はまだ w の process を持たない。
+  (assert (= (. (get reborn.workers "atlas") known-exits) #((KnownExit :job "w" :at-ms BOOT-2 :has-process False)))
+          (get reborn.workers "atlas")))
 
 (deftest test-heartbeats-of-the-same-generation-do-not-move-the-last-exit
   ;; (b) 同じ世代の heartbeat を何度受けても進まない: 報告が無ければ無いまま、報告の刻が在ればその刻のまま。
@@ -723,6 +724,121 @@
   (assert (= (! (exit-of third "w")) BOOT-2))
   (val crashed (! (generation-beat third "b2" BOOT-2 [{"name" "w" "phase" "backoff" "lastExitAtMs" (+ BOOT-2 900)}] (+ BOOT-2 950))))
   (assert (= (! (exit-of crashed "w")) (+ BOOT-2 900)))
-  ;; 退いた世代(1 世代目がまだ送る heartbeat — OLDER)は job の行に触らない。
+  ;; 退いた世代(1 世代目がまだ送る heartbeat — OLDER)の行が終わりの刻を載せなければ、job の行に触らない。
   (val stale (! (generation-beat crashed "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-2 960))))
   (assert (= (get stale.statuses "atlas") (get crashed.statuses "atlas"))))
+
+
+
+;; --- 最後に終わったと知れた刻を coordinator の作り直しの後も保つ(#3672 の続き)------------------------------------------
+;; 状態の報告(ClusterState.statuses)は保存しない。機体が丸ごと死に、同じ機体の coordinator も一緒に作り直されると、前の世代で process を
+;; 持っていた job と進めた刻を報告ごと失い、刻は進まず・None へ戻った。worker/<名> の保存の行の knownExits(job の名・知れた刻・今の世代の
+;; 報告で process を持つか)から読み戻し、作り直しの後に来る新しい世代の heartbeat でも数える。
+(import json)
+(import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
+(import tests.program_rows [SAMPLE-RUN])
+
+(defk saved-w []
+  {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "読み直しても受け付けられる Service w(能力 net・Program の run を持つ)を宣言した coordinator の状態(worker はまだ居ない)。"
+  (ClusterState #((ClusterJob (JobSpec "w" "m" #() "rev") :needs #("net") :run SAMPLE-RUN))))
+
+(defk restarts [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "coordinator を刻 now に作り直した状態を、耐久の置き場(本番の load-state と同じ state-from-kv と、止まっていた長さのずらし)と以前の形の
+   state file の両方から求めるため。状態の報告 statuses は保存しないので、どちらも空になる。"
+  (<- stored ClusterState (state-from-kv (! (full-kv state)) now))
+  (<- from-file ClusterState (state-from-json (json.loads (json.dumps (! (state-to-json state)))) now))
+  #((get (resume-after-downtime stored now) 0) from-file))
+
+(defk exit-after-rebirth [again]
+  {:pre [(: again ClusterState)] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "作り直した coordinator の状態 again に、2 世代目(起動の刻 BOOT-2)の最初の heartbeat(行なし)と、w を pid の無い行(process を起こす前)で
+   載せた次の heartbeat を送った後の、w の刻を読むため。"
+  (assert (= again.statuses {}) again.statuses)
+  (assert (= (lfor j again.jobs j.spec.name) ["w"]) again.refused)
+  (val reborn (! (generation-beat again "b2" BOOT-2 [] (+ BOOT-2 10))))
+  (! (exit-of (! (generation-beat reborn "b2" BOOT-2 [{"name" "w" "phase" "preparing"}] (+ BOOT-2 20))) "w")))
+
+(deftest test-a-new-generation-after-the-coordinator-restarts-moves-the-last-exit
+  ;; (a) 1 世代目が w を pid 100 で走らせていた。coordinator が作り直され(報告は失う)、2 世代目の最初の heartbeat は行を載せず、次の
+  ;; heartbeat で w を pid の無い行で載せる。刻は 2 世代目の起動の刻まで進む(耐久の置き場からも、以前の形の state file からも)。
+  (val first (! (generation-beat (! (saved-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
+  (for [again (! (restarts first (+ BOOT-1 20)))]
+    (assert (= (! (exit-after-rebirth again)) BOOT-2))))
+
+(defk exits-after-restart [again]
+  {:pre [(: again ClusterState)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "作り直した coordinator の状態 again(2 世代目が w を pid 200 で走らせ、刻を BOOT-2 まで進めた後)から、#(2 世代目が同じ行(刻を載せない)を
+   送った後の w の刻  さらに作り直してから 3 世代目(起動の刻 BOOT-2 + 1000)が w を pid の無い行で載せた後の w の刻)を読むため。"
+  (val beaten (! (generation-beat again "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 30))))
+  (val third (! (generation-beat (get (! (restarts beaten (+ BOOT-2 40))) 0) "b3" (+ BOOT-2 1000)
+                                 [{"name" "w" "phase" "preparing"}] (+ BOOT-2 1010))))
+  #((! (exit-of beaten "w")) (! (exit-of third "w"))))
+
+(deftest test-the-moved-last-exit-does-not-go-back-after-the-coordinator-restarts
+  ;; (b) 2 世代目で BOOT-2 まで進めた刻は、coordinator を作り直した後の最初の報告の行(2 世代目の process はまだ終わっていない — 刻を
+  ;; 載せない)でも None に戻らない。作り直しの後に 3 世代目が来れば、2 世代目で process を持っていた w を 3 世代目の起動の刻まで進める。
+  (val first (! (generation-beat (! (saved-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
+  (val second (! (generation-beat first "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 10))))
+  (assert (= (! (exit-of second "w")) BOOT-2))
+  (for [again (! (restarts second (+ BOOT-2 20)))]
+    (assert (= (! (exits-after-restart again)) #(BOOT-2 (+ BOOT-2 1000))))))
+
+(deftest test-an-older-generation-that-outlives-the-new-boot-reports-the-later-exit
+  ;; (c) 世代が重なる形(2026-09-27 の実測 — 旧い Pod は preStop の drain の間も process を動かし、新旧の世代が交互に heartbeat を送る)。
+  ;; 2 世代目の heartbeat で w の刻は BOOT-2 まで進むが、1 世代目の w はまだ走っている。退いた世代(OLDER)の行の終わりの刻も大きい方の
+  ;; 候補に入れる: 1 世代目が後で w の終わり(BOOT-2 + 300)を報告すると、その刻が載る。2 世代目の起動より前の終わりの刻では戻さない。
+  (val first (! (generation-beat (! (declared-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
+  (val second (! (generation-beat first "b2" BOOT-2 [{"name" "w" "phase" "preparing"}] (+ BOOT-2 10))))
+  (assert (= (! (exit-of second "w")) BOOT-2))
+  (val still (! (generation-beat second "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100 "lastExitAtMs" (- BOOT-2 5)}] (+ BOOT-2 100))))
+  (assert (= (! (exit-of still "w")) BOOT-2))
+  (val ended (! (generation-beat still "b1" BOOT-1 [{"name" "w" "phase" "stopped" "lastExitAtMs" (+ BOOT-2 300)}] (+ BOOT-2 310))))
+  (assert (= (! (exit-of ended "w")) (+ BOOT-2 300)) (. (get ended.statuses "atlas") jobs))
+  ;; 退いた世代は名乗りとして受けない(今の世代は b2 のまま)。2 世代目の続く heartbeat(刻を載せない行)でも戻さない。
+  (assert (= (. (get ended.workers "atlas") boot) "b2"))
+  (val after (! (generation-beat ended "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 320))))
+  (assert (= (! (exit-of after "w")) (+ BOOT-2 300))))
+
+(deftest test-a-saved-worker-row-without-known-exits-reads-as-empty
+  ;; (d) 欄 knownExits の無い保存の行(この欄より前の版が書いた行)は空の列として読む(欄の既定が空なだけ — 版で切り替える分岐は無い)。
+  ;; 次に書く時から新しい形。
+  (val first (! (generation-beat (! (saved-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
+  (val row [{"job" "w" "atMs" None "hasProcess" True}])
+  (val kv (! (full-kv first)))
+  (assert (= (get kv "worker/atlas" "knownExits") row) (get kv "worker/atlas"))
+  (val back (! (state-from-kv (| kv {"worker/atlas" (dfor #(k v) (.items (get kv "worker/atlas")) :if (!= k "knownExits") k v)})
+                              (+ BOOT-1 20))))
+  (assert (= (. (get back.workers "atlas") known-exits) #()) (get back.workers "atlas"))
+  (val data (! (state-to-json first)))
+  (val from-file (! (state-from-json (| data {"workers" (lfor w (get data "workers") (dfor #(k v) (.items w) :if (!= k "knownExits") k v))})
+                                     (+ BOOT-1 20))))
+  (assert (= (. (get from-file.workers "atlas") known-exits) #()) (get from-file.workers "atlas"))
+  (val beaten (! (generation-beat back "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 30))))
+  (assert (= (get (! (full-kv beaten)) "worker/atlas" "knownExits") row)))
+
+(defk beat-without-rewrite [state row now]
+  {:pre [(: state ClusterState) (: row dict) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "atlas の 1 世代目が w の行 row を載せた heartbeat を受けた状態を求め、保存の差分(durable-delta)が空 = 保存の行を書かないと確かめるため。"
+  (val beaten (! (generation-beat state "b1" BOOT-1 [row] now)))
+  (val delta (! (durable-delta state beaten)))
+  (assert (= delta {}) #(now delta))
+  beaten)
+
+(deftest test-heartbeats-of-the-same-generation-do-not-rewrite-the-saved-worker-row
+  ;; (e) worker/<名> の保存の行が変わるのは、今の世代で process を持つ job の集まりか知れた刻が替わった時だけ(process の起き・終わり・
+  ;; 世代の入れ替わり)。同じ世代の heartbeat を何度受けても行は変わらない(書きは増えない — 生存の印の書きは印の拍ごと・#2903)。
+  (val idle (! (generation-beat (! (saved-w)) "b1" BOOT-1 [{"name" "w" "phase" "preparing"}] (+ BOOT-1 10))))
+  (val running-row {"name" "w" "phase" "running" "pid" 100})
+  (val started (! (generation-beat idle "b1" BOOT-1 [running-row] (+ BOOT-1 20))))
+  (assert (= (sorted (! (durable-delta idle started))) ["worker/atlas"]) (! (durable-delta idle started)))
+  (var running started)
+  (for [at [30 40 50]]
+    (:= running (! (beat-without-rewrite running running-row (+ BOOT-1 at)))))
+  (val ended-row {"name" "w" "phase" "backoff" "lastExitAtMs" (+ BOOT-1 55)})
+  (val ended (! (generation-beat running "b1" BOOT-1 [ended-row] (+ BOOT-1 60))))
+  (assert (= (sorted (! (durable-delta running ended))) ["worker/atlas"]) (! (durable-delta running ended)))
+  (var waiting ended)
+  (for [at [70 80]]
+    (:= waiting (! (beat-without-rewrite waiting ended-row (+ BOOT-1 at))))))

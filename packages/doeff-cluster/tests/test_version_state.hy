@@ -18,6 +18,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.api_policy :as api-policy)
 (import doeff_cluster.coordinator.core.resource_policy :as resource-policy)
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.resource_policy [version-state running-process live-processes not-ready-version phase-version
                                        unplaced-not-ready snapshot])
 (import tests.program_rows [SAMPLE-RUN])
@@ -409,6 +410,20 @@
                                                                   "lastExitCode" 0 "lastExitAtMs" 995}))])))
   (assert (> (resource-version-of again "Service/w") (resource-version-of ended "Service/w")))
   (assert (= (get (! (service-status again)) "lastExitAtMs") 995)))
+
+
+(deftest test-a-restarted-coordinator-still-moves-the-last-exit-by-the-new-boot
+  ;; 担い手 atlas の機体が丸ごと死に、同じ機体の coordinator も一緒に作り直された(#3672 の続き — 状態の報告は保存しないので消える)。
+  ;; 作り直した coordinator は保存の行(worker/atlas の knownExits)から 1 世代目が w の process を持っていたと知り、2 世代目の heartbeat で
+  ;; 刻を 2 世代目の起動の刻まで進める。本物の読み直し(state-from-kv と止まっていた長さのずらし)と本物の respond を通す。
+  (val placed (! (beat (! (declared)) "atlas" [] :boot "b1" :boot-at BORN-AT)))
+  (val running (! (beat placed "atlas" [(! (row-of placed))] :boot "b1" :boot-at BORN-AT)))
+  (<- stored ClusterState (state-from-kv (! (full-kv running)) START))
+  (val restarted (get (api-policy.resume-after-downtime stored START) 0))
+  (val reborn (! (beat restarted "atlas" [] :boot "b2" :boot-at REBORN-AT)))
+  (val again (! (beat reborn "atlas" [(! (row-of reborn "preparing" {"pid" None "instance" None}))] :boot "b2" :boot-at REBORN-AT)))
+  (assert (= (get (! (process-of again)) "lastExitAtMs") REBORN-AT) (! (process-of again)))
+  (assert (= (get (! (service-status again)) "lastExitAtMs") REBORN-AT) (! (service-status again))))
 
 
 (deftest test-a-refused-declaration-is-blocked-until-it-is-deleted

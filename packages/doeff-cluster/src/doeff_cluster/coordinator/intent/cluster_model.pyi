@@ -38,6 +38,12 @@ class GenerationOrder(StrEnum):
     OLDER = 'older'
     NEWER = 'newer'
 
+@dataclass(frozen=True, kw_only=True)
+class KnownExit:
+    job: str
+    at_ms: int | None
+    has_process: bool
+
 @dataclass(frozen=True)
 class WorkerInfo:
     name: str
@@ -60,6 +66,7 @@ class WorkerInfo:
     seen_mark: int | None = None
     _: KW_ONLY
     task_reserve: int
+    known_exits: tuple[KnownExit, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerLoad:
@@ -268,16 +275,10 @@ class StateReply:
     drains: dict[str, DrainProgress]
 
 @dataclass(frozen=True, kw_only=True)
-class KnownExit:
-    job: str
-    at_ms: int
-
-@dataclass(frozen=True, kw_only=True)
 class WorkerReport:
     at: int
     endpoint: str | None
     jobs: tuple[StatusRow, ...]
-    last_exits: tuple[KnownExit, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class ServiceBody:

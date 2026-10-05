@@ -347,7 +347,13 @@ def board_changes(before: ClusterState, after: ClusterState) -> list:
 def hyx_text_mapXquestion_markX(value: dict | list | str | int | float | bool | None) -> bool:
     ...
 
-def worker_report(previous: WorkerReport | None, rows: tuple, now: int, endpoint: str | None, order: GenerationOrder, boot_at: int | None, declared: frozenset) -> _Program[WorkerReport, object]:
+def known_exits_after(previous: WorkerInfo | None, rows: tuple, order: GenerationOrder, boot_at: int | None, declared: frozenset) -> _Program[tuple, object]:
+    ...
+
+def rows_with_known_exits(rows: tuple, known: tuple) -> _Program[tuple, object]:
+    ...
+
+def worker_report(rows: tuple, now: int, endpoint: str | None, known: tuple) -> _Program[WorkerReport, object]:
     ...
 
 def register_heartbeat(given: ClusterState, body: HeartbeatBody, now: int) -> _Program[ClusterState, object]:
