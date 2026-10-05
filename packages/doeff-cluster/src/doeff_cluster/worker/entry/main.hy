@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
-(import doeff_cluster.foundation.process_versions [this-process-versions])
+(import doeff_cluster.foundation.process_versions [this-process-versions clock-ticks])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [SelfStopSpans ReassignTooEarly timing-outlasts-the-self-stop])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
@@ -49,6 +49,8 @@
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
+(import doeff_cluster.worker.protocol.process_clock [process-clock])
+(import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
 (import doeff_cluster.shared.core.runtime_env_rules [current-platform])
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
@@ -159,6 +161,8 @@
 (deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.worker.entry.main` の __main__ と boot.sh の旧い名の入口が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "worker" :role "main" :reads "env"}}
   "worker の process の入口: 起動の引数と機体の環境変数から組み立て、本番の handler の組の上で調整ループを回すため。"
+  ;; import の終わりの刻(この関数は module の import が済んでから呼ばれる — 起動の内訳の 1 行の 4 番目の刻・#3676)。
+  (setv imported-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms))))
   (setv parser (argparse.ArgumentParser :description "doeff worker(実験)"))
   (.add-argument parser "--coordinator" :required True
                  :help "job を割り当てる coordinator の URL。`,` で並べると前から順に試す(Mac は LAN・tailnet の順)")
@@ -213,7 +217,11 @@
                             :layout layout)
         ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
-                           (machine-environment (+ (run (pass-env-names args.pass-env)) #(BOOT-FILE-VAR)))))
+                           (machine-environment (+ (run (pass-env-names args.pass-env)) #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR)))))
+        ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。
+        ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
+        boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
+                          (read-boot-marks machine-env imported-ms)))
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name)))
@@ -244,7 +252,7 @@
         link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot
                         started-ms started-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
-                        :node args.node
+                        :node args.node :boot-marks boot-marks
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)

@@ -4,7 +4,10 @@ from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
+from datetime import datetime as datetime
+import re as re
 from doeff_time import GetMonotonic as GetMonotonic
+from doeff_time import GetTime as GetTime
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
@@ -18,6 +21,10 @@ from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_Xgreater
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
 from doeff_cluster.worker.intent.env_prepare_model import PrepareRequest as PrepareRequest
 from doeff_cluster.worker.intent.env_prepare_model import StageTime as StageTime
+from doeff_cluster.worker.intent.env_prepare_model import StagePart as StagePart
+from doeff_cluster.worker.intent.env_prepare_model import TREE_COPY as TREE_COPY
+from doeff_cluster.worker.intent.env_prepare_model import TREE_EXPAND as TREE_EXPAND
+from doeff_cluster.worker.intent.env_prepare_model import VolumeKind as VolumeKind
 from doeff_cluster.worker.intent.env_prepare_model import MirrorReady as MirrorReady
 from doeff_cluster.worker.intent.env_prepare_model import FetchState as FetchState
 from doeff_cluster.worker.intent.env_prepare_model import RepoMirror as RepoMirror
@@ -32,6 +39,7 @@ from doeff_cluster.worker.intent.env_prepare_model import PrepareState as Prepar
 from doeff_cluster.worker.intent.env_prepare_model import StageStarted as StageStarted
 from doeff_cluster.worker.intent.env_prepare_model import PrepareNote as PrepareNote
 from doeff_cluster.worker.intent.env_prepare_model import DiskFree as DiskFree
+from doeff_cluster.worker.intent.env_prepare_model import ReadVolume as ReadVolume
 from doeff_cluster.worker.intent.env_prepare_model import EnsureMirror as EnsureMirror
 from doeff_cluster.worker.intent.env_prepare_model import FetchCommit as FetchCommit
 from doeff_cluster.worker.intent.env_prepare_model import MaterializeTree as MaterializeTree
@@ -78,6 +86,16 @@ def carry_source(known: tuple, env: RuntimeEnv, name: str) -> _Program[str | Non
     ...
 
 def hyx_env_marker_XgreaterHthan_signXjson(marker: EnvMarker) -> _Program[dict, object]:
+    ...
+MOUNT_ESCAPE: re.Pattern[str]
+
+def mount_unescaped(text: str) -> _Program[str, object]:
+    ...
+
+def volume_of_mountinfo(text: str, path: str) -> _Program[VolumeKind | None, object]:
+    ...
+
+def timing_line(stages: tuple, volume: VolumeKind | None, startup: float | None) -> _Program[str, object]:
     ...
 
 def stage_disk(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:

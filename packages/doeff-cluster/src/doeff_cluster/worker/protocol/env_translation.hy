@@ -40,9 +40,11 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
+;; この process の mount の表(置き場の disk の種類を読む — #3676)。
+(val MOUNT-TABLE "/proc/self/mountinfo")
 ;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。
 (val NOT-COPIED (frozenset #(".venv" "__pycache__")))
 ;; uv の子に継がせない呼び手の環境変数の型(呼び手の venv と uv・Python の設定)。
@@ -530,6 +532,19 @@
     (<- seen (| int FileFailed) (ReadDiskFree path))
     (<- free int (settled seen "空きを読めない"))
     (resume free))
+
+  (ReadVolume [path]
+    ;; 置き場の disk の種類(#3676): mount の表(/proc/self/mountinfo)を読み、path の実の path(symlink を解く — 無い path はそのまま)を含む
+    ;; 最も深い mount の行を引く。表を読めない機体(macOS 等)は None。
+    (<- table (| str FileFailed) (ReadText MOUNT-TABLE))
+    (<- seen (| PathStat FileFailed) (StatPath path))
+    (val real (match seen
+                (PathStat) (if (= seen.kind PathKind.MISSING) path seen.real-path)
+                _ path))
+    (<- volume (| VolumeKind None) (match table
+                                     (FileFailed) None
+                                     _ (volume-of-mountinfo table real)))
+    (resume volume))
 
   (EnsureMirror [url]
     ;; mirror の名・deploy key・clone の URL は鍵の表の綴り(同じ repo の別の綴り — ssh と https — も表の項目に引き当てる。完全一致の宣言では

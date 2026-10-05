@@ -7,8 +7,9 @@
 (require doeff-hy.macros [defk deff val <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
+(import dataclasses [replace])
 (import json)
-(import doeff_core_effects.file_effects [ReadText WriteText file-done])
+(import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadText WriteText file-done])
 (import doeff [run with-handlers])
 (import doeff_core_effects.handlers [reader state])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -24,6 +25,16 @@
   "worker が渡した JSON の file(要求・許可表)を読むため — 読みは file の効果(答え手 = 入口の os-file-handler)・読めなければ OSError。"
   (<- text (file-done (ReadText path)))
   (json.loads text))
+
+
+(defk requested-ms [path]
+  {:pre [(: path str)] :post [(: % (| int None))] :tags {:context "worker" :role "main"}}
+  "worker が要求の JSON を書いた刻(file の mtime・epoch ミリ秒)を返すため — worker はこの file を書いた直後に準備の process を起こすので、
+   この刻から最初の処理ステージまでが「起こして準備を始めるまで」の秒(process の起こし・Hy と module の import — #3676)。読めなければ None。"
+  (<- seen (| PathStat FileFailed) (StatPath path))
+  (match seen
+    (PathStat) (if (= seen.kind PathKind.FILE) (int (* 1000 seen.modified)) None)
+    _ None))
 
 
 (defk prepared-to-file [request result]
@@ -52,7 +63,9 @@
   (setv settings {"runtime-env.state" args.state "runtime-env.repo-keys" keys
                   "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
                   "runtime-env.progress" args.progress "runtime-env.notes" "/dev/stderr"})
-  (setv request (run (request-of-json (run (with-handlers [os-file-handler] (json-file args.request))))))
+  ;; 要求の JSON を書いた刻を準備の起こしの刻として要求に添える(印の startupSeconds — #3676)。
+  (setv request (replace (run (request-of-json (run (with-handlers [os-file-handler] (json-file args.request)))))
+                         :launched-ms (run (with-handlers [os-file-handler] (requested-ms args.request)))))
   (run (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                       (prepared-to-file request args.result)))
   None)

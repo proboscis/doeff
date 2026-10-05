@@ -77,3 +77,10 @@
   "この process の環境変数の写像を返すため — 入口が Program の外で読む実行先の文脈(shared/entry/run_context_env の context-from-env)の
    材料。os.environ の読みを foundation の層に閉じ、写像は組まずにそのまま渡す(読みの規則は core の context-of-environ の 1 つ — #3014)。"
   os.environ)
+
+
+(defk clock-ticks []
+  {:pre [] :post [(: % int)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "この機体の 1 秒の clock tick の数(/proc/<pid>/stat の starttime の単位 — worker の起動の刻を読む process_clock の handler へ入口が渡す・
+   #3676)を返すため。os への問いを foundation の層に閉じる。"
+  (os.sysconf "SC_CLK_TCK"))

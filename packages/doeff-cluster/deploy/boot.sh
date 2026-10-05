@@ -37,6 +37,21 @@ set -eu
 WORK_DIR=${WORK_DIR:-/work}
 role=${ROLE:-worker}
 
+# 今の刻(epoch ミリ秒)。GNU の date は %3N でミリ秒を出す・BSD(macOS の worker)は出さないので秒の 1000 倍。
+boot_ms() {
+  ms=$(date +%s%3N 2>/dev/null || true)
+  case "$ms" in
+    ''|*[!0-9]*) echo $(( $(date +%s) * 1000 )) ;;
+    *) echo "$ms" ;;
+  esac
+}
+# 起動の内訳の刻(#3676 — worker が最初の heartbeat の答えの後に 1 行で出す): この script の始まり。起動の script の引き継ぎ(下の exec)を
+# またいで最初の値を保つ(引き継いだ先では置き直さない)。
+if [ -z "${DOEFF_BOOT_STARTED_MS:-}" ]; then
+  DOEFF_BOOT_STARTED_MS=$(boot_ms)
+fi
+export DOEFF_BOOT_STARTED_MS
+
 # 自己起動の root を用意して PATH の頭に置く。drain は準備せず、完成した root を使うだけ(preStop で build しない)。
 doeff_root() {
   commit=$WORKER_DOEFF_COMMIT
@@ -212,6 +227,9 @@ if [ -z "${WORKER_TASK_RESERVE:-}" ]; then
   echo "boot: WORKER_TASK_RESERVE が無い — capacity のうち task のために空けておく数(0 以上 WORKER_CAPACITY 以下)を渡す" >&2
   exit 2
 fi
+# worker を exec する刻(起動の内訳の 3 番目の刻・#3676)。
+DOEFF_BOOT_EXEC_MS=$(boot_ms)
+export DOEFF_BOOT_EXEC_MS
 exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --task-reserve "${WORKER_TASK_RESERVE}" \

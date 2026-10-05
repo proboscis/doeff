@@ -296,6 +296,25 @@
   (setv #^ str note ""))
 
 
+(defrecord BootMarks
+  "worker の起動の刻(epoch ミリ秒・None = 取れない — #3676。最初の heartbeat の答えの後に 1 行で出し、起動の遅さがどこに在るかを割る):
+   pod-ms = Pod の起動(PID 1 の process の始まり — /proc/1/stat。Pod の中で boot.sh が PID 1 なら boot.sh の起こされた刻)・
+   script-ms = boot.sh の始まり(boot.sh が最初に置く環境変数 — 起動の script の引き継ぎの exec をまたいで同じ値)・
+   exec-ms = worker の exec(boot.sh が worker を exec する直前に置く環境変数 — boot.sh を通らない起動は None)・
+   process-ms = OS の process の始まり(/proc/self/stat。exec では変わらないので、boot.sh から exec した worker では boot.sh の process の
+   始まりの刻 — 順の断言には入れない)・imported-ms = worker の入口の module の import の終わり(入口 main の頭)。"
+  (setv #^ (| int None) pod-ms None)
+  (setv #^ (| int None) script-ms None)
+  (setv #^ (| int None) exec-ms None)
+  (setv #^ (| int None) process-ms None)
+  (setv #^ (| int None) imported-ms None))
+
+
+(defclass [(dataclass :frozen True)] ProcessStartedMs [EffectBase]
+  "process pid(\"self\" か \"1\")の始まりの刻(epoch ミリ秒 — #3676)。答え = int か None(/proc を読めない機体)。"
+  (#^ str pid))
+
+
 ;; --- action(判断の結果。そのまま effect として実行する) -------------------------
 
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]
