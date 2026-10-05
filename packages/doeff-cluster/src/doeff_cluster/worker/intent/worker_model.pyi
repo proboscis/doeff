@@ -110,6 +110,7 @@ class WorldView:
     processes: tuple[ProcessView, ...]
     probes: tuple[ProbeView, ...] = ()
     env_disk: EnvDisk | None = None
+    warm_children: tuple[WarmChildView, ...] = ()
 
 class StopStage(Enum):
     TERM = "term"
@@ -120,6 +121,28 @@ class StopProgress:
     requested_ms: int
     stage: StopStage
     signalled_ms: int
+
+# --- 待ちの子(#3646)-------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class WarmChildMark:
+    """待ちの子の準備完了の印。threads = thread の数・vm-live = 生きた VM の数の 3 つ組。"""
+
+    threads: int
+    vm_live: tuple[int, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class WarmChildView:
+    """root ごとの待ちの子 1 つの観測。"""
+
+    key: str
+    pid: int
+    started_ms: int
+    mark: WarmChildMark | None = None
+    exit_code: int | None = None
+    ended_ms: int | None = None
+    detail: str = ""
+    stop: StopProgress | None = None
 
 class Outcome(Enum):
     EXITED = "exited"
@@ -226,6 +249,7 @@ class StartJob(EffectBase[None]):
     spec: JobSpec
     attempt: int
     code_path: str
+    warm_key: str | None = None
 
 @dataclass(frozen=True)
 class SignalJob(EffectBase[None]):
@@ -260,6 +284,22 @@ class ReleaseLeases(EffectBase[None]):
     job: str
     instance: str
 
+@dataclass(frozen=True)
+class StartWarmChild(EffectBase[None]):
+    key: str
+    root: str
+    preload: tuple[str, ...]
+
+@dataclass(frozen=True)
+class StopWarmChild(EffectBase[None]):
+    key: str
+    stage: StopStage
+    reason: str
+
+@dataclass(frozen=True)
+class ForgetWarmChild(EffectBase[None]):
+    key: str
+
 Action = (
     PrepareCode
     | PrepareEnv
@@ -271,6 +311,9 @@ Action = (
     | ReleaseLeases
     | ProbeEntry
     | ForgetProbes
+    | StartWarmChild
+    | StopWarmChild
+    | ForgetWarmChild
 )
 
 @dataclass(frozen=True)

@@ -134,7 +134,9 @@
   ;; 入口の検めの観測(ProbeView)。既定は空(検めを知らない呼び手の WorldView をそのまま通す)。
   (setv #^ tuple probes #())
   ;; 実行環境の root の置き場の disk(EnvDisk)。実行環境の job を扱わない worker は None(掃除をしない)。
-  (setv #^ (| EnvDisk None) env-disk None))
+  (setv #^ (| EnvDisk None) env-disk None)
+  ;; root ごとの待ちの子の観測(WarmChildView — #3646)。起こした待ちの子が無ければ空。
+  (setv #^ tuple warm-children #()))
 
 
 (defclass StopStage [Enum]
@@ -145,6 +147,32 @@
   (#^ int requested-ms)
   (#^ StopStage stage)
   (#^ int signalled-ms))
+
+
+;; --- 待ちの子(#3646)-------------------------------------------------------------
+;; 実行環境の root ごとに、その root の venv で module を前もって読み込み、まだ VM を起こさずに待つ常駐の子 process(入口 =
+;; worker/entry/warm_child)。実行環境の task は、その root の待ちの子から fork で分かれて走る(読み込みの秒を task ごとに払わない)。
+;; 待ちの子は env の値と資格を持たない(task の env は分かれる時に渡す)。
+
+(defrecord WarmChildMark
+  "待ちの子の準備完了の印(<S>/ready.json — 入口が読み込みの後に書く): threads = 書いた時の thread の数・vm-live = 生きた VM の数の 3 つ組。
+   分かれる前に thread も VM も無い形(threads = 1・vm-live が全部 0)の時だけ準備済みに数える(条 WC3 — 判じるのは判断の層 1 か所)。"
+  (#^ int threads)
+  (#^ tuple vm-live))
+
+
+(defrecord WarmChildView
+  "root ごとの待ちの子 1 つの観測。key = root のキー(env-<キー>)・pid = 待ちの子の process・started-ms = 起こした刻・mark = 準備完了の印
+   (まだ書いていなければ None)・exit-code = 終わりを観測した code(走っていれば None)・ended-ms = 終わりを観測した刻・detail = 終わりの理由
+   (log の最後の 1 行か、worker が止めた訳)・stop = worker が止め始めた後の進み(止めていなければ None)。"
+  (#^ str key)
+  (#^ int pid)
+  (#^ int started-ms)
+  (setv #^ (| WarmChildMark None) mark None)
+  (setv #^ (| int None) exit-code None)
+  (setv #^ (| int None) ended-ms None)
+  (setv #^ str detail "")
+  (setv #^ (| StopProgress None) stop None))
 
 
 (defclass Outcome [Enum]
@@ -279,7 +307,10 @@
 (defclass [(dataclass :frozen True)] StartJob [EffectBase]
   (#^ JobSpec spec)
   (#^ int attempt)
-  (#^ str code-path))
+  (#^ str code-path)
+  ;; 待ちの子から分けて起こす task だけ: 分かれ元の待ちの子の root のキー(その task 自身の env のキー — 条 WC1)。None = 入れ物 shim で
+  ;; 起こす(service・実行環境を持たない job)。どちらの道かは判断の層が決め、宿は欄のとおりに起こす(黙って別の道へ倒れない)。
+  (setv #^ (| str None) warm-key None))
 
 
 (defclass [(dataclass :frozen True)] SignalJob [EffectBase]
@@ -331,7 +362,28 @@
   (#^ str job)
   (#^ str instance))
 
-(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry ForgetProbes))
+(defclass [(dataclass :frozen True)] StartWarmChild [EffectBase]
+  "root の待ちの子を起こし始める(#3646): key = root のキー・root = READY の root の path・preload = 起動で読み込む module の名(名の順)。
+   終わった前の待ちの子が観測に残っていれば置き換える。準備完了は ObserveWorld の WarmChildView の印で観測する。"
+  (#^ str key)
+  (#^ str root)
+  (#^ tuple preload))
+
+
+(defclass [(dataclass :frozen True)] StopWarmChild [EffectBase]
+  "走っている待ちの子の process group へ stage の signal を送る(reason = 止めた訳 — 観測の detail に残る)。待ちの子から分かれた task には
+   何も送らない(task は分かれた時に自分の session と process group を持つ — 条 WC2)。"
+  (#^ str key)
+  (#^ StopStage stage)
+  (#^ str reason))
+
+
+(defclass [(dataclass :frozen True)] ForgetWarmChild [EffectBase]
+  "終わりを観測した待ちの子を観測の表から外す(もう要らない root の待ちの子 — 要る root は StartWarmChild が置き換える)。"
+  (#^ str key))
+
+(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry ForgetProbes
+                StartWarmChild StopWarmChild ForgetWarmChild))
 
 
 (defclass [(dataclass :frozen True)] WorkerState []

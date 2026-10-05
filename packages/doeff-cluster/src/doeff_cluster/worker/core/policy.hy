@@ -17,7 +17,9 @@
 (import doeff [run])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
-  ProbeEntry ForgetProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
+  ProbeEntry ForgetProbes WarmChildView StartWarmChild StopWarmChild ForgetWarmChild] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
+(import doeff_cluster.worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
+  warm-preload])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -164,11 +166,16 @@
 
 (defn #^ tuple start-on-ready-tree [#^ int now #^ JobSpec spec #^ str tree #^ WorldView world #^ JobRecord record
                                     #^ WorkerPolicy policy]
-  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。"
+  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)は、自分の root の
+   待ちの子が準備済みになるまで起こさない(待ちの子を起こすのは warm-child-actions)— 道は 1 つで、入れ物 shim へ倒れない。"
   (setv gate (probe-actions now spec tree world policy))
   (cond
     (is-not gate None) gate
     (in-backoff now record policy) #()
+    (forks-from-warm-child spec)
+      (if (warm-child-ready (warm-child-of world (warm-key-of spec)))
+          #((StartJob spec (+ record.attempts 1) tree :warm-key (warm-key-of spec)))
+          #())
     True #((StartJob spec (+ record.attempts 1) tree))))
 
 (defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
@@ -239,6 +246,53 @@
                                  (>= (- now (or code.failed-ms 0)) policy.code-retry-ms))))
                (PrepareEnv w.key w.runtime-env :warm True))))
 
+(defk warm-stop-step [now view policy]
+  {:pre [(: now int) (: view WarmChildView) (: policy WorkerPolicy)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "止め始めた待ちの子の次の一手を決めるため: TERM の後、停止の猶予を過ぎても終わらなければ KILL を 1 度送る(job の止めと同じ間)。"
+  (if (and (is-not view.stop None) (= view.stop.stage StopStage.TERM) (>= (- now view.stop.signalled-ms) policy.stop-grace-ms))
+      #((StopWarmChild view.key StopStage.KILL "止めの合図の後も終わらない"))
+      #()))
+
+(defk warm-child-step [now key root view preload policy]
+  {:pre [(: now int) (: key str) (: root (| str None)) (: view (| WarmChildView None)) (: preload tuple) (: policy WorkerPolicy)]
+   :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "root のキー 1 つの待ちの子の action を決めるため(判断の表 — tests/test_warm_child_policy.hy が全行を撃つ)。root = 要る root の READY
+   の path(要らない・READY でなければ None)・view = 待ちの子の観測・preload = 起動で読む module の名。観測が変わらない限り同じ action を
+   2 度出さない(起こした・止め始めた・忘れた事は次の観測に出る)。走っている task には何もしない(条 WC2)。"
+  (cond
+    ;; 要らない root: 走っていれば止め、終わっていれば観測から外す。
+    (is root None)
+      (cond
+        (is view None) #()
+        (is-not view.exit-code None) #((ForgetWarmChild key))
+        (is view.stop None) #((StopWarmChild key StopStage.TERM "root の待ちの子が要らなくなった"))
+        True (! (warm-stop-step now view policy)))
+    (is view None) #((StartWarmChild key root preload))
+    ;; 終わった待ちの子は、準備の失敗と同じ間(code-retry-ms)を置いてから起こし直す(落ちる入口を毎拍起こさない)。
+    (is-not view.exit-code None)
+      (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key root preload)) #())
+    (is-not view.stop None) (! (warm-stop-step now view policy))
+    ;; 印が分かれる前の形でない(条 WC3)待ちの子は、準備済みに数えずに止める(終わった後に起こし直す)。
+    (and (is-not view.mark None) (not (warm-mark-clean view.mark)))
+      #((StopWarmChild key StopStage.TERM (mark-refusal view.mark)))
+    True #()))
+
+(defk warm-child-actions [now desired world warm policy]
+  {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root の
+   うち READY の物。要る root と観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。"
+  (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
+                            (tuple (gfor w warm w.key)))))
+  (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
+  (var actions #())
+  (for [key keys]
+    (<- preload tuple (warm-preload key desired warm))
+    (<- step tuple (warm-child-step now key (if (in key wanted) (ready-path (code-of world key)) None)
+                                    (warm-child-of world key) preload policy))
+    (:= actions (+ actions step)))
+  actions)
+
 (defk pinned-env-keys [desired world warm]
   {:pre [(: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
   "掃除が消してはいけない root のキー(2026-09-26)を決めるため: 宣言の実行環境の job・走っている実行環境の process・温める表・準備中の
@@ -268,16 +322,18 @@
 (defk plan [now desired world records policy [warm #()]]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
-  "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 掃除の係への固定の集合 → 検めの記録の
-   片づけ。job ごとの判断 plan-job は列の中で要素ごとに呼ぶので素の関数のまま(列を順に走らせる道具 #2812 を待つ)。"
+  "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 待ちの子の起こしと止め(#3646)→ 掃除の
+   係への固定の集合 → 検めの記録の片づけ。job ごとの判断 plan-job は列の中で要素ごとに呼ぶので素の関数のまま(列を順に走らせる道具
+   #2812 を待つ)。"
   (<- names tuple (job-names desired world))
   (val jobs (tuple (gfor name names
                          action (plan-job now name desired world (.get records name (JobRecord name)) policy)
                          action)))
   (<- warming tuple (warm-actions now warm world jobs policy))
+  (<- children tuple (warm-child-actions now desired world warm policy))
   (<- sweeping tuple (sweep-actions desired world warm))
   (<- forgetting tuple (forget-probe-actions desired world))
-  (+ jobs warming sweeping forgetting))
+  (+ jobs warming children sweeping forgetting))
 
 (defk ready-followups [now desired before after records policy]
   {:pre [(: now int) (: desired tuple) (: before WorldView) (: after WorldView) (: records dict) (: policy WorkerPolicy)]
@@ -350,7 +406,25 @@
           (is-not (probe-failure world want) None) JobPhase.PROBE-FAILED
           (is-not (probe-in-flight world want) None) JobPhase.PROBING
           (in-backoff now record policy) JobPhase.BACKOFF
+          ;; 待ちの子から分かれる task は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は状態の行の文 — #3646)。
+          (and (forks-from-warm-child want) (not (warm-child-ready (warm-child-of world (warm-key-of want))))) JobPhase.PREPARING
           True JobPhase.STARTING))))
+
+(defn #^ (| str None) warm-wait-detail [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
+                                        #^ JobRecord record]
+  "待ちの子の準備を待っている task の状態の行の理由(#3646)。待っていなければ None。前の待ちの子が終わっていれば、その訳も添える。"
+  (if (or (is want None) (is-not process None) (not (forks-from-warm-child want)) (is-not record.last-outcome None)
+          (is (ready-path (code-of world (code-key want))) None))
+      None
+      (do
+        (setv view (warm-child-of world (warm-key-of want)))
+        (cond
+          (warm-child-ready view) None
+          (and (is-not view None) (is-not view.exit-code None) view.detail)
+            (.format "待ちの子の準備中 — 前の待ちの子が終わった: {}" view.detail)
+          (and (is-not view None) (is-not view.stop None) view.detail)
+            (.format "待ちの子の準備中 — 前の待ちの子を止めている: {}" view.detail)
+          True "待ちの子の準備中"))))
 
 (defk statuses [now desired world records policy]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]
@@ -367,6 +441,7 @@
     :setv probing (if (is want None) None (probe-status now world want))
     :setv handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None))
     :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
+    :setv warm-wait (warm-wait-detail world want process record)
     ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
     ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
     :setv stable (and (is-not process None) (is-not record.last-start-ms None)
@@ -386,6 +461,8 @@
         ;; 入口の検めの間(撃ち直しの間も直前の失敗の理由を出す — 2026-09-27)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probing None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— {}" (probing-detail probing))
         (is-not probing None) (probing-detail probing)
+        ;; 待ちの子の準備を待っている task(#3646)。
+        (is-not warm-wait None) warm-wait
         ;; 入れ替えの途中(新のコードの準備・新の Ready 待ち)は、旧が動いていることを示す。
         handing-off
           (.format "入れ替えを待つ(新のコード {})" (if (is code None) "未準備" code.state.value))
