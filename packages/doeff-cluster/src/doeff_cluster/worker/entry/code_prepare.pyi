@@ -16,6 +16,7 @@ from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import StatPath as StatPath
+from doeff_core_effects.file_effects import WriteText as WriteText
 from doeff_core_effects.file_effects import file_done as file_done
 from doeff_core_effects.os_file import os_file_handler as os_file_handler
 from doeff_core_effects.os_process import subprocess_handler as subprocess_handler
@@ -56,6 +57,9 @@ class BakeSources(EffectBase):
     paths: tuple
 
 def bake_trees(shaped: tuple) -> _Program[tuple, object]:
+    ...
+
+def old_import_table(old: str | None) -> _Program[plan.ImportTable, object]:
     ...
 
 def closure_of_trees(trees: tuple, sources: tuple, entries: tuple) -> _Program[tuple, object]:
