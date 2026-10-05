@@ -142,22 +142,26 @@
   "1 回の走りの読み: deltas = coordinator の置き場への書きの列(書いた順 — 判断の結果と刻を含む)・steps = coordinator の歩ごとの記録
    (CoordinatorStep の tuple — 刻とその歩の後の状態・#2670 の根 B — 筋書きが読む刻までに coordinator が起きて記録した歩)・final =
    走りが終わった後の置き場の鍵の表(耐久になった全部のキー — 記録の後の静かな区間の最後の状態も含む)・answer = 筋書きの答え・takes =
-   coordinator の拍の数。"
+   coordinator の拍の数・deposits = worker の宿が仮の拍を預けた回数(起こされた宿は預け直すので、宿の起きた回数の物差し)・heard-wakes =
+   列が受けた拍の返事が最後の返事と違って宿を起こした回数。"
   (#^ list deltas)
   (#^ (get tuple #(CoordinatorStep ...)) steps)
   ;; 置き場の鍵の表をそのまま持つ(置き場の口 load の答えの形 — 2 つの走りの最後の状態を丸ごと比べるため)。
   (#^ dict final)
   (#^ (| tuple None) answer)
-  (#^ int takes))
+  (#^ int takes)
+  (#^ int deposits)
+  (#^ int heard-wakes))
 
 
 (defk ended-with-takes [scenario]
   {:pre [(: scenario Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書きを回し、その答えと、終わった時の coordinator の拍の数と、coordinator の歩ごとの記録を返すため。"
+  "筋書きを回し、その答えと、終わった時の coordinator の拍の数と、coordinator の歩ごとの記録と、宿の預けの回数と HEARD で起こした
+   回数を返すため。"
   (<- answer (| tuple None) scenario)
   (<- link SimLink (ClientLink))
   (<- steps tuple (CoordinatorSteps))
-  #(answer link.queue.takes steps))
+  #(answer link.queue.takes steps link.queue.deposits link.queue.heard-wakes))
 
 
 (defk trace-of [system scenario skip-idle * [workers None] [policy None] [deployments None]]
@@ -169,7 +173,8 @@
   (<- seen tuple (sim-cluster system (ended-with-takes scenario) :workers workers :policy policy :deployments deployments
                               :skip-idle skip-idle
                               :store (fn [] (let [store (MemoryWalStore)] (.append made store) store))))
-  (Trace :deltas (. (get made 0) deltas) :steps (get seen 2) :final (.load (get made 0)) :answer (get seen 0) :takes (get seen 1)))
+  (Trace :deltas (. (get made 0) deltas) :steps (get seen 2) :final (.load (get made 0)) :answer (get seen 0) :takes (get seen 1)
+         :deposits (get seen 3) :heard-wakes (get seen 4)))
 
 
 (defk state-changes [steps]
@@ -443,7 +448,8 @@
                            (!= (- reference.beats host.beats) (// (- reference.last-ok-ms host.last-ok-ms) tick-ms)))
                    #(host reference)))
   (assert (= apart []) apart)
-  (<- breaches list (same-decisions every (Trace :deltas skipped.deltas :steps skipped.steps :final skipped.final :answer every.answer :takes skipped.takes)))
+  (<- breaches list (same-decisions every (Trace :deltas skipped.deltas :steps skipped.steps :final skipped.final :answer every.answer :takes skipped.takes
+                                                   :deposits skipped.deposits :heard-wakes skipped.heard-wakes)))
   (assert (= breaches []) breaches))
 
 
@@ -737,3 +743,77 @@
       (assert (= (len skipped.steps) (len tried.steps)) #(name (len skipped.steps) (len tried.steps)))
       (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at a.state.alive-ms b.state.alive-ms)))
       (assert (= apart []) #(name apart)))))
+
+
+;; --- 区間の終わりの刻と重なった仮の拍(A' — #2850 の続き)---------------------------------------------------------------
+;; 眠っている worker の宿が預けた仮の拍の刻が、要求で区間が終わる刻とちょうど重なると、前は宿を起こして本物の heartbeat を送らせた(起きた
+;; 宿は先の拍を試し直して預け直す — 使い手の模擬の検の 1 本で、x.5 秒の本物の要求と重なり歩数 1,203,544 → 1,492,965)。今は宿を起こさず、
+;; 預けの拍をその刻の要求として列に積み、返事が最後の返事と同じなら宿は眠ったまま写す。違う時だけ宿を起こし、宿はその刻のまま、列が受けた
+;; 返事で動く(送らない — 同じ刻の heartbeat を 2 度受けさせない)。
+;; - worker 1 台(拍 10 秒 — heartbeat は拍の刻 x0 秒)に、読みの要求を 10 秒ごとに 20 回、拍の刻ちょうど(x0 秒)と 0.1 秒後(x0.1 秒)に
+;;   送る。どちらも 1 拍ずつの走りと判断の変わり目・置き場の最後の状態・筋書きの答えが一致し、重なった走りの宿の預けの回数は、ずらした
+;;   走りより多くない。反例 — 重なった刻に宿を起こす形(直す前)は、重なるたびに宿が預け直して赤。
+;; - 拍の刻ちょうどに、その worker へ置く task を投げる: 返事が変わるので宿を起こし(HEARD)、1 拍ずつの走りと同じ刻に task を走らせる。
+;;   今の worker は名指しの待ち(/watch)で coordinator の変化を待つので、同じ歩で待ちも答え、宿はその刻に起きる — HEARD で起こさない列に
+;;   壊しても判断は食い違わなかった(2026-10-05 に 5 つの刻で実測)。HEARD は待ちに頼らない明示の道として残し、ここではその道を通った上で
+;;   判断が同じことを見る。起きた宿が送らずに列の返事を読む(take-heard)ので、同じ刻の heartbeat は 2 度届かない。
+
+(val ONE-WORKER #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+
+
+(defk wait-until-offset [offset]
+  {:pre [(: offset float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの部品: 起動の刻を含む 10 秒の区切りの頭から数えた秒 offset の刻まで眠るため(worker の拍の刻 x0 秒に揃えて要求を送る)。"
+  (<- started int (now-epoch-ms))
+  (val origin (- started (% started 10000)))
+  (<- now int (now-epoch-ms))
+  (<- (Delay (/ (- (+ origin (int (* 1000 offset))) now) 1000.0)))
+  None)
+
+
+(defk reads-on [offsets]
+  {:pre [(: offsets tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 10 秒の区切りの頭から数えた秒 offsets の刻ちょうどに読みの要求を 1 件ずつ送り、終わりの一生を読むため。"
+  (<- started int (now-epoch-ms))
+  (val origin (- started (% started 10000)))
+  (for [offset offsets]
+    (<- now int (now-epoch-ms))
+    (<- (Delay (/ (- (+ origin (int (* 1000 offset))) now) 1000.0)))
+    (<- (ReadCoordinator "/state")))
+  (<- runs tuple (CoordinatorRuns))
+  runs)
+
+
+(deftest test-a-request-on-a-resting-workers-beat-takes-the-beat-without-waking-the-worker
+  (var deposits {})
+  (for [first [20.0 20.1]]
+    (val scenario (fn [] (reads-on (tuple (gfor k (range 20) (+ first (* 10.0 k)))))))
+    (<- every Trace (trace-of (quitters sim-foundation) (scenario) False :workers ONE-WORKER :policy QUIET-POLICY))
+    (<- skipped Trace (trace-of (quitters sim-foundation) (scenario) True :workers ONE-WORKER :policy QUIET-POLICY))
+    (assert (is-not every.answer None) "走りは答えを返している")
+    (<- breaches list (same-decisions every skipped))
+    (assert (= breaches []) #(first breaches))
+    (:= deposits (| deposits {first skipped.deposits})))
+  (assert (<= (get deposits 20.0) (get deposits 20.1)) deposits))
+
+
+(defk task-on-a-beat [offset]
+  {:pre [(: offset float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 10 秒の区切りの頭から数えた秒 offset の刻ちょうど(worker の拍の刻)に、worker へ置く切り離した task(10 秒眠る)を投げ、
+   答えを待って 30 秒の静かな区間をおき、task の答えと一生を読むため。"
+  (<- (wait-until-offset offset))
+  (<- (submit-detached-task (slow-task sim-task-foundation 10.0) :key "on-beat" :needs NET :name "on-beat" :lease-seconds 60.0))
+  (<- answer DetachedAwaited (AwaitDetached "on-beat" :timeout-seconds 120.0))
+  (<- (Delay 30.0))
+  (<- runs tuple (CoordinatorRuns))
+  #(answer runs))
+
+
+(deftest test-a-task-placed-on-a-resting-workers-beat-runs-at-the-same-tick
+  (<- every Trace (trace-of (quitters sim-foundation) (task-on-a-beat 60.0) False :workers ONE-WORKER :policy QUIET-POLICY))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (task-on-a-beat 60.0) True :workers ONE-WORKER :policy QUIET-POLICY))
+  (assert (isinstance (get every.answer 0) DetachedSucceeded) every.answer)
+  (<- breaches list (same-decisions every skipped))
+  (assert (= breaches []) breaches)
+  ;; 返事が変わった拍を受けて、宿をその刻に起こした(この道を通った)。
+  (assert (> skipped.heard-wakes 0) skipped.heard-wakes))
