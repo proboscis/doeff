@@ -1,4 +1,4 @@
-;;; fake の handler だけが持つ筋書きの口(FakeReply の fail・lose・usage・lines と、検の口 ClaudeForgetSession・world.restarted)の検。
+;;; fake の handler だけが持つ筋書きの口(FakeReply の fail・lose・usage・lines・deltas と、検の口 ClaudeForgetSession・world.restarted)の検。
 ;;; 上の層(doeff-agents の adapter と、その上の業務の模擬)が本番の翻訳 handler の下で、失敗の終わり・途中で消える process・usage・行数の多い本文・
 ;;; 家を空にした形・process の作り直しを fake で起こすための口。本物の CLI に同じ振る舞いを起こす宣言は無いので、fake の世界を
 ;;; この file の中で組む(3 つの解釈器で同じ筋書きを走らせる test_scenarios.hy とは別)。
@@ -8,13 +8,14 @@
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
-(import doeff_claude_code.lines [AssistantMessage Completed Failed BackendLost Interrupted Init InputFate Usage])
+(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
+                                 InputFate Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
                                    SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning
                                    ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
 (import doeff_claude_code.faults [ClaudeForgetSession])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
-(import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start new-id typed kinds-of])
+(import tests.scenario_steps [TurnRecord read-until read-to-end read-to-tool-start new-id typed kinds-of])
 
 (val SPEC (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work"))
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))
@@ -144,6 +145,87 @@
     (FakeReply "" :fail "a" :lose "b")
     (assert False "fail と lose の両方を受けた")
     (except [ValueError] None)))
+
+
+;; --- 最後の本文の差分(deltas)— #3628 ---------------------------------------------------------------------------
+
+(val STREAMED-TEXT "streamed final reply")
+(val STREAMED-PIECES 5)
+
+(defk streamed-reply [#^ str text #^ tuple memory]
+  {:pre [(: text str) (: memory tuple)] :post [(: % FakeReply)] :tags {:context "claude-code" :role "judgment"}}
+  "道具を 1 度呼んでから最後の本文 STREAMED-TEXT を返す手番の返事 — 上の層の模擬が「確定の本文より先に書きかけの本文が届く」を
+   確かめる材料になる差分(deltas)の口を見るため。本文の語 plain は差分を出さない既定の返事(今までの行の列と比べる)。"
+  (if (= text "plain")
+      (FakeReply STREAMED-TEXT :tool-seconds 2.0)
+      (FakeReply STREAMED-TEXT :tool-seconds 2.0 :deltas STREAMED-PIECES)))
+
+(deftest test-the-final-text-is-streamed-as-deltas-before-it-is-confirmed
+  ;; deltas の返事: 道具の結果の後に、最後の本文を deltas 片の差分(PartialMessage の text_delta)で 1 片ずつ別の刻に出し、その後の刻に
+  ;; 確定の本文(AssistantMessage)、続けて result を出す(本物の CLI の --include-partial-messages の行の順)。片はどれも空でなく、連結は
+  ;; 確定の本文と同じ。既定(deltas 0)の返事は差分を 1 つも出さない。
+  (val world (FakeClaudeWorld :respond streamed-reply))
+  (<- record TurnRecord (on-fake world (run-one "streamed")))
+  (<- plain TurnRecord (on-fake world (run-one "plain")))
+  (assert (isinstance record.end Completed) (repr record.end))
+  (assert (= record.end.result-text STREAMED-TEXT) (repr record.end))
+  (val kinds (lfor line record.lines line.kind))
+  (val delta-indexes (lfor #(index kind) (enumerate kinds) :if (isinstance kind PartialMessage) index))
+  (val pieces (lfor index delta-indexes (. (get kinds index) text-delta)))
+  (val text-indexes (lfor #(index kind) (enumerate kinds) :if (and (isinstance kind AssistantMessage) kind.text) index))
+  (assert (= (len pieces) STREAMED-PIECES) pieces)
+  (assert (all pieces) pieces)
+  (assert (= (.join "" pieces) STREAMED-TEXT) pieces)
+  (assert (= (lfor index text-indexes (. (get kinds index) text)) [STREAMED-TEXT]) kinds)
+  ;; 並び: 道具の結果 → 差分の列 → 確定の本文 → result。
+  (val final-index (get text-indexes 0))
+  (val tool-result-index (next (gfor #(index kind) (enumerate kinds) :if (isinstance kind ToolResult) index)))
+  (assert (< tool-result-index (min delta-indexes) (max delta-indexes) final-index) kinds)
+  (assert (isinstance (get kinds (+ final-index 1)) TurnResult) kinds)
+  ;; 刻: 差分は 1 片ずつ別の刻に出て、確定の本文はその後の刻(読み手は確定より前に書きかけの本文を読める)。
+  (val delta-times (lfor index delta-indexes (. (get record.lines index) at)))
+  (assert (all (gfor #(earlier later) (zip delta-times (cut delta-times 1 None)) (< earlier later))) delta-times)
+  (assert (< (get delta-times -1) (. (get record.lines final-index) at)) delta-times)
+  ;; 既定の返事: 差分 0・同じ確定の本文。
+  (assert (isinstance plain.end Completed) (repr plain.end))
+  (assert (= (kinds-of plain.lines PartialMessage) []) plain.lines)
+  (assert (= (lfor kind (kinds-of plain.lines AssistantMessage) :if kind.text kind.text) [STREAMED-TEXT]) plain.lines))
+
+(deftest test-an-input-added-while-the-final-text-streams-follows-the-streamed-text
+  ;; 最後の本文を差分で書いている間に足した入力: 書いている本文は変えず(片の連結 = 返事の本文)、確定の本文の前にその入力を読み
+  ;; (started の行)、返事の本文を確定の本文の後に続ける(本物の CLI が本文の後に足された入力を読むのと同じ)。
+  (val world (FakeClaudeWorld :respond streamed-reply))
+  (defk inject-while-streaming []
+    {:pre [] :post [(: % TurnRecord)]}
+    "最初の差分が出るまで読み、入力を足してから終わりまで読む。"
+    (<- started (begin "streamed" (FreshSession (new-id))))
+    (<- _streaming (read-until started.turn (fn [lines end] (or (kinds-of lines PartialMessage) (is-not end None))) TIMEOUT -1))
+    (<- queued (ClaudeInjectInput started.turn (typed "plain" "inj-late")))
+    (assert (= queued (InputQueued "inj-late")) (repr queued))
+    (<- record (read-to-end started.turn TIMEOUT))
+    record)
+  (<- record TurnRecord (on-fake world (inject-while-streaming)))
+  (assert (isinstance record.end Completed) (repr record.end))
+  (val joined (.join " " #(STREAMED-TEXT STREAMED-TEXT)))
+  (assert (= record.end.result-text joined) (repr record.end))
+  (assert (= (.join "" (lfor kind (kinds-of record.lines PartialMessage) kind.text-delta)) STREAMED-TEXT) record.lines)
+  (val kinds (lfor line record.lines line.kind))
+  (val started-index (.index kinds (InputFate "inj-late" "started")))
+  (val final-index (.index kinds (AssistantMessage :text joined)))
+  (assert (< (max (lfor #(index kind) (enumerate kinds) :if (isinstance kind PartialMessage) index)) started-index final-index) kinds)
+  (assert (in (InputFate "inj-late" "completed") kinds) kinds))
+
+(deftest test-deltas-that-cannot-split-the-text-are-refused
+  ;; 差分の片の数は 0 以上・本文の字数以下(どの片も空でない)で、本文で終わる手番だけ(fail・lose の手番は本文を出さない)。
+  (for [make [(fn [] (FakeReply "abc" :deltas -1))
+              (fn [] (FakeReply "abc" :deltas 4))
+              (fn [] (FakeReply "abc" :deltas 2 :fail "x"))
+              (fn [] (FakeReply "abc" :deltas 2 :lose "x"))]]
+    (try
+      (make)
+      (assert False "分けられない差分の片の数を受けた")
+      (except [ValueError] None)))
+  (assert (= (. (FakeReply "abc" :deltas 3) deltas) 3)))
 
 (deftest test-forgetting-a-session-empties-the-home
   ;; 家を空にした形: 走っている手番は BackendLost・transcript は消え、ResumeSession は SessionNotFound。写し(Rebuilt)を
