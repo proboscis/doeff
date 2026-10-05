@@ -21,7 +21,7 @@
 (val SCHEMA
   (dataclasses.replace LAW-SCHEMA
     :streams (FrozenMap {"journal" (get LAW-SCHEMA.streams "journal")
-                         "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor PULSE-KEEP-SECONDS))})))
+                         "pulses" (StreamDecl :name "pulses" :retention (KeepFor PULSE-KEEP-SECONDS))})))
 (val EVENT-COUNT 2000)
 
 

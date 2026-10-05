@@ -13,8 +13,8 @@
 (import doeff_records.wire [undeclared-reason undeclared-refusal])
 
 (setv SCHEMA (RecordsSchema :tables (FrozenMap {"parts" (TableDecl :name "parts" :key-fields #("id")
-                                                                   :fields #((FieldDecl :name "id" :writers #("w"))))})
-                            :streams (FrozenMap {"journal" (StreamDecl "journal" #("w"))})))
+                                                                   :fields #((FieldDecl :name "id")))})
+                            :streams (FrozenMap {"journal" (StreamDecl "journal")})))
 
 
 (deftest test-a-the-schema-lookup-names-what-is-undeclared
