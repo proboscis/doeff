@@ -7,7 +7,7 @@
 ;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
 ;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)
 ;;;     (aiohttp の無い venv では skip)。
-(require doeff-hy.macros [deftest defk deff <- val var with-handler])
+(require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import collections.abc [Callable])
@@ -19,7 +19,7 @@
 (import threading)
 (import time)
 (import pytest)
-(import doeff [run with_handlers Program])
+(import doeff [EffectBase run with_handlers Program])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.handlers [state await-handler])
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest])
@@ -496,3 +496,92 @@
   (assert (= got.ready.status 503) got)
   (assert (in "拍を刻んでいない" got.ready.body) got)
   (assert (is got.work.status None) got))
+
+
+;; --- 答えは待ち受けの loop へ積むだけ(agora-redesign #3688 の子 (3) の 3b)-----------------------------------------------------
+
+(defclass [(dataclass :frozen True)] ReadAwaits [EffectBase]
+  "awaits-counted が数えた、答え手の節が共有の event loop へ入った回数を読む(答え = int)。")
+
+
+(defhandler awaits-counted
+  ;; 本物の答え手と await-handler の間に挟み、答え手の節が共有の event loop へ入る回数(Await)を数えてから、そのまま渡すため。
+  (session var entered 0)
+  (Await [coroutine]
+    (:= entered (+ entered 1))
+    (reperform effect))
+  (ReadAwaits []
+    (resume entered)))
+
+
+(defk respond-awaits [box]
+  {:pre [(: box queue.Queue)] :post [(: % int)] :tags {:context "http-server-test" :role "program"}}
+  "port 0 で開いて結んだ宛先を box へ置き、要求 1 つに答え、その答え(HttpRespond 1 回)の間に共有の event loop へ入った回数を返すため。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (.put box bound)
+  (<- arrived HttpRequestArrived (HttpNextRequest))
+  (<- before int (ReadAwaits))
+  (<- (HttpRespond :ticket arrived.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"sent")))
+  (<- after int (ReadAwaits))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (- after before))
+
+
+(deff ask-once [box answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "待ち受けが開いたら GET を 1 つ送り、答えを answers へ置くため(失敗なら例外を置く)。"
+  (try
+    (.put answers (run (fetch (.get box :timeout HOLD-SECONDS) "/one" WORK-SECONDS)))
+    (except [error Exception]
+      (.put answers error)))
+  None)
+
+
+(defk responded-awaits []
+  {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で respond-awaits を走らせ、#(共有の loop へ入った回数 相手が受けた答え) を返すため(aiohttp の無い venv では skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (val box (queue.Queue))
+  (val answers (queue.Queue))
+  (.start (threading.Thread :target ask-once :args #(box answers) :daemon True))
+  (<- entered int (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (respond-awaits box)))
+  (val got (.get answers :timeout HOLD-SECONDS))
+  (when (isinstance got Exception)
+    (raise got))
+  #(entered got))
+
+
+(deftest test-the-aiohttp-server-hands-an-answer-to-the-edge-without-a-round-trip
+  ;; 答え(HttpRespond)は待ち受けの loop へ積むだけで、共有の event loop へ入らない(直す前は Await 1 回 — 共有の loop → 待ち受けの loop →
+  ;; 戻りの往復)。相手は送った答えをそのまま受ける。
+  (<- got tuple (responded-awaits))
+  (assert (= got #(0 (Fetched :status 200 :body "sent"))) got))
+
+
+(defk listen-answer-a-gone-ticket-and-close []
+  {:pre [] :post [(: % str)] :tags {:context "http-server-test" :role "program"}}
+  "待ち受けを開き、待ち受けに無い札へ答えを撃ってから閉じるため(答えは積むだけで戻るので、撃った側へは何も上がらない)。"
+  (<- (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (<- (HttpRespond :ticket "no-such" :status 200 :headers #() :body (HttpNoBody)))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.2))
+  "returned")
+
+
+(defk answer-a-ticket-the-edge-does-not-hold []
+  {:pre [] :post [(: % str)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で listen-answer-a-gone-ticket-and-close を走らせるため(aiohttp の無い venv では skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (<- done str (with-handler [(await-handler) (state) aiohttp-http-server] (listen-answer-a-gone-ticket-and-close)))
+  done)
+
+
+(deftest test-an-answer-to-a-ticket-the-edge-does-not-hold-is-named-in-one-line [capfd]
+  ;; 積んだ答えの札が待ち受けに無ければ(2 度目・知らない札)、撃った側へは上げず、待ち受けの loop が traceback 無しの 1 行で名乗る。
+  (<- done str (answer-a-ticket-the-edge-does-not-hold))
+  (val err (. (.readouterr capfd) err))
+  (assert (= done "returned"))
+  (assert (in "札 no-such への命令 HttpRespond" err) err)
+  (assert (not-in "Traceback" err) err))
