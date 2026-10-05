@@ -1,7 +1,7 @@
 """契約 `(: % None)` と型付き束縛 `(<- x None e)` が実行時に通ること。
 
 型の注記の `None` は isinstance に渡せない(`TypeError: isinstance() arg 2 must be a type`)。
-契約と `<-` の型付き束縛は `_runtime-type` の 1 点で `None.__class__` へ写す(名前を引かない形 — #1825・#1845)。
+契約と `<-` の型付き束縛は `doeff_hy.type_forms.runtime_type_form` の 1 点で `None.__class__` へ写す(名前を引かない形 — #1825・#1845)。
 """
 
 from __future__ import annotations
@@ -80,9 +80,14 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
 
 
 def _run(program: object) -> object:
-    from doeff import run
+    """読み込んだ Hy の module の Program を走らせる(module の属性は型の上では object なので Program に絞る)。"""
+    from doeff import Program, run
 
-    return run(program)
+    match program:
+        case Program():
+            return run(program)
+        case _:
+            raise TypeError(f"Program でない値を走らせようとした: {program!r}")
 
 
 def test_none_return_contract_accepts_none(mod: ModuleType) -> None:
@@ -125,10 +130,13 @@ def test_none_contract_expands_without_a_runtime_name_lookup() -> None:
 
     import doeff_hy  # noqa: F401 - Hy の import hook を登録する
 
-    python = ast.unparse(hy_compile(hy.read_many(
+    compiled = hy_compile(hy.read_many(
         "(require doeff-hy.macros [deff])\n"
         "(deff pure-none [x] {:pre [(: x int)] :post [(: % None)]} None)\n"
         "(deff pure-optional [x] {:pre [(: x #(int None))] :post [(: % #(int None))]} x)\n"
-    ), ModuleType("none_contract_expansion_probe")))
+    ), ModuleType("none_contract_expansion_probe"))
+    # hy_compile は get_expr を渡さない時 Module だけを返す(型の上は組との和)— 組の形は呼ばない形なので止める。
+    assert isinstance(compiled, ast.Module), compiled
+    python = ast.unparse(compiled)
     assert "hy.I" not in python
     assert "None.__class__" in python
