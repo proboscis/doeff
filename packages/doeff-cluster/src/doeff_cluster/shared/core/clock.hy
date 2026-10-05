@@ -9,8 +9,8 @@
 (import datetime [datetime timedelta timezone])
 (import doeff_time [GetTime])
 
-(setv EPOCH (datetime 1970 1 1 :tzinfo timezone.utc))
-(setv ONE-MS (timedelta :milliseconds 1))
+(setv #^ datetime EPOCH (datetime 1970 1 1 :tzinfo timezone.utc))
+(setv #^ timedelta ONE-MS (timedelta :milliseconds 1))
 
 
 (defn #^ int epoch-ms-of [#^ datetime at]

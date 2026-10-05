@@ -72,6 +72,8 @@ USED = (
     ),
     # 手元の 1 台の cluster の入口と置き方(#3033 の 2b — 使い手の日次の検が同じ Program を手元の 1 台で走らせる)。
     UsedModule("sim.machine", ("GitSource", "LocalMachine", "local-machine-cluster")),
+    # 時刻の物差し(#3366 — 使い手の版上げの名簿の読みが Program で今の時刻を取る)。
+    UsedModule("shared.core.clock", ("now-epoch-ms",)),
 )
 
 
