@@ -114,11 +114,30 @@ class WsPeer:
     def __init__(self, ticket: str, request: web.Request, ws: web.WebSocketResponse) -> None:
         ...
 
+class Arrivals:
+    ready: Incomplete
+    waiters: Incomplete
+
+    def __init__(self) -> None:
+        ...
+
+    def put(self, event: HttpEvent) -> None:
+        ...
+
+    def wake_one(self) -> None:
+        ...
+
+    def take_now(self) -> HttpEvent | None:
+        ...
+
+    def wait(self) -> HttpEvent:
+        ...
+
 class WebEdge:
     address: Incomplete
     ws_max_bytes: Incomplete
     ws_send_max_bytes: Incomplete
-    queue: Incomplete
+    arrivals: Incomplete
     client: Incomplete
     runner: Incomplete
     waiting: Incomplete
@@ -148,6 +167,12 @@ class WebEdge:
         ...
 
     def next_arrival(self) -> HttpEvent:
+        ...
+
+    def take_arrival(self) -> HttpEvent | None:
+        ...
+
+    def closed_or(self, event: HttpEvent) -> HttpEvent:
         ...
 
     def dispatch(self, request: web.Request) -> web.StreamResponse:
@@ -217,5 +242,8 @@ class WebEdge:
         ...
 
 def read_on_edge(edge: WebEdge, ticket: str, max_bytes: int) -> _Program[HttpBodyOutcome, object]:
+    ...
+
+def next_on_edge(edge: WebEdge) -> _Program[HttpEvent, object]:
     ...
 aiohttp_http_server: _Handler

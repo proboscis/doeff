@@ -6,7 +6,8 @@
 ;;;   - 本物の答え手(aiohttp-http-server): HTTP の中継の本文と X-Forwarded-Proto・ws の中継(frame の往復と close の状態符)・相手が先に
 ;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
 ;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)・
-;;;     答え(HttpRespond)と宣言の小さい本文の読み(HttpReadBody)が共有の event loop へ入らない(#3688 の子 (3) の 3b・3c)
+;;;     答え(HttpRespond)・宣言の小さい本文の読み(HttpReadBody)・列に既に在る到着(HttpNextRequest)が共有の event loop へ入らない
+;;;     (#3688 の子 (3) の 3b・3c と案 1)
 ;;;     (aiohttp の無い venv では skip)。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
@@ -660,3 +661,107 @@
   ;; Await 1 回 — 共有の loop → 待ち受けの loop → 戻りの往復)。読めた本文はそのまま相手へ戻る。
   (<- got tuple (read-body-awaits))
   (assert (= got #(0 (HttpBodyRead :data SMALL-BODY) (Fetched :status 200 :body "small body"))) got))
+
+
+;; --- 列に既に在る到着は往復せずに取る(agora-redesign #3688 の案 1)----------------------------------------------------------------
+;; 書き 1 回で保留の待ちが一斉に起きると、続く要求が待ち受けの列に溜まる。受けの loop が 1 つ取るたびに共有の loop → 待ち受けの loop →
+;; 戻りの往復をしていたので、波が 1 本ずつに並んだ(手元の測り: 待ち 20 本で読みの queue 68.5 ms)。
+
+;; 一度に送る要求の数・相手が送り終えてから待ち受けが列へ並べ終えるまで待つ秒・相手の答えを待つ上限の秒。
+(val WAVE-SIZE 8)
+(val SETTLE-SECONDS 0.5)
+(val WAVE-SECONDS 10.0)
+
+
+(defk take-arrivals [n]
+  {:pre [(: n int)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "受け口の列から n 個の到着を順に取るため(答え = 取った順の tuple)。"
+  (if (= n 0)
+      #()
+      (do (<- head HttpRequestArrived (HttpNextRequest))
+          (<- tail tuple (take-arrivals (- n 1)))
+          (+ #(head) tail))))
+
+
+(defk answer-each [arrivals]
+  {:pre [(: arrivals tuple)] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
+  "到着のそれぞれに、その要求の path を本文にして答えるため。"
+  (for [arrival arrivals]
+    (<- (HttpRespond :ticket arrival.ticket :status 200 :headers #() :body (HttpBodyBytes :data (.encode arrival.path "utf-8")))))
+  None)
+
+
+(defk take-a-wave [box sent]
+  {:pre [(: box queue.Queue) (: sent queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "port 0 で開いて結んだ宛先を box へ置き、1 つ目の到着を受けてから、相手が残りを全部送り終えて列に並ぶのを待ち、残りを取って全部に
+   答えるため。答え = #(残りを取る間に共有の event loop へ入った回数 取った順の到着)。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (.put box bound)
+  (<- first HttpRequestArrived (HttpNextRequest))
+  (for [_ (range WAVE-SIZE)]
+    (.get sent :timeout WAVE-SECONDS))
+  (time.sleep SETTLE-SECONDS)
+  (<- before int (ReadAwaits))
+  (<- rest tuple (take-arrivals (- WAVE-SIZE 1)))
+  (<- after int (ReadAwaits))
+  (val taken (+ #(first) rest))
+  (<- (answer-each taken))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  #((- after before) taken))
+
+
+(deff ask-in-wave [address path sent answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: address HttpAddress) (: path str) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "GET を 1 つ送り終えたら sent へ印を置き、答えの #(path 本文) を answers へ置くため(失敗なら例外を置く)。"
+  (setv connection (http.client.HTTPConnection address.host address.port :timeout WAVE-SECONDS))
+  (try
+    (.request connection "GET" path)
+    (.put sent path)
+    (setv response (.getresponse connection))
+    (.put answers #(path (.decode (.read response) "utf-8")))
+    (except [error Exception]
+      (.put sent error)
+      (.put answers error))
+    (finally
+      (.close connection)))
+  None)
+
+
+(deff fire-wave [box sent answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: box queue.Queue) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "待ち受けが開いたら WAVE-SIZE 本の GET を別々の接続から一度に送るため(/w0 〜)。"
+  (setv address (.get box :timeout WAVE-SECONDS))
+  (for [n (range WAVE-SIZE)]
+    (.start (threading.Thread :target ask-in-wave :args #(address (.format "/w{}" n) sent answers) :daemon True)))
+  None)
+
+
+(defk wave-awaits []
+  {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で take-a-wave を走らせ、#(共有の loop へ入った回数 取った順の到着 相手が受けた答えの集合) を返すため(aiohttp の
+   無い venv では skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (val box (queue.Queue))
+  (val sent (queue.Queue))
+  (val answers (queue.Queue))
+  (.start (threading.Thread :target fire-wave :args #(box sent answers) :daemon True))
+  (<- got tuple (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (take-a-wave box sent)))
+  (val replies (frozenset (gfor _ (range WAVE-SIZE) (.get answers :timeout WAVE-SECONDS))))
+  (+ got #(replies)))
+
+
+(deftest test-the-aiohttp-server-takes-queued-arrivals-without-a-round-trip
+  ;; 列に既に在る到着は、HttpNextRequest が共有の event loop へ入らずに取る(直す前は 1 つ取るたびに Await 1 回 — 共有の loop →
+  ;; 待ち受けの loop → 戻りの往復)。取りこぼしも順の入れ替わりも無い: 取った順は札の順のまま、相手は全員が自分の path の答えを受ける。
+  (<- got tuple (wave-awaits))
+  (val entered (get got 0))
+  (val taken (get got 1))
+  (val replies (get got 2))
+  (val paths (frozenset (gfor n (range WAVE-SIZE) (.format "/w{}" n))))
+  (assert (= entered 0) got)
+  (assert (= (lfor a taken (int a.ticket)) (sorted (gfor a taken (int a.ticket)))) taken)
+  (assert (= (frozenset (gfor a taken a.path)) paths) taken)
+  (assert (= replies (frozenset (gfor p paths #(p p)))) replies))
