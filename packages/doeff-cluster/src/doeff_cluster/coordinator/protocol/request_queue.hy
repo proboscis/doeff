@@ -11,7 +11,7 @@
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch next-step-at MAX-QUIET-MS])
 (import doeff_cluster.coordinator.core.api_policy [TICK-MS])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
-(import doeff_cluster.shared.intent.protocol [Request Reply])
+(import doeff_cluster.shared.intent.protocol [Request Reply PlainText])
 (import dataclasses [replace])
 (import doeff_cluster.coordinator.intent.cluster_model [IdleProbe IdleNextRequests IdleTaken QuietStep QuietStretch ProvisionalBeat
                                                        HeartbeatReply CoordinatorFault]
@@ -21,7 +21,7 @@
 
 
 (val REPLAN "replan")   ; 取り手の呼び鈴の答え: 預けた仮の拍が変わった(区間を試し直す — 要求でも外の出来事でもない)
-(val BEAT "beat")       ; 預けた仮の拍の鈴の答え: その拍は静かでない(worker が本物の heartbeat を送る)
+(val HEARD "heard")     ; 預けた仮の拍の鈴の答え: 列がその拍を受け、返事が worker の最後の返事と違う(宿はその刻のまま返事で動く)
 (val DOWN "down")       ; 預けた仮の拍の鈴の答え: coordinator が止まった・落ちた(預けた拍は受けられない)
 
 
@@ -51,9 +51,24 @@
 
 (defrecord DepositedBeat
   "worker の宿が列に預けた仮の拍 1 つ(#2790): beat = 仮の拍(刻・要求・解いた本文・worker の名)・bell = 宿の眠りを起こす呼び鈴(列が
-   その拍を静かでないと判じた刻に BEAT で、coordinator が止まった時に DOWN で鳴らす — 同じ宿の預けは同じ鈴を持つ)。"
+   受けた拍の返事が worker の最後の返事と違う時に HEARD で、coordinator が止まった時に DOWN で鳴らす — 同じ宿の預けは同じ鈴を持つ)。"
   (#^ ProvisionalBeat beat)
   (#^ RestBell bell))
+
+
+(defrecord TakenBeat
+  "区間の終わりの刻に、宿を起こさずにその刻の要求として列に積んだ預けの仮の拍 1 つ(A' — #2850 の続き): held = 預け(拍と宿の呼び鈴)・
+   request = 積んだ要求(拍の要求に、この組の返事の札を付けた物)。返事の答え手(Reply)が返事を受けるまで列が覚える。"
+  (#^ DepositedBeat held)
+  (#^ Request request))
+
+
+(defrecord HeardBeat
+  "列が受けた預けの仮の拍 1 つの返事(A'): name = worker の名・at = 拍の刻・answer = 返事 #(status 本文)(送り手が本物の heartbeat で
+   受けるのと同じ形)。宿はその刻に heartbeat を送る代わりにこの返事を読む(take-heard)— 写した拍(forget-heard)の物は外す。"
+  (#^ str name)
+  (#^ int at)
+  (#^ tuple answer))
 
 
 (defclass RequestQueue []
@@ -79,11 +94,15 @@
    最後の仮の拍の刻(forget-heard が書く)。宿は預けの拍を刻の順に写し、写し終えた刻より後の拍だけを beat-heard で問う(新しい預けの
    拍は今より後の刻)ので、consumed はその刻より後の拍だけを持つ: 調停ループへ渡した拍のうち、既に写した拍(今の区間の試し planned で
    写した拍・起きた宿が残りをまとめて写した拍)は覚えない。宿が起きた(withdraw-beats)・預け直した(deposit-beats)時は、その宿の
-   覚えを外す(#2769 — 前は外す者の無い覚えが走りの長さに比例して伸び、宿の拍ごとの問いと外しの費用が窓の長さの 2 乗になった)。"
+   覚えを外す(#2769 — 前は外す者の無い覚えが走りの長さに比例して伸び、宿の拍ごとの問いと外しの費用が窓の長さの 2 乗になった)。
+   taken = 区間の終わりの刻に、宿を起こさずにその刻の要求として積んだ預けの仮の拍のうち、まだ返事の無い物(TakenBeat の list — A')・
+   heard = 受けた預けの仮の拍の返事のうち、宿がまだ読んでいない・写していない物(HeardBeat の list)。deposits = 宿が拍を預けた回数・
+   heard-wakes = 返事が違って宿を HEARD で起こした回数(どちらも検が読む — 起こされた宿は先の拍を試し直して預け直すので、預けの回数が
+   宿の起きた回数の物差しになる)。"
   (defn #^ None __init__ [self #^ bool [skip-idle False]]
     (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.skip-idle skip-idle self.takes 0
           self.absorbed {} self.ends-at-marks False self.beats [] self.replies {} self.arrivals {} self.planned []
-          self.consumed [] self.settled {})
+          self.consumed [] self.settled {} self.taken [] self.heard [] self.deposits 0 self.heard-wakes 0)
     None))
 
 
@@ -136,6 +155,7 @@
                                (lfor beat beats (DepositedBeat :beat beat :bell bell)))
                             :key (fn [held] held.beat.at)))
   (setv queue.consumed (lfor held queue.consumed :if (!= held.name name) held))
+  (+= queue.deposits 1)
   (<- (replan-takers queue))
   None)
 
@@ -157,9 +177,14 @@
   {:pre [(: queue RequestQueue)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
   "coordinator が止まった・落ちた時に、預けた仮の拍を全部捨て、預けた宿を DOWN で起こすため(止まっている coordinator は heartbeat を
    受けない — 宿は次の拍から本物の heartbeat を送り、届かないことを本番と同じに数える)。届いた拍の覚え(consumed)はここでは外さない:
-   起こした宿は起きた時に withdraw-beats で自分の覚えを外し、起きるまでの同じ刻に眠りの拍を写す(beat-heard で問う)ことがある。"
-  (val held (tuple queue.beats))
+   起こした宿は起きた時に withdraw-beats で自分の覚えを外し、起きるまでの同じ刻に眠りの拍を写す(beat-heard で問う)ことがある。
+   区間の終わりに要求として積み、まだ返事の無い拍(taken — A')も列から外して DOWN で起こす(止まった coordinator は受けない — 宿は
+   その刻の heartbeat を本物で送り、届かないことを本番と同じに数える)。"
+  (val held (+ (tuple queue.beats) (tuple (gfor taken queue.taken taken.held))))
+  (val unanswered (tuple (gfor taken queue.taken taken.request)))
   (setv queue.beats [])
+  (setv queue.taken [])
+  (setv queue.pending (lfor request queue.pending :if (not (any (gfor gone unanswered (is gone request)))) request))
   (for [deposit held]
     (<- (ring-bell deposit.bell DOWN)))
   None)
@@ -232,51 +257,54 @@
   (tuple (gfor held queue.beats :if (not-in (id held.beat) heard) held.beat)))
 
 
-(defk ring-beats-at [queue at]
-  {:pre [(: queue RequestQueue) (: at int)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
-  "区間の終わりの刻 at に届くはずだった仮の拍を、その worker に本物の heartbeat として送らせるため(その宿の預けを全部外して鈴を BEAT で
-   鳴らす — 宿はその刻に起きて拍を打ち、後の拍は起きた後に預け直す)。答え = 起こした worker の名。"
-  (val due (tuple (gfor held queue.beats :if (= held.beat.at at) held)))
-  (setv queue.beats (lfor held queue.beats :if (not (any (gfor other due (is other.bell held.bell)))) held))
-  (for [held due]
-    (<- (ring-bell held.bell BEAT)))
-  (tuple (gfor held due held.beat.name)))
-
-
-(defk await-peers [queue names seconds]
-  {:pre [(: queue RequestQueue) (: names tuple) (: seconds float)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
-  "起こした worker の名 names の要求が全部 列に積まれるまで(上限 seconds 秒)待つため — 列に他の要求が在っても眠る(取り手の呼び鈴は
-   積まれるたびに鳴るので、積まれた刻に確かめ直す。預けの取り下げの REPLAN でも確かめ直す)。"
-  (<- started int (now-epoch-ms))
-  (var going True)
-  (while going
-    (if (all (gfor name names (any (gfor request queue.pending (= request.peer name)))))
-        (:= going False)
-        (do (<- now int (now-epoch-ms))
-            (val left (- (+ started (int (* 1000 seconds))) now))
-            (if (<= left 0)
-                (:= going False)
-                (do (<- bell Promise (CreatePromise))
-                    (.append queue.takers bell)
-                    (try
-                      (<- (promise-or-timeout bell.future (/ left 1000.0)))
-                      (finally
-                        (when (in bell queue.takers)
-                          (.remove queue.takers bell)))))))))
-  None)
-
-
 (defk heartbeats-at [queue at]
   {:pre [(: queue RequestQueue) (: at int)] :post [(: % None)] :tags {:context "coordinator" :role "protocol"}}
-  "区間が刻 at で終わる時(要求・外の出来事・静かでない歩・上限のどれでも)に、その刻に届くはずだった仮の拍をその worker に本物の
-   heartbeat として送らせ、積まれるのを待つため — 調停ループが 1 拍ずつの走りと同じく、同じ刻の要求と 1 つの歩で受ける(#2850)。"
-  (<- names tuple (ring-beats-at queue at))
-  (when names
-    (<- (await-peers queue names (/ TICK-MS 1000.0)))
-    ;; 要求で起きた取り手と同じく 0 秒の眠りをはさむ(await-first-request): 同じ刻に先に登録された timer(他の worker の拍)を先に
-    ;; 回し、その要求も同じ取りに入れる(1 拍ずつの走りの取りと同じまとまり — #2850 の系全体の静かな区間の 30.1 秒の w2)。
+  "区間が刻 at で終わる時(要求・外の出来事・静かでない歩・上限のどれでも)に、その刻に届くはずだった預けの仮の拍を、宿を起こさずに
+   その刻に届いた要求として列に積むため — 調停ループが 1 拍ずつの走りと同じく、同じ刻の要求と 1 つの歩で受ける(#2850)。返事は答え手
+   (Reply)が見る: worker の最後の返事と同じなら宿は眠ったまま写し、違えば宿を HEARD で起こしてその刻のまま返事で動かす(A' — 前は宿を
+   起こして本物の heartbeat を送らせ、起きた宿が先の拍を試し直して預け直すので、区間の終わりと重なるたびに宿の費用を払った)。
+   宿の後の拍の預けはそのまま残す。"
+  (val due (tuple (gfor held queue.beats :if (= held.beat.at at) held)))
+  (when due
+    (setv queue.beats (lfor held queue.beats :if (not (any (gfor other due (is other held)))) held))
+    (for [held due]
+      (<- slot Promise (CreatePromise))
+      (val request (replace held.beat.request :slot slot))
+      (setv queue.taken (+ queue.taken [(TakenBeat :held held :request request)]))
+      (<- (enqueue-request queue request)))
+    ;; 要求で起きた取り手と同じく 0 秒の眠りをはさむ(await-first-request): 同じ刻に先に登録された timer(眠っていない worker の本物の
+    ;; 拍)を先に回し、その要求も同じ取りに入れる(1 拍ずつの走りの取りと同じまとまり — #2850 の系全体の静かな区間の 30.1 秒の w2)。
     (<- (Delay 0.0)))
   None)
+
+
+(defk heard-beat [queue taken status body]
+  {:pre [(: queue RequestQueue) (: taken TakenBeat) (: status int) (: body (| PlainText dict list tuple str int float bool None))]
+   :post [(: % None)]
+   :tags {:context "coordinator" :role "protocol"}}
+  "列が受けた預けの仮の拍 taken への返事 #(status body) を、眠っている宿へ届けるため(A')— 返事を宿が読む物として覚え(heard)、
+   worker の最後の返事と同じ JSON(200 で — 静かな拍)なら届いた拍として覚え(consumed — 宿は眠ったまま写す)、違えば宿を HEARD で
+   起こす(宿はその刻のまま、送る代わりにこの返事を読んで動く — take-heard)。比べるのは返事の答え手が最後の返事を書き換える前。"
+  (val beat taken.held.beat)
+  (val quiet (and (= status 200) (= body (.get queue.replies beat.name))))
+  (setv queue.heard (+ queue.heard [(HeardBeat :name beat.name :at beat.at :answer #(status body))]))
+  (if quiet
+      (when (or (not-in beat.name queue.settled) (> beat.at (get queue.settled beat.name)))
+        (setv queue.consumed (+ queue.consumed [beat])))
+      (do (+= queue.heard-wakes 1)
+          (<- (ring-bell taken.held.bell HEARD))))
+  None)
+
+
+(defk take-heard [queue name at]
+  {:pre [(: queue RequestQueue) (: name str) (: at int)] :post [(: % (| tuple None))] :tags {:context "coordinator" :role "protocol"}}
+  "worker name の宿が刻 at の heartbeat を送る前に、列がその刻の預けの仮の拍を既に受けたかを知り、受けていればその返事 #(status 本文)
+   を読んで外すため(A' — 送ると同じ刻の heartbeat を coordinator が 2 度受ける)。受けていなければ None(宿は本物で送る)。"
+  (val found (next (gfor heard queue.heard :if (and (= heard.name name) (= heard.at at)) heard) None))
+  (when (is found None)
+    (return None))
+  (setv queue.heard (lfor heard queue.heard :if (is-not heard found) heard))
+  found.answer)
 
 
 (defk follow-stretch [queue probe started cut-at]
@@ -364,7 +392,9 @@
   (for [beat beats]
     (setv (get queue.settled beat.name) (max beat.at (.get queue.settled beat.name beat.at))))
   (when beats
-    (setv queue.consumed (lfor held queue.consumed :if (or (not-in held.name queue.settled) (> held.at (get queue.settled held.name))) held)))
+    (setv queue.consumed (lfor held queue.consumed :if (or (not-in held.name queue.settled) (> held.at (get queue.settled held.name))) held))
+    ;; 写した刻までの受けた拍の返事も外す(宿はその刻の heartbeat をもう送らない — 読む者が無い)。
+    (setv queue.heard (lfor heard queue.heard :if (or (not-in heard.name queue.settled) (> heard.at (get queue.settled heard.name))) heard)))
   None)
 
 
@@ -461,6 +491,11 @@
       (raise (TypeError (.format "返事の札が Promise でない({}): {} {}" (type request.slot) request.method request.path))))
     ;; 返事をした待ちは、もう吸っていない(送り手は返事を受ける)。
     (.pop queue.absorbed (id request.slot) None)
+    ;; 区間の終わりに要求として積んだ預けの仮の拍なら、返事を眠っている宿へ届ける(最後の返事を書き換える前に比べる — A')。
+    (val taken (next (gfor held queue.taken :if (is held.request request) held) None))
+    (when (is-not taken None)
+      (setv queue.taken (lfor held queue.taken :if (is-not held taken) held))
+      (<- (heard-beat queue taken status body)))
     ;; worker が最後に受けた heartbeat の返事を覚える(仮の拍の返事が同じかを比べる — same-reply)。
     (when (and (= status 200) (= request.path "/heartbeat") (isinstance request.actor str))
       (setv (get queue.replies request.actor) body))

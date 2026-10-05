@@ -151,8 +151,8 @@
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch
-                                                          deposit-beats withdraw-beats drop-beats BEAT RestBell ring-bell
-                                                          forget-heard])
+                                                          deposit-beats withdraw-beats drop-beats HEARD RestBell ring-bell
+                                                          forget-heard take-heard])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 ;; 宣言の本文を組む body-of は別名で受ける — 同じ名の coordinator の body-of(要求の本文の解き・上の import)を上書きしないため。
@@ -1692,8 +1692,14 @@
   (val before marked.before)
   (<- sent-at int (now-epoch-ms))
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
-  (<- body dict (beat-body worker before sent-at stopping plan))
-  (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
+  ;; 列がこの刻の預けの仮の拍を既に受けていれば(区間の終わりの刻と重なった拍 — A')、送らずにその返事を読む(同じ刻の heartbeat を
+  ;; coordinator に 2 度受けさせない)。本文は預けた時に同じ綴りで組んだ物で、受けた返事の読み方は送った時と同じ。
+  (<- heard (| tuple None) (take-heard parts.queue worker.name sent-at))
+  (var answer (if (is heard None) #() heard))
+  (when (is heard None)
+    (<- body dict (beat-body worker before sent-at stopping plan))
+    (<- sent tuple (send-request link "POST" "/heartbeat" {} body))
+    (:= answer sent))
   (<- now int (now-epoch-ms))
   (if (= (get answer 0) 200)
       (do (val reply (get answer 1))
@@ -1807,7 +1813,8 @@
 ;; --- 静かな拍を一度に眠る宿(模擬の時計の下だけ — #2790)---------------------------------------------------------
 ;; 拍の間の待ち(AwaitNextTick)に宿が答える。旗(SimPlan.skip-idle)が真なら、先の拍を本番の判断(quiet_policy.quiet-beats)で試し、action も
 ;; 状態の報告の変化も無い拍の heartbeat を「仮の拍」として coordinator の列に預け、その分だけ眠りを延ばす。列は仮の拍を本番の受けの判断で
-;; 試して積み(idle_policy.heard-beats)、静かでない拍の刻に宿を起こす(BEAT — 宿はその拍を本物で打つ)。宿の真実が誰かに書き換わると
+;; 試して積み(idle_policy.heard-beats)、区間の終わりの刻と重なった拍は宿を起こさずにその刻の要求として受け、返事が最後の返事と違う時だけ
+;; 宿を起こす(HEARD — 宿はその刻のまま、送る代わりに列が受けた返事を読む・A')。宿の真実が誰かに書き換わると
 ;; (process の終わり・Kill・Stop・網の切れ・待ちの答え)世界が宿を起こし(ROUSED)、宿は 1 拍ずつの走りの次の拍の刻へ戻る。
 
 (defk rouses [before after]
@@ -1915,7 +1922,8 @@
    :tags {:context "doeff-cluster" :role "protocol"}}
   "模擬の時計の下(旗 skip-idle)で、worker の拍と拍の間の眠りを静かな拍の分だけ一度に取るため。先の拍を本番の判断(quiet-beats — 観測は
    宿の真実をその刻で読む view-of)で試し、静かな拍の heartbeat を仮の拍として列に預けて(deposit-beats)、次に何かが変わる拍まで眠る。
-   起き方: その拍の刻(本物の拍を打つ)・列が静かでないと判じた拍の刻(BEAT — その拍を本物で打つ)・宿の真実の書き換え(ROUSED)・
+   起き方: その拍の刻(本物の拍を打つ)・列が受けた拍の返事が最後の返事と違う刻(HEARD — その拍は列が受けた返事で打つ)・宿の真実の
+   書き換え(ROUSED)・
    coordinator の止まり(DOWN)。起きた刻より前の仮の拍は届いたものとして写し(settle-rest)、後の拍は取り下げる。拍の刻でなく起きたら、
    1 拍ずつの走りの次の拍の刻まで本番と同じ待ちで眠る(rest-of-pause)。coordinator が止まっている・網が切れている・heartbeat の口が
    故障している・止まりが頼まれている(拍の Program が止まり始めを名乗る — #2819)間は預けない(本番と同じ拍の待ち)。"
@@ -1957,8 +1965,9 @@
       (val passed (+ now (* slept.passed tick-ms)))
       (val reason slept.value)
       (<- woke int (now-epoch-ms))
-      ;; 列が静かでないと判じた拍(BEAT)は届いていない — 今その拍を本物で打つ。それ以外は通った拍までが届いた拍。
-      (val sent-until (if (= reason BEAT) (- woke 1) passed))
+      ;; 列が受けて返事が違った拍(HEARD)はまだ写していない — 今その拍を打つ(送る代わりに列が受けた返事を読む — take-heard)。それ以外は
+      ;; 通った拍までが届いた拍。
+      (val sent-until (if (= reason HEARD) (- woke 1) passed))
       (<- (withdraw-beats parts.queue worker.name (+ sent-until 1)))
       (val next-reach (cond (is-not reason None) FIRST-REST-BEATS
                             (= ahead reach) (min (* 2 reach) QUIET-BEATS-LIMIT)
@@ -1966,9 +1975,9 @@
       (val rest-sent (tuple (gfor beat beats :if (<= beat.at sent-until) beat)))
       (<- (settle-rest worker boot rest-sent next-reach))
       (<- (forget-heard parts.queue rest-sent))
-      ;; 起きた後: BEAT・眠りの終わり・次の拍の刻ちょうどでその拍の timer より先の出来事なら、今その拍を打つ。それ以外(通った拍の後の
+      ;; 起きた後: HEARD・眠りの終わり・次の拍の刻ちょうどでその拍の timer より先の出来事なら、今その拍を打つ。それ以外(通った拍の後の
       ;; 出来事)は、1 拍ずつの走りの今の拍の間の待ちの残りを本番と同じ形で眠る。
-      (val due-now (or (is reason None) (= reason BEAT) (= woke (+ passed tick-ms))))
+      (val due-now (or (is reason None) (= reason HEARD) (= woke (+ passed tick-ms))))
       (when (not due-now)
         (<- (rest-of-pause policy changed passed)))))
   (when (not resting)
