@@ -14,7 +14,10 @@
 ;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
 ;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
 ;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
-;;;                 aiohttp の lingering で読み捨てさせない)
+;;;                 aiohttp の lingering で読み捨てさせない)。宣言の長さが PREFETCH-BYTES 以下の本文は、待ち受けの loop が出来事を並べる
+;;;                 前に読み切り、HttpReadBody は共有の loop へ入らずに答え手の節の側で上限を判じて答える(agora-redesign #3688 の子 (3) の
+;;;                 3c — 超えれば同じ HttpBodyTooLarge で、答えの後に接続を閉じる)。先に読んだ本文は、読まずに HttpForward した札では
+;;;                 中継先へそのまま送る
 ;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)。
 ;;;                 答え手の節は命令を待ち受けの loop へ積むだけで戻る(共有の loop を経ず、往復を待たない — agora-redesign #3688 の子 (3)
 ;;;                 の 3b)。積んだ順に渡るので、後から撃った読み・閉じより先に渡る。札が待ち受けに無い(2 度目・知らない札)命令は、積んだ
@@ -39,7 +42,7 @@
 ;;; ws-refusal-status・送りの上限で切るか send-overflows・WsClosed で名乗る状態符と理由 closing-of — こちらの WsClose ならその状態符と理由、
 ;;; 相手の close なら相手の状態符と理由)。契約テストは tests/test_http_server_contract.hy。
 ;;; 並び: 組の外側に await-handler が要る。
-(require doeff-hy.macros [defhandler <- val])
+(require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "http-server" :role "foundation"})
 (import asyncio)
 (import collections [deque])
@@ -66,6 +69,8 @@
 (val FILE-CHUNK-BYTES 262144)
 ;; 要求の本文を読む塊の byte 数(上限の手前では残りの分だけ読む)。
 (val BODY-CHUNK-BYTES 262144)
+;; 待ち受けの loop が出来事を並べる前に読み切る本文の、宣言の長さの上限(頭の註の本文の読み — 塊 1 つ分)。
+(val PREFETCH-BYTES BODY-CHUNK-BYTES)
 
 ;; 中継先への接続の上限と、HTTP の中継の読みの間の上限(秒 — 旧い nginx の proxy_read_timeout 300s と同じ)。
 (val CONNECT-SECONDS 10.0)
@@ -187,6 +192,9 @@
           self.runner None
           self.waiting {}
           self.unread {}
+          ;; 札 → 待ち受けの loop が先に読んだ本文の答え(頭の註の本文の読み)。待ち受けの loop が出来事を並べる前に置き、答え手の節の
+          ;; thread が読みで 1 度だけ取る(dict の pop 1 回)。命令を渡した札からは外す。
+          self.prefetched {}
           self.oversized (set)
           self.peers {}
           self.shut None
@@ -273,10 +281,11 @@
 
   (defn #^ None hand-over [self #^ str ticket #^ HttpCommand command]
     "本体の命令を札の要求へ渡し、その札の本文をもう読ませないため(待ち受けの loop の上で — 受けの coroutine が起きる前に積まれた本文の
-     読みも HttpBodyFailed になる)。同じ札へ 2 度渡すと KeyError。"
+     読みも HttpBodyFailed になる)。先に読んで誰も取らなかった本文は命令と一緒に受けの coroutine へ渡す(中継が送る)。同じ札へ 2 度
+     渡すと KeyError。"
     (setv waiting (.pop self.waiting ticket))
     (.pop self.unread ticket None)
-    (.set-result waiting command)
+    (.set-result waiting #(command (.pop self.prefetched ticket None)))
     None)
 
   (defn #^ None posted [self #^ str ticket #^ HttpCommand command]
@@ -292,29 +301,36 @@
 
   (defn #^ None post [self #^ str ticket #^ HttpCommand command]
     "本体の命令を待ち受けの loop へ積むだけで戻るため(答えの送り — 共有の loop を経ず、往復を待たない・agora-redesign #3688 の子 (3) の
-     3b)。待ち受けの loop は積まれた順に回すので、後から撃った across の coroutine より先に渡る。"
+     3b)。待ち受けの loop は積まれた順に回すので、後から撃った across の coroutine より先に渡る。先に読んだ本文は積む前にここで外す —
+     答えの後に撃った読みは、命令が渡るより先でも先に読んだ本文を取らない。"
+    (.pop self.prefetched ticket None)
     (.call-soon-threadsafe (self.edge-loop) self.posted ticket command)
     None)
 
   (defn :async #^ web.StreamResponse receive [self #^ web.Request request]
-    "aiohttp の要求 1 つ: 札を振って出来事を並べ、本体の命令を待って実 I/O を撃つため。"
+    "aiohttp の要求 1 つ: 札を振り、宣言の小さい本文を先に読んで(頭の註の本文の読み)出来事を並べ、本体の命令を待って実 I/O を撃つため。
+     受けた刻は先に読む前に打つ。"
+    (setv received-at (time.monotonic))
     (setv self.count (+ self.count 1))
     (setv ticket (str self.count)
           waiting (.create-future (asyncio.get-running-loop)))
-    (setv (get self.waiting ticket) waiting
-          (get self.unread ticket) request)
+    (setv (get self.waiting ticket) waiting)
+    (setv early (await (self.prefetch ticket request)))
+    (if (is early None)
+        (setv (get self.unread ticket) request)
+        (setv (get self.prefetched ticket) early))
     (await (.put self.queue (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
                                          :upgrade (upgrade-asked request)
                                          :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
-                                         :received-at (time.monotonic)
+                                         :received-at received-at
                                          :remote request.remote)))
-    (setv command (await waiting))
+    (setv [command unclaimed] (await waiting))
     ;; 命令を受けた札の本文はもう読ませない(渡した拍に hand-over が外した)。本文を上限で断った札は、答えを送った後に接続を閉じる。
     (setv cut-off (in ticket self.oversized))
     (.discard self.oversized ticket)
     (match command
       (HttpRespond :status status :headers headers :body body) (await (self.respond request status headers body cut-off))
-      (HttpForward :url url) (await (self.relay-http request url))
+      (HttpForward :url url) (await (self.relay-http request url unclaimed))
       (WsForward :url url) (await (self.relay-ws request url))
       (WsAccept :ticket accepted) (await (self.terminate-ws request accepted))))
 
@@ -477,6 +493,31 @@
     (when (and (is-not declared None) (> declared max-bytes))
       (.add self.oversized ticket)
       (return (HttpBodyTooLarge :declared declared)))
+    (await (self.drain-body ticket request max-bytes)))
+
+  (defn :async #^ (| HttpBodyOutcome None) prefetch [self #^ str ticket #^ web.Request request]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
+    "宣言の長さが PREFETCH-BYTES 以下の本文を、出来事を並べる前に待ち受けの loop で読み切るため(頭の註の本文の読み)。宣言の無い
+     (chunked)・大きい本文と ws の Upgrade は読まない(None — HttpReadBody が待ち受けの loop で上限を見ながら読む)。"
+    (setv declared request.content-length)
+    (if (or (is declared None) (> declared PREFETCH-BYTES) (upgrade-asked request))
+        None
+        (await (self.drain-body ticket request declared))))
+
+  (defn #^ (| HttpBodyOutcome None) take-prefetched [self #^ str ticket #^ int max-bytes]
+    "待ち受けの loop が先に読んだ札の本文を、答え手の節の thread で 1 度だけ取って上限で判じるため(先に読んでいない・もう取った・命令を
+     渡した札は None)。上限を超えれば HttpBodyTooLarge(宣言の長さ)で、札を oversized へ積む — 待ち受けの loop は積まれた順に回すので、
+     後から撃った答えより先に入り、答えの後に接続を閉じる(頭の註)。"
+    (setv early (.pop self.prefetched ticket None))
+    (match early
+      (HttpBodyRead :data data) (if (> (len data) max-bytes)
+                                    (do (.call-soon-threadsafe (self.edge-loop) self.oversized.add ticket)
+                                        (HttpBodyTooLarge :declared (len data)))
+                                    early)
+      _ early))
+
+  (defn :async #^ HttpBodyOutcome drain-body [self #^ str ticket #^ web.Request request #^ int max-bytes]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
+    "札の要求の本文を max-bytes まで塊で流しながら読むため(読んだ量が上限を超えた拍に止めて断り、札を oversized へ入れる)。"
+    (setv declared request.content-length)
     (setv chunks [] total 0)
     (try
       (while True
@@ -532,12 +573,16 @@
                                request.method request.path status self.dropped-answers error))))
     response)
 
-  (defn :async #^ web.StreamResponse relay-http [self #^ web.Request request #^ str url]
-    "HTTP の要求を中継先へ streaming で写すため(届かなければ 502)。"
+  (defn :async #^ web.StreamResponse relay-http [self #^ web.Request request #^ str url #^ (| HttpBodyOutcome None) unclaimed]
+    "HTTP の要求を中継先へ streaming で写すため(届かなければ 502)。unclaimed = 待ち受けの loop が先に読み、誰も取らなかった本文(頭の註の
+     本文の読み — 読み切った本文はそのまま送る)。"
     (setv response None)
+    (setv data (match unclaimed
+                 (HttpBodyRead :data read) read
+                 _ (if request.body-exists request.content None)))
     (try
       (with [:async upstream (.request self.client request.method url :headers (forwarded-headers request False)
-                                       :data (if request.body-exists request.content None) :allow-redirects False)]
+                                       :data data :allow-redirects False)]
         (setv response (web.StreamResponse :status upstream.status :reason upstream.reason))
         (setv hops (hop-names (.get upstream.headers "Connection" "")))
         (for [[name value] (.items upstream.headers)]
@@ -579,6 +624,16 @@
     client))
 
 
+(defk read-on-edge [edge ticket max-bytes]
+  {:pre [(: edge WebEdge) (: ticket str) (: max-bytes int)] :post [(: % HttpBodyOutcome)]}
+  "札の本文の読みに答えるため: 待ち受けの loop が先に読んだ本文は答え手の節の thread で判じて答え(共有の loop へ入らない — 頭の註の
+   本文の読み)、先に読んでいない札は共有の loop から待ち受けの loop で読む(across)。"
+  (match (.take-prefetched edge ticket max-bytes)
+    None (do (<- outcome HttpBodyOutcome (Await (.across edge (.read-body edge ticket max-bytes))))
+             outcome)
+    early early))
+
+
 (defhandler aiohttp-http-server
   ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
   ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
@@ -590,7 +645,7 @@
     (<- arrival (Await (.across edge (.next-arrival edge))))
     (resume arrival))
   (HttpReadBody [ticket max-bytes]
-    (<- outcome HttpBodyOutcome (Await (.across edge (.read-body edge ticket max-bytes))))
+    (<- outcome HttpBodyOutcome (read-on-edge edge ticket max-bytes))
     (resume outcome))
   (HttpRespond [ticket status headers body]
     ;; 答えは待ち受けの loop へ積むだけ(共有の loop を経ない — 頭の註の応答の送出)。
