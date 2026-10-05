@@ -15,7 +15,8 @@
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
 ;;;   9 bytecode  ReadEditableRoots / CompileTrees           root の venv の interpreter で、焼く根を持つ repo の木の全部を 1 回で作る
-;;;                                                          (引き継ぎ元は lock と Python が同じ root のうち近い版の物 — carry-source)。
+;;;                                                          (引き継ぎ元は lock と Python が同じ root のうち近い版の物 — carry-source。
+;;;                                                          引き継がない「変わった file」は引き継ぎ元の commit との git diff — #3675)。
 ;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
 ;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)。
 ;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)
@@ -39,7 +40,7 @@
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport CarryFrom BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -103,10 +104,11 @@
 
 (defrecord CarryCandidate
   "bytecode の引き継ぎ元の候補 1 つ(lock の sha256 と Python が同じ完成済みの root の、同じ url の repo のツリー)。tree = ツリーの
-   path・root = root の path・made-ms = root の完成の時刻・same-commit = ツリーの commit が新しい宣言の同じ repo と同じ・
-   same-macros = macro の repo(MACRO-REPO)の commit が新しい宣言と同じ。"
+   path・root = root の path・commit = ツリーを展開した commit・made-ms = root の完成の時刻・same-commit = ツリーの commit が新しい宣言の
+   同じ repo と同じ・same-macros = macro の repo(MACRO-REPO)の commit が新しい宣言と同じ。"
   (#^ str tree)
   (#^ str root)
+  (#^ str commit)
   (#^ int made-ms)
   (#^ bool same-commit)
   (#^ bool same-macros))
@@ -123,16 +125,17 @@
                :if (and (= k.env.project.lock-sha256 env.project.lock-sha256) (= k.env.project.python env.project.python))
                r k.env.repos
                :if (= r.url repo.url)
-               (CarryCandidate :tree (.format "{}/{}" k.root r.name) :root k.root :made-ms k.made-ms
+               (CarryCandidate :tree (.format "{}/{}" k.root r.name) :root k.root :commit r.commit :made-ms k.made-ms
                                :same-commit (= r.commit repo.commit)
                                :same-macros (and (is-not macros None)
                                                  (any (gfor m k.env.repos (and (= m.url macros.url) (= m.commit macros.commit)))))))))
 
 
 (defk carry-source [known env name]
-  {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % (| str None))]
+  {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % (| CarryFrom None))]
    :tags {:context "worker" :role "program"}}
-  "repo name の bytecode の引き継ぎ元のツリーの path を返すため(組み直す .pyc を少なくする — 候補は carry-candidates)。無ければ None。
+  "repo name の bytecode の引き継ぎ元(ツリーの path とその commit — CarryFrom)を返すため(組み直す .pyc を少なくする — 候補は
+   carry-candidates)。無ければ None。
    候補が幾つも在れば、.pyc を使い回せる見込みの高い条件から順に選ぶ(#3515 の B — 前は dir の名の順で最初の root を選び、同じ commit
    で組んだ root が在っても古い commit の root から引き継いで約 2000 個を組み直した):
      1 その repo の commit も macro の repo(MACRO-REPO)の commit も同じ root(ツリーの file も macro の file も同じ)
@@ -149,7 +152,8 @@
                         :if group group)
                   #()))
   (if tier
-      (. (min tier :key (fn [c] #((- c.made-ms) c.root))) tree)
+      (do (val chosen (min tier :key (fn [c] #((- c.made-ms) c.root))))
+          (CarryFrom :tree chosen.tree :commit chosen.commit))
       None))
 
 
@@ -162,10 +166,11 @@
   (val counts marker.bytecode)
   (val bytecode (if (is counts None)
                     None
-                    {"compiled" counts.compiled "carried" counts.carried "failed" counts.failed
+                    {"carried" counts.carried "rebuilt" counts.rebuilt "reused" counts.reused "failed" counts.failed
                      "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
                      "carrySeconds" counts.carry-seconds "compileSeconds" counts.compile-seconds
-                     "trees" (lfor t counts.trees {"name" t.name "compiled" t.compiled "carried" t.carried "failed" t.failed})}))
+                     "trees" (lfor t counts.trees {"name" t.name "carried" t.carried "rebuilt" t.rebuilt "reused" t.reused
+                                                   "failed" t.failed})}))
   ;; 処理ステージの files(root に書いた file の数 — 数えない処理ステージは null)・parts(区切りの秒)・volume(disk の種類)・
   ;; startupSeconds(起こしてから最初の処理ステージまで)は #3676 で足した欄(読み手の置き場の名指しは読まない — 報告だけ)。
   (val volume marker.volume)
@@ -348,17 +353,20 @@
 (val BYTECODE-STAGE "bytecode")   ; bytecode の処理ステージの名(計器・マーカー・進みの印)
 
 
-(defk bytecode-trees [request editable]
-  {:pre [(: request PrepareRequest) (: editable tuple)] :post [(: % tuple)]}
+(defk bytecode-trees [request state editable]
+  {:pre [(: request PrepareRequest) (: state PrepareState) (: editable tuple)] :post [(: % tuple)]}
   "焼く根を持つ repo ごとの焼く木(BytecodeTree の列・宣言の repo の順)を作るため — 焼く根 = 宣言の import の根と venv に editable で
-   入る dir(bytecode-roots)・引き継ぎ元 = carry-source・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。"
+   入る dir(bytecode-roots)・引き継ぎ元 = carry-source(変わった file を引き継ぎ元の commit との git diff で決めるため、木の mirror と
+   commit も載せる)・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。"
   (var trees #())
   (for [repo request.env.repos]
     (<- roots tuple (bytecode-roots request.env editable repo.name))
     (when roots
       (<- declared tuple (repo-roots request.env repo.name))
-      (<- carry (| str None) (carry-source request.known request.env repo.name))
-      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots :carry-from carry
+      (<- carry (| CarryFrom None) (carry-source request.known request.env repo.name))
+      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots
+                                         :mirror (next (gfor m state.mirrors :if (= m.name repo.name) m.mirror))
+                                         :commit repo.commit :carry carry
                                          :declared (bool declared)))))))
   trees)
 
@@ -387,8 +395,10 @@
               (do (for [p problems]
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
-                  ;; 書いた file の数 = 焼いた .pyc と引き継いだ .pyc(#3676)。
-                  (replace state :interpreter used :bytecode counts :written (+ counts.compiled counts.carried)))))))
+                  ;; 書いた file の数 = 焼いて書いた .pyc(rebuilt)と hardlink で引き継いだ .pyc(carried)(#3676)。焼かずに残した
+                  ;; .pyc(reused)は引き継いだ物を照らして残しただけで、carried に数えてあるので足さない(#3675)。macro が変わって
+                  ;; 引き継いだ物を焼き直した .pyc は両方に入る(書きの回数としては 2 回 — 報告だけの値)。
+                  (replace state :interpreter used :bytecode counts :written (+ counts.rebuilt counts.carried)))))))
 
 
 (defk stage-bytecode [request state]
@@ -402,7 +412,7 @@
    macro の file が変わると全部を焼き直し、負荷の高い時に 267.9 秒かかった(#3515)。"
   (<- pdir str (project-dir request.env request.root))
   (<- editable tuple (ReadEditableRoots pdir request.root))
-  (<- trees tuple (bytecode-trees request editable))
+  (<- trees tuple (bytecode-trees request state editable))
   (if (not trees)
       state
       (do (<- (StageStarted BYTECODE-STAGE))

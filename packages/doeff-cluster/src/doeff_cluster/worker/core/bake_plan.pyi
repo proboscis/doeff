@@ -36,9 +36,15 @@ class BakeItem:
 class TreeOutcome:
     named: str
     carried: int
-    compiled: int
+    rebuilt: int
+    reused: int
     failed: int
     problem: str | None
+
+@dataclass(frozen=True, kw_only=True)
+class BakeAnswer:
+    failed: tuple
+    reused: tuple
 
 @dataclass(frozen=True, kw_only=True)
 class BakeSummary:
@@ -78,6 +84,9 @@ def scoped_sources(sources: list | tuple, scope: frozenset | None) -> _Program[l
 def tree_failures(failures: tuple, tree: str) -> _Program[list, object]:
     ...
 
+def tree_reused(reused: tuple, tree: str) -> _Program[int, object]:
+    ...
+
 def bake_order(items: tuple) -> _Program[tuple, object]:
     ...
 
@@ -87,7 +96,7 @@ def bake_argv(python: str, tool: str, jobs: int, paths: tuple) -> _Program[tuple
 def bake_input(items: tuple) -> _Program[str, object]:
     ...
 
-def bake_failures(text: str) -> _Program[tuple, object]:
+def bake_answer(text: str) -> _Program[BakeAnswer, object]:
     ...
 
 def tree_line(outcome: TreeOutcome) -> _Program[str, object]:

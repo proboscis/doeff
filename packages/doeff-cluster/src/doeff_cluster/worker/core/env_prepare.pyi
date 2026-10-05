@@ -31,6 +31,7 @@ from doeff_cluster.worker.intent.env_prepare_model import RepoMirror as RepoMirr
 from doeff_cluster.worker.intent.env_prepare_model import EnvMarker as EnvMarker
 from doeff_cluster.worker.intent.env_prepare_model import WheelReady as WheelReady
 from doeff_cluster.worker.intent.env_prepare_model import SyncReport as SyncReport
+from doeff_cluster.worker.intent.env_prepare_model import CarryFrom as CarryFrom
 from doeff_cluster.worker.intent.env_prepare_model import BytecodeTree as BytecodeTree
 from doeff_cluster.worker.intent.env_prepare_model import BytecodeReport as BytecodeReport
 from doeff_cluster.worker.intent.env_prepare_model import ProbeReport as ProbeReport
@@ -75,6 +76,7 @@ MACRO_REPO: str
 class CarryCandidate:
     tree: str
     root: str
+    commit: str
     made_ms: int
     same_commit: bool
     same_macros: bool
@@ -82,7 +84,7 @@ class CarryCandidate:
 def carry_candidates(known: tuple, env: RuntimeEnv, name: str) -> _Program[tuple, object]:
     ...
 
-def carry_source(known: tuple, env: RuntimeEnv, name: str) -> _Program[str | None, object]:
+def carry_source(known: tuple, env: RuntimeEnv, name: str) -> _Program[CarryFrom | None, object]:
     ...
 
 def hyx_env_marker_XgreaterHthan_signXjson(marker: EnvMarker) -> _Program[dict, object]:
@@ -123,7 +125,7 @@ def stage_roots(request: PrepareRequest, state: PrepareState) -> _Program[Prepar
     ...
 BYTECODE_STAGE: str
 
-def bytecode_trees(request: PrepareRequest, editable: tuple) -> _Program[tuple, object]:
+def bytecode_trees(request: PrepareRequest, state: PrepareState, editable: tuple) -> _Program[tuple, object]:
     ...
 
 def bytecode_outcome(trees: tuple, report: BytecodeReport | EnvFailure, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:

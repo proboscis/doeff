@@ -52,13 +52,22 @@
 
 
 (defrecord TreeOutcome
-  "木 1 つの結果(報告の行): carried = 引き継いだ .pyc の数・compiled = 焼けた数・failed = 焼けなかった数・problem = 検めが通らない理由
-   (印を置いていない)か None。"
+  "木 1 つの結果(報告の行): carried = 前の木から hardlink で引き継いだ .pyc の数・焼く計画の file のうち rebuilt = 焼いた数・reused = 在った
+   .pyc が今の source と macro に合い焼かずに残した数・failed = 焼けなかった数(rebuilt + reused + failed = 焼く計画の数 — #3675)・
+   problem = 検めが通らない理由(印を置いていない)か None。"
   (#^ str named)
   (#^ int carried)
-  (#^ int compiled)
+  (#^ int rebuilt)
+  (#^ int reused)
   (#^ int failed)
   (#^ (| str None) problem))
+
+
+(defrecord BakeAnswer
+  "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・reused = 在った .pyc が今の source と今の環境の macro に
+   合うので pool へ送らなかった物の #(木の path 相対 path) の列(#3675)。"
+  (#^ tuple failed)
+  (#^ tuple reused))
 
 
 (defrecord BakeSummary
@@ -184,6 +193,12 @@
   (lfor f failures :if (= (get f 0) tree) #((get f 1) (get f 2))))
 
 
+(defk tree-reused [reused tree]
+  {:pre [(: reused tuple) (: tree str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "1 回の焼きの焼かずに残した物(#(木の path 相対 path) の列)のうち、木 1 つの物の数を求めるため(報告の行の reused)。"
+  (sum (gfor r reused :if (= (get r 0) tree) 1)))
+
+
 ;; --- 焼く順と焼きの道具への受け渡し --------------------------------------------------------------
 
 (defk bake-order [items]
@@ -207,10 +222,13 @@
   (.join "" (gfor #(tree rel name) items (.format "{}\t{}\t{}\n" tree rel name))))
 
 
-(defk bake-failures [text]
-  {:pre [(: text str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "焼きの道具の標準出力(焼けなかった物 1 つ 1 行の `<木の path>\\t<相対 path>\\t<理由>`)を #(木の path 相対 path 理由) の列にするため。"
-  (tuple (gfor line (.splitlines text) :setv parts (.split line "\t" 2) :if (= (len parts) 3) (tuple parts))))
+(defk bake-answer [text]
+  {:pre [(: text str)] :post [(: % BakeAnswer)] :tags {:context "worker" :role "judgment"}}
+  "焼きの道具の標準出力(1 つ 1 行 — 焼けなかった物は `failed\\t<木の path>\\t<相対 path>\\t<理由>`・焼かずに残した物は
+   `reused\\t<木の path>\\t<相対 path>`)を BakeAnswer にするため。"
+  (val rows (tuple (gfor line (.splitlines text) (.split line "\t" 3))))
+  (BakeAnswer :failed (tuple (gfor r rows :if (and (= (len r) 4) (= (get r 0) "failed")) (tuple (cut r 1 None))))
+              :reused (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "reused")) (tuple (cut r 1 None))))))
 
 
 ;; --- 報告の行 ------------------------------------------------------------------------------
@@ -218,13 +236,15 @@
 (defk tree-line [outcome]
   {:pre [(: outcome TreeOutcome)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "木 1 つの報告の行を作るため(呼び手が木ごとの問題を読む形 — 問題の文の改行は空白にして 1 行に収める)。"
-  (.format "tree={} carried={} compiled={} failed={} problem={}" outcome.named outcome.carried outcome.compiled outcome.failed
+  (.format "tree={} carried={} rebuilt={} reused={} failed={} problem={}" outcome.named outcome.carried outcome.rebuilt outcome.reused
+           outcome.failed
            (if (is outcome.problem None) "-" (.replace outcome.problem "\n" " "))))
 
 
 (defk total-line [summary]
   {:pre [(: summary BakeSummary)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "全体の報告の行を作るため(頭は carried=… compiled=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。"
-  (.format "carried={} compiled={} failed={} carry_s={} compile_s={} closure_s={} scan_s={}"
-           (sum (gfor t summary.trees t.carried)) (sum (gfor t summary.trees t.compiled)) (sum (gfor t summary.trees t.failed))
+  "全体の報告の行を作るため(頭は carried=… rebuilt=… reused=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。"
+  (.format "carried={} rebuilt={} reused={} failed={} carry_s={} compile_s={} closure_s={} scan_s={}"
+           (sum (gfor t summary.trees t.carried)) (sum (gfor t summary.trees t.rebuilt)) (sum (gfor t summary.trees t.reused))
+           (sum (gfor t summary.trees t.failed))
            (round summary.carry-s 2) (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)))

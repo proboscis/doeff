@@ -8,7 +8,6 @@
 (import enum [StrEnum])
 (import doeff [EffectBase])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts])
 
 
 ;; 入口の検めの失敗の種類(上の表)。
@@ -26,13 +25,13 @@
 
 
 (defrecord RootMarker
-  "root の完成の印から読んだ形式の版・キー・platform・宣言(形式の版が違えば env は None — 読まない)・bytecode の処理ステージの数と秒
-   (bytecode — 欄の無い印〔#3607 の H2 より前に書かれた印・焼く木が無かった準備〕は None = 記録が無い。検めの判断は読まない)。"
+  "root の完成の印から読んだ置き場の同一性 — 形式の版・キー・platform・宣言(形式の版が違えば env は None — 読まない)。印の bytecode の
+   欄(焼いた数と秒 — 報告と log の値)は持たない: 名指しが数の欄の形に依ると、欄の名を替えた版の worker で、前の形の印を持つ置き場が
+   読めない印になる(#3675)。数は runtime_identity の marker-bytecode が別に読む。"
   (#^ int format)
   (#^ str key)
   (#^ str platform)
-  (#^ (| RuntimeEnv None) env)
-  (#^ (| BytecodeCounts None) bytecode))
+  (#^ (| RuntimeEnv None) env))
 
 
 (defrecord RuntimeFacts
