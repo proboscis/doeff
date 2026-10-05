@@ -38,7 +38,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv
+(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv StartWarmChild WarmChildView WarmChildMark
                                     EnvDisk] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys])
 (import doeff_cluster.worker.protocol.declared [task-spec])
@@ -425,8 +425,13 @@
   (val actions (! (plan 0 #(spec) (WorldView #() #()) {} policy :warm #(warm))))
   (assert (= actions #((PrepareEnv (code-key spec) spec.runtime-env) (PrepareEnv warm.key warm.runtime-env :warm True)))
           "job の準備が先・温める準備が後")
+  ;; 準備済みの root には待ちの子を起こし(#3646)、待ちの子も準備済みなら何もしない。
   (val ready (WorldView #((CodeView warm.key CodeState.READY :path "/r")) #()))
-  (assert (= (! (plan 0 #() ready {} policy :warm #(warm))) #()) "準備済みなら何もしない")
+  (<- started tuple (plan 0 #() ready {} policy :warm #(warm)))
+  (assert (= (tuple (gfor a started #((type a) a.key))) #(#(StartWarmChild warm.key))) "準備済みの root には待ちの子を起こす")
+  (val warmed (WorldView #((CodeView warm.key CodeState.READY :path "/r")) #()
+                         :warm-children #((WarmChildView :key warm.key :pid 1 :started-ms 0 :mark (WarmChildMark :threads 1 :vm-live #(0 0 0))))))
+  (assert (= (! (plan 0 #() warmed {} policy :warm #(warm))) #()) "root も待ちの子も準備済みなら何もしない")
   (val failed (WorldView #((CodeView warm.key CodeState.FAILED :detail "d" :failed-ms 0)) #()))
   (assert (= (! (plan 10 #() failed {} policy :warm #(warm))) #()) "失敗の直後は撃ち直さない")
   (assert (= (! (plan policy.code-retry-ms #() failed {} policy :warm #(warm)))

@@ -25,7 +25,7 @@
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import doeff_cluster.worker.intent.worker_model [StartJob SignalJob ReapJob WorldView])
+(import doeff_cluster.worker.intent.worker_model [StartJob SignalJob ReapJob WorldView WarmChildMark])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 
 
@@ -92,7 +92,7 @@
    印の thread が 1 つでない・生きた VM が在る物を破りの列にして返す(空なら緑)— VM や thread を持った process から fork すると、
    分かれた task の中で錠や VM の状態が壊れるため。"
   (val clean-keys (frozenset (gfor view world.warm-children
-                                   :if (and (is view.exit-code None) (is view.stop None) (is-not view.mark None)
+                                   :if (and (is view.exit-code None) (is view.stop None) (isinstance view.mark WarmChildMark)
                                             (= view.mark.threads 1) (not (any view.mark.vm-live)))
                                    view.key)))
   (tuple (gfor action actions

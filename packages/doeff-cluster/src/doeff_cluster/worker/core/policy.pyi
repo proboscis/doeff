@@ -28,6 +28,7 @@ from doeff_cluster.worker.intent.worker_model import ReleaseLeases as ReleaseLea
 from doeff_cluster.worker.intent.worker_model import ProbeEntry as ProbeEntry
 from doeff_cluster.worker.intent.worker_model import ForgetProbes as ForgetProbes
 from doeff_cluster.worker.intent.worker_model import WarmChildView as WarmChildView
+from doeff_cluster.worker.intent.worker_model import WarmLaunch as WarmLaunch
 from doeff_cluster.worker.intent.worker_model import StartWarmChild as StartWarmChild
 from doeff_cluster.worker.intent.worker_model import StopWarmChild as StopWarmChild
 from doeff_cluster.worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
@@ -46,7 +47,7 @@ from doeff_cluster.worker.core.warm_rules import warm_mark_clean as warm_mark_cl
 from doeff_cluster.worker.core.warm_rules import warm_child_of as warm_child_of
 from doeff_cluster.worker.core.warm_rules import warm_child_ready as warm_child_ready
 from doeff_cluster.worker.core.warm_rules import mark_refusal as mark_refusal
-from doeff_cluster.worker.core.warm_rules import warm_preload as warm_preload
+from doeff_cluster.worker.core.warm_rules import warm_launch as warm_launch
 
 def hyx_kept_when_cut_offXquestion_markX(job: JobSpec, silent_ms: int, keep_fence_ms: int) -> _Program[bool, object]:
     ...
@@ -123,7 +124,10 @@ def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, po
 def warm_stop_step(now: int, view: WarmChildView, policy: WorkerPolicy) -> _Program[tuple, object]:
     ...
 
-def warm_child_step(now: int, key: str, root: str | None, view: WarmChildView | None, preload: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
+def warm_child_step(now: int, key: str, launch: WarmLaunch | None, view: WarmChildView | None, policy: WorkerPolicy) -> _Program[tuple, object]:
+    ...
+
+def launch_of(key: str, wanted: frozenset, desired: tuple, world: WorldView, warm: tuple) -> _Program[WarmLaunch | None, object]:
     ...
 
 def warm_child_actions(now: int, desired: tuple, world: WorldView, warm: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
@@ -141,7 +145,7 @@ def forget_probe_actions(desired: tuple, world: WorldView) -> _Program[tuple, ob
 def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=...) -> _Program[tuple, object]:
     ...
 
-def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
+def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=...) -> _Program[tuple, object]:
     ...
 
 def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPolicy=...) -> JobRecord:

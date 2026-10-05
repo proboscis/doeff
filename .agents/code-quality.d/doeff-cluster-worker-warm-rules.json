@@ -1,0 +1,31 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-worker-warm-rules"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-job-model",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-runtime-env",
+        "doeff-cluster-worker-model",
+        "doeff-cluster-worker-rules"
+      ],
+      "layer": "domain",
+      "name": "doeff-cluster-worker-warm-rules",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/warm_rules.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/worker/core/warm_rules.hy"
+      ],
+      "responsibility": "待ちの子(#3646)の純粋な判断: 待ちの子から分かれる task の見分け・root のキー・置き場と socket の path・起こし方の argv・準備完了の印の読みと照らし(条 WC1・WC3 の守りの 1 か所)。",
+      "typed": true
+    }
+  ]
+}

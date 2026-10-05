@@ -132,13 +132,27 @@ class WarmChildMark:
     vm_live: tuple[int, ...]
 
 @dataclass(frozen=True, kw_only=True)
+class WarmMarkUnreadable:
+    """準備完了の印の file は在るが、印の形に読めない(detail = 読めない訳)。"""
+
+    detail: str
+
+@dataclass(frozen=True, kw_only=True)
+class WarmLaunch:
+    """要る root の待ちの子の起こし方(root・uv の --project・起動で読む module)。"""
+
+    root: str
+    project: str
+    preload: tuple[str, ...]
+
+@dataclass(frozen=True, kw_only=True)
 class WarmChildView:
     """root ごとの待ちの子 1 つの観測。"""
 
     key: str
     pid: int
     started_ms: int
-    mark: WarmChildMark | None = None
+    mark: WarmChildMark | WarmMarkUnreadable | None = None
     exit_code: int | None = None
     ended_ms: int | None = None
     detail: str = ""
@@ -287,8 +301,7 @@ class ReleaseLeases(EffectBase[None]):
 @dataclass(frozen=True)
 class StartWarmChild(EffectBase[None]):
     key: str
-    root: str
-    preload: tuple[str, ...]
+    launch: WarmLaunch
 
 @dataclass(frozen=True)
 class StopWarmChild(EffectBase[None]):

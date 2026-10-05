@@ -455,6 +455,7 @@ class HostTruth:
     sent_stopping: bool = False
     rest_bell: object | None = None
     rest_reach: int = ...
+    warm_children: tuple[object, ...] = ()
 
 @dataclass(frozen=True, kw_only=True)
 class SimChild:
