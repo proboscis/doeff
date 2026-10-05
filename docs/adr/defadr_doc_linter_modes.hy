@@ -22,8 +22,12 @@
          (law selection-survives-reload
            :statement "選択したモードは再読み込み後も維持され、同じ文章の判定は永続キャッシュから得る。"
            :counterexamples [(counterexample "再読み込みで全体検査に戻る。")])]
-  :enforcement [(deftest test-doc-lint-modes-in-vscode
-                  (import pathlib subprocess)
+  :enforcement [(deftest test-doc-lint-modes-in-vscode [machine-tool]
+                  (import os pathlib subprocess)
+                  ;; 実物の VS Code が要る検。起動できる VS Code の無い機体(日次の worker)では、根の conftest の
+                  ;; machine_tool が「tool-absent」として未実行に名指す — 緑とは数えず、黙って skip にもしない
+                  ;; (agora-redesign #3582)。VS Code の在る機体では、ここから先は今までどおり走る。
+                  (machine-tool (os.environ.get "DOC_MODES_VSCODE" "code") "--version")
                   (setv root (/ (. (pathlib.Path __file__) parent parent parent) "ide-plugins/vscode/doeff-runner"))
                   (setv result (subprocess.run ["node" "scripts/run-doc-modes-test.mjs"] :cwd root :check False))
                   (assert (= result.returncode 0)))]
