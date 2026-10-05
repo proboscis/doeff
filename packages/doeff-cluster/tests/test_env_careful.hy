@@ -120,7 +120,7 @@
 
 (deftest test-careful-an-unpushed-commit-comes-back-as-commit-missing [tmp-path subprocess-bytecode]
   ;; 本物の git の縁: remote に push していない commit を宣言すると、本物の git の fetch の答えを翻訳が commit-missing と読む
-  ;; (完成マーカーは置かない)。ほかの失敗の種類(許可表・届かない・lock の hash・uv の失敗・native の build・空き・名前の影・
+  ;; (完成マーカーは置かない)。ほかの失敗の種類(届かない・lock の hash・uv の失敗・native の build・空き・名前の影・
   ;; 子の約束の版)は、同じ翻訳を台本の git と uv の上で回す test_env_prepare.hy の test-each-failure-comes-back-as-its-kind と
   ;; test-a-third-party-package-shadowing-a-root-is-refused が見る。
   (<- rig Rig (make-rig tmp-path))

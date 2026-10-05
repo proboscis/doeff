@@ -1,11 +1,12 @@
-;; 起動の script の読み取りの許可表(WORKER_REPOS・設計 U5・U6・E13)の検。
+;; 起動の script の読み取りの鍵の表(WORKER_REPOS・設計 U5・U6・E13)の検。表は url に鍵を結ぶだけで url を断らない(表に無い url は
+;; worker が鍵なしで clone する — test_env_prepare.hy の test-a-url-missing-from-the-key-table-is-cloned-without-a-key)。
 ;;
 ;; GitHub の deploy key は repo ごとなので、url ごとに別の鍵を ssh に選ばせる。boot.sh の ROLE=access が書く物を確かめる:
-;;   - worker の許可表の JSON(url → 鍵の file・公開の repo は空)
+;;   - worker の鍵の表の JSON(url → 鍵の file・公開の repo は空)
 ;;   - git の insteadOf(url → その url だけの Host の別名)と、別名ごとの ssh の設定(本当の host・その鍵だけ)。どちらも専用の
 ;;     dir に書き、機体の ~/.gitconfig と ~/.ssh/config には書かない
 ;;   - 鍵の file が無ければ起動を止める(黙って鍵なしで進まない)
-;; あわせて、worker の許可表の鍵(env_handlers.git-environment)が worker の ssh の命令(ssh -F)を置き換えず足すことを確かめる。
+;; あわせて、worker の鍵の表の鍵(env_translation.git-environment)が worker の ssh の命令(ssh -F)を置き換えず足すことを確かめる。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
@@ -26,7 +27,7 @@
 
 (defk run-access [home keys repos]
   {:pre [(: home Path) (: keys Path) (: repos str)] :post [(: % subprocess.CompletedProcess)]}
-  "ROLE=access で boot.sh を起こす(家と鍵の dir を検の tmp に向ける)— 許可表から書かれる設定を外から読むため。"
+  "ROLE=access で boot.sh を起こす(家と鍵の dir を検の tmp に向ける)— 鍵の表から書かれる設定を外から読むため。"
   (subprocess.run ["sh" BOOT-SH]
                   :env {"PATH" (os.environ.get "PATH" "") "HOME" (str home) "ROLE" "access"
                         "WORKER_REPOS" repos "WORKER_REPO_KEYS_DIR" (str keys)}
@@ -89,7 +90,7 @@
   (dfor e entries e.name e.value))
 
 
-(deftest test-the-allowlist-key-extends-the-worker-ssh-command
+(deftest test-the-repo-key-extends-the-worker-ssh-command
   ;; 起動の script が書いた ssh -F を保ったまま鍵を足す(置き換えると Host の別名が解けない)。
   (<- env dict (added-by #((EnvEntry :name "GIT_SSH_COMMAND" :value "ssh -F /x/ssh_config"))))
   (assert (.startswith (get env "GIT_SSH_COMMAND") "ssh -F /x/ssh_config -i /keys/key-a ") env)

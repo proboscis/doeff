@@ -116,7 +116,7 @@ def coordinator_url(machine: LocalMachine) -> _Program[str, object]:
 def coordinator_env(machine: LocalMachine) -> _Program[tuple[EnvEntry, ...], object]:
     ...
 
-def repo_allowlist(machine: LocalMachine) -> _Program[str, object]:
+def repo_key_table(machine: LocalMachine) -> _Program[str, object]:
     ...
 
 def git_source_env(sources: tuple[GitSource, ...]) -> _Program[tuple[EnvEntry, ...], object]:

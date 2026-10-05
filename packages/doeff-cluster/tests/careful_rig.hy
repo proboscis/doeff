@@ -123,8 +123,8 @@
   (#^ Path lib))
 
 
-(defk make-rig [base [min-free-bytes 0] [allowed None]]
-  {:pre [(: base Path) (: min-free-bytes int) (: allowed (| tuple None))] :post [(: % Rig)]}
+(defk make-rig [base [min-free-bytes 0]]
+  {:pre [(: base Path) (: min-free-bytes int)] :post [(: % Rig)]}
   "worker の組(root の準備と子 process の言い換えの設定)と、fake の uv を PATH の先頭に置く包みと、app と lib の remote を作る。"
   (val fake (/ base "fake-uv"))
   (.mkdir fake :parents True)
@@ -142,7 +142,8 @@
   (<- app-url str (url-of base "app"))
   (<- lib-url str (url-of base "lib"))
   (<- tools-url str (url-of base "tools"))
-  (.write-text keys (json.dumps (dfor u (or allowed #(app-url lib-url tools-url)) u "")))
+  ;; 鍵の表(URL → deploy key の file)。手元の remote は鍵なしで読む — 表は url を断らないので、載せるのは配備と同じ形を通すため。
+  (.write-text keys (json.dumps (dfor u #(app-url lib-url tools-url) u "")))
   (val state (/ base "state"))
   ;; 検の子 process は checkout の中に bytecode を書かない(root の中に準備した bytecode は読むだけ)。root の外の doeff の code は、
   ;; HOME から引く既定の Hy の code の置き場が答える(conftest の job_child_code_store が先に満たす)。

@@ -363,9 +363,13 @@
   (assert (= left #()) left))
 
 
-;; --- 実行環境の宣言(#3042)— 配備と同じ道: 宣言に実行環境を載せ、worker が許可表でその repo を受けて取り込む ---
+;; --- 実行環境の宣言(#3042)— 配備と同じ道: 宣言に実行環境を載せ、worker がその repo を取り込む(鍵の表は url を断らない)---
 ;; root の準備から Ready までの本物の道(空の uv の cache で uv sync が 36 秒前後 — 60 秒に入らない)は日次の側(#3033)で通す。ここは
-;; 宣言と許可表と取り込み(uv の前の段)までを見る。
+;; 宣言と鍵の表と取り込み(uv の前の段)までを見る。
+
+;; 取り込み(mirror)の段の失敗の種類。これを名乗らなければ取り込みの段を越えた(後の段の名乗り — 検の小さな偽の lock の lock-stale
+;; など — は取り込みの外)。
+(val MIRROR-FAILURES #("repo-unreachable" "commit-missing"))
 
 (defrecord PrepareSeen
   "筋書き declared-and-preparing の答え: declared = Redeclare の答え・failure-kind = worker が job の準備で名乗った失敗の種類(空 = 時間内に
@@ -394,22 +398,22 @@
 
 (defk declared-and-preparing [system]
   {:pre [(: system System)] :post [(: % PrepareSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 実行環境を載せて系を宣言し、worker が準備で失敗を名乗るか 15 秒経つまで見るため(許可表の断りは取り込みの段で直ぐ名乗る)。"
+  "筋書き: 実行環境を載せて系を宣言し、worker が準備で失敗を名乗るか 15 秒経つまで見るため(取り込みの段の失敗は直ぐ名乗る)。"
   (<- declared tuple (Redeclare system))
   (<- kind str (failure-kind-within JOB 15.0))
   (PrepareSeen :declared declared :failure-kind kind))
 
 
-;; 壊した許可表: 実行環境の repo を許可表に載せない(許可表を組むのを忘れた手元の 1 台の代役 — repo-allowlist の差し替え)。
-(defk no-allowlist [machine]
+;; 空の鍵の表: 実行環境の repo を鍵の表に載せない(--repo-keys を空で渡す worker の代役 — repo-key-table の差し替え)。
+(defk no-key-table [machine]
   {:pre [(: machine LocalMachine)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "失敗ケースの許可表: どの repo も載せない(空 = どの url も断る)。"
+  "空の鍵の表(WORKER_REPOS を空にする — どの repo にも鍵を結ばない)で worker を起こすため。"
   "")
 
 
 (defk home-access-mtime []
   {:pre [] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "利用者の HOME の worker の許可表(boot.sh の既定の置き場)の書いた刻を読むため(無ければ None — 手元の 1 台が書き換えないことを見る)。"
+  "利用者の HOME の worker の鍵の表(boot.sh の既定の置き場)の書いた刻を読むため(無ければ None — 手元の 1 台が書き換えないことを見る)。"
   (val home-file (/ (Path.home) ".doeff-worker-repos" "repo-keys.json"))
   (if (.exists home-file) (. (.stat home-file) st-mtime-ns) None))
 
@@ -426,25 +430,29 @@
   (<- before (| int None) (home-access-mtime))
   (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
   (assert (= seen.declared #(JOB)) seen)
-  (assert (!= seen.failure-kind "repo-denied") seen)
+  (assert (not-in seen.failure-kind MIRROR-FAILURES) seen)
   (<- mirrors tuple (mirrors-of tmp-path))
   (assert (= (len mirrors) 1) mirrors)
   (val keys (/ tmp-path "workers" WORKER "access" "repo-keys.json"))
   (assert (in repo.url (.read-text keys :encoding "utf-8")) (.read-text keys :encoding "utf-8"))
   (<- after (| int None) (home-access-mtime))
-  (assert (= before after) "手元の 1 台の worker が利用者の HOME の許可表を書き換えた")
+  (assert (= before after) "手元の 1 台の worker が利用者の HOME の鍵の表を書き換えた")
   (<- left tuple (leftover tmp-path))
   (assert (= left #()) left))
 
 
-(deftest test-a-counterexample-without-the-repo-allowlist-is-refused-with-repo-denied [tmp-path monkeypatch]
+(deftest test-a-worker-with-an-empty-key-table-still-takes-in-the-repo [tmp-path monkeypatch]
+  ;; 鍵の表は url を断らない(2026-10-05 に断る分岐と repo-denied を外した): 表が空の worker(--repo-keys が空)も、表に無い
+  ;; 実行環境の repo を鍵なしで clone し、取り込みの段を越える。
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (runtime-machine-of tmp-path repo))
-  (.setattr monkeypatch machine-module "repo_allowlist" no-allowlist)
+  (.setattr monkeypatch machine-module "repo_key_table" no-key-table)
   (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
-  (assert (= seen.failure-kind "repo-denied") "許可表を組まない壊した形でも worker が repo を受けた — 検が許可表を見ていない")
+  (assert (= seen.declared #(JOB)) seen)
+  (assert (not-in seen.failure-kind MIRROR-FAILURES)
+          (.format "鍵の表が空の worker が取り込みの段で止まった({!r})— 表に無い url を断っている" seen))
   (<- mirrors tuple (mirrors-of tmp-path))
-  (assert (= mirrors #()) mirrors)
+  (assert (= (len mirrors) 1) mirrors)
   (<- left tuple (leftover tmp-path))
   (assert (= left #()) left))
 
@@ -468,9 +476,8 @@
   (<- machine LocalMachine (remote-runtime-machine-of tmp-path repo #((GitSource :remote REMOTE-URL :path repo.url))))
   (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
   (assert (= seen.declared #(JOB)) seen)
-  ;; 取り込み(mirror)の段を越えた — 断り(repo-denied)も届かない(repo-unreachable)も commit の欠け(commit-missing)も名乗らない。後の段の名乗り(検の小さな偽の lock の
-  ;; lock-stale など)は取り込みの外。
-  (assert (not-in seen.failure-kind #("repo-denied" "repo-unreachable" "commit-missing")) seen)
+  ;; 取り込み(mirror)の段を越えた — 届かない(repo-unreachable)も commit の欠け(commit-missing)も名乗らない。
+  (assert (not-in seen.failure-kind MIRROR-FAILURES) seen)
   (<- mirrors tuple (mirrors-of tmp-path))
   (assert (= (len mirrors) 1) mirrors)
   (<- left tuple (leftover tmp-path))

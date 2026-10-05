@@ -6,7 +6,7 @@
 ;;;
 ;;; 世界の宣言 EnvWorld:
 ;;;   remotes     = url → commit → ツリーの中身(file の path と文字)。uv.lock の中身もツリーに入れる。
-;;;   denied      = worker の許可表から外す url(設定 runtime-env.repo-keys に載せない — 断るのは prepare-env)。
+;;;   unlisted    = worker の鍵の表に載せない url(設定 runtime-env.repo-keys に載せない — 翻訳は宣言の綴りのまま鍵なしで clone する)。
 ;;;   unreachable = 初めから届かない url(git の clone と fetch が「Could not read from remote repository」で終わる — 走行の途中で
 ;;;                 変えるには set-unreachable)。
 ;;;   uv-failure  = uv の失敗を 1 つ起こす(UvFailure — uv の側の語で宣言する。sync の失敗は sync で・build の失敗は build で返る。
@@ -108,7 +108,7 @@
 (defrecord EnvWorld
   "速い模擬の外の世界の宣言(頭の註)。"
   (#^ tuple remotes)
-  (setv #^ frozenset denied (frozenset))
+  (setv #^ frozenset unlisted (frozenset))
   (setv #^ frozenset unreachable (frozenset))
   (setv #^ (| UvFailure None) uv-failure None)
   (setv #^ int disk-free (** 2 40))
@@ -567,9 +567,9 @@
 
 (defk world-settings [world]
   {:pre [(: world EnvWorld)] :post [(: % dict)] :tags {:context "runtime-env" :role "entry"}}
-  "翻訳の設定(runtime-env.*): 許可表 = 世界の remote の url から denied を除いた物(鍵なし)。"
+  "翻訳の設定(runtime-env.*): 鍵の表 = 世界の remote の url から unlisted を除いた物(鍵なし)。"
   {"runtime-env.state" STATE-DIR
-   "runtime-env.repo-keys" (dfor r world.remotes :if (not-in r.url world.denied) r.url "")
+   "runtime-env.repo-keys" (dfor r world.remotes :if (not-in r.url world.unlisted) r.url "")
    "runtime-env.code-prepare" CODE-PREPARE
    "runtime-env.uv" "uv"
    "runtime-env.progress" ""

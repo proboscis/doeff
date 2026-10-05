@@ -3,7 +3,7 @@
 ;;; 送る名 ENV-TOOL はこの入口の名(旧い path の doeff_cluster.env_handlers は #2113 で消した — 同じ commit の worker が送る名と揃う):
 ;;;
 ;;;   hy -m doeff_cluster.worker.entry.env_tool --request <要求の JSON> --result <答えの JSON> --state <state dir>
-;;;      --repo-keys <許可表の JSON> --code-prepare <worker の code_prepare.hy> [--uv uv] [--progress <印の file>]
+;;;      --repo-keys <鍵の表の JSON> --code-prepare <worker の code_prepare.hy> [--uv uv] [--progress <印の file>]
 (require doeff-hy.macros [defk deff val <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)

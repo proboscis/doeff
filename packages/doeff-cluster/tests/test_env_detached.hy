@@ -147,12 +147,12 @@
 
 (deftest test-a-failed-preparation-answers-its-kind-without-running-the-program
   ;; 恒久の失敗は 1 回で答える(Program は走らない)。
-  (val denied (EnvFailure :kind EnvFailureKind.REPO-DENIED :detail "許可表に無い" :retryable False))
+  (val missing (EnvFailure :kind EnvFailureKind.COMMIT-MISSING :detail "commit が remote に無い" :retryable False))
   (<- seen Sent (sim-cluster NO-JOBS (failure-scenario #("w1"))
-                             :workers #((SimWorker :name "w1" :provides LOCAL :env-failure denied :task-reserve 0))))
+                             :workers #((SimWorker :name "w1" :provides LOCAL :env-failure missing :task-reserve 0))))
   (val outcome (get seen.outcomes "job"))
   (assert (isinstance outcome DetachedEnvUnavailable) outcome)
-  (assert (= #(outcome.kind outcome.retryable) #(EnvFailureKind.REPO-DENIED.value False)) outcome)
+  (assert (= #(outcome.kind outcome.retryable) #(EnvFailureKind.COMMIT-MISSING.value False)) outcome)
   (assert (= (len (get seen.preparations "w1")) 1) seen.preparations)
   (assert (= (get seen.processes "job") #()) "準備に失敗した task の Program は走らない")
   ;; 一時の失敗は、試した worker を避けて置き直した(ENV-RETRIES 回)後に答える。

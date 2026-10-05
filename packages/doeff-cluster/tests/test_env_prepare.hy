@@ -546,8 +546,7 @@
 (deftest test-each-failure-comes-back-as-its-kind
   (<- world EnvWorld (base-world))
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  ;; URL を許可表から外す / 届かない
-  (<- (expect-failure (replace world :denied (frozenset #(LIB-URL))) env EnvFailureKind.REPO-DENIED False))
+  ;; 届かない(鍵の表に無い url は断らない — test-a-url-missing-from-the-key-table-is-cloned-without-a-key)
   (<- (expect-failure (replace world :unreachable (frozenset #(APP-URL))) env EnvFailureKind.REPO-UNREACHABLE True))
   ;; commit を push しない
   (<- unpushed RuntimeEnv (env-of "app-unpushed" "lib-1" LOCK))
@@ -596,9 +595,10 @@
   (assert missing-ok))
 
 
-;; --- 宣言の url の綴りと worker の許可表(2026-09-28 の事故 — daily-verify が 10 分落ちた)------------------------------
-;; 送り手の checkout の remote が ssh(git@github.com:o/r.git)でも、許可表が同じ repo を https で持っていれば、同じ repo として受け、
-;; clone は許可表の綴りで行う(表は許可表 1 つ — 宣言の側に綴りの表を持たない)。
+;; --- 宣言の url の綴りと worker の鍵の表(2026-09-28 の事故 — daily-verify が 10 分落ちた)------------------------------
+;; 送り手の checkout の remote が ssh(git@github.com:o/r.git)でも、鍵の表が同じ repo を https で持っていれば、同じ repo として
+;; clone は表の綴りで行う(表は鍵の表 1 つ — 宣言の側に綴りの表を持たない)。鍵の表は url を断らない(2026-10-05 に断る分岐と
+;; repo-denied を外した): 表に無い url は宣言の綴りのまま鍵なしで clone へ進む。
 
 (val LIB-HTTPS "https://github.com/o/lib.git")
 
@@ -616,7 +616,7 @@
 
 (defk https-lib-world []
   {:pre [] :post [(: % EnvWorld)]}
-  "許可表の綴りを https に揃えた世界を作るため(lib の remote を LIB-HTTPS に置き換える — 許可表は世界の remote の url から作られる)。"
+  "鍵の表の綴りを https に揃えた世界を作るため(lib の remote を LIB-HTTPS に置き換える — 鍵の表は世界の remote の url から作られる)。"
   (<- world EnvWorld (base-world))
   (replace world :remotes (tuple (gfor r world.remotes (if (= r.url LIB-URL) (replace r :url LIB-HTTPS) r)))))
 
@@ -628,27 +628,46 @@
   (replace env :repos (tuple (gfor r env.repos (if (= r.name "lib") (replace r :url url) r)))))
 
 
-(defk ssh-spelling-scenario [env]
-  {:pre [(: env RuntimeEnv)] :post [(: % bool)]}
-  "ssh の綴りの宣言が準備でき、lib の mirror は許可表の綴り(https)で clone されていることを確かめるため。"
+(defk cloned-as-scenario [env expected]
+  {:pre [(: env RuntimeEnv) (: expected tuple)] :post [(: % bool)]}
+  "宣言が準備でき(断られず)、mirror が expected の綴りの url で clone されたことを確かめるため — worker が取りに行った綴りを外から読む。"
   (<- ready (prepare env #()))
   (assert (isinstance ready EnvReady) ready)
   (<- mirrors dict (files-under "/state/mirrors"))
   (val urls (sorted (gfor [path text] (.items mirrors) :if (.endswith path "/remote-url") text)))
-  (assert (= urls (sorted [APP-URL LIB-HTTPS])) urls)
+  (assert (= urls (sorted expected)) urls)
   True)
 
 
-(deftest test-an-ssh-spelling-of-an-allowed-https-repo-is-prepared-with-the-allowed-spelling
+(deftest test-an-ssh-spelling-of-a-listed-https-repo-is-prepared-with-the-listed-spelling
   (<- world EnvWorld (https-lib-world))
   (<- env RuntimeEnv (lib-spelled-env "git@github.com:o/lib.git"))
-  (<- ok bool (run-in-world world (ssh-spelling-scenario env)))
+  (<- ok bool (run-in-world world (cloned-as-scenario env #(APP-URL LIB-HTTPS))))
   (assert ok)
-  ;; 反例: 許可表から外した repo は、別の綴りで名指しても断る(綴りを変えて許可表を抜けない)。
-  (<- (expect-failure (replace world :denied (frozenset #(LIB-HTTPS))) env EnvFailureKind.REPO-DENIED False))
-  ;; 反例: 別の owner の同じ名の repo は同じ repo ではない。
+  ;; 反例: 鍵の表から外した repo を別の綴りで名指すと、表の綴りには引き当てず、宣言の綴りのまま clone する(断らない)。
+  (<- unlisted bool (run-in-world (replace world :unlisted (frozenset #(LIB-HTTPS)))
+                                  (cloned-as-scenario env #(APP-URL "git@github.com:o/lib.git"))))
+  (assert unlisted)
+  ;; 反例: 別の owner の同じ名の repo は同じ repo ではない — 表の綴り(o/lib)に引き当てず、宣言の綴り(p/lib)のまま clone する。
   (<- other RuntimeEnv (lib-spelled-env "git@github.com:p/lib.git"))
-  (<- (expect-failure world other EnvFailureKind.REPO-DENIED False)))
+  (<- other-ok bool (run-in-world world (cloned-as-scenario other #(APP-URL "git@github.com:p/lib.git"))))
+  (assert other-ok))
+
+
+(deftest test-a-url-missing-from-the-key-table-is-cloned-without-a-key
+  ;; 鍵の表は url に deploy key を結ぶだけで、url を断らない。表に無い url は鍵なしで clone へ進む。
+  (<- world EnvWorld (base-world))
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  ;; 表に無い非公開の repo(鍵なしでは読めない — 模擬では届かない url)は、断りではなく clone の失敗(一時の repo-unreachable)で返る。
+  (<- (expect-failure (replace world :unlisted (frozenset #(LIB-URL)) :unreachable (frozenset #(LIB-URL)))
+                      env EnvFailureKind.REPO-UNREACHABLE True))
+  ;; lib だけ表に無い: 断らずに宣言の綴りで clone し、root を完成させる。
+  (<- one bool (run-in-world (replace world :unlisted (frozenset #(LIB-URL))) (cloned-as-scenario env #(APP-URL LIB-URL))))
+  (assert one)
+  ;; 表が空(--repo-keys が空の worker): どの url も断らない。
+  (<- empty bool (run-in-world (replace world :unlisted (frozenset (gfor r world.remotes r.url)))
+                               (cloned-as-scenario env #(APP-URL LIB-URL))))
+  (assert empty))
 
 
 (deftest test-a-third-party-package-shadowing-a-root-is-refused
