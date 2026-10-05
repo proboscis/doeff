@@ -7,8 +7,12 @@
 //!   無視した file は含まない)のうち、Python(`.py`)と Hy(`.hy`・`.hyk`・`.hyp`)。依存の読みは層の規則と同じ
 //!   (`facts::module_dependencies` — import は `collect_imports`・`python_imports`、Hy の `(require …)` の module を足す)。
 //! - module の名 = file の path を、source の根から点で綴った物。source の根 = file から上へ歩いて最初に当たる dir のうち、
-//!   名が `src`・名が Python の識別子でない(`doeff-core-effects`)・`pyproject.toml` を持つ・親の pyproject.toml の
-//!   `[tool.maturin] python-source` が名指す dir のどれか(repo の根も根)。`__init__` は package の名。`.pyi` は読まないが、
+//!   名が `src`・名が Python の識別子でない(`doeff-core-effects`)・親の pyproject.toml の `[tool.maturin] python-source` が
+//!   名指す dir のどれか(repo の根も根)。名が識別子の dir は、自分の `pyproject.toml` を持っていても根にしない — agora-controllers の
+//!   `controllers/scheduling` は pyproject.toml を持つが、使い手は全部 repo の根からの名(`controllers.scheduling.protocol.…`)で
+//!   import する。根にすると module が `protocol.…` と名付けられて使い手と結ばず、逆依存の検が黙って 0 本になった(2026-10-05・
+//!   agora-redesign #3605 の後 — 入れ子の側の名で import する file は、linter を使う 4 つの repo で 0 件と数えてから外した)。
+//!   `__init__` は package の名。`.pyi` は読まないが、
 //!   変えた path としては隣の module と同じ名になる(stub を変えれば、その module の使い手を選ぶ)。
 //! - import の先 `a.b.名` は、知っている module の名のうち最も長い接頭辞へ縮める(`from pkg import name` は `pkg/name.py` が
 //!   在ればそれ、無ければ `pkg/__init__.py`)。どの接頭辞も知らなければ repo の外(標準・第三者の library)。親の package の
@@ -143,10 +147,7 @@ impl<'a> SourceRoots<'a> {
             return *known;
         }
         let (parent, name) = dir.rsplit_once('/').unwrap_or(("", dir));
-        let answer = name == "src"
-            || !is_identifier(name)
-            || self.root.join(dir).join("pyproject.toml").is_file()
-            || self.declared_python_source(parent).as_deref() == Some(name);
+        let answer = name == "src" || !is_identifier(name) || self.declared_python_source(parent).as_deref() == Some(name);
         self.memo.insert(dir.to_string(), answer);
         answer
     }
@@ -486,6 +487,30 @@ mod tests {
         ]);
         let report = ask(&dir, &files, &["packages/p-one/tests/interpreters.hy"], DEFAULT_MAX_DEPENDENTS);
         assert_eq!(distances(&report), vec![("packages/p-one/tests/test_one.hy", 1)]);
+    }
+
+    /// 失敗ケース(agora-controllers の形): 名が識別子の dir が自分の pyproject.toml を持っていても、その下の module は repo の根からの名で
+    /// 知る — 直す前は `controllers/scheduling` を根にして `protocol.records_turns` と名付け、`controllers.scheduling.protocol.records_turns`
+    /// を import する検を 1 本も選ばなかった。
+    #[test]
+    fn an_identifier_dir_with_its_own_pyproject_keeps_the_names_from_the_repo_root() {
+        let (dir, files) = model(&[
+            ("pyproject.toml", ""),
+            ("controllers/__init__.py", ""),
+            ("controllers/scheduling/pyproject.toml", "[project]\nname = \"agora-scheduling\"\n"),
+            ("controllers/scheduling/__init__.py", ""),
+            ("controllers/scheduling/protocol/__init__.py", ""),
+            ("controllers/scheduling/protocol/records_turns.hy", "(defn records-turns [] 1)\n"),
+            ("controllers/scheduling/tests/test_turn_facts.hy", "(import controllers.scheduling.protocol.records_turns [records-turns])\n"),
+            ("controllers/agora_sim/tests/test_far.hy", "(import os)\n"),
+        ]);
+        let report = ask(&dir, &files, &["controllers/scheduling/protocol/records_turns.hy"], DEFAULT_MAX_DEPENDENTS);
+        assert_eq!(distances(&report), vec![("controllers/scheduling/tests/test_turn_facts.hy", 1)]);
+        let mut roots = SourceRoots::new(dir.path());
+        assert_eq!(
+            roots.module_key("controllers/scheduling/protocol/records_turns.hy").map(|k| k.module).as_deref(),
+            Some("controllers.scheduling.protocol.records_turns")
+        );
     }
 
     #[test]
