@@ -18,14 +18,9 @@
 (import os)
 (import sys)
 (import pathlib [Path])
-(import doeff_cluster.shared.intent.runtime_env_model [NativeWheel RuntimeEnv EnvFailureKind])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
-(import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout])
-(import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
-(import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
-(import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.protocol.env_store [env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
@@ -51,13 +46,10 @@
   (<- a1 str (push-commit rig.app files-a1 "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
   (.insert sys.path 0 (str rig.app))
-  ;; 1 宣言(送り手の組み立て — 本物の git の checkout から)→ 準備 → 実行
-  (<- env-1 RuntimeEnv (subprocess-handler (os-file-handler (checkout-reads
-                         (runtime-env-of-checkouts #((LocalCheckout :name "app" :path (str rig.app))
-                                                     (LocalCheckout :name "lib" :path (str rig.lib)))
-                                                   (ProjectOfCheckout :repo "app" :path "." :python "3.14"
-                                                                      :native #((NativeWheel :package "lib-native" :repo "lib" :paths #("native/core"))))
-                                                   #("app/."))))))
+  ;; 1 宣言 → 準備 → 実行。宣言は台の declare で組む(url は手元の bare repo の file:// — worker の取り込みが本物の git でそこから取る)。
+  ;; 送り手の組み立て(runtime-env-of-checkouts)は手元の path の remote を断る(#3167)ので通さない — 本物の git の checkout から
+  ;; 宣言を組む縁は test_runtime_env_sender.hy が見る。
+  (<- env-1 RuntimeEnv (declare rig a1 l1 LOCK))
   (<- view-1 CodeView (prepare rig env-1))
   (assert (= view-1.state CodeState.READY) view-1)
   (assert (is-not view-1.path None) view-1)

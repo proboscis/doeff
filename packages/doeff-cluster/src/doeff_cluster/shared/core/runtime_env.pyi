@@ -8,6 +8,9 @@ from doeff_cluster.shared.intent.runtime_env_model import ToolRequirement as Too
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnvInvalid as RuntimeEnvInvalid
 from doeff_cluster.shared.intent.runtime_env_model import InvalidKind as InvalidKind
+from doeff_cluster.shared.intent.runtime_env_model import LocalPath as LocalPath
+from doeff_cluster.shared.intent.runtime_env_model import RemoteRepo as RemoteRepo
+from doeff_cluster.shared.intent.runtime_env_model import RepoLocation as RepoLocation
 from doeff_cluster.shared.intent.checkout_model import LocalCheckout as LocalCheckout
 from doeff_cluster.shared.intent.checkout_model import ProjectOfCheckout as ProjectOfCheckout
 from doeff_cluster.shared.intent.checkout_model import CheckoutState as CheckoutState
@@ -15,6 +18,7 @@ from doeff_cluster.shared.intent.checkout_model import ReadCheckout as ReadCheck
 from doeff_cluster.shared.intent.checkout_model import CheckoutRoot as CheckoutRoot
 from doeff_cluster.shared.intent.checkout_model import SenderSourceRoot as SenderSourceRoot
 from doeff_cluster.shared.intent.env_marker_model import FileSha256 as FileSha256
+from doeff_cluster.shared.core.runtime_env_rules import url_location as url_location
 
 def checked_repo(checkout: LocalCheckout) -> _Program[RepoCheckout, object]:
     ...
