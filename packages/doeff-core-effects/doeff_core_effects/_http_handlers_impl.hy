@@ -66,6 +66,11 @@
   (asyncio.sleep delay))
 
 
+;; http-production-handler が答える効果と、節が出す効果(下の宣言の 1 か所の値)。
+(val HTTP-PRODUCTION-HANDLES #(HttpRequest))
+(val HTTP-PRODUCTION-EFFECTS #(Await SlogEffect))
+
+
 (defn #^ (get Callable #([(| Program EffectBase)] Program)) http-production-handler
   [* #^ (get Callable #([] object)) [client-factory http-client-factory] #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
   "Handle HttpRequest with retry/backoff through one async HTTP client per covered scope: each time the handler value is
@@ -75,12 +80,16 @@
   (defn #^ Program scoped-handler [#^ (| Program EffectBase) program]
     (_run-with-scoped-client client-factory sleep program))
   (_copy-handler-metadata scoped-handler (_http-production-handler None sleep))
+  ;; 呼ぶたびに作る installer にも同じ宣言を置く — stacked_handlers の束が中の handler の宣言の和を作れるように(#3724 の読み)。
+  (setv scoped-handler.__doeff_handles__ HTTP-PRODUCTION-HANDLES
+        scoped-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
   scoped-handler)
 
 ;; 節を静的に読めない(client の寿命を包む関数を返す)ので、答える効果と節が出す効果を宣言する(doeff-effect-analyzer の
-;; __doeff_handles__ / __doeff_effects__ — 本番の土台の閉じ具合の検が「読めない handler」と数えないため・#2337)。
-(setv http-production-handler.__doeff_handles__ #(HttpRequest)
-      http-production-handler.__doeff_effects__ #(Await SlogEffect))
+;; __doeff_handles__ / __doeff_effects__ — 本番の土台の閉じ具合の検が「読めない handler」と数えないため・#2337)。関数そのものと、
+;; 関数が返す installer の両方が、この 1 か所の値を持つ。
+(setv http-production-handler.__doeff_handles__ HTTP-PRODUCTION-HANDLES
+      http-production-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
 
 
 (defn #^ (get Callable #([(| Program EffectBase)] Program)) http-fixture-handler
