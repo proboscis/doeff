@@ -26,8 +26,8 @@
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches? epoch-ms])
 
-;; OVERSEER = 宣言の operators に入る書き手(宣言の形の例 — 置き場は書き手の名では断らない・#2994)。
-(setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
+;; 書き手の名(as-writer に渡す名)— 置き場は書き手の名では断らない(#2994)ので、宣言には現れない。
+(setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger")
 (setv TICKET-KEEP-SECONDS 60 PAIR-KEEP-SECONDS 60)
 ;; pulses = 出来事ごとに数える期限つきの列(法 15 — 組で数える列 pairs と並べて、出来事ごとの境も読みが見ることを確かめる)。
 (val PULSE-KEEP-SECONDS 60)
@@ -35,30 +35,24 @@
 (setv LAW-SCHEMA
   (RecordsSchema
     :tables (FrozenMap {"parts" (TableDecl :name "parts" :key-fields #("id")
-                                :fields #((FieldDecl "id" #(MAKER)) (FieldDecl "label" #(MAKER))
-                                          (FieldDecl "color" #(MAKER PAINTER)) (FieldDecl "state" #(MAKER CLOSER))
-                                          (FieldDecl "note" #(MAKER)) (FieldDecl "grant" #(MAKER OVERSEER)))
+                                :fields #((FieldDecl "id") (FieldDecl "label") (FieldDecl "color") (FieldDecl "state")
+                                          (FieldDecl "note") (FieldDecl "grant"))
                                 :indexes #("color" "label")
                                 :states #("open" "held" "closed") :terminal #("closed") :initial "open"
-                                :operator-paths #("grant") :size-budget 400)
+                                :size-budget 400)
              "tickets" (TableDecl :name "tickets" :key-fields #("group" "id")
-                                  :fields #((FieldDecl "group" #(MAKER)) (FieldDecl "id" #(MAKER))
-                                            (FieldDecl "state" #(MAKER)) (FieldDecl "owner" #(MAKER)))
+                                  :fields #((FieldDecl "group") (FieldDecl "id") (FieldDecl "state") (FieldDecl "owner"))
                                   :indexes #("owner")
                                   :states #("open" "done") :terminal #("done") :initial "open"
                                   :retention (KeepFor TICKET-KEEP-SECONDS))
-             ;; 宣言の形の例(FieldDecl.founders・operator-paths)— 置き場は書き手の名では断らない(#2994)。
+             ;; 状態の語彙も索引も持たない表(束の書き・待ち手の検が、parts と別の表として使う)。
              "charters" (TableDecl :name "charters" :key-fields #("name")
-                                   :fields #((FieldDecl "name" #(OVERSEER) :founders #(MAKER))
-                                             (FieldDecl "rule" #(OVERSEER) :founders #(MAKER))
-                                             (FieldDecl "note" #(OVERSEER)))
-                                   :operator-paths #("rule" "note"))})
+                                   :fields #((FieldDecl "name") (FieldDecl "rule") (FieldDecl "note")))})
     ;; pairs = 保持の組(ByKeySuffix「:」)の列 — 法 12。pulses = 出来事ごとに数える期限つきの列 — 法 15。
-    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)
-                         "pairs" (StreamDecl :name "pairs" :writers #(MAKER) :retention (KeepFor PAIR-KEEP-SECONDS)
+    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :size-budget 200)
+                         "pairs" (StreamDecl :name "pairs" :retention (KeepFor PAIR-KEEP-SECONDS)
                                              :retention-group (ByKeySuffix ":"))
-                         "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor PULSE-KEEP-SECONDS))})
-    :operators #(OVERSEER)))
+                         "pulses" (StreamDecl :name "pulses" :retention (KeepFor PULSE-KEEP-SECONDS))})))
 
 
 (defclass LawBroken [AssertionError]
@@ -205,7 +199,7 @@
 (defk law-undeclared-writes-are-refused [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "表の宣言(欄・状態の語・上限・鍵・終端)が許さない書きを断り、行を変えないことを、どの置き場の組でも同じに確かめるための法。
-   書き手の名(欄の writers・operator の宣言の欄)では断らない(#2994)— 欄の書き手でない STRANGER の書きも通る。"
+   書き手の名では断らない(#2994)— 名の知られていない STRANGER の書きも通る。"
   (setv law "宣言が許さない書きは Refused で、行を変えない")
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (setv refusals [])
@@ -222,7 +216,7 @@
                (.format "断った書きが行を変えた: {!r}" untouched)))
   (<- stranger (as-writer harness STRANGER (PutRow "parts" #("p1") (FrozenMap {"label" "s" "grant" "yes"}) (ExpectVersion 1))))
   (<- (require-law (and (isinstance stranger Written) (= stranger.version 2)) law
-               (.format "欄の書き手でない書き手の書き(operator の宣言の欄を含む)が断られた: {!r}" stranger)))
+               (.format "名の知られていない書き手の書きが断られた: {!r}" stranger)))
   (<- closed (as-writer harness CLOSER (PutRow "parts" #("p1") (FrozenMap {"state" "closed"}) (ExpectVersion 2))))
   (<- (require-law (and (isinstance closed Written) (= (get closed.value "state") "closed")) law (.format "終端へ: {!r}" closed)))
   (<- frozen (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "after"}) (ExpectVersion 3))))
@@ -308,10 +302,10 @@
   (<- big (as-writer harness MAKER (AppendEvent "journal" "k4" {"n" (* "x" 300)})))
   (<- (require-law (all (gfor answer [other big] (isinstance answer Refused))) law
                (.format "断るはずの追記: {!r} {!r}" other big)))
-  ;; 列の writers に居ない書き手の追記も通り、書き手の名は出来事に残る(書き手の名では断らない・#2994)。
+  ;; 名の知られていない書き手の追記も通り、書き手の名は出来事に残る(書き手の名では断らない・#2994)。
   (<- stranger (as-writer harness STRANGER (AppendEvent "journal" "k3" {"n" 3})))
   (<- (require-law (and (isinstance stranger Appended) (> stranger.sequence a2.sequence)) law
-               (.format "列の writers に居ない書き手の追記: {!r}" stranger)))
+               (.format "名の知られていない書き手の追記: {!r}" stranger)))
   (<- read (as-writer harness MAKER (ReadEvents "journal")))
   (<- (require-law (= (lfor e read.items #(e.idempotency-key e.body e.writer))
                       [#("k1" {"n" 1} MAKER) #("k2" {"n" 2} MAKER) #("k3" {"n" 3} STRANGER)])

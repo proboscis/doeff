@@ -3,8 +3,8 @@
 ;;;
 ;;; 判断の順(PutRow): 期待(Conflict)→ 宣言の外で値が None の欄を差分から落とす → 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え →
 ;;; 状態の語彙 → 上限。PutRows の束は、全部の行の期待 → 全部の行の書きの判定(1 行ずつは PutRow と同じ判断)。
-;;; 書き手の名(欄の writers・founders・operator-paths・列の writers)では断らない — 書いてよい program は linter の規則と模擬環境の
-;;; 失敗ケースで守る(#2994・#2989)。
+;;; 書き手の名では断らない — 書いてよい program は linter の規則と模擬環境の失敗ケースで守る(#2994・#2989)。宣言(values.hy)も
+;;; 欄ごと・列ごとの書き手と operator の欄を持たない(読む所が 0 の宣言だったので 2026-10-05 に外した・#2986 の単位 D2)。
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
