@@ -22,6 +22,7 @@ from doeff_claude_code.values import IMAGE_MIMES as IMAGE_MIMES
 from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code.lines import Init as Init
 from doeff_claude_code.lines import AssistantMessage as AssistantMessage
+from doeff_claude_code.lines import PartialMessage as PartialMessage
 from doeff_claude_code.lines import ToolCall as ToolCall
 from doeff_claude_code.lines import ToolResult as ToolResult
 from doeff_claude_code.lines import InputFate as InputFate
@@ -70,6 +71,7 @@ from doeff_vm import WithHandler as WithHandler
 QUICK_TURN_SECONDS: float
 CLOCK_TICK: float
 MIN_SLEEP: float
+DELTA_SECONDS: float
 FAKE_CAPABILITIES: tuple[str, ...]
 NO_RECEIPT_CAPABILITIES: tuple[str, ...]
 FAKE_TOOL_USE_ID: str
@@ -87,6 +89,7 @@ class FakeReply:
     lines: int = 0
     think_seconds: float = 0.0
     interrupt_receipt: bool = True
+    deltas: int = 0
 
     def __post_init__(self) -> None:
         ...
@@ -105,6 +108,8 @@ class FakeTurn:
     phase: str
     due_at: float
     lines_emitted: int
+    text: str
+    deltas_emitted: int
     injections: list[FakeInjection]
     permission: str | None
     lines: list[ClaudeStreamLine]
@@ -158,6 +163,18 @@ def emit_all(session: FakeSession, turn: FakeTurn, kinds: list) -> _Program[None
     ...
 
 def finish(session: FakeSession, turn: FakeTurn, end: ClaudeTurnEnd) -> _Program[None, object]:
+    ...
+
+def read_injections(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[tuple, object]:
+    ...
+
+def begin_text(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn, now: float) -> _Program[None, object]:
+    ...
+
+def next_delta_at(turn: FakeTurn) -> _Program[float | None, object]:
+    ...
+
+def emit_due_deltas(session: FakeSession, turn: FakeTurn, now: float) -> _Program[None, object]:
     ...
 
 def complete_turn(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
