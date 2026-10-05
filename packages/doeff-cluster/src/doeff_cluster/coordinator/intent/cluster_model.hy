@@ -348,14 +348,16 @@
   (DRAINED "Drained")
   (BLOCKED "Blocked"))
 
-;; drain の進みの段。DRAINING = まだ残りが在る・DRAINED = 残りが 0(preStop が終わる)・BLOCKED = 移せない job が在り、どれも移している途中でない。
+;; drain の進みの段。DRAINING = まだ残りが在る・DRAINED = 残りが 0(preStop が終わる)・BLOCKED = 待てば移せる job が在り、どれも移している
+;; 途中でない。待っても移せない job(能力の合う別の worker が名簿に無い — DrainProgress.unmovable)は残りに数えない(#3669)。
 
 
 (defrecord DrainProgress
   "drain の進み 1 つ(drain_policy.drain-view — #2595): worker・boot = drain を頼んだ世代・superseded = 退いた世代の待ちの答えか
    (superseded-worker-view)・since-ms / until-ms / actor = drain の頼みの記録(退いた世代の答えには無い — None)・phase・remaining = まだ
-   残っている job と task の名・moving(job の名 → 並べた先の worker)・blocked(job の名 → 移せない理由)・moving-ready(job の名 → 並べた先の
-   準備の理由)。対の欄は job の名から引く表なので dict で持つ。JSON の形は coordinator/protocol/replies が綴る。"
+   残っている job と task の名・moving(job の名 → 並べた先の worker)・blocked(job の名 → 今は移せず待っている理由)・unmovable = 待っても
+   移せないので待たない job の名(能力の合う別の worker が名簿に 1 台も無い — #3669)・moving-ready(job の名 → 並べた先の準備の理由)。
+   対の欄は job の名から引く表なので dict で持つ。JSON の形は coordinator/protocol/replies が綴る。"
   (#^ str worker)
   (#^ (| str None) boot)
   (#^ bool superseded)
@@ -366,6 +368,7 @@
   (#^ (get tuple #(str ...)) remaining)
   (#^ (get dict #(str str)) moving)
   (#^ (get dict #(str str)) blocked)
+  (#^ (get tuple #(str ...)) unmovable)
   (#^ (get dict #(str str)) moving-ready))
 
 

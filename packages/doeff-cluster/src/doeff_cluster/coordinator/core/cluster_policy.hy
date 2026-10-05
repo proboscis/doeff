@@ -1385,9 +1385,11 @@
 
 
 (defn #^ tuple warms-for [#^ ClusterState state #^ str worker #^ int now]
-  "worker に配る温める表の行(期限の内・能力(専用の能力を含む)と宣言の道具が合う行)。heartbeat の返事の warm。"
+  "worker に配る温める表の行(期限の内・能力(専用の能力を含む)と宣言の道具が合う行)。heartbeat の返事の warm。
+   drain 中の worker(draining-workers — 送り手が読む warm_policy.warm-view が数えない worker と同じ判断)には配らない: 空ける worker に
+   新しい版の実行環境の準備を始めさせない(#3669 — 2026-10-05 に drain 中の旧い worker が準備を始めて捨てた)。"
   (setv info (.get state.workers worker))
-  (if (is info None)
+  (if (or (is info None) (in worker (draining-workers state now)))
       #()
       (tuple (gfor w (sorted (.values state.warms) :key (fn [w] w.key))
                    :if (and (> w.until-ms now) (placeable w.needs info)
@@ -1403,7 +1405,8 @@
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
   (when (and (is-not boot None) (superseded-boot state name boot))
     (return (superseded-reply state name boot (or statuses #()) timing ready-instances)))
-  ;; warm = 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
+  ;; warm = 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。drain 中の worker には
+  ;; 配らない(warms-for — #3669)。
   ;; draining = この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
   ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
   ;; formats = 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
