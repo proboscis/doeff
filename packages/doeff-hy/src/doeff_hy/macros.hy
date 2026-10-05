@@ -19,7 +19,7 @@
 ;;;   - do!:         :pre/:post optional, supports (: name Type) shorthand
 ;;;   - (: name Type) in :pre/:post expands to (isinstance name Type)
 ;;;   - 要素の型つきの総称型も書ける: (: % (get tuple #(X ...))) / (: % (of dict K V))(和の中も可)— 実行時に確かめるのは
-;;;     外側の型(tuple / dict)だけで、要素の型は静的な型検査が見る(_runtime-type・agora-redesign #1790)
+;;;     外側の型(tuple / dict)だけで、要素の型は静的な型検査が見る(runtime-type-form・#1790)
 ;;;   - Arbitrary expressions can be mixed with (: ...) in the same list
 
 ;; ---------------------------------------------------------------------------
@@ -283,43 +283,9 @@ defk {name}: :post must include a return type check (: % Type).
     {{:post [(: % pd.DataFrame) (> (len %) 0)]}}
 " :name fn-name)))))
 
-(defn _runtime-type [tp]
-  "型の式を isinstance に渡せる形へ写す(契約の `(: x T)` と `(<- x T e)` の 1 点)。
-
-   型の注記では `None` は「None という値の型」を意味する(PEP 484)が、isinstance の第 2
-   引数に `None` は渡せない(`TypeError: isinstance() arg 2 must be a type ...`)。
-   `(: % None)` が実行時に型エラーになっていた(2026-09-23 `sim_clock.hy` の
-   `clock-driver` で実測)ので、ここで `None` を `None.__class__`(NoneType)へ写す。`#(int None)` の
-   組の中も同じく写す。写し先は名前を引かない形にする — 展開は利用者の関数の中に置かれるので、
-   素の名 `type` を呼ぶと局所の名 `type`(例: `(val type (.get value \"type\"))`)に隠されて
-   TypeError になる(agora-redesign #1825 — 2026-09-30 に agora の検 3 本が赤)。定数 None の属性は
-   局所の名に隠されない。以前の `hy.I.types.NoneType` は確かめのたびに hy.__getattr__ → slashes2dots を
-   通り、automation の検 1 本で約 2 万回・profile の約 4% を使っていた(agora-redesign #1845)。
-
-   要素の型つきの総称型 `(get tuple #(X ...))` / `(of tuple X ...)` / `(of dict K V)` /
-   `(get dict #(K V))` は、isinstance が受けない(`TypeError: isinstance() argument 2 cannot be
-   a parameterized generic`)ので外側の型(tuple・dict)へ写す — 実行時に確かめるのは外側の型
-   だけで、要素の型は静的な型検査(doeff-hy-check の注記)が見る(agora-redesign #1790 の決め:
-   要素まで実行時に見ると確かめのたびに全要素を回し、入れ子の型の再帰も要る)。
-   `(| A B)` の中の総称型も写す(`(| (get tuple #(str ...)) None)` を `(| tuple None)` にする —
-   総称型を含む和も isinstance は断る)。和の中の `None` は写さない(Python 3.10 以降の isinstance
-   が `int | None` をそのまま受ける)。"
-  (cond
-    (and (isinstance tp hy.models.Symbol) (= (str tp) "None"))
-      '(. None __class__)
-    (isinstance tp hy.models.Tuple)
-      (hy.models.Tuple (lfor item tp (_runtime-type item)))
-    (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
-         (isinstance (get tp 0) hy.models.Symbol) (in (str (get tp 0)) #("get" "of"))
-         (isinstance (get tp 1) hy.models.Symbol))
-      (_runtime-type (get tp 1))
-    (and (isinstance tp hy.models.Expression) (>= (len tp) 2)
-         (isinstance (get tp 0) hy.models.Symbol) (= (str (get tp 0)) "|"))
-      (hy.models.Expression (+ [(get tp 0)] (lfor item (cut tp 1 None)
-                                              (if (and (isinstance item hy.models.Symbol) (= (str item) "None"))
-                                                  item
-                                                  (_runtime-type item)))))
-    True tp))
+;; 型の式を isinstance の第 2 引数に置ける形へ写す 1 点は doeff_hy/type_forms.py の runtime-type-form(契約の `(: x T)` と
+;; `(<- x T e)` が呼ぶ・外の道具〔品質検査の Hy の投影〕も同じ関数を呼ぶ — #3366 の根 2 で純 Python の公開の関数へ移した)。
+(import doeff-hy.type-forms [runtime-type-form])
 
 ;; ---------------------------------------------------------------------------
 ;; 型の注記 — 契約の `(: x T)` を関数の注記にも書く(静的な検査が読む)
@@ -443,7 +409,7 @@ defk {name}: :post must include a return type check (: % Type).
    (: x \"desc\") → no-op (documentation-only annotation).
    Other  → generic condition assert.
    type-params(契約の :tp)は isinstance に渡す型の中だけ object に消す — `(of Program T)` は今までどおり外側の型 Program へ
-   (_runtime-type)・素の `(: % T)` は常に真。実行時は外側の型だけを確かめる今までの決め(#1790)と同じ向きで、失敗の文と注記
+   (runtime-type-form)・素の `(: % T)` は常に真。実行時は外側の型だけを確かめる今までの決め(#1790)と同じ向きで、失敗の文と注記
    (_contract-types)は書いた型のまま(agora-redesign #2893)。"
   (if (_is-type-check check)
       (let [target (get check 1)
@@ -466,7 +432,7 @@ defk {name}: :post type annotation cannot be an empty string.
             '(do)
           True
             (let [target-label (if (= (str target) "%") "return value" (str target))]
-              `(assert (isinstance ~target ~(_runtime-type (_object-for (sfor p type-params (str p)) tp)))
+              `(assert (isinstance ~target ~(runtime-type-form (_object-for (sfor p type-params (str p)) tp)))
                        (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
                           (. (type ~target) __name__))))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
@@ -1244,7 +1210,7 @@ defk {name}: {{:post [...]}} is required.
     (is tp None) `(setv ~name ~performed)
     True `(do
             (setv ~name ~performed)
-            (assert (isinstance ~name ~(_runtime-type tp))
+            (assert (isinstance ~name ~(runtime-type-form tp))
                     (+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
 

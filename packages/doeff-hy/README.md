@@ -62,7 +62,7 @@ wherever the bind is written. The 2- and 3-element forms add no check.
 
 `None` is a type in these positions, as in a Python annotation: `(: % None)`,
 `(<- x None effect)` and `#(int None)` check against `type(None)` at runtime
-(`_runtime-type` in `macros.hy` is the one place that maps it). `(| int None)`
+(`runtime_type_form` in `doeff_hy/type_forms.py` is the one place that maps it — `macros.hy` and external tools call it). `(| int None)`
 needs no mapping.
 
 ### Absence and failure (ADR-DOE-CORE-EFFECTS-003)
