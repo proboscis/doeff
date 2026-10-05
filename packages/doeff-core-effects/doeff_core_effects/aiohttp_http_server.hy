@@ -20,6 +20,9 @@
 ;;;                 前に読み切り、HttpReadBody は共有の loop へ入らずに答え手の節の側で上限を判じて答える(agora-redesign #3688 の子 (3) の
 ;;;                 3c — 超えれば同じ HttpBodyTooLarge で、答えの後に接続を閉じる)。先に読んだ本文は、読まずに HttpForward した札では
 ;;;                 中継先へそのまま送る
+;;;   接続の持ち方  使われない接続は IDLE-CONNECTION-SECONDS(3630 秒)で閉じる — doeff の HTTP の client が使われない接続を持つ秒
+;;;                 (_http_handlers_impl.hy の CLIENT-KEEPALIVE-SECONDS 60 秒)より長い(server の切り > client の上限 — その file の頭の註の
+;;;                 契約・agora-redesign #3688)
 ;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)。
 ;;;                 答え手の節は命令を待ち受けの loop へ積むだけで戻る(共有の loop を経ず、往復を待たない — agora-redesign #3688 の子 (3)
 ;;;                 の 3b)。積んだ順に渡るので、後から撃った読み・閉じより先に渡る。札が待ち受けに無い(2 度目・知らない札)命令は、積んだ
@@ -74,6 +77,10 @@
 ;; 待ち受けの loop が出来事を並べる前に読み切る本文の、宣言の長さの上限(頭の註の本文の読み — 塊 1 つ分)。
 (val PREFETCH-BYTES BODY-CHUNK-BYTES)
 
+;; 使われない接続(keep-alive)を閉じるまでの秒(頭の註の接続の持ち方)。client が持つ秒(CLIENT-KEEPALIVE-SECONDS 60 秒)より長く置き、
+;; client が server の閉じた接続へ書く形を普段は起こさない。値は aiohttp の AppRunner の既定(RequestHandler の 3630 秒 — 「間の reverse
+;; proxy より長く」)と同じで、今の振る舞いを変えない。既定に頼らず名で置く — aiohttp の既定は立て方で違い(run_app は 75 秒)、版でも変わる。
+(val IDLE-CONNECTION-SECONDS 3630.0)
 ;; 中継先への接続の上限と、HTTP の中継の読みの間の上限(秒 — 旧い nginx の proxy_read_timeout 300s と同じ)。
 (val CONNECT-SECONDS 10.0)
 (val HTTP-READ-SECONDS 300.0)
@@ -297,7 +304,7 @@
                                                                              :sock-read HTTP-READ-SECONDS)))
     (setv app (web.Application))
     (.add-route app.router "*" "/{tail:.*}" self.dispatch)
-    (setv self.runner (web.AppRunner app :access-log None))
+    (setv self.runner (web.AppRunner app :access-log None :keepalive-timeout IDLE-CONNECTION-SECONDS))
     (await (.setup self.runner))
     (await (.start (web.TCPSite self.runner self.address.host self.address.port)))
     (setv bound (get self.runner.addresses 0))
