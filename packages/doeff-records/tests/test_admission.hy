@@ -19,25 +19,27 @@
 
 
 (deftest test-a-declaration-that-cannot-hold-is-refused-at-construction
-  (setv base {"name" "t" "key_fields" #("id") "fields" #((FieldDecl "id") (FieldDecl "state"))})
+  (setv base {"name" "t" "key_fields" #("id") "fields" #((FieldDecl "id" #("w")) (FieldDecl "state" #("w")))})
   (assert (TableDecl #** base))
-  ;; 鍵の欄が fields に無い(誰も行を作れない)・同じ名の欄が 2 つ・欄の宣言でない物・宣言の外の索引・initial が語彙の外・
-  ;; 終端の語が語彙の外・終端の無い KeepFor・表の名の綴りの外。
-  (for [broken [{"fields" #((FieldDecl "state"))}
-                {"fields" #((FieldDecl "id") (FieldDecl "id"))}
+  ;; 鍵の欄の書き手が無い(誰も行を作れない)・同じ名の欄が 2 つ・欄の宣言でない物・宣言の外の索引・initial が語彙の外・
+  ;; 終端の語が語彙の外・終端の無い KeepFor・鍵の欄を承認の欄にする・表の名の綴りの外。
+  (for [broken [{"fields" #((FieldDecl "state" #("w")))}
+                {"fields" #((FieldDecl "id" #("w")) (FieldDecl "id" #("v")))}
                 {"fields" {"id" #("w")}}
                 {"indexes" #("color")}
                 {"states" #("open") "initial" "gone"}
                 {"states" #("open") "initial" "open" "terminal" #("done")}
                 {"states" #("open") "initial" "open" "retention" (KeepFor 10)}
+                {"operator-paths" #("id")}
                 {"name" "Bad Name"}]]
     (setv args (| base (dfor #(k v) (.items broken) (.replace k "-" "_") v)))
     (assert (refuses? (fn [] (TableDecl #** args)) #(ValueError TypeError)) broken))
-  (assert (refuses? (fn [] (StreamDecl "s" :retention-group (ByKeySuffix ":"))) ValueError) "消えない列の保持の組")
-  (assert (refuses? (fn [] (StreamDecl "s" :retention-group "each")) TypeError) "保持の組の型の外")
+  (assert (refuses? (fn [] (StreamDecl "s" #())) ValueError) "誰も積めない追記の列")
+  (assert (refuses? (fn [] (StreamDecl "s" #("w") :retention-group (ByKeySuffix ":"))) ValueError) "消えない列の保持の組")
+  (assert (refuses? (fn [] (StreamDecl "s" #("w") :retention-group "each")) TypeError) "保持の組の型の外")
   (assert (refuses? (fn [] (ByKeySuffix "")) ValueError) "空の区切り")
-  (assert (= (. (StreamDecl "s") retention-group) (EachEvent)) "既定は出来事ごと")
-  (assert (refuses? (fn [] (FieldDecl "bad name")) ValueError) "欄の名の綴りの外")
+  (assert (= (. (StreamDecl "s" #("w")) retention-group) (EachEvent)) "既定は出来事ごと")
+  (assert (refuses? (fn [] (FieldDecl "x" #())) ValueError) "誰も書けない欄")
   (assert (refuses? (fn [] (LAW-SCHEMA.table "nope")) UndeclaredTable))
   (assert (refuses? (fn [] (PutRow "parts" #("p1") {} "any")) TypeError))
   (assert (refuses? (fn [] (ListRows "parts" :limit 0)) ValueError)))
@@ -54,7 +56,7 @@
   ;; (鍵の順だけ違う)は前の番号・別の本文(True と 1 も別)は「冪等キー」を名指す断り。指紋は正規の綴りの sha256。
   (import doeff_records.admission [judge-append body-digest AppendReplay] doeff_records.values [RetiredKey])
   (import doeff_records.values [Event])
-  (val decl (StreamDecl "pulses" :retention (KeepFor 60)))
+  (val decl (StreamDecl "pulses" #("w") :retention (KeepFor 60)))
   (val body {"a" 1 "b" [True "日本"]})
   (val live (Event "pulses" 7 "k" body "w" 0))
   (val retired (RetiredKey :idempotency-key "k" :sequence 7 :body-digest (body-digest body)))
@@ -92,33 +94,34 @@
   (assert (= (where-refusal decl {"id" "p1" "color" "red" "note" "n"}) (NotIndexed #("note")))))
 
 
-(deftest test-a-declared-field-is-admitted-without-a-writer-name
-  ;; 書きの判断は書き手の名を受け取らない(#2994): 宣言した欄なら、生まれる行の書きも、生まれた行の書き換えも、宣言の形が合えば通る。
+(deftest test-operator-paths-and-field-writers-do-not-refuse-a-write
+  ;; 書きの判断は書き手の名を受け取らない(#2994): operator の宣言の欄(grant)も、欄の書き手の宣言に無い欄(label を painter が
+  ;; 書く形)も、宣言の形が合えば通る。
   (setv decl (LAW-SCHEMA.table "parts")
         row (Row #("p1") {"id" "p1" "state" "open"} 1))
   (assert (= (judge-put decl row #("p1") {"grant" "yes"})
              (Admitted {"id" "p1" "state" "open" "grant" "yes"})))
   (assert (= (judge-put decl row #("p1") {"label" "x"})
-             (Admitted {"id" "p1" "state" "open" "label" "x"})))
+             (Admitted {"id" "p1" "state" "open" "label" "x"}))))
+
+
+(deftest test-a-schema-whose-operator-path-no-operator-can-write-is-refused-at-construction
+  (setv parts (LAW-SCHEMA.table "parts"))
+  ;; grant の書き手(maker・overseer)に operator の主体が居ない一覧・空の一覧・綴りの外の名は、宣言の時に止める。
+  (for [operators [#("someone-else") #() #("") #("a:b") ["overseer"]]]
+    (assert (refuses? (fn [] (RecordsSchema :tables {"parts" parts} :operators operators)) #(ValueError TypeError)) operators))
+  (assert (RecordsSchema :tables {"parts" parts} :operators #("overseer"))))
+
+
+(deftest test-founders-do-not-limit-when-a-field-is-written
+  ;; 誕生の書き手(FieldDecl.founders)は宣言の形として残るが、書きの判断は読まない(#2994): 誕生の書きも、生まれた行の書き換えも通る。
   (setv charters (LAW-SCHEMA.table "charters")
-        chartered (Row #("c1") {"name" "c1" "rule" "r0"} 1))
+        row (Row #("c1") {"name" "c1" "rule" "r0"} 1))
   (assert (= (judge-put charters None #("c1") {"rule" "r0" "note" "n"}) (Admitted {"name" "c1" "rule" "r0" "note" "n"})))
-  (assert (= (judge-put charters chartered #("c1") {"rule" "r1"}) (Admitted {"name" "c1" "rule" "r1"}))))
-
-
-(deftest test-a-declaration-takes-no-writers-founders-or-operators
-  ;; 失敗ケース: 欄・列ごとの書き手(writers)・誕生の書き手(founders)・operator の欄(operator-paths)・operator の主体(operators)は
-  ;; 宣言の型に無い(読む所が 0 の宣言だったので外した)。旧い形の引数は黙って捨てず、組み立ての誤り(TypeError)で止める。
-  (for [#(what thunk) [#("FieldDecl の writers" (fn [] (FieldDecl "x" #("w"))))
-                       #("FieldDecl の founders" (fn [] (FieldDecl "x" :founders #("m"))))
-                       #("TableDecl の operator-paths" (fn [] (TableDecl :name "t" :key-fields #("id") :fields #((FieldDecl "id"))
-                                                                         :operator-paths #())))
-                       #("StreamDecl の writers" (fn [] (StreamDecl "s" #("w"))))
-                       #("StreamDecl の writers(名前つき)" (fn [] (StreamDecl "s" :writers #("w"))))
-                       #("RecordsSchema の operators" (fn [] (RecordsSchema :operators #("overseer"))))]]
-    (assert (refuses? thunk TypeError) what))
-  (for [name ["writers_of" "founders_of"]]
-    (assert (not (hasattr TableDecl name)) name)))
+  (assert (= (judge-put charters row #("c1") {"rule" "r1"}) (Admitted {"name" "c1" "rule" "r1"})))
+  ;; founders の綴りの外は宣言の時に止める。
+  (for [founders [#("") ["maker"] #(1)]]
+    (assert (refuses? (fn [] (FieldDecl "x" #("w") :founders founders)) #(ValueError TypeError)) founders)))
 
 
 (deftest test-only-terminal-rows-of-keep-for-tables-expire
@@ -153,8 +156,8 @@
 
 
 (deftest test-a-none-for-a-field-the-declaration-no-longer-has-leaves-the-old-row-field-in-place
-  ;; 欄 legacy を宣言から外した後の置き場の古い行(外す前に書いた legacy が残る)。その欄の None は判定の前に落ち、
-  ;; 宣言の外の欄として断られず、legacy は行に残る(消すのは欄を宣言から外す前の書き直し)。
+  ;; 欄 legacy を宣言から外した後の置き場の古い行(外す前に書いた legacy が残る)。その欄の None は判定の前に落ちるので、宣言の外の
+  ;; 欄の書き手を尋ねて例外(UndeclaredField)にならず、legacy は行に残る(消すのは欄を宣言から外す前の書き直し)。
   (val decl (LAW-SCHEMA.table "parts"))
   (val row (Row #("p1") {"id" "p1" "label" "a" "state" "open" "legacy" "x"} 1))
   (assert (= (judge-put decl row #("p1") {"label" "b" "legacy" None})
@@ -202,7 +205,7 @@
   (val before (dataclasses.replace LAW-SCHEMA
                                    :tables (.updated LAW-SCHEMA.tables
                                                      {"parts" (dataclasses.replace parts
-                                                                                   :fields (+ parts.fields #((FieldDecl "legacy"))))})))
+                                                                                   :fields (+ parts.fields #((FieldDecl "legacy" #(MAKER)))))})))
   (val store (MemoryStore before))
   (val handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)])
   (<- born (with_handlers handlers (PutRow "parts" #("p1") (FrozenMap {"label" "a" "legacy" "x"}) (ExpectAbsent))))

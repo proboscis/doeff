@@ -91,7 +91,7 @@
 
 
 (defclass MemoryStore []
-  "memory の置き場: schema = 宣言(表と追記の列)/
+  "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/
    lock = 置き場を読み書きする操作を 1 つずつにする錠(thread の間で置き場を共有するため — 同じ thread の入れ子は通す RLock)/
    bells = WatchChanges と WatchEvents の待ち手が掛けた呼び鈴(外の promise → 待つ名の frozenset の dict — 掛けた順。名は #(\"table\" 表)と
    #(\"stream\" 列)の組で、表と列が同じ綴りでも混ざらない。書きは待つ名が重なる呼び鈴を掛けた順に鳴らして外す。
