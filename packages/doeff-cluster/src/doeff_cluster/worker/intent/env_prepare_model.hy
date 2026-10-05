@@ -16,10 +16,13 @@
 
 (defrecord KnownRoot
   "worker が既に完成させた root(展開の複製と bytecode の引き継ぎの元の候補)。made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 —
-   bytecode の引き継ぎ元を、近い版の root が無い時に最も新しく完成した root から選ぶため・#3515 の B)。"
+   bytecode の引き継ぎ元を、近い版の root が無い時に最も新しく完成した root から選ぶため・#3515 の B)・hy-version = 完成マーカーに
+   書いた、その root の venv の Hy の compiler の版(Hy の .pyc は compiler の版が同じ時だけ引き継げる — 欄の無い前の印の root と、
+   venv に Hy の無い root は None = 分からない・引き継ぎ元にしない — #3706)。"
   (#^ RuntimeEnv env)
   (#^ str root)
-  (#^ int made-ms))
+  (#^ int made-ms)
+  (#^ (| str None) hy-version))
 
 
 (defrecord PrepareRequest
@@ -84,7 +87,8 @@
   "完成マーカーの中身: 宣言・キー・処理ステージの秒・bytecode を作った interpreter・子の約束の版・bytecode の処理ステージの数と秒
    (bytecode — 焼く木が無かった準備は None = 記録が無い。印の JSON に欄を足しただけなので、欄を書かない作り手の印も同じ形式の版のまま)・
    volume = root の置き場の disk の種類(読めなければ None)・startup-seconds = 準備の process を起こしてから最初の処理ステージまでの秒
-   (起こした刻を読めなければ None — #3676)。"
+   (起こした刻を読めなければ None — #3676)・hy-version = root の venv の Hy の compiler の版(venv に Hy が無ければ None — 次の準備が
+   bytecode の引き継ぎ元を選ぶ時に比べる・#3706)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -95,7 +99,8 @@
   (#^ int child-protocol)
   (setv #^ (| BytecodeCounts None) bytecode None)
   (setv #^ (| VolumeKind None) volume None)
-  (setv #^ (| float None) startup-seconds None))
+  (setv #^ (| float None) startup-seconds None)
+  (setv #^ (| str None) hy-version None))
 
 
 (defrecord WheelReady
@@ -173,7 +178,9 @@
   ;; 今の処理ステージが root に書いた file の数と区切りの秒(prepare-env が StageTime へ移して次の処理ステージの前に空ける — #3676)。
   (setv #^ (| int None) written None)
   (setv #^ tuple parts #())
-  (setv #^ (| VolumeKind None) volume None))
+  (setv #^ (| VolumeKind None) volume None)
+  ;; root の venv の Hy の compiler の版(bytecode の処理ステージが読み、引き継ぎ元の選びと完成マーカーへ渡す — #3706)。
+  (setv #^ (| str None) hy-version None))
 
 
 ;; --- effect ------------------------------------------------------------------------------
@@ -263,6 +270,12 @@
    \"<repo の名>/<repo の中の相対の dir>\"(repo の根そのものは \"<repo の名>\")の tuple(venv の .pth の名の順・import の根の .pth は除く)。"
   (#^ str project-dir)
   (#^ str root))
+
+
+(defclass [(dataclass :frozen True)] ReadHyVersion [EffectBase]
+  "project の venv に入った Hy の compiler の版(site-packages の hy の dist-info の名から読む — Hy の .pyc は compiler の版が同じ時だけ
+   引き継げるので、bytecode の引き継ぎ元の候補を比べるため・#3706)。答え = 版の str か None(venv に site-packages か Hy が無い)。"
+  (#^ str project-dir))
 
 
 (defclass [(dataclass :frozen True)] CompileTrees [EffectBase]

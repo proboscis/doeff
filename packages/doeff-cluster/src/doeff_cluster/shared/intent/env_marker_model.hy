@@ -9,6 +9,9 @@
 ;;; 数の欄は報告と log のためだけの値で、置き場を名指す読み手(入口の検め runtime_identity の decode-marker・worker の known-roots・引き継ぎ元の
 ;;; 選び carry-candidates)は読まない — 欄の名を替えても(#3675 で compiled を rebuilt と reused に分けた)、PVC に残る前の形の印の置き場は
 ;;; 今までどおり名指せる。
+;;; 印の hyVersion の欄(#3706): root の venv の Hy の compiler の版(書き手 env_prepare の env-marker->json)。読むのは引き継ぎ元の選び
+;;; carry-candidates だけ(worker の known-roots が頼みの JSON へ写す)で、置き場の名指し(decode-marker・known-roots が完成した root に
+;;; 数えるか)は読まない。欄の無い前の印の root は「版が分からない」で、引き継ぎ元にしない。
 (require doeff-hy.macros [defeffect val])
 (require doeff-hy.record [defwire])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})

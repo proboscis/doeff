@@ -7,6 +7,8 @@
 (import doeff_cluster.sim.env_world [EnvWorld WorldRemote WorldCommit WorldFile])
 
 (val LOCK "httpx==0.28.1 top=httpx\nhy==1.1.0 top=hy\nclick==8.1.8 top=click\n")
+;; LOCK の hy の行だけ版を上げた lock(venv の Hy の compiler の版が違う root — bytecode を引き継がない・#3706)。
+(val HY-2-LOCK (.replace LOCK "hy==1.1.0" "hy==1.2.0"))
 (val APP-URL "file:///remotes/app.git")
 (val LIB-URL "file:///remotes/lib.git")
 
@@ -63,14 +65,15 @@
 
 (defk base-world []
   {:pre [] :post [(: % EnvWorld)]}
-  "筋書きの remote: app の commit 4 つ(lock 2 種)と lib の commit 2 つ(native の source 2 種)。"
+  "筋書きの remote: app の commit 5 つ(lock 4 種 — 1 つは hy の版だけ違う)と lib の commit 2 つ(native の source 2 種)。"
   (<- a1 WorldCommit (app-commit "app-1" LOCK "V = 1\n"))
   (<- a2 WorldCommit (app-commit "app-2" LOCK "V = 2\n"))
   (<- a3 WorldCommit (app-commit "app-3" (+ LOCK "rich==13.9.4 top=rich\n") "V = 3\n"))
   (<- a4 WorldCommit (app-commit "app-shadow" (+ LOCK "vendor-shadow==1.0 top=app\n") "V = 4\n"))
+  (<- a5 WorldCommit (app-commit "app-hy" HY-2-LOCK "V = 5\n"))
   (<- l1 WorldCommit (lib-commit "lib-1" "fn a() {}\n"))
   (<- l2 WorldCommit (lib-commit "lib-2" "fn b() {}\n"))
-  (EnvWorld :remotes #((WorldRemote :url APP-URL :commits #(a1 a2 a3 a4))
+  (EnvWorld :remotes #((WorldRemote :url APP-URL :commits #(a1 a2 a3 a4 a5))
                            (WorldRemote :url LIB-URL :commits #(l1 l2)))))
 
 

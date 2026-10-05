@@ -43,7 +43,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport CarryFrom BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport CarryFrom BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -435,6 +435,21 @@
   (tuple out))
 
 
+;; site-packages の Hy の dist-info の dir の名(`hy-<版>.dist-info` — 名は正規化済みで、別の package の名は `hy_…` か `hy` 以外で始まる)。
+(val HY-DIST-PATTERN (re.compile r"hy-([^-/]+)\.dist-info"))
+
+
+(defk hy-dist-version [entries]
+  {:pre [(: entries tuple)] :post [(: % (| str None))] :tags {:context "worker" :role "protocol"}}
+  "site-packages の一覧(DirEntry の列)から venv に入った Hy の compiler の版を読むため(bytecode の引き継ぎ元の候補を Hy の版で比べる —
+   #3706)。hy の dist-info の dir が無ければ None(分からない)。2 つ在れば名の順の先頭(uv は 1 つしか置かない)。"
+  (next (gfor e (sorted entries :key (fn [e] e.name))
+              :setv found (.fullmatch HY-DIST-PATTERN e.name)
+              :if (and found (= e.kind PathKind.DIRECTORY))
+              (.group found 1))
+        None))
+
+
 (defk sync-failure [result]
   {:pre [(: result CommandResult)] :post [(: % EnvFailure)]}
   "uv sync の失敗を kind に分ける: cgroup の memory の上限で殺された = memory-killed・lock が古い = lock-stale・Python を取れない =
@@ -690,6 +705,15 @@
         (do (<- found tuple (editable-dirs site root))
             (resume found))))
 
+  (ReadHyVersion [project-dir]
+    (<- site (| str None) (site-packages project-dir))
+    (if (is site None)
+        (resume None)
+        (do (<- listed (| tuple FileFailed) (ListDirectory site))
+            (<- entries tuple (settled listed "site-packages を読めない"))
+            (<- version (| str None) (hy-dist-version entries))
+            (resume version))))
+
   (CompileTrees [project-dir trees entries]
     ;; 焼く道具は全部の木を 1 回で焼く(cwd = project の dir — 木はどれも絶対 path で渡す)。引き継ぐ木には、引き継ぎ元の commit から
     ;; 変わった path の一覧(git diff)を渡す(#3675 — 渡さないと道具は中身の変わった source の .pyc も持ち越す)。一覧の file は焼いた後に消す。
@@ -740,7 +764,10 @@
   (var known #())
   (for [k (.get data "known" [])]
     (<- known-env RuntimeEnv (runtime-env-of-json (get k "env")))
-    (:= known (+ known #((KnownRoot :env known-env :root (get k "root") :made-ms (int (get k "madeMs")))))))
+    ;; hyVersion = 完成マーカーの Hy の compiler の版(欄の無い前の印・文字でない値は None = 分からない — 引き継ぎ元にしない・#3706)。
+    (val written (.get k "hyVersion"))
+    (val hy-version (match written (str) written _ None))
+    (:= known (+ known #((KnownRoot :env known-env :root (get k "root") :made-ms (int (get k "madeMs")) :hy-version hy-version)))))
   (PrepareRequest :env env :key (get data "key") :platform (get data "platform") :root (get data "root")
                   :known known :min-free-bytes (int (.get data "minFreeBytes" 0))))
 
