@@ -1,5 +1,6 @@
 ;;; bytecode の準備の道具(worker/entry/code_prepare.hy)が全部の木を 1 回で焼く段取りの純粋な判断と、その record — 命令の木ごとの引数の
-;;; 揃え・焼きの並列数・木をまたいだ import の閉包の歩み・焼く順(大きい順)・焼きの道具への受け渡しの行・報告の行。I/O と効果は持たない。
+;;; 揃え・焼きの並列数・木をまたいだ import の閉包の歩み・import の名の表(閉包の読みの使い回し)・焼く順(大きい順)・焼きの道具への受け渡しの
+;;; 行・報告の行。I/O と効果は持たない。
 ;;;
 ;;; 読まれ方: 入口はこの file を package の import でなく、入口の file の位置から求めた path で読む(module 名 doeff_cluster_worker_bake_plan
 ;;; — 入口は準備する root の venv の python で走るので、package で引くと root の版の doeff の物になり、この file を持たない古い版の root で
@@ -9,6 +10,8 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import bisect)
+(import hashlib)
+(import json)
 (import math)
 (import posixpath)
 (import dataclasses [dataclass])  ; dataclass は defrecord の展開が使う
@@ -41,6 +44,21 @@
    import の路の前の木(番号の小さい方)・同じ木の中では相対 path の名の順の先を採る。"
   (#^ tuple names)
   (#^ tuple places))
+
+
+(defrecord ImportRow
+  "import の名の表の行 1 つ(#3694): rel = 木の中の source の相対 path・digest = source の sha256(16 進)・imports = その source が
+   import する名(imported-names の答えの形 #(#(点の数 名 取り出す名の tuple) …))。"
+  (#^ str rel)
+  (#^ str digest)
+  (#^ tuple imports))
+
+
+(defrecord ImportTable
+  "引き継ぎ元の木の import の名の表を読んだ結果(#3694): rows = ImportRow の列(rel の名の順・同じ rel は 1 つ — usable-row が二分探索で
+   引く)・problem = 表を使えない理由(行 0 — 全部を読み直す)か None。"
+  (#^ tuple rows)
+  (#^ (| str None) problem))
 
 
 (defrecord BakeItem
@@ -158,14 +176,15 @@
   (get index.places (bisect.bisect-left index.names name)))
 
 
-(defk imported-modules [index found texts]
-  {:pre [(: index ModuleIndex) (: found tuple) (: texts tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
-  "訪ねた module(found — 索引に在る名)の source の text(texts — 同じ順)が import する名を集めるため。相対の名は module の package から
-   解き、from a import x の a.x も入れる(x が module でなければどの木にも解けず、次の歩みで落ちる)。"
-  (frozenset (gfor #(m text) (zip found texts)
+(defk imported-modules [index found imports]
+  {:pre [(: index ModuleIndex) (: found tuple) (: imports tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "訪ねた module(found — 索引に在る名)の source が import する名(imports — 同じ順の、imported-names の答えの形 #(#(点の数 名
+   取り出す名の tuple) …) の列)を module 名に解くため。相対の名は module の package から解き、from a import x の a.x も入れる(x が
+   module でなければどの木にも解けず、次の歩みで落ちる)。"
+  (frozenset (gfor #(m named) (zip found imports)
                    :setv rel (get (get index.places (bisect.bisect-left index.names m)) 1)
                    :setv package (.split (if (.endswith rel #("__init__.py" "__init__.hy")) m (.join "." (cut (.split m ".") 0 -1))) ".")
-                   #(dots target names) (imported-names rel text)
+                   #(dots target names) named
                    :setv base (if (> dots 0)
                                   (.join "." (+ (cut package 0 (max 0 (- (len package) (- dots 1)))) (if target [target] [])))
                                   target)
@@ -179,6 +198,89 @@
   "閉包に入った module 名(seen)を、木ごとの相対 path の frozenset(木の番号の順・count 個)に分けるため。"
   (val places (tuple (gfor m seen (get index.places (bisect.bisect-left index.names m)))))
   (tuple (gfor i (range count) (frozenset (gfor p places :if (= (get p 0) i) (get p 1))))))
+
+
+;; --- import の名の表(閉包の歩みの読みの使い回し・#3694)-------------------------------------------
+;; 木の根に残す file。閉包の歩みが訪ねた source ごとに、その source の sha256 と import の名(imported-names の答え)を持つ。次の版の
+;; 準備は、引き継ぎ元の木の表のうち --changed に無く sha256 が今の source と合う行を使い回し、構文の読み(Hy の read-many と Python の
+;; ast.parse — 閉包の歩みの秒の大半)を変わった file だけにする。表は今の閉包の source の行だけを持つ(消えた file・閉包から外れた
+;; file の行は次の表に残らない)。隠し file なので木の走査の source には混ざらない。
+
+(val IMPORT-TABLE ".doeff-import-names.json")
+(val IMPORT-TABLE-FORMAT 1)
+
+
+(defk source-digest [text]
+  {:pre [(: text str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "source の中身の sha256(16 進)を求めるため — 表の行を使い回してよいかの鍵(--changed の漏れでも古い行を使わない)。"
+  (.hexdigest (hashlib.sha256 (.encode text "utf-8"))))
+
+
+(defk import-row-of [rel value]
+  {:pre [(: rel str) (: value (| dict list str int float bool None))] :post [(: % (| ImportRow None))] :tags {:context "worker" :role "judgment"}}
+  "表の JSON の行 1 つ({\"sha256\" <16 進> \"imports\" [[点の数 名 [取り出す名 …]] …]})を ImportRow に読むため。形が違えば None
+   (その file は読み直す)。"
+  (var entries #())
+  (var whole True)
+  (match value
+    {"sha256" (str) "imports" (list)}
+      (for [e (get value "imports")]
+        (match e
+          [(int) (str) (list)] :if (all (gfor x (get e 2) (isinstance x str)))
+            (:= entries (+ entries #(#((get e 0) (get e 1) (tuple (get e 2))))))
+          _ (:= whole False)))
+    _ (:= whole False))
+  (if whole (ImportRow :rel rel :digest (get value "sha256") :imports entries) None))
+
+
+(defk import-table-of [text]
+  {:pre [(: text (| str None))] :post [(: % ImportTable)] :tags {:context "worker" :role "judgment"}}
+  "引き継ぎ元の木の表の file の中身(無い・読めなければ None)を ImportTable に読むため(JSON の境界はここ 1 か所)。無い・JSON で
+   ない・形の版が違う表は行 0 で理由つき(全部を読み直す — 安全側)。形の違う行は落とす(その file は読み直す)。"
+  (val parsed (if (is text None)
+                  None
+                  (try (json.loads text) (except [ValueError] None))))
+  (var rows #())
+  (var problem None)
+  (cond
+    (is text None) (:= problem "引き継ぎ元の木に import の名の表が無い(表を残す前の形の木か、読めない)")
+    (is parsed None) (:= problem "引き継ぎ元の木の import の名の表が JSON でない")
+    True
+      (match parsed
+        {"format" form "modules" (dict)} :if (= form IMPORT-TABLE-FORMAT)
+          (for [#(rel value) (.items (get parsed "modules"))]
+            (<- row (| ImportRow None) (import-row-of rel value))
+            (when (is-not row None)
+              (:= rows (+ rows #(row)))))
+        _ (:= problem "引き継ぎ元の木の import の名の表の形の版が違う")))
+  (ImportTable :rows (tuple (sorted rows :key (fn [r] r.rel))) :problem problem))
+
+
+(defk usable-row [table rel digest changed]
+  {:pre [(: table ImportTable) (: rel str) (: digest str) (: changed frozenset)] :post [(: % (| ImportRow None))]
+   :tags {:context "worker" :role "judgment"}}
+  "閉包の歩みが訪ねた source 1 つについて、引き継ぎ元の表の行を使い回してよいかを決めるため: 行が在り、--changed に無く(足した・消した・
+   名を替えた file も一覧に載る)、sha256 が今の source(digest)と合う時だけ行を返す。None なら呼び手が構文を読む(imported-names)—
+   一覧の漏れ(手で直した木など)でも sha256 が違えば古い行を使わない。"
+  (val at (bisect.bisect-left table.rows rel :key (fn [r] r.rel)))
+  (val row (if (and (< at (len table.rows)) (= (. (get table.rows at) rel) rel)) (get table.rows at) None))
+  (if (and (is-not row None) (not-in rel changed) (= row.digest digest)) row None))
+
+
+(defk import-table-json [rows]
+  {:pre [(: rows tuple)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "木の閉包の source の行(ImportRow の列)を、木の根に残す表の JSON の値に綴るため(JSON の境界の 1 点・相対 path の順)。"
+  {"format" IMPORT-TABLE-FORMAT
+   "modules" (dfor row (sorted rows :key (fn [r] r.rel))
+                   row.rel {"sha256" row.digest
+                            "imports" (lfor #(dots name names) row.imports [dots name (list names)])})})
+
+
+(defk import-table-text [rows]
+  {:pre [(: rows tuple)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "木の閉包の source の行(ImportRow の列)を、木の根に残す表の file の中身にするため。"
+  (<- value dict (import-table-json rows))
+  (json.dumps value :ensure-ascii False))
 
 
 (defk scoped-sources [sources scope]

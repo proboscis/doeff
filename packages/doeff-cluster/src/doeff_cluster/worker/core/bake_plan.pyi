@@ -26,6 +26,17 @@ class ModuleIndex:
     places: tuple
 
 @dataclass(frozen=True, kw_only=True)
+class ImportRow:
+    rel: str
+    digest: str
+    imports: tuple
+
+@dataclass(frozen=True, kw_only=True)
+class ImportTable:
+    rows: tuple
+    problem: str | None
+
+@dataclass(frozen=True, kw_only=True)
 class BakeItem:
     tree: str
     rel: str
@@ -72,10 +83,30 @@ def closure_step(index: ModuleIndex, frontier: frozenset, seen: frozenset) -> _P
 def module_place(index: ModuleIndex, name: str) -> _Program[tuple, object]:
     ...
 
-def imported_modules(index: ModuleIndex, found: tuple, texts: tuple) -> _Program[frozenset, object]:
+def imported_modules(index: ModuleIndex, found: tuple, imports: tuple) -> _Program[frozenset, object]:
     ...
 
 def closure_scopes(index: ModuleIndex, seen: frozenset, count: int) -> _Program[tuple, object]:
+    ...
+IMPORT_TABLE: str
+IMPORT_TABLE_FORMAT: int
+
+def source_digest(text: str) -> _Program[str, object]:
+    ...
+
+def import_row_of(rel: str, value: dict | list | str | int | float | bool | None) -> _Program[ImportRow | None, object]:
+    ...
+
+def import_table_of(text: str | None) -> _Program[ImportTable, object]:
+    ...
+
+def usable_row(table: ImportTable, rel: str, digest: str, changed: frozenset) -> _Program[ImportRow | None, object]:
+    ...
+
+def import_table_json(rows: tuple) -> _Program[dict, object]:
+    ...
+
+def import_table_text(rows: tuple) -> _Program[str, object]:
     ...
 
 def scoped_sources(sources: list | tuple, scope: frozenset | None) -> _Program[list, object]:

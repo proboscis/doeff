@@ -19,6 +19,10 @@
 ;;;               module にも解ける所まで辿った閉包だけを焼く(ある木の module が import する別の木の module も入る)。木の外の module
 ;;;               (標準・第三者)は辿らない。閉包の外の module は子が import した時に作られる(焼く物が減るだけで正しさは変わらない)。
 ;;;               --entries が無ければ全部の木の根の下を全部焼く。
+;;;               import の名は構文の読み(Hy の read-many・Python の ast.parse — 閉包の秒の大半)で求める。歩みの後に木ごとの根へ
+;;;               import の名の表(bake_plan の IMPORT-TABLE — source の相対 path → その source の sha256 と import の名)を残し、次の版は
+;;;               引き継ぎ元(--from)の表のうち --changed に無く sha256 が今の source と合う行を使い回して、変わった file だけを読む
+;;;               (#3694)。表の無い引き継ぎ元・形の違う表・表に無い file は今どおり読む。
 ;;;   3 引き継ぎ   木ごとに前の木から .pyc を hardlink する(LinkPycs)
 ;;;   4 焼き      焼く物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
@@ -31,8 +35,8 @@
 ;;; 報告(stderr の slog の行): 木ごとに `tree=<--tree の綴り> carried=N rebuilt=N reused=N failed=N problem=<文|->`、最後に全体の
 ;;; `carried=N rebuilt=N reused=N failed=N carry_s=… compile_s=… closure_s=… scan_s=…`(carried = 前の木から hardlink した .pyc・焼く計画の
 ;;; file のうち rebuilt = 焼いた・reused = 焼かずに残した・failed = 焼けなかった — 3 つの和が焼く計画の数・scan_s = 木の走査・closure_s =
-;;; 閉包の歩み)。検めの通らない
-;;; 木が 1 つでも在れば終わり 1(ほかの木の印は置く)。
+;;; 閉包の歩み)。--entries の在る時は閉包の歩みの後に `closure_modules=N closure_reread=N`(閉包の source の数・そのうち構文を読み
+;;; 直した数)。検めの通らない木が 1 つでも在れば終わり 1(ほかの木の印は置く)。
 ;;; 実行環境の準備(worker/protocol/env_translation)は木ごとの行を読み、版ごとのコードの木の準備(worker/core/code_rules の script)は印の
 ;;; 有無を確かめる。
 ;;;
@@ -67,7 +71,7 @@
 (import doeff [EffectBase run with-handlers])
 (import doeff_time [GetMonotonic sync-time-handler])
 (import doeff_core_effects.handlers [slog-handler])
-(import doeff_core_effects.file_effects [FileFailed PathStat ReadText StatPath file-done])
+(import doeff_core_effects.file_effects [FileFailed PathStat ReadText StatPath WriteText file-done])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [InterpreterFacts ProcessOutcome ReadInterpreter RunProcess])
@@ -155,25 +159,67 @@
   trees)
 
 
+(defk old-import-table [old]
+  {:pre [(: old (| str None))] :post [(: % plan.ImportTable)] :tags {:context "worker" :role "main"}}
+  "引き継ぎ元の木(old — 無ければ None)の根に残る import の名の表を読むため(#3694)。木が無い・表が無い・読めない時は行 0 で理由つき
+   (閉包の source を全部読む)。"
+  (var text None)
+  (when (is-not old None)
+    (<- read (| str FileFailed) (ReadText (posixpath.join old plan.IMPORT-TABLE)))
+    (match read
+      (FileFailed) None
+      found (:= text found)))
+  (<- table plan.ImportTable (plan.import-table-of text))
+  table)
+
+
 (defk closure-of-trees [trees sources entries]
   {:pre [(: trees tuple) (: sources tuple) (: entries tuple)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
   "木ごとの焼く範囲(trees と同じ順の、相対 path の frozenset か None = 根の下を全部)を求めるため。entries が在れば、entries から import を
-   静的に辿った、木をまたぐ閉包(source は module ごとに 1 度だけ読む — 読めない source は何も import しない物として扱う)。"
+   静的に辿った、木をまたぐ閉包(source は module ごとに 1 度だけ読む — 読めない source は何も import しない物として扱う)。
+   import の名は、引き継ぎ元の木の表の行のうち --changed に無く sha256 が今の source と合う物を使い回し、ほかは構文を読む(#3694)。
+   歩みの後に、木ごとに今の閉包の source の行を表として木の根に残す(書けなければ Note — 次の版が全部を読み直すだけ)。"
   (if (not entries)
       (tuple (gfor _ trees None))
       (do (<- index (plan.module-index trees sources))
+          (var tables #())
+          (for [tree trees]
+            (<- table plan.ImportTable (old-import-table tree.old))
+            (when (and (is-not tree.old None) (is-not table.problem None))
+              (<- (Note (.format "import の名の表を使わない(閉包の source を全部読む): {}: {}" tree.named table.problem))))
+            (:= tables (+ tables #(table))))
           (var seen (frozenset))
           (var frontier (frozenset entries))
+          (var rows #())
+          (var reread 0)
           (while frontier
             (<- found tuple (plan.closure-step index frontier seen))
             (:= seen (| seen (frozenset found)))
-            (var texts #())
+            (var imports #())
             (for [m found]
               (<- place tuple (plan.module-place index m))
               (<- read (| str FileFailed) (ReadText (posixpath.join (. (get trees (get place 0)) path) (get place 1))))
-              (:= texts (+ texts #((match read (FileFailed) "" text text)))))
-            (<- named frozenset (plan.imported-modules index found texts))
+              (match read
+                (FileFailed) (:= imports (+ imports #(#())))
+                text (do (<- digest str (plan.source-digest text))
+                         (<- usable (| plan.ImportRow None)
+                             (plan.usable-row (get tables (get place 0)) (get place 1) digest (. (get trees (get place 0)) changed)))
+                         (var listed #())
+                         (match usable
+                           (plan.ImportRow :imports carried) (:= listed carried)
+                           None (do (:= listed (plan.imported-names (get place 1) text))
+                                    (:= reread (+ reread 1))))
+                         (:= imports (+ imports #(listed)))
+                         (:= rows (+ rows #(#((get place 0) (plan.ImportRow :rel (get place 1) :digest digest :imports listed))))))))
+            (<- named frozenset (plan.imported-modules index found imports))
             (:= frontier named))
+          (for [#(i tree) (enumerate trees)]
+            (<- text str (plan.import-table-text (tuple (gfor r rows :if (= (get r 0) i) (get r 1)))))
+            (<- wrote (| FileFailed None) (WriteText (posixpath.join tree.path plan.IMPORT-TABLE) text :replace True))
+            (match wrote
+              (FileFailed :reason reason) (<- (Note (.format "import の名の表を書けない: {}: {}" tree.named reason)))
+              _ None))
+          (<- (Note (.format "closure_modules={} closure_reread={}" (len rows) reread)))
           (<- scopes tuple (plan.closure-scopes index seen (len trees)))
           scopes)))
 
