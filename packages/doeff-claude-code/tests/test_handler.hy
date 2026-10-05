@@ -19,7 +19,7 @@
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
 (import tests.interpreters [STUB-PATH child-env])
-(import tests.scenario_rules [STREAM-PHRASE THINK-PHRASE reply-prompt sleep-prompt])
+(import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE reply-prompt sleep-prompt])
 (import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start])
 
 
@@ -316,13 +316,15 @@
 
 
 (val THINK-SECONDS 0.6)
+(val HOOK-SECONDS 0.4)
 
 (defk thinking-then-plain-then-silent [#^ ClaudeSessionSpec spec #^ str sid]
   {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % list)] :tags {:context "claude-code" :role "program"}}
-  "考えてから本文を流す手番・考えずに本文を流す手番(使い回しの道)・本文を流さない手番を同じ会話で続けて最後まで読む。"
+  "init の後の hook を待ってから考えて本文を流す手番・考えずに本文を流す手番(使い回しの道)・本文を流さない手番を同じ会話で続けて
+   最後まで読む。"
   (<- thinking (ClaudeStartTurn (FreshSession sid) spec
-                                (TurnInput (.join " . " [(reply-prompt "THOUGHT") (.format THINK-PHRASE THINK-SECONDS)
-                                                         (.format STREAM-PHRASE STREAMED-PIECES)])
+                                (TurnInput (.join " . " [(reply-prompt "THOUGHT") (.format HOOK-PHRASE HOOK-SECONDS)
+                                                         (.format THINK-PHRASE THINK-SECONDS) (.format STREAM-PHRASE STREAMED-PIECES)])
                                            (str (uuid.uuid4)))))
   (<- thinking-read TurnRecord (read-to-end thinking.turn 30.0))
   (<- plain (ClaudeStartTurn (ResumeSession sid) spec
@@ -333,24 +335,31 @@
   [thinking-read plain-read silent-read])
 
 
-(deftest test-the-first-text-timing-line-splits-the-thinking-from-the-first-reply [tmp-path]
-  ;; 本文の最初の差分を上の層へ初めて渡した所の計時の行(event first-text — #3696)は、手番ごとに 1 度だけ出て、init の後の最初の行
-  ;; (first-reply の行 — 実物では message_start)を読んでから最初の本文の差分を読むまでの ms after_first_reply_ms を持つ — モデルが
-  ;; 考えた秒と、CLI が最初の文字を受けてから画面に出るまで(区間 H)の起点を、task の log だけで割るため。考える手番は考えた秒の分だけ
-  ;; 開き、考えない手番(使い回しの process の道 — 入力を書いた刻が起点)はほぼ 0。本文の差分の無い手番には行が無い。失敗ケース =
-  ;; 変更前は first-text の行が無い。
+(deftest test-the-first-text-timing-line-splits-the-thinking-from-the-hooks [tmp-path]
+  ;; 本文の最初の差分を上の層へ初めて渡した所の計時の行(event first-text — #3696)は、手番ごとに 1 度だけ出て、init の後の最初の stream
+  ;; の行(実物では message_start)の刻 stream_start_at_ms と、そこから最初の本文の差分を読むまでの ms after_stream_start_ms を持つ —
+  ;; 入力ごとの hook と API へ出すまで・モデルが考えた秒・CLI が最初の文字を受けてから画面に出るまで(区間 H)の起点を、task の log だけで
+  ;; 割るため。init の次の行(first-reply の行)は hook の知らせで message_start ではない(cluster の実測で kind = Other)ので、hook の秒は
+  ;; after_stream_start_ms に入らず、first-reply の行から stream_start_at_ms までに入る。考えない手番(使い回しの process の道)はほぼ 0。
+  ;; 本文の差分の無い手番には行が無い。失敗ケース = 起点を init の次の行にしていた形(#3696 の最初の版)は、hook の秒が考えた秒に混ざって赤。
   (val host (host-of STUB-COMMAND))
   (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler host)]
               (Listen (thinking-then-plain-then-silent (spec-in tmp-path) (str (uuid.uuid4))) :types #(SlogEffect))))
-  (val firsts (lfor effect (get heard 1) :if (and (= effect.msg CLI-TIMING-LOG) (= (.get effect.kwargs "event") "first-text"))
-                    effect.kwargs))
+  (val timings (lfor effect (get heard 1) :if (= effect.msg CLI-TIMING-LOG) effect.kwargs))
+  (val firsts (lfor timing timings :if (= (.get timing "event") "first-text") timing))
   (assert (= (len firsts) 2) (repr firsts))
   (val thought (get firsts 0))
   (val quick (get firsts 1))
   (assert (= (lfor first firsts (.get first "turn_seq")) (sorted (lfor first firsts (.get first "turn_seq")))) (repr firsts))
-  (assert (>= (.get thought "after_first_reply_ms") (* 0.8 THINK-SECONDS 1000)) (repr thought))
-  (assert (< (.get quick "after_first_reply_ms") 200) (repr quick))
-  (assert (<= (.get thought "after_first_reply_ms") (.get thought "since_launch_ms")) (repr thought)))
+  (val thought-reply (next (gfor timing timings :if (and (= (.get timing "event") "first-reply")
+                                                          (= (.get timing "turn_seq") (.get thought "turn_seq")))
+                                 timing)))
+  (assert (>= (.get thought "after_stream_start_ms") (* 0.8 THINK-SECONDS 1000)) (repr thought))
+  (assert (< (.get thought "after_stream_start_ms") (* 0.9 (+ THINK-SECONDS HOOK-SECONDS) 1000)) (repr thought))
+  (assert (>= (- (.get thought "stream_start_at_ms") (.get thought-reply "line_at_ms")) (* 0.8 HOOK-SECONDS 1000))
+          (repr #(thought thought-reply)))
+  (assert (< (.get quick "after_stream_start_ms") 200) (repr quick))
+  (assert (<= (.get thought "after_stream_start_ms") (.get thought "since_launch_ms")) (repr thought)))
 
 
 ;; --- 生かす本数の上限と資格の床で降ろす(#3672 の D2 — 止める判断は host の 1 か所)------------------------------------------
