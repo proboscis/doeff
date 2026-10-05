@@ -12,9 +12,21 @@
 ;;; 時刻と、子孫ごとに生きているのを最後に見た時刻)を受けて破りの列を返す純関数 1 つ。記録を集めるのは本物の process の検
 ;;; (tests/test_shim_descendants.hy)。
 
-(require doeff-hy.macros [defk])
+;;;
+;;; 待ちの子(#3646)の条 3 つ。判断(worker/core/policy の plan)の答えと観測を受けて破りの列を返す純関数。条は守りの関数(warm_rules の
+;;; warm-key-of・warm-mark-clean)を呼ばずに性質を言い直す — 守りを壊すと破りが出る(失敗ケース = tests/test_warm_child_policy.hy)。
+;;; 条 WC1 warm-fork-uses-its-own-root: 待ちの子から分けて起こす task(StartJob の warm-key が在る)は、その task 自身の env の root の
+;;;   待ちの子からだけ分かれる(古い root・別の root の待ちの子へ行かない)。
+;;; 条 WC2 warm-child-state-leaves-running-tasks: 待ちの子の段階(起こし中・準備済み・失敗・止め中・無い)だけが違う 2 つの観測で、
+;;;   走っている process への止めと回収(SignalJob・ReapJob)は同じ(待ちの子が落ちても、そこから分かれた task は落ちない)。
+;;; 条 WC3 warm-fork-only-before-any-vm: task を分けるのは、分かれ元の待ちの子が走っていて、準備完了の印が「thread 1 つ・生きた VM 0」の
+;;;   時だけ(VM を起こした process から fork しない)。
+
+(require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import doeff_cluster.worker.intent.worker_model [StartJob SignalJob ReapJob WorldView])
+(import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 
 
 (defk handoff-keeps-a-ready-writer [lifetimes]
@@ -54,3 +66,35 @@
   (tuple (gfor life lives
                :if (and (is-not life.last-alive-ms None) (> life.last-alive-ms stopped-ms))
                (DescendantOutlivedTheStop :stopped-ms stopped-ms :life life))))
+
+
+(defk warm-fork-uses-its-own-root [actions]
+  {:pre [(: actions tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "条 WC1: 判断の答え actions のうち、待ちの子から分ける StartJob で、分かれ元のキーが task 自身の env の root のキー(\"env-\" + 宣言の
+   env-key)でない物を破りの列にして返す(空なら緑)— 別の root(古い版の root を含む)の venv で task が走らないため。"
+  (tuple (gfor action actions
+               :if (and (isinstance action StartJob) (is-not action.warm-key None)
+                        (!= action.warm-key (+ ENV-KEY-PREFIX (or action.spec.env-key ""))))
+               action)))
+
+
+(defk warm-child-state-leaves-running-tasks [baseline variant]
+  {:pre [(: baseline tuple) (: variant tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "条 WC2: 待ちの子の段階だけが違う 2 つの観測で判断した答え(baseline・variant)の、走っている process への止めと回収(SignalJob・ReapJob)
+   の食い違いを破りの列にして返す(空なら緑)— 待ちの子の失敗や止めが、そこから分かれて走っている task を巻き込まないため。"
+  (val stops (fn [actions] (frozenset (gfor a actions :if (isinstance a #(SignalJob ReapJob)) a))))
+  (tuple (sorted (^ (stops baseline) (stops variant)) :key repr)))
+
+
+(defk warm-fork-only-before-any-vm [actions world]
+  {:pre [(: actions tuple) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "条 WC3: 判断の答え actions のうち、待ちの子から分ける StartJob で、分かれ元の待ちの子が観測に無い・終わった・止め始めた・印が無い・
+   印の thread が 1 つでない・生きた VM が在る物を破りの列にして返す(空なら緑)— VM や thread を持った process から fork すると、
+   分かれた task の中で錠や VM の状態が壊れるため。"
+  (val clean-keys (frozenset (gfor view world.warm-children
+                                   :if (and (is view.exit-code None) (is view.stop None) (is-not view.mark None)
+                                            (= view.mark.threads 1) (not (any view.mark.vm-live)))
+                                   view.key)))
+  (tuple (gfor action actions
+               :if (and (isinstance action StartJob) (is-not action.warm-key None) (not-in action.warm-key clean-keys))
+               action)))

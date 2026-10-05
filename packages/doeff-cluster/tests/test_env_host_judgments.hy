@@ -38,7 +38,8 @@
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView PrepareEnv SweepEnvs StartJob WarmEnv WorkerPolicy WorldView])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView PrepareEnv SweepEnvs StartJob WarmEnv WorkerPolicy WorldView
+  WarmChildView WarmChildMark])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.foundation.process_versions [process-versions])
@@ -214,15 +215,18 @@
   {:pre [(: runs ToolRuns) (: warm WarmEnv) (: spec JobSpec) (: cold-spec JobSpec)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "worker の判断(plan)を env-host の観測の上で回す筋: job の無い拍の判断・先読みを頼んで終わらせた後の観測・task が来た最初の拍の
-   判断・温めていない env の task の最初の拍の判断を返すため。"
+   判断・温めていない env の task の最初の拍の判断を返すため。温めた root には待ちの子も起きている(温める表の root は待ちの子を
+   起こす — #3646)ので、task の来た拍の観測には、その root の準備済みの待ちの子を置く。"
   (val policy (WorkerPolicy))
   (<- before tuple (ObserveEnvs))
   (val warming (! (plan 0 #() (WorldView before #()) {} policy :warm #(warm))))
   (<- (PrepareEnv warm.key warm.runtime-env :warm True))
   (setv runs.released True)
   (<- after tuple (ObserveEnvs))
-  (val first (! (plan 1 #(spec) (WorldView after #()) {} policy :warm #(warm))))
-  (val cold-first (! (plan 2 #(cold-spec) (WorldView after #()) {} policy :warm #(warm))))
+  (val warmed (WorldView after #() :warm-children #((WarmChildView :key warm.key :pid 1 :started-ms 0
+                                                                   :mark (WarmChildMark :threads 1 :vm-live #(0 0 0))))))
+  (val first (! (plan 1 #(spec) warmed {} policy :warm #(warm))))
+  (val cold-first (! (plan 2 #(cold-spec) warmed {} policy :warm #(warm))))
   #(warming after first cold-first))
 
 
@@ -250,7 +254,7 @@
   (<- view (| CodeView None) (view-of (get seen 1) key))
   (<- root str (env-root settings key))
   (assert (and (is-not view None) (= view.state CodeState.READY) (= view.path root)) (get seen 1))
-  (assert (= (get seen 2) #((StartJob spec 1 root))) (get seen 2))
+  (assert (= (get seen 2) #((StartJob spec 1 root :warm-key key))) (get seen 2))
   (assert (is-not cold-spec.runtime-env None) cold-spec)
   (assert (= (get seen 3) #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env))) (get seen 3))
   (assert (= (len runs.launches) 1) runs.launches))

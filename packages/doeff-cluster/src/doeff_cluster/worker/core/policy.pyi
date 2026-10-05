@@ -27,6 +27,10 @@ from doeff_cluster.worker.intent.worker_model import RetireJob as RetireJob
 from doeff_cluster.worker.intent.worker_model import ReleaseLeases as ReleaseLeases
 from doeff_cluster.worker.intent.worker_model import ProbeEntry as ProbeEntry
 from doeff_cluster.worker.intent.worker_model import ForgetProbes as ForgetProbes
+from doeff_cluster.worker.intent.worker_model import WarmChildView as WarmChildView
+from doeff_cluster.worker.intent.worker_model import StartWarmChild as StartWarmChild
+from doeff_cluster.worker.intent.worker_model import StopWarmChild as StopWarmChild
+from doeff_cluster.worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.job_model import JobPhase as JobPhase
 from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
@@ -36,6 +40,13 @@ from doeff_cluster.worker.core.worker_rules import retired_name as retired_name
 from doeff_cluster.worker.core.worker_rules import ready_path as ready_path
 from doeff_cluster.worker.core.worker_rules import RETIRED_MARK as RETIRED_MARK
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX
+from doeff_cluster.worker.core.warm_rules import forks_from_warm_child as forks_from_warm_child
+from doeff_cluster.worker.core.warm_rules import warm_key_of as warm_key_of
+from doeff_cluster.worker.core.warm_rules import warm_mark_clean as warm_mark_clean
+from doeff_cluster.worker.core.warm_rules import warm_child_of as warm_child_of
+from doeff_cluster.worker.core.warm_rules import warm_child_ready as warm_child_ready
+from doeff_cluster.worker.core.warm_rules import mark_refusal as mark_refusal
+from doeff_cluster.worker.core.warm_rules import warm_preload as warm_preload
 
 def hyx_kept_when_cut_offXquestion_markX(job: JobSpec, silent_ms: int, keep_fence_ms: int) -> _Program[bool, object]:
     ...
@@ -109,6 +120,15 @@ def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobR
 def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
     ...
 
+def warm_stop_step(now: int, view: WarmChildView, policy: WorkerPolicy) -> _Program[tuple, object]:
+    ...
+
+def warm_child_step(now: int, key: str, root: str | None, view: WarmChildView | None, preload: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
+    ...
+
+def warm_child_actions(now: int, desired: tuple, world: WorldView, warm: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
+    ...
+
 def pinned_env_keys(desired: tuple, world: WorldView, warm: tuple) -> _Program[frozenset, object]:
     ...
 
@@ -131,6 +151,9 @@ def records_after(now: int, records: dict, actions: tuple, policy: WorkerPolicy=
     ...
 
 def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> JobPhase:
+    ...
+
+def warm_wait_detail(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord) -> str | None:
     ...
 
 def statuses(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:

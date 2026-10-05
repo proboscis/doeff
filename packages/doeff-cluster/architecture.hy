@@ -148,6 +148,17 @@
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1(sim の宿の RetireJob の handler を
 ;;;   「外すと同時に旧を止める」形に壊した worker — SimWorker の retire-stops — で、同じ筋書きに W1 の空白が出る)。
+;;;   WC1 warm-fork-uses-its-own-root(doeff_cluster.worker.core.invariants:warm-fork-uses-its-own-root — #3646)— 待ちの子から分けて起こす
+;;;   task は、その task 自身の env の root の待ちの子からだけ分かれる(古い root・別の root の venv で走らない)。守りは warm_rules の
+;;;   warm-key-of の 1 か所。確かめるのは tests/test_warm_child_policy.hy の判断の表(2 つの root の task を並べた行を含む)。失敗ケース =
+;;;   test-a-fork-key-from-another-root-breaks-wc1(warm-key-of を別の root のキーを返す形に壊すと WC1 が破りを名指す)。
+;;;   WC2 warm-child-state-leaves-running-tasks(同・#3646)— 待ちの子の段階だけが違う観測で、走っている process への止めと回収は同じ
+;;;   (待ちの子が落ちても、そこから分かれた task は落ちない)。守りは判断の層で、待ちの子の action(warm-child-actions)が job の process に
+;;;   触れない事。失敗ケース = test-stopping-forked-tasks-with-their-warm-child-breaks-wc2(待ちの子の止めに合わせて分かれた task も止める形に
+;;;   壊すと WC2 が食い違いを名指す)。
+;;;   WC3 warm-fork-only-before-any-vm(同・#3646)— task を分けるのは、分かれ元の待ちの子の準備完了の印が「thread 1 つ・生きた VM 0」の時
+;;;   だけ。守りは warm_rules の warm-mark-clean の 1 か所(待ちの子の入口は印を書くだけ)。失敗ケース =
+;;;   test-counting-a-mark-with-a-live-vm-as-ready-breaks-wc3(印の VM を見ない形に壊すと WC3 が破りを名指す)。
 ;;;   R1 prune-keeps-runs-whole(doeff_cluster.record_store.core.invariants:prune-keeps-runs-whole)— record-store の保持は run を丸ごと消すか
 ;;;   丸ごと残し、run の途中だけを残さない(再生は run の始まりから走らせる)。確かめるのは tests/test_record_files_contract.hy の
 ;;;   test-prune-removes-or-keeps-each-run-whole(区切りを複数持つ run の消す前と後の text を判断に渡す — 本物と memory の file system の両方)。
@@ -227,7 +238,10 @@
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster.worker.entry.main"]
    :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"
-                "doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant"]})
+                "doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant"
+                "doeff_cluster.worker.core.invariants:warm-fork-uses-its-own-root"
+                "doeff_cluster.worker.core.invariants:warm-child-state-leaves-running-tasks"
+                "doeff_cluster.worker.core.invariants:warm-fork-only-before-any-vm"]})
 
 ;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
