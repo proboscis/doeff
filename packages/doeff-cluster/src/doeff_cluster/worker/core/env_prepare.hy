@@ -36,9 +36,9 @@
 (import datetime [datetime])
 (import re)
 (import doeff_time [GetMonotonic GetTime])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout RepoLocation EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
-(import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
+(import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json url-location])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
 (import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport CarryFrom BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
@@ -103,7 +103,7 @@
 
 
 (defrecord CarryCandidate
-  "bytecode の引き継ぎ元の候補 1 つ(lock の sha256 と Python が同じ完成済みの root の、同じ url の repo のツリー)。tree = ツリーの
+  "bytecode の引き継ぎ元の候補 1 つ(lock の sha256 と Python が同じ完成済みの root の、同じ repo のツリー)。tree = ツリーの
    path・root = root の path・commit = ツリーを展開した commit・made-ms = root の完成の時刻・same-commit = ツリーの commit が新しい宣言の
    同じ repo と同じ・same-macros = macro の repo(MACRO-REPO)の commit が新しい宣言と同じ。"
   (#^ str tree)
@@ -114,21 +114,41 @@
   (#^ bool same-macros))
 
 
+(defk located-repos [repos]
+  {:pre [(: repos tuple)] :post [(: % tuple)]
+   :tags {:context "worker" :role "program"}}
+  "宣言の repo の列の url を 1 度ずつ読み、同じ repo かを綴りでなく正体で比べられるようにするため(#3693)— 答えは repos の順の
+   #(RepoCheckout RepoLocation) の列。"
+  (var pairs #())
+  (for [r repos]
+    (<- where RepoLocation (url-location r.url))
+    (:= pairs (+ pairs #(#(r where)))))
+  pairs)
+
+
 (defk carry-candidates [known env name]
   {:pre [(: known tuple) (: env RuntimeEnv) (: name str)] :post [(: % tuple)]
    :tags {:context "worker" :role "program"}}
   "repo name の bytecode の引き継ぎ元を選ぶ材料(候補の列・known の順)を作るため — lock の sha256 と Python が同じ完成済みの root
-   (Hy の macro の展開が同じ Hy と doeff-hy で固定される組に限るため)の、同じ url の repo のツリー。"
+   (Hy の macro の展開が同じ Hy と doeff-hy で固定される組に限るため)の、同じ repo のツリー。同じ repo かは url の綴りでなく正体
+   (url-location — https と scp の形と ssh:// は同じ repo・#3693)で比べる。"
   (val repo (next (gfor r env.repos :if (= r.name name) r)))
   (val macros (next (gfor r env.repos :if (= r.name MACRO-REPO) r) None))
-  (tuple (gfor k known
-               :if (and (= k.env.project.lock-sha256 env.project.lock-sha256) (= k.env.project.python env.project.python))
-               r k.env.repos
-               :if (= r.url repo.url)
+  (<- declared tuple (located-repos env.repos))
+  (val wanted (next (gfor #(r where) declared :if (= r.name name) where)))
+  (val macros-at (next (gfor #(r where) declared :if (= r.name MACRO-REPO) where) None))
+  (var roots #())
+  (for [k known]
+    (when (and (= k.env.project.lock-sha256 env.project.lock-sha256) (= k.env.project.python env.project.python))
+      (<- at tuple (located-repos k.env.repos))
+      (:= roots (+ roots #(#(k at))))))
+  (tuple (gfor #(k at) roots
+               #(r where) at
+               :if (= where wanted)
                (CarryCandidate :tree (.format "{}/{}" k.root r.name) :root k.root :commit r.commit :made-ms k.made-ms
                                :same-commit (= r.commit repo.commit)
                                :same-macros (and (is-not macros None)
-                                                 (any (gfor m k.env.repos (and (= m.url macros.url) (= m.commit macros.commit)))))))))
+                                                 (any (gfor #(m m-at) at (and (= m-at macros-at) (= m.commit macros.commit)))))))))
 
 
 (defk carry-source [known env name]

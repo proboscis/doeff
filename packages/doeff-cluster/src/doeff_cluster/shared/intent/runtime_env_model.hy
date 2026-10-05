@@ -95,6 +95,27 @@
       (raise (RuntimeEnvInvalid InvalidKind.BAD-COMMIT (.format "repo {} の commit は 40 桁の sha: {!r}" self.name self.commit))))))
 
 
+;; --- repo の url の正体(#3693) -------------------------------------------------------------
+;; 宣言の url の綴りは送り手の checkout の remote のまま(https・scp の形・ssh://・`.git` の有無が混ざる)。同じ repo かを見る所は綴りで
+;; なく、url を 1 度だけ読んだこの正体で比べる(読むのは doeff_cluster.shared.core.runtime_env_rules の url-location 1 つ)。
+
+(defrecord LocalPath
+  "手元の path を名指す url(git の url_is_local_not_ssh と同じ読み分け: file:// で始まる・`:` を含まない・最初の `/` が最初の `:`
+   より前)。path = url の綴りのまま(手元の path どうしは綴りの一致で同じ repo)。"
+  (#^ str path))
+
+
+(defrecord RemoteRepo
+  "網の上の repo の正体。host = 小文字の host(利用者・port・scheme は落とす)・owner = 名の前の path(前後の `/` を外す・無ければ空)・
+   name = 最後の path の部分(末尾の `.git` を外す)。https・scp の形(git@host:owner/name)・ssh:// は同じ正体になる。"
+  (#^ str host)
+  (#^ str owner)
+  (#^ str name))
+
+
+(val RepoLocation (| LocalPath RemoteRepo))
+
+
 (defrecord NativeWheel
   "wheel で入れる native の package。package = uv の package 名・repo = source を持つ repo の名・
    paths = wheel の中身を決める repo の中の dir(キー = 各 dir の git の tree hash)。"

@@ -39,8 +39,8 @@
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の置き場と錠と使った印は、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
 (import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-USED uv-environment :as uv-variables wheel-dir wheel-lock wheel-tmp])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
                       env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport CarryFrom BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
@@ -172,37 +172,21 @@
   (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 16))
 
 
-;; git の URL の 2 つの形: URL 形(scheme://[user@]host[:port]/path)と scp 形(user@host:path — `//` が続かない `:`)。
-(val URL-FORM (re.compile r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/]*@)?([^/:]*)(?::[0-9]*)?(/.*)?$"))
-(val SCP-FORM (re.compile r"^(?:[^@/]+@)?([^:/]+):(?!//)(.*)$"))
-
-
-(defk repo-identity [url]
-  {:pre [(: url str)] :post [(: % str)]}
-  "git の URL が名指す repo を、綴りに依らない 1 つの形(host の小文字 + `/` + path — 前後の `/` と末尾の `.git` を外す)にするため。
-   scheme・利用者・port は落とす(https と ssh と scp 形の git@ は同じ repo)。どちらの形でもなければ前後の空白を外した url のまま。"
-  (val text (.strip url))
-  (val found (or (.match URL-FORM text) (.match SCP-FORM text)))
-  (if (is found None)
-      text
-      (.format "{}/{}" (.lower (.group found 1))
-               (.removesuffix (.strip (or (.group found 2) "") "/") ".git"))))
-
-
 (defk listed-url [url repo-keys]
   {:pre [(: url str) (: repo-keys dict)] :post [(: % (| str None))]}
-  "宣言の url が名指す repo の、鍵の表の綴り(表の項目の URL)を引くため。完全一致が先・無ければ repo-identity が等しい項目がちょうど 1 つの時
-   その項目。0 個・2 個以上(同じ repo を表が 2 つの綴りで持つ — どちらで取るか決められない)は None(宣言の綴りのまま鍵なしで取る)。
+  "宣言の url が名指す repo の、鍵の表の綴り(表の項目の URL)を引くため。完全一致が先・無ければ正体(url-location — 綴りに依らない
+   host・owner・name。手元の path は綴りのまま)が等しい項目がちょうど 1 つの時その項目。0 個・2 個以上(同じ repo を表が 2 つの綴りで
+   持つ — どちらで取るか決められない)は None(宣言の綴りのまま鍵なしで取る)。
    表は鍵の表 1 つ: 宣言の側は送り手の checkout の remote の綴りのまま送り、worker が自分の表の綴りで取りに行く(2026-09-28 の事故 —
    ssh の remote の checkout から宣言した daily-verify が「表に無い URL」で 10 分落ちた)。"
   (if (in url repo-keys)
       url
-      (do (<- wanted str (repo-identity url))
-          (var hits [])
+      (do (<- wanted RepoLocation (url-location url))
+          (var hits #())
           (for [key repo-keys]
-            (<- identity str (repo-identity key))
-            (when (= identity wanted)
-              (.append hits key)))
+            (<- location RepoLocation (url-location key))
+            (when (= location wanted)
+              (:= hits (+ hits #(key)))))
           (if (= (len hits) 1) (get hits 0) None))))
 
 
