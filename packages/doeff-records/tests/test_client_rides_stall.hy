@@ -2,9 +2,11 @@
 ;; 確かめること:
 ;;   要求と答えの公開 effect の全部(公開 effect の一覧 PublicEffect から変化の待ち 2 つを除いた物)が、止まりの間は置き場の戻りを待ち、
 ;;   戻った刻に同じ要求を撃ち直して入る — 一覧に effect を 1 つ足すと、この検の表に無い物として赤になる
-;;   上限 0 秒(名のある答え手 records-unwaited)の組み立ては待たずに Unreachable を返す
-;;   上限を越えても戻らなければ、待った秒と上限を名指した Unreachable を上限ちょうどで返す
-;;   上限の答え手を置かない組み立ては、止まりの無い最初の要求で、答え手の無い ReadSourcePatience として落ちる(止まりの日まで隠れない)
+;;   待つ時間 0 秒(名のある答え手 records-unwaited)の組み立ては待たずに Unreachable を返す
+;;   待つ時間を越えても戻らなければ、待った秒と上限を名指した Unreachable を上限ちょうどで返す
+;;   待つ時間の答え手を置かない組み立ては、止まりの無い最初の要求で、答え手の無い ReadRequestPatience として落ちる(止まりの日まで隠れない)
+;;   合図の源が止まりに耐える時間の答え手(source-patience-handler)だけを置いても、client は答えを得ない — 2 つは別の問い(#3557 — 1 つの
+;;   問いに載せると、handler を並べる位置で答え分けるしかなくなる)
 ;; 反例 = 前の形(client が届かない答えをそのまま返す)は、1 本目の検で 0 秒で Unreachable を返して赤になる。
 ;; 組は http-memory(tests/interpreters.hy — client の要求を同じ scheduler の中で service の respond に渡し、止まりと戻りが 1 つの
 ;; 仮想の時計の上で進む)。止まりは検の口 faults.SetStoreOutage を置き場の handler に撃って起こし、戻りの問い AwaitRecordsBack は
@@ -22,15 +24,15 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.service [RecordsService])
 (import doeff_records.wire [PublicEffect])
-(import doeff_records.event_source [SignalSourcePatience source-patience-handler records-unwaited])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler])
+(import doeff_records.event_source [SignalSourcePatience source-patience-handler])
+(import doeff_records.http_client [RecordsEndpoint RequestPatience http-records-handler request-patience-handler records-unwaited])
 (import tests.interpreters [LawSetup IN-PROCESS-URL in-process-records-http])
 
 (val DETAIL "記録の service が落ちている(止まりを越える検の筋書き)")
 ;; 止まりの長さ(戻るまで)と、検が選ぶ待ちの上限。
 (val STALL-SECONDS 5.0)
-(val PATIENCE (SignalSourcePatience :seconds 60.0))
-(val SHORT-PATIENCE (SignalSourcePatience :seconds 10.0))
+(val PATIENCE (RequestPatience :seconds 60.0))
+(val SHORT-PATIENCE (RequestPatience :seconds 10.0))
 ;; 要求と答えの公開 effect の和(止まりの間に撃つ要求の型)。
 (val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd))
 
@@ -64,13 +66,13 @@
 
 
 (defk asked-through-stall [harness patience ask]
-  {:pre [(: harness LawHarness) (: patience SignalSourcePatience) (: ask RequestAsk)] :post [(: % tuple)]
+  {:pre [(: harness LawHarness) (: patience RequestPatience) (: ask RequestAsk)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
-  "置き場を止め、STALL-SECONDS 秒後に解く手を立ててから、上限 patience の下で ask を撃ち、#(掛かった仮想の秒 答え) を返すため。"
+  "置き場を止め、STALL-SECONDS 秒後に解く手を立ててから、待つ時間 patience の下で ask を撃ち、#(掛かった仮想の秒 答え) を返すため。"
   (<- (as-writer harness MAKER (SetStoreOutage DETAIL)))
   (<- lifter (Spawn (lifted-after harness STALL-SECONDS)))
   (<- began float (GetMonotonic))
-  (<- answer (with_handlers [(source-patience-handler patience)] (as-writer harness MAKER ask)))
+  (<- answer (with_handlers [(request-patience-handler patience)] (as-writer harness MAKER ask)))
   (<- ended float (GetMonotonic))
   (<- (Wait lifter))
   #((- ended began) answer))
@@ -101,7 +103,7 @@
   {:interpreters ["http-memory"]}
   ;; 上限 0 秒(records-unwaited)を選んだ呼びは待たない — 止まりの最初の Unreachable をそのまま 0 秒で返す。
   (<- harness (LawSetup))
-  (<- seen tuple (asked-through-stall harness (SignalSourcePatience :seconds 0.0) (ReadRow "parts" #("p1"))))
+  (<- seen tuple (asked-through-stall harness (RequestPatience :seconds 0.0) (ReadRow "parts" #("p1"))))
   (assert (isinstance (get seen 1) Unreachable) seen)
   (assert (= (get seen 0) 0.0) seen))
 
@@ -112,7 +114,7 @@
   (<- harness (LawSetup))
   (<- (as-writer harness MAKER (SetStoreOutage DETAIL)))
   (<- began float (GetMonotonic))
-  (<- answer (with_handlers [(source-patience-handler SHORT-PATIENCE)] (as-writer harness MAKER (ReadRow "parts" #("p1")))))
+  (<- answer (with_handlers [(request-patience-handler SHORT-PATIENCE)] (as-writer harness MAKER (ReadRow "parts" #("p1")))))
   (<- ended float (GetMonotonic))
   (<- (as-writer harness MAKER (SetStoreOutage None)))
   (assert (isinstance answer Unreachable) answer)
@@ -122,18 +124,20 @@
 
 
 (deftest test-a-client-without-a-patience-answer-falls-on-its-first-request
-  ;; 上限の答え手を置かない組み立ては、止まりの無い最初の要求で ReadSourcePatience の答え手が無いと名指して落ちる(止まりの日まで隠れない)。
+  ;; 待つ時間の答え手を置かない組み立ては、止まりの無い最初の要求で ReadRequestPatience の答え手が無いと名指して落ちる(止まりの日まで
+  ;; 隠れない)。合図の源の耐える時間の答え手(source-patience-handler)だけを置いた組み立ても同じく落ちる — client はその問いを問わない。
   (val store (MemoryStore LAW-SCHEMA))
   (val service (RecordsService LAW-SCHEMA (fn [writer] (memory-records-handler store writer))))
-  (var said None)
-  (try
-    (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (in-process-records-http service)
-                                    (http-records-handler (RecordsEndpoint IN-PROCESS-URL :writer MAKER))]
-                                   (ReadRow "parts" #("p1")))))
-    (except [error Exception]
-      (:= said (str error))))
-  (assert (is-not said None) "上限の答え手の無い組み立てが落ちなかった")
-  (assert (in "ReadSourcePatience" said) said)
+  (for [outer [[] [(source-patience-handler (SignalSourcePatience :seconds 60.0))]]]
+    (var said None)
+    (try
+      (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) #* outer (in-process-records-http service)
+                                      (http-records-handler (RecordsEndpoint IN-PROCESS-URL :writer MAKER))]
+                                     (ReadRow "parts" #("p1")))))
+      (except [error Exception]
+        (:= said (str error))))
+    (assert (is-not said None) #("待つ時間の答え手の無い組み立てが落ちなかった" outer))
+    (assert (in "ReadRequestPatience" said) #(said outer)))
   ;; 同じ組み立てに名のある答え手を置けば、同じ要求は答える(落ちたのは答え手の欠けだけのため)。
   (val answered (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) records-unwaited (in-process-records-http service)
                                                 (http-records-handler (RecordsEndpoint IN-PROCESS-URL :writer MAKER))]

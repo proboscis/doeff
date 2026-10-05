@@ -15,7 +15,6 @@ from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
 from doeff_records.event_source import RECORDS_SIGNAL_SOURCE as RECORDS_SIGNAL_SOURCE
 from doeff_records.event_source import ReadSignalSource as ReadSignalSource
-from doeff_records.event_source import SignalSourcePatience as SignalSourcePatience
 from doeff_records.event_source import came_back_within as came_back_within
 from doeff_records.event_source import first_seen as first_seen
 from doeff_records.values import Changes as Changes
@@ -32,7 +31,7 @@ from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
-from doeff_records.effects import ReadSourcePatience as ReadSourcePatience
+from doeff_records.effects import ReadRequestPatience as ReadRequestPatience
 from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
 from doeff_records.wire import PublicEffect as PublicEffect
 from doeff_records.wire import WireAnswer as WireAnswer
@@ -106,6 +105,17 @@ def counted_reply(endpoint: RecordsEndpoint, operation: str, reply: RawReply | U
 
 def call_service(endpoint: RecordsEndpoint, ask: PublicEffect) -> _Program[WireAnswer | Unreachable, object]:
     ...
+
+@dataclass(frozen=True, kw_only=True)
+class RequestPatience:
+    seconds: float
+
+    def __post_init__(self) -> None:
+        ...
+
+def request_patience_handler(patience: RequestPatience) -> _Handler:
+    ...
+records_unwaited: _Handler
 
 def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | ReadEvents | ReadStreamEnd) -> _Program[tuple[str, ...], object]:
     ...

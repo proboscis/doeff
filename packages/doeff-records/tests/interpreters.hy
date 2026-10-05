@@ -35,7 +35,7 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import urllib.parse [urlsplit])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
-(import doeff_records.event_source [records-unwaited])
+(import doeff_records.http_client [records-unwaited])
 (import doeff_records.service [RecordsService respond HttpRequest :as ServiceRequest])
 (import doeff_records.wire [WRITER-HEADER])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
