@@ -396,6 +396,24 @@
    "why": "上の再輸出の綴り"
   },
   {
+   "handler": "doeff_agents.handlers:claude_process_layer_handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "層 2 だけ — doeff_claude_code の claude-code-handler(子 process の claude)を作る(agora-redesign #3507)"
+  },
+  {
+   "handler": "doeff_agents:claude-process-layer-handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
    "handler": "doeff_claude_code.handler:claude-code-handler",
    "touches": [
     "process",

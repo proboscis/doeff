@@ -137,6 +137,10 @@ mod tests {
         let parsed = WorldCatalog::parse(include_str!("../../data/world_handlers.json"));
         let catalog = parsed.unwrap_or_else(|problems| panic!("同梱の目録が読めない:\n{}", problems.join("\n")));
         assert!(catalog.handlers.contains_key("doeff_core_effects.os_file.os_file_handler"), "os-file-handler が目録に無い");
+        // 層 2 だけの入口(子 process の claude を起こす — agora-redesign #3507)も実 I/O の handler として目録に在る(綴りは 2 つ)。
+        for name in ["doeff_agents.handlers.claude_process_layer_handler", "doeff_agents.claude_process_layer_handler"] {
+            assert!(catalog.handlers.contains_key(name), "{} が目録に無い", name);
+        }
     }
 
     #[test]
