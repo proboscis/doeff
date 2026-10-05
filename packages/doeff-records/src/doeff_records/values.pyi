@@ -18,6 +18,7 @@ from doeff_hy.frozen import FrozenMap
 
 TABLE_NAME_PATTERN: re.Pattern[str]
 FIELD_NAME_PATTERN: re.Pattern[str]
+SEPARATOR_PATTERN: re.Pattern[str]
 
 class UndeclaredTable(ValueError):
     tables: tuple[str, ...]

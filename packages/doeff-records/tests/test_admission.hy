@@ -38,6 +38,9 @@
   (assert (refuses? (fn [] (StreamDecl "s" #("w") :retention-group (ByKeySuffix ":"))) ValueError) "消えない列の保持の組")
   (assert (refuses? (fn [] (StreamDecl "s" #("w") :retention-group "each")) TypeError) "保持の組の型の外")
   (assert (refuses? (fn [] (ByKeySuffix "")) ValueError) "空の区切り")
+  ;; 区切りは PostgreSQL の置き場が組の名の式の索引と文に literal で直に置く(#3614)— 引用符・逆斜線・空白・ASCII の外は宣言で断る。
+  (for [broken ["'" "a'b" "\\" " " "→" "%" (* ":" 17)]]
+    (assert (refuses? (fn [] (ByKeySuffix broken)) ValueError) (repr broken)))
   (assert (= (. (StreamDecl "s" #("w")) retention-group) (EachEvent)) "既定は出来事ごと")
   (assert (refuses? (fn [] (FieldDecl "x" #())) ValueError) "誰も書けない欄")
   (assert (refuses? (fn [] (LAW-SCHEMA.table "nope")) UndeclaredTable))
