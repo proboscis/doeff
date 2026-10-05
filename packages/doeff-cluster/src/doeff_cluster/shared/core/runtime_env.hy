@@ -2,6 +2,7 @@
 ;;;
 ;;; 送り手は手元の checkout(repo ごとの作業の dir)から宣言(runtime_env_model の RuntimeEnv)を組み立てる。worker は commit を
 ;;; remote から取りに行くので、worker が取れない物は送る前に断る(例外 RuntimeEnvInvalid):
+;;;   local-remote          remote の url が手元の path か file://(別の機体の worker はその url から取れない — #3167)
 ;;;   dirty-tree            commit していない変更がある(送れるのは commit した物だけ)
 ;;;   commit-not-on-remote  その commit が remote の branch に無い(push していない)
 ;;;   sender-source-differs 送り手自身が動いている source(このパッケージの checkout)が、宣言の同じ repo の commit と違う
@@ -43,10 +44,28 @@
 
 ;; --- 組み立て -----------------------------------------------------------------------------
 
+;; git が url を手元の path と読む形(git の connect.c の url_is_local_not_ssh と、transport の file://): file:// で始まる・`:` を含まない・
+;; 最初の `/` が最初の `:` より前。URL 形(scheme://)と scp の形(user@host:path)は最初の `/` より前に `:` が在る。
+(defk local-remote? [url]
+  {:pre [(: url str)] :post [(: % bool)] :tags {:context "runtime-env" :role "judgment"}}
+  "remote の url が手元の path を名指すかを見分けるため — 宣言の url は別の機体の worker が clone する元なので、手元の path(/・./・../ で
+   始まる・相対の path)と file:// は取れない。https://・ssh://・scp の形(git@github.com:owner/repo.git)は手元の path でない。"
+  (val colon (.find url ":"))
+  (val slash (.find url "/"))
+  (or (.startswith url "file://")
+      (< colon 0)
+      (and (>= slash 0) (< slash colon))))
+
+
 (defk checked-repo [checkout]
   {:pre [(: checkout LocalCheckout)] :post [(: % RepoCheckout)]}
-  "checkout 1 つを宣言の repo にする。worker が取れない commit(汚れたツリー・push していない)はここで断る。"
+  "checkout 1 つを宣言の repo にする。worker が取れない物(remote が手元の path・汚れたツリー・push していない commit)はここで断る。"
   (<- seen CheckoutState (ReadCheckout checkout.path checkout.remote))
+  (<- local bool (local-remote? seen.url))
+  (when local
+    (raise (RuntimeEnvInvalid InvalidKind.LOCAL-REMOTE
+                              (.format "{} の remote {} は手元の path — 別の機体の worker は取れない。remote を GitHub の url(git@github.com:… か https://…)にした clone から宣言する"
+                                       checkout.name seen.url))))
   (when seen.dirty
     (raise (RuntimeEnvInvalid InvalidKind.DIRTY-TREE
                               (.format "{}({})に commit していない変更がある(送れるのは commit した物だけ)"

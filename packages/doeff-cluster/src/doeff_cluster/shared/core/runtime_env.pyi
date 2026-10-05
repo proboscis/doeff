@@ -16,6 +16,9 @@ from doeff_cluster.shared.intent.checkout_model import CheckoutRoot as CheckoutR
 from doeff_cluster.shared.intent.checkout_model import SenderSourceRoot as SenderSourceRoot
 from doeff_cluster.shared.intent.env_marker_model import FileSha256 as FileSha256
 
+def hyx_local_remoteXquestion_markX(url: str) -> _Program[bool, object]:
+    ...
+
 def checked_repo(checkout: LocalCheckout) -> _Program[RepoCheckout, object]:
     ...
 

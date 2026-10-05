@@ -5,6 +5,7 @@
 ;;   - 反例: 翻訳を誤る形(head を別の checkout から読む・sha256 でない digest)は同じ検め方で赤になる
 ;;   - 組み立て(runtime-env-of-checkouts)が模擬の土台の上で本物と同じ所で断る(汚れ・push していない)
 ;;   - 系の宣言の前の検め(checked-declaring-checkout)が版の違い・checkout の外・汚れ・push していない commit を断る
+;;   - remote の url が手元の path か file:// なら、組み立ても系の宣言の前の検めも断る(scp の形・https・ssh:// は通す)
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
@@ -18,7 +19,7 @@
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout SenderSourceRoot])
 (import doeff_cluster.shared.protocol.checkout_reads [SENDER-SOURCE-DIR checkout-reads checkout-state-at])
-(import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
+(import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout local-remote?])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.shared.intent.env_marker_model [FileSha256])
 (import doeff_cluster.sim.checkout_git_script [GitCheckout GitRemote GitRev git-command])
@@ -27,14 +28,15 @@
 (val LOCK "httpx==0.28.1\n")
 (val APP-HEAD (* "a" 40))
 (val LIB-HEAD (* "b" 40))
-(val APP-URL "file:///remotes/app.git")
-(val LIB-URL "file:///remotes/lib.git")
+(val APP-URL "https://example.invalid/app.git")
+(val LIB-URL "https://example.invalid/lib.git")
 
 
-(defk world-of [app-dirty app-pushed]
-  {:pre [(: app-dirty bool) (: app-pushed bool)] :post [(: % tuple)]}
-  "筋書きの checkout の世界を作るため: app(/src/app — uv.lock を持つ)と lib(/src/lib — 送り手の source の dir を持つ・push 済み)。"
-  #((GitCheckout :path "/src/app" :head APP-HEAD :remotes #((GitRemote :name "origin" :url APP-URL)) :dirty app-dirty
+(defk world-of [app-dirty app-pushed [app-url APP-URL]]
+  {:pre [(: app-dirty bool) (: app-pushed bool) (: app-url str)] :post [(: % tuple)]}
+  "筋書きの checkout の世界を作るため: app(/src/app — uv.lock を持つ・origin の url = app-url)と lib(/src/lib — 送り手の source の dir を
+   持つ・push 済み)。"
+  #((GitCheckout :path "/src/app" :head APP-HEAD :remotes #((GitRemote :name "origin" :url app-url)) :dirty app-dirty
                  :pushed (if app-pushed #("origin/main" "upstream/main") #("upstream/main")))
     (GitCheckout :path "/src/lib" :head LIB-HEAD :remotes #((GitRemote :name "origin" :url LIB-URL)) :pushed #("origin/main")
                  :members #(SENDER-SOURCE-DIR))))
@@ -208,3 +210,41 @@
   (<- unpushed-world tuple (world-of False False))
   (<- unpushed (| RepoCheckout InvalidKind) (declaring-kind unpushed-world "/src/app/pkg" APP-HEAD))
   (assert (= unpushed InvalidKind.COMMIT-NOT-ON-REMOTE) unpushed))
+
+
+;; --- remote の url が手元の path なら断る(#3167) ------------------------------------------
+;;
+;; 宣言の url は worker が clone する元。手元の path(絶対・./・../ で始まる)と file:// の remote から組んだ宣言は、別の機体の worker が
+;; 取れないので、組み立て(runtime-env-of-checkouts)も系の宣言の前の検め(checked-declaring-checkout)も LOCAL-REMOTE で断る。
+;; GitHub の scp の形・https・ssh:// は断らない(scp の形の `:` の後ろの owner/repo を相対の path と取り違えない)。
+
+(val LOCAL-URLS #("/srv/git/app.git" "./app.git" "../remotes/app.git" "file:///srv/git/app.git"))
+(val NETWORK-URLS #("git@github.com:owner/app.git" "https://github.com/owner/app.git" "ssh://git@github.com/owner/app.git"))
+
+
+(deftest test-local-paths-and-network-urls-are-told-apart []
+  ;; 読み分けの純粋な関数: git が手元の path と読む形(相対の path・file:// を含む)だけが真。scp の形の `:` の後ろの owner/repo
+  ;; (`/` を含む)を相対の path と取り違えない。
+  (for [url (+ LOCAL-URLS #("app.git" "repos/app.git" "/srv/git/with:colon.git"))]
+    (assert (! (local-remote? url)) url))
+  (for [url (+ NETWORK-URLS #("git@host.example:app.git" "https://example.invalid/app.git"))]
+    (assert (not (! (local-remote? url))) url)))
+
+
+(deftest test-a-remote-on-a-local-path-is-refused []
+  (for [url LOCAL-URLS]
+    (<- world tuple (world-of False True :app-url url))
+    (<- built (| RuntimeEnv InvalidKind) (build world))
+    (assert (= built InvalidKind.LOCAL-REMOTE) #(url built))
+    (<- declaring (| RepoCheckout InvalidKind) (declaring-kind world "/src/app/pkg" APP-HEAD))
+    (assert (= declaring InvalidKind.LOCAL-REMOTE) #(url declaring))))
+
+
+(deftest test-a-remote-on-the-network-is-not-refused []
+  (for [url NETWORK-URLS]
+    (<- world tuple (world-of False True :app-url url))
+    (<- built (| RuntimeEnv InvalidKind) (build world))
+    (assert (isinstance built RuntimeEnv) #(url built))
+    (assert (= (tuple (gfor r built.repos #(r.name r.url))) #(#("app" url) #("lib" LIB-URL))) built)
+    (<- declaring (| RepoCheckout InvalidKind) (declaring-kind world "/src/app/pkg" APP-HEAD))
+    (assert (= declaring (RepoCheckout :name "system-source" :url url :commit APP-HEAD)) #(url declaring))))
