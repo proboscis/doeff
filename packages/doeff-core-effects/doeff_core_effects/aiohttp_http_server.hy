@@ -10,7 +10,9 @@
 ;;;                 answer の Program を別の thread(asyncio.to_thread)の自分の run で走らせて答える(probe-answer)。札は 1 つ数える
 ;;;   待ち受け      aiohttp の server を待ち受けの loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
 ;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
-;;;                 長い中継が他の要求を止めない
+;;;                 長い中継が他の要求を止めない。列(Arrivals)に既に在る出来事は、HttpNextRequest の節が答え手の節の thread で待たずに
+;;;                 取る(共有の loop へ入らない — 書き 1 回で起きた待ちの読みが列に溜まった時に 1 つずつ往復しない・agora-redesign #3688
+;;;                 の案 1)。列が空の時だけ共有の loop から待ち受けの loop で積まれるまで待つ
 ;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
 ;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
 ;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
@@ -179,6 +181,56 @@
     None))
 
 
+(defclass Arrivals []
+  "受け口の列(要求と ws の出来事・閉じの印)。待ち受けの loop だけが積み(put)、受け手はどの thread からでも列に在る出来事を待たずに
+   取れ(take-now — 共有の loop へ入らない・agora-redesign #3688 の案 1)、空なら待ち受けの loop の上で待つ(wait)。積んだ順に取れる。"
+
+  (defn #^ None __init__ [self]
+    ;; ready = 積まれてまだ取られていない出来事(deque の append と popleft は thread をまたいで安全)。waiters = 空の列を待つ受け手の
+    ;; future(待ち受けの loop だけが触る)。
+    (setv self.ready (deque)
+          self.waiters (deque))
+    None)
+
+  (defn #^ None put [self #^ HttpEvent event]
+    "出来事を列の末尾へ積み、空の列を待つ受け手を 1 つ起こすため(待ち受けの loop の上で)。"
+    (.append self.ready event)
+    (self.wake-one)
+    None)
+
+  (defn #^ None wake-one [self]
+    "空の列を待つ受け手のうち、まだ待っている先頭の 1 つを起こすため(取り消された待ちは飛ばす)。起こされた受け手は列から自分で取る。"
+    (while self.waiters
+      (setv waiter (.popleft self.waiters))
+      (when (not (.done waiter))
+        (.set-result waiter None)
+        (break)))
+    None)
+
+  (defn #^ (| HttpEvent None) take-now [self]
+    "列の先頭の出来事を待たずに取るため(どの thread からでも — 空なら None)。"
+    (try
+      (.popleft self.ready)
+      (except [IndexError]
+        None)))
+
+  (defn :async #^ HttpEvent wait [self]
+    "列の先頭の出来事を取り、空なら積まれるまで待つため(待ち受けの loop の上で)。起こされた時に他の受け手が先に取っていれば待ち直す。
+     待ちが取り消された時に列に出来事が残っていれば、次に待つ受け手を起こす(asyncio.Queue と同じく起こしを取りこぼさない)。"
+    (while True
+      (setv event (self.take-now))
+      (when (is-not event None)
+        (return event))
+      (setv waiter (.create-future (asyncio.get-running-loop)))
+      (.append self.waiters waiter)
+      (try
+        (await waiter)
+        (except [asyncio.CancelledError]
+          (when self.ready
+            (self.wake-one))
+          (raise))))))
+
+
 (defclass WebEdge []
   "aiohttp の待ち受けと、札ごとの命令の待ちと、ws に上げた接続(待ち受けの loop — 頭の註 — の上だけで触る。答え手の節は across で
    渡す)。待ち受けの handler の session の値。"
@@ -187,7 +239,8 @@
     (setv self.address None
           self.ws-max-bytes None
           self.ws-send-max-bytes None
-          self.queue None
+          ;; 受け口の列(待ち受けの loop が積み、答え手の節は在れば待たずに取る — Arrivals)。
+          self.arrivals (Arrivals)
           self.client None
           self.runner None
           self.waiting {}
@@ -239,8 +292,7 @@
           self.ws-max-bytes ws-max-bytes
           self.ws-send-max-bytes ws-send-max-bytes
           self.probes probes)
-    (setv self.queue (asyncio.Queue)
-          self.client (aiohttp.ClientSession :auto-decompress False
+    (setv self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
                                                                              :sock-read HTTP-READ-SECONDS)))
     (setv app (web.Application))
@@ -252,10 +304,24 @@
     (HttpAddress :host self.address.host :port (get bound 1)))
 
   (defn :async #^ HttpEvent next-arrival [self]
-    "受け口の列の次の出来事を本体へ渡すため(閉じた後は列に何が残っていても HttpServerClosed)。"
+    "受け口の列の次の出来事を、積まれるまで待って本体へ渡すため(待ち受けの loop の上で — 閉じた後は列に何が残っていても
+     HttpServerClosed)。"
     (when (is-not self.shut None)
       (return (HttpServerClosed :reason self.shut)))
-    (setv event (await (.get self.queue)))
+    (self.closed-or (await (.wait self.arrivals))))
+
+  (defn #^ (| HttpEvent None) take-arrival [self]
+    "受け口の列に既に在る次の出来事を、答え手の節の thread で待たずに取るため(共有の loop へ入らない・agora-redesign #3688 の案 1 —
+     列が空なら None で、答え手の節が next-arrival で待つ)。閉じた後は next-arrival と同じく HttpServerClosed。"
+    (when (is-not self.shut None)
+      (return (HttpServerClosed :reason self.shut)))
+    (setv event (.take-now self.arrivals))
+    (if (is event None)
+        None
+        (self.closed-or event)))
+
+  (defn #^ HttpEvent closed-or [self #^ HttpEvent event]
+    "取った出来事を渡すため — 閉じた後に取った閉じの印でない出来事は、閉じた理由の HttpServerClosed に替える。"
     (if (and (is-not self.shut None) (not (isinstance event HttpServerClosed)))
         (HttpServerClosed :reason self.shut)
         event))
@@ -319,11 +385,11 @@
     (if (is early None)
         (setv (get self.unread ticket) request)
         (setv (get self.prefetched ticket) early))
-    (await (.put self.queue (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
-                                         :upgrade (upgrade-asked request)
-                                         :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
-                                         :received-at received-at
-                                         :remote request.remote)))
+    (.put self.arrivals (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
+                                            :upgrade (upgrade-asked request)
+                                            :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
+                                            :received-at received-at
+                                            :remote request.remote))
     (setv [command unclaimed] (await waiting))
     ;; 命令を受けた札の本文はもう読ませない(渡した拍に hand-over が外した)。本文を上限で断った札は、答えを送った後に接続を閉じる。
     (setv cut-off (in ticket self.oversized))
@@ -349,14 +415,14 @@
     (setv peer (WsPeer ticket request ws))
     (setv (get self.peers ticket) peer)
     (setv peer.writer (asyncio.create-task (self.write-loop peer)))
-    (await (.put self.queue (WsOpened :ticket ticket :received-at (time.monotonic))))
+    (.put self.arrivals (WsOpened :ticket ticket :received-at (time.monotonic)))
     (try
       ;; async for では相手の close の理由(message.extra)が読めないので、receive を直に回して相手の閉じを控える。
       (while True
         (setv message (await (.receive ws)))
         (match message.type
-          WSMsgType.TEXT (await (.put self.queue (WsTextArrived :ticket ticket :text message.data :received-at (time.monotonic))))
-          WSMsgType.BINARY (await (.put self.queue (WsBinaryArrived :ticket ticket :data message.data :received-at (time.monotonic))))
+          WSMsgType.TEXT (.put self.arrivals (WsTextArrived :ticket ticket :text message.data :received-at (time.monotonic)))
+          WSMsgType.BINARY (.put self.arrivals (WsBinaryArrived :ticket ticket :data message.data :received-at (time.monotonic)))
           WSMsgType.CLOSE (do (setv peer.received (WsCloseFrame :code (int message.data) :reason (or message.extra "")))
                               (break))
           _ (break)))
@@ -377,7 +443,7 @@
     ;; 名乗る状態符と理由は台本の答え手と同じ closing-of で決める(切り・こちらの閉じ・相手の閉じ・切れた時の状態符の順)。
     (setv lost peer.ws.close-code)
     (setv frame (run (closing-of peer.cut peer.sent peer.received (if (is lost None) None (int lost)))))
-    (await (.put self.queue (WsClosed :ticket peer.ticket :code frame.code :reason frame.reason :received-at (time.monotonic))))
+    (.put self.arrivals (WsClosed :ticket peer.ticket :code frame.code :reason frame.reason :received-at (time.monotonic)))
     None)
 
   (defn :async #^ None write-loop [self #^ WsPeer peer]
@@ -472,8 +538,7 @@
       (await (.close self.client)))
     (when (> self.dropped-answers 0)
       (relay-failed (.format "待ち受けを閉じる — 相手が先に切って届かなかった答えは合わせて {} 件" self.dropped-answers)))
-    (when (is-not self.queue None)
-      (await (.put self.queue (HttpServerClosed :reason reason))))
+    (.put self.arrivals (HttpServerClosed :reason reason))
     None)
 
   (defn :async #^ WsSendReport take-report [self]
@@ -634,6 +699,16 @@
     early early))
 
 
+(defk next-on-edge [edge]
+  {:pre [(: edge WebEdge)] :post [(: % HttpEvent)]}
+  "受け手へ次の出来事を渡すため: 受け口の列に既に在れば答え手の節の thread で待たずに取り(共有の loop へ入らない — 頭の註の待ち受け)、
+   空なら共有の loop から待ち受けの loop で積まれるまで待つ(across)。"
+  (match (.take-arrival edge)
+    None (do (<- arrival HttpEvent (Await (.across edge (.next-arrival edge))))
+             arrival)
+    event event))
+
+
 (defhandler aiohttp-http-server
   ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
   ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
@@ -642,7 +717,7 @@
     (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes))))
     (resume bound))
   (HttpNextRequest []
-    (<- arrival (Await (.across edge (.next-arrival edge))))
+    (<- arrival HttpEvent (next-on-edge edge))
     (resume arrival))
   (HttpReadBody [ticket max-bytes]
     (<- outcome HttpBodyOutcome (read-on-edge edge ticket max-bytes))
