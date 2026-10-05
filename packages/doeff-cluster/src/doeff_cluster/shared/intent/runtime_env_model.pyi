@@ -126,6 +126,7 @@ class EnvFailureKind(StrEnum):
     DISK_FULL = "disk-full"
     ENV_INCOMPATIBLE = "env-incompatible"
     PREPARE_TIMEOUT = "prepare-timeout"
+    MEMORY_KILLED = "memory-killed"
 
 RETRYABLE_KINDS: frozenset[EnvFailureKind]
 
