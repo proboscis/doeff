@@ -3,6 +3,8 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import replace as replace
+from itertools import groupby as groupby
+from operator import attrgetter as attrgetter
 from math import ceil as ceil
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
@@ -44,6 +46,7 @@ from doeff_cluster.coordinator.intent.cluster_model import PLACED_PHASES as PLAC
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
+from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
 from doeff_hy.table import Table as Table
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
@@ -342,6 +345,9 @@ def board_changes(before: ClusterState, after: ClusterState) -> list:
     ...
 
 def hyx_text_mapXquestion_markX(value: dict | list | str | int | float | bool | None) -> bool:
+    ...
+
+def worker_report(previous: WorkerReport | None, rows: tuple, now: int, endpoint: str | None, order: GenerationOrder, boot_at: int | None, declared: frozenset) -> _Program[WorkerReport, object]:
     ...
 
 def register_heartbeat(given: ClusterState, body: HeartbeatBody, now: int) -> _Program[ClusterState, object]:

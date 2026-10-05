@@ -196,6 +196,8 @@
 ;; ServiceFact = Service 1 つ: name・replicas = 宣言の台数(宣言の行に無ければ None)・failures = 置き先の担い手が報告した続けて落ちた回数
 ;;   (status.process.failures — 今の process が安定して動いていれば 0)・last-exit-code / last-exit-at-ms = 最後の終わりの code と時刻
 ;;   (epoch ミリ秒)。担い手の報告が無い(置き先が無い・報告の行が無い・欄を載せない担い手)欄は None — 0 と黙って倒さない。
+;;   last-exit-at-ms は最後に終わったと知れた刻 — worker の世代の入れ替わりでは、新しい世代の起動の刻を上限として数える(実の終わりは
+;;   それ以前・#3672)。
 ;; ServicesUnreachable = coordinator に届かず一覧を読めなかった(落ちているかは分からない — 直ったとみなさない)。
 
 (defrecord ServiceFact

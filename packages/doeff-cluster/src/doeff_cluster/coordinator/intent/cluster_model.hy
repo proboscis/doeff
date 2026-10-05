@@ -393,13 +393,25 @@
   (#^ (get dict #(str DrainProgress)) drains))
 
 
+(defrecord KnownExit
+  "worker の上の job 1 つの、最後に終わったと知れた刻(WorkerReport.last-exits の 1 行): job = job の名(状態の報告の行の name)・
+   at-ms = その刻(epoch ms)。worker の世代の入れ替わりで知った刻は新しい世代の起動の刻 — 実の終わりはそれ以前。"
+  (#^ str job)
+  (#^ int at-ms))
+
+
 (defrecord WorkerReport
   "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
-   欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。"
+   欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。
+   last-exits = job ごとの最後に終わったと知れた刻(KnownExit の列・job の名の順 — 作るのは cluster_policy.worker-report)。jobs の行の
+   last-exit-at-ms はこの刻で、同じ worker・同じ job の名では前に知っていた刻から戻さない。worker の世代の入れ替わりでは、前の世代で
+   process を持っていた job を新しい世代の起動の刻までに終わったと数える(実の終わりはそれ以前・#3672)。新しい世代の最初の heartbeat は
+   行を載せないので、行の無い名も宣言の在る job の間は持ち、次に載る同じ名の行へ運ぶ。何も知らない報告は空の列。"
   (#^ int at)
   (#^ (| str None) endpoint)
-  (#^ (get tuple #(StatusRow ...)) jobs))
+  (#^ (get tuple #(StatusRow ...)) jobs)
+  (setv #^ (get tuple #(KnownExit ...)) last-exits #()))
 
 
 (defrecord ServiceBody

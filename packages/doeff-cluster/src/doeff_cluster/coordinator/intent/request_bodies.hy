@@ -144,7 +144,9 @@
 (defwire StatusRow
   "heartbeat の状態の報告の行 1 つ(worker/protocol/heartbeat の status-row と同じ形 — #2447 で dict からこの型にした): name = job の名
    (task は task/<id>)・phase・desired-revision / running-revision・pid・attempts・detail・failures = 続けて落ちた回数(#3477)・
-   last-exit-code / last-exit-at-ms = 最後の終わりの code と時刻・instance = process の世代・spec-hash・
+   last-exit-code / last-exit-at-ms = 最後の終わりの code と時刻(coordinator が持ち続ける行の last-exit-at-ms は最後に終わったと
+   知れた刻 — worker の世代の入れ替わりでは、新しい世代の起動の刻を上限として数える〔実の終わりはそれ以前〕・
+   cluster_policy.worker-report)・instance = process の世代・spec-hash・
    placement = 割り当ての世代・retired-from = 入れ替えで退いた process の元の名・failure-kind / retryable = 実行環境の準備の失敗
    (env-failed の行だけ)・probe = 入口の検めの姿・result = 終わった task の詰めた結果・task = 切り離した task の写し(引き取りが
    読む — 形の検めは cluster_policy.adopted-task)。worker の載せない欄は None(黙って既定の値へ倒さない)。"

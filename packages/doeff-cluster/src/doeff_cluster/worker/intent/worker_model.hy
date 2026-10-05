@@ -282,7 +282,9 @@
   (#^ int attempts)
   (setv #^ str detail "")
   ;; 落ちた事実(#3477): 続けて exit code が 0 でなく終わった回数(今の process が stable-run-ms 以上動いていれば 0)と、
-  ;; 最後の終わりの code と時刻。coordinator は Service の status に欄で載せる(文の detail から読まない)。
+  ;; 最後の終わりの code と時刻。coordinator は Service の status に欄で載せる(文の detail から読まない)。coordinator の見せる
+  ;; last-exit-at-ms は最後に終わったと知れた刻 — worker の世代の入れ替わりでは、新しい世代の起動の刻を上限として数える(実の終わりは
+  ;; それ以前・この記憶は世代とともに消えるので、worker は前の世代の終わりを報告しない・#3672)。
   (setv #^ int failures 0)
   (setv #^ (| int None) last-exit-code None)
   (setv #^ (| int None) last-exit-at-ms None)
