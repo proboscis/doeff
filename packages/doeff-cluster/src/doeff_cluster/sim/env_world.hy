@@ -509,6 +509,15 @@
           (for [#(package version) installed]
             (<- (write-file (posixpath.join site (.format "{}-{}.dist-info" package version) "METADATA")
                             (.format "Name: {}\nVersion: {}\n" package version))))
+          ;; 入れた package の最上位の名ごとに source(`<名>/__init__.py`)を置く。本物の uv と同じく、--compile-bytecode の時だけ
+          ;; 入れる時に bytecode(`<名>/__pycache__/__init__.cpython-<版の数字>.pyc`)も焼く — 無ければ job が最初の import で焼く(#3695)。
+          (val compiled (in "--compile-bytecode" args))
+          (val tag (.format "cpython-{}" (.replace python "." "")))
+          (val tops (lfor #(name names) lines :if (in name wanted) top names top))
+          (for [top tops]
+            (<- (write-file (posixpath.join site top "__init__.py") ""))
+            (when compiled
+              (<- (write-file (posixpath.join site top "__pycache__" (.format "__init__.{}.pyc" tag)) ""))))
           (<- (bump {"syncs" 1 "downloads" (len missing)}))
           (ProcessOutcome :stdout "" :stderr (.format "Prepared {} packages in 1ms\n" (len missing)) :exit-code 0))))
 
