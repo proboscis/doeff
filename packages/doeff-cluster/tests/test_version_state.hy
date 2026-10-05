@@ -13,7 +13,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob RolloutTarget VersionState NotReadyKind UnplacedKind])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.shared.intent.job_model [JobPhase] doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs])
+(import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs resource-version-of])
 (import doeff_cluster.coordinator.core.api_policy [target-view])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.api_policy :as api-policy)
@@ -322,6 +322,93 @@
   (val reborn (! (beat running "atlas" [] :boot "b2" :boot-at reborn-at)))
   (val again (! (beat reborn "atlas" [(! (row-of reborn "starting" {"pid" None "instance" None}))] :boot "b2" :boot-at reborn-at)))
   (assert (= (get (! (process-of again)) "lastExitAtMs") reborn-at) (! (process-of again))))
+
+
+;; --- 最後に終わったと知れた刻は Service の版を進める(#3672 の続き)------------------------------------------------------
+;; 使い手(worker の名簿を写す係)は Service の版の変化を GET /watch で待ち、status.process.lastExitAtMs が進んだ事で担い手の上の process が
+;; 終わったと知る。刻は snapshot の行の status.lastExitAtMs にも載り(担い手の行が刻を持つ間だけ)、刻だけが進んだ拍でも版と出来事が
+;; 進む。刻が進むのは process の終わりと worker の世代の入れ替わりだけなので、同じ世代の拍のくり返しでは版は進まない。
+
+(val BORN-AT (- START 60000))      ; 担い手 atlas の 1 世代目の起動の刻
+(val REBORN-AT (- START 1000))     ; 機体ごと死んで戻った 2 世代目の起動の刻
+
+
+(defk service-status [state]
+  {:pre [(: state ClusterState)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "Service w の snapshot の行の status(stamp が前後を比べて版を進める単位)を読むため。"
+  (get (snapshot state START T) "Service/w" "status"))
+
+
+(defk reborn-carrier []
+  {:pre [] :post [(: % (get tuple #(ClusterState ClusterState ClusterState ClusterState)))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "他に変化の無い cluster で、担い手 atlas の 1 世代目が w を走らせ、機体ごと死んで 2 世代目(起動の刻 REBORN-AT)で戻った世界の 4 拍を
+   求めるため: #(1 世代目が w を走らせている 2 世代目の最初の heartbeat(行なし)2 世代目が w の行を process を起こす前の phase
+   (preparing)で載せた 2 世代目が新しい pid で w を起こした)。"
+  (val placed (! (beat (! (declared)) "atlas" [] :boot "b1" :boot-at BORN-AT)))
+  (val running (! (beat placed "atlas" [(! (row-of placed))] :boot "b1" :boot-at BORN-AT)))
+  (val reborn (! (beat running "atlas" [] :boot "b2" :boot-at REBORN-AT)))
+  (val preparing (! (beat reborn "atlas" [(! (row-of reborn "preparing" {"pid" None "instance" None}))] :boot "b2" :boot-at REBORN-AT)))
+  (val restarted (! (beat preparing "atlas" [(! (row-of preparing "running" {"pid" 200 "instance" "2-b"}))] :boot "b2" :boot-at REBORN-AT)))
+  #(running reborn preparing restarted))
+
+
+(deftest test-a-new-generation-moves-the-service-version-by-the-last-exit
+  ;; (a) 2 世代目の最初の heartbeat(行なし)と、次の heartbeat(w の行を preparing で載せる)の間で ready・版の判定・置き先は同じ(どちらも
+  ;; NotReady・Updating)。変わるのは担い手の行の lastExitAtMs(新しい世代の起動の刻)だけ — それでも Service の版が進み、出来事の記録に
+  ;; 刻の変化が残る。
+  (val worlds (! (reborn-carrier)))
+  (val running (get worlds 0))
+  (val reborn (get worlds 1))
+  (val preparing (get worlds 2))
+  (val restarted (get worlds 3))
+  ;; 刻を持たない担い手の行: 欄を載せない(無い Service の status の形・版は以前と同じ)。
+  (assert (not-in "lastExitAtMs" (! (service-status running))) (! (service-status running)))
+  (assert (= (get (! (service-status preparing)) "ready") (get (! (service-status reborn)) "ready") "NotReady"))
+  (assert (= (get (! (service-status preparing)) "version") (get (! (service-status reborn)) "version") {"state" "Updating"}))
+  (assert (> (resource-version-of preparing "Service/w") (resource-version-of reborn "Service/w"))
+          #((resource-version-of reborn "Service/w") (resource-version-of preparing "Service/w")))
+  (assert (>= (get (! (service-status preparing)) "lastExitAtMs") REBORN-AT) (! (service-status preparing)))
+  (assert (any (gfor e preparing.audit (and (= e.kind "Service") (= (.get e.changes "status.lastExitAtMs") [None REBORN-AT]))))
+          (lfor e preparing.audit e.changes))
+  ;; 2 世代目が新しい pid で process を起こした行でも、刻は新しい世代の起動の刻のまま(版は ready の変化で進む)。
+  (assert (> (resource-version-of restarted "Service/w") (resource-version-of preparing "Service/w")))
+  (assert (= (get (! (service-status restarted)) "lastExitAtMs") REBORN-AT) (! (service-status restarted))))
+
+
+(deftest test-heartbeats-of-the-same-generation-keep-the-service-version
+  ;; (b) 同じ世代の heartbeat をくり返しても Service の版は進まない — 世代の入れ替わりで数えた刻を運ぶ行でも、worker が自分で報告した
+  ;; 終わりの刻を載せる行でも(刻は拍ごとに替わる欄ではない)。
+  (val restarted (get (! (reborn-carrier)) 3))
+  (val row (! (row-of restarted "running" {"pid" 200 "instance" "2-b"})))
+  (val carried (! (beat (! (beat restarted "atlas" [row] :boot "b2" :boot-at REBORN-AT :now (+ START 10)))
+                        "atlas" [row] :boot "b2" :boot-at REBORN-AT :now (+ START 20))))
+  (assert (= (resource-version-of carried "Service/w") (resource-version-of restarted "Service/w"))
+          #((resource-version-of restarted "Service/w") (resource-version-of carried "Service/w")))
+  (assert (= (get (! (service-status carried)) "lastExitAtMs") REBORN-AT))
+  (val reported (! (reporting {"lastExitCode" 0 "lastExitAtMs" 990})))
+  (val own (! (row-of reported "running" {"lastExitCode" 0 "lastExitAtMs" 990})))
+  (val repeated (! (beat (! (beat reported "atlas" [own] :now (+ START 10))) "atlas" [own] :now (+ START 20))))
+  (assert (= (resource-version-of repeated "Service/w") (resource-version-of reported "Service/w"))
+          #((resource-version-of reported "Service/w") (resource-version-of repeated "Service/w")))
+  (assert (= (get (! (service-status repeated)) "lastExitAtMs") 990)))
+
+
+(deftest test-a-process-end-in-the-same-generation-moves-the-service-version
+  ;; (c) 同じ世代で w の process が終わり(code 0 — 続けて落ちた回数 failures は増えない)、次の拍までに起こし直された: phase(running)・
+  ;; ready・版の判定は同じで、変わるのは担い手の行の lastExitAtMs だけ。終わりのたびに Service の版が進む。
+  (val running (! (reporting)))
+  (val ended (! (beat running "atlas" [(! (row-of running "running" {"pid" 101 "instance" "2-a" "attempts" 2
+                                                                       "lastExitCode" 0 "lastExitAtMs" 990}))])))
+  (val before (! (service-status running)))
+  (val after (! (service-status ended)))
+  (assert (= (dfor #(k v) (.items after) :if (!= k "lastExitAtMs") k v) before) #(before after))
+  (assert (> (resource-version-of ended "Service/w") (resource-version-of running "Service/w"))
+          #((resource-version-of running "Service/w") (resource-version-of ended "Service/w")))
+  (assert (= (get after "lastExitAtMs") 990) after)
+  (val again (! (beat ended "atlas" [(! (row-of ended "running" {"pid" 102 "instance" "3-a" "attempts" 3
+                                                                  "lastExitCode" 0 "lastExitAtMs" 995}))])))
+  (assert (> (resource-version-of again "Service/w") (resource-version-of ended "Service/w")))
+  (assert (= (get (! (service-status again)) "lastExitAtMs") 995)))
 
 
 (deftest test-a-refused-declaration-is-blocked-until-it-is-deleted
