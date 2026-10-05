@@ -10,7 +10,8 @@
 
 (val ROOT (. (Path __file__) (resolve) parent parent))
 (val BASE-DOCKERFILE (/ ROOT "deploy" "base" "Dockerfile"))
-(val APT-LINE "      ca-certificates git openssh-client tini build-essential pkg-config libssl-dev \\")
+(val APT-LINE "      ca-certificates git openssh-client tini build-essential pkg-config libssl-dev libpq5 \\")
+(val LIBPQ-ROW "#   libpq5            (2) PostgreSQL の driver psycopg(binary の wheel なし)が実行時に読む libpq(PostgreSQL に繋ぐ job・#3692)\n")
 
 
 (defk rules-of [text]
@@ -48,12 +49,13 @@
 
 
 (deftest test-a-declared-os-library-for-reason-two-is-allowed
-  ;; 理由 (2): 業務の package が新しい OS の library を要する時は、表に理由 (2) で載せて入れる — 赤にならない。
+  ;; 理由 (2): 業務の package が新しい OS の library を要する時は、表に理由 (2) で載せて入れる — 赤にならない。本物の Dockerfile の実例 =
+  ;; libpq5(psycopg が実行時に読む・#3692 — 無い image では PostgreSQL に繋ぐ job が import psycopg で落ちた)。本物が赤に
+  ;; ならないことは test-the-base-dockerfile-keeps-the-contract が確かめる。反例 = 表の行だけ消すと、apt の行の libpq5 が表に無い package で赤。
   (val text (.read-text BASE-DOCKERFILE :encoding "utf-8"))
-  (val with-package (.replace text APT-LINE (.replace APT-LINE "libssl-dev" "libssl-dev libpq5")))
-  (val changed (.replace with-package
-                         "#   libssl-dev        (1) native の build が openssl を結ぶ\n"
-                         "#   libssl-dev        (1) native の build が openssl を結ぶ\n#   libpq5            (2) PostgreSQL の driver が実行時に読む\n"))
-  (assert (!= changed text))
-  (<- found tuple (image-contract-violations changed))
-  (assert (= found #()) found))
+  (assert (in LIBPQ-ROW text) "表に libpq5 の行が理由 (2) で在る")
+  (assert (in APT-LINE text) "apt の行が libpq5 を入れる")
+  (val without-row (.replace text LIBPQ-ROW ""))
+  (assert (!= without-row text))
+  (<- rules tuple (rules-of without-row))
+  (assert (= rules #("os-package-undeclared")) rules))

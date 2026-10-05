@@ -18,6 +18,7 @@
 #   build-essential   (1) doeff-vm の native の build(cc・ld)
 #   pkg-config        (1) native の build が OS の library を探す
 #   libssl-dev        (1) native の build が openssl を結ぶ
+#   libpq5            (2) PostgreSQL の driver psycopg(binary の wheel なし)が実行時に読む libpq(PostgreSQL に繋ぐ job・#3692)
 #
 #   docker build -t <名> -f packages/doeff-cluster/deploy/base/Dockerfile packages/doeff-cluster/deploy
 ARG UV_VERSION=0.12.19
@@ -27,7 +28,7 @@ FROM rust:${RUST_VERSION}-slim-bookworm AS rust
 
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git openssh-client tini build-essential pkg-config libssl-dev \
+      ca-certificates git openssh-client tini build-essential pkg-config libssl-dev libpq5 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /uvx /usr/local/bin/
 # Rust の toolchain は読むだけ(RUSTUP_HOME)。crate の取得先(CARGO_HOME)は起動の script が node の dir へ向ける。
