@@ -695,6 +695,7 @@
   {:pre [(: world EnvWorld)] :post [(: % dict)] :tags {:context "runtime-env" :role "entry"}}
   "翻訳の設定(runtime-env.*): 鍵の表 = 世界の remote の url から unlisted を除いた物(鍵なし)。"
   {"runtime-env.state" STATE-DIR
+   "runtime-env.uv-cache" (+ STATE-DIR "/uv-cache")
    "runtime-env.repo-keys" (dfor r world.remotes :if (not-in r.url world.unlisted) r.url "")
    "runtime-env.code-prepare" CODE-PREPARE
    "runtime-env.uv" "uv"

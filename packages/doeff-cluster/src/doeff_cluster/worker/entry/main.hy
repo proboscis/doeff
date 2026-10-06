@@ -1,7 +1,7 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster.worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
-;;;     --task-reserve N --env-roots-cap BYTES --env-min-free BYTES --code-store DIR
+;;;     --task-reserve N --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -198,6 +198,9 @@
   ;; bytecode の保存先の dir(#3858 — 値は deploy/boot.sh の DOEFF_HY_CODE_STORE の 1 か所・焼く道具は同じ値を環境変数で読む)。
   (.add-argument parser "--code-store" :required True
                  :help "source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・`off` = 保存先を使わない)")
+  ;; uv の cache の dir(#3858 — 値は deploy/boot.sh の DOEFF_UV_CACHE_DIR の 1 か所・実行環境の準備の uv の子の UV_CACHE_DIR)。
+  (.add-argument parser "--uv-cache" :required True
+                 :help "実行環境の準備の uv の子が使う cache の dir(UV_CACHE_DIR・空きが最低を割った時に prune する)")
   (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")
   (.add-argument parser "--pass-env" :default ""
                  :help "子 process へ渡す worker の環境変数の名(`,` で並べる — 機体の設定の path や URL。無い名は起動を止める)")
@@ -247,7 +250,7 @@
         warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ state-dir "logs")) :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
-                          :repo-keys args.repo-keys :uv args.uv :roots-cap-bytes args.env-roots-cap
+                          :repo-keys args.repo-keys :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
                           :min-free-bytes args.env-min-free
                           ;; bytecode の保存先の dir(掃除が 7 日使われない entry を消す — `off` は保存先を使わない設定)。
                           :code-store (if (= args.code-store "off") None args.code-store))

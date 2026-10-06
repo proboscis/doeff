@@ -88,7 +88,7 @@
     (val at (- now (* 3600 hours)))
     (os.utime (/ roots name ENV-MARKER) #(at at))
     (os.utime (/ roots name) #(at at)))
-  (EnvSettings :state (str (/ tmp "state")) :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "true" :roots-cap-bytes CAP))
+  (EnvSettings :state (str (/ tmp "state")) :uv-cache (str (/ tmp "state" "uv-cache")) :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "true" :roots-cap-bytes CAP))
 
 
 (defk sweep-once [pinned]

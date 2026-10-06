@@ -36,7 +36,7 @@
 #   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ用意する(doeff_bake —
 #   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。焼けなくても起動は続ける(import の時に作られる)。
 #   同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
-#   uv の cache と Python は実行環境の root と同じ $WORK_DIR/state の下(uv-cache・python)。crate の取得先は $WORK_DIR/state/cargo。
+#   uv の cache は DOEFF_UV_CACHE_DIR(既定 $WORK_DIR/state/uv-cache — 実行環境の root と同じ dir)、Python は $WORK_DIR/state/python。crate の取得先は $WORK_DIR/state/cargo。
 #   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
 #
@@ -55,6 +55,10 @@ role=${ROLE:-worker}
 # 名を引く)。worker の永続の dir の下に置き、自分の子(実行環境の準備・焼く道具・job)へ継ぐ。呼び手が値を置けばそれを使う(日次の全体
 # 検証の task と、手元の 1 台の cluster を起こすテストは件をまたいで同じ dir を渡す)。7 日使われない entry は worker の掃除が消す。
 export DOEFF_HY_CODE_STORE="${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code-store}"
+# uv の cache の dir(root の準備の uv と、worker の実行環境の準備の uv の子の UV_CACHE_DIR — worker へは --uv-cache で渡す)。既定は
+# worker の永続の dir の下。呼び手が値を置けばそれを使う(手元の 1 台の cluster を件ごとに起こすテストは、件をまたいで同じ dir を渡して
+# 依存を件ごとに取り直さない・#3858)。
+export DOEFF_UV_CACHE_DIR="${DOEFF_UV_CACHE_DIR:-$WORK_DIR/state/uv-cache}"
 # 知らない役は、展開も準備もせず名指しで断る(worker の起動へ落とさない — 走っている worker の Pod の中で役 prepare を、その役を
 # 知らない版へ向けて撃っても、2 つ目の worker を起こさない)。
 case "$role" in
@@ -129,7 +133,7 @@ doeff_extract() {
 # 展開した root を準備して PATH の頭に置く(引き継いだ先 — 宣言した commit の script — の受け持ち)。drain は準備せず、完成した root を
 # 使うだけ(preStop で build しない)。
 doeff_prepare() {
-  export UV_CACHE_DIR="$WORK_DIR/state/uv-cache" UV_PYTHON_INSTALL_DIR="$WORK_DIR/state/python" CARGO_HOME="$WORK_DIR/state/cargo"
+  export UV_CACHE_DIR="$DOEFF_UV_CACHE_DIR" UV_PYTHON_INSTALL_DIR="$WORK_DIR/state/python" CARGO_HOME="$WORK_DIR/state/cargo"
   export UV_NO_PROGRESS=1
   exec 8>"$boot/boot.lock"
   flock 8
@@ -153,7 +157,7 @@ doeff_prepare() {
     synced=$(date +%s)
     # 答え = 1 行「<組んだ|使った> <wheel の path>」(組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
     answer=$(PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" \
-      --mirror "$boot/doeff.git" --commit "$sha" --state "$WORK_DIR/state")
+      --mirror "$boot/doeff.git" --commit "$sha" --state "$WORK_DIR/state" --uv-cache "$DOEFF_UV_CACHE_DIR")
     how=${answer%% *}
     wheel=${answer#* }
     wheeled=$(date +%s)
@@ -405,4 +409,4 @@ exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --na
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
   --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \
-  --code-store "$DOEFF_HY_CODE_STORE"
+  --code-store "$DOEFF_HY_CODE_STORE" --uv-cache "$DOEFF_UV_CACHE_DIR"

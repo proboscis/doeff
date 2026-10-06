@@ -43,12 +43,12 @@
   {"env" declared "key" name "platform" platform "root" root "known" (list known) "minFreeBytes" min-free-bytes})
 
 
-(defk prepare-argv [hy-command tool request result state repo-keys code-prepare uv progress]
-  {:pre [(: hy-command str) (: tool str) (: request str) (: result str) (: state str) (: repo-keys str) (: code-prepare str) (: uv str)
-         (: progress str)]
+(defk prepare-argv [hy-command tool request result state uv-cache repo-keys code-prepare uv progress]
+  {:pre [(: hy-command str) (: tool str) (: request str) (: result str) (: state str) (: uv-cache str) (: repo-keys str) (: code-prepare str)
+         (: uv str) (: progress str)]
    :post [(: % tuple)]}
   "準備の process の起こし方(nice で優先度を下げる — 走っている手番の CPU を奪わない)を組むため。"
-  #("nice" "-n" "10" hy-command "-m" tool "--request" request "--result" result "--state" state "--repo-keys" repo-keys
+  #("nice" "-n" "10" hy-command "-m" tool "--request" request "--result" result "--state" state "--uv-cache" uv-cache "--repo-keys" repo-keys
     "--code-prepare" code-prepare "--uv" uv "--progress" progress))
 
 
