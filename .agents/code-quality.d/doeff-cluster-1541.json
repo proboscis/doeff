@@ -1524,7 +1524,8 @@
         "doeff-cluster-retirement-notices",
         "doeff-cluster-coordinator-reads",
         "doeff-cluster-due-model",
-        "doeff-cluster-due-policy"
+        "doeff-cluster-due-policy",
+        "doeff-cluster-wake-policy"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
