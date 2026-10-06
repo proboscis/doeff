@@ -5,13 +5,16 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "type"})
 (import dataclasses [dataclass field])
 (import enum [Enum])
+(import functools [cached-property])
+(import hashlib)
+(import json)
 
 
 (defclass [(dataclass :frozen True)] JobSpec []
   "job 1 本の宣言。entry は `hy -m` へ渡す module 名、revision は git の commit。once = 1 度だけ走らせる(task)。"
   (#^ str name)
   (#^ str entry)
-  (#^ tuple args)
+  (#^ (get tuple #(str ...)) args)
   (#^ str revision)
   (setv #^ bool once False)
   ;; 割り当ての世代(coordinator の Placement.generation)。process を起こした時の値を子 process へ渡し、readiness と計器の報告に
@@ -41,7 +44,7 @@
   ;; args に載る identity の指紋で決める(改訂 1 の A)。
   (setv #^ (| str None) program (field :default None :compare False))
   ;; 子の環境変数(宣言の :environ・名の順の #(名 値) の tuple — 改訂 1 の G)。比べる欄(変われば入れ替える・spec-hash に入る)。
-  (setv #^ tuple environ #())
+  (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #())
   ;; 途絶しても動かし続けてよい印(#2804 — heartbeat の返事の job の行の keepWhenCutOff)。coordinator が「他に置ける worker が
   ;; 無い」と判じた入れ替えでない service の job に付け、印を渡した担い手からは、担い手が印を持たないと知らせるか Worker が消されるまで
   ;; 他へ移さない(cluster_policy の keep-marks)。worker は印の在る job を coordinator との途絶(fence)でも止めない — 長い方の柵
@@ -59,11 +62,23 @@
   ;; 置くと Program の行の版は上書きされるので、待っている task の版は task の行から読む(2026-10-06 の t661)。worker は task の
   ;; Program の cache の file を版ごとに分けて置く(worker/core/launch.spec-program-file)。coordinator は持たない(worker の中だけの欄)。
   ;; 比べない欄(task は 1 度だけ走る・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
-  (setv #^ (| tuple None) versions (field :default None :compare False))
+  (setv #^ (| (get tuple #((get tuple #(str str)) ...)) None) versions (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
-      (raise (ValueError "job には name・entry・revision が必要です")))))
+      (raise (ValueError "job には name・entry・revision が必要です"))))
+
+  (defn [cached-property] #^ str fingerprint [self]  ; defk にできない: 値の属性(Program の外の純粋な判断 probe-of・statuses が読む)
+    "指紋 spec-hash の計算の本体(公開の入口は doeff_cluster.shared.core.job_rules.spec-hash)。値ごとに最初に読まれた時に 1 度だけ
+     計り、その値の中に覚える(覚えの寿命 = この値。module の大域には持たない)。dataclasses.replace で作り直した値は別の object なので
+     計り直す — 欄が変われば指紋も変わる。材料の欄(name・entry・args・revision・once・runtime-env・environ)は str・bool と str の
+     tuple・str の組の tuple だけで、値を作った後に中身が書き換わらないので、覚えた指紋は古くならない。"
+    (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ [self.name self.entry (list self.args) self.revision self.once]
+                                                             (if self.runtime-env [self.runtime-env] [])
+                                                             (if self.environ [(lfor #(k v) self.environ [k v])] []))
+                                                          :ensure-ascii False :separators #("," ":"))
+                                              "utf-8")))
+         0 16)))
 
 
 (defclass JobPhase [Enum]

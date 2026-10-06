@@ -1344,11 +1344,12 @@
 (defk rows-with-known-exits [rows known]
   {:pre [(: rows tuple) (: known tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "状態の報告の行 rows の last-exit-at-ms を、行の刻と知れた刻(known — known-exits-after)の大きい方にするため(宣言の無い名の行は
-   行の刻のまま)。"
+   行の刻のまま)。刻が変わらない行は同じ値のまま運ぶ(heartbeat ごとに全部の行を作り直さない — #3774)。"
   (tuple (gfor row rows
                :setv times (+ (if (is row.last-exit-at-ms None) [] [row.last-exit-at-ms])
                               (lfor e known :if (and (= e.job row.name) (is-not e.at-ms None)) e.at-ms))
-               (replace row :last-exit-at-ms (if times (max times) None)))))
+               :setv at (if times (max times) None)
+               (if (= at row.last-exit-at-ms) row (replace row :last-exit-at-ms at)))))
 
 
 (defk worker-report [rows now endpoint known]
@@ -1356,9 +1357,14 @@
    :post [(: % WorkerReport)] :tags {:context "coordinator" :role "judgment"}}
   "今の世代か新しい世代の heartbeat の状態の報告の行 rows から、worker の最新の報告(ClusterState.statuses の値)を作るため。行は結果の
    欄 result と task の写しを外し(持ち続けるのは process の姿だけ)、last-exit-at-ms を最後に終わったと知れた刻にする(known =
-   この heartbeat の後の WorkerInfo.known-exits — 同じ worker・同じ job の名では前に知っていた刻から戻さない)。"
+   この heartbeat の後の WorkerInfo.known-exits — 同じ worker・同じ job の名では前に知っていた刻から戻さない)。result も task も
+   持たない行(service の job の行)は同じ値のまま運ぶ(#3774)。"
   (WorkerReport :at now :endpoint endpoint
-                :jobs (! (rows-with-known-exits (tuple (gfor row rows (replace row :result None :task None))) known))))
+                :jobs (! (rows-with-known-exits (tuple (gfor row rows
+                                                             (if (and (is row.result None) (is row.task None))
+                                                                 row
+                                                                 (replace row :result None :task None))))
+                                                known))))
 
 
 (defk register-heartbeat [given body now]
@@ -1511,7 +1517,8 @@
    次に振る task の番号は引き取った id より後へ進める(同じ id を別の task に振らない)。"
   (setv adopted {})
   (for [status statuses]
-    (setv task (adopted-task (replace state :tasks (| state.tasks adopted)) worker boot status now))
+    ;; まだ何も引き取っていない間は state そのものを渡す(行ごとに状態を作り直さない — #3774)。
+    (setv task (adopted-task (if adopted (replace state :tasks (| state.tasks adopted)) state) worker boot status now))
     (when (is-not task None) (setv (get adopted task.id) task)))
   (if adopted
       (replace state :tasks (| state.tasks adopted)
