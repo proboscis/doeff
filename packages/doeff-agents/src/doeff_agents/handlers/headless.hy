@@ -11,6 +11,8 @@
 ;;;   LaunchEffect.turn_credential_ref → 起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの TurnCredential を子の env の
 ;;;                                      手番の資格の名 1 つにだけ置く(HomeTurnCredential = 家の資格のまま・TurnCredentialUnavailable =
 ;;;                                      TurnCredentialUnavailableError で起こさない — issue #979)
+;;;   LaunchEffect.new_context_id      → 新しい文脈の id(HandlerMadeContextId = この adapter が作る・NamedContextId = 呼び手の名指した id)。
+;;;                                      同じ id を名指した 2 つの起動は同じ FreshSession になり、片方の事前起動をもう片方の最初のターンが使う
 ;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
@@ -49,7 +51,8 @@
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
-  RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
+  RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError
+  HandlerMadeContextId NamedContextId])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind
@@ -390,6 +393,24 @@
     ;; 答えの型だけを名乗る(値は資格を運び得るので文に写さない)。
     _ (raise (AgentError (.format "手番の資格 {} の引き換えの答えが閉語彙の外: {}" ref (. (type answer) __name__))))))
 
+(defk launch-context-id [#^ LaunchEffect request]
+  {:pre [(: request LaunchEffect)] :post [(: % str)] :tags {:context "headless-adapter" :role "judgment"}}
+  "session の文脈の id を 1 か所で決めるため: 前の文脈の続き(resume_from)はその id、新しい文脈は LaunchEffect.new_context_id の
+   とおり — handler が作る(HandlerMadeContextId)か、呼び手の名指した id(NamedContextId)。同じ id を名指した 2 つの起動は同じ新しい
+   文脈になるので、片方で事前起動した runtime を、もう片方の最初のターンが層 2 で使い回す。名指した id が層 2 の会話の id の綴り
+   (UUID)でなければ、層 2 の値の例外を上へ漏らさず AgentLaunchError で拒否する。"
+  (when (is-not request.resume-from None)
+    (return request.resume-from))
+  (val choice request.new-context-id)
+  (match choice
+    (HandlerMadeContextId) (new-ref)
+    (NamedContextId)
+      (try
+        (checked-session-id choice.context-id "LaunchEffect.new_context_id")
+        (except [error #(ValueError TypeError)]
+          (raise (AgentLaunchError (.format "session {} を起動できない: {}" request.session-name error)))))
+    _ (raise (AgentError (.format "LaunchEffect.new_context_id が閉じた型の外: {}" (. (type choice) __name__))))))
+
 (defk launch [#^ HeadlessClaudeConfig config #^ HeadlessState state #^ LaunchEffect request]
   {:pre [(: config HeadlessClaudeConfig) (: state HeadlessState) (: request LaunchEffect)] :post [(: % SessionHandle)]}
   "session を起こす。prompt が在れば最初の手番を始める。resume_from は前の文脈の続き(手元に無ければ ResumeTargetNotFoundError)。
@@ -407,12 +428,12 @@
       (checked-session-id request.resume-from "LaunchEffect.resume_from")
       (except [#(ValueError TypeError)]
         (raise (ResumeTargetNotFoundError :resume-from (str request.resume-from))))))
+  (<- context-id (launch-context-id request))
   ;; 手番の資格は起こす直前に引き換える(断りの検めを通った起動だけが資格を受ける)。
   (<- credential (redeemed-credential request))
   (setv spec (spec-of config request credential))
   (val carry (if (is request.resume-snapshot None) None (Rebuilt request.resume-snapshot)))
-  (val session (HeadlessSession name spec (or request.resume-from (new-ref)) (is request.resume-from None) request.lifecycle
-                                carry))
+  (val session (HeadlessSession name spec context-id (is request.resume-from None) request.lifecycle carry))
   ;; 写しを持ち込む時は、最初の手番で在るようになるので手元の在否を確かめない。
   (when (and (is-not request.resume-from None) (is request.prompt None) (is carry None))
     (<- status (ClaudeSessionStatus spec.home spec.cwd request.resume-from))
