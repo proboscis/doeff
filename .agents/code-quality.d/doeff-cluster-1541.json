@@ -1108,7 +1108,8 @@
         "doeff-cluster-coordinator-inbox",
         "doeff-cluster-record-store",
         "doeff-cluster-record-store-handlers",
-        "doeff-cluster-record-inbox"
+        "doeff-cluster-record-inbox",
+        "doeff-cluster-record-store-handler-sets"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-record-store-main",

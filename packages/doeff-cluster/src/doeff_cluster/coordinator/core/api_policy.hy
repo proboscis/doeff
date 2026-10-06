@@ -115,18 +115,27 @@
 ;; 書きの間隔の分(最大 ALIVE-MARK-MS)だけ長めに見積もる = 時間切れを遅らせる側に外れる。
 (setv ALIVE-MARK-MS 5000)
 
-(defn #^ ClusterState mark-alive [#^ ClusterState state #^ int now]
-  "純粋: ALIVE-MARK-MS 経っていれば生きていた時刻を進め、同じ拍の各 worker の最後の連絡の時刻を WorkerInfo.seen-mark に写した状態
-   (耐久の鍵 counter と、連絡のあった worker の worker/<名> が変わる = 次の Persist に載る。沈黙している worker の鍵は変わらない)。
+(defk stamp-alive [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "生きていた時刻を now に進め、各 worker の最後の連絡の時刻を WorkerInfo.seen-mark に写した状態を作るため(耐久の鍵 counter と、連絡の
+   あった worker の worker/<名> が変わる = 次の Persist に載る。沈黙している worker の鍵は変わらない)。印の間隔を問わない — 止まる時の
+   印(run-coordinator の止まりの枝 — #3865)と、間隔の来た印(mark-alive)が使う。
    印が最後の連絡の時刻と揃っている worker は同じ物のまま運び、全員が揃っていれば workers の写像も同じ物のまま — 沈黙している
    worker の行と、版の比べ(resource_policy.dirty-keys の workers)を印の拍で動かさない(#2903)。"
+  (replace state
+           :alive-ms now
+           :workers (if (all (gfor w (.values state.workers) (= w.seen-mark w.last-seen-ms)))
+                        state.workers
+                        (dfor #(n w) (.items state.workers)
+                              n (if (= w.seen-mark w.last-seen-ms) w (replace w :seen-mark w.last-seen-ms))))))
+
+
+(defk mark-alive [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "ALIVE-MARK-MS 経っていれば生きていた時刻の印を付けた状態(stamp-alive)、経っていなければ同じ状態を求めるため(調停ループの歩と、
+   模擬の静かな区間の歩が同じこの関数で印を付ける)。"
   (if (>= (- now state.alive-ms) ALIVE-MARK-MS)
-      (replace state
-               :alive-ms now
-               :workers (if (all (gfor w (.values state.workers) (= w.seen-mark w.last-seen-ms)))
-                            state.workers
-                            (dfor #(n w) (.items state.workers)
-                                  n (if (= w.seen-mark w.last-seen-ms) w (replace w :seen-mark w.last-seen-ms)))))
+      (! (stamp-alive state now))
       state))
 
 (defn #^ tuple resume-after-downtime [#^ ClusterState state #^ int now]

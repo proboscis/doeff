@@ -111,7 +111,10 @@ def tick_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[D
     ...
 ALIVE_MARK_MS: int
 
-def mark_alive(state: ClusterState, now: int) -> ClusterState:
+def stamp_alive(state: ClusterState, now: int) -> _Program[ClusterState, object]:
+    ...
+
+def mark_alive(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
 def resume_after_downtime(state: ClusterState, now: int) -> tuple:

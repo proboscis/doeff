@@ -1,0 +1,21 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-coordinator-inbox",
+        "doeff-cluster-record-inbox",
+        "doeff-cluster-record-store-handlers"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-record-store-handler-sets",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store/entry/handler_sets.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/record_store/entry/handler_sets.hy"
+      ],
+      "responsibility": "記録の置き場の handler の組(本番の組と、まねた環境の組)— 受付の箱・停止の合図・記録の file の handler を並べる(#3865 で契約を足した — それまで契約の無い依存先だった)。",
+      "typed": true
+    }
+  ]
+}

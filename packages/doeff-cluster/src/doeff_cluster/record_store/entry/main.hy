@@ -29,8 +29,9 @@
   (.add-argument parser "--idle-seconds" :type float :default 900.0)
   (setv args (.parse-args parser))
   (setv stop (StopState))
-  (run (stop-on-signals stop))
+  ;; 合図が受付の箱を起こす(要求の無い間の待ちを合図の刻に抜ける・#3865)。
   (setv inbox (RecordInbox args.port))
+  (run (stop-on-signals stop :wake inbox.wake))
   (.start inbox)
   (print (.format "records: :{} で受けます(置き場 {}・保持 {} 日)" args.port args.root args.retention-days) :file sys.stderr :flush True)
   ;; handler の組を選び(本番の組)、その組の上で置き場の Program を回す。

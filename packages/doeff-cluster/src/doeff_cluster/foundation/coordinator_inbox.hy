@@ -6,6 +6,7 @@
 (require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
+(import dataclasses [dataclass])
 (import queue)
 (import signal)
 (import sys)
@@ -36,8 +37,9 @@
   #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8"))
 
 
-;; probe の閾値(秒)。ループは要求が無くても 1 秒ごとに NextRequests を出すので、ふだんの「最後に取りに来てから」は 1 秒 + 1 まとまりの
-;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
+;; probe の閾値(秒)。止まりの秒 = 歩の中に居るなら歩に入ってから、待っているなら待つと定めた刻を越えてから(#3865 — ループは要求の無い間
+;; 次の期限まで眠るので「最後に取りに来てから」では数えない)。ふだんの歩は 1 まとまりの処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の
+;; 詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
 ;; readiness はそれより十分長い 30 秒(worker の返事の上限 REPLY-SECONDS 15 秒の 2 倍)、liveness は「固まった」と言える 120 秒。
 ;; liveness が落ちると kubelet が container を作り直す(状態は耐久の置き場から読み直す)。
 (setv READY-STALL-SECONDS 30.0)
@@ -46,7 +48,8 @@
 
 (deff probe-verdict [#^ str path #^ (| float None) stalled-seconds]  ; defk にできない: 受け口の HTTP の thread(Program の外)が probe ごとに呼ぶ純粋な綴り
   {:pre [(: path str) (: stalled-seconds (| float None))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
-  "純粋: probe の答え #(status 本文)。stalled-seconds = ループが最後に要求を取りに来てからの秒(まだ 1 度も来ていなければ None)。
+  "純粋: probe の答え #(status 本文)。stalled-seconds = ループの止まりの秒(RequestInbox.stalled-seconds — 歩の中なら歩に入ってから・待って
+   いるなら待つと定めた刻を越えてから・まだ 1 度も取りに来ていなければ None)。
    /livez はループが LIVE-STALL-SECONDS より長く止まった時だけ 503(起動直後で 1 度も来ていない時は 200 — 起動の遅さは
    startupProbe が見る)。/readyz は 1 度も来ていない・READY-STALL-SECONDS より長く止まった時に 503。"
   (setv limit (if (= path "/livez") LIVE-STALL-SECONDS READY-STALL-SECONDS))
@@ -61,18 +64,52 @@
     True #(200 {"ok" True "stalledSeconds" (round stalled-seconds 1)})))
 
 
+(defclass InboxWake []
+  "受付の列に入れる起こしの 1 件(RequestInbox.wake — 停止の合図の受け手が入れる)。取り手はこれを受けたら空で返る。")
+
+
+(setv WAKE (InboxWake))
+
+
+(defclass [(dataclass :frozen True)] InboxWaiting []
+  "受付の取り手が待っている: until = 待つと定めた刻(単調時計・None = 期限なし — 要求・起こしでだけ抜ける)。"
+  (#^ (| float None) until))
+
+
+(defclass [(dataclass :frozen True)] InboxBusy []
+  "受付の取り手が歩の中に居る: since = 取って歩に入った刻(単調時計)。"
+  (#^ float since))
+
+
 (defclass RequestInbox []
   "HTTP server(別 thread)が受けた要求を生の形で並べる箱。調停ループは 1 件ずつ取り出して返事を置く。
    formats = probe が名乗る本文の形の版の受け入れる範囲(coordinator の entry が cluster_model の ACCEPTED-FORMATS を渡す — この
    module は intent の型を読まない)。"
   (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic] #^ tuple [formats #()]]
-    ;; last-take = 調停ループが最後に要求を取りに来た時刻(単調時計)。probe はこれだけで答える(ループを通さない)。
-    (setv self.queue (queue.Queue) self.port port self.server None self.clock clock self.last-take None self.formats formats))
+    ;; phase = 取り手の今(None = まだ 1 度も取りに来ていない・InboxWaiting = 待っている・InboxBusy = 歩の中)。probe はこれだけで答える
+    ;; (ループを通さない)。列は SimpleQueue — put は reentrant で、停止の合図の受け手(主 thread の bytecode の区切りに割り込む)から
+    ;; 起こしを入れても止まらない(queue.Queue は入れ子で取れない lock を持つ — #3584 と同じ)。
+    (setv self.queue (queue.SimpleQueue) self.port port self.server None self.clock clock self.phase None self.formats formats))
+
+  (defn #^ (| float None) stalled-seconds [self]
+    "ループの止まりの秒を知るため(probe が読む): 歩の中なら歩に入ってからの秒・待っているなら待つと定めた刻を越えた秒(越えていなければ 0・
+     期限なしなら 0)・まだ 1 度も取りに来ていなければ None。"
+    (setv now (self.clock) phase self.phase)
+    (match phase
+      None None
+      (InboxBusy :since since) (- now since)
+      (InboxWaiting :until until) (if (is until None) 0.0 (max 0.0 (- now until)))))
+
+  (defn #^ None wake [self]
+    "取り手の待ちを、要求が無くても抜けさせるため(停止の合図の受け手が呼ぶ — 合図を次の取りまで待たせない)。どの thread からも・signal の
+     受け手からも呼んでよい。"
+    (.put self.queue WAKE)
+    None)
 
   (defn #^ tuple probe [self #^ str path]
     "k8s の probe(/livez・/readyz)の答え。HTTP の thread が直に答える — 調停ループの遅れ(fsync・k8s の API)に巻き込まれない。"
     ;; 本文の形の版の受け入れる範囲も名乗る(送り手と worker が自分の版を合わせられるように)。
-    (setv #(status body) (probe-verdict path (if (is self.last-take None) None (- (self.clock) self.last-take))))
+    (setv #(status body) (probe-verdict path (.stalled-seconds self)))
     #(status (| body {"formats" (list self.formats)})))
 
   (defn #^ None start [self]
@@ -123,15 +160,18 @@
     (setv self.server.daemon-threads True)
     (.start (threading.Thread :target self.server.serve-forever :daemon True)))
 
-  (defn #^ list take [self #^ float timeout #^ int limit]
-    "最初の 1 件を timeout 秒まで待ち、その時点で並んでいる生の要求を limit 件まで一緒に取る。"
-    (setv self.last-take (self.clock))
+  (defn #^ list take [self #^ (| float None) timeout #^ int limit]
+    "最初の 1 件を timeout 秒まで(None = 期限なし)待ち、その時点で並んでいる生の要求を limit 件まで一緒に取る。起こし(wake)を受けたら、
+     そこまでに取った要求だけを返す(起こしの後ろの要求は次の取りで受ける)。"
+    (setv self.phase (InboxWaiting (if (is timeout None) None (+ (self.clock) timeout))))
     (try (setv first (.get self.queue :timeout timeout))
-         (except [queue.Empty] (return [])))
-    (setv batch [first])
-    (while (< (len batch) limit)
-      (try (.append batch (.get-nowait self.queue))
-           (except [queue.Empty] (break))))
+         (except [queue.Empty] (setv first WAKE)))
+    (setv batch [])
+    (while (and (is-not first WAKE) (< (len batch) limit))
+      (.append batch first)
+      (try (setv first (.get-nowait self.queue))
+           (except [queue.Empty] (setv first WAKE))))
+    (setv self.phase (InboxBusy (self.clock)))
     batch))
 
 
@@ -147,12 +187,15 @@
   (setv #^ bool requested False))
 
 
-(defk stop-on-signals [stop]
-  {:pre [(: stop StopMark)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+(defk stop-on-signals [stop [wake None]]
+  {:pre [(: stop StopMark) (: wake (| Callable None))] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
   "process の入口(coordinator・記録の置き場・worker の main)が SIGTERM と SIGINT を受けたら、渡された止めの印(この module の StopState か
    worker/protocol/stop の StopState — どちらも requested を持つ)を立てるため。3 つの main が同じ signal.signal の 2 行と信号の関数を
    入口の層で直に書いていた — 生の副作用(signal)は foundation に置く(DOEFF106)。signal の登録は main の thread からだけ通るので、
-   入口の main が run で 1 度だけ呼ぶ。"
-  (signal.signal signal.SIGTERM (fn [signum frame] (setv stop.requested True)))
-  (signal.signal signal.SIGINT (fn [signum frame] (setv stop.requested True)))
+   入口の main が run で 1 度だけ呼ぶ。wake = 印を立てた後に待ちを起こす関数(coordinator と記録の置き場は受付の箱の RequestInbox.wake —
+   要求の無い間に眠る待ちを、合図の刻に抜けさせる・#3865)。None = 印を立てるだけ(worker — 拍ごとに印を読む)。"
+  ;; 受け手は signal の module が呼ぶ callback(印を立て、待ちを起こす)。
+  (setv raise-mark (fn [signum frame] (setv stop.requested True) (when (is-not wake None) (wake))))
+  (signal.signal signal.SIGTERM raise-mark)
+  (signal.signal signal.SIGINT raise-mark)
   None)

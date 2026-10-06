@@ -38,7 +38,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
-(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
+(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable])
 (import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable StartKubeReads CollectKubeReads
@@ -200,7 +200,8 @@
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
     (<- ticked ClusterState (rollout-tick next timing naming now))
     (:= next ticked))
-  (:= next (mark-alive next now))
+  (<- marked ClusterState (mark-alive next now))
+  (:= next marked)
   (<- (SaveState base next))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
@@ -234,8 +235,13 @@
   (while True
     (<- stopping bool (CoordinatorStopRequested))
     (when stopping
-      (<- (release-watchers current watchers))
-      (return current))
+      ;; 止まる刻の生存の印を保存してから止まる(#3865 — 要求の無い間に眠る形では、眠りの間に印を書かない。起き直しの
+      ;; resume-after-downtime が止まっていた長さを、最後の印から数えて多く見積もらないように)。
+      (<- now int (now-epoch-ms))
+      (<- marked ClusterState (stamp-alive current now))
+      (<- (SaveState current marked))
+      (<- (release-watchers marked watchers))
+      (return marked))
     (<- stepped tuple (coordinator-step current timing naming watchers))
     (:= current (get stepped 0))
     (:= watchers (get stepped 2))))
