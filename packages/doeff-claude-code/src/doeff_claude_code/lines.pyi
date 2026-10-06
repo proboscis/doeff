@@ -38,6 +38,7 @@ class Init:
 class ToolCall:
     id: str
     name: str
+    input: FrozenMap = ...
 
     def __post_init__(self) -> None:
         ...
@@ -48,8 +49,22 @@ class AssistantMessage:
     tool_calls: tuple[ToolCall, ...] = ...
 
 @dataclass(frozen=True)
+class ToolAnswer:
+    id: str
+    text: str
+    is_error: bool
+    non_text_kinds: tuple[str, ...] = ...
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
 class ToolResult:
-    tool_use_ids: tuple[str, ...] = ...
+    answers: tuple[ToolAnswer, ...]
+
+    @property
+    def tool_use_ids(self) -> tuple[str, ...]:
+        ...
 
 @dataclass(frozen=True)
 class PartialMessage:
@@ -171,6 +186,9 @@ def content_blocks(record: dict) -> tuple:
     ...
 
 def classify_assistant(record: dict) -> Incomplete:
+    ...
+
+def tool_answer_of(block: dict) -> ToolAnswer:
     ...
 
 def classify_user(record: dict) -> Incomplete:
