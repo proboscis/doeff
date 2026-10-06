@@ -209,15 +209,29 @@ def _told_back(outage: SenderOutage) -> "EffectGenerator[None]":
         yield CompletePromise(waiter, None)
 
 
+PartyUnder = Callable[[Layer], Callable[[str, tuple[type, ...], Program[object]], Program[object]]]
+"""How a broker's harness runs a party with a given layer between ``notice_events_handler`` and the broker."""
+
+
 def gap_harness(
     broker: MemoryBroker, *, outage: SenderOutage | None = None, below_events: Layer = unbroken
 ) -> GapLawHarness:
-    """The harness of ``GAP_LAWS``: parties on ``broker`` whose sends the test refuses and lets through.
-    ``below_events`` (between ``notice_events_handler`` and ``refuses_senders``) is where a broken handler goes;
-    ``outage`` lets a test read what the layer saw."""
+    """The harness of ``GAP_LAWS`` on the in-memory broker: parties on ``broker`` whose sends the test refuses and
+    lets through. ``below_events`` (between ``notice_events_handler`` and ``refuses_senders``) is where a broken
+    handler goes; ``outage`` lets a test read what the layer saw."""
+    return gap_harness_over(
+        lambda layer: memory_harness(broker, below_events=layer).as_party, outage=outage, below_events=below_events
+    )
+
+
+def gap_harness_over(
+    party_under: PartyUnder, *, outage: SenderOutage | None = None, below_events: Layer = unbroken
+) -> GapLawHarness:
+    """The harness of ``GAP_LAWS`` on any broker: ``party_under`` runs a party with the given layer under
+    ``notice_events_handler``; this harness puts ``refuses_senders`` (and ``below_events`` above it) there."""
     known = outage if outage is not None else SenderOutage()
     refusing = refuses_senders(known)
-    parties = memory_harness(broker, below_events=lambda program: refusing(below_events(program)))
+    as_party = party_under(lambda program: refusing(below_events(program)))
 
     @do
     def cut() -> "EffectGenerator[None]":
@@ -249,7 +263,7 @@ def gap_harness(
         yield _told_back(known)
 
     return GapLawHarness(
-        as_party=parties.as_party, channel=f"{PREFIX}:note", cut=cut, reopen=reopen, restore=restore, flap=flap
+        as_party=as_party, channel=f"{PREFIX}:note", cut=cut, reopen=reopen, restore=restore, flap=flap
     )
 
 

@@ -2,6 +2,18 @@
   "include": [
     "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/worker_notices.hy"
   ],
+  "module_extensions": {
+    "doeff-cluster-coordinator-handler-sets": {
+      "allow": [
+        "doeff-cluster-worker-notices"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-worker-notices"
+      ]
+    }
+  },
   "modules": [
     {
       "allow": [
@@ -18,17 +30,5 @@
       "responsibility": "worker の生死の出来事を doeff-events の知らせの道へ写す表の 1 か所(出す側 WORKER-NOTICE-ROUTES・受ける側 WORKER-NOTICE-READS・#3864)。",
       "typed": true
     }
-  ],
-  "module_extensions": {
-    "doeff-cluster-coordinator-handler-sets": {
-      "allow": [
-        "doeff-cluster-worker-notices"
-      ]
-    },
-    "doeff-cluster-tests": {
-      "allow": [
-        "doeff-cluster-worker-notices"
-      ]
-    }
-  }
+  ]
 }

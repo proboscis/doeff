@@ -12,7 +12,13 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_core_effects.scheduler import SchedulerDeadlockError
+from doeff_core_effects.scheduler import (
+    CompletePromise,
+    CreatePromise,
+    SchedulerDeadlockError,
+    Spawn,
+    Wait,
+)
 from doeff_events import (
     EventBus,
     SourceMissed,
@@ -24,6 +30,7 @@ from doeff_events.effects.events import Publish, WaitForEvent
 from doeff_events.effects.notices import Announce, AwaitBrokerBack, BrokerUnreachable
 from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
 from doeff_events.handlers.notice_events import (
+    GAP_NOTICE,
     Drop,
     MarkGap,
     NoticeDropped,
@@ -45,6 +52,7 @@ from doeff_events.notice_laws import (
     law_start_and_return_are_told_once,
     law_start_is_told_after_the_subscription,
 )
+from doeff_time import Delay, GetTime
 from event_signal_invariants import (
     Changed,
     SignalWorld,
@@ -55,6 +63,7 @@ from event_signal_invariants import (
 from notice_law_support import (
     PATIENCE_SECONDS,
     PREFIX,
+    T0,
     SenderOutage,
     gap_harness,
     memory_harness,
@@ -65,7 +74,8 @@ from notice_law_support import (
     swallows,
 )
 
-from doeff import Program, Pure, do
+from doeff import K, Pass, Program, Pure, do
+from doeff import handler as program_handler
 
 if TYPE_CHECKING:
     from doeff import EffectGenerator
@@ -422,3 +432,97 @@ def test_unrouted_event_stays_in_the_process() -> None:
 
     party = memory_harness(MemoryBroker()).as_party("law-local", (Local,), publishes_local())
     assert run_on_virtual_clock(party) is True
+
+
+def _fails_the_first_gap_notice(raised: SimpleNamespace) -> "ProgramHandler":
+    """Broken lower layer: the first gap notice raises (a broker client that fails in a way it does not answer as
+    unreachable); every other send goes on."""
+
+    @do
+    def handler(effect: Announce, k: K) -> "EffectGenerator[object]":
+        """Raise once on a gap notice; pass everything else on."""
+        if effect.name == GAP_NOTICE and not raised.done:
+            raised.done = True
+            raise RuntimeError("the client failed while telling the gap")
+        yield Pass(effect, k)
+        return None
+
+    return program_handler(handler)
+
+
+def test_an_error_while_telling_a_gap_leaves_the_exit_free_for_the_next_publish() -> None:
+    # Fix C of the review: the task telling the gap fails in the middle; the exit is given back, so the next
+    # Publish is answered (it tells the gap itself and is sent) instead of waiting forever, and the failure is
+    # raised when the body ends.
+    raised = SimpleNamespace(done=False)
+    harness = gap_harness(MemoryBroker(), below_events=_fails_the_first_gap_notice(raised))
+    seen = SimpleNamespace(answer=None, heard=())
+
+    @do
+    def sends_after_a_failed_telling() -> "EffectGenerator[None]":
+        yield harness.cut()
+        yield Publish(LawNote("lost"))
+        yield harness.restore()
+        yield Delay(1.0)
+        seen.answer = yield Publish(LawNote("next"))
+        first = yield WaitForEvent(SourceMissed, LawNote)
+        second = yield WaitForEvent(SourceMissed, LawNote)
+        seen.heard = (first, second)
+
+    with pytest.raises(RuntimeError, match="failed while telling the gap"):
+        run_on_virtual_clock(harness.as_party("law-failed", (SourceMissed, LawNote), sends_after_a_failed_telling()))
+    assert raised.done
+    assert isinstance(seen.answer, NoticeSent), seen.answer
+    assert seen.heard == (SourceMissed("law-failed", f"{PREFIX}:note"), LawNote("next")), seen.heard
+
+
+def _holds_gap_notices(gate: SimpleNamespace) -> "ProgramHandler":
+    """The layer that holds every gap notice until the test opens ``gate`` (so a send made meanwhile must queue
+    behind it), and writes down when it was held."""
+
+    @do
+    def handler(effect: Announce, k: K) -> "EffectGenerator[object]":
+        """Hold a gap notice on the gate; pass everything else on."""
+        if effect.name == GAP_NOTICE and gate.promise is not None:
+            gate.held = True
+            yield Wait(gate.promise.future)
+        yield Pass(effect, k)
+        return None
+
+    return program_handler(handler)
+
+
+def test_a_publish_made_while_another_task_tells_the_gap_waits_behind_it() -> None:
+    # Fix 5 of the review: the order law passes whichever task goes first, so here the path that waits is forced.
+    # The task waiting for the return tells the gap and is held at the gate; the body's Publish made meanwhile
+    # queues behind it, is answered only after the gate opens (at 1 s), and arrives after the gap.
+    gate = SimpleNamespace(promise=None, held=False)
+    harness = gap_harness(MemoryBroker(), below_events=_holds_gap_notices(gate))
+    seen = SimpleNamespace(answered_at=None, heard=())
+
+    @do
+    def opens_later() -> "EffectGenerator[None]":
+        yield Delay(1.0)
+        yield CompletePromise(gate.promise, None)
+
+    @do
+    def publishes_behind_the_gap() -> "EffectGenerator[None]":
+        yield harness.cut()
+        yield Publish(LawNote("lost"))
+        gate.promise = yield CreatePromise()
+        yield Spawn(opens_later())
+        yield harness.restore()
+        # Let the task waiting for the return reach the exit first (it is held at the gate there).
+        yield Delay(0.1)
+        assert gate.held, "the gap notice was held at the gate"
+        yield Publish(LawNote("right-after"))
+        now = yield GetTime()
+        seen.answered_at = (now - T0).total_seconds()
+        first = yield WaitForEvent(SourceMissed, LawNote)
+        second = yield WaitForEvent(SourceMissed, LawNote)
+        seen.heard = (first, second)
+
+    run_on_virtual_clock(harness.as_party("law-queued", (SourceMissed, LawNote), publishes_behind_the_gap()))
+    assert seen.answered_at is not None, seen.answered_at
+    assert seen.answered_at >= 1.0, seen.answered_at
+    assert seen.heard == (SourceMissed("law-queued", f"{PREFIX}:note"), LawNote("right-after")), seen.heard

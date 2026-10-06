@@ -10,7 +10,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [EffectBase Program with-handlers])
 (import doeff_time [Delay])
-(import doeff_events [EventBus MemoryBroker SourceMissed SourceResumed SourceStarted WaitForEvent memory-notice-handler notice-events-handler
+(import doeff_events [EventBus MemoryBroker hold-broker release-broker SourceMissed SourceResumed SourceStarted WaitForEvent memory-notice-handler notice-events-handler
                       subscribed-event-handler cut-broker restore-broker])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -156,3 +156,25 @@
   (val before (get first 0 0))
   (val after (get again 0 0))
   (assert (= #(after.worker after.boot) #(before.worker before.boot)) #(before after)))
+
+
+(defk answers-while-the-broker-hangs []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "知らせの broker が繋がったまま答えなく成った間に worker の期限を切らせ(WorkerGone の送りが答えを待ったまま)、その間も coordinator が
+   要求に答えるかを読むため。答え = #(その間に読めた worker の生死 coordinator の Pod の一生の数)。"
+  (<- (Delay 3.0))
+  (<- parts SimParts (PartsOf))
+  (<- (hold-broker parts.broker))
+  (<- (StallWorker WORKER STALL-SECONDS))
+  (<- (Delay (+ (/ T.lease-ms 1000) 5.0)))
+  (<- state dict (ReadCoordinator "/state"))
+  (<- (release-broker parts.broker))
+  (<- runs tuple (CoordinatorRuns))
+  #((get state "workers" WORKER "live") (len runs)))
+
+
+(deftest test-a-broker-that-stops-answering-does-not-hold-the-coordinator
+  ;; 直す点 A(見直し): 出来事の送りは調停の歩の外の task で出す — 答えない broker が、歩と要求への返事を止めない。
+  (<- seen tuple (sim-cluster (pulses sim-foundation) (answers-while-the-broker-hangs) :workers WORKERS))
+  (assert (is (get seen 0) False) seen)
+  (assert (= (get seen 1) 1) seen))

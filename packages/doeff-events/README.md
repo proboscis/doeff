@@ -84,7 +84,7 @@ routes = (
 
 # 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
 program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStarted, SourceResumed))(
-    redis_notice_handler("redis://agora-events:6379/0")(     # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
+    redis_notice_handler("redis://agora-events:6379/0", timeout_seconds=2.0)(  # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
         broker_back_by_retry(retry_seconds=2.0)(             # Redis の戻りを、待っている間だけ繋がるかの試しで知る
             notice_events_handler("screen", routes, patience_seconds=900.0)(body)
         )
@@ -125,7 +125,7 @@ program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStart
 下の層(broker の操作の effect — `doeff_events.effects.notices`): `Announce`(答え = 受け手の数)・`SubscribeChannels`(答えるのは broker が
 確かめた後)・`NextAnnouncement`・`CloseSubscription`・`AwaitBrokerBack`。broker に届かない時は例外でなく `BrokerUnreachable` を答えます。
 答える handler は `memory_notice_handler(MemoryBroker())`(process の中・テストは `cut_broker` / `restore_broker` で止まりを作れる)と
-`redis_notice_handler(url)`(extra `doeff-events[redis]` が要る・設定は URL だけ)。
+`redis_notice_handler(url, timeout_seconds)`(extra `doeff-events[redis]` が要る・設定は URL と、繋ぐ・送るの答えを待つ上限 `timeout_seconds` — 既定なし。答えない server や黙った網が出し手を止めない)。
 
 配達の法は `doeff_events.notice_laws` の筋書き(Program)の 1 か所に在り、memory と本物の redis-server の両方が同じ筋書きを通ります
 (宣言 = `docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy`)。本物を相手にするテストは `PATH` の `redis-server` を一時の dir で

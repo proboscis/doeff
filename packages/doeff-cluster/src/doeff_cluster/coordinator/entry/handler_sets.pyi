@@ -27,7 +27,7 @@ from doeff_cluster.coordinator.protocol.worker_notices import WORKER_NOTICE_ROUT
 NOTICE_SOURCE: str
 NOTICE_PATIENCE_SECONDS: float
 
-def redis_notices(url: str, retry_seconds: float) -> list:
+def redis_notices(url: str, timeout_seconds: float, retry_seconds: float) -> list:
     ...
 
 def memory_notices(broker: MemoryBroker) -> list:
