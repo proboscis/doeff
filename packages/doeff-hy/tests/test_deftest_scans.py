@@ -70,3 +70,8 @@ def test_scans_that_are_not_a_tuple_of_globs_are_refused_at_expansion(hy_dir: Pa
     source = f"(require doeff-hy.macros [deftest])\n(deftest test-bad {{:scans {written}}} (assert True))\n"
     with pytest.raises(hy.errors.HyMacroExpansionError, match=r":scans.*文字列の tuple"):
         _imported(hy_dir, f"test_scans_bad_{abs(hash(written))}", source)
+
+
+def test_the_scans_mark_is_registered_by_the_deftest_plugin(pytestconfig: pytest.Config) -> None:
+    """印 ``scans`` は deftest を集める plugin(doeff-adr)が登録する — どの repo でも知らない印の警告を出さない。"""
+    assert any(line.startswith("scans(") for line in pytestconfig.getini("markers"))
