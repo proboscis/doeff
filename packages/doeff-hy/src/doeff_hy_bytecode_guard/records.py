@@ -20,9 +20,9 @@ from types import CodeType, FunctionType, ModuleType
 
 #: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
 #: 2 = gensym の名を正準化した code の記録(agora-redesign #3667)。1 の記録の code は gensym の番号が compile の順で決まって
-#: いるので、1 度 compile し直させる。共有の置き場の鍵の印(STORE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
+#: いるので、1 度 compile し直させる。保存先の code の鍵の印(code_store.CODE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
 #: 判じられて使われず(loader_hooks._from_shared_store)、compile し直した code が同じ鍵の entry を上書きするので、古い世代の
-#: file が置き場に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
+#: file が保存先に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
 RECORD_TAG = "doeff-hy/macro-dependencies/2"
 
 #: PEP 552 の .pyc の頭(magic 4 byte・flags 4 byte・mtime と size か source の hash の 8 byte)。
@@ -110,7 +110,7 @@ RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
 def canonical_gensyms(code: CodeType) -> CodeType:
     """Hy の module の code の木の gensym の名を、module の中の数えの順に 1 から振り直した名へ替えた code を返す — 同じ source の
     code を、compile の順・process・thread に依らず同じにするため(agora-redesign #3667: 詰めた Program の指紋・.pyc・共有の
-    置き場の中身が、どの process が先に何を compile したかで変わっていた)。
+    保存先の中身が、どの process が先に何を compile したかで変わっていた)。
 
     名の表(局所・cell・free・大域と属性の名・関数の名と qualname)と文字列の定数(呼び出しの keyword の名・注記の鍵)に現れる
     gensym の名を集め、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直し、全部の場所で同時に替える。替え方は 1 対 1 なので、
@@ -209,28 +209,6 @@ def _rewritten_constant(value: object, names: Mapping[str, str]) -> object:
             return value
 
 
-#: 作業木をまたいで共有する code の置き場の鍵の印(形を変えたら末尾の番号を上げる — 古い鍵の entry は当たらなくなる)。
-#: 2 = 鍵を compile した bytes そのものから作る版(agora-redesign #2799)。1 の版の置き場には、compile の後に file を読み直した
-#: 鍵の下に古い中身の code が入った entry が在り得るので、新しい版からは引かない(古い entry の file は消さずに残す)。
-STORE_TAG = "doeff-hy/code-store/2"
-
-
-def store_key(
-    source: bytes, module_name: str, hy_version: str, cache_tag: str, optimize: int
-) -> str:
-    """共有の code の置き場の鍵 — source の中身・module 名・Hy の版・Python の版の印・最適化の段で決まり、source の path に
-    依らない(別の作業木の同じ中身の file が同じ entry に当たるため)。macro の依存は鍵に入れず、当たった entry の記録で
-    確かめる(compile の前には依存が分からない)。"""
-    import hashlib  # 共有の置き場を引く時だけ読む
-
-    digest = hashlib.sha256()
-    for part in (STORE_TAG, module_name, hy_version, cache_tag, str(optimize)):
-        digest.update(part.encode("utf-8"))
-        digest.update(b"\0")
-    digest.update(source)
-    return digest.hexdigest()
-
-
 def rebased_record(
     record: MacroRecord, current_file_of: Callable[[str], str | None]
 ) -> MacroRecord | None:
@@ -248,7 +226,7 @@ def rebased_record(
 
 def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:
     """timestamp の方式の .pyc の頭が source の更新時刻と大きさに合うか(Python の判定と同じ下位 32 bit)— hash の方式は
-    偽(Python 自身に判定を任せる)。共有の置き場を引くのは、作業木の .pyc が使えない時だけにするため。"""
+    偽(Python 自身に判定を任せる)。保存先を引くのは、作業木の .pyc が使えない時だけにするため。"""
     if len(header) < PYC_HEADER_BYTES:
         return False
     flags = int.from_bytes(header[4:8], "little")

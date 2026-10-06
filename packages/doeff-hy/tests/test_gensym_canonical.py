@@ -26,7 +26,7 @@ from pathlib import Path
 from types import CodeType
 
 import pytest
-from doeff_hy_bytecode_guard import loader_hooks, records, source_to_code_as_import
+from doeff_hy_bytecode_guard import code_store, records, source_to_code_as_import
 
 #: 直す前の記録の印(gensym の名を正準化していない code の記録)。
 PREVIOUS_RECORD_TAG = "doeff-hy/macro-dependencies/1"
@@ -249,7 +249,7 @@ def _child(root: Path, first: list[str], target: str, pycache: Path) -> dict[str
             "-u",
             "PYTHONDONTWRITEBYTECODE",
             f"PYTHONPYCACHEPREFIX={pycache}",
-            f"{loader_hooks.CODE_STORE_ENV}=off",
+            f"{code_store.STORE_ENV}=off",
             sys.executable,
             "-c",
             _CHILD,
@@ -389,7 +389,7 @@ def test_a_pyc_whose_record_has_the_previous_tag_is_compiled_again(
     し直す。直す前の印のままだと、古い .pyc の中身がそのまま使われ続ける。"""
     import hy
 
-    monkeypatch.setenv(loader_hooks.CODE_STORE_ENV, "off")
+    monkeypatch.setenv(code_store.STORE_ENV, "off")
     # この suite は PYTHONDONTWRITEBYTECODE=1 で走る — .pyc の読みと書きの道をこの検の中だけ開ける(置き場は tmp_path)。
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "pyc"))

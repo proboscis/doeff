@@ -117,22 +117,11 @@
   (#^ int downloaded))
 
 
-(defrecord CarryFrom
-  "bytecode の引き継ぎ元の木 1 つ: tree = 完成済みの root の中の同じ repo の木の path・commit = その木を展開した commit(新しい木の commit
-   との git diff が、引き継がない「変わった file」を決める — #3675)。"
-  (#^ str tree)
-  (#^ str commit))
-
-
 (defrecord BytecodeTree
   "bytecode を焼く木 1 つ(CompileTrees の欄)。tree = repo の木の path・roots = 木の中の焼く根(宣言の import の根と、venv に editable で
-   入る dir)・mirror = その repo の bare mirror の path・commit = 木を展開した commit・carry = 引き継ぎ元(CarryFrom)か None・
-   declared = 宣言の import の根を持つ repo の木か(その木の問題は env の失敗・editable で入るだけの木の問題は記録だけ)。"
+   入る dir)・declared = 宣言の import の根を持つ repo の木か(その木の問題は env の失敗・editable で入るだけの木の問題は記録だけ)。"
   (#^ str tree)
   (#^ tuple roots)
-  (#^ str mirror)
-  (#^ str commit)
-  (#^ (| CarryFrom None) carry)
   (#^ bool declared))
 
 

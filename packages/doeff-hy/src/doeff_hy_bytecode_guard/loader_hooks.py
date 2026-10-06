@@ -23,8 +23,9 @@ TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査�
 if TYPE_CHECKING:
     from doeff_hy_bytecode_guard.records import MacroDependency, MacroRecord
 
-#: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる — doeff_hy/__init__.py)。
-HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")
+#: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる — doeff_hy/__init__.py)。定義点は保存先の module(code の鍵が
+#: Hy の source かで欄を分ける)— 標準 library だけを読む軽い module なので起動時に読んでよい。
+from doeff_hy_bytecode_guard.code_store import HY_SOURCE_SUFFIXES as HY_SOURCE_SUFFIXES
 
 GetCode = Callable[[importlib.machinery.SourceFileLoader, str], "CodeType | None"]
 GetData = Callable[[importlib.machinery.SourceFileLoader, str], bytes]
@@ -40,7 +41,7 @@ _installation = {"installed": False}
 #: threading は起動時に読まないため、初めて Hy の source に当たった時に作る。
 _compile_counts: dict[str, object] = {}
 
-#: この thread で最後に読んだ Hy の source の bytes(path ごと)— compile した bytes を、共有の置き場の鍵に使うため
+#: この thread で最後に読んだ Hy の source の bytes(path ごと)— compile した bytes を、保存先の鍵に使うため
 #: (agora-redesign #2799)。get_code が終わる時にその path の分を捨てる(source を process の間ずっと持たない)。
 _source_reads: dict[str, object] = {}
 
@@ -109,7 +110,7 @@ def record_is_current_here(record: "MacroRecord") -> bool:
 
     記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
     そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
-    共有の置き場の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。.pyc の記録と、展開した木の
+    保存先の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。.pyc の記録と、展開した木の
     cache(doeff-effect-analyzer — agora-redesign #3598)の記録が同じ 1 つの照らし方を使うための公開の口。"""
     from doeff_hy_bytecode_guard import records  # 起動時に読まない
 
@@ -199,7 +200,7 @@ def _recording_source_to_code(previous: SourceToCode):
             return code
         if TYPE_CHECK_EXPANSION.get():
             # 型検査のための展開(doeff_hy.static_view)の code は実行できない(:pre の isinstance と実行の時の import が無い)—
-            # 記録を付けない。記録の無い code は共有の置き場に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
+            # 記録を付けない。記録の無い code は保存先に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
             # compile し直す(_record_is_current_here)。付けると普通の展開と同じ鍵で残り、普通の import が読んで落ちた(I-3)。
             return code
         return records.with_record(code, current_record(module, path))
@@ -210,7 +211,7 @@ def _recording_source_to_code(previous: SourceToCode):
 # 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
 def _remembering_get_data(previous: GetData):
     """読みの口の包み — Hy の source を読んだ bytes を、この thread の「最後に読んだ中身」として覚えるため。compile の口は
-    Hy の包みの内側では展開した後の木しか受け取らないので、compile した bytes が見えるのは読みの所だけ。共有の置き場の鍵は
+    Hy の包みの内側では展開した後の木しか受け取らないので、compile した bytes が見えるのは読みの所だけ。保存先の鍵は
     この bytes から作り、file を読み直さない(agora-redesign #2799)。"""
 
     def get_data(self: importlib.machinery.SourceFileLoader, path: str) -> bytes:
@@ -236,7 +237,7 @@ def _checking_get_code(previous: GetCode):
             _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
 
     def _hy_code(self: importlib.machinery.SourceFileLoader, fullname: str, path: str) -> CodeType | None:
-        """Hy の source の code — 共有の置き場・.pyc・compile のどれかから、展開が今の macro に依る物を返すため。"""
+        """Hy の source の code — 保存先・.pyc・compile のどれかから、展開が今の macro に依る物を返すため。"""
         shared = _from_shared_store(self, fullname, path)
         if shared is not None:
             return shared  # 別の作業木で作った同じ中身の code — 記録は今の環境の macro の file で確かめた
@@ -245,7 +246,7 @@ def _checking_get_code(previous: GetCode):
         code = previous(self, fullname)
         if code is None or counts.get(path, 0) != before:
             if code is not None:
-                _to_shared_store(fullname, _compiled_source(path), code)
+                _to_shared_store(fullname, path, _compiled_source(path), code)
             return code  # 今 compile した物 — 依った macro は今の file
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
@@ -259,7 +260,7 @@ def _checking_get_code(previous: GetCode):
             # Python が source の変更を信じないのと同じく、macro の変更も信じない(組み立ての中で焼き直す前提)。
             return code
         recompiled = _recompile(self, path, header)
-        _to_shared_store(fullname, _compiled_source(path), recompiled)
+        _to_shared_store(fullname, path, _compiled_source(path), recompiled)
         return recompiled
 
     return get_code
@@ -299,45 +300,31 @@ def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
     return isinstance(code, CodeType) and _record_is_current_here(code)
 
 
-#: 共有の code の置き場を指す環境変数(値 = dir の path・``off`` = 使わない。無ければ利用者の cache の dir の下)。
-CODE_STORE_ENV = "DOEFF_HY_CODE_STORE"
+def _store_entry(store: str, fullname: str, path: str, source: bytes) -> str:
+    """source の中身から決まる code の entry の path(鍵と並びの定義点は code_store の 1 つ)。"""
+    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
 
-
-def _store_dir() -> str | None:
-    """作業木をまたいで共有する Hy の code の置き場(使わない設定なら None)— 新しい作業木の .pyc は source の絶対 path に
-    結びつくので必ず冷え、同じ中身の file の変換(macro の展開)をやり直していた(agora-redesign #1753)。"""
-    configured = os.environ.get(CODE_STORE_ENV, "").strip()
-    if configured == "off":
-        return None
-    if configured:
-        return configured
-    base = os.environ.get("XDG_CACHE_HOME", "").strip() or os.path.join(
-        os.path.expanduser("~"), ".cache"
+    key = code_store.code_key(
+        path, source, fullname, _hy_version(), sys.implementation.cache_tag or "", sys.flags.optimize
     )
-    return os.path.join(base, "doeff-hy", "code-store")
-
-
-def _store_entry(store: str, fullname: str, source: bytes) -> str:
-    """source の中身から決まる entry の path(鍵の先頭 2 字を dir に分ける)。"""
-    from doeff_hy_bytecode_guard import records  # 共有の置き場を使う時だけ読む
-
-    key = records.store_key(
-        source, fullname, _hy_version(), sys.implementation.cache_tag or "", sys.flags.optimize
-    )
-    return os.path.join(store, key[:2], key[2:] + ".code")
+    return code_store.entry_path(store, key, code_store.CODE_SUFFIX)
 
 
 def _from_shared_store(
     self: importlib.machinery.SourceFileLoader, fullname: str, path: str
 ) -> CodeType | None:
-    """作業木の .pyc が使えない時に、別の作業木で作った同じ中身の code を共有の置き場から引く(当たらなければ None)。
+    """作業木の .pyc が使えない時に、別の作業木で作った同じ中身の code を保存先(code_store — 作業木・版をまたいで中身で引く)から
+    引く(当たらなければ None)— 新しい作業木の .pyc は source の絶対 path に結びつくので必ず冷え、同じ中身の file の変換(macro の
+    展開)をやり直していた(agora-redesign #1753)。
 
     当たった entry の記録は、提供元の file を module 名から今の環境で引き直して照らし、記録もその path に付け替える
     (付け替えないと、次からの .pyc の照合が別の作業木の macro を見続ける)。作業木の .pyc も標準の timestamp の形で書く。"""
-    store = _store_dir()
+    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
+
+    store = code_store.store_dir()
     if store is None:
         return None
-    from doeff_hy_bytecode_guard import records  # 共有の置き場を使う時だけ読む
+    from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
 
     try:
         stats = self.path_stats(path)
@@ -352,17 +339,10 @@ def _from_shared_store(
         return None  # 作業木の .pyc が使える(か hash の方式 — Python 自身の判定に任せる)
     try:
         source = self.get_data(path)
-        with open(_store_entry(store, fullname, source), "rb") as entry:
-            data = entry.read()
     except OSError:
-        return None
-    import marshal  # 当たった時だけ読む
-
-    try:
-        code = marshal.loads(data)
-    except (EOFError, ValueError, TypeError):
-        return None
-    if not isinstance(code, CodeType):
+        return None  # source を読めなければ標準の get_code が同じ誤りを名乗る
+    code = code_store.stored_code(_store_entry(store, fullname, path, source))
+    if code is None:
         return None
     record = records.record_of(code)
     if record is None:
@@ -385,39 +365,29 @@ def _from_shared_store(
 
 def _compiled_source(path: str) -> bytes | None:
     """今 compile した Hy の source の bytes — この thread で compile の直前に読んだ中身(読みの口が覚えた物)。読みの口を
-    通らずに compile した時(覚えが無い)は None で、置き場には足さない(鍵の bytes が compile した物と同じとは言えない)。"""
+    通らずに compile した時(覚えが無い)は None で、保存先には足さない(鍵の bytes が compile した物と同じとは言えない)。"""
     data = _last_sources().get(path)
     return data if isinstance(data, bytes) else None
 
 
-def _to_shared_store(fullname: str, source: bytes | None, code: CodeType) -> None:
-    """今 compile した Hy の code を、compile した source の bytes を鍵にして共有の置き場へ足す(記録の無い code・bytecode を
+def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeType) -> None:
+    """今 compile した Hy の code を、compile した source の bytes を鍵にして保存先(code_store)へ足す(記録の無い code・bytecode を
     書かない設定では足さない)— 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
     からだけ作り、file を読み直さない(読み直すと、間に書き換わった file の中身の鍵に古い code が入る — agora-redesign #2799)。
-    書けない置き場では黙って足さない(置き場は速さのためだけ)。"""
-    store = _store_dir()
+    書けない保存先では足さない — import の口は venv のすべての Python の起動で走るので、書けない理由を import のたびに出さない
+    (保存先は速さのためだけ・worker の道具は同じ書きの理由を名指して出す)。"""
+    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
+
+    store = code_store.store_dir()
     if store is None or source is None or sys.dont_write_bytecode:
         return
-    from doeff_hy_bytecode_guard import records  # 共有の置き場を使う時だけ読む
+    from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
 
     if records.record_of(code) is None:
         return
-    import contextlib
     import marshal
-    import tempfile
 
-    with contextlib.suppress(OSError):
-        entry = _store_entry(store, fullname, source)
-        os.makedirs(os.path.dirname(entry), exist_ok=True)
-        # 同時に書く別の process と混ざらないよう、同じ dir の一時の file に書いてから置き換える。
-        handle, temporary = tempfile.mkstemp(dir=os.path.dirname(entry), suffix=".tmp")
-        try:
-            with os.fdopen(handle, "wb") as out:
-                out.write(marshal.dumps(code))
-            os.replace(temporary, entry)
-        except OSError:
-            with contextlib.suppress(OSError):
-                os.unlink(temporary)
+    code_store.write_entry(_store_entry(store, fullname, path, source), marshal.dumps(code))
 
 
 def _current_file_of(module_name: str) -> str | None:
@@ -454,7 +424,7 @@ def _recompile(
     )
     import contextlib  # 古い記録に当たった時だけ読む
 
-    # 標準の get_code と同じく、書けない置き場(読み取り専用の木)では書かずに compile した code を使う。
+    # 標準の get_code と同じく、書けない場所(読み取り専用の木)では書かずに compile した code を使う。
     with contextlib.suppress(OSError):
         self.set_data(importlib.util.cache_from_source(path), data)
     return code
@@ -510,6 +480,6 @@ def _hy_version() -> str:
 
 def _check_hash_based_pycs() -> str:
     """``--check-hash-based-pycs`` の値 — 標準の get_code が hash 方式の .pyc を検めるかを決める値を同じ所から読むため。"""
-    import _imp  # この値の唯一の置き場(標準の importlib._bootstrap_external も同じ所を読む)
+    import _imp  # この値の唯一の定義元(標準の importlib._bootstrap_external も同じ所を読む)
 
     return _imp.check_hash_based_pycs

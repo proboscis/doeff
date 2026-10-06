@@ -4,7 +4,7 @@
 ;;     (foundation/bytecode_pool.hy を子 process で起こす・並列 2)。
 ;;   * 失敗ケース(b) 大きい順: pool へ渡す焼く物の列は source の大きさの降順(同じ大きさは木と相対 path の順)— 名の順に戻すと赤。
 ;;     列を作る純粋な関数 bake-order と、準備の Program が焼きの効果へ渡す列(焼きの効果だけを記録の答え手に替える)の両方で確かめる。
-;;   * 木ごとの引数の揃え方: --roots は木ごとに 1 つ・--from と --changed は無いか木ごとに 1 つ(空文字 = その木に無い)。
+;;   * 木ごとの引数の揃え方: --roots は木ごとに 1 つ。
 ;;   * 入口は判断の module bake_plan を package の名でなく自分の位置から求めた path で読む(root の版の doeff に依らないため)。
 ;; 純粋な判断は package の名(doeff_cluster.worker.core.bake_plan)で import して検める。入口の Program へ渡す値と、Program の答えの型は
 ;; 入口が path で読んだ module(code_prepare.plan)の物を使う — 同じ file でも、path で読んだ module と package の module は別の module で、
@@ -35,9 +35,10 @@
 
 (defk prepare-all [shaped jobs entries]
   {:pre [(: shaped tuple) (: jobs int) (: entries tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "道具の入口と同じ順で、揃えた木の組を焼く木にしてから全部を 1 回で準備し、木ごとの結果の列を返すため。"
+  "道具の入口と同じ順で、揃えた木の組を焼く木にしてから全部を 1 回で準備し、木ごとの結果の列を返すため(保存先は使わない設定 —
+   保存先の検は test_code_prepare_content_store.py)。"
   (<- trees tuple (bake-trees shaped))
-  (<- outcomes tuple (prepare-trees trees "env" jobs entries))
+  (<- outcomes tuple (prepare-trees trees "env" jobs entries None "test"))
   outcomes)
 
 
@@ -46,7 +47,7 @@
   (val lib (/ tmp-path "lib"))
   (<- (plant app #(#("app/__init__.py" "") #("app/main.hy" "(import libpkg.used [f])\n(setv V (f))\n") #("app/other.py" "X = 1\n"))))
   (<- (plant lib #(#("src/libpkg/__init__.py" "") #("src/libpkg/used.hy" "(defn f [] 1)\n") #("src/libpkg/unused.py" "Y = 2\n"))))
-  (<- shaped (| tuple str) (plan.tree-arguments #((str app) (str lib)) #("." "src") #() #()))
+  (<- shaped (| tuple str) (plan.tree-arguments #((str app) (str lib)) #("." "src")))
   (assert (isinstance shaped tuple) shaped)
   (<- outcomes tuple
       (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler subprocess-handler tree-files
@@ -81,9 +82,9 @@
 (defhandler recorded-bakes [#^ BakeLog log]
   ;; 引数に残す理由: 検ごとに別の記録を持つ。焼きの効果(外の process を起こす答え手の代わり)が受けた焼く物を覚え、焼かずに「焼けなかった
   ;; 物も焼かずに残した物も無い」と答える。
-  (BakeSources [items jobs paths]
+  (BakeSources [items jobs paths code-store]
     (setv log.items items)
-    (resume (plan.BakeAnswer :failed #() :reused #()))))
+    (resume (plan.BakeAnswer :failed #() :stored #() :reused #() :unstored #()))))
 
 
 (deftest test-the-prepare-program-hands-the-pool-the-largest-sources-first [#^ Path tmp-path]
@@ -92,7 +93,7 @@
   (<- (plant one #(#("p/__init__.py" "") #("p/a_small.py" "Z = 3\n") #("p/big.py" (* "X = 1\n" 200)))))
   (<- (plant two #(#("q/mid.py" (* "Y = 2\n" 20)))))
   (val log (BakeLog))
-  (<- shaped (| tuple str) (plan.tree-arguments #((str one) (str two)) #("." ".") #() #()))
+  (<- shaped (| tuple str) (plan.tree-arguments #((str one) (str two)) #("." ".")))
   (assert (isinstance shaped tuple) shaped)
   (<- (with-handlers [(sim-time-handler :clock (SimClock)) slog-discard-handler os-file-handler tree-files (recorded-bakes log)]
         (prepare-all shaped 2 #())))
@@ -100,15 +101,11 @@
 
 
 (deftest test-per-tree-arguments-line-up-by-one-rule
-  (<- lined (| tuple str) (tree-arguments #("/a" "/b") #("." "src,vendor") #("" "/old/b") #()))
-  (assert (= lined #((TreeArgs :named "/a" :roots #(".") :old None :changed None)
-                     (TreeArgs :named "/b" :roots #("src" "vendor") :old "/old/b" :changed None)))
-          lined)
-  (<- short-roots (| tuple str) (tree-arguments #("/a" "/b") #(".") #() #()))
+  (<- lined (| tuple str) (tree-arguments #("/a" "/b") #("." "src,vendor")))
+  (assert (= lined #((TreeArgs :named "/a" :roots #(".")) (TreeArgs :named "/b" :roots #("src" "vendor")))) lined)
+  (<- short-roots (| tuple str) (tree-arguments #("/a" "/b") #(".")))
   (assert (isinstance short-roots str) short-roots)
-  (<- short-from (| tuple str) (tree-arguments #("/a" "/b") #("." ".") #("/old/a") #()))
-  (assert (isinstance short-from str) short-from)
-  (<- empty-roots (| tuple str) (tree-arguments #("/a") #("") #() #()))
+  (<- empty-roots (| tuple str) (tree-arguments #("/a") #("")))
   (assert (isinstance empty-roots str) empty-roots))
 
 

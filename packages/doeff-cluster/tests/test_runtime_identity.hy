@@ -254,8 +254,8 @@
   ;; 書き手(env-marker->json)が綴った bytecode の欄は数の読み手(marker-bytecode)で同じ値に読み戻せ、印と欄に足された知らない欄は
   ;; 読み捨てる(断らない)。名指しの検めも同じ印で一致を答える。
   (<- scene Declared (declared-scene))
-  (val counts (BytecodeCounts :carried 1 :rebuilt 2 :reused 1 :failed 0 :scan-seconds 0.5 :closure-seconds 0.75 :carry-seconds 0.25
-                              :compile-seconds 1.5 :trees #((TreeCounts :name "app" :carried 1 :rebuilt 2 :reused 1 :failed 0))))
+  (val counts (BytecodeCounts :stored 1 :rebuilt 2 :reused 1 :failed 0 :scan-seconds 0.5 :closure-seconds 0.75
+                              :compile-seconds 1.5 :trees #((TreeCounts :name "app" :stored 1 :rebuilt 2 :reused 1 :failed 0))))
   (<- raw dict (env-marker->json (EnvMarker :env scene.env :key scene.key :platform PLATFORM :stages #() :downloaded 0 :built 0
                                             :interpreter "/usr/bin/python3" :child-protocol 1 :bytecode counts)))
   (setv (get raw "laterField") {"anything" 1})

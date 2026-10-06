@@ -43,7 +43,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport CarryFrom BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -63,12 +63,12 @@
 (val CGROUP-DIR "/sys/fs/cgroup")
 ;; signal 9(SIGKILL)での子の終わりの番号(子 process の答えは負の signal の番号)。
 (val KILLED-CODE -9)
-;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(carried=… rebuilt=… reused=… failed=… carry_s=… compile_s=…
-;; closure_s=… scan_s=… — 全部の欄を読む・#3607 の H2・#3675)と、木ごとの行(tree=<--tree の綴り> carried=… rebuilt=… reused=… failed=…
+;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(stored=… rebuilt=… reused=… failed=… compile_s=… closure_s=…
+;; scan_s=… — 全部の欄を読む・#3607 の H2・#3675・#3858)と、木ごとの行(tree=<--tree の綴り> stored=… rebuilt=… reused=… failed=…
 ;; problem=<文|->)。行の頭には slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。秒は道具が小数 2 桁に丸めて書く。
 (val COMPILED-PATTERN
-  (re.compile r"carried=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) carry_s=([0-9.]+) compile_s=([0-9.]+) closure_s=([0-9.]+) scan_s=([0-9.]+)"))
-(val TREE-PATTERN (re.compile r"(?m)tree=(\S+) carried=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) problem=(.*)$"))
+  (re.compile r"stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) compile_s=([0-9.]+) closure_s=([0-9.]+) scan_s=([0-9.]+)"))
+(val TREE-PATTERN (re.compile r"(?m)tree=(\S+) stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) problem=(.*)$"))
 (val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
 ;; file system の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
@@ -474,48 +474,14 @@
   stat.real-path)
 
 
-(defrecord CarryArgs
-  "焼く道具へ渡す木 1 つの引き継ぎの引数: old = 引き継ぎ元の木の path・changed = 引き継ぎ元の commit から変わった path の一覧の file
-   (git diff — 道具はこの file に載る source の .pyc を引き継がない)。"
-  (#^ str old)
-  (#^ str changed))
-
-
-(defk changed-list [tree state-dir notes]
-  {:pre [(: tree BytecodeTree) (: state-dir str) (: notes str)] :post [(: % (| CarryArgs None))]}
-  "木 1 つの引き継ぎの引数を用意するため: 引き継ぎ元が在れば、引き継ぎ元の commit と木の commit の、木の mirror の git diff(path だけ・
-   rename を消えた path と足した path の 2 つに分ける)を state の下の file に書く。引き継ぎ元が無い・diff を読めない(引き継ぎ元の commit
-   が mirror から消えた等 — 準備の記録 notes に 1 行残す)時は None = 引き継がずに全部を焼く — 変わった file を知らずに引き継ぐと、中身の
-   変わった Python の source の .pyc も持ち越す(版ごとのコードの木の準備 worker/core/code_rules と同じ扱い・#3675)。"
-  (match tree.carry
-    None None
-    (CarryFrom :tree old :commit old-commit)
-      (do (<- diff CommandResult (git #("-C" tree.mirror "diff" "--name-only" "--no-renames" old-commit tree.commit) None))
-          (if (!= diff.code 0)
-              (do (<- detail str (tail-of diff))
-                  (<- (AppendText notes (.format "env: 引き継ぎ元 {} の commit {} と {} の差を読めない — 引き継がずに全部を焼く: {}\n"
-                                                 old old-commit tree.commit detail)))
-                  None)
-              (do (<- name str (digest16 tree.tree))
-                  (val dir (posixpath.join state-dir "changed"))
-                  (<- made (| None FileFailed) (MakeDirectory dir))
-                  (<- (settled made "変わった path の一覧の dir を作れない"))
-                  (val listed (posixpath.join dir (+ name ".txt")))
-                  (<- (write-replacing listed diff.stdout))
-                  (CarryArgs :old old :changed listed))))))
-
-
-(defk compile-argv [uv code-prepare project-dir trees carries entries]
-  {:pre [(: uv str) (: code-prepare str) (: project-dir str) (: trees tuple) (: carries tuple) (: entries tuple)] :post [(: % tuple)]}
-  "焼く道具(worker 自身の code の code_prepare.hy)を root の venv の hy で 1 回起こす命令を組むため: 木ごとに --tree・--roots・--from・
-   --changed を木の順に並べる(道具の揃え方 — --from と --changed は木ごとに 1 つ書き、引き継がない木は空文字)。carries = 木と同じ順の
-   CarryArgs か None。entries は全部の木に共通。"
+(defk compile-argv [uv code-prepare project-dir trees entries]
+  {:pre [(: uv str) (: code-prepare str) (: project-dir str) (: trees tuple) (: entries tuple)] :post [(: % tuple)]}
+  "焼く道具(worker 自身の code の code_prepare.hy)を root の venv の hy で 1 回起こす命令を組むため: 木ごとに --tree・--roots を木の順に
+   並べる(道具の揃え方)。entries は全部の木に共通。保存先の dir は道具が環境変数 DOEFF_HY_CODE_STORE から読む(worker の起動の script が
+   置き、子へ継がれる)。"
   (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare "--revision" "env")
      (if entries #("--entries" (.join "," entries)) #())
-     (tuple (gfor #(t c) (zip trees carries :strict True)
-                  a #("--tree" t.tree "--roots" (.join "," t.roots)
-                      "--from" (if (is c None) "" c.old) "--changed" (if (is c None) "" c.changed))
-                  a))))
+     (tuple (gfor t trees a #("--tree" t.tree "--roots" (.join "," t.roots)) a))))
 
 
 (defk reported-counts [text trees]
@@ -526,12 +492,12 @@
   (if (is total None)
       None
       (do (val lines (tuple (.finditer TREE-PATTERN text)))
-          (BytecodeCounts :carried (int (.group total 1)) :rebuilt (int (.group total 2)) :reused (int (.group total 3))
+          (BytecodeCounts :stored (int (.group total 1)) :rebuilt (int (.group total 2)) :reused (int (.group total 3))
                           :failed (int (.group total 4))
-                          :carry-seconds (float (.group total 5)) :compile-seconds (float (.group total 6))
-                          :closure-seconds (float (.group total 7)) :scan-seconds (float (.group total 8))
+                          :compile-seconds (float (.group total 5))
+                          :closure-seconds (float (.group total 6)) :scan-seconds (float (.group total 7))
                           :trees (tuple (gfor t trees m lines :if (= (.group m 1) t.tree)
-                                              (TreeCounts :name (posixpath.basename t.tree) :carried (int (.group m 2))
+                                              (TreeCounts :name (posixpath.basename t.tree) :stored (int (.group m 2))
                                                           :rebuilt (int (.group m 3)) :reused (int (.group m 4))
                                                           :failed (int (.group m 5)))))))))
 
@@ -555,7 +521,7 @@
                                                  (TreeProblem :tree t.tree :detail (if (is line None) NO-TREE-LINE line))))))
     (in result.code #(0 1))
       (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
-                  :detail (.format "焼く道具の全体の報告の行(carried=… rebuilt=… reused=… failed=… carry_s=… compile_s=… closure_s=… scan_s=…)を読めない: {}"
+                  :detail (.format "焼く道具の全体の報告の行(stored=… rebuilt=… reused=… failed=… compile_s=… closure_s=… scan_s=…)を読めない: {}"
                                    detail))
     True
       (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
@@ -727,18 +693,11 @@
             (resume version))))
 
   (CompileTrees [project-dir trees entries]
-    ;; 焼く道具は全部の木を 1 回で焼く(cwd = project の dir — 木はどれも絶対 path で渡す)。引き継ぐ木には、引き継ぎ元の commit から
-    ;; 変わった path の一覧(git diff)を渡す(#3675 — 渡さないと道具は中身の変わった source の .pyc も持ち越す)。一覧の file は焼いた後に消す。
-    (var carries #())
-    (for [t trees]
-      (<- carry (| CarryArgs None) (changed-list t state-dir notes))
-      (:= carries (+ carries #(carry))))
+    ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
+    ;; 無い物だけを焼く(#3858 — 前の root からの引き継ぎと、その差の一覧は持たない)。
     (<- env tuple (uv-environment state-dir))
-    (<- args tuple (compile-argv uv code-prepare project-dir trees carries entries))
+    (<- args tuple (compile-argv uv code-prepare project-dir trees entries))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
-    (for [c carries]
-      (when (is-not c None)
-        (<- (remove-if-present c.changed))))
     (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees project-dir))
     (resume compiled))
 

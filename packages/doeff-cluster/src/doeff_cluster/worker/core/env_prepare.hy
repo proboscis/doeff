@@ -15,9 +15,8 @@
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
 ;;;   9 bytecode  ReadEditableRoots / ReadHyVersion /        root の venv の interpreter で、焼く根を持つ repo の木の全部を 1 回で作る
-;;;               CompileTrees                               (引き継ぎ元は Python と venv の Hy の compiler の版が同じ root のうち近い版の
-;;;                                                          物 — carry-source。lock は比べない — #3706。
-;;;                                                          引き継がない「変わった file」は引き継ぎ元の commit との git diff — #3675)。
+;;;               CompileTrees                               (.pyc は source の中身で引く保存先 — doeff-hy の code_store — から書き、
+;;;                                                          無い物と今の macro に合わない物だけを焼く・版と root をまたぐ — #3858)。
 ;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
 ;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)。
 ;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)
@@ -37,11 +36,11 @@
 (import datetime [datetime])
 (import re)
 (import doeff_time [GetMonotonic GetTime])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout RepoLocation EnvFailure EnvFailureKind CHILD-PROTOCOL
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
-(import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json url-location])
+(import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport CarryFrom BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -97,91 +96,6 @@
   found)
 
 
-;; Hy の macro(doeff-hy)を持つ repo の宣言の名(送り手は doeff の checkout をこの名で並べる)。Hy の .pyc は、使った macro の
-;; file が同じ時だけ使い回せる — この repo の commit が同じ root からの引き継ぎは、macro の file が同じなので安い(#3515 の B)。
-;; 宣言にこの名の repo が無ければ、引き継ぎ元の選びの macro の条件(1 番目と 2 番目)は使わない(3 番目と 4 番目の条件だけで選ぶ)。
-(val MACRO-REPO "doeff")
-
-
-(defrecord CarryCandidate
-  "bytecode の引き継ぎ元の候補 1 つ(Python と venv の Hy の compiler の版が同じ完成済みの root の、同じ repo のツリー)。tree = ツリーの
-   path・root = root の path・commit = ツリーを展開した commit・made-ms = root の完成の時刻・same-commit = ツリーの commit が新しい宣言の
-   同じ repo と同じ・same-macros = macro の repo(MACRO-REPO)の commit が新しい宣言と同じ。"
-  (#^ str tree)
-  (#^ str root)
-  (#^ str commit)
-  (#^ int made-ms)
-  (#^ bool same-commit)
-  (#^ bool same-macros))
-
-
-(defk located-repos [repos]
-  {:pre [(: repos tuple)] :post [(: % tuple)]
-   :tags {:context "worker" :role "program"}}
-  "宣言の repo の列の url を 1 度ずつ読み、同じ repo かを綴りでなく正体で比べられるようにするため(#3693)— 答えは repos の順の
-   #(RepoCheckout RepoLocation) の列。"
-  (var pairs #())
-  (for [r repos]
-    (<- where RepoLocation (url-location r.url))
-    (:= pairs (+ pairs #(#(r where)))))
-  pairs)
-
-
-(defk carry-candidates [known env name hy-version]
-  {:pre [(: known tuple) (: env RuntimeEnv) (: name str) (: hy-version (| str None))] :post [(: % tuple)]
-   :tags {:context "worker" :role "program"}}
-  "repo name の bytecode の引き継ぎ元を選ぶ材料(候補の列・known の順)を作るため — Python(.pyc の magic と abi)と venv の Hy の
-   compiler の版(hy-version — 新しい root の venv の版)が同じ完成済みの root の、同じ repo のツリー。同じ repo かは url の綴りでなく
-   正体(url-location — https と scp の形と ssh:// は同じ repo・#3693)で比べる。
-   lock の sha256 は比べない(#3706 — 依存を 1 本上げただけの lock の違いで木の .pyc を全部組み直し、記録の表の service の worker の
-   bytecode が 228.6 秒・compiled 1102・carried 0 だった)。引き継いだ .pyc が今の source と macro に合うかは焼く道具が 1 つずつ照らす
-   (bytecode guard の記録の source の hash と macro の提供元)ので、lock の一致はその照らしの代わりにならない。Hy の compiler の版が
-   分からない root(印に欄の無い前の root・venv に Hy の無い root)と、新しい root の版が分からない時は候補にしない。"
-  (val repo (next (gfor r env.repos :if (= r.name name) r)))
-  (val macros (next (gfor r env.repos :if (= r.name MACRO-REPO) r) None))
-  (<- declared tuple (located-repos env.repos))
-  (val wanted (next (gfor #(r where) declared :if (= r.name name) where)))
-  (val macros-at (next (gfor #(r where) declared :if (= r.name MACRO-REPO) where) None))
-  (var roots #())
-  (for [k known]
-    (when (and (is-not hy-version None) (= k.hy-version hy-version) (= k.env.project.python env.project.python))
-      (<- at tuple (located-repos k.env.repos))
-      (:= roots (+ roots #(#(k at))))))
-  (tuple (gfor #(k at) roots
-               #(r where) at
-               :if (= where wanted)
-               (CarryCandidate :tree (.format "{}/{}" k.root r.name) :root k.root :commit r.commit :made-ms k.made-ms
-                               :same-commit (= r.commit repo.commit)
-                               :same-macros (and (is-not macros None)
-                                                 (any (gfor #(m m-at) at (and (= m-at macros-at) (= m.commit macros.commit)))))))))
-
-
-(defk carry-source [known env name hy-version]
-  {:pre [(: known tuple) (: env RuntimeEnv) (: name str) (: hy-version (| str None))] :post [(: % (| CarryFrom None))]
-   :tags {:context "worker" :role "program"}}
-  "repo name の bytecode の引き継ぎ元(ツリーの path とその commit — CarryFrom)を返すため(組み直す .pyc を少なくする — 候補は
-   carry-candidates・hy-version = 新しい root の venv の Hy の compiler の版)。無ければ None。
-   候補が幾つも在れば、.pyc を使い回せる見込みの高い条件から順に選ぶ(#3515 の B — 前は dir の名の順で最初の root を選び、同じ commit
-   で組んだ root が在っても古い commit の root から引き継いで約 2000 個を組み直した):
-     1 その repo の commit も macro の repo(MACRO-REPO)の commit も同じ root(ツリーの file も macro の file も同じ)
-     2 macro の repo の commit が同じ root(macro の file が同じ — 変わった file の .pyc だけを組む)
-     3 その repo の commit が同じ root(Hy の .pyc は macro の file が変わると全部無効になるので、2 より後)
-     4 どれも無ければ、候補の全部
-   同じ条件に当たる候補の中では、完成の時刻が新しい root・同じ時刻なら root の path の順。宣言に macro の repo が無ければ 1 と 2 には
-   誰も当たらず、3 → 4 の順になる。"
-  (<- candidates tuple (carry-candidates known env name hy-version))
-  (val tier (next (gfor group #((tuple (gfor c candidates :if (and c.same-commit c.same-macros) c))
-                                (tuple (gfor c candidates :if c.same-macros c))
-                                (tuple (gfor c candidates :if c.same-commit c))
-                                candidates)
-                        :if group group)
-                  #()))
-  (if tier
-      (do (val chosen (min tier :key (fn [c] #((- c.made-ms) c.root))))
-          (CarryFrom :tree chosen.tree :commit chosen.commit))
-      None))
-
-
 (defk env-marker->json [marker]
   {:pre [(: marker EnvMarker)] :post [(: % dict)]}
   "完成マーカーを file に書く JSON の値にする(file の境界の 1 か所)。bytecode の欄は焼いた数と処理ごとの秒(綴りは読み手の defwire
@@ -191,10 +105,10 @@
   (val counts marker.bytecode)
   (val bytecode (if (is counts None)
                     None
-                    {"carried" counts.carried "rebuilt" counts.rebuilt "reused" counts.reused "failed" counts.failed
+                    {"stored" counts.stored "rebuilt" counts.rebuilt "reused" counts.reused "failed" counts.failed
                      "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
-                     "carrySeconds" counts.carry-seconds "compileSeconds" counts.compile-seconds
-                     "trees" (lfor t counts.trees {"name" t.name "carried" t.carried "rebuilt" t.rebuilt "reused" t.reused
+                     "compileSeconds" counts.compile-seconds
+                     "trees" (lfor t counts.trees {"name" t.name "stored" t.stored "rebuilt" t.rebuilt "reused" t.reused
                                                    "failed" t.failed})}))
   ;; 処理ステージの files(root に書いた file の数 — 数えない処理ステージは null)・parts(区切りの秒)・volume(disk の種類)・
   ;; startupSeconds(起こしてから最初の処理ステージまで)は #3676 で足した欄(読み手の置き場の名指しは読まない — 報告だけ)。
@@ -397,18 +311,13 @@
 (defk bytecode-trees [request state editable]
   {:pre [(: request PrepareRequest) (: state PrepareState) (: editable tuple)] :post [(: % tuple)]}
   "焼く根を持つ repo ごとの焼く木(BytecodeTree の列・宣言の repo の順)を作るため — 焼く根 = 宣言の import の根と venv に editable で
-   入る dir(bytecode-roots)・引き継ぎ元 = carry-source(変わった file を引き継ぎ元の commit との git diff で決めるため、木の mirror と
-   commit も載せる)・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。"
+   入る dir(bytecode-roots)・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。"
   (var trees #())
   (for [repo request.env.repos]
     (<- roots tuple (bytecode-roots request.env editable repo.name))
     (when roots
       (<- declared tuple (repo-roots request.env repo.name))
-      (<- carry (| CarryFrom None) (carry-source request.known request.env repo.name state.hy-version))
-      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots
-                                         :mirror (next (gfor m state.mirrors :if (= m.name repo.name) m.mirror))
-                                         :commit repo.commit :carry carry
-                                         :declared (bool declared)))))))
+      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots :declared (bool declared)))))))
   trees)
 
 
@@ -436,10 +345,9 @@
               (do (for [p problems]
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
-                  ;; 書いた file の数 = 焼いて書いた .pyc(rebuilt)と hardlink で引き継いだ .pyc(carried)(#3676)。焼かずに残した
-                  ;; .pyc(reused)は引き継いだ物を照らして残しただけで、carried に数えてあるので足さない(#3675)。macro が変わって
-                  ;; 引き継いだ物を焼き直した .pyc は両方に入る(書きの回数としては 2 回 — 報告だけの値)。
-                  (replace state :interpreter used :bytecode counts :written (+ counts.rebuilt counts.carried)))))))
+                  ;; 書いた file の数 = 焼いて書いた .pyc(rebuilt)と保存先の code から書いた .pyc(stored)(#3676・#3858)。焼かずに
+                  ;; 残した .pyc(reused)は書いていないので足さない(#3675)。
+                  (replace state :interpreter used :bytecode counts :written (+ counts.rebuilt counts.stored)))))))
 
 
 (defk stage-bytecode [request state]
@@ -448,10 +356,11 @@
    (worker の Hy で作ると macro の展開が違い得るため)。木ごとに起こすと、木 1 つの終わりを待つ間ほかの core が遊ぶ — 焼く道具が全部の木の
    焼く物を 1 つの pool に大きい順に渡す。焼く範囲の入口(bytecode-entries)は全部の木に共通で、import を木をまたいで辿った閉包だけを
    焼く(業務の repo の module が import する依存の repo の module も入る — 入口が無ければ全部の木の根の下を全部焼く: repo の根を指す
-   editable — flat layout の package — は tests や docs も焼くが、冷えた root で 1 回だけ・以後は引き継ぐ)。木の問題の扱いは
-   bytecode-outcome。1 回の焼きの前と後に進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。この処理ステージは
-   macro の file が変わると全部を焼き直し、負荷の高い時に 267.9 秒かかった(#3515)。
-   焼く前に venv の Hy の compiler の版を読む(引き継ぎ元の候補を比べ、完成マーカーに残して次の準備が比べるため — #3706)。"
+   editable — flat layout の package — は tests や docs も焼くが、中身の同じ source は保存先から書く)。木の問題の扱いは
+   bytecode-outcome。1 回の焼きの前と後に進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。.pyc は source の
+   中身で引く保存先から書き、焼くのは中身の変わった file と macro の出所の変わった使う側だけ(#3858 — 前は前の root から引き継ぎ、
+   引き継ぎ元の無い root と macro の file が変わった版は全部を焼き直した・負荷の高い時に 267.9 秒 — #3515)。
+   焼く前に venv の Hy の compiler の版を読む(完成マーカーに残す — #3706)。"
   (<- pdir str (project-dir request.env request.root))
   (<- editable tuple (ReadEditableRoots pdir request.root))
   (<- hy-version (| str None) (ReadHyVersion pdir))

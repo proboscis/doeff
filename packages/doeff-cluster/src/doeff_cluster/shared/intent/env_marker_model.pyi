@@ -9,20 +9,19 @@ ENV_MARKER_FORMAT: int
 @dataclass(frozen=True, kw_only=True)
 class TreeCounts:
     name: str
-    carried: int
+    stored: int
     rebuilt: int
     reused: int
     failed: int
 
 @dataclass(frozen=True, kw_only=True)
 class BytecodeCounts:
-    carried: int
+    stored: int
     rebuilt: int
     reused: int
     failed: int
     scan_seconds: float
     closure_seconds: float
-    carry_seconds: float
     compile_seconds: float
     trees: tuple[TreeCounts, ...]
 

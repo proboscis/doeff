@@ -112,12 +112,10 @@
       (when (not skip)
         (:= failed (dfor #(k v) (.items failed) :if (!= k revision) k v))
         (<- (file-done (MakeDirectory settings.cache)))
-        ;; 引き継ぎ元 = 最後に完成した版の木。
+        ;; 版の木の検めを読み直す(.pyc は source の中身で引く保存先から書くので、前の版の木から引き継がない — #3858)。
         (<- checks tuple (cache-checks settings checked))
         (:= checked (dfor c checks c.name c))
-        (val ready (lfor c checks :if (is c.reason None) c))
-        (val previous (if ready (+ settings.cache "/" (. (max ready :key (fn [c] c.modified)) name)) None))
-        (<- script str (prepare-script settings.repo revision previous :hy-command settings.hy-command :tool settings.tool
+        (<- script str (prepare-script settings.repo revision :hy-command settings.hy-command :tool settings.tool
                                        :layout settings.layout))
         (val tmp (.format "{}/.{}.tmp" settings.cache revision))
         (val err (.format "{}/.{}.err" settings.cache revision))
