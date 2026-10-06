@@ -6,7 +6,8 @@ emulated environment and tests) or ``redis_notice_handler`` (Redis Pub/Sub):
 - ``Announce`` — send a notice to whoever is subscribed to a channel right now; answers how many received it.
 - ``SubscribeChannels`` / ``NextAnnouncement`` / ``CloseSubscription`` — receive notices.
 - ``AwaitBrokerBack`` — the question "has the broker come back", answered by whoever can know it (the in-memory
-  handler answers it itself; the Redis handler passes it outward to the composition).
+  handler answers it itself; for Redis, ``broker_back_by_retry`` answers it with ``ProbeBroker``).
+- ``ProbeBroker`` — try whether the broker can be reached right now (a connection only, no data).
 
 Every operation that talks to the broker answers ``BrokerUnreachable`` instead of raising when the broker cannot
 be reached.
@@ -110,7 +111,15 @@ class CloseSubscription(EffectBase[None]):
 class AwaitBrokerBack(EffectBase[None]):
     """Wait until the broker that answered ``BrokerUnreachable`` can be reached again.
 
-    Answered by whoever can know it: ``memory_notice_handler`` answers when its broker is restored; the Redis
-    handler does not answer it — the composition does (for example from the readiness of the broker's service).
-    The answer must come when the broker is back, not at once: a source asks again after every failed retry.
+    Answered by whoever can know it: ``memory_notice_handler`` answers when its broker is restored; for Redis,
+    ``broker_back_by_retry`` (``handlers/redis_notices.py``) answers it by trying ``ProbeBroker`` at the interval
+    the composition names. The answer must come when the broker is back, not at once: a source asks again after
+    every failed retry.
     """
+
+
+@dataclass(frozen=True)
+class ProbeBroker(EffectBase["None | BrokerUnreachable"]):
+    """Try whether the broker can be reached right now: only a connection, no data is read or written. Answers
+    ``None`` when it can, ``BrokerUnreachable`` when it cannot. Asked only while somebody waits in
+    ``AwaitBrokerBack`` (agora-redesign #3864)."""

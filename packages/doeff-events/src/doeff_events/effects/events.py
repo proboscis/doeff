@@ -60,6 +60,19 @@ class SourceResumed:
 
 
 @dataclass(frozen=True)
+class SourceMissed:
+    """A sender on ``channel`` could not hand the broker an event while the task named ``source`` was subscribed
+    and connected: what was published on that channel since may be missing. The body that names it catches up
+    once from its records, like on ``SourceResumed`` (``notice_events_handler`` turns the sender's gap notice into
+    this event; a sender also tells one when it starts, for what its previous process may have left missing). It
+    may come more than once for one gap; catching up again changes nothing. Not always subscribed, like
+    ``SourceResumed``."""
+
+    source: str
+    channel: str
+
+
+@dataclass(frozen=True)
 class SourceStarted:
     """The task named ``source`` reached its store for the first time and began its subscription.
 

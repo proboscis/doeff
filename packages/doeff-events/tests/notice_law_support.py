@@ -29,7 +29,7 @@ from doeff_events.handlers.memory_notices import (
     restore_broker,
 )
 from doeff_events.handlers.notice_events import notice_events_handler
-from doeff_events.notice_laws import EventLawHarness, law_routes
+from doeff_events.notice_laws import EventLawHarness, GapLawHarness, law_routes
 from doeff_time import sim_time_handler
 
 from doeff import K, Pass, Program, Pure, Resume, do, run
@@ -155,37 +155,102 @@ def memory_harness(
 
 
 @final
-class _SenderOutage:
-    """What ``sender_outage_harness`` knows of the outage it made: why the broker refuses senders (``None`` = it
-    takes them), and the tasks waiting in ``AwaitBrokerBack`` for its return."""
+class SenderOutage:
+    """What ``refuses_senders`` knows of the outage a test made: why the broker refuses senders (``None`` = it takes
+    them), whether the return was told since the last cut (later waits for it are answered at once, as the
+    in-memory broker answers them when it is not cut), the tasks waiting in ``AwaitBrokerBack``, the promise a
+    test waits on until somebody waits for the return, and how many waits were asked (to count them)."""
 
-    __slots__ = ("detail", "waiters")
+    __slots__ = ("asked", "back_told", "detail", "waiters", "wanted")
 
     def __init__(self) -> None:
         """Start with the broker taking every notice."""
         self.detail: str | None = None
+        self.back_told = True
         self.waiters: tuple[Promise[object], ...] = ()
+        self.wanted: Promise[object] | None = None
+        self.asked = 0
 
 
-def refuses_senders(outage: _SenderOutage) -> "ProgramHandler":
-    """The layer under ``notice_events_handler`` that takes the broker from the sending side only: while the outage
-    is on, ``Announce`` answers ``BrokerUnreachable`` and ``AwaitBrokerBack`` waits for the restore; subscriptions
-    and their waits go on to the broker untouched (the receivers stay connected)."""
+def refuses_senders(outage: SenderOutage) -> "ProgramHandler":
+    """The layer under ``notice_events_handler`` that takes the broker from the sending side only (the in-memory
+    broker's ``cut_broker`` takes it from everyone): while the outage is on, ``Announce`` answers
+    ``BrokerUnreachable``. ``AwaitBrokerBack`` is answered at once when the return was told since the last cut,
+    and otherwise waits until the test tells it. Subscriptions and their waits go on to the broker untouched —
+    the receivers stay connected."""
 
     @do
     def handler(effect: Announce | AwaitBrokerBack, k: K) -> "EffectGenerator[object]":
-        """Refuse a send, or hold a wait for the return, while the outage is on; pass on otherwise."""
-        if outage.detail is None:
-            yield Pass(effect, k)
-            return None
+        """Refuse a send while the outage is on; hold a wait for the return until the test tells it."""
         if isinstance(effect, Announce):
+            if outage.detail is None:
+                yield Pass(effect, k)
+                return None
             return (yield Resume(k, BrokerUnreachable(outage.detail)))
+        outage.asked += 1
+        if outage.back_told:
+            return (yield Resume(k, None))
         back: Promise[object] = yield CreatePromise()
         outage.waiters = (*outage.waiters, back)
+        wanted, outage.wanted = outage.wanted, None
+        if wanted is not None:
+            yield CompletePromise(wanted, None)
         yield Wait(back.future)
         return (yield Resume(k, None))
 
     return program_handler(handler)
+
+
+@do
+def _told_back(outage: SenderOutage) -> "EffectGenerator[None]":
+    """Answer everyone waiting for the broker's return."""
+    waiters, outage.waiters = outage.waiters, ()
+    for waiter in waiters:
+        yield CompletePromise(waiter, None)
+
+
+def gap_harness(
+    broker: MemoryBroker, *, outage: SenderOutage | None = None, below_events: Layer = unbroken
+) -> GapLawHarness:
+    """The harness of ``GAP_LAWS``: parties on ``broker`` whose sends the test refuses and lets through.
+    ``below_events`` (between ``notice_events_handler`` and ``refuses_senders``) is where a broken handler goes;
+    ``outage`` lets a test read what the layer saw."""
+    known = outage if outage is not None else SenderOutage()
+    refusing = refuses_senders(known)
+    parties = memory_harness(broker, below_events=lambda program: refusing(below_events(program)))
+
+    @do
+    def cut() -> "EffectGenerator[None]":
+        """Refuse every send from now on; the return is not told."""
+        known.detail = "the broker refuses senders"
+        known.back_told = False
+        yield Pure(None)
+
+    @do
+    def reopen() -> "EffectGenerator[None]":
+        """Take sends again; nobody is told."""
+        known.detail = None
+        yield Pure(None)
+
+    @do
+    def restore() -> "EffectGenerator[None]":
+        """Take sends again and tell the return (to everyone waiting and to whoever asks later)."""
+        known.detail = None
+        known.back_told = True
+        yield _told_back(known)
+
+    @do
+    def flap() -> "EffectGenerator[None]":
+        """Once somebody waits for the return, tell it while sends are still refused (the broker went away again)."""
+        if not known.waiters:
+            wanted: Promise[object] = yield CreatePromise()
+            known.wanted = wanted
+            yield Wait(wanted.future)
+        yield _told_back(known)
+
+    return GapLawHarness(
+        as_party=parties.as_party, channel=f"{PREFIX}:note", cut=cut, reopen=reopen, restore=restore, flap=flap
+    )
 
 
 def never_tells_the_return() -> "ProgramHandler":
@@ -200,30 +265,6 @@ def never_tells_the_return() -> "ProgramHandler":
         return (yield Resume(k, None))
 
     return program_handler(handler)
-
-
-def sender_outage_harness(broker: MemoryBroker, *, below_events: Layer = unbroken) -> EventLawHarness:
-    """The harness of ``HELD_LAWS``: parties on ``broker`` whose ``cut`` / ``restore`` take the broker from the
-    sending side only. ``below_events`` (between ``notice_events_handler`` and ``refuses_senders``) is where a
-    broken handler goes."""
-    outage = _SenderOutage()
-    refusing = refuses_senders(outage)
-    parties = memory_harness(broker, below_events=lambda program: refusing(below_events(program)))
-
-    @do
-    def cut() -> "EffectGenerator[None]":
-        """Refuse every send from now on."""
-        outage.detail = "the broker refuses senders"
-        yield Pure(None)
-
-    @do
-    def restore() -> "EffectGenerator[None]":
-        """Take sends again and answer everyone waiting for the return."""
-        waiters, outage.detail, outage.waiters = outage.waiters, None, ()
-        for waiter in waiters:
-            yield CompletePromise(waiter, None)
-
-    return EventLawHarness(as_party=parties.as_party, cut=cut, restore=restore)
 
 
 def run_on_virtual_clock(program: Program[object]) -> object:
