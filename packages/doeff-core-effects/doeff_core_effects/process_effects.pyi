@@ -12,6 +12,10 @@ class EnvMode(StrEnum):
     REPLACE = 'replace'
     EXTEND = 'extend'
 
+class ChildLifetime(StrEnum):
+    WITH_STARTER = 'with-starter'
+    OUTLIVES_STARTER = 'outlives-starter'
+
 @dataclass(frozen=True, kw_only=True)
 class EnvEntry:
     name: str
@@ -102,6 +106,7 @@ class StartProcess(EffectBase):
     process_group: bool = False
     hold_stdin: bool = False
     reap_group: bool = False
+    lifetime: ChildLifetime = ...
 
 @dataclass(frozen=True)
 class PollProcess(EffectBase):

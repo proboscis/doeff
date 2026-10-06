@@ -47,7 +47,8 @@
 (import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_core_effects.os_file [stat-path])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
+(import doeff_lifeline [Lifeline])
+(import doeff_core_effects.process_effects [ChildLifetime EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
                                             WriteProcessInput ProcessInputWritten
@@ -119,6 +120,11 @@
       found)))
 
 
+;; 起こした process が終わったら子も終わる約束の、起こす側の口(process に 1 つ — doeff_lifeline の Lifeline・#3866)。lifetime が WITH-STARTER の
+;; 子を立てるたびに見張りへ知らせ、表から外した子は見張りからも外す。
+(val LIFELINE (Lifeline))
+
+
 (defclass StartedChildren []
   "StartProcess で立てた子の表(pid → #(Popen process-group reap-group))を process に 1 つ持つため(agora-redesign #2223 — 子は OS の process ごとの資源で、
    答え手を積み直しても同じ子を問える)。Popen を捨てると subprocess の後始末が子を回収して終了 code を奪うので、終わりを答えるまで表で持つ。
@@ -144,6 +150,7 @@
       (setv found (.pop self.children pid None)))
     (when (is-not found None)
       (setv #(child process-group reap-group) found)
+      (.forget LIFELINE pid)
       (when (is-not child.stdin None)
         (with [(contextlib.suppress OSError)] (.close child.stdin)))
       (when (and process-group reap-group)
@@ -542,9 +549,10 @@
   outcome)
 
 
-(defk start-child-process [argv cwd env env-mode env-drop stdout-path stderr-path process-group [hold-stdin False] [reap-group False]]
+(defk start-child-process [argv cwd env env-mode env-drop stdout-path stderr-path process-group [hold-stdin False] [reap-group False]
+                           [lifetime ChildLifetime.WITH-STARTER]]
   {:pre [(: argv tuple) (: cwd (| str None)) (: env (| tuple None)) (: env-mode EnvMode) (: env-drop tuple) (: stdout-path (| str None))
-         (: stderr-path (| str None)) (: process-group bool) (: hold-stdin bool) (: reap-group bool)]
+         (: stderr-path (| str None)) (: process-group bool) (: hold-stdin bool) (: reap-group bool) (: lifetime ChildLifetime)]
    :post [(: % (| ProcessStarted ProcessNotStarted))] :tags {:context "process" :role "foundation"}}
   "StartProcess に本物の子で答えるため: 出力の file を末尾へ足す形で先に開き(開けなければ立てない)、標準入力の無い子を Popen で立てて
    STARTED-CHILDREN に置き、終わりを待たずに pid を返す。立てられない理由は OSError の文のまま(RunProcess の起こせない形と同じ)。"
@@ -556,6 +564,9 @@
       (val child (subprocess.Popen (list argv) :stdin (if hold-stdin subprocess.PIPE subprocess.DEVNULL) :stdout out :stderr err :cwd cwd
                                    :env child-env :start-new-session process-group))
       (.add STARTED-CHILDREN child process-group reap-group)
+      (match lifetime
+        ChildLifetime.WITH-STARTER (.watch LIFELINE child.pid process-group)
+        ChildLifetime.OUTLIVES-STARTER None)
       (ProcessStarted :pid child.pid))
     (except [error OSError]
       (ProcessNotStarted :detail (str error)))))
@@ -665,8 +676,8 @@
   (ResolveModule [name]
     (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
     (resume found))
-  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
-    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group))
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group lifetime]
+    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group lifetime))
     (resume started))
   (PollProcess [pid]
     (<- seen (poll-child-process pid))
@@ -728,8 +739,8 @@
     (<- found (| ModuleFound ModuleNotFound) (os-module-location name))
     (resume found))
   ;; 立てる・問うは待たないのでその場で答える。止めるは猶予の間だけ待つので thread で回す。
-  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
-    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group))
+  (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group lifetime]
+    (<- started (start-child-process argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group lifetime))
     (resume started))
   (PollProcess [pid]
     (<- seen (poll-child-process pid))
