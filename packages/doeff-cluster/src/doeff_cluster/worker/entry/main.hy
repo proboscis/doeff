@@ -22,13 +22,12 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
 (import doeff_core_effects.os_random [os-random-handler])
+(import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.random_effects [RandomBytes])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.protocol.stop [stop-flag StopState])
-(import doeff_cluster.foundation.coordinator_inbox [stop-on-signals])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
@@ -112,9 +111,9 @@
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
-(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs stop warm]
+(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
-         (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings) (: stop StopState)
+         (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings)
          (: warm WarmSettings)]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
@@ -122,9 +121,10 @@
    code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
    (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消し
    (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
-   調整ループ(heartbeat)は回り続ける(#3715)。"
-  [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-warm-process-handler
-   os-file-handler offloaded-tree-handler (session-store) (env-host envs) (code-host codes) (status-file status-path)
+   調整ループ(heartbeat)は回り続ける(#3715)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
+   最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。"
+  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler
+   os-file-handler offloaded-tree-handler (session-store) os-signal-stop-handler (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
    (probe-host probes) (warm-host warm) (process-host host) local-host tick-pauses])
 
@@ -256,11 +256,9 @@
                           :code-store (if (= args.code-store "off") None args.code-store))
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
-                              :probe-dir (str (/ state-dir "probe")) :shim shim)
-        stop (StopState))
+                              :probe-dir (str (/ state-dir "probe")) :shim shim))
   ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
-  (run (stop-on-signals stop))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
@@ -281,7 +279,7 @@
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
-                                           (str (/ state-dir "status.json")) codes envs stop warm)))
+                                           (str (/ state-dir "status.json")) codes envs warm)))
   (print "worker: 起動します" :file sys.stderr :flush True)
   (try
     (run (scheduled (worker-on handlers policy)))

@@ -10,10 +10,11 @@
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView WorkerPolicy DesiredJobs JobStatus ReadDesired ObserveWorld
-                                                  WorkerStopRequested PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob
+                                                  PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob
                                                   AwaitNextTick])
 (import doeff_cluster.worker.core.program [run-worker tick-pause])
 (import doeff_cluster.worker.core.quiet_policy [quiet-beats])
@@ -54,7 +55,7 @@
   ;; 引数に残す理由: 検ごとに別の世界(時計・準備と process の長さ・反例の印)で並べる(Ask で区別できない)。
   ;; 宣言は job a の 1 つ。STOP-MS で止まれと答える。拍の間の眠りは、quiet-beats の答えを記録してから本番と同じく 1 拍だけ眠る。
   (ReadDesired [env-report] (resume (DesiredJobs #(JOB))))
-  (WorkerStopRequested [] (resume (>= (! (clock-ms world.clock)) STOP-MS)))
+  (StopRequested [] (resume (if (>= (! (clock-ms world.clock)) STOP-MS) "signal 15" None)))
   (EnvReport [] (resume None))
   (ObserveWorld []
     (<- seen WorldView (timed-view world (! (clock-ms world.clock))))

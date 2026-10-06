@@ -10,7 +10,7 @@
 (import queue)
 (import signal)
 (import sys)
-(import typing [Callable Protocol runtime-checkable])
+(import typing [Callable])
 (import threading)
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
@@ -182,20 +182,14 @@
   (defn #^ None __init__ [self] (setv self.requested False)))
 
 
-(defclass [runtime-checkable] StopMark [Protocol]
-  "信号で立てる止めの印の形(この module の StopState と worker/protocol/stop の StopState — 層の向きで 1 つの型に寄せられない)。"
-  (setv #^ bool requested False))
-
-
-(defk stop-on-signals [stop [wake None]]
-  {:pre [(: stop StopMark) (: wake (| Callable None))] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "process の入口(coordinator・記録の置き場・worker の main)が SIGTERM と SIGINT を受けたら、渡された止めの印(この module の StopState か
-   worker/protocol/stop の StopState — どちらも requested を持つ)を立てるため。3 つの main が同じ signal.signal の 2 行と信号の関数を
-   入口の層で直に書いていた — 生の副作用(signal)は foundation に置く(DOEFF106)。signal の登録は main の thread からだけ通るので、
-   入口の main が run で 1 度だけ呼ぶ。wake = 印を立てた後に待ちを起こす関数(coordinator と記録の置き場は受付の箱の RequestInbox.wake —
-   要求の無い間に眠る待ちを、合図の刻に抜けさせる・#3865)。None = 印を立てるだけ(worker — 拍ごとに印を読む)。"
+(defk stop-on-signals [stop wake]
+  {:pre [(: stop StopState) (: wake Callable)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "process の入口(coordinator・記録の置き場の main)が SIGTERM と SIGINT を受けたら、止めの印 stop を立てて受付の箱の待ちを起こすため。
+   2 つの main が同じ signal.signal の 2 行と信号の関数を入口の層で直に書いていた — 生の副作用(signal)は foundation に置く(DOEFF106)。
+   signal の登録は main の thread からだけ通るので、入口の main が run で 1 度だけ呼ぶ。wake = 印を立てた後に待ちを起こす関数(受付の箱の
+   RequestInbox.wake — 要求の無い間に眠る待ちを、合図の刻に抜けさせる・#3865)。worker は核の os-signal-stop-handler を使う(#3871)。"
   ;; 受け手は signal の module が呼ぶ callback(印を立て、待ちを起こす)。
-  (setv raise-mark (fn [signum frame] (setv stop.requested True) (when (is-not wake None) (wake))))
+  (setv raise-mark (fn [signum frame] (setv stop.requested True) (wake)))
   (signal.signal signal.SIGTERM raise-mark)
   (signal.signal signal.SIGINT raise-mark)
   None)

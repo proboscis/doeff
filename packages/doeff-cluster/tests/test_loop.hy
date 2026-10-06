@@ -5,10 +5,12 @@
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage
   WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-  WorkerStopRequested PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+  PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 
@@ -54,7 +56,7 @@
     (var current (DesiredJobs #()))
     (for [#(at desired) script] (when (>= world.now at) (:= current desired)))
     (resume current))
-  (WorkerStopRequested [] (resume (>= world.now stop-at)))
+  (StopRequested [] (resume (if (>= world.now stop-at) "signal 15" None)))
   (EnvReport [] (resume None))
   (ObserveWorld [] (resume (.observe world)))
   (PublishStatus [statuses note] (.append world.statuses #(world.now statuses note)) (resume None))
@@ -67,9 +69,10 @@
 (defk fake-host [world script stop-at program]
   {:pre [(: world FakeWorld) (: script tuple) (: stop-at int) (: program Program)] :post [(: % WorkerState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "program を台本の世界(fake-host-script)の下で走らせ、その答えを返すため。台本の外側に仮想の時計(world の SimClock)と、拍の間の
-   眠りの本番の答え手 tick-pauses を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
-  (<- answer WorkerState ((sim-time-handler :clock world.clock) (tick-pauses (slog-discard-handler ((fake-host-script world script stop-at) program)))))
+  "program を台本の世界(fake-host-script)の下で走らせ、その答えを返すため。台本の外側に仮想の時計(world の SimClock)を、内側に拍の間の
+   眠りの本番の答え手 tick-pauses を被せる(tick-pauses の止めの問いは台本が答え、止めの合図は来ない — stop-signal-never-comes)。
+   拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
+  (<- answer WorkerState ((sim-time-handler :clock world.clock) ((fake-host-script world script stop-at) (stop-signal-never-comes (tick-pauses (slog-discard-handler program))))))
   answer)
 
 (defk events-of [world name]

@@ -13,7 +13,7 @@ runtime_env_model.pyi と同じ形)。
   (WorldView.codes = CodeView の組・WorkerState.records = job の名 → JobRecord ほか)。
 - CodeState・ProbeState・StopStage・Outcome は Enum、StartHold は defenum(StrEnum)。StopReason は止めの訳の和の型。
 - effect は凍った dataclass の EffectBase[答えの型]。答えは worker の handler が返す物(ReadDesired = DesiredJobs か DesiredUnreadable・
-  ObserveWorld = WorldView・WorkerStopRequested = bool・残りの action と PublishStatus = None)。
+  ObserveWorld = WorldView・残りの action と PublishStatus = None)。止めの問いは核の StopRequested(#3871)。
 - Action は action の effect の和の型。
 """
 
@@ -287,9 +287,6 @@ class EnvReport(EffectBase[dict[str, object] | None]): ...
 
 @dataclass(frozen=True)
 class ObserveWorld(EffectBase[WorldView]): ...
-
-@dataclass(frozen=True)
-class WorkerStopRequested(EffectBase[bool]): ...
 
 @dataclass(frozen=True)
 class PublishStatus(EffectBase[None]):
