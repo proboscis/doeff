@@ -23,7 +23,7 @@
   {:pre [(: sim Sim) (: seconds int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator が seconds 秒止まってから、耐久の置き場(key の表)から起き直すため。止まっている間も世界(Pod・worker の process)は進む。
    答え = ずらした止まっていた長さ(ms)。"
-  (<- kv dict (full-kv (mark-alive sim.state sim.now)))
+  (<- kv dict (full-kv (! (mark-alive sim.state sim.now))))
   (for [_ (range seconds)]
     (+= sim.now 1000)
     (sim.advance-pods))
@@ -68,10 +68,10 @@
 
 
 (deftest test-mark-alive-is-written-every-few-seconds-not-every-step
-  (setv s (mark-alive (ClusterState) 10000))
+  (setv s (! (mark-alive (ClusterState) 10000)))
   (assert (= s.alive-ms 10000))
-  (assert (is (mark-alive s (+ 10000 (- ALIVE-MARK-MS 1))) s))
-  (assert (= (. (mark-alive s (+ 10000 ALIVE-MARK-MS)) alive-ms) (+ 10000 ALIVE-MARK-MS))))
+  (assert (is (! (mark-alive s (+ 10000 (- ALIVE-MARK-MS 1)))) s))
+  (assert (= (. (! (mark-alive s (+ 10000 ALIVE-MARK-MS))) alive-ms) (+ 10000 ALIVE-MARK-MS))))
 
 
 (deftest test-a-worker-row-moves-only-at-the-mark-and-reloads-the-mark
@@ -85,13 +85,13 @@
                               now T)
                    0)))
   (val workers-of (fn [kv] (dfor #(k v) (.items kv) :if (.startswith k "worker/") k v)))
-  (val marked (mark-alive (beat (beat (ClusterState) "w1" 10000) "w2" 10000) 10000))
+  (val marked (! (mark-alive (beat (beat (ClusterState) "w1" 10000) "w2" 10000) 10000)))
   (<- at-mark dict (full-kv marked))
   (assert (= #((get at-mark "worker/w1" "lastSeenMs") (get at-mark "worker/w2" "lastSeenMs")) #(10000 10000)) at-mark)
   (val beaten (beat marked "w1" 12000))
   (<- after-beat dict (full-kv beaten))
   (assert (= (workers-of after-beat) (workers-of at-mark)) "heartbeat だけで worker の保存の行が変わった")
-  (val next-mark (mark-alive beaten (+ 10000 ALIVE-MARK-MS)))
+  (val next-mark (! (mark-alive beaten (+ 10000 ALIVE-MARK-MS))))
   (<- at-next dict (full-kv next-mark))
   (assert (= (get at-next "worker/w1" "lastSeenMs") 12000) at-next)
   (assert (= (get at-next "worker/w2") (get at-mark "worker/w2")) "沈黙した worker の行が変わった")

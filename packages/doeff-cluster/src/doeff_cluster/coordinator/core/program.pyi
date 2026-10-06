@@ -32,6 +32,7 @@ from doeff_cluster.coordinator.core.api_policy import deployments_to_observe as 
 from doeff_cluster.coordinator.core.api_policy import scale_service as scale_service
 from doeff_cluster.coordinator.core.api_policy import record_action as record_action
 from doeff_cluster.coordinator.core.api_policy import mark_alive as mark_alive
+from doeff_cluster.coordinator.core.api_policy import stamp_alive as stamp_alive
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_ACTOR as ROLLOUT_ACTOR
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_TICK_MS as ROLLOUT_TICK_MS
 from doeff_cluster.coordinator.core.api_policy import TICK_MS as TICK_MS

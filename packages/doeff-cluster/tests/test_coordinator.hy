@@ -207,12 +207,13 @@
   (Reply [request status body] (.append order (+ "reply " request.path)) (<- (Reply request status body)) (resume None)))
 
 (deftest test-group-commit-answers-a-batch-only-after-one-persist
-  ;; 3 件が 1 まとまり: 永続化は 1 回、返事は 3 件とも永続化の後。
+  ;; 3 件が 1 まとまり: まとまりの永続化は 1 回、返事は 3 件とも永続化の後。最後の永続化は止まる時の生存の印(#3865)。
   (setv order [])
   (setv script (Script [[(! (req "PUT" "/board/a" {"value" 1})) (! (req "PUT" "/board/b" {"value" 2})) (! (req "GET" "/board"))]]))
   (<- final ClusterState ((! (scripted script)) ((recording order) (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))
-  (assert (= order ["persist" "reply /board/a" "reply /board/b" "reply /board"]) order)
-  (assert (= (len script.saved) 1)))
+  (assert (= order ["persist" "reply /board/a" "reply /board/b" "reply /board" "persist"]) order)
+  (assert (= (len script.saved) 2))
+  (assert (= (sorted (get script.saved 1)) ["counter"]) (get script.saved 1)))
 
 (deftest test-a-crash-during-persist-leaves-the-batch-unanswered
   ;; 2 まとまり目の fsync の途中で落ちる: 1 まとまり目の書きは返事済み・2 まとまり目の送り手には返事が来ない(失敗として扱われる)。
