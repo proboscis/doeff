@@ -37,11 +37,14 @@ import argparse
 import ast
 import dataclasses
 import json
+import multiprocessing
 import os
 import subprocess
 import sys
 import tempfile
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from itertools import groupby
 from operator import itemgetter
@@ -599,50 +602,145 @@ def _to_cache(projection: Projection) -> CachedProjection:
     )
 
 
-def project_cached(
-    root: Path, roots: list[Path], source: Path, cache_dir: Path | None
-) -> Projection | CompileFailure:
-    """展開の cache(static_cache)を引き、無ければ展開して保存する。cache_dir が None なら毎回展開する。
+#: 保存から引けない依存の展開を並べる子の process の数の上限(agora-redesign #3869)。日次の検証の機体(CPU の上限が在る Pod)でも、
+#: 手で測る時でも同じ値 — 実際の数は min(この上限, この process が使える CPU の数, その段の引けない file の数)。
+EXPANDER_LIMIT = 8
 
-    展開に失敗した source は保存しない(直した時に作り直す・失敗の文言は展開の度に出す)。"""
+
+class ExpansionWorkerLostError(RuntimeError):
+    """依存の展開を受け持った子の process が、答えを返さずに落ちた(答えの無い file を名指す — main は道具の失敗 exit 2 にする)。"""
+
+
+@dataclass(frozen=True)
+class _Hit:
+    """保存から引けた展開。"""
+
+    projection: Projection
+
+
+@dataclass(frozen=True)
+class _Miss:
+    """保存から引けなかった source と、展開した後に保存する鍵(保存しない実行では None)。"""
+
+    source: Path
+    key: str | None
+
+
+def _looked_up(root: Path, roots: list[Path], source: Path, cache_dir: Path | None) -> _Hit | _Miss:
+    """保存から引く(引けなければ、展開した後に保存する鍵を持った _Miss)。"""
     if cache_dir is None:
-        return project(root, roots, source)
+        return _Miss(source, None)
     module = module_name(roots, source)
     key = place(source.read_text(encoding="utf-8"), module, str(source.relative_to(root)))
     match load(cache_dir, key):
         case CachedProjection() as cached:
-            return _from_cache(source, module, cached)
+            return _Hit(_from_cache(source, module, cached))
         case CacheMiss():
+            return _Miss(source, key)
+
+
+def _kept(cache_dir: Path | None, miss: _Miss, result: Projection | CompileFailure) -> None:
+    """展開した結果を保存する(保存の書きはこの 1 か所 — 子の process は書かない)。展開に失敗した source は保存しない
+    (直した時に作り直す・失敗の文言は展開の度に出す)。"""
+    if cache_dir is not None and miss.key is not None and isinstance(result, Projection):
+        store(cache_dir, miss.key, _to_cache(result))
+
+
+def project_cached(
+    root: Path, roots: list[Path], source: Path, cache_dir: Path | None
+) -> Projection | CompileFailure:
+    """展開の cache(static_cache)を引き、無ければ展開して保存する。cache_dir が None なら毎回展開する。"""
+    match _looked_up(root, roots, source, cache_dir):
+        case _Hit(projection):
+            return projection
+        case _Miss() as miss:
             result = project(root, roots, source)
-            if isinstance(result, Projection):
-                store(cache_dir, key, _to_cache(result))
+            _kept(cache_dir, miss, result)
             return result
 
 
+def _project_in_child(root: Path, roots: list[Path], source: Path) -> Projection | CompileFailure:
+    """子の process で 1 つの source を展開する(pool に渡す関数 — module の直下に置き、子が import で引けるようにする)。"""
+    return project(root, roots, source)
+
+
+def _start_pool(workers: int) -> ProcessPoolExecutor:
+    """依存の展開を並べる子の process の pool を起こす(forkserver — 親の thread を写さない)。"""
+    return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("forkserver"))
+
+
+class _Expanders:
+    """保存から引けない依存の展開を受け持つ。引けない file が 2 つ以上の段だけ子の process の pool に並べ、pool は初めて要る時に
+    起こして、1 回の実行の中で段をまたいで使い回す(全部引ける実行では起こさない — 保存が効く時の秒を増やさない)。"""
+
+    def __init__(self, limit: int) -> None:
+        self._workers = max(1, min(limit, os.process_cpu_count() or 1))
+        self._mut_pool: ProcessPoolExecutor | None = None
+
+    def __enter__(self) -> "_Expanders":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._mut_pool is not None:
+            self._mut_pool.shutdown(cancel_futures=True)
+
+    def expanded(
+        self, root: Path, roots: list[Path], sources: list[Path]
+    ) -> dict[Path, Projection | CompileFailure]:
+        """sources を展開する(1 つか、並べる子が 1 つなら親で順に)。子が落ちたら答えの無い file を名指して止める。"""
+        if len(sources) < 2 or self._workers < 2:
+            return {source: project(root, roots, source) for source in sources}
+        if self._mut_pool is None:
+            self._mut_pool = _start_pool(self._workers)
+        pool = self._mut_pool
+        futures = {source: pool.submit(_project_in_child, root, roots, source) for source in sources}
+        try:
+            return {source: future.result() for source, future in futures.items()}
+        except BrokenProcessPool as error:
+            unanswered = sorted(str(s) for s, f in futures.items() if not f.done() or f.exception() is not None)
+            raise ExpansionWorkerLostError(
+                "依存の展開を受け持った子の process が答えを返さずに落ちた: " + ", ".join(unanswered)
+            ) from error
+
+
 def project_closure(
-    root: Path, roots: list[Path], targets: list[Path], cache_dir: Path | None = None
+    root: Path,
+    roots: list[Path],
+    targets: list[Path],
+    cache_dir: Path | None = None,
+    limit: int = EXPANDER_LIMIT,
 ) -> Closure:
-    """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。"""
+    """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。
+
+    import を段ごとに辿る(agora-redesign #3869): 段の中の file は互いの展開を使わないので、保存から引ける file は親で引き、
+    引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に)。"""
     projections: dict[Path, Projection] = {}
     failures: list[CompileFailure] = []
-    pending = list(targets)
-    seen: set[Path] = set()
-    while pending:
-        source = pending.pop()
-        if source in seen:
-            continue
-        seen.add(source)
-        result = project_cached(root, roots, source, cache_dir)
-        if isinstance(result, CompileFailure):
-            failures.append(result)
-            continue
-        projections[source] = result
-        # import の .hy は import の根と、import する file の dir から根までの親で探す(pyright の探し方 — search_dirs)。
-        dirs = search_dirs(root, roots, source)
-        for name in imported_modules(result):
-            for candidate in _module_candidates(dirs, name):
-                if candidate.is_file() and _absolute(candidate) not in seen:
-                    pending.append(_absolute(candidate))
+    seen: set[Path] = set(targets)
+    wave = list(dict.fromkeys(targets))
+    with _Expanders(limit) as expanders:
+        while wave:
+            looked = {source: _looked_up(root, roots, source, cache_dir) for source in wave}
+            misses = [miss for miss in looked.values() if isinstance(miss, _Miss)]
+            fresh = expanders.expanded(root, roots, [miss.source for miss in misses])
+            for miss in misses:
+                _kept(cache_dir, miss, fresh[miss.source])
+            found: list[Path] = []
+            for source, lookup in looked.items():
+                result = lookup.projection if isinstance(lookup, _Hit) else fresh[source]
+                if isinstance(result, CompileFailure):
+                    failures.append(result)
+                    continue
+                projections[source] = result
+                # import の .hy は import の根と、import する file の dir から根までの親で探す(pyright の探し方 — search_dirs)。
+                dirs = search_dirs(root, roots, source)
+                for name in imported_modules(result):
+                    for candidate in _module_candidates(dirs, name):
+                        absolute = _absolute(candidate)
+                        if candidate.is_file() and absolute not in seen:
+                            seen.add(absolute)
+                            found.append(absolute)
+            wave = found
     return Closure(projections, failures)
 
 
