@@ -22,6 +22,10 @@ from doeff_hy.static_check import (
     locate,
     span_index,
 )
+from doeff_hy_bytecode_guard import record_from_rows
+
+#: 位置の検は展開が通った file を読まないので、空の記録を持たせる。
+NOTHING_USED = record_from_rows("probe", ())
 
 
 def naive(projection: Projection, line: int, character: int) -> HyPosition:
@@ -65,7 +69,8 @@ def random_projection(seed: int) -> Projection:
         for _ in range(rows)
     )
     return Projection(
-        source=Path("probe.hy"), module="probe", text=text, spans=tuple(random_spans(chooser, rows))
+        source=Path("probe.hy"), module="probe", text=text, spans=tuple(random_spans(chooser, rows)),
+        used=NOTHING_USED,
     )
 
 
@@ -93,6 +98,7 @@ def test_a_multi_line_span_is_found_on_its_last_line() -> None:
         module="probe",
         text="a\nbbbb\ncccc\ndddd\n",
         spans=(Span((0, 0), (0, 1), 1, 1), Span((1, 0), (3, 3), 7, 2)),
+        used=NOTHING_USED,
     )
     assert locate(span_index(projection), 3, 1) == HyPosition(7, 2)
     assert naive(projection, 3, 1) == HyPosition(7, 2)
@@ -105,6 +111,7 @@ def test_an_index_that_lists_spans_only_on_their_first_line_answers_differently(
         module="probe",
         text="a\nbbbb\ncccc\ndddd\n",
         spans=(Span((0, 0), (0, 1), 1, 1), Span((1, 0), (3, 3), 7, 2)),
+        used=NOTHING_USED,
     )
     full = span_index(projection)
     first_line_only = SpanIndex(
