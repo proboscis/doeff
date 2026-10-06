@@ -457,3 +457,12 @@ def test_the_daily_gate_runs_the_baseline_check_strictly() -> None:
     assert "--label doeff-gate-lint" in lint[0]["run"]
     assert "hook_finding_baseline.py --strict check doeff-linter" in lint[0]["run"]
     assert "hook_finding_baseline.py --strict check semgrep" in lint[0]["run"]
+
+
+def test_the_script_reads_its_sibling_modules_under_a_safe_path() -> None:
+    # PYTHONSAFEPATH=1(作業役の shell に在る)の下では script の dir が sys.path に入らない。それでも隣の module
+    # (doeff_linter_locked・semgrep_locked)を読み、入口まで来る — 引数なしは使い方を出して 2(import で落ちると 1)。
+    ran = subprocess.run([sys.executable, str(SCRIPT)], env={**os.environ, "PYTHONSAFEPATH": "1"},
+                         capture_output=True, text=True, check=False)
+    assert "ModuleNotFoundError" not in ran.stderr, ran.stderr
+    assert ran.returncode == 2, ran.stderr

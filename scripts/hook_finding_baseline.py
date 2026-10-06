@@ -35,6 +35,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+# 隣の module(doeff_linter_locked・semgrep_locked)は、この script の dir を置き場として明示で読む。script の dir が sys.path に入るのは
+# 暗黙の既定で、PYTHONSAFEPATH=1(作業役の shell に在る)の下では入らず、commit の hook が import で落ちた(agora-redesign #3866 の続き)。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from doeff_linter_locked import binary_key, dev_key, input_key, locate, searched
 from semgrep_locked import locked_command, locked_version
 
