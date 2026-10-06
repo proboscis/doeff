@@ -12,6 +12,11 @@
 (import doeff_cluster.coordinator.entry.handler_sets [production-handlers MemoryWalStore])
 (import doeff_cluster.coordinator.protocol.kube [KubeReadBatches kube-unavailable])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot StopState])
+(import doeff_time [Delay])
+(import doeff_cluster.sim.local [wall-sim-cluster ClientLink SimLink SimWorker])
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.sim_programs [quitters])
 
 
 (val QUIET-PROBE (IdleProbe (ClusterState) (ClusterTiming) (ClusterNaming)))
@@ -87,3 +92,28 @@
   (setv (get now 0) 1121.0)
   (val live (get (.probe inbox "/livez") 0))
   (assert (= #(ready live) #(503 503)) #(ready live)))
+
+
+;; --- 模擬の環境(壁の時計)— 要求の無い間の起きの数 ----------------------------------------------------------------
+
+(val QUIET-SECONDS 3.0)
+(val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val RESTING-POLICY (WorkerPolicy :tick-seconds 10.0 :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
+
+
+(defk takes-while-quiet [seconds]
+  {:pre [(: seconds float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 起動の後 1 秒置き、要求の来ない seconds 秒の間に coordinator が受け口から取った回数(歩の数)を読むため。"
+  (<- (Delay 1.0))
+  (<- link SimLink (ClientLink))
+  (val before link.queue.takes)
+  (<- (Delay seconds))
+  (- link.queue.takes before))
+
+
+(deftest test-a-quiet-coordinator-does-not-wake-on-the-wall-clock
+  ;; worker 1 台・拍 10 秒(この 3 秒の間に heartbeat は来ない)・要求の無い 3 秒: coordinator は起きない(歩 0)。
+  ;; 直す前は 1 秒ごとに起きる(3 秒で 3 歩 前後)。
+  (<- taken int (wall-sim-cluster (quitters sim-foundation) (takes-while-quiet QUIET-SECONDS)
+                                  :workers RESTING-WORKERS :policy RESTING-POLICY))
+  (assert (= taken 0) taken))
