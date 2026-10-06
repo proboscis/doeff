@@ -2,10 +2,11 @@
 引数で振る舞いを選ぶ:
   exit <code>                                   — その終了コードで終わる
   inspect <出力の path> [<関所の socket> [<印の path>]]
-      — 開いている fd の行き先・env・process の命令行・thread の本数・doeff の VM の数を JSON で書く。関所が在れば、検が開いた unix socket
+      — 開いている fd の行き先・env・process の命令行・thread の本数・doeff の VM の数・GC が凍らせた object の数を JSON で書く。関所が在れば、検が開いた unix socket
         へ繋いで「書いた」を送り、検が切るまで待ってから印を書く(眠らずに、検の合図で進む)。
 """
 
+import gc
 import json
 import os
 import socket
@@ -21,7 +22,8 @@ def environ_seen() -> dict[str, str]:
 
 
 def facts() -> dict[str, object]:
-    """この process の見え方(fd の行き先・env・命令行・thread の本数・VM の数)を集めるため。"""
+    """この process の見え方(fd の行き先・env・命令行・thread の本数・VM の数・GC が凍らせた object の数 — 待ちの子から受け継いだ分)を
+    集めるため。"""
     import doeff_vm  # noqa: PLC0415 — 走った後の数を読むだけ
 
     names = sorted(os.listdir("/proc/self/fd"))
@@ -36,6 +38,7 @@ def facts() -> dict[str, object]:
         "argv": list(sys.argv),
         "threads": len(os.listdir("/proc/self/task")),
         "vmLive": list(doeff_vm.vm_live_counts()),
+        "gcFrozen": gc.get_freeze_count(),
     }
 
 
