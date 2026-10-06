@@ -6,7 +6,7 @@
 ;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost)。状態機械(dialogue.hy)も
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val])
-(require doeff-hy.record [defenum])
+(require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass field fields])
 (import datetime [datetime])
 (import enum [StrEnum])
@@ -153,6 +153,18 @@
   (#^ str subtype)
   (setv #^ (get tuple #(str ...)) still-queued #()))
 
+;; hook の行の段階(閉じた語彙): STARTED = system/hook_started(hook が動き始めた)/ RESPONSE = system/hook_response(hook が応答した)。
+;; 途中経過の行(hook_progress)はこの語彙に入れない(Other のまま)。
+(defenum HookPhase STARTED RESPONSE)
+
+(defrecord HookNotice
+  "CLI が hook を実行した通知の行(system/hook_started・system/hook_response): event = hook のイベント名(hook_event — この欄の無い版は
+   hook_name の「:」の前)/ phase = 段階(HookPhase)/ name = hook の名前(hook_name — 「イベント名:matcher」・無ければ空)。入力を
+   書かずに事前起動した process が最初の入力の前に出してよい行を、イベント名で絞るため(dialogue.hy の quiet-before-first-input)。"
+  (#^ str event)
+  (#^ HookPhase phase)
+  (#^ str name))
+
 (defclass [(dataclass :frozen True)] TaskEvent []
   "CLI の道具の task の開始と報せ(system/task_started・task_notification)。"
   (#^ str task-id)
@@ -203,7 +215,7 @@
   (setv #^ str subtype ""))
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
-                        PermissionRequested ControlResponse TaskEvent RateLimit TurnResult Other))
+                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit TurnResult Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
   "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語。"
@@ -368,6 +380,13 @@
     (any (gfor block results (not (text-at block "tool_use_id")))) (Other :type "user" :subtype "tool_result_without_id")
     True (ToolResult :answers (tuple (gfor block results (run (tool-answer-of block)))))))
 
+(defk hook-notice-of [#^ dict record #^ HookPhase phase]
+  {:pre [(: record dict) (: phase HookPhase)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}
+  "hook の開始と応答の行を、hook のイベント名で読めるようにするため(最初の入力の前に許す行を名前で絞る — dialogue.hy)。イベント名は
+   hook_event、この欄の無い版は hook_name(「イベント名:matcher」)の「:」の前。"
+  (val name (text-at record "hook_name"))
+  (HookNotice :event (or (text-at record "hook_event") (get (.partition name ":") 0)) :phase phase :name name))
+
 (defn classify-system [#^ dict record]
   (setv subtype (text-at record "subtype"))
   (cond
@@ -384,6 +403,8 @@
       (TaskEvent :task-id (text-at record "task_id") :status "started")
     (= subtype "task_notification")
       (TaskEvent :task-id (text-at record "task_id") :status (or (text-at record "status") "notified"))
+    (= subtype "hook_started") (run (hook-notice-of record HookPhase.STARTED))
+    (= subtype "hook_response") (run (hook-notice-of record HookPhase.RESPONSE))
     True (Other :type "system" :subtype subtype)))
 
 (defn classify-rate-limit [#^ dict record]

@@ -25,7 +25,10 @@
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
 ;;;                                      分からなければ None。token の 4 欄と額がすべて無ければ usage = None・agora-redesign #883)
-;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → ClaudeCloseSession(待たせた入力は discarded の運命で閉じる)
+;;;   WarmSessionEffect                → ClaudeWarmSession(次のターンと同じ始まり方 — 1 度もターンを始めていない新しい文脈は同じ id の
+;;;                                      FreshSession・ほかは ResumeSession。ターンが動いている・入力を待たせていれば事前起動しない)
+;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → ClaudeCloseSession(待たせた入力は discarded の運命で閉じる・事前起動
+;;;                                      しただけの runtime も停止する)
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
 (require doeff-hy.macros [defhandler defk <- val])
@@ -40,7 +43,7 @@
 (import doeff_agents.shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents.effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
-  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect
+  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
@@ -52,8 +55,8 @@
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
                                  Completed Failed Interrupted BackendLost Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
-                                   TurnStarted InterruptRequested TurnEventPage SessionExported
+                                   ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
+                                   TurnStarted InterruptRequested TurnEventPage SessionExported SessionWarmed
                                    SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused
                                    NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent])
 
@@ -246,14 +249,21 @@
 
 ;; --- 層 2 との往復 --------------------------------------------------------------------------------
 
+(defk next-origin [#^ HeadlessSession session]
+  {:pre [(: session HeadlessSession)] :post [(: % (| FreshSession ResumeSession))]
+   :tags {:context "headless-adapter" :role "judgment"}}
+  "session の次のターン(と、その前の事前起動)の文脈の始まり方を 1 か所で決めるため: 1 度もターンを始めていない新しい文脈は
+   FreshSession(事前起動した後の最初のターンも同じ id の新しい文脈)、ほかは ResumeSession(持ち込むコピーが在れば添える)。"
+  (if session.fresh
+      (FreshSession session.context-id)
+      (ResumeSession session.context-id :carry session.carry)))
+
 (defk start-turn [#^ HeadlessSession session #^ TurnInput input]
   {:pre [(: session HeadlessSession) (: input TurnInput)] :post [(: % ClaudeTurn)]}
-  "次の手番を始める。1 度も手番を始めていない新しい文脈は FreshSession、ほかは ResumeSession
-   (降りた process を起こし直すかは層 2 の判断 — ここは続けるとだけ言う)。持ち込む写し(carry)が在れば、始められた手番で
-   使い切る(層 2 は既に在る transcript を上書きしない)。断りは例外で名乗る。"
-  (val origin (if session.fresh
-                  (FreshSession session.context-id)
-                  (ResumeSession session.context-id :carry session.carry)))
+  "次のターンを始める。始まり方は next-origin(終了した process を再起動するか・事前起動した process を使うかは層 2 の判断 — ここは
+   続けるとだけ言う)。持ち込むコピー(carry)が在れば、始められたターンで使い切る(層 2 は既に在る transcript を上書きしない)。拒否は
+   例外で示す。"
+  (<- origin (next-origin session))
   (<- outcome (ClaudeStartTurn origin session.spec input))
   (when (not (isinstance outcome TurnStarted))
     (raise (start-refusal outcome session)))
@@ -429,6 +439,23 @@
     True (.append session.waiting input))
   None)
 
+(defk warm [#^ HeadlessSession session]
+  {:pre [(: session HeadlessSession)] :post [(: % bool)] :tags {:context "headless-adapter" :role "foundation"}}
+  "session の次のターンの CLI を、入力の前に層 2 で起動して待たせるため(WarmSessionEffect — 起動してから入力を受けられるまでの秒を
+   入力の前に済ませる)。始まり方は次のターンと同じ next-origin なので、次のターンは層 2 でその process を使い回す。持ち込むコピーは
+   事前起動で持ち込む(次のターンでは持ち込まない)。ターンが動いている・入力を待たせていれば事前起動するものは無い(偽)。止めた
+   session は SessionNotFoundError、層 2 の拒否はターンと同じ例外(start-refusal)。結果 = 真(次の入力を待つ runtime が在る)か偽。"
+  (when session.stopped
+    (raise (SessionNotFoundError (.format "session {} は止めた" session.name))))
+  (<- (pull session 0.0))
+  (when (or (is-not session.turn None) session.waiting)
+    (return False))
+  (<- origin (next-origin session))
+  (<- outcome (ClaudeWarmSession origin session.spec))
+  (match outcome
+    (SessionWarmed) (do (setv session.carry None) True)
+    _ (raise (start-refusal outcome session))))
+
 (defk interrupt [#^ HeadlessSession session]
   {:pre [(: session HeadlessSession)] :post [(: % bool)]}
   "走っている手番だけを止める(session と文脈は残る)。答え = 止める手番が在ったか。"
@@ -501,6 +528,11 @@
     :when (in handle.session-id state.sessions)
     (<- asked (interrupt (get state.sessions handle.session-id)))
     (resume asked))
+
+  (WarmSessionEffect [handle]
+    :when (in handle.session-id state.sessions)
+    (<- warmed (warm (get state.sessions handle.session-id)))
+    (resume warmed))
 
   (EventsEffect [handle after-seq wait-seconds]
     :when (in handle.session-id state.sessions)

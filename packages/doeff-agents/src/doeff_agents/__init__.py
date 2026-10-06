@@ -120,6 +120,8 @@ _LAZY_EXPORTS = {
     "TurnCredentialUnavailableError": ".effects",
     "TurnInFlightError": ".effects",
     "TurnInputMode": ".effects",
+    "WarmSession": ".effects",
+    "WarmSessionEffect": ".effects",
     "AGENT_SESSIONS_KEY": ".handlers",
     "MOCK_AGENT_STATE_KEY": ".handlers",
     "AgentHandler": ".handlers",

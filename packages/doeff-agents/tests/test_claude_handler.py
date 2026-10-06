@@ -3,11 +3,14 @@
 import json
 from pathlib import Path
 
+import pytest
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects.agent import (
+    AgentCapabilityUnsupportedError,
     LaunchEffect,
     SessionHandle,
     StopEffect,
+    WarmSessionEffect,
 )
 from doeff_core_effects.handlers import state
 
@@ -207,3 +210,28 @@ class TestClaudeHandlerStop:
         result = _run(program(), backend)
         assert result == "stopped"
         assert not backend.has_session("stop-test")
+
+
+class TestClaudeHandlerWarm:
+
+    def test_warming_a_terminal_session_is_refused_by_type(self, tmp_path, monkeypatch):
+        """terminal の claude の会話は LaunchEffect が既に CLI を起動して待たせている — 入力の前に事前起動する
+        WarmSessionEffect に黙って何もせずに応答せず、AgentCapabilityUnsupportedError で拒否する。"""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+        backend = FakeTmuxBackend()
+
+        @do
+        def program():
+            handle = yield Perform(LaunchEffect(
+                session_name="warm-test",
+                agent_type=AgentType.CLAUDE,
+                work_dir=tmp_path,
+            ))
+            return (yield Perform(WarmSessionEffect(handle=handle)))
+
+        with pytest.raises(AgentCapabilityUnsupportedError) as info:
+            _run(program(), backend)
+        assert info.value.capability == "WarmSessionEffect"
+        assert info.value.handler == "claude-handler"

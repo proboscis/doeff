@@ -1,12 +1,14 @@
-;;; doeff-claude-code の公開 effect 8 つと、その戻り値の型(設計 4.3)。
+;;; doeff-claude-code の公開 effect 9 つと、その戻り値の型(設計 4.3)。
 ;;;
 ;;; ClaudeStartTurn / ClaudeInjectInput / ClaudeInterruptTurn / ClaudeReadTurnEvents / ClaudeAnswerPermission /
-;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession。
+;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeWarmSession。
 ;;;
 ;;; 単位は「claude の会話(session)と、その上の手番」。process の単位の操作(起こす・stdin に書く・信号・降ろす・pid の生存)は
-;;; 公開しない — handler の内側の語彙。失敗は例外ではなく戻り値の型で返す(成功の型と失敗の型の判別可能な union)。
-;;; handler の実装の誤り(I/O の予期しない例外)だけが例外として上がる。
-(require doeff-hy.macros [val])
+;;; 公開しない — handler の内側の語彙(ClaudeWarmSession も「会話を入力の前に事前起動する」操作で、process を指定しない)。失敗は
+;;; 例外ではなく戻り値の型で返す(成功の型と失敗の型の判別可能な union)。handler の実装の誤り(I/O の予期しない例外)だけが例外として
+;;; 上がる。
+(require doeff-hy.macros [defeffect val])
+(require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
@@ -161,3 +163,28 @@
 (setv StartTurnOutcome (| TurnStarted SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed
                           AttachmentRefused))
 (val ExportSessionOutcome (| SessionExported SessionNotFound))
+
+
+;; --- 入力の前に会話の process を事前起動して待たせる ------------------------------------------------------------
+
+(defrecord SessionWarmed
+  "会話の process が入力を書かれずに待っている(今起動したか、同じ起動条件の process が既に待っていた — どちらかは見せない)。
+   session-id = 事前起動した会話の id(origin の id そのまま)。"
+  (#^ str session-id))
+
+(val WarmSessionOutcome (| SessionWarmed SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed))
+
+(defeffect ClaudeWarmSession
+  "会話の process を最初の入力の前に起動し、入力を書かずに待たせる — 起動してから入力を受けられるまでの秒を、入力が来る前に済ませる
+   ため。origin・spec は ClaudeStartTurn と同じ意味。後に来た同じ会話の ClaudeStartTurn は、起動条件のキー(argv.hy の launch-key)が
+   同じならこの process に入力を書き(起動しない)、違えば停止して(理由 LAUNCH-CHANGED)再起動する。新しい会話(FreshSession)を事前
+   起動した時は、最初のターンも同じ id の FreshSession で頼む(CLI は入力の前に会話の記録を作らないので、続き ResumeSession には
+   ならない)。最初の入力の前に CLI が出してよい行は SessionStart の hook の開始と応答だけで、ほかの行を出した process はターンの外の
+   出力として停止する(dialogue.hy)。事前起動した process は ClaudeCloseSession でターンなしに停止できる。同じ起動条件の process が
+   既に待っていれば起動しない。枝分かれ(ForkSession)は受けない — 枝の id は入力の後の init で CLI が決めるので、次のターンがその
+   process を指定できない。
+   結果 = SessionWarmed | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed(拒否は ClaudeStartTurn と同じ)。"
+  {:fields [(: origin (| FreshSession ResumeSession)) (: spec ClaudeSessionSpec)]
+   :pre [(: origin (| FreshSession ResumeSession)) (: spec ClaudeSessionSpec)]
+   :answer WarmSessionOutcome
+   :tags {:context "claude-code" :role "intent"}})

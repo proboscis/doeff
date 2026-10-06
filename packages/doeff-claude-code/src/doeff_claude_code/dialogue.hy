@@ -16,6 +16,8 @@
 ;;;   生かして待たせる(#3672 — 起こし直しと記録の読み直しの 1.6〜2.6 秒を消す)。host の手番の外で CLI が出した行(手番の外で起きた
 ;;;   model の出力)を読んだら、その process を降ろす(retire = OUTSIDE-TURN-OUTPUT)— host の頼みの無い手番は誰の物でもない。
 ;;;   外とみなさない行は、host が書いた入力の運命と control の答え(OUTSIDE-TURN-QUIET-KINDS — model を動かさない作法の行)だけ。
+;;;   例外は入力を書かずに事前起動した process(ClaudeWarmSession)の最初の入力の前だけで、SessionStart の hook の開始と応答の行も
+;;;   外とみなさない(quiet-before-first-input — この 2 種の行のほかは広げない。最初の入力の後の待ちは前と同じ)。
 ;;;   control_request で止めて注入が生き残った時は、生き残った入力の手番が同じ process で続く(continues)。
 ;;; - 手番の額(#883): result の行の total_cost_usd は会話の累積で、usage はその CLI の手番 1 回分(実測 2.1.283 —
 ;;;   同じ process の 2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は前の process が降りる時に
@@ -25,6 +27,7 @@
 ;;;
 ;;; stdout の行は lines.hy が分類した型(ClaudeLineKind)で受ける — JSON の読みは lines.hy の 1 か所だけ。
 ;;; stdin へ書く行の綴り(JSON へ書く境界)はこの file の dumps の 1 か所。
+(require doeff-hy.macros [defk])
 (import dataclasses [dataclass field replace])
 (import json)
 (import doeff [run])
@@ -32,7 +35,8 @@
 (import doeff_hy.frozen [thaw-json])
 (import doeff_claude_code.values [TurnInput Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
-                                 AssistantMessage TurnResult Usage ModelWindow INPUT-FATES INPUT-FATE-TERMINAL merged-windows])
+                                 AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
+                                 INPUT-FATE-TERMINAL merged-windows])
 (import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
@@ -71,7 +75,9 @@
    引き継いだ値 — None = 分からない)/ start-mark = この process の始まりの cost-mark(この process が額を記さずに消えた時、次の
    process の CLI が数え始める額 — handler が読む)/ turn-usage = この host の手番の途中に読んだ result の行の usage の和 /
    last-call-usage・last-call-model = この host の手番に読んだ本体の会話(parent_tool_use_id が null)の最後の assistant の行の usage と
-   model(まだ無ければ None)/ turn-windows = この host の手番に読んだ result の行の model ごとの窓(手番の終わりの 3 欄 — #3744)。"
+   model(まだ無ければ None)/ turn-windows = この host のターンに読んだ result の行の model ごとの窓(ターンの終わりの 3 欄 — #3744)/
+   awaiting-first-input = 入力を書かずに事前起動した process が最初の入力を待っている(その間だけ SessionStart の hook の行をターンの
+   外の出力と数えない — quiet-before-first-input。最初のターンを始めると消える)。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
@@ -87,7 +93,8 @@
   (setv #^ Usage turn-usage (field :default-factory Usage))
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
-  (setv #^ (get tuple #(ModelWindow ...)) turn-windows #()))
+  (setv #^ (get tuple #(ModelWindow ...)) turn-windows #())
+  (setv #^ bool awaiting-first-input False))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・retire(この行で process を降ろす訳 — 無ければ
@@ -190,8 +197,9 @@
 ;; --- 遷移(呼び手の操作) -----------------------------------------------------------------------------
 
 (defn begin-turn [#^ DialogueState state #^ TurnInput input]
-  "host の手番を始める: 入力の行を stdin へ。"
-  (Transition :state (replace (closed-turn state) :in-flight True :cli-turn-open True :turn-refs #(input.ref))
+  "host のターンを始める: 入力の行を stdin へ(最初の入力を待つマークは消える)。"
+  (Transition :state (replace (closed-turn state) :in-flight True :cli-turn-open True :turn-refs #(input.ref)
+                              :awaiting-first-input False)
               :sends #((user-line input))))
 
 (defn inject [#^ DialogueState state #^ TurnInput input]
@@ -328,11 +336,24 @@
       (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model))
       (Transition :state state)))
 
+(defk quiet-before-first-input [kind]
+  {:pre [(: kind ClaudeLineKind)] :post [(: % bool)] :tags {:context "claude-code" :role "judgment"}}
+  "入力を書かずに事前起動した process が最初の入力の前に出した行を、ターンの外の出力と数えずに通してよいかを判定するため(この 1 か所
+   だけ — 広げない)。通すのは SessionStart の hook の開始と応答の行(HookNotice — 段階は閉じた語彙の 2 つ)だけ。本物の CLI を入力
+   なしで起動して 30 秒待たせた計測では、入力の前の行はこの 2 行だけで、init・assistant・rate_limit_event の行は 0 本(model への要求も
+   0 — init は入力の後に出る)。ほかの行はターンの外で model が動いた兆候になり得るので通さない(背景の仕事がターンの外で model を
+   呼ばないための守り)。"
+  (match kind
+    (HookNotice :event "SessionStart") True
+    _ False))
+
 (defn on-record [#^ DialogueState state kind]
   "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。
-   host の手番の外で読んだ行は、作法の行(OUTSIDE-TURN-QUIET-KINDS)を除いて、process を降ろす訳 OUTSIDE-TURN-OUTPUT(頭の註)。"
+   host のターンの外で読んだ行は、作法の行(OUTSIDE-TURN-QUIET-KINDS)と、最初の入力を待つ間の SessionStart の hook の行
+   (quiet-before-first-input)を除いて、process を停止する理由 OUTSIDE-TURN-OUTPUT(冒頭のコメント)。"
   (cond
-    (and (not state.in-flight) (not (isinstance kind OUTSIDE-TURN-QUIET-KINDS)))
+    (and (not state.in-flight) (not (isinstance kind OUTSIDE-TURN-QUIET-KINDS))
+         (not (and state.awaiting-first-input (run (quiet-before-first-input kind)))))
       (Transition :state state :retire StopReason.OUTSIDE-TURN-OUTPUT)
     (isinstance kind Init) (on-init state kind)
     (isinstance kind InputFate) (on-lifecycle state kind)

@@ -1,6 +1,6 @@
 ;; 公開 effect の筋書き — fake・本番の handler + 替え玉の CLI・本番の handler + 本物の claude の 3 つで同じ Program を走らせる
 ;; (設計 layer2-effects-design.md 8 節の不変条件)。筋書きは handler を知らない: ScenarioSettings で宣言を読み、公開 effect だけを撃つ。
-(require doeff-hy.macros [deftest <- val])
+(require doeff-hy.macros [deftest <- val var])
 (import dataclasses [replace])
 (import os.path)
 (import doeff_claude_code.values [ClaudeTurn TurnInput FreshSession ResumeSession ForkSession AskHost Allow LinkFromHome Rebuilt
@@ -11,7 +11,7 @@
                                    TurnStarted InputQueued InterruptRequested Answered SessionClosed
                                    SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
-                                   UnknownTurn NoSuchRequest])
+                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import tests.scenario_rules [CODEWORD EXTRA-WORD remember-prompt recall-prompt reply-prompt sleep-prompt
                               touch-prompt extra-prompt])
@@ -318,6 +318,106 @@
   (assert (in "AFTER" done.end.result-text) done.end.result-text)
   (<- after-again (ClaudeLiveProcess sid))
   (assert (= after-again (LiveProcess :launches 1)) after-again))
+
+
+;; --- 入力の前に会話の process を事前起動して待たせる(ClaudeWarmSession)--------------------------------------------
+;; 起動してから最初の入力の行が出るまでの秒(起動から init まで)を、入力を受ける前に済ませておくため。同じ起動条件の最初のターンは
+;; その process を使い回す(再起動しない)。
+
+(deftest test-a-warmed-session-is-used-by-its-first-turn
+  ;; 新しい会話(FreshSession — id は呼び出し側が決める)を入力なしで起動して待たせ、同じ id の FreshSession の最初のターンがその
+  ;; process を使う(起動回数は 1 のまま)。2 度目の事前起動は生きて待っている process を使い、起動しない。閉じた会話の続き
+  ;; (ResumeSession)も事前起動でき、次の続きのターンがその process を使う。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- warmed (ClaudeWarmSession (FreshSession sid) s.base))
+  (assert (= warmed (SessionWarmed :session-id sid)) (repr warmed))
+  (<- before (ClaudeLiveProcess sid))
+  (assert (= before (LiveProcess :launches 1)) before)
+  (<- again (ClaudeWarmSession (FreshSession sid) s.base))
+  (assert (= again (SessionWarmed :session-id sid)) (repr again))
+  (<- first (start (FreshSession sid) s.base (remember-prompt "ALPHA-1")))
+  (assert (= first.turn (ClaudeTurn sid 1)) (repr first))
+  (<- one (read-to-end first.turn s.turn-timeout))
+  (assert (isinstance one.end Completed) (repr one.end))
+  (assert (in "ALPHA-1" one.end.result-text) one.end.result-text)
+  (<- after-one (ClaudeLiveProcess sid))
+  (assert (= after-one (LiveProcess :launches 1)) after-one)
+  (<- closed (ClaudeCloseSession sid "test"))
+  (assert (= closed (SessionClosed False)) (repr closed))
+  (<- rewarmed (ClaudeWarmSession (ResumeSession sid) s.base))
+  (assert (= rewarmed (SessionWarmed :session-id sid)) (repr rewarmed))
+  (<- waiting (ClaudeLiveProcess sid))
+  (assert (= waiting (LiveProcess :launches 2)) waiting)
+  (<- second (start (ResumeSession sid) s.base (recall-prompt)))
+  (<- two (read-to-end second.turn s.turn-timeout))
+  (assert (isinstance two.end Completed) (repr two.end))
+  (assert (in CODEWORD two.end.result-text) two.end.result-text)
+  (<- after-two (ClaudeLiveProcess sid))
+  (assert (= after-two (LiveProcess :launches 2)) after-two))
+
+
+(deftest test-warming-refuses-what-starting-a-turn-refuses
+  ;; 事前起動の拒否はターンを始める時と同じ型: 知らない会話の続き = SessionNotFound・使用済みの id の新しい会話 = SessionIdInUse・
+  ;; ターンの動いている会話 = TurnInFlight。枝分かれ(ForkSession — 新しい id は入力の後の init で CLI が決める)は事前起動の始まり方に
+  ;; 無い(作る時に拒否する)。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val missing (new-id))
+  (<- not-found (ClaudeWarmSession (ResumeSession missing) s.base))
+  (assert (= not-found (SessionNotFound missing)) (repr not-found))
+  (val sid (new-id))
+  (<- first (start (FreshSession sid) s.base (reply-prompt "FIRST")))
+  (<- _ (read-to-end first.turn s.turn-timeout))
+  (<- in-use (ClaudeWarmSession (FreshSession sid) s.base))
+  (assert (= in-use (SessionIdInUse sid)) (repr in-use))
+  (<- long (start (ResumeSession sid) s.base (sleep-prompt LONG-SLEEP "NEVER")))
+  (<- _ (read-to-tool-start long.turn s.turn-timeout))
+  (<- busy (ClaudeWarmSession (ResumeSession sid) s.base))
+  (assert (= busy (TurnInFlight long.turn)) (repr busy))
+  (<- _ (ClaudeCloseSession sid "test"))
+  ;; effect の契約(:pre)が作る時に拒否する。
+  (var forked-refused False)
+  (try
+    (ClaudeWarmSession (ForkSession sid) s.base)
+    (except [AssertionError] (:= forked-refused True)))
+  (assert forked-refused "ForkSession を事前起動の始まり方として受けた"))
+
+
+(deftest test-a-warm-process-with-other-launch-conditions-is-replaced-for-the-turn
+  ;; 事前起動した後に起動条件の違うターン(model が違う)が来たら、待っている process を停止し(理由 LAUNCH-CHANGED)、新しく起動して
+  ;; ターンを走らせる(新しい会話の同じ id のまま — 起動回数は 2)。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- warmed (ClaudeWarmSession (FreshSession sid) s.base))
+  (assert (= warmed (SessionWarmed :session-id sid)) (repr warmed))
+  (<- started (start (FreshSession sid) (replace s.base :model "another-model") (reply-prompt "CHANGED")))
+  (<- done (read-to-end started.turn s.turn-timeout))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (in "CHANGED" done.end.result-text) done.end.result-text)
+  (<- after (ClaudeLiveProcess sid))
+  (assert (= after (LiveProcess :launches 2)) after))
+
+
+(deftest test-a-warm-session-closed-before-any-input-goes-down-and-leaves-the-id-unused
+  ;; 事前起動した process をターンなしで閉じる(ClaudeCloseSession)と終了する(理由 SESSION-CLOSED)。CLI は入力を 1 つも受けていない
+  ;; ので会話の記録は無く、同じ id の新しい会話(FreshSession)をそのまま始められる。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- warmed (ClaudeWarmSession (FreshSession sid) s.base))
+  (assert (= warmed (SessionWarmed :session-id sid)) (repr warmed))
+  (<- closed (ClaudeCloseSession sid "test"))
+  (assert (= closed (SessionClosed False)) (repr closed))
+  (<- gone (live-process-until sid (fn [view] (isinstance view NoLiveProcess)) s.turn-timeout))
+  (assert (= gone (NoLiveProcess :launches 1 :stopped-because StopReason.SESSION-CLOSED)) gone)
+  (<- status (ClaudeSessionStatus s.base.home s.base.cwd sid))
+  (assert (isinstance status.transcript TranscriptAbsent) (repr status))
+  (<- started (start (FreshSession sid) s.base (reply-prompt "LATER")))
+  (<- done (read-to-end started.turn s.turn-timeout))
+  (assert (isinstance done.end Completed) (repr done.end)))
 
 
 (deftest test-dropping-an-idle-live-process-lets-the-next-turn-relaunch

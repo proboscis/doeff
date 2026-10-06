@@ -1,7 +1,10 @@
 ;; 本番の handler だけの検(替え玉の CLI)— 共通の筋書きに載らない handler の内側の約束:
 ;; 会話の process は手番をまたいで生き、閉じると降りる(#3672)・冷えた続きの前の 1 回きりの命令・起動の失敗の型。
 (require doeff-hy.macros [deftest defk <- val var])
-(import dataclasses [replace])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass replace])
+(import json)
+(import os)
 (import os.path)
 (import pathlib [Path])
 (import sys)
@@ -9,20 +12,22 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [listen-handler slog-discard-handler])
-(import doeff_time [Delay GetTime sync-time-handler])
+(import doeff_time [Delay GetMonotonic GetTime sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
-                                   ClaudeSessionStatus TurnStarted LaunchFailed SessionExported SessionNotFound SessionClosed])
+                                   ClaudeSessionStatus ClaudeWarmSession TurnStarted LaunchFailed SessionExported SessionNotFound
+                                   SessionClosed SessionWarmed ProcessStillAlive])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
-(import doeff_claude_code.argv [transcript-path])
+(import doeff_claude_code.argv [launch-key transcript-path])
+(import doeff_claude_code.process [ClaudeProcess])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
                               reply-prompt sleep-prompt])
 (import doeff_claude_code [lines])
-(import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start])
+(import tests.scenario_steps [TurnRecord live-process-until read-to-end read-to-tool-start])
 
 
 (defn host-of [command [live-limit 8] [floor 7200.0] [launch-timeout 30.0]]
@@ -417,6 +422,227 @@
           (repr #(thought thought-reply)))
   (assert (< (.get quick "after_stream_start_ms") 200) (repr quick))
   (assert (<= (.get thought "after_stream_start_ms") (.get thought "since_launch_ms")) (repr thought)))
+
+
+;; --- 入力の前に事前起動して待たせる process(ClaudeWarmSession)の、最初の入力の前の行と片づけ ------------------------------------
+;; 替え玉の CLI は env STUB_CLI_AT_START(JSON の object — lines = 起動の直後に stdout へ出す行の列・marker = 出し終えた後に作る
+;; file の path)を読む。marker は「行を出し終えた」のマークで、テストはそれを待ってから次へ進む(読み取りの thread が行をターンの前に
+;; 読んだ状態を作るため — ターンの後に読むとターンの行に混ざり、守りを確かめられない)。
+
+;; 本物の CLI を入力なしで起動した時に stdout へ出る行(SessionStart の hook の開始と応答 — 実物の stream-json の形。JSON の境界の値
+;; なので写像のまま)。
+(val SESSION-START-LINES
+  [{"type" "system" "subtype" "hook_started" "hook_id" "hook-1" "hook_name" "SessionStart:startup" "hook_event" "SessionStart"
+    "uuid" "u-1"}
+   {"type" "system" "subtype" "hook_response" "hook_id" "hook-1" "hook_name" "SessionStart:startup" "hook_event" "SessionStart"
+    "output" "" "stdout" "" "stderr" "" "exit_code" 0 "outcome" "success" "uuid" "u-2"}])
+;; 行を出し終えたマークを見てから、読み取りの thread が行を処理し終えるのを待つ秒(マークの後の行の読み取りは 1 ms 未満 — 余裕を
+;; 持たせる)。
+(val SETTLE-SECONDS 0.3)
+
+(defrecord StartLinesSpec
+  "替え玉の CLI が起動の直後に行を出す会話の宣言(spec)と、出し終えたマークの file の path(marker)。"
+  (#^ ClaudeSessionSpec spec)
+  (#^ str marker))
+
+(defk spec-with-start-lines [#^ Path tmp-path #^ str name #^ list start-lines]
+  {:pre [(: tmp-path Path) (: name str) (: start-lines list)] :post [(: % StartLinesSpec)]
+   :tags {:context "claude-code" :role "program"}}
+  "替え玉の CLI が起動の直後に start-lines を出す会話の宣言と、出し終えたマークの file の path を作るため。"
+  (val marker (str (/ tmp-path (+ name ".started"))))
+  (val base (spec-in tmp-path))
+  (val env (| (dict base.home.env) {"STUB_CLI_AT_START" (json.dumps {"lines" start-lines "marker" marker})}))
+  (StartLinesSpec :spec (replace base :home (ClaudeHome base.home.config-dir env)) :marker marker))
+
+(defk file-appears [#^ str path #^ float timeout]
+  {:pre [(: path str) (: timeout float)] :post [(: % None)] :tags {:context "claude-code" :role "program"}}
+  "替え玉の CLI が行を出し終えたマークの file が現れるまで待つため(上限 timeout 秒 — 越えたらテストの誤り)。"
+  (<- started (GetMonotonic))
+  (while (not (os.path.exists path))
+    (<- now (GetMonotonic))
+    (assert (< (- now started) timeout) (.format "{} 秒の内に {} が現れない" timeout path))
+    (<- (Delay 0.05)))
+  None)
+
+(defk process-down [#^ ClaudeProcess process #^ float timeout]
+  {:pre [(: process ClaudeProcess) (: timeout float)] :post [(: % bool)] :tags {:context "claude-code" :role "program"}}
+  "host が停止を始めた process が終了するまで待つため(上限 timeout 秒)。結果 = 終了したか。"
+  (<- started (GetMonotonic))
+  (while (.alive process)
+    (<- now (GetMonotonic))
+    (when (>= (- now started) timeout) (return False))
+    (<- (Delay 0.05)))
+  True)
+
+
+(defrecord WarmFirstTurn
+  "事前起動してから最初のターンを走らせたシナリオの観測: before = ターンの前の状態・warm-process = 事前起動した process・done = ターンの
+   読み取り結果・after = ターンの後の状態・turn-process = ターンを走らせた process。"
+  (#^ (| LiveProcess NoLiveProcess) before)
+  (#^ ClaudeProcess warm-process)
+  (#^ TurnRecord done)
+  (#^ (| LiveProcess NoLiveProcess) after)
+  (#^ (| ClaudeProcess None) turn-process))
+
+(defk warm-then-first-turn [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid #^ str marker]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str) (: marker str)] :post [(: % WarmFirstTurn)]
+   :tags {:context "claude-code" :role "program"}}
+  "新しい会話を入力なしで起動し、CLI が起動の直後の行を出し終えて読み取りの thread が読んだ後に、同じ id の最初のターンを走らせるため。"
+  (<- warmed (ClaudeWarmSession (FreshSession sid) spec))
+  (assert (= warmed (SessionWarmed :session-id sid)) (repr warmed))
+  (<- (file-appears marker 30.0))
+  (<- (Delay SETTLE-SECONDS))
+  (<- before (ClaudeLiveProcess sid))
+  (val warm-process (. (.runtime host sid) process))
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "FIRST") "first-1")))
+  (assert (isinstance started TurnStarted) (repr started))
+  (<- done TurnRecord (read-to-end started.turn 30.0))
+  (<- after (ClaudeLiveProcess sid))
+  (val turn-process (. (.runtime host sid) process))
+  (<- (ClaudeCloseSession sid "test"))
+  (WarmFirstTurn :before before :warm-process warm-process :done done :after after :turn-process turn-process))
+
+
+(deftest test-a-warm-process-that-only-ran-the-session-start-hooks-serves-the-first-turn [tmp-path]
+  ;; 入力なしで起動した CLI が最初の入力の前に SessionStart の hook の 2 行を出しても、host は停止しない。同じ id・同じ起動条件の最初の
+  ;; ターンはその process に入力を書く(新しい process を起動しない — 起動回数 1)。事前起動は新しい会話の --session-id で起動し
+  ;; (--resume ではない — まだ記録が無い)、最初のターンの起動条件のキーは事前起動の時と同じ。hook の 2 行はターンの前に読んだ行なので
+  ;; ターンの行に入らない。失敗ケース = 最初の入力の前の行を全部「ターンの外の出力」と数える形では、hook の行で process が停止し
+  ;; (理由 OUTSIDE-TURN-OUTPUT)、ターンは新しい process で走って起動回数が 2 になる。
+  (val host (host-of STUB-COMMAND))
+  (val sid (str (uuid.uuid4)))
+  (<- made StartLinesSpec (spec-with-start-lines tmp-path "hooks" SESSION-START-LINES))
+  (<- seen WarmFirstTurn (with-real-handler host (warm-then-first-turn host made.spec sid made.marker)))
+  (assert (= seen.before (LiveProcess :launches 1)) (repr seen.before))
+  (assert (isinstance seen.done.end Completed) (repr seen.done.end))
+  (assert (not (any (gfor line seen.done.lines (isinstance line.kind lines.HookNotice)))) (repr seen.done.lines))
+  (assert (= seen.after (LiveProcess :launches 1)) (repr seen.after))
+  (assert (is seen.turn-process seen.warm-process) "最初のターンが事前起動した process を使わなかった")
+  (val argv (list seen.warm-process.argv))
+  (assert (= (get argv (+ (.index argv "--session-id") 1)) sid) (repr argv))
+  (assert (not-in "--resume" argv) (repr argv))
+  (<- turn-key (launch-key STUB-COMMAND made.spec))
+  (assert (= (. (.runtime host sid) launch-key) turn-key)))
+
+
+(defrecord ForbiddenLine
+  "最初の入力の前に出たら停止する行 1 つ: name = シナリオの名前・line = 行(JSON の境界の値)。"
+  (#^ str name)
+  (#^ dict line))
+
+;; 最初の入力の前に出たら停止する行: assistant の行(ターンの外で model が応答した形)と、SessionStart 以外の hook の行。
+(val FORBIDDEN-BEFORE-INPUT
+  [(ForbiddenLine :name "assistant"
+                  :line {"type" "assistant" "parent_tool_use_id" None
+                         "message" {"role" "assistant" "model" "claude-stub" "content" [{"type" "text" "text" "unasked"}]}})
+   (ForbiddenLine :name "other-hook"
+                  :line {"type" "system" "subtype" "hook_response" "hook_id" "hook-2" "hook_name" "Notification"
+                         "hook_event" "Notification" "output" "" "stdout" "" "stderr" "" "exit_code" 0 "outcome" "success"})])
+
+(defrecord WarmStopped
+  "事前起動した process を host が停止したシナリオの観測: gone = 停止した後の状態・down = 事前起動した process が終了したか。"
+  (#^ (| LiveProcess NoLiveProcess) gone)
+  (#^ bool down))
+
+(defk warm-until-stopped [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % WarmStopped)]
+   :tags {:context "claude-code" :role "program"}}
+  "新しい会話を入力なしで起動し、host がその process を停止するまで見るため。"
+  (<- warmed (ClaudeWarmSession (FreshSession sid) spec))
+  (assert (= warmed (SessionWarmed :session-id sid)) (repr warmed))
+  (val warm-process (. (.runtime host sid) process))
+  (<- gone (live-process-until sid (fn [view] (isinstance view NoLiveProcess)) 30.0))
+  (<- down (process-down warm-process 30.0))
+  (WarmStopped :gone gone :down down))
+
+
+(deftest test-a-warm-process-that-prints-anything-else-before-the-first-input-is-stopped [tmp-path]
+  ;; 最初の入力の前に SessionStart の hook の行以外の行(assistant の行・別の hook の行)を 1 行でも出した process は、今までどおり
+  ;; ターンの外の出力として停止する(理由 OUTSIDE-TURN-OUTPUT)。SessionStart の hook の行が先に在っても同じ。
+  (val host (host-of STUB-COMMAND))
+  (for [forbidden FORBIDDEN-BEFORE-INPUT]
+    (<- made StartLinesSpec (spec-with-start-lines tmp-path forbidden.name (+ SESSION-START-LINES [forbidden.line])))
+    (<- seen WarmStopped (with-real-handler host (warm-until-stopped host made.spec (str (uuid.uuid4)))))
+    (assert (= seen.gone (NoLiveProcess :launches 1 :stopped-because StopReason.OUTSIDE-TURN-OUTPUT))
+            (repr #(forbidden.name seen.gone)))
+    (assert seen.down forbidden.name)))
+
+
+(defrecord WarmClosed
+  "事前起動した process をターンなしで閉じたシナリオの観測: before = 閉じる前の状態・warm-process = 事前起動した process・closed = 閉じた
+   結果・after = 閉じた後の状態。"
+  (#^ (| LiveProcess NoLiveProcess) before)
+  (#^ ClaudeProcess warm-process)
+  (#^ (| SessionClosed ProcessStillAlive) closed)
+  (#^ (| LiveProcess NoLiveProcess) after))
+
+(defk warm-then-close [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % WarmClosed)]
+   :tags {:context "claude-code" :role "program"}}
+  "新しい会話を入力なしで起動し、ターンを 1 度も走らせずに閉じるため。"
+  (<- (ClaudeWarmSession (FreshSession sid) spec))
+  (<- before (ClaudeLiveProcess sid))
+  (val warm-process (. (.runtime host sid) process))
+  (<- closed (ClaudeCloseSession sid "test"))
+  (<- after (ClaudeLiveProcess sid))
+  (WarmClosed :before before :warm-process warm-process :closed closed :after after))
+
+
+(deftest test-a-warm-process-closed-without-a-turn-leaves-no-child-process [tmp-path]
+  ;; 事前起動した process をターンなしで閉じると、閉じる結果を返す前に終了しきる(子 process は残らない — pid がもう無い)。
+  (val host (host-of STUB-COMMAND))
+  (<- seen WarmClosed (with-real-handler host (warm-then-close host (spec-in tmp-path) (str (uuid.uuid4)))))
+  (assert (= seen.before (LiveProcess :launches 1)) (repr seen.before))
+  (assert (= seen.closed (SessionClosed False)) (repr seen.closed))
+  (assert (not (.alive seen.warm-process)) "閉じても事前起動した process が終了しない")
+  (var gone False)
+  (try
+    (os.kill seen.warm-process.pid 0)
+    (except [ProcessLookupError] (:= gone True)))
+  (assert gone (.format "事前起動した process の pid {} が残る" seen.warm-process.pid))
+  (assert (= seen.after (NoLiveProcess :launches 1 :stopped-because StopReason.SESSION-CLOSED)) (repr seen.after)))
+
+
+(defrecord WarmReplaced
+  "事前起動した後に起動条件の違うターンを走らせたシナリオの観測: warm-process = 事前起動した process・done = ターンの読み取り結果・
+   after = ターンの後の状態・turn-process = ターンを走らせた process・stopped-because = 事前起動した process を停止した理由。"
+  (#^ ClaudeProcess warm-process)
+  (#^ TurnRecord done)
+  (#^ (| LiveProcess NoLiveProcess) after)
+  (#^ (| ClaudeProcess None) turn-process)
+  (#^ (| StopReason None) stopped-because))
+
+(defk warm-then-turn-with-another-model [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % WarmReplaced)]
+   :tags {:context "claude-code" :role "program"}}
+  "新しい会話を入力なしで起動した後に、model の違う最初のターンを走らせるため。"
+  (<- (ClaudeWarmSession (FreshSession sid) spec))
+  (val warm-process (. (.runtime host sid) process))
+  (<- started (ClaudeStartTurn (FreshSession sid) (replace spec :model "another-model") (TurnInput (reply-prompt "CHANGED") "c-1")))
+  (assert (isinstance started TurnStarted) (repr started))
+  (<- done TurnRecord (read-to-end started.turn 30.0))
+  (<- after (ClaudeLiveProcess sid))
+  (val runtime (.runtime host sid))
+  (val seen (WarmReplaced :warm-process warm-process :done done :after after :turn-process runtime.process
+                          :stopped-because runtime.stopped-because))
+  (<- (ClaudeCloseSession sid "test"))
+  seen)
+
+
+(deftest test-a-warm-process-with-other-launch-conditions-goes-down-for-a-new-one [tmp-path]
+  ;; 事前起動した後に model の違う最初のターンが来たら、事前起動した process を停止し(理由 LAUNCH-CHANGED)、新しい会話の同じ id の
+  ;; まま(--session-id)新しい process を起動してターンを走らせる。
+  (val host (host-of STUB-COMMAND))
+  (val sid (str (uuid.uuid4)))
+  (<- seen WarmReplaced (with-real-handler host (warm-then-turn-with-another-model host (spec-in tmp-path) sid)))
+  (assert (isinstance seen.done.end Completed) (repr seen.done.end))
+  (assert (= seen.after (LiveProcess :launches 2)) (repr seen.after))
+  (assert (is-not seen.turn-process seen.warm-process) "model の違うターンが事前起動した process を使った")
+  (assert (not (.alive seen.warm-process)) "事前起動した process が終了していない")
+  (assert (= seen.stopped-because StopReason.LAUNCH-CHANGED) (repr seen.stopped-because))
+  (val argv (list seen.turn-process.argv))
+  (assert (= (get argv (+ (.index argv "--session-id") 1)) sid) (repr argv))
+  (assert (= (get argv (+ (.index argv "--model") 1)) "another-model") (repr argv)))
 
 
 ;; --- 生かす本数の上限と資格の床で降ろす(#3672 の D2 — 止める判断は host の 1 か所)------------------------------------------

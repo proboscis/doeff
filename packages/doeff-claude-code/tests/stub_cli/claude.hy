@@ -12,6 +12,8 @@
 ;;; - --permission-prompt-tool stdio の時は道具の前に control_request can_use_tool を出し、control_response を待つ(allow なら
 ;;;   touch を本当に撃つ)。
 ;;; - stdin の EOF で降りる。stdin を開いたまま result の後も生きる(温かい — 降ろすのは host の仕事)。
+;;; - 入力の前は transcript を作らない(実物と同じ — 最初の入力で作る)。入力を 1 つも受けずに終了した新しい会話は記録を残さない。
+;;; - テスト用の env STUB_CLI_AT_START が在れば、起動の直後(入力の前)にその行を出す(main のコメント)。
 ;;; - --input-format の無い -p <prompt>(冷えた続きの前の 1 回きりの命令)は transcript に印を 1 行足して rc 0。
 ;;; - 額(実測 2.1.283・#883): result の行の total_cost_usd は会話の累積(CLI の手番 1 回 = TURN-COST)で、usage は
 ;;;   その手番の分だけ。stdin の EOF・SIGINT で降りる時に累積の額を transcript に実物と同じ形の 1 行で記し
@@ -282,10 +284,8 @@
         (when (os.path.exists (transcript-path fresh))
           (.write sys.stderr (.format "Error: Session ID {} is already in use.\n" fresh))
           (sys.exit 1))
-        (setv path (transcript-path fresh))
-        (os.makedirs (os.path.dirname path) :exist-ok True)
-        (.touch (Path path))
-        (Session fresh path (in "--permission-prompt-tool" args)))
+        ;; transcript は最初の入力で作る(remember — 実物も入力の前に会話の記録を作らない)。
+        (Session fresh (transcript-path fresh) (in "--permission-prompt-tool" args)))
     resumed
       (do
         (when (not (os.path.exists (transcript-path resumed)))
@@ -311,6 +311,14 @@
     (remember (transcript-path (option args "--resume")) (.format "one-shot: {}" (option args "-p")))
     (sys.exit 0))
   (setv session (open-session args))
+  ;; テスト用の env STUB_CLI_AT_START(JSON の object — lines・marker)が在れば、起動の直後(stdin を読む前)に lines の行をこの会話の
+  ;; id を添えて stdout へ出し、出し終えたマークとして marker の file を作る(入力なしで起動した process が最初の入力の前に出す行を作る
+  ;; テストのため)。
+  (setv at-start (json.loads (.get os.environ "STUB_CLI_AT_START" "null")))
+  (when at-start
+    (for [record (get at-start "lines")]
+      (emit (| record {"session_id" session.session-id})))
+    (.touch (Path (get at-start "marker"))))
   (try
     (.serve session)
     (except [Stop] (sys.exit 0))
@@ -320,12 +328,13 @@
              "session_id" session.session-id "total_cost_usd" session.cost "modelUsage" (model-usage False)})
       (sys.exit 0))
     (finally
-      ;; 降りる時に累積の額を transcript に記す(SIGKILL では走らない — 実物と同じ)。
-      (os.makedirs (os.path.dirname session.path) :exist-ok True)
-      (with [handle (open session.path "a" :encoding "utf-8")]
-        (.write handle (+ (json.dumps {"type" "cost-state" "sessionId" session.session-id "totalCostUSD" session.cost}
-                                      :separators #("," ":"))
-                          "\n"))))))
+      ;; 終了する時に累積の額を transcript に記録する(SIGKILL では実行されない — 実物と同じ)。入力を 1 つも受けずに終了した新しい
+      ;; 会話は transcript が無いので記録しない(記録を作らない — 同じ id の --session-id で再起動できる)。
+      (when (os.path.exists session.path)
+        (with [handle (open session.path "a" :encoding "utf-8")]
+          (.write handle (+ (json.dumps {"type" "cost-state" "sessionId" session.session-id "totalCostUSD" session.cost}
+                                        :separators #("," ":"))
+                            "\n")))))))
 
 (when (= __name__ "__main__")
   (main))

@@ -953,6 +953,33 @@ class EventsEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
+class WarmSessionEffect(AgentEffectBase):
+    """Start the session's agent runtime before its next input and keep it waiting.
+
+    Pays the runtime's start-up time (process start until it can take input)
+    before the input arrives.  The session's next turn (``Send`` /
+    ``FollowUp``) uses the waiting runtime when its launch conditions are
+    unchanged, and starts a new one otherwise.  A session launched without a
+    prompt keeps its new context, so its first turn still starts that context
+    fresh (the waiting runtime has not recorded anything before the input).
+    Before the first input the runtime may only report its session-start
+    hooks; anything else it prints takes it down.  Stop or release the session
+    to take the waiting runtime down without a turn.
+
+    Handlers whose ``LaunchEffect`` already starts a runtime that waits for
+    input (terminal handlers) refuse it with
+    ``AgentCapabilityUnsupportedError`` instead of silently doing nothing; a
+    stopped session is refused with ``SessionNotFoundError``.
+
+    Yields: bool (True = the runtime waits for the session's next input;
+    False = a turn is running or inputs are queued, so there is nothing to
+    warm)
+    """
+
+    handle: SessionHandle
+
+
+@dataclass(frozen=True, kw_only=True)
 class ExportContextEffect(AgentEffectBase):
     """Take an opaque copy of an agent runtime context out of this runtime.
 
@@ -1174,6 +1201,10 @@ def Stop(handle: SessionHandle) -> StopEffect:  # noqa: N802
 
 def Interrupt(handle: SessionHandle) -> InterruptEffect:  # noqa: N802
     return InterruptEffect(handle=handle)
+
+
+def WarmSession(handle: SessionHandle) -> WarmSessionEffect:  # noqa: N802
+    return WarmSessionEffect(handle=handle)
 
 
 def Events(  # noqa: N802

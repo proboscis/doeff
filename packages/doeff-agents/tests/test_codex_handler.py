@@ -2,8 +2,15 @@
 
 from pathlib import Path
 
+import pytest
 from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects.agent import LaunchEffect, SessionHandle, StopEffect
+from doeff_agents.effects.agent import (
+    AgentCapabilityUnsupportedError,
+    LaunchEffect,
+    SessionHandle,
+    StopEffect,
+    WarmSessionEffect,
+)
 from doeff_agents.session_backend import SessionBackend
 from doeff_core_effects.handlers import lazy_ask, state
 
@@ -144,3 +151,23 @@ def test_stop_kills_session(tmp_path: Path) -> None:
     result = _run(program(), backend)
     assert result == "stopped"
     assert not backend.has_session("codex-stop")
+
+
+def test_warming_a_codex_session_is_refused_by_type(tmp_path: Path) -> None:
+    """codex の会話は LaunchEffect が既に CLI を起動して待たせている — 入力の前に事前起動する WarmSessionEffect に黙って
+    何もせずに応答せず、AgentCapabilityUnsupportedError で拒否する。"""
+    backend = FakeTmuxBackend()
+
+    @do
+    def program():
+        handle = yield Perform(LaunchEffect(
+            session_name="codex-warm",
+            agent_type=AgentType.CODEX,
+            work_dir=tmp_path,
+        ))
+        return (yield Perform(WarmSessionEffect(handle=handle)))
+
+    with pytest.raises(AgentCapabilityUnsupportedError) as info:
+        _run(program(), backend)
+    assert info.value.capability == "WarmSessionEffect"
+    assert info.value.handler == "codex-handler"

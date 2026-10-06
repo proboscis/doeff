@@ -17,7 +17,8 @@
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
-(import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
+(import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
+                                  IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind])
@@ -26,7 +27,7 @@
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
-                                   UnknownTurn NoSuchRequest])
+                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
 (import doeff_claude_code.argv [launch-key])
@@ -149,7 +150,8 @@
 (defclass FakeSession []
   "launches = この会話で起こした process の数(本番の handler と同じ規則 — 同じ起こした時の条件の鍵の続きは生きた process を使い回し、
    生き残った入力の手番も同じ process)・alive = process が生きている(手番をまたいで生きて待つ — #3672)・launch-key = 今の process の
-   起こした時の条件の鍵・stopped-because = 最後の process を降ろした訳。"
+   起動条件のキー・stopped-because = 最後の process を停止した理由・warmed-fresh = 新しい会話として入力なしで事前起動し
+   (ClaudeWarmSession)、まだターンを始めていない(最初のターンは同じ id の FreshSession — 本番の handler と同じ)。"
   (defn __init__ [self #^ str session-id home #^ str cwd]
     (setv self.session-id session-id self.home home self.cwd cwd
           self.current-seq 0 self.next-line-seq 0 self.closed False)
@@ -157,6 +159,7 @@
     (setv #^ bool self.alive False)
     (setv #^ (| str None) self.launch-key None)
     (setv #^ (| StopReason None) self.stopped-because None)
+    (setv #^ bool self.warmed-fresh False)
     (setv #^ (get dict #(int FakeTurn)) self.turns {}))
 
   (defn running [self]
@@ -436,7 +439,8 @@
   (setv existing (if (isinstance origin ForkSession) None (.get world.sessions target)))
   (setv present (is-not (transcript-of world spec.home spec.cwd target) None))
   (cond
-    (and (isinstance origin FreshSession) (or existing present)) (return (SessionIdInUse target))
+    ;; 入力なしで事前起動しただけの新しい会話(warmed-fresh)は、同じ id の FreshSession の最初のターンを拒否しない。
+    (and (isinstance origin FreshSession) (or (and existing (not existing.warmed-fresh)) present)) (return (SessionIdInUse target))
     (and (isinstance origin ResumeSession) existing (.running existing)) (return (TurnInFlight (ClaudeTurn target existing.current-seq)))
     (and (not (isinstance origin FreshSession)) (not present)) (return (SessionNotFound target)))
   (setv session-id (if (isinstance origin ForkSession) (str (uuid.uuid4)) target))
@@ -450,13 +454,15 @@
   (setv session (or existing (FakeSession session-id spec.home spec.cwd)))
   (setv session.closed False)
   (setv (get world.sessions session-id) session)
-  ;; 本番の handler と同じ規則(decision.start-decision): 続き(ResumeSession)で、生きて待つ process の起こした時の条件の鍵が同じなら
-  ;; 使い回す。違えば降ろしてから起こす(訳 LAUNCH-CHANGED)。fake の process に実行ファイルは無いので command は空。
+  ;; 本番の handler と同じ規則(decision.start-decision): 続き(ResumeSession)と、入力なしで事前起動しただけの新しい会話の最初の
+  ;; ターンで、生きて待つ process の起動条件のキーが同じなら使い回す。違えば停止してから起動する(理由 LAUNCH-CHANGED)。fake の
+  ;; process に実行ファイルは無いので command は空。
   (<- wanted (launch-key #() spec))
-  (setv reuse (and (isinstance origin ResumeSession) session.alive (= session.launch-key wanted)))
+  (setv reuse (and (or (isinstance origin ResumeSession) (and (isinstance origin FreshSession) session.warmed-fresh))
+                   session.alive (= session.launch-key wanted)))
   (when (and session.alive (not reuse))
     (setv session.alive False session.stopped-because StopReason.LAUNCH-CHANGED))
-  (setv session.launch-key wanted)
+  (setv session.launch-key wanted session.warmed-fresh False)
   (setv memory (tuple (get world.transcripts key)))
   (.append (get world.transcripts key) input.text)
   (<- now-time (GetTime))
@@ -464,6 +470,51 @@
   (<- reply FakeReply (reply-of world input.text memory))
   (<- turn (begin-fake-turn world session reply #(input.ref) True (not reuse)))
   (TurnStarted (ClaudeTurn session-id turn.seq) session-id))
+
+(defk fake-warm-refusal [#^ FakeClaudeWorld world origin spec]
+  {:pre [(: world FakeClaudeWorld) (: origin (| FreshSession ResumeSession)) (: spec ClaudeSessionSpec)]
+   :post [(: % (| SessionIdInUse TurnInFlight SessionNotFound None))] :tags {:context "claude-code" :role "judgment"}}
+  "事前起動を拒否するかを、ターンを始める時(fake-start-turn)と同じ拒否の型で決めるため(本番の handler の start-decision と同じ規則)。
+   拒否しなければ None。新しい会話は、事前起動しただけの会話(warmed-fresh)を除いて、既知の id・記録の在る id を拒否する。続きは
+   ターンの走っている会話と記録の無い会話を拒否する。"
+  (val target origin.session-id)
+  (val existing (.get world.sessions target))
+  (val present (is-not (transcript-of world spec.home spec.cwd target) None))
+  (match origin
+    (FreshSession) (if (or (and (is-not existing None) (not existing.warmed-fresh)) present) (SessionIdInUse target) None)
+    (ResumeSession) (cond
+                      (and (is-not existing None) (is-not (.running existing) None))
+                        (TurnInFlight (ClaudeTurn target existing.current-seq))
+                      (not present) (SessionNotFound target)
+                      True None)))
+
+(defk fake-warm-session [#^ FakeClaudeWorld world #^ ClaudeWarmSession request]
+  {:pre [(: world FakeClaudeWorld) (: request ClaudeWarmSession)] :post [(: % "WarmSessionOutcome")]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の process を最初の入力の前に起動して待たせるため(本番の handler と同じ規則 — 拒否はターンと同じ型・同じ起動条件のキーの
+   生きた process が在れば起動しない・違えば停止して(理由 LAUNCH-CHANGED)起動する)。fake の CLI は入力の前に行を出さず、新しい
+   会話の記録(transcript)は最初のターンで作る(本物の CLI も入力の前に記録を作らない)。"
+  (val origin request.origin)
+  (val spec request.spec)
+  (val target origin.session-id)
+  (match origin
+    (ResumeSession :carry carry) (carry-into world spec.home spec.cwd target carry)
+    _ None)
+  (<- refused (fake-warm-refusal world origin spec))
+  (when (is-not refused None) (return refused))
+  (<- wanted (launch-key #() spec))
+  (val session (or (.get world.sessions target) (FakeSession target spec.home spec.cwd)))
+  (setv (get world.sessions target) session)
+  (setv session.closed False)
+  (when (and session.alive (= session.launch-key wanted))
+    (return (SessionWarmed :session-id target)))
+  (when session.alive
+    (setv session.stopped-because StopReason.LAUNCH-CHANGED))
+  (setv session.alive True
+        session.launches (+ session.launches 1)
+        session.launch-key wanted
+        session.warmed-fresh (isinstance origin FreshSession))
+  (SessionWarmed :session-id target))
 
 (defn running-turn-of [#^ FakeClaudeWorld world #^ ClaudeTurn turn]
   (setv session (.get world.sessions turn.session-id))
@@ -650,6 +701,9 @@
   (ClaudeExportSession [home cwd session-id]
     (<- exported (fake-export world effect))
     (resume exported))
+  (ClaudeWarmSession [origin spec]
+    (<- warmed (fake-warm-session world effect))
+    (resume warmed))
   (ClaudeDropProcess [session-id]
     (<- dropped (fake-drop world session-id))
     (resume dropped))

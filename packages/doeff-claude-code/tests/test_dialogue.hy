@@ -91,6 +91,54 @@
               None)))
 
 
+;; --- 入力なしで事前起動した process の、最初の入力の前の行 ---------------------------------------------------
+;; SessionStart の hook の 2 行(実物の stream-json の形 — hook_started と hook_response。欄 hook_event が hook のイベント名・
+;; hook_name は「イベント名:matcher」)。入力を書かずに起動した CLI が最初の入力の前に出す行はこの 2 行だけ(本物の CLI を入力なしで
+;; 30 秒待たせた計測 — init・assistant・rate_limit_event の行は 0 本。init は入力の後に出る)。
+(val SESSION-START-HOOK-STARTED {"type" "system" "subtype" "hook_started" "hook_id" "hook-1" "hook_name" "SessionStart:startup"
+                                 "hook_event" "SessionStart" "uuid" "u-1" "session_id" SID})
+(val SESSION-START-HOOK-RESPONSE {"type" "system" "subtype" "hook_response" "hook_id" "hook-1" "hook_name" "SessionStart:startup"
+                                  "hook_event" "SessionStart" "output" "" "stdout" "" "stderr" "" "exit_code" 0
+                                  "outcome" "success" "uuid" "u-2" "session_id" SID})
+
+(deftest test-before-the-first-input-only-the-session-start-hook-lines-are-quiet
+  ;; 入力なしで事前起動した process(ClaudeWarmSession)が最初の入力の前に出してよいのは、SessionStart の hook の開始と応答の行だけ。
+  ;; それ以外の行(SessionStart 以外の hook の行・SessionStart の hook の途中経過の行・system/init・assistant・rate_limit_event・
+  ;; result)は今までどおりターンの外の出力として停止する(背景の仕事がターンの外で model を呼ばないための守りを広げない)。最初の入力の
+  ;; 後の待ち(ターンを 1 度終えた後)は SessionStart の行も停止の理由になる — 緩めるのは最初の入力の前だけ。
+  (val waiting (DialogueState :session-id SID :awaiting-first-input True))
+  (for [record [SESSION-START-HOOK-STARTED SESSION-START-HOOK-RESPONSE]]
+    (val read (read-record waiting record))
+    (assert (is read.retire None) (repr #(record read.retire)))
+    (assert (= read.state waiting) (repr read.state)))
+  (for [record [(| SESSION-START-HOOK-RESPONSE {"hook_event" "Notification" "hook_name" "Notification"})
+                (| SESSION-START-HOOK-STARTED {"hook_event" "UserPromptSubmit" "hook_name" "UserPromptSubmit"})
+                {"type" "system" "subtype" "hook_progress" "hook_event" "SessionStart" "hook_name" "SessionStart:startup"}
+                INIT
+                {"type" "assistant" "message" {"role" "assistant" "content" [{"type" "text" "text" "x"}]}}
+                {"type" "rate_limit_event" "rate_limit_info" {"rateLimitType" "five_hour"}}
+                SUCCESS-RESULT]]
+    (assert (= (. (read-record waiting record) retire) StopReason.OUTSIDE-TURN-OUTPUT) (repr record)))
+  ;; 最初の入力でマークは消える。ターンを終えた後の待ちでは SessionStart の hook の行もターンの外の出力。
+  (val begun (dialogue.begin-turn waiting (TurnInput "hello" "msg-1")))
+  (assert (not begun.state.awaiting-first-input) (repr begun.state))
+  (val idle (. (read-record (. (read-record begun.state INIT) state) SUCCESS-RESULT) state))
+  (assert (= (. (read-record idle SESSION-START-HOOK-STARTED) retire) StopReason.OUTSIDE-TURN-OUTPUT)))
+
+
+(deftest test-hook-lines-are-classified-by-their-event
+  ;; hook の開始と応答の行は、イベント名(hook_event — この欄の無い版では hook_name の「:」の前)と段階を持つ型 HookNotice に分ける。
+  ;; 途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
+  (assert (= (classify-record SESSION-START-HOOK-STARTED)
+             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:startup")))
+  (assert (= (classify-record SESSION-START-HOOK-RESPONSE)
+             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.RESPONSE :name "SessionStart:startup")))
+  (assert (= (classify-record {"type" "system" "subtype" "hook_started" "hook_name" "SessionStart:resume"})
+             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:resume")))
+  (assert (= (classify-record {"type" "system" "subtype" "hook_progress" "hook_event" "SessionStart"})
+             (lines.Other :type "system" :subtype "hook_progress"))))
+
+
 (deftest test-a-failed-result-carries-the-cli-text-and-the-api-status
   (setv limit {"type" "result" "subtype" "success" "is_error" True "result" "You've reached your limit."
                "api_error_status" 429 "terminal_reason" "api_error"})
