@@ -35,7 +35,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Final, TypeVar, final
+from typing import TYPE_CHECKING, Final, Generic, TypeVar, final
 
 from doeff_core_effects.effects import Await
 from doeff_time import Delay, GetTime
@@ -55,7 +55,7 @@ from doeff_events.effects.notices import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable, Generator
 
     from redis.asyncio import Redis
     from redis.asyncio.client import PubSub
@@ -160,6 +160,29 @@ async def _or_failed(call: "Awaitable[_T]") -> "_T | _Failed":
         return _Failed(f"{type(error).__name__}: {error}")
 
 
+@final
+class _OnAwait(Generic[_T]):
+    """What the handler hands ``Await``: an awaitable that makes its call's coroutine only when it is awaited.
+    When the task performing the ``Await`` is stopped before the answerer took it, the effect is dropped with
+    nothing made — no coroutine is left unawaited (agora-redesign #3864: "coroutine '_or_failed' was never
+    awaited" when a stopped task's last call was dropped)."""
+
+    __slots__ = ("_call",)
+
+    def __init__(self, call: "Callable[[], Awaitable[_T]]") -> None:
+        """Keep the call; make nothing yet."""
+        self._call = call
+
+    def __await__(self) -> "Generator[object, None, _T]":
+        """Make the call's coroutine now and await it."""
+        return self._call().__await__()
+
+
+def _attempt(call: "Callable[[], Awaitable[_T]]") -> "_OnAwait[_T | _Failed]":
+    """One broker call for ``Await``, made when it is awaited, whose lost connection answers ``_Failed``."""
+    return _OnAwait(lambda: _or_failed(call()))
+
+
 def _client(url: str, repeats: int, timeout_seconds: float, *, calls_end: bool) -> "Redis":
     """Make an asyncio client for ``url``: text replies, TCP keep-alive, a connection that must be made within
     ``timeout_seconds``, and a failed call repeated ``repeats`` times at once (never after a wait — the library's
@@ -198,12 +221,12 @@ def _broker_handler(sending: "Redis", receiving: "Redis") -> "ProgramHandler":
         answer: object = None
         match effect:
             case Announce():
-                answer = yield Await(_or_failed(_announce(sending, effect)))
+                answer = yield Await(_attempt(partial(_announce, sending, effect)))
             case ProbeBroker():
-                answer = yield Await(_or_failed(_reached(sending)))
+                answer = yield Await(_attempt(partial(_reached, sending)))
             case SubscribeChannels(channels=channels):
                 subscription = ChannelSubscription(channels)
-                pubsub = yield Await(_or_failed(_subscribe(receiving, subscription)))
+                pubsub = yield Await(_attempt(partial(_subscribe, receiving, subscription)))
                 if isinstance(pubsub, _Failed):
                     answer = pubsub
                 else:
@@ -213,12 +236,12 @@ def _broker_handler(sending: "Redis", receiving: "Redis") -> "ProgramHandler":
                 known = next((entry for entry in listening if entry.subscription is wanted), None)
                 if known is None:
                     raise LookupError(f"{wanted!r} was not made by this handler, or was closed")
-                answer = yield Await(_or_failed(_next_notice(known.pubsub)))
+                answer = yield Await(_attempt(partial(_next_notice, known.pubsub)))
             case CloseSubscription(subscription=closing):
                 closed = tuple(entry for entry in listening if entry.subscription is closing)
                 listening = tuple(entry for entry in listening if entry.subscription is not closing)
                 for entry in closed:
-                    yield Await(_or_failed(entry.pubsub.aclose()))
+                    yield Await(_attempt(entry.pubsub.aclose))
             case _:
                 yield Pass(effect, k)
                 return None
@@ -245,9 +268,9 @@ def _run(url: str, timeout_seconds: float, body: "Program[_T]") -> "EffectGenera
     try:
         answer = yield _broker_handler(sending, receiving)(body)
     except Exception:
-        yield Await(_close(sending, receiving))
+        yield Await(_OnAwait(partial(_close, sending, receiving)))
         raise
-    yield Await(_close(sending, receiving))
+    yield Await(_OnAwait(partial(_close, sending, receiving)))
     return answer
 
 
