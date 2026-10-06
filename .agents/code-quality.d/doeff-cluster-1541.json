@@ -64,7 +64,9 @@
         "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-policy",
-        "doeff-cluster-coordinator-request-bodies-model"
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-due-model",
+        "doeff-cluster-due-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-api-policy",
@@ -185,7 +187,9 @@
         "doeff-cluster-readiness-rules",
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-rollout-policy",
-        "doeff-cluster-program-policy"
+        "doeff-cluster-program-policy",
+        "doeff-cluster-due-model",
+        "doeff-cluster-due-policy"
       ],
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
@@ -663,7 +667,8 @@
         "doeff-cluster-resource-policy",
         "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-watch-policy"
+        "doeff-cluster-watch-policy",
+        "doeff-cluster-due-model"
       ],
       "layer": "pure",
       "name": "doeff-cluster-idle-policy",
@@ -1517,7 +1522,9 @@
         "doeff-cluster-native-wheel",
         "doeff-cluster-retirement-model",
         "doeff-cluster-retirement-notices",
-        "doeff-cluster-coordinator-reads"
+        "doeff-cluster-coordinator-reads",
+        "doeff-cluster-due-model",
+        "doeff-cluster-due-policy"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
