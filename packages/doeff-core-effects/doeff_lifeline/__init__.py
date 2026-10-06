@@ -158,8 +158,11 @@ class Lifeline:
         """見張りへ 1 行書くため(錠の下で呼ぶ)。最初の 1 行の前に見張りを起こす — 自分の session(起こす側の group へ送られた signal で
         見張りが一緒に止まらない)・標準入力 = 書き口を起こす側だけが持つ pipe。"""
         if self._mut_guard is None:
+            # 見張りの interpreter は、いま動いている interpreter の本体(sys._base_executable)。sys.executable は起動口が書き換える
+            # (Hy の入口は hy の起動口にする — doeff-cluster の worker は `exec hy -m …` で起き、見張りが `hy -I -S -B <file>` として
+            # 起きて即座に終わっていた)。見張りは標準ライブラリだけなので、venv の外の本体で足りる。
             self._mut_guard = subprocess.Popen(
-                [sys.executable, "-I", "-S", "-B", __file__],
+                [sys._base_executable, "-I", "-S", "-B", __file__],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 start_new_session=True,
