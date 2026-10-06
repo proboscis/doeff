@@ -53,6 +53,10 @@
            :handoff-abandoned (bool (.get job "handoffAbandoned" False))
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
+           ;; 子の入口が比べる送り手の版(宣言の行の run.versions — Program の job は必ず持つ・置き場の Program の行は版を持たない — #3762)。
+           :versions (match (.get job "program")
+                       None #()
+                       _ (environ-pairs (get job "versions")))
            :environ (environ-pairs (.get job "environ" {}))
            ;; 途絶しても動かし続けてよい印(#2804 — 移せる先の無い job だけが持つ・無ければ偽 = 古い coordinator の返事も同じ)。
            :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)
@@ -106,6 +110,7 @@
   "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。結果はこの worker の file(名前は task の id で決まる)。詰めた Program は
    service の job と同じく置き場のキー program(sha)で持ち、worker の coordinator への口が /programs/<sha> から cache へ取り、
    子 process の言い換え(worker/protocol/process_host)が `--program <cache の file>` を足す(入口は `task --result <file> --program <file>` — 版は file の中の versions)。
+   版は task の行の versions(task を積んだ送り手の版 — 置き場の Program の行は版を持たない・#3762)で、cache の file は (sha・版) ごとに分かれる。
    実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
   (val id (get task "id"))
   (<- placed EnvPlacement (env-placement (.get task "runtimeEnv") (get task "revision")))
@@ -114,6 +119,7 @@
            placed.revision :once True :detached (bool (.get task "detached" False))
            :runtime-env placed.runtime-env :env-key placed.env-key
            :program (get task "program")
+           :versions (environ-pairs (get task "versions"))
            ;; 子の環境変数(service の job と同じ欄・同じ路 — 子 process の言い換えが宣言の env-vars の上に重ねる)。
            :environ (environ-pairs (.get task "environ" {}))))
 

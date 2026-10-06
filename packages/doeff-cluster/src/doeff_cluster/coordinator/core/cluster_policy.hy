@@ -74,6 +74,8 @@
                    revision
                    :handoff (= (.get item "update") "handoff") :runtime-env runtime
                    :program (get run "program")
+                   ;; 子の入口が比べる送り手の版は宣言の行の run.versions(置き場の Program の行は版を持たない — #3762)。
+                   :versions (environ-pairs (get run "versions"))
                    :environ (environ-pairs (.get item "environ" {}))))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
@@ -109,6 +111,7 @@
   {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
    image の版を追う欄(baseFrom・base・overlay — Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
+   送り手の版 run.versions の欠けと形(子の入口が比べる版 — #3762)・
    environ の名(child-environ-refusal の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
   (setv run (get item "run")
         old (lfor k OLD-RUN-KEYS :if (in k run) k)
@@ -125,6 +128,8 @@
       (.format "run.program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" (.get run "program"))
     (not (and (isinstance (.get run "identity") dict) (isinstance (.get (get run "identity") "function") str)))
       "run.identity(呼んだ関数の参照と引数)が無い"
+    (not (text-map? (.get run "versions")))
+      (.format "run.versions(送り手の版 — 名 → 版の文字列の object)が無いか形が違う: {!r}" (.get run "versions"))
     (not (isinstance environ dict)) (.format "environ は文字列の鍵と値の object: {!r}" environ)
     True (environ-refusal environ declared)))
 
@@ -294,7 +299,7 @@
 (deff task-body-refusal [#^ ClusterState state #^ TaskBody body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: body TaskBody)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
-   Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
+   Program を本文に載せる形)・送り手の版 versions の欠けと形・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
    中で並べ(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)、詰めた Program は service の宣言と同じく先に /programs/<sha> に置いて
    本文は sha だけを運ぶ(R3b — service と task で運び方を分けない)。"
   (let [program body.program]
@@ -304,9 +309,10 @@
                  body.env)
       (is-not body.blob None)
         "旧い形の blob(詰めた Program を本文に載せる形)は受け付けない — 先に PUT /programs/<sha> で置き、本文は program に sha を書く"
-      ;; 版は Program と一緒に置いた版 1 つ(program-versions)。本文の写しは置いた版と食い違いうるので受けない(黙って捨てない)。
-      (is-not body.versions None)
-        "本文の versions は受け付けない — task の版は PUT /programs/<sha> で Program と一緒に置いた版を使う"
+      ;; 版は task の事実(#3762)— 置き場の Program の行は版を持たない(同じ sha を後から別の版の送り手が置いても、積んだ task の版は
+      ;; 変わらない)。送り手は本文に自分の版を必ず書く。
+      (not (text-map? body.versions))
+        (.format "versions(送り手の版 — 名 → 版の文字列の object)が無いか形が違う: {!r}" body.versions)
       (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
         (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
       (not-in program state.programs)
@@ -317,11 +323,11 @@
       True (or (task-environ-refusal body.environ body.runtime-env) (needs-refusal body.needs body.requires)))))
 
 
-(deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
-  "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
-   運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
-  (component-versions-of (. (get state.programs sha) versions)))
+(deff task-versions [#^ TaskBody body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: body TaskBody)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "task の本文の送り手の版(名の順の tuple)— task の行の版(置く worker の版と比べる — can-run-task・子の入口が比べる版は heartbeat の
+   返事の task の行の versions)。版は task の事実で、置き場の Program の行は持たない(#3762)。呼ぶ前に task-body-refusal が形を確かめる。"
+  (component-versions-of body.versions))
 
 
 (deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
@@ -1594,7 +1600,7 @@
   (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
         task (TaskRecord id body.name body.program body.revision
-                         (program-versions state body.program)
+                         (task-versions body)
                          (needs-named body.needs body.requires "task の needs")
                          lease-ms (+ now lease-ms) now
                          :runtime-env body.runtime-env

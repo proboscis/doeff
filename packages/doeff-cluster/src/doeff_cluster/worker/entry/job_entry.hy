@@ -14,7 +14,8 @@
 ;;; 手元の sim-cluster(local.hy)の偽の宿は、この入口と同じく何も足さず、加えて柵(host_contract.SIM-PASSABLE の表の外の effect を
 ;;; 本番と同じ未処理の例外にする)で Program を包む — 本番の子で答えの無い effect が sim だけで通ることを防ぐ。
 ;;;
-;;; Program の file = worker が coordinator の /programs/<sha> から取った JSON {"blob" 詰めた文字列 "versions" 詰めた送り手の版}。
+;;; Program の file = worker が coordinator の /programs/<sha> から取った詰めた文字列と、その job の送り手の版を並べた JSON
+;;; {"blob" 詰めた文字列 "versions" 送り手の版}。版は置き場でなく task の行・宣言の行の版(#3762 — 置き場の Program は版を持たない)。
 ;;; service と task は同じ file を同じ read-program で読む(運び方を分けない — R3b)。--identity は service の宣言の同一性の指紋
 ;;; (spec-hash の材料 — 入口では読まない)。
 ;;; task は結果(TaskSucceeded / TaskFailed)を必ず --result の file に書いてから 0 で終わる。0 以外で終わった = 結果を書けなかった。

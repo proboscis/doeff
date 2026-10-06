@@ -126,10 +126,10 @@
 (deftest test-the-coordinator-refuses-a-task-body-with-a-reserved-or-secret-name
   ;; POST /tasks・PUT /detached のどちらも、本文の environ の誤りは 400 と理由で、状態を変えない。実行環境の env-vars と同じ名も断る
   ;; (子の環境変数の足し口を 1 つにする — service の宣言の行と同じ)。
-  (<- placed tuple (program-placed (ClusterState) V))
+  (<- placed tuple (program-placed (ClusterState)))
   (val state (get placed 0))
   (val sha (get placed 1))
-  (val base {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0})
+  (val base {"program" sha "revision" "r" "versions" V "needs" ["net"] "leaseSeconds" 10.0})
   (for [#(method path) [#("POST" "/tasks") #("PUT" "/detached/job-a")]]
     (for [#(environ word) [#({"DOEFF_WORKER_JOB" "x"} "DOEFF_WORKER_JOB")
                            #({"ROWS_TOKEN" "t"} "ROWS_TOKEN")
@@ -144,23 +144,26 @@
 ;; --- 送り手 → coordinator → heartbeat の返事 → worker の子の環境 -------------------------------------------------
 
 (deftest test-the-sender-bodies-carry-the-environ-only-when-given
-  (<- with-env dict (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {URL-NAME URL}))
+  (<- with-env dict (task-submit-body (* "a" 64) "r" V NET "n" 10.0 None {URL-NAME URL}))
   (assert (= (get with-env "environ") {URL-NAME URL}) with-env)
-  (<- without-env dict (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {}))
+  (<- without-env dict (task-submit-body (* "a" 64) "r" V NET "n" 10.0 None {}))
   (assert (not-in "environ" without-env) without-env)
-  (<- detached dict (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {URL-NAME URL}))
+  (<- detached dict (detached-submit-body (* "a" 64) "r" V NET "n" 10.0 60.0 None {URL-NAME URL}))
   (assert (= (get detached "environ") {URL-NAME URL}) detached)
-  (<- detached-bare dict (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {}))
-  (assert (not-in "environ" detached-bare) detached-bare))
+  (<- detached-bare dict (detached-submit-body (* "a" 64) "r" V NET "n" 10.0 60.0 None {}))
+  (assert (not-in "environ" detached-bare) detached-bare)
+  ;; 送り手の版は task の本文が運ぶ(置き場の Program は版を持たない — #3762)。
+  (for [body [with-env without-env detached detached-bare]]
+    (assert (= (get body "versions") V) body)))
 
 
 (deftest test-the-coordinator-carries-the-environ-to-the-worker-child-like-a-service [tmp-path]
   ;; 両方の task の行が environ を持ち、heartbeat の返事の行に載り、worker の task-spec が JobSpec.environ に写し、ProcessHost が
   ;; service と同じ路で子の環境変数に置く。environ の無い task の行と返事は欄を持たない(以前と同じ形)。
   (<- worker tuple (beat (ClusterState) 0))
-  (<- placed tuple (program-placed (get worker 0) V))
+  (<- placed tuple (program-placed (get worker 0)))
   (val sha (get placed 1))
-  (val body {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "environ" {URL-NAME URL}})
+  (val body {"program" sha "revision" "r" "versions" V "needs" ["net"] "leaseSeconds" 10.0 "environ" {URL-NAME URL}})
   (<- remote tuple (call (get placed 0) "POST" "/tasks" body 10))
   (<- detached tuple (call (get remote 0) "PUT" "/detached/job-e" body 10))
   (<- plain tuple (call (get detached 0) "POST" "/tasks" (| body {"environ" {}}) 10))
@@ -179,10 +182,10 @@
 
 (deftest test-the-same-key-with-another-environ-is-other-work
   ;; 冪等の鍵: 同じ key・同じ environ の送り直しは同じ行(created = false)、違う environ は 409(別の仕事 — Program の読む設定が違う)。
-  (<- placed tuple (program-placed (ClusterState) V))
+  (<- placed tuple (program-placed (ClusterState)))
   (val state (get placed 0))
   (val sha (get placed 1))
-  (val body {"program" sha "revision" "r" "needs" ["net"] "environ" {URL-NAME URL}})
+  (val body {"program" sha "revision" "r" "versions" V "needs" ["net"] "environ" {URL-NAME URL}})
   (<- first tuple (call state "PUT" "/detached/job-k" body 10))
   (assert (= (get first 1) 200) first)
   (<- again tuple (call (get first 0) "PUT" "/detached/job-k" body 11))
@@ -252,7 +255,7 @@
   (<- planned tuple (launched settings spec (str tmp-path) "1-1" 1))
   (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in URL-NAME os.environ))
-  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program))]
+  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program spec.versions))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (val outcome (decode-outcome (.read-text (Path (get spec.args 2)) :encoding "ascii")))

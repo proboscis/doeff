@@ -4,8 +4,8 @@
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
-(import collections.abc [Mapping])
 (import dataclasses [dataclass])
+(import hashlib)
 (import json)
 (import pathlib [Path])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
@@ -39,14 +39,20 @@
       (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
 
 
-(defn #^ Path program-file [#^ Path program-dir #^ str sha]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
-  "詰めた Program の置き場のキー → この worker の cache の file(coordinator への口が取って書き、子へ渡す — 定義点は 1 つ)。"
-  (/ program-dir (+ sha ".json")))
+(defn #^ Path program-file [#^ Path program-dir #^ str sha #^ (get tuple #((get tuple #(str str)) ...)) versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+  "詰めた Program の置き場のキーと、子の入口が比べる送り手の版 → この worker の cache の file(coordinator への口が取って書き、子へ渡す —
+   定義点は 1 つ)。版は task の行・宣言の行の事実で Program の事実でない(#3762)ので、同じ sha でも版ごとに別の file(<版の指紋>/<sha>.json —
+   file の名は置き場のキーのまま: 記録係の header は file の名からキーを読む)。versions = 名の順の #(名 版) の組(JobSpec.versions の形)。
+   版の指紋 = 名の順の組の正規 JSON の sha256 の頭 16 桁。"
+  (let [canonical (json.dumps (sorted versions) :ensure-ascii False :separators #("," ":"))
+        digest (cut (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))) 0 16)]
+    (/ program-dir digest (+ sha ".json"))))
 
 
-(defn #^ str program-file-text [#^ str blob #^ (get Mapping #(str object)) versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
-  "cache の file の中身(子の入口 job_entry の read-program が読む形 {\"blob\" \"versions\"} — service と task で同じ・定義点は 1 つ)。"
-  (json.dumps {"blob" blob "versions" versions}))
+(defn #^ str program-file-text [#^ str blob #^ (get tuple #((get tuple #(str str)) ...)) versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+  "cache の file の中身(子の入口 job_entry の read-program が読む形 {\"blob\" \"versions\"} — service と task で同じ・定義点は 1 つ)。
+   versions = 名の順の #(名 版) の組(JobSpec.versions の形 — task の行・宣言の行の版・#3762)。"
+  (json.dumps {"blob" blob "versions" (dict versions)}))
 
 
 (defk shim-argv [python grace-ms * stamp-lines notice-env]

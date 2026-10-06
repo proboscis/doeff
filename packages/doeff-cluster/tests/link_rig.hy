@@ -90,7 +90,8 @@
   {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator への口が /programs/<sha> から取って置くのと同じ cache の file を置くため(置き場と中身の形の定義点は worker/core/launch の
    program-file と program-file-text — handlers.hy の同じ名の道具を #2427 でここへ移した)。"
-  (let [path (program-file program-dir sha)]
-    (.mkdir program-dir :parents True :exist-ok True)
-    (.write-text path (program-file-text blob versions) :encoding "utf-8")
+  (let [pairs (tuple (sorted (.items versions)))
+        path (program-file program-dir sha pairs)]
+    (.mkdir path.parent :parents True :exist-ok True)
+    (.write-text path (program-file-text blob pairs) :encoding "utf-8")
     path))

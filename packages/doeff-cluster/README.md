@@ -290,7 +290,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 |---|---|
 | `GET /resources/Service`・`GET /resources/Service/<名>` | 定義(`spec`)・状態(`status`: 置き先・Ready か・drain の並べた置き先・handoff の段階・受け付けない行の `refused`)・`resourceVersion`・所有者 |
 | `POST /resources/Service`・`PUT /resources/Service/<名>` | 定義を作る・書き換える(`declare --apply` が使う) |
-| `PUT /programs/<sha>`・`GET /programs/<sha>` | 詰めた Program の置き場(`{"blob" "versions"}`)。中身の sha256 がキー |
+| `PUT /programs/<sha>`・`GET /programs/<sha>` | 詰めた Program の置き場(`{"blob"}`)。中身の sha256 がキー。版は持たない — task の版は `POST /tasks`・`PUT /detached/<key>` の本文の `versions`、service の版は宣言の行の `run.versions` |
 | `GET /resources/Rollout/<名>` | Rollout の段階(`status.phase`)・旧の元の台数・台数の食い違い(`status.drift`) |
 | `GET /resources/Worker` | worker の能力(`provides`・`exclusive`)・node・容量・版・drain |
 | `GET /state` | 置き先(`placements`)・各 worker の process の様子・置けない service(`unplaced`)と理由 |

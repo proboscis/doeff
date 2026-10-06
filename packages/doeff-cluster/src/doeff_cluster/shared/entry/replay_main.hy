@@ -2,7 +2,7 @@
 ;;;
 ;;;   hy -m doeff_cluster.shared.entry.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE
 ;;;
-;;; --program = 記録した job の詰めた Program の file(coordinator の /programs/<sha> から取った JSON {"blob" "versions"} — 記録の
+;;; --program = 記録した job の詰めた Program の file(worker の cache の file と同じ JSON {"blob" "versions"} — 記録の
 ;;; header の program が同じキー)。版を検めて Program を解き、再生の mode で走らせるだけ: Program の中の境目の記録係
 ;;; (shared/entry/boundary_recorder の boundary-recorder)が、Ask RECORD-MODE-KEY に replay と答えられると effect-replayer を置き、その状態は
 ;;; Ask REPLAY-STATE-KEY の答え(この道具が記録から作った ReplayState)。この 2 つの Ask にだけ、この道具が Program の外から答える

@@ -46,7 +46,7 @@
   (<- plan JobLaunch (job-launch spec code-path instance attempt :python settings.python :hy-command settings.hy-command :uv settings.uv
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout :allowed-env allowed
                                  :worker-pid (os.getpid)
-                                 :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
+                                 :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program spec.versions)) None)
                                  :program-env settings.program-env
                                  :work-dir (+ settings.jobs-dir "/" (.replace spec.name "/" "_"))
                                  :shim-grace-ms settings.shim.shim-grace-ms :notice-env settings.notice-env))

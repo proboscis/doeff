@@ -113,8 +113,8 @@
 
 (deftest test-tasks-have-a-lease-cap-and-an-open-count-cap
   ;; task の本文は置き場に置いた詰めた Program のキーを運ぶ(置き場に無い sha の task は受けない — 上限の検の前に置いておく)。
-  (<- empty tuple (program-placed (ClusterState) {} :now 1000))
-  (val body {"program" (get empty 1) "revision" "r" "needs" ["net"] "leaseSeconds" 7200})
+  (<- empty tuple (program-placed (ClusterState) :now 1000))
+  (val body {"program" (get empty 1) "revision" "r" "versions" {} "needs" ["net"] "leaseSeconds" 7200})
   (<- capped (call (get empty 0) "POST" "/tasks" body))
   (assert (= (get capped 1) 400) capped)
   (assert (in "leaseSeconds" (get capped 2 "error")) capped)
@@ -123,7 +123,7 @@
                     (TaskRecord (.format "t{}" i) "n" SAMPLE-TASK-PROGRAM "r" #() #() 60000 999999999 0)))
   (<- full tuple (program-placed (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1)
                                                :workers {"a" (WorkerInfo "a" #("net") 0 1000 :task-reserve 0)})
-                                 {} :now 1000))
+                                 :now 1000))
   (<- over (call (get full 0) "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= (get over 1) 429) over)
   ;; 終わった task は数えない

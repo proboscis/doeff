@@ -74,9 +74,9 @@
   {:pre [(: state ClusterState) (: now int) (: versions dict) (: lease (| float int))] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "task を 1 つ積み、(状態 task の id) の組を返すため。"
-  ;; 詰めた Program を置き場に(送り手の版 versions と一緒に)置いてから、task の本文は置き場のキーだけを運ぶ。
-  (<- placed tuple (program-placed state versions :now now))
-  (val reply (responded (get placed 0) (! (req "POST" "/tasks" {"program" (get placed 1) "revision" "r"
+  ;; 詰めた Program を置き場に置いてから、task の本文は置き場のキーと送り手の版 versions を運ぶ(版は task の事実 — #3762)。
+  (<- placed tuple (program-placed state :now now))
+  (val reply (responded (get placed 0) (! (req "POST" "/tasks" {"program" (get placed 1) "revision" "r" "versions" versions
                                                                "needs" ["net"] "name" "n" "leaseSeconds" lease})) now T))
   #((get reply 0) (get (get reply 2) "task")))
 

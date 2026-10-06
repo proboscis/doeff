@@ -3,7 +3,7 @@
 ;;; 行の run = {"kind" "service" "program" <sha256> "identity" {...} "versions" {...} "describe" "..."}。coordinator は Program を解かない
 ;;; ので、制御面の検(置き場所・入れ替え・drain・資源の口)は Program の中身を要らない — 形の揃った行だけを使う。
 ;;; task の本文も service の宣言と同じく詰めた Program の置き場のキー program(sha)だけを運ぶ。coordinator は置き場に sha が在る時だけ
-;;; task を受けるので、task の検は先に program-placed で置いてから送る(置き場の版が task の版になる)。
+;;; task を受けるので、task の検は先に program-placed で置いてから送る。task の版は task の本文の versions(置き場は版を持たない — #3762)。
 (require doeff-hy.macros [defk <- val])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.program_policy [program-write])
@@ -37,14 +37,14 @@
    "describe" (.format "{}({})" function (.join ", " (gfor a args (repr a))))})
 
 
-(defk program-placed [state versions [blob SAMPLE-BLOB] [now 0]]
-  {:pre [(: state ClusterState) (: versions dict) (: blob str) (: now int)] :post [(: % tuple) (= (len %) 2)]
+(defk program-placed [state [blob SAMPLE-BLOB] [now 0]]
+  {:pre [(: state ClusterState) (: blob str) (: now int)] :post [(: % tuple) (= (len %) 2)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "task を送る前に、詰めた Program を置き場へ本物の口(program_policy.program-write)で置いた状態と、その置き場のキー #(状態 sha)。
-   versions = 詰めた送り手の版(task の版になる — 置く worker の版と比べられる)。版の違う task を並べる検は blob を変える。
+   task の版は置き場でなく task の本文の versions で渡す(#3762)。
    now = 置いた時刻(参照の無い Program は置いてから 10 分で掃除される — 検の時計に合わせる)。"
   (val sha (program-sha blob))
-  (val placed (program-write state sha (ProgramBody :blob blob :versions versions) now))
+  (val placed (program-write state sha (ProgramBody :blob blob) now))
   (assert (= (get placed 1) 200) placed)
   #((get placed 0) sha))
 

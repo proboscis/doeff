@@ -1,7 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = launch.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-from collections.abc import Mapping as Mapping
 from dataclasses import dataclass as dataclass
 from pathlib import Path as Path
 from doeff_core_effects.process_effects import EnvEntry as EnvEntry
@@ -18,10 +17,10 @@ def child_environment(base: dict, extra: dict, declared: dict, worker: dict) -> 
 def env_project_dir(root: str, declared: dict) -> _Program[str, object]:
     ...
 
-def program_file(program_dir: Path, sha: str) -> Path:
+def program_file(program_dir: Path, sha: str, versions: tuple[tuple[str, str], ...]) -> Path:
     ...
 
-def program_file_text(blob: str, versions: Mapping[str, object]) -> str:
+def program_file_text(blob: str, versions: tuple[tuple[str, str], ...]) -> str:
     ...
 
 def shim_argv(python: str, grace_ms: int, *, stamp_lines: bool, notice_env: str | None) -> _Program[tuple[str, ...], object]:

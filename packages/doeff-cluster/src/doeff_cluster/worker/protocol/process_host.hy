@@ -191,7 +191,7 @@
   (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :python settings.python :hy-command settings.hy-command
                                  :uv settings.uv :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
-                                 :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
+                                 :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program spec.versions)) None)
                                  :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms
                                  :notice-env settings.notice-env))
   (when plan.last-used

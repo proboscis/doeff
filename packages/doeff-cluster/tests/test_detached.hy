@@ -676,9 +676,9 @@
   {:pre [(: state ClusterState) (: key str) (: now int) (: lease float) (: retain float)] :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "切り離した task を key で 1 回送るため: 返り値 #(状態 status 本文)。"
-  ;; 詰めた Program を置き場に(版 V と一緒に)置いてから、本文は置き場のキーだけを運ぶ(service の宣言と同じ運び方)。
-  (<- placed (get tuple #(ClusterState str)) (program-placed state V :now now))
-  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" (+ "/detached/" key) now {"program" (get placed 1) "revision" "r" "needs" ["net"]
+  ;; 詰めた Program を置き場に置いてから、本文は置き場のキーと送り手の版 V を運ぶ(service の宣言と同じ運び方・版は task の事実 — #3762)。
+  (<- placed (get tuple #(ClusterState str)) (program-placed state :now now))
+  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" (+ "/detached/" key) now {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]
                                                                         "leaseSeconds" lease "retainSeconds" retain}))
   reply)
 
@@ -996,8 +996,8 @@
   "もとの coordinator が task を置き、worker が受けて状態の報告に写しを添えるまで。返り値 #(もとの状態 id 報告を作る link 元の spec)。"
   (val caps (or needs ["net"]))
   (<- named (get tuple #(ClusterState int (get dict #(str object)))) (beat (ClusterState) "w" 0 :boot-at 1000 :provides caps))
-  (<- placed (get tuple #(ClusterState str)) (program-placed (get named 0) V))
-  (<- put (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" "/detached/job-e" 0 {"program" (get placed 1) "revision" "r" "needs" caps
+  (<- placed (get tuple #(ClusterState str)) (program-placed (get named 0)))
+  (<- put (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" "/detached/job-e" 0 {"program" (get placed 1) "revision" "r" "versions" V "needs" caps
                                                                 "leaseSeconds" 10.0 "retainSeconds" 100.0}))
   (val id (get (get put 2) "task"))
   (assert (isinstance id str) put)
@@ -1063,11 +1063,11 @@
   (var fresh loaded)
   (val reply-56 (! (beat fresh "other" 123500)))
   (:= fresh (get reply-56 0))
-  (val reply-57 (run (program-placed fresh V "TkVX" (+ 123500 T.lease-ms))))
+  (val reply-57 (run (program-placed fresh "TkVX" (+ 123500 T.lease-ms))))
   (:= fresh (get reply-57 0))
   (val sha (get reply-57 1))
   (val reply-58 (! (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
-                               {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0})))
+                               {"program" sha "revision" "r" "versions" V "needs" ["net"] "leaseSeconds" 10.0})))
   (:= fresh (get reply-58 0))
   (val reply (get reply-58 2))
   (assert (!= (get reply "task") id) #(reply id))
@@ -1186,10 +1186,10 @@
   ;; RemoteJob の task(/tasks)は今までどおり: 呼び手の問い合わせが lease を延ばし、drain は数えず、途絶で止める。
   (val reply-73 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-73 0))
-  (val reply-74 (run (program-placed s V)))
+  (val reply-74 (run (program-placed s)))
   (:= s (get reply-74 0))
   (val sha (get reply-74 1))
-  (val reply-75 (! (call s "POST" "/tasks" 0 {"program" sha "revision" "r" "needs" ["net"]
+  (val reply-75 (! (call s "POST" "/tasks" 0 {"program" sha "revision" "r" "versions" V "needs" ["net"]
                                                "name" "n" "leaseSeconds" 5.0})))
   (:= s (get reply-75 0))
   (var body (get reply-75 2))
@@ -1227,11 +1227,11 @@
   ;; 後も同じ型。
   (val reply-79 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-79 0))
-  ;; 版は置き場に Program と一緒に置いた版(本文は版の写しを運ばない)。
-  (val reply-80 (run (program-placed s V)))
+  ;; 版は task の本文の版(置き場は版を持たない — #3762)。
+  (val reply-80 (run (program-placed s)))
   (:= s (get reply-80 0))
   (val sha (get reply-80 1))
-  (setv reply (submit-detached s "job-typed" (! (task-body-of {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}))
+  (setv reply (submit-detached s "job-typed" (! (task-body-of {"program" sha "revision" "r" "versions" V "needs" ["x-tool" "cluster-net" "x-tool"]}))
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status reply.body.created) #(200 True)))
@@ -1256,7 +1256,7 @@
   (assert (= status 400))
   (val reply-84 (! (put-detached s "job-9" 0)))
   (:= s (get reply-84 0))
-  (val reply-85 (! (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "needs" ["net"]})))
+  (val reply-85 (! (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "versions" V "needs" ["net"]})))
   (:= status (get reply-85 1))
   (val body (get reply-85 2))
   (assert (= status 409) body))
@@ -1272,10 +1272,10 @@
   (<- declared (runtime-env->json env))
   (val reply-86 (! (beat (ClusterState) "w" 0)))
   (var s (get reply-86 0))
-  (val reply-87 (run (program-placed s V)))
+  (val reply-87 (run (program-placed s)))
   (:= s (get reply-87 0))
   (val sha (get reply-87 1))
-  (val task {"program" sha "revision" "r" "leaseSeconds" 10.0})
+  (val task {"program" sha "revision" "r" "versions" V "leaseSeconds" 10.0})
   (val warm {"runtimeEnv" declared "ttlSeconds" 60 "holder" "svc-a"})
   (val routes [#("POST" "/tasks" task) #("PUT" "/detached/job-n" task) #("POST" "/warm" warm)])
   (for [#(method path base) routes]

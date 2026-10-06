@@ -218,7 +218,7 @@
   (<- spec (declared-job-spec (! (spec-json (. (job-from-json row) spec))) False))
   ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。
   (assert (is-not spec.program None) spec)
-  (val cached (program-file (Path rig.host.program-dir) spec.program))
+  (val cached (program-file (Path rig.host.program-dir) spec.program spec.versions))
   (.mkdir cached.parent :parents True :exist-ok True)
   (.write-text cached (json.dumps {"blob" (get declaration.programs spec.program) "versions" (get row "run" "versions")})
                :encoding "utf-8")

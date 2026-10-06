@@ -1,7 +1,7 @@
 ;; worker が詰めた Program を受け取って子へ渡す所(ADR-DOE-CLUSTER-001 改訂 1 の F・G・H — 2026-09-27)。
 ;;
 ;; - coordinator への口の fetched-programs: 宣言の job の置き場のキー(spec.program)の Program を coordinator の GET /programs/<sha> から取り、
-;;   state dir の programs/<sha>.json に書く。中身の sha256 がキーと合わない物・取れない物は書かない。在る物は取り直さない。
+;;   state dir の programs/<版の指紋>/<sha>.json に、job の送り手の版(spec.versions — 置き場の答えは版を持たない・#3762)と並べて書く。中身の sha256 がキーと合わない物・取れない物は書かない。在る物は取り直さない。
 ;; - 子 process の言い換えの起こし方(job-launch): 子の引数に `--program <その file>`、子の環境に HOST-CONTRACT の program-env と宣言の environ を足す。
 ;;   coordinator への口と子 process の言い換えは main の置き方(state dir の logs・tasks)で同じ programs の dir を指す。
 (require doeff-hy.macros [deftest defk deff <- val])
@@ -21,6 +21,7 @@
 (val FORGED (* "b" 64))            ; 取った中身の sha256 がこのキーと合わない
 (val ABSENT (* "c" 64))            ; coordinator に置かれていない
 (val VERSIONS {"doeff" "0.4.1"})
+(val VERSION-PAIRS #(#("doeff" "0.4.1")))   ; JobSpec.versions の形(名の順の #(名 版) の組)
 
 
 (defk served-programs [seen]
@@ -30,16 +31,17 @@
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
     (.append seen request.url.path)
     (cond
-      (.endswith request.url.path SHA) (httpx.Response 200 :json {"blob" BLOB "versions" VERSIONS})
-      (.endswith request.url.path FORGED) (httpx.Response 200 :json {"blob" BLOB "versions" VERSIONS})
+      (.endswith request.url.path SHA) (httpx.Response 200 :json {"blob" BLOB})
+      (.endswith request.url.path FORGED) (httpx.Response 200 :json {"blob" BLOB})
       True (httpx.Response 404 :json {"error" "置かれていない"})))
   (httpx.MockTransport answer))
 
 
 (defk service-spec [name program]
   {:pre [(: name str) (: program (| str None))] :post [(: % JobSpec)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "Program の job の service の spec(置き場のキー program・子の環境変数 environ)。"
-  (JobSpec name JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program program :environ #(#("POLL" "5.0"))))
+  "Program の job の service の spec(置き場のキー program・子の環境変数 environ・送り手の版 versions)。"
+  (JobSpec name JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program program :environ #(#("POLL" "5.0"))
+           :versions VERSION-PAIRS))
 
 
 (deftest test-the-link-fetches-only-programs-whose-content-matches-the-key [tmp-path]
@@ -52,10 +54,10 @@
   (<- plain (service-spec "plain" None))
   (.accept-programs link #(good forged absent plain))
   (val dir (/ tmp-path "programs"))
-  (assert (= (json.loads (.read-text (program-file dir SHA) :encoding "utf-8")) {"blob" BLOB "versions" VERSIONS}))
+  (assert (= (json.loads (.read-text (program-file dir SHA VERSION-PAIRS) :encoding "utf-8")) {"blob" BLOB "versions" VERSIONS}))
   ;; 中身の合わない物・置かれていない物は書かない(子は file が無いので起動の時に理由つきで落ちる)。置き場のキーの無い job は取らない。
-  (assert (not (.exists (program-file dir FORGED))))
-  (assert (not (.exists (program-file dir ABSENT))))
+  (assert (not (.exists (program-file dir FORGED VERSION-PAIRS))))
+  (assert (not (.exists (program-file dir ABSENT VERSION-PAIRS))))
   (assert (= (sorted seen) (sorted (lfor s [SHA FORGED ABSENT] (+ "/programs/" s)))) seen)
   ;; 在る物は取り直さない(取れなかった物は次の拍で取り直す)。
   (.clear seen)
@@ -74,7 +76,7 @@
   (val argv (get planned 0))
   (val cwd (get planned 1))
   (val env (get planned 2))
-  (val file (str (program-file (Path host.program-dir) SHA)))
+  (val file (str (program-file (Path host.program-dir) SHA VERSION-PAIRS)))
   (assert (= (list (cut argv -5 None)) ["service" "--identity" (* "0" 16) "--program" file]) argv)
   (assert (= (get env HOST-CONTRACT.program-env) file) env)
   (assert (= (get env "POLL") "5.0") env)

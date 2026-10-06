@@ -1,9 +1,9 @@
 ;;; task の Program も置き場 /programs/<sha> で運ぶ(ADR-DOE-CLUSTER-001 R3b — service と task で運び方を分けない・operator 逐語
 ;;; "i dont find any reason to have different api for services")。
 ;;;
-;;;   送り手  … remote-cluster(remote.hy の program-put)・DetachedSender は詰めた Program を先に PUT /programs/<sha>(本文 {"blob" "versions"})で置き、task の本文
-;;;             (POST /tasks・PUT /detached/<key>)は program に sha を書く。本文の blob・versions は 400(理由つき)。
-;;;   coordinator … 置き場に sha が在る時だけ task を受け、task の版は置き場の版。heartbeat の返事は sha だけを運ぶ。掃除は task の行
+;;;   送り手  … remote-cluster(remote.hy の program-put)・DetachedSender は詰めた Program を先に PUT /programs/<sha>(本文 {"blob"})で置き、task の本文
+;;;             (POST /tasks・PUT /detached/<key>)は program に sha を、versions に送り手の版を書く。本文の blob と versions の欠けは 400(理由つき)。
+;;;   coordinator … 置き場に sha が在る時だけ task を受け、task の版は task の本文の版(置き場は版を持たない — #3762)。heartbeat の返事は sha だけを運ぶ。掃除は task の行
 ;;;             (終わって結果を保持している行も)が参照する sha を残し、行が消えたら猶予の後に消す。状態を失った coordinator は worker の
 ;;;             写しの sha で走っている切り離した task を引き取る。保存の旧い行(blob を持つ)は終わっていなければ failed。
 ;;;   worker  … accept-programs が service と同じ仕組みで task の Program を cache へ取り、子は `task --result <file> --program <file>`。
@@ -28,7 +28,9 @@
 (import tests.link_rig [LinkRig])
 (import tests.link_rig [write-program-file] doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff [Program with-handlers])
+(import doeff [Program run with-handlers])
+(import doeff_cluster.worker.entry.job_entry [read-program])
+(import doeff_cluster.shared.intent.remote_model [VersionMismatch])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -49,6 +51,7 @@
 (val T (ClusterTiming))
 (val V {"python" "3.14.0" "doeff" "1"})
 (val OTHER {"python" "3.9.6" "doeff" "0"})
+(val V-PAIRS (tuple (sorted (.items V))))   ; JobSpec.versions の形(名の順の #(名 版) の組)
 (val PACKAGE-ROOT (. (Path __file__) (resolve) parent parent))
 
 
@@ -70,15 +73,17 @@
 ;; --- coordinator: 本文は置き場のキーだけを運ぶ -----------------------------------------------------------------
 
 (deftest test-a-task-body-carries-only-the-key-of-a-placed-program
-  ;; POST /tasks・PUT /detached のどちらも: 本文の blob(旧い形)・versions(版の写し)・置き場のキーの欠けと形の誤り・置き場に無い sha は
-  ;; 400 と理由で、状態を変えない。置いた sha は通り、task の行は sha と置き場の版を持つ。
-  (<- placed tuple (program-placed (ClusterState) V))
+  ;; POST /tasks・PUT /detached のどちらも: 本文の blob(旧い形)・送り手の版 versions の欠けと形の誤り・置き場のキーの欠けと形の誤り・
+  ;; 置き場に無い sha は 400 と理由で、状態を変えない。置いた sha は通り、task の行は sha と本文の版を持つ。
+  (<- placed tuple (program-placed (ClusterState)))
   (val state (get placed 0))
   (val sha (get placed 1))
-  (val base {"revision" "r" "needs" ["net"] "leaseSeconds" 10.0})
-  (val bad [#({"blob" "QkxPQg==" "versions" V} "旧い形の blob")
+  (val base {"revision" "r" "versions" V "needs" ["net"] "leaseSeconds" 10.0})
+  (val bad [#({"blob" "QkxPQg=="} "旧い形の blob")
             #({"program" sha "blob" "QkxPQg=="} "旧い形の blob")
-            #({"program" sha "versions" V} "本文の versions")
+            #({"program" sha "versions" None} "versions(送り手の版")
+            #({"program" sha "versions" "3.14"} "versions(送り手の版")
+            #({"program" sha "versions" {"python" 3}} "versions(送り手の版")
             #({} "program は詰めた Program の置き場のキー")
             #({"program" "not-a-sha"} "program は詰めた Program の置き場のキー")
             #({"program" (* "f" 64)} "置き場に無い")])
@@ -92,17 +97,17 @@
     (assert (= (get accepted 1) 200) #(method accepted))
     (val row (next (gfor t (.values (. (get accepted 0) tasks)) t)))
     (assert (= row.program sha) row)
-    ;; task の版は置き場に Program と一緒に置いた版(本文は版を運ばない)。
+    ;; task の版は本文の版(置き場は版を持たない — #3762)。
     (assert (= (dict row.versions) V) row.versions)))
 
 
-(deftest test-the-task-versions-come-from-the-placed-program
-  ;; 置く worker との版の突き合わせ(cloudpickle は版をまたいで復元できる保証が無い)は、置き場の版で行う。
+(deftest test-the-task-versions-come-from-the-task-body
+  ;; 置く worker との版の突き合わせ(cloudpickle は版をまたいで復元できる保証が無い)は、task の本文の版で行う — 同じ Program(同じ sha)
+  ;; でも版の違う送り手の task は別の版を持つ(置き場は版を持たない — #3762)。
   (<- worker tuple (beat (ClusterState) 0 []))
-  (<- same tuple (program-placed (get worker 0) V "c2FtZQ=="))
-  (<- other tuple (program-placed (get same 0) OTHER "b3RoZXI="))
-  (<- a tuple (call (get other 0) "POST" "/tasks" {"program" (get same 1) "revision" "r" "needs" ["net"]} 10))
-  (<- b tuple (call (get a 0) "POST" "/tasks" {"program" (get other 1) "revision" "r" "needs" ["net"]} 10))
+  (<- placed tuple (program-placed (get worker 0) "c2FtZQ=="))
+  (<- a tuple (call (get placed 0) "POST" "/tasks" {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]} 10))
+  (<- b tuple (call (get a 0) "POST" "/tasks" {"program" (get placed 1) "revision" "r" "versions" OTHER "needs" ["net"]} 10))
   (val tasks (. (get b 0) tasks))
   (assert (= (. (get tasks (get a 2 "task")) phase) "assigned") tasks)
   (val refused (get tasks (get b 2 "task")))
@@ -112,9 +117,9 @@
 
 (deftest test-the-heartbeat-reply-carries-only-the-program-key-of-each-task
   (<- worker tuple (beat (ClusterState) 0 []))
-  (<- placed tuple (program-placed (get worker 0) V))
-  (<- remote tuple (call (get placed 0) "POST" "/tasks" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
-  (<- detached tuple (call (get remote 0) "PUT" "/detached/job-b" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
+  (<- placed tuple (program-placed (get worker 0)))
+  (<- remote tuple (call (get placed 0) "POST" "/tasks" {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]} 10))
+  (<- detached tuple (call (get remote 0) "PUT" "/detached/job-b" {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]} 10))
   (<- reply tuple (beat (get detached 0) 20 []))
   (val rows (get reply 2 "tasks"))
   (assert (= (len rows) 2) rows)
@@ -130,15 +135,15 @@
   ;; Program は残り、行が消えたら猶予の後に消える。
   (val later (+ PROGRAM-GRACE-MS 1000))
   (<- worker tuple (beat (ClusterState) 0 []))
-  (<- kept tuple (program-placed (get worker 0) V "a2VwdA=="))
-  (<- remote-program tuple (program-placed (get kept 0) V "cmVtb3Rl"))
-  (<- loose tuple (program-placed (get remote-program 0) V "bG9vc2U="))
+  (<- kept tuple (program-placed (get worker 0) "a2VwdA=="))
+  (<- remote-program tuple (program-placed (get kept 0) "cmVtb3Rl"))
+  (<- loose tuple (program-placed (get remote-program 0) "bG9vc2U="))
   (<- detached tuple (call (get loose 0) "PUT" "/detached/job-k"
-                           {"program" (get kept 1) "revision" "r" "needs" ["net"] "leaseSeconds" 60.0
+                           {"program" (get kept 1) "revision" "r" "versions" V "needs" ["net"] "leaseSeconds" 60.0
                             "retainSeconds" (/ (* 3 PROGRAM-GRACE-MS) 1000)} 10))
   (val id (get detached 2 "task"))
   (<- remote tuple (call (get detached 0) "POST" "/tasks"
-                         {"program" (get remote-program 1) "revision" "r" "needs" ["net"] "leaseSeconds" 3600.0} 10))
+                         {"program" (get remote-program 1) "revision" "r" "versions" V "needs" ["net"] "leaseSeconds" 3600.0} 10))
   ;; 担い手が終わりを報告する(切り離した task は結果を保持する)。
   (<- finished tuple (beat (get remote 0) 1000 [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
   (<- alive tuple (beat (get finished 0) (- later 500) []))
@@ -161,8 +166,8 @@
   ;; worker は切り離した task の返事の行(置き場のキー program を含む)を状態の報告に写す。状態を失った coordinator は同じ sha の行を
   ;; 引き取り、同じ返事に載せる(担い手の cache の Program で走り続ける — 置き場に Program が無くてよい)。
   (<- worker tuple (beat (ClusterState) 0 []))
-  (<- placed tuple (program-placed (get worker 0) V))
-  (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
+  (<- placed tuple (program-placed (get worker 0)))
+  (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]} 10))
   (val id (get put 2 "task"))
   (<- reply tuple (beat (get put 0) 20 []))
   (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 0 60000 :task-dir (str (/ tmp-path "tasks"))))
@@ -186,9 +191,9 @@
   ;; 置き場 /programs の前の coordinator が書いた task の行(詰めた Program を行の blob に持つ)は、読み直しで coordinator を落とさない:
   ;; 終わっていない行は failed(理由つき — 走らせない)、終わった行は Program 無し(program None)で結果を保つ。
   (<- worker tuple (beat (ClusterState) 0 []))
-  (<- placed tuple (program-placed (get worker 0) V))
-  (<- open tuple (call (get placed 0) "PUT" "/detached/job-open" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
-  (<- done tuple (call (get open 0) "PUT" "/detached/job-done" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
+  (<- placed tuple (program-placed (get worker 0)))
+  (<- open tuple (call (get placed 0) "PUT" "/detached/job-open" {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]} 10))
+  (<- done tuple (call (get open 0) "PUT" "/detached/job-done" {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"]} 10))
   (val done-id (get done 2 "task"))
   (<- reported tuple (beat (get done 0) 20 [{"name" (+ "task/" done-id) "phase" "finished" "result" "R" "detail" ""}]))
   (val data (! (state-to-json (get reported 0))))
@@ -216,11 +221,11 @@
   (val table {TASK-SHA TASK-BLOB SERVICE-SHA SERVICE-BLOB})
   (deff answer [request]  ; defk にできない: httpx の MockTransport が呼ぶ素の callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
-    "置き場の読み 1 件の答え(在れば {\"blob\" \"versions\"}・無ければ 404)。"
+    "置き場の読み 1 件の答え(在れば {\"blob\"}・無ければ 404 — 置き場は版を持たない)。"
     (.append seen request.url.path)
     (let [sha (get (.split request.url.path "/") -1)]
       (if (in sha table)
-          (httpx.Response 200 :json {"blob" (get table sha) "versions" V})
+          (httpx.Response 200 :json {"blob" (get table sha)})
           (httpx.Response 404 :json {"error" "置かれていない"}))))
   (httpx.MockTransport answer))
 
@@ -231,12 +236,13 @@
   (val state-dir (/ tmp-path "state"))
   (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ state-dir "tasks")) :transport transport))
   (<- host (host-settings state-dir))
-  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program SERVICE-SHA))
+  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program SERVICE-SHA
+                       :versions V-PAIRS))
   (val tasks (.accept-tasks link [{"id" "t1" "name" "n" "revision" "r" "versions" V "program" TASK-SHA}]))
   (.accept-programs link (+ #(service) tasks))
-  ;; service と同じく cache の file({"blob" "versions"})に取る(返事の行は Program を運ばない)。
+  ;; service と同じく cache の file({"blob" "versions"} — versions は task の行の版)に取る(返事の行は Program を運ばない)。
   (assert (= (sorted seen) (sorted [(+ "/programs/" TASK-SHA) (+ "/programs/" SERVICE-SHA)])) seen)
-  (val cached (program-file (.program-dir link) TASK-SHA))
+  (val cached (program-file (.program-dir link) TASK-SHA V-PAIRS))
   (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" TASK-BLOB "versions" V}))
   ;; 子の入口は `task --result <file> --program <cache の file>`(宿の契約の Program の path も同じ file)。
   (<- planned tuple (launched host (get tasks 0) (str tmp-path) "1-1" 1))
@@ -252,14 +258,70 @@
   (.accept-tasks link [])
   (.accept-programs link #(service))
   (assert (not (.exists cached)) "返事から外れた task の Program の cache が残った")
-  (assert (.exists (program-file (.program-dir link) SERVICE-SHA)) "service の job の Program の cache が消えた")
+  (assert (.exists (program-file (.program-dir link) SERVICE-SHA V-PAIRS)) "service の job の Program の cache が消えた")
   (assert (= (list (.iterdir (/ state-dir "tasks"))) []))
   ;; service の job と同じ Program を指す task は、task が外れても今の job が参照するので残す。
   (val shared (.accept-tasks link [{"id" "t2" "name" "n" "revision" "r" "versions" V "program" SERVICE-SHA}]))
   (.accept-programs link (+ #(service) shared))
   (.accept-tasks link [])
   (.accept-programs link #(service))
-  (assert (.exists (program-file (.program-dir link) SERVICE-SHA))))
+  (assert (.exists (program-file (.program-dir link) SERVICE-SHA V-PAIRS))))
+
+
+;; --- 版は task の事実: 同じ Program を後から別の版の送り手が置いても、前に積んだ task はその task の版で比べる(#3762・t661) ----
+
+(defk coordinator-programs [cell now]
+  {:pre [(: cell list) (: now int)] :post [(: % httpx.MockTransport)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "coordinator の GET /programs/<sha> を、cell の先頭に持つ coordinator の状態の本物の振り分け(call)で答える偽の網。"
+  (deff answer [request]  ; defk にできない: httpx の MockTransport が呼ぶ素の callback
+    {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
+    "置き場の読み 1 件を coordinator の振り分けに渡し、その status と本文で答える。"
+    (let [answered (run (call (get cell 0) "GET" request.url.path None now))]
+      (httpx.Response (get answered 1) :json (get answered 2))))
+  (httpx.MockTransport answer))
+
+
+(deftest test-a-queued-task-is-checked-against-its-own-versions-after-a-newer-sender-places-the-same-program [tmp-path]
+  ;; 版 A(この process の版)の送り手が Program を置いて task T を積む → T が待つ間に版 B の送り手が同じ sha を置く → T を置いた
+  ;; worker の子は T の版 A で比べて Program を解く(置き場の行の版で比べると B と比べて VersionMismatch — 10-06 12:04 の t661)。
+  ;; 版 B の送り手が積んだ task は版 B で比べる(版が混ざらない — この process の版 A とは食い違って断る)。
+  (val mine (! (process-versions os.environ)))
+  (val blob (encode-program (based-add 3)))
+  (val sha (program-sha blob))
+  (<- worker-a tuple (call (ClusterState) "POST" "/heartbeat"
+                           {"name" "wa" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" mine "boot" "b1" "statuses" []} 0))
+  (<- worker-b tuple (call (get worker-a 0) "POST" "/heartbeat"
+                           {"name" "wb" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" OTHER "boot" "b1" "statuses" []} 0))
+  (<- placed-a tuple (call (get worker-b 0) "PUT" (+ "/programs/" sha) {"blob" blob} 1))
+  (assert (= (get placed-a 1) 200) placed-a)
+  (<- queued tuple (call (get placed-a 0) "PUT" "/detached/job-a" {"program" sha "revision" "ra" "versions" mine "needs" ["net"]} 2))
+  (assert (= (get queued 1) 200) queued)
+  (<- placed-b tuple (call (get queued 0) "PUT" (+ "/programs/" sha) {"blob" blob} 3))
+  (assert (= (get placed-b 1) 200) placed-b)
+  (<- queued-b tuple (call (get placed-b 0) "PUT" "/detached/job-b" {"program" sha "revision" "rb" "versions" OTHER "needs" ["net"]} 4))
+  (assert (= (get queued-b 1) 200) queued-b)
+  (<- reply-a tuple (call (get queued-b 0) "POST" "/heartbeat"
+                          {"name" "wa" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" mine "boot" "b1" "statuses" []} 5))
+  (<- reply-b tuple (call (get reply-a 0) "POST" "/heartbeat"
+                          {"name" "wb" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" OTHER "boot" "b1" "statuses" []} 5))
+  (val rows (+ (get reply-a 2 "tasks") (get reply-b 2 "tasks")))
+  (assert (= (sorted (lfor r rows (get r "revision"))) ["ra" "rb"]) rows)
+  ;; 1 つの worker の口が 2 本の task(同じ sha・違う版)を受け、coordinator の置き場から Program を取る。
+  (val cell [(get reply-b 0)])
+  (<- transport httpx.MockTransport (coordinator-programs cell 6))
+  (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks")) :transport transport))
+  (val specs (.accept-tasks link rows))
+  (.accept-programs link specs)
+  (val by-revision (dfor s specs s.revision s))
+  (for [revision ["ra" "rb"]]
+    (val spec (get by-revision revision))
+    (val cached (program-file (.program-dir link) spec.program spec.versions))
+    (val read (read-program (str cached) ""))
+    (if (= revision "ra")
+        (do (assert (is (get read 1) None) (str (get read 1)))
+            (assert (= (run (get read 0)) 103)))
+        (do (assert (isinstance (get read 1) VersionMismatch) read)
+            (assert (in "3.9.6" (str (get read 1))) (str (get read 1)))))))
 
 
 ;; --- 通しの検: 本物の coordinator の process・本物の送り手(remote.hy の task-submitted ほか)・coordinator への口・job_entry の子 process ----
@@ -325,7 +387,7 @@
       (<- spec JobSpec (assigned-task link id))
       (assert (= spec.program (program-sha blob)) spec)
       (assert (is-not spec.program None) spec)
-      (val cached (program-file (.program-dir link) spec.program))
+      (val cached (program-file (.program-dir link) spec.program spec.versions))
       (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" blob "versions" (! (process-versions os.environ))}))
       ;; 子 process: worker と同じ引数(task --result <file>)に cache の file を --program で渡す(ProcessHost が足すのと同じ)。
       (val done (subprocess.run [sys.executable "-m" "hy" "-m" spec.entry #* spec.args "--program" (str cached)]

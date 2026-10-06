@@ -96,10 +96,10 @@
 
 
 (defwire ProgramBody
-  "PUT /programs/<sha> の本文: blob = 詰めた Program(base64 の文字列)・versions = 詰めた送り手の版(名 → 版)。"
+  "PUT /programs/<sha> の本文: blob = 詰めた Program(base64 の文字列)。版は Program の事実でなく task の事実なので置き場に運ばない —
+   task の版は task の本文の versions・service の版は宣言の行の run.versions(#3762)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
-  (#^ str blob)
-  (setv #^ (| (get dict #(str str)) None) versions None))
+  (#^ str blob))
 
 
 (defwire BoardWireBody
@@ -226,9 +226,10 @@
 
 
 (defwire TaskBody
-  "POST /tasks と PUT /detached/<key> の本文: program = 置き場に置いた Program の sha・revision = 送り手の commit・name・needs = 要る能力の
+  "POST /tasks と PUT /detached/<key> の本文: program = 置き場に置いた Program の sha・revision = 送り手の commit・versions = 送り手の版
+   (名 → 版の文字列 — task の行の版になり、置く worker の版と子の入口の比べに使う・必ず書く欄・#3762)・name・needs = 要る能力の
    名の列・runtime-env = 実行環境の宣言(JSON の object)・environ = 子の環境変数(名 → 文字列)・lease-seconds / retain-seconds(None = 道の
-   既定)・format。旧い形の欄(requires・env・blob・versions)は判断が理由つきで断る。欄の中身の規則(sha の形と置き場に在るか・needs の名・
+   既定)・format。旧い形の欄(requires・env・blob)は判断が理由つきで断る。欄の中身の規則(sha の形と置き場に在るか・needs の名・
    環境変数の名・宣言の形)は判断が読む — 判断の理由の文を前のまま保つため、ここでは欄の在否と大きな型だけを決める。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ object program None)

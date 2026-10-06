@@ -1,7 +1,8 @@
 ;;; 切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。I/O はしない。
 ;;;
-;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program revision needs name leaseSeconds retainSeconds environ}
-;;;                                   program = 先に PUT /programs/<sha> で置いた詰めた Program の sha(版は置いた時の版 — service の宣言と同じ運び方)
+;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program revision versions needs name leaseSeconds retainSeconds environ}
+;;;                                   program = 先に PUT /programs/<sha> で置いた詰めた Program の sha・versions = 送り手の版(task の行の版 —
+;;;                                   置き場の Program は版を持たない・#3762)
 ;;;                                   → {"key" "task" "created" "phase"}。同じ key が在れば何も作らず created = false
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
@@ -19,7 +20,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
-(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions])
+(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named task-versions])
 (import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -89,7 +90,7 @@
   (setv id (task-id state)
         lease-ms (int (* 1000 lease))
         task (TaskRecord id body.name body.program body.revision
-                         (program-versions state body.program)
+                         (task-versions body)
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ))

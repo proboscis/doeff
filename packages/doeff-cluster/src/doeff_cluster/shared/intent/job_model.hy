@@ -54,6 +54,11 @@
   ;; 印が偽に戻った拍から普通の入れ替えへ進む。coordinator は持たない(返事の JSON にも保存にも載らない — worker の中だけの欄)。比べない欄
   ;; (印だけが変わっても process を起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ bool hold-version (field :default False :compare False))
+  ;; 子の入口が比べる送り手の版(名の順の #(名 版) の tuple — #3762)。task は task の行の versions(task を積んだ送り手の版)・service は
+  ;; 宣言の行の run.versions。置き場の Program の行は版を持たない(同じ sha を後から別の版の送り手が置いても、前に積んだ task の版は
+  ;; 変わらない — 10-06 の t661)。worker は Program の cache の file を (sha・版) ごとに置き(worker/core/launch.program-file)、子は
+  ;; その file の versions とこの process の版を比べる。比べない欄 — service の版の違いは args の identity の指紋が運び、task は 1 度だけ。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ tuple versions (field :default #() :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))

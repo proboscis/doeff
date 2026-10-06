@@ -1177,13 +1177,13 @@
    :post [(: % (| TaskSucceeded TaskFailed))] :tags {:context "doeff-cluster" :role "protocol"}}
   "RemoteJob を本番の remote-cluster と同じ手順で coordinator へ出し、結果を待つため: 詰めた Program を PUT /programs/<sha> で置き、
    POST /tasks(task-submit-body)で出し、問い合わせ(lease を延ばす)を終わるまで続け、抜ける時は task を落とす。送れない値は送る前に
-   断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision)・実行環境の宣言は送り手の宣言(link.runtime-env —
+   断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision と、task の本文の versions = link.versions — 置き場は版を持たない・#3762)・実行環境の宣言は送り手の宣言(link.runtime-env —
    本番の TaskSender の runtime-env と同じく本文の runtimeEnv に載せる)。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
-  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
+  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob}))
   (answered-body put "task の Program を置けない")
-  (<- body dict (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ))
+  (<- body dict (task-submit-body sha link.revision link.versions needs name TASK-LEASE-SECONDS link.runtime-env environ))
   (<- sent tuple (send-request link "POST" "/tasks" {} body))
   (val id (get (answered-object sent "task を出せない") "task"))
   (var outcome None)
@@ -1212,17 +1212,17 @@
   {:pre [(: link SimLink) (: program (| Program EffectBase)) (: key str) (: needs frozenset) (: name str) (: lease-seconds float)
          (: retain-seconds float) (: environ dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "SubmitDetached を本番の detached-cluster(detached-submitted)と同じ手順で送るため: 詰めた Program を版と一緒に PUT /programs/<sha> に置き、PUT /detached/<key>
+  "SubmitDetached を本番の detached-cluster(detached-submitted)と同じ手順で送るため: 詰めた Program を PUT /programs/<sha> に置き、送り手の版を本文に載せた PUT /detached/<key>
    (detached-submit-body)で出す。どちらも何度送っても同じ意味なので期限まで送り直し、届かなければ DetachedUnreachable(送れたかは
    分からない — key で冪等)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
-  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
+  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob}))
   (if (is (get put 0) None)
       (submit-unreachable (unreached-reason put))
       (do (refused-or-body put "task の Program を置けない")
           (<- declared (| dict None) (declared-env link.runtime-env))
-          (<- body dict (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ))
+          (<- body dict (detached-submit-body sha link.revision link.versions needs name lease-seconds retain-seconds declared environ))
           (<- sent tuple (send-resent link "PUT" (detached-path key "") {} body))
           (if (is (get sent 0) None)
               (submit-unreachable (unreached-reason sent))
@@ -2598,7 +2598,7 @@
   (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
   (for [sha needed]
     (<- put tuple (send-request link "PUT" (+ "/programs/" sha) {}
-                                {"blob" (get declaration.programs sha) "versions" (get (get (get declaration.rows 0) "run") "versions")}))
+                                {"blob" (get declaration.programs sha)}))
     (answered-body put (+ "program " sha)))
   (for [read reads :if (is-not read.body None)]
     (<- body dict (service-body-of read))

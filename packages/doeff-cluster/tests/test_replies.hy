@@ -146,7 +146,7 @@
 (deftest test-the-program-and-warm-answers-are-typed-and-spelled-in-the-old-shape
   ;; Program の置き場の答えは型の値(ProgramStored・置いた行 ProgramRow)、温める表の答えは WarmState で、JSON は前と同じ形。
   (assert (= (! (reply-json (ProgramStored :sha "ab"))) {"program" "ab"}))
-  (assert (= (! (reply-json (ProgramRow :blob "b" :versions {"doeff" "1"} :put-ms 5))) {"blob" "b" "versions" {"doeff" "1"}}))
+  (assert (= (! (reply-json (ProgramRow :blob "b" :put-ms 5))) {"blob" "b"}))
   (setv warm (! (reply-json (WarmState :key "k" :ready #("w1") :preparing #() :failed #() :until-ms 9))))
   (assert (and (isinstance warm dict) (= (get warm "key") "k")) warm))
 

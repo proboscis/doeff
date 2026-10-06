@@ -91,7 +91,7 @@ REFUSED_STATUSES: tuple[int, ...]
 def detached_path(key: str, suffix: str) -> str:
     ...
 
-def detached_submit_body(sha: str, revision: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, runtime_env: dict | None, environ: dict) -> _Program[dict, object]:
+def detached_submit_body(sha: str, revision: str, versions: dict, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, runtime_env: dict | None, environ: dict) -> _Program[dict, object]:
     ...
 
 def detached_refusal(status: int | None, body: dict | None) -> DetachedRefused | None:

@@ -29,7 +29,7 @@
 
 (import pathlib [Path])
 (import doeff_cluster.worker.intent.worker_model [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker.protocol.declared [task-spec])
+(import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.core.launch [program-file])
 (import doeff_cluster.worker.core.code_plan [module-name carry-pairs compile-plan cache-rel])
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]
@@ -44,8 +44,10 @@
   (assert spec.once)
   (assert (= spec.program sha) spec)
   (assert (= spec.args #("task" "--result" (str (/ tasks "t7.result")))) spec.args)
-  ;; 本文に Program は無い — 置き場のキーの印だけを残す(返事から外れた task の cache を消すため)。
-  (assert (= (.read-text (/ tasks "t7.program")) sha))
+  ;; 本文に Program は無い — 置き場のキーと task の版で決まる cache の file の印(program-dir からの相対 path)だけを残す
+  ;; (返事から外れた task の cache を消すため・版は task の行の事実 — #3762)。
+  (assert (= (.read-text (/ tasks "t7.program"))
+             (str (.relative-to (program-file (.program-dir link) sha #(#("a" "1") #("b" "2"))) (.program-dir link)))))
   (.write-text (/ tasks "t7.result") "RESULT")
   (val rows (.report link #((JobStatus "task/t7" JobPhase.FINISHED "r" None None 1))))
   (assert (= (get rows 0 "result") "RESULT"))

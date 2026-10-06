@@ -130,14 +130,14 @@
 
 (deff program-row-to-json [#^ ProgramRow row]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: row ProgramRow)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "置き場の Program の行 → 保存の JSON の形 {blob versions putMs}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
-  {"blob" row.blob "versions" row.versions "putMs" row.put-ms})
+  "置き場の Program の行 → 保存の JSON の形 {blob putMs}(state file と durable の KV が使う — 版は持たない・#3762)。"
+  {"blob" row.blob "putMs" row.put-ms})
 
 
 (defk program-row-from-json [data]
   {:pre [(: data dict)] :post [(: % ProgramRow)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 置き場の Program の行(program-row-to-json の逆)。"
-  (ProgramRow :blob (get data "blob") :versions (dict (.get data "versions" {})) :put-ms (int (get data "putMs"))))
+  (ProgramRow :blob (get data "blob") :put-ms (int (get data "putMs"))))
 
 
 (deff warm-entry-to-json [#^ WarmEntry entry]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り

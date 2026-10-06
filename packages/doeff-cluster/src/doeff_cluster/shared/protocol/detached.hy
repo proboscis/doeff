@@ -98,14 +98,14 @@
   (+ "/detached/" (url-quote key :safe "") suffix))
 
 
-(defk detached-submit-body [sha revision needs name lease-seconds retain-seconds runtime-env environ]
-  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
+(defk detached-submit-body [sha revision versions needs name lease-seconds retain-seconds runtime-env environ]
+  {:pre [(: sha str) (: revision str) (: versions dict) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
          (: runtime-env (| dict None)) (: environ dict)]
    :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "PUT /detached/<key> の本文を作るため: 詰めた Program は置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(ADR-DOE-CLUSTER-001
-   R3b)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。environ = 子の環境変数
+   R3b)。versions = 送り手の版(task の行の版 — 置き場の Program は版を持たない・#3762)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。environ = 子の環境変数
    (SubmitDetached.environ — 空なら欄を置かない・同じ key の送り直しの比べに入る)。"
-  (| {"program" sha "revision" revision "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds
+  (| {"program" sha "revision" revision "versions" (dict versions) "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds
       "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
      (if (is runtime-env None) {} {"runtimeEnv" runtime-env})
      (if environ {"environ" (dict environ)} {})))
@@ -291,7 +291,7 @@
 
 (defrecord DetachedSender
   "切り離した task の送り手: revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)・versions = 送り手の版の識別
-   (blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば
+   (task の本文に載せる — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば
    worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)・deadline-seconds = 何度送っても同じ意味の
    要求を、通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。"
   {:tags {:context "doeff-cluster" :role "protocol"}}
@@ -328,10 +328,10 @@
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str) (: blob str) (: needs frozenset) (: name str)
          (: lease-seconds float) (: retain-seconds float) (: environ dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "切り離した task を 1 本出すため: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
-   同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直し、期限まで届かなければ
+  "切り離した task を 1 本出すため: 詰めた Program を置き場 /programs/<sha> に先に置き、本文は sha と送り手の版を運ぶ(service の宣言と
+   同じ運び方 — ADR-DOE-CLUSTER-001 R3b・版は task の事実で置き場は持たない #3762)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直し、期限まで届かなければ
    DetachedUnreachable(送れたかは分からない — key で冪等)。呼び手の誤りは DetachedRefused。"
-  (<- put tuple (program-put cell options blob sender.versions sender.deadline-seconds))
+  (<- put tuple (program-put cell options blob sender.deadline-seconds))
   (setv #(sha stored) put)
   (when (isinstance stored HttpFailed)
     (return (submit-unreachable stored.detail)))
@@ -340,7 +340,7 @@
   (when (is-not sender.runtime-env None)
     (<- env-json dict (runtime-env->json sender.runtime-env))
     (:= declared env-json))
-  (<- body dict (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
+  (<- body dict (detached-submit-body sha sender.revision sender.versions needs name lease-seconds retain-seconds declared environ))
   (<- sent (resent-answer cell options "PUT" (detached-path key "") None body sender.deadline-seconds))
   (when (isinstance sent HttpFailed)
     (return (submit-unreachable sent.detail)))

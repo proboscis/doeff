@@ -65,6 +65,8 @@
   (val stored (httpx.get (+ served-coordinator "/programs/" sha) :timeout 10))
   (assert (= stored.status-code 200) stored.text)
   (assert (= (get (.json stored) "blob") (get declaration.programs sha)))
+  ;; 置き場は版を持たない(#3762 — 子の入口が比べる版は宣言の行の run.versions が返事の job の行で届く)。
+  (assert (not-in "versions" (.json stored)) (.json stored))
   ;; worker: 本物の coordinator への口 の heartbeat → 返事の job に置き場のキー → cache の file。
   (val link (LinkRig served-coordinator WORKER #(NEED) 10 0 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (! (process-versions os.environ))))
@@ -74,8 +76,9 @@
       (assert (= spec.program sha) spec)
       (assert (= spec.environ #(#("TALLY_BASE" "1"))) spec.environ)
       (assert (= (get spec.args 0) "service") spec.args)
-      (val cached (program-file (.program-dir link) sha))
+      (val cached (program-file (.program-dir link) sha spec.versions))
       (assert (.exists cached) (list (.iterdir (.program-dir link))))
+      (assert (= (get (json.loads (.read-text cached :encoding "utf-8")) "versions") (! (process-versions os.environ))))
       (assert (= (get (json.loads (.read-text cached :encoding "utf-8")) "blob") (get declaration.programs sha)))
       ;; 子 process: 宣言の引数(identity の指紋)と cache の file で job_entry の service 入口を起こす。
       (val done (subprocess.run [sys.executable "-m" "hy" "-m" (. spec entry) #* spec.args "--program" (str cached)]

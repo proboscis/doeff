@@ -155,11 +155,11 @@
 
 
 (defrecord ProgramRow
-  "置き場に置いた詰めた Program 1 つ(PUT /programs/<sha> — 改訂 1 の F): blob = 詰めた Program(base64 の文字列)・versions = 詰めた
-   送り手の版(名 → 版)・put-ms = 置いた時刻(参照の無い Program を猶予の後に消す — program_policy.sweep-programs)。#2447 で JSON の dict を
-   この型にした。保存の JSON の形 {blob versions putMs} は cluster_policy の program-row-to-json / program-row-from-json。"
+  "置き場に置いた詰めた Program 1 つ(PUT /programs/<sha> — 改訂 1 の F): blob = 詰めた Program(base64 の文字列)・put-ms = 置いた時刻
+   (参照の無い Program を猶予の後に消す — program_policy.sweep-programs)。#2447 で JSON の dict をこの型にした。保存の JSON の形
+   {blob putMs} は state_json の program-row-to-json / program-row-from-json。版を持たない — 版は task の行(TaskRecord.versions)と
+   宣言の行(run.versions)の事実で、同じ sha を後から別の版の送り手が置いても前に積んだ task の版を変えない(#3762・t661)。"
   (#^ str blob)
-  (#^ (get dict #(str str)) versions)
   (#^ int put-ms))
 
 
@@ -981,7 +981,7 @@
   (setv #^ (get frozenset str) derivable (frozenset))
   ;; 受け付けない Service の行(名 → RefusedJob — 改訂 1 の C)。保存する(元の行のまま)— 読み直しても同じ理由で受け付けない。
   (setv #^ (get dict #(str RefusedJob)) refused (field :default-factory dict))
-  ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。
+  ;; 詰めた Program の置き場(sha → {"blob" "putMs"} — program_policy・改訂 1 の F)。保存する。
   (setv #^ (get dict #(str ProgramRow)) programs (field :default-factory dict))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)
   (setv #^ int rollout-tick-ms 0)                       ; Rollout を最後に調停した時刻

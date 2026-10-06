@@ -74,7 +74,6 @@
    書く Service だけを書く(spec の変わらない Service には書きを送らない — declaration_requests の頭注)。HTTP は汎用の effect(HttpRequest)
    で送り、要求ごとの返事を 1 行出す(slog)。答え = 全部が通ったか(Program の置きが 1 つでも落ちれば行は書かずに偽 — 入口が 1 で終わる)。"
   (val base (.rstrip url "/"))
-  (val versions (get (get (get declaration.rows 0) "run") "versions"))
   (var reads #())
   (for [row declaration.rows]
     (<- read ServiceRead (service-read-at base actor (get row "name") row))
@@ -82,7 +81,7 @@
   (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
   (var programs-placed True)
   (for [sha needed]
-    (<- placed HttpResponse (declare-request "PUT" (+ base "/programs/" sha) actor {"blob" (get declaration.programs sha) "versions" versions}))
+    (<- placed HttpResponse (declare-request "PUT" (+ base "/programs/" sha) actor {"blob" (get declaration.programs sha)}))
     (<- (slog (.format "program {}: {}" (cut sha 0 12) placed.status)))
     (when (>= placed.status 300)
       (:= programs-placed False)))

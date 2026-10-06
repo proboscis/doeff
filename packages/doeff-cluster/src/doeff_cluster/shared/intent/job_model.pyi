@@ -5,7 +5,7 @@ worker の観測と記録の型(worker_model.pyi の ProcessView.spec・JobStatu
 JobPhase を欄の型に使うので、ここで宣言する(runtime_env_model.pyi・service_model.pyi と同じ形)。
 
 - JobSpec は凍った dataclass(キーワード引数に限らない — 実装は位置でも作る)。args は子の入口へ渡す引数の文字列・environ は
-  名の順の (名 値) の組。
+  名の順の (名 値) の組・versions は子の入口が比べる送り手の版の名の順の (名 版) の組(#3762)。
 - JobPhase は Enum。値は名の小文字・`-` 区切り。
 """
 
@@ -32,6 +32,7 @@ class JobSpec:
     environ: tuple[tuple[str, str], ...] = ()
     keep_when_cut_off: bool = False
     hold_version: bool = False
+    versions: tuple[tuple[str, str], ...] = ()
 
 class JobPhase(Enum):
     PREPARING = "preparing"

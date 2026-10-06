@@ -22,7 +22,7 @@
 ;;;                        実行環境の温める表(2026-09-26 — warm_policy。答えは WarmState)
 ;;;   POST   /tasks/<id>/result {"worker" "instance" "result" "format"}  task の子 process が終わる前に直に届ける結果(#1387 —
 ;;;                        cluster_policy.absorb-task-result。終わった task には何もしない・届かなければ heartbeat が運ぶ)
-;;;   PUT /programs/<sha> {"blob" "versions"} · GET /programs/<sha>
+;;;   PUT /programs/<sha> {"blob"} · GET /programs/<sha>
 ;;;                        詰めた Program の置き場(2026-09-27 — program_policy。宣言の行と heartbeat の返事は sha だけを運ぶ)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)

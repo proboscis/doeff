@@ -441,9 +441,9 @@
   (<- declared dict (declared-of "app-1"))
   (<- placed tuple (program-placed (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks {"t1" (! (env-task "t1" declared))}
                                                  :next-task 2)
-                                   {} :now 10))
+                                   :now 10))
   (val submitted (responded (get placed 0) (! (http-request "POST" "/tasks" {}
-                                                  {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 60
+                                                  {"program" (get placed 1) "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 60
                                                    "runtimeEnv" declared}))
                           10 TIMING))
   (assert (in "doeff_worker_env_cold_start_total 2" (metrics-text (get submitted 0) 10 TIMING))

@@ -26,10 +26,10 @@ MODULE = """\
 (import pathlib [Path])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 
-(deff placed [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str str)) versions]
-  {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "probe" :role "foundation"}}
+(deff placed [#^ Path program-dir #^ str sha #^ str blob #^ (get tuple #((get tuple #(str str)) ...)) versions]
+  {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions tuple)] :post [(: % Path)] :tags {:context "probe" :role "foundation"}}
   "cache の file を置く(検の道具が置く形)。"
-  (let [path (program-file program-dir sha)]
+  (let [path (program-file program-dir sha versions)]
     (.write-text path (program-file-text blob versions) :encoding "utf-8")
     path))
 """

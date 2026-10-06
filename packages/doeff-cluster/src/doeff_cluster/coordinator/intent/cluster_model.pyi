@@ -92,7 +92,6 @@ class WarmEntry:
 @dataclass(frozen=True, kw_only=True)
 class ProgramRow:
     blob: str
-    versions: dict[str, str]
     put_ms: int
 
 @dataclass(frozen=True, kw_only=True)

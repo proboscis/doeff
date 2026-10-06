@@ -43,9 +43,9 @@
   "worker が名乗り、task を 1 本出し、worker の次の heartbeat でその worker に置いた状態 #(状態 task の id) を作るため(時刻 0〜200)。"
   (<- alive dict (beat-body worker []))
   (<- joined tuple (answer (ClusterState) "POST" "/heartbeat" alive 0))
-  (<- placed tuple (program-placed (get joined 0) V :now 100))
+  (<- placed tuple (program-placed (get joined 0) :now 100))
   (<- submitted tuple (answer (get placed 0) "POST" "/tasks"
-                              {"program" (get placed 1) "revision" "r" "needs" ["net"] "name" "n" "leaseSeconds" 15.0} 100))
+                              {"program" (get placed 1) "revision" "r" "versions" V "needs" ["net"] "name" "n" "leaseSeconds" 15.0} 100))
   (<- assigned tuple (answer (get submitted 0) "POST" "/heartbeat" alive 200))
   (assert (= (. (get (. (get assigned 0) tasks) (get submitted 2 "task")) phase) "assigned") assigned)
   #((get assigned 0) (get submitted 2 "task")))

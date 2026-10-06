@@ -113,10 +113,10 @@
   (assert (= status 400) body)
   (assert (in "X-Actor" (get body "error")))
   ;; 盤と task は旧い client でも通し、送り元の番地で記録する
-  (val reply-10 (run (program-placed s V :now 1000)))
+  (val reply-10 (run (program-placed s :now 1000)))
   (:= s (get reply-10 0))
   (val sha (get reply-10 1))
-  (<- reply-11 (call s "POST" "/tasks" {"program" sha "revision" "r" "needs" ["net"]} :actor None))
+  (<- reply-11 (call s "POST" "/tasks" {"program" sha "revision" "r" "versions" V "needs" ["net"]} :actor None))
   (:= s (get reply-11 0))
   (:= status (get reply-11 1))
   (assert (= status 200))

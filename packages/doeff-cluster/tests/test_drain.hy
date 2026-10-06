@@ -91,9 +91,9 @@
     None)
 
   (defn #^ dict task-body [self #^ list needs #^ (| dict None) [extra None]]  ; defk にできない: 模擬の世界の method(置き場の状態を進めて本文を返す)
-    "task の本文: 詰めた Program を置き場に(送り手の版 {} で)置いてから、置き場のキーを運ぶ本文(service の宣言と同じ運び方)。"
-    (setv #(self.state sha) (run (program-placed self.state {} :now self.now)))
-    (| {"program" sha "revision" "r1" "needs" needs} (or extra {})))
+    "task の本文: 詰めた Program を置き場に置いてから、置き場のキーと送り手の版 {} を運ぶ本文(service の宣言と同じ運び方・版は task の事実 — #3762)。"
+    (setv #(self.state sha) (run (program-placed self.state :now self.now)))
+    (| {"program" sha "revision" "r1" "versions" {} "needs" needs} (or extra {})))
 
   (defn #^ str placed [self #^ str name] (. (get self.state.placements name) worker))
   (defn #^ (| str None) surge [self #^ str name] (if (in name self.state.surges) (. (get self.state.surges name) worker) None))

@@ -83,7 +83,7 @@
   (<- planned tuple (launched settings spec (str base) "1-1" 1))
   (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in NAME os.environ))
-  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program))]
+  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program spec.versions))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (decode-outcome (.read-text (Path (get spec.args 2)) :encoding "ascii")))

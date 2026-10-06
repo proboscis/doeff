@@ -148,7 +148,7 @@ def needs_named(needs: dict | list | tuple | str | int | float | bool | None, re
 def task_body_refusal(state: ClusterState, body: TaskBody) -> str | None:
     ...
 
-def program_versions(state: ClusterState, sha: str) -> tuple:
+def task_versions(body: TaskBody) -> tuple:
     ...
 
 def needs_refusal(needs: dict | list | tuple | str | int | float | bool | None, requires: dict | list | tuple | str | int | float | bool | None) -> str | None:
