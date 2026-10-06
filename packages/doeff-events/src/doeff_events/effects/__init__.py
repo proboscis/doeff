@@ -1,5 +1,15 @@
 """Event effects for generic publish/subscribe workflows."""
 
+from doeff_events.effects.notices import (
+    Announce,
+    Announcement,
+    AwaitBrokerBack,
+    BrokerUnreachable,
+    ChannelSubscription,
+    CloseSubscription,
+    NextAnnouncement,
+    SubscribeChannels,
+)
 from doeff_events.effects.timers import (
     ArmedTimer,
     ArmedTimers,
@@ -17,6 +27,7 @@ from .events import (
     SourceFailed,
     SourceResumed,
     SourceStalled,
+    SourceStarted,
     StopArrived,
     WaitForEvent,
     WaitForEventEffect,
@@ -25,19 +36,28 @@ from .events import (
 )
 
 __all__ = [
+    "Announce",
+    "Announcement",
     "ArmTimer",
     "ArmTimerEffect",
     "ArmedTimer",
     "ArmedTimers",
     "ArmedTimersEffect",
+    "AwaitBrokerBack",
+    "BrokerUnreachable",
+    "ChannelSubscription",
+    "CloseSubscription",
     "DisarmTimer",
     "DisarmTimerEffect",
+    "NextAnnouncement",
     "Publish",
     "PublishEffect",
     "SourceFailed",
     "SourceResumed",
     "SourceStalled",
+    "SourceStarted",
     "StopArrived",
+    "SubscribeChannels",
     "TimerFired",
     "WaitForEvent",
     "WaitForEventEffect",
