@@ -78,7 +78,10 @@
              :deltas (get rule "deltas")
              ;; 道具の呼びの命令と結果の中身(替え玉の CLI と同じ規則 — #3744)。
              :tool-input (if (get rule "tool_command") {"command" (get rule "tool_command")} {})
-             :tool-output (get rule "tool_output")))
+             :tool-output (get rule "tool_output")
+             ;; 考えている間の差分と道具の命令の差分の片の数(替え玉の CLI と同じ規則 — #3746 (a))。
+             :thinking-deltas (get rule "thinking_deltas")
+             :tool-input-deltas (get rule "tool_input_deltas")))
 
 ;; 共通の筋書きの本番の host の上限の本数と資格の床(筋書きは 1 つの host で会話を数個しか持たず、資格の期限を spec に載せない
 ;; — 上限と床で降ろす形は test_handler の検だけが撃つ)。

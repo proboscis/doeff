@@ -16,6 +16,10 @@
 ;; init の後に hook の知らせ(stream でない system の行)を出し、その秒だけ待ってから答え始める言い方(実物の CLI は init の直後に入力ごとの
 ;; hook を走らせ、その後で API へ出す — #3696 の直し)。秒を当てにする検は替え玉の CLI だけに置く。
 (setv HOOK-PHRASE "Run the hooks for {} seconds first.")
+;; 答えの前に考えている間の差分(stream_event の thinking_delta)を何片出させるか・道具の呼びの命令を何片の差分(input_json_delta)で
+;; 書かせるかの言い方(#3746 (a))。本物の claude は片の数を選べないので、片の数を当てにする検は替え玉の CLI と fake だけに置く。
+(setv THINKING-PIECES-PHRASE "Stream {} thinking pieces.")
+(setv TOOL-INPUT-PIECES-PHRASE "Stream the tool input in {} pieces.")
 
 (defn #^ str remember-prompt [#^ str word]
   (.format "Remember the codeword {}. Reply with exactly: {}" CODEWORD word))
@@ -42,7 +46,9 @@
    \"think_seconds\" 本文の差分の前に考える秒(THINK-PHRASE・無ければ 0.0 — 替え玉の CLI だけが読む)
    \"hook_seconds\" init の後に hook の知らせを出して待つ秒(HOOK-PHRASE・無ければ 0.0 — 替え玉の CLI だけが読む)
    \"tool_command\" 道具に走らせる命令の文(「run exactly this command: <命令> .」の命令・無ければ None — 道具の呼びの input の command)
-   \"tool_output\" 道具の出力(echo <語> の語・ほかの命令は空 — 道具の結果の content。#3744)}。
+   \"tool_output\" 道具の出力(echo <語> の語・ほかの命令は空 — 道具の結果の content。#3744)
+   \"thinking_deltas\" 手番の始めに出す考えている間の差分の片の数(THINKING-PIECES-PHRASE・無ければ 0)
+   \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))}。
    memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
@@ -53,6 +59,8 @@
   (setv streamed (re.search r"Stream the reply in (\d+) pieces" text))
   (setv think (re.search r"Think for (\d+(?:\.\d+)?) seconds before replying" text))
   (setv hooks (re.search r"Run the hooks for (\d+(?:\.\d+)?) seconds first" text))
+  (setv thinking-pieces (re.search r"Stream (\d+) thinking pieces" text))
+  (setv tool-input-pieces (re.search r"Stream the tool input in (\d+) pieces" text))
   (setv word
         (cond
           (in "What was the codeword" text)
@@ -69,6 +77,8 @@
    "touch" (if touch (.group touch 1) None)
    "tool_command" (if command (.group command 1) None)
    "tool_output" (if echoed (.group echoed 1) "")
+   "thinking_deltas" (if thinking-pieces (int (.group thinking-pieces 1)) 0)
+   "tool_input_deltas" (if tool-input-pieces (int (.group tool-input-pieces 1)) 0)
    "deltas" (if streamed (int (.group streamed 1)) 0)
    "think_seconds" (if think (float (.group think 1)) 0.0)
    "hook_seconds" (if hooks (float (.group hooks 1)) 0.0)})

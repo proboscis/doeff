@@ -20,7 +20,7 @@
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
-                                 ModelWindow merged-windows])
+                                 ModelWindow merged-windows DeltaKind])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -66,7 +66,10 @@
    tool-seconds > 0 か needs-permission — の呼びと結果の行に載る。上の層が道具の命令と出力を運ぶ事を確かめるため・#3744)・
    last-call-usage・last-call-model = この手番の CLI が本体の会話の assistant の行で名乗る呼びの usage と model・model-windows = result の
    行で名乗る model ごとの窓(本物の CLI が全部の行で名乗るのと同じに、この手番の全部の assistant の行・result の行に載せる。手番の
-   終わりの 3 欄は、本番の状態機械と同じ規則で出した行から数える — 上の層が会話の context の大きさを運ぶ事を確かめるため・#3744)。"
+   終わりの 3 欄は、本番の状態機械と同じ規則で出した行から数える — 上の層が会話の context の大きさを運ぶ事を確かめるため・#3744)・
+   thinking-deltas = 手番の始め(init の後)に出す考えている間の差分の行(PartialMessage・DeltaKind THINKING)の数・tool-input-deltas =
+   道具の呼びの行の直前に出す道具の命令の差分の行(DeltaKind TOOL-INPUT)の数(道具を呼ぶ手番だけ — 本物の CLI の
+   --include-partial-messages と同じ種類の行・#3746 (a))。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -89,8 +92,14 @@
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
+  ;; 考えている間の差分の行の数(手番の始め — init の後)と、道具の命令の差分の行の数(道具の呼びの行の直前・道具を呼ぶ手番だけ)。
+  (setv #^ int thinking-deltas 0)
+  (setv #^ int tool-input-deltas 0)
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
+    (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
+      (raise (ValueError (.format "FakeReply の thinking-deltas・tool-input-deltas は 0 以上: {} / {}"
+                                  self.thinking-deltas self.tool-input-deltas))))
     (when (and (is-not self.fail None) (is-not self.lose None))
       (raise (ValueError "FakeReply の fail と lose は多くとも 1 つ")))
     (when (< self.lines 0)
@@ -293,7 +302,8 @@
   (while (and (is-not due None) (>= (+ now CLOCK-TICK) due))
     (<- (emit session turn (PartialMessage :text-delta (cut turn.text
                                                             (// (* turn.deltas-emitted size) pieces)
-                                                            (// (* (+ turn.deltas-emitted 1) size) pieces)))))
+                                                            (// (* (+ turn.deltas-emitted 1) size) pieces))
+                                           :delta DeltaKind.TEXT)))
     (setv turn.deltas-emitted (+ turn.deltas-emitted 1))
     (<- following (next-delta-at turn))
     (:= due following))
@@ -379,19 +389,23 @@
   (<- (emit session turn (Init :session-id session.session-id
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
+  ;; 答えの前に考えている間の差分(本物の CLI の thinking_delta の行 — 中身は持たない)。
+  (<- (emit-all session turn (lfor _ (range reply.thinking-deltas) (PartialMessage :delta DeltaKind.THINKING))))
   ;; 道具の呼び: 命令は返事の tool-input(許可の問いも同じ命令を問う — 本物の CLI の can_use_tool の input は tool_use の input)。
+  ;; 呼びの行の直前に、命令を書いている間の差分(input_json_delta の行)を出す。
   (val call (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME reply.tool-input))
+  (val call-lines (+ (lfor _ (range reply.tool-input-deltas) (PartialMessage :delta DeltaKind.TOOL-INPUT))
+                     [(AssistantMessage :tool-calls #(call))]))
   (cond
     reply.needs-permission
       (do
         (setv request-id (str (uuid.uuid4)))
         (setv turn.phase "permission" turn.permission request-id)
-        (<- (emit-all session turn [(AssistantMessage :tool-calls #(call))
-                                    (PermissionRequested request-id FAKE-TOOL-NAME reply.tool-input)])))
+        (<- (emit-all session turn (+ call-lines [(PermissionRequested request-id FAKE-TOOL-NAME reply.tool-input)]))))
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
-        (<- (emit-all session turn [(AssistantMessage :tool-calls #(call)) (TaskEvent "fake-task" "started")]))))
+        (<- (emit-all session turn (+ call-lines [(TaskEvent "fake-task" "started")])))))
   turn)
 
 

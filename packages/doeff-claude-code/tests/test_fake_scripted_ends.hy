@@ -16,6 +16,7 @@
 (import doeff_claude_code.faults [ClaudeForgetSession])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
 (import tests.scenario_steps [TurnRecord read-until read-to-end read-to-tool-start new-id typed kinds-of])
+(import doeff_claude_code [lines])
 
 (val SPEC (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work"))
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))
@@ -31,6 +32,7 @@
     (= text "usage") (FakeReply "counted" :usage USAGE :cost-usd COST)
     (= text "think") (FakeReply "thought" :think-seconds 5.0)
     (= text "no-receipt") (FakeReply "never" :tool-seconds 30.0 :interrupt-receipt False)
+    (= text "deltas") (FakeReply "deltas" :tool-seconds 2.0 :thinking-deltas 3 :tool-input-deltas 2)
     True (FakeReply text :tool-seconds 30.0)))
 
 (defk on-fake [world program]
@@ -307,6 +309,33 @@
       (make)
       (assert False "返事の作り方が 0 か 2 つの世界を受けた")
       (except [ValueError] None))))
+
+(defk deltas-then-plain []
+  {:pre [] :post [(: % tuple)] :tags {:context "claude-code" :role "program"}}
+  "考えている間の差分と道具の命令の差分を流す道具の手番と、どちらも流さない手番を同じ会話で続けて最後まで読む。答え = 2 つの手番の読み。"
+  (val sid (new-id))
+  (<- opening (begin "deltas" (FreshSession sid)))
+  (<- one TurnRecord (read-to-end opening.turn TIMEOUT))
+  (<- again (begin "usage" (ResumeSession sid)))
+  (<- two TurnRecord (read-to-end again.turn TIMEOUT))
+  #(one two))
+
+(deftest test-the-fake-streams-thinking-and-tool-input-deltas-per-turn
+  ;; #3746 (a): FakeReply の thinking-deltas・tool-input-deltas の数だけ、考えている間の差分(DeltaKind THINKING)と道具の命令の差分
+  ;; (TOOL-INPUT)の行を出す — 本物の CLI の --include-partial-messages と同じ種類の行で、上の層が差分の種類を読めるか確かめるため。
+  ;; 考えている間の差分は手番の始め(init の後)、道具の命令の差分は道具の呼びの行の直前。手番ごとに数え直す(次の手番へ持ち越さない)。
+  (<- records tuple (on-fake (FakeClaudeWorld scripted-reply) (deltas-then-plain)))
+  (val counts (lfor record records
+                    (lfor kind [lines.DeltaKind.THINKING lines.DeltaKind.TOOL-INPUT]
+                          (len (lfor partial (kinds-of record.lines PartialMessage) :if (= partial.delta kind) partial)))))
+  (assert (= counts [[3 2] [0 0]]) (repr counts))
+  (val kinds (lfor line (. (get records 0) lines) line.kind))
+  (val call-index (next (gfor #(index kind) (enumerate kinds) :if (and (isinstance kind AssistantMessage) kind.tool-calls) index)))
+  (val input-indexes (lfor #(index kind) (enumerate kinds)
+                           :if (and (isinstance kind PartialMessage) (= kind.delta lines.DeltaKind.TOOL-INPUT)) index))
+  (val thinking-indexes (lfor #(index kind) (enumerate kinds)
+                              :if (and (isinstance kind PartialMessage) (= kind.delta lines.DeltaKind.THINKING)) index))
+  (assert (< (max thinking-indexes) (min input-indexes) (max input-indexes) call-index) kinds))
 
 (deftest test-a-restarted-world-shares-the-home-but-not-the-process
   ;; process の作り直し: 新しい世界は同じ家の transcript を見る(続きを開ける)が、前の process で走っている手番は知らない

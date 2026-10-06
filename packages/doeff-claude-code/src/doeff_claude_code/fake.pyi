@@ -40,6 +40,7 @@ from doeff_claude_code.lines import ClaudeTurnEnd as ClaudeTurnEnd
 from doeff_claude_code.lines import Usage as Usage
 from doeff_claude_code.lines import ModelWindow as ModelWindow
 from doeff_claude_code.lines import merged_windows as merged_windows
+from doeff_claude_code.lines import DeltaKind as DeltaKind
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
 from doeff_claude_code.effects import ClaudeInjectInput as ClaudeInjectInput
 from doeff_claude_code.effects import ClaudeInterruptTurn as ClaudeInterruptTurn
@@ -106,6 +107,8 @@ class FakeReply:
     last_call_usage: Usage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ...
+    thinking_deltas: int = 0
+    tool_input_deltas: int = 0
 
     def __post_init__(self) -> None:
         ...

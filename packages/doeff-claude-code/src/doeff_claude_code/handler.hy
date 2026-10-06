@@ -19,7 +19,8 @@
 ;;; (GetMonotonic の差)だけで、本文・資格・env・argv は載せない。外側に時間の handler に加えて slog の答え手(本番 = doeff_core_effects の
 ;;; slog-handler・検 = slog-discard-handler)が要る。手番の終わりを上の層へ初めて渡した所でも 1 行出し(#3628)、その手番で CLI から
 ;;; 受けた本文の差分の行(text_delta)の数を載せる — 手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で
-;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。本文の最初の差分を上の層へ初めて渡した所でも 1 行出し(#3696)、
+;;; 運ばれなかったのかを分けるため(数だけで、差分の本文は載せない)。同じ行に考えている間の差分(thinking_delta)と道具の命令の差分
+;;; (input_json_delta)の行の数と最初の刻も載せる(#3746 (a) — 差分の種類は lines.hy の DeltaKind)。本文の最初の差分を上の層へ初めて渡した所でも 1 行出し(#3696)、
 ;;; init の後の最初の stream の行(実物では message_start — init の次の行は hook の知らせなどで、それではない)の刻と、そこから最初の差分
 ;;; までの ms を載せる — 入力ごとの hook と API へ出すまで・モデルが考えた秒・最初の文字が画面に出るまでの起点を割るため。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -37,7 +38,7 @@
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage parse-record
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind parse-record
                                  classify-record recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -502,14 +503,14 @@
 (defk claimed-turn-end [runtime log]
   {:pre [(: runtime SessionRuntime) (: log TurnLog)] :post [(: % (| (get tuple #(ClaudeStreamLine ...)) None))]
    :tags {:context "claude-code" :role "foundation"}}
-  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた本文の差分の行(text_delta の本文を持つ PartialMessage —
-   doeff-agents の headless が AgentTextDeltaEvent へ写す行と同じ)を受けた順に 1 度だけ取り出すため(取り出したら手番の記録に印を
-   付け、2 度目からは None)。"
+  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた差分の行(PartialMessage — 種類は DeltaKind)を受けた順に 1 度だけ
+   取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。手番の記録は手番ごとなので、生きた process を使い回す手番でも
+   前の手番の行は入らない。"
   (with [runtime.lock]
     (when log.end-noted
       (return None))
     (setv log.end-noted True)
-    (tuple (gfor line log.lines :if (and (isinstance line.kind PartialMessage) line.kind.text-delta) line))))
+    (tuple (gfor line log.lines :if (isinstance line.kind PartialMessage) line))))
 
 (defk note-turn-end [runtime turn page]
   {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
@@ -517,23 +518,38 @@
   "手番の終わりを上の層へ初めて渡した所の計時の行を出すため(どの手番でも 1 度だけ — #3628)。partial-lines = その手番で CLI から
    受けた本文の差分の行の数(手番の文の途中が画面に出なかった時に、CLI が差分を出さなかったのか、出したが上で運ばれなかったのかを
    分ける)・first-partial-since-launch-ms = process を起こし始めてから読み手の thread が最初の差分の行を読むまで(差分が無い・
-   process を起こさずに続いた手番は None)・since-launch-ms = process を起こし始めてから終わりを渡すまで。差分の本文は載せない。"
+   process を起こさずに続いた手番は None)・since-launch-ms = process を起こし始めてから終わりを渡すまで。差分の本文は載せない。
+   thinking-deltas・tool-input-deltas = その手番で受けた考えている間の差分(thinking_delta)と道具の命令の差分(input_json_delta)の行の
+   数・first-thinking-since-launch-ms・first-tool-input-since-launch-ms = それぞれの最初の行を読むまで(差分の無い手番は欄を出さない)—
+   答えの前に考えていた間と、道具の命令を書いていた間を、本文の差分の無い間から分けるため(#3746 (a))。使い回した process の手番の
+   起点は入力を書いた刻。"
   (when (is page.end None)
     (return None))
   (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
   (when (is log None)
     (return None))
-  (<- partials (claimed-turn-end runtime log))
-  (when (is partials None)
+  (<- deltas (claimed-turn-end runtime log))
+  (when (is deltas None)
     (return None))
+  (val partials (tuple (gfor line deltas :if (and (= line.kind.delta DeltaKind.TEXT) line.kind.text-delta) line)))
+  (val thinking (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.THINKING) line)))
+  (val tool-input (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.TOOL-INPUT) line)))
   (<- now (GetMonotonic))
   (<- at (GetTime))
   (<- wall-ms (epoch-ms-of at))
   (<- since-launch-ms (elapsed-ms log.launched-at now))
   (<- first-partial-since-launch-ms (wall-elapsed-ms log.launched-wall (if partials (. (get partials 0) at) None)))
+  (<- first-thinking-since-launch-ms (wall-elapsed-ms log.launched-wall (if thinking (. (get thinking 0) at) None)))
+  (<- first-tool-input-since-launch-ms (wall-elapsed-ms log.launched-wall (if tool-input (. (get tool-input 0) at) None)))
+  ;; 最初の刻の欄は差分が在る時だけ出す(本文の差分の欄 first_partial_since_launch_ms は今までどおり None でも出す)。
+  (val firsts (dfor #(name ms) [#("first_thinking_since_launch_ms" first-thinking-since-launch-ms)
+                                #("first_tool_input_since_launch_ms" first-tool-input-since-launch-ms)]
+                    :if (is-not ms None)
+                    name ms))
   (<- (slog CLI-TIMING-LOG :level "info" :event "turn-end" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :partial-lines (len partials) :first-partial-since-launch-ms first-partial-since-launch-ms
-            :session-id turn.session-id :turn-seq turn.turn-seq))
+            :thinking-deltas (len thinking) :tool-input-deltas (len tool-input)
+            :session-id turn.session-id :turn-seq turn.turn-seq #** firsts))
   None)
 
 

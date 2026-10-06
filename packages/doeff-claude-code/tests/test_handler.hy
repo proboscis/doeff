@@ -19,7 +19,9 @@
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
 (import tests.interpreters [STUB-PATH child-env])
-(import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE reply-prompt sleep-prompt])
+(import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
+                              reply-prompt sleep-prompt])
+(import doeff_claude_code [lines])
 (import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start])
 
 
@@ -313,6 +315,61 @@
   (assert (isinstance first-partial int) (repr streamed))
   (assert (<= 0 first-partial (.get streamed "since_launch_ms")) (repr streamed))
   (assert (is (.get plain "first_partial_since_launch_ms") None) (repr plain)))
+
+
+;; 替え玉の CLI に、考えている間の差分(thinking_delta)と道具の命令の差分(input_json_delta)を何片ずつ出させるか(#3746 (a))。
+(val THINKING-PIECES 4)
+(val SECOND-THINKING-PIECES 2)
+(val TOOL-INPUT-PIECES 3)
+
+(defk thinking-and-tool-input-over-three-turns [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % tuple)] :tags {:context "claude-code" :role "program"}}
+  "考えている間の差分と道具の命令の差分を流す道具の手番・考えている間の差分だけを流す手番・どちらも流さない手番を、同じ会話の生きた
+   process(使い回し)で続けて最後まで読む。答え = 3 つの手番の読みの列と、最後の process の見え方。"
+  (<- opening (ClaudeStartTurn (FreshSession sid) spec
+                               (TurnInput (.join " . " [(sleep-prompt 1 "TOOLED") (.format THINKING-PIECES-PHRASE THINKING-PIECES)
+                                                        (.format TOOL-INPUT-PIECES-PHRASE TOOL-INPUT-PIECES)])
+                                          (str (uuid.uuid4)))))
+  (<- first-read TurnRecord (read-to-end opening.turn 30.0))
+  (<- second (ClaudeStartTurn (ResumeSession sid) spec
+                              (TurnInput (+ (reply-prompt "AGAIN") " . " (.format THINKING-PIECES-PHRASE SECOND-THINKING-PIECES))
+                                         (str (uuid.uuid4)))))
+  (<- second-read TurnRecord (read-to-end second.turn 30.0))
+  (<- third (ClaudeStartTurn (ResumeSession sid) spec (TurnInput (reply-prompt "PLAIN") (str (uuid.uuid4)))))
+  (<- third-read TurnRecord (read-to-end third.turn 30.0))
+  (<- view (ClaudeLiveProcess sid))
+  #([first-read second-read third-read] view))
+
+
+(deftest test-the-turn-end-timing-line-counts-the-thinking-and-tool-input-deltas-per-turn [tmp-path]
+  ;; #3746 (a): 手番の終わりの計時の行(event turn-end)は、その手番で CLI から受けた考えている間の差分の行の数 thinking_deltas と
+  ;; 道具の命令の差分の行の数 tool_input_deltas、それぞれの最初の行を読むまでの ms(first_thinking_since_launch_ms・
+  ;; first_tool_input_since_launch_ms — 差分の無い手番は欄を出さない)を持つ。本文は載せない。本文の差分の欄(partial_lines・
+  ;; first_partial_since_launch_ms)は今のまま。手番の後も process が生きる形(3 手番を 1 つの process で)で、数と最初の刻は手番ごとに
+  ;; 数え直す(前の手番の分を足さない)。失敗ケース = text_delta 以外の差分を本文の空の行に畳む分類では欄が無くて赤。
+  (val host (host-of STUB-COMMAND))
+  (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler host)]
+              (Listen (thinking-and-tool-input-over-three-turns (spec-in tmp-path) (str (uuid.uuid4))) :types #(SlogEffect))))
+  (val reads (get (get heard 0) 0))
+  (val view (get (get heard 0) 1))
+  (assert (= view (LiveProcess :launches 1)) (repr view))
+  (val ends (lfor effect (get heard 1) :if (and (= effect.msg CLI-TIMING-LOG) (= (.get effect.kwargs "event") "turn-end"))
+                  effect.kwargs))
+  (assert (= (lfor end ends (.get end "thinking_deltas")) [THINKING-PIECES SECOND-THINKING-PIECES 0]) (repr ends))
+  (assert (= (lfor end ends (.get end "tool_input_deltas")) [TOOL-INPUT-PIECES 0 0]) (repr ends))
+  (assert (= (lfor end ends (.get end "partial_lines")) [0 0 0]) (repr ends))
+  (assert (= (lfor end ends #((in "first_thinking_since_launch_ms" end) (in "first_tool_input_since_launch_ms" end)))
+             [#(True True) #(True False) #(False False)])
+          (repr ends))
+  (for [#(end name) [#((get ends 0) "first_thinking_since_launch_ms") #((get ends 0) "first_tool_input_since_launch_ms")
+                     #((get ends 1) "first_thinking_since_launch_ms")]]
+    (assert (and (isinstance (get end name) int) (<= 0 (get end name) (get end "since_launch_ms"))) (repr end)))
+  ;; 上の層へ渡した頁の行の差分の種類の数とも同じ。
+  (assert (= (lfor read reads (len (lfor line read.lines :if (and (isinstance line.kind PartialMessage)
+                                                                   (= line.kind.delta lines.DeltaKind.THINKING))
+                                         line)))
+             [THINKING-PIECES SECOND-THINKING-PIECES 0])
+          (repr reads)))
 
 
 (val THINK-SECONDS 0.6)
