@@ -105,6 +105,8 @@
 (import doeff_core_effects.meter-effects [CountMetric ObserveSeconds ObserveSecondsBatch SetGauge ReadMeter])
 (import doeff_core_effects.process-meter [process-meter-handler])
 (import doeff_core_effects.memory-meter [memory-meter-handler])
+(import doeff_core_effects.step-tally-effects [OpenStepTally CloseStepTally])
+(import doeff_core_effects.scheduler-step-tally [step-tally-handler])
 (import doeff_core_effects.random-effects [RandomBytes])
 (import doeff_core_effects.os-random [os-random-handler])
 (import doeff_core_effects.seeded-random [seeded-random-handler])
@@ -361,6 +363,14 @@
   :handlers [process-meter-handler memory-meter-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "process-meter-handler(本物・process の中の計器)と memory-meter-handler(I/O なし)が 5 effect 全てに答える。")
+
+
+(defdomain doeff-step-tally
+  :title "StepTally 語彙 — 窓を開けた間に scheduler が走らせた歩を数える"
+  :effects [OpenStepTally CloseStepTally]
+  :handlers [step-tally-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "step-tally-handler(Python の scheduler の測りの口に sink を据えて数える)が 2 effect 全てに答える。")
 
 
 (defdomain doeff-random
