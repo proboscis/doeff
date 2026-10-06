@@ -88,7 +88,14 @@
 (defk root-project [marker]
   {:pre [(: marker dict)] :post [(: % str)]}
   "完成マーカーの宣言から、同じ project の組の名(project の repo の url と path)を返すため(掃除で project ごとの最新を残す)。"
-  (val declared (get marker "env"))
+  (<- named str (declared-project (get marker "env")))
+  named)
+
+
+(defk declared-project [declared]
+  {:pre [(: declared dict)] :post [(: % str)]}
+  "宣言の JSON(runtimeEnv の形)から、同じ project の組の名(project の repo の url と path)を返すため(完成マーカーの宣言と、先の組みの
+   頼みの宣言 — #3748 の見積もりが同じ project の root を引く — が同じ綴りで読む)。"
   (val project (get declared "project"))
   (.format "{}:{}" (next (gfor r (get declared "repos") :if (= (get r "name") (get project "repo")) (get r "url")) "")
            (get project "path")))

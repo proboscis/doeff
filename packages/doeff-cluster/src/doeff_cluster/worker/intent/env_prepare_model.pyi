@@ -74,6 +74,7 @@ class EnvMarker:
     volume: VolumeKind | None = None
     startup_seconds: float | None = None
     hy_version: str | None = None
+    build_memory_bytes: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WheelReady:
@@ -149,6 +150,10 @@ class PrepareNote(EffectBase):
 @dataclass(frozen=True)
 class DiskFree(EffectBase):
     path: str
+
+@dataclass(frozen=True)
+class ReadCgroupMemory(EffectBase):
+    name: str
 
 @dataclass(frozen=True)
 class ReadVolume(EffectBase):

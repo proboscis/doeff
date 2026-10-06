@@ -8,6 +8,8 @@
 ;;;                    前の掃除の終わりから SWEEP-EVERY-MS — #3715・#3732)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
 ;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted)
+;;;   warm-refusal     先の組み(温める表の行)を始める前に断るか(no-disk-room・over-roots-cap・no-memory-room — #3748)。見積もりは
+;;;                    root-estimate(disk)と build-memory-estimate(memory の山)・memory の読みは memory-use-of
 ;;;
 ;;; 掃除の下限は 2 つの絶対の量(#3732 — 以前の「volume の 15% と準備を始める空きの大きい方」の割合は外した。root の置き場は他の物と
 ;;; 共有の disk に在り、root の外の物で空きが割合の下限を常に割ると、組むたびに固定されていない root を消し続けた — 戻し先の版の root も):
@@ -17,6 +19,7 @@
 (val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
@@ -34,7 +37,9 @@
   (#^ int made-ms)
   (#^ int last-used-ms)
   (#^ int bytes)
-  (#^ bool owned))
+  (#^ bool owned)
+  ;; 組みの山の memory(byte — 完成マーカーの buildMemoryBytes。測れなかった組み・欄の無い前の印は None・#3748)。
+  (setv #^ (| int None) build-memory-bytes None))
 
 
 (defrecord PrepareLimits
@@ -140,3 +145,121 @@
   "heartbeat で名乗る disk の条件。共有の disk の空きが最低 min-free を割っていれば exhausted(coordinator は準備済みでない env の task を
    置かない — 準備の process も同じ値で disk-full と断る)。"
   (if (< free min-free) "exhausted" "ok"))
+
+
+;; --- 先の組みを始める前の断り(#3748・#3671 の子)---------------------------------------------------------------------
+;; 実例(2026-10-06 05:24〜05:36・screen-worker): 先の組み(POST /warm → 温める表の行 → PrepareEnv :warm)が空きや memory の足りない台でも
+;; 始まり、同じ Longhorn の PVC へ小さい file を大量に書いて空きが掃除の下限を割り、worker のループが約 11 分止まった。先の組みは回の前の
+;; 用意なので、足りない台では始めずに断り、断りの種類を AwaitWarm の WarmFailed で頼み手へ返す。宣言された job の準備は断らない
+;; (今までどおり disk-full の判じだけ — 呼び手 env_store の env-host が warm の頼みにだけこの判じを当てる)。
+
+;; 組む root 1 つの disk の見積もりの既定(byte)— 同じ project の完成した root を数えていない時。専用の台の root は 1 つ 0.19〜0.25 GB
+;; (du -sbl — hardlink を重ねて数える roots-bytes と同じ物差し・#3732 の実測)なので、その上の端を丸めた 256 MiB。大きく置くと、上限の小さい台
+;; (WORKER_ENV_ROOTS_GIB=1)で新しい project の先の組みが一度も通らない(job の準備は断らないので、そこで組めば次から実測が入る)。
+(val DEFAULT-ROOT-BYTES (* 256 1024 1024))
+;; 組みの山の memory の見積もりの既定(byte)— 同じ project の前の組みの実測(完成マーカーの buildMemoryBytes)が無い時。実測がまだ 1 つも
+;; 無いので、本番の 2Gi の container の入口の線(× 0.75 = 1.5GiB)の 3 分の 1 の 512 MiB に置く(初めの組みを 1 本は通し、実測で置き換える)。
+(val DEFAULT-BUILD-MEMORY-BYTES (* 512 1024 1024))
+;; memory の入口の線(memory.max に掛ける割合)。c2-w28 の外の見張りは 2Gi の 1.6GiB(0.8)か oom_kill で組みを取り消すので、入口はそれより下の
+;; 0.75 に置く — 0.9 だと入口を通った組みを見張りが途中で取り消す形が残る(#3748 の c2-w36 の決め)。
+(val MEMORY-ROOM-RATIO 0.75)
+
+
+(defrecord MemoryUse
+  "worker の container の cgroup(v2)の memory の読み: current = memory.current・limit = memory.max(byte)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int current)
+  (#^ int limit))
+
+
+(defrecord MemoryUnread
+  "memory を測れなかった(cgroup v1・file が無い・上限が max = 無い・数でない)。reason = 訳(worker の log の 1 行と、先の組みを断らずに始めた
+   印の訳)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ str reason))
+
+
+(defrecord WarmRoom
+  "先の組みを始める前の読み 1 つ: free = 共有の disk の空き・min-free = 空きの最低・root-bytes = 組む root 1 つの見積もり・roots = roots の
+   合計(最後の数え — まだ数えていなければ None = 判じない)・reclaimable = 掃除で空けられる分(固定でない root の大きさの和)・cap = roots の
+   合計の上限・memory = memory の読み・peak = 組みの山の memory の見積もり。量は全部 byte。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int free)
+  (#^ int min-free)
+  (#^ int root-bytes)
+  (#^ (| int None) roots)
+  (#^ int reclaimable)
+  (#^ int cap)
+  (#^ (| MemoryUse MemoryUnread) memory)
+  (#^ int peak))
+
+
+(defk memory-use-of [current limit]
+  {:pre [(: current (| str None)) (: limit (| str None))] :post [(: % (| MemoryUse MemoryUnread))]
+   :tags {:context "worker" :role "judgment"}}
+  "cgroup v2 の memory.current と memory.max の中身(読めなければ None)を memory の読みにするため。読めない・上限が max(無い)・数でない時は
+   MemoryUnread(訳つき — 呼び手は断らずに組み、測っていない印を立てる)。"
+  (val now (if (is current None) "" (.strip current)))
+  (val cap (if (is limit None) "" (.strip limit)))
+  (match #(current limit)
+    #(None _) (MemoryUnread :reason "memory.current が読めない(cgroup v1 か file が無い)")
+    #(_ None) (MemoryUnread :reason "memory.max が読めない(cgroup v1 か file が無い)")
+    _ :if (= cap "max") (MemoryUnread :reason "memory.max が max(container の memory の上限が無い)")
+    _ :if (not (and (.isdigit now) (.isdigit cap))) (MemoryUnread :reason (.format "memory.current {!r} か memory.max {!r} が数でない" now cap))
+    _ (MemoryUse :current (int now) :limit (int cap))))
+
+
+(defk latest-of-project [roots project]
+  {:pre [(: roots tuple) (: project str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "同じ project の worker が作った root を、完成の新しい順(同じなら名の順)に並べるため(見積もりの元)。"
+  (tuple (sorted (gfor r roots :if (and r.owned (= r.project project)) r) :key (fn [r] #((- r.made-ms) r.key)))))
+
+
+(defk root-estimate [roots project]
+  {:pre [(: roots tuple) (: project str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "組む root 1 つの disk の見積もり(byte)を返すため: 同じ project の最後に組んだ root の大きさ(掃除の数え — hardlink を重ねて数える
+   roots-bytes と同じ物差し)。同じ project の root を数えていなければ DEFAULT-ROOT-BYTES。"
+  (<- latest tuple (latest-of-project roots project))
+  (if latest (. (get latest 0) bytes) DEFAULT-ROOT-BYTES))
+
+
+(defk build-memory-estimate [roots project]
+  {:pre [(: roots tuple) (: project str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "組みの山の memory の見積もり(byte)を返すため: 同じ project の root のうち、組みの山を測れた最も新しい物の実測(完成マーカーの
+   buildMemoryBytes)。無ければ DEFAULT-BUILD-MEMORY-BYTES。"
+  (<- latest tuple (latest-of-project roots project))
+  (next (gfor r latest :if (is-not r.build-memory-bytes None) r.build-memory-bytes) DEFAULT-BUILD-MEMORY-BYTES))
+
+
+(defk reclaimable-bytes [roots pinned]
+  {:pre [(: roots tuple) (: pinned frozenset)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "掃除で空けられる分(byte)を返すため = 掃除の候補(sweep-candidates — 固定・project ごとの新しい 2 つ・worker が作っていない dir を除く)の
+   大きさの和。"
+  (<- candidates tuple (sweep-candidates roots pinned))
+  (sum (gfor r candidates r.bytes)))
+
+
+(defk warm-refusal [room]
+  {:pre [(: room WarmRoom)] :post [(: % (| EnvFailure None))] :tags {:context "worker" :role "judgment"}}
+  "先の組みを始めずに断るかを判じるため(判じるのはここ 1 か所)。断る時は種類つきの失敗(恒久 — AwaitWarm が即座に WarmFailed で返す)、
+   始めてよければ None。順は disk の空き → roots の上限 → memory:
+     no-disk-room    空き < 空きの最低 + root 1 つの見積もり
+     over-roots-cap  roots の合計 + root 1 つの見積もり − 掃除で空けられる分 > 上限(まだ数えていなければ判じない)
+     no-memory-room  memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO(memory を測れなければ判じない — 呼び手が
+                     測っていない印を立てる)"
+  (val need-free (+ room.min-free room.root-bytes))
+  (match room
+    _ :if (< room.free need-free)
+      (EnvFailure :kind EnvFailureKind.NO-DISK-ROOM :retryable False
+                  :detail (.format "先の組みを断った: 共有の disk の空き {} byte < 空きの最低 {} byte + root 1 つの見積もり {} byte"
+                                   room.free room.min-free room.root-bytes))
+    (WarmRoom :roots total :root-bytes extra :reclaimable freed :cap cap)
+      :if (and (is-not total None) (> (- (+ total extra) freed) cap))
+      (EnvFailure :kind EnvFailureKind.OVER-ROOTS-CAP :retryable False
+                  :detail (.format "先の組みを断った: roots の合計 {} byte + root 1 つの見積もり {} byte − 掃除で空けられる {} byte > 上限 {} byte"
+                                   total extra freed cap))
+    (WarmRoom :memory (MemoryUse :current current :limit limit) :peak peak) :if (> (+ current peak) (* limit MEMORY-ROOM-RATIO))
+      (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
+                  :detail (.format "先の組みを断った: memory.current {} byte + 組みの山の見積もり {} byte > memory.max {} byte × {}"
+                                   current peak limit MEMORY-ROOM-RATIO))
+    _ None))

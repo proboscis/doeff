@@ -88,7 +88,9 @@
    (bytecode — 焼く木が無かった準備は None = 記録が無い。印の JSON に欄を足しただけなので、欄を書かない作り手の印も同じ形式の版のまま)・
    volume = root の置き場の disk の種類(読めなければ None)・startup-seconds = 準備の process を起こしてから最初の処理ステージまでの秒
    (起こした刻を読めなければ None — #3676)・hy-version = root の venv の Hy の compiler の版(venv に Hy が無ければ None — 次の準備が
-   bytecode の引き継ぎ元を選ぶ時に比べる・#3706)。"
+   bytecode の引き継ぎ元を選ぶ時に比べる・#3706)・build-memory-bytes = 組みの山の memory(byte — 準備の後の cgroup の memory.peak − 準備の前の
+   memory.current。準備の間に container の memory.peak が上がらなかった・読めなかった組みは None — worker が先の組みを始める前の memory の
+   見積もりに読む・#3748)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -100,7 +102,8 @@
   (setv #^ (| BytecodeCounts None) bytecode None)
   (setv #^ (| VolumeKind None) volume None)
   (setv #^ (| float None) startup-seconds None)
-  (setv #^ (| str None) hy-version None))
+  (setv #^ (| str None) hy-version None)
+  (setv #^ (| int None) build-memory-bytes None))
 
 
 (defrecord WheelReady
@@ -199,6 +202,12 @@
 (defclass [(dataclass :frozen True)] DiskFree [EffectBase]
   "path を含む volume の空き(byte)。答え = int。"
   (#^ str path))
+
+
+(defclass [(dataclass :frozen True)] ReadCgroupMemory [EffectBase]
+  "worker の container の cgroup(v2)の memory の file 1 つ(name = memory.current か memory.peak)の値(byte)を読む(組みの山を測る — #3748)。
+   答え = int か None(cgroup v1・file が無い・数でない)。"
+  (#^ str name))
 
 
 (defclass [(dataclass :frozen True)] ReadVolume [EffectBase]

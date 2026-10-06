@@ -27,7 +27,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key key-material runtime-env->json runtime-env-of-json])
-(import doeff_cluster.worker.core.env_prepare [prepare-env carry-source] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted CarryFrom] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster.worker.core.env_prepare [prepare-env carry-source build-memory-of] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted CarryFrom] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-CARRY-SECONDS BAKE-COMPILE-SECONDS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
@@ -168,6 +168,50 @@
   (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (cold-scenario)))
   (assert ok))
+
+
+;; 組みの山の memory(#3748): 準備の Program は前後で cgroup の memory.current と memory.peak を読み、準備の間に peak が上がった時だけ
+;; 「後の peak − 前の current」を印の buildMemoryBytes に書く(worker が次の先の組みの前に memory の見積もりとして読む)。読めない台は null。
+(val BUILD-MEMORY (* 300 1024 1024))
+
+
+(defk marked-build-memory []
+  {:pre [] :post [(: % (| int None))]}
+  "冷たい準備を 1 回して、印の buildMemoryBytes を返すため。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (<- files dict (files-under ready.root))
+  (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
+  (get marker "buildMemoryBytes"))
+
+
+(defk run-for-value [world scenario]
+  {:pre [(: world EnvWorld) (: scenario Program)] :post [(: % (| int None))]}
+  "答えを返す筋書きを仮想の時計と env-world の下で走らせる。"
+  (<- handlers list (env-world world))
+  (<- value (| int None) ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers scenario))))
+  value)
+
+
+(deftest test-the-ready-marker-carries-the-build-memory-peak
+  ;; sync の間に container の memory.peak が「今 + 300 MiB」へ上がる台: 印の buildMemoryBytes = 300 MiB。memory の file の無い台は null。
+  ;; 反例 = 山を印へ書かない形(欄が null)は 1 本目が赤。
+  (<- base EnvWorld (base-world))
+  (<- measured (| int None) (run-for-value (replace base :build-memory BUILD-MEMORY) (marked-build-memory)))
+  (assert (= measured BUILD-MEMORY) measured)
+  (<- unread (| int None) (run-for-value base (marked-build-memory)))
+  (assert (is unread None) unread))
+
+
+(deftest test-the-build-memory-is-unknown-when-the-peak-did-not-move
+  ;; container の前の山の方が高く、準備の間に memory.peak が上がらなかった時は測れなかった(None)— 前の山を組みの山と読まない。
+  (<- moved (| int None) (build-memory-of 100 500 900))
+  (assert (= moved 800) moved)
+  (<- still (| int None) (build-memory-of 100 900 900))
+  (assert (is still None) still)
+  (<- unread (| int None) (build-memory-of None 900 950))
+  (assert (is unread None) unread))
 
 
 ;; 反例(2026-10-02 の本番 — #2730): project の lock の dev の組に、worker が読めない private の repo の git の依存

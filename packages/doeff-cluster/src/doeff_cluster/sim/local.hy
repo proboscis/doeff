@@ -1756,7 +1756,7 @@
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping))
-  (val full (| base (env-heartbeat-part (env-report views "ok") (current-platform))))
+  (val full (| base (env-heartbeat-part (env-report views "ok" (frozenset)) (current-platform))))
   (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
 
 

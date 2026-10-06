@@ -92,6 +92,9 @@
   (setv #^ (get frozenset str) env-preparing (frozenset))
   (setv #^ (get tuple #(EnvFailed ...)) env-failed #())
   (setv #^ str env-capacity "ok")
+  ;; 先の組みを memory を測らずに始めた root のキー(heartbeat の envs.memoryUnmeasured — 温める表の行の memory-unmeasured の材料・#3748)。
+  ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前 — どちらも名で渡す)。
+  (setv #^ (get frozenset str) env-memory-unmeasured (frozenset))
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、

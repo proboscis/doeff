@@ -29,13 +29,15 @@ class WarmFailure:
 
 @dataclass(frozen=True, kw_only=True)
 class WarmState:
-    """温める表の行 1 つの今の姿(ready / preparing = worker の名・failed = 準備に失敗した worker)。"""
+    """温める表の行 1 つの今の姿(ready / preparing = worker の名・failed = 準備に失敗した worker・memory_unmeasured = 先の組みを
+    memory を測らずに始めた worker が在る — #3748)。"""
 
     key: str
     ready: tuple[str, ...]
     preparing: tuple[str, ...]
     failed: tuple[WarmFailure, ...]
     until_ms: int
+    memory_unmeasured: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class WarmUnreachable:

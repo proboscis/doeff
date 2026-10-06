@@ -532,7 +532,9 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-runtime-env-model"
+      ],
       "layer": "pure",
       "name": "doeff-cluster-env-upkeep",
       "paths": [

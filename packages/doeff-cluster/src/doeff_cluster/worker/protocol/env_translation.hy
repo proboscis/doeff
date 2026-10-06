@@ -43,7 +43,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport CarryFrom BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport CarryFrom BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -59,6 +59,8 @@
 ;; 上限によるかを、子の前後のこの数の差で読む(#3668・memory-killed)。読めない機体(cgroup v1・file が無い)では差を 0 と読む。
 (val CGROUP-MEMORY-EVENTS "/sys/fs/cgroup/memory.events")
 (val OOM-KILL-PATTERN (re.compile r"(?m)^oom_kill (\d+)$"))
+;; 同じ cgroup の memory の file の dir(組みの山を測る ReadCgroupMemory が memory.current と memory.peak を読む — #3748)。
+(val CGROUP-DIR "/sys/fs/cgroup")
 ;; signal 9(SIGKILL)での子の終わりの番号(子 process の答えは負の signal の番号)。
 (val KILLED-CODE -9)
 ;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(carried=… rebuilt=… reused=… failed=… carry_s=… compile_s=…
@@ -606,6 +608,14 @@
     (<- free int (settled seen "空きを読めない"))
     (resume free))
 
+  (ReadCgroupMemory [name]
+    ;; 組みの山の memory(#3748): cgroup v2 の memory の file 1 つを数で読む。読めない(cgroup v1・file が無い)・数でなければ None。
+    (<- text (| str FileFailed) (ReadText (+ CGROUP-DIR "/" name)))
+    (val value (match text
+                 (FileFailed) None
+                 (str) :if (.isdigit (.strip text)) (int (.strip text))
+                 _ None))
+    (resume value))
   (ReadVolume [path]
     ;; 置き場の disk の種類(#3676): mount の表(/proc/self/mountinfo)を読み、path の実の path(symlink を解く — 無い path はそのまま)を含む
     ;; 最も深い mount の行を引く。表を読めない機体(macOS 等)は None。

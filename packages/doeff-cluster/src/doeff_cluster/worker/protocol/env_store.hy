@@ -38,9 +38,10 @@
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes
-                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
+                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
+                                              memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
-                                             overdue-failure root-project])
+                                             overdue-failure root-project declared-project])
 (import doeff_cluster.worker.protocol.heartbeat [env-report])
 
 
@@ -56,6 +57,12 @@
 ;; 消すと選んだ root を退ける脇の名の印(.<名>.swept.<時刻> — . で始まる名は完成品としても掃除の候補としても読まれない。worker が
 ;; 消しの途中で止まって残った脇の dir は、次の掃除の残りの片づけが消す)。
 (val SWEPT-MARK ".swept.")
+;; 先の組みを始めずに断った行の名(#3748 — #3713 の形 = 名 + 欄: key = root のキー・kind = 断りの種類〔EnvFailureKind の綴り〕・
+;; free-bytes・min-free-bytes・root-bytes = root 1 つの見積もり・roots-bytes = roots の合計〔まだ数えていなければ -1〕・reclaimable-bytes・
+;; cap-bytes・memory-current・memory-max〔測れなければ -1〕・peak-bytes = 組みの山の見積もり)。
+(val WARM-REFUSED-LOG "worker: 先の組みを断った")
+;; 先の組みの前に memory を測れなかった行の名(#3748 — 欄: key・reason = 訳)。断らずに組み、heartbeat の memoryUnmeasured に root のキーを載せる。
+(val MEMORY-UNMEASURED-LOG "worker: 先の組みの memory を測れない")
 
 
 (defrecord EnvSettings
@@ -64,7 +71,8 @@
    repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・
    roots-cap-bytes = roots の合計の上限(越えた時だけ固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
    (割った時は root を消さずに準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
-   上限・tool = 準備の process の入口。2 つの量の値は worker の起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
+   上限・tool = 準備の process の入口・cgroup-dir = worker の container の cgroup(v2)の dir(先の組みの前に memory.current と memory.max を
+   読む — #3748)。2 つの量の値は worker の起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
@@ -75,7 +83,8 @@
   (setv #^ int min-free-bytes 0)
   (setv #^ PrepareLimits limits (PrepareLimits))
   (setv #^ int max-parallel 2)
-  (setv #^ str tool ENV-TOOL))
+  (setv #^ str tool ENV-TOOL)
+  (setv #^ str cgroup-dir "/sys/fs/cgroup"))
 
 
 (defrecord PendingEnv
@@ -230,17 +239,24 @@
     (var used 0)
     (var size 0)
     (var project "")
+    (var peak None)
     (when owned
       (<- marker-ms (modified-ms (+ root "/" ENV-MARKER)))
       (:= made (or marker-ms 0))
       (<- measured (MeasureTree root))
       (:= size (if (isinstance measured int) measured 0))
       (<- named str (root-project marker))
-      (:= project named))
+      (:= project named)
+      ;; 組みの山の memory(印の buildMemoryBytes — 先の組みの前の memory の見積もり・#3748)。欄の無い前の印・null は None。
+      (val raw (.get marker "buildMemoryBytes"))
+      (:= peak (match raw
+                 (bool) None
+                 (int) raw
+                 _ None)))
     (<- used-ms (modified-ms (+ root "/.last-used")))
     (:= used (if (is-not used-ms None) used-ms made))
     (:= infos (+ infos #((RootInfo :key (+ ENV-KEY-PREFIX name) :project project :made-ms made :last-used-ms used :bytes size
-                                   :owned owned)))))
+                                   :owned owned :build-memory-bytes peak)))))
   infos)
 
 
@@ -396,6 +412,58 @@
       (PruneState :pid pid :started-ms prune.started-ms)))
 
 
+(defk read-memory [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % (| MemoryUse MemoryUnread))]}
+  "worker の container の cgroup(v2)の memory.current と memory.max を読むため(先の組みの前 — #3748)。読めない file は None として
+   memory-use-of へ渡す(cgroup v1 の path・file が無い機体は MemoryUnread)。"
+  (<- current (ReadText (+ settings.cgroup-dir "/memory.current")))
+  (<- limit (ReadText (+ settings.cgroup-dir "/memory.max")))
+  (<- memory (| MemoryUse MemoryUnread) (memory-use-of (if (isinstance current str) current None) (if (isinstance limit str) limit None)))
+  memory)
+
+
+(defrecord WarmAdmission
+  "先の組みの入口の判じの答え: refused = 断る時の失敗(始めてよければ None)・unmeasured = memory を測れなかった訳(測れたら None —
+   heartbeat の memoryUnmeasured に root のキーを載せる)。"
+  (#^ (| EnvFailure None) refused)
+  (#^ (| str None) unmeasured))
+
+
+(defk warm-admission [settings key runtime-env infos tally busy]
+  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: infos tuple) (: tally (| RootsTally None)) (: busy frozenset)]
+   :post [(: % WarmAdmission)]}
+  "先の組み(PrepareEnv :warm)を始める前に、共有の disk の空き・roots の合計・memory を読んで断るかを決めるため(判じは env_upkeep の
+   warm-refusal 1 つ — #3748)。見積もりは最後の掃除の数え(infos — root ごとの大きさと印の組みの山)から同じ project の物を読む(ループの中で
+   木を歩かない — #3715)。断る時は 1 行(WARM-REFUSED-LOG)、memory を測れない時は理由の 1 行(MEMORY-UNMEASURED-LOG)を出す。
+   busy = 固定の集合(掃除で空けられない root)。"
+  (<- project str (declared-project (json.loads runtime-env)))
+  (<- free int (disk-free settings))
+  (<- root-bytes int (root-estimate infos project))
+  (<- peak int (build-memory-estimate infos project))
+  (<- reclaimable int (reclaimable-bytes infos busy))
+  (<- memory (| MemoryUse MemoryUnread) (read-memory settings))
+  (val roots (match tally
+               None None
+               (RootsTally :bytes total) total))
+  (val room (WarmRoom :free free :min-free settings.min-free-bytes :root-bytes root-bytes :roots roots :reclaimable reclaimable
+                      :cap settings.roots-cap-bytes :memory memory :peak peak))
+  (<- refused (| EnvFailure None) (warm-refusal room))
+  ;; 行の欄の memory の読み(測れなければ -1)と、測れなかった訳。
+  (val memory-current (match memory (MemoryUse :current current) current _ -1))
+  (val memory-max (match memory (MemoryUse :limit limit) limit _ -1))
+  (val unmeasured (match memory (MemoryUnread :reason reason) reason _ None))
+  (match refused
+    (EnvFailure :kind kind)
+      (<- (slog WARM-REFUSED-LOG :level "info" :key (cut key (len ENV-KEY-PREFIX) None) :kind kind.value :free-bytes free
+                :min-free-bytes settings.min-free-bytes :root-bytes root-bytes :roots-bytes (if (is roots None) -1 roots)
+                :reclaimable-bytes reclaimable :cap-bytes settings.roots-cap-bytes :memory-current memory-current
+                :memory-max memory-max :peak-bytes peak))
+    None None)
+  (when (and (is refused None) (is-not unmeasured None))
+    (<- (slog MEMORY-UNMEASURED-LOG :level "info" :key (cut key (len ENV-KEY-PREFIX) None) :reason unmeasured)))
+  (WarmAdmission :refused refused :unmeasured unmeasured))
+
+
 (defk launch-waiting [settings waiting pending]
   {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict)] :post [(: % tuple)]}
   "待っている準備のうち起こせる物を起こし、#(残りの待ち 準備中) を返すため(起こす順と数は env_rules.launch-order)。"
@@ -466,9 +534,14 @@
   (session var tally None)
   (session var prune (PruneState))
   (session var views None)
+  ;; 最後の掃除の数えの root ごとの観測(RootInfo の列 — 先の組みの見積もりが読む・#3748)と、先の組みを memory を測らずに始めた root の
+  ;; キーの集合(heartbeat の memoryUnmeasured — 測って始め直した root は外す)。
+  (session var measured-infos #())
+  (session var unmeasured (frozenset))
   (PrepareEnv [key runtime-env warm]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
-    ;; 先読みと同じ停滞の長さ)、待っていれば先読みの印を下ろす。
+    ;; 先読みと同じ停滞の長さ)、待っていれば先読みの印を下ろす。先の組み(warm)は始める前に空き・roots の上限・memory で断るかを
+    ;; 判じ(warm-admission — #3748)、断れば失敗の記録に種類つきで置く(heartbeat の env-failed → 温める表の WarmFailure)。job の準備は断らない。
     (cond
       (in key pending)
         (when (and (. (get pending key) warm) (not warm))
@@ -481,9 +554,20 @@
             (<- marker (read-marker root))
             (when (is marker None)
               (:= failed (dfor #(k v) (.items failed) :if (!= k key) k v))
-              (<- launched tuple (launch-waiting settings (| waiting {key #(runtime-env warm)}) pending))
-              (:= waiting (get launched 0))
-              (:= pending (get launched 1)))))
+              (var admission (WarmAdmission :refused None :unmeasured None))
+              (when warm
+                (<- judged WarmAdmission
+                    (warm-admission settings key runtime-env measured-infos tally (| pinned-roots (frozenset pending) (frozenset waiting))))
+                (:= admission judged))
+              (:= unmeasured (if (is admission.unmeasured None) (- unmeasured #{key}) (| unmeasured #{key})))
+              (match admission.refused
+                (EnvFailure)
+                  (do (<- now-ms int (now-epoch-ms))
+                      (:= failed (| failed {key #(admission.refused now-ms)})))
+                None
+                  (do (<- launched tuple (launch-waiting settings (| waiting {key #(runtime-env warm)}) pending))
+                      (:= waiting (get launched 0))
+                      (:= pending (get launched 1)))))))
     (resume None))
   (ObserveEnvs []
     (<- observed tuple (observe-envs settings waiting pending failed))
@@ -509,7 +593,7 @@
       (:= views (get observed 3)))
     (<- free int (disk-free settings))
     (<- capacity str (env-capacity free settings.min-free-bytes))
-    (resume (env-report (or views #()) capacity)))
+    (resume (env-report (or views #()) capacity unmeasured)))
   (SweepEnvs [pinned]
     ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
     ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・上限を越えたまま)なら数えを起こす
@@ -532,6 +616,7 @@
             (when (is-not measured None)
               (<- total int (roots-bytes measured.infos))
               (:= tally (RootsTally :ready sweeping.ready :bytes total))
+              (:= measured-infos measured.infos)
               ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
               (<- removing SweepRemoving (start-removing settings measured (| pinned-roots (frozenset pending) (frozenset waiting)) sweeping.started-ms))
               (:= sweeping removing)))

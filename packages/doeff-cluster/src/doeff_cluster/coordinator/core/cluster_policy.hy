@@ -1355,6 +1355,7 @@
                          :env-ready (frozenset envs.ready)
                          :env-preparing (frozenset envs.preparing)
                          :env-failed (tuple (gfor f envs.failed (EnvFailed f.key f.kind f.detail f.retryable)))
+                         :env-memory-unmeasured (frozenset envs.memory-unmeasured)
                          :env-capacity body.env-capacity
                          :retired (retired-after previous boot)
                          ;; 同じ世代が起動時刻を名乗らなくなっても(版を戻した worker)、知っている起動時刻は捨てない。

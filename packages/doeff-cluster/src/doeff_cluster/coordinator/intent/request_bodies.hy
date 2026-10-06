@@ -175,12 +175,13 @@
 
 
 (defwire EnvsReport
-  "heartbeat の実行環境の root の名乗り: ready・preparing = env のキーの列・failed = 失敗の行の列(worker/protocol/heartbeat の
-   env-heartbeat-part と同じ形)。"
+  "heartbeat の実行環境の root の名乗り: ready・preparing = env のキーの列・failed = 失敗の行の列・memory-unmeasured = 先の組みを memory を
+   測らずに始めた root のキーの列(#3748)(worker/protocol/heartbeat の env-heartbeat-part と同じ形)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ (get tuple #(str ...)) ready #())
   (setv #^ (get tuple #(str ...)) preparing #())
-  (setv #^ (get tuple #(EnvFailedRow ...)) failed #()))
+  (setv #^ (get tuple #(EnvFailedRow ...)) failed #())
+  (setv #^ (get tuple #(str ...)) memory-unmeasured #()))
 
 
 (defwire HeartbeatBody

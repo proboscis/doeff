@@ -43,6 +43,7 @@ from doeff_cluster.worker.intent.env_prepare_model import StageStarted as StageS
 from doeff_cluster.worker.intent.env_prepare_model import PrepareNote as PrepareNote
 from doeff_cluster.worker.intent.env_prepare_model import DiskFree as DiskFree
 from doeff_cluster.worker.intent.env_prepare_model import ReadVolume as ReadVolume
+from doeff_cluster.worker.intent.env_prepare_model import ReadCgroupMemory as ReadCgroupMemory
 from doeff_cluster.worker.intent.env_prepare_model import EnsureMirror as EnsureMirror
 from doeff_cluster.worker.intent.env_prepare_model import FetchCommit as FetchCommit
 from doeff_cluster.worker.intent.env_prepare_model import MaterializeTree as MaterializeTree
@@ -104,6 +105,9 @@ def volume_of_mountinfo(text: str, path: str) -> _Program[VolumeKind | None, obj
     ...
 
 def timing_line(stages: tuple, volume: VolumeKind | None, startup: float | None) -> _Program[str, object]:
+    ...
+
+def build_memory_of(current_before: int | None, peak_before: int | None, peak_after: int | None) -> _Program[int | None, object]:
     ...
 
 def stage_disk(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:

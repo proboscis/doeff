@@ -41,7 +41,7 @@
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster.shared.core.runtime_env_rules [env-failure native-key root-split runtime-env->json url-location])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport CarryFrom BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport CarryFrom BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -209,7 +209,9 @@
    "startupSeconds" (if (is marker.startup-seconds None) None (round marker.startup-seconds 3))
    ;; hyVersion(venv の Hy の compiler の版 — 次の準備の引き継ぎ元の選びが読む・#3706)。置き場の名指し(decode-marker・known-roots の
    ;; 同一性)は読まない。
-   "hyVersion" marker.hy-version})
+   "hyVersion" marker.hy-version
+   ;; buildMemoryBytes(組みの山の memory — 先の組みを始める前の memory の見積もりに worker の掃除の数えが読む・#3748)。null = 測れなかった。
+   "buildMemoryBytes" marker.build-memory-bytes})
 
 
 ;; /proc/self/mountinfo の 1 行: `<id> <親> <major:minor> <根> <mount の点> <選択> [<任意の欄>…] - <fs の型> <mount の元> <super の選択>`。
@@ -255,6 +257,17 @@
            (if (is startup None) "-" (.format "{:.3f}" startup))
            (if (is volume None) "-" (.format "{} {} ({})" volume.fs-type volume.device volume.mount))
            (.join " " parts)))
+
+
+(defk build-memory-of [current-before peak-before peak-after]
+  {:pre [(: current-before (| int None)) (: peak-before (| int None)) (: peak-after (| int None))] :post [(: % (| int None))]}
+  "組みの山の memory(byte)を、準備の前後の cgroup の読みから求めるため(#3748)。memory.peak は container の始まりからの最大で戻せない
+   (同じ file を別に開いて読むので fd ごとの reset は使えない)ので、準備の間に memory.peak が上がった時だけ、上がった後の peak − 準備の前の
+   current を組みの山と読む(組みが足した量の上の端 — 見積もりは早めに断る側)。上がらなかった(前の山の方が高い)・どれかが読めない時は
+   None(測れなかった — 次の組みは既定の値か、前の実測で見積もる)。"
+  (match #(current-before peak-before peak-after)
+    #((int) (int) (int)) :if (> peak-after peak-before) (- peak-after current-before)
+    _ None))
 
 
 ;; --- 処理ステージ ---------------------------------------------------------------------------
@@ -499,6 +512,9 @@
    書いた file の数・区切りの秒と、起こしてから最初の処理ステージまでの秒を印に載せ、同じ値を計時の 1 行で記録する(#3676 — 失敗した
    準備も、通った処理ステージまでの 1 行を出す)。"
   (<- first-at datetime (GetTime))
+  ;; 組みの山の memory の前の読み(#3748 — 後の読みと build-memory-of で山を求めて印へ)。
+  (<- current-before (| int None) (ReadCgroupMemory "memory.current"))
+  (<- peak-before (| int None) (ReadCgroupMemory "memory.peak"))
   (val startup (if (is request.launched-ms None)
                    None
                    (/ (- (* 1000 (.timestamp first-at)) request.launched-ms) 1000.0)))
@@ -520,6 +536,8 @@
         _ None)))
   (<- line str (timing-line done volume startup))
   (<- (PrepareNote line))
+  (<- peak-after (| int None) (ReadCgroupMemory "memory.peak"))
+  (<- build-memory (| int None) (build-memory-of current-before peak-before peak-after))
   (match outcome
     (EnvFailure) outcome
     _ (do (<- (WriteEnvMarker request.root
@@ -527,6 +545,6 @@
                                          :stages outcome.stages :downloaded outcome.downloaded :built outcome.built
                                          :interpreter outcome.interpreter :child-protocol CHILD-PROTOCOL
                                          :bytecode outcome.bytecode :volume outcome.volume :startup-seconds startup
-                                         :hy-version outcome.hy-version)))
+                                         :hy-version outcome.hy-version :build-memory-bytes build-memory)))
           (EnvReady :env request.env :key request.key :root request.root :stages outcome.stages
                     :downloaded outcome.downloaded :built outcome.built :interpreter outcome.interpreter))))

@@ -87,6 +87,22 @@
   (assert (< seen.waited (+ PREPARE-SECONDS READY-SLACK-SECONDS)) seen))
 
 
+;; 先の組みを入口で断った worker の名乗り(#3748 — worker の env-host が組みを始めずに置く形・恒久)。3 種のどれも同じ道を通る。
+(val REFUSALS #((EnvFailure :kind EnvFailureKind.NO-DISK-ROOM :retryable False :detail "先の組みを断った: 空きが足りない(模擬)")
+                (EnvFailure :kind EnvFailureKind.OVER-ROOTS-CAP :retryable False :detail "先の組みを断った: roots の上限(模擬)")
+                (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False :detail "先の組みを断った: memory が足りない(模擬)")))
+
+
+(deftest test-a-warm-row-refused-at-the-door-answers-failed-at-once-with-the-kind
+  ;; 先の組みを入口で断った worker(no-disk-room・over-roots-cap・no-memory-room — 恒久)は、待ち続けず WarmFailed で返り種類が読める。
+  ;; 断りは組みを始めないので、組みの秒(30 秒)を待たずに数拍で返る — 種類を一時(retryable)に数えれば期限(120 秒)まで待って赤。
+  (for [refusal REFUSALS]
+    (<- seen Awaited (sim-cluster NO-JOBS (warm-and-await) :workers (! (worker-with 0.0 refusal))))
+    (assert (isinstance seen.answer WarmFailed) seen)
+    (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable)) [#("gpu-1" refusal.kind.value False)]) seen)
+    (assert (< seen.waited READY-SLACK-SECONDS) seen)))
+
+
 (defrecord AroundWarm
   "組み 1 回の前後の名簿の読み: before / after = ReadRunners の答え・moves = その間に coordinator の版が進んだ回数。"
   (#^ object before)

@@ -89,6 +89,11 @@
 ;; 模擬の worker の container の cgroup の memory の出来事の数え(本物と同じ path・同じ形 — 翻訳が子の前後で oom_kill を読む)。
 (val CGROUP-DIR "/sys/fs/cgroup")
 (val CGROUP-EVENTS-PATH "/sys/fs/cgroup/memory.events")
+;; 模擬の container の memory の今と山(#3748 — 準備の Program が前後で読んで組みの山を印へ書く)。世界の build-memory が在る時だけ置き、
+;; uv sync が山を「今 + build-memory」へ上げる(本物の kernel の memory.peak と同じく下がらない)。
+(val CGROUP-CURRENT-PATH "/sys/fs/cgroup/memory.current")
+(val CGROUP-PEAK-PATH "/sys/fs/cgroup/memory.peak")
+(val SIM-MEMORY-CURRENT (* 256 1024 1024))
 
 
 (defrecord UvFailure
@@ -125,7 +130,9 @@
   (setv #^ int child-protocol CHILD-PROTOCOL)
   (setv #^ str mounts SIM-MOUNTS)
   (setv #^ float cold-seconds 60.0)
-  (setv #^ float warm-seconds 5.0))
+  (setv #^ float warm-seconds 5.0)
+  ;; 組みの山の memory(byte — None = cgroup の memory.current と memory.peak を置かない台・#3748)。
+  (setv #^ (| int None) build-memory None))
 
 
 (defrecord EnvWorldLog
@@ -456,6 +463,17 @@
     _ "error: Failed to build the source distribution\n"))
 
 
+(defk raise-memory-peak [world]
+  {:pre [(: world EnvWorld)] :post [(: % None)]}
+  "模擬の kernel の memory.peak を、組みの山(今 + world.build-memory)まで上げるため(下げない — 本物の memory.peak と同じ)。build-memory の
+   無い台では何もしない(file が無い)。"
+  (when (is-not world.build-memory None)
+    (<- seen (| str FileFailed) (ReadText CGROUP-PEAK-PATH))
+    (val before (if (isinstance seen str) (int (.strip seen)) 0))
+    (<- (WriteText CGROUP-PEAK-PATH (.format "{}\n" (max before (+ SIM-MEMORY-CURRENT world.build-memory))))))
+  None)
+
+
 (defk uv-sync [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "uv sync(--frozen か --locked)に答える: 入れる組の package のうち cache に無い物を取りに行き(冷たい秒)、venv と editable の .pth を置く。
@@ -492,6 +510,8 @@
           (val missing (lfor name wanted :if (not-in name cached) name))
           (<- (write-json CACHE-PATH (+ cached missing)))
           (<- (Delay (if missing world.cold-seconds world.warm-seconds)))
+          ;; 組みの山(#3748): sync の間に container の memory.peak が上がる(build-memory の在る台だけ)。
+          (<- (raise-memory-peak world))
           (val venv (posixpath.join pdir ".venv"))
           (val site (posixpath.join venv "lib" (+ "python" python) "site-packages"))
           (<- (write-file (posixpath.join venv "pyvenv.cfg") (.format "python = {}\n" python)))
@@ -689,7 +709,11 @@
                              #((MemoryFile :path FAILURE-PATH :content (.encode (json.dumps (asdict failure))))))
                          #((MemoryFile :path UNREACHABLE-PATH :content (.encode (json.dumps (sorted world.unreachable))))
                            (MemoryFile :path MOUNT-TABLE :content (.encode world.mounts))
-                           (MemoryFile :path CGROUP-EVENTS-PATH :content (.encode events))))
+                           (MemoryFile :path CGROUP-EVENTS-PATH :content (.encode events)))
+                         (if (is world.build-memory None)
+                             #()
+                             #((MemoryFile :path CGROUP-CURRENT-PATH :content (.encode (.format "{}\n" SIM-MEMORY-CURRENT)))
+                               (MemoryFile :path CGROUP-PEAK-PATH :content (.encode (.format "{}\n" SIM-MEMORY-CURRENT))))))
                :free world.disk-free))
 
 
