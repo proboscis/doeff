@@ -403,8 +403,8 @@
 (defrecord SimLink
   "coordinator へ話す送り手の口 1 つ(クラスタの約束の答え coordinator-answers の引数)。queue = coordinator の受け口(要求の列)・
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
-   versions = 送り手の process の版の識別(Program を置く時に blob に添える — 本番の送り手が宿の契約の鍵 versions-key で読む値・
-   sim では筋の versions。blob の JSON にそのまま載る値なので dict のまま持つ)・runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedSender の
+   versions = 送り手の process の版の識別(task の本文の blob に添える — 本番の送り手が宿の契約の鍵 versions-key で読む値・
+   sim では筋の versions。本文の JSON にそのまま載る値なので dict のまま持つ)・runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedSender の
    runtime-env — None = 送り手の版のコードだけ)。"
   (#^ RequestQueue queue)
   (#^ str actor)
@@ -1175,15 +1175,12 @@
 (defk remote-outcome [link program needs name environ]
   {:pre [(: link SimLink) (: program (| Program EffectBase)) (: needs frozenset) (: name str) (: environ dict)]
    :post [(: % (| TaskSucceeded TaskFailed))] :tags {:context "doeff-cluster" :role "protocol"}}
-  "RemoteJob を本番の remote-cluster と同じ手順で coordinator へ出し、結果を待つため: 詰めた Program を PUT /programs/<sha> で置き、
-   POST /tasks(task-submit-body)で出し、問い合わせ(lease を延ばす)を終わるまで続け、抜ける時は task を落とす。送れない値は送る前に
-   断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision)・実行環境の宣言は送り手の宣言(link.runtime-env —
-   本番の TaskSender の runtime-env と同じく本文の runtimeEnv に載せる)。"
+  "RemoteJob を本番の remote-cluster と同じ手順で coordinator へ出し、結果を待つため: 詰めた Program と版を本文に載せた POST /tasks
+   (task-submit-body — coordinator が Program の行と task の行を同じ拍で置く)で出し、問い合わせ(lease を延ばす)を終わるまで続け、
+   抜ける時は task を落とす。送れない値は送る前に断る(encode-program の UnsendableProgram)。版は送り手の版(link.revision・
+   link.versions)・実行環境の宣言は送り手の宣言(link.runtime-env — 本番の TaskSender の runtime-env と同じく本文の runtimeEnv に載せる)。"
   (val blob (encode-program program))
-  (val sha (program-sha blob))
-  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
-  (answered-body put "task の Program を置けない")
-  (<- body dict (task-submit-body sha link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ))
+  (<- body dict (task-submit-body blob link.versions link.revision needs name TASK-LEASE-SECONDS link.runtime-env environ))
   (<- sent tuple (send-request link "POST" "/tasks" {} body))
   (val id (get (answered-object sent "task を出せない") "task"))
   (var outcome None)
@@ -1212,21 +1209,16 @@
   {:pre [(: link SimLink) (: program (| Program EffectBase)) (: key str) (: needs frozenset) (: name str) (: lease-seconds float)
          (: retain-seconds float) (: environ dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "SubmitDetached を本番の detached-cluster(detached-submitted)と同じ手順で送るため: 詰めた Program を版と一緒に PUT /programs/<sha> に置き、PUT /detached/<key>
-   (detached-submit-body)で出す。どちらも何度送っても同じ意味なので期限まで送り直し、届かなければ DetachedUnreachable(送れたかは
-   分からない — key で冪等)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。"
+  "SubmitDetached を本番の detached-cluster(detached-submitted)と同じ手順で送るため: 詰めた Program と版を本文に載せた PUT /detached/<key>
+   (detached-submit-body — coordinator が Program の行と task の行を同じ拍で置く)で出す。key で冪等なので期限まで送り直し、届かなければ
+   DetachedUnreachable(送れたかは分からない)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。"
   (val blob (encode-program program))
-  (val sha (program-sha blob))
-  (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
-  (if (is (get put 0) None)
-      (submit-unreachable (unreached-reason put))
-      (do (refused-or-body put "task の Program を置けない")
-          (<- declared (| dict None) (declared-env link.runtime-env))
-          (<- body dict (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ))
-          (<- sent tuple (send-resent link "PUT" (detached-path key "") {} body))
-          (if (is (get sent 0) None)
-              (submit-unreachable (unreached-reason sent))
-              (DetachedSubmitted key (get (refused-or-object sent "task を出せない") "created"))))))
+  (<- declared (| dict None) (declared-env link.runtime-env))
+  (<- body dict (detached-submit-body blob link.versions link.revision needs name lease-seconds retain-seconds declared environ))
+  (<- sent tuple (send-resent link "PUT" (detached-path key "") {} body))
+  (if (is (get sent 0) None)
+      (submit-unreachable (unreached-reason sent))
+      (DetachedSubmitted key (get (refused-or-object sent "task を出せない") "created"))))
 
 
 (defk bell-span [view timeout-seconds waited]

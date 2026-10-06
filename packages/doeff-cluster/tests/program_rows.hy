@@ -2,8 +2,9 @@
 ;;;
 ;;; 行の run = {"kind" "service" "program" <sha256> "identity" {...} "versions" {...} "describe" "..."}。coordinator は Program を解かない
 ;;; ので、制御面の検(置き場所・入れ替え・drain・資源の口)は Program の中身を要らない — 形の揃った行だけを使う。
-;;; task の本文も service の宣言と同じく詰めた Program の置き場のキー program(sha)だけを運ぶ。coordinator は置き場に sha が在る時だけ
-;;; task を受けるので、task の検は先に program-placed で置いてから送る(置き場の版が task の版になる)。
+;;; task の本文は詰めた Program の置き場のキー program(sha)と、詰めた Program(blob)と版(versions)を運ぶ(#3741 の C')。blob の無い
+;;; 本文(前の送り手の形)は置き場に sha が在る時だけ受けるので、その形の task の検は先に program-placed で置いてから送る(置き場の版が
+;;; task の版になる)。
 (require doeff-hy.macros [defk <- val])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.core.program_policy [program-write])

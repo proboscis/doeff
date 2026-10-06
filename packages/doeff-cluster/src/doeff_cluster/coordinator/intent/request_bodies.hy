@@ -9,7 +9,7 @@
 ;;;   ProgramBody     PUT /programs/<sha>         詰めた Program の置き
 ;;;   HeartbeatBody   POST /heartbeat             worker の生存・能力・版・状態の報告・実行環境の root の名乗り
 ;;;   ResourceBody    POST /resources/<種類>・PUT /resources/<種類>/<名>   資源の宣言の包み(name・spec・resourceVersion)
-;;;   TaskBody        POST /tasks・PUT /detached/<key>   task と切り離した task の頼み
+;;;   TaskBody        POST /tasks・PUT /detached/<key>   task と切り離した task の頼み(詰めた Program を運ぶ — #3741 の C')
 ;;;   WarmBody        POST /warm                  温める表の行
 ;;;   LegacyJobsBody  PUT /jobs                   旧い宣言の口(jobs の行の列と送り手)
 ;;;   BoardWrite      PUT /board/<鍵>             盤の行 1 つの compare-and-set(本文の型 BoardWireBody と、欄が在ったかの印)
@@ -225,19 +225,23 @@
 
 
 (defwire TaskBody
-  "POST /tasks と PUT /detached/<key> の本文: program = 置き場に置いた Program の sha・revision = 送り手の commit・name・needs = 要る能力の
-   名の列・runtime-env = 実行環境の宣言(JSON の object)・environ = 子の環境変数(名 → 文字列)・lease-seconds / retain-seconds(None = 道の
-   既定)・format。旧い形の欄(requires・env・blob・versions)は判断が理由つきで断る。欄の中身の規則(sha の形と置き場に在るか・needs の名・
-   環境変数の名・宣言の形)は判断が読む — 判断の理由の文を前のまま保つため、ここでは欄の在否と大きな型だけを決める。"
+  "POST /tasks と PUT /detached/<key> の本文: program = 詰めた Program の置き場のキー(中身の sha256)・blob = 詰めた Program(base64 の
+   文字列 — ProgramBody の blob と同じ)・versions = 詰めた送り手の版(名 → 版 — ProgramBody の versions と同じ)・revision = 送り手の
+   commit・name・needs = 要る能力の名の列・runtime-env = 実行環境の宣言(JSON の object)・environ = 子の環境変数(名 → 文字列)・
+   lease-seconds / retain-seconds(None = 道の既定)・format。blob と versions を運べば coordinator は Program の行と task の行を同じ状態の
+   替えで置く(#3741 の C' — task 1 本の拍と fsync を 1 回にする)。blob = None は前の送り手の形(Program は先に PUT /programs/<sha> で
+   置いた)— 全部の job が宣言し直された後に blob を必須にしてこの形を消す(別の変更)。旧い形の欄(requires・env)は判断が理由つきで
+   断る。欄の中身の規則(sha の形と置き場に在るか・blob の大きさと sha256・needs の名・環境変数の名・宣言の形)は判断が読む — 判断の
+   理由の文を前のまま保つため、ここでは欄の在否と大きな型だけを決める。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ object program None)
+  (setv #^ (| str None) blob None)
+  (setv #^ (| (get dict #(str str)) None) versions None)
   (setv #^ object revision None)
   (setv #^ str name "")
   (setv #^ object needs None)
   (setv #^ object requires None)
   (setv #^ object env None)
-  (setv #^ object blob None)
-  (setv #^ object versions None)
   (setv #^ object runtime-env None)
   (setv #^ object environ None)
   (setv #^ object lease-seconds None)

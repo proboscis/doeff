@@ -73,6 +73,7 @@ from doeff_cluster.shared.core.runtime_env_rules import child_environ_refusal as
 from doeff_cluster.shared.core.readiness_rules import readiness_refusal as readiness_refusal
 from doeff_cluster.coordinator.core.program_policy import PROGRAM_GRACE_MS as PROGRAM_GRACE_MS
 from doeff_cluster.coordinator.core.program_policy import program_refs as program_refs
+from doeff_cluster.coordinator.core.program_policy import carried_program as carried_program
 JOB_ENTRY: str
 MAX_EVENTS: int
 BOARD_MAX_VALUE_BYTES: int

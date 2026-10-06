@@ -346,8 +346,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-warm-model",
         "doeff-cluster-coordinator-route",
-        "doeff-cluster-remote",
         "doeff-cluster-program-codec",
+        "doeff-cluster-remote-rules",
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
         "doeff-cluster-clock",
@@ -387,6 +387,7 @@
         "doeff-cluster-cluster-policy",
         "doeff-cluster-cluster-rules",
         "doeff-cluster-detached-model",
+        "doeff-cluster-program-policy",
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-coordinator-request-bodies-model"
@@ -973,7 +974,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy"
       ],
-      "responsibility": "coordinator の詰めた Program の置き場(ADR-DOE-CLUSTER-001 R3b・改訂 1 の F — 純粋な判断・I/O はしない)。",
+      "responsibility": "coordinator の詰めた Program の置き場(ADR-DOE-CLUSTER-001 R3b・改訂 1 の F — 純粋な判断・I/O はしない)。task の送りの本文が運ぶ Program も同じ確かめで置く(#3741 の C')。",
       "typed": true
     },
     {

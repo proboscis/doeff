@@ -33,7 +33,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 | 系(System) | job の組。`defsystem` で書く関数に土台を渡すと `service_model.System` の値になる |
 | 土台(foundation) | 本体の Program を受け取り、自分の handler(と scheduler・時計)の下で走らせて答えを返す、module の最上位の `defk` |
 | 能力(needs / provides) | job が要る能力の名(`:needs`)と、worker が提供する能力の名(`--provides`)。coordinator は needs ⊆ provides の worker に置く |
-| Program の置き場 | coordinator の `/programs/<sha>`。詰めた Program(cloudpickle の文字列)を中身の sha256 をキーに置き、宣言と task は sha だけを運ぶ |
+| Program の置き場 | coordinator の `/programs/<sha>`。詰めた Program(cloudpickle の文字列)を中身の sha256 をキーに置き、宣言の行・task の行・heartbeat の返事は sha だけを運ぶ(task の送りの本文は Program を載せ、task の行と同じ拍で置く) |
 | 実行先(宿) | job の Program を走らせる所。本番の worker の子 process(`job_entry`)と、手元の `sim-cluster` の偽の実行先 |
 | 置き先(placement) | Service をどの worker に置いたか(`Placement`・世代 `generation` つき) |
 | Rollout | 旧(Deployment か Service)から新(同)への切り替えの定義。新が Ready になってから旧を止め、失敗したら旧を先に戻してから新を止める |
@@ -309,7 +309,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 - 書き換えは版つきです。`GET` で読んだ `resourceVersion` を付けて `PUT` します。読んだ後に誰かが書いていれば 409 で何も書かれません。
 - Service と Rollout の `DELETE`・所有者(`owner`)の書き換えは、送り手が誰でも通ります。所有者は誰が宣言したかの記録で、書き・消しを断る照合には使いません(`X-Actor` の名乗りは確かめないので守りにならないため、2026-10-05 に外しました)。進行中の Rollout が扱っている Service と、進行中の Rollout は `?force=true` を付けた時だけ消えます。
 - Worker を消す(`DELETE /resources/Worker/<名>`)のは、機体が落ちた事を確かめてから、または沈黙が keep-fence-ms(既定 240 秒)+ 停止の猶予 15 秒を過ぎてからにします。他に置ける worker が無い job は、担い手が途絶しても止めずに動かし続けてよい印を持ちます。Worker を消すと coordinator はその job を他の worker へ置くので、担い手がまだ動いていると 2 か所で走ります。
-- task と切り離した task の本文は Program の sha だけを運びます。先に `PUT /programs/<sha>` で置いてから送ります(置き場に無い sha は 400)。
+- task と切り離した task の本文は、Program の sha(`program`)と詰めた Program(`blob`)と送り手の版(`versions`)を運びます。coordinator は `PUT /programs/<sha>` と同じ確かめ(sha256 が合わなければ 400・大きすぎれば 413)の後、Program の行と task の行を同じ拍(WAL の 1 行・fsync 1 回)で置きます。`blob` の無い本文(前の送り手の形)は、先に `PUT /programs/<sha>` で置いた Program を使います(置き場に無い sha は 400)— 全部の job が宣言し直された後に `blob` を必須にします。
 - 盤の行に `"ttlSeconds": n` を付けると n 秒後に消えます。上限: 1 行 1 MiB・20,000 行・合計 64 MiB(越える書きは 507)。
   task は終わっていない物が 2,000 本まで(429)・lease は 1 時間まで。切り離した task の行(終わって結果を保持している物を含む)は
   10,000 本まで(429)。

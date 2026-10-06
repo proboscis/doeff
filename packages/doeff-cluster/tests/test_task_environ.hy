@@ -45,7 +45,7 @@
 (import doeff_cluster.shared.core.remote_rules [remote-job])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
-(import tests.program_rows [program-placed])
+(import tests.program_rows [SAMPLE-BLOB program-placed])
 (import tests.fixtures.entry_programs [environ-read based-add])
 
 (val T (ClusterTiming))
@@ -144,13 +144,13 @@
 ;; --- 送り手 → coordinator → heartbeat の返事 → worker の子の環境 -------------------------------------------------
 
 (deftest test-the-sender-bodies-carry-the-environ-only-when-given
-  (<- with-env dict (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {URL-NAME URL}))
+  (<- with-env dict (task-submit-body SAMPLE-BLOB V "r" NET "n" 10.0 None {URL-NAME URL}))
   (assert (= (get with-env "environ") {URL-NAME URL}) with-env)
-  (<- without-env dict (task-submit-body (* "a" 64) "r" NET "n" 10.0 None {}))
+  (<- without-env dict (task-submit-body SAMPLE-BLOB V "r" NET "n" 10.0 None {}))
   (assert (not-in "environ" without-env) without-env)
-  (<- detached dict (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {URL-NAME URL}))
+  (<- detached dict (detached-submit-body SAMPLE-BLOB V "r" NET "n" 10.0 60.0 None {URL-NAME URL}))
   (assert (= (get detached "environ") {URL-NAME URL}) detached)
-  (<- detached-bare dict (detached-submit-body (* "a" 64) "r" NET "n" 10.0 60.0 None {}))
+  (<- detached-bare dict (detached-submit-body SAMPLE-BLOB V "r" NET "n" 10.0 60.0 None {}))
   (assert (not-in "environ" detached-bare) detached-bare))
 
 

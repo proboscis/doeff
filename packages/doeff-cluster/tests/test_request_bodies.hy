@@ -138,17 +138,22 @@
 
 
 (deftest test-task-and-warm-bodies-are-read-into-their-types
-  ;; task と切り離した task は同じ本文の型・温める表は別の型。旧い形の欄(blob)は判断が理由つきで断る。
-  (<- task (body-of (! (http-request "POST" "/tasks" {} {"program" "p" "revision" "r" "needs" ["net"] "leaseSeconds" 5}))))
+  ;; task と切り離した task は同じ本文の型・温める表は別の型。本文が運ぶ詰めた Program(blob — 文字列)と送り手の版(versions — 名 → 版)は
+  ;; 型の欄で、型の違う値は判断の前に 400(#3741 の C')。置き場のキー program の無い本文は判断が理由つきで断る。
+  (<- task (body-of (! (http-request "POST" "/tasks" {} {"program" "p" "blob" "eA==" "versions" {"python" "3.14.0"} "revision" "r"
+                                                         "needs" ["net"] "leaseSeconds" 5}))))
   (<- detached (body-of (! (http-request "PUT" "/detached/k" {} {"program" "p" "revision" "r" "needs" ["net"]}))))
-  (assert (= #(task.program task.lease-seconds detached.lease-seconds) #("p" 5 None)) #(task detached))
+  (assert (= #(task.program task.blob task.versions task.lease-seconds) #("p" "eA==" {"python" "3.14.0"} 5)) task)
+  (assert (= #(detached.blob detached.versions detached.lease-seconds) #(None None None)) detached)
+  (<- typed (body-of (! (http-request "POST" "/tasks" {} {"program" "p" "blob" 7 "revision" "r" "needs" ["net"]}))))
+  (assert (in "blob" typed.reason) typed)
   (<- warm (body-of (! (http-request "POST" "/warm" {} {"runtimeEnv" {} "ttlSeconds" 60 "needs" ["net"] "holder" "h"}))))
   (assert (= #(warm.ttl-seconds warm.holder) #(60 "h")) warm)
   (<- named (body-of (! (http-request "POST" "/warm" {} {"holder" 7}))))
   (assert (in "holder" named.reason) named)
-  (val old (responded (ClusterState) (! (http-request "POST" "/tasks" {} {"blob" "x" "revision" "r" "needs" ["net"]})) 1000 T))
-  (assert (= (get old 1) 400) old)
-  (assert (in "blob" (get old 2 "error")) old))
+  (val keyless (responded (ClusterState) (! (http-request "POST" "/tasks" {} {"blob" "x" "revision" "r" "needs" ["net"]})) 1000 T))
+  (assert (= (get keyless 1) 400) keyless)
+  (assert (in "program" (get keyless 2 "error")) keyless))
 
 
 (deftest test-the-old-jobs-body-is-read-into-its-type

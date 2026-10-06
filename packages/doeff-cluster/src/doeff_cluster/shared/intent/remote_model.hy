@@ -17,8 +17,8 @@
 ;;; 落として worker が子 process を止める。
 ;;;
 ;;; cloudpickle は長期保存の形式ではない。blob には必ず commit と Python / doeff の版を添え、受け側は版が違えば復元せずに断る。
-;;; 詰めた Program は task の本文に載せず、coordinator の置き場 /programs/<sha>(program-sha)に版と一緒に先に置き、本文は sha だけを運ぶ
-;;; (service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。
+;;; 詰めた Program は版と一緒に task の本文に載せ、coordinator が置き場 /programs/<sha>(program-sha)の行と task の行を同じ拍で置く
+;;; (ADR-DOE-CLUSTER-001 R3b・#3741 の C')。heartbeat の返事の task の行は sha だけを運び、worker が置き場から取る。
 ;;; ここは型だけ。版の突き合わせ・置き場のキー・失敗の値の組み立て(version-diffs・program-sha・failed-from ほか)は
 ;;; doeff_cluster.shared.core.remote_rules、Program と結果を詰める・戻す(encode-program・decode-outcome ほか)は
 ;;; doeff_cluster.shared.protocol.program_codec。

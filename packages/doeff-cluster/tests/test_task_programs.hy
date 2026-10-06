@@ -1,9 +1,11 @@
 ;;; task の Program も置き場 /programs/<sha> で運ぶ(ADR-DOE-CLUSTER-001 R3b — service と task で運び方を分けない・operator 逐語
 ;;; "i dont find any reason to have different api for services")。
 ;;;
-;;;   送り手  … remote-cluster(remote.hy の program-put)・DetachedSender は詰めた Program を先に PUT /programs/<sha>(本文 {"blob" "versions"})で置き、task の本文
-;;;             (POST /tasks・PUT /detached/<key>)は program に sha を書く。本文の blob・versions は 400(理由つき)。
-;;;   coordinator … 置き場に sha が在る時だけ task を受け、task の版は置き場の版。heartbeat の返事は sha だけを運ぶ。掃除は task の行
+;;;   送り手  … remote-cluster(remote.hy の task-submitted)・DetachedSender は task の本文(POST /tasks・PUT /detached/<key>)に program = sha と
+;;;             詰めた Program(blob)と版(versions)を載せ、PUT /programs/<sha> を別に送らない(#3741 の C' — task 1 本の
+;;;             fsync を 2 回から 1 回へ)。
+;;;   coordinator … 本文の blob を PUT /programs/<sha> と同じ確かめで検め、Program の行と task の行を同じ状態の替え(同じ拍・WAL の 1 行)で
+;;;             置く。blob の無い本文(前の送り手の形)は置き場に sha が在る時だけ受け、task の版は置き場の版。heartbeat の返事は sha だけを運ぶ。掃除は task の行
 ;;;             (終わって結果を保持している行も)が参照する sha を残し、行が消えたら猶予の後に消す。状態を失った coordinator は worker の
 ;;;             写しの sha で走っている切り離した task を引き取る。保存の旧い行(blob を持つ)は終わっていなければ failed。
 ;;;   worker  … accept-programs が service と同じ仕組みで task の Program を cache へ取り、子は `task --result <file> --program <file>`。
@@ -41,8 +43,15 @@
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
+(import tests.program_rows [SAMPLE-BLOB SAMPLE-TASK-PROGRAM program-placed])
 (import tests.fixtures.entry_programs [based-add])
+(import tests.detached_rig [slow-add RIG-PROVIDES])
+(import doeff_cluster.sim.local [sim-cluster SimWorker])
+(import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
+(import doeff_cluster.shared.entry.service_build [system-of])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster.shared.core.remote_rules [remote-job])
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
@@ -67,33 +76,117 @@
   answer)
 
 
-;; --- coordinator: 本文は置き場のキーだけを運ぶ -----------------------------------------------------------------
+;; --- coordinator: task の本文は詰めた Program を運び、Program の行と task の行を同じ状態の替えで置く(#3741 の C')--------------------
 
-(deftest test-a-task-body-carries-only-the-key-of-a-placed-program
-  ;; POST /tasks・PUT /detached のどちらも: 本文の blob(旧い形)・versions(版の写し)・置き場のキーの欠けと形の誤り・置き場に無い sha は
-  ;; 400 と理由で、状態を変えない。置いた sha は通り、task の行は sha と置き場の版を持つ。
+(val TASK-ROUTES #(#("POST" "/tasks") #("PUT" "/detached/job-a")))
+(val TASK-BASE {"revision" "r" "needs" ["net"] "leaseSeconds" 10.0})
+
+
+(deftest test-a-task-body-that-carries-its-program-places-both-rows-in-one-state-change
+  ;; 失敗ケース(#3741 の C'): POST /tasks・PUT /detached の本文が詰めた Program(blob)と送り手の版(versions)を運べば、coordinator は
+  ;; PUT /programs/<sha> と同じ確かめをして、Program の行と task の行を要求 1 つへの答えの状態の替え 1 つ(同じ拍・WAL の 1 行)で置く。
+  ;; task の版は運んだ版。直す前は本文の blob を旧い形として 400 で断った。
+  (val empty (ClusterState))
+  (for [#(method path) TASK-ROUTES]
+    (<- carried tuple (call empty method path (| TASK-BASE {"program" SAMPLE-TASK-PROGRAM "blob" SAMPLE-BLOB "versions" V}) 10))
+    (assert (= (get carried 1) 200) #(method carried))
+    (val after (get carried 0))
+    (val stored (get after.programs SAMPLE-TASK-PROGRAM))
+    (assert (= #(stored.blob stored.versions stored.put-ms) #(SAMPLE-BLOB V 10)) stored)
+    (val row (next (gfor t (.values after.tasks) t)))
+    (assert (= row.program SAMPLE-TASK-PROGRAM) row)
+    (assert (= (dict row.versions) V) row.versions)))
+
+
+(deftest test-a-carried-blob-that-does-not-match-the-program-key-is-refused-and-places-nothing
+  ;; 失敗ケース(#3741 の C'): 本文の blob の sha256 が本文の program と合わなければ 400(理由は sha256 の食い違い)。本文が Program を運んで
+  ;; いても、ほかの欄の断り(needs の欠け)なら Program だけを置かない — どちらも Program の行も task の行も置かず、状態を変えない。
+  (val empty (ClusterState))
+  (val other (program-sha "b3RoZXI="))
+  (for [#(method path) TASK-ROUTES]
+    (<- mismatch tuple (call empty method path (| TASK-BASE {"program" other "blob" SAMPLE-BLOB "versions" V}) 10))
+    (assert (= (get mismatch 1) 400) #(method mismatch))
+    (assert (in "sha256" (get mismatch 2 "error")) #(method mismatch))
+    (<- unneeded tuple (call empty method path {"program" SAMPLE-TASK-PROGRAM "blob" SAMPLE-BLOB "versions" V "revision" "r"} 10))
+    (assert (= (get unneeded 1) 400) #(method unneeded))
+    (for [refused [mismatch unneeded]]
+      (assert (= (. (get refused 0) programs) {}) #(method refused))
+      (assert (= (. (get refused 0) tasks) {}) #(method refused))
+      (assert (= (get refused 0) empty) #(method refused)))))
+
+
+(deftest test-a-body-without-a-blob-uses-the-placed-program-as-before
+  ;; 前の送り手の形(本文に blob が無い — 全部の job が宣言し直されるまで受ける。blob を必須にしてこの道を消すのは別の変更): 置き場に
+  ;; 在る sha は受けて task の版は置いた版、置き場に無い sha・キーの欠けと形の誤りは今までどおり 400 と理由で、状態を変えない。版だけを
+  ;; 運ぶ本文(blob の無い versions)は置いた版と食い違いうるので断る。
   (<- placed tuple (program-placed (ClusterState) V))
   (val state (get placed 0))
   (val sha (get placed 1))
-  (val base {"revision" "r" "needs" ["net"] "leaseSeconds" 10.0})
-  (val bad [#({"blob" "QkxPQg==" "versions" V} "旧い形の blob")
-            #({"program" sha "blob" "QkxPQg=="} "旧い形の blob")
-            #({"program" sha "versions" V} "本文の versions")
+  (val bad [#({"blob" SAMPLE-BLOB "versions" V} "program は詰めた Program の置き場のキー")
+            #({"program" sha "versions" V} "versions は blob と一緒に")
             #({} "program は詰めた Program の置き場のキー")
             #({"program" "not-a-sha"} "program は詰めた Program の置き場のキー")
             #({"program" (* "f" 64)} "置き場に無い")])
-  (for [#(method path) [#("POST" "/tasks") #("PUT" "/detached/job-a")]]
+  (for [#(method path) TASK-ROUTES]
     (for [#(extra word) bad]
-      (<- refused tuple (call state method path (| base extra) 10))
+      (<- refused tuple (call state method path (| TASK-BASE extra) 10))
       (assert (= (get refused 1) 400) #(method extra refused))
       (assert (in word (get refused 2 "error")) #(method extra refused))
       (assert (= (get refused 0) state) #(method extra)))
-    (<- accepted tuple (call state method path (| base {"program" sha}) 10))
+    (<- accepted tuple (call state method path (| TASK-BASE {"program" sha}) 10))
     (assert (= (get accepted 1) 200) #(method accepted))
     (val row (next (gfor t (.values (. (get accepted 0) tasks)) t)))
     (assert (= row.program sha) row)
-    ;; task の版は置き場に Program と一緒に置いた版(本文は版を運ばない)。
+    ;; task の版は置き場に Program と一緒に置いた版。
     (assert (= (dict row.versions) V) row.versions)))
+
+
+;; --- 通しの検: task 1 本の送り = WAL の 1 行・調停ループの 1 拍(#3741 の C')-------------------------------------------------
+
+(val ONE-LINE-SYSTEM (system-of "task-body-program" #()))
+(val ONE-LINE-NEEDS (frozenset RIG-PROVIDES))
+
+
+(defk send-one-of-each []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 切り離した task を 1 本送って終わりまで待ち、RemoteJob の task を 1 本出して答えを受ける(答え = #(切り離した task の結末
+   RemoteJob の答え))。"
+  (<- submitted DetachedSubmitted (submit-detached-task (slow-add 1.0 1) "k-one-line" :needs ONE-LINE-NEEDS))
+  (assert submitted.created submitted)
+  (<- detached (AwaitDetached "k-one-line"))
+  (<- remote int (remote-job (slow-add 1.0 2) :needs ONE-LINE-NEEDS :name "one-line"))
+  #(detached remote))
+
+
+(defk first-written-lines [deltas prefix]
+  {:pre [(: deltas list) (: prefix str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "置き場の差分の列(MemoryWalStore.deltas — 1 つ = 本番の WAL の 1 行 = 調停ループの 1 拍の保存・fsync 1 回)から、prefix で始まる鍵が
+   初めて値を持った行の番号(鍵 → 番号)。"
+  (val written (lfor #(line delta) (enumerate deltas) #(key value) (.items delta)
+                     :if (and (.startswith key prefix) (is-not value None))
+                     #(key line)))
+  (dfor #(key line) (reversed written) key line))
+
+
+(deftest test-one-task-submission-writes-its-program-and-task-rows-in-one-wal-line
+  ;; 失敗ケース(#3741 の C'): 本物の coordinator の調停ループと durable の置き場の書き手(durable-states → wal-store → 置き場の Persist)の
+  ;; 上で、task 1 本の送り(切り離した task と RemoteJob のどちらも)は Program の行と task の行を同じ行(同じ拍の保存 — 本番の WAL の
+  ;; 1 行・fsync 1 回)に書く。直す前は送り手が PUT /programs の返事(fsync の後)を待ってから task を送ったので、2 つの行が別の拍の行に
+  ;; 分かれた(1 本の task で拍と fsync を 2 回、直列に待つ)。
+  (val store (MemoryWalStore))
+  (<- answers tuple (sim-cluster ONE-LINE-SYSTEM (send-one-of-each)
+                                 :workers #((SimWorker :name "w1" :provides ONE-LINE-NEEDS :task-reserve 0))
+                                 :store (fn [] store)))
+  (assert (= answers #((DetachedSucceeded 101) 102)) answers)
+  (<- programs dict (first-written-lines store.deltas "program/"))
+  (<- tasks dict (first-written-lines store.deltas "task/"))
+  (assert (= (len tasks) 2) tasks)
+  (assert (= (len programs) 2) programs)
+  (for [#(key line) (.items tasks)]
+    (val sha (get store.deltas line key "program"))
+    (assert (= (.get programs (+ "program/" sha)) line)
+            (.format "task {} の行は WAL の {} 行目・その Program の行は {} 行目(同じ行でない = 拍と fsync が 2 回)"
+                     key line (.get programs (+ "program/" sha))))))
 
 
 (deftest test-the-task-versions-come-from-the-placed-program
@@ -307,7 +400,7 @@
 
 
 (deftest test-a-task-program-reaches-the-worker-and-job-entry-writes-its-result [served-coordinator tmp-path]
-  ;; 送り手(task-submitted)が Program を置き場に置いて sha だけの task を出し、worker(本物の coordinator への口)が返事の sha の Program を
+  ;; 送り手(task-submitted)が Program を本文に載せた task を出し(coordinator が置き場に置く)、worker(本物の coordinator への口)が返事の sha の Program を
   ;; cache へ取り、job_entry の task 入口の子 process が走らせて結果の file を書き、終わりの報告で呼び手に結果が届く。
   ;; fixture の値は検査器から型が見えない(repo の fixture は object)— conftest の served_coordinator の答え(str)をここで確かめる(test_served_program.hy と同じ)。
   (assert (isinstance served-coordinator str) served-coordinator)

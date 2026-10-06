@@ -14,7 +14,7 @@ from doeff_cluster.shared.protocol.coordinator_route import RoutedReply as Route
 from doeff_cluster.shared.protocol.coordinator_route import routed_request as routed_request
 from doeff_cluster.shared.protocol.coordinator_route import resent_request as resent_request
 from doeff_cluster.shared.protocol.coordinator_route import answer_json as answer_json
-from doeff_cluster.shared.protocol.remote import program_put as program_put
+from doeff_cluster.shared.core.remote_rules import program_sha as program_sha
 from doeff_cluster.shared.intent.protocol import PROTOCOL_FORMAT as PROTOCOL_FORMAT
 from doeff_cluster.shared.intent.protocol import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
@@ -91,7 +91,7 @@ REFUSED_STATUSES: tuple[int, ...]
 def detached_path(key: str, suffix: str) -> str:
     ...
 
-def detached_submit_body(sha: str, revision: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, runtime_env: dict | None, environ: dict) -> _Program[dict, object]:
+def detached_submit_body(blob: str, versions: dict, revision: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, runtime_env: dict | None, environ: dict) -> _Program[dict, object]:
     ...
 
 def detached_refusal(status: int | None, body: dict | None) -> DetachedRefused | None:

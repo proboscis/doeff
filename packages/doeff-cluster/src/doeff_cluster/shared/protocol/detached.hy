@@ -26,7 +26,7 @@
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json])
-(import doeff_cluster.shared.protocol.remote [program-put])
+(import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT WATCH-MAX-SECONDS])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -85,8 +85,8 @@
     True (raise (ValueError (.format "知らない phase: {!r}" phase)))))
 
 
-;; 取り消しに当たる答えの status(本文の error を理由にした DetachedRefused にする)。413 = 詰めた Program が置き場の上限を越える
-;; (PUT /programs — program_policy.PROGRAM-MAX-BYTES)。
+;; 取り消しに当たる答えの status(本文の error を理由にした DetachedRefused にする)。413 = 本文の詰めた Program が置き場の上限を越える
+;; (program_policy.PROGRAM-MAX-BYTES)。
 (val REFUSED-STATUSES #(400 409 413 429))
 
 
@@ -98,15 +98,16 @@
   (+ "/detached/" (url-quote key :safe "") suffix))
 
 
-(defk detached-submit-body [sha revision needs name lease-seconds retain-seconds runtime-env environ]
-  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
+(defk detached-submit-body [blob versions revision needs name lease-seconds retain-seconds runtime-env environ]
+  {:pre [(: blob str) (: versions dict) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: retain-seconds float)
          (: runtime-env (| dict None)) (: environ dict)]
    :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "PUT /detached/<key> の本文を作るため: 詰めた Program は置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(ADR-DOE-CLUSTER-001
-   R3b)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。environ = 子の環境変数
-   (SubmitDetached.environ — 空なら欄を置かない・同じ key の送り直しの比べに入る)。"
-  (| {"program" sha "revision" revision "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds
-      "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
+  "PUT /detached/<key> の本文を作るため: 置き場のキー program(中身の sha256)と、詰めた Program(blob)と送り手の版(versions)を運び、
+   coordinator は Program の行と task の行を同じ拍で置く(ADR-DOE-CLUSTER-001 R3b・#3741 の C' — task-submit-body と同じ。本番の当てる
+   順は coordinator が先・送り手が後)。runtime-env = 実行環境の宣言の JSON(在れば worker は env の root を準備して、その中で走らせる)。
+   environ = 子の環境変数(SubmitDetached.environ — 空なら欄を置かない・同じ key の送り直しの比べに入る)。"
+  (| {"program" (program-sha blob) "blob" blob "versions" versions "revision" revision "needs" (sorted needs) "name" name
+      "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
      (if (is runtime-env None) {} {"runtimeEnv" runtime-env})
      (if environ {"environ" (dict environ)} {})))
 
@@ -291,7 +292,7 @@
 
 (defrecord DetachedSender
   "切り離した task の送り手: revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)・versions = 送り手の版の識別
-   (blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば
+   (本文の blob に添える — 組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば
    worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)・deadline-seconds = 何度送っても同じ意味の
    要求を、通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。"
   {:tags {:context "doeff-cluster" :role "protocol"}}
@@ -328,19 +329,14 @@
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str) (: blob str) (: needs frozenset) (: name str)
          (: lease-seconds float) (: retain-seconds float) (: environ dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "切り離した task を 1 本出すため: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
-   同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直し、期限まで届かなければ
-   DetachedUnreachable(送れたかは分からない — key で冪等)。呼び手の誤りは DetachedRefused。"
-  (<- put tuple (program-put cell options blob sender.versions sender.deadline-seconds))
-  (setv #(sha stored) put)
-  (when (isinstance stored HttpFailed)
-    (return (submit-unreachable stored.detail)))
-  (<- _stored (detached-json stored))
+  "切り離した task を 1 本出すため: 詰めた Program と送り手の版を本文に載せた PUT /detached/<key> を送る(coordinator が Program の行と
+   task の行を同じ拍で置く — detached-submit-body)。key で冪等なので、通信の失敗を越えて送り直し、期限まで届かなければ
+   DetachedUnreachable(送れたかは分からない)。呼び手の誤り(大きすぎる Program の 413 を含む)は DetachedRefused。"
   (var declared None)
   (when (is-not sender.runtime-env None)
     (<- env-json dict (runtime-env->json sender.runtime-env))
     (:= declared env-json))
-  (<- body dict (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
+  (<- body dict (detached-submit-body blob sender.versions sender.revision needs name lease-seconds retain-seconds declared environ))
   (<- sent (resent-answer cell options "PUT" (detached-path key "") None body sender.deadline-seconds))
   (when (isinstance sent HttpFailed)
     (return (submit-unreachable sent.detail)))
@@ -486,7 +482,7 @@
   answer)
 
 
-;; 本物の切り離した task: coordinator の /programs・/detached・/state・/watch へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に
+;; 本物の切り離した task: coordinator の /detached・/state・/watch へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に
 ;; 持っていた DetachedClient を替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す
 ;; 入れ物(RouteCell)。出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
 (defhandler detached-cluster [#^ RouteCell cell #^ RouteOptions options #^ DetachedSender sender #^ float [poll-seconds 1.0]]

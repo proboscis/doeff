@@ -22,23 +22,27 @@
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 
 
-(defk task-submit-body [sha revision needs name lease-seconds runtime-env environ]
-  {:pre [(: sha str) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: runtime-env (| RuntimeEnv None)) (: environ dict)] :post [(: % dict)]
-   :tags {:context "doeff-cluster" :role "protocol"}}
-  "POST /tasks の本文を作るため(本番の remote-cluster と sim の宿で同じ形)。詰めた Program は先に PUT /programs/<sha> で置き、本文は
-   sha だけを運ぶ(service の宣言と同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。environ = 子の環境変数(RemoteJob.environ — 空なら欄を置かない)。"
+(defk task-submit-body [blob versions revision needs name lease-seconds runtime-env environ]
+  {:pre [(: blob str) (: versions dict) (: revision str) (: needs frozenset) (: name str) (: lease-seconds float) (: runtime-env (| RuntimeEnv None))
+         (: environ dict)]
+   :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "POST /tasks の本文を作るため(本番の remote-cluster と sim の宿で同じ形)。本文は置き場のキー program(中身の sha256)と、詰めた
+   Program(blob)と送り手の版(versions)を運び、coordinator は Program の行と task の行を同じ拍で置く(ADR-DOE-CLUSTER-001 R3b・#3741
+   の C' — PUT /programs/<sha> を別に送って返事を待つと、task 1 本で拍と fsync を 2 回、直列に待つ)。environ = 子の環境変数
+   (RemoteJob.environ — 空なら欄を置かない)。本番の当てる順は doeff → coordinator(本文の blob を受ける版)→ 各 job の pin と
+   宣言し直し(この形を送る版)— 送り手を先に替えると古い coordinator が本文の blob を断る。"
   (var declared {})
   (when (is-not runtime-env None)
     (<- env-json dict (runtime-env->json runtime-env))
     (:= declared {"runtimeEnv" env-json}))
-  (| {"program" sha "revision" revision
+  (| {"program" (program-sha blob) "blob" blob "versions" versions "revision" revision
       "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
      declared
      (if environ {"environ" (dict environ)} {})))
 
 
 (defrecord TaskSender
-  "task の送り手: revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)・versions = 送り手の版の識別(blob に添える —
+  "task の送り手: revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)・versions = 送り手の版の識別(本文の blob に添える —
    組み立てが宿の契約の Ask versions-key で読んで渡す・この層は読まない #2345)・runtime-env = 実行環境の宣言(在れば worker は env の
    root を準備して、その中の子 process で走らせる — revision は使わない)。"
   {:tags {:context "doeff-cluster" :role "protocol"}}
@@ -47,30 +51,13 @@
   (#^ (| RuntimeEnv None) runtime-env))
 
 
-(defk program-put [cell options blob versions deadline-seconds]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: blob str) (: versions dict) (: deadline-seconds float)]
-   :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
-  "task を送る前に、詰めた Program を coordinator の置き場 PUT /programs/<sha> に版と一緒に置くため(task の本文は sha だけを運ぶ —
-   service の宣言と同じ運び方・ADR-DOE-CLUSTER-001 R3b)。同じ中身は同じキーの同じ行なので、何度送っても同じ意味 — 失敗は
-   deadline-seconds まで送り直す(resent-request)。答え = #(sha 答え)(答えの読みは呼び手 — 断りの型は口ごとに違う: remote-cluster は
-   answer-json・detached-cluster は detached-refusal)。"
-  (val sha (program-sha blob))
-  (<- reply RoutedReply (resent-request cell.route "PUT" (+ "/programs/" sha) options None {"blob" blob "versions" versions}
-                                        deadline-seconds options.resend-pause-seconds))
-  (setv cell.route reply.route)
-  #(sha reply.answer))
-
-
 (defk task-submitted [cell options sender blob needs name lease-seconds environ]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender TaskSender) (: blob str) (: needs frozenset) (: name str)
          (: lease-seconds float) (: environ dict)]
    :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "task を 1 本出すため: 詰めた Program を置き場に先に置き(program-put)、本文は sha だけを運ぶ POST /tasks を送る。書きなので送り直しは
-   接続の段だけ(routed-request)。答え = coordinator の振った task の id。"
-  (<- put tuple (program-put cell options blob sender.versions options.resend-deadline-seconds))
-  (setv #(sha stored) put)
-  (<- _stored (answer-json stored))
-  (<- body dict (task-submit-body sha sender.revision needs name lease-seconds sender.runtime-env environ))
+  "task を 1 本出すため: 詰めた Program と送り手の版を本文に載せた POST /tasks を 1 回送る(coordinator が Program の行と task の行を
+   同じ拍で置く — task-submit-body)。書きなので送り直しは接続の段だけ(routed-request)。答え = coordinator の振った task の id。"
+  (<- body dict (task-submit-body blob sender.versions sender.revision needs name lease-seconds sender.runtime-env environ))
   (<- reply RoutedReply (routed-request cell.route "POST" "/tasks" options None body))
   (setv cell.route reply.route)
   (<- answer dict (answer-json reply.answer))
@@ -143,7 +130,7 @@
       (<- (task-dropped cell options task)))))
 
 
-;; 本物の RemoteJob: coordinator の /programs と /tasks へ、汎用の HttpRequest で話す(#2337 の 4b — httpx を直に持っていた TaskClient を
+;; 本物の RemoteJob: coordinator の /tasks へ、汎用の HttpRequest で話す(#2337 の 4b — httpx を直に持っていた TaskClient を
 ;; 替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す入れ物(RouteCell)。
 ;; 出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
 (defhandler remote-cluster [#^ RouteCell cell #^ RouteOptions options #^ TaskSender sender #^ float [poll-seconds 1.0] #^ float [lease-seconds 15.0]]

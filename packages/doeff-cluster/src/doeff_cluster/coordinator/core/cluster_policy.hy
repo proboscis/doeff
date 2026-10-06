@@ -28,7 +28,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
 (import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
-(import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
+(import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs carried-program])
 
 (setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
 (setv MAX-EVENTS 200)
@@ -293,24 +293,26 @@
 
 (deff task-body-refusal [#^ ClusterState state #^ TaskBody body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: body TaskBody)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
-  "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
-   Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
-   中で並べ(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)、詰めた Program は service の宣言と同じく先に /programs/<sha> に置いて
-   本文は sha だけを運ぶ(R3b — service と task で運び方を分けない)。"
+  "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・置き場のキー program の形・
+   blob の無い本文の versions(版の写し)と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も
+   Program の値 1 つで、handler は Program の中で並べる(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)。詰めた Program は本文の blob と
+   versions が運び、置く所(program_policy.carried-program)が PUT /programs/<sha> と同じ規則で大きさと sha256 を確かめて、task の行と
+   同じ拍で置く(R3b・#3741 の C')。"
   (let [program body.program]
     (cond
       (is-not body.env None)
         (.format "旧い形の env {!r}(handler の組の import path)は受け付けない — handler は task の Program の中の with-handlers で並べる"
                  body.env)
-      (is-not body.blob None)
-        "旧い形の blob(詰めた Program を本文に載せる形)は受け付けない — 先に PUT /programs/<sha> で置き、本文は program に sha を書く"
-      ;; 版は Program と一緒に置いた版 1 つ(program-versions)。本文の写しは置いた版と食い違いうるので受けない(黙って捨てない)。
-      (is-not body.versions None)
-        "本文の versions は受け付けない — task の版は PUT /programs/<sha> で Program と一緒に置いた版を使う"
       (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
         (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
-      (not-in program state.programs)
-        (.format "program {} は置き場に無い — 先に PUT /programs/{} で置く" program program)
+      ;; 版は Program と一緒に置く版 1 つ(program-versions)。blob の無い本文の版の写しは置いた版と食い違いうるので受けない(黙って捨てない)。
+      (and (is body.blob None) (is-not body.versions None))
+        "本文の versions は blob と一緒にだけ載せる — task の版は詰めた Program と一緒に置く版 1 つ"
+      ;; blob の無い本文は前の送り手の形(Program を先に PUT /programs/<sha> で置いた)— 全部の job が宣言し直された後に blob を必須に
+      ;; して、この枝ごと消す(別の変更 — program_policy.carried-program の註)。
+      (and (is body.blob None) (not-in program state.programs))
+        (.format "program {} は置き場に無い — 本文の blob に詰めた Program を載せる(前の送り手の形なら先に PUT /programs/{} で置く)"
+                 program program)
       ;; 版(送り手の commit)は行の必須の欄(TaskRecord.revision)— 欠けを行を作る所の KeyError に任せない(#1024)。
       (not (isinstance body.revision str))
         (.format "revision(送り手の commit の文字列)が無い: {!r}" body.revision)
@@ -319,8 +321,8 @@
 
 (deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
-  "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
-   運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
+  "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(置く worker の版と
+   比べる — can-run-task)。呼ぶ前に task-body-refusal と program_policy.carried-program が置き場に在ることを確かめる・置く。"
   (component-versions-of (. (get state.programs sha) versions)))
 
 
@@ -1576,9 +1578,12 @@
 (defk submit-task [state body now [owner None]]
   {:pre [(: state ClusterState) (: body TaskBody) (: now int) (: owner (| str None))] :post [(: % tuple)]
    :tags {:context "coordinator" :role "judgment"}}
-  "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
+  "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は詰めた Program(blob・versions)と置き場のキー program を運び、
+   Program の行と task の行を同じ状態の替えで置く(program_policy.carried-program・#3741 の C')。断りは受けた状態のまま。"
   (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
+  (setv #(placed carried stored) (! (carried-program state body now)))
+  (when (!= carried 200) (return #(state carried stored)))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。
   (setv lease-value (if (is body.lease-seconds None) 15.0 body.lease-seconds))
   (try
@@ -1593,12 +1598,12 @@
   (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
         task (TaskRecord id body.name body.program body.revision
-                         (program-versions state body.program)
+                         (program-versions placed body.program)
                          (needs-named body.needs body.requires "task の needs")
                          lease-ms (+ now lease-ms) now
                          :runtime-env body.runtime-env
                          :environ (environ-pairs (or body.environ {}))))
-  #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
+  #((replace placed :tasks (| placed.tasks {id task}) :next-task (+ placed.next-task 1)) 200 (TaskAccepted :id id)))
 
 
 (defk poll-task [state id now]

@@ -1,7 +1,8 @@
 ;;; 切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。I/O はしない。
 ;;;
-;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program revision needs name leaseSeconds retainSeconds environ}
-;;;                                   program = 先に PUT /programs/<sha> で置いた詰めた Program の sha(版は置いた時の版 — service の宣言と同じ運び方)
+;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program blob versions revision needs name leaseSeconds retainSeconds environ}
+;;;                                   program = 詰めた Program の置き場のキー(sha)・blob と versions = 詰めた Program と送り手の版 — Program の
+;;;                                   行と task の行を同じ拍で置く(#3741 の C'。blob の無い前の形は先に PUT /programs/<sha> で置いた Program を使う)
 ;;;                                   → {"key" "task" "created" "phase"}。同じ key が在れば何も作らず created = false
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
@@ -14,6 +15,8 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import typing [NamedTuple])
+(import doeff [run])
+(import doeff_cluster.coordinator.core.program_policy [carried-program])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
@@ -69,6 +72,10 @@
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
+  ;; 本文の詰めた Program を置いた状態(blob の無い前の形は受けた状態のまま)。新しい task の行はこの上に足す — Program の行と同じ
+  ;; 状態の替え(同じ拍・WAL の 1 行)。同じ key の行が在る時と上限の断りは受けた状態のまま返す(Program を置かない)。
+  (setv #(placed carried stored) (run (carried-program state body now)))
+  (when (!= carried 200) (return (Reply state carried stored)))
   (setv needs (needs-named body.needs body.requires "切り離した task の needs")
         environ (environ-pairs (or body.environ {}))
         existing (task-by-key state key))
@@ -89,11 +96,11 @@
   (setv id (task-id state)
         lease-ms (int (* 1000 lease))
         task (TaskRecord id body.name body.program body.revision
-                         (program-versions state body.program)
+                         (program-versions placed body.program)
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ))
-  (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
+  (Reply (replace placed :tasks (| placed.tasks {id task}) :next-task (+ placed.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
 
