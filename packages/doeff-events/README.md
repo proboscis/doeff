@@ -77,6 +77,7 @@ routes = (
         channel=lambda event: f"turn:{event.conversation}",  # 出す先の channel を出来事の値から決める
         encode=lambda event: json.dumps(...),              # 型 → 文字列
         decode=lambda body: TurnState(...),                # 文字列 → 型
+        held_key=lambda event: ("turn-state", event.turn), # 届かない間に持つ時の鍵(同じ鍵は後の値で置き換え)
         reads=("turn:c1",),                                # この process が受ける channel(出すだけなら ())
     ),
 )
@@ -90,8 +91,14 @@ program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStart
 ```
 
 - 出す側: 道の表に在る型の `Publish` を broker へ送り(`PUBLISH`)、答えは `NoticeSent(receivers)` — その時に購読していた受け手の数
-  です(0 = 誰も聞いていない。0 をどう扱うかは出し手が決めます。1 以上でも、受け手が読んだ事の証ではありません)。broker に届かなければ、
-  その `Publish` は Program の中で `EventNotPublished` を上げます。表に無い型は外の handler(process の中の列)へそのまま出ます。
+  です(0 = 誰も聞いていない。0 をどう扱うかは出し手が決めます。1 以上でも、受け手が読んだ事の証ではありません)。表に無い型は外の
+  handler(process の中の列)へそのまま出ます。
+- 出し損ね: broker に届かなかった出来事は捨てずに、道の `held_key` の鍵ごとに持ちます(同じ鍵の後の出来事が前の物を置き換える・
+  鍵の空間は 1 つの包みの全部の道で共通)。`Publish` の答えは `NoticeHeld(detail)` で、Program は止まらずに続きます。持った物は
+  task 1 本が `AwaitBrokerBack` の答えを待って、残った出来事を出した順に出します。また届かなければ残りを持って次の戻りを待ちます。
+  持っている間の新しい `Publish` は、その後ろに並びます(出る順は出した順)。時間で出し直す所も回数の上限も在りません。持つ量は鍵の
+  数で止まります。process が終わると持った物は消えます — 出し手は起動の時に今の状態を出し直し、受け手は記録から追いつきます。
+  出し損ねの扱いはこの 1 か所だけで、出し手は `Publish` の答えを見て自分で出し直しません。
 - 受ける側: 包んだ本体の最初の effect より前に購読を始め、**broker が購読を確かめた後に** `SourceStarted(source)` を 1 度 出します。
   受けた知らせは全部 process の中の購読者の列へ `Publish` し、Program は `WaitForEvent` で 1 つずつ受けます(`WaitForEvent` に答えるのは
   外の `subscribed_event_handler` — `SourceStarted`・`SourceStalled`・`SourceResumed` は、購読の型に名指した Program だけが受けます)。

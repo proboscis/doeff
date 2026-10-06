@@ -40,7 +40,8 @@
     [(rule R1 "配達の法の筋書きは doeff_events.notice_laws の 1 か所に置く。下の層の handler(memory・Redis)と上の層(notice_events_handler)を変える変更は、同じ筋書きを memory と本物の redis-server の両方で通す。")
      (rule R2 "業務の Program には channel の名を出さない。出すのは Publish・WaitForEvent と、出来事の値だけ。")
      (rule R3 "待ちは blocking の取り(期限なし — 止めるのは task の Cancel)と、broker の戻りを待つ期限つきの待ち 1 つ(WaitWithin)だけ。間隔で起きて確かめる形を足さない。")
-     (rule R4 "backend は受けた知らせを黙って捨てない: 受けた知らせは全部 process の中の購読者の列へ Publish し、道の表で読めない知らせは源を名指しで落とす。出した知らせの受け手の数(PUBLISH の答え)は Publish の答え NoticeSent に載せて出し手へ返す。")]
+     (rule R4 "backend は受けた知らせを黙って捨てない: 受けた知らせは全部 process の中の購読者の列へ Publish し、道の表で読めない知らせは源を名指しで落とす。出した知らせの受け手の数(PUBLISH の答え)は Publish の答え NoticeSent に載せて出し手へ返す。")
+     (rule R5 "出し損ねの扱いは notice_events_handler の 1 か所だけに置く(2026-10-07・agora-redesign #3864 — cisco-c8・cc1-w24 と確定): broker に届かなかった出来事は、道の held_key(必須の欄)の鍵ごとに持ち(同じ鍵は後の値で置き換え)、Publish は NoticeHeld で答えて Program を止めない。task 1 本が AwaitBrokerBack の答えを待って、残った出来事を出した順に出す。持っている間の Publish はその後ろに並ぶ。時間で出し直す所・回数の上限は置かない。出し手は Publish の答えを見て自分で出し直さない。process が終われば持った物は消え、出し手の起動の時の出し直しと受け手の追いつきで埋める。")]
   :laws
     [(law subscription-precedes-the-body
        :statement "for_all 読み手 r: r の購読は、包んだ Program の最初の effect より前に、broker の側で成っている — Program が最初に出した知らせを、Program 自身が受ける。"
@@ -77,17 +78,29 @@
                      "packages/doeff-events/tests/test_notice_laws_memory.py::test_notice_announced_during_an_outage_is_not_delivered_later"
                      "packages/doeff-events/tests/test_notice_laws_redis.py::test_broker_law_holds_on_redis"
                      "packages/doeff-events/tests/test_notice_laws_redis.py::test_subscriber_that_does_not_read_is_disconnected_on_redis"]
-       :wiring "配線済み(2026-10-06)— 筋書き notice_laws.law_notice_reaches_only_current_subscribers(購読の前は受け手 0 で届かず、後は受け手 1 で届く)と、止まりの間の知らせが後から届かない事の検(memory)、読まない購読者が接続を切られる事の検(本物)。")]
+       :wiring "配線済み(2026-10-06)— 筋書き notice_laws.law_notice_reaches_only_current_subscribers(購読の前は受け手 0 で届かず、後は受け手 1 で届く)と、止まりの間の知らせが後から届かない事の検(memory)、読まない購読者が接続を切られる事の検(本物)。")
+     (law held-notice-is-sent-once-the-broker-is-back
+       :statement "for_all 出し手 s・出来事 e: broker が s から e を受けられなかった時、e は捨てられずに s の手元に鍵ごとに持たれ、broker が戻った時(AwaitBrokerBack の答え)に、その時に繋がっている読み手へ届く — 読み手が繋がったままで出し手だけが届かなかった場合も届く。持っている間に同じ鍵の出来事が出れば前の物は出ない。届く順は、残った出来事を出した順。"
+       :counterexamples
+         [(counterexample "出し損ねを Program の例外にして捨てる上の層 — 読み手は繋がったままなので SourceResumed を受けず、記録から追いつく合図も無いまま、失った出来事が届かない(居ない worker へ仕事を配り続ける)")
+          (counterexample "持った物を AwaitBrokerBack の答えでなく時間を置いて出し直す上の層 — 間隔で起きて確かめる形(R3)")
+          (counterexample "同じ鍵の新しい出来事を、前の出来事の位置に置き換える上の層 — 戻った後の順が出した順と食い違う")]
+       :enforced-by ["packages/doeff-events/tests/test_notice_laws_memory.py::test_held_law_holds_on_memory"
+                     "packages/doeff-events/tests/test_notice_laws_memory.py::test_not_telling_the_return_breaks_the_held_law"
+                     "packages/doeff-events/tests/test_notice_laws_memory.py::test_publish_answers_held_with_the_brokers_words_while_it_is_unreachable"
+                     "test-adr-doe-events-002-laws-are-declared"]
+       :wiring "配線済み(2026-10-07)— 筋書き notice_laws.law_held_notice_arrives_once_the_broker_is_back と law_held_notices_keep_the_latest_per_key_in_order(HELD_LAWS)。出し手の側だけ broker を失う層(tests/notice_law_support.py の refuses_senders)の下で回す。本物の redis-server では回していない(出し手の側だけの止まりは broker の種類によらず同じ層で作るため)。")]
   :enforcement
     [(deftest test-adr-doe-events-002-laws-are-declared
-       ;; 針: 法の筋書きが notice_laws.py の 1 か所に在り、上の層の法の組 EVENT_LAWS と下の層の法の組 BROKER_LAWS に載っている。
+       ;; 針: 法の筋書きが notice_laws.py の 1 か所に在り、法の組 EVENT_LAWS・HELD_LAWS・BROKER_LAWS に載っている。
        ;; doeff-events は repo の根の環境に入っていないので、import せず file を読む(ADR-DOE-EVENTS-001 と同じ)。
        (val repo-root (. (Path __file__) parent parent parent))
        (val text (.read-text (/ repo-root "packages/doeff-events/src/doeff_events/notice_laws.py") :encoding "utf-8"))
        (for [name ["law_subscription_precedes_the_body" "law_start_is_told_after_the_subscription"
-                   "law_start_and_return_are_told_once" "law_notice_reaches_only_current_subscribers"]]
+                   "law_start_and_return_are_told_once" "law_notice_reaches_only_current_subscribers"
+                   "law_held_notice_arrives_once_the_broker_is_back" "law_held_notices_keep_the_latest_per_key_in_order"]]
          (assert (in (+ "def " name "(") text)
                  (+ "配達の法の筋書きが notice_laws.py に無い(ADR-DOE-EVENTS-002 R1): " name))
          (assert (in (+ name ",") text)
-                 (+ "配達の法の筋書きが法の組(EVENT_LAWS / BROKER_LAWS)に載っていない(ADR-DOE-EVENTS-002 R1): " name))))]
-  :plans ["agora-redesign #3850"])
+                 (+ "配達の法の筋書きが法の組(EVENT_LAWS / HELD_LAWS / BROKER_LAWS)に載っていない(ADR-DOE-EVENTS-002 R1): " name))))]
+  :plans ["agora-redesign #3850" "agora-redesign #3864"])

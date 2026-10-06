@@ -15,19 +15,28 @@ The laws of the upper layer (``notice_events_handler`` — what a business progr
 - ``law_start_and_return_are_told_once`` — the program is told once that the source started and once every time
   the broker came back (``SourceResumed``), and — like the start — only after the subscription is in place again.
 
+The laws of a sender the broker could not take a notice from (the receivers stay connected):
+
+- ``law_held_notice_arrives_once_the_broker_is_back`` — ``Publish`` answers ``NoticeHeld`` while the broker is
+  unreachable, and the held notice arrives at a subscriber that stayed connected once the broker is back.
+- ``law_held_notices_keep_the_latest_per_key_in_order`` — while held, a later notice of the same key replaces the
+  earlier one; the held notices arrive in the order of the publishes that remain, and one published right after
+  the return arrives after them.
+
 The law of the lower layer (the broker's operations — what the upper layer relies on):
 
 - ``law_notice_reaches_only_current_subscribers`` — a notice reaches whoever is subscribed when it is announced
   and the announcer learns how many that was; a notice announced before the subscription is never received.
 
 What no law promises: a notice announced while a subscriber is not subscribed or not connected is not delivered
-later. The program that needs it catches up once from its records on ``SourceStarted`` and ``SourceResumed``.
+later, and what a sender holds is gone when its process ends. The program that needs it catches up once from its records on ``SourceStarted`` and ``SourceResumed``.
 
 Upper-layer laws take an ``EventLawHarness`` (how to run a program as one process of the system, and how to take
 the broker away and bring it back); the lower-layer law takes the prefix of the names it may use and runs under
 a lower-layer handler.
 """
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
@@ -41,7 +50,7 @@ from doeff_events.effects.events import (
     WaitForEvent,
 )
 from doeff_events.effects.notices import Announce, Announcement, NextAnnouncement, SubscribeChannels
-from doeff_events.handlers.notice_events import NoticeRoute, NoticeSent
+from doeff_events.handlers.notice_events import NoticeHeld, NoticeRoute, NoticeSent
 
 if TYPE_CHECKING:
     from doeff import EffectGenerator
@@ -64,8 +73,17 @@ class LawNote:
     text: str
 
 
+@dataclass(frozen=True)
+class LawState:
+    """The laws' notice that a later one of the same ``key`` replaces while it is held."""
+
+    key: str
+    value: int
+
+
 def law_routes(prefix: str) -> "tuple[NoticeRoute[object], ...]":
-    """The routes every process of an upper-layer law is built with: ``LawNote`` on the channel ``<prefix>:note``."""
+    """The routes every process of an upper-layer law is built with: ``LawNote`` and ``LawState`` on the channel
+    ``<prefix>:note``. Every note is held under a key of its own; a state is held under its ``key``."""
     channel = f"{prefix}:note"
     return (
         NoticeRoute(
@@ -74,6 +92,16 @@ def law_routes(prefix: str) -> "tuple[NoticeRoute[object], ...]":
             channel=lambda _event: channel,
             encode=lambda event: event.text,
             decode=LawNote,
+            held_key=lambda event: ("law-note", event.text),
+            reads=(channel,),
+        ),
+        NoticeRoute(
+            event_type=LawState,
+            wire_name="law-state",
+            channel=lambda _event: channel,
+            encode=lambda event: json.dumps([event.key, event.value]),
+            decode=lambda body: LawState(*json.loads(body)),
+            held_key=lambda event: ("law-state", event.key),
             reads=(channel,),
         ),
     )
@@ -159,6 +187,53 @@ def law_start_and_return_are_told_once(harness: EventLawHarness) -> "EffectGener
 
 
 @do
+def law_held_notice_arrives_once_the_broker_is_back(harness: EventLawHarness) -> "EffectGenerator[None]":
+    """A notice published while the broker cannot take it is held (``NoticeHeld``) and arrives at this process —
+    subscribed and connected all along — once the broker is back. ``harness.cut`` takes the broker from senders
+    only."""
+    law = "held-notice-arrives-once-the-broker-is-back"
+
+    @do
+    def sends_into_an_outage() -> "EffectGenerator[None]":
+        """Publish while the broker is away, bring it back, and receive what was held."""
+        yield harness.cut()
+        held = yield Publish(LawNote("held"))
+        _require(isinstance(held, NoticeHeld), f"{law} (answer while unreachable)", held)
+        yield harness.restore()
+        # Nothing else sends the note: if the held note is dropped, this wait is never answered.
+        note = yield WaitForEvent(LawNote)
+        _require(note == LawNote("held"), law, note)
+
+    yield harness.as_party("law-holder", (LawNote,), sends_into_an_outage())
+
+
+@do
+def law_held_notices_keep_the_latest_per_key_in_order(harness: EventLawHarness) -> "EffectGenerator[None]":
+    """While held, ``a=2`` replaces ``a=1``; what arrives is ``b=1, a=2`` (the order of the publishes that remain),
+    then ``c=1`` published right after the return, and nothing else."""
+    law = "held-notices-keep-the-latest-per-key-in-order"
+
+    @do
+    def sends_states_into_an_outage() -> "EffectGenerator[None]":
+        """Publish three states while the broker is away, one more after it is back, and list what arrives."""
+        yield harness.cut()
+        for state in (LawState("a", 1), LawState("b", 1), LawState("a", 2)):
+            yield Publish(state)
+        yield harness.restore()
+        yield Publish(LawState("c", 1))
+        heard: tuple[LawState, ...] = ()
+        while len(heard) < 3:
+            heard = (*heard, (yield WaitForEvent(LawState)))
+        _require(heard == (LawState("b", 1), LawState("a", 2), LawState("c", 1)), law, heard)
+        # The end marker is published after everything above was received: a fourth state would come before it.
+        yield Publish(LawNote("end"))
+        after = yield WaitForEvent(LawState, LawNote)
+        _require(after == LawNote("end"), f"{law} (more than the latest per key)", after)
+
+    yield harness.as_party("law-keeper", (LawState, LawNote), sends_states_into_an_outage())
+
+
+@do
 def law_notice_reaches_only_current_subscribers(prefix: str) -> "EffectGenerator[None]":
     """A notice announced before the subscription has no receiver and is never received; one announced after it
     has one receiver and is received."""
@@ -179,6 +254,13 @@ EVENT_LAWS: Final = (
     law_start_and_return_are_told_once,
 )
 """The upper-layer laws (each takes an ``EventLawHarness``)."""
+
+HELD_LAWS: Final = (
+    law_held_notice_arrives_once_the_broker_is_back,
+    law_held_notices_keep_the_latest_per_key_in_order,
+)
+"""The laws of a sender the broker could not take a notice from (each takes an ``EventLawHarness`` whose ``cut`` /
+``restore`` take the broker from senders only)."""
 
 BROKER_LAWS: Final = (law_notice_reaches_only_current_subscribers,)
 """The lower-layer laws (each takes the prefix of the names it may use)."""

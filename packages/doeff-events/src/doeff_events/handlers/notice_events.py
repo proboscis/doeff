@@ -17,8 +17,16 @@ What the wrapper does:
 
 - Sending. ``Publish(event)`` of a routed type becomes ``Announce`` and answers ``NoticeSent(receivers)`` — the
   broker's count of subscribers that received it (``0`` = nobody was listening; the sender decides what that
-  means). If the broker is unreachable the ``Publish`` raises ``EventNotPublished`` in the program. An unrouted
-  type goes on to the outer handler (the bus inside the process) as before.
+  means). An unrouted type goes on to the outer handler (the bus inside the process) as before.
+- What the broker could not take is held, not lost (the one place a sender's failed notice is handled). When the
+  broker is unreachable the event is held under its route's ``held_key`` — a later event of the same key replaces
+  it — and ``Publish`` answers ``NoticeHeld``; the program goes on. One task waits for ``AwaitBrokerBack`` and
+  then sends what is held, in the order of the publishes that remain; if the broker is away again it holds the
+  rest and waits for the next return. While anything is held, a new ``Publish`` is held behind it, so notices
+  leave in the order they were published. Nothing is retried on a timer and there is no limit of attempts; what
+  is held is bounded by the number of keys. What is held is gone when the process ends: the sender sends its
+  current state again when it starts, and receivers catch up from their records. Whoever answers
+  ``AwaitBrokerBack`` must not answer while the broker is still unreachable.
 - Receiving. Before the body runs, the wrapper subscribes the channels its routes read and — only after the
   broker confirmed the subscription — publishes ``SourceStarted`` on the bus. Then one task waits for notices
   and publishes each received event on the bus; the body receives them one at a time with ``WaitForEvent``
@@ -33,16 +41,17 @@ What the wrapper does:
   ``SourceStalled``, waits for ``AwaitBrokerBack`` up to ``patience_seconds`` (one ``WaitWithin`` — no retry on
   a timer), subscribes again, and after the broker confirmed publishes ``SourceResumed`` once. Past the patience
   it fails with ``NoticeSourceUnreachable`` (``SourceFailed`` reaches the body).
-- Stopping. The source task ends by ``Cancel`` when the body ends; its wait has no time limit of its own.
+- Stopping. The source task and the task sending what is held end by ``Cancel`` when the body ends; their waits
+  have no time limit of their own.
 
 The channels a wrapper reads are fixed when it is built (``_Plan.channels`` is the one place that holds them).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar, final
 
 from doeff_core_effects.scheduler import (
     Cancel,
@@ -95,6 +104,9 @@ class NoticeRoute(Generic[_E]):
     ``wire_name`` = the name that tells this type apart on the wire (several types may share a channel).
     ``channel`` = the channel an event is sent to, decided from the event's value.
     ``encode`` = event → text (JSON by convention). ``decode`` = text → event.
+    ``held_key`` = event → the key it is held under while the broker cannot take it; a later held event of the same
+    key replaces it. The keys of all routes of one wrapper share one space, so routes about the same thing (for
+    example a worker that went and came back) give the same key, and routes about different things must not.
     ``reads`` = the channels this side receives the type from; ``()`` = this side only sends.
     """
 
@@ -103,6 +115,7 @@ class NoticeRoute(Generic[_E]):
     channel: Callable[[_E], str]
     encode: Callable[[_E], str]
     decode: Callable[[str], _E]
+    held_key: Callable[[_E], Hashable]
     reads: tuple[str, ...] = ()
 
 
@@ -114,8 +127,43 @@ class NoticeSent:
     receivers: int
 
 
-class EventNotPublished(RuntimeError):
-    """``Publish`` of a routed event did not reach the broker (it is unreachable). The event was not sent."""
+@dataclass(frozen=True)
+class NoticeHeld:
+    """What ``Publish`` of a routed event answers when it is held instead of sent: the broker could not take it
+    (``detail`` = the broker's words), or earlier events are still held and it waits behind them. It is sent when
+    the broker is back, unless a later event of the same key replaces it first."""
+
+    detail: str
+
+
+@final
+class _Held:
+    """What one wrapper holds while the broker cannot take it: route and event by key, in the order of the
+    publishes that remain (a replaced key moves to the end), and the task sending them (``None`` = none runs —
+    then nothing is held)."""
+
+    __slots__ = ("events", "sender")
+
+    def __init__(self) -> None:
+        """Start with nothing held."""
+        self.events: dict[Hashable, tuple[NoticeRoute[object], object]] = {}
+        self.sender: Task[object] | None = None
+
+    def keep(self, route: NoticeRoute[object], event: object) -> None:
+        """Hold ``event`` under its key, replacing (and moving behind everything) what that key held."""
+        key = route.held_key(event)
+        self.events.pop(key, None)
+        self.events[key] = (route, event)
+
+    def running(self) -> "tuple[Task[object], ...]":
+        """The sending task, if one runs (the tasks to stop when the body ends)."""
+        return () if self.sender is None else (self.sender,)
+
+    def sent(self, key: Hashable, event: object) -> None:
+        """Forget ``key`` after ``event`` was sent — unless a later event of that key came in the meantime."""
+        held = self.events.get(key)
+        if held is not None and held[1] is event:
+            del self.events[key]
 
 
 class NoticeSourceUnreachable(RuntimeError):
@@ -277,21 +325,31 @@ def _failure_announced(source: str, program: "Program[None]") -> "EffectGenerato
 
 
 @do
-def _sent(plan: _Plan, route: NoticeRoute[object], event: object) -> "EffectGenerator[NoticeSent | EventNotPublished]":
-    """Send one routed event to the broker. Answers how many received it, or the ``EventNotPublished`` to raise in
-    the program when the broker is unreachable."""
-    channel = route.channel(event)
-    receivers = yield Announce(channel, route.wire_name, route.encode(event))
-    if isinstance(receivers, BrokerUnreachable):
-        return EventNotPublished(
-            f"source {plan.source!r}: {type(event).__name__} was not published to {channel!r}: {receivers.detail}"
-        )
-    return NoticeSent(receivers)
+def _announced(route: NoticeRoute[object], event: object) -> "EffectGenerator[int | BrokerUnreachable]":
+    """Send one routed event to the broker. Answers how many received it, or ``BrokerUnreachable``."""
+    receivers: int | BrokerUnreachable = yield Announce(route.channel(event), route.wire_name, route.encode(event))
+    return receivers
 
 
-def _body_handler(plan: _Plan) -> "ProgramHandler":
-    """The handler around the body: sends routed ``Publish`` and passes ``WaitForEvent`` outward with
-    ``SourceFailed`` added, so that a failure of this wrapper's source ends the body's wait with its error."""
+@do
+def _held_sent(held: _Held) -> "EffectGenerator[None]":
+    """The task sending what is held: wait for the broker's return, send the held events oldest first, and wait
+    again if the broker is away again. Ends when nothing is held (a later hold starts a new task)."""
+    while held.events:
+        yield AwaitBrokerBack()
+        while held.events:
+            key, (route, event) = next(iter(held.events.items()))
+            receivers = yield _announced(route, event)
+            if isinstance(receivers, BrokerUnreachable):
+                break
+            held.sent(key, event)
+    held.sender = None
+
+
+def _body_handler(plan: _Plan, held: _Held) -> "ProgramHandler":
+    """The handler around the body: sends routed ``Publish`` (holding what the broker cannot take) and passes
+    ``WaitForEvent`` outward with ``SourceFailed`` added, so that a failure of this wrapper's source or of its
+    sending task ends the body's wait with its error."""
 
     @do
     def handler(effect: PublishEffect | WaitForEventEffect, k: K) -> "EffectGenerator[object]":
@@ -301,10 +359,15 @@ def _body_handler(plan: _Plan) -> "ProgramHandler":
             if route is None:
                 yield Pass(effect, k)
                 return None
-            sent = yield _sent(plan, route, effect.event)
-            if isinstance(sent, EventNotPublished):
-                return (yield ResumeThrow(k, sent))
-            return (yield Resume(k, sent))
+            if held.events:
+                held.keep(route, effect.event)
+                return (yield Resume(k, NoticeHeld("earlier events are held until the broker is back")))
+            receivers = yield _announced(route, effect.event)
+            if not isinstance(receivers, BrokerUnreachable):
+                return (yield Resume(k, NoticeSent(receivers)))
+            held.keep(route, effect.event)
+            held.sender = yield Spawn(_failure_announced(plan.source, _held_sent(held)))
+            return (yield Resume(k, NoticeHeld(receivers.detail)))
         wanted = effect.event_types
         came = yield WaitForEventEffect((*wanted, SourceFailed))
         # A failure of another source on the same bus is not this body's unless it asked for failures.
@@ -318,24 +381,36 @@ def _body_handler(plan: _Plan) -> "ProgramHandler":
 
 
 @do
+def _stopped_tasks(tasks: "tuple[Task[object], ...]") -> "EffectGenerator[Exception | None]":
+    """Stop every task; answer the first error of one that had already failed (``None`` if none had)."""
+    first: Exception | None = None
+    for task in tasks:
+        failed = yield _stop_task(task)
+        first = first if first is not None else failed
+    return first
+
+
+@do
 def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     """Begin the subscription, tell the start once it is confirmed, run the source task beside the body (the body
-    stays in this task, so a cancel from outside reaches it), and stop the source when the body ends."""
-    if not plan.channels:
-        # A wrapper that only sends has no source: nothing to subscribe, nothing to tell.
-        return (yield _body_handler(plan)(body))
-    subscription = yield _first_subscription(plan)
-    yield Publish(SourceStarted(source=plan.source))
-    source: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, subscription)))
+    stays in this task, so a cancel from outside reaches it), and stop the source and the sending task when the
+    body ends. A wrapper that only sends has no source: nothing to subscribe, nothing to tell."""
+    held = _Held()
+    source: tuple[Task[object], ...] = ()
+    if plan.channels:
+        subscription = yield _first_subscription(plan)
+        yield Publish(SourceStarted(source=plan.source))
+        reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, subscription)))
+        source = (reader,)
     # The stop runs on an exception and on the normal end, not in ``finally`` (see ``_came_back_within``).
     try:
-        answer = yield _body_handler(plan)(body)
+        answer = yield _body_handler(plan, held)(body)
     except Exception:
-        yield _stop_task(source)
+        yield _stopped_tasks((*source, *held.running()))
         raise
-    failed = yield _stop_task(source)
+    failed = yield _stopped_tasks((*source, *held.running()))
     if failed is not None:
-        # The source fell while the body did not wait: the failure is not dropped.
+        # A task fell while the body did not wait: the failure is not dropped.
         raise failed
     return answer
 
