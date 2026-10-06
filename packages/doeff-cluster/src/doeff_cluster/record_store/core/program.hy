@@ -85,12 +85,14 @@
 (defk store-loop [retention-ms idle-ms]
   {:pre [(: retention-ms int) (: idle-ms int)] :post [(: % int)]}
   ;; 要求を受けて答える。MAINTENANCE-MS ごとに、書き終わった区切りの圧縮と、保持を過ぎた run の削除。
+  ;; 要求の無い間は次の保守の期限まで 1 本で待つ(要求か停止の合図で待ちが抜ける — 受付の箱の wake・#3867)。
   (var last-maintenance 0)
   (var served 0)
   (while True
     (<- stopping bool (CoordinatorStopRequested))
     (when stopping (return served))
-    (<- batch list (NextRequests 1.0))
+    (<- waited-at int (now-epoch-ms))
+    (<- batch list (NextRequests (/ (max 0 (- (+ last-maintenance MAINTENANCE-MS) waited-at)) 1000.0)))
     (for [request batch]
       (try
         (<- answered tuple (answer-request request))
