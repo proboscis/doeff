@@ -8,6 +8,7 @@ from doeff_events.effects.notices import (
     ChannelSubscription,
     CloseSubscription,
     NextAnnouncement,
+    ProbeBroker,
     SubscribeChannels,
 )
 from doeff_events.effects.timers import (
@@ -25,6 +26,7 @@ from .events import (
     Publish,
     PublishEffect,
     SourceFailed,
+    SourceMissed,
     SourceResumed,
     SourceStalled,
     SourceStarted,
@@ -50,9 +52,11 @@ __all__ = [
     "DisarmTimer",
     "DisarmTimerEffect",
     "NextAnnouncement",
+    "ProbeBroker",
     "Publish",
     "PublishEffect",
     "SourceFailed",
+    "SourceMissed",
     "SourceResumed",
     "SourceStalled",
     "SourceStarted",

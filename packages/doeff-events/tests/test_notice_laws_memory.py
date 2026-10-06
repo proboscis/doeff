@@ -8,16 +8,26 @@ factory's arguments.
 
 import json
 from collections.abc import Hashable
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 from doeff_core_effects.scheduler import SchedulerDeadlockError
-from doeff_events import EventBus, SourceResumed, SourceStarted, subscribed_event_handler
+from doeff_events import (
+    EventBus,
+    SourceMissed,
+    SourceResumed,
+    SourceStarted,
+    subscribed_event_handler,
+)
 from doeff_events.effects.events import Publish, WaitForEvent
-from doeff_events.effects.notices import Announce, BrokerUnreachable
+from doeff_events.effects.notices import Announce, AwaitBrokerBack, BrokerUnreachable
 from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
 from doeff_events.handlers.notice_events import (
-    NoticeHeld,
+    Drop,
+    MarkGap,
+    NoticeDropped,
+    NoticeGapMarked,
     NoticeRoute,
     NoticeSent,
     NoticeSourceUnreachable,
@@ -27,10 +37,10 @@ from doeff_events.handlers.notice_events import (
 from doeff_events.notice_laws import (
     BROKER_LAWS,
     EVENT_LAWS,
-    HELD_LAWS,
+    GAP_LAWS,
     LawBroken,
     LawNote,
-    law_held_notice_arrives_once_the_broker_is_back,
+    law_missed_notice_is_told_once_the_broker_is_back,
     law_routes,
     law_start_and_return_are_told_once,
     law_start_is_told_after_the_subscription,
@@ -45,10 +55,12 @@ from event_signal_invariants import (
 from notice_law_support import (
     PATIENCE_SECONDS,
     PREFIX,
+    SenderOutage,
+    gap_harness,
     memory_harness,
     never_tells_the_return,
+    refuses_senders,
     run_on_virtual_clock,
-    sender_outage_harness,
     subscribes_when_the_program_waits_for,
     swallows,
 )
@@ -95,7 +107,7 @@ def _signal_world(*, late_subscription: bool = False) -> SignalWorld:
         channel=lambda _event: "signals",
         encode=lambda event: json.dumps(list(event.keys)),
         decode=lambda body: Changed(tuple(json.loads(body))),
-        held_key=lambda event: event.keys,
+        when_unsent=MarkGap(),
         reads=("signals",),
     )
 
@@ -139,55 +151,221 @@ def test_subscribing_after_the_first_read_breaks_the_shared_gap_invariant() -> N
         check_signal_between_read_and_wait_is_kept(_signal_world(late_subscription=True))
 
 
+def _sender_only(when_unsent: "MarkGap | Drop") -> "tuple[NoticeRoute[object], ...]":
+    """``law_routes`` without the channels they read (a wrapper that only sends), each with ``when_unsent``."""
+    return tuple(
+        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, when_unsent) for r in law_routes(PREFIX)
+    )
+
+
 def test_publish_answers_the_number_of_receivers() -> None:
+    # Guard: a notice nobody received is not a gap — nothing is marked and nothing is told later.
     @do
     def publishes_alone() -> "EffectGenerator[object]":
         return (yield Publish(LawNote("to nobody")))
 
-    sender_only = tuple(
-        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, r.held_key) for r in law_routes(PREFIX)
-    )
     wrapped = memory_notice_handler(MemoryBroker())(
-        notice_events_handler("sender", sender_only, PATIENCE_SECONDS)(publishes_alone())
+        notice_events_handler("sender", _sender_only(MarkGap()), PATIENCE_SECONDS)(publishes_alone())
     )
     assert run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped)) == NoticeSent(0)
 
 
-@pytest.mark.parametrize("law", HELD_LAWS, ids=lambda law: law.__name__)
-def test_held_law_holds_on_memory(law) -> None:
-    run_on_virtual_clock(law(sender_outage_harness(MemoryBroker())))
-
-
-def test_not_telling_the_return_breaks_the_held_law() -> None:
-    # The held note waits for the broker's return, and nothing else sends it: the reader's wait is never answered.
-    harness = sender_outage_harness(MemoryBroker(), below_events=never_tells_the_return())
-    with pytest.raises(SchedulerDeadlockError):
-        run_on_virtual_clock(law_held_notice_arrives_once_the_broker_is_back(harness))
-
-
-def test_publish_answers_held_with_the_brokers_words_while_it_is_unreachable() -> None:
+def test_publish_answers_a_marked_gap_with_the_brokers_words_and_the_body_goes_on() -> None:
     broker = MemoryBroker()
 
     @do
     def publishes_into_an_outage() -> "EffectGenerator[object]":
         yield cut_broker(broker, "cut for the test")
-        return (yield Publish(LawNote("held")))
+        answer = yield Publish(LawNote("lost"))
+        return (answer, "went on")
 
-    sender_only = tuple(
-        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, r.held_key) for r in law_routes(PREFIX)
-    )
     wrapped = memory_notice_handler(broker)(
-        notice_events_handler("sender", sender_only, PATIENCE_SECONDS)(publishes_into_an_outage())
+        notice_events_handler("sender", _sender_only(MarkGap()), PATIENCE_SECONDS)(publishes_into_an_outage())
     )
-    answer = run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped))
-    assert isinstance(answer, NoticeHeld), answer
+    answer, went_on = run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped))
+    assert isinstance(answer, NoticeGapMarked), answer
+    assert answer.channel == f"{PREFIX}:note"
     assert "cut for the test" in answer.detail, answer
+    assert went_on == "went on"
+
+
+@pytest.mark.parametrize("law", GAP_LAWS, ids=lambda law: law.__name__)
+def test_gap_law_holds_on_memory(law) -> None:
+    run_on_virtual_clock(law(gap_harness(MemoryBroker())))
+
+
+def test_not_telling_the_return_breaks_the_missed_notice_law() -> None:
+    # The gap waits for the broker's return, and nothing else tells it: the wait for the gap is never answered.
+    harness = gap_harness(MemoryBroker(), below_events=never_tells_the_return())
+    with pytest.raises(SchedulerDeadlockError):
+        run_on_virtual_clock(law_missed_notice_is_told_once_the_broker_is_back(harness))
+
+
+def test_a_dropped_route_marks_nothing_and_says_so() -> None:
+    # Guard: a route declared Drop is not held: Publish answers NoticeDropped and no gap is told after the return.
+    outage = SenderOutage()
+    harness = gap_harness(MemoryBroker(), outage=outage)
+    routes = _sender_only(Drop())
+    channel = f"{PREFIX}:note"
+    reading = tuple(NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, r.when_unsent, (channel,))
+                    for r in routes)
+
+    @do
+    def drops_one() -> "EffectGenerator[object]":
+        yield harness.cut()
+        answer = yield Publish(LawNote("stale"))
+        yield harness.restore()
+        yield Publish(LawNote("end"))
+        return (answer, (yield WaitForEvent(SourceMissed, LawNote)))
+
+    events = notice_events_handler("dropper", reading, PATIENCE_SECONDS)
+    queue = subscribed_event_handler(EventBus(), "dropper", (SourceMissed, LawNote))
+    party = queue(memory_notice_handler(MemoryBroker())(refuses_senders(outage)(events(drops_one()))))
+    answer, first = run_on_virtual_clock(party)
+    assert isinstance(answer, NoticeDropped), answer
+    assert first == LawNote("end"), first
+    assert outage.asked == 0, "a dropped notice does not wait for the broker's return"
+
+
+def test_many_missed_notices_on_one_channel_are_told_as_one_gap() -> None:
+    # Guard: what is held is bounded by the channels — 50 missed notices on one channel are one gap.
+    harness = gap_harness(MemoryBroker())
+
+    @do
+    def misses_many() -> "EffectGenerator[object]":
+        yield harness.cut()
+        for number in range(50):
+            yield Publish(LawNote(f"lost-{number}"))
+        yield harness.restore()
+        yield Publish(LawNote("end"))
+        heard: tuple[object, ...] = ()
+        while (came := (yield WaitForEvent(SourceMissed, LawNote))) != LawNote("end"):
+            heard = (*heard, came)
+        return heard
+
+    assert run_on_virtual_clock(harness.as_party("law-many", (SourceMissed, LawNote), misses_many())) == (
+        SourceMissed("law-many", f"{PREFIX}:note"),
+    )
+
+
+def test_a_gap_left_when_a_body_ends_does_not_reach_the_next_body() -> None:
+    # Guard: the marks belong to one wrapped body. A body that ends during an outage leaves its gap behind (its
+    # process would restart and tell the gap at its start); the next body on the same broker is told nothing.
+    broker = MemoryBroker()
+    first = gap_harness(broker)
+    second = gap_harness(broker)
+
+    @do
+    def leaves_a_gap() -> "EffectGenerator[None]":
+        yield first.cut()
+        yield Publish(LawNote("lost"))
+
+    @do
+    def starts_clean() -> "EffectGenerator[object]":
+        yield Publish(LawNote("end"))
+        return (yield WaitForEvent(SourceMissed, LawNote))
+
+    run_on_virtual_clock(first.as_party("law-first", (LawNote,), leaves_a_gap()))
+    assert run_on_virtual_clock(second.as_party("law-second", (SourceMissed, LawNote), starts_clean())) == LawNote(
+        "end"
+    )
+
+
+def test_a_sender_tells_a_gap_on_its_start_channels_when_it_starts() -> None:
+    # A sender whose previous process may have ended holding a gap tells it when it starts: a reader connected
+    # before the sender started is told SourceMissed on that channel.
+    broker = MemoryBroker()
+    channel = f"{PREFIX}:note"
+    starting = tuple(
+        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, MarkGap(start_channels=(channel,)))
+        for r in law_routes(PREFIX)
+    )
+    harness = memory_harness(broker)
+
+    @do
+    def reader_then_sender() -> "EffectGenerator[object]":
+        from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, Wait
+
+        ready = yield CreatePromise()
+
+        @do
+        def reads() -> "EffectGenerator[object]":
+            yield WaitForEvent(SourceStarted)
+            yield CompletePromise(ready, None)
+            return (yield WaitForEvent(SourceMissed, LawNote))
+
+        reader = yield Spawn(harness.as_party("law-reader", (SourceStarted, SourceMissed, LawNote), reads()))
+        yield Wait(ready.future)
+        sender = memory_notice_handler(broker)(
+            notice_events_handler("law-restarted", starting, PATIENCE_SECONDS)(Pure(None))
+        )
+        yield subscribed_event_handler(EventBus(), "law-restarted")(sender)
+        return (yield Wait(reader))
+
+    assert run_on_virtual_clock(reader_then_sender()) == SourceMissed("law-reader", channel)
+
+
+def test_a_return_nobody_can_tell_ends_the_body_with_that_error_after_the_next_publish_told_the_gap() -> None:
+    # When nothing can answer AwaitBrokerBack, the task waiting for the return fails; the body goes on, the next
+    # Publish that gets through still tells the gap first, and the failure is raised when the body ends.
+    @do
+    def cannot_tell(effect: AwaitBrokerBack, k) -> "EffectGenerator[object]":
+        raise RuntimeError("nobody can tell whether the broker is back")
+        yield
+
+    from doeff import handler as program_handler
+
+    harness = gap_harness(MemoryBroker(), below_events=program_handler(cannot_tell))
+    # The body's answer is lost to the raise at its end, so it leaves what it heard here.
+    seen = SimpleNamespace(heard=())
+
+    @do
+    def sends_on() -> "EffectGenerator[None]":
+        yield harness.cut()
+        yield Publish(LawNote("lost"))
+        yield harness.reopen()
+        sent = yield Publish(LawNote("next"))
+        assert isinstance(sent, NoticeSent), sent
+        first = yield WaitForEvent(SourceMissed, LawNote)
+        second = yield WaitForEvent(SourceMissed, LawNote)
+        seen.heard = (first, second)
+
+    with pytest.raises(RuntimeError, match="nobody can tell"):
+        run_on_virtual_clock(harness.as_party("law-unknown", (SourceMissed, LawNote), sends_on()))
+    assert seen.heard == (SourceMissed("law-unknown", f"{PREFIX}:note"), LawNote("next"))
+
+
+def test_the_wait_for_the_return_stops_once_the_next_publish_told_the_gap() -> None:
+    # Once the next Publish told the gap, nothing waits for the return any more: telling the return afterwards
+    # makes nobody send again, and the body's end finds no waiting task left to stop.
+    outage = SenderOutage()
+    harness = gap_harness(MemoryBroker(), outage=outage)
+
+    @do
+    def clears_by_publishing() -> "EffectGenerator[object]":
+        yield harness.cut()
+        yield Publish(LawNote("lost"))
+        yield harness.reopen()
+        yield Publish(LawNote("next"))
+        asked_before = outage.asked
+        yield harness.restore()
+        yield Publish(LawNote("end"))
+        heard: tuple[object, ...] = ()
+        while (came := (yield WaitForEvent(SourceMissed, LawNote))) != LawNote("end"):
+            heard = (*heard, came)
+        return (asked_before, outage.asked, heard)
+
+    asked_before, asked_after, heard = run_on_virtual_clock(
+        harness.as_party("law-stop", (SourceMissed, LawNote), clears_by_publishing())
+    )
+    assert asked_before == 1, asked_before
+    assert asked_after == 1, asked_after
+    assert heard == (SourceMissed("law-stop", f"{PREFIX}:note"), LawNote("next")), heard
 
 
 def test_notice_announced_during_an_outage_is_not_delivered_later() -> None:
-    # What the laws do not promise, pinned down: the subscription a cut ended does not hand over later what the
-    # broker was asked to announce before the new subscription (asked of the lower layer, so nothing holds it).
-    # The reader is told the return and catches up from its records.
+    # What the laws do not promise, pinned down: the subscription a cut ended does not hand over later what was
+    # announced before the new subscription — only a gap is told. The reader catches up from its records.
     harness = memory_harness(MemoryBroker())
 
     @do

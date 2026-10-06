@@ -66,8 +66,8 @@ Generic publish/subscribe effects for doeff.
 
 ```python
 from doeff_events import (
-    EventBus, MemoryBroker, NoticeRoute, NoticeSent, SourceResumed, SourceStarted,
-    memory_notice_handler, notice_events_handler, redis_notice_handler, subscribed_event_handler,
+    EventBus, MarkGap, MemoryBroker, NoticeRoute, NoticeSent, SourceMissed, SourceResumed, SourceStarted,
+    broker_back_by_retry, memory_notice_handler, notice_events_handler, redis_notice_handler, subscribed_event_handler,
 )
 
 routes = (
@@ -77,7 +77,7 @@ routes = (
         channel=lambda event: f"turn:{event.conversation}",  # 出す先の channel を出来事の値から決める
         encode=lambda event: json.dumps(...),              # 型 → 文字列
         decode=lambda body: TurnState(...),                # 文字列 → 型
-        held_key=lambda event: ("turn-state", event.turn), # 届かない間に持つ時の鍵(同じ鍵は後の値で置き換え)
+        when_unsent=MarkGap(),                             # 届かなかった時: channel に欠けの印(Drop() = 持たない)
         reads=("turn:c1",),                                # この process が受ける channel(出すだけなら ())
     ),
 )
@@ -85,7 +85,9 @@ routes = (
 # 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
 program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStarted, SourceResumed))(
     redis_notice_handler("redis://agora-events:6379/0")(     # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
-        notice_events_handler("screen", routes, patience_seconds=900.0)(body)
+        broker_back_by_retry(retry_seconds=2.0)(             # Redis の戻りを、待っている間だけ繋がるかの試しで知る
+            notice_events_handler("screen", routes, patience_seconds=900.0)(body)
+        )
     )
 )
 ```
@@ -93,12 +95,14 @@ program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStart
 - 出す側: 道の表に在る型の `Publish` を broker へ送り(`PUBLISH`)、答えは `NoticeSent(receivers)` — その時に購読していた受け手の数
   です(0 = 誰も聞いていない。0 をどう扱うかは出し手が決めます。1 以上でも、受け手が読んだ事の証ではありません)。表に無い型は外の
   handler(process の中の列)へそのまま出ます。
-- 出し損ね: broker に届かなかった出来事は捨てずに、道の `held_key` の鍵ごとに持ちます(同じ鍵の後の出来事が前の物を置き換える・
-  鍵の空間は 1 つの包みの全部の道で共通)。`Publish` の答えは `NoticeHeld(detail)` で、Program は止まらずに続きます。持った物は
-  task 1 本が `AwaitBrokerBack` の答えを待って、残った出来事を出した順に出します。また届かなければ残りを持って次の戻りを待ちます。
-  持っている間の新しい `Publish` は、その後ろに並びます(出る順は出した順)。時間で出し直す所も回数の上限も在りません。持つ量は鍵の
-  数で止まります。process が終わると持った物は消えます — 出し手は起動の時に今の状態を出し直し、受け手は記録から追いつきます。
-  出し損ねの扱いはこの 1 か所だけで、出し手は `Publish` の答えを見て自分で出し直しません。
+- 出し損ね(扱いはここ 1 か所 — ADR-DOE-EVENTS-002 R5): broker に届かなくても `Publish` は例外を上げず、閉じた型の 3 つのどれかで答えます —
+  `NoticeSent`・`NoticeGapMarked`(道の `when_unsent` が `MarkGap` — その channel に欠けの印を付けた)・`NoticeDropped`(`Drop` — 持たない。
+  すぐ古く成る物のため)。持つのは channel の印だけで、出来事そのものは持ちません(持つ量は channel の数で止まる)。欠けは定まった知らせ 1 通
+  (`GAP_NOTICE`)で、broker が戻った時(`AwaitBrokerBack` の答え)・次に通る `Publish` の前・出し手の起動の時(`MarkGap.start_channels`)に
+  出します。受ける包みはそれを `SourceMissed(source, channel)` にし、Program は `SourceStarted` / `SourceResumed` と同じく記録から 1 度
+  追いつきます(何度来てもよい)。別の task が欠けを出している間の `Publish` は、それが終わるのを待ってから出ます(順が入れ替わらない)。
+  次の `Publish` が欠けを全部出したら、戻りを待つ task は止まります。`AwaitBrokerBack` に誰も答えられない時、その task は止まり、印は
+  次の `Publish` まで残り、その失敗は本体が終わる時に上がります。本体が終われば印は消えます(次の起動の欠けの知らせで埋める)。
 - 受ける側: 包んだ本体の最初の effect より前に購読を始め、**broker が購読を確かめた後に** `SourceStarted(source)` を 1 度 出します。
   受けた知らせは全部 process の中の購読者の列へ `Publish` し、Program は `WaitForEvent` で 1 つずつ受けます(`WaitForEvent` に答えるのは
   外の `subscribed_event_handler` — `SourceStarted`・`SourceStalled`・`SourceResumed` は、購読の型に名指した Program だけが受けます)。
@@ -109,7 +113,9 @@ program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStart
 - 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限 `patience_seconds` の `WaitWithin` 1 つ —
   時間で読み直しません)。戻れば購読を作り直し、broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば
   `NoticeSourceUnreachable` で落ちます(`SourceFailed` が本体の待ちに届く)。`AwaitBrokerBack` に答えるのは、memory の handler では handler
-  自身、Redis の handler では組み立ての側(broker の Service の戻りを知る物)です — Redis の handler は答えません。
+  自身、Redis では `broker_back_by_retry(retry_seconds)`(`redis_notice_handler` の内側・`notice_events_handler` の外側に置く)です —
+  落ちている Redis からは知らせが来ないので、待っている間だけ、組み立てが名指す間隔(既定なし)で「繋がるか」だけを試します
+  (`ProbeBroker` = `PING`・data を読み書きしない)。待つ者が居ない間の試しは 0 です(ADR-DOE-EVENTS-002 R6)。
 - 読むのが遅い受け手: Redis は、購読者あての未送の知らせが `client-output-buffer-limit pubsub`(既定 32mb 8mb 60)を越えると、その
   購読者の接続を切ります。受け手には「接続が切れた」(`SourceStalled` → `SourceResumed`)として届き、知らせが黙って抜ける事はありません
   (本物の redis-server 7.2.7 のテストで確かめています)。

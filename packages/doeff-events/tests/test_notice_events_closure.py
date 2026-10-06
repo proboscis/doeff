@@ -15,8 +15,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff_events import EventBus, NoticeRoute, notice_events_handler, subscribed_event_handler
-from doeff_events.effects import WaitForEvent
+from doeff_events import EventBus, MarkGap, NoticeRoute, notice_events_handler, subscribed_event_handler
+from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.effects.notices import Announce
 from doeff_events.handlers.notice_events import NOTICE_EVENTS_EFFECTS, _checked_plan, _run
 
@@ -57,8 +57,19 @@ ROUTES = (
         channel=_channel,
         encode=_encoded,
         decode=_decoded,
-        held_key=_encoded,
+        when_unsent=MarkGap(),
         reads=("rooms",),
+    ),
+)
+# The same route for a wrapper that only sends (nothing to read) and tells a gap on its channel when it starts.
+SENDER_ROUTES = (
+    NoticeRoute(
+        event_type=Rang,
+        wire_name="rang",
+        channel=_channel,
+        encode=_encoded,
+        decode=_decoded,
+        when_unsent=MarkGap(start_channels=("rooms",)),
     ),
 )
 BUS = EventBus()
@@ -75,6 +86,20 @@ def _waits() -> EffectGenerator[Rang]:
 def _wrapped() -> EffectGenerator[Rang]:
     """The wrapper running the body ``_waits`` — the target for reading what it performs around the body."""
     answer: Rang = yield _run(_checked_plan("rooms-source", ROUTES, 30.0), _waits())
+    return answer
+
+
+@do
+def _publishes() -> EffectGenerator[object]:
+    """The body of a wrapper that only sends: publish one event and answer what Publish answered."""
+    answer: object = yield Publish(Rang(room="hall"))
+    return answer
+
+
+@do
+def _wrapped_sender() -> EffectGenerator[object]:
+    """The wrapper that only sends, running the body ``_publishes`` — the target for reading what it performs."""
+    answer: object = yield _run(_checked_plan("rooms-sender", SENDER_ROUTES, 30.0), _publishes())
     return answer
 
 
@@ -101,9 +126,8 @@ def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() ->
     assert declared is not None
     around = analyze_program(_wrapped).residual_with(runs_where_performed).effect_types
     body = analyze_program(_waits).residual_with(runs_where_performed).effect_types
-    # ``Announce`` is performed inside the clause that sends a routed ``Publish`` (``_sent``), which the reading of
-    # the run around the body does not enter — it is declared, and counted here by name.
-    assert Announce not in around
+    # ``Announce`` is performed around the body (the start gaps) and inside the clause that sends a routed
+    # ``Publish`` (``_sent``), which the reading of the run around the body does not enter — it is declared.
     assert declared.effect_types == (around - body) | {Announce}
 
 
@@ -111,3 +135,14 @@ def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
     scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
     coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
+
+
+def test_the_declared_effects_are_what_a_wrapper_that_only_sends_performs_around_the_body() -> None:
+    # A wrapper with no channel to read has no source task, but tells a gap when it starts and waits for the
+    # broker's return while it holds one: what it performs around the body is still inside the declaration.
+    declared = analyze_handler("doeff_events.handlers.notice_events:notice_events_handler").performs
+    assert declared is not None
+    around = analyze_program(_wrapped_sender).residual_with(runs_where_performed).effect_types
+    body = analyze_program(_publishes).residual_with(runs_where_performed).effect_types
+    assert (around - body) <= declared.effect_types, (around - body) - declared.effect_types
+    assert Announce in declared.effect_types
