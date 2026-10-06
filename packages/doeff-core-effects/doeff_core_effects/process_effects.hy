@@ -80,6 +80,10 @@
 ;;;                     〔hold-stdin でない〕・読み手の居ない pipe には書かない)か ProcessNotChild(立てていない pid)。書くのは短い行に限る
 ;;;                     (pipe の容量 約 64 KB を超えると、読み手が読むまで書きが待つ)。
 ;;;   本物の答え手は、立てた子の表を process に 1 つ持つ(子は OS の process ごとの資源 — 答え手を積み直しても同じ子を問える)。
+;;;   AwaitProcessExit  立てた子が終わるまで待つ(#3871 — 消費者 = doeff-cluster の worker の周の間の待ち。子の終わりで起きる)。答え =
+;;;                     ProcessEnded(終わった — 回収はしない。終了 code は後の PollProcess が答える)か ProcessNotChild。答え手は
+;;;                     subprocess-handler とは別(仕組みが機体ごとに違う — Linux = pidfd_exit.hy の pidfd-exit-handler)。外側に
+;;;                     await-handler と scheduled が要る。待っている task を取り消すと、待ちの資源(pidfd)を閉じる。
 ;;;
 ;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
 ;;; ここで 1 度だけ作る。本物(os_process.hy)と I/O なし(scripted_process.hy)の答え手は同じ関数を呼ぶ(同じ形で答える — 契約テスト
@@ -263,6 +267,11 @@
   (setv stop-grace 10.0))
 
 
+(defclass [(dataclass :frozen True)] AwaitProcessExit [EffectBase]
+  "StartProcess で立てた子が終わるまで待つ(頭の註)。答え = ProcessEnded か ProcessNotChild。"
+  (#^ int pid))
+
+
 ;; SignalProcess で送る signal の閉じた型(#2461): TERM = 止まってくれと頼む(子は後始末をして終われる)・KILL = 強いて止める。
 (defenum ProcessSignal TERM KILL)
 
@@ -312,6 +321,11 @@
   "子は終わり、回収した(exit-code = returncode を丸めない — 負の値 = signal)。この後その pid は ProcessNotChild。"
   (#^ int pid)
   (#^ int exit-code))
+
+
+(defrecord ProcessEnded
+  "待った process が終わった(AwaitProcessExit・AwaitWarmChildExit の答え — 回収はしない。終了 code は PollProcess・PollWarmChild が答える)。"
+  (#^ int pid))
 
 
 (defrecord ProcessNotChild

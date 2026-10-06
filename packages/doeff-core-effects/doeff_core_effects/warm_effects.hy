@@ -16,6 +16,9 @@
 ;;;   SignalWarmChild  頼んだ子の group へ signal を 1 度だけ送る。答え = WarmSignaled か WarmGone(居ない・終わっている・使い回された —
 ;;;                    他人の process には送らない)。終わりは PollWarmChild で読む: TERM は子 A が受けずに入口の終わり(-15)を exit の
 ;;;                    file に書く・KILL は A も道連れにするので exit の file は無く WarmLost。
+;;;   AwaitWarmChildExit 頼んだ子が終わるまで待つ(#3871 — 消費者 = doeff-cluster の worker の周の間の待ち)。答え = ProcessEnded
+;;;                    (process_effects.hy — 終わった・使い回された・居ない。終了 code は後の PollWarmChild が読む)。pid と start-ticks の組で
+;;;                    子を名指す。答え手は機体ごとの仕組み(Linux = pidfd_exit.hy の pidfd-exit-handler)。外側に await-handler と scheduled が要る。
 ;;;
 ;;; 断り・失った・送らない理由の文と、exit の file の中身の読みは、本物と I/O なしの答え手が同じ関数を呼ぶ(同じ形で答える — 契約テスト
 ;;; tests/test_warm_process_contract.hy)。
@@ -52,6 +55,12 @@
   #^ int pid
   #^ int start-ticks
   #^ str exit-path)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] AwaitWarmChildExit [EffectBase]
+  "頼んだ子が終わるまで待つ(頭の註)。答え = ProcessEnded。"
+  #^ int pid
+  #^ int start-ticks)
 
 
 (defclass [(dataclass :frozen True :kw-only True)] SignalWarmChild [EffectBase]
