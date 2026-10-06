@@ -95,8 +95,9 @@
                      "packages/doeff-events/tests/test_notice_laws_memory.py::test_a_sender_tells_a_gap_on_its_start_channels_when_it_starts"
                      "packages/doeff-events/tests/test_notice_laws_memory.py::test_a_return_nobody_can_tell_ends_the_body_with_that_error_after_the_next_publish_told_the_gap"
                      "packages/doeff-events/tests/test_notice_laws_memory.py::test_the_wait_for_the_return_stops_once_the_next_publish_told_the_gap"
+                     "packages/doeff-events/tests/test_notice_laws_redis.py::test_a_sender_cut_off_alone_tells_its_gap_to_a_connected_reader_when_it_reaches_the_server_on_redis"
                      "test-adr-doe-events-002-laws-are-declared"]
-       :wiring "配線済み(2026-10-07)— 筋書き notice_laws の GAP_LAWS 5 本を、出し手の側だけ broker を失う層(tests の refuses_senders — 読み手は繋がったまま)の下で memory で回す。戻りを知らせない層では行き止まりで赤。本物の redis-server では回していない(出し手の側だけの止まりは broker の種類によらず同じ層で作る)。")
+       :wiring "配線済み(2026-10-07)— 筋書き notice_laws の GAP_LAWS 5 本を、出し手の側だけ broker を失う層(tests の refuses_senders — 読み手は繋がったまま)の下で memory で回す。戻りを知らせない層では行き止まりで赤。本物の redis-server では、出し手だけをテストの TCP の中継で切って戻し(読み手は直に繋がったまま)、欠けが SourceMissed で届く事を確かめる(redis-server の無い機体では理由つきの skip)。")
      (law broker-return-is-tried-only-while-waited
        :statement "for_all 時刻の区間 I: I の間に AwaitBrokerBack を待つ者が居なければ、broker_back_by_retry の試し(ProbeBroker)は 0 度。待つ者が居る間は組み立ての名指す間隔ごとに 1 度試し、繋がった最初の試しで答える。次の Publish が欠けを全部出した後は試さない。"
        :counterexamples
@@ -104,8 +105,10 @@
           (counterexample "戻りを待つ task を、次の Publish が欠けを出した後も止めない上の層 — 要らない試しが続く")]
        :enforced-by ["packages/doeff-events/tests/test_broker_back_by_retry.py::test_nothing_is_tried_while_no_gap_is_held"
                      "packages/doeff-events/tests/test_broker_back_by_retry.py::test_a_held_gap_is_tried_every_interval_and_told_at_the_first_try_after_the_return"
-                     "packages/doeff-events/tests/test_broker_back_by_retry.py::test_trying_stops_once_the_next_publish_told_the_gap"]
-       :wiring "配線済み(2026-10-07)— memory の broker(ProbeBroker に切られているかで答える)と仮想の時計の下で、試しの刻を数える。本物の Redis で出し手の接続だけを切って戻す検は、まだ無い(redis-server の在る機体の日次の検証で足す — #3864)。")]
+                     "packages/doeff-events/tests/test_broker_back_by_retry.py::test_trying_stops_once_the_next_publish_told_the_gap"
+                     "packages/doeff-events/tests/test_notice_laws_redis.py::test_a_sender_cut_off_alone_tells_its_gap_to_a_connected_reader_when_it_reaches_the_server_on_redis"
+                     "packages/doeff-events/tests/test_notice_laws_redis.py::test_a_restarted_server_is_tried_only_while_a_gap_is_held_and_told_one_gap_on_redis"]
+       :wiring "配線済み(2026-10-07)— memory の broker(ProbeBroker に切られているかで答える)と仮想の時計の下で、試しの刻を数える。本物の redis-server でも、出し手の接続だけを切って戻す検と、server を止めて同じ port で起こし直す検が、試しの数(止まりの前 0・止まりの間は間隔ごと・欠けを出した後は増えない)と欠けの知らせ 1 通を数える(redis-server の無い機体では理由つきの skip)。")]
   :enforcement
     [(deftest test-adr-doe-events-002-laws-are-declared
        ;; 針: 法の筋書きが notice_laws.py の 1 か所に在り、法の組 EVENT_LAWS・GAP_LAWS・BROKER_LAWS に載っている。
