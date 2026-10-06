@@ -1741,10 +1741,21 @@ the effect in the enclosing do-context.
 ;; deftest — effectful test that expands to pytest function
 ;; ---------------------------------------------------------------------------
 
+(defn _test-scans [value]
+  "deftest の :scans の値(そのテストが走査して読む dir か glob — agora-redesign #3874)を検めて glob の list にする。
+   文字列の tuple(空でない・空の文字列を含まない)以外は断る — 黙って捨てると、宣言したつもりのテストが選びの道具に選ばれない。
+   展開の時に呼ぶ helper なので defn(defk にできない)。"
+  (when (or (not (isinstance value hy.models.Tuple)) (= (len value) 0)
+            (not (all (gfor g value (and (isinstance g hy.models.String) (> (len g) 0))))))
+    (raise (SyntaxError (.format "deftest の :scans は、走査して読む dir か glob の文字列の tuple(例 #(\"scripts/x/*.txt\"))— 受けた形: {}"
+                                 (hy.repr value)))))
+  (list value))
+
 (defn _extract-test-meta [body]
   "Parse optional test metadata dict from front of body.
-   Supported keys: :interpreters, :params, :env, :marks, :skip-if, :skip-reason.
-   Returns #(interpreters params-dict env-dict marks skip-if skip-reason real-body).
+   Supported keys: :interpreters, :params, :env, :marks, :skip-if, :skip-reason, :scans.
+   :scans = the dirs or globs the test walks and reads (a tuple of strings — agora-redesign #3874).
+   Returns #(interpreters params-dict env-dict marks skip-if skip-reason scans real-body).
    Skips leading docstring if present."
   (setv interpreters None
         params-dict None
@@ -1752,6 +1763,7 @@ the effect in the enclosing do-context.
         marks None
         skip-if-expr None
         skip-reason None
+        scans None
         real-body body)
   (setv meta-idx None)
   (for [#(i form) (enumerate body)]
@@ -1782,8 +1794,10 @@ the effect in the enclosing do-context.
       (when (= (str k) ":skip-if")
         (setv skip-if-expr v))
       (when (= (str k) ":skip-reason")
-        (setv skip-reason v))))
-  #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body))
+        (setv skip-reason v))
+      (when (= (str k) ":scans")
+        (setv scans (_test-scans v)))))
+  #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body))
 
 (import doeff-hy.static-view [deftest-fixture-annotation])
 
@@ -1844,6 +1858,13 @@ the effect in the enclosing do-context.
      (<- result (fetch-prices))
      (assert result))
 
+   A test that walks a dir or glob instead of importing what it reads declares it, so a changed-file selector
+   (agora-controllers' land_focus_gate) picks the test when a scanned file changes (agora-redesign #3874):
+
+   (deftest test-every-table-row-loads
+     {:scans #(\"scripts/business_fakes/*/*.txt\")}
+     (assert (all-rows-load)))
+
    A fixture may carry its type for the static check — `(deftest test-x [#^ str label] …)`;
    pytest's built-in fixtures (tmp_path, monkeypatch, capsys, …) and doeff_interpreter are typed
    by doeff-hy-check without it, any other unannotated fixture is `object` (agora-redesign #2214).
@@ -1862,7 +1883,7 @@ the effect in the enclosing do-context.
         fixture-params (lfor #(param-name _) fixture-annotations param-name))
 
   ;; Parse optional metadata dict
-  (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body)
+  (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body)
     (_extract-test-meta body))
 
   ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)
@@ -1932,6 +1953,10 @@ the effect in the enclosing do-context.
   (when (is-not skip-if-expr None)
     (.append item-decorators #("skipif" None None)))
 
+  ;; :scans → @pytest.mark.scans("glob", ...)(走査して読む dir か glob の宣言 — 選びの道具は source を読み、走らせた時は印で読める)
+  (when (is-not scans None)
+    (setv item-decorators (+ item-decorators [#("scans" None (hy.models.List scans))])))
+
   ;; 型検査のための展開では、decorator の pytest を doeff-hy-check が module の頭に 1 度だけ置く別名
   ;; `_doeff_pytest`(doeff_hy/static_view.py の STATIC_HELPER_IMPORTS)で引く — deftest ごとの `import pytest` が
   ;; 書き手の import と重なって strict の reportDuplicateImport になっていた(agora-redesign #2214)。
@@ -1942,6 +1967,7 @@ the effect in the enclosing do-context.
       (match kind
         "parametrize" `(.parametrize (. ~pytest-name mark) ~(hy.models.String first) ~second)
         "mark" `(. (. ~pytest-name mark) ~(hy.models.Symbol first))
+        "scans" `(.scans (. ~pytest-name mark) ~@second)
         "skipif" `(.skipif (. ~pytest-name mark) ~skip-if-expr
                     :reason ~(if (is-not skip-reason None) skip-reason
                                  (hy.models.String "skip condition met"))))))

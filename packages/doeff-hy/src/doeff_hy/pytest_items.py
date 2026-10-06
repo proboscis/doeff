@@ -285,9 +285,11 @@ def record_function(
 ) -> hy.models.Expression:
     """test 関数を作る macro が、その関数の pytest の形の記録を展開に足すための口(足す式を返す)。
 
-    ``decorators`` は source の順に次の 3 つの形の組:
+    ``decorators`` は source の順に次の 4 つの形の組:
     ``("parametrize", <引数の名の文字列>, <値の list の form>)`` /
-    ``("mark", <印の名の form>, None)`` / ``("skipif", None, None)``。
+    ``("mark", <印の名の form>, None)`` / ``("skipif", None, None)`` /
+    ``("scans", None, <glob の文字列の list の form>)``(deftest の ``:scans`` — 印 ``scans``。記録には印の名だけを残す:
+    収集の ``-m`` が読むのは名で、glob は選びの道具が source から読む — agora-redesign #3874)。
     """
     fname = hy.mangle(str(name))
     try:
@@ -300,6 +302,8 @@ def record_function(
                     specs.append(Mark(hy.mangle(str(first))))
                 case "skipif":
                     specs.append(SkipIf())
+                case "scans":
+                    specs.append(Mark("scans"))
                 case _:
                     raise ValueError(f"pytest_items: 知らない decorator の種類 {kind!r}")
     except _NotStatic as exc:
