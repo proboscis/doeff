@@ -50,7 +50,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING
 
 import hy
-from doeff_hy_bytecode_guard import current_record
+from doeff_hy_bytecode_guard import current_record, gensym_renaming
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 from hy.models import Object
@@ -323,6 +323,40 @@ def _doeff_hy_import(statement: ast.stmt) -> bool:
             return False
 
 
+def with_canonical_gensyms(tree: ast.Module) -> ast.Module:
+    """展開の木の Hy の gensym の名(識別子と文字列の定数)を、file の中の数えの順に 1 から振り直す(agora-redesign #3869)。
+
+    gensym の数えは process に 1 つなので、同じ source でも、同じ process で先に何を展開したか・並べた時にどの process で
+    展開したかで名が変わり、保存の中身が実行の仕方に依っていた。振り直しの規則は、テストの実行の側の code の正準化と同じ
+    1 つ(doeff_hy_bytecode_guard.gensym_renaming)。替え方は 1 対 1 なので、名の一意性は保たれる。木はこの展開だけの物
+    なので、その場で替える。"""
+    nodes = tuple(ast.walk(tree))
+    rename = gensym_renaming(
+        text for node in nodes for _, value in ast.iter_fields(node) for text in _field_texts(value)
+    )
+    for node in nodes:
+        for name, value in ast.iter_fields(node):
+            match value:
+                case str():
+                    setattr(node, name, rename(value))
+                case list() if all(isinstance(item, str) for item in value):
+                    setattr(node, name, [rename(item) for item in value])
+                case _:
+                    pass
+    return tree
+
+
+def _field_texts(value: object) -> tuple[str, ...]:
+    """AST の欄 1 つの文字列(識別子・文字列の定数・global / nonlocal の名の列)。"""
+    match value:
+        case str():
+            return (value,)
+        case list():
+            return tuple(item for item in value if isinstance(item, str))
+        case _:
+            return ()
+
+
 def without_bookkeeping(tree: ast.Module) -> ast.Module:
     """型検査のための展開から、型の意味を持たない記帳を外す(pyright strict の誤検出の元を展開の側で絶つ)。
 
@@ -433,7 +467,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
         if not isinstance(compiled, ast.Module):
             raise TypeError(f"hy_compile が module を返さなかった: {type(compiled).__name__}")
-        tree = with_static_helpers(without_bookkeeping(compiled))
+        tree = with_canonical_gensyms(with_static_helpers(without_bookkeeping(compiled)))
     except HyLanguageError as error:
         line = error.lineno if isinstance(error.lineno, int) else 1
         column = error.offset if isinstance(error.offset, int) else 1

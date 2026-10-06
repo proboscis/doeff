@@ -334,3 +334,30 @@ def test_one_source_is_read_by_the_hy_reader_once(tmp_path: Path, monkeypatch: p
     assert "2 * x" in result.text, result.text  # reader macro が後ろの form に効いた
     assert [f.rule for f in result.findings].count("doeff-hy-setv") == 1, result.findings  # 一番外の setv の所見は残る
 
+
+#: 展開の文に Hy の gensym の名が出る source(file の中の macro が gensym を使う)。
+GENSYM_MODULE = """\
+(defmacro kept-twice [x]
+  (setv g (hy.gensym "kept"))
+  `(do (setv ~g ~x) (+ ~g ~g)))
+(setv answer (kept-twice 21))
+"""
+
+
+def test_the_expansion_text_does_not_depend_on_what_was_expanded_before(tmp_path: Path) -> None:
+    # 失敗ケース(agora-redesign #3869 の (b) の前提): Hy の gensym の番号は process に 1 つの数えなので、同じ source でも、同じ
+    # process で先に別の file を展開したかで展開の文が変わっていた。保存の中身が実行の順(と、並べた時の process の割り振り)で
+    # 変わらないよう、展開の文の gensym の名は file の中で出てくる順に振り直す。
+    from doeff_hy.static_check import Projection, project
+
+    first = tmp_path / "first.hy"
+    other = tmp_path / "other.hy"
+    first.write_text(GENSYM_MODULE, encoding="utf-8")
+    other.write_text(GENSYM_MODULE.replace("answer", "other_answer"), encoding="utf-8")
+    alone = project(tmp_path, [tmp_path], first)
+    assert isinstance(alone, Projection), alone
+    assert "_hy_gensym_kept_" in alone.text, alone.text
+    assert isinstance(project(tmp_path, [tmp_path], other), Projection)
+    again = project(tmp_path, [tmp_path], first)
+    assert isinstance(again, Projection), again
+    assert again.text == alone.text

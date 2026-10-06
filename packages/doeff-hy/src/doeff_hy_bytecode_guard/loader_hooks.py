@@ -11,7 +11,7 @@ import importlib.machinery
 import importlib.util
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from types import CodeType, ModuleType
 
 # 型検査のための展開の印(contextvars だけを読む軽い module — 起動時に読んでよい。compile の途中で初めて読むと、その .pyc を
@@ -94,6 +94,16 @@ def current_record(
     from doeff_hy_bytecode_guard import records  # 起動時に読まない
 
     return records.MacroRecord(_hy_version(), tuple(macro_dependencies(module, path, also)))
+
+
+def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
+    """名の並びに現れる Hy の gensym の名を、数えの小さい順に 1 から振り直す関数(他の名はそのまま返す)— code の木の正準化
+    (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy.static_check — agora-redesign #3869)にも当てる
+    公開の口。展開の文が、同じ process で先に何を展開したか・どの process で展開したかに依らなくなる。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    renames = records.gensym_renames(names)
+    return lambda name: records.renamed(name, renames)
 
 
 def record_from_rows(hy_version: str, rows: "tuple[tuple[str, str, str], ...]") -> "MacroRecord":
