@@ -18,6 +18,7 @@ from doeff_records.values import (
     ListRowsAnswer,
     PutRowAnswer,
     PutRowsAnswer,
+    ReadEventByKeyAnswer,
     ReadEventsAnswer,
     ReadRowAnswer,
     ReadStreamEndAnswer,
@@ -93,6 +94,11 @@ class ReadEvents(EffectBase[ReadEventsAnswer]):
 @dataclass(frozen=True)
 class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):
     stream: str
+
+@dataclass(frozen=True)
+class ReadEventByKey(EffectBase[ReadEventByKeyAnswer]):
+    stream: str
+    idempotency_key: str
 
 # 源の工場の問い(#3127)— 答えは doeff_records.event_source の SignalSourceFactory。event_source は effects を読むので、ここでは型を文字列で名指す。
 @dataclass(frozen=True)

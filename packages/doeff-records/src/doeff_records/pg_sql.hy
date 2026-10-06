@@ -522,6 +522,28 @@
              :params (+ (! (params-of #(#("ledger" stream)))) living.params)))
 
 
+(defk event-by-key-statement [prefix stream idempotency-key expiry]
+  {:pre [(: prefix str) (: stream str) (: idempotency-key str) (: expiry (| EventExpiry None))] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "冪等キー 1 つの出来事を、列を辿らずに 1 文で引く文を作るため(ReadEventByKey)。行は 2 種で、1 列目の札で分ける: 'event' = 生きた
+   出来事の行(seq・at・payload と、保持の期限を過ぎたか — 回収の前でも過ぎた刻から。判定は読みと回収と同じ expired-event-condition・
+   expiry = None は期限の無い列で過ぎない)/ 'retired' = 回収で消した鍵の覚え(retired_keys の seq)。どちらも一意の索引
+   (append_rows_idempotency・retired_keys の主キー)に当たるので、列の長さに依らない。どちらにも無ければ 0 行。"
+  (var expired "false")
+  (var bounds #())
+  (when (is-not expiry None)
+    (<- condition (expired-event-condition prefix expiry.separator "before_at"))
+    (:= expired condition)
+    (<- named (params-of #(#("before_at" expiry.before-at))))
+    (:= bounds named))
+  (Statement :text (.format "SELECT 'event', old.seq, old.at, old.payload, ({e}) FROM {p}append_rows AS old
+                       WHERE old.ledger = :ledger AND (old.payload::jsonb) ->> 'idempotencyKey' = :idempotency_key
+                     UNION ALL
+                     SELECT 'retired', kept.seq, CAST(NULL AS bigint), CAST(NULL AS text), true FROM {p}retired_keys AS kept
+                       WHERE kept.ledger = :ledger AND kept.idempotency_key = :idempotency_key" :p prefix :e expired)
+             :params (+ (! (params-of #(#("ledger" stream) #("idempotency_key" idempotency-key)))) bounds)))
+
+
 (defk stream-tail-statement [prefix stream expiry stem]
   {:pre [(: prefix str) (: stream str) (: expiry (| EventExpiry None)) (: stem str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}

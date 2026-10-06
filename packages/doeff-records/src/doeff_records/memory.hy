@@ -1,4 +1,4 @@
-;;; memory の handler — 公開 effect 8 つと列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 9 つと列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
@@ -14,7 +14,7 @@
 ;;; 保持の註)。
 ;;; 呼び鈴を外の promise にするのは、同期の書き(handler の外から置き場の関数を直に呼ぶ模擬の支度)と別の
 ;;; thread の書きからも鳴らせるため。待ちは park で待つ(仮想の時計を止めない — 期限の刻まで時計が進める)。
-;;; 保持の期限(#3561 — PostgreSQL の handler と同じ形): 読み(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd)は
+;;; 保持の期限(#3561 — PostgreSQL の handler と同じ形): 読み(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd・ReadEventByKey)は
 ;;; 回収を走らせず、読みの関数が刻を受けて期限を過ぎた行と出来事を出さない(回収と同じ判定 admission.row-expired? / event-expired?)。
 ;;; 回収(purge-expired — 期限を過ぎた行を消して変更の列に RowRemoved を積み、出来事を冪等キーの覚えへ移す)は SweepExpired の時だけ走る。
 ;;; 消え得る最も早い刻(purge-due-ms)より前なら回収は索引を見ない。書き(PutRow・PutRows・AppendEvent — #3605 の D)は回収を走らせず、
@@ -49,10 +49,11 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
-                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed])
+                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
+                              EventAbsent EventRetired])
 (import doeff_records.watching [closing-wake?])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd AwaitRecordsBack
-                               ReadSourcePatience])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey
+                               AwaitRecordsBack ReadSourcePatience])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.store_choice [StoreChoice])
@@ -668,6 +669,19 @@
   (StreamEmpty))
 
 
+(defn #^ (| Event EventAbsent EventRetired) memory-read-event-by-key [#^ MemoryStore store #^ ReadEventByKey ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
+  "ReadEventByKey に答えるため: 列を辿らずに冪等キーの引き(by-idempotency)で出来事を 1 つ引く。刻 now-ms で保持の期限を過ぎていれば回収の前でも
+   EventRetired・回収で消した鍵は覚え(retired-keys)の番号で EventRetired・どちらにも無ければ EventAbsent(消した鍵の再送は新しい出来事を
+   積まない — judge-append — ので、生きた出来事と覚えは同じ鍵で重ならない)。"
+  (setv decl (store.schema.stream ask.stream)
+        slot #(ask.stream ask.idempotency-key)
+        event (.get store.by-idempotency slot))
+  (cond
+    (is-not event None) (if (stored-event-expired? store decl event now-ms) (EventRetired event.sequence) event)
+    (in slot store.retired-keys) (EventRetired (. (get store.retired-keys slot) sequence))
+    True (EventAbsent)))
+
+
 (defn #^ int memory-advance-epoch [#^ MemoryStore store]
   (with [store.lock]
     (+= store.epoch 1)
@@ -743,9 +757,9 @@
 
 (defk answered [store operation names ask program]
   {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
-   ;; 答え = 公開 effect 8 つと WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
+   ;; 答え = 公開 effect 9 つと WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty))]
+                  Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty Event EventAbsent EventRetired))]
    :tags {:context "records" :role "foundation"}}
   "公開 effect ask の答え: 届かない状態(SetStoreOutage)が先・次に当たる故障(lands でなければ置き場に触らずに故障の答え・lands なら
    program で置き場に着けてから故障の答え)・どちらも無ければ program の答え。"
@@ -761,7 +775,7 @@
 
 (defk at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
-   ;; 答え = 置き場の操作の答え(公開 effect 8 つの答えの型のどれか)。
+   ;; 答え = 置き場の操作の答え(公開 effect の答えの型のどれか)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
                   Changes Appended Events StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
@@ -776,10 +790,10 @@
 (defk read-at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
    ;; 答え = 置き場の読みの答え(読みの公開 effect の答えの型のどれか)。
-   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty))]
+   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty Event EventAbsent EventRetired))]
    :tags {:context "records" :role "foundation"}}
   "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(読みの節 ReadRow・ListRows・ReadEvents・
-   ReadStreamEnd の置き場の操作の形)。回収は走らせない — 読みの関数が刻を受けて期限を過ぎた行と出来事を自分で除く(頭の註・#3561)。"
+   ReadStreamEnd・ReadEventByKey の置き場の操作の形)。回収は走らせない — 読みの関数が刻を受けて期限を過ぎた行と出来事を自分で除く(頭の註・#3561)。"
   (<- now (GetTime))
   (val now-ms (epoch-ms now))
   (guarded store (fn [] (operation now-ms))))
@@ -855,6 +869,9 @@
     (resume answer))
   (ReadStreamEnd [stream]
     (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-stream-end store effect now-ms)))))
+    (resume answer))
+  (ReadEventByKey [stream idempotency-key]
+    (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-event-by-key store effect now-ms)))))
     (resume answer))
   (AwaitRecordsBack [names]
     ;; 合図の源の止まりの見張り(#3469)— 止まりが names から外れるまで呼び鈴で眠り、外れたら答える(期限は待つ側の源が持つ)。

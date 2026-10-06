@@ -1,4 +1,4 @@
-;;; PostgreSQL の handler — 公開 effect 8 つに PostgreSQL の表で答える(本番の置き場)。
+;;; PostgreSQL の handler — 公開 effect 9 つに PostgreSQL の表で答える(本番の置き場)。
 ;;; PutRows は PutRow と同じ置き場の錠と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
@@ -31,7 +31,7 @@
 ;;; 同じ分け方(memory.hy の ring-bells)。
 ;;; 読み手の窓の read-modify-write の競合(同じ読み手の位置を 2 つの要求が同時に読んで進める)は旧い版と同じで、ここでは直さない
 ;;; (#880 の構成のレビュー A4)。
-;;; 保持の期限(#3561): 読みの効果(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd)は回収を流さず、期限を
+;;; 保持の期限(#3561): 読みの効果(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd・ReadEventByKey)は回収を流さず、期限を
 ;;; 過ぎた行と出来事を読みの文の条件で除く(回収と同じ境 — row-expiry・event-expiry・pg_sql の頭の註)。読み 1 回が流すのは読みの文だけ。
 ;;; 回収(期限を過ぎた行を消して変更の列に「消えた」を積み、出来事を冪等キーの覚えへ移す — purge-expired)は SweepExpired(手入れの係)の
 ;;; 時だけ流す。時間で起きて回収する loop は持たない。
@@ -53,9 +53,11 @@
                                         SqlUnreachable])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
+                              EventAbsent EventRetired
                               StreamTail StreamTailEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
@@ -67,7 +69,7 @@
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
-                              insert-event-statement read-events-statement stream-end-statement expire-events-statement
+                              insert-event-statement read-events-statement stream-end-statement event-by-key-statement expire-events-statement
                               expire-event-groups-statement touched-events-statement delete-events-statement expiring-events-statement
                               retire-keys-statement find-retired-key-statement])
 
@@ -807,6 +809,26 @@
   (if (is last None) (StreamEmpty) (StreamEnd (int last))))
 
 
+(defk pg-read-event-by-key [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadEventByKey) (: now-ms int)] :post [(: % (| Event EventAbsent EventRetired))]
+   :tags {:context "records" :role "foundation"}}
+  "ReadEventByKey に答えるため: 冪等キーの出来事と、回収で消した鍵の覚えを 1 文で引く(event-by-key-statement — 一意の索引の引き 2 つで、
+   列を辿らない)。生きた出来事は Event・保持の期限を過ぎた出来事(回収の前)と覚えの鍵は EventRetired・どちらも無ければ EventAbsent。
+   消した鍵の再送は新しい出来事を積まない(judge-append)ので、出来事の行と覚えの行は同じ鍵で両方は来ない。"
+  (val decl (store.schema.stream ask.stream))
+  (<- expiry (event-expiry decl now-ms))
+  (<- statement (event-by-key-statement store.prefix ask.stream ask.idempotency-key expiry))
+  (<- records (query-rows store.database statement))
+  (when (not records)
+    (return (EventAbsent)))
+  (val record (get records 0))
+  ;; 覚えの行('retired')と、期限を過ぎた出来事の行(5 列目 = 過ぎたか)は、どちらも消えた出来事の番号で答える。
+  (when (or (= (get record 0) "retired") (get record 4))
+    (return (EventRetired (int (get record 1)))))
+  (<- event (event-of ask.stream (tuple (cut record 1 4))))
+  event)
+
+
 (defk moved-after [program]
   {:pre [(: program Program)] :post [(: % (| EventsMoved EventsQuiet Unreachable))]
    :tags {:context "records" :role "foundation"}}
@@ -904,6 +926,10 @@
   (ReadStreamEnd [stream]
     (<- now (GetTime))
     (<- answer (reached (pg-read-stream-end store effect (epoch-ms now))))
+    (resume answer))
+  (ReadEventByKey [stream idempotency-key]
+    (<- now (GetTime))
+    (<- answer (reached (pg-read-event-by-key store effect (epoch-ms now))))
     (resume answer))
   (AdvanceStoreEpoch []
     ;; 検の口: 届かなければ StoreUnreachable を上げる(答えの型は int だけ — 旧い版と同じ)。版は全部の待ち手に関わる(名の分からない合図)。

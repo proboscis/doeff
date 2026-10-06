@@ -37,6 +37,8 @@ from doeff_records.values import StreamTailEmpty as StreamTailEmpty
 from doeff_records.values import UndeclaredTable as UndeclaredTable
 from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
+from doeff_records.values import EventAbsent as EventAbsent
+from doeff_records.values import EventRetired as EventRetired
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -47,6 +49,7 @@ from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
+from doeff_records.effects import ReadEventByKey as ReadEventByKey
 PATH_PREFIX: str
 WRITER_HEADER: str
 OP_READ_ROW: str
@@ -58,6 +61,7 @@ OP_READ_EVENTS: str
 OP_PUT_ROWS: str
 OP_READ_STREAM_END: str
 OP_WATCH_EVENTS: str
+OP_READ_EVENT_BY_KEY: str
 OPERATIONS: tuple[str, ...]
 WATCH_MAX_SECONDS: float
 WRITE_OPERATIONS: frozenset[str]
@@ -82,8 +86,8 @@ CLIENT_KINDS: tuple[RequestKind, ...]
 CLIENT_OUTCOMES: tuple[str, ...]
 CLIENT_ANSWER_METRICS: tuple[str, ...]
 ANSWER_KINDS: dict[str, tuple[str, ...]]
-PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents
-WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet
+PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey
+WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet | Event | EventAbsent | EventRetired
 
 class WireMalformed(ValueError):
     ...

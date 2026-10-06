@@ -1,7 +1,9 @@
-;;; 記録の仕組みの公開 effect 8 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
+;;; 記録の仕組みの公開 effect 9 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
 ;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。WatchChanges は名指した列(streams)の末尾の
 ;;; 番号と刻も答えに載せる(Changes.tails — #3718)。
+;;; 9 つ目の ReadEventByKey は追記の列の出来事を冪等キーで 1 つ引く(列を頭から読まずに、置き場の (列, 冪等キー) の一意の索引で答える —
+;;; 出自の issue は #3750)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
@@ -178,6 +180,18 @@
   (#^ str stream)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadStreamEnd.stream")))
+
+
+(defclass [(dataclass :frozen True)] ReadEventByKey [EffectBase]
+  "追記の列 stream の、冪等キー idempotency-key で積んだ出来事を 1 つ引く — 使い手が鍵 1 つの問いのために列を頭から読み切らないため
+   (置き場は追記の重複を断るための (列, 冪等キー) の一意の索引を持つ)。答え = Event(在る)| EventAbsent(その鍵では積まれていない)|
+   EventRetired(積まれたが保持の期限で消えた — 消えた出来事の番号)| Unreachable。"
+  (#^ str stream)
+  (#^ str idempotency-key)
+  (defn #^ None __post_init__ [self]
+    (checked-table-name self.stream "ReadEventByKey.stream")
+    (when (not (and (isinstance self.idempotency-key str) self.idempotency-key))
+      (raise (ValueError "ReadEventByKey.idempotency_key は空でない文字列")))))
 
 
 (defclass [(dataclass :frozen True)] ReadSignalSource [EffectBase]

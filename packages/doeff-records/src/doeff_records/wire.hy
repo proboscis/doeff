@@ -1,4 +1,4 @@
-;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 8 つと列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
+;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 9 つと列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
 ;;; 値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
@@ -19,8 +19,9 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
-                              EventsQuiet])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+                              EventsQuiet EventAbsent EventRetired])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadEventByKey])
 
 (setv PATH-PREFIX "/v1/records/")
 ;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りをそのまま書き手の名に使う・#2988)。
@@ -34,8 +35,11 @@
 ;; 追記の列の頭が after より進むのを待つ操作(本文 = {stream after timeout} — 答え = eventsMoved | eventsQuiet)。前の 8 つの綴りは
 ;; 変えずに足した(#3074 — client が列の待ちを ReadEvents の読み直しでなく、service の中の置き場の待ちの long-poll で待つため)。
 (val OP-WATCH-EVENTS "watch-events")
+;; 追記の列の出来事を冪等キーで 1 つ引く操作(本文 = {stream idempotencyKey} — 答え = event | eventAbsent | eventRetired)。前の 9 つの
+;; 綴りは変えずに足した(#3750 — 鍵 1 つの問いのために列を頭から読み切らないため)。
+(val OP-READ-EVENT-BY-KEY "read-event-by-key")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END
-                   OP-WATCH-EVENTS))
+                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY))
 ;; 変化の待ち(watch-changes・watch-events)1 回の要求で service が待つ秒の上限(#3074 の long-poll)。要求の読み(decode-request)が
 ;; timeout をこの秒で切り、service は置き場の待ちへそのまま渡す — 変化が無ければこの秒で空の答え(changes の空・eventsQuiet)を返す。
 ;; client は待ちをこの秒ごとの要求に分けて撃ち直す(眠らない)。間に立つ口の要求の時間切れより短く置く。
@@ -102,12 +106,13 @@
                     OP-READ-EVENTS #("events")
                     OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")
                     OP-READ-STREAM-END #("streamEnd" "streamEmpty")
-                    OP-WATCH-EVENTS #("eventsMoved" "eventsQuiet")})
+                    OP-WATCH-EVENTS #("eventsMoved" "eventsQuiet")
+                    OP-READ-EVENT-BY-KEY #("event" "eventAbsent" "eventRetired")})
 
 ;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy.json_value)。
-(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents))
+(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents ReadEventByKey))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
-                    WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet))
+                    WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired))
 
 
 (defclass WireMalformed [ValueError]
@@ -349,6 +354,8 @@
       (WireRequest OP-READ-STREAM-END {"stream" stream})
     (WatchEvents :stream stream :after after :timeout timeout)
       (WireRequest OP-WATCH-EVENTS {"stream" stream "after" after "timeout" (float timeout)})
+    (ReadEventByKey :stream stream :idempotency_key idempotency-key)
+      (WireRequest OP-READ-EVENT-BY-KEY {"stream" stream "idempotencyKey" idempotency-key})
     (PutRows :writes writes)
       (do (val write-items [])
           (for [write writes] (.append write-items (! (row-write-json write))))
@@ -417,6 +424,9 @@
         (do (<- (object-of body "watch-events の本文" #("stream" "after" "timeout") #()))
             (WatchEvents (! (string-of (get body "stream") "stream")) :after (! (integer-of (get body "after") "after"))
                          :timeout (min (! (seconds-of (get body "timeout") "timeout")) WATCH-MAX-SECONDS)))
+      "read-event-by-key"
+        (do (<- (object-of body "read-event-by-key の本文" #("stream" "idempotencyKey") #()))
+            (ReadEventByKey (! (string-of (get body "stream") "stream")) (! (string-of (get body "idempotencyKey") "idempotencyKey"))))
       _ (raise (WireMalformed (.format "知らない操作: {!r}(操作 = {})" request.operation OPERATIONS)))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed request.operation error)))))
@@ -435,6 +445,7 @@
     (ReadEvents :stream stream) (NamedStores #() #(stream))
     (ReadStreamEnd :stream stream) (NamedStores #() #(stream))
     (WatchEvents :stream stream) (NamedStores #() #(stream))
+    (ReadEventByKey :stream stream) (NamedStores #() #(stream))
     (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())))
 
 
@@ -545,7 +556,11 @@
     (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}
     (StreamEmpty) {"kind" "streamEmpty"}
     (EventsMoved) {"kind" "eventsMoved"}
-    (EventsQuiet) {"kind" "eventsQuiet"}))
+    (EventsQuiet) {"kind" "eventsQuiet"}
+    ;; ReadEventByKey の答え: 出来事は events の items と同じ object を欄 event に入れ子で運ぶ(読みは同じ event-from)。
+    (Event) {"kind" "event" "event" (! (event-json answer))}
+    (EventAbsent) {"kind" "eventAbsent"}
+    (EventRetired :sequence sequence) {"kind" "eventRetired" "sequence" sequence}))
 
 
 (defk row-from [value]
@@ -693,6 +708,11 @@
       {"kind" "streamEmpty"} (do (<- (object-of value "streamEmpty" #("kind") #())) (StreamEmpty))
       {"kind" "eventsMoved"} (do (<- (object-of value "eventsMoved" #("kind") #())) (EventsMoved))
       {"kind" "eventsQuiet"} (do (<- (object-of value "eventsQuiet" #("kind") #())) (EventsQuiet))
+      {"kind" "event"} (do (<- (object-of value "event の答え" #("kind" "event") #())) (! (event-from (get value "event"))))
+      {"kind" "eventAbsent"} (do (<- (object-of value "eventAbsent" #("kind") #())) (EventAbsent))
+      {"kind" "eventRetired"}
+        (do (<- (object-of value "eventRetired" #("kind" "sequence") #()))
+            (EventRetired (! (integer-of (get value "sequence") "eventRetired.sequence"))))
       {"kind" "writtenRows"} (! (written-rows-from value))
       {"kind" "rowsConflict"} (! (rows-conflict-from value))
       {"kind" "rowsRefused"}
