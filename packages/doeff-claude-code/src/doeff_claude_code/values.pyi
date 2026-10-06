@@ -39,7 +39,11 @@ class DenyUnlisted:
 
     def __post_init__(self) -> None:
         ...
-PermissionPolicy: TypeAlias = BypassAll | AskHost | DenyUnlisted
+
+@dataclass(frozen=True)
+class HomeSettings:
+    ...
+PermissionPolicy: TypeAlias = BypassAll | AskHost | DenyUnlisted | HomeSettings
 
 @dataclass(frozen=True)
 class McpSse:
@@ -77,7 +81,7 @@ class ClaudeSessionSpec:
     effort: str | None = None
     settings: FrozenMap = ...
     mcp_servers: FrozenMap[McpSse | McpStdio] = ...
-    permission: BypassAll | AskHost | DenyUnlisted = ...
+    permission: BypassAll | AskHost | DenyUnlisted | HomeSettings = ...
     autocompact: AutocompactAuto | AutocompactTokens | None = None
     system_prompt_append: str | None = None
     cold_resume_prompt: str | None = None
