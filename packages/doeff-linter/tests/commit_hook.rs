@@ -491,8 +491,8 @@ fn timeout_passes_with_an_unmeasured_line() {
     }
 }
 
-/// 遅い代役の linter — HEAD の木(hook が置き場の `commit-hook-tree/<sha>` に置く・agora-redesign #3858)で repo 全体(path が `.`)を撃たれた
-/// 時だけ secs 秒眠ってから本物を撃つ(冷えた事実の cache で HEAD の木を測る 1 回が上限を越える形の代役)。
+/// 遅い代役の linter — HEAD の木(hook が cache の `commit-hook-tree/<repo を表す名>/tree` に置く・agora-redesign #3858)で repo 全体(path が `.`)を実行された
+/// 時だけ secs 秒眠ってから本物を実行する(冷えた事実の cache で HEAD の木を測る 1 回が上限を越える形の代役)。
 fn slow_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join("slow-doeff-linter");
@@ -689,34 +689,13 @@ fn head_sha(root: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// dir の更新時刻を今から secs 秒前にする(使った時刻の古さの代役)。
-fn age(dir: &Path, secs: u64) {
-    let when = std::time::SystemTime::now() - std::time::Duration::from_secs(secs);
-    std::fs::File::open(dir).unwrap().set_modified(when).unwrap();
+/// テストの場所に HEAD の木を用意する(lock を待つ上限 1 秒・一時の木は scratch の下)。
+fn place(root: &Path, overlay: &[String], home: &Path, scratch: &Path) -> doeff_linter::commit_hook::HeadTree {
+    doeff_linter::commit_hook::head_tree(root, overlay, home, scratch, std::time::Duration::from_secs(1)).unwrap().unwrap()
 }
 
-/// 失敗ケース(agora-redesign #3858): HEAD の木を毎回ランダムな一時 dir に書き出すと、根の path ごとの事実の cache(facts_cache)が
-/// 2 回目も効かない。同じ sha の 2 回目は書き出さず、1 回目と同じ決まった path(置き場の commit-hook-tree/<sha>)を使う。
-#[test]
-fn the_head_tree_of_one_sha_is_written_once_and_reused_at_the_same_path() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    let side = tempfile::TempDir::new().unwrap();
-    let home = side.path().join("commit-hook-tree");
-    let first = doeff_linter::commit_hook::kept_head_tree(root, &[], &home).unwrap().unwrap();
-    assert!(first.written, "{:?}", first);
-    assert_eq!(first.path.file_name().unwrap().to_string_lossy(), head_sha(root), "{:?}", first);
-    assert!(first.path.join("app/queue/main.hy").is_file(), "{:?}", first);
-    // 書き出し直せば消える印 — 2 回目が同じ木を使い回したかを見る。
-    std::fs::write(first.path.join("reused.mark"), "").unwrap();
-    let second = doeff_linter::commit_hook::kept_head_tree(root, &[], &home).unwrap().unwrap();
-    assert!(!second.written, "{:?}", second);
-    assert_eq!(second.path, first.path);
-    assert!(second.path.join("reused.mark").is_file(), "{:?}", second);
-}
-
-/// 失敗ケース(#3858): hook を同じ HEAD で 2 回撃つと、HEAD の木は置き場の commit-hook-tree/<sha> に残り、2 回目も同じ木を使う
-/// (以前は一時 dir に書き出して終わりに消していた — 置き場に木が残らない)。
+/// 失敗ケース(#3858): hook を 2 回実行すると、HEAD の木は cache の commit-hook-tree/<repo を表す名>/tree に残り、同じ HEAD の 2 回目は何も
+/// 書かずに同じ木を使う(以前は一時 dir に書き出して終わりに消していた — cache に木が残らない)。
 #[test]
 fn the_hook_keeps_the_head_tree_under_the_cache_for_the_next_run() {
     let dir = baseline_repo();
@@ -725,82 +704,230 @@ fn the_hook_keeps_the_head_tree_under_the_cache_for_the_next_run() {
     git(root, &["add", "app/queue/main.hy"]);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 0, "{}", stderr);
-    let tree = root.join(".git").join("doeff-linter-cache").join("commit-hook-tree").join(head_sha(root));
-    assert!(tree.join("app/queue/main.hy").is_file(), "{} が無い", tree.display());
-    std::fs::write(tree.join("reused.mark"), "").unwrap();
+    let trees = kept_trees(root);
+    assert_eq!(trees.len(), 1, "{:?}", trees);
+    assert_eq!(trees[0].file_name().unwrap(), "tree");
+    let record = std::fs::read_to_string(trees[0].parent().unwrap().join("tree.sha")).unwrap();
+    assert_eq!(record, format!("{}\n", head_sha(root)));
+    std::fs::write(trees[0].join("reused.mark"), "").unwrap();
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 0, "{}", stderr);
-    assert!(tree.join("reused.mark").is_file(), "2 回目が木を書き出し直した");
+    assert!(trees[0].join("reused.mark").is_file(), "2 回目が木を書き出し直した");
 }
 
-/// 失敗ケース(#3858): 途中で落ちた書き出しの残り(.partial-…)は使わない — sha の名の dir は rename で置き終えた物だけ。
+/// 失敗ケース: 同じ HEAD の 2 回目は何も書かない・HEAD を進めた回は変わった path だけを書く・記録の無い木は全部を書き出し直す。
 #[test]
-fn a_leftover_partial_tree_is_not_used() {
+fn the_tree_is_written_whole_once_then_only_by_the_difference() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
-    let home = side.path().join("commit-hook-tree");
-    let partial = home.join(format!(".partial-{}-crashed", head_sha(root)));
-    std::fs::create_dir_all(&partial).unwrap();
-    let placed = doeff_linter::commit_hook::kept_head_tree(root, &[], &home).unwrap().unwrap();
-    assert!(placed.written, "{:?}", placed);
-    assert_eq!(placed.path, home.canonicalize().unwrap().join(head_sha(root)));
-    assert!(placed.path.join("architecture.hy").is_file(), "{:?}", placed);
-    assert!(partial.is_dir(), "1 時間の内の残りは消さない");
+    let (home, scratch) = (side.path().join("commit-hook-tree"), side.path().join("scratch"));
+    use doeff_linter::commit_hook::TreeUpdate;
+    assert_eq!(place(root, &[], &home, &scratch).update, TreeUpdate::Rebuilt);
+    assert_eq!(place(root, &[], &home, &scratch).update, TreeUpdate::Unchanged);
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    std::fs::remove_file(root.join("app/queue/tool.py")).unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "次"]);
+    let advanced = place(root, &[], &home, &scratch);
+    assert_eq!(advanced.update, TreeUpdate::Advanced { rewritten: 1, removed: 1 });
+    // 空になった dir は残さない(git は空の dir を持たない)。
+    write(root, "app/gone/only.py", "x = 1\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "足す"]);
+    drop(advanced);
+    let tree = place(root, &[], &home, &scratch).path;
+    assert!(tree.join("app/gone/only.py").is_file());
+    std::fs::remove_file(root.join("app/gone/only.py")).unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "消す"]);
+    place(root, &[], &home, &scratch);
+    assert!(!tree.join("app/gone").exists(), "空になった dir が残る");
 }
 
-/// 失敗ケース(#3858): 違う sha は別の木 — HEAD を進めると新しい sha の名の木に新しい中身を置き、前の木はそのまま残す。overlay(Lint-Baseline)
-/// の木は sha の木とは別の名(<sha>-<中身の hash 16 桁>)に置き、sha だけの木を書き換えない。
+/// 失敗ケース: 重ねた宣言の file(1 回限りの指定 Lint-Baseline)は、次に木を使う時に木の sha の中身へ戻す — 戻さないと、次の commit の
+/// 基点が今の宣言で測られる。先端に在って HEAD に無い宣言の file は、戻す時に消す。
 #[test]
-fn a_different_sha_or_overlay_gets_its_own_tree() {
+fn an_overlaid_declaration_is_restored_on_the_next_run() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
-    let home = side.path().join("commit-hook-tree");
-    let before = doeff_linter::commit_hook::kept_head_tree(root, &[], &home).unwrap().unwrap();
+    let (home, scratch) = (side.path().join("commit-hook-tree"), side.path().join("scratch"));
+    write(root, "architecture.hy", "; 先端の宣言\n");
+    write(root, "extra.hy", "; 先端だけの宣言\n");
+    let overlay = vec!["architecture.hy".to_string(), "extra.hy".to_string()];
+    let overlaid = place(root, &overlay, &home, &scratch);
+    assert_eq!(std::fs::read_to_string(overlaid.path.join("architecture.hy")).unwrap(), "; 先端の宣言\n");
+    assert!(overlaid.path.join("extra.hy").is_file());
+    drop(overlaid);
+    let plain = place(root, &[], &home, &scratch);
+    assert_eq!(std::fs::read_to_string(plain.path.join("architecture.hy")).unwrap(), ARCHITECTURE);
+    assert!(!plain.path.join("extra.hy").exists(), "HEAD に無い宣言の file が残る");
+}
+
+/// 失敗ケース: 同時の 2 本 — 別の実行が木の lock を持つ間は、置いた木に触らず、この実行の一時 dir に書き出した木を使う(木を測っている
+/// 最中の別の実行の木を書き換えない)。
+#[test]
+fn a_tree_in_use_is_not_rewritten_and_a_temporary_tree_is_used() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let side = tempfile::TempDir::new().unwrap();
+    let (home, scratch) = (side.path().join("commit-hook-tree"), side.path().join("scratch"));
+    let held = place(root, &[], &home, &scratch);
+    let kept_path = held.path.clone();
     write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "次"]);
-    let after = doeff_linter::commit_hook::kept_head_tree(root, &[], &home).unwrap().unwrap();
-    assert_ne!(after.path, before.path);
+    let other = doeff_linter::commit_hook::head_tree(root, &[], &home, &scratch, std::time::Duration::from_millis(200)).unwrap().unwrap();
+    assert_eq!(other.update, doeff_linter::commit_hook::TreeUpdate::Temporary);
+    assert!(other.path.starts_with(&scratch), "{:?}", other.path);
+    assert_eq!(std::fs::read_to_string(other.path.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 2)\n");
+    assert_eq!(std::fs::read_to_string(kept_path.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 1)\n", "使用中の木を書き換えた");
+    drop(held);
+    let after = place(root, &[], &home, &scratch);
+    assert_eq!(after.path, kept_path);
     assert_eq!(std::fs::read_to_string(after.path.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 2)\n");
-    assert_eq!(std::fs::read_to_string(before.path.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 1)\n");
-
-    write(root, "architecture.hy", "; 先端の宣言\n");
-    let overlay = vec!["architecture.hy".to_string()];
-    let overlaid = doeff_linter::commit_hook::kept_head_tree(root, &overlay, &home).unwrap().unwrap();
-    let name = overlaid.path.file_name().unwrap().to_string_lossy().into_owned();
-    assert!(name.starts_with(&format!("{}-", head_sha(root))) && name.len() == 40 + 1 + 16, "{}", name);
-    assert_eq!(std::fs::read_to_string(overlaid.path.join("architecture.hy")).unwrap(), "; 先端の宣言\n");
-    assert_eq!(std::fs::read_to_string(after.path.join("architecture.hy")).unwrap(), ARCHITECTURE);
 }
 
-/// 失敗ケース(#3858): 片づけは sha の名の木を使った時刻の新しい順に 8 個まで残して古い物から消し、1 時間より古い .partial-… を消す。
-/// 今置いた木・ほかの名の物・1 時間の内の .partial-… には触らない。
+/// 同じ repo の別の作業木は同じ 1 つの木を分け合う(repo を表す名は git の共有 dir から)。記録した共有 dir が無くなった repo の dir は
+/// 消す・ほかの名の物には触らない。
 #[test]
-fn pruning_keeps_eight_trees_and_leaves_other_names() {
+fn worktrees_of_one_repo_share_the_tree_and_vanished_repos_are_removed() {
+    let dir = baseline_repo();
+    let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
-    let home = side.path();
-    let sha = |n: u64| format!("{:040x}", n);
-    for n in 0..10u64 {
-        std::fs::create_dir(home.join(sha(n))).unwrap();
-        age(&home.join(sha(n)), 1000 - n * 10);
+    let (home, scratch) = (side.path().join("commit-hook-tree"), side.path().join("scratch"));
+    let linked = side.path().join("linked");
+    git(root, &["worktree", "add", "-q", "--detach", &linked.to_string_lossy(), "HEAD"]);
+    let main_tree = place(root, &[], &home, &scratch).path;
+    let linked_tree = place(&linked, &[], &home, &scratch).path;
+    assert_eq!(main_tree, linked_tree);
+    let gone = home.join(format!("{:016x}", 5));
+    std::fs::create_dir_all(&gone).unwrap();
+    std::fs::write(gone.join("repo.path"), side.path().join("no-such-repo/.git").to_string_lossy().as_bytes()).unwrap();
+    let unrecorded = home.join(format!("{:016x}", 6));
+    std::fs::create_dir_all(&unrecorded).unwrap();
+    place(root, &[], &home, &scratch);
+    assert!(!gone.exists(), "共有 dir の無くなった repo の dir が残る");
+    assert!(unrecorded.is_dir(), "記録の無い dir を消した");
+}
+
+// ------------------------------------------------------------------ HEAD の木は repo ごとに 1 つ(agora-redesign #3858 の直し)
+// 事実の cache(facts_cache)は根の path ごとの dir に、file ごとの大きさと更新時刻を鍵にして置かれる。木を sha ごとの dir に置くと、
+// commit のたびに HEAD が進むふだんの使い方では毎回が新しい根 = cache 無しの 1 回目になる。木は repo ごとに 1 つ置き、HEAD が進んだ時は
+// 変わった file だけを書き換える。
+
+/// hook が cache(repo の .git の下の事実の cache の根)に置いた HEAD の木の根の一覧(architecture.hy を持つ dir — 深さ 2 まで)。
+fn kept_trees(root: &Path) -> Vec<std::path::PathBuf> {
+    let home = root.join(".git").join("doeff-linter-cache").join("commit-hook-tree");
+    let mut found = Vec::new();
+    let mut walk = vec![(home, 0usize)];
+    while let Some((dir, depth)) = walk.pop() {
+        if dir.join("architecture.hy").is_file() {
+            found.push(dir);
+            continue;
+        }
+        if depth < 2 {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    walk.push((entry.path(), depth + 1));
+                }
+            }
+        }
     }
-    // 今置いた木(一番古い時刻でも消さない)・overlay の名の木・ほかの名・新しい残り・古い残り。
-    let keep = sha(0);
-    let overlaid = format!("{}-{:016x}", sha(99), 7);
-    std::fs::create_dir(home.join(&overlaid)).unwrap();
-    age(&home.join(&overlaid), 5000);
-    for other in ["notes", ".partial-fresh", ".partial-stale"] {
-        std::fs::create_dir(home.join(other)).unwrap();
+    found.sort();
+    found
+}
+
+/// file の (inode・更新時刻の ns・大きさ) — 書き換えなかった file はどれも変わらない。
+fn file_stamp(path: &Path) -> (u64, i128, u64) {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
+    (meta.ino(), i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()), meta.len())
+}
+
+/// ふだんの使い方の 1 回 — 1 行を変えて stage し、hook を実行する(通ることを確かめる)。
+fn stage_and_hook(root: &Path, text: &str) {
+    write(root, "app/queue/main.hy", text);
+    git(root, &["add", "app/queue/main.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
+/// 失敗ケース: HEAD を 1 つ進めた 2 回目の hook は、同じ 1 つの木を新しい sha へ進める — 変わらない file は書き換えず(inode と更新時刻が
+/// 前と同じ — 事実の cache が当たる)、変わった file は新しい sha の中身・消えた file は消え・足した file は在る。以前は sha ごとに別の木を
+/// 書き出し、変わらない file も新しい file になっていた(事実の cache は毎回 1 回目)。
+#[test]
+fn advancing_head_rewrites_only_the_changed_files_of_the_one_kept_tree() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    stage_and_hook(root, "(defk cycle [] 2)\n");
+    let first = kept_trees(root);
+    assert_eq!(first.len(), 1, "{:?}", first);
+    let tree = first[0].clone();
+    let untouched = file_stamp(&tree.join("app/foundation/host.hy"));
+    std::fs::remove_file(root.join("app/queue/tool.py")).unwrap();
+    write(root, "app/queue/extra.py", "import sys\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "進める"]);
+    stage_and_hook(root, "(defk cycle [] 33)\n");
+    assert_eq!(kept_trees(root), vec![tree.clone()], "HEAD を進めても木は 1 つ・同じ path");
+    assert_eq!(file_stamp(&tree.join("app/foundation/host.hy")), untouched, "変わらない file を書き換えた");
+    assert_eq!(std::fs::read_to_string(tree.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 2)\n");
+    assert!(!tree.join("app/queue/tool.py").exists(), "消えた file が残る");
+    assert_eq!(std::fs::read_to_string(tree.join("app/queue/extra.py")).unwrap(), "import sys\n");
+}
+
+/// 失敗ケース: 同じ大きさで中身が変わった file は、事実の cache の鍵(大きさと更新時刻)の更新時刻が必ず変わる — 取りこぼすと前の中身の
+/// 事実を読む。
+#[test]
+fn a_same_size_change_gets_a_new_cache_key() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    stage_and_hook(root, "(defk cycle [] 2)\n");
+    let tree = kept_trees(root).remove(0);
+    let before = file_stamp(&tree.join("app/queue/main.hy"));
+    git(root, &["commit", "-q", "-m", "同じ大きさ"]);
+    stage_and_hook(root, "(defk cycle [] 3)\n");
+    assert_eq!(kept_trees(root), vec![tree.clone()]);
+    let after = file_stamp(&tree.join("app/queue/main.hy"));
+    assert_eq!(after.2, before.2, "大きさは同じ");
+    assert_ne!(after.1, before.1, "同じ大きさで中身が変わった file の更新時刻が変わらない");
+    assert_eq!(std::fs::read_to_string(tree.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 2)\n");
+}
+
+/// 失敗ケース: 書き換えの途中で落ちた木(木の今の sha の記録が無い)は使わず、作り直す。
+#[test]
+fn a_tree_left_in_the_middle_of_an_update_is_rebuilt() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    stage_and_hook(root, "(defk cycle [] 2)\n");
+    let tree = kept_trees(root).remove(0);
+    std::fs::write(tree.join("app/queue/main.hy"), "(defk half-written [] 0)\n").unwrap();
+    // 書き換えの間は記録を消しておく形 — 落ちた木は記録を持たない。
+    match std::fs::remove_file(tree.parent().unwrap().join("tree.sha")) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("{}", e),
     }
-    age(&home.join(".partial-stale"), 2 * 3600);
-    age(&home.join("notes"), 9 * 3600);
-    let removed = doeff_linter::commit_hook::prune_kept_trees(home, &keep);
-    let mut left: Vec<String> = std::fs::read_dir(home).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-    left.sort();
-    let mut expected: Vec<String> = (3..10u64).map(sha).chain([keep.clone(), "notes".to_string(), ".partial-fresh".to_string()]).collect();
-    expected.sort();
-    assert_eq!(left, expected);
-    assert_eq!(removed, 4, "sha(1)・sha(2)・overlay の古い木・古い残り");
+    stage_and_hook(root, "(defk cycle [] 3)\n");
+    assert_eq!(std::fs::read_to_string(tree.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 1)\n", "落ちた木を使った");
+}
+
+/// 失敗ケース: 前の形の sha ごとの木(<sha>・<sha>-<16 桁>・書き出しの残り .partial-…)は、新しい形が初めて走った時に消す。
+/// ほかの名の物には触らない。
+#[test]
+fn old_sha_named_trees_are_removed_on_the_first_run() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let home = root.join(".git").join("doeff-linter-cache").join("commit-hook-tree");
+    let old = [format!("{:040x}", 7), format!("{:040x}-{:016x}", 7, 9), ".partial-crashed".to_string()];
+    for name in old.iter().chain(["notes".to_string()].iter()) {
+        std::fs::create_dir_all(home.join(name)).unwrap();
+    }
+    stage_and_hook(root, "(defk cycle [] 2)\n");
+    for name in &old {
+        assert!(!home.join(name).exists(), "{} が残る", name);
+    }
+    assert!(home.join("notes").is_dir(), "ほかの名の物を消した");
 }

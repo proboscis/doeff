@@ -24,8 +24,9 @@
 //! stage した file の当たりは捨てずに止める。
 //! repo 全体の比べの HEAD の木の結果は置き場(head_report_cache — HEAD の commit・子の linter の版・規則の組・木の中の設定が鍵)に残し、
 //! 同じ鍵の次の hook は先端の木だけを測る(上限の秒は上げない)。
-//! HEAD の木そのものは事実の cache の根の `commit-hook-tree/<sha>` に置いて使い回す(kept_head_tree — 根の path が毎回同じなので、HEAD の木を
-//! 測る 1 回にも事実の cache が 2 回目から効く・agora-redesign #3858)。
+//! HEAD の木そのものは事実の cache の根の `commit-hook-tree/<repo を表す名>/tree` に repo ごとに 1 つ置き、HEAD が進んだら git の差分で変わった
+//! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の木を測る 1 回にも事実の cache が効く・
+//! agora-redesign #3858)。
 //! 純粋な部分(規則の分け・鍵の差・止める当たりの選び・測れなかった比べの名指し)は関数に分けて、単体の検で確かめる。
 
 use crate::config::{CommitHookSection, Config};
@@ -301,7 +302,7 @@ impl CommitHookOptions {
 /// 子の linter を撃つ木。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// HEAD の木(事実の cache の根の commit-hook-tree/<sha> に置いた基点 — kept_head_tree)。
+    /// HEAD の木(事実の cache の根の commit-hook-tree/<repo を表す名>/tree に置いた基点 — head_tree)。
     Head,
     /// 先端の木(git の作業木そのもの)。
     Tip,
@@ -454,136 +455,326 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
     Err("一時の dir の固有の名を作れない".to_string())
 }
 
-// HEAD の木を使い回す場所(agora-redesign #3858)。doeff-linter の事実の cache(project::facts_cache)は根の path ごとの dir に、file ごとの
-// 大きさと更新時刻を鍵にして置かれる。HEAD の木を毎回ランダムな名前の一時 dir に書き出すと、根の path が毎回変わり、repo 全体を毎回解析し
-// 直していた(agora-controllers で CPU 約 44 秒)。`git archive` の file の更新時刻は commit の時刻で毎回同じなので、木を sha ごとの決まった
-// path に置けば 2 回目から cache が効く。形は agora-controllers の main へのマージ前の検査(scripts/land_lint_gate.hy の kept-base-tree・
-// 同じ #3858)と揃える:
+// HEAD の木を置く場所(agora-redesign #3858)。doeff-linter の事実の cache(project::facts_cache)は根の path ごとの dir に、file ごとの
+// 大きさと更新時刻を鍵にして置かれる。木を一時 dir や sha ごとの dir に書き出すと、commit のたびに HEAD が進むふだんの使い方では毎回が
+// 新しい根 = cache 無しの 1 回目になる(agora-controllers で CPU 約 66 秒)。木は repo ごとに 1 つ決まった path に置き、HEAD が進んだ時は
+// git の差分で変わった file だけを書き換える — 変わらない file には触らないので更新時刻が保たれ、事実の cache が当たる。
+// 形は agora-controllers の main へのマージ前の検査(scripts/land_lint_gate.hy の repo-base-tree)と揃える:
 //   場所 = 事実の cache の根(facts_cache::cache_base — 既定 `$XDG_CACHE_HOME/doeff-linter`、無ければ `~/.cache/doeff-linter`)の
-//   `commit-hook-tree/<sha>`(overlay が在れば `<sha>-<overlay の中身の hash 16 桁>`)。
-//   書き出しは同じ dir の中の `.partial-` で始まる一時 dir へ行い、書き終えてから rename で <sha> の名に置く。<sha> の名の dir は rename で
-//   置き終えた物だけなので、途中で落ちた書き出しの残り(.partial-…)は使わない。同時の 2 本が同じ sha を書いた時は、先に rename した方を
-//   使い、後の方は自分の一時 dir を消す。
-//   片づけ: 置いた後に、この場所の中の sha の名の dir を使った時刻の新しい順に KEPT_TREES 個まで残して古い物から消し、1 時間より古い
-//   .partial-… を消す。消すのはこの 2 つの名の形の dir だけ(この場所に在るほかの物には触らない)。使い回す時は dir の時刻を今にする。
+//   `commit-hook-tree/<repo を表す名>/` の下に、木 `tree/`・木の今の sha と重ねた宣言の file の記録 `tree.sha`・lock の file `lock`・
+//   repo の git の共有 dir の絶対 path の記録 `repo.path`。
+//   repo を表す名 = repo の git の共有 dir(`git rev-parse --git-common-dir`・正規化した絶対 path)の sha256 の 16 桁。同じ repo の別の
+//   作業木は同じ名で、1 つの木を分け合う — 作業木は数百ある(zeus の agora-controllers で 561)ので作業木ごとでは disk が足りず(木 1 つ
+//   約 35MB)、新しい作業木の最初の commit も、ほかの作業木が進めた木(本線の近く)から差分だけで進められる。
+//   書き換えた file の更新時刻は書いた時刻(tar の -m)にする — commit の時刻(秒の粒度)だと、同じ秒の 2 つの commit で同じ大きさの
+//   別の中身の file が同じ鍵になり、前の中身の事実を読む。
+//   書き換えの間は記録 `tree.sha` を消しておき、書き終えてから一時 file の rename で置く。記録が無い・読めない・記録の sha から差分を
+//   取れない木は、途中で落ちた木として全部を書き出し直す(全部を書くのはこの時と最初の 1 回だけ)。重ねた宣言の file(1 回限りの指定
+//   Lint-Baseline)は記録に載せ、次に進める時に木の sha の中身へ戻す。
+//   同時の 2 本: 木を使う間(書き換えから子の linter が測り終えるまで)は `lock` の排他の lock を持つ。LOCK_WAIT 待っても取れなければ、
+//   この実行の一時 dir に木を書き出して使う(置いた木には触らない — 事実の cache は効かないが、止まらない)。
+//   片づけ: 前の形の sha ごとの木(`<sha>`・`<sha>-<16 桁>`・書き出しの残り `.partial-…`)は見つけたら消す。記録 `repo.path` の
+//   共有 dir が無くなった repo の dir も消す(lock を取れた物だけ)。消すのはこの名の形の dir だけ(この場所に在るほかの物には触らない)。
 //   場所の dir そのものには facts_cache の使った印を付け、事実の cache の根の全体の上限の片づけ(sweep_over_cap)に入れる。
 
-/// HEAD の木を使い回す場所の dir の名(事実の cache の根の直下)。
-pub const KEPT_TREE_DIR: &str = "commit-hook-tree";
-/// 残す木の数。
-pub const KEPT_TREES: usize = 8;
-/// 書き出しの途中の一時 dir の名の頭。
-pub const PARTIAL_PREFIX: &str = ".partial-";
-/// 書き出しの途中の一時 dir を、落ちた残りとして消すまでの秒。
-pub const PARTIAL_STALE: Duration = Duration::from_secs(3600);
+/// HEAD の木を置く場所の dir の名(事実の cache の根の直下)。
+pub const TREE_HOME_DIR: &str = "commit-hook-tree";
+/// repo の dir の中の木の dir の名。
+pub const TREE_DIR: &str = "tree";
+/// repo の dir の中の、木の今の sha と重ねた宣言の file の記録。
+pub const TREE_RECORD: &str = "tree.sha";
+/// repo の dir の中の lock の file。
+pub const TREE_LOCK: &str = "lock";
+/// repo の dir の中の、repo の git の共有 dir の絶対 path の記録。
+pub const REPO_RECORD: &str = "repo.path";
+/// 同時の別の実行が木を使っている時に待つ上限。
+pub const LOCK_WAIT: Duration = Duration::from_secs(30);
+/// 書き換える path がこれより多ければ、差分で進めずに全部を書き出す(git の引数の長さの上限の手前)。
+const REWRITE_LIMIT: usize = 4000;
+/// git archive に 1 回で渡す path の数。
+const ARCHIVE_CHUNK: usize = 500;
 
-/// 置いた HEAD の木 — path = 木の根・written = この呼びで書き出したか(偽 = 前に置いた木を使い回した)。
+/// 木をどう用意したか。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptTree {
+pub enum TreeUpdate {
+    /// 全部を書き出した(最初の 1 回・記録が無い / 読めない・差分を取れなかった・変わった path が多すぎた)。
+    Rebuilt,
+    /// 記録の sha から差分で進めた — rewritten = 書いた file の数・removed = 消した path の数。
+    Advanced { rewritten: usize, removed: usize },
+    /// 記録の sha が HEAD と同じで、戻す・重ねる宣言の file も無い — 何も書いていない。
+    Unchanged,
+    /// 同時の別の実行が木を使っていた — この実行の一時 dir に書き出した木(置いた木には触らない)。
+    Temporary,
+}
+
+/// 用意した HEAD の木 — path = 木の根。lock は木を使い終わる(この値を落とす)まで持つ。
+#[derive(Debug)]
+pub struct HeadTree {
     pub path: PathBuf,
-    pub written: bool,
+    pub update: TreeUpdate,
+    _lock: Option<std::fs::File>,
 }
 
-/// 純粋: 木の dir の名 — overlay が空なら sha、在れば sha と、overlay の各 file の path と先端の中身(無い file は「無い」を表す語)の
-/// hash(sha256)の 16 桁。
-pub fn kept_tree_name(sha: &str, root: &Path, overlay: &[String]) -> String {
-    if overlay.is_empty() {
-        return sha.to_string();
-    }
+/// 木の記録 — 木の今の sha と、その上に先端から重ねた宣言の file。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeRecord {
+    pub sha: String,
+    pub overlay: Vec<String>,
+}
+
+/// 純粋: 16 進の n 桁か。
+fn is_hex(text: &str, n: usize) -> bool {
+    text.len() == n && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// 純粋: 記録の file の中身を読む — 1 行目が sha(40 か 64 桁の 16 進)、続く行が重ねた宣言の file。形が違えば None(落ちた木)。
+pub fn parse_tree_record(text: &str) -> Option<TreeRecord> {
+    let mut lines = text.lines();
+    let sha = lines.next()?.trim();
+    (is_hex(sha, 40) || is_hex(sha, 64)).then(|| TreeRecord { sha: sha.to_string(), overlay: lines.filter(|l| !l.is_empty()).map(str::to_string).collect() })
+}
+
+/// 純粋: 記録の file の中身。
+pub fn render_tree_record(record: &TreeRecord) -> String {
+    std::iter::once(record.sha.as_str()).chain(record.overlay.iter().map(String::as_str)).map(|line| format!("{}\n", line)).collect()
+}
+
+/// 純粋: repo を表す名 — git の共有 dir の絶対 path の sha256 の 16 桁(上の註)。
+pub fn repo_key(common_dir: &Path) -> String {
     use sha2::{Digest, Sha256};
-    let mut digest = Sha256::new();
-    let mut sorted: Vec<&String> = overlay.iter().collect();
-    sorted.sort();
-    for rel in sorted {
-        digest.update(rel.as_bytes());
-        digest.update(b"\0");
-        match std::fs::read(root.join(rel)) {
-            Ok(bytes) if root.join(rel).is_file() => {
-                digest.update(b"present\0");
-                digest.update(&bytes);
-            }
-            _ => digest.update(b"absent\0"),
+    let digest = Sha256::digest(common_dir.as_os_str().as_encoded_bytes());
+    digest.iter().take(8).map(|b| format!("{:02x}", b)).collect()
+}
+
+/// 純粋: 前の形の sha ごとの木の名か(`<40 桁>`・`<40 桁>-<16 桁>`・書き出しの残り `.partial-…`)。
+pub fn is_sha_tree_name(name: &str) -> bool {
+    name.starts_with(".partial-")
+        || match name.split_once('-') {
+            None => is_hex(name, 40),
+            Some((sha, suffix)) => is_hex(sha, 40) && is_hex(suffix, 16),
         }
-        digest.update(b"\0");
+}
+
+/// 場所 home の dir の一覧(symlink は除く)。
+fn home_dirs(home: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(home) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter(|entry| std::fs::symlink_metadata(entry.path()).is_ok_and(|meta| meta.is_dir()))
+        .map(|entry| (entry.file_name().to_string_lossy().into_owned(), entry.path()))
+        .collect()
+}
+
+/// 場所 home の前の形の sha ごとの木を消し、消した数を返す(上の註)。
+pub fn retire_sha_trees(home: &Path) -> usize {
+    home_dirs(home).into_iter().filter(|(name, path)| is_sha_tree_name(name) && std::fs::remove_dir_all(path).is_ok()).count()
+}
+
+/// 場所 home の、記録した git の共有 dir が無くなった repo の dir を消し、消した数を返す(上の註)— keep(今の repo)と、記録の無い dir・
+/// lock を取れない dir には触らない。
+pub fn retire_vanished_repos(home: &Path, keep: &str) -> usize {
+    home_dirs(home)
+        .into_iter()
+        .filter(|(name, path)| {
+            name != keep
+                && is_hex(name, 16)
+                && std::fs::read_to_string(path.join(REPO_RECORD)).is_ok_and(|recorded| !Path::new(recorded.trim()).exists())
+                && acquire_lock(&path.join(TREE_LOCK), Duration::ZERO).is_ok_and(|lock| lock.is_some())
+                && std::fs::remove_dir_all(path).is_ok()
+        })
+        .count()
+}
+
+/// lock の file を開き、排他の lock を wait まで待って取る。取れなければ None。
+fn acquire_lock(path: &Path, wait: Duration) -> Result<Option<std::fs::File>, String> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("{} を開けない: {}", path.display(), e))?;
+    let deadline = Instant::now() + wait;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => return Err(format!("{} の lock を取れない: {}", path.display(), error)),
+        }
     }
-    let hex: String = digest.finalize().iter().map(|b| format!("{:02x}", b)).collect();
-    format!("{}-{}", sha, &hex[..16])
 }
 
-/// 純粋: sha の名の木の dir か(40 桁の 16 進、overlay の木は続けて `-` と 16 桁)。
-pub fn is_kept_tree_name(name: &str) -> bool {
-    let hex = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    match name.split_once('-') {
-        None => hex(name, 40),
-        Some((sha, suffix)) => hex(sha, 40) && hex(suffix, 16),
-    }
-}
-
-/// dir の時刻を今にする(使った印 — 木の中には file を足さない)。
-fn touch(dir: &Path) {
-    let _ = std::fs::File::open(dir).and_then(|f| f.set_modified(SystemTime::now()));
-}
-
-/// HEAD の木(overlay の宣言の file を先端から写した木)を場所 home の sha ごとの決まった path に置き、その根を返す(上の註)— 置き終えた
-/// 木が在れば書き出さずに使い回す。無ければ一時 dir へ書き出して rename で置き、古い木を片づける。HEAD が無い(最初の commit)なら None。
-pub fn kept_head_tree(root: &Path, overlay: &[String], home: &Path) -> Result<Option<KeptTree>, String> {
+/// HEAD の木を repo ごとに 1 つの決まった path(場所 home の `<repo を表す名>/tree`)に用意し、その根を返す(上の註)。木が在れば記録の
+/// sha から HEAD まで変わった file だけを書き換え、無い・落ちた木なら全部を書き出す。同時の別の実行が wait まで木を放さなければ、
+/// scratch の下に書き出した一時の木を返す。HEAD が無い(最初の commit)なら None。
+pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, wait: Duration) -> Result<Option<HeadTree>, String> {
     let Ok(head) = git(root, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]) else { return Ok(None) };
-    let name = kept_tree_name(String::from_utf8_lossy(&head).trim(), root, overlay);
+    let head = String::from_utf8_lossy(&head).trim().to_string();
+    let common = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let common = PathBuf::from(String::from_utf8_lossy(&common).trim());
+    let common = common.canonicalize().unwrap_or(common);
     std::fs::create_dir_all(home).map_err(|e| format!("{} を作れない: {}", home.display(), e))?;
     let home = home.canonicalize().map_err(|e| format!("{} を読めない: {}", home.display(), e))?;
-    let dest = home.join(&name);
-    if dest.is_dir() {
-        touch(&dest);
-        return Ok(Some(KeptTree { path: dest, written: false }));
+    retire_sha_trees(&home);
+    let key = repo_key(&common);
+    retire_vanished_repos(&home, &key);
+    let repo_dir = home.join(&key);
+    std::fs::create_dir_all(&repo_dir).map_err(|e| format!("{} を作れない: {}", repo_dir.display(), e))?;
+    let Some(lock) = acquire_lock(&repo_dir.join(TREE_LOCK), wait)? else {
+        let path = scratch.join("head-tree");
+        std::fs::create_dir_all(&path).map_err(|e| format!("{} を作れない: {}", path.display(), e))?;
+        write_whole_tree(root, &head, overlay, &path)?;
+        return Ok(Some(HeadTree { path, update: TreeUpdate::Temporary, _lock: None }));
+    };
+    let recorded = common.to_string_lossy();
+    if std::fs::read_to_string(repo_dir.join(REPO_RECORD)).ok().as_deref().map(str::trim) != Some(recorded.as_ref()) {
+        std::fs::write(repo_dir.join(REPO_RECORD), format!("{}\n", recorded)).map_err(|e| format!("{} を書けない: {}", REPO_RECORD, e))?;
     }
-    let partial = unique_dir(&home, &format!("{}{}-{}", PARTIAL_PREFIX, name, std::process::id()))?;
-    if let Err(error) = fill_partial(root, overlay, &partial) {
-        let _ = std::fs::remove_dir_all(&partial);
-        return Err(error);
-    }
-    if std::fs::rename(&partial, &dest).is_err() {
-        // 同時の別の呼びが先に同じ名で置いた — その木を使い、自分の一時 dir を消す。
-        let _ = std::fs::remove_dir_all(&partial);
-        if !dest.is_dir() {
-            return Err(format!("HEAD の木を {} に置けない", dest.display()));
-        }
-        return Ok(Some(KeptTree { path: dest, written: false }));
-    }
-    prune_kept_trees(&home, &name);
-    Ok(Some(KeptTree { path: dest, written: true }))
+    let tree = repo_dir.join(TREE_DIR);
+    let record_path = repo_dir.join(TREE_RECORD);
+    let record = std::fs::read_to_string(&record_path).ok().and_then(|text| parse_tree_record(&text)).filter(|_| tree.is_dir());
+    let update = match record {
+        Some(record) => match advance_tree(root, &record, &head, overlay, &tree, &record_path) {
+            Ok(update) => update,
+            // 差分を取れない・書き換えの途中で失敗した木は、全部を書き出し直す(記録は消えている)。
+            Err(_) => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
+        },
+        None => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
+    };
+    Ok(Some(HeadTree { path: tree, update, _lock: Some(lock) }))
 }
 
-/// 一時 dir へ HEAD の木を書き出し、overlay の宣言の file を先端から写す(先端に無い file は写さない)。
-fn fill_partial(root: &Path, overlay: &[String], partial: &Path) -> Result<(), String> {
-    export_head(root, partial)?;
-    for rel in overlay {
-        let from = root.join(rel);
-        if from.is_file() {
-            std::fs::copy(&from, partial.join(rel)).map_err(|e| format!("{} を HEAD の木へ写せない: {}", rel, e))?;
+/// 木を消して HEAD の全部を書き出し直し、記録を置く。
+fn rebuild_tree(root: &Path, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
+    remove_record(record_path)?;
+    if std::fs::symlink_metadata(tree).is_ok() {
+        std::fs::remove_dir_all(tree).map_err(|e| format!("{} を消せない: {}", tree.display(), e))?;
+    }
+    std::fs::create_dir_all(tree).map_err(|e| format!("{} を作れない: {}", tree.display(), e))?;
+    write_whole_tree(root, head, overlay, tree)?;
+    write_record(record_path, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
+    Ok(TreeUpdate::Rebuilt)
+}
+
+/// 在る dir tree へ HEAD の全部を書き出し、宣言の file を先端から重ねる。
+fn write_whole_tree(root: &Path, head: &str, overlay: &[String], tree: &Path) -> Result<(), String> {
+    extract(root, head, &[], tree)?;
+    lay_overlay(root, overlay, tree)
+}
+
+/// 記録の sha から HEAD まで変わった path と、前に重ねた・今重ねる宣言の file だけを、HEAD の中身へ書き換える(消えた path は消す)。
+/// 書き換えの間は記録を消しておく。変わった path が多すぎれば Err(呼び手が全部を書き出し直す)。
+fn advance_tree(root: &Path, record: &TreeRecord, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
+    let changed = git(root, &["diff-tree", "-r", "-z", "--no-renames", "--name-only", &record.sha, head])?;
+    let refresh: BTreeSet<String> = split_z(&changed).into_iter().chain(record.overlay.iter().cloned()).chain(overlay.iter().cloned()).collect();
+    if refresh.is_empty() {
+        return Ok(TreeUpdate::Unchanged);
+    }
+    if refresh.len() > REWRITE_LIMIT {
+        return Err(format!("変わった path が {} 個(上限 {})", refresh.len(), REWRITE_LIMIT));
+    }
+    let refresh: Vec<String> = refresh.into_iter().collect();
+    let present: Vec<String> = present_paths(root, head, &refresh)?.into_iter().collect::<BTreeSet<String>>().into_iter().collect();
+    remove_record(record_path)?;
+    for rel in &refresh {
+        remove_path(tree, rel)?;
+    }
+    if !present.is_empty() {
+        extract(root, head, &present, tree)?;
+    }
+    lay_overlay(root, overlay, tree)?;
+    write_record(record_path, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
+    Ok(TreeUpdate::Advanced { rewritten: present.len(), removed: refresh.len().saturating_sub(present.len()) })
+}
+
+/// NUL 区切りの git の出力を path の列へ。
+fn split_z(out: &[u8]) -> Vec<String> {
+    out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
+}
+
+/// paths のうち commit sha に在る物(git ls-tree)。
+fn present_paths(root: &Path, sha: &str, paths: &[String]) -> Result<Vec<String>, String> {
+    let mut present = Vec::new();
+    for chunk in paths.chunks(ARCHIVE_CHUNK) {
+        let args: Vec<&str> = ["--literal-pathspecs", "ls-tree", "-r", "-z", "--name-only", sha, "--"].into_iter().chain(chunk.iter().map(String::as_str)).collect();
+        present.extend(split_z(&git(root, &args)?));
+    }
+    Ok(present)
+}
+
+/// 木の中の path を消し(dir なら丸ごと)、空になった親の dir を木の根の手前まで消す。
+fn remove_path(tree: &Path, rel: &str) -> Result<(), String> {
+    let path = tree.join(rel);
+    let removed = match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&path),
+        Ok(_) => std::fs::remove_file(&path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    };
+    removed.map_err(|e| format!("{} を消せない: {}", path.display(), e))?;
+    let mut parent = path.parent();
+    while let Some(dir) = parent.filter(|dir| *dir != tree && dir.starts_with(tree)) {
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+        parent = dir.parent();
+    }
+    Ok(())
+}
+
+/// commit sha の paths(空なら全部)を在る dir dest へ書き出す(`git archive --format=tar <sha> -- <paths> | tar -x -m -C dest` —
+/// file の更新時刻は書いた時刻)。
+fn extract(root: &Path, sha: &str, paths: &[String], dest: &Path) -> Result<(), String> {
+    let whole: [Vec<String>; 1] = [Vec::new()];
+    let chunks: Vec<&[String]> = if paths.is_empty() { whole.iter().map(Vec::as_slice).collect() } else { paths.chunks(ARCHIVE_CHUNK).collect() };
+    for chunk in chunks {
+        let mut archive = Command::new("git")
+            .args(["--literal-pathspecs", "archive", "--format=tar", sha, "--"])
+            .args(chunk)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("git archive を起こせない: {}", e))?;
+        let pipe = archive.stdout.take().ok_or("git archive の出力を読めない")?;
+        let extracted = Command::new("tar").arg("-x").arg("-m").arg("-C").arg(dest).stdin(pipe).status();
+        let archived = archive.wait().map_err(|e| format!("git archive を待てない: {}", e))?;
+        let extracted = extracted.map_err(|e| format!("tar を起こせない: {}", e))?;
+        if !archived.success() || !extracted.success() {
+            return Err(format!("HEAD の木を書き出せない(git archive {}・tar {})", archived, extracted));
         }
     }
     Ok(())
 }
 
-/// 場所 home の HEAD の木を片づけ、消した dir の数を返す(上の註)— sha の名の dir は使った時刻の新しい順に KEPT_TREES 個まで残し(今置いた
-/// keep は必ず残す)、1 時間より古い .partial-… を消す。ほかの名の物と symlink には触らない。
-pub fn prune_kept_trees(home: &Path, keep: &str) -> usize {
-    let Ok(entries) = std::fs::read_dir(home) else { return 0 };
-    let now = SystemTime::now();
-    let dirs: Vec<(String, SystemTime, PathBuf)> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let meta = std::fs::symlink_metadata(entry.path()).ok()?;
-            meta.is_dir().then(|| (entry.file_name().to_string_lossy().into_owned(), meta.modified().unwrap_or(UNIX_EPOCH), entry.path()))
-        })
-        .collect();
-    let mut trees: Vec<&(String, SystemTime, PathBuf)> = dirs.iter().filter(|(name, _, _)| is_kept_tree_name(name) && name != keep).collect();
-    trees.sort_by(|a, b| b.1.cmp(&a.1));
-    let old_trees = trees.into_iter().skip(KEPT_TREES - 1);
-    let old_partials = dirs
-        .iter()
-        .filter(|(name, used, _)| name.starts_with(PARTIAL_PREFIX) && now.duration_since(*used).unwrap_or_default() > PARTIAL_STALE);
-    old_trees.chain(old_partials).filter(|(_, _, path)| std::fs::remove_dir_all(path).is_ok()).count()
+/// 宣言の file を先端から木へ写す(先端に無い file は写さない)。
+fn lay_overlay(root: &Path, overlay: &[String], tree: &Path) -> Result<(), String> {
+    for rel in overlay {
+        let from = root.join(rel);
+        if from.is_file() {
+            let to = tree.join(rel);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{} を作れない: {}", parent.display(), e))?;
+            }
+            std::fs::copy(&from, &to).map_err(|e| format!("{} を HEAD の木へ写せない: {}", rel, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// 記録を消す(無ければ何もしない)。
+fn remove_record(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("{} を消せない: {}", path.display(), error)),
+        _ => Ok(()),
+    }
+}
+
+/// 記録を一時 file から rename で置く(書きかけの記録を読ませない)。
+fn write_record(path: &Path, record: &TreeRecord) -> Result<(), String> {
+    let partial = path.with_extension(format!("partial-{}", std::process::id()));
+    std::fs::write(&partial, render_tree_record(record)).map_err(|e| format!("{} を書けない: {}", partial.display(), e))?;
+    std::fs::rename(&partial, path).map_err(|e| format!("{} を置けない: {}", path.display(), e))
 }
 
 /// root で git を撃ち、成功すれば stdout を返す。
@@ -613,25 +804,6 @@ fn staged_paths(root: &Path) -> Result<Vec<String>, String> {
 fn removed_paths(root: &Path) -> Result<Vec<String>, String> {
     let out = git(root, &["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=D", "-z"])?;
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
-}
-
-/// HEAD の木を在る dir dest へ書き出す(`git archive --format=tar HEAD | tar -x -C dest` — file の更新時刻は commit の時刻)。
-fn export_head(root: &Path, dest: &Path) -> Result<(), String> {
-    let mut archive = Command::new("git")
-        .args(["archive", "--format=tar", "HEAD"])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("git archive を起こせない: {}", e))?;
-    let pipe = archive.stdout.take().ok_or("git archive の出力を読めない")?;
-    let extracted = Command::new("tar").arg("-x").arg("-C").arg(dest).stdin(pipe).status();
-    let archived = archive.wait().map_err(|e| format!("git archive を待てない: {}", e))?;
-    let extracted = extracted.map_err(|e| format!("tar を起こせない: {}", e))?;
-    if !archived.success() || !extracted.success() {
-        return Err(format!("HEAD の木を書き出せない(git archive {}・tar {})", archived, extracted));
-    }
-    Ok(())
 }
 
 /// 子へ渡す設定の引数(先端 = 設定 file そのもの・HEAD の木 = 木の中の同じ相対の file、無ければ先端の file)。
@@ -751,19 +923,20 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         return Ok(blocking);
     }
     let scratch = Scratch::create().map_err(Stop::Failed)?;
-    // HEAD の木は事実の cache の根の commit-hook-tree/<sha> に置いて使い回す(kept_head_tree・#3858)。置き場を使わない実行
-    // (DOEFF_LINTER_NO_CACHE)は、この実行の一時 dir を場所にする(終わりに消える)。1 回限りの指定(Lint-Baseline)の木は、HEAD の木を
-    // 今の宣言で測る — 既存の当たりは基点に在る物になり、新しい当たりだけが止まる(木の名は宣言の中身ごとに分かれる)。
+    // HEAD の木は事実の cache の根の commit-hook-tree/<repo を表す名>/tree に repo ごとに 1 つ置き、差分で進める(head_tree・#3858)。
+    // 木の lock はこの関数を抜けるまで(子の linter が木を測り終えるまで)持つ。cache を使わない実行(DOEFF_LINTER_NO_CACHE)は、
+    // この実行の一時 dir を場所にする(終わりに消える)。1 回限りの指定(Lint-Baseline)の木は、HEAD の木を今の宣言で測る — 既存の当たりは
+    // 基点に在る物になり、新しい当たりだけが止まる(重ねた宣言の file は次に進める時に HEAD の中身へ戻す)。
     let home = match &options.cache {
         Some(base) => {
-            let home = base.join(KEPT_TREE_DIR);
+            let home = base.join(TREE_HOME_DIR);
             crate::project::facts_cache::mark_used(&home);
             home
         }
         None => scratch.path.clone(),
     };
-    let kept = kept_head_tree(root, &options.overlay, &home).map_err(Stop::Failed)?;
-    let tree = kept.as_ref().map(|k| k.path.as_path());
+    let held = head_tree(root, &options.overlay, &home, &scratch.path, LOCK_WAIT).map_err(Stop::Failed)?;
+    let tree = held.as_ref().map(|h| h.path.as_path());
     if tree.is_some() && !options.overlay.is_empty() {
         eprintln!("{}{} — HEAD の木を今の宣言({})で測る(1 回限り)", PREFIX, BASELINE_TRAILER, options.overlay.join("・"));
     }
@@ -1089,5 +1262,31 @@ mod tests {
         assert_eq!(resolve_timeout(Some(&section), Some(0)), Duration::from_secs(0));
         assert_eq!(resolve_timeout(Some(&section), None), Duration::from_secs(7));
         assert_eq!(resolve_timeout(None, None), Duration::from_secs(DEFAULT_TIMEOUT_S));
+    }
+
+    #[test]
+    fn commit_hook_tree_record_round_trips_and_refuses_a_broken_record() {
+        let record = TreeRecord { sha: "a".repeat(40), overlay: ids(&["architecture.hy", "pyproject.toml"]) };
+        assert_eq!(parse_tree_record(&render_tree_record(&record)), Some(record));
+        let plain = TreeRecord { sha: "b".repeat(64), overlay: Vec::new() };
+        assert_eq!(parse_tree_record(&render_tree_record(&plain)), Some(plain));
+        for broken in ["", "\n", "abc\n", &format!("{}\n", "g".repeat(40))] {
+            assert_eq!(parse_tree_record(broken), None, "{:?}", broken);
+        }
+    }
+
+    #[test]
+    fn commit_hook_names_only_the_old_sha_trees_and_keys_repos_by_the_common_dir() {
+        let sha = "0".repeat(40);
+        for old in [sha.clone(), format!("{}-{}", sha, "f".repeat(16)), ".partial-x".to_string()] {
+            assert!(is_sha_tree_name(&old), "{}", old);
+        }
+        for other in ["notes", "0123456789abcdef", &format!("{}-x", sha), &"0".repeat(39)] {
+            assert!(!is_sha_tree_name(other), "{}", other);
+        }
+        let key = repo_key(Path::new("/repos/a/.git"));
+        assert!(is_hex(&key, 16), "{}", key);
+        assert_eq!(key, repo_key(Path::new("/repos/a/.git")));
+        assert_ne!(key, repo_key(Path::new("/repos/b/.git")));
     }
 }
