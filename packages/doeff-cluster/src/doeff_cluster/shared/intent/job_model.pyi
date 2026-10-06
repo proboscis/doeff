@@ -12,6 +12,7 @@ JobPhase を欄の型に使うので、ここで宣言する(runtime_env_model.p
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import cached_property
 
 @dataclass(frozen=True)
 class JobSpec:
@@ -34,6 +35,11 @@ class JobSpec:
     keep_when_cut_off: bool = False
     hold_version: bool = False
     versions: tuple[tuple[str, str], ...] | None = None
+
+    @cached_property
+    def fingerprint(self) -> str:
+        """指紋 spec-hash の計算の本体(値ごとに 1 度だけ計り、値の中に覚える — 公開の入口は job_rules.spec_hash)。"""
+        ...
 
 class JobPhase(Enum):
     PREPARING = "preparing"
