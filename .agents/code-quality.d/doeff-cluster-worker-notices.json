@@ -8,6 +8,11 @@
         "doeff-cluster-worker-notices"
       ]
     },
+    "doeff-cluster-local": {
+      "allow": [
+        "doeff-cluster-worker-notices"
+      ]
+    },
     "doeff-cluster-tests": {
       "allow": [
         "doeff-cluster-worker-notices"

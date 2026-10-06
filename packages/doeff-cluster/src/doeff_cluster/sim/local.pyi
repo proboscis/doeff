@@ -87,6 +87,10 @@ class _ClusterTimingView(Protocol):
 
     @property
     def fence_ms(self) -> int: ...
+    @property
+    def client_reply_ms(self) -> int: ...
+    @property
+    def watch_max_ms(self) -> int: ...
 
 class _PlainTextView(Protocol):
     """JSON でない返事の本文(protocol.PlainText — GET /metrics の text)。"""
@@ -114,6 +118,7 @@ class _Handler(Protocol):
 NO_STATE_FILE: str
 SIM_URL: str
 SIM_START_MS: int
+SIM_TIMING_RATIO: int
 DECLARE_ACTOR: str
 CLIENT_NAME: str
 TASK_POLL_SECONDS: float
@@ -228,6 +233,7 @@ class SimLink:
     revision: str
     peer: str
     versions: dict[str, str]
+    timing: _ClusterTimingView
     runtime_env: RuntimeEnv | None = None
 
 @dataclass(frozen=True, kw_only=True)
@@ -285,6 +291,9 @@ class SimDeadlock:
 
 class SimDeadlockError(RuntimeError):
     """sim-cluster の行き止まり(args = 知らせの文と SimDeadlock)。"""
+
+class SimLivenessError(RuntimeError):
+    """比で延ばした世界(:timing を渡さない筋書き)で worker の死の判断が出た(args = 知らせの文と WorkerGone)。"""
 
 def deadlock_of(snapshot: WaitSnapshot) -> Program[SimDeadlock | None, object]: ...
 def earliest_due(world_due: int | None, armed: tuple[ArmedTimer, ...]) -> Program[int | None, object]: ...
