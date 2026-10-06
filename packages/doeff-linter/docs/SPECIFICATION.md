@@ -80,6 +80,11 @@ dir の下(1 か所の定義 = `project::hy_files::walked`)。
   当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)(agora-redesign #3834)。
   repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook の repo 全体の比べに回り、そこで HEAD の木との鍵の差に、stage した
   path に在るこの規則の critical を足す(判定は同じ 1 か所 `baseline::blocks_regardless_of_baseline`)。
+  commit の hook は止める当たりを HEAD の版に同じ識別子が在るかで分けて書く(`commit_hook::split_by_head` — 止める判断は変えない):
+  無い物は「HEAD に無い critical: <識別子>」「repo 全体の規則の HEAD に無い当たり: <識別子>」、在る物は
+  「変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): <識別子>」と書き、後者が在れば
+  「この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)」を 1 行足す(既存の当たりにも「HEAD に無い」と書いていて、
+  hook の不具合と読まれた・agora-redesign #3834)。
 - **誤り**: 基点の file が読めない・JSON でない・`violations` の列が無い・text / json の出力で使った時は終了コード 2。
 - 戻し方: この欄・引数・`src/baseline.rs` を消す(呼び手が使う前なら影響なし)。
 

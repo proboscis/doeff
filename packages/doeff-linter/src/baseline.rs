@@ -28,6 +28,12 @@ pub fn critical_identities(violations: &[EditorViolation]) -> BTreeSet<String> {
 /// 基点で走らせた editor-json の出力から、critical の識別子の集合を読む。形が違えば理由を返す(呼び手は終了コード 2)。
 pub fn read_baseline(text: &str) -> Result<BTreeSet<String>, String> {
     let report: Value = serde_json::from_str(text).map_err(|e| format!("基点の出力が JSON でない: {}", e))?;
+    baseline_identities(&report)
+}
+
+/// 基点の editor-json の出力(読み済みの値)の critical の識別子の集合 — read_baseline と、止めた当たりが HEAD の版にも在るかを分ける
+/// commit の hook(commit_hook::judge)が同じ綴りで読む。
+pub fn baseline_identities(report: &Value) -> Result<BTreeSet<String>, String> {
     let violations = report
         .get("violations")
         .and_then(Value::as_array)
