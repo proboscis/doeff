@@ -5,7 +5,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet])
+                              WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved
+                              EventsQuiet])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer decode-answer])
 
@@ -19,6 +20,7 @@
    (PutRow "parts" #("p1") {"grant" "yes"} (ExpectVersion 4))
    (PutRow "parts" #("p1") {} (ExpectAny))
    (WatchChanges #("parts" "tickets") (WatchCursor 1 7) :timeout 2.5 :limit 3)
+   (WatchChanges #("parts") (WatchCursor 1 7) :streams #("journal" "pulses"))
    (AppendEvent "journal" "k1" {"n" [1 {"m" None}]})
    (AppendEvent "journal" "k2" "a string body")
    (ReadEvents "journal" :after 4 :limit 2)
@@ -41,12 +43,14 @@
    #("put-row" (Conflict (Missing)))
    #("put-row" (Refused "書き手でない"))
    #("watch-changes" (Changes #((RowChanged "parts" #("p1") 1 {"id" "p1"} 5 1700000000123) (RowRemoved "tickets" #("g1" "t1") 6))
-                              (WatchCursor 1 6)))
+                              (WatchCursor 1 6) #()))
+   #("watch-changes" (Changes #() (WatchCursor 1 6) #((StreamTail :stream "journal" :sequence 4 :at 1700000000123)
+                                                      (StreamTailEmpty :stream "pulses"))))
    #("watch-changes" (Reset 2 41))
    #("append-event" (Appended 7))
    #("append-event" (Refused "別の本文"))
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
-   #("read-stream-end" (StreamEnd 7))
+   #("read-stream-end" (StreamEnd 7 1700000000456))
    #("read-stream-end" (StreamEmpty))
    #("watch-events" (EventsMoved))
    #("watch-events" (EventsQuiet))
@@ -102,6 +106,11 @@
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"} "approval" {"token" "t"}})
                            #("watch-changes" {"tables" [] "cursor" {"epoch" 1 "sequence" 0}})
                            #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1}})
+                           ;; 末尾を名指す列(#3718): 名指さない時は鍵ごと無い(空の配列は綴りの外)・文字列の配列・列の名の形・同じ列は 1 度だけ。
+                           #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1 "sequence" 0} "streams" []})
+                           #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1 "sequence" 0} "streams" "journal"})
+                           #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1 "sequence" 0} "streams" ["Journal!"]})
+                           #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1 "sequence" 0} "streams" ["journal" "journal"]})
                            #("append-event" {"stream" "journal" "idempotencyKey" "" "body" 1})
                            #("read-events" {"stream" "journal" "after" -1})
                            #("read-stream-end" {})
@@ -142,10 +151,22 @@
                            ;; 読める最も古い位置 floor の無い Reset は、floor を黙って 0 に倒さず断る。
                            #("watch-changes" {"kind" "reset" "epoch" 2})
                            #("list-rows" {"kind" "reset" "epoch" 2 "floor" "0"})
-                           ;; 列の末尾の番号の無い streamEnd・0 や真偽値の番号は断る(空の列は streamEmpty で運ぶ — 0 に倒さない)。
+                           ;; 名指した列の末尾(#3718): 空の tails は綴りの外(名指さない答えは鍵ごと無い)・刻の無い末尾・知らない kind・
+                           ;; 0 の番号は断る(空の列は streamTailEmpty で運ぶ)。
+                           #("watch-changes" {"kind" "changes" "items" [] "cursor" {"epoch" 1 "sequence" 5} "tails" []})
+                           #("watch-changes" {"kind" "changes" "items" [] "cursor" {"epoch" 1 "sequence" 5}
+                                              "tails" [{"kind" "streamTail" "stream" "journal" "sequence" 4}]})
+                           #("watch-changes" {"kind" "changes" "items" [] "cursor" {"epoch" 1 "sequence" 5}
+                                              "tails" [{"kind" "streamEnd" "sequence" 4 "at" 1}]})
+                           #("watch-changes" {"kind" "changes" "items" [] "cursor" {"epoch" 1 "sequence" 5}
+                                              "tails" [{"kind" "streamTail" "stream" "journal" "sequence" 0 "at" 1}]})
+                           #("watch-changes" {"kind" "changes" "items" [] "cursor" {"epoch" 1 "sequence" 5}
+                                              "tails" [{"kind" "streamTailEmpty"}]})
+                           ;; 列の末尾の番号や刻の無い streamEnd・0 や真偽値の番号は断る(空の列は streamEmpty で運ぶ — 0 に倒さない)。
                            #("read-stream-end" {"kind" "streamEnd"})
-                           #("read-stream-end" {"kind" "streamEnd" "sequence" 0})
-                           #("read-stream-end" {"kind" "streamEnd" "sequence" True})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" 3})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" 0 "at" 1})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" True "at" 1})
                            #("read-stream-end" {"kind" "streamEmpty" "sequence" 3})
                            #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})
                            ;; 列の待ちの答えは eventsMoved | eventsQuiet だけ(欄を持たない)。

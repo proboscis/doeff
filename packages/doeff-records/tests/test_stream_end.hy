@@ -69,7 +69,8 @@
     (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (count-http-requests sent)
                                                 (sim-time-handler :clock clock) records-unwaited (http-records-handler endpoint)]
                                                (ReadStreamEnd "journal")))))
-    (assert (= answer (StreamEnd (get sequences -1))) (repr answer))
+    ;; 末尾 = 最後に積んだ出来事の番号と、それを積んだ刻(#3718)。
+    (assert (= answer (StreamEnd (get sequences -1) (. (get store.events -1) at))) (repr answer))
     (assert (= (len sent) 1) (repr sent))
     (assert (.endswith (get sent 0) "/v1/records/read-stream-end") (repr sent))
     (finally (.close server))))

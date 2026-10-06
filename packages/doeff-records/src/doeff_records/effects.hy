@@ -1,6 +1,7 @@
 ;;; 記録の仕組みの公開 effect 8 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
-;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。
+;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号と刻を 1 回で読む(空の列は StreamEmpty)。WatchChanges は名指した列(streams)の末尾も
+;;; 答えに載せる(Changes.tails — #3718)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
@@ -108,18 +109,27 @@
 
 (defclass [(dataclass :frozen True)] WatchChanges [EffectBase]
   "cursor より後の確定した変更を、頼んだ表の分だけ返す。無ければ timeout 秒まで待つ。limit = 1 回に返す変更の上限。
+   streams = 末尾を知りたい追記の列の名(同じ名は 1 度だけ・既定 = 無し — #3718)。答えの Changes.tails に、名指した順で列ごとの末尾
+   (StreamTail = 最後の生きている出来事の位置と刻 | StreamTailEmpty = 生きている出来事が無い)が載る。
+   tails は答えを返す時点の名指した列の末尾。列への追記では待ち手を起こさない — 起こしたい呼び手は列を源に別に待つ。
    答え = Changes | Reset(cursor の epoch が置き場の版と違う)| Unreachable。"
   (#^ tuple tables)
   (#^ WatchCursor cursor)
   (setv #^ float timeout 0.0)
   (setv #^ int limit DEFAULT-WATCH-LIMIT)
+  (setv #^ (get tuple #(str ...)) streams #())
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.tables tuple) self.tables)) (raise (TypeError "WatchChanges.tables は空でない tuple")))
     (for [name self.tables] (checked-table-name name "WatchChanges.tables の表"))
     (when (not (isinstance self.cursor WatchCursor)) (raise (TypeError "WatchChanges.cursor は WatchCursor")))
     (when (or (isinstance self.timeout bool) (not (isinstance self.timeout #(int float))) (< self.timeout 0))
       (raise (ValueError (.format "WatchChanges.timeout は 0 以上の秒: {!r}" self.timeout))))
-    (checked-limit self.limit "WatchChanges.limit")))
+    (checked-limit self.limit "WatchChanges.limit")
+    (when (not (isinstance self.streams tuple))
+      (raise (TypeError (.format "WatchChanges.streams は列の名の tuple: {!r}" self.streams))))
+    (for [name self.streams] (checked-table-name name "WatchChanges.streams の列"))
+    (when (!= (len self.streams) (len (set self.streams)))
+      (raise (ValueError (.format "WatchChanges.streams に同じ列が 2 度出る: {!r}" self.streams))))))
 
 
 (defclass [(dataclass :frozen True)] AppendEvent [EffectBase]
@@ -163,8 +173,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadStreamEnd [EffectBase]
-  "追記の列 stream の末尾(今ある最後の出来事の番号)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため。
-   答え = StreamEnd(sequence)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
+  "追記の列 stream の末尾(今ある最後の出来事の番号と、それを積んだ刻)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため。
+   答え = StreamEnd(sequence at)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
   (#^ str stream)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadStreamEnd.stream")))

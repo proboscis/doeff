@@ -355,10 +355,32 @@
   (#^ tuple key)
   (#^ int sequence))
 
+(defrecord StreamTail
+  "WatchChanges の答えの tails の 1 つ — 名指した列 1 つの末尾(ReadStreamEnd の StreamEnd と同じ位置と刻・#3718): stream = 列の名 /
+   sequence = 列に今ある、保持の期限を過ぎていない最後の出来事の番号(1 以上)/ at = その出来事を積んだ刻(epoch ミリ秒 — Event.at と同じ)。"
+  {:tags {:context "records" :role "type"}
+   :check [(isinstance stream str)
+           (and (isinstance sequence int) (not (isinstance sequence bool)) (>= sequence 1))
+           (and (isinstance at int) (not (isinstance at bool)))]}
+  #^ str stream
+  #^ int sequence
+  #^ int at)
+
+(defrecord StreamTailEmpty
+  "WatchChanges の答えの tails の 1 つ — 名指した列 stream に、保持の期限を過ぎていない出来事が 1 つも無い(まだ積んでいない・全部が期限を
+   過ぎた — ReadStreamEnd の StreamEmpty と同じ。番号 0 と混ぜずに型で分ける・#3718)。"
+  {:tags {:context "records" :role "type"}
+   :check [(isinstance stream str)]}
+  #^ str stream)
+
 (defclass [(dataclass :frozen True)] Changes []
-  "WatchChanges の答え: items = 頼んだ表の変更(sequence の昇順・確定した変更ちょうど 1 回ずつ)/ cursor = 次に渡す位置。"
+  "WatchChanges の答え: items = 頼んだ表の変更(sequence の昇順・確定した変更ちょうど 1 回ずつ)/ cursor = 次に渡す位置 /
+   tails = 要求が名指した列(WatchChanges.streams)ごとの末尾(StreamTail | StreamTailEmpty — 名指した順・名指さなければ空・#3718)。
+   tails は答えを返す時点の名指した列の末尾で、items と同じ置き場の断面から読む。列への追記では待ち手を起こさない — 起こしたい呼び手は
+   列を源に別に待つ。"
   (#^ tuple items)
-  (#^ WatchCursor cursor))
+  (#^ WatchCursor cursor)
+  (#^ (get tuple #((| StreamTail StreamTailEmpty) ...)) tails))
 
 (defclass [(dataclass :frozen True)] Appended []
   "AppendEvent が確定した(同じ冪等キーの再送は前の sequence)。"
@@ -397,11 +419,14 @@
 
 (defclass [(dataclass :frozen True)] StreamEnd []
   "ReadStreamEnd の答え: sequence = 列に今ある、保持の期限を過ぎていない最後の出来事の番号(期限を過ぎた出来事は回収の前でも数えない —
-   1 以上)。"
+   1 以上)/ at = その出来事を積んだ刻(epoch ミリ秒 — Event.at と同じ・#3718)。"
   (#^ int sequence)
+  (#^ int at)
   (defn #^ None __post_init__ [self]
     (when (or (isinstance self.sequence bool) (not (isinstance self.sequence int)) (< self.sequence 1))
-      (raise (ValueError (.format "StreamEnd.sequence は 1 以上の整数: {!r}" self.sequence))))))
+      (raise (ValueError (.format "StreamEnd.sequence は 1 以上の整数: {!r}" self.sequence))))
+    (when (or (isinstance self.at bool) (not (isinstance self.at int)))
+      (raise (ValueError (.format "StreamEnd.at は整数(epoch ミリ秒): {!r}" self.at))))))
 
 (defclass [(dataclass :frozen True)] StreamEmpty []
   "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・全部が保持の期限を過ぎた)— 番号 0 と混ぜずに型で分ける。")

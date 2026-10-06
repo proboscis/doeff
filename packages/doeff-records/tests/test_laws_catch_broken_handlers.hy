@@ -18,7 +18,8 @@
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
-                            law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep])
+                            law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
+                            law-watch-tails-match-stream-ends])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -28,15 +29,31 @@
     (resume answer)))
 
 (defhandler repeat-changes []
-  (WatchChanges [tables cursor timeout limit]
-    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit))
-    (resume (if (isinstance answer Changes) (Changes (+ answer.items answer.items) answer.cursor) answer))))
+  (WatchChanges [tables cursor timeout limit streams]
+    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    (resume (if (isinstance answer Changes) (Changes (+ answer.items answer.items) answer.cursor answer.tails) answer))))
 
 (defhandler hide-reset []
-  (WatchChanges [tables cursor timeout limit]
-    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit))
+  (WatchChanges [tables cursor timeout limit streams]
+    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
     ;; 置き場の版を見ない handler の顔: Reset の代わりに「変更なし」を返す。
-    (resume (if (isinstance answer Reset) (Changes #() cursor) answer))))
+    (resume (if (isinstance answer Reset) (Changes #() cursor #()) answer))))
+
+(defhandler drop-tails
+  ;; 列の末尾を運ばない handler の顔(#3718): 名指した列の tails を捨て、名指さない答えと同じ形で返す。
+  (WatchChanges [tables cursor timeout limit streams]
+    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    (resume (match answer
+              (Changes :items items :cursor moved) (Changes items moved #())
+              _ answer))))
+
+(defhandler tails-in-name-order
+  ;; 名指した順を守らない handler の顔(#3718): tails を列の名の順に並べ替えて返す(名指した順で照らす使い手が列を取り違える)。
+  (WatchChanges [tables cursor timeout limit streams]
+    (<- answer (WatchChanges tables cursor :timeout timeout :limit limit :streams streams))
+    (resume (match answer
+              (Changes :items items :cursor moved :tails tails) (Changes items moved (tuple (sorted tails :key (fn [tail] tail.stream))))
+              _ answer))))
 
 (defhandler frozen-clock []
   (GetTimeEffect []
@@ -94,8 +111,8 @@
   "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。"
   (<- journal (ReadStreamEnd "journal"))
   (<- pairs (ReadStreamEnd "pairs"))
-  (val ends (lfor end #(journal pairs) :if (isinstance end StreamEnd) end.sequence))
-  (if ends (StreamEnd (max ends)) (StreamEmpty)))
+  (val ends (lfor end #(journal pairs) :if (isinstance end StreamEnd) end))
+  (if ends (max ends :key (fn [end] end.sequence)) (StreamEmpty)))
 
 (defhandler end-of-every-stream []
   ;; 列を問わない handler の顔: どの列の末尾にも、置き場の全部の列の最後の番号を答える。
@@ -135,7 +152,9 @@
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
                       #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
-                      #(law-stream-end-is-the-last-sequence (end-of-every-stream))]]
+                      #(law-stream-end-is-the-last-sequence (end-of-every-stream))
+                      #(law-watch-tails-match-stream-ends drop-tails)
+                      #(law-watch-tails-match-stream-ends tails-in-name-order)]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手の名で断る置き場(欄の書き手でない stranger の書きを断る)— #2994 の前の置き場の形。
   (setv strict-store (MemoryStore LAW-SCHEMA))

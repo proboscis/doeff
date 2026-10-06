@@ -43,6 +43,8 @@ from doeff_records.values import RowsConflict as RowsConflict
 from doeff_records.values import RowsRefused as RowsRefused
 from doeff_records.values import StreamEnd as StreamEnd
 from doeff_records.values import StreamEmpty as StreamEmpty
+from doeff_records.values import StreamTail as StreamTail
+from doeff_records.values import StreamTailEmpty as StreamTailEmpty
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -137,6 +139,9 @@ def law_put_rows_is_all_or_nothing(harness: LawHarness) -> _Program[list[object]
 def law_grouped_events_expire_together(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
+def stream_end_of(harness: LawHarness, stream: str, appended: Appended) -> _Program[StreamEnd, object]:
+    ...
+
 def law_stream_end_is_the_last_sequence(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
@@ -153,6 +158,12 @@ def expired_key_answers(harness: LawHarness) -> _Program[tuple, object]:
     ...
 
 def law_an_expired_key_answers_the_same_before_and_after_a_sweep(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def tails_of_ends(harness: LawHarness, streams: tuple[str, ...]) -> _Program[tuple[StreamTail | StreamTailEmpty, ...], object]:
+    ...
+
+def law_watch_tails_match_stream_ends(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

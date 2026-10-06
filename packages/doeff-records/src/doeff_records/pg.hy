@@ -53,6 +53,7 @@
                                         SqlUnreachable])
 (import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
+                              StreamTail StreamTailEmpty
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -61,9 +62,9 @@
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
-(import doeff_records.pg_sql [Statement RowExpiry EventExpiry DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
+(import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               schema-statements drop-statements
-                              store-head-statement read-row-statement lock-row-statement list-rows-statement
+                              store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
                               insert-event-statement read-events-statement stream-end-statement expire-events-statement
@@ -639,14 +640,44 @@
   expiries)
 
 
+(defk tail-reads [store streams now-ms]
+  {:pre [(: store PreparedStore) (: streams (get tuple #(str ...))) (: now-ms int)] :post [(: % (get tuple #(TailRead ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "WatchChanges が末尾を名指した列 streams の読みの材料(pg_sql.TailRead の組 — 名指した順)を刻 now-ms で作るため(#3718 — 期限の境は
+   ReadStreamEnd と同じ event-expiry)。宣言に無い列は UndeclaredTable。"
+  (var reads #())
+  (for [name streams]
+    (<- expiry (event-expiry (store.schema.stream name) now-ms))
+    (:= reads (+ reads #((TailRead :stream name :expiry expiry)))))
+  reads)
+
+
+(defk tails-of [streams columns]
+  {:pre [(: streams (get tuple #(str ...))) (: columns tuple) (= (len columns) (* 2 (len streams)))]
+   :post [(: % (get tuple #((| StreamTail StreamTailEmpty) ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "watch-head-statement の答えの行の 4 つ目からの列(名指した列ごとに seq・at の 2 つ — 生きている出来事の無い列は NULL)を、名指した順の
+   tails(StreamTail | StreamTailEmpty)にするため(#3718)。"
+  (var tails #())
+  (for [#(stream #(sequence at)) (zip streams (zip (cut columns 0 None 2) (cut columns 1 None 2) :strict True) :strict True)]
+    (:= tails (+ tails #((match sequence
+                            None (StreamTailEmpty :stream stream)
+                            _ (StreamTail :stream stream :sequence (int sequence) :at (int at)))))))
+  tails)
+
+
 (defk pg-watch-scan [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask WatchChanges) (: now-ms int)] :post [(: % (| Changes Reset))]
    :tags {:context "records" :role "foundation"}}
   "WatchChanges の 1 回ぶんの読み(待たない)を流すため。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の変わりは、回収の
    前でも出さない(文の条件・頭の註)。頼んだ表が空なら文を流さない(`IN ()` は文にできない — WatchChanges は空の組を作る時に断るので、
-   今は起きない)。"
+   今は起きない)。名指した列(ask.streams)の末尾は、置き場の頭と同じ 1 文(watch-head-statement — 同じ断面)で読み、変更の列は頭の番号
+   までを読む(変更と末尾が同じ断面の物になる・往復は増えない — #3718)。"
   (for [name ask.tables] (store.schema.table name))
-  (<- head (store-head store))
+  (<- reads tuple (tail-reads store ask.streams now-ms))
+  (<- head-statement Statement (watch-head-statement store.prefix reads))
+  (<- head-rows tuple (query-rows store.database head-statement))
+  (<- head StoreHead (head-of head-rows))
   (val cursor ask.cursor)
   (when (or (!= cursor.epoch head.epoch) (< cursor.sequence head.floor) (> cursor.sequence head.head))
     (return (Reset head.epoch head.floor)))
@@ -658,7 +689,8 @@
     (for [record records]
       (<- change (change-of record))
       (.append items change)))
-  (Changes (tuple items) (WatchCursor head.epoch (next-watch-sequence (tuple items) ask.limit head.head))))
+  (<- tails tuple (tails-of ask.streams (tuple (cut (get head-rows 0) 3 None))))
+  (Changes (tuple items) (WatchCursor head.epoch (next-watch-sequence (tuple items) ask.limit head.head)) tails))
 
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
@@ -765,14 +797,16 @@
 (defk pg-read-stream-end [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadStreamEnd) (: now-ms int)] :post [(: % (| StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
-  "ReadStreamEnd に答えるため: 列の生きた出来事の max(seq) を 1 文で読む(刻 now-ms で保持の期限を過ぎた出来事は回収の前でも数えない —
-   ReadEvents と同じ条件。生きた出来事が無ければ StreamEmpty)。"
+  "ReadStreamEnd に答えるため: 列の最後の生きた出来事の番号と刻を、(ledger, seq) の索引を後ろから 1 行で引く 1 文で読む(刻 now-ms で
+   保持の期限を過ぎた出来事は回収の前でも数えない — ReadEvents と同じ条件。生きた出来事が無ければ 0 行 = StreamEmpty)。WatchChanges の
+   tails も同じ文を頭の文の副問い合わせにして読む(pg-watch-scan — #3718)。"
   (val decl (store.schema.stream ask.stream))
   (<- expiry (event-expiry decl now-ms))
-  (<- statement (stream-end-statement store.prefix ask.stream expiry))
+  (<- statement (stream-end-statement store.prefix ask.stream expiry ""))
   (<- records (query-rows store.database statement))
-  (val last (get (get records 0) 0))
-  (if (is last None) (StreamEmpty) (StreamEnd (int last))))
+  (match records
+    #() (StreamEmpty)
+    #(#(sequence at)) (StreamEnd (int sequence) (int at))))
 
 
 (defk moved-after [program]
@@ -848,6 +882,7 @@
     (<- answer (reached (batched-writing store topics (put-rows-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
+    ;; 呼び鈴の名は頼んだ表だけ — 末尾を名指した列(streams)への追記では待ち手を起こさない(tails は答えを返す時点の末尾・#3718)。
     (<- topics (notice-topics (tuple tables) #()))
     (<- answer (wait-for-signal (fn [now-ms] (reached (pg-watch-scan store effect now-ms)))
                                 (fn [] (hung-bell store topics)) (fn [bell] (dropped-bell store bell)) timeout))

@@ -13,10 +13,10 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `ReadRow(table, key)` | 表・キー | `Row(key, value, version)` か `Missing()` | `Unreachable` |
 | `ListRows(table, where, fields, cursor, limit)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限 | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
 | `PutRow(table, key, value, expect)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)。書き手の名は欄に無く、handler を組む時に身元から入る | `Written(version, value)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
-| `WatchChanges(tables, cursor, timeout, limit)` | 表の列・位置・待つ秒 | `Changes(items, cursor)` | `Reset(epoch, floor)`・`Unreachable` |
+| `WatchChanges(tables, cursor, timeout, limit, streams)` | 表の列・位置・待つ秒・上限・末尾を知りたい追記の列(既定 = 無し) | `Changes(items, cursor, tails)`(`tails` = 名指した列ごとの末尾 `StreamTail(stream, sequence, at)` か `StreamTailEmpty(stream)` — 名指した順・名指さなければ空) | `Reset(epoch, floor)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
 | `ReadEvents(stream, after, limit)` | 追記の列・この番号より後・上限 | `Events(items, last_sequence)` | `Unreachable` |
-| `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence)`(列に今ある、保持の期限を過ぎていない最後の出来事の番号)か `StreamEmpty()`(そういう出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
+| `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence, at)`(列に今ある、保持の期限を過ぎていない最後の出来事の番号と、それを積んだ刻)か `StreamEmpty()`(そういう出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
 | `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
@@ -37,6 +37,9 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   transaction 1 つの中で全部の行を検めてから書くので、書きの途中の失敗は transaction ごと戻る。
 - `WatchChanges` は確定した変更を、番号の順にちょうど 1 回ずつ返す(断られた書き・衝突した書きは出ない)。位置の `epoch` が置き場の版と
   違えば `Reset` を返すので、一覧から読み直す。
+- `WatchChanges` の `streams` に追記の列を名指すと、答えの `tails` に名指した順で列ごとの末尾が載る(`ReadStreamEnd` と同じ位置と刻 —
+  保持の期限を過ぎた出来事は数えない。変更と同じ置き場の断面から読む・#3718)。tails は答えを返す時点の名指した列の末尾。列への追記では
+  待ち手を起こさない — 起こしたい呼び手は列を源に別に待つ(`WatchEvents`)。宣言に無い列を名指すと、表と同じく `UndeclaredTable`。
 - 保持の期限(`KeepFor`)を過ぎた行と出来事は、その刻からどの読みにも出ない: `ReadRow` は `Missing`、`ListRows` と `ReadEvents` は除き、
   `WatchChanges` は行の今の値が期限を過ぎた終端の行である、その行の変わり(`RowChanged`)を出さず、`WatchEvents` は動かず、`ReadStreamEnd` は
   数えない。読みは置き場を変えない(期限の判定は読みが持つ)。置き場から消して変更の列に `RowRemoved` を積み、出来事を冪等キーの覚えへ移す
@@ -112,11 +115,11 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `POST /v1/records/read-row` | `{table, key}` | `row` / `missing` |
 | `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}` | `page` / `reset` / `notIndexed` |
 | `POST /v1/records/put-row` | `{table, key, value, expect}`(`approval` は廃止 — null だけ読み飛ばし、値があれば 400) | `written` / `conflict` / `refused` |
-| `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?}` | `changes` / `reset` |
+| `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?, streams?}`(`streams` は列を名指す時だけ・1 つ以上 — 空の配列は 400。古い service は鍵を知らず 400 なので、名指す client より先に service を新しい版で起こす) | `changes`(`items, cursor` と、`streams` を名指した要求の答えだけ `tails` = 名指した順の `{kind: streamTail, stream, sequence, at}` / `{kind: streamTailEmpty, stream}` の列 — 名指さない要求の答えに鍵は無い)/ `reset` |
 | `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
 | `POST /v1/records/read-events` | `{stream, after?, limit?}` | `events` |
 | `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
-| `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
+| `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence, at`)/ `streamEmpty` |
 | `GET /healthz` | — | `{status: "ok"}` |
 | `GET /metrics` | — | Prometheus の text(`text/plain; version=0.0.4`)— 身元を問わない |
 | `GET /served` | — | `{commits: {<repo>: <sha>} \| null, instance: <世代> \| null, schemaDigests: {<表>: <sha256>}}` — 身元も表の用意も置き場も問わない(#2742) |

@@ -55,9 +55,9 @@
 (import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
                                ReadRequestPatience])
-(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer refusal-from undeclared-refusal
-                            CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome WRITER-HEADER
-                            WATCH-MAX-SECONDS])
+(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
+                            undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
+                            WRITER-HEADER WATCH-MAX-SECONDS])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 
@@ -179,7 +179,9 @@
   (when (isinstance reply Unreachable) (return reply))
   (<- body (reply-json request.operation reply))
   (when (= reply.status 200)
-    (return (! (decode-answer request.operation body))))
+    ;; 読んだ答えが撃った要求に合うかを照らす(WatchChanges の tails は名指した列と同じ数・同じ順 — 外れは WireMalformed・#3718)。
+    (<- decoded WireAnswer (decode-answer request.operation body))
+    (return (! (answer-for-request ask decoded))))
   (<- refusal (refusal-from body))
   (match refusal.error
     "store-unavailable" (Unreachable refusal.reason)
@@ -312,7 +314,8 @@
   ;; 在る時(例: 着地の列の台帳と業務の記録)、置き場ごとの handler を値の列を持たずに重ねるため(内側に表で絞った handler・外側に
   ;; 残りの表の handler)。handler の列を値で持って中で並べ直す振り分けは、組み立てを実行せずに読む道具(doeff-effect-analyzer)が
   ;; 読めない — この形は並びが呼び出しの字面に在るので読める。束の書き(PutRows)と待ち(WatchChanges)は、束の表が全部 served の中の時
-  ;; だけ答える(置き場をまたぐ束は 1 つの置き場では書けない — 外側で断られる)。
+  ;; だけ答える(置き場をまたぐ束は 1 つの置き場では書けない — 外側で断られる)。待ちが末尾を名指す列(streams — #3718)も、全部 served の
+  ;; 中の時だけ答える(列の末尾は待ちと同じ置き場の断面から読むので、同じ口に在る列だけを名指せる)。
   (ReadRow [table key]
     :when (in table served)
     (<- answer (answered-riding-stall endpoint effect))
@@ -329,7 +332,7 @@
     :when (and writes (all (gfor w writes (in w.table served))))
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
-  (WatchChanges [tables cursor timeout limit]
-    :when (and tables (all (gfor t tables (in t served))))
+  (WatchChanges [tables cursor timeout limit streams]
+    :when (and tables (all (gfor t tables (in t served))) (all (gfor s streams (in s served))))
     (<- answer (long-poll endpoint effect))
     (resume answer)))

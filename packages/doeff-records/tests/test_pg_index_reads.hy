@@ -12,8 +12,9 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables])
-(import doeff_records.pg_sql [Statement expiring-events-statement expire-events-statement expire-event-groups-statement
-                              touched-events-statement prune-changes-statement terminal-rows-statement])
+(import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
+                              touched-events-statement prune-changes-statement terminal-rows-statement stream-end-statement
+                              watch-head-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -101,6 +102,14 @@
   (<- pair-probe (expiring-events-statement prefix "pairs" BEFORE ":"))
   (<- terminal (terminal-rows-statement prefix "tickets" "state" #("done")))
   (<- touched (touched-events-statement prefix "pairs" BEFORE ":" "done:m-1"))
+  ;; 列の末尾の読み(#3718 — ReadStreamEnd の文と、WatchChanges の頭の文に列の末尾を並べた形): (ledger, seq) の索引を後ろから 1 行。
+  ;; pulses の出来事は pairs より前に積んである — 主鍵 seq を後ろから読む道なら pairs の出来事を全部読む(等号の照らしの形がそうだった)。
+  ;; 組で数える列(pairs)の末尾は測らない: 期限の条件(living-events-filter — ReadEvents と同じ)の組の照らしは hashed SubPlan の
+  ;; Seq Scan に計画される(末尾の出来事が生きていれば走らない)。これは列の読みの期限の条件の性質で、末尾の読みが足した物ではない。
+  (val pulse-expiry (EventExpiry :before-at BEFORE :separator None))
+  (<- pulse-end (stream-end-statement prefix "pulses" pulse-expiry ""))
+  (<- watch-head (watch-head-statement prefix #((TailRead :stream "pulses" :expiry pulse-expiry)
+                                                (TailRead :stream "journal" :expiry None))))
   (<- pulse-sweep (expire-events-statement prefix "pulses" BEFORE))
   (<- pair-sweep (expire-event-groups-statement prefix "pairs" BEFORE ":"))
   (<- prune (prune-changes-statement prefix BEFORE))
@@ -108,6 +117,8 @@
     #("組で数える列の回収の候補の読み" pair-probe)
     #("期限の在る表の終端の行の読み" terminal)
     #("組で数える列への追記が触る組の読み" touched)
+    #("出来事ごとの列の末尾の読み" pulse-end)
+    #("待ちの頭と列の末尾の読み" watch-head)
     #("出来事ごとの列の回収" pulse-sweep)
     #("組で数える列の回収" pair-sweep)
     #("変更の列の刈り" prune)))
