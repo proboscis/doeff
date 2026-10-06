@@ -26,6 +26,11 @@ class PollWarmChild(EffectBase):
     exit_path: str
 
 @dataclass(frozen=True, kw_only=True)
+class AwaitWarmChildExit(EffectBase):
+    pid: int
+    start_ticks: int
+
+@dataclass(frozen=True, kw_only=True)
 class SignalWarmChild(EffectBase):
     pid: int
     start_ticks: int

@@ -117,6 +117,10 @@ class StopProcess(EffectBase):
     pid: int
     stop_grace: float = 10.0
 
+@dataclass(frozen=True)
+class AwaitProcessExit(EffectBase):
+    pid: int
+
 class ProcessSignal(StrEnum):
     TERM = 'term'
     KILL = 'kill'
@@ -157,6 +161,10 @@ class ProcessRunning:
 class ProcessExited:
     pid: int
     exit_code: int
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessEnded:
+    pid: int
 
 @dataclass(frozen=True, kw_only=True)
 class ProcessNotChild:

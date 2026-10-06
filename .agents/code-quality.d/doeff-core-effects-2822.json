@@ -130,7 +130,9 @@
         "packages/doeff-core-effects/doeff_core_effects/http_host_gate.hy",
         "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi",
         "packages/doeff-core-effects/doeff_core_effects/os_warm_process.hy",
-        "packages/doeff-core-effects/doeff_core_effects/os_warm_process.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/os_warm_process.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/pidfd_exit.hy",
+        "packages/doeff-core-effects/doeff_core_effects/pidfd_exit.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/aiohttp_http_server.hy",
@@ -413,6 +415,7 @@
         "packages/doeff-core-effects/tests/test_http_host_gate.hy",
         "packages/doeff-core-effects/tests/warm_contract_handlers.hy",
         "packages/doeff-core-effects/tests/test_warm_process_contract.hy",
+        "packages/doeff-core-effects/tests/test_process_exit_wait.hy",
         "packages/doeff-core-effects/tests/fake_warm_child.py"
       ],
       "public": [],
