@@ -4,6 +4,7 @@
 - 決定担当：議論の席(proboscis-mbp の w3J:pE)。推奨はこの変更の担当(zeus の cc1-w22)。実装の段取りは coordinator 役の cisco-c7 が確かめた。
 - 根拠：模擬で仮想の数時間から 1 日を回す検が、1 本 50〜60 秒かかっていた。profile の上位は coordinator の拍(約 3 万回)と worker の heartbeat(約 1.5 万回)だった。1 拍を軽くする直しは 3 割に届かず、仮想の時間の長い検には効かない。
 - 記録：agora-redesign #1383(決定の comment)・#1522(実装)・#1518(重い検)。
+- 置き換え：2026-10-07 に ADR-DOE-CLUSTER-002(`docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy`)が置き換えた。本番も模擬も、coordinator は次の期限か要求か停止まで受付を 1 本で待つ。この記録の模擬だけの静かな区間(`idle_policy`)と `TICK-MS` は消した。worker の代役が眠る間の heartbeat は、模擬の受付の列がその刻に要求として渡す(agora-redesign #3865 の単位 2b)。
 
 ## 決定と理由
 

@@ -261,7 +261,6 @@
         "doeff-cluster-clock",
         "doeff-cluster-cluster-model",
         "doeff-cluster-coordinator-inbox",
-        "doeff-cluster-idle-policy",
         "doeff-cluster-kube-handlers",
         "doeff-cluster-promise-wait",
         "doeff-cluster-shared-protocol",
@@ -660,28 +659,6 @@
         "packages/doeff-cluster/src/doeff_cluster/foundation/host_contract.hy"
       ],
       "responsibility": "宿(job の Program を走らせる所)が Program に提供する物の閉じた契約(ADR-DOE-CLUSTER-001・改訂 1 の H)。",
-      "typed": true
-    },
-    {
-      "allow": [
-        "doeff-cluster-api-policy",
-        "doeff-cluster-cluster-model",
-        "doeff-cluster-cluster-policy",
-        "doeff-cluster-resource-policy",
-        "doeff-cluster-rollout-policy",
-        "doeff-cluster-shared-protocol",
-        "doeff-cluster-watch-policy",
-        "doeff-cluster-due-model"
-      ],
-      "layer": "pure",
-      "name": "doeff-cluster-idle-policy",
-      "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy"
-      ],
-      "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy"
-      ],
-      "responsibility": "要求の無い間の静かな区間で、1 拍ずつの走りの調停の歩が何を変えるか(純粋な判断・I/O はしない — 生存の印と吸える待ちの期限だけが変わる歩を試す)。",
       "typed": true
     },
     {
@@ -1413,7 +1390,6 @@
         "doeff-cluster-foundation-check",
         "doeff-cluster-handlers",
         "doeff-cluster-host-contract",
-        "doeff-cluster-idle-policy",
         "doeff-cluster-image-contract",
         "doeff-cluster-image-rules",
         "doeff-cluster-job-entry",

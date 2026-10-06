@@ -53,9 +53,9 @@ from doeff_events import NoticeDropped as NoticeDropped
 from doeff_cluster.coordinator.core.cluster_policy import liveness_moves as liveness_moves
 from doeff_cluster.coordinator.core.cluster_policy import liveness_now as liveness_now
 from doeff_cluster.coordinator.core.cluster_policy import note_liveness as note_liveness
-from doeff_cluster.coordinator.intent.due_model import DueAt as DueAt
-from doeff_cluster.coordinator.intent.due_model import DueNow as DueNow
-from doeff_cluster.coordinator.intent.due_model import DueNever as DueNever
+from doeff_cluster.shared.intent.due_model import DueAt as DueAt
+from doeff_cluster.shared.intent.due_model import DueNow as DueNow
+from doeff_cluster.shared.intent.due_model import DueNever as DueNever
 from doeff_cluster.coordinator.core.wake_policy import next_wake as next_wake
 from doeff_cluster.coordinator.core.wake_policy import after_step as after_step
 from doeff_cluster.coordinator.core.wake_policy import wait_seconds as wait_seconds
