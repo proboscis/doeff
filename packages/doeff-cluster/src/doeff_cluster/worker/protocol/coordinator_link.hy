@@ -289,12 +289,13 @@
 
 (defk armed-bell [state]
   {:pre [(: state LinkState)] :post [(: % (| Promise None))]}
-  "拍の間の眠りを宣言の変化で起こす呼び鈴を返すため(#2692)。待ちの口を使えていない間は None(拍ごとに heartbeat を送るので起こしは
-   要らない)。まだ鳴っていない呼び鈴が在ればそれを渡し(拍ごとに作らない)、無ければ新しく掛ける。"
-  (<- watching bool (watching? state))
+  "拍の間の眠りを宣言の変化で起こす呼び鈴を返すため(#2692)。待ちの口を確かめる前から掛ける — 周の間は期限か呼び鈴でしか起きない
+   (#3871 の単位 4)ので、起動の直後の最初の「変わった」をこの呼び鈴で受けないと、次の heartbeat の期限まで気づかない。待ちの口の無い
+   coordinator では鳴らないだけ(heartbeat の期限で起きる)。待ちを使わない口(watch-enabled が偽)だけ None。まだ鳴っていない呼び鈴が
+   在ればそれを渡し(拍ごとに作らない)、無ければ新しく掛ける。"
   (val watch state.watch)
   (cond
-    (not watching) None
+    (not state.watch-enabled) None
     (is-not watch.bell None) watch.bell
     True (do (<- bell Promise (CreatePromise))
              (setv watch.bell bell)
