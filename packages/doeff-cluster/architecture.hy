@@ -132,9 +132,12 @@
 ;;;   版上げ 12 回で通した順を、sim で測った落ち方 = tests/test_upgrade_swaps.hy に合わせた)。判じるのは入れ替えを始めた瞬間の記録(何を・
 ;;;   どの版へ・その瞬間の名簿と、queued / どの worker に置かれた assigned の task の写し)。確かめるのは tests/test_upgrade_invariants.hy の
 ;;;   test-the-order-the-2026-10-05-upgrade-used-is-green。模擬の Flux が当てた瞬間に同じ記録を写す筋書きは #3366 の単位 2b の続き。
-;;;   V1 coordinator-after-every-worker — coordinator の入れ替えを始めるのは、名簿の worker が全部同じ版で live になった後だけ(新しい
-;;;   coordinator は新しい欄の無い heartbeat を断り、古い worker は 20 秒で job を止める)。失敗ケース = 同じ file の
-;;;   test-starting-the-coordinator-before-every-worker-is-new-breaks-v1。
+;;;   V1 coordinator-after-every-worker — coordinator を版 X へ入れ替え始めるのは、宣言の内の worker が全部 live で、その版が確かめた版の
+;;;   組み合わせ(VerifiedVersions — X と組めると手元で確かめた worker の版の集合)に入っている時だけ(新しい coordinator が組めない版の
+;;;   worker の heartbeat を断り、その worker が 20 秒で job を止める形を防ぐ)。worker と coordinator のどちらを先に上げるかは変更ごとに
+;;;   決まり、確かめた版の組み合わせで表す(#3772)。宣言の外の worker は数えない。失敗ケース = 同じ file の
+;;;   test-starting-the-coordinator-before-every-worker-is-new-breaks-v1・test-a-worker-version-outside-the-verified-pair-breaks-v1。
+;;;   守るのは版上げの Program の coordinator の入口(upgrade-coordinator — 照らしに通らなければ宣言を書く前に UpgradeRefused で断る)。
 ;;;   V2 worker-swap-waits-for-its-tasks — worker の入れ替えを始めるのは、その worker に置かれた(assigned・走り中の)task が無い時だけ
 ;;;   (drain の空くのを待つ — 入れ替える worker の上で走る task は lease が切れて失われ、別の live な worker が居ても走らせ直さない。queued は
 ;;;   入れ替えで落ちない)。失敗ケース = test-swapping-a-worker-with-a-running-task-breaks-v2。

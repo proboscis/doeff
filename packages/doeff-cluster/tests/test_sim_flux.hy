@@ -12,7 +12,8 @@
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside DrainWorker WorkerOf ProcessesOf])
 (import doeff_cluster.sim.flux [FluxPass manifest-state reconcile-manifests prestop-drain])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
-(import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS write-manifest await-back breaches-of flux-outside])
+(import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS SAME-VERSION write-manifest await-back breaches-of
+                            flux-outside])
 (import tests.detached_rig [slow-add])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [host-a-pulses])
@@ -31,7 +32,7 @@
   (<- (write-manifest NEW NEW NEW))
   (<- third FluxPass (reconcile-manifests PATHS second.applied prestop-drain COORDINATOR-SECONDS))
   (<- now SimWorker (WorkerOf "a"))
-  (<- rules tuple (breaches-of (+ first.starts second.starts third.starts)))
+  (<- rules tuple (breaches-of (+ first.starts second.starts third.starts) SAME-VERSION))
   #(rules a-back b-back now.doeff-commit (len (+ first.starts second.starts third.starts))))
 
 
@@ -48,7 +49,7 @@
   (<- applied tuple (manifest-state PATHS))
   (<- (write-manifest NEW NEW OLD))
   (<- pass FluxPass (reconcile-manifests PATHS applied prestop-drain COORDINATOR-SECONDS))
-  (<- rules tuple (breaches-of pass.starts))
+  (<- rules tuple (breaches-of pass.starts SAME-VERSION))
   rules)
 
 
@@ -65,7 +66,7 @@
   (<- applied tuple (manifest-state PATHS))
   (<- (write-manifest OLD OLD NEW))
   (<- pass FluxPass (reconcile-manifests PATHS applied prestop-drain COORDINATOR-SECONDS))
-  (<- rules tuple (breaches-of pass.starts))
+  (<- rules tuple (breaches-of pass.starts SAME-VERSION))
   rules)
 
 
@@ -92,7 +93,7 @@
   (<- (write-manifest NEW OLD OLD))
   (<- pass FluxPass (reconcile-manifests PATHS applied drain COORDINATOR-SECONDS))
   (<- outcome (AwaitDetached "k-run"))
-  (<- rules tuple (breaches-of pass.starts))
+  (<- rules tuple (breaches-of pass.starts SAME-VERSION))
   #(rules outcome))
 
 
@@ -122,7 +123,7 @@
   (<- (Delay 5.0))
   (<- processes tuple (ProcessesOf "pulse"))
   (val last (get processes -1))
-  (<- rules tuple (breaches-of pass.starts))
+  (<- rules tuple (breaches-of pass.starts SAME-VERSION))
   #(rules (/ (- (. (get pass.starts 0) at-ms) asked) 1000.0) back #(last.worker last.exit-code)))
 
 
@@ -157,7 +158,7 @@
   (<- (Delay 1.0))
   (<- (write-manifest NEW NEW NEW))
   (<- third FluxPass (reconcile-manifests PATHS second.applied prestop-drain COORDINATOR-SECONDS))
-  (<- rules tuple (breaches-of third.starts))
+  (<- rules tuple (breaches-of third.starts SAME-VERSION))
   rules)
 
 

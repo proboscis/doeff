@@ -12,6 +12,7 @@ from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as Coordi
 from doeff_cluster.shared.intent.launch_model import DesireWorker as DesireWorker
 from doeff_cluster.shared.intent.launch_model import DesireCoordinator as DesireCoordinator
 from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPhase
+from doeff_cluster.shared.intent.upgrade_model import WorkerDeclaration as WorkerDeclaration
 from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
 from doeff_cluster.shared.intent.upgrade_model import UpgradeState as UpgradeState
 from doeff_cluster.shared.intent.upgrade_model import UpgradeLimits as UpgradeLimits
@@ -27,6 +28,14 @@ from doeff_cluster.shared.intent.upgrade_model import PrepareBootRoot as Prepare
 from doeff_cluster.shared.intent.upgrade_model import BootRootAlreadyPrepared as BootRootAlreadyPrepared
 from doeff_cluster.shared.intent.upgrade_model import BootRootBuilt as BootRootBuilt
 from doeff_cluster.shared.intent.upgrade_model import BootRootRefused as BootRootRefused
+from doeff_cluster.shared.intent.upgrade_model import VerifiedVersions as VerifiedVersions
+from doeff_cluster.shared.intent.upgrade_model import AwaitQuietWindow as AwaitQuietWindow
+from doeff_cluster.shared.intent.upgrade_model import QuietWindowOpened as QuietWindowOpened
+from doeff_cluster.shared.intent.upgrade_model import QuietWindowMissed as QuietWindowMissed
+from doeff_cluster.shared.intent.upgrade_model import UnverifiedWorkers as UnverifiedWorkers
+from doeff_cluster.shared.intent.upgrade_model import RollbackRootMissing as RollbackRootMissing
+from doeff_cluster.shared.intent.upgrade_model import CoordinatorUpgraded as CoordinatorUpgraded
+from doeff_cluster.shared.intent.upgrade_model import ClusterUpgraded as ClusterUpgraded
 UNREACHABLE_RETRY_SECONDS: float
 WATCH_SECONDS: float
 
@@ -36,13 +45,31 @@ def no_task_on(name: str, state: UpgradeState) -> _Program[bool, object]:
 def back_on(name: str, commit: str, state: UpgradeState) -> _Program[bool, object]:
     ...
 
-def all_back_on(commit: str, state: UpgradeState) -> _Program[bool, object]:
+def declared_of(state: UpgradeState) -> _Program[tuple[RosterEntry, ...], object]:
+    ...
+
+def undeclared_of(state: UpgradeState) -> _Program[tuple[RosterEntry, ...], object]:
+    ...
+
+def unverified_of(verified: VerifiedVersions, state: UpgradeState) -> _Program[tuple[RosterEntry, ...], object]:
+    ...
+
+def v1_decidable(verified: VerifiedVersions, state: UpgradeState) -> _Program[bool, object]:
     ...
 
 def queue_empty(state: UpgradeState) -> _Program[bool, object]:
     ...
 
-def all_live(state: UpgradeState) -> _Program[bool, object]:
+def coordinator_on(commit: str, state: UpgradeState) -> _Program[bool, object]:
+    ...
+
+def declared_live(state: UpgradeState) -> _Program[bool, object]:
+    ...
+
+def tasks_known(ids: tuple[str, ...], state: UpgradeState) -> _Program[bool, object]:
+    ...
+
+def undeclared_across(before: UpgradeState, after: UpgradeState) -> _Program[tuple[RosterEntry, ...], object]:
     ...
 
 def entry_line(e: RosterEntry) -> _Program[str, object]:
@@ -57,7 +84,13 @@ def tasks_on_line(name: str, state: UpgradeState) -> _Program[str, object]:
 def worker_line(name: str, state: UpgradeState) -> _Program[str, object]:
     ...
 
-def not_back_line(commit: str, state: UpgradeState) -> _Program[str, object]:
+def unsettled_line(state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def coordinator_line(state: UpgradeState) -> _Program[str, object]:
+    ...
+
+def missing_tasks_line(ids: tuple[str, ...], state: UpgradeState) -> _Program[str, object]:
     ...
 
 def queued_line(state: UpgradeState) -> _Program[str, object]:
@@ -66,7 +99,7 @@ def queued_line(state: UpgradeState) -> _Program[str, object]:
 def not_live_line(state: UpgradeState) -> _Program[str, object]:
     ...
 
-def await_until(step: str, done: Callable, observe: Callable, limit_seconds: float) -> _Program[None, object]:
+def await_until(step: str, done: Callable, observe: Callable, limit_seconds: float) -> _Program[UpgradeState, object]:
     ...
 
 def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
@@ -78,5 +111,17 @@ def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> 
 def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
     ...
 
-def upgrade_cluster(workers: tuple[WorkerLaunch, ...], coordinator: CoordinatorLaunch, limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
+def refuse_unverified(coordinator: CoordinatorLaunch, verified: VerifiedVersions, state: UpgradeState) -> _Program[None, object]:
+    ...
+
+def require_rollback_root(root: BootRootAlreadyPrepared | BootRootBuilt, target: str) -> _Program[None, object]:
+    ...
+
+def await_quiet_window(target: str, limit_seconds: float) -> _Program[None, object]:
+    ...
+
+def upgrade_coordinator(coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[CoordinatorUpgraded, object]:
+    ...
+
+def upgrade_cluster(workers: tuple[WorkerLaunch, ...], coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[ClusterUpgraded, object]:
     ...
