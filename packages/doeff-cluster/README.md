@@ -172,7 +172,8 @@ Program は `(<- told (AwaitRetirement))` で、名から外された時点(新�
 無い止め(宣言から外れた・recreate・worker の停止・途絶)では何も返りません(止めは `AwaitStop` で知ります)。本番の路 = worker の
 `process-host` が shim の標準入力へ 1 行を書き、shim(`--notice-env`)が job に継がせた知らせの pipe へ中継し、job の中の
 `pipe-retirement-notices` の読みの thread が待ちを起こします(間隔で読み直しません)。`sim-cluster` では偽の実行先が世界の受け手で答えます。
-版を上げる順は worker が先です: この知らせを送らない古い worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WORKER_NOTICE_FD`)が
+この変更では worker を先に上げます(順は変更ごとに決まり、確かめた版の組み合わせで表す — 「配備の順」の節): この知らせを送らない古い
+worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WORKER_NOTICE_FD`)が
 無く、`AwaitRetirement` は何も返さずに待ち続けます(SIGTERM の止めは今までどおり届きます)。知らせを読まない job(答え手を組まない job・
 `AwaitRetirement` を一度も問わない job)の下で pipe が満ちても、shim は知らせを捨てて標準入力を読み続けます(worker の消失を見落としません)。
 
@@ -428,16 +429,29 @@ Deployment の get・scale と、能力を導くための nodes の get が要�
 
 ### 配備の順
 
-coordinator を先に上げ、その後に worker を入れ替えます。worker の preStop(`ROLE=drain`)は drain の頼みに自分の process の世代
-(`boot`)を載せ、coordinator は今の世代でない頼み(退いた世代・一度も見ていない世代)を同じ名の今の世代に付けません。古い版の
-coordinator はこの欄を読まないので、先に worker だけを上げても効きません。
+worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせで表します(#3772)。版上げの Program
+(`shared/core/upgrade_program.hy`)の入口は 3 つです: worker だけを入れ替える `upgrade-workers`・coordinator だけを入れ替える
+`upgrade-coordinator`・worker を入れ替えてから coordinator を入れ替える `upgrade-cluster`。coordinator を版 X へ入れ替える入口は、
+確かめた版の組み合わせ(`VerifiedVersions` — X と、X と組めると手元で確かめた worker の版の集合)を受け取り、宣言の内の worker が
+全部動いていて、その版が集合に入っている時だけ入れ替えます(条 V1)。集合に無い版の worker が 1 つでも居れば、宣言を書く前に
+`UpgradeRefused` で、その worker と版を明示して断ります。宣言の外の worker(配備する側の外で起動する worker)は待たず照らさず、
+入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。coordinator の入れ替えは、ほかに待ち行列が空(条 V4)・
+上げる前の版の自己起動の root(戻し先)が在る・静かな時間帯(`AwaitQuietWindow` — 何を「入れ替えで切れて困る仕事」とみなすかは
+配備する側の handler が決める)を宣言を書く前に確かめ、当てた後は coordinator が版 X で答える・宣言の内の worker が live に戻る・
+入れ替えの前に待っていた task が coordinator に在る、の 3 つを待ちます。
 
-- 同じ名の Pod が並ぶ worker(node の dir の lock を持たない Deployment の worker)では、新しい coordinator を上げた後の最初の入れ替え
-  だけ、新しい Pod が旧い Pod の preStop が終わってから最長 150 秒 NotReady のままになり得ます。旧い版の preStop は `boot` を載せないので、
-  その頼みが新しい世代に drain を付けるためです(期限 = preStop の上限 90 秒 + 余裕 60 秒)。
-- 急ぐ時は、旧い Pod が終わった後に `DELETE /workers/<名>/drain` を実行して drain を解きます。
-- worker は入口の検めの間の job を phase `probing` で報告します。coordinator はこの phase を「その worker で起動しかけている」と
-  数えます(他へ置かない)。旧い版の coordinator はこの phase を知らないので、ここでも coordinator を先に上げます。
+順が決まっている変更の例:
+
+- drain の頼みに世代を載せる変更(coordinator が先): worker の preStop(`ROLE=drain`)は drain の頼みに自分の process の世代
+  (`boot`)を載せ、coordinator は今の世代でない頼み(退いた世代・一度も見ていない世代)を同じ名の今の世代に付けません。古い版の
+  coordinator はこの欄を読まないので、先に worker だけを上げても効きません。
+  - 同じ名の Pod が並ぶ worker(node の dir の lock を持たない Deployment の worker)では、新しい coordinator を上げた後の最初の入れ替え
+    だけ、新しい Pod が旧い Pod の preStop が終わってから最長 150 秒 NotReady のままになり得ます。旧い版の preStop は `boot` を載せないので、
+    その頼みが新しい世代に drain を付けるためです(期限 = preStop の上限 90 秒 + 余裕 60 秒)。
+  - 急ぐ時は、旧い Pod が終わった後に `DELETE /workers/<名>/drain` を実行して drain を解きます。
+- phase `probing` の変更(coordinator が先): worker は入口の検めの間の job を phase `probing` で報告します。coordinator はこの phase を
+  「その worker で起動しかけている」と数えます(他へ置かない)。旧い版の coordinator はこの phase を知らないので、coordinator を先に上げます。
+- 退きの知らせの変更(worker が先): 上の「退きの知らせ」の段落。
 
 ## テスト
 

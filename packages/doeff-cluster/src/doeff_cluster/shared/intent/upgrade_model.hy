@@ -1,15 +1,21 @@
 ;;; worker と coordinator を新しい版へ入れ替える版上げの型と effect(#3366 の単位 3)。版上げの Program(shared/core/upgrade_program.hy)が
 ;;; 使い、条 V1〜V5 の判定(coordinator/core/upgrade_invariants.hy)が同じ記録を読む。
 ;;;
-;;;   (<- state (ReadUpgradeState))       ; 名簿(worker ごとの live と動いている版)と、終わっていない task の写し
+;;;   (<- state (ReadUpgradeState))       ; 名簿(worker ごとの live・動いている版・宣言の内か外か)・終わっていない task・coordinator の版・
+;;;                                       ; coordinator が知る task の id の一覧
 ;;;   (<- (PublishDeclarations))          ; DesireWorker / DesireCoordinator で書いた宣言を公開する(本番 = commit と merge の列・sim = 何もしない)
 ;;;   (<- (ApplyDeclarations))            ; 公開した宣言を当てる(本番 = Flux の「すぐ読み直せ」の印・sim = 模擬の Flux の 1 回の当て)
 ;;;   (<- (ConfirmCleanBoot launch))      ; 入れ替え先の値で、コピーも状態も無い空の機体の起動が通るか(Desire の前に・#3366 の単位 5a)
 ;;;   (<- answer (PrepareBootRoot launch)) ; 入れ替え先の版の自己起動の root を、今の保存先に先に準備する(起動の確認の後・Desire の前に・#3725)
+;;;   (<- answer (AwaitQuietWindow target seconds)) ; 静かな時間帯を待つ(coordinator の宣言を書く直前に・#3772)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
-;;; 空の起動か root の準備が断られたら UpgradeRefused で対象を明示して止まる(宣言を書かず公開もしない・自動で戻さない)。
+;;; 空の起動か root の準備が断られた時・確かめた版の組み合わせに無い版の worker が居る時・戻し先の root が無い時は、UpgradeRefused で対象を明示して
+;;; 止まる(宣言を書かず公開もしない・自動で戻さない)。
+;;;
+;;; worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせ(VerifiedVersions — coordinator の版 X と、X と組めると
+;;; 手元で確かめた worker の版の集合)で表す(#3772)。
 (require doeff-hy.macros [val defeffect])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
@@ -24,17 +30,24 @@
 ;; 写しに載せる task の phase(coordinator の /resources/Task の queued と assigned — assigned は置かれた・走り中)。
 (defenum PendingPhase QUEUED ASSIGNED)
 
+;; 名簿の worker が、配備する側の宣言の内に居るか(#3772)。
+;;   DECLARED   = 配備する側が宣言を書ける worker。版上げの待ちと条 V1 の照らしに入る — 版を読めない間(入れ替えの途中など)は待つ。
+;;   UNDECLARED = 宣言の外の worker(配備する側の外の systemd が起動する worker など)。待ちからも条 V1 の照らしからも外し、外した事は
+;;                coordinator を入れ替えた結果に名と版で必ず出す(黙って外さない)。
+(defenum WorkerDeclaration DECLARED UNDECLARED)
+
 
 (defrecord RosterEntry
-  "名簿の 1 台の写し: worker = 名・live = 生きていたか(作り直した直後の新しい世代が名乗り終える前は数えない)・doeff-commit = その
-   worker の今の世代が動いている doeff の版。None = 読み手がその worker の版を読めない(配備する側が宣言を書けない worker)— 名簿には
-   coordinator の知る worker を全部 載せ、版の読めない worker は条 V1 で新しい版と数えない(#3366)。unread-reason = 版を読めない訳
-   (読み手が書く汎用の文 — 入れ替えの途中で新しい世代が準備完了でない・宣言を書けない worker など。版を読めた時は None)。待ちが上限で
-   止まった時の文に載り、何が戻らないのかを名指す。"
+  "名簿の worker 1 つのコピー: worker = 名・live = 生きていたか(作り直した直後の新しい世代が登録を終える前は数えない)・doeff-commit = その
+   worker の今の世代が動いている doeff の版(None = 読み手がその worker の版を読めない)・declaration = 宣言の内か外か(閉じた区別 —
+   「宣言の内で版を読めない」は待ち、「宣言の外」は待たない・#3772)。名簿には coordinator の知る worker を全部 載せる。
+   unread-reason = 版を読めない理由(読み手が書く汎用の文 — 入れ替えの途中で新しい世代が準備完了でない・宣言の外 など。版を読めた時は
+   None)。待ちが上限で止まった時の文に載り、何が戻らないのかを明示する。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str worker)
   (#^ bool live)
   (#^ (| str None) doeff-commit)
+  (#^ WorkerDeclaration declaration)
   (setv #^ (| str None) unread-reason None))
 
 
@@ -47,10 +60,15 @@
 
 
 (defrecord UpgradeState
-  "版上げの Program が次へ進むかを決める読み: roster = 名簿の写し・tasks = 終わっていない task の写し。"
+  "版上げの Program が次へ進むかを決めるための coordinator の状態: roster = 名簿のコピー・tasks = 終わっていない task のコピー・coordinator-commit = 答えた
+   coordinator が動いている doeff の版(None = 読み手が読めない — 当てた直後に古い coordinator が答えても「新しい版で戻った」と読まない
+   ため・#3772)・known-tasks = coordinator が知る task の id の全部(終わった物も — coordinator の作り直しの前に待っていた task が、
+   作り直しの後も coordinator に在るかを読むため)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ (get tuple #(RosterEntry ...)) roster)
-  (#^ (get tuple #(PendingTask ...)) tasks))
+  (#^ (get tuple #(PendingTask ...)) tasks)
+  (#^ (| str None) coordinator-commit)
+  (#^ (get tuple #(str ...)) known-tasks))
 
 
 (defrecord UpgradeStateUnreachable
@@ -82,11 +100,22 @@
 
 (defrecord UpgradeLimits
   "版上げの待ちの上限(秒 — 宣言の値): drain = 入れ替える worker に置かれた task が終わるまで・return = 当てた worker / coordinator が
-   新しい版で戻るまで・queue = coordinator を入れ替える前に待ち行列が空になるまで。"
+   新しい版で戻るまで(coordinator の前の、宣言の内の worker が動いて版を読めるまでの待ちも同じ上限)・queue = coordinator を入れ替える前に
+   待ち行列が空になるまで・quiet = coordinator の宣言を書く前に静かな時間帯を待つ上限(AwaitQuietWindow に渡す・#3772)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ float drain-seconds)
   (#^ float return-seconds)
-  (#^ float queue-seconds))
+  (#^ float queue-seconds)
+  (#^ float quiet-seconds))
+
+
+(defrecord VerifiedVersions
+  "確かめた版の組み合わせ(#3772): coordinator = coordinator の版 X・workers = X と組めると手元で確かめた worker の版の集合。worker と coordinator の
+   どちらを先に上げるかは変更ごとに決まり、この組み合わせで表す — coordinator を版 X へ入れ替えてよいのは、宣言の内の worker が全部動いていて、
+   その版がこの集合に入っている時だけ(条 V1)。集合に無い版の worker が 1 つでも居れば、宣言を書く前に、その worker を明示して断る。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str coordinator)
+  (#^ (get frozenset str) workers))
 
 
 (defclass UpgradeStalled [RuntimeError]
@@ -187,15 +216,80 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
+(defrecord QuietWindowOpened
+  "静かな時間帯に入った(答え手が確かめた — 入れ替えで切れて困る仕事が今は走っていない): target = 何を入れ替える前の待ちか。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target))
+
+
+(defrecord QuietWindowMissed
+  "上限の内に静かな時間帯に入らなかった: target = 何を入れ替える前の待ちか・reason = 何が静かにならなかったか(答え手が書く文)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ str reason))
+
+
+(defeffect AwaitQuietWindow
+  "入れ替えで切れて困る仕事が走っていない時間帯(静かな時間帯)を待つ — 汎用の効果で、何を「切れて困る仕事」と読むかは答え手(配備する
+   側の業務)が決める(#3772)。版上げの Program は coordinator の宣言を書く直前に 1 回出す。答え手は静かになるか timeout-seconds を
+   越えるまで受け持ってから答える(呼び手は時間で読み直さない)。sim = すぐ QuietWindowOpened。答え = QuietWindowOpened か
+   QuietWindowMissed。"
+  {:fields [(: target str) (: timeout-seconds float)]
+   :answer (| QuietWindowOpened QuietWindowMissed)
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defrecord UnverifiedWorkers
+  "coordinator を入れ替える前の条 V1 の照らしで、確かめた版の組み合わせに無い版で動く宣言の内の worker が居た(#3772): target = 何の入れ替えを
+   止めたか(\"coordinator\")・coordinator-commit = 入れ替え先の coordinator の版・workers = 組み合わせに無い版で live な宣言の内の worker
+   (名と版 — 宣言の外の worker は入らない)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ str coordinator-commit)
+  (#^ (get tuple #(RosterEntry ...)) workers))
+
+
+(defrecord RollbackRootMissing
+  "入れ替える前の版(今 動いている版)の自己起動の root が保存先に無い — 入れ替えた後に前の版へ戻す先が無いので始めない(#3772):
+   target = 何の入れ替えを止めたか・root = 入れ替え先の版の root の準備の答え(previous-root-present が偽の物)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ (| BootRootAlreadyPrepared BootRootBuilt) root))
+
+
 (defclass UpgradeRefused [RuntimeError]
-  "入れ替えの前の手順(空の機体の起動の確認・自己起動の root の準備)が断られたので、宣言を書かず公開もせずに止まった。target = 何の
-   入れ替えを止めたか・refusal = 拒否の答えそのもの(CleanBootRefused か BootRootRefused — 準備の拒否の理由は閉じた語)。自動で戻さない。"
-  (defn #^ None __init__ [self #^ str target #^ (| CleanBootRefused BootRootRefused) refusal]  ; defk にできない: 例外の構成子
+  "入れ替えの前の手順(空の機体の起動の確認・自己起動の root の準備・確かめた版の組み合わせの照らし・戻し先の root の確かめ)が断ったので、宣言を
+   書かず公開もせずに止まった。target = 何の入れ替えを止めたか・refusal = 拒否の答えそのもの(閉じた和: CleanBootRefused・
+   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing)。自動で戻さない。"
+  (defn #^ None __init__ [self #^ str target #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing) refusal]
+    ;; defk にできない: 例外の構成子
     (.__init__ (super)
                (match refusal
                  (CleanBootRefused :reason reason)
                    (.format "版上げを止めた: {} の入れ替え先の版で、空の機体の起動が通らない({})— 宣言は書いていない" target reason)
                  (BootRootRefused :reason reason)
                    (.format "版上げを止めた: {} の保存先に、入れ替え先の版の自己起動の root を準備できない({})— 宣言は書いていない"
-                            target reason)))
+                            target reason)
+                 (UnverifiedWorkers :coordinator_commit commit :workers workers)
+                   (.format "版上げを止めた: {} を版 {} へ入れ替える前に、確かめた版の組み合わせに無い版で動く宣言の内の worker が居る({})— 宣言は書いていない"
+                            target (cut commit 0 10)
+                            (.join "・" (gfor e workers (.format "{}(版 {})" e.worker (cut (or e.doeff-commit "") 0 10)))))
+                 (RollbackRootMissing)
+                   (.format "版上げを止めた: {} の保存先に、上げる前の版の自己起動の root が無い(入れ替えた後に戻す先が無い)— 宣言は書いていない"
+                            target)))
     (setv self.target target self.refusal refusal)))
+
+
+(defrecord CoordinatorUpgraded
+  "upgrade-coordinator の答え(#3772): root = coordinator の入れ替え先の版の root の準備の答え(上げる前の版の root が在る物 — 無ければ
+   断っている)・undeclared = 宣言の外で、版の組み合わせの照らしと待ちから外した worker(名・live・版 — 黙って外さないため結果に必ず載せる)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ (| BootRootAlreadyPrepared BootRootBuilt) root)
+  (#^ (get tuple #(RosterEntry ...)) undeclared))
+
+
+(defrecord ClusterUpgraded
+  "upgrade-cluster の答え: workers = worker ごとの root の準備の答え(入れ替えた順)・coordinator = coordinator の入れ替えの答え。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) workers)
+  (#^ CoordinatorUpgraded coordinator))

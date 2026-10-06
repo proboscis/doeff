@@ -3,13 +3,14 @@
 (require doeff-hy.macros [defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
+(import functools [partial])
 (import yaml)
 (import doeff_time [Delay])
 (import doeff_core_effects.file_effects [ReadText WriteText MemoryFile MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
-(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind])
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind VerifiedVersions])
 (import doeff_cluster.shared.core.launch_rules [worker-launch-env coordinator-launch-env])
 (import doeff_cluster.coordinator.core.upgrade_invariants [coordinator-after-every-worker worker-swap-waits-for-its-tasks
                                                             one-worker-at-a-time coordinator-swap-on-an-empty-queue
@@ -25,8 +26,11 @@
 (val ON-X (frozenset ["x-tool"]))
 (val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :task-reserve 0 :capacity 1 :doeff-commit OLD))
 (val B (SimWorker :name "b" :provides (frozenset ["y-tool" "host-b"]) :task-reserve 0 :capacity 1 :doeff-commit OLD))
-(val JUDGES #(coordinator-after-every-worker worker-swap-waits-for-its-tasks one-worker-at-a-time coordinator-swap-on-an-empty-queue))
 (val COORDINATOR-SECONDS 5.0)
+;; 宣言に Deployment の在る worker の名(manifest-of が書く worker a・b)。
+(val DECLARED (frozenset ["a" "b"]))
+;; worker と coordinator を同じ版 NEW にそろえる時の確かめた版の組み合わせ(coordinator NEW と組めると確かめたのは NEW の worker だけ — #3772)。
+(val SAME-VERSION (VerifiedVersions :coordinator NEW :workers (frozenset [NEW])))
 
 
 (defk deployment [name role env]
@@ -68,26 +72,29 @@
   (while (and (not back) (< waited 60))
     (<- (Delay 1.0))
     (:= waited (+ waited 1))
-    (<- seen (roster-snapshot UpgradeKind.WORKER name commit))
+    (<- seen (roster-snapshot UpgradeKind.WORKER name commit DECLARED))
     (:= back (any (gfor e seen.roster (and (= e.worker name) e.live (= e.doeff-commit commit))))))
   back)
 
 
-(defk breaches-of [starts]
-  {:pre [(: starts tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "入れ替えの記録の列に、条 V1〜V4 の判定を全部当てた破りの条の名(重ねない・名の順)。"
+(defk breaches-of [starts verified]
+  {:pre [(: starts tuple) (: verified VerifiedVersions)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "入れ替えの記録の列に、条 V1〜V4 の判定を全部当てた破りの条の名(重ねない・名の順)。verified = 条 V1 が照らす確かめた版の組み合わせ。"
+  (val judges #((partial coordinator-after-every-worker :verified verified) worker-swap-waits-for-its-tasks one-worker-at-a-time
+                coordinator-swap-on-an-empty-queue))
   (var rules #())
-  (for [judge JUDGES]
+  (for [judge judges]
     (<- found tuple (judge starts))
     (:= rules (+ rules (tuple (gfor b found b.rule)))))
   (tuple (sorted (set rules))))
 
 
-(defk program-breaches-of [starts places]
-  {:pre [(: starts tuple) (: places tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk program-breaches-of [starts places verified]
+  {:pre [(: starts tuple) (: places tuple) (: verified VerifiedVersions)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "版上げの Program で上げた時の記録に条 V1〜V5 の判定を全部当て、違反した条の名を返すため(重ねない・名の順)。starts = 入れ替えの記録の列・
-   places = 同じ瞬間の保存先のスナップショットの列(V5 の入力 — 版上げの Program を通さずに手で当てる筋書きには無いので、そちらは breaches-of)。"
-  (<- order tuple (breaches-of starts))
+   places = 同じ瞬間の保存先のスナップショットの列(V5 の入力 — 版上げの Program を通さずに手で当てる筋書きには無いので、そちらは breaches-of)・
+   verified = 条 V1 が照らす確かめた版の組み合わせ。"
+  (<- order tuple (breaches-of starts verified))
   (<- unprepared tuple (swap-after-boot-root-prepared places))
   (tuple (sorted (set (+ order (tuple (gfor b unprepared b.rule)))))))
 

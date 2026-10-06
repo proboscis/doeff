@@ -4,10 +4,12 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_cluster.shared.intent.upgrade_model import UpgradeKind as UpgradeKind
 from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPhase
+from doeff_cluster.shared.intent.upgrade_model import WorkerDeclaration as WorkerDeclaration
 from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
 from doeff_cluster.shared.intent.upgrade_model import PendingTask as PendingTask
 from doeff_cluster.shared.intent.upgrade_model import UpgradeStart as UpgradeStart
 from doeff_cluster.shared.intent.upgrade_model import BootRootsAtStart as BootRootsAtStart
+from doeff_cluster.shared.intent.upgrade_model import VerifiedVersions as VerifiedVersions
 
 @dataclass(frozen=True, kw_only=True)
 class UpgradeBreach:
@@ -16,7 +18,7 @@ class UpgradeBreach:
     target: str
     detail: str
 
-def coordinator_after_every_worker(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
+def coordinator_after_every_worker(starts: tuple[UpgradeStart, ...], verified: VerifiedVersions) -> _Program[tuple[UpgradeBreach, ...], object]:
     ...
 
 def worker_swap_waits_for_its_tasks(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
