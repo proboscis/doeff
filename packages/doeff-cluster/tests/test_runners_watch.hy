@@ -49,7 +49,7 @@
 
 
 (deftest test-a-runners-change-wakes-at-the-change-and-times-out-unchanged
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (drain-during-wait) :workers WORKERS))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (drain-during-wait) :workers WORKERS))
   (val revision (get seen 0))
   (val first (get seen 2 0))
   (val second (get seen 3 0))
@@ -70,7 +70,7 @@
 
 
 (deftest test-a-coordinator-without-the-watch-answers-watch-missing
-  (<- answer (| RunnersChange RunnersWatchMissing RunnersUnreachable) (sim-cluster (beacons sim-foundation) (wait-without-route) :workers WORKERS))
+  (<- answer (| RunnersChange RunnersWatchMissing RunnersUnreachable) (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (wait-without-route) :workers WORKERS))
   (assert (isinstance answer RunnersWatchMissing) answer))
 
 
@@ -149,7 +149,7 @@
 
 
 (deftest test-a-worker-death-and-return-advance-the-version-but-live-heartbeats-do-not
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (death-and-return) :workers WORKERS))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (death-and-return) :workers WORKERS))
   (val quiet-a (get seen 0))
   (val quiet-b (get seen 1))
   ;; 生きている間の heartbeat では版は進まず、Worker の記録の行も増えない(記録の行が増えすぎない)。
