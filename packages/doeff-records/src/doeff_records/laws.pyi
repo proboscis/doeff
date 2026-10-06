@@ -45,6 +45,9 @@ from doeff_records.values import StreamEnd as StreamEnd
 from doeff_records.values import StreamEmpty as StreamEmpty
 from doeff_records.values import StreamTail as StreamTail
 from doeff_records.values import StreamTailEmpty as StreamTailEmpty
+from doeff_records.values import Event as Event
+from doeff_records.values import EventAbsent as EventAbsent
+from doeff_records.values import EventRetired as EventRetired
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -55,6 +58,7 @@ from doeff_records.effects import WatchEvents as WatchEvents
 from doeff_records.effects import AppendEvent as AppendEvent
 from doeff_records.effects import ReadEvents as ReadEvents
 from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
+from doeff_records.effects import ReadEventByKey as ReadEventByKey
 from doeff_records.faults import AdvanceStoreEpoch as AdvanceStoreEpoch
 from doeff_records.maintenance import SweepExpired as SweepExpired
 from doeff_records.maintenance import PruneChanges as PruneChanges
@@ -161,6 +165,9 @@ def tails_of_last_events(harness: LawHarness, streams: tuple[str, ...]) -> _Prog
     ...
 
 def law_watch_tails_match_last_events(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_event_by_key_reads_the_same_event(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

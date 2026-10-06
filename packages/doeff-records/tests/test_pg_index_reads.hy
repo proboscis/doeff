@@ -1,4 +1,4 @@
-;; #3614: PostgreSQL の置き場で、期限の境・組・変更の列の刻・終端の状態で引く文が、表の行の数に比例して読まない事。
+;; #3614: PostgreSQL の置き場で、期限の境・組・変更の列の刻・終端の状態・冪等キー(#3750)で引く文が、表の行の数に比例して読まない事。
 ;; 使い捨ての PostgreSQL の置き場(LAW-SCHEMA — 組で数える列 pairs・出来事ごとに数える列 pulses・期限の在る表 tickets)に、文が拾わない行
 ;; (期限の前の出来事・終端でない行・刈らない変更)を N 行と 2N 行置き、統計を取ってから(ANALYZE)文ごとに EXPLAIN (ANALYZE, FORMAT JSON) を
 ;; 流して、置き場の表を読んだ行の数(走査の節ごとに (返した行 + 条件で落とした行 + 索引の再照合で落とした行) × loops の和)を比べる:
@@ -13,7 +13,8 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
-                              touched-events-statement prune-changes-statement terminal-rows-statement watch-head-statement])
+                              touched-events-statement prune-changes-statement terminal-rows-statement watch-head-statement
+                              event-by-key-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -108,6 +109,10 @@
   (val pulse-expiry (EventExpiry :before-at BEFORE :separator None))
   (<- watch-head (watch-head-statement prefix #((TailRead :stream "pulses" :expiry pulse-expiry)
                                                 (TailRead :stream "journal" :expiry None))))
+  ;; 冪等キー 1 つの読み(#3750 — ReadEventByKey): 一意の索引 (ledger, 冪等キー) で 1 行を引き、期限の判定はその 1 行についてだけ見る
+  ;; (組で数える列は組の名の式の索引)。鍵は拾わない行の中の 1 つ(置き場が大きくても読む行は変わらない)。
+  (<- pulse-key (event-by-key-statement prefix "pulses" "pulse-7" pulse-expiry))
+  (<- pair-key (event-by-key-statement prefix "pairs" "done:m-1" (EventExpiry :before-at BEFORE :separator ":")))
   (<- pulse-sweep (expire-events-statement prefix "pulses" BEFORE))
   (<- pair-sweep (expire-event-groups-statement prefix "pairs" BEFORE ":"))
   (<- prune (prune-changes-statement prefix BEFORE))
@@ -116,6 +121,8 @@
     #("期限の在る表の終端の行の読み" terminal)
     #("組で数える列への追記が触る組の読み" touched)
     #("待ちの頭と列の末尾の読み" watch-head)
+    #("出来事ごとの列の冪等キーの読み" pulse-key)
+    #("組で数える列の冪等キーの読み" pair-key)
     #("出来事ごとの列の回収" pulse-sweep)
     #("組で数える列の回収" pair-sweep)
     #("変更の列の刈り" prune)))

@@ -17,6 +17,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
 | `ReadEvents(stream, after, limit)` | 追記の列・この番号より後・上限 | `Events(items, last_sequence)` | `Unreachable` |
 | `ReadStreamEnd(stream)` | 追記の列 | `StreamEnd(sequence)`(列に今ある、保持の期限を過ぎていない最後の出来事の番号)か `StreamEmpty()`(そういう出来事が 1 つも無い — 番号 0 と混ぜない) | `Unreachable` |
+| `ReadEventByKey(stream, idempotency_key)` | 追記の列・冪等キー | `Event`(その鍵で積んだ出来事 — `ReadEvents` が出すのと同じ)か `EventAbsent()`(その鍵ではまだ積んでいない)か `EventRetired(sequence)`(積まれたが保持の期限を過ぎた — 消えた出来事の番号)。列を辿らず、置き場の (列, 冪等キー) の一意の索引で答える(#3750) | `Unreachable` |
 | `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
@@ -43,7 +44,7 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   待ち手を起こさない — 起こしたい呼び手は列を源に別に待つ(`WatchEvents`)。宣言に無い列を名指すと、表と同じく `UndeclaredTable`。
 - 保持の期限(`KeepFor`)を過ぎた行と出来事は、その刻からどの読みにも出ない: `ReadRow` は `Missing`、`ListRows` と `ReadEvents` は除き、
   `WatchChanges` は行の今の値が期限を過ぎた終端の行である、その行の変わり(`RowChanged`)を出さず、`WatchEvents` は動かず、`ReadStreamEnd` は
-  数えない。読みは置き場を変えない(期限の判定は読みが持つ)。置き場から消して変更の列に `RowRemoved` を積み、出来事を冪等キーの覚えへ移す
+  数えず、`ReadEventByKey` は `EventRetired` を答える。読みは置き場を変えない(期限の判定は読みが持つ)。置き場から消して変更の列に `RowRemoved` を積み、出来事を冪等キーの覚えへ移す
   回収は、書き(`PutRow`・`PutRows`・`AppendEvent`)の前と `SweepExpired` の時だけ走る。だから期限を過ぎた行の `RowRemoved` は、期限の刻でも
   読みの時でもなく、期限の後の最初の書き(どの表・列への書きでもよい)か `SweepExpired` の時に積まれる(記録の service では手入れの係が
   `RECORDS_MAINTENANCE_SECONDS` ごと — 既定 60 秒 — に `SweepExpired` を撃つ)— 既に `WatchChanges` で行を受け取って写しを持つ読み手は、
@@ -121,6 +122,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `POST /v1/records/read-events` | `{stream, after?, limit?}` | `events` |
 | `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
 | `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
+| `POST /v1/records/read-event-by-key` | `{stream, idempotencyKey}` | `event`(`event` = `read-events` の `items` と同じ形の出来事 1 つ)/ `eventAbsent` / `eventRetired`(`sequence`) |
 | `GET /healthz` | — | `{status: "ok"}` |
 | `GET /metrics` | — | Prometheus の text(`text/plain; version=0.0.4`)— 身元を問わない |
 | `GET /served` | — | `{commits: {<repo>: <sha>} \| null, instance: <世代> \| null, schemaDigests: {<表>: <sha256>}}` — 身元も表の用意も置き場も問わない(#2742) |
@@ -171,7 +173,7 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 `undeclared-refusal` の 1 か所)。`400` / `500` と、ほかの status(`401` / `403`・間の proxy の `502` など — status ごとの枝は持たない)は
 一般の失敗で `WireError` を上げる(本文が契約の断りの形でない JSON の時だけ `WireMalformed`。口は `401` / `403` を出さない)。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
-置き場の止まり(#3557): 要求と答えの公開 effect 7 つは、届かない(`503` の `store-unavailable` を含む `Unreachable`)時に、待つ時間まで
+置き場の止まり(#3557): 要求と答えの公開 effect 8 つは、届かない(`503` の `store-unavailable` を含む `Unreachable`)時に、待つ時間まで
 置き場の戻りを待って同じ要求を撃ち直す。待つ時間は要求のたびに client だけが問う `ReadRequestPatience` で問い、戻りは合図の源と同じ
 `AwaitRecordsBack` で待つ。組み立ては client の外側に待つ時間の答え手を必ず置き、名で選ぶ — 待つ秒
 (`doeff_records.http_client.request_patience_handler(RequestPatience(seconds))`)か、待たない 0 秒(`doeff_records.http_client.records_unwaited`)。

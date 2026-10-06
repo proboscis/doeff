@@ -8,8 +8,8 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict Refused RowsConflict RowsRefused
-                              StreamEnd StreamEmpty])
-(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadStreamEnd])
+                              StreamEnd StreamEmpty Event EventAbsent EventRetired])
+(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadStreamEnd ReadEventByKey])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
@@ -19,7 +19,7 @@
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
-                            law-watch-tails-match-last-events])
+                            law-watch-tails-match-last-events law-event-by-key-reads-the-same-event])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -120,6 +120,27 @@
     (<- answer (end-over-every-stream))
     (resume answer)))
 
+(defk event-in-any-stream [idempotency-key]
+  {:pre [(: idempotency-key str)] :post [(: % (| Event EventAbsent))]}
+  "置き場の全部の列(journal・pulses・pairs)から鍵の出来事を探した最初の答え — 列を問わない鍵の読みの handler の顔の答え。"
+  (for [stream #("journal" "pulses" "pairs")]
+    (<- answer (ReadEventByKey stream idempotency-key))
+    (when (isinstance answer Event)
+      (return answer)))
+  (EventAbsent))
+
+(defhandler event-of-any-stream []
+  ;; 列を問わない handler の顔(#3750): どの列の鍵の読みにも、置き場の全部の列からその鍵の出来事を探して答える。
+  (ReadEventByKey [stream idempotency-key]
+    (<- answer (event-in-any-stream idempotency-key))
+    (resume answer)))
+
+(defhandler retired-as-absent []
+  ;; 消えた鍵と来ていない鍵を混ぜる handler の顔(#3750): EventRetired を EventAbsent で答える。
+  (ReadEventByKey [stream idempotency-key]
+    (<- answer (ReadEventByKey stream idempotency-key))
+    (resume (if (isinstance answer EventRetired) (EventAbsent) answer))))
+
 
 (defclass Forgetful [dict]
   "書いても覚えない dict — 保持の期限で消した冪等キーの覚え(MemoryStore.retired-keys)をこれにした置き場は、#3022 の前の置き場の形
@@ -153,6 +174,8 @@
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
                       #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
                       #(law-stream-end-is-the-last-sequence (end-of-every-stream))
+                      #(law-event-by-key-reads-the-same-event (event-of-any-stream))
+                      #(law-event-by-key-reads-the-same-event (retired-as-absent))
                       #(law-watch-tails-match-last-events drop-tails)
                       #(law-watch-tails-match-last-events tails-in-name-order)]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
@@ -175,6 +198,10 @@
   (setv forgetful.retired-keys (Forgetful))
   (assert (breaks? law-expired-keys-are-remembered (broken-harness forgetful None)))
   (assert (not (breaks? law-expired-keys-are-remembered (broken-harness (MemoryStore LAW-SCHEMA) None))))
+  ;; 同じ置き場の代役で、回収で消した鍵を鍵の読みが EventAbsent と答える(#3750)。
+  (setv forgetful-keys (MemoryStore LAW-SCHEMA))
+  (setv forgetful-keys.retired-keys (Forgetful))
+  (assert (breaks? law-event-by-key-reads-the-same-event (broken-harness forgetful-keys None)))
   ;; 壊していない handler では同じ法が緑(反例の包みが無ければ通る — 比べの基準)。
   (assert (not (breaks? law-stale-put-conflicts (broken-harness (MemoryStore LAW-SCHEMA) None)))))
 

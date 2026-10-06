@@ -6,8 +6,9 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
                               WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved
-                              EventsQuiet])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+                              EventsQuiet EventAbsent EventRetired])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadEventByKey])
 (import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
@@ -26,6 +27,7 @@
    (ReadEvents "journal" :after 4 :limit 2)
    (ReadStreamEnd "journal")
    (WatchEvents "journal" :after 4 :timeout 2.5)
+   (ReadEventByKey "journal" "k1")
    (PutRows #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
               (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))
               (RowWrite "parts" #("p2") {} (ExpectAny))))])
@@ -54,6 +56,9 @@
    #("read-stream-end" (StreamEmpty))
    #("watch-events" (EventsMoved))
    #("watch-events" (EventsQuiet))
+   #("read-event-by-key" (Event "journal" 4 "k1" {"n" [1 {"m" None}]} "maker" 1000))
+   #("read-event-by-key" (EventAbsent))
+   #("read-event-by-key" (EventRetired 3))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
    #("put-rows" (RowsConflict 1 "tickets" #("g1" "t1") ROW))
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
@@ -116,6 +121,11 @@
                            #("read-stream-end" {})
                            #("read-stream-end" {"stream" "journal" "after" 0})
                            #("read-stream-end" {"stream" "Journal!"})
+                           ;; 冪等キーの読み(#3750): 2 つの欄が必須・空の鍵と列の名の形の外は断る。
+                           #("read-event-by-key" {"stream" "journal"})
+                           #("read-event-by-key" {"stream" "journal" "idempotencyKey" ""})
+                           #("read-event-by-key" {"stream" "Journal!" "idempotencyKey" "k1"})
+                           #("read-event-by-key" {"stream" "journal" "idempotencyKey" "k1" "after" 0})
                            ;; 列の待ち(#3074)は 3 つの欄が必須 — 足りない欄を既定に倒さない・負の after と待ちの秒は断る。
                            #("watch-events" {"stream" "journal" "after" 0})
                            #("watch-events" {"stream" "journal" "timeout" 1.0})
@@ -170,7 +180,14 @@
                            #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})
                            ;; 列の待ちの答えは eventsMoved | eventsQuiet だけ(欄を持たない)。
                            #("watch-events" {"kind" "eventsMoved" "sequence" 3})
-                           #("watch-events" {"kind" "events" "items" [] "lastSequence" 0})]]
+                           #("watch-events" {"kind" "events" "items" [] "lastSequence" 0})
+                           ;; 冪等キーの読みの答え(#3750): 出来事は欄 event の入れ子だけ・消えた番号は 1 以上・他の操作の答えの kind は断る。
+                           #("read-event-by-key" {"kind" "event" "stream" "journal" "sequence" 1 "idempotencyKey" "k1" "body" 1
+                                                  "writer" "maker" "at" 1})
+                           #("read-event-by-key" {"kind" "eventRetired"})
+                           #("read-event-by-key" {"kind" "eventRetired" "sequence" 0})
+                           #("read-event-by-key" {"kind" "eventAbsent" "sequence" 3})
+                           #("read-event-by-key" {"kind" "missing"})]]
     (try
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))
