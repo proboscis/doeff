@@ -91,10 +91,9 @@
 (val NO-JOBS (system-of "contract-scenarios" #()))
 ;; sim-cluster で coordinator を切る時に止めておく秒(契約の Program の残りより十分長い — 切ったら戻さない)。
 (val SIM-DOWN-SECONDS 3600.0)
-;; cluster-semaphore の担い手の名・lease の期限・空き待ちの間隔。
+;; cluster-semaphore の担い手の名・lease の期限。
 (val SEMAPHORE-HOLDER "worker-a")
 (val SEMAPHORE-TTL-SECONDS 15.0)
-(val SEMAPHORE-POLL-SECONDS 0.5)
 
 
 (defclass [(dataclass :frozen True)] BoardSeen [EffectBase]
@@ -387,7 +386,7 @@
 (deff semaphore-session []  ; defk にできない: 組み立ての表(INTERPRETERS)が handler を作る時に呼ぶ Program の外の準備
   {:pre [] :post [(: % SemaphoreSession)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "cluster-semaphore の担い手 1 つの手元の記憶(解釈器を開くたびに新しく作る)。"
-  (SemaphoreSession SEMAPHORE-HOLDER :ttl-seconds SEMAPHORE-TTL-SECONDS :poll-seconds SEMAPHORE-POLL-SECONDS))
+  (SemaphoreSession SEMAPHORE-HOLDER :ttl-seconds SEMAPHORE-TTL-SECONDS))
 
 
 (val INTERPRETERS

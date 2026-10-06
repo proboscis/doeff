@@ -43,12 +43,11 @@
 (defclass SemaphoreSession []
   "cluster-semaphore の手元の記憶。holder = この process を cluster で一意に指す名(composition root が決める)。
    held = 名前 → 持っている token の列(permit は区別しないので、Release は古い物から返す)。
-   poll-seconds = 空きの無い claim を問い直す間(None = 問い直さず、coordinator の待ち AwaitLeaseFree で空きを待つ)。間を持つ形は、
-   本番の coordinator が lease の待ちに答える版で動くまでの間だけ残す(その後の変更で poll-seconds ごと消す — #3865 の後の単位)。
+   空きの無い claim は coordinator の待ち AwaitLeaseFree で空きを待つ(時間で問い直す間は持たない — 2026-10-07 の決定 B)。
    retry-seconds = coordinator に届かない時に延長を試し直す間(落ちた相手の戻りを知る試し)。"
-  (defn #^ None __init__ [self #^ str holder #^ float [ttl-seconds 15.0] #^ (| float None) [poll-seconds 0.5] #^ float [retry-seconds 0.5]]
+  (defn #^ None __init__ [self #^ str holder #^ float [ttl-seconds 15.0] #^ float [retry-seconds 0.5]]
     ;; expires = token → 保存に書けたと確かめた期限(epoch ミリ秒)。lease-fence はこれと時計だけで判じる。
-    (setv self.holder holder self.ttl-seconds ttl-seconds self.poll-seconds poll-seconds self.retry-seconds retry-seconds
+    (setv self.holder holder self.ttl-seconds ttl-seconds self.retry-seconds retry-seconds
           self.seq 0 self.held {} self.lost (set) self.renewers {} self.expires {}
           ;; 一度でも持った名前(LeaseStanding の standby と lost を分ける)。
           self.ever-held (set)))
@@ -91,7 +90,7 @@
 (defk acquire-lease [session semaphore]
   {:pre [(: session SemaphoreSession) (: semaphore ClusterSemaphore)] :post [(: % str)]}
   ;; 空きが出るまで待って取り直す(先着順の保証は無い)。判断は coordinator が自分の時計で 1 か所で行う(LeaseOp)。待ちは coordinator の
-  ;; 知らせ(AwaitLeaseFree — 返した時・期限が切れた時に起きる)。poll-seconds を持つ session だけは間ごとに問い直す(SemaphoreSession の註)。
+  ;; 知らせ(AwaitLeaseFree — 返した時・期限が切れた時に起きる)。
   ;; 柵の期限 = 送る前に読んだ自分の時計 + TTL(coordinator が書いた期限より必ず前 — semaphore_model の冒頭)。
   (setv token (.next-token session))
   (while True
@@ -101,10 +100,7 @@
       (setv (get session.expires token) (+ sent (.ttl-ms session)))
       (.hold session semaphore.name token)
       (return token))
-    (if (is session.poll-seconds None)
-        (<- _seen bool (AwaitLeaseFree semaphore.name))
-        ;; 時間で取り直す理由: 本番の coordinator が lease の待ちに答える版で動くまでの間の、poll-seconds を持つ使い手の道。
-        (<- (Delay session.poll-seconds)))))
+    (<- _seen bool (AwaitLeaseFree semaphore.name))))
 
 
 (defk renew-lease [session semaphore token]
