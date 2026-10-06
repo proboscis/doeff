@@ -228,6 +228,8 @@ pub enum Explain {
     IntentFakedInVerification { subject: String, reason: String },
     /// DOEFF207: 本番の系の job の読み書きの欄の欠け・書き手の無い読み(主体 = 系::job・理由の文)。
     SystemAccessUnwritten { subject: String, reason: String },
+    /// DOEFF208: 本番の code が記録の変更の待ちで job を起こす(主体 = 定義と呼び・理由の文)。
+    RecordChangeWakesJob { subject: String, reason: String },
     /// DOEFF166: 登録簿の鍵(source = 載った登録簿の file・rules = 鍵の区切りが指す、この実行で判じた規則の ID)がどの所見にも当たらない。
     RegistryEntryStale { key: String, source: String, rules: Vec<String> },
     /// DOEFF165: intent の効果の網羅の表の 1 行(効果・持ち主の service・3 列・欠けの語句)。
@@ -649,6 +651,7 @@ impl<'a> Narrator<'a> {
             Explain::BusinessEffectFake { subject, reason } => (subject.clone(), reason.clone()),
             Explain::IntentFakedInVerification { subject, reason } => (subject.clone(), reason.clone()),
             Explain::SystemAccessUnwritten { subject, reason } => (subject.clone(), reason.clone()),
+            Explain::RecordChangeWakesJob { subject, reason } => (subject.clone(), reason.clone()),
             Explain::RegistryEntryStale { key, source, rules } => (
                 format!("登録簿 {} の鍵 {}", source, key),
                 format!("この実行で規則 {} を repo 全体に当てたが、この鍵に当たる所見が無い。載った破れを直した後に行を消し忘れると、同じ所に破れが戻っても登録簿が黙って warning に下げる(縮める向きの登録簿が緩んだまま — agora-redesign #1706)。", rules.join("・")),

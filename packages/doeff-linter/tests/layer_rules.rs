@@ -3036,6 +3036,95 @@ fn reads_are_not_judged_without_outside_writers() {
     assert!(keys(&report, "DOEFF207").is_empty(), "{:?}", keys(&report, "DOEFF207"));
 }
 
+/// DOEFF208 の見本の repo: 本番の code(:business-fakes の :production)に、記録の変更の待ちを起動の手段にする所と、当たらない形を並べる。
+/// `declared` = architecture.hy に :business-fakes を書くか(書かない repo には当てない)。
+fn record_wait_repo(declared: bool) -> tempfile::TempDir {
+    let files = [
+        (
+            // 当たる: entry の handler の列に記録の変更の合図の源を結ぶ(read-signal-handler・module の名つきの records-signal-handler)。
+            "app/billing/entry/turn_events.hy",
+            tags("billing", "entry")
+                + "(import doeff_records.event_source [read-signal-handler])\n(import doeff_records [event-source])\n\
+                   (defk run-placer [body]\n  (with-handlers [(read-signal-handler BINDINGS on-moved)] body))\n\
+                   (defk run-maker [body]\n  (with-handlers [(event-source.records-signal-handler BINDINGS on-moved)] body))\n",
+        ),
+        (
+            // 当たる: 記録の変更を待つ(秒が変数・literal の 5.0・位置の引数の 3 つ目)。当たらない: 秒 0・0.0・秒を書かない(既定 0)・
+            // match の pattern の綴り。
+            "app/billing/core/memo_wait.hy",
+            tags("billing", "judgment")
+                + "(import doeff_records.effects [WatchChanges WatchEvents])\n\
+                   (defk wait-for [cursor left]\n  (<- answer (WatchChanges #(\"message\") cursor :timeout left))\n  answer)\n\
+                   (defk wait-literal [cursor]\n  (WatchChanges #(\"message\") cursor :timeout 5.0))\n\
+                   (defk wait-stream [after]\n  (WatchEvents \"intake\" after 30))\n\
+                   (defk catch-up [cursor]\n  (WatchChanges #(\"message\") cursor :timeout 0.0))\n\
+                   (defk catch-up-int [cursor]\n  (WatchEvents \"intake\" 0 :timeout 0))\n\
+                   (defk catch-up-default [cursor]\n  (WatchChanges #(\"message\") cursor))\n\
+                   (defk waited [ask]\n  (match ask\n    (WatchChanges :timeout timeout) (float timeout)\n    (WatchEvents :timeout t) :if (> t 0) t\n    _ 0.0))\n",
+        ),
+        (
+            // 当たらない: 記録の効果に答える handler の中で出し直す待ち(中継)。
+            "app/billing/foundation/relay.hy",
+            tags("shared", "foundation")
+                + "(defhandler records-relay\n  (WatchChanges [tables cursor timeout limit]\n    (<- answer (WatchChanges tables cursor :timeout timeout))\n    (resume answer))\n  \
+                   (WatchEvents [stream after timeout]\n    (resume (WatchEvents stream after timeout))))\n",
+        ),
+        // 当たらない: 模擬の環境・検の file・doeff-records の package の中(使い手でなく、効果と源の持ち主)。
+        ("app/sim/world.hy", tags("sim", "entry") + "(defk emulated [body]\n  (with-handlers [(read-signal-handler BINDINGS on-moved)] body))\n"),
+        ("app/billing/tests/test_wait.hy", tags("billing", "entry") + "(deftest waits\n  (WatchChanges #(\"message\") cursor :timeout 5.0))\n"),
+        (
+            "packages/doeff-records/src/doeff_records/event_source.hy",
+            "(defk source-task [tables cursor]\n  (WatchChanges tables cursor :timeout WATCH-SECONDS))\n\
+             (val SOURCE (records-signal-handler BINDINGS on-moved))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF208\"]");
+    if declared {
+        let arch_path = dir.path().join("architecture.hy");
+        let declared = ":foundation foundation\n  \
+                        :business-fakes {:simulation [\"app/sim/**\"] :tests [\"**/tests/**\"] :production [\"app/**\" \"packages/**\"] :business-modules [\"app.billing\"]}";
+        let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declared);
+        std::fs::write(&arch_path, text).unwrap();
+    }
+    dir
+}
+
+/// 利用者 2026-10-06 23:0x("記録に書いて記録をポーリングする設計を本当にやめてくれ、linterでみつけて禁止したい" /
+/// "記録は記録、起動は起動"・agora-redesign #3834): 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
+/// handler の外で秒が 0 でない記録の変更の待ちを出す所は赤。待たずに 1 回読む(秒 0)・模擬・検・doeff-records の中・記録の効果に答える
+/// handler の中・match の pattern は当たらない。
+#[test]
+fn production_waits_on_record_changes_are_red() {
+    let dir = record_wait_repo(true);
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert_eq!(
+        keys(&report, "DOEFF208"),
+        vec![
+            "app/billing/core/memo_wait.hy::DOEFF208::wait-for::WatchChanges",
+            "app/billing/core/memo_wait.hy::DOEFF208::wait-literal::WatchChanges",
+            "app/billing/core/memo_wait.hy::DOEFF208::wait-stream::WatchEvents",
+            "app/billing/entry/turn_events.hy::DOEFF208::run-maker::records-signal-handler",
+            "app/billing/entry/turn_events.hy::DOEFF208::run-placer::read-signal-handler",
+        ]
+    );
+    let source = violation(&report, "app/billing/entry/turn_events.hy::DOEFF208::run-placer::read-signal-handler");
+    assert_eq!(source["level"], "critical", "{}", source);
+    assert!(source["message"].as_str().unwrap().contains("記録の変更を出来事の源にする"), "{}", source["message"]);
+    let wait = violation(&report, "app/billing/core/memo_wait.hy::DOEFF208::wait-for::WatchChanges");
+    assert!(wait["message"].as_str().unwrap().contains(":timeout left"), "{}", wait["message"]);
+    assert!(!wait["explanation"]["reason"].as_str().unwrap().is_empty(), "{}", wait);
+}
+
+/// :business-fakes(本番の code の範囲の宣言)を書いていない repo には DOEFF208 を当てない(本番の code の範囲が分からない)。
+#[test]
+fn record_waits_are_not_judged_without_business_fakes() {
+    let dir = record_wait_repo(false);
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF208").is_empty(), "{:?}", keys(&report, "DOEFF208"));
+}
+
 /// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
 /// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
 /// 母集団が 0 になり、条を消しても鳴らなかった。
