@@ -48,7 +48,7 @@
   (.mkdir root :parents True)
   (.write-text (/ root ENV-MARKER)
                (json.dumps {"env" {"project" {"repo" "r" "path" "p"} "repos" [{"name" "r" "url" "https://example.invalid/r"}]}}))
-  (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :roots-cap-bytes 0
+  (EnvSettings :state (str (/ tmp "state")) :uv-cache (str (/ tmp "state" "uv-cache")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :roots-cap-bytes 0
                :min-free-bytes (** 10 18)))
 
 

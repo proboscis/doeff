@@ -257,7 +257,7 @@
 (defk sweep-settings [cap]
   {:pre [(: cap int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "掃除させる env-host の設定を返すため(cap = roots の合計の上限・prune の命令は台本に無い名 — 起きない)。"
-  (EnvSettings :state STATE :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "no-uv" :roots-cap-bytes cap))
+  (EnvSettings :state STATE :uv-cache (+ STATE "/uv-cache") :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "no-uv" :roots-cap-bytes cap))
 
 
 (defk left-roots []

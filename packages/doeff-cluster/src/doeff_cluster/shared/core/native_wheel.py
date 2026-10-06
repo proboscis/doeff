@@ -85,10 +85,11 @@ class UvVariable:
     value: str
 
 
-def uv_environment(state_dir: str) -> tuple[UvVariable, ...]:
-    """uv の子の環境へ足す変数: 共有の cache と Python を state dir の下に置く(呼び手の venv と設定を外すのは UV_DROP)。"""
+def uv_environment(state_dir: str, uv_cache: str) -> tuple[UvVariable, ...]:
+    """uv の子の環境へ足す変数: 共有の cache は uv_cache の dir(値は起動の script の DOEFF_UV_CACHE_DIR の 1 か所 — 既定は state dir の
+    下の uv-cache)、Python は state dir の下に置く(呼び手の venv と設定を外すのは UV_DROP)。"""
     return (
-        UvVariable("UV_CACHE_DIR", posixpath.join(state_dir, "uv-cache")),
+        UvVariable("UV_CACHE_DIR", uv_cache),
         UvVariable("UV_PYTHON_INSTALL_DIR", posixpath.join(state_dir, "python")),
         UvVariable("UV_NO_PROGRESS", "1"),
     )

@@ -26,6 +26,9 @@
 ;;     shim・job の子の入口(job_entry)と、workspace の package が site-packages へ入れる .pth の import の行が起こす module
 ;;     (doeff-hy の doeff_hy_bytecode_guard — interpreter の起動ごとに import される)を名指す。boot.sh に綴った焼く道具の印の名は
 ;;     code_plan の MARKER と同じ。
+;;  11 uv の cache の dir は呼び手が渡せる: worker の準備の uv の子は設定 runtime-env.uv-cache(worker の --uv-cache)を、起動の script の
+;;     uv の子は呼び手の DOEFF_UV_CACHE_DIR を UV_CACHE_DIR として継ぐ(既定は $WORK_DIR/state/uv-cache — 件ごとに worker を起こす
+;;     テストは件をまたいで同じ cache を渡し、依存を件ごとに取り直さない・#3858)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import hashlib)
@@ -212,11 +215,12 @@
   ready)
 
 
-(defk worker-wheel [state-dir uv key source-dir]
-  {:pre [(: state-dir Path) (: uv Path) (: key str) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]
+(defk worker-wheel [state-dir uv-cache uv key source-dir]
+  {:pre [(: state-dir Path) (: uv-cache Path) (: uv Path) (: key str) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation — worker/entry/env_tool)で wheel を用意する。"
-  (val settings {"runtime-env.state" (str state-dir) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
+  "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation — worker/entry/env_tool)で wheel を用意する(uv-cache = worker の
+   uv の cache の dir — 起動の script の DOEFF_UV_CACHE_DIR)。"
+  (val settings {"runtime-env.state" (str state-dir) "runtime-env.uv-cache" (str uv-cache) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
                  "runtime-env.uv" (str uv) "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
   (<- ready (| WheelReady EnvFailure)
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
@@ -256,7 +260,7 @@
   ;; 起こす入口は checkout の中に bytecode を書かない(検の後の検めが checkout の .pyc を赤にする)。
   (monkeypatch.setenv "PYTHONDONTWRITEBYTECODE" "1")
   (val booted (subprocess.run [sys.executable "-m" "doeff_cluster.worker.entry.boot_wheel" "--root" (str src) "--mirror" (str mirror)
-                               "--commit" sha "--state" (str state-dir) "--uv" (str uv)]
+                               "--commit" sha "--state" (str state-dir) "--uv-cache" (str (/ state-dir "uv-cache")) "--uv" (str uv)]
                               :capture-output True :text True :timeout 60))
   (assert (= booted.returncode 0) booted.stderr)
   (val answer (.split (.strip booted.stdout) " " 1))
@@ -268,7 +272,7 @@
   (assert (= path (os.path.join target WHEEL-NAME)) #(path target))
   (assert (os.path.isfile (os.path.join target native-wheel.WHEEL-USED)) "起動も使った印を置く(掃除が 7 日で消さない)")
   ;; worker は同じ鍵で同じ置き場の wheel を見つけ、組み直さない。
-  (<- ready (| WheelReady EnvFailure) (worker-wheel state-dir uv key (str (/ src (get native-wheel.DOEFF-VM-PATHS 0)))))
+  (<- ready (| WheelReady EnvFailure) (worker-wheel state-dir (/ state-dir "uv-cache") uv key (str (/ src (get native-wheel.DOEFF-VM-PATHS 0)))))
   (assert (= ready (WheelReady :path path :built False)) ready)
   (<- log tuple (uv-log tmp-path))
   (assert (= (len (lfor line log :if (.startswith line "build") line)) 1) log))
@@ -276,17 +280,18 @@
 
 ;; --- 4 boot.sh の 2 回 --------------------------------------------------------------------------
 
-(defk boot-once [tmp sha [role "records"] * [writes-bytecode False]]
-  {:pre [(: tmp Path) (: sha str) (: role str) (: writes-bytecode bool)] :post [(: % subprocess.CompletedProcess)]}
+(defk boot-once [tmp sha [role "records"] * [writes-bytecode False] [given #()]]
+  {:pre [(: tmp Path) (: sha str) (: role str) (: writes-bytecode bool) (: given tuple)] :post [(: % subprocess.CompletedProcess)]}
   "image の起動の script を role の役(既定 records)で起こす(root の準備の後は、root の venv の偽の hy が役の起動を断るので落ちる)。
-   writes-bytecode = 呼び手の PYTHONDONTWRITEBYTECODE を空にする(本番の Pod と同じ — 準備の間の Python に立てるのは boot.sh の受け持ち)。"
+   writes-bytecode = 呼び手の PYTHONDONTWRITEBYTECODE を空にする(本番の Pod と同じ — 準備の間の Python に立てるのは boot.sh の受け持ち)。
+   given = 呼び手が足す環境変数の (名 値) の組の列(配備の env や、件をまたいで同じ dir を渡すテストの呼び手が置く値)。"
   (subprocess.run ["sh" BOOT-SH]
-                  :env {"PATH" (+ (str (/ tmp "bin")) ":/usr/bin:/bin") "HOME" (str tmp) "ROLE" role
+                  :env (| (dict given) {"PATH" (+ (str (/ tmp "bin")) ":/usr/bin:/bin") "HOME" (str tmp) "ROLE" role
                         "WORK_DIR" (str (/ tmp "work")) "WORKER_DOEFF_COMMIT" sha "WORKER_DOEFF_URL" (str (/ tmp "doeff"))
                         "FAKE_UV_LOG" (str (/ tmp "uv.log")) "FAKE_HY_LOG" (str (/ tmp "hy.log"))
                         "FAKE_UV_PYTHON" sys.executable "PYTHONDONTWRITEBYTECODE" (if writes-bytecode "" "1")
                         ;; 呼び手の venv(uv build の子へ継がせない物)
-                        "VIRTUAL_ENV" (str (/ tmp "caller-venv"))}
+                        "VIRTUAL_ENV" (str (/ tmp "caller-venv"))})
                   :capture-output True :text True :timeout 60))
 
 
@@ -322,6 +327,41 @@
   (<- twice tuple (uv-log tmp-path))
   (assert (= (len (lfor line twice :if (.startswith line "build") line)) 1) #(twice second.stderr))
   (assert (= (len (lfor line twice :if (.startswith line "pip") line)) 2) twice))
+
+
+;; --- 11 uv の cache の dir は呼び手が渡せる -------------------------------------------------------------
+
+(deftest test-the-uv-cache-given-to-the-worker-reaches-its-uv-children [tmp-path monkeypatch]
+  ;; worker の準備の process(本物の翻訳 env-translation)が起こす uv の子は、設定 runtime-env.uv-cache の dir を UV_CACHE_DIR として
+  ;; 継ぐ(state の下に固定しない — 手元の 1 台の cluster を件ごとに起こすテストは、件をまたいで同じ cache を渡して依存を取り直さない)。
+  (<- made tuple (doeff-source tmp-path))
+  (val src (get made 0))
+  (val mirror (get made 1))
+  (val sha (get made 2))
+  (<- uv Path (fake-uv tmp-path))
+  (val shared (/ tmp-path "shared-uv-cache"))
+  (monkeypatch.setenv "FAKE_UV_LOG" (str (/ tmp-path "uv.log")))
+  (<- key str (worker-key mirror sha))
+  (<- ready (| WheelReady EnvFailure) (worker-wheel (/ tmp-path "state") shared uv key (str (/ src (get native-wheel.DOEFF-VM-PATHS 0)))))
+  (assert (isinstance ready WheelReady) ready)
+  (<- log tuple (uv-log tmp-path))
+  (val builds (lfor line log :if (.startswith line "build") line))
+  (assert (= (len builds) 1) log)
+  (assert (in (.format " cache={} " shared) (get builds 0)) builds))
+
+
+(deftest test-boot-sh-gives-the-uv-cache-of-the-caller-to-its-uv-children [tmp-path]
+  ;; 起動の script は呼び手が置いた DOEFF_UV_CACHE_DIR を root の準備の uv の子(sync・build・pip)の UV_CACHE_DIR にする(置かなければ
+  ;; 既定 $WORK_DIR/state/uv-cache — 上の 4 の検)。
+  (<- made tuple (doeff-source tmp-path))
+  (<- (fake-uv tmp-path))
+  (val shared (/ tmp-path "shared-uv-cache"))
+  (<- done subprocess.CompletedProcess (boot-once tmp-path (get made 2) :given #(#("DOEFF_UV_CACHE_DIR" (str shared)))))
+  (assert (in "root を準備した" done.stderr) done.stderr)
+  (<- log tuple (uv-log tmp-path))
+  (val children (lfor line log :if (.startswith line #("sync" "build" "pip")) line))
+  (assert (= (len children) 3) log)
+  (assert (all (gfor line children (in (.format " cache={} " shared) line))) children))
 
 
 ;; --- 5・6・7 展開は image の script・準備は引き継いだ先 -------------------------------------------------

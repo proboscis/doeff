@@ -137,7 +137,7 @@
    :tags {:context "doeff-cluster-test" :role "program"}}
   "tmp の dir の上の env-host の設定(準備の道具は inline-env-tool が答えるので起きない・uv の cache の prune は何もしない true)。cgroup の dir は
    既定で tmp の中の無い dir(検の機体の本物の cgroup を読まない — memory は測れない側・#3748)。"
-  (EnvSettings :state (str (/ base "state")) :hy-command "hy" :platform PLATFORM :code-prepare PREPARE-TOOL :uv "true"
+  (EnvSettings :state (str (/ base "state")) :uv-cache (str (/ base "state" "uv-cache")) :hy-command "hy" :platform PLATFORM :code-prepare PREPARE-TOOL :uv "true"
                :roots-cap-bytes roots-cap-bytes :min-free-bytes min-free-bytes
                :cgroup-dir (if (is cgroup-dir None) (str (/ base "no-cgroup")) cgroup-dir)))
 
@@ -216,7 +216,7 @@
   (<- other-key str (env-key-of other))
   (<- other-text str (declared-text other))
   (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool other-runs)
-                      (env-host (EnvSettings :state (str (/ tmp-path "other")) :hy-command "hy" :platform PLATFORM
+                      (env-host (EnvSettings :state (str (/ tmp-path "other")) :uv-cache (str (/ tmp-path "other" "uv-cache")) :hy-command "hy" :platform PLATFORM
                                              :code-prepare PREPARE-TOOL :uv "true" :roots-cap-bytes NO-CAP))]
         (two-keys key text other-key other-text)))
   (assert (= (len other-runs.launches) 2) other-runs.launches))

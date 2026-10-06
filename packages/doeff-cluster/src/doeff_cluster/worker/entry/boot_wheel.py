@@ -13,7 +13,7 @@ git の tree hash(mirror の commit から)・Python(root の .python-version �
 これを起こす。
 
 使い方: python -m doeff_cluster.worker.entry.boot_wheel --root <doeff の root> --mirror <doeff の bare repo> --commit <sha>
-        --state <state dir> [--uv <uv の path(既定 uv)>]
+        --state <state dir> --uv-cache <uv の cache の dir> [--uv <uv の path(既定 uv)>]
   stdout = 1 行「<組んだ|使った> <wheel の path>」(boot.sh が起動の行に載せ、wheel を venv へ入れる)。
   stderr = 組んだか使ったかと秒の 1 行(組む時は uv build の出力も)。組めない・鍵の材料を読めない時は非 0 で終わり、理由を stderr に 1 行。
 """
@@ -88,7 +88,7 @@ def wheel_in(target: str) -> str | None:
     return posixpath.join(target, wheels[0]) if wheels else None
 
 
-def built_wheel(source_dir: str, target: str, state_dir: str, uv: str) -> str:
+def built_wheel(source_dir: str, target: str, state_dir: str, uv_cache: str, uv: str) -> str:
     """source_dir から wheel を途中の dir へ組み、target へ名を変えて置く。答え = 置いた wheel の path。uv の出力は stderr へ流す
     (stdout は wheel の path の 1 行だけ)。"""
     tmp = native_wheel.wheel_tmp(target)
@@ -96,7 +96,7 @@ def built_wheel(source_dir: str, target: str, state_dir: str, uv: str) -> str:
     done = subprocess.run(
         [uv, "build", "--wheel", "--out-dir", tmp, source_dir],
         cwd=source_dir,
-        env=child_environ(native_wheel.UV_DROP, native_wheel.uv_environment(state_dir)),
+        env=child_environ(native_wheel.UV_DROP, native_wheel.uv_environment(state_dir, uv_cache)),
         stdout=sys.stderr,
         check=False,
     )
@@ -122,7 +122,7 @@ def marked_used(target: str) -> None:
     os.replace(staged, posixpath.join(target, native_wheel.WHEEL_USED))
 
 
-def ensured_wheel(root: str, mirror: str, commit: str, state_dir: str, uv: str) -> BootWheel:
+def ensured_wheel(root: str, mirror: str, commit: str, state_dir: str, uv_cache: str, uv: str) -> BootWheel:
     """root の doeff-vm の wheel を鍵の置き場から用意する(在ればそれ・無ければ組んで置く)。錠(native_wheel.wheel_lock)を持つ間に
     見て・組んで・使った印を置く — 同じ鍵を組む worker の準備と重ならない。"""
     key = boot_key(root, mirror, commit)
@@ -138,7 +138,7 @@ def ensured_wheel(root: str, mirror: str, commit: str, state_dir: str, uv: str) 
         ready = (
             BootWheel(path=existing, built=False)
             if existing is not None
-            else BootWheel(path=built_wheel(source_dir, target, state_dir, uv), built=True)
+            else BootWheel(path=built_wheel(source_dir, target, state_dir, uv_cache, uv), built=True)
         )
         marked_used(target)
     finally:
@@ -154,12 +154,13 @@ def main() -> None:
     parser.add_argument("--root", required=True, help="doeff の root(展開した commit の木)")
     parser.add_argument("--mirror", required=True, help="doeff の bare repo(tree hash を読む)")
     parser.add_argument("--commit", required=True, help="root の commit")
-    parser.add_argument("--state", required=True, help="state dir(wheels/・locks/・uv-cache/・python/ を置く)")
+    parser.add_argument("--state", required=True, help="state dir(wheels/・locks/・python/ を置く)")
+    parser.add_argument("--uv-cache", required=True, help="uv の cache の dir(起動の script の DOEFF_UV_CACHE_DIR)")
     parser.add_argument("--uv", default="uv", help="uv の命令(既定 uv — PATH で引く)")
     args = parser.parse_args()
     started = time.monotonic()
     try:
-        ready = ensured_wheel(args.root, args.mirror, args.commit, args.state, args.uv)
+        ready = ensured_wheel(args.root, args.mirror, args.commit, args.state, args.uv_cache, args.uv)
     except BootWheelFailed as failure:
         print(f"boot: doeff-vm の wheel を用意できない: {failure}", file=sys.stderr, flush=True)
         sys.exit(1)

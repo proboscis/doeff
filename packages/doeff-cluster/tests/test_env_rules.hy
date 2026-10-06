@@ -60,6 +60,8 @@
   (val declared {"project" {"lockSha256" "L" "python" "3.12" "repo" "r" "path" "p"} "repos" [{"name" "r" "url" "git@x:r"}]})
   (<- project str (root-project {"env" declared}))
   (assert (= project "git@x:r:p") project)
-  (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/keys" "/cp" "uv" "/p"))
+  (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/uc" "/keys" "/cp" "uv" "/p"))
   (assert (= (cut argv 0 6) #("nice" "-n" "10" "/hy" "-m" "tool")) argv)
+  ;; worker の uv の cache の dir(main の --uv-cache)は準備の process へそのまま渡る(state の下に固定しない)。
+  (assert (in #("--uv-cache" "/uc") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
   (assert (= (cut argv -2 None) #("--progress" "/p")) argv))
