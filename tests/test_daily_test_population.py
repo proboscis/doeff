@@ -557,3 +557,12 @@ def test_no_package_declares_its_own_pytest_ini() -> None:
         f"package の母集団の path に自分の pytest の設定が在る: {declared}"
         " — root の pyproject へ寄せる — ADR-DOE-ENFORCE-001 R8"
     )
+
+
+def test_every_daily_stage_declares_whether_it_runs_pytest() -> None:
+    """日次の全体検証は欄 pytest = true の処理ステージで session が 1 本も答えなければカバレッジの欠けに数え、欄の無い処理ステージは
+    「pytest の実行は未宣言」と記帳する(agora-redesign #3879)。走らせ器は断らないので、欄の書き忘れはこの repo の宣言の検で赤にする。"""
+    full = tomllib.loads((REPO_ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
+    assert isinstance(full, list) and full, f"[gate] full が処理ステージの列でない(1 本の文字列には欄 pytest を書けない): {full!r}"
+    missing = [stage.get("name") for stage in full if not isinstance(stage.get("pytest"), bool)]
+    assert not missing, f"[gate] full の処理ステージ {missing} に欄 pytest(true か false)が無い"
