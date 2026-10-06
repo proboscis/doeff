@@ -229,6 +229,22 @@
           (repr result))
   (assert (= (. (classify-record {"type" "result" "subtype" "success" "is_error" False}) model-windows) #())))
 
+(deftest test-stream-event-deltas-are-split-by-their-kind
+  ;; #3746 (a): --include-partial-messages の stream_event の delta を種類の閉じた型(DeltaKind)で分けて読む — text_delta だけを本文の
+  ;; 差分にして、ほかを本文の空の行に畳む分類では、考えている間(thinking_delta)と道具の命令を書いている間(input_json_delta)の行が
+  ;; 数えられず赤。本文の差分の欄 text-delta は今のまま(text_delta の本文だけ)。
+  (val read (lfor event [{"type" "content_block_delta" "index" 0 "delta" {"type" "text_delta" "text" "he"}}
+                         {"type" "content_block_delta" "index" 0 "delta" {"type" "thinking_delta" "thinking" "hmm"}}
+                         {"type" "content_block_delta" "index" 1 "delta" {"type" "input_json_delta" "partial_json" "{\"comm"}}
+                         {"type" "content_block_delta" "index" 0 "delta" {"type" "signature_delta" "signature" "c2ln"}}
+                         {"type" "message_delta" "delta" {"stop_reason" "end_turn"}}
+                         {"type" "message_start" "message" {"role" "assistant" "content" []}}]
+                  (classify-record {"type" "stream_event" "parent_tool_use_id" None "event" event})))
+  (assert (= (lfor kind read #(kind.delta kind.text-delta))
+             [#(lines.DeltaKind.TEXT "he") #(lines.DeltaKind.THINKING "") #(lines.DeltaKind.TOOL-INPUT "")
+              #(lines.DeltaKind.OTHER "") #(lines.DeltaKind.NO-DELTA "") #(lines.DeltaKind.NO-DELTA "")])
+          (repr read)))
+
 (deftest test-line-classification
   (assert (= (classify-record {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]
                                "model" "m" "permissionMode" "default" "mcp_servers" [{"name" "s"}]})
@@ -254,7 +270,7 @@
                                "terminal_reason" "aborted_streaming"})
              (TurnResult "error_during_execution" True "aborted_streaming" "")))
   (assert (= (classify-record {"type" "stream_event" "event" {"delta" {"type" "text_delta" "text" "x"}}})
-             (PartialMessage "x")))
+             (PartialMessage "x" lines.DeltaKind.TEXT)))
   (assert (= (classify-record {"type" "brand_new" "subtype" "s"}) (Other "brand_new" "s")))
   (assert (= (classify-record {"type" "control_response"
                                "response" {"subtype" "success" "request_id" "rid" "response" {"still_queued" ["i1"]}}})

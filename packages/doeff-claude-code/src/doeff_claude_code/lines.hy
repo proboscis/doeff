@@ -6,8 +6,10 @@
 ;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost)。状態機械(dialogue.hy)も
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
 (require doeff-hy.macros [defk val])
+(require doeff-hy.record [defenum])
 (import dataclasses [dataclass field fields])
 (import datetime [datetime])
+(import enum [StrEnum])
 (import json)
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn])
@@ -106,9 +108,21 @@
     "答えた呼びの id の列(答えの列から作る読み取り — 元は answers の 1 つ)。"
     (tuple (gfor answer self.answers answer.id))))
 
+;; stream_event の delta の種類(#3746 (a) — 閉じた語彙): TEXT = text_delta(本文の差分)/ THINKING = thinking_delta(考えている間の
+;; 差分)/ TOOL-INPUT = input_json_delta(道具の呼びの命令を書いている間の差分)/ OTHER = 種類の名の在るほかの delta(signature_delta・
+;; citations_delta・CLI の版で増える物)/ NO-DELTA = 種類の名の在る delta を持たない stream_event(message_start・content_block_start /
+;; stop・message_delta)。
+(defenum DeltaKind TEXT THINKING TOOL-INPUT OTHER NO-DELTA)
+
 (defclass [(dataclass :frozen True)] PartialMessage []
-  "stream_event(--include-partial-messages)。text_delta なら本文の差分。"
-  (setv #^ str text-delta ""))
+  "stream_event(--include-partial-messages)。text-delta = text_delta なら本文の差分(ほかは空)/ delta = delta の種類(DeltaKind —
+   考えている間や道具の命令を書いている間の行を、本文の空の行と分けて数えるため)。考えている間と道具の命令の差分の中身は持たない。
+   本文の差分(text-delta が空でない)は種類 TEXT の行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。"
+  (setv #^ str text-delta "")
+  (setv #^ DeltaKind delta DeltaKind.NO-DELTA)
+  (defn __post_init__ [self]
+    (when (and self.text-delta (!= self.delta DeltaKind.TEXT))
+      (raise (ValueError (.format "PartialMessage の本文の差分は種類 TEXT の行だけ: delta {!r}" self.delta))))))
 
 (defclass [(dataclass :frozen True)] ThinkingTokens []
   (setv #^ int estimated 0))
@@ -422,9 +436,20 @@
       (InputFate :ref (text-at record "command_uuid") :state state)
       (Other :type "command_lifecycle" :subtype state)))
 
+(defn #^ DeltaKind delta-kind-of [#^ str delta-type]
+  "stream_event の delta の type の名 → DeltaKind(手番の終わりの計時の行が差分の種類ごとに数えるため — 名の無い delta は NO-DELTA・
+   知らない名は OTHER)。"
+  (match delta-type
+    "" DeltaKind.NO-DELTA
+    "text_delta" DeltaKind.TEXT
+    "thinking_delta" DeltaKind.THINKING
+    "input_json_delta" DeltaKind.TOOL-INPUT
+    _ DeltaKind.OTHER))
+
 (defn classify-stream-event [#^ dict record]
   (setv delta (object-at (object-at record "event") "delta"))
-  (PartialMessage :text-delta (if (= (text-at delta "type") "text_delta") (text-at delta "text") "")))
+  (setv kind (delta-kind-of (text-at delta "type")))
+  (PartialMessage :text-delta (if (= kind DeltaKind.TEXT) (text-at delta "text") "") :delta kind))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 

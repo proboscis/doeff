@@ -56,6 +56,17 @@
   {"type" "assistant" "session_id" session-id "parent_tool_use_id" parent
    "message" {"role" "assistant" "model" model "content" content "usage" usage}})
 
+(defn stream-block [#^ str session-id #^ dict block #^ dict delta #^ int pieces]
+  "1 つの content block を pieces 片の差分(--include-partial-messages の stream_event)で流す — 実物と同じく content_block_start と
+   content_block_stop で挟む。片の中身は検が読まないので、どの片も同じ delta(#3746 (a) — 考えている間・道具の命令の差分の数を作るため)。"
+  (emit {"type" "stream_event" "session_id" session-id "parent_tool_use_id" None
+         "event" {"type" "content_block_start" "index" 0 "content_block" block}})
+  (for [_ (range pieces)]
+    (emit {"type" "stream_event" "session_id" session-id "parent_tool_use_id" None
+           "event" {"type" "content_block_delta" "index" 0 "delta" delta}}))
+  (emit {"type" "stream_event" "session_id" session-id "parent_tool_use_id" None
+         "event" {"type" "content_block_stop" "index" 0}}))
+
 (defn #^ dict model-usage [#^ bool subagent]
   "result の行の modelUsage(本体の model と、subagent を走らせた手番は subagent の model)。"
   (if subagent {MODEL MAIN-WINDOW SUBAGENT-MODEL SUBAGENT-WINDOW} {MODEL MAIN-WINDOW}))
@@ -192,6 +203,10 @@
       (import time)
       (emit {"type" "system" "subtype" "hook_response" "session_id" self.session-id "hook_event" "UserPromptSubmit"})
       (time.sleep (get rule "hook_seconds")))
+    (when (> (get rule "thinking_deltas") 0)
+      ;; 答えの前に考えている間の差分(thinking の block の thinking_delta — #3746 (a))。
+      (stream-block self.session-id {"type" "thinking" "thinking" ""} {"type" "thinking_delta" "thinking" "..."}
+                    (get rule "thinking_deltas")))
     (remember self.path text)
     (setv injections [])
     (setv words [(get rule "text")])
@@ -209,13 +224,18 @@
       (.touch (Path (get rule "touch"))))
     (when (> (get rule "tool_seconds") 0)
       ;; 道具の呼びの input は prompt の命令(実物の Bash の tool_use と同じ欄 command)・結果の content はその命令の出力(実物の Bash の
-      ;; tool_result と同じく文字列 — #3744)。
+      ;; tool_result と同じく文字列 — #3744)。呼びの行の前に、命令を書いている間の差分(tool_use の block の input_json_delta —
+      ;; #3746 (a))。
+      (when (> (get rule "tool_input_deltas") 0)
+        (stream-block self.session-id {"type" "tool_use" "id" "toolu_stub" "name" "Bash" "input" {}}
+                      {"type" "input_json_delta" "partial_json" ""} (get rule "tool_input_deltas")))
       (emit (assistant-line self.session-id [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
                                                "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]
                             TOOL-CALL-USAGE))
       (emit {"type" "system" "subtype" "task_started" "task_id" "stub-task" "session_id" self.session-id})
-      ;; 道具の途中の subagent の行(親 = 道具の呼び・別の model と usage — 本体の最後の呼びに数えない行・#3744)。
-      (emit (assistant-line self.session-id [{"type" "text" "text" "subagent"}] SUBAGENT-USAGE SUBAGENT-MODEL "toolu_stub"))
+      ;; 道具の途中の subagent の行(親 = 道具の呼び・別の model と usage — 本体の最後の呼びに数えない行・#3744)。中身は thinking の
+      ;; block だけにする — 本文も道具の呼びも持たないので上の層の出来事は増えない(替え玉を使う上の層の検の出来事の列を変えない)。
+      (emit (assistant-line self.session-id [{"type" "thinking" "thinking" "subagent"}] SUBAGENT-USAGE SUBAGENT-MODEL "toolu_stub"))
       (setv stop (.wait-tool self (get rule "tool_seconds") injections))
       (when (is-not stop None)
         (setv queued (lfor record injections :if (.get record "uuid") (.get record "uuid")))
