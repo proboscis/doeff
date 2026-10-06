@@ -25,6 +25,8 @@ doeff の版が違う作業木どうしは、互いの entry を上書きせず�
 
 import hashlib
 import json
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -176,13 +178,15 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
         "spans": [[*s.start, *s.end, s.hy_line, s.hy_column] for s in projection.spans],
         "findings": [vars(f) for f in projection.findings],
     }
+    # 一時の file は書き手ごとの名(pid と時刻)— 保存先を共有する 2 台の worker が同じ entry を同時に書いても、互いの一時の file へ
+    # 書き込まずに済み、どちらかの中身がそのまま rename される(agora-redesign #3863 の (b))。書けなければ一時の file を残さない。
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         temporary.replace(path)
     except OSError:
-        return
+        temporary.unlink(missing_ok=True)
 
 
 def default_cache_dir() -> Path:

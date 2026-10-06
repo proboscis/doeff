@@ -367,3 +367,60 @@ def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
     assert default_cache_dir() == tmp_path / "xdg" / "doeff-hy-check"
     monkeypatch.setenv("DOEFF_HY_CHECK_CACHE", str(tmp_path / "kept"))
     assert default_cache_dir() == tmp_path / "kept"
+
+
+# ---- 2 つの書き手(agora-redesign #3863 の (b) — 2 台の worker が保存先を共有する)--------------------------------------------
+
+#: 子の process が同じ entry へ何度も書く(大きい中身で、書きの途中に別の書き手の書きが重なるようにする)。
+WRITER = """\
+import sys
+from pathlib import Path
+from doeff_hy.static_cache import CachedProjection, store
+from doeff_hy_bytecode_guard import record_from_rows
+cache, mark, rounds = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+used = record_from_rows("probe", ())
+for _ in range(rounds):
+    store(cache, "a" * 64, CachedProjection(mark * 400_000, (), (), used))
+"""
+
+
+def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
+    # 失敗ケース(#3863 の (b)): 保存の書きの一時の file の名が <entry>.tmp で固定だったので、2 つの process(共有の保存先を使う
+    # 2 台の worker)が同じ entry を同時に書くと、同じ一時の file へ互いに書き込み、混ざった中身が rename されうる。書き手ごとの
+    # 一時の file に書いてから rename する。最後の entry は、どちらかの書き手の中身そのまま(読める JSON)で、一時の file は残らない。
+    import json
+    import subprocess
+
+    from doeff_hy import static_cache
+
+    cache = tmp_path / ".cache"
+    writers = [
+        subprocess.Popen([sys.executable, "-c", WRITER, str(cache), mark, "40"]) for mark in ("x", "y")
+    ]
+    assert [writer.wait(timeout=25) for writer in writers] == [0, 0]
+    entries = list(cache.rglob("*.json"))
+    assert len(entries) == 1, entries
+    text = json.loads(entries[0].read_text(encoding="utf-8"))["text"]
+    assert text in {"x" * 400_000, "y" * 400_000}, "2 つの書き手の中身が混ざった"
+    assert not [p for p in cache.rglob("*") if p.is_file() and p.suffix != ".json"], "一時の file が残った"
+    assert static_cache.CACHE_VERSION == 2
+
+
+def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 失敗ケース(#3863 の (b)): 2 度の書きが同じ一時の file を使わない(直す前は <entry>.tmp で同じ — 赤)。
+    from doeff_hy import static_cache
+    from doeff_hy_bytecode_guard import record_from_rows
+
+    written: list[str] = []
+    real = Path.write_text
+
+    def recording(path: Path, data: str, *args: object, **kwargs: object) -> int:
+        written.append(path.name)
+        return real(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", recording)
+    used = record_from_rows("probe", ())
+    for _ in range(2):
+        static_cache.store(tmp_path, "b" * 64, static_cache.CachedProjection("t", (), (), used))
+    assert len(written) == 2
+    assert written[0] != written[1], written
