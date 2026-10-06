@@ -6,6 +6,7 @@
 ;;;   * HttpRespond の status・頭(同じ名の頭も落とさない)・本文(byte 列・file の範囲)がそのまま相手に届く。本文なしの答えは本文が空
 ;;;   * HEAD と 204 の答えは本文を送らない(HttpBodyBytes を渡しても)
 ;;;   * HttpForward は中継先の status を相手に届け、届かない中継先は 502
+;;;   * WsForward は届かない中継先なら要求を ws に上げずに 502 で断り、ws の出来事は出ない
 ;;;   * WsAccept で上げた札は WsOpened・相手の 1 通が WsTextArrived / WsBinaryArrived・WsSendText が相手に届き、WsClose の状態符と理由が
 ;;;     相手の受ける close と出来事 WsClosed の両方に載る。相手が閉じれば WsClosed は相手の状態符と理由
 ;;;   * Upgrade の無い要求への WsAccept は 426 で断り、ws の出来事は出ない
@@ -22,8 +23,8 @@
 (import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead
                                                 HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody
                                                 HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport
-                                                WsAccept WsBinaryArrived WsClose WsClosed WsOpened WsSendReport WsSendText WsTextArrived
-                                                WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer])
+                                                WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText
+                                                WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
 (val SHUTDOWN-REASON "検が閉じた")
@@ -113,6 +114,9 @@
                  (Answered :settled True))
     "/dead" (do (<- (HttpForward :ticket t :url (+ world.dead "/x")))
                 (Answered :settled True))
+    ;; 届かない中継先への ws の中継は断られ、ws の出来事は出ない — ここで決着する。
+    "/dead-ws" (do (<- (WsForward :ticket t :url (+ world.dead "/x")))
+                   (Answered :settled True))
     "/ws" (do (<- (WsAccept :ticket t))
               ;; Upgrade の無い要求は断られ、ws の出来事は出ない — ここで決着する。
               (Answered :settled (not event.upgrade)))
@@ -229,6 +233,16 @@
   (<- served Served (serve requests))
   (assert (= (lfor a served.answers a.status) [UPSTREAM-STATUS 502]) served.answers)
   (assert (= served.events (+ (tuple (! (request-shapes requests))) CLOSED)) served.events))
+
+
+(deftest test-a-ws-forward-to-an-unreachable-upstream-answers-502
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  (val requests #((PeerRequest :method "GET" :target "/dead-ws" :ws True)))
+  (<- served Served (serve requests))
+  ;; 断った札には ws の出来事が出ない。
+  (assert (= served.events (+ (tuple (! (request-shapes requests))) CLOSED)) served.events)
+  (val refused (get served.answers 0))
+  (assert (= [refused.status refused.texts refused.closed] [502 #() None]) refused))
 
 
 (deftest test-a-ws-exchange-reaches-both-sides-and-our-close-is-named

@@ -67,6 +67,8 @@ PREFETCH_BYTES: int
 IDLE_CONNECTION_SECONDS: float
 CONNECT_SECONDS: float
 HTTP_READ_SECONDS: float
+WS_UPSTREAM_CONNECT_SECONDS: float
+WS_UPSTREAM_HANDSHAKE_SECONDS: float
 HOP_BY_HOP: frozenset[str]
 WS_HANDSHAKE_PREFIX: str
 NO_STATUS_CLOSE: int
@@ -140,6 +142,7 @@ class WebEdge:
     ws_send_max_bytes: Incomplete
     arrivals: Incomplete
     client: Incomplete
+    ws_client: Incomplete
     runner: Incomplete
     waiting: Incomplete
     unread: Incomplete

@@ -7,7 +7,7 @@
 ;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
 ;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)・
 ;;;     答え(HttpRespond)・宣言の小さい本文の読み(HttpReadBody)・列に既に在る到着(HttpNextRequest)が共有の event loop へ入らない
-;;;     (#3688 の子 (3) の 3b・3c と案 1)
+;;;     (#3688 の子 (3) の 3b・3c と案 1)・ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)
 ;;;     (aiohttp の無い venv では skip)。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
@@ -765,3 +765,264 @@
   (assert (= (lfor a taken (int a.ticket)) (sorted (gfor a taken (int a.ticket)))) taken)
   (assert (= (frozenset (gfor a taken a.path)) paths) taken)
   (assert (= replies (frozenset (gfor p paths #(p p)))) replies))
+
+
+;; --- ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)-------------------------------------------------------------
+;; 中継先が入れ替わる間は、中継先への繋ぎの SYN が黙って落ちる(答えも断りも返らない)。直す前の ws の中継は HTTP の中継と共用の接続の
+;; 上限(CONNECT-SECONDS 10 秒)まで待ってから 502 を返し、相手の繋ぎの上限と同じ長さだったので、相手の撃ち直しが遅れた。ws の中継は
+;; 中継先へ繋ぐ時に 2 つの上限を別々に持つ: 繋ぐまで(名前の引き + TCP の接続 — WS-UPSTREAM-CONNECT-SECONDS)と、繋がった後の handshake
+;; の答え(WS-UPSTREAM-HANDSHAKE-SECONDS)。検は見る側の上限だけを縮めて秒を詰める。
+;;   * SYN に答えの返らない中継先は「繋ぐまで」で見切って 502(直す前は 10 秒 待つ)
+;;   * 閉じた port の中継先は上限を待たずに 502
+;;   * 繋がった中継先が「繋ぐまで」の上限より後に handshake に答えても、502 にせず繋いで frame を通す(繋ぎ全体を 1 つの上限で切ると、
+;;     答えの遅い中継先へ相手が撃ち直し続ける)
+;;   * 繋がったのに handshake に答えない中継先は「handshake の答え」で見切って 502(直す前は 300 秒 待つ)
+;;   * 繋いだ後は「handshake の答え」の上限より長く黙っても切らない(frame の読みに上限は無い)
+
+;; 縮めた上限(見る側)・中継先が handshake の答えを遅らせる秒(縮めた上限より後)・繋いだ後に相手が黙る秒(縮めた上限より長い)・中継の
+;; 答え(502)が相手に届くまでの上限(縮めた上限 + 余白 — 縮めない側の上限 3 秒・15 秒より短い)・相手が 1 つの答えを待つ上限・中継先の
+;; 相手役が聞き続ける上限(相手が来なかった時の保険)— どれも秒。
+(val CUT-SECONDS 0.3)
+(val LATE-ANSWER-SECONDS 0.6)
+(val QUIET-SECONDS 0.9)
+(val ANSWER-WITHIN-SECONDS 2.0)
+(val DIAL-SECONDS 20.0)
+(val UPSTREAM-LIFE-SECONDS 30.0)
+;; SYN を落とす port を作る時の、待ちの列を埋める接続の数の上限と、列が埋まったと見なす秒(繋ぎが返らない)。
+(val STALL-FILL-LIMIT 8)
+(val STALL-PROBE-SECONDS 0.2)
+;; 本物の答え手の module の、縮める上限の定数の名(Python の綴り)。
+(val CONNECT-LIMIT "WS_UPSTREAM_CONNECT_SECONDS")
+(val HANDSHAKE-LIMIT "WS_UPSTREAM_HANDSHAKE_SECONDS")
+
+
+(defrecord Dialed
+  "相手が待ち受けへ ws で繋いだ結果: status = 上がれば 101・断られればその status・時間の内に答えが無ければ None。seconds = 繋ぎの答え
+   までの秒。echoes = 上げた後に受けた 1 通の列(送った順 — 文字でない 1 通は型の名と中身)。"
+  {:tags {:context "http-server-test" :role "type"}}
+  (#^ (| int None) status)
+  (#^ float seconds)
+  (#^ (get tuple #(str ...)) echoes))
+
+
+(defrecord Stalled
+  "繋ぎの SYN に答えの返らない port: port と、その状態を保つために開いたままにする socket の列(全部を閉じれば解ける)。"
+  {:tags {:context "http-server-test" :role "type"}}
+  (#^ int port)
+  (#^ (get tuple #(socket.socket ...)) held))
+
+
+(defk stalled-port []
+  {:pre [] :post [(: % Stalled)] :tags {:context "http-server-test" :role "foundation"}}
+  "繋ぎの SYN に答えの返らない 127.0.0.1 の port を作るため(中継先が入れ替わる間の形): 誰も受け取らない聞き手の待ちの列(backlog 0)を
+   接続で埋めると、kernel は以後の SYN を黙って落とす。埋まった事は、次の繋ぎが STALL-PROBE-SECONDS の内に返らない事で確かめる。待ちの
+   列が埋まっても SYN を落とさない OS では skip。"
+  (val listener (socket.socket))
+  (.bind listener #("127.0.0.1" 0))
+  (.listen listener 0)
+  (val port (get (.getsockname listener) 1))
+  (var held #(listener))
+  (var stalled False)
+  (while (and (not stalled) (<= (len held) STALL-FILL-LIMIT))
+    (val filler (socket.socket))
+    (.settimeout filler STALL-PROBE-SECONDS)
+    (try
+      (.connect filler #("127.0.0.1" port))
+      (:= held (+ held #(filler)))
+      (except [TimeoutError]
+        (.close filler)
+        (:= stalled True))))
+  (when (not stalled)
+    (for [opened held]
+      (.close opened))
+    (pytest.skip "待ちの列が埋まった聞き手への SYN を、この OS は落とさない"))
+  (Stalled :port port :held held))
+
+
+(defk silent-listener []
+  {:pre [] :post [(: % socket.socket)] :tags {:context "http-server-test" :role "foundation"}}
+  "TCP の接続は繋がる(kernel が待ちの列に積む)が、誰も受け取らず何も答えない 127.0.0.1 の聞き手を作るため(繋がったのに handshake に
+   答えない中継先の形)。"
+  (val listener (socket.socket))
+  (.bind listener #("127.0.0.1" 0))
+  (.listen listener)
+  listener)
+
+
+(deff answer-ws-late [delay box]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: delay float) (: box queue.Queue)] :post [(: % None)] :tags {:context "http-server-test" :role "foundation"}}
+  "中継先の相手役: TCP の接続は直ぐ受け、ws の handshake の答え(101)を delay 秒 遅らせ、上げた後は文字の 1 通に echo: を付けて返すため。
+   この thread の event loop で聞き、結んだ port を box へ置き、ws の 1 本が終わるまで(長くても UPSTREAM-LIFE-SECONDS)聞く。"
+  (import aiohttp [web])
+  (setv loop (asyncio.new-event-loop)
+        served (asyncio.Event)
+        app (web.Application))
+  (.add-route app.router "GET" "/ws"
+              (fn :async [request]
+                (await (asyncio.sleep delay))
+                (setv ws (web.WebSocketResponse))
+                (try
+                  (await (.prepare ws request))
+                  (for [:async message ws]
+                    (await (.send-str ws (+ "echo:" message.data))))
+                  (finally
+                    (.set served)))
+                ws))
+  (setv runner (web.AppRunner app))
+  (.run-until-complete loop (.setup runner))
+  (.run-until-complete loop (.start (web.TCPSite runner "127.0.0.1" 0)))
+  (.put box (get (get runner.addresses 0) 1))
+  (try
+    (.run-until-complete loop (asyncio.wait-for (.wait served) UPSTREAM-LIFE-SECONDS))
+    (except [TimeoutError] None)
+    (finally
+      (.run-until-complete loop (.cleanup runner))
+      (.close loop)))
+  None)
+
+
+(defk late-ws-upstream [delay]
+  {:pre [(: delay float)] :post [(: % str)] :tags {:context "http-server-test" :role "foundation"}}
+  "handshake の答えを delay 秒 遅らせる ws の相手役(answer-ws-late)を別の thread で開き、その url を返すため。"
+  (val box (queue.Queue))
+  (.start (threading.Thread :target answer-ws-late :args #(delay box) :daemon True))
+  (.format "http://127.0.0.1:{}/ws" (.get box :timeout DIAL-SECONDS)))
+
+
+(defk dial [address texts quiet]
+  {:pre [(: address HttpAddress) (: texts tuple) (: quiet float)] :post [(: % Dialed)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "相手の ws の繋ぎ 1 つ(この thread だけの event loop と aiohttp の client): 待ち受けの /ws へ繋いで答え(101 か断り)までの秒を測り、
+   上がれば quiet 秒 黙ってから texts を 1 通ずつ送り、返りの 1 通を受けて閉じる。"
+  (import aiohttp [ClientSession ClientWebSocketResponse WSMsgType WSServerHandshakeError])
+  (val loop (asyncio.new-event-loop))
+  (val session (ClientSession :loop loop))
+  (val started (time.monotonic))
+  (var echoes #())
+  (try
+    (val answer (try
+                  (.run-until-complete loop (asyncio.wait-for (.ws-connect session (.format "http://{}:{}/ws" address.host address.port))
+                                                              DIAL-SECONDS))
+                  (except [refused WSServerHandshakeError] refused.status)
+                  (except [TimeoutError] None)))
+    (val seconds (- (time.monotonic) started))
+    (match answer
+      (ClientWebSocketResponse)
+        (do (time.sleep quiet)
+            (for [text texts]
+              (.run-until-complete loop (.send-str answer text))
+              (val message (.run-until-complete loop (.receive answer :timeout DIAL-SECONDS)))
+              (:= echoes (+ echoes #((match message.type
+                                       WSMsgType.TEXT message.data
+                                       other (.format "{}: {!r}" other.name message.data))))))
+            (.run-until-complete loop (.close answer))
+            (Dialed :status 101 :seconds seconds :echoes echoes))
+      status (Dialed :status status :seconds seconds :echoes #()))
+    (finally
+      (.run-until-complete loop (.close session))
+      (.close loop))))
+
+
+(deff dial-once [box answers texts quiet]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: box queue.Queue) (: answers queue.Queue) (: texts tuple) (: quiet float)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "待ち受けが開いたら ws で 1 度 繋いで結果を answers へ置き(失敗なら例外を置く)、/done を送って待ち受けを閉じさせるため。"
+  (setv address (.get box :timeout DIAL-SECONDS))
+  (try
+    (.put answers (run (dial address texts quiet)))
+    (except [error Exception]
+      (.put answers error))
+    (finally
+      (run (fetch address "/done" DIAL-SECONDS))))
+  None)
+
+
+(defk relay-until-done [upstream box release]
+  {:pre [(: upstream str) (: box queue.Queue) (: release Callable)] :post [(: % int)]
+   :tags {:context "http-server-test" :role "program"}}
+  "port 0 で開いて結んだ宛先を box へ置き、/done 以外の要求を upstream へ ws で中継し(WsForward)、/done が届いたら release で中継先の
+   相手役を畳んでから閉じるため(答え = 中継した数)。先に相手役を畳むのは、中継がまだ中継先を待っている時(上限が効かない形)に、待ち受けの
+   閉じがその待ちに付き合わないようにするため。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (.put box bound)
+  (var relayed 0)
+  (var open True)
+  (while open
+    (<- arrived HttpRequestArrived (HttpNextRequest))
+    (match arrived.path
+      "/done" (do (<- (HttpRespond :ticket arrived.ticket :status 204 :headers #() :body (HttpNoBody)))
+                  (:= open False))
+      _ (do (<- (WsForward :ticket arrived.ticket :url upstream))
+            (:= relayed (+ relayed 1)))))
+  (release)
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  relayed)
+
+
+(defk dialed-through [upstream texts quiet release]
+  {:pre [(: upstream str) (: texts tuple) (: quiet float) (: release Callable)] :post [(: % Dialed)]
+   :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で relay-until-done を走らせ、相手が ws で 1 度 繋いだ結果を返すため(aiohttp の無い venv では skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (val box (queue.Queue))
+  (val answers (queue.Queue))
+  (.start (threading.Thread :target dial-once :args #(box answers texts quiet) :daemon True))
+  (<- _relayed int (with-handler [(await-handler) (state) aiohttp-http-server] (relay-until-done upstream box release)))
+  (val got (.get answers :timeout DIAL-SECONDS))
+  (when (isinstance got Exception)
+    (raise got))
+  got)
+
+
+(defk shrink [monkeypatch limit]
+  {:pre [(: monkeypatch pytest.MonkeyPatch) (: limit str)] :post [(: % None)] :tags {:context "http-server-test" :role "foundation"}}
+  "本物の答え手の上限の定数 limit を、この検の間だけ CUT-SECONDS に縮めるため(待ち受けは開く時に定数を読む・aiohttp の無い venv では
+   skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server :as edge-module)
+  (.setattr monkeypatch edge-module limit CUT-SECONDS)
+  None)
+
+
+(deftest test-a-ws-forward-gives-up-an-upstream-that-drops-the-connect [monkeypatch]
+  ;; SYN に答えの返らない中継先は「繋ぐまで」の上限で見切り、ws に上げずに 502。答えは上限より前には来ない(断りではなく見切り)。
+  (<- (shrink monkeypatch CONNECT-LIMIT))
+  (<- stalled Stalled (stalled-port))
+  (<- got Dialed (dialed-through (.format "http://127.0.0.1:{}/ws" stalled.port) #() 0.0
+                                 (fn [] (for [opened stalled.held] (.close opened)))))
+  (assert (= got.status 502) got)
+  (assert (<= CUT-SECONDS got.seconds ANSWER-WITHIN-SECONDS) got))
+
+
+(deftest test-a-ws-forward-to-a-closed-port-answers-502-at-once
+  ;; 閉じた port の中継先(断りが直ぐ返る)は、上限を待たずに 502。上限は縮めない(繋ぐまで 3 秒)— 答えはそれより早い。
+  (<- got Dialed (dialed-through (.format "http://127.0.0.1:{}/ws" (free-port)) #() 0.0 (fn [] None)))
+  (assert (= got.status 502) got)
+  (assert (< got.seconds ANSWER-WITHIN-SECONDS) got))
+
+
+(deftest test-a-ws-forward-keeps-an-upstream-that-answers-the-handshake-late [monkeypatch]
+  ;; 繋がった中継先が「繋ぐまで」の上限より後に handshake に答えても、502 にせず繋ぎ、frame が往復する。
+  (<- (shrink monkeypatch CONNECT-LIMIT))
+  (<- upstream str (late-ws-upstream LATE-ANSWER-SECONDS))
+  (<- got Dialed (dialed-through upstream #("hi") 0.0 (fn [] None)))
+  (assert (= [got.status got.echoes] [101 #("echo:hi")]) got)
+  (assert (>= got.seconds LATE-ANSWER-SECONDS) got))
+
+
+(deftest test-a-ws-forward-gives-up-an-upstream-that-never-answers-the-handshake [monkeypatch]
+  ;; 繋がったのに handshake に答えない中継先は「handshake の答え」の上限で見切り、ws に上げずに 502。
+  (<- (shrink monkeypatch HANDSHAKE-LIMIT))
+  (<- listener socket.socket (silent-listener))
+  (<- got Dialed (dialed-through (.format "http://127.0.0.1:{}/ws" (get (.getsockname listener) 1)) #() 0.0 listener.close))
+  (assert (= got.status 502) got)
+  (assert (<= CUT-SECONDS got.seconds ANSWER-WITHIN-SECONDS) got))
+
+
+(deftest test-a-relayed-ws-stays-open-through-a-silence-longer-than-the-handshake-limit [monkeypatch]
+  ;; 繋いだ後は、「handshake の答え」の上限より長く黙っても切らない — 黙った後の 1 通が往復する。
+  (<- (shrink monkeypatch HANDSHAKE-LIMIT))
+  (<- upstream str (late-ws-upstream 0.0))
+  (<- got Dialed (dialed-through upstream #("hi") QUIET-SECONDS (fn [] None)))
+  (assert (= [got.status got.echoes] [101 #("echo:hi")]) got))
