@@ -23,8 +23,8 @@
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.table [Table table-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request NextRequests])
-(import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow HeartbeatBody])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -1040,8 +1040,8 @@
 ;; 送り手は最後に知った coordinator 全体の版(ClusterState.revision — 資源の spec / status が変わるたびに進む・生存の時刻や lease の
 ;; 期限は入らない)を after で渡し、版がそれと違うようになるか、timeoutSeconds(WATCH-MAX-SECONDS まで)が過ぎるまで返事を待つ。
 ;; 答え = {"revision" 今の版 "changed" 変わったか}。worker を名指せば、版が進んでもその worker の heartbeat の返事(温める表を除く)が
-;; 変わらない間は起きない。調停ループ(coordinator.coordinator-step)が待ちの要求を持ち、書きの後(Persist の後)と拍ごとに判じる。
-;; 期限は拍(TICK-MS)の刻で判じる — 期限の後の最初の拍で返す。
+;; 変わらない間は起きない。調停ループ(coordinator.coordinator-step)が待ちの要求を持ち、書きの後(Persist の後)と歩ごとに判じる。
+;; 期限の刻ちょうどに返す(coordinator は待ちの期限まで受付を待つ — wake_policy.watchers-due・#3865)。
 
 ;; 待ちの上限 WATCH-MAX-SECONDS は worker も問いに載せる取り交わしの値なので shared/intent/protocol に在る(#2025)。
 
@@ -1088,17 +1088,13 @@
 (defclass [(dataclass :frozen True)] Watcher []
   "GET /watch の待ち 1 件(調停ループが返事まで持つ)。request = 返事を返す相手の要求・after = 送り手が知っている版・deadline-ms =
    変わらなくても返す刻(epoch ms)・worker / boot = 名指した worker とその process の世代(None = coordinator 全体の版だけを見る)・
-   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)。asked = 問いの after(送り手が
-   問いに書いた版 — after は版が進んでも見え方が変わらなければ進むが、asked は変わらない)・seconds = 問いの待つ秒(timeoutSeconds)。
-   asked と seconds は、模擬の時計の下の受け口が期限の来た待ちを区間の中で吸ってよいかを判じる材料(idle_policy.absorbable — #2790)。"
+   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)。"
   (#^ Request request)
   (#^ int after)
   (#^ int deadline-ms)
   (setv #^ (| str None) worker None)
   (setv #^ (| str None) boot None)
-  (setv #^ (| HeartbeatReply None) mark None)
-  (setv #^ int asked 0)
-  (setv #^ float seconds 0.0))
+  (setv #^ (| HeartbeatReply None) mark None))
 
 
 (defclass [(dataclass :frozen True)] WatchRefusal []
@@ -1123,62 +1119,13 @@
 ;; --- effect ----------------------------------------------------------------------
 
 (defrecord ProvisionalBeat
-  "worker の宿が預けた仮の拍 1 つ(模擬の時計の下 — #2790): at = 1 拍ずつの走りで worker がその heartbeat を送る刻・request = その刻に
-   送る POST /heartbeat の要求(本文は宿が本物の heartbeat と同じ綴りで組んだ物)・body = 本文を道の型に解いた物(本番の受け口の
-   ReadBody と同じ解き)・name = 送り手の worker の名(返事を worker の最後の返事と比べる鍵)。coordinator の静かな区間の判断が、
-   本番の受けの判断(api_policy.respond)でその刻に試して積む。"
+  "worker の代役(模擬の時計の下の宿)が、静かな間に眠る前に預けた仮の heartbeat 1 つ(#2790): at = 1 拍ずつの走りで worker がその
+   heartbeat を送る刻・request = その刻に送る POST /heartbeat の要求(本文は宿が本物の heartbeat と同じ綴りで組んだ物)・name = 送り手の
+   worker の名(返事を worker の最後の返事と比べる鍵)。模擬の受付の列が、その刻に普通の heartbeat の要求として調停ループへ渡す
+   (調停ループは本番と同じ要求しか受けない・#3865)。"
   (#^ int at)
   (#^ Request request)
-  (#^ HeartbeatBody body)
   (#^ str name))
-
-
-(defclass [(dataclass :frozen True)] IdleProbe []
-  "要求の無い間の静かな区間を、模擬の時計の下の受け口が本番と同じ判断の関数で 1 歩ずつ試すための材料(idle_policy.quiet-stretch —
-   2026-09-30・#2790)。state = この歩の前の調停の状態・timing / naming = 調停ループの設定・watchers = 返事を待たせている版の変化の
-   待ち(Watcher の tuple — 区間の中で期限が来た待ちは、1 拍ずつの走りの「変わっていない」の返事と送り直しを吸って期限を引き直す)・
-   beats = worker の宿が預けた仮の拍(ProvisionalBeat の tuple — 刻の順。模擬の列が足す — 調停ループは空のまま渡す)。
-   本番の受け口は読まない。"
-  (#^ ClusterState state)
-  (#^ ClusterTiming timing)
-  (#^ ClusterNaming naming)
-  (setv #^ (get tuple #(Watcher ...)) watchers #())
-  (setv #^ (get tuple #(ProvisionalBeat ...)) beats #()))
-
-
-(defrecord QuietStep
-  "模擬の時計の下で一度に進めた静かな区間の 1 歩(1 拍ずつの走りの coordinator-step 1 回に当たる — #2790)。at = 歩の刻(epoch ms)・
-   state = その歩の後の調停の状態(1 拍ずつの走りの SaveState の after と同じ値)・watchers = その歩の後の待ち(期限を引き直した物を含む)・
-   marked = その歩が生存の印を書いたか(静かな歩のうち置き場へ書くのは印の歩だけ — 落ちの注入の数え方が読む)・beats = その歩が受けた
-   仮の拍(ProvisionalBeat の tuple — 1 拍ずつの走りでその刻に届く heartbeat)。"
-  (#^ int at)
-  (#^ ClusterState state)
-  (#^ (get tuple #(Watcher ...)) watchers)
-  (#^ bool marked)
-  (setv #^ (get tuple #(ProvisionalBeat ...)) beats #()))
-
-
-(defrecord QuietStretch
-  "静かな区間を本番の判断で試した答え(idle_policy.quiet-stretch): steps = 試して静かだった歩(QuietStep の tuple — 刻の順)・end-at =
-   最初の静かでない歩の刻(区間の終わり — 調停ループが本物の歩を回す刻。試した上限までに無ければ None)。"
-  (#^ (get tuple #(QuietStep ...)) steps)
-  (#^ (| int None) end-at))
-
-
-(defrecord IdleTaken
-  "模擬の時計の下の受け口が IdleNextRequests に返す答え(本番の受け口は要求の list を返す): steps = 眠った区間の中で 1 拍ずつの走りが
-   下したはずの歩(QuietStep の tuple — 刻の順。調停ループは歩ごとに SaveState してから本物の歩を回す)・batch = 起きた時に取った要求の
-   list(本番の答えと同じ意味)。"
-  (#^ (get tuple #(QuietStep ...)) steps)
-  (#^ (get list object) batch))
-
-
-(defclass [(dataclass :frozen True)] IdleNextRequests [NextRequests]
-  "coordinator の調停ループが出す NextRequests(shared の受け口の effect)に、模擬の時計の下の受け口だけが読む材料 idle を足した物
-   (要求が無ければ、本番の判断で何も変わらない拍の数だけ一度に眠る — 本番の受け口は NextRequests として受けて idle を読まず、拍の
-   間隔は timeout-seconds のまま)。idle は coordinator の状態の全体(ClusterState)を持つので、shared の NextRequests には置かず
-   この子 class に置く(record-store は NextRequests だけを読む・#2180)。"
-  (setv #^ (| IdleProbe None) idle None))
 
 
 (defclass [(dataclass :frozen True)] CoordinatorFault [EffectBase]

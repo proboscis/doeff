@@ -55,8 +55,7 @@
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")
-(setv TICK-MS 1000)               ; 調停ループの要求の無い拍の間隔(本番の NextRequests の待ち — coordinator-step・模擬の列・idle_policy が読む)
-(setv ROLLOUT-TICK-MS 1000)       ; Rollout の拍の間隔(coordinator.coordinator-step と idle_policy が読む)
+(setv ROLLOUT-TICK-MS 1000)       ; Rollout の歩の間隔の下限(coordinator-step と wake_policy.rollout-due が読む)
 
 
 (defk settle [before after actor now timing]
@@ -216,7 +215,7 @@
 
 (defn #^ int deployment-reread-from [#^ (| DeploymentSeen DeploymentUnreadable None) seen]  ; defk にできない: coordinator の純粋な判断(deployments-to-observe)が呼ぶ
   "台数を持つ Rollout の相手の Deployment の観測 seen を読み直す最初の刻(読んだ刻 + 10 秒 + 1 ms・観測が無ければ 10 秒 + 1 ms)。
-   deployments-to-observe の境の定義点 — 静かな区間の次の期限(idle_policy.rollout-due・#3064)も同じ値を読む。"
+   deployments-to-observe の境の定義点 — 次に起きる刻(wake_policy.rollout-due・#3064)も同じ値を読む。"
   (+ (if (is seen None) 0 seen.at) 10000 1))
 
 

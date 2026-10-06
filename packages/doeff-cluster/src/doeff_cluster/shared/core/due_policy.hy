@@ -1,6 +1,6 @@
 ;;; 期限の答え(shared/intent/due_model の DueAt・DueNow・DueNever)を作る・合わせる純粋な判断(#3865)。coordinator と worker が共用する
 ;;; (#3871 で coordinator の層から移した): coordinator の期限の関数(cluster_policy の liveness-due・task-due・sweep-due・api_policy の
-;;; tick-due・idle_policy の rollout-due)と、worker の期限の関数(worker/core/worker_due)が使う。
+;;; tick-due・wake_policy の rollout-due)と、worker の期限の関数(worker/core/worker_due)が使う。
 (require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import functools [reduce])

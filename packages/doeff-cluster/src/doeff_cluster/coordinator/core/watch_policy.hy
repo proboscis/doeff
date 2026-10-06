@@ -50,7 +50,7 @@
             (is after None) (WatchRefusal request "after(知っている coordinator の版 — 0 以上の整数)が要る")
             (is seconds None) (WatchRefusal request "timeoutSeconds は 0 以上の数")
             True (Watcher :request request :after after :deadline-ms (+ now (int (* 1000 seconds)))
-                          :worker (.get request.query "worker") :boot (.get request.query "boot") :asked after :seconds seconds)))))
+                          :worker (.get request.query "worker") :boot (.get request.query "boot"))))))
 
 
 (defk worker-mark [state worker boot now timing]
@@ -71,8 +71,8 @@
 (defk all-waiting-unchanged [watchers state now]
   {:pre [(: watchers tuple) (: state ClusterState) (: now int)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "どの待ちにも settle-watch が答えず、待ちをそのまま返す時か(版が after のまま・worker を名指した待ちは見え方を覚え済み・期限の
-   前)を、見え方を作らずに知るため — 静かな区間の歩(idle_policy.renewed-watchers)が、この時は待ちを 1 件ずつ判じずに持ち越す
-   (#2670 の根 B)。条件は settle-watch の枝のうち「起きない・覚え直さない・期限で返さない」枝と同じ(同値の検 = tests/test_watch.hy)。"
+   前)を、見え方を作らずに知るため — 次に起きる刻(wake_policy.watchers-due)が、この時は待ちの期限まで待ってよいと判じる
+   (#3865)。条件は settle-watch の枝のうち「起きない・覚え直さない・期限で返さない」枝と同じ(同値の検 = tests/test_watch.hy)。"
   (all (gfor watcher watchers
              (and (= state.revision watcher.after)
                   (or (is watcher.worker None) (is-not watcher.mark None))

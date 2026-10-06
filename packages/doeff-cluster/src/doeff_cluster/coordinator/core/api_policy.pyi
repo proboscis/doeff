@@ -95,7 +95,6 @@ from doeff_cluster.coordinator.core.program_policy import program_read as progra
 from doeff_cluster.coordinator.core.program_policy import sweep_programs as sweep_programs
 OBSERVATION_STALE_MS: int
 ROLLOUT_ACTOR: str
-TICK_MS: int
 ROLLOUT_TICK_MS: int
 
 def settle(before: ClusterState, after: ClusterState, actor: str, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:

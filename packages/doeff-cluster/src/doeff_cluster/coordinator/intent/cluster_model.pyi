@@ -13,10 +13,8 @@ from doeff_hy.table import table_of as table_of
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
-from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster.coordinator.intent.request_bodies import StatusRow as StatusRow
 from doeff_cluster.coordinator.intent.request_bodies import DurationRow as DurationRow
-from doeff_cluster.coordinator.intent.request_bodies import HeartbeatBody as HeartbeatBody
 
 class ComponentVersion(NamedTuple):
     component: str
@@ -726,8 +724,6 @@ class Watcher:
     worker: str | None = None
     boot: str | None = None
     mark: HeartbeatReply | None = None
-    asked: int = 0
-    seconds: float = 0.0
 
 @dataclass(frozen=True)
 class WatchRefusal:
@@ -748,38 +744,7 @@ class WatchStep:
 class ProvisionalBeat:
     at: int
     request: Request
-    body: HeartbeatBody
     name: str
-
-@dataclass(frozen=True)
-class IdleProbe:
-    state: ClusterState
-    timing: ClusterTiming
-    naming: ClusterNaming
-    watchers: tuple[Watcher, ...] = ...
-    beats: tuple[ProvisionalBeat, ...] = ...
-
-@dataclass(frozen=True, kw_only=True)
-class QuietStep:
-    at: int
-    state: ClusterState
-    watchers: tuple[Watcher, ...]
-    marked: bool
-    beats: tuple[ProvisionalBeat, ...] = ...
-
-@dataclass(frozen=True, kw_only=True)
-class QuietStretch:
-    steps: tuple[QuietStep, ...]
-    end_at: int | None
-
-@dataclass(frozen=True, kw_only=True)
-class IdleTaken:
-    steps: tuple[QuietStep, ...]
-    batch: list[object]
-
-@dataclass(frozen=True)
-class IdleNextRequests(NextRequests):
-    idle: IdleProbe | None = None
 
 @dataclass(frozen=True)
 class CoordinatorFault(EffectBase):

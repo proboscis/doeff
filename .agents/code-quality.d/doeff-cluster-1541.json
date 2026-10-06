@@ -236,6 +236,8 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-wal-store",
         "doeff-cluster-watch-policy",
+        "doeff-cluster-due-model",
+        "doeff-cluster-wake-policy",
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-state-json",
         "doeff-cluster-launch-rules"
@@ -484,7 +486,8 @@
         "doeff-cluster-metrics-model",
         "doeff-cluster-readiness-model",
         "doeff-cluster-semaphore-model",
-        "doeff-hy-json-value"
+        "doeff-hy-json-value",
+        "doeff-hy-frozen"
       ],
       "layer": "pure",
       "name": "doeff-cluster-effect-codec",

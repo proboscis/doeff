@@ -413,6 +413,7 @@
     "ADR-DOE-CLUSTER-001 runner-inserts-no-recorder",
     "ADR-DOE-CLUSTER-001 service-and-task-share-one-entry",
     "ADR-DOE-CLUSTER-002 a-settled-state-is-never-due-now",
+    "ADR-DOE-CLUSTER-002 a-sleeping-stand-in-changes-no-decision",
     "ADR-DOE-CLUSTER-002 an-unsettled-loop-fails-loudly",
     "ADR-DOE-CLUSTER-002 due-answers-are-closed",
     "ADR-DOE-CLUSTER-002 due-is-the-instant-the-judgment-changes",

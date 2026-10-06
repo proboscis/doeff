@@ -21,10 +21,12 @@
 ;;;   POST   /tasks/<id>/result   task の子 process が終わる前に直に届ける結果(届かなければ worker の heartbeat が運ぶ — #1387)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・保持を解く(detached_policy)
-;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が「ループが最後に要求を取りに来た時刻」だけで
-;;;                             答える(probe-verdict)。fsync・k8s の API の読みでループが数秒遅れても落ちない(2026-09-25)。
+;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が受付の箱の待ちの様子だけで答える
+;;;                             (probe-verdict — 待つと定めた刻までの待ちは止まりと数えない・#3865)。fsync・k8s の API の読みで
+;;;                             ループが数秒遅れても落ちない(2026-09-25)。
 ;;;
-;;; 形: 調停ループは doeff の Program(run-coordinator)。並んでいる要求をまとめて受け(NextRequests)、純粋な判断
+;;; 形: 調停ループは doeff の Program(run-coordinator)。要求が無い間は、次の期限(wake_policy.next-wake)か要求か停止の合図まで
+;;; 受付を 1 本で待つ(1 秒ごとに起きない・#3865)。並んでいる要求をまとめて受け(NextRequests)、純粋な判断
 ;;; (api_policy.respond / tick / plan-rollouts)で 1 件ずつ次の状態と返事を導き、まとまりの変化を 1 回で永続化してから
 ;;; (SaveState — 答え手の protocol が KV の差分に綴り、追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
 ;;; coordinator が落ちても消えない。永続化に失敗したら返事をせずに落ちる(送り手には失敗として見える)。
@@ -34,11 +36,11 @@
 (val MODULE-TAGS {:context "coordinator" :role "program"})
 (import dataclasses [replace])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Reply CoordinatorStopRequested Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming IdleProbe IdleNextRequests IdleTaken SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested Request])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
-(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
+(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable])
 (import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable StartKubeReads CollectKubeReads
@@ -47,6 +49,8 @@
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-moves liveness-now note-liveness])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.coordinator.core.wake_policy [next-wake after-step wait-seconds count-unsettled])
 
 
 
@@ -184,46 +188,29 @@
   None)
 
 
-(defk coordinator-step [state timing naming watchers]
-  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)] :post [(: % tuple)]}
-  ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ 1 秒待つ)→ 1 件ずつ判断 → Rollout(1 秒ごと)→ 永続化 → 全員に返事。
+(defk coordinator-step [state timing naming watchers wait]
+  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple) (: wait (| float None))]
+   :post [(: % tuple)]}
+  ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ wait 秒まで待つ — None は期限なし)→ 1 件ずつ判断 → Rollout(前の Rollout の歩
+  ;; から ROLLOUT-TICK-MS 経っていれば)→ 永続化 → 全員に返事。wait は調停ループが次に起きる刻から求める(wake_policy・#3865)。
   ;; watchers = 返事を待たせている版の変化の待ち(Watcher の tuple — watch_policy)。永続化の後に、前からの待ちとこのまとまりで
-  ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の拍へ持ち越す。
+  ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の歩へ持ち越す。
   ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
-  (<- taken (| list IdleTaken) (IdleNextRequests (/ TICK-MS 1000.0) :idle (IdleProbe state timing naming :watchers watchers)))
-  ;; 模擬の時計の下の受け口は、眠った静かな区間の歩(1 拍ずつの走りが下したはずの歩 — 生存の印と、吸った待ちの期限の引き直し)を
-  ;; 添えて返す(#2790)。渡された歩ごとに保存して、その後の状態と待ちから本物の歩を回す(模擬の書きの見張りは、落ちの注入が待って
-  ;; いない間は区間を最後の歩 1 つにまとめて渡す — 保存は区間で 1 回・置き場の最後の状態は歩ごとの保存と同じ・#2670 の根 B)。
-  ;; 生存の印も仮の拍も無い歩は、前の歩と Rollout の拍の刻(耐久の鍵の外)しか違わず差分が空なので、保存を出さない(#2670 の根 B —
-  ;; 書きの列は同じ)。状態はその歩へ進める(次の歩の差分は、鍵の部品が同じ物の前の状態から取っても同じ)。
-  ;; 本番の受け口は要求の list だけを返す。
-  (var base state)
-  (var held watchers)
-  (var batch [])
-  (match taken
-    (IdleTaken) (do (for [step taken.steps]
-                      (when (or step.marked step.beats)
-                        (<- (SaveState base step.state)))
-                      ;; worker の生死が変わった歩なら、保存の後にその出来事を出す(#3864 — 飛ばした区間も歩ごとに比べる)。
-                      (<- (announced-aside (! (liveness-moves base step.state timing))))
-                      (:= base step.state)
-                      (:= held step.watchers))
-                    (:= batch taken.batch))
-    _ (:= batch taken))
+  (<- batch list (NextRequests wait))
   (<- now int (now-epoch-ms))
-  ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
-  ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
+  ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎歩調停する(2026-09-25)。
+  ;; 以前は要求の無い歩だけだったので、読みの要求(GET)が続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
-  (<- tick-answer ClusterState (tick base now timing))
+  (<- tick-answer ClusterState (tick state now timing))
   (var next tick-answer)
   (var replies #())
-  (var waiting held)
+  (var waiting watchers)
   (for [request batch]
     (<- watch (| Watcher WatchRefusal None) (watch-of request now))
     (match watch
       (Watcher) (:= waiting (+ waiting #(watch)))
       (WatchRefusal) (:= replies (+ replies #(#(request 400 (ErrorReply :message watch.reason)))))
-      ;; 状態が拍の頭の tick の答えのままなら、同じ now で調停済み(前の要求が調停を通らずに状態を変えていない)。
+      ;; 状態が歩の頭の tick の答えのままなら、同じ now で調停済み(前の要求が調停を通らずに状態を変えていない)。
       _ (do (<- answered tuple (request-reply next request now timing (is next tick-answer)))
             (:= next (get answered 0))
             (:= replies (+ replies #(#(request (get answered 1) (get answered 2))))))))
@@ -232,9 +219,9 @@
     (:= next ticked))
   (<- marked ClusterState (mark-alive next now))
   (:= next marked)
-  (<- (SaveState base next))
+  (<- (SaveState state next))
   ;; worker の生死の出来事は保存の後に出す(#3864)。
-  (<- (announced-aside (! (liveness-moves base next timing))))
+  (<- (announced-aside (! (liveness-moves state next timing))))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。
@@ -264,6 +251,9 @@
   ;; node の label から導く能力の名は、worker の自己申告として受けない(register-heartbeat が provides から外す — 改訂 1 の I)。
   (var current (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
   (var watchers #())
+  ;; 次に起きる刻(最初の歩は今すぐ)と、今すぐが要求なしに続いた歩の数(wake_policy.count-unsettled)。
+  (var due (DueNow))
+  (var streak 0)
   ;; 起動の時に、名簿の全部の今の生死を 1 度出す(#3864 — 沈黙の集合は保存の形に無いので、ここで今の刻から求める。保存する欄は
   ;; 変わらない。受け手の追いつきにも成る)。以後の歩は、変わった所だけを出す。
   (<- started int (now-epoch-ms))
@@ -279,6 +269,20 @@
       (<- (SaveState current marked))
       (<- (release-watchers marked watchers))
       (return marked))
-    (<- stepped tuple (coordinator-step current timing naming watchers))
-    (:= current (get stepped 0))
-    (:= watchers (get stepped 2))))
+    ;; 受付は、前の歩の後に決めた次に起きる刻まで待つ(期限が無ければ期限なし — 要求か停止の合図か外の出来事でだけ起きる・#3865)。
+    (<- waiting-from int (now-epoch-ms))
+    (<- wait (| float None) (wait-seconds due waiting-from))
+    (<- stepped tuple (coordinator-step current timing naming watchers wait))
+    (val after (get stepped 0))
+    (:= watchers (get stepped 2))
+    ;; 次に起きる刻: 状態を変えた歩か要求を受けた歩の後は今すぐ、何も変えない歩の後は次の期限(after-step)。今すぐが続けば、変わり
+    ;; 続けた欄を名指して落ちる(count-unsettled)。要求を受けた歩の変化は要求の答えなので数えない(要求の続く間に落ちない)。
+    (<- woke int (now-epoch-ms))
+    (<- planned (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
+    (val took (> (get stepped 1) 0))
+    (<- settling (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after current)) False))
+    (<- counted int (count-unsettled streak settling current after))
+    (:= streak counted)
+    (<- following (| DueAt DueNow DueNever) (after-step settling False took))
+    (:= due following)
+    (:= current after)))
