@@ -1,8 +1,8 @@
-;; 入れ替えの順の条 V1〜V5(coordinator/core/upgrade_invariants.hy — #3366・V5 は #3725)の検。記録は入れ替えを始めた瞬間の写しの合成の
-;; 列で、2026-10-05 の版上げ(#3156)で通した順は緑、破る順は条の名で赤になる事を確かめる。条の中身(何が落ちるか)は sim で測った物
+;; 入れ替えの順の条 V1〜V5(coordinator/core/upgrade_invariants.hy — #3366・V5 は #3725)のテスト。記録は入れ替えを始めた瞬間のスナップショットを合成した
+;; 列で、2026-10-05 の版上げ(#3156)で通した順は緑、違反する順は条の名で赤になる事を確かめる。条の中身(何が落ちるか)は sim で測った物
 ;; (tests/test_upgrade_swaps.hy)。模擬の Flux が当てた瞬間に同じ記録を写す筋書きは単位 2b の続き。
-;; V5 の失敗ケースは合成の列に加えて、模擬の世界(模擬の Flux と模擬の置き場 — sim/flux.hy の flux-declarations)で、準備の前に Desire を
-;; 出す壊した Program と、組まずに「組んだ」と答える壊した答え手を走らせ、入れ替えの瞬間の置き場の写しで赤になる事を見る。
+;; V5 の失敗ケースは合成の列に加えて、模擬の世界(模擬の Flux と模擬の保存先 — sim/flux.hy の flux-declarations)で、準備の前に Desire を
+;; 出す壊した Program と、組まずに「組んだ」と答える壊した handler を走らせ、入れ替えの瞬間の保存先のスナップショットで赤になる事を見る。
 (require doeff-hy.macros [deftest defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with-handlers Program])
@@ -100,20 +100,20 @@
   (assert (= (tuple (gfor b found #(b.rule b.detail))) #(#("V4 coordinator-swap-on-an-empty-queue" "task t1 が queued のまま"))) found))
 
 
-;; --- 条 V5(#3725): 入れ替えを始めた瞬間の置き場に、入れ替え先の版の自己起動の root が準備済みで在る -------------------------------
+;; --- 条 V5(#3725): 入れ替えを始めた瞬間の保存先に、入れ替え先の版の自己起動の root が準備済みで在る -------------------------------
 
 (val AGENT-2-TO-NEW (UpgradeStart :at-ms 7 :kind UpgradeKind.WORKER :target "agent-2" :doeff-commit NEW :tasks #()
                                   :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD))))
 
 
 (deftest test-a-swap-whose-boot-root-is-on-the-place-is-green-for-v5
-  ;; 入れ替えの瞬間に、置き場に入れ替え先の版の root が在る(上げる前の版の root も残っている — 準備は足すだけ)。
+  ;; 入れ替えの瞬間に、保存先に入れ替え先の版の root が在る(上げる前の版の root も残っている — 準備は足すだけ)。
   (<- found tuple (swap-after-boot-root-prepared #((BootRootsAtStart :start AGENT-2-TO-NEW :prepared #(OLD NEW)))))
   (assert (= found #()) found))
 
 
 (deftest test-swapping-before-the-boot-root-is-prepared-breaks-v5
-  ;; 失敗ケース(合成の列): 入れ替えの瞬間の置き場に在るのが上げる前の版の root だけ / root が 1 つも無い — 作り直した process が起動の
+  ;; 失敗ケース(合成の列): 入れ替えの瞬間の保存先に在るのが上げる前の版の root だけ / root が 1 つも無い — 作り直した process が起動の
   ;; 中で root を準備する間、その上の service に届かない順。
   (for [#(what prepared) #(#("上げる前の版の root だけ" #(OLD)) #("root が無い" #()))]
     (<- found tuple (swap-after-boot-root-prepared #((BootRootsAtStart :start AGENT-2-TO-NEW :prepared prepared))))
@@ -127,7 +127,7 @@
 
 (defk then-places [program]
   {:pre [(: program Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "program を走らせてから、模擬の置き場が残した入れ替えの瞬間の写し(条 V5 の入力)を読むため。"
+  "program を走らせてから、模擬の保存先が残した入れ替えの瞬間のスナップショット(条 V5 の入力)を読むため。"
   (<- program)
   (<- places tuple (BootRootsAtStartsSeen))
   places)
@@ -146,7 +146,7 @@
 
 (defk broken-order-on-sim []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 模擬の世界で、準備の前に Desire を出す壊した Program を走らせる。答え = 入れ替えの瞬間の置き場の写し。"
+  "筋書き: 模擬の世界で、準備の前に Desire を出す壊した Program を走らせる。答え = 入れ替えの瞬間の保存先のスナップショット。"
   (<- (Delay 3.0))
   (<- applied tuple (manifest-state PATHS))
   (<- places tuple (with-handlers [(flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied) desire-by-manifest]
@@ -155,8 +155,8 @@
 
 
 (deftest test-a-program-that-desires-before-the-boot-root-is-prepared-breaks-v5
-  ;; 失敗ケース(壊した Program): 準備より先に宣言を書いて当てると、a の古い process が止まる瞬間の置き場に在るのは上げる前の版の root
-  ;; だけ — V5 が a を名指す(後から準備しても、入れ替えの瞬間の写しは変わらない)。
+  ;; 失敗ケース(壊した Program): 準備より先に宣言を書いて当てると、a の古い process が止まる瞬間の保存先に在るのは上げる前の版の root
+  ;; だけ — V5 が a を違反として挙げる(後から準備しても、入れ替えの瞬間のスナップショットは変わらない)。
   (<- outside SimOutside (flux-outside))
   (<- places tuple (sim-cluster NO-JOBS (broken-order-on-sim) :workers #(A B) :outside outside))
   (assert (= (tuple (gfor p places #(p.start.target p.prepared))) #(#("a" #(OLD)))) places)
@@ -165,7 +165,7 @@
 
 
 (defhandler boot-roots-claimed-without-building
-  ;; 壊した答え手(失敗ケース): 置き場に root を組まず、完成の印も確かめずに「組んだ」と答える(模擬の置き場には何も足されない)。
+  ;; 壊した handler(失敗ケース): 保存先に root を組まず、完成のマークも確かめずに「組んだ」と答える(模擬の保存先には何も足されない)。
   (PrepareBootRoot [launch]
     (<- target str (launch-target launch))
     (resume (BootRootBuilt :target target :seconds 0.0 :previous-root-present True))))
@@ -173,8 +173,8 @@
 
 (defk broken-answer-on-sim []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 模擬の世界で、組まずに「組んだ」と答える壊した答え手の下で、版上げの Program(本物)に a を上げさせる。
-   答え = 入れ替えの瞬間の置き場の写し。"
+  "筋書き: 模擬の世界で、組まずに「組んだ」と答える壊した handler の下で、版上げの Program(本物)に a を上げさせる。
+   答え = 入れ替えの瞬間の保存先のスナップショット。"
   (<- (Delay 3.0))
   (<- applied tuple (manifest-state PATHS))
   (<- places tuple (with-handlers [(flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied)
@@ -184,8 +184,8 @@
 
 
 (deftest test-an-answer-that-claims-a-boot-root-it-did-not-build-breaks-v5
-  ;; 失敗ケース(壊した答え手): Program は準備の答えを受けてから宣言を書くが、答え手が組んでいないので、入れ替えの瞬間の置き場に
-  ;; 入れ替え先の版の root が無い — V5 が a を名指す(Program の順だけでは守れず、答え手が完成の印まで確かめて答える事が要る)。
+  ;; 失敗ケース(壊した handler): Program は準備の答えを受けてから宣言を書くが、handler が組んでいないので、入れ替えの瞬間の保存先に
+  ;; 入れ替え先の版の root が無い — V5 が a を違反として挙げる(Program の順だけでは守れず、handler が完成のマークまで確かめて答える事が要る)。
   (<- outside SimOutside (flux-outside))
   (<- places tuple (sim-cluster NO-JOBS (broken-answer-on-sim) :workers #(A B) :outside outside))
   (<- found tuple (swap-after-boot-root-prepared places))

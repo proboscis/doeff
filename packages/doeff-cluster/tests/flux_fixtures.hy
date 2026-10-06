@@ -1,5 +1,5 @@
 ;; 模擬の Flux と版上げの Program の検が共に使う道具(#3366): worker a・b と coordinator の manifest を本番が宣言を書く時と同じ写し
-;; (launch_rules)で作る・宣言の置き場(記憶の中の file)を sim の外の世界に置く・条 V1〜V4 を全部当てる(置き場の写しが在れば V5 も)。
+;; (launch_rules)で作る・宣言の保存先(メモリ上の file)を sim の外の世界に置く・条 V1〜V4 を全部当てる(保存先のスナップショットが在れば V5 も)。
 (require doeff-hy.macros [defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
@@ -85,16 +85,16 @@
 
 (defk program-breaches-of [starts places]
   {:pre [(: starts tuple) (: places tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "版上げの Program で上げた回の記録に、条 V1〜V5 の判定を全部当てた破りの条の名(重ねない・名の順)。starts = 入れ替えの記録の列・
-   places = 同じ瞬間の置き場の写しの列(V5 の入力 — 版上げの Program を通さずに手で当てる筋書きには無いので、そちらは breaches-of)。"
+  "版上げの Program で上げた時の記録に条 V1〜V5 の判定を全部当て、違反した条の名を返すため(重ねない・名の順)。starts = 入れ替えの記録の列・
+   places = 同じ瞬間の保存先のスナップショットの列(V5 の入力 — 版上げの Program を通さずに手で当てる筋書きには無いので、そちらは breaches-of)。"
   (<- order tuple (breaches-of starts))
   (<- unprepared tuple (swap-after-boot-root-prepared places))
   (tuple (sorted (set (+ order (tuple (gfor b unprepared b.rule)))))))
 
 
 (defhandler desire-by-manifest
-  ;; 検の道具: Desire の値を覚え、worker a・b と coordinator の manifest を launch_rules の写しで作り直して置き場へ書くため(本番の
-  ;; handler は行だけを書き換えるが、doeff はそれを import できない — 値 → 行の写しは同じ launch_rules)。
+  ;; テストの道具: Desire の値を覚え、worker a・b と coordinator の manifest を launch_rules の変換で作り直して保存先へ書くため(本番の
+  ;; handler は行だけを書き換えるが、doeff はそれを import できない — 値 → 行の変換は同じ launch_rules)。
   (session var a-commit OLD)
   (session var b-commit OLD)
   (session var c-commit OLD)

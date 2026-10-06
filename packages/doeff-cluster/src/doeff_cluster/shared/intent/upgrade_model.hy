@@ -5,11 +5,11 @@
 ;;;   (<- (PublishDeclarations))          ; DesireWorker / DesireCoordinator で書いた宣言を公開する(本番 = commit と merge の列・sim = 何もしない)
 ;;;   (<- (ApplyDeclarations))            ; 公開した宣言を当てる(本番 = Flux の「すぐ読み直せ」の印・sim = 模擬の Flux の 1 回の当て)
 ;;;   (<- (ConfirmCleanBoot launch))      ; 入れ替え先の値で、コピーも状態も無い空の機体の起動が通るか(Desire の前に・#3366 の単位 5a)
-;;;   (<- answer (PrepareBootRoot launch)) ; 入れ替え先の版の自己起動の root を、今の置き場に先に準備する(確かめの後・Desire の前に・#3725)
+;;;   (<- answer (PrepareBootRoot launch)) ; 入れ替え先の版の自己起動の root を、今の保存先に先に準備する(起動の確認の後・Desire の前に・#3725)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
-;;; 空の起動か root の準備が断られたら UpgradeRefused で名指しで止まる(宣言を書かず公開もしない・自動で戻さない)。
+;;; 空の起動か root の準備が断られたら UpgradeRefused で対象を明示して止まる(宣言を書かず公開もしない・自動で戻さない)。
 (require doeff-hy.macros [val defeffect])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
@@ -72,9 +72,9 @@
 
 
 (defrecord BootRootsAtStart
-  "入れ替えを始めた瞬間(古い process が止まる瞬間)の、入れ替える物の置き場の写し 1 つ: start = その入れ替えの記録・prepared = その瞬間に
-   置き場に準備済み(完成の印つき)で在った自己起動の root の版。条 V5 の入力。UpgradeStart の欄にしない訳 = 名簿と task は coordinator の
-   読み・置き場は準備の答え手(PrepareBootRoot)の読みで、宣言を当てるだけの記録の作り手は置き場を知らない(#3725)。"
+  "入れ替えを始めた瞬間(古い process が止まる瞬間)の、入れ替える対象の保存先のスナップショット 1 つ: start = その入れ替えの記録・prepared = その瞬間に
+   保存先に準備済み(完成のマークつき)で在った自己起動の root の版。条 V5 の入力。UpgradeStart の欄にしない理由 = 名簿と task は coordinator から
+   読む物・保存先は準備の handler(PrepareBootRoot)だけが読む物で、宣言を当てるだけの記録の作り手は保存先を知らない(#3725)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ UpgradeStart start)
   (#^ (get tuple #(str ...)) prepared))
@@ -138,31 +138,31 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
-;; 自己起動の root の準備が断られた訳(閉じた語 — 答え手は自由な文でなく、このどれかで答える)。
+;; 自己起動の root の準備が断られた理由(閉じた語 — handler は自由な文でなく、このどれかで答える)。
 ;;   PREPARE-ROLE-UNKNOWN  = 入れ替え先の版の起動の script が準備の役を知らない(準備を始めていない)
-;;   PLACE-UNAVAILABLE     = 置き場が準備を受けられない(今の版の process に届かない・置き場に書けない・準備の分の余りが無い など —
+;;   PLACE-UNAVAILABLE     = 保存先が準備を受けられない(今の版の process に届かない・保存先に書けない・準備に要る空きが無い など —
 ;;                           準備を始めていない)
-;;   PREPARE-STOPPED       = 準備の間、同じ置き場で動いている今の版の process を守る線(答え手が持つ — 余りの memory・拍の遅れ など)に
-;;                           当たったので、答え手が準備を途中で止めた。版が悪いのではなく置き場が込んでいた — 次の手は、置き場が空いた
-;;                           刻に同じ版で撃ち直す。
-;;   PREPARE-FAILED        = 準備が自分で 0 でない終了で終わった。その版の準備が通らない — 次の手は、撃ち直さずに落ちた訳を直す
-;;                           (PREPARE-STOPPED と分ける訳 = 次の手が違う)。
-;;   READY-MARK-INCOMPLETE = 準備は 0 で終わったが、root の完成の印が無いか、印の中身が完成の形でない(終了の値だけを信じない)
+;;   PREPARE-STOPPED       = 準備の間、同じ保存先で動いている今の版の process を守るためのしきい値(handler が持つ — 空き memory・周期の遅れ
+;;                           など)を越えたので、handler が準備を途中で止めた。版が悪いのではなく保存先が混んでいた — 次の手は、保存先が
+;;                           空いた時に同じ版で実行し直す。
+;;   PREPARE-FAILED        = 準備が自分で 0 でない終了で終わった。その版の準備が通らない — 次の手は、実行し直さずに失敗の原因を直す
+;;                           (PREPARE-STOPPED と分ける理由 = 次の手が違う)。
+;;   READY-MARK-INCOMPLETE = 準備は 0 で終わったが、root の完成のマークが無いか、マークの中身が完成の形でない(終了の値だけを信じない)
 (defenum BootRootRefusal PREPARE-ROLE-UNKNOWN PLACE-UNAVAILABLE PREPARE-STOPPED PREPARE-FAILED READY-MARK-INCOMPLETE)
 
 
 (defrecord BootRootAlreadyPrepared
-  "入れ替え先の版の自己起動の root は、置き場に準備済みだった(何もしなかった): target = worker の名か \"coordinator\"・
-   previous-root-present = 上げる前の版(今 動いている版)の root が置き場に在るか — 戻し先が残っているかを、回のまとめ役が別に読まずに
-   済むように載せる(上げる前の版が無い時は偽)。"
+  "入れ替え先の版の自己起動の root は、保存先に準備済みだった(何もしなかった): target = worker の名か \"coordinator\"・
+   previous-root-present = 上げる前の版(今 動いている版)の root が保存先に在るか — 戻し先が残っているかを、版上げ全体をまとめる側が別に
+   読まずに済むように載せる(上げる前の版が無い時は偽)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str target)
   (#^ bool previous-root-present))
 
 
 (defrecord BootRootBuilt
-  "入れ替え先の版の自己起動の root を、置き場に組んだ: target = worker の名か \"coordinator\"・seconds = 組むのにかかった秒・
-   previous-root-present = 上げる前の版の root が置き場に在るか(BootRootAlreadyPrepared と同じ — 準備は足すだけで、今の版の root を消さない)。"
+  "入れ替え先の版の自己起動の root を、保存先に組んだ: target = worker の名か \"coordinator\"・seconds = 組むのにかかった秒・
+   previous-root-present = 上げる前の版の root が保存先に在るか(BootRootAlreadyPrepared と同じ — 準備は足すだけで、今の版の root を消さない)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str target)
   (#^ float seconds)
@@ -170,17 +170,17 @@
 
 
 (defrecord BootRootRefused
-  "入れ替え先の版の自己起動の root を、置き場に準備できなかった: target = worker の名か \"coordinator\"・reason = 断りの訳(閉じた語)。"
+  "入れ替え先の版の自己起動の root を、保存先に準備できなかった: target = worker の名か \"coordinator\"・reason = 拒否の理由(閉じた語)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str target)
   (#^ BootRootRefusal reason))
 
 
 (defeffect PrepareBootRoot
-  "入れ替え先の値(worker か coordinator)の版の自己起動の root(bytecode 込み)を、その物の今の置き場に先に準備する — 作り直した後の起動が
-   完成の印を読んで進み、root の準備と初回の import(実測 15〜25 秒)が止まりに乗らないようにするため(#3725)。答え手は準備が終わるまで
-   受け持ってから答える(呼び手は時間で読み直さない)。準備は足すだけで、今の版の root を消さない。上げる前の版は答え手が自分で読む。
-   本番 = 今の版の process の置き場で、入れ替え先の版の起動の script の準備の役を 1 回通す・sim = 模擬の置き場に足す(筋書きの答え)。
+  "入れ替え先の値(worker か coordinator)の版の自己起動の root(bytecode 込み)を、入れ替える対象の今の保存先に先に準備する — 作り直した後の起動が
+   完成のマークを読んで進み、root の準備と初回の import(実測 15〜25 秒)が停止時間に乗らないようにするため(#3725)。handler は準備が終わるまで
+   受け持ってから答える(呼び手は時間で読み直さない)。準備は足すだけで、今の版の root を消さない。上げる前の版は handler が自分で読む。
+   本番 = 今の版の process の保存先で、入れ替え先の版の起動の script の準備の役を 1 回通す・sim = 模擬の保存先に足す(筋書きの答え)。
    答え = BootRootAlreadyPrepared か BootRootBuilt か BootRootRefused。"
   {:fields [(: launch (| WorkerLaunch CoordinatorLaunch))]
    :answer (| BootRootAlreadyPrepared BootRootBuilt BootRootRefused)
@@ -188,14 +188,14 @@
 
 
 (defclass UpgradeRefused [RuntimeError]
-  "入れ替えの前の手(空の機体の起動の確かめ・自己起動の root の準備)が断られたので、宣言を書かず公開もせずに止まった。target = 何の
-   入れ替えを止めたか・refusal = 断りの答えそのもの(CleanBootRefused か BootRootRefused — 準備の断りの訳は閉じた語)。自動で戻さない。"
+  "入れ替えの前の手順(空の機体の起動の確認・自己起動の root の準備)が断られたので、宣言を書かず公開もせずに止まった。target = 何の
+   入れ替えを止めたか・refusal = 拒否の答えそのもの(CleanBootRefused か BootRootRefused — 準備の拒否の理由は閉じた語)。自動で戻さない。"
   (defn #^ None __init__ [self #^ str target #^ (| CleanBootRefused BootRootRefused) refusal]  ; defk にできない: 例外の構成子
     (.__init__ (super)
                (match refusal
                  (CleanBootRefused :reason reason)
                    (.format "版上げを止めた: {} の入れ替え先の版で、空の機体の起動が通らない({})— 宣言は書いていない" target reason)
                  (BootRootRefused :reason reason)
-                   (.format "版上げを止めた: {} の置き場に、入れ替え先の版の自己起動の root を準備できない({})— 宣言は書いていない"
+                   (.format "版上げを止めた: {} の保存先に、入れ替え先の版の自己起動の root を準備できない({})— 宣言は書いていない"
                             target reason)))
     (setv self.target target self.refusal refusal)))

@@ -12,7 +12,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/coordinator/core/upgrade_invariants.hy"
       ],
-      "responsibility": "worker と coordinator を新しい版へ入れ替える順の条 V1〜V5(coordinator は worker 全部の後・走り中の task の在る worker は空くのを待つ・1 台ずつ・coordinator は待ち行列が空の時・入れ替え先の版の自己起動の root が置き場に準備済みの時)の記録の型と判定の純関数(#3366 — 落ち方は sim で測った物。V5 は #3725 で、入れ替えの瞬間の置き場の写しを判じる)。",
+      "responsibility": "worker と coordinator を新しい版へ入れ替える順の条 V1〜V5(coordinator は worker 全部の後・実行中の task の在る worker は空くのを待つ・1 つずつ・coordinator は待ち行列が空の時・入れ替え先の版の自己起動の root が保存先に準備済みの時)の記録の型と判定の純関数(#3366 — 落ち方は sim で測った物。V5 は #3725 で、入れ替えの瞬間の保存先のスナップショットを判定する)。",
       "typed": true
     }
   ]
