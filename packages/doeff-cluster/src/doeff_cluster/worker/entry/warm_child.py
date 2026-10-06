@@ -25,6 +25,10 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
 - 待ちの子が落ちても、走っている A と B は落ちない(A は別の session・終わりは exit の file で worker が読む)。
 - worker が消えたら(stdin の EOF)、待ちの子は終わる。走っている A は、shim と同じく自分の stdin の EOF で job を止める。
 - TERM は B を fork する前に block し、B は signal の扱いを既定に戻してから unblock する(戻す前に届いた TERM を落とさない)。
+- 読み込みを終えたら、受け付けの前に GC で 1 回掃いて(gc.collect)、残った object を全部凍らせる(gc.freeze — 以後の GC が掃かない
+  永続の世代へ移す)。分かれた子は待ちの子の GC の数えと heap を受け継ぐので、凍らせないと、数えが閾値の手前で起きた待ちの子から分かれた
+  子は最初の行の前に GC を走らせ、読み込んだ約 100 MB の heap の頁を写す(copy-on-write の fault 約 2.5 万回・job-start → 最初の行が
+  中央 71 → 271 ms — #3765)。凍らせた object の数を準備完了の印に残す。
 
 使い方: python -m doeff_cluster.worker.entry.warm_child --root <root の dir> --socket <socket の path> --ready <準備完了の印の path>
         [--preload <module の名>]…
@@ -32,6 +36,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
 
 import argparse
 import contextlib
+import gc
 import importlib
 import json
 import os
@@ -324,6 +329,9 @@ def main() -> None:
     signal.set_wakeup_fd(wake[1], warn_on_full_buffer=False)
     signal.signal(signal.SIGCHLD, lambda _signum, _frame: None)
     root = os.path.realpath(options.root)
+    # 受け付けの前に heap を掃いて凍らせる(頭注 — 分かれた子が受け継いだ GC の数えで最初の行の前に heap を写さない)。
+    gc.collect()
+    gc.freeze()
     facts = {
         "pid": os.getpid(),
         "root": root,
@@ -332,6 +340,7 @@ def main() -> None:
         "preloaded": list(modules),
         "threads": thread_count(),
         "vmLive": list(vm_live_counts()),
+        "gcFrozen": gc.get_freeze_count(),
     }
     write_replacing(options.ready, json.dumps(facts, ensure_ascii=False))
     print(f"warm_child: 準備完了 root={root} module={len(sys.modules)}", file=sys.stderr, flush=True)

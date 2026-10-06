@@ -15,6 +15,7 @@ tests/fixtures/warm_job(前もって読む module として名指す)。範囲�
 - 前もって読めない module は、名を挙げて起動を断る
 - worker が消えたら(stdin の EOF)待ちの子は終わる
 - 分かれた子の log(task の log)は、shim の道と同じ部品で 1 行ごとに壁の時計の刻の頭を持つ(#3714)
+- 待ちの子は読み込んだ heap を受け付けの前に GC で掃いて凍らせ、分かれた子はその凍った heap を受け継ぐ(#3765)
 """
 
 import ctypes
@@ -244,6 +245,23 @@ def test_the_ready_mark_shows_one_thread_and_no_vm_before_any_fork(place: Path) 
         assert facts["vmLive"] == [0, 0, 0], facts
         assert facts["preloaded"] == ["doeff_cluster.worker.entry.job_entry", JOB], facts
         assert facts["root"] == os.path.realpath(warm.root), facts
+    finally:
+        stopped(warm)
+
+
+def test_the_warm_child_freezes_its_loaded_heap_so_a_forked_job_starts_with_it_frozen(place: Path) -> None:
+    """待ちの子は module を読み込んだ後・受け付けの前に GC で 1 回掃いて heap を凍らせ(準備完了の印の gcFrozen が 0 より大きい)、分かれた子は
+    その凍った object を受け継ぐ(#3765 — 凍らせないと、待ちの子の GC の数えを受け継いだ子が最初の行の前に GC を走らせ、読み込んだ約 100 MB の
+    heap の頁を写して 271 ms 遅れた)。前の形では両方とも 0 で赤。"""
+    warm = started(place)
+    try:
+        frozen = readied(warm)["gcFrozen"]
+        assert isinstance(frozen, int) and frozen > 0, frozen
+        out = place / "facts.json"
+        ended(forked_job(warm, "a", ["inspect", str(out)]))
+        seen = json.loads(out.read_text())
+        # 子が fork の後に解放した object は永続の世代から抜けるので、数は待ちの子より少し減る(実測 84,273 → 84,268)— 大半が凍ったままか。
+        assert seen["gcFrozen"] > frozen // 2, (seen["gcFrozen"], frozen)
     finally:
         stopped(warm)
 
