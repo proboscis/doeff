@@ -23,7 +23,7 @@ class ReplyTarget(Protocol):
 
 class InboxQueue(Protocol):
 
-    def take(self, timeout: float, limit: int) -> list:
+    def take(self, timeout: float | None, limit: int) -> list:
         ...
 
 class StopSignal(Protocol):

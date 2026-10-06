@@ -275,14 +275,13 @@
     (<- stepped tuple (coordinator-step current timing naming watchers wait))
     (val after (get stepped 0))
     (:= watchers (get stepped 2))
-    ;; 次に起きる刻: 状態を変えた歩か要求を受けた歩の後は今すぐ、何も変えない歩の後は次の期限(after-step)。今すぐが続けば、変わり
-    ;; 続けた欄を名指して落ちる(count-unsettled)。要求を受けた歩の変化は要求の答えなので数えない(要求の続く間に落ちない)。
+    ;; 次に起きる刻: 要求を受けずに状態を変えた歩の後は今すぐ、それ以外は次に起きる刻(after-step — 要求で変わった状態が落ち着いて
+    ;; いなければ期限の関数が今すぐを返す)。今すぐが続けば、変わり続けた欄を名指して落ちる(count-unsettled)。
     (<- woke int (now-epoch-ms))
     (<- planned (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
     (val took (> (get stepped 1) 0))
-    (<- settling (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after current)) False))
-    (<- counted int (count-unsettled streak settling current after))
+    (<- following (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after current))))
+    (<- counted int (count-unsettled streak following current after))
     (:= streak counted)
-    (<- following (| DueAt DueNow DueNever) (after-step settling False took))
     (:= due following)
     (:= current after)))
