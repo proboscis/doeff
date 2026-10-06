@@ -77,7 +77,7 @@
                                             ReadEnvironment WorkingDirectory
                                             ProcessAlive ReadInterpreter ReadMachineName ResolveModule
                                             StartProcess PollProcess StopProcess
-                                            SignalProcess])
+                                            SignalProcess WriteProcessInput])
 ;; offloaded-subprocess-handler は factory metered-offloaded-subprocess-handler に計器 None を渡した値で __doeff_body__ を持たない —
 ;; 導出には factory を挙げる(agora-redesign #2847)。
 (import doeff_core_effects.os-process [subprocess-handler metered-offloaded-subprocess-handler])
@@ -293,10 +293,10 @@
   :title "Process 語彙 — 子 process と自分の環境"
   :effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory
             ProcessAlive ReadInterpreter ReadMachineName ResolveModule
-            StartProcess PollProcess StopProcess SignalProcess]
+            StartProcess PollProcess StopProcess SignalProcess WriteProcessInput]
   :handlers [subprocess-handler metered-offloaded-subprocess-handler scripted-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "subprocess-handler(本物)・metered-offloaded-subprocess-handler(本物 — 計器の無い形が offloaded-subprocess-handler)と scripted-process-handler(I/O なし・台本)が 12 effect 全てに答える。")
+  :docs "subprocess-handler(本物)・metered-offloaded-subprocess-handler(本物 — 計器の無い形が offloaded-subprocess-handler)と scripted-process-handler(I/O なし・台本)が 13 effect 全てに答える。")
 
 
 (defdomain doeff-warm-process
