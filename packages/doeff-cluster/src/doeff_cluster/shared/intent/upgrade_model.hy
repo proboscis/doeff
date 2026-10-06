@@ -61,8 +61,9 @@
 
 (defrecord UpgradeState
   "版上げの Program が次へ進むかを決めるための coordinator の状態: roster = 名簿のコピー・tasks = 終わっていない task のコピー・coordinator-commit = 答えた
-   coordinator が動いている doeff の版(None = 読み手が読めない — 当てた直後に古い coordinator が答えても「新しい版で戻った」と読まない
-   ため・#3772)・known-tasks = coordinator が知る task の id の全部(終わった物も — coordinator の作り直しの前に待っていた task が、
+   coordinator が動いている doeff の版(GET /state の欄 coordinatorCommit を shared/protocol/coordinator_reads の coordinator-commit-of-state で
+   読んだ物 — 宣言した版ではなく答えた process の版。None = 申告していない。当てた直後に古い coordinator が答えても「新しい版で戻った」と
+   読まないため・#3772)・known-tasks = coordinator が知る task の id の全部(終わった物も — coordinator の作り直しの前に待っていた task が、
    作り直しの後も coordinator に在るかを読むため)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ (get tuple #(RosterEntry ...)) roster)

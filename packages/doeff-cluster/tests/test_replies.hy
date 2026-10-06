@@ -1,6 +1,7 @@
 ;; 返事の本文の型と綴り(#2595): core の判断(api_policy.respond)は GET /events・GET /state・GET /workers/<名> の答えを型の値(EventsView・StateReply・WorkerDrainView)で返し、
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest defk <- val])
+(import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased ProgramStored ProgramRow])
 (import doeff_cluster.shared.intent.warm_model [WarmState])
@@ -41,6 +42,17 @@
   (assert (and (isinstance body dict) (in "audit" body) (in "drains" body) (in "workers" body)) (sorted body))
   (assert (= (len (get body "audit")) (len answer.audit)) body)
   (assert (all (gfor e (get body "audit") (isinstance e dict))) body))
+
+
+(deftest test-the-state-reply-names-the-running-commit-only-when-it-was-read
+  ;; #3772: GET /state の答えは、coordinator の process が起動の時に読んだ doeff の版を欄 coordinatorCommit に載せる。読めなかった
+  ;; (None)時は欄を書かない — 空の文字や null を版として書かない。
+  (val commit "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
+  (val s (! (written)))
+  (val named (get (responded (replace s :running-commit commit) (! (http-request "GET" "/state" {} None)) 3000 T) 2))
+  (assert (= (.get named "coordinatorCommit") commit) (sorted named))
+  (val unnamed (get (responded s (! (http-request "GET" "/state" {} None)) 3000 T) 2))
+  (assert (not-in "coordinatorCommit" unnamed) (sorted unnamed)))
 
 
 (deftest test-a-body-that-is-not-a-reply-type-passes-unchanged

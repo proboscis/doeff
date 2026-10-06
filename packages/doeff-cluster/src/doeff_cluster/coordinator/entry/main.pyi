@@ -2,6 +2,7 @@
 
 from doeff import Program as _Program
 from pathlib import Path as Path
+from dataclasses import replace as replace
 from doeff import run as run
 from doeff import with_handlers as with_handlers
 from doeff_time import sync_time_handler as sync_time_handler
@@ -15,6 +16,10 @@ from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import file_done as file_done
 from doeff_core_effects.handlers import slog_handler as slog_handler
 from doeff_core_effects.os_file import os_file_handler as os_file_handler
+from doeff_core_effects.os_process import subprocess_handler as subprocess_handler
+from doeff_core_effects.process_effects import EnvEntry as EnvEntry
+from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
+from doeff_cluster.shared.core.launch_rules import coordinator_commit_env_name as coordinator_commit_env_name
 from doeff_core_effects.scheduler import scheduled as scheduled
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.coordinator.intent.cluster_model import ClusterState as ClusterState
@@ -52,6 +57,12 @@ def legacy_state(state_file: str, now: int) -> _Program[ClusterState | None, obj
     ...
 
 def load_state(state_file: str, store: DurableStore, now: int) -> _Program[ClusterState, object]:
+    ...
+
+def running_commit() -> _Program[str | None, object]:
+    ...
+
+def with_running_commit(state: ClusterState) -> _Program[ClusterState, object]:
     ...
 
 def state_on_start(state_file: str, store: DurableStore) -> _Program[ClusterState, object]:

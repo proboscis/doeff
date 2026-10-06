@@ -294,7 +294,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 | `PUT /programs/<sha>`・`GET /programs/<sha>` | 詰めた Program の置き場(`{"blob" "versions"}`)。中身の sha256 がキー |
 | `GET /resources/Rollout/<名>` | Rollout の段階(`status.phase`)・旧の元の台数・台数の食い違い(`status.drift`) |
 | `GET /resources/Worker` | worker の能力(`provides`・`exclusive`)・node・容量・版・drain |
-| `GET /state` | 置き先(`placements`)・各 worker の process の様子・置けない service(`unplaced`)と理由 |
+| `GET /state` | 置き先(`placements`)・各 worker の process の様子・置けない service(`unplaced`)と理由・この coordinator の process が走っている doeff の版(`coordinatorCommit` — 起動の時に 1 度読んだ環境変数 `WORKER_DOEFF_COMMIT`。読めなければ欄を書かない) |
 | `GET '/events?kind=Service&name=<名>&limit=50'` | 誰がいつ何を書いたか |
 | `GET /metrics` | Prometheus の text(service の計器は label `service`・`worker` 付き・盤の行の数と大きさ・戻しの止まった Rollout) |
 | `GET /livez`・`GET /readyz` | 調停ループが最後に要求を取りに来てからの秒だけで答える(readyz は 30 秒・livez は 120 秒止まると 503) |
@@ -438,7 +438,10 @@ worker と coordinator のどちらを先に上げるかは変更ごとに決ま
 入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。coordinator の入れ替えは、ほかに待ち行列が空(条 V4)・
 上げる前の版の自己起動の root(戻し先)が在る・静かな時間帯(`AwaitQuietWindow` — 何を「入れ替えで切れて困る仕事」とみなすかは
 配備する側の handler が決める)を宣言を書く前に確かめ、当てた後は coordinator が版 X で答える・宣言の内の worker が live に戻る・
-入れ替えの前に待っていた task が coordinator に在る、の 3 つを待ちます。
+入れ替えの前に待っていた task が coordinator に在る、の 3 つを待ちます。「coordinator が版 X で答える」は、答えた coordinator が
+`GET /state` の `coordinatorCommit` で申告する版で判じます(宣言した版や Deployment の世代からは推しません — 作り直しの途中で古い Pod が
+答えている間も「新しい版」と読んでしまうため)。名簿の読みに答える handler は、この欄を `shared/protocol/coordinator_reads.hy` の
+`coordinator-commit-of-state` で読みます(本番の読みと模擬の Flux の読みが同じ 1 つを通る)。
 
 順が決まっている変更の例:
 

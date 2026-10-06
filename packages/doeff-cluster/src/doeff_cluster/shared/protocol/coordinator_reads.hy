@@ -117,6 +117,16 @@
       None))
 
 
+(defk coordinator-commit-of-state [state]
+  {:pre [(: state dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /state の答え(JSON の object)から、答えた coordinator の process が走っている doeff の版(欄 coordinatorCommit —
+   起動の時に読んだ WORKER_DOEFF_COMMIT)を引くため。欄が無い・文字でない・空なら None(その coordinator は版を申告していない)。
+   版上げの Program の名簿の読みは、本番(配備する側の handler)も模擬の Flux もこの 1 つを通る — 宣言した版や Pod の作り直しの数から
+   推さず、答えた process の版で「新しい版の coordinator が答えた」を判じる(#3772)。"
+  (val commit (.get state "coordinatorCommit"))
+  (if (and (isinstance commit str) commit) commit None))
+
+
 (defk job-pids-of [state name]
   {:pre [(: state dict) (: name str)] :post [(: % (get tuple #(int ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator の /state の statuses(worker の名 → 名乗った job の行)から、どの worker の上かを問わず job name の process の pid を引くため
