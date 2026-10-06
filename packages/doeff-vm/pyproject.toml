@@ -33,12 +33,15 @@ include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 # `uv run` は古い doeff_vm/*.so をそのまま使い続ける(2026-09-23 22:42〜23:17 に pod の
 # controller が古い .so で 35 分落ちた — card acp:kanban-issue:ki-3965aa5188ae)。
 # ここに列挙すると既定の鍵は置き換わるので pyproject.toml も自分で並べる。
-# path 依存の crate(Cargo.toml の [dependencies] の path = を推移的にたどった先)の
-# Cargo.toml / Cargo.lock / pyproject.toml / build.rs / library の *.rs が漏れなく
-# 載っていることは tests/test_uv_cache_keys_cover_rust_inputs.py が検査する。
 # この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある(agora-redesign #3860)。保存先の wheel は
 # python-source(この dir の doeff_vm/)の .py・.pyi・py.typed も持つので、それも並べる — 並べないと Python だけを変えた後の
 # 非 editable の入れ(worker の uv build)が、前の Python の入った wheel を保存先から引く。
+# build の口の file そのもの(editable の組み方を決める)と、口が保存先の鍵に入れる組みを変える環境変数(口の BUILD_ENV_NAMES と、
+# 接頭辞 CARGO_PROFILE_・CARGO_BUILD_・MATURIN_・PYO3_ のうち使う名)も並べる — 取り込みの作業と make sync は
+# --reinstall-package を付けないので、uv が気づかない変化では口が呼ばれない(#3860 の 2)。
+# path 依存の crate(Cargo.toml の path = を推移的にたどった先)の Cargo.toml / Cargo.lock / pyproject.toml / build.rs / *.rs・
+# 口の file・口の環境変数の名が漏れなく載っている事と、どの鍵の変化でも uv が口を呼ぶ事は
+# tests/test_land_install_follows_rust_keys.py が検査する。
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },
@@ -52,4 +55,19 @@ cache-keys = [
     { file = "../doeff-vm-core/Cargo.toml" },
     { file = "../doeff-vm-core/Cargo.lock" },
     { file = "../doeff-vm-core/src/**/*.rs" },
+    { file = "doeff_cargo_backend.py" },
+    { env = "RUSTFLAGS" },
+    { env = "CARGO_ENCODED_RUSTFLAGS" },
+    { env = "RUSTC" },
+    { env = "MACOSX_DEPLOYMENT_TARGET" },
+    { env = "CARGO_BUILD_TARGET" },
+    { env = "CARGO_BUILD_RUSTFLAGS" },
+    { env = "CARGO_PROFILE_RELEASE_DEBUG" },
+    { env = "CARGO_PROFILE_RELEASE_STRIP" },
+    { env = "CARGO_PROFILE_RELEASE_LTO" },
+    { env = "CARGO_PROFILE_RELEASE_OPT_LEVEL" },
+    { env = "CARGO_PROFILE_RELEASE_CODEGEN_UNITS" },
+    { env = "MATURIN_PEP517_ARGS" },
+    { env = "PYO3_PYTHON" },
+    { env = "PYO3_CONFIG_FILE" },
 ]
