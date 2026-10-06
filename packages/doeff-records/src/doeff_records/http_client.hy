@@ -1,4 +1,4 @@
-;;; 記録の service の HTTP の口に公開 effect 8 つで答える client の handler — 別の process の Hy / Python の Program が、
+;;; 記録の service の HTTP の口に公開 effect 9 つで答える client の handler — 別の process の Hy / Python の Program が、
 ;;; memory や PostgreSQL の handler と同じ effect のまま記録の service を読み書きするため。
 ;;;
 ;;; 書き手の名は endpoint の writer を平文の見出し X-Records-Writer で送る(service は確かめずに書き手の名に使う — 自分の program
@@ -24,8 +24,8 @@
 ;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
 ;;; service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む。
 ;;;
-;;; 置き場の止まり(#3557 — 記録の service の短い停止を越える 1 か所): 要求と答えの 7 つ(ReadRow・ListRows・PutRow・
-;;; PutRows・AppendEvent・ReadEvents・ReadStreamEnd)は、届かない(503 store-unavailable を含む Unreachable)時に、止まりの上限まで置き場の
+;;; 置き場の止まり(#3557 — 記録の service の短い停止を越える 1 か所): 要求と答えの 8 つ(ReadRow・ListRows・PutRow・
+;;; PutRows・AppendEvent・ReadEvents・ReadStreamEnd・ReadEventByKey)は、届かない(503 store-unavailable を含む Unreachable)時に、止まりの上限まで置き場の
 ;;; 戻りを待って同じ要求を撃ち直す(answered-riding-stall)。待つ時間は client だけが問う ReadRequestPatience の答え(RequestPatience —
 ;;; 合図の源が止まりに耐える時間 ReadSourcePatience とは別の問い)、戻りは合図の源と同じ came-back-within(AwaitRecordsBack を見張りの task で
 ;;; 受ける — 時間で撃ち直さない)。待つ時間の問いは止まった時だけでなく要求のたびに撃つ — 答え手の無い組み立ては最初の要求で名指しで落ち、
@@ -54,7 +54,7 @@
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
-                               ReadRequestPatience])
+                               ReadEventByKey ReadRequestPatience])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
                             WRITER-HEADER WATCH-MAX-SECONDS])
@@ -213,7 +213,7 @@
 
 
 (defk stall-names [ask]
-  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd))] :post [(: % (get tuple #(str ...)))]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd ReadEventByKey))] :post [(: % (get tuple #(str ...)))]
    :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask が触る表と列の名前を知るため(戻りの問い AwaitRecordsBack に渡す — 置き場は名ごとに止まり得る)。"
   (match ask
@@ -223,11 +223,12 @@
     (PutRows :writes writes) (! (first-seen (tuple (gfor write writes write.table))))
     (AppendEvent :stream stream) #(stream)
     (ReadEvents :stream stream) #(stream)
-    (ReadStreamEnd :stream stream) #(stream)))
+    (ReadStreamEnd :stream stream) #(stream)
+    (ReadEventByKey :stream stream) #(stream)))
 
 
 (defk answered-riding-stall [endpoint ask]
-  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd))]
+  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd ReadEventByKey))]
    :post [(: % (| WireAnswer Unreachable))] :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask 1 つに、置き場の止まりを越えて答えるため(file の頭の註「置き場の止まり」— client の 1 か所)。待つ時間を要求のたびに
    問い、届けばその答え、届かなければ待つ時間(0 秒なら待たない)の残りまで置き場の戻りを待って同じ要求を撃ち直す。越えたら、待った秒と
@@ -304,6 +305,9 @@
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ReadStreamEnd [stream]
+    (<- answer (answered-riding-stall endpoint effect))
+    (resume answer))
+  (ReadEventByKey [stream idempotency-key]
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer)))
 

@@ -223,6 +223,14 @@ class StreamEnd:
 class StreamEmpty:
     ...
 
+@dataclass(frozen=True)
+class EventAbsent:
+    ...
+
+@dataclass(frozen=True)
+class EventRetired:
+    sequence: int
+
 # --- 失敗の答え ---
 
 @dataclass(frozen=True)
@@ -272,5 +280,6 @@ AppendEventAnswer: TypeAlias = Appended | Refused | Unreachable
 ReadEventsAnswer: TypeAlias = Events | Unreachable
 WatchEventsAnswer: TypeAlias = EventsMoved | EventsQuiet | Unreachable
 ReadStreamEndAnswer: TypeAlias = StreamEnd | StreamEmpty | Unreachable
+ReadEventByKeyAnswer: TypeAlias = Event | EventAbsent | EventRetired | Unreachable
 PutRowsAnswer: TypeAlias = WrittenRows | RowsConflict | RowsRefused | Unreachable
 

@@ -78,7 +78,8 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [RecordsSchema Unreachable WaitsClosed])
 (import doeff_records.schema_digest [schema-digests])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadEventByKey])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS request-stages stage-metric])
@@ -336,7 +337,8 @@
   (WatchEvents [stream after timeout] (resume (Unreachable NOT-PREPARED-REASON)))
   (AppendEvent [stream idempotency-key body] (resume (Unreachable NOT-PREPARED-REASON)))
   (ReadEvents [stream after limit] (resume (Unreachable NOT-PREPARED-REASON)))
-  (ReadStreamEnd [stream] (resume (Unreachable NOT-PREPARED-REASON))))
+  (ReadStreamEnd [stream] (resume (Unreachable NOT-PREPARED-REASON)))
+  (ReadEventByKey [stream idempotency-key] (resume (Unreachable NOT-PREPARED-REASON))))
 
 
 (defhandler request-stamps

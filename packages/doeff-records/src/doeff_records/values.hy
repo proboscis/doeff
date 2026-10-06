@@ -73,7 +73,7 @@
 (defclass [(dataclass :frozen True)] KeepFor []
   "表: 終端の状態になった行を seconds 秒の後に消す(transient)。追記の列: 積んでから seconds 秒の後に消す。
    期限を過ぎた行と出来事は、その刻からどの読みにも出ない(ReadRow は Missing・ListRows と ReadEvents は除く・WatchChanges は行の今の値が
-   期限を過ぎた行の変わりを出さない・WatchEvents は動かない・ReadStreamEnd は数えない)。置き場から消して変更の列に RowRemoved を積むのは
+   期限を過ぎた行の変わりを出さない・WatchEvents は動かない・ReadStreamEnd は数えない・ReadEventByKey は EventRetired)。置き場から消して変更の列に RowRemoved を積むのは
    回収で、回収は SweepExpired(手入れの係)の時だけ走る。書き(PutRow・PutRows・AppendEvent)は自分が触る行と出来事だけを回収と同じく
    片付けてから判じる(#3605 の D — 期限を過ぎた行への書きは、その行の RowRemoved を積んでから無い行として判じる)。RowRemoved は期限の刻
    でも読みの時でもなく、期限の後の SweepExpired(かその行への書き)の時に積まれ、既に WatchChanges で行を受け取った読み手の写しには
@@ -428,6 +428,17 @@
 (defclass [(dataclass :frozen True)] StreamEmpty []
   "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・全部が保持の期限を過ぎた)— 番号 0 と混ぜずに型で分ける。")
 
+(defclass [(dataclass :frozen True)] EventAbsent []
+  "ReadEventByKey の答え: 列にその冪等キーで積んだ出来事が無い(まだ積んでいない — 消えた出来事とは EventRetired で分ける)。")
+
+(defclass [(dataclass :frozen True)] EventRetired []
+  "ReadEventByKey の答え: その冪等キーの出来事は積まれたが、保持の期限を過ぎた(回収の前でも過ぎた刻から — 他の読みと同じ)。
+   sequence = 消えた出来事の番号(1 以上)。まだ積んでいない鍵(EventAbsent)と分けて、使い手が「来ていない」と「来て消えた」を混ぜないため。"
+  (#^ int sequence)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.sequence bool) (not (isinstance self.sequence int)) (< self.sequence 1))
+      (raise (ValueError (.format "EventRetired.sequence は 1 以上の整数: {!r}" self.sequence))))))
+
 
 ;; --- 失敗の答え --------------------------------------------------------------------------------------------
 
@@ -485,4 +496,5 @@
 (setv ReadEventsAnswer (| Events Unreachable))
 (val WatchEventsAnswer (| EventsMoved EventsQuiet Unreachable))
 (val ReadStreamEndAnswer (| StreamEnd StreamEmpty Unreachable))
+(val ReadEventByKeyAnswer (| Event EventAbsent EventRetired Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))

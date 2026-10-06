@@ -20,8 +20,9 @@
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused
-                              StreamEnd StreamEmpty StreamTail StreamTailEmpty])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+                              StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches? epoch-ms])
@@ -818,6 +819,55 @@
   [start empty beat entry named reversed-watch plain written changed expired])
 
 
+;; --- 法 19: 出来事を冪等キーで 1 つ引く読みは、列の読みと同じ出来事を答え、来ていない鍵と消えた鍵を分ける ---------------------------
+
+(defk law-event-by-key-reads-the-same-event [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "冪等キーの読みの法(#3750): ReadEventByKey は、その列にその鍵で積んだ出来事を ReadEvents が出すのと同じ Event で答える(別の列の同じ鍵・
+   同じ本文の再送で答えが変わらない)。まだ積んでいない鍵は EventAbsent・保持の期限を過ぎた鍵は回収の前でも後でも消えた出来事の番号の
+   EventRetired(組で数える列は組の最後の出来事から — 他の読みと同じ境)。使い手が鍵 1 つの問いのために列を頭から読み切らずに済み、
+   どの置き場の handler も同じ答えを返すことを確かめるため。"
+  (val law "ReadEventByKey は列の読みと同じ出来事を答え、来ていない鍵は EventAbsent・期限を過ぎた鍵は EventRetired")
+  (<- first (as-writer harness MAKER (AppendEvent "journal" "by-key-1" {"n" 1})))
+  (<- second (as-writer harness MAKER (AppendEvent "journal" "by-key-2" {"n" 2})))
+  (<- elsewhere (as-writer harness MAKER (AppendEvent "pulses" "by-key-elsewhere" {"n" 3})))
+  (<- listed (as-writer harness MAKER (ReadEvents "journal" :after (- first.sequence 1) :limit 2)))
+  (<- one (as-writer harness MAKER (ReadEventByKey "journal" "by-key-1")))
+  (<- two (as-writer harness MAKER (ReadEventByKey "journal" "by-key-2")))
+  (<- (require-law (and (isinstance listed Events) (= #(one two) listed.items)) law
+                   (.format "鍵の読みが列の読みと違う出来事を答えた: {!r} {!r} / {!r}" one two listed)))
+  (<- absent (as-writer harness MAKER (ReadEventByKey "journal" "by-key-never")))
+  (<- crossed (as-writer harness MAKER (ReadEventByKey "journal" "by-key-elsewhere")))
+  (<- (require-law (and (= absent (EventAbsent)) (= crossed (EventAbsent))) law
+                   (.format "積んでいない鍵・別の列の鍵が EventAbsent でない: {!r} {!r}" absent crossed)))
+  (<- replay (as-writer harness MAKER (AppendEvent "journal" "by-key-1" {"n" 1})))
+  (<- again (as-writer harness MAKER (ReadEventByKey "journal" "by-key-1")))
+  (<- (require-law (and (= replay first) (= again one)) law (.format "再送が鍵の読みを変えた: {!r} {!r}" replay again)))
+  ;; 保持: pulses は出来事ごとに PULSE-KEEP-SECONDS 秒・pairs は組(区切り「:」の後ろ)の最後の出来事から PAIR-KEEP-SECONDS 秒。
+  (<- old-ask (as-writer harness MAKER (AppendEvent "pairs" "ask:by-key" {"n" 4})))
+  (<- (Delay 30))
+  (<- young-done (as-writer harness MAKER (AppendEvent "pairs" "done:by-key" {"n" 5})))
+  (<- (Delay (- (max PULSE-KEEP-SECONDS PAIR-KEEP-SECONDS) 29)))
+  (<- pulse-gone (as-writer harness MAKER (ReadEventByKey "pulses" "by-key-elsewhere")))
+  (<- grouped (as-writer harness MAKER (ReadEventByKey "pairs" "ask:by-key")))
+  (<- (require-law (and (= pulse-gone (EventRetired elsewhere.sequence)) (isinstance grouped Event)
+                        (= grouped.sequence old-ask.sequence))
+                   law (.format "期限を過ぎた鍵が回収の前に EventRetired でない・組の若い出来事が残す鍵が消えた: {!r} {!r}" pulse-gone grouped)))
+  (<- (Delay 30))
+  (<- group-gone (as-writer harness MAKER (ReadEventByKey "pairs" "ask:by-key")))
+  (<- (as-writer harness MAKER (SweepExpired)))
+  (<- swept-pulse (as-writer harness MAKER (ReadEventByKey "pulses" "by-key-elsewhere")))
+  (<- swept-done (as-writer harness MAKER (ReadEventByKey "pairs" "done:by-key")))
+  (<- (require-law (and (= group-gone (EventRetired old-ask.sequence)) (= swept-pulse pulse-gone)
+                        (= swept-done (EventRetired young-done.sequence)))
+                   law (.format "組の期限・回収の後の鍵の答えが EventRetired でない: {!r} {!r} {!r}" group-gone swept-pulse swept-done)))
+  (<- kept (as-writer harness MAKER (ReadEventByKey "journal" "by-key-2")))
+  (<- (require-law (= kept two) law (.format "保持の無い列の鍵が時間で変わった: {!r}" kept)))
+  [first second elsewhere listed one two absent crossed replay again old-ask young-done pulse-gone grouped group-gone swept-pulse
+   swept-done kept])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -839,6 +889,7 @@
             "expired-records-are-unseen-before-a-sweep" law-expired-records-are-unseen-before-a-sweep
             "a-write-clears-the-expired-row-it-touches" law-a-write-clears-the-expired-row-it-touches
             "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep
-            "watch-tails-match-last-events" law-watch-tails-match-last-events})
+            "watch-tails-match-last-events" law-watch-tails-match-last-events
+            "event-by-key-reads-the-same-event" law-event-by-key-reads-the-same-event})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

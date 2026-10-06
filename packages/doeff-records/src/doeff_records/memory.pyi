@@ -25,6 +25,7 @@ from doeff_records.effects import (
     ListRows,
     PutRow,
     PutRows,
+    ReadEventByKey,
     ReadEvents,
     ReadRow,
     ReadStreamEnd,
@@ -40,6 +41,8 @@ from doeff_records.values import (
     Changes,
     Conflict,
     Event,
+    EventAbsent,
+    EventRetired,
     Events,
     EventsMoved,
     EventsQuiet,
@@ -117,7 +120,7 @@ class MemoryStore:
     def __init__(self, schema: RecordsSchema) -> None: ...
     def __deepcopy__(self, memo: dict[int, object]) -> MemoryStore: ...
 
-#: 公開 effect 8 つと WatchEvents の答えの型のどれか(answered・at-now の :post)。
+#: 公開 effect 9 つと WatchEvents の答えの型のどれか(answered・at-now の :post)。
 _StoreAnswer = (
     Row
     | Missing
@@ -138,6 +141,9 @@ _StoreAnswer = (
     | EventsQuiet
     | StreamEnd
     | StreamEmpty
+    | Event
+    | EventAbsent
+    | EventRetired
 )
 
 CLOCK_TICK: timedelta
@@ -157,6 +163,7 @@ def memory_watch_scan(store: MemoryStore, ask: WatchChanges, now_ms: int) -> obj
 def memory_append(store: MemoryStore, writer: str, ask: AppendEvent, now_ms: int) -> object: ...
 def memory_read_events(store: MemoryStore, ask: ReadEvents, now_ms: int) -> Events: ...
 def memory_read_stream_end(store: MemoryStore, ask: ReadStreamEnd, now_ms: int) -> StreamEnd | StreamEmpty: ...
+def memory_read_event_by_key(store: MemoryStore, ask: ReadEventByKey, now_ms: int) -> Event | EventAbsent | EventRetired: ...
 def memory_advance_epoch(store: MemoryStore) -> int: ...
 def memory_add_fault(store: MemoryStore, fault: StoreFault) -> None: ...
 def memory_clear_faults(store: MemoryStore, names: frozenset[str] | None) -> None: ...
