@@ -26,6 +26,7 @@ MODULE = """\
 (import collections.abc [Callable])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside ProcessOutside SimProcess ProcessesOf KillWorker])
+(import doeff_events [MemoryBroker])
 
 (defk probe-workers [names]
   {:pre [(: names (get tuple #(str ...)))] :post [(: % (get list SimWorker))] :tags {:context "probe" :role "judgment"}}
@@ -50,7 +51,7 @@ MODULE = """\
   (<- workers (get list SimWorker) (probe-workers #("w1" "w2")))
   (<- per-process (get Callable #([str str] ProcessOutside)) (probe-per-process #(int)))
   (val outside (SimOutside :handlers [] :effects #() :per-process per-process))
-  (<- answer int (sim-cluster system (probe-scenario) :workers (tuple workers) :outside outside))
+  (<- answer int (sim-cluster system (probe-scenario) :workers (tuple workers) :outside outside :notice-broker (MemoryBroker)))
   answer)
 """
 
