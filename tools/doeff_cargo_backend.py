@@ -3,9 +3,15 @@
 入口は 1 つ(ADR-DOE-BUILD-001): uv sync・uv build・別の repo の path の依存・uv の git の checkout からの build・worker の
 `uv build --wheel` のどれもこの口を通る。口は組む前に、必ず「source の中身の hash を鍵にした wheel の保存先」を引く。在れば cargo を
 撃たずにそれを使い、無ければ組んで置いてから使う。wheel の hook(build_wheel)も editable の hook(build_editable)も同じ保存先の
-同じ wheel から答える — editable は保存先の wheel の組み立ての成果物(native の拡張 module と、maturin の include で wheel に入れる
-組み立ての出力)を source の中の maturin の python-source の下へ置き、その dir を指す .pth だけの wheel を返す(maturin の editable と
-同じ形)。以前の editable は毎回 maturin を一時の target で撃ち、日次の検証で doeff-vm を 1 日 約 100 度組み直していた(#3860)。
+同じ wheel から答える。以前の editable は毎回 maturin を一時の target で撃ち、日次の検証で doeff-vm を 1 日 約 100 度組み直していた(#3860)。
+
+editable(_editable_wheel): 保存先の wheel の組み立ての成果物(native の拡張 module と、maturin の include で wheel に入れる組み立ての
+出力)を、editable の wheel の中身として venv の site-packages の `__editable__.<名>.native/` に入れる(uv の RECORD が持つ — 消えれば
+uv が入れ直し、uninstall でも消える)。source は作業木の maturin の python-source のまま読み、package の探し先は venv の成果物の dir →
+作業木の dir の順(wheel に入れる小さな finder `__editable___<名>_finder` と、それを起こす .pth)。成果物を source の木の中に置かない
+理由(2026-10-07 04:00 の日次): 木の git の名簿に無い file を消す写し(dotfiles の remote_check)が成果物を消しても、uv の記録は
+その有無を知らず、次の uv sync が組み直さず import が落ちた(tests/test_editable_native_survives_tree_prune.py)。成果物の dir を先に
+探すので、前の形が source の木に残した成果物は使われない。
 
 鍵(_wheel_slot): 組みに効く物の sha256 — tool.uv.cache-keys の file(宣言が無ければ DEFAULT_SOURCE_GLOBS)の中身と相対 path・rustc と
 maturin の版・機体・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と
@@ -80,7 +86,7 @@ BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_BUILD_", "MATURIN_", "PYO3_")
 # 上の接頭辞に当たるが、組む場所と並べる数だけを変えて中身を変えない名 — 鍵に入れると作業木や機体の混み方ごとに置き場が割れて
 # 共有が効かなくなる。
 PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_JOBS"})
-# native の拡張 module の file の末尾(editable で source の中へ置く組み立ての成果物)。
+# native の拡張 module の file の末尾(editable で venv の成果物の dir へ入れる組み立ての成果物)。
 NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 
 # PEP 517 の config_settings: frontend が渡す「設定の名 → 文字列か文字列の list」。口は中を読まず maturin へ渡す。
@@ -99,10 +105,11 @@ class StoredWheel:
 
 @dataclass(frozen=True)
 class WheelEntry:
-    """editable の wheel に書く file 1 つ: name = wheel の中の path・data = 中身。"""
+    """editable の wheel に書く file 1 つ: name = wheel の中の path・data = 中身・mode = 入れた file の許可の bit(CLI の binary は実行の bit)。"""
 
     name: str
     data: bytes
+    mode: int
 
 
 def _owner_pid(name: str) -> int | None:
@@ -376,7 +383,7 @@ def _store_wheel(slot: Path, built: Path) -> Path:
 
 def _wheel_includes(config: Mapping[str, object]) -> tuple[str, ...]:
     """[tool.maturin] の include のうち wheel に入る物の glob(package の dir から)— 組み立ての出力を wheel に同梱する宣言
-    (doeff-indexer の CLI の binary)。editable はこれも source の中へ置く。"""
+    (doeff-indexer の CLI の binary)。editable はこれも venv の成果物の dir へ入れる。"""
     match config.get("include"):
         case list() as entries:
             return tuple(
@@ -395,49 +402,83 @@ def _wheel_includes(config: Mapping[str, object]) -> tuple[str, ...]:
 
 
 def _built_member(member: str, package: Path, source_root: Path, includes: tuple[str, ...]) -> bool:
-    """wheel の file 1 つが組み立ての成果物(native の拡張 module か、include で wheel に入れた物)か — editable が source の中へ置く物。
-    dist-info・data の下と、source そのもの(.py など)は置かない(作業木の source が正しい)。"""
+    """wheel の file 1 つが組み立ての成果物(native の拡張 module か、include で wheel に入れた物)か — editable が venv の成果物の dir へ
+    入れる物。dist-info・data の下と、source そのもの(.py など)は入れない(作業木の source が正しい)。"""
     if member.endswith("/") or member.split("/", 1)[0].endswith((".dist-info", ".data")):
         return False
     relative = os.path.relpath(source_root / member, package)
     return member.endswith(NATIVE_SUFFIXES) or any(fnmatch.fnmatch(relative, pattern) for pattern in includes)
 
 
-def _place_file(path: Path, data: bytes, mode: int) -> None:
-    """組み立ての成果物 1 つを source の中へ置くため(中身が同じなら触らない — 動いている process が開いた .so の inode を替えない。
-    違えば別名に書いてから名を替える)。"""
-    if path.is_file() and path.read_bytes() == data:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    staged = path.with_name(f".{path.name}.{os.getpid()}.part")
-    staged.write_bytes(data)
-    staged.chmod(mode or 0o644)
-    os.replace(staged, path)
+# editable の wheel に入れる finder の module の中身({packages} = 名 → 作業木の source の package の dir・{native} = 成果物の dir の名)。
+# package の探し先を venv の成果物の dir → 作業木の source の dir の順にする(成果物の dir を先に探すので、前の形が source の木に残した
+# 成果物は使われない)。
+EDITABLE_FINDER = '''\
+"""editable の入れの finder — doeff の build の口(tools/doeff_cargo_backend.py)が書く(agora-redesign #3860)。"""
+import importlib.util
+import os
+import sys
+
+NATIVE = os.path.join(os.path.dirname(os.path.abspath(__file__)), {native!r})
+PACKAGES = {packages!r}
+
+
+class EditableNativeFinder:
+    """PACKAGES の package を、探し先 = 成果物の dir → 作業木の source の dir の package として答える。"""
+
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        source = PACKAGES.get(fullname)
+        if source is None:
+            return None
+        return importlib.util.spec_from_file_location(
+            fullname, os.path.join(source, "__init__.py"), submodule_search_locations=[os.path.join(NATIVE, fullname), source]
+        )
+
+
+sys.meta_path.insert(0, EditableNativeFinder)
+'''
 
 
 def _editable_wheel(stored: Path, package: Path, source_root: Path, includes: tuple[str, ...], wheel_directory: Path) -> str:
-    """保存先の wheel から editable の wheel を作るため: 組み立ての成果物を source_root(maturin の python-source)の下へ置き、
-    dist-info(RECORD を除く)と source_root を指す .pth だけの wheel を wheel_directory に書く(maturin の editable と同じ形)。
+    """保存先の wheel から editable の wheel を作るため(頭の註の editable): 組み立ての成果物を `__editable__.<名>.native/` の下に、
+    dist-info(RECORD を除く)と、source_root を指し finder を起こす .pth と、finder の module を入れた wheel を wheel_directory に書く。
     答え = 書いた wheel の名(保存先の wheel と同じ名 — 同じ tag)。"""
     with zipfile.ZipFile(stored) as archive:
         (dist_info,) = {name.split("/", 1)[0] for name in archive.namelist() if name.split("/", 1)[0].endswith(".dist-info")}
-        for info in archive.infolist():
-            if _built_member(info.filename, package, source_root, includes):
-                _place_file(source_root / info.filename, archive.read(info), (info.external_attr >> 16) & 0o777)
+        distribution = dist_info.split("-", 1)[0]
+        native = f"__editable__.{distribution}.native"
+        products = tuple(
+            WheelEntry(name=f"{native}/{info.filename}", data=archive.read(info), mode=(info.external_attr >> 16) & 0o777)
+            for info in archive.infolist()
+            if _built_member(info.filename, package, source_root, includes)
+        )
         metadata = tuple(
-            WheelEntry(name=name, data=archive.read(name))
+            WheelEntry(name=name, data=archive.read(name), mode=0o644)
             for name in sorted(archive.namelist())
             if name.startswith(f"{dist_info}/") and not name.endswith("/") and name != f"{dist_info}/RECORD"
         )
-    distribution = dist_info.split("-", 1)[0]
-    entries = (*metadata, WheelEntry(name=f"{distribution}.pth", data=f"{source_root}\n".encode("utf-8")))
+    tops = sorted({entry.name.split("/")[1] for entry in products if entry.name.count("/") >= 2})
+    packages = {top: str(source_root / top) for top in tops if (source_root / top / "__init__.py").is_file()}
+    finder = f"__editable___{distribution}_finder"
+    loose = any(entry.name.count("/") == 1 for entry in products)  # package の外の成果物(根の拡張 module)は成果物の dir を路に足す
+    pth = "".join((f"{source_root}\n", f"{native}\n" if loose else "", f"import {finder}\n" if packages else ""))
+    entries = (
+        *metadata,
+        *products,
+        WheelEntry(name=f"{finder}.py", data=EDITABLE_FINDER.format(native=native, packages=packages).encode("utf-8"), mode=0o644),
+        WheelEntry(name=f"{distribution}.pth", data=pth.encode("utf-8"), mode=0o644),
+    )
     text = io.StringIO()
     csv.writer(text, lineterminator="\n").writerows(
         (*((entry.name, f"sha256={_urlsafe_digest('sha256', entry.data)}", str(len(entry.data))) for entry in entries), (f"{dist_info}/RECORD", "", ""))
     )
     with zipfile.ZipFile(wheel_directory / stored.name, "w", compression=zipfile.ZIP_DEFLATED) as editable:
         for entry in entries:
-            editable.writestr(entry.name, entry.data)
+            info = zipfile.ZipInfo(entry.name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.external_attr = (0o100000 | (entry.mode or 0o644)) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            editable.writestr(info, entry.data)
         editable.writestr(f"{dist_info}/RECORD", text.getvalue())
     return stored.name
 
