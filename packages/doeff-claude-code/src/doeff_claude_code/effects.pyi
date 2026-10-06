@@ -1,6 +1,8 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
 from doeff_claude_code.values import ClaudeSessionSpec as ClaudeSessionSpec
@@ -175,3 +177,16 @@ class ProcessStillAlive:
     detail: str
 StartTurnOutcome: TypeAlias = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused
 ExportSessionOutcome: TypeAlias = SessionExported | SessionNotFound
+
+@dataclass(frozen=True, kw_only=True)
+class SessionWarmed:
+    session_id: str
+WarmSessionOutcome: TypeAlias = SessionWarmed | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed
+
+@_doeff_dataclass(frozen=True)
+class ClaudeWarmSession(_doeff_effect_base[WarmSessionOutcome]):
+    origin: FreshSession | ResumeSession
+    spec: ClaudeSessionSpec
+
+    def __post_init__(self) -> None:
+        ...

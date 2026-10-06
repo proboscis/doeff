@@ -15,7 +15,7 @@
 
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
-  SendEffect StopEffect SessionHandle Observation])
+  SendEffect StopEffect SessionHandle Observation WarmSessionEffect AgentCapabilityUnsupportedError])
 (import doeff_agents.effects.agent [refuse-turn-capabilities])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.claude [ClaudeAdapter])
@@ -208,6 +208,13 @@
     (when (is session-data None)
       (reperform effect))
     (resume (.capture-pane active-backend (.get session-data "pane-id") lines)))
+
+  ;; 入力の前に runtime を事前起動する WarmSessionEffect は、この handler の会話では LaunchEffect が既に CLI を起動して入力を待たせて
+  ;; いる — 黙って何もせずに応答せず、型で拒否する。この handler の知らない会話は外側の handler へ回す。
+  (WarmSessionEffect [handle]
+    (when (not-in handle.session-id sessions)
+      (reperform effect))
+    (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "claude-handler")))
 
   (SendEffect [handle message literal enter]
     (setv active-backend backend)

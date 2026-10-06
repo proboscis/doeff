@@ -11,6 +11,7 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
 (import doeff_agents.agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
 (import doeff_agents.effects [
+  AgentCapabilityUnsupportedError
   AgentEffect
   AttachAgentSessionEffect
   AwaitResultEffect
@@ -29,7 +30,8 @@
   ReleaseSessionEffect
   SendEffect
   StopEffect
-  StopSessionEffect])
+  StopSessionEffect
+  WarmSessionEffect])
 (import doeff_agents.session-backend [SessionBackend])
 (import doeff_agents.handlers.production [
   TmuxAgentHandler
@@ -165,6 +167,11 @@
 
   (FollowUpEffect [handle message]
     (resume (.handle-follow-up agent-handler effect)))
+
+  ;; 入力の前に runtime を事前起動する WarmSessionEffect は、AgentHandler の会話では LaunchEffect が既に CLI を起動して入力を待たせて
+  ;; いる — 黙って何もせずに応答せず、型で拒否する。
+  (WarmSessionEffect [handle]
+    (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "agent-handler-defhandler")))
 
   (StopSessionEffect [handle reason]
     (.handle-stop-session agent-handler effect)
@@ -353,6 +360,11 @@
       (_cached-tmux-handler handler-ref active-backend session-repository
                             claude-runtime-policy codex-runtime-policy))
     (resume (.handle-follow-up agent-handler effect)))
+
+  ;; 入力の前に runtime を事前起動する WarmSessionEffect は、tmux の会話では LaunchEffect が既に CLI を起動して入力を待たせている —
+  ;; 黙って何もせずに応答せず、型で拒否する。
+  (WarmSessionEffect [handle]
+    (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "tmux-agent-defhandler")))
 
   (StopSessionEffect [handle reason]
     (setv active-backend backend)

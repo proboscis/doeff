@@ -109,6 +109,16 @@ class ControlResponse:
     subtype: str
     still_queued: tuple[str, ...] = ...
 
+class HookPhase(StrEnum):
+    STARTED = 'started'
+    RESPONSE = 'response'
+
+@dataclass(frozen=True, kw_only=True)
+class HookNotice:
+    event: str
+    phase: HookPhase
+    name: str
+
 @dataclass(frozen=True)
 class TaskEvent:
     task_id: str
@@ -146,7 +156,7 @@ class TurnResult:
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | RateLimit | TurnResult | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | TurnResult | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:
@@ -226,6 +236,9 @@ def tool_answer_of(block: dict) -> _Program[ToolAnswer, object]:
     ...
 
 def classify_user(record: dict) -> Incomplete:
+    ...
+
+def hook_notice_of(record: dict, phase: HookPhase) -> _Program[HookNotice, object]:
     ...
 
 def classify_system(record: dict) -> Incomplete:
