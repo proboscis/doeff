@@ -3125,6 +3125,114 @@ fn record_waits_are_not_judged_without_business_fakes() {
     assert!(keys(&report, "DOEFF208").is_empty(), "{:?}", keys(&report, "DOEFF208"));
 }
 
+/// DOEFF209 の見本の repo: 本番の code(:business-fakes の :production)に、同じ物を時間の待ちを挟んで繰り返し取りに行く形と、当たらない形を
+/// 並べる。`declared` = architecture.hy に :business-fakes を書くか(書かない repo には当てない)。
+fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
+    let files = [
+        (
+            // 補助: 今から s 秒後に期限を掛けて 1 度だけ待つ(1 度だけなので補助そのものは当たらず、繰り返しの中の呼び手が当たる)。
+            "app/billing/core/clock_help.hy",
+            tags("billing", "judgment")
+                + "(defk arm-next [s]\n  (<- now (GetTime))\n  (<- (ArmTimer TAG (+ now (timedelta :seconds s)))))\n",
+        ),
+        (
+            // 当たる: 今 + 秒の ArmTimer を loop の中で掛けて読む・Delay の loop・補助の defk に包んだ形・:poll-seconds・
+            // 印が無い時も試す loop に「届かない間だけの繋ぎ直し」を書いた形(区分が合わない)・語彙の外の理由。
+            "app/billing/core/polls.hy",
+            tags("billing", "judgment")
+                + "(import app.billing.core.clock_help [arm-next])\n\
+                   (defk poll-arm []\n  (while True\n    (<- now (GetTime))\n    (<- (ArmTimer TAG (+ now (timedelta :seconds 5))))\n    (<- (WaitForEvent TimerFired))\n    (<- (ReadQueue))))\n\
+                   (defk poll-sleep []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n\
+                   (defk poll-helper []\n  (while True\n    (<- (arm-next 5.0))\n    (<- (WaitForEvent TimerFired))\n    (<- (ReadQueue))))\n\
+                   (defk poll-lib [holder]\n  (SemaphoreSession holder :ttl-seconds 15.0 :poll-seconds 1.0))\n\
+                   (defk reconnect-always []\n  (while True\n    ;; 時間で取り直す理由: 届かない間だけの繋ぎ直し\n    (<- (Delay INTERVAL))\n    (<- (Ping))))\n\
+                   (defk poll-excuse []\n  (while True\n    (<- (Delay 5.0)) ; 時間で取り直す理由: 仕方ない\n    (<- (ReadQueue))))\n",
+        ),
+        (
+            // 当たらない: 行から導いた期限・変わりを待つ上限の秒(DOEFF208 の側)・1 度だけの期限・書くだけの loop(理由つき)・
+            // 知らせの口の無い相手(理由つき)・印が在る間だけ試す繋ぎ直し(理由つき)・別の task に渡す 1 度の待ち・秒 0 の譲り・期限の差の眠り・
+            // 要求の timeout。
+            "app/billing/core/fine.hy",
+            tags("billing", "judgment")
+                + "(import app.billing.core.clock_help [arm-next])\n\
+                   (defk until-due [row]\n  (while True\n    (<- (ArmTimer TAG row.deadline))\n    (<- (WaitForEvent TimerFired))\n    (<- (ReadQueue))))\n\
+                   (defk long-poll [c]\n  (while True\n    (<- (WatchChanges #(\"t\") c :timeout 30))\n    (<- (ReadQueue))))\n\
+                   (defk once []\n  (<- now (GetTime))\n  (<- (ArmTimer TAG (+ now (timedelta :seconds 5))))\n  (<- (WaitForEvent TimerFired)))\n\
+                   (defk beat []\n  (while True\n    ;; 時間で取り直す理由: 書くだけ: 生存の印\n    (<- (arm-next 5.0))\n    (<- (WaitForEvent TimerFired))\n    (<- (WriteBeat))))\n\
+                   (defk custody []\n  (while True\n    (<- (Delay 60.0)) ; 時間で取り直す理由: 相手に知らせの口が無い: 預かり所\n    (<- (ReadCustody))))\n\
+                   (defk reconnect [url]\n  (while True\n    (<- answer (Ping url))\n    (match answer\n      (Unreachable) (do\n        ;; 時間で取り直す理由: 届かない間だけの繋ぎ直し\n        (<- (Delay 2.0)))\n      _ (return answer))))\n\
+                   (defk spawner []\n  (while True\n    (<- (Spawn (arm-next 5.0)))\n    (<- (WaitForEvent Moved))))\n\
+                   (defk yields [due]\n  (while True\n    (<- now (GetTime))\n    (<- (Delay 0.0))\n    (<- (Delay (- due now)))\n    (<- (HttpRequest URL :timeout 5.0))))\n",
+        ),
+        // 当たる: 前の分けで漏れた services/record と、doeff の package(doeff-core-effects・doeff-traverse・doeff-records の中も)。
+        ("services/record/serving.hy", "(defk store-watch []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadStore))))\n".to_string()),
+        (
+            "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+            "(defk wait-exit [p]\n  (while (running? p)\n    (<- (Delay 0.02))))\n".to_string(),
+        ),
+        ("packages/doeff-traverse/doeff_traverse/walk.hy", "(defk walk-poll []\n  (while True\n    (<- (Delay 1.0))\n    (<- (Probe))))\n".to_string()),
+        (
+            "packages/doeff-records/src/doeff_records/maintenance.hy",
+            "(defk maintain [s]\n  (while True\n    (<- (Delay s))\n    (<- (Compact))))\n".to_string(),
+        ),
+        // 当たらない: 模擬の環境・検の file(母集団の外)。
+        ("app/sim/world.hy", tags("sim", "entry") + "(defk emulated []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n"),
+        ("app/billing/tests/test_poll.hy", tags("billing", "entry") + "(deftest polls\n  (while True\n    (<- (Delay 5.0))))\n"),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF209\"]");
+    if declared {
+        let arch_path = dir.path().join("architecture.hy");
+        let declared = ":foundation foundation\n  \
+                        :business-fakes {:simulation [\"app/sim/**\"] :tests [\"**/tests/**\"] :production [\"app/**\" \"services/**\" \"packages/**\"] :business-modules [\"app.billing\"]}";
+        let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declared);
+        std::fs::write(&arch_path, text).unwrap();
+    }
+    dir
+}
+
+/// 利用者 2026-10-06("so anything that require polling, are to be fixed. polling is a last resort" / "記録に書いて記録をポーリングする設計を
+/// 本当にやめてくれ、linterでみつけて禁止したい"・agora-redesign #3834): 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
+/// 取りに行く所は赤 — 今 + 秒の ArmTimer・Delay・補助の定義に包んだ形・:poll-seconds。期限の待ち・変わりを待つ上限の秒・1 度だけの期限・
+/// 閉じた語彙の理由を書いた所は通る。母集団は services/record と doeff の package(doeff-core-effects・doeff-traverse・doeff-records)も含む。
+#[test]
+fn production_polling_on_timers_is_red() {
+    let dir = timed_refetch_repo(true);
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert_eq!(
+        keys(&report, "DOEFF209"),
+        vec![
+            "app/billing/core/polls.hy::DOEFF209::poll-arm::ArmTimer::periodic",
+            "app/billing/core/polls.hy::DOEFF209::poll-excuse::Delay::periodic",
+            "app/billing/core/polls.hy::DOEFF209::poll-helper::arm-next::periodic",
+            "app/billing/core/polls.hy::DOEFF209::poll-lib::SemaphoreSession::periodic",
+            "app/billing/core/polls.hy::DOEFF209::poll-sleep::Delay::periodic",
+            "app/billing/core/polls.hy::DOEFF209::reconnect-always::Delay::periodic",
+            "packages/doeff-core-effects/doeff_core_effects/os_process.hy::DOEFF209::wait-exit::Delay::periodic",
+            "packages/doeff-records/src/doeff_records/maintenance.hy::DOEFF209::maintain::Delay::periodic",
+            "packages/doeff-traverse/doeff_traverse/walk.hy::DOEFF209::walk-poll::Delay::periodic",
+            "services/record/serving.hy::DOEFF209::store-watch::Delay::periodic",
+        ]
+    );
+    let arm = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-arm::ArmTimer::periodic");
+    assert_eq!(arm["level"], "critical", "{}", arm);
+    assert!(!arm["explanation"]["reason"].as_str().unwrap().is_empty(), "{}", arm);
+    let helper = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-helper::arm-next::periodic");
+    assert!(helper["message"].as_str().unwrap().contains("clock_help.hy:"), "{}", helper["message"]);
+    let always = violation(&report, "app/billing/core/polls.hy::DOEFF209::reconnect-always::Delay::periodic");
+    assert!(always["message"].as_str().unwrap().contains("届かない後の取り直し"), "{}", always["message"]);
+    let excuse = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-excuse::Delay::periodic");
+    assert!(excuse["message"].as_str().unwrap().contains("閉じた語彙の外"), "{}", excuse["message"]);
+}
+
+/// :business-fakes(本番の code の範囲の宣言)を書いていない repo には DOEFF209 を当てない。
+#[test]
+fn polling_on_timers_is_not_judged_without_business_fakes() {
+    let dir = timed_refetch_repo(false);
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF209").is_empty(), "{:?}", keys(&report, "DOEFF209"));
+}
+
 /// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
 /// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
 /// 母集団が 0 になり、条を消しても鳴らなかった。

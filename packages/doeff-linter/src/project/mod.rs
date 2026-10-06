@@ -62,6 +62,7 @@ pub mod assembly_shape;
 pub mod invariants;
 pub mod system_access;
 pub mod record_waits;
+pub mod timed_refetch;
 pub mod system_decls;
 pub mod clause_coverage;
 pub mod python_reach;
@@ -542,6 +543,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| enabled.contains(&ProjectRule::RecordChangeWakesJob)) {
                         let (found, problems) = crate::timing::timed("record-waits", || judge_record_waits(root, decl));
+                        drafts.extend(found);
+                        report.errors.extend(problems);
+                    }
+                    if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| enabled.contains(&ProjectRule::PollingOnTimer)) {
+                        let (found, problems) = crate::timing::timed("timed-refetch", || judge_timed_refetch(root, decl));
                         drafts.extend(found);
                         report.errors.extend(problems);
                     }
@@ -3533,6 +3539,33 @@ fn judge_record_waits(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<D
                 explain: Explain::RecordChangeWakesJob {
                     subject: found.subject(),
                     reason: "記録は記録、起動は起動(利用者 2026-10-06)。記録の変更を待って job を起こすと、記録の置き場が出来事の運び手を兼ね、待ちの秒と読み直しの分だけ反応が遅れ、置き場の負荷が待ち手の数に比例して増える。起こす知らせは出来事の基盤から受け、記録は書くだけにする — 起動や繋ぎ直しの時に追いつく読みは待たない 1 回の読み(秒 0)で足りる(agora-redesign #3834)。".to_string(),
+                },
+                rel: found.rel,
+                message,
+            }
+        })
+        .collect();
+    (drafts, problems)
+}
+
+/// DOEFF209: 本番の code の Program が同じ物を時間の待ちを挟んで繰り返し取りに行く所を、呼びの頭の位置の下書きにする(鍵の細目 =
+/// 定義の名::頭の綴り::区分)と、読めない file の理由。
+fn judge_timed_refetch(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<Draft>, Vec<String>) {
+    let (found, problems) = timed_refetch::find(root, decl);
+    let drafts = found
+        .into_iter()
+        .map(|found| {
+            let message = format!("{} — {}", found.rel, found.describe());
+            Draft {
+                rule: ProjectRule::PollingOnTimer,
+                layer: None,
+                path: root.join(&found.rel),
+                range: found.range,
+                detail: Some(found.detail()),
+                base: Severity::Error,
+                explain: Explain::PollingOnTimer {
+                    subject: format!("{}(区分 {})", found.subject(), found.refetch.label()),
+                    reason: "時間で取りに行くのは最後の手段(利用者 2026-10-06 \"so anything that require polling, are to be fixed. polling is a last resort\")。間隔を置いて同じ物を取りに行くと、変わりへの反応が間隔の分だけ遅れ、変わらない間も相手を読み続け、負荷が取りに行く手の数に比例して増える。起こすのは相手の変わりの知らせ(出来事)にし、起きる刻が行や予定から決まる期限はその刻を掛ける(agora-redesign #3834)。".to_string(),
                 },
                 rel: found.rel,
                 message,
