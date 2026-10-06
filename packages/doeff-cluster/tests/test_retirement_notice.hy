@@ -9,6 +9,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff_time [Delay])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess Redeclare ReportsOf ProcessesOf SharedRows])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -145,7 +146,7 @@
 (deftest test-an-abandoned-handoff-withdraws-the-retirement-and-a-new-declaration-retires-again
   ;; 諦め: 新が Ready にならないまま期限を越えると、旧は「退く」の次に「退きを取り消した」を受けて動き続ける(止めの合図を受けない)。
   ;; 宣言し直して諦めが解けると、同じ旧が もう一度「退く」を受け、その刻は次の新の最初の Ready より前で、その後に止められる。
-  (<- seen AbandonSeen (sim-cluster (retiring-beacons sim-foundation)
+  (<- seen AbandonSeen (sim-cluster :timing (ClusterTiming) (retiring-beacons sim-foundation)
                                     (abandoned-then-redeclared (retiring-beacons-stuck sim-foundation) (retiring-beacons-v3 sim-foundation))))
   (val first (get seen.abandoned.processes 0))
   (<- told tuple (notices-of seen.abandoned first.instance))

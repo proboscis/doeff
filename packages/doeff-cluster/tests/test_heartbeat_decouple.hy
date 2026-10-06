@@ -69,9 +69,9 @@
 (deftest test-a-desired-change-wakes-the-worker-within-a-tick
   ;; 宣言し直しは待ちが受け、拍ごとに heartbeat を送る今までの形と拍 1 つ(0.5 秒)の差の内で旧い版を止める。反例 — 待ちが塞がれた
   ;; worker は heartbeat の間隔(8 秒)が来るまで気づかない(heartbeat の直後に宣言し直すので、遅れは間隔からその拍の分を引いた以上)。
-  (<- ticking int (sim-cluster (beacons sim-foundation) (redeclare-latency "tick") :workers (get PAIRS None)))
-  (<- watching int (sim-cluster (beacons sim-foundation) (redeclare-latency "watch") :workers (get PAIRS None)))
-  (<- blind int (sim-cluster (beacons sim-foundation) (redeclare-latency "blind") :workers (get PAIRS 8000)))
+  (<- ticking int (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (redeclare-latency "tick") :workers (get PAIRS None)))
+  (<- watching int (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (redeclare-latency "watch") :workers (get PAIRS None)))
+  (<- blind int (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (redeclare-latency "blind") :workers (get PAIRS 8000)))
   (assert (<= watching (+ ticking 500)) #(ticking watching blind))
   (assert (>= blind (+ ticking 1000)) #(ticking watching blind))
   (assert (>= blind (- 8000 1000)) #(ticking watching blind)))
@@ -103,10 +103,10 @@
 (deftest test-a-watch-task-that-dies-is-recorded-and-falls-back-to-every-tick [monkeypatch]
   ;; 名指しの待ちの task が(口を確かめた後に)思わぬ例外で止まると、理由が世界の記録に 1 行ずつ残り(本番の「待ちの thread が
   ;; 止まった」)、その世代は拍ごとの heartbeat に戻って、宣言し直しに拍ごとの形と同じ刻で気づく(黙って間隔まで遅れない)。
-  (<- ticking int (sim-cluster (beacons sim-foundation) (redeclare-latency "tick") :workers (get PAIRS None)))
+  (<- ticking int (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (redeclare-latency "tick") :workers (get PAIRS None)))
   (.clear BROKEN-CALLS)
   (.setattr monkeypatch local "note_watch" breaking-note)
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (broken-watch-latency) :workers (get PAIRS None)))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (broken-watch-latency) :workers (get PAIRS None)))
   (val failures (get seen 1))
   (assert (= (len failures) 2) failures)
   (assert (all (gfor f failures (in "RuntimeError: 壊れた待ち" f.reason))) failures)
@@ -133,10 +133,10 @@
 (deftest test-heartbeats-arrive-inside-the-liveness-window
   ;; 間隔は窓の 1/4(2.5 秒)— 沈黙は間隔と拍 1 つの内・生きていないと数えられることは無い。反例 — 間隔を窓(10 秒)より長くすると
   ;; coordinator は worker を死んだと数える。
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (liveness-samples) :workers (get PAIRS None)))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (liveness-samples) :workers (get PAIRS None)))
   (assert (= (get seen 0) 0) seen)
   (assert (<= (get seen 1) (+ (// TIMING.lease-ms 4) 500)) seen)
-  (<- broken tuple (sim-cluster (beacons sim-foundation) (liveness-samples) :workers (get PAIRS 12000)))
+  (<- broken tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (liveness-samples) :workers (get PAIRS 12000)))
   (assert (> (get broken 0) 0) broken))
 
 
@@ -154,9 +154,9 @@
 (deftest test-a-short-detached-lease-is-extended-by-the-heartbeats
   ;; 間隔は自分の切り離した task の lease の 1/3(1 秒)以下になり、task は最後まで走る。反例 — 間隔 5 秒の worker では lease(3 秒)が
   ;; 切れて lost。
-  (<- answer (| DetachedSucceeded DetachedLost) (sim-cluster (beacons sim-foundation) (short-lease-task) :workers (get PAIRS None)))
+  (<- answer (| DetachedSucceeded DetachedLost) (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (short-lease-task) :workers (get PAIRS None)))
   (assert (isinstance answer DetachedSucceeded) answer)
-  (<- broken (| DetachedSucceeded DetachedLost) (sim-cluster (beacons sim-foundation) (short-lease-task) :workers (get PAIRS 5000)))
+  (<- broken (| DetachedSucceeded DetachedLost) (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (short-lease-task) :workers (get PAIRS 5000)))
   (assert (isinstance broken DetachedLost) broken))
 
 
@@ -185,10 +185,10 @@
   (val original-settle local.settle-beats)
   (.setattr monkeypatch local "settle_beats"
             (fn [worker boot sent] (.update beats (* [worker.name] (len sent))) (original-settle worker boot sent)))
-  (<- (sim-cluster (beacons sim-foundation) (quiet-for 30.0 True) :workers (get PAIRS None)))
+  (<- (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (quiet-for 30.0 True) :workers (get PAIRS None)))
   (val without (.total beats))
   (.clear beats)
-  (<- (sim-cluster (beacons sim-foundation) (quiet-for 30.0 False) :workers (get PAIRS None)))
+  (<- (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (quiet-for 30.0 False) :workers (get PAIRS None)))
   (val with-watch (.total beats))
   (assert (> without 100) #(without with-watch))
   (assert (< with-watch 50) #(without with-watch)))
@@ -216,7 +216,7 @@
 
 (deftest test-the-fence-still-counts-from-the-last-delivered-heartbeat
   ;; 網の切れた worker は、最後に届いた heartbeat から fence(20 秒)を越えた最初の拍で job を止める(拍の間隔 0.5 秒の内)。
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (cut-holder) :workers (get PAIRS None)))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-holder) :workers (get PAIRS None)))
   (val last-ok (get seen 0))
   (val ended (get seen 1))
   (assert (is-not ended None) seen)

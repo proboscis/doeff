@@ -213,7 +213,7 @@
   ;; sim の組は筋書きを sim-cluster の中で回す(担い手は sim の worker)。他の組は handler を被せ、担い手を並べて回す。
   (try
     (if (= rig.kind "sim")
-        (<- (sim-cluster NO-JOBS scenario :workers rig.sim-workers))
+        (<- (sim-cluster :timing (ClusterTiming) NO-JOBS scenario :workers rig.sim-workers))
         (<- (with-handlers rig.handlers (with-worker rig scenario))))
     (finally
       (rig.close)))

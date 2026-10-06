@@ -75,7 +75,7 @@
   ;; 受入: 処理が 30 秒(fence 20 秒の後・移し替えの期限の前)止まった担い手は、戻った最初の周期で印の無い job を止める(止めの合図 -15)
   ;; — heartbeat の返事を待たない。coordinator は置き先を保っているので、次の返事で同じ担い手に起き直す。2 か所では走らない。
   ;; 直す前は、戻って最初の heartbeat が通るので止めの判断が走らず、同じ process が動き続けた(列は 1 つ・exit-code None)。
-  (<- seen StallSeen (sim-cluster (pulses sim-foundation) (stall-then-read 30.0) :workers TWO-CAPABLE))
+  (<- seen StallSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (stall-then-read 30.0) :workers TWO-CAPABLE))
   (val stopped (get seen.after 0))
   (assert (= #(stopped.worker stopped.exit-code) #(seen.host -15)) seen.after)
   ;; 止めたのは明けた最初の周期(明けた刻から止めの猶予の内 — 止まりの最中ではない)。
@@ -89,6 +89,6 @@
 
 (deftest test-a-worker-stalled-within-the-fence-keeps-its-movable-job
   ;; 止まりが fence の内(10 秒)なら止めない — 戻った周期の判断は「最後の成功から fence を越えたか」だけを見る。
-  (<- seen StallSeen (sim-cluster (pulses sim-foundation) (stall-then-read 10.0) :workers TWO-CAPABLE))
+  (<- seen StallSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (stall-then-read 10.0) :workers TWO-CAPABLE))
   (assert (= (len seen.after) 1) seen.after)
   (assert (= #((. (get seen.after 0) worker) (. (get seen.after 0) exit-code)) #(seen.host None)) seen.after))

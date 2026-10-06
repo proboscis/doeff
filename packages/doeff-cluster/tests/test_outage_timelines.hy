@@ -325,7 +325,7 @@
   ;; 13:26 の形: 担い手の処理が止まり heartbeat が「移し替えの期限 + 2 秒」送られない(今日は 47 秒で、その時の期限 45 秒を 2 秒越えた)。
   ;; 置ける worker が 1 台の job は外されず、起こし直さず(以前は期限で外し、戻った担い手が止めて 67 秒かけて起こし直した)、明けた後は
   ;; heartbeat・Ready・報告・task の置きが続く。止まりの長さは期限から作る(値を写さない — 期限を動かしても主張が同じ所を見る)。
-  (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage STALL-PAST-REASSIGN #("pulse")) :workers STALL-PAST-REASSIGN.workers))
+  (<- seen TimelineSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (outage STALL-PAST-REASSIGN #("pulse")) :workers STALL-PAST-REASSIGN.workers))
   (val pulse (get seen.jobs 0))
   (<- (in-one-place pulse))
   (<- (kept-running pulse))
@@ -339,7 +339,7 @@
 (deftest test-todays-47-second-stall-is-within-the-reassign-deadline-and-changes-nothing
   ;; 今日の 13:26 の実際の 47 秒は、移し替えを 60 秒にした(#2806)後は期限の内 — coordinator の見え方の沈黙は期限に届かず、置ける worker が
   ;; 1 台の job は(印の有無に関わらず)外されず、起こし直さず、明けた後も仕事が続く。印に頼る見え方(途絶の最中の ready の理由)は見ない。
-  (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage STALL-1326 #("pulse")) :workers STALL-1326.workers))
+  (<- seen TimelineSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (outage STALL-1326 #("pulse")) :workers STALL-1326.workers))
   (val pulse (get seen.jobs 0))
   (<- (in-one-place pulse))
   (assert (= (len pulse.after.processes) 1) #("起こし直し" pulse.after.processes))
@@ -358,7 +358,7 @@
   ;; 同じ筋書きに混ぜた移せる先の在る service(roamer)は今までどおり: 担い手が fence(20 秒)で止め、coordinator が移し替えの期限の後に
   ;; 途絶していない w-spare へ移す — fence が先なので 2 か所で走らない。
   (val jobs #("pulse-a" "pulse-b" "pulse-c" "pulse-d" "roamer"))
-  (<- seen TimelineSeen (sim-cluster (solo-pulses sim-foundation) (outage CUT-1353 jobs) :workers CUT-1353.workers))
+  (<- seen TimelineSeen (sim-cluster :timing (ClusterTiming) (solo-pulses sim-foundation) (outage CUT-1353 jobs) :workers CUT-1353.workers))
   (for [job (cut seen.jobs 0 4)]
     (<- (in-one-place job))
     (<- (kept-running job)))
@@ -386,7 +386,7 @@
   ;; 途絶中の 2 台目: 担い手 w1 の網が 115 秒切れ、その 30 秒目に能力の合う w2 が登録され(移せる先が「無い」から「在る」に)、34 秒目から
   ;; coordinator が 20.2 秒止まって置き場から読み直す。印を渡した担い手からは、読み直した後も、移し替えの期限を過ぎても移さない — w2 で
   ;; process は起きず、2 か所で走らない。明けた後も w1 の process がそのまま動き続ける(担い手は条件を満たすので外さない)。
-  (<- seen TimelineSeen (sim-cluster (pulses sim-foundation) (outage JOIN-DURING-1353 #("pulse")) :workers JOIN-DURING-1353.workers))
+  (<- seen TimelineSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (outage JOIN-DURING-1353 #("pulse")) :workers JOIN-DURING-1353.workers))
   (val pulse (get seen.jobs 0))
   ;; 移せる先は途絶の最中に在った(w2 は生きていると数えられ、w1 は沈黙が移し替えの期限を越えていた)。
   (<- joined HostSeen (host-of seen.mid-hosts "w2"))

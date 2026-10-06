@@ -867,7 +867,7 @@
 (deftest test-a-dead-worker-is-not-alive-after-the-coordinator-is-recreated
   ;; 条 L2(architecture.hy の :invariants): 死んだ worker は、coordinator が作り直された後も lease の後に生きていると答えられない(本物の
   ;; 置き場は最後の連絡の時刻を読み直す)。
-  (<- probes tuple (sim-cluster (beacons sim-foundation) (liveness-across-a-stop)))
+  (<- probes tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (liveness-across-a-stop)))
   (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= lies #()) #(lies probes)))
 
@@ -886,7 +886,7 @@
 (deftest test-a-counterexample-store-without-last-seen-breaks-l2
   ;; 条 L2 の失敗ケース: 置き場の差し替えの口(#989)に lastSeenMs を置かない置き場を差すと、作り直した coordinator が死んだ worker を
   ;; 生きていると答え、条 L2 の判断がその読みを名指す(同じ筋書きの本物の置き場では空 — 上の test-a-dead-worker-is-not-alive-…)。
-  (<- probes tuple (sim-cluster (beacons sim-foundation) (liveness-across-a-stop) :store DropsLastSeen))
+  (<- probes tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (liveness-across-a-stop) :store DropsLastSeen))
   (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= (len lies) 1) #(lies probes)))
 
@@ -923,7 +923,7 @@
 (deftest test-the-recreated-coordinator-places-no-new-job-on-a-dead-worker
   ;; 条 L1(architecture.hy の :invariants): 作り直した coordinator は、死んだ worker へ新しい job を置かない(本物の置き場は最後の連絡の
   ;; 時刻を読み直す — 置ける worker が他に無いので beacon-b は置かれない)。
-  (<- seen PlacedAfterAStop (sim-cluster (beacons sim-foundation) (placement-after-a-stop)))
+  (<- seen PlacedAfterAStop (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (placement-after-a-stop)))
   (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= wrong #()) #(wrong seen)))
 
@@ -931,7 +931,7 @@
 (deftest test-a-counterexample-store-without-last-seen-breaks-l1
   ;; 条 L1 の失敗ケース: 最後の連絡を読み直せない置き場(DropsLastSeen)では、作り直した coordinator が死んだ worker を生きていると読み、
   ;; 足した beacon-b をそこへ置き、条 L1 の判断がその置き先を名指す。
-  (<- seen PlacedAfterAStop (sim-cluster (beacons sim-foundation) (placement-after-a-stop) :store DropsLastSeen))
+  (<- seen PlacedAfterAStop (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (placement-after-a-stop) :store DropsLastSeen))
   (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (in "beacon-b" (lfor p wrong p.job)) #(wrong seen)))
 
@@ -1190,7 +1190,7 @@
 
 (deftest test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time
   ;; 条 C8(architecture.hy の :invariants): 2 台のうち担い手を死なせると、もう 1 台(本当に受けられる)へ期限のうちに移って動く。
-  (<- seen KilledCarrier (sim-cluster (beacons sim-foundation) (carrier-killed-then-waited) :workers TWO-WORKERS))
+  (<- seen KilledCarrier (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (carrier-killed-then-waited) :workers TWO-WORKERS))
   (val takers (frozenset (gfor w TWO-WORKERS :if (!= w.name seen.host) w.name)))
   (<- stranded tuple (moves-to-a-live-worker seen.processes seen.deaths takers FAILOVER-DEADLINE-MS))
   (assert (= stranded #()) #(stranded seen)))
@@ -1199,7 +1199,7 @@
 (deftest test-a-counterexample-worker-that-hides-its-abilities-breaks-c8
   ;; 条 C8 の失敗ケース: もう 1 台が heartbeat で能力を名乗らない壊れた worker(SimWorker の claims-provides = 空)だと、coordinator は
   ;; 移せる先が無いと読んで job を担い手から動かさず、本当は受けられる w2 が生きているのに期限を過ぎ、条 C8 の判断がその job を名指す。
-  (<- seen KilledCarrier (sim-cluster (beacons sim-foundation) (carrier-killed-then-waited)
+  (<- seen KilledCarrier (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (carrier-killed-then-waited)
                                       :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                                                  (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :claims-provides (frozenset) :task-reserve 0))))
   (assert (= seen.host "w1") seen)
@@ -1251,7 +1251,7 @@
 (deftest test-a-dead-worker-takes-its-processes-and-their-tasks-and-the-job-moves
   ;; worker が node ごと死ぬ: 子 process は exit -9(中で Spawn した task も止まる)・heartbeat が止まり、coordinator は lease の後に
   ;; 生きていないと数え、移し替えの時間の後に job を生きている worker へ置く。
-  (<- seen Moved (sim-cluster (spawners sim-foundation) (kill-host "spawner" "spawn/") :workers TWO-WORKERS))
+  (<- seen Moved (sim-cluster :timing (ClusterTiming) (spawners sim-foundation) (kill-host "spawner" "spawn/") :workers TWO-WORKERS))
   (assert (= seen.answer 1) seen.answer)
   (val old (get seen.after 0))
   (val new (get seen.after -1))
@@ -1371,7 +1371,7 @@
   ;; 網の切断: heartbeat が届かない間も子 process は動き続け(10 秒後)、fence(20 秒)を越えると本物の worker_policy の判断で lease を
   ;; 持たない job を止める(-15)。coordinator は移し替えの時間の後に、網のつながった worker へ置く。他に置ける worker が在る job の形 —
   ;; 置ける worker が 1 台の job は印で止めず置き先も外さない(#2804 — tests/test_keep_when_cut_off.hy)。
-  (<- seen Moved (sim-cluster (pulses sim-foundation) (cut-host) :workers TWO-WORKERS))
+  (<- seen Moved (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-host) :workers TWO-WORKERS))
   (val first (get seen.mid 0))
   (assert (is first.exit-code None) seen.mid)
   (val stopped (get seen.after 0))
@@ -1416,7 +1416,7 @@
   ;; 2 つ同時に動く — 本物の worker_policy の fence がそれを防いでいることの裏返し。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)
                  (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)))
-  (<- seen Moved (sim-cluster (pulses sim-foundation) (cut-host) :workers workers))
+  (<- seen Moved (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-host) :workers workers))
   (val live (lfor p seen.after :if (is p.exit-code None) p))
   (assert (= (sorted (sfor p live p.worker)) ["w1" "w2"]) seen.after))
 

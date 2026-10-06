@@ -325,7 +325,7 @@
 (deftest test-a-lone-job-keeps-running-through-a-two-minute-cut
   ;; 受入 6(網の途絶 2 分・13:53 型): 置ける worker が 1 台の job は、担い手の網が 2 分切れても process を止めず(印 — fence でも止めない)、
   ;; coordinator も置き先を外さず(移せる先が無い)、明けた後も起こし直さない。途絶の最中の ready は Unknown(止まりと読まない)。
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 120.0)))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-for 120.0)))
   (assert (= (len seen.after) 1) seen.after)
   (assert (is (. (get seen.after 0) exit-code) None) seen.after)
   (assert (= seen.readiness.state "Unknown") seen.readiness)
@@ -337,7 +337,7 @@
 (deftest test-a-lone-job-keeps-running-through-a-47-second-stall
   ;; 受入 6(処理の止まり 47 秒・13:26 型): 担い手の処理が止まり heartbeat が 47 秒送られなくても、置ける worker が 1 台の job の置き先を
   ;; 外さない — 再開した担い手への返事に job が載り続け、起こし直さない。
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (stall-for 47.0)))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (stall-for 47.0)))
   (assert (= (len seen.after) 1) seen.after)
   (assert (is (. (get seen.after 0) exit-code) None) seen.after)
   (<- spans tuple (spans-of seen.after))
@@ -348,7 +348,7 @@
 (deftest test-a-lone-job-is-stopped-by-the-long-fence-and-restarted-in-place-after-a-250-second-cut
   ;; 長い方の柵: 置ける worker が 1 台の job も、担い手の網が keep-fence-ms(240 秒)を越えて切れていれば止まる(止めの合図 -15)。
   ;; coordinator は置き先を保つので、明けた後は同じ worker で起き直す — 2 か所では走らない。
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 250.0)))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-for 250.0)))
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= broken #()) broken)
@@ -397,7 +397,7 @@
   ;; 長い方の柵(査読の決め): 分断の最中に k8s が同じ名の worker の新しい世代を作っても(早くても約 350 秒後)、印の在る job の古い
   ;; process は keep-fence-ms(240 秒)で既に止まっていて、新しい世代の process と重ならない(条 C2)。新しい世代は印を持たないと知らせる
   ;; ので約束が外れ、置き先を引き継いで起こす。
-  (<- seen PartitionSeen (sim-cluster (pulses sim-foundation) (partition-then-recreate)))
+  (<- seen PartitionSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (partition-then-recreate)))
   (<- spans tuple (partitioned-spans seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= broken #()) broken)
@@ -434,7 +434,7 @@
   ;; 受入 5・条件 2 の (a): 途絶の最中に能力の合う 2 台目が加わっても、印を渡した担い手から job を移さない(担い手は印で動き続けて
   ;; いる)。明けた後、担い手は印の無い返事を受けて印を持たないと知らせ、保証は時間の柵へ戻る — 次の途絶では fence(20 秒)で止まり、
   ;; 移し替えの期限の後に 2 台目へ移る。どの時点でも 2 か所で走らない(条 C2)。
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-then-join) :workers JOINING))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-then-join) :workers JOINING))
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= broken #()) broken)
@@ -470,7 +470,7 @@
 (deftest test-widened-needs-during-a-cut-do-not-run-the-job-twice
   ;; 受入 5・条件 2 の (b): 途絶の最中に宣言の needs が変わって置ける worker が増えても、印を渡した担い手から job を移さない。明けた後も
   ;; 担い手は条件を満たすので、そのまま動かし続ける(起こし直さない・2 か所で走らない)。
-  (<- seen CutSeen (sim-cluster (lone-pulses sim-foundation) (cut-then-widen) :workers WIDENING))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (lone-pulses sim-foundation) (cut-then-widen) :workers WIDENING))
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= broken #()) broken)
@@ -494,7 +494,7 @@
 (deftest test-draining-the-holder-moves-the-job-only-after-it-stops
   ;; 条件 2 の (c): 置ける唯一の worker だった担い手が drain に入ると(脇に置ける worker が加わった後)、担い手は印の無い返事を受けて
   ;; 印を持たないと知らせ、job を止め、止め終えた後に他へ置かれる — 2 か所で走らない。
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (join-then-drain) :workers JOINING))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (join-then-drain) :workers JOINING))
   (val old (get seen.after 0))
   (val new (get seen.after -1))
   (assert (= #(old.worker old.exit-code) #("w1" -15)) seen.after)
@@ -524,7 +524,7 @@
 (deftest test-the-state-view-shows-the-promise-on-the-emulated-cluster
   ;; 読みの口(#2883)を模擬の世界の本物の coordinator で: 移せる先の無い pulse は担い手 w1 の今の世代への約束が 1 件出て、能力の合う w2 が
   ;; 加わった後(w1 が印の無い返事を受けて手放した後)は消える。
-  (<- seen MarksSeen (sim-cluster (pulses sim-foundation) (marks-before-and-after-join) :workers JOINING))
+  (<- seen MarksSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (marks-before-and-after-join) :workers JOINING))
   (assert (= (lfor m seen.alone #((get m "job") (get m "worker") (get m "boot"))) [#("pulse" "w1" "w1-boot1")]) seen.alone)
   (assert (isinstance (get seen.alone 0 "sinceMs") int) seen.alone)
   (assert (= seen.joined []) seen.joined))
@@ -533,7 +533,7 @@
 (deftest test-an-old-worker-without-marks-still-stops-at-the-fence-and-is-restarted-in-place
   ;; 受入 4(古い worker と新しい coordinator の組): 印を知らない worker は今までどおり fence で止める。coordinator は移せる先が無いので
   ;; 置き先を保ち、明けた後に同じ worker で起こし直す(以前と同じ止まりと起こし直し)— 2 か所では走らない。
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 120.0)
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-for 120.0)
                                 :workers #((SimWorker :name "old" :provides (frozenset ["cluster-net"]) :ignores-keep-marks True :task-reserve 0))))
   (val stopped (get seen.after 0))
   (val again (get seen.after -1))
@@ -550,7 +550,7 @@
   ;; 走り、C2 が重なりを名指す — 本物の worker の fence(印の無い job は止める)がそれを防いでいることの裏返し。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)
                  (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)))
-  (<- seen CutSeen (sim-cluster (pulses sim-foundation) (cut-for 90.0) :workers workers))
+  (<- seen CutSeen (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-for 90.0) :workers workers))
   (<- spans tuple (spans-of seen.after))
   (<- broken tuple (one-place-per-job spans))
   (assert (= (len broken) 1) broken)
