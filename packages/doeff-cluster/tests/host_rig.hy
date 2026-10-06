@@ -18,7 +18,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob Outcome ProcessView WorkerPolicy])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 
@@ -46,7 +46,7 @@
   (<- plan JobLaunch (job-launch spec code-path instance attempt :python settings.python :hy-command settings.hy-command :uv settings.uv
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout :allowed-env allowed
                                  :worker-pid (os.getpid)
-                                 :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
+                                 :program-path (if spec.program (str (! (spec-program-file (Path settings.program-dir) spec))) None)
                                  :program-env settings.program-env
                                  :work-dir (+ settings.jobs-dir "/" (.replace spec.name "/" "_"))
                                  :shim-grace-ms settings.shim.shim-grace-ms :notice-env settings.notice-env))

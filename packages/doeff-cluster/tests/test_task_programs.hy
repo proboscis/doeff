@@ -26,9 +26,11 @@
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS])
 (import tests.host_rig [host-settings launched])
 (import tests.link_rig [LinkRig])
-(import tests.link_rig [write-program-file] doeff_cluster.worker.core.launch [program-file])
+(import tests.link_rig [write-program-file] doeff_cluster.worker.core.launch [program-file spec-program-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff [Program with-handlers])
+(import doeff [Program run with-handlers])
+(import doeff_cluster.worker.entry.job_entry [read-program])
+(import doeff_cluster.shared.intent.remote_model [VersionMismatch])
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -236,7 +238,7 @@
   (.accept-programs link (+ #(service) tasks))
   ;; service と同じく cache の file({"blob" "versions"})に取る(返事の行は Program を運ばない)。
   (assert (= (sorted seen) (sorted [(+ "/programs/" TASK-SHA) (+ "/programs/" SERVICE-SHA)])) seen)
-  (val cached (program-file (.program-dir link) TASK-SHA))
+  (val cached (! (spec-program-file (.program-dir link) (get tasks 0))))
   (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" TASK-BLOB "versions" V}))
   ;; 子の入口は `task --result <file> --program <cache の file>`(宿の契約の Program の path も同じ file)。
   (<- planned tuple (launched host (get tasks 0) (str tmp-path) "1-1" 1))
@@ -260,6 +262,83 @@
   (.accept-tasks link [])
   (.accept-programs link #(service))
   (assert (.exists (program-file (.program-dir link) SERVICE-SHA))))
+
+
+;; --- 版は task の事実: 同じ Program を後から別の版の送り手が置いても、前に積んだ task はその task の版で比べる(#3762) ----
+
+(defk coordinator-programs [cell now]
+  {:pre [(: cell list) (: now int)] :post [(: % httpx.MockTransport)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "coordinator の GET /programs/<sha> を、cell の先頭に持つ coordinator の状態の本物の振り分け(call)で答える偽の網。"
+  (deff answer [request]  ; defk にできない: httpx の MockTransport が呼ぶ素の callback
+    {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
+    "Program の読み 1 件を coordinator の振り分けに渡し、その status と本文で答える。"
+    (let [answered (run (call (get cell 0) "GET" request.url.path None now))]
+      (httpx.Response (get answered 1) :json (get answered 2))))
+  (httpx.MockTransport answer))
+
+
+(defk heartbeat-of [state name versions now]
+  {:pre [(: state ClusterState) (: name str) (: versions dict) (: now int)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "能力 net・版 versions の worker name の heartbeat 1 回 → #(次の状態 status 返事)。"
+  (<- answer tuple (call state "POST" "/heartbeat"
+                         {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" versions "boot" "b1" "statuses" []}
+                         now))
+  answer)
+
+
+(deftest test-a-queued-task-is-checked-against-its-own-versions-after-a-newer-sender-places-the-same-program [tmp-path]
+  ;; 版 A(この process の版)の送り手が Program を置いて task を積む → その task が待つ間に版 B の送り手が同じ sha を置く(coordinator の
+  ;; Program の行の版は B に上書きされる)→ task を受けた worker の子は、その task の行の版 A で比べて Program を解く(Program の行の版で
+  ;; 比べると B と比べて VersionMismatch — 2026-10-06 12:04 の日次の検証の task t661)。版 B の送り手が積んだ task は版 B で比べる
+  ;; (版が混ざらない — この process の版 A とは食い違って断る)。
+  (val mine (! (process-versions os.environ)))
+  (val blob (encode-program (based-add 3)))
+  (val sha (program-sha blob))
+  (<- worker-a tuple (heartbeat-of (ClusterState) "wa" mine 0))
+  (<- worker-b tuple (heartbeat-of (get worker-a 0) "wb" OTHER 0))
+  (<- placed-a tuple (call (get worker-b 0) "PUT" (+ "/programs/" sha) {"blob" blob "versions" mine} 1))
+  (assert (= (get placed-a 1) 200) placed-a)
+  (<- queued-a tuple (call (get placed-a 0) "PUT" "/detached/job-a" {"program" sha "revision" "ra" "needs" ["net"]} 2))
+  (assert (= (get queued-a 1) 200) queued-a)
+  (<- placed-b tuple (call (get queued-a 0) "PUT" (+ "/programs/" sha) {"blob" blob "versions" OTHER} 3))
+  (assert (= (get placed-b 1) 200) placed-b)
+  (<- queued-b tuple (call (get placed-b 0) "PUT" "/detached/job-b" {"program" sha "revision" "rb" "needs" ["net"]} 4))
+  (assert (= (get queued-b 1) 200) queued-b)
+  (<- reply-a tuple (heartbeat-of (get queued-b 0) "wa" mine 5))
+  (<- reply-b tuple (heartbeat-of (get reply-a 0) "wb" OTHER 5))
+  (val rows (+ (get reply-a 2 "tasks") (get reply-b 2 "tasks")))
+  (assert (= (sorted (lfor r rows (get r "revision"))) ["ra" "rb"]) rows)
+  ;; 今の契約: coordinator の Program の行の版は後から置いた送り手の版(B)に替わっている。
+  (<- stored tuple (call (get reply-b 0) "GET" (+ "/programs/" sha) None 6))
+  (assert (= (get stored 2 "versions") OTHER) stored)
+  ;; 1 つの worker の口が 2 本の task(同じ sha・違う版)を受け、coordinator から Program を取る。
+  (<- transport httpx.MockTransport (coordinator-programs [(get reply-b 0)] 6))
+  (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks")) :transport transport))
+  ;; 同じ Program を指す service の job(版を持たない)も並べる — service は今までどおり coordinator の Program の行の版で比べる。
+  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program sha))
+  (val specs (.accept-tasks link rows))
+  (.accept-programs link (+ #(service) specs))
+  (val by-revision (dfor s specs s.revision s))
+  (val cached-a (! (spec-program-file (.program-dir link) (get by-revision "ra"))))
+  (val cached-b (! (spec-program-file (.program-dir link) (get by-revision "rb"))))
+  (val cached-service (! (spec-program-file (.program-dir link) service)))
+  ;; 版の違う 2 本の task と service は、同じ sha でも別の file を読む(上書きし合わない)。file の名は 3 つとも <sha>.json。
+  (assert (= (len #{cached-a cached-b cached-service}) 3) #(cached-a cached-b cached-service))
+  (assert (= #{cached-a.name cached-b.name cached-service.name} #{(+ sha ".json")}))
+  (val read-a (read-program (str cached-a) ""))
+  (assert (is (get read-a 1) None) (str (get read-a 1)))
+  (assert (= (run (get read-a 0)) 103))
+  (val read-b (read-program (str cached-b) ""))
+  (assert (isinstance (get read-b 1) VersionMismatch) read-b)
+  (assert (in "3.9.6" (str (get read-b 1))) (str (get read-b 1)))
+  (assert (= (get (json.loads (.read-text cached-service :encoding "utf-8")) "versions") OTHER))
+  ;; task が返事から外れたら、その task の cache だけを消す(service の cache は残す)。
+  (.accept-tasks link [])
+  (.accept-programs link #(service))
+  (assert (not (.exists cached-a)) cached-a)
+  (assert (not (.exists cached-b)) cached-b)
+  (assert (.exists cached-service) cached-service))
 
 
 ;; --- 通しの検: 本物の coordinator の process・本物の送り手(remote.hy の task-submitted ほか)・coordinator への口・job_entry の子 process ----
@@ -325,7 +404,7 @@
       (<- spec JobSpec (assigned-task link id))
       (assert (= spec.program (program-sha blob)) spec)
       (assert (is-not spec.program None) spec)
-      (val cached (program-file (.program-dir link) spec.program))
+      (val cached (! (spec-program-file (.program-dir link) spec)))
       (assert (= (json.loads (.read-text cached :encoding "utf-8")) {"blob" blob "versions" (! (process-versions os.environ))}))
       ;; 子 process: worker と同じ引数(task --result <file>)に cache の file を --program で渡す(ProcessHost が足すのと同じ)。
       (val done (subprocess.run [sys.executable "-m" "hy" "-m" spec.entry #* spec.args "--program" (str cached)]

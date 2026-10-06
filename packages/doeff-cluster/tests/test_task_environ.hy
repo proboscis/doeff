@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.core.launch [spec-program-file])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.protocol.detached [detached-submitted detached-submit-body])
 (import doeff [with-handlers])
@@ -252,7 +252,7 @@
   (<- planned tuple (launched settings spec (str tmp-path) "1-1" 1))
   (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in URL-NAME os.environ))
-  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program))]
+  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (! (spec-program-file (.program-dir link) spec)))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (val outcome (decode-outcome (.read-text (Path (get spec.args 2)) :encoding "ascii")))

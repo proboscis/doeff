@@ -3,7 +3,7 @@
 (import time)
 (import httpx)
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable CutOff])
-(import tests.link_rig [LinkRig])
+(import tests.link_rig [LinkRig] doeff_cluster.worker.core.launch [spec-program-name])
 
 (deftest test-broken-declaration-is-reported-not-raised
   ;; worker が job を受けるのは coordinator の返事からだけ(宣言の file を直に読む口は無い)。読めない返事は例外を上げず「読めない」に
@@ -44,8 +44,11 @@
   (assert spec.once)
   (assert (= spec.program sha) spec)
   (assert (= spec.args #("task" "--result" (str (/ tasks "t7.result")))) spec.args)
-  ;; 本文に Program は無い — 置き場のキーの印だけを残す(返事から外れた task の cache を消すため)。
-  (assert (= (.read-text (/ tasks "t7.program")) sha))
+  ;; 本文に Program は無い — その task の Program の cache の file(Program の cache の dir からの相対 path — Program のキーと task の行の
+  ;; 版で決まる・#3762)の印だけを残す(返事から外れた task の cache を消すため)。
+  (assert (= (.read-text (/ tasks "t7.program")) (! (spec-program-name spec))))
+  (assert (.startswith (.read-text (/ tasks "t7.program")) "tasks/"))
+  (assert (.endswith (.read-text (/ tasks "t7.program")) (+ "/" sha ".json")))
   (.write-text (/ tasks "t7.result") "RESULT")
   (val rows (.report link #((JobStatus "task/t7" JobPhase.FINISHED "r" None None 1))))
   (assert (= (get rows 0 "result") "RESULT"))
