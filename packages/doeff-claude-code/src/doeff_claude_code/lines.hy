@@ -72,9 +72,15 @@
     (object.__setattr__ self "input" (frozen-json-object self.input "ToolCall.input"))))
 
 (defclass [(dataclass :frozen True)] AssistantMessage []
-  "assistant の message: 本文の text の block を連ねたものと、呼んだ道具(tool_use の block の id と名の組)の列。"
+  "assistant の message: 本文の text の block を連ねたものと、呼んだ道具(tool_use の block の id と名の組)の列 /
+   usage = message.usage(この行を出した API の呼び 1 回の消費 — 1 つの呼びは content の block ごとに行を出し、どの行も同じ usage を
+   名乗る。出力の token は呼びの途中の値。usage の object が無ければ None)/ model = message.model(無ければ None)/
+   parent-tool-use-id = subagent の行なら親の呼び(道具の呼び)の id、本体の会話の行は None(行の最上位の parent_tool_use_id)。#3744。"
   (setv #^ str text "")
-  (setv #^ (get tuple #(ToolCall ...)) tool-calls #()))
+  (setv #^ (get tuple #(ToolCall ...)) tool-calls #())
+  (setv #^ (| Usage None) usage None)
+  (setv #^ (| str None) model None)
+  (setv #^ (| str None) parent-tool-use-id None))
 
 (defclass [(dataclass :frozen True)] ToolAnswer []
   "user の行の tool_result の block 1 つ(道具の結果 1 つ): id = 答えた呼びの id(tool_use_id — 前の ToolCall.id と同じ・空でない文字列)/
@@ -145,6 +151,19 @@
   (setv #^ (| float None) utilization None)
   (setv #^ (| int None) resets-at None))
 
+(defclass [(dataclass :frozen True)] ModelWindow []
+  "result の行の modelUsage の model 1 つの窓(会話の context の大きさを上限と比べるため — #3744): model = model の名(modelUsage の鍵)/
+   context-window = contextWindow / max-output-tokens = maxOutputTokens(名乗らない欄は None — 0 を発明しない)。"
+  (#^ str model)
+  (setv #^ (| int None) context-window None)
+  (setv #^ (| int None) max-output-tokens None))
+
+(defn #^ tuple merged-windows [#^ tuple earlier #^ tuple later]
+  "1 つの host の手番に読んだ result の行の窓を 1 つの列にするため(状態機械と fake が同じ規則で数える): model ごとに 1 つ、並びは最初に
+   名乗った順、値は後の行が名乗った物。"
+  (setv by-model (dict (gfor window (+ earlier later) #(window.model window))))
+  (tuple (.values by-model)))
+
 (defclass [(dataclass :frozen True)] TurnResult []
   "result の行(CLI の手番の終わり)。host の手番の終わりかどうかは状態機械(dialogue.hy)が決める。
    origin-kind = origin.kind(CLI が自分で起こした手番の印)/ result-text = result の本文 /
@@ -152,7 +171,8 @@
    cost-usd = total_cost_usd — 会話の累積の額(USD)で、この行の手番だけの額ではない(実測 2.1.283・#883: 同じ process の
    2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は、前の process が降りる時に transcript へ記した額から
    数え続ける — --fork-session の枝も親の transcript の額から数える)。手番の額へ直すのは状態機械(dialogue.hy)/
-   api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)。"
+   api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)/
+   model-windows = modelUsage の model ごとの窓(ModelWindow の列・object の鍵の順 — 無ければ空)。"
   (#^ str subtype)
   (#^ bool is-error)
   (setv #^ str terminal-reason "")
@@ -161,7 +181,8 @@
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
   (setv #^ (| int None) api-error-status None)
-  (setv #^ (get tuple #(str ...)) input-refs #()))
+  (setv #^ (get tuple #(str ...)) input-refs #())
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
 
 (defclass [(dataclass :frozen True)] Other []
   "語彙の外の行(名前だけ持つ)。"
@@ -180,40 +201,60 @@
 
 
 ;; --- 手番の終わり ---------------------------------------------------------------------------------
+;;
+;; どの終わりも、会話の今の context の大きさを出すための 3 欄を持つ(#3744 — 状態機械 dialogue.hy の ended が 1 か所で載せる):
+;; last-call-usage = この手番の本体の会話(parent_tool_use_id が null)の最後の assistant の行の usage(最後の API の呼び 1 回の消費 —
+;; 今の context の大きさは入力の側 input・cache_read・cache_creation の和。出力の token は呼びの途中の値)/ last-call-model = その行の
+;; model / model-windows = この手番に読んだ result の行の modelUsage の窓(model ごとに 1 つ)。手番の途中で終わった時は、それまでに
+;; 読んだ値(本体の assistant の行が無ければ None・result の行が無ければ空 — 0 を発明しない)。
 
 (defclass [(dataclass :frozen True)] Completed []
   "CLI が誤りなく終えた手番。usage = この手番に読んだ result の行の消費の token の和(Usage)/
    cost-usd = この手番の額(USD)= CLI が名乗った累積の額(total_cost_usd)の、手番の始まりから終わりまでの差(状態機械 dialogue.hy が
-   数える)。始まりか終わりの額が分からなければ None(0 を発明しない)。"
+   数える)。始まりか終わりの額が分からなければ None(0 を発明しない)/ last-call-usage・last-call-model・model-windows は節の頭の註。"
   (setv #^ str result-text "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
-  (setv #^ (get tuple #(str ...)) input-refs #()))
+  (setv #^ (get tuple #(str ...)) input-refs #())
+  (setv #^ (| Usage None) last-call-usage None)
+  (setv #^ (| str None) last-call-model None)
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
 
 (defclass [(dataclass :frozen True)] Failed []
   "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
    usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)・
-   cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)。"
+   cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)/
+   last-call-usage・last-call-model・model-windows は節の頭の註。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
-  (setv #^ (get tuple #(str ...)) input-refs #()))
+  (setv #^ (get tuple #(str ...)) input-refs #())
+  (setv #^ (| Usage None) last-call-usage None)
+  (setv #^ (| str None) last-call-model None)
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
 
 (defclass [(dataclass :frozen True)] Interrupted []
   "止めた手番の終わり。process-kept = 同じ CLI の process が会話に残り次の手番も使うか(control の止め — 真)、止めと一緒に
    process が降りたか(SIGINT の形・会話を閉じる止め・止めの途中で process が消えた — 偽。#3672 の決め 6)— 既定値を置かない
    (作り手が必ず名乗る)・surviving-refs = CLI が次の手番として走らせる入力(continued-by がその手番)・dropped-refs = 読まれずに
-   捨てられた入力。"
+   捨てられた入力 / last-call-usage・last-call-model・model-windows は節の頭の註。"
   (#^ bool process-kept)
   (setv #^ (get tuple #(str ...)) surviving-refs #())
   (setv #^ (get tuple #(str ...)) dropped-refs #())
-  (setv #^ (| ClaudeTurn None) continued-by None))
+  (setv #^ (| ClaudeTurn None) continued-by None)
+  (setv #^ (| Usage None) last-call-usage None)
+  (setv #^ (| str None) last-call-model None)
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
 
 (defclass [(dataclass :frozen True)] BackendLost []
-  "終わりの行を読む前に process が消えた(OOM・kill・host の再起動)。次の手番は同じ ResumeSession で頼めばよい。"
-  (#^ str detail))
+  "終わりの行を読む前に process が消えた(OOM・kill・host の再起動)。次の手番は同じ ResumeSession で頼めばよい /
+   last-call-usage・last-call-model・model-windows は節の頭の註(消える前に読んだ値)。"
+  (#^ str detail)
+  (setv #^ (| Usage None) last-call-usage None)
+  (setv #^ (| str None) last-call-model None)
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
 
 (setv ClaudeTurnEnd (| Completed Failed Interrupted BackendLost))
 
@@ -272,9 +313,12 @@
   "assistant の行 → AssistantMessage。tool_use の block は id・name・input を読んで ToolCall にする。id か name が無い・空の、または
    input が無い・JSON の object でない tool_use の block を 1 つでも持つ行は、名指しの Other(type = assistant・subtype =
    tool_use_without_id / tool_use_without_name / tool_use_without_input)で断る — 空の id の ToolCall を作らない(結果の tool_use_id と
-   突き合わせられない呼びを通さない)・命令の無い呼びを空の命令として通さない。"
+   突き合わせられない呼びを通さない)・命令の無い呼びを空の命令として通さない。
+   message.usage(object の時だけ — usage-of で読む)・message.model・行の最上位の parent_tool_use_id も読む(無い・空なら None)。"
   (setv blocks (content-blocks record))
   (setv uses (tuple (gfor block blocks :if (= (.get block "type") "tool_use") block)))
+  (setv message (object-at record "message"))
+  (setv usage (.get message "usage"))
   (cond
     (any (gfor block uses (not (text-at block "id")))) (Other :type "assistant" :subtype "tool_use_without_id")
     (any (gfor block uses (not (text-at block "name")))) (Other :type "assistant" :subtype "tool_use_without_name")
@@ -282,7 +326,10 @@
     True (AssistantMessage
            :text (.join "" (gfor block blocks :if (= (.get block "type") "text") (text-at block "text")))
            :tool-calls (tuple (gfor block uses (ToolCall :id (text-at block "id") :name (text-at block "name")
-                                                         :input (frozen-json-object (get block "input") "tool_use の block の input")))))))
+                                                         :input (frozen-json-object (get block "input") "tool_use の block の input"))))
+           :usage (if (isinstance usage dict) (usage-of usage) None)
+           :model (or (text-at message "model") None)
+           :parent-tool-use-id (or (text-at record "parent_tool_use_id") None))))
 
 (defn #^ ToolAnswer tool-answer-of [#^ dict block]
   "tool_result の block 1 つ → ToolAnswer。content は文字列(本文そのまま)・block の列(text の block の本文を改行で連ね、text でない
@@ -349,8 +396,17 @@
                    :subtype (text-at response "subtype")
                    :still-queued (strings-at (object-at response "response") "still_queued")))
 
+(defn #^ tuple model-windows-of [#^ dict model-usage]
+  "result の行の modelUsage(model の名 → その model の数の object)→ ModelWindow の列(object の鍵の順)— 会話の context の大きさを
+   model の窓と比べるため。値が object でない model・空の名は飛ばす。"
+  (tuple (gfor #(model numbers) (.items model-usage) :if (and (isinstance model str) model (isinstance numbers dict))
+               (ModelWindow :model model
+                            :context-window (int-at numbers "contextWindow")
+                            :max-output-tokens (int-at numbers "maxOutputTokens")))))
+
 (defn classify-result [#^ dict record]
-  (TurnResult :subtype (text-at record "subtype")
+  (TurnResult :model-windows (model-windows-of (object-at record "modelUsage"))
+              :subtype (text-at record "subtype")
               :is-error (is (.get record "is_error") True)
               :terminal-reason (text-at record "terminal_reason")
               :origin-kind (text-at (object-at record "origin") "kind")

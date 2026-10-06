@@ -34,6 +34,9 @@
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
+;; fake の返事の usage の型(FakeReply の last-call-usage)と model ごとの窓の型は、組み立ての部品と公開面の module から読む。
+(import doeff_agents.handlers.headless_compose :as compose)
+(import doeff_agents.effects :as public-effects)
 
 (setv FAKE "fake" STUB "stub" REAL "real")
 (setv REAL-CONFIG-ENV "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR")
@@ -63,6 +66,9 @@
   (.format "Use the Bash tool to run exactly this command: echo {} . Then reply with exactly: {}" output word))
 (val ECHO-OUTPUT "TOOL-OUT-5")
 (val ECHO-SECONDS 0.2)
+;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
+(val CALL-MODEL "claude-stub")
+(val SUBAGENT-MODEL "claude-stub-sub")
 
 (defn fake-responder [#^ str text #^ tuple memory]
   "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。
@@ -82,10 +88,20 @@
                exact (.group exact 1)
                extra (.group extra 1)
                True "OK"))
-  ;; 道具の命令(input)は prompt の命令の文、出力は echo の語(ほかの命令は出力なし)— 替え玉の CLI と同じ。
+  ;; 道具の命令(input)は prompt の命令の文、出力は echo の語(ほかの命令は出力なし)— 替え玉の CLI と同じ。echo の道具の手番は、
+  ;; 本体の最後の呼びの usage と model・model ごとの窓も替え玉の CLI と同じ値を名乗る(#3744)。
   (FakeReply word :tool-seconds (cond sleep (float (.group sleep 1)) echoed ECHO-SECONDS True 0.0)
              :tool-input (if command {"command" (.group command 1)} {})
-             :tool-output (if echoed (.group echoed 1) "")))
+             :tool-output (if echoed (.group echoed 1) "")
+             :last-call-usage (if echoed
+                                  (compose.Usage :input-tokens 4 :output-tokens 1 :cache-creation-input-tokens 20
+                                                 :cache-read-input-tokens 1010)
+                                  None)
+             :last-call-model (if echoed CALL-MODEL None)
+             :model-windows (if echoed
+                                #((public-effects.ModelWindow CALL-MODEL 200000 32000)
+                                  (public-effects.ModelWindow SUBAGENT-MODEL 100000 None))
+                                #())))
 
 
 ;; --- 解釈器(composition root) --------------------------------------------------------------------
@@ -603,6 +619,28 @@
 
 (deftest test-headless-tool-events-carry-the-command-and-the-output-stub [tmp-path]
   (<- (check-tool-events-carry-the-command-and-the-output (run-on STUB tmp-path tool-turn-with-output))))
+
+(defk check-turn-end-carries-the-last-call [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "手番の終わり(AgentTurnCompleted — 頁の end と AgentTurnEndEvent の end)が、本体の会話の最後の呼びの usage(AgentTurnUsage — 額は
+   呼びごとには分からないので None)と model、model ごとの窓(context の大きさの上限・出力の上限)を運ぶ。道具の呼びの行の後の最後の
+   本文の行の usage を取り、subagent の行(替え玉の CLI は道具の途中に 1 行出す)は取らない(#3744)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (= (ends-of done.events) [done.end]) (repr done.events))
+  (assert (= done.end.last-call-usage (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20
+                                                      :cache-read-tokens 1010))
+          (repr done.end))
+  (assert (= done.end.last-call-model CALL-MODEL) (repr done.end))
+  (assert (= (lfor window done.end.model-windows #(window.model window.context-window window.max-output-tokens))
+             [#(CALL-MODEL 200000 32000) #(SUBAGENT-MODEL 100000 None)])
+          (repr done.end))
+  None)
+
+(deftest test-headless-turn-end-carries-the-last-call-and-the-model-windows-fake [tmp-path]
+  (<- (check-turn-end-carries-the-last-call (run-on FAKE tmp-path tool-turn-with-output))))
+
+(deftest test-headless-turn-end-carries-the-last-call-and-the-model-windows-stub [tmp-path]
+  (<- (check-turn-end-carries-the-last-call (run-on STUB tmp-path tool-turn-with-output))))
 
 (deftest test-headless-next-turn-input-waits-fake [tmp-path]
   (check-next-turn (run-on FAKE tmp-path next-turn-input-waits-for-the-running-turn)))

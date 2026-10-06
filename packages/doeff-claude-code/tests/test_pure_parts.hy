@@ -203,6 +203,32 @@
   (with [(pytest.raises ValueError :match "ToolAnswer.id")]
     (lines.ToolAnswer "" "x" False)))
 
+(deftest test-assistant-lines-keep-their-usage-model-and-parent-and-results-keep-the-model-windows
+  ;; #3744: 会話の今の context の大きさを出すため、assistant の行の message.usage(名乗らない欄は None)・message.model・
+  ;; parent_tool_use_id(null = 本体の会話・在れば subagent の行)と、result の行の modelUsage の model ごとの contextWindow・
+  ;; maxOutputTokens を型へ載せる。読まずに捨てる分類は赤。
+  (val main (classify-record {"type" "assistant" "parent_tool_use_id" None
+                              "message" {"id" "msg_1" "model" "claude-opus-4-5" "content" [{"type" "text" "text" "a"}]
+                                         "usage" {"input_tokens" 3 "cache_creation_input_tokens" 100
+                                                  "cache_read_input_tokens" 2000 "output_tokens" 1}}}))
+  (assert (= #(main.usage main.model main.parent-tool-use-id)
+             #((Usage :input-tokens 3 :cache-creation-input-tokens 100 :cache-read-input-tokens 2000 :output-tokens 1)
+               "claude-opus-4-5" None))
+          (repr main))
+  ;; usage の object が無い行は None(空の数を発明しない)・subagent の行は parent_tool_use_id を持つ。
+  (val sub (classify-record {"type" "assistant" "parent_tool_use_id" "toolu_9"
+                             "message" {"model" "claude-haiku-4-5" "content" [{"type" "text" "text" "b"}]}}))
+  (assert (= #(sub.usage sub.model sub.parent-tool-use-id) #(None "claude-haiku-4-5" "toolu_9")) (repr sub))
+  ;; modelUsage の model ごとの値を名のある値の列へ(並びは object の鍵の順・名乗らない欄は None)。
+  (val result (classify-record {"type" "result" "subtype" "success" "is_error" False
+                                "modelUsage" {"claude-opus-4-5" {"inputTokens" 3 "outputTokens" 1 "contextWindow" 200000
+                                                                 "maxOutputTokens" 64000 "costUSD" 0.1}
+                                              "claude-haiku-4-5" {"inputTokens" 5 "contextWindow" 200000}}}))
+  (assert (= result.model-windows #((lines.ModelWindow "claude-opus-4-5" 200000 64000)
+                                    (lines.ModelWindow "claude-haiku-4-5" 200000 None)))
+          (repr result))
+  (assert (= (. (classify-record {"type" "result" "subtype" "success" "is_error" False}) model-windows) #())))
+
 (deftest test-line-classification
   (assert (= (classify-record {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]
                                "model" "m" "permissionMode" "default" "mcp_servers" [{"name" "s"}]})

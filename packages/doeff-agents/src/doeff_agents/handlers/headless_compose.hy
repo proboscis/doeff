@@ -14,6 +14,9 @@
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
+;; 模擬の返事(FakeReply)の usage と last-call-usage の型。呼び手が doeff_claude_code を import せずに返事を組めるように、FakeReply と
+;; 並べてここから読ませる(agora-redesign #3744)。
+(import doeff_claude_code.lines [Usage])
 (import doeff_agents.handlers.headless [HeadlessClaudeConfig HeadlessState headless-claude-handler])
 
 

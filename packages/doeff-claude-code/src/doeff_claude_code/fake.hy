@@ -19,7 +19,8 @@
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
-                                 TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage])
+                                 TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
+                                 ModelWindow merged-windows])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -62,7 +63,10 @@
    確定の本文と同じで、どの片も空でない(deltas は本文の字数以下)。失敗と消失(fail・lose)の手番は本文を出さないので組まない・
    tool-input = 道具の呼び(と許可の問い)の命令 — tool_use の block の input と同じ JSON の object(深く凍らせる)・
    tool-output = 道具の結果の中身の本文・tool-error = 道具が誤りで終えたか(tool-input から tool-error は、道具を呼ぶ手番 —
-   tool-seconds > 0 か needs-permission — の呼びと結果の行に載る。上の層が道具の命令と出力を運ぶ事を確かめるため・#3744)。"
+   tool-seconds > 0 か needs-permission — の呼びと結果の行に載る。上の層が道具の命令と出力を運ぶ事を確かめるため・#3744)・
+   last-call-usage・last-call-model = この手番の CLI が本体の会話の assistant の行で名乗る呼びの usage と model・model-windows = result の
+   行で名乗る model ごとの窓(本物の CLI が全部の行で名乗るのと同じに、この手番の全部の assistant の行・result の行に載せる。手番の
+   終わりの 3 欄は、本番の状態機械と同じ規則で出した行から数える — 上の層が会話の context の大きさを運ぶ事を確かめるため・#3744)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -81,6 +85,10 @@
   (setv #^ FrozenMap tool-input (field :default-factory (fn [] (FrozenMap {"command" "fake"}))))
   (setv #^ str tool-output "")
   (setv #^ bool tool-error False)
+  ;; 本体の会話の呼びの usage と model、model ごとの窓(名乗らない = None・空)。
+  (setv #^ (| Usage None) last-call-usage None)
+  (setv #^ (| str None) last-call-model None)
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (and (is-not self.fail None) (is-not self.lose None))
@@ -107,7 +115,8 @@
 (defclass FakeTurn []
   "fake の手番 1 つ: phase = quick / tool / permission / text(最後の本文を差分で書いている — 期限 due-at は確定の本文を出す時刻)/ done・
    permission = 答え待ちの許可の問いの id(無ければ None)・text = 最後の本文(text の相に入る時に決まる)・deltas-emitted = 出した差分の片の数・
-   end = 手番の終わり(まだなら None)・bells = 出来事の読み(ClaudeReadTurnEvents)の待ち手が掛けた呼び鈴(新しい行か終わりで鳴らして外す)。"
+   end = 手番の終わり(まだなら None)・bells = 出来事の読み(ClaudeReadTurnEvents)の待ち手が掛けた呼び鈴(新しい行か終わりで鳴らして外す)・
+   last-call-usage・last-call-model・model-windows = 出した行から数えた本体の最後の呼びと窓(終わりに載せる — 本番の状態機械と同じ規則)。"
   (defn __init__ [self #^ int seq #^ float started-at #^ FakeReply reply #^ (get tuple #(str ...)) refs]
     (setv #^ int self.seq seq)
     (setv #^ float self.started-at started-at)
@@ -122,7 +131,10 @@
     (setv #^ (| str None) self.permission None)
     (setv #^ (get list ClaudeStreamLine) self.lines [])
     (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)
-    (setv #^ (get tuple #((get ExternalPromise None) ...)) self.bells #())))
+    (setv #^ (get tuple #((get ExternalPromise None) ...)) self.bells #())
+    (setv #^ (| Usage None) self.last-call-usage None)
+    (setv #^ (| str None) self.last-call-model None)
+    (setv #^ (get tuple #(ModelWindow ...)) self.model-windows #())))
 
 
 (defclass FakeSession []
@@ -192,11 +204,29 @@
     (.complete bell None))
   None)
 
+(defk said-by-reply [#^ FakeReply reply kind]
+  {:pre [(: reply FakeReply) (: kind ClaudeLineKind)] :post [(: % ClaudeLineKind)] :tags {:context "claude-code" :role "foundation"}}
+  "fake の CLI がこの手番の行で名乗る呼びの値を行に載せるため(本物の CLI が全部の assistant の行で usage と model を、result の行で
+   modelUsage を名乗るのと同じ — #3744): assistant の行には返事の last-call-usage と last-call-model、result の行には返事の
+   model-windows。ほかの行はそのまま。"
+  (cond
+    (isinstance kind AssistantMessage) (replace kind :usage reply.last-call-usage :model reply.last-call-model)
+    (isinstance kind TurnResult) (replace kind :model-windows reply.model-windows)
+    True kind))
+
 (defk emit [#^ FakeSession session #^ FakeTurn turn kind]
   {:pre [(: session FakeSession) (: turn FakeTurn) (: kind ClaudeLineKind)] :post [(: % (type None))]}
+  "手番の行を 1 つ出すため。出した行から、本番の状態機械(dialogue.hy の on-assistant・on-result)と同じ規則で本体の最後の呼びと
+   model ごとの窓を手番に覚える(終わりに載せるのは finish)。"
   (<- at (GetTime))
-  (.append turn.lines (ClaudeStreamLine :seq session.next-line-seq :at at :kind kind :raw (repr kind)))
+  (<- said (said-by-reply turn.reply kind))
+  (.append turn.lines (ClaudeStreamLine :seq session.next-line-seq :at at :kind said :raw (repr said)))
   (+= session.next-line-seq 1)
+  (cond
+    (and (isinstance said AssistantMessage) (is said.parent-tool-use-id None))
+      (setv turn.last-call-usage said.usage turn.last-call-model said.model)
+    (isinstance said TurnResult)
+      (setv turn.model-windows (merged-windows turn.model-windows said.model-windows)))
   (<- (ring-turn turn))
   None)
 
@@ -208,8 +238,11 @@
 (defk finish [#^ FakeSession session #^ FakeTurn turn end]
   {:pre [(: session FakeSession) (: turn FakeTurn) (: end ClaudeTurnEnd)] :post [(: % (type None))]}
   "手番を end で閉じるため。process は手番の終わりで降ろさない(次の手番まで生きて待つ)— 消えた process の終わり(BackendLost)だけ
-   process が無くなる(訳は付けない — 降ろしたのでなく自分で消えた)。"
-  (setv turn.end end turn.phase "done")
+   process が無くなる(訳は付けない — 降ろしたのでなく自分で消えた)。終わりには手番に覚えた本体の最後の呼びと窓を載せる(本番の
+   状態機械の ended と同じ — どの終わり方でも同じ 3 欄)。"
+  (setv turn.end (replace end :last-call-usage turn.last-call-usage :last-call-model turn.last-call-model
+                              :model-windows turn.model-windows)
+        turn.phase "done")
   (when (isinstance end BackendLost) (setv session.alive False))
   (<- (ring-turn turn))
   None)

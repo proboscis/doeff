@@ -33,6 +33,15 @@
 (setv CAPABILITIES ["msg_lifecycle_v1" "interrupt_receipt_v1"])
 ;; CLI の手番 1 回の額(USD — 2 進で割り切れる値にして、累積の差が検の比べで端数を出さないようにする)。
 (setv TURN-COST 0.25)
+;; model の名・API の呼びごとの usage・result の modelUsage の窓(#3744 — 実物と同じ欄の名)。本体の会話の assistant の行は
+;; parent_tool_use_id が null、道具の途中の subagent の行は道具の呼びの id を持つ。道具の手番は、道具の呼びの行と最後の本文の行で
+;; 別の呼びの usage を名乗る(最後の呼びは最後の本文の行)。
+(setv MODEL "claude-stub" SUBAGENT-MODEL "claude-stub-sub")
+(setv TOOL-CALL-USAGE {"input_tokens" 3 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 1000 "output_tokens" 5})
+(setv FINAL-CALL-USAGE {"input_tokens" 4 "cache_creation_input_tokens" 20 "cache_read_input_tokens" 1010 "output_tokens" 1})
+(setv SUBAGENT-USAGE {"input_tokens" 1 "cache_read_input_tokens" 50000 "output_tokens" 900})
+(setv MAIN-WINDOW {"inputTokens" 7 "outputTokens" 6 "contextWindow" 200000 "maxOutputTokens" 32000})
+(setv SUBAGENT-WINDOW {"inputTokens" 1 "contextWindow" 100000})
 
 
 (defclass Stop [Exception] "stdin の EOF(降りる)。")
@@ -41,6 +50,15 @@
 (defn emit [#^ dict record]
   (.write sys.stdout (+ (json.dumps record :ensure-ascii False) "\n"))
   (.flush sys.stdout))
+
+(defn #^ dict assistant-line [#^ str session-id #^ list content #^ dict usage [model MODEL] [parent None]]
+  "assistant の行(実物と同じ形 — message の model・usage と最上位の parent_tool_use_id を持つ)。"
+  {"type" "assistant" "session_id" session-id "parent_tool_use_id" parent
+   "message" {"role" "assistant" "model" model "content" content "usage" usage}})
+
+(defn #^ dict model-usage [#^ bool subagent]
+  "result の行の modelUsage(本体の model と、subagent を走らせた手番は subagent の model)。"
+  (if subagent {MODEL MAIN-WINDOW SUBAGENT-MODEL SUBAGENT-WINDOW} {MODEL MAIN-WINDOW}))
 
 (defn option [#^ list args #^ str name]
   (if (in name args) (get args (+ (.index args name) 1)) None))
@@ -135,7 +153,7 @@
              (= (.get (.get record "response" {}) "request_id") request-id))
           (return (.get (.get (.get record "response" {}) "response" {}) "behavior")))))
 
-  (defn result [self #^ str text #^ list refs #^ int deltas #^ float think-seconds]
+  (defn result [self #^ str text #^ list refs #^ int deltas #^ float think-seconds #^ bool subagent]
     ;; deltas > 0 なら、確定の本文の前に本文を deltas 片の差分(--include-partial-messages の stream_event の text_delta)で出す。
     ;; 片は字数でほぼ等分(片の連結 = 本文 — fake の FakeReply.deltas と同じ分け方)。実物と同じく差分の列を content_block_start と
     ;; content_block_stop(text_delta でない stream_event)で挟む。think-seconds > 0 なら、実物が考える時と同じく、先に message_start
@@ -155,12 +173,11 @@
                                  "text" (cut text (// (* piece (len text)) deltas) (// (* (+ piece 1) (len text)) deltas))}}}))
       (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
              "event" {"type" "content_block_stop" "index" 0}}))
-    (emit {"type" "assistant" "session_id" self.session-id
-           "message" {"role" "assistant" "content" [{"type" "text" "text" text}]}})
+    (emit (assistant-line self.session-id [{"type" "text" "text" text}] FINAL-CALL-USAGE))
     (+= self.cost TURN-COST)
     (emit {"type" "result" "subtype" "success" "is_error" False "result" text "terminal_reason" "completed"
            "session_id" self.session-id "total_cost_usd" self.cost "usage" {"input_tokens" 1 "output_tokens" 1}
-           "user_message_uuids" refs}))
+           "user_message_uuids" refs "modelUsage" (model-usage subagent)}))
 
   (defn run-turn [self #^ list records]
     "1 手番(records = この手番の入力の行 — 普通は 1 つ・生き残った注入の手番は複数)。"
@@ -180,9 +197,9 @@
     (setv words [(get rule "text")])
     (when (and (get rule "permission") self.ask)
       (setv request-id (str (uuid.uuid4)))
-      (emit {"type" "assistant" "session_id" self.session-id
-             "message" {"role" "assistant" "content" [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
-                                                        "input" {"command" (.format "touch {}" (get rule "touch"))}}]}})
+      (emit (assistant-line self.session-id [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
+                                               "input" {"command" (.format "touch {}" (get rule "touch"))}}]
+                            TOOL-CALL-USAGE))
       (emit {"type" "control_request" "request_id" request-id
              "request" {"subtype" "can_use_tool" "tool_name" "Bash"
                         "input" {"command" (.format "touch {}" (get rule "touch"))} "permission_suggestions" []}})
@@ -193,10 +210,12 @@
     (when (> (get rule "tool_seconds") 0)
       ;; 道具の呼びの input は prompt の命令(実物の Bash の tool_use と同じ欄 command)・結果の content はその命令の出力(実物の Bash の
       ;; tool_result と同じく文字列 — #3744)。
-      (emit {"type" "assistant" "session_id" self.session-id
-             "message" {"role" "assistant" "content" [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
-                                                        "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]}})
+      (emit (assistant-line self.session-id [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
+                                               "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]
+                            TOOL-CALL-USAGE))
       (emit {"type" "system" "subtype" "task_started" "task_id" "stub-task" "session_id" self.session-id})
+      ;; 道具の途中の subagent の行(親 = 道具の呼び・別の model と usage — 本体の最後の呼びに数えない行・#3744)。
+      (emit (assistant-line self.session-id [{"type" "text" "text" "subagent"}] SUBAGENT-USAGE SUBAGENT-MODEL "toolu_stub"))
       (setv stop (.wait-tool self (get rule "tool_seconds") injections))
       (when (is-not stop None)
         (setv queued (lfor record injections :if (.get record "uuid") (.get record "uuid")))
@@ -204,7 +223,8 @@
                "response" {"subtype" "success" "request_id" stop "response" {"still_queued" queued}}})
         (+= self.cost TURN-COST)
         (emit {"type" "result" "subtype" "error_during_execution" "is_error" True "terminal_reason" "aborted_tools"
-               "session_id" self.session-id "total_cost_usd" self.cost "user_message_uuids" refs})
+               "session_id" self.session-id "total_cost_usd" self.cost "user_message_uuids" refs
+               "modelUsage" (model-usage True)})
         (for [ref refs] (.lifecycle self ref "cancelled"))
         (when injections (.run-turn self injections))
         (return None))
@@ -215,7 +235,7 @@
       (.lifecycle self (.get record "uuid") "started")
       (.append words (get (reply-for (user-text record) (memory-of self.path)) "text")))
     (.result self (.join " " words) (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))
-             (get rule "deltas") (get rule "think_seconds"))
+             (get rule "deltas") (get rule "think_seconds") (> (get rule "tool_seconds") 0))
     (for [ref (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))]
       (.lifecycle self ref "completed")))
 
@@ -230,8 +250,7 @@
         ;; 検だけの行(本物の claude には書かない — faults.ClaudeEmitOutsideTurn): 手番の外で本文を 1 行出す。背景の仕事の完了で
         ;; result の後の CLI が手番の外に動いた形(#517 の事故・#3672 の守り)を模す。
         (and (is-not record None) (= (.get record "type") "stub_emit_outside"))
-          (emit {"type" "assistant" "session_id" self.session-id
-                 "message" {"role" "assistant" "content" [{"type" "text" "text" "outside the turn"}]}})))))
+          (emit (assistant-line self.session-id [{"type" "text" "text" "outside the turn"}] FINAL-CALL-USAGE))))))
 
 
 (defn open-session [#^ list args]
@@ -278,7 +297,7 @@
     (except [KeyboardInterrupt]
       (+= session.cost TURN-COST)
       (emit {"type" "result" "subtype" "error_during_execution" "is_error" True "terminal_reason" "aborted_streaming"
-             "session_id" session.session-id "total_cost_usd" session.cost})
+             "session_id" session.session-id "total_cost_usd" session.cost "modelUsage" (model-usage False)})
       (sys.exit 0))
     (finally
       ;; 降りる時に累積の額を transcript に記す(SIGKILL では走らない — 実物と同じ)。

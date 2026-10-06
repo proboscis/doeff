@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code.lines
 from doeff import EffectBase
+from doeff_claude_code.lines import ModelWindow as ModelWindow
 from doeff_claude_code.lines import ToolAnswer as ToolAnswer
 from doeff_claude_code.lines import ToolCall as ToolCall
 
@@ -153,6 +154,15 @@ class AgentTurnUsage:
     cost_usd: float | None = None
 
 
+# Every turn end also carries what the conversation's current context size is read from
+# (agora-redesign #3744): ``last_call_usage`` = the usage of the turn's last API call in the main
+# conversation (subagent calls excluded; ``cost_usd`` is None — the runtime prices whole turns, not
+# calls; the context size is its input side: input + cache_read + cache_write), ``last_call_model`` =
+# that call's model, ``model_windows`` = each model's context window and output limit as the runtime
+# stated them in the turn.  A turn that ended early carries what was read so far (``None`` / ``()``
+# when nothing was — never an invented 0).
+
+
 @dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
     """The turn finished.  ``resume_from`` continues this agent's context.
@@ -165,6 +175,9 @@ class AgentTurnCompleted:
     input_refs: tuple[str, ...] = ()
     resume_from: str
     usage: AgentTurnUsage | None = None
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -179,6 +192,9 @@ class AgentTurnFailed:
     input_refs: tuple[str, ...] = ()
     resume_from: str
     usage: AgentTurnUsage | None = None
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -199,6 +215,9 @@ class AgentTurnInterrupted:
     surviving_refs: tuple[str, ...] = ()
     dropped_refs: tuple[str, ...] = ()
     resume_from: str
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -210,6 +229,9 @@ class AgentTurnLost:
 
     detail: str
     resume_from: str
+    last_call_usage: AgentTurnUsage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ()
 
 
 AgentTurnEnd = AgentTurnCompleted | AgentTurnFailed | AgentTurnInterrupted | AgentTurnLost
