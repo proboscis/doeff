@@ -4,7 +4,9 @@
 ;;; 直す前: 止めの見張り(watch-stop)は待ち受けを閉じる(HttpShutdown)だけで、保留中の long-poll は置き場の待ちのまま上限の秒
 ;;; (WATCH-MAX-SECONDS = 25 秒)まで答えず、受けの loop はそれを Gather で待つ — 入口の run は止めの合図から 25 秒近く終わらない
 ;;; (本番では worker の猶予 10 秒を使い切って SIGKILL)。
-;;; 直した後: 止めの合図で、保留中の待ちは直ぐに空の答え(changes の空・eventsQuiet)を受け、run は合図から止めの見張りの間隔の内に終わる。
+;;; 直した後: 止めの合図で、保留中の待ちは直ぐに空の答え(changes の空・eventsQuiet)を受け、run は合図の刻に終わる。
+;;; 止めの見張りは止めの合図を約束で待つ(AwaitStop)— 一定の間隔で起きて問い直さない(問い直す形では、合図の刻が間隔の刻みの間に
+;;; 落ちると次の刻みまで閉じが遅れ、待つ間に Delay を撃ち続ける)。
 ;;; 空の答えの位置(cursor)は頼んだ位置のままなので、client が今の取り決めのまま(同じ位置から)次の置き場へ撃ち直すと、止めの後の書きを
 ;;; 読める。
 ;;;
@@ -17,14 +19,15 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import collections.abc [Callable])
 (import doeff [Program EffectBase run with-handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects.effects [Listen])
+(import doeff_core_effects.handlers [listen-handler state])
 (import doeff_core_effects.scheduler [Spawn scheduled])
 (import doeff_core_effects.stop_signal_effects [RaiseStop])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpScript ReadHttpServed ScriptedBody])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-sql-handler])
-(import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
+(import doeff_time [Delay DelayEffect GetMonotonic SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -39,9 +42,8 @@
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
 (val PG-SKIP-REASON (pg-skip-reason))
 
-;; 止めの合図を撃つ仮想の秒・止めの見張りが合図を問い直す間隔・止めの理由。
-(val STOP-AT 2.0)
-(val STOP-POLL 0.5)
+;; 止めの合図を撃つ仮想の秒(問い直す形の間隔 0.5 秒の刻みの間 — 問い直す形なら閉じが 2.5 秒まで遅れる)・止めの理由。
+(val STOP-AT 2.3)
 (val STOP-REASON "検の止め")
 ;; 止めの合図の後に待たない筋書き(撃ち直し)で、止めの合図を撃つ仮想の秒(待ちの上限より後 — 待ちが止めで終わったのではない事を見る)。
 (val LATE-STOP-AT (* 2 WATCH-MAX-SECONDS))
@@ -52,11 +54,13 @@
 
 (defrecord StoppedRun
   "止めの筋書きを 1 回走らせた見え方: seconds = 入口の run の始まりから終わりまでの仮想の秒・code = 入口の終わりの code・
-   served = 台本の待ち受けが受けた命令(HttpServed — 受けた順)・cursor = 待ちの起点の位置。"
+   served = 台本の待ち受けが受けた命令(HttpServed — 受けた順)・cursor = 待ちの起点の位置・delays = 入口の run の中で撃たれた Delay の数
+   (止めを待つ間に起きて確かめた回数)。"
   (#^ float seconds)
   (#^ int code)
   (#^ tuple served)
-  (#^ WatchCursor cursor))
+  (#^ WatchCursor cursor)
+  (#^ int delays))
 
 
 (defrecord EntryEnded
@@ -122,9 +126,11 @@
   "台本の待ち受けの下で入口を走らせ、仮想の stop-at 秒に止めの合図を撃つため(cursor = 筋書きの待ちの起点 — 見え方に添える)。"
   (<- (Spawn (raised-later stop-at) :daemon True))
   (<- began float (GetMonotonic))
-  (<- ended EntryEnded (with-handlers [(scripted-http-server script) listening-noted] (served-then-read serving)))
+  (<- heard (with-handlers [listen-handler]
+              (Listen (with-handlers [(scripted-http-server script) listening-noted] (served-then-read serving)) :types #(DelayEffect))))
   (<- finished float (GetMonotonic))
-  (StoppedRun :seconds (- finished began) :code ended.code :served ended.served :cursor cursor))
+  (val ended (get heard 0))
+  (StoppedRun :seconds (- finished began) :code ended.code :served ended.served :cursor cursor :delays (len (get heard 1))))
 
 
 (defk served-then-read [serving]
@@ -145,7 +151,7 @@
   {:pre [(: handler-for Callable)] :post [(: % RecordsServing)] :tags {:context "records" :role "judgment"}}
   "書き手の名 → 記録の handler の関数 handler-for の上の入口の設定を作るため(用意の I/O は無い・手入れは立てない)。"
   (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :prepare (prepared-now handler-for)
-                  :request-handlers #() :max-bytes 65536 :maintenance None :stop-poll-seconds STOP-POLL :drain-seconds 0.0))
+                  :request-handlers #() :max-bytes 65536 :maintenance None :drain-seconds 0.0))
 
 
 (defk prepared-now [handler-for]
@@ -197,10 +203,11 @@
 
 (defk stopped-quickly-with-empty-answers [ran]
   {:pre [(: ran StoppedRun)] :post [(: % None)] :tags {:context "records" :role "judgment"}}
-  "止めの筋書きの断言: run は止めの合図から見張りの間隔の内に 0 で終わり(待ちの上限の 25 秒を待たない)、保留の札はどれも空の答えを
-   ちょうど 1 つ受ける(changes は頼んだ位置のまま)。"
+  "止めの筋書きの断言: run は止めの合図の刻に 0 で終わり(待ちの上限の 25 秒も、問い直しの次の刻みも待たない)、入口の中で Delay を
+   1 度も撃たず(止めを待つ間に起きて確かめない)、保留の札はどれも空の答えをちょうど 1 つ受ける(changes は頼んだ位置のまま)。"
   (assert (= ran.code 0) ran)
-  (assert (<= ran.seconds (+ STOP-AT STOP-POLL)) #("止めの合図から待ちの上限まで待った" ran.seconds))
+  (assert (< (abs (- ran.seconds STOP-AT)) 1e-9) #("止めの合図の刻に閉じ始めなかった" ran.seconds))
+  (assert (= ran.delays 0) #("止めを待つ間に Delay を撃った" ran.delays))
   (for [ticket CHANGES-TICKETS]
     (<- changes (decoded ran ticket "watch-changes"))
     (assert (= changes (Changes #() ran.cursor #())) #(ticket changes)))

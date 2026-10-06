@@ -10,7 +10,7 @@
 ;;;                        答えない StoreSilent の閉じた型 StoreReach を返す)。使い手の土台が準備の報告に同じ判断を撃つ口
 ;;;   start-records-server 検の殻: 入口の Program を別の thread の run で回し、表の用意の告知を待って、結んだ宛先の url と止める close を持つ
 ;;;                        RunningServer を返す(使い手の検と模擬が使う口 — 置き場は呼び手が渡す)。止めの合図は殻の合図(threading.Event)を
-;;;                        shell-control が StopRequested の答えにする。
+;;;                        shell-control が AwaitStop の答えにする(合図が立つまで約束で待つ)。
 ;;; 本番の土台と env の読みは main.hy。
 ;;;
 ;;; 入口の形(他の記録の service の入口と同じ形):
@@ -26,7 +26,7 @@
 ;;;     外(止めの合図で受けの loop が先に終われば、告知の前でも途中でも用意の task ごと取り消す)。答え手: 本番の土台は 1 行を印字し
 ;;;     (main.hy の printed-listening)、使い手の土台は準備の報告を立て、検の殻は開いた口を返す。答え手が落ちれば用意の失敗と同じく run を
 ;;;     例外で終える
-;;;   - 止めの見張り(watch-stop)は StopRequested を問い、合図で保留中の置き場の待ちを止めの印で起こし(CloseWaits)、HttpShutdown を撃つ。
+;;;   - 止めの見張り(watch-stop)は止めの合図を約束で待ち(AwaitStop — 一定の間隔で起きて問い直さない)、合図で保留中の置き場の待ちを止めの印で起こし(CloseWaits)、HttpShutdown を撃つ。
 ;;;     止めの印(#3713): 入口の session(waits-closing)が印を持ち、要求ごとの記録の handler の中の待ち(WaitWithin — 変化の待ちの long-poll の
 ;;;     呼び鈴の待ち)を切り手(closing-cuts-waits)が呼び鈴・期限・止めの門の早い方で起こす。印を受けた待ち手は読み直さずに静かな答え
 ;;;     (空の changes・eventsQuiet — 位置は頼んだ位置のまま)で返り、client は今の取り決めのまま次の置き場へ撃ち直す。止めた後に来た待ちは
@@ -66,9 +66,9 @@
 (import dataclasses [dataclass])
 (import doeff [Program EffectBase run with-handlers])
 (import doeff_core_effects.handlers [await-handler state])
-(import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError
-                                      Wait scheduled])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects.scheduler [Cancel CompletePromise CreateExternalPromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn
+                                      Task TaskCancelledError Wait scheduled])
+(import doeff_core_effects.stop_signal_effects [AwaitStop])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader
                                                 HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed
@@ -114,8 +114,7 @@
 (val NOT-PREPARED-REASON "表の用意が済んでいない(起動の途中)")
 ;; 手入れの係の書き手の名(手入れの effect は書き手の許可を通らない — 行を書かない)。
 (val MAINTAINER "records-maintenance")
-;; 検の殻: 止めの合図を問い直す間隔・待ち受けが開いて表の用意を告げるのを待つ上限・閉じて run が終わるのを待つ上限の秒と、止めの理由。
-(val SHELL-STOP-POLL-SECONDS 0.02)
+;; 検の殻: 待ち受けが開いて表の用意を告げるのを待つ上限・閉じて run が終わるのを待つ上限の秒と、止めの理由。
 (val SHELL-OPEN-SECONDS 30.0)
 (val SHELL-CLOSE-SECONDS 10.0)
 (val SHELL-STOP-REASON "検の殻の close")
@@ -146,8 +145,8 @@
 (defrecord RecordsServing
   "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・prepare = 表を用意して
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
-   検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
-   drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(置き場に届くかの
+   検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・
+   drain-seconds = 待ち受けの閉じの流し切りの上限(止めの見張りは止めの合図を AwaitStop で待つ — 間隔は持たない)・readiness = () → 置き場に届けば True の Program(置き場に届くかの
    判断 store-reach が READINESS-SECONDS の上限で撃つ・None = 問わない — 用意が済めば ready)・pressure = () → 置き場の詰まりの読み
    (StorePressure | PressureUnread)の Program(store-reach が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
    meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)・
@@ -158,7 +157,6 @@
   (#^ tuple request-handlers)
   (#^ int max-bytes)
   (#^ (| MaintenancePlan None) maintenance)
-  (#^ float stop-poll-seconds)
   (#^ float drain-seconds)
   (setv #^ (| Callable None) readiness None)
   (setv #^ (| Callable None) pressure None)
@@ -667,18 +665,16 @@
       _ (raise (TypeError (+ "記録の service の待ち受けに ws の出来事が来た: " (repr event)))))))
 
 
-(defk watch-stop [poll-seconds drain-seconds]
-  {:pre [(: poll-seconds float) (: drain-seconds float)] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "止めの合図を poll-seconds ごとに問い、合図を見たら保留中の置き場の待ちを止めの印で起こしてから(CloseWaits — 変化の待ちの long-poll が
-   上限の秒を待たずに空の答えを返す・#3713)待ち受けを閉じるため(受けの loop が HttpServerClosed を受けて終わる)。印を閉じより先に置くのは、
-   待ち受けの閉じ(aiohttp の後始末)が答え途中の要求の答えを待つため — 先に閉じると long-poll の答えまで閉じが終わらない。"
-  (while True
-    (<- reason (| str None) (StopRequested))
-    (when (is-not reason None)
-      (<- (CloseWaits :reason reason))
-      (<- (HttpShutdown :reason reason :drain-seconds drain-seconds))
-      (return None))
-    (<- (Delay poll-seconds))))
+(defk watch-stop [drain-seconds]
+  {:pre [(: drain-seconds float)] :post [(: % None)] :tags {:context "records" :role "entry"}}
+  "止めの合図を約束で待ち(AwaitStop — 一定の間隔で起きて問い直さない・合図の刻にすぐ起きる)、合図を受けたら保留中の置き場の待ちを止めの
+   印で起こしてから(CloseWaits — 変化の待ちの long-poll が上限の秒を待たずに空の答えを返す・#3713)待ち受けを閉じるため(受けの loop が
+   HttpServerClosed を受けて終わる)。印を閉じより先に置くのは、待ち受けの閉じ(aiohttp の後始末)が答え途中の要求の答えを待つため — 先に
+   閉じると long-poll の答えまで閉じが終わらない。"
+  (<- reason str (AwaitStop))
+  (<- (CloseWaits :reason reason))
+  (<- (HttpShutdown :reason reason :drain-seconds drain-seconds))
+  None)
 
 
 (defk prepare-store [prepare bound]
@@ -736,7 +732,7 @@
   ;; 用意を受けの loop より先に立てる(同じ拍に並んだ時に用意が先に走る)。用意の告知は用意の task の終わりが出す(prepare-store)。
   (<- preparing Task (Spawn (prepare-store serving.prepare bound)))
   (<- serving-task Task (Spawn (with-handlers [request-ledger request-stamps] (receive-requests serving))))
-  (<- watcher Task (Spawn (watch-stop serving.stop-poll-seconds serving.drain-seconds) :daemon True))
+  (<- watcher Task (Spawn (watch-stop serving.drain-seconds) :daemon True))
   (<- first (| StorePrepared ServingEnded) (Race preparing serving-task))
   (match first
     (StorePrepared)
@@ -788,19 +784,24 @@
     None))
 
 
-(defhandler shell-control [#^ Callable prepared #^ Callable stopping]
-  "検の殻の外から、入口の Program の名乗り(RecordsListening)・表の用意の告知(RecordsPrepared)・止めの合図(StopRequested)に答えるため
-   (#880 F3)。殻は告知の宛先を受け取ってから口を返す — 返った口は記録の操作に答えられる(#3733)。"
+(defhandler shell-control [#^ Callable prepared #^ Callable stopped]
+  "検の殻の外から、入口の Program の名乗り(RecordsListening)・表の用意の告知(RecordsPrepared)・止めの合図の待ち(AwaitStop)に答えるため
+   (#880 F3)。殻は告知の宛先を受け取ってから口を返す — 返った口は記録の操作に答えられる(#3733)。止めの待ちは外の約束で待ち、殻の
+   合図を待つ thread がその約束を終わらせる(一定の間隔で起きて問い直さない)。scheduler の handler はこの外側に要る。"
   {:tags {:context "records" :role "entry"}}
-  ;; 引数に残す理由: prepared は殻が告知の宛先を受け取る口(thread の外の queue の put)、stopping は殻の止めの合図を読む口(合図が
-  ;; 立っていれば理由・無ければ None)。どちらも thread をまたぐ殻の物で、Ask で読む設定ではない。
+  ;; 引数に残す理由: prepared は殻が告知の宛先を受け取る口(thread の外の queue の put)、stopped は殻の止めの合図が立つまで塞いで待ち、
+  ;; 理由を返す口(threading.Event の wait)。どちらも thread をまたぐ殻の物で、Ask で読む設定ではない。
   (RecordsListening [address]
     (resume None))
   (RecordsPrepared [address seconds]
     (prepared address)
     (resume None))
-  (StopRequested []
-    (resume (stopping))))
+  (AwaitStop []
+    (<- waiter (CreateExternalPromise))
+    ;; 合図を待つ thread は約束の完了だけを撃つ(complete は thread をまたいで呼べる)。待ちが取り消された後の完了は捨てられる。
+    (.start (threading.Thread :target (fn [] (.complete waiter (stopped))) :daemon True :name "doeff-records-stop"))
+    (<- reason str (Wait waiter.future))
+    (resume reason)))
 
 
 (defk ready-handlers [handler-for]
@@ -828,10 +829,10 @@
         ended (threading.Event))
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
                                 :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
-                                :max-bytes REQUEST-MAX-BYTES :maintenance None :stop-poll-seconds SHELL-STOP-POLL-SECONDS
-                                :drain-seconds 0.0 :meter config.meter :served config.served))
+                                :max-bytes REQUEST-MAX-BYTES :maintenance None :drain-seconds 0.0 :meter config.meter
+                                :served config.served))
   (setv program (with-handlers [(await-handler) (async-time-handler) (state) aiohttp-http-server
-                                (shell-control opened.put (fn [] (if (.is-set ended) SHELL-STOP-REASON None)))]
+                                (shell-control opened.put (fn [] (.wait ended) SHELL-STOP-REASON))]
                                (serve-records serving)))
   (setv thread (threading.Thread :target (fn [] (shell-run program opened)) :daemon True :name "doeff-records-http"))
   (.start thread)

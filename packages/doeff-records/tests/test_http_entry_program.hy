@@ -134,7 +134,7 @@
   "入口の設定(本番の serve-records-service が env から作る物と同じ形 — 本文の上限だけ小さく・手入れは立てない・meter = 計器の
    差し替え(None = 既定の memory-meter-handler))を作るため。"
   (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :prepare prepare
-                  :request-handlers #() :max-bytes MAX-BYTES :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0
+                  :request-handlers #() :max-bytes MAX-BYTES :maintenance None :drain-seconds 0.0
                   :meter meter))
 
 
@@ -429,7 +429,7 @@
   (val got [])
   (val parts (ScriptedParts :script script :broken None :note (fn [c] (.append got c))))
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :prepare prepare
-                               :request-handlers #() :max-bytes MAX-BYTES :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0
+                               :request-handlers #() :max-bytes MAX-BYTES :maintenance None :drain-seconds 0.0
                                :readiness readiness :pressure pressure))
   (val code (run (records-process (fn [body] (scripted-foundation parts body)) serving)))
   (val by-ticket {})
@@ -510,7 +510,7 @@
   "置き場に届くかの公開の判断(store-reach)を、readiness を渡した入口の設定で、scheduler と仮想の時計の下で 1 回撃つため。"
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA
                                :prepare (handlers-at-once (MemoryStore LAW-SCHEMA)) :request-handlers #() :max-bytes MAX-BYTES
-                               :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0 :readiness readiness))
+                               :maintenance None :drain-seconds 0.0 :readiness readiness))
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock))] (store-reach serving)))))
 
 

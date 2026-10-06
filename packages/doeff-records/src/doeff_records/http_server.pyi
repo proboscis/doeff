@@ -52,7 +52,6 @@ class RecordsServing:
     request_handlers: tuple[object, ...]
     max_bytes: int
     maintenance: MaintenancePlan | None
-    stop_poll_seconds: float
     drain_seconds: float
     readiness: Callable[..., object] | None = None
     pressure: Callable[..., object] | None = None

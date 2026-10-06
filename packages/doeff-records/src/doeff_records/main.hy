@@ -25,7 +25,7 @@
 ;;;     (sys.exit (run (with-handlers [subprocess-handler os-file-handler] (serve-records-service SCHEMA dsn-of)))))
 ;;;
 ;;; 自分の process の外側を持つ系は、records-settings と records-serving(置き場の選びを渡す)で値を作り、(records-process (fn [body] (<自分の外側>
-;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・StopRequested の答え手が要る)。
+;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・止めの合図の待ち AwaitStop の答え手が要る)。
 ;;;
 ;;; dsn-of = 接続 URL の file の中身 → PostgreSQL の DSN の Program(file の綴りは呼び手の系ごとに違う — 例: env の 1 行 KEY=URL)。
 ;;; env の読み(ReadEnvironment)と file の読み(ReadText)は呼び手が外側に置く答え手(doeff_core_effects の subprocess-handler・os-file-handler)が答える。
@@ -83,8 +83,7 @@
 (val DEFAULT-KEEP-CHANGES-SECONDS 604800.0)
 ;; SqlQuery に書く database の名(この service の置き場は 1 つ — 答え手の宣言と揃える)。
 (val DATABASE "records")
-;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
-(val STOP-POLL-SECONDS 0.5)
+;; 待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。止めの合図は AwaitStop で待つので間隔の秒は持たない。
 (val DRAIN-SECONDS 0.0)
 
 
@@ -275,7 +274,7 @@
   (RecordsServing :address settings.address :schema schema
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
-                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
+                  :drain-seconds DRAIN-SECONDS :readiness choice.readiness
                   :pressure choice.pressure))
 
 

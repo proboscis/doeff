@@ -138,7 +138,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   doeff の汎用の HTTP の待ち受けの effect(`HttpListen`・`HttpNextRequest`・`HttpReadBody`・`HttpRespond`・`HttpShutdown`)を出し、
   要求ごとに `Spawn` した task が答える(例外でも必ず答える — 答えていなければ 500 internal)。本文の上限(16 MiB)は `HttpReadBody` が
   読む前に判じる。表の用意は task で、口は先に開き、用意の前の記録の操作は 503 store-unavailable・`/healthz` は 200。用意が落ちれば
-  run は例外で終わる。止めの合図(`StopRequested`)で `HttpShutdown` し、走り中の要求を待ってから終わる。
+  run は例外で終わる。止めの合図(`AwaitStop` で約束として待つ — 一定の間隔で起きて問い直さない)で `HttpShutdown` し、走り中の要求を待ってから終わる。
 - 用意の告知(#3733): 用意の task は記録の handler を置いた後に `RecordsPrepared(address, seconds)`(結んだ宛先・用意の所要の秒)を
   1 度だけ出す — 告知が出たなら記録の操作に答えられる。告知は用意の task の終わりで、止めの道の外(止めの合図が先なら用意の task ごと
   取り消す)。本番の土台(`records-connected` の `printed-listening`)は 1 行を印字する。準備の報告を立てる使い手の土台は、自分の答え手を
@@ -212,7 +212,7 @@ client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoi
 Program で、答え = process の終わりの code。本番の土台(`records-foundation`)は scheduler・`await-handler`・`async-time-handler`・
 `os-signal-stop-handler`・`aiohttp-http-server`・`pooled-postgres-sql-handler`(psycopg 3・自動 commit — image に psycopg が要る)。
 
-自分の process の外側(scheduler・`await-handler`・`state`・時計・止めの合図 `StopRequested` の答え手)を持つ系は、単独の入口を使わずに
+自分の process の外側(scheduler・`await-handler`・`state`・時計・止めの合図の待ち `AwaitStop` の答え手)を持つ系は、単独の入口を使わずに
 割った口を組む(#1280):
 
 - `records-settings dsn-of` — env と file を読んで設定の値 `RecordsSettings`(DSN・接頭辞・機体の名・接続の数・宛先・手入れ)を作る

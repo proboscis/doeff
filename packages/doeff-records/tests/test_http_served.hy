@@ -100,7 +100,7 @@
   ;; /served は表の用意を問わない — 用意の読みで落ちる世界でも 200。同じ世界で /readyz は用意を読むので落ちる(反例が効いていることを見る)。
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA
                                :prepare (ready-handlers (fn [writer] None)) :request-handlers #() :max-bytes REQUEST-MAX-BYTES
-                               :maintenance None :stop-poll-seconds 0.1 :drain-seconds 0.0 :served BUILD))
+                               :maintenance None :drain-seconds 0.0 :served BUILD))
   (<- answer (with_handlers [prepared-handlers-fail] (answer-with serving "t-served" (ServiceRequest "GET" "/served" b""))))
   (assert (= answer.status 200) answer)
   (assert (= (get (json.loads answer.body) "instance") "3-0123456789ab") answer)

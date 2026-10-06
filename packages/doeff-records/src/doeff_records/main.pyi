@@ -55,7 +55,6 @@ DEFAULT_POOL_SIZE: int
 DEFAULT_MAINTENANCE_SECONDS: float
 DEFAULT_KEEP_CHANGES_SECONDS: float
 DATABASE: str
-STOP_POLL_SECONDS: float
 DRAIN_SECONDS: float
 
 @dataclass(frozen=True, kw_only=True)

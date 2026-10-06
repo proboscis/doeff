@@ -15,7 +15,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.process_effects [ReadEnvironment EnvEntry])
 (import doeff_core_effects.file_effects [ReadText])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects.stop_signal_effects [AwaitStop])
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_time [async-time-handler])
 (import doeff_records.laws [LAW-SCHEMA])
@@ -42,9 +42,9 @@
 
 
 (defhandler stop-at-once
-  "止めの合図を初めから立てておくため(待ち受けを開いた後の最初の問いで閉じる)。"
+  "止めの合図を初めから立てておくため(待ち受けを開いた後の止めの待ちがすぐ答えを受けて閉じる)。"
   {:tags {:context "records" :role "foundation"}}
-  (StopRequested []
+  (AwaitStop []
     (resume "検の止め")))
 
 
