@@ -38,6 +38,8 @@
                                                        DeploymentSeen DeploymentUnreadable ServiceBody LegacyJobs])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
+(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.coordinator.core.due_policy [earliest-due])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
@@ -95,12 +97,15 @@
 
 
 (defk tick-due [state now timing]
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "要求の無い拍(tick)が、状態がこのままで状態を変え得る最初の刻を知るため(#3060 — 静かな区間はそれより前の歩を試さずに進める)。
-   tick の中の期限で動く判断ごとの刻の最小。どれも None なら None(状態がこのままなら tick は何も変えない)。"
+   tick の中の期限で動く判断ごとの答え(intent/due_model — #3865)を合わせた物。どれも DueNever なら DueNever(状態がこのままなら
+   tick は何も変えない)。"
+  (<- placing (| int None) (placement-due state now timing))
   (val dues #((! (liveness-due state now timing)) (! (task-due state now timing)) (! (sweep-due state now timing))
-              (! (placement-due state now timing))))
-  (min (gfor due dues :if (is-not due None) due) :default None))
+              (if (is placing None) (DueNever) (DueAt :at placing))))
+  (<- answer (| DueAt DueNow DueNever) (earliest-due dues))
+  answer)
 
 
 ;; --- coordinator が止まっていた時間(2026-09-25) --------------------------------------------------

@@ -17,6 +17,8 @@
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen NodeLabelsUnreadable KeepMark KnownExit])
+(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.coordinator.core.due_policy [due-of-instants])
 (import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
@@ -1174,51 +1176,64 @@
 
 ;; --- 静かな区間の次の期限(#3060) -------------------------------------------------------------------------------------------
 ;; 模擬の時計の下の coordinator が、静かな区間をどの刻まで本番の判断で試さずに進めてよいかを知るための関数(idle_policy.quiet-due が集める)。
-;; どれも「状態がこのまま変わらない間に、その判断の答えが変わり得る最初の刻(epoch ms・now より後)」を返し、None = 状態がこのままなら
-;; その判断は何もしない。今は行の有無だけを見る(行が在れば (+ now 1) = 次の拍で試す — 今までの 1 秒ごとの試しと同じ)。行が在る時の
-;; 刻を、判断が比べに使う期限の値から求めるのは liveness-due = #3061・task-due = #3062・sweep-due = #3063。
+;; どれも期限の答え(intent/due_model — #3865)を返す: DueAt = 状態がこのまま変わらない間に、その判断の答えが変わり得る最初の刻
+;; (epoch ms・now より後)・DueNow = まだ落ち着いていない(今判断すれば状態が変わる)・DueNever = 状態がこのままならその判断は何もしない。
+;; 刻は判断が比べに使う期限の値から求める(liveness-due = #3061・task-due = #3062・sweep-due = #3063・置いた task と待っている task = #3865)。
 
 (defk liveness-due [state now timing]
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定)が、状態がこのままで答えを変え得る最初の刻を知るため。
    どの判断も、最後の連絡 + 窓(liveness-deadline)を今の刻が越えた時に答えを変える — 窓は lease-ms(note-liveness・place-jobs・drain・
    見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・WORKER-FORGET-MS
-   (forget-silent-workers)。答え = worker ごと・窓ごとの「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば None)。
-   生きていないと数える名(silent)が今の刻の求め直しと違えば、note-liveness が次の歩で答えを変えるので次の刻。"
+   (forget-silent-workers)。答え = worker ごと・窓ごとの「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば DueNever)。
+   生きていないと数える名(silent)が今の刻の求め直しと違えば、note-liveness が今の刻で答えを変えるので DueNow。"
   (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms WORKER-FORGET-MS))
-  (if (!= (silent-names state now timing) state.silent)
-      (+ now 1)
-      (min (gfor w (.values state.workers) window windows
-                 :setv due (+ (liveness-deadline w window) 1)
-                 :if (> due now)
-                 due)
-           :default None)))
+  (val ats (tuple (gfor w (.values state.workers) window windows
+                        :setv due (+ (liveness-deadline w window) 1)
+                        :if (> due now)
+                        due)))
+  (cond
+    (!= (silent-names state now timing) state.silent) (DueNow)
+    ats (DueAt :at (min ats))
+    True (DueNever)))
 
 
 (defk task-due [state now timing]
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "task の判断(place-tasks の lease の切れ・置き直し・切り離した task)が、状態がこのままで答えを変え得る最初の刻を知るため(#3062)。
    刻は place-tasks が比べる期限と同じ関数から求める: 各 task の自分の期限(task-lapse-at)と、置ける worker の無い待っている task の
-   待ちの期限(wait-lapse-at)の最小。置いた切り離していない task と、置ける worker の在る待っている task は次の拍。どの task も
-   期限を持たなければ None。期限が now 以前なら次の拍。"
+   待ちの期限(wait-lapse-at)と、置いた切り離していない task の担い手の生死の窓(reassign-after-ms)が切れる刻と、置ける生きた worker の
+   在る待っている task のその worker の生死の窓(lease-ms)が切れる刻の最小(#3865)。どれかが now 以前なら DueNow(place-tasks が今の刻で
+   変える)・どの task も期限を持たなければ DueNever。"
   (var dues #())
   (for [task (.values state.tasks)]
     (<- lapse (| int None) (task-lapse-at task now))
     (val capable (if (= task.phase "queued") (lfor w (.values state.workers) :if (can-run-task task w) w) []))
+    (val live (lfor w capable :if (alive now w timing.lease-ms) w))
     (<- waited (| int None) (wait-lapse-at capable timing))
     (val tried (match task
-                 ;; 置いた切り離していない task は、担い手の生死の窓(alive)で失敗にする — 次の拍で試す。
-                 (TaskRecord :detached False :phase phase) :if (in phase PLACED-PHASES) (+ now 1)
-                 ;; 待っている task は、置ける worker が在れば(空き・drain・生死の窓で置き先が変わる)次の拍、無ければ待ちの期限。
+                 ;; 置いた切り離していない task は、担い手が reassign-after-ms の窓の外に出た刻に失敗にする(place-tasks と同じ比べ)。
+                 ;; 担い手が状態に居なければ、place-tasks が今の刻で失敗にする。
+                 (TaskRecord :detached False :phase phase) :if (in phase PLACED-PHASES)
+                   (if (in task.worker state.workers)
+                       (+ (liveness-deadline (get state.workers task.worker) timing.reassign-after-ms) 1)
+                       now)
+                 ;; 待っている task: 置ける生きた worker が在れば、その置き先の候補が変わるのは worker が lease-ms の窓の外に出る刻
+                 ;; (空き・drain の終わりは要求と sweep-due が受ける)。置ける worker が 1 台も無ければ place-tasks が今の刻で終える。
+                 ;; 生きた worker が無ければ待ちの期限。
                  (TaskRecord :phase "queued")
-                   (if (or (is waited None) (any (gfor w capable (alive now w timing.lease-ms)))) (+ now 1) waited)
+                   (cond
+                     live (min (gfor w live (+ (liveness-deadline w timing.lease-ms) 1)))
+                     (is waited None) now
+                     True waited)
                  _ None))
     (:= dues (+ dues (tuple (gfor due [lapse tried] :if (is-not due None) due)))))
-  (if dues (max (+ now 1) (min dues)) None))
+  (<- answer (| DueAt DueNow DueNever) (due-of-instants now dues))
+  answer)
 
 
 (defk sweep-due [state now timing]
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "掃除の判断(盤の行・drain・温める表・詰めた Program)が、状態がこのままで答えを変え得る最初の刻を知るため(#3063)。値は各判断が
    比べに使う期限と同じ: sweep-board = 行の expires-ms・sweep-drains(と advance-drains の drain 中の判定)= until-ms・sweep-warms = until-ms・
    program_policy.sweep-programs = 参照の無い Program の put-ms + PROGRAM-GRACE-MS を過ぎた刻。途絶しても動かす印(sweep-keep-marks)は
@@ -1228,8 +1243,9 @@
                     (lfor d (.values state.drains) d.until-ms)
                     (lfor w (.values state.warms) w.until-ms)
                     (lfor #(sha row) (.items state.programs) :if (not-in sha used) (+ row.put-ms PROGRAM-GRACE-MS 1))))
-  ;; 掃いた後の状態なら期限はどれも now より後。掃く前の状態を渡されても、次の拍より前へは戻らない。
-  (if deadlines (max (+ now 1) (min deadlines)) None))
+  ;; 掃いた後の状態なら期限はどれも now より後。掃く前の状態(期限が now 以前)は DueNow(sweep が今の刻で変える)。
+  (<- answer (| DueAt DueNow DueNever) (due-of-instants now (tuple deadlines)))
+  answer)
 
 
 (defk reconcile [now given timing]

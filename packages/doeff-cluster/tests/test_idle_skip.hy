@@ -22,6 +22,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive WORKER-FORGET-MS])
 (import doeff_cluster.coordinator.core.program [coordinator-step])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch quiet-step quiet-due])
+(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.idle_policy :as idle-policy)
 (import doeff_cluster.coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms sweep-due])
 (import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
@@ -586,30 +587,34 @@
   (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms seen :task-reserve 0))
   (val start (ClusterState :workers {"w" worker}))
   ;; lease-ms — note-liveness が生きていないと数え始める刻。
-  (<- lease-due (| int None) (liveness-due start seen timing))
-  (assert (= lease-due (+ seen timing.lease-ms 1)) lease-due)
+  (<- lease-answer (| DueAt DueNow DueNever) (liveness-due start seen timing))
+  (assert (= lease-answer (DueAt :at (+ seen timing.lease-ms 1))) lease-answer)
+  (val lease-due lease-answer.at)
   (assert (is (note-liveness start (- lease-due 1) timing) start))
   (val silent (note-liveness start lease-due timing))
   (assert (= silent.silent (frozenset ["w"])) silent.silent)
   ;; reassign-after-ms・keep-fence-ms — held-placements と資源の status が比べる alive の窓。
-  (<- reassign-due (| int None) (liveness-due silent lease-due timing))
-  (assert (= reassign-due (+ seen timing.reassign-after-ms 1)) reassign-due)
+  (<- reassign-answer (| DueAt DueNow DueNever) (liveness-due silent lease-due timing))
+  (assert (= reassign-answer (DueAt :at (+ seen timing.reassign-after-ms 1))) reassign-answer)
+  (val reassign-due reassign-answer.at)
   (assert (and (alive (- reassign-due 1) worker timing.reassign-after-ms) (not (alive reassign-due worker timing.reassign-after-ms))))
-  (<- fence-due (| int None) (liveness-due silent reassign-due timing))
-  (assert (= fence-due (+ seen timing.keep-fence-ms 1)) fence-due)
+  (<- fence-answer (| DueAt DueNow DueNever) (liveness-due silent reassign-due timing))
+  (assert (= fence-answer (DueAt :at (+ seen timing.keep-fence-ms 1))) fence-answer)
+  (val fence-due fence-answer.at)
   (assert (and (alive (- fence-due 1) worker timing.keep-fence-ms) (not (alive fence-due worker timing.keep-fence-ms))))
   ;; WORKER-FORGET-MS — forget-silent-workers が忘れる刻。
-  (<- forget-due (| int None) (liveness-due silent fence-due timing))
-  (assert (= forget-due (+ seen WORKER-FORGET-MS 1)) forget-due)
+  (<- forget-answer (| DueAt DueNow DueNever) (liveness-due silent fence-due timing))
+  (assert (= forget-answer (DueAt :at (+ seen WORKER-FORGET-MS 1))) forget-answer)
+  (val forget-due forget-answer.at)
   (<- kept ClusterState (forget-silent-workers silent (- forget-due 1)))
   (assert (is kept silent))
   (<- forgotten ClusterState (forget-silent-workers silent forget-due))
   (assert (= forgotten.workers {}) forgotten.workers)
-  ;; 忘れた後: 生きていないと数える名が残っていれば note-liveness が次の歩で外す(次の刻)・外した後は期限が無い(None)。
-  (<- left (| int None) (liveness-due forgotten forget-due timing))
-  (assert (= left (+ forget-due 1)) left)
-  (<- after (| int None) (liveness-due (note-liveness forgotten forget-due timing) forget-due timing))
-  (assert (is after None) after))
+  ;; 忘れた後: 生きていないと数える名が残っていれば note-liveness が今の刻で外す(今すぐ)・外した後は期限が無い(無し)。
+  (<- left (| DueAt DueNow DueNever) (liveness-due forgotten forget-due timing))
+  (assert (= left (DueNow)) left)
+  (<- after (| DueAt DueNow DueNever) (liveness-due (note-liveness forgotten forget-due timing) forget-due timing))
+  (assert (= after (DueNever)) after))
 
 
 (deftest test-a-quiet-stretch-with-workers-is-tried-at-the-first-liveness-deadline
@@ -648,15 +653,15 @@
                (ClusterState :warms {"e" (WarmEntry :key "e" :runtime-env {} :needs #() :until-ms due-at :holder "w")})
                (ClusterState :programs {"p" (ProgramRow :blob "" :versions {} :put-ms (- due-at PROGRAM-GRACE-MS 1))})])
   (for [state states]
-    (<- due (| int None) (sweep-due state 0 (ClusterTiming)))
+    (<- due (| DueAt DueNow DueNever) (sweep-due state 0 (ClusterTiming)))
     (<- before ClusterState (swept-at state (- due-at 1)))
     (<- at ClusterState (swept-at state due-at))
-    (assert (= due due-at) due)
+    (assert (= due (DueAt :at due-at)) due)
     (assert (is before state) "期限の 1 ms 前に判断が状態を変えた")
     (assert (is-not at state) "期限の刻に判断が状態を変えなかった"))
   ;; 期限の無い盤の行だけの状態は、時刻では何も変わらない。
-  (<- none (| int None) (sweep-due (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms None :size 1)}) 0 (ClusterTiming)))
-  (assert (is none None) none))
+  (<- none (| DueAt DueNow DueNever) (sweep-due (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms None :size 1)}) 0 (ClusterTiming)))
+  (assert (= none (DueNever)) none))
 
 
 (deftest test-a-board-row-expiring-in-a-quiet-stretch-is-swept-on-the-same-step
@@ -718,8 +723,9 @@
     ;; 起点の拍の後の状態(待つ task は待ちの理由を書いた後)から数える — 静かな区間の歩の前提。
     (<- settled dict (place-tasks start state {} timing))
     (val quiet (replace state :tasks settled))
-    (<- due (| int None) (task-due quiet start timing))
-    (assert (= due expected) #(name due expected))
+    (<- answer (| DueAt DueNow DueNever) (task-due quiet start timing))
+    (assert (= answer (DueAt :at expected)) #(name answer expected))
+    (val due answer.at)
     (<- before dict (place-tasks (- due 1) quiet {} timing))
     (<- at dict (place-tasks due quiet {} timing))
     (assert (= before settled) #(name "期限の 1 ms 前に変わった" before))

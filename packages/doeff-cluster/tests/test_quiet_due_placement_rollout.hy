@@ -18,6 +18,7 @@
 (import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
 (import doeff_cluster.coordinator.core.rollout_policy [ready-timeout-from])
 (import doeff_cluster.coordinator.core.idle_policy [rollout-due quiet-stretch])
+(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 (import tests.test_idle_skip [tried-steps])
 
@@ -80,8 +81,9 @@
   ;; その刻の 1 ms 前は待ったまま、その刻に戻し(RollingBack)へ入る。
   (<- state ClusterState (waiting-rollout))
   (val row (get state.rollouts "to-b"))
-  (<- due (| int None) (rollout-due state ROLLOUT-START (ClusterTiming) (ClusterNaming)))
-  (assert (= due (ready-timeout-from row.spec row.status.phase-since-ms)) #(due row.status))
+  (<- answer (| DueAt DueNow DueNever) (rollout-due state ROLLOUT-START (ClusterTiming) (ClusterNaming)))
+  (assert (= answer (DueAt :at (ready-timeout-from row.spec row.status.phase-since-ms))) #(answer row.status))
+  (val due answer.at)
   (<- before tuple (plan-rollouts state (- due 1) (ClusterTiming) (ClusterNaming)))
   (<- at tuple (plan-rollouts state due (ClusterTiming) (ClusterNaming)))
   (assert (= (. (get (. (get before 0) rollouts) "to-b") status phase) "WaitingNewReady") (get before 0))
