@@ -1068,13 +1068,17 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             trace_enqueued(entry, priority, seq, wake)
 
     def trace_enqueued(entry, priority, seq, wake):
-        """測りの口(#3861): 並べた entry の起こされ方と、その前に並ぶ entry の数と起こされ方を出す。"""
+        """測りの口(#3861): 並べた entry の起こされ方を出す。前に並ぶ entry の数と起こされ方は、
+        外から起きた entry の時だけ数える(並べるたびに ready を舐めると、測りそのものが遅れを足す)。"""
         kind, pid = (
             ("placeholder", None) if entry[0] == "wait_external"
-            else (wake, None) if wake is not None
+            else wake if wake is not None
             else wake_context[0]
         )
         wake_of_seq[seq] = (kind, pid)
+        if kind != "external":
+            _trace("enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority)
+            return
         ahead = [
             wake_of_seq.get(other_seq, ("untracked", None))[0]
             for neg, other_seq, _entry in ready
@@ -1262,6 +1266,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """
         promise = promises.get(pid)
         if promise is None or promise["status"] != "pending":
+            _trace(
+                "external-ignored", run_id, pid=pid,
+                status="swept" if promise is None else promise["status"],
+            )
             return
         promise["status"] = "completed" if action == "complete" else "failed"
         promise["result"] = value
