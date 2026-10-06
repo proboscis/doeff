@@ -155,13 +155,14 @@
   (setv args (.parse-args parser))
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))
-  (run (stop-on-signals stop))
+  ;; 受付の箱は合図の受け手より先に作る(合図が箱を起こす — 要求の無い間に眠る待ちを合図の刻に抜ける・#3865)。待ち受けは読み直しの後。
+  (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
+  (run (stop-on-signals stop :wake inbox.wake))
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
   ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog・起動の時刻は壁時計・自分の環境変数(走っている
   ;; doeff の版)は本物の process の handler が答える。
   (setv state (run (scheduled (with_handlers [slog-handler os-file-handler subprocess-handler (sync-time-handler)]
                                 (state-on-start args.state-file store)))))
-  (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
   (.start inbox)
   ;; k8s の API は Pod の ServiceAccount の token が在る時だけ(手元の coordinator では Rollout の Deployment の観測が Unknown のまま)。
   ;; 読みも台数の変更も 3 秒で打ち切る(読むのは進行中の Rollout の相手だけ・1 秒に 1 回)。読みは調停ループの外の thread で走り、

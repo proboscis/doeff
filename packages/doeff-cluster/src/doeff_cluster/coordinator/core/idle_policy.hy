@@ -176,7 +176,7 @@
         (:= rolled current)))
   (var stepped None)
   (when (is-not rolled None)
-    (val marked (mark-alive rolled at))
+    (val marked (! (mark-alive rolled at)))
     (var moved True)
     (when beats
       (<- only bool (only-times-moved marked state))
@@ -225,7 +225,7 @@
    同じ値・同じ待ち)。"
   (val state last.state)
   (val rolled (if (>= (- at state.rollout-tick-ms) ROLLOUT-TICK-MS) (replace state :rollout-tick-ms at) state))
-  (val marked (mark-alive rolled at))
+  (val marked (! (mark-alive rolled at)))
   (QuietStep :at at :state marked :watchers last.watchers :marked (!= marked.alive-ms rolled.alive-ms)))
 
 
