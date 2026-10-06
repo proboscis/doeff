@@ -49,7 +49,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
-                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty WaitsClosed])
+                              Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed])
 (import doeff_records.watching [closing-wake?])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd AwaitRecordsBack
                                ReadSourcePatience])
@@ -473,8 +473,10 @@
 
 (defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査
   "今ある変更から 1 回ぶんの答え(待たない)。位置が今の版の外なら Reset。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の
-   変わりは、回収の前でも出さない(上限の前に除く — 次の位置がずれない・hidden-change?)。"
+   変わりは、回収の前でも出さない(上限の前に除く — 次の位置がずれない・hidden-change?)。名指した列(ask.streams)の末尾(最後の生きている
+   出来事の番号と刻)は、変更と同じ錠の内の同じ断面で ReadStreamEnd と同じ探し方で読み、名指した順の tails にする(#3718)。"
   (for [name ask.tables] (store.schema.table name))
+  (for [name ask.streams] (store.schema.stream name))
   (setv cursor ask.cursor)
   (when (or (!= cursor.epoch store.epoch) (< cursor.sequence store.floor) (> cursor.sequence store.head))
     (return (Reset store.epoch store.floor)))
@@ -483,7 +485,18 @@
                                          (not (hidden-change? store change now-ms)))
                                 change)
                           ask.limit)))
-  (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head))))
+  (setv tails #())
+  (for [name ask.streams]
+    ;; 列の最後の生きている出来事(memory-read-stream-end と同じ探し方 — 列の出来事は番号の昇順なので後ろから・期限を過ぎた出来事は数えない)。
+    (setv decl (store.schema.stream name))
+    (setv last (next (gfor event (reversed store.events)
+                           :if (and (= event.stream name) (not (stored-event-expired? store decl event now-ms)))
+                           event)
+                     None))
+    (setv tails (+ tails #((match last
+                             None (StreamTailEmpty :stream name)
+                             (Event :sequence sequence :at at) (StreamTail :stream name :sequence sequence :at at))))))
+  (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head)) tails))
 
 
 (defn #^ (| EventsMoved EventsQuiet) memory-events-scan [#^ MemoryStore store #^ WatchEvents ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査(memory-watch-scan と同じ作法)
@@ -515,11 +528,12 @@
    最中に置いた窓も、起きた回で不達として返す — 頭の註)。"
   (with [store.lock]
     (setv down (unreachable-for store (match ask
-                                        (WatchChanges :tables tables) (tuple tables)
+                                        (WatchChanges :tables tables :streams streams) (+ (tuple tables) streams)
                                         (WatchEvents :stream stream) #(stream))))
     (when (is-not down None)
       (return (WatchRound :answer down :quiet False)))
     (match ask
+      ;; 呼び鈴を掛ける名は頼んだ表だけ — 末尾を名指した列(streams)への追記では待ち手を起こさない(tails は答えを返す時点の末尾・#3718)。
       (WatchChanges :tables tables)
         (setv answer (memory-watch-scan store ask now-ms)
               quiet (and (isinstance answer Changes) (not answer.items))
@@ -825,8 +839,9 @@
     (<- answer (answered store WRITE (tuple (gfor w writes w.table)) effect
                          (at-now store (fn [now-ms] (memory-put-rows store writer effect now-ms)))))
     (resume answer))
-  (WatchChanges [tables cursor timeout limit]
-    (<- answer (answered store READ (tuple tables) effect
+  (WatchChanges [tables cursor timeout limit streams]
+    ;; 触る名は頼んだ表と、末尾を名指した列(#3718 — 届かない状態と故障はどちらの名でも当たる)。
+    (<- answer (answered store READ (+ (tuple tables) streams) effect
                          (memory-watch store effect)))
     (resume answer))
   (WatchEvents [stream after timeout]

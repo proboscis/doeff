@@ -10,7 +10,7 @@
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty WatchCursor])
+(import doeff_records.values [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty StreamTailEmpty WatchCursor])
 (import doeff_records.effects [ReadRow ListRows WatchChanges WatchEvents ReadEvents ReadStreamEnd PutRow AppendEvent])
 (import doeff_records.laws [MAKER TICKET-KEEP-SECONDS])
 (import doeff_records.pg [pg-records-handler drop-records-tables])
@@ -35,6 +35,9 @@
   (val reads #(#("ReadRow" (ReadRow "tickets" #("g1" "t1")))
                #("ListRows" (ListRows "tickets"))
                #("WatchChanges" (WatchChanges #("tickets") (WatchCursor start.epoch start.sequence) :timeout 0.0))
+               ;; 列の末尾を名指した待ち(#3718): 末尾は置き場の頭と同じ 1 文で読む — 往復と文は名指さない待ちと同じ数。
+               #("WatchChanges tails" (WatchChanges #("tickets") (WatchCursor start.epoch start.sequence) :timeout 0.0
+                                                    :streams #("pulses" "pairs")))
                #("ReadEvents pulses" (ReadEvents "pulses"))
                #("ReadEvents pairs" (ReadEvents "pairs"))
                #("WatchEvents" (WatchEvents "pulses" :after 0 :timeout 0.0))
@@ -64,6 +67,9 @@
     (assert (= (get answers "ReadRow") (Missing)) answers)
     (assert (and (isinstance (get answers "ListRows") Page) (= (. (get answers "ListRows") rows) #())) answers)
     (assert (and (isinstance (get answers "WatchChanges") Changes) (= (. (get answers "WatchChanges") items) #())) answers)
+    (assert (and (isinstance (get answers "WatchChanges tails") Changes) (= (. (get answers "WatchChanges tails") items) #())
+                 (= (. (get answers "WatchChanges tails") tails) #((StreamTailEmpty :stream "pulses") (StreamTailEmpty :stream "pairs"))))
+            answers)
     (assert (and (isinstance (get answers "ReadEvents pulses") Events) (= (. (get answers "ReadEvents pulses") items) #())) answers)
     (assert (and (isinstance (get answers "ReadEvents pairs") Events) (= (. (get answers "ReadEvents pairs") items) #())) answers)
     (assert (= (get answers "WatchEvents") (EventsQuiet)) answers)
@@ -71,7 +77,8 @@
     ;; 読み 1 回が流す文は読みの文だけ(transaction の外の文 1 つ = 往復 1 回): 行・追記の読みは 1 往復、置き場の頭を読む一覧と変更の列は
     ;; 2 往復(頭 + 読み)。回収の候補の読み(終端の行の読み・期限を過ぎた出来事の在るかの読み)も回収の transaction の文(BEGIN・DELETE)も
     ;; 流れない。
-    (val expected {"ReadRow" 1 "ListRows" 2 "WatchChanges" 2 "ReadEvents pulses" 1 "ReadEvents pairs" 1 "WatchEvents" 1 "ReadStreamEnd" 1})
+    (val expected {"ReadRow" 1 "ListRows" 2 "WatchChanges" 2 "WatchChanges tails" 2 "ReadEvents pulses" 1 "ReadEvents pairs" 1
+                   "WatchEvents" 1 "ReadStreamEnd" 1})
     (assert (= (dfor #(name round-trips) (.items trips) name (len round-trips)) expected) trips)
     (assert (= (dfor #(name statements) (.items ran) name (len statements)) expected) ran)
     (assert (not (any (gfor #(_ statements) (.items ran) text statements (in "DELETE" text)))) ran)

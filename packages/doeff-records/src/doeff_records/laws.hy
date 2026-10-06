@@ -20,7 +20,7 @@
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused
-                              StreamEnd StreamEmpty])
+                              StreamEnd StreamEmpty StreamTail StreamTailEmpty])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
@@ -338,7 +338,7 @@
   (<- start (as-writer harness MAKER (ListRows "parts")))
   (setv cursor (WatchCursor start.epoch start.sequence))
   (<- idle (as-writer harness MAKER (WatchChanges #("parts") cursor :timeout 1.0)))
-  (<- (require-law (= idle (Changes #() cursor)) law (.format "変更の無い待ち: {!r}" idle)))
+  (<- (require-law (= idle (Changes #() cursor #())) law (.format "変更の無い待ち: {!r}" idle)))
   (<- task (Spawn (late-write harness)))
   (<- woke (as-writer harness MAKER (WatchChanges #("parts") cursor :timeout 30.0)))
   (<- written (Wait task))
@@ -755,6 +755,69 @@
   (+ [beat ask side] (list before) [done read swept] (list after) [side-again end]))
 
 
+;; --- 法 18: 名指した列の末尾は ReadEvents の最後の出来事と同じ位置と刻・名指さない待ちは末尾を持たない ------------------------
+
+(defk tails-of-last-events [harness streams]
+  {:pre [(: harness LawHarness) (: streams (get tuple #(str ...)))] :post [(: % (get tuple #((| StreamTail StreamTailEmpty) ...)))]
+   :tags {:context "records" :role "program"}}
+  "列 streams を名指した順に 1 つずつ ReadEvents で読み、最後の出来事(保持の期限を過ぎた出来事は ReadEvents に出ない)の番号と刻を
+   WatchChanges の tails と比べる形(出来事が在れば StreamTail・無ければ StreamTailEmpty)にするため(法 18 の基準)。"
+  (var tails #())
+  (for [stream streams]
+    (<- read (as-writer harness MAKER (ReadEvents stream)))
+    (:= tails (+ tails #((match read
+                            (Events :items #()) (StreamTailEmpty :stream stream)
+                            (Events :items items) (StreamTail :stream stream :sequence (. (get items -1) sequence) :at (. (get items -1) at))
+                            other (raise (LawBroken (.format "法 18 の基準: 列 {} の ReadEvents が Events でない: {!r}" stream other))))))))
+  tails)
+
+
+(defk law-watch-tails-match-last-events [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "WatchChanges の tails の法(#3718): 列を名指した WatchChanges の答えの tails は、名指した順に、同じ時点の ReadEvents の最後の出来事と
+   同じ位置と刻(出来事が無ければ StreamTailEmpty)。列に積むと次の読みで新しい末尾・保持の期限が全部過ぎた列は空の印。列への追記は
+   表の変化ではない(items に出ない)。列を名指さない答えの tails は空。どの置き場の handler も同じ答えを返すことを確かめるため。"
+  (val law "名指した列の tails は ReadEvents の最後の出来事と同じ位置と刻・名指さない待ちの tails は空")
+  (val streams #("pulses" "journal"))
+  (<- start (as-writer harness MAKER (ListRows "parts")))
+  (val cursor (WatchCursor start.epoch start.sequence))
+  ;; 空の列: 名指した順にどちらも空の印。
+  (<- empty (as-writer harness MAKER (WatchChanges #("parts") cursor :streams streams)))
+  (<- (require-law (and (isinstance empty Changes) (= empty.tails #((StreamTailEmpty :stream "pulses") (StreamTailEmpty :stream "journal"))))
+                   law (.format "空の列の末尾: {!r}" empty)))
+  ;; 積んだ後: 名指した順の末尾が ReadEvents の最後の出来事と同じ位置と刻・追記は items に出ない。
+  (<- beat (as-writer harness MAKER (AppendEvent "pulses" "tail-beat" {"n" 1})))
+  (<- (Delay 1))
+  (<- entry (as-writer harness MAKER (AppendEvent "journal" "tail-entry" {"n" 2})))
+  (<- named (as-writer harness MAKER (WatchChanges #("parts") cursor :streams streams)))
+  (<- named-lasts (tails-of-last-events harness streams))
+  (<- (require-law (and (isinstance named Changes) (= named.items #()) (= named.tails named-lasts)
+                        (= (lfor tail named.tails tail.sequence) [beat.sequence entry.sequence]))
+                   law (.format "積んだ後の末尾が ReadEvents の最後の出来事 {!r} と違う: {!r}" named-lasts named)))
+  ;; 名指す順を替えると tails の順も替わる。
+  (<- reversed-watch (as-writer harness MAKER (WatchChanges #("parts") cursor :streams #("journal" "pulses"))))
+  (<- (require-law (and (isinstance reversed-watch Changes) (= reversed-watch.tails (tuple (reversed named.tails))))
+                   law (.format "名指した順でない末尾: {!r}" reversed-watch)))
+  ;; 名指さない待ちの tails は空。
+  (<- plain (as-writer harness MAKER (WatchChanges #("parts") cursor)))
+  (<- (require-law (and (isinstance plain Changes) (= plain.tails #())) law (.format "名指さない待ちの末尾: {!r}" plain)))
+  ;; 表の変化と末尾は同じ答えに載る。
+  (<- written (as-writer harness MAKER (PutRow "parts" #("p-tail") (FrozenMap {"label" "t"}) (ExpectAbsent))))
+  (<- changed (as-writer harness MAKER (WatchChanges #("parts") cursor :streams streams)))
+  (<- (require-law (and (isinstance changed Changes) (= (lfor item changed.items #(item.key item.version)) [#(#("p-tail") written.version)])
+                        (= changed.tails named.tails))
+                   law (.format "表の変化の答えの末尾: {!r}" changed)))
+  ;; 保持の期限(PULSE-KEEP-SECONDS)が全部過ぎた列は、回収の前でも空の印。
+  (<- (Delay (+ PULSE-KEEP-SECONDS 1)))
+  (<- expired (as-writer harness MAKER (WatchChanges #("parts") changed.cursor :streams streams)))
+  (<- expired-lasts (tails-of-last-events harness streams))
+  (<- (require-law (and (isinstance expired Changes) (= expired.tails expired-lasts)
+                        (= expired.tails #((StreamTailEmpty :stream "pulses") (get named.tails 1))))
+                   law (.format "期限を過ぎた列の末尾が ReadEvents の最後の出来事 {!r} と違う・空の印でない: {!r}" expired-lasts expired)))
+  [start empty beat entry named reversed-watch plain written changed expired])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -775,6 +838,7 @@
             "expired-keys-are-remembered" law-expired-keys-are-remembered
             "expired-records-are-unseen-before-a-sweep" law-expired-records-are-unseen-before-a-sweep
             "a-write-clears-the-expired-row-it-touches" law-a-write-clears-the-expired-row-it-touches
-            "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep})
+            "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep
+            "watch-tails-match-last-events" law-watch-tails-match-last-events})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

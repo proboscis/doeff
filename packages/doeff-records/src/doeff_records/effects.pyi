@@ -70,6 +70,7 @@ class WatchChanges(EffectBase[WatchChangesAnswer]):
     cursor: WatchCursor
     timeout: float = 0.0
     limit: int = ...
+    streams: tuple[str, ...] = ()
 
 @dataclass(frozen=True)
 class AppendEvent(EffectBase[AppendEventAnswer]):

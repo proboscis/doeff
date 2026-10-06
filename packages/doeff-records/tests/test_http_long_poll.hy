@@ -116,7 +116,7 @@
   (<- cursor WatchCursor (cursor-now harness))
   (<- changes Waited (watched-once harness (WatchChanges #("parts") cursor :timeout LONG-WAIT)))
   (assert (= changes.seconds LONG-WAIT) changes)
-  (assert (= changes.answer (Changes #() cursor)) changes)
+  (assert (= changes.answer (Changes #() cursor #())) changes)
   (assert (= changes.sent #(WATCH-MAX-SECONDS WATCH-MAX-SECONDS (- LONG-WAIT (* 2 WATCH-MAX-SECONDS)))) changes)
   (<- first (as-writer harness MAKER (AppendEvent "journal" "first" {"n" 0})))
   (<- events Waited (watched-once harness (WatchEvents "journal" :after first.sequence :timeout LONG-WAIT)))

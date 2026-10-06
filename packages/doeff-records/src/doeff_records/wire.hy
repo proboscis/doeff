@@ -18,7 +18,8 @@
 (import doeff_hy.json_value [JsonValue])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
-                              RowsConflict RowsRefused StreamEnd StreamEmpty UndeclaredTable EventsMoved EventsQuiet])
+                              RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
+                              EventsQuiet])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 
 (setv PATH-PREFIX "/v1/records/")
@@ -334,9 +335,12 @@
                                  "cursor" (! (list-cursor-json cursor)) "limit" limit})
     (PutRow :table table :key key :value value :expect expect)
       (WireRequest OP-PUT-ROW {"table" table "key" (list key) "value" (thaw-json value) "expect" (! (expect-json expect))})
-    (WatchChanges :tables tables :cursor cursor :timeout timeout :limit limit)
-      (WireRequest OP-WATCH-CHANGES {"tables" (list tables) "cursor" (! (watch-cursor-json cursor)) "timeout" (float timeout)
-                                     "limit" limit})
+    (WatchChanges :tables tables :cursor cursor :timeout timeout :limit limit :streams streams)
+      ;; 鍵 streams は列を名指した時だけ送る(#3718 — 名指さない要求は前の形のまま。古い記録の service は知らない鍵を 400 で断るので、
+      ;; 名指す client より先に service を新しい版で起こす)。
+      (WireRequest OP-WATCH-CHANGES (| {"tables" (list tables) "cursor" (! (watch-cursor-json cursor)) "timeout" (float timeout)
+                                        "limit" limit}
+                                       (if streams {"streams" (list streams)} {})))
     (AppendEvent :stream stream :idempotency_key idempotency-key :body body)
       (WireRequest OP-APPEND-EVENT {"stream" stream "idempotencyKey" idempotency-key "body" (thaw-json body)})
     (ReadEvents :stream stream :after after :limit limit)
@@ -378,13 +382,18 @@
             (PutRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))
                     (! (json-object-in (get body "value") "value")) (! (expect-from (get body "expect")))))
       "watch-changes"
-        (do (<- (object-of body "watch-changes の本文" #("tables" "cursor") #("timeout" "limit")))
+        (do (<- (object-of body "watch-changes の本文" #("tables" "cursor") #("timeout" "limit" "streams")))
             (setv keywords {})
             ;; 待ちの秒は 1 回の要求の上限 WATCH-MAX-SECONDS で切る(long-poll の取り決め — #3074: service はこの秒まで待ち、変化が
             ;; 無ければ空の答えを返す。client は待ちをこの秒ごとの要求に分ける)。
             (when (in "timeout" body)
               (setv (get keywords "timeout") (min (! (seconds-of (get body "timeout") "timeout")) WATCH-MAX-SECONDS)))
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
+            ;; 鍵 streams は名指した時だけ在る(encode-request は空の列を送らない)— 空の配列は綴りの外として断る。
+            (when (in "streams" body)
+              (<- streams (strings-of (get body "streams") "streams"))
+              (when (not streams) (raise (WireMalformed "watch-changes の streams は空でない配列(名指さない時は鍵ごと無い)")))
+              (setv (get keywords "streams") streams))
             (WatchChanges (! (strings-of (get body "tables") "tables")) (! (watch-cursor-from (get body "cursor") "cursor"))
                           #** keywords))
       "append-event"
@@ -421,7 +430,7 @@
     (ReadRow :table table) (NamedStores #(table) #())
     (ListRows :table table) (NamedStores #(table) #())
     (PutRow :table table) (NamedStores #(table) #())
-    (WatchChanges :tables tables) (NamedStores tables #())
+    (WatchChanges :tables tables :streams streams) (NamedStores tables streams)
     (AppendEvent :stream stream) (NamedStores #() #(stream))
     (ReadEvents :stream stream) (NamedStores #() #(stream))
     (ReadStreamEnd :stream stream) (NamedStores #() #(stream))
@@ -486,6 +495,14 @@
    "writer" event.writer "at" event.at})
 
 
+(defk tail-json [tail]
+  {:pre [(: tail (| StreamTail StreamTailEmpty))] :post [(: % dict)]}
+  "WatchChanges の答えの、名指した列 1 つの末尾を wire の object(kind = streamTail | streamTailEmpty)にするため(#3718)。"
+  (match tail
+    (StreamTail :stream stream :sequence sequence :at at) {"kind" "streamTail" "stream" stream "sequence" sequence "at" at}
+    (StreamTailEmpty :stream stream) {"kind" "streamTailEmpty" "stream" stream}))
+
+
 (defk encode-answer [answer]
   {:pre [(: answer WireAnswer)] :post [(: % dict)]}
   "HTTP の口が記録の handler から受けた答え(Unreachable を除く)を、200 の本文にする。"
@@ -501,10 +518,17 @@
     (Refused :reason reason) {"kind" "refused" "reason" reason}
     (NotIndexed :fields fields) {"kind" "notIndexed" "fields" (list fields)}
     (Reset :epoch epoch :floor floor) {"kind" "reset" "epoch" epoch "floor" floor}
-    (Changes :items items :cursor cursor)
+    (Changes :items items :cursor cursor :tails tails)
       (do (setv encoded [])
           (for [item items] (.append encoded (! (change-json item))))
-          {"kind" "changes" "items" encoded "cursor" (! (watch-cursor-json cursor))})
+          (var tail-items [])
+          (for [tail tails]
+            (<- tail-item dict (tail-json tail))
+            (:= tail-items (+ tail-items [tail-item])))
+          ;; 鍵 tails は要求が列を名指した時だけ出す(tails は名指した列ごとに 1 つ — 名指さない要求の答えは前の形のまま。古い client は
+          ;; 知らない鍵を WireMalformed にするので、名指さない client を壊さない・#3718)。
+          (| {"kind" "changes" "items" encoded "cursor" (! (watch-cursor-json cursor))}
+             (if tail-items {"tails" tail-items} {})))
     (Appended :sequence sequence) {"kind" "appended" "sequence" sequence}
     (Events :items items :last_sequence last-sequence)
       (do (setv encoded [])
@@ -566,6 +590,37 @@
   value)
 
 
+(defk tail-from [value]
+  {:pre [(: value JsonValue)] :post [(: % (| StreamTail StreamTailEmpty))]}
+  "wire の object から、WatchChanges の答えの名指した列 1 つの末尾を読むため(#3718)。"
+  (match value
+    {"kind" "streamTail"}
+      (do (<- (object-of value "streamTail" #("kind" "stream" "sequence" "at") #()))
+          (StreamTail :stream (! (string-of (get value "stream") "streamTail.stream"))
+                      :sequence (! (integer-of (get value "sequence") "streamTail.sequence"))
+                      :at (! (integer-of (get value "at") "streamTail.at"))))
+    {"kind" "streamTailEmpty"}
+      (do (<- (object-of value "streamTailEmpty" #("kind" "stream") #()))
+          (StreamTailEmpty :stream (! (string-of (get value "stream") "streamTailEmpty.stream"))))
+    _ (raise (WireMalformed (.format "列の末尾は kind = streamTail | streamTailEmpty: {!r}" value)))))
+
+
+(defk tails-from [value]
+  {:pre [(: value dict)] :post [(: % (get tuple #((| StreamTail StreamTailEmpty) ...)))]}
+  "changes の本文の鍵 tails(要求が列を名指した時だけ在る — #3718)を、名指した列の末尾の tuple にするため。鍵が無ければ空。在るのに空の
+   配列は綴りの外(encode-answer は空の tails を鍵ごと出さない)。名指した列と合うかは、要求を知る client が answer-for-request で照らす。"
+  (when (not-in "tails" value)
+    (return #()))
+  (<- items list (list-in (get value "tails") "changes.tails"))
+  (when (not items)
+    (raise (WireMalformed "changes の tails は空でない配列(列を名指さない要求の答えには鍵ごと無い)")))
+  (var tails #())
+  (for [item items]
+    (<- tail (| StreamTail StreamTailEmpty) (tail-from item))
+    (:= tails (+ tails #(tail))))
+  tails)
+
+
 (defk written-rows-from [value]
   {:pre [(: value JsonValue)] :post [(: % WrittenRows)]}
   "wire の object から PutRows の確定(束の順の written の列)を読む。"
@@ -619,10 +674,11 @@
         (do (<- (object-of value "reset" #("kind" "epoch" "floor") #()))
             (Reset (! (integer-of (get value "epoch") "reset.epoch")) (! (integer-of (get value "floor") "reset.floor"))))
       {"kind" "changes"}
-        (do (<- (object-of value "changes" #("kind" "items" "cursor") #()))
+        (do (<- (object-of value "changes" #("kind" "items" "cursor") #("tails")))
             (setv items [])
             (for [item (! (list-in (get value "items") "changes.items"))] (.append items (! (change-from item))))
-            (Changes (tuple items) (! (watch-cursor-from (get value "cursor") "changes.cursor"))))
+            (<- tails tuple (tails-from value))
+            (Changes (tuple items) (! (watch-cursor-from (get value "cursor") "changes.cursor")) tails))
       {"kind" "appended"}
         (do (<- (object-of value "appended" #("kind" "sequence") #()))
             (Appended (! (integer-of (get value "sequence") "appended.sequence"))))
@@ -656,6 +712,21 @@
     (raise (WireMalformed (.format "{} の答えの kind は {} のどれか: {!r}" operation (get ANSWER-KINDS operation) value))))
   (<- answer (answer-from value))
   answer)
+
+
+(defk answer-for-request [ask answer]
+  {:pre [(: ask PublicEffect) (: answer WireAnswer)] :post [(: % WireAnswer)]}
+  "client が受けて読んだ答え answer が、撃った要求 ask に合うかを照らすため(#3718): WatchChanges の答えの tails は、名指した列 streams と
+   同じ数・同じ順の列の末尾。名指したのに鍵 tails が無い・数や列が違う・名指さないのに在る答えは、黙って空や既定へ倒さず WireMalformed で
+   名指して上げる(service の綴りの誤り)。他の答えはそのまま返す。"
+  (match #(ask answer)
+    #((WatchChanges :streams streams) (Changes :tails tails))
+      (do (val named (tuple (gfor tail tails tail.stream)))
+          (when (!= named streams)
+            (raise (WireMalformed (.format "watch-changes の答えの tails の列 {} が、要求が名指した列 {} と合わない"
+                                           (list named) (list streams)))))
+          answer)
+    _ answer))
 
 
 ;; --- 断り ------------------------------------------------------------------------------------------------

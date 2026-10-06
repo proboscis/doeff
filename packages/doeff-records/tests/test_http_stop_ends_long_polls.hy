@@ -203,7 +203,7 @@
   (assert (<= ran.seconds (+ STOP-AT STOP-POLL)) #("止めの合図から待ちの上限まで待った" ran.seconds))
   (for [ticket CHANGES-TICKETS]
     (<- changes (decoded ran ticket "watch-changes"))
-    (assert (= changes (Changes #() ran.cursor)) #(ticket changes)))
+    (assert (= changes (Changes #() ran.cursor #())) #(ticket changes)))
   (<- quiet (decoded ran EVENTS-TICKET "watch-events"))
   (assert (= quiet (EventsQuiet)) quiet)
   None)
