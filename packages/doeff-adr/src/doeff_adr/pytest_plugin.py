@@ -188,6 +188,8 @@ def pytest_configure(config: pytest.Config) -> None:
     ここで先頭に入れれば書き換えより先に .hy を引き受けられる。"""
     if _HY_SOURCE_FINDER not in sys.meta_path:
         sys.meta_path.insert(0, _HY_SOURCE_FINDER)
+    # deftest の :scans が付ける印(agora-redesign #3874)— deftest を集めるこの plugin が登録し、どの repo でも知らない印にしない。
+    config.addinivalue_line("markers", "scans(*globs): このテストが走査して読む dir か glob(deftest の :scans — 選びの道具が当てる)")
     # 外す一覧は起動の時に 1 度だけ読む — 理由の無い行はここで run を止める(収集の file ごとに読み直さない)。
     config.stash[_HY_TEST_SKIPS_KEY] = parse_hy_test_skips(config.getini("doeff_hy_test_skips"))
 
