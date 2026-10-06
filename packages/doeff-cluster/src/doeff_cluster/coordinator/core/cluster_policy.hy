@@ -1620,7 +1620,9 @@
              :events (tuple (cut state.events -50 None))
              :revision state.revision
              ;; 途絶しても動かし続けてよい印の約束(#2883 — 読みだけ。列は job の名の順のまま)。
-             :keep-marks state.keep-marks))
+             :keep-marks state.keep-marks
+             ;; この coordinator の process が走っている doeff の版(#3772 — 読めなければ None)。
+             :coordinator-commit state.running-commit))
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ dict body]

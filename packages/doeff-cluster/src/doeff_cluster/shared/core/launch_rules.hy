@@ -49,6 +49,13 @@
   (frozenset (gfor f COORDINATOR-LAUNCH-FIELDS f.env-name)))
 
 
+(defk coordinator-commit-env-name []
+  {:pre [] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "coordinator の process が走っている doeff の版(boot.sh が自己起動の root を選んだ版)を、その process が起動の時に読む環境変数の名を
+   表から引くため — coordinator は GET /state の答えにこの版を載せる(#3772)。名を 2 つ目に書かない。"
+  (next (gfor f COORDINATOR-LAUNCH-FIELDS :if (= f.field "doeff_commit") f.env-name)))
+
+
 (defclass LaunchEnvMissing [ValueError]
   "行から値を読む時に、省けない行(optional でない欄の名)が無い。黙って既定の値で埋めない。")
 

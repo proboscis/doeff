@@ -45,6 +45,7 @@ from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy
+from doeff_core_effects.process_effects import EnvEntry
 from doeff_core_effects.scheduler import Promise, Task
 from doeff_events import ArmedTimer
 from doeff_hy.json_value import JsonValue
@@ -340,6 +341,13 @@ class FailRoute(EffectBase[None]):
 
 @dataclass(frozen=True)
 class CoordinatorRuns(EffectBase[tuple[SimCoordinatorRun, ...]]): ...
+
+@dataclass(frozen=True)
+class ReplaceCoordinatorEnviron(EffectBase[None]):
+    environ: tuple[EnvEntry, ...]
+
+@dataclass(frozen=True)
+class CoordinatorEnvironOf(EffectBase[tuple[EnvEntry, ...]]): ...
 
 @dataclass(frozen=True)
 class CoordinatorStep:

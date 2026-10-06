@@ -12,7 +12,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/coordinator_reads.hy"
       ],
-      "responsibility": "coordinator の口(GET /resources/Service/<名>・GET /state)を読む部品 — 契約の effect(ReadinessOf・AwaitReadiness・AwaitJobProcess — shared/intent/cluster_control.hy)に coordinator の URL だけで答える境界の handler(手元の 1 台の sim/machine.hy・配備の shared/entry/deployed_cluster.hy)が共有する(#3294)。",
+      "responsibility": "coordinator の口(GET /resources/Service/<名>・GET /state)を読む部品 — 契約の effect(ReadinessOf・AwaitReadiness・AwaitJobProcess — shared/intent/cluster_control.hy)に coordinator の URL だけで答える境界の handler(手元の 1 台の sim/machine.hy・配備の shared/entry/deployed_cluster.hy)が共有する(#3294)。GET /state の答えから、答えた coordinator が申告する doeff の版(欄 coordinatorCommit)を読む coordinator-commit-of-state は、版上げの Program の名簿の読み(配備する側の本番の handler と模擬の Flux)が共有する(#3772)。",
       "typed": true
     }
   ]

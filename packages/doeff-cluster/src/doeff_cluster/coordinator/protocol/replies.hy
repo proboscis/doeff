@@ -84,7 +84,16 @@
 
 (defk state-view-json [#^ StateView view]
   {:pre [(: view StateView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "状態の画面 → JSON の形(#2595 の前に cluster_policy.state-view が組んでいた形と同じ)。"
+  "状態の画面 → JSON の形(#2595 の前に cluster_policy.state-view が組んでいた形と同じ)。coordinatorCommit = この coordinator の process が
+   走っている doeff の版(起動の時に読んだ WORKER_DOEFF_COMMIT — #3772)。読めなかった時は欄を書かない(空の文字や null を版として書かない)。
+   足すだけの欄で、知らない欄を読まない読み手(欄を名で引く読み手)はそのまま読める。"
+  (| (! (state-view-body view))
+     (if (is view.coordinator-commit None) {} {"coordinatorCommit" view.coordinator-commit})))
+
+
+(defk state-view-body [#^ StateView view]
+  {:pre [(: view StateView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "状態の画面の、版の欄を除く本体 → JSON の形(state-view-json が版の欄を足す)。"
   {"now" view.now
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
    "workers" (dfor w view.workers

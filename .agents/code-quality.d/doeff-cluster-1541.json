@@ -233,7 +233,8 @@
         "doeff-cluster-wal-store",
         "doeff-cluster-watch-policy",
         "doeff-cluster-coordinator-request-bodies-model",
-        "doeff-cluster-state-json"
+        "doeff-cluster-state-json",
+        "doeff-cluster-launch-rules"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
@@ -1515,7 +1516,8 @@
         "records-event-source",
         "doeff-cluster-native-wheel",
         "doeff-cluster-retirement-model",
-        "doeff-cluster-retirement-notices"
+        "doeff-cluster-retirement-notices",
+        "doeff-cluster-coordinator-reads"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
