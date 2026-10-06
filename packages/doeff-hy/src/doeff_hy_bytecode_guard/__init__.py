@@ -32,6 +32,7 @@ from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION as TYPE_CHECK
 from doeff_hy_bytecode_guard.loader_hooks import bytecode_is_current as bytecode_is_current
 from doeff_hy_bytecode_guard.loader_hooks import current_record as current_record
 from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
+from doeff_hy_bytecode_guard.loader_hooks import gensym_renaming as gensym_renaming
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed
 from doeff_hy_bytecode_guard.loader_hooks import macro_dependencies as macro_dependencies
