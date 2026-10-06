@@ -64,7 +64,11 @@
     (when (not (all (gfor tool self.allowed-tools (and (isinstance tool str) tool))))
       (raise (ValueError (.format "DenyUnlisted.allowed_tools は空でない文字列の tuple: {!r}" self.allowed-tools))))))
 
-(setv PermissionPolicy (| BypassAll AskHost DenyUnlisted))
+(defclass [(dataclass :frozen True)] HomeSettings []
+  "許可を起動の引数に載せず、設定 dir の settings.json の permissions に任せる — 許可の旗を付けない
+   (旗が在ると settings.json の permissions より旗が勝つ・#3753)。")
+
+(setv PermissionPolicy (| BypassAll AskHost DenyUnlisted HomeSettings))
 
 
 ;; --- MCP の server ----------------------------------------------------------------------------
@@ -119,7 +123,7 @@
   (setv #^ (| str None) effort None)
   (setv #^ FrozenMap settings (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap (| McpSse McpStdio)) mcp-servers (field :default-factory FrozenMap))
-  (setv #^ (| BypassAll AskHost DenyUnlisted) permission (BypassAll))
+  (setv #^ (| BypassAll AskHost DenyUnlisted HomeSettings) permission (BypassAll))
   (setv #^ (| AutocompactAuto AutocompactTokens None) autocompact None)
   (setv #^ (| str None) system-prompt-append None)
   (setv #^ (| str None) cold-resume-prompt None)
@@ -132,8 +136,9 @@
       (raise (TypeError "ClaudeSessionSpec.home は ClaudeHome")))
     (when (not (and (isinstance self.cwd str) self.cwd))
       (raise (ValueError "ClaudeSessionSpec.cwd は空でない文字列")))
-    (when (not (isinstance self.permission #(BypassAll AskHost DenyUnlisted)))
-      (raise (TypeError (.format "ClaudeSessionSpec.permission は BypassAll / AskHost / DenyUnlisted: {!r}" self.permission))))
+    (when (not (isinstance self.permission #(BypassAll AskHost DenyUnlisted HomeSettings)))
+      (raise (TypeError (.format "ClaudeSessionSpec.permission は BypassAll / AskHost / DenyUnlisted / HomeSettings: {!r}"
+                                 self.permission))))
     (when (not (or (is self.autocompact None) (isinstance self.autocompact #(AutocompactAuto AutocompactTokens))))
       (raise (TypeError (.format "ClaudeSessionSpec.autocompact は AutocompactAuto / AutocompactTokens / None: {!r}" self.autocompact))))
     (object.__setattr__ self "settings" (frozen-json-object self.settings "ClaudeSessionSpec.settings"))

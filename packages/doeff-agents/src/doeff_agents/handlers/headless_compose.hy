@@ -10,7 +10,7 @@
 (import collections.abc [Callable Mapping])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
-(import doeff_claude_code.values [ClaudeHome])
+(import doeff_claude_code.values [ClaudeHome BypassAll PermissionPolicy])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
@@ -34,7 +34,8 @@
    (headless-claude-handler config (HeadlessState))])
 
 (defn #^ list fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]
-                                             * #^ (get Mapping #(str str)) env #^ (get Mapping #(str object)) settings]
+                                             * #^ (get Mapping #(str str)) env #^ (get Mapping #(str object)) settings
+                                             #^ PermissionPolicy [permission (BypassAll)]]
   "模擬の組: doeff-claude-code の fake の handler + headless の adapter(process も API も使わない)。
    responder = (入力の本文 それまでの入力の tuple) → FakeReply(返事の本文・道具の秒数・許可の問いの要否)。
    world = 呼び手が持つ fake の世界(FakeClaudeWorld — 検の口で家の中身を触る・同じ家の上で process を作り直す〔world.restarted〕
@@ -42,11 +43,12 @@
    env / settings = 本番の組(headless-claude-handlers)と同じ意味の家の env(文字列 → 文字列の写像)と CLI の settings(JSON の写像)。
    どちらも必ず渡す(既定の値は無い — 宣言する物の無い呼び手は空の写像を明示で渡す・agora-redesign #3387)。上の層の模擬が、本番と
    同じ手順で決めた env と settings を起動の宣言(層 2 へ渡る ClaudeSessionSpec の home.env と settings)に載せて観測するため
-   (agora-redesign #3327)。fake の層 2 はどちらも読まない。どちらも宣言を作る時に凍らせる(ClaudeHome・HeadlessClaudeConfig)。"
+   (agora-redesign #3327)。fake の層 2 はどちらも読まない。どちらも宣言を作る時に凍らせる(ClaudeHome・HeadlessClaudeConfig)。
+   permission = 起動の宣言の許可の方策(既定 BypassAll — 本番の adapter と同じ形を上の層の模擬が渡して観測するため・#3753)。"
   (when (= (is responder None) (is world None))
     (raise (ValueError "fake-headless-claude-handlers は responder と world のちょうど 1 つを受ける")))
   [(fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world))
-   (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings)
+   (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :permission permission)
                             (HeadlessState))])
 
 
@@ -71,10 +73,13 @@
     (raise (ValueError "fake-claude-process-layer は responder と world のちょうど 1 つを受ける")))
   (fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world)))
 
-(defk claude-adapter [config-dir env settings cold-resume-prompt]
-  {:pre [(: config-dir str) (: env Mapping) (: settings Mapping) (: cold-resume-prompt (| str None))] :post [(: % Callable)]}
+(defk claude-adapter [config-dir env settings cold-resume-prompt permission]
+  {:pre [(: config-dir str) (: env Mapping) (: settings Mapping) (: cold-resume-prompt (| str None)) (: permission PermissionPolicy)]
+   :post [(: % Callable)]}
   "headless の adapter だけ(doeff-agents の公開 effect を層 2 の effect へ写す — 対の入口の 2 つ目と同じ物。層 2 が本物でも fake でも同じ
    adapter)を作るため。config-dir / env = claude の家(凍らせる)・settings = CLI の settings の JSON の写像・cold-resume-prompt = 冷えた
-   続きの前の 1 回きりの process に渡す文(None = 渡さない)。"
-  (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :cold-resume-prompt cold-resume-prompt)
+   続きの前の 1 回きりの process に渡す文(None = 渡さない)・permission = 起動の宣言の許可の方策(HomeSettings = 設定 dir の settings.json の
+   permissions に任せて許可の旗を付けない — #3753)。"
+  (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :cold-resume-prompt cold-resume-prompt
+                                                 :permission permission)
                            (HeadlessState)))

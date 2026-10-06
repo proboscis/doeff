@@ -48,7 +48,7 @@
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
-                                  checked-session-id])
+                                  BypassAll PermissionPolicy checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
                                  Completed Failed Interrupted BackendLost Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -61,7 +61,7 @@
 
 ;; 引き換えた access token(LaunchEffect.turn_credential_ref の RedeemTurnCredentialEffect の答え — #665・#979)を置く env の名。綴りの家は境界の env の語彙
 ;; doeff_agents/agent_env.hy の 1 点(TURN-AUTH-ENV-KEYS の要素・#708 — 家は session host を import しない)。
-(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
+(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV GITHUB-TOKEN-ENV])
 
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------
@@ -69,10 +69,12 @@
 (defclass [(dataclass :frozen True)] HeadlessClaudeConfig []
   "composition root が渡す宣言: home = claude の家(資格は root が custody から借りて env に置く — この handler は読むだけ)/
    settings = CLI の settings に合流する宣言(JSON — 深く凍らせた写像)/ cold-resume-prompt = 冷えた続きの前に 1 回だけ走らせる命令(None = 走らせない)/
+   permission = 層 2 の会話の宣言へ渡す許可の方策(既定 BypassAll・HomeSettings = 設定 dir の settings.json の permissions に任せる — #3753)/
    page-wait = 層 2 へ 1 回に待つ秒数の上限(長い待ちはこの刻みで読む)。"
   (#^ ClaudeHome home)
   (setv #^ FrozenMap settings (field :default-factory FrozenMap))
   (setv #^ (| str None) cold-resume-prompt None)
+  (setv #^ PermissionPolicy permission (BypassAll))
   (setv #^ float page-wait 5.0)
   (defn __post_init__ [self]
     (object.__setattr__ self "settings" (frozen-json-object self.settings "HeadlessClaudeConfig.settings"))))
@@ -113,18 +115,22 @@
 (defn #^ ClaudeSessionSpec spec-of [#^ HeadlessClaudeConfig config #^ LaunchEffect effect #^ (| TurnCredential None) [credential None]]
   "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 引き換えた access token
    (credential — LaunchEffect.turn_credential_ref を RedeemTurnCredentialEffect で引き換えた答え・None = 家の資格。手番の資格の env の名
-   1 つにだけ置く。家の env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ)。"
+   1 つにだけ置く。設定 dir の env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ)。答えが GitHub の token
+   (credential.github-token)も持てば GITHUB-TOKEN-ENV(GH_TOKEN)に置く(#3753)。許可の方策は config の permission。"
   (assert-session-env-is-non-auth-overlay effect.session-env :context "LaunchEffect.session_env (headless-claude-handler)")
   (setv env (| (dict config.home.env) (dict (or effect.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
   (when (is-not credential None)
     (setv (get env TURN-CREDENTIAL-ENV) credential.oauth-token))
+  (when (and (is-not credential None) (is-not credential.github-token None))
+    (setv (get env GITHUB-TOKEN-ENV) credential.github-token))
   ;; 借りた資格の期限は層 2 の宣言へ写す(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)
                      :model effect.model
                      :effort effect.effort
                      :settings config.settings
+                     :permission config.permission
                      :cold-resume-prompt config.cold-resume-prompt
                      :credential-expires-at (if (is credential None) None credential.expires-at)))
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # activate Hy import hook for handler modules
+from doeff_claude_code.values import BypassAll, PermissionPolicy
 from doeff_time import sync_time_handler
 
 if TYPE_CHECKING:
@@ -48,6 +49,10 @@ from doeff_agents.handlers.testing import ScenarioStep as ScenarioStep
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.session_store import AgentSessionRepository as AgentSessionRepository
+
+# The headless adapter's default permission policy: skip the CLI's permission
+# checks (`BypassAll`) — the behavior every caller had before #3753.
+_DEFAULT_CLAUDE_PERMISSION: PermissionPolicy = BypassAll()
 
 # Keys kept for compatibility with persisted metadata naming.
 AGENT_SESSIONS_KEY = "__agent_sessions__"
@@ -210,6 +215,7 @@ def fake_headless_claude_agent_handlers(
     world: Any = None,
     env: Mapping[str, str],
     settings: Mapping[str, object],
+    permission: PermissionPolicy = _DEFAULT_CLAUDE_PERMISSION,
 ) -> list[Any]:
     """The same adapter over doeff-claude-code's fake handler (no process, no API).
 
@@ -223,10 +229,12 @@ def fake_headless_claude_agent_handlers(
     emulation passes what its production path decided, so the launch
     declaration the fake layer 2 receives carries them (agora-redesign #3327);
     a caller with nothing to declare passes empty mappings explicitly.
+    ``permission`` is the launch declaration's permission policy, as for
+    ``claude_agent_adapter_handler`` (default ``BypassAll()``).
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
     return _hy_headless_compose_module().fake_headless_claude_handlers(
-        responder, config_dir, world, env=env, settings=settings
+        responder, config_dir, world, env=env, settings=settings, permission=permission
     )
 
 
@@ -268,6 +276,7 @@ def fake_claude_agent_runtime_handlers(
     world: Any = None,
     env: Mapping[str, str],
     settings: Mapping[str, object],
+    permission: PermissionPolicy = _DEFAULT_CLAUDE_PERMISSION,
 ) -> list[Any]:
     """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
 
@@ -277,11 +286,17 @@ def fake_claude_agent_runtime_handlers(
     ``env`` / ``settings`` are the same home env (str → str) and CLI settings
     (a JSON mapping) the production runtime takes; both are required — pass
     empty mappings explicitly when there is nothing to declare (agora-redesign
-    #3387). They ride on the launch declaration only.
+    #3387). They ride on the launch declaration only, as does ``permission``
+    (the permission policy, default ``BypassAll()`` — agora-redesign #3753).
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
     return fake_headless_claude_agent_handlers(
-        responder=responder, config_dir=config_dir, world=world, env=env, settings=settings
+        responder=responder,
+        config_dir=config_dir,
+        world=world,
+        env=env,
+        settings=settings,
+        permission=permission,
     )
 
 
@@ -330,20 +345,26 @@ def claude_agent_adapter_handler(
     env: Mapping[str, str],
     settings: Mapping[str, object],
     cold_resume_prompt: str | None = None,
+    permission: PermissionPolicy = _DEFAULT_CLAUDE_PERMISSION,
 ) -> Callable[..., object]:
     """The headless adapter alone: the public effects onto layer-2 effects.
 
     The same adapter both pair entries return second — whether layer 2 is
     the production handler or the fake. ``config_dir`` / ``env`` are the
     Claude home, ``settings`` the CLI settings (a JSON mapping — pass an
-    empty mapping explicitly when there is nothing to declare). Layer 2 must
-    be answered outside it (``claude_process_layer_handler``, the fake, or an
-    emulation's peer).
+    empty mapping explicitly when there is nothing to declare). ``permission``
+    is the launch declaration's permission policy: the default
+    ``BypassAll()`` skips permission checks; ``HomeSettings()`` puts no
+    permission flag on the CLI so the home's ``settings.json`` permissions
+    decide (agora-redesign #3753). Layer 2 must be answered outside it
+    (``claude_process_layer_handler``, the fake, or an emulation's peer).
     """
     from doeff import run
 
     return run(
-        _hy_headless_compose_module().claude_adapter(config_dir, env, settings, cold_resume_prompt)
+        _hy_headless_compose_module().claude_adapter(
+            config_dir, env, settings, cold_resume_prompt, permission
+        )
     )
 
 
