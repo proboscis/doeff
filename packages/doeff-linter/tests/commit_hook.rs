@@ -408,8 +408,8 @@ fn a_staged_file_with_an_old_record_wait_blocks_and_an_untouched_one_does_not() 
 }
 
 /// 失敗ケース(agora-redesign #3834・案 1): repo 全体の比べに回る DOEFF209 も、stage した file に HEAD の版から在る当たりで commit を止める
-/// (HEAD の木との鍵の差に、stage した path の基点の差で下げない当たりを足す)。当たりの在る file に触らない commit は止まらない。上限で
-/// 打ち切った時は今までどおり通し、測れなかった事を名指す。
+/// (HEAD の木との識別子の差に、stage した path の基点の差で下げない当たりを足す)。当たりの在る file に触らない commit は止まらない。
+/// 上限なし(--commit-hook-timeout-s 0)でも同じ当たりで止まる。
 #[test]
 fn a_staged_file_with_an_old_polling_loop_blocks_and_an_untouched_one_does_not() {
     let dir = repo_with_an_old_hit("DOEFF209", POLLING_LOOP);
@@ -418,8 +418,9 @@ fn a_staged_file_with_an_old_polling_loop_blocks_and_an_untouched_one_does_not()
     assert_eq!(code, 1, "{}", stderr);
     assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF209::poll::Delay::periodic", ALREADY_ON_HEAD)), "{}", stderr);
     let (code, stderr) = hook(root, &["--commit-hook-timeout-s", "0"]);
-    assert_eq!(code, 0, "{}", stderr);
-    assert!(stderr.contains("測れなかった"), "{}", stderr);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF209::poll::Delay::periodic", ALREADY_ON_HEAD)), "{}", stderr);
+    assert!(!stderr.contains("測れなかった"), "{}", stderr);
     stage_only_an_untouched_file(root);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 0, "{}", stderr);
@@ -532,21 +533,42 @@ fn nothing_staged_passes() {
     assert!(stderr.is_empty(), "{}", stderr);
 }
 
-/// 失敗ケース(iii): 上限 0 秒は測れなかったとして 1 行出し、止めない(新しい当たりの在る変更でも 0)。その 1 行は、どの比べを・どの木で・
-/// どの規則を・何秒の上限で打ち切ったかを名指す(agora-redesign #2723 — 以前は「終わらなかった」だけで、何を確かめずに通したかが残らなかった)。
+/// agora-redesign #3834: 上限 0 秒は上限なし — 打ち切らずに終わりまで測り、新しい当たりで止める(以前は 0 秒を「実行せずに越えた」
+/// 扱いにして、測れなかったとして通していた)。上限で止まった commit を確かめ直す命令は、この形を使う。
 #[test]
-fn timeout_passes_with_an_unmeasured_line() {
+fn a_zero_timeout_measures_to_the_end() {
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &["--commit-hook-timeout-s", "0"]);
-    assert_eq!(code, 0, "{}", stderr);
-    assert!(stderr.contains("測れなかった"), "{}", stderr);
-    assert_eq!(stderr.lines().count(), 1, "{}", stderr);
-    for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF016)", "上限 0 秒で打ち切った"] {
-        assert!(stderr.contains(part), "{:?} が無い: {}", part, stderr);
-    }
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
+    assert!(!stderr.contains("測れなかった"), "{}", stderr);
+}
+
+/// 打ち切って止めた時の行の後ろ 2 行の頭(agora-redesign #3834・cisco-c8 の可 2026-10-07)。
+const RERUN_COMMAND: &str = "上限なしで同じ比べをやり直す命令: ";
+const RERUN_GUIDE: &str = "この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない";
+
+/// 打ち切って止めた判じの行から、上限なしの命令を取り出す。
+fn rerun_command(lines: &[String]) -> String {
+    lines.iter().find_map(|line| line.strip_prefix(RERUN_COMMAND)).map(str::to_string).unwrap_or_else(|| panic!("上限なしの命令の行が無い: {:?}", lines))
+}
+
+/// 上限なしの命令を shell で実行し、(終了コード・stderr)を返す(cache は hook() と同じく repo の .git の下)。
+fn run_rerun(root: &Path, command: &str) -> (i32, String) {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .env("DOEFF_LINTER_CACHE_DIR", root.join(".git").join("doeff-linter-cache"))
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).into_owned())
 }
 
 /// 遅い代役の linter — HEAD の木(hook が cache の `commit-hook-tree/<repo を表す名>/tree` に置く・agora-redesign #3858)で repo 全体(path が `.`)を実行された
@@ -609,7 +631,7 @@ fn clause_repo() -> tempfile::TempDir {
 }
 
 /// 失敗ケース(agora-redesign #2723・条 S10 の形): 宣言(architecture.hy)に条 Q2 を足した commit は、反例の無い条の DOEFF167 の新しい当たりを
-/// 生む。(i) HEAD の木の 1 回が上限を越えると(遅い代役 — 冷えた置き場)止めずに通すが、測れなかった比べ・木・規則・秒を名指す。
+/// 生む。(i) HEAD の木の 1 回が上限を越えると(遅い代役 — 冷えた cache)、測れなかった比べ・木・規則・秒を書いて止める(#3834)。
 /// (ii) 上限の内で 1 度測れた HEAD の木の結果は置き場に残り(使った印つき)、同じ HEAD の次の hook は先端の木だけを上限の内で測って、
 /// DOEFF167 の当たりで止める(上限の秒は上げない)。
 #[test]
@@ -624,11 +646,12 @@ fn a_declaration_change_names_an_unmeasured_head_tree_and_blocks_doeff167_from_t
     let new_hit = "repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF167::queue::Q2";
 
     let cold = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 4));
-    assert_eq!(cold.code, 0, "{:?}", cold);
-    assert_eq!(cold.lines.len(), 1, "{:?}", cold);
-    for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 3 個", "DOEFF167", "上限 4 秒で打ち切った"] {
+    assert_eq!(cold.code, 1, "{:?}", cold);
+    assert_eq!(cold.lines.len(), 3, "{:?}", cold);
+    for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 3 個", "DOEFF167", "上限 4 秒で打ち切った", "commit を止める"] {
         assert!(cold.lines[0].contains(part), "{:?} が無い: {:?}", part, cold);
     }
+    assert!(cold.lines[1].starts_with(RERUN_COMMAND) && cold.lines[2] == RERUN_GUIDE, "{:?}", cold);
 
     let measured = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 60));
     assert_eq!(measured.code, 1, "{:?}", measured);
@@ -661,6 +684,46 @@ fn a_cut_whole_repo_comparison_keeps_the_staged_hits_blocking() {
     assert_eq!(got.code, 1, "{:?}", got);
     assert!(got.lines.iter().any(|line| line.starts_with("stage した file の破れ: app/queue/tool.py:1: DOEFF016")), "{:?}", got);
     assert!(got.lines.iter().any(|line| line.contains("HEAD の木の repo 全体の比べを測れなかった") && line.contains("(DOEFF163)")), "{:?}", got);
+    assert!(got.lines.iter().any(|line| line == RERUN_GUIDE), "{:?}", got);
+}
+
+/// 失敗ケース(agora-redesign #3834・元の issue #2723・cisco-c8 の可 2026-10-07): repo 全体の比べが上限で打ち切られた commit は、stage した
+/// file に当たりが無くても止める(終了コード 1 — 以前は 0 で通し、作業役は通った commit を確かめ直さなかった)。止める時の行は、測れなかった
+/// 比べの 1 行・上限なしで同じ比べをやり直す命令・「0 件を確かめてから commit し直す・--no-verify は使わない」の 3 行。命令はそのまま
+/// shell で実行でき、打ち切らずに終わりまで測って、新しい当たり(DOEFF163)で止める。
+#[test]
+fn a_cut_comparison_blocks_and_names_the_command_to_rerun_without_a_limit() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let side = tempfile::TempDir::new().unwrap();
+    let linter = slow_head_linter(side.path(), 5);
+    write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
+    git(root, &["add", "architecture.hy"]);
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &root.join(".git").join("doeff-linter-cache"), 4));
+    assert_ne!(got.code, 0, "{:?}", got);
+    assert_eq!(got.code, 1, "{:?}", got);
+    assert!(got.lines.iter().any(|line| line.contains("HEAD の木の repo 全体の比べを測れなかった") && line.contains("commit を止める")), "{:?}", got);
+    assert!(got.lines.iter().any(|line| line == RERUN_GUIDE), "{:?}", got);
+    let command = rerun_command(&got.lines);
+    assert!(command.ends_with("--commit-hook-timeout-s 0"), "{}", command);
+    let (code, stderr) = run_rerun(root, &command);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
+    assert!(!stderr.contains("測れなかった"), "{}", stderr);
+}
+
+/// 上の対: 上限の内で終わった commit は今までどおり通す(終了コード 0・行なし)— 遅い代役でも上限に届かなければ止めない。
+#[test]
+fn a_comparison_within_the_limit_still_passes() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let side = tempfile::TempDir::new().unwrap();
+    let linter = slow_head_linter(side.path(), 1);
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(root, &["add", "app/queue/main.hy"]);
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 60));
+    assert_eq!(got.code, 0, "{:?}", got);
+    assert!(got.lines.is_empty(), "{:?}", got);
 }
 
 /// agora-redesign #2683 の設定 — DOEFF172(写像の置き場の臭い・major の warning — 終了コードを変えない)だけ。
