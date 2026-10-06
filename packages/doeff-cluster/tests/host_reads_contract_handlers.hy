@@ -17,6 +17,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])
 (import os)
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [reader state])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
@@ -103,7 +104,7 @@
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "sim の宿の子の答え手(run-fenced と同じ並び: host-answers の内側に値の表の environ-reader)の下で program を走らせる。"
   (val link (SimLink :queue (RequestQueue) :actor CONTEXT.job :revision CONTEXT.revision :peer CONTEXT.worker
-                     :versions (! (process-versions os.environ))))
+                     :versions (! (process-versions os.environ)) :timing (ClusterTiming)))
   (val child (SimChild :ctx CONTEXT :program-path PROGRAM-PATH :environ (dict DECLARED) :link link :pid 1 :passable #()))
   (<- answer (with_handlers [(reader OUTER) outer-answers (host-answers child) (environ-reader child.environ)] program))
   answer)

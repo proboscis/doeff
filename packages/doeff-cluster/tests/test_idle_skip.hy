@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_core_effects.scheduler [Spawn Cancel Task])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive WORKER-FORGET-MS])
+(import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms sweep-due])
 (import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
@@ -329,13 +329,13 @@
   (assert (= fence-answer (DueAt :at (+ seen timing.keep-fence-ms 1))) fence-answer)
   (val fence-due fence-answer.at)
   (assert (and (alive (- fence-due 1) worker timing.keep-fence-ms) (not (alive fence-due worker timing.keep-fence-ms))))
-  ;; WORKER-FORGET-MS — forget-silent-workers が忘れる刻。
+  ;; worker-forget-ms — forget-silent-workers が忘れる刻。
   (<- forget-answer (| DueAt DueNow DueNever) (liveness-due silent fence-due timing))
-  (assert (= forget-answer (DueAt :at (+ seen WORKER-FORGET-MS 1))) forget-answer)
+  (assert (= forget-answer (DueAt :at (+ seen timing.worker-forget-ms 1))) forget-answer)
   (val forget-due forget-answer.at)
-  (<- kept ClusterState (forget-silent-workers silent (- forget-due 1)))
+  (<- kept ClusterState (forget-silent-workers silent (- forget-due 1) timing))
   (assert (is kept silent))
-  (<- forgotten ClusterState (forget-silent-workers silent forget-due))
+  (<- forgotten ClusterState (forget-silent-workers silent forget-due timing))
   (assert (= forgotten.workers {}) forgotten.workers)
   ;; 忘れた後: 生きていないと数える名が残っていれば note-liveness が今の刻で外す(今すぐ)・外した後は期限が無い(無し)。
   (<- left (| DueAt DueNow DueNever) (liveness-due forgotten forget-due timing))

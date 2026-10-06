@@ -7,7 +7,7 @@
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv full-kv durable-delta state-from-kv])
-(import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
+(import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN
                           board-usage value-size] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
@@ -139,7 +139,7 @@
   (:= s (get reply-11 0))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (in "j" s.placements))
-  (setv later (! (tick s (+ WORKER-FORGET-MS 1) T)))
+  (setv later (! (tick s (+ (. (ClusterTiming) worker-forget-ms) 1) T)))
   (assert (not-in "newmac" later.workers))
   (assert (in "atlas" later.workers)))
 

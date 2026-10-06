@@ -89,7 +89,6 @@ BOARD_MAX_ROWS: int
 BOARD_MAX_BYTES: int
 TASK_MAX_LEASE_SECONDS: int
 TASK_MAX_OPEN: int
-WORKER_FORGET_MS: int
 
 def declared_runtime_env(item: dict) -> str | None:
     ...
@@ -338,7 +337,7 @@ def renew_detached(tasks: dict, worker: str, boot: str | None, now: int) -> dict
 def sweep_board(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def forget_silent_workers(state: ClusterState, now: int) -> _Program[ClusterState, object]:
+def forget_silent_workers(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
 
 def sweep_drains(state: ClusterState, now: int) -> _Program[ClusterState, object]:

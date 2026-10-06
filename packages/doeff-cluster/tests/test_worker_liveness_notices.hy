@@ -12,7 +12,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.core.api_policy [tick])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat liveness-moves liveness-now WORKER-FORGET-MS])
+(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat liveness-moves liveness-now])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
 
 (val T (ClusterTiming))
@@ -74,9 +74,9 @@
 
 
 (deftest test-a-worker-forgotten-after-a-long-silence-is-not-told-back
-  ;; 長い沈黙(WORKER-FORGET-MS)で名簿から消えた worker は沈黙の集合からも外れるが、戻ったのではない。
+  ;; 長い沈黙(ClusterTiming.worker-forget-ms)で名簿から消えた worker は沈黙の集合からも外れるが、戻ったのではない。
   (val past (! (tick (! (named)) (+ DEADLINE 1) T)))
-  (val forgotten (! (tick past (+ SEEN WORKER-FORGET-MS 1) T)))
+  (val forgotten (! (tick past (+ SEEN T.worker-forget-ms 1) T)))
   (assert (not-in "w" forgotten.workers) "長い沈黙の worker は名簿から消える")
   (assert (= (! (liveness-moves past forgotten T)) #()) "名簿から消えた worker は WorkerBack にならない"))
 

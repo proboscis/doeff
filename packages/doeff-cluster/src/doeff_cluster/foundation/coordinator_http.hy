@@ -19,11 +19,6 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 
-;; 返事を待つ上限(秒)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
-;; volume の実測(2026-09-24): fsync p50 0.1 秒、ただし 30 分に 1 回ほど 10.4 秒の詰まり(その間の返事は最長 13 秒)。上限はそれより
-;; 長く、worker の自己停止(20 秒)より短くする。heartbeat・共有の保存・task・readiness の client は全部この値を使う。
-(setv REPLY-SECONDS 15.0)
-
 ;; 接続の段の上限(秒)。tailnet の上の往復は数 ms なので、2 秒待って届かない SYN は待つより送り直す方が早い。
 (setv CONNECT-SECONDS 2.0)
 

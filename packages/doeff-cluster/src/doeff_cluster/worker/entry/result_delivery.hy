@@ -12,7 +12,8 @@
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.protocol.task_result [delivered-task-result])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteOptions])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 
@@ -22,7 +23,9 @@
    送り直しは接続の段の一巡し直し 1 回だけ(子の終わりを長く止めない)。"
   (run (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (sync-time-handler)]
                                  (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance encoded
-                                                        (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS
+                                                        (RouteOptions :reply-seconds (/ (. (ClusterTiming) client-reply-ms) 1000.0)
+                                                                      :watch-seconds (/ (. (ClusterTiming) watch-max-ms) 1000.0)
+                                                                      :connect-seconds CONNECT-SECONDS
                                                                       :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS
                                                                       :resend-pause-seconds RESEND-PAUSE-SECONDS
                                                                       :connect-retries 1 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000))

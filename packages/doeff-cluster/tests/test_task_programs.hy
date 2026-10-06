@@ -362,7 +362,7 @@
   found)
 
 
-(val SEND-OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "served-task-program"))
+(val SEND-OPTIONS (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "served-task-program"))
 
 
 (defk over-network [program]

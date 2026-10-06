@@ -16,7 +16,6 @@ from doeff_cluster.shared.protocol.coordinator_route import resent_request as re
 from doeff_cluster.shared.protocol.coordinator_route import answer_json as answer_json
 from doeff_cluster.shared.protocol.remote import program_put as program_put
 from doeff_cluster.shared.intent.protocol import PROTOCOL_FORMAT as PROTOCOL_FORMAT
-from doeff_cluster.shared.intent.protocol import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson

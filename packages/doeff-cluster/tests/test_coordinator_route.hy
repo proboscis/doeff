@@ -16,7 +16,7 @@
 (val LAN "http://lan:8080")
 (val NET "http://tailnet:8080")
 (val START-MS 1790000000000)
-(val OPTIONS (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
+(val OPTIONS (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 2 :recheck-ms 60000 :actor "job@w1/1"))
 
 
 (defk ok [url]

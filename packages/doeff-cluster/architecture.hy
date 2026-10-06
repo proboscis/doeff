@@ -37,9 +37,10 @@
 ;;;   C4 timing-outlasts-the-self-stop(doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop — #2806)— coordinator が
 ;;;   連絡の途絶えた worker の印の無い job を他へ移す時刻(ClusterTiming.reassign-after-ms)は、その worker が自分で job を止め切る最悪の
 ;;;   時刻(fence + heartbeat の返事の上限 + 接続の上限 + 子の停止の猶予 — 送った heartbeat が上限まで答えない間は worker の周期が止まって
-;;;   いて判じられない)より後(C2 の時間の柵の値の側)。値の定義は 3 か所(ClusterTiming・foundation/coordinator_http の REPLY-SECONDS と
-;;;   CONNECT-SECONDS・WorkerPolicy の停止の猶予)に分かれているので、判断は値を受け取る純関数で、値を集めるのは呼び手。確かめるのは
-;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の定数から内訳を作って判断に渡す — 数を検に
+;;;   いて判じられない)より後(C2 の時間の柵の値の側)。値の定義は 3 か所(fence・移し替え・返事の上限 = ClusterTiming・
+;;;   接続の上限 = foundation/coordinator_http の CONNECT-SECONDS・停止の猶予 = WorkerPolicy — 返事の上限は 2026-10-07 に ClusterTiming へ
+;;;   移した・#3865)に分かれているので、判断は値を受け取る純関数で、値を集めるのは呼び手。確かめるのは
+;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の既定の ClusterTiming と定数から内訳を作って判断に渡す — 数を検に
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
 ;;;   C4b stopped-job-leaves-no-descendant(doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant — #2940 の 2 段目)— job を
