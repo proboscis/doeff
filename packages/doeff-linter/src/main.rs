@@ -113,7 +113,8 @@ struct Args {
     #[arg(long)]
     commit_hook: bool,
 
-    /// --commit-hook の子の linter 1 回ごとの上限(秒)。設定の commit_hook.timeout_s より勝つ(既定 20)
+    /// --commit-hook の子の linter 1 回ごとの上限(秒)。設定の commit_hook.timeout_s より勝つ(既定 20)。0 は上限なし — 上限で
+    /// 打ち切られて止まった commit を、同じ比べで終わりまで確かめ直す時に使う
     #[arg(long)]
     commit_hook_timeout_s: Option<u64>,
 
@@ -678,7 +679,7 @@ fn main() -> ExitCode {
 
 /// `--commit-hook` — git の作業木の根(`--root` が勝つ)と設定を決め、本体(doeff_linter::commit_hook)を撃つ。`--split-rules` も同じ
 /// 根と設定から、変えた path に当てる規則の分けだけを出す(門と hook が同じ判定を使う)。
-/// 終了コード 0 = 通す(測れなかった時を含む)・1 = 止める・2 = 設定・git・linter の誤り。
+/// 終了コード 0 = 通す・1 = 止める(上限で打ち切って測れなかった時を含む)・2 = 設定・git・linter の誤り。
 fn run_commit_hook(args: &Args) -> ExitCode {
     let fail = |reason: String| {
         eprintln!("doeff-linter commit-hook: {}", reason);
@@ -719,6 +720,7 @@ fn run_commit_hook(args: &Args) -> ExitCode {
             Err(error) => return fail(format!("commit 本文 {} を読めない: {}", file.display(), error)),
         };
         options.overlay = doeff_linter::commit_hook::baseline_overlay(&message, &options.declarations);
+        options.message = Some(cwd.join(file));
     }
     if args.split_rules {
         // 門の口: path の引数を変えた path として、hook と同じ判定の分けを出す(既定の . は変えた path ではない)。
