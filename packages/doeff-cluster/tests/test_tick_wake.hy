@@ -16,13 +16,15 @@
 (import dataclasses [dataclass])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf ReadCoordinator])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView DesiredJobs ReadDesired ObserveWorld WorkerStopRequested
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView DesiredJobs ReadDesired ObserveWorld
                                                   PublishStatus EnvReport])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
@@ -48,8 +50,8 @@
   (ReadDesired [env-report]
     (setv log.reads (+ log.reads #((! (clock-ms log.clock)))))
     (resume (DesiredJobs #() :changed bell.future)))
-  (WorkerStopRequested []
-    (resume (or (>= (! (clock-ms log.clock)) stop-ms) (>= (len log.reads) READ-LIMIT))))
+  (StopRequested []
+    (resume (if (or (>= (! (clock-ms log.clock)) stop-ms) (>= (len log.reads) READ-LIMIT)) "signal 15" None)))
   (EnvReport [] (resume None))
   (ObserveWorld [] (resume (WorldView #() #())))
   (PublishStatus [statuses note] (resume None)))
@@ -63,7 +65,7 @@
   (when rung
     (<- (CompletePromise bell True)))
   (val log (TickLog (SimClock)))
-  (<- ((sim-time-handler :clock log.clock) (tick-pauses ((bell-host log bell stop-ms) (run-worker POLICY)))))
+  (<- ((sim-time-handler :clock log.clock) ((bell-host log bell stop-ms) (stop-signal-never-comes (tick-pauses (run-worker POLICY))))))
   log.reads)
 
 

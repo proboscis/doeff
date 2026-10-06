@@ -15,6 +15,8 @@
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import tests.stop_fixtures [stop-signal-never-comes])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.file_effects [MemoryFiles])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess timed-out-outcome])
@@ -23,7 +25,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [StartJob SignalJob ReapJob Outcome StopStage Undeclared CodeView CodeState WorldView
-                                                 WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld WorkerStopRequested EnvReport
+                                                 WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld EnvReport
                                                  PublishStatus PrepareCode ReleaseLeases])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.protocol.process_host [HostSettings STOP-TIMING-LOG process-host])
@@ -141,9 +143,9 @@
             (:= last-jobs reply.jobs)
             (resume (DesiredJobs reply.jobs)))
         (resume (desired-when-unreachable (- now last-ok-ms) FENCE-MS KEEP-FENCE-MS last-jobs #() "台本の途絶"))))
-  (WorkerStopRequested []
+  (StopRequested []
     (<- now int (now-epoch-ms))
-    (resume (>= now stop-ms)))
+    (resume (if (>= now stop-ms) "signal 15" None)))
   (EnvReport [] (resume None))
   (PublishStatus [statuses note] (resume None))
   ;; 終わった process の lease の返し(本番は coordinator への口)— この筋書きは lease を数えない。
@@ -251,7 +253,7 @@
 (deftest test-a-changed-spec-and-an-undeclared-job-are-stopped-with-their-reasons
   ;; 1 秒目の返事で svc の版が変わり、other が宣言から外れる。3 秒目に worker が止まる(残る svc は worker の停止の訳)。
   (val replies #((Reply :from-ms 0 :jobs #(SPEC OTHER) :reached True) (Reply :from-ms 1000 :jobs #(SPEC-B) :reached True)))
-  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 3000) tick-pauses]))
+  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 3000) stop-signal-never-comes tick-pauses]))
   (assert (= (! (lines-of noted.stops "svc"))
              #(#("term" "spec-changed") #("reaped" "spec-changed") #("term" "worker-stopping") #("reaped" "worker-stopping")))
           noted.stops)
@@ -264,7 +266,7 @@
   ;; ms つき)。5 秒目に届くようになり起こし直し、7 秒目の worker の停止で止める。
   (val replies #((Reply :from-ms 0 :jobs #(SPEC) :reached True) (Reply :from-ms 1000 :jobs #(SPEC) :reached False)
                  (Reply :from-ms 5000 :jobs #(SPEC) :reached True)))
-  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 7000) tick-pauses]))
+  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 7000) stop-signal-never-comes tick-pauses]))
   (assert (= (! (lines-of noted.stops "svc"))
              #(#("term" "cut-off") #("reaped" "cut-off") #("term" "worker-stopping") #("reaped" "worker-stopping")))
           noted.stops)
@@ -277,6 +279,6 @@
 (deftest test-a-held-start-is-noted-once-while-the-reason-lasts-and-again-when-it-changes
   ;; svc の版の準備は 1 秒目まで準備中(拍 0.1 秒 — 10 拍ほど続く)、1 秒目から失敗(撃ち直しの間 30 秒より前に 2 秒目で止まる)。
   (val replies #((Reply :from-ms 0 :jobs #(SPEC) :reached True)))
-  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript :failed-ms 1000 :ready-ms None) 2000) tick-pauses]))
+  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript :failed-ms 1000 :ready-ms None) 2000) stop-signal-never-comes tick-pauses]))
   (assert (= noted.holds #((HoldLine :job "svc" :reason "preparing") (HoldLine :job "svc" :reason "prepare-failed"))) noted.holds)
   (assert (= noted.stops #()) noted.stops))

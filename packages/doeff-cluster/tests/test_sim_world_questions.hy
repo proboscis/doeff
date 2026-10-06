@@ -14,10 +14,11 @@
 (import doeff_time [sim-time-handler])
 (import doeff_core_effects.handlers [state :as session-store])
 (import doeff_core_effects.scheduler [CreatePromise Promise])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_cluster.shared.intent.protocol [NextRequests Request Reply CoordinatorStopRequested])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.coordinator.protocol.store [Persist])
-(import doeff_cluster.worker.intent.worker_model [PublishStatus WorkerStopRequested ReadDesired])
+(import doeff_cluster.worker.intent.worker_model [PublishStatus ReadDesired])
 (import doeff_cluster.sim.local [SimPlan SimParts SimWorker HostTruth HostTruthOf PartsOf sim-plan sim-world sim-host StopCoordinator CrashCoordinator TakeHeldRequests
                                  observe-requests StepBook])
 (import tests.fixtures.envs [sim-foundation])
@@ -105,7 +106,7 @@
 ;;   (StepEnded — #2670 の根 A)。要求を 1 つ取った 1 歩は、取り・書き・歩の終わりの 3 つ。反例: 返事ごとの ReleaseRequest・書きごとの
 ;;   NoteCoordinatorWrite・歩の頭の PauseDue を別々に聞く前の形は 1 歩に 5 つ(この検は赤)。止まった後の返事(止まる調停ループの待ちへの
 ;;   返事 — 次の歩の頭が無い)はすぐ手放す(ReleaseRequest)。
-;; - worker の拍の止めの問い(WorkerStopRequested): 世代の確かめと全 worker の止まれを問い 1 つ(StopRequestOf)。
+;; - worker の拍の止めの問い(核の StopRequested): 世代の確かめと全 worker の止まれを問い 1 つ(StopRequestOf)。
 ;;   反例: HostTruthOf と WorkersStopping を別々に聞く形。
 ;; - heartbeat を送る拍: 筋(PlanOf)と部品(PartsOf)は宿の世代ごとに 1 度 — 拍ごとに世界へ聞かない。
 
@@ -319,7 +320,7 @@
 (deftest test-a-worker-stop-question-asks-the-world-once
   (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
-                   (with-handlers [(session-store) (sim-world plan) world-question-counter] (under-host plan (WorkerStopRequested)))))
+                   (with-handlers [(session-store) (sim-world plan) world-question-counter] (under-host plan (StopRequested)))))
   (assert (= asked #("StopRequestOf")) asked))
 
 

@@ -4,11 +4,6 @@
       "allow": [
         "doeff-cluster-coordinator-inbox"
       ]
-    },
-    "doeff-cluster-tests": {
-      "allow": [
-        "doeff-cluster-worker-stop"
-      ]
     }
   }
 }
