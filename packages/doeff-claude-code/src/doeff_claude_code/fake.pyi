@@ -38,6 +38,8 @@ from doeff_claude_code.lines import BackendLost as BackendLost
 from doeff_claude_code.lines import ClaudeLineKind as ClaudeLineKind
 from doeff_claude_code.lines import ClaudeTurnEnd as ClaudeTurnEnd
 from doeff_claude_code.lines import Usage as Usage
+from doeff_claude_code.lines import ModelWindow as ModelWindow
+from doeff_claude_code.lines import merged_windows as merged_windows
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
 from doeff_claude_code.effects import ClaudeInjectInput as ClaudeInjectInput
 from doeff_claude_code.effects import ClaudeInterruptTurn as ClaudeInterruptTurn
@@ -101,6 +103,9 @@ class FakeReply:
     tool_input: FrozenMap = ...
     tool_output: str = ''
     tool_error: bool = False
+    last_call_usage: Usage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ...
 
     def __post_init__(self) -> None:
         ...
@@ -126,6 +131,9 @@ class FakeTurn:
     lines: list[ClaudeStreamLine]
     end: Completed | Failed | Interrupted | BackendLost | None
     bells: tuple[ExternalPromise[None], ...]
+    last_call_usage: Usage | None
+    last_call_model: str | None
+    model_windows: tuple[ModelWindow, ...]
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -169,6 +177,9 @@ def reply_of(world: FakeClaudeWorld, text: str, memory: tuple) -> _Program[FakeR
     ...
 
 def ring_turn(turn: FakeTurn) -> _Program[None, object]:
+    ...
+
+def said_by_reply(reply: FakeReply, kind: ClaudeLineKind) -> _Program[ClaudeLineKind, object]:
     ...
 
 def emit(session: FakeSession, turn: FakeTurn, kind: ClaudeLineKind) -> _Program[None, object]:

@@ -7,6 +7,7 @@
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState StopSignal StopControl NoStop])
 (import doeff_claude_code.faults [StopReason])
+(import doeff_claude_code [lines])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
 (setv INIT {"type" "system" "subtype" "init" "session_id" SID
@@ -299,6 +300,58 @@
   (assert (is (dialogue.answer-permission allowed.state "req-1" (Allow))))
   (setv denied (dialogue.answer-permission asked.state "req-1" (Deny "no")))
   (assert (= (get (json.loads (get denied.sends 0)) "response" "response") {"behavior" "deny" "message" "no"})))
+
+
+;; --- 本体の会話の最後の呼びの usage と model・model ごとの窓(#3744) -----------------------------------------
+
+;; 1 つの API の呼び(message)は content の block ごとに assistant の行を出し、どの行も同じ id・同じ usage を名乗る。subagent の行は
+;; parent_tool_use_id に親の呼びの id を持つ。
+(val CALL-1-USAGE {"input_tokens" 4 "cache_creation_input_tokens" 300 "cache_read_input_tokens" 9000 "output_tokens" 2})
+(val CALL-2-USAGE {"input_tokens" 6 "cache_creation_input_tokens" 50 "cache_read_input_tokens" 9300 "output_tokens" 11})
+(val CALL-1-TEXT {"type" "assistant" "parent_tool_use_id" None
+                  "message" {"id" "msg_1" "model" "claude-opus-4-5" "content" [{"type" "text" "text" "x"}] "usage" CALL-1-USAGE}})
+(val CALL-1-TOOL {"type" "assistant" "parent_tool_use_id" None
+                  "message" {"id" "msg_1" "model" "claude-opus-4-5"
+                             "content" [{"type" "tool_use" "id" "toolu_1" "name" "Task" "input" {}}] "usage" CALL-1-USAGE}})
+(val SUBAGENT-CALL {"type" "assistant" "parent_tool_use_id" "toolu_1"
+                    "message" {"id" "msg_s" "model" "claude-haiku-4-5" "content" [{"type" "text" "text" "sub"}]
+                               "usage" {"input_tokens" 1 "cache_read_input_tokens" 50000 "output_tokens" 900}}})
+(val CALL-2-TEXT {"type" "assistant" "parent_tool_use_id" None
+                  "message" {"id" "msg_2" "model" "claude-opus-4-5" "content" [{"type" "text" "text" "done"}] "usage" CALL-2-USAGE}})
+(val WINDOWED-RESULT (| SUCCESS-RESULT {"modelUsage" {"claude-opus-4-5" {"contextWindow" 200000 "maxOutputTokens" 64000}
+                                                      "claude-haiku-4-5" {"contextWindow" 200000 "maxOutputTokens" 32000}}}))
+
+(deftest test-the-turn-end-carries-the-last-main-call-and-the-model-windows
+  ;; 手番の終わりは、本体の会話(parent_tool_use_id が null)の最後の assistant の行の usage と model、result の行の modelUsage の
+  ;; model ごとの窓を運ぶ。subagent の行(parent_tool_use_id が在る)は後に読んでも取らない。
+  (var state (started))
+  (for [record [CALL-1-TEXT CALL-1-TOOL SUBAGENT-CALL CALL-2-TEXT SUBAGENT-CALL]]
+    (:= state (. (read-record state record) state)))
+  (val read (read-record state WINDOWED-RESULT))
+  (assert (isinstance read.end Completed) (repr read.end))
+  (assert (= #(read.end.last-call-usage read.end.last-call-model read.end.model-windows)
+             #((Usage :input-tokens 6 :cache-creation-input-tokens 50 :cache-read-input-tokens 9300 :output-tokens 11)
+               "claude-opus-4-5"
+               #((lines.ModelWindow "claude-opus-4-5" 200000 64000) (lines.ModelWindow "claude-haiku-4-5" 200000 32000))))
+          (repr read.end)))
+
+
+(deftest test-the-last-call-is-kept-by-a-lost-turn-and-forgotten-at-the-next-turn
+  ;; 途中で process が消えた手番も、それまでに読んだ本体の呼びの usage と model を運ぶ(result の行が無いので窓は空)。次の手番は
+  ;; 空から数え直す — 前の手番の呼びと窓を次の手番の終わりへ持ち越さない(0 も発明しない)。
+  (val called (. (read-record (started) CALL-1-TEXT) state))
+  (val lost (dialogue.on-exit called 137 ""))
+  (assert (isinstance lost.end BackendLost) (repr lost.end))
+  (assert (= #(lost.end.last-call-usage lost.end.last-call-model lost.end.model-windows)
+             #((Usage :input-tokens 4 :cache-creation-input-tokens 300 :cache-read-input-tokens 9000 :output-tokens 2)
+               "claude-opus-4-5" #()))
+          (repr lost.end))
+  (val finished (read-record called WINDOWED-RESULT))
+  (val again (dialogue.begin-turn finished.state (TurnInput "again" "msg-2")))
+  (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
+  (assert (isinstance second.end Completed) (repr second.end))
+  (assert (= #(second.end.last-call-usage second.end.last-call-model second.end.model-windows) #(None None #()))
+          (repr second.end)))
 
 
 (deftest test-input-outside-a-turn-is-not-written

@@ -17,6 +17,8 @@
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
 ;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る)
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
+;;;   手番の終わりの last-call-usage・last-call-model・model-windows → AgentTurn*.last_call_usage(AgentTurnUsage — 額は None)・
+;;;                                      last_call_model・model_windows(会話の今の context の大きさの材料 — agora-redesign #3744)
 ;;;   AssistantMessage.tool-calls / ToolResult.answers → AgentToolUseEvent.tool_calls / AgentToolResultEvent.answers(道具の呼びの命令
 ;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
@@ -155,21 +157,35 @@
                                    :cost-usd cost-usd))
   (if (= turn-usage (AgentTurnUsage)) None turn-usage))
 
+(defn #^ (| AgentTurnUsage None) last-call-of [#^ (| Usage None) usage]
+  "層 2 の手番の最後の呼びの usage → 層 3 の AgentTurnUsage(会話の今の context の大きさを記録へ運ぶため — #3744)。呼びごとの額は
+   CLI が名乗らないので None。usage が無い・4 欄とも名乗られなければ None。"
+  (if (is usage None) None (usage-of usage None)))
+
 (defn end-of [end #^ str context-id]
-  "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。"
+  "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。どの終わりも本体の最後の呼びの usage と model・
+   model ごとの窓を運ぶ(#3744)。"
+  (when (not (isinstance end #(Completed Failed Interrupted BackendLost)))
+    (raise (TypeError (.format "層 2 の手番の終わりが閉語彙の外: {!r}" end))))
+  (setv last-call-usage (last-call-of end.last-call-usage)
+        last-call-model end.last-call-model
+        model-windows end.model-windows)
   (cond
     (isinstance end Completed)
       (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id
-                          :usage (usage-of end.usage end.cost-usd))
+                          :usage (usage-of end.usage end.cost-usd)
+                          :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
     (isinstance end Failed)
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
-                       :usage (usage-of end.usage end.cost-usd))
+                       :usage (usage-of end.usage end.cost-usd)
+                       :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
     (isinstance end Interrupted)
       (AgentTurnInterrupted :cli-kept end.process-kept :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs
-                            :resume-from context-id)
+                            :resume-from context-id
+                            :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
     (isinstance end BackendLost)
-      (AgentTurnLost :detail end.detail :resume-from context-id)
-    True (raise (TypeError (.format "層 2 の手番の終わりが閉語彙の外: {!r}" end)))))
+      (AgentTurnLost :detail end.detail :resume-from context-id
+                     :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)))
 
 (defn #^ str detail-of [end]
   (cond

@@ -31,7 +31,7 @@
 (import doeff_hy.frozen [thaw-json])
 (import doeff_claude_code.values [TurnInput Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
-                                 TurnResult Usage INPUT-FATES INPUT-FATE-TERMINAL])
+                                 AssistantMessage TurnResult Usage ModelWindow INPUT-FATES INPUT-FATE-TERMINAL merged-windows])
 (import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
@@ -68,7 +68,9 @@
    permissions = 答え待ちの許可の問い(PermissionRequested)/
    cost-mark = 手番の額の起点(CLI の累積の額 total_cost_usd の、前の手番を閉じた result の行の値。process の始まりは handler が
    引き継いだ値 — None = 分からない)/ start-mark = この process の始まりの cost-mark(この process が額を記さずに消えた時、次の
-   process の CLI が数え始める額 — handler が読む)/ turn-usage = この host の手番の途中に読んだ result の行の usage の和。"
+   process の CLI が数え始める額 — handler が読む)/ turn-usage = この host の手番の途中に読んだ result の行の usage の和 /
+   last-call-usage・last-call-model = この host の手番に読んだ本体の会話(parent_tool_use_id が null)の最後の assistant の行の usage と
+   model(まだ無ければ None)/ turn-windows = この host の手番に読んだ result の行の model ごとの窓(手番の終わりの 3 欄 — #3744)。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
@@ -81,7 +83,10 @@
   (setv #^ (get tuple #(PermissionRequested ...)) permissions #())
   (setv #^ (| float None) cost-mark None)
   (setv #^ (| float None) start-mark None)
-  (setv #^ Usage turn-usage (field :default-factory Usage)))
+  (setv #^ Usage turn-usage (field :default-factory Usage))
+  (setv #^ (| Usage None) last-call-usage None)
+  (setv #^ (| str None) last-call-model None)
+  (setv #^ (get tuple #(ModelWindow ...)) turn-windows #()))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・retire(この行で process を降ろす訳 — 無ければ
@@ -163,17 +168,22 @@
                  :input-refs refs)))
 
 (defn #^ DialogueState closed-turn [#^ DialogueState state]
-  "host の手番を閉じた状態(会話の id・CLI の能力・額の起点は保つ)。"
+  "host の手番を閉じた状態(会話の id・CLI の能力・額の起点は保つ。最後の呼びと窓は次の手番へ持ち越さない)。"
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
-           :deferred-result None :permissions #() :turn-usage (Usage)))
+           :deferred-result None :permissions #() :turn-usage (Usage)
+           :last-call-usage None :last-call-model None :turn-windows #()))
+
+(defn with-last-call [end #^ DialogueState state]
+  "手番の終わりに、その手番で読んだ本体の最後の呼びの usage と model・model ごとの窓を載せるため(どの終わり方でも同じ 3 欄 — #3744)。"
+  (replace end :last-call-usage state.last-call-usage :last-call-model state.last-call-model :model-windows state.turn-windows))
 
 (defn ended [#^ DialogueState state end #^ (| TurnResult None) [priced-by None] #^ (| StopReason None) [retire None]]
   "host の手番を end で閉じる遷移(process は降ろさない — 次の手番まで生きて待つ。retire が在れば、その訳で降ろす)。priced-by = 手番を
    閉じた result の行(在ればその行の累積の額が次の手番の額の起点 — 止めた手番の額は数えずに捨て、次の手番へ混ぜない。行が無い
-   終わりは起点を動かさない)。"
+   終わりは起点を動かさない)。終わりには閉じる前の state の最後の呼びと窓を載せる(with-last-call)。"
   (setv closed (closed-turn state))
   (Transition :state (if (is priced-by None) closed (replace closed :cost-mark priced-by.cost-usd))
-              :end end :retire retire))
+              :end (with-last-call end state) :retire retire))
 
 
 ;; --- 遷移(呼び手の操作) -----------------------------------------------------------------------------
@@ -281,7 +291,8 @@
    (累積の額の差にはどの行の分も入るので、usage も同じ行の集まりで数える)。"
   (when (not state.in-flight)
     (return (Transition :state state)))
-  (setv counted (replace state :turn-usage (+ state.turn-usage result.usage)))
+  (setv counted (replace state :turn-usage (+ state.turn-usage result.usage)
+                               :turn-windows (merged-windows state.turn-windows result.model-windows)))
   (when (in result.origin-kind CLI-OWN-TURN-ORIGINS)
     (return (Transition :state counted)))
   (setv open-closed (replace counted :cli-turn-open False))
@@ -299,13 +310,22 @@
             (Transition :state (replace (closed-turn open-closed) :in-flight True :turn-refs survivors
                                         :injections (tuple (gfor ref survivors (Injection ref "queued")))
                                         :cost-mark result.cost-usd)
-                        :end (Interrupted :process-kept True :surviving-refs survivors :dropped-refs dropped)
+                        :end (with-last-call (Interrupted :process-kept True :surviving-refs survivors :dropped-refs dropped)
+                                             open-closed)
                         :continues True)
             (ended open-closed (Interrupted :process-kept True :dropped-refs dropped) :priced-by result)))
     queued
       (Transition :state (replace open-closed :deferred-result result))
     True
       (ended open-closed (end-of-result result open-closed) :priced-by result)))
+
+(defn on-assistant [#^ DialogueState state #^ AssistantMessage message]
+  "assistant の行: 本体の会話(parent_tool_use_id が null)の行なら、その usage と model を手番の最後の呼びとして覚える(1 つの呼びの
+   block ごとの行は同じ usage を名乗るので、最後の行で置き換えてよい)。subagent の行は覚えない — 会話の context の大きさは本体の呼びの
+   入力の側で数えるため(#3744)。"
+  (if (is message.parent-tool-use-id None)
+      (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model))
+      (Transition :state state)))
 
 (defn on-record [#^ DialogueState state kind]
   "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。
@@ -318,4 +338,5 @@
     (isinstance kind ControlResponse) (on-control-response state kind)
     (isinstance kind PermissionRequested) (on-permission-request state kind)
     (isinstance kind TurnResult) (on-result state kind)
+    (isinstance kind AssistantMessage) (on-assistant state kind)
     True (Transition :state state)))

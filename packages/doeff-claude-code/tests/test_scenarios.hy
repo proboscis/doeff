@@ -69,7 +69,11 @@
   (<- asked (ClaudeInterruptTurn started.turn))
   (assert (isinstance asked InterruptRequested) (repr asked))
   (<- stopped (read-to-end started.turn s.turn-timeout))
-  (assert (= stopped.end (Interrupted :process-kept False)) (repr stopped.end))
+  ;; 止めの形だけを比べる(終わりが運ぶ本体の最後の呼びと model の窓は答え手ごとに違う — #3744)。
+  (assert (and (isinstance stopped.end Interrupted)
+               (= #(stopped.end.process-kept stopped.end.surviving-refs stopped.end.dropped-refs stopped.end.continued-by)
+                  #(False #() #() None)))
+          (repr stopped.end))
   (<- after (start (ResumeSession sid) s.base (reply-prompt "AFTER")))
   (<- done (read-to-end after.turn s.turn-timeout))
   (assert (isinstance done.end Completed) (repr done.end))
