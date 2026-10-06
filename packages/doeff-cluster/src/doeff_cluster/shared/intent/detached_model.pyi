@@ -101,6 +101,7 @@ class RunnerFact:
     live: bool
     draining: bool
     task_room: int
+    node: str = ""
 
 @dataclass(frozen=True, kw_only=True)
 class RunnersUnreachable:
