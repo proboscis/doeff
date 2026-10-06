@@ -16,6 +16,11 @@ dependencies = [
     "doeff-hy",
 ]
 
+[project.optional-dependencies]
+# The Redis handler (doeff_events.handlers.redis_streams) is the only user of the client; a process that uses the
+# in-memory broker does not need it (agora-redesign #3850).
+redis = ["redis>=5.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

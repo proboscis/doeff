@@ -59,6 +59,30 @@ class SourceResumed:
     source: str
 
 
+@dataclass(frozen=True)
+class SourceStarted:
+    """The task named ``source`` reached its store for the first time and began its subscription.
+
+    A source that feeds events from another process (``stream_events_handler``) publishes it once, before it lets
+    the body run: the body that names it in its subscription catches up once from its records and then goes on
+    with events alone. Not always subscribed, like ``SourceResumed``.
+    """
+
+    source: str
+
+
+@dataclass(frozen=True)
+class SourceGap:
+    """The task named ``source`` found that events it was to read are gone: the head of its stream was cut
+    (a length limit) past the place its reader had reached.
+
+    Published when the source starts or reaches its store again and sees the cut. The body that names it in its
+    subscription catches up once from its records. Not always subscribed, like ``SourceResumed``.
+    """
+
+    source: str
+
+
 def _normalize_event_types(event_types: tuple[type[Any], ...]) -> tuple[type[Any], ...]:
     if not event_types:
         raise ValueError("WaitForEvent requires at least one event type")
@@ -115,6 +139,10 @@ __all__ = [
     "Publish",
     "PublishEffect",
     "SourceFailed",
+    "SourceGap",
+    "SourceResumed",
+    "SourceStalled",
+    "SourceStarted",
     "StopArrived",
     "WaitForEvent",
     "WaitForEventEffect",
