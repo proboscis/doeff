@@ -29,7 +29,7 @@
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.worker.intent.env_prepare_model [ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.entry.service_build [resolve])
-(import doeff_cluster.worker.protocol.declared [task-spec] tests.link_rig [write-program-file])
+(import doeff_cluster.worker.protocol.declared [task-spec] tests.link_rig [write-program-file] doeff_cluster.worker.core.launch [spec-program-file])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings])
@@ -250,10 +250,12 @@
   (.mkdir tasks :parents True :exist-ok True)
   (val blob (encode-program (report)))
   (val sha (program-sha blob))
-  (write-program-file (Path rig.host.program-dir) sha blob (or versions (! (process-versions os.environ))))
   (<- spec (task-spec {"id" task-id "revision" "" "versions" (or versions (! (process-versions os.environ))) "program" sha
                         "runtimeEnv" declared}
                        tasks))
+  ;; cache の file の置き方は worker と同じ定義点(task は task の行の版ごとの dir — launch.spec-program-file・#3762)。
+  (<- cached Path (spec-program-file (Path rig.host.program-dir) spec))
+  (write-program-file cached.parent sha blob (or versions (! (process-versions os.environ))))
   (<- key str (env-key env (current-platform)))
   (<- root str (env-root rig.envs (+ "env-" key)))
   (val ended (! (run-on-host rig.host (job-ended spec root DEADLINE-SECONDS) :around around)))

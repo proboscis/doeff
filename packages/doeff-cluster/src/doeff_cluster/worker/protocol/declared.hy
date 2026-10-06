@@ -106,6 +106,7 @@
   "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。結果はこの worker の file(名前は task の id で決まる)。詰めた Program は
    service の job と同じく置き場のキー program(sha)で持ち、worker の coordinator への口が /programs/<sha> から cache へ取り、
    子 process の言い換え(worker/protocol/process_host)が `--program <cache の file>` を足す(入口は `task --result <file> --program <file>` — 版は file の中の versions)。
+   file の中の versions は task の行の versions で、cache の file は版ごとに分かれる(launch.spec-program-file・#3762)。
    実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
   (val id (get task "id"))
   (<- placed EnvPlacement (env-placement (.get task "runtimeEnv") (get task "revision")))
@@ -114,6 +115,9 @@
            placed.revision :once True :detached (bool (.get task "detached" False))
            :runtime-env placed.runtime-env :env-key placed.env-key
            :program (get task "program")
+           ;; 子の入口が比べる送り手の版 = task の行の versions(task を作った時の版 — coordinator の Program の行の版は後の送り手に
+           ;; 上書きされうるので使わない・#3762)。
+           :versions (environ-pairs (get task "versions"))
            ;; 子の環境変数(service の job と同じ欄・同じ路 — 子 process の言い換えが宣言の env-vars の上に重ねる)。
            :environ (environ-pairs (.get task "environ" {}))))
 
