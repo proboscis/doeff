@@ -15,7 +15,6 @@ from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvF
 from doeff_cluster.shared.intent.runtime_env_model import CHILD_PROTOCOL as CHILD_PROTOCOL
 from doeff_cluster.shared.intent.runtime_env_model import SUPPORTED_CHILD_PROTOCOLS as SUPPORTED_CHILD_PROTOCOLS
 from doeff_cluster.shared.core.runtime_env_rules import env_failure as env_failure
-from doeff_cluster.shared.core.runtime_env_rules import native_key as native_key
 from doeff_cluster.shared.core.runtime_env_rules import root_split as root_split
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
@@ -44,7 +43,6 @@ from doeff_cluster.worker.intent.env_prepare_model import ReadCgroupMemory as Re
 from doeff_cluster.worker.intent.env_prepare_model import EnsureMirror as EnsureMirror
 from doeff_cluster.worker.intent.env_prepare_model import FetchCommit as FetchCommit
 from doeff_cluster.worker.intent.env_prepare_model import MaterializeTree as MaterializeTree
-from doeff_cluster.worker.intent.env_prepare_model import TreeHash as TreeHash
 from doeff_cluster.worker.intent.env_prepare_model import EnsureNativeWheel as EnsureNativeWheel
 from doeff_cluster.worker.intent.env_prepare_model import SyncProject as SyncProject
 from doeff_cluster.worker.intent.env_prepare_model import InstallWheels as InstallWheels

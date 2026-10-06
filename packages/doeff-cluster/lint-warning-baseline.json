@@ -32,7 +32,7 @@
     "src/doeff_cluster/worker/core/beat_policy.hy": 1,
     "src/doeff_cluster/worker/core/code_prepare.hy": 1,
     "src/doeff_cluster/worker/core/drain_client.hy": 2,
-    "src/doeff_cluster/worker/core/env_prepare.hy": 2,
+    "src/doeff_cluster/worker/core/env_prepare.hy": 1,
     "src/doeff_cluster/worker/core/launch.hy": 2,
     "src/doeff_cluster/worker/core/probe_rules.hy": 2,
     "src/doeff_cluster/worker/intent/code_model.hy": 1,

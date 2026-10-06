@@ -301,7 +301,7 @@
 (defk sweep-leftovers [settings now-ms]
   {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
   "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
-   wheel(使うたびに dir の中の印の file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)と、7 日使われない bytecode の
+   wheel(build の口の保存先 — 口が使うたびに dir の中の印の file を置き換えて dir の時刻を進める)と、7 日使われない bytecode の
    保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)を消し、消した path の列を
    返すため。"
   (<- roots (ListDirectory (+ settings.state "/roots")))

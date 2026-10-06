@@ -16,7 +16,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
       ],
-      "responsibility": "起動の script(deploy/boot.sh)の自己起動が root の venv へ入れる doeff-vm の wheel を、実行環境の準備と同じ鍵・同じ置き場・同じ錠から用意する入口(無ければ組んで置く)。",
+      "responsibility": "起動の script(deploy/boot.sh)の自己起動が root の venv へ入れる doeff-vm の wheel を、実行環境の準備と同じく `uv build --wheel` で build の口に渡し、口の保存先の中の wheel(口の報告で知る)を答える入口(同じ package の錠を持つ間に通す)。自前の鍵と置き場は持たない。",
       "typed": true
     }
   ]

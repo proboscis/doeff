@@ -227,17 +227,10 @@
 
 
 
-(defclass [(dataclass :frozen True)] TreeHash [EffectBase]
-  "commit の中の dir の git の tree hash。答え = str。"
-  (#^ str mirror)
-  (#^ str commit)
-  (#^ str path))
-
-
 (defclass [(dataclass :frozen True)] EnsureNativeWheel [EffectBase]
-  "キーの native の wheel を用意する(無ければ source-dir — 宣言の paths の先頭の dir — から build・キーごとに排他)。
-   答え = WheelReady か EnvFailure(native-build-failed)。"
-  (#^ str key)
+  "native の wheel を build の口(doeff の tools/doeff_cargo_backend.py — Rust の部品を組む・引く入口の 1 つ)の保存先から用意する
+   (`uv build --wheel` で source-dir — 宣言の paths の先頭の dir — を口へ渡す。口が source の中身の鍵で保存先を引き、無い時だけ組む・
+   package ごとに排他)。答え = WheelReady か EnvFailure(native-build-failed)。"
   (#^ str package)
   (#^ str source-dir))
 

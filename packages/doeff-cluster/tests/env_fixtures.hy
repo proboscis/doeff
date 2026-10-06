@@ -43,6 +43,8 @@
   (<- sha str (sha-of label))
   (WorldCommit :sha sha
               :files #((WorldFile :path "native/core/lib.rs" :text native)
+                       ;; 本物の build の口と同じく、模擬の口も報告の行に pyproject の [project] の name を書く(#3860)。
+                       (WorldFile :path "native/core/pyproject.toml" :text "[project]\nname = \"lib-native\"\n")
                        (WorldFile :path "lib/__init__.py" :text "Y = 2\n")
                        ;; editable で入る依存の package の dir(test_env_prepare の editable の筋書き — venv の .pth が指す先が在る)。
                        (WorldFile :path "extra/src/extra_pkg/__init__.py" :text "Z = 3\n"))))
