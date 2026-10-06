@@ -32,11 +32,6 @@
 (setv CLAUDE-TURN-CREDENTIAL-ENV "CLAUDE_CODE_OAUTH_TOKEN")
 (setv TURN-AUTH-ENV-KEYS #{CLAUDE-TURN-CREDENTIAL-ENV})
 
-;; ターンの資格の答え(TurnCredential.github_token)が GitHub の token を持つ時に、headless の adapter がその値を置く子の env の名
-;; (agora-redesign #3753 — 子の CLI の gh・git が GitHub へ書くため)。設定 dir の env・session_env の受理と禁止の集合には入れない(どの集合を
-;; 禁じるかは上の表のまま)。
-(setv GITHUB-TOKEN-ENV "GH_TOKEN")
-
 ;; provider の鍵・札の綴り(= どの層でも agent process へ運ばせない)。
 ;; 形(`*_API_KEY`)の判定と重なる名も在るが、重なりは無害 — 形だけでは拾えない
 ;; 別名(*_API_KEY で終わらない個人鍵・AUTH_TOKEN 系)を綴りで塞ぐのがこの名簿の役。

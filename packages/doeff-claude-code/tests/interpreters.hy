@@ -83,10 +83,9 @@
              :thinking-deltas (get rule "thinking_deltas")
              :tool-input-deltas (get rule "tool_input_deltas")))
 
-;; 共通の筋書きの本番の host の上限の本数と資格の床(筋書きは 1 つの host で会話を数個しか持たず、資格の期限を spec に載せない
-;; — 上限と床で降ろす形は test_handler の検だけが撃つ)。
+;; 共通の筋書きの本番の host の上限の本数(筋書きは 1 つの host で会話を数個しか持たず、資格の止める刻を spec に載せない
+;; — 上限と止める刻で停止する形は test_handler のテストだけが確かめる)。
 (setv SCENARIO-LIVE-LIMIT 8)
-(setv SCENARIO-CREDENTIAL-FLOOR 7200.0)
 
 (defn handlers-for [#^ str name]
   ;; 本番の handler は計時の行(slog)を出すので、その外側に slog の答え手を置く(本番の組の slog-handler の代わり — #3605)。
@@ -94,10 +93,10 @@
     (= name FAKE) [(sim-time-handler :clock (SimClock)) (fake-claude-code-handler (FakeClaudeWorld fake-responder))]
     (= name STUB) [(sync-time-handler) slog-discard-handler
                    (claude-code-handler (ClaudeCodeHost #(sys.executable "-m" "hy" STUB-PATH) (clock-of (sync-time-handler))
-                                                        SCENARIO-LIVE-LIMIT SCENARIO-CREDENTIAL-FLOOR :launch-timeout 60.0))]
+                                                        SCENARIO-LIVE-LIMIT :launch-timeout 60.0))]
     (= name REAL) [(sync-time-handler) slog-discard-handler
                    (claude-code-handler (ClaudeCodeHost #("claude") (clock-of (sync-time-handler))
-                                                        SCENARIO-LIVE-LIMIT SCENARIO-CREDENTIAL-FLOOR :launch-timeout 120.0))]
+                                                        SCENARIO-LIVE-LIMIT :launch-timeout 120.0))]
     True []))
 
 (defn build-interpreter [#^ str name #^ Path tmp-path]

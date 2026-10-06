@@ -41,8 +41,8 @@
 ;; LAUNCH-CHANGED = 次の手番の起こした時の条件の鍵(argv.hy の launch-key)が違う / OUTSIDE-TURN-OUTPUT = 手番の外で出力した(守り)/
 ;; INTERRUPT-SIGNAL = 止めるを SIGINT で伝えた(CLI は result の後に自分で降りる — 2.1.282。降りる途中の process を次の手番が使い回さ
 ;; ない)/ LIVE-LIMIT = 生かす本数の上限(ClaudeCodeHost の live-limit)に来て、手番を走らせていない物のうち一番長く使われていない物
-;; として降ろした(D2)/ CREDENTIAL-FLOOR = 資格の期限 − 床(ClaudeCodeHost の credential-floor-seconds)を過ぎた(D2 — 呼び手は
-;; この訳を読んで借りた資格を返す)。process が自分で終わった時(落ちた・消された)は訳を付けない。
+;; として降ろした(D2)/ CREDENTIAL-FLOOR = 今が資格の止める刻(ClaudeSessionSpec の credential-usable-until — 借り手が余裕の秒を
+;; 引いた後の刻)以上になった(D2・#3753 (c) — 呼び手はこの訳を読んで借りた資格を返す)。process が自分で終わった時(落ちた・消された)は訳を付けない。
 (defenum StopReason SESSION-CLOSED LAUNCH-CHANGED OUTSIDE-TURN-OUTPUT INTERRUPT-SIGNAL LIVE-LIMIT CREDENTIAL-FLOOR)
 
 

@@ -179,7 +179,6 @@ def headless_claude_agent_handlers(
     config_dir: str,
     env: dict[str, str],
     live_limit: int,
-    credential_floor_seconds: float,
     settings: dict[str, Any] | None = None,
     cold_resume_prompt: str | None = None,
     command: tuple[str, ...] = ("claude",),
@@ -189,10 +188,11 @@ def headless_claude_agent_handlers(
     Returns ``[doeff-claude-code production handler, headless adapter]`` in
     ``with_handlers`` order (outer first). ``config_dir`` / ``env`` are the
     Claude home (credentials are placed in ``env`` by the composition root).
-    ``live_limit`` is how many CLI processes the host keeps alive at once and
-    ``credential_floor_seconds`` how long before a lent credential expires the
-    host stops the process using it (both from the caller's declaration — no
-    defaults; agora-redesign #3672 D2).
+    ``live_limit`` is how many CLI processes the host keeps alive at once
+    (from the caller's declaration — no default; agora-redesign #3672 D2).
+    The instant a lent credential stops its CLI is not a host setting: the
+    launch carries the redeemed ``TurnCredential.usable_until`` as is
+    (agora-redesign #3753 (c)).
     Install a doeff-time handler, a slog handler (the production handler
     emits CLI launch timing lines — agora-redesign #3605) and the scheduler
     outside them. No session-host socket is opened (agora-redesign #604).
@@ -204,7 +204,6 @@ def headless_claude_agent_handlers(
         cold_resume_prompt,
         tuple(command),
         live_limit=live_limit,
-        credential_floor_seconds=credential_floor_seconds,
     )
 
 
@@ -243,7 +242,6 @@ def claude_agent_runtime_handlers(
     config_dir: str,
     env: dict[str, str],
     live_limit: int,
-    credential_floor_seconds: float,
     settings: dict[str, Any] | None = None,
     cold_resume_prompt: str | None = None,
 ) -> list[Any]:
@@ -255,7 +253,7 @@ def claude_agent_runtime_handlers(
     effects is decided here. Today it is the print-mode adapter over
     ``doeff-claude-code`` (the same pair as ``headless_claude_agent_handlers``).
     ``config_dir`` / ``env`` are the Claude home (credentials are placed by the
-    composition root); ``live_limit`` / ``credential_floor_seconds`` as for
+    composition root); ``live_limit`` as for
     ``headless_claude_agent_handlers``. Install a doeff-time handler, a slog
     handler and the scheduler outside.
     """
@@ -263,7 +261,6 @@ def claude_agent_runtime_handlers(
         config_dir=config_dir,
         env=env,
         live_limit=live_limit,
-        credential_floor_seconds=credential_floor_seconds,
         settings=settings,
         cold_resume_prompt=cold_resume_prompt,
     )
@@ -303,7 +300,6 @@ def fake_claude_agent_runtime_handlers(
 def claude_process_layer_handler(
     *,
     live_limit: int,
-    credential_floor_seconds: float,
     command: tuple[str, ...] = ("claude",),
 ) -> Callable[..., object]:
     """Layer 2 alone: the production handler that keeps each conversation's CLI process alive across turns.
@@ -312,16 +308,14 @@ def claude_process_layer_handler(
     caller that places layer 2 and the adapter at different depths
     (agora-redesign #3507): layer 2 belongs to the foundation that owns real
     processes (an emulation answers layer 2 outside instead), the adapter sits
-    next to the program. ``live_limit`` / ``credential_floor_seconds`` as for
+    next to the program. ``live_limit`` as for
     ``headless_claude_agent_handlers`` (agora-redesign #3672 D2). Install a
     doeff-time handler, the scheduler and a slog handler outside it.
     """
     from doeff import run
 
     return run(
-        _hy_headless_compose_module().claude_process_layer(
-            tuple(command), live_limit, float(credential_floor_seconds)
-        )
+        _hy_headless_compose_module().claude_process_layer(tuple(command), live_limit)
     )
 
 

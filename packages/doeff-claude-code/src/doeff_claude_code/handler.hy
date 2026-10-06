@@ -54,7 +54,7 @@
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState])
-(import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision retire-time credential-due])
+(import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision credential-due])
 (import doeff_claude_code.argv [transcript-dir transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 
@@ -144,7 +144,8 @@
     (setv #^ (| StopReason None) self.stopped-because None)
     (setv #^ (| str None) self.launch-key None)
     ;; last-used = 最後に手番を始めた刻(GetMonotonic の読み — 上限の本数で一番長く使われていない物を選ぶ・D2)・retire-after = 今の
-    ;; process を止める刻(資格の期限 − 床・epoch 秒 — 期限を知らなければ None・D2)。
+    ;; process を止める刻(最後に起動した・再利用したターンの spec の credential-usable-until と同じ刻・epoch 秒 — 知らなければ None・
+    ;; D2・#3753 (c))。
     (setv #^ (| float None) self.last-used None)
     (setv #^ (| float None) self.retire-after None)
     ;; warmed-fresh = 新しい会話として入力なしで事前起動し(ClaudeWarmSession)、まだターンを始めていない(decision.SessionView の同じ
@@ -192,19 +193,16 @@
 (defclass ClaudeCodeHost []
   "handler の状態: 会話の id → SessionRuntime。command = 実行ファイルと前置きの引数(例: #(\"claude\"))・clock = 行の時刻を
    刻む関数(clock.clock-of)・live-limit = 同時に生かす process の本数の上限(走っている手番の process も数える — 機体の memory の
-   予算 ÷ 1 本の memory。#3672 の D2)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential-expires-at)の手前で
-   process を止める床の秒・launch-timeout = init の行を待つ上限と、上限の本数に空きを待つ上限(秒)。上限と床は呼び手の宣言から
-   受ける(既定を持たない)。"
-  (defn __init__ [self #^ tuple command clock #^ int live-limit #^ float credential-floor-seconds [launch-timeout 120.0]]
+   予算 ÷ 1 本の memory。#3672 の D2)・launch-timeout = init の行を待つ上限と、上限の本数に空きを待つ上限(秒)。上限は呼び手の
+   宣言から受ける(既定を持たない)。資格で process を止める刻は host が持たず、ターンの宣言(ClaudeSessionSpec の
+   credential-usable-until — 借り手が余裕の秒を引いた後の刻)を何も足し引きせずに使う(#3753 (c))。"
+  (defn __init__ [self #^ tuple command clock #^ int live-limit [launch-timeout 120.0]]
     ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る。
     (when (or (isinstance live-limit bool) (< live-limit 1))
       (raise (ValueError (.format "ClaudeCodeHost.live_limit は 1 以上の整数: {!r}" live-limit))))
-    (when (or (isinstance credential-floor-seconds bool) (< credential-floor-seconds 0))
-      (raise (ValueError (.format "ClaudeCodeHost.credential_floor_seconds は 0 以上の秒: {!r}" credential-floor-seconds))))
     (setv self.command command
           self.clock clock
           self.live-limit live-limit
-          self.credential-floor-seconds (float credential-floor-seconds)
           self.launch-timeout (float launch-timeout)
           self.lock (threading.Lock)
           ;; doorbell = 会話の組が変わる(足す・忘れる)のを待つ手の呼び鈴(本数の空きの待ち — hang-on-all)。
@@ -275,7 +273,7 @@
       (+= runtime.next-line-seq 1))
     (setv transition (dialogue.on-record runtime.state kind))
     (apply-transition runtime binding transition)
-    ;; 手番の境で、資格の期限 − 床を過ぎていれば止める(D2 — 生き残った入力の手番が続く時は境ではない)。
+    ;; ターンの終わりで、行の時刻が資格の止める刻以上(ちょうども)なら止める(D2 — 残った入力のターンが続く時は終わりではない)。
     (when (and (is-not transition.end None) (not transition.continues) (is transition.retire None)
                (credential-due runtime.retire-after (.timestamp at)))
       (setv runtime.stopped-because StopReason.CREDENTIAL-FLOOR)
@@ -676,7 +674,7 @@
                            (fn [] (.ring runtime.doorbell))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
-      (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
+      (setv runtime.retire-after spec.credential-usable-until)
       (except [error OSError]
         (setv runtime.binding None)
         (setv (. (.open-log runtime) end) (Interrupted :process-kept False))
@@ -692,7 +690,7 @@
    :post [(: % (| LaunchFailed None))] :tags {:context "claude-code" :role "foundation"}}
   "会話の process を、入力を書かずに起動して待たせるため(ClaudeWarmSession — ターンは開かない)。状態機械は最初の入力を待つマーク
    (awaiting-first-input)つきで新しくする — 最初の入力までは SessionStart の hook の行だけをターンの外の出力と数えない(dialogue.hy)。
-   読み取りの thread が読んだ行はターンの記録に入らない(ターンが無い)。費用の起点・起動条件のキー・資格の期限の余裕はターンの process
+   stdout を読む thread が読んだ行はターンの記録に入らない(ターンが無い)。費用の起点・起動条件のキー・資格の止める刻はターンの process
    と同じ規則。新しい会話なら warmed-fresh のマークを付ける(最初のターンは同じ id の FreshSession)。結果 = None(起動した)か
    LaunchFailed(実行ファイルが無い等)。"
   (<- mark (launch-mark-of runtime origin recorded))
@@ -712,7 +710,7 @@
                            (fn [] (.ring runtime.doorbell))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
-      (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
+      (setv runtime.retire-after spec.credential-usable-until)
       (except [error OSError]
         (setv runtime.binding None)
         (return (LaunchFailed :stderr-tail (str error))))))
@@ -747,14 +745,14 @@
                       :stderr-tail (if seen (.stderr-tail process)
                                        (.format "no init line within {} seconds" host.launch-timeout))))))
 
-(defk reuse-turn [#^ SessionRuntime runtime #^ ClaudeSessionSpec spec #^ TurnInput input #^ float requested #^ float floor-seconds]
-  {:pre [(: runtime SessionRuntime) (: spec ClaudeSessionSpec) (: input TurnInput) (: requested float) (: floor-seconds float)]
+(defk reuse-turn [#^ SessionRuntime runtime #^ ClaudeSessionSpec spec #^ TurnInput input #^ float requested]
+  {:pre [(: runtime SessionRuntime) (: spec ClaudeSessionSpec) (: input TurnInput) (: requested float)]
    :post [(: % (| TurnStarted None))]
    :tags {:context "claude-code" :role "foundation"}}
-  "生きて手番を待つ process に、この手番の入力を書くため(#3672 — 起こさず init も待たない。CLI は入力ごとに init を出し直すが、
-   書いた後なので手番の中の行として受ける)。経過の起点は入力を書いた刻。この手番の spec の資格の期限で止める刻を決め直す(同じ
-   token の貸与が延びれば期限も延びる — D2)。判断の後に process が降りた・降り始めた・手番を走らせているなら None(呼び手が降りるの
-   を待って起こす)。"
+  "生きてターンを待つ process に、このターンの入力を書くため(#3672 — 起動せず init も待たない。CLI は入力ごとに init を出し直す
+   が、書いた後なのでターンの中の行として受ける)。経過の起点は入力を書いた刻。止める刻はこのターンの spec の credential-usable-until
+   に置き直す(同じ token の貸与が延びれば止める刻も延びる — D2)。判断の後に process が停止した・停止し始めた・ターンを走らせて
+   いるなら None(呼び手が停止を待ってから起動する)。"
   (<- writing (GetMonotonic))
   (<- writing-wall (GetTime))
   (with [runtime.lock]
@@ -770,7 +768,7 @@
     (setv runtime.last-used requested)
     ;; ターンを始めたので、入力なしで事前起動した新しい会話のマークは消す(事前起動した process を最初のターンが使い回した時もここ)。
     (setv runtime.warmed-fresh False)
-    (setv runtime.retire-after (retire-time spec.credential-expires-at floor-seconds))
+    (setv runtime.retire-after spec.credential-usable-until)
     (apply-transition runtime binding (dialogue.begin-turn runtime.state input)))
   (<- (note-reused runtime turn-seq requested writing writing-wall))
   (TurnStarted (ClaudeTurn runtime.session-id turn-seq) runtime.session-id))
@@ -786,7 +784,7 @@
   None)
 
 
-;; --- 生かす本数の上限と資格の床(#3672 の D2 — 止める判断は host のここ 1 か所)------------------------------------------------
+;; --- 生かす本数の上限と資格の止める刻(#3672 の D2 — 止める判断は host のここ 1 か所)------------------------------------------------
 
 (defrecord LiveView
   "上限の本数を数える時の 1 つの会話の観測: runtime = その会話・idle = 生きて手番を走らせていない(降ろしてよい)・
@@ -834,7 +832,7 @@
   room)
 
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]
-  "手番を走らせていない生きた process の資格が床を切っていれば止めるため(訳 CREDENTIAL-FLOOR)。"
+  "ターンを走らせていない生きた process を、今が資格の止める刻以上なら止めるため(理由 CREDENTIAL-FLOOR)。"
   (with [runtime.lock]
     (setv process runtime.process)
     (when (and (is-not process None) (.alive process) (is process.retiring None) (is (.running-turn runtime) None)
@@ -842,10 +840,11 @@
       (setv runtime.stopped-because StopReason.CREDENTIAL-FLOOR)
       (.retire process))))
 
-(defk retire-under-floor [#^ ClaudeCodeHost host]
+(defk retire-past-usable-until [#^ ClaudeCodeHost host]
   {:pre [(: host ClaudeCodeHost)] :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
-  "host が呼ばれるたびに、手番を走らせていない生きた process のうち資格の期限 − 床を過ぎた物を止めるため(D2 — 走っている手番の
-   process は手番の境で on-line が止める。呼び手はこの訳を読んで借りた資格を返す)。"
+  "host が呼ばれるたびに(ターンを始める前を含む)、ターンを走らせていない生きた process のうち、今が資格の止める刻(spec の
+   credential-usable-until)以上の物を止めるため — 止める刻を過ぎた process へ次のターンを渡さない(D2・#3753 (c)。
+   走っているターンの process はターンの終わりで on-line が止める。呼び手はこの理由を見て借りた資格を返す)。"
   (<- now datetime (GetTime))
   (with [host.lock]
     (setv runtimes (tuple (.values host.runtimes))))
@@ -892,7 +891,7 @@
   {:pre [(: host ClaudeCodeHost) (: request ClaudeStartTurn)] :post [(: % "StartTurnOutcome")]}
   ;; 計時の行の起点(頼まれた刻 — 頭の註)。
   (<- requested (GetMonotonic))
-  (<- (retire-under-floor host))
+  (<- (retire-past-usable-until host))
   (setv origin request.origin spec request.spec input request.input)
   (setv refused (refused-attachment input))
   (when (is-not refused None) (return refused))
@@ -910,7 +909,7 @@
   (when (isinstance decision Reuse)
     (when (is runtime None)
       (raise (RuntimeError (.format "使い回す会話 {} の状態が無い(start-decision の誤り)" target-id))))
-    (<- reused (reuse-turn runtime spec input requested host.credential-floor-seconds))
+    (<- reused (reuse-turn runtime spec input requested))
     (when (is-not reused None) (return reused))
     ;; 判断の後に process が降りた・降り始めた(手番の外で出力した)— 降りるのを待ってから起こす。
     (:= decision (Launch :wait-retire True)))
@@ -945,7 +944,7 @@
    足りるかはターンと同じ start-decision の 1 か所で決め(Reuse = 起動しない)、拒否もターンと同じ型。起動前の準備はターンと同じ
    prepare-launch。起動できなかった新しい会話の状態は忘れる(id は未使用の扱い)。"
   (<- requested (GetMonotonic))
-  (<- (retire-under-floor host))
+  (<- (retire-past-usable-until host))
   (val origin request.origin)
   (val spec request.spec)
   (val canonical (os.path.realpath spec.cwd))
@@ -1028,7 +1027,7 @@
 
 (defk read-events [#^ ClaudeCodeHost host #^ ClaudeReadTurnEvents request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeReadTurnEvents)] :post [(: % (| TurnEventPage UnknownTurn))]}
-  (<- (retire-under-floor host))
+  (<- (retire-past-usable-until host))
   (setv turn request.turn)
   (setv runtime (.runtime host turn.session-id))
   (when (or (is runtime None) (is (page-of runtime turn request.after-seq) None))
@@ -1142,7 +1141,7 @@
     (<- closed (close-session host effect))
     (resume closed))
   (ClaudeSessionStatus [home cwd session-id]
-    (<- (retire-under-floor host))
+    (<- (retire-past-usable-until host))
     (resume (session-status host effect)))
   (ClaudeExportSession [home cwd session-id]
     (<- exported (export-session effect))

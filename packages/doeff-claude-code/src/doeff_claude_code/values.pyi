@@ -85,7 +85,7 @@ class ClaudeSessionSpec:
     autocompact: AutocompactAuto | AutocompactTokens | None = None
     system_prompt_append: str | None = None
     cold_resume_prompt: str | None = None
-    credential_expires_at: float | None = None
+    credential_usable_until: float | None = None
 
     def __post_init__(self) -> None:
         ...

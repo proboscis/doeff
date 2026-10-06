@@ -1,8 +1,9 @@
 ;; 本番の handler だけの検(替え玉の CLI)— 共通の筋書きに載らない handler の内側の約束:
 ;; 会話の process は手番をまたいで生き、閉じると降りる(#3672)・冷えた続きの前の 1 回きりの命令・起動の失敗の型。
-(require doeff-hy.macros [deftest defk <- val var])
+(require doeff-hy.macros [deftest defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])
+(import datetime [datetime timedelta timezone])
 (import json)
 (import os)
 (import os.path)
@@ -10,11 +11,11 @@
 (import sys)
 (import threading)
 (import uuid)
-(import doeff [with_handlers])
+(import doeff [EffectBase with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [await-handler listen-handler slog-discard-handler])
 (import doeff_core_effects.scheduler [CreateExternalPromise])
-(import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler sync-time-handler])
+(import doeff_time [Delay DelayEffect GetMonotonic GetTimeEffect WaitWithin async-time-handler sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
@@ -32,9 +33,9 @@
 (import tests.scenario_steps [TurnRecord live-process-until read-to-end read-to-tool-start])
 
 
-(defn host-of [command [live-limit 8] [floor 7200.0] [launch-timeout 30.0]]
-  ;; 検の host(上限の本数と資格の床は、それを撃つ検だけが小さくする — #3672 の D2)。
-  (ClaudeCodeHost command (clock-of (sync-time-handler)) live-limit floor :launch-timeout launch-timeout))
+(defn host-of [command [live-limit 8] [launch-timeout 30.0]]
+  ;; テストの host(上限の本数は、それを確かめるテストだけが小さくする — #3672 の D2)。
+  (ClaudeCodeHost command (clock-of (sync-time-handler)) live-limit :launch-timeout launch-timeout))
 
 (defn spec-in [#^ Path tmp-path [cold None]]
   (setv work (/ tmp-path "work"))
@@ -647,7 +648,7 @@
   (assert (= (get argv (+ (.index argv "--model") 1)) "another-model") (repr argv)))
 
 
-;; --- 生かす本数の上限と資格の床で降ろす(#3672 の D2 — 止める判断は host の 1 か所)------------------------------------------
+;; --- 生かす本数の上限と資格の止める刻で停止する(#3672 の D2 — 止める判断は host の 1 か所)------------------------------------------
 
 (defk one-turn [#^ ClaudeSessionSpec spec origin #^ str word]
   {:pre [(: spec ClaudeSessionSpec) (: origin (| FreshSession ResumeSession)) (: word str)]
@@ -723,17 +724,54 @@
   outcome)
 
 
-(defk expiring-in [#^ ClaudeSessionSpec base #^ float seconds]
-  {:pre [(: base ClaudeSessionSpec) (: seconds float)] :post [(: % ClaudeSessionSpec)]}
-  "検の spec に、今から seconds 秒後に切れる資格の期限を添えるため(時刻は時間の答え手の内側で読む)。"
-  (<- now (GetTime))
-  (replace base :credential-expires-at (+ (.timestamp now) seconds)))
+;; 資格の止める刻(ClaudeSessionSpec.credential-usable-until — 借り手が余裕の秒を引いた後の刻を宣言に載せる・#3753 (c))で
+;; 停止するテストは、壁の時計を 1 つの刻に固定して動かす(PinnedWall)。host の GetTime(ターンの間の確認)と行の時刻(ターンの
+;; 終わりの判断)の両方がその刻を使うので、止める刻ちょうど・その 1 秒前を本物の時計の進みに頼らずに作れる(待つ秒も要らない)。
 
-(defk turn-then-resume-under-the-floor [#^ ClaudeSessionSpec base #^ str sid]
-  {:pre [(: base ClaudeSessionSpec) (: sid str)] :post [(: % tuple)]}
-  "資格の期限が床の内側(100 秒後に切れる・床 200 秒)の spec で手番を 1 つ走らせ、続けて同じ会話を続けるため。答え = 1 手番目の
-   後の見え方・続きの後の見え方。"
-  (<- spec (expiring-in base 100.0))
+(defclass [dataclass] PinnedWall []
+  "テスト用の壁の時計の刻 1 つ。GetTime の答え(pinned-wall)と host の行の時刻(pinned-host の clock)がここを使い、テストの
+   筋書きだけが MoveWall で動かす(stdout を読む thread からも使うので、handler の中の名ではなく 1 つの object に置く)。"
+  (#^ datetime at))
+
+(defclass [(dataclass :frozen True)] MoveWall [EffectBase]
+  "テスト用の壁の時計を at の刻へ動かす(テストの筋書きだけが出す)。"
+  (#^ datetime at))
+
+;; 引数に残す理由: host の行の時刻(stdout を読む thread — effect を出せない)も同じ刻を使うので、刻は handler の中の名ではなく、
+;; host と分け合う 1 つの object に置く。
+(defhandler pinned-wall [#^ PinnedWall pin]
+  (GetTimeEffect []
+    (resume pin.at))
+  (MoveWall [at]
+    (setv pin.at at)
+    (resume None)))
+
+;; 止める刻 T と、最初のターンを走らせる刻(T の 1 時間前)。
+(val USABLE-UNTIL-AT (datetime 2026 10 6 12 0 0 :tzinfo timezone.utc))
+(val BEFORE-USABLE-UNTIL (- USABLE-UNTIL-AT (timedelta :hours 1)))
+
+(defk pinned-host [#^ PinnedWall pin]
+  {:pre [(: pin PinnedWall)] :post [(: % ClaudeCodeHost)] :tags {:context "claude-code-test" :role "foundation"}}
+  "行の時刻もテスト用の壁の時計で刻む host を作るため(ターンの終わりの判断が止める刻ちょうどを使えるように)。"
+  (ClaudeCodeHost STUB-COMMAND (fn [] pin.at) 8 :launch-timeout 30.0))
+
+(defk pinned-handlers [#^ ClaudeCodeHost host #^ PinnedWall pin]
+  {:pre [(: host ClaudeCodeHost) (: pin PinnedWall)] :post [(: % list)] :tags {:context "claude-code-test" :role "foundation"}}
+  "本番の handler の外側に、GetTime をテスト用の壁の時計で答える handler を置いた handler の並びを作るため(WaitWithin・
+   GetMonotonic は本物の時計のまま)。"
+  [(sync-time-handler) slog-discard-handler (pinned-wall pin) (claude-code-handler host)])
+
+(defk usable-until-in [#^ Path tmp-path #^ (| datetime None) at]
+  {:pre [(: tmp-path Path) (: at (| datetime None))] :post [(: % ClaudeSessionSpec)]
+   :tags {:context "claude-code-test" :role "foundation"}}
+  "テストの spec に、止める刻 at(None = 刻を知らない)を添えるため。"
+  (replace (spec-in tmp-path) :credential-usable-until (if (is at None) None (.timestamp at))))
+
+
+(defk turn-then-resume-at-the-usable-until [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % tuple)] :tags {:context "claude-code-test" :role "program"}}
+  "壁の時計が止める刻ちょうどの間に、ターンを 1 つ走らせ、続けて同じ会話を続けるため。答え = 1 ターン目の後の見え方・続きの後の
+   見え方。"
   (<- end (one-turn spec (FreshSession sid) "ONE"))
   (assert (isinstance end Completed) (repr end))
   (<- after-first (ClaudeLiveProcess sid))
@@ -743,36 +781,116 @@
   #(after-first after-second))
 
 
-(deftest test-a-process-whose-credential-is-under-the-floor-goes-down-at-the-turn-boundary [tmp-path]
-  ;; 資格の期限 − 床 を過ぎた process は、手番の境で止める(訳 CREDENTIAL-FLOOR — 呼び手はこの訳を読んで借りた資格を返す)。
-  ;; 次の手番は起こし直す(使い回さない)。
-  (val host (host-of STUB-COMMAND :floor 200.0))
-  (<- views (with-real-handler host (turn-then-resume-under-the-floor (spec-in tmp-path) (str (uuid.uuid4)))))
+(deftest test-a-process-goes-down-at-the-turn-boundary-when-the-clock-is-exactly-the-usable-until [tmp-path]
+  ;; 行の時刻が止める刻ちょうど(credential-usable-until と同じ刻)のターンの終わりで、process を止める(理由 CREDENTIAL-FLOOR —
+  ;; 呼び手はこの理由を見て借りた資格を返す)。次のターンは新しい process を起動する(再利用しない)。host は余裕の秒を持たず、
+  ;; 宣言の刻をそのまま使う。
+  (val pin (PinnedWall USABLE-UNTIL-AT))
+  (<- host (pinned-host pin))
+  (<- handlers (pinned-handlers host pin))
+  (<- spec (usable-until-in tmp-path USABLE-UNTIL-AT))
+  (<- views (with_handlers handlers (turn-then-resume-at-the-usable-until spec (str (uuid.uuid4)))))
   (assert (= (get views 0) (NoLiveProcess :launches 1 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views))
   (assert (= (get views 1) (NoLiveProcess :launches 2 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views)))
 
 
-(defk idle-until-the-floor [#^ ClaudeSessionSpec base #^ str sid #^ float wait-seconds]
-  {:pre [(: base ClaudeSessionSpec) (: sid str) (: wait-seconds float)] :post [(: % tuple)]}
-  "手番の後に生きて待つ process の資格が、待つ間に床を切る筋書きのため(20 秒後に切れる・床 15 秒 — 手番の後はまだ床の外)。答え =
-   手番の後の見え方・待った後に host を呼んだ後の見え方。"
-  (<- spec (expiring-in base 20.0))
+(defk idle-across-the-usable-until [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % tuple)] :tags {:context "claude-code-test" :role "program"}}
+  "止める刻の 1 時間前にターンを 1 つ走らせ、壁の時計を止める刻の 1 秒前・止める刻ちょうどへ動かすたびに host を呼ぶ(会話の
+   状態を問う)筋書きのため。答え = ターンの後・1 秒前・ちょうどの見え方。"
   (<- end (one-turn spec (FreshSession sid) "ONE"))
   (assert (isinstance end Completed) (repr end))
   (<- after-turn (ClaudeLiveProcess sid))
-  (<- (Delay wait-seconds))
+  (<- (MoveWall (- USABLE-UNTIL-AT (timedelta :seconds 1))))
   (<- (ClaudeSessionStatus spec.home spec.cwd sid))
-  (<- after-wait (ClaudeLiveProcess sid))
-  #(after-turn after-wait))
+  (<- just-before (ClaudeLiveProcess sid))
+  (<- (MoveWall USABLE-UNTIL-AT))
+  (<- (ClaudeSessionStatus spec.home spec.cwd sid))
+  (<- exactly-at (ClaudeLiveProcess sid))
+  #(after-turn just-before exactly-at))
 
 
-(deftest test-an-idle-process-whose-credential-crosses-the-floor-goes-down-at-the-next-call [tmp-path]
-  ;; 手番を走らせていない process の資格が待つ間に床を切ったら、host が次に呼ばれた時(手番を始める・行を読む・会話の状態を読む)に
-  ;; 止める(訳 CREDENTIAL-FLOOR)。
-  (val host (host-of STUB-COMMAND :floor 15.0))
-  (<- views (with-real-handler host (idle-until-the-floor (spec-in tmp-path) (str (uuid.uuid4)) 7.0)))
+(deftest test-an-idle-process-goes-down-between-turns-exactly-at-the-usable-until [tmp-path]
+  ;; ターンを走らせていない process は、壁の時計が止める刻ちょうどになった後に host が呼ばれた時(ターンを始める・行を読む・会話の
+  ;; 状態を問う)に止める(理由 CREDENTIAL-FLOOR)。1 秒前はまだ止めない。
+  (val pin (PinnedWall BEFORE-USABLE-UNTIL))
+  (<- host (pinned-host pin))
+  (<- handlers (pinned-handlers host pin))
+  (<- spec (usable-until-in tmp-path USABLE-UNTIL-AT))
+  (<- views (with_handlers handlers (idle-across-the-usable-until spec (str (uuid.uuid4)))))
   (assert (= (get views 0) (LiveProcess :launches 1)) (repr views))
-  (assert (= (get views 1) (NoLiveProcess :launches 1 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views)))
+  (assert (= (get views 1) (LiveProcess :launches 1)) (repr views))
+  (assert (= (get views 2) (NoLiveProcess :launches 1 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views)))
+
+
+(defk idle-far-past-with-no-usable-until [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % tuple)] :tags {:context "claude-code-test" :role "program"}}
+  "止める刻を知らない spec でターンを 1 つ走らせ、壁の時計を 10 年先へ動かして host を呼び、続けて同じ会話を続ける筋書きのため。
+   答え = 10 年先で host を呼んだ後の見え方・続きの後の見え方。"
+  (<- end (one-turn spec (FreshSession sid) "ONE"))
+  (assert (isinstance end Completed) (repr end))
+  (<- (MoveWall (+ USABLE-UNTIL-AT (timedelta :days 3650))))
+  (<- (ClaudeSessionStatus spec.home spec.cwd sid))
+  (<- far-later (ClaudeLiveProcess sid))
+  (<- again (one-turn spec (ResumeSession sid) "TWO"))
+  (assert (isinstance again Completed) (repr again))
+  (<- after-again (ClaudeLiveProcess sid))
+  #(far-later after-again))
+
+
+(deftest test-a-process-with-no-usable-until-is-never-stopped-for-the-credential [tmp-path]
+  ;; credential-usable-until が None(刻を知らない)なら、資格の理由では止めない — 時計がどれだけ進んでも生きて待ち、次のターンも
+  ;; 同じ process が受ける。
+  (val pin (PinnedWall BEFORE-USABLE-UNTIL))
+  (<- host (pinned-host pin))
+  (<- handlers (pinned-handlers host pin))
+  (<- spec (usable-until-in tmp-path None))
+  (<- views (with_handlers handlers (idle-far-past-with-no-usable-until spec (str (uuid.uuid4)))))
+  (assert (= (get views 0) (LiveProcess :launches 1)) (repr views))
+  (assert (= (get views 1) (LiveProcess :launches 1)) (repr views)))
+
+
+(defrecord PastUsableUntil
+  "止める刻を過ぎた後に次のターンを頼んだ筋書きの観測: first-alive = 最初の process がまだ生きて停止の途中でないか・
+   same-process = 次のターンが最初の process で走ったか・stopped-because = 最初の process を止めた理由・after = 次のターンの後の
+   見え方。"
+  (#^ bool first-alive)
+  (#^ bool same-process)
+  (#^ (| StopReason None) stopped-because)
+  (#^ (| LiveProcess NoLiveProcess) after))
+
+(defk next-turn-past-the-usable-until [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % PastUsableUntil)]
+   :tags {:context "claude-code-test" :role "program"}}
+  "止める刻の 1 時間前にターンを 1 つ走らせ、壁の時計を止める刻の 1 秒後へ動かしてから、同じ会話の次のターンを頼むため。次の
+   ターンの spec は貸与が延びた形(止める刻を 2 時間後へ — 起動条件のキーは同じ)。"
+  (<- end (one-turn spec (FreshSession sid) "ONE"))
+  (assert (isinstance end Completed) (repr end))
+  (val first-process (. (.runtime host sid) process))
+  (<- (MoveWall (+ USABLE-UNTIL-AT (timedelta :seconds 1))))
+  (val renewed (replace spec :credential-usable-until (.timestamp (+ USABLE-UNTIL-AT (timedelta :hours 2)))))
+  (<- again (one-turn renewed (ResumeSession sid) "TWO"))
+  (assert (isinstance again Completed) (repr again))
+  (val runtime (.runtime host sid))
+  (<- after (ClaudeLiveProcess sid))
+  (PastUsableUntil :first-alive (and (.alive first-process) (is first-process.retiring None))
+                   :same-process (is runtime.process first-process)
+                   :stopped-because runtime.stopped-because
+                   :after after))
+
+
+(deftest test-a-process-past-its-usable-until-is-not-handed-the-next-turn [tmp-path]
+  ;; 止める刻を過ぎた process へ次のターンを渡さない: ターンを始める前の判断(host の確認)で止め(理由 CREDENTIAL-FLOOR)、次の
+  ;; ターンは新しい process で走る — 次のターンの spec が延びた刻を持ち、起動条件のキーが同じでも、過ぎた process を再利用しない。
+  (val pin (PinnedWall BEFORE-USABLE-UNTIL))
+  (<- host (pinned-host pin))
+  (<- handlers (pinned-handlers host pin))
+  (<- spec (usable-until-in tmp-path USABLE-UNTIL-AT))
+  (<- seen (with_handlers handlers (next-turn-past-the-usable-until host spec (str (uuid.uuid4)))))
+  (assert (not seen.first-alive) (repr seen))
+  (assert (not seen.same-process) (repr seen))
+  (assert (= seen.stopped-because StopReason.CREDENTIAL-FLOOR) (repr seen))
+  (assert (= seen.after (LiveProcess :launches 2)) (repr seen)))
 
 
 ;; --- 待ちは呼び鈴で起きる(時間で起きて確かめない)---------------------------------------------------------------

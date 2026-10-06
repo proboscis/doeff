@@ -22,15 +22,16 @@
 
 (defn #^ list headless-claude-handlers [#^ str config-dir #^ (get FrozenMap str) env
                                         [settings None] [cold-resume-prompt None] [command #("claude")]
-                                        * #^ int live-limit #^ float credential-floor-seconds]
+                                        * #^ int live-limit]
   "本番の組: doeff-claude-code の本番の handler(会話の CLI を手番をまたいで生かす)+ headless の adapter。
    config-dir / env = claude の家(資格は root が custody から借りて env に置く — 凍らせた写像。dict を渡しても作る時に凍らせる)/
-   settings = CLI の settings の JSON(FrozenMap か None)/ live-limit = 同時に生かす CLI の本数の上限 / credential-floor-seconds =
-   借りた資格の期限の手前で CLI を止める床の秒(どちらも呼び手の宣言から — 既定を持たない・#3672 の D2)。行の時刻は壁の時計で刻む。"
+   settings = CLI の settings の JSON(FrozenMap か None)/ live-limit = 同時に生かす CLI の本数の上限(呼び手の宣言から — 既定を
+   持たない・#3672 の D2)。借りた資格で CLI を止める刻はこの関数が作る handler には設定せず、引き換えの答え
+   (TurnCredential.usable-until)を何も足し引きせずにターンの宣言へ渡す(agora-redesign #3753 (c))。行の時刻は壁の時計で刻む。"
   (setv config (HeadlessClaudeConfig (ClaudeHome config-dir env)
                                      :settings (if (is settings None) (FrozenMap) settings)
                                      :cold-resume-prompt cold-resume-prompt))
-  [(claude-code-handler (ClaudeCodeHost (tuple command) (clock-of (sync-time-handler)) live-limit credential-floor-seconds))
+  [(claude-code-handler (ClaudeCodeHost (tuple command) (clock-of (sync-time-handler)) live-limit))
    (headless-claude-handler config (HeadlessState))])
 
 (defn #^ list fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]
@@ -56,14 +57,14 @@
 ;; 呼び手が層 2(CLI の process の寿命)と adapter(agent の寿命)を別の段に置くため — 層 2 を土台の外側(本番 = process を起こす土台・
 ;; 模擬 = 外の世界の相手役)に置き、adapter だけを Program に近い側に置く。上の対の入口と同じ handler を同じ設定で作る(対の入口は変えない)。
 
-(defk claude-process-layer [command live-limit credential-floor-seconds]
-  {:pre [(: command tuple) (all (gfor part command (isinstance part str))) (: live-limit int) (: credential-floor-seconds float)]
+(defk claude-process-layer [command live-limit]
+  {:pre [(: command tuple) (all (gfor part command (isinstance part str))) (: live-limit int)]
    :post [(: % Callable)]}
   "層 2 の本番の handler だけ(会話の CLI を手番をまたいで生かす — headless-claude-handlers の対の 1 つ目と同じ物)を作るため。command =
-   CLI の実行の引数の頭・live-limit = 同時に生かす CLI の本数の上限・credential-floor-seconds = 借りた資格の期限の手前で CLI を止める
-   床の秒(どちらも呼び手の宣言から・#3672 の D2)。行の時刻は壁の時計で刻む。外側に doeff-time の時間の handler・scheduler・slog の
-   答え手を要る。"
-  (claude-code-handler (ClaudeCodeHost command (clock-of (sync-time-handler)) live-limit credential-floor-seconds)))
+   CLI の実行の引数の頭・live-limit = 同時に生かす CLI の本数の上限(呼び手の宣言から・#3672 の D2)。資格で CLI を止める刻はターンの
+   宣言(ClaudeSessionSpec の credential-usable-until)が運ぶ(agora-redesign #3753 (c))。行の時刻は壁の時計で刻む。外側に doeff-time
+   の時間の handler・scheduler・slog の答え手を要る。"
+  (claude-code-handler (ClaudeCodeHost command (clock-of (sync-time-handler)) live-limit)))
 
 (defk fake-claude-process-layer [responder world]
   {:pre [(: responder (| Callable None)) (: world (| FakeClaudeWorld None))] :post [(: % Callable)]}

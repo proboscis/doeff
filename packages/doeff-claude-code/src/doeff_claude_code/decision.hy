@@ -40,14 +40,10 @@
 (setv StartDecision (| Refuse Reuse Launch))
 
 
-(defn #^ (| float None) retire-time [#^ (| float None) credential-expires-at #^ float floor-seconds]
-  "生きた process を止める刻(資格の期限 − 床・epoch 秒)を、起こした・使い回した手番の spec から決めるため(#3672 の D2)。期限を
-   知らなければ None(床で止めない)。"
-  (if (is credential-expires-at None) None (- credential-expires-at floor-seconds)))
-
 (defn #^ bool credential-due [#^ (| float None) retire-after #^ float now]
-  "その process を資格の床で止める時か(止める刻を過ぎたか)を判じるため — 手番の境と、手番を走らせていない process の見回りの
-   どちらもこの 1 点で判じる(D2)。"
+  "その process を資格の理由で止める時か(今が止める刻 retire-after 以上か — ちょうども止める)を判じるため。retire-after はターンの
+   spec の credential-usable-until と同じ刻で、ここでは何も足し引きしない(#3753 (c))。None = 刻を知らない = 止めない。ターンの
+   終わりと、ターンを走らせていない process の確認のどちらもこの 1 点で判じる(D2)。"
   (and (is-not retire-after None) (>= now retire-after)))
 
 

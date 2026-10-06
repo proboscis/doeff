@@ -125,7 +125,7 @@
   (.mkdir (/ work "work") :parents True :exist-ok True)
   (val spec (ClaudeSessionSpec :home (ClaudeHome (str (/ work "home")) env) :cwd (str (/ work "work"))
                                :settings {"disableAllHooks" True}))
-  (val host (ClaudeCodeHost #(sys.executable "-m" "hy" STUB-PATH) (clock-of (sync-time-handler)) 4 7200.0 :launch-timeout 60.0))
+  (val host (ClaudeCodeHost #(sys.executable "-m" "hy" STUB-PATH) (clock-of (sync-time-handler)) 4 :launch-timeout 60.0))
   (val began (datetime.now JST))
   (val measured (run (scheduled (with_handlers [(sync-time-handler) slog-discard-handler (claude-code-handler host)]
                                                (rounds spec count)))))

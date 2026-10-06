@@ -20,13 +20,13 @@ from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaud
 from doeff_agents.handlers.headless import HeadlessState as HeadlessState
 from doeff_agents.handlers.headless import headless_claude_handler as headless_claude_handler
 
-def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int, credential_floor_seconds: float) -> list:
+def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int) -> list:
     ...
 
 def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, *, env: Mapping[str, str], settings: Mapping[str, object], permission: PermissionPolicy=...) -> list:
     ...
 
-def claude_process_layer(command: tuple, live_limit: int, credential_floor_seconds: float) -> _Program[Callable, object]:
+def claude_process_layer(command: tuple, live_limit: int) -> _Program[Callable, object]:
     ...
 
 def fake_claude_process_layer(responder: Callable | None, world: FakeClaudeWorld | None) -> _Program[Callable, object]:

@@ -67,7 +67,7 @@
 
 ;; 引き換えた access token(LaunchEffect.turn_credential_ref の RedeemTurnCredentialEffect の答え — #665・#979)を置く env の名。綴りの家は境界の env の語彙
 ;; doeff_agents/agent_env.hy の 1 点(TURN-AUTH-ENV-KEYS の要素・#708 — 家は session host を import しない)。
-(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV GITHUB-TOKEN-ENV])
+(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
 
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------
@@ -121,16 +121,15 @@
 (defn #^ ClaudeSessionSpec spec-of [#^ HeadlessClaudeConfig config #^ LaunchEffect effect #^ (| TurnCredential None) [credential None]]
   "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 引き換えた access token
    (credential — LaunchEffect.turn_credential_ref を RedeemTurnCredentialEffect で引き換えた答え・None = 家の資格。手番の資格の env の名
-   1 つにだけ置く。設定 dir の env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ)。答えが GitHub の token
-   (credential.github-token)も持てば GITHUB-TOKEN-ENV(GH_TOKEN)に置く(#3753)。許可の方策は config の permission。"
+   1 つにだけ置く。設定 dir の env と session_env は資格の env を持てない — 資格を受け取る経路は引き換えの答え 1 つ)。許可の方策は
+   config の permission。"
   (assert-session-env-is-non-auth-overlay effect.session-env :context "LaunchEffect.session_env (headless-claude-handler)")
   (setv env (| (dict config.home.env) (dict (or effect.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
   (when (is-not credential None)
     (setv (get env TURN-CREDENTIAL-ENV) credential.oauth-token))
-  (when (and (is-not credential None) (is-not credential.github-token None))
-    (setv (get env GITHUB-TOKEN-ENV) credential.github-token))
-  ;; 借りた資格の期限は層 2 の宣言へ写す(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
+  ;; 借りた資格の止める刻(借り手が余裕の秒を引いた後の刻)は、何も足し引きせずに層 2 の宣言へ渡す — 層 2 はこの刻から先、その CLI
+  ;; へターンを渡さない(#3672 の D2・agora-redesign #3753 (c))。設定 dir の資格は刻を知らない(None = 止めない)。
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)
                      :model effect.model
@@ -138,7 +137,7 @@
                      :settings config.settings
                      :permission config.permission
                      :cold-resume-prompt config.cold-resume-prompt
-                     :credential-expires-at (if (is credential None) None credential.expires-at)))
+                     :credential-usable-until (if (is credential None) None credential.usable-until)))
 
 (defn #^ list event-builders-of [kind #^ datetime at]
   "層 2 の行の型 → 層 3 の出来事を作る関数(seq → 出来事)の列。出来事はその型の欄で直接作る(語彙の外の行は空)。"
