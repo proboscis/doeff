@@ -29,8 +29,11 @@ def checked_declaring_checkout(path: str, revision: str) -> _Program[RepoCheckou
 def check_sender_source(checkouts: tuple, repos: tuple, sender_repo: str) -> _Program[bool, object]:
     ...
 
-def runtime_env_of_checkouts(checkouts: tuple, project: ProjectOfCheckout, import_roots: tuple, env_vars: tuple=..., tools: tuple=..., sender_repo: str | None=None) -> _Program[RuntimeEnv, object]:
+def project_of_checkout(by_name: dict, project: ProjectOfCheckout) -> _Program[PythonProject, object]:
     ...
 
-def project_dir(env: RuntimeEnv, root: str) -> _Program[str, object]:
+def runtime_env_of_checkouts(checkouts: tuple, project: ProjectOfCheckout, import_roots: tuple, env_vars: tuple=..., tools: tuple=..., sender_repo: str | None=None, extra_projects: tuple=...) -> _Program[RuntimeEnv, object]:
+    ...
+
+def project_dir(project: PythonProject, root: str) -> _Program[str, object]:
     ...

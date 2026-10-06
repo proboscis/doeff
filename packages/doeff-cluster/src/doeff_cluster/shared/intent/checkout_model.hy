@@ -17,7 +17,8 @@
 
 
 (defrecord ProjectOfCheckout
-  "宣言の project の、送り手が書く部分(uv.lock の sha256 は組み立てが checkout から計算する)。"
+  "宣言の project(主の project と足しの project — 同じ型)の、送り手が書く部分(uv.lock の sha256 は組み立てが checkout から
+   project ごとに同じ手順で計算する)。足しの project は native を持てない(宣言の型 RuntimeEnv が断る)。"
   (#^ str repo)
   (#^ str path)
   (#^ str python)

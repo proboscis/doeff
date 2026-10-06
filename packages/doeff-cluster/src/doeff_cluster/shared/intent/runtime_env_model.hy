@@ -13,8 +13,13 @@
 ;;; 宣言の誤り(名の重複・branch 名の commit・宣言に無い repo・`..` を含む path・予約した環境変数)は、送る前に例外
 ;;; RuntimeEnvInvalid で断る(呼び手の誤り)。準備の失敗(worker の側で起きる)は値 EnvFailure で返す。
 ;;;
-;;; キー env-key は root の中身を決める物(repos・project・import-roots・format)と platform だけから作る。env-vars と tools は
-;;; file を変えないのでキーに入れない。準備の手順の版もキーに入れない(coordinator と worker の版が違っても同じ宣言が同じキーになる)。
+;;; キー env-key は root の中身を決める物(repos・project・extra-projects・import-roots・format)と platform だけから作る。env-vars と
+;;; tools は file を変えないのでキーに入れない。準備の手順の版もキーに入れない(coordinator と worker の版が違っても同じ宣言が同じキーになる)。
+;;;
+;;; 足しの project(extra-projects・#3753 の (b)): 主の project のほかに worker が venv を用意する uv の project
+;;; (<root>/<repo>/<path>/.venv)。空の時はキーの材料にも JSON にも何も足さない(欄を足す前の宣言とキーが 1 字も変わらない)。
+;;; 足しの project を持つ宣言は、coordinator と worker の両方がこの欄を読む版へ上がった後にだけ出す(前の版は JSON の欄を読まずに
+;;; 捨て、別のキーを求める)。
 ;;; ここは型と定数だけ。キー・JSON の往復・失敗の値の組み立て・子の環境変数の組の検め(env-key・runtime-env->json・
 ;;; runtime-env-of-json・env-failure・child-environ-refusal ほか)は doeff_cluster.shared.core.runtime_env_rules、鍵の長さ・platform の名・
 ;;; native の wheel の鍵と置き場(ENV_KEY_LENGTH・current_platform・native_key ほか)は doeff_cluster.shared.core.native_wheel。
@@ -24,6 +29,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
+(import posixpath)
 (import re)
 
 (val RUNTIME-ENV-FORMAT 1)
@@ -52,8 +58,11 @@
 ;; remote の url が手元の path(file:// を含む)— 別の機体の worker はその url から取れない(2026-10-05・#3167)。
 ;; NOT-IN-CHECKOUT と REVISION-DIFFERS は系の宣言(declare)が断る物: 系の関数の source が git の checkout の中に無い・checkout の HEAD が
 ;; 宣言の版と違う(2026-09-28 — 詰める Program の参照する code と、実行先が宣言の版で展開する code を一致させる)。
+;; NATIVE-IN-EXTRA-PROJECT は足しの project が native の wheel を持つ(wheel を組んで venv へ入れるのは主の project だけ — 足しの
+;; project の native を sync から外すと、その package が venv に入らないまま準備が通るので、宣言の時に断る・#3753)。
 (defenum InvalidKind
   INVALID-NAME DUPLICATE-REPO BAD-COMMIT BAD-URL BAD-SHA256 UNKNOWN-REPO BAD-PATH RESERVED-ENV-VAR SECRET-ENV-VAR EMPTY BAD-JSON
+  NATIVE-IN-EXTRA-PROJECT
   DIRTY-TREE COMMIT-NOT-ON-REMOTE LOCAL-REMOTE SENDER-SOURCE-DIFFERS NOT-IN-CHECKOUT REVISION-DIFFERS)
 
 
@@ -193,9 +202,13 @@
 
 (defrecord RuntimeEnv
   "実行環境の宣言。repos = 1 つ以上・project = 依存の正本の uv の project・
+   extra-projects = 足しの project(PythonProject の tuple・既定は空 — worker が lock を照らして venv を用意するだけで、子は主の
+   project の venv で走る。native は持てない・主の project とも互いとも別の dir)・
    import-roots = \"<repo の名>/<repo の中の相対の dir>\"(前が先。project の venv の .pth に並ぶ)。"
   (#^ tuple repos)
   (#^ PythonProject project)
+  ;; 足しの project(頭の註)。空でない宣言は、coordinator と worker の両方がこの欄を読む版へ上がった後にだけ出す。
+  (setv #^ tuple extra-projects #())
   (#^ tuple import-roots)
   (setv #^ tuple env-vars #())
   (setv #^ tuple tools #())
@@ -206,6 +219,7 @@
   (setv #^ tuple bytecode-entries #())
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (RuntimeEnvInvalid.check-tuple "RuntimeEnv.repos" self.repos RepoCheckout)
+    (RuntimeEnvInvalid.check-tuple "RuntimeEnv.extra-projects" self.extra-projects PythonProject)
     (RuntimeEnvInvalid.check-tuple "RuntimeEnv.bytecode-entries" self.bytecode-entries str)
     (for [m self.bytecode-entries]
       (when (not (all (gfor part (.split m ".") (.isidentifier part))))
@@ -222,9 +236,21 @@
       (raise (RuntimeEnvInvalid InvalidKind.DUPLICATE-REPO (.format "repo の名が重なる: {}" names))))
     (setv known (frozenset names))
     (for [#(what repo) (+ [#("project" self.project.repo)]
-                          (lfor w self.project.native #((.format "native {}" w.package) w.repo)))]
+                          (lfor w self.project.native #((.format "native {}" w.package) w.repo))
+                          (lfor p self.extra-projects #((.format "足しの project {}/{}" p.repo p.path) p.repo)))]
       (when (not-in repo known)
         (raise (RuntimeEnvInvalid InvalidKind.UNKNOWN-REPO (.format "{} の repo {} が宣言に無い" what repo)))))
+    (for [p self.extra-projects]
+      (when p.native
+        (raise (RuntimeEnvInvalid InvalidKind.NATIVE-IN-EXTRA-PROJECT
+                                  (.format "足しの project {}/{} は native の wheel を持てない(wheel を組んで venv へ入れるのは主の project だけ): {}"
+                                           p.repo p.path (lfor w p.native w.package))))))
+    ;; venv の dir(<root>/<repo>/<path>/.venv)が重なると、後の sync が前の venv を上書きする。`agentcli/.` と `agentcli` は同じ dir。
+    (setv project-dirs (lfor p (+ #(self.project) self.extra-projects) #(p.repo (posixpath.normpath p.path))))
+    (when (!= (len project-dirs) (len (set project-dirs)))
+      (raise (RuntimeEnvInvalid InvalidKind.BAD-PATH
+                                (.format "project の dir が重なる(主の project と足しの project はそれぞれ別の dir の venv): {}"
+                                         (lfor #(repo path) project-dirs (.format "{}/{}" repo path))))))
     (for [root self.import-roots]
       (setv #(repo _ rel) (.partition root "/"))
       (when (not-in repo known)

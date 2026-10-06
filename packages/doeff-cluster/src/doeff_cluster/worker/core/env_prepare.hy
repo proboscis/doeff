@@ -9,9 +9,12 @@
 ;;;   1 空き      DiskFree                                   空きが下限を切れば disk-full
 ;;;   2 mirror    EnsureMirror / FetchCommit                 repo-unreachable・commit-missing(URL は断らない — 鍵の表に無い URL は鍵なしで clone)
 ;;;   3 展開      MaterializeTree                            同じ commit のツリーを持つ別の root があれば複製(.venv・マーカー・__pycache__ を除く)
-;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
+;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch(主の project と
+;;;                                                          足しの project ごと — 訳にどの project かを書く)
 ;;;   5 native    TreeHash / EnsureNativeWheel               キーの wheel が無ければ build(native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
+;;;                                                          主の project と足しの project ごとに、その dir の .venv へ(#3753)。
+;;;                                                          5 と 7〜10 は主の project だけ
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
 ;;;   9 bytecode  ReadEditableRoots / ReadHyVersion /        root の venv の interpreter で、焼く根を持つ repo の木の全部を 1 回で作る
@@ -326,15 +329,20 @@
 
 (defk stage-lock [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "展開した uv.lock が宣言の sha256 と同じかを確かめる(宣言の project の path の誤りを展開の直後に捕まえるため)。"
-  (<- pdir str (project-dir request.env request.root))
-  (<- found (| str None) (FileSha256 (.format "{}/uv.lock" pdir)))
-  (if (= found request.env.project.lock-sha256)
-      state
-      (do (<- failure EnvFailure
-              (env-failure EnvFailureKind.LOCK-MISMATCH
-                           (.format "{}/uv.lock の sha256 が宣言と違う(宣言 {} ・展開 {})" pdir request.env.project.lock-sha256 found)))
-          failure)))
+  "展開した uv.lock が宣言の sha256 と同じかを、主の project と足しの project(宣言の順)ごとに確かめる(宣言の project の path の
+   誤りを展開の直後に捕まえるため)。最初に違った project を訳に書いて lock-mismatch で止まる。"
+  (var failure None)
+  (for [project (+ #(request.env.project) request.env.extra-projects)]
+    (when (is failure None)
+      (<- pdir str (project-dir project request.root))
+      (<- found (| str None) (FileSha256 (.format "{}/uv.lock" pdir)))
+      (when (!= found project.lock-sha256)
+        (<- mismatch EnvFailure
+            (env-failure EnvFailureKind.LOCK-MISMATCH
+                         (.format "project {}/{} の {}/uv.lock の sha256 が宣言と違う(宣言 {} ・展開 {})"
+                                  project.repo project.path pdir project.lock-sha256 found)))
+        (:= failure mismatch))))
+  (if (is failure None) state failure))
 
 
 (defk stage-native [request state]
@@ -362,20 +370,26 @@
 
 (defk stage-sync [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "依存を lock どおりに入れる(native は wheel で後から入れるので除く)。依存を入れるのはここだけ(子の起動は --no-sync)。"
-  (<- pdir str (project-dir request.env request.root))
-  (val project request.env.project)
-  (<- report (| SyncReport EnvFailure)
-      (SyncProject pdir project.python project.groups (tuple (gfor w project.native w.package))))
-  (match report
-    (EnvFailure) report
-    (SyncReport :downloaded n) (replace state :downloaded n)))
+  "依存を lock どおりに、主の project と足しの project(宣言の順)ごとにその dir の venv へ入れる(native は wheel で後から主の
+   project の venv へ入れるので除く — 足しの project は native を持たない)。依存を入れるのはここだけ(子の起動は --no-sync)。
+   取りに行った数は全部の project の合計。失敗は訳にどの project かを書いて返し、後の project は sync しない。"
+  (var downloaded 0)
+  (var failure None)
+  (for [project (+ #(request.env.project) request.env.extra-projects)]
+    (when (is failure None)
+      (<- pdir str (project-dir project request.root))
+      (<- report (| SyncReport EnvFailure)
+          (SyncProject pdir project.python project.groups (tuple (gfor w project.native w.package))))
+      (match report
+        (EnvFailure) (:= failure (replace report :detail (.format "project {}/{}: {}" project.repo project.path report.detail)))
+        (SyncReport :downloaded n) (:= downloaded (+ downloaded n)))))
+  (if (is failure None) (replace state :downloaded downloaded) failure))
 
 
 (defk stage-wheels [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
   "native の wheel を venv へ入れる。"
-  (<- pdir str (project-dir request.env request.root))
+  (<- pdir str (project-dir request.env.project request.root))
   (if (not state.wheels)
       state
       (do (<- done (InstallWheels pdir state.wheels))
@@ -385,7 +399,7 @@
 (defk stage-roots [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
   "import の根を venv の .pth に宣言の順で並べる(子に PYTHONPATH を置かずに根を解くため)。書く file は .pth の 1 つ(#3676)。"
-  (<- pdir str (project-dir request.env request.root))
+  (<- pdir str (project-dir request.env.project request.root))
   (<- roots tuple (absolute-roots request.env request.root))
   (<- (WriteImportRoots pdir roots))
   (replace state :written 1))
@@ -452,7 +466,7 @@
    bytecode-outcome。1 回の焼きの前と後に進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。この処理ステージは
    macro の file が変わると全部を焼き直し、負荷の高い時に 267.9 秒かかった(#3515)。
    焼く前に venv の Hy の compiler の版を読む(引き継ぎ元の候補を比べ、完成マーカーに残して次の準備が比べるため — #3706)。"
-  (<- pdir str (project-dir request.env request.root))
+  (<- pdir str (project-dir request.env.project request.root))
   (<- editable tuple (ReadEditableRoots pdir request.root))
   (<- hy-version (| str None) (ReadHyVersion pdir))
   (val with-hy (replace state :hy-version hy-version))
@@ -469,7 +483,7 @@
 (defk stage-probe [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
   "子と同じ起こし方で root を読み、子の約束の版と根の名前の影を確かめる(cloudpickle の参照が送り手と同じ source に解けるため)。"
-  (<- pdir str (project-dir request.env request.root))
+  (<- pdir str (project-dir request.env.project request.root))
   (<- roots tuple (absolute-roots request.env request.root))
   (<- report (| ProbeReport EnvFailure) (ProbeImports pdir roots))
   (match report

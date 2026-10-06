@@ -44,7 +44,7 @@
 (defk outside-origins [declared root origins]
   {:pre [(: declared RuntimeEnv) (: root str) (: origins tuple)] :post [(: % tuple)]}
   "宣言の repo の dir の下に無い・project の venv の中・import できない module の置き場(判断 2 段目)。"
-  (<- pdir str (project-dir declared root))
+  (<- pdir str (project-dir declared.project root))
   (val venv (+ (.rstrip pdir "/") "/.venv/"))
   (val bases (tuple (gfor r declared.repos (+ (.rstrip root "/") "/" r.name "/"))))
   (tuple (gfor o origins

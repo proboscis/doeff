@@ -107,17 +107,11 @@
   True)
 
 
-(defk runtime-env-of-checkouts [checkouts project import-roots [env-vars #()] [tools #()] [sender-repo None]]
-  {:pre [(: checkouts tuple) (: project ProjectOfCheckout) (: import-roots tuple) (: env-vars tuple) (: tools tuple)
-         (: sender-repo (| str None))]
-   :post [(: % RuntimeEnv)]}
-  "手元の checkout から宣言を組み立てる(送る前の唯一の口)。uv.lock の sha256 は checkout から計算する。
-   sender-repo = 送り手自身の source を持つ宣言の repo の名(送り手が env の外で動く時に、その source が宣言と同じかを確かめる)。"
-  (var repos [])
-  (for [c checkouts]
-    (<- repo RepoCheckout (checked-repo c))
-    (.append repos repo))
-  (val by-name (dfor c checkouts c.name c.path))
+(defk project-of-checkout [by-name project]
+  {:pre [(: by-name dict) (: project ProjectOfCheckout)] :post [(: % PythonProject)]
+   :tags {:context "runtime-env" :role "program"}}
+  "送り手の書いた project 1 つを宣言の project にするため — uv.lock の sha256 を checkout から計算する(主の project と足しの project
+   が同じ手順を通る)。by-name = 宣言の repo の名 → 手元の checkout の path。repo の checkout が無い・uv.lock が無い時は送る前に断る。"
   (when (not-in project.repo by-name)
     (raise (RuntimeEnvInvalid InvalidKind.UNKNOWN-REPO (.format "project の repo {} の checkout が無い" project.repo))))
   (val lock-path (if (= project.path ".")
@@ -126,19 +120,39 @@
   (<- lock-hash (| str None) (FileSha256 lock-path))
   (when (is lock-hash None)
     (raise (RuntimeEnvInvalid InvalidKind.BAD-PATH (.format "project の uv.lock が無い: {}" lock-path))))
+  (PythonProject :repo project.repo :path project.path :lock-sha256 lock-hash :python project.python
+                 :groups project.groups :native project.native))
+
+
+(defk runtime-env-of-checkouts [checkouts project import-roots [env-vars #()] [tools #()] [sender-repo None] [extra-projects #()]]
+  {:pre [(: checkouts tuple) (: project ProjectOfCheckout) (: import-roots tuple) (: env-vars tuple) (: tools tuple)
+         (: sender-repo (| str None)) (: extra-projects tuple)]
+   :post [(: % RuntimeEnv)]}
+  "手元の checkout から宣言を組み立てる(送る前の唯一の入口)。uv.lock の sha256 は checkout から計算する。
+   sender-repo = 送り手自身の source を持つ宣言の repo の名(送り手が env の外で動く時に、その source が宣言と同じかを確かめる)。
+   extra-projects = 足しの project(ProjectOfCheckout の tuple — worker が venv を用意する主の project 以外の project。lock の
+   sha256 は主の project と同じ手順で計算する)。"
+  (var repos [])
+  (for [c checkouts]
+    (<- repo RepoCheckout (checked-repo c))
+    (.append repos repo))
+  (val by-name (dfor c checkouts c.name c.path))
+  (<- main PythonProject (project-of-checkout by-name project))
+  (var extras #())
+  (for [p extra-projects]
+    (<- extra PythonProject (project-of-checkout by-name p))
+    (:= extras (+ extras #(extra))))
   (when (is-not sender-repo None)
     (<- (check-sender-source checkouts (tuple repos) sender-repo)))
-  (RuntimeEnv :repos (tuple repos)
-              :project (PythonProject :repo project.repo :path project.path :lock-sha256 lock-hash :python project.python
-                                      :groups project.groups :native project.native)
+  (RuntimeEnv :repos (tuple repos) :project main :extra-projects extras
               :import-roots import-roots :env-vars env-vars :tools tools))
 
 
 ;; venv を持つ project の dir — worker の準備(worker/core/env_prepare)と入口の検め(runtime_identity)が同じ path を使う
-;; (#2025 の 3 本目で env_prepare から移した)。
-(defk project-dir [env root]
-  {:pre [(: env RuntimeEnv) (: root str)] :post [(: % str)]}
+;; (#2025 の 3 本目で env_prepare から移した)。主の project も足しの project も同じ規則(#3753)。
+(defk project-dir [project root]
+  {:pre [(: project PythonProject) (: root str)] :post [(: % str)]}
   "venv を持つ project の dir(uv の --project に渡す path)。"
-  (if (= env.project.path ".")
-      (.format "{}/{}" root env.project.repo)
-      (.format "{}/{}/{}" root env.project.repo env.project.path)))
+  (if (= project.path ".")
+      (.format "{}/{}" root project.repo)
+      (.format "{}/{}/{}" root project.repo project.path)))

@@ -950,3 +950,149 @@
   (<- world EnvWorld (base-world))
   (<- shadow RuntimeEnv (env-of "app-shadow" "lib-1" (+ LOCK "vendor-shadow==1.0 top=app\n")))
   (<- (expect-failure world shadow EnvFailureKind.ENV-INCOMPATIBLE False)))
+
+
+;; --- 足しの project(#3753 の (b))------------------------------------------------------------------
+;; 主の project のほかに、worker が venv を用意する project を 0 個以上宣言できる(例: dotfiles の agentcli — hook の engine は木の
+;; agentcli/.venv/bin/python を決め打ちで探すので、venv は <root>/dotfiles/agentcli/.venv に要る)。lock の照合と sync だけを足しの
+;; project ごとに回し、native・wheel・import の根・bytecode・確かめは主の project のまま。
+;; 足しの project の無い宣言のキーと JSON は、欄を足す前と 1 字も変わらない(coordinator と worker の版が食い違う間の守り)。
+
+;; 欄を足す前(doeff の origin/main ef0e8f0c3)の形で求めた、代表の宣言(env-of "app-1" "lib-1" LOCK — repo 2 つ・主の project 1 つ・
+;; native 1 つ)のキーと、通信の本文の JSON(欄の名の順で並べ、区切りに空白を入れない綴り)。
+(val PINNED-KEY "86a8cf06fd5c94afdbc99a6d")
+(val PINNED-JSON #[[{"envVars":[],"format":1,"importRoots":["app/.","app/vendor"],"project":{"groups":[],"lockSha256":"f07eaa71a777dee816698eb799d9a6e1b796565c3222d10ecb5100f0125edb78","native":[{"package":"lib-native","paths":["native/core"],"repo":"lib"}],"path":".","python":"3.14","repo":"app"},"repos":[{"commit":"8d91d7c662e62b772ff8483400d2a665eb0cab3c","name":"app","url":"file:///remotes/app.git"},{"commit":"c570e2410e44bd3557cfa4edec0aae855453986c","name":"lib","url":"file:///remotes/lib.git"}],"tools":[]}]])
+(val DOTFILES-URL "file:///remotes/dotfiles.git")
+(val AGENTCLI-LOCK "typer==0.12.5 top=typer\nclick==8.1.8 top=click\n")
+
+
+(deftest test-a-declaration-without-extra-projects-keeps-its-key-and-json
+  ;; 失敗ケース (i): 足しの project が空の宣言は、キーの材料にも JSON にも何も足さない。足しの project が空でも欄を書く作り方
+  ;; (例: "extraProjects": [])では、今の宣言のキーが全部変わり、版の食い違う間に coordinator と worker が別の root を指す。
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- key str (env-key env PLATFORM))
+  (assert (= key PINNED-KEY) key)
+  (<- encoded dict (runtime-env->json env))
+  (val text (json.dumps encoded :sort-keys True :separators #("," ":") :ensure-ascii False))
+  (assert (= text PINNED-JSON) text)
+  (<- decoded RuntimeEnv (runtime-env-of-json (json.loads PINNED-JSON)))
+  (assert (= decoded env)))
+
+
+(defk agentcli-project [lock-hash]
+  {:pre [(: lock-hash str)] :post [(: % PythonProject)]}
+  "dotfiles の agentcli を指す足しの project を作るため(lock-hash = 宣言に書く uv.lock の sha256)。"
+  (PythonProject :repo "dotfiles" :path "agentcli" :lock-sha256 lock-hash :python "3.14"))
+
+
+(defk agentcli-env [lock-hash]
+  {:pre [(: lock-hash str)] :post [(: % RuntimeEnv)]}
+  "代表の宣言に dotfiles の repo を足し、その agentcli を足しの project にした宣言を作るため。"
+  (<- base RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- sha str (sha-of "dotfiles-1"))
+  (<- extra PythonProject (agentcli-project lock-hash))
+  (replace base :repos (+ base.repos #((RepoCheckout :name "dotfiles" :url DOTFILES-URL :commit sha)))
+                :extra-projects #(extra)))
+
+
+(defk dotfiles-world []
+  {:pre [] :post [(: % EnvWorld)]}
+  "筋書きの remote に dotfiles(agentcli の pyproject・uv.lock・package)の commit 1 つを足した世界を作るため。"
+  (<- base EnvWorld (base-world))
+  (<- sha str (sha-of "dotfiles-1"))
+  (val commit (WorldCommit :sha sha
+                           :files #((WorldFile :path "agentcli/pyproject.toml" :text "[project]\nname = \"agentcli\"\n")
+                                    (WorldFile :path "agentcli/uv.lock" :text AGENTCLI-LOCK)
+                                    (WorldFile :path "agentcli/src/agentcli/__init__.py" :text "W = 1\n"))))
+  (replace base :remotes (+ base.remotes #((WorldRemote :url DOTFILES-URL :commits #(commit))))))
+
+
+(deftest test-the-declaration-refuses-extra-project-mistakes
+  ;; 足しの project の repo は宣言に在り、主の project とも他の足しの project とも同じ dir を指さない。native は持たない
+  ;; (native の wheel を組んで入れるのは主の project だけ)。
+  (<- env RuntimeEnv (agentcli-env (! (lock-sha AGENTCLI-LOCK))))
+  (val extra (get env.extra-projects 0))
+  (for [#(kind make)
+        [#(InvalidKind.UNKNOWN-REPO (fn [] (replace env :extra-projects #((replace extra :repo "tools")))))
+         #(InvalidKind.BAD-PATH (fn [] (replace env :extra-projects #((replace env.project :lock-sha256 extra.lock-sha256 :native #())))))
+         #(InvalidKind.BAD-PATH (fn [] (replace env :extra-projects #(extra (replace extra :path "agentcli/.")))))
+         #(InvalidKind.NATIVE-IN-EXTRA-PROJECT
+           (fn [] (replace env :extra-projects #((replace extra :native #((NativeWheel :package "lib-native" :repo "lib"
+                                                                                         :paths #("native/core"))))))))]]
+    (with [caught (pytest.raises RuntimeEnvInvalid)] (make))
+    (assert (= caught.value.kind kind) (.format "{} のはずが {}" kind caught.value.kind))))
+
+
+(deftest test-the-key-covers-the-extra-project-locks
+  ;; 足しの project が空でない宣言は、足しの project をキーの材料に入れる: 足しの project の lock だけが違う 2 つの宣言は別の root。
+  ;; 失敗ケース: キーの材料から足しの project を外した作り方では、2 つが同じキーになり、古い lock で組んだ venv の root で走る。
+  (<- one RuntimeEnv (agentcli-env (! (lock-sha AGENTCLI-LOCK))))
+  (<- two RuntimeEnv (agentcli-env (! (lock-sha (+ AGENTCLI-LOCK "rich==13.9.4 top=rich\n")))))
+  (<- k-one str (env-key one PLATFORM))
+  (<- k-two str (env-key two PLATFORM))
+  (assert (!= k-one k-two) "足しの project の lock だけが違う宣言は別の root")
+  (<- k-main str (env-key (replace one :extra-projects #()) PLATFORM))
+  (assert (!= k-one k-main) "足しの project を持つ宣言と持たない宣言は別の root")
+  (<- m-one dict (key-material one PLATFORM))
+  (<- m-two dict (key-material two PLATFORM))
+  (del (get m-one "extraProjects") (get m-two "extraProjects"))
+  (assert (= (json.dumps m-one :sort-keys True) (json.dumps m-two :sort-keys True)))
+  ;; 通信の本文の JSON は足しの project を運び、宣言へ戻る。
+  (<- encoded dict (runtime-env->json one))
+  (<- decoded RuntimeEnv (runtime-env-of-json (json.loads (json.dumps encoded))))
+  (assert (= decoded one) decoded))
+
+
+(defk failure-in-world [world env]
+  {:pre [(: world EnvWorld) (: env RuntimeEnv)] :post [(: % EnvFailure)]}
+  "world の下で env を準備し、失敗(完成マーカーを置かなかったことも確かめる)を返すため。"
+  (<- handlers list (env-world world))
+  (<- failure EnvFailure ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers (failure-of env)))))
+  failure)
+
+
+(deftest test-an-extra-project-lock-that-differs-stops-the-prepare-naming-the-project
+  ;; 失敗ケース (ii): 足しの project の uv.lock の sha256 が宣言と違えば、主の project の lock 違いと同じ止まり方(恒久の lock-mismatch)で、
+  ;; どの project かを訳に含めて止まる。
+  (<- world EnvWorld (dotfiles-world))
+  (<- env RuntimeEnv (agentcli-env (* "0" 64)))
+  (<- failure EnvFailure (failure-in-world world env))
+  (assert (= failure.kind EnvFailureKind.LOCK-MISMATCH) failure)
+  (assert (not failure.retryable) failure)
+  (assert (in "dotfiles/agentcli" failure.detail) failure.detail)
+  ;; 主の project の lock 違いも、訳にどの project かを書いて同じ種類で止まる。
+  (<- good RuntimeEnv (agentcli-env (! (lock-sha AGENTCLI-LOCK))))
+  (<- main-failure EnvFailure (failure-in-world world (replace good :project (replace good.project :lock-sha256 (* "0" 64)))))
+  (assert (= main-failure.kind EnvFailureKind.LOCK-MISMATCH) main-failure)
+  (assert (in "project app/." main-failure.detail) main-failure.detail))
+
+
+(defk extra-project-scenario []
+  {:pre [] :post [(: % bool)]}
+  "足しの project を持つ宣言の準備で、worker が足しの project の dir へ uv sync --project を呼び、<root>/dotfiles/agentcli/.venv を
+   作ることを確かめるため。主の project の venv と import の根は変わらない。"
+  (<- env RuntimeEnv (agentcli-env (! (lock-sha AGENTCLI-LOCK))))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (<- log EnvWorldLog (read-world-log))
+  (assert (= log.synced-projects #((.format "{}/app" ready.root) (.format "{}/dotfiles/agentcli" ready.root))) log.synced-projects)
+  (<- files dict (files-under ready.root))
+  (val venv (.format "{}/dotfiles/agentcli/.venv" ready.root))
+  (assert (in (.format "{}/bin/python" venv) files))
+  (assert (in (.format "{}/lib/python3.14/site-packages/typer/__init__.py" venv) files))
+  (assert (not-in (.format "{}/app/.venv/lib/python3.14/site-packages/typer/__init__.py" ready.root) files)
+          "足しの project の依存は主の project の venv に入らない")
+  (assert (= (get files (.format "{}/app/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" ready.root)))
+  ;; 取りに行ったのは主の lock の 3 つと、足しの lock のうち cache に無い typer の 1 つ。
+  (assert (= ready.downloaded 4) ready.downloaded)
+  (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
+  (<- declared RuntimeEnv (runtime-env-of-json (get marker "env")))
+  (assert (= declared env) declared)
+  True)
+
+
+(deftest test-an-extra-project-gets-its-own-venv
+  ;; 失敗ケース (iii)
+  (<- world EnvWorld (dotfiles-world))
+  (<- ok bool (run-in-world world (extra-project-scenario)))
+  (assert ok))

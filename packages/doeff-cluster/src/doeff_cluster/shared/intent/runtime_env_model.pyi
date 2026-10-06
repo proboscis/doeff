@@ -43,6 +43,7 @@ class InvalidKind(StrEnum):
     SECRET_ENV_VAR = "secret-env-var"
     EMPTY = "empty"
     BAD_JSON = "bad-json"
+    NATIVE_IN_EXTRA_PROJECT = "native-in-extra-project"
     DIRTY_TREE = "dirty-tree"
     COMMIT_NOT_ON_REMOTE = "commit-not-on-remote"
     LOCAL_REMOTE = "local-remote"
@@ -126,6 +127,7 @@ class RuntimeEnv:
 
     repos: tuple[RepoCheckout, ...]
     project: PythonProject
+    extra_projects: tuple[PythonProject, ...] = ()
     import_roots: tuple[str, ...]
     env_vars: tuple[EnvVar, ...] = ()
     tools: tuple[ToolRequirement, ...] = ()

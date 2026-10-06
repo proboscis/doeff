@@ -139,7 +139,8 @@
   "世界に起きた事の回数(筋書きの確かめに使う)。compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
    ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・carried = 引き継いだ
    .pyc の数(木ごとに足す)・entries = 最後の bytecode の焼く範囲の入口・changed = 焼く道具に渡した木ごとの変わった path の一覧
-   (#(木 path の tuple) の列・焼いた順 — 引き継がない木は空・#3675)・notes = 準備の記録の行。"
+   (#(木 path の tuple) の列・焼いた順 — 引き継がない木は空・#3675)・synced-projects = 通った uv sync の --project の dir(呼んだ順 —
+   主の project と足しの project ごとに 1 つ・#3753)・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
   (setv #^ int archives 0)
@@ -152,6 +153,7 @@
   (setv #^ tuple entries #())
   (setv #^ tuple compiled-trees #())
   (setv #^ tuple changed #())
+  (setv #^ tuple synced-projects #())
   (setv #^ tuple notes #()))
 
 
@@ -249,12 +251,12 @@
 
 (defk bump [changes]
   {:pre [(: changes dict)] :post [(: % None)]}
-  "世界の log の回数を足し、列の欄(entries は置き換え・compiled-trees と changed は後ろへ足す)を書くため。"
+  "世界の log の回数を足し、列の欄(entries は置き換え・compiled-trees と changed と synced-projects は後ろへ足す)を書くため。"
   (<- log dict (read-json LOG-PATH {}))
   (for [#(k v) (.items changes)]
     (cond
       (in k LOG-FIELDS) (setv (get log k) (+ (.get log k 0) v))
-      (in k #("compiled-trees" "changed")) (setv (get log k) (+ (.get log k []) [v]))
+      (in k #("compiled-trees" "changed" "synced-projects")) (setv (get log k) (+ (.get log k []) [v]))
       True (setv (get log k) v)))
   (<- (write-json LOG-PATH log))
   None)
@@ -538,7 +540,7 @@
             (<- (write-file (posixpath.join site top "__init__.py") ""))
             (when compiled
               (<- (write-file (posixpath.join site top "__pycache__" (.format "__init__.{}.pyc" tag)) ""))))
-          (<- (bump {"syncs" 1 "downloads" (len missing)}))
+          (<- (bump {"syncs" 1 "downloads" (len missing) "synced-projects" pdir}))
           (ProcessOutcome :stdout "" :stderr (.format "Prepared {} packages in 1ms\n" (len missing)) :exit-code 0))))
 
 
@@ -740,6 +742,7 @@
                :entries (tuple (.get log "entries" []))
                :compiled-trees (tuple (gfor #(tree roots) (.get log "compiled-trees" []) #(tree (tuple roots))))
                :changed (tuple (gfor #(tree paths) (.get log "changed" []) #(tree (tuple paths))))
+               :synced-projects (tuple (.get log "synced-projects" []))
                :notes (tuple (gfor line (.splitlines notes) :if line (.removeprefix line "env: ")))))
 
 

@@ -54,16 +54,29 @@
           (RemoteRepo :host (.lower host) :owner (.strip (get parts 0) "/") :name (get parts 2)))))
 
 
+(defk project-material [project]
+  {:pre [(: project PythonProject)] :post [(: % dict)]}
+  "uv の project 1 つをキーの材料と JSON の値にするため(主の project と足しの project が同じ綴りを使う)。"
+  {"repo" project.repo "path" project.path "lockSha256" project.lock-sha256
+   "python" project.python "groups" (list project.groups)
+   "native" (lfor w project.native {"package" w.package "repo" w.repo "paths" (list w.paths)})})
+
+
 (defk key-material [env platform]
   {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
-  "キーの材料(root の中身を決める物だけ)。env-vars・tools・準備の手順の版は入れない。"
-  {"format" env.format
-   "platform" platform
-   "repos" (lfor r env.repos {"name" r.name "url" r.url "commit" r.commit})
-   "project" {"repo" env.project.repo "path" env.project.path "lockSha256" env.project.lock-sha256
-              "python" env.project.python "groups" (list env.project.groups)
-              "native" (lfor w env.project.native {"package" w.package "repo" w.repo "paths" (list w.paths)})}
-   "importRoots" (list env.import-roots)})
+  "キーの材料(root の中身を決める物だけ)。env-vars・tools・準備の手順の版は入れない。足しの project は空でない時だけ
+   extraProjects に入れる(空の宣言のキーは欄を足す前と 1 字も変わらない・足しの project の lock だけが違う宣言は別のキー)。"
+  (<- main dict (project-material env.project))
+  (var extras [])
+  (for [p env.extra-projects]
+    (<- material dict (project-material p))
+    (:= extras (+ extras [material])))
+  (| {"format" env.format
+      "platform" platform
+      "repos" (lfor r env.repos {"name" r.name "url" r.url "commit" r.commit})
+      "project" main
+      "importRoots" (list env.import-roots)}
+     (if extras {"extraProjects" extras} {})))
 
 
 (defk env-key [env platform]
@@ -95,20 +108,32 @@
      (if env.bytecode-entries {"bytecodeEntries" (list env.bytecode-entries)} {})))
 
 
+(defk project-of-json [value]
+  {:pre [(: value dict)] :post [(: % PythonProject)]}
+  "JSON の値 1 つを uv の project にするため(主の project と足しの project が同じ読み方を使う)。形の誤り(KeyError・TypeError・
+   AttributeError)は呼び手 runtime-env-of-json が bad-json にする。"
+  (PythonProject :repo (get value "repo") :path (get value "path")
+                 :lock-sha256 (get value "lockSha256") :python (get value "python")
+                 :groups (tuple (.get value "groups" []))
+                 :native (tuple (gfor w (.get value "native" [])
+                                      (NativeWheel :package (get w "package") :repo (get w "repo")
+                                                   :paths (tuple (get w "paths")))))))
+
+
 (defk runtime-env-of-json [value]
   {:pre [(: value dict)] :post [(: % RuntimeEnv)]}
   "JSON の値 → 宣言。形が違えば RuntimeEnvInvalid(bad-json)、中身の誤りは型の検査の RuntimeEnvInvalid。"
   (try
-    (val project (get value "project"))
+    (<- project PythonProject (project-of-json (get value "project")))
+    (var extras #())
+    (for [p (.get value "extraProjects" [])]
+      (<- extra PythonProject (project-of-json p))
+      (:= extras (+ extras #(extra))))
     (val env (RuntimeEnv
       :repos (tuple (gfor r (get value "repos")
                           (RepoCheckout :name (get r "name") :url (get r "url") :commit (get r "commit"))))
-      :project (PythonProject :repo (get project "repo") :path (get project "path")
-                              :lock-sha256 (get project "lockSha256") :python (get project "python")
-                              :groups (tuple (.get project "groups" []))
-                              :native (tuple (gfor w (.get project "native" [])
-                                                   (NativeWheel :package (get w "package") :repo (get w "repo")
-                                                                :paths (tuple (get w "paths"))))))
+      :project project
+      :extra-projects extras
       :import-roots (tuple (get value "importRoots"))
       :env-vars (tuple (gfor v (.get value "envVars" []) (EnvVar :name (get v "name") :value (get v "value"))))
       :tools (tuple (gfor t (.get value "tools" []) (ToolRequirement :name (get t "name") :version (.get t "version" ""))))

@@ -20,6 +20,8 @@
 (import doeff_core_effects.os_file [os-file-handler])
 
 (setv LOCK "httpx==0.28.1\n")
+;; 足しの project(repo の中の tool の dir)の uv.lock — 主の lock と違う中身(sha256 が主と違うことを読み分けるため)。
+(val TOOL-LOCK "typer==0.12.5\n")
 
 
 (defk git [cwd #* args]
@@ -48,6 +50,8 @@
   (<- (git base "clone" "-q" (str remote) (str work)))
   (.write-text (/ work "uv.lock") LOCK)
   (.write-text (/ work "pyproject.toml") "[project]\nname = \"x\"\n")
+  (.mkdir (/ work "tool"))
+  (.write-text (/ work "tool" "uv.lock") TOOL-LOCK)
   (<- (git work "add" "-A"))
   (<- (git work "commit" "-q" "-m" "first"))
   (<- (git work "push" "-q" "origin" "HEAD:main"))
@@ -57,9 +61,9 @@
   work)
 
 
-(defk build [work sender-root sender-repo]
-  {:pre [(: work Path) (: sender-root (| str None)) (: sender-repo (| str None))] :post [(: % RuntimeEnv)]}
-  "work の checkout 1 つから宣言を組み立てる(送り手の source の根は sender-root だと答える)。"
+(defk build [work sender-root sender-repo [extra-projects #()]]
+  {:pre [(: work Path) (: sender-root (| str None)) (: sender-repo (| str None)) (: extra-projects tuple)] :post [(: % RuntimeEnv)]}
+  "work の checkout 1 つから宣言を組み立てる(送り手の source の根は sender-root だと答える・extra-projects = 足しの project)。"
   (<- env RuntimeEnv
       (subprocess-handler
         (os-file-handler
@@ -67,7 +71,8 @@
             (handle (runtime-env-of-checkouts #((LocalCheckout :name "app" :path (str work)))
                                               (ProjectOfCheckout :repo "app" :path "." :python "3.14")
                                               #("app/.")
-                                              :sender-repo sender-repo)
+                                              :sender-repo sender-repo
+                                              :extra-projects extra-projects)
               (SenderSourceRoot [] (resume sender-root)))))))
   env)
 
@@ -135,3 +140,19 @@
   (<- outside InvalidKind (refusal-of work None "app"))
   (assert (= outside InvalidKind.SENDER-SOURCE-DIFFERS)))
 
+
+
+(deftest test-an-extra-project-lock-is-hashed-from-the-checkout [tmp-path]
+  ;; 足しの project(#3753 の (b))の uv.lock の sha256 も、主の project と同じ手順で送り手が checkout から計算する。
+  ;; lock の無い dir を指す足しの project は、主の project と同じく送る前に断る。
+  (<- work Path (pushed-checkout tmp-path "app"))
+  (<- env RuntimeEnv (build work None None #((ProjectOfCheckout :repo "app" :path "tool" :python "3.13"))))
+  (assert (= (len env.extra-projects) 1) env.extra-projects)
+  (val extra (get env.extra-projects 0))
+  (assert (= #(extra.repo extra.path extra.python) #("app" "tool" "3.13")) extra)
+  (assert (= extra.lock-sha256 (.hexdigest (hashlib.sha256 (.encode TOOL-LOCK)))) extra)
+  (assert (= env.project.lock-sha256 (.hexdigest (hashlib.sha256 (.encode LOCK)))) env.project)
+  (with [caught (pytest.raises RuntimeEnvInvalid)]
+    (<- _ RuntimeEnv (build work None None #((ProjectOfCheckout :repo "app" :path "missing" :python "3.14")))))
+  (assert (= caught.value.kind InvalidKind.BAD-PATH) caught.value)
+  (assert (in "missing/uv.lock" caught.value.detail) caught.value))

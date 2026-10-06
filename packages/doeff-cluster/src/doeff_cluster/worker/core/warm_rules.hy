@@ -64,7 +64,7 @@
     (<- env RuntimeEnv (runtime-env-of-json (json.loads text)))
     (:= names (| names (frozenset env.bytecode-entries))))
   (<- declared RuntimeEnv (runtime-env-of-json (json.loads (get texts 0))))
-  (<- project str (project-dir declared root))
+  (<- project str (project-dir declared.project root))
   (WarmLaunch :root root :project project :preload (tuple (sorted names))))
 
 
