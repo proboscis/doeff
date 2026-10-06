@@ -56,10 +56,6 @@ MODULE_TAGS = {"context": "worker", "role": "main"}
 
 # prctl の option の番号(linux/prctl.h の PR_SET_CHILD_SUBREAPER)— 子孫の引き取り手になる。
 PR_SET_CHILD_SUBREAPER = 36
-# 片づけの周の間の待ち(秒): KILL を届けた周は、子が死に切るのを短く待つ。届けられなかった周(残る子が KILL を受け付けない — 別の uid の
-# setuid の子など)は、走査を詰めて CPU を使い切らないよう長く待つ(その子が自分で終わるのを待つ)。
-SWEEP_PAUSE_SECONDS = 0.001
-SWEEP_IDLE_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -234,19 +230,24 @@ def killed(pid: int) -> bool:
     return True
 
 
-def swept(job: int, job_code: int | None) -> int:
+def swept(job: int, job_code: int | None, wake: int) -> int:
     """片づけ(引き取りが効いている時): PPid が自分の process を KILL して回収する周を、子が 0 になり waitpid が ECHILD を返すまで
     繰り返す。走査 → KILL → 回収はこの順(回収するまで死んだ子は zombie で pid を占める — 再利用された pid を殺さない)。
+    周と周の間は、子の終わり(SIGCHLD の起こしの fd wake)まで待つ — 時間で起きて走査し直さない(#3834。前は 0.001 秒・KILL を受け付けない
+    子が残る時は 0.05 秒ごとに走査し直していた)。起こしの印は周の頭で読み捨てるので、回収の後・待つ前に終わった子の印も残って待ちを
+    すぐ抜ける。KILL した子の子孫は、その子が死んだ時に shim へ引き取られ(その子の SIGCHLD で起きた)次の周の走査で見つかる。
     job_code = 待ちの間に回収した job の終了コード(期限が先なら None — job もここで KILL して回収する)。答え = job の終了コード。"""
     me = os.getpid()
     code = job_code
     while True:
-        delivered = [pid for pid in children_of(me) if killed(pid)]
+        drained(wake)
+        for pid in children_of(me):
+            killed(pid)
         harvest = harvested(job)
         code = code if harvest.job_code is None else harvest.job_code
         if harvest.childless:
             break
-        time.sleep(SWEEP_PAUSE_SECONDS if delivered else SWEEP_IDLE_SECONDS)
+        select.select([wake], [], [])
     if code is None:
         raise RuntimeError(f"shim: 片づけの後も job {job} の終了コードが無い")
     return code
@@ -263,12 +264,12 @@ def group_killed(job: int, leads_group: bool) -> int:
     return os.waitstatus_to_exitcode(status)
 
 
-def settled(job: int, job_code: int | None, adoption: Adoption, leads_group: bool) -> int:
-    """3 つの道が 1 度だけ通る片づけ(main thread)。答え = job の終了コード。引き取りが効いていれば子孫を全部片づける。使えなければ
-    今までの動き: 期限を過ぎても job が終わっていなければ group へ KILL、終わっていれば何もしない。"""
+def settled(job: int, job_code: int | None, adoption: Adoption, leads_group: bool, wake: int) -> int:
+    """3 つの道が 1 度だけ通る片づけ(main thread)。答え = job の終了コード。引き取りが効いていれば子孫を全部片づける(子の終わりは
+    起こしの fd wake で待つ)。使えなければ今までの動き: 期限を過ぎても job が終わっていなければ group へ KILL、終わっていれば何もしない。"""
     match adoption:
         case Adopting():
-            return swept(job, job_code)
+            return swept(job, job_code, wake)
         case NotAdopting():
             return job_code if job_code is not None else group_killed(job, leads_group)
 
@@ -356,7 +357,7 @@ def shim_code(
         job = spawn()
         lines.begin()
         threading.Thread(target=watch_parent, args=(leads_group, relay), daemon=True).start()
-        return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group)
+        return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group, wake)
     finally:
         lines.end()
 

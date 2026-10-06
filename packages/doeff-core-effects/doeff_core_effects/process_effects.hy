@@ -76,6 +76,17 @@
 ;;;                     (pipe の容量 約 64 KB を超えると、読み手が読むまで書きが待つ)。
 ;;;   本物の答え手は、立てた子の表を process に 1 つ持つ(子は OS の process ごとの資源 — 答え手を積み直しても同じ子を問える)。
 ;;;
+;;; 子の終わりの知らせ(agora-redesign #3834 — 消費者 = doeff-cluster の worker の拍の間の眠り。終わりを時間で起きて問わずに知る):
+;;;   WatchExits        呼び手が作った外の約束 bell(CreateExternalPromise の ExternalPromise)を、targets のどれかが終わった時に True で
+;;;                     満たす。答え = None(待たずに返す — 呼び手は bell の future を自分の期限と競わせて待つ)。掛けた時に既に終わっている
+;;;                     target が在れば、その場で満たす。targets が空なら満たさない。target(ExitTarget)の start-ticks が None なら、この
+;;;                     答え手が StartProcess で立ててまだ回収していない子(回収するまで pid は使い回されない — 表に無ければ終わった扱い)、
+;;;                     int なら他の process(待ちの子から分けた子など)で、pid が同じ start-ticks の process のままかを照らす(違えば
+;;;                     終わった扱い — 使い回された pid を待たない)。本物 = Linux の pidfd(終わりで読めるようになる fd)を 1 本の見張りの
+;;;                     thread が待つ。台本 = 立てた子の表で、SignalProcess・StopProcess が子を終わらせた時に満たす(他の process は台本の
+;;;                     世界に無いので見張らない)。
+;;;   UnwatchExits      bell の見張りを外す(満たされずに起きた眠りの後 — 外した後は満たさない)。答え = None。
+;;;
 ;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
 ;;; ここで 1 度だけ作る。本物(os_process.hy)と I/O なし(scripted_process.hy)の答え手は同じ関数を呼ぶ(同じ形で答える — 契約テスト
 ;;; tests/test_process_contract.hy)。
@@ -86,6 +97,7 @@
 (import enum [StrEnum])
 (import doeff [EffectBase])
 (import doeff_core_effects.file_effects [PathKind])
+(import doeff_core_effects.scheduler [ExternalPromise])
 
 ;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
 (val TIMED-OUT-CODE 124)
@@ -304,6 +316,24 @@
 (defrecord ProcessNotChild
   "この答え手が立てた子でない pid(立てていない・既に終わりを答えて回収した)— 他人の process に signal を送らないため。"
   (#^ int pid))
+
+
+(defrecord ExitTarget
+  "WatchExits が終わりを見張る process 1 つ(頭の註): pid・start-ticks = None ならこの答え手が立ててまだ回収していない子、int なら他の
+   process の /proc の starttime(pid の使い回しを見分ける)。"
+  (#^ int pid)
+  (setv #^ (| int None) start-ticks None))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] WatchExits [EffectBase]
+  "targets のどれかが終わった時に bell を True で満たす(頭の註)。答え = None。"
+  #^ ExternalPromise bell
+  #^ (get tuple #(ExitTarget ...)) targets)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] UnwatchExits [EffectBase]
+  "bell の見張りを外す(頭の註)。答え = None。"
+  #^ ExternalPromise bell)
 
 
 (defk timed-out-outcome [stdout stderr]

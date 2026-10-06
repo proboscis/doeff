@@ -22,12 +22,12 @@
 (import doeff_core_effects.file_effects [MakeDirectory RemoveTree WriteText file-done])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess
                                             ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild
-                                            WriteProcessInput ProcessInputWritten])
+                                            WriteProcessInput ProcessInputWritten ExitTarget])
 (import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
                                                  Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
+(import doeff_cluster.worker.protocol.observations [ObserveProcesses ProcessesWake HostWake])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmRefused WarmRunning WarmExited WarmLost])
@@ -316,4 +316,10 @@
                                         (replace started :view (replace started.view :exit-code polled.exit-code))
                                         started)))))
     (:= table seen)
-    (resume (tuple (gfor started (.values seen) started.view)))))
+    (resume (tuple (gfor started (.values seen) started.view))))
+  (ProcessesWake []
+    ;; 終わりを観測していない子の終わりで拍の間の眠りを起こす(#3834 — 子の終わりを時間で起きて問わずに知る。問うのは起きた拍の
+    ;; ObserveProcesses だけ)。待ちの子から分けた子はこの worker の子でないので、起動の刻で照らして見張る(使い回された pid を待たない)。
+    (resume (HostWake :targets (tuple (gfor started (.values table) :if (is started.view.exit-code None)
+                                            (ExitTarget :pid started.view.pid
+                                                        :start-ticks (if (is started.fork None) None started.fork.start-ticks))))))))

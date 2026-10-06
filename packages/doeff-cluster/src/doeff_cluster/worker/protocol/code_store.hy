@@ -18,10 +18,10 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadText ListDirectory WalkTree RenamePath MakeDirectory
                                          RemoveTree file-done])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess ProcessNotStarted ProcessExited])
+(import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess ProcessNotStarted ProcessExited ExitTarget])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode])
-(import doeff_cluster.worker.protocol.observations [ObserveCode CodeTimings])
+(import doeff_cluster.worker.protocol.observations [ObserveCode CodeTimings CodeWake HostWake])
 (import doeff_cluster.worker.core.code_plan [MARKER marker-problem])
 (import doeff_cluster.worker.core.code_prepare [tree-listing])
 (import doeff_cluster.worker.core.code_rules [prepare-script])
@@ -149,4 +149,7 @@
                       (lfor c checks :if (and (is c.reason None) (not-in c.name pending) (not-in c.name failed))
                             (CodeView c.name CodeState.READY :path (+ settings.cache "/" c.name)))))))
   (CodeTimings []
-    (resume (dict timings))))
+    (resume (dict timings)))
+  (CodeWake []
+    ;; 準備の子の終わりで拍の間の眠りを起こす(#3834 — 準備の終わりを拍ごとに PollProcess で問わずに知る)。
+    (resume (HostWake :targets (tuple (gfor #(pid _ _) (.values pending) (ExitTarget :pid pid)))))))

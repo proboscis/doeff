@@ -30,6 +30,7 @@
 (import doeff_cluster.worker.protocol.stop [stop-flag StopState])
 (import doeff_cluster.foundation.coordinator_inbox [stop-on-signals])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster.worker.protocol.wake [wake-host])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
@@ -122,11 +123,12 @@
    code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
    (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消し
    (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
-   調整ループ(heartbeat)は回り続ける(#3715)。"
+   調整ループ(heartbeat)は回り続ける(#3715)。拍の間の眠り(tick-pauses)の起こし方は wake-host が各言い換え・coordinator-link・stop-flag に
+   問うてまとめ、子の終わりの見張り(WatchExits)は subprocess-handler が pidfd で待つ(#3834)。"
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler (stop-flag stop) subprocess-handler os-warm-process-handler
    os-file-handler offloaded-tree-handler (session-store) (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (warm-host warm) (process-host host) local-host tick-pauses])
+   (probe-host probes) (warm-host warm) (process-host host) local-host wake-host tick-pauses])
 
 
 (defk timing-checked [fence-ms policy timing]

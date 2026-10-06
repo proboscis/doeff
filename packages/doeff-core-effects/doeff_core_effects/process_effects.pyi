@@ -5,6 +5,7 @@ from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
 from doeff_core_effects.file_effects import PathKind as PathKind
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 TIMED_OUT_CODE: int
 NOT_STARTED_CODE: int
 
@@ -156,6 +157,20 @@ class ProcessExited:
 @dataclass(frozen=True, kw_only=True)
 class ProcessNotChild:
     pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class ExitTarget:
+    pid: int
+    start_ticks: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class WatchExits(EffectBase):
+    bell: ExternalPromise
+    targets: tuple[ExitTarget, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class UnwatchExits(EffectBase):
+    bell: ExternalPromise
 
 def timed_out_outcome(stdout: str, stderr: str) -> _Program[ProcessOutcome, object]:
     ...

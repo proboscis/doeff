@@ -503,8 +503,11 @@
 
 (defclass [(dataclass :frozen True)] AwaitNextTick [EffectBase]
   "結果は None。調整ループが拍の後に次の拍まで眠るため。答え手が眠り方を決める: 本番の組は worker/protocol/tick_pauses の tick-pauses
-   (core/program.tick-pause — tick-seconds を宣言の変化の呼び鈴 changed と競わせる)。state = この拍の後の記憶(模擬の時計の下の宿が、
-   先の拍を本番の判断で試す材料 — 本番の答え手は読まない)。"
+   (次に何かが変わる拍か、言い換えの期限・次の heartbeat の刻まで眠り、宣言の変化の呼び鈴 changed・子の終わり・止めの合図で起きる —
+   #3834)。state = この拍の後の記憶・world = この拍の終わりの観測(先の拍を本番の判断で試す材料 — 本番の答え手と模擬の時計の下の宿が
+   読む)・stopping = この拍が止まり始めの拍か(止まる間は先の拍を試さず tick-seconds で打つ)。"
   (#^ WorkerPolicy policy)
   (#^ (| Future None) changed)
-  (#^ WorkerState state))
+  (#^ WorkerState state)
+  (#^ WorldView world)
+  (#^ bool stopping))

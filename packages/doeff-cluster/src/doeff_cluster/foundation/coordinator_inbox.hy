@@ -138,21 +138,30 @@
 ;; --- 停止 --------------------------------------------------------------------------------------
 
 (defclass StopState []
-  "停止の合図(SIGTERM の handler が requested を立て、shared/protocol/inbox.hy の stop-flag が読む)。"
-  (defn #^ None __init__ [self] (setv self.requested False)))
+  "停止の合図(SIGTERM の handler が request で requested を立て、shared/protocol/inbox.hy の stop-flag が読む)。"
+  (defn #^ None __init__ [self] (setv self.requested False))
+
+  (defn #^ None request [self]
+    "止めの合図を立てる(信号の受け手から呼ばれる)。"
+    (setv self.requested True)))
 
 
 (defclass [runtime-checkable] StopMark [Protocol]
-  "信号で立てる止めの印の形(この module の StopState と worker/protocol/stop の StopState — 層の向きで 1 つの型に寄せられない)。"
-  (setv #^ bool requested False))
+  "信号で立てる止めの印の形(この module の StopState と worker/protocol/stop の StopState — 層の向きで 1 つの型に寄せられない)。
+   request = 立てる口(worker の印は立てる時に眠っている拍も起こす — #3834)。"
+  (setv #^ bool requested False)
+
+  (defn #^ None request [self]
+    "止めの印を立てる。"
+    ...))
 
 
 (defk stop-on-signals [stop]
   {:pre [(: stop StopMark)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
   "process の入口(coordinator・記録の置き場・worker の main)が SIGTERM と SIGINT を受けたら、渡された止めの印(この module の StopState か
-   worker/protocol/stop の StopState — どちらも requested を持つ)を立てるため。3 つの main が同じ signal.signal の 2 行と信号の関数を
+   worker/protocol/stop の StopState — どちらも request で立てる)を立てるため。3 つの main が同じ signal.signal の 2 行と信号の関数を
    入口の層で直に書いていた — 生の副作用(signal)は foundation に置く(DOEFF106)。signal の登録は main の thread からだけ通るので、
    入口の main が run で 1 度だけ呼ぶ。"
-  (signal.signal signal.SIGTERM (fn [signum frame] (setv stop.requested True)))
-  (signal.signal signal.SIGINT (fn [signum frame] (setv stop.requested True)))
+  (signal.signal signal.SIGTERM (fn [signum frame] (.request stop)))
+  (signal.signal signal.SIGINT (fn [signum frame] (.request stop)))
   None)

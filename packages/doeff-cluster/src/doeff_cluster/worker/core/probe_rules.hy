@@ -41,6 +41,17 @@
     True ProbeStep.WAIT))
 
 
+(defk probe-due [started-ms timeout-ms stopping-ms deadline-ms]
+  {:pre [(: started-ms int) (: timeout-ms (| int float)) (: stopping-ms (| int None)) (: deadline-ms int)] :post [(: % int)]
+   :tags {:context "worker" :role "judgment"}}
+  "走っている束 1 本で、probe-step が次に手を変える最初の刻(epoch ms)を知るため(#3834 — worker は束の終わりを知らせで知り、時間切れと
+   shim の期限だけをこの刻に観測し直す)。止めの合図の前 = 起こしてからの ms が timeout-ms を越える最初の刻(TERM)・合図の後 = 合図から
+   deadline-ms が経つ刻(KILL)。比べは probe-step と同じ向き(越える = TERM・以上 = KILL)。"
+  (if (is stopping-ms None)
+      (+ started-ms (int timeout-ms) 1)
+      (+ stopping-ms deadline-ms)))
+
+
 (defk probe-reason [code stderr]
   {:pre [(: code int) (: stderr str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "検めの process の終了から、状態に出す理由の 1 行を決めるため(stderr の最後の空でない行。無ければ終了の番号)。"

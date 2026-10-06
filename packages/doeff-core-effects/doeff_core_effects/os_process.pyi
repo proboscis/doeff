@@ -39,6 +39,9 @@ from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.process_effects import ProcessSignalled as ProcessSignalled
 from doeff_core_effects.process_effects import WriteProcessInput as WriteProcessInput
 from doeff_core_effects.process_effects import ProcessInputWritten as ProcessInputWritten
+from doeff_core_effects.process_effects import WatchExits as WatchExits
+from doeff_core_effects.process_effects import UnwatchExits as UnwatchExits
+from doeff_core_effects.process_effects import ExitTarget as ExitTarget
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
 from doeff_core_effects.process_effects import ReadMachineName as ReadMachineName
 from doeff_core_effects.process_effects import ResolveModule as ResolveModule
@@ -49,6 +52,8 @@ from doeff_core_effects.process_effects import timed_out_outcome as timed_out_ou
 from doeff_core_effects.process_effects import not_started_outcome as not_started_outcome
 from doeff_core_effects.process_effects import executable_file_answer as executable_file_answer
 from doeff_core_effects.process_effects import environment_answer as environment_answer
+from doeff_core_effects.os_warm_process import same_child_running as same_child_running
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 PROCESS_THREADS: ThreadPerCall
@@ -101,6 +106,34 @@ class StartedChildren:
     def forget(self, pid: Incomplete) -> Incomplete:
         ...
 STARTED_CHILDREN: StartedChildren
+
+class ExitWatcher:
+    lock: Incomplete
+    fds: Incomplete
+    bells: Incomplete
+    poller: Incomplete
+
+    def __init__(self: ExitWatcher) -> None:
+        ...
+
+    def watch(self: ExitWatcher, bell: ExternalPromise, fds: tuple) -> None:
+        ...
+
+    def unwatch(self: ExitWatcher, bell: ExternalPromise) -> None:
+        ...
+
+    def dropped(self: ExitWatcher, bell: ExternalPromise) -> None:
+        ...
+
+    def serve(self: ExitWatcher) -> None:
+        ...
+EXIT_WATCHER: ExitWatcher
+
+def exit_target_fd(target: ExitTarget) -> _Program[int | None, object]:
+    ...
+
+def watch_exits(bell: ExternalPromise, targets: tuple) -> _Program[None, object]:
+    ...
 
 def os_executable_at(path: str) -> _Program[bool, object]:
     ...

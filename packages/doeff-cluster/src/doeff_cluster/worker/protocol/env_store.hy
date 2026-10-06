@@ -29,16 +29,16 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
-                                            ProcessExited])
+                                            ProcessExited ExitTarget])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.native_wheel [wheels-root])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
-(import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
+(import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk EnvsWake HostWake])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes
-                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
+                                              prepare-overdue prepare-due env-capacity WHEEL-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
                                               memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project declared-project])
@@ -188,6 +188,15 @@
   (if (or (isinstance seen FileFailed) (!= seen.kind PathKind.FILE))
       pending.started-ms
       (max pending.started-ms (int (* 1000 seen.modified)))))
+
+
+(defk pending-due [settings pending]
+  {:pre [(: settings EnvSettings) (: pending PendingEnv)] :post [(: % int)] :tags {:context "worker" :role "protocol"}}
+  "走っている準備 1 本の停滞の期限の刻(epoch ms — 最後の進みから stall-seconds を越える最初の刻)を、拍の間の眠りがその刻に起きるために
+   知るため(#3834)。"
+  (<- progressed int (progressed-ms pending))
+  (<- due int (prepare-due progressed settings.limits))
+  due)
 
 
 (defk ready-views [settings busy]
@@ -629,4 +638,14 @@
               (:= prune next-prune)
               (:= swept-ms now-ms)
               (:= sweeping None))))
-    (resume None)))
+    (resume None))
+  (EnvsWake []
+    ;; 準備と prune の子の終わりで拍の間の眠りを起こし、準備の停滞の期限(prepare-due)の刻にも起こす(#3834 — 準備の終わりを拍ごとに
+    ;; PollProcess で問わない。期限の刻に起きた拍の観測が、進みの印を読み直して止めるかを判じる)。
+    (var dues #())
+    (for [p (.values pending)]
+      (<- due int (pending-due settings p))
+      (:= dues (+ dues #(due))))
+    (val targets (+ (tuple (gfor p (.values pending) (ExitTarget :pid p.pid)))
+                    (if (is prune.pid None) #() #((ExitTarget :pid prune.pid)))))
+    (resume (HostWake :targets targets :due-ms (if dues (min dues) None)))))

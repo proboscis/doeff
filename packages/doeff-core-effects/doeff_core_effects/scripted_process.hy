@@ -22,6 +22,9 @@
 ;;;                     値。終わりは PollProcess が答えて回収する)・終わっていた子には送らない(delivered False)(#2461)。
 ;;;   WriteProcessInput 表に無い pid = ProcessNotChild・hold-stdin で立てて走り続ける子 = 書いた形(delivered True — 台本の世界に pipe は無く、
 ;;;                     中身はどこにも残らない)・それ以外(終わった子・hold-stdin でない子)= 書かない(delivered False)(#3672)。
+;;;   WatchExits        start-ticks の無い target(立てた子)のどれかが走り続ける子でなければ(終わった・表に無い)その場で bell を満たし、
+;;;                     そうでなければ覚えて、SignalProcess・StopProcess がその子を終わらせた時に満たす(#3834)。start-ticks の在る target
+;;;                     (他の process)は台本の世界に無いので見張らない。UnwatchExits は覚えた bell を外す。
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
@@ -43,7 +46,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            WriteProcessInput ProcessInputWritten
+                                            WriteProcessInput ProcessInputWritten WatchExits UnwatchExits
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             not-started-outcome start-refusal executable-file-answer environment-answer])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
@@ -158,6 +161,15 @@
   answer)
 
 
+(defk ended-watchers [watching pid]
+  {:pre [(: watching dict) (: pid int)] :post [(: % dict)] :tags {:context "process" :role "foundation"}}
+  "台本の子 pid が終わった時に、その子を見張っていた bell を満たして外すため(#3834)。答え = 残りの見張り(bell → pid の frozenset)。"
+  (for [#(bell pids) (.items watching)]
+    (when (in pid pids)
+      (.complete bell True)))
+  (dfor #(bell pids) (.items watching) :if (not-in pid pids) bell pids))
+
+
 (defhandler scripted-process-handler [#^ ProcessScript script]
   ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var jobs 0)
@@ -166,6 +178,8 @@
   ;; hold-stdin で立てた子の pid(WriteProcessInput が書いた形で答える子 — #3672)。
   (session var held (frozenset))
   (session var next-pid SCRIPTED-FIRST-PID)
+  ;; 子の終わりを待つ bell(WatchExits — bell → 見張る pid の frozenset・#3834)。
+  (session var watching {})
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
     ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
     (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
@@ -230,13 +244,28 @@
     (match (.get started pid)
       None (resume (ProcessNotChild :pid pid))
       state (do (del (get started pid))
+                (<- left dict (ended-watchers watching pid))
+                (:= watching left)
                 (resume (ProcessExited :pid pid :exit-code (if (= state SCRIPTED-RUNNING) SCRIPTED-STOPPED-CODE state))))))
   (SignalProcess [pid signal]
     (match (.get started pid)
       None (resume (ProcessNotChild :pid pid))
       state :if (= state SCRIPTED-RUNNING) (do (setv (get started pid) (match signal ProcessSignal.TERM -15 ProcessSignal.KILL -9))  ; 本物の子が signal で終わった時と同じ負の値
+                                              (<- left dict (ended-watchers watching pid))
+                                              (:= watching left)
                                               (resume (ProcessSignalled :pid pid :delivered True)))
       _ (resume (ProcessSignalled :pid pid :delivered False))))
+  (WatchExits [bell targets]
+    ;; 立てた子だけを見張る(他の process は台本の世界に無い)。走り続ける子でない target が 1 つでも在れば、その場で満たす。
+    (val own (frozenset (gfor t targets :if (is t.start-ticks None) t.pid)))
+    (if (any (gfor pid own (!= (.get started pid) SCRIPTED-RUNNING)))
+        (.complete bell True)
+        (when own
+          (:= watching (| watching {bell own}))))
+    (resume None))
+  (UnwatchExits [bell]
+    (:= watching (dfor #(b pids) (.items watching) :if (is-not b bell) b pids))
+    (resume None))
   (WriteProcessInput [pid text]
     (match (.get started pid)
       None (resume (ProcessNotChild :pid pid))

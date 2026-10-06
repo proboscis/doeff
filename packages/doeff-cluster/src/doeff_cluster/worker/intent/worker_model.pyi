@@ -426,3 +426,5 @@ class AwaitNextTick(EffectBase[None]):
     policy: WorkerPolicy
     changed: Future[bool] | None
     state: WorkerState
+    world: WorldView
+    stopping: bool

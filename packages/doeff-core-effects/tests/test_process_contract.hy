@@ -24,11 +24,14 @@
 ;;; 台本が env None を None で受ける)は test_process_file_effects.hy。
 (require doeff-hy.macros [defk deftest <- val var])
 (import os)
+(import signal)
+(import pathlib [Path])
+(import doeff_core_effects.scheduler [CreateExternalPromise Wait])
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            WriteProcessInput ProcessInputWritten
+                                            WriteProcessInput ProcessInputWritten WatchExits UnwatchExits ExitTarget
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound
                                             ModuleNotFound environment-mapping])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
@@ -494,3 +497,77 @@
   (<- big str (ReadText (+ root "/big")))
   (assert (= exited (ProcessExited :pid started.pid :exit-code 0)) exited)
   (assert (= (len big) (len BIG-OUTPUT-TEXT)) (.format "子の出力の長さ {}" (len big))))
+
+
+;; ---- 子の終わりの知らせ(WatchExits・UnwatchExits — agora-redesign #3834)--------------------------------------------------------
+;; 消費者 = doeff-cluster の worker の拍の間の眠り(子の終わりを時間で起きて問わずに、知らせで起きる)。
+
+(deftest test-a-watched-child-that-ends-rings-the-bell
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 走っている子を見張り、止めると bell が満たされる(待つのは bell だけ — 時間で起きて問わない)。終わりは PollProcess が今までどおり回収する。
+  (<- started (StartProcess :argv #("sleep" "30")))
+  (assert (isinstance started ProcessStarted) started)
+  (<- bell (CreateExternalPromise))
+  (<- (WatchExits :bell bell :targets #((ExitTarget :pid started.pid))))
+  (<- (SignalProcess :pid started.pid :signal ProcessSignal.TERM))
+  (<- rung (Wait bell.future))
+  (<- (UnwatchExits :bell bell))
+  (<- exited (exited-soon started.pid))
+  (assert (is rung True) rung)
+  (assert (= exited (ProcessExited :pid started.pid :exit-code -15)) exited))
+
+
+(deftest test-a-child-that-already-ended-rings-the-bell-at-once
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 掛ける前に終わった子(まだ回収していない)と、回収済みで表に無い pid は、掛けたその場で満たす(終わりを取りこぼさない)。
+  (<- ended (StartProcess :argv #("/bin/sh" "-c" OUT-ERR-EXIT)))
+  (<- (RunProcess :argv #("sleep" "0.3")))
+  (<- bell (CreateExternalPromise))
+  (<- (WatchExits :bell bell :targets #((ExitTarget :pid ended.pid))))
+  (<- rung (Wait bell.future))
+  (<- exited (PollProcess ended.pid))
+  (<- again (CreateExternalPromise))
+  (<- (WatchExits :bell again :targets #((ExitTarget :pid ended.pid))))
+  (<- rung-again (Wait again.future))
+  (assert (= #(rung rung-again) #(True True)) #(rung rung-again))
+  (assert (= exited (ProcessExited :pid ended.pid :exit-code 3)) exited))
+
+
+(deftest test-an-unwatched-bell-is-not-rung
+  {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
+  ;; 見張りを外した bell は、子が終わっても満たされない(同じ子を見張るもう 1 つの bell が満たされた後も)。
+  (<- started (StartProcess :argv #("sleep" "30")))
+  (<- dropped (CreateExternalPromise))
+  (<- kept (CreateExternalPromise))
+  (<- (WatchExits :bell dropped :targets #((ExitTarget :pid started.pid))))
+  (<- (WatchExits :bell kept :targets #((ExitTarget :pid started.pid))))
+  (<- (UnwatchExits :bell dropped))
+  (<- (SignalProcess :pid started.pid :signal ProcessSignal.KILL))
+  (<- rung (Wait kept.future))
+  (<- (exited-soon started.pid))
+  ;; 外した bell は誰も満たさない — ここで満たし、先に満たされていなかった事を答えの値で確かめる(2 度目の完了は無視される)。
+  (.complete dropped "外した後に満たした")
+  (<- late (Wait dropped.future))
+  (assert (is rung True) rung)
+  (assert (= late "外した後に満たした") late))
+
+
+(deftest test-another-process-is-watched-by-its-start-ticks
+  ;; 他の process(立てた子の背景の孫)は start-ticks で照らして見張る。台本の世界に他の process は無いので本物の答え手だけ。
+  ;; start-ticks の違う pid(使い回された pid に当たる)はその場で終わった扱い。
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (<- root str (ContractRoot))
+  (val out (+ root "/pid"))
+  (<- started (StartProcess :argv #("/bin/sh" "-c" LEFT-BEHIND) :stdout-path out))
+  (<- grandchild str (first-line-of out))
+  (val pid (int grandchild))
+  (val ticks (int (get (.split (get (.rsplit (.read-text (Path (.format "/proc/{}/stat" pid))) ")" 1) 1)) 19)))
+  (<- wrong (CreateExternalPromise))
+  (<- (WatchExits :bell wrong :targets #((ExitTarget :pid pid :start-ticks (+ ticks 1)))))
+  (<- rung-wrong (Wait wrong.future))
+  (<- bell (CreateExternalPromise))
+  (<- (WatchExits :bell bell :targets #((ExitTarget :pid pid :start-ticks ticks))))
+  (os.kill pid signal.SIGKILL)
+  (<- rung (Wait bell.future))
+  (<- (exited-soon started.pid))
+  (assert (= #(rung-wrong rung) #(True True)) #(rung-wrong rung)))

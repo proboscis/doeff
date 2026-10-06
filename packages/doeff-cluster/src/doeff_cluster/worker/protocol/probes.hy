@@ -22,17 +22,17 @@
 (import dataclasses [dataclass replace])
 (import doeff_core_effects.file_effects [MakeDirectory ReadText RemoveTree file-done])
 (import doeff_core_effects.process_effects [ReadEnvironment StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessNotStarted
-                                            ProcessExited])
+                                            ProcessExited ExitTarget])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeEntry ForgetProbes ProbeState ProbeView])
-(import doeff_cluster.worker.protocol.observations [ObserveProbes])
+(import doeff_cluster.worker.protocol.observations [ObserveProbes ProbesWake HostWake])
 (import doeff_cluster.worker.core.worker_rules [probe-refusal])
 (import doeff_cluster.worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES shim-argv])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
-                                               probe-settle probe-command probe-step ProbeSettle ProbeStep])
+                                               probe-settle probe-command probe-step probe-due ProbeSettle ProbeStep])
 
 
 (defrecord ProbeSettings
@@ -219,4 +219,14 @@
                       (lfor run (.values runs) s run.specs
                             (ProbeView (spec-hash s) ProbeState.RUNNING :started-ms run.started-ms :attempts (.get attempts (spec-hash s) 1)
                                        :last-failure (.get last-failure (spec-hash s) "")))
-                      (list (.values done)))))))
+                      (list (.values done))))))
+  (ProbesWake []
+    ;; 束の子の終わりで拍の間の眠りを起こし、時間切れ(TERM)と shim の期限(KILL)の刻にも起こす(#3834 — 束の終わりを拍ごとに PollProcess で
+    ;; 問わない。期限の刻は probe-step と同じ向きの比べ — probe_rules.probe-due)。
+    (<- deadline int (shim-deadline-ms settings.shim))
+    (var dues #())
+    (for [run (.values runs)]
+      (<- due int (probe-due run.started-ms (* settings.timeout-seconds 1000) run.stopping-ms deadline))
+      (:= dues (+ dues #(due))))
+    (resume (HostWake :targets (tuple (gfor run (.values runs) (ExitTarget :pid run.pid)))
+                      :due-ms (if dues (min dues) None)))))

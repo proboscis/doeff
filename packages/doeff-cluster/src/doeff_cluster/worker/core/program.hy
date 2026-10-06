@@ -65,9 +65,17 @@
   (TickLag :elapsed-ms (- marks.ended marks.began) :slowest longest.name :slowest-ms longest.ms))
 
 
+(defrecord TickEnd
+  "拍 1 つの終わり: state = 次の状態・alive = まだ終了を待つ子 process の数・changed = 宣言の変化の呼び鈴(Future か None)・world = 拍の
+   終わりの観測(拍の間の眠りが、先の拍を本番の判断で試す材料 — #3834)。"
+  (#^ WorkerState state)
+  (#^ int alive)
+  (#^ (| Future None) changed)
+  (#^ WorldView world))
+
+
 (defk worker-tick [state policy stopping]
-  {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
-  ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None))
+  {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % TickEnd)]}
   ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。止まり始めも渡す — heartbeat で名乗り、
   ;; coordinator がこの世代へ新しく置かない(#2819)。
   ;; 拍の遅れの計り(#3715): 拍の頭・重い 3 種の待ちの後・拍の終わりに時刻を読み、拍が TICK-LAG-MS を越えたらいちばん長い区間を名指す。
@@ -133,13 +141,14 @@
     (<- lag TickLag (tick-lag (TickMarks :began began :env-reported (epoch-ms-of env-reported-at) :desired-read now
                                          :observed (epoch-ms-of observed-at) :ended (epoch-ms-of ended-at))))
     (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms)))
-  #((WorkerState :declaration declaration :records records)
-    ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
-    (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
-    ;; 宣言の変化の呼び鈴(読めた宣言の物だけ — 拍の間の眠りが競わせる・#2692)。
-    (match read
-      (DesiredJobs :changed changed) changed
-      _ None)))
+  (TickEnd :state (WorkerState :declaration declaration :records records)
+           ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
+           :alive (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
+           ;; 宣言の変化の呼び鈴(読めた宣言の物だけ — 拍の間の眠りが競わせる・#2692)。
+           :changed (match read
+                      (DesiredJobs :changed changed) changed
+                      _ None)
+           :world after))
 
 (defk tick-pause [policy changed]
   {:pre [(: policy WorkerPolicy) (: changed (| Future None))] :post [(: % None)]}
@@ -166,9 +175,9 @@
   (var state (WorkerState))
   (while True
     (<- stopping bool (WorkerStopRequested))
-    (<- ticked tuple (worker-tick state policy stopping))
-    (val alive (get ticked 1))
-    (:= state (get ticked 0))
-    (when (and stopping (= alive 0)) (return state))
-    ;; 拍の間の眠りは答え手が決める(本番 = tick-pauses の tick-pause・模擬の時計の下の宿は静かな拍を一度に眠れる — #2781)。
-    (<- (AwaitNextTick policy (get ticked 2) state))))
+    (<- ticked TickEnd (worker-tick state policy stopping))
+    (:= state ticked.state)
+    (when (and stopping (= ticked.alive 0)) (return state))
+    ;; 拍の間の眠りは答え手が決める(本番 = tick-pauses — 次に何かが変わる刻まで眠り、子の終わり・宣言の変化・止めの合図で起きる
+    ;; 〔#3834〕・模擬の時計の下の宿は静かな拍を一度に眠れる — #2781)。
+    (<- (AwaitNextTick policy ticked.changed state ticked.world stopping))))

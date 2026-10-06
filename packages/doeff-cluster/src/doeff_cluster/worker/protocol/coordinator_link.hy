@@ -34,6 +34,7 @@
 (import doeff_cluster.worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks])
+(import doeff_cluster.worker.protocol.observations [LinkDue EveryTick])
 (import doeff_cluster.worker.core.boot_timing [boot-line])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
@@ -450,6 +451,17 @@
   rows)
 
 
+(defk next-beat-due [state]
+  {:pre [(: state LinkState)] :post [(: % (| int EveryTick))]}
+  "worker の拍の間の眠りが、次の heartbeat を送る刻まで眠れるかを知るため(#3834)。heartbeat-due と同じ材料で読む: 待ちの口を使えて
+   いて、前の heartbeat が届き、状態の報告と止まり始めが送った物のままなら、最後に届いた heartbeat から送る間隔が経つ刻(宣言の変化は
+   待ちが呼び鈴で起こす)。それ以外は拍ごとに送るので EveryTick。"
+  (<- watching bool (watching? state))
+  (if (and watching (is-not state.last-desired None) (= state.statuses state.sent-statuses) (= state.stopping state.sent-stopping))
+      (+ state.last-ok-ms state.beat-interval-ms)
+      (EveryTick)))
+
+
 (defhandler coordinator-link [#^ LinkState state #^ RouteCell cell #^ RouteOptions options #^ RouteCell watch-cell]
   ;; 引数に残す理由: 拍から拍へ持ち越す値(state)と宛先の状態(cell・待ちの watch-cell)は組み立てが作る入れ物・送り方は worker の process の値。
   (ReadDesired [env-report stopping]
@@ -467,4 +479,7 @@
     ;; 状態は次の heartbeat で送る。file にも書くので、同じ効果を外側の status-file へ回す。
     (<- rows list (status-rows state statuses))
     (setv state.statuses rows)
-    (reperform effect)))
+    (reperform effect))
+  (LinkDue []
+    (<- due (| int EveryTick) (next-beat-due state))
+    (resume due)))

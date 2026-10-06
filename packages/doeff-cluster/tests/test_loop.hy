@@ -11,6 +11,7 @@
   WorkerStopRequested PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import tests.fixtures.tick_wake [every-tick-wake])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000
                            :tick-seconds 0.1)
@@ -69,7 +70,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を台本の世界(fake-host-script)の下で走らせ、その答えを返すため。台本の外側に仮想の時計(world の SimClock)と、拍の間の
    眠りの本番の答え手 tick-pauses を被せる。拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
-  (<- answer WorkerState ((sim-time-handler :clock world.clock) (tick-pauses (slog-discard-handler ((fake-host-script world script stop-at) program)))))
+  (<- answer WorkerState ((sim-time-handler :clock world.clock) (every-tick-wake (tick-pauses (slog-discard-handler ((fake-host-script world script stop-at) program))))))
   answer)
 
 (defk events-of [world name]

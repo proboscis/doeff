@@ -26,6 +26,7 @@
                                                   PublishStatus EnvReport])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import tests.fixtures.tick_wake [every-tick-wake])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons slow-task sim-task-foundation NET])
 
@@ -63,7 +64,7 @@
   (when rung
     (<- (CompletePromise bell True)))
   (val log (TickLog (SimClock)))
-  (<- ((sim-time-handler :clock log.clock) (tick-pauses ((bell-host log bell stop-ms) (run-worker POLICY)))))
+  (<- ((sim-time-handler :clock log.clock) (every-tick-wake (tick-pauses ((bell-host log bell stop-ms) (run-worker POLICY))))))
   log.reads)
 
 

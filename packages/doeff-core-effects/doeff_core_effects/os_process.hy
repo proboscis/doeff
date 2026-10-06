@@ -23,6 +23,10 @@
 ;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)・SignalProcess(#2461)・WriteProcessInput(#3672)は、立てた子を process に 1 つの表
 ;;; STARTED-CHILDREN で持つ。立てる・問う・signal を送る・握った標準入力へ短い行を書くは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
 ;;; では thread で回す。
+;;; WatchExits・UnwatchExits(agora-redesign #3834)は、process に 1 つの見張り EXIT-WATCHER(ExitWatcher)が答える: target ごとに pidfd を
+;;; 開いて epoll に置き、1 本の見張りの thread が epoll で待つ(時間で起きない)。どれかの pidfd が読めるようになったら(= その process が
+;;; 終わった)、その bell の pidfd を全部外して閉じ、bell を満たす(ExternalPromise.complete — thread をまたいでよい口)。他の process の
+;;; target は pidfd を開いた後に /proc の starttime で照らす(開く前に pid が使い回されていても、別の process を待たない)。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "process" :role "foundation"})
@@ -30,11 +34,14 @@
 (import enum [StrEnum])
 (import collections.abc [Callable])
 (import contextlib)
+(import ctypes)
+(import errno)
 (import fnmatch)
 (import importlib.util)
 (import io)
 (import logging)
 (import os)
+(import select)
 (import signal)
 (import socket)
 (import subprocess)
@@ -50,9 +57,11 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            WriteProcessInput ProcessInputWritten
+                                            WriteProcessInput ProcessInputWritten WatchExits UnwatchExits ExitTarget
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer environment-answer])
+(import doeff_core_effects.os_warm_process [same-child-running])
+(import doeff_core_effects.scheduler [ExternalPromise])
 
 ;; offloaded-subprocess-handler の thread(呼び 1 つに 1 本 — 同時の数の上限は呼び手が並べる数)。
 (val PROCESS-THREADS (ThreadPerCall))
@@ -152,6 +161,117 @@
 
 ;; StartProcess で立てた子の表(process に 1 つ — StartedChildren の註)。
 (val STARTED-CHILDREN (StartedChildren))
+
+
+(defclass ExitWatcher []
+  "WatchExits の見張り(頭の註 — process に 1 つ)。fds = 置いた pidfd → その bell・bells = bell → その pidfd の tuple。epoll と見張りの
+   thread は最初の見張りで作る。表の読み書きは 1 つの錠の下(見張りの thread と答え手が並んで触る)。bell は object そのものを鍵に持つ
+   (id で覚えない)。資源の係なので値の型ではない。"
+
+  (deff __init__ [self]  ; defk にできない: 資源の class の初期化
+    {:pre [(: self ExitWatcher)] :post [(: % None)]}
+    "表を空で始めるため(epoll と thread はまだ作らない)。"
+    (setv self.lock (threading.Lock)
+          self.fds {}
+          self.bells {}
+          self.poller None))
+
+  (deff watch [self bell fds]  ; defk にできない: 資源の class の錠の口(答え手と見張りの thread の間の同期 — VM の外の錠)
+    {:pre [(: self ExitWatcher) (: bell ExternalPromise) (: fds tuple)] :post [(: % None)]}
+    "bell の pidfd(開いた物 — 持ち主はこの見張りへ移る)を epoll に置くため。終わった process の pidfd は置いた時に読めるので、置く前に
+     終わっていても取りこぼさない。"
+    (with [self.lock]
+      (when (is self.poller None)
+        (setv self.poller (select.epoll))
+        (.start (threading.Thread :target self.serve :name "doeff-exit-watch" :daemon True)))
+      (setv (get self.bells bell) (+ (.get self.bells bell #()) fds))
+      (for [fd fds]
+        (setv (get self.fds fd) bell)
+        (.register self.poller fd select.EPOLLIN))))
+
+  (deff unwatch [self bell]  ; defk にできない: 資源の class の錠の口(答え手と見張りの thread の間の同期 — VM の外の錠)
+    {:pre [(: self ExitWatcher) (: bell ExternalPromise)] :post [(: % None)]}
+    "bell の pidfd を epoll から外して閉じるため(満たされずに起きた眠りの後・満たした後)。"
+    (with [self.lock]
+      (.dropped self bell)))
+
+  (deff dropped [self bell]  ; defk にできない: 錠を持った呼び手だけが呼ぶ表の書き換え(VM の外)
+    {:pre [(: self ExitWatcher) (: bell ExternalPromise)] :post [(: % None)]}
+    "錠の下で、bell の pidfd を epoll から外して閉じ、表から消すため。"
+    (for [fd (.pop self.bells bell #())]
+      (.pop self.fds fd None)
+      (with [(contextlib.suppress OSError ValueError)] (.unregister self.poller fd))
+      (with [(contextlib.suppress OSError)] (os.close fd))))
+
+  (deff serve [self]  ; defk にできない: 見張りの thread の本体(VM の外で epoll に塞がる)
+    {:pre [(: self ExitWatcher)] :post [(: % None)]}
+    "見張りの thread の本体: epoll で pidfd が読めるようになるのを待ち(時間で起きない)、読めた pidfd の bell の見張りを全部外してから
+     bell を満たす。外した後に同じ番号の fd が別の bell に置かれていても、その bell を余分に 1 度起こすだけ(取りこぼしはしない)。"
+    (while True
+      (setv events (.poll self.poller))
+      (with [self.lock]
+        ;; 同じ bell の pidfd が同じ回に複数読めても、満たすのは 1 度(dict.fromkeys で重ねを除く)。
+        (setv rung (tuple (dict.fromkeys (gfor #(fd _) events :setv bell (.get self.fds fd) :if (is-not bell None) bell))))
+        (for [bell rung]
+          (.dropped self bell)))
+      (for [bell rung]
+        (.complete bell True)))))
+
+
+;; WatchExits の見張り(process に 1 つ — ExitWatcher の註)。
+(val EXIT-WATCHER (ExitWatcher))
+;; pidfd_open の system call の番号(Linux 5.3 から・どの arch も同じ 434)。uv の配る Python(python-build-standalone)は os.pidfd_open を
+;; 持たない(2026-10-06 に 3.14.3 で確かめた)ので、libc の syscall で開く。
+(val SYS-PIDFD-OPEN 434)
+(val LIBC (ctypes.CDLL None :use-errno True))
+
+
+(defk pidfd-open [pid]
+  {:pre [(: pid int)] :post [(: % (| int None))] :tags {:context "process" :role "foundation"}}
+  "pid の process の pidfd(終わると読めるようになる fd)を開くため。答え = fd か、その pid の process が居ない(ESRCH)時の None。
+   それ以外の断りは OSError で上げる(黙って終わった扱いにしない)。"
+  (val fd (LIBC.syscall SYS-PIDFD-OPEN (ctypes.c-int pid) (ctypes.c-uint 0)))
+  (if (>= fd 0)
+      fd
+      (do (val number (ctypes.get-errno))
+          (if (= number errno.ESRCH)
+              None
+              (raise (OSError number (os.strerror number) (.format "pidfd_open({})" pid)))))))
+
+
+(defk exit-target-fd [target]
+  {:pre [(: target ExitTarget)] :post [(: % (| int None))] :tags {:context "process" :role "foundation"}}
+  "target の process の pidfd を開くため。答え = 開いた fd か、もう終わっている(居ない・この答え手が立てた子として表に無い・start-ticks が
+   違う〔pid が使い回された〕・zombie)時の None。他の process は開いた後に照らす(開く前の使い回しを見分ける)。"
+  (when (and (is target.start-ticks None) (is (.find STARTED-CHILDREN target.pid) None))
+    (return None))
+  (<- fd (| int None) (pidfd-open target.pid))
+  (when (or (is fd None) (is target.start-ticks None))
+    (return fd))
+  (<- running bool (same-child-running target.pid target.start-ticks))
+  (if running
+      fd
+      (do (os.close fd) None)))
+
+
+(defk watch-exits [bell targets]
+  {:pre [(: bell ExternalPromise) (: targets tuple)] :post [(: % None)] :tags {:context "process" :role "foundation"}}
+  "WatchExits に本物の process で答えるため(頭の註): target ごとに pidfd を開き、1 つでも終わっていれば開いた分を閉じてその場で bell を
+   満たし、そうでなければ見張り EXIT-WATCHER に置く。"
+  (var fds #())
+  (var ended False)
+  (for [target targets]
+    (when (not ended)
+      (<- fd (| int None) (exit-target-fd target))
+      (if (is fd None)
+          (:= ended True)
+          (:= fds (+ fds #(fd))))))
+  (if ended
+      (do (for [fd fds] (os.close fd))
+          (.complete bell True))
+      (when fds
+        (.watch EXIT-WATCHER bell fds)))
+  None)
 
 
 (defk os-executable-at [path]
@@ -679,7 +799,13 @@
     (resume written))
   (StopProcess [pid stop-grace]
     (<- stopped (stop-child-process pid (float stop-grace)))
-    (resume stopped)))
+    (resume stopped))
+  (WatchExits [bell targets]
+    (<- (watch-exits bell targets))
+    (resume None))
+  (UnwatchExits [bell]
+    (.unwatch EXIT-WATCHER bell)
+    (resume None)))
 
 
 (defk offloaded-run [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output meter]
@@ -743,7 +869,14 @@
     (resume written))
   (StopProcess [pid stop-grace]
     (<- stopped (offloaded PROCESS-THREADS (fn [] (run-detached (stop-child-process pid (float stop-grace)))) keep-nothing))
-    (resume stopped)))
+    (resume stopped))
+  ;; 見張りを置く・外すは待たない(終わりは見張りの thread が bell を満たして知らせる)のでその場で答える。
+  (WatchExits [bell targets]
+    (<- (watch-exits bell targets))
+    (resume None))
+  (UnwatchExits [bell]
+    (.unwatch EXIT-WATCHER bell)
+    (resume None)))
 
 
 ;; 計器の無い形(頭の註 — 取り消しで止めた子は数えず、log にだけ出す)。

@@ -15,11 +15,11 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [FileFailed MakeDirectory RemoveTree ReadText file-done])
 (import doeff_core_effects.process_effects [EnvMode ReadEnvironment StartProcess PollProcess SignalProcess ProcessSignal ProcessStarted
-                                            ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
+                                            ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild ExitTarget])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild
                                                   ForgetWarmChild StopProgress StopStage])
-(import doeff_cluster.worker.protocol.observations [ObserveWarmChildren])
+(import doeff_cluster.worker.protocol.observations [ObserveWarmChildren WarmWake HostWake EveryTick])
 (import doeff_cluster.worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
 
@@ -143,4 +143,11 @@
       (<- observed WarmChildView (observed-warm-child settings view))
       (:= seen (| seen {key observed})))
     (:= table seen)
-    (resume (tuple (.values seen)))))
+    (resume (tuple (.values seen))))
+  (WarmWake []
+    ;; 待ちの子の終わりで拍の間の眠りを起こす(#3834 — 終わりを拍ごとに PollProcess で問わない)。準備完了の印は、まだ読んでいない
+    ;; 走っている子が在る間だけ拍ごとに読む(EveryTick — 印を書いた側からの合図はまだ無い。待つのは起こしてから印を書くまでの間だけで、
+    ;; 準備済みの子が走り続ける間は拍ごとに起きない)。
+    (val running (tuple (gfor view (.values table) :if (is view.exit-code None) view)))
+    (resume (HostWake :targets (tuple (gfor view running (ExitTarget :pid view.pid)))
+                      :due-ms (if (any (gfor view running (is view.mark None))) (EveryTick) None)))))

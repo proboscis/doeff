@@ -26,6 +26,8 @@ from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.process_effects import ProcessSignalled as ProcessSignalled
 from doeff_core_effects.process_effects import WriteProcessInput as WriteProcessInput
 from doeff_core_effects.process_effects import ProcessInputWritten as ProcessInputWritten
+from doeff_core_effects.process_effects import WatchExits as WatchExits
+from doeff_core_effects.process_effects import UnwatchExits as UnwatchExits
 from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
 from doeff_core_effects.process_effects import ReadMachineName as ReadMachineName
 from doeff_core_effects.process_effects import ResolveModule as ResolveModule
@@ -81,6 +83,9 @@ def scripted_append_outputs(stdout_path: str | None, stderr_path: str | None, ou
     ...
 
 def scripted_executable_at(commands: tuple[ScriptedCommand, ...], path: str) -> _Program[bool, object]:
+    ...
+
+def ended_watchers(watching: dict, pid: int) -> _Program[dict, object]:
     ...
 
 def scripted_process_handler(script: ProcessScript) -> _Handler:

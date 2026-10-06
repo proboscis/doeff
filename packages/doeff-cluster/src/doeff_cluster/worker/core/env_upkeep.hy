@@ -7,6 +7,7 @@
 ;;;   sweep-due        新しい掃除(数え)を始める時か(まだ数えていない・完成した root の集合が変わった・上限を越えたままで固定が変わったか
 ;;;                    前の掃除の終わりから SWEEP-EVERY-MS — #3715・#3732)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
+;;;   prepare-due      prepare-overdue が真になる最初の刻(worker の拍の間の眠りがこの刻に起きる — #3834)
 ;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted)
 ;;;   warm-refusal     先の組み(温める表の行)を始める前に断るか(no-disk-room・over-roots-cap・no-memory-room — #3748)。見積もりは
 ;;;                    root-estimate(disk)と build-memory-estimate(memory の山)・memory の読みは memory-use-of
@@ -138,6 +139,13 @@
    先読みも job の準備も、最後の進み(progressed — 進みの印の時刻)から stall-seconds 進まない時だけ止める。進んでいる準備は、
    起こしてから長くても止めない。"
   (> (- now progressed) limits.stall-seconds))
+
+
+(defk prepare-due [progressed-ms limits]
+  {:pre [(: progressed-ms int) (: limits PrepareLimits)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "準備 1 本で prepare-overdue が真になる最初の刻(epoch ms)を知るため(#3834 — worker は準備の子の終わりを知らせで知り、停滞の期限だけを
+   この刻に観測し直す。その間に進みの印が動いていれば、観測し直した時に期限は先へ延びる)。比べは prepare-overdue と同じ向き(越える)。"
+  (+ progressed-ms (int (* 1000 limits.stall-seconds)) 1))
 
 
 (defk env-capacity [free min-free]
