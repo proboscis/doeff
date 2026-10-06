@@ -33,7 +33,7 @@
     (setv self.entered (threading.Event))
     None)
 
-  (defn #^ object get [self [block True] [timeout None]]
+  (defn #^ object get [self #^ bool [block True] #^ (| float None) [timeout None]]
     (.set self.entered)
     (.get (super) block timeout)))
 
@@ -47,7 +47,7 @@
   ;; 取り手が 300 秒の待ちに入った後、45 秒目の /readyz と 130 秒目の /livez は 200(待つと定めた刻の前なので生きている)。
   ;; 直す前は「最後に取りに来てから」の秒で判じるので、45 秒目の /readyz が 503(閾値 30 秒)・130 秒目の /livez が 503(閾値 120 秒)。
   (val now [1000.0])
-  (val inbox (RequestInbox 0 :clock (fn [] (get now 0))))
+  (val inbox (RequestInbox 0 30.0 :clock (fn [] (get now 0))))
   (setv inbox.queue (EnteredQueue))
   (val taker (threading.Thread :target (fn [] (.take inbox 300.0 1)) :daemon True))
   (.start taker)
@@ -64,7 +64,7 @@
 (deftest test-the-probe-still-reports-a-loop-stuck-inside-a-step
   ;; 守り: 取り手が要求を取って歩に入った後、31 秒戻らなければ /readyz は 503(閾値 30 秒)・121 秒で /livez も 503。
   (val now [1000.0])
-  (val inbox (RequestInbox 0 :clock (fn [] (get now 0))))
+  (val inbox (RequestInbox 0 30.0 :clock (fn [] (get now 0))))
   (.put inbox.queue (a-read))
   (.take inbox 300.0 1)
   (setv (get now 0) 1031.0)
@@ -76,7 +76,7 @@
 
 (deftest test-a-woken-inbox-returns-at-once-and-keeps-the-requests
   ;; 起こしが入っていれば、取り手は待ちの秒を待たずに空で返る。起こしの後ろに並んだ要求は、次の取りで受ける(落とさない)。
-  (val inbox (RequestInbox 0))
+  (val inbox (RequestInbox 0 30.0))
   (.wake inbox)
   (.put inbox.queue (a-read))
   (val started (time.monotonic))
@@ -93,7 +93,7 @@
 from doeff import run
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox, StopState, stop_on_signals
 from doeff_cluster.foundation.record_inbox import RecordInbox
-inbox = (RecordInbox if sys.argv[1] == 'records' else RequestInbox)(0)
+inbox = RecordInbox(0) if sys.argv[1] == 'records' else RequestInbox(0, 30.0)
 stop = StopState()
 run(stop_on_signals(stop, wake=inbox.wake))
 print('ready', flush=True)
@@ -118,7 +118,7 @@ print(f'{stop.requested}', flush=True)
 ")
 
 
-(defn #^ str after-sigterm [#^ str code #* args]
+(defn #^ str after-sigterm [#^ str code #^ tuple args]
   "子の process に code を走らせ、ready を読んだら SIGTERM を送り、子が最後に書いた行を返すため(本物の process の本物の合図)。"
   (setv child (subprocess.Popen [sys.executable "-c" code #* args] :stdout subprocess.PIPE :stderr subprocess.PIPE :text True))
   (try
@@ -132,21 +132,21 @@ print(f'{stop.requested}', flush=True)
 
 (deftest test-a-sigterm-wakes-the-coordinator-inbox-wait
   ;; 20 秒の待ちの最中の SIGTERM で、印が立ち、待ちが 1 秒以内に抜ける。直す前は stop-on-signals が箱を起こさない(待ちは 20 秒)。
-  (val parts (.split (after-sigterm CHILD-INBOX "coordinator")))
+  (val parts (.split (after-sigterm CHILD-INBOX #("coordinator"))))
   (assert (= (get parts 0) "True") parts)
   (assert (< (float (get parts 1)) 1.0) parts))
 
 
 (deftest test-a-sigterm-wakes-the-records-inbox-wait
   ;; 記録の service の箱(RecordInbox — RequestInbox の子)も同じ。
-  (val parts (.split (after-sigterm CHILD-INBOX "records")))
+  (val parts (.split (after-sigterm CHILD-INBOX #("records"))))
   (assert (= (get parts 0) "True") parts)
   (assert (< (float (get parts 1)) 1.0) parts))
 
 
 (deftest test-a-sigterm-still-raises-the-worker-stop-mark
   ;; worker の入口は箱を持たず、今までどおり印だけを立てる(拍が 0.5 秒ごとに読む)。
-  (assert (= (after-sigterm CHILD-WORKER) "True")))
+  (assert (= (after-sigterm CHILD-WORKER #()) "True")))
 
 
 ;; --- 止まる時の生存の印 ----------------------------------------------------------------------------

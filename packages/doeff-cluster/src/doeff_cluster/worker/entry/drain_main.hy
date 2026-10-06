@@ -16,6 +16,7 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
@@ -23,7 +24,7 @@
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [coordinator-calls])
 
-;; 要求 1 つの返事を待つ上限(秒)。coordinator の fsync の詰まり(最長 13 秒 — coordinator_http.REPLY-SECONDS)より短くはしない。
+;; 要求 1 つの返事を待つ上限(秒)。coordinator の fsync の詰まり(最長 13 秒 — ClusterTiming.client-reply-ms の訳)より短くはしない。
 ;; readinessProbe は timeoutSeconds の内で終わるよう短くする。
 (setv CALL-SECONDS 15.0 PROBE-CALL-SECONDS 5.0)
 
@@ -49,7 +50,8 @@
   (setv args (.parse-args parser))
   ;; 宛先の表を作る時刻は時計の effect で読む(答え手 = sync-time-handler — 入口の層で time.time を直に読まない・DOEFF106・#3014)。
   (setv cell (RouteCell (run (route-of args.coordinator (run (with-handlers [(sync-time-handler)] (now-epoch-ms))))))
-        options (RouteOptions :reply-seconds (if (= args.mode "ready") PROBE-CALL-SECONDS CALL-SECONDS) :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS
+        options (RouteOptions :reply-seconds (if (= args.mode "ready") PROBE-CALL-SECONDS CALL-SECONDS)
+                              :watch-seconds (/ (. (ClusterTiming) watch-max-ms) 1000.0) :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS
                               :connect-retries 0 :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor (.format "drain@{}" args.name)))
   (defn #^ (| dict bool) on-coordinator [#^ object program]
     ;; 並びは外側から: 待ち・本物の HTTP の答え手・時計・coordinator への口(drain の頼みの言い換えも持つ)。

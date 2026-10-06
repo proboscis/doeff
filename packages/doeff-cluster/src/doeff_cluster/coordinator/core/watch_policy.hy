@@ -8,7 +8,7 @@
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep] doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.core.api_policy [ready-instances])
 
@@ -25,27 +25,28 @@
     _ None))
 
 
-(defk query-seconds [value]
-  {:pre [(: value (| str int float None))] :post [(: % (| float None))] :tags {:context "coordinator" :role "judgment"}}
-  "問いの timeoutSeconds を読むため: 0 以上の有限の数(文字列か数)を WATCH-MAX-SECONDS で頭打ちにする。無ければ上限。読めなければ None。"
+(defk query-seconds [value limit]
+  {:pre [(: value (| str int float None)) (: limit float)] :post [(: % (| float None))] :tags {:context "coordinator" :role "judgment"}}
+  "問いの timeoutSeconds を読むため: 0 以上の有限の数(文字列か数)を待ちの上限 limit(秒 — ClusterTiming.watch-max-ms)で頭打ちにする。
+   無ければ上限。読めなければ None。"
   (val number (match value
-                None WATCH-MAX-SECONDS
+                None limit
                 (| (int) (float)) (float value)
                 (str) (try (float value) (except [ValueError] None))
                 _ None))
   (if (and (is-not number None) (<= 0.0 number) (< number (float "inf")))
-      (min number WATCH-MAX-SECONDS)
+      (min number limit)
       None))
 
 
-(defk watch-of [request now]
-  {:pre [(: request Request) (: now int)] :post [(: % (| Watcher WatchRefusal None))] :tags {:context "coordinator" :role "judgment"}}
+(defk watch-of [request now timing]
+  {:pre [(: request Request) (: now int) (: timing ClusterTiming)] :post [(: % (| Watcher WatchRefusal None))] :tags {:context "coordinator" :role "judgment"}}
   "受けた要求が版の変化を待つ読み(GET /watch)なら、その待ち(期限 = now + timeoutSeconds)か、読めない問いの断りにするため。
    それ以外の要求は None(受け口の振り分け api_policy.respond へ渡す)。"
   (if (not (and (= request.method "GET") (= (tuple request.parts) #("watch"))))
       None
       (do (<- after (| int None) (query-revision (.get request.query "after")))
-          (<- seconds (| float None) (query-seconds (.get request.query "timeoutSeconds")))
+          (<- seconds (| float None) (query-seconds (.get request.query "timeoutSeconds") (/ timing.watch-max-ms 1000.0)))
           (cond
             (is after None) (WatchRefusal request "after(知っている coordinator の版 — 0 以上の整数)が要る")
             (is seconds None) (WatchRefusal request "timeoutSeconds は 0 以上の数")

@@ -16,7 +16,6 @@
 (import enum [StrEnum])
 (import dataclasses [dataclass])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
 
 (val BEAT-LEASE-DIVISOR 4)          ; 生存の窓を何等分した間隔で送るか(10 秒 → 2.5 秒)
 (val BEAT-TASK-LEASE-DIVISOR 3)     ; 切り離した task の lease を何等分した間隔で送るか

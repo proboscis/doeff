@@ -206,7 +206,7 @@
   (var replies #())
   (var waiting watchers)
   (for [request batch]
-    (<- watch (| Watcher WatchRefusal None) (watch-of request now))
+    (<- watch (| Watcher WatchRefusal None) (watch-of request now timing))
     (match watch
       (Watcher) (:= waiting (+ waiting #(watch)))
       (WatchRefusal) (:= replies (+ replies #(#(request 400 (ErrorReply :message watch.reason)))))
@@ -232,7 +232,7 @@
         (:= kept (+ kept #(judged.watcher)))
         (do (<- body dict (watch-answer-json judged.answer))
             (<- (Reply watcher.request 200 body)))))
-  #(next (len batch) kept))
+  #(next (len batch) kept now))
 
 
 (defk release-watchers [state watchers]
@@ -277,7 +277,7 @@
     (:= watchers (get stepped 2))
     ;; 次に起きる刻: 要求を受けずに状態を変えた歩の後は今すぐ、それ以外は次に起きる刻(after-step — 要求で変わった状態が落ち着いて
     ;; いなければ期限の関数が今すぐを返す)。今すぐが続けば、変わり続けた欄を名指して落ちる(count-unsettled)。
-    (<- woke int (now-epoch-ms))
+    (val woke (get stepped 3))
     (<- planned (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
     (val took (> (get stepped 1) 0))
     (<- following (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after current))))

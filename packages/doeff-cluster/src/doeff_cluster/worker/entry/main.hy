@@ -32,7 +32,7 @@
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.protocol.lease_release [lease-release])
@@ -137,7 +137,7 @@
    接続の上限 + 子の停止の猶予)より前になる起動(--fence や --stop-grace を長くし過ぎた等)。
    shim の期限(worker/core/shim_timing・#2940): 子の shim の期限(shim の猶予 + 掃除の余裕)が worker の KILL(停止の猶予)より後になる
    起動(--stop-grace を掃除の余裕より短くした等 — shim が子孫を片づける前に worker が shim を殺す)。"
-  (val spans (SelfStopSpans :fence-ms fence-ms :reply-ms (int (* REPLY-SECONDS 1000)) :connect-ms (int (* CONNECT-SECONDS 1000))
+  (val spans (SelfStopSpans :fence-ms fence-ms :reply-ms timing.client-reply-ms :connect-ms (int (* CONNECT-SECONDS 1000))
                               :stop-grace-ms policy.stop-grace-ms :kill-grace-ms policy.kill-grace-ms))
   (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop timing.reassign-after-ms spans))
   (when broken
@@ -273,7 +273,8 @@
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)
-        link-options (RouteOptions :reply-seconds REPLY-SECONDS :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0
+        link-options (RouteOptions :reply-seconds (/ (. (ClusterTiming) client-reply-ms) 1000.0)
+                                   :watch-seconds (/ (. (ClusterTiming) watch-max-ms) 1000.0) :connect-seconds CONNECT-SECONDS :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0
                                    :recheck-ms (int (* PREFERRED-RECHECK-SECONDS 1000)) :actor args.name)
         link-cell (RouteCell (run (route-of args.coordinator started-ms)))
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))

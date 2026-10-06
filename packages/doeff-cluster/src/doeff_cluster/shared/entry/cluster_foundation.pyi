@@ -21,7 +21,7 @@ from doeff_cluster.shared.protocol.coordinator_route import CoordinatorRoute as 
 from doeff_cluster.shared.protocol.coordinator_route import RouteCell as RouteCell
 from doeff_cluster.shared.protocol.coordinator_route import RouteOptions as RouteOptions
 from doeff_cluster.shared.protocol.coordinator_route import route_of as route_of
-from doeff_cluster.foundation.coordinator_http import REPLY_SECONDS as REPLY_SECONDS
+from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.foundation.coordinator_http import CONNECT_SECONDS as CONNECT_SECONDS
 from doeff_cluster.foundation.coordinator_http import PREFERRED_RECHECK_SECONDS as PREFERRED_RECHECK_SECONDS
 from doeff_cluster.foundation.coordinator_http import RESEND_PAUSE_SECONDS as RESEND_PAUSE_SECONDS

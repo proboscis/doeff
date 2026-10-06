@@ -27,7 +27,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json])
 (import doeff_cluster.shared.protocol.remote [program-put])
-(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT WATCH-MAX-SECONDS])
+(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
@@ -210,14 +210,14 @@
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: name str) (: poll-seconds float)]
    :post [(: % ServiceReady)] :tags {:context "doeff-cluster" :role "protocol"}}
   "名を挙げた Service が Ready になるまで待つため(AwaitServiceReady の本番の答え — #3470)。Ready でなければ coordinator の版が変わるまで
-   GET /watch(long-poll・上限 WATCH-MAX-SECONDS)で待って読み直す — 時間で起きて確かめず、版の変化で起きる。coordinator に届かない間だけ
+   GET /watch(long-poll・上限 options.watch-seconds)で待って読み直す — 時間で起きて確かめず、版の変化で起きる。coordinator に届かない間だけ
    poll-seconds の間を置いて問い直す(境界の答え手の中だけの待ち)。待つ口の無い旧い coordinator は名指して落とす(後方互換を持たない)。"
   (var after 0)
   (while True
     (<- ready (| bool None) (service-readiness cell options sender name))
     (when (is ready True)
       (return (ServiceReady :name name :revision after)))
-    (<- change (runners-changed cell options after WATCH-MAX-SECONDS))
+    (<- change (runners-changed cell options after options.watch-seconds))
     (match change
       (RunnersChange :revision revision) (:= after revision)
       (RunnersWatchMissing :detail detail)
@@ -572,7 +572,7 @@
    :post [(: % (| WarmReady WarmFailed WarmWaitExpired))] :tags {:context "doeff-cluster" :role "protocol"}}
   "温める表の行 key が組み上がるか落ちるまで待つため(AwaitWarm の本番の答え — #3668 (b))。GET /warm/<key> で読み、答えの判断
    (warm_rules.warm-wait-answer — sim の宿と同じ物)が待ちを言えば、coordinator の版が変わるまで GET /watch(long-poll・残りの秒と
-   WATCH-MAX-SECONDS の小さい方)で待って読み直す — 時間で起きて確かめず、版の変化で起きる(worker の組みの進みは Worker の行の
+   options.watch-seconds の小さい方)で待って読み直す — 時間で起きて確かめず、版の変化で起きる(worker の組みの進みは Worker の行の
    status の env に載り版を進める)。coordinator に届かない間だけ poll-seconds の間を置いて問い直す。待つ口の無い旧い coordinator は
    名指して落とす(後方互換を持たない)。"
   (<- started int (now-epoch-ms))
@@ -586,7 +586,7 @@
     (val left (max 0.0 (- timeout-seconds waited)))
     (if (is-not step None)
         (:= answer step)
-        (do (<- change (runners-changed cell options after (min WATCH-MAX-SECONDS left)))
+        (do (<- change (runners-changed cell options after (min options.watch-seconds left)))
             (match change
               (RunnersChange :revision revision) (:= after revision)
               (RunnersWatchMissing :detail detail)

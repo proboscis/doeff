@@ -1038,12 +1038,12 @@
 ;; --- 版の変化を待つ読み(GET /watch — #1933)---------------------------------------------------
 ;;
 ;; 送り手は最後に知った coordinator 全体の版(ClusterState.revision — 資源の spec / status が変わるたびに進む・生存の時刻や lease の
-;; 期限は入らない)を after で渡し、版がそれと違うようになるか、timeoutSeconds(WATCH-MAX-SECONDS まで)が過ぎるまで返事を待つ。
+;; 期限は入らない)を after で渡し、版がそれと違うようになるか、timeoutSeconds(ClusterTiming.watch-max-ms まで)が過ぎるまで返事を待つ。
 ;; 答え = {"revision" 今の版 "changed" 変わったか}。worker を名指せば、版が進んでもその worker の heartbeat の返事(温める表を除く)が
 ;; 変わらない間は起きない。調停ループ(coordinator.coordinator-step)が待ちの要求を持ち、書きの後(Persist の後)と歩ごとに判じる。
 ;; 期限の刻ちょうどに返す(coordinator は待ちの期限まで受付を待つ — wake_policy.watchers-due・#3865)。
 
-;; 待ちの上限 WATCH-MAX-SECONDS は worker も問いに載せる取り交わしの値なので shared/intent/protocol に在る(#2025)。
+;; 待ちの上限は worker も問いに載せる取り交わしの値なので ClusterTiming の watch-max-ms(shared/intent/protocol — #3865)。
 
 
 (defrecord TaskOffer

@@ -26,7 +26,7 @@
 
 (deftest test-coordinator-keeps-the-connection-between-requests
   ;; 以前(HTTP/1.0)は返事のたびに接続を閉じ、client は毎回 TCP を張り直していた。
-  (setv inbox (RequestInbox 0))
+  (setv inbox (RequestInbox 0 30.0))
   (.start inbox)
   (setv stop (threading.Event))
   (.start (threading.Thread :target serve :args #(inbox stop) :daemon True))

@@ -21,7 +21,8 @@
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 
 ;; 担い手の報告が古くならない時計(効く期限を準備の報告の window の 1 つにする)。
-(val LONG-LEASE (ClusterTiming :lease-ms 1000000000))
+;; 移し替えと忘れる期限は生死の窓より長い(ClusterTiming の順の検め — #3865)ので、生死の窓と一緒に延ばす。
+(val LONG-LEASE (ClusterTiming :lease-ms 1000000000 :reassign-after-ms 2000000000 :worker-forget-ms 3000000000))
 ;; 担い手の報告が準備の報告の window(10 秒)より早く古くなる時計。
 (val SHORT-LEASE (ClusterTiming :lease-ms 5000))
 (val T (ClusterTiming))
