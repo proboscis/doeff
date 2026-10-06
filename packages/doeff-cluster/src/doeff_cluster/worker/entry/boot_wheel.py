@@ -2,27 +2,28 @@
 
 Rust の部品を組む・引く入口は doeff の build の口 tools/doeff_cargo_backend.py の 1 つ(ADR-DOE-BUILD-001)。ここは自前の鍵も置き場も
 持たず、実行環境の準備(worker の EnsureNativeWheel)と同じく `uv build --wheel` でその口を通るだけ: 口は source の中身の鍵で保存先
-($WORK_DIR/state/wheels — env DOEFF_WHEEL_CACHE)を引き、無い時だけ組んで置き、保存先の中の wheel と組んだかを報告の file
-(env DOEFF_WHEEL_REPORT)に書く。uv の子の環境・錠・報告の読みの定義点は doeff_cluster.shared.core.native_wheel の 1 つ。
+($WORK_DIR/state/wheels — env DOEFF_WHEEL_CACHE)を引き、無い時だけ組んで置く。入れる wheel は uv build が root の下の --out-dir
+(<root>/.native-wheels/doeff-vm/)に出した file。口が報告の file(env DOEFF_WHEEL_REPORT)に書く「組んだか」は観測だけ(書かれなければ
+「不明」)。uv の子の環境・--out-dir の置き場・錠・報告の読みの定義点は doeff_cluster.shared.core.native_wheel の 1 つ。
 
 標準ライブラリと native_wheel・foundation/process_environ だけを import する: boot.sh は doeff-vm を入れる前の venv(uv sync --no-install-package
 doeff-vm)の python でこれを起こす。
 
 使い方: python -m doeff_cluster.worker.entry.boot_wheel --root <doeff の root> --state <state dir> --uv-cache <uv の cache の dir>
         [--uv <uv の path(既定 uv)>]
-  stdout = 1 行「<組んだ|使った> <wheel の path>」(boot.sh が起動の行に載せ、wheel を venv へ入れる — path は保存先の中の wheel)。
-  stderr = 組んだか使ったかと秒の 1 行(口と uv build の出力も)。組めない・報告を読めない時は非 0 で終わり、理由を stderr に 1 行。
+  stdout = 1 行「<組んだ|使った|組んだかは不明で用意した> <wheel の path>」(boot.sh が起動の行に載せ、wheel を venv へ入れる — path は
+  --out-dir の中の wheel)。stderr = 用意の仕方と秒の 1 行(口と uv build の出力も)。組めない・wheel が出ない・報告の行の形が違う時は
+  非 0 で終わり、理由を stderr に 1 行。
 """
 
 import argparse
 import fcntl
 import os
 import posixpath
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
+from dataclasses import dataclass
 
 from doeff_cluster.foundation.process_environ import child_environ
 from doeff_cluster.shared.core import native_wheel
@@ -32,42 +33,77 @@ MODULE_TAGS = {"context": "worker", "role": "main"}
 
 
 class BootWheelFailed(RuntimeError):
-    """wheel を用意できない(組めない・口の報告を読めない)— 入口が理由を stderr に出して非 0 で終わる。"""
+    """wheel を用意できない(組めない・wheel が出ない・口の報告の行の形が違う)— 入口が理由を stderr に出して非 0 で終わる。"""
 
 
-def built_or_stored(root: str, state_dir: str, uv_cache: str, uv: str) -> native_wheel.StoredWheel:
-    """root の doeff-vm の source を `uv build --wheel` で build の口に渡し、口が報告した保存先の中の wheel を返す。uv の --out-dir の
-    写しと報告の file は一時の dir に置き、読んだら消す(入れるのは保存先の中の wheel)。uv の出力は stderr へ流す(stdout は答えの
-    1 行だけ)。"""
+# 口の報告の観測(native_wheel.reported_built の答え)ごとの、答えの行の頭の語(空白を含まない — boot.sh が最初の空白で分ける)。
+HOW_BUILT = "組んだ"
+HOW_STORED = "使った"
+HOW_UNREPORTED = "組んだかは不明で用意した"
+
+
+@dataclass(frozen=True)
+class BootWheel:
+    """用意した wheel: how = 答えの行の頭の語(HOW_*)・path = uv build が --out-dir に出した wheel の file。"""
+
+    how: str
+    path: str
+
+
+def report_text(report: str) -> str:
+    """口の報告の file の中身(口が書かなかった — 報告の約束の無い版の口 — なら空文字)を読み、file を消すため。"""
+    if not os.path.isfile(report):
+        return ""
+    with open(report, encoding="utf-8") as handle:
+        text = handle.read()
+    os.remove(report)
+    return text
+
+
+def wheel_in(out_dir: str) -> str:
+    """uv build が --out-dir に出した wheel の file の path(名の順の先頭)。無ければ BootWheelFailed。"""
+    wheels = sorted(name for name in os.listdir(out_dir) if name.endswith(".whl"))
+    if not wheels:
+        raise BootWheelFailed(f"uv build が --out-dir {out_dir} に wheel を出さない")
+    return posixpath.join(out_dir, wheels[0])
+
+
+def built_or_stored(root: str, state_dir: str, uv_cache: str, uv: str) -> BootWheel:
+    """root の doeff-vm の source を `uv build --wheel` で build の口に渡し、uv が root の下の --out-dir に出した wheel を返す。答え =
+    BootWheel。--out-dir は前の残りを消してから使う。uv の出力は stderr へ流す(stdout は答えの 1 行だけ)。"""
     source_dir = posixpath.join(root, native_wheel.DOEFF_VM_SOURCE)
-    os.makedirs(state_dir, exist_ok=True)
-    scratch = tempfile.mkdtemp(prefix=".boot-wheel-", dir=state_dir)
-    try:
-        report = posixpath.join(scratch, "report.jsonl")
-        extra = (*native_wheel.uv_environment(state_dir, uv_cache), native_wheel.UvVariable(native_wheel.WHEEL_REPORT_ENV, report))
-        done = subprocess.run(
-            [uv, "build", "--wheel", "--out-dir", posixpath.join(scratch, "out"), source_dir],
-            cwd=source_dir,
-            env=child_environ(native_wheel.UV_DROP, extra),
-            stdout=sys.stderr,
-            check=False,
-        )
-        if done.returncode != 0:
-            raise BootWheelFailed(f"uv build が終了コード {done.returncode} で終わった({source_dir} — 出力は上)")
-        text = ""
-        if os.path.isfile(report):
-            with open(report, encoding="utf-8") as handle:
-                text = handle.read()
-        match native_wheel.stored_wheel_of(text, native_wheel.DOEFF_VM_PACKAGE):
-            case native_wheel.StoredWheel() as found:
-                return found
-            case str() as problem:
-                raise BootWheelFailed(problem)
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+    out_dir = native_wheel.wheel_out_dir(root, native_wheel.DOEFF_VM_PACKAGE)
+    report = f"{out_dir}.report.jsonl"
+    if os.path.isdir(out_dir):
+        for name in os.listdir(out_dir):
+            os.remove(posixpath.join(out_dir, name))
+    os.makedirs(out_dir, exist_ok=True)
+    if os.path.isfile(report):
+        os.remove(report)
+    extra = (*native_wheel.uv_environment(state_dir, uv_cache), native_wheel.UvVariable(native_wheel.WHEEL_REPORT_ENV, report))
+    done = subprocess.run(
+        [uv, "build", "--wheel", "--out-dir", out_dir, source_dir],
+        cwd=source_dir,
+        env=child_environ(native_wheel.UV_DROP, extra),
+        stdout=sys.stderr,
+        check=False,
+    )
+    text = report_text(report)
+    if done.returncode != 0:
+        raise BootWheelFailed(f"uv build が終了コード {done.returncode} で終わった({source_dir} — 出力は上)")
+    wheel = wheel_in(out_dir)
+    match native_wheel.reported_built(text, native_wheel.DOEFF_VM_PACKAGE):
+        case True:
+            return BootWheel(how=HOW_BUILT, path=wheel)
+        case False:
+            return BootWheel(how=HOW_STORED, path=wheel)
+        case native_wheel.NotReported():
+            return BootWheel(how=HOW_UNREPORTED, path=wheel)
+        case str() as problem:
+            raise BootWheelFailed(problem)
 
 
-def ensured_wheel(root: str, state_dir: str, uv_cache: str, uv: str) -> native_wheel.StoredWheel:
+def ensured_wheel(root: str, state_dir: str, uv_cache: str, uv: str) -> BootWheel:
     """root の doeff-vm の wheel を build の口の保存先から用意する。package の錠(native_wheel.wheel_lock)を持つ間に口を通す — 同じ
     package を組む worker の準備と重ならない。"""
     lock = native_wheel.wheel_lock(state_dir, native_wheel.DOEFF_VM_PACKAGE)
@@ -96,9 +132,8 @@ def main() -> None:
     except BootWheelFailed as failure:
         print(f"boot: doeff-vm の wheel を用意できない: {failure}", file=sys.stderr, flush=True)
         sys.exit(1)
-    how = "組んだ" if ready.built else "使った"
-    print(f"boot: doeff-vm の wheel を{how}({time.monotonic() - started:.1f} 秒・{ready.path})", file=sys.stderr, flush=True)
-    print(f"{how} {ready.path}", flush=True)
+    print(f"boot: doeff-vm の wheel を{ready.how}({time.monotonic() - started:.1f} 秒・{ready.path})", file=sys.stderr, flush=True)
+    print(f"{ready.how} {ready.path}", flush=True)
 
 
 if __name__ == "__main__":

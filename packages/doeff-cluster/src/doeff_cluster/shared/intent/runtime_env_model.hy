@@ -17,7 +17,7 @@
 ;;; file を変えないのでキーに入れない。準備の手順の版もキーに入れない(coordinator と worker の版が違っても同じ宣言が同じキーになる)。
 ;;; ここは型と定数だけ。キー・JSON の往復・失敗の値の組み立て・子の環境変数の組の検め(env-key・runtime-env->json・
 ;;; runtime-env-of-json・env-failure・child-environ-refusal ほか)は doeff_cluster.shared.core.runtime_env_rules、鍵の長さ・platform の名・
-;;; native の wheel を build の口の保存先から用意する約束(ENV_KEY_LENGTH・current_platform・stored_wheel_of ほか)は doeff_cluster.shared.core.native_wheel。
+;;; native の wheel を build の口の保存先から用意する約束(ENV_KEY_LENGTH・current_platform・reported_built・wheel_out_dir ほか)は doeff_cluster.shared.core.native_wheel。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defenum defrecord])

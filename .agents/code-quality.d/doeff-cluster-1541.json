@@ -523,7 +523,8 @@
         "doeff-cluster-runtime-env",
         "doeff-cluster-env-prepare-model",
         "doeff-cluster-env-marker-model",
-        "doeff-cluster-runtime-env-rules"
+        "doeff-cluster-runtime-env-rules",
+        "doeff-cluster-native-wheel"
       ],
       "layer": "effects",
       "name": "doeff-cluster-env-prepare",

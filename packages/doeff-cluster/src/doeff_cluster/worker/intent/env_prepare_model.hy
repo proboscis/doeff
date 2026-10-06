@@ -90,13 +90,13 @@
    (起こした刻を読めなければ None — #3676)・hy-version = root の venv の Hy の compiler の版(venv に Hy が無ければ None — 次の準備が
    bytecode の引き継ぎ元を選ぶ時に比べる・#3706)・build-memory-bytes = 組みの山の memory(byte — 準備の後の cgroup の memory.peak − 準備の前の
    memory.current。準備の間に container の memory.peak が上がらなかった・読めなかった組みは None — worker が先の組みを始める前の memory の
-   見積もりに読む・#3748)。"
+   見積もりに読む・#3748)・built = 組んだ native の wheel の数(build の口の報告の無い wheel が在れば None = 数えられない・#3860)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
   (#^ tuple stages)
   (#^ int downloaded)
-  (#^ int built)
+  (#^ (| int None) built)
   (#^ str interpreter)
   (#^ int child-protocol)
   (setv #^ (| BytecodeCounts None) bytecode None)
@@ -106,10 +106,15 @@
   (setv #^ (| int None) build-memory-bytes None))
 
 
+;; native の wheel をどう用意したか(build の口の報告の観測 — #3860): BUILT = 口が組んだ・STORED = 口が保存先から引いた・
+;; UNREPORTED = 口が報告を書かなかった(報告の約束の無い版の口 — 宣言の古い doeff の root。組んだか引いたかは分からない)。
+(defenum WheelOrigin BUILT STORED UNREPORTED)
+
+
 (defrecord WheelReady
-  "native の wheel の path。built = この準備で build した(キーの wheel が無かった)。"
+  "native の wheel: path = uv build が --out-dir に出した wheel の file(venv へ入れる物)・origin = 口が組んだか(観測 — WheelOrigin)。"
   (#^ str path)
-  (#^ bool built))
+  (#^ WheelOrigin origin))
 
 
 (defrecord SyncReport
@@ -154,7 +159,7 @@
   (#^ str root)
   (#^ tuple stages)
   (#^ int downloaded)
-  (#^ int built)
+  (#^ (| int None) built)
   (#^ str interpreter))
 
 
@@ -163,7 +168,8 @@
   (setv #^ tuple mirrors #())
   (setv #^ tuple wheels #())
   (setv #^ int downloaded 0)
-  (setv #^ int built 0)
+  ;; 組んだ native の wheel の数(None = 口の報告が無い wheel が在り数えられない — 0 で埋めない・#3860)。
+  (setv #^ (| int None) built 0)
   (setv #^ str interpreter "")
   (setv #^ tuple stages #())
   (setv #^ (| BytecodeCounts None) bytecode None)
@@ -230,9 +236,11 @@
 (defclass [(dataclass :frozen True)] EnsureNativeWheel [EffectBase]
   "native の wheel を build の口(doeff の tools/doeff_cargo_backend.py — Rust の部品を組む・引く入口の 1 つ)の保存先から用意する
    (`uv build --wheel` で source-dir — 宣言の paths の先頭の dir — を口へ渡す。口が source の中身の鍵で保存先を引き、無い時だけ組む・
-   package ごとに排他)。答え = WheelReady か EnvFailure(native-build-failed)。"
+   package ごとに排他)。out-dir = uv build の --out-dir(venv へ入れる wheel を出させる dir — root の下・native_wheel.wheel-out-dir)。
+   答え = WheelReady か EnvFailure(native-build-failed)。"
   (#^ str package)
-  (#^ str source-dir))
+  (#^ str source-dir)
+  (#^ str out-dir))
 
 
 (defclass [(dataclass :frozen True)] SyncProject [EffectBase]

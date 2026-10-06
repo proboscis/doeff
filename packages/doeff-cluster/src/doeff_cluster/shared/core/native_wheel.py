@@ -2,8 +2,10 @@
 
 Rust の部品を組む・引く入口は doeff の build の口 tools/doeff_cargo_backend.py の 1 つ(ADR-DOE-BUILD-001)。worker は自前の鍵も置き場も
 持たず、`uv build --wheel` でその口を通るだけ: 口は source の中身の鍵で保存先(env DOEFF_WHEEL_CACHE)を引き、無い時だけ組んで置き、
-保存先の中の wheel と組んだかを env DOEFF_WHEEL_REPORT の file に 1 行の JSON で書く。この module は、その呼びの環境(uv の子へ足す
-変数)・同じ package を同時に組まないための錠・報告の行の読みを定義する。
+uv build が --out-dir に出した wheel をそのまま使う(どの版の口でも出る)。口が env DOEFF_WHEEL_REPORT の file に書く「組んだか」の
+1 行は観測だけで、報告の約束の無い版の口(宣言の古い doeff の root)は書かない — その時は「報告が無い」(NotReported)として名指す
+(組んだ・使ったのどちらにも埋めない・報告が無いことを準備の失敗にしない)。この module は、その呼びの環境(uv の子へ足す変数)・
+--out-dir の置き場・同じ package を同時に組まないための錠・報告の行の読みを定義する。
 
 使い手は 2 つで、どちらもここだけを読む(綴りの複製を作らない):
   - 実行環境の準備(worker): worker/protocol/env_translation の EnsureNativeWheel・掃除 = worker/protocol/env_store の sweep-leftovers
@@ -13,9 +15,10 @@ Rust の部品を組む・引く入口は doeff の build の口 tools/doeff_car
 標準ライブラリだけを import する(doeff・hy・doeff_cluster の Hy の module を import しない): 起動の script は doeff-vm を入れる前の venv の
 python でこの module を読む。
 
-置き場(state = worker の state dir — 起動の script では $WORK_DIR/state):
+置き場(state = worker の state dir — 起動の script では $WORK_DIR/state・root = 準備する root):
   state/wheels/<package>-<鍵>/<wheel>   build の口の保存先(並びと鍵と .used は口の物)
   state/locks/wheel-<package>           package ごとの錠(fcntl.flock の排他 — worker の AcquireLock と同じ錠)
+  <root>/.native-wheels/<package>/      uv build の --out-dir(venv へ入れる wheel — root と一緒に消える)
 """
 
 import json
@@ -74,26 +77,29 @@ def uv_environment(state_dir: str, uv_cache: str) -> tuple[UvVariable, ...]:
     )
 
 
+def wheel_out_dir(root: str, package: str) -> str:
+    """root の package の wheel を uv build の --out-dir に出させる dir(venv へ入れる wheel の在りか — root と一緒に消える)。"""
+    return posixpath.join(root, ".native-wheels", package)
+
+
 @dataclass(frozen=True)
-class StoredWheel:
-    """build の口が報告した wheel: path = 保存先の中の wheel の file・built = その呼びが組んだ(保存先に無かった)。"""
-
-    path: str
-    built: bool
+class NotReported:
+    """build の口が package の報告の行を書かなかった(報告の約束の無い版の口 — 組んだか保存先から引いたかは分からない)。"""
 
 
-def stored_wheel_of(text: str, project: str) -> "StoredWheel | str":
-    """build の口の報告の file の中身(1 行 1 つの JSON)から、package project の最後の行を StoredWheel に読むため。行が無い・形が違う
-    時は理由の文(呼び手は native の build の失敗として名指す — 報告を書かない口は通らない)。"""
-    found: StoredWheel | str = f"build の口の報告に {project} の行が無い(口が保存先を通っていない)"
+def reported_built(text: str, project: str) -> "bool | NotReported | str":
+    """build の口の報告の file の中身(1 行 1 つの JSON — 無い file は空文字で渡す)から、package project の最後の行の「組んだか」を
+    読むため(True = 組んだ・False = 保存先から引いた)。行が無ければ NotReported。行が JSON でない・形が違う時は理由の文(報告を
+    書く版の口の約束の破れ — 呼び手は native の build の失敗として名指す)。"""
+    found: bool | NotReported = NotReported()
     for line in text.splitlines():
         try:
             row = json.loads(line)
         except ValueError:
             return f"build の口の報告の行が JSON でない: {line[:200]}"
         match row:
-            case {"project": str() as name, "wheel": str() as wheel, "built": bool() as built} if name == project:
-                found = StoredWheel(path=wheel, built=built)
+            case {"project": str() as name, "wheel": str(), "built": bool() as built} if name == project:
+                found = built
             case {"project": str(), "wheel": str(), "built": bool()}:
                 pass
             case _:
