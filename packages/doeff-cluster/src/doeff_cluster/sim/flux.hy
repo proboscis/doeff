@@ -22,9 +22,10 @@
 ;;; 当てた瞬間に、入れ替える対象の保存先のスナップショット(BootRootsAtStart)を残す — 条 V5 が判定する。宣言を当てるだけの reconcile-manifests は
 ;;; 保存先を持たない(版上げの Program を通さずに手で当てる筋書きには、準備の handler が居ない)。
 ;;;
-;;; 名簿の内容(#3772): 宣言の内か外か = 当たっている宣言に、その名の worker の Deployment が在るか。coordinator の版 = 答えた coordinator の
-;;; Pod が起動した時の宣言の版 — 模擬の Flux は coordinator の宣言を当てた時、その時の Pod の一生の数(CoordinatorRuns)を覚え、次の一生から
-;;; 新しい版で動くと読む。止めの合図は次の周期で効くので、当てた直後は古い版の coordinator がまだ答える(本物の Recreate と同じ形)。
+;;; 名簿の内容(#3772): 宣言の内か外か = 当たっている宣言に、その名の worker の Deployment が在るか。coordinator の版 = 答えた coordinator が
+;;; GET /state の答えの欄 coordinatorCommit で申告する版(本番の読みと同じ shared/protocol/coordinator_reads の coordinator-commit-of-state)。
+;;; 模擬の Flux は coordinator を作り直す時、Deployment の env を模擬の Pod の環境として渡す(ReplaceCoordinatorEnviron — 次の一生から
+;;; 効く)ので、作り直した coordinator は本番と同じ入口の読み(WORKER_DOEFF_COMMIT)で新しい版を申告する。
 ;;; 静かな時間帯の待ち(AwaitQuietWindow)には、模擬の世界ではすぐ「静か」と答える。
 (require doeff-hy.macros [val var defk defhandler defeffect <-])
 (require doeff-hy.record [defrecord])
@@ -36,7 +37,7 @@
 (import doeff_core_effects.scheduler [Spawn Gather Task])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.launch_rules [worker-launch-of-env coordinator-launch-of-env coordinator-launch-names])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireCoordinator])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
 (import doeff [with-handlers])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 (import doeff_cluster.worker.core.drain_client [await-drained DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
@@ -46,8 +47,9 @@
                                                    ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused BootRootsAtStart
                                                    PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
                                                    AwaitQuietWindow QuietWindowOpened])
+(import doeff_cluster.shared.protocol.coordinator_reads [coordinator-commit-of-state])
 (import doeff_cluster.sim.local [SimWorker HostTruth DrainWorker StopWorker ReplaceWorker StartWorker WorkerOf HostTruthOf
-                                 StopCoordinator ReadCoordinator CoordinatorRuns])
+                                 StopCoordinator ReadCoordinator ReplaceCoordinatorEnviron])
 
 
 ;; Deployment の role(env の ROLE)のうち、模擬の Flux が作り直す物。
@@ -125,11 +127,13 @@
 
 (defrecord CoordinatorView
   "模擬の coordinator の状態(GET /state)を型にした物: roster = 名簿のコピー・tasks = 終わっていない task のコピー・known-tasks = coordinator が
-   知る task の id の全部(終わった物も)。名簿の問い合わせ(upgrade-state)と入れ替えの瞬間の記録(roster-snapshot)が同じ 1 つの取り方を使うため。"
+   知る task の id の全部(終わった物も)・coordinator-commit = 答えた coordinator が申告する doeff の版(欄 coordinatorCommit — 申告しなければ
+   None)。名簿の問い合わせ(upgrade-state)と入れ替えの瞬間の記録(roster-snapshot)が同じ 1 つの取り方を使うため。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ (get tuple #(RosterEntry ...)) roster)
   (#^ (get tuple #(PendingTask ...)) tasks)
-  (#^ (get tuple #(str ...)) known-tasks))
+  (#^ (get tuple #(str ...)) known-tasks)
+  (#^ (| str None) coordinator-commit))
 
 
 (defk coordinator-view [declared]
@@ -138,7 +142,8 @@
   "模擬の coordinator の状態を読み、型の付いた値(CoordinatorView)にするため(JSON の境界はここだけ)。名簿 = worker ごとの live と、
    その worker の今の世代が動いている版(sim の WorkerOf)と、宣言の内か外か(declared に名が在るか)— live は、coordinator が live と
    答え、worker の動く機体(sim の HostTruth)が止まっておらず、今の世代の heartbeat に coordinator が 1 度でも返事をした時(作り直した
-   直後の新しい世代が登録を終える前は live に数えない)。task = queued と、worker に置かれた物。coordinator に届かなければ UpgradeStateUnreachable(作り直しの間)。"
+   直後の新しい世代が登録を終える前は live に数えない)。task = queued と、worker に置かれた物。coordinator の版 = 答えの欄 coordinatorCommit
+   (本番の読みと同じ coordinator-commit-of-state)。coordinator に届かなければ UpgradeStateUnreachable(作り直しの間)。"
   (try
     (<- state dict (ReadCoordinator "/state"))
     (except [failed RemoteJobFailed]
@@ -155,19 +160,19 @@
                           (if (= (get t "phase") "queued")
                               (PendingTask :task (get t "id") :phase PendingPhase.QUEUED :worker None)
                               (PendingTask :task (get t "id") :phase PendingPhase.ASSIGNED :worker (get t "worker"))))))
-  (CoordinatorView :roster roster :tasks tasks :known-tasks (tuple (gfor t (get state "tasks") (get t "id")))))
+  (<- commit (| str None) (coordinator-commit-of-state state))
+  (CoordinatorView :roster roster :tasks tasks :known-tasks (tuple (gfor t (get state "tasks") (get t "id"))) :coordinator-commit commit))
 
 
-(defk upgrade-state [declared coordinator-commit]
-  {:pre [(: declared (get frozenset str)) (: coordinator-commit (| str None))] :post [(: % (| UpgradeState UpgradeStateUnreachable))]
+(defk upgrade-state [declared]
+  {:pre [(: declared (get frozenset str))] :post [(: % (| UpgradeState UpgradeStateUnreachable))]
    :tags {:context "doeff-cluster" :role "program"}}
-  "sim の世界で、版上げが次へ進むかを決める読み(ReadUpgradeState の sim の答え)を作るため。名簿と task は coordinator-view(declared =
-   当たっている宣言の worker の名)・coordinator の版 = coordinator-commit(答えた coordinator の Pod が起動した時の宣言の版 —
-   flux-declarations が CoordinatorRuns から読む)。coordinator に届かなければ UpgradeStateUnreachable(作り直しの間)。"
+  "sim の世界で、版上げが次へ進むかを決める状態(ReadUpgradeState の sim の答え)を作るため。名簿・task・coordinator の版は
+   coordinator-view(declared = 当たっている宣言の worker の名)。coordinator に届かなければ UpgradeStateUnreachable(作り直しの間)。"
   (<- view (| CoordinatorView UpgradeStateUnreachable) (coordinator-view declared))
   (match view
     (UpgradeStateUnreachable) view
-    (CoordinatorView) (UpgradeState :roster view.roster :tasks view.tasks :coordinator-commit coordinator-commit
+    (CoordinatorView) (UpgradeState :roster view.roster :tasks view.tasks :coordinator-commit view.coordinator-commit
                                     :known-tasks view.known-tasks)))
 
 
@@ -226,11 +231,12 @@
 (defk recreate-coordinator [deployed seconds declared]
   {:pre [(: deployed DeployedEnv) (: seconds float) (: declared (get frozenset str))] :post [(: % UpgradeStart)]
    :tags {:context "doeff-cluster" :role "program"}}
-  "coordinator の Deployment を作り直すため: 止まる瞬間の記録 → seconds 秒止めて同じ保存先から作り直す(sim の coordinator の process は
-   版を持たない — 記録の版は宣言の版・答えた coordinator の版は flux-declarations が Pod の一生の数から読む)。declared = 当てる宣言の
-   worker の名。答え = 入れ替えを始めた瞬間の記録。"
+  "coordinator の Deployment を作り直すため: 止まる瞬間の記録 → Deployment の env を模擬の Pod の環境にする(次の一生から効く —
+   作り直した coordinator は入口の読みでその env の WORKER_DOEFF_COMMIT を申告する・#3772)→ seconds 秒止めて同じ保存先から作り直す。
+   declared = 当てる宣言の worker の名。答え = 入れ替えを始めた瞬間の記録。"
   (<- launch CoordinatorLaunch (coordinator-launch-of-env deployed.env))
   (<- start UpgradeStart (roster-snapshot UpgradeKind.COORDINATOR "coordinator" launch.doeff-commit declared))
+  (<- (ReplaceCoordinatorEnviron deployed.env))
   (<- (StopCoordinator seconds))
   start)
 
@@ -349,43 +355,6 @@
   seen)
 
 
-(defrecord CoordinatorGeneration
-  "模擬の coordinator の版の移り 1 つ(#3772): first-run = CoordinatorRuns の列の何番目の一生から・doeff-commit = その一生が起動した時の
-   宣言の版(宣言に版の行が無ければ None)。"
-  {:tags {:context "doeff-cluster" :role "type"}}
-  (#^ int first-run)
-  (#^ (| str None) doeff-commit))
-
-
-(defk first-generations [applied]
-  {:pre [(: applied (get tuple #(DeployedEnv ...)))] :post [(: % (get tuple #(CoordinatorGeneration ...)))]
-   :tags {:context "doeff-cluster" :role "program"}}
-  "筋書きの初めに当たっている宣言(applied)から、最初の一生(0 番目)の coordinator の版を決めるため — 模擬の世界の coordinator はその版で
-   起動したと読む。"
-  (<- roots (get tuple #(BootRoot ...)) (coordinator-running-roots applied))
-  #((CoordinatorGeneration :first-run 0 :doeff-commit (if roots (. (get roots 0) doeff-commit) None))))
-
-
-(defk generations-after [generations starts first-run]
-  {:pre [(: generations (get tuple #(CoordinatorGeneration ...))) (: starts (get tuple #(UpgradeStart ...))) (: first-run int)]
-   :post [(: % (get tuple #(CoordinatorGeneration ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "1 回の当てで coordinator を作り直したら(starts に coordinator の記録が在れば)、当てる前の Pod の一生の数(first-run)の次の一生から
-   入れ替え先の版で動くと覚えるため — 止めの合図は次の周期で効くので、それまでは古い版の coordinator が答える。"
-  (+ generations (tuple (gfor s starts :if (= s.kind UpgradeKind.COORDINATOR)
-                              (CoordinatorGeneration :first-run first-run :doeff-commit s.doeff-commit)))))
-
-
-(defk running-coordinator-commit [generations]
-  {:pre [(: generations (get tuple #(CoordinatorGeneration ...)))] :post [(: % (| str None))]
-   :tags {:context "doeff-cluster" :role "program"}}
-  "今 答える coordinator(Pod の一生の列の最後)が動いている版を返すため: その一生の番号以下から始まる版の移りのうち最後の物の版。
-   まだ 1 度も起動していなければ None。"
-  (<- runs tuple (CoordinatorRuns))
-  (val current (- (len runs) 1))
-  (val started (tuple (gfor g generations :if (<= g.first-run current) g)))
-  (if started (. (get started -1) doeff-commit) None))
-
-
 (defhandler flux-declarations [#^ tuple paths #^ Callable drain #^ float coordinator-seconds #^ (get tuple #(DeployedEnv ...)) initial]
   ;; 引数に残す理由: 置き場の path・drain(preStop の代わり)・coordinator の止まりの秒・初めの当てた物は筋書きごとに違う値(設定ではなく
   ;; 模擬の世界そのもの)。
@@ -396,13 +365,12 @@
   ;; 自己起動の root の準備(PrepareBootRoot)は、模擬の保存先に無ければ待たずに組み、在れば準備済みと答える(断られる筋書きは
   ;; refused-boot-roots を内側に置く)。保存先に在る root = 指定された対象が今 動いている版の物と、session に覚えた物(roots — 先に準備した
   ;; 物と、準備の時に動いていた版の物。足すだけで消さない)。当てた瞬間の保存先のスナップショットは session に積み、BootRootsAtStartsSeen で返す。
-  ;; 名簿の問い合わせに答える coordinator の版は、coordinator の版の移り(generations — 初めは initial の版・当てで coordinator を作り直すたびに
-  ;; 次の一生から入れ替え先の版)と今の Pod の一生の数から読む(#3772)。静かな時間帯の待ちには、すぐ「静か」と答える。
+  ;; 名簿の問い合わせに答える coordinator の版は、答えた coordinator が GET /state で申告する版(coordinator-view — #3772)。静かな時間帯の
+  ;; 待ちには、すぐ「静か」と答える。
   (session var applied initial)
   (session var starts #())
   (session var roots #())
   (session var places #())
-  (session var generations (! (first-generations initial)))
   (AwaitQuietWindow [target timeout-seconds]
     (resume (QuietWindowOpened :target target)))
   (ConfirmCleanBoot [launch]
@@ -419,19 +387,15 @@
   (PublishDeclarations []
     (resume None))
   (ApplyDeclarations []
-    (<- runs tuple (CoordinatorRuns))
     (<- pass FluxPass (reconcile-manifests paths applied drain coordinator-seconds))
     (<- seen (get tuple #(BootRootsAtStart ...)) (places-at pass.starts roots applied))
-    (<- moved (get tuple #(CoordinatorGeneration ...)) (generations-after generations pass.starts (len runs)))
     (:= places (+ places seen))
     (:= applied pass.applied)
     (:= starts (+ starts pass.starts))
-    (:= generations moved)
     (resume None))
   (ReadUpgradeState []
     (<- declared (get frozenset str) (declared-workers applied))
-    (<- commit (| str None) (running-coordinator-commit generations))
-    (<- state (upgrade-state declared commit))
+    (<- state (upgrade-state declared))
     (resume state))
   (UpgradeStartsSeen []
     (resume starts))
@@ -471,31 +435,26 @@
 
 
 (defhandler stale-coordinator-answers [#^ int reads]
-  ;; 引数に残す理由: 当てた直後に古い coordinator が何回答えるかは筋書きごとに違う値(模擬の世界そのもの)。
-  ;; 当てた直後に古い版の coordinator がまだ答える筋書きのため(本物の Recreate で、古い Pod が止めの合図を受けて退くまでの間 — #3772):
-  ;; coordinator の宣言を書いて当てた後の名簿の問い合わせ reads 回に、当てる前に最後に返した答え(古い coordinator の版と名簿)を返す。
-  ;; 模擬の Flux は当てた後の最初の読みまでに古い coordinator を止めているので、この形はこの handler を内側に置いた時だけ現れる。
+  ;; 引数に残す理由: 止めの合図の後に古い coordinator が何回答えるかは筋書きごとに違う値(模擬の世界そのもの)。
+  ;; coordinator を作り直す止めの合図の後も、古い process がしばらく GET /state に答える筋書きのため(本物の Recreate で、古い Pod が止めの
+  ;; 合図を受けて退くまでの間 — #3772): 止めの合図(StopCoordinator)の後の GET /state の読み reads 回に、合図の前に最後に読めた答え(古い
+  ;; coordinator が申告する版 coordinatorCommit を含む JSON のまま)を返す。flux-declarations の外側に置く(模擬の Flux の読みと止めは
+  ;; flux-declarations の節から外へ出るので、ここで受ける)。模擬の世界の coordinator は止めの合図の後の最初の読みまでに退くので、
+  ;; この形はこの handler を置いた時だけ現れる。
   (session var last None)
-  (session var swapping False)
   (session var stale 0)
-  (ReadUpgradeState []
-    (if (and (> stale 0) (isinstance last UpgradeState))
+  (StopCoordinator [seconds]
+    (<- (StopCoordinator seconds))
+    (:= stale reads)
+    (resume None))
+  (ReadCoordinator [path]
+    :when (= path "/state")
+    (if (and (> stale 0) (isinstance last dict))
         (do (:= stale (- stale 1))
             (resume last))
-        (do (<- state (ReadUpgradeState))
-            (when (isinstance state UpgradeState)
-              (:= last state))
-            (resume state))))
-  (DesireCoordinator [launch]
-    (:= swapping True)
-    (<- changes (DesireCoordinator launch))
-    (resume changes))
-  (ApplyDeclarations []
-    (<- (ApplyDeclarations))
-    (when swapping
-      (:= stale reads)
-      (:= swapping False))
-    (resume None)))
+        (do (<- answer dict (ReadCoordinator path))
+            (:= last answer)
+            (resume answer)))))
 
 
 (defhandler refused-boot-roots [#^ (get frozenset str) targets #^ BootRootRefusal reason]

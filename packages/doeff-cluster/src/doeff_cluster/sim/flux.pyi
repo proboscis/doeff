@@ -19,7 +19,6 @@ from doeff_cluster.shared.core.launch_rules import coordinator_launch_of_env as 
 from doeff_cluster.shared.core.launch_rules import coordinator_launch_names as coordinator_launch_names
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
-from doeff_cluster.shared.intent.launch_model import DesireCoordinator as DesireCoordinator
 from doeff import with_handlers as with_handlers
 from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
 from doeff_cluster.worker.core.drain_client import await_drained as await_drained
@@ -48,6 +47,7 @@ from doeff_cluster.shared.intent.upgrade_model import BootRootRefused as BootRoo
 from doeff_cluster.shared.intent.upgrade_model import BootRootRefusal as BootRootRefusal
 from doeff_cluster.shared.intent.upgrade_model import AwaitQuietWindow as AwaitQuietWindow
 from doeff_cluster.shared.intent.upgrade_model import QuietWindowOpened as QuietWindowOpened
+from doeff_cluster.shared.protocol.coordinator_reads import coordinator_commit_of_state as coordinator_commit_of_state
 from doeff_cluster.sim.local import SimWorker as SimWorker
 from doeff_cluster.sim.local import HostTruth as HostTruth
 from doeff_cluster.sim.local import DrainWorker as DrainWorker
@@ -58,7 +58,7 @@ from doeff_cluster.sim.local import WorkerOf as WorkerOf
 from doeff_cluster.sim.local import HostTruthOf as HostTruthOf
 from doeff_cluster.sim.local import StopCoordinator as StopCoordinator
 from doeff_cluster.sim.local import ReadCoordinator as ReadCoordinator
-from doeff_cluster.sim.local import CoordinatorRuns as CoordinatorRuns
+from doeff_cluster.sim.local import ReplaceCoordinatorEnviron as ReplaceCoordinatorEnviron
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 from doeff import Some as Some
@@ -97,11 +97,12 @@ class CoordinatorView:
     roster: tuple[RosterEntry, ...]
     tasks: tuple[PendingTask, ...]
     known_tasks: tuple[str, ...]
+    coordinator_commit: str | None
 
 def coordinator_view(declared: frozenset[str]) -> _Program[CoordinatorView | UpgradeStateUnreachable, object]:
     ...
 
-def upgrade_state(declared: frozenset[str], coordinator_commit: str | None) -> _Program[UpgradeState | UpgradeStateUnreachable, object]:
+def upgrade_state(declared: frozenset[str]) -> _Program[UpgradeState | UpgradeStateUnreachable, object]:
     ...
 
 def roster_snapshot(kind: UpgradeKind, target: str, commit: str, declared: frozenset[str]) -> _Program[UpgradeStart, object]:
@@ -152,20 +153,6 @@ def roots_with(roots: tuple[BootRoot, ...], more: tuple[BootRoot, ...]) -> _Prog
     ...
 
 def places_at(starts: tuple[UpgradeStart, ...], roots: tuple[BootRoot, ...], applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRootsAtStart, ...], object]:
-    ...
-
-@dataclass(frozen=True, kw_only=True)
-class CoordinatorGeneration:
-    first_run: int
-    doeff_commit: str | None
-
-def first_generations(applied: tuple[DeployedEnv, ...]) -> _Program[tuple[CoordinatorGeneration, ...], object]:
-    ...
-
-def generations_after(generations: tuple[CoordinatorGeneration, ...], starts: tuple[UpgradeStart, ...], first_run: int) -> _Program[tuple[CoordinatorGeneration, ...], object]:
-    ...
-
-def running_coordinator_commit(generations: tuple[CoordinatorGeneration, ...]) -> _Program[str | None, object]:
     ...
 
 def flux_declarations(paths: tuple, drain: Callable, coordinator_seconds: float, initial: tuple[DeployedEnv, ...]) -> _Handler:

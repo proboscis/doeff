@@ -37,6 +37,9 @@ def readiness_awaited(url: str, name: str, state: str, seconds: float) -> _Progr
 def state_of(url: str) -> _Program[dict | None, object]:
     ...
 
+def coordinator_commit_of_state(state: dict) -> _Program[str | None, object]:
+    ...
+
 def job_pids_of(state: dict, name: str) -> _Program[tuple[int, ...], object]:
     ...
 

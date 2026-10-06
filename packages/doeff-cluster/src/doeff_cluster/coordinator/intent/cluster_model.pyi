@@ -239,6 +239,7 @@ class StateView:
     events: tuple[object, ...]
     revision: int
     keep_marks: tuple[KeepMark, ...]
+    coordinator_commit: str | None
 
 class DrainPhase(StrEnum):
     DRAINING = 'Draining'
@@ -663,6 +664,7 @@ class ClusterState:
     audit_seq: int = 0
     rollouts: dict[str, RolloutRow] = ...
     derivable: frozenset[str] = ...
+    running_commit: str | None = None
     refused: dict[str, RefusedJob] = ...
     programs: dict[str, ProgramRow] = ...
     started_ms: int = 0

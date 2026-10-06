@@ -100,7 +100,8 @@
 
 (defk coordinator-on [commit state]
   {:pre [(: commit str) (: state UpgradeState)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "答えた coordinator が版 commit で動いているか — 当てた直後に古い coordinator が答えても、入れ替えが済んだとみなさないため(#3772)。"
+  "答えた coordinator が版 commit で動いているか(GET /state で申告する版 — 宣言した版ではない)— 当てた直後に古い coordinator が答えても、
+   入れ替えが済んだとみなさないため(#3772)。"
   (= state.coordinator-commit commit))
 
 

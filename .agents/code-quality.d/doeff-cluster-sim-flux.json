@@ -3,6 +3,7 @@
     {
       "allow": [
         "doeff-cluster-clock",
+        "doeff-cluster-coordinator-reads",
         "doeff-cluster-drain-client",
         "doeff-cluster-drain-model",
         "doeff-cluster-launch-model",
@@ -21,7 +22,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/sim/flux.hy"
       ],
-      "responsibility": "模擬の Flux(#3366 の単位 2b): 宣言の保存先(メモリ上の file)の manifest を読み、Deployment の env が前に当てた物と違う worker / coordinator を本番の Recreate と同じ順で作り直し、入れ替えを始めた瞬間の記録(条 V1〜V4 の入力)を残す。worker の drain は本番の preStop の待ち(drain_client.await-drained)そのものを sim の DrainWorker で答えて走らせる(#3669)。env を読むのは launch_rules の表だけ・manifest の書式は読まない(text を文書にするのは配備する側が ManifestDocuments に答える handler — #3566)。版上げの Program の effect に答える flux-declarations は、自己起動の root の模擬の保存先も持つ(今 動いている版の root と PrepareBootRoot で先に準備した root — 足すだけで消さない)— 当てた瞬間の保存先のスナップショット(条 V5 の入力)を残し、準備が拒否される筋書きは refused-boot-roots で作る(#3725)。名簿の問い合わせには、宣言の内 / 外(当たっている宣言に Deployment が在るか)・答えた coordinator の版(Pod の一生の数から — 止めの合図が効くまでは古い版)・coordinator が知る task の id を載せ、静かな時間帯の待ちにはすぐ答える。当てた直後に古い coordinator が答える筋書きは stale-coordinator-answers で作る(#3772)。",
+      "responsibility": "模擬の Flux(#3366 の単位 2b): 宣言の保存先(メモリ上の file)の manifest を読み、Deployment の env が前に当てた物と違う worker / coordinator を本番の Recreate と同じ順で作り直し、入れ替えを始めた瞬間の記録(条 V1〜V4 の入力)を残す。worker の drain は本番の preStop の待ち(drain_client.await-drained)そのものを sim の DrainWorker で答えて走らせる(#3669)。env を読むのは launch_rules の表だけ・manifest の書式は読まない(text を文書にするのは配備する側が ManifestDocuments に答える handler — #3566)。版上げの Program の effect に答える flux-declarations は、自己起動の root の模擬の保存先も持つ(今 動いている版の root と PrepareBootRoot で先に準備した root — 足すだけで消さない)— 当てた瞬間の保存先のスナップショット(条 V5 の入力)を残し、準備が拒否される筋書きは refused-boot-roots で作る(#3725)。名簿の問い合わせには、宣言の内 / 外(当たっている宣言に Deployment が在るか)・答えた coordinator の版(GET /state の欄 coordinatorCommit を本番と同じ coordinator-commit-of-state で読む — coordinator を作り直す時に Deployment の env を模擬の Pod の環境として渡す)・coordinator が知る task の id を載せ、静かな時間帯の待ちにはすぐ答える。止めの合図の後も古い coordinator が GET /state に答える筋書きは stale-coordinator-answers で作る(#3772)。",
       "typed": true
     }
   ]
