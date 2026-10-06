@@ -4,9 +4,11 @@
       "allow": [
         "doeff-cluster-api-policy",
         "doeff-cluster-cluster-model",
+        "doeff-cluster-cluster-policy",
         "doeff-cluster-due-model",
         "doeff-cluster-due-policy",
-        "doeff-cluster-idle-policy",
+        "doeff-cluster-resource-policy",
+        "doeff-cluster-rollout-policy",
         "doeff-cluster-shared-protocol",
         "doeff-cluster-watch-policy"
       ],

@@ -5,15 +5,13 @@ from doeff import Program as _Program
 from dataclasses import replace as replace
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
+from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster.shared.intent.protocol import Reply as Reply
 from doeff_cluster.shared.intent.protocol import CoordinatorStopRequested as CoordinatorStopRequested
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.coordinator.intent.cluster_model import ClusterState as ClusterState
 from doeff_cluster.coordinator.intent.cluster_model import ErrorReply as ErrorReply
 from doeff_cluster.coordinator.intent.cluster_model import ClusterNaming as ClusterNaming
-from doeff_cluster.coordinator.intent.cluster_model import IdleProbe as IdleProbe
-from doeff_cluster.coordinator.intent.cluster_model import IdleNextRequests as IdleNextRequests
-from doeff_cluster.coordinator.intent.cluster_model import IdleTaken as IdleTaken
 from doeff_cluster.coordinator.intent.cluster_model import SaveState as SaveState
 from doeff_cluster.coordinator.intent.cluster_model import Fault as Fault
 from doeff_cluster.coordinator.intent.cluster_model import CoordinatorFault as CoordinatorFault
@@ -35,7 +33,6 @@ from doeff_cluster.coordinator.core.api_policy import mark_alive as mark_alive
 from doeff_cluster.coordinator.core.api_policy import stamp_alive as stamp_alive
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_ACTOR as ROLLOUT_ACTOR
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_TICK_MS as ROLLOUT_TICK_MS
-from doeff_cluster.coordinator.core.api_policy import TICK_MS as TICK_MS
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
 from doeff_cluster.coordinator.intent.request_bodies import ReadBody as ReadBody
 from doeff_cluster.coordinator.intent.request_bodies import BodyUnreadable as BodyUnreadable
@@ -56,6 +53,13 @@ from doeff_events import NoticeDropped as NoticeDropped
 from doeff_cluster.coordinator.core.cluster_policy import liveness_moves as liveness_moves
 from doeff_cluster.coordinator.core.cluster_policy import liveness_now as liveness_now
 from doeff_cluster.coordinator.core.cluster_policy import note_liveness as note_liveness
+from doeff_cluster.coordinator.intent.due_model import DueAt as DueAt
+from doeff_cluster.coordinator.intent.due_model import DueNow as DueNow
+from doeff_cluster.coordinator.intent.due_model import DueNever as DueNever
+from doeff_cluster.coordinator.core.wake_policy import next_wake as next_wake
+from doeff_cluster.coordinator.core.wake_policy import after_step as after_step
+from doeff_cluster.coordinator.core.wake_policy import wait_seconds as wait_seconds
+from doeff_cluster.coordinator.core.wake_policy import count_unsettled as count_unsettled
 KUBE_READS_NAMED_MS: int
 
 def kube_observations(state: ClusterState, now: int) -> _Program[KubeReadsDone, object]:
@@ -82,7 +86,7 @@ def announce_liveness(events: tuple) -> _Program[int, object]:
 def announced_aside(events: tuple) -> _Program[None, object]:
     ...
 
-def coordinator_step(state: ClusterState, timing: ClusterTiming, naming: ClusterNaming, watchers: tuple) -> _Program[tuple, object]:
+def coordinator_step(state: ClusterState, timing: ClusterTiming, naming: ClusterNaming, watchers: tuple, wait: float | None) -> _Program[tuple, object]:
     ...
 
 def release_watchers(state: ClusterState, watchers: tuple) -> _Program[int, object]:

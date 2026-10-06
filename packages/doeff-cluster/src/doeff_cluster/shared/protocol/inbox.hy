@@ -18,8 +18,8 @@
 
 
 (defclass InboxQueue [Protocol]
-  "受付の箱の形(foundation/coordinator_inbox の RequestInbox)— 生の要求を limit 件まで取る。"
-  (defn #^ list take [self #^ float timeout #^ int limit] (raise NotImplementedError)))
+  "受付の箱の形(foundation/coordinator_inbox の RequestInbox)— 生の要求を limit 件まで取る(timeout None = 期限なしで待つ)。"
+  (defn #^ list take [self #^ (| float None) timeout #^ int limit] (raise NotImplementedError)))
 
 
 (defclass StopSignal [Protocol]

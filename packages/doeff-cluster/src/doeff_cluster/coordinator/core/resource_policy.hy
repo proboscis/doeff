@@ -252,16 +252,15 @@
        (not (still-live-somewhere now state name timing))))
 
 
-;; --- 静かな区間の次の期限(#3064)--------------------------------------------------------------
-;; 模擬の時計の下の coordinator は、試して静かだった歩の後、次の期限より前の歩を本番の判断で試さずに作る(idle_policy.quiet-stretch)。
-;; 下の 2 つは、状態がこのままで readiness の判定と止まりの判定が答えを変え得る最初の刻を、判定が比べに使う期限の値(上の
+;; --- 判断の期限(#3064・#3865)--------------------------------------------------------------
+;; coordinator は、何も変えない歩の後、次の期限まで受付を待つ(wake_policy.next-wake)。下の 2 つは、状態がこのままで readiness の判定と止まりの判定が答えを変え得る最初の刻を、判定が比べに使う期限の値(上の
 ;; carrier-stale-from ほかと cluster_policy.liveness-deadline)から返す。返すのは答えを変え得る刻の下限(早めに試すのは安全・遅らせない)。
 
 (defk readiness-due [state name now timing [placement None]]
   {:pre [(: state ClusterState) (: name str) (: now int) (: timing ClusterTiming) (: placement (| Placement None))]
    :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "Service name の readiness の判定(service-readiness・running-process)が、状態がこのままで答え(Ready | NotReady | Unknown)を変え得る
-   最初の刻を知るため — 入れ替えの見張り(api_policy.placement-due)・Rollout の相手の観測(idle_policy.rollout-due)・drain の並べ
+   最初の刻を知るため — 入れ替えの見張り(api_policy.placement-due)・Rollout の相手の観測(wake_policy.rollout-due)・drain の並べ
    (cluster_policy.sweep-due)が呼ぶ。担い手の報告が新しい間は、報告が古くなる刻と準備の報告の window の期限。古い間は、起動の直後の
    猶予の終わりと、担い手の沈黙の窓 2 つ(移し替え・途絶の柵)。宣言・置き先が無い・replicas 0 の判定は時刻で変わらない(None)。
    placement = 見る置き先(既定 = いまの置き先 — running-process と同じ)。"
@@ -292,7 +291,7 @@
 (defk service-stopped-due [state name now timing]
   {:pre [(: state ClusterState) (: name str) (: now int) (: timing ClusterTiming)] :post [(: % (| int None))]
    :tags {:context "coordinator" :role "judgment"}}
-  "service-stopped が、状態がこのままで答えを変え得る最初の刻を知るため(Rollout の Service の相手の stopped — idle_policy.rollout-due)。
+  "service-stopped が、状態がこのままで答えを変え得る最初の刻を知るため(Rollout の Service の相手の stopped — wake_policy.rollout-due)。
    宣言が無いか replicas 0 で置き先も無い Service の行を載せた worker が、沈黙で母集団(cluster_policy.service-rows の lease-ms の窓)から
    外れる刻の最小。それ以外は時刻で変わらない(None)。"
   (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))

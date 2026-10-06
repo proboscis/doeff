@@ -345,7 +345,7 @@
 (defk rollout-phase-due [spec status now]
   {:pre [(: spec RolloutSpec) (: status RolloutStatus) (: now int)] :post [(: % (| int None))]
    :tags {:context "coordinator" :role "judgment"}}
-  "Rollout 1 つの段の判断(rollout-step・action-due)が、相手の観測がこのままで答えを変え得る最初の刻を知るため(idle_policy.rollout-due が
+  "Rollout 1 つの段の判断(rollout-step・action-due)が、相手の観測がこのままで答えを変え得る最初の刻を知るため(wake_policy.rollout-due が
    集める・#3064)。段の起点からの期限(ready-timeout-from ほか — 段ごとに比べる物)と、失敗した action を出し直せる刻(action-retry-from)の、
    now より後の最小。相手の観測が変わる刻は readiness の判定の期限(呼び手が足す)。終わった段・中止・起点の無い段・観察の Unknown の間は
    時刻では変わらない(Unknown を抜けるのは観測の変化 — 呼び手の期限)。返すのは答えを変え得る刻の下限。"

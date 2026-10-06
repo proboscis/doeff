@@ -140,9 +140,7 @@
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText WATCH-MAX-SECONDS])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES IdleNextRequests IdleTaken ProvisionalBeat]
-        doeff_cluster.coordinator.intent.request_bodies [HeartbeatBody]
-        doeff_cluster.coordinator.protocol.request_bodies [body-of]
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES ProvisionalBeat]
         doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
@@ -156,12 +154,12 @@
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_events [MemoryBroker])
 (import doeff_cluster.coordinator.protocol.store [Persist])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch
+(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer
                                                           deposit-beats withdraw-beats drop-beats HEARD RestBell ring-bell
                                                           forget-heard take-heard])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
-;; 宣言の本文を組む body-of は別名で受ける — 同じ名の coordinator の body-of(要求の本文の解き・上の import)を上書きしないため。
+;; 宣言の本文を組む body-of は別名で受ける — coordinator の要求の本文の解き(request_bodies.body-of)と取り違えないため。
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of :as service-body-of])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
@@ -377,10 +375,10 @@
 
 
 (defrecord CoordinatorStep
-  "coordinator の歩 1 つの記録(1 拍ずつの走りと飛ばす走りを歩ごとの状態で比べる基準 — #2670 の根 B): at = その歩の刻・state = その歩の
-   後の状態(本物の歩なら次の取りの材料 idle の状態、眠った区間の歩なら QuietStep の状態)。"
+  "置き場へ書いた coordinator の歩 1 つの記録(期限だけで起きる走りと余計に起こす走りを、耐久の状態の変わり目とその刻で比べる基準 —
+   #2670 の根 B・#3865): at = その歩の刻・writes = その歩の Persist の writes の列(書きの順 — 置き場の鍵の差分)。"
   (#^ int at)
-  (#^ ClusterState state))
+  (#^ tuple writes))
 
 
 (defrecord SimPauses
@@ -398,8 +396,7 @@
    済ませる・#3054 の C-6。節は本体で使う session の値を名ごとに節の頭で読むので、別々の名だと 1 歩で 5 度読む)。cuts = 網の切れている
    worker の名 → 切れが明ける刻(epoch ms)・failing = 故障を入れている口 #(method path) → #(答える status 明ける刻)(2 つの欄に写像を
    持つ理由: 筋書きの CutWorker・FailRoute が名ごと・口ごとに置く表をそのまま運ぶ — 引く側は名と口で引くだけ)・held = 取って返事を
-   まだしていない要求(返事の前に落ちたら接続の失敗を返す相手)・reports = 届いた service の報告(SimReport)。眠った静かな区間の歩の
-   書きの数えは、coordinator の一生の帳面 StepBook が持つ(#3132)。"
+   まだしていない要求(返事の前に落ちたら接続の失敗を返す相手)・reports = 届いた service の報告(SimReport)。"
   (#^ dict cuts)
   (#^ dict failing)
   (#^ tuple held)
@@ -577,8 +574,8 @@
    per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)・store = coordinator の置き場を作る
    関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。deployments = 偽の k8s の
    初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。runtime-env = 宣言の実行環境の宣言
-   (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。skip-idle = coordinator の要求の列が、要求の無い間に何も変えない拍を
-   一度に眠るか(仮想の時計の入口 sim-cluster だけが真 — 本番の拍の間隔と判断の刻は変えない・2026-09-30)。versions = sim の送り手・
+   (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。skip-idle = worker の代役(宿)が、静かな拍を
+   一度に眠るか(仮想の時計の入口 sim-cluster だけが真 — 預けた heartbeat は受付の列がその刻に要求として渡す・#2790・#3865)。versions = sim の送り手・
    worker・子が名乗る版の識別(sim-plan が 1 度だけ綴る — env の root の外の process として・foundation/process_versions。宣言と blob の JSON にそのまま載る値なので dict)。"
   (#^ System system)
   (#^ Declaration declaration)
@@ -828,14 +825,12 @@
 (defeffect AdmitBatch
   "調停ループの 1 歩が取った要求 batch を、網の切れと口の故障の今で篩い、残した要求のうち service の報告を記録し、返事の前に落ちたら
    接続の失敗を返す相手として覚える — 1 歩の問いを世界への 1 つにする(篩い・報告・覚えを別々に聞くと 1 歩に 2〜3 度・#2668・
-   #3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空で聞く(何も書かない)。steps = coordinator の歩の記録(CoordinatorStep の
-   tuple — 前の本物の歩の後の状態と、眠った区間の歩の状態・刻の順)を世界の列に控える(CoordinatorSteps — 1 拍ずつの走りと飛ばす
-   走りを歩ごとの状態で比べる基準・#2670 の根 B — 問いを増やさずに同じ 1 つで運ぶ)。宿の篩いの読みは空。答え = Admission。"
-  {:fields [(: batch tuple) (: steps tuple)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
+   #3054 の C-6)。静かな拍を眠る宿の篩いの読みは batch を空で聞く(何も書かない)。答え = Admission。"
+  {:fields [(: batch tuple)] :answer Admission :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect CoordinatorSteps
-  "検の effect: coordinator の歩ごとの記録(CoordinatorStep)の列(AdmitBatch が運んだ記録・刻の順 — 1 拍ずつの走りでは 1 拍ごと、
-   飛ばす走りでは眠った区間の歩と本物の歩)。最後の歩(止まる前の歩)は次の取りが無いので入らない。"
+  "検の effect: 置き場へ書いた coordinator の歩ごとの記録(CoordinatorStep)の列(StepEnded が運んだ記録・刻の順)。止まる時の歩
+   (止まる刻の生存の印)は次の歩の頭が無いので入らない。"
   {:answer tuple :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ReleaseRequest
@@ -863,8 +858,8 @@
 
 (defeffect PersistCrashDue
   "次の Persist で落ちを注入するか — 筋書きの落ち(crash)が頼まれているかを PauseDue と同じく判じて筋書きから外す。observe-requests は
-   注入が待っている時(列の ends-at-marks)だけ、区間の歩の書き(帳面 StepBook の replayed — 落とさない・#2790)でない書きの前に問う
-   (#3132 — 書きごとに問うと生存の印の書き 1 回 46 歩のうち 20 歩になった)。"
+   注入が待っている時(列の crash-waiting)だけ、書きの前に問う(#3132 — 書きごとに問うと生存の印の書き 1 回 46 歩のうち 20 歩に
+   なった)。"
   {:answer bool :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect NextWorldDue
@@ -1003,7 +998,7 @@
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
-  (SimParts :queue (RequestQueue :skip-idle plan.skip-idle) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))
+  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))
             :broker (MemoryBroker)))
 
 
@@ -1916,8 +1911,8 @@
 
 ;; --- 静かな拍を一度に眠る宿(模擬の時計の下だけ — #2790)---------------------------------------------------------
 ;; 拍の間の待ち(AwaitNextTick)に宿が答える。旗(SimPlan.skip-idle)が真なら、先の拍を本番の判断(quiet_policy.quiet-beats)で試し、action も
-;; 状態の報告の変化も無い拍の heartbeat を「仮の拍」として coordinator の列に預け、その分だけ眠りを延ばす。列は仮の拍を本番の受けの判断で
-;; 試して積み(idle_policy.heard-beats)、区間の終わりの刻と重なった拍は宿を起こさずにその刻の要求として受け、返事が最後の返事と違う時だけ
+;; 状態の報告の変化も無い拍の heartbeat を「仮の拍」として coordinator の列に預け、その分だけ眠りを延ばす。列は仮の拍の刻が来たら、
+;; 宿を起こさずにその刻の普通の heartbeat の要求として coordinator へ渡し(#3865)、返事が最後の返事と違う時だけ
 ;; 宿を起こす(HEARD — 宿はその刻のまま、送る代わりに列が受けた返事を読む・A')。宿の真実が誰かに書き換わると
 ;; (process の終わり・Kill・Stop・網の切れ・待ちの答え)世界が宿を起こし(ROUSED)、宿は 1 拍ずつの走りの次の拍の刻へ戻る。
 
@@ -1939,8 +1934,8 @@
    :tags {:context "doeff-cluster" :role "protocol"}}
   "now の拍の後の静かな拍 count 個(1 拍ずつの走りで worker が打つ拍)のうち heartbeat を送る拍の heartbeat を、仮の拍(ProvisionalBeat の
    tuple — 刻の順)にするため。送るかは本物の拍と同じ判断(heartbeat-due — 前の仮の拍は届いたものとして数える)、本文は本物と同じ綴り
-   (beat-body)と同じ解き(body-of)。本文が刻に依るのは準備の見え方(codes-view)だけなので、見え方が前の拍と同じなら綴りと解きを
-   使い回す(静かな拍は本文が同じ — 拍ごとに綴って解く費用を払わない)。宿は止まりが頼まれていない間だけ眠る(rest-quietly)ので、
+   (beat-body)。本文が刻に依るのは準備の見え方(codes-view)だけなので、見え方が前の拍と同じなら綴りを
+   使い回す(静かな拍は本文が同じ — 拍ごとに綴る費用を払わない)。宿は止まりが頼まれていない間だけ眠る(rest-quietly)ので、
    仮の拍が名乗る止まり始めは偽(#2819 — 前に名乗った止まりと違えば、本物の拍と同じく送る間隔を待たずに送る)。"
   (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None) (is truth.watch-failure None)))
   (val interval (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))
@@ -1961,13 +1956,9 @@
       (when (or (is heard None) (!= views seen-views))
         (<- body dict (beat-body worker truth at False plan))
         (val request (! (http-request "POST" "/heartbeat" {} body :actor worker.name :peer worker.name)))
-        (<- parsed (body-of request))
-        (match parsed
-          (HeartbeatBody) (:= heard (ProvisionalBeat :at at :request request :body parsed :name worker.name))
-          _ (:= heard None))
+        (:= heard (ProvisionalBeat :at at :request request :name worker.name))
         (:= seen-views views))
-      (when (is-not heard None)
-        (:= beats (+ beats #((replace heard :at at)))))
+      (:= beats (+ beats #((replace heard :at at))))
       (:= fresh True)
       (:= woken False)
       (:= sent truth.statuses)
@@ -2036,7 +2027,7 @@
   (<- truth HostTruth (checked-truth worker.name boot asked.truth))
   (val all-stopping asked.all-stopping)
   ;; 網の切れと口の故障の今(取った要求の無い篩い — 報告も覚えも書かない)。
-  (<- admitted Admission (AdmitBatch #() #()))
+  (<- admitted Admission (AdmitBatch #()))
   (val faults admitted.faults)
   (<- now int (now-epoch-ms))
   (val tick-ms (int (* 1000 policy.tick-seconds)))
@@ -2408,40 +2399,18 @@
 (defclass [dataclass] StepBook []
   "coordinator の一生 1 つの、調停ループの 1 歩の間に observe-requests が溜める物(#2670 の根 A): released = この歩で返事を済ませた要求
    (歩の終わりに覚えから外す)・noted = この歩の Persist の writes の列(書きの順 — 歩の終わりに知らせる)・stopped = 歩の頭の判定が
-   止まりと答えた(止まる調停ループの待ちへの返事 release-watchers はすぐ外す — 次の歩の頭は無い)。歩の頭ごとに空にする。replayed =
-   眠った静かな区間の歩をまとめて保存する Persist のうち、まだ来ていない数(調停ループへ渡した歩のうち生存の印を書く歩の数 — 落ちの
-   注入が待っていない間は区間をまとめた 1 歩・handed-quiet-steps。その書きは 1 拍ずつの走りでは
-   落ちの注入より前の刻の書きなので落とさない・#2790)。歩の頭では空にせず、書きごとに 1 減らす。一生ごとに作り直すので、前の一生が
-   保存し終えずに落ちた数を持ち越さない(#3132 で世界の受付から移した — 書きごとに世界へ問わずに判じるため)。session の値に
-   持たないのは、読み書きのたびに状態の答え手までの効果になり、世界への問い 1 つと同じ重さになるため(1 歩の世界への問いを減らした分が
-   消える — 9 file の歩が 4% 増えた)。real-at = 前の取りが起きた刻(その刻の本物の歩の後の状態を、次の取りの材料 idle から歩の記録へ
-   添える — #2670 の根 B)。一生の最初の取りの前は None。"
+   止まりと答えた(止まる調停ループの待ちへの返事 release-watchers はすぐ外す — 次の歩の頭は無い)。歩の頭ごとに空にする。一生ごとに
+   作り直す。session の値に持たないのは、読み書きのたびに状態の答え手までの効果になり、世界への問い 1 つと同じ重さになるため。"
   (setv #^ tuple released #()
         #^ tuple noted #()
-        #^ bool stopped False
-        #^ int replayed 0
-        #^ (| int None) real-at None))
-
-
-(defk handed-quiet-steps [queue steps]
-  {:pre [(: queue RequestQueue) (: steps tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "眠った静かな区間の歩 steps(QuietStep の tuple — 刻の順)のうち、調停ループへ渡して保存させる歩を決めるため(#2670 の根 B)。落ちの
-   注入が待っていない間は、区間を最後の歩 1 つにまとめる — 調停ループの保存は区間の前の状態から最後の状態への 1 回になり、置き場の
-   最後の状態と耐久の状態の変わり目の列(歩の記録 CoordinatorStep — まとめる前の歩から取る)は歩ごとの保存と同じ。まとめた歩の生存の
-   印と仮の拍は区間の全部の歩の物(保存するかの判断と落ちの注入の数え方が読む)。落ちの注入が待っている間(queue.ends-at-marks —
-   区間は生存の印の歩の手前で切れている)は歩ごとのまま渡す(落ちた後の再開の状態を 1 拍ずつの走りと同じ古さに保つ)。"
-  (if (or queue.ends-at-marks (<= (len steps) 1))
-      steps
-      #((replace (get steps -1)
-                 :marked (any (gfor step steps step.marked))
-                 :beats (tuple (gfor step steps beat step.beats beat))))))
+        #^ bool stopped False))
 
 
 (defhandler observe-requests [#^ StepBook book #^ RequestQueue queue]
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 1 歩の間に溜める帳面 book は coordinator の一生ごとに作る可変の箱(coordinator-life が作って渡す)— session の値に
   ;; すると読み書きのたびに状態の答え手までの効果になる(StepBook の docstring)。一生をまたがない。queue = coordinator の要求の列
-  ;; (世界の部品 SimParts.queue と同じ物)— 落ちの注入が待っているか(ends-at-marks — 世界の CrashCoordinator が立て、落ちで下ろす)を
+  ;; (世界の部品 SimParts.queue と同じ物)— 落ちの注入が待っているか(crash-waiting — 世界の CrashCoordinator が立て、落ちで下ろす)を
   ;; 書きの前に読む(#3132)。
   ;; 調停ループの一番内側: 取った要求のうち網の切れた worker から届いた物を落とし(送り手には接続の失敗 — 本番では届かない)、故障を
   ;; 入れている口(FailRoute)への物に注入した status で答えて調停ループへ渡さず、service の
@@ -2449,23 +2418,11 @@
   ;; 止まり(止めの合図)と落ち(Persist の失敗 — 返事をせずに落ちる)を注入する。効果はそのまま外側(本物の組)へ出し直す。
   ;; 1 歩の世界への問いは 2〜3 つ(#2670 の根 A): 取りの篩い(AdmitBatch)・歩の終わり(StepEnded — 次の歩の頭の止まりの判定の刻に、
   ;; この歩の返事の手放しと書きの知らせと止まりの判定を 1 つで)と、落ちの注入が待っている間だけ書きの前の落ちの判断(PersistCrashDue —
-  ;; 書きより前に要る・#3132)。返事と書きと区間の歩の書きの数えは帳面 book に溜める。
+  ;; 書きより前に要る・#3132)。返事と書きは帳面 book に溜める。
   (NextRequests [timeout-seconds limit]
-    ;; 模擬の列は、眠った静かな区間の歩を添えて返す(IdleTaken — #2790)。篩うのは取った要求だけ。調停ループへ渡す歩は、落ちの注入が
-    ;; 待っていない間は区間の最後の歩 1 つにまとめる(handed-quiet-steps — 保存を区間で 1 回に・#2670 の根 B)。渡す歩の書き(生存の印の
-    ;; 歩)は 1 拍ずつの走りでは起きる前の刻の書きなので、落ちの注入で落とさないよう数を覚える。
-    (<- taken (| list IdleTaken) effect)
-    (<- batch list (taken-batch taken))
-    (<- handed tuple (handed-quiet-steps queue (if (isinstance taken IdleTaken) taken.steps #())))
-    (val marks (len (lfor step handed :if step.marked step)))
-    (setv book.replayed (+ book.replayed marks))
-    ;; 歩の記録(#2670 の根 B): 前の取りの刻の本物の歩の後の状態(この取りの材料 idle)と、眠った区間の歩を刻の順に。
-    (val idle (if (isinstance effect IdleNextRequests) effect.idle None))
-    (val stepped (+ (if (and (is-not book.real-at None) (is-not idle None)) #((CoordinatorStep :at book.real-at :state idle.state)) #())
-                    (if (isinstance taken IdleTaken) (tuple (gfor step taken.steps (CoordinatorStep :at step.at :state step.state))) #())))
-    ;; 篩い・報告の記録・覚え・歩の記録を、世界への問い 1 つで(#3054 の C-6)。
-    (<- admitted Admission (AdmitBatch (tuple batch) stepped))
-    (setv book.real-at admitted.faults.now-ms)
+    (<- batch list effect)
+    ;; 篩い・報告の記録・覚えを、世界への問い 1 つで(#3054 の C-6)。
+    (<- admitted Admission (AdmitBatch (tuple batch)))
     (val faults admitted.faults)
     (val kept (list admitted.kept))
     (for [r batch]
@@ -2473,7 +2430,7 @@
         (in r.peer faults.cut) (<- (CompletePromise r.slot #(None {"error" CUT-REASON})))
         (in #(r.method r.path) faults.failing)
           (<- (CompletePromise r.slot #((get faults.failing #(r.method r.path)) {"error" FAULT-REASON})))))
-    (resume (if (isinstance taken IdleTaken) (replace taken :batch kept :steps handed) kept)))
+    (resume kept))
   (Reply [request status body]
     ;; 返事を済ませた要求は歩の終わりに覚えから外す(止まる調停ループの返事は次の歩の頭が無いので、すぐ外す)。
     (if book.stopped
@@ -2482,18 +2439,16 @@
     (<- effect)
     (resume None))
   (Persist [writes]
-    ;; 落ちの注入の判断(書きより前): まとめて保存する区間の歩の書きは落とさない(帳面で数える)。それ以外の書きは、落ちの注入が待って
-    ;; いる時だけ筋書きの落ちの頼みを世界への問い 1 つで判じる — 待っていない書き(生存の印の書きの大半)は世界へ問わない(#3132)。
-    (if (> book.replayed 0)
-        (setv book.replayed (- book.replayed 1))
-        (when queue.ends-at-marks
-          (<- crash bool (PersistCrashDue))
-          (when crash
-            ;; 落ちる前に、この歩で溜めた書きの知らせを出す(書き終えた書きの待ち手は、落ちても起こす)。
-            (for [done book.noted]
-              (<- (NoteCoordinatorWrite done)))
-            (setv book.noted #())
-            (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる")))))
+    ;; 落ちの注入の判断(書きより前): 落ちの注入が待っている時だけ筋書きの落ちの頼みを世界への問い 1 つで判じる — 待っていない書き
+    ;; (生存の印の書きの大半)は世界へ問わない(#3132)。
+    (when queue.crash-waiting
+      (<- crash bool (PersistCrashDue))
+      (when crash
+        ;; 落ちる前に、この歩で溜めた書きの知らせを出す(書き終えた書きの待ち手は、落ちても起こす)。
+        (for [done book.noted]
+          (<- (NoteCoordinatorWrite done)))
+        (setv book.noted #())
+        (raise (OSError "sim: Persist の失敗(注入 — fsync の失敗)。返事をせずに落ちる"))))
     (<- effect)
     ;; 書き終えたことは歩の終わり(StepEnded)に知らせる — 書きで終わった切り離した task の待ち手(proboscis/doeff#631)と準備の状態を
     ;; 待つ待ち手(AwaitReadiness・#3053)を起こす。
@@ -3078,12 +3033,9 @@
             (:= revivals (| revivals {name promise}))
             (resume promise))
         (resume None)))
-  (AdmitBatch [batch steps]
+  (AdmitBatch [batch]
     ;; 篩い(網の切れ・口の故障・刻)と、残した要求の service の報告の記録と、返事の前に落ちた時の覚えを 1 つの問いで(#3054 の C-6)—
-    ;; 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は書かない。coordinator の歩の
-    ;; 記録 steps は列に控える(#2670 の根 B)。
-    (when steps
-      (:= steps-seen (+ steps-seen steps)))
+    ;; 読む世界の値は受付の 1 つ(intake)。何も取らなかった歩(静かな拍・静かな拍を眠る宿の篩いの読み)は書かない。
     (<- now int (now-epoch-ms))
     (val faults (RouteFaults :cut (frozenset (gfor #(name until) (.items intake.cuts) :if (> until now) name))
                              :failing (dfor #(route #(status until)) (.items intake.failing) :if (> until now) route status)
@@ -3105,12 +3057,16 @@
     (if (is after None)
         (resume False)
         (do (:= pausing after)
-            ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
-            (setattr parts.queue "ends_at_marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            ;; 落ちを待つ注入が残っていなければ、書きの前の落ちの問いをやめる(CrashCoordinator・#3132)。
+            (setattr parts.queue "crash_waiting" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
   (StepEnded [released writes]
     ;; 調停ループの 1 歩の終わりの問い 1 つ(#2670 の根 A): 返事を済ませた要求を覚えから外し(ReleaseRequest と同じ)、この歩の書きを
     ;; 書きの順に知らせ(NoteCoordinatorWrite と同じ — 準備の状態の待ち手は最初の書きの知らせで起こす)、止まりを判じる(PauseDue と同じ)。
+    ;; 書いた歩は、刻と書きの列を歩の記録に控える(CoordinatorSteps — #2670 の根 B・#3865)。
+    (when writes
+      (<- at int (now-epoch-ms))
+      (:= steps-seen (+ steps-seen #((CoordinatorStep :at at :writes writes)))))
     (when released
       (:= intake (replace intake :held (tuple (gfor r intake.held :if (not (any (gfor done released (is done r)))) r)))))
     (for [#(index done) (enumerate writes)]
@@ -3124,8 +3080,8 @@
     (if (is after None)
         (resume False)
         (do (:= pausing after)
-            ;; 落ちを待つ注入が残っていなければ、静かな区間を生存の印の歩で切るのをやめる(CrashCoordinator)。
-            (setattr parts.queue "ends_at_marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            ;; 落ちを待つ注入が残っていなければ、書きの前の落ちの問いをやめる(CrashCoordinator・#3132)。
+            (setattr parts.queue "crash_waiting" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
   (PersistCrashDue []
     ;; 筋書きの落ちの頼みを PauseDue と同じく判じる(区間の歩の書きを落とさない判断は observe-requests の帳面 — #3132)。
@@ -3133,7 +3089,7 @@
     (if (is after None)
         (resume False)
         (do (:= pausing after)
-            (setattr parts.queue "ends_at_marks" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
+            (setattr parts.queue "crash_waiting" (any (gfor p after.queued (= (get p 0) PAUSE-CRASH))))
             (resume True))))
   (DowntimeOf []
     (val taken pausing.downtime)
@@ -3273,15 +3229,14 @@
     (resume (tuple (gfor p preparations :if (= p.worker name) p))))
   (StopCoordinator [seconds]
     (:= pausing (replace pausing :queued (+ pausing.queued #(#(PAUSE-STOP (float seconds))))))
-    ;; 眠っている coordinator に知らせる(要求の無い拍を飛ばす列は、本番の 1 秒の拍が止めに気づく刻まで眠り直す — nudge-takers)。
+    ;; 待っている coordinator を起こす(本番の停止の合図が受付の箱を起こすのと同じ — nudge-takers・#3865)。
     (<- (nudge-takers parts.queue))
     (resume None))
   (CrashCoordinator [seconds]
     (:= pausing (replace pausing :queued (+ pausing.queued #(#(PAUSE-CRASH (float seconds))))))
-    ;; 落ちるのは次の Persist(1 拍ずつの走りでは、注入の後の最初の書き)。静かな区間を眠っている coordinator を起こし(注入の刻より前の
-    ;; 歩をまとめて保存し、その後の最初の歩を本物の歩にする)、落ちるまでは生存の印を書く最初の歩で区間を切る(#2790)。
-    ;; 欄の名は Hy が読む名(queue.ends-at-marks = ends_at_marks)で書く — 文字列の "ends-at-marks" は別の属性を作り、印が立たなかった(#3132)。
-    (setattr parts.queue "ends_at_marks" True)
+    ;; 落ちるのは次の Persist(注入の後の最初の書き)。待っている coordinator を起こす(その歩が生存の印を書けば、そこで落ちる)。
+    ;; 欄の名は Hy が読む名(queue.crash-waiting = crash_waiting)で書く — 文字列の "crash-waiting" は別の属性を作り、印が立たない(#3132)。
+    (setattr parts.queue "crash_waiting" True)
     (<- (nudge-takers parts.queue))
     (resume None))
   (CoordinatorRuns []
@@ -3615,8 +3570,8 @@
    scheduler が在っても無くても走る)。deployments = 「namespace/名」→ KubeMemory の観測の dict(specReplicas・replicas・readyReplicas 等)。
    走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。runtime-env = 宣言の実行環境の宣言(本番の
    declare の --runtime-env と同じ — 本物の worker が準備し、子の run-context の runtime-env になる。既定 None)。壁の時計で回すなら
-   wall-sim-cluster。skip-idle = coordinator が要求の無い間、本番の判断で何も変えない拍を一度に眠る(既定 = 真。判断の刻は 1 秒ごとの
-   拍と同じ — 同値の検が偽と真を比べる・2026-09-30)。"
+   wall-sim-cluster。skip-idle = worker の代役(宿)が、本番の判断で何も変えない拍を一度に眠る(既定 = 真。預けた heartbeat は受付の
+   列がその刻に要求として渡す — 同値の検が偽と真を比べる・2026-09-30・#3865)。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
                                            :skip-idle skip-idle))))
