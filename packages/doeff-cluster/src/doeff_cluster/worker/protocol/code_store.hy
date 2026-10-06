@@ -20,7 +20,10 @@
                                          RemoveTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess ProcessNotStarted ProcessExited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode WakeSet WorkerWakes])
+(import doeff_cluster.worker.core.worker_due [wakes-with])
+(import doeff_cluster.shared.intent.due_model [DueNever])
+(import doeff_core_effects.process_effects [AwaitProcessExit])
 (import doeff_cluster.worker.protocol.observations [ObserveCode CodeTimings])
 (import doeff_cluster.worker.core.code_plan [MARKER marker-problem])
 (import doeff_cluster.worker.core.code_prepare [tree-listing])
@@ -147,4 +150,11 @@
                       (lfor c checks :if (and (is c.reason None) (not-in c.name pending) (not-in c.name failed))
                             (CodeView c.name CodeState.READY :path (+ settings.cache "/" c.name)))))))
   (CodeTimings []
-    (resume (dict timings))))
+    (resume (dict timings)))
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4): 走っている準備の子(pending — まだ終わりを観測していない物)の終わりを待つ効果を足す。
+    ;; 期限と呼び鈴は足さない(準備の期限は持たない・終わりは ObserveCode が読む)。
+    (<- outer WakeSet effect)
+    (val exits (tuple (gfor #(pid started-ms err) (.values pending) (AwaitProcessExit pid))))
+    (<- merged WakeSet (wakes-with outer (DueNever) #() exits))
+    (resume merged)))

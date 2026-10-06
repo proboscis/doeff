@@ -28,7 +28,8 @@
 (val SETTLE-SECONDS 12.0)
 ;; heartbeat の間(4 秒)に coordinator が要求の無い拍を持つ worker の設定 — 模擬の列が何も変えない拍を飛ばす場面を作る(既定の 0.5 秒
 ;; ごとの heartbeat では要求が絶えず、飛ばす拍が無い)。
-(val SPARSE-POLICY (WorkerPolicy :tick-seconds 4.0 :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
+(val SPARSE-TICK-SECONDS 4.0)
+(val SPARSE-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 
 (defk watch-once [query]
@@ -89,8 +90,8 @@
   ;; #3865)。worker の代役が静かな拍を眠る走り(既定)でも、1 拍ずつ打つ走りでも同じ刻。反例: 期限を次に起きる刻に入れない作りは、
   ;; 次に状態の変わる刻まで寝過ごす。
   (for [seconds [0.5 1.2 2.5]]
-    (<- skipped tuple (sim-cluster (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY))
-    (<- every tuple (sim-cluster (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY
+    (<- skipped tuple (sim-cluster (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS))
+    (<- every tuple (sim-cluster (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS
                                  :skip-idle False))
     (for [#(started answer at) [skipped every]]
       (assert (= (get answer 0) 200) answer)

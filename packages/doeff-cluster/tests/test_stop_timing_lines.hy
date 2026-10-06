@@ -30,6 +30,7 @@
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.protocol.process_host [HostSettings STOP-TIMING-LOG process-host])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import tests.wake_fixtures [wakes-every])
 (import doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable])
 (import doeff_cluster.worker.core.program [run-worker START-HOLD-LOG])
 (import tests.host_rig [host-settings])
@@ -42,7 +43,7 @@
 (val GRACE-SECONDS 10.0)
 (val REAP-SECONDS 0.5)
 ;; 調整ループの方針(拍 0.1 秒)と、coordinator との途絶の柵(本番の 20 秒・240 秒の代わりの短い値)。
-(val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :tick-seconds 0.1))
+(val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))
 (val FENCE-MS 2000)
 (val KEEP-FENCE-MS 4000)
 
@@ -253,7 +254,7 @@
 (deftest test-a-changed-spec-and-an-undeclared-job-are-stopped-with-their-reasons
   ;; 1 秒目の返事で svc の版が変わり、other が宣言から外れる。3 秒目に worker が止まる(残る svc は worker の停止の訳)。
   (val replies #((Reply :from-ms 0 :jobs #(SPEC OTHER) :reached True) (Reply :from-ms 1000 :jobs #(SPEC-B) :reached True)))
-  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 3000) stop-signal-never-comes tick-pauses]))
+  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 3000) stop-signal-never-comes tick-pauses (wakes-every 100)]))
   (assert (= (! (lines-of noted.stops "svc"))
              #(#("term" "spec-changed") #("reaped" "spec-changed") #("term" "worker-stopping") #("reaped" "worker-stopping")))
           noted.stops)
@@ -266,7 +267,7 @@
   ;; ms つき)。5 秒目に届くようになり起こし直し、7 秒目の worker の停止で止める。
   (val replies #((Reply :from-ms 0 :jobs #(SPEC) :reached True) (Reply :from-ms 1000 :jobs #(SPEC) :reached False)
                  (Reply :from-ms 5000 :jobs #(SPEC) :reached True)))
-  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 7000) stop-signal-never-comes tick-pauses]))
+  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript) 7000) stop-signal-never-comes tick-pauses (wakes-every 100)]))
   (assert (= (! (lines-of noted.stops "svc"))
              #(#("term" "cut-off") #("reaped" "cut-off") #("term" "worker-stopping") #("reaped" "worker-stopping")))
           noted.stops)
@@ -279,6 +280,6 @@
 (deftest test-a-held-start-is-noted-once-while-the-reason-lasts-and-again-when-it-changes
   ;; svc の版の準備は 1 秒目まで準備中(拍 0.1 秒 — 10 拍ほど続く)、1 秒目から失敗(撃ち直しの間 30 秒より前に 2 秒目で止まる)。
   (val replies #((Reply :from-ms 0 :jobs #(SPEC) :reached True)))
-  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript :failed-ms 1000 :ready-ms None) 2000) stop-signal-never-comes tick-pauses]))
+  (<- noted NotedLines (on-scripted-host (worker-run) [(worker-world replies (CodeScript :failed-ms 1000 :ready-ms None) 2000) stop-signal-never-comes tick-pauses (wakes-every 100)]))
   (assert (= noted.holds #((HoldLine :job "svc" :reason "preparing") (HoldLine :job "svc" :reason "prepare-failed"))) noted.holds)
   (assert (= noted.stops #()) noted.stops))

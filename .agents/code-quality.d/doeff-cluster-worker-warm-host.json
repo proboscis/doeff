@@ -13,7 +13,9 @@
         "doeff-cluster-worker-warm-rules",
         "doeff-cluster-worker-launch",
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-observations"
+        "doeff-cluster-worker-observations",
+        "doeff-cluster-worker-due",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-warm-host",

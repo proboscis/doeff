@@ -12,6 +12,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld WorldView PublishStatus
                                                   EnvReport])
 (import doeff_cluster.worker.core.program [run-worker])
+(import tests.wake_fixtures [wakes-every])
 
 
 (defhandler empty-host
@@ -33,10 +34,10 @@
 (deftest test-the-worker-stops-on-the-core-stop-effect
   ;; 失敗ケース 3: 核の止め(scripted-stop-handler の RaiseStop — 本番は os-signal-stop-handler の SIGTERM)が立っていれば、run-worker は
   ;; 最初の拍で止まりの手順に入り、子が無いので抜ける。直す前は run-worker が worker 独自の WorkerStopRequested を問い、答え手が無い。
-  (val policy (WorkerPolicy :tick-seconds 0.1))
+  (val policy (WorkerPolicy))
   (<- final WorkerState
       ((state) ((sim-time-handler :clock (SimClock)) (scripted-stop-handler
-        (slog-discard-handler (empty-host (stopped-worker policy)))))))
+        ((wakes-every 100) (slog-discard-handler (empty-host (stopped-worker policy))))))))
   (assert (= final.records {}) final))
 
 
