@@ -191,8 +191,8 @@
   (assert (= (lfor e (.iterdir cache) :if (in ".broken." e.name) e) [])))
 
 
-(deftest test-next-revision-carries-from-the-ready-tree [tmp-path]
-  ;; 前の完成品から引き継ぐ道(git diff → --from / --changed)も、同じ検めを通って完成品になる。
+(deftest test-next-revision-is-prepared-without-the-ready-tree [tmp-path]
+  ;; 次の版も、前の完成品から引き継がずに(.pyc は source の中身で引く保存先から書く — #3858)同じ検めを通って完成品になる。
   (setv #(repo rev1) (! (make-repo tmp-path)) cache (/ tmp-path "cache"))
   (<- settings (code-settings repo cache HY))
   (assert (= (. (! (run-codes settings (prepared rev1))) state) CodeState.READY))
@@ -204,14 +204,14 @@
   (assert (= view.state CodeState.READY) view.detail)
   (setv marker (json.loads (.read-text (/ cache rev2 MARKER))))
   (assert (= (get marker "pycs") 3))
-  ;; 引き継いだ .pyc は前の木と同じ inode(hardlink)。
-  (assert (= (. (.stat (/ cache rev2 (cache-rel "pkg/m.py"))) st-ino)
-             (. (.stat (/ cache rev1 (cache-rel "pkg/m.py"))) st-ino))))
+  ;; 前の版の木の .pyc を hardlink しない(版の木は互いに独立 — 同じ中身の .pyc は保存先から書く)。
+  (assert (!= (. (.stat (/ cache rev2 (cache-rel "pkg/m.py"))) st-ino)
+              (. (.stat (/ cache rev1 (cache-rel "pkg/m.py"))) st-ino))))
 
 
-(deftest test-a-previous-tree-this-repo-cannot-resolve-is-not-carried-from [tmp-path]
-  ;; 前の完成品の版をこの repo で解けない時(以前の「<base>~<revision>」の重ねる木の名・履歴から消えた commit — 2026-09-28 に
-  ;; 重ねる木を消した)は、引き継がずに全部を焼いて完成品にする。引き継ぎは速さのためだけで、引き継げないことを準備の失敗にしない。
+(deftest test-a-ready-tree-of-another-history-does-not-affect-the-next-revision [tmp-path]
+  ;; 同じ cache に別の履歴の版の完成品が在っても(以前の「<base>~<revision>」の重ねる木の名・履歴から消えた commit)、次の版の準備は
+  ;; それに依らずに全部を用意して完成品にする。
   (<- made (make-repo tmp-path))
   (val cache (/ tmp-path "cache"))
   (assert (= (. (! (run-codes (! (code-settings (get made 0) cache HY)) (prepared (get made 1)))) state) CodeState.READY))
@@ -225,7 +225,7 @@
   (<- (git other "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" "other"))
   (<- rev (git other "rev-parse" "HEAD"))
   (<- settings (code-settings other cache HY))
-  ;; 引き継ぎ元の候補 = 前の完成品(観測で完成品と答える唯一の版)。
+  ;; 前の完成品(観測で完成品と答える唯一の版)。
   (<- ready list (run-codes settings (ready-views)))
   (assert (= (lfor v ready v.revision) [(get made 1)]) "前の完成品が在るはず")
   (<- view (run-codes settings (prepared rev)))

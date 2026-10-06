@@ -23,6 +23,8 @@
 
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
+;; 7 日使われない bytecode の保存先の entry を消す(native の wheel と同じ 7 日の作法 — entry は使うたびに時刻を進める・#3858)。
+(val CODE-STORE-UNUSED-SECONDS WHEEL-UNUSED-SECONDS)
 (val SWEEP-EVERY-MS 30000)              ; roots の合計が上限を越えている間の掃除の間隔(前の掃除の終わりから — 固定の集合が変わった時はすぐ)
 ;; project ごとに消さない root の数(最後に使った時刻の新しい順): 今の版と 1 つ前に動いていた版(戻し先 — #3732)。
 (val KEEP-PER-PROJECT 2)

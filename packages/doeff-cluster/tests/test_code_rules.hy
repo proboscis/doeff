@@ -1,6 +1,6 @@
 ;; 版ごとのコードの木の準備の script を組む判断 prepare-script(worker/core/code_rules — #2466)を、sh を走らせずに確かめる。
 ;;   * どの命令も set -eu の下の単独の文で、完成の印を確かめてから最後に rename する(final の在る dir は常に完成品)。
-;;   * 焼きの hy が無ければ bytecode を省いて印だけを置く・前の木が在れば git diff の変わった file で引き継ぎ、解けなければ全部を焼く。
+;;   * 焼きの hy が無ければ bytecode を省いて印だけを置く・前の版の木から引き継がない(.pyc は source の中身で引く保存先から書く — #3858)。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
 (import doeff_cluster.worker.core.code_plan [MARKER])
@@ -8,7 +8,7 @@
 
 
 (deftest test-the-script-checks-the-marker-before-the-rename-that-comes-last
-  (<- script str (prepare-script "/repo" "rev9" None :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout)))
+  (<- script str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout)))
   (val lines (.splitlines script))
   (assert (= (get lines 0) "set -eu") lines)
   (assert (= (get lines -1) "mv \"$T\" \"$F\"") lines)
@@ -17,12 +17,14 @@
   (assert (in "PYTHONDONTWRITEBYTECODE=1 \"/bin/hy\" \"/w/code_prepare.hy\" --revision \"rev9\" --tree \"$T\" --roots \".\"" script) script))
 
 
-(deftest test-the-script-carries-the-previous-tree-and-falls-back-to-a-full-bake
-  (<- carried str (prepare-script "/repo" "rev9" "/cache/rev8" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout)))
-  (assert (in "diff --name-only \"rev8\" \"rev9\"" carried) carried)
-  (assert (in "--from \"/cache/rev8\" --changed \"$T.changed\"" carried) carried)
-  (assert (in "引き継がずに全部を焼く" carried) carried)
+(deftest test-the-script-does-not-carry-from-a-previous-tree
+  ;; 失敗ケース(#3858): 版の木の準備は前の版の木から .pyc を引き継がない(引き継ぎ元の差の一覧も渡さない)— 引き継ぐ形に戻すと、引き継ぎ元の
+  ;; 無い worker で全部を焼き直す道が残る。
+  (<- script str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout)))
+  (assert (not-in "--from" script) script)
+  (assert (not-in "--changed" script) script)
+  (assert (not-in "diff --name-only" script) script)
   ;; 焼きの hy が無ければ bytecode を省き、印だけを置く(道具を起こさない)。
-  (<- plain str (prepare-script "/repo" "rev9" "/cache/rev8" :hy-command None :tool "/w/code_prepare.hy" :layout (CodeLayout)))
+  (<- plain str (prepare-script "/repo" "rev9" :hy-command None :tool "/w/code_prepare.hy" :layout (CodeLayout)))
   (assert (not-in "code_prepare.hy" plain) plain)
   (assert (in "\"bytecode\": false" plain) plain))

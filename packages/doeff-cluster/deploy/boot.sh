@@ -33,8 +33,8 @@
 #   入れて、その venv の hy で起こす。wheel は実行環境の準備(worker)と同じ鍵・同じ置き場($WORK_DIR/state/wheels/doeff-vm-<鍵>)の物を
 #   使い、無ければ組んで置く(python -m doeff_cluster.worker.entry.boot_wheel — 鍵と置き場の定義点は doeff_cluster/shared/core/native_wheel.py
 #   の 1 つ)。doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。続けて root の中の source(venv に editable で入る
-#   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ焼く(doeff_bake —
-#   前の準備済みの root から、変わっていない file の .pyc を hardlink で引き継ぐ)。焼けなくても起動は続ける(import の時に作られる)。
+#   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ用意する(doeff_bake —
+#   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。焼けなくても起動は続ける(import の時に作られる)。
 #   同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
 #   uv の cache と Python は実行環境の root と同じ $WORK_DIR/state の下(uv-cache・python)。crate の取得先は $WORK_DIR/state/cargo。
 #   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
@@ -51,6 +51,10 @@
 set -eu
 WORK_DIR=${WORK_DIR:-/work}
 role=${ROLE:-worker}
+# source の中身で引く bytecode の保存先(doeff-hy の code_store — 入口は 1 つ・版と root をまたいで同じ中身の source の code と import の
+# 名を引く)。worker の永続の dir の下に置き、自分の子(実行環境の準備・焼く道具・job)へ継ぐ。呼び手が値を置けばそれを使う(日次の全体
+# 検証の task と、手元の 1 台の cluster を起こすテストは件をまたいで同じ dir を渡す)。7 日使われない entry は worker の掃除が消す。
+export DOEFF_HY_CODE_STORE="${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code-store}"
 # 知らない役は、展開も準備もせず名指しで断る(worker の起動へ落とさない — 走っている worker の Pod の中で役 prepare を、その役を
 # 知らない版へ向けて撃っても、2 つ目の worker を起こさない)。
 case "$role" in
@@ -163,13 +167,12 @@ doeff_prepare() {
   export PATH="$root/.venv/bin:$PATH"
 }
 
-# 準備する root の中の source(venv の .pth が書く root の中の dir — editable で入る package)の bytecode を焼く(doeff_prepare が
-# boot.lock を持ったまま呼ぶ・#3725)。焼くのは実行環境の準備(worker/protocol/env_translation の CompileTrees)と同じ焼く道具 — root の
+# 準備する root の中の source(venv の .pth が書く root の中の dir — editable で入る package)の bytecode を用意する(doeff_prepare が
+# boot.lock を持ったまま呼ぶ・#3725)。道具は実行環境の準備(worker/protocol/env_translation の CompileTrees)と同じ — root の
 # 版の worker/entry/code_prepare.hy を root の venv の hy で 1 回起こし、BOOT_ENTRIES の閉包だけを、import の時に source の hash を検める
-# 方式で焼く(引数の意味と揃え方は道具の頭の註)。引き継ぎ元 = 同じ $boot/roots の準備済みの root のうち、焼く道具の完成の印が在り、Python
-# と venv の Hy の compiler の版が同じで、準備の済んだのが最も新しい物(実行環境の準備の引き継ぎ元の条件と同じ — #3706)。引き継ぐ時は
-# 引き継ぎ元の sha からの git diff を --changed で渡す(載った file の .pyc は引き継がない)。焼けなくても起動は続ける — 焼かれなかった
-# module は import の時に作られる(遅くなるだけ)。結果は準備の行に載せる 1 句(baked)。
+# 方式で用意する(引数の意味と揃え方は道具の頭の註)。.pyc は source の中身で引く保存先(DOEFF_HY_CODE_STORE)から書き、中身の変わった
+# file だけを焼く(#3858 — 前の root からの引き継ぎは持たない)。焼けなくても起動は続ける — 焼かれなかった module は import の時に
+# 作られる(遅くなるだけ)。結果は準備の行に載せる 1 句(baked)。
 doeff_bake() {
   tool=$root/packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy
   if [ ! -f "$tool" ] || [ ! -x "$root/.venv/bin/hy" ]; then
@@ -206,66 +209,21 @@ doeff_bake() {
     baked="bytecode を焼かない(venv の .pth に root の中の dir が無い)"
     return 0
   fi
-  python_version=$root/.python-version
-  hy_version=$(hy_dist "$root")
-  from=""
-  if [ -n "$hy_version" ]; then
-    for candidate in "$boot"/roots/*; do
-      [ -d "$candidate" ] && [ ! -L "$candidate" ] && [ "$candidate" != "$root" ] || continue
-      [ -f "$candidate/.doeff-boot-ready" ] && [ -f "$candidate/$CODE_MARKER" ] || continue
-      cmp -s "$candidate/.python-version" "$python_version" || continue
-      [ "$(hy_dist "$candidate")" = "$hy_version" ] || continue
-      if [ -z "$from" ] || [ "$candidate/.doeff-boot-ready" -nt "$from/.doeff-boot-ready" ]; then
-        from=$candidate
-      fi
-    done
-  fi
   set -- --revision "$sha" --entries "$BOOT_ENTRIES" --tree "$root" --roots "$roots"
-  carried="なし"
-  changed=""
-  if [ -n "$from" ]; then
-    previous=${from##*/}
-    changed=$WORK_DIR/state/changed/boot-$sha.txt
-    mkdir -p "$WORK_DIR/state/changed"
-    # 変わった path の一覧(実行環境の準備の changed-list と同じ命令・同じ置き場)。読めなければ引き継がずに全部を焼く。
-    if diff_error=$(git -C "$boot/doeff.git" diff --name-only --no-renames "$previous" "$sha" 2>&1 >"$changed"); then
-      set -- "$@" --from "$from" --changed "$changed"
-      carried=$(printf '%.12s' "$previous")
-    else
-      echo "boot: 引き継ぎ元 $previous と $sha の差を読めない — 引き継がずに全部を焼く: $diff_error" >&2
-      rm -f "$changed"
-      changed=""
-    fi
-  fi
   bake_started=$(date +%s)
   # 焼く道具そのもの(Hy)の import が timestamp の方式の .pyc を root へ書かないよう PYTHONDONTWRITEBYTECODE を立てる(道具の頭の註)。
-  # 道具は stderr に報告の行を書く — 全体の行(carried=… rebuilt=… reused=… failed=… carry_s=…)から数を読む。
+  # 道具は stderr に報告の行を書く — 全体の行(stored=… rebuilt=… reused=… failed=… compile_s=…)から数を読む。
   if report=$(cd "$root" && PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/hy" "$tool" "$@" 2>&1); then
     counts=$(printf '%s\n' "$report" |
-      sed -n 's/.*\(carried=[0-9]* rebuilt=[0-9]* reused=[0-9]* failed=[0-9]*\) carry_s=.*/\1/p' | tail -n 1)
+      sed -n 's/.*\(stored=[0-9]* rebuilt=[0-9]* reused=[0-9]* failed=[0-9]*\) compile_s=.*/\1/p' | tail -n 1)
   else
     counts=""
   fi
   if [ -n "$counts" ]; then
-    baked="bytecode $(( $(date +%s) - bake_started )) 秒(${counts}・引き継ぎ元 ${carried})"
+    baked="bytecode $(( $(date +%s) - bake_started )) 秒(${counts})"
   else
     baked="bytecode を焼けない(import の時に作られる): $(printf '%s\n' "$report" | tail -n 3 | tr '\n' ' ')"
   fi
-  [ -z "$changed" ] || rm -f "$changed"
-}
-
-# root の venv に入った Hy の compiler の版(site-packages の hy-<版>.dist-info の名・無ければ空 — 終わりは常に 0: 呼び手は
-# `x=$(hy_dist …)` で受け、set -e で止めない)。
-hy_dist() {
-  for info in "$1"/.venv/lib/python*/site-packages/hy-*.dist-info; do
-    if [ -d "$info" ]; then
-      info=${info##*/}
-      info=${info#hy-}
-      echo "${info%.dist-info}"
-      return 0
-    fi
-  done
-  return 0
 }
 
 # 読み取りの鍵の表から、worker の鍵の表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
@@ -446,4 +404,5 @@ exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --na
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
-  --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))"
+  --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \
+  --code-store "$DOEFF_HY_CODE_STORE"

@@ -22,11 +22,12 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass replace])
 (import json)
+(import posixpath)
 (import re)
 (import doeff_core_effects [slog])
 (import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory RenamePath MakeDirectory RemoveTree
+(import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory WalkTree RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
                                             ProcessExited])
@@ -38,7 +39,7 @@
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes
-                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
+                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
                                               memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project declared-project])
@@ -72,7 +73,9 @@
    roots-cap-bytes = roots の合計の上限(越えた時だけ固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
    (割った時は root を消さずに準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
    上限・tool = 準備の process の入口・cgroup-dir = worker の container の cgroup(v2)の dir(先の組みの前に memory.current と memory.max を
-   読む — #3748)。2 つの量の値は worker の起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
+   読む — #3748)・code-store = source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・None = 保存先を使わない
+   設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)。2 つの量の値は worker の起動の引数(main.hy の
+   --env-roots-cap・--env-min-free — 既定は boot.sh)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
@@ -84,7 +87,8 @@
   (setv #^ PrepareLimits limits (PrepareLimits))
   (setv #^ int max-parallel 2)
   (setv #^ str tool ENV-TOOL)
-  (setv #^ str cgroup-dir "/sys/fs/cgroup"))
+  (setv #^ str cgroup-dir "/sys/fs/cgroup")
+  (setv #^ (| str None) code-store None))
 
 
 (defrecord PendingEnv
@@ -295,7 +299,8 @@
 (defk sweep-leftovers [settings now-ms]
   {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
   "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
-   wheel(使うたびに dir の中の印の file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)を消し、消した path の列を
+   wheel(使うたびに dir の中の印の file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)と、7 日使われない bytecode の
+   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)を消し、消した path の列を
    返すため。"
   (<- roots (ListDirectory (+ settings.state "/roots")))
   (val aside (if (isinstance roots FileFailed)
@@ -311,10 +316,30 @@
         (<- at (modified-ms path))
         (when (and (is-not at None) (> (- now-ms at) (* 1000 WHEEL-UNUSED-SECONDS)))
           (:= stale (+ stale #(path)))))))
-  (val doomed (+ aside stale))
+  (<- unused tuple (unused-store-entries settings.code-store now-ms))
+  (val doomed (+ aside stale unused))
   (for [target doomed]
     (<- (RemoveTree target)))
   doomed)
+
+
+(defk unused-store-entries [store now-ms]
+  {:pre [(: store (| str None)) (: now-ms int)] :post [(: % tuple)]}
+  "bytecode の保存先(store — None = 使わない設定)の file のうち、CODE-STORE-UNUSED-SECONDS より長く時刻の進んでいない物の path の列を
+   求めるため(掃除が消す・保存先の dir が無ければ空)。"
+  (if (is store None)
+      #()
+      (do (<- listed (| tuple FileFailed) (WalkTree store))
+          (var found #())
+          (match listed
+            (FileFailed) None
+            entries (for [entry entries]
+                      (when (= entry.kind PathKind.FILE)
+                        (val path (posixpath.join store entry.name))
+                        (<- at (modified-ms path))
+                        (when (and (is-not at None) (> (- now-ms at) (* 1000 CODE-STORE-UNUSED-SECONDS)))
+                          (:= found (+ found #(path)))))))
+          found)))
 
 
 (defk measuring-roots [settings done]

@@ -1,43 +1,36 @@
-;;; bytecode の準備の道具(worker/entry/code_prepare.hy)が全部の木を 1 回で焼く段取りの純粋な判断と、その record — 命令の木ごとの引数の
-;;; 揃え・焼きの並列数・木をまたいだ import の閉包の歩み・import の名の表(閉包の読みの使い回し)・前の木から引き継ぐ .pyc(頭の検めの方式と
-;;; magic)・焼く順(大きい順)・焼きの道具への受け渡しの行・報告の行。I/O と効果は持たない。
+;;; bytecode の準備の道具(worker/entry/code_prepare.hy)が全部の木を 1 回で用意する手順の純粋な判断と、その record — 命令の木ごとの引数の
+;;; 揃え・並列数・木をまたいだ import の閉包の歩み・import の名の保存先の entry の形(閉包の読みを source の中身で使い回す)・焼く順(大きい
+;;; 順)・焼きの道具への受け渡しの行・報告の行。I/O と効果は持たない。
 ;;;
 ;;; 読まれ方: 入口はこの file を package の import でなく、入口の file の位置から求めた path で読む(module 名 doeff_cluster_worker_bake_plan
 ;;; — 入口は準備する root の venv の python で走るので、package で引くと root の版の doeff の物になり、この file を持たない古い版の root で
 ;;; 落ちる)。だからこの file が import してよいのも、cluster で動く job の doeff の版から変わっていない部品(code_plan の module-name・
-;;; imported-names・carry-pairs と doeff-hy の macro)と標準 library だけ。検は package の名で普通に import して判断を検める。
-(require doeff-hy.macros [defk val <-])
-(require doeff-hy.record [defrecord defenum])
+;;; imported-names と doeff-hy の macro)と標準 library だけ。検は package の名で普通に import して判断を検める。
+(require doeff-hy.macros [defk val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import bisect)
-(import hashlib)
 (import json)
 (import math)
 (import posixpath)
 (import dataclasses [dataclass])  ; dataclass は defrecord の展開が使う
-(import enum [StrEnum])  ; StrEnum は defenum の展開が使う
-(import doeff_cluster.worker.core.code_plan [carry-pairs imported-names module-name])
+(import doeff_cluster.worker.core.code_plan [imported-names module-name])
 
 
 ;; --- record ------------------------------------------------------------------------------
 
 (defrecord TreeArgs
-  "命令の木 1 つの引数(揃えた後): named = --tree の綴り・roots = --roots の根(前が先)・old = --from(無ければ None)・
-   changed = --changed の file(無ければ None)。"
+  "命令の木 1 つの引数(揃えた後): named = --tree の綴り・roots = --roots の根(前が先)。"
   (#^ str named)
-  (#^ tuple roots)
-  (#^ (| str None) old)
-  (#^ (| str None) changed))
+  (#^ tuple roots))
 
 
 (defrecord BakeTree
   "焼く木 1 つ。named = 命令に書かれた木の綴り(報告の行の名 — 呼び手はこの綴りで木を引き当てる)・path = symlink を辿った絶対 path・
-   roots = 木の中の import の根(前が先)・old = 引き継ぎ元の前の木の絶対 path か None・changed = 前の木から変わった相対 path。"
+   roots = 木の中の import の根(前が先)。"
   (#^ str named)
   (#^ str path)
-  (#^ tuple roots)
-  (#^ (| str None) old)
-  (#^ frozenset changed))
+  (#^ tuple roots))
 
 
 (defrecord ModuleIndex
@@ -45,34 +38,6 @@
    import の路の前の木(番号の小さい方)・同じ木の中では相対 path の名の順の先を採る。"
   (#^ tuple names)
   (#^ tuple places))
-
-
-(defrecord ImportRow
-  "import の名の表の行 1 つ(#3694): rel = 木の中の source の相対 path・digest = source の sha256(16 進)・imports = その source が
-   import する名(imported-names の答えの形 #(#(点の数 名 取り出す名の tuple) …))。"
-  (#^ str rel)
-  (#^ str digest)
-  (#^ tuple imports))
-
-
-(defrecord ImportTable
-  "引き継ぎ元の木の import の名の表を読んだ結果(#3694): rows = ImportRow の列(rel の名の順・同じ rel は 1 つ — usable-row が二分探索で
-   引く)・problem = 表を使えない理由(行 0 — 全部を読み直す)か None。"
-  (#^ tuple rows)
-  (#^ (| str None) problem))
-
-
-(defenum PycScheme CHECKED-HASH UNCHECKED-HASH TIMESTAMP UNREADABLE)
-;; .pyc の検めの方式(PEP 552 の頭の flags — 0 = timestamp・0b01 = unchecked hash・0b11 = checked hash)。UNREADABLE = 頭の 16 byte を
-;; 読めない・足りない・flags がどれでもない .pyc(#3727)。
-
-
-(defrecord PycHead
-  "引き継ぎ元の木の .pyc 1 つの頭を読んだ結果(#3727): path = 木の中の相対 path・scheme = 検めの方式・magic = 頭の magic 4 byte(頭を
-   読めない・16 byte に足りなければ空)。"
-  (#^ str path)
-  (#^ PycScheme scheme)
-  (#^ bytes magic))
 
 
 (defrecord BakeItem
@@ -84,11 +49,11 @@
 
 
 (defrecord TreeOutcome
-  "木 1 つの結果(報告の行): carried = 前の木から hardlink で引き継いだ .pyc の数・焼く計画の file のうち rebuilt = 焼いた数・reused = 在った
-   .pyc が今の source と macro に合い焼かずに残した数・failed = 焼けなかった数(rebuilt + reused + failed = 焼く計画の数 — #3675)・
-   problem = 検めが通らない理由(印を置いていない)か None。"
+  "木 1 つの結果(報告の行): 焼く計画の file のうち stored = 保存先の code から .pyc を書いた数・rebuilt = 焼いた数・reused = 在った .pyc が
+   今の source と macro に合い焼かずに残した数・failed = 焼けなかった数(stored + rebuilt + reused + failed = 焼く計画の数)・problem =
+   検めが通らない理由(印を置いていない)か None。"
   (#^ str named)
-  (#^ int carried)
+  (#^ int stored)
   (#^ int rebuilt)
   (#^ int reused)
   (#^ int failed)
@@ -96,19 +61,21 @@
 
 
 (defrecord BakeAnswer
-  "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・reused = 在った .pyc が今の source と今の環境の macro に
-   合うので pool へ送らなかった物の #(木の path 相対 path) の列(#3675)。"
+  "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・stored = 保存先の code から .pyc を書いた物の
+   #(木の path 相対 path) の列・reused = 在った .pyc が今の source と今の環境の macro に合うので pool へ送らなかった物の
+   #(木の path 相対 path) の列(#3675)・unstored = 焼いた code を保存先へ書けなかった理由の列(重ねない)。"
   (#^ tuple failed)
-  (#^ tuple reused))
+  (#^ tuple stored)
+  (#^ tuple reused)
+  (#^ tuple unstored))
 
 
 (defrecord BakeSummary
-  "1 回の準備の結果: trees = 木ごとの TreeOutcome(命令の順)・経過の秒(scan-s = 木の走査・closure-s = 閉包の歩み・carry-s = 引き継ぎ・
-   compile-s = 焼き)。"
+  "1 回の準備の結果: trees = 木ごとの TreeOutcome(命令の順)・経過の秒(scan-s = 木の走査・closure-s = 閉包の歩み・compile-s = 保存先の
+   引きと焼き)。"
   (#^ tuple trees)
   (#^ float scan-s)
   (#^ float closure-s)
-  (#^ float carry-s)
   (#^ float compile-s))
 
 
@@ -124,26 +91,18 @@
       (max 1 available)))
 
 
-(defk tree-arguments [trees roots olds changes]
-  {:pre [(: trees tuple) (: roots tuple) (: olds tuple) (: changes tuple)] :post [(: % (| tuple str))]
-   :tags {:context "worker" :role "judgment"}}
-  "木ごとに並べた命令の引数(--tree・--roots・--from・--changed の値の列)を木の組(TreeArgs の列)に揃えるため(揃え方は入口の頭の註)。
-   揃わなければ使い方の誤りの文。"
+(defk tree-arguments [trees roots]
+  {:pre [(: trees tuple) (: roots tuple)] :post [(: % (| tuple str))] :tags {:context "worker" :role "judgment"}}
+  "木ごとに並べた命令の引数(--tree・--roots の値の列)を木の組(TreeArgs の列)に揃えるため(揃え方は入口の頭の註)。揃わなければ
+   使い方の誤りの文。"
   (cond
     (!= (len roots) (len trees))
       (.format "--roots は --tree ごとに 1 つ書く(木 {} に --roots {})" (len trees) (len roots))
     (any (gfor r roots (not (.strip r ","))))
       "--roots の値が空(import の根を 1 つ以上 `,` で並べる)"
-    (not-in (len olds) #(0 (len trees)))
-      (.format "--from は書かないか --tree ごとに 1 つ書く(無い木は \"\" — 木 {} に --from {})" (len trees) (len olds))
-    (not-in (len changes) #(0 (len trees)))
-      (.format "--changed は書かないか --tree ごとに 1 つ書く(無い木は \"\" — 木 {} に --changed {})" (len trees) (len changes))
     True
       (tuple (gfor #(i tree) (enumerate trees)
-                   (TreeArgs :named tree
-                             :roots (tuple (gfor r (.split (get roots i) ",") :if r r))
-                             :old (if (and olds (get olds i)) (get olds i) None)
-                             :changed (if (and changes (get changes i)) (get changes i) None))))))
+                   (TreeArgs :named tree :roots (tuple (gfor r (.split (get roots i) ",") :if r r)))))))
 
 
 (defk trees-import-path [trees]
@@ -214,87 +173,50 @@
   (tuple (gfor i (range count) (frozenset (gfor p places :if (= (get p 0) i) (get p 1))))))
 
 
-;; --- import の名の表(閉包の歩みの読みの使い回し・#3694)-------------------------------------------
-;; 木の根に残す file。閉包の歩みが訪ねた source ごとに、その source の sha256 と import の名(imported-names の答え)を持つ。次の版の
-;; 準備は、引き継ぎ元の木の表のうち --changed に無く sha256 が今の source と合う行を使い回し、構文の読み(Hy の read-many と Python の
-;; ast.parse — 閉包の歩みの秒の大半)を変わった file だけにする。表は今の閉包の source の行だけを持つ(消えた file・閉包から外れた
-;; file の行は次の表に残らない)。隠し file なので木の走査の source には混ざらない。
+;; --- import の名の保存先の entry(閉包の歩みの読みを source の中身で使い回す・#3694・#3858)----------------------------
+;; 閉包の歩みが訪ねた source ごとの import の名(imported-names の答え)を、doeff-hy の code_store の保存先に source の中身の鍵で置く(種類の
+;; 末尾 .imports)。次の準備は、版・木・root が違っても中身の同じ source の entry を使い、構文の読み(Hy の read-many と Python の
+;; ast.parse — 閉包の秒の大半)を中身の変わった file だけにする。前は木の根に表 1 つを残し、引き継ぎ元の木(--from)の表と変わった path の
+;; 一覧(--changed)で使い回したので、引き継ぎ元の無い root(新しい worker・空の /work・テストの 1 台)は全部を読み直した。
 
-(val IMPORT-TABLE ".doeff-import-names.json")
-(val IMPORT-TABLE-FORMAT 1)
-
-
-(defk source-digest [text]
-  {:pre [(: text str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "source の中身の sha256(16 進)を求めるため — 表の行を使い回してよいかの鍵(--changed の漏れでも古い行を使わない)。"
-  (.hexdigest (hashlib.sha256 (.encode text "utf-8"))))
+;; entry の形の印(形か imported-names の読み方を変えたら末尾の番号を上げる — 古い entry は当たらなくなる)。
+(val IMPORTS-TAG "doeff-cluster/import-names/1")
 
 
-(defk import-row-of [rel value]
-  {:pre [(: rel str) (: value (| dict list str int float bool None))] :post [(: % (| ImportRow None))] :tags {:context "worker" :role "judgment"}}
-  "表の JSON の行 1 つ({\"sha256\" <16 進> \"imports\" [[点の数 名 [取り出す名 …]] …]})を ImportRow に読むため。形が違えば None
-   (その file は読み直す)。"
-  (var entries #())
-  (var whole True)
-  (match value
-    {"sha256" (str) "imports" (list)}
-      (for [e (get value "imports")]
-        (match e
-          [(int) (str) (list)] :if (all (gfor x (get e 2) (isinstance x str)))
-            (:= entries (+ entries #(#((get e 0) (get e 1) (tuple (get e 2))))))
-          _ (:= whole False)))
-    _ (:= whole False))
-  (if whole (ImportRow :rel rel :digest (get value "sha256") :imports entries) None))
+(defk imports-key-parts [rel hy-version]
+  {:pre [(: rel str) (: hy-version str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "source 1 つの import の名の entry の鍵の欄(code_store の content-key へ source の中身と渡す)— Python の source は ast の読み、Hy の
+   source は Hy の読み手の版で読みが変わりうるので、Hy の版も入れる。"
+  (if (.endswith rel ".py")
+      #(IMPORTS-TAG "py" "")
+      #(IMPORTS-TAG "hy" hy-version)))
 
 
-(defk import-table-of [text]
-  {:pre [(: text (| str None))] :post [(: % ImportTable)] :tags {:context "worker" :role "judgment"}}
-  "引き継ぎ元の木の表の file の中身(無い・読めなければ None)を ImportTable に読むため(JSON の境界はここ 1 か所)。無い・JSON で
-   ない・形の版が違う表は行 0 で理由つき(全部を読み直す — 安全側)。形の違う行は落とす(その file は読み直す)。"
-  (val parsed (if (is text None)
-                  None
-                  (try (json.loads text) (except [ValueError] None))))
-  (var rows #())
+(defk imports-entry [imports]
+  {:pre [(: imports tuple)] :post [(: % bytes)] :tags {:context "worker" :role "judgment"}}
+  "import の名(imported-names の答えの形 #(#(点の数 名 取り出す名の tuple) …))を entry の中身(JSON の境界の 1 点)に綴るため。"
+  (.encode (json.dumps (lfor #(dots name names) imports [dots name (list names)]) :ensure-ascii False) "utf-8"))
+
+
+(defk imports-of-entry [data]
+  {:pre [(: data bytes)] :post [(: % (| tuple str))] :tags {:context "worker" :role "judgment"}}
+  "entry の中身を import の名の列に読むため。JSON でない・形が違う entry は理由の文(呼び手は名指して除き、構文を読み直して書き直す)。"
+  (var parsed None)
   (var problem None)
-  (cond
-    (is text None) (:= problem "引き継ぎ元の木に import の名の表が無い(表を残す前の形の木か、読めない)")
-    (is parsed None) (:= problem "引き継ぎ元の木の import の名の表が JSON でない")
-    True
-      (match parsed
-        {"format" form "modules" (dict)} :if (= form IMPORT-TABLE-FORMAT)
-          (for [#(rel value) (.items (get parsed "modules"))]
-            (<- row (| ImportRow None) (import-row-of rel value))
-            (when (is-not row None)
-              (:= rows (+ rows #(row)))))
-        _ (:= problem "引き継ぎ元の木の import の名の表の形の版が違う")))
-  (ImportTable :rows (tuple (sorted rows :key (fn [r] r.rel))) :problem problem))
-
-
-(defk usable-row [table rel digest changed]
-  {:pre [(: table ImportTable) (: rel str) (: digest str) (: changed frozenset)] :post [(: % (| ImportRow None))]
-   :tags {:context "worker" :role "judgment"}}
-  "閉包の歩みが訪ねた source 1 つについて、引き継ぎ元の表の行を使い回してよいかを決めるため: 行が在り、--changed に無く(足した・消した・
-   名を替えた file も一覧に載る)、sha256 が今の source(digest)と合う時だけ行を返す。None なら呼び手が構文を読む(imported-names)—
-   一覧の漏れ(手で直した木など)でも sha256 が違えば古い行を使わない。"
-  (val at (bisect.bisect-left table.rows rel :key (fn [r] r.rel)))
-  (val row (if (and (< at (len table.rows)) (= (. (get table.rows at) rel) rel)) (get table.rows at) None))
-  (if (and (is-not row None) (not-in rel changed) (= row.digest digest)) row None))
-
-
-(defk import-table-json [rows]
-  {:pre [(: rows tuple)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
-  "木の閉包の source の行(ImportRow の列)を、木の根に残す表の JSON の値に綴るため(JSON の境界の 1 点・相対 path の順)。"
-  {"format" IMPORT-TABLE-FORMAT
-   "modules" (dfor row (sorted rows :key (fn [r] r.rel))
-                   row.rel {"sha256" row.digest
-                            "imports" (lfor #(dots name names) row.imports [dots name (list names)])})})
-
-
-(defk import-table-text [rows]
-  {:pre [(: rows tuple)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "木の閉包の source の行(ImportRow の列)を、木の根に残す表の file の中身にするため。"
-  (<- value dict (import-table-json rows))
-  (json.dumps value :ensure-ascii False))
+  (try
+    (:= parsed (json.loads (.decode data "utf-8")))
+    (except [error ValueError]
+      (:= problem (.format "JSON でない: {}" error))))
+  (var entries #())
+  (when (is problem None)
+    (match parsed
+      (list) (for [e parsed]
+               (match e
+                 [(int) (str) (list)] :if (all (gfor x (get e 2) (isinstance x str)))
+                   (:= entries (+ entries #(#((get e 0) (get e 1) (tuple (get e 2))))))
+                 _ (:= problem (.format "import の名の形が違う行: {!r}" e))))
+      _ (:= problem "import の名の列でない")))
+  (if (is problem None) entries problem))
 
 
 (defk scoped-sources [sources scope]
@@ -309,46 +231,11 @@
   (lfor f failures :if (= (get f 0) tree) #((get f 1) (get f 2))))
 
 
-(defk tree-reused [reused tree]
-  {:pre [(: reused tuple) (: tree str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
-  "1 回の焼きの焼かずに残した物(#(木の path 相対 path) の列)のうち、木 1 つの物の数を求めるため(報告の行の reused)。"
-  (sum (gfor r reused :if (= (get r 0) tree) 1)))
-
-
-;; --- 前の木から引き継ぐ .pyc(#3727)---------------------------------------------------------------
-;; 引き継ぎ元の木の .pyc には、道具が焼いた checked hash の物と、閉包の外の module を子が import した時に Python が書いた timestamp の物
-;; (と、古い Python が焼いた物)が混ざる。新しい木は展開し直すので source の mtime が違い、timestamp の .pyc は import の時に古いと判じられ
-;; その場で compile される。magic の違う .pyc も同じ。だから引き継ぐのは、import が新しい木でそのまま使う checked hash で magic が今の
-;; Python と同じ物だけにし、ほかは焼く一覧に残す(焼いた数 rebuilt に入る)。
-
-(val PYC-HEAD-BYTES 16)
-
-
-(defk pyc-head-of [path head]
-  {:pre [(: path str) (: head (| bytes None))] :post [(: % PycHead)] :tags {:context "worker" :role "judgment"}}
-  "引き継ぎ元の木の .pyc 1 つの頭(head — 先頭の PYC-HEAD-BYTES byte・読めなければ None)を PycHead にするため(PEP 552 — magic 4 byte・
-   flags 4 byte・残りは timestamp と大きさか source の hash)。足りない頭と、flags がどの方式でもない頭は UNREADABLE。"
-  (match head
-    (bytes) :if (>= (len head) PYC-HEAD-BYTES)
-      (PycHead :path path
-               :scheme (match (int.from-bytes (cut head 4 8) "little")
-                         0 PycScheme.TIMESTAMP
-                         0b01 PycScheme.UNCHECKED-HASH
-                         0b11 PycScheme.CHECKED-HASH
-                         _ PycScheme.UNREADABLE)
-               :magic (cut head 0 4))
-    _ (PycHead :path path :scheme PycScheme.UNREADABLE :magic b"")))
-
-
-(defk carried-pycs [heads magic old-sources new-sources new-pycs changed]
-  {:pre [(: heads tuple) (: magic bytes) (: old-sources frozenset) (: new-sources frozenset) (: new-pycs frozenset) (: changed frozenset)]
-   :post [(: % list)] :tags {:context "worker" :role "judgment"}}
-  "前の木から hardlink で引き継ぐ .pyc(相対 path の列)を決めるため: 引き継ぎ元の木の .pyc の頭(heads — PycHead の列)のうち checked hash
-   の方式で magic が今の Python(magic)と同じ物から、code_plan の carry-pairs が source で選ぶ物(source が変わっておらず新しい木にも在り、
-   新しい木にまだ .pyc の無い物)。"
-  (<- pairs list (carry-pairs (lfor head heads :if (and (= head.scheme PycScheme.CHECKED-HASH) (= head.magic magic)) head.path)
-                              old-sources new-sources new-pycs changed))
-  pairs)
+(defk tree-count [listed tree]
+  {:pre [(: listed tuple) (: tree str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "1 回の用意の答えの #(木の path 相対 path) の列(保存先から書いた物・焼かずに残した物)のうち、木 1 つの物の数を求めるため(報告の行の
+   stored と reused)。"
+  (sum (gfor r listed :if (= (get r 0) tree) 1)))
 
 
 ;; --- 焼く順と焼きの道具への受け渡し --------------------------------------------------------------
@@ -361,11 +248,15 @@
   (tuple (gfor item (sorted items :key (fn [i] #((- i.size) i.tree i.rel))) #(item.tree item.rel item.name))))
 
 
-(defk bake-argv [python tool jobs paths]
-  {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+(defk bake-argv [python tool jobs paths store-module store]
+  {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple) (: store-module str) (: store (| str None))] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
   "焼きの道具(tool = worker 自身のコードの foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
-   準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir)。"
-  (+ #(python "-m" "hy" tool "--jobs" (str jobs)) (tuple (gfor p paths a #("--path" p) a))))
+   準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir・store-module = worker の版の doeff-hy の
+   code_store.py・store = 保存先の dir — None は保存先を使わない)。"
+  (+ #(python "-m" "hy" tool "--jobs" (str jobs) "--store-module" store-module)
+     (if (is store None) #() #("--store" store))
+     (tuple (gfor p paths a #("--path" p) a))))
 
 
 (defk bake-input [items]
@@ -376,11 +267,14 @@
 
 (defk bake-answer [text]
   {:pre [(: text str)] :post [(: % BakeAnswer)] :tags {:context "worker" :role "judgment"}}
-  "焼きの道具の標準出力(1 つ 1 行 — 焼けなかった物は `failed\\t<木の path>\\t<相対 path>\\t<理由>`・焼かずに残した物は
-   `reused\\t<木の path>\\t<相対 path>`)を BakeAnswer にするため。"
+  "焼きの道具の標準出力(1 つ 1 行 — 焼けなかった物は `failed\\t<木の path>\\t<相対 path>\\t<理由>`・保存先の code から書いた物は
+   `stored\\t<木の path>\\t<相対 path>`・焼かずに残した物は `reused\\t<木の path>\\t<相対 path>`・保存先へ書けなかった理由は
+   `unstored\\t<理由>`)を BakeAnswer にするため。"
   (val rows (tuple (gfor line (.splitlines text) (.split line "\t" 3))))
   (BakeAnswer :failed (tuple (gfor r rows :if (and (= (len r) 4) (= (get r 0) "failed")) (tuple (cut r 1 None))))
-              :reused (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "reused")) (tuple (cut r 1 None))))))
+              :stored (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "stored")) (tuple (cut r 1 None))))
+              :reused (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "reused")) (tuple (cut r 1 None))))
+              :unstored (tuple (gfor line (.splitlines text) :if (.startswith line "unstored\t") (cut line (len "unstored\t") None)))))
 
 
 ;; --- 報告の行 ------------------------------------------------------------------------------
@@ -388,15 +282,15 @@
 (defk tree-line [outcome]
   {:pre [(: outcome TreeOutcome)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "木 1 つの報告の行を作るため(呼び手が木ごとの問題を読む形 — 問題の文の改行は空白にして 1 行に収める)。"
-  (.format "tree={} carried={} rebuilt={} reused={} failed={} problem={}" outcome.named outcome.carried outcome.rebuilt outcome.reused
+  (.format "tree={} stored={} rebuilt={} reused={} failed={} problem={}" outcome.named outcome.stored outcome.rebuilt outcome.reused
            outcome.failed
            (if (is outcome.problem None) "-" (.replace outcome.problem "\n" " "))))
 
 
 (defk total-line [summary]
   {:pre [(: summary BakeSummary)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "全体の報告の行を作るため(頭は carried=… rebuilt=… reused=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。"
-  (.format "carried={} rebuilt={} reused={} failed={} carry_s={} compile_s={} closure_s={} scan_s={}"
-           (sum (gfor t summary.trees t.carried)) (sum (gfor t summary.trees t.rebuilt)) (sum (gfor t summary.trees t.reused))
+  "全体の報告の行を作るため(頭は stored=… rebuilt=… reused=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。"
+  (.format "stored={} rebuilt={} reused={} failed={} compile_s={} closure_s={} scan_s={}"
+           (sum (gfor t summary.trees t.stored)) (sum (gfor t summary.trees t.rebuilt)) (sum (gfor t summary.trees t.reused))
            (sum (gfor t summary.trees t.failed))
-           (round summary.carry-s 2) (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)))
+           (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)))

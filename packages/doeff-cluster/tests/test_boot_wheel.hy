@@ -59,6 +59,8 @@
 (val ROOT-CLUSTER "packages/doeff-cluster/src/doeff_cluster")
 ;; 焼く道具の file(入口・判断の module・焼きの道具 — 入口は後の 2 つを自分の位置から求めた path で読む)。
 (val TOOL-FILES #("worker/entry/code_prepare.hy" "worker/core/bake_plan.hy" "foundation/bytecode_pool.hy"))
+;; 焼く道具が同じ checkout の doeff-hy から path で読む保存先の入口(root の中の置き場 — 検の doeff の root へ本物の file を写す)。
+(val STORE-FILE "packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py")
 ;; 起動の入口と同じ名の小さな module(worker/entry/main は worker/core/boot_helper を import する — 閉包)と、どこからも import されない
 ;; worker/core/unused(閉包の外)。
 (val ENTRY-MODULES {"worker/entry/main.hy" "(import doeff_cluster.worker.core.boot_helper [answer])\n(setv V answer)\n"
@@ -122,7 +124,10 @@
    同じ名の小さな module も commit する(偽なら root の準備は焼く道具が無いので焼かずに注記だけ — 焼きの検の外の検の秒を
    増やさない)。答え = #(repo mirror sha)。"
   (val src (/ tmp "doeff"))
-  (val tools (if bake (dfor rel TOOL-FILES (.format "{}/{}" ROOT-CLUSTER rel) (.read-text (/ CLUSTER-SRC rel) :encoding "utf-8")) {}))
+  (val tools (if bake
+                 (| (dfor rel TOOL-FILES (.format "{}/{}" ROOT-CLUSTER rel) (.read-text (/ CLUSTER-SRC rel) :encoding "utf-8"))
+                    {STORE-FILE (.read-text (/ (. PACKAGES parent) STORE-FILE) :encoding "utf-8")})
+                 {}))
   (val modules (if bake (dfor #(rel text) (.items ENTRY-MODULES) (.format "{}/{}" ROOT-CLUSTER rel) text) {}))
   (for [#(rel text) (.items (| {".python-version" (+ PYTHON "\n")
                                 "packages/doeff-vm/Cargo.toml" "[package]\nname = \"doeff-vm\"\n"
@@ -388,7 +393,6 @@
   (assert (.is-file (/ root MARKER)) #("焼く道具の完成の印が無い" done.stderr))
   (<- line str (prepared-line done.stderr))
   (assert (in "rebuilt=" line) #("準備の行に焼いた数が無い" done.stderr))
-  (assert (in "引き継ぎ元 なし" line) line)
   ;; 焼く道具は 1 回だけ起こし、根は venv の .pth が書く root の中の dir だけ(root そのものは `.`)— import の行と root の外の dir を
   ;; 根と読まない。末尾に改行の無い .pth の行も読む。
   (<- calls tuple (hy-log tmp-path))
@@ -402,7 +406,10 @@
   (assert (= revision sha) bakes))
 
 
-(deftest test-boot-sh-carries-the-previous-root-bytecode-by-hardlink [tmp-path]
+(deftest test-boot-sh-writes-the-unchanged-bytecode-of-the-next-root-from-the-store [tmp-path]
+  ;; 失敗ケース(#3858): 1 file だけ変えた次の版の root は、変わっていない file の .pyc を source の中身で引く保存先
+  ;; ($WORK_DIR/state/doeff-hy-code-store — 起動の script の既定)から書き(stored)、変えた file だけを焼く。前の root の .pyc を hardlink で
+  ;; 引き継がない(前の root が消えた・別の /work でも同じに効く)。
   (<- made tuple (doeff-source tmp-path :bake True))
   (val src (get made 0))
   (val sha1 (get made 2))
@@ -410,9 +417,7 @@
   (<- first subprocess.CompletedProcess (boot-once tmp-path sha1))
   (<- first-line str (prepared-line first.stderr))
   (assert (in "rebuilt=" first-line) first.stderr)
-  ;; 1 file だけ変えた次の版(同じ /work — 前の版の root が残る)。変える file は Python の source: Python の source は .pyc が在れば
-  ;; 焼く物に入らない(code_plan の compile-plan)ので、変わった path の一覧(--changed)を渡さないと前の root の .pyc を引き継いだまま
-  ;; 焼かれない(Hy の source は .pyc が在っても焼きの道具が source と照らし直す)。
+  (assert (.is-dir (/ tmp-path "work" "state" "doeff-hy-code-store")) #("起動の script の既定の保存先に code が足されていない" first.stderr))
   (val changed-rel "worker/entry/shim.py")
   (val changed-text "V = 2\n")
   (.write-text (/ src ROOT-CLUSTER changed-rel) changed-text :encoding "utf-8")
@@ -424,18 +429,15 @@
   (for [rel (gfor r BAKED :if (!= r changed-rel) r)]
     (<- old Path (pyc-of root1 rel))
     (<- new Path (pyc-of root2 rel))
-    (assert (and (.is-file new) (os.path.samefile old new)) #("変えていない file の .pyc を前の root から hardlink で引き継いでいない" rel second.stderr)))
-  (<- old-changed Path (pyc-of root1 changed-rel))
+    (assert (.is-file new) #("変えていない file の .pyc が無い" rel second.stderr))
+    (assert (not (os.path.samefile old new)) #("前の root の .pyc を hardlink で引き継いだ" rel)))
   (<- new-changed Path (pyc-of root2 changed-rel))
   (assert (.is-file new-changed) #("変えた file が焼かれていない" second.stderr))
-  (assert (not (os.path.samefile old-changed new-changed)) "変えた file の .pyc を前の root から引き継いだ")
   (assert (= (cut (.read-bytes new-changed) 8 16) (importlib.util.source-hash (.encode changed-text "utf-8")))
           "変えた file の .pyc の頭の hash が新しい source と合わない")
   (<- line str (prepared-line second.stderr))
-  (assert (in (.format "引き継ぎ元 {}" (cut sha1 0 12)) line) #("準備の行に引き継ぎ元が無い" second.stderr))
-  (val carried (re.search r"carried=(\d+)" line))
-  (assert (and (is-not carried None) (>= (int (.group carried 1)) 1)) line)
-  (assert (not (.exists (/ tmp-path "work" "state" "changed" (.format "boot-{}.txt" sha2)))) "変わった path の一覧の file を消していない"))
+  (val stored (re.search r"stored=(\d+)" line))
+  (assert (and (is-not stored None) (>= (int (.group stored 1)) 1)) #("変えていない file を保存先から書いていない" line)))
 
 
 (deftest test-the-boot-entries-name-every-module-the-root-venv-starts []
