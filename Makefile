@@ -60,8 +60,8 @@ install:
 # 最後に組んだ経路で 15 倍速さを変えた)。doeff の pytest は root の conftest.py が有効にし、
 # tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
 # だから make sync と素の uv sync は同じ build を作る。--reinstall-package doeff-vm は uv の Rust の変化の見落としに
-# 備えた作り直しで、doeff-vm を必ず組み直す(以前の maturin develop の役)。組み直しは uv の build と同じ口を通り、
-# cargo の target を作業木の外の一時の dir に置くので、1 回の make sync で組むのは 1 回だけ(agora-redesign #1493)。
+# 備えて build の口を必ず呼ぶ。口は source の中身の鍵で wheel の保存先を先に引くので、Rust の source が同じなら組まず
+# (保存先から入れ直すだけ)、変わった時だけ作業木の外の一時の target で 1 回組む(ADR-DOE-BUILD-001・agora-redesign #1493・#3860)。
 sync:
 	uv sync --group dev --reinstall-package doeff-vm
 

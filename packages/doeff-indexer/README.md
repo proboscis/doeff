@@ -38,9 +38,10 @@ cd packages/doeff-indexer
 # Build the Rust binary only (no Python features)
 cargo build --release --no-default-features
 
-# Or build with Python bindings (requires maturin). The wrapper puts the cargo target in a
-# temporary directory outside the checkout and deletes it afterwards (tools/doeff_cargo_backend.py).
-uv run --no-sync python doeff_cargo_backend.py maturin develop
+# Or install with Python bindings through uv. The build goes through tools/doeff_cargo_backend.py, the one
+# entry for Rust builds (ADR-DOE-BUILD-001): it reuses the wheel stored under the hash of the sources and builds
+# only when they changed (in a temporary cargo target outside the checkout; CARGO_TARGET_DIR=<dir> keeps one).
+uv sync
 ```
 
 ## CLI Usage

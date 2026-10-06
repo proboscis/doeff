@@ -1,8 +1,10 @@
 """PEP 517 build backend wrapper for doeff-indexer.
 
 This wraps maturin's backend to ensure the Rust CLI binary is built and bundled into the wheel
-and editable installs. Both the CLI build and maturin's build use the cargo target given by
-doeff_cargo_backend.cargo_target_dir (outside the package dir — agora-redesign #1493).
+and editable installs. The wheel and the editable install both come from the keyed wheel store of
+doeff_cargo_backend (the one entry for Rust builds — ADR-DOE-BUILD-001・agora-redesign #3860): this module only
+supplies how to build on a miss (the CLI binary, then maturin), in the cargo target the store gives
+(outside the package dir — agora-redesign #1493).
 """
 
 import os
@@ -17,6 +19,8 @@ import maturin
 from doeff_cargo_backend import (
     ConfigSettings,
     cargo_target_dir,
+    editable_from_store,
+    wheel_from_store,
 )
 from doeff_cargo_backend import get_requires_for_build_editable as get_requires_for_build_editable
 from doeff_cargo_backend import get_requires_for_build_sdist as get_requires_for_build_sdist
@@ -73,15 +77,19 @@ def _ensure_cli_binary(target_dir: Path) -> None:
         destination.chmod(destination.stat().st_mode | 0o111)
 
 
+def _compile_with_cli(target: Path, wheel_directory: str, config_settings: ConfigSettings | None) -> str:
+    """保存先に無い時の組み方: CLI の binary をこの build の target で組んで python/ の下へ写し、maturin で wheel に同梱する。"""
+    _ensure_cli_binary(target)
+    return maturin.build_wheel(wheel_directory, config_settings, None)
+
+
 def build_wheel(
     wheel_directory: str,
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """wheel に CLI の binary を同梱して組むため(target は作業木の外)。"""
-    with cargo_target_dir() as target_dir:
-        _ensure_cli_binary(target_dir)
-        return maturin.build_wheel(wheel_directory, config_settings, metadata_directory)
+    """wheel を保存先から渡すため(無ければ CLI の binary を同梱して組んで置く — target は作業木の外)。"""
+    return wheel_from_store(wheel_directory, config_settings, _compile_with_cli)
 
 
 def build_editable(
@@ -89,10 +97,8 @@ def build_editable(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """editable で入れる時も CLI の binary を同梱するため(target は作業木の外)。"""
-    with cargo_target_dir() as target_dir:
-        _ensure_cli_binary(target_dir)
-        return maturin.build_editable(wheel_directory, config_settings, metadata_directory)
+    """editable で入れる時も保存先の wheel から答えるため(CLI の binary と拡張 module を python/ の下へ置く)。"""
+    return editable_from_store(wheel_directory, config_settings, _compile_with_cli)
 
 
 def build_sdist(sdist_directory: str, config_settings: ConfigSettings | None = None) -> str:

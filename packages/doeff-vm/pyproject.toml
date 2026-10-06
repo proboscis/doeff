@@ -36,12 +36,18 @@ include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 # path 依存の crate(Cargo.toml の [dependencies] の path = を推移的にたどった先)の
 # Cargo.toml / Cargo.lock / pyproject.toml / build.rs / library の *.rs が漏れなく
 # 載っていることは tests/test_uv_cache_keys_cover_rust_inputs.py が検査する。
+# この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある(agora-redesign #3860)。保存先の wheel は
+# python-source(この dir の doeff_vm/)の .py・.pyi・py.typed も持つので、それも並べる — 並べないと Python だけを変えた後の
+# 非 editable の入れ(worker の uv build)が、前の Python の入った wheel を保存先から引く。
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "Cargo.toml" },
     { file = "Cargo.lock" },
     { file = "src/**/*.rs" },
+    { file = "doeff_vm/**/*.py" },
+    { file = "doeff_vm/**/*.pyi" },
+    { file = "doeff_vm/py.typed" },
     { file = "../doeff-vm-core/pyproject.toml" },
     { file = "../doeff-vm-core/Cargo.toml" },
     { file = "../doeff-vm-core/Cargo.lock" },
