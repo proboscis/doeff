@@ -446,7 +446,7 @@
   ;; boot.sh が root の venv の hy で起こす役の module の全部(`hy -m <module>`)と、worker が同じ venv で起こす入口。
   (val started (frozenset (re.findall r"\bhy -m (doeff_cluster(?:\.\w+)+)" text)))
   (assert (>= (len started) 4) started)
-  (<- shim tuple (shim-argv "python" 1000 :stamp-lines False))
+  (<- shim tuple (shim-argv "python" 1000 :stamp-lines False :notice-env None))
   ;; workspace の package の .pth(packages/<名>/src/*.pth — site-packages へ入る)の import の行が起こす module。
   (val pth-imports (frozenset (gfor pth (.glob PACKAGES "*/src/*.pth")
                                     line (.splitlines (.read-text pth :encoding "utf-8"))
