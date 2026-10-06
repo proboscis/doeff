@@ -12,8 +12,9 @@
 (import uuid)
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
-(import doeff_core_effects.handlers [listen-handler slog-discard-handler])
-(import doeff_time [Delay DelayEffect GetMonotonic GetTime sync-time-handler])
+(import doeff_core_effects.handlers [await-handler listen-handler slog-discard-handler])
+(import doeff_core_effects.scheduler [CreateExternalPromise])
+(import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
@@ -834,3 +835,53 @@
   (assert outcome.woke (repr outcome))
   (assert (< outcome.seconds 1.0) (repr outcome))
   (assert (= (len (get heard 1)) 0) (.format "待ちの間に Delay を {} 回撃った" (len (get heard 1)))))
+
+
+;; --- 本番の CLI の組(await-handler・async-time-handler・scheduled)の下の待ち ------------------------------------------
+;; 本番の CLI の host は scheduled の中で [(await-handler) … (async-time-handler) …] の組で動く(上の層の composition root)。待ちの部品
+;; (別の thread が完了させる約束を WaitWithin :park True で待つ)と、直した handler の手番 1 本を、その組の下でも確かめる。
+
+(defn production-stack [#* inner]
+  ;; 本番の CLI の組の時間と待ちの答え手(順も同じ — await-handler が外・async-time-handler が内)と、検が足す内側の答え手。
+  (+ [(await-handler) slog-discard-handler (async-time-handler)] (list inner)))
+
+(defk wait-for-a-bell-from-another-thread [#^ (| float None) ring-after #^ float seconds]
+  {:pre [(: ring-after (| float None)) (: seconds float)] :post [(: % WaitOutcome)] :tags {:context "claude-code" :role "program"}}
+  "呼び鈴(CreateExternalPromise の約束)を、別の thread が ring-after 秒後に完了させる(None なら誰も鳴らさない)形で、WaitWithin
+   :park True を上限 seconds 秒で待たせるため。答え = 鳴って起きたか・待った秒。"
+  (<- bell (CreateExternalPromise))
+  (when (is-not ring-after None)
+    (val timer (threading.Timer ring-after (fn [] (.complete bell True))))
+    (setv timer.daemon True)
+    (.start timer))
+  (<- started (GetMonotonic))
+  (<- answer (WaitWithin bell.future seconds :park True))
+  (<- finished (GetMonotonic))
+  (WaitOutcome :woke (is answer True) :seconds (- finished started)))
+
+
+(deftest test-a-bell-from-another-thread-wakes-the-wait-under-the-production-stack [tmp-path]
+  ;; 本番の CLI の組の下で、別の thread が 50 ms 後に完了させた呼び鈴は、上限 5 秒の WaitWithin をその刻に起こす(読み手の thread が
+  ;; 鳴らす呼び鈴の形)。失敗ケース = 外からの完了が scheduler を起こさない組では、上限の 5 秒まで眠る。
+  (<- outcome WaitOutcome (with_handlers (production-stack) (wait-for-a-bell-from-another-thread 0.05 5.0)))
+  (assert outcome.woke (repr outcome))
+  (assert (<= 0.04 outcome.seconds 0.5) (repr outcome)))
+
+
+(deftest test-an-unrung-bell-answers-none-at-the-deadline-under-the-production-stack [tmp-path]
+  ;; 誰も鳴らさない呼び鈴の待ちは、本番の CLI の組の下でも期限(5 秒)で None を答えて抜ける(待ちの上限の秒が効く)。失敗ケース =
+  ;; :park True の待ちが期限の時計を止める組では、期限が来ずに抜けない。
+  (<- outcome WaitOutcome (with_handlers (production-stack) (wait-for-a-bell-from-another-thread None 5.0)))
+  (assert (not outcome.woke) (repr outcome))
+  (assert (<= 4.9 outcome.seconds 6.0) (repr outcome)))
+
+
+(deftest test-a-turn-reads-to-the-end-without-a-clock-tick-under-the-production-stack [tmp-path]
+  ;; 直した handler の手番 1 本(替え玉の CLI)は、本番の CLI の組の下でも最後まで読め、待ちの間に Delay を撃たない。失敗ケース =
+  ;; 0.05 秒ごとに Delay で起きて確かめる形では、この組の下でも handler が Delay を何度も撃つ。
+  (val host (host-of STUB-COMMAND))
+  (<- heard (with_handlers (production-stack listen-handler (claude-code-handler host))
+              (Listen (hooked-and-thinking-turn (spec-in tmp-path) (str (uuid.uuid4))) :types #(DelayEffect))))
+  (val done (get heard 0))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (= (len (get heard 1)) 0) (.format "待ちの間に handler が Delay を {} 回撃った" (len (get heard 1)))))
