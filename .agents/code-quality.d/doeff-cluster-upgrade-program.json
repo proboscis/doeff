@@ -15,7 +15,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/core/upgrade_program.hy"
       ],
-      "responsibility": "版上げの Program(#3366 の単位 3): worker を 1 つずつ(置かれた task の終わりを待つ → 空の機体の起動を確かめる → 入れ替え先の版の自己起動の root を今の保存先に準備する(#3725)→ Desire → 公開 → 当てる → 新しい版で戻るのを待つ)、最後に coordinator(worker 全部が新しい版・待ち行列が空)。待ちは coordinator の版の変化で起き、上限を越えたら UpgradeStalled で対象を明示して落ちる。確認か root の準備が拒否されたら、宣言を書かずに UpgradeRefused で対象を明示して止まる(root の準備の待ちは handler が持ち、ここは答えを 1 回受けるだけ)。",
+      "responsibility": "版上げの Program(#3366 の単位 3): worker を 1 つずつ入れ替える upgrade-workers(置かれた task の終わりを待つ → 空の機体の起動を確かめる → 入れ替え先の版の自己起動の root を今の保存先に準備する(#3725)→ Desire → 公開 → 当てる → 新しい版で戻るのを待つ)・coordinator だけを入れ替える upgrade-coordinator(#3772: 待ち行列が空 → 宣言の内の worker が全部 live で、その版が確かめた版の組み合わせ VerifiedVersions に入るかを照らす → 空の起動の確認 → root の準備と戻し先の確かめ → 静かな時間帯の待ち → Desire → 公開 → 当てる → coordinator が入れ替え先の版で答える → 宣言の内の worker が live → 待っていた task が coordinator に在る。宣言の外の worker は待たず照らさず答えに載せる)・その 2 つを順に通す upgrade-cluster。どちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせで表す。待ちは coordinator の版の変化で起き、上限を越えたら UpgradeStalled で対象を明示して落ちる。入れ替えの前の手順が拒否したら、宣言を書かずに UpgradeRefused で対象を明示して止まる(root の準備と静かな時間帯の待ちは handler が持ち、ここは答えを 1 回受けるだけ)。",
       "typed": true
     }
   ]

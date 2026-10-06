@@ -5,11 +5,13 @@
 ;; 出す壊した Program と、組まずに「組んだ」と答える壊した handler を走らせ、入れ替えの瞬間の保存先のスナップショットで赤になる事を見る。
 (require doeff-hy.macros [deftest defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import functools [partial])
 (import doeff [with-handlers Program])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch DesireWorker])
-(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart BootRootsAtStart
-                                                   UpgradeLimits PublishDeclarations ApplyDeclarations PrepareBootRoot BootRootBuilt])
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase WorkerDeclaration RosterEntry PendingTask UpgradeStart
+                                                   BootRootsAtStart VerifiedVersions UpgradeLimits PublishDeclarations ApplyDeclarations
+                                                   PrepareBootRoot BootRootBuilt])
 (import doeff_cluster.shared.core.upgrade_program [upgrade-workers])
 (import doeff_cluster.coordinator.core.upgrade_invariants [coordinator-after-every-worker worker-swap-waits-for-its-tasks
                                                             one-worker-at-a-time coordinator-swap-on-an-empty-queue
@@ -20,7 +22,12 @@
 
 (val OLD "d563ab95a0000000000000000000000000000000")
 (val NEW "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
-(val JUDGES #(coordinator-after-every-worker worker-swap-waits-for-its-tasks one-worker-at-a-time coordinator-swap-on-an-empty-queue))
+(val IN WorkerDeclaration.DECLARED)
+(val OUT WorkerDeclaration.UNDECLARED)
+;; worker と coordinator を同じ版 NEW にそろえる時の確かめた版の組み合わせ(2026-10-05 の版上げの形)。
+(val SAME-VERSION (VerifiedVersions :coordinator NEW :workers (frozenset [NEW])))
+(val JUDGES #((partial coordinator-after-every-worker :verified SAME-VERSION) worker-swap-waits-for-its-tasks one-worker-at-a-time
+              coordinator-swap-on-an-empty-queue))
 
 
 (val QUEUED (PendingTask :task "t1" :phase PendingPhase.QUEUED :worker None))
@@ -33,21 +40,21 @@
   ;; よい(落ちない)・coordinator は待ち行列が空の時に最後。
   (val starts
     #((UpgradeStart :at-ms 1 :kind UpgradeKind.WORKER :target "agent-2" :doeff-commit NEW :tasks #(QUEUED ON-VERIFY-2)
-                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD)
-                              (RosterEntry :worker "verify-1" :live True :doeff-commit OLD)
-                              (RosterEntry :worker "verify-2" :live True :doeff-commit OLD)))
+                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD :declaration IN)
+                              (RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN)
+                              (RosterEntry :worker "verify-2" :live True :doeff-commit OLD :declaration IN)))
       (UpgradeStart :at-ms 2 :kind UpgradeKind.WORKER :target "verify-1" :doeff-commit NEW :tasks #(QUEUED ON-VERIFY-2)
-                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW)
-                              (RosterEntry :worker "verify-1" :live True :doeff-commit OLD)
-                              (RosterEntry :worker "verify-2" :live True :doeff-commit OLD)))
+                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW :declaration IN)
+                              (RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN)
+                              (RosterEntry :worker "verify-2" :live True :doeff-commit OLD :declaration IN)))
       (UpgradeStart :at-ms 3 :kind UpgradeKind.WORKER :target "verify-2" :doeff-commit NEW :tasks #(ON-VERIFY-1)
-                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW)
-                              (RosterEntry :worker "verify-1" :live True :doeff-commit NEW)
-                              (RosterEntry :worker "verify-2" :live True :doeff-commit OLD)))
+                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW :declaration IN)
+                              (RosterEntry :worker "verify-1" :live True :doeff-commit NEW :declaration IN)
+                              (RosterEntry :worker "verify-2" :live True :doeff-commit OLD :declaration IN)))
       (UpgradeStart :at-ms 4 :kind UpgradeKind.COORDINATOR :target "coordinator" :doeff-commit NEW :tasks #(ON-VERIFY-1)
-                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW)
-                              (RosterEntry :worker "verify-1" :live True :doeff-commit NEW)
-                              (RosterEntry :worker "verify-2" :live True :doeff-commit NEW)))))
+                    :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW :declaration IN)
+                              (RosterEntry :worker "verify-1" :live True :doeff-commit NEW :declaration IN)
+                              (RosterEntry :worker "verify-2" :live True :doeff-commit NEW :declaration IN)))))
   (for [judge JUDGES]
     (<- found tuple (judge starts))
     (assert (= found #()) found)))
@@ -56,8 +63,8 @@
 (deftest test-swapping-a-worker-with-a-running-task-breaks-v2
   ;; 失敗ケース(sim の測りの (b)): 入れ替える worker の上で task が走っている(drain の空くのを待っていない)。
   (val start (UpgradeStart :at-ms 5 :kind UpgradeKind.WORKER :target "verify-1" :doeff-commit NEW :tasks #(ON-VERIFY-1 QUEUED)
-                           :roster #((RosterEntry :worker "verify-1" :live True :doeff-commit OLD)
-                                     (RosterEntry :worker "verify-2" :live True :doeff-commit OLD))))
+                           :roster #((RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN)
+                                     (RosterEntry :worker "verify-2" :live True :doeff-commit OLD :declaration IN))))
   (<- found tuple (worker-swap-waits-for-its-tasks #(start)))
   (assert (= (tuple (gfor b found #(b.rule b.target))) #(#("V2 worker-swap-waits-for-its-tasks" "verify-1"))) found)
   ;; queued と、別の worker に置かれた task は数えない(入れ替えで落ちない — sim の測りの (a))。
@@ -70,12 +77,12 @@
 (deftest test-starting-the-next-worker-before-the-previous-is-back-breaks-v3
   ;; 失敗ケース(cisco-c8 の条件 3): 前の 1 台が新しい版で live に戻ったのを読まずに次を始める — 戻りが来ない間は次へ進まない。
   (val first (UpgradeStart :at-ms 1 :kind UpgradeKind.WORKER :target "agent-2" :doeff-commit NEW :tasks #()
-                           :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD)
-                                     (RosterEntry :worker "verify-1" :live True :doeff-commit OLD))))
-  (for [#(what entry) #(#("まだ live でない" (RosterEntry :worker "agent-2" :live False :doeff-commit NEW))
-                        #("live だが古い版のまま" (RosterEntry :worker "agent-2" :live True :doeff-commit OLD)))]
+                           :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD :declaration IN)
+                                     (RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN))))
+  (for [#(what entry) #(#("まだ live でない" (RosterEntry :worker "agent-2" :live False :doeff-commit NEW :declaration IN))
+                        #("live だが古い版のまま" (RosterEntry :worker "agent-2" :live True :doeff-commit OLD :declaration IN)))]
     (val second (UpgradeStart :at-ms 2 :kind UpgradeKind.WORKER :target "verify-1" :doeff-commit NEW :tasks #()
-                              :roster #(entry (RosterEntry :worker "verify-1" :live True :doeff-commit OLD))))
+                              :roster #(entry (RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN))))
     (<- found tuple (one-worker-at-a-time #(second first)))
     (assert (= (tuple (gfor b found #(b.rule b.target))) #(#("V3 one-worker-at-a-time" "verify-1"))) #(what found))))
 
@@ -83,17 +90,56 @@
 (deftest test-starting-the-coordinator-before-every-worker-is-new-breaks-v1
   ;; 失敗ケース: worker が全部新しい版で live になる前に coordinator の入れ替えを始める。
   (val start (UpgradeStart :at-ms 9 :kind UpgradeKind.COORDINATOR :target "coordinator" :doeff-commit NEW :tasks #()
-                           :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW)
-                                     (RosterEntry :worker "verify-1" :live True :doeff-commit OLD)
-                                     (RosterEntry :worker "verify-2" :live False :doeff-commit NEW))))
-  (<- found tuple (coordinator-after-every-worker #(start)))
+                           :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW :declaration IN)
+                                     (RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN)
+                                     (RosterEntry :worker "verify-2" :live False :doeff-commit NEW :declaration IN))))
+  (<- found tuple (coordinator-after-every-worker #(start) SAME-VERSION))
   (assert (= (sorted (gfor b found b.rule)) ["V1 coordinator-after-every-worker" "V1 coordinator-after-every-worker"]) found)
   (assert (all (gfor b found (= b.target "coordinator")))))
 
 
+;; --- 条 V1 は確かめた版の組み合わせで照らす(#3772)— 順は変更ごとに決まる ---------------------------------------------------------------
+
+(val MID "5a1b2c3d4e5f60718293a4b5c6d7e8f901234567")
+;; coordinator NEW と組めると確かめた worker の版 = NEW と MID(2026-10-06 の形 — worker の版が混ざったまま coordinator だけを上げる)。
+(val VERIFIED (VerifiedVersions :coordinator NEW :workers (frozenset [NEW MID])))
+
+
+(deftest test-mixed-worker-versions-inside-the-verified-pair-keep-v1
+  ;; 宣言の内の worker の版が NEW と MID で混ざっていても、どちらも確かめた組み合わせに入っていれば V1 は緑。宣言の外の worker(古い版・live で
+  ;; ない)は数えない。同じ記録を「同じ版」の組み合わせで照らすと、MID の worker と宣言の外の worker を挙げずに MID だけが赤。
+  (val start (UpgradeStart :at-ms 9 :kind UpgradeKind.COORDINATOR :target "coordinator" :doeff-commit NEW :tasks #()
+                           :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW :declaration IN)
+                                     (RosterEntry :worker "verify-1" :live True :doeff-commit MID :declaration IN)
+                                     (RosterEntry :worker "host-20" :live False :doeff-commit OLD :declaration OUT))))
+  (<- found tuple (coordinator-after-every-worker #(start) VERIFIED))
+  (assert (= found #()) found)
+  (<- same tuple (coordinator-after-every-worker #(start) SAME-VERSION))
+  (assert (= (len same) 1) same)
+  (assert (in "verify-1" (. (get same 0) detail)) same))
+
+
+(deftest test-a-worker-version-outside-the-verified-pair-breaks-v1
+  ;; 失敗ケース: 宣言の内の worker が確かめた組み合わせに無い版(OLD)で動いている時に coordinator の入れ替えを始める。入れ替え先の版が組み合わせの
+  ;; coordinator の版でない時も V1 の違反(組み合わせがその coordinator の物でない)。
+  (val roster #((RosterEntry :worker "agent-2" :live True :doeff-commit NEW :declaration IN)
+                (RosterEntry :worker "verify-1" :live True :doeff-commit OLD :declaration IN)))
+  (<- found tuple (coordinator-after-every-worker
+                    #((UpgradeStart :at-ms 9 :kind UpgradeKind.COORDINATOR :target "coordinator" :doeff-commit NEW :tasks #() :roster roster))
+                    VERIFIED))
+  (assert (= (tuple (gfor b found b.rule)) #("V1 coordinator-after-every-worker")) found)
+  (assert (in "verify-1" (. (get found 0) detail)) found)
+  (<- other tuple (coordinator-after-every-worker
+                    #((UpgradeStart :at-ms 9 :kind UpgradeKind.COORDINATOR :target "coordinator" :doeff-commit MID :tasks #()
+                                    :roster (cut roster 0 1)))
+                    VERIFIED))
+  (assert (= (len other) 1) other)
+  (assert (in "確かめた版の組み合わせの coordinator の版" (. (get other 0) detail)) other))
+
+
 (deftest test-starting-the-coordinator-with-a-queued-task-breaks-v4
   ;; 失敗ケース(sim の測りの (c)): 待ち行列に task が在る時に coordinator の入れ替えを始める。走り中の task は数えない(残る)。
-  (val roster #((RosterEntry :worker "verify-1" :live True :doeff-commit NEW)))
+  (val roster #((RosterEntry :worker "verify-1" :live True :doeff-commit NEW :declaration IN)))
   (<- found tuple (coordinator-swap-on-an-empty-queue
                     #((UpgradeStart :at-ms 9 :kind UpgradeKind.COORDINATOR :target "coordinator" :doeff-commit NEW
                                     :tasks #(QUEUED ON-VERIFY-1) :roster roster))))
@@ -103,7 +149,7 @@
 ;; --- 条 V5(#3725): 入れ替えを始めた瞬間の保存先に、入れ替え先の版の自己起動の root が準備済みで在る -------------------------------
 
 (val AGENT-2-TO-NEW (UpgradeStart :at-ms 7 :kind UpgradeKind.WORKER :target "agent-2" :doeff-commit NEW :tasks #()
-                                  :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD))))
+                                  :roster #((RosterEntry :worker "agent-2" :live True :doeff-commit OLD :declaration IN))))
 
 
 (deftest test-a-swap-whose-boot-root-is-on-the-place-is-green-for-v5
@@ -122,7 +168,7 @@
 
 ;; 模擬の世界の worker a(tests/flux_fixtures.hy の A — 旧い版で動く)を NEW へ上げる値と、待ちの上限。
 (val TARGET-A (WorkerLaunch :name "a" :provides #("x-tool" "host-a") :exclusive #() :capacity 1 :task-reserve 0 :doeff-commit NEW))
-(val LIMITS (UpgradeLimits :drain-seconds 120.0 :return-seconds 60.0 :queue-seconds 120.0))
+(val LIMITS (UpgradeLimits :drain-seconds 120.0 :return-seconds 60.0 :queue-seconds 120.0 :quiet-seconds 60.0))
 
 
 (defk then-places [program]

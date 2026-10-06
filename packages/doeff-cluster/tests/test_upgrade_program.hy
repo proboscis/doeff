@@ -2,6 +2,8 @@
 ;; 何もしない・当てる = 模擬の Flux・root の準備 = 模擬の保存先)が答え、Program が条 V1〜V5 を自分で守る事(入れ替えの瞬間の記録と
 ;; 保存先のスナップショットで違反 0)・実行中の task の終わりを待つ事・待ちの上限を越えると対象を明示して落ちる事・入れ替えの前の手順(空の機体の確認 →
 ;; root の準備)が断られたら何も書かずに対象を明示して止まる事を確かめる。
+;; coordinator だけを上げる入口(upgrade-coordinator — #3772)は、名簿と task を読む effect に台本で答える世界で、確かめた版の組み合わせ
+;; (VerifiedVersions)・宣言の外の worker・戻し先の root・静かな時間帯・当てた直後に古い coordinator が答える形を確かめる。
 ;;
 ;; DesireWorker / DesireCoordinator に答えるのは、テストの道具 desire-by-manifest(tests/flux_fixtures.hy — 値から manifest を launch_rules の
 ;; 変換で作り直して保存先へ書く)— doeff は配備する側の repo の本番の handler を import できないため。本番の handler で一周するテストは
@@ -15,28 +17,34 @@
 (import doeff [with-handlers Program])
 (import doeff_core_effects.handlers [state])
 (import doeff_time [Delay SimClock sim-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
 (import doeff_cluster.shared.intent.upgrade_model [UpgradeLimits UpgradeStalled UpgradeState UpgradeStart RosterEntry PendingTask PendingPhase
-                                                   ReadUpgradeState PublishDeclarations ApplyDeclarations ConfirmCleanBoot
-                                                   CleanBootPassed CleanBootRefused UpgradeRefused PrepareBootRoot BootRootAlreadyPrepared
-                                                   BootRootBuilt BootRootRefused BootRootRefusal])
+                                                   WorkerDeclaration VerifiedVersions ReadUpgradeState PublishDeclarations
+                                                   ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused UpgradeRefused
+                                                   PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
+                                                   AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
+                                                   RollbackRootMissing CoordinatorUpgraded ClusterUpgraded])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
-(import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-workers])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator])
+(import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-coordinator upgrade-workers])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator CoordinatorRuns])
 (import doeff_cluster.sim.flux [FluxPass manifest-state prestop-drain flux-declarations refused-clean-boots refused-boot-roots
-                                launch-target UpgradeStartsSeen BootRootsAtStartsSeen])
-(import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS program-breaches-of flux-outside desire-by-manifest])
+                                stale-coordinator-answers launch-target UpgradeStartsSeen BootRootsAtStartsSeen])
+(import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS SAME-VERSION program-breaches-of flux-outside
+                             desire-by-manifest])
 (import tests.detached_rig [slow-add])
 
 ;; 宣言の値(本番の DECLARED-WORKERS に当たる)— 版は NEW へ。
 (val TARGET-A (WorkerLaunch :name "a" :provides #("x-tool" "host-a") :exclusive #() :capacity 1 :task-reserve 0 :doeff-commit NEW))
 (val TARGET-B (WorkerLaunch :name "b" :provides #("y-tool" "host-b") :exclusive #() :capacity 1 :task-reserve 0 :doeff-commit NEW))
 (val TARGET-COORDINATOR (CoordinatorLaunch :doeff-commit NEW))
-(val LIMITS (UpgradeLimits :drain-seconds 120.0 :return-seconds 60.0 :queue-seconds 120.0))
+(val LIMITS (UpgradeLimits :drain-seconds 120.0 :return-seconds 60.0 :queue-seconds 120.0 :quiet-seconds 60.0))
 ;; 本番の Pod の猶予(terminationGracePeriodSeconds — agent-worker は 120 秒)が task より短い worker の代わりの猶予の秒。
 (val GRACE-SECONDS 5.0)
+(val IN WorkerDeclaration.DECLARED)
+(val OUT WorkerDeclaration.UNDECLARED)
 
 
 (defk drain-within-grace [name]
@@ -59,7 +67,7 @@
   (<- applied tuple (manifest-state PATHS))
   (<- run tuple (with-handlers [(flux-declarations PATHS drain COORDINATOR-SECONDS applied) desire-by-manifest]
                   (upgrade-then-starts limits)))
-  (<- rules tuple (program-breaches-of (get run 0) (get run 1)))
+  (<- rules tuple (program-breaches-of (get run 0) (get run 1) SAME-VERSION))
   (<- a SimWorker (WorkerOf "a"))
   (<- b SimWorker (WorkerOf "b"))
   #(rules a.doeff-commit b.doeff-commit (get run 0)))
@@ -68,7 +76,7 @@
 (defk upgrade-then-starts [limits]
   {:pre [(: limits UpgradeLimits)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "Program を走らせてから、模擬の Flux が当てた入れ替えの瞬間の記録と、同じ瞬間の保存先のスナップショットを読む。答え = #(記録 保存先のスナップショット)。"
-  (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR limits))
+  (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION limits))
   (<- starts tuple (UpgradeStartsSeen))
   (<- places tuple (BootRootsAtStartsSeen))
   #(starts places))
@@ -85,8 +93,45 @@
   (val starts (get seen 3))
   (assert (= rules #()) rules)
   (assert (= #(a-commit b-commit) #(NEW NEW)) seen)
-  ;; 1 台ずつ: worker a・b・coordinator の順に 1 つずつ入れ替えた。
+  ;; 1 つずつ: worker a・b・coordinator の順に 1 つずつ入れ替えた。
   (assert (= (tuple (gfor s starts s.target)) #("a" "b" "coordinator")) starts))
+
+
+(defk upgrade-then-coordinator-runs []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 模擬の世界で Program に a・b・coordinator を NEW へ上げさせ、Program が答えを返した時刻・coordinator の Pod の一生の列・
+   入れ替えの記録を読む。coordinator を当てた直後の名簿の読み 2 回には、古い版の coordinator が答える(stale-coordinator-answers)。
+   答え = #(返した時刻 一生の列 記録)。"
+  (<- (Delay 3.0))
+  (<- applied tuple (manifest-state PATHS))
+  (<- run tuple (with-handlers [(flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied) desire-by-manifest
+                                (stale-coordinator-answers 2)]
+                  (returned-then-runs)))
+  run)
+
+
+(defk returned-then-runs []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "Program を走らせ、答えを返した時刻を取ってから、coordinator の Pod の一生の列と入れ替えの記録を読む。答え = #(時刻 一生の列 記録)。"
+  (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS))
+  (<- returned int (now-epoch-ms))
+  (<- runs tuple (CoordinatorRuns))
+  (<- starts tuple (UpgradeStartsSeen))
+  #(returned runs starts))
+
+
+(deftest test-the-program-returns-only-after-the-new-coordinator-answers-in-the-emulated-world
+  ;; 失敗ケース 4 の模擬の世界の形(#3772): coordinator を当てた直後に古い版の coordinator が 2 回答える(全部の worker は live)。
+  ;; Program が答えを返すのは、入れ替えを始めた後に起動した新しい coordinator が答えた後 — worker が live なら終わりとする形は、
+  ;; 新しい coordinator の起動より前に答えを返して赤。
+  (<- outside SimOutside (flux-outside))
+  (<- seen tuple (sim-cluster NO-JOBS (upgrade-then-coordinator-runs) :workers #(A B) :outside outside))
+  (val returned (get seen 0))
+  (val runs (get seen 1))
+  (val swap (next (gfor s (get seen 2) :if (= s.target "coordinator") s)))
+  (val after (tuple (gfor r runs :if (> r.started-ms swap.at-ms) r)))
+  (assert after #(swap runs))
+  (assert (<= (. (get after 0) started-ms) returned) #(returned after)))
 
 
 ;; 模擬の世界で root の準備が断られる時の理由(どの理由でも同じ止まり方 — 理由ごとに明示されるかは、下の台本のテストが 5 つとも確かめる)。
@@ -115,7 +160,7 @@
    答え = #(停止 記録 保存先のスナップショット)。"
   (var refused None)
   (try
-    (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))
+    (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS))
     (except [e UpgradeRefused]
       (:= refused e)))
   (<- starts tuple (UpgradeStartsSeen))
@@ -124,8 +169,8 @@
 
 
 (deftest test-a-worker-whose-clean-boot-fails-stops-the-upgrade-before-anything-is-written
-  ;; 失敗ケース(Mac の調整役の条件 3・今朝の形): 最初の worker a の入れ替え先の空の起動が落ちる — Program は a を名指して止まり、宣言を
-  ;; 書かず(置き場は始めと同じ)、何も入れ替えず、a・b は元の版のまま。
+  ;; 失敗ケース(Mac の調整役の条件 3・今朝の形): 最初の worker a の入れ替え先の空の起動が落ちる — Program は a を明示して止まり、宣言を
+  ;; 書かず(保存先は始めと同じ)、何も入れ替えず、a・b は元の版のまま。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset ["a"]) (frozenset)) :workers #(A B) :outside outside))
   (val refused (get seen 0))
@@ -140,7 +185,7 @@
 
 (deftest test-a-coordinator-whose-clean-boot-fails-stops-after-the-workers-and-before-its-swap
   ;; 失敗ケース: coordinator の入れ替え先の空の起動が落ちる — worker a・b は入れ替わり(新しい版)、coordinator の宣言は書かれず
-  ;; 入れ替えもしない(入れ替えの記録は a・b だけ)。止まりは coordinator を名指す。
+  ;; 入れ替えもしない(入れ替えの記録は a・b だけ)。停止は coordinator を明示する。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset ["coordinator"]) (frozenset)) :workers #(A B)
                               :outside outside))
@@ -180,7 +225,7 @@
   (assert (= refused.refusal (BootRootRefused :target "coordinator" :reason SIM-REFUSAL)) refused.refusal)
   (assert (= (tuple (gfor s (get seen 2) s.target)) #("a" "b")) seen)
   (assert (= #((get seen 3) (get seen 4)) #(NEW NEW)) seen)
-  (<- rules tuple (program-breaches-of (get seen 2) (get seen 5)))
+  (<- rules tuple (program-breaches-of (get seen 2) (get seen 5) SAME-VERSION))
   (assert (= rules #()) rules))
 
 
@@ -216,37 +261,41 @@
   (assert (= caught.value.limit-seconds 5.0)))
 
 
-;; --- 条 V4 の待ち: 名簿と task の読みを台本で返す(時刻の競りの無い形)---------------------------------------------------------
-;; sim の上では、待ち行列が空でない瞬間に Program が coordinator の手前へ着く順を、時刻の競り無しには作れない。名簿と task の読み
-;; (ReadUpgradeState — 外の世界の境界)だけを台本の handler で返し、Program が待ち行列の空を読むまで DesireCoordinator を出さない事を見る。
+;; --- 名簿と task を読む effect に台本で答える形(時刻の競りの無い形)--------------------------------------------------------------
+;; sim の上では、待ち行列が空でない瞬間に Program が coordinator の手前へ着く順を、時刻の競り無しには作れない。名簿と task を読む effect
+;; (ReadUpgradeState — 外の世界の境界)だけを台本の handler で答え、Program が待ち行列の空を読むまで DesireCoordinator を出さない事などを見る。
 
 (defrecord ScriptLog
-  "台本の handler が覚えた事: reads = 読みの回数・coordinator-at = DesireCoordinator を出した時の読みの回数(None = 出していない)。"
+  "台本の handler が覚えた事: reads = 名簿を読んだ回数・coordinator-at = DesireCoordinator を出した時に名簿を読んでいた回数(None = 出していない)。"
   (#^ int reads)
   (#^ (| int None) coordinator-at))
 
 (defeffect ScriptLogSeen
-  "検の effect: 台本の handler が覚えた事(ScriptLog)。"
+  "テスト用の effect: 台本の handler が覚えた事(ScriptLog)。"
   {:answer ScriptLog :tags {:context "doeff-cluster-test" :role "intent"}})
 
 
-(val ALL-OLD (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit OLD) (RosterEntry :worker "b" :live True :doeff-commit OLD))
-                           :tasks #()))
-(val A-NEW (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW) (RosterEntry :worker "b" :live True :doeff-commit OLD))
-                         :tasks #()))
-(val ALL-NEW (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW) (RosterEntry :worker "b" :live True :doeff-commit NEW))
-                           :tasks #()))
-(val ALL-NEW-QUEUED (UpgradeState :roster ALL-NEW.roster :tasks #((PendingTask :task "t9" :phase PendingPhase.QUEUED :worker None))))
-;; 読みの台本(Program が読む順): a の drain → a の戻り → b の drain → b の戻り → 全部の戻り → 待ち行列(空でない 2 回 → 空)→ coordinator の戻り。
-(val SCRIPT #(ALL-OLD A-NEW A-NEW ALL-NEW ALL-NEW ALL-NEW-QUEUED ALL-NEW-QUEUED ALL-NEW ALL-NEW))
-;; 待ち行列が空と読める回(SCRIPT の 8 番目)— DesireCoordinator はこの後。
-(val QUEUE-EMPTY-READ 8)
+(val ALL-OLD (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit OLD :declaration IN)
+                                     (RosterEntry :worker "b" :live True :doeff-commit OLD :declaration IN))
+                           :tasks #() :coordinator-commit OLD :known-tasks #()))
+(val A-NEW (replace ALL-OLD :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW :declaration IN)
+                                      (RosterEntry :worker "b" :live True :doeff-commit OLD :declaration IN))))
+(val ALL-NEW (replace ALL-OLD :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW :declaration IN)
+                                        (RosterEntry :worker "b" :live True :doeff-commit NEW :declaration IN))))
+(val ALL-NEW-QUEUED (replace ALL-NEW :tasks #((PendingTask :task "t9" :phase PendingPhase.QUEUED :worker None)) :known-tasks #("t9")))
+;; coordinator を NEW へ入れ替えた後の名簿(新しい coordinator が NEW で答える)。
+(val ALL-NEW-SWAPPED (replace ALL-NEW :coordinator-commit NEW))
+;; 台本(Program が読む順): a の drain → a の戻り → b の drain → b の戻り → 待ち行列(空でない 2 回 → 空)→ 条 V1 →
+;; coordinator が NEW で答える → 宣言の内の worker が live → 待っていた task が在る。
+(val SCRIPT #(ALL-OLD A-NEW A-NEW ALL-NEW ALL-NEW-QUEUED ALL-NEW-QUEUED ALL-NEW ALL-NEW ALL-NEW-SWAPPED))
+;; 待ち行列が空と読める 7 番目の後、条 V1 を照らす 8 番目の読みの後に DesireCoordinator を出す。
+(val V1-READ 8)
 
 
 (defhandler scripted-upgrade [#^ tuple script]
-  ;; 引数に残す理由: 読みの台本は検ごとに違う値(設定ではなく外の世界そのもの)。
-  ;; 名簿と task を読む effect に台本の順で答え、版の変化の待ちはすぐ返し、宣言の effect は覚えるだけにするため(空の機体の確認は通し、
-  ;; root の準備は組んだと答える)。
+  ;; 引数に残す理由: 台本はテストごとに違う値(設定ではなく外の世界そのもの)。
+  ;; 名簿と task を読む effect に台本の順で答え(台本の最後は繰り返す)、版の変化の待ちは仮想の 1 秒の後に返し、宣言の effect は覚える
+  ;; だけにするため(空の機体の確認は通し、root の準備は組んだと答え、静かな時間帯はすぐ来たと答える)。
   (session var reads 0)
   (session var coordinator-at None)
   (ReadUpgradeState []
@@ -254,6 +303,7 @@
     (:= reads (+ reads 1))
     (resume (get script at)))
   (AwaitRunnersChange [after timeout-seconds]
+    (<- (Delay 1.0))
     (resume (RunnersChange :revision (+ after 1) :changed True)))
   (DesireWorker [launch]
     (resume #()))
@@ -261,10 +311,13 @@
     (:= coordinator-at reads)
     (resume #()))
   (ConfirmCleanBoot [launch]
-    (resume (CleanBootPassed :target (if (isinstance launch WorkerLaunch) launch.name "coordinator"))))
+    (<- target str (launch-target launch))
+    (resume (CleanBootPassed :target target)))
   (PrepareBootRoot [launch]
     (<- target str (launch-target launch))
     (resume (BootRootBuilt :target target :seconds 0.0 :previous-root-present True)))
+  (AwaitQuietWindow [target timeout-seconds]
+    (resume (QuietWindowOpened :target target)))
   (PublishDeclarations []
     (resume None))
   (ApplyDeclarations []
@@ -275,116 +328,51 @@
 
 (defk scripted-run []
   {:pre [] :post [(: % ScriptLog)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "台本の読みで Program を 1 回走らせ、覚えた事を返す。"
-  (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))
+  "台本の世界で Program を 1 回走らせ、覚えた事を返す。"
+  (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS))
   (<- seen ScriptLog (ScriptLogSeen))
   seen)
 
 
 (deftest test-the-upgrade-program-waits-for-an-empty-queue-before-the-coordinator
-  ;; 条 V4 を Program が守る: 待ち行列に task が在る間(台本の 6・7 番目の読み)は coordinator を入れ替えず、空と読んだ(8 番目)後に
-  ;; DesireCoordinator を出す。待ちを外すと 5 番目の読みの後に出る(赤)。
+  ;; 条 V4 を Program が守る: 待ち行列に task が在る間(台本の 5・6 番目)は coordinator を入れ替えず、空と読んだ(7 番目)後の条 V1 の
+  ;; 照らし(8 番目)の後に DesireCoordinator を出す。待ち行列の待ちを外すと 5 番目の後に出る(赤)。
   (<- seen ScriptLog (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)] (scripted-run)))
-  (assert (= seen.coordinator-at QUEUE-EMPTY-READ) seen))
+  (assert (= seen.coordinator-at V1-READ) seen))
 
 
-;; --- worker だけの回(upgrade-workers)と、版の読めない worker の在る名簿(#3366 — 本番の入口の前に要る 2 つ)--------------------
+;; --- worker だけを上げる場合(upgrade-workers)と、戻らない worker の最後の状態(#3366)-------------------------------------------
 
-;; 読みの台本: a の drain → a の戻り → b の drain → b の戻り(coordinator の待ちは無い)。
+;; 台本: a の drain → a の戻り → b の drain → b の戻り(coordinator の待ちは無い)。
 (val WORKERS-ONLY-SCRIPT #(ALL-OLD A-NEW A-NEW ALL-NEW))
 
 
 (defk workers-only-run []
   {:pre [] :post [(: % ScriptLog)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "台本の読みで worker だけの回を 1 回走らせ、覚えた事を返す。"
+  "台本の世界で worker だけを 1 回上げ、覚えた事を返す。"
   (<- (upgrade-workers #(TARGET-A TARGET-B) LIMITS))
   (<- seen ScriptLog (ScriptLogSeen))
   seen)
 
 
 (deftest test-a-workers-only-upgrade-never-touches-the-coordinator
-  ;; worker だけの回は a・b を 1 台ずつ入れ替え(読み 4 回 = drain と戻りを 2 台分)、coordinator に Desire を出さない。
+  ;; worker だけを上げる時は a・b を 1 つずつ入れ替え(名簿を 4 回読む = drain と戻りを 2 つ分)、coordinator に Desire を出さない。
   (<- seen ScriptLog (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)] (workers-only-run)))
   (assert (is seen.coordinator-at None) seen)
   (assert (= seen.reads (len WORKERS-ONLY-SCRIPT)) seen))
 
 
-;; a・b は新しい版で戻ったが、名簿には版の読めない worker c(配備する側が宣言を書けない worker — doeff-commit None)も居る。
-(val WITH-UNREADABLE (UpgradeState :roster (+ ALL-NEW.roster #((RosterEntry :worker "c" :live True :doeff-commit None))) :tasks #()))
-
-
-(defhandler unreadable-roster [#^ UpgradeState settled]
-  ;; 引数に残す理由: a・b を入れ替えた後の名簿は検ごとに違う値(外の世界そのもの)。
-  ;; a・b の drain と戻りまでは台本どおりに答え、その後は名簿 settled を返し続け、版の変化の待ちは上限まで時間を進めるため
-  ;; (coordinator を入れ替えようとしたら、その場で検を落とす)。
-  (session var reads 0)
-  (ReadUpgradeState []
-    (val at reads)
-    (:= reads (+ reads 1))
-    (resume (if (< at (len WORKERS-ONLY-SCRIPT)) (get WORKERS-ONLY-SCRIPT at) settled)))
-  (AwaitRunnersChange [after timeout-seconds]
-    (<- (Delay timeout-seconds))
-    (resume (RunnersChange :revision (+ after 1) :changed True)))
-  (DesireWorker [launch]
-    (resume #()))
-  (DesireCoordinator [launch]
-    (raise (AssertionError "版の読めない worker c を新しい版と数え、coordinator を入れ替えた")))
-  (ConfirmCleanBoot [launch]
-    (resume (CleanBootPassed :target (if (isinstance launch WorkerLaunch) launch.name "coordinator"))))
-  (PrepareBootRoot [launch]
-    (<- target str (launch-target launch))
-    (resume (BootRootBuilt :target target :seconds 0.0 :previous-root-present True)))
-  (PublishDeclarations []
-    (resume None))
-  (ApplyDeclarations []
-    (resume None)))
-
-
-(deftest test-a-worker-whose-version-cannot-be-read-stops-the-coordinator-swap-by-name
-  ;; 失敗ケース(条 V1): 名簿の worker c の版が読めない(None)— Program は c を新しい版と数えず、「worker が全部 版 NEW で live」の
-  ;; 待ちで上限を越えて名指しで止まり、coordinator を入れ替えない。None を新しい版と数える形にすると DesireCoordinator で赤。
-  (with [caught (pytest.raises UpgradeStalled)]
-    (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (unreadable-roster WITH-UNREADABLE)]
-            (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
-  (assert (= caught.value.step (.format "worker が全部 版 {} で live" NEW)) caught.value.step))
-
-
-;; a を入れ替えた後、a は live だが版を読めない(読み手が訳を書いた — 新しい世代が準備完了でない)まま戻らない。
+;; a を入れ替えた後、a は live だが版を読めない(読み手が理由を書いた — 新しい世代が準備完了でない)まま戻らない。
 (val A-STUCK-REASON "新しい世代が準備完了でない(準備完了の判定 = その上の job が答える事)")
-(val A-STUCK (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit None :unread-reason A-STUCK-REASON)
-                                     (RosterEntry :worker "b" :live True :doeff-commit OLD))
-                           :tasks #()))
-
-
-(defhandler stuck-after-drain [#^ UpgradeState settled]
-  ;; 引数に残す理由: 戻らない名簿は検ごとに違う値(外の世界そのもの)。
-  ;; drain の読み(最初の 1 回)は旧い版の名簿で答え、その後は名簿 settled を返し続け、版の変化の待ちは上限まで時間を進めるため。
-  (session var reads 0)
-  (ReadUpgradeState []
-    (val at reads)
-    (:= reads (+ reads 1))
-    (resume (if (= at 0) ALL-OLD settled)))
-  (AwaitRunnersChange [after timeout-seconds]
-    (<- (Delay timeout-seconds))
-    (resume (RunnersChange :revision (+ after 1) :changed True)))
-  (DesireWorker [launch]
-    (resume #()))
-  (ConfirmCleanBoot [launch]
-    (resume (CleanBootPassed :target launch.name)))
-  (PrepareBootRoot [launch]
-    (<- target str (launch-target launch))
-    (resume (BootRootBuilt :target target :seconds 0.0 :previous-root-present True)))
-  (PublishDeclarations []
-    (resume None))
-  (ApplyDeclarations []
-    (resume None)))
+(val A-STUCK (replace ALL-OLD :roster #((RosterEntry :worker "a" :live True :doeff-commit None :declaration IN :unread-reason A-STUCK-REASON)
+                                        (RosterEntry :worker "b" :live True :doeff-commit OLD :declaration IN))))
 
 
 (deftest test-a-stalled-return-names-the-last-reading-of-the-worker
   ;; 失敗ケース(#3366 — 止まった時の文を分ける): a の戻りの待ちが上限で止まった時、文は待ちの名だけでなく、最後に読んだ a の行
-  ;; (live=True・版を読めない訳)を載せる — 「worker は起きたが、上の job が答えない」と分かる。observe の文を載せない形にすると赤。
+  ;; (live=True・版を読めない理由)を載せる — 「worker は起動したが、上の job が答えない」と分かる。observe の文を載せない形にすると赤。
   (with [caught (pytest.raises UpgradeStalled)]
-    (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (stuck-after-drain A-STUCK)]
+    (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(ALL-OLD A-STUCK))]
             (upgrade-workers #(TARGET-A) LIMITS))))
   (assert (= caught.value.step (.format "worker a が版 {} で live に戻る" NEW)) caught.value.step)
   (val text (str caught.value))
@@ -412,8 +400,9 @@
 
 
 (defhandler step-recorder
-  ;; テストの道具: 版上げの Program が出した書き込みの effect(空の機体の確認・root の準備・Desire・公開・当て)を出した順に覚え、同じ effect を外側の
-  ;; handler へ出し直して、その答えをそのまま返すため(答えは変えない — effect の順と、拒否の後に出なかった effect を見る)。
+  ;; テストの道具: 版上げの Program が出した書き込みの effect(空の機体の確認・root の準備・静かな時間帯の待ち・Desire・公開・当て)を出した
+  ;; 順に覚え、同じ effect を外側の handler へ出し直して、その答えをそのまま返すため(答えは変えない — effect の順と、拒否の後に出なかった
+  ;; effect を見る)。
   (session var steps #())
   (session var answers #())
   (ConfirmCleanBoot [launch]
@@ -426,6 +415,10 @@
     (:= steps (+ steps #((SwapStep :name "PrepareBootRoot" :target target))))
     (<- answer (PrepareBootRoot launch))
     (:= answers (+ answers #(answer)))
+    (resume answer))
+  (AwaitQuietWindow [target timeout-seconds]
+    (:= steps (+ steps #((SwapStep :name "AwaitQuietWindow" :target target))))
+    (<- answer (AwaitQuietWindow :target target :timeout-seconds timeout-seconds))
     (resume answer))
   (DesireWorker [launch]
     (:= steps (+ steps #((SwapStep :name "DesireWorker" :target launch.name))))
@@ -449,10 +442,16 @@
 
 (defk swap-steps [desire target]
   {:pre [(: desire str) (: target str)] :post [(: % (get tuple #(SwapStep ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
-  "入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 当て)を、テストが比べる形で作るため。"
+  "worker の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 当て)を、テストが比べる形で作るため。"
   #((SwapStep :name "ConfirmCleanBoot" :target target) (SwapStep :name "PrepareBootRoot" :target target)
     (SwapStep :name desire :target target) (SwapStep :name "PublishDeclarations" :target None)
     (SwapStep :name "ApplyDeclarations" :target None)))
+
+
+;; coordinator の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → 静かな時間帯の待ち → Desire → 公開 → 当て — #3772)。
+(val COORDINATOR-STEPS #((SwapStep :name "ConfirmCleanBoot" :target "coordinator") (SwapStep :name "PrepareBootRoot" :target "coordinator")
+                         (SwapStep :name "AwaitQuietWindow" :target "coordinator") (SwapStep :name "DesireCoordinator" :target "coordinator")
+                         (SwapStep :name "PublishDeclarations" :target None) (SwapStep :name "ApplyDeclarations" :target None)))
 
 
 (defk recorded-run [program]
@@ -469,15 +468,14 @@
 
 (deftest test-each-swap-prepares-the-boot-root-after-the-clean-boot-and-before-the-desire
   ;; effect の順(#3725): worker の入れ替えも coordinator の入れ替えも、空の機体の確認 → root の準備 → Desire → 公開 → 当て。準備の effect を
-  ;; 外すと PrepareBootRoot が列に無く、Desire の後へ動かすと順が違って赤。
+  ;; 外すと PrepareBootRoot が列に無く、Desire の後へ動かすと順が違って赤。coordinator は Desire の前に静かな時間帯を待つ(#3772)。
   (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT) step-recorder]
-                   (recorded-run (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
+                   (recorded-run (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS))))
   (assert (is (get seen 0) None) seen)
   (<- a tuple (swap-steps "DesireWorker" "a"))
   (<- b tuple (swap-steps "DesireWorker" "b"))
-  (<- coordinator tuple (swap-steps "DesireCoordinator" "coordinator"))
   (val log (get seen 1))
-  (assert (= log.steps (+ a b coordinator)) log.steps)
+  (assert (= log.steps (+ a b COORDINATOR-STEPS)) log.steps)
   ;; 台本の世界の準備の答えは 3 つとも「組んだ」— Program はそのまま Desire へ進む。
   (assert (= (tuple (gfor answer log.answers (type answer))) #(BootRootBuilt BootRootBuilt BootRootBuilt)) log.answers))
 
@@ -513,10 +511,10 @@
 
 (deftest test-a-refused-coordinator-boot-root-stops-before-the-coordinator-desire
   ;; 失敗ケース(#3725): coordinator の root の準備が断られる — worker a・b の effect は 5 つずつ全部出て、coordinator は確認と準備の 2 つだけ
-  ;; (DesireCoordinator・その公開・当ては出ない)。停止は coordinator を明示する。
+  ;; (静かな時間帯の待ち・DesireCoordinator・その公開・当ては出ない)。停止は coordinator を明示する。
   (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)
                                  (refused-boot-roots (frozenset ["coordinator"]) BootRootRefusal.PLACE-UNAVAILABLE) step-recorder]
-                   (recorded-run (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
+                   (recorded-run (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS))))
   (val refused (get seen 0))
   (assert (isinstance refused UpgradeRefused) seen)
   (assert (= refused.target "coordinator") refused)
@@ -600,11 +598,256 @@
           prepared))
 
 
+(defhandler boot-roots-kept-only-for-the-coordinator
+  ;; 筋書きの handler: どの対象の root も「組んだ(12.5 秒)」と答え、上げる前の版の root は coordinator の保存先にだけ残っていると答える
+  ;; (worker の戻し先は無い — worker の入れ替えは戻し先の有無を結果に載せて進む・coordinator は戻し先が無いと始めない #3772)。
+  (PrepareBootRoot [launch]
+    (<- target str (launch-target launch))
+    (resume (BootRootBuilt :target target :seconds 12.5 :previous-root-present (= target "coordinator")))))
+
+
 (deftest test-the-cluster-program-returns-the-coordinator-boot-root-answer-last
-  ;; coordinator まで上げる場合の結果は、worker の分の後に coordinator の分が並ぶ(戻し先の有無を 3 つとも対象ごとに読める)。
-  (<- prepared tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)
-                                     boot-roots-built-without-a-previous-root]
-                       (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS)))
-  (assert (= (tuple (gfor p prepared #(p.target p.previous-root-present)))
-             #(#("a" False) #("b" False) #("coordinator" False)))
-          prepared))
+  ;; coordinator まで上げる場合の結果は、worker の分(入れ替えた順)と coordinator の分を分けて載せる(戻し先の有無を 3 つとも対象ごとに読める)。
+  (<- upgraded ClusterUpgraded (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)
+                                               boot-roots-kept-only-for-the-coordinator]
+                                 (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS)))
+  (assert (= (tuple (gfor p upgraded.workers #(p.target p.previous-root-present))) #(#("a" False) #("b" False))) upgraded)
+  (val root upgraded.coordinator.root)
+  (assert (= #(root.target root.previous-root-present) #("coordinator" True)) upgraded))
+
+
+;; --- coordinator だけを上げる入口(upgrade-coordinator — #3772)---------------------------------------------------------------------
+;; 今の cluster の形: 宣言の内の worker の版が混ざっている(a = NEW・b = MID)。coordinator NEW と組めると手元で確かめた worker の版は
+;; NEW と MID。名簿と task を読む effect に台本で答え、書き込みの effect の順を step-recorder で覚える。
+
+(val MID "5a1b2c3d4e5f60718293a4b5c6d7e8f901234567")
+(val VERIFIED (VerifiedVersions :coordinator NEW :workers (frozenset [NEW MID])))
+;; a の上で動いている task(coordinator を入れ替えた後も coordinator に在るか確かめる)と、終わった task。
+(val RUNNING (PendingTask :task "t-run" :phase PendingPhase.ASSIGNED :worker "a"))
+(val MIXED (UpgradeState :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW :declaration IN)
+                                   (RosterEntry :worker "b" :live True :doeff-commit MID :declaration IN))
+                         :tasks #(RUNNING) :coordinator-commit OLD :known-tasks #("t-run" "t-done")))
+(val MIXED-SWAPPED (replace MIXED :coordinator-commit NEW))
+;; 台本: 待ち行列(空)→ 条 V1 → coordinator が NEW で答える → 宣言の内の worker が live → 待っていた task が在る。
+(val MIXED-SCRIPT #(MIXED MIXED MIXED-SWAPPED))
+;; 条 V1 を照らす読み(2 番目)の後に DesireCoordinator を出す。
+(val COORDINATOR-V1-READ 2)
+
+
+(defrecord CoordinatorRun
+  "台本の世界で upgrade-coordinator を 1 回走らせた結果: outcome = 答え(CoordinatorUpgraded)か停止(UpgradeRefused・UpgradeStalled)・
+   script = 台本の handler が覚えた事・log = step-recorder が覚えた事。"
+  (#^ (| CoordinatorUpgraded UpgradeRefused UpgradeStalled) outcome)
+  (#^ ScriptLog script)
+  (#^ StepLog log))
+
+
+(defk coordinator-run []
+  {:pre [] :post [(: % CoordinatorRun)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "coordinator を NEW へ上げる入口を VERIFIED で 1 回走らせ(拒否と上限の停止は受ける)、台本と書き込みの effect の記録を読むため。"
+  (var outcome None)
+  (try
+    (<- upgraded CoordinatorUpgraded (upgrade-coordinator TARGET-COORDINATOR VERIFIED LIMITS))
+    (:= outcome upgraded)
+    (except [e [UpgradeRefused UpgradeStalled]]
+      (:= outcome e)))
+  (<- script ScriptLog (ScriptLogSeen))
+  (<- log StepLog (StepLogSeen))
+  (CoordinatorRun :outcome outcome :script script :log log))
+
+
+(deftest test-mixed-worker-versions-inside-the-verified-pair-are-applied
+  ;; 失敗ケース 6(#3772): 宣言の内の worker の版が NEW と MID で混ざっていても、どちらも確かめた組み合わせに入っていれば coordinator を
+  ;; 当てる(条 V1 の照らしの後に DesireCoordinator を出し、全部の手順を通って答える)。「全部 coordinator と同じ版」で待つ形では、
+  ;; 今の cluster(版が混ざったまま)で必ず上限まで待って止まり赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade MIXED-SCRIPT) step-recorder]
+                           (coordinator-run)))
+  (assert (isinstance run.outcome CoordinatorUpgraded) run.outcome)
+  (assert (= run.script.coordinator-at COORDINATOR-V1-READ) run.script)
+  (assert (= run.log.steps COORDINATOR-STEPS) run.log.steps))
+
+
+;; 確かめた組み合わせに無い版(OLD)で動く、宣言の内の worker b が居る。
+(val UNVERIFIED (replace MIXED :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW :declaration IN)
+                                         (RosterEntry :worker "b" :live True :doeff-commit OLD :declaration IN))))
+
+
+(deftest test-a-worker-on-a-version-outside-the-verified-pair-is-refused-before-the-desire
+  ;; 失敗ケース 5(#3772): 確かめた組み合わせに無い版の worker が 1 つ在ると、宣言を書く前に、その worker と版を明示して断る — 書き込みの
+  ;; effect は 1 つも出ない(空の機体の確認より前)。待って上限で止まる形・照らさずに当てる形はどちらも赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNVERIFIED)) step-recorder]
+                           (coordinator-run)))
+  (val refused run.outcome)
+  (assert (isinstance refused UpgradeRefused) refused)
+  (assert (= refused.target "coordinator") refused)
+  (assert (isinstance refused.refusal UnverifiedWorkers) refused.refusal)
+  (assert (= (tuple (gfor e refused.refusal.workers #(e.worker e.doeff-commit))) #(#("b" OLD))) refused.refusal)
+  (assert (in "b(版 " (str refused)) (str refused))
+  (assert (= run.log.steps #()) run.log.steps)
+  (assert (is run.script.coordinator-at None) run.script))
+
+
+;; 宣言の外の worker 2 つ: z は live で古い版(組み合わせに無い)・y は live でなく版を読めない。
+(val OUTSIDE-REASON "宣言の外(配備する側が宣言を書けない worker)")
+(val OUTSIDERS #((RosterEntry :worker "z" :live True :doeff-commit OLD :declaration OUT :unread-reason None)
+                 (RosterEntry :worker "y" :live False :doeff-commit None :declaration OUT :unread-reason OUTSIDE-REASON)))
+(val WITH-OUTSIDERS (replace MIXED :roster (+ MIXED.roster OUTSIDERS)))
+(val WITH-OUTSIDERS-SWAPPED (replace WITH-OUTSIDERS :coordinator-commit NEW))
+
+
+(deftest test-a-worker-outside-the-declaration-is-neither-waited-for-nor-hidden
+  ;; 失敗ケース 1(#3772): 宣言の外の worker(z = 組み合わせに無い版・y = live でなく版を読めない)は、組み合わせの照らしからも待ちからも
+  ;; 外して coordinator を当て、結果に名と版を必ず出す。外の worker を待つ形は上限で止まって赤、黙って外す形は結果に出ず赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock))
+                                         (scripted-upgrade #(WITH-OUTSIDERS WITH-OUTSIDERS WITH-OUTSIDERS-SWAPPED)) step-recorder]
+                           (coordinator-run)))
+  (assert (isinstance run.outcome CoordinatorUpgraded) run.outcome)
+  (assert (= (sorted (gfor e run.outcome.undeclared #(e.worker e.live (or e.doeff-commit "版を読めない"))))
+             [#("y" False "版を読めない") #("z" True OLD)])
+          run.outcome.undeclared)
+  (assert (= run.log.steps COORDINATOR-STEPS) run.log.steps))
+
+
+;; 待ち行列に task が残る(queued のまま)。
+(val QUEUED-TASK (PendingTask :task "t-queued" :phase PendingPhase.QUEUED :worker None))
+(val MIXED-QUEUED (replace MIXED :tasks #(RUNNING QUEUED-TASK) :known-tasks #("t-run" "t-done" "t-queued")))
+
+
+(deftest test-a-queued-task-keeps-the-coordinator-from-being-applied
+  ;; 失敗ケース 2(#3772): 待ち行列が空でなければ当てない — 上限まで待って「待ち行列が空」の待ちで止まり、残った task を明示する。
+  ;; 書き込みの effect は 1 つも出ない。版が混ざった cluster で、条 V1 の待ちで先に止まる形(待ち行列を見る前に止まる)も赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(MIXED-QUEUED)) step-recorder]
+                           (coordinator-run)))
+  (val stalled run.outcome)
+  (assert (isinstance stalled UpgradeStalled) stalled)
+  (assert (= stalled.step "待ち行列が空") stalled.step)
+  (assert (in "t-queued" stalled.observed) stalled.observed)
+  (assert (= run.log.steps #()) run.log.steps)
+  (assert (is run.script.coordinator-at None) run.script))
+
+
+(deftest test-a-missing-rollback-root-stops-before-the-coordinator-desire
+  ;; 失敗ケース 3(#3772): coordinator の保存先に上げる前の版の root が無い(戻し先が無い)なら始めない — 拒否は戻し先が無い事を
+  ;; 型(RollbackRootMissing)で明示し、書き込みの effect は確認と準備の 2 つだけ(静かな時間帯の待ち・Desire・公開・当ては出ない)。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade MIXED-SCRIPT)
+                                         boot-roots-built-without-a-previous-root step-recorder]
+                           (coordinator-run)))
+  (val refused run.outcome)
+  (assert (isinstance refused UpgradeRefused) refused)
+  (assert (= refused.target "coordinator") refused)
+  (assert (isinstance refused.refusal RollbackRootMissing) refused.refusal)
+  (assert (= refused.refusal.root (BootRootBuilt :target "coordinator" :seconds 12.5 :previous-root-present False)) refused.refusal)
+  (assert (= run.log.steps (cut COORDINATOR-STEPS 0 2)) run.log.steps)
+  (assert (is run.script.coordinator-at None) run.script))
+
+
+;; 宣言の内の worker の版が全部 NEW(条 V1 はすぐ通る)— 当てた後の coordinator の答えだけを見る台本の元。
+(val UNIFORM (replace ALL-NEW :tasks #(RUNNING) :known-tasks #("t-run")))
+(val UNIFORM-SWAPPED (replace UNIFORM :coordinator-commit NEW))
+;; 台本: 待ち行列 → 条 V1 → 当てた直後は古い coordinator(OLD)が 2 回答える → 新しい coordinator が NEW で答える。
+(val LATE-SCRIPT #(UNIFORM UNIFORM UNIFORM UNIFORM UNIFORM-SWAPPED))
+;; 新しい coordinator が初めて NEW で答える読み(5 番目)。
+(val FIRST-NEW-READ 5)
+
+
+(deftest test-an-old-coordinator-answering-after-the-apply-is-not-the-end
+  ;; 失敗ケース 4(#3772): 当てた直後に古い coordinator(版 OLD)が答えても終わりにしない — coordinator が版 NEW で答える(5 番目の読み)
+  ;; まで待ってから、宣言の内の worker と待っていた task を確かめて答える。worker が live なら終わりとする形は 3 番目の読みで答えて赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade LATE-SCRIPT) step-recorder]
+                           (coordinator-run)))
+  (assert (isinstance run.outcome CoordinatorUpgraded) run.outcome)
+  (assert (>= run.script.reads FIRST-NEW-READ) run.script))
+
+
+(deftest test-a-coordinator-that-never-answers-on-the-new-version-stops-by-name
+  ;; 失敗ケース 4 の止まり方: 新しい版の coordinator がいつまでも答えない(古い版が答え続ける)なら、上限で「coordinator が版 NEW で
+  ;; 答える」の待ちで止まり、最後に答えた版を明示する(黙って待ち続けない・終わりにもしない)。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM)) step-recorder]
+                           (coordinator-run)))
+  (val stalled run.outcome)
+  (assert (isinstance stalled UpgradeStalled) stalled)
+  (assert (= stalled.step (.format "coordinator が版 {} で答える" NEW)) stalled.step)
+  (assert (in (cut OLD 0 10) stalled.observed) stalled.observed))
+
+
+;; 宣言の内の worker c が live だが版を読めない(入れ替えの途中 — 新しい世代が準備完了でない)。
+(val C-REASON "新しい世代が準備完了でない")
+(val WITH-UNREADABLE (replace MIXED :roster (+ MIXED.roster #((RosterEntry :worker "c" :live True :doeff-commit None :declaration IN
+                                                                            :unread-reason C-REASON)))))
+;; 同じ c が宣言の外の時。
+(val WITH-UNREADABLE-OUTSIDE (replace MIXED :roster (+ MIXED.roster #((RosterEntry :worker "c" :live True :doeff-commit None :declaration OUT
+                                                                                    :unread-reason C-REASON)))))
+
+
+(deftest test-a-worker-whose-version-cannot-be-read-stops-the-coordinator-swap-by-name
+  ;; 失敗ケース 7(条 V1・#3366 のテストを #3772 の決定に合わせて書き直した): 宣言の内で版を読めない worker c は、組み合わせに入っていると
+  ;; 数えずに待ち、上限で「宣言の内の worker が全部 live で版を読める」の待ちで c と理由を明示して止まる(coordinator は当てない)。
+  ;; 同じ c が宣言の外なら待たずに当て、結果に c を載せる — 入れ替え中で版を読めない(待つ)と宣言の外(待たない)を型で分ける。
+  (<- inside CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(WITH-UNREADABLE)) step-recorder]
+                              (coordinator-run)))
+  (val stalled inside.outcome)
+  (assert (isinstance stalled UpgradeStalled) stalled)
+  (assert (= stalled.step "宣言の内の worker が全部 live で版を読める") stalled.step)
+  (assert (in "c(live=True・版を読めない" stalled.observed) stalled.observed)
+  (assert (in C-REASON stalled.observed) stalled.observed)
+  (assert (= inside.log.steps #()) inside.log.steps)
+  (<- outside CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock))
+                                             (scripted-upgrade #(WITH-UNREADABLE-OUTSIDE WITH-UNREADABLE-OUTSIDE
+                                                                 (replace WITH-UNREADABLE-OUTSIDE :coordinator-commit NEW)))
+                                             step-recorder]
+                               (coordinator-run)))
+  (assert (isinstance outside.outcome CoordinatorUpgraded) outside.outcome)
+  (assert (= (tuple (gfor e outside.outcome.undeclared e.worker)) #("c")) outside.outcome.undeclared))
+
+
+(defhandler quiet-window-never-comes
+  ;; 筋書きの handler: 入れ替えで切れて困る仕事が走り続け、上限の内に静かな時間帯が来ないと答える。
+  (AwaitQuietWindow [target timeout-seconds]
+    (resume (QuietWindowMissed :target target :reason "筋書き: 入れ替えで切れて困る仕事が走り続けている"))))
+
+
+(deftest test-the-quiet-window-is-awaited-before-the-coordinator-desire
+  ;; 失敗ケース 8(#3772): 静かな時間帯の効果を、coordinator の宣言の書き換え(DesireCoordinator)より前に出す。静かな時間帯が来なければ
+  ;; 上限で止まり、宣言を書かない(Desire・公開・当ては出ない)。効果を出さない形・Desire の後に出す形は順が違って赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM UNIFORM UNIFORM-SWAPPED))
+                                         step-recorder]
+                           (coordinator-run)))
+  (assert (isinstance run.outcome CoordinatorUpgraded) run.outcome)
+  (assert (= run.log.steps COORDINATOR-STEPS) run.log.steps)
+  (<- missed CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM)) quiet-window-never-comes
+                                            step-recorder]
+                              (coordinator-run)))
+  (val stalled missed.outcome)
+  (assert (isinstance stalled UpgradeStalled) stalled)
+  (assert (= stalled.step "静かな時間帯を待つ") stalled.step)
+  (assert (in "走り続けている" stalled.observed) stalled.observed)
+  (assert (= missed.log.steps (cut COORDINATOR-STEPS 0 3)) missed.log.steps))
+
+
+(deftest test-a-refused-coordinator-clean-boot-writes-no-declaration-through-the-coordinator-entry
+  ;; 失敗ケース 9(#3772・upgrade-cluster の同じテストを coordinator だけの入口でも断言する): coordinator の空の機体の起動が断られたら、
+  ;; 宣言を書かない — 書き込みの effect は確認の 1 つだけ。版が混ざった cluster で条 V1 の待ちで止まる形(確認まで着かない)も赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade MIXED-SCRIPT)
+                                         (refused-clean-boots (frozenset ["coordinator"])) step-recorder]
+                           (coordinator-run)))
+  (val refused run.outcome)
+  (assert (isinstance refused UpgradeRefused) refused)
+  (assert (= refused.target "coordinator") refused)
+  (assert (isinstance refused.refusal CleanBootRefused) refused.refusal)
+  (assert (= run.log.steps (cut COORDINATOR-STEPS 0 1)) run.log.steps)
+  (assert (is run.script.coordinator-at None) run.script))
+
+
+;; 入れ替えの後の coordinator が、前に待っていた task t-run を知らない(作り直しで記録を失った)。
+(val LOST-TASK (replace MIXED-SWAPPED :known-tasks #("t-done")))
+
+
+(deftest test-a-task-the-new-coordinator-does-not-know-stops-by-name
+  ;; 入れ替えの前に待っていた task(t-run)が、入れ替えの後の coordinator に無ければ、上限で「待っていた task が coordinator に在る」の
+  ;; 待ちで止まり、無い task を明示する(coordinator が記録を失った事を黙って終わりにしない)。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(MIXED MIXED LOST-TASK)) step-recorder]
+                           (coordinator-run)))
+  (val stalled run.outcome)
+  (assert (isinstance stalled UpgradeStalled) stalled)
+  (assert (= stalled.step "待っていた task が coordinator に在る") stalled.step)
+  (assert (in "t-run" stalled.observed) stalled.observed))

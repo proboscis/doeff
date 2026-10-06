@@ -14,8 +14,11 @@
 ;;;   - coordinator の作り直しで worker の行を読めない(2026-10-05 の形: 古い coordinator が書いた行に taskReserve が無い)と、queued は
 ;;;     「合う worker が無い」で即 落ちる(#2440 の落ちはこれ)。走り中の task は残る。
 ;;;
-;;;   V1 coordinator-after-every-worker — coordinator の入れ替えを始めるのは、名簿の worker が全部、その coordinator と同じ版で live に
-;;;      なった後だけ(新しい coordinator は新しい欄の無い heartbeat を断り、古い worker は 20 秒で job を止める — 版上げの調べ #3156)。
+;;;   V1 coordinator-after-every-worker — coordinator を版 X へ入れ替え始めるのは、宣言の内の worker が全部 live で、その版が確かめた
+;;;      版の組み合わせ(VerifiedVersions — X と組めると手元で確かめた worker の版の集合)に入っている時だけ(新しい coordinator が組めない版の
+;;;      worker の heartbeat を断り、その worker が 20 秒で job を止める形を防ぐ — 版上げの調べ #3156)。worker と coordinator のどちらを
+;;;      先に上げるかは変更ごとに決まり、確かめた版の組み合わせで表す(#3772 — 2026-10-05 は worker が先・2026-10-06 の #3748 は coordinator が先)。
+;;;      宣言の外の worker は数えない(版上げの Program は待ちからも外し、結果に名と版を出す)。
 ;;;   V2 worker-swap-waits-for-its-tasks — worker の入れ替えを始めるのは、その worker に置かれた task(assigned・走り中)が無い時だけ
 ;;;      (drain の空くのを待つ)。queued は入れ替えで落ちないので数えない。
 ;;;   V3 one-worker-at-a-time — 次の worker の入れ替えを始めるのは、前に入れ替えを始めた worker が新しい版で live に戻ったのを読んだ後
@@ -29,7 +32,8 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [dataclass])
-(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart BootRootsAtStart])
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase WorkerDeclaration RosterEntry PendingTask UpgradeStart
+                                                   BootRootsAtStart VerifiedVersions])
 
 
 (defrecord UpgradeBreach
@@ -41,18 +45,27 @@
   (#^ str detail))
 
 
-(defk coordinator-after-every-worker [starts]
-  {:pre [(: starts (get tuple #(UpgradeStart ...)))] :post [(: % (get tuple #(UpgradeBreach ...)))]
+(defk coordinator-after-every-worker [starts verified]
+  {:pre [(: starts (get tuple #(UpgradeStart ...))) (: verified VerifiedVersions)] :post [(: % (get tuple #(UpgradeBreach ...)))]
    :tags {:context "coordinator" :role "judgment"}}
-  "条 V1: coordinator の入れ替えを始めた瞬間に、名簿の worker のうち同じ版で live でない物を返す(空なら緑)。新しい coordinator が
-   古い worker の heartbeat を断って job を止めさせる順を、版上げの記録から判じるため。"
-  (tuple (gfor s starts
-               :if (= s.kind UpgradeKind.COORDINATOR)
-               e s.roster
-               :if (not (and e.live (= e.doeff-commit s.doeff-commit)))
-               (UpgradeBreach :rule "V1 coordinator-after-every-worker" :at-ms s.at-ms :target s.target
-                              :detail (.format "worker {} は live={}・版 {}(入れ替え先 {})" e.worker e.live e.doeff-commit
-                                               s.doeff-commit)))))
+  "条 V1: coordinator の入れ替えを始めた瞬間に、宣言の内の worker のうち live でない物・版が確かめた版の組み合わせ(verified)に無い物を返し、
+   入れ替え先の版が組み合わせの coordinator の版でなければそれも返す(空なら緑)。新しい coordinator が組めない版の worker の heartbeat を断って
+   job を止めさせる順を、版上げの記録から判じるため。宣言の外の worker は数えない。"
+  (val off-pair (tuple (gfor s starts
+                             :if (and (= s.kind UpgradeKind.COORDINATOR) (!= s.doeff-commit verified.coordinator))
+                             (UpgradeBreach :rule "V1 coordinator-after-every-worker" :at-ms s.at-ms :target s.target
+                                            :detail (.format "入れ替え先 {} は確かめた版の組み合わせの coordinator の版 {} でない" s.doeff-commit
+                                                             verified.coordinator)))))
+  (val off-workers (tuple (gfor s starts
+                                :if (= s.kind UpgradeKind.COORDINATOR)
+                                e s.roster
+                                :if (and (= e.declaration WorkerDeclaration.DECLARED)
+                                         (not (and e.live (in e.doeff-commit verified.workers))))
+                                (UpgradeBreach :rule "V1 coordinator-after-every-worker" :at-ms s.at-ms :target s.target
+                                               :detail (.format "worker {} は live={}・版 {}(入れ替え先 {} と組めると確かめた版: {})" e.worker
+                                                                e.live e.doeff-commit s.doeff-commit
+                                                                (.join "・" (sorted verified.workers)))))))
+  (+ off-pair off-workers))
 
 
 (defk worker-swap-waits-for-its-tasks [starts]
