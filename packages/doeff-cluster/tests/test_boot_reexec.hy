@@ -66,3 +66,31 @@
   (<- done subprocess.CompletedProcess (boot tmp-path (get made 0) (get made 1) "records" {"DOEFF_BOOT_FROM_ROOT" "1"}))
   (assert (not-in "root の script" done.stdout) done.stdout)
   (assert (!= done.returncode 0) "検の root には hy が無いので、役の起動へ進めば落ちる"))
+
+
+(deftest test-the-prepare-role-prepares-the-root-and-starts-nothing [tmp-path]
+  ;; 役 prepare は展開と準備だけで終わる(#3725)— 版上げの前に、今の worker の Pod の中で上げ先の版の root を
+  ;; 先に組むため。root の script は本物(引き継いだ先がこの役を受け持つ)。検の PATH に hy は無いので、役の起動へ落ちれば非 0 になる。
+  (<- made tuple (prepared-root tmp-path (.read-text (Path BOOT-SH))))
+  (<- done subprocess.CompletedProcess (boot tmp-path (get made 0) (get made 1) "prepare"))
+  (assert (= done.returncode 0) done.stderr)
+  (assert (= (.strip done.stdout) (str (/ tmp-path "work" "boot" "roots" (get made 1)))) done.stdout)
+  (assert (in "準備済み" done.stderr) done.stderr))
+
+
+(deftest test-an-unknown-role-is-refused-before-anything-is-extracted [tmp-path]
+  ;; 失敗ケース: 知らない役を worker の起動へ落とすと、走っている worker の Pod の中で 2 つ目の worker が起きる。名指しで断り、
+  ;; 展開もしない(mirror の dir を作らない)。
+  (<- done subprocess.CompletedProcess (boot tmp-path (str (/ tmp-path "no-such-repo")) (* "0" 40) "prepair"))
+  (assert (= done.returncode 2) (+ done.stdout done.stderr))
+  (assert (in "知らない役 ROLE=prepair" done.stderr) done.stderr)
+  (assert (not (.exists (/ tmp-path "work" "boot"))) "断る前に展開の dir を作った"))
+
+
+(deftest test-the-prepare-role-needs-the-commit-to-prepare [tmp-path]
+  ;; 失敗ケース: 準備する commit を渡さない prepare は、何もせずに成功したように終わらない。
+  (val done (subprocess.run ["sh" BOOT-SH]
+                            :env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "ROLE" "prepare" "WORK_DIR" (str (/ tmp-path "work"))}
+                            :capture-output True :text True :timeout 60))
+  (assert (= done.returncode 2) (+ done.stdout done.stderr))
+  (assert (in "WORKER_DOEFF_COMMIT" done.stderr) done.stderr))
