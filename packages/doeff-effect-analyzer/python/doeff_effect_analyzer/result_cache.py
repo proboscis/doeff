@@ -250,7 +250,10 @@ def _spec_without_import(name: str) -> ModuleSpec | None:
             continue
         try:
             spec = find_spec(name, locations)
-        except (ImportError, OSError, ValueError):
+        except (ImportError, OSError, ValueError, KeyError):
+            # KeyError: the import system's namespace path (a package without ``__init__``) reads its
+            # parent from ``sys.modules`` and raises when the parent is not loaded here — not found
+            # here, so the stored answer is not reused and the analysis runs again.
             return None
         if isinstance(spec, ModuleSpec):
             return spec

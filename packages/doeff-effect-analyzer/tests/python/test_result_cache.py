@@ -179,6 +179,33 @@ def test_a_module_not_loaded_here_is_compared_by_the_file_the_import_would_find(
         sys.modules.pop("result_cache_package", None)
 
 
+def test_a_module_under_namespace_packages_not_loaded_here_does_not_raise(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A module under two levels of namespace packages (no ``__init__``) loaded where the answer was
+    computed but not in this process: the import system's namespace path reads the parent from
+    ``sys.modules`` and raises KeyError when it is not loaded. The lookup must answer "not found
+    here" (analyze again) instead of letting the KeyError out of the analysis (agora-redesign
+    — the agora-controllers closure tests failed on ``KeyError: 'controllers.artifact_store'``)."""
+    inner = tmp_path / "src" / "result_cache_ns" / "middle" / "inner.py"
+    inner.parent.mkdir(parents=True)
+    inner.write_text("ANSWER = 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path / "src"))
+    names = ("result_cache_ns.middle.inner", "result_cache_ns.middle", "result_cache_ns")
+    importlib.import_module(names[0])
+    try:
+        analysis = Counting()
+        first = rc.cached_result(IDENTITY, analysis)
+        for name in names:
+            sys.modules.pop(name)
+        assert rc.cached_result(IDENTITY, analysis) == first
+        assert analysis.runs == 2
+        assert "result_cache_ns" not in sys.modules
+    finally:
+        for name in names:
+            sys.modules.pop(name, None)
+
+
 def test_an_identity_keeps_the_answers_used_most_recently(
     cache_dir: Path, material: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
