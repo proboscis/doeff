@@ -14,7 +14,7 @@ import importlib.util
 import inspect
 import marshal
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from types import CodeType, FunctionType, ModuleType
 
@@ -116,16 +116,24 @@ def canonical_gensyms(code: CodeType) -> CodeType:
     gensym の名を集め、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直し、全部の場所で同時に替える。替え方は 1 対 1 なので、
     module の中の名の一意性はそのまま保たれる。module の中の gensym の呼びの順は compile の順に依らないので、振り直した名も
     依らない。Hy の数えそのものには触らない(並行する compile と食い合わない)。"""
+    names = gensym_renames(_texts(code))
+    if all(old == new for old, new in names.items()):
+        return code
+    return _rewritten(code, names)
+
+
+def gensym_renames(texts: Iterable[str]) -> dict[str, str]:
+    """名と文字列の並びに現れる gensym の名から、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直した名への対応を作る —
+    code の木(:func:`canonical_gensyms`)と、型検査の展開の木(doeff_hy.static_check — agora-redesign #3869)が同じ 1 つの
+    振り直しを使うため。対応は gensym の名そのもの(Hy が改めた束縛の名に埋まった物も含む)を鍵にし、替えるのは
+    :func:`renamed` が行う。"""
     found: dict[str, re.Match[str]] = {}
-    for text in _texts(code):
+    for text in texts:
         match = _gensym_match(text)
         if match is not None:
             found[match.group(0)] = match
     ordered = sorted(found.values(), key=lambda match: int(match.group(2)))
-    names = {match.group(0): f"{match.group(1)}{rank}" for rank, match in enumerate(ordered, 1)}
-    if all(old == new for old, new in names.items()):
-        return code
-    return _rewritten(code, names)
+    return {match.group(0): f"{match.group(1)}{rank}" for rank, match in enumerate(ordered, 1)}
 
 
 def unread_gensym_texts(code: CodeType) -> tuple[str, ...]:
@@ -170,26 +178,26 @@ def _constant_texts(value: object) -> Iterator[str]:
             return
 
 
-def _renamed(text: str, names: Mapping[str, str]) -> str:
+def renamed(text: str, names: Mapping[str, str]) -> str:
     """名 1 つの gensym の名を振り直した名(Hy が改めた束縛の名なら、埋まった gensym の名だけを替える)。"""
     replaced = names.get(text)
     if replaced is not None:
         return replaced
-    renamed = RENAMED_BINDING.fullmatch(text)
-    if renamed is None:
+    binding = RENAMED_BINDING.fullmatch(text)
+    if binding is None:
         return text
-    return renamed.group(1) + _renamed(renamed.group(2), names) + renamed.group(3)
+    return binding.group(1) + renamed(binding.group(2), names) + binding.group(3)
 
 
 def _rewritten(code: CodeType, names: Mapping[str, str]) -> CodeType:
     """code とその入れ子の code の名の表と文字列の定数の gensym の名を、names の名へ替えた写しを作る(元の code は替えない)。"""
     return code.replace(
-        co_varnames=tuple(_renamed(name, names) for name in code.co_varnames),
-        co_cellvars=tuple(_renamed(name, names) for name in code.co_cellvars),
-        co_freevars=tuple(_renamed(name, names) for name in code.co_freevars),
-        co_names=tuple(_renamed(name, names) for name in code.co_names),
-        co_name=_renamed(code.co_name, names),
-        co_qualname=".".join(_renamed(part, names) for part in code.co_qualname.split(".")),
+        co_varnames=tuple(renamed(name, names) for name in code.co_varnames),
+        co_cellvars=tuple(renamed(name, names) for name in code.co_cellvars),
+        co_freevars=tuple(renamed(name, names) for name in code.co_freevars),
+        co_names=tuple(renamed(name, names) for name in code.co_names),
+        co_name=renamed(code.co_name, names),
+        co_qualname=".".join(renamed(part, names) for part in code.co_qualname.split(".")),
         co_consts=tuple(_rewritten_constant(constant, names) for constant in code.co_consts),
     )
 
@@ -200,7 +208,7 @@ def _rewritten_constant(value: object, names: Mapping[str, str]) -> object:
         case CodeType():
             return _rewritten(value, names)
         case str():
-            return _renamed(value, names)
+            return renamed(value, names)
         case tuple():
             return tuple(_rewritten_constant(item, names) for item in value)
         case frozenset():
