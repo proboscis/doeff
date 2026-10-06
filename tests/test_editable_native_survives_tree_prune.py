@@ -145,3 +145,20 @@ def test_the_native_module_survives_a_prune_of_unlisted_files_and_the_next_make_
     pruned = tree.prune_like_remote_check()
     tree.run(_make_sync())
     assert tree.native_found(), f"名簿に無い file を消した後の make sync で組んだ物が見つからない(消した file: {pruned})"
+
+
+def test_rewriting_the_pth_source_line_moves_the_package_and_keeps_the_native_module(tree: Tree) -> None:
+    # 失敗ケース(agora-redesign #3860 — agora-controllers の固定の版への向け直し scripts/pinned_doeff.hy は venv の .pth の行だけを書き換える):
+    # .pth の 1 行目を別の checkout へ書き換えると、package の Python はその checkout から読まれ、組んだ物は venv から読まれ続ける。直す前の
+    # finder は作業木の path を自分の中に持ち、書き換えた後も元の checkout を読んだ。
+    tree.run(_make_sync())
+    moved = tree.root.parent / "other-checkout"
+    shutil.copytree(tree.root / "packages" / "probe-native", moved)
+    (moved / "probe_native" / "__init__.py").write_text("MOVED = True\n")
+    (pth,) = (tree.root / ".venv").glob("lib/python*/site-packages/probe_native.pth")
+    lines = pth.read_text().splitlines()
+    pth.write_text("\n".join([str(moved), *lines[1:]]) + "\n")
+    python = tree.root / ".venv" / "bin" / "python"
+    probe = "import probe_native, importlib.util; print(probe_native.MOVED, importlib.util.find_spec('probe_native._native') is not None)"
+    done = subprocess.run([str(python), "-c", probe], cwd="/", capture_output=True, text=True, check=False)
+    assert done.stdout.split() == ["True", "True"], done.stdout + done.stderr
