@@ -45,7 +45,7 @@
 (import doeff [EffectBase Program with-handlers])
 (import datetime [datetime])
 (import doeff_core_effects.scheduler [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
-(import doeff_events.effects [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect])
+(import doeff_events.effects [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_records.admission [key-text])
@@ -371,13 +371,33 @@
   answer)
 
 
+(defk wait-all-beside-sources [source event-types]
+  {:pre [(: source str) (: event-types tuple)] :post [(: % tuple)]}
+  "本体の WaitForEvents の 1 回に源の失敗を届けるため(wait-beside-sources の組の版): 本体の型と SourceFailed を 1 つの WaitForEvents で外の
+   購読者の列へ出し、届いた組に自分の源(source)の失敗が在れば、運ばれた例外で落ちる。同じ bus の別の源の失敗は、本体が SourceFailed を
+   待っていれば組に残し、待っていなければ組から除く。除いて組が空になれば待ち直す(本体には空の組を答えない)。"
+  (val wants-failures (in SourceFailed event-types))
+  (var kept #())
+  (while (not kept)
+    (<- came (WaitForEventsEffect (+ event-types #(SourceFailed))))
+    (for [event came]
+      (when (and (isinstance event SourceFailed) (= event.source source))
+        (raise event.error)))
+    (:= kept (tuple (gfor event came :if (or (not (isinstance event SourceFailed)) wants-failures) event))))
+  kept)
+
+
 (defhandler waits-beside-sources [#^ str source]
-  "包んだ本体の WaitForEvent に源の失敗の合図を足して待たせるため(答えは外の購読者の列のまま — 待ちの型を足して出し直すだけ)。"
+  "包んだ本体の WaitForEvent・WaitForEvents に源の失敗の合図を足して待たせるため(答えは外の購読者の列のまま — 待ちの型を足して出し直す
+   だけ)。"
   {:tags {:context "records" :role "foundation"}}
   ;; 引数に残す理由: source はこの包みの源の名(組み立ての引数の購読者の名前)で、包み 1 つごとに違うので Ask では読めない。
   (WaitForEventEffect [event-types]
     (<- answer (wait-beside-sources source event-types))
-    (resume answer)))
+    (resume answer))
+  (WaitForEventsEffect [event-types]
+    (<- answers tuple (wait-all-beside-sources source event-types))
+    (resume answers)))
 
 
 (defk run-with-sources [plan body]
@@ -429,7 +449,7 @@
 ;; ので宣言する)。位置の読み(ListRows・ReadStreamEnd)・源の task(Spawn と、その中の WatchChanges・WatchEvents・ReadStreamEnd・
 ;; Publish — 源の失敗・止まり・戻りの合図も)・止まりの待ち(上限の問い ReadSourcePatience・GetTime・見張りの task の Spawn と約束の
 ;; CreatePromise / CompletePromise・戻りの問い AwaitRecordsBack・上限つきの待ち WaitWithin)・源と見張りの止め(Cancel・Wait)。本体の
-;; WaitForEvent は本体の effect のまま外へ出る(型を足して出し直すだけ)ので数えない。実際に出す effect との一致は
+;; WaitForEvent・WaitForEvents は本体の effect のまま外へ出る(型を足して出し直すだけ)ので数えない。実際に出す effect との一致は
 ;; test_event_source_closure.py が確かめる。
 (val SOURCE-EFFECTS #(ListRows ReadStreamEnd WatchChanges WatchEvents PublishEffect ReadSourcePatience GetTimeEffect AwaitRecordsBack
                       CreatePromise CompletePromise WaitWithinEffect Spawn Cancel Wait))
