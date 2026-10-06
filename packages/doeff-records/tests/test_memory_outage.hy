@@ -3,6 +3,7 @@
 ;; 正典の memory の置き場をこの口で「届かない」にする。
 ;;   届かない間: 名に当たる公開 effect 8 つは Unreachable(detail)・置き場は変わらない / 名に当たらない表と列は今までどおり
 ;;   戻した後: 届かない間に撃った書きは 1 つも残っていない・読み書きは今までどおり
+;;   /readyz の問い(memory の置き場の選びの readiness): 置き場全体の止まりの間だけ届かない
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
@@ -12,7 +13,7 @@
 (import doeff_records.values [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records.faults [SetStoreOutage])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records.memory [MemoryStore memory-records-handler memory-store-choice])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
@@ -112,3 +113,18 @@
   (assert (and (isinstance (get answers 0) Changes) (= (. (get answers 0) items) #())) answers)
   (assert (isinstance (get answers 1) EventsQuiet) answers)
   (assert (= (get answers 2) 30.0) answers))
+
+
+(deftest test-the-memory-choice-answers-the-readiness-from-the-outage
+  ;; /readyz の問い(置き場の選び memory-store-choice の readiness — #3733): 置き場全体の止まり(名の無い SetStoreOutage — 記録の
+  ;; service に届かない状態)を置いた間は届かない(False)、外せば届く(True)。名を限った止まり(一部の表の断り)は置き場そのものには
+  ;; 届くので届く(PostgreSQL の置き場の問い SELECT 1 が表ごとの断りでは落ちないのと同じ)。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val choice (run (memory-store-choice store)))
+  (assert (is (in-store store (choice.readiness)) True))
+  (in-store store (SetStoreOutage DETAIL))
+  (assert (is (in-store store (choice.readiness)) False))
+  (in-store store (SetStoreOutage None))
+  (assert (is (in-store store (choice.readiness)) True))
+  (in-store store (SetStoreOutage DETAIL :names (frozenset #("parts"))))
+  (assert (is (in-store store (choice.readiness)) True)))

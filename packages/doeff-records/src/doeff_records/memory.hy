@@ -878,11 +878,20 @@
   (partial memory-records-handler store))
 
 
+(defk memory-readiness [store]
+  {:pre [(: store MemoryStore)] :post [(: % bool)] :tags {:context "records" :role "foundation"}}
+  "/readyz の問い(memory の置き場の選びの readiness — #3733)に、本番の置き場の問い(PostgreSQL の SELECT 1)と同じ意味で答えるため:
+   置き場全体の止まり(名の無い faults.SetStoreOutage — 記録の service に届かない状態)を置いた間は届かない(False)、無ければ届く(True)。
+   名を限った止まり(一部の表と列の断り)は置き場そのものには届くので届く(表ごとの断りでは SELECT 1 は落ちない)。"
+  (val outage store.outage)
+  (or (is outage None) (is-not outage.names None)))
+
+
 (defk memory-store-choice [store]
   {:pre [(: store MemoryStore)] :post [(: % StoreChoice)] :tags {:context "records" :role "foundation"}}
-  "memory の置き場 store を使う置き場の選びを作るため(模擬・手元の 1 process・単体の検が records-serving に渡す。/readyz は用意の済みだけで
-   ready)。PostgreSQL の選びは doeff_records.main の PG-STORE。"
-  (StoreChoice :prepare-of (partial memory-prepared store) :readiness None))
+  "memory の置き場 store を使う置き場の選びを作るため(模擬・手元の 1 process・単体の検が records-serving に渡す。/readyz は置き場全体の
+   止まりの間だけ届かない — memory-readiness)。PostgreSQL の選びは doeff_records.main の PG-STORE。"
+  (StoreChoice :prepare-of (partial memory-prepared store) :readiness (partial memory-readiness store)))
 
 
 ;; --- 模擬の源(memory の置き場の書きで合図を発する — #3127)-----------------------------------------------------------------

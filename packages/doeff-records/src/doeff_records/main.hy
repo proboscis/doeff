@@ -62,7 +62,7 @@
 (import doeff_records.values [RecordsSchema])
 (import doeff_records.pg [pg-records-handler prepare-records-store])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
-(import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening REQUEST-MAX-BYTES serve-records])
+(import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
 
 (val MODULE-TAGS {:context "records" :role "entry"})
@@ -163,11 +163,16 @@
 
 
 (defhandler printed-listening [#^ str prefix]
-  "本番の土台で、待ち受けが結んだ宛先を 1 行名乗るため。"
+  "本番の土台で、待ち受けが結んだ宛先と、表の用意が済んで答え始めた拍(RecordsPrepared)を 1 行ずつ名乗るため(使い手の土台が告知に
+   別の答えを持つなら、この handler より内側に置く)。"
   {:tags {:context "records" :role "entry"}}
   ;; 引数に残す理由: prefix は名乗りの行に載せる組み立ての値(Ask で読む設定ではない)。
   (RecordsListening [address]
     (print (.format "記録の service: {}:{} で待ち受ける(接頭辞 {}・表の用意は task)" address.host address.port prefix)
+           :file sys.stderr :flush True)
+    (resume None))
+  (RecordsPrepared [address seconds]
+    (print (.format "記録の service: 表の用意が {} 秒で済んだ — {}:{} で答える" (round seconds 1) address.host address.port)
            :file sys.stderr :flush True)
     (resume None)))
 
