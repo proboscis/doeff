@@ -7,6 +7,7 @@ from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from dataclasses import fields as fields
 from datetime import datetime as datetime
+from enum import StrEnum as StrEnum
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import freeze_json as freeze_json
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
@@ -69,9 +70,20 @@ class ToolResult:
     def tool_use_ids(self) -> tuple[str, ...]:
         ...
 
+class DeltaKind(StrEnum):
+    TEXT = 'text'
+    THINKING = 'thinking'
+    TOOL_INPUT = 'tool-input'
+    OTHER = 'other'
+    NO_DELTA = 'no-delta'
+
 @dataclass(frozen=True)
 class PartialMessage:
     text_delta: str = ''
+    delta: DeltaKind = ...
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True)
 class ThinkingTokens:
@@ -238,6 +250,9 @@ def classify_result(record: dict) -> Incomplete:
     ...
 
 def classify_lifecycle(record: dict) -> Incomplete:
+    ...
+
+def delta_kind_of(delta_type: str) -> DeltaKind:
     ...
 
 def classify_stream_event(record: dict) -> Incomplete:
