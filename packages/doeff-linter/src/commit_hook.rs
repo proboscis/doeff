@@ -22,16 +22,18 @@
 //! 止める(agora-redesign #3834)。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
 //! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
 //!
-//! 子の linter は 1 回ごとに上限(既定 20 秒)を持ち、越えたら止めずに通す(速さが優先)が、黙っては通さない — どの比べの、どの木で、
-//! どの規則を、何秒の上限で打ち切ったかを 1 行で名指す(agora-redesign #2723 — 以前の「終わらなかった」の 1 行は何を確かめずに
-//! 通したかを言わず、宣言の file を変えた commit の DOEFF167 の当たりが気づかれずに main に入った)。repo 全体の比べが打ち切られても、
-//! stage した file の当たりは捨てずに止める。
+//! 子の linter は 1 回ごとに上限(既定 20 秒・0 は上限なし)を持ち、越えたら commit を止める(終了コード 1・agora-redesign #3834・
+//! 元の issue #2723)。以前は越えたら通していて、何を確かめずに通したかを 1 行で書くだけだった — 作業役は通った commit を
+//! 確かめ直さず、宣言の file を変えた commit の DOEFF167 の当たりが main に入った。止める時は、どの比べの、どの木で、どの規則を、
+//! 何秒の上限で打ち切ったかを 1 行で書き、上限なしで同じ比べをやり直す命令(unbounded_command — そのまま貼って実行できる形)と、
+//! その結果が 0 件である事を確かめてから commit し直す(--no-verify は使わない)案内を続けて出す。repo 全体の比べが打ち切られても、
+//! stage した file の当たりは捨てずに並べる。
 //! repo 全体の比べの HEAD の木の結果は置き場(head_report_cache — HEAD の commit・子の linter の版・規則の組・木の中の設定が鍵)に残し、
 //! 同じ鍵の次の hook は先端の木だけを測る(上限の秒は上げない)。
 //! HEAD の木そのものは事実の cache の根の `commit-hook-tree/<repo を表す名>/tree` に repo ごとに 1 つ置き、HEAD が進んだら git の差分で変わった
 //! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の木を測る 1 回にも事実の cache が効く・
 //! agora-redesign #3858)。
-//! 純粋な部分(規則の分け・鍵の差・止める当たりの選び・測れなかった比べの名指し)は関数に分けて、単体の検で確かめる。
+//! 純粋な部分(規則の分け・識別子の差・止める当たりの選び・測れなかった比べの文・上限なしの命令)は関数に分けて、単体のテストで確かめる。
 
 use crate::config::{CommitHookSection, Config};
 use serde_json::Value;
@@ -43,6 +45,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 子の linter 1 回ごとの既定の上限(秒)。
 pub const DEFAULT_TIMEOUT_S: u64 = 20;
+/// 上限なしを表す秒の値(引数 --commit-hook-timeout-s・設定の timeout_s)。
+pub const UNBOUNDED_TIMEOUT_S: u64 = 0;
 /// stage した path のうち linter が読む物の末尾。
 pub const LINTED_SUFFIXES: [&str; 4] = [".hy", ".hyk", ".hyp", ".py"];
 /// 出す行の頭。
@@ -211,9 +215,12 @@ pub fn violation_line(report: &Value, violation: &Value) -> String {
     format!("{}:{}: {} {}", path, line, violation["rule"].as_str().unwrap_or(""), message)
 }
 
-/// 純粋: 設定と引数から子の linter 1 回ごとの上限を決める(引数が勝つ・無ければ設定・無ければ既定)。
-pub fn resolve_timeout(section: Option<&CommitHookSection>, cli: Option<u64>) -> Duration {
-    Duration::from_secs(cli.or_else(|| section.and_then(|s| s.timeout_s)).unwrap_or(DEFAULT_TIMEOUT_S))
+/// 純粋: 設定と引数から子の linter 1 回ごとの上限を選ぶ(引数が勝つ・無ければ設定・無ければ既定)。0 秒は上限なし(None)。
+pub fn resolve_timeout(section: Option<&CommitHookSection>, cli: Option<u64>) -> Option<Duration> {
+    match cli.or_else(|| section.and_then(|s| s.timeout_s)).unwrap_or(DEFAULT_TIMEOUT_S) {
+        UNBOUNDED_TIMEOUT_S => None,
+        secs => Some(Duration::from_secs(secs)),
+    }
 }
 
 /// 純粋: 設定の enable・disable と引数を当てた有効な規則の列(ふだんの実行と同じ merge_config・None は全部の規則)。
@@ -299,7 +306,13 @@ pub struct CommitHookOptions {
     pub declarations: Declarations,
     /// 基点(HEAD の木)へ写す今の宣言の file(commit 本文の Lint-Baseline の行が在る時だけ — 空なら写さない)。
     pub overlay: Vec<String>,
-    pub timeout: Duration,
+    /// commit 本文の file(引数 --commit-message — 上限なしの命令にも同じ file を渡す)。
+    pub message: Option<PathBuf>,
+    /// 引数の --enable・--disable(上限なしの命令に同じ物を渡す)。
+    pub cli_enable: Vec<String>,
+    pub cli_disable: Vec<String>,
+    /// 子の linter 1 回ごとの上限(None = 上限なし)。
+    pub timeout: Option<Duration>,
     /// 子として撃つ linter(ふつうは今の binary)。
     pub linter: PathBuf,
     /// HEAD の木の結果の置き場の根(facts_cache の根 — None なら置き場を使わずに毎回 HEAD の木を測る)。
@@ -318,6 +331,9 @@ impl CommitHookOptions {
             declarations: declarations_of(&root, config.as_ref().map(|(c, path)| (*c, path.as_path()))),
             enabled,
             overlay: Vec::new(),
+            message: None,
+            cli_enable: cli_enable.to_vec(),
+            cli_disable: cli_disable.to_vec(),
             timeout: resolve_timeout(section, cli_timeout),
             config: config.map(|(_, path)| path),
             root,
@@ -368,11 +384,11 @@ pub struct Unmeasured {
     pub cut: Cut,
 }
 
-/// 純粋: 測れなかった比べを 1 行で名指す(何を確かめずに通したかを残す — agora-redesign #2723)。
+/// 純粋: 測れなかった比べを 1 行で書く(何を確かめずに commit を止めたか — agora-redesign #2723・#3834)。
 pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
     let Cut { side, rules, limit } = &unmeasured.cut;
     format!(
-        "{}を測れなかった — {}で当てた規則 {} 個({})の子の linter を上限 {} 秒で打ち切った。この規則の当たりは確かめないまま通す(上限 = 設定の [tool.doeff-linter.commit_hook] timeout_s)",
+        "{}を測れなかった — {}で当てた規則 {} 個({})の子の linter を上限 {} 秒で打ち切った。この規則の当たりを確かめていないので commit を止める(上限 = 設定の [tool.doeff-linter.commit_hook] timeout_s・0 は上限なし)",
         unmeasured.what,
         side.name(),
         rules.len(),
@@ -381,24 +397,57 @@ pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
     )
 }
 
+/// 純粋: shell にそのまま貼れる形の 1 語(安全な字だけならそのまま・他は ' で囲む)。
+fn shell_word(word: &str) -> String {
+    let plain = !word.is_empty() && word.bytes().all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b));
+    if plain { word.to_string() } else { format!("'{}'", word.replace('\'', "'\\''")) }
+}
+
+/// 純粋: 上限なしで同じ hook の判じをやり直す命令(作業役がそのまま貼って実行できる 1 行)— 同じ linter・同じ根・同じ設定・同じ
+/// --enable / --disable・同じ commit 本文の file に、上限なし(--commit-hook-timeout-s 0)を足す。stage は同じ index を読む。
+pub fn unbounded_command(options: &CommitHookOptions) -> String {
+    let path = |p: &Path| p.to_string_lossy().into_owned();
+    let mut words = vec![path(&options.linter), "--commit-hook".to_string(), "--root".to_string(), path(&options.root)];
+    match &options.config {
+        Some(config) => words.extend(["--config".to_string(), path(config)]),
+        None => words.push("--no-config".to_string()),
+    }
+    if !options.cli_enable.is_empty() {
+        words.extend(["--enable".to_string(), options.cli_enable.join(",")]);
+    }
+    if !options.cli_disable.is_empty() {
+        words.extend(["--disable".to_string(), options.cli_disable.join(",")]);
+    }
+    if let Some(message) = &options.message {
+        words.extend(["--commit-message".to_string(), path(message)]);
+    }
+    words.extend(["--commit-hook-timeout-s".to_string(), UNBOUNDED_TIMEOUT_S.to_string()]);
+    words.iter().map(|w| shell_word(w)).collect::<Vec<_>>().join(" ")
+}
+
+/// 純粋: 打ち切って commit を止めた時の行 — 測れなかった比べの 1 行・上限なしの命令・やり直しの案内。
+pub fn cut_lines(options: &CommitHookOptions, unmeasured: &Unmeasured) -> Vec<String> {
+    vec![
+        unmeasured_line(unmeasured),
+        format!("上限なしで同じ比べをやり直す命令: {}", unbounded_command(options)),
+        "この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない".to_string(),
+    ]
+}
+
 /// 子の linter 1 回の答え。
 #[derive(Debug)]
 pub enum Measured {
     Report(Value),
-    /// 上限を越えた(止めずに通す — 打ち切った 1 回を名指す)。
+    /// 上限を越えた(commit を止める — 打ち切った 1 回を書く)。
     TimedOut(Cut),
     /// 動かなかった・出力が JSON でない(理由)。
     Failed(String),
 }
 
-/// 子の linter を editor-json で撃ち、上限の中で終われば出力を読む。終了コード 0・1・3・4 は測れた(中身で判じる)とし、
-/// 他は理由つきの失敗。上限は撃つ前にも見る(0 秒なら撃たずに越えた扱い)。
-pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Duration) -> Measured {
-    let deadline = Instant::now() + timeout;
-    let cut = || Measured::TimedOut(Cut { side: run.side, rules: run.rules.clone(), limit: timeout });
-    if timeout.is_zero() {
-        return cut();
-    }
+/// 子の linter を editor-json で実行し、上限の中で終われば出力を読む(timeout が None なら終わるまで待つ)。終了コード 0・1・3・4 は
+/// 測れた(中身で判じる)とし、他は理由つきの失敗。
+pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Duration>) -> Measured {
+    let bound = timeout.map(|limit| (Instant::now() + limit, limit));
     let spawned = Command::new(linter)
         .args(["--output-format", "editor-json", "--no-log"])
         .args(&run.args)
@@ -426,12 +475,14 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Duration) -
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return cut();
+            Ok(None) => {
+                if let Some((_, limit)) = bound.filter(|(deadline, _)| Instant::now() >= *deadline) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Measured::TimedOut(Cut { side: run.side, rules: run.rules.clone(), limit });
+                }
+                std::thread::sleep(Duration::from_millis(20));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(error) => return Measured::Failed(format!("子の linter を待てない: {}", error)),
         }
     };
@@ -856,7 +907,7 @@ fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String],
     LintRun { side: if tree.is_some() { Side::Head } else { Side::Tip }, rules: rules.to_vec(), args }
 }
 
-/// 止める物の一覧(種類ごと)と、repo 全体の比べを上限で測れなかった時の名指し(止めない)。
+/// 止める物の一覧(種類ごと)と、repo 全体の比べを上限で測れなかった時の 1 回(これも止める)。
 #[derive(Debug, Default)]
 struct Blocking {
     staged: Vec<String>,
@@ -874,7 +925,7 @@ pub fn out_of_scope_of(report: &Value) -> Vec<String> {
     report["out_of_scope"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect()
 }
 
-/// 途中で測れなかった理由(上限越えは名指して止めない・失敗は終了コード 2)。
+/// 途中で測れなかった理由(上限越えは終了コード 1・失敗は終了コード 2)。
 enum Stop {
     TimedOut(Unmeasured),
     Failed(String),
@@ -899,7 +950,7 @@ pub struct Assessment {
     pub lines: Vec<String>,
 }
 
-/// hook の判じ(印字しない)。終了コード 0 = 通す(測れなかった時を含む — 測れなかった比べは名指す)・1 = 止める・
+/// hook の判じ(印字しない)。終了コード 0 = 通す・1 = 止める(上限で打ち切って測れなかった時を含む — 上限なしの命令を添える)・
 /// 2 = git・linter が動かなかった。
 pub fn assess(options: &CommitHookOptions) -> Assessment {
     match judge(options) {
@@ -908,7 +959,8 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                 !(blocking.staged.is_empty()
                     && blocking.fresh_critical.is_empty()
                     && blocking.grown_warnings.is_empty()
-                    && blocking.whole.is_empty()),
+                    && blocking.whole.is_empty()
+                    && blocking.unmeasured.is_none()),
             );
             let lines = blocking
                 .staged
@@ -918,12 +970,12 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                 .chain(blocking.grown_warnings.iter().map(|line| format!("major の warning が HEAD の版より増えた(stage した file の組の数): {}", line)))
                 .chain(blocking.whole.not_on_head.iter().map(|ident| format!("repo 全体の規則の HEAD に無い当たり: {}", ident)))
                 .chain(already_on_head_lines(&blocking))
-                .chain(blocking.unmeasured.iter().map(unmeasured_line))
+                .chain(blocking.unmeasured.iter().flat_map(|unmeasured| cut_lines(options, unmeasured)))
                 .chain(blocking.out_of_scope.iter().map(|path| format!("対象の外(linter が歩く範囲の外 — 層の規則はこの file を測っていない): {}", path)))
                 .collect();
             Assessment { code, lines }
         }
-        Err(Stop::TimedOut(unmeasured)) => Assessment { code: 0, lines: vec![unmeasured_line(&unmeasured)] },
+        Err(Stop::TimedOut(unmeasured)) => Assessment { code: 1, lines: cut_lines(options, &unmeasured) },
         Err(Stop::Failed(reason)) => Assessment { code: 2, lines: vec![reason] },
     }
 }
@@ -1023,7 +1075,7 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     }
 
     if !whole.is_empty() {
-        // 上限で打ち切られても、stage した file の当たりは捨てずに止め、測れなかった比べを名指す(agora-redesign #2723)。
+        // 上限で打ち切られても、stage した file の当たりは捨てずに並べ、測れなかった比べを書いて止める(agora-redesign #2723・#3834)。
         match whole_repo_hits(options, tree, whole, &tip_root, &staged) {
             Ok(hits) => blocking.whole = hits,
             Err(Stop::TimedOut(unmeasured)) => blocking.unmeasured = Some(unmeasured),
@@ -1273,11 +1325,11 @@ mod tests {
     fn commit_hook_unmeasured_line_names_the_comparison_tree_rules_and_limit() {
         let cut = Cut { side: Side::Head, rules: ids(&["DOEFF163", "DOEFF167"]), limit: Duration::from_secs(20) };
         let line = unmeasured_line(&Unmeasured { what: "HEAD の木の repo 全体の比べ".to_string(), cut });
-        for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "上限 20 秒で打ち切った", "確かめないまま通す"] {
+        for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "上限 20 秒で打ち切った", "確かめていないので commit を止める"] {
             assert!(line.contains(part), "{:?} が無い: {}", part, line);
         }
-        let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(0) };
-        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: tip }).contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter を上限 0 秒"));
+        let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(1) };
+        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: tip }).contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter を上限 1 秒"));
     }
 
     #[test]
@@ -1290,7 +1342,10 @@ mod tests {
             enabled: Vec::new(),
             declarations: Declarations::default(),
             overlay: Vec::new(),
-            timeout: Duration::from_secs(20),
+            message: None,
+            cli_enable: Vec::new(),
+            cli_disable: Vec::new(),
+            timeout: Some(Duration::from_secs(20)),
             linter: PathBuf::from("/bin/doeff-linter"),
             cache: None,
         };
@@ -1309,9 +1364,42 @@ mod tests {
     #[test]
     fn commit_hook_timeout_prefers_cli_then_config_then_default() {
         let section = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7) };
-        assert_eq!(resolve_timeout(Some(&section), Some(0)), Duration::from_secs(0));
-        assert_eq!(resolve_timeout(Some(&section), None), Duration::from_secs(7));
-        assert_eq!(resolve_timeout(None, None), Duration::from_secs(DEFAULT_TIMEOUT_S));
+        assert_eq!(resolve_timeout(Some(&section), Some(3)), Some(Duration::from_secs(3)));
+        assert_eq!(resolve_timeout(Some(&section), None), Some(Duration::from_secs(7)));
+        assert_eq!(resolve_timeout(None, None), Some(Duration::from_secs(DEFAULT_TIMEOUT_S)));
+        // 0 秒は上限なし(引数でも設定でも)。
+        assert_eq!(resolve_timeout(Some(&section), Some(0)), None);
+        assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0) }), None), None);
+    }
+
+    /// agora-redesign #3834: 上限なしの命令は、同じ linter・根・設定・--enable / --disable・commit 本文の file に上限なしを足した 1 行で、
+    /// 空白や ' を含む path も shell にそのまま貼れる形で書く。設定が無ければ --no-config。
+    #[test]
+    fn commit_hook_unbounded_command_repeats_the_same_hook_without_a_limit() {
+        let mut options = CommitHookOptions {
+            root: PathBuf::from("/repo"),
+            config: Some(PathBuf::from("/repo/pyproject.toml")),
+            enabled: Vec::new(),
+            declarations: Declarations::default(),
+            overlay: Vec::new(),
+            message: None,
+            cli_enable: Vec::new(),
+            cli_disable: Vec::new(),
+            timeout: Some(Duration::from_secs(20)),
+            linter: PathBuf::from("/bin/doeff-linter"),
+            cache: None,
+        };
+        assert_eq!(unbounded_command(&options), "/bin/doeff-linter --commit-hook --root /repo --config /repo/pyproject.toml --commit-hook-timeout-s 0");
+        options.root = PathBuf::from("/my repo/it's");
+        options.config = None;
+        options.cli_enable = ids(&["DOEFF163", "DOEFF016"]);
+        options.cli_disable = ids(&["DOEFF110"]);
+        options.message = Some(PathBuf::from("/my repo/it's/.git/COMMIT_EDITMSG"));
+        assert_eq!(
+            unbounded_command(&options),
+            "/bin/doeff-linter --commit-hook --root '/my repo/it'\\''s' --no-config --enable DOEFF163,DOEFF016 --disable DOEFF110 \
+             --commit-message '/my repo/it'\\''s/.git/COMMIT_EDITMSG' --commit-hook-timeout-s 0"
+        );
     }
 
     #[test]
