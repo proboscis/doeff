@@ -47,6 +47,10 @@ from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as Nod
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
+from doeff_cluster.coordinator.intent.due_model import DueAt as DueAt
+from doeff_cluster.coordinator.intent.due_model import DueNow as DueNow
+from doeff_cluster.coordinator.intent.due_model import DueNever as DueNever
+from doeff_cluster.coordinator.core.due_policy import due_of_instants as due_of_instants
 from doeff_hy.table import Table as Table
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
@@ -338,13 +342,13 @@ def sweep_warms(state: ClusterState, now: int) -> _Program[ClusterState, object]
 def cold_starts(before: dict, after: dict) -> _Program[int, object]:
     ...
 
-def liveness_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
+def liveness_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[DueAt | DueNow | DueNever, object]:
     ...
 
-def task_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
+def task_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[DueAt | DueNow | DueNever, object]:
     ...
 
-def sweep_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
+def sweep_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[DueAt | DueNow | DueNever, object]:
     ...
 
 def reconcile(now: int, given: ClusterState, timing: ClusterTiming) -> _Program[ClusterState, object]:

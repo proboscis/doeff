@@ -28,6 +28,10 @@ from doeff_cluster.coordinator.intent.cluster_model import LegacyJobs as LegacyJ
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
 from doeff_cluster.coordinator.core.metrics_policy import record_metrics as record_metrics
 from doeff_cluster.coordinator.core.metrics_policy import metrics_text as metrics_text
+from doeff_cluster.coordinator.intent.due_model import DueAt as DueAt
+from doeff_cluster.coordinator.intent.due_model import DueNow as DueNow
+from doeff_cluster.coordinator.intent.due_model import DueNever as DueNever
+from doeff_cluster.coordinator.core.due_policy import earliest_due as earliest_due
 from doeff_cluster.coordinator.core.cluster_policy import reconcile as reconcile
 from doeff_cluster.coordinator.core.cluster_policy import register_heartbeat as register_heartbeat
 from doeff_cluster.coordinator.core.cluster_policy import heartbeat_reply as heartbeat_reply
@@ -103,7 +107,7 @@ def tick(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[Clust
 def placement_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
     ...
 
-def tick_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[int | None, object]:
+def tick_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[DueAt | DueNow | DueNever, object]:
     ...
 ALIVE_MARK_MS: int
 
