@@ -186,7 +186,9 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
 
 
 def default_cache_dir() -> Path:
-    """既定の置き場(XDG の cache の下 — 消費 repo の木を汚さない)。"""
+    """既定の置き場 — $DOEFF_HY_CHECK_CACHE が名指す dir(走りをまたいで残る dir へ向ける呼び手のため — agora-redesign
+    #3863)、無ければ XDG の cache の下(消費 repo の木を汚さない)。"""
     from doeff_hy import env_places
 
-    return env_places.cache_home() / "doeff-hy-check"
+    configured = env_places.check_cache_setting()
+    return Path(configured) if configured else env_places.cache_home() / "doeff-hy-check"

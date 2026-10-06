@@ -350,3 +350,20 @@ def test_a_changed_doeff_hy_macro_expands_again(copied_doeff_hy: CopiedDoeffHy) 
     assert copied_doeff_hy.expanded() == 1
     _append_comment(copied_doeff_hy.package / "macros.hy")
     assert copied_doeff_hy.expanded() == 1
+
+
+# ---- 保存先(agora-redesign #3863)--------------------------------------------------------------------------
+
+
+def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 失敗ケース(#3863): 日次の検証の task は HOME を走りごとの空の dir に替えるので、XDG の cache の下の保存先は毎回空で、
+    # 全部の .hy を展開し直していた。DOEFF_HY_CHECK_CACHE が名指す dir を保存先にし、走りをまたいで残る dir へ向けられる
+    # ようにする(テストの実行の側の DOEFF_HY_CODE_STORE・doeff-effect-analyzer の DOEFF_EFFECT_ANALYZER_CACHE と同じ形)。
+    from doeff_hy.static_cache import default_cache_dir
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert default_cache_dir() == tmp_path / "xdg" / "doeff-hy-check"
+    monkeypatch.setenv("DOEFF_HY_CHECK_CACHE", str(tmp_path / "kept"))
+    assert default_cache_dir() == tmp_path / "kept"
