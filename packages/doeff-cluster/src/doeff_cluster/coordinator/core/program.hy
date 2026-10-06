@@ -44,6 +44,7 @@
 (import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable StartKubeReads CollectKubeReads
                                                      KubeReadsIdle KubeReadsRunning KubeReadsDone])
 (import doeff_core_effects.effects [slog])
+(import doeff_core_effects.scheduler [Spawn])
 (import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-moves liveness-now note-liveness])
 
@@ -174,6 +175,15 @@
   (len events))
 
 
+(defk announced-aside [events]
+  {:pre [(: events tuple)] :post [(: % None)] :tags {:context "coordinator" :role "program"}}
+  "worker の生死の出来事を、調停の歩の外の task で出すため(#3864 — 知らせの broker が答えない間も、coordinator の歩と要求への返事を
+   止めない)。出る順は doeff-events の包みの 1 本の出口が守る(後から出した task は前の task の後に並ぶ)。出来事が無い歩は task を作らない。"
+  (when events
+    (<- (Spawn (announce-liveness events))))
+  None)
+
+
 (defk coordinator-step [state timing naming watchers]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)] :post [(: % tuple)]}
   ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ 1 秒待つ)→ 1 件ずつ判断 → Rollout(1 秒ごと)→ 永続化 → 全員に返事。
@@ -195,7 +205,7 @@
                       (when (or step.marked step.beats)
                         (<- (SaveState base step.state)))
                       ;; worker の生死が変わった歩なら、保存の後にその出来事を出す(#3864 — 飛ばした区間も歩ごとに比べる)。
-                      (<- (announce-liveness (! (liveness-moves base step.state timing))))
+                      (<- (announced-aside (! (liveness-moves base step.state timing))))
                       (:= base step.state)
                       (:= held step.watchers))
                     (:= batch taken.batch))
@@ -224,7 +234,7 @@
   (:= next marked)
   (<- (SaveState base next))
   ;; worker の生死の出来事は保存の後に出す(#3864)。
-  (<- (announce-liveness (! (liveness-moves base next timing))))
+  (<- (announced-aside (! (liveness-moves base next timing))))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。
@@ -258,7 +268,7 @@
   ;; 変わらない。受け手の追いつきにも成る)。以後の歩は、変わった所だけを出す。
   (<- started int (now-epoch-ms))
   (:= current (note-liveness current started timing))
-  (<- (announce-liveness (! (liveness-now current timing))))
+  (<- (announced-aside (! (liveness-now current timing))))
   (while True
     (<- stopping bool (CoordinatorStopRequested))
     (when stopping

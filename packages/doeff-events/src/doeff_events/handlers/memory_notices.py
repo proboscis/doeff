@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Final, final
 
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
 
-from doeff import K, Pass, Resume, do
+from doeff import K, Pass, Pure, Resume, do
 from doeff import handler as _program_handler
 from doeff_events.effects.notices import (
     Announce,
@@ -71,15 +71,36 @@ class _Listener:
 @final
 class MemoryBroker:
     """The state of an in-memory notice broker. Programs never see it; ``memory_notice_handler`` is its only
-    user, and ``cut_broker`` / ``restore_broker`` are the test controls."""
+    user, and ``cut_broker`` / ``restore_broker`` / ``hold_broker`` / ``release_broker`` are the test controls."""
 
-    __slots__ = ("_mut_back_waiters", "_mut_down", "_mut_listeners")
+    __slots__ = ("_mut_back_waiters", "_mut_down", "_mut_held", "_mut_listeners")
 
     def __init__(self) -> None:
         """Start a reachable broker with no subscriber."""
         self._mut_listeners: tuple[_Listener, ...] = ()
         self._mut_back_waiters: tuple[Promise[object], ...] = ()
         self._mut_down: BrokerUnreachable | None = None
+        # While held (``hold_broker``): the sends and tries waiting for an answer that does not come.
+        self._mut_held: tuple[Promise[object], ...] | None = None
+
+    @property
+    def held(self) -> bool:
+        """Whether the broker keeps its connections but answers no send (``hold_broker``)."""
+        return self._mut_held is not None
+
+    def hold_waiter(self, promise: Promise[object]) -> None:
+        """Register a send waiting for an answer while the broker is held."""
+        self._mut_held = (*(self._mut_held or ()), promise)
+
+    def hold(self) -> None:
+        """Keep every connection but answer no send from now on."""
+        if self._mut_held is None:
+            self._mut_held = ()
+
+    def release(self) -> tuple[_Wake, ...]:
+        """Answer sends again; the ones that waited go on."""
+        waiting, self._mut_held = self._mut_held or (), None
+        return tuple(_Wake(promise, None) for promise in waiting)
 
     @property
     def down(self) -> BrokerUnreachable | None:
@@ -148,6 +169,21 @@ def cut_broker(broker: MemoryBroker, detail: str) -> "EffectGenerator[None]":
 
 
 @do
+def hold_broker(broker: MemoryBroker) -> "EffectGenerator[None]":
+    """Test control: the broker keeps every connection but stops answering sends (``Announce``, ``ProbeBroker``) —
+    a server that hangs, or a network that went silent. Subscriptions stay as they are."""
+    broker.hold()
+    yield Pure(None)
+
+
+@do
+def release_broker(broker: MemoryBroker) -> "EffectGenerator[None]":
+    """Test control: the held broker answers sends again; those that waited are answered now."""
+    for wake in broker.release():
+        yield CompletePromise(wake.promise, wake.value)
+
+
+@do
 def restore_broker(broker: MemoryBroker) -> "EffectGenerator[None]":
     """Test control: bring ``broker`` back, so that everyone waiting for it goes on."""
     for wake in broker.restore():
@@ -172,6 +208,11 @@ def memory_notice_handler(broker: MemoryBroker) -> "ProgramHandler":
         for its return and the close."""
         answer: object = None
         wakes: tuple[_Wake, ...] = ()
+        if isinstance(effect, Announce | ProbeBroker) and broker.held:
+            # A held broker answers no send until it is released (whoever waits must have a time limit of its own).
+            unanswered: Promise[object] = yield CreatePromise()
+            broker.hold_waiter(unanswered)
+            yield Wait(unanswered.future)
         match effect:
             case AwaitBrokerBack():
                 if broker.down is not None:
