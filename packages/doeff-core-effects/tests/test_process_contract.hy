@@ -23,7 +23,10 @@
 ;;; 本物だけの性質(WorkingDirectory が自分の process の作業 dir)と fake だけの性質(job ごとの作業 dir・台本から台本を走らせる・
 ;;; 台本が env None を None で受ける)は test_process_file_effects.hy。
 (require doeff-hy.macros [defk deftest <- val var])
+(import contextlib)
 (import os)
+(import signal)
+(import sys)
 (import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
@@ -494,3 +497,91 @@
   (<- big str (ReadText (+ root "/big")))
   (assert (= exited (ProcessExited :pid started.pid :exit-code 0)) exited)
   (assert (= (len big) (len BIG-OUTPUT-TEXT)) (.format "子の出力の長さ {}" (len big))))
+
+
+;; ---- 起こした process が終わったら、その子も終わる(StartProcess の lifetime — agora-redesign #3866)------------------------------------
+;; 起こす側は別の process(lifeline_starter.py — 本物の答え手で子を StartProcess する)で、検はそれを外から止める・普通に終わらせる。
+;; 片づけ(StopProcess)を走らせずに起こした側が終わっても、子と、子が別の session に起こした孫が残らない。lifetime を OUTLIVES-STARTER
+;; と書いた子だけは残る。台本の世界に別の process は無いので本物の答え手だけ。検が赤の時も process を残さないよう、断言の前に残りを止める。
+
+(val STARTER (os.path.join (os.path.dirname (os.path.abspath __file__)) "lifeline_starter.py"))
+
+
+(defk killed-leftovers [pids]
+  {:pre [(: pids tuple)] :post [(: % None)] :tags {:context "process-test" :role "program"}}
+  "検が見つけた pid のうち、まだ生きている物を SIGKILL する — 赤の検が起こした process を残さないため(この検の子ではないので
+   SignalProcess は ProcessNotChild と答える)。"
+  (for [pid pids]
+    (with [(contextlib.suppress ProcessLookupError)]
+      (os.kill pid signal.SIGKILL)))
+  None)
+
+
+(defk starter-and-child [mode root child-out]
+  {:pre [(: mode str) (: root str) (: child-out str)] :post [(: % tuple)] :tags {:context "process-test" :role "program"}}
+  "起こす側を mode で立て、起こす側が書いた子の pid を待って読む。答え = #(起こす側の pid 子の pid)。"
+  (val out (+ root "/child-" mode))
+  ;; first-line-of は在る file を読み直すので、起こす側が書く前に空で置く。
+  (<- (WriteText out ""))
+  (when (!= child-out "-") (<- (WriteText child-out "")))
+  (<- started (StartProcess :argv #(sys.executable STARTER mode out child-out)))
+  (assert (isinstance started ProcessStarted) started)
+  (<- child str (first-line-of out))
+  #(started.pid (int child)))
+
+
+(deftest test-a-child-ends-when-its-starter-is-killed
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (<- root str (ContractRoot))
+  (<- pids tuple (starter-and-child "hold" root "-"))
+  (val starter (get pids 0))
+  (val child (get pids 1))
+  (<- (SignalProcess :pid starter :signal ProcessSignal.KILL))
+  (<- (exited-soon starter))
+  (<- gone bool (gone-soon child))
+  (<- (killed-leftovers #(child)))
+  (assert gone (.format "起こした側を SIGKILL した後も、子(pid {})が生きている" child)))
+
+
+(deftest test-a-child-ends-when-its-starter-exits-without-stopping-it
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (<- root str (ContractRoot))
+  (<- pids tuple (starter-and-child "exit" root "-"))
+  (val starter (get pids 0))
+  (val child (get pids 1))
+  (<- exited (exited-soon starter))
+  (<- gone bool (gone-soon child))
+  (<- (killed-leftovers #(child)))
+  (assert (= exited (ProcessExited :pid starter :exit-code 0)) exited)
+  (assert gone (.format "起こした側が StopProcess を呼ばずに終わった後も、子(pid {})が生きている" child)))
+
+
+(deftest test-a-grandchild-in-another-session-ends-with-the-first-starter
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  ;; 子(起こす側 hold)が更に孫を新しい session に StartProcess する。一番上の起こす側を SIGKILL すると、子も孫も残らない。
+  (<- root str (ContractRoot))
+  (val grand-out (+ root "/grandchild"))
+  (<- pids tuple (starter-and-child "hold" root grand-out))
+  (val starter (get pids 0))
+  (val child (get pids 1))
+  (<- grandchild str (first-line-of grand-out))
+  (<- (SignalProcess :pid starter :signal ProcessSignal.KILL))
+  (<- (exited-soon starter))
+  (<- child-gone bool (gone-soon child))
+  (<- grandchild-gone bool (gone-soon (int grandchild)))
+  (<- (killed-leftovers #(child (int grandchild))))
+  (assert child-gone (.format "一番上の起こす側を SIGKILL した後も、子(pid {})が生きている" child))
+  (assert grandchild-gone (.format "一番上の起こす側を SIGKILL した後も、別の session の孫(pid {})が生きている" grandchild)))
+
+
+(deftest test-a-child-that-outlives-its-starter-is-left-running
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (<- root str (ContractRoot))
+  (<- pids tuple (starter-and-child "outlive" root "-"))
+  (val starter (get pids 0))
+  (val child (get pids 1))
+  (<- exited (exited-soon starter))
+  (<- gone bool (gone-soon child))
+  (<- (killed-leftovers #(child)))
+  (assert (= exited (ProcessExited :pid starter :exit-code 0)) exited)
+  (assert (not gone) (.format "OUTLIVES-STARTER の子(pid {})が、起こした側の終わりで止まった" child)))

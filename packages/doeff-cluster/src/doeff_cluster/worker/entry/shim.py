@@ -49,6 +49,7 @@ from types import FrameType
 
 from doeff_cluster.foundation.process_environ import child_environ
 from doeff_cluster.worker.entry.line_stamp import OutputLines, RawLines, stamped_lines
+from doeff_lifeline import Group, Single, Target, watched_until_eof
 
 # 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
 # 版をまたいで名前で読む)。
@@ -222,7 +223,11 @@ def parent_of(pid: int) -> int | None:
 
 def children_of(parent: int) -> tuple[int, ...]:
     """PPid が parent の process を /proc の走査で並べる(名前・session・group・環境では探さない)。"""
-    return tuple(pid for pid in (int(name) for name in os.listdir("/proc") if name.isdigit()) if parent_of(pid) == parent)
+    return tuple(
+        pid
+        for pid in (int(name) for name in os.listdir("/proc") if name.isdigit())
+        if parent_of(pid) == parent
+    )
 
 
 def killed(pid: int) -> bool:
@@ -284,17 +289,19 @@ def relayed(relay: NoticeRelay | None, line: bytes) -> None:
         os.write(relay.write_fd, line)
 
 
+def worker_gone(leads_group: bool) -> tuple[Target, ...]:
+    """worker の消失(stdin の EOF)で止めの合図を送る相手: group の先頭なら自分の group(job にも届く)、そうでなければ自分だけ。"""
+    print("shim: worker が消えたので job を止めます", file=sys.stderr, flush=True)
+    return (Group(os.getpid()),) if leads_group else (Single(os.getpid()),)
+
+
 def watch_parent(leads_group: bool, relay: NoticeRelay | None) -> None:
     """worker の標準入力を行ごとに読み、退きの知らせの行を job の知らせの pipe へ中継し(#3672)、worker の消失(stdin の EOF — kill -9 を
-    含む)で止めの合図を自分へ送る(group の先頭なら group へ — job にも届く)。期限と片づけは main thread が受け持つ(この thread は
-    回収しない)。"""
-    for line in iter(sys.stdin.buffer.readline, b""):
-        relayed(relay, line)
-    print("shim: worker が消えたので job を止めます", file=sys.stderr, flush=True)
-    if leads_group:
-        os.killpg(os.getpid(), signal.SIGTERM)
-    else:
-        os.kill(os.getpid(), signal.SIGTERM)
+    含む)で止めの合図を自分へ送る。読みと EOF の合図は、StartProcess の見張りと同じ本体(doeff-core-effects の doeff_lifeline の
+    watched_until_eof — #3866)。期限と片づけは main thread が受け持つ(この thread は回収しない)。"""
+    watched_until_eof(
+        sys.stdin.buffer, lambda line: relayed(relay, line), lambda: worker_gone(leads_group)
+    )
 
 
 class PopenSpawner:
@@ -321,7 +328,10 @@ class PopenSpawner:
                 # 環境の組は foundation の生の読み(child_environ — この process の環境に名を足す)が組む(入口は環境変数に直に触らない)。
                 notice = NoticeVariable(name=name, value=f"{read_fd}:{os.fstat(read_fd).st_ino}")
                 self._mut_child = subprocess.Popen(
-                    self.command, stdin=subprocess.DEVNULL, pass_fds=(read_fd,), env=child_environ((), (notice,))
+                    self.command,
+                    stdin=subprocess.DEVNULL,
+                    pass_fds=(read_fd,),
+                    env=child_environ((), (notice,)),
                 )
                 # 読み口は job だけが持つ(shim が写しを持ち続けると、job が終わった後も書きが詰まらずに溜まる)。
                 os.close(read_fd)
@@ -329,7 +339,12 @@ class PopenSpawner:
 
 
 def shim_code(
-    grace: float, spawn: Callable[[], int], lines: OutputLines, adopt: Callable[[], Adoption], *, relay: NoticeRelay | None
+    grace: float,
+    spawn: Callable[[], int],
+    lines: OutputLines,
+    adopt: Callable[[], Adoption],
+    *,
+    relay: NoticeRelay | None,
 ) -> int:
     """job を起こし、3 つの道のどれかで片づけるまで見張って、job の終了コード(signal で終わったなら負)を返すため。grace = 止めの合図から
     job を待つ猶予(秒)・spawn = job を起こして pid を返す部品(本物の shim は PopenSpawner — 待ちの子から分かれた子は、読み込み済みの
@@ -343,7 +358,11 @@ def shim_code(
         adoption = adopt()
         match adoption:
             case NotAdopting(reason=reason):
-                print(f"shim: 子孫の引き取りを使えないので、process group への合図だけで止めます({reason})", file=sys.stderr, flush=True)
+                print(
+                    f"shim: 子孫の引き取りを使えないので、process group への合図だけで止めます({reason})",
+                    file=sys.stderr,
+                    flush=True,
+                )
             case Adopting():
                 pass
         # group へ送ってよいのは shim が group の先頭の時だけ(worker は start_new_session で起動する)。
@@ -384,7 +403,9 @@ def shim_flags(flags: list[str]) -> ShimFlags:
                 raise SystemExit(f"shim: 旗 --notice-env が 2 度ある {flags}")
             return ShimFlags(stamp_lines=tail.stamp_lines, notice_env=name)
         case _:
-            raise SystemExit(f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines と --notice-env <名> だけ)")
+            raise SystemExit(
+                f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines と --notice-env <名> だけ)"
+            )
 
 
 def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:

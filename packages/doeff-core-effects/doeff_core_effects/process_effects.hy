@@ -62,6 +62,11 @@
 ;;;                     読む(doeff-cluster の worker の shim は EOF で job の group を止める — worker が kill -9 で死んでも job が残らない)。
 ;;;                     PollProcess / StopProcess が子を回収した時に閉じる。reap-group(#2471・既定 False): process-group で立てた子の終わりを
 ;;;                     回収する時に、その group に残った process(背景に回った孫)へ SIGKILL を送る。
+;;;                     lifetime(#3866・閉じた型 ChildLifetime・既定 WITH-STARTER): 起こした process が終わると(SIGKILL・片づけを走らせない
+;;;                     終わりを含む)、子も終わる — process-group の子は group ごと、そうでない子はその process だけ。本物の答え手は
+;;;                     process に 1 つの見張り(doeff-core-effects の doeff_lifeline)を最初の StartProcess の時に起こし、立てた子を知らせる。
+;;;                     見張りは起こした process の終わりを pipe の EOF で知り、TERM → 猶予 10 秒 → KILL。OUTLIVES-STARTER の子は
+;;;                     知らせない(起こした process の後も走る)。
 ;;;   PollProcess       立てた子を待たずに 1 度だけ問う。答え = ProcessRunning・ProcessExited(終了 code — 答えた時に回収し、その pid を忘れる)・
 ;;;                     ProcessNotChild(この答え手が立てた子でない pid)。
 ;;;   StopProcess       立てた子を止めて回収する: process-group なら group へ、そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL。
@@ -94,6 +99,12 @@
 
 ;; RunProcess の env の tuple の扱い(頭の註): REPLACE = 子の環境変数の全部・EXTEND = 呼び手の環境を継いで足す。
 (defenum EnvMode REPLACE EXTEND)
+
+
+;; StartProcess で立てた子が、起こした process の終わりの後にどうなるか(頭の註・agora-redesign #3866): WITH-STARTER(既定)= 起こした
+;; process が終わると(SIGKILL を含む)子も終わる・OUTLIVES-STARTER = 起こした process が終わっても子は走り続ける(書くのは理由を持つ
+;; 使い手の 1 か所だけ — merge-queue の着地の窓)。
+(defenum ChildLifetime WITH-STARTER OUTLIVES-STARTER)
 
 
 (defrecord EnvEntry
@@ -235,7 +246,9 @@
   #^ bool hold-stdin
   (setv hold-stdin False)
   #^ bool reap-group
-  (setv reap-group False))
+  (setv reap-group False)
+  #^ ChildLifetime lifetime
+  (setv lifetime ChildLifetime.WITH-STARTER))
 
 
 (defclass [(dataclass :frozen True)] PollProcess [EffectBase]
