@@ -274,3 +274,27 @@
   (assert (!= (get third 0) (get first 0)) got)
   (assert (not (get third 1)) got)
   (assert (= repeated "") got))
+
+
+(defk first-read-bell [link]
+  {:pre [(: link LinkRig)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起動の直後の最初の読み(待ちの口をまだ確かめていない)の呼び鈴と、待ちが最初に「変わった」と答えた後のその呼び鈴: #(読んだ時に待ちを
+   確かめていたか 呼び鈴の番号 鳴ったか)。"
+  (<- first DesiredJobs (ReadDesired))
+  (val confirmed-at-read link.state.watch.confirmed)
+  (<- (settle (fn [] link.state.watch.woken)))
+  (<- rung tuple (bell-of first))
+  (setv link.state.watch.closing True)
+  #(confirmed-at-read (get rung 0) (get rung 1)))
+
+
+(deftest test-the-first-read-before-the-watch-is-confirmed-carries-a-bell-the-first-change-rings [tmp-path]
+  ;; 起動の直後の最初の読みは、待ちの口を確かめる前でも呼び鈴を添え、待ちの最初の「変わった」で鳴る(#3871 の単位 4 の後 — 周期の周が
+  ;; 無いので、呼び鈴が無いと次の heartbeat の期限まで宣言の変化に気づかない。cc3-w56 が単位 5 で見つけた)。待ちの口の無い coordinator
+  ;; では鳴らないだけで、heartbeat の期限で起きる(test-the-link-adds-the-heartbeat-deadline-even-without-the-watch)。
+  (val coordinator (FakeCoordinator "changed"))
+  (val link (! (watching-link coordinator tmp-path)))
+  (val got (! (on-link link (first-read-bell link))))
+  (assert (not (get got 0)) got)
+  (assert (is-not (get got 1) None) got)
+  (assert (get got 2) got))
