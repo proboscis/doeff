@@ -419,6 +419,9 @@ dev = [
     # 実 PostgreSQL の検(doeff-core-effects の extra postgres・doeff-records の extra pg と同じ psycopg)を、日次と手元の dev の環境でも
     # 走らせる — 検が使い捨ての PostgreSQL を自分で立てても、psycopg が無いと skip か import の失敗になる(agora-redesign #2830)。
     "psycopg>=3.1",
+    # 実 Redis の検(doeff-events の extra redis と同じ client)を、日次と手元の dev の環境でも走らせる — client が無いと、redis-server の
+    # 実行 file が在っても本物を相手にする検が import で落ちる(agora-redesign #3850)。
+    "redis>=5.0",
     "hy>=1.2.0",
     "doeff-hy",
     "doeff-adr",
