@@ -197,5 +197,5 @@
     (<- due (| DueAt DueNow DueNever) (next-tick-due gathered.due (bool settling)))
     (<- counted int (count-unsettled-ticks streak due fired))
     (:= streak counted)
-    ;; 周の間の待ちは答え手が決める(本番 = tick-pauses の 1 本の待ち・模擬の時計の下の宿は静かな周を一度に眠れる — #2781)。
-    (<- (AwaitNextTick policy (get ticked 2) (replace gathered :due due) state :stopping stopping))))
+    ;; 周の間の待ちは答え手 tick-pauses の 1 本の待ち(本番の組も模擬の世界の宿も同じ — #3871 の単位 4・5)。
+    (<- (AwaitNextTick policy (get ticked 2) (replace gathered :due due) :stopping stopping))))

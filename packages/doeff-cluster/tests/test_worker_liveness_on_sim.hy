@@ -1,7 +1,6 @@
 ;; worker の生死の出来事を、模擬の世界(sim-cluster — 本物の coordinator と本物の worker を仮想の時計で回す)で受ける側から確かめる
 ;; 失敗ケース(#3864)。筋書きの Program が coordinator と同じ知らせの broker(SimParts.broker)を読む受け手になる。
 ;;   1・3 worker の処理を期限より長く止めると、期限を越えた歩で WorkerGone が 1 度、戻ると WorkerBack が 1 度(重ねて出ない)。
-;;   5 静かな区間を飛ばす模擬(skip-idle 真)でも、1 歩ずつ走らせた時(偽)と同じ刻・同じ数の出来事。
 ;;   6 broker が止まっている間に期限が切れても coordinator は止まらず、broker が戻った後、受け手は追いつきの合図を受けて、
 ;;     coordinator の状態から worker が居ない事を読める(模擬の broker は全員を切るので、受け手も繋ぎ直す。受け手が繋がったままの形は
 ;;     doeff-events の GAP_LAWS が持つ)。
@@ -106,12 +105,6 @@
   (<- heard tuple (sim-cluster (pulses sim-foundation) (stall-and-hear-on broker) :timing (ClusterTiming) :workers WORKERS
                                :notice-broker broker))
   (<- (gone-then-back heard)))
-
-
-(deftest test-skipping-quiet-steps-tells-the-same-events-at-the-same-times
-  (<- skipping tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle True))
-  (<- stepping tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle False))
-  (assert (= skipping stepping) #(skipping stepping)))
 
 
 (defk catches-up-after-an-outage [broker]

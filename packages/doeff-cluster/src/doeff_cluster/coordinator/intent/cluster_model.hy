@@ -1120,16 +1120,6 @@
 
 ;; --- effect ----------------------------------------------------------------------
 
-(defrecord ProvisionalBeat
-  "worker の代役(模擬の時計の下の宿)が、静かな間に眠る前に預けた仮の heartbeat 1 つ(#2790): at = 1 拍ずつの走りで worker がその
-   heartbeat を送る刻・request = その刻に送る POST /heartbeat の要求(本文は宿が本物の heartbeat と同じ綴りで組んだ物)・name = 送り手の
-   worker の名(返事を worker の最後の返事と比べる鍵)。模擬の受付の列が、その刻に普通の heartbeat の要求として調停ループへ渡す
-   (調停ループは本番と同じ要求しか受けない・#3865)。"
-  (#^ int at)
-  (#^ Request request)
-  (#^ str name))
-
-
 (defclass [(dataclass :frozen True)] CoordinatorFault [EffectBase]
   "coordinator の中の欠陥(Fault)を log に 1 行出す。結果は None。本番の受け口(coordinator_inbox.http-requests)は stderr へ、
    模擬の受け口(coordinator.protocol.request_queue.queued-requests)は列の faults へ書く。"

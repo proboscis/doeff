@@ -31,7 +31,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.replicas [with-replicas])
 (import tests.fixtures.event_programs [stop-minders stop-ignorers])
-(import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
+(import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 late-handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
@@ -246,8 +246,9 @@
 
 
 (deftest test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready
-  ;; handoff: 新を旧と並べて起こし、coordinator が新の世代を Ready と数えた後に旧を止める(引数 every を変えた版)。
-  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
+  ;; handoff: 新を旧と並べて起こし、coordinator が新の世代を Ready と数えた後に旧を止める(引数 every を変えた版)。止まりの刻を試すので
+  ;; 本番の時間の設定(:timing)で回す — worker は周期で起きず、旧を止める答えを次の heartbeat で受ける(#3871 の単位 5)。
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (handoff-beacons sim-foundation)
                                    (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)))
   (assert (= (len changed.after.processes) 2) changed.after.processes)
   (val old (get changed.after.processes 0))
@@ -277,10 +278,12 @@
 
 (deftest test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1
   ;; 反例(条 W1): 入れ替えで旧を名から外す handler(RetireJob)が外すと同時に旧を止める壊れた worker(retire-stops)では、新が Ready に
-  ;; なるまで Ready の書き手が居ない区間ができ、W1 の判断が空白を返す — 本物の handler が旧を動かし続けていることの裏返し。
+  ;; なるまで Ready の書き手が居ない区間ができ、W1 の判断が空白を返す — 本物の handler が旧を動かし続けていることの裏返し。新の版は
+  ;; 起き上がりに 1 秒かかる(本番の子の import と起動の間 — 模擬の子は起きた刻に報告するので、worker がすぐ起きると空白が 0 ms になる・
+  ;; #3871 の単位 5)。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :retire-stops True :task-reserve 0)))
-  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
-                                   (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (handoff-beacons sim-foundation)
+                                   (redeclare-and-watch (late-handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)
                                    :workers workers))
   (<- lifetimes tuple (writer-lifetimes changed.after))
   (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))

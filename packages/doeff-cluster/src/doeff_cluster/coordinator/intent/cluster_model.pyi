@@ -741,12 +741,6 @@ class WatchStep:
     answer: WatchAnswer | None
     watcher: Watcher
 
-@dataclass(frozen=True, kw_only=True)
-class ProvisionalBeat:
-    at: int
-    request: Request
-    name: str
-
 @dataclass(frozen=True)
 class CoordinatorFault(EffectBase):
     fault: Fault
