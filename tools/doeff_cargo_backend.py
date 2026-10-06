@@ -19,9 +19,9 @@ wheel の置き場(state/wheels/<package>-<鍵>/ と .used — shared/core/nativ
 確かめ、壊れていれば名指しの 1 行を出してその wheel を除き、組み直す(黙って壊れた物を使わない)。
 
 報告(_write_report): env DOEFF_WHEEL_REPORT が在れば、その file に 1 行の JSON {"project": <package の名>, "wheel": <保存先の中の
-wheel の path>, "built": <この呼び出しが組んだか>} を足す。doeff-cluster の worker(実行環境の準備と起動の script)は `uv build --wheel` で
-この口を通り、保存先の中の wheel をこの行で知って入れる — 自前の鍵と置き場を持たない(読み手は shared/core/native_wheel.py の
-stored_wheel_of・#3860)。
+wheel の path>, "built": <この呼び出しが組んだか>} を足す。doeff-cluster の worker(実行環境の準備と起動の script)は `uv build --wheel
+--out-dir` でこの口を通り、出た wheel を入れる — 自前の鍵と置き場を持たない。報告は組んだかを見るためだけに使う(読み手は
+shared/core/native_wheel.py の reported_built・報告を書かない版の口なら組んだかは UNREPORTED・#3860)。
 
 cargo の target: 組む時だけ、package の dir の外の 1 回の build ごとの一時の dir に置き、wheel を作ったら消す(#1493)。1 つの共有の
 target にしない理由: cargo は source の file の時刻で新旧を判定し、成果物を workspace の中の相対 path で名付ける。2 つの作業木が 1 つの
@@ -69,7 +69,7 @@ TEMP_PREFIX = "doeff-cargo-target-"
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
 # 保存先の中の wheel と組んだかを 1 行の JSON で足す file を指す env(頭の註の報告 — 無ければ書かない)。
 WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
-# 保存先の dir の使った印(dir の時刻を進める — 掃除は dir の時刻を読む)。worker の native_wheel.WHEEL_USED と同じ名。
+# 保存先の dir の使った印(dir の時刻を進める — worker の掃除は 7 日使われない dir を dir の時刻で選ぶ)。
 USED_MARK = ".used"
 # tool.uv.cache-keys の file を宣言しない package の、組みに効く file の既定(package の dir からの glob)。
 DEFAULT_SOURCE_GLOBS = ("pyproject.toml", "Cargo.toml", "Cargo.lock", "build.rs", "src/**/*")

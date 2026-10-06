@@ -18,6 +18,7 @@ from doeff_cluster.shared.core.runtime_env_rules import env_failure as env_failu
 from doeff_cluster.shared.core.runtime_env_rules import root_split as root_split
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
+from doeff_cluster.shared.core.native_wheel import wheel_out_dir as wheel_out_dir
 from doeff_cluster.worker.intent.env_prepare_model import PrepareRequest as PrepareRequest
 from doeff_cluster.worker.intent.env_prepare_model import StageTime as StageTime
 from doeff_cluster.worker.intent.env_prepare_model import StagePart as StagePart
@@ -28,6 +29,7 @@ from doeff_cluster.worker.intent.env_prepare_model import MirrorReady as MirrorR
 from doeff_cluster.worker.intent.env_prepare_model import FetchState as FetchState
 from doeff_cluster.worker.intent.env_prepare_model import RepoMirror as RepoMirror
 from doeff_cluster.worker.intent.env_prepare_model import EnvMarker as EnvMarker
+from doeff_cluster.worker.intent.env_prepare_model import WheelOrigin as WheelOrigin
 from doeff_cluster.worker.intent.env_prepare_model import WheelReady as WheelReady
 from doeff_cluster.worker.intent.env_prepare_model import SyncReport as SyncReport
 from doeff_cluster.worker.intent.env_prepare_model import BytecodeTree as BytecodeTree
@@ -96,6 +98,9 @@ def stage_trees(request: PrepareRequest, state: PrepareState) -> _Program[Prepar
     ...
 
 def stage_lock(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:
+    ...
+
+def built_count(counted: int | None, origin: WheelOrigin) -> _Program[int | None, object]:
     ...
 
 def stage_native(request: PrepareRequest, state: PrepareState) -> _Program[PrepareState | EnvFailure, object]:

@@ -39,12 +39,12 @@
                                          MakeDirectory ListDirectory WalkTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
-(import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV StoredWheel stored-wheel-of uv-environment :as uv-variables wheel-lock wheels-root])
+(import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -354,28 +354,51 @@
           (.hexdigest (hashlib.sha256 content)))))
 
 
-(defk wheel-of [package source-dir state-dir uv-cache uv]
-  {:pre [(: package str) (: source-dir str) (: state-dir str) (: uv-cache str) (: uv str)]
+(defk wheel-in [out-dir]
+  {:pre [(: out-dir str)] :post [(: % (| str None))]}
+  "uv build が --out-dir に出した wheel の file の path を求めるため(名の順の先頭・無ければ None)。"
+  (<- listed (| tuple FileFailed) (ListDirectory out-dir))
+  (<- entries tuple (settled listed "wheel の --out-dir を読めない"))
+  (val names (sorted (gfor e entries :if (.endswith e.name ".whl") e.name)))
+  (if names (posixpath.join out-dir (get names 0)) None))
+
+
+(defk origin-of-report [reported]
+  {:pre [(: reported (| bool NotReported))] :post [(: % WheelOrigin)]}
+  "build の口の報告の観測(native_wheel.reported-built の答え)を wheel の用意の由来の閉じた型にするため。"
+  (match reported
+    True WheelOrigin.BUILT
+    False WheelOrigin.STORED
+    (NotReported) WheelOrigin.UNREPORTED))
+
+
+(defk wheel-of [package source-dir out-dir state-dir uv-cache uv]
+  {:pre [(: package str) (: source-dir str) (: out-dir str) (: state-dir str) (: uv-cache str) (: uv str)]
    :post [(: % (| WheelReady EnvFailure))]}
-  "native の wheel を build の口の保存先から用意するため: `uv build --wheel` で source-dir を口へ渡し(口が source の中身の鍵で保存先を
-   引き、無い時だけ組む — 自前の鍵は持たない・#3860)、口が報告の file に書いた保存先の中の wheel と組んだかを答える。uv の --out-dir の
-   写しと報告の file は state の wheels の下の一時の dir に置き、読んだら消す。signal での終了(OOM の kill 等)は一時、compiler の誤りと
-   口の報告が読めない事は恒久の native-build-failed。"
-  (<- name str (digest16 source-dir))
-  (val scratch (posixpath.join (wheels-root state-dir) (+ ".build-" name)))
-  (<- (remove-if-present scratch))
-  (<- made (| None FileFailed) (MakeDirectory scratch))
-  (<- (settled made "wheel の組みの一時の dir を作れない"))
-  (val report (posixpath.join scratch "report.jsonl"))
+  "native の wheel を build の口を通して用意するため: `uv build --wheel --out-dir out-dir` で source-dir を口へ渡し(口が source の中身の
+   鍵で保存先を引き、無い時だけ組む — 自前の鍵は持たない・#3860)、uv が out-dir に出した wheel の file を答える(どの版の口でも出る)。
+   口が報告の file(out-dir の隣・読んだら消す)に書く「組んだか」は観測だけ — 報告の約束の無い版の口(宣言の古い doeff の root)は
+   書かないので、その時は WheelOrigin の UNREPORTED(準備は止めない)。signal での終了(OOM の kill 等)は一時、compiler の誤り・wheel が
+   出ない・報告の行の形が違う事は恒久の native-build-failed。"
+  (<- (remove-if-present out-dir))
+  (<- made (| None FileFailed) (MakeDirectory out-dir))
+  (<- (settled made "wheel の --out-dir を作れない"))
+  (val report (+ out-dir ".report.jsonl"))
+  (<- (remove-if-present report))
   (<- env tuple (uv-environment state-dir uv-cache))
-  (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" (posixpath.join scratch "out") source-dir) source-dir
+  (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" out-dir source-dir) source-dir
                                       (+ env #((EnvEntry :name WHEEL-REPORT-ENV :value report)))))
   (<- read (| str FileFailed) (ReadText report))
-  (<- (remove-if-present scratch))
+  (<- (remove-if-present report))
   (if (= built.code 0)
-      (match (stored-wheel-of (match read (FileFailed) "" text text) package)
-        (StoredWheel :path path :built b) (WheelReady :path path :built b)
-        problem (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail problem :retryable False))
+      (do (<- wheel (| str None) (wheel-in out-dir))
+          (val reported (reported-built (match read (FileFailed) "" text text) package))
+          (match #(wheel reported)
+            #(None _) (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :retryable False
+                                  :detail (.format "uv build が --out-dir {} に wheel を出さない" out-dir))
+            #(_ (str)) (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail reported :retryable False)
+            #(path _) (do (<- origin WheelOrigin (origin-of-report reported))
+                          (WheelReady :path path :origin origin))))
       (do (<- detail str (tail-of built))
           (<- killed (| EnvFailure None) (memory-killed-of built "native の build"))
           (if (is-not killed None)
@@ -613,10 +636,10 @@
     (<- digest (| str None) (file-sha256 path))
     (resume digest))
 
-  (EnsureNativeWheel [package source-dir]
+  (EnsureNativeWheel [package source-dir out-dir]
     (<- wheel (| WheelReady EnvFailure)
         (locked (wheel-lock state-dir package)
-                (wheel-of package source-dir state-dir uv-cache uv)))
+                (wheel-of package source-dir out-dir state-dir uv-cache uv)))
     (resume wheel))
 
   (SyncProject [project-dir python groups no-install]

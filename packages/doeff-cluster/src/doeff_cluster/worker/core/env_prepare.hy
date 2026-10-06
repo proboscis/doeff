@@ -10,7 +10,7 @@
 ;;;   2 mirror    EnsureMirror / FetchCommit                 repo-unreachable・commit-missing(URL は断らない — 鍵の表に無い URL は鍵なしで clone)
 ;;;   3 展開      MaterializeTree                            同じ commit のツリーを持つ別の root があれば複製(.venv・マーカー・__pycache__ を除く)
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
-;;;   5 native    EnsureNativeWheel                          build の口の保存先から wheel(無ければ口が組む — native-build-failed)
+;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
@@ -40,7 +40,8 @@
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.shared.core.native_wheel [wheel-out-dir])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -251,20 +252,34 @@
           failure)))
 
 
+(defk built-count [counted origin]
+  {:pre [(: counted (| int None)) (: origin WheelOrigin)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "組んだ native の wheel の数に、wheel 1 つの用意の観測(origin)を足すため。口の報告の無い wheel が 1 つでも在れば数えられない(None —
+   0 で埋めない・#3860)。"
+  (match origin
+    WheelOrigin.UNREPORTED None
+    WheelOrigin.BUILT (if (is counted None) None (+ counted 1))
+    WheelOrigin.STORED counted))
+
+
 (defk stage-native [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "native の package を、build の口(Rust の部品を組む・引く入口の 1 つ)の保存先の wheel で用意する — 口が source の中身の鍵で引くので、
-   source が同じなら build し直さない(自前の鍵は持たない・#3860)。"
+  "native の package を、build の口(Rust の部品を組む・引く入口の 1 つ)を通した wheel で用意する — 口が source の中身の鍵で引くので、
+   source が同じなら build し直さない(自前の鍵は持たない・#3860)。入れる wheel は uv build が root の下の --out-dir に出した file
+   (wheel-out-dir — どの版の口でも出る)。"
   (var wheels [])
   (var built 0)
   (var failure None)
   (for [wheel request.env.project.native]
     (when (is failure None)
       (<- ready (| WheelReady EnvFailure)
-          (EnsureNativeWheel wheel.package (.format "{}/{}/{}" request.root wheel.repo (get wheel.paths 0))))
+          (EnsureNativeWheel wheel.package (.format "{}/{}/{}" request.root wheel.repo (get wheel.paths 0))
+                             (wheel-out-dir request.root wheel.package)))
       (match ready
         (EnvFailure) (:= failure ready)
-        (WheelReady :path path :built b) (do (.append wheels path) (when b (:= built (+ built 1)))))))
+        (WheelReady :path path :origin origin) (do (.append wheels path)
+                                                   (<- counted (| int None) (built-count built origin))
+                                                   (:= built counted)))))
   (if (is failure None) (replace state :wheels (tuple wheels) :built built) failure))
 
 
