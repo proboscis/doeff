@@ -41,7 +41,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import groupby
 from operator import itemgetter
@@ -53,8 +53,9 @@ import hy
 from doeff_hy_bytecode_guard import current_record
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
+from hy.models import Object
 
-from doeff_hy.binding_forms import Finding, module_findings
+from doeff_hy.binding_forms import Finding, ModuleScope
 from doeff_hy.static_baseline import (
     BaselineUnreadable,
     Split,
@@ -418,11 +419,17 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     module = ModuleType(name)
     module.__file__ = str(source)
     relative = str(source.relative_to(root))
+    # source は Hy の reader で 1 度だけ読む(agora-redesign #3869)。compile は前の form を処理してから次の form を読む(file の中で
+    # 定義した reader macro を後ろの form に効かせるため)ので、先に全部を読まず、compile が form を 1 つ読むたびに同じ form を
+    # 一番外の setv の所見(ModuleScope)に見せる(form を最後まで抱えない)。以前は所見のために新しい reader で読み直し、展開の
+    # 約 2 割を払い、file の中の reader macro を知らずに落ちていた。
+    forms = hy.read_many(text, filename=str(source))
+    scope = ModuleScope()
+    lazy = hy.models.Lazy(_shown_to(scope, forms))
+    lazy.source, lazy.filename, lazy.reader = forms.source, forms.filename, forms.reader
     try:
         with static_view(), collect_findings() as found:
-            compiled = hy_compile(
-                hy.read_many(text, filename=str(source)), module, filename=str(source), source=text
-            )
+            compiled = hy_compile(lazy, module, filename=str(source), source=text)
         # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
         if not isinstance(compiled, ast.Module):
             raise TypeError(f"hy_compile が module を返さなかった: {type(compiled).__name__}")
@@ -437,8 +444,8 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     rendered = ast.unparse(tree)
     reparsed = ast.parse(rendered)
     spans = [span for pair in _child_pairs(reparsed, tree) if (span := _span(*pair)) is not None]
-    # module の直下の setv は macro の外なので、source の一番外の並びを別に読む(ADR-DOE-HY-006)。
-    top_level = module_findings(hy.read_many(text, filename=str(source)))
+    # module の直下の setv は macro の外なので、source の一番外の並びを別に見る(ADR-DOE-HY-006)— compile と並んで見た所見。
+    top_level = scope.findings
     return Projection(
         source,
         name,
@@ -447,6 +454,13 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         tuple(_finding_diagnostic(relative, f) for f in (*found, *top_level)),
         used=current_record(module, str(source), also=(sys.modules[__name__],)),
     )
+
+
+def _shown_to(scope: ModuleScope, forms: Iterable[Object]) -> Iterator[Object]:
+    """forms を 1 つずつ渡しながら、渡す前に同じ form を scope に見せる(compile と所見が 1 度の読みを分け合うため)。"""
+    for form in forms:
+        scope.visit(form)
+        yield form
 
 
 def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:

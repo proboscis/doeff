@@ -299,3 +299,38 @@ def test_binding_findings_are_reported_on_their_lines(tmp_path: Path) -> None:
     assert ("doeff-hy-rebind", "error", 6) in found
     assert not any(rule == "doeff-hy-rebind" and line != 6 for rule, _, line in found)
     assert code == 1
+
+
+#: 一番外の setv の所見(val を勧める警告)と、file の中で定義した reader macro を後ろの form が使う source。
+READ_ONCE_MODULE = """\
+(require doeff-hy.macros [defk])
+(defreader twice (setv form (.parse-one-form &reader)) `(* 2 ~form))
+(setv counter 1)
+(defk doubled [x]
+  {:pre [(: x int)] :post [(: % int)]}
+  #twice x)
+"""
+
+
+def test_one_source_is_read_by_the_hy_reader_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 失敗ケース(agora-redesign #3869 の (c)): project は source を Hy の reader で 2 度読んでいた(compile と、一番外の setv の
+    # 所見)。2 度目の読みが展開の約 2 割(依存 76 file で 2.6 秒)。1 度だけ読み、compile が読んだ form を所見にも使う。
+    # file の中で定義した reader macro(#twice)は compile が前の form を処理してから次を読む作りで効くので、それも崩さない。
+    from doeff_hy.static_check import Projection, project
+
+    source = tmp_path / "probe.hy"
+    source.write_text(READ_ONCE_MODULE, encoding="utf-8")
+    reads: list[str] = []
+    real = hy.read_many
+
+    def counting(text: str, *args: object, **kwargs: object) -> object:
+        reads.append(text)
+        return real(text, *args, **kwargs)
+
+    monkeypatch.setattr(hy, "read_many", counting)
+    result = project(tmp_path, [tmp_path], source)
+    assert isinstance(result, Projection), result
+    assert len(reads) == 1, f"Hy の reader で {len(reads)} 度読んだ"
+    assert "2 * x" in result.text, result.text  # reader macro が後ろの form に効いた
+    assert [f.rule for f in result.findings].count("doeff-hy-setv") == 1, result.findings  # 一番外の setv の所見は残る
+

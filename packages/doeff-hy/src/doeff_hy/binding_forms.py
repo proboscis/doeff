@@ -1265,22 +1265,31 @@ def module_lazy_reference(symbol: Symbol) -> Object:
 _MODULE_SCOPE_HEADS: frozenset[str] = frozenset({"do", "when", "if", "cond", "try", "else", "finally", "except"})
 
 
-def module_findings(forms: Iterable[Object]) -> list[Finding]:
-    """module の直下の setv の所見(val / var を勧める警告・val の名前の束縛し直しの赤・効かない := の赤)。
+class ModuleScope:
+    """module の直下の形を 1 つずつ見て、直下の setv の所見を集める(val / var を勧める警告・val の名前の束縛し直しの赤・
+    効かない := の赤)。
 
-    doeff-hy-check が 1 file の source の一番外の並びに当てる(module の直下は macro の外なので、
-    setv は展開の時には見えない)。"""
-    findings: list[Finding] = []
-    declared: dict[str, Declaration] = {}
+    doeff-hy-check が 1 file の source の一番外の並びに当てる(module の直下は macro の外なので、setv は展開の時には
+    見えない)。Hy の compile が form を 1 つ読むたびに同じ form を渡せるよう、1 つずつ受け取る形にしてある — 所見のために
+    source を読み直さず、読んだ form を最後まで抱えもしない(agora-redesign #3869)。"""
 
-    def visit(form: Object) -> None:
+    def __init__(self) -> None:
+        self._findings: list[Finding] = []
+        self._declared: dict[str, Declaration] = {}
+
+    @property
+    def findings(self) -> tuple[Finding, ...]:
+        """ここまでに見た形の所見。"""
+        return tuple(self._findings)
+
+    def visit(self, form: Object) -> None:
         """module の scope の中の 1 つの形を見る(defn などの入れ子の scope には入らない)。"""
         declaration = parse_declaration(form) if _head(form) in MODULE_ONLY_HEADS else None
         if declaration is not None:
-            declared.setdefault(declaration.name, declaration)
+            self._declared.setdefault(declaration.name, declaration)
             return
         if isinstance(form, Expression) and len(form) > 0 and isinstance(form[0], Keyword) and str(form[0]) == ":=":
-            findings.append(
+            self._findings.append(
                 Finding(RULE_REBIND, Severity.ERROR, _line(form), _column(form),
                         "module の直下の (:= …) は Hy では keyword の呼び出しとして読まれ、何も書き換えない — "
                         "module の var は module の直下の setv で書き換える [ADR-DOE-HY-006]")
@@ -1290,17 +1299,17 @@ def module_findings(forms: Iterable[Object]) -> list[Finding]:
         if head in {"setv", "setx"} and isinstance(form, Expression):
             names = [n for t in list(form[1:])[0::2] for n in _target_names(t)]
             for symbol in names:
-                first = declared.get(str(symbol))
+                first = self._declared.get(str(symbol))
                 if first is not None and first.mutability is Mutability.VAL:
-                    findings.append(
+                    self._findings.append(
                         Finding(RULE_REBIND, Severity.ERROR, _line(symbol), _column(symbol),
                                 f"({first.spelled} {symbol} …) で宣言した名前を setv で束縛し直している — "
                                 f"書き換えるなら (var {symbol} …) で宣言する [ADR-DOE-HY-006]")
                     )
-            unwarned = [n for n in names if str(n) not in declared]
+            unwarned = [n for n in names if str(n) not in self._declared]
             if unwarned:
                 shown = unwarned[0]
-                findings.append(
+                self._findings.append(
                     Finding(RULE_SETV, Severity.WARNING, _line(form), _column(form),
                             f"module の直下の setv の代わりに (val {shown} …)、書き換えるなら (var {shown} …) を使う "
                             "[ADR-DOE-HY-006]")
@@ -1308,8 +1317,13 @@ def module_findings(forms: Iterable[Object]) -> list[Finding]:
             return
         if head in _MODULE_SCOPE_HEADS and isinstance(form, Expression):
             for child in form[1:]:
-                visit(child)
+                self.visit(child)
 
+
+
+def module_findings(forms: Iterable[Object]) -> list[Finding]:
+    """module の直下の setv の所見(ModuleScope に一番外の並びを順に見せた結果)。"""
+    scope = ModuleScope()
     for form in forms:
-        visit(form)
-    return findings
+        scope.visit(form)
+    return list(scope.findings)
