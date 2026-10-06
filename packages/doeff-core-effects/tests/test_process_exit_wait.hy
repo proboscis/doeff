@@ -17,7 +17,7 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.handlers [await-handler])
-(import doeff_core_effects.scheduler [scheduled Spawn Race Cancel])
+(import doeff_core_effects.scheduler [scheduled Spawn Race Cancel Wait TaskCancelledError])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler proc-stat-of])
 (import doeff_core_effects.process_effects [StartProcess PollProcess AwaitProcessExit ProcessStarted ProcessExited ProcessEnded
@@ -115,11 +115,13 @@
 
 (defk raced-away [pid]
   {:pre [(: pid int)] :post [(: % None)]}
-  "pid の終わりの待ちを、0.2 秒の待ちと競わせて負けさせ、負けた待ちを取り消す。"
+  "pid の終わりの待ちを、0.2 秒の待ちと競わせて負けさせ、負けた待ちを取り消して、取り消しの済むまで待つ。"
   (<- waiting (Spawn (awaited (AwaitProcessExit pid))))
   (<- short (Spawn (Await (asyncio.sleep 0.2))))
   (<- (Race waiting short))
   (<- (Cancel waiting))
+  (try (<- (Wait waiting))
+       (except [TaskCancelledError] None))
   None)
 
 
