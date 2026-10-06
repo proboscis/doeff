@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
-(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key])
+(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
@@ -448,6 +448,56 @@
     (is d.boot None) (replace state :drains (| state.drains {name (replace d :boot boot)}))
     (!= d.boot boot) (replace state :drains (dfor #(k v) (.items state.drains) :if (!= k name) k v))
     True state))
+
+
+;; --- 前の世代の process が持っていた名前付きの lease(#3770) ----------------------------------------------------------
+;; worker が突然止まる(drain しない・終わった process の lease を返さない)と、子の process は終わっているのに、その process が名乗った
+;; 担い手(<job>/<process の世代の名>/…)は盤の lease の行に期限まで残り、同じ名で起き直した worker の新しい process は期限まで lease を
+;; 取れなかった。新しい世代(generation-order が NEWER)の名乗りは前の世代の process が終わった印(known-exits-after が前の世代の
+;; process の終わりを新しい世代の起動の刻までと数えるのと同じ前提)なので、その時に前の世代の最新の報告で process の世代の名を持つ行の
+;; 担い手を外す。担い手の綴りと外し方は worker が終わった process の lease を返すのと同じ定義(lease_rules.lease-holder・
+;; holder-tokens-prefix・drop-holders)。退いた世代の heartbeat(OLDER)はここへ来ない — 外した担い手を戻さず、その process の延長は
+;; lost と答える(lease_rules.renew)。前の世代が最後の報告の後に起こした process の担い手は報告に無いので、期限まで残る。
+
+(defk generation-holder-prefixes [report]
+  {:pre [(: report (| WorkerReport None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の最新の報告 report の行のうち process の世代の名を持つ物から、その process が名乗った担い手の token の頭を求めるため。
+   担い手の job の名は子が名乗った名(入れ替えで退いた process は元の名 retired-from — worker の ReleaseLeases と同じ)。"
+  (match report
+    None #()
+    _ (tuple (gfor row report.jobs
+                   :if row.instance
+                   (holder-tokens-prefix (lease-holder (or row.retired-from row.name) row.instance))))))
+
+
+(defk holders-dropped [row prefixes]
+  {:pre [(: row BoardRow) (: prefixes tuple)] :post [(: % (| dict None))] :tags {:context "coordinator" :role "judgment"}}
+  "盤の lease の行 row の値から、token が prefixes のどれかで始まる担い手を外した後の値を求めるため。外す物が無ければ None。"
+  (var current row.value)
+  (var changed False)
+  (for [prefix prefixes]
+    (val updated (drop-holders current prefix))
+    (match updated
+      None None
+      _ (do (:= current updated) (:= changed True))))
+  (if changed current None))
+
+
+(defk board-without-generation-holders [board report]
+  {:pre [(: board dict) (: report (| WorkerReport None))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の前の世代の最新の報告 report の process が持っていた担い手を、盤 board の lease の行から外した後の盤を求めるため(頭の註)。
+   変わった行は版を 1 進める(POST /leases の書きと同じ)。外す物が無ければ同じ board を返す。"
+  (val prefixes (! (generation-holder-prefixes report)))
+  (when (not prefixes)
+    (return board))
+  (var freed {})
+  (for [#(key row) (.items board)]
+    (when (.startswith key SEMAPHORE-PREFIX)
+      (val value (! (holders-dropped row prefixes)))
+      (match value
+        None None
+        _ (:= freed (| freed {key (replace row :value value :version (+ row.version 1) :size (value-size value))})))))
+  (if freed (| board freed) board))
 
 
 (defn #^ dict load-of [#^ ClusterState state #^ dict placements]
@@ -1375,9 +1425,15 @@
                          :known-exits known)
         ;; job の行の最後に終わったと知れた刻は、known-exits-after が前の知れた刻と世代の比べから数えた known(worker-report — #3672)。
         report (! (worker-report statuses now body.endpoint known))
+        ;; 新しい世代の名乗りで、前の世代の process が持っていた名前付きの lease を外す(#3770 — 前の世代の最新の報告は、この
+        ;; heartbeat で置き換える前の adopted.statuses の行)。
+        board (match order
+                GenerationOrder.NEWER (! (board-without-generation-holders adopted.board (.get adopted.statuses name)))
+                _ adopted.board)
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
-                     :statuses (| adopted.statuses {name report})))
+                     :statuses (| adopted.statuses {name report})
+                     :board board))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
   ;; 置き直しの待ちへ戻す(absorb-task-reports・#2976 の I-3 の赤 R5)— 退いた世代の heartbeat はここへ来ないので戻さない。
