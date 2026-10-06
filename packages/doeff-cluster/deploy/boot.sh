@@ -14,6 +14,9 @@
 #                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
+#   ROLE=prepare     … WORKER_DOEFF_COMMIT の自己起動の root を展開して準備する(.pyc の焼きまで)だけで、何も起こさずに root の path を
+#                      出して終わる — 版上げの前に、今の worker の Pod の中で上げ先の版の root を先に組むため(同じ $WORK_DIR)。
+#                      準備済みなら秒で終わる。上げ先の commit の script がこの役を知らないと断られるので、撃つ前に上げ先を読む
 #   ROLE=access      … 読み取りの鍵の表(WORKER_REPOS)の git / ssh の設定と鍵の表の JSON だけを書き、JSON の path を出す
 #   ROLE=ready       … worker の Pod の readinessProbe: coordinator の見る worker がこの Pod の worker(世代が一致)で、生きていて
 #                      drain 中でなければ 0
@@ -47,6 +50,18 @@
 set -eu
 WORK_DIR=${WORK_DIR:-/work}
 role=${ROLE:-worker}
+# 知らない役は、展開も準備もせず名指しで断る(worker の起動へ落とさない — 走っている worker の Pod の中で役 prepare を、その役を
+# 知らない版へ向けて撃っても、2 つ目の worker を起こさない)。
+case "$role" in
+  coordinator|records|worker|drain|access|ready|prepare) ;;
+  *)
+    echo "boot: 知らない役 ROLE=$role(coordinator・records・worker・drain・access・ready・prepare のどれか)" >&2
+    exit 2 ;;
+esac
+if [ "$role" = prepare ] && [ -z "${WORKER_DOEFF_COMMIT:-}" ]; then
+  echo "boot: ROLE=prepare は WORKER_DOEFF_COMMIT(準備する doeff の commit)が要る" >&2
+  exit 2
+fi
 # 自己起動の root に bytecode を焼く範囲の入口(`,` で並べる・役で分けない): 下の役が root の venv の hy で起こす module の全部と、worker が
 # 同じ venv で起こす準備の process(env_tool)・shim・job の子の入口(job_entry)と、venv の .pth が interpreter の起動ごとに import する
 # doeff-hy の doeff_hy_bytecode_guard(どこからも import の文で辿れない)。焼くのはこの入口から import を辿った閉包だけ。
@@ -313,6 +328,11 @@ if [ -n "${WORKER_DOEFF_COMMIT:-}" ] && [ "$role" != ready ] && [ "$role" != acc
 fi
 
 case "$role" in
+  prepare)
+    # 上の展開と準備(doeff_extract・doeff_prepare — どちらも boot.lock の下・.pyc の焼きを含む)だけで終わる。役は何も起こさず、
+    # 準備した root の path を 1 行出す。準備済みの root なら完成の印を読んで秒で抜ける。
+    echo "$root"
+    exit 0 ;;
   access)
     # 鍵の表の設定(git / ssh の設定と worker の鍵の表の JSON)だけを書き、JSON の path を出す — 手元の機体と検で確かめるため。
     repo_access
