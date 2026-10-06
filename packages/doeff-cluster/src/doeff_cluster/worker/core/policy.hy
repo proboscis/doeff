@@ -357,7 +357,7 @@
 (defk pinned-env-keys [desired world warm]
   {:pre [(: desired tuple) (: world WorldView) (: warm tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
   "掃除が消してはいけない root のキー(2026-09-26)を決めるため: 宣言の実行環境の job・走っている実行環境の process・温める表・準備中の
-   root。project ごとの最新の root は掃除の係が完成マーカーから守る(env_upkeep.sweep-choice)。"
+   root。project ごとの新しい 2 つの root(今の版と戻し先の版)は掃除の係が置き場の材料から守る(env_upkeep.recent-per-project・#3732)。"
   (frozenset (+ (lfor spec desired :if spec.runtime-env (code-key spec))
                 (lfor p world.processes :if p.spec.runtime-env (code-key p.spec))
                 (lfor w warm w.key)
@@ -379,7 +379,7 @@
 
 (defk sweep-actions [declaration world]
   {:pre [(: declaration (| NotYetRead DeclarationRead)) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "掃除の係へ固定の集合を渡す action を求めるため(固定の集合が変わった時と、空きが下限を切った時だけ)。実行環境を扱わない worker は
+  "掃除の係へ固定の集合を渡す action を求めるため(固定の集合が変わった時と、掃除の係が拍を求めている時 — EnvDisk.sweep-wanted — だけ)。実行環境を扱わない worker は
    撃たない。declaration = 最後に読めた宣言(拍の Program が worker の停止で空にした列ではない — 止まる worker も次に起きた時の宣言の
    root を消さない)。宣言をまだ一度も読めていない間(起き直した直後・DesiredUnreadable が続く間 — #3731)は撃たない: 固定の集合が
    宣言の root を含まず、止まった job の root を消して起こし直しが root の作り直しになる。一度読めた後の途絶は最後に読めた宣言で判じる。"
@@ -389,7 +389,7 @@
     #(_ None) #()
     #((DeclarationRead :jobs jobs :warm warm) _)
       (do (<- pinned frozenset (pinned-env-keys jobs world warm))
-          (if (or (!= pinned disk.pinned) (< disk.free disk.floor)) #((SweepEnvs pinned)) #()))))
+          (if (or (!= pinned disk.pinned) disk.sweep-wanted) #((SweepEnvs pinned)) #()))))
 
 (defk forget-probe-actions [desired world]
   {:pre [(: desired tuple) (: world WorldView)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}

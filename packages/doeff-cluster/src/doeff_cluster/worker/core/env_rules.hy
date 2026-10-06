@@ -1,13 +1,13 @@
-;;; worker の実行環境の root の準備の判断 — 起こす順・準備の頼みの JSON と起こし方・準備の答えの読み・期限切れの理由・掃除の候補の形・
-;;; 掃除の下限(handlers.hy の EnvStore から分けた・#2467)。I/O は呼び手(worker/protocol/env_store の env-host)が行う。
-;;; 期限そのもの・掃除の選び・disk の条件は env_upkeep。
+;;; worker の実行環境の root の準備の判断 — 起こす順・準備の頼みの JSON と起こし方・準備の答えの読み・期限切れの理由・掃除の候補の形
+;;; (handlers.hy の EnvStore から分けた・#2467)。I/O は呼び手(worker/protocol/env_store の env-host)が行う。
+;;; 期限そのもの・掃除の選びと下限(roots の合計の上限・共有の disk の空きの最低 — #3732)・disk の条件は env_upkeep。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import json)
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
-(import doeff_cluster.worker.core.env_upkeep [PrepareLimits SWEEP-FLOOR-RATIO])
+(import doeff_cluster.worker.core.env_upkeep [PrepareLimits])
 
 (val ANSWER-HEAD-CHARS 200)   ; 形の読めない答えの file の中身を失敗の理由に載せる長さ
 
@@ -93,10 +93,3 @@
   (.format "{}:{}" (next (gfor r (get declared "repos") :if (= (get r "name") (get project "repo")) (get r "url")) "")
            (get project "path")))
 
-
-(defk floor-bytes [sweep-floor-bytes min-free-bytes total]
-  {:pre [(: sweep-floor-bytes (| int None)) (: min-free-bytes int) (: total int)] :post [(: % int)]}
-  "掃除を始める空きの下限を決めるため(設定の値が在ればそれ・無ければ volume の SWEEP-FLOOR-RATIO と準備を始める空きの大きい方)。"
-  (if (is-not sweep-floor-bytes None)
-      sweep-floor-bytes
-      (max min-free-bytes (int (* SWEEP-FLOOR-RATIO total)))))

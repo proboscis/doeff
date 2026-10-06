@@ -1,6 +1,7 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster.worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
+;;;     --task-reserve N --env-roots-cap BYTES --env-min-free BYTES
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -189,7 +190,11 @@
   (.add-argument parser "--repo-keys" :default ""
                  :help "実行環境の task の鍵の表(JSON の file — URL → deploy key の file。表に無い URL は鍵なしで clone する・空 = 鍵を使わない)")
   (.add-argument parser "--uv" :default "uv" :help "実行環境の準備と子の起動に使う uv の命令")
-  (.add-argument parser "--env-min-free" :type int :default 0 :help "実行環境の準備を始める空きの下限(byte)")
+  ;; 実行環境の root の置き場の 2 つの量(#3732 — 既定の値は deploy/boot.sh の 1 か所・ここは必ずの引数)。
+  (.add-argument parser "--env-roots-cap" :type int :required True
+                 :help "実行環境の roots の合計の上限(byte・hardlink を重ねて数える)— 越えた時だけ固定されていない root を消す")
+  (.add-argument parser "--env-min-free" :type int :required True
+                 :help "root の置き場の在る共有の disk の空きの最低(byte)— 割った時は root を消さずに準備を disk-full で断る")
   (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")
   (.add-argument parser "--pass-env" :default ""
                  :help "子 process へ渡す worker の環境変数の名(`,` で並べる — 機体の設定の path や URL。無い名は起動を止める)")
@@ -239,7 +244,8 @@
         warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ state-dir "logs")) :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
-                          :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
+                          :repo-keys args.repo-keys :uv args.uv :roots-cap-bytes args.env-roots-cap
+                          :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
                               :probe-dir (str (/ state-dir "probe")) :shim shim)

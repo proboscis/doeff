@@ -39,7 +39,7 @@
   (.write-text (/ roots READY-NAME ENV-MARKER) (json.dumps {"env" {"project" {}}}))
   (.mkdir (/ roots HALF-NAME))
   (.mkdir (/ roots ".old.broken.1"))
-  (EnvSettings :state (str (/ tmp "state")) :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL))
+  (EnvSettings :state (str (/ tmp "state")) :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :roots-cap-bytes (** 2 62)))
 
 
 (defk on-envs [settings program [inner []]]

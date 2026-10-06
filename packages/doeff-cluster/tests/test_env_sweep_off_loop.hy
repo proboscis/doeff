@@ -48,15 +48,21 @@
 (val KEEP-FENCE-MS 240000)
 ;; 遅い木の台: 木 1 つの数えか消しにかかる仮想の秒。
 (val SLOW-SECONDS 60.0)
-;; 筋書きの長さ(仮想の秒): root 3 つの数え(180 秒)と 2 つの消し(120 秒)が終わり、次の掃除が始まるまで。
+;; 筋書きの長さ(仮想の秒): root 4 つの数え(240 秒)と 2 つの消し(120 秒)が終わり、次の掃除が始まるまで。
 (val RUN-MS 400000)
-;; 同じ project の完成した root 3 つ(名の順で最初の a が project の最新として残り、b と c が消してよい root)。
+;; 同じ project の完成した root 4 つ(memory の置き場は時刻を持たないので、名の順で a と b が project の新しい 2 つとして残り — #3732 —
+;; c と d が消してよい root)。
 (val ROOT-A "aaaaaaaaaaaaaaaaaaaaaaaa")
 (val ROOT-B "bbbbbbbbbbbbbbbbbbbbbbbb")
 (val ROOT-C "cccccccccccccccccccccccc")
+(val ROOT-D "dddddddddddddddddddddddd")
+(val ALL-ROOTS #(ROOT-A ROOT-B ROOT-C ROOT-D))
 (val MARKER {"env" {"project" {"repo" "r" "path" "p"} "repos" [{"name" "r" "url" "https://example.invalid/r"}]}})
-;; 下限を disk の大きさより上に置いて、拍ごとに掃除の係へ回す。
-(val FLOOR (** 10 18))
+;; roots の合計の上限を 0 に置いて、拍ごとに掃除の係へ回す(#3732)。
+(val CAP 0)
+;; memory の置き場の既定の空きと総量(MemoryFiles の既定と同じ)。
+(val ROOMY-FREE (** 2 40))
+(val DISK-TOTAL (** 2 41))
 
 
 (defrecord TreeLoad
@@ -239,26 +245,26 @@
   running)
 
 
-(defk roots-on-disk []
-  {:pre [] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "memory の置き場に同じ project の完成した root 3 つ(完成マーカーと中身の file 1 つずつ)を置いた中身を返すため。"
-  (val names #(ROOT-A ROOT-B ROOT-C))
-  (MemoryFiles :dirs (+ #(STATE (+ STATE "/roots")) (tuple (gfor n names (+ STATE "/roots/" n))))
+(defk roots-on-disk [free]
+  {:pre [(: free int)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "memory の置き場に同じ project の完成した root 4 つ(完成マーカーと中身の file 1 つずつ)を置いた中身を返すため(free = disk の空き)。"
+  (val names ALL-ROOTS)
+  (MemoryFiles :free free :total DISK-TOTAL :dirs (+ #(STATE (+ STATE "/roots")) (tuple (gfor n names (+ STATE "/roots/" n))))
                :files (tuple (+ (lfor n names (MemoryFile :path (+ STATE "/roots/" n "/" ENV-MARKER) :content (.encode (json.dumps MARKER))))
                                 (lfor n names (MemoryFile :path (+ STATE "/roots/" n "/lib.py") :content b"x = 1\n"))))))
 
 
-(defk sweep-settings []
-  {:pre [] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "拍ごとに掃除させる env-host の設定を返すため(下限は disk の大きさより上・prune の命令は台本に無い名 — 起きない)。"
-  (EnvSettings :state STATE :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "no-uv" :sweep-floor-bytes FLOOR))
+(defk sweep-settings [cap]
+  {:pre [(: cap int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "掃除させる env-host の設定を返すため(cap = roots の合計の上限・prune の命令は台本に無い名 — 起きない)。"
+  (EnvSettings :state STATE :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "no-uv" :roots-cap-bytes cap))
 
 
 (defk left-roots []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "root の置き場に残っている root の名を返すため。"
   (var left #())
-  (for [name #(ROOT-A ROOT-B ROOT-C)]
+  (for [name ALL-ROOTS]
     (<- seen (StatPath (+ STATE "/roots/" name)))
     (when (and (not (isinstance seen FileFailed)) (= seen.kind PathKind.DIRECTORY))
       (:= left (+ left #(name)))))
@@ -283,17 +289,18 @@
   seen)
 
 
-(defk on-slow-disk [program measure-seconds remove-seconds [inner []]]
-  {:pre [(: program Program) (: measure-seconds float) (: remove-seconds float) (: inner list)] :post [(: % "program の答え")]
-   :tags {:context "doeff-cluster-test" :role "entry"}}
+(defk on-slow-disk [program measure-seconds remove-seconds [inner []] [cap CAP] [free ROOMY-FREE]]
+  {:pre [(: program Program) (: measure-seconds float) (: remove-seconds float) (: inner list) (: cap int) (: free int)]
+   :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を env-host・process-host と台本の子 process・遅い木の memory の file system・仮想の時計の下で回すため(行は外側の
-   run-lines-noted が受ける)。inner = env-host の内側に置く handler(調整ループを回す筋書きは宿の代役と拍の間の眠り)。"
+   run-lines-noted が受ける)。inner = env-host の内側に置く handler(調整ループを回す筋書きは宿の代役と拍の間の眠り)・cap = roots の
+   合計の上限・free = disk の空き。"
   (<- host HostSettings (host-settings (Path STATE) :policy POLICY))
   ;; root の準備(env-host の PrepareEnv が nice で起こす)も止めるまで走る — 消えた root の作り直しは終わらず、観測の準備中に残る。
   (val script (ProcessScript :commands #((ScriptedCommand :name (. (Path host.python) name) :run runs-until-stopped)
                                          (ScriptedCommand :name "nice" :run runs-until-stopped))))
-  (<- settings EnvSettings (sweep-settings))
-  (<- files MemoryFiles (roots-on-disk))
+  (<- settings EnvSettings (sweep-settings cap))
+  (<- files MemoryFiles (roots-on-disk free))
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) tree-load run-lines-noted (memory-file-handler files)
                                   (slow-trees measure-seconds remove-seconds) (scripted-process-handler script) (process-host host)
                                   (env-host settings) #* inner]
@@ -312,11 +319,11 @@
 
 
 (deftest test-a-slow-measure-keeps-the-heartbeat-and-the-job
-  ;; 木 1 つの数えに 60 秒(root 3 つで 180 秒)。数えている間も拍は 1 秒ごとに続き、job は止まらない。b と c は消える。
+  ;; 木 1 つの数えに 60 秒(root 4 つで 240 秒)。数えている間も拍は 1 秒ごとに続き、job は止まらない。c と d は消える。
   (<- got SweepRun (on-slow-disk (worker-run) SLOW-SECONDS 0.0 [(sweep-world RUN-MS None) tick-pauses]))
   (<- (kept-running got))
   (assert (>= got.swept 1) got)
-  (assert (= got.left #(ROOT-A)) got.left))
+  (assert (= got.left #(ROOT-A ROOT-B)) got.left))
 
 
 (deftest test-a-slow-remove-keeps-the-heartbeat-and-the-job
@@ -324,15 +331,15 @@
   (<- got SweepRun (on-slow-disk (worker-run) 0.0 SLOW-SECONDS [(sweep-world RUN-MS None) tick-pauses]))
   (<- (kept-running got))
   (assert (>= got.load.removed 2) got.load)
-  (assert (= got.left #(ROOT-A)) got.left))
+  (assert (= got.left #(ROOT-A ROOT-B)) got.left))
 
 
 (defk pinned-while-measuring []
   {:pre [] :post [(: % SweepRun)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "固定の無い掃除を始め、数えている間(10 秒目)に b を固定にし、その後は b を固定のまま 1 秒ごとに掃除の係へ回すため(RUN-MS まで)。"
+  "固定の無い掃除を始め、数えている間(10 秒目)に c を固定にし、その後は c を固定のまま 1 秒ごとに掃除の係へ回すため(RUN-MS まで)。"
   (<- (SweepEnvs (frozenset)))
   (<- (Delay 10.0))
-  (val pinned (frozenset #((+ "env-" ROOT-B))))
+  (val pinned (frozenset #((+ "env-" ROOT-C))))
   (for [_ (range (// RUN-MS 1000))]
     (<- (SweepEnvs pinned))
     (<- (Delay 1.0)))
@@ -341,9 +348,9 @@
 
 
 (deftest test-a-root-pinned-while-measuring-is-not-removed
-  ;; 数えの答えが届いた拍の固定で選ぶ: 数えの間に固定になった b は残り、c だけが消える(a は project の最新)。
+  ;; 数えの答えが届いた拍の固定で選ぶ: 数えの間に固定になった c は残り、d だけが消える(a と b は project の新しい 2 つ)。
   (<- got SweepRun (on-slow-disk (pinned-while-measuring) SLOW-SECONDS 0.0 [(sweep-world RUN-MS None)]))
-  (assert (= got.left #(ROOT-A ROOT-B)) got.left))
+  (assert (= got.left #(ROOT-A ROOT-B ROOT-C)) got.left))
 
 
 (defk ten-ticks-of-changing-pins []
@@ -390,12 +397,12 @@
 
 ;; --- 起き直して宣言をまだ読めていない間の掃除(#3731)------------------------------------------------------------------------------
 ;; 起き直した worker は最初の宣言を読むまで、最後に読んだ宣言が「まだ読んでいない」(NotYetRead)。この間の固定の集合は準備中の root だけで、
-;; 下限を切った disk では止まった job の root(宣言に在る・まだ起こし直していない)まで消し、起こし直しが root の作り直しになった。
+;; 上限を越えた roots では止まった job の root(宣言に在る・まだ起こし直していない)まで消し、起こし直しが root の作り直しになった。
 ;; 反例 = 直す前の形(WorkerState の宣言の初期値が空の列で、掃除の判断が空の宣言と読んでいない宣言を区別しない)は、読めない 30 秒の間に
-;; b と c を消す — 下の断言が赤(2026-10-06 に直す前の worker で確かめた)。
+;; c と d を消す — 下の断言が赤(2026-10-06 に直す前の worker で確かめた)。
 
-;; 止まった job: 実行環境の job で、root は b(env のキー = b)。宣言に在るが起こし直していない(root の準備の観測を返さない)。
-(val ENV-SPEC (JobSpec "env-job" "jobs.env" #() "rev-e" :runtime-env "{}" :env-key ROOT-B))
+;; 止まった job: 実行環境の job で、root は c(env のキー = c)。宣言に在るが起こし直していない(root の準備の観測を返さない)。
+(val ENV-SPEC (JobSpec "env-job" "jobs.env" #() "rev-e" :runtime-env "{}" :env-key ROOT-C))
 
 
 (defhandler restart-world [#^ int read-from-ms #^ int stop-ms]
@@ -420,14 +427,30 @@
 
 
 (deftest test-a-restarted-worker-does-not-sweep-before-the-first-declaration
-  ;; 起き直してから 30 秒、宣言が読めない(読めるのは筋書きの後)。下限を切った disk でも掃除しない — 止まった job の root b も c も残る。
+  ;; 起き直してから 30 秒、宣言が読めない(読めるのは筋書きの後)。上限を越えた roots でも掃除しない — 止まった job の root c も d も残る。
   (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world (* 2 RUN-MS) 30000) tick-pauses]))
   (assert (= got.swept 0) got)
-  (assert (= got.left #(ROOT-A ROOT-B ROOT-C)) got.left))
+  (assert (= got.left ALL-ROOTS) got.left))
 
 
 (deftest test-the-first-declaration-starts-the-sweep-and-pins-the-declared-root
-  ;; 30 秒目に最初の宣言を読んだ拍から今までどおり掃除する: 宣言の job の root b は固定で残り、固定でない c は消える(a は project の最新)。
+  ;; 30 秒目に最初の宣言を読んだ拍から今までどおり掃除する: 宣言の job の root c は固定で残り、固定でない d は消える(a と b は project の
+  ;; 新しい 2 つ)。
   (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world 30000 60000) tick-pauses]))
   (assert (>= got.swept 1) got)
-  (assert (= got.left #(ROOT-A ROOT-B)) got.left))
+  (assert (= got.left #(ROOT-A ROOT-B ROOT-C)) got.left))
+
+
+;; --- 共有の disk の空きでは root を消さない(#3732)---------------------------------------------------------------------------------
+;; 実例(2026-10-06): agent-worker-2 の /work は node の root の disk(468G・他の物と共有)の上で空き 47G。掃除の下限は disk 全体の割合
+;; (volume の 15% と準備を始める空きの大きい方 = 約 75 GB)で、root の外の物が常に下限を割らせ、組むたびに固定されていない root を
+;; 消し続けた(root は全部で 933M — 消しても下限の上へ戻れない)— 戻し先の版の root も宣言の最中に消えた。
+;; 反例 = 直す前の形(空きが割合の下限を切れば消す)は c と d(と b)を消す — 下の断言が赤(2026-10-06 に直す前の env_upkeep・env_store で
+;; 確かめた)。
+
+(deftest test-a-shared-disk-below-the-old-ratio-keeps-roots-within-the-cap
+  ;; disk の空き 1 GB・総量 2 TiB(空きは割合の下限 15% を大きく割る)・roots の合計は上限の内。掃除の係は数えるが、root は 1 つも消さない。
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world RUN-MS None) tick-pauses] :cap (** 2 62) :free (** 10 9)))
+  (<- (kept-running got))
+  (assert (= got.load.removed 0) got.load)
+  (assert (= got.left ALL-ROOTS) got.left))

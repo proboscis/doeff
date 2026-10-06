@@ -153,7 +153,9 @@
                          :uv (str wrapper)))
   (Rig :base base :state state :fake fake :app app :lib lib
        :envs (EnvSettings :state (str state) :hy-command HY :platform (current-platform) :code-prepare PREPARE-TOOL :repo-keys (str keys)
-                          :uv (str wrapper) :min-free-bytes min-free-bytes)
+                          :uv (str wrapper) :min-free-bytes min-free-bytes
+                          ;; roots の合計の上限は掃除の起きない大きさ(この台は準備を見る — 掃除は test_env_host_judgments ほか)。
+                          :roots-cap-bytes (** 2 62))
        :host host))
 
 

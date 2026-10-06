@@ -11,7 +11,8 @@
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
 #                      import の根(`,` で並べる・既定 .)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
-#                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す))
+#                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す)・
+#                      WORKER_ENV_ROOTS_GIB / WORKER_ENV_MIN_FREE_GIB = 実行環境の root の置き場の 2 つの量(GiB の整数・下の既定の註))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
 #   ROLE=prepare     … WORKER_DOEFF_COMMIT の自己起動の root を展開して準備する(.pyc の焼きまで)だけで、何も起こさずに root の path を
@@ -411,6 +412,24 @@ if [ -z "${WORKER_TASK_RESERVE:-}" ]; then
   echo "boot: WORKER_TASK_RESERVE が無い — capacity のうち task のために空けておく数(0 以上 WORKER_CAPACITY 以下)を渡す" >&2
   exit 2
 fi
+# 実行環境の root の置き場の 2 つの量(#3732 — 掃除の下限を disk 全体の割合から絶対の量へ。既定の値はここの 1 か所で、worker の
+# 入口は必ずの引数として受ける)。台ごとに変える時は Deployment の env に GiB の整数で書く:
+#   WORKER_ENV_ROOTS_GIB    roots の合計の上限(既定 20)— 越えた時だけ、固定(走っている job・宣言の job・準備中・温める表)でも
+#                           project ごとの新しい 2 つ(今の版と戻し先の版)でもない root を、最後に使った古い順に消す。合計は root ごとの
+#                           大きさの和で、root どうしが hardlink で共有する木と .pyc を重ねて数える(実の使用量より大きく出る)。
+#                           2026-10-06 の実測で root 1 つは重ねて数えて 0.19〜0.25 GB(zeus の service worker の業務の root)— 専用の
+#                           service worker(/work が共有の USB の SSD の hostPath)は 1(root 4 本分)で足りる。
+#   WORKER_ENV_MIN_FREE_GIB 共有の disk の空きの最低(既定 25)— 割った時は root を消さずに準備を disk-full で断り、heartbeat で
+#                           exhausted を名乗る(coordinator は準備済みでない env の task を置かない)。
+env_roots_gib=${WORKER_ENV_ROOTS_GIB:-20}
+env_min_free_gib=${WORKER_ENV_MIN_FREE_GIB:-25}
+for amount in "WORKER_ENV_ROOTS_GIB=$env_roots_gib" "WORKER_ENV_MIN_FREE_GIB=$env_min_free_gib"; do
+  case "${amount#*=}" in
+    ''|*[!0-9]*)
+      echo "boot: ${amount%%=*} は GiB の 0 以上の整数で渡す(受けた値: ${amount#*=})" >&2
+      exit 2 ;;
+  esac
+done
 # worker を exec する刻(起動の内訳の 3 番目の刻・#3676)。
 DOEFF_BOOT_EXEC_MS=$(boot_ms)
 export DOEFF_BOOT_EXEC_MS
@@ -419,4 +438,5 @@ exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --na
   --task-reserve "${WORKER_TASK_RESERVE}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
-  --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}"
+  --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
+  --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))"

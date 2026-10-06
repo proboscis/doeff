@@ -94,10 +94,10 @@ class ProbeStatus:
 
 @dataclass(frozen=True)
 class EnvDisk:
-    """実行環境の root の置き場の disk の観測。pinned = root のキー(env-<キー>)の集合。"""
+    """実行環境の root の置き場の disk の観測。sweep-wanted = 掃除の係が拍を求めている。pinned = root のキー(env-<キー>)の集合。"""
 
     free: int
-    floor: int
+    sweep_wanted: bool
     pinned: frozenset[str]
 
 @dataclass(frozen=True)

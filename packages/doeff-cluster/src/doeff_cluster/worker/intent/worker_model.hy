@@ -117,11 +117,12 @@
 
 
 (defclass [(dataclass :frozen True)] EnvDisk []
-  "実行環境の root の置き場の disk の観測(2026-09-26): free = 空き(byte)・floor = 掃除を始める空きの下限・
-   pinned = 掃除の係が今持っている固定の集合(root のキー env-<キー>)。worker の判断は固定の集合が変わった時と、空きが下限を切った
-   時に SweepEnvs を撃つ。"
+  "実行環境の root の置き場の disk の観測(2026-09-26): free = 共有の disk の空き(byte)・sweep-wanted = 掃除の係が拍を求めている
+   (roots の合計が上限を越えている・最後に数えてから完成した root の集合が変わった・まだ数えていない・掃除が走っている —
+   env_upkeep.sweep-wanted・#3732)・pinned = 掃除の係が今持っている固定の集合(root のキー env-<キー>)。worker の判断は固定の集合が
+   変わった時と、sweep-wanted が真の時に SweepEnvs を撃つ。"
   (#^ int free)
-  (#^ int floor)
+  (#^ bool sweep-wanted)
   (#^ frozenset pinned))
 
 
@@ -384,8 +385,8 @@
 
 
 (defclass [(dataclass :frozen True)] SweepEnvs [EffectBase]
-  "実行環境の root の掃除の係へ固定の集合(root のキー env-<キー> — 走っている job・宣言の job・準備中・温める表)を渡し、空きが
-   下限を切っていれば掃除させる(消す root の選びは env_upkeep.sweep-choice)。disk を空けて次の準備を通すため。"
+  "実行環境の root の掃除の係へ固定の集合(root のキー env-<キー> — 走っている job・宣言の job・準備中・温める表)を渡し、roots の
+   合計が上限を越えていれば掃除させる(消す root の選びは env_upkeep.sweep-choice・#3732)。root の置き場を上限の内に保つため。"
   (#^ frozenset pinned))
 
 

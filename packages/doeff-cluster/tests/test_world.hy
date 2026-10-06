@@ -11,7 +11,7 @@
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))
 (val ENV (CodeView "env-0123" CodeState.PREPARING))
-(val DISK (EnvDisk 10 5 (frozenset #("env-0123"))))
+(val DISK (EnvDisk :free 10 :sweep-wanted False :pinned (frozenset #("env-0123"))))
 (val CHILD (WarmChildView :key "env-0123" :pid 77 :started-ms 5))
 
 

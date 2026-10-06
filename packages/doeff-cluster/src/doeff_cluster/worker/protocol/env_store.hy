@@ -10,7 +10,8 @@
 ;;;   * 先読み(warm): 温める表の root は job の準備より後に起こし、同時の枠の 1 つを job に残す(起こす順と数は env_rules.launch-order)。
 ;;;     期限は env_upkeep.prepare-overdue(先読みも job の準備も、進みの印が動かない長さだけ)。期限を判じる前に答えの file を読み、
 ;;;     完成を書いた準備(終わりの処理の途中)は止めない — 次の観測で終わりを読む。
-;;;   * 掃除(sweep): 空きが下限を切ったら、固定されていない root を消す(選びは env_upkeep.sweep-choice)・uv の cache を prune(待たない)・
+;;;   * 掃除(sweep): roots の合計が上限(settings.roots-cap-bytes)を越えたら、固定されていない root を消す(選びは env_upkeep.sweep-choice・
+;;;     #3732 — 共有の disk の空きでは消さない。空きが最低 settings.min-free-bytes を割った時は準備を disk-full で断る)・uv の cache を prune(待たない)・
 ;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
@@ -36,17 +37,18 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-candidates sweep-choice sweep-due prepare-overdue env-capacity
-                                              WHEEL-UNUSED-SECONDS])
+(import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes
+                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
-                                             overdue-failure root-project floor-bytes])
+                                             overdue-failure root-project])
 (import doeff_cluster.worker.protocol.heartbeat [env-report])
 
 
 (val ENV-TOOL "doeff_cluster.worker.entry.env_tool")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
 (val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
-;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes・floor-bytes・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数)。
+;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes = 共有の disk の空き・roots-bytes = roots の合計(hardlink を重ねて数える)・
+;; cap-bytes = roots の合計の上限・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数 — #3732)。
 (val SWEEP-LOG "worker: 掃除の選び")
 ;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
 ;; took-ms = 数えの始めから消しの終わりまでの ms)。
@@ -59,19 +61,21 @@
 (defrecord EnvSettings
   "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(root は state/roots の下)・
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
-   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・min-free-bytes = 準備を始める空きの下限・
-   limits = 準備の期限・max-parallel = 同時の準備の上限・tool = 準備の process の入口・sweep-floor-bytes = 掃除の下限(None = volume の割合)。"
+   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・
+   roots-cap-bytes = roots の合計の上限(越えた時だけ固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
+   (割った時は root を消さずに準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
+   上限・tool = 準備の process の入口。2 つの量の値は worker の起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
   (#^ str code-prepare)
+  (#^ int roots-cap-bytes)
   (setv #^ str repo-keys "")
   (setv #^ str uv "uv")
   (setv #^ int min-free-bytes 0)
   (setv #^ PrepareLimits limits (PrepareLimits))
   (setv #^ int max-parallel 2)
-  (setv #^ str tool ENV-TOOL)
-  (setv #^ (| int None) sweep-floor-bytes None))
+  (setv #^ str tool ENV-TOOL))
 
 
 (defrecord PendingEnv
@@ -192,13 +196,18 @@
   views)
 
 
-(defk disk-view [settings pinned]
-  {:pre [(: settings EnvSettings) (: pinned frozenset)] :post [(: % EnvDisk)]}
-  "root の置き場の disk の観測を返すため(worker の判断が掃除の時を決める)。"
+(defk disk-free [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % int)]}
+  "root の置き場の在る共有の disk の空き(byte)を返すため(heartbeat の名乗り・掃除の行・prune の判じが読む)。"
   (<- (file-done (MakeDirectory settings.state)))
   (<- usage (file-done (ReadDiskUsage settings.state)))
-  (<- floor int (floor-bytes settings.sweep-floor-bytes settings.min-free-bytes usage.total))
-  (EnvDisk :free usage.free :floor floor :pinned pinned))
+  usage.free)
+
+
+(defk ready-keys [views]
+  {:pre [(: views (| tuple None))] :post [(: % frozenset)]}
+  "最後の観測(ObserveEnvs)の完成した root のキーの集合を返すため(まだ観測していなければ空)— 掃除の数えを起こすかの比べ(#3732)。"
+  (frozenset (gfor view (or views #()) :if (= view.state CodeState.READY) view.revision)))
 
 
 (defk modified-ms [path]
@@ -246,9 +255,11 @@
 
 
 (defrecord SweepMeasuring
-  "走っている掃除の数え: done = 答え(MeasuredRoots)を受ける Promise・started-ms = 掃除を始めた時刻。"
+  "走っている掃除の数え: done = 答え(MeasuredRoots)を受ける Promise・started-ms = 掃除を始めた時刻・ready = 数えを始めた拍の完成した
+   root のキーの集合(数えの結び RootsTally に載せる — #3732)。"
   (#^ Promise done)
-  (#^ int started-ms))
+  (#^ int started-ms)
+  (#^ (get frozenset str) ready))
 
 
 (defrecord SweepRemoving
@@ -314,12 +325,13 @@
   None)
 
 
-(defk start-measuring [settings now-ms]
-  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % SweepMeasuring)]}
-  "掃除の数えをループの外の task として起こし、走っている数えの記録を返すため(ループは待たない — 答えは後の拍で sweep-answer が読む)。"
+(defk start-measuring [settings ready now-ms]
+  {:pre [(: settings EnvSettings) (: ready frozenset) (: now-ms int)] :post [(: % SweepMeasuring)]}
+  "掃除の数えをループの外の task として起こし、走っている数えの記録を返すため(ループは待たない — 答えは後の拍で sweep-answer が読む)。
+   ready = この拍の完成した root のキーの集合。"
   (<- done Promise (CreatePromise))
   (<- (Spawn (measuring-roots settings done) :daemon True))
-  (SweepMeasuring :done done :started-ms now-ms))
+  (SweepMeasuring :done done :started-ms now-ms :ready ready))
 
 
 (defk sweep-answer [work]
@@ -340,19 +352,21 @@
 
 (defk start-removing [settings measured busy started-ms]
   {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: started-ms int)] :post [(: % SweepRemoving)]}
-  "数えの答えが届いた拍で、その拍の固定(busy — 数えの間に固定になった root も入る)と空きで消す root を選び、脇へ退け、消しをループの
-   外の task として起こすため。答え = 走っている消しの記録。"
-  (<- disk EnvDisk (disk-view settings busy))
+  "数えの答えが届いた拍で、その拍の固定(busy — 数えの間に固定になった root も入る)と roots の合計の上限で消す root を選び、脇へ退け、
+   消しをループの外の task として起こすため。答え = 走っている消しの記録。"
+  (<- free int (disk-free settings))
+  (<- total int (roots-bytes measured.infos))
+  (val cap settings.roots-cap-bytes)
   (<- candidates tuple (sweep-candidates measured.infos busy))
-  (<- chosen tuple (sweep-choice measured.infos busy disk.free disk.floor))
-  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・下限・固定の数・候補の数・選んだ数。
-  (<- (slog SWEEP-LOG :level "info" :free-bytes disk.free :floor-bytes disk.floor :pinned (len busy) :candidates (len candidates)
+  (<- chosen tuple (sweep-choice measured.infos busy cap))
+  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・roots の合計・上限・固定の数・候補の数・選んだ数。
+  (<- (slog SWEEP-LOG :level "info" :free-bytes free :roots-bytes total :cap-bytes cap :pinned (len busy) :candidates (len candidates)
             :chosen (len chosen)))
   (<- now-ms int (now-epoch-ms))
   (var aside #())
   (for [key chosen]
-    (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(空き {} byte < 下限 {} byte)" (cut key (len ENV-KEY-PREFIX) None)
-                       disk.free disk.floor)))
+    (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(roots の合計 {} byte > 上限 {} byte)" (cut key (len ENV-KEY-PREFIX) None)
+                       total cap)))
     (<- moved bool (set-aside settings key now-ms))
     (when moved
       (:= aside (+ aside #(key)))))
@@ -363,7 +377,8 @@
 
 (defk pruned-after [settings prune preparing now-ms]
   {:pre [(: settings EnvSettings) (: prune PruneState) (: preparing bool) (: now-ms int)] :post [(: % PruneState)]}
-  "消しの終わった拍で、まだ下限を切っていれば uv の cache を prune するため(venv の中の file は hardlink なので残る)。答え = 次の prune の
+  "消しの終わった拍で、共有の disk の空きが最低(min-free-bytes)を割っていれば uv の cache を prune するため(venv の中の file は
+   hardlink なので残る — #3732 の前は掃除の下限で判じていた)。答え = 次の prune の
    記録。prune は uv の cache の lock を取るので、待つと root の準備の uv run が終わるまで worker のループ(heartbeat)が止まる — 別の
    process として起こして待たない。前の prune が走っている間と、root の準備が走っている間(preparing)と、前の prune から
    PRUNE-EVERY-MS の間は起こさない(準備と lock を競わない・他の物が使う node の disk では prune で下限に戻らないので、掃除ごとに
@@ -372,8 +387,8 @@
   (when (is-not pid None)
     (<- polled (PollProcess pid))
     (when (not (isinstance polled ProcessRunning)) (:= pid None)))
-  (<- after EnvDisk (disk-view settings (frozenset)))
-  (if (and (< after.free after.floor) (is pid None) (not preparing)
+  (<- free int (disk-free settings))
+  (if (and (< free settings.min-free-bytes) (is pid None) (not preparing)
            (or (= prune.started-ms 0) (>= (- now-ms prune.started-ms) PRUNE-EVERY-MS)))
       (do (<- started (StartProcess :argv #(settings.uv "cache" "prune") :env-mode EnvMode.EXTEND
                                     :env #((EnvEntry :name "UV_CACHE_DIR" :value (+ settings.state "/uv-cache"))) :process-group True))
@@ -440,13 +455,15 @@
   ;; 引数に残す理由: root の置き場と準備の道具は worker の process ごとの設定(main が引数から作る)。
   ;; 記録: 待ち(キー → #(宣言の JSON 先読みか) — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
   ;; 固定の集合 pinned-roots(最後に受けた SweepEnvs の固定 — 判断の側の statuses の held と別の物)・最後の掃除の終わりの時刻・
-  ;; 走っている掃除(数えか消し — 同時に 1 つ)・prune の記録・最後の観測(heartbeat の名乗りが読む)。
+  ;; 走っている掃除(数えか消し — 同時に 1 つ)・最後の数えの結び tally(RootsTally — まだ数えていなければ None・#3732)・prune の記録・
+  ;; 最後の観測(heartbeat の名乗りが読む)。
   (session var waiting {})
   (session var pending {})
   (session var failed {})
   (session var pinned-roots (frozenset))
   (session var swept-ms 0)
   (session var sweeping None)
+  (session var tally None)
   (session var prune (PruneState))
   (session var views None)
   (PrepareEnv [key runtime-env warm]
@@ -476,8 +493,11 @@
     (:= views (get observed 3))
     (resume views))
   (ObserveEnvDisk []
-    (<- disk EnvDisk (disk-view settings pinned-roots))
-    (resume disk))
+    ;; 掃除の係が拍を求めているか(sweep-wanted)は最後の観測の完成した root の集合と最後の数えの結びで判じる(#3732)。
+    (<- free int (disk-free settings))
+    (<- ready frozenset (ready-keys views))
+    (<- wanted bool (sweep-wanted (is-not sweeping None) tally ready settings.roots-cap-bytes))
+    (resume (EnvDisk :free free :sweep-wanted wanted :pinned pinned-roots)))
   (EnvReport []
     ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件
     ;; (形は env-report — sim の宿と同じ関数)。
@@ -487,14 +507,14 @@
       (:= pending (get observed 1))
       (:= failed (get observed 2))
       (:= views (get observed 3)))
-    (<- disk EnvDisk (disk-view settings pinned-roots))
-    (<- capacity str (env-capacity disk.free settings.min-free-bytes))
+    (<- free int (disk-free settings))
+    (<- capacity str (env-capacity free settings.min-free-bytes))
     (resume (env-report (or views #()) capacity)))
   (SweepEnvs [pinned]
     ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
-    ;;   走っていない → 始める時(sweep-due)なら数えを起こす
-    ;;   数えている   → 答えが届いていれば、この拍の固定で選び、選んだ root を脇へ退けて消しを起こす
-    ;;   消している   → 終わっていれば終わりの 1 行を出し、まだ下限を切っていれば uv の cache の prune を起こす
+    ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・上限を越えたまま)なら数えを起こす
+    ;;   数えている   → 答えが届いていれば、数えの結び(tally)を持ち替え、この拍の固定と上限で選び、選んだ root を脇へ退けて消しを起こす
+    ;;   消している   → 終わっていれば終わりの 1 行を出し、共有の disk の空きが最低を割っていれば uv の cache の prune を起こす
     ;; 初期値の空との比べで「変わった」と判じる最初の SweepEnvs は、worker が最初の宣言を読んだ拍の物(読む前は判断の側
     ;; policy.sweep-actions が撃たない — #3731)。ここで二重に止めない。
     (val changed (!= pinned pinned-roots))
@@ -502,14 +522,16 @@
     (<- now-ms int (now-epoch-ms))
     (match sweeping
       None
-        (do (<- disk EnvDisk (disk-view settings pinned-roots))
-            (<- due bool (sweep-due disk.free disk.floor changed now-ms swept-ms))
+        (do (<- ready frozenset (ready-keys views))
+            (<- due bool (sweep-due tally ready settings.roots-cap-bytes changed now-ms swept-ms))
             (when due
-              (<- measuring SweepMeasuring (start-measuring settings now-ms))
+              (<- measuring SweepMeasuring (start-measuring settings ready now-ms))
               (:= sweeping measuring)))
       (SweepMeasuring)
         (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
             (when (is-not measured None)
+              (<- total int (roots-bytes measured.infos))
+              (:= tally (RootsTally :ready sweeping.ready :bytes total))
               ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
               (<- removing SweepRemoving (start-removing settings measured (| pinned-roots (frozenset pending) (frozenset waiting)) sweeping.started-ms))
               (:= sweeping removing)))
