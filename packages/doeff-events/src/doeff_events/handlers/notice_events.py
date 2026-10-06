@@ -33,8 +33,9 @@ What the wrapper does:
   the body ends. When the body ends, the waiting task is stopped and the marks are gone.
 - Receiving. Before the body runs, the wrapper subscribes the channels its routes read and — only after the
   broker confirmed the subscription — publishes ``SourceStarted`` on the bus. Then one task waits for notices
-  and publishes each received event on the bus; the body receives them one at a time with ``WaitForEvent``
-  (the wrapper does not answer it, it only adds ``SourceFailed`` to the wait like doeff-records' signal source).
+  and publishes each received event on the bus; the body receives them one at a time with ``WaitForEvent``, or
+  all that have arrived at once with ``WaitForEvents`` (the wrapper does not answer either, it only adds
+  ``SourceFailed`` to the wait like doeff-records' signal source).
   Every notice received is published; one that no route of this wrapper can decode fails the source by name.
 - What is not delivered. A notice reaches the subscribers connected when it is announced. Notices announced
   before the subscription, or while the connection was lost, never arrive. The wrapper does not fill that gap:
@@ -81,6 +82,7 @@ from doeff_events.effects.events import (
     SourceStalled,
     SourceStarted,
     WaitForEventEffect,
+    WaitForEventsEffect,
 )
 from doeff_events.effects.notices import (
     Announce,
@@ -477,29 +479,53 @@ def _sent(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -
     return answer
 
 
+def _foreign_failure(plan: _Plan, wanted: tuple[type[object], ...], came: object) -> bool:
+    """Whether ``came`` is a failure of another source on the same bus that the body did not ask for (it asks for
+    failures by naming ``SourceFailed``) — such a failure is not this body's, and the wait drops it."""
+    return isinstance(came, SourceFailed) and came.source != plan.source and SourceFailed not in wanted
+
+
+def _own_failure(plan: _Plan, came: object) -> SourceFailed | None:
+    """``came`` if it is the failure of this wrapper's source (the body's wait ends with its error), else ``None``."""
+    return came if isinstance(came, SourceFailed) and came.source == plan.source else None
+
+
 def _body_handler(plan: _Plan, gaps: _Gaps) -> "ProgramHandler":
     """The handler around the body: sends routed ``Publish`` (marking what the broker cannot take) and passes
-    ``WaitForEvent`` outward with ``SourceFailed`` added, so that a failure of this wrapper's source ends the
-    body's wait with its error."""
+    ``WaitForEvent`` / ``WaitForEvents`` outward with ``SourceFailed`` added, so that a failure of this wrapper's
+    source ends the body's wait with its error."""
 
     @do
-    def handler(effect: PublishEffect | WaitForEventEffect, k: K) -> "EffectGenerator[object]":
+    def handler(
+        effect: PublishEffect | WaitForEventEffect | WaitForEventsEffect, k: K
+    ) -> "EffectGenerator[object]":
         """Translate one effect of the body (see ``_body_handler``)."""
-        if isinstance(effect, PublishEffect):
-            route = plan.route_of(effect.event)
-            if route is None:
-                yield Pass(effect, k)
-                return None
-            answer = yield _sent(plan, gaps, route, effect.event)
-            return (yield Resume(k, answer))
-        wanted = effect.event_types
-        came = yield WaitForEventEffect((*wanted, SourceFailed))
-        # A failure of another source on the same bus is not this body's unless it asked for failures.
-        while isinstance(came, SourceFailed) and came.source != plan.source and SourceFailed not in wanted:
-            came = yield WaitForEventEffect((*wanted, SourceFailed))
-        if isinstance(came, SourceFailed) and came.source == plan.source:
-            return (yield ResumeThrow(k, came.error))
-        return (yield Resume(k, came))
+        match effect:
+            case PublishEffect(event=event):
+                route = plan.route_of(event)
+                if route is None:
+                    yield Pass(effect, k)
+                    return None
+                answer = yield _sent(plan, gaps, route, event)
+                return (yield Resume(k, answer))
+            case WaitForEventEffect(event_types=wanted):
+                came = yield WaitForEventEffect((*wanted, SourceFailed))
+                while _foreign_failure(plan, wanted, came):
+                    came = yield WaitForEventEffect((*wanted, SourceFailed))
+                failure = _own_failure(plan, came)
+                if failure is not None:
+                    return (yield ResumeThrow(k, failure.error))
+                return (yield Resume(k, came))
+            case WaitForEventsEffect(event_types=wanted):
+                kept: tuple[object, ...] = ()
+                # Wait again while every event that came was another source's failure the body did not ask for.
+                while not kept:
+                    came_all: tuple[object, ...] = yield WaitForEventsEffect((*wanted, SourceFailed))
+                    failure = next((own for came in came_all if (own := _own_failure(plan, came)) is not None), None)
+                    if failure is not None:
+                        return (yield ResumeThrow(k, failure.error))
+                    kept = tuple(came for came in came_all if not _foreign_failure(plan, wanted, came))
+                return (yield Resume(k, kept))
 
     return _program_handler(handler)
 

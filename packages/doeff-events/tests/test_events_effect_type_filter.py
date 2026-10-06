@@ -1,8 +1,8 @@
 """出来事の handler の effect の引数の型の註の検(agora-redesign #2670 の根 A)。
 
 VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
-その handler を Python に入らずに外へ渡す。memory の 2 つの handler(event_handler・subscribed_event_handler)は Publish と WaitForEvent
-にだけ答え、ほかは Pass で外へ渡すだけなので、註で 2 つの型に絞っても答えと順は変わらず、本体に入る回数だけが減る(註が EffectBase の
+その handler を Python に入らずに外へ渡す。memory の 2 つの handler(event_handler・subscribed_event_handler)は Publish と WaitForEvent・
+WaitForEvents にだけ答え、ほかは Pass で外へ渡すだけなので、註でその型に絞っても答えと順は変わらず、本体に入る回数だけが減る(註が EffectBase の
 間は、係の本体の全部の effect がこの handler を Pass で通り、agora の手番の筋書き 1 本で 7,000〜11,000 歩を使っていた)。
 """
 
@@ -14,7 +14,7 @@ from types import CodeType, FrameType
 from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader
 from doeff_events import EventBus, Publish, event_handler, subscribed_event_handler
-from doeff_events.effects import PublishEffect, WaitForEventEffect
+from doeff_events.effects import PublishEffect, WaitForEventEffect, WaitForEventsEffect
 from doeff_vm._effect_types import handler_effect_types
 from events_test_support import run_scheduled
 
@@ -72,8 +72,12 @@ def _subscriber_code() -> CodeType:
 
 
 def test_both_memory_handlers_declare_the_effects_they_answer() -> None:
-    assert handler_effect_types(_raw(subscribed_event_handler(EventBus(), "s", (Changed,)))) == (WaitForEventEffect, PublishEffect)
-    assert handler_effect_types(_raw(event_handler())) == (WaitForEventEffect, PublishEffect)
+    assert handler_effect_types(_raw(subscribed_event_handler(EventBus(), "s", (Changed,)))) == (
+        WaitForEventEffect,
+        WaitForEventsEffect,
+        PublishEffect,
+    )
+    assert handler_effect_types(_raw(event_handler())) == (WaitForEventEffect, WaitForEventsEffect, PublishEffect)
 
 
 def test_an_effect_outside_the_types_does_not_enter_the_subscriber() -> None:

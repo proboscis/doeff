@@ -116,9 +116,9 @@
 ;;;   - 時間の設定の既定(#3865 — 本番には無い・模擬の境界だけ): :timing を渡さない筋書きは、本番の既定の窓を全部 SIM-TIMING-RATIO 倍に
 ;;;     延ばした設定で走る(heartbeat と待ちの送り直しの歩を減らす)。その世界では worker の死の判断が起きない前提で、出たら筋書きを待たずに
 ;;;     SimLivenessError で終わる。生死・fence・停止と、heartbeat に載る報告の速さを試す筋書きは本番の値を :timing で明示する。
-;;;   - 行き止まりの見張り(#3078 — 本番には無い・模擬の境界だけ): 業務の task が全部 出来事(WaitForEvent)を待って止まり、筋書きの本体も
-;;;     期限なしで待ち、coordinator の task の行が落ち着いていれば、仮想の時計を進め続けずに SimDeadlockError で終わる。数えるのは
-;;;     WaitForEvent の待ちだけ(Delay・記録の Watch の待ちは数えない)。process の中で Spawn した子は、終わっても process の終わりまで
+;;;   - 行き止まりの見張り(#3078 — 本番には無い・模擬の境界だけ): 業務の task が全部 出来事(WaitForEvent・WaitForEvents)を待って止まり、
+;;;     筋書きの本体も期限なしで待ち、coordinator の task の行が落ち着いていれば、仮想の時計を進め続けずに SimDeadlockError で終わる。数える
+;;;     のは WaitForEvent・WaitForEvents の待ちだけ(Delay・記録の Watch の待ちは数えない)。process の中で Spawn した子は、終わっても process の終わりまで
 ;;;     task の数に入る(その間は行き止まりと判じない — 見落としの向き)。
 ;;;
 ;;; 状態の置き場(ADR-DOE-HY-007): 世界の状態は世界の handler(sim-world)の session var に置き、値は defrecord、変化は effect で書く。
@@ -139,7 +139,7 @@
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError Race])
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
-(import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
+(import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [Delay GetMonotonic TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])
@@ -913,7 +913,7 @@
 ;; --- 行き止まりの見張りの値と effect(#3078)----------------------------------------------------------------
 
 (defrecord BusinessWait
-  "出来事を待っている業務の task 1 つ: process の pid・job の名・待つ出来事の型の名(WaitForEvent の型の名を , で繋いだ物)。"
+  "出来事を待っている業務の task 1 つ: process の pid・job の名・待つ出来事の型の名(WaitForEvent・WaitForEvents の型の名を , で繋いだ物)。"
   (#^ int pid)
   (#^ str job)
   (#^ str events))
@@ -958,7 +958,7 @@
    本番の値を :timing で明示する(#3865)。args = 知らせの文と WorkerGone。")
 
 (defeffect NoteEventWait
-  "業務の process pid の task 1 つが出来事の待ち(WaitForEvent)に入った(waiting 真 — events = 待つ型の名)か、出た(偽)かを世界に
+  "業務の process pid の task 1 つが出来事の待ち(WaitForEvent・WaitForEvents)に入った(waiting 真 — events = 待つ型の名)か、出た(偽)かを世界に
    知らせる(#3078)。"
   {:fields [(: pid int) (: events str) (: waiting bool)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -1676,7 +1676,7 @@
    据えた process は TERM で止めの節を回して自分で終わる・#3145)。殺された process(Crash = 1・worker の死 = -9)はここへ戻らない —
    本物の SIGKILL と同じく task ごと捨てられ(Discard — 巻き戻さない・finally の effect は走らない)、終わりは殺した側が書く。"
   (try
-    ;; 出来事の待ちの印(business-wait-tap — 行き止まりの見張りの材料・#3078)は柵の外側に置く: 柵が外へ通した WaitForEvent だけを見て、
+    ;; 出来事の待ちの印(business-wait-tap — 行き止まりの見張りの材料・#3078)は柵の外側に置く: 柵が外へ通した WaitForEvent・WaitForEvents だけを見て、
     ;; 印の知らせ(NoteEventWait)は柵を通らずに世界へ届く。
     ;; 止めの合図の口(process-signals — 本番の SIGTERM の代役・#3145)は柵のすぐ外: 柵が通した止めの問いと待ちに答え、外の世界が
     ;; 通す時だけ外の答え手へ渡す。
@@ -3404,12 +3404,12 @@
 
 ;; --- 行き止まりの見張り(#3078 — 業務の task の待ちだけを見る・時計の刻みでは起きない)--------------------------------
 ;; 今の scheduler の行き止まりの判定(SchedulerDeadlockError — 走れる task も外の約束の待ちも無い時)は sim-cluster では起きない: worker の
-;; 拍の timer がいつも時計の列に在り、列が空にならない。なので業務の task の出来事の待ち(WaitForEvent)だけを数え、それを起こす物
+;; 拍の timer がいつも時計の列に在り、列が空にならない。なので業務の task の出来事の待ち(WaitForEvent・WaitForEvents)だけを数え、それを起こす物
 ;; (筋書きの本体・coordinator の置き直し・業務の timer・sim の世界の予定)が無い時にその場で SimDeadlockError で終わらせる。
 
 (defk event-names [event-types]
   {:pre [(: event-types tuple)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "WaitForEvent の型の組を、名を , で繋いだ文にするため(行き止まりの知らせの名指し)。"
+  "WaitForEvent・WaitForEvents の型の組を、名を , で繋いだ文にするため(行き止まりの知らせの名指し)。"
   (.join "," (gfor t event-types t.__name__)))
 
 
@@ -3473,7 +3473,7 @@
 
 (defhandler business-wait-tap [#^ int pid]
   {:tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 業務の process pid の出来事の待ち(WaitForEvent)の前後を世界に知らせる(行き止まりの見張りの材料)。待ちそのものは外側の出来事の
+  ;; 業務の process pid の出来事の待ち(WaitForEvent・WaitForEvents)の前後を世界に知らせる(行き止まりの見張りの材料)。待ちそのものは外側の出来事の
   ;; 答え手がする(答えはそのまま返す)。殺された process(Discard)の待ちは「出た」の知らせが戻らないが、世界は生きている process の
   ;; 待ちだけを数える。
   ;; 引数に残す理由: process ごとに別の pid で同じ handler を並べる(柵 fence と同じ — Ask では process を区別できない)。
@@ -3482,7 +3482,13 @@
     (<- (NoteEventWait pid events True))
     (<- event (WaitForEventEffect event-types))
     (<- (NoteEventWait pid events False))
-    (resume event)))
+    (resume event))
+  (WaitForEventsEffect [event-types]
+    (<- events str (event-names event-types))
+    (<- (NoteEventWait pid events True))
+    (<- came tuple (WaitForEventsEffect event-types))
+    (<- (NoteEventWait pid events False))
+    (resume came)))
 
 
 (defhandler scenario-wait-tap
@@ -3494,6 +3500,11 @@
     (<- event (WaitForEventEffect event-types))
     (<- (NoteScenarioWait False))
     (resume event))
+  (WaitForEventsEffect [event-types]
+    (<- (NoteScenarioWait True))
+    (<- came tuple (WaitForEventsEffect event-types))
+    (<- (NoteScenarioWait False))
+    (resume came))
   (AwaitProcessEnded [job timeout-seconds]
     :when (is timeout-seconds None)
     (<- (NoteScenarioWait True))

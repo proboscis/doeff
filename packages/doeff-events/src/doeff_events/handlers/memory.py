@@ -3,7 +3,8 @@
 ``event_handler()`` は、その時に待っている全員へ合図を同報し、待ち手が居なければ合図を捨てる(元の形のまま)。
 ``subscribed_event_handler()`` は購読者ごとの列を持ち、待ち手が居ない間に発した合図も列に積む — 状態を読んでから
 ``WaitForEvent`` に入るまでの間に別の task が発した合図を落とさない(agora-redesign #3075・設計 #3072)。列に溜まった
-同じ型の「所が変わった」合図は 1 つにまとめる(agora-redesign #3079)。
+同じ型の「所が変わった」合図は 1 つにまとめる(agora-redesign #3079)。``WaitForEvents`` は 1 つ以上届くまで待ち、その時に列に在る
+当たる合図を全部、来た順の組で受ける — 同じ刻に届いた複数の知らせを 1 回の読みにまとめる。
 """
 
 import inspect
@@ -14,7 +15,13 @@ from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise
 
 from doeff import K, Pass, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
-from doeff_events.effects import PublishEffect, SourceFailed, StopArrived, WaitForEventEffect
+from doeff_events.effects import (
+    PublishEffect,
+    SourceFailed,
+    StopArrived,
+    WaitForEventEffect,
+    WaitForEventsEffect,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Hashable
@@ -58,13 +65,15 @@ def event_handler():
     """Create a stateful in-memory pub/sub handler.
 
     WaitForEvent creates a Promise and blocks via Wait(promise.future).
+    WaitForEvents waits the same way and answers the one event it received as ``(event,)`` (there is no queue to
+    hold more).
     Publish resolves promises for listeners whose registered type matches.
     """
     listeners: dict[type, list] = {}
 
     @do
-    def handler(effect: WaitForEventEffect | PublishEffect, k):
-        if isinstance(effect, WaitForEventEffect):
+    def handler(effect: WaitForEventEffect | WaitForEventsEffect | PublishEffect, k):
+        if isinstance(effect, WaitForEventEffect | WaitForEventsEffect):
             promise = yield CreatePromise()
             for event_type in effect.event_types:
                 listeners.setdefault(event_type, []).append(promise)
@@ -72,7 +81,8 @@ def event_handler():
                 event = yield Wait(promise.future)
             finally:
                 _remove_promises(listeners, {id(promise)})
-            result = yield Resume(k, event)
+            answer = (event,) if isinstance(effect, WaitForEventsEffect) else event
+            result = yield Resume(k, answer)
             return result
 
         if isinstance(effect, PublishEffect):
@@ -176,7 +186,7 @@ class SubscriberQueue:
     列へ渡す。列に同じ型のまとめてよい合図(``_coalescible``)が既に在れば、その合図を ``keys`` を合わせた 1 つに
     置き換え(先に来た方の位置のまま)、無ければ末尾に積む。購読の型に当たらない合図は捨てる。``take(types)`` は列の
     先頭から ``types`` に当たる最初の合図を取り出す。1 つの合図は購読者ごとに 1 度だけ渡る(待ち手の 1 人か、列の
-    1 か所 — まとめた合図はその ``keys`` の中)。
+    1 か所 — まとめた合図はその ``keys`` の中)。``take_all(types)`` は ``types`` に当たる合図を全部、来た順に取り出す。
 
     記録の service から合図を受ける handler(agora-redesign #3077)も、受けた合図をこの ``offer`` に渡せば、
     ``WaitForEvent`` の側の待ち方(``take`` → 無ければ待ち手として約束で待つ)を共有できる。
@@ -235,6 +245,12 @@ class SubscriberQueue:
                 return event
         return EMPTY
 
+    def take_all(self, wanted: tuple[type, ...]) -> tuple[object, ...]:
+        """列の先頭から ``wanted`` に当たる合図を全部取り出し、来た順の組で返す。無ければ空の組。当たらない合図は列に残る。"""
+        taken = tuple(event for event in self._pending if isinstance(event, wanted))
+        self._pending[:] = [event for event in self._pending if not isinstance(event, wanted)]
+        return taken
+
     def add_waiter(self, wanted: tuple[type, ...], promise: Promise[object]) -> None:
         """``wanted`` の合図を ``promise`` で待つ待ち手を末尾に足す(起こすのは来た順)。"""
         self._waiters.append(_Waiter(_require_types(tuple(wanted)), promise))
@@ -288,39 +304,62 @@ def subscribed_event_handler(
       合図は、その時に待っていない購読者の列にも残る。
     - ``WaitForEvent(*types)``: 自分の列から取り出す。無ければ内側の約束(``CreatePromise``・``Wait``)で待つ。
       ``types`` に購読の型の外の型が在れば ``ValueError``(満たされない待ち = 配線の誤りを、その場で名指す)。
+    - ``WaitForEvents(*types)``: 自分の列に当たる合図が在れば全部を来た順の組で答える。無ければ ``WaitForEvent`` と同じく
+      約束で 1 つ待ち、起きた後にその時に列に在る残りも足して答える(空の組は答えない)。型の外の検めも同じ。
 
     購読者の名前・列・``bus`` はこの組み立ての引数だけに出て、Program には出ない。ack も cursor も無い。
     """
     queue = bus.subscribe(subscriber, (*event_types, StopArrived, SourceFailed) if event_types else ())
 
+    def outside_error(wanted: tuple[type, ...]) -> ValueError | None:
+        """``wanted`` に購読の型の外の型が在れば、それを名指す ``ValueError``。無ければ ``None``(2 つの待ちの共有の検め)。"""
+        outside = queue.outside(wanted)
+        if not outside:
+            return None
+        names = ", ".join(t.__name__ for t in outside)
+        subscribed = ", ".join(t.__name__ for t in queue.event_types) or "なし"
+        return ValueError(
+            f"購読者 {subscriber!r} は購読の型の外を待った: {names}"
+            f"(購読の型: {subscribed})— 外の型の合図は列に積まれず、待ちが満たされない"
+        )
+
     @do
-    def handler(effect: WaitForEventEffect | PublishEffect, k: K) -> "EffectGenerator[object]":
-        """この購読者の Program の Publish・WaitForEvent に、bus と自分の列で答える。effect の型の注記により、ほかの effect では
-        VM がこの handler を飛ばす(doeff-vm の _effect_types.py — 本体の全部の effect がここを Pass で通る歩を出さない)。"""
+    def next_one(wanted: tuple[type, ...]) -> "EffectGenerator[object]":
+        """列から ``wanted`` に当たる最初の合図を取り出す。無ければ待ち手として約束で 1 つ待つ。"""
+        found = queue.take(wanted)
+        if not isinstance(found, Empty):
+            return found
+        promise: Promise[object] = yield CreatePromise()
+        queue.add_waiter(wanted, promise)
+        try:
+            came = yield Wait(promise.future)
+        finally:
+            queue.remove_waiter(promise)
+        return came
+
+    @do
+    def handler(
+        effect: WaitForEventEffect | WaitForEventsEffect | PublishEffect, k: K
+    ) -> "EffectGenerator[object]":
+        """この購読者の Program の Publish・WaitForEvent・WaitForEvents に、bus と自分の列で答える。effect の型の注記により、ほかの
+        effect では VM がこの handler を飛ばす(doeff-vm の _effect_types.py — 本体の全部の effect がここを Pass で通る歩を出さない)。"""
         match effect:
             case WaitForEventEffect(event_types=wanted):
-                outside = queue.outside(wanted)
-                if outside:
-                    names = ", ".join(t.__name__ for t in outside)
-                    subscribed = ", ".join(t.__name__ for t in queue.event_types) or "なし"
-                    return (
-                        yield ResumeThrow(
-                            k,
-                            ValueError(
-                                f"購読者 {subscriber!r} は購読の型の外を待った: {names}"
-                                f"(購読の型: {subscribed})— 外の型の合図は列に積まれず、待ちが満たされない"
-                            ),
-                        )
-                    )
-                found = queue.take(wanted)
-                if isinstance(found, Empty):
-                    promise: Promise[object] = yield CreatePromise()
-                    queue.add_waiter(wanted, promise)
-                    try:
-                        found = yield Wait(promise.future)
-                    finally:
-                        queue.remove_waiter(promise)
+                error = outside_error(wanted)
+                if error is not None:
+                    return (yield ResumeThrow(k, error))
+                found = yield next_one(wanted)
                 return (yield Resume(k, found))
+            case WaitForEventsEffect(event_types=wanted):
+                error = outside_error(wanted)
+                if error is not None:
+                    return (yield ResumeThrow(k, error))
+                queued = queue.take_all(wanted)
+                if queued:
+                    return (yield Resume(k, queued))
+                # 列が空なら 1 つ待ち、起きるまでに列に積まれた残りも同じ答えに足す(来た順 — 起こした合図が最初)。
+                first = yield next_one(wanted)
+                return (yield Resume(k, (first, *queue.take_all(wanted))))
             case PublishEffect(event=event):
                 for promise in bus.offer(event):
                     yield CompletePromise(promise, event)

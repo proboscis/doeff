@@ -84,15 +84,17 @@ class SourceStarted:
     source: str
 
 
-def _normalize_event_types(event_types: tuple[type[Any], ...]) -> tuple[type[Any], ...]:
+def _normalize_event_types(
+    effect_name: str, event_types: tuple[type[Any], ...]
+) -> tuple[type[Any], ...]:
     if not event_types:
-        raise ValueError("WaitForEvent requires at least one event type")
+        raise ValueError(f"{effect_name} requires at least one event type")
 
     normalized: list[type[Any]] = []
     for event_type in event_types:
         if not isinstance(event_type, type):
             raise TypeError(
-                f"WaitForEvent event types must be type objects, got {type(event_type).__name__}"
+                f"{effect_name} event types must be type objects, got {type(event_type).__name__}"
             )
         if event_type not in normalized:
             normalized.append(event_type)
@@ -116,11 +118,29 @@ class WaitForEventEffect(EffectBase):
 
     def __init__(self, event_types: tuple[type[Any], ...]):
         super().__init__()
-        self.event_types = _normalize_event_types(event_types)
+        self.event_types = _normalize_event_types("WaitForEvent", event_types)
 
     def __repr__(self):
         names = ", ".join(t.__name__ for t in self.event_types)
         return f"WaitForEvent({names})"
+
+
+class WaitForEventsEffect(EffectBase):
+    """Wait until at least one event matching the configured event types arrives, then answer every matching event
+    already delivered to the waiter, in arrival order, as a non-empty tuple.
+
+    ``WaitForEvent`` answers one event per wait, so a receiver that gets several events at the same moment folds them
+    one by one and shows each partial state. ``WaitForEvents`` takes them all in one wait. A handler without a queue
+    (``event_handler``) answers the one event it delivered as ``(event,)``.
+    """
+
+    def __init__(self, event_types: tuple[type[Any], ...]):
+        super().__init__()
+        self.event_types = _normalize_event_types("WaitForEvents", event_types)
+
+    def __repr__(self):
+        names = ", ".join(t.__name__ for t in self.event_types)
+        return f"WaitForEvents({names})"
 
 
 def publish(event: Any) -> PublishEffect:
@@ -131,9 +151,14 @@ def wait_for_event(*event_types: type[Any]) -> WaitForEventEffect:
     return WaitForEventEffect(event_types=tuple(event_types))
 
 
+def wait_for_events(*event_types: type[Any]) -> WaitForEventsEffect:
+    return WaitForEventsEffect(event_types=tuple(event_types))
+
+
 # Capitalized aliases
 Publish = publish
 WaitForEvent = wait_for_event
+WaitForEvents = wait_for_events
 
 
 __all__ = [
@@ -146,6 +171,9 @@ __all__ = [
     "StopArrived",
     "WaitForEvent",
     "WaitForEventEffect",
+    "WaitForEvents",
+    "WaitForEventsEffect",
     "publish",
     "wait_for_event",
+    "wait_for_events",
 ]
