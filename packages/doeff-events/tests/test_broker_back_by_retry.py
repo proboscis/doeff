@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, final
 import pytest
 from doeff_events import EventBus, subscribed_event_handler
 from doeff_events.effects.events import Publish
-from doeff_events.effects.notices import Announce, ProbeBroker
+from doeff_events.effects.notices import Announce, BrokerUnreachable, ProbeBroker
 from doeff_events.handlers.memory_notices import (
     MemoryBroker,
     cut_broker,
@@ -39,7 +39,7 @@ from doeff_events.notice_laws import LawNote, law_routes
 from doeff_time import Delay, GetTime
 from notice_law_support import PATIENCE_SECONDS, PREFIX, T0, run_on_virtual_clock
 
-from doeff import K, Pass, Program, do
+from doeff import K, Pass, Program, Resume, do
 from doeff import handler as program_handler
 
 if TYPE_CHECKING:
@@ -147,3 +147,37 @@ def test_trying_stops_once_the_next_publish_told_the_gap() -> None:
 def test_the_interval_is_named_by_the_composition_and_must_be_positive(seconds: object) -> None:
     with pytest.raises(ValueError, match="retry_seconds"):
         broker_back_by_retry(seconds)  # type: ignore[arg-type] — the check refuses what the type allows past it
+
+
+def _sends_refused() -> "ProgramHandler":
+    """A broker that takes a connection but refuses every send: ``ProbeBroker`` goes on (answered as reachable),
+    ``Announce`` answers ``BrokerUnreachable``."""
+
+    @do
+    def handler(effect: Announce, k: K) -> "EffectGenerator[object]":
+        """Refuse the send."""
+        return (yield Resume(k, BrokerUnreachable("the broker takes the PING but refuses the send")))
+
+    return program_handler(handler)
+
+
+def test_a_broker_that_takes_the_ping_but_refuses_the_sends_is_tried_once_an_interval() -> None:
+    # Fix B of the review: the try succeeds at once, the gap still cannot be told, and the return is asked about
+    # again — the second ask in the same outage waits out the interval first instead of trying again at once
+    # (without it, the tries repeat at 0 s and the virtual clock never moves).
+    broker, seen = MemoryBroker(), _Seen()
+    routes = tuple(
+        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, MarkGap()) for r in law_routes(PREFIX)
+    )
+
+    @do
+    def misses_and_waits() -> "EffectGenerator[None]":
+        yield Publish(LawNote("lost"))
+        yield Delay(12.0)
+
+    events = notice_events_handler("law-refused", routes, PATIENCE_SECONDS)
+    under = memory_notice_handler(broker)(
+        _recording(seen)(_sends_refused()(broker_back_by_retry(RETRY_SECONDS)(events(misses_and_waits()))))
+    )
+    run_on_virtual_clock(subscribed_event_handler(EventBus(), "law-refused")(under))
+    assert seen.tries == (0.0, 5.0, 10.0), seen.tries

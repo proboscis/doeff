@@ -157,14 +157,16 @@
   ;; process のテストは memory(この process の中だけ — 誰にも届かない)を名指す。
   (.add-argument parser "--notice-broker" :required True
                  :help "redis://<host>:<port>/<db> か memory")
+  (.add-argument parser "--notice-timeout-seconds" :type float :default None
+                 :help "Redis へ繋ぐ・送るの答えを待つ上限(秒)— --notice-broker が Redis の時は必須")
   (.add-argument parser "--notice-retry-seconds" :type float :default None
                  :help "Redis の戻りを待つ間だけ繋がるかを試す間隔(秒)— --notice-broker が Redis の時は必須")
   (setv args (.parse-args parser))
-  (when (and (!= args.notice-broker "memory") (is args.notice-retry-seconds None))
-    (.error parser "--notice-broker が Redis の時は --notice-retry-seconds が要る(既定なし)"))
+  (when (and (!= args.notice-broker "memory") (or (is args.notice-timeout-seconds None) (is args.notice-retry-seconds None)))
+    (.error parser "--notice-broker が Redis の時は --notice-timeout-seconds と --notice-retry-seconds が要る(既定なし)"))
   (setv notices (if (= args.notice-broker "memory")
                     (memory-notices (MemoryBroker))
-                    (redis-notices args.notice-broker args.notice-retry-seconds)))
+                    (redis-notices args.notice-broker args.notice-timeout-seconds args.notice-retry-seconds)))
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))
   ;; 受付の箱は合図の受け手より先に作る(合図が箱を起こす — 要求の無い間に眠る待ちを合図の刻に抜ける・#3865)。待ち受けは読み直しの後。

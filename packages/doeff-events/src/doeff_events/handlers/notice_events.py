@@ -9,7 +9,7 @@ Order of handlers (outer → inner)::
 
     subscribed_event_handler(bus, subscriber, types)   # the one that answers WaitForEvent
       → clock handler (GetTime / WaitWithin)           # only used while the broker is unreachable
-        → memory_notice_handler(broker) | redis_notice_handler(url)  (+ whoever answers AwaitBrokerBack)
+        → memory_notice_handler(broker) | redis_notice_handler(url, timeout_seconds) → broker_back_by_retry(retry_seconds)
           → notice_events_handler(source, routes, patience_seconds)
             → business program
 
@@ -173,17 +173,18 @@ PublishAnswer = NoticeSent | NoticeGapMarked | NoticeDropped
 
 @final
 class _Gaps:
-    """The marks of one wrapped body: the channels with a gap not told yet (first-marked order), whether a gap is
-    being told now and who waits for that to end, the task waiting for the broker's return (``None`` = none), and
-    the error of a waiting task that failed (raised when the body ends)."""
+    """What one wrapped body keeps for its sends: the channels with a gap not told yet (first-marked order), the
+    one exit every send of the body goes through (whether it is taken, and who queues for it — first come, first
+    served), the task waiting for the broker's return (``None`` = none), and the error of a waiting task that failed
+    (raised when the body ends)."""
 
-    __slots__ = ("_mut_after_telling", "_mut_channels", "_mut_failure", "_mut_telling", "_mut_waiter")
+    __slots__ = ("_mut_busy", "_mut_channels", "_mut_failure", "_mut_queued", "_mut_waiter")
 
     def __init__(self) -> None:
-        """Start with no gap."""
+        """Start with no gap and the exit free."""
         self._mut_channels: tuple[str, ...] = ()
-        self._mut_telling = False
-        self._mut_after_telling: tuple[Promise[None], ...] = ()
+        self._mut_busy = False
+        self._mut_queued: tuple[Promise[None], ...] = ()
         self._mut_waiter: Task[object] | None = None
         self._mut_failure: Exception | None = None
 
@@ -246,6 +247,13 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience
     for route in routes:
         if not isinstance(route, NoticeRoute):
             raise TypeError(f"notice_events_handler: routes must be NoticeRoute values, got {route!r}")
+        if not isinstance(route.when_unsent, MarkGap | Drop):
+            raise TypeError(
+                f"notice_events_handler: the route {route.wire_name!r} must say what is done with an event the broker "
+                f"could not take (when_unsent = MarkGap(...) or Drop()), got {route.when_unsent!r}"
+            )
+        if route.wire_name == GAP_NOTICE:
+            raise ValueError(f"notice_events_handler: the wire name {GAP_NOTICE!r} is the gap notice's own")
     types = tuple(route.event_type for route in routes)
     names = tuple(route.wire_name for route in routes)
     if len(set(types)) != len(types) or len(set(names)) != len(names):
@@ -359,33 +367,71 @@ def _failure_announced(source: str, program: "Program[None]") -> "EffectGenerato
 
 
 @do
+def _exit_taken(gaps: _Gaps) -> "EffectGenerator[None]":
+    """Take the body's one exit: at once if it is free, otherwise after everyone who queued before (the one leaving
+    hands it over — first come, first served). A task stopped while it queues leaves the queue, and one stopped
+    right after it was handed the exit hands it on, so the exit is never left taken by nobody."""
+    if not gaps._mut_busy:
+        gaps._mut_busy = True
+        return None
+    turn: Promise[None] = yield CreatePromise()
+    gaps._mut_queued = (*gaps._mut_queued, turn)
+    try:
+        yield Wait(turn.future)
+    except Exception:
+        if turn in gaps._mut_queued:
+            gaps._mut_queued = tuple(queued for queued in gaps._mut_queued if queued is not turn)
+        else:
+            yield _exit_left(gaps)
+        raise
+    return None
+
+
+@do
+def _exit_left(gaps: _Gaps) -> "EffectGenerator[None]":
+    """Leave the exit: hand it to the first who queued, or free it when nobody did."""
+    if gaps._mut_queued:
+        turn, gaps._mut_queued = gaps._mut_queued[0], gaps._mut_queued[1:]
+        yield CompletePromise(turn, None)
+    else:
+        gaps._mut_busy = False
+
+
+@do
+def _through_exit(gaps: _Gaps, sending: "Program[_T]") -> "EffectGenerator[_T]":
+    """Run ``sending`` holding the exit, and leave it afterwards — also when ``sending`` raises or is stopped."""
+    yield _exit_taken(gaps)
+    try:
+        answer = yield sending
+    except Exception:
+        yield _exit_left(gaps)
+        raise
+    yield _exit_left(gaps)
+    return answer
+
+
+@do
 def _gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[BrokerUnreachable | None]":
-    """Tell every marked gap, oldest first, and unmark each one told. Answers ``None`` when all were told, or the
-    broker's refusal (the rest stay marked). Only one teller at a time (``gaps._mut_telling``)."""
-    gaps._mut_telling = True
-    refused: BrokerUnreachable | None = None
-    while gaps._mut_channels and refused is None:
+    """Tell every marked gap, oldest first, and unmark each one told (the caller holds the exit). Answers ``None``
+    when all were told, or the broker's refusal (the rest stay marked)."""
+    while gaps._mut_channels:
         receivers = yield Announce(gaps._mut_channels[0], GAP_NOTICE, plan.source)
         if isinstance(receivers, BrokerUnreachable):
-            refused = receivers
-        else:
-            gaps._mut_channels = gaps._mut_channels[1:]
-    gaps._mut_telling = False
-    waiting, gaps._mut_after_telling = gaps._mut_after_telling, ()
-    for done in waiting:
-        yield CompletePromise(done, None)
-    return refused
+            return receivers
+        gaps._mut_channels = gaps._mut_channels[1:]
+    return None
 
 
 @do
 def _gaps_told_on_return(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[None]":
-    """The task waiting for the broker's return: wait for ``AwaitBrokerBack``, tell the gaps, and wait again if
-    the broker is away again. Ends when no gap is left (a later mark starts a new task); the next ``Publish``
-    that told every gap stops it."""
+    """The task waiting for the broker's return: wait for ``AwaitBrokerBack``, then tell the gaps through the exit
+    (behind any send already in it), and wait again if the broker is away again. Ends when no gap is left (a later
+    mark starts a new task); the next ``Publish`` that told every gap stops it. When ``AwaitBrokerBack`` cannot be
+    answered (nothing answers it, or its answerer fails), this task fails: no new task is started for the marks,
+    the next ``Publish`` that gets through still tells them, and the failure is raised when the body ends."""
     while gaps._mut_channels:
         yield AwaitBrokerBack()
-        if not gaps._mut_telling:
-            yield _gaps_told(plan, gaps)
+        yield _through_exit(gaps, _gaps_told(plan, gaps))
     gaps._mut_waiter = None
 
 
@@ -399,9 +445,9 @@ def _marked(plan: _Plan, gaps: _Gaps, channel: str, detail: str) -> "EffectGener
 
 
 @do
-def _sent(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -> "EffectGenerator[PublishAnswer]":
-    """Send one routed event: tell the gaps first if there are any, then the event. What the broker cannot take
-    is marked (``MarkGap``) or dropped (``Drop``)."""
+def _sent_in_exit(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -> "EffectGenerator[PublishAnswer]":
+    """Send one routed event while holding the exit: tell the gaps first if there are any, then the event. What
+    the broker cannot take is marked (``MarkGap``) or dropped (``Drop``)."""
     channel = route.channel(event)
     match route.when_unsent:
         case Drop():
@@ -410,11 +456,6 @@ def _sent(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -
                 return NoticeDropped(detail=receivers.detail)
             return NoticeSent(receivers)
         case MarkGap():
-            while gaps._mut_telling:
-                # Another task is telling the gaps: wait until it is done, so nothing overtakes the gap.
-                done: Promise[None] = yield CreatePromise()
-                gaps._mut_after_telling = (*gaps._mut_after_telling, done)
-                yield Wait(done.future)
             if gaps._mut_channels:
                 refused = yield _gaps_told(plan, gaps)
                 if refused is not None:
@@ -426,6 +467,14 @@ def _sent(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -
             if isinstance(receivers, BrokerUnreachable):
                 return (yield _marked(plan, gaps, channel, receivers.detail))
             return NoticeSent(receivers)
+
+
+@do
+def _sent(plan: _Plan, gaps: _Gaps, route: NoticeRoute[object], event: object) -> "EffectGenerator[PublishAnswer]":
+    """Send one routed event through the body's one exit, so sends leave in the order they came and nothing
+    overtakes a gap being told (the sends of tasks the body spawned queue there too)."""
+    answer: PublishAnswer = yield _through_exit(gaps, _sent_in_exit(plan, gaps, route, event))
+    return answer
 
 
 def _body_handler(plan: _Plan, gaps: _Gaps) -> "ProgramHandler":
@@ -474,7 +523,7 @@ def _started_gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[None]":
             for channel in route.when_unsent.start_channels:
                 gaps.mark(channel)
     if gaps._mut_channels:
-        refused = yield _gaps_told(plan, gaps)
+        refused = yield _through_exit(gaps, _gaps_told(plan, gaps))
         if refused is not None:
             gaps._mut_waiter = yield Spawn(_gaps_told_on_return(plan, gaps))
 

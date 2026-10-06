@@ -261,6 +261,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 | 引数(boot.sh の環境変数) | 意味 | 既定 |
 |---|---|---|
 | `--notice-broker`(`NOTICE_BROKER`) | `redis://<host>:<port>/<db>` か `memory`(この process の中だけ — Redis の無い機体のテスト) | なし(必須) |
+| `--notice-timeout-seconds`(`NOTICE_TIMEOUT_SECONDS`) | Redis へ繋ぐ・送るの答えを待つ上限(秒 — 答えない Redis が coordinator を止めない) | なし(Redis の時は必須) |
 | `--notice-retry-seconds`(`NOTICE_RETRY_SECONDS`) | Redis の戻りを待つ間だけ繋がるかを試す間隔(秒) | なし(Redis の時は必須) |
 
 ## 手元で確かめる(sim-cluster)

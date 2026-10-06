@@ -1,7 +1,7 @@
 """The notice broker on Redis: the lower layer of ``doeff_events.effects.notices`` answered by a Redis server's
 Pub/Sub (agora-redesign #3850).
 
-``redis_notice_handler(url)`` needs the optional dependency ``doeff-events[redis]`` (redis-py's asyncio client).
+``redis_notice_handler(url, timeout_seconds)`` needs the optional dependency ``doeff-events[redis]`` (redis-py's asyncio client).
 The module itself imports without it; the client library is imported when the wrapped body starts.
 
 How it talks to Redis:
@@ -24,17 +24,21 @@ How it talks to Redis:
   — which this handler answers as ``BrokerUnreachable``, like any lost connection.
 - Two clients, made when the wrapped body starts and closed when it ends: subscriptions use one that never
   repeats a call (a lost connection must be seen), ``Announce`` uses one that repeats a failed call once, at
-  once, on a fresh connection (a pooled connection that died while idle is not an outage). The only connection
-  setting is the URL (plus TCP keep-alive, so that a waiting subscriber notices a peer that vanished).
+  once, on a fresh connection (a pooled connection that died while idle is not an outage). The connection
+  settings are the URL and ``timeout_seconds`` (named by the composition — no default): a connection must be made
+  within it, and a send (``Announce``, ``ProbeBroker``) must be answered within it, so a server that keeps the
+  connection but stops answering never holds a sender. The subscriptions' wait for the next notice has no limit
+  (plus TCP keep-alive, so that a waiting subscriber notices a peer that vanished).
 """
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeVar, final
 
 from doeff_core_effects.effects import Await
-from doeff_time import Delay
+from doeff_time import Delay, GetTime
 
 from doeff import K, Pass, Program, Resume, do
 from doeff import handler as _program_handler
@@ -156,9 +160,12 @@ async def _or_failed(call: "Awaitable[_T]") -> "_T | _Failed":
         return _Failed(f"{type(error).__name__}: {error}")
 
 
-def _client(url: str, repeats: int) -> "Redis":
-    """Make an asyncio client for ``url``: text replies, TCP keep-alive, and a failed call repeated ``repeats``
-    times at once (never after a wait — the library's timed retries are not used)."""
+def _client(url: str, repeats: int, timeout_seconds: float, *, calls_end: bool) -> "Redis":
+    """Make an asyncio client for ``url``: text replies, TCP keep-alive, a connection that must be made within
+    ``timeout_seconds``, and a failed call repeated ``repeats`` times at once (never after a wait — the library's
+    timed retries are not used). ``calls_end`` = every call must also be answered within ``timeout_seconds`` (the
+    sending client: a server that keeps the connection but does not answer, or a network that went silent, is
+    unreachable after that time). The subscriptions' client waits for the next notice without a limit."""
     try:
         from redis.asyncio import Redis
         from redis.asyncio.retry import Retry
@@ -167,7 +174,14 @@ def _client(url: str, repeats: int) -> "Redis":
         raise ImportError(
             "redis_notice_handler needs the Redis client: install the extra 'doeff-events[redis]'"
         ) from error
-    return Redis.from_url(url, decode_responses=True, socket_keepalive=True, retry=Retry(NoBackoff(), repeats))
+    return Redis.from_url(
+        url,
+        decode_responses=True,
+        socket_keepalive=True,
+        socket_connect_timeout=timeout_seconds,
+        socket_timeout=timeout_seconds if calls_end else None,
+        retry=Retry(NoBackoff(), repeats),
+    )
 
 
 def _broker_handler(sending: "Redis", receiving: "Redis") -> "ProgramHandler":
@@ -222,9 +236,10 @@ async def _close(sending: "Redis", receiving: "Redis") -> None:
 
 
 @do
-def _run(url: str, body: "Program[_T]") -> "EffectGenerator[_T]":
+def _run(url: str, timeout_seconds: float, body: "Program[_T]") -> "EffectGenerator[_T]":
     """Make the clients, run the body under the handler, and close the clients when the body ends."""
-    sending, receiving = _client(url, 1), _client(url, 0)
+    sending = _client(url, 1, timeout_seconds, calls_end=True)
+    receiving = _client(url, 0, timeout_seconds, calls_end=False)
     # The close runs on an exception and on the normal end, not in ``finally``: yielding inside the GeneratorExit
     # of a discarded process is an error (the same reason as doeff-records' sources).
     try:
@@ -242,12 +257,17 @@ class _BodyWrapper(partial["Program[object]"]):
     _doeff_is_handler_fn = True
 
 
-def redis_notice_handler(url: str) -> "ProgramHandler":
+def redis_notice_handler(url: str, timeout_seconds: float) -> "ProgramHandler":
     """Build the handler that answers the lower-layer notice effects from the Redis server at ``url``
-    (for example ``redis://agora-events:6379/0``). Nothing but the URL is configured."""
+    (for example ``redis://agora-events:6379/0``). ``timeout_seconds`` = how long a connection may take to be made
+    and a send (``Announce``, ``ProbeBroker``) may take to be answered before it counts as unreachable — so a
+    server that stops answering, or a network that goes silent, never holds a sender (agora-redesign #3864). No
+    default: the composition names it."""
     if not isinstance(url, str) or not url:
         raise ValueError("redis_notice_handler: url must be a non-empty string")
-    return _BodyWrapper(_run, url)
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int | float) or timeout_seconds <= 0:
+        raise ValueError(f"redis_notice_handler: timeout_seconds must be a number > 0, got {timeout_seconds!r}")
+    return _BodyWrapper(_run, url, float(timeout_seconds))
 
 
 def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":
@@ -262,12 +282,22 @@ def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":
     if isinstance(retry_seconds, bool) or not isinstance(retry_seconds, int | float) or retry_seconds <= 0:
         raise ValueError(f"broker_back_by_retry: retry_seconds must be a number > 0, got {retry_seconds!r}")
 
+    # When this handler last answered (``None`` = never). A connection that works does not mean sends work: when
+    # the broker is asked about again within the interval after an answer, the interval is waited out first, so a
+    # broker that takes the PING but refuses the sends is not asked about without a pause.
+    last_answer: datetime | None = None
+
     @do
     def handler(effect: AwaitBrokerBack, k: K) -> "EffectGenerator[object]":
-        """Try the connection until it can be made."""
+        """Try the connection until it can be made (after the rest of the interval, when asked again soon)."""
+        nonlocal last_answer
+        now: datetime = yield GetTime()
+        if last_answer is not None and (now - last_answer).total_seconds() < retry_seconds:
+            yield Delay(retry_seconds - (now - last_answer).total_seconds())
         # Retried on a timer because a broker that is down sends nothing: nothing else can tell its return.
         while isinstance((yield ProbeBroker()), BrokerUnreachable):
             yield Delay(retry_seconds)
+        last_answer = yield GetTime()
         return (yield Resume(k, None))
 
     return _program_handler(handler)

@@ -361,9 +361,11 @@ case "$role" in
     naming=${CLUSTER_NAMING:-}
     [ -n "$naming" ] || naming='{}'
     # worker の生死の出来事(#3864)を出す知らせの broker(redis://… か memory)は既定なし — manifest が NOTICE_BROKER を名指す。
-    # Redis の時は、戻りを待つ間だけ繋がるかを試す間隔 NOTICE_RETRY_SECONDS も名指す(coordinator の起動の引数が断る)。
+    # Redis の時は、繋ぐ・送るの答えを待つ上限 NOTICE_TIMEOUT_SECONDS と、戻りを待つ間だけ繋がるかを試す間隔 NOTICE_RETRY_SECONDS も
+    # 名指す(無ければ coordinator の起動の引数が断る)。
     [ -n "${NOTICE_BROKER:-}" ] || { echo "boot.sh: ROLE=coordinator には NOTICE_BROKER(redis://… か memory)が要る" >&2; exit 2; }
     set -- --notice-broker "$NOTICE_BROKER"
+    [ -z "${NOTICE_TIMEOUT_SECONDS:-}" ] || set -- "$@" --notice-timeout-seconds "$NOTICE_TIMEOUT_SECONDS"
     [ -z "${NOTICE_RETRY_SECONDS:-}" ] || set -- "$@" --notice-retry-seconds "$NOTICE_RETRY_SECONDS"
     exec hy -m doeff_cluster.coordinator.entry.main --state-file "$WORK_DIR/coord/state.json" --port "${LISTEN_PORT:-8080}" \
       --naming "$naming" "$@" ;;

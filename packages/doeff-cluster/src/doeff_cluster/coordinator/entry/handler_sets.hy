@@ -32,10 +32,11 @@
 (val NOTICE-PATIENCE-SECONDS 60.0)
 
 
-(defn #^ list redis-notices [#^ str url #^ float retry-seconds]
-  "本番の知らせの組(外側が先): Redis(url)へ出し、届かない間は欠けの印を持ち、戻りは待っている間だけ retry-seconds ごとに繋がるかを
-   試して知る(ADR-DOE-EVENTS-002 R5・R6)。await-handler と時計(Delay)は組の外側の本番の組が答える。"
-  [(redis-notice-handler url) (broker-back-by-retry retry-seconds)
+(defn #^ list redis-notices [#^ str url #^ float timeout-seconds #^ float retry-seconds]
+  "本番の知らせの組(外側が先): Redis(url)へ出し(繋ぐ・送るの答えは timeout-seconds まで待つ — 答えない Redis が coordinator を
+   止めない)、届かない間は欠けの印を持ち、戻りは待っている間だけ retry-seconds ごとに繋がるかを試して知る(ADR-DOE-EVENTS-002 R5・R6)。
+   await-handler と時計(Delay)は組の外側の本番の組が答える。"
+  [(redis-notice-handler url timeout-seconds) (broker-back-by-retry retry-seconds)
    (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES NOTICE-PATIENCE-SECONDS)])
 
 
