@@ -7,6 +7,7 @@ from doeff_cluster.shared.intent.upgrade_model import PendingPhase as PendingPha
 from doeff_cluster.shared.intent.upgrade_model import RosterEntry as RosterEntry
 from doeff_cluster.shared.intent.upgrade_model import PendingTask as PendingTask
 from doeff_cluster.shared.intent.upgrade_model import UpgradeStart as UpgradeStart
+from doeff_cluster.shared.intent.upgrade_model import BootRootsAtStart as BootRootsAtStart
 
 @dataclass(frozen=True, kw_only=True)
 class UpgradeBreach:
@@ -25,4 +26,7 @@ def one_worker_at_a_time(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[Upg
     ...
 
 def coordinator_swap_on_an_empty_queue(starts: tuple[UpgradeStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
+    ...
+
+def swap_after_boot_root_prepared(places: tuple[BootRootsAtStart, ...]) -> _Program[tuple[UpgradeBreach, ...], object]:
     ...

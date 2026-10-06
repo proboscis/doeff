@@ -47,6 +47,11 @@ class UpgradeStart:
     tasks: tuple[PendingTask, ...]
 
 @dataclass(frozen=True, kw_only=True)
+class BootRootsAtStart:
+    start: UpgradeStart
+    prepared: tuple[str, ...]
+
+@dataclass(frozen=True, kw_only=True)
 class UpgradeLimits:
     drain_seconds: float
     return_seconds: float
@@ -81,13 +86,40 @@ class CleanBootRefused:
     target: str
     reason: str
 
-class UpgradeRefused(RuntimeError):
-    target: str
-    reason: str
-
-    def __init__(self, target: str, reason: str) -> None:
-        ...
-
 @_doeff_dataclass(frozen=True)
 class ConfirmCleanBoot(_doeff_effect_base[CleanBootPassed | CleanBootRefused]):
     launch: WorkerLaunch | CoordinatorLaunch
+
+class BootRootRefusal(StrEnum):
+    PREPARE_ROLE_UNKNOWN = 'prepare-role-unknown'
+    PLACE_UNAVAILABLE = 'place-unavailable'
+    PREPARE_STOPPED = 'prepare-stopped'
+    PREPARE_FAILED = 'prepare-failed'
+    READY_MARK_INCOMPLETE = 'ready-mark-incomplete'
+
+@dataclass(frozen=True, kw_only=True)
+class BootRootAlreadyPrepared:
+    target: str
+    previous_root_present: bool
+
+@dataclass(frozen=True, kw_only=True)
+class BootRootBuilt:
+    target: str
+    seconds: float
+    previous_root_present: bool
+
+@dataclass(frozen=True, kw_only=True)
+class BootRootRefused:
+    target: str
+    reason: BootRootRefusal
+
+@_doeff_dataclass(frozen=True)
+class PrepareBootRoot(_doeff_effect_base[BootRootAlreadyPrepared | BootRootBuilt | BootRootRefused]):
+    launch: WorkerLaunch | CoordinatorLaunch
+
+class UpgradeRefused(RuntimeError):
+    target: str
+    refusal: CleanBootRefused | BootRootRefused
+
+    def __init__(self, target: str, refusal: CleanBootRefused | BootRootRefused) -> None:
+        ...

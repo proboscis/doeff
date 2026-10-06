@@ -23,6 +23,10 @@ from doeff_cluster.shared.intent.upgrade_model import ConfirmCleanBoot as Confir
 from doeff_cluster.shared.intent.upgrade_model import CleanBootPassed as CleanBootPassed
 from doeff_cluster.shared.intent.upgrade_model import CleanBootRefused as CleanBootRefused
 from doeff_cluster.shared.intent.upgrade_model import UpgradeRefused as UpgradeRefused
+from doeff_cluster.shared.intent.upgrade_model import PrepareBootRoot as PrepareBootRoot
+from doeff_cluster.shared.intent.upgrade_model import BootRootAlreadyPrepared as BootRootAlreadyPrepared
+from doeff_cluster.shared.intent.upgrade_model import BootRootBuilt as BootRootBuilt
+from doeff_cluster.shared.intent.upgrade_model import BootRootRefused as BootRootRefused
 UNREACHABLE_RETRY_SECONDS: float
 WATCH_SECONDS: float
 
@@ -66,6 +70,9 @@ def await_until(step: str, done: Callable, observe: Callable, limit_seconds: flo
     ...
 
 def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
+    ...
+
+def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
     ...
 
 def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[None, object]:

@@ -1,9 +1,11 @@
-;;; worker と coordinator を新しい版へ入れ替える順の条 V1〜V4(#3366 — 2026-10-05 の版上げ 12 回(#3156)で通した順を条にし、sim で
-;;; 測った落ち方(tests/test_upgrade_swaps.hy)に合わせた)。
+;;; worker と coordinator を新しい版へ入れ替える順の条 V1〜V5(#3366 — 2026-10-05 の版上げ 12 回(#3156)で通した順を条にし、sim で
+;;; 測った落ち方(tests/test_upgrade_swaps.hy)に合わせた。V5 は #3725)。
 ;;;
 ;;; 判じる物 = 入れ替えを始めた瞬間の記録(UpgradeStart — 型は shared/intent/upgrade_model.hy)の列: 何を(worker の名か coordinator)・どの版へ・その瞬間の名簿の写し
 ;;; (worker ごとの live と動いている版)と、終わっていない task の写し(queued か、どの worker に置かれた assigned か)。記録を作るのは、
 ;;; 版上げの Program を走らせる筋書き(模擬の Flux が当てた瞬間に名簿と task を写す)か、同じ形の合成の列(検の失敗ケース)。
+;;; V5 だけは、同じ瞬間の置き場の写し(BootRootsAtStart — 入れ替えの記録と、その瞬間に置き場に準備済みで在った自己起動の root の版)の
+;;; 列を判じる — 置き場は名簿にも task にも出ず、準備の答え手(PrepareBootRoot)だけが読むため。
 ;;;
 ;;; sim で測った落ち方(本物の coordinator の置き方の code を通す):
 ;;;   - worker の入れ替えの間の queued は落ちない(担い手が名簿に在る間は silent-worker-wait-ms まで待ち、戻ると走る — 本番 5 時間)。
@@ -20,15 +22,18 @@
 ;;;      だけ(戻りが来なければ次へ進まない)。
 ;;;   V4 coordinator-swap-on-an-empty-queue — coordinator の入れ替えを始めるのは、queued の task が無い時だけ(作り直した coordinator が
 ;;;      worker の行を読めないと、queued は即 落ちる — 版を上げる作り直しでは行の形が変わり得る)。
+;;;   V5 swap-after-boot-root-prepared — worker / coordinator の入れ替えを始めるのは、その物の置き場に入れ替え先の版の自己起動の root が
+;;;      準備済み(完成の印つき)で在る時だけ(無いと、作り直した process が起動の中で root を準備して初回の import をする間 — 実測
+;;;      15〜25 秒 — その上の service に届かない)。守るのは版上げの Program の順: 準備(PrepareBootRoot)が済んでから宣言を書く。
 (require doeff-hy.macros [val defk])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [dataclass])
-(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart])
+(import doeff_cluster.shared.intent.upgrade_model [UpgradeKind PendingPhase RosterEntry PendingTask UpgradeStart BootRootsAtStart])
 
 
 (defrecord UpgradeBreach
-  "条 V1〜V4 の破り 1 つ: rule = 条の名・at-ms = 破った入れ替えを始めた時刻・target = 何を入れ替え始めたか・detail = 何が足りなかったか。"
+  "条 V1〜V5 の破り 1 つ: rule = 条の名・at-ms = 破った入れ替えを始めた時刻・target = 何を入れ替え始めたか・detail = 何が足りなかったか。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str rule)
   (#^ int at-ms)
@@ -91,3 +96,17 @@
                :if (= t.phase PendingPhase.QUEUED)
                (UpgradeBreach :rule "V4 coordinator-swap-on-an-empty-queue" :at-ms s.at-ms :target s.target
                               :detail (.format "task {} が queued のまま" t.task)))))
+
+
+(defk swap-after-boot-root-prepared [places]
+  {:pre [(: places (get tuple #(BootRootsAtStart ...)))] :post [(: % (get tuple #(UpgradeBreach ...)))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 V5: worker / coordinator の入れ替えを始めた瞬間に、その物の置き場に入れ替え先の版の自己起動の root が準備済みで無ければ返す
+   (空なら緑)。root の無い版へ入れ替えると、作り直した process が起動の中で root を準備して初回の import をする間(実測 15〜25 秒)
+   その上の service に届かない — 準備を通さずに(準備の前に・準備が断られたのに・組んでいないのに組んだと答えて)宣言を当てる順を、
+   入れ替えの瞬間の置き場の写しから判じるため(#3725)。"
+  (tuple (gfor p places
+               :if (not-in p.start.doeff-commit p.prepared)
+               (UpgradeBreach :rule "V5 swap-after-boot-root-prepared" :at-ms p.start.at-ms :target p.start.target
+                              :detail (.format "入れ替え先の版 {} の自己起動の root が置き場に無い(準備済みの版: {})" p.start.doeff-commit
+                                               (or (.join "・" p.prepared) "無し"))))))

@@ -143,6 +143,16 @@
 ;;;   V4 coordinator-swap-on-an-empty-queue — coordinator の入れ替えを始めるのは queued の task が無い時だけ(作り直した coordinator が
 ;;;   worker の行を読めないと queued は即 落ちる — 2026-10-05 の taskReserve の形・#2440)。失敗ケース =
 ;;;   test-starting-the-coordinator-with-a-queued-task-breaks-v4。
+;;;   V5 swap-after-boot-root-prepared(#3725)— worker / coordinator の入れ替えを始めるのは、その物の置き場に入れ替え先の版の自己起動の
+;;;   root が準備済み(完成の印つき)で在る時だけ(無いと、作り直した process が起動の中で root を準備して初回の import をする間 — 実測
+;;;   15〜25 秒 — その上の service に届かない)。判じるのは入れ替えを始めた瞬間の置き場の写し(BootRootsAtStart — 入れ替えの記録と、その
+;;;   瞬間に準備済みで在った root の版。置き場は名簿にも task にも出ず、準備の答え手だけが読むので、V1〜V4 の記録とは別の列)。守りは
+;;;   版上げの Program(shared/core/upgrade_program.hy)の順の 1 か所: 空の機体の確かめ → root の準備(PrepareBootRoot — 答え手が準備の
+;;;   終わりまで受け持つ)→ 宣言を書く。確かめるのは tests/test_upgrade_program.hy の test-the-upgrade-program-keeps-v1-to-v5(模擬の
+;;;   Flux と模擬の置き場の上で Program を走らせ、置き場の写しを判断に渡す)。失敗ケースは tests/test_upgrade_invariants.hy の
+;;;   test-swapping-before-the-boot-root-is-prepared-breaks-v5(合成の列)・
+;;;   test-a-program-that-desires-before-the-boot-root-is-prepared-breaks-v5(準備の前に Desire を出す壊した Program)・
+;;;   test-an-answer-that-claims-a-boot-root-it-did-not-build-breaks-v5(組まずに「組んだ」と答える壊した答え手)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -237,7 +247,8 @@
                 "doeff_cluster.coordinator.core.upgrade_invariants:coordinator-after-every-worker"
                 "doeff_cluster.coordinator.core.upgrade_invariants:worker-swap-waits-for-its-tasks"
                 "doeff_cluster.coordinator.core.upgrade_invariants:one-worker-at-a-time"
-                "doeff_cluster.coordinator.core.upgrade_invariants:coordinator-swap-on-an-empty-queue"]})
+                "doeff_cluster.coordinator.core.upgrade_invariants:coordinator-swap-on-an-empty-queue"
+                "doeff_cluster.coordinator.core.upgrade_invariants:swap-after-boot-root-prepared"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)・W2(退く process は新の Ready と自分の止めより前に退く知らせを受ける — #3672)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
