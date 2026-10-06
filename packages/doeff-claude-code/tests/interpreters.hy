@@ -75,7 +75,10 @@
 (defn fake-responder [#^ str text #^ tuple memory]
   (setv rule (reply-for text memory))
   (FakeReply (get rule "text") :tool-seconds (get rule "tool_seconds") :needs-permission (get rule "permission")
-             :deltas (get rule "deltas")))
+             :deltas (get rule "deltas")
+             ;; 道具の呼びの命令と結果の中身(替え玉の CLI と同じ規則 — #3744)。
+             :tool-input (if (get rule "tool_command") {"command" (get rule "tool_command")} {})
+             :tool-output (get rule "tool_output")))
 
 ;; 共通の筋書きの本番の host の上限の本数と資格の床(筋書きは 1 つの host で会話を数個しか持たず、資格の期限を spec に載せない
 ;; — 上限と床で降ろす形は test_handler の検だけが撃つ)。

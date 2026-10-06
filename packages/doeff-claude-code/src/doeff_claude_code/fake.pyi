@@ -12,6 +12,7 @@ from doeff_time import WaitWithin as WaitWithin
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
 from doeff_claude_code.values import FreshSession as FreshSession
 from doeff_claude_code.values import ResumeSession as ResumeSession
@@ -24,6 +25,7 @@ from doeff_claude_code.lines import Init as Init
 from doeff_claude_code.lines import AssistantMessage as AssistantMessage
 from doeff_claude_code.lines import PartialMessage as PartialMessage
 from doeff_claude_code.lines import ToolCall as ToolCall
+from doeff_claude_code.lines import ToolAnswer as ToolAnswer
 from doeff_claude_code.lines import ToolResult as ToolResult
 from doeff_claude_code.lines import InputFate as InputFate
 from doeff_claude_code.lines import PermissionRequested as PermissionRequested
@@ -81,7 +83,7 @@ DELTA_SECONDS: float
 FAKE_CAPABILITIES: tuple[str, ...]
 NO_RECEIPT_CAPABILITIES: tuple[str, ...]
 FAKE_TOOL_USE_ID: str
-FAKE_TOOL_CALL: ToolCall
+FAKE_TOOL_NAME: str
 
 @dataclass(frozen=True)
 class FakeReply:
@@ -96,6 +98,9 @@ class FakeReply:
     think_seconds: float = 0.0
     interrupt_receipt: bool = True
     deltas: int = 0
+    tool_input: FrozenMap = ...
+    tool_output: str = ''
+    tool_error: bool = False
 
     def __post_init__(self) -> None:
         ...

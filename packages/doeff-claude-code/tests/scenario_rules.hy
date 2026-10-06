@@ -40,9 +40,14 @@
   "prompt → {\"text\" 返事の本文 \"tool_seconds\" 道具の秒数 \"permission\" 道具の前に許可を問うか \"touch\" 触る path
    \"deltas\" 最後の本文を分ける差分の片の数(STREAM-PHRASE・無ければ 0 = 差分を出さない)
    \"think_seconds\" 本文の差分の前に考える秒(THINK-PHRASE・無ければ 0.0 — 替え玉の CLI だけが読む)
-   \"hook_seconds\" init の後に hook の知らせを出して待つ秒(HOOK-PHRASE・無ければ 0.0 — 替え玉の CLI だけが読む)}。memory = それまでの入力の本文(会話の記憶)。"
+   \"hook_seconds\" init の後に hook の知らせを出して待つ秒(HOOK-PHRASE・無ければ 0.0 — 替え玉の CLI だけが読む)
+   \"tool_command\" 道具に走らせる命令の文(「run exactly this command: <命令> .」の命令・無ければ None — 道具の呼びの input の command)
+   \"tool_output\" 道具の出力(echo <語> の語・ほかの命令は空 — 道具の結果の content。#3744)}。
+   memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
+  (setv command (re.search r"run exactly this command: (.+?) \." text))
+  (setv echoed (if command (re.fullmatch r"echo (\S+)" (.group command 1)) None))
   (setv exact (re.search r"[Rr]eply with exactly: (\S+)" text))
   (setv extra (re.search r"include the word (\S+)" text))
   (setv streamed (re.search r"Stream the reply in (\d+) pieces" text))
@@ -59,9 +64,11 @@
           extra (.group extra 1)
           True "OK"))
   {"text" word
-   "tool_seconds" (cond sleep (float (.group sleep 1)) touch 0.2 True 0.0)
+   "tool_seconds" (cond sleep (float (.group sleep 1)) touch 0.2 echoed 0.2 True 0.0)
    "permission" (is-not touch None)
    "touch" (if touch (.group touch 1) None)
+   "tool_command" (if command (.group command 1) None)
+   "tool_output" (if echoed (.group echoed 1) "")
    "deltas" (if streamed (int (.group streamed 1)) 0)
    "think_seconds" (if think (float (.group think 1)) 0.0)
    "hook_seconds" (if hooks (float (.group hooks 1)) 0.0)})

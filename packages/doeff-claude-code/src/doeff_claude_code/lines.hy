@@ -58,23 +58,47 @@
 
 (defclass [(dataclass :frozen True)] ToolCall []
   "assistant の message の tool_use の block 1 つ: id = block の id(続く user の行の tool_result の tool_use_id が同じ id で
-   結果を名指す)/ name = 道具の名。どちらも空でない文字列(空の欄は分類の段で Other として断る — 空文字で通さない)。"
+   結果を名指す)/ name = 道具の名。どちらも空でない文字列(空の欄は分類の段で Other として断る — 空文字で通さない)/
+   input = 道具の呼びの命令(block の input の JSON の object のまま — 鍵の集合は道具ごとに開いているので、PermissionRequested.input と
+   同じく深く凍らせた写像。input の無い・写像でない block は分類の段で Other として断る)。#3744。"
   (#^ str id)
   (#^ str name)
+  (setv #^ FrozenMap input (field :default-factory FrozenMap))
   (defn __post_init__ [self]
     (when (not (and (isinstance self.id str) self.id))
       (raise (ValueError (.format "ToolCall.id は空でない文字列: {!r}" self.id))))
     (when (not (and (isinstance self.name str) self.name))
-      (raise (ValueError (.format "ToolCall.name は空でない文字列: {!r}" self.name))))))
+      (raise (ValueError (.format "ToolCall.name は空でない文字列: {!r}" self.name))))
+    (object.__setattr__ self "input" (frozen-json-object self.input "ToolCall.input"))))
 
 (defclass [(dataclass :frozen True)] AssistantMessage []
   "assistant の message: 本文の text の block を連ねたものと、呼んだ道具(tool_use の block の id と名の組)の列。"
   (setv #^ str text "")
   (setv #^ (get tuple #(ToolCall ...)) tool-calls #()))
 
+(defclass [(dataclass :frozen True)] ToolAnswer []
+  "user の行の tool_result の block 1 つ(道具の結果 1 つ): id = 答えた呼びの id(tool_use_id — 前の ToolCall.id と同じ・空でない文字列)/
+   text = 結果の中身の本文(content が文字列ならそのまま、block の列なら text の block の本文を改行で連ねた物、content が無ければ空)/
+   is-error = 道具が誤りで終えたか(block の is_error が真の時だけ真)/ non-text-kinds = content の列にあった text でない block
+   (画像など)の種類の名を出た順に(本文に入らない中身が在ったことを黙って消さない — type の無い block は空の名)。#3744。"
+  (#^ str id)
+  (#^ str text)
+  (#^ bool is-error)
+  (setv #^ (get tuple #(str ...)) non-text-kinds #())
+  (defn __post_init__ [self]
+    (when (not (and (isinstance self.id str) self.id))
+      (raise (ValueError (.format "ToolAnswer.id は空でない文字列: {!r}" self.id))))
+    (when (not (isinstance self.text str))
+      (raise (TypeError (.format "ToolAnswer.text は文字列: {!r}" self.text))))
+    (when (not (isinstance self.non-text-kinds tuple))
+      (raise (TypeError (.format "ToolAnswer.non_text_kinds は tuple: {!r}" self.non-text-kinds))))))
+
 (defclass [(dataclass :frozen True)] ToolResult []
-  "user の行の tool_result(道具の結果が model へ返った)。"
-  (setv #^ (get tuple #(str ...)) tool-use-ids #()))
+  "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順)。"
+  (#^ (get tuple #(ToolAnswer ...)) answers)
+  (defn [property] #^ (get tuple #(str ...)) tool-use-ids [self]
+    "答えた呼びの id の列(答えの列から作る読み取り — 元は answers の 1 つ)。"
+    (tuple (gfor answer self.answers answer.id))))
 
 (defclass [(dataclass :frozen True)] PartialMessage []
   "stream_event(--include-partial-messages)。text_delta なら本文の差分。"
@@ -245,22 +269,43 @@
   (if (isinstance content list) (tuple (gfor block content :if (isinstance block dict) block)) #()))
 
 (defn classify-assistant [#^ dict record]
-  "assistant の行 → AssistantMessage。tool_use の block は id と name を読んで ToolCall にする。id か name が無い・空の
-   tool_use の block を 1 つでも持つ行は、名指しの Other(type = assistant・subtype = tool_use_without_id / tool_use_without_name)で
-   断る — 空の id の ToolCall を作らない(結果の tool_use_id と突き合わせられない呼びを通さない)。"
+  "assistant の行 → AssistantMessage。tool_use の block は id・name・input を読んで ToolCall にする。id か name が無い・空の、または
+   input が無い・JSON の object でない tool_use の block を 1 つでも持つ行は、名指しの Other(type = assistant・subtype =
+   tool_use_without_id / tool_use_without_name / tool_use_without_input)で断る — 空の id の ToolCall を作らない(結果の tool_use_id と
+   突き合わせられない呼びを通さない)・命令の無い呼びを空の命令として通さない。"
   (setv blocks (content-blocks record))
   (setv uses (tuple (gfor block blocks :if (= (.get block "type") "tool_use") block)))
   (cond
     (any (gfor block uses (not (text-at block "id")))) (Other :type "assistant" :subtype "tool_use_without_id")
     (any (gfor block uses (not (text-at block "name")))) (Other :type "assistant" :subtype "tool_use_without_name")
+    (any (gfor block uses (not (isinstance (.get block "input") dict)))) (Other :type "assistant" :subtype "tool_use_without_input")
     True (AssistantMessage
            :text (.join "" (gfor block blocks :if (= (.get block "type") "text") (text-at block "text")))
-           :tool-calls (tuple (gfor block uses (ToolCall :id (text-at block "id") :name (text-at block "name")))))))
+           :tool-calls (tuple (gfor block uses (ToolCall :id (text-at block "id") :name (text-at block "name")
+                                                         :input (frozen-json-object (get block "input") "tool_use の block の input")))))))
+
+(defn #^ ToolAnswer tool-answer-of [#^ dict block]
+  "tool_result の block 1 つ → ToolAnswer。content は文字列(本文そのまま)・block の列(text の block の本文を改行で連ね、text でない
+   block は種類の名を non-text-kinds へ)・無い(空の本文)のどれか。それ以外の値(写像・数)は 1 つの text でない中身として種類の名を残す。"
+  (setv content (.get block "content"))
+  (setv parts (cond
+                (is content None) #()
+                (isinstance content str) #({"type" "text" "text" content})
+                (isinstance content list) (tuple content)
+                True #(content)))
+  (ToolAnswer :id (text-at block "tool_use_id")
+              :text (.join "\n" (gfor part parts :if (= (text-at part "type") "text") (text-at part "text")))
+              :is-error (is (.get block "is_error") True)
+              :non-text-kinds (tuple (gfor part parts :if (!= (text-at part "type") "text") (text-at part "type")))))
 
 (defn classify-user [#^ dict record]
-  (setv ids (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result")
-                         (text-at block "tool_use_id"))))
-  (if ids (ToolResult :tool-use-ids ids) (Other :type "user")))
+  "user の行 → ToolResult(tool_result の block ごとに ToolAnswer)。tool_result の無い行は Other(type = user)。tool_use_id が無い・空の
+   tool_result を 1 つでも持つ行は、名指しの Other(subtype = tool_result_without_id)で断る — どの呼びへの答えか分からない結果を通さない。"
+  (setv results (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result") block)))
+  (cond
+    (not results) (Other :type "user")
+    (any (gfor block results (not (text-at block "tool_use_id")))) (Other :type "user" :subtype "tool_result_without_id")
+    True (ToolResult :answers (tuple (gfor block results (tool-answer-of block))))))
 
 (defn classify-system [#^ dict record]
   (setv subtype (text-at record "subtype"))

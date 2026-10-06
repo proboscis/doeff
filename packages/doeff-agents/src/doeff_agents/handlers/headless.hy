@@ -17,6 +17,8 @@
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
 ;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る)
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
+;;;   AssistantMessage.tool-calls / ToolResult.answers → AgentToolUseEvent.tool_calls / AgentToolResultEvent.answers(道具の呼びの命令
+;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
@@ -133,7 +135,7 @@
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
     (isinstance kind ToolResult)
-      [(fn [seq] (AgentToolResultEvent :seq seq :at at :tool-use-ids kind.tool-use-ids))]
+      [(fn [seq] (AgentToolResultEvent :seq seq :at at :answers kind.answers))]
     (isinstance kind InputFate)
       [(fn [seq] (AgentInputFateEvent :seq seq :at at :input-ref kind.ref :state (InputFateState kind.state)))]
     True []))

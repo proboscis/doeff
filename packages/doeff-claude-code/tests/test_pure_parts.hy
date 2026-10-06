@@ -10,6 +10,7 @@
 (import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
                                  RateLimit TurnResult PartialMessage Other ControlResponse Usage recorded-cost])
 (import doeff_claude_code.values [Allow])
+(import doeff_claude_code [lines])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
 (setv HOME (ClaudeHome "/h/.claude" {"PATH" "/bin"}))
@@ -136,11 +137,12 @@
 (deftest test-tool-use-blocks-keep-their-id-and-name-in-block-order
   ;; #3518: tool_use の block の id は、続く tool_result の tool_use_id と突き合わせる鍵。名だけ読む分類は赤。
   (val raw (json.dumps {"type" "assistant"
-                        "message" {"content" [{"type" "tool_use" "id" "toolu_1" "name" "Bash"}
-                                              {"type" "tool_use" "id" "toolu_2" "name" "Read"}]}}))
+                        "message" {"content" [{"type" "tool_use" "id" "toolu_1" "name" "Bash" "input" {"command" "ls"}}
+                                              {"type" "tool_use" "id" "toolu_2" "name" "Read" "input" {"file_path" "/a"}}]}}))
   (val kind (classify-record (parse-record raw)))
   (assert (isinstance kind AssistantMessage) (repr kind))
-  (assert (= kind.tool-calls #((ToolCall "toolu_1" "Bash") (ToolCall "toolu_2" "Read"))) (repr kind)))
+  (assert (= kind.tool-calls #((ToolCall "toolu_1" "Bash" {"command" "ls"}) (ToolCall "toolu_2" "Read" {"file_path" "/a"})))
+          (repr kind)))
 
 (deftest test-a-tool-use-block-without-an-id-is-refused-by-name
   ;; id の無い・空の tool_use の block を空の id の呼びとして通さない — 名指しの Other で断る。
@@ -154,15 +156,62 @@
   (with [(pytest.raises ValueError :match "ToolCall.id")]
     (ToolCall "" "Bash")))
 
+(deftest test-tool-calls-keep-their-input-and-tool-results-keep-their-content
+  ;; #3744: 会話の画面の道具の行を開くには、道具の呼びの命令(tool_use の block の input)と結果の中身(tool_result の
+  ;; content と is_error)が記録まで届く事が要る。分類で input と content を捨てる形は赤。
+  (val called (classify-record {"type" "assistant"
+                                "message" {"content" [{"type" "tool_use" "id" "toolu_1" "name" "Bash"
+                                                       "input" {"command" "ls -la" "timeout" 5 "flags" ["a" "b"]}}]}}))
+  (assert (isinstance called AssistantMessage) (repr called))
+  (val call (get called.tool-calls 0))
+  ;; input は JSON の値のまま深く凍らせて持つ(配列は tuple)。作った後に書き換えられない。
+  (assert (= call.input {"command" "ls -la" "timeout" 5 "flags" #("a" "b")}) (repr call))
+  (with [(pytest.raises TypeError)] (setv (get call.input "command") "rm -rf /"))
+  ;; tool_result の content は文字列のことも block の列のこともある。text の block は改行で連ね、text でない block(画像など)は
+  ;; 捨てずに種類の名を non-text-kinds に残す。content の無い結果は空の本文。is_error が真の結果だけ is-error。
+  (val answered (classify-record
+                  {"type" "user"
+                   "message" {"content" [{"type" "tool_result" "tool_use_id" "toolu_1" "content" "total 0\n" "is_error" False}
+                                         {"type" "tool_result" "tool_use_id" "toolu_2" "content" "Exit code 2" "is_error" True}
+                                         {"type" "tool_result" "tool_use_id" "toolu_3"
+                                          "content" [{"type" "text" "text" "line 1"}
+                                                     {"type" "image" "source" {"type" "base64" "media_type" "image/png" "data" "AA=="}}
+                                                     {"type" "text" "text" "line 2"}]}
+                                         {"type" "tool_result" "tool_use_id" "toolu_4"}]}}))
+  (assert (isinstance answered ToolResult) (repr answered))
+  (assert (= answered.answers #((lines.ToolAnswer "toolu_1" "total 0\n" False)
+                                (lines.ToolAnswer "toolu_2" "Exit code 2" True)
+                                (lines.ToolAnswer "toolu_3" "line 1\nline 2" False #("image"))
+                                (lines.ToolAnswer "toolu_4" "" False)))
+          (repr answered))
+  ;; 結果の id の列は答えの列から作る読み取り(元は答えの列 1 つ)。
+  (assert (= answered.tool-use-ids #("toolu_1" "toolu_2" "toolu_3" "toolu_4")) (repr answered)))
+
+(deftest test-a-tool-block-without-its-input-or-its-id-is-refused-by-name
+  ;; input の無い・写像でない tool_use の block を空の命令の呼びとして通さない。tool_use_id の無い・空の tool_result を空の id の結果として
+  ;; 通さない — どちらも名指しの Other で断る(#3744)。
+  (for [block [{"type" "tool_use" "id" "toolu_2" "name" "Bash"} {"type" "tool_use" "id" "toolu_2" "name" "Bash" "input" "ls"}]]
+    (assert (= (classify-record {"type" "assistant"
+                                 "message" {"content" [{"type" "tool_use" "id" "toolu_1" "name" "Read" "input" {}} block]}})
+               (Other "assistant" "tool_use_without_input"))
+            block))
+  (for [block [{"type" "tool_result" "content" "x"} {"type" "tool_result" "tool_use_id" "" "content" "x"}]]
+    (assert (= (classify-record {"type" "user"
+                                 "message" {"content" [{"type" "tool_result" "tool_use_id" "t1" "content" "ok"} block]}})
+               (Other "user" "tool_result_without_id"))
+            block))
+  (with [(pytest.raises ValueError :match "ToolAnswer.id")]
+    (lines.ToolAnswer "" "x" False)))
+
 (deftest test-line-classification
   (assert (= (classify-record {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]
                                "model" "m" "permissionMode" "default" "mcp_servers" [{"name" "s"}]})
              (Init SID #("msg_lifecycle_v1") "m" "default" #("s"))))
   (assert (= (classify-record {"type" "assistant" "message" {"content" [{"type" "text" "text" "a"}
-                                                                        {"type" "tool_use" "id" "toolu_a" "name" "Bash"}]}})
+                                                                        {"type" "tool_use" "id" "toolu_a" "name" "Bash" "input" {}}]}})
              (AssistantMessage "a" #((ToolCall "toolu_a" "Bash")))))
   (assert (= (classify-record {"type" "user" "message" {"content" [{"type" "tool_result" "tool_use_id" "t1"}]}})
-             (ToolResult #("t1"))))
+             (ToolResult #((lines.ToolAnswer "t1" "" False)))))
   (assert (= (classify-record {"type" "command_lifecycle" "command_uuid" "r" "state" "started"}) (InputFate "r" "started")))
   (assert (= (classify-record {"type" "command_lifecycle" "command_uuid" "r" "state" "weird"})
              (Other "command_lifecycle" "weird")))
