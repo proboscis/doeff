@@ -5,6 +5,9 @@
 (require doeff-hy.macros [defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
+(import dataclasses [replace])
+(import os)
+(import time)
 (import httpx)
 (import pathlib [Path])
 (import doeff [Program with-handlers])
@@ -19,12 +22,12 @@
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.intent.worker_model [CodeState EnvReport ReadDesired DesiredJobs DesiredUnreadable])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host known-roots])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host known-roots sweep-leftovers])
+(import doeff_cluster.worker.core.env_upkeep [CODE-STORE-UNUSED-SECONDS])
 (import doeff_cluster.worker.protocol.env_translation [request-of-json])
-(import doeff_cluster.worker.core.env_prepare [carry-source env-marker->json])
-(import doeff_cluster.worker.intent.env_prepare_model [CarryFrom EnvMarker PrepareRequest])
+(import doeff_cluster.worker.core.env_prepare [env-marker->json])
+(import doeff_cluster.worker.intent.env_prepare_model [EnvMarker])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import tests.env_fixtures [LOCK env-of])
 
 (val READY-NAME "0123456789abcdef01234567")
@@ -97,55 +100,40 @@
   (assert (not-in "envs" (get sent 1)) sent))
 
 
-;; 失敗ケース(#3675 の読み手の条件): #3675 より前の worker が書いた完成マーカー(bytecode の欄が compiled・carried・failed の形)の root も、
-;; 新しい worker の完成した root の列(known-roots)に入り、準備の要求の JSON を通して引き継ぎ元の選び(carry-source)が選べる — 置き場の
-;; 名指しは宣言の欄だけを読み、数の欄(報告と log の値)に依らない。数の欄を読む形にすると、前の形の印の root が列から落ちて赤。
-(deftest test-a-root-marked-with-the-earlier-bytecode-counts-is-still-a-carry-source [tmp-path]
+;; 失敗ケース(#3675 の読み手の条件): 前の worker が書いた完成マーカー(bytecode の欄が compiled・carried・failed の形 — #3858 の前は
+;; carried と carrySeconds も在った)の root も、新しい worker の完成した root の列(known-roots)に入る — root の名指しは宣言の欄だけを
+;; 読み、数の欄(報告と log の値)に依らない。数の欄を読む形にすると、前の形の印の root が列から落ちて赤。
+(deftest test-a-root-marked-with-the-earlier-bytecode-counts-is-still-a-known-root [tmp-path]
   (<- settings EnvSettings (settings-in tmp-path))
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val root (/ tmp-path "state" "roots" READY-NAME))
   (<- raw dict (env-marker->json (EnvMarker :env env :key READY-NAME :platform "test" :stages #() :downloaded 0 :built 0
-                                            :interpreter "/usr/bin/python3" :child-protocol 1 :hy-version HY-VERSION)))
+                                            :interpreter "/usr/bin/python3" :child-protocol 1 :hy-version "1.1.0")))
   (setv (get raw "bytecode") {"compiled" 3 "carried" 1 "failed" 0 "scanSeconds" 0.5 "closureSeconds" 0.75 "carrySeconds" 0.25
                               "compileSeconds" 1.5 "trees" [{"name" "app" "compiled" 3 "carried" 1 "failed" 0}]})
   (.write-text (/ root ENV-MARKER) (json.dumps raw))
-  (<- picked (| CarryFrom None) (carry-source-through-store settings tmp-path))
-  (assert (= picked (CarryFrom :tree (.format "{}/app" root) :commit (. (get env.repos 0) commit))) picked))
-
-
-;; 新しい root の venv の Hy の compiler の版(引き継ぎ元の候補を比べる版 — #3706)。
-(val HY-VERSION "1.1.0")
-
-
-(defk carry-source-through-store [settings tmp]
-  {:pre [(: settings EnvSettings) (: tmp Path)] :post [(: % (| CarryFrom None))]}
-  "worker の完成した root の列(known-roots)を準備の要求の JSON に通して、app-2 の宣言の引き継ぎ元の選び(carry-source・新しい root の
-   Hy の版は HY-VERSION)の答えを返すため — 置き場に完成した root が 1 つ在る事も確かめる。"
   (<- known tuple (with-handlers [os-file-handler] (known-roots settings)))
-  (assert (= (tuple (gfor k known (get k "root"))) #((str (/ tmp "state" "roots" READY-NAME)))) known)
-  (<- next-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
-  (<- declared dict (runtime-env->json next-env))
-  (<- request PrepareRequest (request-of-json {"env" declared "key" "k" "platform" "test" "root" (str (/ tmp "new")) "known" known}))
-  (<- picked (| CarryFrom None) (carry-source request.known request.env "app" HY-VERSION))
-  picked)
+  (assert (= (tuple (gfor k known (get k "root"))) #((str root))) known))
 
 
-;; 失敗ケース(#3706): Hy の版の欄(hyVersion)の無い前の印の root と、別の Hy の版の印の root は、完成した root の列には入るが
-;; (置き場の名指しは新しい欄を読まない)、引き継ぎ元には選ばれない(版の分からない compiler で焼いた .pyc を持ち越さない)。
-;; 同じ版の印の root は、lock が違っても(依存を 1 本上げた)選ばれる — lock の一致を条件に残すと赤。
-(deftest test-the-carry-source-reads-the-hy-version-of-the-marker [tmp-path]
+;; 失敗ケース(#3858): 掃除(sweep-leftovers)は bytecode の保存先(doeff-hy の code_store)の entry のうち、7 日使われない物(使うたびに
+;; 時刻を進める)を消し、使った物と、保存先を使わない設定(code-store が None)の時は何も消さない。掃除が保存先を歩かないと、版ごとに
+;; 増える entry が消えずに worker の disk を埋める(native の wheel の保存先と同じ 7 日の作法)。
+(deftest test-the-sweep-removes-store-entries-unused-for-seven-days [tmp-path]
+  (val store (/ tmp-path "code-store"))
+  (.mkdir (/ store "ab") :parents True)
+  (val stale (/ store "ab" "old.code"))
+  (val used (/ store "ab" "new.imports"))
+  (.write-bytes stale b"x")
+  (.write-bytes used b"y")
+  (val now-s (time.time))
+  (val past (- now-s CODE-STORE-UNUSED-SECONDS 60))
+  (os.utime stale #(past past))
   (<- settings EnvSettings (settings-in tmp-path))
-  (<- env RuntimeEnv (env-of "app-1" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
-  (val marker-path (/ tmp-path "state" "roots" READY-NAME ENV-MARKER))
-  (<- raw dict (env-marker->json (EnvMarker :env env :key READY-NAME :platform "test" :stages #() :downloaded 0 :built 0
-                                            :interpreter "/usr/bin/python3" :child-protocol 1 :hy-version HY-VERSION)))
-  (.write-text marker-path (json.dumps raw))
-  (<- same (| CarryFrom None) (carry-source-through-store settings tmp-path))
-  (assert (= same (CarryFrom :tree (.format "{}/app" (/ tmp-path "state" "roots" READY-NAME)) :commit (. (get env.repos 0) commit)))
-          same)
-  (.write-text marker-path (json.dumps (dfor #(k v) (.items raw) :if (!= k "hyVersion") k v)))
-  (<- unknown (| CarryFrom None) (carry-source-through-store settings tmp-path))
-  (assert (is unknown None) unknown)
-  (.write-text marker-path (json.dumps (| raw {"hyVersion" "1.2.0"})))
-  (<- other (| CarryFrom None) (carry-source-through-store settings tmp-path))
-  (assert (is other None) other))
+  (<- none-removed tuple (with-handlers [os-file-handler] (sweep-leftovers settings (int (* now-s 1000)))))
+  (assert (.exists stale) "保存先を使わない設定(code-store が None)で保存先の file を消した")
+  (assert (not-in (str stale) none-removed) none-removed)
+  (<- removed tuple (with-handlers [os-file-handler] (sweep-leftovers (replace settings :code-store (str store)) (int (* now-s 1000)))))
+  (assert (in (str stale) removed) removed)
+  (assert (not (.exists stale)) "7 日使われない entry が残った")
+  (assert (.exists used) "使った entry を消した"))

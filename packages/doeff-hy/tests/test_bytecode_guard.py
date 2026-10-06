@@ -316,10 +316,10 @@ def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_co
     中身の鍵の下に入り、同じ中身の file を読む全部の作業木が古い振る舞いで動いた(実例 2026-10-02 13:57 — doeff-cluster の
     sim/local.hy の検が毎回赤)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import loader_hooks
+    from doeff_hy_bytecode_guard import code_store, loader_hooks
 
     store = tmp_path / "store"
-    monkeypatch.setenv(loader_hooks.CODE_STORE_ENV, str(store))
+    monkeypatch.setenv(code_store.STORE_ENV, str(store))
     # この suite は PYTHONDONTWRITEBYTECODE=1 で走る — 置き場は bytecode を書く設定の時だけ書くので、この検の中だけ書かせる。
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     package = tmp_path / "racepkg"
@@ -350,10 +350,10 @@ def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_co
     monkeypatch.setitem(sys.modules, name, importlib.util.module_from_spec(spec))
     assert loader.get_code(name) is not None
     assert loader.mut_compiled
-    assert not Path(loader_hooks._store_entry(str(store), name, new)).exists(), (
+    assert not Path(loader_hooks._store_entry(str(store), name, str(source), new)).exists(), (
         "新しい中身の鍵の下に、古い中身から作った code が入った"
     )
-    assert Path(loader_hooks._store_entry(str(store), name, old)).exists(), (
+    assert Path(loader_hooks._store_entry(str(store), name, str(source), old)).exists(), (
         "compile した中身の鍵で置き場に入らない"
     )
 
@@ -386,10 +386,10 @@ def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
     from doeff import run
     from doeff_hy.static_view import static_view
-    from doeff_hy_bytecode_guard import loader_hooks
+    from doeff_hy_bytecode_guard import code_store, loader_hooks
 
     store = tmp_path / "store"
-    monkeypatch.setenv(loader_hooks.CODE_STORE_ENV, str(store))
+    monkeypatch.setenv(code_store.STORE_ENV, str(store))
     # この suite は PYTHONDONTWRITEBYTECODE=1 で走る — .pyc と置き場は bytecode を書く設定の時だけ書くので、この検の中だけ書かせる。
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "pyc"))
@@ -415,7 +415,7 @@ def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_
         sys.modules[name] = importlib.util.module_from_spec(spec)
         with static_view():
             spec.loader.get_code(name)
-        assert not Path(loader_hooks._store_entry(str(store), name, source.read_bytes())).exists(), (
+        assert not Path(loader_hooks._store_entry(str(store), name, str(source), source.read_bytes())).exists(), (
             "型検査のための展開の code が共有の置き場に入った"
         )
         del sys.modules[name]

@@ -10,7 +10,6 @@ from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
-from doeff_cluster.shared.intent.runtime_env_model import RepoLocation as RepoLocation
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
 from doeff_cluster.shared.intent.runtime_env_model import CHILD_PROTOCOL as CHILD_PROTOCOL
@@ -19,7 +18,6 @@ from doeff_cluster.shared.core.runtime_env_rules import env_failure as env_failu
 from doeff_cluster.shared.core.runtime_env_rules import native_key as native_key
 from doeff_cluster.shared.core.runtime_env_rules import root_split as root_split
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
-from doeff_cluster.shared.core.runtime_env_rules import url_location as url_location
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
 from doeff_cluster.worker.intent.env_prepare_model import PrepareRequest as PrepareRequest
 from doeff_cluster.worker.intent.env_prepare_model import StageTime as StageTime
@@ -33,7 +31,6 @@ from doeff_cluster.worker.intent.env_prepare_model import RepoMirror as RepoMirr
 from doeff_cluster.worker.intent.env_prepare_model import EnvMarker as EnvMarker
 from doeff_cluster.worker.intent.env_prepare_model import WheelReady as WheelReady
 from doeff_cluster.worker.intent.env_prepare_model import SyncReport as SyncReport
-from doeff_cluster.worker.intent.env_prepare_model import CarryFrom as CarryFrom
 from doeff_cluster.worker.intent.env_prepare_model import BytecodeTree as BytecodeTree
 from doeff_cluster.worker.intent.env_prepare_model import BytecodeReport as BytecodeReport
 from doeff_cluster.worker.intent.env_prepare_model import ProbeReport as ProbeReport
@@ -73,25 +70,6 @@ def bytecode_roots(env: RuntimeEnv, editable: tuple, name: str) -> _Program[tupl
     ...
 
 def reuse_tree(known: tuple, repo: RepoCheckout) -> _Program[str | None, object]:
-    ...
-MACRO_REPO: str
-
-@dataclass(frozen=True, kw_only=True)
-class CarryCandidate:
-    tree: str
-    root: str
-    commit: str
-    made_ms: int
-    same_commit: bool
-    same_macros: bool
-
-def located_repos(repos: tuple) -> _Program[tuple, object]:
-    ...
-
-def carry_candidates(known: tuple, env: RuntimeEnv, name: str, hy_version: str | None) -> _Program[tuple, object]:
-    ...
-
-def carry_source(known: tuple, env: RuntimeEnv, name: str, hy_version: str | None) -> _Program[CarryFrom | None, object]:
     ...
 
 def hyx_env_marker_XgreaterHthan_signXjson(marker: EnvMarker) -> _Program[dict, object]:

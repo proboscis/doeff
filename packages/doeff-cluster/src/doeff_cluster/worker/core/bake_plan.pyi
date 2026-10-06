@@ -2,8 +2,6 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-from enum import StrEnum as StrEnum
-from doeff_cluster.worker.core.code_plan import carry_pairs as carry_pairs
 from doeff_cluster.worker.core.code_plan import imported_names as imported_names
 from doeff_cluster.worker.core.code_plan import module_name as module_name
 
@@ -11,44 +9,17 @@ from doeff_cluster.worker.core.code_plan import module_name as module_name
 class TreeArgs:
     named: str
     roots: tuple
-    old: str | None
-    changed: str | None
 
 @dataclass(frozen=True, kw_only=True)
 class BakeTree:
     named: str
     path: str
     roots: tuple
-    old: str | None
-    changed: frozenset
 
 @dataclass(frozen=True, kw_only=True)
 class ModuleIndex:
     names: tuple
     places: tuple
-
-@dataclass(frozen=True, kw_only=True)
-class ImportRow:
-    rel: str
-    digest: str
-    imports: tuple
-
-@dataclass(frozen=True, kw_only=True)
-class ImportTable:
-    rows: tuple
-    problem: str | None
-
-class PycScheme(StrEnum):
-    CHECKED_HASH = 'checked-hash'
-    UNCHECKED_HASH = 'unchecked-hash'
-    TIMESTAMP = 'timestamp'
-    UNREADABLE = 'unreadable'
-
-@dataclass(frozen=True, kw_only=True)
-class PycHead:
-    path: str
-    scheme: PycScheme
-    magic: bytes
 
 @dataclass(frozen=True, kw_only=True)
 class BakeItem:
@@ -60,7 +31,7 @@ class BakeItem:
 @dataclass(frozen=True, kw_only=True)
 class TreeOutcome:
     named: str
-    carried: int
+    stored: int
     rebuilt: int
     reused: int
     failed: int
@@ -69,20 +40,21 @@ class TreeOutcome:
 @dataclass(frozen=True, kw_only=True)
 class BakeAnswer:
     failed: tuple
+    stored: tuple
     reused: tuple
+    unstored: tuple
 
 @dataclass(frozen=True, kw_only=True)
 class BakeSummary:
     trees: tuple
     scan_s: float
     closure_s: float
-    carry_s: float
     compile_s: float
 
 def cpu_limit_of(cpu_max: str | None, available: int) -> _Program[int, object]:
     ...
 
-def tree_arguments(trees: tuple, roots: tuple, olds: tuple, changes: tuple) -> _Program[tuple | str, object]:
+def tree_arguments(trees: tuple, roots: tuple) -> _Program[tuple | str, object]:
     ...
 
 def trees_import_path(trees: tuple) -> _Program[tuple, object]:
@@ -102,25 +74,15 @@ def imported_modules(index: ModuleIndex, found: tuple, imports: tuple) -> _Progr
 
 def closure_scopes(index: ModuleIndex, seen: frozenset, count: int) -> _Program[tuple, object]:
     ...
-IMPORT_TABLE: str
-IMPORT_TABLE_FORMAT: int
+IMPORTS_TAG: str
 
-def source_digest(text: str) -> _Program[str, object]:
+def imports_key_parts(rel: str, hy_version: str) -> _Program[tuple, object]:
     ...
 
-def import_row_of(rel: str, value: dict | list | str | int | float | bool | None) -> _Program[ImportRow | None, object]:
+def imports_entry(imports: tuple) -> _Program[bytes, object]:
     ...
 
-def import_table_of(text: str | None) -> _Program[ImportTable, object]:
-    ...
-
-def usable_row(table: ImportTable, rel: str, digest: str, changed: frozenset) -> _Program[ImportRow | None, object]:
-    ...
-
-def import_table_json(rows: tuple) -> _Program[dict, object]:
-    ...
-
-def import_table_text(rows: tuple) -> _Program[str, object]:
+def imports_of_entry(data: bytes) -> _Program[tuple | str, object]:
     ...
 
 def scoped_sources(sources: list | tuple, scope: frozenset | None) -> _Program[list, object]:
@@ -129,20 +91,13 @@ def scoped_sources(sources: list | tuple, scope: frozenset | None) -> _Program[l
 def tree_failures(failures: tuple, tree: str) -> _Program[list, object]:
     ...
 
-def tree_reused(reused: tuple, tree: str) -> _Program[int, object]:
-    ...
-PYC_HEAD_BYTES: int
-
-def pyc_head_of(path: str, head: bytes | None) -> _Program[PycHead, object]:
-    ...
-
-def carried_pycs(heads: tuple, magic: bytes, old_sources: frozenset, new_sources: frozenset, new_pycs: frozenset, changed: frozenset) -> _Program[list, object]:
+def tree_count(listed: tuple, tree: str) -> _Program[int, object]:
     ...
 
 def bake_order(items: tuple) -> _Program[tuple, object]:
     ...
 
-def bake_argv(python: str, tool: str, jobs: int, paths: tuple) -> _Program[tuple, object]:
+def bake_argv(python: str, tool: str, jobs: int, paths: tuple, store_module: str, store: str | None) -> _Program[tuple, object]:
     ...
 
 def bake_input(items: tuple) -> _Program[str, object]:

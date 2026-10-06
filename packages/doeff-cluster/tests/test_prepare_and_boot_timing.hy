@@ -73,12 +73,12 @@
   (<- marker dict (marker-of ready))
   (val stages (get marker "stages"))
   (assert (= (lfor s stages (get s "name")) STAGE-NAMES))
-  ;; 書いた file の数: roots = .pth の 1 つ・bytecode = 焼いて書いた数(rebuilt)+ 引き継いだ数(carried — 焼かずに残した reused は carried に
-  ;; 含まれるので足さない・#3675)・数を知らない処理ステージは null(0 で埋めない)。
+  ;; 書いた file の数: roots = .pth の 1 つ・bytecode = 焼いて書いた数(rebuilt)+ 保存先の code から書いた数(stored — 焼かずに残した
+  ;; reused は書いていないので足さない・#3675・#3858)・数を知らない処理ステージは null(0 で埋めない)。
   (val files (dfor s stages (get s "name") (get s "files")))
   (val baked (get marker "bytecode"))
   (assert (= (get files "roots") 1) files)
-  (assert (= (get files "bytecode") (+ (get baked "rebuilt") (get baked "carried"))) #(files baked))
+  (assert (= (get files "bytecode") (+ (get baked "rebuilt") (get baked "stored"))) #(files baked))
   (assert (> (get files "bytecode") 0) files)
   (assert (all (gfor n ["disk" "mirror" "tree" "lock" "native" "sync" "wheels" "probe"] (is (get files n) None))) files)
   ;; 木の処理ステージの repo ごとの秒と置き方(冷たい準備は両方とも展開)。

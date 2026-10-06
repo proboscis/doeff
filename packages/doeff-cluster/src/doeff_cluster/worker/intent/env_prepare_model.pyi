@@ -86,17 +86,9 @@ class SyncReport:
     downloaded: int
 
 @dataclass(frozen=True, kw_only=True)
-class CarryFrom:
-    tree: str
-    commit: str
-
-@dataclass(frozen=True, kw_only=True)
 class BytecodeTree:
     tree: str
     roots: tuple
-    mirror: str
-    commit: str
-    carry: CarryFrom | None
     declared: bool
 
 @dataclass(frozen=True, kw_only=True)
