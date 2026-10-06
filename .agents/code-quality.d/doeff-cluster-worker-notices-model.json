@@ -1,0 +1,32 @@
+{
+  "include": [
+    "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/worker_notices.hy"
+  ],
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-cluster-worker-notices-model",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/worker_notices.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/worker_notices.hy"
+      ],
+      "responsibility": "worker の生死の出来事の型(WorkerGone・WorkerBack — coordinator が worker の生死の期限の切れと戻りを process の外へ出す・#3864)。",
+      "typed": true
+    }
+  ],
+  "module_extensions": {
+    "doeff-cluster-cluster-policy": {
+      "allow": [
+        "doeff-cluster-worker-notices-model"
+      ]
+    },
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-worker-notices-model"
+      ]
+    }
+  }
+}
