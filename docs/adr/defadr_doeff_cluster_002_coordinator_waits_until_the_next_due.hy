@@ -5,7 +5,8 @@
 ;;; (解釈である事を :problem に書く)。追跡 = agora-redesign #3865。
 ;;;
 ;;; 段: 単位 1(期限の答えの型・now + 1 の書き直し・次に起きる刻の純粋な判断と落ち着くまでの約束)は判断だけで、待ち方は変えない。
-;;; 単位 2 で調停ループ(core/program.hy の coordinator-step)を繋ぎ、1 秒の周期の設定(TICK-MS)とそれで起きる code を同じ変更で消す。
+;;; 単位 2 で調停ループ(core/program.hy の run-coordinator)を繋ぎ、1 秒の周期の設定(TICK-MS)とそれで起きる code(模擬の格子の上の
+;;; 静かな区間 — idle_policy)を同じ変更で消した(単位 2b)。worker の代役が眠る間の heartbeat は、模擬の受付の列がその刻に要求として渡す。
 ;;;
 ;;; 戻し方: この ADR と単位 2 の commit を revert する(本番は 1 秒ごとの拍へ、模擬は格子の上の静かな区間へ戻る)。単位 1 の
 ;;; 判断(期限の答えの型)は、待ち方を変えないので残してよい。
@@ -28,8 +29,7 @@
 (val NOW-PLUS-ONE-ROSTER
   {"cluster_policy.hy" 0
    "api_policy.hy" 0
-   "idle_policy.hy" 1   ; rollout-due の Rollout の拍の刻の下限(R5 — #3868 で消す)
-   "wake_policy.hy" 0})
+   "wake_policy.hy" 1})   ; rollout-due の Rollout の歩の刻の下限(R5 — #3868 で消す)
 
 
 (defadr ADR-DOE-CLUSTER-002
@@ -41,7 +41,8 @@
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/wake_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/idle_policy.hy"
+          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy"
+          "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_queue.hy"
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem
     [(fact
@@ -62,12 +63,13 @@
      (interpretation
        "数の now + 1 は「1 ms 先の期限」と「すぐもう 1 歩」を見分けられない。答えを閉じた型に分ければ、待ち方を決める側(調停ループ)が今すぐの歩と期限までの待ちを名で分けられる。")]
   :decision
-    [(rule R1 "coordinator は、何も変えない歩の後、次に起きる刻(core/wake_policy.hy の next-wake — 要求の無い歩の期限・Rollout の期限・返事を待たせている待ちの期限のいちばん早い答え)まで受付を 1 本で待つ。要求・停止の合図・外の出来事は待ちを起こす。1 秒の周期の設定(TICK-MS)と、それで起きる code は持たない(単位 2 で消す)。")
+    [(rule R1 "coordinator は、何も変えない歩の後、次に起きる刻(core/wake_policy.hy の next-wake — 要求の無い歩の期限・Rollout の期限・返事を待たせている待ちの期限のいちばん早い答え)まで受付を 1 本で待つ。要求・停止の合図・外の出来事は待ちを起こす。1 秒の周期の設定(TICK-MS)と、それで起きる code は持たない(単位 2b で消した)。")
      (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない — #3865 の見直しの追記)。")
      (rule R3 "期限の関数の答えは閉じた型 DueAt(刻)・DueNow(今すぐ — 今の刻で判断すれば状態が変わる)・DueNever(状態がこのままなら時刻では変わらない)。数の now + 1 を返さない。落ち着いた状態(要求の無い歩をもう 1 歩進めても変わらない)では DueNow を返さない。")
      (rule R4 "状態を変えた歩か要求を受けた歩の後は、待たずにもう 1 歩進める(after-step)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
-     (rule R5 "Rollout の進行中に Kubernetes の Deployment と node を読む所は、期限ではなく周期で見に行く形(Rollout の拍 ROLLOUT-TICK-MS)として rollout-due に名を付けて残す。Kubernetes の watch に替える件(agora-redesign #3868)で消す。読みの結果が待ちを起こす変更も #3868。")
-     (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")]
+     (rule R5 "Rollout の進行中に Kubernetes の Deployment と node を読む所は、期限ではなく周期で見に行く形(Rollout の歩の間隔の下限 ROLLOUT-TICK-MS)として rollout-due に名を付けて残す。Kubernetes の watch に替える件(agora-redesign #3868)で消す。読みの結果が待ちを起こす変更も #3868。Rollout の歩は前の Rollout の歩から ROLLOUT-TICK-MS 経った歩でだけ回るので、rollout-due は前の Rollout の歩より後の期限から求め、Rollout の歩を回せる最初の刻より早くは答えない(期限の刻の歩が Rollout の歩を回せない時も期限を落とさない)。")
+     (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")
+     (rule R7 "模擬だけの物(worker の代役が静かな拍を眠る事と、眠る前に預ける heartbeat)は受け手の層(模擬の受付の列 coordinator/protocol/request_queue.hy)に置く。列は預けた heartbeat をその刻に普通の heartbeat の要求として調停ループへ渡し、調停ループは本番と同じ要求だけを受ける(調停ループに模擬の材料を渡す effect を持たない — 前の IdleNextRequests・IdleTaken は消した)。")]
   :laws
     [(law due-answers-are-closed
        :statement "for_all 期限の関数 f ∈ {liveness-due・task-due・sweep-due・tick-due・rollout-due・next-wake}・状態 s・刻 now: f(s, now) ∈ DueAt ∪ DueNow ∪ DueNever"
@@ -96,14 +98,24 @@
        :statement "for_all 調停ループの歩の列: 続けて DueNow の歩の数 > UNSETTLED-STEP-LIMIT ⇒ CoordinatorUnsettled(文は前後の状態で違う欄の名を含む)"
        :counterexamples
          [(counterexample "今すぐが続く間、待たずに歩を回し続ける — CPU を使い続け、どの判断が落ち着かないかが分からない")]
-       :enforced-by ["packages/doeff-cluster/tests/test_next_wake.hy::test-a-coordinator-that-never-settles-fails-naming-the-moving-field"]
-       :wiring "一部配線(2026-10-07・単位 1b)— 判断の関数の検は在る。調停ループが count-unsettled を通る所は単位 2")
+       :enforced-by ["packages/doeff-cluster/tests/test_next_wake.hy::test-a-coordinator-that-never-settles-fails-naming-the-moving-field"
+                     "packages/doeff-cluster/tests/test_coordinator_idle_wait.hy::test-a-loop-that-never-settles-fails-loudly"]
+       :wiring "配線済み(2026-10-07・単位 2b)— 調停ループ run-coordinator が歩ごとに count-unsettled を通る(要求を受けた歩の変化は数えない)")
      (law the-coordinator-wakes-only-for-a-due-a-request-a-stop-or-an-event
        :statement "for_all 本番と模擬の coordinator・要求の無い区間 I: I の中で coordinator が起きる刻 ⊆ {next-wake の刻} ∪ {要求が届いた刻} ∪ {停止の合図の刻} ∪ {外の出来事の刻}"
        :counterexamples
          [(counterexample "受付の箱を 1 秒で打ち切り、要求の無い 3 秒に 3 歩回る(2026-10-07 の本線 — 壁の時計の模擬で実測)")]
-       :enforced-by ["packages/doeff-cluster/tests/test_coordinator_idle_wait.hy(branch wt/3865-coordinator-idle-wait — 単位 2 で main へ)"]
-       :wiring "未配線(2026-10-07)— 失敗ケースは branch に在り、単位 2 の繋ぎ替えと同じ変更で main へ入る")]
+       :enforced-by ["packages/doeff-cluster/tests/test_coordinator_idle_wait.hy"
+                     "packages/doeff-cluster/tests/test_idle_skip.hy::test-a-quiet-system-steps-only-for-requests-and-deadlines"]
+       :wiring "配線済み(2026-10-07・単位 2b)")
+     (law a-sleeping-stand-in-changes-no-decision
+       :statement "for_all 筋書き: 期限だけで起きる走り(worker の代役は静かな拍を眠り、預けた heartbeat を列がその刻に渡す)と、余計に起こす走り(代役は 1 拍ずつ打ち、coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい"
+       :counterexamples
+         [(counterexample "預けた heartbeat を、起きた時にまとめて調停ループへ渡す — 判断の刻が heartbeat の刻からずれる(前の静かな区間の形はこれを本番の判断で試して隠していた)")]
+       :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy"
+                     "packages/doeff-cluster/tests/test_coordinator_idle_wait.hy::test-the-sim-queue-hands-a-deposited-beat-over-at-its-instant"
+                     "packages/doeff-cluster/tests/test_rest_same_instant.hy"]
+       :wiring "配線済み(2026-10-07・単位 2b)")]
   :enforcement
     [(deftest test-adr-doe-cluster-002-due-answers-are-closed
        ;; 期限の関数は、期限の無い状態に DueNever・落ち着いていない状態に DueNow を返す(数の None・now + 1 ではない — R3)。
@@ -116,7 +128,7 @@
        (assert (= (run (sweep-due expired 200 timing)) (DueNow)) "期限の過ぎた行の掃除は今すぐ"))
      (deftest test-adr-doe-cluster-002-no-number-now-plus-one
        ;; 針: 期限の関数の file に、数の (+ now 1) を期限として書く所は台帳を超えない(新設は赤・削り忘れも赤 — R3)。
-       ;; idle_policy の 1 つは Rollout の拍の刻の下限(max (+ now 1) …)で、R5 の周期の答え(DueAt)の中。#3868 で消す。
+       ;; wake_policy の 1 つは Rollout の歩の刻の下限(max (+ now 1) …)で、R5 の周期の答え(DueAt)の中。#3868 で消す。
        (val repo-root (. (Path __file__) parent parent parent))
        (val counts (dfor name NOW-PLUS-ONE-ROSTER
                          name (.count (.read-text (/ repo-root CORE name) :encoding "utf-8") "(+ now 1)")))

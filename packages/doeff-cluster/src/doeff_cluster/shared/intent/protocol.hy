@@ -82,10 +82,10 @@
 
 (defclass [(dataclass :frozen True)] NextRequests [EffectBase]
   "受付に並んだ要求をまとめて取る(coordinator と record-store の受け口の effect)。結果は Request の list。最初の 1 件を
-   timeout-seconds まで待ち(来なければ空 = 期限の経過で次の拍へ進む)、その時点で並んでいる要求を limit 件まで一緒に取る
-   (group commit の 1 まとまり)。coordinator の調停ループは、模擬の時計の下の受け口だけが読む材料を足した子 class
-   doeff_cluster.coordinator.intent.cluster_model.IdleNextRequests を出す(本番の受け口はこの class として受ける・#2180)。"
-  (#^ float timeout-seconds)
+   timeout-seconds まで待ち(来なければ空 = 期限の経過で次の歩へ進む・None = 期限なし — 要求か停止の合図か外の出来事でだけ起きる)、
+   その時点で並んでいる要求を limit 件まで一緒に取る(group commit の 1 まとまり)。coordinator の調停ループは、次の期限までの秒を
+   渡す(coordinator/core/wake_policy.wait-seconds・#3865)。"
+  (#^ (| float None) timeout-seconds)
   (setv #^ int limit 256))
 
 

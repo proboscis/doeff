@@ -16,10 +16,12 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ProvisionalBeat])
-(import doeff_cluster.coordinator.intent.request_bodies [HeartbeatBody])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
+(import doeff_cluster.coordinator.core.program :as coordinator-program)
+(import doeff_cluster.shared.intent.due_model [DueNow])
+(import doeff_cluster.coordinator.intent.due_model [CoordinatorUnsettled])
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
-(import doeff_cluster.coordinator.protocol.request_bodies [request-bodies body-of])
+(import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue RestBell queued-requests deposit-beats])
@@ -138,9 +140,8 @@
   "worker w1 の代役が刻 at の仮の heartbeat を列に預け、取り手が受付を期限なしで待つ。取りの起きた刻と、取った要求の path・送り手を
    返すため。"
   (val request (! (heartbeat-of "w1")))
-  (<- body HeartbeatBody (body-of request))
   (<- promise Promise (CreatePromise))
-  (<- (deposit-beats queue "w1" #((ProvisionalBeat :at at :request request :body body :name "w1")) (RestBell promise)))
+  (<- (deposit-beats queue "w1" #((ProvisionalBeat :at at :request request :name "w1")) (RestBell promise)))
   (<- batch list (NextRequests None))
   (<- woke int (now-epoch-ms))
   #(woke (lfor r batch #(r.path r.actor))))
@@ -152,3 +153,26 @@
   (val queue (RequestQueue))
   (<- seen tuple ((sim-time-handler :clock (! (clock-at 0))) (with-handlers [(queued-requests queue)] (hand-over-a-deposit queue 2500))))
   (assert (= seen #(2500 [#("/heartbeat" "w1")])) seen))
+
+
+;; --- 落ち着かない調停ループは名指して落ちる ----------------------------------------------------------------------------------
+
+(defk always-now [state now timing naming watchers]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)]
+   :post [(: % DueNow)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "次に起きる刻をいつも今すぐと答える next-wake の代わり(落ち着かない判断の作り — 調停ループが黙って回り続けないかを見るため)。"
+  (DueNow))
+
+
+(deftest test-a-loop-that-never-settles-fails-loudly [monkeypatch]
+  ;; 次に起きる刻がいつも今すぐ(要求は来ない)なら、調停ループは UNSETTLED-STEP-LIMIT 歩を越えた所で CoordinatorUnsettled で落ちる
+  ;; (ADR-DOE-CLUSTER-002 R4)。反例: count-unsettled を通らない調停ループは、取りの上限 TAKE-LIMIT まで回り続けて止めの合図で終わる。
+  (.setattr monkeypatch coordinator-program "next_wake" always-now)
+  (val inbox (TimedInbox [] 600000))
+  (var failed None)
+  (try
+    (<- (run-timed inbox))
+    (except [error CoordinatorUnsettled]
+      (:= failed error)))
+  (assert (is-not failed None) (len inbox.waits))
+  (assert (< (len inbox.waits) TAKE-LIMIT) (len inbox.waits)))
