@@ -33,7 +33,10 @@
 ;;;   HTTP の中継   本文を両向きとも streaming で通す。hop-by-hop の頭を落とし、X-Forwarded-Proto / X-Forwarded-For を足す。Host は要求の
 ;;;                 値のまま。中継先に届かなければ 502
 ;;;   ws の中継     先に中継先へ ws で繋いでから(届かなければ 502)、要求を ws に上げて frame を両向きに写す。1 frame の上限は HttpListen の
-;;;                 ws-max-bytes。中継の側は ping を撃たず(autoping を切る)、端末の間の ping / pong と close の状態符をそのまま写す
+;;;                 ws-max-bytes。中継の側は ping を撃たず(autoping を切る)、端末の間の ping / pong と close の状態符をそのまま写す。
+;;;                 中継先へ繋ぐ時の上限は 2 つで、HTTP の中継とは別に持つ(ws の中継だけの client に置く): 繋ぐまで(名前の引き + TCP の
+;;;                 接続)は WS-UPSTREAM-CONNECT-SECONDS・繋がった後の handshake の答えは WS-UPSTREAM-HANDSHAKE-SECONDS — どちらも越えれば
+;;;                 ws に上げずに 502。繋いだ後の frame の読みに上限は無い(長く黙る接続を切らない)
 ;;;   ws の終端     WsAccept で要求を ws に上げる(handshake の形が合わなければ断りの応答 — GET でなければ 405・Upgrade: websocket が無ければ
 ;;;                 426・他は 400 — を返して 1 行名乗る)。上げたら接続ごとに読みの loop(aiohttp が ping への pong・分割の組み立て・UTF-8 の検め・
 ;;;                 1 通の上限 ws-max-bytes を持つ)と、送りの箱 + 書き手の task(WsSendText / WsClose は箱へ積むだけで待たない — 遅い 1 接続が
@@ -81,9 +84,16 @@
 ;; client が server の閉じた接続へ書く形を普段は起こさない。値は aiohttp の AppRunner の既定(RequestHandler の 3630 秒 — 「間の reverse
 ;; proxy より長く」)と同じで、今の振る舞いを変えない。既定に頼らず名で置く — aiohttp の既定は立て方で違い(run_app は 75 秒)、版でも変わる。
 (val IDLE-CONNECTION-SECONDS 3630.0)
-;; 中継先への接続の上限と、HTTP の中継の読みの間の上限(秒 — 旧い nginx の proxy_read_timeout 300s と同じ)。
+;; HTTP の中継の、中継先への接続の上限と読みの間の上限(秒 — 旧い nginx の proxy_read_timeout 300s と同じ)。
 (val CONNECT-SECONDS 10.0)
 (val HTTP-READ-SECONDS 300.0)
+;; ws の中継が中継先へ繋ぐ時の 2 つの上限(秒 — 頭の註の ws の中継。HTTP の中継の上の 2 つとは別に持つ)。
+;;   繋ぐまで         名前の引きと TCP の接続を合わせた上限。中継先が入れ替わる間は繋ぎの SYN が黙って落ち、断りも返らない — 相手の繋ぎの
+;;                    上限より短く見切って 502 を返し、相手がすぐ撃ち直せるようにする
+;;   handshake の答え 繋がった後、中継先の 101 を待つ読みの間の上限。繋がった中継先の遅い答えを「繋ぐまで」の短い上限で切らない
+;;                    (切ると、答えの遅い中継先へ相手が撃ち直し続ける)
+(val WS-UPSTREAM-CONNECT-SECONDS 3.0)
+(val WS-UPSTREAM-HANDSHAKE-SECONDS 15.0)
 ;; 中継で写さない頭(hop-by-hop — RFC 9110 7.6.1)。ws の中継は handshake の頭も写さない(aiohttp が中継先への handshake を組む)。
 (val HOP-BY-HOP (frozenset #("connection" "keep-alive" "proxy-authenticate" "proxy-authorization" "te" "trailer" "trailers"
                             "transfer-encoding" "upgrade")))
@@ -248,7 +258,9 @@
           self.ws-send-max-bytes None
           ;; 受け口の列(待ち受けの loop が積み、答え手の節は在れば待たずに取る — Arrivals)。
           self.arrivals (Arrivals)
+          ;; 中継の client は 2 つ: HTTP の中継(client)と ws の中継(ws-client — 中継先へ繋ぐ時の上限が違う)。
           self.client None
+          self.ws-client None
           self.runner None
           self.waiting {}
           self.unread {}
@@ -302,6 +314,13 @@
     (setv self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
                                                                              :sock-read HTTP-READ-SECONDS)))
+    ;; ws の中継だけの client: aiohttp の ws_connect は要求ごとの ClientTimeout を受けず、session の値で繋ぐので、上限を HTTP の中継と
+    ;; 分けるには session を分ける(接続の置き場も別になり、ws の中継は HTTP の中継の使われていない接続を使い回さず毎回 繋ぐ)。
+    ;; connect = 接続を得るまでの全部(接続の枠の空き待ち + 名前の引き + TCP の接続 — sock-connect は名前の引きを含まない)。
+    ;; sock-read = 要求を書いた後の読みの間の上限で、handshake の答えにだけ効く(aiohttp は 101 を受けると読みの上限を外す)。
+    ;; total は置かない(繋いだ ws を時間で切らない)。
+    (setv self.ws-client (aiohttp.ClientSession :timeout (aiohttp.ClientTimeout :total None :connect WS-UPSTREAM-CONNECT-SECONDS
+                                                                                :sock-read WS-UPSTREAM-HANDSHAKE-SECONDS)))
     (setv app (web.Application))
     (.add-route app.router "*" "/{tail:.*}" self.dispatch)
     (setv self.runner (web.AppRunner app :access-log None :keepalive-timeout IDLE-CONNECTION-SECONDS))
@@ -541,8 +560,9 @@
         (.abort peer.request.transport)))
     (when (is-not self.runner None)
       (await (.cleanup self.runner)))
-    (when (is-not self.client None)
-      (await (.close self.client)))
+    (for [client #(self.client self.ws-client)]
+      (when (is-not client None)
+        (await (.close client))))
     (when (> self.dropped-answers 0)
       (relay-failed (.format "待ち受けを閉じる — 相手が先に切って届かなかった答えは合わせて {} 件" self.dropped-answers)))
     (.put self.arrivals (HttpServerClosed :reason reason))
@@ -676,10 +696,11 @@
         response)))
 
   (defn :async #^ web.StreamResponse relay-ws [self #^ web.Request request #^ str url]
-    "ws の要求を中継先へ繋いで frame を両向きに写すため(先に中継先へ繋ぎ、届かなければ Upgrade せずに 502)。"
+    "ws の要求を中継先へ繋いで frame を両向きに写すため(先に中継先へ繋ぎ、届かなければ Upgrade せずに 502 — 繋ぐまでの上限と handshake の
+     答えの上限を越えた時も同じ。上限は ws の中継の client が持つ・頭の註)。"
     (setv protocols (lfor p (.split (.get request.headers "Sec-WebSocket-Protocol" "") ",") :if (.strip p) (.strip p)))
     (try
-      (setv upstream (await (.ws-connect self.client url :headers (forwarded-headers request True) :autoping False
+      (setv upstream (await (.ws-connect self.ws-client url :headers (forwarded-headers request True) :autoping False
                                          :max-msg-size self.ws-max-bytes :protocols protocols)))
       (except [error #(aiohttp.ClientError asyncio.TimeoutError)]
         (relay-failed (+ "中継先 " url " へ ws で届かない: " (repr error)))
