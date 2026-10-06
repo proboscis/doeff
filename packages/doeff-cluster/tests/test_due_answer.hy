@@ -11,7 +11,7 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])
-(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due liveness-due sweep-due note-liveness liveness-deadline])
 (import doeff_cluster.coordinator.core.api_policy [tick tick-due])
 
