@@ -32,6 +32,8 @@ from doeff_records.values import RowsConflict as RowsConflict
 from doeff_records.values import RowsRefused as RowsRefused
 from doeff_records.values import StreamEnd as StreamEnd
 from doeff_records.values import StreamEmpty as StreamEmpty
+from doeff_records.values import StreamTail as StreamTail
+from doeff_records.values import StreamTailEmpty as StreamTailEmpty
 from doeff_records.values import UndeclaredTable as UndeclaredTable
 from doeff_records.values import EventsMoved as EventsMoved
 from doeff_records.values import EventsQuiet as EventsQuiet
@@ -198,6 +200,9 @@ def change_json(change: RowChanged | RowRemoved) -> _Program[dict, object]:
 def event_json(event: Event) -> _Program[dict, object]:
     ...
 
+def tail_json(tail: StreamTail | StreamTailEmpty) -> _Program[dict, object]:
+    ...
+
 def encode_answer(answer: WireAnswer) -> _Program[dict, object]:
     ...
 
@@ -213,6 +218,12 @@ def event_from(value: JsonValue) -> _Program[Event, object]:
 def list_in(value: JsonValue, what: str) -> _Program[list, object]:
     ...
 
+def tail_from(value: JsonValue) -> _Program[StreamTail | StreamTailEmpty, object]:
+    ...
+
+def tails_from(value: dict) -> _Program[tuple[StreamTail | StreamTailEmpty, ...], object]:
+    ...
+
 def written_rows_from(value: JsonValue) -> _Program[WrittenRows, object]:
     ...
 
@@ -223,6 +234,9 @@ def answer_from(value: JsonValue) -> _Program[WireAnswer, object]:
     ...
 
 def decode_answer(operation: str, value: JsonValue) -> _Program[WireAnswer, object]:
+    ...
+
+def answer_for_request(ask: PublicEffect, answer: WireAnswer) -> _Program[WireAnswer, object]:
     ...
 
 def refusal_json(refusal: WireRefusal) -> _Program[dict, object]:

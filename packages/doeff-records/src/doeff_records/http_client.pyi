@@ -38,6 +38,7 @@ from doeff_records.wire import WireAnswer as WireAnswer
 from doeff_records.wire import JsonValue as JsonValue
 from doeff_records.wire import encode_request as encode_request
 from doeff_records.wire import decode_answer as decode_answer
+from doeff_records.wire import answer_for_request as answer_for_request
 from doeff_records.wire import refusal_from as refusal_from
 from doeff_records.wire import undeclared_refusal as undeclared_refusal
 from doeff_records.wire import CLIENT_ANSWER_METRICS as CLIENT_ANSWER_METRICS
