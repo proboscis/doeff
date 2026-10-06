@@ -17,7 +17,7 @@
 (import pathlib [Path])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming BoardRow])
-(import doeff_cluster.coordinator.intent.due_model [DueNow DueNever])
+(import doeff_cluster.shared.intent.due_model [DueNow DueNever])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.api_policy [tick-due])
 (import doeff_cluster.coordinator.core.wake_policy [next-wake])
@@ -29,15 +29,15 @@
   {"cluster_policy.hy" 0
    "api_policy.hy" 0
    "idle_policy.hy" 1   ; rollout-due の Rollout の拍の刻の下限(R5 — #3868 で消す)
-   "due_policy.hy" 0
    "wake_policy.hy" 0})
 
 
 (defadr ADR-DOE-CLUSTER-002
   :title "doeff-cluster の coordinator は、要求の無い間、次に判断の答えが変わる刻(期限ちょうど)・要求・停止の合図・外の出来事のどれかまで 1 本で待つ。1 秒ごとに起きて見に行く拍を持たない。期限の関数は答えを「刻・今すぐ・無し」の閉じた型で返し、落ち着いた状態では今すぐを返さない"
   :status "accepted"
-  :scope ["packages/doeff-cluster/src/doeff_cluster/coordinator/intent/due_model.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/due_policy.hy"
+  :scope ["packages/doeff-cluster/src/doeff_cluster/shared/intent/due_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/shared/core/due_policy.hy"
+          "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/due_model.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/wake_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"

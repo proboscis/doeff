@@ -27,7 +27,7 @@
 (import doeff_cluster.coordinator.core.api_policy [tick tick-due respond plan-rollouts deployments-to-observe deployment-reread-due mark-alive
                                                    ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.watch_policy [settle-watch all-waiting-unchanged])
-(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 
 (val MAX-QUIET-MS 3600000)    ; 一度に眠る区間の上限(仮想の 1 時間 — その刻の歩は静かでも本物の歩として回す)
 
