@@ -27,13 +27,18 @@
 //! 4. ライブラリへ問い直しの間隔を渡す鍵の引数 `:poll-seconds`(literal の 0 でない値)は、繰り返しを問わず当てる(繰り返すのはライブラリ)。
 //!
 //! 当たらない物: 起きる刻が行や予定から導かれる期限の待ち(刻に `(+ 今 …)` を含まない)・変わりを待つ時の上限の秒(WatchChanges /
-//! WatchEvents の秒 — DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中。
+//! WatchEvents の秒 — DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中・
+//! 時間切れの期限(tag が top level の名で、その tag と比べる分岐の本体が全部 繰り返しを抜ける `(stop …)` の物 — 止めの合図を待つ上限の
+//! 秒・cisco-c8 の決定 2026-10-07。来た後に同じ読みを繰り返す本体が在る tag は外さない — stopping_tags)。
 //!
 //! 区分(当たりの鍵の細目の最後の段と本文): `periodic`(純粋に時間で取り直す)と `retry`(届かない後の取り直し — 待ちの綴り・掛ける期限の
 //! tag・囲む match の節の型の綴りに retry / unreachable / unavailable が在る。補助の呼びは補助の中の待ちが全部 retry の時)。
 //!
 //! 場所に書いて通す理由: 当たりの行か、その直前に続く註だけの行に `; 時間で取り直す理由: <語>`(DOEFF111 の `; defk にできない: <理由>` と
-//! 同じ置き方)。語は閉じた集合 — `相手に知らせの口が無い: <相手>`・`書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`・
+//! 同じ置き方)。語は閉じた集合 — `相手に変更の知らせが無い: <相手> — <何で確かめたか>`(相手の名と確かめの根拠〔相手の API の文書の節・
+//! 相手の code の行・試した命令と結果〕のどちらも空でない。相手が変更の知らせを持つと分かっている相手〔PARTIES_WITH_CHANGE_NOTICE —
+//! Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図〕なら通さない — Mac の調整役の条件 2026-10-07)・
+//! `書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`・
 //! `届かない間だけの繋ぎ直し`(区分 retry の当たりだけ — 届かない印か失敗の答えが在る間だけ間を置いて繋がるかを試し、data を取りに
 //! 行かず、戻ったら印を消す形)。語の外・区分の合わない語は通さず、当たりの本文に訳を足す。
 
@@ -112,27 +117,64 @@ pub enum WriteOnly {
 /// 場所に書いて通す理由(閉じた語彙)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
-    /// 相手に知らせの口が無い(相手の名)。
-    NoNotice(String),
+    /// 相手に変更の知らせが無い(相手の名と、何で確かめたか — どちらも空でない)。
+    NoChangeNotice { party: String, evidence: String },
     /// 書くだけ(生存の印・報告・期限の延長)。
     WriteOnly(WriteOnly),
     /// 届かない間だけの繋ぎ直し(区分 retry だけ)。
     ReconnectWhileUnreachable,
 }
 
-/// 理由の語を読む(閉じた語彙の外は Err に語そのものを返す)。
-pub fn parse_reason(text: &str) -> Result<Reason, String> {
+/// 「相手に変更の知らせが無い」の語の頭。
+pub const NO_CHANGE_NOTICE: &str = "相手に変更の知らせが無い:";
+/// 相手の名と確かめの根拠の区切り。
+pub const EVIDENCE_SEPARATOR: char = '—';
+
+/// 変更の知らせを持つと分かっている相手(閉じた一覧 — 表に出す名, 照らす綴り)。照らし方: 書いた相手の名を小文字にし、空白を除き、`_` を
+/// `-` に揃えた綴りが、照らす綴りのどれかを含めば当てる(Mac の調整役の条件 2026-10-07・agora-redesign #3834)。
+pub const PARTIES_WITH_CHANGE_NOTICE: &[(&str, &[&str])] = &[
+    ("Kubernetes", &["kubernetes", "k8s", "kube-apiserver"]),
+    ("coordinator の GET /watch", &["coordinator", "/watch"]),
+    ("doeff-events の基盤", &["doeff-events"]),
+    ("記録の service の変更の合図", &["記録のservice", "記録の変更の合図", "agora-record", "doeff-records"]),
+];
+
+/// 相手の名が、変更の知らせを持つと分かっている相手なら、その表に出す名。
+pub fn party_with_change_notice(party: &str) -> Option<&'static str> {
+    let spelled: String = party.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase().replace('_', "-");
+    PARTIES_WITH_CHANGE_NOTICE.iter().find(|(_, words)| words.iter().any(|w| spelled.contains(w))).map(|(name, _)| *name)
+}
+
+/// 理由を通さない訳(閉じた集合)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReasonRefusal {
+    /// 閉じた語彙の外(書いた語そのもの)。
+    OutsideVocabulary(String),
+    /// 「相手に変更の知らせが無い」に相手の名か確かめの根拠が無い。
+    MissingPartyOrEvidence,
+    /// 相手が変更の知らせを持つと分かっている(表に出す名)。
+    PartyHasChangeNotice(&'static str),
+}
+
+/// 理由の語を読む。
+pub fn parse_reason(text: &str) -> Result<Reason, ReasonRefusal> {
     let text = text.trim();
-    if let Some(rest) = text.strip_prefix("相手に知らせの口が無い:") {
-        let party = rest.trim();
-        return if party.is_empty() { Err(text.to_string()) } else { Ok(Reason::NoNotice(party.to_string())) };
+    if let Some(rest) = text.strip_prefix(NO_CHANGE_NOTICE) {
+        let (party, evidence) = rest.split_once(EVIDENCE_SEPARATOR).map(|(p, e)| (p.trim(), e.trim())).unwrap_or((rest.trim(), ""));
+        if party.is_empty() || evidence.is_empty() {
+            return Err(ReasonRefusal::MissingPartyOrEvidence);
+        }
+        if let Some(known) = party_with_change_notice(party) {
+            return Err(ReasonRefusal::PartyHasChangeNotice(known));
+        }
+        return Ok(Reason::NoChangeNotice { party: party.to_string(), evidence: evidence.to_string() });
     }
     match text {
         "書くだけ: 生存の印" => Ok(Reason::WriteOnly(WriteOnly::Liveness)),
         "書くだけ: 報告" => Ok(Reason::WriteOnly(WriteOnly::Report)),
         "書くだけ: 期限の延長" => Ok(Reason::WriteOnly(WriteOnly::LeaseExtension)),
         "届かない間だけの繋ぎ直し" => Ok(Reason::ReconnectWhileUnreachable),
-        _ => Err(text.to_string()),
+        _ => Err(ReasonRefusal::OutsideVocabulary(text.to_string())),
     }
 }
 
@@ -473,6 +515,8 @@ struct Index {
     unique: HashMap<String, Vec<DefId>>,
     /// 今を返す呼びの頭(比べの形)— CLOCK_HEADS と、引数の無い定義で本文がそれを呼ぶ物(`(defk wall-ms-now [] …)`)。
     clock_heads: BTreeSet<String>,
+    /// 時間切れの期限の tag(比べの形 — stopping_tags)。
+    stopping_tags: BTreeSet<String>,
 }
 
 impl Index {
@@ -506,7 +550,7 @@ impl Index {
             }
             clock_heads.extend(found);
         }
-        Index { modules, unique, clock_heads }
+        Index { modules, unique, clock_heads, stopping_tags: stopping_tags(units) }
     }
 
     /// file `file` の呼びの頭の綴りが指す定義。
@@ -523,6 +567,58 @@ impl Index {
             return units[files[0]].by_key.get(original).map(|&def| (files[0], def));
         }
         self.unique.get(&key).filter(|found| found.len() == 1).map(|found| found[0])
+    }
+}
+
+/// 時間切れの期限の tag — top level で結んだ名(`(val STOP-WAIT-TAG "…")`)のうち、その tag と比べる分岐(`(cond (= tag 名) 本体 …)`・
+/// `(if (= tag 名) 本体 …)`)が母集団に 1 つ以上在り、その本体が全部 繰り返しを抜ける `(stop …)` の物。止めの合図を待つ上限の秒の期限は、
+/// 来たら待ちを打ち切って抜けるだけで、同じ物を取りに行く繰り返しではない(cisco-c8 の決定 2026-10-07・agora-redesign #3834)。来た後に
+/// 同じ読みを繰り返す本体が 1 つでも在る tag は外さない。
+fn stopping_tags(units: &[Unit]) -> BTreeSet<String> {
+    let mut seen: HashMap<String, bool> = HashMap::new();
+    for unit in units {
+        let source = unit.source.as_str();
+        for form in &unit.forms {
+            tag_branches(source, form, &mut |tested, body| {
+                let exits = body.paren_items().map(visible).is_some_and(|items| head_symbol(source, &items) == Some("stop"));
+                for name in tested {
+                    *seen.entry(name).or_insert(true) &= exits;
+                }
+            });
+        }
+    }
+    let constants: BTreeSet<String> = units
+        .iter()
+        .flat_map(|unit| {
+            let source = unit.source.as_str();
+            unit.forms.iter().filter_map(move |form| {
+                let items = form.paren_items().map(visible)?;
+                let head = head_symbol(source, &items)?;
+                let name = items.get(1).filter(|f| matches!(f.node, Node::Symbol) && matches!(head, "val" | "setv"))?;
+                Some(norm(spelled(source, name)))
+            })
+        })
+        .collect();
+    seen.into_iter().filter(|(name, exits)| *exits && constants.contains(name)).map(|(name, _)| name).collect()
+}
+
+/// form の木の、`(= a b)` で比べる分岐の (比べた記号の名〔比べの形・最後の段〕, 本体) を visit に渡す(`cond` の組と `if` の then)。
+fn tag_branches<'f>(source: &str, form: &'f Form, visit: &mut impl FnMut(Vec<String>, &'f Form)) {
+    if let Some(items) = form.paren_items().map(visible) {
+        let pairs: Vec<(&Form, &Form)> = match head_symbol(source, &items) {
+            Some("cond") => items[1..].chunks(2).filter(|pair| pair.len() == 2).map(|pair| (pair[0], pair[1])).collect(),
+            Some("if") if items.len() >= 3 => vec![(items[1], items[2])],
+            _ => Vec::new(),
+        };
+        for (test, body) in pairs {
+            let Some(compared) = test.paren_items().map(visible).filter(|t| head_symbol(source, t) == Some("=")) else { continue };
+            let names: Vec<String> =
+                compared[1..].iter().filter(|f| matches!(f.node, Node::Symbol)).map(|f| norm(last_segment(spelled(source, f)))).collect();
+            visit(names, body);
+        }
+    }
+    for child in children(form) {
+        tag_branches(source, child, visit);
     }
 }
 
@@ -664,6 +760,11 @@ impl<'a> Walk<'a> {
             return;
         }
         if TIMER_SINKS.contains(&name) {
+            let tag = argument(source, args, 0, Some(":tag")).filter(|t| matches!(t.node, Node::Symbol));
+            if tag.is_some_and(|t| self.index.stopping_tags.contains(&norm(last_segment(spelled(source, t))))) {
+                // 時間切れの期限(来たら繰り返しを抜けるだけ)— 同じ物を取りに行く繰り返しではない。
+                return;
+            }
             let refetch = kind_of(named_retry);
             if let Some(at) = argument(source, args, TIMER_AT_POSITION, Some(":at")) {
                 if let Some(bound_retry) = self.time_argument(at, refetch, in_loop) {
@@ -971,10 +1072,18 @@ pub fn reason_at(source: &str, line: usize, refetch: Refetch) -> ReasonRead {
             "「届かない間だけの繋ぎ直し」は区分 届かない後の取り直し(届かない印か失敗の答えが在る間だけ試す所)にだけ書ける".to_string(),
         ),
         Ok(_) => ReasonRead::Accepted,
-        Err(word) => ReasonRead::Rejected(format!(
-            "「{}」は閉じた語彙の外(相手に知らせの口が無い: <相手> / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し)",
-            word
+        Err(ReasonRefusal::OutsideVocabulary(word)) => ReasonRead::Rejected(format!(
+            "「{}」は閉じた語彙の外({} <相手> {} <何で確かめたか> / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し)",
+            word, NO_CHANGE_NOTICE, EVIDENCE_SEPARATOR
         )),
+        Err(ReasonRefusal::MissingPartyOrEvidence) => ReasonRead::Rejected(format!(
+            "「{}」には相手の名と、{} の後に何で確かめたか(相手の API の文書の節・相手の code の行・試した命令と結果)の両方が要る",
+            NO_CHANGE_NOTICE.trim_end_matches(':'),
+            EVIDENCE_SEPARATOR
+        )),
+        Err(ReasonRefusal::PartyHasChangeNotice(known)) => {
+            ReasonRead::Rejected(format!("この相手は変更の知らせを持つ({}) — その知らせで起きる形にする", known))
+        }
     }
 }
 
@@ -1117,12 +1226,53 @@ mod tests {
         assert_eq!(details(&[("h.hy", handler), ("u.hy", user)]), vec!["run::AwaitNextTick::periodic", "os::sleep::periodic"]);
     }
 
+    /// cisco-c8 の決定 2026-10-07(agora-redesign #3834): 止めの合図を待つ上限の期限(来たら繰り返しを抜けるだけ — agora-controllers の
+    /// task_attempt.hy の pumping-loop の deadline-passed の形)は当てない。同じ形でも、期限が来た後に同じ読みを繰り返す本体なら当たる。
+    #[test]
+    fn a_deadline_that_only_ends_the_wait_is_not_hit_but_one_that_reads_again_is() {
+        let shape = |after_stop_wait: &str| {
+            format!(
+                "(val DEADLINE-TAG \"t:deadline\")\n(val STOP-WAIT-TAG \"t:stop-wait\")\n\
+                 (defk deadline-passed [p]\n  (<- read (stopped-by p))\n  (when (not (finished? read))\n    (<- now (GetTime))\n    \
+                 (<- (ArmTimer STOP-WAIT-TAG (+ now (timedelta :seconds STOP-WAIT-SECONDS)))))\n  read)\n\
+                 (defk pumping-loop [first]\n  (event-loop [p P first]\n    (Moved) (! (read-on p))\n    (TimerFired :tag tag) (cond\n      \
+                 (= tag DEADLINE-TAG) (let [read (! (deadline-passed p))] (if (! (finished? read)) (stop read) read))\n      \
+                 (= tag STOP-WAIT-TAG) {}\n      True p)))\n",
+                after_stop_wait
+            )
+        };
+        assert!(details(&[("a.hy", &shape("(stop p)"))]).is_empty(), "{:?}", details(&[("a.hy", &shape("(stop p)"))]));
+        assert_eq!(details(&[("a.hy", &shape("(! (read-on p))"))]), vec!["pumping-loop::deadline-passed::periodic"]);
+    }
+
     #[test]
     fn reasons_are_a_closed_vocabulary() {
-        assert_eq!(parse_reason(" 相手に知らせの口が無い: 預かり所"), Ok(Reason::NoNotice("預かり所".into())));
-        assert!(parse_reason("相手に知らせの口が無い:").is_err());
+        // 相手と確かめの根拠が在れば通る。
+        assert_eq!(
+            parse_reason(" 相手に変更の知らせが無い: 預かり所 — custody の API の文書 3 節に watch が無い"),
+            Ok(Reason::NoChangeNotice { party: "預かり所".into(), evidence: "custody の API の文書 3 節に watch が無い".into() })
+        );
+        // 根拠が無い・相手が無い = 通さない。
+        for text in ["相手に変更の知らせが無い: 預かり所", "相手に変更の知らせが無い: 預かり所 — ", "相手に変更の知らせが無い: — 文書 3 節"] {
+            assert_eq!(parse_reason(text), Err(ReasonRefusal::MissingPartyOrEvidence), "{}", text);
+        }
+        // 変更の知らせを持つと分かっている相手 = 通さない(大小文字・空白・別名を問わない)。
+        for (party, known) in [
+            ("Kubernetes", "Kubernetes"),
+            ("kubernetes の API", "Kubernetes"),
+            ("K8s", "Kubernetes"),
+            ("doeff-cluster の Coordinator", "coordinator の GET /watch"),
+            ("doeff_events の基盤", "doeff-events の基盤"),
+            ("記録の service", "記録の service の変更の合図"),
+        ] {
+            let text = format!("相手に変更の知らせが無い: {} — 文書を読んだ", party);
+            assert_eq!(parse_reason(&text), Err(ReasonRefusal::PartyHasChangeNotice(known)), "{}", text);
+        }
         assert_eq!(parse_reason("書くだけ: 生存の印"), Ok(Reason::WriteOnly(WriteOnly::Liveness)));
-        assert!(parse_reason("仕方ない").is_err());
+        // 閉じた語彙の外の語は通さない(閉じた語彙から外した綴りもここに入る)。
+        assert_eq!(parse_reason("仕方ない"), Err(ReasonRefusal::OutsideVocabulary("仕方ない".into())));
+        let known = "(defk a []\n  (while True\n    ;; 時間で取り直す理由: 相手に変更の知らせが無い: Kubernetes — 試した\n    (<- (Delay 1.0))\n    (<- (Read))))\n";
+        assert!(matches!(reason_at(known, 3, Refetch::Periodic), ReasonRead::Rejected(why) if why.contains("この相手は変更の知らせを持つ")));
         let source = "(defk a []\n  (while True\n    ;; 時間で取り直す理由: 届かない間だけの繋ぎ直し\n    (<- (Delay 1.0))\n    (<- (Read))))\n";
         assert!(matches!(reason_at(source, 3, Refetch::Periodic), ReasonRead::Rejected(_)));
         assert_eq!(reason_at(source, 3, Refetch::Retry), ReasonRead::Accepted);

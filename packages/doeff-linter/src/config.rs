@@ -522,12 +522,19 @@ pub fn needs_whole_repo(id: &str) -> bool {
     ProjectRule::parse(id).is_some_and(|rule| rule.needs_whole_repo())
 }
 
-/// `--list-rules` の出力 — 全部の規則の ID と、repo 全体が要るかの名乗り(門と hook が repo 全体の比べの規則を選ぶ 1 か所)。
+/// 規則の ID が Jev に問う意味の規則か(ProjectRule::is_semantic の名乗り — ID の頭では決めない・agora-redesign #3834)。Python の文ごとの
+/// 規則と知らない ID は偽。
+pub fn is_semantic(id: &str) -> bool {
+    ProjectRule::parse(id).is_some_and(|rule| rule.is_semantic())
+}
+
+/// `--list-rules` の出力 — 全部の規則の ID と、repo 全体が要るかの名乗り(門と hook が repo 全体の比べの規則を選ぶ 1 か所)と、Jev に問う
+/// 規則かの名乗り(門が Jev の規則を分ける 1 か所)。
 pub fn rule_list_json() -> serde_json::Value {
     serde_json::Value::Array(
         get_all_rule_ids()
             .into_iter()
-            .map(|id| serde_json::json!({ "id": id, "whole_repo": needs_whole_repo(&id) }))
+            .map(|id| serde_json::json!({ "id": id, "whole_repo": needs_whole_repo(&id), "semantic": is_semantic(&id) }))
             .collect(),
     )
 }
