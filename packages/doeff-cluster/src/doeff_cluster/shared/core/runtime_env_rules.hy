@@ -1,11 +1,10 @@
-;;; 実行環境の宣言(runtime env)の純粋な判断: キー(env-key・native-key)・JSON の往復(runtime-env->json・runtime-env-of-json)・
+;;; 実行環境の宣言(runtime env)の純粋な判断: キー(env-key)・JSON の往復(runtime-env->json・runtime-env-of-json)・
 ;;; 準備の失敗の値(env-failure)・子の環境変数の組の検め(child-environ-refusal)・repo の url の正体(url-location)。
 ;;; 型と定数は doeff_cluster.shared.intent.runtime_env_model。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import hashlib)
 (import json)
-(import doeff_cluster.shared.core [native_wheel])
 (import doeff_cluster.shared.core.native_wheel [ENV-KEY-LENGTH])
 (import doeff_cluster.shared.intent.runtime_env_model [RUNTIME-ENV-FORMAT InvalidKind RuntimeEnvInvalid RepoCheckout
                                                        LocalPath RemoteRepo RepoLocation
@@ -72,16 +71,6 @@
   (<- material dict (key-material env platform))
   (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
   (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
-
-
-(defk native-key [wheel tree-hashes python platform]
-  {:pre [(: wheel NativeWheel) (: tree-hashes tuple) (: python str) (: platform str)
-         (= (len tree-hashes) (len wheel.paths))]
-   :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
-  "native の wheel のキー = package・wheel の中身を決める dir ごとの git の tree hash・Python・platform の正規化した JSON の sha256 の
-   頭 24 桁。tree-hashes は wheel.paths と同じ順。定義点は native_wheel.native_key の 1 つ — 起動の script(worker/entry/boot_wheel)も
-   同じ関数で鍵を求め、実行環境の準備が置いた wheel を使う。"
-  (native_wheel.native-key wheel.package wheel.paths tree-hashes python platform))
 
 
 (defk runtime-env->json [env]

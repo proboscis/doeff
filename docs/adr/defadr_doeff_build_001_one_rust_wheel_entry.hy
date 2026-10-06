@@ -4,10 +4,10 @@
 ;;; 出自 = 利用者の 2026-10-07 の原文 2 通(agora-redesign #3860 の本文・dotfiles ADR-DOTFILES-027 の条 R-cf708d56 と追補 1)と、Mac の
 ;;; 調整役の決定(#3860 の 1・2026-10-07 — 入口は 1 つ・古い道は替える変更と同じ変更で消す)。
 ;;;
-;;; 移す予定の入口(PENDING-ENTRIES): 鍵と保存先を自前で持つ所が 2 系統残る — doeff-cluster の worker の native の wheel(git の tree
-;;; hash の鍵・state/wheels)と、commit の hook の doeff-linter の binary の置き場(linter_snapshot)。worker の code は本体を起こし直す
-;;; まとめに同乗する決まり(#3860 の 3)なので、この変更では書かずに名指して台帳に置く。台帳に無い新しい入口は赤・入口を消した変更が
-;;; 台帳の行を残すと赤(消した変更が同じ commit で行を削る)。
+;;; 移す予定の入口(PENDING-ENTRIES): 鍵と保存先を自前で持つ所が 1 系統残る — commit の hook の doeff-linter の binary の置き場
+;;; (linter_snapshot)。台帳に無い新しい入口は赤・入口を消した変更が台帳の行を残すと赤(消した変更が同じ commit で行を削る)。
+;;; doeff-cluster の worker の native の wheel(git の tree hash の鍵・state/wheels — 実行環境の準備と起動の script)は #3860 で入口を
+;;; `uv build --wheel` で通るだけの形にし、台帳の 4 行を消した(R7)。
 ;;;
 ;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと、build の口の保存先の形が前に戻る)。
 
@@ -31,28 +31,21 @@
 
 ;; 移す予定の入口 — path → 理由(消した変更が同じ commit で行を削る)。
 (val PENDING-ENTRIES
-  {"packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py"
-   "worker の native の wheel の鍵(git の tree hash)と保存先 state/wheels の定義点。worker の code は本体を起こし直すまとめに同乗(#3860 の 3)"
-   "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env_rules.hy"
-   "worker の native-key(native_wheel.native_key を包む)— 同上"
-   "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
-   "起動の script の doeff-vm の wheel(自前の鍵の上で uv build --wheel)— 同上"
-   "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy"
-   "worker の実行環境の準備の EnsureNativeWheel(自前の鍵の上で uv build --wheel)— 同上"
-   "packages/doeff-linter/scripts/linter_snapshot.py"
+  {"packages/doeff-linter/scripts/linter_snapshot.py"
    "commit の hook の doeff-linter の binary の置き場(sha と入力の鍵・cargo build --release)— 別の変更で入口の保存先へ移す"})
 
 ;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場(検は入口を呼んで確かめる側・文書は手順の写し)。
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
 (val SCAN-SKIP-PREFIXES #("docs/" "specs/" "notes/" ".github/"))
 
-;; Rust を組む・鍵を作る形の目印。
-;;   - Python: maturin の build の hook を呼ぶ(maturin.build_wheel・maturin.build_editable)・命令の列に "build" と "--wheel" か
-;;     "--release" が並ぶ(uv build --wheel・cargo build --release)・名に native_key を持つ関数の定義。
-;;   - Hy: 註でない行の "build" "--wheel" / "build" "--release" の並び・(defk native-key の定義。
+;; Rust を組む・鍵を作る形の目印。`uv build --wheel` は入口(build の口)を通る呼びなので数えない(#3860 — worker と起動の script は
+;; これだけで wheel を用意する)。
+;;   - Python: maturin の build の hook を呼ぶ(maturin.build_wheel・maturin.build_editable)・命令の列に "build" と "--release" が並ぶ
+;;     (cargo build --release)・名に native_key を持つ関数の定義。
+;;   - Hy: 註でない行の "build" "--release" の並び・(defk native-key の定義。
 (val MATURIN-HOOKS #{"build_wheel" "build_editable"})
-(val BUILD-FLAGS #{"--wheel" "--release"})
-(val HY-BUILD-ARGV (re.compile r"\"build\"\s+\"--(?:wheel|release)\""))
+(val BUILD-FLAGS #{"--release"})
+(val HY-BUILD-ARGV (re.compile r"\"build\"\s+\"--release\""))
 (val HY-KEY-DEFINITION (re.compile r"\(defk\s+native-key\b"))
 
 
@@ -142,6 +135,8 @@
   :scope ["tools/doeff_cargo_backend.py"
           "packages/doeff-indexer/doeff_indexer_build_backend.py"
           "packages/doeff-vm/pyproject.toml"
+          "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py"
+          "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
           "docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy"]
   :problem
     [(fact
@@ -169,13 +164,15 @@
      (rule R3 "組み方が maturin だけでない package(doeff-indexer)は、無い時の組み方(Compile)を wheel_from_store・editable_from_store に渡す。自前で保存先・鍵を持たず、build の hook から maturin を直に撃たない。")
      (rule R4 "鍵 = tool.uv.cache-keys の file(宣言が無ければ既定の glob)の中身と相対 path・rustc と maturin の版・機体・組む Python の ABI・組みを変える環境変数・build の設定。wheel に入る file はどれも宣言に並べる(doeff-vm は doeff_vm/ の .py・.pyi・py.typed も)。")
      (rule R5 "保存先 = env DOEFF_WHEEL_CACHE(無ければ $XDG_CACHE_HOME/doeff-cargo-wheels)の <package>-<鍵>/<wheel> と .used。使う前に RECORD の hash で確かめ、壊れていれば名指しの 1 行を出してその wheel を除き組み直す。")
-     (rule R6 "移す予定の入口(worker の native の wheel・commit の hook の linter の binary)は台帳 PENDING-ENTRIES に理由つきで置く。台帳に無い新しい入口は赤。入口へ移した・消した変更は同じ commit で台帳の行を削る(残すと赤)。")]
+     (rule R6 "移す予定の入口(commit の hook の linter の binary)は台帳 PENDING-ENTRIES に理由つきで置く。台帳に無い新しい入口は赤。入口へ移した・消した変更は同じ commit で台帳の行を削る(残すと赤)。")
+     (rule R7 "doeff-cluster の worker(実行環境の準備の EnsureNativeWheel)と起動の script(worker/entry/boot_wheel)は、native の wheel を `uv build --wheel` で入口へ渡すだけにし、自前の鍵(git の tree hash)と置き場を持たない。保存先は入口の DOEFF_WHEEL_CACHE(worker の state/wheels)で、入口が env DOEFF_WHEEL_REPORT の file に書く 1 行(保存先の中の wheel と組んだか)で wheel を知る — 読みの定義点は native_wheel.stored_wheel_of(#3860 の 1 の続き)。")]
   :laws
     [(law rust-builds-pass-through-one-entry
        :statement "for_all file f in doeff (excluding tests and docs): builds_or_keys_rust(f) => f == ENTRY or f in COMPILERS or f in PENDING-ENTRIES; and builds_or_keys_rust(ENTRY)"
        :counterexamples
          [(counterexample "package の build の口が tools/doeff_cargo_backend.py を通さず maturin.build_editable を直に呼ぶ(2026-10-06 までの editable の形 — 日次の検証で doeff-vm を 1 日 約 100 度組んだ)")
-          (counterexample "新しい script が自前の鍵で wheel の置き場を作り、uv build --wheel を撃つ(worker の native_wheel と同じ形の 3 つ目)")])
+          (counterexample "新しい script が自前の鍵(native_key — git の tree hash)で wheel の置き場を作る(#3860 の前の worker の native_wheel と同じ形)")
+          (counterexample "script が cargo build --release を直に撃つ(入口の保存先を通らない)")])
      (law compiler-hooks-read-the-store
        :statement "for_all hook h in {build_wheel, build_editable} of every file in COMPILERS: calls(h, the matching store function of ENTRY)"
        :counterexamples
@@ -201,14 +198,17 @@
        (val stale (run (stale-pending (run (rust-building-files repo-root)))))
        (assert (= stale []) (+ "移した入口が台帳に残っている(ADR-DOE-BUILD-001 R6): " (str stale))))
      (deftest test-adr-doe-build-001-judgments-reject-the-counterexamples
-       ;; 反例: 入口を 2 つにした形(maturin の hook を直に呼ぶ口・自前の鍵の上で uv build --wheel を撃つ script・Hy の native-key)は
-       ;; 2 つ目の入口として赤。註と docstring の中の綴りは数えない。台帳の行は原因が消えると赤。
+       ;; 反例: 入口を 2 つにした形(maturin の hook を直に呼ぶ口・cargo build --release を撃つ script・自前の鍵 native_key・Hy の
+       ;; native-key)は 2 つ目の入口として赤。uv build --wheel は入口を通る呼びなので数えない。註と docstring の中の綴りは数えない。
+       ;; 台帳の行は原因が消えると赤。
        (assert (run (python-builds-rust "import maturin\ndef build_editable(d, c=None, m=None):\n    return maturin.build_editable(d, c, m)\n")))
-       (assert (run (python-builds-rust "import subprocess\nsubprocess.run(['uv', 'build', '--wheel', '--out-dir', 'x', 'pkg'])\n")))
+       (assert (run (python-builds-rust "import subprocess\nsubprocess.run(['cargo', 'build', '--release'])\n")))
+       (assert (not (run (python-builds-rust "import subprocess\nsubprocess.run(['uv', 'build', '--wheel', '--out-dir', 'x', 'pkg'])\n"))))
        (assert (run (python-builds-rust "def native_key(package, trees):\n    return package\n")))
        (assert (not (run (python-builds-rust "\"\"\"cargo build --release の註\"\"\"\n# maturin.build_wheel を呼ばない\nx = ['build', 'docs']\n"))))
        (assert (run (hy-builds-rust "(defk native-key [wheel] wheel)\n")))
-       (assert (run (hy-builds-rust "(RunProcess :argv #(uv \"build\" \"--wheel\" \"--out-dir\" tmp src))\n")))
+       (assert (run (hy-builds-rust "(RunProcess :argv #(cargo \"build\" \"--release\"))\n")))
+       (assert (not (run (hy-builds-rust "(RunProcess :argv #(uv \"build\" \"--wheel\" \"--out-dir\" tmp src))\n"))))
        (assert (not (run (hy-builds-rust ";; uv \"build\" \"--wheel\" を撃たない\n"))))
        (val second "packages/doeff-new/build_backend.py")
        (assert (= (len (run (entry-violations (frozenset #{ENTRY second})))) 1))

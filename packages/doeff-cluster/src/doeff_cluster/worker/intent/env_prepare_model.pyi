@@ -168,14 +168,7 @@ class MaterializeTree(EffectBase):
     reuse: str | None
 
 @dataclass(frozen=True)
-class TreeHash(EffectBase):
-    mirror: str
-    commit: str
-    path: str
-
-@dataclass(frozen=True)
 class EnsureNativeWheel(EffectBase):
-    key: str
     package: str
     source_dir: str
 

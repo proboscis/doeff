@@ -21,7 +21,7 @@
 ;;;
 ;;; git の子の環境は env-mode EXTEND(親を継いで足す)で、足すのは git-environment の 2 つだけ。uv の子は EXTEND に env-drop UV-DROP(呼び手の
 ;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
-;;; process の間の錠を持つ。mirror は URL ごと、native の wheel はキーごとに file の錠(AcquireLock)で排他にする。
+;;; process の間の錠を持つ。mirror は URL ごと、native の wheel は package ごとに file の錠(AcquireLock)で排他にする(wheel の鍵と保存先は build の口の物)。
 ;;; 展開は git archive と tar、同じ commit の root からの複製は cp -al(hardlink)の後に持ち越さない物(.venv・__pycache__・完成マーカー)を消す。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
@@ -37,14 +37,14 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText
                                          MakeDirectory ListDirectory WalkTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
-;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の置き場と錠と使った印は、起動の script(worker/entry/boot_wheel)と
+;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
-(import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-USED uv-environment :as uv-variables wheel-dir wheel-lock wheel-tmp])
+(import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV StoredWheel stored-wheel-of uv-environment :as uv-variables wheel-lock wheels-root])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree TreeHash EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -135,7 +135,7 @@
 
 (defk uv-environment [state-dir uv-cache]
   {:pre [(: state-dir str) (: uv-cache str)] :post [(: % tuple)]}
-  "uv の子の環境へ足す変数を作るため: 共有の cache は uv-cache の dir・Python は state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。
+  "uv の子の環境へ足す変数を作るため: 共有の cache は uv-cache の dir・Python と build の口の保存先は state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。
    変数の定義点は native_wheel.uv-environment の 1 つ — 起動の script が doeff-vm の wheel を組む時も同じ環境で組む。"
   (tuple (gfor v (uv-variables state-dir uv-cache) (EnvEntry :name v.name :value v.value))))
 
@@ -237,7 +237,7 @@
 
 (defk locked [path body]
   {:pre [(: path str) (: body Program)] :post [(: % (| MirrorReady WheelReady EnvFailure))]}
-  "錠 path を取って body(Program)を走らせ、放してから body の答えを返すため(mirror は URL ごと・wheel はキーごとの排他)。"
+  "錠 path を取って body(Program)を走らせ、放してから body の答えを返すため(mirror は URL ごと・wheel は package ごとの排他)。"
   (<- (MakeDirectory (posixpath.dirname path)))
   (<- got (| LockHeld FileFailed) (AcquireLock path))
   (<- held LockHeld (settled got "錠を取れない"))
@@ -354,41 +354,33 @@
           (.hexdigest (hashlib.sha256 content)))))
 
 
-(defk wheel-in [target]
-  {:pre [(: target str)] :post [(: % (| str None))]}
-  "キーの dir の wheel の path(名の順の先頭・dir が無いか wheel が無ければ None)。"
-  (<- kind PathKind (kind-at target))
-  (if (!= kind PathKind.DIRECTORY)
-      None
-      (do (<- listed (| tuple FileFailed) (ListDirectory target))
-          (<- entries tuple (settled listed "wheel の dir を読めない"))
-          (val wheels (lfor e entries :if (.endswith e.name ".whl") e.name))
-          (if wheels (posixpath.join target (get wheels 0)) None))))
-
-
-(defk wheel-of [package source-dir target state-dir uv-cache uv]
-  {:pre [(: package str) (: source-dir str) (: target str) (: state-dir str) (: uv-cache str) (: uv str)]
+(defk wheel-of [package source-dir state-dir uv-cache uv]
+  {:pre [(: package str) (: source-dir str) (: state-dir str) (: uv-cache str) (: uv str)]
    :post [(: % (| WheelReady EnvFailure))]}
-  "キーの dir(target)の native の wheel を用意する(在ればそのまま・無ければ source-dir から build して置く)。
-   signal での終了(OOM の kill 等)は一時、compiler の誤りは恒久の native-build-failed。"
-  (<- existing (| str None) (wheel-in target))
-  (if (is-not existing None)
-      (WheelReady :path existing :built False)
-      (do (val tmp (wheel-tmp target))
-          (<- (remove-if-present tmp))
-          (<- env tuple (uv-environment state-dir uv-cache))
-          (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" tmp source-dir) source-dir env))
-          (<- made (| str None) (wheel-in tmp))
-          (if (and (= built.code 0) (is-not made None))
-              (do (<- moved (| None FileFailed) (RenamePath tmp target))
-                  (<- (settled moved "wheel を置けない"))
-                  (WheelReady :path (posixpath.join target (posixpath.basename made)) :built True))
-              (do (<- detail str (tail-of built))
-                  (<- (remove-if-present tmp))
-                  (<- killed (| EnvFailure None) (memory-killed-of built "native の build"))
-                  (if (is-not killed None)
-                      killed
-                      (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail detail :retryable (< built.code 0))))))))
+  "native の wheel を build の口の保存先から用意するため: `uv build --wheel` で source-dir を口へ渡し(口が source の中身の鍵で保存先を
+   引き、無い時だけ組む — 自前の鍵は持たない・#3860)、口が報告の file に書いた保存先の中の wheel と組んだかを答える。uv の --out-dir の
+   写しと報告の file は state の wheels の下の一時の dir に置き、読んだら消す。signal での終了(OOM の kill 等)は一時、compiler の誤りと
+   口の報告が読めない事は恒久の native-build-failed。"
+  (<- name str (digest16 source-dir))
+  (val scratch (posixpath.join (wheels-root state-dir) (+ ".build-" name)))
+  (<- (remove-if-present scratch))
+  (<- made (| None FileFailed) (MakeDirectory scratch))
+  (<- (settled made "wheel の組みの一時の dir を作れない"))
+  (val report (posixpath.join scratch "report.jsonl"))
+  (<- env tuple (uv-environment state-dir uv-cache))
+  (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" (posixpath.join scratch "out") source-dir) source-dir
+                                      (+ env #((EnvEntry :name WHEEL-REPORT-ENV :value report)))))
+  (<- read (| str FileFailed) (ReadText report))
+  (<- (remove-if-present scratch))
+  (if (= built.code 0)
+      (match (stored-wheel-of (match read (FileFailed) "" text text) package)
+        (StoredWheel :path path :built b) (WheelReady :path path :built b)
+        problem (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail problem :retryable False))
+      (do (<- detail str (tail-of built))
+          (<- killed (| EnvFailure None) (memory-killed-of built "native の build"))
+          (if (is-not killed None)
+              killed
+              (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail detail :retryable (< built.code 0))))))
 
 
 (defk site-packages [project-dir]
@@ -621,20 +613,10 @@
     (<- digest (| str None) (file-sha256 path))
     (resume digest))
 
-  (TreeHash [mirror commit path]
-    (<- result CommandResult (git #("-C" mirror "rev-parse" (.format "{}:{}" commit path)) None))
-    (when (!= result.code 0)
-      (raise (RuntimeError (.format "{} の {} の tree hash を読めない: {}" commit path result.stderr))))
-    (resume (.strip result.stdout)))
-
-  (EnsureNativeWheel [key package source-dir]
-    (val target (wheel-dir state-dir package key))
+  (EnsureNativeWheel [package source-dir]
     (<- wheel (| WheelReady EnvFailure)
-        (locked (wheel-lock state-dir key)
-                (wheel-of package source-dir target state-dir uv-cache uv)))
-    ;; 使った印(掃除は 7 日使われない wheel の dir を消す — env_upkeep.WHEEL-UNUSED-SECONDS)。
-    (when (isinstance wheel WheelReady)
-      (<- (write-replacing (posixpath.join target WHEEL-USED) "")))
+        (locked (wheel-lock state-dir package)
+                (wheel-of package source-dir state-dir uv-cache uv)))
     (resume wheel))
 
   (SyncProject [project-dir python groups no-install]

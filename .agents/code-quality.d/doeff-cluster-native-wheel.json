@@ -13,7 +13,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py"
       ],
-      "responsibility": "native の wheel の鍵(native_key)・置き場(wheel_dir・wheel_lock・wheel_tmp・WHEEL_USED)・組む時の uv の子の環境(UV_DROP・uv_environment)・platform の名・doeff-vm の宣言の定義点の 1 つ。実行環境の準備(worker)と起動の script の入口(boot_wheel)が同じ鍵で同じ置き場の wheel を使う。標準ライブラリだけ。",
+      "responsibility": "native の wheel を build の口(doeff の tools/doeff_cargo_backend.py — Rust の部品を組む・引く入口の 1 つ)の保存先から用意する時の約束の定義点: uv の子の環境(UV_DROP・uv_environment — 共有の cache・Python・口の保存先 DOEFF_WHEEL_CACHE)・package ごとの錠(wheel_lock)・口の報告の行の読み(stored_wheel_of — 保存先の中の wheel と組んだか)・platform の名・doeff-vm の source の dir。自前の鍵と置き場は持たない。実行環境の準備(worker)と起動の script の入口(boot_wheel)が同じ約束で口を通る。標準ライブラリだけを import する。",
       "typed": true
     }
   ]
