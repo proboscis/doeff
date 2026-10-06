@@ -5,7 +5,8 @@
 - 基点: 基点に在る赤だけなら exit 0、基点に無い赤が 1 つでも出たら exit 1。行がずれただけでは新しい赤にしない。
 - 展開から記帳を外す: 型検査に見せる Python に `setattr(…, '__doeff_…__', …)`・`hy.macros.require` が残らず、
   strict で doeff-hy 自身の import の赤(重複・stub 無し・private な補助の名)が出ない。
-- 展開の cache: 2 度目は保存した展開を引き、診断は 1 度目と同じ。source を変えれば鍵が変わる。
+- 展開の cache: 2 度目は保存した展開を引き、診断は 1 度目と同じ。source を変えれば別の entry(引くか展開し直すかの失敗ケースは
+  test_static_cache.py — agora-redesign #3862)。
 """
 
 import contextlib
@@ -13,12 +14,10 @@ import io
 import json
 import shutil
 from collections import Counter
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from doeff_hy.static_baseline import Baseline, Identity, read_baseline, split
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
@@ -189,195 +188,3 @@ def test_a_baseline_of_another_version_is_unreadable(tmp_path: Path) -> None:
     path.write_text(json.dumps({"version": 9, "errors": []}), encoding="utf-8")
     with pytest.raises(BaselineUnreadable):
         read_baseline(path)
-
-
-def test_the_require_scan_is_kept_by_the_source_text_and_redone_when_it_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # 失敗ケース(agora-redesign #2675): 展開の cache の鍵を作るための require の読み(Hy の reader で source を全部読む)を毎回し直し、
-    # 依存 350 個の file の 1 回の測りの約 29 秒のほとんどがそれだった。読みの結果を source の中身の指紋ごとに保存して引く。
-    # 同じ中身は読み直さない・中身が変われば読み直す・鍵は保存の有無で変わらない(展開の保存はそのまま当たる)。
-    from doeff_hy import static_cache
-
-    cache = tmp_path / ".cache"
-    text = "(require probe_macros [m])\n(m 1)\n"
-    assert static_cache._required_modules(text, cache) == ("probe_macros",)
-    assert len(list((cache / "requires").rglob("*.txt"))) == 1
-    assert not list(cache.rglob("*.json"))  # 展開の保存(*.json)の数えに混ざらない
-
-    def unread(_text: str) -> tuple[str, ...]:
-        raise AssertionError("同じ中身を読み直した")
-
-    monkeypatch.setattr(static_cache, "_read_required_modules", unread)
-    assert static_cache._required_modules(text, cache) == ("probe_macros",)
-    monkeypatch.undo()
-    changed = "(require probe_macros [m])\n(require other_macros [n])\n"
-    assert static_cache._required_modules(changed, cache) == ("probe_macros", "other_macros")
-    source = tmp_path / "probe.hy"
-    source.write_text(text, encoding="utf-8")
-    roots = (tmp_path,)
-    assert static_cache.cache_key(roots, source, "probe", "probe.hy", cache) == static_cache.cache_key(
-        roots, source, "probe", "probe.hy"
-    )
-
-
-DOTTED_PACKAGE = "probe_dotted"
-
-
-@pytest.fixture
-def dotted_macros(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """根の下の点つきの名の macro の module(probe_dotted/inner/macros.hy)と、それを require する probe.hy。
-    検の後で、この検が import した probe_dotted の module を sys.modules から外す(他の検へ持ち越さない)。"""
-    import sys
-
-    monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.setattr(sys, "dont_write_bytecode", True)
-    inner = tmp_path / DOTTED_PACKAGE / "inner"
-    inner.mkdir(parents=True)
-    (tmp_path / DOTTED_PACKAGE / "__init__.hy").write_text("", encoding="utf-8")
-    (inner / "__init__.hy").write_text("", encoding="utf-8")
-    macros = inner / "macros.hy"
-    macros.write_text('(defmacro said [] "old")\n', encoding="utf-8")
-    (tmp_path / "probe.hy").write_text(
-        f"(require {DOTTED_PACKAGE}.inner.macros [said])\n(setv word (said))\n", encoding="utf-8"
-    )
-    yield macros
-    for name in [n for n in sys.modules if n == DOTTED_PACKAGE or n.startswith(f"{DOTTED_PACKAGE}.")]:
-        del sys.modules[name]
-
-
-def test_a_dotted_require_puts_the_macro_module_in_the_key_and_expands_again(
-    tmp_path: Path, dotted_macros: Path
-) -> None:
-    # 失敗ケース(agora-redesign #2696): `(require a.b.c [m])` の点つきの名を Hy の reader は `(. a b c)` の式として読み、
-    # require の読みが名を拾わなかった。macro の module の中身が鍵に入らず、macro を変えても古い展開が当たった
-    # (型検査が古い展開を測る)。macro の module を変えると鍵が変わり、展開し直して新しい macro の答えが出る。
-    import sys
-
-    from doeff_hy import static_cache
-    from doeff_hy.static_check import Projection, project_cached
-
-    cache = tmp_path / ".cache"
-    roots = [tmp_path]
-    source = tmp_path / "probe.hy"
-    first = project_cached(tmp_path, roots, source, cache)
-    assert isinstance(first, Projection) and "'old'" in first.text, first
-    warm = static_cache.cache_key(tuple(roots), source, "probe", "probe.hy", cache)
-    dotted_macros.write_text('(defmacro said [] "new")\n', encoding="utf-8")
-    for name in [n for n in sys.modules if n.startswith(f"{DOTTED_PACKAGE}.")]:
-        del sys.modules[name]  # 次の実行(別の process)と同じく、macro の module を読み直させる
-    assert static_cache.cache_key(tuple(roots), source, "probe", "probe.hy", cache) != warm, "macro を変えても鍵が同じ"
-    second = project_cached(tmp_path, roots, source, cache)
-    assert isinstance(second, Projection) and "'new'" in second.text, second
-
-
-def test_a_relative_require_puts_the_macro_module_of_its_package_in_the_key(
-    tmp_path: Path, dotted_macros: Path
-) -> None:
-    # 失敗ケース(agora-redesign #2696): 相対の `(require .macros [said])` は、require する source の package
-    # (probe_dotted.inner)から解いた module の中身を鍵に入れる。
-    from doeff_hy import static_cache
-
-    user = dotted_macros.parent / "user.hy"
-    user.write_text("(require .macros [said])\n(setv word (said))\n", encoding="utf-8")
-    roots = (tmp_path,)
-    relative = str(user.relative_to(tmp_path))
-    warm = static_cache.cache_key(roots, user, f"{DOTTED_PACKAGE}.inner.user", relative)
-    dotted_macros.write_text('(defmacro said [] "new")\n', encoding="utf-8")
-    assert static_cache.cache_key(roots, user, f"{DOTTED_PACKAGE}.inner.user", relative) != warm
-
-
-def test_the_require_scan_names_every_module_hy_requires() -> None:
-    # 失敗ケース(agora-redesign #2696): 1 つの require の 2 つ目からの module・点つきの名・相対の名も、Hy の compiler が
-    # require に渡すのと同じ名で拾う(`:as` の別名・`*`・括弧の中の macro の名・`:macros` / `:readers` は名でない)。
-    from doeff_hy import static_cache
-
-    text = (
-        "(require plain [m])\n"
-        "(require a.b [m] c-d :as x e.f-g.h * i :macros [y] :readers [r])\n"
-        "(require .near [m] ..up.far [n] . [o])\n"
-    )
-    assert static_cache._read_required_modules(text) == (
-        "plain", "a.b", "c_d", "e.f_g.h", "i", ".near", "..up.far", "."
-    )
-
-
-def test_a_require_scan_kept_by_the_older_version_is_not_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # 失敗ケース(agora-redesign #2696): 版 1 の読みの保存は点つきの名を欠いた答え(空)を持つ。読みの保存の鍵に版を
-    # 入れ、版 1 の保存を新しい版では読まない(古い保存から欠けた答えを返さない)。
-    from doeff_hy import static_cache
-
-    cache = tmp_path / ".cache"
-    text = "(require a.b [m])\n"
-    monkeypatch.setattr(static_cache, "REQUIRES_VERSION", 1)
-    stale = static_cache._requires_entry(cache, text)
-    stale.parent.mkdir(parents=True)
-    stale.write_text("", encoding="utf-8")
-    monkeypatch.undo()
-    assert static_cache._requires_entry(cache, text) != stale
-    assert static_cache._required_modules(text, cache) == ("a.b",)
-
-
-OUTSIDE_PACKAGE = "probe_outside_macros"
-
-
-@pytest.fixture
-def outside_macros(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """根(proj)の外に置いた別の package の macro の module(outside/probe_outside_macros/macros.hy — sys.path から引ける)と、
-    根の下でそれを require する proj/probe.hy。検の後で、この検が import した module を sys.modules から外す。"""
-    import sys
-
-    outside = tmp_path / "outside"
-    monkeypatch.syspath_prepend(str(outside))
-    monkeypatch.setattr(sys, "dont_write_bytecode", True)
-    package = outside / OUTSIDE_PACKAGE
-    package.mkdir(parents=True)
-    (package / "__init__.hy").write_text("", encoding="utf-8")
-    macros = package / "macros.hy"
-    macros.write_text('(defmacro said [] "old")\n', encoding="utf-8")
-    project = tmp_path / "proj"
-    project.mkdir()
-    (project / "probe.hy").write_text(f"(require {OUTSIDE_PACKAGE}.macros [said])\n(setv word (said))\n", encoding="utf-8")
-    yield macros
-    for name in [n for n in sys.modules if n == OUTSIDE_PACKAGE or n.startswith(f"{OUTSIDE_PACKAGE}.")]:
-        del sys.modules[name]
-
-
-def test_a_macro_of_another_package_outside_the_roots_is_in_the_key(tmp_path: Path, outside_macros: Path) -> None:
-    # 失敗ケース(agora-redesign #2774): 根の外の別の package の macro(例 doeff-adr.macros)は、require の名を根の下の file に
-    # 解けず黙って捨てられ、鍵に入らなかった。macro を変えても古い展開が当たった(型検査が古い展開を測る)。根の外の package の
-    # 置き場から file を解いて中身を鍵に入れ、変えれば展開し直して新しい macro の答えが出る。
-    import sys
-
-    from doeff_hy import static_cache
-    from doeff_hy.static_check import Projection, project_cached
-
-    project = tmp_path / "proj"
-    cache = tmp_path / ".cache"
-    roots = [project]
-    source = project / "probe.hy"
-    first = project_cached(project, roots, source, cache)
-    assert isinstance(first, Projection) and "'old'" in first.text, first
-    warm = static_cache.cache_key(tuple(roots), source, "probe", "probe.hy", cache)
-    outside_macros.write_text('(defmacro said [] "new")\n', encoding="utf-8")
-    for name in [n for n in sys.modules if n.startswith(f"{OUTSIDE_PACKAGE}.")]:
-        del sys.modules[name]  # 次の実行(別の process)と同じく、macro の module を読み直させる
-    assert static_cache.cache_key(tuple(roots), source, "probe", "probe.hy", cache) != warm, "根の外の macro を変えても鍵が同じ"
-    second = project_cached(project, roots, source, cache)
-    assert isinstance(second, Projection) and "'new'" in second.text, second
-
-
-def test_the_hy_version_is_in_the_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(agora-redesign #2774): Hy の版が鍵に入らず、Hy を上げても古い展開が当たった。版の値が変われば鍵が変わる。
-    import hy
-
-    from doeff_hy import static_cache
-
-    source = tmp_path / "probe.hy"
-    source.write_text("(setv word 1)\n", encoding="utf-8")
-    roots = (tmp_path,)
-    warm = static_cache.cache_key(roots, source, "probe", "probe.hy")
-    monkeypatch.setattr(hy, "__version__", f"{hy.__version__}.probe")
-    assert static_cache.cache_key(roots, source, "probe", "probe.hy") != warm, "Hy の版を変えても鍵が同じ"

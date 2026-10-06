@@ -35,7 +35,15 @@ from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed
 from doeff_hy_bytecode_guard.loader_hooks import macro_dependencies as macro_dependencies
+from doeff_hy_bytecode_guard.loader_hooks import record_from_rows as record_from_rows
 from doeff_hy_bytecode_guard.loader_hooks import record_is_current_here as record_is_current_here
 from doeff_hy_bytecode_guard.loader_hooks import (
     source_to_code_as_import as source_to_code_as_import,
 )
+
+TYPE_CHECKING = False  # typing と records を起動時に読まない — 型検査器はこの名の分岐を真として読む
+
+if TYPE_CHECKING:
+    # 記録の型(注記だけに使う公開の名 — 値は current_record・record_from_rows が作る)。
+    from doeff_hy_bytecode_guard.records import MacroDependency as MacroDependency
+    from doeff_hy_bytecode_guard.records import MacroRecord as MacroRecord

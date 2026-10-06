@@ -10,7 +10,7 @@
 - --strict: pyright の typeCheckingMode を strict にする。
 - --write-baseline / --baseline: 今の赤を基点として書く / 基点に無い赤だけを止める(doeff_hy/static_baseline.py)。
   --json の診断には、基点に在る赤かを欄 `known` で付ける。
-- --cache-dir / --no-cache: 依存の .hy の展開を source の指紋ごとに保存して引く(doeff_hy/static_cache.py・
+- --cache-dir / --no-cache: 依存の .hy の展開を、source と展開が通った file の記録ごとに保存して引く(doeff_hy/static_cache.py・
   既定の置き場 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)。
 - 新しい赤(基点が無ければ全部の赤)があれば exit 1、無ければ 0、道具として走れなければ 2。
 
@@ -35,6 +35,7 @@ packages/doeff-hy/docs/static-check.md)。
 
 import argparse
 import ast
+import dataclasses
 import json
 import os
 import subprocess
@@ -46,8 +47,10 @@ from itertools import groupby
 from operator import itemgetter
 from pathlib import Path
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 import hy
+from doeff_hy_bytecode_guard import current_record
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 
@@ -65,12 +68,15 @@ from doeff_hy.static_cache import (
     CachedProjection,
     CachedSpan,
     CacheMiss,
-    cache_key,
     default_cache_dir,
     load,
+    place,
     store,
 )
 from doeff_hy.static_view import STATIC_HELPER_IMPORTS, collect_findings, static_view
+
+if TYPE_CHECKING:
+    from doeff_hy_bytecode_guard import MacroRecord
 
 _SKIP_DIRS = frozenset({".git", ".venv", "venv", "__pycache__", "node_modules", ".exp"})
 
@@ -107,6 +113,8 @@ class Projection:
     spans: tuple[Span, ...]
     # macro が展開の時に出した所見(val / var の検査 — ADR-DOE-HY-006)を Hy の位置の診断にした物。
     findings: tuple[Diagnostic, ...] = ()
+    # 展開が通った file の記録(Hy の版・macro と補助と型検査の後処理の file と sha256 — 保存を照らす・agora-redesign #3862)。
+    used: "MacroRecord" = dataclasses.field(kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -437,6 +445,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         rendered,
         tuple(spans),
         tuple(_finding_diagnostic(relative, f) for f in (*found, *top_level)),
+        used=current_record(module, str(source), also=(sys.modules[__name__],)),
     )
 
 
@@ -525,6 +534,7 @@ def _from_cache(source: Path, module: str, cached: CachedProjection) -> Projecti
             Diagnostic(f.path, f.line, f.column, f.severity, f.rule, f.message)
             for f in cached.findings
         ),
+        used=cached.used,
     )
 
 
@@ -537,6 +547,7 @@ def _to_cache(projection: Projection) -> CachedProjection:
             CachedFinding(f.path, f.line, f.column, f.severity, f.rule, f.message)
             for f in projection.findings
         ),
+        projection.used,
     )
 
 
@@ -549,7 +560,7 @@ def project_cached(
     if cache_dir is None:
         return project(root, roots, source)
     module = module_name(roots, source)
-    key = cache_key(tuple(roots), source, module, str(source.relative_to(root)), cache_dir)
+    key = place(source.read_text(encoding="utf-8"), module, str(source.relative_to(root)))
     match load(cache_dir, key):
         case CachedProjection() as cached:
             return _from_cache(source, module, cached)
