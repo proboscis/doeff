@@ -13,3 +13,6 @@ class DueNow:
 @dataclass(frozen=True, kw_only=True)
 class DueNever:
     ...
+
+class CoordinatorUnsettled(Exception):
+    ...
