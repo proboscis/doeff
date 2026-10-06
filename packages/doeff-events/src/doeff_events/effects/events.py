@@ -59,6 +59,18 @@ class SourceResumed:
     source: str
 
 
+@dataclass(frozen=True)
+class SourceStarted:
+    """The task named ``source`` reached its store for the first time and began its subscription.
+
+    A source that feeds events from another process (``notice_events_handler``) publishes it once, before it lets
+    the body run: the body that names it in its subscription catches up once from its records and then goes on
+    with events alone. Not always subscribed, like ``SourceResumed``.
+    """
+
+    source: str
+
+
 def _normalize_event_types(event_types: tuple[type[Any], ...]) -> tuple[type[Any], ...]:
     if not event_types:
         raise ValueError("WaitForEvent requires at least one event type")
@@ -115,6 +127,9 @@ __all__ = [
     "Publish",
     "PublishEffect",
     "SourceFailed",
+    "SourceResumed",
+    "SourceStalled",
+    "SourceStarted",
     "StopArrived",
     "WaitForEvent",
     "WaitForEventEffect",

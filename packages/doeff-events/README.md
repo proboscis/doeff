@@ -57,3 +57,63 @@ Generic publish/subscribe effects for doeff.
 
 展開の時に断る形: 止めの節が無い・2 つ在る / 待つ型の節が無い / 型を導けない節(`_`・名前だけ・`|`・値の式)/ 同じ型の節が 2 つ /
 型の節の束縛に値の式を書く(値で絞らず本体で分ける)/ 本体の無い節 / 最後の値の位置でない `stop`。
+
+## process をまたぐ知らせ(notice broker — agora-redesign #3850)
+
+業務の Program は今までどおり `Publish(event)` と `WaitForEvent(*types)` だけを書きます。出来事を別の process へ運ぶのは
+`notice_events_handler` で、運び方(channel の名・値の綴り方)はその引数の道の表にだけ書きます。Program には channel の名は
+出ません。運ぶのは保存しない知らせ(Redis の Pub/Sub)だけです。
+
+```python
+from doeff_events import (
+    EventBus, MemoryBroker, NoticeRoute, NoticeSent, SourceResumed, SourceStarted,
+    memory_notice_handler, notice_events_handler, redis_notice_handler, subscribed_event_handler,
+)
+
+routes = (
+    NoticeRoute(
+        event_type=TurnState,                              # Program が出す・待つ型
+        wire_name="turn-state",                            # 線の上の名(同じ channel に複数の型が乗る)
+        channel=lambda event: f"turn:{event.conversation}",  # 出す先の channel を出来事の値から決める
+        encode=lambda event: json.dumps(...),              # 型 → 文字列
+        decode=lambda body: TurnState(...),                # 文字列 → 型
+        reads=("turn:c1",),                                # この process が受ける channel(出すだけなら ())
+    ),
+)
+
+# 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
+program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStarted, SourceResumed))(
+    redis_notice_handler("redis://agora-events:6379/0")(     # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
+        notice_events_handler("screen", routes, patience_seconds=900.0)(body)
+    )
+)
+```
+
+- 出す側: 道の表に在る型の `Publish` を broker へ送り(`PUBLISH`)、答えは `NoticeSent(receivers)` — その時に購読していた受け手の数
+  です(0 = 誰も聞いていない。0 をどう扱うかは出し手が決めます。1 以上でも、受け手が読んだ事の証ではありません)。broker に届かなければ、
+  その `Publish` は Program の中で `EventNotPublished` を上げます。表に無い型は外の handler(process の中の列)へそのまま出ます。
+- 受ける側: 包んだ本体の最初の effect より前に購読を始め、**broker が購読を確かめた後に** `SourceStarted(source)` を 1 度 出します。
+  受けた知らせは全部 process の中の購読者の列へ `Publish` し、Program は `WaitForEvent` で 1 つずつ受けます(`WaitForEvent` に答えるのは
+  外の `subscribed_event_handler` — `SourceStarted`・`SourceStalled`・`SourceResumed` は、購読の型に名指した Program だけが受けます)。
+  道の表で読めない知らせは捨てずに、源を `UnroutedNotice` で落とします。
+- 届かない物: 知らせは、出された時に購読していて繋がっている読み手にだけ届きます。購読の前と、繋がっていない間の知らせは後から
+  届きません。失った分は backend が埋めず、Program が `SourceStarted` と `SourceResumed` を受けた時に 1 度 記録から追いつく前提です
+  (どちらも購読が成った後にだけ出るので、追いつきの読みの後に出た知らせは落ちません)。
+- 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限 `patience_seconds` の `WaitWithin` 1 つ —
+  時間で読み直しません)。戻れば購読を作り直し、broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば
+  `NoticeSourceUnreachable` で落ちます(`SourceFailed` が本体の待ちに届く)。`AwaitBrokerBack` に答えるのは、memory の handler では handler
+  自身、Redis の handler では組み立ての側(broker の Service の戻りを知る物)です — Redis の handler は答えません。
+- 読むのが遅い受け手: Redis は、購読者あての未送の知らせが `client-output-buffer-limit pubsub`(既定 32mb 8mb 60)を越えると、その
+  購読者の接続を切ります。受け手には「接続が切れた」(`SourceStalled` → `SourceResumed`)として届き、知らせが黙って抜ける事はありません
+  (本物の redis-server 7.2.7 のテストで確かめています)。
+- 止め方: 源の task は時間の上限の無い blocking の取りで待ち、本体が終わると `Cancel` で止まります(`await_handler` が取り消しを
+  redis-py の coroutine へ伝える)。本体の止めは今までどおり `StopArrived` を `WaitForEvent` で受けます。
+
+下の層(broker の操作の effect — `doeff_events.effects.notices`): `Announce`(答え = 受け手の数)・`SubscribeChannels`(答えるのは broker が
+確かめた後)・`NextAnnouncement`・`CloseSubscription`・`AwaitBrokerBack`。broker に届かない時は例外でなく `BrokerUnreachable` を答えます。
+答える handler は `memory_notice_handler(MemoryBroker())`(process の中・テストは `cut_broker` / `restore_broker` で止まりを作れる)と
+`redis_notice_handler(url)`(extra `doeff-events[redis]` が要る・設定は URL だけ)。
+
+配達の法は `doeff_events.notice_laws` の筋書き(Program)の 1 か所に在り、memory と本物の redis-server の両方が同じ筋書きを通ります
+(宣言 = `docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy`)。本物を相手にするテストは `PATH` の `redis-server` を一時の dir で
+起動します。実行 file が無ければ、そのテストだけを訳つきで skip します(memory を相手にするテストは必ず走ります)。
