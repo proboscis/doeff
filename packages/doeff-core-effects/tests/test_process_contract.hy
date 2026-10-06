@@ -505,6 +505,10 @@
 ;; と書いた子だけは残る。台本の世界に別の process は無いので本物の答え手だけ。検が赤の時も process を残さないよう、断言の前に残りを止める。
 
 (val STARTER (os.path.join (os.path.dirname (os.path.abspath __file__)) "lifeline_starter.py"))
+;; 起こす側の起こし方: python で起こす形と、Hy の入口から起こす形(sys.executable が hy の起動口になる — doeff-cluster の worker と同じ)。
+(val PYTHON-STARTER #(sys.executable STARTER))
+(val HY-STARTER #((os.path.join (os.path.dirname sys.executable) "hy")
+                  (os.path.join (os.path.dirname (os.path.abspath __file__)) "lifeline_starter_hy.hy")))
 
 
 (defk killed-leftovers [pids]
@@ -517,14 +521,14 @@
   None)
 
 
-(defk starter-and-child [mode root child-out]
-  {:pre [(: mode str) (: root str) (: child-out str)] :post [(: % tuple)] :tags {:context "process-test" :role "program"}}
-  "起こす側を mode で立て、起こす側が書いた子の pid を待って読む。答え = #(起こす側の pid 子の pid)。"
+(defk starter-and-child [launch mode root child-out]
+  {:pre [(: launch tuple) (: mode str) (: root str) (: child-out str)] :post [(: % tuple)] :tags {:context "process-test" :role "program"}}
+  "起こす側を launch(起こし方)と mode で立て、起こす側が書いた子の pid を待って読む。答え = #(起こす側の pid 子の pid)。"
   (val out (+ root "/child-" mode))
   ;; first-line-of は在る file を読み直すので、起こす側が書く前に空で置く。
   (<- (WriteText out ""))
   (when (!= child-out "-") (<- (WriteText child-out "")))
-  (<- started (StartProcess :argv #(sys.executable STARTER mode out child-out)))
+  (<- started (StartProcess :argv #(#* launch mode out child-out)))
   (assert (isinstance started ProcessStarted) started)
   (<- child str (first-line-of out))
   #(started.pid (int child)))
@@ -533,7 +537,7 @@
 (deftest test-a-child-ends-when-its-starter-is-killed
   {:interpreters ["subprocess" "offloaded-subprocess"]}
   (<- root str (ContractRoot))
-  (<- pids tuple (starter-and-child "hold" root "-"))
+  (<- pids tuple (starter-and-child PYTHON-STARTER "hold" root "-"))
   (val starter (get pids 0))
   (val child (get pids 1))
   (<- (SignalProcess :pid starter :signal ProcessSignal.KILL))
@@ -546,7 +550,7 @@
 (deftest test-a-child-ends-when-its-starter-exits-without-stopping-it
   {:interpreters ["subprocess" "offloaded-subprocess"]}
   (<- root str (ContractRoot))
-  (<- pids tuple (starter-and-child "exit" root "-"))
+  (<- pids tuple (starter-and-child PYTHON-STARTER "exit" root "-"))
   (val starter (get pids 0))
   (val child (get pids 1))
   (<- exited (exited-soon starter))
@@ -561,7 +565,7 @@
   ;; 子(起こす側 hold)が更に孫を新しい session に StartProcess する。一番上の起こす側を SIGKILL すると、子も孫も残らない。
   (<- root str (ContractRoot))
   (val grand-out (+ root "/grandchild"))
-  (<- pids tuple (starter-and-child "hold" root grand-out))
+  (<- pids tuple (starter-and-child PYTHON-STARTER "hold" root grand-out))
   (val starter (get pids 0))
   (val child (get pids 1))
   (<- grandchild str (first-line-of grand-out))
@@ -577,7 +581,7 @@
 (deftest test-a-child-that-outlives-its-starter-is-left-running
   {:interpreters ["subprocess" "offloaded-subprocess"]}
   (<- root str (ContractRoot))
-  (<- pids tuple (starter-and-child "outlive" root "-"))
+  (<- pids tuple (starter-and-child PYTHON-STARTER "outlive" root "-"))
   (val starter (get pids 0))
   (val child (get pids 1))
   (<- exited (exited-soon starter))
@@ -585,3 +589,17 @@
   (<- (killed-leftovers #(child)))
   (assert (= exited (ProcessExited :pid starter :exit-code 0)) exited)
   (assert (not gone) (.format "OUTLIVES-STARTER の子(pid {})が、起こした側の終わりで止まった" child)))
+
+
+(deftest test-a-child-ends-when-its-starter-started-from-hy-is-killed
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  ;; Hy の入口は sys.executable を hy の起動口に書き換える。起こす側がそうでも、見張りは起き、起こす側の SIGKILL で子が終わる。
+  (<- root str (ContractRoot))
+  (<- pids tuple (starter-and-child HY-STARTER "hold" root "-"))
+  (val starter (get pids 0))
+  (val child (get pids 1))
+  (<- (SignalProcess :pid starter :signal ProcessSignal.KILL))
+  (<- (exited-soon starter))
+  (<- gone bool (gone-soon child))
+  (<- (killed-leftovers #(child)))
+  (assert gone (.format "Hy の入口から起きた起こす側を SIGKILL した後も、子(pid {})が生きている" child)))
