@@ -541,7 +541,7 @@ impl ProjectRule {
             | ProjectRule::ServiceInvariantsMissing
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
-            | ProjectRule::RecordChangeWakesJob
+            // DOEFF209 は補助の定義(今 + 秒の期限を掛けて待つ defk・handler の節)を repo 全体から集め、別の file の補助の変化で呼び手に当たりが付く。
             | ProjectRule::PollingOnTimer
             | ProjectRule::RegistryEntryStale
             // テストと本番の届き(定義の graph)を辿る: テストの種類・模擬で回さない service・縁の検・偽物・組み立て・反例・網羅。
@@ -590,6 +590,10 @@ impl ProjectRule {
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::UntypedStructuredValue
+            // DOEFF208 は file の中身と architecture.hy の :business-fakes だけで決まる(宣言を変えた commit は split_for_change が全部の規則を
+            // repo 全体の比べへ移す — DOEFF170・171・173 と同じ)。stage した path に当て、既知の一覧を持たない規則の入口(基点の差で
+            // 下げない new_critical)を通す([issue])。
+            | ProjectRule::RecordChangeWakesJob
             // Jev に問う意味の規則は門と hook が当てない(定義ごとに問う — 判じる単位は定義)。
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge

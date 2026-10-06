@@ -75,6 +75,11 @@ dir の下(1 か所の定義 = `project::hy_files::walked`)。
   基点の識別子が残ったまま別の path に同じ名が増えたら、新しい破れ。
 - **出力**: editor-json の一番上の欄 `new_critical`(識別子の辞書順の列)。基点と比べない時は `null`。版は上げない(欄の追加)。
 - **範囲**: path を名指した実行では、名指しの下の違反だけを比べる。基点の出力も同じ path の名指しで作る(呼び手の役)。
+- **既知の一覧を持たない規則**(登録簿で下げない規則 — DOEFF206〜209): path を名指した実行(commit の hook の stage した file・登録の前の
+  変えた所の検査)では、名指しの下のその規則の critical を、基点に同じ識別子が在っても全部 `new_critical` に入れる — 変えた file に
+  当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)([issue])。
+  repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook の repo 全体の比べに回り、そこで HEAD の木との鍵の差に、stage した
+  path に在るこの規則の critical を足す(判定は同じ 1 か所 `baseline::blocks_regardless_of_baseline`)。
 - **誤り**: 基点の file が読めない・JSON でない・`violations` の列が無い・text / json の出力で使った時は終了コード 2。
 - 戻し方: この欄・引数・`src/baseline.rs` を消す(呼び手が使う前なら影響なし)。
 
