@@ -55,6 +55,7 @@ from doeff_core_effects.scheduler import (
     Wait,
 )
 from doeff_time import GetTime, WaitWithin
+from doeff_time.effects.time import GetTimeEffect, WaitWithinEffect
 
 from doeff import K, Pass, Program, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
@@ -360,3 +361,33 @@ def notice_events_handler(
     first effect.
     """
     return _BodyWrapper(_run, _checked_plan(source, routes, patience_seconds))
+
+
+# Every effect one wrapper performs around the body: the subscription and the wait for notices (``SubscribeChannels``,
+# ``NextAnnouncement``, ``CloseSubscription``), sending a routed event (``Announce``), what the source task publishes
+# on the bus (``PublishEffect`` — the received events and ``SourceStarted`` / ``SourceStalled`` / ``SourceResumed`` /
+# ``SourceFailed``), getting past an outage (``AwaitBrokerBack``, ``GetTimeEffect``, ``WaitWithinEffect``, the watcher
+# task's ``CreatePromise`` / ``CompletePromise``), and running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``).
+# The body's own ``WaitForEvent`` and its unrouted ``Publish`` go outward as the body's effects and are not counted.
+# ``tests/test_notice_events_closure.py`` checks that this is what the wrapper really performs.
+NOTICE_EVENTS_EFFECTS = (
+    SubscribeChannels,
+    NextAnnouncement,
+    CloseSubscription,
+    Announce,
+    PublishEffect,
+    AwaitBrokerBack,
+    GetTimeEffect,
+    WaitWithinEffect,
+    CreatePromise,
+    CompletePromise,
+    Spawn,
+    Cancel,
+    Wait,
+)
+
+# The declaration doeff-effect-analyzer reads for a body wrapper (it cannot read inside the factory): the wrapper
+# closes nothing for the handlers outside it (``__doeff_handles__ = ()`` — a routed ``Publish`` becomes ``Announce``,
+# everything else the body performs goes outward) and performs ``NOTICE_EVENTS_EFFECTS`` around the body.
+notice_events_handler.__doeff_handles__ = ()
+notice_events_handler.__doeff_effects__ = NOTICE_EVENTS_EFFECTS
