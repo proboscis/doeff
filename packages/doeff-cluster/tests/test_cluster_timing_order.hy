@@ -9,8 +9,9 @@
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import pytest)
-(import doeff_cluster.shared.intent.protocol [ClusterTiming scaled-timing])
-(import doeff_cluster.shared.intent.due_model [DueAt])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.shared.core.timing_rules [scaled-timing])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
 (import doeff_cluster.coordinator.core.cluster_policy [forget-silent-workers liveness-due note-liveness])
 
@@ -35,7 +36,7 @@
 
 
 (deftest test-forgetting-a-silent-worker-reads-the-timing
-  ;; 最後の連絡 0 の worker: 設定の忘れる期限 2 時間の刻の 1 ms 後に忘れ、その刻には残る。liveness-due もその刻 + 1 を返す。
+  ;; 最後の連絡 0 の worker: 設定の忘れる期限 2 時間の刻の 1 ms 後に忘れ、その刻には残る。1.5 時間の刻の liveness-due もその刻 + 1 を返す。
   (val timing (ClusterTiming :worker-forget-ms (* 2 3600 1000)))
   (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0))
   (val state (note-liveness (ClusterState :workers {"w" worker}) (* 3600 1000) timing))
@@ -43,7 +44,7 @@
   (<- gone ClusterState (forget-silent-workers state (+ (* 2 3600 1000) 1) timing))
   (assert (in "w" kept.workers) kept.workers)
   (assert (= gone.workers {}) gone.workers)
-  (<- due object (liveness-due (note-liveness state (* 3 60 1000 60) timing) (* 3 60 1000 60) timing))
+  (<- due (| DueAt DueNow DueNever) (liveness-due (note-liveness state 5400000 timing) 5400000 timing))
   (assert (= due (DueAt :at (+ (* 2 3600 1000) 1))) due))
 
 
@@ -62,7 +63,7 @@
 (deftest test-a-scaled-timing-stretches-every-window-by-one-ratio
   ;; 延ばす入口は 1 つ(scaled-timing): 本番の既定の全部の窓を同じ比で延ばす。順の検めは延ばした値にも当たる。
   (val base (ClusterTiming))
-  (val stretched (scaled-timing 60))
+  (<- stretched ClusterTiming (scaled-timing 60))
   (assert (= #(stretched.lease-ms stretched.fence-ms stretched.reassign-after-ms stretched.keep-fence-ms stretched.worker-forget-ms
                stretched.silent-worker-wait-ms stretched.watch-max-ms stretched.client-reply-ms stretched.inbox-reply-ms)
              (tuple (gfor v #(base.lease-ms base.fence-ms base.reassign-after-ms base.keep-fence-ms base.worker-forget-ms

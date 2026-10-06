@@ -170,7 +170,7 @@
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))
   ;; 受付の箱は合図の受け手より先に作る(合図が箱を起こす — 要求の無い間に眠る待ちを合図の刻に抜ける・#3865)。待ち受けは読み直しの後。
-  (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
+  (setv inbox (RequestInbox args.port (/ (. (ClusterTiming) inbox-reply-ms) 1000.0) :formats ACCEPTED-FORMATS))
   (run (stop-on-signals stop :wake inbox.wake))
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
   ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog・起動の時刻は壁時計・自分の環境変数(走っている

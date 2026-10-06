@@ -16,7 +16,9 @@
   },
   "modules": [
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-shared-protocol"
+      ],
       "layer": "domain",
       "name": "doeff-cluster-timing-rules",
       "paths": [

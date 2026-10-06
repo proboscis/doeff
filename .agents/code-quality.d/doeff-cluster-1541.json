@@ -123,6 +123,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-clock",
         "doeff-cluster-coordinator-http",
         "doeff-cluster-coordinator-route",
@@ -425,6 +426,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-coordinator-http",
         "doeff-cluster-drain-client",
         "doeff-cluster-drain-model",
@@ -2603,6 +2605,7 @@
     },
     {
       "allow": [
+        "doeff-cluster-shared-protocol",
         "doeff-cluster-task-result",
         "doeff-cluster-coordinator-route",
         "doeff-cluster-coordinator-http",

@@ -48,7 +48,7 @@
   ;; 取り手が 300 秒の待ちに入った後、45 秒目の /readyz と 130 秒目の /livez は 200(待つと定めた刻の前なので生きている)。
   ;; 直す前は「最後に取りに来てから」の秒で判じるので、45 秒目の /readyz が 503(閾値 30 秒)・130 秒目の /livez が 503(閾値 120 秒)。
   (val now [1000.0])
-  (val inbox (RequestInbox 0 :clock (fn [] (get now 0))))
+  (val inbox (RequestInbox 0 30.0 :clock (fn [] (get now 0))))
   (setv inbox.queue (EnteredQueue))
   (val taker (threading.Thread :target (fn [] (.take inbox 300.0 1)) :daemon True))
   (.start taker)
@@ -65,7 +65,7 @@
 (deftest test-the-probe-still-reports-a-loop-stuck-inside-a-step
   ;; 守り: 取り手が要求を取って歩に入った後、31 秒戻らなければ /readyz は 503(閾値 30 秒)・121 秒で /livez も 503。
   (val now [1000.0])
-  (val inbox (RequestInbox 0 :clock (fn [] (get now 0))))
+  (val inbox (RequestInbox 0 30.0 :clock (fn [] (get now 0))))
   (.put inbox.queue (a-read))
   (.take inbox 300.0 1)
   (setv (get now 0) 1031.0)
@@ -77,7 +77,7 @@
 
 (deftest test-a-woken-inbox-returns-at-once-and-keeps-the-requests
   ;; 起こしが入っていれば、取り手は待ちの秒を待たずに空で返る。起こしの後ろに並んだ要求は、次の取りで受ける(落とさない)。
-  (val inbox (RequestInbox 0))
+  (val inbox (RequestInbox 0 30.0))
   (.wake inbox)
   (.put inbox.queue (a-read))
   (val started (time.monotonic))
@@ -94,7 +94,7 @@
 from doeff import run
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox, StopState, stop_on_signals
 from doeff_cluster.foundation.record_inbox import RecordInbox
-inbox = (RecordInbox if sys.argv[1] == 'records' else RequestInbox)(0)
+inbox = RecordInbox(0) if sys.argv[1] == 'records' else RequestInbox(0, 30.0)
 stop = StopState()
 run(stop_on_signals(stop, wake=inbox.wake))
 print('ready', flush=True)

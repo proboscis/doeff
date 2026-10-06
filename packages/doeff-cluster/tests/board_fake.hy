@@ -26,7 +26,7 @@
 
 ;; fake の盤の宛先(この URL で始まる要求だけに答える — ほかの HttpRequest は外側へ通す)と、shared-http の送り方。
 (val BOARD-URL "http://board-fake")
-(val BOARD-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0 :recheck-ms 60000 :actor "board-fake"))
+(val BOARD-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0 :recheck-ms 60000 :actor "board-fake"))
 
 
 (defrecord BoardReply

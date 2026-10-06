@@ -139,7 +139,7 @@
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText WATCH-MAX-SECONDS])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES ProvisionalBeat]
         doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
@@ -148,7 +148,7 @@
 (import doeff_cluster.coordinator.entry.main [load-state with-running-commit])
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
-(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS REPLY-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
@@ -408,12 +408,14 @@
    actor = 書きの送り手(X-Actor)・revision = 送り手の版(task の revision)・peer = 送り手の居る所(網の切断は worker の名で数える)・
    versions = 送り手の process の版の識別(Program を置く時に blob に添える — 本番の送り手が宿の契約の鍵 versions-key で読む値・
    sim では筋の versions。blob の JSON にそのまま載る値なので dict のまま持つ)・runtime-env = 送る task(RemoteJob と切り離した task)の実行環境の宣言(本番の TaskSender・DetachedSender の
-   runtime-env — None = 送り手の版のコードだけ)。"
+   runtime-env — None = 送り手の版のコードだけ)・timing = 模擬の coordinator の時間の設定(本番の送り手が組み立ての時に ClusterTiming
+   から作る返事の打ち切りと待ちの上限を、送り手の口でも同じ値で使う — sim-cluster の :timing・#3865)。"
   (#^ RequestQueue queue)
   (#^ str actor)
   (#^ str revision)
   (#^ str peer)
   (#^ dict versions)
+  (#^ ClusterTiming timing)
   (setv #^ (| RuntimeEnv None) runtime-env None))
 
 
@@ -1079,10 +1081,10 @@
   (if sha (+ "/sim/programs/" sha ".json") ""))
 
 
-(defk control-link [queue revision versions]
-  {:pre [(: queue RequestQueue) (: revision str) (: versions dict)] :post [(: % SimLink)] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk control-link [queue revision versions timing]
+  {:pre [(: queue RequestQueue) (: revision str) (: versions dict) (: timing ClusterTiming)] :post [(: % SimLink)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の仕組み(宣言・検の読み)が coordinator へ話す口を作るため(送り手 sim-declare — 網の切断は受けない)。"
-  (SimLink :queue queue :actor DECLARE-ACTOR :revision revision :peer DECLARE-ACTOR :versions versions))
+  (SimLink :queue queue :actor DECLARE-ACTOR :revision revision :peer DECLARE-ACTOR :versions versions :timing timing))
 
 
 ;; --- coordinator との話し方(scheduler と時計の effect だけ — 柵の内側の答えも使う)--------------------------------
@@ -1091,17 +1093,16 @@
   {:pre [(: link SimLink) (: method str) (: path str) (: query dict) (: body (| dict None))]
    :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator の受け口(要求の列)へ 1 件送り、返事 #(status 本文) を待つため。止まっている coordinator には接続の失敗
-   #(None {\"error\" …}) を返す(本番の送り手の接続の失敗に当たる)。返事は本番の HTTP の client と同じ REPLY-SECONDS までしか
+   #(None {\"error\" …}) を返す(本番の送り手の接続の失敗に当たる)。返事は本番の HTTP の client と同じ打ち切り(link.timing.client-reply-ms)までしか
    待たず、来なければ途中で切れた失敗 #(None {\"error\" …}) を返す — 受けたまま返事をしない coordinator(拍の判断が落ち続ける等)の前で
    送り手を無期限に止めない(止めると worker の拍と止めの手順が終わらず、模擬が仮想の時計を回し続ける・#2596)。"
   (if (not link.queue.up)
       #(None {"error" "coordinator に接続できない(止まっている)"})
       (do (<- promise Promise (CreatePromise))
           (<- (enqueue-request link.queue (! (http-request method path query body :slot promise :actor link.actor :peer link.peer))))
-          ;; 区間の中で吸った待ちは、送り直しの刻から打ち切りを数え直す(1 拍ずつの走りでは返事と送り直しがあり打ち切りは来ない — #2790)。
-          (<- answer (| tuple None) (await-answer link.queue promise REPLY-SECONDS))
+          (<- answer (| tuple None) (await-answer link.queue promise (/ link.timing.client-reply-ms 1000.0)))
           (if (is answer None)
-              #(None {"error" (.format "coordinator の返事が {} 秒で来ない(途中で切れた)" REPLY-SECONDS)})
+              #(None {"error" (.format "coordinator の返事が {} 秒で来ない(途中で切れた)" (/ link.timing.client-reply-ms 1000.0))})
               answer))))
 
 
@@ -1348,7 +1349,7 @@
     (<- ready (| bool None) (service-ready-of (get read 0) (if (is (get read 0) None) (unreached-reason read) (get read 1))))
     (when (is ready True)
       (return (ServiceReady :name name :revision after)))
-    (<- change (await-runners-change link after WATCH-MAX-SECONDS))
+    (<- change (await-runners-change link after (/ link.timing.watch-max-ms 1000.0)))
     (match change
       (RunnersChange :revision revision) (:= after revision)
       (RunnersWatchMissing :detail detail)
@@ -1407,7 +1408,7 @@
     (val left (max 0.0 (- timeout-seconds waited)))
     (if (is-not step None)
         (:= answer step)
-        (do (<- change (await-runners-change link after (min WATCH-MAX-SECONDS left)))
+        (do (<- change (await-runners-change link after (min (/ link.timing.watch-max-ms 1000.0) left)))
             (match change
               (RunnersChange :revision revision) (:= after revision)
               (RunnersWatchMissing :detail detail)
@@ -1787,7 +1788,7 @@
   (<- marked HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :woken False))))
   (val before marked.before)
   (<- sent-at int (now-epoch-ms))
-  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
+  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions :timing plan.timing))
   ;; 列がこの刻の預けの仮の拍を既に受けていれば(区間の終わりの刻と重なった拍 — A')、送らずにその返事を読む(同じ刻の heartbeat を
   ;; coordinator に 2 度受けさせない)。本文は預けた時に同じ綴りで組んだ物で、受けた返事の読み方は送った時と同じ。
   (<- heard (| tuple None) (take-heard parts.queue worker.name sent-at))
@@ -2186,7 +2187,7 @@
     (<- program-path str (program-path-of spec.program))
     ;; 子の送り手の口は本番の子の TaskSender・DetachedSender と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
     (<- child-env (| RuntimeEnv None) (runtime-env-of-context ctx))
-    (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :versions plan.versions
+    (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :versions plan.versions :timing plan.timing
                        :runtime-env child-env))
     (<- outside ProcessOutside (process-outside plan.per-process spec.name worker.name))
     (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid
@@ -2236,7 +2237,7 @@
     (resume None))
   (ReleaseLeases [job instance]
     (<- (live-truth worker.name boot))
-    (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions)
+    (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions :timing plan.timing)
                          job instance))
     (resume None))
   (PublishStatus [statuses note]
@@ -2314,7 +2315,7 @@
    届くまで眠る。待つ口が無い(404)・世代が終わったら抜ける。網は worker と同じ(切れていれば届かない)。"
   (<- parts SimParts (PartsOf))
   (<- plan SimPlan (PlanOf))
-  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions))
+  (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions :timing plan.timing))
   (var going True)
   (while going
     (<- truth HostTruth (HostTruthOf worker.name))
@@ -2322,7 +2323,7 @@
       (or truth.down (!= truth.boot boot) truth.watch-unsupported) (:= going False)
       (or (is truth.watch-after None) truth.woken) (<- (await-beat worker.name boot))
       True (do (val after truth.watch-after)
-               (<- answer tuple (send-request link "GET" "/watch" (watch-params after worker.name boot truth.watch-confirmed) None))
+               (<- answer tuple (send-request link "GET" "/watch" (watch-params after worker.name boot truth.watch-confirmed plan.timing.watch-max-ms) None))
                (<- more bool (note-watch worker.name boot after (watch-reading (get answer 0) (get answer 1))))
                (:= going more))))
   boot)
@@ -3220,7 +3221,7 @@
     (resume None))
   (DrainWorker [name ttl-seconds]
     (val request (drain-request name ttl-seconds (. (get hosts name) boot)))
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- answer tuple (send-shaped link request))
     (resume (if (is (get answer 0) None)
                 {"error" (unreached-reason answer)}
@@ -3249,16 +3250,16 @@
   (CoordinatorSteps []
     (resume steps-seen))
   (ClientLink []
-    (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions)))
+    (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions :timing plan.timing)))
   (Redeclare [system environ]
     ;; その宣言し直しの上書き(渡されなければ最初の宣言の上書き)を新しい系に対して検めて重ねる(#3131 — 本番の declare と同じ 1 つの規則)。
     ;; 台数は本番の declare と同じく系の値の各 job の :replicas が行に載って書かれる(0 = 取り下げ — #3487)。
     (<- declaration Declaration (declaration-of system plan.revision (if (is environ None) plan.environ environ) plan.runtime-env plan.versions))
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- names tuple (apply-declaration link declaration))
     (resume names))
   (DeclareRollout [name spec]
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- answer tuple (send-request link "POST" "/resources/Rollout" {} {"name" name "spec" (deepcopy spec)}))
     (resume (answered-body answer (+ "Rollout を作れない: " name))))
   (KubeCalls []
@@ -3298,14 +3299,14 @@
                 (do (<- answer (promise-or-timeout promise.future timeout-seconds))
                     (resume (if (is answer None) (ProcessWaitExpired :job job :waited-seconds (float timeout-seconds)) answer)))))))
   (ReadinessOf [name]
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- answer tuple (service-answer-of link name))
     (<- readiness ServiceReadiness (readiness-of-body (get answer 0) (get answer 1)))
     (resume readiness))
   (AwaitReadiness [name state timeout-seconds]
     ;; 読む前に呼び鈴を掛け(読みと次の書きの間の鳴らしを取りこぼさない)、答えが出なければ coordinator の次の書き(NoteCoordinatorWrite)
     ;; か期限で起きて 1 回だけ読み直す。時計の刻みでは読み直さない(#3053)。答えの判断(届いた・落ちた・期限)は本番と同じ readiness-wait-answer。
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- started int (now-epoch-ms))
     (var answer None)
     (while (is answer None)
@@ -3340,11 +3341,11 @@
                         (JobProcessWaitExpired :job job :excluding excluding :waited-seconds (float timeout-seconds))
                         answer)))))
   (SharedRows [prefix]
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- answer tuple (send-shaped link (board-read-request prefix)))
     (resume (answered-body answer "盤を読めない")))
   (ReadCoordinator [path]
-    (<- link SimLink (control-link parts.queue plan.revision plan.versions))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- answer tuple (send-request link "GET" path {} None))
     (resume (answered-body answer (+ "GET " path)))))
 
@@ -3513,7 +3514,7 @@
   (<- parts SimParts (PartsOf))
   (<- pod Task (Spawn (coordinator-pod)))
   (<- (await-coordinator parts.queue))
-  (<- control SimLink (control-link parts.queue plan.revision plan.versions))
+  (<- control SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
   (<- (apply-declaration control plan.declaration))
   (var keepers [])
   (for [w plan.workers]

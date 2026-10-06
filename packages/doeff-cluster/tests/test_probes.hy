@@ -48,7 +48,7 @@
   ;; 調停ループが 1 度も要求を取らない(= fsync で塞がっている)間も、probe は並ばずに即答する。
   (val now [1000.0])
   (<- port int (free-port))
-  (val inbox (RequestInbox port :clock (fn [] (get now 0))))
+  (val inbox (RequestInbox port 30.0 :clock (fn [] (get now 0))))
   (.start inbox)
   (val server inbox.server)
   (assert (is-not server None) "start の後は HTTP server が在る")
