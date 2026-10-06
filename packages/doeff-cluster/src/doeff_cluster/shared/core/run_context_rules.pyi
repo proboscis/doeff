@@ -7,11 +7,12 @@ from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeE
 from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
+RUNTIME_ENV_ROOT_VAR: str
 
 def worker_context_environ(coordinator: str, worker: str) -> _Program[dict[str, str], object]:
     ...
 
-def process_context_environ(spec: JobSpec, instance: str, attempt: int) -> _Program[dict[str, str], object]:
+def process_context_environ(spec: JobSpec, instance: str, attempt: int, code_path: str) -> _Program[dict[str, str], object]:
     ...
 
 def context_of_environ(environ: Mapping[str, str]) -> _Program[RunContext, object]:

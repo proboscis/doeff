@@ -11,6 +11,10 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 
+;; 実行環境の job の子が受ける、その job の root の絶対 path の環境変数の名(#3753 — 名の定義はここ 1 か所。root の下に宣言の repo の
+;; 名の dir が並ぶ。子は root の下の木の path を、兄弟の dir の並びから推さずにこの値から組む)。
+(val RUNTIME-ENV-ROOT-VAR "DOEFF_RUNTIME_ENV_ROOT")
+
 
 (defk worker-context-environ [coordinator worker]
   {:pre [(: coordinator str) (: worker str)] :post [(: % (get dict #(str str)))] :tags {:context "doeff-cluster" :role "judgment"}}
@@ -19,11 +23,13 @@
   {"DOEFF_WORKER_COORDINATOR" coordinator "DOEFF_WORKER_NAME" worker})
 
 
-(defk process-context-environ [spec instance attempt]
-  {:pre [(: spec JobSpec) (: instance str) (: attempt int)] :post [(: % (get dict #(str str)))] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk process-context-environ [spec instance attempt code-path]
+  {:pre [(: spec JobSpec) (: instance str) (: attempt int) (: code-path str)] :post [(: % (get dict #(str str)))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
   "worker が起こす子 process 1 つへ渡す文脈の環境変数(job の名・版・試行・世代・spec の指紋・割り当て、実行環境の job なら宣言の
-   JSON とキー)を作るため。本番の ProcessHost.launch と sim の宿(local.run-context-of)が同じ関数で作る — 実行環境の job の子だけが
-   DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY を受ける(env の job でなければ置かない)。"
+   JSON とキーと root の path)を作るため。本番の ProcessHost.launch と模擬の worker(local.run-context-of)が同じ関数で作る — 実行環境の
+   job の子だけが DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY・RUNTIME-ENV-ROOT-VAR を受ける(env の job でなければ置かない)。
+   code-path = 子を起こす StartJob の code-path(実行環境の job では worker の env_store の env-root が返す root の絶対 path)。"
   (| {"DOEFF_WORKER_JOB" spec.name
       "DOEFF_WORKER_REVISION" spec.revision
       "DOEFF_WORKER_ATTEMPT" (str attempt)
@@ -31,7 +37,7 @@
       "DOEFF_WORKER_SPEC_HASH" (spec-hash spec)
       "DOEFF_WORKER_PLACEMENT" (if (is spec.placement None) "" (str spec.placement))}
      (if spec.runtime-env
-         {"DOEFF_RUNTIME_ENV" spec.runtime-env "DOEFF_RUNTIME_ENV_KEY" (or spec.env-key "")}
+         {"DOEFF_RUNTIME_ENV" spec.runtime-env "DOEFF_RUNTIME_ENV_KEY" (or spec.env-key "") RUNTIME-ENV-ROOT-VAR code-path}
          {})))
 
 
@@ -48,7 +54,8 @@
               :spec-hash (.get environ "DOEFF_WORKER_SPEC_HASH" "")
               :placement (.get environ "DOEFF_WORKER_PLACEMENT" "")
               :runtime-env (.get environ "DOEFF_RUNTIME_ENV" "")
-              :env-key (.get environ "DOEFF_RUNTIME_ENV_KEY" "")))
+              :env-key (.get environ "DOEFF_RUNTIME_ENV_KEY" "")
+              :env-root (.get environ RUNTIME-ENV-ROOT-VAR "")))
 
 
 (defk runtime-env-of-context [ctx]

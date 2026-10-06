@@ -14,6 +14,7 @@ class RunContext:
     placement: str = ''
     runtime_env: str = ''
     env_key: str = ''
+    env_root: str = ''
 
     def identity(self) -> dict[str, str | int | None]:
         ...

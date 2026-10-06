@@ -26,6 +26,8 @@
   ;; 実行環境の宣言(JSON の文字列)とキー。env の task でなければ空。子がさらに task を送る時の既定の env になる。
   (setv #^ str runtime-env "")
   (setv #^ str env-key "")
+  ;; 実行環境の root の絶対 path(下に宣言の repo の名の dir が並ぶ・#3753)。env の task でなければ空。
+  (setv #^ str env-root "")
 
   (defn #^ (get dict #(str (| str int None))) identity [self]
     "報告に載せる process の世代(coordinator の resource_policy.report-matches が比べる欄)。"

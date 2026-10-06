@@ -111,13 +111,13 @@
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "job の子 process の起こし方を、渡された値だけから決めるため(ProcessHost と、後の言い換えの handler が同じ形で起こす)。
    子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが DOEFF_RUNTIME_ENV・
-   DOEFF_RUNTIME_ENV_KEY を受ける)。Program の job(改訂 1 の F・H)は詰めた Program の file(program-path)を引数と環境変数(宿の契約
+   DOEFF_RUNTIME_ENV_KEY と root の path〔= code-path〕を受ける)。Program の job(改訂 1 の F・H)は詰めた Program の file(program-path)を引数と環境変数(宿の契約
    HOST-CONTRACT の program-env — 呼び手が名を渡す。core は foundation の宿の契約を読まない)で渡す。実行環境の job は root の venv の uv run(PYTHONPATH を置かない・子の環境変数は許可表で組む・cwd = work-dir)、
    それ以外は木の PYTHONPATH(layout)を足して worker の環境を継ぐ(EXTEND)。allowed-env = worker の環境のうち許可表の名と LC_* の分
    (実行環境の job だけが読む — 読むのは呼び手: ReadEnvironment の names = CHILD-ENV-ALLOWED・prefixes = CHILD-ENV-PREFIXES)。
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
    fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。"
-  (<- context dict (process-context-environ spec instance attempt))
+  (<- context dict (process-context-environ spec instance attempt code-path))
   (val worker-env (| context {"DOEFF_WORKER_PID" (str worker-pid)}
                      (if program-path {program-env program-path} {})))
   (val program-args (if program-path #("--program" program-path) #()))

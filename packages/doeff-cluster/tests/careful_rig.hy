@@ -42,6 +42,7 @@
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.shared.core.run_context_rules [RUNTIME-ENV-ROOT-VAR])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))
@@ -104,10 +105,10 @@
                    ";; この commit の値。cloudpickle は module の属性の関数を参照で運ぶので、子は root の中のこの関数を呼ぶ\n"
                    ";; (defk の本体は値で運ばれ、本体が直に読む module の定数は送り手の値で固まる — だから本体は VALUE を直に読まない)。\n"
                    "(defn current-value [] VALUE)  ; defk にできない: cloudpickle が参照で運ぶ素の関数の見本\n"
-                   ";; 送る Program: この commit の値と、子の環境(PYTHONPATH・cwd・env のキー・worker の pid・interpreter)を返す。\n"
+                   ";; 送る Program: この commit の値と、子の環境(PYTHONPATH・cwd・env のキー・worker の pid・interpreter・env の root)を返す。\n"
                    "(defk report []\n  {:pre [] :post [(: % tuple)]}\n"
                    "  #((current-value) (os.environ.get \"PYTHONPATH\") (os.getcwd) (os.environ.get \"DOEFF_RUNTIME_ENV_KEY\")\n"
-                   "    (os.environ.get \"DOEFF_WORKER_PID\") sys.prefix))\n"
+                   (.format "    (os.environ.get \"DOEFF_WORKER_PID\") sys.prefix (os.environ.get \"{}\")))\n" RUNTIME-ENV-ROOT-VAR)
                    ";; 実行先の handler の組(空)。\n"
                    "(defn env [config ctx] [])  ; defk にできない: job_entry が Program の外で呼ぶ組み立ての関数\n")
    "docs/readme.md" "doc\n"})

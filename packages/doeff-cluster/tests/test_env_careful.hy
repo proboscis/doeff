@@ -36,7 +36,7 @@
 
 (defk child-answer [outcome]
   {:pre [(: outcome TaskSucceeded)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "成功した task の子の答え #(値 PYTHONPATH cwd env のキー worker の pid venv の prefix)(appjobs の report)— 値が組であることを確かめて返す。"
+  "成功した task の子の答え #(値 PYTHONPATH cwd env のキー worker の pid venv の prefix env の root)(appjobs の report)— 値が組であることを確かめて返す。"
   (assert (isinstance outcome.value tuple) outcome)
   outcome.value)
 
@@ -54,7 +54,7 @@
   (assert (= view-1.state CodeState.READY) view-1)
   (assert (is-not view-1.path None) view-1)
   (<- outcome-1 TaskSucceeded (run-task rig env-1 "t1"))
-  ;; 子の答え = #(値 PYTHONPATH cwd env のキー worker の pid venv の prefix)
+  ;; 子の答え = #(値 PYTHONPATH cwd env のキー worker の pid venv の prefix env の root)
   (<- answer-1 tuple (child-answer outcome-1))
   (val value-1 (get answer-1 0))
   (val pythonpath (get answer-1 1))
@@ -70,6 +70,14 @@
   (<- key-1-want str (env-key env-1 (current-platform)))
   (assert (= key-1 key-1-want))
   (assert (= prefix-1 (str (/ (Path view-1.path) "app" ".venv"))) "子は root の venv で走った")
+  ;; 失敗ケース(#3753): 子は自分の root の絶対 path を DOEFF_RUNTIME_ENV_ROOT で受け、その下に宣言の repo の名の dir が在る(root の
+  ;; 下に並べた木の path を、兄弟の dir の並びから推させない)。値は worker の env_store の env-root が返す path。
+  (val root-1 (get answer-1 6))
+  (<- key-1-root str (env-key env-1 (current-platform)))
+  (<- root-1-want str (env-root rig.envs (+ "env-" key-1-root)))
+  (assert (= root-1 root-1-want view-1.path) #(root-1 root-1-want view-1.path))
+  (for [repo env-1.repos]
+    (assert (.is-dir (/ (Path root-1) repo.name)) (.format "root の下に宣言の repo {} の dir が無い" repo.name)))
   (val marker (json.loads (.read-text (/ (Path view-1.path) ENV-MARKER))))
   (assert (= (get marker "interpreter") (os.path.realpath (/ (Path view-1.path) "app" ".venv" "bin" "python")))
           "bytecode を作った interpreter は root の venv の物")

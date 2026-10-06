@@ -53,11 +53,12 @@
 ;; --- 本番の worker と sim の宿が子へ渡す文脈は同じ(2026-09-29)------------------------------------------------------
 ;; 本番の子 process の言い換え(process-host — 起こし方は worker/core/launch の job-launch)は子の環境変数(shared/core/run_context_rules の worker-context-environ・process-context-environ)を置き、子は context-from-env
 ;; で読む。sim の宿(local.run-context-of)は同じ関数で作った dict を同じ読み(context-of-environ)で読む。実行環境の job の子は宣言と
-;; キー(DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY)を受け、そうでない job の子は空で受ける(以前の sim の宿は env の job でも空で渡した)。
+;; キーと root の path(DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY・DOEFF_RUNTIME_ENV_ROOT)を受け、そうでない job の子は空で受ける
+;; (以前の sim の宿は env の job でも空で渡した)。
 
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.core.run_context_rules [worker-context-environ context-of-environ])
+(import doeff_cluster.shared.core.run_context_rules [worker-context-environ context-of-environ RUNTIME-ENV-ROOT-VAR])
 (import doeff_cluster.sim.local [run-context-of SIM-URL])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 
@@ -65,15 +66,28 @@
 (val INSTANCE "1-abc")
 
 
+(defk launched-environ [tmp-path spec]
+  {:pre [(: tmp-path Path) (: spec JobSpec)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "本番の process-host が子へ渡す環境変数(子が実際に受ける全部)を返すため(子 process は起こさない・木 / root の path は root-of)。"
+  (<- shared dict (worker-context-environ SIM-URL WORKER))
+  (<- settings (host-settings tmp-path :hy-command HY :extra-env shared))
+  (<- root str (root-of tmp-path))
+  (.mkdir (Path root) :parents True :exist-ok True)
+  (<- plan tuple (launched settings spec root INSTANCE 1))
+  (get plan 2))
+
+
+(defk root-of [tmp-path]
+  {:pre [(: tmp-path Path)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "検の子が走る木 / 実行環境の root の path(本番の worker では env_store の env-root が返す path が StartJob の code-path になる)。"
+  (str (/ tmp-path "root")))
+
+
 (defk launched-context [tmp-path spec]
   {:pre [(: tmp-path Path) (: spec JobSpec)] :post [(: % RunContext)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本番の process-host が子へ渡す環境変数を、子の読み(context-of-environ)で RunContext にするため(子 process は起こさない)。"
-  (<- shared dict (worker-context-environ SIM-URL WORKER))
-  (<- settings (host-settings tmp-path :hy-command HY :extra-env shared))
-  (val root (/ tmp-path "root"))
-  (.mkdir root :parents True :exist-ok True)
-  (<- plan tuple (launched settings spec (str root) INSTANCE 1))
-  (<- ctx RunContext (context-of-environ (get plan 2)))
+  (<- environ dict (launched-environ tmp-path spec))
+  (<- ctx RunContext (context-of-environ environ))
   ctx)
 
 
@@ -83,11 +97,28 @@
   (val text (json.dumps declared-json :sort-keys True))
   (val plain (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #() "r1" :placement 3))
   (val with-env (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #() "r1" :once True :runtime-env text :env-key "k1"))
+  (<- root str (root-of tmp-path))
   (for [spec [plain with-env]]
     (<- real RunContext (launched-context tmp-path spec))
-    (<- sim RunContext (run-context-of WORKER spec 1 INSTANCE))
+    (<- sim RunContext (run-context-of WORKER spec 1 INSTANCE root))
     (assert (= sim real) #(sim real)))
-  (<- env-sim RunContext (run-context-of WORKER with-env 1 INSTANCE))
-  (assert (= #(env-sim.runtime-env env-sim.env-key) #(text "k1")) env-sim)
-  (<- plain-sim RunContext (run-context-of WORKER plain 1 INSTANCE))
-  (assert (= #(plain-sim.runtime-env plain-sim.env-key plain-sim.placement) #("" "" "3")) plain-sim))
+  (<- env-sim RunContext (run-context-of WORKER with-env 1 INSTANCE root))
+  (assert (= #(env-sim.runtime-env env-sim.env-key env-sim.env-root) #(text "k1" root)) env-sim)
+  (<- plain-sim RunContext (run-context-of WORKER plain 1 INSTANCE root))
+  (assert (= #(plain-sim.runtime-env plain-sim.env-key plain-sim.env-root plain-sim.placement) #("" "" "" "3")) plain-sim))
+
+
+(deftest test-only-a-runtime-env-child-is-given-its-root
+  [tmp-path]
+  ;; 失敗ケース(#3753): 実行環境の job の子は、その root の絶対 path を DOEFF_RUNTIME_ENV_ROOT で受ける(root の下に並べた木 —
+  ;; 例 <root>/dotfiles — の path を、兄弟の dir の並びから推させない)。env でない job の子は受けない(木の path は root ではない)。
+  (<- declared RuntimeEnv (sample-env))
+  (<- declared-json dict (runtime-env->json declared))
+  (val text (json.dumps declared-json :sort-keys True))
+  (val plain (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #() "r1"))
+  (val with-env (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #() "r1" :once True :runtime-env text :env-key "k1"))
+  (<- root str (root-of tmp-path))
+  (<- env-environ dict (launched-environ tmp-path with-env))
+  (assert (= (.get env-environ RUNTIME-ENV-ROOT-VAR) root) (.get env-environ RUNTIME-ENV-ROOT-VAR))
+  (<- plain-environ dict (launched-environ tmp-path plain))
+  (assert (not-in RUNTIME-ENV-ROOT-VAR plain-environ) (.get plain-environ RUNTIME-ENV-ROOT-VAR)))

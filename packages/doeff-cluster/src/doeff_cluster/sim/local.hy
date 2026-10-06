@@ -1062,14 +1062,15 @@
   (WorldView codes truth.processes (tuple (.values truth.probes)) :warm-children truth.warm-children))
 
 
-(defk run-context-of [worker spec attempt instance]
-  {:pre [(: worker str) (: spec JobSpec) (: attempt int) (: instance str)] :post [(: % RunContext)]
+(defk run-context-of [worker spec attempt instance code-path]
+  {:pre [(: worker str) (: spec JobSpec) (: attempt int) (: instance str) (: code-path str)] :post [(: % RunContext)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "起こす process の宿の契約の run-context を作るため: 本番の worker が子へ渡す環境変数を同じ関数(shared/core/run_context_rules の
    worker-context-environ・process-context-environ — 本番の main と ProcessHost.launch が呼ぶ物)で作り、本番の子と同じ読み
-   (context-of-environ)で読む(報告の世代が coordinator の report-matches と合い、実行環境の job の子は宣言とキーを受ける)。"
+   (context-of-environ)で読む(報告の世代が coordinator の report-matches と合い、実行環境の job の子は宣言とキーと root の path を
+   受ける)。code-path = 模擬の worker が受けた StartJob の code-path(実行環境の job では模擬の root の path)。"
   (<- shared dict (worker-context-environ SIM-URL worker))
-  (<- own dict (process-context-environ spec instance attempt))
+  (<- own dict (process-context-environ spec instance attempt code-path))
   (<- ctx RunContext (context-of-environ (| shared own)))
   ctx)
 
@@ -2181,7 +2182,7 @@
     (<- now int (now-epoch-ms))
     (<- pid int (NextPid))
     (val instance (.format "{}-p{}" worker.name pid))
-    (<- ctx RunContext (run-context-of worker.name spec attempt instance))
+    (<- ctx RunContext (run-context-of worker.name spec attempt instance code-path))
     ;; 観測と記録を Spawn の前に書く(Spawn の直後に新しい task が先に走って終わっても、終わりを書く相手が在る)。
     (<- (PutHostTruth worker.name
                       (replace truth :processes (+ truth.processes #((ProcessView spec.name spec attempt pid now :instance instance))))))
