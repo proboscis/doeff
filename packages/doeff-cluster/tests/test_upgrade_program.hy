@@ -1,10 +1,10 @@
 ;; 版上げの Program(shared/core/upgrade_program.hy — #3366 の単位 3)の検。sim-cluster の上で、宣言の effect に flux-declarations(公開 =
-;; 何もしない・当てる = 模擬の Flux・root の準備 = 模擬の置き場)が答え、Program が条 V1〜V5 を自分で守る事(入れ替えの瞬間の記録と
-;; 置き場の写しで破り 0)・走り中の task の終わりを待つ事・待ちの上限を越えると名指しで落ちる事・入れ替えの前の手(空の機体の確かめ →
-;; root の準備)が断られたら何も書かずに名指しで止まる事を確かめる。
+;; 何もしない・当てる = 模擬の Flux・root の準備 = 模擬の保存先)が答え、Program が条 V1〜V5 を自分で守る事(入れ替えの瞬間の記録と
+;; 保存先のスナップショットで違反 0)・実行中の task の終わりを待つ事・待ちの上限を越えると対象を明示して落ちる事・入れ替えの前の手順(空の機体の確認 →
+;; root の準備)が断られたら何も書かずに対象を明示して止まる事を確かめる。
 ;;
-;; DesireWorker / DesireCoordinator に答えるのは、検の道具 desire-by-manifest(tests/flux_fixtures.hy — 値から manifest を launch_rules の
-;; 写しで作り直して置き場へ書く)— doeff は配備する側の repo の本番の handler を import できないため。本番の handler で一周する検は
+;; DesireWorker / DesireCoordinator に答えるのは、テストの道具 desire-by-manifest(tests/flux_fixtures.hy — 値から manifest を launch_rules の
+;; 変換で作り直して保存先へ書く)— doeff は配備する側の repo の本番の handler を import できないため。本番の handler で一周するテストは
 ;; 配備する側の repo に置く(その repo の一周の検を、この Program に替える)。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
@@ -53,8 +53,8 @@
 
 (defk upgrade-and-judge [limits drain]
   {:pre [(: limits UpgradeLimits) (: drain Callable)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 宣言を読み、Program で a・b・coordinator を NEW へ上げ、入れ替えの瞬間の記録と置き場の写しを条 V1〜V5 で判じる。
-   答え = #(破りの条の名 a の版 b の版 記録)。"
+  "筋書き: 宣言を読み、Program で a・b・coordinator を NEW へ上げ、入れ替えの瞬間の記録と保存先のスナップショットを条 V1〜V5 で判定する。
+   答え = #(違反した条の名 a の版 b の版 記録)。"
   (<- (Delay 3.0))
   (<- applied tuple (manifest-state PATHS))
   (<- run tuple (with-handlers [(flux-declarations PATHS drain COORDINATOR-SECONDS applied) desire-by-manifest]
@@ -67,7 +67,7 @@
 
 (defk upgrade-then-starts [limits]
   {:pre [(: limits UpgradeLimits)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "Program を走らせてから、模擬の Flux が当てた入れ替えの瞬間の記録と、同じ瞬間の置き場の写しを読む。答え = #(記録 置き場の写し)。"
+  "Program を走らせてから、模擬の Flux が当てた入れ替えの瞬間の記録と、同じ瞬間の保存先のスナップショットを読む。答え = #(記録 保存先のスナップショット)。"
   (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR limits))
   (<- starts tuple (UpgradeStartsSeen))
   (<- places tuple (BootRootsAtStartsSeen))
@@ -75,8 +75,8 @@
 
 
 (deftest test-the-upgrade-program-keeps-v1-to-v5
-  ;; V5(#3725): どの入れ替えも、置き場に入れ替え先の版の root を先に準備してから始まる — Program から準備の手を外すと、a・b・
-  ;; coordinator の入れ替えの瞬間の置き場に NEW の root が無く、V5 が赤(直す前の Program で見た)。
+  ;; V5(#3725): どの入れ替えも、保存先に入れ替え先の版の root を先に準備してから始まる — Program から準備の手順を外すと、a・b・
+  ;; coordinator の入れ替えの瞬間の保存先に NEW の root が無く、V5 が赤(直す前の Program で見た)。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-and-judge LIMITS prestop-drain) :workers #(A B) :outside outside))
   (val rules (get seen 0))
@@ -89,7 +89,7 @@
   (assert (= (tuple (gfor s starts s.target)) #("a" "b" "coordinator")) starts))
 
 
-;; 模擬の世界で root の準備が断られる時の訳(どの訳でも同じ止まり方 — 訳ごとの名指しは下の台本の検が 4 つとも通す)。
+;; 模擬の世界で root の準備が断られる時の理由(どの理由でも同じ止まり方 — 理由ごとに明示されるかは、下の台本のテストが 5 つとも確かめる)。
 (val SIM-REFUSAL BootRootRefusal.PREPARE-FAILED)
 
 
@@ -97,7 +97,7 @@
   {:pre [(: clean-boots frozenset) (: boot-roots frozenset)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: clean-boots に名の在る入れ替え先の空の起動が落ち(2026-10-05 07:1x の形 — 起動の時に読む物が壊れていて、空の Pod が起動で
    落ちる版)、boot-roots に名の在る入れ替え先の自己起動の root の準備が断られる(#3725)世界で Program を走らせる。
-   答え = #(止まりの例外 止まった後の宣言 入れ替えの記録 a の版 b の版 置き場の写し)。"
+   答え = #(停止の例外 止まった後の宣言 入れ替えの記録 a の版 b の版 保存先のスナップショット)。"
   (<- (Delay 3.0))
   (<- applied tuple (manifest-state PATHS))
   (<- run tuple (with-handlers [(flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied) (refused-clean-boots clean-boots)
@@ -111,8 +111,8 @@
 
 (defk refusal-then-starts []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "Program を走らせて入れ替えの前の手の断りによる止まり(UpgradeRefused)を受け、模擬の Flux が当てた入れ替えの記録と置き場の写しを読む。
-   答え = #(止まり 記録 置き場の写し)。"
+  "Program を走らせて入れ替えの前の手順の拒否による停止(UpgradeRefused)を受け、模擬の Flux が当てた入れ替えの記録と保存先のスナップショットを読む。
+   答え = #(停止 記録 保存先のスナップショット)。"
   (var refused None)
   (try
     (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))
@@ -152,9 +152,9 @@
 
 
 (deftest test-a-worker-whose-boot-root-cannot-be-prepared-stops-the-upgrade-before-anything-is-written
-  ;; 失敗ケース(#3725): 最初の worker a の入れ替え先の版の自己起動の root を、a の置き場に準備できない — Program は a と断りの訳
-  ;; (閉じた語)を名指して止まり、宣言を書かず(置き場は始めと同じ)、何も入れ替えず、a・b は元の版のまま。準備の手を Desire の後に
-  ;; 置くと、宣言が書かれて置き場が始めと違い赤(準備の手の無い直す前の Program は、止まらずに全部入れ替えて赤)。
+  ;; 失敗ケース(#3725): 最初の worker a の入れ替え先の版の自己起動の root を、a の保存先に準備できない — Program は a と拒否の理由
+  ;; (閉じた語)を明示して止まり、宣言を書かず(宣言の保存先は始めと同じ)、何も入れ替えず、a・b は元の版のまま。準備の手順を Desire の後に
+  ;; 置くと、宣言が書かれて宣言の保存先が始めと違い赤(準備の手順の無い直す前の Program は、止まらずに全部入れ替えて赤)。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset) (frozenset ["a"])) :workers #(A B) :outside outside))
   (val refused (get seen 0))
@@ -170,7 +170,7 @@
 
 (deftest test-a-coordinator-whose-boot-root-cannot-be-prepared-stops-after-the-workers-and-before-its-swap
   ;; 失敗ケース(#3725): coordinator の入れ替え先の版の root を準備できない — worker a・b は入れ替わり(新しい版・どちらも root を先に
-  ;; 準備してから = V5 の破り 0)、coordinator の宣言は書かれず入れ替えもしない。止まりは coordinator と訳を名指す。
+  ;; 準備してから = V5 の違反 0)、coordinator の宣言は書かれず入れ替えもしない。停止は coordinator と理由を明示する。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset) (frozenset ["coordinator"])) :workers #(A B)
                               :outside outside))
@@ -245,7 +245,7 @@
 
 (defhandler scripted-upgrade [#^ tuple script]
   ;; 引数に残す理由: 読みの台本は検ごとに違う値(設定ではなく外の世界そのもの)。
-  ;; 名簿と task の読みを台本の順に返し、版の変化の待ちはすぐ返し、宣言の effect は覚えるだけにするため(空の機体の確かめは通し、
+  ;; 名簿と task を読む effect に台本の順で答え、版の変化の待ちはすぐ返し、宣言の effect は覚えるだけにするため(空の機体の確認は通し、
   ;; root の準備は組んだと答える)。
   (session var reads 0)
   (session var coordinator-at None)
@@ -393,27 +393,27 @@
   (assert (in A-STUCK-REASON caught.value.observed) caught.value.observed))
 
 
-;; --- 入れ替えの前の root の準備(PrepareBootRoot — #3725): 手の順・断りで出なくなる手・答えの 3 つの枝 ---------------------------
-;; Program が出した書きの手を、出した順に覚える道具(step-recorder)を一番内側に置き、手の順と「出なかった手」を見る。
+;; --- 入れ替えの前の root の準備(PrepareBootRoot — #3725): effect の順・拒否の後に出なくなる effect・答えの 3 つの枝 ---------------------------
+;; Program が出した書き込みの effect を、出した順に覚える道具(step-recorder)を一番内側に置き、effect の順と「出なかった effect」を見る。
 
 (defrecord SwapStep
-  "Program が出した書きの手 1 つ: name = effect の名・target = 何の入れ替えの手か(公開と当ては的を持たないので None)。"
+  "Program が出した書き込みの effect 1 つ: name = effect の名・target = 何の入れ替えの effect か(公開と当ては対象を持たないので None)。"
   (#^ str name)
   (#^ (| str None) target))
 
 (defrecord StepLog
-  "step-recorder が覚えた事: steps = Program が出した書きの手(出した順)・answers = root の準備の答え(受けた順)。"
+  "step-recorder が覚えた事: steps = Program が出した書き込みの effect(出した順)・answers = root の準備の答え(受けた順)。"
   (#^ (get tuple #(SwapStep ...)) steps)
   (#^ (get tuple #((| BootRootAlreadyPrepared BootRootBuilt BootRootRefused) ...)) answers))
 
 (defeffect StepLogSeen
-  "検の effect: step-recorder が覚えた事(StepLog)。"
+  "テスト用の effect: step-recorder が覚えた事(StepLog)。"
   {:answer StepLog :tags {:context "doeff-cluster-test" :role "intent"}})
 
 
 (defhandler step-recorder
-  ;; 検の道具: 版上げの Program が出した書きの手(空の機体の確かめ・root の準備・Desire・公開・当て)を出した順に覚え、同じ手を外側の
-  ;; 答え手へ出し直して、その答えをそのまま返すため(答えは変えない — 手の順と、断りの後に出なかった手を見る)。
+  ;; テストの道具: 版上げの Program が出した書き込みの effect(空の機体の確認・root の準備・Desire・公開・当て)を出した順に覚え、同じ effect を外側の
+  ;; handler へ出し直して、その答えをそのまま返すため(答えは変えない — effect の順と、拒否の後に出なかった effect を見る)。
   (session var steps #())
   (session var answers #())
   (ConfirmCleanBoot [launch]
@@ -449,7 +449,7 @@
 
 (defk swap-steps [desire target]
   {:pre [(: desire str) (: target str)] :post [(: % (get tuple #(SwapStep ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
-  "入れ替え 1 つの書きの手の順(空の機体の確かめ → root の準備 → Desire → 公開 → 当て)を、検が比べる形で作るため。"
+  "入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 当て)を、テストが比べる形で作るため。"
   #((SwapStep :name "ConfirmCleanBoot" :target target) (SwapStep :name "PrepareBootRoot" :target target)
     (SwapStep :name desire :target target) (SwapStep :name "PublishDeclarations" :target None)
     (SwapStep :name "ApplyDeclarations" :target None)))
@@ -457,7 +457,7 @@
 
 (defk recorded-run [program]
   {:pre [(: program Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "版上げの Program を走らせ(入れ替えの前の手の断りによる止まりは受ける)、step-recorder が覚えた事を読むため。答え = #(止まり 覚えた事)。"
+  "版上げの Program を走らせ(入れ替えの前の手順の拒否による停止は受ける)、step-recorder が覚えた事を読むため。答え = #(停止 覚えた事)。"
   (var refused None)
   (try
     (<- program)
@@ -468,7 +468,7 @@
 
 
 (deftest test-each-swap-prepares-the-boot-root-after-the-clean-boot-and-before-the-desire
-  ;; 手の順(#3725): worker の入れ替えも coordinator の入れ替えも、空の機体の確かめ → root の準備 → Desire → 公開 → 当て。準備の手を
+  ;; effect の順(#3725): worker の入れ替えも coordinator の入れ替えも、空の機体の確認 → root の準備 → Desire → 公開 → 当て。準備の effect を
   ;; 外すと PrepareBootRoot が列に無く、Desire の後へ動かすと順が違って赤。
   (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT) step-recorder]
                    (recorded-run (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
@@ -483,8 +483,8 @@
 
 
 (deftest test-a-refused-boot-root-stops-before-the-desire-and-names-the-target-and-the-reason
-  ;; 失敗ケース(#3725): a の root の準備が断られる — どの訳(閉じた語の 4 つ)でも、Program は DesireWorker・PublishDeclarations・
-  ;; ApplyDeclarations を 1 つも出さず(手は a の確かめと準備の 2 つだけ)、UpgradeRefused が a と、断りの答え(訳は閉じた語)を名指す。
+  ;; 失敗ケース(#3725): a の root の準備が断られる — どの理由(閉じた語の 5 つ)でも、Program は DesireWorker・PublishDeclarations・
+  ;; ApplyDeclarations を 1 つも出さず(effect は a の確認と準備の 2 つだけ)、UpgradeRefused が a と、拒否の答え(理由は閉じた語)を明示する。
   (for [reason BootRootRefusal]
     (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)
                                    (refused-boot-roots (frozenset ["a"]) reason) step-recorder]
@@ -499,7 +499,7 @@
 
 
 (deftest test-a-refused-clean-boot-never-asks-for-the-boot-root
-  ;; 失敗ケース: a の空の機体の確かめが断られた世界では、root の準備の手は出ない(手は a の確かめの 1 つだけ)— 準備は確かめの後。
+  ;; 失敗ケース: a の空の機体の確認が断られた世界では、root の準備の effect は出ない(effect は a の確認の 1 つだけ)— 準備は確認の後。
   (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)
                                  (refused-clean-boots (frozenset ["a"])) step-recorder]
                    (recorded-run (upgrade-workers #(TARGET-A TARGET-B) LIMITS))))
@@ -512,8 +512,8 @@
 
 
 (deftest test-a-refused-coordinator-boot-root-stops-before-the-coordinator-desire
-  ;; 失敗ケース(#3725): coordinator の root の準備が断られる — worker a・b の手は 5 つずつ全部出て、coordinator は確かめと準備の 2 つだけ
-  ;; (DesireCoordinator・その公開・当ては出ない)。止まりは coordinator を名指す。
+  ;; 失敗ケース(#3725): coordinator の root の準備が断られる — worker a・b の effect は 5 つずつ全部出て、coordinator は確認と準備の 2 つだけ
+  ;; (DesireCoordinator・その公開・当ては出ない)。停止は coordinator を明示する。
   (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)
                                  (refused-boot-roots (frozenset ["coordinator"]) BootRootRefusal.PLACE-UNAVAILABLE) step-recorder]
                    (recorded-run (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS))))
@@ -551,8 +551,8 @@
 
 
 (deftest test-the-boot-root-is-built-once-and-found-prepared-on-the-next-run
-  ;; 答えの枝「組んだ」と「準備済みだった」(#3725): 模擬の置き場に NEW の root が無い 1 度目は組み、a が NEW で動いている 2 度目は
-  ;; 準備済みと答える(何もしない)。どちらも上げる前の版の root は置き場に在る(準備は足すだけで消さない)。入れ替えは 1 度だけ。
+  ;; 答えの枝「組んだ」と「準備済みだった」(#3725): 模擬の保存先に NEW の root が無い 1 度目は組み、a が NEW で動いている 2 度目は
+  ;; 準備済みと答える(何もしない)。どちらも上げる前の版の root は保存先に在る(準備は足すだけで消さない)。入れ替えは 1 度だけ。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-a-twice) :workers #(A B) :outside outside))
   (assert (= (get seen 0) #((BootRootBuilt :target "a" :seconds 0.0 :previous-root-present True)
@@ -563,14 +563,14 @@
 
 
 (defhandler boot-roots-answered-outside-the-types
-  ;; 壊した答え手(失敗ケース): root の準備に、3 つの答えの型のどれでもない値(None)で答える。
+  ;; 壊した handler(失敗ケース): root の準備に、3 つの答えの型のどれでもない値(None)で答える。
   (PrepareBootRoot [launch]
     (resume None)))
 
 
 (deftest test-an-answer-outside-the-three-types-stops-before-the-desire
-  ;; 失敗ケース(#3725): 答え手が 3 つの型の外の値で答える — Program はそれを「準備済み」と読んで先へ進まず、答えを受けた所で、待っていた
-  ;; 型と受けた値の型を名指して落ちる(先へ進むと台本の世界は最後まで通り、落ちないので赤)。
+  ;; 失敗ケース(#3725): handler が 3 つの型の外の値で答える — Program はそれを「準備済み」とみなして先へ進まず、答えを受けた所で、待っていた
+  ;; 型と受けた値の型を明示して落ちる(先へ進むと台本の世界は最後まで通り、落ちないので赤)。
   (with [caught (pytest.raises AssertionError)]
     (<- _ (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)
                           boot-roots-answered-outside-the-types]
@@ -583,15 +583,15 @@
 
 
 (defhandler boot-roots-built-without-a-previous-root
-  ;; 筋書きの答え手: どの物の root も「組んだ(12.5 秒)」と答え、上げる前の版の root は置き場に残っていない(戻し先が無い)と答える。
+  ;; 筋書きの handler: どの対象の root も「組んだ(12.5 秒)」と答え、上げる前の版の root は保存先に残っていない(戻し先が無い)と答える。
   (PrepareBootRoot [launch]
     (<- target str (launch-target launch))
     (resume (BootRootBuilt :target target :seconds 12.5 :previous-root-present False))))
 
 
 (deftest test-the-workers-program-returns-each-boot-root-answer-in-swap-order
-  ;; root の準備の答えは Program の結果に載る(#3725)— 戻し先の root が残っていない(previous-root-present = 偽)事と組んだ秒を、起こした
-  ;; 側が台ごとに名指しで読める。答えを受けて捨てる Program では結果が None で、戻し先が無い事がどこにも出ない(直す前の形で赤)。
+  ;; root の準備の答えは Program の結果に載る(#3725)— 戻し先の root が残っていない(previous-root-present = 偽)事と組んだ秒を、実行した
+  ;; 側が worker ごとに読める。答えを受けて捨てる Program では結果が None で、戻し先が無い事がどこにも出ない(直す前の形で赤)。
   (<- prepared tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)
                                      boot-roots-built-without-a-previous-root]
                        (upgrade-workers #(TARGET-A TARGET-B) LIMITS)))
@@ -601,7 +601,7 @@
 
 
 (deftest test-the-cluster-program-returns-the-coordinator-boot-root-answer-last
-  ;; coordinator まで上げる回の結果は、worker の分の後に coordinator の分が並ぶ(戻し先の有無を 3 つとも名指しで読める)。
+  ;; coordinator まで上げる場合の結果は、worker の分の後に coordinator の分が並ぶ(戻し先の有無を 3 つとも対象ごとに読める)。
   (<- prepared tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)
                                      boot-roots-built-without-a-previous-root]
                        (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS)))

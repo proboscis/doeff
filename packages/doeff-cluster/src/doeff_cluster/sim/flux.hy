@@ -16,11 +16,11 @@
 ;;; 文書(dict の列)にするのは、配備する側が ManifestDocuments に答える handler(配備する側の検と、この package の検は yaml で答える)。
 ;;; doeff-cluster の source は yaml を import しない(test_package_independence の許可表のまま — #3566)。
 ;;;
-;;; 自己起動の root の置き場(本物の worker / coordinator の $WORK_DIR の代わり — #3725)は、版上げの Program の effect に答える
+;;; 自己起動の root の保存先(本物の worker / coordinator の $WORK_DIR の代わり — #3725)は、版上げの Program の effect に答える
 ;;; flux-declarations が持つ: 在る root = 今 動いている版の物(その版で起動した — worker は模擬の世界の今の世代の版・coordinator は
 ;;; 当たっている宣言の版)と、PrepareBootRoot で先に準備した物(足すだけで消さない)。
-;;; 当てた瞬間に、入れ替える物の置き場の写し(BootRootsAtStart)を残す — 条 V5 が判じる。宣言を当てるだけの reconcile-manifests は
-;;; 置き場を持たない(版上げの Program を通さずに手で当てる筋書きには、準備の答え手が居ない)。
+;;; 当てた瞬間に、入れ替える対象の保存先のスナップショット(BootRootsAtStart)を残す — 条 V5 が判定する。宣言を当てるだけの reconcile-manifests は
+;;; 保存先を持たない(版上げの Program を通さずに手で当てる筋書きには、準備の handler が居ない)。
 (require doeff-hy.macros [val var defk defhandler defeffect <-])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
@@ -49,7 +49,7 @@
 (val COORDINATOR-ROLE "coordinator")
 ;; coordinator の task の phase のうち、worker に置かれている物(置かれた・準備中・走り中)。
 (val PLACED-PHASES (frozenset #("assigned" "preparing" "running")))
-;; 模擬の置き場が自己起動の root を組むのにかかる秒 — 待たずに組む(本番は root の準備と初回の import で 15〜25 秒・空の置き場なら分の単位)。
+;; 模擬の保存先が自己起動の root を組むのにかかる秒 — 待たずに組む(本番は root の準備と初回の import で 15〜25 秒・空の保存先なら分の単位)。
 (val SIM-BUILD-SECONDS 0.0)
 
 
@@ -210,13 +210,13 @@
 
 
 (defeffect BootRootsAtStartsSeen
-  "検の effect: flux-declarations が当てた入れ替えの瞬間ごとの置き場の写しの全部(始めた順)— 版上げの Program の後に条 V5 を判じるため。"
+  "テスト用の effect: flux-declarations が当てた入れ替えの瞬間ごとの保存先のスナップショットの全部(始めた順)— 版上げの Program の後に条 V5 を判定するため。"
   {:answer (get tuple #(BootRootsAtStart ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
 (defrecord BootRoot
-  "模擬の置き場に準備済み(完成の印つき)で在る自己起動の root 1 つ: target = 置き場の持ち主(worker の名か \"coordinator\")・
+  "模擬の保存先に準備済み(完成のマークつき)で在る自己起動の root 1 つ: target = 保存先の持ち主(worker の名か \"coordinator\")・
    doeff-commit = root の版。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str target)
@@ -225,7 +225,7 @@
 
 (defk worker-running-roots [name]
   {:pre [(: name str)] :post [(: % (get tuple #(BootRoot ...)))] :tags {:context "doeff-cluster" :role "program"}}
-  "worker name が今 動いている版の自己起動の root を返すため(模擬の世界の今の世代の版 — その版で起動したので、root は置き場に在る)。"
+  "worker name が今 動いている版の自己起動の root を返すため(模擬の世界の今の世代の版 — その版で起動したので、root は保存先に在る)。"
   (<- now SimWorker (WorkerOf name))
   #((BootRoot :target name :doeff-commit now.doeff-commit)))
 
@@ -233,7 +233,7 @@
 (defk coordinator-running-roots [applied]
   {:pre [(: applied (get tuple #(DeployedEnv ...)))] :post [(: % (get tuple #(BootRoot ...)))] :tags {:context "doeff-cluster" :role "program"}}
   "coordinator が今 動いている版の自己起動の root を返すため — 模擬の coordinator は版を持たないので、当たっている宣言(applied)の
-   coordinator の版を動いている版と読む(その版で起動したので、root は置き場に在る)。版の行を持たない宣言(自己起動でない coordinator)は
+   coordinator の版を動いている版とみなす(その版で起動したので、root は保存先に在る)。版の行を持たない宣言(自己起動でない coordinator)は
    数えない — 動いている版の root が無いので、上げる前の版の root も無い。"
   (<- names (get frozenset str) (coordinator-launch-names))
   (var found #())
@@ -248,8 +248,8 @@
 (defk running-roots-of [launch applied]
   {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: applied (get tuple #(DeployedEnv ...)))]
    :post [(: % (get tuple #(BootRoot ...)))] :tags {:context "doeff-cluster" :role "program"}}
-  "入れ替え先の値 launch が名指す物が、今 動いている版の自己起動の root を返すため(置き場に在る root のうち、準備しなくても在る物 —
-   上げる前の版の root が在るかもここから読む)。読むのは名指された 1 つだけ(ほかの Deployment の env は読まない)。"
+  "入れ替え先の値 launch が指す対象が、今 動いている版の自己起動の root を返すため(保存先に在る root のうち、準備しなくても在る物 —
+   上げる前の版の root が在るかもここから読む)。読むのは指定された 1 つだけ(ほかの Deployment の env は読まない)。"
   (<- found (get tuple #(BootRoot ...))
       (match launch
         (WorkerLaunch :name name) (worker-running-roots name)
@@ -260,7 +260,7 @@
 (defk running-roots-at [start applied]
   {:pre [(: start UpgradeStart) (: applied (get tuple #(DeployedEnv ...)))] :post [(: % (get tuple #(BootRoot ...)))]
    :tags {:context "doeff-cluster" :role "program"}}
-  "入れ替えを始めた瞬間に、入れ替える物が動いていた版の自己起動の root を返すため: worker はその瞬間の名簿の写しの版(版を読めた時)・
+  "入れ替えを始めた瞬間に、入れ替える対象が動いていた版の自己起動の root を返すため: worker はその瞬間の名簿のコピーにある版(版を読めた時)・
    coordinator は当てる前の宣言(applied)の版。"
   (<- found (get tuple #(BootRoot ...))
       (match start.kind
@@ -271,7 +271,7 @@
 
 (defk roster-roots [start]
   {:pre [(: start UpgradeStart)] :post [(: % (get tuple #(BootRoot ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker の入れ替えを始めた瞬間の名簿の写しから、その worker が動いていた版の自己起動の root を引くため(版を読めた時だけ)。"
+  "worker の入れ替えを始めた瞬間の名簿のコピーから、その worker が動いていた版の自己起動の root を引くため(版を読めた時だけ)。"
   (tuple (gfor entry start.roster
                :if (and (= entry.worker start.target) (is-not entry.doeff-commit None))
                (BootRoot :target start.target :doeff-commit entry.doeff-commit))))
@@ -280,15 +280,15 @@
 (defk roots-with [roots more]
   {:pre [(: roots (get tuple #(BootRoot ...))) (: more (get tuple #(BootRoot ...)))] :post [(: % (get tuple #(BootRoot ...)))]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "模擬の置き場の root の列に more を足すため(同じ root は重ねない)。足すだけで消さない — 上げる前の版の root は戻し先として残る。"
+  "模擬の保存先の root の列に more を足すため(同じ root は重ねない)。足すだけで消さない — 上げる前の版の root は戻し先として残る。"
   (+ roots (tuple (gfor root more :if (not-in root roots) root))))
 
 
 (defk places-at [starts roots applied]
   {:pre [(: starts (get tuple #(UpgradeStart ...))) (: roots (get tuple #(BootRoot ...))) (: applied (get tuple #(DeployedEnv ...)))]
    :post [(: % (get tuple #(BootRootsAtStart ...)))] :tags {:context "doeff-cluster" :role "program"}}
-  "入れ替えを始めた瞬間の記録ごとに、入れ替える物の置き場の写し(その瞬間に準備済みで在った root の版)を作るため(条 V5 の入力)。
-   在る root = その瞬間に動いていた版の物と、先に準備した物(roots — 当てている間に置き場へ足す手は無いので、当てる直前の物と同じ)。
+  "入れ替えを始めた瞬間の記録ごとに、入れ替える対象の保存先のスナップショット(その瞬間に準備済みで在った root の版)を作るため(条 V5 の入力)。
+   在る root = その瞬間に動いていた版の物と、先に準備した物(roots — 当てている間に保存先へ足す手順は無いので、当てる直前の物と同じ)。
    applied = 当てる前の宣言。"
   (var seen #())
   (for [start starts]
@@ -306,9 +306,9 @@
   ;; 1 回の当て(前に当てた物 applied は session に持つ — 初めは initial = 筋書きが Desire の前に読んだ manifest-state)・名簿の読みは
   ;; upgrade-state。当てた瞬間の記録は session に積み、UpgradeStartsSeen で返す。空の機体の起動の確かめは、模擬の世界では通る
   ;; (落ちる版の筋書きは refused-clean-boots を内側に置く)。
-  ;; 自己起動の root の準備(PrepareBootRoot)は、模擬の置き場に無ければ待たずに組み、在れば準備済みと答える(断られる筋書きは
-  ;; refused-boot-roots を内側に置く)。置き場に在る root = 名指された物が今 動いている版の物と、session に覚えた物(roots — 先に準備した
-  ;; 物と、準備の時に動いていた版の物。足すだけで消さない)。当てた瞬間の置き場の写しは session に積み、BootRootsAtStartsSeen で返す。
+  ;; 自己起動の root の準備(PrepareBootRoot)は、模擬の保存先に無ければ待たずに組み、在れば準備済みと答える(断られる筋書きは
+  ;; refused-boot-roots を内側に置く)。保存先に在る root = 指定された対象が今 動いている版の物と、session に覚えた物(roots — 先に準備した
+  ;; 物と、準備の時に動いていた版の物。足すだけで消さない)。当てた瞬間の保存先のスナップショットは session に積み、BootRootsAtStartsSeen で返す。
   (session var applied initial)
   (session var starts #())
   (session var roots #())
@@ -346,9 +346,9 @@
   {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: target str) (: held (get tuple #(BootRoot ...)))
          (: running (get tuple #(BootRoot ...)))]
    :post [(: % (| BootRootAlreadyPrepared BootRootBuilt))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "模擬の置き場(held — 準備の前に名指された物の置き場に在る root)から、入れ替え先の版の root の準備の答えを作るため: 在れば準備済み・
-   無ければ組んだ(SIM-BUILD-SECONDS)。上げる前の版の root が在るか = その物が今 動いている版を持つか(running — 動いている版の
-   root は置き場に在る)。"
+  "模擬の保存先(held — 準備の前に指定された対象の保存先に在る root)から、入れ替え先の版の root の準備の答えを作るため: 在れば準備済み・
+   無ければ組んだ(SIM-BUILD-SECONDS)。上げる前の版の root が在るか = その対象が今 動いている版を持つか(running — 動いている版の
+   root は保存先に在る)。"
   (val kept (bool running))
   (if (in (BootRoot :target target :doeff-commit launch.doeff-commit) held)
       (BootRootAlreadyPrepared :target target :previous-root-present kept)
@@ -374,9 +374,9 @@
 
 
 (defhandler refused-boot-roots [#^ (get frozenset str) targets #^ BootRootRefusal reason]
-  ;; 引数に残す理由: どの入れ替え先の root の準備が、どの訳で断られるかは筋書きごとに違う値(模擬の世界そのもの)。
+  ;; 引数に残す理由: どの入れ替え先の root の準備が、どの理由で断られるかは筋書きごとに違う値(模擬の世界そのもの)。
   ;; 自己起動の root を準備できない筋書きのため(入れ替え先の版の起動の script が準備の役を知らない・準備が落ちる など): targets に名の
-  ;; 在る入れ替え先の準備だけを reason で断る(模擬の置き場には何も足さない)。ほかの準備は外側(flux-declarations)へ渡す。
+  ;; 在る入れ替え先の準備だけを reason で断る(模擬の保存先には何も足さない)。ほかの準備は外側(flux-declarations)へ渡す。
   (PrepareBootRoot [launch]
     :when (in (if (isinstance launch WorkerLaunch) launch.name "coordinator") targets)
     (<- target str (launch-target launch))

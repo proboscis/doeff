@@ -2,14 +2,14 @@
 ;;; 12 回(#3156)で手でした順と待ちを、条 V1〜V5(coordinator/core/upgrade_invariants.hy)を自分で守る形にした:
 ;;;
 ;;;   worker ごとに: その worker に置かれた task が終わるのを待つ(V2)→ 空の機体の起動を確かめる(ConfirmCleanBoot — 断られたら
-;;;                  UpgradeRefused で止まる・単位 5a)→ 入れ替え先の版の自己起動の root を今の置き場に先に準備する(PrepareBootRoot —
+;;;                  UpgradeRefused で止まる・単位 5a)→ 入れ替え先の版の自己起動の root を今の保存先に先に準備する(PrepareBootRoot —
 ;;;                  V5・断られたら UpgradeRefused で止まる・#3725)→ DesireWorker → PublishDeclarations → ApplyDeclarations →
 ;;;                  新しい版で live に戻るのを待つ(V3 — 戻りが来なければ次へ進まない)
 ;;;   最後に:       worker が全部新しい版で live(V1)・待ち行列が空(V4)を待つ → 空の起動を確かめる → root を準備する(V5)→
 ;;;                  DesireCoordinator → 公開 → 当てる → 戻りを待つ
 ;;;
-;;; 入れ替えの前の 2 つの手(確かめ・root の準備)は宣言を書く前に通す — どちらが断られても、宣言にも名簿にも何も書かずに止まる。
-;;; root の準備は effect 1 つで、答え手が準備の終わりまで受け持って答える(ここは答えを 1 回受けるだけ — 時間で読み直さない)。
+;;; 入れ替えの前の 2 つの手順(起動の確認・root の準備)は宣言を書く前に通す — どちらが断られても、宣言にも名簿にも何も書かずに止まる。
+;;; root の準備は effect 1 つで、handler が準備の終わりまで受け持って答える(ここは答えを 1 回受けるだけ — 時間で読み直さない)。
 ;;;
 ;;; worker の輪だけの upgrade-workers は、coordinator を入れ替えない回(今の coordinator が新しい worker を受ける版の組)の入口でもある。
 ;;; V1 は名簿の worker の全部で判じる — 読み手が版を読めない worker(RosterEntry の doeff-commit が None)は新しい版と数えない(#3366)。
@@ -170,12 +170,12 @@
 (defk prepare-boot-root [launch target]
   {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: target str)] :post [(: % (| BootRootAlreadyPrepared BootRootBuilt))]
    :tags {:context "doeff-cluster" :role "program"}}
-  "入れ替え先の版の自己起動の root を、宣言を書く前に、その物の今の置き場に準備しておくため(作り直した process が起動の中で root を
+  "入れ替え先の版の自己起動の root を、宣言を書く前に、入れ替える対象の今の保存先に準備しておくため(作り直した process が起動の中で root を
    準備して初回の import をする間 — 実測 15〜25 秒 — service に届かなくなるのを避ける・条 V5・#3725)。準備済みでも組んでも先へ進み、
-   断られたら UpgradeRefused で target と断りの答え(訳は閉じた語)を名指して止まる(宣言を書かず公開もしない — cluster は変わらない)。
-   待ちは答え手が持つ — ここは答えを 1 回受けるだけ。答えは 3 つの型のどれか(それ以外の値を返す答え手は、ここで型の名指しで落ちる —
-   知らない答えを「準備済み」と読んで先へ進まない)。通った答え(準備済みだった・組んだ)はそのまま返す — 組んだ秒と、上げる前の版の
-   root が置き場に残っているか(previous-root-present = 戻し先が在るか)を、Program を起こした側が読めるように。"
+   断られたら UpgradeRefused で target と拒否の答え(理由は閉じた語)を明示して止まる(宣言を書かず公開もしない — cluster は変わらない)。
+   待ちは handler が持つ — ここは答えを 1 回受けるだけ。答えは 3 つの型のどれか(それ以外の値を返す handler は、ここで型の名前を明示して落ちる —
+   知らない答えを「準備済み」とみなして先へ進まない)。通った答え(準備済みだった・組んだ)はそのまま返す — 組んだ秒と、上げる前の版の
+   root が保存先に残っているか(previous-root-present = 戻し先が在るか)を、Program を実行した側が読めるように。"
   (<- answer (| BootRootAlreadyPrepared BootRootBuilt BootRootRefused) (PrepareBootRoot launch))
   (match answer
     (BootRootAlreadyPrepared) answer
@@ -189,8 +189,8 @@
    :tags {:context "doeff-cluster" :role "program"}}
   "worker を 1 台ずつ新しい値へ入れ替えるため(条 V2・V3 の待ち — 頭の註)。coordinator は入れ替えない — worker だけを上げる回
    (coordinator が今の版のまま新しい worker を受ける版の組)と、upgrade-cluster の前半の両方がこれを通る(#3366)。どの入れ替えも、
-   宣言を書く前に空の機体の起動を確かめ(confirm-clean-boot)、入れ替え先の版の root を置き場に準備する(prepare-boot-root)。
-   答え = worker ごとの root の準備の答えを、入れ替えた順に並べた列(起こした側が、台ごとの秒と戻し先の有無を終わりに出すため)。"
+   宣言を書く前に空の機体の起動を確かめ(confirm-clean-boot)、入れ替え先の版の root を保存先に準備する(prepare-boot-root)。
+   答え = worker ごとの root の準備の答えを、入れ替えた順に並べた列(実行した側が、worker ごとの秒と戻し先の有無を終わりに出すため)。"
   (var prepared #())
   (for [w workers]
     (<- (await-until (.format "worker {} に置かれた task が終わる" w.name) (partial no-task-on w.name) (partial tasks-on-line w.name)
@@ -210,9 +210,9 @@
   {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: coordinator CoordinatorLaunch) (: limits UpgradeLimits)]
    :post [(: % (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)))]
    :tags {:context "doeff-cluster" :role "program"}}
-  "worker を 1 台ずつ新しい値へ入れ替え(upgrade-workers)、最後に coordinator を入れ替えるため(条 V1〜V5 を守る順と待ち — 頭の註)。
+  "worker を 1 つずつ新しい値へ入れ替え(upgrade-workers)、最後に coordinator を入れ替えるため(条 V1〜V5 を守る順と待ち — 頭の註)。
    worker の値の doeff-commit と coordinator の doeff-commit は同じ版を言う(V1 の「同じ版で live」)。V1 は名簿の worker の全部で
-   判じる — 版の読めない worker(RosterEntry の doeff-commit が None)は新しい版と数えないので、その待ちで名指しで止まる。
+   判定する — 版の読めない worker(RosterEntry の doeff-commit が None)は新しい版と数えないので、その待ちの名前を明示して止まる。
    答え = root の準備の答えの列(worker の分を入れ替えた順に・最後に coordinator の分)。"
   (<- prepared (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) (upgrade-workers workers limits))
   (<- (await-until (.format "worker が全部 版 {} で live" coordinator.doeff-commit) (partial all-back-on coordinator.doeff-commit)

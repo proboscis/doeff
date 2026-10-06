@@ -143,16 +143,16 @@
 ;;;   V4 coordinator-swap-on-an-empty-queue — coordinator の入れ替えを始めるのは queued の task が無い時だけ(作り直した coordinator が
 ;;;   worker の行を読めないと queued は即 落ちる — 2026-10-05 の taskReserve の形・#2440)。失敗ケース =
 ;;;   test-starting-the-coordinator-with-a-queued-task-breaks-v4。
-;;;   V5 swap-after-boot-root-prepared(#3725)— worker / coordinator の入れ替えを始めるのは、その物の置き場に入れ替え先の版の自己起動の
-;;;   root が準備済み(完成の印つき)で在る時だけ(無いと、作り直した process が起動の中で root を準備して初回の import をする間 — 実測
-;;;   15〜25 秒 — その上の service に届かない)。判じるのは入れ替えを始めた瞬間の置き場の写し(BootRootsAtStart — 入れ替えの記録と、その
-;;;   瞬間に準備済みで在った root の版。置き場は名簿にも task にも出ず、準備の答え手だけが読むので、V1〜V4 の記録とは別の列)。守りは
-;;;   版上げの Program(shared/core/upgrade_program.hy)の順の 1 か所: 空の機体の確かめ → root の準備(PrepareBootRoot — 答え手が準備の
+;;;   V5 swap-after-boot-root-prepared(#3725)— worker / coordinator の入れ替えを始めるのは、入れ替える対象の保存先に入れ替え先の版の自己起動の
+;;;   root が準備済み(完成のマークつき)で在る時だけ(無いと、作り直した process が起動の中で root を準備して初回の import をする間 — 実測
+;;;   15〜25 秒 — その上の service に届かない)。判定するのは入れ替えを始めた瞬間の保存先のスナップショット(BootRootsAtStart — 入れ替えの記録と、
+;;;   その瞬間に準備済みで在った root の版。保存先は名簿にも task にも出ず、準備の handler だけが読むので、V1〜V4 の記録とは別の列)。守るのは
+;;;   版上げの Program(shared/core/upgrade_program.hy)の順の 1 か所: 空の機体の確認 → root の準備(PrepareBootRoot — handler が準備の
 ;;;   終わりまで受け持つ)→ 宣言を書く。確かめるのは tests/test_upgrade_program.hy の test-the-upgrade-program-keeps-v1-to-v5(模擬の
-;;;   Flux と模擬の置き場の上で Program を走らせ、置き場の写しを判断に渡す)。失敗ケースは tests/test_upgrade_invariants.hy の
+;;;   Flux と模擬の保存先の上で Program を走らせ、保存先のスナップショットを判断に渡す)。失敗ケースは tests/test_upgrade_invariants.hy の
 ;;;   test-swapping-before-the-boot-root-is-prepared-breaks-v5(合成の列)・
 ;;;   test-a-program-that-desires-before-the-boot-root-is-prepared-breaks-v5(準備の前に Desire を出す壊した Program)・
-;;;   test-an-answer-that-claims-a-boot-root-it-did-not-build-breaks-v5(組まずに「組んだ」と答える壊した答え手)。
+;;;   test-an-answer-that-claims-a-boot-root-it-did-not-build-breaks-v5(組まずに「組んだ」と答える壊した handler)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
