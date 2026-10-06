@@ -51,6 +51,8 @@ from doeff_cluster.coordinator.intent.due_model import DueAt as DueAt
 from doeff_cluster.coordinator.intent.due_model import DueNow as DueNow
 from doeff_cluster.coordinator.intent.due_model import DueNever as DueNever
 from doeff_cluster.coordinator.core.due_policy import due_of_instants as due_of_instants
+from doeff_cluster.coordinator.intent.worker_notices import WorkerBack as WorkerBack
+from doeff_cluster.coordinator.intent.worker_notices import WorkerGone as WorkerGone
 from doeff_hy.table import Table as Table
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
@@ -138,6 +140,12 @@ def silent_names(state: ClusterState, now: int, timing: ClusterTiming) -> frozen
     ...
 
 def note_liveness(state: ClusterState, now: int, timing: ClusterTiming) -> ClusterState:
+    ...
+
+def liveness_moves(before: ClusterState, after: ClusterState, timing: ClusterTiming) -> _Program[tuple, object]:
+    ...
+
+def liveness_now(state: ClusterState, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
 def placeable(needs: tuple, worker: WorkerInfo) -> bool:
