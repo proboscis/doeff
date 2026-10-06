@@ -22,6 +22,7 @@ Usage:
 """
 
 import functools
+import itertools
 import logging
 import os
 import sys
@@ -69,6 +70,32 @@ HANDLE_SWEEP_INTERVAL = 1024
 # registration time (#502): a long-lived PENDING promise whose owner mints
 # `.future` repeatedly must not accumulate dead refs until terminality.
 HANDLE_REFS_PRUNE_MIN = 8
+
+# 測りの口(agora-redesign #3861 の測り・#3855 と同じ口)。branch の上だけで、main へは登録しない。
+# sink を据えると、Python の scheduler が出来事ごとに dict を 1 つ渡す。None なら何も読まない。
+TraceSink = Callable[[dict[str, object]], None]
+_trace_sink: TraceSink | None = None
+_trace_runs = itertools.count()
+
+
+def set_scheduler_trace(sink: TraceSink | None) -> None:
+    """process 全体で 1 つの測りの sink を据える(None で外す)。"""
+    global _trace_sink
+    _trace_sink = sink
+
+
+def _trace(event: str, run: int | None, **fields: object) -> None:
+    sink = _trace_sink
+    if sink is None:
+        return
+    sink({
+        "event": event,
+        "run": run,
+        "thread": threading.current_thread().name,
+        "ns": time.perf_counter_ns(),
+        "cpu_ns": time.thread_time_ns(),
+        **fields,
+    })
 
 
 def _boundary_callable(kind: str, boundary_callable: Callable[..., object]) -> object:
@@ -568,9 +595,10 @@ class ExternalPromise(Generic[_T]):
     ``complete``/``fail`` は scheduler の thread に割り込む signal の受け手からも呼んでよい
     (python の実装の外からの完了の列は put が reentrant な ``queue.SimpleQueue`` — agora-redesign #3584)。
     """
-    def __init__(self, promise_id, queue, _register=None, _bind_cancel=None) -> None:
+    def __init__(self, promise_id, queue, _register=None, _bind_cancel=None, _run=None) -> None:
         self.promise_id = promise_id
         self._queue = queue
+        self._run = _run
         self._register = _register
         self._bind_cancel = _bind_cancel
 
@@ -612,10 +640,12 @@ class ExternalPromise(Generic[_T]):
 
     def complete(self, value: _T) -> None:
         """値で完了する。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
+        _trace("external-complete", self._run, pid=self.promise_id)
         self._queue.put(("complete", self.promise_id, value))
 
     def fail(self, error):
         """error で失敗にする。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
+        _trace("external-complete", self._run, pid=self.promise_id, failed=True)
         self._queue.put(("fail", self.promise_id, error))
 
     def __repr__(self):
@@ -903,6 +933,13 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     # (queue.Queue は入れ子で取れない lock を持ち、その lock の中に合図が当たると put が同じ thread を待って止まった —
     # agora-redesign #3584)。
     external_queue = queue_mod.SimpleQueue()  # thread-safe, blocking get()
+    # 測りの口(#3861): この run の番号と、ready の entry の通し番号ごとの起こされ方
+    # (external の時は起こした外の約束の id)。sink が無い時は何も積まない。
+    run_id = next(_trace_runs)
+    wake_context: list[tuple[str, int | None]] = [("internal", None)]
+    wake_of_seq: dict[int, tuple[str, int | None]] = {}
+    # sys._is_gil_enabled は Python 3.13 から。それより前は GIL が常に有る。
+    _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
     handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
     handle_prune_at = {}  # waitable_key → refs length that triggers a dead-ref prune
 
@@ -1022,11 +1059,32 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             )
         return entry["status"], entry.get("result")
 
-    def enqueue(entry, priority=PRIORITY_NORMAL):
+    def enqueue(entry, priority=PRIORITY_NORMAL, wake=None):
         """Add entry to priority queue. Higher priority = served first."""
         seq = insertion_seq[0]
         insertion_seq[0] += 1
         heapq.heappush(ready, (-priority, seq, entry))
+        if _trace_sink is not None:
+            trace_enqueued(entry, priority, seq, wake)
+
+    def trace_enqueued(entry, priority, seq, wake):
+        """測りの口(#3861): 並べた entry の起こされ方と、その前に並ぶ entry の数と起こされ方を出す。"""
+        kind, pid = (
+            ("placeholder", None) if entry[0] == "wait_external"
+            else (wake, None) if wake is not None
+            else wake_context[0]
+        )
+        wake_of_seq[seq] = (kind, pid)
+        ahead = [
+            wake_of_seq.get(other_seq, ("untracked", None))[0]
+            for neg, other_seq, _entry in ready
+            if (neg, other_seq) < (-priority, seq)
+        ]
+        _trace(
+            "enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority,
+            ready=len(ready), ahead=len(ahead),
+            ahead_by_wake={name: ahead.count(name) for name in set(ahead)},
+        )
 
     def has_live_ready_entry(include_daemons):
         """True when the ready heap holds an entry that can still run.
@@ -1209,7 +1267,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         promise["result"] = value
         # Settled: nothing left to cancel; drop the callbacks' references.
         promise.pop("cancel_callbacks", None)
-        wake_waiters(("promise", pid))
+        _trace("external-drained", run_id, pid=pid, ready=len(ready))
+        wake_context[0] = ("external", pid)
+        try:
+            wake_waiters(("promise", pid))
+        finally:
+            wake_context[0] = ("internal", None)
 
     def bind_cancel_callback(pid: int, callback: Callable[[], object]) -> None:
         """Backs ExternalPromise.on_cancel (scheduler thread only)."""
@@ -1522,6 +1585,15 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     return True
         return False
 
+    def trace_entered(heap_item, tid):
+        """測りの口(#3861): 選んだ entry の起こされ方を resumed で、task へ入る時を task-enter で出す。"""
+        if _trace_sink is None:
+            return
+        kind, pid = wake_of_seq.pop(heap_item[1], ("untracked", None))
+        site = None if tid is None else tasks[tid].get("spawn_site")
+        _trace("resumed", run_id, tid=tid, wake=kind, pid=pid, ready=len(ready))
+        _trace("task-enter", run_id, tid=tid, site=site, ready=len(ready))
+
     def pick_next():  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
         from doeff.program import ResumeThrow
         # Heap tuples held out of the heap for the duration of this call:
@@ -1566,11 +1638,13 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         # observers) captured at the spawn site, innermost first —
                         # preserves handler/observer nesting order, in one VM step.
                         prog = _reinstall_boundaries(prog, tasks[tid].pop("inner_boundaries", []))
+                        trace_entered(heap_item, tid)
                         return make_handler(tid)(wrap_task(tid, prog))
                     if entry[0] == "resume":
                         _, owner_tid, cont, value = entry
                         if is_owner_cancelled(owner_tid):
                             continue
+                        trace_entered(heap_item, owner_tid)
                         return Transfer(cont, value)
                     if entry[0] == "sem_resume":
                         # A ReleaseSemaphore permit travelling to a parked
@@ -1580,11 +1654,13 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         if is_owner_cancelled(owner_tid):
                             return_inflight_permit(sid, owner_tid)
                             continue
+                        trace_entered(heap_item, owner_tid)
                         return Transfer(cont, None)
                     if entry[0] == "raise":
                         _, owner_tid, cont, error = entry
                         if is_owner_cancelled(owner_tid):
                             continue
+                        trace_entered(heap_item, owner_tid)
                         return ResumeThrow(cont, error)
                     if entry[0] == "wait_external":
                         # Placeholder for a task waiting on an external promise.
@@ -1908,6 +1984,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     @do
     def handle_scheduler_effect(current_tid, effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+        _trace(
+            "task-leave", run_id, tid=current_tid, effect=type(effect).__name__,
+            ready=len(ready),
+        )
         drain()
         if isinstance(effect, Spawn):
             # Capture the boundary stack (handlers AND WithObserve observers)
@@ -1928,7 +2008,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                              inner_boundaries=inner_boundaries,
                              daemon=effect.daemon)
             tasks[tid]["spawn_site"] = spawn_site
-            enqueue(("new", tid), effect.priority)
+            enqueue(("new", tid), effect.priority, wake=("new", None))
             # Spawner resumes at its OWN task priority (#504): a hard-coded
             # NORMAL here would promote an IDLE spawner above the
             # PRIORITY_EXTERNAL_WAIT shield and demote a HIGH spawner.
@@ -2274,6 +2354,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     pid, external_queue,
                     _register=register_handle,
                     _bind_cancel=bind_cancel_callback,
+                    _run=run_id,
                 ),
             )
             r = yield Resume(k, ep)
