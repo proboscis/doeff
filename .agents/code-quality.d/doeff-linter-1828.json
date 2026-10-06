@@ -118,6 +118,7 @@
     "packages/doeff-linter/src/project/system_decls.rs",
     "packages/doeff-linter/src/project/system_access.rs",
     "packages/doeff-linter/src/project/record_waits.rs",
+    "packages/doeff-linter/src/project/timed_refetch.rs",
     "packages/doeff-linter/tests/out_of_scope.rs"
   ],
   "modules": [
@@ -238,7 +239,8 @@
         "packages/doeff-linter/src/project/affected_tests.rs",
         "packages/doeff-linter/src/project/system_decls.rs",
         "packages/doeff-linter/src/project/system_access.rs",
-        "packages/doeff-linter/src/project/record_waits.rs"
+        "packages/doeff-linter/src/project/record_waits.rs",
+        "packages/doeff-linter/src/project/timed_refetch.rs"
       ],
       "public": [
         "packages/doeff-linter/src/project/allowed_heads.rs",
