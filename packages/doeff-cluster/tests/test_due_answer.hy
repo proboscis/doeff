@@ -13,6 +13,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])
 (import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks task-due liveness-due sweep-due note-liveness liveness-deadline])
+(import doeff_cluster.coordinator.core.api_policy [tick tick-due])
 
 
 (val PYTHON #((ComponentVersion "python" "3")))
@@ -94,3 +95,31 @@
   (<- empty-task (| DueAt DueNow DueNever) (task-due (ClusterState) 0 timing))
   (<- empty-sweep (| DueAt DueNow DueNever) (sweep-due (ClusterState) 0 timing))
   (assert (= #(empty-live empty-task empty-sweep) #((DueNever) (DueNever) (DueNever))) #(empty-live empty-task empty-sweep)))
+
+
+(defk settled-scenarios []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "落ち着いた状態の筋書き #(名 状態) を並べるため(どれも、要求の無い歩を進めても状態が変わらない — 長く続きうる): 置ける worker が全部
+   埋まっていて待つ task・能力の合う worker が黙っていて待つ task・置いた task と生きた担い手・何も無い状態。"
+  (<- busy WorkerInfo (worker-at "w" 14000 1))
+  (<- silent WorkerInfo (worker-at "s" 0 1))
+  (<- run TaskRecord (task-on "run" "assigned" "w"))
+  (<- wait TaskRecord (task-on "wait" "queued" None))
+  #(#("置ける worker が埋まっていて待つ task" (ClusterState :workers {"w" busy} :tasks {"run" run "wait" wait}))
+    #("能力の合う worker が黙っていて待つ task" (ClusterState :workers {"s" silent} :tasks {"wait" wait}))
+    #("置いた task と生きた担い手" (ClusterState :workers {"w" busy} :tasks {"run" run}))
+    #("何も無い状態" (ClusterState))))
+
+
+(deftest test-a-settled-state-is-never-due-now
+  ;; 要求の無い歩(tick)を 1 つ進めて落ち着いた状態(もう 1 歩進めても変わらない)では、期限の答えは今すぐ(DueNow)ではない。
+  ;; 待ち方を期限まで待つ形に替えた時に、待たずの歩が回り続けないための守り(#3865 の単位 2 の前提)。
+  (val timing (ClusterTiming))
+  (val now 15000)
+  (<- scenarios tuple (settled-scenarios))
+  (for [#(name state) scenarios]
+    (<- settled ClusterState (tick state now timing))
+    (<- again ClusterState (tick settled now timing))
+    (assert (= again settled) #(name "もう 1 歩で状態が変わった — 筋書きが落ち着いていない"))
+    (<- due (| DueAt DueNow DueNever) (tick-due settled now timing))
+    (assert (!= due (DueNow)) #(name due))))
