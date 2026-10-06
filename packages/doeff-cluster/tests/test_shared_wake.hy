@@ -34,7 +34,7 @@
     (setv self.entered (threading.Event))
     None)
 
-  (defn #^ object get [self [block True] [timeout None]]
+  (defn #^ object get [self #^ bool [block True] #^ (| float None) [timeout None]]
     (.set self.entered)
     (.get (super) block timeout)))
 
@@ -128,7 +128,7 @@ run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_
 ")
 
 
-(defn #^ str after-sigterm [#^ str code #* args]
+(defn #^ str after-sigterm [#^ str code #^ tuple args]
   "子の process に code を走らせ、ready を読んだら SIGTERM を送り、子が最後に書いた行を返すため(本物の process の本物の合図)。"
   (setv child (subprocess.Popen [sys.executable "-c" code #* args] :stdout subprocess.PIPE :stderr subprocess.PIPE :text True))
   (try
@@ -142,14 +142,14 @@ run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_
 
 (deftest test-a-sigterm-wakes-the-coordinator-inbox-wait
   ;; 20 秒の待ちの最中の SIGTERM で、印が立ち、待ちが 1 秒以内に抜ける。直す前は stop-on-signals が箱を起こさない(待ちは 20 秒)。
-  (val parts (.split (after-sigterm CHILD-INBOX "coordinator")))
+  (val parts (.split (after-sigterm CHILD-INBOX #("coordinator"))))
   (assert (= (get parts 0) "True") parts)
   (assert (< (float (get parts 1)) 1.0) parts))
 
 
 (deftest test-a-sigterm-wakes-the-records-inbox-wait
   ;; 記録の service の箱(RecordInbox — RequestInbox の子)も同じ。
-  (val parts (.split (after-sigterm CHILD-INBOX "records")))
+  (val parts (.split (after-sigterm CHILD-INBOX #("records"))))
   (assert (= (get parts 0) "True") parts)
   (assert (< (float (get parts 1)) 1.0) parts))
 
@@ -157,7 +157,7 @@ run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_
 (deftest test-a-sigterm-ends-the-worker-tick-wait
   ;; 失敗ケース(#3871 の単位 3): 拍 10 秒の待ちの最中の SIGTERM で、核の止めの理由が立ち、待ちが 1 秒以内に抜ける。直す前は拍の待ちが
   ;; 止めの合図を待たない(待ちは 10 秒 — 印は次の拍の頭で読む)。
-  (val parts (.split (after-sigterm CHILD-WORKER)))
+  (val parts (.split (after-sigterm CHILD-WORKER #())))
   (assert (= (cut parts 0 2) ["signal" (str (int signal.SIGTERM))]) parts)
   (assert (< (float (get parts 2)) 1.0) parts))
 

@@ -8,10 +8,11 @@
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.scheduler [Future])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_cluster.shared.core.clock [now-epoch-ms epoch-ms-of])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
-  ReadDesired ObserveWorld WorkerStopRequested PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead] doeff_cluster.shared.intent.job_model [JobPhase])
+  ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
   declared-warm sweep-actions])
 
@@ -165,7 +166,9 @@
   ;; worker の停止要求を受けたら宣言を空として扱い、全 job を同じ停止の手順で回収する。
   (var state (WorkerState))
   (while True
-    (<- stopping bool (WorkerStopRequested))
+    ;; 止めは核の止めの効果で知る(本番 = os-signal-stop-handler の SIGTERM・SIGINT — #3871 の単位 3)。答え = 理由(None = 続ける)。
+    (<- reason (| str None) (StopRequested))
+    (val stopping (is-not reason None))
     (<- ticked tuple (worker-tick state policy stopping))
     (val alive (get ticked 1))
     (:= state (get ticked 0))

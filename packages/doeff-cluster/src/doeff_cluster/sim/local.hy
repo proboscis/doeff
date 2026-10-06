@@ -213,7 +213,7 @@
 ;; worker の世代は入口の組み立て(doeff_cluster.worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster.worker.entry.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
-                       DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus
+                       DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases EnvReport AwaitNextTick StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
                        ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
@@ -708,7 +708,7 @@
 
 
 (defrecord HostStop
-  "worker の拍の止めの問い(WorkerStopRequested)に宿が答える材料(StopRequestOf の答え — 世代の確かめと全 worker の止まれを世界への
+  "worker の拍の止めの問い(核の StopRequested)に宿が答える材料(StopRequestOf の答え — 世代の確かめと全 worker の止まれを世界への
    問い 1 つで・#3054 の C-6)。truth = その worker の宿の真実・all-stopping = 全 worker が止まる時か。"
   (#^ HostTruth truth)
   (#^ bool all-stopping))
@@ -875,7 +875,7 @@
   {:fields [(: now-ms int)] :answer (| int None) :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect StopRequestOf
-  "worker name の拍の止めの問い(WorkerStopRequested)に答える材料 — その worker の宿の真実と、全 worker が止まる時かを世界への問い
+  "worker name の拍の止めの問い(核の StopRequested)に答える材料 — その worker の宿の真実と、全 worker が止まる時かを世界への問い
    1 つで読む(#3054 の C-6)。答え = HostStop。"
   {:fields [(: name str)] :answer HostStop :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -2031,7 +2031,7 @@
    coordinator の止まり(DOWN)。起きた刻より前の仮の拍は届いたものとして写し(settle-rest)、後の拍は取り下げる。拍の刻でなく起きたら、
    1 拍ずつの走りの次の拍の刻まで本番と同じ待ちで眠る(rest-of-pause)。coordinator が止まっている・網が切れている・heartbeat の口が
    故障している・止まりが頼まれている(拍の Program が止まり始めを名乗る — #2819)間は預けない(本番と同じ拍の待ち)。"
-  ;; 宿の真実と、拍の Program が問う止まりの頼み(WorkerStopRequested の答えと同じ)を世界への問い 1 つで読む(#3054 の C-6)。
+  ;; 宿の真実と、拍の Program が問う止まりの頼み(StopRequested の答えと同じ)を世界への問い 1 つで読む(#3054 の C-6)。
   (<- asked HostStop (StopRequestOf worker.name))
   (<- truth HostTruth (checked-truth worker.name boot asked.truth))
   (val all-stopping asked.all-stopping)
@@ -2253,11 +2253,12 @@
     ;; 世界への問い 1 つにする(#2668・L1218 の不変条件 — 前に読んでから書くと 1 組で世界を 2 度通る)。
     (<- (change-live-truth worker.name boot (fn [latest] (statuses-written latest statuses))))
     (resume None))
-  (WorkerStopRequested []
-    ;; 世代の確かめと全 worker の止まれを世界への問い 1 つで読む(#3054 の C-6)。
+  (StopRequested []
+    ;; 世代の確かめと全 worker の止まれを世界への問い 1 つで読む(#3054 の C-6)。止めの頼み(StopWorker・StopWorkers)は本番の
+    ;; worker の Pod への SIGTERM に当たるので、理由は本番の os-signal-stop-handler と同じ綴り(#3871 の単位 3)。
     (<- asked HostStop (StopRequestOf worker.name))
     (<- truth HostTruth (checked-truth worker.name boot asked.truth))
-    (resume (or asked.all-stopping truth.stopping)))
+    (resume (if (or asked.all-stopping truth.stopping) TERM-REASON None)))
   (EnvReport []
     ;; sim の宿は heartbeat の root の名乗りを世界の root から自分で作る(env-heartbeat-part)ので、拍の Program の問いには None で答える。
     (resume None))

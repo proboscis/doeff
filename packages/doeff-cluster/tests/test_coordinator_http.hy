@@ -7,7 +7,6 @@
 (import httpx)
 (import pytest)
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox json-reply StopState stop-on-signals])
-(import doeff_cluster.worker.protocol.stop [StopState :as WorkerStopState])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
@@ -112,19 +111,21 @@
   (assert (in LAN (get lines 1)) lines))
 
 
-(deftest test-stop-on-signals-raises-both-stop-marks-and-refuses-other-values
-  "3 つの main が信号の登録を foundation の 1 か所(stop-on-signals)に任せても、coordinator と記録の置き場の StopState と worker の
-   StopState の両方が SIGTERM・SIGINT で立つ事(main の止まり方が変わらない)— requested を持たない値は登録の前に断る。"
+(deftest test-stop-on-signals-raises-the-stop-mark-and-refuses-other-values
+  "coordinator と記録の置き場の main が信号の登録を foundation の 1 か所(stop-on-signals)に任せても、StopState が SIGTERM・SIGINT の
+   どちらでも立ち、待ちを起こす関数が呼ばれる事(main の止まり方が変わらない)— StopState でない値は登録の前に断る。worker は核の
+   os-signal-stop-handler を使う(#3871)。"
   (val saved #((signal.getsignal signal.SIGTERM) (signal.getsignal signal.SIGINT)))
   (try
-    (for [[kind sig] [[StopState signal.SIGTERM] [WorkerStopState signal.SIGINT]]]
-      (setv mark (kind))
-      (! (stop-on-signals mark))
+    (for [sig [signal.SIGTERM signal.SIGINT]]
+      (setv mark (StopState) woken [None])
+      (! (stop-on-signals mark (fn [] (setv (get woken 0) sig))))
       (assert (not mark.requested))
       (os.kill (os.getpid) sig)
-      (assert mark.requested (.format "{} が {} で立たない" kind.__module__ sig)))
+      (assert mark.requested (.format "{} で立たない" sig))
+      (assert (= woken [sig]) woken))
     (with [(pytest.raises Exception)]
-      (! (stop-on-signals "印でない値")))
+      (! (stop-on-signals "印でない値" (fn [] None))))
     (finally
       (signal.signal signal.SIGTERM (get saved 0))
       (signal.signal signal.SIGINT (get saved 1)))))

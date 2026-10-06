@@ -21,6 +21,8 @@
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import tests.stop_fixtures [stop-signal-never-comes])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles MeasureTree RemoveTree StatPath PathKind FileFailed])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess timed-out-outcome])
@@ -30,7 +32,7 @@
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-                                                 WorkerStopRequested EnvReport PublishStatus PrepareCode ReleaseLeases SweepEnvs EnvDisk])
+                                                 EnvReport PublishStatus PrepareCode ReleaseLeases SweepEnvs EnvDisk])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveEnvDisk])
 (import doeff_cluster.worker.protocol.process_host [HostSettings STOP-TIMING-LOG process-host])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
@@ -216,9 +218,9 @@
       _ (do (:= holding False)
             (:= cut-offs (+ cut-offs 1))
             (resume silenced))))
-  (WorkerStopRequested []
+  (StopRequested []
     (<- now int (now-epoch-ms))
-    (resume (>= now stop-ms)))
+    (resume (if (>= now stop-ms) "signal 15" None)))
   (EnvReport [] (resume None))
   (PublishStatus [statuses note]
     (<- now int (now-epoch-ms))
@@ -320,7 +322,7 @@
 
 (deftest test-a-slow-measure-keeps-the-heartbeat-and-the-job
   ;; 木 1 つの数えに 60 秒(root 4 つで 240 秒)。数えている間も拍は 1 秒ごとに続き、job は止まらない。c と d は消える。
-  (<- got SweepRun (on-slow-disk (worker-run) SLOW-SECONDS 0.0 [(sweep-world RUN-MS None) tick-pauses]))
+  (<- got SweepRun (on-slow-disk (worker-run) SLOW-SECONDS 0.0 [(sweep-world RUN-MS None) stop-signal-never-comes tick-pauses]))
   (<- (kept-running got))
   (assert (>= got.swept 1) got)
   (assert (= got.left #(ROOT-A ROOT-B)) got.left))
@@ -328,7 +330,7 @@
 
 (deftest test-a-slow-remove-keeps-the-heartbeat-and-the-job
   ;; 木 1 つの消しに 60 秒(選んだ root 2 つで 120 秒)。消している間も拍は続き、job は止まらない。
-  (<- got SweepRun (on-slow-disk (worker-run) 0.0 SLOW-SECONDS [(sweep-world RUN-MS None) tick-pauses]))
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 SLOW-SECONDS [(sweep-world RUN-MS None) stop-signal-never-comes tick-pauses]))
   (<- (kept-running got))
   (assert (>= got.load.removed 2) got.load)
   (assert (= got.left #(ROOT-A ROOT-B)) got.left))
@@ -381,7 +383,7 @@
 (deftest test-a-tick-over-the-lag-threshold-names-the-slowest-effect
   ;; 30 秒目の拍の PublishStatus が 6 秒待つ(閾 TICK-LAG-MS = 5 秒を越える)— 拍の遅れの行が 1 つ出て、待った effect の名を名乗る。
   ;; 遅い木は無い(数えも消しも 0 秒)ので、他の拍は行を出さない。
-  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world 60000 (SlowPublish :at-ms 30000 :seconds 6.0)) tick-pauses]))
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world 60000 (SlowPublish :at-ms 30000 :seconds 6.0)) stop-signal-never-comes tick-pauses]))
   (assert (= (len got.lags) 1) got.lags)
   (val lag (get got.lags 0))
   (assert (= lag.slowest ACTIONS-TO-PUBLISH) lag)
@@ -391,7 +393,7 @@
 
 (deftest test-a-tick-under-the-lag-threshold-has-no-lag-line
   ;; 4 秒の待ちは閾の内 — 行を出さない。
-  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world 60000 (SlowPublish :at-ms 30000 :seconds 4.0)) tick-pauses]))
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world 60000 (SlowPublish :at-ms 30000 :seconds 4.0)) stop-signal-never-comes tick-pauses]))
   (assert (= got.lags #()) got.lags))
 
 
@@ -413,9 +415,9 @@
   (ReadDesired [env-report stopping]
     (<- now int (now-epoch-ms))
     (resume (if (< now read-from-ms) (DesiredUnreadable "coordinator に届かない") (DesiredJobs #(ENV-SPEC)))))
-  (WorkerStopRequested []
+  (StopRequested []
     (<- now int (now-epoch-ms))
-    (resume (>= now stop-ms)))
+    (resume (if (>= now stop-ms) "signal 15" None)))
   (EnvReport [] (resume None))
   (PublishStatus [statuses note] (resume None))
   (ReleaseLeases [job instance] (resume None))
@@ -428,7 +430,7 @@
 
 (deftest test-a-restarted-worker-does-not-sweep-before-the-first-declaration
   ;; 起き直してから 30 秒、宣言が読めない(読めるのは筋書きの後)。上限を越えた roots でも掃除しない — 止まった job の root c も d も残る。
-  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world (* 2 RUN-MS) 30000) tick-pauses]))
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world (* 2 RUN-MS) 30000) stop-signal-never-comes tick-pauses]))
   (assert (= got.swept 0) got)
   (assert (= got.left ALL-ROOTS) got.left))
 
@@ -436,7 +438,7 @@
 (deftest test-the-first-declaration-starts-the-sweep-and-pins-the-declared-root
   ;; 30 秒目に最初の宣言を読んだ拍から今までどおり掃除する: 宣言の job の root c は固定で残り、固定でない d は消える(a と b は project の
   ;; 新しい 2 つ)。
-  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world 30000 60000) tick-pauses]))
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(restart-world 30000 60000) stop-signal-never-comes tick-pauses]))
   (assert (>= got.swept 1) got)
   (assert (= got.left #(ROOT-A ROOT-B ROOT-C)) got.left))
 
@@ -450,7 +452,7 @@
 
 (deftest test-a-shared-disk-below-the-old-ratio-keeps-roots-within-the-cap
   ;; disk の空き 1 GB・総量 2 TiB(空きは割合の下限 15% を大きく割る)・roots の合計は上限の内。掃除の係は数えるが、root は 1 つも消さない。
-  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world RUN-MS None) tick-pauses] :cap (** 2 62) :free (** 10 9)))
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world RUN-MS None) stop-signal-never-comes tick-pauses] :cap (** 2 62) :free (** 10 9)))
   (<- (kept-running got))
   (assert (= got.load.removed 0) got.load)
   (assert (= got.left ALL-ROOTS) got.left))
