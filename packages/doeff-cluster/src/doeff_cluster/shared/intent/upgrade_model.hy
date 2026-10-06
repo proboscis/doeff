@@ -8,6 +8,7 @@
 ;;;   (<- (ConfirmCleanBoot launch))      ; 入れ替え先の値で、コピーも状態も無い空の機体の起動が通るか(Desire の前に・#3366 の単位 5a)
 ;;;   (<- answer (PrepareBootRoot launch)) ; 入れ替え先の版の自己起動の root を、今の保存先に先に準備する(起動の確認の後・Desire の前に・#3725)
 ;;;   (<- answer (AwaitQuietWindow target seconds)) ; 静かな時間帯を待つ(coordinator の宣言を公開した後・当てる直前に・#3772)
+;;;   (<- answer (CompareClusterCode running wanted)) ; 動いている版と上げる先の版の間に packages/doeff-cluster の code の差が在るか(入口で・#2671)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
@@ -18,6 +19,12 @@
 ;;;
 ;;; worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせ(VerifiedVersions — coordinator の版 X と、X と組めると
 ;;; 手元で確かめた worker の版の集合)で表す(#3772)。
+;;;
+;;; 本体(coordinator と worker の process)を起動し直すのは、doeff-cluster の code が変わった時だけ(利用者の決定 2026-10-06 21:0x・
+;;; #2671)。版上げの入口は、上げる対象ごとに「動いている版 → 上げる先の版」の間に packages/doeff-cluster の code の差が
+;;; 在るかを CompareClusterCode で問う(答え手 = 配備する側の git・sim = 版の一致)。差の無い対象は作り直さずに答えに名と版で出し
+;;; (UnchangedTarget)、全部の対象に差が無ければ宣言を書く前に NoClusterCodeChange で断る。動いている版を読めない・差を判じられない
+;;; 対象が 1 つでも在れば、宣言を書く前に ClusterCodeUnjudged で名指して止まる(読めない版を既定の値で埋めない)。
 (require doeff-hy.macros [val defeffect])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
@@ -271,6 +278,74 @@
   (#^ (get tuple #(str ...)) tasks))
 
 
+(defrecord ClusterCodeDiffers
+  "動いている版 running と上げる先の版 wanted の間に、packages/doeff-cluster の code の差が在る(CompareClusterCode の答え — 作り直す)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str running)
+  (#^ str wanted))
+
+
+(defrecord ClusterCodeSame
+  "動いている版 running と上げる先の版 wanted の間に、packages/doeff-cluster の code の差が無い(CompareClusterCode の答え — 作り直さない)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str running)
+  (#^ str wanted))
+
+
+(defrecord ClusterCodeUnread
+  "動いている版 running と上げる先の版 wanted の間の差を、答え手が判じられなかった(CompareClusterCode の答え): reason = 判じられない訳
+   (答え手が書く文 — 版が履歴に無い・浅い clone など)。差が在るとも無いともみなさず、版上げは ClusterCodeUnjudged で止まる。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str running)
+  (#^ str wanted)
+  (#^ str reason))
+
+
+(defeffect CompareClusterCode
+  "動いている doeff の版 running と上げる先の版 wanted の間に、packages/doeff-cluster の code の差が在るかを問う(#2671 — 本体を起動し直す
+   のは doeff-cluster の code が変わった時だけ)。doeff-cluster の側は判断だけで、版の履歴を読むのは答え手: 本番 = 配備する側の handler が
+   doeff の checkout の git で答える・sim = 版が同じなら差が無い。答え = ClusterCodeDiffers か ClusterCodeSame か ClusterCodeUnread。"
+  {:fields [(: running str) (: wanted str)]
+   :answer (| ClusterCodeDiffers ClusterCodeSame ClusterCodeUnread)
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defrecord UnchangedTarget
+  "版上げの入口で、doeff-cluster の code の差が無いので作り直さずに外した対象 1 つ(#2671 — 黙って外さないため答えと断りに載せる):
+   kind = worker か coordinator・target = worker の名か \"coordinator\"・running = 動いている版・wanted = 上げる先の版。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ UpgradeKind kind)
+  (#^ str target)
+  (#^ str running)
+  (#^ str wanted))
+
+
+(defrecord CodeGate
+  "版上げの入口の doeff-cluster の code の差の判じの答え(#2671): changed = 差が在るので入れ替える対象(渡した順)・unchanged = 差が無いので
+   入れ替えずに外す対象(名と版)。changed が空の時は答えにならない(入口が NoClusterCodeChange で断る)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ (get tuple #((| WorkerLaunch CoordinatorLaunch) ...)) changed)
+  (#^ (get tuple #(UnchangedTarget ...)) unchanged))
+
+
+(defrecord NoClusterCodeChange
+  "版上げの入口で、上げる対象の全部に doeff-cluster の code の差が無かった(#2671 — 断りの閉じた理由の 1 つ。宣言を書く前に断る):
+   targets = 差の無い対象の全部(名と版)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ (get tuple #(UnchangedTarget ...)) targets))
+
+
+(defrecord ClusterCodeUnjudged
+  "版上げの入口で、ある対象の doeff-cluster の code の差を判じられなかった(#2671 — 宣言を書く前に止まる): target = 対象の名・
+   running = 動いている版(None = 読めない — coordinator が GET /state で版を名乗らない・worker の版を名簿で読めない)・wanted = 上げる先の
+   版・reason = 読めない / 判じられない訳。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ (| str None) running)
+  (#^ str wanted)
+  (#^ str reason))
+
+
 ;; 入れ替えの前の手順が断った所(UpgradeRefused の欄 point — 閉じた語):
 ;;   BEFORE-DESIRE = 宣言を書く前(宣言を書かず公開もしていない — cluster は変わらない)
 ;;   BEFORE-APPLY  = coordinator の宣言を書いて公開した後、当てる前(当てていない — 配備する側は Flux を止めたまま扱う・自動では戻さない)
@@ -279,13 +354,21 @@
 
 (defclass UpgradeRefused [RuntimeError]
   "入れ替えの前の手順が断ったので止まった。target = 何の入れ替えを止めたか・refusal = 拒否の答えそのもの(閉じた和: CleanBootRefused・
-   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing・QueuedTasksRemain・QuietWindowMissed)・
-   point = 断った所(RefusalPoint — 宣言を書く前か、宣言を書いて公開した後で当てる前か)。文も断った所を明示する。自動で戻さない。"
+   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing・QueuedTasksRemain・QuietWindowMissed・
+   NoClusterCodeChange・ClusterCodeUnjudged)・point = 断った所(RefusalPoint — 宣言を書く前か、宣言を書いて公開した後で当てる前か)。
+   文も断った所を明示する。自動で戻さない。"
   (defn #^ None __init__ [self #^ str target
-                          #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing QueuedTasksRemain QuietWindowMissed) refusal
+                          #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing QueuedTasksRemain QuietWindowMissed
+                                NoClusterCodeChange ClusterCodeUnjudged) refusal
                           #^ RefusalPoint point]
     ;; defk にできない: 例外の構成子
     (setv what (match refusal
+                 (NoClusterCodeChange :targets targets)
+                   (.format "{} の動いている版と上げる先の版の間に、doeff-cluster の code の差が無い({})"
+                            target (.join "・" (gfor u targets (.format "{}(版 {} → {})" u.target (cut u.running 0 10) (cut u.wanted 0 10)))))
+                 (ClusterCodeUnjudged :running running :wanted wanted :reason reason)
+                   (.format "{} の doeff-cluster の code の差を判じられない(動いている版 {} → 上げる先 {}: {})"
+                            target (if (is running None) "読めない" (cut running 0 10)) (cut wanted 0 10) reason)
                  (CleanBootRefused :reason reason)
                    (.format "{} の入れ替え先の版で、空の機体の起動が通らない({})" target reason)
                  (BootRootRefused :reason reason)
@@ -329,8 +412,17 @@
   (#^ (get tuple #(RosterEntry ...)) undeclared))
 
 
-(defrecord ClusterUpgraded
-  "upgrade-cluster の答え: workers = worker ごとの root の準備の答え(入れ替えた順)・coordinator = coordinator の入れ替えの答え。"
+(defrecord WorkersUpgraded
+  "upgrade-workers の答え(#2671): prepared = 入れ替えた worker ごとの root の準備の答え(入れ替えた順)・unchanged = doeff-cluster の code の
+   差が無いので入れ替えずに外した worker(名と版 — 黙って外さないため結果に必ず載せる)。"
   {:tags {:context "doeff-cluster" :role "type"}}
-  (#^ (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) workers)
-  (#^ CoordinatorUpgraded coordinator))
+  (#^ (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) prepared)
+  (#^ (get tuple #(UnchangedTarget ...)) unchanged))
+
+
+(defrecord ClusterUpgraded
+  "upgrade-cluster の答え: workers = worker の入れ替えの答え(入れ替えた順の root の準備の答えと、差が無いので外した worker)・
+   coordinator = coordinator の入れ替えの答えか、doeff-cluster の code の差が無いので入れ替えなかった事(UnchangedTarget — #2671)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ WorkersUpgraded workers)
+  (#^ (| CoordinatorUpgraded UnchangedTarget) coordinator))

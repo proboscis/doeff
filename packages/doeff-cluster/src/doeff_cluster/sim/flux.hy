@@ -27,6 +27,9 @@
 ;;; 模擬の Flux は coordinator を作り直す時、Deployment の env を模擬の Pod の環境として渡す(ReplaceCoordinatorEnviron — 次の一生から
 ;;; 効く)ので、作り直した coordinator は本番と同じ入口の読み(WORKER_DOEFF_COMMIT)で新しい版を申告する。
 ;;; 静かな時間帯の待ち(AwaitQuietWindow)には、模擬の世界ではすぐ「静か」と答える。
+;;; doeff-cluster の code の差の問い(CompareClusterCode — #2671)には、模擬の世界では版が同じなら差が無い・違えば差が在ると答える
+;;; (模擬の世界に doeff の履歴は無い)。版が違っても code が同じ筋書きは same-cluster-code を内側に置く。模擬の coordinator は初め版を
+;;; 名乗らない(Pod の環境が空)ので、coordinator を上げる筋書きは coordinator-started-on で動いている版を名乗らせてから始める。
 (require doeff-hy.macros [val var defk defhandler defeffect <-])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
@@ -36,7 +39,8 @@
 (import doeff_core_effects.process_effects [EnvEntry])
 (import doeff_core_effects.scheduler [Spawn Gather Task])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.core.launch_rules [worker-launch-of-env coordinator-launch-of-env coordinator-launch-names])
+(import doeff_time [Delay])
+(import doeff_cluster.shared.core.launch_rules [worker-launch-of-env coordinator-launch-of-env coordinator-launch-names coordinator-launch-env])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
 (import doeff [with-handlers])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
@@ -46,7 +50,8 @@
                                                    UpgradeState UpgradeStateUnreachable ReadUpgradeState PublishDeclarations
                                                    ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused BootRootsAtStart
                                                    PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
-                                                   AwaitQuietWindow QuietWindowOpened])
+                                                   AwaitQuietWindow QuietWindowOpened CompareClusterCode ClusterCodeDiffers
+                                                   ClusterCodeSame])
 (import doeff_cluster.shared.protocol.coordinator_reads [coordinator-commit-of-state])
 (import doeff_cluster.sim.local [SimWorker HostTruth DrainWorker StopWorker ReplaceWorker StartWorker WorkerOf HostTruthOf
                                  StopCoordinator ReadCoordinator ReplaceCoordinatorEnviron])
@@ -366,13 +371,17 @@
   ;; refused-boot-roots を内側に置く)。保存先に在る root = 指定された対象が今 動いている版の物と、session に覚えた物(roots — 先に準備した
   ;; 物と、準備の時に動いていた版の物。足すだけで消さない)。当てた瞬間の保存先のスナップショットは session に積み、BootRootsAtStartsSeen で返す。
   ;; 名簿の問い合わせに答える coordinator の版は、答えた coordinator が GET /state で申告する版(coordinator-view — #3772)。静かな時間帯の
-  ;; 待ちには、すぐ「静か」と答える。
+  ;; 待ちには、すぐ「静か」と答える。doeff-cluster の code の差の問いには、版が同じなら差が無い・違えば差が在ると答える(#2671)。
   (session var applied initial)
   (session var starts #())
   (session var roots #())
   (session var places #())
   (AwaitQuietWindow [target timeout-seconds]
     (resume (QuietWindowOpened :target target)))
+  (CompareClusterCode [running wanted]
+    (resume (if (= running wanted)
+                (ClusterCodeSame :running running :wanted wanted)
+                (ClusterCodeDiffers :running running :wanted wanted))))
   (ConfirmCleanBoot [launch]
     (<- target str (launch-target launch))
     (resume (CleanBootPassed :target target)))
@@ -465,3 +474,24 @@
     :when (in (if (isinstance launch WorkerLaunch) launch.name "coordinator") targets)
     (<- target str (launch-target launch))
     (resume (BootRootRefused :target target :reason reason))))
+
+
+(defhandler same-cluster-code [#^ (get frozenset (get tuple #(str str))) pairs]
+  ;; 引数に残す理由: どの 2 つの版の間で doeff-cluster の code が同じかは筋書きごとに違う値(模擬の世界の doeff の履歴そのもの)。
+  ;; 版が違っても doeff-cluster の code が同じ(pin 合わせ・ほかの package だけの変更)筋書きのため(#2671): pairs に在る (動いている版
+  ;; 上げる先の版) の問いだけに「差が無い」と答える。ほかの問いは外側(flux-declarations)へ渡す。
+  (CompareClusterCode [running wanted]
+    :when (in #(running wanted) pairs)
+    (resume (ClusterCodeSame :running running :wanted wanted))))
+
+
+(defk coordinator-started-on [commit]
+  {:pre [(: commit str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "模擬の coordinator を、版 commit の Deployment の env(本番が宣言に書くのと同じ launch_rules の行)で起こし直し、新しい一生が受け付けるまで
+   待つため — 模擬の coordinator は初め版を名乗らないので、版上げの入口が coordinator の動いている版(GET /state の coordinatorCommit)を
+   読む筋書きは、これで動いている版を名乗らせてから始める(#2671)。"
+  (<- environ (get tuple #(EnvEntry ...)) (coordinator-launch-env (CoordinatorLaunch :doeff-commit commit)))
+  (<- (ReplaceCoordinatorEnviron environ))
+  (<- (StopCoordinator 1.0))
+  (<- (Delay 5.0))
+  None)

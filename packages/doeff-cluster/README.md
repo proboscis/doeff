@@ -435,7 +435,19 @@ worker と coordinator のどちらを先に上げるかは変更ごとに決ま
 確かめた版の組み合わせ(`VerifiedVersions` — X と、X と組めると手元で確かめた worker の版の集合)を受け取り、宣言の内の worker が
 全部動いていて、その版が集合に入っている時だけ入れ替えます(条 V1)。集合に無い版の worker が 1 つでも居れば、宣言を書く前に
 `UpgradeRefused` で、その worker と版を明示して断ります。宣言の外の worker(配備する側の外で起動する worker)は待たず照らさず、
-入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。coordinator の入れ替えの手順の並びは次のとおりです。
+入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。
+
+3 つの入口は、どれも何も書く前に、上げる対象ごとに「動いている版 → 上げる先の版」の間に `packages/doeff-cluster` の code の差が在るかを
+判じます(#2671 — 本体の process を起動し直すのは doeff-cluster の code が変わった時だけ)。動いている版は、coordinator は `GET /state` で
+名乗る版(`coordinatorCommit`)・worker は名簿の版です。差は効果 `CompareClusterCode` で問い、答え手(配備する側の handler — doeff の
+checkout の git で答える・模擬の Flux は版が同じなら差が無いと答える)が `ClusterCodeDiffers` / `ClusterCodeSame` / `ClusterCodeUnread` の
+どれかで答えます。差の無い対象は入れ替えずに答え(`WorkersUpgraded` の `unchanged`・`ClusterUpgraded` の `coordinator`)に名と版
+(`UnchangedTarget`)を載せ、全部の対象に差が無ければ `UpgradeRefused`(理由 `NoClusterCodeChange`)で断ります。動いている版を読めない・
+差を判じられない対象が 1 つでも在れば `UpgradeRefused`(理由 `ClusterCodeUnjudged`)で名指して止まります(読めない版を推しません)。
+どちらも断った所は宣言を書く前です。`upgrade-cluster` で入れ替えずに外した worker の動いている版は、上げる先と同じ doeff-cluster の
+code なので、coordinator の条 V1 の照らしで確かめた版の組み合わせに数えます。
+
+coordinator の入れ替えの手順の並びは次のとおりです。
 
 1. 宣言を書く前: 待ち行列が空(条 V4)→ 条 V1 の照らし → 空の機体の起動の確かめ → 事前ビルドと、上げる前の版の自己起動の root
    (戻し先)が在る事の確かめ。どれかが断れば `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-DESIRE`)で止まり、宣言を書きません。

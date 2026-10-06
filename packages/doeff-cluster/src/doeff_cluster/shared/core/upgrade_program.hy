@@ -24,6 +24,13 @@
 ;;; 名簿の worker のうち宣言の外(RosterEntry の declaration が UNDECLARED)の物は、待ちからも V1 の照らしからも外し、coordinator の
 ;;; 入れ替えの答えに名と版を必ず載せる。宣言の内で版を読めない worker(doeff-commit が None — 入れ替えの途中など)は待つ。
 ;;;
+;;; 3 つの入口は、どれも最初に doeff-cluster の code の差を判じる(#2671 — 本体を起動し直すのは doeff-cluster の code が変わった時だけ):
+;;; 名簿を 1 回読み、上げる対象ごとに動いている版(coordinator は GET /state で名乗る版・worker は名簿の版)と上げる先の版の間の差を
+;;; CompareClusterCode で問う。差の無い対象は入れ替えずに答えに名と版で出し(UnchangedTarget)、全部の対象に差が無ければ宣言を書く前に
+;;; UpgradeRefused(NoClusterCodeChange)で断る。動いている版を読めない・差を判じられない対象が 1 つでも在れば、宣言を書く前に
+;;; UpgradeRefused(ClusterCodeUnjudged)で名指して止まる。upgrade-cluster で入れ替えずに外した worker は、上げる先と同じ doeff-cluster の
+;;; code で動いているので、その動いている版を coordinator の条 V1 の照らしで確かめた版の組み合わせに数える。
+;;;
 ;;; 待ちは時間で読み直さない — coordinator の版の変化(AwaitRunnersChange — task の phase と worker の変化で進む)で起きて読み直す。
 ;;; coordinator に届かない間だけ、上限の内で短く待ってから問い直す(版の変化を待つ API が無いため)。どの待ちも上限(UpgradeLimits —
 ;;; 宣言の値)を持ち、越えたら UpgradeStalled で、どの待ちで止まったかを明示して落ちる(黙って待ち続けない)。
@@ -35,13 +42,16 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
+(import dataclasses [replace])
 (import doeff_cluster.shared.intent.upgrade_model [PendingPhase WorkerDeclaration RosterEntry UpgradeState UpgradeLimits UpgradeStalled
                                                    ReadUpgradeState PublishDeclarations ApplyDeclarations ConfirmCleanBoot
                                                    CleanBootPassed CleanBootRefused UpgradeRefused PrepareBootRoot
                                                    BootRootAlreadyPrepared BootRootBuilt BootRootRefused VerifiedVersions
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
                                                    RollbackRootMissing QueuedTasksRemain RefusalPoint WaitReached WaitExpired
-                                                   CoordinatorUpgraded ClusterUpgraded])
+                                                   CoordinatorUpgraded ClusterUpgraded WorkersUpgraded UpgradeKind
+                                                   CompareClusterCode ClusterCodeDiffers ClusterCodeSame ClusterCodeUnread
+                                                   UnchangedTarget NoClusterCodeChange ClusterCodeUnjudged CodeGate])
 
 
 ;; coordinator に届かない間に問い直すまでの秒(版の変化を待つ口が答えない時だけ — 上限の内)と、1 回の版の変化の待ちの上限の秒
@@ -292,13 +302,94 @@
     (BootRootRefused) (raise (UpgradeRefused target answer RefusalPoint.BEFORE-DESIRE))))
 
 
-(defk upgrade-workers [workers limits]
+(defk launch-name [launch]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "入れ替え先の値が名指す対象の名を、code の差の判じの答えと断りに載せるため: worker なら名・coordinator なら \"coordinator\"。"
+  (match launch
+    (WorkerLaunch :name name) name
+    (CoordinatorLaunch) "coordinator"))
+
+
+(defk launch-kind [launch]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch))] :post [(: % UpgradeKind)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "入れ替え先の値が worker か coordinator かを、差の無い対象の記録(UnchangedTarget)に載せるため。"
+  (match launch
+    (WorkerLaunch) UpgradeKind.WORKER
+    (CoordinatorLaunch) UpgradeKind.COORDINATOR))
+
+
+(defk running-commit-of [launch state]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: state UpgradeState)] :post [(: % (| str None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "入れ替え先の値が名指す対象が今 動いている doeff の版を、名簿から読むため(#2671): coordinator = GET /state で名乗る版・worker = 名簿の
+   その worker の版。読めなければ None(既定の値で埋めない — 呼び手が訳を添えて止まる)。"
+  (match launch
+    (CoordinatorLaunch) state.coordinator-commit
+    (WorkerLaunch :name name) (next (gfor e state.roster :if (= e.worker name) e.doeff-commit) None)))
+
+
+(defk unread-reason-of [launch state]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: state UpgradeState)] :post [(: % str)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "動いている版を読めない対象の訳を、止まった時の断りに載せるため(何が名乗らないのか・名簿のどの行が版を持たないのかを名指す)。"
+  (match launch
+    (CoordinatorLaunch) "coordinator が GET /state で動いている版を名乗らない(答えに coordinatorCommit が無い)"
+    (WorkerLaunch :name name)
+      (do (val found (tuple (gfor e state.roster :if (= e.worker name) e)))
+          (if found
+              (or (. (get found 0) unread-reason) "名簿の版が無い(訳は読み手が書いていない)")
+              (.format "worker {} は名簿に居ない" name)))))
+
+
+(defk cluster-code-changed [launch state]
+  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: state UpgradeState)] :post [(: % (| (| WorkerLaunch CoordinatorLaunch) UnchangedTarget))]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "対象 1 つの「動いている版 → 上げる先の版」の間に doeff-cluster の code の差が在るかを判じるため(#2671): 差が在れば launch をそのまま返し
+   (入れ替える)、差が無ければ UnchangedTarget(名と版)を返す(入れ替えない)。動いている版を読めない・答え手が判じられない時は、
+   宣言を書く前に UpgradeRefused(ClusterCodeUnjudged)で対象と訳を名指して止まる(差が在るとも無いともみなさない)。"
+  (<- target str (launch-name launch))
+  (<- running (| str None) (running-commit-of launch state))
+  (when (is running None)
+    (<- reason str (unread-reason-of launch state))
+    (raise (UpgradeRefused target (ClusterCodeUnjudged :target target :running None :wanted launch.doeff-commit :reason reason)
+                           RefusalPoint.BEFORE-DESIRE)))
+  (<- answer (| ClusterCodeDiffers ClusterCodeSame ClusterCodeUnread) (CompareClusterCode running launch.doeff-commit))
+  (<- kind UpgradeKind (launch-kind launch))
+  (match answer
+    (ClusterCodeDiffers) launch
+    (ClusterCodeSame) (UnchangedTarget :kind kind :target target :running running :wanted launch.doeff-commit)
+    (ClusterCodeUnread :reason reason)
+      (raise (UpgradeRefused target (ClusterCodeUnjudged :target target :running running :wanted launch.doeff-commit :reason reason)
+                             RefusalPoint.BEFORE-DESIRE))))
+
+
+(defk cluster-code-gate [launches limits]
+  {:pre [(: launches (get tuple #((| WorkerLaunch CoordinatorLaunch) ...))) (: limits UpgradeLimits)] :post [(: % CodeGate)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "版上げの入口で、上げる対象の全部について doeff-cluster の code の差を、何も書く前に判じるため(#2671 — 頭の註)。名簿を 1 回読み
+   (coordinator に届かない間は上限の内で待つ)、対象ごとに cluster-code-changed で問う。全部の対象に差が無ければ、宣言を書く前に
+   UpgradeRefused(NoClusterCodeChange — 対象の名と版の全部)で断る。答え = 差の在る対象(渡した順)と、差が無いので外す対象。"
+  (<- state UpgradeState (await-until "動いている版を読む" state-read state-line limits.return-seconds))
+  (var changed #())
+  (var unchanged #())
+  (for [launch launches]
+    (<- judged (| (| WorkerLaunch CoordinatorLaunch) UnchangedTarget) (cluster-code-changed launch state))
+    (match judged
+      (UnchangedTarget) (:= unchanged (+ unchanged #(judged)))
+      _ (:= changed (+ changed #(judged)))))
+  (when (not changed)
+    (raise (UpgradeRefused (.join "・" (gfor u unchanged u.target)) (NoClusterCodeChange :targets unchanged) RefusalPoint.BEFORE-DESIRE)))
+  (CodeGate :changed changed :unchanged unchanged))
+
+
+(defk swap-workers [workers limits]
   {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: limits UpgradeLimits)]
    :post [(: % (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)))]
    :tags {:context "doeff-cluster" :role "program"}}
   "worker を 1 つずつ新しい値へ入れ替えるため(条 V2・V3 の待ち — 頭の註)。coordinator は入れ替えない — worker だけを上げる時
    (今の coordinator がその worker の版と組めると確かめた変更)と、upgrade-cluster の前半の両方がこれを通る(#3366)。どの入れ替えも、
    宣言を書く前に空の機体の起動を確かめ(confirm-clean-boot)、入れ替え先の版の root を保存先に準備する(prepare-boot-root)。
+   code の差の判じは呼び手(入口)が先に済ませ、差の在る worker だけを渡す(#2671)。
    答え = worker ごとの root の準備の答えを、入れ替えた順に並べた列(実行した側が、worker ごとの秒と戻し先の有無を終わりに出すため)。"
   (var prepared #())
   (for [w workers]
@@ -313,6 +404,18 @@
     (<- (await-until (.format "worker {} が版 {} で live に戻る" w.name w.doeff-commit) (partial back-on w.name w.doeff-commit)
                      (partial worker-line w.name) limits.return-seconds)))
   prepared)
+
+
+(defk upgrade-workers [workers limits]
+  {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: limits UpgradeLimits)]
+   :post [(: % WorkersUpgraded)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "worker だけを上げる入口(coordinator は入れ替えない — 今の coordinator がその worker の版と組めると確かめた変更・#3366)。何も書く前に
+   doeff-cluster の code の差を判じ(cluster-code-gate — 全部に差が無ければ断る・#2671)、差の在る worker だけを 1 つずつ入れ替える
+   (swap-workers)。答え = 入れ替えた worker ごとの root の準備の答え(入れ替えた順)と、差が無いので外した worker(名と版)。"
+  (<- gate CodeGate (cluster-code-gate workers limits))
+  (<- prepared (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) (swap-workers gate.changed limits))
+  (WorkersUpgraded :prepared prepared :unchanged gate.unchanged))
 
 
 (defk refuse-unverified [coordinator verified state point]
@@ -383,12 +486,13 @@
   None)
 
 
-(defk upgrade-coordinator [coordinator verified limits]
+(defk swap-coordinator [coordinator verified limits]
   {:pre [(: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: limits UpgradeLimits)
          (= verified.coordinator coordinator.doeff-commit)]
    :post [(: % CoordinatorUpgraded)]
    :tags {:context "doeff-cluster" :role "program"}}
-  "coordinator だけを版 X(coordinator.doeff-commit)へ入れ替えるため(#3772 — 頭の註の coordinator の手順)。verified = 確かめた版の
+  "coordinator を版 X(coordinator.doeff-commit)へ入れ替えるため(#3772 — 頭の註の coordinator の手順。code の差の判じは呼び手の入口が
+   先に済ませる — #2671)。verified = 確かめた版の
    組み合わせ(coordinator の版は X と同じでなければならない)— 宣言の内の worker の版が混ざっていても、全部が組み合わせに入っていれば
    当てる。宣言の外の worker は待たず照らさず、答えに載せる。待ち行列が空(V4)→ 条 V1 の待ちと照らし → 空の起動の確認 → root の準備
    (V5)と戻し先の確かめ → Desire → 公開 → 当てる直前の確かめ(状態を読み直す → V1 の照らし → 待ち行列が空 → 静かな時間帯 —
@@ -415,15 +519,55 @@
   (CoordinatorUpgraded :root root :undeclared outside))
 
 
+(defk upgrade-coordinator [coordinator verified limits]
+  {:pre [(: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: limits UpgradeLimits)
+         (= verified.coordinator coordinator.doeff-commit)]
+   :post [(: % CoordinatorUpgraded)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "coordinator だけを上げる入口(#3772): 何も書く前に、coordinator が GET /state で名乗る動いている版と上げる先の版 X の間の doeff-cluster の
+   code の差を判じ(cluster-code-gate — 差が無ければ NoClusterCodeChange で断る・名乗らなければ ClusterCodeUnjudged で止まる・#2671)、
+   差が在れば swap-coordinator で入れ替える。答え = root の準備の答えと、外した宣言の外の worker。"
+  (<- (cluster-code-gate #(coordinator) limits))
+  (<- swapped CoordinatorUpgraded (swap-coordinator coordinator verified limits))
+  swapped)
+
+
+(defk verified-with-kept [verified kept]
+  {:pre [(: verified VerifiedVersions) (: kept (get tuple #(UnchangedTarget ...)))] :post [(: % VerifiedVersions)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "upgrade-cluster で入れ替えずに外した worker(kept)の動いている版を、coordinator の条 V1 の照らしの確かめた版の組み合わせに足すため
+   (#2671): 外した worker は上げる先(組み合わせに入る版)と同じ doeff-cluster の code で動いているので、組めると確かめた版と数える —
+   足さないと、外した worker の版で coordinator の入れ替えを断る事になる。"
+  (replace verified :workers (| verified.workers (frozenset (gfor u kept :if (= u.kind UpgradeKind.WORKER) u.running)))))
+
+
 (defk upgrade-cluster [workers coordinator verified limits]
   {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: limits UpgradeLimits)
          (= verified.coordinator coordinator.doeff-commit) (all (gfor w workers (in w.doeff-commit verified.workers)))]
    :post [(: % ClusterUpgraded)]
    :tags {:context "doeff-cluster" :role "program"}}
-  "worker を 1 つずつ新しい値へ入れ替え(upgrade-workers)、その後に coordinator を入れ替えるため(upgrade-coordinator — worker が先の
-   変更の入口)。入れ替え先の worker の版は確かめた版の組み合わせ(verified.workers)に入っていなければならない — 入らない版へ上げると、
-   worker を全部入れ替えた後に coordinator の条 V1 で断る事になるため、呼び手の誤りとして始めに落とす。
-   答え = worker ごとの root の準備の答え(入れ替えた順)と coordinator の入れ替えの答え。"
-  (<- prepared (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) (upgrade-workers workers limits))
-  (<- swapped CoordinatorUpgraded (upgrade-coordinator coordinator verified limits))
-  (ClusterUpgraded :workers prepared :coordinator swapped))
+  "worker を 1 つずつ新しい値へ入れ替え(swap-workers)、その後に coordinator を入れ替えるため(swap-coordinator — worker が先の変更の入口)。
+   何も書く前に、worker と coordinator の全部について doeff-cluster の code の差を判じ(cluster-code-gate — 全部に差が無ければ断る・#2671)、
+   差の在る物だけを入れ替える。入れ替え先の worker の版は確かめた版の組み合わせ(verified.workers)に入っていなければならない — 入らない版へ
+   上げると、worker を全部入れ替えた後に coordinator の条 V1 で断る事になるため、呼び手の誤りとして始めに落とす。差が無いので外した worker の
+   動いている版は、coordinator の条 V1 の照らしで組み合わせに数える(verified-with-kept)。
+   答え = worker の入れ替えの答え(root の準備の答えと外した worker)と、coordinator の入れ替えの答えか外した事。"
+  (<- gate CodeGate (cluster-code-gate (+ workers #(coordinator)) limits))
+  (val changed-workers (tuple (gfor w gate.changed :if (isinstance w WorkerLaunch) w)))
+  (val kept-workers (tuple (gfor u gate.unchanged :if (= u.kind UpgradeKind.WORKER) u)))
+  (<- prepared (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)) (swap-workers changed-workers limits))
+  (<- swapped (| CoordinatorUpgraded UnchangedTarget) (coordinator-unless-kept coordinator verified gate limits))
+  (ClusterUpgraded :workers (WorkersUpgraded :prepared prepared :unchanged kept-workers) :coordinator swapped))
+
+
+(defk coordinator-unless-kept [coordinator verified gate limits]
+  {:pre [(: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: gate CodeGate) (: limits UpgradeLimits)]
+   :post [(: % (| CoordinatorUpgraded UnchangedTarget))] :tags {:context "doeff-cluster" :role "program"}}
+  "upgrade-cluster の後半: coordinator に doeff-cluster の code の差が無ければ入れ替えずにその記録(UnchangedTarget)を返し、差が在れば、
+   外した worker の版を足した組み合わせ(verified-with-kept)で swap-coordinator を通すため(#2671)。"
+  (val kept (tuple (gfor u gate.unchanged :if (= u.kind UpgradeKind.COORDINATOR) u)))
+  (match kept
+    #(found) found
+    _ (do (<- widened VerifiedVersions (verified-with-kept verified gate.unchanged))
+          (<- swapped CoordinatorUpgraded (swap-coordinator coordinator widened limits))
+          swapped)))
