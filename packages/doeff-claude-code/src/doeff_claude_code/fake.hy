@@ -16,9 +16,9 @@
 (import uuid)
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolResult InputFate PermissionRequested
+(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -41,9 +41,10 @@
 (setv FAKE-CAPABILITIES #("msg_lifecycle_v1" "interrupt_receipt_v1"))
 ;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の process の能力(FakeReply の interrupt-receipt が偽の手番)。
 (val NO-RECEIPT-CAPABILITIES #("msg_lifecycle_v1"))
-;; 偽の手番が呼ぶ道具の 1 つの呼び(tool_use の id)。道具の結果の行(ToolResult)は同じ id を名指す。
+;; 偽の手番が呼ぶ道具の 1 つの呼び(tool_use の id と道具の名)。道具の結果の行(ToolResult)の答えは同じ id を名指す。呼びの命令と
+;; 結果の中身は手番の返事(FakeReply の tool-input・tool-output・tool-error)が決める。
 (val FAKE-TOOL-USE-ID "fake-tool")
-(val FAKE-TOOL-CALL (ToolCall FAKE-TOOL-USE-ID "Bash"))
+(val FAKE-TOOL-NAME "Bash")
 
 
 (defclass [(dataclass :frozen True)] FakeReply []
@@ -58,7 +59,10 @@
    (dialogue.hy の interrupt と on-result)が受理を名乗らない CLI を止める道(#3467)・
    deltas = 最後の本文を何片の差分(PartialMessage の text_delta)に分けて、確定の本文(AssistantMessage)の前に DELTA-SECONDS ごとに
    出すか(0 = 差分を出さない。本物の CLI の --include-partial-messages の行の順 — 差分の列 → 確定の本文 → result)。片の連結は
-   確定の本文と同じで、どの片も空でない(deltas は本文の字数以下)。失敗と消失(fail・lose)の手番は本文を出さないので組まない。"
+   確定の本文と同じで、どの片も空でない(deltas は本文の字数以下)。失敗と消失(fail・lose)の手番は本文を出さないので組まない・
+   tool-input = 道具の呼び(と許可の問い)の命令 — tool_use の block の input と同じ JSON の object(深く凍らせる)・
+   tool-output = 道具の結果の中身の本文・tool-error = 道具が誤りで終えたか(tool-input から tool-error は、道具を呼ぶ手番 —
+   tool-seconds > 0 か needs-permission — の呼びと結果の行に載る。上の層が道具の命令と出力を運ぶ事を確かめるため・#3744)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -73,7 +77,12 @@
   (setv #^ bool interrupt-receipt True)
   ;; 最後の本文を分ける差分の片の数(0 = 差分を出さない)。
   (setv #^ int deltas 0)
+  ;; 道具の呼びの命令(tool_use の input と同じ JSON の object)と、結果の中身の本文・誤りの印。
+  (setv #^ FrozenMap tool-input (field :default-factory (fn [] (FrozenMap {"command" "fake"}))))
+  (setv #^ str tool-output "")
+  (setv #^ bool tool-error False)
   (defn #^ None __post-init__ [self]
+    (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (and (is-not self.fail None) (is-not self.lose None))
       (raise (ValueError "FakeReply の fail と lose は多くとも 1 つ")))
     (when (< self.lines 0)
@@ -308,7 +317,9 @@
     (<- (emit-due-lines session turn now)))
   (when (and (in turn.phase #("quick" "tool")) (>= (+ now CLOCK-TICK) turn.due-at))
     (when (= turn.phase "tool")
-      (<- (emit-all session turn [(ToolResult :tool-use-ids #(FAKE-TOOL-USE-ID)) (TaskEvent "fake-task" "completed")])))
+      (<- (emit-all session turn [(ToolResult :answers #((ToolAnswer :id FAKE-TOOL-USE-ID :text turn.reply.tool-output
+                                                                      :is-error turn.reply.tool-error)))
+                                  (TaskEvent "fake-task" "completed")])))
     (if (or (is-not turn.reply.fail None) (is-not turn.reply.lose None))
         (<- (end-scripted session turn))
         (<- (begin-text world session turn now))))
@@ -335,17 +346,19 @@
   (<- (emit session turn (Init :session-id session.session-id
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
+  ;; 道具の呼び: 命令は返事の tool-input(許可の問いも同じ命令を問う — 本物の CLI の can_use_tool の input は tool_use の input)。
+  (val call (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME reply.tool-input))
   (cond
     reply.needs-permission
       (do
         (setv request-id (str (uuid.uuid4)))
         (setv turn.phase "permission" turn.permission request-id)
-        (<- (emit-all session turn [(AssistantMessage :tool-calls #(FAKE-TOOL-CALL))
-                                    (PermissionRequested request-id "Bash" (FrozenMap {"command" "fake"}))])))
+        (<- (emit-all session turn [(AssistantMessage :tool-calls #(call))
+                                    (PermissionRequested request-id FAKE-TOOL-NAME reply.tool-input)])))
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
-        (<- (emit-all session turn [(AssistantMessage :tool-calls #(FAKE-TOOL-CALL)) (TaskEvent "fake-task" "started")]))))
+        (<- (emit-all session turn [(AssistantMessage :tool-calls #(call)) (TaskEvent "fake-task" "started")]))))
   turn)
 
 

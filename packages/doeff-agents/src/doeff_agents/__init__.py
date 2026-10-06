@@ -95,6 +95,7 @@ _LAZY_EXPORTS = {
     "AgentTextEvent": ".effects",
     "AgentToolResultEvent": ".effects",
     "AgentToolUseEvent": ".effects",
+    "ToolAnswer": ".effects",
     "ToolCall": ".effects",
     "AgentTurnCompleted": ".effects",
     "AgentTurnEnd": ".effects",

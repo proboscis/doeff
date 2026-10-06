@@ -191,8 +191,11 @@
     (when (and (get rule "permission") (get rule "touch"))
       (.touch (Path (get rule "touch"))))
     (when (> (get rule "tool_seconds") 0)
+      ;; 道具の呼びの input は prompt の命令(実物の Bash の tool_use と同じ欄 command)・結果の content はその命令の出力(実物の Bash の
+      ;; tool_result と同じく文字列 — #3744)。
       (emit {"type" "assistant" "session_id" self.session-id
-             "message" {"role" "assistant" "content" [{"type" "tool_use" "id" "toolu_stub" "name" "Bash" "input" {}}]}})
+             "message" {"role" "assistant" "content" [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
+                                                        "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]}})
       (emit {"type" "system" "subtype" "task_started" "task_id" "stub-task" "session_id" self.session-id})
       (setv stop (.wait-tool self (get rule "tool_seconds") injections))
       (when (is-not stop None)
@@ -206,7 +209,8 @@
         (when injections (.run-turn self injections))
         (return None))
       (emit {"type" "user" "session_id" self.session-id
-             "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" "toolu_stub" "content" ""}]}}))
+             "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" "toolu_stub" "content" (get rule "tool_output")
+                                                   "is_error" False}]}}))
     (for [record injections]
       (.lifecycle self (.get record "uuid") "started")
       (.append words (get (reply-for (user-text record) (memory-of self.path)) "text")))

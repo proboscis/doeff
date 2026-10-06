@@ -56,6 +56,13 @@
 (defn #^ str sleep-prompt [#^ int seconds #^ str word]
   (.format "Use the Bash tool to run exactly this command: sleep {} . When it finishes, reply with exactly: {}" seconds word))
 (defn #^ str extra-prompt [] (.format "Also include the word {} in your final reply." EXTRA-WORD))
+;; 出力のある道具の手番(agora-redesign #3744 — 道具の命令と出力が出来事まで届くかを見る)。替え玉の CLI の規則と同じ言葉。
+(defk echo-prompt [#^ str output #^ str word]
+  {:pre [(: output str) (: word str)] :post [(: % str)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "道具の出力が output になる命令(echo)を走らせてから word で答えさせる prompt。"
+  (.format "Use the Bash tool to run exactly this command: echo {} . Then reply with exactly: {}" output word))
+(val ECHO-OUTPUT "TOOL-OUT-5")
+(val ECHO-SECONDS 0.2)
 
 (defn fake-responder [#^ str text #^ tuple memory]
   "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。
@@ -64,8 +71,10 @@
   (when spent
     (return (FakeReply "" :tool-seconds 2.0 :fail "spent then failed" :cost-usd (float (.group spent 1)))))
   (setv sleep (re.search r"sleep (\d+)" text)
+        command (re.search r"run exactly this command: (.+?) \." text)
         exact (re.search r"[Rr]eply with exactly: (\S+)" text)
         extra (re.search r"include the word (\S+)" text))
+  (setv echoed (if command (re.fullmatch r"echo (\S+)" (.group command 1)) None))
   (setv word (cond
                (in "What was the codeword" text)
                  (next (gfor earlier memory :setv found (re.search r"codeword (\S+?)\." earlier) :if found (.group found 1))
@@ -73,7 +82,10 @@
                exact (.group exact 1)
                extra (.group extra 1)
                True "OK"))
-  (FakeReply word :tool-seconds (if sleep (float (.group sleep 1)) 0.0)))
+  ;; 道具の命令(input)は prompt の命令の文、出力は echo の語(ほかの命令は出力なし)— 替え玉の CLI と同じ。
+  (FakeReply word :tool-seconds (cond sleep (float (.group sleep 1)) echoed ECHO-SECONDS True 0.0)
+             :tool-input (if command {"command" (.group command 1)} {})
+             :tool-output (if echoed (.group echoed 1) "")))
 
 
 ;; --- 解釈器(composition root) --------------------------------------------------------------------
@@ -198,6 +210,15 @@
   {:pre [(: s Setting)] :post [(: % Read)]}
   "道具を 1 度呼ぶ手番を最後まで読む(呼びの出来事と結果の出来事の id の突き合わせを見るため・agora-redesign #3518)。"
   (<- handle (launch s "adapter-tool-ids" (sleep-prompt 1 "TOOLED") None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk tool-turn-with-output [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "出力のある道具を 1 度呼ぶ手番を最後まで読む(道具の命令と出力が出来事に載るかを見るため・agora-redesign #3744)。"
+  (<- prompt (echo-prompt ECHO-OUTPUT "ECHOED"))
+  (<- handle (launch s "adapter-tool-content" prompt None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -560,6 +581,28 @@
 
 (deftest test-headless-tool-call-ids-meet-their-results-stub [tmp-path]
   (<- (check-tool-calls-meet-results (run-on STUB tmp-path tool-turn-to-the-end))))
+
+(defk check-tool-events-carry-the-command-and-the-output [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "AgentToolUseEvent の呼びが道具の命令(input)を、AgentToolResultEvent の答えが結果の中身(本文・誤りの印・text でない block の種類)を
+   運ぶ。命令と出力を捨てる adapter では会話の画面の道具の行を開けず赤(agora-redesign #3744)。結果の id の列(tool_use_ids)は答えの列から
+   作る読み取りで、答えの id と同じ並び。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val calls (lfor event done.events :if (isinstance event AgentToolUseEvent) call event.tool-calls call))
+  (val results (lfor event done.events :if (isinstance event AgentToolResultEvent) event))
+  (assert (= (lfor call calls #(call.name (dict call.input))) [#("Bash" {"command" (+ "echo " ECHO-OUTPUT)})]) (repr calls))
+  (val answers (lfor event results answer event.answers answer))
+  (assert (= (lfor answer answers #(answer.id answer.text answer.is-error answer.non-text-kinds))
+             [#((. (get calls 0) id) ECHO-OUTPUT False #())])
+          (repr answers))
+  (assert (all (gfor event results (= event.tool-use-ids (tuple (gfor answer event.answers answer.id))))) (repr results))
+  None)
+
+(deftest test-headless-tool-events-carry-the-command-and-the-output-fake [tmp-path]
+  (<- (check-tool-events-carry-the-command-and-the-output (run-on FAKE tmp-path tool-turn-with-output))))
+
+(deftest test-headless-tool-events-carry-the-command-and-the-output-stub [tmp-path]
+  (<- (check-tool-events-carry-the-command-and-the-output (run-on STUB tmp-path tool-turn-with-output))))
 
 (deftest test-headless-next-turn-input-waits-fake [tmp-path]
   (check-next-turn (run-on FAKE tmp-path next-turn-input-waits-for-the-running-turn)))

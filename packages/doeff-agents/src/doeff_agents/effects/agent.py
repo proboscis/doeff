@@ -16,8 +16,9 @@ from enum import Enum
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
-import hy  # noqa: F401  # .hy import hook — ToolCall lives in the Hy module doeff_claude_code.lines
+import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code.lines
 from doeff import EffectBase
+from doeff_claude_code.lines import ToolAnswer as ToolAnswer
 from doeff_claude_code.lines import ToolCall as ToolCall
 
 if TYPE_CHECKING:
@@ -234,8 +235,9 @@ class AgentTextDeltaEvent:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
-    """The agent called tools: one ToolCall (tool_use block id + tool name) per call, in block order.
-    Each id is the one a later AgentToolResultEvent names in tool_use_ids."""
+    """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
+    ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
+    Each id is the one a later AgentToolResultEvent's answer names (agora-redesign #3744)."""
 
     seq: int
     at: datetime
@@ -244,11 +246,18 @@ class AgentToolUseEvent:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentToolResultEvent:
-    """Tool results went back to the agent."""
+    """Tool results went back to the agent: one ToolAnswer per result, in block order — ``id`` (the
+    call it answers), ``text`` (the result's text), ``is_error`` and ``non_text_kinds`` (kinds of the
+    result's non-text blocks, e.g. images, that ``text`` leaves out) (agora-redesign #3744)."""
 
     seq: int
     at: datetime
-    tool_use_ids: tuple[str, ...]
+    answers: tuple[ToolAnswer, ...]
+
+    @property
+    def tool_use_ids(self) -> tuple[str, ...]:
+        """The answered call ids, read from ``answers`` (the answers are the one source)."""
+        return tuple(answer.id for answer in self.answers)
 
 
 @dataclass(frozen=True, kw_only=True)
