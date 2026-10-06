@@ -1526,7 +1526,8 @@
         "doeff-cluster-coordinator-reads",
         "doeff-cluster-due-model",
         "doeff-cluster-due-policy",
-        "doeff-cluster-wake-policy"
+        "doeff-cluster-wake-policy",
+        "doeff-cluster-worker-due"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"

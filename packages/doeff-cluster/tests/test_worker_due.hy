@@ -75,7 +75,7 @@
 (deftest test-plan-due-is-the-term-to-kill-boundary
   ;; TERM を送った job に KILL を送る刻(signalled-ms + stop-grace-ms — stop-actions)。
   (val world (WorldView #(READY1) #((ProcessView "a" A1 1 10 0))))
-  (val records {"a" (JobRecord "a" :attempts 1 :stopping (JobStop 1000 StopStage.TERM 1000 (Undeclared)))})
+  (val records {"a" (JobRecord "a" :attempts 1 :stopping (JobStop :requested-ms 1000 :stage StopStage.TERM :signalled-ms 1000 :reason (Undeclared)))})
   (<- due (plan-due NOW world records POLICY))
   (<- at int (boundary due (! (policy-judged #() world records)) NOW))
   (assert (= at (+ 1000 POLICY.stop-grace-ms)) at))
@@ -84,7 +84,7 @@
 (deftest test-plan-due-is-the-stop-unconfirmed-boundary
   ;; KILL を送った job を「止まりを確かめられない」と報告する刻(signalled-ms + kill-grace-ms — phase-of)。
   (val world (WorldView #(READY1) #((ProcessView "a" A1 1 10 0))))
-  (val records {"a" (JobRecord "a" :attempts 1 :stopping (JobStop 1000 StopStage.KILL 1000 (Undeclared)))})
+  (val records {"a" (JobRecord "a" :attempts 1 :stopping (JobStop :requested-ms 1000 :stage StopStage.KILL :signalled-ms 1000 :reason (Undeclared)))})
   (<- due (plan-due NOW world records POLICY))
   (<- at int (boundary due (! (policy-judged #() world records)) NOW))
   (assert (= at (+ 1000 POLICY.kill-grace-ms)) at))
@@ -92,7 +92,7 @@
 
 (deftest test-plan-due-is-the-warm-child-kill-boundary
   ;; TERM を送った待ちの子に KILL を送る刻(stop の signalled-ms + stop-grace-ms — warm-stop-step)。
-  (val world (WorldView #() #() :warm-children #((WarmChildView "env-k" 20 0 :stop (StopProgress 1000 StopStage.TERM 1000)))))
+  (val world (WorldView #() #() :warm-children #((WarmChildView :key "env-k" :pid 20 :started-ms 0 :stop (StopProgress 1000 StopStage.TERM 1000)))))
   (<- due (plan-due NOW world {} POLICY))
   (<- at int (boundary due (! (policy-judged #() world {})) NOW))
   (assert (= at (+ 1000 POLICY.stop-grace-ms)) at))
@@ -100,8 +100,8 @@
 
 (deftest test-plan-due-is-the-warm-child-restart-boundary
   ;; 終わった待ちの子を起こし直す刻(ended-ms + code-retry-ms — warm-child-step)。判断は要る root の起こし方 launch を持つ warm-child-step。
-  (val view (WarmChildView "env-k" 20 0 :exit-code 1 :ended-ms 1000))
-  (val launch (WarmLaunch "/roots/k" "/roots/k" #()))
+  (val view (WarmChildView :key "env-k" :pid 20 :started-ms 0 :exit-code 1 :ended-ms 1000))
+  (val launch (WarmLaunch :root "/roots/k" :project "/roots/k" :preload #()))
   (<- due (plan-due NOW (WorldView #() #() :warm-children #(view)) {} POLICY))
   (<- at int (boundary due (fn [at] (run (warm-child-step at "env-k" launch view POLICY))) NOW))
   (assert (= at (+ 1000 POLICY.code-retry-ms)) at))
@@ -119,7 +119,7 @@
 (deftest test-plan-due-is-the-earliest-of-the-boundaries
   ;; 期限が 2 つ在れば早い方(KILL の 1000 + 10000 と、落ち着きの 500 + 60000)。
   (val world (WorldView #(READY1) #((ProcessView "a" A1 1 10 500))))
-  (val records {"a" (JobRecord "a" :attempts 1 :last-start-ms 500 :failures 1 :stopping (JobStop 1000 StopStage.TERM 1000 (Undeclared)))})
+  (val records {"a" (JobRecord "a" :attempts 1 :last-start-ms 500 :failures 1 :stopping (JobStop :requested-ms 1000 :stage StopStage.TERM :signalled-ms 1000 :reason (Undeclared)))})
   (<- due (plan-due NOW world records POLICY))
   (assert (= due (DueAt :at (+ 1000 POLICY.stop-grace-ms))) due))
 

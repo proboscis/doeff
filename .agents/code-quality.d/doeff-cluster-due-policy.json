@@ -7,12 +7,12 @@
       "layer": "pure",
       "name": "doeff-cluster-due-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/due_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/due_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/due_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/shared/core/due_policy.hy"
       ],
-      "responsibility": "期限の答えを作る・合わせる純粋な判断(期限の刻の列から答えを作る・判断ごとの答えを 1 つに合わせる — #3865)。",
+      "responsibility": "期限の答えを作る・合わせる純粋な判断(期限の刻の列から答えを作る・判断ごとの答えを 1 つに合わせる — #3865・coordinator と worker が共用 — #3871)。",
       "typed": true
     }
   ]

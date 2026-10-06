@@ -18,7 +18,7 @@
 (import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
 (import doeff_cluster.coordinator.core.rollout_policy [ready-timeout-from])
 (import doeff_cluster.coordinator.core.idle_policy [rollout-due quiet-stretch])
-(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 (import tests.test_idle_skip [tried-steps])
 

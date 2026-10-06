@@ -38,8 +38,8 @@
                                                        DeploymentSeen DeploymentUnreadable ServiceBody LegacyJobs])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
-(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.core.due_policy [earliest-due])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.shared.core.due_policy [earliest-due])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness

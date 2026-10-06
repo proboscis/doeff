@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive WORKER-FORGET-MS])
 (import doeff_cluster.coordinator.core.program [coordinator-step])
 (import doeff_cluster.coordinator.core.idle_policy [quiet-stretch quiet-step quiet-due])
-(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.idle_policy :as idle-policy)
 (import doeff_cluster.coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms sweep-due])
 (import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
