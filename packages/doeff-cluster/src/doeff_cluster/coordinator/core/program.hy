@@ -44,6 +44,8 @@
 (import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable StartKubeReads CollectKubeReads
                                                      KubeReadsIdle KubeReadsRunning KubeReadsDone])
 (import doeff_core_effects.effects [slog])
+(import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
+(import doeff_cluster.coordinator.core.cluster_policy [liveness-moves liveness-now note-liveness])
 
 
 
@@ -156,6 +158,22 @@
   {"revision" answer.revision "changed" answer.changed})
 
 
+(defk announce-liveness [events]
+  {:pre [(: events tuple)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
+  "worker の生死の出来事(WorkerGone・WorkerBack — #3864)を process の外へ出すため。届かなかった物は doeff-events が channel の欠けの
+   印として持ち、受け手は戻った時に coordinator の状態から追いつく(ADR-DOE-EVENTS-002 R5)ので、ここは出し直さず 1 行だけ報告する。
+   答え = 出した数。"
+  (for [event events]
+    (<- answer (| NoticeSent NoticeGapMarked NoticeDropped) (Publish event))
+    (match answer
+      (NoticeSent) None
+      (NoticeGapMarked) (<- (slog (.format "coordinator: {} が知らせの broker に届かなかった — channel {} に欠けの印({})"
+                                           (. (type event) __name__) answer.channel answer.detail)))
+      (NoticeDropped) (<- (slog (.format "coordinator: {} が知らせの broker に届かず捨てた({})"
+                                         (. (type event) __name__) answer.detail)))))
+  (len events))
+
+
 (defk coordinator-step [state timing naming watchers]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)] :post [(: % tuple)]}
   ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ 1 秒待つ)→ 1 件ずつ判断 → Rollout(1 秒ごと)→ 永続化 → 全員に返事。
@@ -176,6 +194,8 @@
     (IdleTaken) (do (for [step taken.steps]
                       (when (or step.marked step.beats)
                         (<- (SaveState base step.state)))
+                      ;; worker の生死が変わった歩なら、保存の後にその出来事を出す(#3864 — 飛ばした区間も歩ごとに比べる)。
+                      (<- (announce-liveness (! (liveness-moves base step.state timing))))
                       (:= base step.state)
                       (:= held step.watchers))
                     (:= batch taken.batch))
@@ -203,6 +223,8 @@
   (<- marked ClusterState (mark-alive next now))
   (:= next marked)
   (<- (SaveState base next))
+  ;; worker の生死の出来事は保存の後に出す(#3864)。
+  (<- (announce-liveness (! (liveness-moves base next timing))))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。
@@ -232,6 +254,11 @@
   ;; node の label から導く能力の名は、worker の自己申告として受けない(register-heartbeat が provides から外す — 改訂 1 の I)。
   (var current (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
   (var watchers #())
+  ;; 起動の時に、名簿の全部の今の生死を 1 度出す(#3864 — 沈黙の集合は保存の形に無いので、ここで今の刻から求める。保存する欄は
+  ;; 変わらない。受け手の追いつきにも成る)。以後の歩は、変わった所だけを出す。
+  (<- started int (now-epoch-ms))
+  (:= current (note-liveness current started timing))
+  (<- (announce-liveness (! (liveness-now current timing))))
   (while True
     (<- stopping bool (CoordinatorStopRequested))
     (when stopping

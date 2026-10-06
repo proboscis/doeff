@@ -47,7 +47,7 @@ from doeff_cluster.shared.intent.service_model import System
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy
 from doeff_core_effects.process_effects import EnvEntry
 from doeff_core_effects.scheduler import Promise, Task
-from doeff_events import ArmedTimer
+from doeff_events import ArmedTimer, MemoryBroker
 from doeff_hy.json_value import JsonValue
 from doeff_vm import WithHandler
 
@@ -417,6 +417,7 @@ class SimParts:
     store: _WalStoreView
     stop: object
     kube: object
+    broker: MemoryBroker
 
 @dataclass(frozen=True, kw_only=True)
 class SimExit:

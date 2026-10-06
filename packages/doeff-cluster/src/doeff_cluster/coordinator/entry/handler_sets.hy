@@ -23,13 +23,33 @@
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
+(import doeff_events [MemoryBroker broker-back-by-retry memory-notice-handler notice-events-handler redis-notice-handler])
+(import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES])
+
+;; coordinator が出来事(worker の生死 — #3864)を出す包みの源の名。出すだけ(channel を読まない)なので、broker の戻りを待つ上限
+;; NOTICE-PATIENCE-SECONDS は使われない(doeff-events の notice-events-handler が引数として求める — 既定値を持たない)。
+(val NOTICE-SOURCE "doeff-cluster-coordinator")
+(val NOTICE-PATIENCE-SECONDS 60.0)
 
 
-(defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube]
-  "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。slog-handler = 調停ループの 1 行の
+(defn #^ list redis-notices [#^ str url #^ float retry-seconds]
+  "本番の知らせの組(外側が先): Redis(url)へ出し、届かない間は欠けの印を持ち、戻りは待っている間だけ retry-seconds ごとに繋がるかを
+   試して知る(ADR-DOE-EVENTS-002 R5・R6)。await-handler と時計(Delay)は組の外側の本番の組が答える。"
+  [(redis-notice-handler url) (broker-back-by-retry retry-seconds)
+   (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES NOTICE-PATIENCE-SECONDS)])
+
+
+(defn #^ list memory-notices [#^ MemoryBroker broker]
+  "process の中の知らせの組(外側が先): 同じ broker を持つ受け手へ出す(まねた環境・Redis の無い機体の本物の process のテスト)。"
+  [(memory-notice-handler broker) (notice-events-handler NOTICE-SOURCE WORKER-NOTICE-ROUTES NOTICE-PATIENCE-SECONDS)])
+
+
+(defn #^ list production-handlers [#^ RequestInbox inbox #^ WalStore store #^ StopState stop #^ object kube #^ list notices]
+  "本番の組(外側が先)。kube = kube-api か kube-unavailable(資格の有無は composition root が決める)。notices = 知らせの組
+   (redis-notices か memory-notices — composition root が起動の引数で選ぶ・既定なし)。slog-handler = 調停ループの 1 行の
    報告(k8s の読みが答えない時の名指し — #2807)を stderr へ出す。"
   [slog-handler (await-handler) (async-time-handler) (stop-flag stop) (wal-store store) (http-requests inbox) coordinator-faults kube request-bodies
-   durable-states reply-bodies])
+   durable-states reply-bodies #* notices])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------
@@ -71,9 +91,10 @@
   (defn #^ None checkpoint [self] None))
 
 
-(defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube #^ list [watchers []]]
+(defn #^ list emulated-handlers [#^ RequestQueue queue #^ MemoryWalStore store #^ StopState stop #^ KubeMemory kube #^ MemoryBroker broker #^ list [watchers []]]
   "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
    (coordinator_inbox.StopState)。watchers = 置き場への書き(Persist)と要求の受け渡しを見張る handler の列(sim の落ちの注入と呼び鈴 —
    本番の組と同じく保存の綴り durable-states をいちばん内側に置くので、見張りはその外で KV の差分を見る)。slog-handler = 本番と同じ
-   1 行の報告の答え手。"
-  [slog-handler (stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies #* watchers durable-states reply-bodies])
+   1 行の報告の答え手。broker = 知らせの broker(worker の生死の出来事を出す — 模擬の受け手が同じ broker を読む)。"
+  [slog-handler (stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies #* watchers durable-states reply-bodies
+   #* (memory-notices broker)])

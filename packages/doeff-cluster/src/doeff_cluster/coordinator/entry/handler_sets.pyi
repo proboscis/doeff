@@ -18,8 +18,22 @@ from doeff_cluster.foundation.coordinator_inbox import StopState as StopState
 from doeff_cluster.shared.protocol.inbox import http_requests as http_requests
 from doeff_cluster.shared.protocol.inbox import stop_flag as stop_flag
 from doeff_cluster.coordinator.protocol.faults import coordinator_faults as coordinator_faults
+from doeff_events import MemoryBroker as MemoryBroker
+from doeff_events import broker_back_by_retry as broker_back_by_retry
+from doeff_events import memory_notice_handler as memory_notice_handler
+from doeff_events import notice_events_handler as notice_events_handler
+from doeff_events import redis_notice_handler as redis_notice_handler
+from doeff_cluster.coordinator.protocol.worker_notices import WORKER_NOTICE_ROUTES as WORKER_NOTICE_ROUTES
+NOTICE_SOURCE: str
+NOTICE_PATIENCE_SECONDS: float
 
-def production_handlers(inbox: RequestInbox, store: WalStore, stop: StopState, kube: object) -> list:
+def redis_notices(url: str, retry_seconds: float) -> list:
+    ...
+
+def memory_notices(broker: MemoryBroker) -> list:
+    ...
+
+def production_handlers(inbox: RequestInbox, store: WalStore, stop: StopState, kube: object, notices: list) -> list:
     ...
 
 class MemoryWalStore:
@@ -53,5 +67,5 @@ class MemoryWalStore:
     def checkpoint(self) -> None:
         ...
 
-def emulated_handlers(queue: RequestQueue, store: MemoryWalStore, stop: StopState, kube: KubeMemory, watchers: list=...) -> list:
+def emulated_handlers(queue: RequestQueue, store: MemoryWalStore, stop: StopState, kube: KubeMemory, broker: MemoryBroker, watchers: list=...) -> list:
     ...

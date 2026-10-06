@@ -48,6 +48,13 @@ from doeff_cluster.coordinator.intent.kube_model import KubeReadsIdle as KubeRea
 from doeff_cluster.coordinator.intent.kube_model import KubeReadsRunning as KubeReadsRunning
 from doeff_cluster.coordinator.intent.kube_model import KubeReadsDone as KubeReadsDone
 from doeff_core_effects.effects import slog as slog
+from doeff_events import Publish as Publish
+from doeff_events import NoticeSent as NoticeSent
+from doeff_events import NoticeGapMarked as NoticeGapMarked
+from doeff_events import NoticeDropped as NoticeDropped
+from doeff_cluster.coordinator.core.cluster_policy import liveness_moves as liveness_moves
+from doeff_cluster.coordinator.core.cluster_policy import liveness_now as liveness_now
+from doeff_cluster.coordinator.core.cluster_policy import note_liveness as note_liveness
 KUBE_READS_NAMED_MS: int
 
 def kube_observations(state: ClusterState, now: int) -> _Program[KubeReadsDone, object]:
@@ -66,6 +73,9 @@ def request_reply(state: ClusterState, request: Request, now: int, timing: Clust
     ...
 
 def watch_answer_json(answer: WatchAnswer) -> _Program[dict, object]:
+    ...
+
+def announce_liveness(events: tuple) -> _Program[int, object]:
     ...
 
 def coordinator_step(state: ClusterState, timing: ClusterTiming, naming: ClusterNaming, watchers: tuple) -> _Program[tuple, object]:

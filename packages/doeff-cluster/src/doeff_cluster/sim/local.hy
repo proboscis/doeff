@@ -154,6 +154,7 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
+(import doeff_events [MemoryBroker])
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer taken-batch
                                                           deposit-beats withdraw-beats drop-beats HEARD RestBell ring-bell
@@ -599,11 +600,13 @@
 
 (defrecord SimParts
   "coordinator の Pod の部品(1 回の走りに 1 組 — 世界の session val が 1 回だけ作る)。emulated-handlers が受ける要求の列・置き場・
-   停止の合図・偽の k8s。"
+   停止の合図・偽の k8s・知らせの broker(coordinator が worker の生死の出来事を出す先 — 筋の Program はこの broker を読んで受け手に
+   成れる・#3864)。"
   (#^ RequestQueue queue)
   (#^ MemoryWalStore store)
   (#^ StopState stop)
-  (#^ KubeMemory kube))
+  (#^ KubeMemory kube)
+  (#^ MemoryBroker broker))
 
 
 (defrecord SimExit
@@ -1000,7 +1003,8 @@
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
-  (SimParts :queue (RequestQueue :skip-idle plan.skip-idle) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))))
+  (SimParts :queue (RequestQueue :skip-idle plan.skip-idle) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))
+            :broker (MemoryBroker)))
 
 
 (defk fresh-truth [name generation now timing]
@@ -2535,7 +2539,7 @@
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
-    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [(observe-requests (StepBook) parts.queue)])
+    (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube parts.broker [(observe-requests (StepBook) parts.queue)])
           (run-coordinator started plan.timing plan.naming)))
     "stopped"
     (except [error OSError]

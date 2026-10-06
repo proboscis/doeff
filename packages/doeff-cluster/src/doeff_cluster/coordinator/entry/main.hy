@@ -32,7 +32,8 @@
 (import doeff_cluster.coordinator.protocol.kube [KubeReadBatches kube-api kube-unavailable] doeff_cluster.foundation.kube_client [KubeClient] doeff_cluster.coordinator.intent.kube_model [KubeUnavailable])
 ;; HTTP の受付と停止の合図(coordinator_inbox — 以前の coordinator.hy の再輸出は #2022 で消した)。
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
-(import doeff_cluster.coordinator.entry.handler_sets [production-handlers])
+(import doeff_cluster.coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
+(import doeff_events [MemoryBroker])
 
 
 
@@ -152,7 +153,18 @@
   (.add-argument parser "--port" :type int :default 8080)
   (.add-argument parser "--naming" :default "{}"
                  :help "外の系と取り交わす名(JSON: ownerAnnotation・ownerScope・nodeCapabilities)— cluster_model.ClusterNaming")
+  ;; worker の生死の出来事(#3864)を出す知らせの broker。既定は無い — 本番の manifest は Redis の URL を、Redis の無い機体の本物の
+  ;; process のテストは memory(この process の中だけ — 誰にも届かない)を名指す。
+  (.add-argument parser "--notice-broker" :required True
+                 :help "redis://<host>:<port>/<db> か memory")
+  (.add-argument parser "--notice-retry-seconds" :type float :default None
+                 :help "Redis の戻りを待つ間だけ繋がるかを試す間隔(秒)— --notice-broker が Redis の時は必須")
   (setv args (.parse-args parser))
+  (when (and (!= args.notice-broker "memory") (is args.notice-retry-seconds None))
+    (.error parser "--notice-broker が Redis の時は --notice-retry-seconds が要る(既定なし)"))
+  (setv notices (if (= args.notice-broker "memory")
+                    (memory-notices (MemoryBroker))
+                    (redis-notices args.notice-broker args.notice-retry-seconds)))
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))
   ;; 受付の箱は合図の受け手より先に作る(合図が箱を起こす — 要求の無い間に眠る待ちを合図の刻に抜ける・#3865)。待ち受けは読み直しの後。
@@ -174,7 +186,7 @@
                   args.port (len state.jobs) (len state.tasks) (len state.board) (len state.rollouts) state.revision
                   (if (KubeClient.available) "あり" "なし") (or state.running-commit "版を読めない")) :file sys.stderr :flush True)
   ;; handler の組は coordinator_handler_sets の値(本番の組)。
-  (run (scheduled (with_handlers (production-handlers inbox store stop kube) (run-coordinator state (ClusterTiming) naming))))
+  (run (scheduled (with_handlers (production-handlers inbox store stop kube notices) (run-coordinator state (ClusterTiming) naming))))
   (print "coordinator: 止まりました" :file sys.stderr :flush True))
 
 
