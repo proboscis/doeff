@@ -356,8 +356,8 @@
   (#^ int sequence))
 
 (defrecord StreamTail
-  "WatchChanges の答えの tails の 1 つ — 名指した列 1 つの末尾(ReadStreamEnd の StreamEnd と同じ位置と刻・#3718): stream = 列の名 /
-   sequence = 列に今ある、保持の期限を過ぎていない最後の出来事の番号(1 以上)/ at = その出来事を積んだ刻(epoch ミリ秒 — Event.at と同じ)。"
+  "WatchChanges の答えの tails の 1 つ — 名指した列 1 つの末尾(#3718): stream = 列の名 / sequence = 列に今ある、保持の期限を過ぎていない
+   最後の出来事の番号(1 以上 — ReadStreamEnd の StreamEnd と同じ番号)/ at = その出来事を積んだ刻(epoch ミリ秒 — ReadEvents の Event.at と同じ)。"
   {:tags {:context "records" :role "type"}
    :check [(isinstance stream str)
            (and (isinstance sequence int) (not (isinstance sequence bool)) (>= sequence 1))
@@ -419,14 +419,11 @@
 
 (defclass [(dataclass :frozen True)] StreamEnd []
   "ReadStreamEnd の答え: sequence = 列に今ある、保持の期限を過ぎていない最後の出来事の番号(期限を過ぎた出来事は回収の前でも数えない —
-   1 以上)/ at = その出来事を積んだ刻(epoch ミリ秒 — Event.at と同じ・#3718)。"
+   1 以上)。"
   (#^ int sequence)
-  (#^ int at)
   (defn #^ None __post_init__ [self]
     (when (or (isinstance self.sequence bool) (not (isinstance self.sequence int)) (< self.sequence 1))
-      (raise (ValueError (.format "StreamEnd.sequence は 1 以上の整数: {!r}" self.sequence))))
-    (when (or (isinstance self.at bool) (not (isinstance self.at int)))
-      (raise (ValueError (.format "StreamEnd.at は整数(epoch ミリ秒): {!r}" self.at))))))
+      (raise (ValueError (.format "StreamEnd.sequence は 1 以上の整数: {!r}" self.sequence))))))
 
 (defclass [(dataclass :frozen True)] StreamEmpty []
   "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・全部が保持の期限を過ぎた)— 番号 0 と混ぜずに型で分ける。")

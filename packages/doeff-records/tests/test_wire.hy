@@ -50,7 +50,7 @@
    #("append-event" (Appended 7))
    #("append-event" (Refused "別の本文"))
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
-   #("read-stream-end" (StreamEnd 7 1700000000456))
+   #("read-stream-end" (StreamEnd 7))
    #("read-stream-end" (StreamEmpty))
    #("watch-events" (EventsMoved))
    #("watch-events" (EventsQuiet))
@@ -162,11 +162,10 @@
                                               "tails" [{"kind" "streamTail" "stream" "journal" "sequence" 0 "at" 1}]})
                            #("watch-changes" {"kind" "changes" "items" [] "cursor" {"epoch" 1 "sequence" 5}
                                               "tails" [{"kind" "streamTailEmpty"}]})
-                           ;; 列の末尾の番号や刻の無い streamEnd・0 や真偽値の番号は断る(空の列は streamEmpty で運ぶ — 0 に倒さない)。
+                           ;; 列の末尾の番号の無い streamEnd・0 や真偽値の番号は断る(空の列は streamEmpty で運ぶ — 0 に倒さない)。
                            #("read-stream-end" {"kind" "streamEnd"})
-                           #("read-stream-end" {"kind" "streamEnd" "sequence" 3})
-                           #("read-stream-end" {"kind" "streamEnd" "sequence" 0 "at" 1})
-                           #("read-stream-end" {"kind" "streamEnd" "sequence" True "at" 1})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" 0})
+                           #("read-stream-end" {"kind" "streamEnd" "sequence" True})
                            #("read-stream-end" {"kind" "streamEmpty" "sequence" 3})
                            #("read-stream-end" {"kind" "events" "items" [] "lastSequence" 0})
                            ;; 列の待ちの答えは eventsMoved | eventsQuiet だけ(欄を持たない)。

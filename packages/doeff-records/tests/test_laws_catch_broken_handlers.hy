@@ -19,7 +19,7 @@
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
-                            law-watch-tails-match-stream-ends])
+                            law-watch-tails-match-last-events])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -111,8 +111,8 @@
   "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。"
   (<- journal (ReadStreamEnd "journal"))
   (<- pairs (ReadStreamEnd "pairs"))
-  (val ends (lfor end #(journal pairs) :if (isinstance end StreamEnd) end))
-  (if ends (max ends :key (fn [end] end.sequence)) (StreamEmpty)))
+  (val ends (lfor end #(journal pairs) :if (isinstance end StreamEnd) end.sequence))
+  (if ends (StreamEnd (max ends)) (StreamEmpty)))
 
 (defhandler end-of-every-stream []
   ;; 列を問わない handler の顔: どの列の末尾にも、置き場の全部の列の最後の番号を答える。
@@ -153,8 +153,8 @@
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
                       #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
                       #(law-stream-end-is-the-last-sequence (end-of-every-stream))
-                      #(law-watch-tails-match-stream-ends drop-tails)
-                      #(law-watch-tails-match-stream-ends tails-in-name-order)]]
+                      #(law-watch-tails-match-last-events drop-tails)
+                      #(law-watch-tails-match-last-events tails-in-name-order)]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手の名で断る置き場(欄の書き手でない stranger の書きを断る)— #2994 の前の置き場の形。
   (setv strict-store (MemoryStore LAW-SCHEMA))

@@ -1,8 +1,9 @@
 ;; 名指した追記の列の末尾(tails)を WatchChanges の答えに載せる契約(#3718)の失敗ケース。使い手は 1 拍ごとに待ちの長さ 0 の
 ;; WatchChanges と、列全体の最後の出来事の刻を得るためだけの ReadEvents を撃っていた — 後の方を無くすため、WatchChanges の
 ;; 要求に streams(末尾を知りたい列の名)を足し、答え Changes の tails に名指した列ごとの末尾(StreamTail = 位置と刻 / StreamTailEmpty =
-;; 生きている出来事が無い)を名指した順で載せる。ReadStreamEnd の答え StreamEnd にも刻 at を足す。確かめること:
-;;   (a) 列を名指した WatchChanges(待ちの長さ 0)の tails は、同じ時点の ReadStreamEnd と同じ位置と刻。列に積んだ後に読み直すと新しい末尾
+;; 生きている出来事が無い)を名指した順で載せる(ReadStreamEnd の答え StreamEnd の形は替えない)。確かめること:
+;;   (a) 列を名指した WatchChanges(待ちの長さ 0)の tails は、同じ時点の ReadEvents の最後の出来事と同じ位置と刻。列に積んだ後に読み直すと
+;;       新しい末尾
 ;;   (b) 列に生きている出来事が無い(空・期限が全部過ぎた)時、tails はその列の StreamTailEmpty
 ;;   (c) 列を名指さない WatchChanges の答えは tails が空で、wire の答えに鍵 tails が無い(古い client の形のまま)— 要求にも鍵 streams が無い
 ;;   (d) client: 要求が名指したのに答えに tails が無い・数や列が合わない・名指さないのに在る時は WireMalformed で上がる(黙って空にしない)
@@ -16,10 +17,10 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_time [SimClock sim-time-handler Delay GetMonotonic])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [Appended Changes ExpectAbsent StreamEmpty StreamEnd StreamTail StreamTailEmpty UndeclaredTable WatchCursor
+(import doeff_records.values [Appended Changes Event Events ExpectAbsent StreamEmpty StreamTail StreamTailEmpty UndeclaredTable WatchCursor
                               Written])
-(import doeff_records.effects [AppendEvent ListRows PutRow ReadStreamEnd WatchChanges])
-(import doeff_records.laws [LAW-SCHEMA LawHarness MAKER PULSE-KEEP-SECONDS as-writer law-watch-tails-match-stream-ends])
+(import doeff_records.effects [AppendEvent ListRows PutRow ReadEvents ReadStreamEnd WatchChanges])
+(import doeff_records.laws [LAW-SCHEMA LawHarness MAKER PULSE-KEEP-SECONDS as-writer law-watch-tails-match-last-events])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.service [RecordsService respond HttpRequest :as ServiceRequest])
 (import doeff_records.wire [WireMalformed encode-answer encode-request])
@@ -47,16 +48,19 @@
   answer)
 
 
-(defk end-of [harness stream]
-  {:pre [(: harness LawHarness) (: stream str)] :post [(: % (| StreamEnd StreamEmpty))] :tags {:context "records" :role "program"}}
-  "列 stream の末尾を ReadStreamEnd で読むため(tails と比べる基準)。"
-  (<- end (as-writer harness MAKER (ReadStreamEnd stream)))
-  end)
+(defk last-event-of [harness stream]
+  {:pre [(: harness LawHarness) (: stream str)] :post [(: % (| Event None))] :tags {:context "records" :role "program"}}
+  "列 stream の最後の生きている出来事を ReadEvents で読むため(tails と比べる基準 — 保持の期限を過ぎた出来事は ReadEvents に出ない)。
+   無ければ None。"
+  (<- read (as-writer harness MAKER (ReadEvents stream)))
+  (match read
+    (Events :items #()) None
+    (Events :items items) (get items -1)))
 
 
 ;; --- (a) ----------------------------------------------------------------------------------------------------
 
-(deftest test-a-named-tails-match-the-stream-end-and-follow-appends
+(deftest test-a-named-tails-match-the-last-event-and-follow-appends
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- cursor WatchCursor (cursor-now harness))
@@ -64,15 +68,15 @@
   (<- (Delay 1))
   (<- second Appended (as-writer harness MAKER (AppendEvent "journal" "tail-2" {"n" 2})))
   (<- first-read Changes (watched harness cursor #("journal")))
-  (<- first-end (end-of harness "journal"))
-  (assert (and (isinstance first-end StreamEnd) (= first-end.sequence second.sequence)) first-end)
-  (assert (= first-read.tails #((StreamTail :stream "journal" :sequence first-end.sequence :at first-end.at))) #(first-read first-end))
+  (<- first-last (last-event-of harness "journal"))
+  (assert (and (isinstance first-last Event) (= first-last.sequence second.sequence)) first-last)
+  (assert (= first-read.tails #((StreamTail :stream "journal" :sequence first-last.sequence :at first-last.at))) #(first-read first-last))
   ;; 列に積んだ後の読み直しは新しい末尾(位置も刻も進む)— 表の変化は無いので items は空のまま。
   (<- (Delay 1))
   (<- third Appended (as-writer harness MAKER (AppendEvent "journal" "tail-3" {"n" 3})))
   (<- again Changes (watched harness cursor #("journal")))
-  (<- moved (end-of harness "journal"))
-  (assert (and (isinstance moved StreamEnd) (= moved.sequence third.sequence) (= moved.at (+ first-end.at 1000))) #(first-end moved))
+  (<- moved (last-event-of harness "journal"))
+  (assert (and (isinstance moved Event) (= moved.sequence third.sequence) (= moved.at (+ first-last.at 1000))) #(first-last moved))
   (assert (= again.tails #((StreamTail :stream "journal" :sequence moved.sequence :at moved.at))) #(again moved))
   (assert (= again.items #()) again))
 
@@ -89,15 +93,16 @@
   ;; pulses に 1 つ積む: pulses は末尾・journal は空のまま。
   (<- beat Appended (as-writer harness MAKER (AppendEvent "pulses" "beat-1" {"n" 1})))
   (<- live Changes (watched harness cursor #("pulses" "journal")))
-  (<- live-end (end-of harness "pulses"))
-  (assert (and (isinstance live-end StreamEnd) (= live-end.sequence beat.sequence)) live-end)
-  (assert (= live.tails #((StreamTail :stream "pulses" :sequence beat.sequence :at live-end.at) (StreamTailEmpty :stream "journal")))
+  (<- live-last (last-event-of harness "pulses"))
+  (assert (and (isinstance live-last Event) (= live-last.sequence beat.sequence)) live-last)
+  (assert (= live.tails #((StreamTail :stream "pulses" :sequence beat.sequence :at live-last.at) (StreamTailEmpty :stream "journal")))
           live)
-  ;; 保持の期限(PULSE-KEEP-SECONDS)が全部過ぎた列は、回収の前でも空の印(ReadStreamEnd の StreamEmpty と同じ)。
+  ;; 保持の期限(PULSE-KEEP-SECONDS)が全部過ぎた列は、回収の前でも空の印(ReadStreamEnd の StreamEmpty・ReadEvents の空と同じ)。
   (<- (Delay (+ PULSE-KEEP-SECONDS 1)))
   (<- expired Changes (watched harness cursor #("pulses" "journal")))
-  (<- expired-end (end-of harness "pulses"))
-  (assert (= expired-end (StreamEmpty)) expired-end)
+  (<- expired-end (as-writer harness MAKER (ReadStreamEnd "pulses")))
+  (<- expired-last (last-event-of harness "pulses"))
+  (assert (and (= expired-end (StreamEmpty)) (is expired-last None)) #(expired-end expired-last))
   (assert (= expired.tails #((StreamTailEmpty :stream "pulses") (StreamTailEmpty :stream "journal"))) expired))
 
 
@@ -233,23 +238,25 @@
   (<- appended Appended (Wait appender))
   (assert (>= (- ended began) QUIET-WAIT) #((- ended began) quiet))
   (assert (and (isinstance quiet Changes) (= quiet.items #())) quiet)
-  (<- quiet-end (end-of harness "journal"))
-  (assert (and (isinstance quiet-end StreamEnd) (= quiet-end.sequence appended.sequence)) quiet-end)
-  (assert (= quiet.tails #((StreamTail :stream "journal" :sequence quiet-end.sequence :at quiet-end.at))) #(quiet quiet-end))
+  (<- quiet-last (last-event-of harness "journal"))
+  (assert (and (isinstance quiet-last Event) (= quiet-last.sequence appended.sequence)) quiet-last)
+  (assert (= quiet.tails #((StreamTail :stream "journal" :sequence quiet-last.sequence :at quiet-last.at))) #(quiet quiet-last))
   ;; 列への追記の後に表を書く: 表の変化で返り、tails は先に積んだ列の末尾。
   (<- writer (Spawn (late-append-then-write harness)))
   (<- woke (as-writer harness MAKER (WatchChanges #("parts") quiet.cursor :timeout 30.0 :streams #("journal"))))
   (<- written Written (Wait writer))
   (assert (and (isinstance woke Changes) (= (lfor item woke.items #(item.key item.version)) [#(#("late-row") written.version)])) woke)
-  (<- woke-end (end-of harness "journal"))
-  (assert (= woke.tails #((StreamTail :stream "journal" :sequence woke-end.sequence :at woke-end.at))) #(woke woke-end))
-  (assert (> woke-end.sequence appended.sequence) #(woke-end appended)))
+  (<- woke-last (last-event-of harness "journal"))
+  (assert (and (isinstance woke-last Event)
+               (= woke.tails #((StreamTail :stream "journal" :sequence woke-last.sequence :at woke-last.at))))
+          #(woke woke-last))
+  (assert (> woke-last.sequence appended.sequence) #(woke-last appended)))
 
 
-;; --- 法 18(doeff_records.laws の law-watch-tails-match-stream-ends)を 4 つの置き場で回す -------------------------------------------
+;; --- 法 18(doeff_records.laws の law-watch-tails-match-last-events)を 4 つの置き場で回す -------------------------------------------
 
 (deftest test-the-tails-law-holds-on-every-store
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
-  (<- transcript (law-watch-tails-match-stream-ends harness))
+  (<- transcript (law-watch-tails-match-last-events harness))
   (assert transcript))

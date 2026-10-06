@@ -473,8 +473,8 @@
 
 (defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査
   "今ある変更から 1 回ぶんの答え(待たない)。位置が今の版の外なら Reset。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の
-   変わりは、回収の前でも出さない(上限の前に除く — 次の位置がずれない・hidden-change?)。名指した列(ask.streams)の末尾は、変更と同じ
-   錠の内の同じ断面で ReadStreamEnd と同じ読み(memory-read-stream-end)で読み、名指した順の tails にする(#3718)。"
+   変わりは、回収の前でも出さない(上限の前に除く — 次の位置がずれない・hidden-change?)。名指した列(ask.streams)の末尾(最後の生きている
+   出来事の番号と刻)は、変更と同じ錠の内の同じ断面で ReadStreamEnd と同じ探し方で読み、名指した順の tails にする(#3718)。"
   (for [name ask.tables] (store.schema.table name))
   (for [name ask.streams] (store.schema.stream name))
   (setv cursor ask.cursor)
@@ -487,9 +487,15 @@
                           ask.limit)))
   (setv tails #())
   (for [name ask.streams]
-    (setv tails (+ tails #((match (memory-read-stream-end store (ReadStreamEnd name) now-ms)
-                             (StreamEnd :sequence sequence :at at) (StreamTail :stream name :sequence sequence :at at)
-                             (StreamEmpty) (StreamTailEmpty :stream name))))))
+    ;; 列の最後の生きている出来事(memory-read-stream-end と同じ探し方 — 列の出来事は番号の昇順なので後ろから・期限を過ぎた出来事は数えない)。
+    (setv decl (store.schema.stream name))
+    (setv last (next (gfor event (reversed store.events)
+                           :if (and (= event.stream name) (not (stored-event-expired? store decl event now-ms)))
+                           event)
+                     None))
+    (setv tails (+ tails #((match last
+                             None (StreamTailEmpty :stream name)
+                             (Event :sequence sequence :at at) (StreamTail :stream name :sequence sequence :at at))))))
   (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head)) tails))
 
 
@@ -653,13 +659,12 @@
 
 
 (defn #^ (| StreamEnd StreamEmpty) memory-read-stream-end [#^ MemoryStore store #^ ReadStreamEnd ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
-  "ReadStreamEnd に答えるため: 刻 now-ms の断面で、列 stream の保持の期限を過ぎていない最後の出来事の番号と、それを積んだ刻(末尾は期限で
-   変わる — 回収の前の期限を過ぎた出来事は数えない・全部過ぎれば StreamEmpty。列の出来事は番号の昇順に並ぶので後ろから探す)。
-   WatchChanges の tails も同じ読み(memory-watch-scan — #3718)。"
+  "ReadStreamEnd に答えるため: 刻 now-ms の断面で、列 stream の保持の期限を過ぎていない最後の出来事の番号(末尾は期限で変わる — 回収の前の
+   期限を過ぎた出来事は数えない・全部過ぎれば StreamEmpty。列の出来事は番号の昇順に並ぶので後ろから探す)。"
   (setv decl (store.schema.stream ask.stream))
   (for [event (reversed store.events)]
     (when (and (= event.stream ask.stream) (not (stored-event-expired? store decl event now-ms)))
-      (return (StreamEnd event.sequence event.at))))
+      (return (StreamEnd event.sequence))))
   (StreamEmpty))
 
 

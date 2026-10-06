@@ -1,7 +1,7 @@
 ;;; 記録の仕組みの公開 effect 8 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
-;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号と刻を 1 回で読む(空の列は StreamEmpty)。WatchChanges は名指した列(streams)の末尾も
-;;; 答えに載せる(Changes.tails — #3718)。
+;;; 8 つ目の ReadStreamEnd は追記の列の末尾の番号を 1 回で読む(空の列は StreamEmpty)。WatchChanges は名指した列(streams)の末尾の
+;;; 番号と刻も答えに載せる(Changes.tails — #3718)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
@@ -173,8 +173,8 @@
 
 
 (defclass [(dataclass :frozen True)] ReadStreamEnd [EffectBase]
-  "追記の列 stream の末尾(今ある最後の出来事の番号と、それを積んだ刻)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため。
-   答え = StreamEnd(sequence at)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
+  "追記の列 stream の末尾(今ある最後の出来事の番号)を 1 回で読む — 使い手が末尾を ReadEvents の先読みと二分で探さないため。
+   答え = StreamEnd(sequence)| StreamEmpty(出来事が 1 つも無い)| Unreachable。"
   (#^ str stream)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadStreamEnd.stream")))

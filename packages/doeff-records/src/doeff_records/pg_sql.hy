@@ -511,13 +511,23 @@
              :params (+ (! (params-of #(#("ledger" stream) #("after" after) #("limit" limit)))) living.params)))
 
 
-(defk stream-end-statement [prefix stream expiry stem]
+(defk stream-end-statement [prefix stream expiry]
+  {:pre [(: prefix str) (: stream str) (: expiry (| EventExpiry None))] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "追記の列の最後の出来事の番号(出来事が無ければ NULL)を 1 文で読む文を作るため(ReadStreamEnd)。末尾は保持の期限で変わる(期限を
+   過ぎた出来事は数えない — 全部過ぎれば NULL = StreamEmpty)ので、ReadEvents と同じ条件で期限を過ぎた出来事を除く(expiry = None は
+   期限の無い列)。"
+  (<- living (living-events-filter prefix expiry "before_at"))
+  (Statement :text (.format "SELECT max(old.seq) FROM {p}append_rows AS old WHERE old.ledger = :ledger{l}" :p prefix :l living.text)
+             :params (+ (! (params-of #(#("ledger" stream)))) living.params)))
+
+
+(defk stream-tail-statement [prefix stream expiry stem]
   {:pre [(: prefix str) (: stream str) (: expiry (| EventExpiry None)) (: stem str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "追記の列 stream の最後の生きている出来事の番号と刻(seq・at — 生きている出来事が無ければ 0 行)を、(ledger, seq) の索引を後ろから 1 行で
-   引く文を作るため(ReadStreamEnd と、WatchChanges の頭の文 watch-head-statement の列ごとの副問い合わせが、この 1 つを使う・#3718)。末尾は
-   保持の期限で変わる(期限を過ぎた出来事は数えない — 全部過ぎれば 0 行 = StreamEmpty)ので、ReadEvents と同じ条件で期限を過ぎた出来事を
-   除く(expiry = None は期限の無い列)。stem = 引数の名の頭(1 つの文に列を並べても名が混ざらない — ReadStreamEnd は空)。
+  "WatchChanges の頭の文(watch-head-statement)が列ごとに並べる副問い合わせ — 追記の列 stream の最後の生きている出来事の番号と刻
+   (seq・at — 生きている出来事が無ければ 0 行)を、(ledger, seq) の索引を後ろから 1 行で引く文を作るため(#3718)。期限の条件は ReadEvents
+   と同じ(expiry = None は期限の無い列)。stem = 引数の名の頭(1 つの文に列を並べても名が混ざらない)。
    列の照らしを等号でなく両端の同じ範囲(ledger >= :l AND ledger <= :l — 決まった照合の text では等号と同じ行)で書き、並びを (ledger, seq) の
    索引の並びのまま書くのは、PostgreSQL に (ledger, seq) の索引を後ろから引かせるため: 等号だと列の名が定数とみなされて並びから落ち、
    planner は主鍵 seq を後ろから読んで列の名で濾す道を選ぶ — 末尾より後に他の列の出来事が多いほど読む行が増える(使い捨ての置き場の
@@ -542,14 +552,14 @@
    :tags {:context "records" :role "foundation"}}
   "WatchChanges の 1 回ぶんの読みの頭を 1 文 = 1 つの断面で読む文を作るため(#3718): 置き場の版・忘れた位置・変更の列の先頭の番号
    (store-head-statement と同じ 3 つ)の後ろに、末尾を名指した列 tails ごとに最後の生きている出来事の番号と刻の 2 つを並べる(列ごとに
-   stream-end-statement の文を LEFT JOIN … ON TRUE の副問い合わせにする — 生きている出来事の無い列は NULL の組)。変更の列の読み
+   stream-tail-statement の文を LEFT JOIN … ON TRUE の副問い合わせにする — 生きている出来事の無い列は NULL の組)。変更の列の読み
    (changes-statement)は頭の番号までなので、番号を取ってから commit するまでを書きの錠の中に置く約束(頭の註)の下で、変更と末尾は同じ
    断面の物になる。READ COMMITTED では文ごとに断面が変わるので、末尾を別の文に分けない。tails が空なら store-head-statement と同じ答えの組。"
   (var columns "")
   (var joins "")
   (var params #())
   (for [#(index tail) (enumerate tails)]
-    (<- select Statement (stream-end-statement prefix tail.stream tail.expiry (.format "t{}_" index)))
+    (<- select Statement (stream-tail-statement prefix tail.stream tail.expiry (.format "t{}_" index)))
     (:= columns (+ columns (.format ", t{i}.seq, t{i}.at" :i index)))
     (:= joins (+ joins (.format "\n                       LEFT JOIN ({s}) AS t{i} ON TRUE" :s select.text :i index)))
     (:= params (+ params select.params)))

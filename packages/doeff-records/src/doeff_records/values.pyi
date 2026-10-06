@@ -218,7 +218,6 @@ class EventsQuiet:
 @dataclass(frozen=True)
 class StreamEnd:
     sequence: int
-    at: int
 
 @dataclass(frozen=True)
 class StreamEmpty:

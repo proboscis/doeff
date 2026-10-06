@@ -797,16 +797,14 @@
 (defk pg-read-stream-end [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadStreamEnd) (: now-ms int)] :post [(: % (| StreamEnd StreamEmpty))]
    :tags {:context "records" :role "foundation"}}
-  "ReadStreamEnd に答えるため: 列の最後の生きた出来事の番号と刻を、(ledger, seq) の索引を後ろから 1 行で引く 1 文で読む(刻 now-ms で
-   保持の期限を過ぎた出来事は回収の前でも数えない — ReadEvents と同じ条件。生きた出来事が無ければ 0 行 = StreamEmpty)。WatchChanges の
-   tails も同じ文を頭の文の副問い合わせにして読む(pg-watch-scan — #3718)。"
+  "ReadStreamEnd に答えるため: 列の生きた出来事の max(seq) を 1 文で読む(刻 now-ms で保持の期限を過ぎた出来事は回収の前でも数えない —
+   ReadEvents と同じ条件。生きた出来事が無ければ StreamEmpty)。"
   (val decl (store.schema.stream ask.stream))
   (<- expiry (event-expiry decl now-ms))
-  (<- statement (stream-end-statement store.prefix ask.stream expiry ""))
+  (<- statement (stream-end-statement store.prefix ask.stream expiry))
   (<- records (query-rows store.database statement))
-  (match records
-    #() (StreamEmpty)
-    #(#(sequence at)) (StreamEnd (int sequence) (int at))))
+  (val last (get (get records 0) 0))
+  (if (is last None) (StreamEmpty) (StreamEnd (int last))))
 
 
 (defk moved-after [program]

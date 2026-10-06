@@ -538,47 +538,32 @@
 
 ;; --- 法 13: 列の末尾の番号は 1 回の読みで答え、空の列は空と答える ----------------------------------------------------
 
-(defk stream-end-of [harness stream appended]
-  {:pre [(: harness LawHarness) (: stream str) (: appended Appended)] :post [(: % StreamEnd)]
-   :tags {:context "records" :role "program"}}
-  "列 stream に積んだ出来事 appended を末尾とする StreamEnd(番号と、その出来事を積んだ刻 — ReadEvents の Event.at)を作るため(列の末尾の
-   法が ReadStreamEnd の答えと比べる基準・#3718)。積んだ出来事が読めなければ LawBroken。"
-  (<- read (as-writer harness MAKER (ReadEvents stream :after (- appended.sequence 1) :limit 1)))
-  (<- (require-law (and (isinstance read Events) (= (lfor event read.items event.sequence) [appended.sequence])) "列の末尾の基準"
-                   (.format "列 {} に積んだ出来事 {} が読めない: {!r}" stream appended.sequence read)))
-  (StreamEnd appended.sequence (. (get read.items 0) at)))
-
-
 (defk law-stream-end-is-the-last-sequence [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "列の末尾の法: ReadStreamEnd は列の最後の出来事の番号とそれを積んだ刻を StreamEnd で答え(別の列に後から積んだ出来事は数えない・同じ冪等
-   キーの再送は末尾を動かさない)、出来事が 1 つも無い列は StreamEmpty で答える。保持で刈った後は残る出来事の最後の番号・全部刈れば StreamEmpty。
+  "列の末尾の法: ReadStreamEnd は列の最後の出来事の番号を StreamEnd で答え(別の列に後から積んだ出来事は数えない・同じ冪等キーの再送は
+   末尾を動かさない)、出来事が 1 つも無い列は StreamEmpty で答える。保持で刈った後は残る出来事の最後の番号・全部刈れば StreamEmpty。
    使い手が列の末尾を ReadEvents の倍々の先読みと二分で探さずに 1 回で読むため。"
-  (val law "ReadStreamEnd は列の最後の出来事の番号と刻を答え、空の列は StreamEmpty")
+  (val law "ReadStreamEnd は列の最後の出来事の番号を答え、空の列は StreamEmpty")
   (<- empty (as-writer harness MAKER (ReadStreamEnd "journal")))
   (<- (require-law (= empty (StreamEmpty)) law (.format "空の列: {!r}" empty)))
   (<- first (as-writer harness MAKER (AppendEvent "journal" "end-1" {"n" 1})))
-  (<- (Delay 1))
   (<- second (as-writer harness MAKER (AppendEvent "journal" "end-2" {"n" 2})))
   (<- other (as-writer harness MAKER (AppendEvent "pairs" "end-other" {"n" 3})))
   (<- tail (as-writer harness MAKER (ReadStreamEnd "journal")))
-  (<- second-end (stream-end-of harness "journal" second))
-  (<- (require-law (= tail second-end) law
-               (.format "積んだ列の末尾(別の列の後の出来事 {} を数えない)が {!r} でない: {!r}" other.sequence second-end tail)))
+  (<- (require-law (= tail (StreamEnd second.sequence)) law
+               (.format "積んだ列の末尾(別の列の後の出来事 {} を数えない): {!r}" other.sequence tail)))
   (<- replay (as-writer harness MAKER (AppendEvent "journal" "end-1" {"n" 1})))
   (<- replayed (as-writer harness MAKER (ReadStreamEnd "journal")))
   (<- (require-law (and (= replay first) (= replayed tail)) law (.format "再送が末尾を動かした: {!r} {!r}" replay replayed)))
   (<- other-end (as-writer harness MAKER (ReadStreamEnd "pairs")))
-  (<- other-expected (stream-end-of harness "pairs" other))
-  (<- (require-law (= other-end other-expected) law (.format "別の列の末尾が {!r} でない: {!r}" other-expected other-end)))
+  (<- (require-law (= other-end (StreamEnd other.sequence)) law (.format "別の列の末尾: {!r}" other-end)))
   ;; 保持(pairs は積んでから PAIR-KEEP-SECONDS 秒で消える — 区切りを含まないキーは出来事ごと)。
   (<- (Delay 30))
   (<- young (as-writer harness MAKER (AppendEvent "pairs" "end-young" {"n" 4})))
   (<- (Delay (+ (- PAIR-KEEP-SECONDS 30) 1)))
   (<- partial (as-writer harness MAKER (ReadStreamEnd "pairs")))
-  (<- young-end (stream-end-of harness "pairs" young))
-  (<- (require-law (= partial young-end) law (.format "一部を刈った後の末尾が {!r} でない: {!r}" young-end partial)))
+  (<- (require-law (= partial (StreamEnd young.sequence)) law (.format "一部を刈った後の末尾: {!r}" partial)))
   (<- (Delay 30))
   (<- gone (as-writer harness MAKER (ReadStreamEnd "pairs")))
   (<- (require-law (= gone (StreamEmpty)) law (.format "全部を刈った列: {!r}" gone)))
@@ -766,34 +751,34 @@
   (<- side-again (as-writer harness MAKER (AppendEvent "pairs" "ask:u17" {"n" 3})))
   (<- (require-law (= side-again side) law (.format "新しい鍵の追記の前に消えた鍵の再送が前の番号でない: {!r} {!r}" side-again side)))
   (<- end (as-writer harness MAKER (ReadStreamEnd "pairs")))
-  (<- done-end (stream-end-of harness "pairs" done))
-  (<- (require-law (= end done-end) law (.format "列の末尾が新しい鍵の出来事 {!r} でない: {!r}" done-end end)))
+  (<- (require-law (= end (StreamEnd done.sequence)) law (.format "列の末尾が新しい鍵の出来事でない: {!r}" end)))
   (+ [beat ask side] (list before) [done read swept] (list after) [side-again end]))
 
 
-;; --- 法 18: 名指した列の末尾は ReadStreamEnd と同じ位置と刻・名指さない待ちは末尾を持たない ------------------------------
+;; --- 法 18: 名指した列の末尾は ReadEvents の最後の出来事と同じ位置と刻・名指さない待ちは末尾を持たない ------------------------
 
-(defk tails-of-ends [harness streams]
+(defk tails-of-last-events [harness streams]
   {:pre [(: harness LawHarness) (: streams (get tuple #(str ...)))] :post [(: % (get tuple #((| StreamTail StreamTailEmpty) ...)))]
    :tags {:context "records" :role "program"}}
-  "列 streams を名指した順に 1 つずつ ReadStreamEnd で読み、WatchChanges の tails と比べる形(StreamEnd → StreamTail・StreamEmpty →
-   StreamTailEmpty)にするため(法 18 の基準)。"
+  "列 streams を名指した順に 1 つずつ ReadEvents で読み、最後の出来事(保持の期限を過ぎた出来事は ReadEvents に出ない)の番号と刻を
+   WatchChanges の tails と比べる形(出来事が在れば StreamTail・無ければ StreamTailEmpty)にするため(法 18 の基準)。"
   (var tails #())
   (for [stream streams]
-    (<- end (as-writer harness MAKER (ReadStreamEnd stream)))
-    (:= tails (+ tails #((match end
-                            (StreamEnd :sequence sequence :at at) (StreamTail :stream stream :sequence sequence :at at)
-                            (StreamEmpty) (StreamTailEmpty :stream stream))))))
+    (<- read (as-writer harness MAKER (ReadEvents stream)))
+    (:= tails (+ tails #((match read
+                            (Events :items #()) (StreamTailEmpty :stream stream)
+                            (Events :items items) (StreamTail :stream stream :sequence (. (get items -1) sequence) :at (. (get items -1) at))
+                            other (raise (LawBroken (.format "法 18 の基準: 列 {} の ReadEvents が Events でない: {!r}" stream other))))))))
   tails)
 
 
-(defk law-watch-tails-match-stream-ends [harness]
+(defk law-watch-tails-match-last-events [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "WatchChanges の tails の法(#3718): 列を名指した WatchChanges の答えの tails は、名指した順に、同じ時点の ReadStreamEnd と同じ位置と刻
-   (StreamEnd → StreamTail・StreamEmpty → StreamTailEmpty)。列に積むと次の読みで新しい末尾・保持の期限が全部過ぎた列は空の印。列への追記は
+  "WatchChanges の tails の法(#3718): 列を名指した WatchChanges の答えの tails は、名指した順に、同じ時点の ReadEvents の最後の出来事と
+   同じ位置と刻(出来事が無ければ StreamTailEmpty)。列に積むと次の読みで新しい末尾・保持の期限が全部過ぎた列は空の印。列への追記は
    表の変化ではない(items に出ない)。列を名指さない答えの tails は空。どの置き場の handler も同じ答えを返すことを確かめるため。"
-  (val law "名指した列の tails は ReadStreamEnd と同じ位置と刻・名指さない待ちの tails は空")
+  (val law "名指した列の tails は ReadEvents の最後の出来事と同じ位置と刻・名指さない待ちの tails は空")
   (val streams #("pulses" "journal"))
   (<- start (as-writer harness MAKER (ListRows "parts")))
   (val cursor (WatchCursor start.epoch start.sequence))
@@ -801,15 +786,15 @@
   (<- empty (as-writer harness MAKER (WatchChanges #("parts") cursor :streams streams)))
   (<- (require-law (and (isinstance empty Changes) (= empty.tails #((StreamTailEmpty :stream "pulses") (StreamTailEmpty :stream "journal"))))
                    law (.format "空の列の末尾: {!r}" empty)))
-  ;; 積んだ後: 名指した順の末尾が ReadStreamEnd と同じ位置と刻・追記は items に出ない。
+  ;; 積んだ後: 名指した順の末尾が ReadEvents の最後の出来事と同じ位置と刻・追記は items に出ない。
   (<- beat (as-writer harness MAKER (AppendEvent "pulses" "tail-beat" {"n" 1})))
   (<- (Delay 1))
   (<- entry (as-writer harness MAKER (AppendEvent "journal" "tail-entry" {"n" 2})))
   (<- named (as-writer harness MAKER (WatchChanges #("parts") cursor :streams streams)))
-  (<- named-ends (tails-of-ends harness streams))
-  (<- (require-law (and (isinstance named Changes) (= named.items #()) (= named.tails named-ends)
+  (<- named-lasts (tails-of-last-events harness streams))
+  (<- (require-law (and (isinstance named Changes) (= named.items #()) (= named.tails named-lasts)
                         (= (lfor tail named.tails tail.sequence) [beat.sequence entry.sequence]))
-                   law (.format "積んだ後の末尾が ReadStreamEnd {!r} と違う: {!r}" named-ends named)))
+                   law (.format "積んだ後の末尾が ReadEvents の最後の出来事 {!r} と違う: {!r}" named-lasts named)))
   ;; 名指す順を替えると tails の順も替わる。
   (<- reversed-watch (as-writer harness MAKER (WatchChanges #("parts") cursor :streams #("journal" "pulses"))))
   (<- (require-law (and (isinstance reversed-watch Changes) (= reversed-watch.tails (tuple (reversed named.tails))))
@@ -826,10 +811,10 @@
   ;; 保持の期限(PULSE-KEEP-SECONDS)が全部過ぎた列は、回収の前でも空の印。
   (<- (Delay (+ PULSE-KEEP-SECONDS 1)))
   (<- expired (as-writer harness MAKER (WatchChanges #("parts") changed.cursor :streams streams)))
-  (<- expired-ends (tails-of-ends harness streams))
-  (<- (require-law (and (isinstance expired Changes) (= expired.tails expired-ends)
+  (<- expired-lasts (tails-of-last-events harness streams))
+  (<- (require-law (and (isinstance expired Changes) (= expired.tails expired-lasts)
                         (= expired.tails #((StreamTailEmpty :stream "pulses") (get named.tails 1))))
-                   law (.format "期限を過ぎた列の末尾が ReadStreamEnd {!r} と違う・空の印でない: {!r}" expired-ends expired)))
+                   law (.format "期限を過ぎた列の末尾が ReadEvents の最後の出来事 {!r} と違う・空の印でない: {!r}" expired-lasts expired)))
   [start empty beat entry named reversed-watch plain written changed expired])
 
 
@@ -854,6 +839,6 @@
             "expired-records-are-unseen-before-a-sweep" law-expired-records-are-unseen-before-a-sweep
             "a-write-clears-the-expired-row-it-touches" law-a-write-clears-the-expired-row-it-touches
             "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep
-            "watch-tails-match-stream-ends" law-watch-tails-match-stream-ends})
+            "watch-tails-match-last-events" law-watch-tails-match-last-events})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

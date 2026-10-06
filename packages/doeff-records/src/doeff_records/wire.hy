@@ -542,7 +542,7 @@
       {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (encode-answer current))}
     (RowsRefused :index index :table table :key key :reason reason)
       {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
-    (StreamEnd :sequence sequence :at at) {"kind" "streamEnd" "sequence" sequence "at" at}
+    (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}
     (StreamEmpty) {"kind" "streamEmpty"}
     (EventsMoved) {"kind" "eventsMoved"}
     (EventsQuiet) {"kind" "eventsQuiet"}))
@@ -688,8 +688,8 @@
             (for [item (! (list-in (get value "items") "events.items"))] (.append items (! (event-from item))))
             (Events (tuple items) (! (integer-of (get value "lastSequence") "events.lastSequence"))))
       {"kind" "streamEnd"}
-        (do (<- (object-of value "streamEnd" #("kind" "sequence" "at") #()))
-            (StreamEnd (! (integer-of (get value "sequence") "streamEnd.sequence")) (! (integer-of (get value "at") "streamEnd.at"))))
+        (do (<- (object-of value "streamEnd" #("kind" "sequence") #()))
+            (StreamEnd (! (integer-of (get value "sequence") "streamEnd.sequence"))))
       {"kind" "streamEmpty"} (do (<- (object-of value "streamEmpty" #("kind") #())) (StreamEmpty))
       {"kind" "eventsMoved"} (do (<- (object-of value "eventsMoved" #("kind") #())) (EventsMoved))
       {"kind" "eventsQuiet"} (do (<- (object-of value "eventsQuiet" #("kind") #())) (EventsQuiet))
