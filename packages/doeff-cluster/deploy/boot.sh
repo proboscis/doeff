@@ -30,8 +30,9 @@
 #   doeff-vm の wheel・完成の印 .doeff-boot-ready)と役の起動は引き継いだ先 — 宣言した commit の script — がする。だから準備の手順を
 #   直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい手順で準備され、image を作り直さない。
 #   準備: `uv sync --locked --compile-bytecode --package doeff-cluster --no-install-package doeff-vm` した venv に doeff-vm の wheel を
-#   入れて、その venv の hy で起こす。wheel は実行環境の準備(worker)と同じ鍵・同じ置き場($WORK_DIR/state/wheels/doeff-vm-<鍵>)の物を
-#   使い、無ければ組んで置く(python -m doeff_cluster.worker.entry.boot_wheel — 鍵と置き場の定義点は doeff_cluster/shared/core/native_wheel.py
+#   入れて、その venv の hy で起こす。wheel は実行環境の準備(worker)と同じく `uv build --wheel` で build の口(tools/doeff_cargo_backend.py
+#   — Rust の部品を組む・引く入口の 1 つ・ADR-DOE-BUILD-001)を通し、口の保存先($WORK_DIR/state/wheels — source の中身の鍵)の物を
+#   使い、無ければ口が組んで置く(python -m doeff_cluster.worker.entry.boot_wheel — 呼びの約束の定義点は doeff_cluster/shared/core/native_wheel.py
 #   の 1 つ)。doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。続けて root の中の source(venv に editable で入る
 #   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ用意する(doeff_bake —
 #   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。焼けなくても起動は続ける(import の時に作られる)。
@@ -157,7 +158,7 @@ doeff_prepare() {
     synced=$(date +%s)
     # 答え = 1 行「<組んだ|使った> <wheel の path>」(組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
     answer=$(PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" \
-      --mirror "$boot/doeff.git" --commit "$sha" --state "$WORK_DIR/state" --uv-cache "$DOEFF_UV_CACHE_DIR")
+      --state "$WORK_DIR/state" --uv-cache "$DOEFF_UV_CACHE_DIR")
     how=${answer%% *}
     wheel=${answer#* }
     wheeled=$(date +%s)

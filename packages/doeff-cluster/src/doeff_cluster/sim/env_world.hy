@@ -37,6 +37,7 @@
 (import enum [StrEnum])
 (import functools [partial])
 (import hashlib)
+(import tomllib)
 (import json)
 (import re)
 (import posixpath)
@@ -371,37 +372,9 @@
           (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
 
 
-(defk git-rev-parse [world args]
-  {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
-  "git rev-parse <sha>:<path> に答えるため(dir の下の file の path と中身で決まる hash — 本物の tree hash と同じく中身が同じなら同じ値)。"
-  (val sha-path (.split (get args -1) ":" 1))
-  (val sha (get sha-path 0))
-  (val path (get sha-path 1))
-  (<- commit (| WorldCommit None) (commit-of world sha))
-  (if (is commit None)
-      (ProcessOutcome :stdout "" :stderr "fatal: bad revision\n" :exit-code GIT-FATAL)
-      (do (val prefix (+ path "/"))
-          (val parts (lfor f (sorted commit.files :key (fn [f] f.path)) :if (.startswith f.path prefix) (+ f.path "\0" f.text)))
-          (ProcessOutcome :stdout (+ (.hexdigest (hashlib.sha1 (.encode (.join "\n" parts)))) "\n") :stderr "" :exit-code 0))))
-
-
-(defk git-diff [world args]
-  {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
-  "git diff --name-only --no-renames <sha> <sha> に答えるため(2 つの commit の木で、片方にだけ在るか中身の違う file の path — 名の順)。
-   どちらかの commit が世界に無ければ本物と同じく終わり 128。"
-  (<- old (| WorldCommit None) (commit-of world (get args -2)))
-  (<- new (| WorldCommit None) (commit-of world (get args -1)))
-  (if (or (is old None) (is new None))
-      (ProcessOutcome :stdout "" :stderr "fatal: bad revision\n" :exit-code GIT-FATAL)
-      (do (val before (dfor f old.files f.path f.text))
-          (val after (dfor f new.files f.path f.text))
-          (val changed (sorted (gfor path (| (set before) (set after)) :if (!= (.get before path) (.get after path)) path)))
-          (ProcessOutcome :stdout (.join "" (gfor path changed (+ path "\n"))) :stderr "" :exit-code 0))))
-
-
 (defk git-script [world commands request]
   {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive・rev-parse・diff)に世界から答える台本。"
+  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive)に世界から答える台本。"
   (val argv (tuple request.argv))
   (val args (if (in "-C" argv) (cut argv 3 None) (cut argv 1 None)))
   (<- answer ProcessOutcome
@@ -411,8 +384,6 @@
         "config" (git-config argv)
         "fetch" (git-fetch world argv args)
         "archive" (git-archive world args)
-        "rev-parse" (git-rev-parse world args)
-        "diff" (git-diff world args)
         _ (ProcessOutcome :stdout "" :stderr (.format "usage: git の台本が知らない形: {}\n" argv) :exit-code BAD-USAGE)))
   answer)
 
@@ -561,9 +532,40 @@
   None)
 
 
-(defk uv-build [world args]
-  {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
-  "uv build --wheel --out-dir <dir> <source> に答える: native の build(冷たい秒)で dir に wheel を 1 つ置く。"
+(defk tree-digest [root]
+  {:pre [(: root str)] :post [(: % str)]}
+  "root の下の file の相対 path と中身の sha256(模擬の build の口の保存先の鍵 — 本物の口と同じく、中身が同じなら同じ値)。"
+  (<- listed (| tuple FileFailed) (WalkTree root))
+  (var parts #())
+  (when (not (isinstance listed FileFailed))
+    (for [e (sorted listed :key (fn [e] e.name))]
+      (when (= e.kind PathKind.FILE)
+        (<- text str (read-or-empty (posixpath.join root e.name)))
+        (:= parts (+ parts #((+ e.name "\0" text)))))))
+  (.hexdigest (hashlib.sha256 (.encode (.join "\n" parts) "utf-8"))))
+
+
+(defk project-name [source]
+  {:pre [(: source str)] :post [(: % str)]}
+  "source の dir の pyproject.toml の [project] の name(本物の build の口が報告に書く名と同じ — 無ければ口と同じく unnamed)。"
+  (<- text str (read-or-empty (posixpath.join source "pyproject.toml")))
+  (match (.get (tomllib.loads text) "project")
+    {"name" name} :if (isinstance name str) name
+    _ "unnamed"))
+
+
+(defk env-value [request name]
+  {:pre [(: request RunProcess) (: name str)] :post [(: % (| str None))]}
+  "子 process に足した環境変数 name の値(無ければ None)。"
+  (next (gfor e request.env :if (= e.name name) e.value) None))
+
+
+(defk uv-build [world request]
+  {:pre [(: world EnvWorld) (: request RunProcess)] :post [(: % ProcessOutcome)]}
+  "uv build --wheel --out-dir <dir> <source> に答える(本物の build の口と同じ形 — #3860): source の中身の鍵で保存先
+   (env DOEFF_WHEEL_CACHE の <source の名>-<鍵>/)を引き、在れば組まず、無ければ native の build(冷たい秒)で組んで置く。どちらも
+   out の dir に写しを置き、報告の file(env DOEFF_WHEEL_REPORT)へ保存先の中の wheel と組んだかの 1 行を足す。"
+  (val args (tuple request.argv))
   (<- failure (| UvFailure None) (uv-failure-now))
   (if (and failure (in failure.fault BUILD-FAULTS))
       ;; signal での終了は負の終わり、compiler の誤りは 1 — 一時か恒久かは翻訳が本物と同じく終わりで読み分ける。memory の上限で殺された
@@ -572,10 +574,23 @@
             (<- (count-oom-kill)))
           (ProcessOutcome :stdout "" :stderr (+ failure.detail "\n")
                           :exit-code (if (in failure.fault #(UvFault.BUILD-KILLED UvFault.BUILD-MEMORY-KILLED)) -9 1)))
-      (do (<- (Delay world.cold-seconds))
-          (<- out str (required-option-of args "--out-dir"))
-          (<- (write-file (posixpath.join out (+ (posixpath.basename (get args -1)) ".whl")) ""))
-          (<- (bump {"builds" 1}))
+      (do (<- out str (required-option-of args "--out-dir"))
+          (val source (get args -1))
+          (<- package str (project-name source))
+          (<- cache (| str None) (env-value request "DOEFF_WHEEL_CACHE"))
+          (<- report (| str None) (env-value request "DOEFF_WHEEL_REPORT"))
+          (<- key str (tree-digest source))
+          (val stored (posixpath.join (or cache "/world/wheel-cache") (.format "{}-{}" package (cut key 0 32)) (+ package ".whl")))
+          (<- seen str (read-or-empty stored))
+          (val built (not seen))
+          (when built
+            (<- (Delay world.cold-seconds))
+            (<- (write-file stored "wheel"))
+            (<- (bump {"builds" 1})))
+          (<- (write-file (posixpath.join out (+ package ".whl")) "wheel"))
+          (when report
+            (<- prior str (read-or-empty report))
+            (<- (write-file report (+ prior (json.dumps {"project" package "wheel" stored "built" built}) "\n"))))
           (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
 
 
@@ -673,7 +688,7 @@
   (<- answer ProcessOutcome
       (match verb
         "sync" (uv-sync world args)
-        "build" (uv-build world args)
+        "build" (uv-build world request)
         "pip" (uv-pip args)
         "run" :if (in "-c" args) (uv-probe world args)
         "run" (uv-compile args)

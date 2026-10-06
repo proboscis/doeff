@@ -18,6 +18,11 @@ wheel の置き場(state/wheels/<package>-<鍵>/ と .used — shared/core/nativ
 置き場に渡して共有する — worker の掃除(7 日使われない dir を消す)がそのまま効く。保存先の wheel は使う前に RECORD の hash で
 確かめ、壊れていれば名指しの 1 行を出してその wheel を除き、組み直す(黙って壊れた物を使わない)。
 
+報告(_write_report): env DOEFF_WHEEL_REPORT が在れば、その file に 1 行の JSON {"project": <package の名>, "wheel": <保存先の中の
+wheel の path>, "built": <この呼び出しが組んだか>} を足す。doeff-cluster の worker(実行環境の準備と起動の script)は `uv build --wheel` で
+この口を通り、保存先の中の wheel をこの行で知って入れる — 自前の鍵と置き場を持たない(読み手は shared/core/native_wheel.py の
+stored_wheel_of・#3860)。
+
 cargo の target: 組む時だけ、package の dir の外の 1 回の build ごとの一時の dir に置き、wheel を作ったら消す(#1493)。1 つの共有の
 target にしない理由: cargo は source の file の時刻で新旧を判定し、成果物を workspace の中の相対 path で名付ける。2 つの作業木が 1 つの
 target を共有すると、先に作った作業木の source は後の build の成果物より古く見え、別の作業木の build を黙って使う(cargo 1.96.1 で
@@ -40,6 +45,7 @@ import fnmatch
 import glob
 import hashlib
 import io
+import json
 import os
 import platform
 import shutil
@@ -61,6 +67,8 @@ import maturin
 TARGET_ENV = "CARGO_TARGET_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
+# 保存先の中の wheel と組んだかを 1 行の JSON で足す file を指す env(頭の註の報告 — 無ければ書かない)。
+WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
 # 保存先の dir の使った印(dir の時刻を進める — 掃除は dir の時刻を読む)。worker の native_wheel.WHEEL_USED と同じ名。
 USED_MARK = ".used"
 # tool.uv.cache-keys の file を宣言しない package の、組みに効く file の既定(package の dir からの glob)。
@@ -166,7 +174,7 @@ def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_
         case Path() as found:
             _mark_used(slot)
             print(f"doeff_cargo_backend: 同じ source の wheel を使う(組まない)— {found.name}・{slot}", file=sys.stderr)
-            return StoredWheel(path=found, built=False)
+            return _write_report(package, StoredWheel(path=found, built=False))
         case None:
             pass
     started = time.monotonic()
@@ -175,7 +183,25 @@ def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_
             name = compile_wheel(target, out, config_settings)
         stored = _store_wheel(slot, Path(out) / name)
     print(f"doeff_cargo_backend: wheel を組んだ({time.monotonic() - started:.0f} 秒)— {name}・{slot} に置いた", file=sys.stderr)
-    return StoredWheel(path=stored, built=True)
+    return _write_report(package, StoredWheel(path=stored, built=True))
+
+
+def _write_report(package: Path, stored: StoredWheel) -> StoredWheel:
+    """env DOEFF_WHEEL_REPORT の file に、保存先の中の wheel と組んだかを 1 行の JSON で足すため(頭の註の報告 — env が無ければ何も
+    しない)。答え = stored(呼び手がそのまま返す)。"""
+    match os.environ.get(WHEEL_REPORT_ENV):
+        case str() as report if report:
+            match _pyproject(package).get("project"):
+                case {"name": str() as project}:
+                    pass
+                case _:
+                    project = "unnamed"
+            line = json.dumps({"project": project, "wheel": str(stored.path), "built": stored.built}, ensure_ascii=False)
+            with open(report, "a", encoding="utf-8") as out:
+                out.write(line + "\n")
+        case _:
+            pass
+    return stored
 
 
 def wheel_from_store(wheel_directory: str, config_settings: ConfigSettings | None, compile_wheel: Compile) -> str:

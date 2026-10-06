@@ -205,3 +205,21 @@ def test_a_miss_builds_in_a_temporary_target_and_removes_it(backend: ModuleType,
     (target,) = compile_wheel.targets
     assert target.parent == tmp_path and not target.exists()
     assert not (package / "target").exists()
+
+
+def test_the_entry_reports_the_stored_wheel_to_the_caller(backend: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 失敗ケース(#3860 — doeff-cluster の worker と起動の script が `uv build --wheel` で入口を通るだけにする前提): env DOEFF_WHEEL_REPORT が
+    # 在れば、入口は呼ぶたびに保存先の中の wheel と組んだかを 1 行の JSON で足す(1 度目は組んだ・2 度目は使った — 同じ保存先の wheel)。
+    # 書かないと、呼び手は自前の鍵で保存先を引き直すしかない。
+    import json
+
+    report = tmp_path / "report.jsonl"
+    monkeypatch.setenv("DOEFF_WHEEL_REPORT", str(report))
+    package = _checkout(tmp_path / "wt")
+    _call(backend, "wheel_from_store", package, tmp_path / "out-1", FakeCompile(package))
+    _call(backend, "wheel_from_store", package, tmp_path / "out-2", FakeCompile(package))
+    rows = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines()]
+    assert [row["built"] for row in rows] == [True, False], rows
+    assert rows[0]["wheel"] == rows[1]["wheel"], rows
+    assert Path(rows[0]["wheel"]).is_file() and Path(rows[0]["wheel"]).is_relative_to(tmp_path / "store"), rows
+    assert {row["project"] for row in rows} == {"probe"}, rows

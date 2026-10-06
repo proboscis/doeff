@@ -1,15 +1,20 @@
-;; 起動の script(deploy/boot.sh)の自己起動が、実行環境の準備(worker の EnsureNativeWheel)と同じ鍵・同じ置き場の doeff-vm の wheel を
+;; 起動の script(deploy/boot.sh)の自己起動と実行環境の準備(worker の EnsureNativeWheel)が、どちらも `uv build --wheel` で build の口
+;; (doeff の tools/doeff_cargo_backend.py — Rust の部品を組む・引く入口の 1 つ・ADR-DOE-BUILD-001)を通り、口の保存先の同じ wheel を
 ;; 使うことの検(2026-10-06 00:02〜00:05 の版上げで、起動の uv sync が doeff-vm を source から 94 秒かけて組み、同じ PVC に在った同じ中身の
-;; wheel を使わなかった — その間 利用者の画面が切れた)。
+;; wheel を使わなかった — その間 利用者の画面が切れた・#3860 で worker の自前の git tree hash の鍵と置き場を消した)。偽の uv の build は
+;; 本物の口と同じ形で答える: source の中身の鍵で DOEFF_WHEEL_CACHE の <package>-<鍵>/ を引き、無ければ置き、DOEFF_WHEEL_REPORT へ
+;; 保存先の中の wheel と組んだかの 1 行を足す。
 ;;
 ;; 失敗ケース:
-;;   1 鍵の値は今までと 1 文字も変わらない(本番の PVC に在る wheel の鍵 — 起動の commit 6af862bb の tree hash で c1bb153879baff5265c2f12a)。
-;;   2 worker の native-key(Hy の defk)の本体は、起動の script が使う native_wheel.native_key そのもの(差し替えると worker の鍵も変わる)。
-;;   3 起動の入口 boot_wheel が組んで置いた wheel を、worker の EnsureNativeWheel(本物の翻訳 env-translation と本物の答え手)が同じ鍵で
-;;     組み直さずに使う(置き場の綴りが 1 か所)。
-;;   4 boot.sh を 2 回通す: 1 回目は wheel が無いので組んで置き、2 回目(root だけを消す)は置いた wheel を使い uv build を撃たない。
-;;     どちらも doeff-vm を uv sync で組まず(--no-install-package doeff-vm)、wheel を root の venv へ入れる。uv build の子は呼び手の
-;;     venv を継がず、cache は state の下。
+;;   1 口の報告の行の読み(native_wheel の stored-wheel-of)は package の最後の行を答え、行が無い・形が違う時は理由の文(黙って
+;;     組んだ扱いにしない)。
+;;   2 起動の入口 boot_wheel が口を通して置かせた wheel を、worker の EnsureNativeWheel(本物の翻訳 env-translation と本物の答え手)が
+;;     同じ口の保存先から組ませずに使う — 自前の鍵(git の tree hash)を引く形に戻すと、口の保存先の wheel を見つけられず赤。source の
+;;     中身を変えると口が 1 度だけ組む。
+;;   3 起動の入口は --mirror・--commit を受けない(tree hash を読む道を持たない)。
+;;   4 boot.sh を 2 回通す: 1 回目は口が組んで置き、2 回目(root だけを消す)は口が置いた wheel を使う。どちらも doeff-vm を uv sync で
+;;     組まず(--no-install-package doeff-vm)、保存先の中の wheel を root の venv へ入れる。uv build の子は呼び手の venv を継がず、
+;;     cache は state の下。
 ;;   5 image に焼いた起動の script(引き継ぐ前)は root を展開して宣言した commit の script へ引き継ぐだけで、uv を 1 度も撃たない
 ;;     (準備の手順の直しが image の作り直しなしで効く — 2026-10-06 に準備を image の script が持っていて、wheel の直しが本番の image では
 ;;     効かなかった)。
@@ -31,7 +36,6 @@
 ;;     テストは件をまたいで同じ cache を渡し、依存を件ごとに取り直さない・#3858)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import hashlib)
 (import importlib.util)
 (import os)
 (import re)
@@ -45,8 +49,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.native_wheel :as native-wheel)
-(import doeff_cluster.shared.core.runtime_env_rules [native-key])
-(import doeff_cluster.shared.intent.runtime_env_model [NativeWheel EnvFailure])
+(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
 (import doeff_cluster.worker.core.launch [shim-argv])
 (import doeff_cluster.worker.intent.env_prepare_model [EnsureNativeWheel WheelReady])
@@ -81,12 +84,11 @@
 (val CHECKED-HASH 0b11)
 (val PYTHON "3.14.3t")
 (val WHEEL-NAME "doeff_vm-0.1.0-cp314-cp314t-linux_x86_64.whl")
-;; doeff の native の package を宣言する実行環境の native の欄(doeff を repo の名 doeff で並べる宣言の形)。
-(val DOEFF-VM (NativeWheel :package native-wheel.DOEFF-VM-PACKAGE :repo "doeff" :paths native-wheel.DOEFF-VM-PATHS))
 ;; 偽の uv: 呼ばれた引数と、子が継いだ VIRTUAL_ENV・UV_CACHE_DIR・DOEFF_BOOT_FROM_ROOT(引き継いだ先の script か)を log へ 1 行。sync は root の venv の python(検の python へ渡すだけ)・
 ;; hy(引数を FAKE_HY_LOG へ 1 行書き、file を起こす時 = 焼く道具は検の python の hy へ渡す・-m で役を起こす時は終わり 3 で止まる — 検の役の起動は
 ;; root の準備の後で落ちる)・Hy の dist-info と、uv と同じく末尾に改行の無い .pth(root そのもの・root の中の dir・root の外の dir・import の行だけの
-;; 物)を置き、build は --out-dir に wheel を 1 つ置く。pip は何もしない。
+;; 物)を置く。build は本物の build の口と同じ形(source の中身の鍵で DOEFF_WHEEL_CACHE の doeff-vm-<鍵>/ を引き、無ければ置き、--out-dir に
+;; 写しを置き、DOEFF_WHEEL_REPORT へ 1 行)。pip は何もしない。
 (val FAKE-UV (+ "#!/bin/sh\n"
                 "echo \"$* venv=${VIRTUAL_ENV:-} cache=${UV_CACHE_DIR:-} from=${DOEFF_BOOT_FROM_ROOT:-}\" >>\"$FAKE_UV_LOG\"\n"
                 "case \"$1\" in\n"
@@ -104,9 +106,13 @@
                 ;; package の名で引かず path で読む(検の環境の doeff_cluster に解けて検の外の木へ書かないため)。
                 "        shim=packages/doeff-cluster/src/doeff_cluster/worker/entry/shim.py\n"
                 "        [ ! -f \"$shim\" ] || \"$FAKE_UV_PYTHON\" -c 'import importlib.machinery as m, sys; m.SourceFileLoader(\"shim\", sys.argv[1]).get_code(\"shim\")' \"$shim\" ;;\n"
-                "  build) out=''; prev=''\n"
-                "         for a in \"$@\"; do [ \"$prev\" = --out-dir ] && out=$a; prev=$a; done\n"
-                "         mkdir -p \"$out\" && : >\"$out/" WHEEL-NAME "\" ;;\n"
+                "  build) out=''; prev=''; src=''\n"
+                "         for a in \"$@\"; do [ \"$prev\" = --out-dir ] && out=$a; prev=$a; src=$a; done\n"
+                "         key=$(cd \"$src\" && find . -type f | LC_ALL=C sort | xargs cat | sha256sum | cut -c1-32)\n"
+                "         slot=\"$DOEFF_WHEEL_CACHE/doeff-vm-$key\"; built=false\n"
+                "         if [ ! -f \"$slot/" WHEEL-NAME "\" ]; then mkdir -p \"$slot\" && : >\"$slot/" WHEEL-NAME "\"; built=true; fi\n"
+                "         mkdir -p \"$out\" && cp \"$slot/" WHEEL-NAME "\" \"$out/" WHEEL-NAME "\"\n"
+                "         [ -z \"${DOEFF_WHEEL_REPORT:-}\" ] || printf '{\"project\": \"doeff-vm\", \"wheel\": \"%s\", \"built\": %s}\\n' \"$slot/" WHEEL-NAME "\" \"$built\" >>\"$DOEFF_WHEEL_REPORT\" ;;\n"
                 "esac\n"))
 
 
@@ -147,14 +153,6 @@
   (val mirror (/ tmp "doeff.git"))
   (<- (git tmp "clone" "-q" "--bare" (str src) (str mirror)))
   #(src mirror sha))
-
-
-(defk worker-key [mirror sha]
-  {:pre [(: mirror Path) (: sha str)] :post [(: % str)]}
-  "worker の準備(env_prepare の stage-native)と同じ材料で、doeff-vm の wheel の鍵を worker の native-key で求める。"
-  (<- trees str (git mirror "rev-parse" #* (gfor path DOEFF-VM.paths (.format "{}:{}" sha path))))
-  (<- key str (native-key DOEFF-VM (tuple (.splitlines trees)) PYTHON (native-wheel.current-platform)))
-  key)
 
 
 (defk fake-uv [tmp]
@@ -208,15 +206,15 @@
   (int.from-bytes (cut (.read-bytes path) 4 8) "little"))
 
 
-(defk ensure-wheel [key source-dir]
-  {:pre [(: key str) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]}
+(defk ensure-wheel [source-dir]
+  {:pre [(: source-dir str)] :post [(: % (| WheelReady EnvFailure))]}
   "worker の準備が出す EnsureNativeWheel を 1 回出す。"
-  (<- ready (| WheelReady EnvFailure) (EnsureNativeWheel key native-wheel.DOEFF-VM-PACKAGE source-dir))
+  (<- ready (| WheelReady EnvFailure) (EnsureNativeWheel native-wheel.DOEFF-VM-PACKAGE source-dir))
   ready)
 
 
-(defk worker-wheel [state-dir uv-cache uv key source-dir]
-  {:pre [(: state-dir Path) (: uv-cache Path) (: uv Path) (: key str) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]
+(defk worker-wheel [state-dir uv-cache uv source-dir]
+  {:pre [(: state-dir Path) (: uv-cache Path) (: uv Path) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation — worker/entry/env_tool)で wheel を用意する(uv-cache = worker の
    uv の cache の dir — 起動の script の DOEFF_UV_CACHE_DIR)。"
@@ -224,58 +222,72 @@
                  "runtime-env.uv" (str uv) "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
   (<- ready (| WheelReady EnvFailure)
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
-                     (ensure-wheel key source-dir)))
+                     (ensure-wheel source-dir)))
   ready)
 
 
-;; --- 1・2 鍵の関数は 1 つ ----------------------------------------------------------------------
-
-(deftest test-the-wheel-key-is-unchanged-for-the-production-wheel []
-  (val trees #("a44f7a5bb5e16ccad1fc48eb84b39e8b21a6ab49" "befe962d60c3adebda4f8941ca306c5afda6cc07"))
-  (val want "c1bb153879baff5265c2f12a")
-  (assert (= (native-wheel.native-key native-wheel.DOEFF-VM-PACKAGE native-wheel.DOEFF-VM-PATHS trees PYTHON "linux-x86_64") want))
-  (<- worker str (native-key DOEFF-VM trees PYTHON "linux-x86_64"))
-  (assert (= worker want) worker))
-
-
-(deftest test-the-worker-native-key-is-the-boot-key-function [monkeypatch]
-  ;; worker の native-key は鍵を自分で綴らず、起動の script と同じ native_wheel.native_key を呼ぶ(複製が在れば差し替えが効かない)。
-  ;; 差し替えた関数は受けた引数の綴り(repr)の sha256 の頭を返す — 引数がそのまま渡ったことも同じ値で確かめる。
-  (val spelled (fn [args] (cut (.hexdigest (hashlib.sha256 (.encode (repr args)))) 0 native-wheel.ENV-KEY-LENGTH)))
-  (monkeypatch.setattr native-wheel "native_key" (fn [#* args] (spelled args)))
-  (<- key str (native-key DOEFF-VM #("t1" "t2") PYTHON "linux-x86_64"))
-  (assert (= key (spelled #(native-wheel.DOEFF-VM-PACKAGE native-wheel.DOEFF-VM-PATHS #("t1" "t2") PYTHON "linux-x86_64"))) key))
+(defk stored-path [state-dir stdout]
+  {:pre [(: state-dir Path) (: stdout str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "起動の入口の答えの 1 行(「<組んだ|使った> <path>」)の path が build の口の保存先(state/wheels/doeff-vm-<鍵>/)の中の wheel である事を
+   確かめて返すため。"
+  (val path (get (.split (.strip stdout) " " 1) -1))
+  (assert (.startswith path (str (/ state-dir "wheels" "doeff-vm-"))) path)
+  (assert (.endswith path WHEEL-NAME) path)
+  path)
 
 
-;; --- 3 置き場は 1 つ ---------------------------------------------------------------------------
+;; --- 1 口の報告の読み ------------------------------------------------------------------------------
 
-(deftest test-the-worker-uses-the-wheel-the-boot-built [tmp-path monkeypatch]
+(deftest test-the-report-names-the-stored-wheel-of-the-package
+  (val line (fn [project wheel built] (+ "{\"project\": \"" project "\", \"wheel\": \"" wheel "\", \"built\": " built "}\n")))
+  (val text (+ (line "doeff-vm" "/s/a.whl" "true") (line "other" "/s/o.whl" "true") (line "doeff-vm" "/s/b.whl" "false")))
+  (assert (= (native-wheel.stored-wheel-of text "doeff-vm") (native-wheel.StoredWheel :path "/s/b.whl" :built False)))
+  ;; 反例: 行が無い・JSON でない・形が違う報告は理由の文(組んだ扱いにも使った扱いにもしない)。
+  (assert (isinstance (native-wheel.stored-wheel-of "" "doeff-vm") str))
+  (assert (isinstance (native-wheel.stored-wheel-of "{not json\n" "doeff-vm") str))
+  (assert (isinstance (native-wheel.stored-wheel-of "{\"project\": \"doeff-vm\", \"wheel\": 1, \"built\": true}\n" "doeff-vm") str))
+  (assert (isinstance (native-wheel.stored-wheel-of (line "other" "/s/o.whl" "true") "doeff-vm") str)))
+
+
+;; --- 2・3 保存先は build の口の 1 つ -------------------------------------------------------------------
+
+(deftest test-the-worker-uses-the-wheel-the-boot-had-the-backend-store [tmp-path monkeypatch]
   (<- made tuple (doeff-source tmp-path))
   (val src (get made 0))
-  (val mirror (get made 1))
-  (val sha (get made 2))
   (<- uv Path (fake-uv tmp-path))
   (val state-dir (/ tmp-path "state"))
   (monkeypatch.setenv "FAKE_UV_LOG" (str (/ tmp-path "uv.log")))
   ;; 起こす入口は checkout の中に bytecode を書かない(検の後の検めが checkout の .pyc を赤にする)。
   (monkeypatch.setenv "PYTHONDONTWRITEBYTECODE" "1")
-  (val booted (subprocess.run [sys.executable "-m" "doeff_cluster.worker.entry.boot_wheel" "--root" (str src) "--mirror" (str mirror)
-                               "--commit" sha "--state" (str state-dir) "--uv-cache" (str (/ state-dir "uv-cache")) "--uv" (str uv)]
+  (val booted (subprocess.run [sys.executable "-m" "doeff_cluster.worker.entry.boot_wheel" "--root" (str src)
+                               "--state" (str state-dir) "--uv-cache" (str (/ state-dir "uv-cache")) "--uv" (str uv)]
                               :capture-output True :text True :timeout 60))
   (assert (= booted.returncode 0) booted.stderr)
-  (val answer (.split (.strip booted.stdout) " " 1))
-  (val how (get answer 0))
-  (val path (get answer -1))
-  (assert (= how "組んだ") booted.stdout)
-  (<- key str (worker-key mirror sha))
-  (val target (native-wheel.wheel-dir (str state-dir) native-wheel.DOEFF-VM-PACKAGE key))
-  (assert (= path (os.path.join target WHEEL-NAME)) #(path target))
-  (assert (os.path.isfile (os.path.join target native-wheel.WHEEL-USED)) "起動も使った印を置く(掃除が 7 日で消さない)")
-  ;; worker は同じ鍵で同じ置き場の wheel を見つけ、組み直さない。
-  (<- ready (| WheelReady EnvFailure) (worker-wheel state-dir (/ state-dir "uv-cache") uv key (str (/ src (get native-wheel.DOEFF-VM-PATHS 0)))))
+  (assert (.startswith booted.stdout "組んだ ") booted.stdout)
+  (<- path str (stored-path state-dir booted.stdout))
+  ;; worker は同じ口の保存先の wheel を受け、口は組まない(自前の鍵で別の置き場を引かない)。
+  (val source-dir (str (/ src native-wheel.DOEFF-VM-SOURCE)))
+  (val uv-cache (/ state-dir "uv-cache"))
+  (<- ready (| WheelReady EnvFailure) (worker-wheel state-dir uv-cache uv source-dir))
   (assert (= ready (WheelReady :path path :built False)) ready)
-  (<- log tuple (uv-log tmp-path))
-  (assert (= (len (lfor line log :if (.startswith line "build") line)) 1) log))
+  ;; source の中身を変えると、口が 1 度だけ組む(次は使う)。
+  (.write-text (/ src native-wheel.DOEFF-VM-SOURCE "src.rs") "// changed\n" :encoding "utf-8")
+  (<- changed (| WheelReady EnvFailure) (worker-wheel state-dir uv-cache uv source-dir))
+  (assert (and (isinstance changed WheelReady) changed.built (!= changed.path path)) changed)
+  (<- again (| WheelReady EnvFailure) (worker-wheel state-dir uv-cache uv source-dir))
+  (assert (= again (WheelReady :path changed.path :built False)) again)
+  ;; 一時の dir(uv の --out-dir の写しと報告)は残さない。
+  (assert (= (lfor e (.iterdir (/ state-dir "wheels")) :if (.startswith e.name ".") e.name) []) (list (.iterdir (/ state-dir "wheels")))))
+
+
+(deftest test-the-boot-entry-takes-no-tree-hash-arguments [tmp-path]
+  ;; 反例: 起動の入口は --mirror・--commit(git の tree hash を読む材料)を受けない — 自前の鍵の道が残れば受けて赤。
+  (val booted (subprocess.run [sys.executable "-m" "doeff_cluster.worker.entry.boot_wheel" "--root" (str tmp-path)
+                               "--mirror" (str tmp-path) "--commit" "HEAD" "--state" (str (/ tmp-path "state"))
+                               "--uv-cache" (str (/ tmp-path "uv-cache"))]
+                              :capture-output True :text True :timeout 60 :env (| (dict os.environ) {"PYTHONDONTWRITEBYTECODE" "1"})))
+  (assert (= booted.returncode 2) booted.stderr)
+  (assert (in "unrecognized arguments" booted.stderr) booted.stderr))
 
 
 ;; --- 4 boot.sh の 2 回 --------------------------------------------------------------------------
@@ -297,12 +309,9 @@
 
 (deftest test-boot-sh-builds-the-wheel-once-and-reuses-it [tmp-path]
   (<- made tuple (doeff-source tmp-path))
-  (val mirror (get made 1))
   (val sha (get made 2))
   (<- (fake-uv tmp-path))
-  (<- key str (worker-key mirror sha))
   (val state-dir (str (/ tmp-path "work" "state")))
-  (val wheel (os.path.join (native-wheel.wheel-dir state-dir native-wheel.DOEFF-VM-PACKAGE key) WHEEL-NAME))
   (val python (str (/ tmp-path "work" "boot" "roots" sha ".venv" "bin" "python")))
   (<- first subprocess.CompletedProcess (boot-once tmp-path sha))
   (assert (in "root を準備した" first.stderr) first.stderr)
@@ -315,18 +324,20 @@
   (val builds (lfor line once :if (.startswith line "build") line))
   (assert (= (len builds) 1) #(once first.stderr))
   (assert (in (.format " venv= cache={}/uv-cache from=1" state-dir) (get builds 0)) builds)
-  (assert (= (lfor line once :if (.startswith line "pip") line)
-             [(.format "pip install --no-deps --python {} {} venv={} cache={}/uv-cache from=1"
-                       python wheel (/ tmp-path "caller-venv") state-dir)])
+  (val pips (lfor line once :if (.startswith line "pip") line))
+  (assert (and (= (len pips) 1)
+               (.startswith (get pips 0) (.format "pip install --no-deps --python {} {}/wheels/doeff-vm-" python state-dir))
+               (.endswith (get pips 0) (.format "/{} venv={} cache={}/uv-cache from=1" WHEEL-NAME (/ tmp-path "caller-venv") state-dir)))
           once)
-  ;; 2 回目: root だけを消す(同じ node の次の Pod が別の commit の root を持つ時と同じ)— wheel は置き場に在るので組まない。
+  ;; 2 回目: root だけを消す(同じ node の次の Pod が別の commit の root を持つ時と同じ)— 口が保存先の wheel を使い、組まない。
   (shutil.rmtree (/ tmp-path "work" "boot" "roots" sha))
   (<- second subprocess.CompletedProcess (boot-once tmp-path sha))
   (assert (in "root を準備した" second.stderr) second.stderr)
   (assert (in "使った" second.stderr) second.stderr)
   (<- twice tuple (uv-log tmp-path))
-  (assert (= (len (lfor line twice :if (.startswith line "build") line)) 1) #(twice second.stderr))
-  (assert (= (len (lfor line twice :if (.startswith line "pip") line)) 2) twice))
+  (val second-pips (lfor line twice :if (.startswith line "pip") line))
+  (assert (= (len second-pips) 2) twice)
+  (assert (= (get second-pips 0) (get second-pips 1)) "2 回目も 1 回目と同じ保存先の wheel を入れる"))
 
 
 ;; --- 11 uv の cache の dir は呼び手が渡せる -------------------------------------------------------------
@@ -336,13 +347,10 @@
   ;; 継ぐ(state の下に固定しない — 手元の 1 台の cluster を件ごとに起こすテストは、件をまたいで同じ cache を渡して依存を取り直さない)。
   (<- made tuple (doeff-source tmp-path))
   (val src (get made 0))
-  (val mirror (get made 1))
-  (val sha (get made 2))
   (<- uv Path (fake-uv tmp-path))
   (val shared (/ tmp-path "shared-uv-cache"))
   (monkeypatch.setenv "FAKE_UV_LOG" (str (/ tmp-path "uv.log")))
-  (<- key str (worker-key mirror sha))
-  (<- ready (| WheelReady EnvFailure) (worker-wheel (/ tmp-path "state") shared uv key (str (/ src (get native-wheel.DOEFF-VM-PATHS 0)))))
+  (<- ready (| WheelReady EnvFailure) (worker-wheel (/ tmp-path "state") shared uv (str (/ src native-wheel.DOEFF-VM-SOURCE))))
   (assert (isinstance ready WheelReady) ready)
   (<- log tuple (uv-log tmp-path))
   (val builds (lfor line log :if (.startswith line "build") line))
