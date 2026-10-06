@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, final
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait, scheduled
 from doeff_events import EventBus, subscribed_event_handler
 from doeff_events.effects.events import PublishEffect, WaitForEventEffect
-from doeff_events.effects.notices import ChannelSubscription, NextAnnouncement, SubscribeChannels
+from doeff_events.effects.notices import (
+    Announce,
+    AwaitBrokerBack,
+    BrokerUnreachable,
+    ChannelSubscription,
+    NextAnnouncement,
+    SubscribeChannels,
+)
 from doeff_events.handlers.memory_notices import (
     MemoryBroker,
     cut_broker,
@@ -25,7 +32,7 @@ from doeff_events.handlers.notice_events import notice_events_handler
 from doeff_events.notice_laws import EventLawHarness, law_routes
 from doeff_time import sim_time_handler
 
-from doeff import K, Pass, Program, Resume, do, run
+from doeff import K, Pass, Program, Pure, Resume, do, run
 from doeff import handler as program_handler
 
 if TYPE_CHECKING:
@@ -145,6 +152,78 @@ def memory_harness(
         cut=lambda: cut_broker(broker, "the in-memory broker was cut"),
         restore=lambda: restore_broker(broker),
     )
+
+
+@final
+class _SenderOutage:
+    """What ``sender_outage_harness`` knows of the outage it made: why the broker refuses senders (``None`` = it
+    takes them), and the tasks waiting in ``AwaitBrokerBack`` for its return."""
+
+    __slots__ = ("detail", "waiters")
+
+    def __init__(self) -> None:
+        """Start with the broker taking every notice."""
+        self.detail: str | None = None
+        self.waiters: tuple[Promise[object], ...] = ()
+
+
+def refuses_senders(outage: _SenderOutage) -> "ProgramHandler":
+    """The layer under ``notice_events_handler`` that takes the broker from the sending side only: while the outage
+    is on, ``Announce`` answers ``BrokerUnreachable`` and ``AwaitBrokerBack`` waits for the restore; subscriptions
+    and their waits go on to the broker untouched (the receivers stay connected)."""
+
+    @do
+    def handler(effect: Announce | AwaitBrokerBack, k: K) -> "EffectGenerator[object]":
+        """Refuse a send, or hold a wait for the return, while the outage is on; pass on otherwise."""
+        if outage.detail is None:
+            yield Pass(effect, k)
+            return None
+        if isinstance(effect, Announce):
+            return (yield Resume(k, BrokerUnreachable(outage.detail)))
+        back: Promise[object] = yield CreatePromise()
+        outage.waiters = (*outage.waiters, back)
+        yield Wait(back.future)
+        return (yield Resume(k, None))
+
+    return program_handler(handler)
+
+
+def never_tells_the_return() -> "ProgramHandler":
+    """Broken layer: ``AwaitBrokerBack`` is never answered (sits between ``notice_events_handler`` and
+    ``refuses_senders``)."""
+
+    @do
+    def handler(effect: AwaitBrokerBack, k: K) -> "EffectGenerator[object]":
+        """Wait on a promise nobody completes."""
+        never: Promise[object] = yield CreatePromise()
+        yield Wait(never.future)
+        return (yield Resume(k, None))
+
+    return program_handler(handler)
+
+
+def sender_outage_harness(broker: MemoryBroker, *, below_events: Layer = unbroken) -> EventLawHarness:
+    """The harness of ``HELD_LAWS``: parties on ``broker`` whose ``cut`` / ``restore`` take the broker from the
+    sending side only. ``below_events`` (between ``notice_events_handler`` and ``refuses_senders``) is where a
+    broken handler goes."""
+    outage = _SenderOutage()
+    refusing = refuses_senders(outage)
+    parties = memory_harness(broker, below_events=lambda program: refusing(below_events(program)))
+
+    @do
+    def cut() -> "EffectGenerator[None]":
+        """Refuse every send from now on."""
+        outage.detail = "the broker refuses senders"
+        yield Pure(None)
+
+    @do
+    def restore() -> "EffectGenerator[None]":
+        """Take sends again and answer everyone waiting for the return."""
+        waiters, outage.detail, outage.waiters = outage.waiters, None, ()
+        for waiter in waiters:
+            yield CompletePromise(waiter, None)
+
+    return EventLawHarness(as_party=parties.as_party, cut=cut, restore=restore)
 
 
 def run_on_virtual_clock(program: Program[object]) -> object:

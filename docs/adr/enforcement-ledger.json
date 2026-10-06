@@ -446,6 +446,7 @@
     "ADR-DOE-ENFORCE-001 ledger-is-generated-from-the-tree",
     "ADR-DOE-ENFORCE-002 p0-rule-liveness",
     "ADR-DOE-EVENTS-001 loops-wait-for-events",
+    "ADR-DOE-EVENTS-002 held-notice-is-sent-once-the-broker-is-back",
     "ADR-DOE-EVENTS-002 notice-reaches-only-current-subscribers",
     "ADR-DOE-EVENTS-002 start-and-return-are-told-once",
     "ADR-DOE-EVENTS-002 start-is-told-after-the-subscription",

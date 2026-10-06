@@ -51,7 +51,15 @@ def _decoded(text: str) -> Rang:
 
 
 ROUTES = (
-    NoticeRoute(event_type=Rang, wire_name="rang", channel=_channel, encode=_encoded, decode=_decoded, reads=("rooms",)),
+    NoticeRoute(
+        event_type=Rang,
+        wire_name="rang",
+        channel=_channel,
+        encode=_encoded,
+        decode=_decoded,
+        held_key=_encoded,
+        reads=("rooms",),
+    ),
 )
 BUS = EventBus()
 

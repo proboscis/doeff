@@ -7,7 +7,7 @@ from doeff_events.handlers.memory_notices import (
     restore_broker,
 )
 from doeff_events.handlers.notice_events import (
-    EventNotPublished,
+    NoticeHeld,
     NoticeRoute,
     NoticeSent,
     NoticeSourceUnreachable,
@@ -21,8 +21,8 @@ from .memory import EventBus, SubscriberQueue, event_handler, subscribed_event_h
 
 __all__ = [
     "EventBus",
-    "EventNotPublished",
     "MemoryBroker",
+    "NoticeHeld",
     "NoticeRoute",
     "NoticeSent",
     "NoticeSourceUnreachable",

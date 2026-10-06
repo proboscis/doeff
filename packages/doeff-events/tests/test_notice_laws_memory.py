@@ -14,9 +14,10 @@ import pytest
 from doeff_core_effects.scheduler import SchedulerDeadlockError
 from doeff_events import EventBus, SourceResumed, SourceStarted, subscribed_event_handler
 from doeff_events.effects.events import Publish, WaitForEvent
+from doeff_events.effects.notices import Announce, BrokerUnreachable
 from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
 from doeff_events.handlers.notice_events import (
-    EventNotPublished,
+    NoticeHeld,
     NoticeRoute,
     NoticeSent,
     NoticeSourceUnreachable,
@@ -26,8 +27,10 @@ from doeff_events.handlers.notice_events import (
 from doeff_events.notice_laws import (
     BROKER_LAWS,
     EVENT_LAWS,
+    HELD_LAWS,
     LawBroken,
     LawNote,
+    law_held_notice_arrives_once_the_broker_is_back,
     law_routes,
     law_start_and_return_are_told_once,
     law_start_is_told_after_the_subscription,
@@ -43,7 +46,9 @@ from notice_law_support import (
     PATIENCE_SECONDS,
     PREFIX,
     memory_harness,
+    never_tells_the_return,
     run_on_virtual_clock,
+    sender_outage_harness,
     subscribes_when_the_program_waits_for,
     swallows,
 )
@@ -90,6 +95,7 @@ def _signal_world(*, late_subscription: bool = False) -> SignalWorld:
         channel=lambda _event: "signals",
         encode=lambda event: json.dumps(list(event.keys)),
         decode=lambda body: Changed(tuple(json.loads(body))),
+        held_key=lambda event: event.keys,
         reads=("signals",),
     )
 
@@ -138,46 +144,58 @@ def test_publish_answers_the_number_of_receivers() -> None:
     def publishes_alone() -> "EffectGenerator[object]":
         return (yield Publish(LawNote("to nobody")))
 
-    sender_only = tuple(NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode) for r in law_routes(PREFIX))
+    sender_only = tuple(
+        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, r.held_key) for r in law_routes(PREFIX)
+    )
     wrapped = memory_notice_handler(MemoryBroker())(
         notice_events_handler("sender", sender_only, PATIENCE_SECONDS)(publishes_alone())
     )
     assert run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped)) == NoticeSent(0)
 
 
-def test_publish_raises_when_the_broker_is_unreachable() -> None:
+@pytest.mark.parametrize("law", HELD_LAWS, ids=lambda law: law.__name__)
+def test_held_law_holds_on_memory(law) -> None:
+    run_on_virtual_clock(law(sender_outage_harness(MemoryBroker())))
+
+
+def test_not_telling_the_return_breaks_the_held_law() -> None:
+    # The held note waits for the broker's return, and nothing else sends it: the reader's wait is never answered.
+    harness = sender_outage_harness(MemoryBroker(), below_events=never_tells_the_return())
+    with pytest.raises(SchedulerDeadlockError):
+        run_on_virtual_clock(law_held_notice_arrives_once_the_broker_is_back(harness))
+
+
+def test_publish_answers_held_with_the_brokers_words_while_it_is_unreachable() -> None:
     broker = MemoryBroker()
 
     @do
-    def publishes_into_an_outage() -> "EffectGenerator[str]":
+    def publishes_into_an_outage() -> "EffectGenerator[object]":
         yield cut_broker(broker, "cut for the test")
-        try:
-            yield Publish(LawNote("lost"))
-        except EventNotPublished as error:
-            return str(error)
-        return "published"
+        return (yield Publish(LawNote("held")))
 
-    sender_only = tuple(NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode) for r in law_routes(PREFIX))
+    sender_only = tuple(
+        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, r.held_key) for r in law_routes(PREFIX)
+    )
     wrapped = memory_notice_handler(broker)(
         notice_events_handler("sender", sender_only, PATIENCE_SECONDS)(publishes_into_an_outage())
     )
-    message = run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped))
-    assert "cut for the test" in message, message
+    answer = run_on_virtual_clock(subscribed_event_handler(EventBus(), "sender")(wrapped))
+    assert isinstance(answer, NoticeHeld), answer
+    assert "cut for the test" in answer.detail, answer
 
 
 def test_notice_announced_during_an_outage_is_not_delivered_later() -> None:
-    # What the laws do not promise, pinned down: the subscription a cut ended does not hand over later what was
-    # announced before the new subscription. The reader is told the return and catches up from its records.
+    # What the laws do not promise, pinned down: the subscription a cut ended does not hand over later what the
+    # broker was asked to announce before the new subscription (asked of the lower layer, so nothing holds it).
+    # The reader is told the return and catches up from its records.
     harness = memory_harness(MemoryBroker())
 
     @do
     def reader() -> "EffectGenerator[object]":
         yield WaitForEvent(SourceStarted)
         yield harness.cut()
-        try:
-            yield Publish(LawNote("during"))
-        except EventNotPublished:
-            pass
+        refused = yield Announce(f"{PREFIX}:note", "law-note", "during")
+        assert isinstance(refused, BrokerUnreachable), refused
         yield harness.restore()
         yield WaitForEvent(SourceResumed)
         yield Publish(LawNote("after"))

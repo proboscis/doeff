@@ -31,8 +31,8 @@ from .effects import (
 )
 from .handlers import (
     EventBus,
-    EventNotPublished,
     MemoryBroker,
+    NoticeHeld,
     NoticeRoute,
     NoticeSent,
     NoticeSourceUnreachable,
@@ -63,9 +63,9 @@ __all__ = [
     "DisarmTimer",
     "DisarmTimerEffect",
     "EventBus",
-    "EventNotPublished",
     "MemoryBroker",
     "NextAnnouncement",
+    "NoticeHeld",
     "NoticeRoute",
     "NoticeSent",
     "NoticeSourceUnreachable",
