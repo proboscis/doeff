@@ -7,12 +7,14 @@
 ;;;   (<- (ApplyDeclarations))            ; 公開した宣言を当てる(本番 = Flux の「すぐ読み直せ」の印・sim = 模擬の Flux の 1 回の当て)
 ;;;   (<- (ConfirmCleanBoot launch))      ; 入れ替え先の値で、コピーも状態も無い空の機体の起動が通るか(Desire の前に・#3366 の単位 5a)
 ;;;   (<- answer (PrepareBootRoot launch)) ; 入れ替え先の版の自己起動の root を、今の保存先に先に準備する(起動の確認の後・Desire の前に・#3725)
-;;;   (<- answer (AwaitQuietWindow target seconds)) ; 静かな時間帯を待つ(coordinator の宣言を書く直前に・#3772)
+;;;   (<- answer (AwaitQuietWindow target seconds)) ; 静かな時間帯を待つ(coordinator の宣言を公開した後・当てる直前に・#3772)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
-;;; 空の起動か root の準備が断られた時・確かめた版の組み合わせに無い版の worker が居る時・戻し先の root が無い時は、UpgradeRefused で対象を明示して
-;;; 止まる(宣言を書かず公開もしない・自動で戻さない)。
+;;; 入れ替えの前の手順が断った時は、UpgradeRefused で対象と断った所(RefusalPoint)を明示して止まる(自動で戻さない): 空の起動か root の
+;;; 準備が断られた時・確かめた版の組み合わせに無い版の worker が居る時・戻し先の root が無い時は宣言を書く前(宣言を書かず公開もしない)。
+;;; coordinator の当てる直前の確かめ(版の組み合わせの照らし・待ち行列が空・静かな時間帯)が断った時は当てる前(宣言は書いて公開した・
+;;; 当てていない)。
 ;;;
 ;;; worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせ(VerifiedVersions — coordinator の版 X と、X と組めると
 ;;; 手元で確かめた worker の版の集合)で表す(#3772)。
@@ -224,7 +226,8 @@
 
 
 (defrecord QuietWindowMissed
-  "上限の内に静かな時間帯に入らなかった: target = 何を入れ替える前の待ちか・reason = 何が静かにならなかったか(答え手が書く文)。"
+  "上限の内に静かな時間帯に入らなかった: target = 何を入れ替える前の待ちか・reason = 何が静かにならなかったか(答え手が書く文)。
+   AwaitQuietWindow の答えで、そのまま UpgradeRefused の断りの理由になる(当てる前に断った — 宣言は書いて公開した)。"
   {:tags {:context "doeff-cluster" :role "type"}}
   (#^ str target)
   (#^ str reason))
@@ -232,7 +235,8 @@
 
 (defeffect AwaitQuietWindow
   "入れ替えで切れて困る仕事が走っていない時間帯(静かな時間帯)を待つ — 汎用の効果で、何を「切れて困る仕事」と読むかは答え手(配備する
-   側の業務)が決める(#3772)。版上げの Program は coordinator の宣言を書く直前に 1 回出す。答え手は静かになるか timeout-seconds を
+   側の業務)が決める(#3772)。版上げの Program は coordinator の宣言を公開した後、当てる直前に 1 回出す(公開は数分かかり、その間に
+   切れて困る仕事が始まりうるので、当てる直前に読む)。答え手は静かになるか timeout-seconds を
    越えるまで受け持ってから答える(呼び手は時間で読み直さない)。sim = すぐ QuietWindowOpened。答え = QuietWindowOpened か
    QuietWindowMissed。"
   {:fields [(: target str) (: timeout-seconds float)]
@@ -258,27 +262,63 @@
   (#^ (| BootRootAlreadyPrepared BootRootBuilt) root))
 
 
+(defrecord QueuedTasksRemain
+  "coordinator を当てる直前に、待ち行列の task が上限の内に空にならなかった(#3772 — 作り直した coordinator が worker の行を読めない間に
+   queued の task を落とす形 #2440 を防ぐ条 V4 を、宣言と公開の数分の後にもう 1 度確かめた): target = 何の入れ替えを止めたか・
+   tasks = 最後に読んだ時に queued だった task の id。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ (get tuple #(str ...)) tasks))
+
+
+;; 入れ替えの前の手順が断った所(UpgradeRefused の欄 point — 閉じた語):
+;;   BEFORE-DESIRE = 宣言を書く前(宣言を書かず公開もしていない — cluster は変わらない)
+;;   BEFORE-APPLY  = coordinator の宣言を書いて公開した後、当てる前(当てていない — 配備する側は Flux を止めたまま扱う・自動では戻さない)
+(defenum RefusalPoint BEFORE-DESIRE BEFORE-APPLY)
+
+
 (defclass UpgradeRefused [RuntimeError]
-  "入れ替えの前の手順(空の機体の起動の確認・自己起動の root の準備・確かめた版の組み合わせの照らし・戻し先の root の確かめ)が断ったので、宣言を
-   書かず公開もせずに止まった。target = 何の入れ替えを止めたか・refusal = 拒否の答えそのもの(閉じた和: CleanBootRefused・
-   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing)。自動で戻さない。"
-  (defn #^ None __init__ [self #^ str target #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing) refusal]
+  "入れ替えの前の手順が断ったので止まった。target = 何の入れ替えを止めたか・refusal = 拒否の答えそのもの(閉じた和: CleanBootRefused・
+   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing・QueuedTasksRemain・QuietWindowMissed)・
+   point = 断った所(RefusalPoint — 宣言を書く前か、宣言を書いて公開した後で当てる前か)。文も断った所を明示する。自動で戻さない。"
+  (defn #^ None __init__ [self #^ str target
+                          #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing QueuedTasksRemain QuietWindowMissed) refusal
+                          #^ RefusalPoint point]
     ;; defk にできない: 例外の構成子
-    (.__init__ (super)
-               (match refusal
+    (setv what (match refusal
                  (CleanBootRefused :reason reason)
-                   (.format "版上げを止めた: {} の入れ替え先の版で、空の機体の起動が通らない({})— 宣言は書いていない" target reason)
+                   (.format "{} の入れ替え先の版で、空の機体の起動が通らない({})" target reason)
                  (BootRootRefused :reason reason)
-                   (.format "版上げを止めた: {} の保存先に、入れ替え先の版の自己起動の root を準備できない({})— 宣言は書いていない"
-                            target reason)
+                   (.format "{} の保存先に、入れ替え先の版の自己起動の root を準備できない({})" target reason)
                  (UnverifiedWorkers :coordinator_commit commit :workers workers)
-                   (.format "版上げを止めた: {} を版 {} へ入れ替える前に、確かめた版の組み合わせに無い版で動く宣言の内の worker が居る({})— 宣言は書いていない"
+                   (.format "{} を版 {} へ入れ替える前に、確かめた版の組み合わせに無い版で動く宣言の内の worker が居る({})"
                             target (cut commit 0 10)
                             (.join "・" (gfor e workers (.format "{}(版 {})" e.worker (cut (or e.doeff-commit "") 0 10)))))
                  (RollbackRootMissing)
-                   (.format "版上げを止めた: {} の保存先に、上げる前の版の自己起動の root が無い(入れ替えた後に戻す先が無い)— 宣言は書いていない"
-                            target)))
-    (setv self.target target self.refusal refusal)))
+                   (.format "{} の保存先に、上げる前の版の自己起動の root が無い(入れ替えた後に戻す先が無い)" target)
+                 (QueuedTasksRemain :tasks tasks)
+                   (.format "{} を当てる前に、待ち行列の task が上限の内に空にならない(queued: {})" target (.join "・" tasks))
+                 (QuietWindowMissed :reason reason)
+                   (.format "{} を当てる前に、静かな時間帯が上限の内に来ない({})" target reason)))
+    (setv where (match point
+                  RefusalPoint.BEFORE-DESIRE "宣言は書いていない"
+                  RefusalPoint.BEFORE-APPLY "宣言は書いて公開したが、当てていない(自動では戻さない)"))
+    (.__init__ (super) (.format "版上げを止めた: {} — {}" what where))
+    (setv self.target target self.refusal refusal self.point point)))
+
+
+(defrecord WaitReached
+  "版上げの待ちが条件に届いた: state = 条件が真になった時の名簿(呼び手がその同じ状態で次を判定する)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ UpgradeState state))
+
+
+(defrecord WaitExpired
+  "版上げの待ちが上限を越えた: observed = 最後に読んだ物のうちその待ちに効く所の文・last = 最後に読めた名簿(1 度も読めなければ None)。
+   呼び手が UpgradeStalled で落ちるか、最後の名簿から断りの理由を組んで UpgradeRefused で止まるかを決める(#3772)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str observed)
+  (#^ (| UpgradeState None) last))
 
 
 (defrecord CoordinatorUpgraded

@@ -435,10 +435,18 @@ worker と coordinator のどちらを先に上げるかは変更ごとに決ま
 確かめた版の組み合わせ(`VerifiedVersions` — X と、X と組めると手元で確かめた worker の版の集合)を受け取り、宣言の内の worker が
 全部動いていて、その版が集合に入っている時だけ入れ替えます(条 V1)。集合に無い版の worker が 1 つでも居れば、宣言を書く前に
 `UpgradeRefused` で、その worker と版を明示して断ります。宣言の外の worker(配備する側の外で起動する worker)は待たず照らさず、
-入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。coordinator の入れ替えは、ほかに待ち行列が空(条 V4)・
-上げる前の版の自己起動の root(戻し先)が在る・静かな時間帯(`AwaitQuietWindow` — 何を「入れ替えで切れて困る仕事」とみなすかは
-配備する側の handler が決める)を宣言を書く前に確かめ、当てた後は coordinator が版 X で答える・宣言の内の worker が live に戻る・
-入れ替えの前に待っていた task が coordinator に在る、の 3 つを待ちます。「coordinator が版 X で答える」は、答えた coordinator が
+入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。coordinator の入れ替えの手順の並びは次のとおりです。
+
+1. 宣言を書く前: 待ち行列が空(条 V4)→ 条 V1 の照らし → 空の機体の起動の確かめ → 事前ビルドと、上げる前の版の自己起動の root
+   (戻し先)が在る事の確かめ。どれかが断れば `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-DESIRE`)で止まり、宣言を書きません。
+2. 宣言を書いて(`DesireCoordinator`)公開する(`PublishDeclarations`)。公開(マージの列・main 入り)は数分かかります。
+3. 当てる直前の確かめ(1 か所): 状態を読み直す → 条 V1 の照らし(公開の間に別の worker の入れ替えが入りうる)→ 待ち行列が空
+   (公開の間に積まれた queued の task は作り直しで落ちうる — 上限 `queue-seconds` まで待つ)→ 静かな時間帯(`AwaitQuietWindow` —
+   何を「入れ替えで切れて困る仕事」とみなすかは配備する側の handler が決める・上限 `quiet-seconds`)。どれかが断れば当てずに
+   `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-APPLY`・理由は `UnverifiedWorkers` / `QueuedTasksRemain` / `QuietWindowMissed`)で
+   止まります。宣言と公開は済んだまま当てていない状態で、自動では戻しません(配備する側は Flux を止めたまま扱います)。
+4. 当てる(`ApplyDeclarations`)→ coordinator が版 X で答える・宣言の内の worker が live に戻る・入れ替えの前に待っていた task が
+   coordinator に在る、の 3 つを待ちます。「coordinator が版 X で答える」は、答えた coordinator が
 `GET /state` の `coordinatorCommit` で申告する版で判じます(宣言した版や Deployment の世代からは推しません — 作り直しの途中で古い Pod が
 答えている間も「新しい版」と読んでしまうため)。名簿の読みに答える handler は、この欄を `shared/protocol/coordinator_reads.hy` の
 `coordinator-commit-of-state` で読みます(本番の読みと模擬の Flux の読みが同じ 1 つを通る)。

@@ -8,13 +8,15 @@
 ;;;                  新しい版で live に戻るのを待つ(V3 — 戻りが来なければ次へ進まない)
 ;;;   coordinator:   待ち行列が空(V4)を待つ → 宣言の内の worker が全部 live で版を読めるのを待ち、その版を確かめた版の組み合わせで照らす
 ;;;                  (V1 — 組み合わせに無い版が 1 つでも在れば断る)→ 空の起動を確かめる → root を準備し(V5)、上げる前の版の root
-;;;                  (戻し先)が在るかを確かめる → 静かな時間帯を待つ(AwaitQuietWindow)→ DesireCoordinator → 公開 → 当てる →
-;;;                  coordinator が入れ替え先の版で答えるのを待つ → 宣言の内の worker が全部 live に戻るのを待つ → 入れ替えの前に待っていた
-;;;                  task が coordinator に在るのを待つ
+;;;                  (戻し先)が在るかを確かめる → DesireCoordinator → 公開 → 当てる直前の確かめ(状態を読み直す → V1 の照らし →
+;;;                  待ち行列が空(V4)→ 静かな時間帯を待つ(AwaitQuietWindow))→ 当てる → coordinator が入れ替え先の版で答えるのを
+;;;                  待つ → 宣言の内の worker が全部 live に戻るのを待つ → 入れ替えの前に待っていた task が coordinator に在るのを待つ
 ;;;
 ;;; 入れ替えの前の手順(起動の確認・root の準備・版の照らし・戻し先の確かめ)は宣言を書く前に通す — どれが断っても、宣言にも名簿にも何も
-;;; 書かずに止まる。root の準備と静かな時間帯の待ちは effect 1 つずつで、handler が終わりまで受け持って答える(ここは答えを 1 回受ける
-;;; だけ — 時間で読み直さない)。
+;;; 書かずに止まる(UpgradeRefused の断った所 = 宣言の前)。公開(マージの列・main 入り)は数分かかり、その間に別の worker の入れ替え・
+;;; 待ち行列の task・入れ替えで切れて困る仕事が入りうるので、coordinator は当てる直前にもう 1 度確かめる — 断ったら当てずに止まる
+;;; (断った所 = 当てる前・宣言と公開は済んだまま・自動では戻さない)。root の準備と静かな時間帯の待ちは effect 1 つずつで、handler が
+;;; 終わりまで受け持って答える(ここは答えを 1 回受けるだけ — 時間で読み直さない)。
 ;;;
 ;;; worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせ(VerifiedVersions — coordinator の版 X と、X と
 ;;; 組めると手元で確かめた worker の版の集合)で表す(#3772 — 2026-10-05 は worker が先・2026-10-06 の #3748 は coordinator が先)。
@@ -38,7 +40,8 @@
                                                    CleanBootPassed CleanBootRefused UpgradeRefused PrepareBootRoot
                                                    BootRootAlreadyPrepared BootRootBuilt BootRootRefused VerifiedVersions
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
-                                                   RollbackRootMissing CoordinatorUpgraded ClusterUpgraded])
+                                                   RollbackRootMissing QueuedTasksRemain RefusalPoint WaitReached WaitExpired
+                                                   CoordinatorUpgraded ClusterUpgraded])
 
 
 ;; coordinator に届かない間に問い直すまでの秒(版の変化を待つ口が答えない時だけ — 上限の内)と、1 回の版の変化の待ちの上限の秒
@@ -90,6 +93,18 @@
   (<- unverified (get tuple #(RosterEntry ...)) (unverified-of verified state))
   (or (bool unverified)
       (and (bool declared) (all (gfor e declared (and e.live (is-not e.doeff-commit None)))))))
+
+
+(defk state-read [state]
+  {:pre [(: state UpgradeState)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名簿を 1 度読めたか(読めた名簿なら真)— 当てる直前に coordinator の状態を読み直す待ちの条件(届かない間だけ待つ)。"
+  True)
+
+
+(defk state-line [state]
+  {:pre [(: state UpgradeState)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "state-read の待ちの最後の読みの文 — 名簿を読めた時は止まらないので、名簿の worker の数だけを載せる。"
+  (.format "名簿の worker の数 {}" (len state.roster)))
 
 
 (defk queue-empty [state]
@@ -204,38 +219,51 @@
       (do (<- line str (joined-lines (tuple (gfor e declared :if (not e.live) e)))) line)))
 
 
-(defk await-until [step done observe limit-seconds]
-  {:pre [(: step str) (: done Callable) (: observe Callable) (: limit-seconds float)] :post [(: % UpgradeState)]
+(defk await-state [done observe limit-seconds]
+  {:pre [(: done Callable) (: observe Callable) (: limit-seconds float)] :post [(: % (| WaitReached WaitExpired))]
    :tags {:context "doeff-cluster" :role "program"}}
   "版上げの次の手順の前の条件 done(UpgradeState → bool の Program)が真になるまで待つため。coordinator の版の変化で起きて読み直し、
-   届かない間は UNREACHABLE-RETRY-SECONDS だけ待って問い直す。limit-seconds を越えたら UpgradeStalled(step を明示し、最後に読んだ
-   名簿を observe(UpgradeState → str の Program)で文にして載せる — 待ちの名だけでは何が戻らないのか分からないため・#3366)。
-   答え = done が真になった時の名簿(呼び手がその同じ状態で次を判定する — 読み直して別の状態を照らさないため・#3772)。"
+   届かない間は UNREACHABLE-RETRY-SECONDS だけ待って問い直す。答えは閉じた 2 つ: 届いた(WaitReached — done が真になった時の名簿・
+   呼び手がその同じ状態で次を判定する)か、limit-seconds を越えた(WaitExpired — 最後に読んだ名簿を observe(UpgradeState → str の
+   Program)で文にした物と、最後に読めた名簿)。上限で落ちるか断るかは呼び手が決める(#3772)。"
   (<- started int (now-epoch-ms))
   (val deadline (+ started (int (* limit-seconds 1000))))
   (var revision 0)
-  (var reached None)
+  (var answer None)
   (var last "まだ 1 度も読めていない")
-  (while (is reached None)
+  (var last-state None)
+  (while (is answer None)
     (<- state (ReadUpgradeState))
     (var ok False)
     (if (isinstance state UpgradeState)
         (do (<- judged bool (done state))
             (:= ok judged)
             (<- seen str (observe state))
-            (:= last seen))
+            (:= last seen)
+            (:= last-state state))
         (:= last (.format "名簿を読めなかった: {}" state.reason)))
     (if ok
-        (:= reached state)
+        (:= answer (WaitReached :state state))
         (do (<- now int (now-epoch-ms))
-            (when (>= now deadline)
-              (raise (UpgradeStalled step limit-seconds last)))
-            (val remaining (/ (- deadline now) 1000.0))
-            (<- change (AwaitRunnersChange revision :timeout-seconds (min remaining WATCH-SECONDS)))
-            (if (isinstance change RunnersChange)
-                (:= revision change.revision)
-                (<- (Delay (min remaining UNREACHABLE-RETRY-SECONDS)))))))
-  reached)
+            (if (>= now deadline)
+                (:= answer (WaitExpired :observed last :last last-state))
+                (do (val remaining (/ (- deadline now) 1000.0))
+                    (<- change (AwaitRunnersChange revision :timeout-seconds (min remaining WATCH-SECONDS)))
+                    (if (isinstance change RunnersChange)
+                        (:= revision change.revision)
+                        (<- (Delay (min remaining UNREACHABLE-RETRY-SECONDS)))))))))
+  answer)
+
+
+(defk await-until [step done observe limit-seconds]
+  {:pre [(: step str) (: done Callable) (: observe Callable) (: limit-seconds float)] :post [(: % UpgradeState)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "版上げの次の手順の前の条件 done が真になるまで待ち(await-state)、limit-seconds を越えたら UpgradeStalled で落ちるため(step を明示し、
+   最後に読んだ名簿の文を載せる — 待ちの名だけでは何が戻らないのか分からないため・#3366)。答え = done が真になった時の名簿。"
+  (<- waited (| WaitReached WaitExpired) (await-state done observe limit-seconds))
+  (match waited
+    (WaitReached) waited.state
+    (WaitExpired) (raise (UpgradeStalled step limit-seconds waited.observed))))
 
 
 (defk confirm-clean-boot [launch target]
@@ -245,7 +273,7 @@
   (<- verdict (ConfirmCleanBoot launch))
   (match verdict
     (CleanBootPassed) None
-    (CleanBootRefused) (raise (UpgradeRefused target verdict))))
+    (CleanBootRefused) (raise (UpgradeRefused target verdict RefusalPoint.BEFORE-DESIRE))))
 
 
 (defk prepare-boot-root [launch target]
@@ -261,7 +289,7 @@
   (match answer
     (BootRootAlreadyPrepared) answer
     (BootRootBuilt) answer
-    (BootRootRefused) (raise (UpgradeRefused target answer))))
+    (BootRootRefused) (raise (UpgradeRefused target answer RefusalPoint.BEFORE-DESIRE))))
 
 
 (defk upgrade-workers [workers limits]
@@ -287,16 +315,17 @@
   prepared)
 
 
-(defk refuse-unverified [coordinator verified state]
-  {:pre [(: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: state UpgradeState)] :post [(: % None)]
+(defk refuse-unverified [coordinator verified state point]
+  {:pre [(: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: state UpgradeState) (: point RefusalPoint)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "program"}}
-  "条 V1 の照らし: 宣言の内で live な worker の版が、確かめた版の組み合わせに無い物を 1 つでも見たら、宣言を書く前に UpgradeRefused で
-   その worker と版を明示して断るため(新しい coordinator が組めない版の worker の heartbeat を断り、その worker が job を止める形を、
-   当てる前に止める・#3772)。"
+  "条 V1 の照らし: 宣言の内で live な worker の版が、確かめた版の組み合わせに無い物を 1 つでも見たら、UpgradeRefused でその worker と版と
+   断った所 point を明示して断るため(新しい coordinator が組めない版の worker の heartbeat を断り、その worker が job を止める形を、
+   当てる前に止める・#3772)。宣言を書く前と、当てる直前(公開の待ちの間に別の worker の入れ替えが入りうる)の 2 か所で通る。"
   (<- unverified (get tuple #(RosterEntry ...)) (unverified-of verified state))
   (when unverified
     (raise (UpgradeRefused "coordinator" (UnverifiedWorkers :target "coordinator" :coordinator-commit coordinator.doeff-commit
-                                                            :workers unverified))))
+                                                            :workers unverified)
+                           point)))
   None)
 
 
@@ -306,18 +335,52 @@
   "入れ替える前の版の自己起動の root(戻し先)が保存先に在る事を、宣言を書く前に確かめるため — 無ければ入れ替えた後に前の版へ戻せない
    ので、UpgradeRefused(RollbackRootMissing)で target を明示して始めない(#3772)。"
   (when (not root.previous-root-present)
-    (raise (UpgradeRefused target (RollbackRootMissing :target target :root root))))
+    (raise (UpgradeRefused target (RollbackRootMissing :target target :root root) RefusalPoint.BEFORE-DESIRE)))
   None)
+
+
+(defk queued-ids [state]
+  {:pre [(: state UpgradeState)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "名簿の読みの queued の task の id を、当てる前の待ち行列の断りの理由に載せるため。"
+  (tuple (gfor t state.tasks :if (= t.phase PendingPhase.QUEUED) t.task)))
+
+
+(defk refuse-unless-queue-empties [target limit-seconds]
+  {:pre [(: target str) (: limit-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "当てる直前に、待ち行列が空になるのを待つため(条 V4 をもう 1 度 — 宣言を書いてから公開して着くまでの数分の間に積まれた queued の
+   task は、作り直した coordinator が worker の行を読めない間に落ちうる・#2440・#3772)。上限の内に空にならなければ当てずに
+   UpgradeRefused(QueuedTasksRemain — 最後に読んだ queued の task の id)で止まる。1 度も名簿を読めなければ UpgradeStalled で落ちる
+   (残った task を名指せない)。"
+  (<- waited (| WaitReached WaitExpired) (await-state queue-empty queued-line limit-seconds))
+  (match waited
+    (WaitReached) None
+    (WaitExpired :last None) (raise (UpgradeStalled "当てる前に待ち行列が空" limit-seconds waited.observed))
+    (WaitExpired) (do (<- ids (get tuple #(str ...)) (queued-ids waited.last))
+                      (raise (UpgradeRefused target (QueuedTasksRemain :target target :tasks ids) RefusalPoint.BEFORE-APPLY)))))
 
 
 (defk await-quiet-window [target limit-seconds]
   {:pre [(: target str) (: limit-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
-  "入れ替えの宣言を書く直前に、入れ替えで切れて困る仕事が走っていない時間帯を待つため(AwaitQuietWindow — 何を「切れて困る仕事」と
-   読むかは handler が決める・#3772)。上限の内に来なければ UpgradeStalled で、静かにならなかった理由を明示して落ちる(宣言は書かない)。"
+  "当てる直前に、入れ替えで切れて困る仕事が走っていない時間帯を待つため(AwaitQuietWindow — 何を「切れて困る仕事」と読むかは handler が
+   決める・#3772。公開は数分かかり、その間に切れて困る仕事が始まりうるので、宣言の前ではなく当てる直前に読む)。上限の内に来なければ
+   当てずに UpgradeRefused(QuietWindowMissed — 静かにならなかった理由)で止まる(宣言は書いて公開した・当てていない)。"
   (<- answer (| QuietWindowOpened QuietWindowMissed) (AwaitQuietWindow :target target :timeout-seconds limit-seconds))
   (match answer
     (QuietWindowOpened) None
-    (QuietWindowMissed) (raise (UpgradeStalled "静かな時間帯を待つ" limit-seconds answer.reason))))
+    (QuietWindowMissed) (raise (UpgradeRefused target answer RefusalPoint.BEFORE-APPLY))))
+
+
+(defk check-before-apply [coordinator verified limits]
+  {:pre [(: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: limits UpgradeLimits)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "program"}}
+  "coordinator の宣言を公開した後、当てる直前の確かめを 1 か所で通すため(#3772): 状態を読み直す → 条 V1 の照らし(公開の待ちの間に
+   別の worker の入れ替えが入りうる)→ 待ち行列が空(条 V4 — 上限で断る)→ 静かな時間帯(上限で断る)。どれが断っても当てずに
+   UpgradeRefused(断った所 = 当てる前)で止まる — 宣言と公開は済んだまま・自動では戻さない。"
+  (<- fresh UpgradeState (await-until "当てる前に coordinator の状態を読み直す" state-read state-line limits.return-seconds))
+  (<- (refuse-unverified coordinator verified fresh RefusalPoint.BEFORE-APPLY))
+  (<- (refuse-unless-queue-empties "coordinator" limits.queue-seconds))
+  (<- (await-quiet-window "coordinator" limits.quiet-seconds))
+  None)
 
 
 (defk upgrade-coordinator [coordinator verified limits]
@@ -328,18 +391,19 @@
   "coordinator だけを版 X(coordinator.doeff-commit)へ入れ替えるため(#3772 — 頭の註の coordinator の手順)。verified = 確かめた版の
    組み合わせ(coordinator の版は X と同じでなければならない)— 宣言の内の worker の版が混ざっていても、全部が組み合わせに入っていれば
    当てる。宣言の外の worker は待たず照らさず、答えに載せる。待ち行列が空(V4)→ 条 V1 の待ちと照らし → 空の起動の確認 → root の準備
-   (V5)と戻し先の確かめ → 静かな時間帯 → Desire → 公開 → 当てる → coordinator が X で答える → 宣言の内の worker が live → 待っていた
-   task が coordinator に在る。答え = root の準備の答えと、外した宣言の外の worker。"
+   (V5)と戻し先の確かめ → Desire → 公開 → 当てる直前の確かめ(状態を読み直す → V1 の照らし → 待ち行列が空 → 静かな時間帯 —
+   check-before-apply)→ 当てる → coordinator が X で答える → 宣言の内の worker が live → 待っていた task が coordinator に在る。
+   答え = root の準備の答えと、外した宣言の外の worker。"
   (<- (await-until "待ち行列が空" queue-empty queued-line limits.queue-seconds))
   (<- before UpgradeState (await-until "宣言の内の worker が全部 live で版を読める" (partial v1-decidable verified) unsettled-line
                                        limits.return-seconds))
-  (<- (refuse-unverified coordinator verified before))
+  (<- (refuse-unverified coordinator verified before RefusalPoint.BEFORE-DESIRE))
   (<- (confirm-clean-boot coordinator "coordinator"))
   (<- root (| BootRootAlreadyPrepared BootRootBuilt) (prepare-boot-root coordinator "coordinator"))
   (<- (require-rollback-root root "coordinator"))
-  (<- (await-quiet-window "coordinator" limits.quiet-seconds))
   (<- (DesireCoordinator coordinator))
   (<- (PublishDeclarations))
+  (<- (check-before-apply coordinator verified limits))
   (<- (ApplyDeclarations))
   (<- (await-until (.format "coordinator が版 {} で答える" coordinator.doeff-commit) (partial coordinator-on coordinator.doeff-commit)
                    coordinator-line limits.return-seconds))

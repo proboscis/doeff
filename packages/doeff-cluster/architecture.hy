@@ -137,7 +137,8 @@
 ;;;   worker の heartbeat を断り、その worker が 20 秒で job を止める形を防ぐ)。worker と coordinator のどちらを先に上げるかは変更ごとに
 ;;;   決まり、確かめた版の組み合わせで表す(#3772)。宣言の外の worker は数えない。失敗ケース = 同じ file の
 ;;;   test-starting-the-coordinator-before-every-worker-is-new-breaks-v1・test-a-worker-version-outside-the-verified-pair-breaks-v1。
-;;;   守るのは版上げの Program の coordinator の入口(upgrade-coordinator — 照らしに通らなければ宣言を書く前に UpgradeRefused で断る)。
+;;;   守るのは版上げの Program の coordinator の入口(upgrade-coordinator — 照らしに通らなければ宣言を書く前に UpgradeRefused で断り、
+;;;   公開の後・当てる直前にもう 1 度照らして、通らなければ当てずに断る)。
 ;;;   V2 worker-swap-waits-for-its-tasks — worker の入れ替えを始めるのは、その worker に置かれた(assigned・走り中の)task が無い時だけ
 ;;;   (drain の空くのを待つ — 入れ替える worker の上で走る task は lease が切れて失われ、別の live な worker が居ても走らせ直さない。queued は
 ;;;   入れ替えで落ちない)。失敗ケース = test-swapping-a-worker-with-a-running-task-breaks-v2。
