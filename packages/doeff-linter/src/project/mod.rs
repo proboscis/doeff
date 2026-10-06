@@ -61,6 +61,7 @@ pub mod contract_breach;
 pub mod assembly_shape;
 pub mod invariants;
 pub mod system_access;
+pub mod record_waits;
 pub mod system_decls;
 pub mod clause_coverage;
 pub mod python_reach;
@@ -538,6 +539,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     if enabled.contains(&ProjectRule::SystemAccessUnwritten) {
                         drafts.extend(judge_system_access(root, architecture, hy));
+                    }
+                    if let Some(decl) = architecture.business_fakes.as_ref().filter(|_| enabled.contains(&ProjectRule::RecordChangeWakesJob)) {
+                        let (found, problems) = crate::timing::timed("record-waits", || judge_record_waits(root, decl));
+                        drafts.extend(found);
+                        report.errors.extend(problems);
                     }
                     if let Some(raw) = settings.raw.as_ref().filter(|r| r.world_modules.is_some()) {
                         let placed: BTreeSet<&str> = layer_files.iter().map(|f| f.file.rel.as_str()).collect();
@@ -3507,6 +3513,33 @@ fn judge_system_access(root: &Path, architecture: &architecture::Architecture, h
             }
         })
         .collect()
+}
+
+/// DOEFF208: 本番の code が記録の変更の待ちで job を起こす所を、呼びの頭の位置の下書きにする(鍵の細目 = 定義の名::頭の綴り)と、
+/// 読めない file の理由。
+fn judge_record_waits(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<Draft>, Vec<String>) {
+    let (found, problems) = record_waits::find(root, decl);
+    let drafts = found
+        .into_iter()
+        .map(|found| {
+            let message = format!("{} — {}", found.rel, found.describe());
+            Draft {
+                rule: ProjectRule::RecordChangeWakesJob,
+                layer: None,
+                path: root.join(&found.rel),
+                range: found.range,
+                detail: Some(found.detail()),
+                base: Severity::Error,
+                explain: Explain::RecordChangeWakesJob {
+                    subject: found.subject(),
+                    [removed]
+                },
+                rel: found.rel,
+                message,
+            }
+        })
+        .collect();
+    (drafts, problems)
 }
 
 /// seeds から呼び手を逆向きに辿って届く deftest(DOEFF136 と同じ辺 — 呼び出し・参照・入れ子と、系の値の中の辺)。
