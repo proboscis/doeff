@@ -34,16 +34,19 @@ from functools import partial
 from typing import TYPE_CHECKING, Final, TypeVar, final
 
 from doeff_core_effects.effects import Await
+from doeff_time import Delay
 
 from doeff import K, Pass, Program, Resume, do
 from doeff import handler as _program_handler
 from doeff_events.effects.notices import (
     Announce,
     Announcement,
+    AwaitBrokerBack,
     BrokerUnreachable,
     ChannelSubscription,
     CloseSubscription,
     NextAnnouncement,
+    ProbeBroker,
     SubscribeChannels,
 )
 
@@ -100,6 +103,11 @@ async def _announce(client: "Redis", effect: Announce) -> int:
     if isinstance(receivers, bool) or not isinstance(receivers, int):
         raise BrokerAnswerMalformed(f"PUBLISH must answer the number of receivers, got {receivers!r}")
     return receivers
+
+
+async def _reached(client: "Redis") -> None:
+    """``PING`` — whether a connection to the server can be made now (nothing is read or written)."""
+    await client.ping()
 
 
 async def _subscribe(client: "Redis", subscription: ChannelSubscription) -> "PubSub":
@@ -169,7 +177,7 @@ def _broker_handler(sending: "Redis", receiving: "Redis") -> "ProgramHandler":
 
     @do
     def handler(
-        effect: Announce | SubscribeChannels | NextAnnouncement | CloseSubscription, k: K
+        effect: Announce | SubscribeChannels | NextAnnouncement | CloseSubscription | ProbeBroker, k: K
     ) -> "EffectGenerator[object]":
         """Answer one broker operation with one awaited call; ``BrokerUnreachable`` when the server is not there."""
         nonlocal listening
@@ -177,6 +185,8 @@ def _broker_handler(sending: "Redis", receiving: "Redis") -> "ProgramHandler":
         match effect:
             case Announce():
                 answer = yield Await(_or_failed(_announce(sending, effect)))
+            case ProbeBroker():
+                answer = yield Await(_or_failed(_reached(sending)))
             case SubscribeChannels(channels=channels):
                 subscription = ChannelSubscription(channels)
                 pubsub = yield Await(_or_failed(_subscribe(receiving, subscription)))
@@ -238,3 +248,26 @@ def redis_notice_handler(url: str) -> "ProgramHandler":
     if not isinstance(url, str) or not url:
         raise ValueError("redis_notice_handler: url must be a non-empty string")
     return _BodyWrapper(_run, url)
+
+
+def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":
+    """Build the handler that answers ``AwaitBrokerBack`` for a broker that cannot tell its own return (Redis):
+    try ``ProbeBroker`` (a connection only, no data), and while it fails, wait ``retry_seconds`` and try again
+    (agora-redesign #3864 — the decision of 2026-10-07, ADR-DOE-EVENTS-002 R6). Answers once a try succeeds.
+
+    Placed between ``redis_notice_handler`` (outside — it answers ``ProbeBroker``) and ``notice_events_handler``
+    (inside — it asks ``AwaitBrokerBack`` only while a channel holds a gap or a subscription lost its broker), so
+    nothing is tried while nobody waits. ``retry_seconds`` has no default: the composition names it.
+    """
+    if isinstance(retry_seconds, bool) or not isinstance(retry_seconds, int | float) or retry_seconds <= 0:
+        raise ValueError(f"broker_back_by_retry: retry_seconds must be a number > 0, got {retry_seconds!r}")
+
+    @do
+    def handler(effect: AwaitBrokerBack, k: K) -> "EffectGenerator[object]":
+        """Try the connection until it can be made."""
+        # Retried on a timer because a broker that is down sends nothing: nothing else can tell its return.
+        while isinstance((yield ProbeBroker()), BrokerUnreachable):
+            yield Delay(retry_seconds)
+        return (yield Resume(k, None))
+
+    return _program_handler(handler)

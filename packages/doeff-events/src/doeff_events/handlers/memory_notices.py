@@ -29,6 +29,7 @@ from doeff_events.effects.notices import (
     ChannelSubscription,
     CloseSubscription,
     NextAnnouncement,
+    ProbeBroker,
     SubscribeChannels,
 )
 
@@ -164,7 +165,8 @@ def memory_notice_handler(broker: MemoryBroker) -> "ProgramHandler":
 
     @do
     def handler(
-        effect: Announce | SubscribeChannels | NextAnnouncement | CloseSubscription | AwaitBrokerBack, k: K
+        effect: Announce | SubscribeChannels | NextAnnouncement | CloseSubscription | AwaitBrokerBack | ProbeBroker,
+        k: K,
     ) -> "EffectGenerator[object]":
         """Answer one broker operation; while the broker is cut, answer ``BrokerUnreachable`` to all but the wait
         for its return and the close."""
@@ -179,6 +181,8 @@ def memory_notice_handler(broker: MemoryBroker) -> "ProgramHandler":
                         yield Wait(back.future)
                     finally:
                         broker.remove_back_waiter(back)
+            case ProbeBroker():
+                answer = broker.down
             case CloseSubscription(subscription=closing):
                 broker.close(closing)
             case Announce() | SubscribeChannels() | NextAnnouncement() if broker.down is not None:
