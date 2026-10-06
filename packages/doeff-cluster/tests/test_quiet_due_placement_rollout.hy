@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState HandoffPhase IdleProbe QuietStep QuietStretch])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.api_policy [placement-due plan-rollouts tick ROLLOUT-ACTOR])
+(import doeff_cluster.coordinator.core.api_policy [placement-due plan-rollouts tick ROLLOUT-ACTOR ROLLOUT-TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
@@ -88,6 +88,21 @@
   (<- at tuple (plan-rollouts state due (ClusterTiming) (ClusterNaming)))
   (assert (= (. (get (. (get before 0) rollouts) "to-b") status phase) "WaitingNewReady") (get before 0))
   (assert (= (. (get (. (get at 0) rollouts) "to-b") status phase) "RollingBack") (get at 0)))
+
+
+(deftest test-a-stage-deadline-after-the-last-rollout-step-waits-for-the-rollout-interval
+  ;; 期限の刻の歩が Rollout の歩を回さない(前の Rollout の歩から ROLLOUT-TICK-MS が経っていない — 要求の歩が 500 ms 前に回した)時、
+  ;; rollout-due はその期限を落とさず、Rollout の歩を回せる最初の刻(前の Rollout の歩 + ROLLOUT-TICK-MS)を返す。期限が Rollout の歩の
+  ;; 刻の後なら、まだ判じていない。直す前は今より後の期限だけを見るので、時間切れを判じないまま DueNever(二度と起きない)。
+  (<- state ClusterState (waiting-rollout))
+  (val row (get state.rollouts "to-b"))
+  (val due (ready-timeout-from row.spec row.status.phase-since-ms))
+  (val stepped (replace state :rollout-tick-ms (- due 500)))
+  (<- answer (| DueAt DueNow DueNever) (rollout-due stepped due (ClusterTiming) (ClusterNaming)))
+  (assert (= answer (DueAt :at (+ (- due 500) ROLLOUT-TICK-MS))) #(answer due))
+  ;; 守り: Rollout の歩が期限の後に回っていれば、その期限は判じ済み(次の期限は先 — 期限の刻の答えに戻らない)。
+  (<- judged (| DueAt DueNow DueNever) (rollout-due (replace state :rollout-tick-ms due) due (ClusterTiming) (ClusterNaming)))
+  (assert (not (and (isinstance judged DueAt) (<= judged.at due))) judged))
 
 
 (deftest test-writes-before-the-deadline-happen-at-their-ticks
