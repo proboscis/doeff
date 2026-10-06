@@ -230,7 +230,7 @@
   {:pre [(: stopping bool)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "止めが既に来ている所で、60 秒の期限の待ちを stopping(周の頭で止めを知っていたか)つきで待ち、待った仮想の ms を返すため。"
   (<- began int (now-epoch-ms))
-  (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began 60000)) :bells #() :exits #()) (WorkerState) :stopping stopping))
+  (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began 60000)) :bells #() :exits #()) :stopping stopping))
   (<- ended int (now-epoch-ms))
   (- ended began))
 

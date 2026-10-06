@@ -27,9 +27,7 @@
                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 ;; 系が落ち着くまで(beacon が置かれ、readiness の window 5 秒が埋まる)待つ秒。
 (val SETTLE-SECONDS 12.0)
-;; heartbeat の間(4 秒)に coordinator が要求の無い拍を持つ worker の設定 — 模擬の列が何も変えない拍を飛ばす場面を作る(既定の 0.5 秒
-;; ごとの heartbeat では要求が絶えず、飛ばす拍が無い)。
-(val SPARSE-TICK-SECONDS 4.0)
+;; 起こし直しを待たせる worker の設定(終わった process を起こし直す要求で coordinator を起こさない)。
 (val SPARSE-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 
@@ -86,18 +84,15 @@
   #(started (get seen 0) (get seen 1)))
 
 
-(deftest test-an-unchanged-watch-returns-at-its-deadline-either-way
+(deftest test-an-unchanged-watch-returns-at-its-deadline
   ;; 変わらない待ちは、期限の刻ちょうどに「変わっていない」と返る(coordinator は待ちの期限まで受付を待つ — 1 秒の格子に丸めない・
-  ;; #3865)。worker の代役が静かな拍を眠る走り(既定)でも、1 拍ずつ打つ走りでも同じ刻。反例: 期限を次に起きる刻に入れない作りは、
-  ;; 次に状態の変わる刻まで寝過ごす。
+  ;; #3865)。反例: 期限を次に起きる刻に入れない作りは、次に状態の変わる刻まで寝過ごす。
   (for [seconds [0.5 1.2 2.5]]
-    (<- skipped tuple (sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS))
-    (<- every tuple (sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS
-                                 :skip-idle False))
-    (for [#(started answer at) [skipped every]]
-      (assert (= (get answer 0) 200) answer)
-      (assert (not (get (get answer 1) "changed")) answer)
-      (assert (= (- at started) (round (* 1000 seconds))) #(seconds (- at started))))))
+    (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY))
+    ;; seen = #(待ち始めた刻 返事 返事の刻)。
+    (assert (= (get seen 1 0) 200) seen)
+    (assert (not (get seen 1 1 "changed")) seen)
+    (assert (= (- (get seen 2) (get seen 0)) (round (* 1000 seconds))) #(seconds seen))))
 
 
 (defk watcher-of [query]

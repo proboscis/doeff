@@ -224,6 +224,14 @@
   n)
 
 
+(defk late-beacon-program [foundation key every late]
+  {:pre [(: foundation Callable) (: key str) (: every float) (: late float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: 起き上がりに late 秒かかってから beacon-loop を回す(本番の子が import と起動の間 Ready を報告できない形 — 模擬の子は
+   起きた刻に報告するので、入れ替えの間の Ready の書き手の空白を作る反例の材料)。"
+  (<- n int (foundation (do! (<- (Delay late)) (<- counted int (beacon-loop key every)) counted)))
+  n)
+
+
 (defk copy-program [foundation source target]
   {:pre [(: foundation Callable) (: source str) (: target str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "service: copy-loop を土台で包む。"
@@ -315,6 +323,12 @@
 (defsystem handoff-beacons-v2 [#^ Callable foundation]
   "handoff-beacons の版 2(本体の引数 every を変えた — 入れ替わる)"
   (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+          :update "handoff" :environ {"STEP" "1"}))
+
+
+(defsystem late-handoff-beacons-v2 [#^ Callable foundation]
+  "handoff-beacons の版 2 で、起き上がりに 1 秒かかる物(入れ替えの間の Ready の書き手の空白の反例 — 条 W1)"
+  (beacon (late-beacon-program foundation "beacon/h" 2.0 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
