@@ -4,7 +4,8 @@
 ;;   閾値より長く居る時は、今までどおり止まりと数える。
 ;; - 受付の箱は起こし(wake)で待ちを抜ける。停止の合図(SIGTERM)の受け手は印を立てて箱を起こすので、本物の process の待ちが
 ;;   すぐ抜ける(合図は main の thread の待ちに割り込む — 本物の process に本物の SIGTERM を送って確かめる)。
-;; - worker の入口は同じ停止の部品で、今までどおり印が立つ(worker の拍は 0.5 秒ごとに印を読む — 箱を持たない)。
+;; - worker は核の停止の答え手(os-signal-stop-handler)を使い、拍と拍の間の待ちの本番の答え手(tick-pauses)が停止の合図の待ち
+;;   (AwaitStop)を拍の眠りと競わせるので、本物の process の待ちが拍の長さを待たずに抜ける(#3871 の単位 3)。
 ;; - coordinator は止まる時に、今の刻の生存の印を保存してから止まる(眠っている間は印を書かない形の前提 — 止まった長さを多く数えない)。
 (require doeff-hy.macros [deftest defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -105,16 +106,25 @@ print(f'{stop.requested} {time.monotonic() - started:.3f}', flush=True)
 
 (val CHILD-WORKER
   "import time, hy
-from doeff import run
-from doeff_cluster.foundation.coordinator_inbox import stop_on_signals
-from doeff_cluster.worker.protocol.stop import StopState
-stop = StopState()
-run(stop_on_signals(stop))
-print('ready', flush=True)
-deadline = time.monotonic() + 20.0
-while not stop.requested and time.monotonic() < deadline:
-    time.sleep(0.05)
-print(f'{stop.requested}', flush=True)
+from doeff import do, run, with_handlers
+from doeff_core_effects.handlers import await_handler, state
+from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects.stop_signal_effects import StopRequested
+from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler
+from doeff_time import async_time_handler
+from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WorkerPolicy, WorkerState
+from doeff_cluster.worker.protocol.tick_pauses import tick_pauses
+
+@do
+def body():
+    yield StopRequested()
+    print('ready', flush=True)
+    started = time.monotonic()
+    yield AwaitNextTick(WorkerPolicy(tick_seconds=10.0), None, WorkerState())
+    reason = yield StopRequested()
+    print(f'{reason} {time.monotonic() - started:.3f}', flush=True)
+
+run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_signal_stop_handler, tick_pauses], body())))
 ")
 
 
@@ -144,9 +154,12 @@ print(f'{stop.requested}', flush=True)
   (assert (< (float (get parts 1)) 1.0) parts))
 
 
-(deftest test-a-sigterm-still-raises-the-worker-stop-mark
-  ;; worker の入口は箱を持たず、今までどおり印だけを立てる(拍が 0.5 秒ごとに読む)。
-  (assert (= (after-sigterm CHILD-WORKER) "True")))
+(deftest test-a-sigterm-ends-the-worker-tick-wait
+  ;; 失敗ケース(#3871 の単位 3): 拍 10 秒の待ちの最中の SIGTERM で、核の止めの理由が立ち、待ちが 1 秒以内に抜ける。直す前は拍の待ちが
+  ;; 止めの合図を待たない(待ちは 10 秒 — 印は次の拍の頭で読む)。
+  (val parts (.split (after-sigterm CHILD-WORKER)))
+  (assert (= (cut parts 0 2) ["signal" (str (int signal.SIGTERM))]) parts)
+  (assert (< (float (get parts 2)) 1.0) parts))
 
 
 ;; --- 止まる時の生存の印 ----------------------------------------------------------------------------
