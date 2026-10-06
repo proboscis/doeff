@@ -8,6 +8,8 @@ uv に、doeff-vm と同じ cache-keys を持ち、呼ばれた度数を記録�
 
 from __future__ import annotations
 
+import glob
+import importlib.util
 import re
 import shlex
 import shutil
@@ -15,11 +17,16 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-VM_PYPROJECT = REPO / "packages" / "doeff-vm" / "pyproject.toml"
+VM = REPO / "packages" / "doeff-vm"
+VM_PYPROJECT = VM / "pyproject.toml"
+BACKEND = REPO / "tools" / "doeff_cargo_backend.py"
+# 口の BUILD_ENV_NAMES のうち doeff-vm の組みに効かない名(doeff-indexer の CLI の binary を同梱しない旗)。
+NOT_FOR_VM = frozenset({"DOEFF_INDEXER_SKIP_CLI_BUILD"})
 
 # 呼ばれるたびに workspace の根の calls.log へ 1 行足し、中身の無い wheel を返す build の口(依存なし)。
 STUB_BACKEND = '''
@@ -58,10 +65,51 @@ def build_editable(wheel_directory, config_settings=None, metadata_directory=Non
 '''
 
 
-def _cache_keys() -> list[str]:
-    """本物の doeff-vm の tool.uv.cache-keys の file の glob(この並びを、そのまま偽の package に写す)。"""
-    declared = tomllib.loads(VM_PYPROJECT.read_text(encoding="utf-8"))["tool"]["uv"]["cache-keys"]
-    return [key["file"] for key in declared]
+def _cache_keys() -> list[dict[str, str]]:
+    """本物の doeff-vm の tool.uv.cache-keys(この並びを、そのまま偽の package に写す)。"""
+    return tomllib.loads(VM_PYPROJECT.read_text(encoding="utf-8"))["tool"]["uv"]["cache-keys"]
+
+
+def _file_keys() -> list[str]:
+    """cache-keys の file の glob。"""
+    return [key["file"] for key in _cache_keys() if "file" in key]
+
+
+def _env_keys() -> list[str]:
+    """cache-keys の環境変数の名。"""
+    return [key["env"] for key in _cache_keys() if "env" in key]
+
+
+def _backend() -> ModuleType:
+    """build の口を module として読む(tools は package でないので path から)。"""
+    spec = importlib.util.spec_from_file_location("doeff_cargo_backend_keys_under_test", BACKEND)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _path_crates(crate: Path) -> list[Path]:
+    """crate の Cargo.toml の path = を推移的にたどった crate の dir(自分を含む・順は名の順)。"""
+    def deps(at: Path) -> list[Path]:
+        manifest = tomllib.loads((at / "Cargo.toml").read_text(encoding="utf-8"))
+        tables = [manifest.get(name, {}) for name in ("dependencies", "build-dependencies")]
+        return [(at / spec["path"]).resolve() for table in tables for spec in table.values() if isinstance(spec, dict) and "path" in spec]
+
+    def walk(pending: list[Path], seen: frozenset[Path]) -> frozenset[Path]:
+        if not pending:
+            return seen
+        head, rest = pending[0], pending[1:]
+        return walk(rest, seen) if head in seen else walk(rest + deps(head), seen | {head})
+
+    return sorted(walk([crate.resolve()], frozenset()))
+
+
+def _crate_inputs(crate: Path) -> list[Path]:
+    """crate 1 つの、組みに効く file(在る物だけ)。"""
+    named = [crate / name for name in ("Cargo.toml", "Cargo.lock", "pyproject.toml", "build.rs")]
+    return [path for path in named if path.is_file()] + sorted((crate / "src").rglob("*.rs"))
 
 
 def _land_install() -> list[str]:
@@ -90,6 +138,7 @@ KEY_FILES = {
     "../doeff-vm-core/Cargo.toml": "../doeff-vm-core/Cargo.toml",
     "../doeff-vm-core/Cargo.lock": "../doeff-vm-core/Cargo.lock",
     "../doeff-vm-core/src/**/*.rs": "../doeff-vm-core/src/lib.rs",
+    "doeff_cargo_backend.py": "doeff_cargo_backend.py",
 }
 
 
@@ -109,8 +158,11 @@ class Workspace:
         }
 
     def build(self) -> None:
-        keys = _cache_keys()
-        assert sorted(keys) == sorted(KEY_FILES), f"doeff-vm の cache-keys が変わった — KEY_FILES を揃える: {keys}"
+        keys = _file_keys()
+        assert sorted(keys) == sorted(KEY_FILES), f"doeff-vm の cache-keys の file が変わった — KEY_FILES を揃える: {keys}"
+        entries = "".join(
+            f'    {{ {kind} = "{value}" }},\n' for key in _cache_keys() for kind, value in key.items()
+        )
         (self.root / "pyproject.toml").write_text(
             '[project]\nname = "probe-root"\nversion = "0.1.0"\nrequires-python = ">=3.10"\ndependencies = ["doeff-vm"]\n'
             '[dependency-groups]\ndev = []\n'
@@ -120,7 +172,7 @@ class Workspace:
         pyproject = (
             '[build-system]\nrequires = []\nbuild-backend = "stub_backend"\nbackend-path = ["."]\n'
             '[project]\nname = "doeff-vm"\nversion = "0.2.0"\nrequires-python = ">=3.10"\n'
-            "[tool.uv]\ncache-keys = [\n" + "".join(f'    {{ file = "{k}" }},\n' for k in keys) + "]\n"
+            "[tool.uv]\ncache-keys = [\n" + entries + "]\n"
         )
         for rel in KEY_FILES.values():
             path = self.vm / rel
@@ -132,10 +184,11 @@ class Workspace:
         self.run(["uv", "lock"])
         self.run(_land_install())
 
-    def run(self, argv: list[str]) -> None:
+    def run(self, argv: list[str], extra: dict[str, str] | None = None) -> None:
         uv = shutil.which(argv[0])
         assert uv is not None, f"{argv[0]} が探し道に無い"
-        done = subprocess.run([uv, *argv[1:]], cwd=self.root, env=self.env, capture_output=True, text=True, timeout=25, check=False)
+        done = subprocess.run([uv, *argv[1:]], cwd=self.root, env={**self.env, **(extra or {})}, capture_output=True, text=True,
+                              timeout=25, check=False)
         assert done.returncode == 0, f"{argv} が rc {done.returncode}: {done.stderr}"
 
     def calls(self) -> int:
@@ -173,3 +226,27 @@ def test_a_change_outside_the_cache_keys_does_not_call_the_rust_build_entry(work
     before = workspace.calls()
     workspace.run(_land_install())
     assert workspace.calls() == before
+
+
+@pytest.mark.parametrize("name", _env_keys())
+def test_a_change_to_each_cache_key_env_calls_the_rust_build_entry_once(workspace: Workspace, name: str) -> None:
+    before = workspace.calls()
+    workspace.run(_land_install(), {name: "changed"})
+    assert workspace.calls() == before + 1, f"{name} を替えた後の作り直しが build の口を {workspace.calls() - before} 度呼んだ(1 度のはず)"
+    workspace.run(_land_install())  # 元へ戻す(戻しも変化 — 次の件の数え始めを揃える)
+
+
+def test_the_cache_keys_cover_every_path_crate_input() -> None:
+    matched = {Path(hit).resolve() for pattern in _file_keys() for hit in glob.glob(str(VM / pattern), recursive=True)}
+    missing = [str(path.relative_to(REPO)) for crate in _path_crates(VM) for path in _crate_inputs(crate) if path.resolve() not in matched]
+    assert not missing, f"doeff-vm の cache-keys に無い、path 依存の crate の組みに効く file: {missing}"
+
+
+def test_the_cache_keys_cover_the_build_entry_file_and_its_build_env_names() -> None:
+    backend = _backend()
+    assert (VM / "doeff_cargo_backend.py").resolve() == BACKEND.resolve()
+    assert "doeff_cargo_backend.py" in _file_keys(), "build の口の file そのものが cache-keys に無い"
+    missing = sorted(backend.BUILD_ENV_NAMES - NOT_FOR_VM - set(_env_keys()))
+    assert not missing, f"口が保存先の鍵に入れる環境変数のうち cache-keys に無い名: {missing}"
+    unprefixed = [name for name in _env_keys() if name not in backend.BUILD_ENV_NAMES and not name.startswith(backend.BUILD_ENV_PREFIXES)]
+    assert not unprefixed, f"口が保存先の鍵に入れない環境変数が cache-keys に在る(uv だけが組み直し、口は前の wheel を引く): {unprefixed}"
