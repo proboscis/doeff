@@ -93,6 +93,13 @@
 (setv LEASE-OPS #("claim" "renew" "release" "drop"))
 
 
+;; 名前付きの lease に空きが出るまで待つ(coordinator の GET /watch?lease=<名> — 今空いていればすぐ・担い手が返した時と期限が切れた時に
+;; 起きる・#3865 の後の単位)。答え = bool(真 = 空きを見た・偽 = 待ちの上限で返った)。空きを見ても取れたとは限らない(他の待つ側が
+;; 先に取りうる)ので、待つ側は claim し直す。
+(defclass [(dataclass :frozen True)] AwaitLeaseFree [EffectBase]
+  (#^ str name))
+
+
 (defwire LeaseAnswer
   "LeaseOp の答え(coordinator の POST /leases/<名> の返事の本文と同じ形 — 欄の綴りは camel): ok = 操作が通ったか・reason = 通らなかった
    理由(空きが無い・lost — 通れば None)・ttl-ms = 与えた期限(ms — 返す・外すは 0)・dropped = drop で外した担い手の数(ほかの操作は 0)。

@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read node-reread-due])
 (import doeff_cluster.coordinator.core.resource_policy [readiness-due service-stopped-due])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-targets rollout-phase-due TERMINAL-PHASES])
-(import doeff_cluster.coordinator.core.watch_policy [all-waiting-unchanged])
+(import doeff_cluster.coordinator.core.watch_policy [all-waiting-unchanged lease-full-at])
 
 ;; 今すぐ(DueNow)が続いてよい歩の数。1 歩ごとに状態の欄の 1 つが落ち着く(生死の求め直し → task → 掃除 → 置き先)ので、正しい判断なら
 ;; 数歩で落ち着く。越えたら回り続けていると見て落ちる。
@@ -59,11 +59,19 @@
   "返事を待たせている待ち(GET /watch の Watcher)が答えを変える最初の刻を知るため: どの待ちも落ち着いていれば(版が after のまま・名指した
    待ちは見え方を覚え済み — watch_policy.all-waiting-unchanged)いちばん早い期限 deadline-ms ちょうど(watch-deadline は now >= deadline-ms で
    「変わっていない」と答える)、落ち着いていない待ちが在れば今すぐ(settle-watch が今の刻で答える・見え方を覚える)、待ちが無ければ無し。"
+  ;; lease の待ちは、その lease に最初に空きが出る刻(担い手の期限切れ)にも起きる(#3865 の後の単位)。
   (<- unchanged bool (all-waiting-unchanged watchers state now))
+  (var ats #())
+  (for [watcher watchers]
+    (:= ats (+ ats #(watcher.deadline-ms)))
+    (when (is-not watcher.lease None)
+      (<- full (| int None) (lease-full-at watcher state now))
+      (when (is-not full None)
+        (:= ats (+ ats #(full))))))
   (cond
     (not watchers) (DueNever)
     (not unchanged) (DueNow)
-    True (DueAt :at (min (gfor watcher watchers watcher.deadline-ms)))))
+    True (DueAt :at (min ats))))
 
 
 (defk next-wake [state now timing naming watchers]

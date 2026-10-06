@@ -36,7 +36,7 @@
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台と同じ読みの定義 host_contract.environ-reader を子の spec.environ の上に並べる:
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
-;;;     LeaseOp・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners / ReadServices / AwaitRunnersChange・WarmRuntimeEnv /
+;;;     LeaseOp・AwaitLeaseFree・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners / ReadServices / AwaitRunnersChange・WarmRuntimeEnv /
 ;;;     ReadWarmState。
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(service_report.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
@@ -200,7 +200,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer SEMAPHORE-PREFIX])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree SEMAPHORE-PREFIX])
 (import doeff_hy.wire [parse :as parse-wire])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
@@ -210,7 +210,7 @@
                                                      ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 ;; 準備の状態の読みと待ちの判断は本番の境界の handler と同じ 1 つ(写しを 2 か所に持たない — #3668 の (a))。
 (import doeff_cluster.shared.protocol.coordinator_reads [readiness-of-body readiness-wait-answer])
-(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
+(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
@@ -1596,6 +1596,10 @@
     ;; 本番の shared-http と同じく、返事の本文を LeaseAnswer に解いて答える(#2523)。
     (<- leased LeaseAnswer (parse-wire LeaseAnswer (answered-body answer (.format "lease {} の {}" name op))))
     (resume leased))
+  (AwaitLeaseFree [name]
+    ;; 本番の shared-http と同じ要求(GET /watch?lease=<名>)を同じ送り直しで送り、同じ読みで答える。
+    (<- answer tuple (send-shaped-resent link (lease-wait-request name)))
+    (resume (lease-wait-answer (answered-body answer (.format "lease {} の空きの待ち" name)))))
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))

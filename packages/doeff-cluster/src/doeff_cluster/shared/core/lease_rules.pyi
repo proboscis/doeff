@@ -31,6 +31,9 @@ def semaphore_key(name: str) -> str:
 def live_holders(row: dict | None, now_ms: int) -> dict:
     ...
 
+def lease_full_until(row: dict | None, now_ms: int) -> int | None:
+    ...
+
 def claim(row: dict | None, permits: int, token: str, now_ms: int, ttl_ms: int) -> dict | None:
     ...
 

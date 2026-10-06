@@ -94,6 +94,15 @@
       (dfor #(token expires) (.items (get row "holders")) :if (> expires now-ms) token expires)))
 
 
+(defn #^ (| int None) lease-full-until [#^ (| dict None) row #^ int now-ms]
+  "純粋: 行が今の刻で満ちていれば(期限の切れていない担い手が permits 以上)、最初に空く刻(担い手の期限のいちばん早い物 — 期限の刻に
+   その担い手は live-holders から落ちる)。空きがあれば None。GET /watch?lease=<名> の待ちが起きる条件と、coordinator が起きる刻の 1 か所。"
+  (setv live (live-holders row now-ms))
+  (if (and (is-not row None) (>= (len live) (get row "permits")))
+      (min (.values live))
+      None))
+
+
 (defn #^ (| dict None) claim [#^ (| dict None) row #^ int permits #^ str token #^ int now-ms #^ int ttl-ms]
   "純粋: permit を 1 つ取った後の行。空きが無ければ None。期限の切れた担い手はこの書きで落とす。
    同じ名前で permits が食い違えば BodyInvalid(要求の誤り・ValueError の子 — 同じ名前は同じ lock でなければならない)。"

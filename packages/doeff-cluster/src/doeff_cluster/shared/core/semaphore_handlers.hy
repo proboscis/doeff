@@ -20,7 +20,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced
-                                                    LeaseStanding LeaseOp LeaseAnswer STANDBY HELD LOST])
+                                                    LeaseStanding LeaseOp LeaseAnswer AwaitLeaseFree STANDBY HELD LOST])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict holder-tokens-prefix])
 
 
@@ -42,10 +42,13 @@
 
 (defclass SemaphoreSession []
   "cluster-semaphore の手元の記憶。holder = この process を cluster で一意に指す名(composition root が決める)。
-   held = 名前 → 持っている token の列(permit は区別しないので、Release は古い物から返す)。"
-  (defn #^ None __init__ [self #^ str holder #^ float [ttl-seconds 15.0] #^ float [poll-seconds 0.5]]
+   held = 名前 → 持っている token の列(permit は区別しないので、Release は古い物から返す)。
+   poll-seconds = 空きの無い claim を問い直す間(None = 問い直さず、coordinator の待ち AwaitLeaseFree で空きを待つ)。間を持つ形は、
+   本番の coordinator が lease の待ちに答える版で動くまでの間だけ残す(その後の変更で poll-seconds ごと消す — #3865 の後の単位)。
+   retry-seconds = coordinator に届かない時に延長を試し直す間(落ちた相手の戻りを知る試し)。"
+  (defn #^ None __init__ [self #^ str holder #^ float [ttl-seconds 15.0] #^ (| float None) [poll-seconds 0.5] #^ float [retry-seconds 0.5]]
     ;; expires = token → 保存に書けたと確かめた期限(epoch ミリ秒)。lease-fence はこれと時計だけで判じる。
-    (setv self.holder holder self.ttl-seconds ttl-seconds self.poll-seconds poll-seconds
+    (setv self.holder holder self.ttl-seconds ttl-seconds self.poll-seconds poll-seconds self.retry-seconds retry-seconds
           self.seq 0 self.held {} self.lost (set) self.renewers {} self.expires {}
           ;; 一度でも持った名前(LeaseStanding の standby と lost を分ける)。
           self.ever-held (set)))
@@ -87,23 +90,27 @@
 
 (defk acquire-lease [session semaphore]
   {:pre [(: session SemaphoreSession) (: semaphore ClusterSemaphore)] :post [(: % str)]}
-  ;; 空きが出るまで poll ごとに問い直す(先着順の保証は無い)。判断は coordinator が自分の時計で 1 か所で行う(LeaseOp)。
+  ;; 空きが出るまで待って取り直す(先着順の保証は無い)。判断は coordinator が自分の時計で 1 か所で行う(LeaseOp)。待ちは coordinator の
+  ;; 知らせ(AwaitLeaseFree — 返した時・期限が切れた時に起きる)。poll-seconds を持つ session だけは間ごとに問い直す(SemaphoreSession の註)。
   ;; 柵の期限 = 送る前に読んだ自分の時計 + TTL(coordinator が書いた期限より必ず前 — semaphore_model の冒頭)。
   (setv token (.next-token session))
   (while True
     (<- sent int (now-epoch-ms))
     (<- answer LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
-    (if answer.ok
-        (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
-            (.hold session semaphore.name token)
-            (return token))
+    (when answer.ok
+      (setv (get session.expires token) (+ sent (.ttl-ms session)))
+      (.hold session semaphore.name token)
+      (return token))
+    (if (is session.poll-seconds None)
+        (<- _seen bool (AwaitLeaseFree semaphore.name))
+        ;; 時間で取り直す理由: 本番の coordinator が lease の待ちに答える版で動くまでの間の、poll-seconds を持つ使い手の道。
         (<- (Delay session.poll-seconds)))))
 
 
 (defk renew-lease [session semaphore token]
   {:pre [(: session SemaphoreSession) (: semaphore ClusterSemaphore) (: token str)] :post [(: % (type None))]}
   ;; 持っている間、TTL の 1/3 ごとに期限を延ばす。返した後(holds が偽)は書かない — 取り消しが届かなくても止まる。
-  ;; coordinator に届かない(通信の失敗・作り直しの途中)時は poll ごとに試し直す(延長の係が例外で消えると、途絶が直っても
+  ;; coordinator に届かない(通信の失敗・作り直しの途中)時は retry-seconds ごとに試し直す(延長の係が例外で消えると、途絶が直っても
   ;; 延ばせず書きが止まったままになる)。届かない間の柵の期限は、最後に延ばせた時の値のまま進まない。
   ;; 延ばしたかどうか分からない(返事の前に切れた)時も期限は進めない(柵は早めに締まる側に外れる)。
   (while True
@@ -118,7 +125,7 @@
         (:= answer renewed)
         (except [e Exception] (:= answer None)))
       (cond
-        (is answer None) (<- (Delay session.poll-seconds))
+        (is answer None) (<- (Delay session.retry-seconds))
         answer.ok (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
                               (:= done True))
         True (do (.add session.lost token)

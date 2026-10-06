@@ -1088,13 +1088,15 @@
 (defclass [(dataclass :frozen True)] Watcher []
   "GET /watch の待ち 1 件(調停ループが返事まで持つ)。request = 返事を返す相手の要求・after = 送り手が知っている版・deadline-ms =
    変わらなくても返す刻(epoch ms)・worker / boot = 名指した worker とその process の世代(None = coordinator 全体の版だけを見る)・
-   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)。"
+   mark = 名指した worker の heartbeat の返事の見え方(版 after の時の物 — まだ見ていなければ None)・lease = 空きを待つ名前付きの
+   lease の名(None = 版の変化を待つ。名があれば版を見ず、その lease に空きがある時に起きる — 今空いていればすぐ・#3865 の後の単位)。"
   (#^ Request request)
   (#^ int after)
   (#^ int deadline-ms)
   (setv #^ (| str None) worker None)
   (setv #^ (| str None) boot None)
-  (setv #^ (| HeartbeatReply None) mark None))
+  (setv #^ (| HeartbeatReply None) mark None)
+  (setv #^ (| str None) lease None))
 
 
 (defclass [(dataclass :frozen True)] WatchRefusal []

@@ -57,5 +57,9 @@ class LeaseOp(EffectBase[LeaseAnswer]):
     ttl_ms: int = ...
 
 @dataclass(frozen=True)
+class AwaitLeaseFree(EffectBase[bool]):
+    name: str
+
+@dataclass(frozen=True)
 class LeaseStanding(EffectBase[str]):
     name: str

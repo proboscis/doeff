@@ -1587,6 +1587,7 @@
         "doeff-cluster-api-policy",
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
+        "doeff-cluster-lease-rules",
         "doeff-cluster-shared-protocol"
       ],
       "layer": "pure",
