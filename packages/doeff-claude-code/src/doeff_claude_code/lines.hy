@@ -114,13 +114,17 @@
 
 (defclass [(dataclass :frozen True)] PartialMessage []
   "stream_event(--include-partial-messages)。text-delta = text_delta なら本文の差分(ほかは空)/ delta = delta の種類(DeltaKind —
-   考えている間や道具の命令を書いている間の行を、本文の空の行と分けて数えるため)。考えている間と道具の命令の差分の中身は持たない。
-   本文の差分(text-delta が空でない)は種類 TEXT の行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。"
+   考えている間や道具の命令を書いている間の行を、本文の空の行と分けて数えるため)/ thinking-delta = thinking_delta なら考えの差分の
+   文字列(ほかは空 — 上の層が本文の前に「考えている」と分かる表示を出すため・#3789)。道具の命令の差分の中身は持たない。
+   本文の差分は種類 TEXT の行だけ、考えの差分は種類 THINKING の行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。"
   (setv #^ str text-delta "")
   (setv #^ DeltaKind delta DeltaKind.NO-DELTA)
+  (setv #^ str thinking-delta "")
   (defn __post_init__ [self]
     (when (and self.text-delta (!= self.delta DeltaKind.TEXT))
-      (raise (ValueError (.format "PartialMessage の本文の差分は種類 TEXT の行だけ: delta {!r}" self.delta))))))
+      (raise (ValueError (.format "PartialMessage の本文の差分は種類 TEXT の行だけ: delta {!r}" self.delta))))
+    (when (and self.thinking-delta (!= self.delta DeltaKind.THINKING))
+      (raise (ValueError (.format "PartialMessage の考えの差分は種類 THINKING の行だけ: delta {!r}" self.delta))))))
 
 (defclass [(dataclass :frozen True)] ThinkingTokens []
   (setv #^ int estimated 0))
@@ -472,7 +476,8 @@
 (defn classify-stream-event [#^ dict record]
   (setv delta (object-at (object-at record "event") "delta"))
   (setv kind (run (delta-kind-of (text-at delta "type"))))
-  (PartialMessage :text-delta (if (= kind DeltaKind.TEXT) (text-at delta "text") "") :delta kind))
+  (PartialMessage :text-delta (if (= kind DeltaKind.TEXT) (text-at delta "text") "") :delta kind
+                  :thinking-delta (if (= kind DeltaKind.THINKING) (text-at delta "thinking") "")))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 

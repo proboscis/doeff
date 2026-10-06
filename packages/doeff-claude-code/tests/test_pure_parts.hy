@@ -257,6 +257,15 @@
               #(lines.DeltaKind.OTHER "") #(lines.DeltaKind.NO-DELTA "") #(lines.DeltaKind.NO-DELTA "")])
           (repr read)))
 
+(deftest test-a-thinking-delta-carries-its-text
+  ;; #3789: 考えている間の差分(thinking_delta)は、種類 THINKING と一緒に考えの文字列を運ぶ — 上の層が「考えている」と
+  ;; 分かる表示を、本文の前に画面へ出すため(前は種類だけで中身を落とし、ここで赤)。本文の差分の欄は空のまま。考えの文字列は種類
+  ;; THINKING の行だけが持つ(作り手が種類を名乗り忘れた行は断る)。
+  (val read (classify-record {"type" "stream_event" "event" {"delta" {"type" "thinking_delta" "thinking" "hmm"}}}))
+  (assert (= #(read.delta read.thinking-delta read.text-delta) #(lines.DeltaKind.THINKING "hmm" "")) (repr read))
+  (with [(pytest.raises ValueError)]
+    (PartialMessage :delta lines.DeltaKind.TEXT :thinking-delta "hmm")))
+
 (deftest test-line-classification
   (assert (= (classify-record {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]
                                "model" "m" "permissionMode" "default" "mcp_servers" [{"name" "s"}]})

@@ -93,6 +93,7 @@ _LAZY_EXPORTS = {
     "AgentInputFateEvent": ".effects",
     "AgentTextDeltaEvent": ".effects",
     "AgentTextEvent": ".effects",
+    "AgentThinkingDeltaEvent": ".effects",
     "AgentToolResultEvent": ".effects",
     "AgentToolUseEvent": ".effects",
     "ModelWindow": ".effects",
