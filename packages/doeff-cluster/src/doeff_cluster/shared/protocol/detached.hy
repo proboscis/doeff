@@ -149,11 +149,13 @@
 
 (deff runner-facts-of-view [#^ dict workers]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
   {:pre [(: workers dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "coordinator の GET /state の workers(名 → {provides exclusive live draining taskRoom …})を名簿の断面(RunnerFact の tuple・名の順)に
-   するため。taskRoom は coordinator が必ず書く欄(#3489)— 無い答えは KeyError で落とす(既定の値で埋めない)。"
+  "coordinator の GET /state の workers(名 → {provides exclusive live draining taskRoom node …})を名簿の断面(RunnerFact の tuple・名の順)に
+   するため。taskRoom(#3489)と node(Worker の資源の spec.node — 空 = k8s の外・#3747)は coordinator が必ず書く欄 — 無い
+   答えは KeyError で落とす(既定の値で埋めない)。"
   (tuple (gfor #(name w) (sorted (.items workers))
                (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" [])))
-                           :live (bool (get w "live")) :draining (bool (get w "draining")) :task-room (int (get w "taskRoom"))))))
+                           :live (bool (get w "live")) :draining (bool (get w "draining")) :task-room (int (get w "taskRoom"))
+                           :node (str (get w "node"))))))
 
 
 (deff runners-change-of [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断

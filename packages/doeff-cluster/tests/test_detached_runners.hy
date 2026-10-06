@@ -520,6 +520,24 @@
   (assert ok))
 
 
+;; --- 担い手の置かれた node(RunnerFact.node — #3747)------------------------------------------------------------------------
+
+(defk nodes-named []
+  {:pre [] :post [(: % bool)]}
+  ;; 名簿の担い手は coordinator の Worker の資源の spec.node(worker の --node)をそのまま名乗る — 名乗らない担い手は空(推測で埋めない)。
+  (<- roster tuple (ReadRunners))
+  (val facts (! (by-name roster)))
+  (assert (= #((. (get facts "a") node) (. (get facts "b") node)) #("zeus" "")) roster)
+  True)
+
+(deftest test-the-roster-carries-the-k8s-node-each-runner-names
+  ;; 担い手 a は node zeus に置かれ、b は node を名乗らない(k8s の外)。名簿の読みは spec.node を写し、空を別の名で埋めない。
+  (<- ok bool (sim-cluster NO-JOBS (nodes-named)
+                           :workers #((replace (get SIM-RUNNERS 0) :node "zeus") (get SIM-RUNNERS 1))
+                           :timing TIMING))
+  (assert ok))
+
+
 ;; --- Service の一覧(ReadServices — #3479): 置き先の担い手が報告した落ちた事実 -----------------------------------------------
 
 (deftest test-the-service-view-carries-reported-failures-and-leaves-unreported-ones-as-none
