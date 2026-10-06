@@ -12,6 +12,7 @@
 (import collections.abc [Callable])
 (import doeff [with-handlers])
 (import doeff_time [Delay SimClock sim-time-handler])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [AwaitServiceReady ServiceReady])
 (import doeff_cluster.shared.protocol.detached [DetachedSender service-ready-awaited])
@@ -43,7 +44,7 @@
 
 
 (deftest test-a-ready-service-answers-at-once
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (ready-at-once) :workers WORKERS))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (ready-at-once) :workers WORKERS))
   (val answer (get seen 0))
   (val started (get seen 1))
   (val at (get seen 2))
@@ -73,7 +74,7 @@
 
 (deftest test-a-service-that-is-down-is-waited-for-until-it-is-ready-again
   ;; 失敗ケース: NotReady の間に返る待ち(読みを 1 回しかしない・Ready を見ない)は、待ち始めた刻に返り、返った時の語が NotReady。
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (down-then-back) :workers WORKERS))
+  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (down-then-back) :workers WORKERS))
   (val before (get seen 0))
   (val down (get seen 1))
   (val answer (get seen 2))

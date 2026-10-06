@@ -4,6 +4,8 @@
 ;;   (生きていると数える worker の job を、移し替えの判断が先に他へ移す形を作らせない)。
 ;; - worker を忘れる期限(worker-forget-ms)は移し替えより長い。短い設定は断る。
 ;; - 待ちの上限 < worker の client の打ち切り < 受付の打ち切り。延ばすのは scaled-timing(比 1 つ)だけ。
+;; - 模擬の世界(sim-plan)の時間の既定は比で延ばした値(scaled-timing SIM-TIMING-RATIO)。本番の値で走らせる筋書きは :timing に
+;;   ClusterTiming の既定を明示して渡し、その値がそのまま使われる(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
 ;; - 忘れる判断(forget-silent-workers)と、その期限(liveness-due)は設定の worker-forget-ms を読む(定数ではない — 模擬の世界が設定を
 ;;   丸ごと比を保って延ばす時に、忘れる期限も一緒に動く)。
 (require doeff-hy.macros [deftest <- val])
@@ -14,6 +16,9 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
 (import doeff_cluster.coordinator.core.cluster_policy [forget-silent-workers liveness-due note-liveness])
+(import doeff_cluster.sim.local [SimPlan SIM-TIMING-RATIO sim-plan])
+(import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.sim_programs [beacons])
 
 
 (deftest test-a-lease-longer-than-the-reassign-is-refused
@@ -70,3 +75,15 @@
                               base.silent-worker-wait-ms base.watch-max-ms base.client-reply-ms base.inbox-reply-ms)
                           (* 60 v))))
           stretched))
+
+
+;; --- 模擬の世界の既定(道 ホ)--------------------------------------------------------------------------------------------------
+
+(deftest test-the-sim-world-defaults-to-the-scaled-timing-and-keeps-an-explicit-one
+  ;; :timing を渡さない筋書きは比で延ばした値で走り、本番の値を明示した筋書きはその値のまま走る。
+  (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
+  (<- implicit SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 None None None None))
+  (<- explicit SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 (ClusterTiming) None None None))
+  (assert (> SIM-TIMING-RATIO 1) SIM-TIMING-RATIO)
+  (assert (= implicit.timing scaled) implicit.timing)
+  (assert (= explicit.timing (ClusterTiming)) explicit.timing))

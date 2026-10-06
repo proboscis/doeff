@@ -5,6 +5,8 @@
 ;;   6 broker が止まっている間に期限が切れても coordinator は止まらず、broker が戻った後、受け手は追いつきの合図を受けて、
 ;;     coordinator の状態から worker が居ない事を読める(模擬の broker は全員を切るので、受け手も繋ぎ直す。受け手が繋がったままの形は
 ;;     doeff-events の GAP_LAWS が持つ)。
+;;   8 :timing を渡さない筋書き(比で延ばした世界 — 生死の判断が起きない前提で heartbeat の間を延ばした)で worker の死の判断が出たら、
+;;     筋書きを待たずに SimLivenessError で終わる(生死を試す筋書きは本番の値を :timing で明示する — 上の 1〜7 は T を渡す・#3865)。
 ;;   7 coordinator が起き直すと、沈黙のままの worker の WorkerGone を(同じ boot で)1 度出す(起動の時の今の状態 — その前に
 ;;     WorkerBack を出さない)。
 (require doeff-hy.macros [deftest defk <- val var])
@@ -14,9 +16,11 @@
                       subscribed-event-handler cut-broker restore-broker])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.shared.core.timing_rules [scaled-timing])
+(import pytest)
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
-(import doeff_cluster.sim.local [sim-cluster SimParts PartsOf SimWorker StallWorker StopCoordinator ReadCoordinator CoordinatorRuns])
+(import doeff_cluster.sim.local [SIM-TIMING-RATIO SimLivenessError sim-cluster SimParts PartsOf SimWorker StallWorker StopCoordinator ReadCoordinator CoordinatorRuns])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 
@@ -81,13 +85,13 @@
 
 
 (deftest test-a-stalled-worker-is-told-gone-once-and-back-once
-  (<- heard tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :workers WORKERS))
+  (<- heard tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS))
   (<- (gone-then-back heard)))
 
 
 (deftest test-skipping-quiet-steps-tells-the-same-events-at-the-same-times
-  (<- skipping tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :workers WORKERS :skip-idle True))
-  (<- stepping tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :workers WORKERS :skip-idle False))
+  (<- skipping tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle True))
+  (<- stepping tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle False))
   (assert (= skipping stepping) #(skipping stepping)))
 
 
@@ -117,7 +121,7 @@
 
 
 (deftest test-a-deadline-passed-while-the-broker-was-away-is-caught-up-after-it-returns
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (gone-during-an-outage) :workers WORKERS))
+  (<- seen tuple (sim-cluster (pulses sim-foundation) (gone-during-an-outage) :timing (ClusterTiming) :workers WORKERS))
   (val told (get seen 0))
   (val alive (get seen 1))
   (val runs (get seen 2))
@@ -148,7 +152,7 @@
 
 
 (deftest test-a-restarted-coordinator-tells-a-still-silent-worker-gone-once
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (gone-across-a-restart) :workers WORKERS))
+  (<- seen tuple (sim-cluster (pulses sim-foundation) (gone-across-a-restart) :timing (ClusterTiming) :workers WORKERS))
   (val first (get seen 0))
   (val again (get seen 1))
   (assert (= (len first) 1) first)
@@ -175,6 +179,22 @@
 
 (deftest test-a-broker-that-stops-answering-does-not-hold-the-coordinator
   ;; 直す点 A(見直し): 出来事の送りは調停の歩の外の task で出す — 答えない broker が、歩と要求への返事を止めない。
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (answers-while-the-broker-hangs) :workers WORKERS))
+  (<- seen tuple (sim-cluster (pulses sim-foundation) (answers-while-the-broker-hangs) :timing (ClusterTiming) :workers WORKERS))
   (assert (is (get seen 0) False) seen)
   (assert (= (get seen 1) 1) seen))
+
+
+(defk stalls-past-the-scaled-lease []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "比で延ばした世界の生死の期限より長く worker の処理を止め、その後も待つため(見張りが先に終わらせる)。"
+  (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
+  (<- (Delay 3.0))
+  (<- (StallWorker WORKER (+ (/ scaled.lease-ms 1000) 20.0)))
+  (<- (Delay (+ (/ scaled.lease-ms 1000) 20.0)))
+  None)
+
+
+(deftest test-a-worker-death-in-the-scaled-world-ends-the-run
+  (with [caught (pytest.raises SimLivenessError)]
+    (<- (sim-cluster (pulses sim-foundation) (stalls-past-the-scaled-lease) :workers WORKERS)))
+  (assert (in WORKER (str caught.value)) caught.value))
