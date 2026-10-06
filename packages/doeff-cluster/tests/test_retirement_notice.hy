@@ -7,6 +7,7 @@
 ;; 知らせを受けた刻と止めの合図を受けた刻を盤に書き、筋書きは盤の行と coordinator に届いた報告から順を読む。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -94,7 +95,7 @@
 (deftest test-the-retiring-process-hears-it-before-the-new-ready-and-its-own-stop
   ;; 入れ替え: 旧は「退く」を 1 つだけ受け、その刻は新の最初の Ready の報告より前、旧が止めの合図を受けるより前(条 W2 — architecture.hy の
   ;; worker の :invariants)。新は何も受けない。
-  (<- seen RetireSeen (sim-cluster (retiring-beacons sim-foundation) (redeclared (retiring-beacons-v2 sim-foundation) 15.0)))
+  (<- seen RetireSeen (sim-cluster :notice-broker (MemoryBroker) (retiring-beacons sim-foundation) (redeclared (retiring-beacons-v2 sim-foundation) 15.0)))
   (assert (= (len seen.processes) 2) seen.processes)
   (val old (get seen.processes 0))
   (val new (get seen.processes 1))
@@ -114,7 +115,7 @@
   ;; 反例(条 W2): 入れ替えで旧を名から外す RetireJob が観測だけ書いて process へ知らせない壊れた worker(silent-notices)では、旧は
   ;; 何も受けないまま新が Ready になり止められ、W2 の判断がその世代を名指す — 本物の宿が名から外す時に知らせていることの裏返し。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :silent-notices True :task-reserve 0)))
-  (<- seen RetireSeen (sim-cluster (retiring-beacons sim-foundation) (redeclared (retiring-beacons-v2 sim-foundation) 15.0)
+  (<- seen RetireSeen (sim-cluster :notice-broker (MemoryBroker) (retiring-beacons sim-foundation) (redeclared (retiring-beacons-v2 sim-foundation) 15.0)
                                    :workers workers))
   (val old (get seen.processes 0))
   (val new (get seen.processes 1))
@@ -146,7 +147,7 @@
 (deftest test-an-abandoned-handoff-withdraws-the-retirement-and-a-new-declaration-retires-again
   ;; 諦め: 新が Ready にならないまま期限を越えると、旧は「退く」の次に「退きを取り消した」を受けて動き続ける(止めの合図を受けない)。
   ;; 宣言し直して諦めが解けると、同じ旧が もう一度「退く」を受け、その刻は次の新の最初の Ready より前で、その後に止められる。
-  (<- seen AbandonSeen (sim-cluster :timing (ClusterTiming) (retiring-beacons sim-foundation)
+  (<- seen AbandonSeen (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (retiring-beacons sim-foundation)
                                     (abandoned-then-redeclared (retiring-beacons-stuck sim-foundation) (retiring-beacons-v3 sim-foundation))))
   (val first (get seen.abandoned.processes 0))
   (<- told tuple (notices-of seen.abandoned first.instance))
@@ -176,7 +177,7 @@
 
 (deftest test-a-stop-without-a-handoff-sends-no-retirement
   ;; 入れ替えの無い止め(宣言から外れた): process は止めの合図を受けて終わり、退きの知らせは何も受けない。
-  (<- seen RetireSeen (sim-cluster (retiring-beacons sim-foundation) (withdrawn (retiring-beacons sim-foundation))))
+  (<- seen RetireSeen (sim-cluster :notice-broker (MemoryBroker) (retiring-beacons sim-foundation) (withdrawn (retiring-beacons sim-foundation))))
   (assert (= (len seen.processes) 1) seen.processes)
   (val only (get seen.processes 0))
   (<- stopped (| int None) (stop-of seen only.instance))

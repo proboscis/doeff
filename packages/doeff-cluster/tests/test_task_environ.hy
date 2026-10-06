@@ -10,6 +10,7 @@
 ;;   sim       … sim の宿が spec.environ の名の Ask に、本番の土台と同じ読みの定義(host_contract.environ-reader)で答える
 ;;               (本番の土台の (environ-reader) が外へ通した Ask)。値の字面どおりの読みの契約は test_environ_reader.hy。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_events [MemoryBroker])
 (import json)
 (import os)
 (import sys)
@@ -276,7 +277,7 @@
 
 (deftest test-a-sim-task-child-answers-the-environ-name-from-the-host
   ;; sim の子では (environ-reader) が環境に無い名を外へ通し、sim の宿が同じ読みの定義で spec.environ から答える(本番と同じ Program・同じ :environ)。
-  (<- answer tuple (sim-cluster NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= (get answer 0) URL) answer)
   (assert (= (get answer 1) (DetachedSubmitted "sim-env" True)) answer)
   (assert (= (get answer 2) (DetachedSucceeded "http://detached.invalid")) answer))

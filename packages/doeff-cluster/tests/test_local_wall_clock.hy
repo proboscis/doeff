@@ -7,6 +7,7 @@
 ;;   - 外の thread の客が本物の socket(ws)で系の中の job と話す: job の返事は実時間で届き(すぐの 1 通は 1 秒の内・道具の後の 1 通は道具の
 ;;     秒の後 1 秒の内)、job の時計は客の時計と 1 秒の内で合う(仮想の時計では job の時刻は起点の 2026-01-01 のまま進まない)。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import doeff [with-handlers])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -28,7 +29,7 @@
 
 (deftest test-a-service-round-trips-a-detached-task-through-a-worker-on-the-wall-clock
   (<- before int (outside-now-ms))
-  (<- rows dict (wall-sim-cluster (submitters sim-foundation) (rows-when-present "wall/" "wall/task" 20.0)))
+  (<- rows dict (wall-sim-cluster :notice-broker (MemoryBroker) (submitters sim-foundation) (rows-when-present "wall/" "wall/task" 20.0)))
   (<- after int (outside-now-ms))
   (assert (in "wall/task" rows) rows)
   (val row (get rows "wall/task"))
@@ -43,7 +44,7 @@
 
 (deftest test-an-outside-thread-talks-with-a-job-over-a-real-socket-on-the-wall-clock
   ;; 待ち受けを持つ job の土台は Await の答え手と aiohttp の待ち受けを並べる(柵は Await を通さない)。
-  (<- heard tuple (wall-sim-cluster (listeners wall-io-foundation) (talk-to-the-listener "wall/address" 20.0)))
+  (<- heard tuple (wall-sim-cluster :notice-broker (MemoryBroker) (listeners wall-io-foundation) (talk-to-the-listener "wall/address" 20.0)))
   (assert (= (lfor h heard (get h.body "kind")) ["started" "done"]) heard)
   (val started (get heard 0))
   (val done (get heard 1))

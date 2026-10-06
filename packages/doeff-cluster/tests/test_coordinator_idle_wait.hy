@@ -129,7 +129,7 @@
 (deftest test-a-quiet-coordinator-does-not-wake-on-the-wall-clock
   ;; worker 1 台・拍 10 秒(この 3 秒の間に heartbeat は来ない)・要求の無い 3 秒: coordinator は起きない(歩 0)。
   ;; 直す前は 1 秒ごとに起きる(3 秒で 3 歩 前後)。
-  (<- taken int (wall-sim-cluster (quitters sim-foundation) (takes-while-quiet QUIET-SECONDS)
+  (<- taken int (wall-sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (takes-while-quiet QUIET-SECONDS)
                                   :workers RESTING-WORKERS :policy RESTING-POLICY :tick-seconds RESTING-TICK-SECONDS))
   (assert (= taken 0) taken))
 

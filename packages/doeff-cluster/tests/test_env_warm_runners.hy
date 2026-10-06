@@ -6,6 +6,7 @@
 ;; (2026-09-28 まで同じ VM の模擬 detached-local が自前の表で答えていた — 呼び手の外側の handler を継ぐので消した。)
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -60,7 +61,7 @@
 
 
 (deftest test-the-warm-table-counts-only-matching-live-undrained-runners
-  (<- seen Warmed (sim-cluster :timing (ClusterTiming) NO-JOBS (scenario) :workers WORKERS))
+  (<- seen Warmed (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (scenario) :workers WORKERS))
   (assert (= seen.gpu.ready #("gpu-1")) seen.gpu)
   ;; 一般の行(net)は、net を提供していても専用の能力を持つ gpu-1 には数えない。
   (assert (= seen.plain.ready #("cpu-1")) seen.plain)
@@ -96,7 +97,7 @@
 (deftest test-a-draining-runner-is-not-handed-a-newer-warm-row
   ;; 失敗ケース(#3669): drain 中の担い手には、温める表の行を heartbeat の返事で配らない(送り手の warm-view が drain 中の担い手を数えない
   ;; のと同じ判断)— 新しい版の行を温めても、gpu-1 は先読みの準備を起こさない。直す前は行が配られ、gpu-1 が準備を起こした(after が 1 増えた)。
-  (<- seen DrainedWarm (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-a-newer-version-after-the-drain) :workers WORKERS))
+  (<- seen DrainedWarm (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-a-newer-version-after-the-drain) :workers WORKERS))
   (assert (= seen.before 1) seen)
   (assert (= seen.after seen.before) seen)
   (assert (= #(seen.row.ready seen.row.preparing) #(#() #())) seen.row))

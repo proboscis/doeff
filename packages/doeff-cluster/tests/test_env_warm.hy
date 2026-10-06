@@ -14,6 +14,7 @@
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import json)
 (import pathlib [Path])
@@ -122,7 +123,7 @@
 
 (deftest test-scenario-8-warming-keeps-preparation-out-of-the-wait
   ;; 温めた後の送り: 待ちは 2 秒以内(worker の拍と置き先の拍だけ)・冷たい起動 0・準備は温めた 1 回だけ(送った task は準備しない)。
-  (<- seen Measured (sim-cluster :timing (ClusterTiming) NO-JOBS (scenario-8) :workers WARM-WORKERS))
+  (<- seen Measured (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (scenario-8) :workers WARM-WORKERS))
   (assert (<= seen.waited 2.0) (.format "温めた後の待ちは 2 秒以内: {}" seen.waited))
   (assert (= seen.cold-starts 0.0) seen.cold-starts)
   (assert (= (lfor p seen.preparations p.warm) [True]) seen.preparations))
@@ -137,7 +138,7 @@
 (deftest test-counterexample-sending-without-warming-waits-for-preparation
   ;; 温めない送り: 待ちに準備(PREPARE-SECONDS)が入り 2 秒を超え、coordinator の冷たい起動の計器が 1 つ増え、準備は task の準備(先読み
   ;; でない)1 回。
-  (<- seen Measured (sim-cluster :timing (ClusterTiming) NO-JOBS (counterexample-8) :workers WARM-WORKERS))
+  (<- seen Measured (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (counterexample-8) :workers WARM-WORKERS))
   (assert (> seen.waited 2.0) (.format "温めない送りは準備を待つ: {}" seen.waited))
   (assert (= seen.cold-starts 1.0) seen.cold-starts)
   (assert (= (lfor p seen.preparations p.warm) [False]) seen.preparations))
@@ -170,7 +171,7 @@
 
 
 (deftest test-an-old-version-task-does-not-wait-for-the-new-version-env-root-preparation
-  (<- seen SplitMeasured (sim-cluster :timing (ClusterTiming) NO-JOBS (split-scenario) :workers SPLIT-WORKERS))
+  (<- seen SplitMeasured (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (split-scenario) :workers SPLIT-WORKERS))
   ;; 旧い版: コードの木の準備は prepare-seconds(0 秒)で揃い、実行環境の root は準備せず、待ちは worker の拍と置き先の拍だけ(2 秒以内)。
   (assert (<= seen.old.waited 2.0) (.format "旧い版は実行環境の root の準備を待たない: {}" seen.old.waited))
   (assert (= seen.old.preparations #()) seen.old.preparations)
@@ -402,7 +403,7 @@
 (deftest test-a-failed-warm-route-answers-unreachable-and-writes-no-row
   ;; 故障の間の頼みは本番の warm-cluster と同じ WarmUnreachable(理由に返った状態)で、要求は調停ループに届かない(同じキーの行の読み —
   ;; 故障を入れていない口 — は空の姿)。故障が明けた後の頼みは本物の coordinator が書いた行の姿。
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-under-a-failed-route) :workers WARM-WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-under-a-failed-route) :workers WARM-WORKERS))
   (val failed (get seen 0))
   (val absent (get seen 1))
   (val again (get seen 2))

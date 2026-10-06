@@ -9,6 +9,7 @@
 ;;; 走らせ方 = package の根の conftest.py(`uv run pytest packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy`)。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import json)
 (import doeff [with-handlers])
@@ -46,7 +47,7 @@
 
 (deftest test-the-coordinator-entry-runs-on-the-emulated-handlers
   ;; coordinator の Pod は入口の load-state と emulated-handlers の上で調停ループを回し、5 秒の間 止まらずに要求へ答える。
-  (<- seen Started (sim-cluster EMPTY (read-after-start) :start-ms START-MS))
+  (<- seen Started (sim-cluster :notice-broker (MemoryBroker) EMPTY (read-after-start) :start-ms START-MS))
   (assert (= (len seen.runs) 1) seen.runs)
   (val life (get seen.runs 0))
   (assert (isinstance life SimCoordinatorRun) life)
@@ -57,7 +58,7 @@
 
 (deftest test-the-worker-entry-runs-on-the-sim-host
   ;; worker の世代は入口の worker-on を偽の宿の組の上で回し、heartbeat で coordinator に名乗る(coordinator は生きていると数える)。
-  (<- seen Started (sim-cluster EMPTY (read-after-start) :start-ms START-MS))
+  (<- seen Started (sim-cluster :notice-broker (MemoryBroker) EMPTY (read-after-start) :start-ms START-MS))
   (assert (get seen.view "alive") seen.view))
 
 

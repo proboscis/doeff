@@ -1,6 +1,7 @@
 ;;; sim の外の世界(SimOutside)の検 — service は外の系(業務の store の模擬)を effect を通してだけ共有し、柵は SimOutside の effects に
 ;;; 載った型だけを外へ通す(載っていなければ本番の子と同じ未処理で落ちる)。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff [EffectBase])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -20,7 +21,7 @@
 
 (deftest test-services-share-the-outside-store-only-through-effects
   (val rows {})
-  (<- answer (sim-cluster (shared-store sim-foundation) (wait-seconds 30.0)
+  (<- answer (sim-cluster :notice-broker (MemoryBroker) (shared-store sim-foundation) (wait-seconds 30.0)
                           :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (>= (.get rows "count" 0) 10) rows)
   (assert (>= (.get rows "seen" 0) 5) rows))
@@ -35,7 +36,7 @@
 
 
 (deftest test-without-the-outside-world-the-store-effect-is-unanswered
-  (<- processes tuple (sim-cluster (shared-store sim-foundation) (crashed-processes "writer")))
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (shared-store sim-foundation) (crashed-processes "writer")))
   (assert processes)
   (assert (any (gfor p processes (and (is-not p.exit-code None) (!= p.exit-code 0) (in "StorePut" p.detail)))) processes))
 
@@ -44,7 +45,7 @@
   ;; process ごとの外の handler の組(SimOutside.per-process — job の名と worker の名で作る)は、柵の外側・共有の外の世界の手前で
   ;; 答える: 書きは job の名つきの行になり、共有の store の "count" には届かない(読み手は数を見ないので "seen" も書かない)。
   (val rows {})
-  (<- answer (sim-cluster (shared-store sim-foundation) (wait-seconds 30.0)
+  (<- answer (sim-cluster :notice-broker (MemoryBroker) (shared-store sim-foundation) (wait-seconds 30.0)
                           :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet)
                                                :per-process (fn [job worker] (ProcessOutside :handlers #((signed-puts rows job)))))))
   (assert (>= (.get rows "writer/count" 0) 10) rows)
@@ -56,7 +57,7 @@
   ;; process ごとの柵の許し: 書き手の process にだけ StorePut・StoreGet を通す(共有の外の世界の型は空)。読み手の process は同じ
   ;; effect を出しても柵に止められ、本番の子と同じく未処理で落ちる — 別の job の外の口が sim で黙って答えない(構成のレビューの A)。
   (val rows {})
-  (<- processes tuple (sim-cluster (shared-store sim-foundation) (crashed-processes "reader")
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (shared-store sim-foundation) (crashed-processes "reader")
                                    :outside (SimOutside :handlers [(memory-store rows)] :effects #()
                                                         :per-process (fn [job worker]
                                                                        (if (= job "writer")
@@ -80,7 +81,7 @@
   ;; 本物の機体の死では、落ちた process の後始末から何も届かない。sim でも、殺された process の取り消しの巻き戻しの中の effect
   ;; (finally の StorePut)は外の世界に届かない(殺された process は巻き戻さずに捨てる — Discard)。
   (val rows {})
-  (<- processes tuple (sim-cluster (last-words sim-foundation) (kill-the-speaker "w1")
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (last-words sim-foundation) (kill-the-speaker "w1")
                                    :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                                    :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (>= (.get rows "count" 0) 5) rows)
@@ -106,7 +107,7 @@
   ;; 書く 3 つの道(EndProcess・Crash・KillWorker)が同じ記録を書く(#3057)。前の形では、KillWorker が書いた刻を巻き戻しの後の
   ;; EndProcess が 5 秒後で書き直していた。
   (val rows {})
-  (<- lag int (sim-cluster (slow-last-words sim-foundation) (end-lag-after (KillWorker "w1"))
+  (<- lag int (sim-cluster :notice-broker (MemoryBroker) (slow-last-words sim-foundation) (end-lag-after (KillWorker "w1"))
                            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                            :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (= lag 0) lag)
@@ -117,7 +118,7 @@
   ;; Crash も同じ: 前の形では、終わりを巻き戻しの後の EndProcess だけが 5 秒後で書いていた(Crash の後は worker が job を起こし
   ;; 直し、その process は筋書きの終わりの優雅な停止で最後の言葉を書くので、ここでは書きの有無を問わない)。
   (val rows {})
-  (<- lag int (sim-cluster (slow-last-words sim-foundation) (end-lag-after (Crash "speaker"))
+  (<- lag int (sim-cluster :notice-broker (MemoryBroker) (slow-last-words sim-foundation) (end-lag-after (Crash "speaker"))
                            :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                            :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (= lag 0) lag))
@@ -127,7 +128,7 @@
   ;; 殺された process の中で Spawn した task も一緒に捨てる(本番は子 process ごと消える)— 子の task の後始末(finally の StorePut)も
   ;; 外の世界に届かない(#3057)。
   (val rows {})
-  (<- processes tuple (sim-cluster (spawning-last-words sim-foundation) (kill-the-speaker "w1")
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (spawning-last-words sim-foundation) (kill-the-speaker "w1")
                                    :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                                    :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (>= (.get rows "count" 0) 5) rows)
@@ -163,7 +164,7 @@
   ;; 登録の隙間: 殺された process の task が後から世界に覚えられたら、その場で捨てる(取り消して巻き戻させない)— 後始末
   ;; (finally の StorePut)は外の世界に届かない(#3057 — 前は門が effect ごとに殺されたかを問うて断っていた)。
   (val rows {})
-  (<- (sim-cluster (last-words sim-foundation) (register-after-the-kill "w1")
+  (<- (sim-cluster :notice-broker (MemoryBroker) (last-words sim-foundation) (register-after-the-kill "w1")
                    :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
                    :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet))))
   (assert (not-in "late-words" rows) rows))

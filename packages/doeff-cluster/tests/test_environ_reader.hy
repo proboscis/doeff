@@ -10,6 +10,7 @@
 ;;                 落ちる(sim の子では環境に無い名を外へ通すので sim の宿が字面どおり返し、食い違いが sim の検では見えない — この
 ;;                 読み手を足した理由。job API の計画の決定 4 の戻し方「専用の handler を足して置き換える」)。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import os)
 (import sys)
 (import subprocess)
@@ -116,7 +117,7 @@
   ;; sim の宿は本番の土台と同じ読みの定義(environ-reader)を子の spec.environ の上に並べるので、(environ-reader) で読む Program は本番の子と
   ;; 同じ字面を返す。反例の見本(env_var_ask)も sim では字面どおり返る — 環境に無い名を外へ通し sim の宿が答えるため。本番の子でだけ
   ;; 落ちる食い違いは sim の検では見えない(だから本番の土台は env_var_ask ではなく (environ-reader) を並べる)。
-  (<- answer tuple (sim-cluster NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= answer #(POLICY POLICY)) answer))
 
 

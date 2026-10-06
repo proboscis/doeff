@@ -1,5 +1,6 @@
 ;;; 本物の coordinator と worker の上で Rollout の順序を検める(#1386)。
 (require doeff-hy.macros [deftest defk deff <- val var])
+(import doeff_events [MemoryBroker])
 (import pytest)
 (import doeff_time [Delay])
 (import doeff_cluster.coordinator.core.api_policy :as api-policy)
@@ -81,14 +82,14 @@
 
 
 (deftest test-rollout-waits-for-the-service-before-stopping-the-deployment
-  (<- calls tuple (sim-cluster (beacons sim-foundation) (rollout-scenario)
+  (<- calls tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (rollout-scenario)
                               :workers WORKERS :deployments DEPLOYMENTS))
   (assert (= (len calls) 1))
   (assert (= (get DEPLOYMENTS DEP "specReplicas") 1)))
 
 
 (deftest test-reverse-rollout-waits-for-the-explicit-pod-readiness
-  (<- (sim-cluster (beacons sim-foundation) (reverse-scenario)
+  (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (reverse-scenario)
                   :workers WORKERS :deployments DEPLOYMENTS)))
 
 
@@ -102,7 +103,7 @@
 (deftest test-the-same-scenario-rejects-a-rollout-that-stops-old-first [monkeypatch]
   (.setattr monkeypatch api-policy "rollout_step" stop-old-before-ready)
   (with [(pytest.raises AssertionError :match "新が動く前に旧の Deployment を止めた")]
-    (<- (sim-cluster (beacons sim-foundation) (rollout-scenario)
+    (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (rollout-scenario)
                     :workers WORKERS :deployments DEPLOYMENTS))))
 
 
@@ -118,5 +119,5 @@
 
 
 (deftest test-rollout-declarations-go-through-coordinator-validation
-  (<- (sim-cluster (beacons sim-foundation) (rejected-rollouts)
+  (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (rejected-rollouts)
                   :workers WORKERS :deployments DEPLOYMENTS)))

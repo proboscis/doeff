@@ -32,6 +32,7 @@ MODULE = """\
 (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.sim.local [sim-cluster])
+(import doeff_events [MemoryBroker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView CodeView CodeState ProcessView JobStatus
                                                   ObserveWorld ReadDesired DesiredJobs DesiredUnreadable])
 
@@ -65,7 +66,7 @@ MODULE = """\
   {:pre [(: system System)] :post [(: % int)] :tags {:context "probe" :role "entry"}}
   "入口 sim-cluster の :policy に WorkerPolicy を渡す。"
   (<- policy WorkerPolicy (probe-policy 3000))
-  (<- answer int (sim-cluster system (probe-observe) :policy policy))
+  (<- answer int (sim-cluster system (probe-observe) :policy policy :notice-broker (MemoryBroker)))
   answer)
 """
 

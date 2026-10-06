@@ -6,6 +6,7 @@
 ;;; NextWorldDue — 網の切れが明ける刻など)が残る間は行き止まりにせず、明けた後に終わらせる。業務の timer(#3093 — doeff-events の
 ;;; ArmedTimers)が残る間も行き止まりにせず、見張りは最も早い timer の刻に読み直す。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import pytest)
 (import doeff_time [Delay])
 (import doeff_events [ArmedTimer ArmTimerEffect DisarmTimerEffect Publish WaitForEventEffect PublishEffect event-handler timer-handler])
@@ -59,7 +60,7 @@
   ;; timer がいつも時計の列に在るので、仮想の時計が進み続けて終わらない(検の上限で落ちる)。
   (<- outside SimOutside (events-outside))
   (with [raised (pytest.raises SimDeadlockError)]
-    (<- (sim-cluster (ping-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (ping-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
   (assert (in "waiter" (str raised.value)) raised.value)
   (assert (in "Ping" (str raised.value)) raised.value))
 
@@ -76,7 +77,7 @@
 
 (deftest test-an-event-that-arrives-is-not-a-deadlock
   (<- outside SimOutside (events-outside))
-  (<- ended ProcessEnded (sim-cluster (ping-waiters sim-foundation) (ping-after-a-while) :outside outside))
+  (<- ended ProcessEnded (sim-cluster :notice-broker (MemoryBroker) (ping-waiters sim-foundation) (ping-after-a-while) :outside outside))
   (assert (= ended.job "waiter") ended))
 
 
@@ -90,7 +91,7 @@
 (deftest test-a-bounded-wait-for-a-job-is-not-a-deadlock
   ;; 筋書きの待ちに期限が在れば、業務の task が全部 出来事を待っていても行き止まりにしない — 期限で答えが返る。
   (<- outside SimOutside (events-outside))
-  (<- answer (| ProcessEnded ProcessWaitExpired) (sim-cluster (ping-waiters sim-foundation) (await-the-waiter-for 30.0)
+  (<- answer (| ProcessEnded ProcessWaitExpired) (sim-cluster :notice-broker (MemoryBroker) (ping-waiters sim-foundation) (await-the-waiter-for 30.0)
                                                               :outside outside))
   (assert (= answer (ProcessWaitExpired :job "waiter" :waited-seconds 30.0)) answer))
 
@@ -110,7 +111,7 @@
   ;; 予定の刻を見なければ、網を切った直後(起点から 30 秒より前)に終わる。
   (<- outside SimOutside (events-outside))
   (with [raised (pytest.raises SimDeadlockError)]
-    (<- (sim-cluster (ping-waiters sim-foundation) (cut-then-await-the-waiter) :outside outside)))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (ping-waiters sim-foundation) (cut-then-await-the-waiter) :outside outside)))
   (val found (get raised.value.args 1))
   (assert (isinstance found SimDeadlock) found)
   (assert (>= (- found.at-ms SIM-START-MS) 30000) found))
@@ -148,7 +149,7 @@
   ;; timer が残る間は行き止まりにしない — 期限が来て waiter が終わる。見張りが ArmedTimers を見なければ、待ちがそろった直後に
   ;; SimDeadlockError で終わる。
   (<- outside SimOutside (timers-outside))
-  (<- ended ProcessEnded (sim-cluster (deadline-waiters sim-foundation) (await-the-deadline-waiter) :outside outside))
+  (<- ended ProcessEnded (sim-cluster :notice-broker (MemoryBroker) (deadline-waiters sim-foundation) (await-the-deadline-waiter) :outside outside))
   (assert (= ended.job "waiter") ended))
 
 
@@ -156,5 +157,5 @@
   ;; timer の答え手を置いても、積まれた timer が無ければ今までどおり即 行き止まり(ArmedTimers の答えが空)。
   (<- outside SimOutside (timers-outside))
   (with [raised (pytest.raises SimDeadlockError)]
-    (<- (sim-cluster (ping-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (ping-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
   (assert (in "Ping" (str raised.value)) raised.value))

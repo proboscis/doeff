@@ -7,6 +7,7 @@
 ;; coordinator は同じ task の 2 度目の結果(heartbeat が運んだ物)を冪等に受ける。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_core_effects.scheduler [Spawn Task Wait Race Cancel])
 (import doeff_core_effects.effects [Try])
@@ -97,7 +98,7 @@
 (deftest test-a-task-that-exited-0-runs-once-and-answers-although-its-worker-dies-before-the-next-heartbeat
   ;; task の process が 0 で終わった刻(次の heartbeat の前)に worker を殺し、同じ名で起こし直す: task は 1 度だけ走り、呼び手に
   ;; 答えが届く。前の形では結果が死んだ worker の disk に残ったまま届かず、起き直した worker が同じ task をもう 1 度走らせた。
-  (<- seen WindowRun (sim-cluster (pulses sim-foundation) (remote-window) :workers #((SimWorker :name WORKER :provides NET :task-reserve 0))))
+  (<- seen WindowRun (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (remote-window) :workers #((SimWorker :name WORKER :provides NET :task-reserve 0))))
   (assert (= seen.killed-ms seen.ended-ms) seen)
   (assert (= (. (get seen.runs 0) exit-code) 0) seen.runs)
   (assert (= (len seen.runs) 1) seen.runs)
@@ -112,7 +113,7 @@
 
 (deftest test-a-detached-task-that-exited-0-keeps-its-answer-although-its-worker-dies-before-the-next-heartbeat
   ;; 切り離した task でも同じ窓で答えを失わない。前の形では、置いた世代の worker が死んだので lease 切れで lost(DetachedLost)になった。
-  (<- seen WindowRun (sim-cluster (pulses sim-foundation) (detached-window "once") :workers #((SimWorker :name WORKER :provides NET :task-reserve 0))))
+  (<- seen WindowRun (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (detached-window "once") :workers #((SimWorker :name WORKER :provides NET :task-reserve 0))))
   (assert (= seen.killed-ms seen.ended-ms) seen)
   (assert (= (. (get seen.runs 0) exit-code) 0) seen.runs)
   (assert (= (len seen.runs) 1) seen.runs)
@@ -157,7 +158,7 @@
 
 (deftest test-a-task-is-answered-within-the-limit
   ;; 条 C9: task を走らせられる worker が居れば、送った task は上限のうちに値で答えられる。
-  (<- call TaskCall (sim-cluster (pulses sim-foundation) (timed-call "timed") :workers #((SimWorker :name WORKER :provides NET :task-reserve 0))))
+  (<- call TaskCall (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (timed-call "timed") :workers #((SimWorker :name WORKER :provides NET :task-reserve 0))))
   (assert (is-not call.answered-at-ms None) call)
   (<- late tuple (tasks-answered-in-time #(call) TASK-ANSWER-MS))
   (assert (= late #()) #(late call)))
@@ -166,7 +167,7 @@
 (deftest test-a-counterexample-worker-that-hides-its-abilities-breaks-c9
   ;; 条 C9 の失敗ケース: task を本当は走らせられる worker が heartbeat で能力を名乗らない壊れた worker(SimWorker の claims-provides = 空)
   ;; だと、coordinator は task を置けず「能力の合う worker が無い」の失敗で答え(値の答えが無い)、条 C9 の判断がその task を名指す。
-  (<- call TaskCall (sim-cluster (pulses sim-foundation) (timed-call "timed")
+  (<- call TaskCall (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (timed-call "timed")
                                  :workers #((SimWorker :name WORKER :provides NET :claims-provides (frozenset) :task-reserve 0))))
   (<- late tuple (tasks-answered-in-time #(call) TASK-ANSWER-MS))
   (assert (= (lfor c late c.name) ["timed"]) #(late call)))
