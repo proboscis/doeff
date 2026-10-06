@@ -11,7 +11,7 @@
 (import os)
 (import re)
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome BypassAll AskHost DenyUnlisted McpSse McpStdio
+(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
 
 (setv STREAM-FLAGS ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
@@ -52,6 +52,8 @@
     (isinstance policy DenyUnlisted)
       (+ ["--permission-prompts" "none"]
          (if policy.allowed-tools ["--allowedTools" (.join "," policy.allowed-tools)] []))
+    ;; 許可は設定 dir(CLAUDE_CONFIG_DIR)の settings.json の permissions に従う — 旗はそれより勝つので 1 つも付けない(#3753)。
+    (isinstance policy HomeSettings) []
     True (raise (TypeError (.format "許可の方策が閉語彙の外: {!r}" policy)))))
 
 (defn #^ FrozenMap merged-settings [#^ FrozenMap declared #^ FrozenMap env]

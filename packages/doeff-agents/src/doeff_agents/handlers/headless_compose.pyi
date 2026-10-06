@@ -7,6 +7,8 @@ from collections.abc import Mapping as Mapping
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_time import sync_time_handler as sync_time_handler
 from doeff_claude_code.values import ClaudeHome as ClaudeHome
+from doeff_claude_code.values import BypassAll as BypassAll
+from doeff_claude_code.values import PermissionPolicy as PermissionPolicy
 from doeff_claude_code.clock import clock_of as clock_of
 from doeff_claude_code.handler import ClaudeCodeHost as ClaudeCodeHost
 from doeff_claude_code.handler import claude_code_handler as claude_code_handler
@@ -21,7 +23,7 @@ from doeff_agents.handlers.headless import headless_claude_handler as headless_c
 def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int, credential_floor_seconds: float) -> list:
     ...
 
-def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, *, env: Mapping[str, str], settings: Mapping[str, object]) -> list:
+def fake_headless_claude_handlers(responder: Incomplete, config_dir: Incomplete='fake-claude-home', world: Incomplete=None, *, env: Mapping[str, str], settings: Mapping[str, object], permission: PermissionPolicy=...) -> list:
     ...
 
 def claude_process_layer(command: tuple, live_limit: int, credential_floor_seconds: float) -> _Program[Callable, object]:
@@ -30,5 +32,5 @@ def claude_process_layer(command: tuple, live_limit: int, credential_floor_secon
 def fake_claude_process_layer(responder: Callable | None, world: FakeClaudeWorld | None) -> _Program[Callable, object]:
     ...
 
-def claude_adapter(config_dir: str, env: Mapping, settings: Mapping, cold_resume_prompt: str | None) -> _Program[Callable, object]:
+def claude_adapter(config_dir: str, env: Mapping, settings: Mapping, cold_resume_prompt: str | None, permission: PermissionPolicy) -> _Program[Callable, object]:
     ...

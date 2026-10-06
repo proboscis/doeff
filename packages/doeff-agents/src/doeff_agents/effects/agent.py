@@ -643,16 +643,28 @@ class TurnCredential:
     declaration so the process layer can stop a live process before it (the
     credential floor — agora-redesign #3672 D2); the lender is told through
     the process layer's stop reason, never by this value.
+
+    ``github_token`` is a GitHub token lent for the same turns, or ``None``
+    when none is lent (agora-redesign #3753). A handler that can place it puts
+    it into the agent process's ``GH_TOKEN`` env (the name lives in
+    ``doeff_agents.agent_env``) so the agent's ``gh`` / ``git`` can write to
+    GitHub; it is checked like ``oauth_token`` and kept out of ``repr`` too.
     """
 
     oauth_token: str = field(repr=False)
     expires_at: float | None
+    github_token: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.oauth_token, str) or not self.oauth_token:
             raise ValueError("TurnCredential.oauth_token must be a non-empty string")
         if any(ch in self.oauth_token for ch in "\r\n\x00"):
             raise ValueError("TurnCredential.oauth_token must be a single line")
+        if self.github_token is not None:
+            if not isinstance(self.github_token, str) or not self.github_token:
+                raise ValueError("TurnCredential.github_token must be a non-empty string or None")
+            if any(ch in self.github_token for ch in "\r\n\x00"):
+                raise ValueError("TurnCredential.github_token must be a single line")
         if self.expires_at is not None and (
             isinstance(self.expires_at, bool) or not isinstance(self.expires_at, int | float)
         ):

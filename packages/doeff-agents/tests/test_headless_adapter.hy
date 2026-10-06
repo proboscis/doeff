@@ -839,6 +839,38 @@
   (with [(pytest.raises ValueError)]
     (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "")))
 
+(deftest test-the-redeemed-github-token-rides-on-the-child-env-as-gh-token [tmp-path]
+  ;; agora-redesign #3753: 引き換えた TurnCredential が github_token を持てば、adapter は子の claude の env の GH_TOKEN(名の定義元 = agent_env.hy)
+  ;; にその値を 1 つ置く。持たない答え・設定 dir の資格の答えの起動には GH_TOKEN が無い。token は TurnCredential・起動の宣言・設定 dir の repr に写らず、
+  ;; 値の確かめは oauth_token と同じ(空でない文字列・CR/LF/NUL を含まない)。
+  (import doeff_agents.agent_env [GITHUB-TOKEN-ENV])
+  (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential])
+  (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code.values [ClaudeHome])
+  (val oauth "sk-ant-oat01-never-printed-3753")
+  (val github "ghs-never-printed-3753")
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (assert (= GITHUB-TOKEN-ENV "GH_TOKEN"))
+  (val world (FakeClaudeWorld fake-responder))
+  (val asked [])
+  (val credential (TurnCredential oauth None :github-token github))
+  (val answers {"lease-gh" credential "lease-plain" (TurnCredential oauth None) "lease-home" (HomeTurnCredential)})
+  (for [#(name ref) [#("gh" "lease-gh") #("plain" "lease-plain") #("home" "lease-home")]]
+    (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
+  (val envs (lfor session (.values world.sessions) (dict session.home.env)))
+  (assert (= (len envs) 3) (len envs))
+  (assert (= (lfor env envs (.get env GITHUB-TOKEN-ENV)) [github None None]) "GH_TOKEN を置くのは github_token を持つ起動 1 つだけ")
+  (val config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
+  (val launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-gh"))
+  (val spec (spec-of config launch credential))
+  (for [shown [(repr credential) (repr spec) (repr spec.home)]]
+    (assert (not-in github shown) "github_token の値が repr に写った"))
+  (for [bad ["" "a\nb" "a\rb" "a\x00b" 7]]
+    (with [(pytest.raises ValueError)]
+      (TurnCredential oauth None :github-token bad))))
+
 (deftest test-an-unredeemable-credential-ref-does-not-start-the-session [tmp-path]
   ;; #979 の反例: 引き換えられない参照(知らない・もう返した lease)の起動は TurnCredentialUnavailableError(AgentLaunchError の 1 つ)で
   ;; 断り、CLI の会話を 1 つも始めない(家の資格で黙って走らせない)。断りの理由は答えの文のまま運ぶ。
@@ -990,6 +1022,39 @@
   (assert (= (. (get given 0) home config-dir) home))
   (assert (= (dict (. (get given 0) home env)) env))
   (assert (= (thaw-json (. (get given 0) settings)) settings)))
+
+(deftest test-the-adapter-and-the-fake-runtimes-carry-the-given-permission-on-the-launch [tmp-path]
+  ;; agora-redesign #3753: adapter だけの入口と fake の handler の並びの入口(土台を指定しない名・headless の名・組み立ての部品)に permission を渡すと、
+  ;; 層 2 へ渡る起動の宣言(ClaudeSessionSpec)の permission がその値になる — 許可を設定 dir の settings.json に任せる形(HomeSettings)を
+  ;; 本番の adapter と模擬の fake に同じく渡すため。渡さなければ BypassAll(今のまま)。
+  (import doeff_agents [claude-agent-adapter-handler fake-claude-process-layer-handler fake-claude-agent-runtime-handlers
+                        fake-headless-claude-agent-handlers])
+  (import doeff_claude_code.values [BypassAll HomeSettings])
+  (val home (str (/ tmp-path "home")))
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val cases [#("adapter-given" (HomeSettings)
+                [(fake-claude-process-layer-handler :responder fake-responder)
+                 (claude-agent-adapter-handler :config-dir home :env {} :settings {} :permission (HomeSettings))])
+              #("adapter-default" (BypassAll)
+                [(fake-claude-process-layer-handler :responder fake-responder)
+                 (claude-agent-adapter-handler :config-dir home :env {} :settings {})])
+              #("fake-runtime-given" (HomeSettings)
+                (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home :env {} :settings {}
+                                                    :permission (HomeSettings)))
+              #("fake-runtime-default" (BypassAll)
+                (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home :env {} :settings {}))
+              #("fake-headless-given" (HomeSettings)
+                (fake-headless-claude-agent-handlers :responder fake-responder :config-dir home :env {} :settings {}
+                                                     :permission (HomeSettings)))
+              #("fake-compose-given" (HomeSettings)
+                (fake-headless-claude-handlers fake-responder home :env {} :settings {} :permission (HomeSettings)))
+              #("fake-compose-default" (BypassAll)
+                (fake-headless-claude-handlers fake-responder home :env {} :settings {}))])
+  (for [#(name expected runtime) cases]
+    (val given (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))] (launched-specs work name runtime)))))
+    (assert (= (len given) 1) #(name given))
+    (assert (= (. (get given 0) permission) expected) #(name (. (get given 0) permission)))))
 
 (deftest test-the-fake-process-layer-takes-exactly-one-of-responder-and-world []
   ;; agora-redesign #3507: fake の層 2 だけの入口も、対の入口と同じく responder と world のちょうど 1 つを受ける(両方・どちらも無しは断る)。

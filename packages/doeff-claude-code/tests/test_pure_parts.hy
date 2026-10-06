@@ -2,7 +2,7 @@
 (require doeff-hy.macros [deftest val <-])
 (import json)
 (import pytest)
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted McpSse McpStdio
+(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession TurnInput])
 (import doeff_claude_code.argv [launch-argv launch-key cold-resume-argv transcript-path process-env])
 (import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
@@ -39,7 +39,7 @@
 (deftest test-the-launch-argv-takes-monitor-out-of-the-tools
   ;; 守り(#3672・#517 の事故の形): 背景の仕事を消す環境変数は Monitor を残す(2.1.289 の実測)ので、Monitor は起こす引数で外す。
   ;; 名簿の許可(DenyUnlisted の --allowedTools)と重ねても外れる形(--disallowedTools は許可より先に効く)。
-  (for [policy [(BypassAll) (AskHost) (DenyUnlisted #("Read" "Monitor"))]]
+  (for [policy [(BypassAll) (AskHost) (DenyUnlisted #("Read" "Monitor")) (HomeSettings)]]
     (val argv (launch-argv #("claude") (ClaudeSessionSpec :home HOME :cwd "/w" :permission policy) (FreshSession SID)))
     (assert (in "--disallowedTools" argv) argv)
     (assert (in "Monitor" (.split (get argv (+ (.index argv "--disallowedTools") 1)) ",")) argv)))
@@ -88,6 +88,20 @@
   (setv deny (flags (DenyUnlisted #("Read" "Grep"))))
   (assert (= (get deny (+ (.index deny "--allowedTools") 1)) "Read,Grep"))
   (assert (= (get deny (+ (.index deny "--permission-prompts") 1)) "none")))
+
+
+(deftest test-home-settings-puts-no-permission-flag
+  ;; #3753: 許可を設定 dir(CLAUDE_CONFIG_DIR)の settings.json の permissions に任せる形(HomeSettings)は、起動の引数に
+  ;; 許可の旗を 1 つも載せない(旗が在ると settings.json の permissions より旗が勝つ)。冷えた続きの前の 1 回きりの process も同じ。
+  ;; 宣言の既定は BypassAll のまま(既存の使い手の振る舞いを変えない)。
+  (val spec (ClaudeSessionSpec :home HOME :cwd "/w" :permission (HomeSettings) :cold-resume-prompt "/x"))
+  (val launched (launch-argv #("claude") spec (FreshSession SID)))
+  (val cold (cold-resume-argv #("claude") spec SID))
+  (for [argv [launched cold]]
+    (for [flag ["--dangerously-skip-permissions" "--permission-mode" "--permission-prompts" "--permission-prompt-tool"
+                "--allowedTools"]]
+      (assert (not-in flag argv) argv)))
+  (assert (= (. (ClaudeSessionSpec :home HOME :cwd "/w") permission) (BypassAll))))
 
 
 (deftest test-the-cold-resume-argv-drops-disable-all-hooks
