@@ -28,6 +28,8 @@ def _backend() -> ModuleType:
     spec = importlib.util.spec_from_file_location("doeff_cargo_backend_under_test", BACKEND)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # dataclass は定義の module を sys.modules から引く(口の StoredWheel・WheelEntry)ので、読む前に名で登録する。
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
