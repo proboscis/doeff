@@ -1,7 +1,7 @@
 ;;; coordinator が次に起きる刻と、落ち着くまでの約束の純粋な判断(#3865)。
 ;;;
-;;; 調停ループ(core/program.hy の run-coordinator)は、要求が無い間、次に起きる刻(next-wake)まで受付を 1 本で待つ。状態を変えた歩か
-;;; 要求を受けた歩の後は待たずにもう 1 歩進め(after-step)、何も変えない歩の後だけ次に起きる刻まで待つ。今すぐが上限を越えて続けば、
+;;; 調停ループ(core/program.hy の run-coordinator)は、要求が無い間、次に起きる刻(next-wake)まで受付を 1 本で待つ。
+;;; 要求を受けずに状態を変えた歩の後は待たずにもう 1 歩進め(after-step)、それ以外は次に起きる刻まで待つ。今すぐが上限を越えて続けば、
 ;;; 変わり続けた欄を名指して落ちる(count-unsettled)。判断は期限ちょうどの刻に出る(1 秒の格子に丸めない)。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
@@ -78,12 +78,13 @@
   answer)
 
 
-(defk after-step [due changed took]
-  {:pre [(: due (| DueAt DueNow DueNever)) (: changed bool) (: took bool)] :post [(: % (| DueAt DueNow DueNever))]
+(defk after-step [due changed]
+  {:pre [(: due (| DueAt DueNow DueNever)) (: changed bool)] :post [(: % (| DueAt DueNow DueNever))]
    :tags {:context "coordinator" :role "judgment"}}
-  "歩の後にどこまで待つかを決めるため: 状態を変えた歩(changed)か要求を受けた歩(took)の後は今すぐもう 1 歩(その歩の答えが次の判断の
-   答えを変えうる)。何も変えない歩の後は、その時に求めた次に起きる刻 due まで。"
-  (if (or changed took) (DueNow) due))
+  "歩の後にどこまで待つかを決めるため: 要求を受けずに状態を変えた歩(changed — 時刻で変わった判断の歩)の後は今すぐもう 1 歩(その歩の
+   答えが次の判断の答えを変えうる)。それ以外は、その時に求めた次に起きる刻 due まで — 要求を受けた歩の後も、要求で変わった状態が
+   落ち着いていなければ期限の関数が今すぐを返す(R3)ので、必ずもう 1 歩は回さない(#3865 の直し A — 要求ごとの空の歩を消す)。"
+  (if changed (DueNow) due))
 
 
 (defk wait-seconds [due now]

@@ -40,7 +40,7 @@ from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
 from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
 from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
-from doeff_cluster.coordinator.intent.cluster_model import ClusterState, QuietStep
+from doeff_cluster.coordinator.intent.cluster_model import ClusterState
 from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
@@ -58,12 +58,12 @@ _Answer = TypeVar("_Answer")
 # --- 型の宣言の無い module の値の、この module が読む欄 ----------------------------------------------------
 
 class _RequestQueueView(Protocol):
-    """coordinator の受け口(protocol.request_queue.RequestQueue)— up = 受け付けているか・ends_at_marks = 落ちの注入が待っているか。"""
+    """coordinator の受け口(protocol.request_queue.RequestQueue)— up = 受け付けているか・crash_waiting = 落ちの注入が待っているか。"""
 
     @property
     def up(self) -> bool: ...
     @property
-    def ends_at_marks(self) -> bool: ...
+    def crash_waiting(self) -> bool: ...
 
 class _WalStoreView(Protocol):
     """coordinator の置き場(handler_sets.MemoryWalStore)— load = 置き場の鍵 → 値。"""
@@ -351,17 +351,13 @@ class CoordinatorEnvironOf(EffectBase[tuple[EnvEntry, ...]]): ...
 
 @dataclass(frozen=True)
 class CoordinatorStep:
-    """coordinator の歩 1 つの記録(1 拍ずつの走りと飛ばす走りを歩ごとの状態で比べる基準 — #2670 の根 B)。"""
+    """置き場へ書いた coordinator の歩 1 つの記録(刻と、その歩の Persist の writes の列 — #2670 の根 B・#3865)。"""
 
     at: int
-    state: ClusterState
+    writes: tuple[object, ...]
 
 @dataclass(frozen=True)
 class CoordinatorSteps(EffectBase[tuple[CoordinatorStep, ...]]): ...
-
-def handed_quiet_steps(
-    queue: _RequestQueueView, steps: tuple[QuietStep, ...]
-) -> Program[tuple[QuietStep, ...], object]: ...
 
 @dataclass(frozen=True)
 class StartWorker(EffectBase[bool]):

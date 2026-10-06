@@ -3,7 +3,7 @@
 ;; - 次に起きる刻(next-wake)= 要求の無い歩の期限(tick-due)・Rollout の期限(rollout-due)・返事を待たせている待ち(GET /watch)の期限の
 ;;   いちばん早い答え。待ちは、落ち着いていれば期限 deadline-ms ちょうどに「変わっていない」と答える(watch-deadline と同じ比べ)。
 ;;   落ち着いていない待ち(版が進んだ・見え方をまだ覚えていない)は今すぐ。
-;; - 歩の後の約束(after-step): 状態を変えた歩か要求を受けた歩の後は今すぐもう 1 歩。何も変えない歩の後だけ、次に起きる刻まで待つ。
+;; - 歩の後の約束(after-step): 要求を受けずに状態を変えた歩の後は今すぐもう 1 歩。それ以外は次に起きる刻まで待つ。
 ;; - 待つ秒(wait-seconds): 刻までの秒(過ぎていれば 0)・今すぐは 0・無しは期限なし(None)。
 ;; - 落ち着かない時の止め(count-unsettled): 今すぐが UNSETTLED-STEP-LIMIT 歩を越えて続いたら、変わり続けた欄を名指して落ちる
 ;;   (黙って回り続けない)。
@@ -65,12 +65,12 @@
   (assert (= due (DueNow)) due))
 
 
-(deftest test-a-step-that-changed-or-took-requests-is-followed-at-once
+(deftest test-a-step-that-changed-without-requests-is-followed-at-once
+  ;; 要求を受けずに状態を変えた歩の後は今すぐ。それ以外(要求を受けた歩も)は次に起きる刻のまま(#3865 の直し A)。
   (val later (DueAt :at 9000))
-  (<- changed (| DueAt DueNow DueNever) (after-step later True False))
-  (<- took (| DueAt DueNow DueNever) (after-step later False True))
-  (<- quiet (| DueAt DueNow DueNever) (after-step later False False))
-  (assert (= #(changed took quiet) #((DueNow) (DueNow) later)) #(changed took quiet)))
+  (<- changed (| DueAt DueNow DueNever) (after-step later True))
+  (<- quiet (| DueAt DueNow DueNever) (after-step later False))
+  (assert (= #(changed quiet) #((DueNow) later)) #(changed quiet)))
 
 
 (deftest test-the-wait-is-the-seconds-to-the-due-instant
