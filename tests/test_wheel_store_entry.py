@@ -135,18 +135,40 @@ def test_the_wheel_hook_and_the_editable_hook_read_one_store(backend: ModuleType
     assert compile_second.calls == 0
 
 
-def test_editable_places_the_native_module_in_the_source_and_points_a_pth_at_it(backend: ModuleType, tmp_path: Path) -> None:
-    # editable の wheel は maturin の editable と同じ形: native の拡張 module を python-source の下へ置き、その dir を指す .pth と
-    # dist-info だけを持つ(Python の source は作業木の物を読む)。RECORD は書いた file の hash と合う。
+@dataclass(frozen=True)
+class EditableNative:
+    """editable の wheel が venv の成果物の dir に入れる native の拡張 module: data = 中身・mode = 許可の bit。"""
+
+    data: bytes
+    mode: int
+
+
+def _editable_native(wheel: Path) -> EditableNative:
+    """editable の wheel の中の native の拡張 module を読む。"""
+    with zipfile.ZipFile(wheel) as archive:
+        info = archive.getinfo(f"__editable__.probe.native/{NATIVE}")
+        return EditableNative(data=archive.read(info), mode=(info.external_attr >> 16) & 0o777)
+
+
+def test_editable_puts_the_native_module_in_the_venv_and_finds_the_source_through_a_finder(backend: ModuleType, tmp_path: Path) -> None:
+    # editable の wheel は、native の拡張 module を source の木に置かず、wheel の中身として venv の __editable__.probe.native/ に入れる
+    # (uv の RECORD が持つ — 木の名簿に無い file を消す写しでも消えない・2026-10-07 04:00 の日次)。.pth は python-source を路に足し、
+    # finder を起こす。finder は probe の探し先を 成果物の dir → 作業木の dir の順にする。RECORD は書いた file の hash と合う。
     package = _checkout(tmp_path / "wt")
     wheel = _call(backend, "editable_from_store", package, tmp_path / "out", FakeCompile(package))
-    placed = package / "python" / NATIVE
-    assert placed.read_bytes() == b"pub fn probe() {}\n"
-    assert os.access(placed, os.X_OK)
+    assert not (package / "python" / NATIVE).exists(), "native の拡張 module を source の木に置いた"
+    native = _editable_native(wheel)
+    assert native.data == b"pub fn probe() {}\n"
+    assert native.mode & 0o111, "native の拡張 module の実行の bit が落ちた"
     with zipfile.ZipFile(wheel) as archive:
         names = sorted(archive.namelist())
-        assert names == ["probe-0.1.0.dist-info/METADATA", "probe-0.1.0.dist-info/RECORD", "probe-0.1.0.dist-info/WHEEL", "probe.pth"]
-        assert archive.read("probe.pth").decode().strip() == str((package / "python").resolve())
+        assert names == sorted([
+            f"__editable__.probe.native/{NATIVE}", "__editable___probe_finder.py", "probe-0.1.0.dist-info/METADATA",
+            "probe-0.1.0.dist-info/RECORD", "probe-0.1.0.dist-info/WHEEL", "probe.pth",
+        ])
+        assert archive.read("probe.pth").decode().splitlines() == [str((package / "python").resolve()), "import __editable___probe_finder"]
+        finder = archive.read("__editable___probe_finder.py").decode()
+        assert repr({"probe": str((package / "python" / "probe").resolve())}) in finder
     assert backend._wheel_problem(wheel) is None
 
 
@@ -157,9 +179,9 @@ def test_one_changed_rust_file_builds_exactly_once(backend: ModuleType, tmp_path
     for name in ("wt-changed-1", "wt-changed-2"):
         package = _checkout(tmp_path / name, rust="pub fn probe() { let _ = 1; }\n")
         compile_wheel = FakeCompile(package)
-        _call(backend, "editable_from_store", package, tmp_path / f"out-{name}", compile_wheel)
+        wheel = _call(backend, "editable_from_store", package, tmp_path / f"out-{name}", compile_wheel)
         counts = [*counts, compile_wheel.calls]
-        assert (package / "python" / NATIVE).read_bytes() == b"pub fn probe() { let _ = 1; }\n"
+        assert _editable_native(wheel).data == b"pub fn probe() { let _ = 1; }\n"
     assert counts == [1, 0]
 
 
