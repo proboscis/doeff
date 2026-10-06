@@ -10,6 +10,7 @@
 ;;   丸ごと比を保って延ばす時に、忘れる期限も一緒に動く)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])
@@ -82,8 +83,8 @@
 (deftest test-the-sim-world-defaults-to-the-scaled-timing-and-keeps-an-explicit-one
   ;; :timing を渡さない筋書きは比で延ばした値で走り、本番の値を明示した筋書きはその値のまま走る。
   (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
-  (<- implicit SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 None None None None))
-  (<- explicit SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 (ClusterTiming) None None None))
+  (<- implicit SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) None None "sim" 0 None None None None))
+  (<- explicit SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) None None "sim" 0 (ClusterTiming) None None None))
   (assert (> SIM-TIMING-RATIO 1) SIM-TIMING-RATIO)
   (assert (= implicit.timing scaled) implicit.timing)
   (assert (= explicit.timing (ClusterTiming)) explicit.timing))

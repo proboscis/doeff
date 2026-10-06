@@ -7,6 +7,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import httpx)
 (import pytest)
@@ -81,7 +82,7 @@
   ;; drain 中の worker も版 2 を準備して起こし、移し先の版 2 が Ready になった後で捨てた。直した後は drain 中の worker に新しい process は
   ;; 起きず、旧い版(版 1)は移し先の版 2 が起きた後まで動き続ける。
   (<- workers tuple (handoff-workers 10.0))
-  (<- seen HeldDrain (sim-cluster (handoff-beacons sim-foundation)
+  (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                                   (drain-then-redeclare 20.0 120.0 (handoff-beacons-v2 sim-foundation) 0.0 40.0)
                                   :workers workers))
   (<- (assert-the-drained-worker-kept-the-old-version seen)))
@@ -90,7 +91,7 @@
 (deftest test-a-draining-worker-does-not-start-the-new-version-even-when-preparing-is-instant
   ;; 失敗ケース A0(#3684): A と同じで準備 0 秒。直す前は drain 中の worker が版 2 を次の拍で起こした。
   (<- workers tuple (handoff-workers 0.0))
-  (<- seen HeldDrain (sim-cluster (handoff-beacons sim-foundation)
+  (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                                   (drain-then-redeclare 10.0 120.0 (handoff-beacons-v2 sim-foundation) 0.0 25.0)
                                   :workers workers))
   (<- (assert-the-drained-worker-kept-the-old-version seen)))
@@ -101,7 +102,7 @@
   ;; 宣言し直す。直す前は drain 中の worker が版 1 を止めて版 2 を起こし直した(10 秒後の読みで版 1 は終わり版 2 が動いていた)。
   ;; 直した後は期限まで版 1 が動き続け、期限が過ぎて返事の draining が偽に戻った後の拍で、普通の入れ替え(止めてから起こす)で版 2 へ移る。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
-  (<- seen HeldDrain (sim-cluster (beacons sim-foundation)
+  (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation)
                                   (drain-then-redeclare 10.0 20.0 (beacons-v2 sim-foundation) 10.0 30.0)
                                   :workers workers))
   (assert (= (get seen.answer "status") 200) seen.answer)

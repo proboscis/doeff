@@ -7,6 +7,7 @@
 ;; - 本番の client も同じ読み(service-ready-of)で答える: 200 Ready → 返る・200 NotReady と 404 → 版の変化を待って読み直す・
 ;;   200 の本文の形が違えば名指して落ちる・待つ口の無い coordinator(/watch が 404)は名指して落ちる。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_events [MemoryBroker])
 (import httpx)
 (import pytest)
 (import collections.abc [Callable])
@@ -44,7 +45,7 @@
 
 
 (deftest test-a-ready-service-answers-at-once
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (ready-at-once) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (ready-at-once) :workers WORKERS))
   (val answer (get seen 0))
   (val started (get seen 1))
   (val at (get seen 2))
@@ -74,7 +75,7 @@
 
 (deftest test-a-service-that-is-down-is-waited-for-until-it-is-ready-again
   ;; 失敗ケース: NotReady の間に返る待ち(読みを 1 回しかしない・Ready を見ない)は、待ち始めた刻に返り、返った時の語が NotReady。
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (down-then-back) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (down-then-back) :workers WORKERS))
   (val before (get seen 0))
   (val down (get seen 1))
   (val answer (get seen 2))

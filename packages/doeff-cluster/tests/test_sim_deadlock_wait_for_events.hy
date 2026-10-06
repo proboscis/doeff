@@ -2,6 +2,7 @@
 ;;; して数えるかの検。数えなければ、誰も Ping を送らない筋書きで仮想の時計が進み続けて終わらない(test_sim_deadlock の
 ;;; test-a-wait-for-an-event-nobody-sends-ends-the-run-at-once-as-a-deadlock の WaitForEvents 版)。
 (require doeff-hy.macros [deftest defk defsystem <- val])
+(import doeff_events [MemoryBroker])
 (import pytest)
 (import collections.abc [Callable])
 (import doeff_events [WaitForEvents WaitForEventsEffect PublishEffect event-handler])
@@ -46,6 +47,6 @@
 (deftest test-a-wait-for-events-nobody-sends-ends-the-run-at-once-as-a-deadlock
   (<- outside SimOutside (batch-events-outside))
   (with [raised (pytest.raises SimDeadlockError)]
-    (<- (sim-cluster (batch-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (batch-waiters sim-foundation) (await-the-waiter-forever) :outside outside)))
   (assert (in "waiter" (str raised.value)) raised.value)
   (assert (in "Ping" (str raised.value)) raised.value))

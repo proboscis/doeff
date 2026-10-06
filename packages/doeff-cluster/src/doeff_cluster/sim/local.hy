@@ -605,6 +605,9 @@
   (#^ ClusterNaming naming)
   (#^ WorkerPolicy policy)
   (#^ tuple passable)
+  ;; 知らせの broker(coordinator が worker の生死の出来事を出す先 — 呼び手が作って sim-cluster の :notice-broker で渡す。呼び手の世界の
+  ;; job と筋書きが同じ broker の受け手に成れる・#3850。sim は作らない)。
+  (#^ MemoryBroker notice-broker)
   (setv #^ (| Callable None) per-process None)
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
@@ -996,10 +999,11 @@
 
 
 (defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [skip-idle False]
-                [tick-seconds SIM-TICK-SECONDS]]
+                [tick-seconds SIM-TICK-SECONDS] * notice-broker]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)
+         (: notice-broker MemoryBroker)]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -1016,18 +1020,19 @@
            :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
            :skip-idle skip-idle :tick-seconds tick-seconds :watches-gone (is timing None)
            :start-ms start-ms :timing (or timing scaled) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
-           :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
+           :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects)) :notice-broker notice-broker))
 
 
 (defk parts-of [plan]
   {:pre [(: plan SimPlan)] :post [(: % SimParts)] :tags {:context "doeff-cluster" :role "foundation"}}
   "coordinator の Pod の部品を作るため(世界の handler が session で 1 回だけ呼ぶ — 置き場は 1 回の走りに 1 つで、作り直した
-   coordinator も同じ置き場から読み直す)。置き場は筋の store が作る(無ければ MemoryWalStore)。"
+   coordinator も同じ置き場から読み直す)。置き場は筋の store が作る(無ければ MemoryWalStore)。知らせの broker は呼び手が渡した筋の
+   notice-broker(作らない — 呼び手の世界の受け手と同じ broker・#3850)。"
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
   (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))
-            :broker (MemoryBroker)))
+            :broker plan.notice-broker))
 
 
 (defk fresh-truth [name generation now timing]
@@ -3624,17 +3629,18 @@
 
 
 (defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]
-                       [skip-idle False] [tick-seconds SIM-TICK-SECONDS]]
+                       [skip-idle False] [tick-seconds SIM-TICK-SECONDS] * notice-broker]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)
+         (: notice-broker MemoryBroker)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
   (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env skip-idle
-                             :tick-seconds tick-seconds))
+                             :tick-seconds tick-seconds :notice-broker notice-broker))
   ;; no-business-timers は外の世界の外側: 外の世界に timer-handler を置いた走りでは、それが先に ArmedTimers に答える(#3093)。
   (<- answer (with-handlers [(session-store) no-business-timers #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
@@ -3642,10 +3648,12 @@
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None] [runtime-env None] [skip-idle True] [tick-seconds SIM-TICK-SECONDS]]
+                  [outside None] [store None] [deployments None] [runtime-env None] [skip-idle True] [tick-seconds SIM-TICK-SECONDS]
+                  notice-broker]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)
+         (: notice-broker MemoryBroker)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -3660,18 +3668,20 @@
    declare の --runtime-env と同じ — 本物の worker が準備し、子の run-context の runtime-env になる。既定 None)。壁の時計で回すなら
    wall-sim-cluster。skip-idle = worker の代役(宿)が、本番の判断で何も変えない拍を一度に眠る(既定 = 真。預けた heartbeat は受付の
    列がその刻に要求として渡す — 同値の検が偽と真を比べる・2026-09-30・#3865)。tick-seconds = worker の代役(宿)の拍の刻み(本番の
-   worker は周期で眠らない — #3871 の単位 4。宿の作り替えは単位 5。既定 SIM-TICK-SECONDS)。"
+   worker は周期で眠らない — #3871 の単位 4。宿の作り替えは単位 5。既定 SIM-TICK-SECONDS)。notice-broker = 知らせの broker
+   (doeff-events の MemoryBroker — coordinator が worker の生死の出来事を出す先。呼び手が作って渡し、筋書きと呼び手の世界の job は同じ
+   broker の受け手に成れる。既定は無い — sim は作らない・#3850)。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
-                                           :skip-idle skip-idle :tick-seconds tick-seconds))))
+                                           :skip-idle skip-idle :tick-seconds tick-seconds :notice-broker notice-broker))))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None] [deployments None] [runtime-env None] [tick-seconds SIM-TICK-SECONDS]]
+                       [store None] [deployments None] [runtime-env None] [tick-seconds SIM-TICK-SECONDS] notice-broker]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: tick-seconds float)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: tick-seconds float) (: notice-broker MemoryBroker)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -3682,5 +3692,5 @@
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
-                                           :tick-seconds tick-seconds))))
+                                           :tick-seconds tick-seconds :notice-broker notice-broker))))
   answer)

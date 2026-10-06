@@ -13,6 +13,7 @@
 (require doeff-hy.macros [deftest defk deff defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が名指す
 (import pathlib [Path])
@@ -167,7 +168,7 @@
   {:pre [(: rig RunnersRig) (: scenario Program)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きを組の上で回すため(sim の組は sim-cluster の中で・担い手 a・b は sim の worker)。"
   (if (= rig.kind "sim")
-      (<- (sim-cluster NO-JOBS scenario :workers SIM-RUNNERS :timing TIMING))
+      (<- (sim-cluster :notice-broker (MemoryBroker) NO-JOBS scenario :workers SIM-RUNNERS :timing TIMING))
       (<- (with-handlers rig.handlers (rig-body rig scenario))))
   True)
 
@@ -373,7 +374,7 @@
 (deftest test-a-coordinator-outage-hides-the-roster-but-keeps-tasks-running
   ;; 担い手は coordinator の途絶で切り離した task を止めない(fence を越えても kept-when-cut-off が残す)。task は 1 度だけ a で走り、
   ;; 結果を書いて終わる(走らせ直さない)。
-  (<- processes tuple (sim-cluster NO-JOBS (outage-hides-the-roster) :workers SIM-RUNNERS))
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (outage-hides-the-roster) :workers SIM-RUNNERS))
   (assert (= (len processes) 1) processes)
   (val only (get processes 0))
   (assert (= #(only.worker only.exit-code) #("a" 0)) processes))
@@ -445,12 +446,12 @@
   True)
 
 (deftest test-a-runner-stopped-without-a-drain-gets-no-new-task-until-its-next-generation
-  (<- ok bool (sim-cluster NO-JOBS (stop-without-drain-then-return) :workers SIM-RUNNERS :timing TIMING))
+  (<- ok bool (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (stop-without-drain-then-return) :workers SIM-RUNNERS :timing TIMING))
   (assert ok))
 
 (deftest test-a-counterexample-worker-that-does-not-announce-its-stop-breaks-c3
   ;; 失敗ケース: a が止まり始めを heartbeat で名乗らない(silent-stop)と、同じ前半で task が止まった a の世代に置かれ、条 C3 が task を名指す。
-  (<- seen StopRecords (sim-cluster NO-JOBS (stop-without-drain-and-submit) :workers SILENT-STOP-RUNNERS :timing TIMING))
+  (<- seen StopRecords (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (stop-without-drain-and-submit) :workers SILENT-STOP-RUNNERS :timing TIMING))
   (<- breaches tuple (stopped-generation-gets-no-new-task seen.stopped seen.placed))
   (assert (= breaches #(STOPPED-KEY)) seen))
 
@@ -494,7 +495,7 @@
   True)
 
 (deftest test-a-task-placed-just-before-its-runner-stops-goes-back-to-waiting
-  (<- ok bool (sim-cluster NO-JOBS (submit-then-stop-then-return) :workers SIM-RUNNERS :timing TIMING))
+  (<- ok bool (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (submit-then-stop-then-return) :workers SIM-RUNNERS :timing TIMING))
   (assert ok))
 
 
@@ -532,7 +533,7 @@
 
 (deftest test-the-roster-carries-the-k8s-node-each-runner-names
   ;; 担い手 a は node zeus に置かれ、b は node を名乗らない(k8s の外)。名簿の読みは spec.node を写し、空を別の名で埋めない。
-  (<- ok bool (sim-cluster NO-JOBS (nodes-named)
+  (<- ok bool (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (nodes-named)
                            :workers #((replace (get SIM-RUNNERS 0) :node "zeus") (get SIM-RUNNERS 1))
                            :timing TIMING))
   (assert ok))

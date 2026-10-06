@@ -11,6 +11,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import pytest)
 (import doeff_time [Delay])
@@ -103,7 +104,7 @@
 
 (deftest test-the-coordinator-keeps-answering-while-the-k8s-reads-do-not-answer [monkeypatch capfd]
   (<- (stalled-k8s monkeypatch False))
-  (<- got StalledReads (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (stalled-reads-scenario) :workers WORKERS :deployments DEPLOYMENTS))
+  (<- got StalledReads (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (stalled-reads-scenario) :workers WORKERS :deployments DEPLOYMENTS))
   (assert (<= got.slowest-ms ANSWER-WITHIN-MS) got)
   ;; 区間の間に job が止まって起き直していない(同じ 1 つの process が動き続ける)。
   (assert (! (kept-running got.before got.after)) got)
@@ -114,6 +115,6 @@
 (deftest test-a-k8s-read-inside-the-loop-stops-the-answers-and-the-worker-stops-its-job [monkeypatch]
   ;; 失敗ケース: 読みを調停ループの中で待つと、答えが区間の分だけ遅れ、worker が fence を越えて job を止める。
   (<- (stalled-k8s monkeypatch True))
-  (<- got StalledReads (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (stalled-reads-scenario) :workers WORKERS :deployments DEPLOYMENTS))
+  (<- got StalledReads (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (stalled-reads-scenario) :workers WORKERS :deployments DEPLOYMENTS))
   (assert (> got.slowest-ms ANSWER-WITHIN-MS) got)
   (assert (not (! (kept-running got.before got.after))) got))

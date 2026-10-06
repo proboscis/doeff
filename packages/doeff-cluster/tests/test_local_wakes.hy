@@ -6,6 +6,7 @@
 ;;   送る GET /detached/<key> は終わりの前後の 2 回ほど — 前の形(DETACHED-POLL-SECONDS = 1 秒ごと)なら 120 秒の task で 120 回を越える。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import pytest)
 (import doeff_cluster.sim.local :as local)
@@ -53,7 +54,7 @@
 (deftest test-a-process-end-wakes-its-waiter-at-the-write-without-rereading [monkeypatch]
   ;; 120 拍で抜ける service の終わりを待つ: 起きるのは終わりを書いた刻ちょうど(1 秒の刻みに丸めない)で、待つ相手の判断は定数回。
   (<- judged list (count-calls monkeypatch "ended_process"))
-  (<- seen ProcessWait (sim-cluster (long-quitters sim-foundation) (wait-for-quitter None)))
+  (<- seen ProcessWait (sim-cluster :notice-broker (MemoryBroker) (long-quitters sim-foundation) (wait-for-quitter None)))
   (assert (= seen.answer (ProcessEnded :job "long-quitter" :instance seen.process.instance :worker seen.process.worker)) seen)
   (assert (= seen.woke-ms seen.process.ended-ms) seen)
   (assert (<= 1 (len judged) READS-BOUND) (len judged)))
@@ -80,7 +81,7 @@
 (deftest test-a-process-wait-expires-at-its-timeout-and-a-zero-timeout-only-reads [monkeypatch]
   ;; 終わらない間の待ちは期限の刻に ProcessWaitExpired で返り、timeout 0 は待たずに読む。その間に読み直さない。
   (<- judged list (count-calls monkeypatch "ended_process"))
-  (<- seen ExpiredWaits (sim-cluster (long-quitters sim-foundation) (expire-on-quitter)))
+  (<- seen ExpiredWaits (sim-cluster :notice-broker (MemoryBroker) (long-quitters sim-foundation) (expire-on-quitter)))
   (assert (= seen.first (ProcessWaitExpired :job "long-quitter" :waited-seconds 30.0)) seen)
   (assert (= (- seen.woke-ms seen.started-ms) 30000) seen)
   (assert (= seen.now (ProcessWaitExpired :job "long-quitter" :waited-seconds 0.0)) seen)
@@ -113,7 +114,7 @@
 (deftest test-a-detached-task-end-wakes-its-waiter-without-polling-the-coordinator [monkeypatch]
   ;; 120 秒眠る task を期限なしで待つ: 答えは task の答えで、coordinator への GET /detached/<key> は定数回(前の形は 1 秒ごと)。
   (<- sent list (count-calls monkeypatch "send_resent"))
-  (<- seen DetachedWait (sim-cluster (pulses sim-foundation) (wait-for-slow-task "slow" None)))
+  (<- seen DetachedWait (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (wait-for-slow-task "slow" None)))
   (assert (= seen.answer (DetachedSucceeded SLOW-SECONDS)) seen)
   (assert (>= (- seen.woke-ms seen.started-ms) (int (* 1000 SLOW-SECONDS))) seen)
   (<- reads int (detached-reads sent "slow"))
@@ -123,7 +124,7 @@
 (deftest test-a-detached-wait-with-a-timeout-returns-pending-at-the-timeout-without-polling [monkeypatch]
   ;; 30 秒の期限の待ちは、終わらない task を期限の刻に DetachedPending で返し、その間に読み直さない。
   (<- sent list (count-calls monkeypatch "send_resent"))
-  (<- seen DetachedWait (sim-cluster (pulses sim-foundation) (wait-for-slow-task "slow-30" 30.0)))
+  (<- seen DetachedWait (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (wait-for-slow-task "slow-30" 30.0)))
   (assert (isinstance seen.answer DetachedPending) seen)
   (assert (= (- seen.woke-ms seen.started-ms) 30000) seen)
   (<- reads int (detached-reads sent "slow-30"))
@@ -183,7 +184,7 @@
 (deftest test-a-process-start-wakes-its-waiter-at-the-write-without-rereading [monkeypatch]
   ;; 60 秒後に起きる worker の上の job の起き上がりを待つ: 起きるのは process を記録した刻ちょうどで、待つ相手の判断は定数回。
   (<- judged list (count-calls monkeypatch "first_process"))
-  (<- seen StartWait (sim-cluster (long-quitters sim-foundation) (wait-for-late-start)
+  (<- seen StartWait (sim-cluster :notice-broker (MemoryBroker) (long-quitters sim-foundation) (wait-for-late-start)
                                   :workers #((SimWorker :name "late" :provides NET :starts-down True :task-reserve 0))))
   (assert (= seen.woke-ms seen.process.started-ms) seen)
   (assert (>= (- seen.woke-ms seen.started-ms) 60000) seen)

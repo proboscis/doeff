@@ -7,6 +7,7 @@
 ;; 反例(直す前): 名乗りは <job>/<世代>、外しは <worker>/<世代>/ の頭だったので、終わった process の lease は外れず期限まで残った —
 ;; 入れ替え(handoff)で旧い版が lease を持ったまま止まると、新しい版は lease の期限(TTL)まで取れなかった。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.entry.cluster_foundation [lease-holder-of])
 (import doeff_cluster.shared.intent.run_context [RunContext])
@@ -54,7 +55,7 @@
 (deftest test-after-a-handoff-the-new-version-takes-the-lease-the-old-one-held-without-waiting-for-its-expiry
   ;; handoff: 新しい版は待機で Ready と報告し、旧い版は lease を返さずに止まる(止めの合図 -15)。worker が終わった旧い版の lease を
   ;; 返すので、新しい版は旧い版が止まってから TTL より十分短い間に lease を取る(直す前は外しが当たらず、期限まで取れなかった)。
-  (<- answer tuple (sim-cluster (lease-writers lease-sim-foundation) (redeclare-and-read 25.0)))
+  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) (lease-writers lease-sim-foundation) (redeclare-and-read 25.0)))
   (setv #(before after processes) answer)
   (val old (next (gfor p processes :if (= p.instance (get before HOLDER-ROW "instance")) p)))
   (assert (= old.exit-code -15) processes)
@@ -87,7 +88,7 @@
 (deftest test-after-a-worker-dies-and-restarts-under-the-same-name-the-new-process-takes-the-lease-without-waiting-for-its-expiry
   ;; worker が突然止まると、旧い世代の process は lease を返さずに終わる(worker も返さない)。同じ名の新しい世代が名乗った時に
   ;; coordinator が旧い世代の process の担い手を外すので、新しい process は起きてすぐ lease を取る(直す前は期限まで取れなかった)。
-  (<- answer tuple (sim-cluster (lease-writers lease-sim-foundation) (kill-restart-and-read 25.0)))
+  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) (lease-writers lease-sim-foundation) (kill-restart-and-read 25.0)))
   (setv #(before after processes killed-at started) answer)
   (assert started)
   (val old (next (gfor p processes :if (= p.instance (get before HOLDER-ROW "instance")) p)))

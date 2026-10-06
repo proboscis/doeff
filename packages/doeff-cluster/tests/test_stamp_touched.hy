@@ -7,6 +7,7 @@
 ;;   dirty-keys を両方の snapshot の鍵の全部に差し替えた stamp)と同じ版・出来事の記録になることを確かめる。
 (require doeff-hy.macros [deftest defk deff <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import dataclasses [replace])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -106,15 +107,15 @@
 (deftest test-touched-only-stamp-matches-the-every-key-stamp-on-every-settle [monkeypatch]
   (setv (get SEEN 0) 0 (get SEEN 1) #())
   (.setattr monkeypatch api-policy "stamp" checking-stamp)
-  (<- (sim-cluster (relay sim-foundation) (watch-rows 10.0 "relay/")))
-  (<- (sim-cluster (beacons sim-foundation) (crash-and-watch "beacon" "beacon/")))
-  (<- (sim-cluster (handoff-beacons sim-foundation)
+  (<- (sim-cluster :notice-broker (MemoryBroker) (relay sim-foundation) (watch-rows 10.0 "relay/")))
+  (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (crash-and-watch "beacon" "beacon/")))
+  (<- (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                    (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)))
-  (<- (sim-cluster (gpu-only sim-foundation) (watch-trainer)
+  (<- (sim-cluster :notice-broker (MemoryBroker) (gpu-only sim-foundation) (watch-trainer)
                    :workers #((SimWorker :name "cpu-1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                               (SimWorker :name "gpu-1" :provides (frozenset ["cluster-net" "gpu"]) :task-reserve 0))))
-  (<- (sim-cluster (detaching sim-foundation) (watch-rows 15.0 "detached/")))
-  (<- (sim-cluster (beacons sim-foundation) (kill-drain-restart) :workers TWO-WORKERS))
+  (<- (sim-cluster :notice-broker (MemoryBroker) (detaching sim-foundation) (watch-rows 15.0 "detached/")))
+  (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (kill-drain-restart) :workers TWO-WORKERS))
   (assert (> (get SEEN 0) 100) SEEN)
   (assert (= (get SEEN 1) #()) (get SEEN 1)))
 
@@ -139,7 +140,7 @@
 
 (deftest test-a-carriers-report-alone-marks-the-services-it-carries [monkeypatch]
   (.setattr monkeypatch api-policy "stamp" capture-stamp)
-  (<- (sim-cluster (relay sim-foundation) (watch-rows 10.0 "relay/")))
+  (<- (sim-cluster :notice-broker (MemoryBroker) (relay sim-foundation) (watch-rows 10.0 "relay/")))
   (.undo monkeypatch)
   (val state (get (get CAPTURED 0) 0))
   (val now (get (get CAPTURED 0) 1))

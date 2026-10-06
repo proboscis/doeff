@@ -13,6 +13,7 @@
 ;; その後に coordinator の判断(純粋な関数)と worker の途絶の検。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
@@ -213,7 +214,7 @@
   ;; sim の組は筋書きを sim-cluster の中で回す(担い手は sim の worker)。他の組は handler を被せ、担い手を並べて回す。
   (try
     (if (= rig.kind "sim")
-        (<- (sim-cluster :timing (ClusterTiming) NO-JOBS scenario :workers rig.sim-workers))
+        (<- (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS scenario :workers rig.sim-workers))
         (<- (with-handlers rig.handlers (with-worker rig scenario))))
     (finally
       (rig.close)))

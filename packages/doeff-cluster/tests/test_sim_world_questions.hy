@@ -9,6 +9,7 @@
 ;; - worker の宿(sim-host)の読んで直して書く 1 組(状態の報告 PublishStatus)は、世界への問い 1 つ(ChangeHostTruth)。
 ;;   反例: 宿の真実を読み(HostTruthOf)、直して置き直す(PutHostTruth)形では 1 組に 2 つ(この検は赤)。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
+(import doeff_events [MemoryBroker])
 (import doeff [with-handlers Program])
 (import doeff_vm [EffectBase])
 (import doeff_time [sim-time-handler])
@@ -60,7 +61,7 @@
 (defk questions-in-quiet-steps [n]
   {:pre [(: n int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の列・本物の observe-requests・本物の sim の世界の間に数える handler を置き、静かな歩 n 回の問いの列を返すため。"
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) None None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) None None "sim" 0 None None None None))
   (val queue (RequestQueue))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter
@@ -87,7 +88,7 @@
 
 
 (deftest test-a-host-read-change-write-asks-the-world-once
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter] (publish-once plan))))
   ;; 報告の 1 組は ChangeHostTruth 1 つ(読みと書きを別々に聞かない)。
@@ -138,7 +139,7 @@
 
 
 (deftest test-a-step-that-takes-a-request-asks-the-world-once
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter] (one-request-step))))
   (assert (= asked #("AdmitBatch")) asked))
@@ -168,7 +169,7 @@
 
 
 (deftest test-a-persist-asks-the-world-nothing-without-a-queued-crash-and-the-step-end-notes-it
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter] (persist-then-step-end))))
   ;; 落ちの注入が待っていなければ、書きの前に問わない(#3132)・書き終えた知らせは歩の終わりの問い 1 つに入る。
@@ -204,7 +205,7 @@
 (defk crash-persists []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の sim の世界の上で persist-with-a-queued-crash を回すため。"
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- answer tuple ((sim-time-handler :clock (! (clock-at 0)))
                     (with-handlers [(session-store) (sim-world plan) world-question-counter] (persist-with-a-queued-crash))))
   answer)
@@ -271,7 +272,7 @@
 
 
 (deftest test-a-step-that-takes-persists-and-replies-asks-the-world-twice
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- seen tuple ((sim-time-handler :clock (! (clock-at 0)))
                   (with-handlers [(session-store) (sim-world plan) world-question-counter] (whole-step False))))
   (val answer (get seen 0))
@@ -286,7 +287,7 @@
 (deftest test-a-reply-after-the-stop-is-released-at-once
   ;; 止めを注入した歩: 歩の終わりの判定が止まりと答える。その後の返事(止まる調停ループの待ちへの返事と同じ — 次の歩の頭が無い)は
   ;; すぐ手放す(ReleaseRequest)— 溜めると、止まった後に接続の失敗を返す相手に残る。
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- seen tuple ((sim-time-handler :clock (! (clock-at 0)))
                   (with-handlers [(session-store) (sim-world plan) world-question-counter] (whole-step True))))
   (val answer (get seen 0))
@@ -309,7 +310,7 @@
 
 
 (deftest test-a-worker-stop-question-asks-the-world-once
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter] (under-host plan (StopRequested)))))
   (assert (= asked #("StopRequestOf")) asked))
@@ -317,7 +318,7 @@
 
 (deftest test-a-heartbeat-beat-does-not-ask-the-world-for-the-plan-or-the-parts
   ;; 宿の最初の拍は heartbeat を送る(まだ fresh でない)。coordinator は立っていない(列が上がっていない)ので送りは接続の失敗で返る。
-  (<- plan SimPlan (sim-plan (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
+  (<- plan SimPlan (sim-plan :notice-broker (MemoryBroker) (beacons sim-foundation) #(HOST) None "sim" 0 None None None None))
   (<- asked tuple ((sim-time-handler :clock (! (clock-at 0)))
                    (with-handlers [(session-store) (sim-world plan) world-question-counter] (under-host plan (ReadDesired :stopping False)))))
   (assert (not (& (set asked) #{"PlanOf" "PartsOf"})) asked))
