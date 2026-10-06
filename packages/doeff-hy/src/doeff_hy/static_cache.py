@@ -1,52 +1,42 @@
 """doeff-hy-check の展開の cache(agora-redesign #2153)。
 
 変えた file 3 つを検めるだけでも、それが import する根の下の .hy(agora の画面の core で 105 個)を全部展開するので
-36 秒かかった。依存の展開は source が変わらなければ同じ結果になるので、展開した Python・位置の対応表・所見を
-鍵ごとに保存し、次の実行は変えた file だけを展開する。
+36 秒かかった。依存の展開は、展開が依った物が変わらなければ同じ結果になるので、展開した Python・位置の対応表・所見を
+保存し、次の実行は変わった物だけを展開する。
 
-鍵(sha256)= 次のどれかが変われば別の鍵になる:
+展開が依った物(agora-redesign #3862 — テストの実行の側の bytecode の記録と同じ 1 つの作り方):
 - 展開する source の中身・その module 名・根からの相対 path(診断の path と import の解決に効く)。
-- doeff-hy の macro と型検査の展開の source(doeff_hy の .hy / .py 全部 — macro が変われば展開が変わる)。
-- source が `require` する根の下の macro の module の中身(推移的に)。名は Hy の compiler が require に渡すのと同じ
-  名で拾う — 点つきの `a.b.c`(reader は `(. a b c)` の式に読む)・1 つの require に並べた 2 つ目からの module・
-  相対の `.x`(source の package から解く)も。点つきの名を拾わず、macro を変えても古い展開が当たっていた
-  (agora-redesign #2696)。根の下で当たらない名は、根の外の最上位の package の置き場(find_spec — import はしない)で
-  file に解いて中身を入れる(別の package の macro — 例 doeff-adr.macros。以前は黙って捨て、macro を変えても古い展開が
-  当たっていた — agora-redesign #2774)。doeff_hy 自身は上の指紋が持つので二重に入れない。解けない名は Hy の require も
-  失敗するので鍵に入れない。
-- Hy の版(Hy を上げると展開が変わりうる — agora-redesign #2774)。
-- この file の版(CACHE_VERSION — 保存の形を変えたら上げる)。
+- 展開が通った file の記録(``doeff_hy_bytecode_guard.current_record``)— Hy の版、require した macro の module、macro が
+  呼ぶ同じ package の補助の module(名前空間の値と、macro の本体の中の import)、推移的な require、根の外の別の package の
+  macro。macro から辿れない型検査の展開の後処理(doeff_hy.static_check とそれが参照する doeff_hy の module)も同じ辿り方で
+  入れる(``also``)。
+以前は doeff_hy の package 全体の指紋と、source を Hy の reader で読んで集めた require の先の .hy だけをキーに入れていた。
+展開に関係ない doeff_hy の commit 1 つで全部の展開が作り直しになり(1 file の測りが 8 秒から 72 秒)、一方で macro が呼ぶ
+補助の .py を変えても古い展開が当たっていた。
 
-鍵を作るには source が `require` する module の名が要り、それを知るには source を Hy の reader で読む。読みは展開の
-次に重く、cache が温かくても検める file の依存の全部(agora の controllers/agora_sim/screen.hy で 350 個)を毎回読み直して
-いた(1 file の測りの約 29 秒のほとんど — agora-redesign #2675)。だから読みの結果(require する名の列)も source の中身の
-指紋ごとに保存して引く(<cache dir>/requires/<頭 2 字>/<指紋>.txt — 1 行 1 名)。指紋 = 読みの版(REQUIRES_VERSION)・
-Hy の版・source の中身(reader の答えは後の 2 つだけで決まる)。読みの答えの意味を変えたら REQUIRES_VERSION を上げ、
-古い版の保存(点つきの名を欠いた答え)を読まない。展開の保存と別の拡張子にして、展開の数え(*.json)に混ぜない。
+展開が通った file は展開した後にしか分からないので、保存は 2 段にする(doeff-effect-analyzer の展開の保存 — agora-redesign
+#3598 — と同じ形): source の中身・module 名・相対 path・この file の版で決まる場所(<cache dir>/<頭 2 字>/<場所>/)の中に、
+展開が通った file の記録ごとの entry(<記録の指紋>.json)を置き、記録が今の環境に合う entry だけを読む
+(``record_is_current_here`` — 記録の path は作った作業木の物なので、module 名から今の環境の file を引き直して照らす)。
+doeff の版が違う作業木どうしは、互いの entry を上書きせずに並べて持つ。
 
-保存の形は 1 鍵 1 file の JSON(<cache dir>/<鍵の頭 2 字>/<鍵>.json)。壊れた file は読めない物として捨てて展開し直す。
+保存の形は 1 entry 1 file の JSON。壊れた file は読めない物として飛ばし、展開し直す。
 """
 
 import hashlib
-import importlib.util
 import json
-from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import hy
-from hy.errors import HyLanguageError
-from hy.models import Expression, Keyword, Symbol
+from doeff_hy_bytecode_guard import record_from_rows, record_is_current_here
 
-import doeff_hy
+if TYPE_CHECKING:
+    from doeff_hy_bytecode_guard import MacroRecord
 
-CACHE_VERSION = 1
-# require の読みの保存の版(上の docstring)。1 = 一番外の require の 1 つ目の点なしの名だけ。
-# 2 = Hy の compiler が require に渡す名を全部(点つき・2 つ目からの module・相対)— agora-redesign #2696。
-REQUIRES_VERSION = 2
-# macro と展開の source を _doeff_hy_digest が丸ごと鍵に入れる package(根の外の macro の解決では二重に読まない)。
-DIGESTED_PACKAGE = "doeff_hy"
+# 保存の形の版(形を変えたら上げる — 場所の名に入るので、古い版の entry は読まれない)。
+# 2 = 展開が通った file の記録で照らす形(agora-redesign #3862)。
+CACHE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -72,248 +62,93 @@ class CachedFinding:
 
 
 @dataclass(frozen=True)
+class CachedDependency:
+    """保存した記録の 1 行(展開が通った file 1 つ — doeff_hy_bytecode_guard の MacroDependency と同じ欄)。"""
+
+    module: str
+    file: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class CachedProjection:
-    """1 つの .hy の展開の結果のうち、保存して読み戻す部分。"""
+    """1 つの .hy の展開の結果のうち、保存して読み戻す部分と、展開が通った file の記録。"""
 
     text: str
     spans: tuple[CachedSpan, ...]
     findings: tuple[CachedFinding, ...]
+    used: "MacroRecord"
 
 
 @dataclass(frozen=True)
 class CacheMiss:
-    """保存した展開を使えない理由(無い・壊れている・形が違う)。呼び手は展開し直して保存する。"""
+    """保存した展開を使えない理由(無い・今の環境に合う記録の entry が無い)。呼び手は展開し直して保存する。"""
 
     reason: str
 
 
-@cache
-def _doeff_hy_digest() -> str:
-    """doeff-hy の macro と展開の source の指紋(macro が変われば全部の展開を作り直すため)。"""
-    package = Path(doeff_hy.__file__).parent
+def place(text: str, module: str, relative: str) -> str:
+    """source の展開の場所の名(source の中身・module 名・相対 path・保存の形の版で決まる — 上の docstring)。"""
     digest = hashlib.sha256()
-    for path in sorted(p for p in package.rglob("*") if p.suffix in {".hy", ".py", ".pyi"}):
-        digest.update(str(path.relative_to(package)).encode())
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
-def _requires_entry(cache_dir: Path, text: str) -> Path:
-    """require する名の列の保存先(読みの版・Hy の版・source の中身の指紋 — 上の docstring)。"""
-    digest = hashlib.sha256()
-    for part in ("requires", str(REQUIRES_VERSION), hy.__version__, text):
+    for part in (str(CACHE_VERSION), module, relative, text):
         digest.update(part.encode())
-        digest.update(b"\0")
-    key = digest.hexdigest()
-    return cache_dir / "requires" / key[:2] / f"{key}.txt"
-
-
-def _required_modules(text: str, cache_dir: Path | None = None) -> tuple[str, ...]:
-    """source の一番外の `(require …)` が require する module の名(macro の展開が依る module を鍵に入れるため)。cache_dir があれば
-    読みの結果を source の中身の指紋ごとに引き、無ければ読んで保存する(上の docstring — 毎回の reader の読みを省くため)。"""
-    if cache_dir is None:
-        return _read_required_modules(text)
-    entry = _requires_entry(cache_dir, text)
-    try:
-        return tuple(name for name in entry.read_text(encoding="utf-8").split("\n") if name)
-    except OSError:
-        pass
-    names = _read_required_modules(text)
-    try:
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        temporary = entry.with_suffix(".tmp")
-        temporary.write_text("\n".join(names), encoding="utf-8")
-        temporary.replace(entry)
-    except OSError:
-        pass
-    return names
-
-
-def _read_required_modules(text: str) -> tuple[str, ...]:
-    """source を Hy の reader で読み、一番外の `(require …)` が require する module の名を並べる(保存しない読みの 1 か所)。"""
-    try:
-        forms = hy.read_many(text)
-        return tuple(
-            name
-            for form in forms
-            if isinstance(form, Expression) and len(form) >= 2 and form[0] == Symbol("require")
-            for name in _require_entries(form[1:])
-        )
-    except HyLanguageError:  # 読めない source は展開も失敗する(CompileFailure)— 鍵は source の中身だけで決まる
-        return ()
-
-
-def _require_entries(arguments: Sequence[object]) -> tuple[str, ...]:
-    """`(require …)` の引数のうち module の名の物を並べる。Hy の文法では module の名の後に `[名 …]`・`*`・
-    `:as 別名`・`:macros …`・`:readers …` が 0〜2 つ続き、その後に次の module の名が来てよい。名でない物 =
-    括弧・`*`・keyword・`:as` の次の別名。"""
-    return tuple(
-        name
-        for previous, argument in zip((None, *arguments), arguments)
-        if not (isinstance(previous, Keyword) and previous == Keyword("as"))
-        and (name := _module_name(argument)) is not None
-    )
-
-
-def _module_name(argument: object) -> str | None:
-    """require の 1 つの引数が module の名なら、Hy の compiler が require に渡すのと同じ名(hy.core.result_macros の
-    module_name_str と compile_require の規則 — 部分ごとに mangle・相対は先頭の点を残す)。名でなければ None。
-    reader は `a.b.c` を `(. a b c)`、相対の `.x` を `(. None x)`・`..x.y` を `(.. None x y)` の式に読む。"""
-    match argument:
-        case Symbol() if argument == Symbol("*"):
-            return None
-        case Symbol() if not argument.strip("."):
-            return str(argument)  # `.` だけ = その source の package(相対)
-        case Symbol():
-            return hy.mangle(argument)
-        case Expression():
-            return _dotted_module_name(tuple(argument))
-        case _:
-            return None
-
-
-def _dotted_module_name(parts: tuple[object, ...]) -> str | None:
-    """`(. a b c)`・`(. None x)`・`(.. None x y)` の式の module の名(頭が点だけの記号で、残りが全部記号の時だけ)。"""
-    symbols = tuple(part for part in parts if isinstance(part, Symbol))
-    if len(symbols) != len(parts) or len(symbols) < 2 or symbols[0].strip("."):
-        return None
-    head, *rest = symbols
-    relative = rest[0] == Symbol("None")
-    dotted = ".".join(hy.mangle(part) for part in (rest[1:] if relative else rest))
-    return f"{head}{dotted}" if relative else dotted
-
-
-@dataclass(frozen=True)
-class _MacroSource:
-    """require で読む根の下の macro の module の file と、その file の相対の require(`.x`)を解く package。"""
-
-    path: Path
-    package: str
-
-
-def _package_of(module: str, path: Path) -> str:
-    """module の相対の require を解く package(__init__.hy なら module 自身・他は親の package)。"""
-    return module if path.name == "__init__.hy" else module.rpartition(".")[0]
-
-
-def _absolute_module(name: str, package: str) -> str | None:
-    """require の名を絶対の module 名にする。相対の名は package から解き、解けなければ None(Hy の require も失敗する)。"""
-    if not name.startswith("."):
-        return name
-    try:
-        return importlib.util.resolve_name(name, package)
-    except (ImportError, ValueError):
-        return None
-
-
-def _module_files(roots: tuple[Path, ...], module: str) -> tuple[Path, ...]:
-    """module の名が根の下で当たりうる file(根ごとに <名>.hy と <名>/__init__.hy)。"""
-    return tuple(
-        candidate
-        for root in roots
-        for candidate in (
-            root.joinpath(*module.split(".")).with_suffix(".hy"),
-            root.joinpath(*module.split(".")) / "__init__.hy",
-        )
-    )
-
-
-@cache
-def _outside_roots(top: str) -> tuple[Path, ...]:
-    """根の外の最上位の package(か module)を置いた dir — `_module_files` に根として渡す形(agora-redesign #2774)。
-    find_spec は最上位の名で引くので親を import せず、module 自体も import しない。1 回の実行の間は変わらないので名ごとに覚える。"""
-    try:
-        spec = importlib.util.find_spec(top)
-    except (ImportError, ValueError):
-        return ()
-    if spec is None:
-        return ()
-    if spec.submodule_search_locations:
-        return tuple(Path(location).parent for location in spec.submodule_search_locations)
-    if spec.origin is not None and spec.origin.endswith(".hy"):
-        return (Path(spec.origin).parent,)
-    return ()
-
-
-def _macro_files(roots: tuple[Path, ...], module: str) -> tuple[Path, ...]:
-    """require した module の名を、在る .hy の file に解く — 根の下で当たればそれ、当たらなければ根の外の package の置き場で
-    (別の package の macro — 例 doeff-adr.macros。以前は黙って捨て、macro を変えても古い展開が当たった — agora-redesign #2774)。
-    doeff_hy 自身は _doeff_hy_digest が持つので、根の外では引かない(二重に入れない)。"""
-    inside = tuple(candidate for candidate in _module_files(roots, module) if candidate.is_file())
-    top = module.split(".")[0]
-    if inside or top == DIGESTED_PACKAGE:
-        return inside
-    return tuple(candidate for candidate in _module_files(_outside_roots(top), module) if candidate.is_file())
-
-
-def _macro_sources(
-    roots: tuple[Path, ...],
-    text: str,
-    package: str,
-    seen: frozenset[Path] = frozenset(),
-    cache_dir: Path | None = None,
-) -> tuple[Path, ...]:
-    """source が require する macro の .hy を推移的に集める(根の下と、根の外の別の package — doeff_hy 自身は _doeff_hy_digest が
-    持つ)。package = source の相対の require を解く package。"""
-    modules = tuple(
-        absolute
-        for name in _required_modules(text, cache_dir)
-        if (absolute := _absolute_module(name, package)) is not None
-    )
-    found = tuple(
-        _MacroSource(candidate, _package_of(module, candidate))
-        for module in modules
-        for candidate in _macro_files(roots, module)
-        if candidate not in seen
-    )
-    known = seen | frozenset(macro.path for macro in found)
-    return tuple(macro.path for macro in found) + tuple(
-        deeper
-        for macro in found
-        for deeper in _macro_sources(
-            roots, macro.path.read_text(encoding="utf-8"), macro.package, known, cache_dir
-        )
-    )
-
-
-def cache_key(
-    roots: tuple[Path, ...], source: Path, module: str, relative: str, cache_dir: Path | None = None
-) -> str:
-    """展開を引く鍵(上の docstring の 4 つが同じなら同じ展開になる)。cache_dir があれば require の読みもそこで引く。"""
-    text = source.read_text(encoding="utf-8")
-    digest = hashlib.sha256()
-    for part in (str(CACHE_VERSION), hy.__version__, _doeff_hy_digest(), module, relative, text):
-        digest.update(part.encode())
-        digest.update(b"\0")
-    package = _package_of(module, source)
-    for macro in sorted(set(_macro_sources(roots, text, package, cache_dir=cache_dir))):
-        digest.update(macro.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
 
 
-def _entry(cache_dir: Path, key: str) -> Path:
-    return cache_dir / key[:2] / f"{key}.json"
+def _record_name(record: "MacroRecord") -> str:
+    """場所の中の entry の名(展開が通った file の module 名と中身の指紋 — file の path は書いた作業木の物なので入れない。
+    同じ中身の別の作業木は同じ entry に当たる。doeff-effect-analyzer の entry の名と同じ)。"""
+    digest = hashlib.sha256()
+    for part in (record.hy_version, *(f"{d.module}\0{d.sha256}" for d in record.dependencies)):
+        digest.update(part.encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
-def load(cache_dir: Path, key: str) -> CachedProjection | CacheMiss:
-    """保存した展開を読む。使えない時は理由つきの CacheMiss(呼び手が展開し直す)。"""
-    path = _entry(cache_dir, key)
-    if not path.is_file():
+def _place_dir(cache_dir: Path, name: str) -> Path:
+    return cache_dir / name[:2] / name
+
+
+def load(cache_dir: Path, name: str) -> CachedProjection | CacheMiss:
+    """場所の中で、展開が通った file の記録が今の環境に合う entry を読む。無ければ理由つきの CacheMiss(呼び手が展開し直す)。"""
+    directory = _place_dir(cache_dir, name)
+    if not directory.is_dir():
         return CacheMiss("無い")
+    for entry in sorted(directory.glob("*.json")):
+        match _read_entry(entry):
+            case CachedProjection() as cached if record_is_current_here(cached.used):
+                return cached
+            case _:
+                continue
+    return CacheMiss("今の環境に合う記録の entry が無い")
+
+
+def _read_entry(path: Path) -> CachedProjection | CacheMiss:
+    """entry 1 つを読む(読めない・形が違う時は CacheMiss)。"""
     try:
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return CacheMiss(f"読めない: {error}")
     match loaded:
-        case {"version": 1, "text": str(text), "spans": list(spans), "findings": list(findings)}:
+        case {
+            "version": 2,
+            "hy": str(hy_version),
+            "dependencies": list(dependencies),
+            "text": str(text),
+            "spans": list(spans),
+            "findings": list(findings),
+        }:
+            rows = tuple(_row(d) for d in dependencies)
+            read = tuple(row for row in rows if not isinstance(row, CacheMiss))
+            if len(read) != len(rows):
+                return CacheMiss("記録の行の形が違う")
             try:
                 return CachedProjection(
                     text,
-                    tuple(
-                        CachedSpan((s[0], s[1]), (s[2], s[3]), s[4], s[5]) for s in spans
-                    ),
+                    tuple(CachedSpan((s[0], s[1]), (s[2], s[3]), s[4], s[5]) for s in spans),
                     tuple(CachedFinding(**f) for f in findings),
+                    record_from_rows(hy_version, tuple((d.module, d.file, d.sha256) for d in read)),
                 )
             except (TypeError, IndexError) as error:
                 return CacheMiss(f"欄の形が違う: {error}")
@@ -321,11 +156,22 @@ def load(cache_dir: Path, key: str) -> CachedProjection | CacheMiss:
             return CacheMiss("版か形が違う")
 
 
-def store(cache_dir: Path, key: str, projection: CachedProjection) -> None:
-    """展開を保存する。書けなくても検めは続ける(cache は速さのためだけ)。"""
-    path = _entry(cache_dir, key)
+def _row(value: object) -> "CachedDependency | CacheMiss":
+    """記録の 1 行(module 名・file・sha256 の 3 つの文字列)。形が違えば CacheMiss。"""
+    match value:
+        case [str(module), str(file), str(sha256)]:
+            return CachedDependency(module, file, sha256)
+        case _:
+            return CacheMiss(f"記録の行の形が違う: {value!r}")
+
+
+def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
+    """展開を、場所の中の記録の entry に保存する。書けなくても検めは続ける(cache は速さのためだけ)。"""
+    path = _place_dir(cache_dir, name) / f"{_record_name(projection.used)}.json"
     payload = {
         "version": CACHE_VERSION,
+        "hy": projection.used.hy_version,
+        "dependencies": [[d.module, d.file, d.sha256] for d in projection.used.dependencies],
         "text": projection.text,
         "spans": [[*s.start, *s.end, s.hy_line, s.hy_column] for s in projection.spans],
         "findings": [vars(f) for f in projection.findings],

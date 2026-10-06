@@ -70,25 +70,38 @@ def is_hy_source(path: object) -> bool:
     return isinstance(path, str) and path.endswith(HY_SOURCE_SUFFIXES)
 
 
-def macro_dependencies(module: ModuleType, path: str) -> "list[MacroDependency]":
+def macro_dependencies(
+    module: ModuleType, path: str, also: "tuple[ModuleType, ...]" = ()
+) -> "list[MacroDependency]":
     """読み込み済みの Hy の module の展開が依った macro の file と今の sha256 — 記録を作る口と、索引のキャッシュの鍵
-    (agora-redesign #1291)が同じ 1 つの辿り方を使うための公開の口。"""
+    (agora-redesign #1291)が同じ 1 つの辿り方を使うための公開の口。``also`` は ``records.macro_provider_files`` の同名の引数。"""
     from doeff_hy_bytecode_guard import records  # 起動時に読まない
 
     return [
         # 読めない file は、どの sha256 とも合わない印で記録する — 記録から外すと、その file の変更を見落とす。
         records.MacroDependency(name, file, file_sha256(file) or records.UNREADABLE)
-        for name, file in records.macro_provider_files(module, path, sys.modules).items()
+        for name, file in records.macro_provider_files(module, path, sys.modules, also).items()
     ]
 
 
-def current_record(module: ModuleType, path: str) -> "MacroRecord":
+def current_record(
+    module: ModuleType, path: str, also: "tuple[ModuleType, ...]" = ()
+) -> "MacroRecord":
     """Hy の module(path の file を展開した物)の展開が依った物の記録 — 今の Hy の版と、macro の提供元の file と今の sha256。
-    compile の口が code に足す記録と、展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)が同じ 1 つの作り方を
-    使うための公開の口。"""
+    compile の口が code に足す記録と、展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の
+    保存(doeff_hy.static_cache — agora-redesign #3862)が同じ 1 つの作り方を使うための公開の口。``also`` は
+    ``records.macro_provider_files`` の同名の引数(macro の外で展開の結果を変える module)。"""
     from doeff_hy_bytecode_guard import records  # 起動時に読まない
 
-    return records.MacroRecord(_hy_version(), tuple(macro_dependencies(module, path)))
+    return records.MacroRecord(_hy_version(), tuple(macro_dependencies(module, path, also)))
+
+
+def record_from_rows(hy_version: str, rows: "tuple[tuple[str, str, str], ...]") -> "MacroRecord":
+    """保存した記録の行(module 名・file・sha256)から記録を組み直す — 記録を file に書いて読み戻す保存(型検査の展開の
+    保存 doeff_hy.static_cache — agora-redesign #3862)が、記録の形の持ち主(records)を直に import しないための公開の口。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    return records.MacroRecord(hy_version, tuple(records.MacroDependency(*row) for row in rows))
 
 
 def record_is_current_here(record: "MacroRecord") -> bool:

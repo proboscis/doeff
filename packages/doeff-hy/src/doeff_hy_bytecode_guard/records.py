@@ -260,17 +260,22 @@ def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:
 
 
 def macro_provider_files(
-    module: ModuleType, path: str, modules: Mapping[str, ModuleType]
+    module: ModuleType,
+    path: str,
+    modules: Mapping[str, ModuleType],
+    also: tuple[ModuleType, ...] = (),
 ) -> dict[str, str]:
     """module の展開が依った source の file の一覧 ``{module 名: file}``(名の順)。
 
     macro の提供元の module、提供元が参照する同じ top package の module(macro の中から呼ぶ補助の関数 — 名前空間の値と、
     提供元の関数・macro の本体の中の import の両方)、提供元自身が require した macro の提供元を辿る。Hy 自身(``hy.*``)は記録の Hy の版で覆う。
     module 自身の file(``path``)は Python の .pyc の有効判定が覆うので含めない。
+    ``also`` = macro の外で展開の結果を変える module(型検査の展開の後処理 doeff_hy.static_check — macro から辿れない)。
+    提供元と同じく、その file と、それが参照する同じ top package の module を辿る(agora-redesign #3862)。
     """
     files: dict[str, str] = {}
     seen: set[str] = set()
-    pending = list(_macro_providers(module, modules))
+    pending = [*_macro_providers(module, modules), *also]
     while pending:
         provider = pending.pop()
         name = provider.__name__
