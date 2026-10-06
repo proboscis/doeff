@@ -486,15 +486,16 @@
              :params (! (params-of #(#("ledger" stream) #("at" at) #("payload" payload) #("origin_host" origin-host) #("epoch" epoch))))))
 
 
-(defk living-events-filter [prefix expiry]
-  {:pre [(: prefix str) (: expiry (| EventExpiry None))] :post [(: % Clause)]
+(defk living-events-filter [prefix expiry bound]
+  {:pre [(: prefix str) (: expiry (| EventExpiry None)) (: bound str)] :post [(: % Clause)]
    :tags {:context "records" :role "foundation"}}
   "追記の列の読みの文(出来事 old)の WHERE の後ろに足す「保持の期限を過ぎた出来事を除く」条件を作るため(expiry = None は期限の無い列 —
-   空の断片で文を変えない)。条件は回収と同じ expired-event-condition(#3561 — 読みは回収を待たずに同じ境で期限を見る)。"
+   空の断片で文を変えない)。条件は回収と同じ expired-event-condition(#3561 — 読みは回収を待たずに同じ境で期限を見る)。bound = 境の刻の
+   引数の名(1 つの文に列を並べる読み — watch-head-statement — が列ごとに別の名を使う)。"
   (when (is expiry None)
     (return NO-CLAUSE))
-  (<- expired (expired-event-condition prefix expiry.separator))
-  (<- named (params-of #(#("before_at" expiry.before-at))))
+  (<- expired (expired-event-condition prefix expiry.separator bound))
+  (<- named (params-of #(#(bound expiry.before-at))))
   (Clause :text (.format " AND NOT ({})" expired) :params named))
 
 
@@ -503,7 +504,7 @@
    :tags {:context "records" :role "foundation"}}
   "追記の列の after より後を読む文を作るため。expiry = 列の保持の期限の境(None = 期限の無い列)— 期限を過ぎた出来事は、回収の前でも
    読みに出さない(上限の前に除く)。"
-  (<- living (living-events-filter prefix expiry))
+  (<- living (living-events-filter prefix expiry "before_at"))
   (Statement :text (.format "SELECT old.seq, old.at, old.payload FROM {p}append_rows AS old
                        WHERE old.ledger = :ledger AND old.seq > :after{l} ORDER BY old.seq LIMIT :limit"
                             :p prefix :l living.text)
@@ -516,9 +517,56 @@
   "追記の列の最後の出来事の番号(出来事が無ければ NULL)を 1 文で読む文を作るため(ReadStreamEnd)。末尾は保持の期限で変わる(期限を
    過ぎた出来事は数えない — 全部過ぎれば NULL = StreamEmpty)ので、ReadEvents と同じ条件で期限を過ぎた出来事を除く(expiry = None は
    期限の無い列)。"
-  (<- living (living-events-filter prefix expiry))
+  (<- living (living-events-filter prefix expiry "before_at"))
   (Statement :text (.format "SELECT max(old.seq) FROM {p}append_rows AS old WHERE old.ledger = :ledger{l}" :p prefix :l living.text)
              :params (+ (! (params-of #(#("ledger" stream)))) living.params)))
+
+
+(defk stream-tail-statement [prefix stream expiry stem]
+  {:pre [(: prefix str) (: stream str) (: expiry (| EventExpiry None)) (: stem str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "WatchChanges の頭の文(watch-head-statement)が列ごとに並べる副問い合わせ — 追記の列 stream の最後の生きている出来事の番号と刻
+   (seq・at — 生きている出来事が無ければ 0 行)を、(ledger, seq) の索引を後ろから 1 行で引く文を作るため(#3718)。期限の条件は ReadEvents
+   と同じ(expiry = None は期限の無い列)。stem = 引数の名の頭(1 つの文に列を並べても名が混ざらない)。
+   列の照らしを等号でなく両端の同じ範囲(ledger >= :l AND ledger <= :l — 決まった照合の text では等号と同じ行)で書き、並びを (ledger, seq) の
+   索引の並びのまま書くのは、PostgreSQL に (ledger, seq) の索引を後ろから引かせるため: 等号だと列の名が定数とみなされて並びから落ち、
+   planner は主鍵 seq を後ろから読んで列の名で濾す道を選ぶ — 末尾より後に他の列の出来事が多いほど読む行が増える(使い捨ての置き場の
+   EXPLAIN で、2000 行の列の末尾の読みが 4005 行を読み、範囲の形は 1 行 — test_pg_index_reads.hy が測る)。"
+  (<- living (living-events-filter prefix expiry (+ stem "before_at")))
+  (Statement :text (.format "SELECT old.seq, old.at FROM {p}append_rows AS old
+                       WHERE old.ledger >= :{s}ledger AND old.ledger <= :{s}ledger{l}
+                       ORDER BY old.ledger DESC, old.seq DESC LIMIT 1"
+                            :p prefix :s stem :l living.text)
+             :params (+ (! (params-of #(#((+ stem "ledger") stream)))) living.params)))
+
+
+(defrecord TailRead
+  "WatchChanges が末尾を名指した列 1 つの読みの材料(watch-head-statement に渡す・#3718): stream = 列の名 / expiry = 列の保持の期限の境
+   (None = 期限の無い列 — 読みの条件を足さない)。"
+  (#^ str stream)
+  (#^ (| EventExpiry None) expiry))
+
+
+(defk watch-head-statement [prefix tails]
+  {:pre [(: prefix str) (: tails tuple) (all (gfor tail tails (isinstance tail TailRead)))] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "WatchChanges の 1 回ぶんの読みの頭を 1 文 = 1 つの断面で読む文を作るため(#3718): 置き場の版・忘れた位置・変更の列の先頭の番号
+   (store-head-statement と同じ 3 つ)の後ろに、末尾を名指した列 tails ごとに最後の生きている出来事の番号と刻の 2 つを並べる(列ごとに
+   stream-tail-statement の文を LEFT JOIN … ON TRUE の副問い合わせにする — 生きている出来事の無い列は NULL の組)。変更の列の読み
+   (changes-statement)は頭の番号までなので、番号を取ってから commit するまでを書きの錠の中に置く約束(頭の註)の下で、変更と末尾は同じ
+   断面の物になる。READ COMMITTED では文ごとに断面が変わるので、末尾を別の文に分けない。tails が空なら store-head-statement と同じ答えの組。"
+  (var columns "")
+  (var joins "")
+  (var params #())
+  (for [#(index tail) (enumerate tails)]
+    (<- select Statement (stream-tail-statement prefix tail.stream tail.expiry (.format "t{}_" index)))
+    (:= columns (+ columns (.format ", t{i}.seq, t{i}.at" :i index)))
+    (:= joins (+ joins (.format "\n                       LEFT JOIN ({s}) AS t{i} ON TRUE" :s select.text :i index)))
+    (:= params (+ params select.params)))
+  (Statement :text (.format "SELECT e.epoch, e.floor, greatest(e.floor, (SELECT coalesce(max({p}row_changes.seq), 0) FROM {p}row_changes)){c}
+                       FROM {p}store_epoch AS e{j}
+                       WHERE e.id = 1" :p prefix :c columns :j joins)
+             :params params))
 
 
 (defk find-retired-key-statement [prefix stream idempotency-key]
@@ -547,20 +595,21 @@
              :params (! (params-of #(#("ledger" stream) #("retired" retired))))))
 
 
-(defk expired-event-condition [prefix separator]
-  {:pre [(: prefix str) (: separator (| str None))] :post [(: % str)]
+(defk expired-event-condition [prefix separator bound]
+  {:pre [(: prefix str) (: separator (| str None)) (: bound str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "出来事 old が保持の期限を過ぎた条件の文を作るため(引数 :before_at — 列の照らし old.ledger は含まない)。
+  "出来事 old が保持の期限を過ぎた条件の文を作るため(境の刻の引数 :{bound} — 回収と 1 列の読みは before_at・列を並べる読みは列ごとの名。
+   列の照らし old.ledger は含まない)。
    separator = None は出来事ごとに数える列(積んだ刻 ≦ 境の刻)・str は組で数える列(ByKeySuffix)の区切りで、組の出来事が全部 before-at
    以下に積まれた組だけ(= 組の最後の出来事から保持の秒 — admission.event-expired? と retention-group-of と同じ境)。回収(expiring-where)と
    読み(living-events-filter)がこの 1 つを使う(#3561)。刻の照らしは append_rows (ledger, at)・組の「新しい出来事」の照らしは
    (ledger, 組の名の式) の索引に当たる(#3614 — 組の名の式は索引と同じ key-suffix-expression)。"
   (if (is separator None)
-      "old.at <= :before_at"
-      (.format "old.at <= :before_at AND NOT EXISTS (
+      (.format "old.at <= :{b}" :b bound)
+      (.format "old.at <= :{b} AND NOT EXISTS (
                          SELECT 1 FROM {p}append_rows AS young
-                          WHERE young.ledger = old.ledger AND young.at > :before_at AND {young} = {old})"
-               :p prefix :young (! (key-suffix-expression "young.payload" separator))
+                          WHERE young.ledger = old.ledger AND young.at > :{b} AND {young} = {old})"
+               :b bound :p prefix :young (! (key-suffix-expression "young.payload" separator))
                :old (! (key-suffix-expression "old.payload" separator)))))
 
 
@@ -570,7 +619,7 @@
   "保持の期限を過ぎた列 :ledger の出来事 old の条件の文を作るため(引数 :ledger・:before_at — 期限の条件は
    expired-event-condition)。刈りの候補の読み(expiring-events-statement)と刈り(expire-events-statement・expire-event-groups-statement)が
    同じ条件を使う。"
-  (<- expired (expired-event-condition prefix separator))
+  (<- expired (expired-event-condition prefix separator "before_at"))
   (+ "old.ledger = :ledger AND " expired))
 
 

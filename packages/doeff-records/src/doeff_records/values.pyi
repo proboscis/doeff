@@ -166,10 +166,22 @@ class RowRemoved:
     key: tuple[str, ...]
     sequence: int
 
+# WatchChanges の答えの tails の 1 つ — 名指した列 1 つの末尾(#3718)。
+@dataclass(frozen=True, kw_only=True)
+class StreamTail:
+    stream: str
+    sequence: int
+    at: int
+
+@dataclass(frozen=True, kw_only=True)
+class StreamTailEmpty:
+    stream: str
+
 @dataclass(frozen=True)
 class Changes:
     items: tuple[RowChanged | RowRemoved, ...]
     cursor: WatchCursor
+    tails: tuple[StreamTail | StreamTailEmpty, ...]
 
 @dataclass(frozen=True)
 class Appended:
