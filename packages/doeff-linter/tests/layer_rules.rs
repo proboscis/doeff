@@ -3499,8 +3499,9 @@ fn an_absent_unserved_table_is_empty_but_an_absent_declaration_list_is_unreadabl
 }
 
 /// agora-redesign #1818(#1810 の子): DOEFF143(模擬の偽物)と DOEFF157(検だけの偽物)を規則の ID で名指して確かめる。
-/// 模擬の環境の fake-charge と検の file の test-charge は業務の効果 Charge に tap でなく答える(鳴る例)。同じ置き場の、効果を出し直す
-/// tap の handler(watch-charge・watch-refund)と、反例の表に在るわざと壊した handler(broken-refund・broken-charge)は鳴らない(鳴らない例)。
+/// 模擬の環境の fake-charge と検の file の test-charge は業務の効果 Charge に tap でなく答える(鳴る例)。同じ置き場の、受けた効果を
+/// そのまま渡す tap の handler(出し直しの答えを resume する watch-charge・reperform する watch-refund — agora-redesign #3834 から
+/// `(resume (Charge))` は効果の値そのものを答える節に読む)と、反例の表に在るわざと壊した handler(broken-refund・broken-charge)は鳴らない(鳴らない例)。
 #[test]
 fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are_not() {
     let files = [
@@ -3510,7 +3511,7 @@ fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are
             "app/sim/fake_billing.hy",
             "(import app.billing.intent.effects [Charge Refund])\n\
              (defhandler fake-charge (Charge [] (resume 0)))\n\
-             (defhandler watch-charge (Charge [] (resume (Charge))))\n\
+             (defhandler watch-charge (Charge [] (<- charged effect) (resume charged)))\n\
              (defhandler broken-refund (Refund [] (resume 0)))\n"
                 .to_string(),
         ),
@@ -3518,7 +3519,7 @@ fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are
             "app/billing/tests/test_fakes.hy",
             "(import app.billing.intent.effects [Charge Refund])\n\
              (defhandler test-charge (Charge [] (resume 1)))\n\
-             (defhandler watch-refund (Refund [] (resume (Refund))))\n\
+             (defhandler watch-refund (Refund [] (reperform effect)))\n\
              (defhandler broken-charge (Charge [] (resume 0)))\n\
              (deftest test-with-handlers (with-handlers [test-charge watch-refund broken-charge] 1))\n"
                 .to_string(),

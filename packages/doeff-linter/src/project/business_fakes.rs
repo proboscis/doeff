@@ -14,14 +14,18 @@
 //! 答えるのは、翻訳の層(`:translation-layer`)の handler 1 つだけ。翻訳の層の外の答え手と、同じ効果に答える翻訳の handler の 2 つ目以降を出す。
 //!
 //! DOEFF206(agora-redesign #3405・#3407・#3406): intent の層の効果には検証環境(`:verification-environment`)でも本番の翻訳の handler が
-//! 答える。検証環境の dir の節が intent の効果に狭い tap(出し直しの答えをそのまま resume)でなく答える所と、違反を通す表(外の世界の表・
+//! 答える。検証環境の dir の節が intent の効果に自前で答える(どれかの終わりが自前の値を返す — 片方の枝だけでも)所と、違反を通す表(外の世界の表・
 //! 下の層を通す表・検だけの偽物の表)の行が intent の効果を通す所を出す。登録簿で下げない(利用者 2026-10-04 "so this kind of violation,
 //! must be detected by doeff linter")。
 //!
 //! 届く先は DOEFF133・136 と同じ定義の辺の図(呼び出し・参照・入れ子)を根から前向きに辿る。全体の実行だけ(repo 全体の図が要る)。
 //! 模擬の根・本番の入口・業務の module・表の置き場は repo の宣言 `:business-fakes` から読み、ここには repo の名前を置かない。
 //!
-//! tap = 節の本体が同じ効果を出し直す節(節の頭の名の呼び・`(<- 答え effect)`・`(yield effect)` — 観測・障害の注入)。出し直した上で答えを変える節も tap に見える(読みの限界)。
+//! 節の判じは `clause_shapes_in` の 1 か所だけ(agora-redesign #3834 — それまで DOEFF143 の広い読みと DOEFF206 の狭い読みが同じ節を
+//! 別に判じていた)。節の形 `ClauseShape` は 2 つの欄を持つ: forwards = どれかの終わりが受けた効果をそのまま外へ渡す・answers = どれかの
+//! 終わりが自前の値を返す。この file の「tap」は forwards の在る節(観測・障害の注入 — 片方の枝でだけ出し直す節も含む)を指し、
+//! 偽物の判じ(DOEFF143・155・156・157・158)はそれを外す。反例の表の当たり(DOEFF143・157 の表の照らし・164・167)と DOEFF206 は
+//! answers の在る節に表の行を求める。
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -110,60 +114,34 @@ fn head_symbol<'s>(source: &'s str, items: &[Form]) -> Option<&'s str> {
     items.first().filter(|f| matches!(f.node, Node::Symbol)).map(|f| text(source, f))
 }
 
-/// form の中に同じ効果の出し直しが在るか — `(name …)` の呼び・受けた effect をそのまま外へ出す `(<- 答え effect)`・`(yield effect)`。
-fn reissues(source: &str, form: &Form, name: &str) -> bool {
-    match &form.node {
-        Node::Seq { delim, items } => {
-            let last_is_effect = items.last().is_some_and(|f| matches!(f.node, Node::Symbol) && text(source, f) == "effect");
-            let here = *delim == Delim::Paren
-                && match head_symbol(source, items) {
-                    Some(head) if head == name => true,
-                    Some("<-") => items.len() >= 3 && last_is_effect,
-                    Some("yield") => items.len() == 2 && last_is_effect,
-                    _ => false,
-                };
-            here || items.iter().any(|i| reissues(source, i, name))
-        }
-        Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => reissues(source, inner, name),
-        Node::Annotated { target: Some(target), .. } => reissues(source, target, name),
-        _ => false,
-    }
-}
-
 fn read_forms(source: &str) -> Vec<Form> {
     Reader::new(source, 0, source.len()).read_all()
 }
 
-/// file の defhandler の節ごとの tap(鍵 = (handler の名, 節の頭の名) — 同じ handler の同じ頭は 1 つに数え、どれかが tap なら tap)。
-pub fn taps_in(source: &str) -> HashMap<(String, String), bool> {
-    fn visit(source: &str, forms: &[Form], out: &mut HashMap<(String, String), bool>) {
-        for form in forms {
-            let Node::Seq { delim, items } = &form.node else { continue };
-            if *delim == Delim::Paren && head_symbol(source, items) == Some("defhandler") && items.len() >= 2 {
-                let handler = text(source, &items[1]).to_string();
-                for clause in &items[2..] {
-                    let Some(parts) = clause.paren_items() else { continue };
-                    let Some(head) = head_symbol(source, parts) else { continue };
-                    if parts.get(1).and_then(Form::bracket_items).is_none() {
-                        continue;
-                    }
-                    let tap = parts[2..].iter().any(|p| reissues(source, p, head));
-                    *out.entry((handler.clone(), head.to_string())).or_insert(false) |= tap;
-                }
-            }
-            visit(source, items, out);
-        }
-    }
-    let mut out = HashMap::new();
-    visit(source, &read_forms(source), &mut out);
-    out
+/// 効果の節 1 つの形 — DOEFF143・155・156・157・158・164・167・206 が共に使う、ただ 1 つの判じ(agora-redesign #3834)。
+/// 節の終わり(`resume`・`transfer`・`finish`・`reperform`・`pass`・`:when` の条件が偽の時の自動の reperform)を全部集め、2 つの欄に分ける。
+/// 1 つの節が両方を持つ事がある(片方の枝でだけ出し直す障害の注入・観測)。扱いは規則の側で決める: 表の行を要るかは `answers` で、
+/// 障害の注入・観測として偽物の判じから外すかは `forwards` で見る。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClauseShape {
+    /// どれかの終わりが受けた効果をそのまま外へ渡す — 出し直し(`(<- 名 [型] 出し直し)`・`(setv 名 (yield 出し直し))`)で束ねた名
+    /// (`(:= 名 束ねた名)` などで入れ直した名も)をそのまま `resume` / `transfer` する・同じ効果を出し直した節の `(resume None)`(答えを
+    /// 捨てる観測)・`(reperform effect の名か別名)`・`(pass)`・`:when` の節。出し直しには、別の handler に答えさせる
+    /// `(with_handlers [...] 出し直し)` も数える。`(resume (if 条件 A B))` は枝ごとの終わりに分ける。
+    pub forwards: bool,
+    /// どれかの終わりが自前の値を返す — 束ねた名でない値の `resume` / `transfer`・`finish`・別の効果の `reperform`・別の handler の下の
+    /// 出し直しの答え(答えを作る handler を節が選ぶ)。forwards の終わりが 1 つも無い節も自前で答える節に数える。`raise` は終わりに数えない
+    /// (捕まえた例外を投げ直す観測と、自前の故障を区別できない)。
+    pub answers: bool,
 }
 
-/// DOEFF206 の狭い tap: 節の本体が同じ効果を出し直し(`(<- 名 [型] effect)`・`(<- 名 [型] (頭 受けた引数 …))`・`(setv 名 (yield effect))`)、
-/// 本体の `(resume …)` の全部が、その出し直しで束ねた名**そのもの**を渡す節だけ。受けた effect の別名(`(val 名 effect)`・`(setv 名 effect)`)の
-/// 出し直しも同じに数える。出し直した答えの欄を書き換える・別の値を組む・枝の 1 つで自前の値を渡す・引数を変えて出し直す節は tap でない
-/// (DOEFF143 の `taps_in` は字面の出し直しだけを見る — そちらは変えない)。
-fn passes_reissue_through(source: &str, params: &[&str], body: &[Form], head: &str) -> bool {
+impl ClauseShape {
+    /// 読めなかった節(file が読めない・節の頭が索引と合わない)の形 — 自前で答える節に数える(外す側に倒さない)。
+    pub const ANSWERING: ClauseShape = ClauseShape { forwards: false, answers: true };
+}
+
+/// 節の本体(節の頭の後ろ・引数の並びの後ろの form の並び)の形。
+fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> ClauseShape {
     /// 受けた effect の名と、その別名(`(val 名 X)`・`(setv 名 X)` の X が effect か別名 — 本体の全部から集める)。
     fn aliases<'s>(source: &'s str, form: &Form, out: &mut Vec<&'s str>) -> bool {
         let Node::Seq { items, .. } = &form.node else { return false };
@@ -177,62 +155,146 @@ fn passes_reissue_through(source: &str, params: &[&str], body: &[Form], head: &s
         }
         items.iter().fold(grew, |grew, item| aliases(source, item, out) || grew)
     }
-    let mut effect_names: Vec<&str> = vec!["effect"];
+    // 受けた効果は名 `effect` で束ねられる。節の欄に `effect` の名が在れば(`(RecordAs [principal effect] …)` など)、その名は欄の値で、
+    // 受けた効果ではない。
+    let mut effect_names: Vec<&str> = if params.contains(&"effect") { Vec::new() } else { vec!["effect"] };
     while body.iter().fold(false, |grew, form| aliases(source, form, &mut effect_names) || grew) {}
-    /// 出し直しの式か(effect の名か別名・節が受けた引数をそのまま並べた `(頭 …)` の呼び(`:欄` の語は数えない)・`(yield 出し直し)`)。
-    fn reissue(source: &str, form: &Form, head: &str, params: &[&str], effect_names: &[&str]) -> bool {
+    /// 出し直しの式か — effect の名か別名・節が受けた引数をそのまま並べた `(頭 …)` の呼び(`:欄` の語は数えない)・`(yield 出し直し)`・
+    /// 別の handler の下での出し直し `(with_handlers [...] 出し直し)`(綴り `with-handlers`・`with-handler` も同じ)。
+    /// 出し直しなら Some(別の handler の下か)。
+    fn reissue(source: &str, form: &Form, head: &str, params: &[&str], effect_names: &[&str]) -> Option<bool> {
         match &form.node {
-            Node::Symbol => effect_names.contains(&text(source, form)),
+            Node::Symbol => effect_names.contains(&text(source, form)).then_some(false),
             Node::Seq { delim: Delim::Paren, items } => match head_symbol(source, items) {
                 Some(h) if h == head => {
                     let args: Vec<&str> = items[1..].iter().map(|f| text(source, f)).filter(|t| !t.starts_with(':')).collect();
-                    args == params
+                    (args == params).then_some(false)
                 }
-                Some("yield") => items.len() == 2 && reissue(source, &items[1], head, params, effect_names),
-                _ => false,
+                Some("yield") if items.len() == 2 => reissue(source, &items[1], head, params, effect_names),
+                Some("with_handlers" | "with-handlers" | "with_handler" | "with-handler") if items.len() == 3 => {
+                    reissue(source, &items[2], head, params, effect_names).map(|_| true)
+                }
+                _ => None,
             },
-            _ => false,
+            _ => None,
         }
     }
-    let reissue = |form: &Form| reissue(source, form, head, params, &effect_names);
-    fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> bool, bound: &mut Vec<&'s str>, resumed: &mut Vec<Option<&'s str>>) {
+    /// 節の終わり 1 つ。
+    enum Ending<'s> {
+        /// 受けた効果をそのまま外へ渡す(`(reperform effect)`・`(pass)`)。
+        Forward,
+        /// 自前の値。
+        Own,
+        /// 記号の値の `resume` / `transfer`(出し直しで束ねた名なら渡す・そうでなければ自前 — 束ねの全部を集めた後で決める)。
+        Value(&'s str),
+        /// `(resume None)`(同じ効果を出し直した節なら、答えを捨てて None で返す観測 — 渡す終わりに数える)。
+        Nothing,
+    }
+    /// 本体を歩いて集める物。
+    #[derive(Default)]
+    struct Walked<'s> {
+        /// 出し直しの答えを束ねた名と、別の handler の下の出し直しか。
+        bound: Vec<(&'s str, bool)>,
+        /// 名から名への入れ直し `(:= 名 名)`・`(setv 名 名)`・`(val 名 名)`。
+        assigned: Vec<(&'s str, &'s str)>,
+        /// 本体のどこかで同じ効果を出し直したか(名に束ねない `(<- 出し直し)` も含む)。
+        reissued: bool,
+        endings: Vec<Ending<'s>>,
+    }
+    /// `resume` / `transfer` の値の終わり — `(if 条件 A B)` は枝ごとの終わりに分ける。
+    fn value_endings<'s>(source: &'s str, form: &Form, out: &mut Vec<Ending<'s>>) {
+        match &form.node {
+            Node::Symbol if text(source, form) == "None" => out.push(Ending::Nothing),
+            Node::Symbol => out.push(Ending::Value(text(source, form))),
+            Node::Seq { delim: Delim::Paren, items } if head_symbol(source, items) == Some("if") && items.len() == 4 => {
+                value_endings(source, &items[2], out);
+                value_endings(source, &items[3], out);
+            }
+            _ => out.push(Ending::Own),
+        }
+    }
+    fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> Option<bool>, walked: &mut Walked<'s>) {
         let Node::Seq { delim, items } = &form.node else { return };
         if *delim == Delim::Paren {
-            match head_symbol(source, items) {
-                // (<- 名 [型] 出し直し)
-                Some("<-") if items.len() >= 3 && matches!(items[1].node, Node::Symbol) && reissue(&items[items.len() - 1]) => {
-                    bound.push(text(source, &items[1]));
-                }
-                // (setv 名 (yield 出し直し))
-                Some("setv") if items.len() == 3 && matches!(items[1].node, Node::Symbol) => {
-                    if let Some(inner) = items[2].paren_items() {
-                        if head_symbol(source, inner) == Some("yield") && inner.len() == 2 && reissue(&inner[1]) {
-                            bound.push(text(source, &items[1]));
+            // `:=` は読みの上で記号でなく keyword の形なので、頭の綴りで見る。
+            let word = head_symbol(source, items).or_else(|| items.first().map(|f| text(source, f)).filter(|t| *t == ":="));
+            match (word, items.as_slice()) {
+                // (<- 名 [型] 出し直し)・(<- 出し直し)
+                (Some("<-"), [_, .., last]) => {
+                    if let Some(chosen) = reissue(last) {
+                        walked.reissued = true;
+                        if items.len() >= 3 && matches!(items[1].node, Node::Symbol) {
+                            walked.bound.push((text(source, &items[1]), chosen));
                         }
                     }
                 }
-                Some("resume") => {
-                    resumed.push(match items.as_slice() {
-                        [_, value] if matches!(value.node, Node::Symbol) => Some(text(source, value)),
-                        _ => None,
-                    });
+                (Some(":=" | "setv" | "val"), [_, name, value]) if matches!(name.node, Node::Symbol) => {
+                    if matches!(value.node, Node::Symbol) {
+                        walked.assigned.push((text(source, name), text(source, value)));
+                    }
+                    // (setv 名 (yield 出し直し))
+                    if let Some(inner) = value.paren_items() {
+                        if head_symbol(source, inner) == Some("yield") {
+                            if let Some(chosen) = reissue(value) {
+                                walked.reissued = true;
+                                walked.bound.push((text(source, name), chosen));
+                            }
+                        }
+                    }
+                }
+                (Some("resume" | "transfer"), [_, value]) => {
+                    value_endings(source, value, &mut walked.endings);
+                    return;
+                }
+                (Some("resume" | "transfer" | "finish"), _) => {
+                    walked.endings.push(Ending::Own);
+                    return;
+                }
+                (Some("reperform"), _) => {
+                    walked.endings.push(if items.len() == 2 && reissue(&items[1]).is_some() { Ending::Forward } else { Ending::Own });
+                    return;
+                }
+                (Some("pass"), [_]) => {
+                    walked.endings.push(Ending::Forward);
                     return;
                 }
                 _ => {}
             }
         }
-        items.iter().for_each(|item| walk(source, item, reissue, bound, resumed));
+        items.iter().for_each(|item| walk(source, item, reissue, walked));
     }
-    let mut bound = Vec::new();
-    let mut resumed = Vec::new();
-    body.iter().for_each(|form| walk(source, form, &reissue, &mut bound, &mut resumed));
-    !resumed.is_empty() && resumed.iter().all(|value| value.is_some_and(|name| bound.contains(&name)))
+    let reissue = |form: &Form| reissue(source, form, head, params, &effect_names);
+    let mut walked = Walked::default();
+    body.iter().for_each(|form| walk(source, form, &reissue, &mut walked));
+    // 束ねた名を入れ直した名も束ねた名に数える(`(:= answer closed)` など)。
+    while let Some(grown) = walked.assigned.iter().find_map(|&(name, value)| {
+        let known = |n: &str| walked.bound.iter().find(|(bound, _)| *bound == n).map(|&(_, chosen)| chosen);
+        known(name).is_none().then(|| known(value).map(|chosen| (name, chosen))).flatten()
+    }) {
+        walked.bound.push(grown);
+    }
+    let Walked { bound, reissued, endings, .. } = walked;
+    // 終わりごとに (渡すか, 自前で答えるか)。別の handler の下の出し直しの答えは、受けた効果を外へ渡しつつ、答えを作る handler を節が選ぶので両方。
+    let judged = |ending: &Ending| match ending {
+        Ending::Forward => (true, false),
+        Ending::Own => (false, true),
+        Ending::Nothing => (reissued, !reissued),
+        Ending::Value(name) => match bound.iter().find(|(bound, _)| bound == name) {
+            Some(&(_, chosen)) => (true, chosen),
+            None => (false, true),
+        },
+    };
+    // `:when 条件` の節は、条件が偽の時に doeff-hy の handle が自動で reperform する(doeff-hy handle.hy の Clause guards)。
+    let guarded = body.first().is_some_and(|form| text(source, form) == ":when");
+    let forwards = guarded || endings.iter().any(|ending| judged(ending).0);
+    let answers = !forwards || endings.iter().any(|ending| judged(ending).1);
+    ClauseShape { forwards, answers }
 }
 
-/// file の defhandler の節ごとの DOEFF206 の狭い tap(鍵 = (handler の名, 節の頭の名) — 同じ handler の同じ頭が 2 つ在れば、両方が tap の時だけ
-/// tap)。`taps_in` と同じ節の読み。
-pub fn pass_through_taps_in(source: &str) -> HashMap<(String, String), bool> {
-    fn visit(source: &str, forms: &[Form], out: &mut HashMap<(String, String), bool>) {
+/// file の defhandler の節ごとの形(鍵 = (handler の名, 節の頭の名))。同じ handler の同じ頭の節が 2 つ在れば、どちらの欄も OR で合わせる
+/// (どちらかが渡せば forwards・どちらかが答えれば answers)。
+pub fn clause_shapes_in(source: &str) -> HashMap<(String, String), ClauseShape> {
+    fn visit(source: &str, forms: &[Form], out: &mut HashMap<(String, String), ClauseShape>) {
         for form in forms {
             let Node::Seq { delim, items } = &form.node else { continue };
             if *delim == Delim::Paren && head_symbol(source, items) == Some("defhandler") && items.len() >= 2 {
@@ -242,8 +304,10 @@ pub fn pass_through_taps_in(source: &str) -> HashMap<(String, String), bool> {
                     let Some(head) = head_symbol(source, parts) else { continue };
                     let Some(params) = parts.get(1).and_then(Form::bracket_items) else { continue };
                     let params: Vec<&str> = params.iter().map(|p| text(source, p)).collect();
-                    let tap = passes_reissue_through(source, &params, &parts[2..], head);
-                    *out.entry((handler.clone(), head.to_string())).or_insert(true) &= tap;
+                    let shape = clause_shape(source, &params, &parts[2..], head);
+                    let merged = out.entry((handler.clone(), head.to_string())).or_insert(ClauseShape { forwards: false, answers: false });
+                    merged.forwards |= shape.forwards;
+                    merged.answers |= shape.answers;
                 }
             }
             visit(source, items, out);
@@ -383,20 +447,27 @@ pub fn python_isinstance_effects(source: &str, importer: &str) -> Vec<String> {
     out
 }
 
-/// 効果に答える節 1 つ(索引の effect の節と、その tap)。
+/// 効果に答える節 1 つ(索引の effect の節と、その形)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Clause {
     pub node: usize,
     pub rel: String,
     pub handler: String,
     pub effect: String,
-    pub tap: bool,
+    /// 節の形(`clause_shapes_in` で 1 度だけ求める — 規則の全部が同じ判じを読む)。
+    pub shape: ClauseShape,
 }
 
 impl Clause {
     /// 反例の表の鍵(`<path>::<handler>::<効果>`)。
     pub fn key(&self) -> String {
         format!("{}::{}::{}", self.rel, self.handler, self.effect)
+    }
+
+    /// 反例の表の当たりに数える節か — 本番の入口から届かず、自前で答える終わりを持ち(片方の枝だけでも)、鍵が表に在る。
+    /// DOEFF143・157 の表の照らしと DOEFF164・167 の反例の節が同じ条件を使う(agora-redesign #3834)。
+    pub fn counterexample_in(&self, produced: bool, counterexamples: &BTreeMap<String, String>) -> bool {
+        self.shape.answers && !produced && counterexamples.contains_key(&self.key())
     }
 }
 
@@ -441,7 +512,7 @@ pub enum Verdict {
     UnservedExternal(String),
     /// DOEFF206: 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す(添字は `PassRow` の順)。
     IntentPassedByTable(usize),
-    /// DOEFF206: 検証環境の dir の中の handler の節が intent の層の効果に、出し直しの答えをそのまま渡す tap でなく答えを作る(Clause の添字)。
+    /// DOEFF206: 検証環境の dir の中の handler の節が intent の層の効果に自前の値を返す終わりを持ち、反例の表に行が無い(Clause の添字)。
     IntentAnsweredInVerification(usize),
 }
 
@@ -469,8 +540,6 @@ pub struct IntentFakeInputs<'a> {
     pub intent_effect: &'a [bool],
     /// 節が検証環境の dir の中の file に在るか。
     pub in_verification: &'a [bool],
-    /// 節が狭い tap(同じ効果を出し直し、その答えをそのまま resume する)か。
-    pub pass_through: &'a [bool],
     pub counterexamples: &'a BTreeMap<String, String>,
     pub rows: &'a [PassRow],
     /// 行の効果が intent の層の効果か(PassRow の順)。
@@ -478,14 +547,15 @@ pub struct IntentFakeInputs<'a> {
 }
 
 /// DOEFF206: intent の層の効果は、模擬でも本番の翻訳の handler が答える — 検証環境が自前で答える節と、それを通す表の行を出す。
-/// 外すのは狭い tap と、反例の表に鍵(`<path>::<handler>::<効果>`)の在る節だけ(登録簿では下げない — 規則の側で決める)。
+/// 自前で答える終わりを 1 つでも持つ節(`ClauseShape::answers` — 一部の枝でだけ出し直す節も含む)は、反例の表に鍵
+/// (`<path>::<handler>::<効果>`)が在る時だけ外す(登録簿では下げない — 規則の側で決める)。
 pub fn judge_intent_fakes(inputs: &IntentFakeInputs) -> Vec<Verdict> {
-    let IntentFakeInputs { clauses, intent_effect, in_verification, pass_through, counterexamples, rows, row_intent } = inputs;
+    let IntentFakeInputs { clauses, intent_effect, in_verification, counterexamples, rows, row_intent } = inputs;
     let rows = rows.iter().enumerate().filter(|(i, _)| row_intent[*i]).map(|(i, _)| Verdict::IntentPassedByTable(i));
     let answers = clauses
         .iter()
         .enumerate()
-        .filter(|(i, clause)| in_verification[*i] && intent_effect[*i] && !pass_through[*i] && !counterexamples.contains_key(&clause.key()))
+        .filter(|(i, clause)| in_verification[*i] && intent_effect[*i] && clause.shape.answers && !counterexamples.contains_key(&clause.key()))
         .map(|(i, _)| Verdict::IntentAnsweredInVerification(i));
     rows.chain(answers).collect()
 }
@@ -501,13 +571,15 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
     // intent の効果 → それに答える翻訳の handler(`<path>::<handler>`)と、その最初の節。
     let mut translators: BTreeMap<&str, BTreeMap<(&str, &str), usize>> = BTreeMap::new();
     for (i, clause) in clauses.iter().enumerate() {
-        if clause.tap {
-            continue;
-        }
-        // 本番から届かない節の鍵が反例の表に在れば、どの効果に答える節でも表の当たりに数える — 土台の効果(記録・時計・外の相手)に
-        // 答える壊した handler も反例の表に載せられる(agora-redesign #1560 の定義 3)。
-        if !produced[i] && counterexamples.contains_key(&clause.key()) {
+        // 本番から届かない節が自前で答える終わりを持ち、その鍵が反例の表に在れば、どの効果に答える節でも表の当たりに数える — 土台の効果
+        // (記録・時計・外の相手)に答える壊した handler も反例の表に載せられる(agora-redesign #1560 の定義 3)。片方の枝でだけ出し直す
+        // 節も当たりに数える(下の偽物の判じからは外れるが、表の行は要る — DOEFF206・164・167 と同じ読み・agora-redesign #3834)。
+        if clause.counterexample_in(produced[i], counterexamples) {
             hit_keys.insert(clause.key());
+        }
+        // 受けた効果をそのまま外へ渡す終わりを持つ節は、障害の注入・観測として偽物の判じから外す。
+        if clause.shape.forwards {
+            continue;
         }
         if produced[i] {
             served.insert(clause.effect.as_str());
@@ -631,8 +703,13 @@ mod tests {
         }
     }
 
-    fn clause(i: usize, effect: &str, tap: bool) -> Clause {
-        Clause { node: i, rel: "app/sim/fake.hy".into(), handler: "fake".into(), effect: effect.into(), tap }
+    /// 判じの検で使う節の形 — forwards の節は受けた効果をそのまま渡すだけ(答えない)・そうでない節は自前で答えるだけ。
+    fn shape(forwards: bool) -> ClauseShape {
+        ClauseShape { forwards, answers: !forwards }
+    }
+
+    fn clause(i: usize, effect: &str, forwards: bool) -> Clause {
+        Clause { node: i, rel: "app/sim/fake.hy".into(), handler: "fake".into(), effect: effect.into(), shape: shape(forwards) }
     }
 
     #[test]
@@ -654,25 +731,19 @@ mod tests {
     }
 
     #[test]
-    fn taps_and_entries_are_read() {
+    fn entries_are_read() {
         let source = r#"
 (defhandler fake
-  (ReadRow [key] (resume k (ReadRow key)))
-  (WriteRow [row] (resume k None))
-  (Tick [n] (<- seen effect) (resume k seen))
-  (Log [line] (yield effect))
-  (Drop [n] (<- other effect2) (yield effect n)))
+  (ReadRow [key] (<- row (ReadRow key)) (resume row))
+  (WriteRow [row] (resume None))
+  (Tick [n] (<- seen effect) (resume seen))
+  (Log [line] (reperform effect))
+  (Drop [n] (<- other effect2) (resume other)))
 (defhandler fake2
-  (Stop [] (resume k None)))
+  (Stop [] (resume None)))
 (when (= __name__ "__main__")
   (main))
 "#;
-        let taps = taps_in(source);
-        assert_eq!(taps.get(&("fake".to_string(), "ReadRow".to_string())), Some(&true));
-        assert_eq!(taps.get(&("fake".to_string(), "WriteRow".to_string())), Some(&false));
-        assert_eq!(taps.get(&("fake".to_string(), "Tick".to_string())), Some(&true)); // (<- 答え effect)
-        assert_eq!(taps.get(&("fake".to_string(), "Log".to_string())), Some(&true)); // (yield effect)
-        assert_eq!(taps.get(&("fake".to_string(), "Drop".to_string())), Some(&false)); // 別の値の出し直しは tap でない
         assert_eq!(main_guard_lines(source), vec![(9, 10)]);
         assert_eq!(entry_names("env = \"app.orders.envs:make-env\"", &decl()), vec!["app.orders.envs.make_env".to_string()]);
         let py = "from app.screen.effects import Log\nimport app.clock as c\ndef dispatch(effect, k):\n    if isinstance(effect, Log):\n        return 1\n    if isinstance(effect, (c.Now, str)):\n        return 2\n";
@@ -681,9 +752,9 @@ mod tests {
         assert_eq!(python_isinstance_effects(relative, "app.screen.entry.values"), vec!["app.screen.effects.Log".to_string()]);
     }
 
-    /// DOEFF206 の狭い tap: 出し直した答えをそのまま resume する節だけ(DOEFF143 の taps_in より狭い)。
+    /// 節の形の判じ(agora-redesign #3834): 終わりごとに「受けた効果をそのまま渡す」か「自前の値」かを分け、節の 2 つの欄にする。
     #[test]
-    fn pass_through_taps_resume_the_reissued_answer_unchanged() {
+    fn clause_shapes_split_forwarding_and_answering_endings() {
         let source = r#"
 (defhandler h
   (ReadRow [key] (<- row (ReadRow key)) (resume row))
@@ -693,25 +764,105 @@ mod tests {
   (Swap [n] (<- seen effect) (<- other (Swap 2)) (resume other))
   (Keyed [key n] (<- row (Keyed :key key :n n)) (resume row))
   (Aliased [n] (val request effect) (<- seen datetime (GetTime)) (<- answer request) (resume answer))
-  (Split [n] (if n (resume 0) (do (<- seen effect) (resume seen))))
-  (Drop [n] (yield effect))
+  (Again [n] (reperform effect))
+  (Renamed [n] (setv asked effect) (reperform asked))
+  (Other [n] (reperform (Other 2)))
+  (Old [n] (pass))
+  (Guarded [n] :when (> n 0) (<- seen effect) (resume seen))
+  (Elsewhere [key] (<- found (handler-for key)) (<- answer object (with_handlers [found] (Elsewhere key))) (resume answer))
+  (Handed [key] (<- answer (with-handlers [found] effect)) (transfer answer))
+  (Ended [n] (finish n))
+  (Raised [n] (raise (ValueError n)))
+  (Seen [n] (<- _seen effect) (<- (Note n)) (resume None))
+  (Told [n] (<- (Told n)) (resume None))
+  (Silent [n] (resume None))
+  (Kept [n] (var answer None) (try (<- got effect) (:= answer got) (except [e Exception] (raise e))) (resume answer))
+  (Wrapped [principal effect] (<- answer (with_handlers [found] effect)) (resume answer))
+  (Trimmed [n] (<- answer effect) (resume (if n (trim answer) answer)))
+  (Twice [n] (resume 0))
+  (Twice [n] (reperform effect))
   (Own [n] (resume n)))
 "#;
-        let taps = pass_through_taps_in(source);
-        let tap = |head: &str| taps.get(&("h".to_string(), head.to_string())).copied();
-        assert_eq!(tap("ReadRow"), Some(true));
-        assert_eq!(tap("Tick"), Some(true));
-        assert_eq!(tap("Log"), Some(true));
-        assert_eq!(tap("Bend"), Some(false)); // 答えを変えて resume
-        assert_eq!(tap("Swap"), Some(false)); // 引数を変えて出し直した答え(同じ効果の出し直しではない)
-        assert_eq!(tap("Aliased"), Some(true)); // 受けた effect の別名の出し直し
-        assert_eq!(tap("Keyed"), Some(true)); // :欄 の語つきでも、受けた引数をそのまま並べた出し直し
-        assert_eq!(tap("Split"), Some(false)); // 枝の 1 つで自前の値
-        assert_eq!(tap("Drop"), Some(false)); // resume が無い
-        assert_eq!(tap("Own"), Some(false));
-        // DOEFF143 の読み(taps_in)は字面の出し直しで tap に数えるまま。
-        let wide = taps_in(source);
-        assert_eq!(wide.get(&("h".to_string(), "Bend".to_string())), Some(&true));
+        let shapes = clause_shapes_in(source);
+        let at = |head: &str| shapes.get(&("h".to_string(), head.to_string())).map(|s| (s.forwards, s.answers));
+        let passes = Some((true, false));
+        let answers = Some((false, true));
+        let both = Some((true, true));
+        assert_eq!(at("ReadRow"), passes);
+        assert_eq!(at("Tick"), passes);
+        assert_eq!(at("Log"), passes);
+        assert_eq!(at("Bend"), answers); // 答えを変えて resume
+        assert_eq!(at("Swap"), answers); // 引数を変えて出し直した答え(同じ効果の出し直しではない)
+        assert_eq!(at("Keyed"), passes); // :欄 の語つきでも、受けた引数をそのまま並べた出し直し
+        assert_eq!(at("Aliased"), passes); // 受けた effect の別名の出し直し
+        assert_eq!(at("Again"), passes); // (reperform effect)
+        assert_eq!(at("Renamed"), passes); // 別名の reperform
+        assert_eq!(at("Other"), answers); // 別の値の reperform は自前の答え
+        assert_eq!(at("Old"), passes); // (pass)
+        assert_eq!(at("Guarded"), passes); // :when の偽の時の自動の reperform と、出し直しの答えの resume
+        assert_eq!(at("Elsewhere"), both); // 別の handler に答えさせる — 効果は外へ渡るが、答えを作る handler は節が選ぶ
+        assert_eq!(at("Handed"), both); // 別の handler の下の出し直しの答えを transfer
+        assert_eq!(at("Ended"), answers); // finish
+        assert_eq!(at("Raised"), answers); // raise は終わりに数えず、渡す終わりも無い
+        assert_eq!(at("Seen"), passes); // 出し直して答えを捨てる観測の (resume None)
+        assert_eq!(at("Told"), passes); // 名に束ねない出し直しの後の (resume None)
+        assert_eq!(at("Silent"), answers); // 出し直さない (resume None) は自前の答え
+        assert_eq!(at("Kept"), passes); // 出し直しの答えを (:= 名 束ねた名) で入れ直して resume
+        assert_eq!(at("Wrapped"), answers); // 欄の名 effect は受けた効果ではない
+        assert_eq!(at("Trimmed"), both); // (resume (if 条件 A B)) の枝の 1 つが自前の値
+        assert_eq!(at("Twice"), both); // 同じ頭の 2 つの節は欄ごとに OR
+        assert_eq!(at("Own"), answers);
+    }
+
+    /// 片方の枝でだけ出し直す壊した handler(agora-redesign #3834 — kn-w37 の 7 件目の書き直す前の形)は、書き方が 3 つ在っても
+    /// 同じ形 {forwards・answers} に判じ、DOEFF143・164・206 が同じ答えを出す: 反例の表に行が有れば どれも当たらず、無ければ 206 だけが当たる。
+    #[test]
+    fn one_branch_forwarding_is_judged_alike_by_every_rule() {
+        let source = r#"
+(defhandler a (Place [n] (if n (resume 0) (do (<- got effect) (resume got)))))
+(defhandler b (Place [n] :when n (resume 0)))
+(defhandler c (Place [n] (if n (resume 0) (reperform effect))))
+"#;
+        let shapes = clause_shapes_in(source);
+        for handler in ["a", "b", "c"] {
+            let shape = shapes[&(handler.to_string(), "Place".to_string())];
+            assert_eq!(shape, ClauseShape { forwards: true, answers: true }, "{} の形", handler);
+            let at = Clause { node: 0, rel: "app/sim/fake.hy".into(), handler: handler.into(), effect: "app.orders.intent.Place".into(), shape };
+            let row: BTreeMap<String, String> = [(at.key(), "反例".to_string())].into();
+            let clauses = vec![at];
+            let (yes, no, empty) = (vec![true], vec![false], BTreeMap::new());
+            let python_answered = std::collections::BTreeSet::new();
+            for (table, expected_206) in [(&row, vec![]), (&empty, vec![Verdict::IntentAnsweredInVerification(0)])] {
+                let verdicts = judge(
+                    &Inputs {
+                        clauses: &clauses,
+                        simulated: &yes,
+                        produced: &no,
+                        tested: &no,
+                        intent_effect: &yes,
+                        translation_file: &no,
+                        external: &empty,
+                        counterexamples: table,
+                        unserved: &empty,
+                        python_answered: &python_answered,
+                    },
+                    &decl(),
+                );
+                assert_eq!(verdicts, vec![], "DOEFF143 が {} を当てた(表の行 {} 件)", handler, table.len());
+                let intent = judge_intent_fakes(&IntentFakeInputs {
+                    clauses: &clauses,
+                    intent_effect: &yes,
+                    in_verification: &yes,
+                    counterexamples: table,
+                    rows: &[],
+                    row_intent: &[],
+                });
+                assert_eq!(intent, expected_206, "DOEFF206 の {} の判じ(表の行 {} 件)", handler, table.len());
+                // DOEFF164・167 の反例の節の条件(mod.rs が同じ Clause::counterexample_in を読む)。
+                let counted = clauses.iter().filter(|c| c.counterexample_in(false, table)).count();
+                assert_eq!(counted, table.len(), "DOEFF164 の反例の節の数 {}", handler);
+            }
+        }
     }
 
     #[test]
@@ -783,12 +934,12 @@ mod tests {
 
     #[test]
     fn intent_effects_are_answered_by_one_translation_handler() {
-        let at = |i: usize, rel: &str, handler: &str, tap: bool| Clause {
+        let at = |i: usize, rel: &str, handler: &str, forwards: bool| Clause {
             node: i,
             rel: rel.into(),
             handler: handler.into(),
             effect: "app.orders.intent.Place".into(),
-            tap,
+            shape: shape(forwards),
         };
         let clauses = vec![
             at(0, "app/orders/protocol/a.hy", "translate", false), // 翻訳の handler 1 つ目

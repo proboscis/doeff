@@ -2846,11 +2846,12 @@ fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
     callees
 }
 
-/// 図の中の effect の節の全部と、その tap(読まない file の節は数えない)。DOEFF143・155・156 が使う。
+/// 図の中の effect の節の全部と、その形(読まない file の節は数えない)。節の形はここで 1 度だけ求め、DOEFF143・155・156・157・158・164・
+/// 167・206 が同じ物を読む(agora-redesign #3834)。
 fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>, decl: &architecture::BusinessFakes) -> Vec<business_fakes::Clause> {
     use business_fakes::FileRole;
     let mut clauses: Vec<business_fakes::Clause> = Vec::new();
-    let mut taps: HashMap<&str, HashMap<(String, String), bool>> = HashMap::new();
+    let mut shapes: HashMap<&str, HashMap<(String, String), business_fakes::ClauseShape>> = HashMap::new();
     for (node, &(rel, index)) in graph.nodes.iter().enumerate() {
         let d = &hy[rel].definitions[index];
         let role = business_fakes::role_of(rel, decl);
@@ -2859,10 +2860,11 @@ fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyF
         }
         let Some(effect) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
         let handler = d.container.clone().unwrap_or_default();
-        let file_taps = taps.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::taps_in(&s)).unwrap_or_default());
+        let file_shapes =
+            shapes.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::clause_shapes_in(&s)).unwrap_or_default());
         let head = d.handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
-        let tap = file_taps.get(&(handler.clone(), head)).copied().unwrap_or(false);
-        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, tap });
+        let shape = file_shapes.get(&(handler.clone(), head)).copied().unwrap_or(business_fakes::ClauseShape::ANSWERING);
+        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, shape });
     }
     clauses
 }
@@ -3228,26 +3230,10 @@ fn judge_business_fakes(
     let intent_fakes: Vec<Verdict> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
         let row_intent: Vec<bool> = pass_rows.iter().map(|row| effect_in_intent(row.effect())).collect();
         let in_verification: Vec<bool> = clauses.iter().map(|c| architecture.in_verification_environment(&c.rel)).collect();
-        let mut taps: HashMap<&str, HashMap<(String, String), bool>> = HashMap::new();
-        let pass_through: Vec<bool> = clauses
-            .iter()
-            .zip(&in_verification)
-            .map(|(c, inside)| {
-                if !inside {
-                    return false;
-                }
-                let file_taps = taps
-                    .entry(c.rel.as_str())
-                    .or_insert_with(|| std::fs::read_to_string(root.join(&c.rel)).map(|s| business_fakes::pass_through_taps_in(&s)).unwrap_or_default());
-                let head = definition(c.node).handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
-                file_taps.get(&(c.handler.clone(), head)).copied().unwrap_or(false)
-            })
-            .collect();
         business_fakes::judge_intent_fakes(&business_fakes::IntentFakeInputs {
             clauses: &clauses,
             intent_effect: &intent_effect,
             in_verification: &in_verification,
-            pass_through: &pass_through,
             counterexamples: &counterexamples,
             rows: &pass_rows,
             row_intent: &row_intent,
@@ -3337,7 +3323,7 @@ fn judge_business_fakes(
                     base: Severity::Error,
                     explain: Explain::IntentFakedInVerification {
                         subject: format!("検証環境の handler {} の節 {}", clause.handler, clause.effect),
-                        reason: "検証環境が intent の効果に答えると、本番の翻訳の handler が手元で 1 度も走らないまま緑になる。答えは本番の翻訳の handler に任せ、その下の土台の handler だけを差し替える。出し直しの答えをそのまま resume する tap と、反例の表に載せたわざと壊した節だけは外す。".to_string(),
+                        reason: "検証環境が intent の効果に答えると、本番の翻訳の handler が手元で 1 度も走らないまま緑になる。答えは本番の翻訳の handler に任せ、その下の土台の handler だけを差し替える。外すのは、どの終わりも受けた効果をそのまま外へ渡す節(出し直しの答えをそのまま resume する・reperform する・:when の節)と、反例の表に載せたわざと壊した節だけ。片方の枝でだけ自前で答える節も、表の行が無ければ当たる。".to_string(),
                     },
                 }
             }
@@ -3630,7 +3616,7 @@ fn judge_counterexample_coverage(
     let mut keys = BTreeSet::new();
     let mut cases = Vec::new();
     for (i, clause) in clauses.iter().enumerate() {
-        if clause.tap || produced[i] || !counterexamples.contains_key(&clause.key()) || !keys.insert(clause.key()) {
+        if !clause.counterexample_in(produced[i], counterexamples) || !keys.insert(clause.key()) {
             continue;
         }
         let base = business_fakes::module_of_effect(&clause.effect).replace('.', "/");
@@ -3693,7 +3679,7 @@ fn judge_clause_coverage(
     let mut keys = BTreeSet::new();
     let mut cases = Vec::new();
     for (i, clause) in clauses.iter().enumerate() {
-        if clause.tap || produced[i] || !counterexamples.contains_key(&clause.key()) || !keys.insert(clause.key()) {
+        if !clause.counterexample_in(produced[i], counterexamples) || !keys.insert(clause.key()) {
             continue;
         }
         let breaks = claims.by_key.get(&clause.key()).cloned().unwrap_or_default();

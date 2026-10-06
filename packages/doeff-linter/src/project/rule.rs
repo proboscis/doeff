@@ -215,7 +215,7 @@ pub enum ProjectRule {
     /// DOEFF165: intent の層の効果に、手元の検から出す定義・模擬の答え手・本番の答え手のどれかが無い — 網羅の表の欠け
     /// (agora-redesign #1561 K3・まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
     IntentEffectUncovered,
-    /// DOEFF206: 検証環境(:verification-environment)の handler が intent の層の効果に、出し直しの答えをそのまま渡す tap でなく自前で答える・
+    /// DOEFF206: 検証環境(:verification-environment)の handler が intent の層の効果に自前で答える(片方の枝だけでも)・
     /// 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す — 本番の翻訳の handler が手元で 1 度も
     /// 走らないまま緑になる穴(agora-redesign #3405・#3407・#3406)。登録簿で下げない。宣言は :business-fakes・:verification-environment・:assembly-shape。
     IntentFakedInVerification,
@@ -1143,7 +1143,7 @@ impl ProjectRule {
             ProjectRule::ServiceWithoutCounterexample => "業務の service ごとに、わざと壊した handler の反例を 1 本以上持つ — 反例の表(:counterexamples)の節に届く deftest のうち、その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届く物が 1 本も無く、節の効果の定義元がその service か土台でなければ、反例の無い service として赤にする",
             ProjectRule::ClauseWithoutCounterexample => "業務の不変条件は条ごとに、わざと壊した handler の反例を 1 本以上持つか、持たない理由を宣言する — defservice の :clauses の条ごとに、反例の表(:counterexamples)の行のうち `breaks: <service>::<条>` でその条を名乗り、その節に届く deftest が service の entry の層の定義にも届く物が 1 本も無く、:clause-exemptions の理由も無ければ、網羅の欠けとして赤にする(service に 1 本あれば緑の DOEFF164 を条へ細かくした物・agora-redesign #1713)",
             ProjectRule::RegistryEntryStale => "既知の破れの登録簿は縮める向きだけ — 載った鍵は今も当たる所見を指す。全体の実行で、鍵の区切り(law の名か規則の ID)が指す規則を判じたのに、どの所見にも当たらない鍵は消し忘れの古い行(agora-redesign #1706)",
-            ProjectRule::IntentFakedInVerification => "intent の層の効果には、検証環境でも本番の翻訳の handler(層 protocol)が答える — 検証環境の handler が自前で答える・表の行で通すと、本番の翻訳が手元で 1 度も走らないまま緑になる(利用者 2026-10-04 \"so this kind of violation, must be detected by doeff linter\"・agora-redesign #3405)。外すのは出し直しの答えをそのまま resume する tap と、反例の表に載せたわざと壊した節だけ",
+            ProjectRule::IntentFakedInVerification => "intent の層の効果には、検証環境でも本番の翻訳の handler(層 protocol)が答える — 検証環境の handler が自前で答える・表の行で通すと、本番の翻訳が手元で 1 度も走らないまま緑になる(利用者 2026-10-04 \"so this kind of violation, must be detected by doeff linter\"・agora-redesign #3405)。外すのは、どの終わりも受けた効果をそのまま外へ渡す節と、反例の表に載せたわざと壊した節だけ(片方の枝でだけ自前で答える節は表の行が要る)",
             ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(agora-redesign #1561・#1155)",
             ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(operator 2026-09-29 \"everything is 'pure' until we apply handler that has real IO\")",
             ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler には縁の検が 1 本以上在る — 空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。理由つきの :contract-test (none …) の handler は判じない・理由の無い :contract-test none は鳴る",
