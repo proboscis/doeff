@@ -47,7 +47,10 @@ from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeU
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox as RequestInbox
 from doeff_cluster.foundation.coordinator_inbox import StopState as StopState
 from doeff_cluster.foundation.coordinator_inbox import stop_on_signals as stop_on_signals
+from doeff_cluster.coordinator.entry.handler_sets import memory_notices as memory_notices
 from doeff_cluster.coordinator.entry.handler_sets import production_handlers as production_handlers
+from doeff_cluster.coordinator.entry.handler_sets import redis_notices as redis_notices
+from doeff_events import MemoryBroker as MemoryBroker
 from doeff_cluster.coordinator.core.program import run_coordinator as run_coordinator
 
 def board_file_rows(board_dir: str) -> _Program[tuple, object]:

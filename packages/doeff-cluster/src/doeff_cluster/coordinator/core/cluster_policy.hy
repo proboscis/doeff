@@ -19,6 +19,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen NodeLabelsUnreadable KeepMark KnownExit])
 (import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.due_policy [due-of-instants])
+(import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_hy.table [Table])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
@@ -249,6 +250,36 @@
    変われば新しい値 — Worker の資源の status の live が変わり、stamp が版を進めて出来事を 1 行残す(死んだ拍と戻った拍だけ)。"
   (let [silent (silent-names state now timing)]
     (if (= silent state.silent) state (replace state :silent silent))))
+
+
+;; --- worker の生死の出来事(#3864)------------------------------------------------------------------------------------------
+;; coordinator が worker の生死を process の外へ出す出来事を、沈黙の集合(note-liveness が求める ClusterState.silent)の 1 か所から
+;; 求める。出すのは program.coordinator-step(保存の後)。時間で見回る所は無い — 沈黙の集合が変わる歩でだけ出来事が在る。
+
+;; WorkerGone の期限は生死の判断と同じ liveness-deadline・WorkerBack の刻は最後の heartbeat。
+
+(defk liveness-moves [before after timing]
+  {:pre [(: before ClusterState) (: after ClusterState) (: timing ClusterTiming)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "coordinator の 1 歩(before → after)で worker の生死が変わった所を、出す出来事の列にするため(名の順)。沈黙の集合に入った名 =
+   WorkerGone・出た名のうち after の名簿に残る名 = WorkerBack(長い沈黙で名簿から消えた worker — forget-silent-workers — は戻った事に
+   しない)。変わらなければ空。"
+  (val gone (sorted (- after.silent before.silent)))
+  (val back (sorted (gfor name (- before.silent after.silent) :if (in name after.workers) name)))
+  (+ (tuple (gfor name gone :setv w (get after.workers name)
+                  (WorkerGone :worker name :boot w.boot :deadline-ms (liveness-deadline w timing.lease-ms))))
+     (tuple (gfor name back :setv w (get after.workers name)
+                  (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
+
+
+(defk liveness-now [state timing]
+  {:pre [(: state ClusterState) (: timing ClusterTiming)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "coordinator が起きた時に、名簿の全部の worker の今の生死を 1 度出すため(名の順 — 沈黙の worker は WorkerGone・ほかは WorkerBack)。
+   沈黙の集合は保存の形に無いので、起き直しの後の最初の歩の状態から求める。受け手の追いつきにも成る。"
+  (tuple (gfor name (sorted state.workers) :setv w (get state.workers name)
+               (if (in name state.silent)
+                   (WorkerGone :worker name :boot w.boot :deadline-ms (liveness-deadline w timing.lease-ms))
+                   (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
 
 
 (deff placeable [#^ tuple needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ

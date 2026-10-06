@@ -250,6 +250,19 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 | `ownerScope` | その値の頭(`<scope>/Rollout/<名> replicas=<n>`) | `doeff-cluster` |
 | `nodeCapabilities` | node の label から導く能力 `[{"label" "value" "capability"} …]` | `company-machine` を `doeff.dev/company-machine=true` から |
 
+### worker の生死の出来事(coordinator の引数・#3864)
+
+coordinator は、worker の生死の期限(最後の heartbeat + lease)が切れた歩で `WorkerGone(worker, boot, deadline-ms)` を、沈黙から戻った歩で
+`WorkerBack(worker, boot, seen-ms)` を、doeff-events の知らせとして channel `doeff-cluster:workers` へ出します(状態の保存の後・変わった時に
+1 度)。起動の時は名簿の全部の今の生死を 1 度出します。届かなかった時は channel に欠けの印が付き、受け手は `SourceMissed` を受けて
+coordinator の状態(`GET /state`)から読み直します。受け手は `coordinator.protocol.worker_notices` の `WORKER-NOTICE-READS` を使い、
+古い物は boot と刻で捨てます(保存しない知らせなので順が入れ替わる事が在る)。
+
+| 引数(boot.sh の環境変数) | 意味 | 既定 |
+|---|---|---|
+| `--notice-broker`(`NOTICE_BROKER`) | `redis://<host>:<port>/<db>` か `memory`(この process の中だけ — Redis の無い機体のテスト) | なし(必須) |
+| `--notice-retry-seconds`(`NOTICE_RETRY_SECONDS`) | Redis の戻りを待つ間だけ繋がるかを試す間隔(秒) | なし(Redis の時は必須) |
+
 ## 手元で確かめる(sim-cluster)
 
 `doeff_cluster.sim.local.sim-cluster` は、sim の土台で作った系の値を、本物の coordinator と本物の worker の上で 1 process・仮想の時計で

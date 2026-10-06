@@ -16,8 +16,10 @@
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view job-from-json identity-hash] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff [run])
+(import doeff [run with-handlers])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
+(import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
+(import doeff_events [MemoryBroker])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states durable-load durable-persist])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
@@ -186,8 +188,9 @@
 
 (defk scripted [script]
   {:pre [(: script Script)] :post [(: % Callable)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "台本の外側に仮想の時計(script の SimClock)を被せる。"
-  (fn [program] ((sim-time-handler :clock script.clock) ((scripted-requests script) (request-bodies (durable-states (reply-bodies program)))))))
+  "台本の外側に仮想の時計(script の SimClock)を被せる。worker の生死の出来事(#3864)は誰も読まない memory の broker へ出す。"
+  (fn [program] ((sim-time-handler :clock script.clock)
+                 ((scripted-requests script) (request-bodies (durable-states (reply-bodies (with-handlers (memory-notices (MemoryBroker)) program))))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V}))
@@ -363,7 +366,7 @@
   (<- (durable-load store))
   (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}}))
                         (! (req "PUT" "/board/k" {"value" 1}))]))
-  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
+  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (with-handlers (memory-notices (MemoryBroker)) (run-coordinator (ClusterState) T (ClusterNaming)))))))))
   (setv back (! (state-from-kv (! (durable-load (WalStore d))) 99999)))
   (assert (= (! (durable-kv back)) (! (durable-kv final))))
   (assert (= (. back revision) (. final revision)))
