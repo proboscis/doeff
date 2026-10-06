@@ -59,11 +59,12 @@ install:
 # (agora-redesign #980 — 以前は cargo feature で make sync の build だけが検査つきになり、同じ venv が
 # 最後に組んだ経路で 15 倍速さを変えた)。doeff の pytest は root の conftest.py が有効にし、
 # tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
-# だから make sync と素の uv sync は同じ build を作る。--reinstall-package doeff-vm は uv の Rust の変化の見落としに
-# 備えて build の口を必ず呼ぶ。口は source の中身の鍵で wheel の保存先を先に引くので、Rust の source が同じなら組まず
-# (保存先から入れ直すだけ)、変わった時だけ作業木の外の一時の target で 1 回組む(ADR-DOE-BUILD-001・agora-redesign #1493・#3860)。
+# だから make sync と素の uv sync は同じ build を作る。uv は doeff-vm の tool.uv.cache-keys(.rs・Cargo.toml・Cargo.lock・
+# doeff-vm-core を含む)の変化で build の口を呼び、口は同じ file の中身の鍵で wheel の保存先を先に引くので、Rust の source が
+# 変わった時だけ作業木の外の一時の target で 1 回組む(ADR-DOE-BUILD-001・agora-redesign #1493・#3860 — 失敗ケース =
+# tests/test_land_install_follows_rust_keys.py)。
 sync:
-	uv sync --group dev --reinstall-package doeff-vm
+	uv sync --group dev
 
 pre-commit-install:
 	uv run pre-commit install

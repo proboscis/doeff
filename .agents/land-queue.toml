@@ -269,12 +269,13 @@ full_sessions = 1
 # ⇒ なぜこの命令か:
 #   - `uv sync --frozen` = uv.lock を書き換えない(揃えた checkout を dirty にしない)。agent/venv-run.sh が uv.lock の
 #     変化で撃つ同期と同じ形(`--all-packages` を足すと、その同期が次に余りの package を外し、2 つが打ち消し合う)。
-#   - `--reinstall-package doeff-vm` = Rust の VM の拡張を今の source から作り直す(uv は .rs の変化を見ないので、
-#     素の uv sync は古い .so を残す — AGENTS.md の Stale Rust VM builds と同じ理由。2026-09-23 22:42〜23:17 の pod の実弾)。
-#     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)と、venv-run の次の同期が
-#     上書きする maturin develop の組だから。#980(2026-09-29)から VM の build は経路に依らず同じ(検査は実行時に有効にする)。
+#   - Rust の VM の拡張(doeff-vm)の作り直しの旗は付けない: uv は doeff-vm の tool.uv.cache-keys(.rs・Cargo.toml・Cargo.lock・
+#     doeff-vm-core を含む)の変化で build の口を呼び、口は同じ file の中身の鍵で wheel の保存先を引くので、Rust が変わった時だけ
+#     1 度組み、変わっていなければ口を呼ばない(ADR-DOE-BUILD-001・agora-redesign #3860 の 2 — 旗が在った間は 1 度 45.8〜59.9 秒・
+#     2026-10-06 に 67 度)。失敗ケース = tests/test_land_install_follows_rust_keys.py。
+#     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)だから。
 #   - venv-run の `--exclusive` = 同じ venv の読み手(門・常駐の controller)と排他して作り直す。
 # 上限 1800 秒 = 門の build の段の --sync-timeout 900 の 2 倍(Rust の release build と飽和帯の機体)。
 [follow]
-install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- uv sync --frozen --reinstall-package doeff-vm"
+install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- uv sync --frozen"
 install_timeout_s = 1800
