@@ -45,7 +45,7 @@ from doeff_cluster.worker.intent.worker_model import WorkerStopping as WorkerSto
 from doeff_cluster.worker.protocol.observations import ObserveProcesses as ObserveProcesses
 from doeff_cluster.worker.core.launch import JobLaunch as JobLaunch
 from doeff_cluster.worker.core.launch import job_launch as job_launch
-from doeff_cluster.worker.core.launch import program_file as program_file
+from doeff_cluster.worker.core.launch import spec_program_file as spec_program_file
 from doeff_cluster.worker.core.launch import CHILD_ENV_ALLOWED as CHILD_ENV_ALLOWED
 from doeff_cluster.worker.core.launch import CHILD_ENV_PREFIXES as CHILD_ENV_PREFIXES
 from doeff_cluster.worker.core.shim_timing import ShimSpans as ShimSpans

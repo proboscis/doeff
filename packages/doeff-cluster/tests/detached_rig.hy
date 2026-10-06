@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.core.launch [spec-program-file])
 (import doeff_cluster.foundation.host_contract [environ-reader])
 (import doeff_cluster.worker.entry.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
@@ -82,7 +82,7 @@
    job_entry と同じ read-program で読み(版 → 復元)、走らせ、結果の file を書く。task の :environ は、本番の worker が子の環境変数に
    置いて子の土台の (environ-reader) が読む物を、同じ読みの定義 environ-reader に spec.environ を渡して答える(他の名は外側へ)。"
   (assert (is-not spec.program None) f"task の job は Program の置き場のキーを持つ: {spec}")
-  (val read (read-program (str (program-file (.program-dir worker.link) spec.program)) ""))
+  (val read (read-program (str (! (spec-program-file (.program-dir worker.link) spec))) ""))
   (var outcome None)
   (if (is-not (get read 1) None)
       (:= outcome (failed-from (get read 1)))

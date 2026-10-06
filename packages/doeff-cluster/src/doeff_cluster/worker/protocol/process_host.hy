@@ -28,7 +28,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
                                                  Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.core.launch [JobLaunch job-launch program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
@@ -188,10 +188,15 @@
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read))
   (<- work str (job-work-dir settings spec.name))
+  ;; 子へ渡す Program の cache の file(task は task の行の版ごとの file — launch.spec-program-file・#3762)。
+  (var program-path None)
+  (when spec.program
+    (<- cached Path (spec-program-file (Path settings.program-dir) spec))
+    (:= program-path (str cached)))
   (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :python settings.python :hy-command settings.hy-command
                                  :uv settings.uv :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
-                                 :program-path (if spec.program (str (program-file (Path settings.program-dir) spec.program)) None)
+                                 :program-path program-path
                                  :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms
                                  :notice-env settings.notice-env))
   (when plan.last-used

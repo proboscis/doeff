@@ -22,7 +22,7 @@
 (import doeff_time [SimClock])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.core.launch [spec-program-file])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.protocol.detached [detached-submitted])
 (import doeff_time [sim-time-handler])
@@ -83,7 +83,7 @@
   (<- planned tuple (launched settings spec (str base) "1-1" 1))
   (val env (| (get planned 2) {"PYTHONPATH" (str ROOT)}))
   (assert (not-in NAME os.environ))
-  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (program-file (.program-dir link) spec.program))]
+  (val done (subprocess.run [HY "-m" spec.entry #* spec.args "--program" (str (! (spec-program-file (.program-dir link) spec)))]
                             :cwd (str ROOT) :env env :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (decode-outcome (.read-text (Path (get spec.args 2)) :encoding "ascii")))

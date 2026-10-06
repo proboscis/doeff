@@ -31,7 +31,7 @@
                                                WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS ClusterTiming])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence])
-(import doeff_cluster.worker.core.launch [program-file program-file-text])
+(import doeff_cluster.worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks])
 (import doeff_cluster.worker.core.boot_timing [boot-line])
@@ -122,17 +122,21 @@
 
 (defk accepted-tasks [state tasks]
   {:pre [(: state LinkState) (: tasks list)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :reads "json"}}
-  "heartbeat の返事の task の行 → 1 度だけ走らせる job。task ごとに、その Program の置き場のキーを印の file <id>.program に残し
+  "heartbeat の返事の task の行 → 1 度だけ走らせる job。task ごとに、その Program の cache の file(Program のキーと task の行の版で
+   決まる — program-dir からの相対 path・launch.spec-program-name・#3762)を印の file <id>.program に残し
    (返事から外れた task の Program の cache を後で消すため — fetched-programs)、返事から外れた task の結果の file を消す(この worker が
    書いた物だけ)。切り離した task は返事の行をそのまま写しとして持つ(状態の報告に添える)。"
   (<- (file-done (MakeDirectory state.task-dir)))
   (val ids (sfor t tasks (get t "id")))
-  (for [task tasks]
-    (val mark (os.path.join state.task-dir (+ (get task "id") ".program")))
-    ;; 同じ id の印が別の sha を指していれば書き直す(印は cache の掃除にだけ使う — 子へ渡す file は返事の行の sha で決まる)。
+  ;; 印の file は読んだ job(task-specs — 版は task の行の versions)から書く(返事の行の読みを 2 か所に置かない)。
+  (<- specs tuple (task-specs tasks (Path state.task-dir)))
+  (for [spec specs]
+    (val mark (os.path.join state.task-dir (+ (cut spec.name 5 None) ".program")))
+    (<- cached str (spec-program-name spec))
+    ;; 同じ id の印が別の file を指していれば書き直す(印は cache の掃除にだけ使う — 子へ渡す file は返事の行の sha と版で決まる)。
     (<- marked (ReadText mark))
-    (when (!= (if (isinstance marked str) marked None) (get task "program"))
-      (<- (file-done (WriteText mark (get task "program") :replace True)))))
+    (when (!= (if (isinstance marked str) marked None) cached)
+      (<- (file-done (WriteText mark cached :replace True)))))
   ;; .blob = 詰めた Program を行に持っていた版の worker が書いた file(置き場 /programs の前)— 残っていれば一緒に消す。
   (<- entries (ListDirectory state.task-dir))
   (when (not (isinstance entries FileFailed))
@@ -141,14 +145,15 @@
       (when (and (in (get parts 1) #(".blob" ".result")) (not-in (get parts 0) ids))
         (<- (RemoveTree (os.path.join state.task-dir entry.name))))))
   (setv state.task-echo (dfor task tasks :if (.get task "detached") (get task "id") (dict task)))
-  (<- specs tuple (task-specs tasks (Path state.task-dir)))
   specs)
 
 
-(defk fetched-program [cell options program-dir sha]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: program-dir str) (: sha str)] :post [(: % None)]
+(defk fetched-program [cell options path sha versions]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: path str) (: sha str) (: versions (| tuple None))] :post [(: % None)]
    :tags {:context "worker" :role "protocol" :reads "json"}}
-  "詰めた Program 1 つを coordinator の /programs/<sha> から取り、子の入口が読む形の cache の file({\"blob\" \"versions\"})に置くため。中身の
+  "詰めた Program 1 つを coordinator の /programs/<sha> から取り、子の入口が読む形の cache の file path({\"blob\" \"versions\"})に置くため。
+   versions = 子の入口が比べる送り手の版: task は task の行の版(名の順の #(名 版) の組 — #3762)・None は答えの versions(service —
+   coordinator の Program の行の版)。中身の
    sha256 がキーと合わない物・取れない物は書かずに 1 行出す(次の拍で試し直す — 子は file が無いので起動の時に理由つきで落ちる)。"
   (<- reply RoutedReply (routed-request cell.route "GET" (+ "/programs/" sha) options None None))
   (setv cell.route reply.route)
@@ -163,8 +168,12 @@
     (:= problem (+ "中身の sha256 がキーと合わない: " sha)))
   (if (is-not problem None)
       (<- (slog (.format "worker: Program {} を取れない: {}" sha problem)))
-      (<- (file-done (WriteText (str (program-file (Path program-dir) sha))
-                                (program-file-text (get body "blob") (.get body "versions" {})) :replace True))))
+      (do (<- (file-done (MakeDirectory (os.path.dirname path))))
+          (<- (file-done (WriteText path (program-file-text (get body "blob")
+                                                            (match versions
+                                                              None (.get body "versions" {})
+                                                              pairs (dict pairs)))
+                                    :replace True)))))
   None)
 
 
@@ -172,14 +181,18 @@
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions) (: specs tuple)] :post [(: % None)]}
   "宣言の job と task のうち、cache に無い詰めた Program を取り寄せ(改訂 1 の F — service と task で同じ仕組み)、返事から外れた task の
    Program の cache を、今の job と task のどれも参照していなければ消すため(task ごとの印 <id>.program から引く — service の job の
-   Program は消さない)。"
+   Program は消さない)。cache の file は service が Program のキーごと・task が (Program のキー・task の行の版) ごと(#3762 — 同じ sha
+   でも版の違う task は別の file を読む・launch.spec-program-name)。"
   (<- (file-done (MakeDirectory state.program-dir)))
-  (val wanted (sfor s specs :if s.program s.program))
-  (for [sha (sorted wanted)]
-    (val path (str (program-file (Path state.program-dir) sha)))
-    (<- found (ReadText path))
-    (when (isinstance found FileFailed)
-      (<- (fetched-program cell options state.program-dir sha))))
+  (var wanted #())
+  (for [s specs :if s.program]
+    (<- name str (spec-program-name s))
+    (when (not-in name wanted)
+      (:= wanted (+ wanted #(name)))
+      (val path (os.path.join state.program-dir name))
+      (<- found (ReadText path))
+      (when (isinstance found FileFailed)
+        (<- (fetched-program cell options path s.program s.versions)))))
   (val current (sfor s specs :if (.startswith s.name "task/") (cut s.name 5 None)))
   (<- entries (ListDirectory state.task-dir))
   (when (not (isinstance entries FileFailed))
@@ -188,9 +201,9 @@
       (when (and (= (get parts 1) ".program") (not-in (get parts 0) current))
         (val mark (os.path.join state.task-dir entry.name))
         (<- text (ReadText mark))
-        (val marked-sha (if (isinstance text str) (.strip text) ""))
-        (when (and marked-sha (not-in marked-sha wanted))
-          (<- (RemoveTree (str (program-file (Path state.program-dir) marked-sha)))))
+        (val marked (if (isinstance text str) (.strip text) ""))
+        (when (and marked (not-in marked wanted))
+          (<- (RemoveTree (os.path.join state.program-dir marked))))
         (<- (RemoveTree mark)))))
   None)
 

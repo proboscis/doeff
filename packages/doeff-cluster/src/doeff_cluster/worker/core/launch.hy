@@ -6,6 +6,7 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import collections.abc [Mapping])
 (import dataclasses [dataclass])
+(import hashlib)
 (import json)
 (import pathlib [Path])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
@@ -47,6 +48,28 @@
 (defn #^ str program-file-text [#^ str blob #^ (get Mapping #(str object)) versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
   "cache の file の中身(子の入口 job_entry の read-program が読む形 {\"blob\" \"versions\"} — service と task で同じ・定義点は 1 つ)。"
   (json.dumps {"blob" blob "versions" versions}))
+
+
+(defk spec-program-name [spec]
+  {:pre [(: spec JobSpec) (isinstance spec.program str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "Program の job 1 本の cache の file の置き方を 1 か所で決めるため(Program の cache の dir からの相対 path — coordinator への口が
+   取って書き、task の印 <id>.program に残して掃除に使い、子 process の言い換えが spec-program-file で --program に渡す)。
+   service(spec.versions が None)は <sha>.json。task は tasks/<版の指紋>/<sha>.json — task の版は task の行の版で、同じ sha の
+   Program を版の違う 2 本の task が使っても file が上書きし合わないように版ごとに分ける(#3762)。file の名はどちらも <sha>.json の
+   まま(記録係の header が file の名から Program のキーを読む — shared/entry/boundary_recorder)。
+   版の指紋 = 名の順の #(名 版) の組の正規 JSON の sha256 の頭 16 桁。"
+  (match spec.versions
+    None (str (program-file (Path) spec.program))
+    versions (do (val canonical (json.dumps (lfor #(k v) versions [k v]) :ensure-ascii False :separators #("," ":")))
+                 (val digest (cut (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))) 0 16))
+                 (str (program-file (/ (Path "tasks") digest) spec.program)))))
+
+
+(defk spec-program-file [program-dir spec]
+  {:pre [(: program-dir Path) (: spec JobSpec) (isinstance spec.program str)] :post [(: % Path)] :tags {:context "worker" :role "judgment"}}
+  "Program の job 1 本の子へ渡す cache の file の path を返すため(Program の cache の dir program-dir の下の spec-program-name)。"
+  (<- name str (spec-program-name spec))
+  (/ program-dir name))
 
 
 (defk shim-argv [python grace-ms * stamp-lines notice-env]
