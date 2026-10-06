@@ -66,7 +66,7 @@
     [(rule R1 "coordinator は、何も変えない歩の後、次に起きる刻(core/wake_policy.hy の next-wake — 要求の無い歩の期限・Rollout の期限・返事を待たせている待ちの期限のいちばん早い答え)まで受付を 1 本で待つ。要求・停止の合図・外の出来事は待ちを起こす。1 秒の周期の設定(TICK-MS)と、それで起きる code は持たない(単位 2b で消した)。")
      (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない — #3865 の見直しの追記)。")
      (rule R3 "期限の関数の答えは閉じた型 DueAt(刻)・DueNow(今すぐ — 今の刻で判断すれば状態が変わる)・DueNever(状態がこのままなら時刻では変わらない)。数の now + 1 を返さない。落ち着いた状態(要求の無い歩をもう 1 歩進めても変わらない)では DueNow を返さない。")
-     (rule R4 "状態を変えた歩か要求を受けた歩の後は、待たずにもう 1 歩進める(after-step)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
+     (rule R4 "要求を受けずに状態を変えた歩の後は、待たずにもう 1 歩進める(after-step)。要求を受けた歩の後は、次に起きる刻まで待つ — 要求で変わった状態が落ち着いていなければ期限の関数が DueNow を返す(R3)ので、要求ごとに空の歩を回さない(2026-10-07 の直し A・cisco-c8 の可。前は要求を受けた歩の後も必ずもう 1 歩回していた)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
      (rule R5 "Rollout の進行中に Kubernetes の Deployment と node を読む所は、期限ではなく周期で見に行く形(Rollout の歩の間隔の下限 ROLLOUT-TICK-MS)として rollout-due に名を付けて残す。Kubernetes の watch に替える件(agora-redesign #3868)で消す。読みの結果が待ちを起こす変更も #3868。Rollout の歩は前の Rollout の歩から ROLLOUT-TICK-MS 経った歩でだけ回るので、rollout-due は前の Rollout の歩より後の期限から求め、Rollout の歩を回せる最初の刻より早くは答えない(期限の刻の歩が Rollout の歩を回せない時も期限を落とさない)。")
      (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")
      (rule R7 "模擬だけの物(worker の代役が静かな拍を眠る事と、眠る前に預ける heartbeat)は受け手の層(模擬の受付の列 coordinator/protocol/request_queue.hy)に置く。列は預けた heartbeat をその刻に普通の heartbeat の要求として調停ループへ渡し、調停ループは本番と同じ要求だけを受ける(調停ループに模擬の材料を渡す effect を持たない — 前の IdleNextRequests・IdleTaken は消した)。")]
