@@ -32,7 +32,8 @@
   AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
-  AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect])
+  AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
+  NamedContextId HandlerMadeContextId])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
@@ -932,6 +933,126 @@
   (assert seen.warmed (repr seen))
   (assert (= seen.status SessionStatus.STOPPED) (repr seen))
   (assert (isinstance seen.refused SessionNotFoundError) (repr seen)))
+
+
+;; --- 新しい文脈の id を呼び手が名指す(LaunchEffect.new_context_id)-------------------------------------------------------
+;; 事前起動する session と、最初のターンを始める session が別の LaunchEffect でも、同じ新しい文脈の id を名指せば同じ文脈になり、
+;; 最初のターンは事前起動した runtime を使い回す(agora-redesign #3810)。名指さなければ handler が id を作る(今までの形)。
+
+(val NAMED-CONTEXT "5f0c1c5e-7a55-4b7e-9d0b-0a4d3d7f1a01")
+(val OTHER-CONTEXT "5f0c1c5e-7a55-4b7e-9d0b-0a4d3d7f1a02")
+
+(defrecord NamedWarmThenTurn
+  "新しい文脈の id を名指して事前起動し、別の session の最初のターンを走らせたシナリオの観測: warmed = 事前起動の結果・first = 最初の
+   ターンの読み取り結果・warm-view = 事前起動で名指した文脈の層 2 の process の状態・turn-view = 最初のターンで名指した文脈の状態。"
+  (#^ bool warmed)
+  (#^ Read first)
+  (#^ (| LiveProcess NoLiveProcess) warm-view)
+  (#^ (| LiveProcess NoLiveProcess) turn-view))
+
+(defk launch-naming [#^ Setting s #^ str name #^ (| str None) prompt #^ str context-id]
+  {:pre [(: s Setting) (: name str) (: prompt (| str None)) (: context-id str)] :post [(: % SessionHandle)]
+   :tags {:context "headless-adapter-test" :role "program"}}
+  "新しい文脈の id を名指して session を起動するため(prompt が在れば最初のターンも始める)。"
+  (<- handle (Launch name :agent-type AgentType.CLAUDE :work-dir s.work-dir :prompt prompt :model s.model
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN :new-context-id (NamedContextId context-id)))
+  handle)
+
+(defk named-warm-then-turn [#^ Setting s #^ str warm-context #^ str turn-context]
+  {:pre [(: s Setting) (: warm-context str) (: turn-context str)] :post [(: % NamedWarmThenTurn)]
+   :tags {:context "headless-adapter-test" :role "program"}}
+  "warm-context を名指した session を事前起動し、turn-context を名指した別の session で最初のターンを走らせて、層 2 の起動回数を
+   見るため。"
+  (<- holder (launch-naming s "adapter-named-warm" None warm-context))
+  (<- warmed (WarmSession holder))
+  (<- handle (launch-naming s "adapter-named-turn" (remember-prompt "ALPHA-1") turn-context))
+  (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- warm-view (ClaudeLiveProcess warm-context))
+  (<- turn-view (ClaudeLiveProcess turn-context))
+  (<- (Stop handle))
+  (<- (Stop holder))
+  (NamedWarmThenTurn :warmed warmed :first first :warm-view warm-view :turn-view turn-view))
+
+(defk check-named-turn-completed [#^ NamedWarmThenTurn seen #^ str turn-context]
+  {:pre [(: seen NamedWarmThenTurn) (: turn-context str)] :post [(: % None)]
+   :tags {:context "headless-adapter-test" :role "judgment"}}
+  "名指した文脈の最初のターンが終わり、続きの id が名指した id である事を確かめるため。"
+  (assert seen.warmed (repr seen))
+  (val ends (ends-of seen.first.events))
+  (assert (and (= (len ends) 1) (isinstance (get ends 0) AgentTurnCompleted)) (repr ends))
+  (assert (in "ALPHA-1" (. (get ends 0) result-text)) (repr ends))
+  (assert (= (. (get ends 0) resume-from) turn-context) (repr ends))
+  None)
+
+(defk same-named-context [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % NamedWarmThenTurn)] :tags {:context "headless-adapter-test" :role "program"}}
+  "事前起動と最初のターンが同じ id を名指すシナリオを run-on へ渡すため。"
+  (<- seen (named-warm-then-turn s NAMED-CONTEXT NAMED-CONTEXT))
+  seen)
+
+(defk different-named-contexts [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % NamedWarmThenTurn)] :tags {:context "headless-adapter-test" :role "program"}}
+  "事前起動と最初のターンが違う id を名指すシナリオを run-on へ渡すため。"
+  (<- seen (named-warm-then-turn s NAMED-CONTEXT OTHER-CONTEXT))
+  seen)
+
+(defk check-same-named-context [#^ NamedWarmThenTurn seen]
+  {:pre [(: seen NamedWarmThenTurn)] :post [(: % None)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "同じ id を名指した時、最初のターンが事前起動した runtime を使い回した(層 2 の起動回数 1)事を確かめるため。"
+  (<- (check-named-turn-completed seen NAMED-CONTEXT))
+  (assert (= seen.turn-view (LiveProcess :launches 1)) (repr seen.turn-view))
+  None)
+
+(defk check-different-named-contexts [#^ NamedWarmThenTurn seen]
+  {:pre [(: seen NamedWarmThenTurn)] :post [(: % None)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "違う id を名指した時、最初のターンは事前起動した runtime を使わず自分の runtime を起動した(層 2 の起動回数は文脈ごとに 1・
+   合わせて 2)事を確かめるため。"
+  (<- (check-named-turn-completed seen OTHER-CONTEXT))
+  (assert (= seen.warm-view (LiveProcess :launches 1)) (repr seen.warm-view))
+  (assert (= seen.turn-view (LiveProcess :launches 1)) (repr seen.turn-view))
+  None)
+
+(deftest test-headless-a-named-new-context-warmed-serves-the-first-turn-of-another-session-fake [tmp-path]
+  (<- (check-same-named-context (run-on FAKE tmp-path same-named-context))))
+
+(deftest test-headless-a-named-new-context-warmed-serves-the-first-turn-of-another-session-stub [tmp-path]
+  (<- (check-same-named-context (run-on STUB tmp-path same-named-context))))
+
+(deftest test-headless-a-different-named-new-context-does-not-use-the-warmed-runtime-fake [tmp-path]
+  (<- (check-different-named-contexts (run-on FAKE tmp-path different-named-contexts))))
+
+(deftest test-headless-a-different-named-new-context-does-not-use-the-warmed-runtime-stub [tmp-path]
+  (<- (check-different-named-contexts (run-on STUB tmp-path different-named-contexts))))
+
+(deftest test-launch-new-context-id-is-a-closed-choice-and-terminal-handlers-refuse-a-named-one [tmp-path]
+  ;; 既定は handler が id を作る(HandlerMadeContextId)。名指しは NamedContextId だけで、resume_from(前の文脈の続き)とは両立しない。
+  ;; 文脈の id を自分で決められない端末の handler は、名指しを黙って捨てずに型で拒否する。
+  (import doeff_agents.effects [refuse-turn-capabilities])
+  (val plain (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path))
+  (assert (= plain.new-context-id (HandlerMadeContextId)) (repr plain))
+  (with [(pytest.raises ValueError)]
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :resume-from NAMED-CONTEXT
+                  :new-context-id (NamedContextId OTHER-CONTEXT)))
+  (with [(pytest.raises TypeError)]
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :new-context-id NAMED-CONTEXT))
+  (with [(pytest.raises ValueError)]
+    (NamedContextId ""))
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
+                                            :new-context-id (NamedContextId NAMED-CONTEXT))
+                              :handler "t"))
+  (assert (= info.value.capability "LaunchEffect.new_context_id") info.value.capability))
+
+(defk launch-with-a-malformed-name [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % SessionHandle)] :tags {:context "headless-adapter-test" :role "program"}}
+  "runtime が受けない綴りの id を名指して起動するシナリオを run-on へ渡すため。"
+  (<- handle (launch-naming s "adapter-named-malformed" None "not-a-context-id"))
+  handle)
+
+(deftest test-headless-refuses-a-named-new-context-id-the-runtime-cannot-take-fake [tmp-path]
+  ;; runtime が受けない綴りの id は、層 2 の値の例外を上へ漏らさず起動の失敗として型で拒否する(session は起動しない)。
+  (with [(pytest.raises AgentLaunchError)]
+    (run-on FAKE tmp-path launch-with-a-malformed-name)))
 
 
 (deftest test-terminal-handlers-refuse-warming-by-type [tmp-path]

@@ -123,6 +123,8 @@ _LAZY_EXPORTS = {
     "TurnInputMode": ".effects",
     "WarmSession": ".effects",
     "WarmSessionEffect": ".effects",
+    "HandlerMadeContextId": ".effects",
+    "NamedContextId": ".effects",
     "AGENT_SESSIONS_KEY": ".handlers",
     "MOCK_AGENT_STATE_KEY": ".handlers",
     "AgentHandler": ".handlers",

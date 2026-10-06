@@ -720,6 +720,32 @@ class RedeemTurnCredentialEffect(AgentEffectBase):
             raise ValueError("RedeemTurnCredentialEffect.credential_ref must be a non-empty string")
 
 
+@dataclass(frozen=True)
+class HandlerMadeContextId:
+    """``LaunchEffect.new_context_id``: the handler makes the id of the session's
+    new context itself (the caller learns it from a turn end's ``resume_from``)."""
+
+
+@dataclass(frozen=True)
+class NamedContextId:
+    """``LaunchEffect.new_context_id``: the caller names the id of the session's
+    new context.
+
+    Two launches that name the same id (and the same launch conditions) mean
+    the same new context: a runtime started ahead of the input for one
+    (``WarmSessionEffect``) serves the first turn of the other.  The spelling
+    the runtime accepts is the handler's to check; a handler refuses an id it
+    cannot take with ``AgentLaunchError`` and an id already in use with
+    ``SessionAlreadyExistsError``.
+    """
+
+    context_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context_id, str) or not self.context_id:
+            raise ValueError("NamedContextId.context_id must be a non-empty string")
+
+
 @dataclass(frozen=True, kw_only=True)
 class LaunchEffect(AgentEffectBase):
     """Launch a new agent session.
@@ -739,6 +765,12 @@ class LaunchEffect(AgentEffectBase):
     A context already present here is not overwritten. It needs
     ``resume_from`` and must not be empty. Handlers that cannot bring a
     context in refuse it with ``AgentCapabilityUnsupportedError``.
+
+    ``new_context_id`` says who makes the id of a new context (a launch
+    without ``resume_from``): the handler (``HandlerMadeContextId``, the
+    default) or the caller (``NamedContextId``).  A named id cannot be
+    combined with ``resume_from``.  Handlers that cannot start a context under
+    a given id refuse a named one with ``AgentCapabilityUnsupportedError``.
 
     Yields: SessionHandle
     """
@@ -768,12 +800,22 @@ class LaunchEffect(AgentEffectBase):
     # An opaque copy of the ``resume_from`` context (the answer of
     # ``ExportContextEffect``) to bring in before continuing.
     resume_snapshot: str | None = None
+    # Who makes the id of the new context of a launch without ``resume_from``.
+    new_context_id: HandlerMadeContextId | NamedContextId = HandlerMadeContextId()
 
     def __post_init__(self) -> None:
         if self.turn_credential_ref is not None and (
             not isinstance(self.turn_credential_ref, str) or not self.turn_credential_ref
         ):
             raise ValueError("LaunchEffect.turn_credential_ref must be a non-empty string")
+        if not isinstance(self.new_context_id, HandlerMadeContextId | NamedContextId):
+            raise TypeError(
+                "LaunchEffect.new_context_id must be HandlerMadeContextId or NamedContextId"
+            )
+        if isinstance(self.new_context_id, NamedContextId) and self.resume_from is not None:
+            raise ValueError(
+                "LaunchEffect.new_context_id names a new context; it cannot be combined with resume_from"
+            )
         if self.resume_snapshot is None:
             return
         if self.resume_from is None:
@@ -1130,6 +1172,7 @@ def Launch(  # noqa: N802
     session_env: dict[str, str] | None = None,
     resume_from: str | None = None,
     resume_snapshot: str | None = None,
+    new_context_id: HandlerMadeContextId | NamedContextId = HandlerMadeContextId(),
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
     return LaunchEffect(
@@ -1147,6 +1190,7 @@ def Launch(  # noqa: N802
         session_env=session_env,
         resume_from=resume_from,
         resume_snapshot=resume_snapshot,
+        new_context_id=new_context_id,
     )
 
 
@@ -1350,7 +1394,13 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     ``FollowUpEffect``, so ``resume_from`` never silently starts a fresh
     context, a ``turn_credential_ref`` is never silently dropped (the
     launch would run on whatever home credentials the handler has), and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
+    A named ``new_context_id`` is never silently replaced by an id the caller
+    does not know.
     """
+    if isinstance(effect, LaunchEffect) and isinstance(effect.new_context_id, NamedContextId):
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.new_context_id", handler=handler
+        )
     if isinstance(effect, LaunchEffect) and effect.resume_from is not None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.resume_from", handler=handler
