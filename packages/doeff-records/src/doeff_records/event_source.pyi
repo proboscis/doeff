@@ -28,6 +28,7 @@ from doeff_events.effects import SourceFailed as SourceFailed
 from doeff_events.effects import SourceResumed as SourceResumed
 from doeff_events.effects import SourceStalled as SourceStalled
 from doeff_events.effects import WaitForEventEffect as WaitForEventEffect
+from doeff_events.effects import WaitForEventsEffect as WaitForEventsEffect
 from doeff_time import GetTime as GetTime
 from doeff_time import WaitWithin as WaitWithin
 from doeff_time.effects.time import GetTimeEffect as GetTimeEffect
@@ -145,6 +146,9 @@ def stop_source(task: Task) -> _Program[None, object]:
     ...
 
 def wait_beside_sources(source: str, event_types: tuple) -> _Program[Incomplete, object]:
+    ...
+
+def wait_all_beside_sources(source: str, event_types: tuple) -> _Program[tuple, object]:
     ...
 
 def waits_beside_sources(source: str) -> _Handler:

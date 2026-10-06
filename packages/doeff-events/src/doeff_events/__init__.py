@@ -28,8 +28,11 @@ from .effects import (
     TimerFired,
     WaitForEvent,
     WaitForEventEffect,
+    WaitForEvents,
+    WaitForEventsEffect,
     publish,
     wait_for_event,
+    wait_for_events,
 )
 from .handlers import (
     GAP_NOTICE,
@@ -100,6 +103,8 @@ __all__ = [
     "UnroutedNotice",
     "WaitForEvent",
     "WaitForEventEffect",
+    "WaitForEvents",
+    "WaitForEventsEffect",
     "WhenUnsent",
     "broker_back_by_retry",
     "cut_broker",
@@ -114,4 +119,5 @@ __all__ = [
     "subscribed_event_handler",
     "timer_handler",
     "wait_for_event",
+    "wait_for_events",
 ]

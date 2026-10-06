@@ -22,7 +22,7 @@ class Rang:
     room: str
 
 
-class SourceBroke(RuntimeError):
+class SourceBrokeError(RuntimeError):
     """源の task が落ちた時の例外(``SourceFailed`` が運ぶ)。"""
 
 
@@ -57,12 +57,12 @@ def _received_beside_source(published: tuple[object, ...]) -> tuple[object, ...]
 
 
 def test_wait_for_events_beside_sources_drops_another_sources_failure() -> None:
-    other = SourceFailed(source="other", error=SourceBroke("other"))
+    other = SourceFailed(source="other", error=SourceBrokeError("other"))
     received = _received_beside_source((other, Rang("a"), Rang("b")))
     assert received == (Rang("a"), Rang("b")), received
 
 
 def test_wait_for_events_beside_sources_raises_its_own_sources_failure() -> None:
-    mine = SourceFailed(source="mine", error=SourceBroke("mine"))
-    with pytest.raises(SourceBroke, match="mine"):
+    mine = SourceFailed(source="mine", error=SourceBrokeError("mine"))
+    with pytest.raises(SourceBrokeError, match="mine"):
         _received_beside_source((Rang("a"), mine))

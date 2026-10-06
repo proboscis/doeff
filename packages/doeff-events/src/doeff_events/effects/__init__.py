@@ -33,8 +33,11 @@ from .events import (
     StopArrived,
     WaitForEvent,
     WaitForEventEffect,
+    WaitForEvents,
+    WaitForEventsEffect,
     publish,
     wait_for_event,
+    wait_for_events,
 )
 
 __all__ = [
@@ -65,6 +68,9 @@ __all__ = [
     "TimerFired",
     "WaitForEvent",
     "WaitForEventEffect",
+    "WaitForEvents",
+    "WaitForEventsEffect",
     "publish",
     "wait_for_event",
+    "wait_for_events",
 ]

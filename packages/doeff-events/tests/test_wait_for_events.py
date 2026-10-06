@@ -44,7 +44,7 @@ class Unrelated:
     note: str
 
 
-class SourceBroke(RuntimeError):
+class SourceBrokeError(RuntimeError):
     """源の task が落ちた時の例外(``SourceFailed`` が運ぶ)。"""
 
 
@@ -69,7 +69,9 @@ def _wait_rang() -> EffectGenerator[tuple[object, ...]]:
     return came
 
 
-def _received_after(published: tuple[object, ...], body: Program[tuple[object, ...]]) -> tuple[object, ...]:
+def _received_after(
+    published: tuple[object, ...], body: Program[tuple[object, ...]]
+) -> tuple[object, ...]:
     """書き手が ``published`` を発し終えた後で、購読者 listener(``Rang`` を購読)が ``body`` を走らせた答え。"""
     bus = EventBus()
     receiving = subscribed_event_handler(bus, "listener", (Rang,))
@@ -137,12 +139,12 @@ def _received_in_notice_wrapper(published: tuple[object, ...]) -> tuple[object, 
 
 
 def test_wait_for_events_in_the_notice_wrapper_drops_another_sources_failure() -> None:
-    other = SourceFailed(source="other", error=SourceBroke("other"))
+    other = SourceFailed(source="other", error=SourceBrokeError("other"))
     received = _received_in_notice_wrapper((other, Rang("a"), Rang("b")))
     assert received == (Rang("a"), Rang("b")), received
 
 
 def test_wait_for_events_in_the_notice_wrapper_raises_its_own_sources_failure() -> None:
-    mine = SourceFailed(source="mine", error=SourceBroke("mine"))
-    with pytest.raises(SourceBroke, match="mine"):
+    mine = SourceFailed(source="mine", error=SourceBrokeError("mine"))
+    with pytest.raises(SourceBrokeError, match="mine"):
         _received_in_notice_wrapper((Rang("a"), mine))
