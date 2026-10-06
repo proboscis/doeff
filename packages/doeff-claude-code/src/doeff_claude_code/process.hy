@@ -53,12 +53,14 @@
 
 (defclass ClaudeProcess []
   "1 つの claude の print mode の process。on-line(raw) は stdout の 1 行ごとに読み手の thread から、on-exit(exit-code stderr-tail) は
-   stdout の EOF と process の終わりの後に 1 度だけ呼ぶ。"
+   stdout の EOF と process の終わりの後に 1 度だけ呼ぶ。on-down() は process が終わった時(stdout の EOF を待たない — 子の子が stdout を
+   開いたままでも呼ぶ)と、降ろす梯子を踏み終えた時に呼ぶ(待つ側が alive・retire-finished を読み直す合図 — 2 度呼ぶことがある)。"
 
-  (defn __init__ [self #^ list argv #^ str cwd #^ dict env on-line on-exit]
+  (defn __init__ [self #^ list argv #^ str cwd #^ dict env on-line on-exit on-down]
     (setv self.argv (tuple argv)
           self.on-line on-line
           self.on-exit on-exit
+          self.on-down on-down
           self.stderr-lines (deque :maxlen STDERR-TAIL-LINES)
           self.retire-lock (threading.Lock)
           self.retiring None
@@ -70,7 +72,9 @@
     (setv self.stderr-reader (threading.Thread :target self.read-stderr :name "claude-stderr" :daemon True))
     (.start self.stderr-reader)
     (setv self.reader (threading.Thread :target self.read-stdout :name "claude-stdout" :daemon True))
-    (.start self.reader))
+    (.start self.reader)
+    (setv self.exit-watcher (threading.Thread :target self.watch-exit :name "claude-exit" :daemon True))
+    (.start self.exit-watcher))
 
   (defn [property] #^ int pid [self] self.process.pid)
 
@@ -116,7 +120,8 @@
                        (.went-down-within self TERM-GRACE-SECONDS))
                    (do (when (.alive self) (with [(contextlib.suppress OSError)] (.kill self.process)))
                        (.went-down-within self TERM-GRACE-SECONDS))))
-    (setv self.went-down down))
+    (setv self.went-down down)
+    (self.on-down))
 
   (defn retire [self]
     "降ろし始める(冪等・呼び手を止めない): stdin に EOF を出し、梯子を自分の thread で回す。"
@@ -131,6 +136,11 @@
     (and (is-not self.retiring None) (not (.is-alive self.retiring))))
 
   ;; -- 読み手 ----------------------------------------------------------------------------------
+
+  (defn watch-exit [self]
+    "process の終わりを待つ側へ知らせるため(thread の入口 — stdout の EOF を待たずに on-down を呼ぶ)。"
+    (.wait self.process)
+    (self.on-down))
 
   (defn read-stderr [self]
     (setv stream self.process.stderr)

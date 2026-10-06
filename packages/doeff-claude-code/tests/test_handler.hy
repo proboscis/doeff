@@ -8,11 +8,12 @@
 (import os.path)
 (import pathlib [Path])
 (import sys)
+(import threading)
 (import uuid)
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [listen-handler slog-discard-handler])
-(import doeff_time [Delay GetMonotonic GetTime sync-time-handler])
+(import doeff_time [Delay DelayEffect GetMonotonic GetTime sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
@@ -22,7 +23,7 @@
 (import doeff_claude_code.argv [launch-key transcript-path])
 (import doeff_claude_code.process [ClaudeProcess])
 (import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost Doorbell claude-code-handler wait-until])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
                               reply-prompt sleep-prompt])
@@ -771,3 +772,65 @@
   (<- views (with-real-handler host (idle-until-the-floor (spec-in tmp-path) (str (uuid.uuid4)) 7.0)))
   (assert (= (get views 0) (LiveProcess :launches 1)) (repr views))
   (assert (= (get views 1) (NoLiveProcess :launches 1 :stopped-because StopReason.CREDENTIAL-FLOOR)) (repr views)))
+
+
+;; --- 待ちは呼び鈴で起きる(時間で起きて確かめない)---------------------------------------------------------------
+
+(defk hooked-and-thinking-turn [#^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: spec ClaudeSessionSpec) (: sid str)] :post [(: % TurnRecord)] :tags {:context "claude-code" :role "program"}}
+  "init の後に hook の秒と考える秒を置いてから本文を差分で出す手番を、起こしてから最後まで読んで閉じるため(起動の待ち・頁の読みの
+   待ち・閉じる待ちのどれもが、まだ来ていない行や終わりを待つ形)。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec
+                               (TurnInput (.join " " [(.format HOOK-PHRASE 0.2) (.format THINK-PHRASE 0.2) (.format STREAM-PHRASE 3)
+                                                     (reply-prompt "WAITED")])
+                                          (str (uuid.uuid4)))))
+  (assert (isinstance started TurnStarted) (repr started))
+  (<- done TurnRecord (read-to-end started.turn 30.0))
+  (<- (ClaudeCloseSession sid "test"))
+  done)
+
+
+(deftest test-the-waits-wake-on-the-reader-thread-not-on-a-clock-tick [tmp-path]
+  ;; 起動の待ち・頁の読みの待ち・閉じる待ちは、読み手の thread(と process の終わり)が状態を変えた時に鳴らす呼び鈴で起きる —
+  ;; 時間の刻み(Delay)で起きて確かめない。刻みで起きる形は行が来てから最大 1 刻みだけ遅れて待ちが抜け、待つ間も刻みごとに起きる。
+  ;; 失敗ケース = 0.05 秒ごとに Delay で起きて確かめる形では、この手番の間に handler が Delay を何度も撃つ。
+  (val host (host-of STUB-COMMAND))
+  (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler host)]
+              (Listen (hooked-and-thinking-turn (spec-in tmp-path) (str (uuid.uuid4))) :types #(DelayEffect))))
+  (val done (get heard 0))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (= (len (get heard 1)) 0) (.format "待ちの間に handler が Delay を {} 回撃った" (len (get heard 1)))))
+
+
+(defrecord WaitOutcome
+  "wait-until を 1 回待たせた観測: woke = 条件が真になって抜けたか・seconds = 待った秒。"
+  (#^ bool woke)
+  (#^ float seconds))
+
+(defk wait-through-a-change-before-the-bell [#^ float seconds]
+  {:pre [(: seconds float)] :post [(: % WaitOutcome)] :tags {:context "claude-code" :role "program"}}
+  "状態が「待つ手が条件を読んだ直後・呼び鈴を掛ける前」に変わり、その変化の呼び鈴が誰も掛けていない所で鳴る形で wait-until を
+   待たせるため(上限 seconds 秒)。"
+  (val doorbell (Doorbell))
+  (val read-once (threading.Event))
+  (val changed (threading.Event))
+  (<- started (GetMonotonic))
+  (<- woke (wait-until (fn [bell] (.hang doorbell bell))
+                       (fn [] (if (.is-set read-once)
+                                  (.is-set changed)
+                                  (do (.set read-once) (.set changed) (.ring doorbell) False)))
+                       seconds))
+  (<- finished (GetMonotonic))
+  (WaitOutcome :woke woke :seconds (- finished started)))
+
+
+(deftest test-a-change-just-before-the-bell-is-hung-does-not-wait-out-the-deadline [tmp-path]
+  ;; 待つ手は呼び鈴を掛けてから条件を読み直すので、読んだ直後・掛ける前に状態が変わって呼び鈴が空振りしても、期限まで待たずに抜ける
+  ;; (取りこぼしが無い)。時間の刻み(Delay)でも起きない。失敗ケース = 掛ける前に読んだ条件だけで眠る形は 5 秒の期限まで眠る・
+  ;; 刻みで起きて確かめる形は Delay を撃つ。
+  (<- heard (with_handlers [(sync-time-handler) listen-handler]
+              (Listen (wait-through-a-change-before-the-bell 5.0) :types #(DelayEffect))))
+  (val outcome (get heard 0))
+  (assert outcome.woke (repr outcome))
+  (assert (< outcome.seconds 1.0) (repr outcome))
+  (assert (= (len (get heard 1)) 0) (.format "待ちの間に Delay を {} 回撃った" (len (get heard 1)))))

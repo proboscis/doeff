@@ -13,8 +13,9 @@
 ;;;   ClaudeStartTurn 1 回に終わりはちょうど 1 つ。行の seq は会話の中で単調増加。
 ;;;
 ;;; 状態は ClaudeCodeHost(composition root が 1 つ作って handler に渡す)が持つ。読み手の thread と handler の節は
-;;; 会話ごとの lock で状態機械(dialogue.hy)の値を差し替える。待つ所(init・出来事・降りるの待ち)は doeff-time の
-;;; GetMonotonic / Delay で刻む(VM の thread を眠らせない)。
+;;; 会話ごとの lock で状態機械(dialogue.hy)の値を差し替える。待つ所(init・出来事・降りるの待ち・本数の空き)は呼び鈴
+;;; (Doorbell — CreateExternalPromise の約束)を掛けてから条件を読み直し、WaitWithin で上限の秒まで待つ。状態を変えた側(読み手の
+;;; thread・process の終わり・handler の節)が呼び鈴を鳴らす(時間で起きて確かめない — 行が来てから待ちが抜けるまでに刻みの遅れが無い)。
 ;;;
 ;;; 計時の行(#3605): 送ってから CLI が答え始めるまでの秒を分けて測るため、手番の process を起こした所・init の行を受けた
 ;;; 所・init の後の最初の行を上の層へ初めて渡した所で、slog を 1 行ずつ出す。欄は名と壁の時刻(GetTime の epoch ミリ秒)と経過のミリ秒
@@ -37,7 +38,8 @@
 (import threading)
 (import uuid)
 (import doeff_core_effects.effects [slog])
-(import doeff_time [Delay GetMonotonic GetTime])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind parse-record
@@ -56,7 +58,6 @@
 (import doeff_claude_code.argv [transcript-dir transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 
-(setv POLL-SECONDS 0.05)
 (setv KEPT-TURNS 16)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 (setv COLD-RESUME-TIMEOUT-SECONDS 600.0)
@@ -65,6 +66,33 @@
 
 
 ;; --- 状態 ---------------------------------------------------------------------------------------
+
+(defclass Doorbell []
+  "状態が変わるのを待つ手(wait-until)が掛けた呼び鈴(CreateExternalPromise の約束)を集め、状態を変えた側が全部鳴らすため。読み手の
+   thread と handler の節の両方から触るので自分の lock を持つ。呼び鈴は object そのものを持つ(id で覚えない)。鳴らすのは
+   ExternalPromise.complete だけ(thread をまたいでよい唯一の口・2 度目の完了は無視される)。"
+  (defn __init__ [self]
+    (setv self.lock (threading.Lock))
+    (setv #^ (get tuple #((get ExternalPromise bool) ...)) self.bells #()))
+
+  (defn #^ tuple hang [self bell]
+    "呼び鈴を掛ける。答え = 掛けた先の組(wait-until が外す先)。"
+    (with [self.lock]
+      (setv self.bells (+ self.bells #(bell))))
+    #(self))
+
+  (defn unhang [self bell]
+    "鳴らずに起きた呼び鈴を外す。"
+    (with [self.lock]
+      (setv self.bells (tuple (gfor other self.bells :if (is-not other bell) other)))))
+
+  (defn ring [self]
+    "掛かっている呼び鈴を全部鳴らして外す(答え = WaitWithin の期限の None と分ける True)。"
+    (with [self.lock]
+      (setv bells self.bells)
+      (setv self.bells #()))
+    (for [bell bells]
+      (.complete bell True))))
 
 (defclass TurnLog []
   "1 つの手番の行と終わり(まだ終わっていなければ end は None)。launched-at = この手番で process を起こし始めた刻(GetMonotonic の
@@ -106,7 +134,9 @@
           self.current-seq 0
           self.next-line-seq 0
           self.init-seen False
-          self.closed False)
+          self.closed False
+          ;; doorbell = この会話の状態(手番の行と終わり・init・process の生き死に)を待つ手の呼び鈴。
+          self.doorbell (Doorbell))
     ;; launches = この会話で手番のために起こした process の数・stopped-because = 最後の process を降ろした訳(検の口 ClaudeLiveProcess が
     ;; 読む — 会話ごとに process を生かしたまま待たせる形の使い回しと守りを確かめるため・#3672)・launch-key = 今の process の起こした時の
     ;; 条件の鍵(argv.hy の launch-key — 次の手番で使い回してよいかを決める)。
@@ -176,26 +206,40 @@
           self.live-limit live-limit
           self.credential-floor-seconds (float credential-floor-seconds)
           self.launch-timeout (float launch-timeout)
-          self.lock (threading.Lock))
+          self.lock (threading.Lock)
+          ;; doorbell = 会話の組が変わる(足す・忘れる)のを待つ手の呼び鈴(本数の空きの待ち — hang-on-all)。
+          self.doorbell (Doorbell))
     (setv #^ (get dict #(str SessionRuntime)) self.runtimes {}))
 
   (defn runtime [self #^ str session-id]
     (with [self.lock] (.get self.runtimes session-id)))
 
   (defn register [self #^ SessionRuntime runtime]
-    (with [self.lock] (setv (get self.runtimes runtime.session-id) runtime)))
+    (with [self.lock] (setv (get self.runtimes runtime.session-id) runtime))
+    (.ring self.doorbell))
 
   (defn forget [self #^ str session-id #^ SessionRuntime runtime]
     (with [self.lock]
       (when (is (.get self.runtimes session-id) runtime)
-        (del (get self.runtimes session-id))))))
+        (del (get self.runtimes session-id))))
+    (.ring self.doorbell))
+
+  (defn #^ tuple hang-on-all [self bell]
+    "本数の空きを待つ手の呼び鈴を、host と今の全部の会話に掛けるため(どの会話の手番の終わり・process の終わりでも、会話の組が
+     変わっても鳴る)。host に先に掛けてから会話の組を読む — 読んだ後に足された会話は host の呼び鈴が知らせる。答え = 掛けた先の組。"
+    (.hang self.doorbell bell)
+    (with [self.lock]
+      (setv runtimes (tuple (.values self.runtimes))))
+    (for [runtime runtimes]
+      (.hang runtime.doorbell bell))
+    (+ #(self.doorbell) (tuple (gfor runtime runtimes runtime.doorbell)))))
 
 
 ;; --- 読み手の thread からの呼び(lock の中で状態機械を進める) ------------------------------------------
 
 (defn apply-transition [#^ SessionRuntime runtime #^ Binding binding transition]
-  "遷移の答えを運ぶ: 状態を差し替え、stdin へ書き、SIGINT を送り、手番の終わりを記し、降ろす訳が在れば記して process を降ろし始める。
-   runtime.lock の中で呼ぶ。"
+  "遷移の答えを運ぶ: 状態を差し替え、stdin へ書き、SIGINT を送り、手番の終わりを記し、降ろす訳が在れば記して process を降ろし始め、
+   会話の呼び鈴を鳴らす(待つ手が読み直す)。runtime.lock の中で呼ぶ。"
   (setv runtime.state transition.state)
   (for [line transition.sends] (.send (process-of binding) line))
   (when transition.signal (.interrupt (process-of binding)))
@@ -213,7 +257,8 @@
       (setv log.end end)))
   (when (is-not transition.retire None)
     (setv runtime.stopped-because transition.retire)
-    (.retire (process-of binding))))
+    (.retire (process-of binding)))
+  (.ring runtime.doorbell))
 
 (defn on-line [#^ SessionRuntime runtime #^ Binding binding #^ (get Callable #([] datetime)) clock #^ str raw]
   "stdout の 1 行を、今の process の行なら手番の記録に足して状態機械を進めるため。host の手番の外の行(前の process の行・手番の
@@ -315,28 +360,42 @@
   (if refused (AttachmentRefused (get refused 0)) None))
 
 
-;; --- 待ち(doeff-time の時計で刻む) --------------------------------------------------------------------
+;; --- 待ち(呼び鈴で起きる) --------------------------------------------------------------------
 
-(defk wait-until [ready #^ float seconds]
-  {:pre [(: ready Callable) (: seconds float)] :post [(: % bool)]}
-  "ready() が真になるまで待つ(上限 seconds 秒)。答え = 真になったか。"
+(defk wait-until [hang ready #^ float seconds]
+  {:pre [(: hang Callable) (: ready Callable) (: seconds float)] :post [(: % bool)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "ready() が真になるまで、状態を変えた側が鳴らす呼び鈴で起きて待つため(上限 seconds 秒 — 時間で起きて確かめない)。hang(bell) =
+   呼び鈴を状態の持ち主の Doorbell に掛け、掛けた先の組を答える関数。取りこぼさない順: 呼び鈴を掛けてから ready を読み直す(読んだ
+   直後・掛ける前に状態が変わっても、掛けた後の読み直しが見る。掛けた後の変化は呼び鈴が鳴る)。鳴った・期限が来た・読み直しで真の
+   どれでも、呼び鈴を外して約束を閉じる(鳴らずに起きた呼び鈴を残さない)。答え = 真になったか。"
   (<- started (GetMonotonic))
-  (while (not (ready))
+  (when (ready) (return True))
+  (while True
+    (<- bell (CreateExternalPromise))
+    (val hung (hang bell))
+    (val now-ready (ready))
     (<- now (GetMonotonic))
-    (when (>= (- now started) seconds) (return False))
-    (<- (Delay POLL-SECONDS)))
-  True)
+    (val left (- seconds (- now started)))
+    (when (and (not now-ready) (> left 0))
+      (<- (WaitWithin bell.future left :park True)))
+    (for [doorbell hung]
+      (.unhang doorbell bell))
+    (.complete bell True)
+    (when now-ready (return True))
+    (when (<= left 0) (return False))))
 
 (defk run-cold-resume [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str session-id]
   {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: session-id str)] :post [(: % bool)]}
   "冷えた続きの前の 1 回きりの命令を走らせて終わりを待つ。答え = 走り終えたか(失敗しても手番は起こす — 最適化の命令)。"
-  (setv done (threading.Event))
+  (val done (threading.Event))
+  (val doorbell (Doorbell))
   (try
     (setv process (ClaudeProcess (cold-resume-argv host.command spec session-id) spec.cwd (process-env spec.home)
-                                 (fn [raw] None) (fn [code tail] (.set done))))
+                                 (fn [raw] None) (fn [code tail] (.set done) (.ring doorbell)) (fn [] (.ring doorbell))))
     (except [OSError] (return False)))
   (.close-stdin process)
-  (<- finished (wait-until (fn [] (.is-set done)) COLD-RESUME-TIMEOUT-SECONDS))
+  (<- finished (wait-until (fn [bell] (.hang doorbell bell)) (fn [] (.is-set done)) COLD-RESUME-TIMEOUT-SECONDS))
   (when (not finished) (.drop process))
   finished)
 
@@ -390,7 +449,7 @@
   {:pre [(: runtime SessionRuntime) (: turn-seq int) (: outcome (| TurnStarted LaunchFailed))] :post [(: % None)]
    :tags {:context "claude-code" :role "foundation"}}
   "init の行を受けた(か受けずに起動を諦めた)所の計時の行を出すため。since-launch-ms = process を起こし始めてから待ちが init を見るまで
-   (待ちは POLL-SECONDS ごとに見るので、その分だけ遅れ得る)・line-at-ms = 読み手の thread が init の行を読んだ壁の時刻(無ければ None)。"
+   (待ちは読み手の thread が init の行で鳴らす呼び鈴で起きるので、刻みの遅れは無い)・line-at-ms = 読み手の thread が init の行を読んだ壁の時刻(無ければ None)。"
   (<- now (GetMonotonic))
   (<- at (GetTime))
   (val log (with [runtime.lock] (.get runtime.turns turn-seq)))
@@ -613,13 +672,15 @@
       (setv binding.process
             (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
                            (fn [raw] (on-line runtime binding host.clock raw))
-                           (fn [code tail] (on-exit runtime binding code tail))))
+                           (fn [code tail] (on-exit runtime binding code tail))
+                           (fn [] (.ring runtime.doorbell))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
       (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
       (except [error OSError]
         (setv runtime.binding None)
         (setv (. (.open-log runtime) end) (Interrupted :process-kept False))
+        (.ring runtime.doorbell)
         (return (LaunchFailed :stderr-tail (str error)))))
     (apply-transition runtime binding transition)
     turn-seq))
@@ -647,7 +708,8 @@
       (setv binding.process
             (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
                            (fn [raw] (on-line runtime binding host.clock raw))
-                           (fn [code tail] (on-exit runtime binding code tail))))
+                           (fn [code tail] (on-exit runtime binding code tail))
+                           (fn [] (.ring runtime.doorbell))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
       (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
@@ -662,7 +724,8 @@
   "init の行(か process の終わり)まで待つ。init の前に終了した・期限を過ぎた = LaunchFailed(fresh-runtime = ターンを 1 度も始めて
    いない会話 — 新しく作った・事前起動しただけの会話の状態は忘れる)。"
   (setv process (.bound-process runtime))
-  (<- seen (wait-until (fn [] (or runtime.init-seen (not (.alive process)))) host.launch-timeout))
+  (<- seen (wait-until (fn [bell] (.hang runtime.doorbell bell)) (fn [] (or runtime.init-seen (not (.alive process))))
+                       host.launch-timeout))
   (with [runtime.lock]
     (setv started runtime.init-seen))
   (if started
@@ -671,11 +734,14 @@
         (TurnStarted (ClaudeTurn runtime.session-id turn-seq) runtime.session-id))
       (do
         (when seen
-          (<- (wait-until (fn [] (is-not (. (get runtime.turns turn-seq) end) None)) 2.0)))
+          (<- (wait-until (fn [bell] (.hang runtime.doorbell bell))
+                          (fn [] (is-not (. (get runtime.turns turn-seq) end) None))
+                          2.0)))
         (.drop process)
         (with [runtime.lock]
           (setv log (get runtime.turns turn-seq))
-          (when (is log.end None) (setv log.end (Interrupted :process-kept False))))
+          (when (is log.end None) (setv log.end (Interrupted :process-kept False)))
+          (.ring runtime.doorbell))
         (when fresh-runtime (.forget host runtime.session-id runtime))
         (LaunchFailed :exit-code (.exit-code process)
                       :stderr-tail (if seen (.stderr-tail process)
@@ -764,7 +830,7 @@
   {:pre [(: host ClaudeCodeHost)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
   "新しい process を起こす前に、生かす本数(host.live-limit)に空きができるまで待つため(空きを作るのは room-or-evict・待つ上限は
    launch-timeout)。答え = 空きができたか。"
-  (<- room (wait-until (fn [] (room-or-evict host)) host.launch-timeout))
+  (<- room (wait-until (fn [bell] (.hang-on-all host bell)) (fn [] (room-or-evict host)) host.launch-timeout))
   room)
 
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]
@@ -807,7 +873,7 @@
     (when (is runtime None)
       (raise (RuntimeError (.format "process の終了を待つ会話 {} の状態が無い(start-decision の誤り)" target-id))))
     (val old (.bound-process runtime))
-    (<- down (wait-until (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
+    (<- down (wait-until (fn [bell] (.hang runtime.doorbell bell)) (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
     (when (not down)
       (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
   ;; CLI が数え始める額 = 続き・枝の親の transcript の最後の cost-state の額(前の process が終了して額を記録した後 = 終了を待った後に
@@ -968,7 +1034,8 @@
   (when (or (is runtime None) (is (page-of runtime turn request.after-seq) None))
     (return (UnknownTurn turn)))
   ;; 待つ間に古い手番として刈られた手番は、知らない手番と同じに答える。
-  (<- (wait-until (fn [] (setv page (page-of runtime turn request.after-seq))
+  (<- (wait-until (fn [bell] (.hang runtime.doorbell bell))
+                  (fn [] (setv page (page-of runtime turn request.after-seq))
                          (or (is page None) (bool page.lines) (is-not page.end None)))
                   (float request.wait-up-to)))
   (setv page (page-of runtime turn request.after-seq))
@@ -991,10 +1058,12 @@
     (setv runtime.closed True)
     (setv process runtime.process)
     (when (and (is-not process None) (.alive process))
-      (setv runtime.stopped-because StopReason.SESSION-CLOSED)))
+      (setv runtime.stopped-because StopReason.SESSION-CLOSED))
+    (.ring runtime.doorbell))
   (when (and (is-not process None) (.alive process))
     (.retire process)
-    (<- (wait-until (fn [] (or (not (.alive process)) (.retire-finished process))) RETIRE-WAIT-SECONDS))
+    (<- (wait-until (fn [bell] (.hang runtime.doorbell bell)) (fn [] (or (not (.alive process)) (.retire-finished process)))
+                    RETIRE-WAIT-SECONDS))
     (when (.alive process)
       (return (ProcessStillAlive (.format "process pid {} of session {} did not go down after EOF, SIGTERM and SIGKILL ({})"
                                           process.pid request.session-id request.reason)))))
