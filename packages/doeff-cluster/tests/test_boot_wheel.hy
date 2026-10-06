@@ -2,18 +2,19 @@
 ;; (doeff の tools/doeff_cargo_backend.py — Rust の部品を組む・引く入口の 1 つ・ADR-DOE-BUILD-001)を通り、口の保存先の同じ wheel を
 ;; 使うことの検(2026-10-06 00:02〜00:05 の版上げで、起動の uv sync が doeff-vm を source から 94 秒かけて組み、同じ PVC に在った同じ中身の
 ;; wheel を使わなかった — その間 利用者の画面が切れた・#3860 で worker の自前の git tree hash の鍵と置き場を消した)。偽の uv の build は
-;; 本物の口と同じ形で答える: source の中身の鍵で DOEFF_WHEEL_CACHE の <package>-<鍵>/ を引き、無ければ置き、DOEFF_WHEEL_REPORT へ
-;; 保存先の中の wheel と組んだかの 1 行を足す。
+;; 本物の口と同じ形で答える: source の中身の鍵で DOEFF_WHEEL_CACHE の <package>-<鍵>/ を引き、無ければ置き、--out-dir に写しを置き、
+;; DOEFF_WHEEL_REPORT へ保存先の中の wheel と組んだかの 1 行を足す。入れる wheel は --out-dir に出た file で、報告は観測だけ。
 ;;
 ;; 失敗ケース:
-;;   1 口の報告の行の読み(native_wheel の stored-wheel-of)は package の最後の行を答え、行が無い・形が違う時は理由の文(黙って
-;;     組んだ扱いにしない)。
+;;   1 口の報告の行の読み(native_wheel の reported-built)は package の最後の行の「組んだか」を答え、行が無い時は「報告が無い」
+;;     (NotReported — 組んだ・使ったのどちらにも埋めない)、形が違う時は理由の文。報告を書かない版の口(宣言の古い doeff の root)で
+;;     用意しても、--out-dir に出た wheel を受け、由来は UNREPORTED(native-build-failed で止まらない)。
 ;;   2 起動の入口 boot_wheel が口を通して置かせた wheel を、worker の EnsureNativeWheel(本物の翻訳 env-translation と本物の答え手)が
 ;;     同じ口の保存先から組ませずに使う — 自前の鍵(git の tree hash)を引く形に戻すと、口の保存先の wheel を見つけられず赤。source の
 ;;     中身を変えると口が 1 度だけ組む。
 ;;   3 起動の入口は --mirror・--commit を受けない(tree hash を読む道を持たない)。
 ;;   4 boot.sh を 2 回通す: 1 回目は口が組んで置き、2 回目(root だけを消す)は口が置いた wheel を使う。どちらも doeff-vm を uv sync で
-;;     組まず(--no-install-package doeff-vm)、保存先の中の wheel を root の venv へ入れる。uv build の子は呼び手の venv を継がず、
+;;     組まず(--no-install-package doeff-vm)、root の下の --out-dir に出た wheel を root の venv へ入れる。uv build の子は呼び手の venv を継がず、
 ;;     cache は state の下。
 ;;   5 image に焼いた起動の script(引き継ぐ前)は root を展開して宣言した commit の script へ引き継ぐだけで、uv を 1 度も撃たない
 ;;     (準備の手順の直しが image の作り直しなしで効く — 2026-10-06 に準備を image の script が持っていて、wheel の直しが本番の image では
@@ -52,7 +53,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
 (import doeff_cluster.worker.core.launch [shim-argv])
-(import doeff_cluster.worker.intent.env_prepare_model [EnsureNativeWheel WheelReady])
+(import doeff_cluster.worker.intent.env_prepare_model [EnsureNativeWheel WheelOrigin WheelReady])
 (import doeff_cluster.worker.protocol.declared [JOB-ENTRY])
 (import doeff_cluster.worker.protocol.env_store [ENV-TOOL])
 (import doeff_cluster.worker.protocol.env_translation [env-translation])
@@ -108,6 +109,8 @@
                 "        [ ! -f \"$shim\" ] || \"$FAKE_UV_PYTHON\" -c 'import importlib.machinery as m, sys; m.SourceFileLoader(\"shim\", sys.argv[1]).get_code(\"shim\")' \"$shim\" ;;\n"
                 "  build) out=''; prev=''; src=''\n"
                 "         for a in \"$@\"; do [ \"$prev\" = --out-dir ] && out=$a; prev=$a; src=$a; done\n"
+                ;; 報告の約束の無い版の口(FAKE_UV_OLD_BACKEND — #3860 の前の doeff の root の口): 保存先を引かず --out-dir に組み、報告を書かない。
+                "         if [ -n \"${FAKE_UV_OLD_BACKEND:-}\" ]; then mkdir -p \"$out\" && : >\"$out/" WHEEL-NAME "\"; exit 0; fi\n"
                 "         key=$(cd \"$src\" && find . -type f | LC_ALL=C sort | xargs cat | sha256sum | cut -c1-32)\n"
                 "         slot=\"$DOEFF_WHEEL_CACHE/doeff-vm-$key\"; built=false\n"
                 "         if [ ! -f \"$slot/" WHEEL-NAME "\" ]; then mkdir -p \"$slot\" && : >\"$slot/" WHEEL-NAME "\"; built=true; fi\n"
@@ -206,47 +209,50 @@
   (int.from-bytes (cut (.read-bytes path) 4 8) "little"))
 
 
-(defk ensure-wheel [source-dir]
-  {:pre [(: source-dir str)] :post [(: % (| WheelReady EnvFailure))]}
+(defk ensure-wheel [source-dir out-dir]
+  {:pre [(: source-dir str) (: out-dir str)] :post [(: % (| WheelReady EnvFailure))]}
   "worker の準備が出す EnsureNativeWheel を 1 回出す。"
-  (<- ready (| WheelReady EnvFailure) (EnsureNativeWheel native-wheel.DOEFF-VM-PACKAGE source-dir))
+  (<- ready (| WheelReady EnvFailure) (EnsureNativeWheel native-wheel.DOEFF-VM-PACKAGE source-dir out-dir))
   ready)
 
 
 (defk worker-wheel [state-dir uv-cache uv source-dir]
   {:pre [(: state-dir Path) (: uv-cache Path) (: uv Path) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation — worker/entry/env_tool)で wheel を用意する(uv-cache = worker の
-   uv の cache の dir — 起動の script の DOEFF_UV_CACHE_DIR)。"
+  "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation — worker/entry/env_tool)で wheel を用意する(--out-dir は
+   state の隣の worker-root の下 — 準備の stage-native と同じ wheel-out-dir・uv-cache = worker の uv の cache の dir — 起動の script の
+   DOEFF_UV_CACHE_DIR)。"
+  (val out-dir (native-wheel.wheel-out-dir (str (/ state-dir.parent "worker-root")) native-wheel.DOEFF-VM-PACKAGE))
   (val settings {"runtime-env.state" (str state-dir) "runtime-env.uv-cache" (str uv-cache) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
                  "runtime-env.uv" (str uv) "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
   (<- ready (| WheelReady EnvFailure)
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
-                     (ensure-wheel source-dir)))
+                     (ensure-wheel source-dir out-dir)))
   ready)
 
 
-(defk stored-path [state-dir stdout]
-  {:pre [(: state-dir Path) (: stdout str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "起動の入口の答えの 1 行(「<組んだ|使った> <path>」)の path が build の口の保存先(state/wheels/doeff-vm-<鍵>/)の中の wheel である事を
-   確かめて返すため。"
+(defk out-path [root stdout]
+  {:pre [(: root Path) (: stdout str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "起動の入口の答えの 1 行(「<組んだ|使った|…> <path>」)の path が root の下の --out-dir(<root>/.native-wheels/doeff-vm/)に出た wheel の
+   file である事を確かめて返すため。"
   (val path (get (.split (.strip stdout) " " 1) -1))
-  (assert (.startswith path (str (/ state-dir "wheels" "doeff-vm-"))) path)
-  (assert (.endswith path WHEEL-NAME) path)
+  (assert (= path (os.path.join (native-wheel.wheel-out-dir (str root) native-wheel.DOEFF-VM-PACKAGE) WHEEL-NAME)) path)
+  (assert (os.path.isfile path) path)
   path)
 
 
 ;; --- 1 口の報告の読み ------------------------------------------------------------------------------
 
-(deftest test-the-report-names-the-stored-wheel-of-the-package
+(deftest test-the-report-names-whether-the-backend-built-the-package
   (val line (fn [project wheel built] (+ "{\"project\": \"" project "\", \"wheel\": \"" wheel "\", \"built\": " built "}\n")))
   (val text (+ (line "doeff-vm" "/s/a.whl" "true") (line "other" "/s/o.whl" "true") (line "doeff-vm" "/s/b.whl" "false")))
-  (assert (= (native-wheel.stored-wheel-of text "doeff-vm") (native-wheel.StoredWheel :path "/s/b.whl" :built False)))
-  ;; 反例: 行が無い・JSON でない・形が違う報告は理由の文(組んだ扱いにも使った扱いにもしない)。
-  (assert (isinstance (native-wheel.stored-wheel-of "" "doeff-vm") str))
-  (assert (isinstance (native-wheel.stored-wheel-of "{not json\n" "doeff-vm") str))
-  (assert (isinstance (native-wheel.stored-wheel-of "{\"project\": \"doeff-vm\", \"wheel\": 1, \"built\": true}\n" "doeff-vm") str))
-  (assert (isinstance (native-wheel.stored-wheel-of (line "other" "/s/o.whl" "true") "doeff-vm") str)))
+  (assert (is (native-wheel.reported-built text "doeff-vm") False))
+  ;; 反例: 行が無い報告(報告を書かない版の口・他の package の行だけ)は「報告が無い」— 組んだ扱いにも使った扱いにもしない。
+  (assert (= (native-wheel.reported-built "" "doeff-vm") (native-wheel.NotReported)))
+  (assert (= (native-wheel.reported-built (line "other" "/s/o.whl" "true") "doeff-vm") (native-wheel.NotReported)))
+  ;; 反例: JSON でない・形が違う行は理由の文(報告を書く版の口の約束の破れ)。
+  (assert (isinstance (native-wheel.reported-built "{not json\n" "doeff-vm") str))
+  (assert (isinstance (native-wheel.reported-built "{\"project\": \"doeff-vm\", \"wheel\": 1, \"built\": true}\n" "doeff-vm") str)))
 
 
 ;; --- 2・3 保存先は build の口の 1 つ -------------------------------------------------------------------
@@ -264,20 +270,37 @@
                               :capture-output True :text True :timeout 60))
   (assert (= booted.returncode 0) booted.stderr)
   (assert (.startswith booted.stdout "組んだ ") booted.stdout)
-  (<- path str (stored-path state-dir booted.stdout))
-  ;; worker は同じ口の保存先の wheel を受け、口は組まない(自前の鍵で別の置き場を引かない)。
+  (<- (out-path src booted.stdout))
+  ;; worker は同じ口の保存先の wheel を受け(口は組まない — 自前の鍵で別の置き場を引かない)、--out-dir に出た file を入れる。
   (val source-dir (str (/ src native-wheel.DOEFF-VM-SOURCE)))
   (val uv-cache (/ state-dir "uv-cache"))
   (<- ready (| WheelReady EnvFailure) (worker-wheel state-dir uv-cache uv source-dir))
-  (assert (= ready (WheelReady :path path :built False)) ready)
+  (assert (and (isinstance ready WheelReady) (= ready.origin WheelOrigin.STORED) (os.path.isfile ready.path)) ready)
   ;; source の中身を変えると、口が 1 度だけ組む(次は使う)。
   (.write-text (/ src native-wheel.DOEFF-VM-SOURCE "src.rs") "// changed\n" :encoding "utf-8")
   (<- changed (| WheelReady EnvFailure) (worker-wheel state-dir uv-cache uv source-dir))
-  (assert (and (isinstance changed WheelReady) changed.built (!= changed.path path)) changed)
+  (assert (and (isinstance changed WheelReady) (= changed.origin WheelOrigin.BUILT)) changed)
   (<- again (| WheelReady EnvFailure) (worker-wheel state-dir uv-cache uv source-dir))
-  (assert (= again (WheelReady :path changed.path :built False)) again)
-  ;; 一時の dir(uv の --out-dir の写しと報告)は残さない。
-  (assert (= (lfor e (.iterdir (/ state-dir "wheels")) :if (.startswith e.name ".") e.name) []) (list (.iterdir (/ state-dir "wheels")))))
+  (assert (and (isinstance again WheelReady) (= again.origin WheelOrigin.STORED) (os.path.isfile again.path)) again)
+  (<- log tuple (uv-log tmp-path))
+  (assert (= (len (lfor line log :if (.startswith line "build") line)) 4) log)
+  ;; 報告の file は読んだら消す(--out-dir の隣に残さない)。
+  (val outs (. (Path again.path) parent parent))
+  (assert (= (lfor e (.iterdir outs) :if (.endswith e.name ".jsonl") e.name) []) (list (.iterdir outs))))
+
+
+(deftest test-a-backend-without-the-report-still-gives-its-wheel-with-an-unreported-origin [tmp-path monkeypatch]
+  ;; 反例: 報告を書かない版の口(宣言の古い doeff の root — 本番の job は古い版を宣言している物が在る)で用意しても、uv build が --out-dir に
+  ;; 出した wheel を受け、組んだかは閉じた型の「報告が無い」になる(native-build-failed で止まらない・組んだ / 使ったのどちらにも埋めない)。
+  (<- made tuple (doeff-source tmp-path))
+  (val src (get made 0))
+  (<- uv Path (fake-uv tmp-path))
+  (monkeypatch.setenv "FAKE_UV_LOG" (str (/ tmp-path "uv.log")))
+  (monkeypatch.setenv "FAKE_UV_OLD_BACKEND" "1")
+  (<- ready (| WheelReady EnvFailure) (worker-wheel (/ tmp-path "state") (/ tmp-path "uv-cache") uv (str (/ src native-wheel.DOEFF-VM-SOURCE))))
+  (assert (isinstance ready WheelReady) ready)
+  (assert (and (.endswith ready.path WHEEL-NAME) (os.path.isfile ready.path)) ready)
+  (assert (= ready.origin WheelOrigin.UNREPORTED) ready))
 
 
 (deftest test-the-boot-entry-takes-no-tree-hash-arguments [tmp-path]
@@ -325,9 +348,9 @@
   (assert (= (len builds) 1) #(once first.stderr))
   (assert (in (.format " venv= cache={}/uv-cache from=1" state-dir) (get builds 0)) builds)
   (val pips (lfor line once :if (.startswith line "pip") line))
-  (assert (and (= (len pips) 1)
-               (.startswith (get pips 0) (.format "pip install --no-deps --python {} {}/wheels/doeff-vm-" python state-dir))
-               (.endswith (get pips 0) (.format "/{} venv={} cache={}/uv-cache from=1" WHEEL-NAME (/ tmp-path "caller-venv") state-dir)))
+  (val wheel (os.path.join (native-wheel.wheel-out-dir (str (/ tmp-path "work" "boot" "roots" sha)) native-wheel.DOEFF-VM-PACKAGE) WHEEL-NAME))
+  (assert (= pips [(.format "pip install --no-deps --python {} {} venv={} cache={}/uv-cache from=1"
+                            python wheel (/ tmp-path "caller-venv") state-dir)])
           once)
   ;; 2 回目: root だけを消す(同じ node の次の Pod が別の commit の root を持つ時と同じ)— 口が保存先の wheel を使い、組まない。
   (shutil.rmtree (/ tmp-path "work" "boot" "roots" sha))
@@ -337,7 +360,8 @@
   (<- twice tuple (uv-log tmp-path))
   (val second-pips (lfor line twice :if (.startswith line "pip") line))
   (assert (= (len second-pips) 2) twice)
-  (assert (= (get second-pips 0) (get second-pips 1)) "2 回目も 1 回目と同じ保存先の wheel を入れる"))
+  (assert (= (get second-pips 0) (get second-pips 1)) "2 回目も root の下の --out-dir に出た wheel を入れる")
+  (assert (= (len (lfor line twice :if (.startswith line "build") line)) 2) twice))
 
 
 ;; --- 11 uv の cache の dir は呼び手が渡せる -------------------------------------------------------------

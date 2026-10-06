@@ -165,7 +165,7 @@
      (rule R4 "鍵 = tool.uv.cache-keys の file(宣言が無ければ既定の glob)の中身と相対 path・rustc と maturin の版・機体・組む Python の ABI・組みを変える環境変数・build の設定。wheel に入る file はどれも宣言に並べる(doeff-vm は doeff_vm/ の .py・.pyi・py.typed も)。")
      (rule R5 "保存先 = env DOEFF_WHEEL_CACHE(無ければ $XDG_CACHE_HOME/doeff-cargo-wheels)の <package>-<鍵>/<wheel> と .used。使う前に RECORD の hash で確かめ、壊れていれば名指しの 1 行を出してその wheel を除き組み直す。")
      (rule R6 "移す予定の入口(commit の hook の linter の binary)は台帳 PENDING-ENTRIES に理由つきで置く。台帳に無い新しい入口は赤。入口へ移した・消した変更は同じ commit で台帳の行を削る(残すと赤)。")
-     (rule R7 "doeff-cluster の worker(実行環境の準備の EnsureNativeWheel)と起動の script(worker/entry/boot_wheel)は、native の wheel を `uv build --wheel` で入口へ渡すだけにし、自前の鍵(git の tree hash)と置き場を持たない。保存先は入口の DOEFF_WHEEL_CACHE(worker の state/wheels)で、入口が env DOEFF_WHEEL_REPORT の file に書く 1 行(保存先の中の wheel と組んだか)で wheel を知る — 読みの定義点は native_wheel.stored_wheel_of(#3860 の 1 の続き)。")]
+     (rule R7 "doeff-cluster の worker(実行環境の準備の EnsureNativeWheel)と起動の script(worker/entry/boot_wheel)は、native の wheel を `uv build --wheel` で入口へ渡すだけにし、自前の鍵(git の tree hash)と置き場を持たない。保存先は入口の DOEFF_WHEEL_CACHE(worker の state/wheels)。入れる wheel は uv build が root の下の --out-dir(native_wheel.wheel_out_dir)に出した file で、どの版の入口でも出る(宣言の古い doeff の root も同じ形で通る)。入口が env DOEFF_WHEEL_REPORT の file に書く 1 行(組んだか)は観測だけで、書かない版の入口では由来を閉じた型の UNREPORTED にし、準備を止めず、組んだ・使ったのどちらにも埋めない — 読みの定義点は native_wheel.reported_built(#3860 の 1 の続き)。")]
   :laws
     [(law rust-builds-pass-through-one-entry
        :statement "for_all file f in doeff (excluding tests and docs): builds_or_keys_rust(f) => f == ENTRY or f in COMPILERS or f in PENDING-ENTRIES; and builds_or_keys_rust(ENTRY)"

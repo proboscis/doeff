@@ -156,7 +156,8 @@ doeff_prepare() {
     (cd "$root" && PYTHONDONTWRITEBYTECODE=1 uv sync --locked --compile-bytecode --package doeff-cluster --no-dev \
       --no-install-package doeff-vm >&2)
     synced=$(date +%s)
-    # 答え = 1 行「<組んだ|使った> <wheel の path>」(組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
+    # 答え = 1 行「<組んだ|使った|組んだかは不明で用意した> <wheel の path>」(path は uv build が root の下の --out-dir に出した wheel・
+    # 組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
     answer=$(PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" \
       --state "$WORK_DIR/state" --uv-cache "$DOEFF_UV_CACHE_DIR")
     how=${answer%% *}

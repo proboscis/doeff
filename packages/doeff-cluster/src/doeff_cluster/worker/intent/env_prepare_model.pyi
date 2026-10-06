@@ -67,7 +67,7 @@ class EnvMarker:
     platform: str
     stages: tuple
     downloaded: int
-    built: int
+    built: int | None
     interpreter: str
     child_protocol: int
     bytecode: BytecodeCounts | None = None
@@ -76,10 +76,15 @@ class EnvMarker:
     hy_version: str | None = None
     build_memory_bytes: int | None = None
 
+class WheelOrigin(StrEnum):
+    BUILT = 'built'
+    STORED = 'stored'
+    UNREPORTED = 'unreported'
+
 @dataclass(frozen=True, kw_only=True)
 class WheelReady:
     path: str
-    built: bool
+    origin: WheelOrigin
 
 @dataclass(frozen=True, kw_only=True)
 class SyncReport:
@@ -114,7 +119,7 @@ class EnvReady:
     root: str
     stages: tuple
     downloaded: int
-    built: int
+    built: int | None
     interpreter: str
 
 @dataclass(frozen=True, kw_only=True)
@@ -122,7 +127,7 @@ class PrepareState:
     mirrors: tuple = ...
     wheels: tuple = ...
     downloaded: int = 0
-    built: int = 0
+    built: int | None = 0
     interpreter: str = ''
     stages: tuple = ...
     bytecode: BytecodeCounts | None = None
@@ -171,6 +176,7 @@ class MaterializeTree(EffectBase):
 class EnsureNativeWheel(EffectBase):
     package: str
     source_dir: str
+    out_dir: str
 
 @dataclass(frozen=True)
 class SyncProject(EffectBase):
