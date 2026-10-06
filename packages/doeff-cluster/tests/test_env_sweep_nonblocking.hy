@@ -10,12 +10,14 @@
 ;; (#3715)ので、筋書きは SweepEnvs を短い間を置いて撃ち続ける(worker の拍の代わり)。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import json)
 (import os)
 (import time)
 (import pathlib [Path])
 (import doeff_time [Delay])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.intent.worker_model [PrepareEnv SweepEnvs])
+(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings])
 (import tests.careful_rig [run-envs])
 
@@ -40,8 +42,14 @@
 
 (defk sweeping [tmp uv [hy-command "hy"]]
   {:pre [(: tmp Path) (: uv str) (: hy-command str)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "下限を disk の大きさより上に置いて、必ず掃除させる設定を組むため。"
-  (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :sweep-floor-bytes (** 10 18)))
+  "必ず掃除させ(roots の合計の上限 0 を、消せない root 1 つ — project の最新 — が越えたままにする)、消しの終わりに prune を起こさせる
+   (共有の disk の空きの最低を disk の大きさより上に置く — #3732)設定を組むため。"
+  (val root (/ tmp "state" "roots" "fedcba9876543210fedcba98"))
+  (.mkdir root :parents True)
+  (.write-text (/ root ENV-MARKER)
+               (json.dumps {"env" {"project" {"repo" "r" "path" "p"} "repos" [{"name" "r" "url" "https://example.invalid/r"}]}}))
+  (EnvSettings :state (str (/ tmp "state")) :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL :uv uv :roots-cap-bytes 0
+               :min-free-bytes (** 10 18)))
 
 
 (val SWEEP-PAUSE-SECONDS 0.02)   ; 撃つ SweepEnvs の間(worker の拍の代わり)

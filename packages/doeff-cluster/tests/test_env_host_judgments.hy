@@ -7,7 +7,9 @@
 ;; (test_env_careful.hy)が見る。
 ;;   6 同じキーの準備を 2 回頼む: 準備の道具は 1 回だけ起き(走っている準備を起こし直さない)、終われば READY
 ;;   8 先読み: 温める表の env を job の前に準備し、task が来た最初の拍で子を起こす(準備を待たない)— 温めていない env は準備を起こす
-;;   9 空きが下限を切る: 固定された root・project ごとの最新・worker が作っていない dir は残り、固定されていない古い root が消える
+;;   9 roots の合計が上限を越える: 固定された root・project ごとの新しい 2 つ(今の版と戻し先の版)・worker が作っていない dir は残り、
+;;     固定されていない古い root が消える。合計は root ごとの大きさの和で hardlink を重ねて数える(#3732)。共有の disk の空きが最低を
+;;     割っても root は消さず、heartbeat で exhausted を名乗り、準備の頼みに空きの最低を載せる(準備の process が disk-full で断る)
 ;;   準備の期限(#3515): 進みの印が動いている job の準備は、起こしてから長くても止めない・完成の答えを書いて終わりの処理の途中の準備は
 ;;     期限の拍で止めない・進みの印が停滞の秒(600 秒)動かない準備は今どおり止める。時計は仮想の時計(sim-time-handler)で、進みの印の
 ;;     file の時刻は os.utime でその時計の物差しに置く。
@@ -39,7 +41,7 @@
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.protocol.declared [task-spec])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView PrepareEnv SweepEnvs StartJob WarmEnv WorkerPolicy WorldView
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView PrepareEnv SweepEnvs EnvReport StartJob WarmEnv WorkerPolicy WorldView
   WarmChildView WarmChildMark])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.worker.core.worker_rules [code-key])
@@ -123,11 +125,14 @@
             (resume answer)))))
 
 
-(defk settings-at [base [sweep-floor-bytes None]]
-  {:pre [(: base Path) (: sweep-floor-bytes (| int None))] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "program"}}
+(val NO-CAP (** 2 62))   ; roots の合計の上限を掃除の起きない大きさに置く(掃除を見ない検)
+
+
+(defk settings-at [base [roots-cap-bytes NO-CAP] [min-free-bytes 0]]
+  {:pre [(: base Path) (: roots-cap-bytes int) (: min-free-bytes int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "program"}}
   "tmp の dir の上の env-host の設定(準備の道具は inline-env-tool が答えるので起きない・uv の cache の prune は何もしない true)。"
   (EnvSettings :state (str (/ base "state")) :hy-command "hy" :platform PLATFORM :code-prepare PREPARE-TOOL :uv "true"
-               :sweep-floor-bytes sweep-floor-bytes))
+               :roots-cap-bytes roots-cap-bytes :min-free-bytes min-free-bytes))
 
 
 (defk declared [n]
@@ -205,7 +210,7 @@
   (<- other-text str (declared-text other))
   (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool other-runs)
                       (env-host (EnvSettings :state (str (/ tmp-path "other")) :hy-command "hy" :platform PLATFORM
-                                             :code-prepare PREPARE-TOOL :uv "true"))]
+                                             :code-prepare PREPARE-TOOL :uv "true" :roots-cap-bytes NO-CAP))]
         (two-keys key text other-key other-text)))
   (assert (= (len other-runs.launches) 2) other-runs.launches))
 
@@ -292,17 +297,20 @@
   None)
 
 
-(deftest test-scenario-9-the-sweep-keeps-pinned-latest-and-foreign-dirs [tmp-path]
-  ;; 同じ project の root 3 つ: a(固定・最も古い)・b・c(最後に作った = project の最新)。worker が作っていない dir(キーの形の名で
-  ;; 完成マーカーの無い dir と、別の名の dir)。空きの下限を空きより上に置く(下限を切った状態)。
+(deftest test-scenario-9-the-sweep-keeps-pinned-recent-two-and-foreign-dirs [tmp-path]
+  ;; 同じ project の root 4 つ: a(固定・最も古く使った)・b・c(1 つ前に動いていた版 = 戻し先)・d(今の版)。worker が作っていない dir
+  ;; (キーの形の名で完成マーカーの無い dir と、別の名の dir)。roots の合計の上限を 0 に置く(越えた状態)。
+  ;; 反例 = 直す前の形(project ごとに完成の時刻の最新 1 つだけを守る)は戻し先の c を消す — 下の c の断言が赤。
   (val runs (ToolRuns))
-  (<- settings EnvSettings (settings-at tmp-path :sweep-floor-bytes (** 2 62)))
+  (<- settings EnvSettings (settings-at tmp-path :roots-cap-bytes 0))
   (<- env-1 RuntimeEnv (declared 1))
   (<- env-2 RuntimeEnv (declared 2))
   (<- env-3 RuntimeEnv (declared 3))
+  (<- env-4 RuntimeEnv (declared 4))
   (<- a Path (made-root settings "aaaaaaaaaaaaaaaaaaaaaaaa" env-1 100 1000))
   (<- b Path (made-root settings "bbbbbbbbbbbbbbbbbbbbbbbb" env-2 200 2000))
   (<- c Path (made-root settings "cccccccccccccccccccccccc" env-3 300 3000))
+  (<- d Path (made-root settings "dddddddddddddddddddddddd" env-4 400 4000))
   (val foreign (/ (Path settings.state) "roots" "0123456789abcdef01234567"))
   (.mkdir foreign)
   (.write-text (/ foreign "keep.txt") "not ours\n")
@@ -313,9 +321,88 @@
                    (swept-rounds (frozenset #((+ "env-" a.name)))))))
   (assert (.exists a) "固定された root は残る")
   (assert (not (.exists b)) "固定されていない古い root は消える")
-  (assert (.exists c) "project ごとの最新の root(bytecode の引き継ぎ元)は残る")
+  (assert (.exists c) "1 つ前に動いていた版の root(戻し先)は残る")
+  (assert (.exists d) "今の版の root は残る")
   (assert (and (.exists foreign) (.exists notes)) "worker が作っていない dir は消さない")
   (assert (= runs.launches #()) runs.launches))
+
+
+(val LIB-BYTES 2000)   ; 合計の上限の検で root ごとに置く file の大きさ(完成マーカーより大きく — 下の前提の断言)
+
+
+(defk tree-bytes [root]
+  {:pre [(: root Path)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "root の下の file の大きさの和を、掃除の数え(MeasureTree — hardlink は重ねて数える)と同じ物差しで返すため(上限の値を検の中で決める)。"
+  (sum (gfor #(top _ files) (os.walk root) name files (. (os.lstat (os.path.join top name)) st-size))))
+
+
+(deftest test-roots-over-the-cap-lose-the-oldest-unpinned-root-and-hardlinks-count-twice [tmp-path]
+  ;; 同じ project の root 4 つ(最後に使った時刻 a < b < c < d)に LIB-BYTES の file を 1 つずつ置き、d の file は c の file の hardlink
+  ;; (root どうしが木と .pyc を共有する形 — #3671・#3727)。固定は無い。上限 = 重ねて数えた合計から a の半分を引いた値:
+  ;;   - 重ねて数えると合計は上限を越え、古い a を 1 つ消せば上限の内へ戻る — a だけが消え、b・c・d は残る
+  ;;   - inode を 1 度だけ数える合計(c と d の共有を 1 度)は上限の内(前提の断言)— 重ねて数える形は、それより早めに消す
+  (val runs (ToolRuns))
+  (<- probe EnvSettings (settings-at tmp-path))
+  (<- env-1 RuntimeEnv (declared 1))
+  (<- env-2 RuntimeEnv (declared 2))
+  (<- env-3 RuntimeEnv (declared 3))
+  (<- env-4 RuntimeEnv (declared 4))
+  (<- a Path (made-root probe "aaaaaaaaaaaaaaaaaaaaaaaa" env-1 100 1000))
+  (<- b Path (made-root probe "bbbbbbbbbbbbbbbbbbbbbbbb" env-2 200 2000))
+  (<- c Path (made-root probe "cccccccccccccccccccccccc" env-3 300 3000))
+  (<- d Path (made-root probe "dddddddddddddddddddddddd" env-4 400 4000))
+  (for [root #(a b c)]
+    (.write-bytes (/ root "lib.py") (* b"x" LIB-BYTES)))
+  (os.link (/ c "lib.py") (/ d "lib.py"))
+  (var sizes #())
+  (for [root #(a b c d)]
+    (<- size int (tree-bytes root))
+    (:= sizes (+ sizes #(size))))
+  (val counted (sum sizes))
+  (val cap (- counted (// (get sizes 0) 2)))
+  (assert (<= (- counted LIB-BYTES) cap) (.format "前提: inode を 1 度だけ数える合計 {} は上限 {} の内" (- counted LIB-BYTES) cap))
+  (<- settings EnvSettings (settings-at tmp-path :roots-cap-bytes cap))
+  (<- (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                 (env-host settings)]
+                   (swept-rounds (frozenset)))))
+  (assert (not (.exists a)) "上限を越えた合計は、固定されていない最も古い root から消える")
+  (assert (and (.exists b) (.exists c) (.exists d)) "上限の内へ戻ったら、それより新しい root は消さない")
+  (assert (= (. (os.stat (/ d "lib.py")) st-nlink) 2) "共有の file は残る c と d の間で hardlink のまま"))
+
+
+(defk report-after-sweeps [key text]
+  {:pre [(: key str) (: text str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "掃除の係を回してから新しい env の準備を頼み、heartbeat で名乗る root の姿を返すため。"
+  (<- (swept-rounds (frozenset)))
+  (<- (PrepareEnv key text))
+  (<- report dict (EnvReport))
+  report)
+
+
+(deftest test-a-shared-disk-below-the-free-minimum-refuses-preparation-and-keeps-roots [tmp-path]
+  ;; 共有の disk の空きが最低を割る(最低を disk の大きさより上に置く)が、roots の合計は上限の内。root は消さない(以前は空きの下限で
+  ;; 消し続けた)・heartbeat は exhausted を名乗る・準備の頼みは空きの最低を載せる(準備の process の stage-disk がこの値で disk-full と
+  ;; 断る — test_env_prepare の disk-full の検)。反例 = 直す前の形(空きが下限を切れば固定されていない root を消す)は a と b を消す — 赤。
+  (val runs (ToolRuns))
+  (val floor (** 2 62))
+  (<- settings EnvSettings (settings-at tmp-path :min-free-bytes floor))
+  (<- env-1 RuntimeEnv (declared 1))
+  (<- env-2 RuntimeEnv (declared 2))
+  (<- env-3 RuntimeEnv (declared 3))
+  (<- a Path (made-root settings "aaaaaaaaaaaaaaaaaaaaaaaa" env-1 100 1000))
+  (<- b Path (made-root settings "bbbbbbbbbbbbbbbbbbbbbbbb" env-2 200 2000))
+  (<- c Path (made-root settings "cccccccccccccccccccccccc" env-3 300 3000))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (<- report dict (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler
+                                             (inline-env-tool runs) (env-host settings)]
+                               (report-after-sweeps key text))))
+  (assert (and (.exists a) (.exists b) (.exists c)) "共有の disk の空きが最低を割っても root は消さない")
+  (assert (= (get report "capacity") "exhausted") report)
+  (assert (= (len runs.launches) 1) runs.launches)
+  (val request (json.loads (.read-text (Path (get runs.launches 0)))))
+  (assert (= (get request "minFreeBytes") floor) request))
 
 
 ;; --- 準備の期限(#3515)------------------------------------------------------------------------------

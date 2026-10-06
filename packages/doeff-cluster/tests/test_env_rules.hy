@@ -2,12 +2,12 @@
 ;;   * 起こす順: job の準備を先に・同時は max-parallel 本まで・先読みは枠の 1 つを job に残す。
 ;;   * 準備の答えの読み: 答えの file の中身(失敗・完成・形の読めない中身)・失敗の答え・成功の答え・答えを書かずに終わった process・
 ;;     期限切れの理由。
-;;   * 掃除の候補の project の名・掃除の下限・準備の process の起こし方。
+;;   * 掃除の候補の project の名・準備の process の起こし方(掃除の下限は env_upkeep の 2 つの絶対の量 — test_env_warm・#3732)。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.core.env_upkeep [PrepareLimits])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-argv answer-of-text prepare-outcome overdue-failure
-                                             root-project floor-bytes])
+                                             root-project])
 
 
 (deftest test-job-prepares-go-first-and-warm-ones-leave-a-slot
@@ -56,14 +56,10 @@
   (assert (and (not-in "先読み" job.detail) (in "600" job.detail)) job))
 
 
-(deftest test-project-floor-and-argv
+(deftest test-project-and-argv
   (val declared {"project" {"lockSha256" "L" "python" "3.12" "repo" "r" "path" "p"} "repos" [{"name" "r" "url" "git@x:r"}]})
   (<- project str (root-project {"env" declared}))
   (assert (= project "git@x:r:p") project)
-  (<- set-floor int (floor-bytes 5 100 1000))
-  (assert (= set-floor 5) set-floor)
-  (<- ratio-floor int (floor-bytes None 100 10000))
-  (assert (= ratio-floor 1500) ratio-floor)
   (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/keys" "/cp" "uv" "/p"))
   (assert (= (cut argv 0 6) #("nice" "-n" "10" "/hy" "-m" "tool")) argv)
   (assert (= (cut argv -2 None) #("--progress" "/p")) argv))

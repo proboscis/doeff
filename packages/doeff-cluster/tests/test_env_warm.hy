@@ -4,7 +4,8 @@
 ;; 筋書き(設計 worker-runtime-env.md 節 5):
 ;;   8 先読み: 送る前に WarmRuntimeEnv → 送る: 準備の時間が「送ってから Program が走り出すまで」に入らない(仮想の時計で 2 秒以内)
 ;;     反例「先読みをせずに送る」: 仮想の時計で 2 秒を超え、計器(冷たい起動の数・phase preparing)がそれを示す
-;;   9 固定された root がある時に空きが下限を切る: 固定された root は残り、固定されていない古い root が消える(掃除の選びの純粋な関数)
+;;   9 固定された root がある時に roots の合計が上限を越える: 固定された root と project ごとの新しい 2 つ(今の版と戻し先の版)は残り、
+;;     固定されていない古い root が消える(掃除の選びの純粋な関数・#3732)
 ;; coordinator: 温める表(POST /warm・GET /warm/<キー>)・heartbeat の返事で label の合う worker にだけ配る・準備済みの worker を
 ;;   優先して置く・準備済みが無ければ phase preparing と計器 doeff_worker_env_cold_start_total・envCapacity=exhausted の worker を避ける。
 ;; worker: 温める env を job より後に準備する(PrepareEnv :warm True)・固定の集合を掃除の係へ渡す(SweepEnvs)。
@@ -32,7 +33,8 @@
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState WarmUnreachable WarmAnswer])
 (import doeff_cluster.shared.core.warm_rules [warm-key warm-state-of-json warm-runtime-env])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
+(import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits SWEEP-EVERY-MS sweep-choice sweep-due sweep-wanted
+                                              recent-per-project prepare-overdue env-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -181,19 +183,54 @@
 
 ;; --- 筋書き 9(掃除の選び — 純粋な関数) --------------------------------------------------------
 
-(deftest test-scenario-9-sweep-keeps-pinned-latest-and-foreign-roots
-  ;; project p の root 4 つ(a が最古・d が最新)と、worker が作っていない dir x(さらに古い)。a は固定(走っている job か温める表)。
+(deftest test-scenario-9-sweep-keeps-pinned-recent-two-and-foreign-roots
+  ;; project p の root 4 つ(最後に使った時刻 a < b < c < d — d が今の版・c が 1 つ前に動いていた版 = 戻し先)と、別の project q の root
+  ;; 1 つ(最も古く使った)と、worker が作っていない dir x。a は固定(走っている job か温める表)。合計は worker が作った root だけ(500)。
   (val roots #((RootInfo :key "a" :project "p" :made-ms 10 :last-used-ms 10 :bytes 100 :owned True)
                (RootInfo :key "b" :project "p" :made-ms 20 :last-used-ms 20 :bytes 100 :owned True)
                (RootInfo :key "c" :project "p" :made-ms 30 :last-used-ms 30 :bytes 100 :owned True)
-               (RootInfo :key "d" :project "p" :made-ms 40 :last-used-ms 5 :bytes 100 :owned True)
+               (RootInfo :key "d" :project "p" :made-ms 40 :last-used-ms 40 :bytes 100 :owned True)
+               (RootInfo :key "q" :project "q" :made-ms 1 :last-used-ms 1 :bytes 100 :owned True)
                (RootInfo :key "x" :project "" :made-ms 1 :last-used-ms 1 :bytes 100 :owned False)))
-  (<- nothing tuple (sweep-choice roots (frozenset #("a")) 500 400))
-  (assert (= nothing #()) "空きが下限の上なら消さない")
-  (<- one tuple (sweep-choice roots (frozenset #("a")) 350 400))
-  (assert (= one #("b")) "固定されていない最も古い root から、下限を越えるまで")
-  (<- all tuple (sweep-choice roots (frozenset #("a")) 0 10000))
-  (assert (= all #("b" "c")) "固定(a)・project ごとの最新(d — 使った時刻は古くても)・worker の作っていない dir(x)は消さない"))
+  (<- recent frozenset (recent-per-project roots))
+  (assert (= recent (frozenset #("c" "d" "q"))) "project ごとに最後に使った新しい 2 つ(別の project は 1 つしか無ければその 1 つ)")
+  (<- nothing tuple (sweep-choice roots (frozenset #("a")) 500))
+  (assert (= nothing #()) "roots の合計が上限の内なら消さない")
+  (<- one tuple (sweep-choice roots (frozenset #("a")) 450))
+  (assert (= one #("b")) "固定されていない最も古い root から、合計が上限の内へ戻るまで")
+  (<- all tuple (sweep-choice roots (frozenset #("a")) 0))
+  (assert (= all #("b")) "固定(a)・project ごとの新しい 2 つ(d と戻し先の c)・別の project の root(q)・worker の作っていない dir(x)は消さない"))
+
+
+(deftest test-the-previous-version-root-survives-even-when-a-newer-root-was-made-later
+  ;; 版を替えた job の 1 つ前の版の root(old — 戻し先)は、後から完成した先読みの root(next — まだ使っていない)があっても、最後に使った
+  ;; 時刻で新しい 2 つに入る限り残る。反例 = 直す前の形(project ごとに完成の時刻の最新 1 つだけ守る)は old を消す — 下の断言が赤。
+  (val roots #((RootInfo :key "older" :project "p" :made-ms 10 :last-used-ms 100 :bytes 100 :owned True)
+               (RootInfo :key "old" :project "p" :made-ms 20 :last-used-ms 200 :bytes 100 :owned True)
+               (RootInfo :key "now" :project "p" :made-ms 30 :last-used-ms 300 :bytes 100 :owned True)))
+  (<- chosen tuple (sweep-choice roots (frozenset #("now")) 0))
+  (assert (= chosen #("older")) "戻し先の old は残り、それより古い older だけを消す"))
+
+
+(deftest test-sweep-due-measures-only-when-the-roots-changed-or-stay-over-the-cap
+  ;; 数え(root ごとに木を歩く)は、まだ数えていない時・完成した root の集合が変わった時・上限を越えたままで固定が変わったか間隔が経った
+  ;; 時だけ。上限の内で集合が変わらなければ、固定が変わっても数えない(共有の disk の空きでは数えない — #3732)。
+  (val under (RootsTally :ready (frozenset #("env-a")) :bytes 100))
+  (val over (RootsTally :ready (frozenset #("env-a")) :bytes 300))
+  (val same (frozenset #("env-a")))
+  (assert (! (sweep-due None same 200 False 0 0)) "まだ数えていなければ数える")
+  (assert (not (! (sweep-due under same 200 True 1000 0))) "上限の内で集合が変わらなければ、固定が変わっても数えない")
+  (assert (! (sweep-due under (frozenset #("env-a" "env-b")) 200 False 1000 0)) "新しく完成した root が在れば数え直す")
+  (assert (! (sweep-due under (frozenset) 200 False 1000 0)) "root が消えれば数え直す")
+  (assert (not (! (sweep-due over same 200 False 1000 0))) "上限を越えたままでも、固定が変わらず間隔の内なら数えない")
+  (assert (! (sweep-due over same 200 True 1000 0)) "上限を越えたまま固定が変われば数え直す")
+  (assert (! (sweep-due over same 200 False SWEEP-EVERY-MS 0)) "上限を越えたまま間隔が経てば数え直す")
+  ;; 掃除の係が拍を求めるか(heartbeat の観測の sweep-wanted)。
+  (assert (! (sweep-wanted False None same 200)) "まだ数えていなければ求める")
+  (assert (not (! (sweep-wanted False under same 200))) "上限の内で集合が変わらず、走っていなければ求めない")
+  (assert (! (sweep-wanted True under same 200)) "走っている掃除は拍ごとに答えを読んで進むので求める")
+  (assert (! (sweep-wanted False over same 200)) "上限を越えていれば求める")
+  (assert (! (sweep-wanted False under (frozenset #("env-b")) 200)) "完成した root の集合が変われば求める"))
 
 
 ;; --- 準備の期限と disk の状態(純粋) ------------------------------------------------------------
@@ -445,14 +482,15 @@
                        (Path "/tmp/tasks")))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val world (WorldView #((CodeView "env-preparing" CodeState.PREPARING)) #() #()
-                        :env-disk (EnvDisk :free 10 :floor 100 :pinned (frozenset))))
+                        :env-disk (EnvDisk :free 10 :sweep-wanted True :pinned (frozenset))))
   (val pinned (! (pinned-env-keys #(spec) world #(warm))))
   (assert (= pinned (frozenset #((code-key spec) warm.key "env-preparing"))) pinned)
   (val declaration (DeclarationRead :jobs #(spec) :warm #(warm)))
-  (assert (= (! (sweep-actions declaration world)) #((SweepEnvs pinned))) "空きが下限を切れば固定の集合を渡して掃除する")
-  (val roomy (replace world :env-disk (EnvDisk :free 1000 :floor 100 :pinned pinned)))
-  (assert (= (! (sweep-actions declaration roomy)) #()) "空きが足り、固定の集合が変わらなければ掃除の係を呼ばない")
-  ;; 宣言をまだ一度も読めていない間(起き直した直後 — #3731)は、空きが下限を切っていても掃除の係を呼ばない。
+  (assert (= (! (sweep-actions declaration world)) #((SweepEnvs pinned))) "掃除の係が拍を求めていれば固定の集合を渡して掃除する")
+  (val roomy (replace world :env-disk (EnvDisk :free 10 :sweep-wanted False :pinned pinned)))
+  (assert (= (! (sweep-actions declaration roomy)) #())
+          "掃除の係が拍を求めず、固定の集合が変わらなければ、共有の disk の空きが少なくても掃除の係を呼ばない(#3732)")
+  ;; 宣言をまだ一度も読めていない間(起き直した直後 — #3731)は、掃除の係が拍を求めていても掃除の係を呼ばない。
   (assert (= (! (sweep-actions (NotYetRead) world)) #()) "宣言を読む前は掃除しない")
   (<- planned tuple (plan 0 #(spec) world {} (WorkerPolicy) :warm #(warm)))
   (assert (not (any (gfor a planned (isinstance a SweepEnvs))))

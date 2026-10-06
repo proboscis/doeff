@@ -54,7 +54,8 @@
   (subprocess.Popen [HY "-m" "doeff_cluster.worker.entry.main" "--coordinator" url "--name" NAME
                      "--provides" "agent,host-t,boundary-personal" "--exclusive" "host-t" "--node" "" "--capacity" "1" "--task-reserve" "0"
                      "--repo" (str repo) "--state-dir" (str (/ tmp-path "state")) "--stop-grace" "10"
-                     "--import-roots" "." "--repo-keys" "" "--tools" "git=2.43.0" "--pass-env" ""]
+                     "--import-roots" "." "--repo-keys" "" "--tools" "git=2.43.0" "--pass-env" ""
+                     "--env-roots-cap" (str (** 2 34)) "--env-min-free" "0"]
                     :cwd (str ROOT) :stdout (open (/ tmp-path "worker.log") "w") :stderr subprocess.STDOUT
                     :env (| (dict os.environ) {"DOEFF_WORKER_BOOT_FILE" (str (/ tmp-path "boot"))
                                                "DOEFF_WORKER_READY_FILE" (str (/ tmp-path "ready"))
