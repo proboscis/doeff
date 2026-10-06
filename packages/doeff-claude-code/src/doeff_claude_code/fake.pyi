@@ -14,6 +14,7 @@ from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
+from doeff_claude_code.values import ClaudeSessionSpec as ClaudeSessionSpec
 from doeff_claude_code.values import FreshSession as FreshSession
 from doeff_claude_code.values import ResumeSession as ResumeSession
 from doeff_claude_code.values import ForkSession as ForkSession
@@ -69,6 +70,8 @@ from doeff_claude_code.effects import AttachmentRefused as AttachmentRefused
 from doeff_claude_code.effects import NoTurnInFlight as NoTurnInFlight
 from doeff_claude_code.effects import UnknownTurn as UnknownTurn
 from doeff_claude_code.effects import NoSuchRequest as NoSuchRequest
+from doeff_claude_code.effects import ClaudeWarmSession as ClaudeWarmSession
+from doeff_claude_code.effects import SessionWarmed as SessionWarmed
 from doeff_claude_code.faults import ClaudeDropProcess as ClaudeDropProcess
 from doeff_claude_code.faults import ClaudeForgetSession as ClaudeForgetSession
 from doeff_claude_code.faults import ClaudeLiveProcess as ClaudeLiveProcess
@@ -152,6 +155,7 @@ class FakeSession:
     alive: bool
     launch_key: str | None
     stopped_because: StopReason | None
+    warmed_fresh: bool
     turns: dict[int, FakeTurn]
 
     def __init__(self, session_id: str, home: Incomplete, cwd: str) -> None:
@@ -234,6 +238,12 @@ def carry_into(world: FakeClaudeWorld, home: Incomplete, cwd: str, session_id: s
     ...
 
 def fake_start_turn(world: FakeClaudeWorld, request: ClaudeStartTurn) -> _Program[Incomplete, object]:
+    ...
+
+def fake_warm_refusal(world: FakeClaudeWorld, origin: FreshSession | ResumeSession, spec: ClaudeSessionSpec) -> _Program[SessionIdInUse | TurnInFlight | SessionNotFound | None, object]:
+    ...
+
+def fake_warm_session(world: FakeClaudeWorld, request: ClaudeWarmSession) -> _Program[Incomplete, object]:
     ...
 
 def running_turn_of(world: FakeClaudeWorld, turn: ClaudeTurn) -> Incomplete:

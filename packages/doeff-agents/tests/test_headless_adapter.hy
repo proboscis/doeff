@@ -8,6 +8,7 @@
 ;;
 ;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents.sessionhost も import しない(公開 effect だけ)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
+(require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import os)
@@ -18,14 +19,15 @@
 (import doeff [run with_handlers EffectBase])
 (import doeff_core_effects.handlers [state :as session-store slog-discard-handler])
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
-;; 故障の注入の口だけは層 2 の検の effect を使う(公開 effect ではない — process の死を起こす手が公開面に無いため)。
-(import doeff_claude_code.faults [ClaudeDropProcess])
+;; 故障の注入だけは層 2 のテスト用の effect を使う(公開 effect ではない — process を消す手段が公開面に無いため)。事前起動した runtime
+;; を最初のターンが使い回したか(層 2 の起動回数)を読む effect も同じ(公開面は process を見せない)。
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess])
 ;; fake の組に渡した env と settings が層 2 へ届く起動の宣言に載るかを見る口も、層 2 の effect を写す(#3327 — 公開面に宣言が出ないため)。
 (import doeff_claude_code.effects [ClaudeStartTurn])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.effects [
-  Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect
+  Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
@@ -770,6 +772,139 @@
     (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
                                             :turn-credential-ref "lease-1")
                               :handler "t")))
+
+
+;; --- 入力の前に runtime を事前起動して待たせる(WarmSessionEffect)-----------------------------------------------------
+;; prompt なしで起動した session の runtime(層 2 の CLI)を、最初の入力の前に起動して待たせる — 起動してから入力を受けられるまでの
+;; 秒を入力の前に済ませる。最初のターンはその runtime を使い回す(層 2 の起動回数が増えない)。
+
+(defrecord WarmedSession
+  "事前起動してから最初のターンを走らせたシナリオの観測: warmed・again = 事前起動の結果 2 回・first = 最初のターンの読み取り結果・
+   view = 最初のターンの後の層 2 の process の状態・busy = ターンの動いている間の事前起動の結果。"
+  (#^ bool warmed)
+  (#^ bool again)
+  (#^ Read first)
+  (#^ (| LiveProcess NoLiveProcess) view)
+  (#^ bool busy))
+
+(defk warm-then-first-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % WarmedSession)] :tags {:context "headless-adapter-test" :role "program"}}
+  "prompt なしで起動した session を WarmSession で事前起動し、最初の入力(FollowUp)のターンがその runtime を使い回すかを見るため。"
+  (<- handle (launch s "adapter-warm" None None))
+  (<- warmed (WarmSession handle))
+  (<- again (WarmSession handle))
+  (<- (FollowUp handle (remember-prompt "ALPHA-1")))
+  (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- view (ClaudeLiveProcess first.end.resume-from))
+  (<- (FollowUp handle (sleep-prompt 40 "NEVER")))
+  (<- _ (read-until handle tool-started s.timeout first.after))
+  (<- busy (WarmSession handle))
+  (<- (Stop handle))
+  (WarmedSession :warmed warmed :again again :first first :view view :busy busy))
+
+(defk check-warmed [#^ WarmedSession seen]
+  {:pre [(: seen WarmedSession)] :post [(: % None)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "事前起動してから最初のターンを走らせた観測が、事前起動の約束(使い回し・ターンの間は事前起動しない)を満たすかを確かめるため。"
+  (assert (and seen.warmed seen.again) (repr seen))
+  (val ends (ends-of seen.first.events))
+  (assert (= (len ends) 1) (repr ends))
+  (val end (get ends 0))
+  (assert (isinstance end AgentTurnCompleted) (repr end))
+  (assert (in "ALPHA-1" end.result-text) (repr end))
+  ;; 最初のターンは事前起動した runtime を使った(層 2 の起動回数 1)。
+  (assert (= seen.view (LiveProcess :launches 1)) (repr seen.view))
+  ;; ターンの動いている間は事前起動するものが無い(偽)。
+  (assert (is seen.busy False) (repr seen.busy))
+  None)
+
+(deftest test-headless-warm-session-serves-the-first-turn-fake [tmp-path]
+  (<- (check-warmed (run-on FAKE tmp-path warm-then-first-turn))))
+
+(deftest test-headless-warm-session-serves-the-first-turn-stub [tmp-path]
+  (<- (check-warmed (run-on STUB tmp-path warm-then-first-turn))))
+
+
+(defrecord WarmedContinuation
+  "前の文脈を続ける session を事前起動したシナリオの観測: warmed = 事前起動の結果・done = 続きのターンの読み取り結果・view = 続きの
+   ターンの後の層 2 の process の状態・context = 続けた文脈の id。"
+  (#^ bool warmed)
+  (#^ Read done)
+  (#^ (| LiveProcess NoLiveProcess) view)
+  (#^ str context))
+
+(defk warm-a-continuation [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % WarmedContinuation)] :tags {:context "headless-adapter-test" :role "program"}}
+  "1 ターンを走らせて止めた文脈を、prompt なしで起動した別の session(resume_from)で事前起動し、続きのターンがその runtime を使うかを
+   見るため。"
+  (<- first-handle (launch s "adapter-warm-first" (remember-prompt "ALPHA-1") None))
+  (<- one (read-until first-handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop first-handle))
+  (val context one.end.resume-from)
+  (<- handle (launch s "adapter-warm-next" None context))
+  (<- warmed (WarmSession handle))
+  (<- launched (ClaudeLiveProcess context))
+  (<- (FollowUp handle (recall-prompt)))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- view (ClaudeLiveProcess context))
+  (assert (= view launched) (repr #(launched view)))
+  (<- (Stop handle))
+  (WarmedContinuation :warmed warmed :done done :view view :context context))
+
+(defk check-warmed-continuation [#^ WarmedContinuation seen]
+  {:pre [(: seen WarmedContinuation)] :post [(: % None)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "続きを事前起動した観測が、続きのターンが事前起動した runtime を使った事を満たすかを確かめるため。"
+  (assert seen.warmed (repr seen))
+  (val ends (ends-of seen.done.events))
+  (assert (and (= (len ends) 1) (isinstance (get ends 0) AgentTurnCompleted)) (repr ends))
+  (assert (in CODEWORD (. (get ends 0) result-text)) (repr ends))
+  (assert (= (. (get ends 0) resume-from) seen.context) (repr ends))
+  ;; 1 ターン目の runtime(止めて終了した)・事前起動した runtime の 2 つ — 続きのターンは事前起動した runtime を使い、3 つ目を起動
+  ;; しない。
+  (assert (= seen.view (LiveProcess :launches 2)) (repr seen.view))
+  None)
+
+(deftest test-headless-warm-a-continuation-fake [tmp-path]
+  (<- (check-warmed-continuation (run-on FAKE tmp-path warm-a-continuation))))
+
+(deftest test-headless-warm-a-continuation-stub [tmp-path]
+  (<- (check-warmed-continuation (run-on STUB tmp-path warm-a-continuation))))
+
+
+(defrecord WarmedThenStopped
+  "事前起動した session をターンなしで止めたシナリオの観測: warmed = 事前起動の結果・status = 止めた後の状態・refused = 止めた後の
+   事前起動の拒否。"
+  (#^ bool warmed)
+  (#^ SessionStatus status)
+  (#^ (| SessionNotFoundError None) refused))
+
+(defk warm-then-stop [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % WarmedThenStopped)] :tags {:context "headless-adapter-test" :role "program"}}
+  "事前起動した session をターンを 1 度も走らせずに止め、止めた session は事前起動できない事を見るため。"
+  (<- handle (launch s "adapter-warm-stop" None None))
+  (<- warmed (WarmSession handle))
+  (<- (Stop handle))
+  (<- observed (Monitor handle))
+  (var refused None)
+  (try
+    (<- (WarmSession handle))
+    (except [error SessionNotFoundError] (:= refused error)))
+  (WarmedThenStopped :warmed warmed :status observed.status :refused refused))
+
+(deftest test-headless-a-warm-session-stops-without-a-turn-fake [tmp-path]
+  (val seen (run-on FAKE tmp-path warm-then-stop))
+  (assert seen.warmed (repr seen))
+  (assert (= seen.status SessionStatus.STOPPED) (repr seen))
+  (assert (isinstance seen.refused SessionNotFoundError) (repr seen)))
+
+
+(deftest test-terminal-handlers-refuse-warming-by-type [tmp-path]
+  ;; LaunchEffect が既に CLI を起動して待たせる handler(AgentHandler の object を包む defhandler)は、入力の前に事前起動する
+  ;; WarmSessionEffect に黙って何もせずに応答せず、AgentCapabilityUnsupportedError で拒否する(claude-handler・codex-handler の拒否は
+  ;; test_claude_handler.py・test_codex_handler.py)。
+  (import doeff_agents.handlers.testing [ScenarioAgentHandler])
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (run (scheduled (.wrap (ScenarioAgentHandler) (WarmSession (SessionHandle "x"))))))
+  (assert (= info.value.capability "WarmSessionEffect") info.value.capability))
 
 
 ;; --- 手番の資格の参照の引き換え(issue #979)------------------------------------------------------------------------

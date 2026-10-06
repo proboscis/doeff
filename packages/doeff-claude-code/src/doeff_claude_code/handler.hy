@@ -1,10 +1,12 @@
-;;; 本番の handler — 公開 effect 8 つ(と検の口 ClaudeDropProcess)に、claude の print mode の子 process で答える。
+;;; 本番の handler — 公開 effect 9 つ(とテスト用の effect ClaudeDropProcess)に、claude の print mode の子 process で答える。
 ;;;
 ;;; 方針 = 会話の process は手番をまたいで生かし、次の手番(同じ会話の続き)の入力をその process へ書く(#3672 — 起こし直しと記録の
 ;;; 読み直しの 1.6〜2.6 秒を消す)。使い回すのは、起こした時の条件の鍵(argv.hy の launch-key — argv・cwd・env の指紋)が同じ時だけ。
 ;;; 違えば降ろしてから `--resume <id>` の新しい process を起こす。手番の外で出力した process は降ろす(dialogue.hy の on-record —
-;;; #517 の事故の形の守り)。起こすか使い回すかの判断は ClaudeStartTurn の中の 1 か所(decision.start-decision)だけで、上の層は会話の
-;;; id と手番の参照しか持たない。
+;;; #517 の事故の形の守り)。起動するか使い回すかの判断は decision.start-decision の 1 か所だけで、上の層は会話の id とターンの参照
+;;; しか持たない。ClaudeWarmSession は同じ判断で、入力の前に process を起動して待たせる(ターンは開かない — 最初のターンがその process
+;;; を使い回す。起動してから入力を受けられるまでの秒を入力の前に済ませる)。起動前の準備(待っている process の停止・停止の完了待ち・
+;;; 冷えた続きの前の命令・本数の空き)はターンと事前起動で同じ prepare-launch を通る。
 ;;;
 ;;; 不変条件(fake と共通 — tests/test_scenarios.hy が両方に当てる):
 ;;;   1 つの会話に走っている手番は多くとも 1 つ・生きた process は多くとも 1 つ(降りる途中の process は待ってから起こす)。
@@ -45,7 +47,7 @@
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
-                                   ProcessStillAlive])
+                                   ProcessStillAlive ClaudeWarmSession SessionWarmed])
 (import json)
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.dialogue :as dialogue)
@@ -115,6 +117,9 @@
     ;; process を止める刻(資格の期限 − 床・epoch 秒 — 期限を知らなければ None・D2)。
     (setv #^ (| float None) self.last-used None)
     (setv #^ (| float None) self.retire-after None)
+    ;; warmed-fresh = 新しい会話として入力なしで事前起動し(ClaudeWarmSession)、まだターンを始めていない(decision.SessionView の同じ
+    ;; 名前の欄 — 最初のターンは同じ id の FreshSession。ターンを始めると消える)。
+    (setv #^ bool self.warmed-fresh False)
     (setv #^ (| Binding None) self.binding None)
     (setv #^ (get dict #(int TurnLog)) self.turns {}))
 
@@ -298,11 +303,12 @@
         (setv process runtime.process)
         (setv running (.running-turn runtime))
         (if (or (is process None) (not (.alive process)))
-            (SessionView :known True :running-turn running)
+            (SessionView :known True :running-turn running :warmed-fresh runtime.warmed-fresh)
             (SessionView :known True
                          :running-turn running
                          :retiring (is-not process.retiring None)
-                         :idle-key (if (and (is process.retiring None) (is running None)) runtime.launch-key None))))))
+                         :idle-key (if (and (is process.retiring None) (is running None)) runtime.launch-key None)
+                         :warmed-fresh runtime.warmed-fresh)))))
 
 (defn refused-attachment [#^ TurnInput input]
   (setv refused (lfor item input.attachments :if (not-in item.mime IMAGE-MIMES) item.mime))
@@ -555,37 +561,60 @@
 
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
-(defn spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
+(defk launch-cost-mark [origin #^ (| float None) recorded #^ bool had-previous #^ (| int None) previous-exit
+                        #^ (| float None) cost-mark #^ (| float None) start-mark]
+  {:pre [(: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| float None)) (: had-previous bool)
+         (: previous-exit (| int None)) (: cost-mark (| float None)) (: start-mark (| float None))]
+   :post [(: % (| float None))] :tags {:context "claude-code" :role "judgment"}}
+  "新しく起動する process の CLI が数え始める額(ターンの費用の起点)を、ターンの process と入力なしで起動する process の両方で 1 か所
+   で決めるため。CLI は終了する時に会話の累積の額を transcript に記録し、--resume・--fork-session の process は最後に記録した額から
+   数え続ける(実測 2.1.283・#883 — ターンごとには記録せず、終了する時に 1 回)。新しい会話(FreshSession)は 0(何も使っていない —
+   入力の前に停止した事前起動の process の後も 0)。ほかは recorded(transcript の最後の cost-state の額 — CLI が数え始める額そのもの)
+   が在ればそれ。無ければ前の process の終わり方で決める: 前の process が無い・終了コード 0 = 今の起点(cost-mark)/ SIGKILL(額を
+   記録できずに消えた — CLI は前の process が始まった時の額から数える)= 前の process の始まりの起点(start-mark)/ ほか(期限の
+   SIGTERM・誤りの終了)= 分からないので None(そのターンの費用は None。次のターンからは読んだ行の累積で数え直す)。"
+  (match origin
+    (FreshSession) 0.0
+    _ (cond
+        (is-not recorded None) recorded
+        (or (not had-previous) (= previous-exit 0)) cost-mark
+        (= previous-exit (- signal.SIGKILL)) start-mark
+        True None)))
+
+(defk launch-mark-of [#^ SessionRuntime runtime origin #^ (| float None) recorded]
+  {:pre [(: runtime SessionRuntime) (: origin (| FreshSession ResumeSession ForkSession)) (: recorded (| float None))]
+   :post [(: % (| float None))] :tags {:context "claude-code" :role "foundation"}}
+  "会話の前の process の終わり方と今の状態機械の起点を読み、新しく起動する process の費用の起点(launch-cost-mark)を出すため。"
+  (val previous (with [runtime.lock] runtime.process))
+  (val state (with [runtime.lock] runtime.state))
+  (<- mark (launch-cost-mark origin recorded (is-not previous None) (if (is previous None) None (.exit-code previous))
+                             state.cost-mark state.start-mark))
+  mark)
+
+(defk spawn-turn [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ TurnInput input
                   #^ (| float None) recorded #^ str key]
-  "手番の process を起こして入力を書く。key = この process の起こした時の条件の鍵(次の手番の使い回しの判断が読む)。
-   答え = 手番の番号か LaunchFailed(実行ファイルが無い等)。
-   新しい process の状態機械へ引き継ぐのは会話の id と手番の額の起点だけ。CLI は降りる時に会話の累積の額を transcript に記し、
-   --resume・--fork-session の process は最後に記した額から数え続ける(実測 2.1.283・#883 — 手番ごとには記さず、降りる時に 1 回)。
-   起点は recorded(transcript の最後の cost-state の額 — CLI が数え始める額そのもの)が在ればそれ。無ければ前の process の降り方で
-   決める: 前の process が無い・終了コード 0 = 今の起点 / SIGKILL(額を記せずに消えた — CLI は前の process が始まった時の額から
-   数える)= 前の process の始まりの起点 / ほか(期限の SIGTERM・誤りの終了)= 分からないので None(その手番の額は None。次の手番
-   からは読んだ行の累積で数え直す)。"
+  {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: spec ClaudeSessionSpec)
+         (: origin (| FreshSession ResumeSession ForkSession)) (: input TurnInput) (: recorded (| float None)) (: key str)]
+   :post [(: % (| int LaunchFailed))] :tags {:context "claude-code" :role "foundation"}}
+  "ターンの process を起動して入力を書くため。key = この process の起動条件のキー(次のターンの使い回しの判断が読む)。
+   結果 = ターンの番号か LaunchFailed(実行ファイルが無い等)。新しい process の状態機械へ引き継ぐのは会話の id と費用の起点
+   (launch-mark-of)だけ。ターンを始めたので、入力なしで事前起動した新しい会話のマーク(warmed-fresh)は消す。"
+  (<- mark (launch-mark-of runtime origin recorded))
   (with [runtime.lock]
-    (setv previous runtime.process)
-    (setv exit-code (if (is previous None) None (.exit-code previous)))
-    (setv mark (cond
-                 (is-not recorded None) recorded
-                 (or (is previous None) (= exit-code 0)) runtime.state.cost-mark
-                 (= exit-code (- signal.SIGKILL)) runtime.state.start-mark
-                 True None))
     (setv runtime.closed False
           runtime.init-seen False
+          runtime.warmed-fresh False
           runtime.state (DialogueState :session-id runtime.session-id :cost-mark mark :start-mark mark))
-    (setv turn-seq (.open-turn runtime))
-    (setv binding (Binding turn-seq))
+    (val turn-seq (.open-turn runtime))
+    (val binding (Binding turn-seq))
     (setv runtime.binding binding)
-    (setv transition (dialogue.begin-turn runtime.state input))
+    (val transition (dialogue.begin-turn runtime.state input))
     (try
       (setv binding.process
             (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
                            (fn [raw] (on-line runtime binding host.clock raw))
                            (fn [code tail] (on-exit runtime binding code tail))))
-      (+= runtime.launches 1)
+      (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
       (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
       (except [error OSError]
@@ -595,10 +624,43 @@
     (apply-transition runtime binding transition)
     turn-seq))
 
+(defk spawn-idle [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ ClaudeSessionSpec spec origin #^ (| float None) recorded
+                  #^ str key]
+  {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: spec ClaudeSessionSpec) (: origin (| FreshSession ResumeSession))
+         (: recorded (| float None)) (: key str)]
+   :post [(: % (| LaunchFailed None))] :tags {:context "claude-code" :role "foundation"}}
+  "会話の process を、入力を書かずに起動して待たせるため(ClaudeWarmSession — ターンは開かない)。状態機械は最初の入力を待つマーク
+   (awaiting-first-input)つきで新しくする — 最初の入力までは SessionStart の hook の行だけをターンの外の出力と数えない(dialogue.hy)。
+   読み取りの thread が読んだ行はターンの記録に入らない(ターンが無い)。費用の起点・起動条件のキー・資格の期限の余裕はターンの process
+   と同じ規則。新しい会話なら warmed-fresh のマークを付ける(最初のターンは同じ id の FreshSession)。結果 = None(起動した)か
+   LaunchFailed(実行ファイルが無い等)。"
+  (<- mark (launch-mark-of runtime origin recorded))
+  (with [runtime.lock]
+    (setv runtime.closed False
+          runtime.init-seen False
+          runtime.warmed-fresh (isinstance origin FreshSession)
+          runtime.state (DialogueState :session-id runtime.session-id :cost-mark mark :start-mark mark
+                                       :awaiting-first-input True))
+    (val binding (Binding runtime.current-seq))
+    (setv runtime.binding binding)
+    (try
+      (setv binding.process
+            (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
+                           (fn [raw] (on-line runtime binding host.clock raw))
+                           (fn [code tail] (on-exit runtime binding code tail))))
+      (setv runtime.launches (+ runtime.launches 1))
+      (setv runtime.launch-key key)
+      (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
+      (except [error OSError]
+        (setv runtime.binding None)
+        (return (LaunchFailed :stderr-tail (str error))))))
+  None)
+
 (defk await-init [#^ ClaudeCodeHost host #^ SessionRuntime runtime #^ int turn-seq #^ bool fresh-runtime]
   {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: turn-seq int) (: fresh-runtime bool)]
    :post [(: % (| TurnStarted LaunchFailed))]}
-  "init の行(か process の終わり)まで待つ。init の前に降りた・期限を過ぎた = LaunchFailed(新しく作った会話の記録は忘れる)。"
+  "init の行(か process の終わり)まで待つ。init の前に終了した・期限を過ぎた = LaunchFailed(fresh-runtime = ターンを 1 度も始めて
+   いない会話 — 新しく作った・事前起動しただけの会話の状態は忘れる)。"
   (setv process (.bound-process runtime))
   (<- seen (wait-until (fn [] (or runtime.init-seen (not (.alive process)))) host.launch-timeout))
   (with [runtime.lock]
@@ -640,6 +702,8 @@
     (setv log (.open-log runtime))
     (setv log.launched-at writing log.launched-wall writing-wall)
     (setv runtime.last-used requested)
+    ;; ターンを始めたので、入力なしで事前起動した新しい会話のマークは消す(事前起動した process を最初のターンが使い回した時もここ)。
+    (setv runtime.warmed-fresh False)
     (setv runtime.retire-after (retire-time spec.credential-expires-at floor-seconds))
     (apply-transition runtime binding (dialogue.begin-turn runtime.state input)))
   (<- (note-reused runtime turn-seq requested writing writing-wall))
@@ -723,6 +787,41 @@
     (retire-if-due runtime (.timestamp now)))
   None)
 
+(defrecord LaunchReady
+  "新しい process を起動する前の準備が済んだ: recorded = 続き・枝の親の transcript の最後の cost-state の額(CLI が数え始める額 —
+   無ければ None)。"
+  (#^ (| float None) recorded))
+
+(defk prepare-launch [#^ ClaudeCodeHost host runtime #^ ClaudeSessionSpec spec #^ str canonical #^ str target-id #^ Launch decision]
+  {:pre [(: host ClaudeCodeHost) (: runtime (| SessionRuntime None)) (: spec ClaudeSessionSpec) (: canonical str) (: target-id str)
+         (: decision Launch)]
+   :post [(: % (| LaunchReady LaunchFailed))] :tags {:context "claude-code" :role "foundation"}}
+  "新しい process を起動する前の準備を、ターン(start-turn)と入力の前の事前起動(warm-session)で同じ順に行うため: 生きて待っている
+   process を停止する(理由 LAUNCH-CHANGED)→ 停止中の process の終了を待つ → transcript の最後の額を読む → 冷えた続きの前の命令 →
+   生かす本数に空きを作る。結果 = LaunchReady か、終了しない・空かない時の LaunchFailed。"
+  (when decision.retire-idle
+    (when (is runtime None)
+      (raise (RuntimeError (.format "生きた process を停止する会話 {} の状態が無い(start-decision の誤り)" target-id))))
+    (<- (retire-idle runtime)))
+  (when decision.wait-retire
+    (when (is runtime None)
+      (raise (RuntimeError (.format "process の終了を待つ会話 {} の状態が無い(start-decision の誤り)" target-id))))
+    (val old (.bound-process runtime))
+    (<- down (wait-until (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
+    (when (not down)
+      (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
+  ;; CLI が数え始める額 = 続き・枝の親の transcript の最後の cost-state の額(前の process が終了して額を記録した後 = 終了を待った後に
+  ;; 読む)。冷えた続きの前の命令より前に読む — その命令が使った額もこのターンの費用に数える。新しい会話は transcript が無いので None。
+  (<- recorded (recorded-cost-mark spec.home canonical target-id))
+  (when decision.cold-resume
+    (<- (run-cold-resume host spec target-id)))
+  ;; 生かす本数に空きを作る(D2 — 上限なら一番長く使われていない、ターン待ちの process を停止する・全部が動いていれば空くまで待つ)。
+  (<- room (make-room host))
+  (when (not room)
+    (return (LaunchFailed :stderr-tail (.format "live-limit {} reached: every live process is running a turn (waited {} seconds)"
+                                                host.live-limit host.launch-timeout))))
+  (LaunchReady :recorded recorded))
+
 (defk start-turn [#^ ClaudeCodeHost host #^ ClaudeStartTurn request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeStartTurn)] :post [(: % "StartTurnOutcome")]}
   ;; 計時の行の起点(頼まれた刻 — 頭の註)。
@@ -749,27 +848,11 @@
     (when (is-not reused None) (return reused))
     ;; 判断の後に process が降りた・降り始めた(手番の外で出力した)— 降りるのを待ってから起こす。
     (:= decision (Launch :wait-retire True)))
-  (when decision.retire-idle
-    (when (is runtime None)
-      (raise (RuntimeError (.format "生きた process を降ろす会話 {} の状態が無い(start-decision の誤り)" target-id))))
-    (<- (retire-idle runtime)))
-  (when decision.wait-retire
-    (when (is runtime None)
-      (raise (RuntimeError (.format "降りるのを待つ会話 {} の状態が無い(start-decision の誤り)" target-id))))
-    (setv old (.bound-process runtime))
-    (<- down (wait-until (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
-    (when (not down)
-      (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
-  ;; CLI が数え始める額 = 続き・枝の親の transcript の最後の cost-state の額(前の process が降りて額を記した後 = 降りるのを待った後に
-  ;; 読む)。冷えた続きの前の命令より前に読む — その命令が使った額もこの手番の額に数える。新しい会話は transcript が無いので None。
-  (<- recorded (recorded-cost-mark spec.home canonical target-id))
-  (when decision.cold-resume
-    (<- (run-cold-resume host spec target-id)))
-  ;; 生かす本数に空きを作る(D2 — 上限なら一番長く使われていない手番待ちの process を降ろす・全部が走っていれば空くまで待つ)。
-  (<- room (make-room host))
-  (when (not room)
-    (return (LaunchFailed :stderr-tail (.format "live-limit {} reached: every live process is running a turn (waited {} seconds)"
-                                                host.live-limit host.launch-timeout))))
+  (<- ready (prepare-launch host runtime spec canonical target-id decision))
+  (when (isinstance ready LaunchFailed) (return ready))
+  ;; ターンを 1 度も始めていない会話(新しく作る・入力なしで事前起動しただけ)は、起動できなかった時に忘れる — 新しい会話の id は
+  ;; 未使用の扱いに戻る。
+  (val unused (or (is runtime None) runtime.warmed-fresh))
   (setv fresh-runtime (is runtime None))
   (when fresh-runtime
     ;; transcript に額の行が無い時の起点: 新しい会話の CLI は 0 から数える。この handler が前の process を見ていない続き・枝は
@@ -780,14 +863,53 @@
   (<- launching (GetMonotonic))
   (<- launching-wall (GetTime))
   (setv runtime.last-used requested)
-  (setv spawned (spawn-turn host runtime spec origin input recorded key))
+  (<- spawned (spawn-turn host runtime spec origin input ready.recorded key))
   (when (isinstance spawned LaunchFailed)
-    (when fresh-runtime (.forget host target-id runtime))
+    (when unused (.forget host target-id runtime))
     (return spawned))
   (<- (note-spawned runtime spawned origin requested launching launching-wall))
-  (<- outcome (await-init host runtime spawned fresh-runtime))
+  (<- outcome (await-init host runtime spawned unused))
   (<- (note-init runtime spawned outcome))
   outcome)
+
+(defk warm-session [#^ ClaudeCodeHost host #^ ClaudeWarmSession request]
+  {:pre [(: host ClaudeCodeHost) (: request ClaudeWarmSession)] :post [(: % "WarmSessionOutcome")]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の process を最初の入力の前に起動して待たせるため(ClaudeWarmSession)。起動するか・同じ起動条件の process が既に待っているので
+   足りるかはターンと同じ start-decision の 1 か所で決め(Reuse = 起動しない)、拒否もターンと同じ型。起動前の準備はターンと同じ
+   prepare-launch。起動できなかった新しい会話の状態は忘れる(id は未使用の扱い)。"
+  (<- requested (GetMonotonic))
+  (<- (retire-under-floor host))
+  (val origin request.origin)
+  (val spec request.spec)
+  (val canonical (os.path.realpath spec.cwd))
+  (val target-id origin.session-id)
+  (val carried (apply-carry spec.home canonical target-id (match origin (ResumeSession :carry carry) carry _ None)))
+  (when (is-not carried None) (return carried))
+  (val known (.runtime host target-id))
+  (<- key (launch-key host.command spec))
+  (val decision (start-decision origin (session-view known)
+                                (file-present (transcript-path spec.home.config-dir canonical target-id))
+                                (is-not spec.cold-resume-prompt None)
+                                key))
+  (match decision
+    (Refuse :outcome outcome) (return outcome)
+    (Reuse) (return (SessionWarmed :session-id target-id))
+    _ None)
+  (<- ready (prepare-launch host known spec canonical target-id decision))
+  (when (isinstance ready LaunchFailed) (return ready))
+  (val runtime (if (is known None)
+                   (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) 0.0 None))
+                   known))
+  (when (is known None) (.register host runtime))
+  ;; ターンを 1 度も始めていない会話(新しく作る・事前起動しただけ)は、起動できなかった時に忘れる(start-turn と同じ)。
+  (val unused (or (is known None) known.warmed-fresh))
+  (setv runtime.last-used requested)
+  (<- spawned (spawn-idle host runtime spec origin ready.recorded key))
+  (when (isinstance spawned LaunchFailed)
+    (when unused (.forget host target-id runtime))
+    (return spawned))
+  (SessionWarmed :session-id target-id))
 
 (defn in-flight-log [runtime #^ ClaudeTurn turn]
   "名指した手番が走っていればその TurnLog(でなければ None)。runtime.lock の中で呼ぶ。"
@@ -956,6 +1078,9 @@
   (ClaudeExportSession [home cwd session-id]
     (<- exported (export-session effect))
     (resume exported))
+  (ClaudeWarmSession [origin spec]
+    (<- warmed (warm-session host effect))
+    (resume warmed))
   (ClaudeDropProcess [session-id]
     (resume (drop-process host session-id)))
   (ClaudeLiveProcess [session-id]

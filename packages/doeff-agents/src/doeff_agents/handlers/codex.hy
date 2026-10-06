@@ -9,7 +9,7 @@
 (import doeff [Ask])
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
-  SendEffect StopEffect SessionHandle Observation ExportContextEffect AgentCapabilityUnsupportedError])
+  SendEffect StopEffect SessionHandle Observation ExportContextEffect WarmSessionEffect AgentCapabilityUnsupportedError])
 (import doeff_agents.effects.agent [refuse-turn-capabilities])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.codex [CodexAdapter])
@@ -83,6 +83,13 @@
   (ExportContextEffect [agent-type]
     :when (= agent-type AgentType.CODEX)
     (raise (AgentCapabilityUnsupportedError :capability "ExportContextEffect" :handler "codex-handler")))
+
+  ;; 入力の前に runtime を事前起動する WarmSessionEffect は、この handler の会話では LaunchEffect が既に CLI を起動して入力を待たせて
+  ;; いる — 黙って何もせずに応答せず、型で拒否する。この handler の知らない会話は外側の handler へ回す。
+  (WarmSessionEffect [handle]
+    (when (not-in handle.session-id sessions)
+      (reperform effect))
+    (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "codex-handler")))
 
   (MonitorEffect [handle]
     (setv active-backend backend)
