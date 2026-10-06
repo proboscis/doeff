@@ -6,6 +6,7 @@
 ;; - 止まる coordinator は待ちに「変わっていない」と返してから止まる(送り手を接続の失敗まで待たせない)。
 ;; - after の無い問いは 400。heartbeat の返事は、次の待ちの after に使う版を運ぶ。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_events [MemoryBroker])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -64,7 +65,7 @@
 
 
 (deftest test-a-watch-returns-at-the-change-without-rereading
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (change-wakes-watcher) :workers TWO-WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (change-wakes-watcher) :workers TWO-WORKERS))
   (val revision (get seen 0))
   (val drained-at (get seen 1))
   (val answer (get seen 2 0))
@@ -90,8 +91,8 @@
   ;; #3865)。worker の代役が静かな拍を眠る走り(既定)でも、1 拍ずつ打つ走りでも同じ刻。反例: 期限を次に起きる刻に入れない作りは、
   ;; 次に状態の変わる刻まで寝過ごす。
   (for [seconds [0.5 1.2 2.5]]
-    (<- skipped tuple (sim-cluster (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS))
-    (<- every tuple (sim-cluster (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS
+    (<- skipped tuple (sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS))
+    (<- every tuple (sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (quiet-watch seconds) :workers TWO-WORKERS :policy SPARSE-POLICY :tick-seconds SPARSE-TICK-SECONDS
                                  :skip-idle False))
     (for [#(started answer at) [skipped every]]
       (assert (= (get answer 0) 200) answer)
@@ -132,7 +133,7 @@
 
 
 (deftest test-a-worker-scoped-watch-wakes-only-for-its-own-changes
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (scoped-watches) :workers TWO-WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (scoped-watches) :workers TWO-WORKERS))
   (val first (get seen 0 0))
   (val first-at (get seen 0 1))
   (val second (get seen 1 0))
@@ -164,7 +165,7 @@
 
 (deftest test-a-stopping-coordinator-answers-its-watchers
   ;; 止まる coordinator は待ちに「変わっていない」と返す(反例 — 返さずに止まれば、送り手は接続の失敗 #(None …) を受ける)。
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (watch-across-stop) :workers TWO-WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (watch-across-stop) :workers TWO-WORKERS))
   (val answer (get seen 0 0))
   (val at (get seen 0 1))
   (val stop-at (get seen 1))
@@ -183,7 +184,7 @@
 
 
 (deftest test-an-unreadable-watch-query-is-refused
-  (<- seen tuple (sim-cluster (beacons sim-foundation) (refused-watches) :workers TWO-WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (refused-watches) :workers TWO-WORKERS))
   (for [answer seen]
     (assert (= (get answer 0) 400) answer)))
 

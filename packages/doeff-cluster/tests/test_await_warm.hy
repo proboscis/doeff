@@ -7,6 +7,7 @@
 ;;   * 期限まで組み上がらなければ、最後の読み(準備中)つきの WarmWaitExpired で返る
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -61,7 +62,7 @@
 (deftest test-a-warm-row-that-finishes-answers-ready-when-it-finishes
   ;; 失敗ケース: Worker の行の status に env を載せないと、組みの完成で coordinator の版が進まず、待ちは期限(120 秒)まで起きない
   ;; (WarmWaitExpired)。載せれば準備の 30 秒の数拍後に WarmReady で返る。
-  (<- seen Awaited (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS None))))
+  (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS None))))
   (assert (isinstance seen.answer WarmReady) seen)
   (assert (= seen.answer.state.ready #("gpu-1")) seen)
   (assert (< seen.waited (+ PREPARE-SECONDS READY-SLACK-SECONDS)) seen))
@@ -69,7 +70,7 @@
 
 (deftest test-a-warm-row-whose-preparation-fails-answers-failed-with-the-kind
   ;; 失敗ケース: 恒久の失敗を待ち続けず、WarmFailed で失敗した担い手と種類を返す(判断が失敗を数えなければ期限まで待って赤)。
-  (<- seen Awaited (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS FAILURE))))
+  (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS FAILURE))))
   (assert (isinstance seen.answer WarmFailed) seen)
   (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable))
              [#("gpu-1" EnvFailureKind.NATIVE-BUILD-FAILED.value False)])
@@ -80,7 +81,7 @@
 (deftest test-a-warm-row-killed-by-the-memory-limit-answers-failed-as-memory-killed
   ;; 組みの子が cgroup の memory の上限で殺された worker(memory-killed・恒久)は、待ち続けず WarmFailed で返り、種類 memory-killed が読める
   ;; — 回の Program は memory を読まずに「先の組みを取り消して止まりの中で宣言する形へ」を決められる(vg-w45・cisco-c8 の可 10-06 00:3x)。
-  (<- seen Awaited (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS MEMORY-FAILURE))))
+  (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with PREPARE-SECONDS MEMORY-FAILURE))))
   (assert (isinstance seen.answer WarmFailed) seen)
   (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable))
              [#("gpu-1" EnvFailureKind.MEMORY-KILLED.value False)])
@@ -98,7 +99,7 @@
   ;; 先の組みを入口で断った worker(no-disk-room・over-roots-cap・no-memory-room — 恒久)は、待ち続けず WarmFailed で返り種類が読める。
   ;; 断りは組みを始めないので、組みの秒(30 秒)を待たずに数拍で返る — 種類を一時(retryable)に数えれば期限(120 秒)まで待って赤。
   (for [refusal REFUSALS]
-    (<- seen Awaited (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with 0.0 refusal))))
+    (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with 0.0 refusal))))
     (assert (isinstance seen.answer WarmFailed) seen)
     (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable)) [#("gpu-1" refusal.kind.value False)]) seen)
     (assert (< seen.waited READY-SLACK-SECONDS) seen)))
@@ -126,14 +127,14 @@
   ;; #3668 (b) の費用の見張り(cisco-c8 の 1 点): env を Worker の行に載せると、名指さない版の待ち手(名簿を写す係 — 差だけを直す reconciler)
   ;; は組みの始まりと終わりで起きる。起きても名簿の事実(RunnerFact = 名・能力・生死・drain・task の空き)は変わらないので、係が直す差は 0
   ;; (読み直し 1 回だけ)。版が進むのは組み 1 回で worker ごとに 2 回(準備中・準備済み)まで。
-  (<- seen AroundWarm (sim-cluster :timing (ClusterTiming) NO-JOBS (runners-around-a-warm) :workers (! (worker-with PREPARE-SECONDS None))))
+  (<- seen AroundWarm (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (runners-around-a-warm) :workers (! (worker-with PREPARE-SECONDS None))))
   (assert (= seen.before seen.after) seen)
   (assert (<= 1 seen.moves 2) seen))
 
 
 (deftest test-a-warm-row-that-does-not-finish-in-time-answers-expired-with-the-last-read
   ;; 期限まで組み上がらない行は、最後の読み(準備中の担い手)つきの WarmWaitExpired で返る — 期限より前には返らない。
-  (<- seen Awaited (sim-cluster :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with SLOW-PREPARE-SECONDS None))))
+  (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with SLOW-PREPARE-SECONDS None))))
   (assert (isinstance seen.answer WarmWaitExpired) seen)
   (assert (isinstance seen.answer.last WarmState) seen)
   (assert (= seen.answer.last.preparing #("gpu-1")) seen)

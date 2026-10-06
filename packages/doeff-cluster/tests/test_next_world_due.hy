@@ -6,6 +6,7 @@
 ;; 答え、明けた後は None になることを見る検(作り直しの刻を覚えない形・明けた刻を数え続ける形は赤)。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -115,13 +116,13 @@
 
 (deftest test-the-world-answers-the-end-of-a-cut
   ;; 網の切れの最中は、世界が切れの明ける刻を答える。明けた後は予定が無い(明けた切れを数え続けない)。
-  (<- seen DueSeen (sim-cluster (pulses sim-foundation) (cut-due)))
+  (<- seen DueSeen (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (cut-due)))
   (assert (= seen.during seen.expected) seen)
   (assert (is seen.after None) seen))
 
 
 (deftest test-the-world-answers-the-restart-of-a-crashed-coordinator
   ;; 落ちた coordinator を作り直すまでの間は、世界が作り直しの刻を答える(Delay の中だけに消えない)。作り直した後は予定が無い。
-  (<- seen DueSeen (sim-cluster (pulses sim-foundation) (restart-due)))
+  (<- seen DueSeen (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (restart-due)))
   (assert (= seen.during seen.expected) seen)
   (assert (is seen.after None) seen))

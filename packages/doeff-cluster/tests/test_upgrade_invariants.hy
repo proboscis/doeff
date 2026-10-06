@@ -5,6 +5,7 @@
 ;; 出す壊した Program と、組まずに「組んだ」と答える壊した handler を走らせ、入れ替えの瞬間の保存先のスナップショットで赤になる事を見る。
 (require doeff-hy.macros [deftest defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import functools [partial])
 (import doeff [with-handlers Program])
 (import doeff_time [Delay])
@@ -204,7 +205,7 @@
   ;; 失敗ケース(壊した Program): 準備より先に宣言を書いて当てると、a の古い process が止まる瞬間の保存先に在るのは上げる前の版の root
   ;; だけ — V5 が a を違反として挙げる(後から準備しても、入れ替えの瞬間のスナップショットは変わらない)。
   (<- outside SimOutside (flux-outside))
-  (<- places tuple (sim-cluster NO-JOBS (broken-order-on-sim) :workers #(A B) :outside outside))
+  (<- places tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (broken-order-on-sim) :workers #(A B) :outside outside))
   (assert (= (tuple (gfor p places #(p.start.target p.prepared))) #(#("a" #(OLD)))) places)
   (<- found tuple (swap-after-boot-root-prepared places))
   (assert (= (tuple (gfor b found #(b.rule b.target))) #(#("V5 swap-after-boot-root-prepared" "a"))) found))
@@ -233,6 +234,6 @@
   ;; 失敗ケース(壊した handler): Program は準備の答えを受けてから宣言を書くが、handler が組んでいないので、入れ替えの瞬間の保存先に
   ;; 入れ替え先の版の root が無い — V5 が a を違反として挙げる(Program の順だけでは守れず、handler が完成のマークまで確かめて答える事が要る)。
   (<- outside SimOutside (flux-outside))
-  (<- places tuple (sim-cluster NO-JOBS (broken-answer-on-sim) :workers #(A B) :outside outside))
+  (<- places tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (broken-answer-on-sim) :workers #(A B) :outside outside))
   (<- found tuple (swap-after-boot-root-prepared places))
   (assert (= (tuple (gfor b found #(b.rule b.target))) #(#("V5 swap-after-boot-root-prepared" "a"))) found))

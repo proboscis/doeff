@@ -4,6 +4,7 @@
 ;; worker の drain は本番の preStop と同じ待ち(prestop-drain — coordinator が drained と答えるか上限まで頼み直す・#3669)。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import collections.abc [Callable])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
@@ -38,7 +39,7 @@
 
 (deftest test-the-2026-10-05-order-through-the-emulated-flux-is-green
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-in-order) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-in-order) :workers #(A B) :outside outside))
   (assert (= seen #(#() True True NEW 3)) seen))
 
 
@@ -55,7 +56,7 @@
 
 (deftest test-two-workers-in-one-write-break-v3
   (<- outside SimOutside (flux-outside))
-  (<- rules tuple (sim-cluster NO-JOBS (both-workers-in-one-write) :workers #(A B) :outside outside))
+  (<- rules tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (both-workers-in-one-write) :workers #(A B) :outside outside))
   (assert (= rules #("V3 one-worker-at-a-time")) rules))
 
 
@@ -72,7 +73,7 @@
 
 (deftest test-the-coordinator-before-the-workers-breaks-v1
   (<- outside SimOutside (flux-outside))
-  (<- rules tuple (sim-cluster NO-JOBS (coordinator-first) :workers #(A B) :outside outside))
+  (<- rules tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (coordinator-first) :workers #(A B) :outside outside))
   (assert (= rules #("V1 coordinator-after-every-worker")) rules))
 
 
@@ -99,12 +100,12 @@
 
 (deftest test-a-drain-that-does-not-wait-breaks-v2-and-loses-the-running-task
   (<- outside SimOutside (flux-outside))
-  (<- broken tuple (sim-cluster NO-JOBS (swap-a-under-a-running-task drain-without-waiting) :workers #(A B)
+  (<- broken tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (swap-a-under-a-running-task drain-without-waiting) :workers #(A B)
                                 :outside outside))
   (assert (= (get broken 0) #("V2 worker-swap-waits-for-its-tasks")) broken)
   (assert (isinstance (get broken 1) DetachedLost) broken)
   ;; 本番の preStop と同じく空くのを待つ drain なら破りは無く、task は走り切る。
-  (<- waited tuple (sim-cluster NO-JOBS (swap-a-under-a-running-task prestop-drain) :workers #(A B)
+  (<- waited tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (swap-a-under-a-running-task prestop-drain) :workers #(A B)
                                 :outside outside))
   (assert (= waited #(#() (DetachedSucceeded 104))) waited))
 
@@ -132,7 +133,7 @@
   ;; 本番の preStop と同じ待ち(prestop-drain)で、上限(DRAIN-DEADLINE-SECONDS)を待たずに drained で終わり、a の入れ替えへ進む。
   ;; job は a の上で止まるまで動き、新しい世代の a で動き直す(移せる先は無いので、置き先は a のまま)。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster (host-a-pulses sim-foundation) (swap-a-under-a-job-only-a-can-hold) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (host-a-pulses sim-foundation) (swap-a-under-a-job-only-a-can-hold) :workers #(A B) :outside outside))
   (assert (= (get seen 0) #()) seen)
   ;; 直す前は上限まで待って timeout(待ちの秒 = 90.0)。直した後は 1 回目の頼みの答えが drained(頼み直しの間隔より短い)。
   (assert (< (get seen 1) DRAIN-DEADLINE-SECONDS) seen)
@@ -164,7 +165,7 @@
 
 (deftest test-the-coordinator-with-a-queued-task-breaks-v4
   (<- outside SimOutside (flux-outside))
-  (<- rules tuple (sim-cluster NO-JOBS (coordinator-with-a-queued-task) :workers #(A B) :outside outside))
+  (<- rules tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (coordinator-with-a-queued-task) :workers #(A B) :outside outside))
   (assert (= rules #("V4 coordinator-swap-on-an-empty-queue")) rules))
 
 

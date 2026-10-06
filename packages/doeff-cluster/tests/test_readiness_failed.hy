@@ -8,6 +8,7 @@
 ;;; 判断は本番の境界の handler と同じ 1 つ(shared/protocol/coordinator_reads.hy の readiness-wait-answer)を通る。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_cluster.sim.local [sim-cluster SimWorker])
 (import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceReadiness ServiceFailed ReadinessWaitExpired
@@ -46,7 +47,7 @@
 
 (deftest test-a-service-whose-env-cannot-be-prepared-answers-failed-before-the-deadline
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (<- seen Waited (sim-cluster (beacons sim-foundation) (wait-ready "beacon" PATIENCE) :runtime-env env
+  (<- seen Waited (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (wait-ready "beacon" PATIENCE) :runtime-env env
                                :workers #((SimWorker :name "w1" :provides NEEDS :env-failure MISSING :task-reserve 0))))
   ;; 直す前は ReadinessWaitExpired(waited 600 秒)— 落ちた事が答えに無く、回は段の上限まで止まる。
   (assert (isinstance seen.answer ServiceFailed) seen.answer)
@@ -83,7 +84,7 @@
 
 
 (deftest test-a-crashed-service-restarting-through-backoff-is-not-answered-as-failed
-  (<- seen Restarted (sim-cluster (beacons sim-foundation) (crash-then-wait "beacon" PATIENCE) :policy SLOW-RESTART))
+  (<- seen Restarted (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (crash-then-wait "beacon" PATIENCE) :policy SLOW-RESTART))
   (assert (isinstance seen.before JobProcessSeen) seen.before)
   (assert (= seen.crashed 1) seen)
   ;; backoff は FAILED-PHASES に入らない — 起こし直しが済めば Ready が返る。

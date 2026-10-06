@@ -4,6 +4,7 @@
 ;;   2 担い手が延ばさずに期限が切れた刻ちょうどに、待っていた claim が取れる(前は期限の後の次の poll)。
 ;; 待つ側は poll の間を持たない SemaphoreSession(:poll-seconds None)で、GET /watch?lease=<名> で空きを待つ。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import doeff_core_effects.scheduler [Spawn Wait Task])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -59,10 +60,10 @@
 
 
 (deftest test-a-waiting-claim-takes-the-lease-at-the-release
-  (<- #(released-at taken-at) tuple (sim-cluster (beacons sim-foundation) (released-then-taken)))
+  (<- #(released-at taken-at) tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (released-then-taken)))
   (assert (<= released-at taken-at (+ released-at SLACK-MS)) #(released-at taken-at)))
 
 
 (deftest test-a-waiting-claim-takes-the-lease-at-the-expiry-of-a-holder-that-stopped-renewing
-  (<- #(expires-at taken-at) tuple (sim-cluster (beacons sim-foundation) (expired-then-taken)))
+  (<- #(expires-at taken-at) tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (expired-then-taken)))
   (assert (<= expires-at taken-at (+ expires-at SLACK-MS)) #(expires-at taken-at)))

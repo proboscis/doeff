@@ -13,6 +13,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import json)
 (import pathlib [Path])
@@ -109,7 +110,7 @@
 
 
 (deftest test-a-task-runs-after-its-root-is-prepared-and-a-new-commit-prepares-a-new-root
-  (<- seen Sent (sim-cluster NO-JOBS (scenario-1-and-2) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- seen Sent (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (scenario-1-and-2) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= seen.outcomes {"job-1" (DetachedSucceeded 101) "job-2" (DetachedSucceeded 102)}) seen.outcomes)
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
@@ -132,7 +133,7 @@
 
 (deftest test-two-tasks-of-one-env-share-one-preparation
   ;; 準備は 1 本(worker は準備中・準備済みの root を準備し直さない)・2 本とも走る。準備に時間のかかる worker で確かめる。
-  (<- seen Sent (sim-cluster NO-JOBS (scenario-6) :workers #((SimWorker :name "w1" :provides LOCAL :prepare-seconds 3.0 :task-reserve 0))))
+  (<- seen Sent (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (scenario-6) :workers #((SimWorker :name "w1" :provides LOCAL :prepare-seconds 3.0 :task-reserve 0))))
   (assert (= seen.outcomes {"a" (DetachedSucceeded 101) "b" (DetachedSucceeded 102)}) seen.outcomes)
   (assert (= (len (get seen.preparations "w1")) 1) seen.preparations))
 
@@ -149,7 +150,7 @@
 (deftest test-a-failed-preparation-answers-its-kind-without-running-the-program
   ;; 恒久の失敗は 1 回で答える(Program は走らない)。
   (val missing (EnvFailure :kind EnvFailureKind.COMMIT-MISSING :detail "commit が remote に無い" :retryable False))
-  (<- seen Sent (sim-cluster NO-JOBS (failure-scenario #("w1"))
+  (<- seen Sent (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (failure-scenario #("w1"))
                              :workers #((SimWorker :name "w1" :provides LOCAL :env-failure missing :task-reserve 0))))
   (val outcome (get seen.outcomes "job"))
   (assert (isinstance outcome DetachedEnvUnavailable) outcome)
@@ -159,7 +160,7 @@
   ;; 一時の失敗は、試した worker を避けて置き直した(ENV-RETRIES 回)後に答える。
   (val unreachable (EnvFailure :kind EnvFailureKind.REPO-UNREACHABLE :detail "届かない" :retryable True))
   (val names (tuple (gfor i (range (+ 1 ENV-RETRIES)) (.format "w{}" (+ i 1)))))
-  (<- again Sent (sim-cluster NO-JOBS (failure-scenario names)
+  (<- again Sent (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (failure-scenario names)
                               :workers (tuple (gfor n names (SimWorker :name n :provides LOCAL :env-failure unreachable :task-reserve 0)))))
   (val temporary (get again.outcomes "job"))
   (assert (isinstance temporary DetachedEnvUnavailable) temporary)

@@ -11,6 +11,7 @@
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import pytest)
@@ -90,7 +91,7 @@
   ;; V5(#3725): どの入れ替えも、保存先に入れ替え先の版の root を先に準備してから始まる — Program から準備の手順を外すと、a・b・
   ;; coordinator の入れ替えの瞬間の保存先に NEW の root が無く、V5 が赤(直す前の Program で見た)。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-and-judge LIMITS prestop-drain) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-and-judge LIMITS prestop-drain) :workers #(A B) :outside outside))
   (val rules (get seen 0))
   (val a-commit (get seen 1))
   (val b-commit (get seen 2))
@@ -129,7 +130,7 @@
 (deftest test-a-coordinator-started-on-a-version-names-it-in-the-state-answer
   ;; 失敗ケース a(#3772): coordinator を版 NEW の env で起こすと、GET /state の答えの欄 coordinatorCommit に NEW が出て、共有の読み
   ;; (coordinator-commit-of-state — 配備する側の名簿の読みも通る)が NEW と読む。欄を書かない coordinator では欄が無く赤。
-  (<- state dict (sim-cluster NO-JOBS (state-after-restart-on NEW) :workers #(A B)))
+  (<- state dict (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (state-after-restart-on NEW) :workers #(A B)))
   (assert (= (.get state "coordinatorCommit") NEW) (sorted state))
   (<- read (| str None) (coordinator-commit-of-state state))
   (assert (= read NEW) read))
@@ -150,7 +151,7 @@
 (deftest test-a-coordinator-without-the-version-variable-writes-no-version-field
   ;; 失敗ケース b(#3772): 環境変数が無い・空の値の coordinator は、欄 coordinatorCommit を書かない(空の文字や null を版として書かない)。
   ;; 共有の読みはどちらも None と読む。読めない時に空の文字を書く形は赤。
-  (<- seen tuple (sim-cluster NO-JOBS (states-without-the-version) :workers #(A B)))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (states-without-the-version) :workers #(A B)))
   (for [state seen]
     (assert (not-in "coordinatorCommit" state) (sorted state))
     (<- read (| str None) (coordinator-commit-of-state state))
@@ -234,7 +235,7 @@
   ;; 入れ替えを始めた後に起動した新しい coordinator が欄で NEW を申告した後。worker が live なら終わりとする形・宣言の版を答えた版と
   ;; みなす形は、新しい coordinator の起動より前に答えを返して赤。欄を書かない coordinator では NEW を読めず上限で止まり赤。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-then-coordinator-runs) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-then-coordinator-runs) :workers #(A B) :outside outside))
   (val returned (get seen 0))
   (val runs (get seen 1))
   (val swap (next (gfor s (get seen 2) :if (= s.target "coordinator") s)))
@@ -284,7 +285,7 @@
   ;; 失敗ケース(Mac の調整役の条件 3・今朝の形): 最初の worker a の入れ替え先の空の起動が落ちる — Program は a を明示して止まり、宣言を
   ;; 書かず(保存先は始めと同じ)、何も入れ替えず、a・b は元の版のまま。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset ["a"]) (frozenset)) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-with-refused-boots (frozenset ["a"]) (frozenset)) :workers #(A B) :outside outside))
   (val refused (get seen 0))
   (assert (isinstance refused UpgradeRefused) seen)
   (assert (= refused.target "a") refused)
@@ -299,7 +300,7 @@
   ;; 失敗ケース: coordinator の入れ替え先の空の起動が落ちる — worker a・b は入れ替わり(新しい版)、coordinator の宣言は書かれず
   ;; 入れ替えもしない(入れ替えの記録は a・b だけ)。停止は coordinator を明示する。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset ["coordinator"]) (frozenset)) :workers #(A B)
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-with-refused-boots (frozenset ["coordinator"]) (frozenset)) :workers #(A B)
                               :outside outside))
   (val refused (get seen 0))
   (assert (isinstance refused UpgradeRefused) seen)
@@ -313,7 +314,7 @@
   ;; (閉じた語)を明示して止まり、宣言を書かず(宣言の保存先は始めと同じ)、何も入れ替えず、a・b は元の版のまま。準備の手順を Desire の後に
   ;; 置くと、宣言が書かれて宣言の保存先が始めと違い赤(準備の手順の無い直す前の Program は、止まらずに全部入れ替えて赤)。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset) (frozenset ["a"])) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-with-refused-boots (frozenset) (frozenset ["a"])) :workers #(A B) :outside outside))
   (val refused (get seen 0))
   (assert (isinstance refused UpgradeRefused) seen)
   (assert (= refused.target "a") refused)
@@ -329,7 +330,7 @@
   ;; 失敗ケース(#3725): coordinator の入れ替え先の版の root を準備できない — worker a・b は入れ替わり(新しい版・どちらも root を先に
   ;; 準備してから = V5 の違反 0)、coordinator の宣言は書かれず入れ替えもしない。停止は coordinator と理由を明示する。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-with-refused-boots (frozenset) (frozenset ["coordinator"])) :workers #(A B)
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-with-refused-boots (frozenset) (frozenset ["coordinator"])) :workers #(A B)
                               :outside outside))
   (val refused (get seen 0))
   (assert (isinstance refused UpgradeRefused) seen)
@@ -356,7 +357,7 @@
   ;; 条 V2 を Program が守る: a の上で走る task が終わるのを待ってから a を入れ替える — task は走り切り、破りは無い。worker の drain は
   ;; 猶予 5 秒で止めへ進む形(drain-within-grace — 本番の Pod の猶予が task より短い時)なので、task を救うのは Program の待ちだけ。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-under-a-running-task LIMITS drain-within-grace) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-under-a-running-task LIMITS drain-within-grace) :workers #(A B) :outside outside))
   (assert (= (get seen 0) #()) seen)
   (assert (= (get seen 1) (DetachedSucceeded 104)) seen)
   (val a-start (next (gfor s (get seen 2) :if (= s.target "a") s)))
@@ -368,7 +369,7 @@
   ;; 止まったかを名指しで落ちる。
   (<- outside SimOutside (flux-outside))
   (with [caught (pytest.raises UpgradeStalled)]
-    (<- _ (sim-cluster NO-JOBS (upgrade-under-a-running-task (replace LIMITS :drain-seconds 5.0) drain-within-grace) :workers #(A B) :outside outside)))
+    (<- _ (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-under-a-running-task (replace LIMITS :drain-seconds 5.0) drain-within-grace) :workers #(A B) :outside outside)))
   (assert (= caught.value.step "worker a に置かれた task が終わる") caught.value.step)
   (assert (= caught.value.limit-seconds 5.0)))
 
@@ -665,7 +666,7 @@
   ;; 答えの枝「組んだ」と「準備済みだった」(#3725): 模擬の保存先に NEW の root が無い 1 度目は組み、a が NEW で動いている 2 度目は
   ;; 準備済みと答える(何もしない)。どちらも上げる前の版の root は保存先に在る(準備は足すだけで消さない)。入れ替えは 1 度だけ。
   (<- outside SimOutside (flux-outside))
-  (<- seen tuple (sim-cluster NO-JOBS (upgrade-a-twice) :workers #(A B) :outside outside))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (upgrade-a-twice) :workers #(A B) :outside outside))
   (assert (= (get seen 0) #((BootRootBuilt :target "a" :seconds 0.0 :previous-root-present True)
                             (BootRootAlreadyPrepared :target "a" :previous-root-present True)))
           seen)

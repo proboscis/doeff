@@ -6,6 +6,7 @@
 ;; StartWorker・CutWorker・DrainWorker)で世界を動かし・読む。時間を進めるのは Delay。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import json)
 (import pytest)
@@ -80,7 +81,7 @@
 
 (deftest test-a-service-runs-reports-ready-and-becomes-ready-within-its-window
   ;; service が起き、拍ごとに ReportReady を送り、coordinator が readiness の窓(5 秒)の中の報告で Ready と数える。
-  (<- seen Seen (sim-cluster (beacons sim-foundation) (watch-beacon 12)))
+  (<- seen Seen (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (watch-beacon 12)))
   (assert (= seen.readiness.state "Ready") seen)
   (assert (= (len seen.processes) 1) seen.processes)
   (val first (get seen.processes 0))
@@ -129,7 +130,7 @@
 
 (deftest test-a-crashed-service-is-restarted-by-the-real-worker-and-coordinator
   ;; Crash で落とした process(exit 1)を、本物の worker の判断が backoff の後に起こし直す(世代が増え、新しい世代が Ready に戻る)。
-  (<- changed Changed (sim-cluster (beacons sim-foundation) (crash-and-watch "beacon" "beacon/")))
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (crash-and-watch "beacon" "beacon/")))
   (assert (= changed.answer 1) changed)
   (assert (= (len changed.before.processes) 1) changed.before.processes)
   (assert (= (len changed.after.processes) 2) changed.after.processes)
@@ -146,7 +147,7 @@
 
 (deftest test-redeclaring-a-recreate-service-stops-the-old-process-before-the-new-one-starts
   ;; 版(environ の STEP)を変えて宣言し直すと入れ替わる — recreate は旧を止めて(止めの合図 -15)から新を起こす。
-  (<- changed Changed (sim-cluster (beacons sim-foundation) (redeclare-and-watch (beacons-v2 sim-foundation) "beacon" "beacon/" 12.0)))
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (redeclare-and-watch (beacons-v2 sim-foundation) "beacon" "beacon/" 12.0)))
   (assert (= changed.answer #("beacon")) changed.answer)
   (assert (= (get changed.before.rows "beacon/a" "step") "1") changed.before.rows)
   (assert (= (len changed.after.processes) 2) changed.after.processes)
@@ -212,7 +213,7 @@
 (deftest test-a-redeclaration-with-zero-replicas-withdraws-the-service
   ;; 取り下げ(#3487): 同じ系の job の :replicas を 0 にして宣言し直すと、coordinator の Service の replicas が 0 になり、動いていた
   ;; process は止まって起こし直されない(契約の effect が系の値の台数を 3 つの handler で運ぶ)。
-  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation) (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/")))
+  (<- seen ReplicasSeen (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/")))
   (assert (= seen.changed.answer #("beacon")) seen.changed.answer)
   (assert (= (len seen.changed.before.processes) 1) seen.changed.before.processes)
   (assert (= seen.replicas 0) seen)
@@ -222,7 +223,7 @@
 (deftest test-a-handler-that-ignores-the-requested-replicas-does-not-withdraw
   ;; 失敗ケース(取り下げ): 系の台数 0 を無視して 1 を書く handler では、同じ取り下げの筋書きで Service の replicas は 1 のまま・
   ;; process は動き続ける(上の検が答え手の欠けを赤にできることの確かめ)。
-  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation)
+  (<- seen ReplicasSeen (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation)
                                      (with-handlers [(fixes-replicas 1)] (withdraw-and-watch (beacons sim-foundation) "beacon" "beacon/"))))
   (assert (= seen.replicas 1) seen)
   (assert (any (gfor p seen.changed.after.processes (is p.exit-code None))) seen.changed.after.processes))
@@ -230,7 +231,7 @@
 
 (deftest test-a-redeclaration-with-one-replica-wakes-a-withdrawn-service
   ;; 起こし(#3487): 取り下げた系を元の系(job の :replicas 1)で宣言し直すと、Service の replicas が 1 に戻り、新しい process が起きる。
-  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation) (withdraw-wake-and-watch (beacons sim-foundation) "beacon" "beacon/")))
+  (<- seen ReplicasSeen (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (withdraw-wake-and-watch (beacons sim-foundation) "beacon" "beacon/")))
   (assert (all (gfor p seen.changed.before.processes (is-not p.exit-code None))) seen.changed.before.processes)
   (assert (= seen.replicas 1) seen)
   (assert (any (gfor p seen.changed.after.processes (is p.exit-code None))) seen.changed.after.processes))
@@ -238,7 +239,7 @@
 
 (deftest test-a-handler-that-ignores-the-requested-replicas-does-not-wake
   ;; 失敗ケース(起こし): 系の台数 1 を無視して 0 を書く handler では、起こしの筋書きの後も Service の replicas は 0・動く process は無い。
-  (<- seen ReplicasSeen (sim-cluster (beacons sim-foundation)
+  (<- seen ReplicasSeen (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation)
                                      (with-handlers [(fixes-replicas 0)] (withdraw-wake-and-watch (beacons sim-foundation) "beacon" "beacon/"))))
   (assert (= seen.replicas 0) seen)
   (assert (all (gfor p seen.changed.after.processes (is-not p.exit-code None))) seen.changed.after.processes))
@@ -246,7 +247,7 @@
 
 (deftest test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready
   ;; handoff: 新を旧と並べて起こし、coordinator が新の世代を Ready と数えた後に旧を止める(引数 every を変えた版)。
-  (<- changed Changed (sim-cluster (handoff-beacons sim-foundation)
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                                    (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)))
   (assert (= (len changed.after.processes) 2) changed.after.processes)
   (val old (get changed.after.processes 0))
@@ -278,7 +279,7 @@
   ;; 反例(条 W1): 入れ替えで旧を名から外す handler(RetireJob)が外すと同時に旧を止める壊れた worker(retire-stops)では、新が Ready に
   ;; なるまで Ready の書き手が居ない区間ができ、W1 の判断が空白を返す — 本物の handler が旧を動かし続けていることの裏返し。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :retire-stops True :task-reserve 0)))
-  (<- changed Changed (sim-cluster (handoff-beacons sim-foundation)
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                                    (redeclare-and-watch (handoff-beacons-v2 sim-foundation) "beacon" "beacon/" 15.0)
                                    :workers workers))
   (<- lifetimes tuple (writer-lifetimes changed.after))
@@ -306,7 +307,7 @@
 (deftest test-a-handoff-job-runs-at-most-two-processes-across-two-handoffs
   ;; 条 C14(architecture.hy の :invariants): 入れ替えを 2 度通しても、beacon が同時に動く子 process は旧と新の 2 つまで(本物の worker は
   ;; 新が Ready になった後に旧を止める)。
-  (<- processes tuple (sim-cluster (handoff-beacons sim-foundation)
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                                    (handed-off-twice (handoff-beacons-v2 sim-foundation) (handoff-beacons-v3 sim-foundation))))
   (assert (>= (len processes) 3) processes)
   (<- over tuple (runs-within-their-limit processes HANDOFF-LIMIT))
@@ -316,7 +317,7 @@
 (deftest test-a-counterexample-worker-that-hides-retired-processes-breaks-c14
   ;; 条 C14 の失敗ケース: 入れ替えで名から外した旧の process を観測に載せない壊れた worker(SimWorker の hides-retired)では、旧を止める前に
   ;; 次の新が並び、2 度目の入れ替えで beacon が同時に 3 つ動き、条 C14 の判断がその process を名指す。
-  (<- processes tuple (sim-cluster (handoff-beacons sim-foundation)
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
                                    (handed-off-twice (handoff-beacons-v2 sim-foundation) (handoff-beacons-v3 sim-foundation))
                                    :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :hides-retired True :task-reserve 0))))
   (<- over tuple (runs-within-their-limit processes HANDOFF-LIMIT))
@@ -333,7 +334,7 @@
 
 (deftest test-services-connect-only-through-the-board
   ;; copier は beacon が盤に書いた行を読んで写す(service どうしは ReadShared / WriteShared でだけつながる)。
-  (<- rows dict (sim-cluster (relay sim-foundation) (watch-rows 10.0 "relay/")))
+  (<- rows dict (sim-cluster :notice-broker (MemoryBroker) (relay sim-foundation) (watch-rows 10.0 "relay/")))
   (assert (= (get rows "relay/source" "step") "9") rows)
   (assert (= (get rows "relay/copy" "step") "9") rows)
   (assert (>= (get rows "relay/copy" "n") 1) rows))
@@ -359,7 +360,7 @@
 (deftest test-the-fence-drops-a-process-whose-effect-only-the-sim-could-answer
   ;; 柵: sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime)は通る。sim の世界だけが答える effect(検の
   ;; ProcessesOf)を出した process は、本番の子と同じ未処理の例外で落ちる(exit 1 — worker が起こし直しても同じく落ちる)。
-  (<- seen Fenced (sim-cluster (fenced sim-foundation) (watch-fence)))
+  (<- seen Fenced (sim-cluster :notice-broker (MemoryBroker) (fenced sim-foundation) (watch-fence)))
   (assert (= (get seen.rows "fence/passer" "answer") 42) seen.rows)
   (assert (>= (get seen.rows "fence/passer" "elapsedMs") 500) seen.rows)
   (assert (= seen.passer.state "Ready") seen.passer)
@@ -388,7 +389,7 @@
 (deftest test-services-keep-their-own-handlers-for-the-same-effect-type
   ;; 別スコープ: sweet と sour は同じ Flavor の型に別の答えの handler を並べ、混ざらない。handler を並べない plain には他の service の
   ;; handler が届かず、答えの無い effect で落ちる。
-  (<- seen Flavored (sim-cluster (flavors sim-foundation) (watch-flavors)))
+  (<- seen Flavored (sim-cluster :notice-broker (MemoryBroker) (flavors sim-foundation) (watch-flavors)))
   (assert (= (get seen.rows "flavor/sweet") "sweet") seen.rows)
   (assert (= (get seen.rows "flavor/sour") "sour") seen.rows)
   (assert (not-in "flavor/plain" seen.rows) seen.rows)
@@ -399,16 +400,16 @@
 (deftest test-the-environ-override-replaces-a-declared-name-and-refuses-an-undeclared-one
   ;; job ごとの environ の上書きは宣言の :environ に重なる(宿が Ask に答える値が変わる)。宣言に無い名・系に無い job・文字列でない値は
   ;; 走らせる前に断る。
-  (<- seen Seen (sim-cluster (beacons sim-foundation) (watch-beacon 8) :environ {"beacon" {"STEP" "7"}}))
+  (<- seen Seen (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (watch-beacon 8) :environ {"beacon" {"STEP" "7"}}))
   (assert (= (get seen.rows "beacon/a" "step") "7") seen.rows)
   (with [raised (pytest.raises ValueError)]
-    (<- (sim-cluster (beacons sim-foundation) (watch-beacon 1) :environ {"beacon" {"UNDECLARED" "x"}})))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (watch-beacon 1) :environ {"beacon" {"UNDECLARED" "x"}})))
   (assert (in "UNDECLARED" (str raised.value)) (str raised.value))
   (with [raised (pytest.raises ValueError)]
-    (<- (sim-cluster (beacons sim-foundation) (watch-beacon 1) :environ {"elsewhere" {"STEP" "7"}})))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (watch-beacon 1) :environ {"elsewhere" {"STEP" "7"}})))
   (assert (in "elsewhere" (str raised.value)) (str raised.value))
   (with [raised (pytest.raises ValueError)]
-    (<- (sim-cluster (beacons sim-foundation) (watch-beacon 1) :environ {"beacon" {"STEP" 7}})))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (watch-beacon 1) :environ {"beacon" {"STEP" 7}})))
   (assert (in "STEP" (str raised.value)) (str raised.value)))
 
 
@@ -429,7 +430,7 @@
   ;; 最初の宣言に無い job(beacon-b)を上書きつきで足すと、その job の process は上書きの値で起きる。前からの job(beacon)は上書きが
   ;; 同じなので入れ替わらず、前の process が前の値のまま動く。新しい系に無い job の上書きは名指しで断る(最初の宣言と同じ規則)。
   (<- seen (get tuple #(Seen Seen))
-      (sim-cluster (beacons sim-foundation) (redeclare-with-overrides {"beacon" {"STEP" "7"} "beacon-b" {"STEP" "5"}})
+      (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (redeclare-with-overrides {"beacon" {"STEP" "7"} "beacon-b" {"STEP" "5"}})
                    :environ {"beacon" {"STEP" "7"}}))
   (val a (get seen 0))
   (val b (get seen 1))
@@ -438,7 +439,7 @@
   (assert (= (len a.processes) 1) a.processes)
   (assert (= (len b.processes) 1) b.processes)
   (with [raised (pytest.raises ValueError)]
-    (<- (sim-cluster (beacons sim-foundation) (redeclare-with-overrides {"elsewhere" {"STEP" "5"}}))))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (redeclare-with-overrides {"elsewhere" {"STEP" "5"}}))))
   (assert (in "elsewhere" (str raised.value)) (str raised.value)))
 
 
@@ -454,12 +455,12 @@
   ;; needs ⊆ provides: どの worker も gpu を提供しなければ置かれず(process が起きない・Ready にならない)、提供する worker が居れば
   ;; その worker に置かれる。
   (val cpu (SimWorker :name "cpu-1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
-  (<- none Seen (sim-cluster (gpu-only sim-foundation) (watch-trainer) :workers #(cpu)))
+  (<- none Seen (sim-cluster :notice-broker (MemoryBroker) (gpu-only sim-foundation) (watch-trainer) :workers #(cpu)))
   (assert (= none.processes #()) none.processes)
   (assert (!= none.readiness.state "Ready") none.readiness)
   (assert (not none.rows) none.rows)
   (val gpu (SimWorker :name "gpu-1" :provides (frozenset ["cluster-net" "gpu"]) :task-reserve 0))
-  (<- placed Seen (sim-cluster (gpu-only sim-foundation) (watch-trainer) :workers #(cpu gpu)))
+  (<- placed Seen (sim-cluster :notice-broker (MemoryBroker) (gpu-only sim-foundation) (watch-trainer) :workers #(cpu gpu)))
   (assert (= (lfor p placed.processes p.worker) ["gpu-1"]) placed.processes)
   (assert (= (get placed.rows "gpu/beat" "step") "1") placed.rows))
 
@@ -478,7 +479,7 @@
                                           :call (CallShape :function holding-unloadable :args [sim-foundation "unloadable"] :kwargs {}) :replicas 1
                                           :needs #{"cluster-net"}))))
   (with [raised (pytest.raises UnsendableProgram)]
-    (<- (sim-cluster broken (Delay 1.0))))
+    (<- (sim-cluster :notice-broker (MemoryBroker) broken (Delay 1.0))))
   (assert (in "解けない値" (str raised.value)) (str raised.value)))
 
 
@@ -532,7 +533,7 @@
 (deftest test-a-crash-also-stops-the-tasks-the-process-spawned
   ;; 本番の子 process の中の task は process と一緒に消える。sim でも Crash で落とした process の中で Spawn した task(盤に世代の名の
   ;; 鍵で書き続ける)は止まり、起こし直した新しい世代の task だけが書き続ける。
-  (<- seen Spawned (sim-cluster (spawners sim-foundation) (crash-spawner)))
+  (<- seen Spawned (sim-cluster :notice-broker (MemoryBroker) (spawners sim-foundation) (crash-spawner)))
   (val old (get seen.processes 0))
   (val new (get seen.processes -1))
   (val old-key (+ "spawn/" old.instance))
@@ -557,7 +558,7 @@
 
 (deftest test-a-process-that-returns-takes-its-spawned-tasks-with-it
   ;; process が値で抜けた(本番の子 process の終わり)後は、中で Spawn した task も書かない。
-  (<- seen Spawned (sim-cluster (quitters sim-foundation) (watch-quitter)))
+  (<- seen Spawned (sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (watch-quitter)))
   (val first (get seen.processes 0))
   (val key (+ "quit/" first.instance))
   (assert (= first.exit-code 0) seen.processes)
@@ -584,11 +585,11 @@
   ;; runtime-env(DOEFF_RUNTIME_ENV)として渡す。宣言しなければ子の run-context は空。
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (<- with-env tuple (sim-cluster (context-env-readers sim-foundation) (ended-reader) :runtime-env env))
+  (<- with-env tuple (sim-cluster :notice-broker (MemoryBroker) (context-env-readers sim-foundation) (ended-reader) :runtime-env env))
   (val read (get with-env 0))
   (assert (= read.exit-code 0) with-env)
   (assert (= (json.loads read.value) declared) read)
-  (<- without tuple (sim-cluster (context-env-readers sim-foundation) (ended-reader)))
+  (<- without tuple (sim-cluster :notice-broker (MemoryBroker) (context-env-readers sim-foundation) (ended-reader)))
   (assert (= (. (get without 0) value) "") without))
 
 
@@ -597,7 +598,7 @@
 (deftest test-a-service-submits-and-awaits-a-detached-task-through-the-host
   ;; service の SubmitDetached・AwaitDetached に sim の宿が本番の detached-cluster と同じ要求(PUT /programs・PUT /detached)で答え、
   ;; 本物の coordinator が task を worker に置き、worker が task の Program を走らせた答えが service に返る。
-  (<- rows dict (sim-cluster (detaching sim-foundation) (watch-rows 15.0 "detached/")))
+  (<- rows dict (sim-cluster :notice-broker (MemoryBroker) (detaching sim-foundation) (watch-rows 15.0 "detached/")))
   (assert (= (get rows "detached/result") {"created" True "value" 103 "outcome" "DetachedSucceeded"}) rows))
 
 
@@ -631,7 +632,7 @@
 (deftest test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime
   ;; 優雅な停止: 止まっている間は届かない(ready は読めない)。止まっている秒の後に同じ置き場から読み直して作り直し、盤の行と Service
   ;; は残り、service は Ready に戻る。
-  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator False 10.0)))
+  (<- seen Outage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (pause-coordinator False 10.0)))
   (assert (= (len seen.runs) 2) seen.runs)
   (val first (get seen.runs 0))
   (val second (get seen.runs 1))
@@ -650,7 +651,7 @@
 (deftest test-a-coordinator-that-fails-to-persist-drops-its-replies-and-is-recreated
   ;; Persist の失敗: 返事をせずに落ちる(その拍の書きの送り手には接続の失敗 — 盤に書けなかった beacon は例外で落ちる)。止まっている秒の
   ;; 後に置き場から作り直し、service は起こし直されて Ready に戻る。
-  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator True 5.0)))
+  (<- seen Outage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (pause-coordinator True 5.0)))
   (assert (= (len seen.runs) 2) seen.runs)
   (val first (get seen.runs 0))
   (val second (get seen.runs 1))
@@ -665,7 +666,7 @@
   ;; 置き場の差し替えの口(#989 — 使い手の反例の壊れた置き場のため): sim-cluster は store が作る置き場を 1 回の走りに 1 つだけ作り、
   ;; coordinator はそこへ書き、止めた後の作り直しも同じ置き場から読み直す(盤の行が残り、service は Ready に戻る)。
   (val made [])
-  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator False 10.0)
+  (<- seen Outage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (pause-coordinator False 10.0)
                                :store (fn [] (let [store (MemoryWalStore)] (.append made store) store))))
   (assert (= (len made) 1) made)
   (val store (get made 0))
@@ -685,7 +686,7 @@
 (deftest test-a-counterexample-store-that-pretends-to-persist-breaks-c1
   ;; 条 C1 の失敗ケース: 置き場の差し替えの口(#989)に Persist を捨てる置き場を差すと、止める前に返事を返した盤の行が作り直した後に
   ;; 無く、条 C1 の判断がその行を名指す(同じ筋書きの本物の置き場では空 — 上の test-a-stopped-coordinator-is-recreated-…)。
-  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator False 10.0) :store PretendsToPersist))
+  (<- seen Outage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (pause-coordinator False 10.0) :store PretendsToPersist))
   (assert seen.before seen)
   (<- lost tuple (acknowledged-writes-survive seen.before seen.after.rows))
   (assert (in "beacon/a" lost) #(lost seen.after.rows)))
@@ -723,7 +724,7 @@
 (deftest test-a-quiet-board-and-the-declared-services-survive-a-stop
   ;; 条 C15・C16(architecture.hy の :invariants): 書き手の止まった盤の行は、作り直した後も止める前と同じ値(版 2 の step = 2)で、
   ;; 受け付けた Service(relay の 2 つ)も在る。
-  (<- seen QuietOutage (sim-cluster (beacons sim-foundation) (quiet-board-across-a-stop)))
+  (<- seen QuietOutage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (quiet-board-across-a-stop)))
   (assert (= (get seen.rows-before "beacon/a" "step") "2") seen.rows-before)
   (assert seen.services-before seen)
   (<- changed tuple (acknowledged-values-survive seen.rows-before seen.rows-after))
@@ -742,7 +743,7 @@
 (deftest test-a-counterexample-store-that-keeps-the-first-value-breaks-c15
   ;; 条 C15 の失敗ケース: 置き場の差し替えの口(#989)に盤の行の最初の値だけを残す置き場を差すと、作り直した coordinator の盤の行が
   ;; 止める前の値(step = 2)でなく最初の値になり、条 C15 がその行を名指す(C1 は鍵が残るので緑のまま)。
-  (<- seen QuietOutage (sim-cluster (beacons sim-foundation) (quiet-board-across-a-stop) :store KeepsFirstValue))
+  (<- seen QuietOutage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (quiet-board-across-a-stop) :store KeepsFirstValue))
   (<- lost tuple (acknowledged-writes-survive seen.rows-before seen.rows-after))
   (assert (= lost #()) #(lost seen))
   (<- changed tuple (acknowledged-values-survive seen.rows-before seen.rows-after))
@@ -760,7 +761,7 @@
 (deftest test-a-counterexample-store-that-forgets-services-breaks-c16
   ;; 条 C16 の失敗ケース: 置き場の差し替えの口(#989)に読み直しで Service の宣言を渡さない置き場を差すと、作り直した coordinator の
   ;; GET /state に止める前の Service が無く、条 C16 がその名を名指す。
-  (<- seen QuietOutage (sim-cluster (beacons sim-foundation) (quiet-board-across-a-stop) :store ForgetsServices))
+  (<- seen QuietOutage (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (quiet-board-across-a-stop) :store ForgetsServices))
   (<- missing tuple (declared-services-survive seen.services-before seen.services-after))
   (assert missing seen))
 
@@ -780,7 +781,7 @@
 
 (deftest test-the-coordinator-revision-never-goes-back-across-a-stop
   ;; 条 C5(architecture.hy の :invariants): 止まりの前に読んだ版より、作り直しの後の版が小さくない(本物の置き場は版を読み直す)。
-  (<- reads tuple (sim-cluster (beacons sim-foundation) (revision-across-a-stop 10.0)))
+  (<- reads tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (revision-across-a-stop 10.0)))
   (assert (> (. (get reads 0) revision) 0) reads)
   (<- drops tuple (revision-never-goes-back reads))
   (assert (= drops #()) drops))
@@ -794,7 +795,7 @@
 (deftest test-a-counterexample-store-that-forgets-on-reload-breaks-c5
   ;; 条 C5 の失敗ケース: 置き場の差し替えの口(#989)に読み直しで何も返さない置き場を差すと、作り直した coordinator の版が止まりの前より
   ;; 小さくなり、条 C5 の判断がその読みの組を名指す(同じ筋書きの本物の置き場では空 — 上の test-the-coordinator-revision-…)。
-  (<- reads tuple (sim-cluster (beacons sim-foundation) (revision-across-a-stop 10.0) :store ForgetsOnReload))
+  (<- reads tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (revision-across-a-stop 10.0) :store ForgetsOnReload))
   (<- drops tuple (revision-never-goes-back reads))
   (assert (= (len drops) 1) #(drops reads)))
 
@@ -817,7 +818,7 @@
 (deftest test-service-versions-never-go-back-across-a-stop
   ;; 条 C12(architecture.hy の :invariants): 止まりの前に読んだ Service ごとの resourceVersion より、作り直しの後の版が小さくない(本物の
   ;; 置き場は資源の版の記録を読み直す)。
-  (<- reads tuple (sim-cluster (beacons sim-foundation) (service-versions-across-a-stop 10.0)))
+  (<- reads tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (service-versions-across-a-stop 10.0)))
   (assert (any (gfor r reads (> r.version 1))) reads)
   (<- drops tuple (service-versions-never-go-back reads))
   (assert (= drops #()) drops))
@@ -838,7 +839,7 @@
   ;; 条 C12 の失敗ケース: 置き場の差し替えの口(#989)に読み直しで Service の版を 1 に戻す置き場を差すと、作り直した coordinator の
   ;; Service の resourceVersion が止まりの前より小さくなり、条 C12 がその読みの組を名指す(同じ筋書きの本物の置き場では空 — 上の
   ;; test-service-versions-never-go-back-across-a-stop)。
-  (<- reads tuple (sim-cluster (beacons sim-foundation) (service-versions-across-a-stop 10.0) :store ResetsServiceVersionsOnReload))
+  (<- reads tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (service-versions-across-a-stop 10.0) :store ResetsServiceVersionsOnReload))
   (<- drops tuple (service-versions-never-go-back reads))
   (assert drops reads)
   (assert (all (gfor d drops (< d.later.version d.earlier.version))) drops))
@@ -867,7 +868,7 @@
 (deftest test-a-dead-worker-is-not-alive-after-the-coordinator-is-recreated
   ;; 条 L2(architecture.hy の :invariants): 死んだ worker は、coordinator が作り直された後も lease の後に生きていると答えられない(本物の
   ;; 置き場は最後の連絡の時刻を読み直す)。
-  (<- probes tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (liveness-across-a-stop)))
+  (<- probes tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (liveness-across-a-stop)))
   (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= lies #()) #(lies probes)))
 
@@ -886,7 +887,7 @@
 (deftest test-a-counterexample-store-without-last-seen-breaks-l2
   ;; 条 L2 の失敗ケース: 置き場の差し替えの口(#989)に lastSeenMs を置かない置き場を差すと、作り直した coordinator が死んだ worker を
   ;; 生きていると答え、条 L2 の判断がその読みを名指す(同じ筋書きの本物の置き場では空 — 上の test-a-dead-worker-is-not-alive-…)。
-  (<- probes tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (liveness-across-a-stop) :store DropsLastSeen))
+  (<- probes tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (liveness-across-a-stop) :store DropsLastSeen))
   (<- lies tuple (alive-only-while-reachable probes (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= (len lies) 1) #(lies probes)))
 
@@ -923,7 +924,7 @@
 (deftest test-the-recreated-coordinator-places-no-new-job-on-a-dead-worker
   ;; 条 L1(architecture.hy の :invariants): 作り直した coordinator は、死んだ worker へ新しい job を置かない(本物の置き場は最後の連絡の
   ;; 時刻を読み直す — 置ける worker が他に無いので beacon-b は置かれない)。
-  (<- seen PlacedAfterAStop (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (placement-after-a-stop)))
+  (<- seen PlacedAfterAStop (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (placement-after-a-stop)))
   (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (= wrong #()) #(wrong seen)))
 
@@ -931,7 +932,7 @@
 (deftest test-a-counterexample-store-without-last-seen-breaks-l1
   ;; 条 L1 の失敗ケース: 最後の連絡を読み直せない置き場(DropsLastSeen)では、作り直した coordinator が死んだ worker を生きていると読み、
   ;; 足した beacon-b をそこへ置き、条 L1 の判断がその置き先を名指す。
-  (<- seen PlacedAfterAStop (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (placement-after-a-stop) :store DropsLastSeen))
+  (<- seen PlacedAfterAStop (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (placement-after-a-stop) :store DropsLastSeen))
   (<- wrong tuple (places-only-on-reachable seen.placements seen.gone (. (ClusterTiming) lease-ms) PROBE-SLACK-MS))
   (assert (in "beacon-b" (lfor p wrong p.job)) #(wrong seen)))
 
@@ -951,7 +952,7 @@
 (deftest test-a-worker-runs-no-more-jobs-than-its-capacity
   ;; 条 C6(architecture.hy の :invariants): capacity 1 の worker 1 台に service 2 つの系を置くと、coordinator は 1 つだけ置き、動く数は
   ;; capacity を越えない。
-  (<- spans tuple (sim-cluster (beacons-plus sim-foundation) (spans-on-one-worker) :workers #(ONE-SLOT)))
+  (<- spans tuple (sim-cluster :notice-broker (MemoryBroker) (beacons-plus sim-foundation) (spans-on-one-worker) :workers #(ONE-SLOT)))
   (assert spans spans)
   (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
   (assert (= over #()) #(over spans)))
@@ -960,7 +961,7 @@
 (deftest test-a-counterexample-worker-that-overstates-its-capacity-breaks-c6
   ;; 条 C6 の失敗ケース: heartbeat で capacity を多く名乗る壊れた worker(SimWorker の overstates-capacity)では、coordinator が名乗りどおり
   ;; 2 つ置き、本当の capacity 1 を越えて動き、条 C6 の判断がその瞬間を名指す。
-  (<- spans tuple (sim-cluster (beacons-plus sim-foundation) (spans-on-one-worker)
+  (<- spans tuple (sim-cluster :notice-broker (MemoryBroker) (beacons-plus sim-foundation) (spans-on-one-worker)
                                :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :overstates-capacity 5 :task-reserve 0))))
   (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
   (assert (= (len over) 1) #(over spans)))
@@ -1007,7 +1008,7 @@
   ;; 条 C17(architecture.hy の :invariants): capacity 3・task のために 1 つ空けておく worker 1 台に常駐の service を 3 つ宣言すると、
   ;; coordinator は 2 つだけ置き(名の順に delegator と echo-a — echo-b は空きが無い)、delegator が出す手番の task は空けておいた分で走って
   ;; 答える(add-task の答え 103 が盤に載る)。どの読みでも常駐の数は capacity − task-reserve = 2 を越えない。
-  (<- scene ReserveScene (sim-cluster (reserved-trio sim-foundation) (reserve-scene) :workers #(RESERVED-ONE)))
+  (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene) :workers #(RESERVED-ONE)))
   (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.places RESERVE-TRUTH))
   (assert (= taken #()) #(taken scene))
   (assert (= (lfor p scene.places p.jobs) [2 2 2 2]) scene.places)
@@ -1019,7 +1020,7 @@
 (deftest test-a-counterexample-worker-that-hides-its-task-reserve-breaks-c17
   ;; 条 C17 の失敗ケース: heartbeat で task のために空けておく数を 0 と名乗る壊れた worker(SimWorker の claims-task-reserve)では、
   ;; coordinator が名乗りどおり常駐を 3 つとも置き、本当の予約(1)に常駐が入り、条 C17 の判断がその読みを名指す(手番の task は置けずに待つ)。
-  (<- scene ReserveScene (sim-cluster (reserved-trio sim-foundation) (reserve-scene)
+  (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene)
                                       :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 3 :task-reserve 1
                                                             :claims-task-reserve 0))))
   (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.places RESERVE-TRUTH))
@@ -1043,7 +1044,7 @@
 
 (deftest test-a-job-is-not-placed-on-a-worker-without-its-needs
   ;; 条 C7(architecture.hy の :invariants): job の needs(cluster-net)を提供しない worker しか居なければ、coordinator はそこへ置かない。
-  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+  (<- placements tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"]) :task-reserve 0))))
   (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
   (assert (= wrong #()) #(wrong placements)))
@@ -1052,7 +1053,7 @@
 (deftest test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c7
   ;; 条 C7 の失敗ケース: heartbeat で持たない能力を名乗る壊れた worker(SimWorker の claims-provides)では、coordinator が名乗りどおり置き、
   ;; 条 C7 の判断がその置き先を名指す(本当の能力は gpu だけ)。
-  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+  (<- placements tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
                                                           :claims-provides (frozenset ["gpu" "cluster-net"]) :task-reserve 0))))
   (<- wrong tuple (placed-only-where-eligible placements BEACON-NEEDS GPU-ONLY-ABILITY))
@@ -1064,7 +1065,7 @@
 
 (deftest test-an-exclusive-worker-takes-no-job-that-does-not-need-its-ability
   ;; 条 C10(architecture.hy の :invariants): gpu を専用の能力に持つ worker しか居なければ、gpu を要らない beacon はそこへ置かれない。
-  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+  (<- placements tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["cluster-net" "gpu"])
                                                           :exclusive (frozenset ["gpu"]) :task-reserve 0))))
   (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
@@ -1074,7 +1075,7 @@
 (deftest test-a-counterexample-worker-that-hides-its-exclusive-ability-breaks-c10
   ;; 条 C10 の失敗ケース: heartbeat で専用の能力を名乗らない壊れた worker(SimWorker の claims-exclusive = 空)では、coordinator が gpu を
   ;; 要らない beacon をそこへ置き、条 C10 の判断がその置き先を名指す(本当の専用の能力は gpu)。
-  (<- placements tuple (sim-cluster (beacons sim-foundation) (placements-after 15.0)
+  (<- placements tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (placements-after 15.0)
                                     :workers #((SimWorker :name "g1" :provides (frozenset ["cluster-net" "gpu"])
                                                           :exclusive (frozenset ["gpu"]) :claims-exclusive (frozenset) :task-reserve 0))))
   (<- wrong tuple (exclusive-workers-take-only-their-jobs placements BEACON-NEEDS GPU-EXCLUSIVE))
@@ -1096,7 +1097,7 @@
 
 (deftest test-a-job-process-runs-only-on-an-eligible-worker
   ;; 条 C13(architecture.hy の :invariants): gpu だけを持つ g1 と cluster-net を持つ w1 が居れば、beacon の子 process は w1 でだけ動く。
-  (<- processes tuple (sim-cluster (beacons sim-foundation) (beacon-processes-after 15.0)
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (beacon-processes-after 15.0)
                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"]) :task-reserve 0)
                                               (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))))
   (assert processes processes)
@@ -1107,7 +1108,7 @@
 (deftest test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c13
   ;; 条 C13 の失敗ケース: heartbeat で持たない能力を名乗る壊れた worker(SimWorker の claims-provides)しか居なければ、beacon の子 process が
   ;; 本当は cluster-net を持たない g1 で動き、条 C13 の判断がその process を名指す。
-  (<- processes tuple (sim-cluster (beacons sim-foundation) (beacon-processes-after 15.0)
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (beacon-processes-after 15.0)
                                    :workers #((SimWorker :name "g1" :provides (frozenset ["gpu"])
                                                          :claims-provides (frozenset ["gpu" "cluster-net"]) :task-reserve 0))))
   (<- wrong tuple (ran-only-where-eligible processes BEACON-NEEDS GPU-AND-NET-ABILITIES #()))
@@ -1142,7 +1143,7 @@
 (deftest test-a-draining-worker-takes-no-new-job
   ;; 条 C11(architecture.hy の :invariants): drain を頼んだ worker 1 台の世界で系に service を足しても、coordinator は drain の期限の内に
   ;; そこへ置かない(beacon-b は置かれない)。
-  (<- seen DrainedAndRedeclared (sim-cluster (beacons sim-foundation) (placements-during-a-drain "w1")
+  (<- seen DrainedAndRedeclared (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (placements-during-a-drain "w1")
                                              :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))))
   (<- wrong tuple (no-new-place-while-draining seen.placements seen.drains))
   (assert (= wrong #()) #(wrong seen)))
@@ -1151,7 +1152,7 @@
 (deftest test-a-counterexample-worker-that-claims-a-new-generation-every-beat-breaks-c11
   ;; 条 C11 の失敗ケース: heartbeat ごとに新しい世代を名乗る壊れた worker(SimWorker の fresh-boot-every-beat)では、coordinator は drain を
   ;; 別の世代の頼みとして付けないか解き、足した beacon-b を drain の期限の内にそこへ置き、条 C11 の判断がその置き先を名指す。
-  (<- seen DrainedAndRedeclared (sim-cluster (beacons sim-foundation) (placements-during-a-drain "w1")
+  (<- seen DrainedAndRedeclared (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (placements-during-a-drain "w1")
                                              :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])
                                                                    :fresh-boot-every-beat True :task-reserve 0))))
   (<- wrong tuple (no-new-place-while-draining seen.placements seen.drains))
@@ -1190,7 +1191,7 @@
 
 (deftest test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time
   ;; 条 C8(architecture.hy の :invariants): 2 台のうち担い手を死なせると、もう 1 台(本当に受けられる)へ期限のうちに移って動く。
-  (<- seen KilledCarrier (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (carrier-killed-then-waited) :workers TWO-WORKERS))
+  (<- seen KilledCarrier (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (carrier-killed-then-waited) :workers TWO-WORKERS))
   (val takers (frozenset (gfor w TWO-WORKERS :if (!= w.name seen.host) w.name)))
   (<- stranded tuple (moves-to-a-live-worker seen.processes seen.deaths takers FAILOVER-DEADLINE-MS))
   (assert (= stranded #()) #(stranded seen)))
@@ -1199,7 +1200,7 @@
 (deftest test-a-counterexample-worker-that-hides-its-abilities-breaks-c8
   ;; 条 C8 の失敗ケース: もう 1 台が heartbeat で能力を名乗らない壊れた worker(SimWorker の claims-provides = 空)だと、coordinator は
   ;; 移せる先が無いと読んで job を担い手から動かさず、本当は受けられる w2 が生きているのに期限を過ぎ、条 C8 の判断がその job を名指す。
-  (<- seen KilledCarrier (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (carrier-killed-then-waited)
+  (<- seen KilledCarrier (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (carrier-killed-then-waited)
                                       :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                                                  (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :claims-provides (frozenset) :task-reserve 0))))
   (assert (= seen.host "w1") seen)
@@ -1210,7 +1211,7 @@
 (deftest test-a-store-maker-that-does-not-make-a-memory-store-is-refused
   ;; 置き場を作る関数が MemoryWalStore でない値を返せば、走らせる前に断る(emulated-handlers と load-state が読む口が無い)。
   (with [raised (pytest.raises TypeError)]
-    (<- (sim-cluster (beacons sim-foundation) (Delay 1.0) :store (fn [] {}))))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (Delay 1.0) :store (fn [] {}))))
   (assert (in "MemoryWalStore" (str raised.value)) (str raised.value)))
 
 
@@ -1251,7 +1252,7 @@
 (deftest test-a-dead-worker-takes-its-processes-and-their-tasks-and-the-job-moves
   ;; worker が node ごと死ぬ: 子 process は exit -9(中で Spawn した task も止まる)・heartbeat が止まり、coordinator は lease の後に
   ;; 生きていないと数え、移し替えの時間の後に job を生きている worker へ置く。
-  (<- seen Moved (sim-cluster :timing (ClusterTiming) (spawners sim-foundation) (kill-host "spawner" "spawn/") :workers TWO-WORKERS))
+  (<- seen Moved (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (spawners sim-foundation) (kill-host "spawner" "spawn/") :workers TWO-WORKERS))
   (assert (= seen.answer 1) seen.answer)
   (val old (get seen.after 0))
   (val new (get seen.after -1))
@@ -1284,7 +1285,7 @@
 (deftest test-a-stopped-worker-stops-its-jobs-and-a-new-generation-takes-them-back
   ;; 優雅な停止(本番の SIGTERM): 抜けるまでに全 job を止めの合図(-15)で回収する。StartWorker は新しい世代(boot)で起こし、動いて
   ;; いる worker には偽を返す。新しい世代が job を起こし直す。
-  (<- seen Moved (sim-cluster (pulses sim-foundation) (stop-and-start-host)))
+  (<- seen Moved (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stop-and-start-host)))
   (val first (get seen.mid 0))
   (assert (= first.exit-code -15) seen.mid)
   (assert (= seen.answer {"again" True "twice" False}) seen.answer)
@@ -1319,7 +1320,7 @@
   ;; worker の TERM は、止めの合図の受け手を据えた job(event-loop の止めの節を持つ係)へ止めの合図として届く(本番の SIGTERM →
   ;; os-signal-stop-handler → 止めの見張りの StopArrived と同じ道・#3145)— 係は止めの節で後始末の印を書いて自分で終わる(exit 0)。
   ;; 取り消し(exit -15・印なし)で終わるのではない。
-  (<- seen StopSeen (sim-cluster (stop-minders sim-foundation) (stop-host-of "minder")))
+  (<- seen StopSeen (sim-cluster :notice-broker (MemoryBroker) (stop-minders sim-foundation) (stop-host-of "minder")))
   (assert (= seen.process.exit-code 0) seen.process)
   (assert (= (get seen.rows "stop/minder") {"reason" "signal 15"}) seen.rows)
   ;; 猶予(本番の既定 stop-grace-ms 10 秒)を待たずに終わる。
@@ -1337,7 +1338,7 @@
 (deftest test-a-stopped-worker-hands-the-stop-signal-through-an-outside-stop-answerer
   ;; 外の世界が止めの問いに答える(使い手の模擬の組と同じ — 外の答え手の合図は来ない)job にも、worker の TERM は止めの合図として
   ;; 届き、係は止めの節で自分で終わる(#3145 — 直す前の sim は TERM を取り消しに変え、exit -15・印なしで終わっていた)。
-  (<- seen StopSeen (sim-cluster (stop-minders sim-foundation) (stop-host-of "minder")
+  (<- seen StopSeen (sim-cluster :notice-broker (MemoryBroker) (stop-minders sim-foundation) (stop-host-of "minder")
                                  :outside SCRIPTED-STOP-OUTSIDE))
   (assert (= seen.process.exit-code 0) seen.process)
   (assert (= (get seen.rows "stop/minder") {"reason" "signal 15"}) seen.rows)
@@ -1347,7 +1348,7 @@
 (deftest test-a-job-that-ignores-the-stop-signal-is-cancelled-after-the-grace
   ;; 止めの問いを出した(受け手を据えた)が止めの合図を無視する job は、猶予(stop-grace-ms 10 秒)の後の KILL で取り消される
   ;; (exit -15 — 今までの振る舞い・#3145)。
-  (<- seen StopSeen (sim-cluster (stop-ignorers sim-foundation) (stop-host-of "ignorer")))
+  (<- seen StopSeen (sim-cluster :notice-broker (MemoryBroker) (stop-ignorers sim-foundation) (stop-host-of "ignorer")))
   (assert (= seen.process.exit-code -15) seen.process)
   (assert (>= (- seen.process.ended-ms seen.asked-ms) 10000) #(seen.asked-ms seen.process)))
 
@@ -1371,7 +1372,7 @@
   ;; 網の切断: heartbeat が届かない間も子 process は動き続け(10 秒後)、fence(20 秒)を越えると本物の worker_policy の判断で lease を
   ;; 持たない job を止める(-15)。coordinator は移し替えの時間の後に、網のつながった worker へ置く。他に置ける worker が在る job の形 —
   ;; 置ける worker が 1 台の job は印で止めず置き先も外さない(#2804 — tests/test_keep_when_cut_off.hy)。
-  (<- seen Moved (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-host) :workers TWO-WORKERS))
+  (<- seen Moved (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (pulses sim-foundation) (cut-host) :workers TWO-WORKERS))
   (val first (get seen.mid 0))
   (assert (is first.exit-code None) seen.mid)
   (val stopped (get seen.after 0))
@@ -1399,7 +1400,7 @@
 (deftest test-a-drained-worker-hands-its-handoff-service-to-another-worker
   ;; drain(本番の preStop と同じ頼み): coordinator は drain 中の worker の上の入れ替えの service を、もう 1 台の worker に並べて起こし、
   ;; 新しい世代が Ready になってから旧を止める。worker は drain 中と見える(ready でない)。
-  (<- seen Moved (sim-cluster (handoff-beacons sim-foundation) (drain-host) :workers TWO-WORKERS))
+  (<- seen Moved (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation) (drain-host) :workers TWO-WORKERS))
   (assert (isinstance seen.answer dict) seen.answer)
   (assert (= (get seen.answer "status") 200) seen.answer)
   (assert (get seen.view "draining") seen.view)
@@ -1416,7 +1417,7 @@
   ;; 2 つ同時に動く — 本物の worker_policy の fence がそれを防いでいることの裏返し。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)
                  (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True :task-reserve 0)))
-  (<- seen Moved (sim-cluster :timing (ClusterTiming) (pulses sim-foundation) (cut-host) :workers workers))
+  (<- seen Moved (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (pulses sim-foundation) (cut-host) :workers workers))
   (val live (lfor p seen.after :if (is p.exit-code None) p))
   (assert (= (sorted (sfor p live p.worker)) ["w1" "w2"]) seen.after))
 
@@ -1435,7 +1436,7 @@
 
 (deftest test-a-worker-that-starts-down-takes-the-job-only-after-it-is-started
   ;; starts-down: 後から加わる node。起こすまで job は置かれず(process が無い)、StartWorker の後に名乗って job を受ける。
-  (<- seen Moved (sim-cluster (pulses sim-foundation) (start-late)
+  (<- seen Moved (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (start-late)
                               :workers #((SimWorker :name "late" :provides (frozenset ["cluster-net"]) :starts-down True :task-reserve 0))))
   (assert (= seen.before #()) seen.before)
   (assert (= seen.answer 1) seen.answer)
@@ -1476,7 +1477,7 @@
 
 (deftest test-the-waits-see-a-crashed-service-restart-without-polling-the-clock
   ;; 待つ effect の答え: Ready になった時の準備・最初の process・落とした後の別の pid の process・もう一度の Ready。
-  (<- seen Recovered (sim-cluster (beacons sim-foundation) (crash-and-await "beacon" 30.0)))
+  (<- seen Recovered (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (crash-and-await "beacon" 30.0)))
   (assert (and (isinstance seen.first ServiceReadiness) (= seen.first.state "Ready")) seen.first)
   ;; 書きで起きる: Ready の待ちは、coordinator が Ready を数えた書きの時に答え、期限(30 秒)まで眠らない — 起こしを外すと期限で
   ;; 起きてから読み直すので、ここが 30 秒になる。
@@ -1506,7 +1507,7 @@
 
 
 (deftest test-a-wait-for-what-never-comes-answers-expired-at-its-deadline
-  (<- seen Expired (sim-cluster (beacons sim-foundation) (await-what-never-comes "beacon" 6.0)))
+  (<- seen Expired (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (await-what-never-comes "beacon" 6.0)))
   (assert (isinstance seen.never-ready ReadinessWaitExpired) seen.never-ready)
   (assert (= seen.never-ready.last.state "Ready") seen.never-ready)
   (assert (>= seen.never-ready.waited-seconds 6.0) seen.never-ready)

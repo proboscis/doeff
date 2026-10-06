@@ -272,8 +272,12 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 ```hy
 (<- answer (sim-cluster (my-system sim-foundation) (scenario)
                         :workers #((SimWorker :name "w1" :provides #{"cluster-net"}))
-                        :environ {"my-writer" {"WRITER_MODE" "dry-run"}}))
+                        :environ {"my-writer" {"WRITER_MODE" "dry-run"}}
+                        :notice-broker (MemoryBroker)))
 ```
+
+- `notice-broker`(doeff-events の `MemoryBroker`・既定は無い)= coordinator が worker の生死の出来事(`WorkerGone`・`WorkerBack`)を
+  出す知らせの broker。呼び手が作って渡すので、筋書きと呼び手の世界の job は同じ broker の受け手に成れます(sim は作りません)。
 
 - 偽の実行先は、`/programs` の詰めた文字列を解き直して(テストの object と共有しない)job ごとに別のスコープで走らせます。
   許可表(`host_contract.SIM-PASSABLE` — scheduler と時計の effect)の外の effect は、Program と実行先のどちらも答えなければ本番の子と
@@ -292,7 +296,8 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 
   ```hy
   (<- answer (wall-sim-cluster (my-system sim-foundation) (scenario)
-                               :workers #((SimWorker :name "w1" :provides #{"cluster-net"}))))
+                               :workers #((SimWorker :name "w1" :provides #{"cluster-net"}))
+                               :notice-broker (MemoryBroker)))
   ```
 - 本番との既知の差: 1 process なので module の大域の状態は job の間で共有されうる・sim の土台は scheduler を含まない(本番の土台の
   入れ忘れは `foundation_check` で確かめる)・土台の `:needs` の漏れは見つからない。

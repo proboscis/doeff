@@ -9,6 +9,7 @@
 ;;       coordinator が書いた行に taskReserve が無く、新しい coordinator が読まない)時と、読める時。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_events [MemoryBroker])
 (import dataclasses [replace])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -63,7 +64,7 @@
 
 
 (deftest test-a-replaced-worker-comes-back-with-the-new-values
-  (<- seen tuple (sim-cluster NO-JOBS (replace-a-with-a-larger-capacity) :workers #(A) :timing TIMING))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (replace-a-with-a-larger-capacity) :workers #(A) :timing TIMING))
   (assert (= seen #(False True 1 2 True NEW)) seen))
 
 
@@ -80,7 +81,7 @@
 (deftest test-a-task-running-on-the-swapped-worker-is-lost-when-the-swap-does-not-wait
   ;; 測り (b): drain を頼むだけで空くのを待たずに止めると、走り中の切り離した task は lease が切れて lost(走らせ直さない)— 条 V2 の
   ;; 根拠。本番の preStop は drain の空くのを待つ(sim の DrainWorker は頼むだけ — 本物と違う所)。
-  (<- outcome (sim-cluster NO-JOBS (running-task-across-the-swap) :workers #(A) :timing TIMING))
+  (<- outcome (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (running-task-across-the-swap) :workers #(A) :timing TIMING))
   (assert (isinstance outcome DetachedLost) outcome)
   (assert (in "lease が切れた" outcome.reason) outcome.reason))
 
@@ -109,8 +110,8 @@
 
 
 (deftest test-a-queued-task-is-dropped-when-the-restarted-coordinator-cannot-read-the-worker-rows
-  (<- readable tuple (sim-cluster NO-JOBS (queued-task-across-a-coordinator-restart) :workers #(A) :timing TIMING))
-  (<- unreadable tuple (sim-cluster NO-JOBS (queued-task-across-a-coordinator-restart) :workers #(A) :timing TIMING
+  (<- readable tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (queued-task-across-a-coordinator-restart) :workers #(A) :timing TIMING))
+  (<- unreadable tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (queued-task-across-a-coordinator-restart) :workers #(A) :timing TIMING
                                     :store DropsTaskReserve))
   ;; 測り (c): 行が読めれば queued は作り直しを越えて走る。読めない(2026-10-05 の形)と queued は「合う worker が無い」で即 落ち、
   ;; 走り中の task は残る — 条 V4 の根拠(#2440)。

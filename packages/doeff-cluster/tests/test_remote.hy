@@ -3,6 +3,7 @@
 ;; handler も継がない(以前の remote-inline は継いでいたので消した — 段 5)。handler の値は詰めない(R3b — encode-program が
 ;; UnsendableProgram で断る)。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_events [MemoryBroker])
 (import json)
 (import os)
 (import pathlib [Path])
@@ -41,7 +42,7 @@
   ;; service の中から出した task は、別の process(別のスコープ)で走り、答えが呼び手へ返る。自分で reader を並べた add-task は
   ;; 100 + 3。reader を並べない orphan-task は、呼び手が並べた reader(base = 1)を継がないので答えが無く、呼び手には失敗が届く
   ;; (呼び手の handler を継ぐ remote-inline なら黙って 1 と答えていた)。
-  (<- rows dict (sim-cluster (delegating sim-foundation) (watch-delegator)))
+  (<- rows dict (sim-cluster :notice-broker (MemoryBroker) (delegating sim-foundation) (watch-delegator)))
   (assert (= (get rows "remote/result" "sum") 103) rows)
   (val orphan (get rows "remote/result" "orphan"))
   (assert (.startswith orphan "失敗") orphan)

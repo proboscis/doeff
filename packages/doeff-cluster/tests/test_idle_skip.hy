@@ -9,6 +9,7 @@
 ;; - 期限の関数(liveness-due・sweep-due・task-due)は、判断が比べに使う期限の値と同じ刻を返す。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import doeff [Program])
 (import doeff_cluster.shared.intent.service_model [System])
@@ -95,7 +96,7 @@
   "同じ系と筋書きを、every なら余計に起こす走り(宿は 1 拍ずつ打ち・coordinator を 1 秒ごとに起こす)、偽なら期限だけで起きる走り
    (宿は静かな拍を眠る)で回し、置き場の書きの列と筋書きの答えと歩の数を返すため。"
   (val made [])
-  (<- seen tuple (sim-cluster system (ended-with-takes scenario every) :workers workers :policy policy :deployments deployments :tick-seconds tick-seconds
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) system (ended-with-takes scenario every) :workers workers :policy policy :deployments deployments :tick-seconds tick-seconds
                               :skip-idle (not every)
                               :store (fn [] (let [store (MemoryWalStore)] (.append made store) store))))
   (Trace :deltas (. (get made 0) deltas) :steps (get seen 2) :final (.load (get made 0)) :answer (get seen 0) :takes (get seen 1)

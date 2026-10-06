@@ -7,6 +7,7 @@
 ;; - 戻らない Service は、上限 seconds ちょうどで None(見張りは止める)。
 ;; - 落ちた Service は、別の worker へ置き直されて Ready に戻った拍で戻る。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_events [MemoryBroker])
 (import gc)
 (import pytest)
 (import sys)
@@ -50,7 +51,7 @@
 
 (deftest test-a-ready-service-comes-back-at-once-and-a-stale-ready-is-not-read-again-before-the-version-moves
   ;; 失敗ケース: 版を待たずに Ready を読む待ち(AwaitServiceReady だけ)は、2 度目も待たずに戻る — 古い Ready の間に撃ち直しが回り続ける。
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (asked-twice) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (asked-twice) :workers WORKERS))
   (val first-answer (get seen 0 0))
   (val first-ms (get seen 0 1))
   (val second-answer (get seen 1 0))
@@ -74,7 +75,7 @@
 
 (deftest test-a-service-that-never-comes-back-ends-at-the-bound
   ;; 失敗ケース: 期限の無い待ちは戻らない Service で終わらない(筋書きが返らない)・上限より前に None を返す待ちは待った秒が足りない。
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (never-back) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (never-back) :workers WORKERS))
   (val answer (get seen 0))
   (val waited (get seen 1))
   (assert (is answer None) seen)
@@ -100,7 +101,7 @@
 
 (deftest test-a-down-service-is-waited-for-until-it-is-ready-again
   ;; 失敗ケース: NotReady の間に戻る待ちは、待った ms が 0 で、返った時の語が NotReady。
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (down-then-back) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (down-then-back) :workers WORKERS))
   (val down (get seen 0))
   (val answer (get seen 1))
   (val waited (get seen 2))
@@ -136,7 +137,7 @@
    捨てた generator の閉じを拾う)。"
   (setv seen [])
   (monkeypatch.setattr sys "unraisablehook" (fn [unraisable] (.append seen (.format "{} — {}" unraisable.exc-value unraisable.err-msg))))
-  (<- ended (| str None) (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (stopped-while-waiting kill) :workers WORKERS))
+  (<- ended (| str None) (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (stopped-while-waiting kill) :workers WORKERS))
   (gc.collect)
   #(ended (tuple seen)))
 

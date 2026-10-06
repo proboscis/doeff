@@ -537,6 +537,7 @@ def sim_cluster(
     runtime_env: RuntimeEnv | None = None,
     skip_idle: bool = True,
     tick_seconds: float = 0.5,
+    notice_broker: MemoryBroker,
 ) -> Program[_Answer, object]: ...
 def wall_sim_cluster(
     system: System,
@@ -552,4 +553,5 @@ def wall_sim_cluster(
     deployments: dict[str, dict[str, int]] | None = None,
     runtime_env: RuntimeEnv | None = None,
     tick_seconds: float = 0.5,
+    notice_broker: MemoryBroker,
 ) -> Program[_Answer, object]: ...

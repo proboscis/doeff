@@ -6,6 +6,7 @@
 ;;   反例: 子 process の答え手に計器を渡さない(None)と、同じ筋書きで取り消しの後も行が出ない — 1 本目の検はこの形を赤にする。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.shared.intent.protocol [PlainText])
@@ -72,14 +73,14 @@
 
 (deftest test-a-cancelled-child-is-counted-on-the-coordinator-metrics [tmp-path]
   ;; 子の要求を 1 回取り消す → 止めた子の数え 1 → 橋が送る → coordinator の GET /metrics に 1。
-  (<- seen CancelSeen (wall-sim-cluster (cancel-reporters sim-foundation (str (/ tmp-path "child.pid"))) (stopped-children-seen)))
+  (<- seen CancelSeen (wall-sim-cluster :notice-broker (MemoryBroker) (cancel-reporters sim-foundation (str (/ tmp-path "child.pid"))) (stopped-children-seen)))
   (assert seen.cancelled seen)
   (assert (= seen.stopped 1.0) seen))
 
 
 (deftest test-a-child-handler-without-a-meter-leaves-no-count [tmp-path]
   ;; 失敗ケース: 子 process の答え手に計器を渡さない(None)と、取り消しの後も行が出ない — 上の検はこの形を赤にする。
-  (<- seen CancelSeen (wall-sim-cluster (uncounted-cancel-reporters sim-foundation (str (/ tmp-path "child.pid")))
+  (<- seen CancelSeen (wall-sim-cluster :notice-broker (MemoryBroker) (uncounted-cancel-reporters sim-foundation (str (/ tmp-path "child.pid")))
                                         (stopped-children-seen)))
   (assert seen.cancelled seen)
   (assert (is seen.stopped None) seen)

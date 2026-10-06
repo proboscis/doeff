@@ -85,13 +85,32 @@
 
 
 (deftest test-a-stalled-worker-is-told-gone-once-and-back-once
-  (<- heard tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS))
+  (<- heard tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS))
+  (<- (gone-then-back heard)))
+
+
+(defk stall-and-hear-on [broker]
+  {:pre [(: broker MemoryBroker)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "worker が名乗った後に、呼び手が作って sim-cluster に渡した broker の受け手に成り(PartsOf を読まない)、worker の処理を止めて戻るまでに
+   受けた出来事を返すため。"
+  (<- (Delay 3.0))
+  (<- heard tuple (as-reader broker (stalls-and-hears)))
+  heard)
+
+
+(deftest test-a-broker-given-by-the-caller-hears-the-coordinator
+  ;; 失敗ケース(#3850 — 世界の基盤を呼び手が作って渡す形): 呼び手が作った broker を :notice-broker で渡すと、coordinator は
+  ;; その broker へ生死の出来事を出し、同じ broker の受け手(呼び手の世界の job の形)が WorkerGone・WorkerBack を受ける。以前は coordinator が
+  ;; 走りごとに自分の broker を作ったので、外で作った broker の受け手には何も届かなかった。
+  (val broker (MemoryBroker))
+  (<- heard tuple (sim-cluster (pulses sim-foundation) (stall-and-hear-on broker) :timing (ClusterTiming) :workers WORKERS
+                               :notice-broker broker))
   (<- (gone-then-back heard)))
 
 
 (deftest test-skipping-quiet-steps-tells-the-same-events-at-the-same-times
-  (<- skipping tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle True))
-  (<- stepping tuple (sim-cluster (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle False))
+  (<- skipping tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle True))
+  (<- stepping tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stall-and-hear) :timing (ClusterTiming) :workers WORKERS :skip-idle False))
   (assert (= skipping stepping) #(skipping stepping)))
 
 
@@ -121,7 +140,7 @@
 
 
 (deftest test-a-deadline-passed-while-the-broker-was-away-is-caught-up-after-it-returns
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (gone-during-an-outage) :timing (ClusterTiming) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (gone-during-an-outage) :timing (ClusterTiming) :workers WORKERS))
   (val told (get seen 0))
   (val alive (get seen 1))
   (val runs (get seen 2))
@@ -152,7 +171,7 @@
 
 
 (deftest test-a-restarted-coordinator-tells-a-still-silent-worker-gone-once
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (gone-across-a-restart) :timing (ClusterTiming) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (gone-across-a-restart) :timing (ClusterTiming) :workers WORKERS))
   (val first (get seen 0))
   (val again (get seen 1))
   (assert (= (len first) 1) first)
@@ -179,7 +198,7 @@
 
 (deftest test-a-broker-that-stops-answering-does-not-hold-the-coordinator
   ;; 直す点 A(見直し): 出来事の送りは調停の歩の外の task で出す — 答えない broker が、歩と要求への返事を止めない。
-  (<- seen tuple (sim-cluster (pulses sim-foundation) (answers-while-the-broker-hangs) :timing (ClusterTiming) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (answers-while-the-broker-hangs) :timing (ClusterTiming) :workers WORKERS))
   (assert (is (get seen 0) False) seen)
   (assert (= (get seen 1) 1) seen))
 
@@ -196,5 +215,5 @@
 
 (deftest test-a-worker-death-in-the-scaled-world-ends-the-run
   (with [caught (pytest.raises SimLivenessError)]
-    (<- (sim-cluster (pulses sim-foundation) (stalls-past-the-scaled-lease) :workers WORKERS)))
+    (<- (sim-cluster :notice-broker (MemoryBroker) (pulses sim-foundation) (stalls-past-the-scaled-lease) :workers WORKERS)))
   (assert (in WORKER (str caught.value)) caught.value))

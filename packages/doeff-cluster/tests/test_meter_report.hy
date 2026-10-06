@@ -4,6 +4,7 @@
 ;;          3 件を client の計器で数え、橋がその累計を coordinator へ送り、coordinator の GET /metrics に service の label つきで出る。
 ;;          橋を壊す(断面を送らない)と同じ筋書きで行が出ない — 1 本目の検はこの形を赤にする。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_core_effects.meter_effects [MeterSnapshot SecondsTotal])
 (import doeff_hy.frozen [FrozenMap])
@@ -35,11 +36,11 @@
 (deftest test-unreachable-writes-reach-the-coordinator-metrics
   ;; 届かない窓(10 秒)の間に 1 秒ごとの書き 3 件 → client の計器の write_unreachable が 3 → 橋が 30 秒ごとに送る → 45 秒後の
   ;; GET /metrics に 3(記録の service の計器には出ない数)。
-  (<- seen (sim-cluster (records-writers sim-foundation) (unreachable-writes-seen 45.0)))
+  (<- seen (sim-cluster :notice-broker (MemoryBroker) (records-writers sim-foundation) (unreachable-writes-seen 45.0)))
   (assert (= seen 3.0) seen))
 
 
 (deftest test-a-bridge-that-does-not-report-leaves-no-metric
   ;; 失敗ケース: 橋を壊す(断面を送らない)と、同じ筋書きで GET /metrics に行が無い — 上の検はこの形を赤にする。
-  (<- seen (sim-cluster (silent-records-writers sim-foundation) (unreachable-writes-seen 45.0)))
+  (<- seen (sim-cluster :notice-broker (MemoryBroker) (silent-records-writers sim-foundation) (unreachable-writes-seen 45.0)))
   (assert (is seen None) seen))

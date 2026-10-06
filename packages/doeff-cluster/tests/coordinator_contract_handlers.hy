@@ -36,6 +36,7 @@
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
+(import doeff_events [MemoryBroker])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import functools [partial])
@@ -358,7 +359,7 @@
   {:pre [(: with-env bool) (: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "手元の runner sim-cluster(job を持たない系・担い手 w1)の筋書きとして program を走らせる。"
-  (<- answer (sim-cluster NO-JOBS (sim-sender with-env program) :workers SIM-WORKERS))
+  (<- answer (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-sender with-env program) :workers SIM-WORKERS))
   answer)
 
 

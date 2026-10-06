@@ -4,6 +4,7 @@
 ;; - 待つ口の無い coordinator(/watch が 404)には RunnersWatchMissing(呼び手が周回に戻る)。
 ;; - 本番の client は同じ読み(runners-change-of)で答える: 200 → RunnersChange・404 → RunnersWatchMissing・届かない → RunnersUnreachable。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_events [MemoryBroker])
 (import httpx)
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay])
@@ -49,7 +50,7 @@
 
 
 (deftest test-a-runners-change-wakes-at-the-change-and-times-out-unchanged
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (drain-during-wait) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (drain-during-wait) :workers WORKERS))
   (val revision (get seen 0))
   (val first (get seen 2 0))
   (val second (get seen 3 0))
@@ -70,7 +71,7 @@
 
 
 (deftest test-a-coordinator-without-the-watch-answers-watch-missing
-  (<- answer (| RunnersChange RunnersWatchMissing RunnersUnreachable) (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (wait-without-route) :workers WORKERS))
+  (<- answer (| RunnersChange RunnersWatchMissing RunnersUnreachable) (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (wait-without-route) :workers WORKERS))
   (assert (isinstance answer RunnersWatchMissing) answer))
 
 
@@ -149,7 +150,7 @@
 
 
 (deftest test-a-worker-death-and-return-advance-the-version-but-live-heartbeats-do-not
-  (<- seen tuple (sim-cluster :timing (ClusterTiming) (beacons sim-foundation) (death-and-return) :workers WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (death-and-return) :workers WORKERS))
   (val quiet-a (get seen 0))
   (val quiet-b (get seen 1))
   ;; 生きている間の heartbeat では版は進まず、Worker の記録の行も増えない(記録の行が増えすぎない)。
