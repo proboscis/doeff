@@ -701,7 +701,7 @@ pub fn find(
             }
         }
     }
-    for clause in clauses.iter().filter(|c| !c.tap && !external.contains_key(&c.effect)) {
+    for clause in clauses.iter().filter(|c| !c.shape.forwards && !external.contains_key(&c.effect)) {
         if business_fakes::business_module(business_fakes::module_of_effect(&clause.effect), decl) {
             model.tops[top_of[clause.node]].answers.push((clause.handler.clone(), clause.effect.clone()));
         }

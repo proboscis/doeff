@@ -215,7 +215,7 @@ pub enum ProjectRule {
     /// DOEFF165: intent の層の効果に、手元の検から出す定義・模擬の答え手・本番の答え手のどれかが無い — 網羅の表の欠け
     /// ([issue] K3・まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
     IntentEffectUncovered,
-    /// DOEFF206: 検証環境(:verification-environment)の handler が intent の層の効果に、出し直しの答えをそのまま渡す tap でなく自前で答える・
+    /// DOEFF206: 検証環境(:verification-environment)の handler が intent の層の効果に自前で答える(片方の枝だけでも)・
     /// 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す — 本番の翻訳の handler が手元で 1 度も
     /// 走らないまま緑になる穴([issue]・#3407・#3406)。登録簿で下げない。宣言は :business-fakes・:verification-environment・:assembly-shape。
     IntentFakedInVerification,
