@@ -580,3 +580,31 @@
   (assert (in "BootRootBuilt" text) text)
   (assert (in "BootRootRefused" text) text)
   (assert (in "NoneType" text) text))
+
+
+(defhandler boot-roots-built-without-a-previous-root
+  ;; 筋書きの答え手: どの物の root も「組んだ(12.5 秒)」と答え、上げる前の版の root は置き場に残っていない(戻し先が無い)と答える。
+  (PrepareBootRoot [launch]
+    (<- target str (launch-target launch))
+    (resume (BootRootBuilt :target target :seconds 12.5 :previous-root-present False))))
+
+
+(deftest test-the-workers-program-returns-each-boot-root-answer-in-swap-order
+  ;; root の準備の答えは Program の結果に載る(#3725)— 戻し先の root が残っていない(previous-root-present = 偽)事と組んだ秒を、起こした
+  ;; 側が台ごとに名指しで読める。答えを受けて捨てる Program では結果が None で、戻し先が無い事がどこにも出ない(直す前の形で赤)。
+  (<- prepared tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)
+                                     boot-roots-built-without-a-previous-root]
+                       (upgrade-workers #(TARGET-A TARGET-B) LIMITS)))
+  (assert (= prepared #((BootRootBuilt :target "a" :seconds 12.5 :previous-root-present False)
+                        (BootRootBuilt :target "b" :seconds 12.5 :previous-root-present False)))
+          prepared))
+
+
+(deftest test-the-cluster-program-returns-the-coordinator-boot-root-answer-last
+  ;; coordinator まで上げる回の結果は、worker の分の後に coordinator の分が並ぶ(戻し先の有無を 3 つとも名指しで読める)。
+  (<- prepared tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade SCRIPT)
+                                     boot-roots-built-without-a-previous-root]
+                       (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR LIMITS)))
+  (assert (= (tuple (gfor p prepared #(p.target p.previous-root-present)))
+             #(#("a" False) #("b" False) #("coordinator" False)))
+          prepared))

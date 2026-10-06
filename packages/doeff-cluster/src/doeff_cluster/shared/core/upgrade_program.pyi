@@ -72,11 +72,11 @@ def await_until(step: str, done: Callable, observe: Callable, limit_seconds: flo
 def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
     ...
 
-def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
+def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
     ...
 
-def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[None, object]:
+def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
     ...
 
-def upgrade_cluster(workers: tuple[WorkerLaunch, ...], coordinator: CoordinatorLaunch, limits: UpgradeLimits) -> _Program[None, object]:
+def upgrade_cluster(workers: tuple[WorkerLaunch, ...], coordinator: CoordinatorLaunch, limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
     ...

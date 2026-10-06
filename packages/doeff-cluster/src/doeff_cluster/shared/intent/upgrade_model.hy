@@ -143,8 +143,10 @@
 ;;   PLACE-UNAVAILABLE     = 置き場が準備を受けられない(今の版の process に届かない・置き場に書けない・準備の分の余りが無い など —
 ;;                           準備を始めていない)
 ;;   PREPARE-STOPPED       = 準備の間、同じ置き場で動いている今の版の process を守る線(答え手が持つ — 余りの memory・拍の遅れ など)に
-;;                           当たったので、答え手が準備を途中で止めた(版が悪いのではなく、置き場が込んでいた — 後で撃ち直せる)
-;;   PREPARE-FAILED        = 準備が自分で 0 でない終了で終わった(その版の準備が通らない)
+;;                           当たったので、答え手が準備を途中で止めた。版が悪いのではなく置き場が込んでいた — 次の手は、置き場が空いた
+;;                           刻に同じ版で撃ち直す。
+;;   PREPARE-FAILED        = 準備が自分で 0 でない終了で終わった。その版の準備が通らない — 次の手は、撃ち直さずに落ちた訳を直す
+;;                           (PREPARE-STOPPED と分ける訳 = 次の手が違う)。
 ;;   READY-MARK-INCOMPLETE = 準備は 0 で終わったが、root の完成の印が無いか、印の中身が完成の形でない(終了の値だけを信じない)
 (defenum BootRootRefusal PREPARE-ROLE-UNKNOWN PLACE-UNAVAILABLE PREPARE-STOPPED PREPARE-FAILED READY-MARK-INCOMPLETE)
 
