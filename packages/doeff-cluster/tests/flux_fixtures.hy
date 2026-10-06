@@ -1,5 +1,5 @@
 ;; 模擬の Flux と版上げの Program の検が共に使う道具(#3366): worker a・b と coordinator の manifest を本番が宣言を書く時と同じ写し
-;; (launch_rules)で作る・宣言の置き場(記憶の中の file)を sim の外の世界に置く・条 V1〜V4 を全部当てる。
+;; (launch_rules)で作る・宣言の置き場(記憶の中の file)を sim の外の世界に置く・条 V1〜V4 を全部当てる(置き場の写しが在れば V5 も)。
 (require doeff-hy.macros [defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
@@ -8,11 +8,12 @@
 (import doeff_core_effects.file_effects [ReadText WriteText MemoryFile MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_cluster.shared.entry.service_build [system-of])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
 (import doeff_cluster.shared.intent.upgrade_model [UpgradeKind])
 (import doeff_cluster.shared.core.launch_rules [worker-launch-env coordinator-launch-env])
 (import doeff_cluster.coordinator.core.upgrade_invariants [coordinator-after-every-worker worker-swap-waits-for-its-tasks
-                                                            one-worker-at-a-time coordinator-swap-on-an-empty-queue])
+                                                            one-worker-at-a-time coordinator-swap-on-an-empty-queue
+                                                            swap-after-boot-root-prepared])
 (import doeff_cluster.sim.local [SimWorker SimOutside])
 (import doeff_cluster.sim.flux [roster-snapshot ManifestDocuments])
 
@@ -80,6 +81,31 @@
     (<- found tuple (judge starts))
     (:= rules (+ rules (tuple (gfor b found b.rule)))))
   (tuple (sorted (set rules))))
+
+
+(defk program-breaches-of [starts places]
+  {:pre [(: starts tuple) (: places tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "版上げの Program で上げた回の記録に、条 V1〜V5 の判定を全部当てた破りの条の名(重ねない・名の順)。starts = 入れ替えの記録の列・
+   places = 同じ瞬間の置き場の写しの列(V5 の入力 — 版上げの Program を通さずに手で当てる筋書きには無いので、そちらは breaches-of)。"
+  (<- order tuple (breaches-of starts))
+  (<- unprepared tuple (swap-after-boot-root-prepared places))
+  (tuple (sorted (set (+ order (tuple (gfor b unprepared b.rule)))))))
+
+
+(defhandler desire-by-manifest
+  ;; 検の道具: Desire の値を覚え、worker a・b と coordinator の manifest を launch_rules の写しで作り直して置き場へ書くため(本番の
+  ;; handler は行だけを書き換えるが、doeff はそれを import できない — 値 → 行の写しは同じ launch_rules)。
+  (session var a-commit OLD)
+  (session var b-commit OLD)
+  (session var c-commit OLD)
+  (DesireWorker [launch]
+    (if (= launch.name "a") (:= a-commit launch.doeff-commit) (:= b-commit launch.doeff-commit))
+    (<- (write-manifest a-commit b-commit c-commit))
+    (resume #()))
+  (DesireCoordinator [launch]
+    (:= c-commit launch.doeff-commit)
+    (<- (write-manifest a-commit b-commit c-commit))
+    (resume #())))
 
 
 (defhandler yaml-manifest-documents

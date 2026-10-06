@@ -16,6 +16,7 @@ from doeff_core_effects.scheduler import Task as Task
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.core.launch_rules import worker_launch_of_env as worker_launch_of_env
 from doeff_cluster.shared.core.launch_rules import coordinator_launch_of_env as coordinator_launch_of_env
+from doeff_cluster.shared.core.launch_rules import coordinator_launch_names as coordinator_launch_names
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 from doeff import with_handlers as with_handlers
@@ -37,6 +38,12 @@ from doeff_cluster.shared.intent.upgrade_model import ApplyDeclarations as Apply
 from doeff_cluster.shared.intent.upgrade_model import ConfirmCleanBoot as ConfirmCleanBoot
 from doeff_cluster.shared.intent.upgrade_model import CleanBootPassed as CleanBootPassed
 from doeff_cluster.shared.intent.upgrade_model import CleanBootRefused as CleanBootRefused
+from doeff_cluster.shared.intent.upgrade_model import BootRootsAtStart as BootRootsAtStart
+from doeff_cluster.shared.intent.upgrade_model import PrepareBootRoot as PrepareBootRoot
+from doeff_cluster.shared.intent.upgrade_model import BootRootAlreadyPrepared as BootRootAlreadyPrepared
+from doeff_cluster.shared.intent.upgrade_model import BootRootBuilt as BootRootBuilt
+from doeff_cluster.shared.intent.upgrade_model import BootRootRefused as BootRootRefused
+from doeff_cluster.shared.intent.upgrade_model import BootRootRefusal as BootRootRefusal
 from doeff_cluster.sim.local import SimWorker as SimWorker
 from doeff_cluster.sim.local import HostTruth as HostTruth
 from doeff_cluster.sim.local import DrainWorker as DrainWorker
@@ -54,6 +61,7 @@ from doeff_core_effects.effects import Put as Put
 WORKER_ROLE: str
 COORDINATOR_ROLE: str
 PLACED_PHASES: frozenset[str]
+SIM_BUILD_SECONDS: float
 
 @dataclass(frozen=True, kw_only=True)
 class DeployedEnv:
@@ -99,11 +107,47 @@ def reconcile_manifests(paths: tuple[str, ...], applied: tuple[DeployedEnv, ...]
 class UpgradeStartsSeen(_doeff_effect_base[tuple[UpgradeStart, ...]]):
     ...
 
-def flux_declarations(paths: tuple, drain: Callable, coordinator_seconds: float, initial: tuple) -> _Handler:
+@_doeff_dataclass(frozen=True)
+class BootRootsAtStartsSeen(_doeff_effect_base[tuple[BootRootsAtStart, ...]]):
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class BootRoot:
+    target: str
+    doeff_commit: str
+
+def worker_running_roots(name: str) -> _Program[tuple[BootRoot, ...], object]:
+    ...
+
+def coordinator_running_roots(applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
+    ...
+
+def running_roots_of(launch: WorkerLaunch | CoordinatorLaunch, applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
+    ...
+
+def running_roots_at(start: UpgradeStart, applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
+    ...
+
+def roster_roots(start: UpgradeStart) -> _Program[tuple[BootRoot, ...], object]:
+    ...
+
+def roots_with(roots: tuple[BootRoot, ...], more: tuple[BootRoot, ...]) -> _Program[tuple[BootRoot, ...], object]:
+    ...
+
+def places_at(starts: tuple[UpgradeStart, ...], roots: tuple[BootRoot, ...], applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRootsAtStart, ...], object]:
+    ...
+
+def flux_declarations(paths: tuple, drain: Callable, coordinator_seconds: float, initial: tuple[DeployedEnv, ...]) -> _Handler:
+    ...
+
+def boot_root_answer(launch: WorkerLaunch | CoordinatorLaunch, target: str, held: tuple[BootRoot, ...], running: tuple[BootRoot, ...]) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
     ...
 
 def launch_target(launch: WorkerLaunch | CoordinatorLaunch) -> _Program[str, object]:
     ...
 
 def refused_clean_boots(targets: frozenset) -> _Handler:
+    ...
+
+def refused_boot_roots(targets: frozenset[str], reason: BootRootRefusal) -> _Handler:
     ...
