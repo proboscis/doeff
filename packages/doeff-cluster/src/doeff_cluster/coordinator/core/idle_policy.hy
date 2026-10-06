@@ -27,6 +27,7 @@
 (import doeff_cluster.coordinator.core.api_policy [tick tick-due respond plan-rollouts deployments-to-observe deployment-reread-due mark-alive
                                                    ROLLOUT-ACTOR ROLLOUT-TICK-MS TICK-MS])
 (import doeff_cluster.coordinator.core.watch_policy [settle-watch all-waiting-unchanged])
+(import doeff_cluster.coordinator.intent.due_model [DueAt DueNow DueNever])
 
 (val MAX-QUIET-MS 3600000)    ; 一度に眠る区間の上限(仮想の 1 時間 — その刻の歩は静かでも本物の歩として回す)
 
@@ -44,14 +45,16 @@
 
 
 (defk rollout-due [state now timing naming]
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| int None))]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| DueAt DueNow DueNever))]
    :tags {:context "coordinator" :role "judgment"}}
   "Rollout の拍(rollout-quiet と同じ判断)が、状態がこのままで k8s を読む・段を進める・action を出し得る最初の刻を知るため(#3064)。
    今読む物が在れば次の拍(終わっていない Rollout の Deployment の相手は毎拍読む)。無ければ、台数の持ち主の Deployment と node の印の
    読み直しの刻(deployment-reread-due・node-reread-due)と、終わっていない Rollout ごとの段の期限(rollout-phase-due)と、その Service の
    相手の観測が変わる刻(readiness の判定 readiness-due・止まりの判定 service-stopped-due)の、now より後の最小。どれも判断が比べに使う
    期限の値から求める(#1383 の決めの条件 (1))。試して静かだった歩の後の状態だけを前提にする(quiet-stretch は区間の起点の直後の歩を
-   必ず試す — 能力の導出・段の入り口のような時刻に依らない 1 度きりの変化は、その歩で済んでいる)。None = 時刻では変わらない。"
+   必ず試す — 能力の導出・段の入り口のような時刻に依らない 1 度きりの変化は、その歩で済んでいる)。DueNever = 時刻では変わらない。
+   今読む物が在る間は、Kubernetes を読む周期(Rollout の拍 ROLLOUT-TICK-MS — 次の Rollout の拍の刻)の刻を返す: これは期限ではなく
+   周期で見に行く形で、Kubernetes の watch に替える件(#3868)で消す(#3865)。"
   (<- deployments (| int None) (deployment-reread-due state now))
   (<- nodes (| int None) (node-reread-due state now))
   (var dues (tuple (gfor due [deployments nodes] :if (is-not due None) due)))
@@ -64,9 +67,12 @@
           (<- ready (| int None) (readiness-due state target.name now timing))
           (<- stopped (| int None) (service-stopped-due state target.name now timing))
           (:= dues (+ dues (tuple (gfor due [ready stopped] :if (is-not due None) due))))))))
-  (if (or (deployments-to-observe state now) (nodes-to-read state now))
-      (+ now 1)
-      (min (gfor due dues :if (> due now) due) :default None)))
+  (val ahead (tuple (gfor due dues :if (> due now) due)))
+  (cond
+    (or (deployments-to-observe state now) (nodes-to-read state now))
+      (DueAt :at (max (+ now 1) (+ state.rollout-tick-ms ROLLOUT-TICK-MS)))
+    ahead (DueAt :at (min ahead))
+    True (DueNever)))
 
 
 (defk absorbable [watcher state]
@@ -188,14 +194,24 @@
   (min (+ last.at TICK-MS) (if pending (. (get pending 0) at) (+ last.at TICK-MS))))
 
 
+(defk due-instant [last due]
+  {:pre [(: last QuietStep) (: due (| DueAt DueNow DueNever))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "期限の答え due を、静かな区間の歩の刻の比べ(quiet-stretch — 格子の上の歩)に使う数にするため: DueAt は刻・DueNow は歩 last の
+   直後(次の格子の歩で試す)・DueNever は None。格子の上の待ち方は変えない(#3865 の単位 1)。"
+  (match due
+    (DueAt :at at) at
+    (DueNow) (+ last.at 1)
+    (DueNever) None))
+
+
 (defk quiet-due [last probe pending]
   {:pre [(: last QuietStep) (: probe IdleProbe) (: pending tuple)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "静かな区間が歩 last の後に本番の判断で試さなければならない最初の刻を知るため(#3060): 要求の無い拍(api_policy.tick-due)・Rollout の
    拍(rollout-due)・待ち(答える・見え方を覚え直す歩なら次の拍、それ以外は期限の刻)・まだ受けていない仮の拍 pending の届く刻の最小。
    それより前の歩は試しても何も変えない(held-step で作る)。None = 状態がこのままなら区間の終わりまで試す歩が無い。"
   (val grid (+ last.at TICK-MS))
-  (<- ticking (| int None) (tick-due last.state last.at probe.timing))
-  (<- rolling (| int None) (rollout-due last.state last.at probe.timing probe.naming))
+  (<- ticking (| int None) (due-instant last (! (tick-due last.state last.at probe.timing))))
+  (<- rolling (| int None) (due-instant last (! (rollout-due last.state last.at probe.timing probe.naming))))
   (<- unchanged bool (all-waiting-unchanged last.watchers last.state grid))
   (val watching (if unchanged (min (gfor watcher last.watchers watcher.deadline-ms) :default None) grid))
   (val arriving (if pending (. (get pending 0) at) None))
