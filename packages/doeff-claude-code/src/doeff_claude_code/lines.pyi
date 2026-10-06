@@ -78,6 +78,7 @@ class DeltaKind(StrEnum):
 class PartialMessage:
     text_delta: str = ''
     delta: DeltaKind = ...
+    thinking_delta: str = ''
 
     def __post_init__(self) -> None:
         ...
