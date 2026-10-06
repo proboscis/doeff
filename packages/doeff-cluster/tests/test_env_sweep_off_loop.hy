@@ -37,7 +37,7 @@
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.core.heartbeat_rules [desired-after-silence])
-(import doeff_cluster.worker.core.program [run-worker TICK-LAG-LOG TICK-LAG-MS])
+(import doeff_cluster.worker.core.program [run-worker TICK-LAG-LOG TICK-LAG-MS ACTIONS-TO-PUBLISH])
 (import tests.host_rig [host-settings])
 
 (val STATE "/state")
@@ -384,7 +384,7 @@
   (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world 60000 (SlowPublish :at-ms 30000 :seconds 6.0)) tick-pauses]))
   (assert (= (len got.lags) 1) got.lags)
   (val lag (get got.lags 0))
-  (assert (= lag.slowest "PublishStatus") lag)
+  (assert (= lag.slowest ACTIONS-TO-PUBLISH) lag)
   (assert (> lag.elapsed-ms TICK-LAG-MS) lag)
   (assert (>= lag.slowest-ms 6000) lag))
 
