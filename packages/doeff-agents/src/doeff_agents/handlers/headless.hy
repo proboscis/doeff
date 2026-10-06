@@ -45,14 +45,14 @@
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
-  AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
+  AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
+(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind
                                  Completed Failed Interrupted BackendLost Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
@@ -100,8 +100,8 @@
     (setv #^ (| ClaudeTurn None) self.turn None)
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
-    (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
-                          AgentTurnEndEvent))
+    (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
+                          AgentInputFateEvent AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
@@ -145,6 +145,9 @@
          (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] []))
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
+    ;; 考えている間の差分は、中身が空でも片ごとに 1 つ出す — 本文の前に「考えている」と分かる合図(agora-redesign #3789)。
+    (and (isinstance kind PartialMessage) (= kind.delta DeltaKind.THINKING))
+      [(fn [seq] (AgentThinkingDeltaEvent :seq seq :at at :text kind.thinking-delta))]
     (isinstance kind ToolResult)
       [(fn [seq] (AgentToolResultEvent :seq seq :at at :answers kind.answers))]
     (isinstance kind InputFate)

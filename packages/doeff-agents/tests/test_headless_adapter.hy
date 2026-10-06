@@ -29,7 +29,7 @@
 (import doeff_agents.effects [
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
-  AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
+  AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect])
@@ -66,6 +66,14 @@
   {:pre [(: output str) (: word str)] :post [(: % str)] :tags {:context "headless-adapter-test" :role "judgment"}}
   "道具の出力が output になる命令(echo)を走らせてから word で答えさせる prompt。"
   (.format "Use the Bash tool to run exactly this command: echo {} . Then reply with exactly: {}" output word))
+;; 答えの前に考えている間の差分を片の数だけ出す手番(agora-redesign #3789 — 考えの差分が出来事まで届くかを見る)。替え玉の CLI の規則
+;; (scenario_rules.hy の THINKING-PIECES-PHRASE)と同じ言葉。片の中身は替え玉の CLI も fake も "..."。
+(defk thinking-prompt [#^ int pieces #^ str word]
+  {:pre [(: pieces int) (: word str)] :post [(: % str)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "答えの前に考えの差分を pieces 片出してから word で答えさせる prompt。"
+  (.format "Stream {} thinking pieces. Reply with exactly: {}" pieces word))
+(val THINKING-PIECES 3)
+(val THINKING-PIECE "...")
 (val ECHO-OUTPUT "TOOL-OUT-5")
 (val ECHO-SECONDS 0.2)
 ;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
@@ -79,6 +87,7 @@
   (when spent
     (return (FakeReply "" :tool-seconds 2.0 :fail "spent then failed" :cost-usd (float (.group spent 1)))))
   (setv sleep (re.search r"sleep (\d+)" text)
+        thinking (re.search r"Stream (\d+) thinking pieces\." text)
         command (re.search r"run exactly this command: (.+?) \." text)
         exact (re.search r"[Rr]eply with exactly: (\S+)" text)
         extra (re.search r"include the word (\S+)" text))
@@ -93,6 +102,7 @@
   ;; 道具の命令(input)は prompt の命令の文、出力は echo の語(ほかの命令は出力なし)— 替え玉の CLI と同じ。echo の道具の手番は、
   ;; 本体の最後の呼びの usage と model・model ごとの窓も替え玉の CLI と同じ値を名乗る(#3744)。
   (FakeReply word :tool-seconds (cond sleep (float (.group sleep 1)) echoed ECHO-SECONDS True 0.0)
+             :thinking-deltas (if thinking (int (.group thinking 1)) 0)
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
              :last-call-usage (if echoed
@@ -237,6 +247,15 @@
   "出力のある道具を 1 度呼ぶ手番を最後まで読む(道具の命令と出力が出来事に載るかを見るため・agora-redesign #3744)。"
   (<- prompt (echo-prompt ECHO-OUTPUT "ECHOED"))
   (<- handle (launch s "adapter-tool-content" prompt None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk thinking-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "答えの前に考えの差分を THINKING-PIECES 片出す手番を最後まで読む(考えの差分が出来事に載るかを見るため・agora-redesign #3789)。"
+  (<- prompt str (thinking-prompt THINKING-PIECES "THOUGHT"))
+  (<- handle (launch s "adapter-thinking" prompt None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -613,6 +632,24 @@
              [#((. (get calls 0) id) ECHO-OUTPUT False #())])
           (repr answers))
   None)
+
+(defk check-thinking-deltas-come-before-the-text [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "考えている間の差分(層 2 の PartialMessage の種類 THINKING)が、片ごとに考えの出来事(AgentThinkingDeltaEvent — 考えの文字列つき)として、
+   確定の本文の出来事より前に出る。考えの差分を落とす adapter では 0 で赤(agora-redesign #3789 — 本文が 66 秒後まで来ない手番で、画面が
+   考えている事を出せなかった)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val thought (lfor #(index event) (enumerate done.events) :if (isinstance event AgentThinkingDeltaEvent) #(index event.text)))
+  (val texts (lfor #(index event) (enumerate done.events) :if (isinstance event AgentTextEvent) index))
+  (assert (= (lfor #(_ text) thought text) (* [THINKING-PIECE] THINKING-PIECES)) (repr done.events))
+  (assert (and texts (< (max (lfor #(index _) thought index)) (get texts 0))) (repr done.events))
+  None)
+
+(deftest test-headless-carries-the-thinking-deltas-before-the-text-fake [tmp-path]
+  (<- (check-thinking-deltas-come-before-the-text (run-on FAKE tmp-path thinking-turn))))
+
+(deftest test-headless-carries-the-thinking-deltas-before-the-text-stub [tmp-path]
+  (<- (check-thinking-deltas-come-before-the-text (run-on STUB tmp-path thinking-turn))))
 
 (deftest test-headless-tool-events-carry-the-command-and-the-output-fake [tmp-path]
   (<- (check-tool-events-carry-the-command-and-the-output (run-on FAKE tmp-path tool-turn-with-output))))

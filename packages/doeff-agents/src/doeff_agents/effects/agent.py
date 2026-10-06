@@ -256,6 +256,17 @@ class AgentTextDeltaEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentThinkingDeltaEvent:
+    """A partial piece of the agent's thinking before it writes its text (``text`` may be empty when the
+    runtime streams the thinking without its words). An upper layer shows that the agent is thinking
+    before the first text arrives (agora-redesign #3789)."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
     ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
@@ -299,6 +310,7 @@ class AgentTurnEndEvent:
 AgentEvent = (
     AgentTextEvent
     | AgentTextDeltaEvent
+    | AgentThinkingDeltaEvent
     | AgentToolUseEvent
     | AgentToolResultEvent
     | AgentInputFateEvent
