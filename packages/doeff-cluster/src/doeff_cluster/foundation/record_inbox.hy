@@ -15,10 +15,17 @@
 ;; 上限が無い最初の版は、古い記録係(1 回 500 行)が起点の一覧を貯めて一度に送った数百 MB の本文を JSON で読み、memory が 1.9 GB に
 ;; 跳ねて落ちた(2026-09-25 00:19 JST・上限 2Gi の Pod)。
 (setv MAX-BODY-BYTES 64000000)
+;; 置き場の Program の返事を待つ打ち切り(秒)— 書きの fsync と詰めの間も待つ。coordinator の ClusterTiming の外の値(#3865 で名を付けた)。
+(setv RECORD-REPLY-SECONDS 60.0)
 
 
 (defclass RecordInbox [RequestInbox]
-  "coordinator の RequestInbox と同じ箱。違いは本文の上限(超えたら読まずに 413)だけ。"
+  "coordinator の RequestInbox と同じ箱。違いは本文の上限(超えたら読まずに 413)と、置き場の Program の返事を待つ打ち切り
+   (RECORD-REPLY-SECONDS — coordinator の ClusterTiming の外)。"
+  (defn #^ None __init__ [self #^ int port]
+    (.__init__ (super) port RECORD-REPLY-SECONDS)
+    None)
+
   (defn #^ None start [self]
     (setv inbox self)
     (defclass Handler [BaseHTTPRequestHandler]
@@ -40,7 +47,7 @@
         (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
                                       (.get self.headers "X-Actor") (str (get self.client-address 0))))
         ;; 置き場の答えの本文の形(表か PlainText だけ)は、返事を出す record_store/core/program.hy の store-loop が検める。
-        (if (.wait slot.done 60.0)
+        (if (.wait slot.done inbox.reply-seconds)
             (.send self slot.status slot.data slot.content-type)
             (.send self 503 #* (json-reply {"error" "置き場の Program が返事をしない"}))))
       (defn #^ None send [self #^ int status #^ bytes data #^ str content-type]

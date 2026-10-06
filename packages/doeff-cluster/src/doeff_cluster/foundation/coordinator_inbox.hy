@@ -40,7 +40,7 @@
 ;; probe の閾値(秒)。止まりの秒 = 歩の中に居るなら歩に入ってから、待っているなら待つと定めた刻を越えてから(#3865 — ループは要求の無い間
 ;; 次の期限まで眠るので「最後に取りに来てから」では数えない)。ふだんの歩は 1 まとまりの処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の
 ;; 詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
-;; readiness はそれより十分長い 30 秒(worker の返事の上限 REPLY-SECONDS 15 秒の 2 倍)、liveness は「固まった」と言える 120 秒。
+;; readiness はそれより十分長い 30 秒(worker の返事の上限 ClusterTiming.client-reply-ms の既定 15 秒の 2 倍)、liveness は「固まった」と言える 120 秒。
 ;; liveness が落ちると kubelet が container を作り直す(状態は耐久の置き場から読み直す)。
 (setv READY-STALL-SECONDS 30.0)
 (setv LIVE-STALL-SECONDS 120.0)
@@ -84,12 +84,14 @@
 (defclass RequestInbox []
   "HTTP server(別 thread)が受けた要求を生の形で並べる箱。調停ループは 1 件ずつ取り出して返事を置く。
    formats = probe が名乗る本文の形の版の受け入れる範囲(coordinator の entry が cluster_model の ACCEPTED-FORMATS を渡す — この
-   module は intent の型を読まない)。"
-  (defn #^ None __init__ [self #^ int port #^ Callable [clock time.monotonic] #^ tuple [formats #()]]
+   module は intent の型を読まない)。reply-seconds = HTTP の thread が調停ループの返事を待つ打ち切り(coordinator の entry が
+   ClusterTiming.inbox-reply-ms から渡す — 前は名の無い 30 秒・#3865)。"
+  (defn #^ None __init__ [self #^ int port #^ float reply-seconds #^ Callable [clock time.monotonic] #^ tuple [formats #()]]
     ;; phase = 取り手の今(None = まだ 1 度も取りに来ていない・InboxWaiting = 待っている・InboxBusy = 歩の中)。probe はこれだけで答える
     ;; (ループを通さない)。列は SimpleQueue — put は reentrant で、停止の合図の受け手(主 thread の bytecode の区切りに割り込む)から
     ;; 起こしを入れても止まらない(queue.Queue は入れ子で取れない lock を持つ — #3584 と同じ)。
-    (setv self.queue (queue.SimpleQueue) self.port port self.server None self.clock clock self.phase None self.formats formats))
+    (setv self.queue (queue.SimpleQueue) self.port port self.server None self.clock clock self.phase None self.formats formats
+          self.reply-seconds reply-seconds))
 
   (defn #^ (| float None) stalled-seconds [self]
     "ループの止まりの秒を知るため(probe が読む): 歩の中なら歩に入ってからの秒・待っているなら待つと定めた刻を越えた秒(越えていなければ 0・
@@ -136,7 +138,7 @@
             (return (.send self 400 #* (json-reply {"error" (.format "JSON を読めない: {}" error)})))))
         (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
                                       (.get self.headers "X-Actor") (str (get self.client-address 0))))
-        (if (.wait slot.done 30.0)
+        (if (.wait slot.done inbox.reply-seconds)
             (do
               ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。版の変化を待つ読み(GET /watch)は
               ;; 待つのが仕事なので出さない(#1933)。札を作った時刻と同じ単調な時計で、この thread が測る。

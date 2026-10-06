@@ -58,7 +58,6 @@ DECLARED = {
     metrics_model: {"ReportMetrics", "ReadProcessGauges"},
     protocol: {
         "PROTOCOL_FORMAT",
-        "WATCH_MAX_SECONDS",
         "ClusterTiming",
         "Request",
         "BodyInvalid",

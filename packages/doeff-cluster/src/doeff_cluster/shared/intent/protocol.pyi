@@ -15,8 +15,6 @@ from dataclasses import dataclass
 from doeff import EffectBase
 
 PROTOCOL_FORMAT: int
-WATCH_MAX_SECONDS: float
-
 @dataclass(frozen=True)
 class ClusterTiming:
     lease_ms: int = 10000
@@ -24,6 +22,10 @@ class ClusterTiming:
     reassign_after_ms: int = 60000
     silent_worker_wait_ms: int = ...
     keep_fence_ms: int = 240000
+    worker_forget_ms: int = ...
+    watch_max_ms: int = 10000
+    client_reply_ms: int = 15000
+    inbox_reply_ms: int = 30000
 
 @dataclass(frozen=True, eq=False)
 class Request:
@@ -51,7 +53,7 @@ class PlainText:
 class NextRequests(EffectBase[list[Request]]):
     """受付に並んだ要求をまとめて取る(答え = Request の list)。"""
 
-    timeout_seconds: float
+    timeout_seconds: float | None
     limit: int = 256
 
 @dataclass(frozen=True)

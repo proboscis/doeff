@@ -7,7 +7,7 @@
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [SelfStopSpans ReassignTooEarly self-stop-ms timing-outlasts-the-self-stop])
-(import doeff_cluster.foundation.coordinator_http [REPLY-SECONDS CONNECT-SECONDS])
+(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import doeff_cluster.worker.entry.main [timing-checked])
 
@@ -18,9 +18,9 @@
 
 (defk production-spans []
   {:pre [] :post [(: % SelfStopSpans)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "本番の定数(ClusterTiming の fence・coordinator_http の返事と接続の上限・WorkerPolicy の停止の猶予)から、worker の止め切りの内訳を
+  "本番の既定(ClusterTiming の fence と返事の上限・coordinator_http の接続の上限・WorkerPolicy の停止の猶予)から、worker の止め切りの内訳を
    作るため — 数を検に写さない。"
-  (SelfStopSpans :fence-ms T.fence-ms :reply-ms (int (* REPLY-SECONDS 1000)) :connect-ms (int (* CONNECT-SECONDS 1000))
+  (SelfStopSpans :fence-ms T.fence-ms :reply-ms T.client-reply-ms :connect-ms (int (* CONNECT-SECONDS 1000))
                   :stop-grace-ms P.stop-grace-ms :kill-grace-ms P.kill-grace-ms))
 
 

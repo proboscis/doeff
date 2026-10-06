@@ -18,7 +18,7 @@
 
 ;; 検の coordinator の宛先(MockTransport は宛先を見ない)と、口の送り方(本番の組み立てと同じ値)。
 (val COORDINATOR-URL "http://coordinator")
-(val TEST-ROUTE (RouteOptions :reply-seconds 15.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "test-sender"))
+(val TEST-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "test-sender"))
 
 
 (deff failure-kind [#^ httpx.TransportError error]  ; defk にできない: handler の節が httpx の例外を値に写す純粋な判断(except の中で呼ぶ)

@@ -47,8 +47,6 @@
 ;; task は 2000 本まで(越えたら 429)。
 (setv TASK-MAX-LEASE-SECONDS 3600)
 (setv TASK-MAX-OPEN 2000)
-;; 沈黙した worker を忘れるまで(置き先と task を持たない worker だけ)。Mac は眠り・持ち出しで数日沈黙するので 7 日。
-(setv WORKER-FORGET-MS (* 7 24 3600 1000))
 
 
 ;; --- 宣言の読み書き(JSON ⇄ 型) ----------------------------------------------------
@@ -1167,13 +1165,13 @@
       (replace state :board (dfor #(k row) (.items state.board) :if (not-in k gone) k row))))
 
 
-(defk forget-silent-workers [state now]
-  {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
-  "純粋: WORKER-FORGET-MS より長く沈黙し、置き先も task も持たない worker を忘れた状態(忘れる物が無ければ同じ object)。"
+(defk forget-silent-workers [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "純粋: 設定の忘れる期限(ClusterTiming.worker-forget-ms)より長く沈黙し、置き先も task も持たない worker を忘れた状態(忘れる物が無ければ同じ object)。"
   (setv busy (| (sfor a (+ (list (.values state.placements)) (list (.values state.surges))) a.worker)
                 ;; 終わって結果を持っているだけの切り離した task は worker を引き留めない。
                 (sfor t (.values state.tasks) :if (and t.worker (not (and t.detached (in t.phase DETACHED-TERMINAL)))) t.worker))
-        gone (lfor #(n w) (.items state.workers) :if (and (> now (liveness-deadline w WORKER-FORGET-MS)) (not-in n busy)) n))
+        gone (lfor #(n w) (.items state.workers) :if (and (> now (liveness-deadline w timing.worker-forget-ms)) (not-in n busy)) n))
   (if (not gone)
       state
       (replace state :workers (dfor #(n w) (.items state.workers) :if (not-in n gone) n w)
@@ -1215,10 +1213,10 @@
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定)が、状態がこのままで答えを変え得る最初の刻を知るため。
    どの判断も、最後の連絡 + 窓(liveness-deadline)を今の刻が越えた時に答えを変える — 窓は lease-ms(note-liveness・place-jobs・drain・
-   見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・WORKER-FORGET-MS
+   見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・worker-forget-ms
    (forget-silent-workers)。答え = worker ごと・窓ごとの「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば DueNever)。
    生きていないと数える名(silent)が今の刻の求め直しと違えば、note-liveness が今の刻で答えを変えるので DueNow。"
-  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms WORKER-FORGET-MS))
+  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms timing.worker-forget-ms))
   (val ats (tuple (gfor w (.values state.workers) window windows
                         :setv due (+ (liveness-deadline w window) 1)
                         :if (> due now)
@@ -1285,7 +1283,7 @@
    置き先を決め直し、置き先の変化を出来事の列に足した状態を求めるため。何も変わらなければ掃いた後の状態そのものを返す。"
   ;; 消された・忘れた Worker への途絶しても動かし続けてよい印の約束は、置き先の判断の前に外す(#2804 — その job を他へ置ける)。
   (<- state ClusterState
-      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains (! (sweep-board given now)) now)) now)) now))))
+      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains (! (sweep-board given now)) now)) now)) now timing))))
   ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
   ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
   ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。

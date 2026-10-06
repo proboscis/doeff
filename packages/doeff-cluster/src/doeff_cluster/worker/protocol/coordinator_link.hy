@@ -29,7 +29,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                                                WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS ClusterTiming])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence])
 (import doeff_cluster.worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
@@ -71,6 +71,8 @@
           ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 返事の timing の keep_fence_ms が上書きする。
           ;; 欄の無い返事 = 古い coordinator は印も付けないので、この既定が使われる事は無い)。
           self.keep-fence-ms (. (ClusterTiming) keep-fence-ms)
+          ;; 名指しの待ち(GET /watch)で待ってもらう上限(返事の timing の watch_max_ms が上書きする — 最初の返事の前は既定・#3865)。
+          self.watch-max-ms (. (ClusterTiming) watch-max-ms)
           self.task-dir task-dir self.versions (or versions {})
           ;; 詰めた Program の cache(/programs/<sha> から取る — 子 process の言い換えと同じ state dir の programs・改訂 1 の F)。
           self.program-dir (os.path.join (os.path.dirname (os.path.abspath task-dir)) "programs")
@@ -95,11 +97,11 @@
 
 
 
-(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol)
-  {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
+(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed #^ int limit-ms]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol)
+  {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool) (: limit-ms int)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
-   確かめるまで毎拍の heartbeat を続ける)、その後は上限まで待つ。"
-  {"after" (str after) "timeoutSeconds" (str (if confirmed WATCH-MAX-SECONDS 0.0)) "worker" worker "boot" boot})
+   確かめるまで毎拍の heartbeat を続ける)、その後は上限 limit-ms(coordinator の timing の watch-max-ms — heartbeat の返事で受け取る)まで待つ。"
+  {"after" (str after) "timeoutSeconds" (str (if confirmed (/ limit-ms 1000.0) 0.0)) "worker" worker "boot" boot})
 
 (defk told-once [state outcome line]
   {:pre [(: state LinkState) (: outcome str) (: line str)] :post [(: % None)]}
@@ -248,7 +250,7 @@
 (defk watch-once [state cell options after]
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions) (: after int)] :post [(: % WatchReading)]}
   "名指しの待ちを 1 回送り、答えを読むため(届かない・読めない返事も WatchReading の FAILED に畳む — 背景の task を例外で落とさない)。"
-  (<- reply RoutedReply (routed-request cell.route "GET" "/watch" options (watch-params after state.name state.boot state.watch.confirmed)
+  (<- reply RoutedReply (routed-request cell.route "GET" "/watch" options (watch-params after state.name state.boot state.watch.confirmed state.watch-max-ms)
                                         None))
   (setv cell.route reply.route)
   (val answer reply.answer)
@@ -375,6 +377,9 @@
     ;; 印の在る job の長い方の柵(#2804)も同じく受け取る。
     (when (and timing (in "keep_fence_ms" timing))
       (setv state.keep-fence-ms (int (get timing "keep_fence_ms"))))
+    ;; 名指しの待ちの上限も同じく受け取る(#3865 — coordinator の頭打ちと同じ値で問う)。
+    (when (and timing (in "watch_max_ms" timing))
+      (setv state.watch-max-ms (int (get timing "watch_max_ms"))))
     (<- jobs tuple (declared-job-specs declared))
     (setv state.last-jobs jobs)
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))

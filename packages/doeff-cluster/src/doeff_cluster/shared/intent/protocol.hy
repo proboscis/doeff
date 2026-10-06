@@ -30,12 +30,37 @@
   ;; 停止の猶予 15 秒 = 255 秒 < 350 秒なので、分断の最中に新しい世代が来ても古い process とは重ならない。tolerations を短くする manifest の
   ;; 変更はこの前提を崩す。worker は heartbeat の返事の timing から受け取る(欄の無い返事 = 古い coordinator は印も付けない)。
   (setv #^ int keep-fence-ms 240000)
+  ;; 連絡の途絶えた worker を、置き先も task も持たなければ名簿から忘れるまで(cluster_policy.forget-silent-workers)。Mac は眠り・持ち出しで
+  ;; 数日沈黙するので 7 日。
+  (setv #^ int worker-forget-ms (* 7 24 3600 1000))
+  ;; 版の変化を待つ読み(GET /watch)の待ちの上限 — worker が問いの timeoutSeconds に載せ、coordinator が頭打ちにする取り交わしの値。
+  ;; worker は heartbeat の返事の timing から受け取る(lease-ms と同じ道)。下の 2 つの HTTP の打ち切りより短い(__post-init__ が検める —
+  ;; 定数 WATCH-MAX-SECONDS から移した・Mac の調整役の決定 2026-10-07 04:4x・#3865)。
+  (setv #^ int watch-max-ms 10000)
+  ;; worker と送り手の HTTP の client が coordinator の返事を待つ打ち切り(RouteOptions.reply-seconds — foundation/coordinator_http の定数
+  ;; REPLY-SECONDS から移した)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
+  ;; volume の実測(2026-09-24): fsync p50 0.1 秒、ただし 30 分に 1 回ほど 10.4 秒の詰まり(その間の返事は最長 13 秒)。上限はそれより
+  ;; 長く、worker の自己停止(fence)より短くする。heartbeat・共有の保存・task・readiness の client は全部この値を使う。
+  (setv #^ int client-reply-ms 15000)
+  ;; 受付の箱(foundation/coordinator_inbox)の HTTP の thread が、調停ループの返事を待つ打ち切り(前は名の無い 30 秒)。
+  (setv #^ int inbox-reply-ms 30000)
 
   (defn #^ None __post-init__ [self]
+    ;; 時間の窓の順の関係を 1 か所で検め、崩れた組は作る時に断る(本番の設定の誤りと、模擬の世界が比を保たずに延ばした組を名指す —
+    ;; Mac の調整役の決定 2026-10-07 04:4x の条件 (a)・#3865)。
     (when (<= self.keep-fence-ms self.fence-ms)
       (raise (ValueError "印の在る job の長い方の柵(keep-fence-ms)は fence より長くなければならない")))
     (when (<= self.reassign-after-ms self.fence-ms)
-      (raise (ValueError "移し替えは worker の自己停止より後でなければならない")))))
+      (raise (ValueError "移し替えは worker の自己停止より後でなければならない")))
+    (when (<= self.reassign-after-ms self.lease-ms)
+      (raise (ValueError "移し替え(reassign-after-ms)は生死の窓(lease-ms)より長くなければならない")))
+    (when (<= self.worker-forget-ms self.reassign-after-ms)
+      (raise (ValueError "worker を忘れる期限(worker-forget-ms)は移し替えより長くなければならない")))
+    (when (<= self.client-reply-ms self.watch-max-ms)
+      (raise (ValueError "待ちの上限(watch-max-ms)は client の返事の打ち切り(client-reply-ms)より短くなければならない")))
+    (when (<= self.inbox-reply-ms self.client-reply-ms)
+      (raise (ValueError "client の返事の打ち切り(client-reply-ms)は受付の打ち切り(inbox-reply-ms)より短くなければならない")))))
+
 
 
 ;; HTTP の本文(/tasks・/detached・/heartbeat)の形の版(2026-09-26)。送り手・coordinator・worker は別々の版になり得るので、本文に
@@ -72,12 +97,6 @@
   "JSON でない返事の本文(GET /metrics の Prometheus の text)。HTTP の handler は content-type をそのまま付けて text を返す。"
   (#^ str text)
   (setv #^ str content-type "text/plain; version=0.0.4; charset=utf-8"))
-
-
-;; 版の変化を待つ読み(GET /watch)の待ちの上限(秒)— worker が問いの timeoutSeconds に載せ、coordinator が頭打ちにする取り交わしの値。
-;; 本番の受付の thread は返事を 30 秒まで待ち、worker の HTTP の client は 15 秒で打ち切る(coordinator_http の REPLY-SECONDS)ので、
-;; その両方より拍 1 つ分以上短くする(coordinator/intent/cluster_model から移した・#2025)。
-(val WATCH-MAX-SECONDS 10.0)
 
 
 (defclass [(dataclass :frozen True)] NextRequests [EffectBase]

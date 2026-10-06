@@ -1,7 +1,7 @@
 ;; 組みの完成を待つ効果 AwaitWarm(#3668 (b))の本番の答え手(detached.hy の warm-cluster の warm-awaited)の待ち方を、coordinator への HTTP
 ;; だけを台本の答え手に替えて確かめる(本番の coordinator が組みの進みで版を進めることは、本物の coordinator の上の検 test_await_warm.hy が持つ):
 ;;   * 待ちは GET /watch(版の変化の long-poll)で起き、版が進めば読み直して WarmReady で返る — 間隔で起きて確かめない
-;;   * 版が進まない coordinator では、GET /watch の上限(WATCH-MAX-SECONDS)ごとに 1 回だけ読み直し、期限で WarmWaitExpired(最後の読みつき)
+;;   * 版が進まない coordinator では、GET /watch の上限(ClusterTiming.watch-max-ms)ごとに 1 回だけ読み直し、期限で WarmWaitExpired(最後の読みつき)
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -11,7 +11,8 @@
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [WATCH-MAX-SECONDS])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(val WATCH-MAX-SECONDS (/ (. (ClusterTiming) watch-max-ms) 1000.0))  ; 待ちの上限の既定(ClusterTiming)
 (import doeff_cluster.shared.intent.warm_model [AwaitWarm WarmState WarmReady WarmWaitExpired])
 (import doeff_cluster.shared.core.warm_rules [warm-state->json])
 (import doeff_cluster.shared.protocol.detached [warm-cluster])
