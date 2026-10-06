@@ -26,7 +26,7 @@
                                                    ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused UpgradeRefused
                                                    PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
-                                                   RollbackRootMissing CoordinatorUpgraded ClusterUpgraded])
+                                                   RollbackRootMissing QueuedTasksRemain RefusalPoint CoordinatorUpgraded ClusterUpgraded])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-coordinator upgrade-workers])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator CoordinatorRuns StopCoordinator
@@ -560,10 +560,11 @@
     (SwapStep :name "ApplyDeclarations" :target None)))
 
 
-;; coordinator の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → 静かな時間帯の待ち → Desire → 公開 → 当て — #3772)。
+;; coordinator の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 静かな時間帯の待ち → 当て — #3772。
+;; 公開は数分かかるので、静かな時間帯は当てる直前に待つ)。
 (val COORDINATOR-STEPS #((SwapStep :name "ConfirmCleanBoot" :target "coordinator") (SwapStep :name "PrepareBootRoot" :target "coordinator")
-                         (SwapStep :name "AwaitQuietWindow" :target "coordinator") (SwapStep :name "DesireCoordinator" :target "coordinator")
-                         (SwapStep :name "PublishDeclarations" :target None) (SwapStep :name "ApplyDeclarations" :target None)))
+                         (SwapStep :name "DesireCoordinator" :target "coordinator") (SwapStep :name "PublishDeclarations" :target None)
+                         (SwapStep :name "AwaitQuietWindow" :target "coordinator") (SwapStep :name "ApplyDeclarations" :target None)))
 
 
 (defk recorded-run [program]
@@ -856,15 +857,16 @@
 ;; 宣言の内の worker の版が全部 NEW(条 V1 はすぐ通る)— 当てた後の coordinator の答えだけを見る台本の元。
 (val UNIFORM (replace ALL-NEW :tasks #(RUNNING) :known-tasks #("t-run")))
 (val UNIFORM-SWAPPED (replace UNIFORM :coordinator-commit NEW))
-;; 台本: 待ち行列 → 条 V1 → 当てた直後は古い coordinator(OLD)が 2 回答える → 新しい coordinator が NEW で答える。
-(val LATE-SCRIPT #(UNIFORM UNIFORM UNIFORM UNIFORM UNIFORM-SWAPPED))
-;; 新しい coordinator が初めて NEW で答える読み(5 番目)。
-(val FIRST-NEW-READ 5)
+;; 台本: 待ち行列 → 条 V1 → 当てる直前の読み直しと待ち行列 → 当てた直後は古い coordinator(OLD)が 2 回答える → 新しい coordinator が
+;; NEW で答える。
+(val LATE-SCRIPT #(UNIFORM UNIFORM UNIFORM UNIFORM UNIFORM UNIFORM UNIFORM-SWAPPED))
+;; 新しい coordinator が初めて NEW で答える読み(7 番目)。
+(val FIRST-NEW-READ 7)
 
 
 (deftest test-an-old-coordinator-answering-after-the-apply-is-not-the-end
-  ;; 失敗ケース 4(#3772): 当てた直後に古い coordinator(版 OLD)が答えても終わりにしない — coordinator が版 NEW で答える(5 番目の読み)
-  ;; まで待ってから、宣言の内の worker と待っていた task を確かめて答える。worker が live なら終わりとする形は 3 番目の読みで答えて赤。
+  ;; 失敗ケース 4(#3772): 当てた直後に古い coordinator(版 OLD)が答えても終わりにしない — coordinator が版 NEW で答える(7 番目の読み)
+  ;; まで待ってから、宣言の内の worker と待っていた task を確かめて答える。worker が live なら終わりとする形は 5 番目の読みで答えて赤。
   (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade LATE-SCRIPT) step-recorder]
                            (coordinator-run)))
   (assert (isinstance run.outcome CoordinatorUpgraded) run.outcome)
@@ -918,22 +920,74 @@
     (resume (QuietWindowMissed :target target :reason "筋書き: 入れ替えで切れて困る仕事が走り続けている"))))
 
 
-(deftest test-the-quiet-window-is-awaited-before-the-coordinator-desire
-  ;; 失敗ケース 8(#3772): 静かな時間帯の効果を、coordinator の宣言の書き換え(DesireCoordinator)より前に出す。静かな時間帯が来なければ
-  ;; 上限で止まり、宣言を書かない(Desire・公開・当ては出ない)。効果を出さない形・Desire の後に出す形は順が違って赤。
+(deftest test-the-quiet-window-is-awaited-after-the-publish-and-before-the-apply
+  ;; 失敗ケース 8(#3772・cisco-c8 の決定で書き直した): 静かな時間帯の効果は、公開(PublishDeclarations)の後・当てる(ApplyDeclarations)の
+  ;; 直前に出す — 公開(マージの列・main 入り)は数分かかり、その間に入れ替えで切れて困る仕事が始まりうるので、当てる直前にもう 1 度
+  ;; 読む。(a) 通る時の順は 確認 → 準備 → Desire → 公開 → 静かな時間帯 → 当て。Desire の前に待つ形は順が違って赤。
   (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM UNIFORM UNIFORM-SWAPPED))
                                          step-recorder]
                            (coordinator-run)))
   (assert (isinstance run.outcome CoordinatorUpgraded) run.outcome)
-  (assert (= run.log.steps COORDINATOR-STEPS) run.log.steps)
+  (assert (= run.log.steps COORDINATOR-STEPS) run.log.steps))
+
+
+(deftest test-a-quiet-window-that-never-comes-refuses-the-apply-after-the-publish
+  ;; 失敗ケース 8 の止まり方(#3772): 上限の内に静かな時間帯が来なければ、ApplyDeclarations を出さずに UpgradeRefused で止まり、
+  ;; 断りの理由は静かな時間帯が来なかった事(QuietWindowMissed — 閉じた型)。それまでに DesireCoordinator と PublishDeclarations は
+  ;; 出ている — 宣言と公開は済み・当てていない状態で止まった事を、型と文で分かる(自動では戻さない)。UpgradeStalled で止まる形・
+  ;; 宣言の前に止まる形は赤。
   (<- missed CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM)) quiet-window-never-comes
                                             step-recorder]
                               (coordinator-run)))
-  (val stalled missed.outcome)
-  (assert (isinstance stalled UpgradeStalled) stalled)
-  (assert (= stalled.step "静かな時間帯を待つ") stalled.step)
-  (assert (in "走り続けている" stalled.observed) stalled.observed)
-  (assert (= missed.log.steps (cut COORDINATOR-STEPS 0 3)) missed.log.steps))
+  (val refused missed.outcome)
+  (assert (isinstance refused UpgradeRefused) refused)
+  (assert (= refused.target "coordinator") refused)
+  (assert (= refused.refusal (QuietWindowMissed :target "coordinator" :reason "筋書き: 入れ替えで切れて困る仕事が走り続けている"))
+          refused.refusal)
+  (assert (= refused.point RefusalPoint.BEFORE-APPLY) refused.point)
+  (assert (in "当てていない" (str refused)) (str refused))
+  (assert (= missed.log.steps (cut COORDINATOR-STEPS 0 5)) missed.log.steps)
+  (assert (= missed.script.coordinator-at 2) missed.script))
+
+
+;; 公開の間に変わる世界: 宣言の前の 2 回の読み(待ち行列・条 V1)は UNIFORM のまま、公開の後の読みから変わる。
+;; queued の task t-late が積まれた(作り直した coordinator が落としうる — #2440)。
+(val LATE-QUEUED (PendingTask :task "t-late" :phase PendingPhase.QUEUED :worker None))
+(val UNIFORM-LATE-QUEUED (replace UNIFORM :tasks #(RUNNING LATE-QUEUED) :known-tasks #("t-run" "t-late")))
+;; 別の worker の入れ替えが入り、宣言の内の worker b が確かめた組み合わせに無い版 OLD で動いている。
+(val UNIFORM-LATE-UNVERIFIED (replace UNIFORM :roster #((RosterEntry :worker "a" :live True :doeff-commit NEW :declaration IN)
+                                                        (RosterEntry :worker "b" :live True :doeff-commit OLD :declaration IN))))
+
+
+(deftest test-a-task-queued-during-the-publish-refuses-the-apply
+  ;; 失敗ケース(#3772・doeff-cluster の持ち主の読み 1): 宣言の前は待ち行列が空でも、公開の間に queued の task が積まれたら、当てる直前の
+  ;; 確かめで上限まで待ち、空にならなければ当てずに UpgradeRefused(QueuedTasksRemain — 残った task の id)で止まる。宣言と公開は
+  ;; 済んでいる(断った所 = 当てる前)。待ち行列を入口の最初にしか見ない形は当てて赤(作り直しで queued を落とす形)。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM UNIFORM UNIFORM-LATE-QUEUED))
+                                         step-recorder]
+                           (coordinator-run)))
+  (val refused run.outcome)
+  (assert (isinstance refused UpgradeRefused) refused)
+  (assert (= refused.refusal (QueuedTasksRemain :target "coordinator" :tasks #("t-late"))) refused.refusal)
+  (assert (= refused.point RefusalPoint.BEFORE-APPLY) refused.point)
+  (assert (in "t-late" (str refused)) (str refused))
+  (assert (= run.log.steps (cut COORDINATOR-STEPS 0 4)) run.log.steps))
+
+
+(deftest test-a-worker-version-changed-during-the-publish-refuses-the-apply
+  ;; 失敗ケース(#3772・doeff-cluster の持ち主の読み 2): 公開の間に、宣言の内の worker b の版が確かめた組み合わせに無い版(OLD)へ
+  ;; 替わったら、当てる直前の確かめで状態を読み直し、同じ条 V1 の照らしで当てずに UpgradeRefused(UnverifiedWorkers — b と版)で止まる
+  ;; (断った所 = 当てる前)。V1 を宣言の前にしか照らさない形は当てて赤。
+  (<- run CoordinatorRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(UNIFORM UNIFORM UNIFORM-LATE-UNVERIFIED))
+                                         step-recorder]
+                           (coordinator-run)))
+  (val refused run.outcome)
+  (assert (isinstance refused UpgradeRefused) refused)
+  (assert (isinstance refused.refusal UnverifiedWorkers) refused.refusal)
+  (assert (= (tuple (gfor e refused.refusal.workers #(e.worker e.doeff-commit))) #(#("b" OLD))) refused.refusal)
+  (assert (= refused.point RefusalPoint.BEFORE-APPLY) refused.point)
+  (assert (in "当てていない" (str refused)) (str refused))
+  (assert (= run.log.steps (cut COORDINATOR-STEPS 0 4)) run.log.steps))
 
 
 (deftest test-a-refused-coordinator-clean-boot-writes-no-declaration-through-the-coordinator-entry

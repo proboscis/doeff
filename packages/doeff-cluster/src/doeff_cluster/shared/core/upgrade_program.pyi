@@ -34,6 +34,10 @@ from doeff_cluster.shared.intent.upgrade_model import QuietWindowOpened as Quiet
 from doeff_cluster.shared.intent.upgrade_model import QuietWindowMissed as QuietWindowMissed
 from doeff_cluster.shared.intent.upgrade_model import UnverifiedWorkers as UnverifiedWorkers
 from doeff_cluster.shared.intent.upgrade_model import RollbackRootMissing as RollbackRootMissing
+from doeff_cluster.shared.intent.upgrade_model import QueuedTasksRemain as QueuedTasksRemain
+from doeff_cluster.shared.intent.upgrade_model import RefusalPoint as RefusalPoint
+from doeff_cluster.shared.intent.upgrade_model import WaitReached as WaitReached
+from doeff_cluster.shared.intent.upgrade_model import WaitExpired as WaitExpired
 from doeff_cluster.shared.intent.upgrade_model import CoordinatorUpgraded as CoordinatorUpgraded
 from doeff_cluster.shared.intent.upgrade_model import ClusterUpgraded as ClusterUpgraded
 UNREACHABLE_RETRY_SECONDS: float
@@ -55,6 +59,12 @@ def unverified_of(verified: VerifiedVersions, state: UpgradeState) -> _Program[t
     ...
 
 def v1_decidable(verified: VerifiedVersions, state: UpgradeState) -> _Program[bool, object]:
+    ...
+
+def state_read(state: UpgradeState) -> _Program[bool, object]:
+    ...
+
+def state_line(state: UpgradeState) -> _Program[str, object]:
     ...
 
 def queue_empty(state: UpgradeState) -> _Program[bool, object]:
@@ -99,6 +109,9 @@ def queued_line(state: UpgradeState) -> _Program[str, object]:
 def not_live_line(state: UpgradeState) -> _Program[str, object]:
     ...
 
+def await_state(done: Callable, observe: Callable, limit_seconds: float) -> _Program[WaitReached | WaitExpired, object]:
+    ...
+
 def await_until(step: str, done: Callable, observe: Callable, limit_seconds: float) -> _Program[UpgradeState, object]:
     ...
 
@@ -111,13 +124,22 @@ def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> 
 def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
     ...
 
-def refuse_unverified(coordinator: CoordinatorLaunch, verified: VerifiedVersions, state: UpgradeState) -> _Program[None, object]:
+def refuse_unverified(coordinator: CoordinatorLaunch, verified: VerifiedVersions, state: UpgradeState, point: RefusalPoint) -> _Program[None, object]:
     ...
 
 def require_rollback_root(root: BootRootAlreadyPrepared | BootRootBuilt, target: str) -> _Program[None, object]:
     ...
 
+def queued_ids(state: UpgradeState) -> _Program[tuple[str, ...], object]:
+    ...
+
+def refuse_unless_queue_empties(target: str, limit_seconds: float) -> _Program[None, object]:
+    ...
+
 def await_quiet_window(target: str, limit_seconds: float) -> _Program[None, object]:
+    ...
+
+def check_before_apply(coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[None, object]:
     ...
 
 def upgrade_coordinator(coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[CoordinatorUpgraded, object]:

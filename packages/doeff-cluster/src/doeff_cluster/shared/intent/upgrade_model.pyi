@@ -155,12 +155,31 @@ class RollbackRootMissing:
     target: str
     root: BootRootAlreadyPrepared | BootRootBuilt
 
+@dataclass(frozen=True, kw_only=True)
+class QueuedTasksRemain:
+    target: str
+    tasks: tuple[str, ...]
+
+class RefusalPoint(StrEnum):
+    BEFORE_DESIRE = 'before-desire'
+    BEFORE_APPLY = 'before-apply'
+
 class UpgradeRefused(RuntimeError):
     target: str
-    refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing
+    refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing | QueuedTasksRemain | QuietWindowMissed
+    point: RefusalPoint
 
-    def __init__(self, target: str, refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing) -> None:
+    def __init__(self, target: str, refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing | QueuedTasksRemain | QuietWindowMissed, point: RefusalPoint) -> None:
         ...
+
+@dataclass(frozen=True, kw_only=True)
+class WaitReached:
+    state: UpgradeState
+
+@dataclass(frozen=True, kw_only=True)
+class WaitExpired:
+    observed: str
+    last: UpgradeState | None
 
 @dataclass(frozen=True, kw_only=True)
 class CoordinatorUpgraded:
