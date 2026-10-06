@@ -32,6 +32,7 @@ from doeff_records.pg_sql import DEFAULT_PREFIX as DEFAULT_PREFIX
 from doeff_records.http_server import MaintenancePlan as MaintenancePlan
 from doeff_records.http_server import RecordsServing as RecordsServing
 from doeff_records.http_server import RecordsListening as RecordsListening
+from doeff_records.http_server import RecordsPrepared as RecordsPrepared
 from doeff_records.http_server import REQUEST_MAX_BYTES as REQUEST_MAX_BYTES
 from doeff_records.http_server import serve_records as serve_records
 from doeff_records.store_choice import StoreChoice as StoreChoice

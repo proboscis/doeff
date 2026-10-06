@@ -11,7 +11,10 @@
 ;;;   - 反例: 表の用意が落ちれば、run は例外で終わる(0 で終わらない — 半端に立ったまま答え続けない)
 ;;;   - 計器(#2709): 実際に送った答えを札ごとにちょうど 1 つ、要求の種と status の counter に数える(400 の本文の断り・500 の落ちた札・
 ;;;     用意の前の 503 も)。送りが落ちた札は 500 で送り直し、500 として数える(送れなかった答えは数えない)
-(require doeff-hy.macros [deftest defhandler defk <- val])
+;;;   - 表の用意の告知(#3733): 用意が済むまで RecordsPrepared は出ず(用意の前の記録の操作は 503)、済んだ拍に 1 度だけ
+;;;     出る。告知の後に届いた最初の要求は答える(告知が出たなら要求に答えられる)
+;;;   - 置き場に届くかの公開の判断 store-reach(/readyz と同じ判断): 届く・届かない・上限の秒の内に答えない、をそれぞれの型で返す
+(require doeff-hy.macros [deftest defeffect defhandler defk <- val])
 (require doeff-hy.record [defrecord])
 (import json)
 (import dataclasses [dataclass])
@@ -21,12 +24,13 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpReadBody HttpRequestArrived HttpRespond HttpScript ReadHttpServed
-                                                ScriptedBody])
+(import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpNextRequest HttpReadBody HttpRequestArrived
+                                                HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServing RecordsListening serve-records])
+(import doeff_records.http_server [RecordsServing RecordsListening RecordsPrepared StoreReach StoreReachable StoreSilent StoreUnreachable
+                                   serve-records store-reach])
 (import doeff_records.wire [ANSWER-METRICS])
 (import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
@@ -52,12 +56,15 @@
 
 
 (defhandler scripted-extras [#^ (| str None) broken]
-  "札 broken の本文の読みに語彙の外の答えを返し、待ち受けの名乗りを受け流すため(検の土台の代役)。他の札の読みは外側の台本の待ち受けへ回す。"
+  "札 broken の本文の読みに語彙の外の答えを返し、待ち受けの名乗りと表の用意の告知を受け流すため(検の土台の代役)。他の札の読みは外側の
+   台本の待ち受けへ回す。"
   {:tags {:context "records" :role "foundation"}}
   ;; 引数に残す理由: 壊す札は検の筋書きごとの値。
   (HttpReadBody [ticket max-bytes] :when (= ticket broken)
     (resume "語彙の外の答え"))
   (RecordsListening [address]
+    (resume None))
+  (RecordsPrepared [address seconds]
     (resume None)))
 
 
@@ -270,6 +277,126 @@
   (assert (= answered (FrozenMap {"records_requests_read_500" 1.0})) answered))
 
 
+;; --- 表の用意の告知(#3733)------------------------------------------------------------------------------------
+;; 入口は表の用意が済んだ拍(用意の task が 書き手の名 → handler の関数を置いた後)に、RecordsPrepared を 1 度だけ出す — 告知が出たなら
+;; 記録の操作に答えられる。使い手の土台は告知を受けて準備の報告を立てる。台本の待ち受けは要求が尽きると閉じるので、要求を仮想の時計で
+;; 空けて渡し、用意が長い間も受けの loop を開けておく。告知の答え手は、告知の拍までに答えた札を控え、台本へ要求を 1 つ足す(告知の後の
+;; 最初の要求)。控えは run の外へ積まず、走り終えた後に読んで run の答えにする(計器の検と同じ形)。
+
+;; 台本の要求を渡す間隔の秒・用意が済むまでの秒(仮想の時計 — 早い札 2 つは用意の前に届く)・告知の拍に足す札。
+(val ARRIVAL-PACE-SECONDS 2.0)
+(val PREPARE-SECONDS 5.0)
+(val LATE-TICKET "t-late")
+
+
+(defrecord PreparedNotice
+  "用意の告知 1 つの控え: address = 告知が名乗った宛先・seconds = 告知が名乗った用意の秒・answered = 告知の拍までに台本の待ち受けが
+   送った答え(#(札 status) の送った順)。"
+  (#^ HttpAddress address)
+  (#^ float seconds)
+  (#^ tuple answered))
+
+
+(defrecord NoticedRun
+  "告知の筋書きを 1 回走らせた答え(run の結果): code = 入口の終わりの code・served = 台本の待ち受けが受けた命令(受けた順)・
+   notices = 告知の控え(出た順)。"
+  (#^ int code)
+  (#^ tuple served)
+  (#^ tuple notices))
+
+
+(defeffect ReadNotices
+  "告知の控え(PreparedNotice の出た順の列)を読む(検の土台の問い — prepared-noted が答える)。"
+  {:fields [] :answer tuple :tags {:context "records" :role "foundation"}})
+
+
+(defhandler arrivals-paced [#^ float seconds]
+  "台本の要求を seconds 秒ずつ空けて渡すため(台本の待ち受けは尽きると閉じる — 用意が長い間も受けの loop を開けておく)。"
+  {:tags {:context "records" :role "foundation"}}
+  ;; 引数に残す理由: 間隔は検の筋書きごとの値。
+  (HttpNextRequest []
+    (<- (Delay seconds))
+    (<- event effect)
+    (resume event)))
+
+
+(defhandler prepared-noted [#^ HttpScript late]
+  "表の用意の告知(RecordsPrepared)を控え、告知の拍に台本へ要求を足すため(告知の後の最初の要求 — 検の土台の代役)。"
+  {:tags {:context "records" :role "foundation"}}
+  ;; 引数に残す理由: late は告知の拍に足す台本(検の筋書きごとの値)。notices = 告知の控え(出た順・session の値)。
+  (session var notices #())
+  (RecordsPrepared [address seconds]
+    (<- served tuple (ReadHttpServed))
+    (:= notices (+ notices #((PreparedNotice :address address :seconds seconds
+                                             :answered (tuple (gfor one served #(one.ticket one.status)))))))
+    (<- (AppendHttpScript :arrivals late.arrivals :bodies late.bodies))
+    (resume None))
+  (ReadNotices []
+    (resume notices)))
+
+
+(defk read-script [ticket]
+  {:pre [(: ticket str)] :post [(: % HttpScript)] :tags {:context "records" :role "judgment"}}
+  "札 ticket で表 parts の行 p1 を読む要求 1 つの台本を作るため。"
+  (val read (.encode (json.dumps {"table" "parts" "key" ["p1"]}) "utf-8"))
+  (HttpScript :arrivals #((! (arrival ticket "POST" READ-PATH "maker" (len read))))
+              :bodies #((ScriptedBody :ticket ticket :data read))))
+
+
+(defk served-by-ticket [served]
+  {:pre [(: served tuple)] :post [(: % dict)] :tags {:context "records" :role "judgment"}}
+  "受けた命令の列を、札 → その札の命令の列(受けた順)の表にするため(status-of が読む形)。"
+  (dfor ticket (frozenset (gfor one served one.ticket)) ticket (tuple (gfor one served :if (= one.ticket ticket) one))))
+
+
+(defk noticed-body [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % NoticedRun)] :tags {:context "records" :role "foundation"}}
+  "入口の Program を走らせ、終わった後に台本の待ち受けが受けた命令と告知の控えを読んで、run の答えにするため。"
+  (<- code int (serve-records serving))
+  (<- served tuple (ReadHttpServed))
+  (<- notices tuple (ReadNotices))
+  (NoticedRun :code code :served served :notices notices))
+
+
+(defk noticed-run [prepare]
+  {:pre [(: prepare (| Program EffectBase))] :post [(: % NoticedRun)] :tags {:context "records" :role "foundation"}}
+  "早い札 2 つ(生存 t-health・読み t-early)を ARRIVAL-PACE-SECONDS 秒ずつ空けて渡す台本を、告知の控えの下で入口に走らせるため
+   (土台は他の台本の検と同じ — scheduler・session の値の置き場・仮想の時計・台本の止めの合図と待ち受け)。告知が出れば、その拍に
+   読み LATE-TICKET を台本へ足す。"
+  (<- early HttpScript (read-script "t-early"))
+  (<- late HttpScript (read-script LATE-TICKET))
+  (val script (HttpScript :arrivals (+ #((! (arrival "t-health" "GET" "/healthz" None None))) early.arrivals) :bodies early.bodies))
+  (<- serving RecordsServing (serving-of prepare None))
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) scripted-stop-handler (scripted-http-server script)
+                                  (scripted-extras None) (arrivals-paced ARRIVAL-PACE-SECONDS) (prepared-noted late)]
+                                 (noticed-body serving)))))
+
+
+(deftest test-the-prepared-notice-comes-once-when-the-store-is-prepared
+  ;; 用意は仮想の 5 秒: 生存(2 秒)と読み(4 秒)は用意の前に届き、読みは 503。5 秒の拍に告知が 1 つ出て、告知の拍までに送った答えは
+  ;; その 2 つだけ(告知の前に記録の操作へ答えていない)。告知の拍に足した読み(6 秒に届く)は 200。
+  (<- ran NoticedRun (noticed-run (handlers-after (MemoryStore LAW-SCHEMA) PREPARE-SECONDS)))
+  (assert (= ran.code 0) ran)
+  (assert (= (len ran.notices) 1) ran.notices)
+  (val notice (get ran.notices 0))
+  (assert (= notice.address (HttpAddress :host "127.0.0.1" :port 0)) notice)
+  (assert (= notice.seconds PREPARE-SECONDS) notice)
+  (assert (= notice.answered #(#("t-health" 200) #("t-early" 503))) notice)
+  (<- by-ticket dict (served-by-ticket ran.served))
+  (assert (= (! (status-of by-ticket "t-early")) #(503 "store-unavailable")) by-ticket)
+  (assert (= (! (status-of by-ticket LATE-TICKET)) #(200 None)) by-ticket))
+
+
+(deftest test-no-prepared-notice-comes-while-the-store-is-unprepared
+  ;; 反例の側: 用意が 1 時間かかる間に台本が尽きて待ち受けが閉じると、用意は取り消され、告知は 1 つも出ない(記録の操作は 503 のまま)。
+  (<- ran NoticedRun (noticed-run (handlers-after (MemoryStore LAW-SCHEMA) 3600.0)))
+  (assert (= ran.code 0) ran)
+  (assert (= ran.notices #()) ran.notices)
+  (<- by-ticket dict (served-by-ticket ran.served))
+  (assert (= (! (status-of by-ticket "t-early")) #(503 "store-unavailable")) by-ticket)
+  (assert (not-in LATE-TICKET by-ticket) by-ticket))
+
+
 ;; --- /readyz --------------------------------------------------------------------------------------------------
 ;; /healthz は生存だけ(liveness)・/readyz は置き場を上限 1 秒で問う(readiness)。固まった置き場で口ごと固まらない。
 
@@ -376,6 +503,27 @@
   (val before (! (readyz-status (handlers-after store 3600.0) (! (answers-with True)))))
   (assert (= (get before 1) #(503 "store-unavailable")) before)
   (assert (= (get before 2) #(200 None)) before))
+
+
+(defk reach-under-the-clock [readiness]
+  {:pre [(: readiness (| Callable None))] :post [(: % StoreReach)] :tags {:context "records" :role "foundation"}}
+  "置き場に届くかの公開の判断(store-reach)を、readiness を渡した入口の設定で、scheduler と仮想の時計の下で 1 回撃つため。"
+  (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA
+                               :prepare (handlers-at-once (MemoryStore LAW-SCHEMA)) :request-handlers #() :max-bytes MAX-BYTES
+                               :maintenance None :stop-poll-seconds 1.0 :drain-seconds 0.0 :readiness readiness))
+  (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock))] (store-reach serving)))))
+
+
+(deftest test-the-store-reach-judgment-answers-each-outcome-in-its-own-type
+  ;; /readyz と同じ判断を、使い手(準備の報告)が撃てる公開の判断として返す(#3733): 届く = StoreReachable(詰まりの読みを持つ)・
+  ;; 届かない = StoreUnreachable(理由)・上限の 1 秒の内に答えない = StoreSilent(待った上限の秒)。問いの無い置き場は届く。
+  (val quiet (StorePressure :lock-waiters 0 :idle-in-transaction-max-seconds 0.0))
+  (assert (= (! (reach-under-the-clock (! (answers-with True)))) (StoreReachable :pressure quiet)))
+  (assert (= (! (reach-under-the-clock None)) (StoreReachable :pressure quiet)))
+  (val down (! (reach-under-the-clock (! (answers-with False)))))
+  (assert (= down (StoreUnreachable :reason "置き場に届かない")) down)
+  ;; 固まった置き場(1 時間答えない): 上限の 1 秒で答えないと返す(問いを待ち続けない)。
+  (assert (= (! (reach-under-the-clock hung-probe)) (StoreSilent :seconds 1.0))))
 
 
 (deftest test-a-failed-preparation-ends-the-run-with-the-error

@@ -133,6 +133,15 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   要求ごとに `Spawn` した task が答える(例外でも必ず答える — 答えていなければ 500 internal)。本文の上限(16 MiB)は `HttpReadBody` が
   読む前に判じる。表の用意は task で、口は先に開き、用意の前の記録の操作は 503 store-unavailable・`/healthz` は 200。用意が落ちれば
   run は例外で終わる。止めの合図(`StopRequested`)で `HttpShutdown` し、走り中の要求を待ってから終わる。
+- 用意の告知(#3733): 用意の task は記録の handler を置いた後に `RecordsPrepared(address, seconds)`(結んだ宛先・用意の所要の秒)を
+  1 度だけ出す — 告知が出たなら記録の操作に答えられる。告知は用意の task の終わりで、止めの道の外(止めの合図が先なら用意の task ごと
+  取り消す)。本番の土台(`records-connected` の `printed-listening`)は 1 行を印字する。準備の報告を立てる使い手の土台は、自分の答え手を
+  `printed-listening` より内側に置く。答え手が落ちれば用意の失敗と同じく run は例外で終わる。
+- `GET /readyz` は用意の前は 503、用意の後は置き場に届くかの判断 `doeff_records.http_server.store_reach(serving)` で答える。判断は公開で、
+  使い手の土台が準備の報告に同じ判断を撃てる。答えは閉じた型 `StoreReach` = `StoreReachable(pressure)`(届く — 詰まりの読みを持つ・200)/
+  `StoreUnreachable(reason)`(`RecordsServing.readiness` が届かないと答えた・503)/ `StoreSilent(seconds)`(上限 1 秒の内に答えない・503)。
+  `readiness` が None の置き場は届く。memory の置き場の選び(`memory-store-choice`)の `readiness` は、置き場全体の止まり(名の無い
+  `faults.SetStoreOutage`)の間だけ届かない(名を限った止まりは届く — PostgreSQL の `SELECT 1` と同じ意味)。
 - 計器(#2709): 要求の task は答えを送った直後に、要求の種(`write` = put-row・put-rows・append-event / `read` = 残りの記録の操作 /
   `other` = 記録の操作でない route)と実際に送った答えの status ごとの counter `records_requests_<種>_<status>` を doeff の `CountMetric` で
   1 つ数える(本文の断りの 400・答えの途中で落ちた 500 も同じ 1 か所)。答えの送りが例外になれば、標準の誤りへ 1 行名指して 500 internal を
@@ -147,7 +156,8 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   使い手の木の data(使い手の repo が木ごとに書く表の要約の file)も同じ関数で書く。身元を引く前・表の用意を問う前に答えるので、
   置き場に届かない間も読める。計器の種は `other`。`TableDecl` の形が doeff の版で変わると、全部の表の要約が一度に変わる。
 - 検と模擬の殻は `doeff_records.http_server.start_records_server(run(records_server_config(schema, handler_for, request_handlers=…)))`:
-  入口の Program を別の thread の run で回し、`url` と `close()` を持つ `RunningServer` を返す。`handler_for` = 書き手の名 → 用意し終えた
+  入口の Program を別の thread の run で回し、表の用意の告知(`RecordsPrepared`)を待って `url` と `close()` を持つ `RunningServer` を返す
+  (返った口は記録の操作に答えられる)。`handler_for` = 書き手の名 → 用意し終えた
   置き場の handler、`request_handlers` = 要求ごとの答えの外側に被せる handler の列(検の仮想の時計・SQL の答え手)、`meter` = 計器の
   答え手の差し替え(None = 既定 — 検が壊した計器を差す口)。
 
@@ -201,7 +211,8 @@ Program で、答え = process の終わりの code。本番の土台(`records-f
 
 - `records-settings dsn-of` — env と file を読んで設定の値 `RecordsSettings`(DSN・接頭辞・機体の名・接続の数・宛先・手入れ)を作る
 - `records-serving schema settings choice` — 本体の設定 `RecordsServing` を作る。`choice` は置き場の選び `StoreChoice`(`doeff_records.store_choice` — 表の用意の作り手と /readyz の問い)で、PostgreSQL は `doeff_records.main` の `PG-STORE`、memory は `doeff_records.memory` の `memory-store-choice`
-- `records-connected settings body` — 土台の口(待ち受け・名乗り・PostgreSQL の答え手。接続と pool を開き、終われば閉じる)。外側は持たない
+- `records-connected settings body` — 土台の口(待ち受け・名乗りと用意の告知の印字・PostgreSQL の答え手。接続と pool を開き、終われば閉じる)。
+  外側は持たない。用意の告知(`RecordsPrepared`)に別の答えを持つ使い手は、`body` を自分の答え手で包んで渡す(印字より内側が先に答える)
 - `records-process foundation serving` — 本体。`(records-process (fn [body] (<自分の外側> (records-connected settings body))) serving)` と撃つ
 
 `records-foundation` は単独の入口の土台の全部(外側 + `records-connected`)。

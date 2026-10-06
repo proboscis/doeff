@@ -116,12 +116,12 @@
 
 
 (deftest test-serving-takes-the-store-from-the-choice
-  ;; 置き場の選びを替えると、表の用意と /readyz の問いがその選びの物になる(PostgreSQL に固定しない — #1608)。memory の選びは
-  ;; /readyz を問わず(用意が済めば ready)、表の用意は memory の置き場の handler の関数を返す(I/O なし)。
+  ;; 置き場の選びを替えると、表の用意と /readyz の問いがその選びの物になる(PostgreSQL に固定しない — #1608)。memory の選びの
+  ;; /readyz の問いは置き場の止まりを読み(止まりの無い置き場は届く — #3733)、表の用意は memory の置き場の handler の関数を返す(I/O なし)。
   (<- settings RecordsSettings (settings-under REQUIRED-ENV))
   (val store (MemoryStore LAW-SCHEMA))
   (<- serving RecordsServing (records-serving LAW-SCHEMA settings (! (memory-store-choice store))))
-  (assert (is serving.readiness None) serving)
+  (assert (is (! (serving.readiness)) True) serving)
   (<- handler-for Callable serving.prepare)
   (assert (callable (handler-for "maker")) handler-for))
 

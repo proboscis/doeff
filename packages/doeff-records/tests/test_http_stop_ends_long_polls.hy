@@ -32,7 +32,7 @@
 (import doeff_records.values [Changes EventsQuiet ExpectAbsent WatchCursor Written])
 (import doeff_records.effects [ListRows PutRow WatchChanges WatchEvents])
 (import doeff_records.wire [PATH-PREFIX WATCH-MAX-SECONDS decode-answer encode-request])
-(import doeff_records.http_server [CloseWaits RecordsListening RecordsServing closing-cuts-waits serve-records waits-closing])
+(import doeff_records.http_server [CloseWaits RecordsListening RecordsPrepared RecordsServing closing-cuts-waits serve-records waits-closing])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason postgres-connections fresh-prefix run-sql prepared-store
                             records-handler-for])
 
@@ -66,9 +66,11 @@
 
 
 (defhandler listening-noted
-  "入口の名乗り(RecordsListening)を受け流すため(検の土台の代役 — 本番の土台は 1 行を印字する)。"
+  "入口の名乗り(RecordsListening)と表の用意の告知(RecordsPrepared)を受け流すため(検の土台の代役 — 本番の土台は 1 行ずつ印字する)。"
   {:tags {:context "records" :role "foundation"}}
   (RecordsListening [address]
+    (resume None))
+  (RecordsPrepared [address seconds]
     (resume None)))
 
 
