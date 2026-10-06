@@ -140,10 +140,12 @@
 
 (defk coordinator-env [machine]
   {:pre [(: machine LocalMachine)] :post [(: % (get tuple #(EnvEntry ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "boot.sh の ROLE=coordinator に渡す環境変数を組むため(配備の coordinator と同じ名)。"
+  "boot.sh の ROLE=coordinator に渡す環境変数を組むため(配備の coordinator と同じ名)。worker の生死の出来事(#3864)の broker は、この
+   機体の process の中だけ(memory — Redis の無い機体でも起きる。誰にも届かない)。"
   #((EnvEntry :name "ROLE" :value "coordinator")
     (EnvEntry :name "LISTEN_PORT" :value (str machine.port))
-    (EnvEntry :name "WORK_DIR" :value (str (/ (Path machine.work-dir) "coordinator")))))
+    (EnvEntry :name "WORK_DIR" :value (str (/ (Path machine.work-dir) "coordinator")))
+    (EnvEntry :name "NOTICE_BROKER" :value "memory")))
 
 
 (defk repo-key-table [machine]
