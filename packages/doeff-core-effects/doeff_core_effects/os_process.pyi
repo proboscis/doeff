@@ -18,6 +18,8 @@ from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_lifeline import Lifeline as Lifeline
+from doeff_core_effects.process_effects import ChildLifetime as ChildLifetime
 from doeff_core_effects.process_effects import EnvEntry as EnvEntry
 from doeff_core_effects.process_effects import EnvMode as EnvMode
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
@@ -84,6 +86,7 @@ class ChildWatch:
 
     def cancel(self: ChildWatch) -> WatchedChild | None:
         ...
+LIFELINE: Lifeline
 
 class StartedChildren:
     lock: Incomplete
@@ -185,7 +188,7 @@ def run_communicated(argv: tuple, stdin: str | None, timeout: int | float | None
 def run_subprocess(argv: tuple, stdin: str | None, timeout: int | float | None, cwd: str | None, env: tuple | None, env_mode: EnvMode, output_path: str | None, env_drop: tuple, process_group: bool, stop_grace: int | float, stream_output: bool, watch: ChildWatch | None=None) -> _Program[ProcessOutcome, object]:
     ...
 
-def start_child_process(argv: tuple, cwd: str | None, env: tuple | None, env_mode: EnvMode, env_drop: tuple, stdout_path: str | None, stderr_path: str | None, process_group: bool, hold_stdin: bool=False, reap_group: bool=False) -> _Program[ProcessStarted | ProcessNotStarted, object]:
+def start_child_process(argv: tuple, cwd: str | None, env: tuple | None, env_mode: EnvMode, env_drop: tuple, stdout_path: str | None, stderr_path: str | None, process_group: bool, hold_stdin: bool=False, reap_group: bool=False, lifetime: ChildLifetime=...) -> _Program[ProcessStarted | ProcessNotStarted, object]:
     ...
 
 def poll_child_process(pid: int) -> _Program[ProcessRunning | ProcessExited | ProcessNotChild, object]:
