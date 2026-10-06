@@ -24,6 +24,8 @@
 //! stage した file の当たりは捨てずに止める。
 //! repo 全体の比べの HEAD の木の結果は置き場(head_report_cache — HEAD の commit・子の linter の版・規則の組・木の中の設定が鍵)に残し、
 //! 同じ鍵の次の hook は先端の木だけを測る(上限の秒は上げない)。
+//! HEAD の木そのものは事実の cache の根の `commit-hook-tree/<sha>` に置いて使い回す(kept_head_tree — 根の path が毎回同じなので、HEAD の木を
+//! 測る 1 回にも事実の cache が 2 回目から効く・agora-redesign #3858)。
 //! 純粋な部分(規則の分け・鍵の差・止める当たりの選び・測れなかった比べの名指し)は関数に分けて、単体の検で確かめる。
 
 use crate::config::{CommitHookSection, Config};
@@ -32,7 +34,7 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 子の linter 1 回ごとの既定の上限(秒)。
 pub const DEFAULT_TIMEOUT_S: u64 = 20;
@@ -299,7 +301,7 @@ impl CommitHookOptions {
 /// 子の linter を撃つ木。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// HEAD の木(一時の dir に書き出した基点)。
+    /// HEAD の木(事実の cache の根の commit-hook-tree/<sha> に置いた基点 — kept_head_tree)。
     Head,
     /// 先端の木(git の作業木そのもの)。
     Tip,
@@ -426,20 +428,9 @@ struct Scratch {
 impl Scratch {
     /// std::env::temp_dir() の下に固有の名で作る(既に在る名は使わない)。
     fn create() -> Result<Scratch, String> {
-        let base = std::env::temp_dir();
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        for attempt in 0..100u32 {
-            let path = base.join(format!("doeff-linter-commit-hook-{}-{}-{}", std::process::id(), nanos, attempt));
-            match std::fs::create_dir(&path) {
-                Ok(()) => {
-                    let path = path.canonicalize().unwrap_or(path);
-                    return Ok(Scratch { path });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(format!("一時の dir {} を作れない: {}", path.display(), error)),
-            }
-        }
-        Err("一時の dir の固有の名を作れない".to_string())
+        let path = unique_dir(&std::env::temp_dir(), &format!("doeff-linter-commit-hook-{}", std::process::id()))?;
+        let path = path.canonicalize().unwrap_or(path);
+        Ok(Scratch { path })
     }
 }
 
@@ -447,6 +438,152 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
+}
+
+/// base の下に `<prefix>-<ns>-<n>` の固有の名の dir を作る(既に在る名は使わない)。
+fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    for attempt in 0..100u32 {
+        let path = base.join(format!("{}-{}-{}", prefix, nanos, attempt));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("一時の dir {} を作れない: {}", path.display(), error)),
+        }
+    }
+    Err("一時の dir の固有の名を作れない".to_string())
+}
+
+// HEAD の木を使い回す場所(agora-redesign #3858)。doeff-linter の事実の cache(project::facts_cache)は根の path ごとの dir に、file ごとの
+// 大きさと更新時刻を鍵にして置かれる。HEAD の木を毎回ランダムな名前の一時 dir に書き出すと、根の path が毎回変わり、repo 全体を毎回解析し
+// 直していた(agora-controllers で CPU 約 44 秒)。`git archive` の file の更新時刻は commit の時刻で毎回同じなので、木を sha ごとの決まった
+// path に置けば 2 回目から cache が効く。形は agora-controllers の main へのマージ前の検査(scripts/land_lint_gate.hy の kept-base-tree・
+// 同じ #3858)と揃える:
+//   場所 = 事実の cache の根(facts_cache::cache_base — 既定 `$XDG_CACHE_HOME/doeff-linter`、無ければ `~/.cache/doeff-linter`)の
+//   `commit-hook-tree/<sha>`(overlay が在れば `<sha>-<overlay の中身の hash 16 桁>`)。
+//   書き出しは同じ dir の中の `.partial-` で始まる一時 dir へ行い、書き終えてから rename で <sha> の名に置く。<sha> の名の dir は rename で
+//   置き終えた物だけなので、途中で落ちた書き出しの残り(.partial-…)は使わない。同時の 2 本が同じ sha を書いた時は、先に rename した方を
+//   使い、後の方は自分の一時 dir を消す。
+//   片づけ: 置いた後に、この場所の中の sha の名の dir を使った時刻の新しい順に KEPT_TREES 個まで残して古い物から消し、1 時間より古い
+//   .partial-… を消す。消すのはこの 2 つの名の形の dir だけ(この場所に在るほかの物には触らない)。使い回す時は dir の時刻を今にする。
+//   場所の dir そのものには facts_cache の使った印を付け、事実の cache の根の全体の上限の片づけ(sweep_over_cap)に入れる。
+
+/// HEAD の木を使い回す場所の dir の名(事実の cache の根の直下)。
+pub const KEPT_TREE_DIR: &str = "commit-hook-tree";
+/// 残す木の数。
+pub const KEPT_TREES: usize = 8;
+/// 書き出しの途中の一時 dir の名の頭。
+pub const PARTIAL_PREFIX: &str = ".partial-";
+/// 書き出しの途中の一時 dir を、落ちた残りとして消すまでの秒。
+pub const PARTIAL_STALE: Duration = Duration::from_secs(3600);
+
+/// 置いた HEAD の木 — path = 木の根・written = この呼びで書き出したか(偽 = 前に置いた木を使い回した)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptTree {
+    pub path: PathBuf,
+    pub written: bool,
+}
+
+/// 純粋: 木の dir の名 — overlay が空なら sha、在れば sha と、overlay の各 file の path と先端の中身(無い file は「無い」を表す語)の
+/// hash(sha256)の 16 桁。
+pub fn kept_tree_name(sha: &str, root: &Path, overlay: &[String]) -> String {
+    if overlay.is_empty() {
+        return sha.to_string();
+    }
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    let mut sorted: Vec<&String> = overlay.iter().collect();
+    sorted.sort();
+    for rel in sorted {
+        digest.update(rel.as_bytes());
+        digest.update(b"\0");
+        match std::fs::read(root.join(rel)) {
+            Ok(bytes) if root.join(rel).is_file() => {
+                digest.update(b"present\0");
+                digest.update(&bytes);
+            }
+            _ => digest.update(b"absent\0"),
+        }
+        digest.update(b"\0");
+    }
+    let hex: String = digest.finalize().iter().map(|b| format!("{:02x}", b)).collect();
+    format!("{}-{}", sha, &hex[..16])
+}
+
+/// 純粋: sha の名の木の dir か(40 桁の 16 進、overlay の木は続けて `-` と 16 桁)。
+pub fn is_kept_tree_name(name: &str) -> bool {
+    let hex = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    match name.split_once('-') {
+        None => hex(name, 40),
+        Some((sha, suffix)) => hex(sha, 40) && hex(suffix, 16),
+    }
+}
+
+/// dir の時刻を今にする(使った印 — 木の中には file を足さない)。
+fn touch(dir: &Path) {
+    let _ = std::fs::File::open(dir).and_then(|f| f.set_modified(SystemTime::now()));
+}
+
+/// HEAD の木(overlay の宣言の file を先端から写した木)を場所 home の sha ごとの決まった path に置き、その根を返す(上の註)— 置き終えた
+/// 木が在れば書き出さずに使い回す。無ければ一時 dir へ書き出して rename で置き、古い木を片づける。HEAD が無い(最初の commit)なら None。
+pub fn kept_head_tree(root: &Path, overlay: &[String], home: &Path) -> Result<Option<KeptTree>, String> {
+    let Ok(head) = git(root, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]) else { return Ok(None) };
+    let name = kept_tree_name(String::from_utf8_lossy(&head).trim(), root, overlay);
+    std::fs::create_dir_all(home).map_err(|e| format!("{} を作れない: {}", home.display(), e))?;
+    let home = home.canonicalize().map_err(|e| format!("{} を読めない: {}", home.display(), e))?;
+    let dest = home.join(&name);
+    if dest.is_dir() {
+        touch(&dest);
+        return Ok(Some(KeptTree { path: dest, written: false }));
+    }
+    let partial = unique_dir(&home, &format!("{}{}-{}", PARTIAL_PREFIX, name, std::process::id()))?;
+    if let Err(error) = fill_partial(root, overlay, &partial) {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(error);
+    }
+    if std::fs::rename(&partial, &dest).is_err() {
+        // 同時の別の呼びが先に同じ名で置いた — その木を使い、自分の一時 dir を消す。
+        let _ = std::fs::remove_dir_all(&partial);
+        if !dest.is_dir() {
+            return Err(format!("HEAD の木を {} に置けない", dest.display()));
+        }
+        return Ok(Some(KeptTree { path: dest, written: false }));
+    }
+    prune_kept_trees(&home, &name);
+    Ok(Some(KeptTree { path: dest, written: true }))
+}
+
+/// 一時 dir へ HEAD の木を書き出し、overlay の宣言の file を先端から写す(先端に無い file は写さない)。
+fn fill_partial(root: &Path, overlay: &[String], partial: &Path) -> Result<(), String> {
+    export_head(root, partial)?;
+    for rel in overlay {
+        let from = root.join(rel);
+        if from.is_file() {
+            std::fs::copy(&from, partial.join(rel)).map_err(|e| format!("{} を HEAD の木へ写せない: {}", rel, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// 場所 home の HEAD の木を片づけ、消した dir の数を返す(上の註)— sha の名の dir は使った時刻の新しい順に KEPT_TREES 個まで残し(今置いた
+/// keep は必ず残す)、1 時間より古い .partial-… を消す。ほかの名の物と symlink には触らない。
+pub fn prune_kept_trees(home: &Path, keep: &str) -> usize {
+    let Ok(entries) = std::fs::read_dir(home) else { return 0 };
+    let now = SystemTime::now();
+    let dirs: Vec<(String, SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let meta = std::fs::symlink_metadata(entry.path()).ok()?;
+            meta.is_dir().then(|| (entry.file_name().to_string_lossy().into_owned(), meta.modified().unwrap_or(UNIX_EPOCH), entry.path()))
+        })
+        .collect();
+    let mut trees: Vec<&(String, SystemTime, PathBuf)> = dirs.iter().filter(|(name, _, _)| is_kept_tree_name(name) && name != keep).collect();
+    trees.sort_by(|a, b| b.1.cmp(&a.1));
+    let old_trees = trees.into_iter().skip(KEPT_TREES - 1);
+    let old_partials = dirs
+        .iter()
+        .filter(|(name, used, _)| name.starts_with(PARTIAL_PREFIX) && now.duration_since(*used).unwrap_or_default() > PARTIAL_STALE);
+    old_trees.chain(old_partials).filter(|(_, _, path)| std::fs::remove_dir_all(path).is_ok()).count()
 }
 
 /// root で git を撃ち、成功すれば stdout を返す。
@@ -478,12 +615,8 @@ fn removed_paths(root: &Path) -> Result<Vec<String>, String> {
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
 }
 
-/// HEAD の木を dest へ 1 度だけ書き出す(`git archive --format=tar HEAD | tar -x -C dest`)。HEAD が無い(最初の commit)なら false。
-fn export_head(root: &Path, dest: &Path) -> Result<bool, String> {
-    if git(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_err() {
-        return Ok(false);
-    }
-    std::fs::create_dir(dest).map_err(|e| format!("{} を作れない: {}", dest.display(), e))?;
+/// HEAD の木を在る dir dest へ書き出す(`git archive --format=tar HEAD | tar -x -C dest` — file の更新時刻は commit の時刻)。
+fn export_head(root: &Path, dest: &Path) -> Result<(), String> {
     let mut archive = Command::new("git")
         .args(["archive", "--format=tar", "HEAD"])
         .current_dir(root)
@@ -498,7 +631,7 @@ fn export_head(root: &Path, dest: &Path) -> Result<bool, String> {
     if !archived.success() || !extracted.success() {
         return Err(format!("HEAD の木を書き出せない(git archive {}・tar {})", archived, extracted));
     }
-    Ok(true)
+    Ok(())
 }
 
 /// 子へ渡す設定の引数(先端 = 設定 file そのもの・HEAD の木 = 木の中の同じ相対の file、無ければ先端の file)。
@@ -618,16 +751,20 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         return Ok(blocking);
     }
     let scratch = Scratch::create().map_err(Stop::Failed)?;
-    let tree_dir = scratch.path.join("tree");
-    let tree = export_head(root, &tree_dir).map_err(Stop::Failed)?.then_some(tree_dir.as_path());
-    // 1 回限りの指定(Lint-Baseline): HEAD の木を今の宣言で測る — 既存の当たりは基点に在る物になり、新しい当たりだけが止まる。
-    if let (Some(t), false) = (tree, options.overlay.is_empty()) {
-        for rel in &options.overlay {
-            let from = root.join(rel);
-            if from.is_file() {
-                std::fs::copy(&from, t.join(rel)).map_err(|e| Stop::Failed(format!("{} を HEAD の木へ写せない: {}", rel, e)))?;
-            }
+    // HEAD の木は事実の cache の根の commit-hook-tree/<sha> に置いて使い回す(kept_head_tree・#3858)。置き場を使わない実行
+    // (DOEFF_LINTER_NO_CACHE)は、この実行の一時 dir を場所にする(終わりに消える)。1 回限りの指定(Lint-Baseline)の木は、HEAD の木を
+    // 今の宣言で測る — 既存の当たりは基点に在る物になり、新しい当たりだけが止まる(木の名は宣言の中身ごとに分かれる)。
+    let home = match &options.cache {
+        Some(base) => {
+            let home = base.join(KEPT_TREE_DIR);
+            crate::project::facts_cache::mark_used(&home);
+            home
         }
+        None => scratch.path.clone(),
+    };
+    let kept = kept_head_tree(root, &options.overlay, &home).map_err(Stop::Failed)?;
+    let tree = kept.as_ref().map(|k| k.path.as_path());
+    if tree.is_some() && !options.overlay.is_empty() {
         eprintln!("{}{} — HEAD の木を今の宣言({})で測る(1 回限り)", PREFIX, BASELINE_TRAILER, options.overlay.join("・"));
     }
     let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
