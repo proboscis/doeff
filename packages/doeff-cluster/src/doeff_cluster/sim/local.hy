@@ -113,6 +113,9 @@
 ;;;     job の Program が出すと柵で落ちる。
 ;;;   - AwaitDetached は読み直さず、模擬の coordinator がその task の終わりの phase を書いた時(Persist)に起きる(本番の detached-cluster は
 ;;;     poll-seconds ごとに読む — 答えの意味は同じ)。
+;;;   - 時間の設定の既定(#3865 — 本番には無い・模擬の境界だけ): :timing を渡さない筋書きは、本番の既定の窓を全部 SIM-TIMING-RATIO 倍に
+;;;     延ばした設定で走る(heartbeat と待ちの送り直しの歩を減らす)。その世界では worker の死の判断が起きない前提で、出たら筋書きを待たずに
+;;;     SimLivenessError で終わる。生死・fence・停止と、heartbeat に載る報告の速さを試す筋書きは本番の値を :timing で明示する。
 ;;;   - 行き止まりの見張り(#3078 — 本番には無い・模擬の境界だけ): 業務の task が全部 出来事(WaitForEvent)を待って止まり、筋書きの本体も
 ;;;     期限なしで待ち、coordinator の task の行が落ち着いていれば、仮想の時計を進め続けずに SimDeadlockError で終わる。数えるのは
 ;;;     WaitForEvent の待ちだけ(Delay・記録の Watch の待ちは数えない)。process の中で Spawn した子は、終わっても process の終わりまで
@@ -139,6 +142,7 @@
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
 (import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
+(import doeff_cluster.shared.core.timing_rules [scaled-timing])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES ProvisionalBeat]
         doeff_cluster.shared.intent.protocol [NextRequests])
@@ -152,7 +156,9 @@
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
-(import doeff_events [MemoryBroker])
+(import doeff_events [MemoryBroker EventBus WaitForEvent subscribed-event-handler memory-notice-handler notice-events-handler])
+(import doeff_cluster.coordinator.intent.worker_notices [WorkerGone])
+(import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer
                                                           deposit-beats withdraw-beats drop-beats HEARD RestBell ring-bell
@@ -237,7 +243,11 @@
 (val CUT-REASON "網が切れている(sim — 送り手の居る worker の網)")
 (val FAULT-REASON "sim: 注入した故障(FailRoute — coordinator の口がこの状態で答える)")
 (val ROUSED "roused")                        ; 静かな拍を眠る宿の呼び鈴の答え: 宿の真実が書き換わった(世界の出来事 — #2790)
-(val QUIET-BEATS-LIMIT 360)                  ; 宿が一度に眠る拍の上限(拍 10 秒なら仮想の 1 時間 — coordinator の区間の上限と同じ長さ)
+;; 模擬の世界の時間の設定の既定の比: :timing を渡さない筋書きは、本番の既定の窓を全部この比で延ばした設定(scaled-timing)で走る。
+;; heartbeat と待ちの送り直しは coordinator の本物の歩なので(#3865)、仮想の時間を長く回す筋書きの歩の数がこの比でほぼ反比例に減る。
+;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
+(val SIM-TIMING-RATIO 200)
+(val QUIET-BEATS-LIMIT 360)                 ; 宿が一度に眠る拍の上限(拍 10 秒なら仮想の 1 時間 — coordinator の区間の上限と同じ長さ)
 (val FIRST-REST-BEATS 4)                     ; 宿が一度に眠る拍の最初の上限(最後まで眠れるたびに倍 — 宿の真実の rest-reach)
 
 
@@ -594,7 +604,10 @@
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
   (setv #^ (| RuntimeEnv None) runtime-env None)
-  (setv #^ bool skip-idle False))
+  (setv #^ bool skip-idle False)
+  ;; 比で延ばした世界(sim-cluster に :timing を渡さない筋書き — SIM-TIMING-RATIO)か。真なら worker の死の判断(WorkerGone)を見張り、
+  ;; 出たら筋書きを待たずに SimLivenessError で終わる(延ばした窓は生死の判断が起きない前提 — #3865)。
+  (setv #^ bool watches-gone False))
 
 
 (defrecord SimParts
@@ -933,6 +946,10 @@
   "sim-cluster の行き止まり: 業務の task が全部 出来事を待って止まり、それを起こす物(筋書き・timer・予定・置き直し)が無い。args = 知らせの文と
    SimDeadlock。")
 
+(defclass SimLivenessError [RuntimeError]  ; class にする理由: sim-cluster を終わらせる例外の型(検が pytest.raises で名指す — 欄も状態も足さない)
+  "比で延ばした世界(:timing を渡さない筋書き)で worker の死の判断が出た: 延ばした窓は生死の判断が起きない前提なので、生死を試す筋書きは
+   本番の値を :timing で明示する(#3865)。args = 知らせの文と WorkerGone。")
+
 (defeffect NoteEventWait
   "業務の process pid の task 1 つが出来事の待ち(WaitForEvent)に入った(waiting 真 — events = 待つ型の名)か、出た(偽)かを世界に
    知らせる(#3078)。"
@@ -986,10 +1003,11 @@
   ;; process に入っている版で、sim の worker と子も同じ識別を名乗る(1 つの process の中の模擬)。
   (<- versions dict (process-versions {}))
   (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env versions))
+  (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
            :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
-           :skip-idle skip-idle
-           :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
+           :skip-idle skip-idle :watches-gone (is timing None)
+           :start-ms start-ms :timing (or timing scaled) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
 
@@ -3503,6 +3521,23 @@
   None)
 
 
+;; --- 比で延ばした世界の生死の見張り(#3865)--------------------------------------------------------------
+
+(val GONE-READER "sim-gone-watch")
+
+(defk gone-watch [broker]
+  {:pre [(: broker MemoryBroker)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "coordinator と同じ知らせの broker の受け手として worker の死の判断(WorkerGone)を待ち、来たら SimLivenessError で終わらせるため
+   (比で延ばした世界だけで走る — sim-main が筋書きと競わせる)。"
+  (<- came WorkerGone (with-handlers [(subscribed-event-handler (EventBus) GONE-READER #(WorkerGone))
+                                      (memory-notice-handler broker)
+                                      (notice-events-handler GONE-READER WORKER-NOTICE-READS 3600.0)]
+                        (WaitForEvent WorkerGone)))
+  (raise (SimLivenessError (.format "比 {} で延ばした世界で worker {} の死の判断が出た — 生死を試す筋書きは :timing に本番の値を明示する"
+                                    SIM-TIMING-RATIO came.worker)
+                           came)))
+
+
 ;; --- 入口 -----------------------------------------------------------------------------------------------
 
 (defk sim-main [scenario]
@@ -3513,6 +3548,10 @@
   (<- plan SimPlan (PlanOf))
   (<- parts SimParts (PartsOf))
   (<- pod Task (Spawn (coordinator-pod)))
+  (var guards [])
+  (when plan.watches-gone
+    (<- gone Task (Spawn (gone-watch parts.broker)))
+    (:= guards [gone]))
   (<- (await-coordinator parts.queue))
   (<- control SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
   (<- (apply-declaration control plan.declaration))
@@ -3525,9 +3564,11 @@
   (<- story Task (Spawn (with-handlers [(coordinator-answers client) scenario-wait-tap] scenario)))
   (<- watch Task (Spawn (deadlock-watch control)))
   (try
-    (<- answer (Race story watch))
+    (<- answer (Race story watch #* guards))
     answer
     (finally
+      (for [guard guards]
+        (<- (Cancel guard)))
       (<- (Cancel watch))
       (<- (Cancel story))
       (<- (StopWorkers))

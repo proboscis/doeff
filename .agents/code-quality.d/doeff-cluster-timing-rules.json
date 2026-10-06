@@ -3,6 +3,11 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/core/timing_rules.hy"
   ],
   "module_extensions": {
+    "doeff-cluster-local": {
+      "allow": [
+        "doeff-cluster-timing-rules"
+      ]
+    },
     "doeff-cluster-main": {
       "allow": [
         "doeff-cluster-timing-rules"
