@@ -18,7 +18,10 @@
                                             ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild
-                                                  ForgetWarmChild StopProgress StopStage])
+                                                  ForgetWarmChild StopProgress StopStage WakeSet WorkerWakes])
+(import doeff_cluster.worker.core.worker_due [wakes-with])
+(import doeff_cluster.shared.intent.due_model [DueNever])
+(import doeff_core_effects.process_effects [AwaitProcessExit])
 (import doeff_cluster.worker.protocol.observations [ObserveWarmChildren])
 (import doeff_cluster.worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
@@ -143,4 +146,11 @@
       (<- observed WarmChildView (observed-warm-child settings view))
       (:= seen (| seen {key observed})))
     (:= table seen)
-    (resume (tuple (.values seen)))))
+    (resume (tuple (.values seen))))
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4): 終わりをまだ観測していない待ちの子(exit-code が None — 起こせずに pid 0 で終わった物は
+    ;; 除く)の終わりを待つ効果を足す。待ちの子は StartProcess で立てた子なので AwaitProcessExit。
+    (<- outer WakeSet effect)
+    (val exits (tuple (gfor view (.values table) :if (is view.exit-code None) (AwaitProcessExit view.pid))))
+    (<- merged WakeSet (wakes-with outer (DueNever) #() exits))
+    (resume merged)))

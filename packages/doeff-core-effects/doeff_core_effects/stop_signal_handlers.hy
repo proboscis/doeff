@@ -38,8 +38,18 @@
           self.waiters #()))
 
   (defn #^ None park [self #^ (get ExternalPromise str) waiter]
-    "Keep waiter until the stop (or until its wait is cancelled — forget)."
-    (setv self.waiters (+ self.waiters #(waiter)))
+    "Keep waiter until the stop (or until its wait is cancelled — forget). A stop that already came completes it at once:
+     AwaitStop checks the reason before it creates the waiter, and a signal between that check and this park would
+     otherwise leave the waiter parked with nobody to complete it (#3871 unit 4). The stop signals are held back while the
+     reason is read and the waiter is kept, so the receiver runs either before (reason seen here) or after (waiter seen
+     there)."
+    (setv held (signal.pthread-sigmask signal.SIG-BLOCK STOP-SIGNALS))
+    (try
+      (if (is-not self.reason None)
+          (.complete waiter self.reason)
+          (setv self.waiters (+ self.waiters #(waiter))))
+      (finally
+        (signal.pthread-sigmask signal.SIG-SETMASK held)))
     None)
 
   (defn #^ None forget [self #^ (get ExternalPromise str) waiter]

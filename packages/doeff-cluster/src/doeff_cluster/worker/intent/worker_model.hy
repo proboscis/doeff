@@ -16,6 +16,7 @@
 (import doeff_core_effects.scheduler [Future])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 
 
 ;; 業務の repo の木の形(2026-09-25 — クラスタの仕組みを業務の repo から切り出した時に、木の形を worker の引数へ出した)。
@@ -272,9 +273,8 @@
   (setv #^ int stable-run-ms 60000)
   ;; コードの準備に失敗した版を作り直すまでの間(失敗が続く版で git と焼きを毎拍撃たない)。
   (setv #^ int code-retry-ms 30000)
-  ;; 拍と拍の間の眠りの上限。宣言の変化の呼び鈴(DesiredJobs.changed)が鳴れば、上限を待たずに次の拍へ進む(#2692)。
-  (setv #^ float tick-seconds 0.5)
-  ;; 呼び鈴で起きる時も、拍の終わりからこの秒は空ける(変化が途切れなく続いても拍は 1 秒に 1 / wake-gap-seconds 回まで — #2692)。
+;; 周の間の待ちに周期の上限は無い — 次の期限・宣言の変化・子の終わり・止め・掃除の終わりの早い 1 つまで待つ(#3871 の単位 4)。
+  ;; 呼び鈴で起きる時も、周の終わりからこの秒は空ける(変化が途切れなく続いても周は 1 秒に 1 / wake-gap-seconds 回まで — #2692)。
   (setv #^ float wake-gap-seconds 0.1))
 
 
@@ -315,9 +315,9 @@
   (setv #^ tuple warm #())
   ;; coordinator との途絶で宣言を絞った(#3713 — 絞りで外れた job を止める訳 CutOff)。None = 返事の宣言そのまま。
   (setv #^ (| CutOff None) cut-off None)
-  ;; 宣言の変化の呼び鈴(#2692): この読みの後に宣言が変わった(名指しの待ちが「変わった」と答えた)時に満ちる Future。拍の間の眠りは
-  ;; これと tick-seconds を競わせ、変化を次の拍の境まで待たない。None = 変化を知らせる口が無い(拍ごとに読む宿・待ちの口の無い
-  ;; coordinator)— 眠りは tick-seconds。値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
+  ;; 宣言の変化の呼び鈴(#2692): この読みの後に宣言が変わった(名指しの待ちが「変わった」と答えた)時に満ちる Future。周の間の待ちは
+  ;; これで起きる(#3871 の単位 4)。None = 変化を知らせる口が無い(待ちの口の無い coordinator — 周の間の待ちは heartbeat の期限で起きる)。
+  ;; 値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
   (setv #^ (| Future None) changed (field :default None :compare False)))
 
 
@@ -497,10 +497,32 @@
 
 ;; --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
 
+(defrecord WakeSet
+  "周の間の待ちを起こす物の組(#3871 の単位 4): due = 次の期限(DueAt・今すぐ DueNow・無し DueNever)・bells = 満ちたら起こす Future の列
+   (掃除の task の終わりなど)・exits = 終わったら起こす子 process の待ちの効果の列(AwaitProcessExit・AwaitWarmChildExit の値)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ (| DueAt DueNow DueNever) due)
+  (#^ tuple bells)
+  (#^ tuple exits))
+
+
+(defclass [(dataclass :frozen True)] WorkerWakes [EffectBase]
+  "結果は WakeSet。周の後に、周の間の待ちを起こす物を集めるため。状態を持つ handler(送り手の口・実行環境・process の host)が、外側の
+   答え(この effect を外へ出し直した物)に自分の期限・呼び鈴・待つ子を足して返す。一番外の答え手(worker/protocol/worker_wakes の
+   no-wakes)は空の組を返す — handler を並べ忘れると、その層の起きる物が組から消える。")
+
+
+(defclass WorkerUnsettled [Exception]  ; class にする理由: worker の調整ループを止める例外の型(検が pytest.raises で名指す — 欄も状態も足さない)
+  "状態を変える周が上限を越えて続いた(今すぐもう 1 周が止まらない)。args = 続いた action の名を書いた文。")
+
 (defclass [(dataclass :frozen True)] AwaitNextTick [EffectBase]
-  "結果は None。調整ループが拍の後に次の拍まで眠るため。答え手が眠り方を決める: 本番の組は worker/protocol/tick_pauses の tick-pauses
-   (core/program.tick-pause — tick-seconds を宣言の変化の呼び鈴 changed と競わせる)。state = この拍の後の記憶(模擬の時計の下の宿が、
-   先の拍を本番の判断で試す材料 — 本番の答え手は読まない)。"
+  "結果は None。調整ループが周の後に次の周まで待つため。答え手が待ち方を決める: 本番の組は worker/protocol/tick_pauses の tick-pauses
+   (wakes の期限・changed と wakes の呼び鈴・待つ子の終わり・止めの合図の早い 1 つまで 1 本で待つ — #3871 の単位 4)。changed = 宣言の
+   変化の呼び鈴・wakes = 周の後に集めた起きる物の組・state = この周の後の記憶(模擬の時計の下の宿が、先の周を本番の判断で試す材料 —
+   本番の答え手は読まない)・stopping = 周の頭で止めを知っていたか(偽の周の後に止めが来ていれば、答え手は待たずに戻る — 周の頭の問いと
+   待ちの間に来た合図を取りこぼさない)。"
   (#^ WorkerPolicy policy)
   (#^ (| Future None) changed)
-  (#^ WorkerState state))
+  (#^ WakeSet wakes)
+  (#^ WorkerState state)
+  (setv #^ bool stopping False))

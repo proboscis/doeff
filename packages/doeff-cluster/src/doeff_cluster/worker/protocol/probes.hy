@@ -26,7 +26,10 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeEntry ForgetProbes ProbeState ProbeView])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeEntry ForgetProbes ProbeState ProbeView WakeSet WorkerWakes])
+(import doeff_cluster.worker.core.worker_due [wakes-with])
+(import doeff_cluster.shared.intent.due_model [DueNever])
+(import doeff_core_effects.process_effects [AwaitProcessExit])
 (import doeff_cluster.worker.protocol.observations [ObserveProbes])
 (import doeff_cluster.worker.core.worker_rules [probe-refusal])
 (import doeff_cluster.worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES shim-argv])
@@ -219,4 +222,11 @@
                       (lfor run (.values runs) s run.specs
                             (ProbeView (spec-hash s) ProbeState.RUNNING :started-ms run.started-ms :attempts (.get attempts (spec-hash s) 1)
                                        :last-failure (.get last-failure (spec-hash s) "")))
-                      (list (.values done)))))))
+                      (list (.values done))))))
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4): 走っている検めの束(runs)の shim の終わりを待つ効果を足す。時間切れの期限は足さない
+    ;; (束の時間の上限と止めの猶予は ObserveProbes が拍ごとに判じる — この単位の範囲外)。
+    (<- outer WakeSet effect)
+    (val exits (tuple (gfor run (.values runs) (AwaitProcessExit run.pid))))
+    (<- merged WakeSet (wakes-with outer (DueNever) #() exits))
+    (resume merged)))

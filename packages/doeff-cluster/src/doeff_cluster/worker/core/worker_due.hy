@@ -1,5 +1,6 @@
 ;;; worker の期限の純粋な判断(#3871 の単位 2)— 状態がこのままで、時刻だけで worker の判断の答えが変わる最初の刻を、期限の答え
-;;; (shared/intent/due_model の DueAt・DueNow・DueNever)で返す。周の間の待ち(周期の眠り)にはまだ繋がない(単位 4)。
+;;; (shared/intent/due_model の DueAt・DueNow・DueNever)で返す。周の間の待ちは、これらを起きる物の組(WakeSet)に集めて 1 本で待つ
+;;; (単位 4 — plan-due は core/program が、ほかは状態を持つ handler が WorkerWakes の答えに足す・wakes-with)。
 ;;;
 ;;;   plan-due            policy.hy の時刻の比べ: 準備の作り直し(code の failed-ms + code-retry-ms)・検めの撃ち直し(probe の failed-ms +
 ;;;                       code-retry-ms)・起こし直しの間(last-exit-ms + backoff-ms)・TERM から KILL(signalled-ms + stop-grace-ms)・
@@ -18,12 +19,12 @@
 ;;;
 ;;; 拾わない物: 状態の報告の検めの経過の秒(policy.probe-status — 表示だけで、他の訳で heartbeat を送る時に新しい値が載る)・
 ;;; heartbeat の時刻でない条件(待ちの口を使えない・前の heartbeat が届いていない・待ちが「変わった」と答えた・報告が変わった — 出来事)。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import math)
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.shared.core.due_policy [due-of-instants])
-(import doeff_cluster.worker.intent.worker_model [CodeState ProbeState StopStage Outcome WorldView WorkerPolicy])
+(import doeff_cluster.shared.core.due_policy [due-of-instants earliest-due])
+(import doeff_cluster.worker.intent.worker_model [CodeState ProbeState StopStage Outcome WorldView WorkerPolicy WakeSet])
 (import doeff_cluster.worker.core.policy [backoff-ms])
 (import doeff_cluster.worker.core.env_upkeep [RootsTally PrepareLimits SWEEP-EVERY-MS])
 
@@ -90,3 +91,11 @@
    終わり swept-ms から SWEEP-EVERY-MS。まだ数えていない・上限の内なら、時刻では変わらない。"
   (<- due (| DueAt DueNever) (due-after now (if (and (is-not tally None) (> tally.bytes cap)) #((+ swept-ms SWEEP-EVERY-MS)) #())))
   due)
+
+
+(defk wakes-with [outer due bells exits]
+  {:pre [(: outer WakeSet) (: due (| DueAt DueNow DueNever)) (: bells tuple) (: exits tuple)] :post [(: % WakeSet)]
+   :tags {:context "worker" :role "judgment"}}
+  "外側の答え outer(起きる物の組)に、自分の期限・呼び鈴・待つ子を足した組を作るため(期限は早い方 — #3871 の単位 4)。"
+  (<- merged (| DueAt DueNow DueNever) (earliest-due #(outer.due due)))
+  (WakeSet :due merged :bells (+ outer.bells bells) :exits (+ outer.exits exits)))

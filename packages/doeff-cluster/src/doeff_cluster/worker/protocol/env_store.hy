@@ -30,12 +30,15 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory WalkTree RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
-                                            ProcessExited])
+                                            ProcessExited AwaitProcessExit])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.native_wheel [wheels-root])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport])
+(import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport WakeSet WorkerWakes])
+(import doeff_cluster.worker.core.worker_due [wakes-with prepare-stop-due sweep-interval-due])
+(import doeff_cluster.shared.core.due_policy [earliest-due])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes
@@ -656,4 +659,21 @@
               (:= prune next-prune)
               (:= swept-ms now-ms)
               (:= sweeping None))))
-    (resume None)))
+    (resume None))
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4): 準備の子と走っている prune の子の終わり(exits)・走っている掃除の task の終わりの Future
+    ;; (bells)・準備の停滞の止めの期限と roots の数え直しの間隔(due)を、外側の答えに足す。
+    (<- outer WakeSet effect)
+    (<- now int (now-epoch-ms))
+    (var dues #())
+    (for [p (.values pending)]
+      (<- progressed int (progressed-ms p))
+      (<- stop-due (| DueAt DueNever) (prepare-stop-due now progressed settings.limits))
+      (:= dues (+ dues #(stop-due))))
+    (<- interval-due (| DueAt DueNever) (sweep-interval-due now tally settings.roots-cap-bytes swept-ms))
+    (<- due (| DueAt DueNow DueNever) (earliest-due (+ dues #(interval-due))))
+    (val bells (if (is sweeping None) #() #(sweeping.done.future)))
+    (val exits (+ (tuple (gfor p (.values pending) (AwaitProcessExit p.pid)))
+                  (if (is prune.pid None) #() #((AwaitProcessExit prune.pid)))))
+    (<- merged WakeSet (wakes-with outer due bells exits))
+    (resume merged)))

@@ -28,6 +28,11 @@
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
                                                  Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
+(import doeff_cluster.worker.intent.worker_model [WakeSet WorkerWakes])
+(import doeff_cluster.worker.core.worker_due [wakes-with])
+(import doeff_cluster.shared.intent.due_model [DueNever])
+(import doeff_core_effects.process_effects [AwaitProcessExit])
+(import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmRefused WarmRunning WarmExited WarmLost])
@@ -316,4 +321,15 @@
                                         (replace started :view (replace started.view :exit-code polled.exit-code))
                                         started)))))
     (:= table seen)
-    (resume (tuple (gfor started (.values seen) started.view)))))
+    (resume (tuple (gfor started (.values seen) started.view))))
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4): 終わりをまだ観測していない子の終わりを待つ効果を足す。待ちの子から分けた子は起動の刻を
+    ;; 照らして待つ(pid の使い回しの終わりでは起きない)。
+    (<- outer WakeSet effect)
+    (val exits (tuple (gfor started (.values table)
+                            :if (is started.view.exit-code None)
+                            (if (is-not started.fork None)
+                                (AwaitWarmChildExit :pid started.view.pid :start-ticks started.fork.start-ticks)
+                                (AwaitProcessExit started.view.pid)))))
+    (<- merged WakeSet (wakes-with outer (DueNever) #() exits))
+    (resume merged)))

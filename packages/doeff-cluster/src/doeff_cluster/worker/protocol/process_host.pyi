@@ -43,6 +43,12 @@ from doeff_cluster.worker.intent.worker_model import Retired as Retired
 from doeff_cluster.worker.intent.worker_model import CutOff as CutOff
 from doeff_cluster.worker.intent.worker_model import WorkerStopping as WorkerStopping
 from doeff_cluster.worker.protocol.observations import ObserveProcesses as ObserveProcesses
+from doeff_cluster.worker.intent.worker_model import WakeSet as WakeSet
+from doeff_cluster.worker.intent.worker_model import WorkerWakes as WorkerWakes
+from doeff_cluster.worker.core.worker_due import wakes_with as wakes_with
+from doeff_cluster.shared.intent.due_model import DueNever as DueNever
+from doeff_core_effects.process_effects import AwaitProcessExit as AwaitProcessExit
+from doeff_core_effects.warm_effects import AwaitWarmChildExit as AwaitWarmChildExit
 from doeff_cluster.worker.core.launch import JobLaunch as JobLaunch
 from doeff_cluster.worker.core.launch import job_launch as job_launch
 from doeff_cluster.worker.core.launch import spec_program_file as spec_program_file

@@ -112,7 +112,8 @@
 
 (val QUIET-SECONDS 3.0)
 (val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
-(val RESTING-POLICY (WorkerPolicy :tick-seconds 10.0 :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
+(val RESTING-TICK-SECONDS 10.0)
+(val RESTING-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 
 (defk takes-while-quiet [seconds]
@@ -129,7 +130,7 @@
   ;; worker 1 台・拍 10 秒(この 3 秒の間に heartbeat は来ない)・要求の無い 3 秒: coordinator は起きない(歩 0)。
   ;; 直す前は 1 秒ごとに起きる(3 秒で 3 歩 前後)。
   (<- taken int (wall-sim-cluster (quitters sim-foundation) (takes-while-quiet QUIET-SECONDS)
-                                  :workers RESTING-WORKERS :policy RESTING-POLICY))
+                                  :workers RESTING-WORKERS :policy RESTING-POLICY :tick-seconds RESTING-TICK-SECONDS))
   (assert (= taken 0) taken))
 
 

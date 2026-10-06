@@ -23,7 +23,7 @@
 (import doeff_cluster.worker.core.program [worker-tick TICK-LAG-LOG ACTIONS-TO-PUBLISH])
 
 (val SPEC (JobSpec "svc" "jobs.svc" #() "rev-a"))
-(val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :tick-seconds 1.0))
+(val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))
 ;; 遅い待ちの秒(拍の遅れの線 5 秒を越える)。
 (val SLOW-SECONDS 6.0)
 ;; 拍 1 つの時刻の読みの数(拍の頭・EnvReport の後・ReadDesired の後 = 判断の now・最初の ObserveWorld の後・拍の終わり)。

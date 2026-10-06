@@ -812,7 +812,8 @@
         "doeff-cluster-run-context",
         "doeff-cluster-run-context-rules",
         "doeff-cluster-native-wheel",
-        "doeff-cluster-retirement-model"
+        "doeff-cluster-retirement-model",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
@@ -1607,7 +1608,9 @@
         "doeff-cluster-job-model",
         "doeff-cluster-promise-wait",
         "doeff-cluster-worker-model",
-        "doeff-cluster-worker-policy"
+        "doeff-cluster-worker-policy",
+        "doeff-cluster-due-model",
+        "doeff-cluster-worker-due"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker",
@@ -1623,7 +1626,8 @@
     {
       "allow": [
         "doeff-cluster-job-model",
-        "doeff-cluster-runtime-env-model"
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-due-model"
       ],
       "layer": "domain",
       "name": "doeff-cluster-worker-model",
@@ -2106,7 +2110,9 @@
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-launch",
         "doeff-cluster-worker-observations",
-        "doeff-cluster-worker-warm-rules"
+        "doeff-cluster-worker-warm-rules",
+        "doeff-cluster-worker-due",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-process-host",
@@ -2145,7 +2151,9 @@
         "doeff-cluster-worker-rules",
         "doeff-cluster-worker-launch",
         "doeff-cluster-worker-probe-rules",
-        "doeff-cluster-worker-observations"
+        "doeff-cluster-worker-observations",
+        "doeff-cluster-worker-due",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-probes",
@@ -2181,7 +2189,9 @@
         "doeff-cluster-code-plan",
         "doeff-cluster-code-prepare-program",
         "doeff-cluster-worker-code-rules",
-        "doeff-cluster-worker-observations"
+        "doeff-cluster-worker-observations",
+        "doeff-cluster-worker-due",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-code-store",
@@ -2238,7 +2248,10 @@
         "doeff-cluster-worker-env-rules",
         "doeff-cluster-worker-heartbeat",
         "doeff-cluster-worker-observations",
-        "doeff-cluster-native-wheel"
+        "doeff-cluster-native-wheel",
+        "doeff-cluster-worker-due",
+        "doeff-cluster-due-policy",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-env-store",
@@ -2356,7 +2369,10 @@
         "doeff-cluster-shared-protocol",
         "doeff-cluster-remote-rules",
         "doeff-cluster-runtime-env-rules",
-        "doeff-cluster-native-wheel"
+        "doeff-cluster-native-wheel",
+        "doeff-cluster-due-model",
+        "doeff-cluster-due-policy",
+        "doeff-cluster-worker-due"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-coordinator-link",

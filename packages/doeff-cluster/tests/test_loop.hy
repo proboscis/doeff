@@ -13,9 +13,9 @@
   PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import tests.wake_fixtures [wakes-every])
 
-(setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000
-                           :tick-seconds 0.1)
+(setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)
       A1 (JobSpec "a" "jobs.a" #() "rev1")
       A2 (replace A1 :revision "rev2")
       B1 (JobSpec "b" "jobs.b" #() "rev1"))
@@ -72,7 +72,7 @@
   "program を台本の世界(fake-host-script)の下で走らせ、その答えを返すため。台本の外側に仮想の時計(world の SimClock)を、内側に拍の間の
    眠りの本番の答え手 tick-pauses を被せる(tick-pauses の止めの問いは台本が答え、止めの合図は来ない — stop-signal-never-comes)。
    拍の間の眠りは仮想の時刻を進めるだけで、実時間は使わない。"
-  (<- answer WorkerState ((sim-time-handler :clock world.clock) ((fake-host-script world script stop-at) (stop-signal-never-comes (tick-pauses (slog-discard-handler program))))))
+  (<- answer WorkerState ((sim-time-handler :clock world.clock) ((fake-host-script world script stop-at) (stop-signal-never-comes ((wakes-every 100) (tick-pauses (slog-discard-handler program)))))))
   answer)
 
 (defk events-of [world name]

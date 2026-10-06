@@ -33,10 +33,17 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence])
 (import doeff_cluster.worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks WakeSet WorkerWakes])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.shared.core.due_policy [earliest-due])
+(import doeff_cluster.worker.core.worker_due [beat-due fence-due wakes-with])
 (import doeff_cluster.worker.core.boot_timing [boot-line])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs])
 (import doeff_cluster.worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
+
+;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・
+;; #3871 の単位 4)。
+(val RESEND-AFTER-MS 500)
 
 
 (defclass WatchCell []
@@ -271,7 +278,7 @@
 
 (defk bell-rung [watch]
   {:pre [(: watch WatchCell)] :post [(: % None)]}
-  "待ちが「変わった」と答えた時に、拍の間の眠りを起こす呼び鈴を鳴らして手放すため(#2692 — 眠っている拍が tick-seconds を待たずに
+  "待ちが「変わった」と答えた時に、拍の間の眠りを起こす呼び鈴を鳴らして手放すため(#2692 — 待っている周が期限を待たずに
    起きて heartbeat を送る)。1 回の眠りの間に変化が何度来ても鳴るのは掛かっていた 1 つだけ(次の宣言の読みが新しく掛ける)。"
   (val bell watch.bell)
   (when (is-not bell None)
@@ -468,6 +475,18 @@
     (<- desired (polled state cell options watch-cell))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell desired bell))
     (resume belled))
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4): 外側の答えに、heartbeat を送る期限・途絶の柵の期限と、前の heartbeat が届いていなければ
+    ;; 送り直しの刻を足す。宣言の変化の呼び鈴は ReadDesired の答え(DesiredJobs.changed)が運ぶので足さない。
+    (<- outer WakeSet effect)
+    (<- now int (now-epoch-ms))
+    (<- beat (| DueAt DueNever) (beat-due now state.last-ok-ms state.beat-interval-ms))
+    (<- fence (| DueAt DueNever) (fence-due now state.last-ok-ms state.fence-ms state.keep-fence-ms))
+    ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。
+    (val resend (if (is state.last-desired None) (DueAt :at (+ now RESEND-AFTER-MS)) (DueNever)))
+    (<- due (| DueAt DueNow DueNever) (earliest-due #(beat fence resend)))
+    (<- merged WakeSet (wakes-with outer due #() #()))
+    (resume merged))
   (PublishStatus [statuses note]
     ;; 状態は次の heartbeat で送る。file にも書くので、同じ効果を外側の status-file へ回す。
     (<- rows list (status-rows state statuses))

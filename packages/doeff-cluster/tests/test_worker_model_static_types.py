@@ -38,7 +38,7 @@ MODULE = """\
 (defk probe-policy [grace]
   {:pre [(: grace int)] :post [(: % WorkerPolicy)] :tags {:context "probe" :role "judgment"}}
   "停止の猶予だけを変えた判断の設定を作る(sim-cluster の :policy に渡す形)。"
-  (WorkerPolicy :stop-grace-ms grace :tick-seconds 0.25))
+  (WorkerPolicy :stop-grace-ms grace))
 
 (defk probe-world [spec]
   {:pre [(: spec JobSpec)] :post [(: % WorldView)] :tags {:context "probe" :role "judgment"}}
@@ -143,6 +143,9 @@ def test_the_stub_matches_the_hy_module(module: types.ModuleType) -> None:
         }
         if issubclass(actual, Enum):
             assert stub_values == {member.name: member.value for member in actual}, name
+        elif issubclass(actual, Exception):
+            # 例外の型(WorkerUnsettled — #3871 の単位 4)は欄を持たない。
+            assert stub_fields == [], name
         else:
             assert stub_fields == [f.name for f in fields(actual)], name
         for method in (item for item in node.body if isinstance(item, ast.FunctionDef)):

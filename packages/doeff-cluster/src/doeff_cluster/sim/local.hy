@@ -140,10 +140,11 @@
                                       Future TaskCancelledError Race])
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect])
-(import doeff_time [Delay TicksOutcome WaitTicks sim-time-handler async-time-handler])
+(import doeff_time [Delay GetMonotonic TicksOutcome WaitTicks sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms epoch-ms-of])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
+(import doeff_cluster.shared.intent.due_model [DueNever])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES ProvisionalBeat]
         doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
@@ -181,8 +182,9 @@
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held desired-after-silence])
-;; 拍の間の待ち(AwaitNextTick)は宿が答える: 旗が偽なら本番と同じ tick-pause、真なら静かな拍を quiet-beats で試して一度に眠る(#2790)。
-(import doeff_cluster.worker.core.program [tick-pause])
+;; 拍の間の待ち(AwaitNextTick)は宿が答える: 旗が偽なら模擬の刻み(SimPlan.tick-seconds)ごとの sim-tick-pause、真なら静かな拍を
+;; quiet-beats で試して一度に眠る(#2790)。本番の周の間の待ち(期限・呼び鈴・子の終わりの 1 本の待ち — #3871 の単位 4)は使わない
+;; (宿の作り替えは単位 5)。
 (import doeff_cluster.worker.core.quiet_policy [quiet-beats])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-reader])
 (import doeff_cluster.shared.intent.run_context [RunContext])
@@ -219,7 +221,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
-                       ReleaseLeases EnvReport AwaitNextTick StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
+                       ReleaseLeases EnvReport AwaitNextTick WakeSet WorkerWakes StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
                        ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
 
@@ -247,6 +249,9 @@
 ;; heartbeat と待ちの送り直しは coordinator の本物の歩なので(#3865)、仮想の時間を長く回す筋書きの歩の数がこの比でほぼ反比例に減る。
 ;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
 (val SIM-TIMING-RATIO 200)
+;; worker の代役(宿)の拍の刻みの既定(秒)— 前の本番の worker の周期と同じ 0.5 秒。本番の worker は周期で眠らない(#3871 の単位 4)。
+;; 宿は単位 5 で期限の関数で飛ぶ形に替え、この刻みも消す。速さのために粗くする筋書きは sim-cluster の :tick-seconds で渡す。
+(val SIM-TICK-SECONDS 0.5)
 (val QUIET-BEATS-LIMIT 360)                 ; 宿が一度に眠る拍の上限(拍 10 秒なら仮想の 1 時間 — coordinator の区間の上限と同じ長さ)
 (val FIRST-REST-BEATS 4)                     ; 宿が一度に眠る拍の最初の上限(最後まで眠れるたびに倍 — 宿の真実の rest-reach)
 
@@ -607,7 +612,9 @@
   (setv #^ bool skip-idle False)
   ;; 比で延ばした世界(sim-cluster に :timing を渡さない筋書き — SIM-TIMING-RATIO)か。真なら worker の死の判断(WorkerGone)を見張り、
   ;; 出たら筋書きを待たずに SimLivenessError で終わる(延ばした窓は生死の判断が起きない前提 — #3865)。
-  (setv #^ bool watches-gone False))
+  (setv #^ bool watches-gone False)
+  ;; worker の代役(宿)の拍の刻み(秒 — SIM-TICK-SECONDS・sim-cluster の :tick-seconds)。
+  (setv #^ float tick-seconds SIM-TICK-SECONDS))
 
 
 (defrecord SimParts
@@ -988,10 +995,11 @@
   (system-declaration system revision :versions versions :runtime-env runtime-env :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [skip-idle False]]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [skip-idle False]
+                [tick-seconds SIM-TICK-SECONDS]]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -1006,7 +1014,7 @@
   (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
            :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
-           :skip-idle skip-idle :watches-gone (is timing None)
+           :skip-idle skip-idle :tick-seconds tick-seconds :watches-gone (is timing None)
            :start-ms start-ms :timing (or timing scaled) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
@@ -2013,21 +2021,40 @@
   None)
 
 
-(defk rest-of-pause [policy changed slept-at]
-  {:pre [(: policy WorkerPolicy) (: changed (| Future None)) (: slept-at int)] :post [(: % None)]
+(defk sim-tick-pause [policy changed tick-seconds]
+  {:pre [(: policy WorkerPolicy) (: changed (| Future None)) (: tick-seconds float)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "拍 slept-at の後の眠りの残り(拍の終わり slept-at + tick-seconds まで)を、本番の拍の間の待ち(core/program.tick-pause)と同じ形で
+  "模擬の宿の拍と拍の間を眠るため(#2692 — 前の本番の形を模擬の刻み tick-seconds で残した物・単位 5 で替える)。上限は tick-seconds。
+   宣言の変化の呼び鈴 changed が在れば眠りを呼び鈴と競わせ、鳴れば拍の終わりから wake-gap-seconds が経つまで眠り足す。"
+  (match changed
+    ;; 時間で取り直す理由: 模擬の宿の刻み(本番は周期で眠らない — #3871 の単位 4。宿の作り替えは単位 5)。
+    None (<- (Delay tick-seconds))
+    _ (do (<- slept-at float (GetMonotonic))
+          (<- rung (promise-or-timeout changed tick-seconds))
+          (when (is-not rung None)
+            (<- woke-at float (GetMonotonic))
+            (val gap (min policy.wake-gap-seconds tick-seconds))
+            (val rest (min gap (- gap (- woke-at slept-at))))
+            (when (> rest 0)
+              (<- (Delay rest))))))
+  None)
+
+
+(defk rest-of-pause [policy changed slept-at tick-seconds]
+  {:pre [(: policy WorkerPolicy) (: changed (| Future None)) (: slept-at int) (: tick-seconds float)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "拍 slept-at の後の眠りの残り(拍の終わり slept-at + tick-seconds まで)を、宿の拍の間の待ち(sim-tick-pause)と同じ形で
    眠るため — 宣言の変化の呼び鈴 changed と競わせ、鳴れば slept-at から wake-gap-seconds が経つまで眠り足す。静かな拍を眠った宿が
    世界の出来事で起きた後に、1 拍ずつの走りの次の拍の刻へ戻るため。"
   (<- now int (now-epoch-ms))
-  (val left (/ (- (+ slept-at (int (* 1000 policy.tick-seconds))) now) 1000.0))
+  (val left (/ (- (+ slept-at (int (* 1000 tick-seconds))) now) 1000.0))
   (when (> left 0)
     (match changed
       None (<- (Delay left))
       _ (do (<- rung (promise-or-timeout changed left))
             (when (is-not rung None)
               (<- woke-at int (now-epoch-ms))
-              (val gap (min policy.wake-gap-seconds policy.tick-seconds))
+              (val gap (min policy.wake-gap-seconds tick-seconds))
               (val rest (min gap (- gap (/ (- woke-at slept-at) 1000.0))))
               (when (> rest 0)
                 (<- (Delay rest)))))))
@@ -2053,7 +2080,7 @@
   (<- admitted Admission (AdmitBatch #()))
   (val faults admitted.faults)
   (<- now int (now-epoch-ms))
-  (val tick-ms (int (* 1000 policy.tick-seconds)))
+  (val tick-ms (int (* 1000 plan.tick-seconds)))
   ;; 一度に眠る拍の上限は、最後まで眠れた眠りごとに倍にし(上限 QUIET-BEATS-LIMIT)、途中で起こされたら最初の長さへ戻す — 出来事の多い
   ;; 間は先の拍を試して預ける費用を小さく保つ。
   (val reach (max 1 (min truth.rest-reach QUIET-BEATS-LIMIT)))
@@ -2062,7 +2089,7 @@
   ;; wake-gap の後に拍を打つ(1 拍ずつの走りの、拍の直後の変化に気づく拍 — #2850 の 20.1 秒の w1)。
   (when (and parts.queue.up (not truth.woken) (not all-stopping) (not truth.stopping) (not-in worker.name faults.cut)
              (not-in #("POST" "/heartbeat") faults.failing))
-    (<- quiet int (quiet-beats state policy (fn [at] (view-of truth at)) now reach))
+    (<- quiet int (quiet-beats state policy (fn [at] (view-of truth at)) now reach tick-ms))
     (:= ahead quiet))
   (var resting False)
   (var beats #())
@@ -2097,9 +2124,9 @@
       ;; 出来事)は、1 拍ずつの走りの今の拍の間の待ちの残りを本番と同じ形で眠る。
       (val due-now (or (is reason None) (= reason HEARD) (= woke (+ passed tick-ms))))
       (when (not due-now)
-        (<- (rest-of-pause policy changed passed)))))
+        (<- (rest-of-pause policy changed passed plan.tick-seconds)))))
   (when (not resting)
-    (<- (tick-pause policy changed)))
+    (<- (sim-tick-pause policy changed plan.tick-seconds)))
   None)
 
 
@@ -2276,12 +2303,15 @@
   (EnvReport []
     ;; sim の宿は heartbeat の root の名乗りを世界の root から自分で作る(env-heartbeat-part)ので、拍の Program の問いには None で答える。
     (resume None))
-  (AwaitNextTick [policy changed state]
-    ;; 拍の間の待ち(#2790): 模擬の時計の下(旗 skip-idle)は静かな拍を一度に眠る(rest-quietly)。旗が偽なら本番の答え手
-    ;; (worker/protocol/tick_pauses)と同じ tick-pause。
+  (WorkerWakes []
+    ;; 周の間の待ちを起こす物(#3871 の単位 4)の一番外: 宿は自分の刻みで眠る(AwaitNextTick の答え)ので、起きる物は集めない。
+    (resume (WakeSet :due (DueNever) :bells #() :exits #())))
+  (AwaitNextTick [policy changed wakes state stopping]
+    ;; 拍の間の待ち(#2790): 模擬の時計の下(旗 skip-idle)は静かな拍を一度に眠る(rest-quietly)。旗が偽なら模擬の刻みごとの
+    ;; sim-tick-pause。どちらも模擬の刻み SimPlan.tick-seconds を読み、起きる物の組 wakes は読まない(宿の作り替えは #3871 の単位 5)。
     (if plan.skip-idle
         (<- (rest-quietly worker boot policy changed state plan parts))
-        (<- (tick-pause policy changed)))
+        (<- (sim-tick-pause policy changed plan.tick-seconds)))
     (resume None)))
 
 
@@ -3583,16 +3613,17 @@
 
 
 (defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]
-                       [skip-idle False]]
+                       [skip-idle False] [tick-seconds SIM-TICK-SECONDS]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env skip-idle))
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env skip-idle
+                             :tick-seconds tick-seconds))
   ;; no-business-timers は外の世界の外側: 外の世界に timer-handler を置いた走りでは、それが先に ArmedTimers に答える(#3093)。
   (<- answer (with-handlers [(session-store) no-business-timers #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
@@ -3600,10 +3631,10 @@
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None] [runtime-env None] [skip-idle True]]
+                  [outside None] [store None] [deployments None] [runtime-env None] [skip-idle True] [tick-seconds SIM-TICK-SECONDS]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: skip-idle bool) (: tick-seconds float)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -3617,18 +3648,19 @@
    走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。runtime-env = 宣言の実行環境の宣言(本番の
    declare の --runtime-env と同じ — 本物の worker が準備し、子の run-context の runtime-env になる。既定 None)。壁の時計で回すなら
    wall-sim-cluster。skip-idle = worker の代役(宿)が、本番の判断で何も変えない拍を一度に眠る(既定 = 真。預けた heartbeat は受付の
-   列がその刻に要求として渡す — 同値の検が偽と真を比べる・2026-09-30・#3865)。"
+   列がその刻に要求として渡す — 同値の検が偽と真を比べる・2026-09-30・#3865)。tick-seconds = worker の代役(宿)の拍の刻み(本番の
+   worker は周期で眠らない — #3871 の単位 4。宿の作り替えは単位 5。既定 SIM-TICK-SECONDS)。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
-                                           :skip-idle skip-idle))))
+                                           :skip-idle skip-idle :tick-seconds tick-seconds))))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None] [deployments None] [runtime-env None]]
+                       [store None] [deployments None] [runtime-env None] [tick-seconds SIM-TICK-SECONDS]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None))]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: tick-seconds float)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -3638,5 +3670,6 @@
    await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env))))
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
+                                           :tick-seconds tick-seconds))))
   answer)

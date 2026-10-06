@@ -1,7 +1,7 @@
 ;; worker の先の拍を本番の判断で試す quiet-beats(worker/core/quiet_policy — #2781)の同値の検。
 ;;
 ;; 本物の run-worker を、時刻だけで観測が決まる偽の世界(コードの準備は prepare-ms 後に揃い、子 process は life-ms 後に落ちる)の上で
-;; 1 拍ずつ回す。拍の間の眠りの答え手(AwaitNextTick)は、眠る前の記憶で quiet-beats を試して記録し、本番と同じ tick-pause で 1 拍だけ眠る。
+;; 1 拍ずつ回す。拍の間の眠りの答え手(AwaitNextTick)は、眠る前の記憶で quiet-beats を試して記録し、模擬の宿の sim-tick-pause(刻み 1.0 秒)で 1 拍だけ眠る。
 ;; - 各眠りの時点の quiet-beats の答え(眠ってよい拍の数)は、1 拍ずつの走りで次に action が出たか状態の報告が変わった拍と一致する
 ;;   (準備の揃い・落ちた process の回収・起こし直しの間の終わりを含む)。
 ;; - 反例: 先の拍の刻で観測を読み直さない判断(眠る前の観測のまま試す)は、準備の揃いと process の終わりを見落として長く答え、食い違う。
@@ -16,10 +16,12 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView WorkerPolicy DesiredJobs JobStatus ReadDesired ObserveWorld
                                                   PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob
                                                   AwaitNextTick])
-(import doeff_cluster.worker.core.program [run-worker tick-pause])
+(import doeff_cluster.worker.core.program [run-worker])
+(import doeff_cluster.sim.local [sim-tick-pause])
+(import tests.wake_fixtures [wakes-every])
 (import doeff_cluster.worker.core.quiet_policy [quiet-beats])
 
-(val POLICY (WorkerPolicy :tick-seconds 1.0 :restart-backoff-ms 2000 :stop-grace-ms 1000 :kill-grace-ms 500))
+(val POLICY (WorkerPolicy :restart-backoff-ms 2000 :stop-grace-ms 1000 :kill-grace-ms 500))
 (val TICK-MS 1000)
 (val JOB (JobSpec "a" "jobs.a" #() "rev1"))
 (val LIMIT 8)           ; 1 回の眠りで試す拍の上限
@@ -83,11 +85,11 @@
     (val now (! (clock-ms world.clock)))
     (setv world.procs (dfor #(k v) (.items world.procs) :if (!= k name) k v) world.acts (| world.acts #{now}))
     (resume None))
-  (AwaitNextTick [policy changed state]
+  (AwaitNextTick [policy changed wakes state stopping]
     (val now (! (clock-ms world.clock)))
-    (<- beats int (quiet-beats state policy (fn [at] (timed-view world (if world.stale now at))) now LIMIT))
+    (<- beats int (quiet-beats state policy (fn [at] (timed-view world (if world.stale now at))) now LIMIT TICK-MS))
     (setv world.pauses (+ world.pauses #(#(now beats))))
-    (<- (tick-pause policy changed))
+    (<- (sim-tick-pause policy changed 1.0))
     (resume None)))
 
 
@@ -108,7 +110,7 @@
   {:pre [(: stale bool)] :post [(: % TimedWorld)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の run-worker を偽の世界(準備 3.3 秒・process は 4.5 秒で落ちる)の上で STOP-MS まで 1 拍ずつ回し、記録の残った世界を返すため。"
   (val world (TimedWorld 3300 4500 stale))
-  (<- ((sim-time-handler :clock world.clock) (slog-discard-handler ((timed-host world) (run-worker POLICY)))))
+  (<- ((sim-time-handler :clock world.clock) (slog-discard-handler ((timed-host world) ((wakes-every TICK-MS) (run-worker POLICY))))))
   world)
 
 

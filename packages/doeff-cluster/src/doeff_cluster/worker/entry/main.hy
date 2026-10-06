@@ -21,6 +21,7 @@
 (import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
+(import doeff_core_effects.pidfd_exit [pidfd-exit-handler])
 (import doeff_core_effects.os_random [os-random-handler])
 (import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
@@ -29,6 +30,7 @@
 (import doeff_time [async-time-handler sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
@@ -123,8 +125,8 @@
    (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
    調整ループ(heartbeat)は回り続ける(#3715)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。"
-  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler
-   os-file-handler offloaded-tree-handler (session-store) os-signal-stop-handler (env-host envs) (code-host codes) (status-file status-path)
+  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler pidfd-exit-handler
+   os-file-handler offloaded-tree-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
    (probe-host probes) (warm-host warm) (process-host host) local-host tick-pauses])
 

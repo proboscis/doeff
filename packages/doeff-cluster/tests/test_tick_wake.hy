@@ -1,12 +1,11 @@
 ;; worker の拍の間の眠りを宣言の変化で起こす(#2692)。
 ;;
-;; worker の調整ループ(worker/core/program の run-worker)は拍ごとに tick-seconds(0.5 秒)を眠る。前の形は眠りが無条件で、名指しの待ちが
-;; 「変わった」と答えても次の拍の境まで起きず、task の開始が変化の刻の位相で 0〜0.5 秒遅れた。今は宣言の読みが呼び鈴(DesiredJobs.changed)を
-;; 添え、眠りは呼び鈴と tick-seconds を競わせる(呼び鈴で起きた時は拍の終わりから wake-gap-seconds まで眠り足す)。
+;; worker の調整ループ(worker/core/program の run-worker)は、周の間を周期で眠らず、起きる物の組(WakeSet)の早い 1 つまで 1 本で待つ(#3871 の
+;; 単位 4)。宣言の読みは呼び鈴(DesiredJobs.changed)を添え、宣言が変われば周の境を待たずに起きる(呼び鈴で起きた時は拍の終わりから
+;; wake-gap-seconds まで眠り足す)。静かな周が期限まで眠る検は test_worker_wakes.hy に在る。
 ;;
-;; - 眠りの途中で宣言が変われば、拍の境を待たずに起きる(模擬の世界 sim-cluster で、置いた task の開始までの仮想の ms を測る)。
-;;   反例: 呼び鈴を無視して tick-seconds を眠る形では、変化の位相しだいで 300 ms 以上待つ。
-;; - 呼び鈴が鳴らない(変化が無い・起こしを取りこぼした)時も、拍は tick-seconds ごとに打たれる(止まらない・早まらない)。
+;; - 眠りの途中で宣言が変われば、周の境を待たずに起きる(模擬の世界 sim-cluster で、置いた task の開始までの仮想の ms を測る)。
+;;   反例: 呼び鈴を無視して宿の刻み(模擬の宿の拍 0.5 秒)を眠る形では、変化の位相しだいで 300 ms 以上待つ。
 ;; - 起こしが途切れなく続いても、拍は 1 秒に 1 / wake-gap-seconds 回まで(空回りしない)。反例: 間を空けない形では同じ仮想の刻で拍が
 ;;   回り続ける(この検は上限の拍の数で打ち切って赤)。
 ;; - 1 回の眠りの間に変化が何度来ても、鳴る呼び鈴は 1 つ(本番の coordinator への口 — 鳴るまで拍をまたいで同じ呼び鈴を渡す)。
@@ -29,6 +28,7 @@
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import tests.fixtures.envs [sim-foundation])
+(import tests.wake_fixtures [wakes-every])
 (import tests.fixtures.sim_programs [beacons slow-task sim-task-foundation NET])
 
 (val POLICY (WorkerPolicy))
@@ -65,21 +65,13 @@
   (when rung
     (<- (CompletePromise bell True)))
   (val log (TickLog (SimClock)))
-  (<- ((sim-time-handler :clock log.clock) ((bell-host log bell stop-ms) (stop-signal-never-comes (tick-pauses (run-worker POLICY))))))
+  (<- ((sim-time-handler :clock log.clock) ((bell-host log bell stop-ms) (stop-signal-never-comes ((wakes-every 500) (tick-pauses (run-worker POLICY)))))))
   log.reads)
-
-
-(deftest test-a-silent-bell-still-ticks-every-tick-seconds
-  ;; 呼び鈴が鳴らない(変化が無い・起こしを取りこぼした)時は、拍は tick-seconds(500 ms)ごと — 止まらず、早まりもしない。
-  (<- reads tuple (ticks-with-bell False 3000))
-  (val gaps (lfor #(a b) (zip reads (cut reads 1 None)) (- b a)))
-  (assert (>= (len gaps) 5) reads)
-  (assert (all (gfor g gaps (= g 500))) gaps))
 
 
 (deftest test-repeated-wakes-do-not-busy-loop
   ;; 起こしが途切れなく続いても(呼び鈴が鳴りっぱなし)、拍は wake-gap-seconds(100 ms)ごと — 1 秒に 10 回まで。起こしは効いている
-  ;; (拍は tick-seconds ごとの 2 回より多い)。反例: 間を空けない形は同じ刻で READ-LIMIT まで回る・呼び鈴を無視する形は 1 秒に 2 回。
+  ;; (期限 500 ms ごとの 2 回より多い)。反例: 間を空けない形は同じ刻で READ-LIMIT まで回る・呼び鈴を無視する形は 1 秒に 2 回。
   (<- reads tuple (ticks-with-bell True 1000))
   (val in-first-second (lfor r reads :if (< r 1000) r))
   (assert (< (len reads) READ-LIMIT) (len reads))
@@ -127,7 +119,7 @@
 
 
 (deftest test-a-change-mid-sleep-starts-the-task-before-the-next-tick
-  ;; 置いた task は拍の境(tick-seconds = 500 ms)を待たずに起きる: どの位相で置いても開始まで wake-gap-seconds(100 ms)+ 送りの数 ms の内。
+  ;; 置いた task は宿の刻み(模擬の宿の拍 = 500 ms)を待たずに起きる: どの位相で置いても開始まで wake-gap-seconds(100 ms)+ 送りの数 ms の内。
   ;; 反例: 眠りが無条件の形では、置いた刻の位相しだいで 300 ms 以上待つ(最大は拍 1 つ近く)。
   (<- latencies tuple (sim-cluster (beacons sim-foundation) (start-latencies)
                                    :workers #((SimWorker :name "w1" :provides NET :task-reserve 0))))
@@ -139,7 +131,7 @@
 ;;
 ;; 木の無い worker は最初の拍で準備(PrepareCode)を撃つ。準備がその拍のうちに揃えば(模擬の既定 prepare-seconds = 0)、action の後の観測で
 ;; 揃った木を見て同じ拍で起こす。揃わなければ(本番の git・uv のような長い準備)落ちずに今までの道 — 後の拍で揃いを観測してから起こす。
-;; 反例: 揃いを次の拍まで見ない形では、最初の task の開始が拍 1 つ(500 ms)近く遅れる(呼び鈴は鳴らないので tick-seconds を待つ)。
+;; 反例: 揃いを次の拍まで見ない形では、最初の task の開始が拍 1 つ(500 ms)近く遅れる(呼び鈴は鳴らないので宿の刻みを待つ)。
 
 ;; job を持たない系: worker は最初の task まで木を持たない(冷えた worker)。
 (val NO-JOBS (system-of "first-task" #()))

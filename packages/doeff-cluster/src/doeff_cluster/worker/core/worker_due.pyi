@@ -5,12 +5,14 @@ from doeff_cluster.shared.intent.due_model import DueAt as DueAt
 from doeff_cluster.shared.intent.due_model import DueNow as DueNow
 from doeff_cluster.shared.intent.due_model import DueNever as DueNever
 from doeff_cluster.shared.core.due_policy import due_of_instants as due_of_instants
+from doeff_cluster.shared.core.due_policy import earliest_due as earliest_due
 from doeff_cluster.worker.intent.worker_model import CodeState as CodeState
 from doeff_cluster.worker.intent.worker_model import ProbeState as ProbeState
 from doeff_cluster.worker.intent.worker_model import StopStage as StopStage
 from doeff_cluster.worker.intent.worker_model import Outcome as Outcome
 from doeff_cluster.worker.intent.worker_model import WorldView as WorldView
 from doeff_cluster.worker.intent.worker_model import WorkerPolicy as WorkerPolicy
+from doeff_cluster.worker.intent.worker_model import WakeSet as WakeSet
 from doeff_cluster.worker.core.policy import backoff_ms as backoff_ms
 from doeff_cluster.worker.core.env_upkeep import RootsTally as RootsTally
 from doeff_cluster.worker.core.env_upkeep import PrepareLimits as PrepareLimits
@@ -32,4 +34,7 @@ def prepare_stop_due(now: int, progressed_ms: int, limits: PrepareLimits) -> _Pr
     ...
 
 def sweep_interval_due(now: int, tally: RootsTally | None, cap: int, swept_ms: int) -> _Program[DueAt | DueNever, object]:
+    ...
+
+def wakes_with(outer: WakeSet, due: DueAt | DueNow | DueNever, bells: tuple, exits: tuple) -> _Program[WakeSet, object]:
     ...

@@ -1,7 +1,7 @@
 ;;; worker が heartbeat をいつ送るか(純粋な判断・I/O はしない — #1933)。本番の coordinator への口(worker/protocol/coordinator_link)と手元の sim の宿
 ;;; (local.hy)が同じ関数を使う。
 ;;;
-;;; worker の拍(WorkerPolicy.tick-seconds・0.5 秒)ごとに ReadDesired が来るが、heartbeat を送るのは次のどれかの時だけ:
+;;; worker の周(期限・宣言の変化・子の終わり・止めの早い 1 つで起きる — #3871 の単位 4)ごとに ReadDesired が来るが、heartbeat を送るのは次のどれかの時だけ:
 ;;;   - 待ちの口を使えていない(返事に版が無い旧い coordinator・GET /watch が 404・待ちがまだ 1 度も答えていない)— 今までどおり毎拍
 ;;;   - 前の heartbeat が届いていない(届かない間は毎拍送り直す — 途絶と fence の数え方は今までどおり)
 ;;;   - 名指しの待ち(GET /watch?worker=<名>)が「変わった」と答えた(desired の変化を待ちで受ける)

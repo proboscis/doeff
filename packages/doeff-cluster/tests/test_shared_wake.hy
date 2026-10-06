@@ -5,7 +5,7 @@
 ;; - 受付の箱は起こし(wake)で待ちを抜ける。停止の合図(SIGTERM)の受け手は印を立てて箱を起こすので、本物の process の待ちが
 ;;   すぐ抜ける(合図は main の thread の待ちに割り込む — 本物の process に本物の SIGTERM を送って確かめる)。
 ;; - worker は核の停止の答え手(os-signal-stop-handler)を使い、拍と拍の間の待ちの本番の答え手(tick-pauses)が停止の合図の待ち
-;;   (AwaitStop)を拍の眠りと競わせるので、本物の process の待ちが拍の長さを待たずに抜ける(#3871 の単位 3)。
+;;   (AwaitStop)を拍の眠りと競わせるので、本物の process の待ちが期限(この検では 60 秒先)を待たずに抜ける(#3871 の単位 3)。
 ;; - coordinator は止まる時に、今の刻の生存の印を保存してから止まる(眠っている間は印を書かない形の前提 — 止まった長さを多く数えない)。
 (require doeff-hy.macros [deftest defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -112,7 +112,8 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_core_effects.stop_signal_effects import StopRequested
 from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler
 from doeff_time import async_time_handler
-from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WorkerPolicy, WorkerState
+from doeff_cluster.shared.intent.due_model import DueAt
+from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy, WorkerState
 from doeff_cluster.worker.protocol.tick_pauses import tick_pauses
 
 @do
@@ -120,7 +121,8 @@ def body():
     yield StopRequested()
     print('ready', flush=True)
     started = time.monotonic()
-    yield AwaitNextTick(WorkerPolicy(tick_seconds=10.0), None, WorkerState())
+    due = DueAt(at=int(time.time() * 1000) + 60000)
+    yield AwaitNextTick(WorkerPolicy(), None, WakeSet(due=due, bells=(), exits=()), WorkerState())
     reason = yield StopRequested()
     print(f'{reason} {time.monotonic() - started:.3f}', flush=True)
 

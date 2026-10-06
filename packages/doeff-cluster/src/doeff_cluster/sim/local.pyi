@@ -119,6 +119,7 @@ NO_STATE_FILE: str
 SIM_URL: str
 SIM_START_MS: int
 SIM_TIMING_RATIO: int
+SIM_TICK_SECONDS: float
 DECLARE_ACTOR: str
 CLIENT_NAME: str
 TASK_POLL_SECONDS: float
@@ -535,6 +536,7 @@ def sim_cluster(
     deployments: dict[str, dict[str, int]] | None = None,
     runtime_env: RuntimeEnv | None = None,
     skip_idle: bool = True,
+    tick_seconds: float = 0.5,
 ) -> Program[_Answer, object]: ...
 def wall_sim_cluster(
     system: System,
@@ -549,4 +551,5 @@ def wall_sim_cluster(
     store: Callable[[], _WalStoreView] | None = None,
     deployments: dict[str, dict[str, int]] | None = None,
     runtime_env: RuntimeEnv | None = None,
+    tick_seconds: float = 0.5,
 ) -> Program[_Answer, object]: ...

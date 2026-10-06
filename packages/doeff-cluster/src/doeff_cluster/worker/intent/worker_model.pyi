@@ -20,9 +20,12 @@ runtime_env_model.pyi と同じ形)。
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 
+from doeff_cluster.shared.intent.due_model import DueAt, DueNever, DueNow
 from doeff_cluster.shared.intent.job_model import JobPhase, JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure
+from doeff_core_effects.process_effects import AwaitProcessExit
 from doeff_core_effects.scheduler import Future
+from doeff_core_effects.warm_effects import AwaitWarmChildExit
 
 from doeff import EffectBase
 
@@ -238,7 +241,6 @@ class WorkerPolicy:
     restart_backoff_max_ms: int = 60000
     stable_run_ms: int = 60000
     code_retry_ms: int = 30000
-    tick_seconds: float = 0.5
     wake_gap_seconds: float = 0.1
 
 @dataclass(frozen=True)
@@ -422,4 +424,17 @@ class WorkerState:
 class AwaitNextTick(EffectBase[None]):
     policy: WorkerPolicy
     changed: Future[bool] | None
+    wakes: WakeSet
     state: WorkerState
+    stopping: bool = False
+
+@dataclass(frozen=True)
+class WakeSet:
+    due: DueAt | DueNow | DueNever
+    bells: tuple[Future[object], ...]
+    exits: tuple[AwaitProcessExit | AwaitWarmChildExit, ...]
+
+@dataclass(frozen=True)
+class WorkerWakes(EffectBase[WakeSet]): ...
+
+class WorkerUnsettled(Exception): ...

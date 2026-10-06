@@ -1,6 +1,7 @@
 {
   "include": [
-    "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy"
+    "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy",
+    "packages/doeff-cluster/src/doeff_cluster/worker/protocol/worker_wakes.hy"
   ],
   "module_extensions": {
     "doeff-cluster-local": {
@@ -13,15 +14,19 @@
     {
       "allow": [
         "doeff-cluster-worker",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-clock",
+        "doeff-cluster-due-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-tick-pauses",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy",
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/worker_wakes.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy"
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tick_pauses.hy",
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/worker_wakes.hy"
       ],
       "responsibility": "worker の拍と拍の間の眠り(effect AwaitNextTick)に答える handler — 拍の間の待ちの長さの判断は worker/core/program の tick-pause が持ち、ここは答えるだけ(本番の worker と sim の宿が同じ答え手を使う)",
       "typed": true
