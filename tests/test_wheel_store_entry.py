@@ -168,7 +168,8 @@ def test_editable_puts_the_native_module_in_the_venv_and_finds_the_source_throug
         ])
         assert archive.read("probe.pth").decode().splitlines() == [str((package / "python").resolve()), "import __editable___probe_finder"]
         finder = archive.read("__editable___probe_finder.py").decode()
-        assert repr({"probe": str((package / "python" / "probe").resolve())}) in finder
+        assert "PACKAGES = ('probe',)" in finder
+        assert str(package) not in finder, "finder が作業木の path を持つ(source の根の定義元は .pth の 1 行目だけ)"
     assert backend._wheel_problem(wheel) is None
 
 

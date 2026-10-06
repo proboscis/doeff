@@ -410,7 +410,8 @@ def _built_member(member: str, package: Path, source_root: Path, includes: tuple
     return member.endswith(NATIVE_SUFFIXES) or any(fnmatch.fnmatch(relative, pattern) for pattern in includes)
 
 
-# editable の wheel に入れる finder の module の中身({packages} = 名 → 作業木の source の package の dir・{native} = 成果物の dir の名)。
+# editable の wheel に入れる finder の module の中身({packages} = 答える package の名の組・{native} = 成果物の dir の名・{pth} = 作業木の
+# source の根を 1 行目に持つ同じ wheel の .pth の名 — source の根は finder に書かず .pth から読む)。
 # package の探し先を venv の成果物の dir → 作業木の source の dir の順にする(成果物の dir を先に探すので、前の形が source の木に残した
 # 成果物は使われない)。
 EDITABLE_FINDER = '''\
@@ -419,8 +420,13 @@ import importlib.util
 import os
 import sys
 
-NATIVE = os.path.join(os.path.dirname(os.path.abspath(__file__)), {native!r})
+SITE = os.path.dirname(os.path.abspath(__file__))
+NATIVE = os.path.join(SITE, {native!r})
 PACKAGES = {packages!r}
+# 作業木の source の根は、同じ wheel の .pth の 1 行目だけが持つ(定義元を 1 つにする — .pth の行を別の checkout へ書き換える向け直しに
+# finder も従う)。
+with open(os.path.join(SITE, {pth!r}), encoding="utf-8") as _pth:
+    SOURCE = _pth.readline().strip()
 
 
 class EditableNativeFinder:
@@ -428,9 +434,9 @@ class EditableNativeFinder:
 
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        source = PACKAGES.get(fullname)
-        if source is None:
+        if fullname not in PACKAGES:
             return None
+        source = os.path.join(SOURCE, fullname)
         return importlib.util.spec_from_file_location(
             fullname, os.path.join(source, "__init__.py"), submodule_search_locations=[os.path.join(NATIVE, fullname), source]
         )
@@ -459,14 +465,14 @@ def _editable_wheel(stored: Path, package: Path, source_root: Path, includes: tu
             if name.startswith(f"{dist_info}/") and not name.endswith("/") and name != f"{dist_info}/RECORD"
         )
     tops = sorted({entry.name.split("/")[1] for entry in products if entry.name.count("/") >= 2})
-    packages = {top: str(source_root / top) for top in tops if (source_root / top / "__init__.py").is_file()}
+    packages = tuple(top for top in tops if (source_root / top / "__init__.py").is_file())
     finder = f"__editable___{distribution}_finder"
     loose = any(entry.name.count("/") == 1 for entry in products)  # package の外の成果物(根の拡張 module)は成果物の dir を路に足す
     pth = "".join((f"{source_root}\n", f"{native}\n" if loose else "", f"import {finder}\n" if packages else ""))
     entries = (
         *metadata,
         *products,
-        WheelEntry(name=f"{finder}.py", data=EDITABLE_FINDER.format(native=native, packages=packages).encode("utf-8"), mode=0o644),
+        WheelEntry(name=f"{finder}.py", data=EDITABLE_FINDER.format(native=native, packages=packages, pth=f"{distribution}.pth").encode("utf-8"), mode=0o644),
         WheelEntry(name=f"{distribution}.pth", data=pth.encode("utf-8"), mode=0o644),
     )
     text = io.StringIO()
