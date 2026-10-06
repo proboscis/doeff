@@ -21,20 +21,23 @@
 
 (defn #^ WarmState warm-view [#^ ClusterState state #^ WarmEntry entry #^ int now #^ ClusterTiming timing]
   "行 1 つの今の姿: 行の needs に合い(能力)、生きていて drain 中でない worker を、その worker の platform の root のキーで照らして分ける
-   (送り手が「1 台以上で準備済み」を読んで Ready を決めるため)。"
+   (送り手が「1 台以上で準備済み」を読んで Ready を決めるため)。そのうち 1 台でも先の組みを memory を測らずに始めていれば memory-unmeasured。"
   (setv draining (draining-workers state now)
-        ready [] preparing [] failed [])
+        ready [] preparing [] failed [] unmeasured False)
   (for [w (sorted (.values state.workers) :key (fn [w] w.name))]
     (when (and (alive now w timing.lease-ms) (not-in w.name draining) w.platform
                (placeable entry.needs w) (tools-cover entry.runtime-env w))
       (setv key (root-key-on entry.runtime-env w))
+      ;; 先の組みを memory を測らずに始めた worker が在れば行に印を立てる(#3748)。
+      (when (in key w.env-memory-unmeasured) (setv unmeasured True))
       (cond
         (in key w.env-ready) (.append ready w.name)
         (in key w.env-preparing) (.append preparing w.name)
         True (for [f w.env-failed]
                (when (= f.key key)
                  (.append failed (WarmFailure :worker w.name :kind f.kind :detail f.detail :retryable f.retryable)))))))
-  (WarmState :key entry.key :ready (tuple ready) :preparing (tuple preparing) :failed (tuple failed) :until-ms entry.until-ms))
+  (WarmState :key entry.key :ready (tuple ready) :preparing (tuple preparing) :failed (tuple failed) :until-ms entry.until-ms
+             :memory-unmeasured unmeasured))
 
 
 (defn #^ tuple warm-write [#^ ClusterState state #^ WarmBody body #^ int now #^ str actor #^ ClusterTiming timing]

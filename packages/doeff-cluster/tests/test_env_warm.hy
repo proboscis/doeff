@@ -326,6 +326,26 @@
   (assert (= (get missing 1) 404) missing))
 
 
+
+(deftest test-a-warm-row-says-when-a-worker-built-it-without-measuring-memory
+  ;; worker が heartbeat の envs.memoryUnmeasured に root のキーを名乗ると(先の組みの前に memory を読めなかった — #3748)、その行の姿は
+  ;; memory-unmeasured = 真で、通信の本文(memoryUnmeasured)を往復しても残る。名乗らない worker だけの行は偽。
+  (<- declared dict (declared-of "app-1"))
+  (<- key-linux str (key-on declared "linux-x86_64"))
+  (val body {"runtimeEnv" declared "needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
+  (val written (responded (ClusterState) (! (http-request "POST" "/warm" {} body :actor "svc-a")) 1000 TIMING))
+  (val warmed (warm-state-of-json (get written 2)))
+  (val hb {"name" "w1" "provides" ["agent-cli"] "capacity" 2 "taskReserve" 0 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+           "envs" {"ready" [] "preparing" [key-linux] "failed" [] "memoryUnmeasured" []} "envCapacity" "ok"})
+  (val measured (! (register-heartbeat (get written 0) (! (heartbeat-of hb)) 2000)))
+  (val read-1 (warm-state-of-json (get (responded measured (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 2000 TIMING) 2)))
+  (assert (= #(read-1.preparing read-1.memory-unmeasured) #(#("w1") False)) read-1)
+  (val unmeasured (! (register-heartbeat measured (! (heartbeat-of (| hb {"envs" {"ready" [] "preparing" [key-linux] "failed" []
+                                                                              "memoryUnmeasured" [key-linux]}}))) 3000)))
+  (val read-2 (warm-state-of-json (get (responded unmeasured (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 3000 TIMING) 2)))
+  (assert (= #(read-2.preparing read-2.memory-unmeasured) #(#("w1") True)) read-2))
+
+
 ;; --- 本物の client(warm-cluster): coordinator に届かない頼みは値で答える(2026-09-28)---------------------------
 
 (deff answers-503 [request]  ; defk にできない: httpx の MockTransport が同期で呼ぶ外の callback

@@ -145,6 +145,9 @@ class EnvFailureKind(StrEnum):
     ENV_INCOMPATIBLE = "env-incompatible"
     PREPARE_TIMEOUT = "prepare-timeout"
     MEMORY_KILLED = "memory-killed"
+    NO_DISK_ROOM = "no-disk-room"
+    OVER_ROOTS_CAP = "over-roots-cap"
+    NO_MEMORY_ROOM = "no-memory-room"
 
 RETRYABLE_KINDS: frozenset[EnvFailureKind]
 

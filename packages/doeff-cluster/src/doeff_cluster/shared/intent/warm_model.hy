@@ -36,12 +36,15 @@
 (defrecord WarmState
   "温める表の行 1 つの今の姿。key = 行のキー(宣言と needs の組)・ready / preparing = 行の needs(能力・専用の能力・宣言の道具)に
    合い、生きていて drain 中でない worker のうち準備済み / 準備中の worker の名・failed = 準備に失敗した worker(WarmFailure)・
-   until-ms = 行の期限(coordinator の時計の epoch ミリ秒)。"
+   until-ms = 行の期限(coordinator の時計の epoch ミリ秒)・memory-unmeasured = 行の needs に合う worker のどれかが、この行の root の先の組みを
+   memory を測らずに始めた(cgroup v1・memory の file が無い・上限が無い — 組みの前の memory の判じ〔no-memory-room〕が効いていない。
+   本番だけ黙って読めない形を頼み手が見えるように・#3748)。"
   (#^ str key)
   (#^ tuple ready)
   (#^ tuple preparing)
   (#^ tuple failed)
-  (#^ int until-ms))
+  (#^ int until-ms)
+  (setv #^ bool memory-unmeasured False))
 
 
 (defrecord WarmUnreachable

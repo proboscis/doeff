@@ -8,7 +8,7 @@ from doeff_cluster.worker.intent.worker_model import JobStatus as JobStatus
 from doeff_cluster.worker.core.worker_rules import ENV_KEY_PREFIX as ENV_KEY_PREFIX
 from doeff_cluster.worker.core.heartbeat_rules import finished_task_id as finished_task_id
 
-def env_report(views: tuple[CodeView, ...], capacity: str) -> dict[str, object]:
+def env_report(views: tuple[CodeView, ...], capacity: str, unmeasured: frozenset[str]) -> dict[str, object]:
     ...
 
 def env_heartbeat_part(report: dict[str, object], platform: str) -> dict[str, object]:

@@ -38,7 +38,7 @@
   "WarmState → 通信の本文。"
   {"key" state.key "ready" (list state.ready) "preparing" (list state.preparing)
    "failed" (lfor f state.failed {"worker" f.worker "kind" f.kind "detail" f.detail "retryable" f.retryable})
-   "untilMs" state.until-ms})
+   "untilMs" state.until-ms "memoryUnmeasured" state.memory-unmeasured})
 
 
 (defn #^ WarmState warm-state-of-json [#^ dict value]  ; defk にできない: coordinator の純粋な判断と HTTP の handler の境界で読む
@@ -47,7 +47,8 @@
              :failed (tuple (gfor f (get value "failed")
                                   (WarmFailure :worker (get f "worker") :kind (get f "kind") :detail (get f "detail")
                                                :retryable (bool (get f "retryable")))))
-             :until-ms (int (get value "untilMs"))))
+             :until-ms (int (get value "untilMs"))
+             :memory-unmeasured (bool (get value "memoryUnmeasured"))))
 
 
 (defk warm-wait-answer [read key waited timeout-seconds]

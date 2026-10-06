@@ -19,9 +19,12 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import json)
 (import os)
+(import shutil)
+(import collections.abc [Callable])
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -36,7 +39,8 @@
 (import doeff_cluster.worker.intent.env_prepare_model [EnvMarker EnvReady])
 (import doeff_cluster.worker.core.env_prepare [env-marker->json])
 (import doeff_cluster.worker.protocol.env_translation [answer-json])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings ENV-TOOL env-host env-root])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings ENV-TOOL env-host env-root WARM-REFUSED-LOG MEMORY-UNMEASURED-LOG])
+(import doeff_cluster.worker.core.env_upkeep [DEFAULT-ROOT-BYTES DEFAULT-BUILD-MEMORY-BYTES])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs])
 (import doeff_cluster.worker.protocol.declared [task-spec])
@@ -128,11 +132,14 @@
 (val NO-CAP (** 2 62))   ; roots の合計の上限を掃除の起きない大きさに置く(掃除を見ない検)
 
 
-(defk settings-at [base [roots-cap-bytes NO-CAP] [min-free-bytes 0]]
-  {:pre [(: base Path) (: roots-cap-bytes int) (: min-free-bytes int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "tmp の dir の上の env-host の設定(準備の道具は inline-env-tool が答えるので起きない・uv の cache の prune は何もしない true)。"
+(defk settings-at [base [roots-cap-bytes NO-CAP] [min-free-bytes 0] [cgroup-dir None]]
+  {:pre [(: base Path) (: roots-cap-bytes int) (: min-free-bytes int) (: cgroup-dir (| str None))] :post [(: % EnvSettings)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "tmp の dir の上の env-host の設定(準備の道具は inline-env-tool が答えるので起きない・uv の cache の prune は何もしない true)。cgroup の dir は
+   既定で tmp の中の無い dir(検の機体の本物の cgroup を読まない — memory は測れない側・#3748)。"
   (EnvSettings :state (str (/ base "state")) :hy-command "hy" :platform PLATFORM :code-prepare PREPARE-TOOL :uv "true"
-               :roots-cap-bytes roots-cap-bytes :min-free-bytes min-free-bytes))
+               :roots-cap-bytes roots-cap-bytes :min-free-bytes min-free-bytes
+               :cgroup-dir (if (is cgroup-dir None) (str (/ base "no-cgroup")) cgroup-dir)))
 
 
 (defk declared [n]
@@ -268,14 +275,15 @@
 
 ;; --- 9 掃除 -----------------------------------------------------------------------------------------
 
-(defk made-root [settings name env made-s used-s]
-  {:pre [(: settings EnvSettings) (: name str) (: env RuntimeEnv) (: made-s int) (: used-s int)] :post [(: % Path)]
+(defk made-root [settings name env made-s used-s [build-memory None]]
+  {:pre [(: settings EnvSettings) (: name str) (: env RuntimeEnv) (: made-s int) (: used-s int) (: build-memory (| int None))] :post [(: % Path)]
    :tags {:context "doeff-cluster-test" :role "program"}}
-  "準備の済んだ root を置き場に置くため(完成マーカーは本物の綴り・作った時刻 = マーカーの時刻・使った時刻 = .last-used の時刻)。"
+  "準備の済んだ root を置き場に置くため(完成マーカーは本物の綴り・作った時刻 = マーカーの時刻・使った時刻 = .last-used の時刻・
+   build-memory = 印の組みの山の memory — #3748)。"
   (val root (/ (Path settings.state) "roots" name))
   (.mkdir root :parents True)
   (<- marker dict (env-marker->json (EnvMarker :env env :key name :platform PLATFORM :stages #() :downloaded 0 :built 0
-                                               :interpreter "" :child-protocol CHILD-PROTOCOL)))
+                                               :interpreter "" :child-protocol CHILD-PROTOCOL :build-memory-bytes build-memory)))
   (.write-text (/ root ENV-MARKER) (json.dumps marker :ensure-ascii False))
   (os.utime (/ root ENV-MARKER) #(made-s made-s))
   (.write-text (/ root ".last-used") "")
@@ -571,3 +579,241 @@
   (assert (and (is-not view None) (= view.state CodeState.FAILED) (is-not view.failure None)
                (= view.failure.kind EnvFailureKind.PREPARE-TIMEOUT))
           view))
+
+
+;; --- 先の組みの入口の断り(#3748)-----------------------------------------------------------------------
+;; 先の組み(PrepareEnv :warm)を受けた env-host は、組みを始める前に共有の disk の空き・roots の合計・container の memory を読み、足りなければ
+;; 準備の道具を起こさずに種類つき(no-disk-room・over-roots-cap・no-memory-room — 恒久)の失敗で断り、worker の log に 1 行出す。
+;; memory を読めない台(cgroup v1・file が無い・上限 max)では断らずに組み、heartbeat の memoryUnmeasured に root のキーを載せる。
+;; 宣言された job の準備(warm でない)は断らない。反例 = 直す前の env-host(先の組みも判じずに起こす)— 断る 3 本が赤。
+
+(val GIB (** 1024 3))
+(val MIB (** 1024 2))
+
+
+(defclass LogLines []
+  "noted-lines の記録: lines = 先の組みの断りの行と memory を測れない行の #(名 欄の dict) の列(出た順)。"
+  (defn #^ None __init__ [self]
+    (setv #^ (get tuple #(tuple ...)) self.lines #())
+    None))
+
+
+(defhandler noted-lines [#^ LogLines notes]
+  ;; 引数に残す理由: 検ごとに別の記録を並べる。先の組みの 2 つの行だけを覚え、他の行は外側の slog-handler へ渡す。
+  (SlogEffect []
+    (if (in effect.msg #(WARM-REFUSED-LOG MEMORY-UNMEASURED-LOG))
+        (do (setv notes.lines (+ notes.lines #(#(effect.msg (dict effect.kwargs)))))
+            (resume None))
+        (do (<- answer effect)
+            (resume answer)))))
+
+
+(defrecord WarmSeen
+  "先の組みの筋書きの見え方: view = 頼んだ root の観測(無ければ None)・report = heartbeat で名乗る root の姿。"
+  (#^ (| CodeView None) view)
+  (#^ dict report))
+
+
+(defk prepared-after-sweeps [key text warm]
+  {:pre [(: key str) (: text str) (: warm bool)] :post [(: % WarmSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "掃除の係を回して roots を数えさせてから(見積もりと roots の合計の元)、準備を頼み(warm = 先の組みか)、観測と heartbeat の名乗りを返すため。"
+  (<- (swept-rounds (frozenset)))
+  (<- (PrepareEnv key text :warm warm))
+  (<- views tuple (ObserveEnvs))
+  (<- report dict (EnvReport))
+  (<- view (| CodeView None) (view-of views key))
+  (WarmSeen :view view :report report))
+
+
+(defk cgroup-at [base current limit]
+  {:pre [(: base Path) (: current str) (: limit str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "cgroup v2 の memory の file(memory.current・memory.max)を tmp の dir に置き、その dir を返すため。"
+  (val dir (/ base "cgroup"))
+  (.mkdir dir :parents True :exist-ok True)
+  (.write-text (/ dir "memory.current") (+ current "\n"))
+  (.write-text (/ dir "memory.max") (+ limit "\n"))
+  (str dir))
+
+
+(defk run-warm [settings runs notes key text warm]
+  {:pre [(: settings EnvSettings) (: runs ToolRuns) (: notes LogLines) (: key str) (: text str) (: warm bool)] :post [(: % WarmSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "本物の file system の上の env-host で prepared-after-sweeps を回すため。"
+  (<- seen WarmSeen (scheduled (with-handlers [(state) (sync-time-handler) slog-handler (noted-lines notes) os-file-handler subprocess-handler
+                                               (inline-env-tool runs) (env-host settings)]
+                                 (prepared-after-sweeps key text warm))))
+  seen)
+
+
+(defk refused-kind [seen]
+  {:pre [(: seen WarmSeen)] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "観測が恒久の失敗なら種類の綴りを返すため(失敗でなければ None)。"
+  (match seen.view
+    (CodeView :state CodeState.FAILED :failure failure) :if (and (is-not failure None) (not failure.retryable)) failure.kind.value
+    _ None))
+
+
+(deftest test-a-warm-build-without-disk-room-is-refused-before-it-starts [tmp-path]
+  ;; 共有の disk の空き < 空きの最低 + root 1 つの見積もり(同じ project の root が無いので既定の 256 MiB): 先の組みは準備の道具を起こさず
+  ;; no-disk-room で断り、heartbeat の失敗に種類が載り、log に 1 行。同じ台で宣言された job の準備は断らない(起こす)。
+  (val free (. (shutil.disk-usage tmp-path) free))
+  (<- settings EnvSettings (settings-at tmp-path :min-free-bytes (- free (// DEFAULT-ROOT-BYTES 2))))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val runs (ToolRuns))
+  (val notes (LogLines))
+  (<- seen WarmSeen (run-warm settings runs notes key text True))
+  (assert (= (len runs.launches) 0) (.format "先の組みは始めない: {}" runs.launches))
+  (<- kind (| str None) (refused-kind seen))
+  (assert (= kind EnvFailureKind.NO-DISK-ROOM.value) seen)
+  (assert (= (lfor f (get seen.report "failed") (get f "kind")) [EnvFailureKind.NO-DISK-ROOM.value]) seen.report)
+  (assert (= (lfor #(name fields) notes.lines #(name (get fields "kind"))) [#(WARM-REFUSED-LOG EnvFailureKind.NO-DISK-ROOM.value)])
+          notes.lines)
+  ;; 反例: 宣言された job の準備(warm でない)は同じ台でも断らない。
+  (val job-runs (ToolRuns))
+  (<- (run-warm settings job-runs (LogLines) key text False))
+  (assert (= (len job-runs.launches) 1) job-runs.launches))
+
+
+(defk three-roots [settings small big]
+  {:pre [(: settings EnvSettings) (: small int) (: big int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "同じ project の root 3 つ(作った・使った時刻 a < b < c)を置き、a に small byte・b と c に big byte の file を置くため。答え = #(a b c)。
+   project ごとの新しい 2 つ(b と c)は掃除で消せない — 消せるのは a だけ。見積もりの元(最後に組んだ root)は c。"
+  (<- env-1 RuntimeEnv (declared 1))
+  (<- env-2 RuntimeEnv (declared 2))
+  (<- env-3 RuntimeEnv (declared 3))
+  (<- a Path (made-root settings "aaaaaaaaaaaaaaaaaaaaaaaa" env-1 100 1000))
+  (<- b Path (made-root settings "bbbbbbbbbbbbbbbbbbbbbbbb" env-2 200 2000))
+  (<- c Path (made-root settings "cccccccccccccccccccccccc" env-3 300 3000))
+  (.write-bytes (/ a "lib.py") (* b"x" small))
+  (.write-bytes (/ b "lib.py") (* b"x" big))
+  (.write-bytes (/ c "lib.py") (* b"x" big))
+  #(a b c))
+
+
+(defrecord WarmRun
+  "先の組みの筋書き 1 回の結果: seen = 見え方・launches = 起こした準備の道具の数・lines = 先の組みの行(#(名 欄) の列)。"
+  (#^ WarmSeen seen)
+  (#^ int launches)
+  (#^ tuple lines))
+
+
+(defk roots-room [tmp-path cap-of]
+  {:pre [(: tmp-path Path) (: cap-of Callable)] :post [(: % WarmRun)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "root 3 つ(a は小さく、c は大きい)の台で、上限 = cap-of(合計 a c) の先の組みを回すため。答え = WarmRun。"
+  (<- probe EnvSettings (settings-at tmp-path))
+  (<- roots tuple (three-roots probe 1000 (* 64 1024)))
+  (var sizes #())
+  (for [root roots]
+    (<- size int (tree-bytes root))
+    (:= sizes (+ sizes #(size))))
+  (val cap (cap-of (sum sizes) (get sizes 0) (get sizes 2)))
+  (<- settings EnvSettings (settings-at tmp-path :roots-cap-bytes cap))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val runs (ToolRuns))
+  (val notes (LogLines))
+  (<- seen WarmSeen (run-warm settings runs notes key text True))
+  (assert (all (gfor root roots (.exists root))) "合計が上限の内なので掃除は消さない")
+  (WarmRun :seen seen :launches (len runs.launches) :lines notes.lines))
+
+
+(deftest test-a-warm-build-over-the-roots-cap-is-refused-after-counting-what-the-sweep-can-free [tmp-path]
+  ;; roots の合計 = 上限(掃除は消さない)。組む root 1 つの見積もり = 最後に組んだ c の大きさ(64 KiB)・掃除で空けられる分 = a(1 KB 弱)。
+  ;; 合計 + c − a > 上限 なので over-roots-cap で断る(準備の道具を起こさない・log に 1 行)。
+  (<- run WarmRun (roots-room tmp-path (fn [total a c] total)))
+  (val seen run.seen)
+  (val launches run.launches)
+  (val lines run.lines)
+  (assert (= launches 0) launches)
+  (<- kind (| str None) (refused-kind seen))
+  (assert (= kind EnvFailureKind.OVER-ROOTS-CAP.value) seen)
+  (assert (= (lfor #(name fields) lines #(name (get fields "kind"))) [#(WARM-REFUSED-LOG EnvFailureKind.OVER-ROOTS-CAP.value)]) lines))
+
+
+(deftest test-a-warm-build-fits-the-roots-cap-once-the-unpinned-root-is-counted-as-freeable [tmp-path]
+  ;; 反例(境): 上限 = 合計 + c − a(ちょうど)— 掃除で空けられる a を引けば上限の内なので組む。空けられる分を引かない判じなら断って赤。
+  (<- run WarmRun (roots-room tmp-path (fn [total a c] (- (+ total c) a))))
+  (val seen run.seen)
+  (val launches run.launches)
+  (val lines run.lines)
+  (assert (= launches 1) launches)
+  (<- kind (| str None) (refused-kind seen))
+  (assert (is kind None) seen)
+  (assert (= (lfor #(name _) lines name) [MEMORY-UNMEASURED-LOG]) lines))
+
+
+(defk memory-room [tmp-path current build-memory]
+  {:pre [(: tmp-path Path) (: current int) (: build-memory (| int None))] :post [(: % WarmRun)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "memory.max 4 GiB・memory.current = current の台で先の組みを回すため。build-memory が在れば同じ project の root を 1 つ置き、印に組みの山を
+   書く(見積もりの元)。答え = WarmRun。"
+  (<- cgroup str (cgroup-at tmp-path (str current) (str (* 4 GIB))))
+  (<- settings EnvSettings (settings-at tmp-path :cgroup-dir cgroup))
+  (when (is-not build-memory None)
+    (<- env-1 RuntimeEnv (declared 1))
+    (<- (made-root settings "aaaaaaaaaaaaaaaaaaaaaaaa" env-1 100 1000 build-memory)))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val runs (ToolRuns))
+  (val notes (LogLines))
+  (<- seen WarmSeen (run-warm settings runs notes key text True))
+  (WarmRun :seen seen :launches (len runs.launches) :lines notes.lines))
+
+
+(deftest test-a-warm-build-without-memory-room-is-refused-before-it-starts [tmp-path]
+  ;; memory.current 2.75 GiB + 組みの山の見積もり(実測が無いので既定の 512 MiB)= 3.25 GiB > memory.max 4 GiB × 0.75 = 3 GiB: no-memory-room で
+  ;; 断る(準備の道具を起こさない・log の行に memory の読みと見積もり)。
+  (<- run WarmRun (memory-room tmp-path (+ (* 2 GIB) (* 768 MIB)) None))
+  (val seen run.seen)
+  (val launches run.launches)
+  (val lines run.lines)
+  (assert (= launches 0) launches)
+  (<- kind (| str None) (refused-kind seen))
+  (assert (= kind EnvFailureKind.NO-MEMORY-ROOM.value) seen)
+  (assert (= (lfor #(name fields) lines #(name (get fields "kind") (get fields "memory_current") (get fields "memory_max") (get fields "peak_bytes")))
+             [#(WARM-REFUSED-LOG EnvFailureKind.NO-MEMORY-ROOM.value (+ (* 2 GIB) (* 768 MIB)) (* 4 GIB) DEFAULT-BUILD-MEMORY-BYTES)])
+          lines)
+  (assert (= (get seen.report "memoryUnmeasured") []) seen.report))
+
+
+(deftest test-the-memory-estimate-is-the-previous-build-peak-of-the-same-project [tmp-path]
+  ;; 同じ memory の台でも、同じ project の前の組みの実測(印の buildMemoryBytes = 100 MiB)が在れば見積もりはそれ — 2.75 GiB + 100 MiB < 3 GiB
+  ;; なので組む。実測を読まずに既定の値で判じれば断って赤。
+  (<- run WarmRun (memory-room tmp-path (+ (* 2 GIB) (* 768 MIB)) (* 100 MIB)))
+  (val seen run.seen)
+  (val launches run.launches)
+  (val lines run.lines)
+  (assert (= launches 1) launches)
+  (<- kind (| str None) (refused-kind seen))
+  (assert (is kind None) seen)
+  (assert (= lines #()) lines))
+
+
+(deftest test-a-warm-build-on-a-host-whose-memory-cannot-be-read-starts-and-says-so [tmp-path]
+  ;; memory の file が無い台(cgroup v1 の代わり — settings-at の既定)と、上限が max の台: 断らずに組み、heartbeat の memoryUnmeasured に root の
+  ;; キーを載せ、log に理由の 1 行。読める台では memoryUnmeasured は空(上の 2 本)。
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val bare (cut key (len "env-") None))
+  (val runs (ToolRuns))
+  (val notes (LogLines))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- seen WarmSeen (run-warm settings runs notes key text True))
+  (assert (= (len runs.launches) 1) runs.launches)
+  (assert (= (get seen.report "memoryUnmeasured") [bare]) seen.report)
+  (assert (= (lfor #(name fields) notes.lines #(name (get fields "key"))) [#(MEMORY-UNMEASURED-LOG bare)]) notes.lines)
+  ;; 上限が max(container の memory の上限が無い)
+  (val other (/ tmp-path "other"))
+  (.mkdir other)
+  (<- cgroup str (cgroup-at other (str GIB) "max"))
+  (<- unlimited EnvSettings (settings-at other :cgroup-dir cgroup))
+  (val other-runs (ToolRuns))
+  (val other-notes (LogLines))
+  (<- unlimited-seen WarmSeen (run-warm unlimited other-runs other-notes key text True))
+  (assert (= (len other-runs.launches) 1) other-runs.launches)
+  (assert (= (get unlimited-seen.report "memoryUnmeasured") [bare]) unlimited-seen.report)
+  (assert (in "max" (get (get (get other-notes.lines 0) 1) "reason")) other-notes.lines))
