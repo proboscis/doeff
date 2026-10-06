@@ -141,17 +141,6 @@ def _leftovers(temp_root: Path) -> list[str]:
     return sorted(path.name for path in temp_root.iterdir() if path.name.startswith(TEMP_PREFIX))
 
 
-def _run_wrapped(command: list[str], env: list[str]) -> subprocess.CompletedProcess[str]:
-    """`python doeff_cargo_backend.py <命令…>`(文書が勧める maturin develop の包み)で命令を走らせる。"""
-    return subprocess.run(
-        [*env, sys.executable, str(BACKEND), *command],
-        capture_output=True,
-        text=True,
-        timeout=BUILD_TIMEOUT_SECONDS,
-        check=False,  # 包みが命令の終了 code をそのまま返す事を、呼び手が確かめる
-    )
-
-
 def test_a_shared_target_hands_the_older_checkout_the_other_checkouts_build(tmp_path: Path) -> None:
     """反例: 2 つの作業木が 1 つの target を共有すると、先に切った作業木 B は A の build を黙って受け取る。
 
@@ -282,7 +271,9 @@ def test_every_maturin_package_builds_through_the_backend() -> None:
         if isinstance(node, ast.ImportFrom) and node.module == "doeff_cargo_backend"
         for alias in node.names
     }
-    assert "cargo_target_dir" in imported
+    # doeff-indexer の口も保存先の入口(wheel_from_store・editable_from_store)を通る — 自前で maturin を撃つ 2 つ目の入口を作らない
+    # (ADR-DOE-BUILD-001)。
+    assert {"cargo_target_dir", "wheel_from_store", "editable_from_store"} <= imported
 
 
 def test_a_failed_build_leaves_no_target(tmp_path: Path) -> None:
@@ -297,21 +288,6 @@ def test_a_failed_build_leaves_no_target(tmp_path: Path) -> None:
     assert process.returncode != 0
     assert not (broken / "target").exists()
     assert _leftovers(temp_root) == []
-
-
-def test_the_command_wrapper_runs_inside_a_temporary_target_and_removes_it(tmp_path: Path) -> None:
-    """`python doeff_cargo_backend.py <命令…>` は命令に一時の target を渡し、命令の終了 code を返し、target を消す。"""
-    temp_root = tmp_path / "tmp"
-    temp_root.mkdir()
-    report = "import os, sys; print(os.environ['CARGO_TARGET_DIR']); sys.exit(3)"
-
-    finished = _run_wrapped([sys.executable, "-c", report], _build_env(temp_root, None))
-
-    given = Path(finished.stdout.strip())
-    assert finished.returncode == 3
-    assert given.parent == temp_root
-    assert given.name.startswith(f"{TEMP_PREFIX}")
-    assert not given.exists()
 
 
 def test_a_build_sweeps_targets_left_by_killed_builds_but_not_live_ones(tmp_path: Path) -> None:
@@ -331,7 +307,7 @@ def test_a_build_sweeps_targets_left_by_killed_builds_but_not_live_ones(tmp_path
     for path in (killed, running, foreign):
         (path / "release").mkdir(parents=True)
 
-    _run_wrapped(["true"], _build_env(temp_root, None))
+    _build(_write_checkout(tmp_path / "wt-sweep", "sweep"), tmp_path / "wheels", _build_env(temp_root, None))
 
     assert _leftovers(temp_root) == sorted([running.name, foreign.name])
 
@@ -421,3 +397,40 @@ def test_a_changed_source_builds_again(tmp_path: Path) -> None:
     changed = _build_logged(_write_checkout(tmp_path / "wt-new", "after"), tmp_path / "wheels-new", env)
     assert "wheel を組んだ" in changed.log, changed.log
     assert _greeting(changed.wheel, tmp_path / "scratch") == "after"
+
+
+def test_an_editable_in_a_fresh_checkout_reuses_the_stored_wheel(tmp_path: Path) -> None:
+    """失敗ケース(agora-redesign #3860): editable の hook も保存先を引く — 同じ中身の作業木を作り直して editable で入れ直しても、
+    2 回目は cargo を撃たない。直す前の editable は毎回一時の target で組み直した(日次の検証で doeff-vm を 1 日 約 100 度)。"""
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    env = _build_env(temp_root, None)
+    first = _write_checkout(tmp_path / "wt-first", "same")
+    _age(first, 3600)
+    process = _start_build(first, tmp_path / "wheels-first", env, "build_editable")
+    _, built_log = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
+    assert process.returncode == 0, built_log
+    assert "wheel を組んだ" in built_log, built_log
+    fresh = _write_checkout(tmp_path / "wt-fresh", "same")
+    process = _start_build(fresh, tmp_path / "wheels-fresh", env, "build_editable")
+    out, again_log = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
+    assert process.returncode == 0, again_log
+    assert "同じ source の wheel を使う(組まない)" in again_log, again_log
+    assert "wheel を組んだ" not in again_log, again_log
+    wheel = tmp_path / "wheels-fresh" / out.strip().splitlines()[-1]
+    assert _greeting(wheel, tmp_path / "scratch") == "same"
+    assert _leftovers(temp_root) == []
+
+
+def test_the_wheel_hook_fills_the_store_the_editable_hook_reads(tmp_path: Path) -> None:
+    """入口は 1 つ: build_wheel が組んで置いた wheel を、別の作業木の build_editable が組まずに使う。"""
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    env = _build_env(temp_root, None)
+    built = _build_logged(_write_checkout(tmp_path / "wt-wheel", "shared"), tmp_path / "wheels-wheel", env)
+    assert "wheel を組んだ" in built.log, built.log
+    process = _start_build(_write_checkout(tmp_path / "wt-editable", "shared"), tmp_path / "wheels-editable", env, "build_editable")
+    _, log = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
+    assert process.returncode == 0, log
+    assert "同じ source の wheel を使う(組まない)" in log, log
+    assert "wheel を組んだ" not in log, log

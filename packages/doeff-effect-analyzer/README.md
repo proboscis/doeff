@@ -122,8 +122,12 @@ for effect sets and coverage.
 ## Building
 
 ```
-uv run python tools/doeff_cargo_backend.py maturin develop --manifest-path packages/doeff-effect-analyzer/Cargo.toml
+uv sync
 ```
+
+The build goes through `tools/doeff_cargo_backend.py`, the one entry for Rust builds (ADR-DOE-BUILD-001): it reuses
+the wheel stored under the hash of the Rust sources and builds only when they changed. For incremental Rust builds
+while editing the crate, give it a target dir of your own: `CARGO_TARGET_DIR=<dir> uv sync`.
 
 Mixed layout: `python-source = "python"`, extension module
 `doeff_effect_analyzer._native`.
