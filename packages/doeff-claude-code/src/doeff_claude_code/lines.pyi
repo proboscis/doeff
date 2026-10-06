@@ -47,6 +47,9 @@ class ToolCall:
 class AssistantMessage:
     text: str = ''
     tool_calls: tuple[ToolCall, ...] = ...
+    usage: Usage | None = None
+    model: str | None = None
+    parent_tool_use_id: str | None = None
 
 @dataclass(frozen=True)
 class ToolAnswer:
@@ -109,6 +112,15 @@ class RateLimit:
     resets_at: int | None = None
 
 @dataclass(frozen=True)
+class ModelWindow:
+    model: str
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+
+def merged_windows(earlier: tuple, later: tuple) -> tuple:
+    ...
+
+@dataclass(frozen=True)
 class TurnResult:
     subtype: str
     is_error: bool
@@ -119,6 +131,7 @@ class TurnResult:
     cost_usd: float | None = None
     api_error_status: int | None = None
     input_refs: tuple[str, ...] = ...
+    model_windows: tuple[ModelWindow, ...] = ...
 
 @dataclass(frozen=True)
 class Other:
@@ -139,6 +152,9 @@ class Completed:
     usage: Usage = ...
     cost_usd: float | None = None
     input_refs: tuple[str, ...] = ...
+    last_call_usage: Usage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ...
 
 @dataclass(frozen=True)
 class Failed:
@@ -148,6 +164,9 @@ class Failed:
     usage: Usage = ...
     cost_usd: float | None = None
     input_refs: tuple[str, ...] = ...
+    last_call_usage: Usage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ...
 
 @dataclass(frozen=True)
 class Interrupted:
@@ -155,10 +174,16 @@ class Interrupted:
     surviving_refs: tuple[str, ...] = ...
     dropped_refs: tuple[str, ...] = ...
     continued_by: ClaudeTurn | None = None
+    last_call_usage: Usage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ...
 
 @dataclass(frozen=True)
 class BackendLost:
     detail: str
+    last_call_usage: Usage | None = None
+    last_call_model: str | None = None
+    model_windows: tuple[ModelWindow, ...] = ...
 ClaudeTurnEnd: TypeAlias = Completed | Failed | Interrupted | BackendLost
 
 def object_at(value: Incomplete, key: str) -> dict:
@@ -204,6 +229,9 @@ def classify_control_request(record: dict) -> Incomplete:
     ...
 
 def classify_control_response(record: dict) -> Incomplete:
+    ...
+
+def model_windows_of(model_usage: dict) -> tuple:
     ...
 
 def classify_result(record: dict) -> Incomplete:
