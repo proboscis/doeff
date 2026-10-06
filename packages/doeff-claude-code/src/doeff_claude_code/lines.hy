@@ -11,6 +11,7 @@
 (import datetime [datetime])
 (import enum [StrEnum])
 (import json)
+(import doeff [run])
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn])
 
@@ -102,11 +103,8 @@
       (raise (TypeError (.format "ToolAnswer.non_text_kinds は tuple: {!r}" self.non-text-kinds))))))
 
 (defclass [(dataclass :frozen True)] ToolResult []
-  "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順)。"
-  (#^ (get tuple #(ToolAnswer ...)) answers)
-  (defn [property] #^ (get tuple #(str ...)) tool-use-ids [self]
-    "答えた呼びの id の列(答えの列から作る読み取り — 元は answers の 1 つ)。"
-    (tuple (gfor answer self.answers answer.id))))
+  "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順 — 答えた呼びの id は各答えの id)。"
+  (#^ (get tuple #(ToolAnswer ...)) answers))
 
 ;; stream_event の delta の種類(#3746 (a) — 閉じた語彙): TEXT = text_delta(本文の差分)/ THINKING = thinking_delta(考えている間の
 ;; 差分)/ TOOL-INPUT = input_json_delta(道具の呼びの命令を書いている間の差分)/ OTHER = 種類の名の在るほかの delta(signature_delta・
@@ -172,10 +170,11 @@
   (setv #^ (| int None) context-window None)
   (setv #^ (| int None) max-output-tokens None))
 
-(defn #^ tuple merged-windows [#^ tuple earlier #^ tuple later]
+(defk merged-windows [#^ tuple earlier #^ tuple later]
+  {:pre [(: earlier tuple) (: later tuple)] :post [(: % (get tuple #(ModelWindow ...)))] :tags {:context "claude-code" :role "foundation"}}
   "1 つの host の手番に読んだ result の行の窓を 1 つの列にするため(状態機械と fake が同じ規則で数える): model ごとに 1 つ、並びは最初に
    名乗った順、値は後の行が名乗った物。"
-  (setv by-model (dict (gfor window (+ earlier later) #(window.model window))))
+  (val by-model (dict (gfor window (+ earlier later) #(window.model window))))
   (tuple (.values by-model)))
 
 (defclass [(dataclass :frozen True)] TurnResult []
@@ -345,15 +344,16 @@
            :model (or (text-at message "model") None)
            :parent-tool-use-id (or (text-at record "parent_tool_use_id") None))))
 
-(defn #^ ToolAnswer tool-answer-of [#^ dict block]
+(defk tool-answer-of [#^ dict block]
+  {:pre [(: block dict)] :post [(: % ToolAnswer)] :tags {:context "claude-code" :role "foundation"}}
   "tool_result の block 1 つ → ToolAnswer。content は文字列(本文そのまま)・block の列(text の block の本文を改行で連ね、text でない
    block は種類の名を non-text-kinds へ)・無い(空の本文)のどれか。それ以外の値(写像・数)は 1 つの text でない中身として種類の名を残す。"
-  (setv content (.get block "content"))
-  (setv parts (cond
-                (is content None) #()
-                (isinstance content str) #({"type" "text" "text" content})
-                (isinstance content list) (tuple content)
-                True #(content)))
+  (val content (.get block "content"))
+  (val parts (cond
+               (is content None) #()
+               (isinstance content str) #({"type" "text" "text" content})
+               (isinstance content list) (tuple content)
+               True #(content)))
   (ToolAnswer :id (text-at block "tool_use_id")
               :text (.join "\n" (gfor part parts :if (= (text-at part "type") "text") (text-at part "text")))
               :is-error (is (.get block "is_error") True)
@@ -366,7 +366,7 @@
   (cond
     (not results) (Other :type "user")
     (any (gfor block results (not (text-at block "tool_use_id")))) (Other :type "user" :subtype "tool_result_without_id")
-    True (ToolResult :answers (tuple (gfor block results (tool-answer-of block))))))
+    True (ToolResult :answers (tuple (gfor block results (run (tool-answer-of block)))))))
 
 (defn classify-system [#^ dict record]
   (setv subtype (text-at record "subtype"))
@@ -410,7 +410,8 @@
                    :subtype (text-at response "subtype")
                    :still-queued (strings-at (object-at response "response") "still_queued")))
 
-(defn #^ tuple model-windows-of [#^ dict model-usage]
+(defk model-windows-of [#^ dict model-usage]
+  {:pre [(: model-usage dict)] :post [(: % (get tuple #(ModelWindow ...)))] :tags {:context "claude-code" :role "foundation"}}
   "result の行の modelUsage(model の名 → その model の数の object)→ ModelWindow の列(object の鍵の順)— 会話の context の大きさを
    model の窓と比べるため。値が object でない model・空の名は飛ばす。"
   (tuple (gfor #(model numbers) (.items model-usage) :if (and (isinstance model str) model (isinstance numbers dict))
@@ -419,7 +420,7 @@
                             :max-output-tokens (int-at numbers "maxOutputTokens")))))
 
 (defn classify-result [#^ dict record]
-  (TurnResult :model-windows (model-windows-of (object-at record "modelUsage"))
+  (TurnResult :model-windows (run (model-windows-of (object-at record "modelUsage")))
               :subtype (text-at record "subtype")
               :is-error (is (.get record "is_error") True)
               :terminal-reason (text-at record "terminal_reason")
@@ -436,7 +437,8 @@
       (InputFate :ref (text-at record "command_uuid") :state state)
       (Other :type "command_lifecycle" :subtype state)))
 
-(defn #^ DeltaKind delta-kind-of [#^ str delta-type]
+(defk delta-kind-of [#^ str delta-type]
+  {:pre [(: delta-type str)] :post [(: % DeltaKind)] :tags {:context "claude-code" :role "foundation"}}
   "stream_event の delta の type の名 → DeltaKind(手番の終わりの計時の行が差分の種類ごとに数えるため — 名の無い delta は NO-DELTA・
    知らない名は OTHER)。"
   (match delta-type
@@ -448,7 +450,7 @@
 
 (defn classify-stream-event [#^ dict record]
   (setv delta (object-at (object-at record "event") "delta"))
-  (setv kind (delta-kind-of (text-at delta "type")))
+  (setv kind (run (delta-kind-of (text-at delta "type"))))
   (PartialMessage :text-delta (if (= kind DeltaKind.TEXT) (text-at delta "text") "") :delta kind))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
