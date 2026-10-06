@@ -78,6 +78,9 @@
 ;;;   FailRoute 型 path 状態 秒  coordinator の口 型 path(完全一致)への要求に、秒の間 状態(5xx など)で答える(本番の coordinator の前の
 ;;;                             ingress や作り直しの最中の答え — 要求は調停ループに届かず、状態を変えない)。
 ;;;   CoordinatorRuns           coordinator の Pod の一生の列(SimCoordinatorRun — 始まり・終わり・止まり方)。
+;;;   ReplaceCoordinatorEnviron 環境  coordinator の Pod の環境変数(EnvEntry の tuple)を差し替える。次の一生から効く(本番の Deployment の
+;;;                             env を変えて Pod を作り直す形 — 今の一生は起動の時に読んだ値のまま)。一生の始めに入口と同じ読み
+;;;                             (coordinator.entry.main の with-running-commit)で走っている doeff の版を読む(#3772)。初めは空。
 ;;;   KillWorker 名             worker が node ごと死ぬ: 子 process は全部 exit -9 で止まり(中で Spawn した task も)、heartbeat が止まる。
 ;;;                             答え = 止めた process の数。
 ;;;   StopWorker 名             worker を優雅に止める(本番の SIGTERM — 全 job を止めの手順で回収して抜ける)。抜けるまで待つ。
@@ -144,7 +147,9 @@
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
-(import doeff_cluster.coordinator.entry.main [load-state])
+(import doeff_cluster.coordinator.entry.main [load-state with-running-commit])
+(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
 (import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS REPLY-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
@@ -470,6 +475,18 @@
    まま(切断が先)。答え = None。"
   {:fields [(: method str) (: path str) (: status int) (: seconds float)]
    :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect ReplaceCoordinatorEnviron
+  "検の effect: coordinator の Pod の環境変数を environ(EnvEntry の tuple)に差し替える。次の一生から効く(本番の Deployment の env を
+   変えて Pod を作り直す形 — 今の一生は起動の時に読んだ値のまま・#3772)。答え = None。"
+  {:fields [(: environ (get tuple #(EnvEntry ...)))]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect CoordinatorEnvironOf
+  "coordinator の Pod の一生の始めに、その Pod の環境変数(ReplaceCoordinatorEnviron で差し替えた値・初めは空)を読むため。"
+  {:answer (get tuple #(EnvEntry ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect CoordinatorRuns
@@ -2502,8 +2519,9 @@
 
 (defk coordinator-life [plan parts]
   {:pre [(: plan SimPlan) (: parts SimParts)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
-  "coordinator の Pod の一生 1 つ: 置き場から読み直して(無ければ新しい状態で)本物の調停ループを emulated-handlers の上で回し、止まる
-   (止めの合図)か落ちる(Persist の失敗)まで。答え = 止まり方。"
+  "coordinator の Pod の一生 1 つ: 置き場から読み直して(無ければ新しい状態で)、この Pod の環境から走っている doeff の版を本番の入口と
+   同じ読み(with-running-commit — 環境の答え手は模擬の Pod の環境 = ReplaceCoordinatorEnviron の値・#3772)で載せ、本物の調停ループを
+   emulated-handlers の上で回し、止まる(止めの合図)か落ちる(Persist の失敗)まで。答え = 止まり方。"
   (<- now int (now-epoch-ms))
   ;; 読み直しの 1 行の報告(本番の入口と同じ slog)は、ここで stderr へ出す。
   (var state None)
@@ -2511,11 +2529,14 @@
       (do (<- loaded ClusterState (with-handlers [slog-handler] (load-state NO-STATE-FILE parts.store now)))
           (:= state loaded))
       (:= state (ClusterState :started-ms now :task-prefix (fresh-task-prefix now))))
+  (<- environ (get tuple #(EnvEntry ...)) (CoordinatorEnvironOf))
+  (<- started ClusterState (with-handlers [(scripted-process-handler (ProcessScript :commands #() :env environ))]
+                             (with-running-commit state)))
   (<- (CoordinatorStarted now))
   (setattr parts.queue "up" True)
   (try
     (<- (with-handlers (emulated-handlers parts.queue parts.store parts.stop parts.kube [(observe-requests (StepBook) parts.queue)])
-          (run-coordinator state plan.timing plan.naming)))
+          (run-coordinator started plan.timing plan.naming)))
     "stopped"
     (except [error OSError]
       (str error))))
@@ -2805,6 +2826,8 @@
   (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
   (session var pausing (SimPauses :queued #()))
   (session var runs #())
+  ;; coordinator の Pod の環境変数(ReplaceCoordinatorEnviron で差し替える — 一生の始めに CoordinatorEnvironOf で読む・#3772)。
+  (session var coordinator-environ #())
   ;; coordinator の歩の記録(CoordinatorStep の tuple・刻の順 — AdmitBatch が運ぶ・検が CoordinatorSteps で読む・#2670 の根 B)。
   (session var steps-seen #())
   (session var end-waiters {})
@@ -3258,6 +3281,11 @@
     (resume None))
   (CoordinatorRuns []
     (resume runs))
+  (ReplaceCoordinatorEnviron [environ]
+    (:= coordinator-environ environ)
+    (resume None))
+  (CoordinatorEnvironOf []
+    (resume coordinator-environ))
   (CoordinatorSteps []
     (resume steps-seen))
   (ClientLink []

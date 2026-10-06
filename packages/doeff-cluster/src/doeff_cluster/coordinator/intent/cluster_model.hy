@@ -350,7 +350,9 @@
   "GET /state の状態の画面(cluster_policy.state-view — #2595): now・services・workers・placements(job の名 → Placement)・unplaced(job の名 →
    置き先が無い理由)・statuses(worker の名 → StatusView)・tasks・board-keys = 盤の行の数・surges(job の名 → Placement)・events = 直近
    50 件の割り当ての移り変わり・revision・keep-marks = 途絶しても動かし続けてよい印の約束の列(job の名の順 — #2883: 版上げの後と障害の時に、
-   どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)。JSON の形は coordinator/protocol/replies が綴る。"
+   どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)・coordinator-commit = 答えた coordinator の process が走っている
+   doeff の版(ClusterState の running-commit — 読めなければ None で、JSON の欄 coordinatorCommit を書かない。版上げの Program が「新しい
+   版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)。JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
   (#^ (get tuple #(WorkerView ...)) workers)
@@ -362,7 +364,8 @@
   (#^ (get dict #(str Placement)) surges)
   (#^ (get tuple #(object ...)) events)
   (#^ int revision)
-  (#^ (get tuple #(KeepMark ...)) keep-marks))
+  (#^ (get tuple #(KeepMark ...)) keep-marks)
+  (#^ (| str None) coordinator-commit))
 
 
 (defenum DrainPhase
@@ -979,6 +982,9 @@
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
   ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
   (setv #^ (get frozenset str) derivable (frozenset))
+  ;; この coordinator の process が走っている doeff の版(起動の時に入口が 1 度、環境変数 WORKER_DOEFF_COMMIT から読む — 入口の
+  ;; with-running-commit。読めなければ None)。保存しない(process の世代ごとの事実)。GET /state の coordinatorCommit に載る(#3772)。
+  (setv #^ (| str None) running-commit None)
   ;; 受け付けない Service の行(名 → RefusedJob — 改訂 1 の C)。保存する(元の行のまま)— 読み直しても同じ理由で受け付けない。
   (setv #^ (get dict #(str RefusedJob)) refused (field :default-factory dict))
   ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。

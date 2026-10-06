@@ -8,6 +8,7 @@
 (import os)
 (import sys)
 (import pathlib [Path])
+(import dataclasses [replace])
 (import doeff [run with_handlers])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -15,6 +16,9 @@
 (import doeff_core_effects.file_effects [FileFailed ListDirectory PathKind ReadText StatPath file-done])
 (import doeff_core_effects.handlers [slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
+(import doeff_cluster.shared.core.launch_rules [coordinator-commit-env-name])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ACCEPTED-FORMATS])
@@ -107,12 +111,34 @@
   legacy)
 
 
+(defk running-commit []
+  {:pre [] :post [(: % (| str None))] :tags {:context "coordinator" :role "main"}}
+  "この coordinator の process が走っている doeff の版を、起動の時に 1 度、自分の環境変数(名は launch_rules の表 — boot.sh が自己起動の
+   root を選んだ版)から読むため。GET /state の答えに載せ、版上げの Program が「新しい版の coordinator が答えた」を宣言でなく答えた
+   process で判じる(#3772)。無い・空なら None(空の文字を版として載せない)。環境の読みは汎用の効果 ReadEnvironment — 本番の入口は
+   subprocess-handler、模擬の coordinator の Pod は模擬の Pod の環境で答える。"
+  (<- name str (coordinator-commit-env-name))
+  (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment #(name)))
+  (val values (tuple (gfor e found :if (and (= e.name name) e.value) e.value)))
+  (if values (get values 0) None))
+
+
+(defk with-running-commit [state]
+  {:pre [(: state ClusterState)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "main"}}
+  "読み直した状態に、この process が走っている doeff の版(running-commit)を載せるため — 本番の入口と模擬の coordinator の Pod が
+   同じこの 1 つを通る(読み方のコピーを 2 か所に持たない・#3772)。"
+  (<- commit (| str None) (running-commit))
+  (replace state :running-commit commit))
+
+
 (defk state-on-start [state-file store]
   {:pre [(: state-file str) (: store DurableStore)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "main"}}
-  "起動の時刻を時計の effect で読み、その時刻で置き場から状態を読み直すため(時計の答え手は入口が被せる)。"
+  "起動の時刻を時計の effect で読み、その時刻で置き場から状態を読み直し、この process が走っている doeff の版を載せるため(時計と
+   環境の答え手は入口が被せる)。"
   (<- now int (now-epoch-ms))
   (<- state ClusterState (load-state state-file store now))
-  state)
+  (<- started ClusterState (with-running-commit state))
+  started)
 
 
 ;; --- composition root ------------------------------------------------------------------
@@ -131,8 +157,9 @@
   (setv stop (StopState))
   (run (stop-on-signals stop))
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
-  ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog・起動の時刻は壁時計が答える。
-  (setv state (run (scheduled (with_handlers [slog-handler os-file-handler (sync-time-handler)]
+  ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog・起動の時刻は壁時計・自分の環境変数(走っている
+  ;; doeff の版)は本物の process の handler が答える。
+  (setv state (run (scheduled (with_handlers [slog-handler os-file-handler subprocess-handler (sync-time-handler)]
                                 (state-on-start args.state-file store)))))
   (setv inbox (RequestInbox args.port :formats ACCEPTED-FORMATS))
   (.start inbox)
@@ -142,9 +169,9 @@
   (setv kube (if (KubeClient.available)
                  (kube-api (KubeClient KubeUnavailable :timeout 3.0) (KubeReadBatches))
                  (kube-unavailable "k8s の ServiceAccount の token が無い(Pod の外の coordinator)" (KubeReadBatches))))
-  (print (.format "coordinator: :{} で受けます(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {})"
+  (print (.format "coordinator: :{} で受けます(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {}・doeff {})"
                   args.port (len state.jobs) (len state.tasks) (len state.board) (len state.rollouts) state.revision
-                  (if (KubeClient.available) "あり" "なし")) :file sys.stderr :flush True)
+                  (if (KubeClient.available) "あり" "なし") (or state.running-commit "版を読めない")) :file sys.stderr :flush True)
   ;; handler の組は coordinator_handler_sets の値(本番の組)。
   (run (scheduled (with_handlers (production-handlers inbox store stop kube) (run-coordinator state (ClusterTiming) naming))))
   (print "coordinator: 止まりました" :file sys.stderr :flush True))

@@ -29,7 +29,11 @@
                                                    RollbackRootMissing CoordinatorUpgraded ClusterUpgraded])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-coordinator upgrade-workers])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator CoordinatorRuns])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator CoordinatorRuns StopCoordinator
+                                 ReplaceCoordinatorEnviron])
+(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_cluster.shared.core.launch_rules [coordinator-launch-env coordinator-commit-env-name])
+(import doeff_cluster.shared.protocol.coordinator_reads [coordinator-commit-of-state])
 (import doeff_cluster.sim.flux [FluxPass manifest-state prestop-drain flux-declarations refused-clean-boots refused-boot-roots
                                 stale-coordinator-answers launch-target UpgradeStartsSeen BootRootsAtStartsSeen])
 (import tests.flux_fixtures [OLD NEW NO-JOBS PATHS ON-X A B COORDINATOR-SECONDS SAME-VERSION program-breaches-of flux-outside
@@ -97,38 +101,146 @@
   (assert (= (tuple (gfor s starts s.target)) #("a" "b" "coordinator")) starts))
 
 
+;; --- coordinator が自分の版を GET /state で申告する(#3772)----------------------------------------------------------------------------
+;; 本番の coordinator は起動の時に 1 度、環境変数(boot.sh が渡す WORKER_DOEFF_COMMIT)から自分の走っている doeff の版を読み、GET /state
+;; の欄 coordinatorCommit に載せる。模擬の coordinator の Pod は本番の入口と同じ読み(with-running-commit)を、模擬の Pod の環境で通る。
+
+(defk restart-coordinator-on [environ]
+  {:pre [(: environ (get tuple #(EnvEntry ...)))] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの道具: coordinator の Pod の環境を environ に替えて作り直し、新しい一生が受け付けるまで待つため(本番の Deployment の env を
+   変えて Pod を作り直す形 — 止めの合図の後 1 秒止まって作り直す)。"
+  (<- (ReplaceCoordinatorEnviron environ))
+  (<- (StopCoordinator 1.0))
+  (<- (Delay 5.0))
+  None)
+
+
+(defk state-after-restart-on [commit]
+  {:pre [(: commit str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: coordinator を版 commit の Deployment の env(本番が宣言に書くのと同じ launch_rules の行)で作り直し、GET /state を読む。
+   答え = /state の答え(JSON の object)。"
+  (<- (Delay 3.0))
+  (<- environ (get tuple #(EnvEntry ...)) (coordinator-launch-env (CoordinatorLaunch :doeff-commit commit)))
+  (<- (restart-coordinator-on environ))
+  (<- state dict (ReadCoordinator "/state"))
+  state)
+
+
+(deftest test-a-coordinator-started-on-a-version-names-it-in-the-state-answer
+  ;; 失敗ケース a(#3772): coordinator を版 NEW の env で起こすと、GET /state の答えの欄 coordinatorCommit に NEW が出て、共有の読み
+  ;; (coordinator-commit-of-state — 配備する側の名簿の読みも通る)が NEW と読む。欄を書かない coordinator では欄が無く赤。
+  (<- state dict (sim-cluster NO-JOBS (state-after-restart-on NEW) :workers #(A B)))
+  (assert (= (.get state "coordinatorCommit") NEW) (sorted state))
+  (<- read (| str None) (coordinator-commit-of-state state))
+  (assert (= read NEW) read))
+
+
+(defk states-without-the-version []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 環境変数の無い coordinator(模擬の Pod の初め)と、同じ名の環境変数を空の値で渡して作り直した coordinator の GET /state を読む。
+   答え = #(初めの答え 空の値の答え)。"
+  (<- (Delay 3.0))
+  (<- first dict (ReadCoordinator "/state"))
+  (<- name str (coordinator-commit-env-name))
+  (<- (restart-coordinator-on #((EnvEntry :name name :value ""))))
+  (<- emptied dict (ReadCoordinator "/state"))
+  #(first emptied))
+
+
+(deftest test-a-coordinator-without-the-version-variable-writes-no-version-field
+  ;; 失敗ケース b(#3772): 環境変数が無い・空の値の coordinator は、欄 coordinatorCommit を書かない(空の文字や null を版として書かない)。
+  ;; 共有の読みはどちらも None と読む。読めない時に空の文字を書く形は赤。
+  (<- seen tuple (sim-cluster NO-JOBS (states-without-the-version) :workers #(A B)))
+  (for [state seen]
+    (assert (not-in "coordinatorCommit" state) (sorted state))
+    (<- read (| str None) (coordinator-commit-of-state state))
+    (assert (is read None) read)))
+
+
+(deftest test-the-state-reader-takes-the-version-only-when-it-is-named
+  ;; 共有の読み(#3772): 欄が文字で空でない時だけ版と読む — 欄が無い・空の文字・null・文字でない値は None(版を推さない)。
+  (for [#(state expected) #(#({"coordinatorCommit" NEW} NEW) #({} None) #({"coordinatorCommit" ""} None)
+                            #({"coordinatorCommit" None} None) #({"coordinatorCommit" 7} None))]
+    (<- read (| str None) (coordinator-commit-of-state state))
+    (assert (= read expected) #(state read))))
+
+
+(defrecord CommitRead
+  "Program が読んだ名簿 1 つ: commit = 答えた coordinator の版(UpgradeState の coordinator-commit)・after-apply = coordinator の宣言を
+   当てた後の読みか。"
+  (#^ (| str None) commit)
+  (#^ bool after-apply))
+
+(defeffect CommitReadsSeen
+  "テスト用の effect: commit-recorder が覚えた名簿の読み(CommitRead の tuple・読んだ順)。"
+  {:answer tuple :tags {:context "doeff-cluster-test" :role "intent"}})
+
+
+(defhandler commit-recorder
+  ;; テストの道具: Program が読んだ名簿ごとに、答えた coordinator の版と、coordinator の宣言を当てた後の読みかを覚えるため(答えは
+  ;; 変えない)。
+  (session var reads #())
+  (session var swapping False)
+  (session var applied False)
+  (ReadUpgradeState []
+    (<- state (ReadUpgradeState))
+    (when (isinstance state UpgradeState)
+      (:= reads (+ reads #((CommitRead :commit state.coordinator-commit :after-apply applied)))))
+    (resume state))
+  (DesireCoordinator [launch]
+    (:= swapping True)
+    (<- changes (DesireCoordinator launch))
+    (resume changes))
+  (ApplyDeclarations []
+    (<- (ApplyDeclarations))
+    (when swapping
+      (:= applied True))
+    (resume None))
+  (CommitReadsSeen []
+    (resume reads)))
+
+
 (defk upgrade-then-coordinator-runs []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 模擬の世界で Program に a・b・coordinator を NEW へ上げさせ、Program が答えを返した時刻・coordinator の Pod の一生の列・
-   入れ替えの記録を読む。coordinator を当てた直後の名簿の読み 2 回には、古い版の coordinator が答える(stale-coordinator-answers)。
-   答え = #(返した時刻 一生の列 記録)。"
+  "筋書き: coordinator を版 OLD の env で起こし直してから、模擬の世界で Program に a・b・coordinator を NEW へ上げさせ、Program が答えを
+   返した時刻・coordinator の Pod の一生の列・入れ替えの記録・Program が読んだ coordinator の版を読む。coordinator の止めの合図の後の
+   GET /state の読み 2 回には、古い coordinator が版 OLD を申告したまま答える(stale-coordinator-answers — 模擬の Flux の外側)。
+   答え = #(返した時刻 一生の列 記録 読んだ版)。"
   (<- (Delay 3.0))
+  (<- environ (get tuple #(EnvEntry ...)) (coordinator-launch-env (CoordinatorLaunch :doeff-commit OLD)))
+  (<- (restart-coordinator-on environ))
   (<- applied tuple (manifest-state PATHS))
-  (<- run tuple (with-handlers [(flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied) desire-by-manifest
-                                (stale-coordinator-answers 2)]
+  (<- run tuple (with-handlers [(stale-coordinator-answers 2) (flux-declarations PATHS prestop-drain COORDINATOR-SECONDS applied)
+                                desire-by-manifest commit-recorder]
                   (returned-then-runs)))
   run)
 
 
 (defk returned-then-runs []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "Program を走らせ、答えを返した時刻を取ってから、coordinator の Pod の一生の列と入れ替えの記録を読む。答え = #(時刻 一生の列 記録)。"
+  "Program を走らせ、答えを返した時刻を取ってから、coordinator の Pod の一生の列・入れ替えの記録・読んだ版を読む。
+   答え = #(時刻 一生の列 記録 読んだ版)。"
   (<- (upgrade-cluster #(TARGET-A TARGET-B) TARGET-COORDINATOR SAME-VERSION LIMITS))
   (<- returned int (now-epoch-ms))
   (<- runs tuple (CoordinatorRuns))
   (<- starts tuple (UpgradeStartsSeen))
-  #(returned runs starts))
+  (<- reads tuple (CommitReadsSeen))
+  #(returned runs starts reads))
 
 
 (deftest test-the-program-returns-only-after-the-new-coordinator-answers-in-the-emulated-world
-  ;; 失敗ケース 4 の模擬の世界の形(#3772): coordinator を当てた直後に古い版の coordinator が 2 回答える(全部の worker は live)。
-  ;; Program が答えを返すのは、入れ替えを始めた後に起動した新しい coordinator が答えた後 — worker が live なら終わりとする形は、
-  ;; 新しい coordinator の起動より前に答えを返して赤。
+  ;; 失敗ケース c / 4 の模擬の世界の形(#3772): coordinator を当てた直後に、古い coordinator が欄 coordinatorCommit で版 OLD を申告して
+  ;; 2 回答える(全部の worker は live)。Program はその欄の値で古い版と読み(当てた後の読みに OLD が在る)、終わりにしない。答えを返すのは、
+  ;; 入れ替えを始めた後に起動した新しい coordinator が欄で NEW を申告した後。worker が live なら終わりとする形・宣言の版を答えた版と
+  ;; みなす形は、新しい coordinator の起動より前に答えを返して赤。欄を書かない coordinator では NEW を読めず上限で止まり赤。
   (<- outside SimOutside (flux-outside))
   (<- seen tuple (sim-cluster NO-JOBS (upgrade-then-coordinator-runs) :workers #(A B) :outside outside))
   (val returned (get seen 0))
   (val runs (get seen 1))
   (val swap (next (gfor s (get seen 2) :if (= s.target "coordinator") s)))
+  (val after-apply (tuple (gfor r (get seen 3) :if r.after-apply r.commit)))
+  (assert (in OLD after-apply) (get seen 3))
+  (assert (= (get after-apply -1) NEW) (get seen 3))
   (val after (tuple (gfor r runs :if (> r.started-ms swap.at-ms) r)))
   (assert after #(swap runs))
   (assert (<= (. (get after 0) started-ms) returned) #(returned after)))
