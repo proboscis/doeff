@@ -3146,11 +3146,13 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
                    (defk poll-helper []\n  (while True\n    (<- (arm-next 5.0))\n    (<- (WaitForEvent TimerFired))\n    (<- (ReadQueue))))\n\
                    (defk poll-lib [holder]\n  (SemaphoreSession holder :ttl-seconds 15.0 :poll-seconds 1.0))\n\
                    (defk reconnect-always []\n  (while True\n    ;; 時間で取り直す理由: 届かない間だけの繋ぎ直し\n    (<- (Delay INTERVAL))\n    (<- (Ping))))\n\
-                   (defk poll-excuse []\n  (while True\n    (<- (Delay 5.0)) ; 時間で取り直す理由: 仕方ない\n    (<- (ReadQueue))))\n",
+                   (defk poll-excuse []\n  (while True\n    (<- (Delay 5.0)) ; 時間で取り直す理由: 仕方ない\n    (<- (ReadQueue))))\n\
+                   (defk poll-kube []\n  (while True\n    (<- (Delay 5.0)) ; 時間で取り直す理由: 相手に変更の知らせが無い: Kubernetes — 試した\n    (<- (ReadPods))))\n\
+                   (defk poll-unproven []\n  (while True\n    (<- (Delay 5.0)) ; 時間で取り直す理由: 相手に変更の知らせが無い: 預かり所\n    (<- (ReadCustody))))\n",
         ),
         (
             // 当たらない: 行から導いた期限・変わりを待つ上限の秒(DOEFF208 の側)・1 度だけの期限・書くだけの loop(理由つき)・
-            // 知らせの口の無い相手(理由つき)・印が在る間だけ試す繋ぎ直し(理由つき)・別の task に渡す 1 度の待ち・秒 0 の譲り・期限の差の眠り・
+            // 変更の知らせの無い相手(相手と確かめの根拠つきの理由)・印が在る間だけ試す繋ぎ直し(理由つき)・別の task に渡す 1 度の待ち・秒 0 の譲り・期限の差の眠り・
             // 要求の timeout。
             "app/billing/core/fine.hy",
             tags("billing", "judgment")
@@ -3159,7 +3161,7 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
                    (defk long-poll [c]\n  (while True\n    (<- (WatchChanges #(\"t\") c :timeout 30))\n    (<- (ReadQueue))))\n\
                    (defk once []\n  (<- now (GetTime))\n  (<- (ArmTimer TAG (+ now (timedelta :seconds 5))))\n  (<- (WaitForEvent TimerFired)))\n\
                    (defk beat []\n  (while True\n    ;; 時間で取り直す理由: 書くだけ: 生存の印\n    (<- (arm-next 5.0))\n    (<- (WaitForEvent TimerFired))\n    (<- (WriteBeat))))\n\
-                   (defk custody []\n  (while True\n    (<- (Delay 60.0)) ; 時間で取り直す理由: 相手に知らせの口が無い: 預かり所\n    (<- (ReadCustody))))\n\
+                   (defk custody []\n  (while True\n    (<- (Delay 60.0)) ; 時間で取り直す理由: 相手に変更の知らせが無い: 預かり所 — custody の API の文書に変更の知らせの節が無い\n    (<- (ReadCustody))))\n\
                    (defk reconnect [url]\n  (while True\n    (<- answer (Ping url))\n    (match answer\n      (Unreachable) (do\n        ;; 時間で取り直す理由: 届かない間だけの繋ぎ直し\n        (<- (Delay 2.0)))\n      _ (return answer))))\n\
                    (defk spawner []\n  (while True\n    (<- (Spawn (arm-next 5.0)))\n    (<- (WaitForEvent Moved))))\n\
                    (defk yields [due]\n  (while True\n    (<- now (GetTime))\n    (<- (Delay 0.0))\n    (<- (Delay (- due now)))\n    (<- (HttpRequest URL :timeout 5.0))))\n",
@@ -3205,8 +3207,10 @@ fn production_polling_on_timers_is_red() {
             "app/billing/core/polls.hy::DOEFF209::poll-arm::ArmTimer::periodic",
             "app/billing/core/polls.hy::DOEFF209::poll-excuse::Delay::periodic",
             "app/billing/core/polls.hy::DOEFF209::poll-helper::arm-next::periodic",
+            "app/billing/core/polls.hy::DOEFF209::poll-kube::Delay::periodic",
             "app/billing/core/polls.hy::DOEFF209::poll-lib::SemaphoreSession::periodic",
             "app/billing/core/polls.hy::DOEFF209::poll-sleep::Delay::periodic",
+            "app/billing/core/polls.hy::DOEFF209::poll-unproven::Delay::periodic",
             "app/billing/core/polls.hy::DOEFF209::reconnect-always::Delay::periodic",
             "packages/doeff-core-effects/doeff_core_effects/os_process.hy::DOEFF209::wait-exit::Delay::periodic",
             "packages/doeff-records/src/doeff_records/maintenance.hy::DOEFF209::maintain::Delay::periodic",
@@ -3223,6 +3227,10 @@ fn production_polling_on_timers_is_red() {
     assert!(always["message"].as_str().unwrap().contains("届かない後の取り直し"), "{}", always["message"]);
     let excuse = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-excuse::Delay::periodic");
     assert!(excuse["message"].as_str().unwrap().contains("閉じた語彙の外"), "{}", excuse["message"]);
+    let kube = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-kube::Delay::periodic");
+    assert!(kube["message"].as_str().unwrap().contains("この相手は変更の知らせを持つ(Kubernetes)"), "{}", kube["message"]);
+    let unproven = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-unproven::Delay::periodic");
+    assert!(unproven["message"].as_str().unwrap().contains("何で確かめたか"), "{}", unproven["message"]);
 }
 
 /// :business-fakes(本番の code の範囲の宣言)を書いていない repo には DOEFF209 を当てない。
@@ -3231,6 +3239,79 @@ fn polling_on_timers_is_not_judged_without_business_fakes() {
     let dir = timed_refetch_repo(false);
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF209").is_empty(), "{:?}", keys(&report, "DOEFF209"));
+}
+
+/// 登録簿の dir を足し、その中の file に鍵 key を書く(既知の当たりとして載せてみる)。
+fn register_key(root: &Path, key: &str) {
+    let pyproject = root.join("pyproject.toml");
+    let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\ndirs = [\"registry/BREACHES\"]\n";
+    std::fs::write(&pyproject, settings).unwrap();
+    let registry = root.join("registry/BREACHES");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::write(registry.join("known.txt"), format!("{}\n既知の当たりとして載せてみる(下がらない事の見本)\n", key)).unwrap();
+}
+
+/// agora-redesign #3834: DOEFF208・209 の鍵を登録簿に載せても、当たりは error・critical・登録の外のまま(既知の一覧で通す形にしない —
+/// DOEFF206 の intent_fakes_in_verification_are_not_lowered_by_the_registry と同じ形)。
+#[test]
+fn record_waits_and_polling_are_not_lowered_by_the_registry() {
+    for (dir, rule, key) in [
+        (record_wait_repo(true), "DOEFF208", "app/billing/core/memo_wait.hy::DOEFF208::wait-for::WatchChanges"),
+        (timed_refetch_repo(true), "DOEFF209", "app/billing/core/polls.hy::DOEFF209::poll-sleep::Delay::periodic"),
+    ] {
+        register_key(dir.path(), key);
+        let (_, report) = editor(dir.path());
+        assert!(keys(&report, rule).contains(&key.to_string()), "{}", report);
+        let found = violation(&report, key);
+        assert_eq!(found["severity"], "error", "{}", found);
+        assert_eq!(found["level"], "critical", "{}", found);
+        assert_eq!(found["registered"], false, "{}", found);
+    }
+}
+
+/// 名指しの path と基点の報告を渡して editor-json を走らせ、(終了コード・新しい critical の識別子の辞書順)を返す。
+fn named_against_baseline(root: &Path, baseline: &Path, named: &[&str]) -> (i32, Vec<String>) {
+    let mut args = vec!["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()];
+    args.extend_from_slice(named);
+    let (code, stdout, stderr) = run(root, &args, None);
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let mut fresh: Vec<String> =
+        report["new_critical"].as_array().unwrap_or_else(|| panic!("new_critical が無い: {}", report)).iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    fresh.sort();
+    (code, fresh)
+}
+
+/// agora-redesign #3834(cisco-c8 の可・規則 A の入口の形): 既知の一覧を持たない規則(登録簿で下げない規則 — DOEFF206〜209)の critical は、
+/// 名指しの path(変えた file)に在れば、基点の報告に同じ鍵が在っても new_critical に入る(基点の差でも登録簿でも下がらない)。名指していない
+/// file の当たりは入らない。名指しの無い全体の実行は基点の差だけ(全体の数は日次で出す)。
+#[test]
+fn rules_without_a_registry_block_their_hits_in_named_files_even_when_the_baseline_has_them() {
+    let dir = record_wait_repo(true);
+    let root = dir.path();
+    let baseline = baseline_file(root);
+    let (code, fresh) = named_against_baseline(root, &baseline, &["app/billing/core/memo_wait.hy"]);
+    assert_eq!(
+        fresh,
+        vec![
+            "app/billing/core/memo_wait.hy::DOEFF208::wait-for::WatchChanges",
+            "app/billing/core/memo_wait.hy::DOEFF208::wait-literal::WatchChanges",
+            "app/billing/core/memo_wait.hy::DOEFF208::wait-stream::WatchEvents",
+        ]
+    );
+    assert_eq!(code, 4);
+    // 名指していない file(turn_events.hy)の当たりは入らない。
+    let (_, fresh) = named_against_baseline(root, &baseline, &["app/billing/foundation/relay.hy"]);
+    assert!(fresh.is_empty(), "{:?}", fresh);
+    // 名指しの無い実行は基点の差だけ。
+    let (_, fresh) = named_against_baseline(root, &baseline, &[]);
+    assert!(fresh.is_empty(), "{:?}", fresh);
+    // DOEFF209 も同じ入口を通る(全体を判じてから名指しの path で絞る)。
+    let dir = timed_refetch_repo(true);
+    let root = dir.path();
+    let baseline = baseline_file(root);
+    let (code, fresh) = named_against_baseline(root, &baseline, &["services/record/serving.hy"]);
+    assert_eq!(fresh, vec!["services/record/serving.hy::DOEFF209::store-watch::Delay::periodic"]);
+    assert_eq!(code, 4);
 }
 
 /// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の

@@ -891,9 +891,8 @@ fn run_editor(args: &Args) -> ExitCode {
         only: only.as_deref(),
         signatures: signatures.as_ref(),
     }));
-    report.new_critical = baseline.map(|baseline| {
-        doeff_linter::baseline::new_criticals(&baseline, &doeff_linter::baseline::critical_identities(&report.violations))
-    });
+    report.new_critical =
+        baseline.map(|baseline| doeff_linter::baseline::blocking_criticals(&baseline, &report.violations, only.is_some()));
     // 名指した Hy の file のうち linter が歩く範囲の外の物(層の規則が判じていない — 仕様 1 節「名指しの範囲の外」・agora-redesign #2821)。
     report.out_of_scope = match (&only, stdin_file.is_none() && setup.has_project_rules()) {
         (Some(named), true) => {

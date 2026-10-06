@@ -263,6 +263,110 @@ fn list_rules_names_which_rules_need_the_whole_repo() {
     }
 }
 
+/// agora-redesign #3834: `--list-rules` は Jev に問う規則かの名乗り(semantic)も出す — 門は ID の頭でなくこの欄で Jev の規則を分ける。
+/// 頭が DOEFF2 の決定的な規則(DOEFF206〜209)は Jev の規則でない。
+#[test]
+fn list_rules_names_which_rules_ask_jev() {
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter")).arg("--list-rules").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let listed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let semantic = |id: &str| {
+        listed.as_array().unwrap().iter().find(|r| r["id"] == id).unwrap_or_else(|| panic!("{} が無い", id))["semantic"]
+            .as_bool()
+            .unwrap_or_else(|| panic!("{} に semantic の欄が無い", id))
+    };
+    for id in ["DOEFF201", "DOEFF202", "DOEFF203", "DOEFF204", "DOEFF205"] {
+        assert!(semantic(id), "{} は Jev に問う", id);
+    }
+    for id in ["DOEFF016", "DOEFF110", "DOEFF206", "DOEFF207", "DOEFF208", "DOEFF209"] {
+        assert!(!semantic(id), "{} は Jev に問わない", id);
+    }
+}
+
+/// 失敗ケース(agora-redesign #3834): 門の口 `--split-rules` は DOEFF206〜209 を quick か whole に入れる(直す前はどちらにも 0 本 — ID の頭
+/// DOEFF2 で Jev の規則として落ちていた)。Jev の規則(DOEFF201・205)はどちらにも入らない。
+#[test]
+fn split_rules_keeps_the_doeff2_rules_that_do_not_ask_jev() {
+    let dir = baseline_repo();
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .args(["--split-rules", "--enable", "DOEFF201,DOEFF205,DOEFF206,DOEFF207,DOEFF208,DOEFF209", "app/queue/main.hy"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let split: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let listed = |side: &str| -> Vec<String> { split[side].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect() };
+    let (quick, whole) = (listed("quick"), listed("whole"));
+    assert!(quick.contains(&"DOEFF208".to_string()), "{}", split);
+    for id in ["DOEFF206", "DOEFF207", "DOEFF209"] {
+        assert!(whole.contains(&id.to_string()), "{} {}", id, split);
+    }
+    for id in ["DOEFF201", "DOEFF205"] {
+        assert!(!quick.contains(&id.to_string()) && !whole.contains(&id.to_string()), "{} {}", id, split);
+    }
+}
+
+/// 規則 rule だけを有効にし、:business-fakes を宣言し、当たりを持つ file `app/queue/wait.hy`(中身 text)を基点に commit した repo。
+/// その file に註を 1 行足して stage した状態で返す。
+fn repo_with_an_old_hit(rule: &str, text: &str) -> tempfile::TempDir {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &format!("[tool.doeff-linter]\nenable = [\"{}\"]\n\n[tool.doeff-linter.commit_hook]\ntimeout_s = 120\n", rule));
+    write(
+        root,
+        "architecture.hy",
+        &ARCHITECTURE.replace(":foundation foundation", ":foundation foundation\n  :business-fakes {:simulation [\"app/sim/**\"] :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.queue\"]}"),
+    );
+    write(root, "app/queue/wait.hy", text);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "当たりを持つ基点"]);
+    write(root, "app/queue/wait.hy", &format!(";; 註を足す\n{}", text));
+    git(root, &["add", "app/queue/wait.hy"]);
+    dir
+}
+
+/// 当たりの在る file の stage を外し、当たりの無い file だけを stage する。
+fn stage_only_an_untouched_file(root: &Path) {
+    git(root, &["reset", "-q", "app/queue/wait.hy"]);
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(root, &["add", "app/queue/main.hy"]);
+}
+
+/// 失敗ケース(agora-redesign #3834・cisco-c8 の可): stage した file に HEAD の版から在る DOEFF208 の当たりも、commit を止める(既知の一覧を
+/// 持たない規則は基点の差で下げない — stage した path に当てる列の new_critical)。DOEFF208 の当たりを持つ file に触らない commit は
+/// 止まらない(file 単位)。
+#[test]
+fn a_staged_file_with_an_old_record_wait_blocks_and_an_untouched_one_does_not() {
+    let wait = "(import doeff_records.effects [WatchChanges])\n(defk wait-for [cursor left]\n  (WatchChanges #(\"message\") cursor :timeout left))\n";
+    let dir = repo_with_an_old_hit("DOEFF208", wait);
+    let root = dir.path();
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("HEAD に無い critical: app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"), "{}", stderr);
+    stage_only_an_untouched_file(root);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
+/// 失敗ケース(agora-redesign #3834・案 1): repo 全体の比べに回る DOEFF209 も、stage した file に HEAD の版から在る当たりで commit を止める
+/// (HEAD の木との鍵の差に、stage した path の基点の差で下げない当たりを足す)。当たりの在る file に触らない commit は止まらない。上限で
+/// 打ち切った時は今までどおり通し、測れなかった事を名指す。
+#[test]
+fn a_staged_file_with_an_old_polling_loop_blocks_and_an_untouched_one_does_not() {
+    let poll = "(defk poll []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n";
+    let dir = repo_with_an_old_hit("DOEFF209", poll);
+    let root = dir.path();
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: app/queue/wait.hy::DOEFF209::poll::Delay::periodic"), "{}", stderr);
+    let (code, stderr) = hook(root, &["--commit-hook-timeout-s", "0"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(stderr.contains("測れなかった"), "{}", stderr);
+    stage_only_an_untouched_file(root);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
 /// 失敗ケース(agora-redesign #2127): file 1 つで判じる規則(DOEFF102 — 層に禁じた module の import)でも、宣言(architecture.hy)だけを
 /// 変えた commit で、stage していない file に新しい当たりが付く。宣言の file を変えた commit は全部の規則を repo 全体の比べに当てて
 /// 止める。宣言を戻せば通る。

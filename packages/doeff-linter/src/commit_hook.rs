@@ -36,8 +36,6 @@ use std::time::{Duration, Instant};
 
 /// 子の linter 1 回ごとの既定の上限(秒)。
 pub const DEFAULT_TIMEOUT_S: u64 = 20;
-/// Jev に問う意味の規則の番号の頭(DOEFF201〜205)— commit では問わない(cache を読むだけでも遅い)。
-pub const SEMANTIC_PREFIX: &str = "DOEFF2";
 /// stage した path のうち linter が読む物の末尾。
 pub const LINTED_SUFFIXES: [&str; 4] = [".hy", ".hyk", ".hyp", ".py"];
 /// 出す行の頭。
@@ -50,13 +48,14 @@ pub struct RuleSplit {
     pub whole: Vec<String>,
 }
 
-/// 純粋: 有効な規則から意味の規則(DOEFF2xx)を除き、規則が repo 全体が要ると名乗る物(config::needs_whole_repo)を whole、残りを
+/// 純粋: 有効な規則から Jev に問う意味の規則(規則の名乗り config::is_semantic — commit では問わない・cache を読むだけでも遅い)を除き、規則が repo 全体が要ると名乗る物(config::needs_whole_repo)を whole、残りを
 /// quick に分ける(順は保つ)。以前は設定の手の一覧 whole_repo_rules で分けていて、一覧に足し忘れた規則(DOEFF149・161)の当たりが
-/// どちらの段にも掛からず main に入った(agora-redesign #2090)。
+/// どちらの段にも掛からず main に入った(agora-redesign #2090)。意味の規則も以前は ID の頭 DOEFF2 で除いていて、頭が同じ決定的な規則
+/// (DOEFF206〜209)がどちらにも入らなかった(agora-redesign #3834)。
 pub fn split_rules(enabled: &[String]) -> RuleSplit {
     let (whole, quick): (Vec<String>, Vec<String>) = enabled
         .iter()
-        .filter(|r| !r.to_uppercase().starts_with(SEMANTIC_PREFIX))
+        .filter(|r| !crate::config::is_semantic(r))
         .cloned()
         .partition(|r| crate::config::needs_whole_repo(r));
     RuleSplit { quick, whole }
@@ -139,10 +138,19 @@ pub fn grown_major_warnings(head: &Value, tip: &Value) -> Vec<String> {
         .collect()
 }
 
-/// 純粋: repo 全体の規則の当たりのうち、先端(tip)に在って HEAD(head)に無い物の識別子(辞書順)。
-pub fn fresh_whole_repo_hits(head: &Value, tip: &Value) -> Vec<String> {
+/// 純粋: repo 全体の規則の当たりのうち止める物の識別子(辞書順)— 先端(tip)に在って HEAD(head)に無い物と、stage した path(`staged`
+/// — repo の根からの相対)に在る、基点の差で下げずに止める当たり(baseline::blocks_regardless_of_baseline — 既知の一覧を持たない
+/// DOEFF206〜209 の critical)。後者は HEAD に同じ鍵が在っても止める(細かさは file 単位・agora-redesign #3834)。
+pub fn fresh_whole_repo_hits(head: &Value, tip: &Value, staged: &[String]) -> Vec<String> {
     let before = report_idents(head);
-    report_idents(tip).into_iter().filter(|id| !before.contains(id)).collect()
+    let unlisted = violations(tip)
+        .filter(|v| {
+            let level = v["level"].as_str().and_then(crate::project::rule::RuleLevel::parse);
+            level.is_some_and(|level| crate::baseline::blocks_regardless_of_baseline(v["rule"].as_str().unwrap_or(""), level))
+                && staged.iter().any(|p| p == relative_to_root(tip, v["path"].as_str().unwrap_or("")))
+        })
+        .map(|v| violation_identity(tip, v));
+    report_idents(tip).into_iter().filter(|id| !before.contains(id)).chain(unlisted).collect::<BTreeSet<String>>().into_iter().collect()
 }
 
 /// 純粋: 報告の違反の path と根を、from の根から to の根へ付け替える — HEAD の木で走らせた出力を、先端の根で走らせた出力と
@@ -660,7 +668,7 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
 
     if !whole.is_empty() {
         // 上限で打ち切られても、stage した file の当たりは捨てずに止め、測れなかった比べを名指す(agora-redesign #2723)。
-        match whole_repo_hits(options, tree, whole, &tip_root) {
+        match whole_repo_hits(options, tree, whole, &tip_root, &staged) {
             Ok(hits) => blocking.whole = hits,
             Err(Stop::TimedOut(unmeasured)) => blocking.unmeasured = Some(unmeasured),
             Err(failed) => return Err(failed),
@@ -669,15 +677,15 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     Ok(blocking)
 }
 
-/// repo 全体の比べ — 先端の木の当たりのうち HEAD の木に無い物。HEAD の木の結果は置き場から読めれば測らない(head_whole_report)。
-fn whole_repo_hits(options: &CommitHookOptions, tree: Option<&Path>, whole: &[String], tip_root: &Path) -> Result<Vec<String>, Stop> {
+/// repo 全体の比べ — 先端の木の当たりのうち HEAD の木に無い物と、stage した path の基点の差で下げない当たり(fresh_whole_repo_hits)。HEAD の木の結果は置き場から読めれば測らない(head_whole_report)。
+fn whole_repo_hits(options: &CommitHookOptions, tree: Option<&Path>, whole: &[String], tip_root: &Path, staged: &[String]) -> Result<Vec<String>, Stop> {
     let head = match tree {
         Some(t) => head_whole_report(options, t, whole, tip_root)?,
         None => empty_report(),
     };
     let dot = vec![".".to_string()];
     let tip = measured(run_linter(&options.linter, &options.root, &lint_args(options, None, whole, &[], &dot), options.timeout), "先端の木の repo 全体の比べ")?;
-    Ok(fresh_whole_repo_hits(&head, &tip))
+    Ok(fresh_whole_repo_hits(&head, &tip, staged))
 }
 
 /// HEAD の木の repo 全体の比べの結果(違反の path は先端の根へ付け替え済み)。置き場に同じ鍵の結果が在ればそれを使い、無ければ木を測って
@@ -741,6 +749,16 @@ mod tests {
         // repo 全体の比べは規則が名乗る列 — 手の一覧に無かった DOEFF149 も入る(agora-redesign #2090)。列の DOEFF166 が行の名指す規則を
         // 同じ実行で当てる(agora-redesign #1999・#2033)。
         assert_eq!(split.whole, ids(&["DOEFF163", "DOEFF149", "doeff166"]));
+    }
+
+    /// agora-redesign #3834: Jev の規則かどうかは規則の名乗り(ProjectRule::is_semantic)で決まり、ID の頭では決まらない — 頭が DOEFF2 の
+    /// 決定的な規則(DOEFF206〜209)は quick か whole に入り、Jev の規則(DOEFF201〜205)だけがどちらにも入らない。
+    #[test]
+    fn commit_hook_split_rules_keeps_deterministic_rules_whose_id_starts_with_doeff2() {
+        let enabled = ids(&["DOEFF201", "DOEFF202", "DOEFF203", "DOEFF204", "DOEFF205", "DOEFF206", "DOEFF207", "DOEFF208", "DOEFF209"]);
+        let split = split_rules(&enabled);
+        assert_eq!(split.quick, ids(&["DOEFF208"]));
+        assert_eq!(split.whole, ids(&["DOEFF206", "DOEFF207", "DOEFF209"]));
     }
 
     #[test]
@@ -856,13 +874,27 @@ mod tests {
             v("new-error", "error", "major"),
             v("new-warning", "warning", "major"),
         ]});
-        assert_eq!(fresh_whole_repo_hits(&head, &tip), ids(&["new-critical", "new-error"]));
+        assert_eq!(fresh_whole_repo_hits(&head, &tip, &[]), ids(&["new-critical", "new-error"]));
         // 鍵の無い違反は根からの相対 path で比べる(先端と HEAD の木で根が違っても同じ識別子)。
         let keyless = |root: &str| json!({ "root": root, "violations": [
             { "severity": "error", "level": "major", "path": format!("{}/x.py", root), "rule": "DOEFF016", "message": "m" }
         ]});
-        assert!(fresh_whole_repo_hits(&keyless("/h"), &keyless("/r")).is_empty());
-        assert_eq!(fresh_whole_repo_hits(&empty_report(), &keyless("/r")), ids(&["x.py::DOEFF016::m"]));
+        assert!(fresh_whole_repo_hits(&keyless("/h"), &keyless("/r"), &[]).is_empty());
+        assert_eq!(fresh_whole_repo_hits(&empty_report(), &keyless("/r"), &[]), ids(&["x.py::DOEFF016::m"]));
+    }
+
+    /// agora-redesign #3834: 既知の一覧を持たない規則(DOEFF206〜209)の critical は、stage した path に在れば HEAD に同じ鍵が在っても止める。
+    /// stage していない file の当たり・登録簿で下げる規則の HEAD に在る critical は止めない。
+    #[test]
+    fn commit_hook_whole_repo_diff_keeps_unlisted_rule_hits_in_staged_files() {
+        let hit = |rule: &str, path: &str, key: &str| json!({ "rule": rule, "path": format!("/r/{}", path), "key": key, "severity": "error", "level": "critical" });
+        let all = json!({ "root": "/r", "violations": [
+            hit("DOEFF209", "a.hy", "a.hy::DOEFF209::poll::Delay::periodic"),
+            hit("DOEFF209", "b.hy", "b.hy::DOEFF209::poll::Delay::periodic"),
+            hit("DOEFF163", "a.hy", "a.hy::DOEFF163::queue"),
+        ]});
+        assert_eq!(fresh_whole_repo_hits(&all, &all, &ids(&["a.hy"])), ids(&["a.hy::DOEFF209::poll::Delay::periodic"]));
+        assert!(fresh_whole_repo_hits(&all, &all, &ids(&["c.hy"])).is_empty());
     }
 
     #[test]
