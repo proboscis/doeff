@@ -1,10 +1,9 @@
 ;;; coordinator が次に起きる刻と、落ち着くまでの約束の純粋な判断(#3865)。
 ;;;
-;;; 調停ループは、要求が無い間、次に起きる刻(next-wake)まで受付を 1 本で待つ。状態を変えた歩か要求を受けた歩の後は待たずに
-;;; もう 1 歩進め(after-step)、何も変えない歩の後だけ次に起きる刻まで待つ。今すぐが上限を越えて続けば、変わり続けた欄を名指して
-;;; 落ちる(count-unsettled)。判断は期限ちょうどの刻に出る(1 秒の格子に丸めない)。
-;;; ここは判断だけで、調停ループ(core/program.hy の coordinator-step)へは #3865 の単位 2 で繋ぐ。
-(require doeff-hy.macros [defk val])
+;;; 調停ループ(core/program.hy の run-coordinator)は、要求が無い間、次に起きる刻(next-wake)まで受付を 1 本で待つ。状態を変えた歩か
+;;; 要求を受けた歩の後は待たずにもう 1 歩進め(after-step)、何も変えない歩の後だけ次に起きる刻まで待つ。今すぐが上限を越えて続けば、
+;;; 変わり続けた欄を名指して落ちる(count-unsettled)。判断は期限ちょうどの刻に出る(1 秒の格子に丸めない)。
+(require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [fields])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -12,13 +11,46 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.intent.due_model [CoordinatorUnsettled])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
-(import doeff_cluster.coordinator.core.api_policy [tick-due])
-(import doeff_cluster.coordinator.core.idle_policy [rollout-due])
+(import doeff_cluster.coordinator.core.api_policy [tick-due deployments-to-observe deployment-reread-due ROLLOUT-TICK-MS])
+(import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read node-reread-due])
+(import doeff_cluster.coordinator.core.resource_policy [readiness-due service-stopped-due])
+(import doeff_cluster.coordinator.core.rollout_policy [rollout-targets rollout-phase-due TERMINAL-PHASES])
 (import doeff_cluster.coordinator.core.watch_policy [all-waiting-unchanged])
 
 ;; 今すぐ(DueNow)が続いてよい歩の数。1 歩ごとに状態の欄の 1 つが落ち着く(生死の求め直し → task → 掃除 → 置き先)ので、正しい判断なら
 ;; 数歩で落ち着く。越えたら回り続けていると見て落ちる。
 (val UNSETTLED-STEP-LIMIT 100)
+
+
+(defk rollout-due [state now timing naming]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| DueAt DueNow DueNever))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "Rollout の歩(coordinator-step の rollout-tick)が、状態がこのままで Kubernetes を読む・段を進める・action を出し得る最初の刻を知るため
+   (#3064)。期限は、台数の持ち主の Deployment と node の印の読み直しの刻(deployment-reread-due・node-reread-due)と、終わっていない
+   Rollout ごとの段の期限(rollout-phase-due)と、その Service の相手の観測が変わる刻(readiness の判定 readiness-due・止まりの判定
+   service-stopped-due)。どれも判断が比べに使う期限の値から求める(#1383 の決めの条件 (1))。Rollout の歩は、前の Rollout の歩
+   (rollout-tick-ms)から ROLLOUT-TICK-MS 経った歩でだけ回るので、期限は前の Rollout の歩の刻より後(まだ判じていない物)から求め、答えは
+   その最小と、Rollout の歩を回せる最初の刻(rollout-tick-ms + ROLLOUT-TICK-MS)の遅い方(期限の刻の歩が Rollout の歩を回せない時も期限を
+   落とさない — #3865)。DueNever = 時刻では変わらない。今読む物が在る間は、Kubernetes を読む周期(次の Rollout の歩の刻)の刻を返す:
+   これは期限ではなく周期で見に行く形で、Kubernetes の watch に替える件(#3868)で消す(#3865)。"
+  (val since state.rollout-tick-ms)
+  (<- deployments (| int None) (deployment-reread-due state since))
+  (<- nodes (| int None) (node-reread-due state since))
+  (var dues (tuple (gfor due [deployments nodes] :if (is-not due None) due)))
+  (for [#(_ r) (sorted (.items state.rollouts))]
+    (when (not-in r.status.phase TERMINAL-PHASES)
+      (<- phase (| int None) (rollout-phase-due r.spec r.status since))
+      (:= dues (+ dues (if (is-not phase None) #(phase) #())))
+      (for [target (rollout-targets r.spec)]
+        (when (= target.kind "Service")
+          (<- ready (| int None) (readiness-due state target.name since timing))
+          (<- stopped (| int None) (service-stopped-due state target.name since timing))
+          (:= dues (+ dues (tuple (gfor due [ready stopped] :if (is-not due None) due))))))))
+  (val gate (+ since ROLLOUT-TICK-MS))
+  (cond
+    (or (deployments-to-observe state now) (nodes-to-read state now)) (DueAt :at (max (+ now 1) gate))
+    dues (DueAt :at (max (min dues) gate))
+    True (DueNever)))
 
 
 (defk watchers-due [watchers state now]
@@ -37,7 +69,7 @@
 (defk next-wake [state now timing naming watchers]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)]
    :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
-  "何も変えない歩の後に、調停ループが次に起きる刻を知るため: 要求の無い歩の期限(api_policy.tick-due)・Rollout の期限(idle_policy.rollout-due —
+  "何も変えない歩の後に、調停ループが次に起きる刻を知るため: 要求の無い歩の期限(api_policy.tick-due)・Rollout の期限(rollout-due —
    Rollout の進行中は Kubernetes を読む周期を含む・#3868)・待ちの期限(watchers-due)のいちばん早い答え。"
   (<- ticking (| DueAt DueNow DueNever) (tick-due state now timing))
   (<- rolling (| DueAt DueNow DueNever) (rollout-due state now timing naming))

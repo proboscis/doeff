@@ -407,9 +407,9 @@
   (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
   (assert (is (resolve-type "doeff_cluster.worker_model:JobPhase") JobPhase))
   (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
-  ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが idle 付きで出した物なので、子 class を引く
-  (import doeff_cluster.coordinator.intent.cluster_model [IdleNextRequests])
-  (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") IdleNextRequests))
+  ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが材料 idle 付きで出した物で、その子 class は #3865 で消した
+  ;; (調停ループは本番と同じ NextRequests を出す)。旧い名は引けない(黙って別の型へ倒れない — 保存の形は互換を持たない)。
+  (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") None))
   ;; record-store の effect(#2030)— 旧い module の名 doeff_cluster.record_store は今は dir(package)なので、表が無ければ引けない
   (import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines])
   (assert (is (resolve-type "doeff_cluster.record_store:AppendRecordLines") AppendRecordLines))

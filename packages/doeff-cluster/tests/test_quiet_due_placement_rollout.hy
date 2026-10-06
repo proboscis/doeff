@@ -1,26 +1,25 @@
-;; 静かな区間の次の期限 5/5(#3064): 入れ替えの見張り(api_policy.placement-due)と Rollout の拍(idle_policy.rollout-due)は、判断が比べに
+;; 次に起きる刻の期限(#3064・#3865): 入れ替えの見張り(api_policy.placement-due)と Rollout の歩(wake_policy.rollout-due)は、判断が比べに
 ;; 使う期限の値(同じ関数)から次の刻を返す。
-;; - (1) 返す刻が、本番の判断が比べに使う期限の値と一致する: 入れ替えの諦め(handoff_policy.handoff-deadline・watch-handoffs)と、
+;; - 返す刻が、本番の判断が比べに使う期限の値と一致する: 入れ替えの諦め(handoff_policy.handoff-deadline・watch-handoffs)と、
 ;;   Rollout の段の時間切れ(rollout_policy.ready-timeout-from・plan-rollouts)。判断はその刻の 1 ms 前は答えを変えず、その刻に変える。
 ;;   期限の関数を判断と別に持つ(片方だけ直す)と、刻か判断の切り替わりのどちらかが食い違って赤。
-;; - (2) 期限より前の書き(5 秒ごとの生存の印)は飛び越さず、その刻に起きる: 次の期限まで試さずに進めた区間が、1 秒ごとに本番の判断で
-;;   試した区間と、歩の列(刻・状態・生存の印)も区間の終わりの刻も同じ。期限を遅く返すと区間の終わりが食い違って赤。
+;; - Rollout の歩は前の Rollout の歩から ROLLOUT-TICK-MS 経った歩でだけ回るので、期限の刻の歩が Rollout の歩を回せない時も、期限を
+;;   落とさず、回せる最初の刻を返す(#3865)。
 (require doeff-hy.macros [deftest defk <- val])
 (import dataclasses [replace])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState HandoffPhase IdleProbe QuietStep QuietStretch])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState HandoffPhase])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.api_policy [placement-due plan-rollouts tick ROLLOUT-ACTOR ROLLOUT-TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
 (import doeff_cluster.coordinator.core.rollout_policy [ready-timeout-from])
-(import doeff_cluster.coordinator.core.idle_policy [rollout-due quiet-stretch])
+(import doeff_cluster.coordinator.core.wake_policy [rollout-due])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
-(import tests.test_idle_skip [tried-steps])
 
 ;; 担い手の報告が古くならない・readiness の window が諦めの期限より長い時計と宣言(効く期限を諦めの 1 つにする)。
 (val LONG-LEASE (ClusterTiming :lease-ms 1000000000))
@@ -33,7 +32,7 @@
 
 
 (deftest test-the-placement-due-is-the-handoff-deadline-the-watch-compares
-  ;; (1) 入れ替え: 新の世代(r2)が Ready にならず見張りが Ready を待っている状態で、placement-due は諦めの期限 handoff-deadline を返し、
+  ;; 入れ替え: 新の世代(r2)が Ready にならず見張りが Ready を待っている状態で、placement-due は諦めの期限 handoff-deadline を返し、
   ;; 本番の判断 watch-handoffs はその刻の 1 ms 前は待ったまま、その刻に諦める。
   (val sim (Sim WINDOW-OVER-DEADLINE))
   (<- (steps sim 12))
@@ -57,7 +56,7 @@
 (defk waiting-rollout []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "program"}}
   "worker の居ない世界に Service 2 つとその間の Rollout を作り、要求の無い拍と Rollout の拍を 1 つずつ回して WaitingNewReady に入れた
-   状態を返すため((1) と (2) の出発点 — 試した歩の後の状態と同じく、拍の判断の不動点)。"
+   状態を返すため(Rollout の期限の検の出発点 — 歩の判断の不動点)。"
   (val made-a (responded (ClusterState :started-ms (- ROLLOUT-START 60000))
                          (! (http-request "POST" "/resources/Service" {} {"name" "writer-a" "spec" SERVICE} :actor "c-test"))
                          ROLLOUT-START (ClusterTiming)))
@@ -77,7 +76,7 @@
 
 
 (deftest test-the-rollout-due-is-the-stage-deadline-the-step-compares
-  ;; (1) Rollout: WaitingNewReady の Rollout で、rollout-due は段の時間切れ ready-timeout-from を返し、本番の判断 plan-rollouts は
+  ;; Rollout: WaitingNewReady の Rollout で、rollout-due は段の時間切れ ready-timeout-from を返し、本番の判断 plan-rollouts は
   ;; その刻の 1 ms 前は待ったまま、その刻に戻し(RollingBack)へ入る。
   (<- state ClusterState (waiting-rollout))
   (val row (get state.rollouts "to-b"))
@@ -104,17 +103,3 @@
   (<- judged (| DueAt DueNow DueNever) (rollout-due (replace state :rollout-tick-ms due) due (ClusterTiming) (ClusterNaming)))
   (assert (not (and (isinstance judged DueAt) (<= judged.at due))) judged))
 
-
-(deftest test-writes-before-the-deadline-happen-at-their-ticks
-  ;; (2) WaitingNewReady の Rollout の状態から 2 分の静かな区間: 次の期限(段の時間切れ)まで試さずに進めた区間は、1 秒ごとに本番の判断で
-  ;; 試した区間と、歩の列(5 秒ごとの生存の印を含む)も、区間の終わり(時間切れの後の最初の拍)も同じ。
-  (<- state ClusterState (waiting-rollout))
-  (val start (QuietStep :at ROLLOUT-START :state state :watchers #() :marked False))
-  (val horizon (+ ROLLOUT-START 120000))
-  (<- skipped QuietStretch (quiet-stretch (IdleProbe state (ClusterTiming) (ClusterNaming)) start horizon))
-  (<- tried QuietStretch (tried-steps start horizon))
-  (assert (= skipped.end-at tried.end-at (+ ROLLOUT-START 61000)) #(skipped.end-at tried.end-at))
-  (assert (= (len skipped.steps) (len tried.steps)) #((len skipped.steps) (len tried.steps)))
-  (val apart (lfor #(a b) (zip skipped.steps tried.steps) :if (!= a b) #(a.at a.state.alive-ms b.state.alive-ms)))
-  (assert (= apart []) apart)
-  (assert (any (gfor step skipped.steps step.marked)) "区間の中で生存の印が書かれている"))

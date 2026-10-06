@@ -2,10 +2,8 @@
   "modules": [
     {
       "allow": [
-        "doeff-cluster-api-policy",
         "doeff-cluster-clock",
         "doeff-cluster-cluster-model",
-        "doeff-cluster-idle-policy",
         "doeff-cluster-promise-wait",
         "doeff-cluster-shared-protocol"
       ],

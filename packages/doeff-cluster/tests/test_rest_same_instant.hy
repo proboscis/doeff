@@ -157,8 +157,8 @@
 (deftest test-a-resting-host-shows-the-same-truth-at-every-instant-as-one-beat-at-a-time
   ;; 1 拍ずつの走り(skip-idle 偽)と、宿が静かな拍をまとめて眠る走り(skip-idle 真)で、どの読みも同じ刻に同じ宿の真実を見て、
   ;; coordinator の置き場の書きの列も一致する。まとめて眠る走りは宿の眠りを使っている(拍の数が少ない)。
-  (<- every Trace (trace-of (quitters sim-foundation) (quiet-reads) False :workers TWO-WORKERS :policy QUIET-POLICY))
-  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-reads) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- every Trace (trace-of (quitters sim-foundation) (quiet-reads) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-reads) False :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (is-not every.answer None) "走りは答えを返している")
   (assert (> (len every.answer) 10) every.answer)
   ;; 読みの間に拍が届いている(比べが空でない — 届いた拍の数が読みごとに増える)。
@@ -187,7 +187,7 @@
 (deftest test-the-counterexamples-a-skipped-beat-and-a-different-report-are-named
   ;; 失敗ケース: 眠りの中の拍を 1 つ飛ばして写す形(届いた拍の数が 1 つ少ないのに最後に届いた刻は同じ)と、同じ拍に着いた読みで送った
   ;; 状態の報告が違う形は、比べが読みの名で名指す。
-  (<- every Trace (trace-of (quitters sim-foundation) (quiet-reads) False :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- every Trace (trace-of (quitters sim-foundation) (quiet-reads) True :workers TWO-WORKERS :policy QUIET-POLICY))
   (<- skipped-beat tuple (with-w1-seen every.answer "拍 11" (fn [seen] (replace seen :beats (- seen.beats 1)))))
   (<- lag list (truth-breaches every.answer skipped-beat))
   (assert (= (len lag) 1) lag)
