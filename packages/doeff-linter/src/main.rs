@@ -307,7 +307,9 @@ impl Setup {
                 ProjectRule::ServiceInvariantsMissing => self.settings.architecture.is_some(),
                 ProjectRule::ServiceSystemMissing => self.settings.architecture.is_some(),
                 ProjectRule::SystemAccessUnwritten => self.settings.architecture.as_ref().is_some_and(|a| a.outside_writers.is_some()),
-                ProjectRule::RecordChangeWakesJob => self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()),
+                ProjectRule::RecordChangeWakesJob | ProjectRule::PollingOnTimer => {
+                    self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some())
+                }
                 ProjectRule::HandlerArgumentHoldsState => self.settings.architecture.as_ref().is_some_and(|a| a.handler_arguments.is_some()),
                 ProjectRule::BusinessEffectFake | ProjectRule::TestOnlyFake => self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some()),
                 ProjectRule::ServiceWithoutCounterexample | ProjectRule::ClauseWithoutCounterexample | ProjectRule::IntentFakedInVerification => {

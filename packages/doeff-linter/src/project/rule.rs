@@ -160,6 +160,10 @@ pub enum ProjectRule {
     /// [removed]
     /// [issue])。登録簿で下げない。母集団は :business-fakes の本番の code。
     RecordChangeWakesJob,
+    /// DOEFF209: 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く — Delay・WaitTicks・今 + 決まった秒の
+    /// [removed]
+    /// [issue])。登録簿で下げない。母集団は :business-fakes の本番の code。
+    PollingOnTimer,
     /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
     /// import する — 置き場の決まっていない module への依存([issue])。
     PlacedDependency,
@@ -283,6 +287,7 @@ impl ProjectRule {
         ProjectRule::ServiceSystemMissing,
         ProjectRule::SystemAccessUnwritten,
         ProjectRule::RecordChangeWakesJob,
+        ProjectRule::PollingOnTimer,
         ProjectRule::PlacedDependency,
         ProjectRule::BlindDefinitionReads,
         ProjectRule::DefinitionCallsUnlistedHead,
@@ -363,6 +368,7 @@ impl ProjectRule {
             ProjectRule::ServiceSystemMissing => "DOEFF173",
             ProjectRule::SystemAccessUnwritten => "DOEFF207",
             ProjectRule::RecordChangeWakesJob => "DOEFF208",
+            ProjectRule::PollingOnTimer => "DOEFF209",
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::BlindDefinitionReads => "DOEFF141",
             ProjectRule::DefinitionCallsUnlistedHead => "DOEFF147",
@@ -420,6 +426,7 @@ impl ProjectRule {
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
+            | ProjectRule::PollingOnTimer
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
             // 決めた材料だけで判じる定義に、ほかの材料が入り込む(#1368 — #1188 の子。新しい当たりは critical)。
@@ -535,6 +542,7 @@ impl ProjectRule {
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
+            | ProjectRule::PollingOnTimer
             | ProjectRule::RegistryEntryStale
             // テストと本番の届き(定義の graph)を辿る: テストの種類・模擬で回さない service・縁の検・偽物・組み立て・反例・網羅。
             | ProjectRule::TestKindMismatch
@@ -669,6 +677,7 @@ impl ProjectRule {
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
+            | ProjectRule::PollingOnTimer
             | ProjectRule::RegistryEntryStale
             // 定義の graph(テストと本番の届き)を repo 全体で辿る。
             | ProjectRule::WorldHandlerMisplaced
@@ -692,9 +701,9 @@ impl ProjectRule {
 
     /// 登録簿(既知の当たりの表)に載った当たりを warning へ下げてよい規則か。DOEFF206 は下げない — 違反を通す表を作らせない規則が、
     /// [removed]
-    /// 今在る当たりを表に載せて通す形にしない(DOEFF208 = [issue])。
+    /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209 = [issue])。
     pub fn lowered_by_registry(self) -> bool {
-        !matches!(self, ProjectRule::IntentFakedInVerification | ProjectRule::SystemAccessUnwritten | ProjectRule::RecordChangeWakesJob)
+        !matches!(self, ProjectRule::IntentFakedInVerification | ProjectRule::SystemAccessUnwritten | ProjectRule::RecordChangeWakesJob | ProjectRule::PollingOnTimer)
     }
 
     /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
@@ -783,6 +792,7 @@ impl ProjectRule {
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
+            | ProjectRule::PollingOnTimer
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::BlindDefinitionReads
@@ -880,6 +890,7 @@ impl ProjectRule {
             ProjectRule::ServiceSystemMissing => "系を宣言していない service",
             ProjectRule::SystemAccessUnwritten => "本番の job の読みに書き手が無い",
             ProjectRule::RecordChangeWakesJob => "記録の変更の待ちで job を起こす",
+            ProjectRule::PollingOnTimer => "時間の待ちを挟んで同じ物を取りに行く",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
             ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
@@ -948,6 +959,7 @@ impl ProjectRule {
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
+            | ProjectRule::PollingOnTimer
             | ProjectRule::DefinitionCallsUnlistedHead
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::BroadCatchOutsideCarrier
@@ -1039,6 +1051,7 @@ impl ProjectRule {
             ProjectRule::ServiceSystemMissing => "Service System Missing",
             ProjectRule::SystemAccessUnwritten => "System Access Unwritten",
             ProjectRule::RecordChangeWakesJob => "Record Change Wakes Job",
+            ProjectRule::PollingOnTimer => "Polling On Timer",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
@@ -1114,6 +1127,7 @@ impl ProjectRule {
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
             ProjectRule::ServiceInvariantsMissing => "architecture.hy の defservice は(entry の層を持たない service も)、architecture.hy の defservice に :invariants(業務の不変条件の関数 `module:関数` の列)を宣言する — 名指した関数は実在し、:tags の :role が judgment(記録を受けて破りの列を返す純粋な判断)。宣言の無い service・実在しない関数・判断でない関数は赤",
             ProjectRule::ServiceSystemMissing => "architecture.hy の defservice は(entry の層を持たない service も)、architecture.hy の defservice に :system(cluster に置く系 `module:defsystem の名`・系が複数なら列)を宣言する — 名指した module はその service の entry の層に在り、名は defsystem で定義され、引数は型つきの土台 1 つ(defsystem の引数の型の注記 `[#^ T foundation]` が在ればそれで、無ければ土台を受ける job の関数の引数の型が書かれ、素の Callable・写像・組でない)。defsystem が在れば汎用の模擬 cluster のテストに自動で載る。その service の code が別の service の系の中で走るなら {:part-of \"module:defsystem の名\"}(指す系はどこかの service の entry の層)、旧い経路に残す service と process を持たない部品の service(main も deploy も無く他の service が読むだけ)は {:exempt \"理由\"} と理由を書く(理由の中身は判じない・空の理由は赤)",
+            [removed]
             [removed]
             [removed]
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
@@ -1208,6 +1222,7 @@ impl ProjectRule {
             ProjectRule::ServiceSystemMissing => "defservice に :system \"<module>:<defsystem の名>\" を足し、defsystem はその service の entry の層に (defsystem 名 [foundation] …) の形で置く。土台を受ける job の関数は :pre に土台の型(defrecord)を書く。旧い経路に残す service と process を持たない部品の service は :system {:exempt \"理由\"}",
             ProjectRule::SystemAccessUnwritten => "job の行に :reads #{…} :writes #{…} を書く。読む組に書き手が無いなら、その組を書く job を本番の系に足すか、書き手が本番の系の job でない(外の repo の道具・人の操作・job でない task)なら architecture.hy の :outside-writers に組と書き手を書く",
             ProjectRule::RecordChangeWakesJob => "記録の変更を待って起きる形をやめる: 起こす知らせは出来事の基盤(redis・rabbitmq など)から受け、記録は書くだけにする。起動や繋ぎ直しの時に追いつくための読みは待たない 1 回の読み(秒 0)にする。合図の源(read-signal-handler)を handler の列から外し、出来事の基盤の知らせを受ける源に替える",
+            ProjectRule::PollingOnTimer => "時間の間隔で取りに行くのをやめ、相手の変わりの知らせ(出来事 — doeff-events の Publish / WaitForEvent・出来事の基盤)で起きる形にする。起きる刻が行や予定から決まる期限の待ちは、その刻を行から導いて掛ける。相手が変わりを知らせる手段を持たない所・書くだけの loop(生存の印・報告・期限の延長)・届かない印か失敗の答えが在る間だけ繋がるかを試し、戻ったら印を消す繋ぎ直しだけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書く",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
@@ -1311,6 +1326,7 @@ mod tests {
         ("DOEFF173", RuleFamily::Definition),
         ("DOEFF207", RuleFamily::Definition),
         ("DOEFF208", RuleFamily::Definition),
+        ("DOEFF209", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),
         ("DOEFF141", RuleFamily::Place),
         ("DOEFF147", RuleFamily::Definition),
