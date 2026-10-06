@@ -27,6 +27,7 @@
 ;;; stdin へ書く行の綴り(JSON へ書く境界)はこの file の dumps の 1 か所。
 (import dataclasses [dataclass field replace])
 (import json)
+(import doeff [run])
 (import typing [NamedTuple])
 (import doeff_hy.frozen [thaw-json])
 (import doeff_claude_code.values [TurnInput Allow Deny])
@@ -292,7 +293,7 @@
   (when (not state.in-flight)
     (return (Transition :state state)))
   (setv counted (replace state :turn-usage (+ state.turn-usage result.usage)
-                               :turn-windows (merged-windows state.turn-windows result.model-windows)))
+                               :turn-windows (run (merged-windows state.turn-windows result.model-windows))))
   (when (in result.origin-kind CLI-OWN-TURN-ORIGINS)
     (return (Transition :state counted)))
   (setv open-closed (replace counted :cli-turn-open False))

@@ -8,6 +8,7 @@ from dataclasses import field as field
 from dataclasses import fields as fields
 from datetime import datetime as datetime
 from enum import StrEnum as StrEnum
+from doeff import run as run
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import freeze_json as freeze_json
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
@@ -65,10 +66,6 @@ class ToolAnswer:
 @dataclass(frozen=True)
 class ToolResult:
     answers: tuple[ToolAnswer, ...]
-
-    @property
-    def tool_use_ids(self) -> tuple[str, ...]:
-        ...
 
 class DeltaKind(StrEnum):
     TEXT = 'text'
@@ -129,7 +126,7 @@ class ModelWindow:
     context_window: int | None = None
     max_output_tokens: int | None = None
 
-def merged_windows(earlier: tuple, later: tuple) -> tuple:
+def merged_windows(earlier: tuple, later: tuple) -> _Program[tuple[ModelWindow, ...], object]:
     ...
 
 @dataclass(frozen=True)
@@ -225,7 +222,7 @@ def content_blocks(record: dict) -> tuple:
 def classify_assistant(record: dict) -> Incomplete:
     ...
 
-def tool_answer_of(block: dict) -> ToolAnswer:
+def tool_answer_of(block: dict) -> _Program[ToolAnswer, object]:
     ...
 
 def classify_user(record: dict) -> Incomplete:
@@ -243,7 +240,7 @@ def classify_control_request(record: dict) -> Incomplete:
 def classify_control_response(record: dict) -> Incomplete:
     ...
 
-def model_windows_of(model_usage: dict) -> tuple:
+def model_windows_of(model_usage: dict) -> _Program[tuple[ModelWindow, ...], object]:
     ...
 
 def classify_result(record: dict) -> Incomplete:
@@ -252,7 +249,7 @@ def classify_result(record: dict) -> Incomplete:
 def classify_lifecycle(record: dict) -> Incomplete:
     ...
 
-def delta_kind_of(delta_type: str) -> DeltaKind:
+def delta_kind_of(delta_type: str) -> _Program[DeltaKind, object]:
     ...
 
 def classify_stream_event(record: dict) -> Incomplete:

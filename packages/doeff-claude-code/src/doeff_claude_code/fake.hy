@@ -235,7 +235,7 @@
     (and (isinstance said AssistantMessage) (is said.parent-tool-use-id None))
       (setv turn.last-call-usage said.usage turn.last-call-model said.model)
     (isinstance said TurnResult)
-      (setv turn.model-windows (merged-windows turn.model-windows said.model-windows)))
+      (setv turn.model-windows (! (merged-windows turn.model-windows said.model-windows))))
   (<- (ring-turn turn))
   None)
 

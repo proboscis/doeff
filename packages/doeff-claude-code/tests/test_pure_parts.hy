@@ -183,9 +183,7 @@
                                 (lines.ToolAnswer "toolu_2" "Exit code 2" True)
                                 (lines.ToolAnswer "toolu_3" "line 1\nline 2" False #("image"))
                                 (lines.ToolAnswer "toolu_4" "" False)))
-          (repr answered))
-  ;; 結果の id の列は答えの列から作る読み取り(元は答えの列 1 つ)。
-  (assert (= answered.tool-use-ids #("toolu_1" "toolu_2" "toolu_3" "toolu_4")) (repr answered)))
+          (repr answered)))
 
 (deftest test-a-tool-block-without-its-input-or-its-id-is-refused-by-name
   ;; input の無い・写像でない tool_use の block を空の命令の呼びとして通さない。tool_use_id の無い・空の tool_result を空の id の結果として

@@ -576,7 +576,7 @@
 
 (defk check-tool-calls-meet-results [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
-  "AgentToolUseEvent の tool_calls の id が、後に続く AgentToolResultEvent の tool_use_ids と突き合う(どの結果も前の呼びの id を
+  "AgentToolUseEvent の tool_calls の id が、後に続く AgentToolResultEvent の答え(answers)の id と突き合う(どの結果も前の呼びの id を
    名指し、どの呼びにも結果が届く)。呼びの id を落とす adapter では突き合わず赤(agora-redesign #3518)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val uses (lfor event done.events :if (isinstance event AgentToolUseEvent) event))
@@ -584,11 +584,11 @@
   (assert (and uses results) (repr done.events))
   (val called (lfor event uses call event.tool-calls call.id))
   (assert (all called) (repr uses))
-  (val answered (lfor event results id event.tool-use-ids id))
+  (val answered (lfor event results answer event.answers answer.id))
   (assert (= (sorted called) (sorted answered)) (repr #(uses results)))
   (for [result results]
-    (assert (all (gfor id result.tool-use-ids
-                       (any (gfor use uses :if (< use.seq result.seq) call use.tool-calls (= call.id id)))))
+    (assert (all (gfor answer result.answers
+                       (any (gfor use uses :if (< use.seq result.seq) call use.tool-calls (= call.id answer.id)))))
             (repr #(uses result))))
   None)
 
@@ -601,8 +601,7 @@
 (defk check-tool-events-carry-the-command-and-the-output [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "AgentToolUseEvent の呼びが道具の命令(input)を、AgentToolResultEvent の答えが結果の中身(本文・誤りの印・text でない block の種類)を
-   運ぶ。命令と出力を捨てる adapter では会話の画面の道具の行を開けず赤(agora-redesign #3744)。結果の id の列(tool_use_ids)は答えの列から
-   作る読み取りで、答えの id と同じ並び。"
+   運ぶ。命令と出力を捨てる adapter では会話の画面の道具の行を開けず赤(agora-redesign #3744)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val calls (lfor event done.events :if (isinstance event AgentToolUseEvent) call event.tool-calls call))
   (val results (lfor event done.events :if (isinstance event AgentToolResultEvent) event))
@@ -611,7 +610,6 @@
   (assert (= (lfor answer answers #(answer.id answer.text answer.is-error answer.non-text-kinds))
              [#((. (get calls 0) id) ECHO-OUTPUT False #())])
           (repr answers))
-  (assert (all (gfor event results (= event.tool-use-ids (tuple (gfor answer event.answers answer.id))))) (repr results))
   None)
 
 (deftest test-headless-tool-events-carry-the-command-and-the-output-fake [tmp-path]

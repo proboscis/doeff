@@ -276,11 +276,6 @@ class AgentToolResultEvent:
     at: datetime
     answers: tuple[ToolAnswer, ...]
 
-    @property
-    def tool_use_ids(self) -> tuple[str, ...]:
-        """The answered call ids, read from ``answers`` (the answers are the one source)."""
-        return tuple(answer.id for answer in self.answers)
-
 
 @dataclass(frozen=True, kw_only=True)
 class AgentInputFateEvent:
