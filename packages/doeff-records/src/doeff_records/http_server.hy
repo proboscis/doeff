@@ -4,10 +4,12 @@
 ;;; 切り替え・時計と scheduler を被せて run する runner・要求ごとに handler の組を借りる lease)は退役した。
 ;;;
 ;;;   serve-records        入口の Program(本体): 待ち受けを開き(HttpListen)、結んだ宛先を名乗り(RecordsListening)、表の用意・受けの loop・
-;;;                        止めの見張りの task を立てて待つ。形は下の「入口の形」
+;;;                        止めの見張りの task を立てて待つ。表の用意が済んだ拍に告知する(RecordsPrepared)。形は下の「入口の形」
 ;;;   answer-arrival       要求 1 つに答える task の本体: 本文を読み(HttpReadBody)→ service.respond → 答えを送る(HttpRespond)
-;;;   start-records-server 検の殻: 入口の Program を別の thread の run で回し、結んだ宛先の url と止める close を持つ RunningServer を返す
-;;;                        (使い手の検と模擬が使う口 — 置き場は呼び手が渡す)。止めの合図は殻の合図(threading.Event)を
+;;;   store-reach          置き場に届くかの公開の判断(/readyz と同じ判断 — 届く StoreReachable・届かない StoreUnreachable・上限の秒の内に
+;;;                        答えない StoreSilent の閉じた型 StoreReach を返す)。使い手の土台が準備の報告に同じ判断を撃つ口
+;;;   start-records-server 検の殻: 入口の Program を別の thread の run で回し、表の用意の告知を待って、結んだ宛先の url と止める close を持つ
+;;;                        RunningServer を返す(使い手の検と模擬が使う口 — 置き場は呼び手が渡す)。止めの合図は殻の合図(threading.Event)を
 ;;;                        shell-control が StopRequested の答えにする。
 ;;; 本番の土台と env の読みは main.hy。
 ;;;
@@ -19,13 +21,19 @@
 ;;;   - 表の用意は task(prepare-store — serving.prepare の Program が 書き手の名 → handler の関数を返す)。本体が Race(用意 / 受けの loop の
 ;;;     終わり)で見張る: 用意が落ちれば例外が run を 0 以外で終える(再起動が繋ぎ直す)。止めの合図で loop が先に終われば用意を取り消して
 ;;;     0 で終わる。用意の間も口は開いていて、/healthz = 200・記録の操作 = 503 store-unavailable(用意の済みは prepared-slot の session の値)
+;;;   - 用意の告知(#3733): 用意の task は 書き手の名 → handler の関数を prepared-slot に置いた後に RecordsPrepared(結んだ宛先・所要の秒)を
+;;;     1 度だけ出す — 告知が出たなら記録の操作に答えられる。告知は用意の task の終わりで、止めの道(watch-stop → CloseWaits → HttpShutdown)の
+;;;     外(止めの合図で受けの loop が先に終われば、告知の前でも途中でも用意の task ごと取り消す)。答え手: 本番の土台は 1 行を印字し
+;;;     (main.hy の printed-listening)、使い手の土台は準備の報告を立て、検の殻は開いた口を返す。答え手が落ちれば用意の失敗と同じく run を
+;;;     例外で終える
 ;;;   - 止めの見張り(watch-stop)は StopRequested を問い、合図で保留中の置き場の待ちを止めの印で起こし(CloseWaits)、HttpShutdown を撃つ。
 ;;;     止めの印(#3713): 入口の session(waits-closing)が印を持ち、要求ごとの記録の handler の中の待ち(WaitWithin — 変化の待ちの long-poll の
 ;;;     呼び鈴の待ち)を切り手(closing-cuts-waits)が呼び鈴・期限・止めの門の早い方で起こす。印を受けた待ち手は読み直さずに静かな答え
 ;;;     (空の changes・eventsQuiet — 位置は頼んだ位置のまま)で返り、client は今の取り決めのまま次の置き場へ撃ち直す。止めた後に来た待ちは
 ;;;     待たずに印で答える。置き場(memory・PostgreSQL)の呼び鈴そのものは鳴らさない — 待ち手が外す(置き場は他の入口と共有してよい)
-;;;   - GET /readyz(#1479)は置き場を問う: 用意の前 = 503・serving.readiness の問いを READINESS-SECONDS の上限で撃ち、True = 200・
-;;;     False か時間切れ = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の不調で再起動を繰り返さない)
+;;;   - GET /readyz(#1479)は置き場を問う: 用意の前 = 503・置き場に届くかの判断 store-reach(serving.readiness の問いを READINESS-SECONDS の
+;;;     上限で撃つ)が届く = 200・届かないか上限の内に答えない = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の
+;;;     不調で再起動を繰り返さない)
 ;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む
 ;;;   - 計器(#2709): 要求の task は答えを送った直後に、要求の種(wire の request-kind)と実際に送った答えの status の counter
 ;;;     records_requests_<種>_<status> を doeff の計器の effect CountMetric で 1 つ数える(本文の断りの 400・落ちた時の 500・送りが落ちて
@@ -105,7 +113,7 @@
 (val NOT-PREPARED-REASON "表の用意が済んでいない(起動の途中)")
 ;; 手入れの係の書き手の名(手入れの effect は書き手の許可を通らない — 行を書かない)。
 (val MAINTAINER "records-maintenance")
-;; 検の殻: 止めの合図を問い直す間隔・待ち受けが開くのを待つ上限・閉じて run が終わるのを待つ上限の秒と、止めの理由。
+;; 検の殻: 止めの合図を問い直す間隔・待ち受けが開いて表の用意を告げるのを待つ上限・閉じて run が終わるのを待つ上限の秒と、止めの理由。
 (val SHELL-STOP-POLL-SECONDS 0.02)
 (val SHELL-OPEN-SECONDS 30.0)
 (val SHELL-CLOSE-SECONDS 10.0)
@@ -138,9 +146,9 @@
   "入口の Program(serve-records)の設定: address = 待ち受けの宛先・schema = 置き場の宣言・prepare = 表を用意して
    書き手の名 → 記録の handler の関数を返す Program(1 度だけ走る)・request-handlers = 要求ごとの答えの外側に被せる handler の列(本番は空・
    検は呼び手の仮想の時計)・max-bytes = 要求の本文の上限・maintenance = 手入れの設定(None = 立てない)・stop-poll-seconds /
-   drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(/readyz が
-   READINESS-SECONDS の上限で撃つ・None = 用意が済めば ready — memory の置き場)・pressure = () → 置き場の詰まりの読み
-   (StorePressure | PressureUnread)の Program(/readyz が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
+   drain-seconds = 止めの見張りの間隔と待ち受けの閉じの流し切りの上限・readiness = () → 置き場に届けば True の Program(置き場に届くかの
+   判断 store-reach が READINESS-SECONDS の上限で撃つ・None = 問わない — 用意が済めば ready)・pressure = () → 置き場の詰まりの読み
+   (StorePressure | PressureUnread)の Program(store-reach が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
    meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)・
    served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)。"
   (#^ HttpAddress address)
@@ -165,9 +173,24 @@
   (#^ str body))
 
 
-(defrecord ReadinessTimedOut
-  "/readyz の問いの時計の答え — 置き場の問いが上限の秒の内に答えなかった印(Race で問いの答えと見分けるため)。"
+;; 置き場に届くかの判断(store-reach)の答えの閉じた型 StoreReach = 届く | 届かない | 上限の秒の内に答えない。
+(defrecord StoreReachable
+  "置き場に届いた(store-reach の答え): pressure = 詰まりの読み(錠を待つ本数と idle in transaction の最長の秒・読めなければ理由 — #1858)。"
+  (#^ (| StorePressure PressureUnread) pressure))
+
+
+(defrecord StoreUnreachable
+  "置き場の問い(serving.readiness)が届かないと答えた(store-reach の答え): reason = 理由の 1 行。"
+  (#^ str reason))
+
+
+(defrecord StoreSilent
+  "置き場の問いが上限の秒の内に答えなかった(store-reach の答え — 上限の時計 readiness-timer の答えでもあり、Race で問いの答えと
+   見分ける): seconds = 待った上限の秒。"
   (#^ float seconds))
+
+
+(val StoreReach (| StoreReachable StoreUnreachable StoreSilent))
 
 
 (defrecord StorePrepared
@@ -183,8 +206,13 @@
 ;; --- 入口の Program が問う effect -------------------------------------------------------------------------------------------------
 
 (defeffect RecordsListening
-  "待ち受けが address を結んだ拍の名乗り(本番の土台は 1 行を印字し、検の殻は結んだ port を受け取る)。答えは None。"
+  "待ち受けが address を結んだ拍の名乗り(本番の土台は 1 行を印字する — 表の用意はまだ済んでいない)。答えは None。"
   {:fields [(: address HttpAddress)] :answer None :tags {:context "records" :role "entry"}})
+
+(defeffect RecordsPrepared
+  "表の用意が済んだ拍の告知(書き手の名 → 記録の handler の関数を置いた後 — 告知が出たなら記録の操作に答えられる): address = 結んだ宛先・
+   seconds = 用意の所要の秒。本番の土台は 1 行を印字し、使い手の土台は準備の報告を立て、検の殻は開いた口を返す。答えは None。"
+  {:fields [(: address HttpAddress) (: seconds float)] :answer None :tags {:context "records" :role "entry"}})
 
 (defeffect TrackRequest
   "受けの loop が Spawn した要求の task を台帳に載せる。答えは None。"
@@ -379,10 +407,10 @@
 
 
 (defk readiness-timer [seconds]
-  {:pre [(: seconds float)] :post [(: % ReadinessTimedOut)] :tags {:context "records" :role "entry"}}
-  "/readyz の問いの上限を刻むため(seconds 秒眠って印を返す — Race の片方)。"
+  {:pre [(: seconds float)] :post [(: % StoreSilent)] :tags {:context "records" :role "entry"}}
+  "置き場の問いの上限を刻むため(seconds 秒眠って「答えない」を返す — store-reach の Race の片方)。"
   (<- (Delay seconds))
-  (ReadinessTimedOut :seconds seconds))
+  (StoreSilent :seconds seconds))
 
 
 (defk store-pressure [serving]
@@ -394,11 +422,40 @@
 
 
 (defk store-probe [serving]
-  {:pre [(: serving RecordsServing)] :post [(: % (| StorePressure PressureUnread bool))] :tags {:context "records" :role "entry"}}
-  "/readyz の問いの本体: 置き場に届くかを問い(届かなければ False)、届けば詰まりを読む。1 つの task で撃つので、READINESS-SECONDS の
-   上限は届くかの問いと詰まりの読みの両方に掛かる。"
+  {:pre [(: serving RecordsServing)] :post [(: % (| StoreReachable StoreUnreachable))] :tags {:context "records" :role "entry"}}
+  "置き場の問いの本体: 置き場に届くかを問い(届かなければ StoreUnreachable)、届けば詰まりを読む。1 つの task で撃つので、
+   READINESS-SECONDS の上限は届くかの問いと詰まりの読みの両方に掛かる。"
   (<- reachable bool (serving.readiness))
-  (if reachable (! (store-pressure serving)) False))
+  (if reachable
+      (StoreReachable :pressure (! (store-pressure serving)))
+      (StoreUnreachable :reason "置き場に届かない")))
+
+
+(defk cancelled-and-settled [task]
+  {:pre [(: task Task)] :post [(: % None)] :tags {:context "records" :role "entry"}}
+  "Race で答えの決まった問いの task を取り消し、解け終わるまで待つため(終わっていた task の取り消しは何もしない — 答えは捨てる)。"
+  (<- (Cancel task))
+  (try
+    (<- _ended (Wait task))
+    (except [TaskCancelledError] None))
+  None)
+
+
+(defk store-reach [serving]
+  {:pre [(: serving RecordsServing)] :post [(: % StoreReach)] :tags {:context "records" :role "entry"}}
+  "置き場に届くかを /readyz と同じ判断で決めるため(公開 — 使い手の土台が準備の報告に同じ判断を撃つ・#3733): 問いが無ければ届く
+   (詰まりは store-pressure の読み)・問いを READINESS-SECONDS の上限で撃ち、届けば StoreReachable(詰まりの読みを持つ)・届かなければ
+   StoreUnreachable・上限の内に答えなければ StoreSilent(問いの task は取り消す — 固まった置き場の問いを待ち続けない)。取り消した task は
+   解け終わるまで待つ(走りかけの問いと時計を置き去りにして返らない — 判断を root で撃つ呼び手でも #501 の置き去りにならない)。表の用意の
+   済みは問わない(用意の告知 RecordsPrepared と /readyz の用意の前の 503 が持つ)。"
+  (when (is serving.readiness None)
+    (return (StoreReachable :pressure (! (store-pressure serving)))))
+  (<- probe Task (Spawn (store-probe serving)))
+  (<- timer Task (Spawn (readiness-timer READINESS-SECONDS)))
+  (<- first StoreReach (Race probe timer))
+  (<- (cancelled-and-settled probe))
+  (<- (cancelled-and-settled timer))
+  first)
 
 
 (defk ready-answer [pressure]
@@ -414,24 +471,16 @@
 
 (defk readiness-answer [serving prepared]
   {:pre [(: serving RecordsServing) (: prepared (| Callable None))] :post [(: % HttpAnswer)] :tags {:context "records" :role "entry"}}
-  "/readyz に答えるため: 用意の前は 503・問いが無ければ 200(詰まりは store-pressure の読み)・問いを READINESS-SECONDS の上限で撃ち、
-   届けば 200(錠を待つ本数と idle in transaction の最長の秒を載せる・#1858)・False か時間切れなら 503 store-unavailable(問いの task は
-   取り消す — 固まった置き場の問いを待ち続けない)。"
+  "/readyz に答えるため: 用意の前は 503・置き場に届くかの判断(store-reach)が届くなら 200(錠を待つ本数と idle in transaction の最長の
+   秒を載せる・#1858)・届かないか上限の内に答えなければ 503 store-unavailable。"
   (when (is prepared None)
     (return (! (refusal-answer ERROR-STORE-UNAVAILABLE "表の用意が済んでいない"))))
-  (when (is serving.readiness None)
-    (return (! (ready-answer (! (store-pressure serving))))))
-  (<- probe Task (Spawn (store-probe serving)))
-  (<- timer Task (Spawn (readiness-timer READINESS-SECONDS)))
-  (<- first (| StorePressure PressureUnread bool ReadinessTimedOut) (Race probe timer))
-  (<- (Cancel probe))
-  (<- (Cancel timer))
-  (match first
-    (ReadinessTimedOut :seconds seconds)
-      (! (refusal-answer ERROR-STORE-UNAVAILABLE (.format "置き場が {} 秒の内に答えない" seconds)))
-    (StorePressure) (! (ready-answer first))
-    (PressureUnread) (! (ready-answer first))
-    _ (! (refusal-answer ERROR-STORE-UNAVAILABLE "置き場に届かない"))))
+  (<- reach StoreReach (store-reach serving))
+  (match reach
+    (StoreReachable :pressure pressure) (! (ready-answer pressure))
+    (StoreUnreachable :reason reason) (! (refusal-answer ERROR-STORE-UNAVAILABLE reason))
+    (StoreSilent :seconds seconds)
+      (! (refusal-answer ERROR-STORE-UNAVAILABLE (.format "置き場が {} 秒の内に答えない" seconds)))))
 
 
 (defk metrics-answer []
@@ -630,11 +679,12 @@
     (<- (Delay poll-seconds))))
 
 
-(defk prepare-store [prepare]
-  {:pre [(: prepare (| Program EffectBase))] :post [(: % StorePrepared)] :tags {:context "records" :role "entry"}}
-  ;; 表の用意(起動時の 1 点・冪等)を 1 回撃ち、書き手の名 → handler の関数を prepared-slot に置いて所要を名乗る。口は先に開いていて、
-  ;; /healthz は process の生存だけを答え、記録の操作は用意が済むまで 503。失敗は名乗って例外のまま上げる(本体の Race が受けて run を
-  ;; 0 以外で終える — 半端に立ったまま答え続けない・再起動が繋ぎ直す)。
+(defk prepare-store [prepare bound]
+  {:pre [(: prepare (| Program EffectBase)) (: bound HttpAddress)] :post [(: % StorePrepared)] :tags {:context "records" :role "entry"}}
+  ;; 表の用意(起動時の 1 点・冪等)を 1 回撃ち、書き手の名 → handler の関数を prepared-slot に置いてから、用意の告知(RecordsPrepared —
+  ;; 結んだ宛先 bound と所要の秒・頭の註の用意の告知)を出す。告知は handler の関数を置いた後なので、告知が出たなら記録の操作に答えられる。
+  ;; 口は先に開いていて、/healthz は process の生存だけを答え、記録の操作は用意が済むまで 503。失敗は名乗って例外のまま上げる(本体の Race
+  ;; が受けて run を 0 以外で終える — 半端に立ったまま答え続けない・再起動が繋ぎ直す)。
   (<- started float (GetMonotonic))
   (try
     (<- handler-for Callable prepare)
@@ -645,7 +695,9 @@
       (raise)))
   (<- (KeepPreparedHandlers :handler-for handler-for))
   (<- done-at float (GetMonotonic))
-  (StorePrepared :seconds (- done-at started)))
+  (val seconds (- done-at started))
+  (<- (RecordsPrepared :address bound :seconds seconds))
+  (StorePrepared :seconds seconds))
 
 
 (defk maintain [handler-for plan]
@@ -679,16 +731,14 @@
   (<- (place-answer-metrics))
   (<- bound HttpAddress (HttpListen :address serving.address))
   (<- (RecordsListening :address bound))
-  ;; 用意を受けの loop より先に立てる(同じ拍に並んだ時に用意が先に走る)。
-  (<- preparing Task (Spawn (prepare-store serving.prepare)))
+  ;; 用意を受けの loop より先に立てる(同じ拍に並んだ時に用意が先に走る)。用意の告知は用意の task の終わりが出す(prepare-store)。
+  (<- preparing Task (Spawn (prepare-store serving.prepare bound)))
   (<- serving-task Task (Spawn (with-handlers [request-ledger request-stamps] (receive-requests serving))))
   (<- watcher Task (Spawn (watch-stop serving.stop-poll-seconds serving.drain-seconds) :daemon True))
   (<- first (| StorePrepared ServingEnded) (Race preparing serving-task))
   (match first
-    (StorePrepared :seconds seconds)
-      (do (print (.format "記録の service: 表の用意が {} 秒で済んだ — {}:{} で答える" (round seconds 1) bound.host bound.port)
-                 :file sys.stderr :flush True)
-          (when (is-not serving.maintenance None)
+    (StorePrepared)
+      (do (when (is-not serving.maintenance None)
             (<- handler-for Callable (PreparedHandlers))
             (<- (Spawn (maintain handler-for serving.maintenance) :daemon True)))
           (<- (Wait serving-task)))
@@ -736,13 +786,16 @@
     None))
 
 
-(defhandler shell-control [#^ Callable listening #^ Callable stopping]
-  "検の殻の外から、入口の Program の名乗り(RecordsListening)と止めの合図(StopRequested)に答えるため(#880 F3)。"
+(defhandler shell-control [#^ Callable prepared #^ Callable stopping]
+  "検の殻の外から、入口の Program の名乗り(RecordsListening)・表の用意の告知(RecordsPrepared)・止めの合図(StopRequested)に答えるため
+   (#880 F3)。殻は告知の宛先を受け取ってから口を返す — 返った口は記録の操作に答えられる(#3733)。"
   {:tags {:context "records" :role "entry"}}
-  ;; 引数に残す理由: listening は殻が結んだ宛先を受け取る口(thread の外の queue の put)、stopping は殻の止めの合図を読む口(合図が
+  ;; 引数に残す理由: prepared は殻が告知の宛先を受け取る口(thread の外の queue の put)、stopping は殻の止めの合図を読む口(合図が
   ;; 立っていれば理由・無ければ None)。どちらも thread をまたぐ殻の物で、Ask で読む設定ではない。
   (RecordsListening [address]
-    (listening address)
+    (resume None))
+  (RecordsPrepared [address seconds]
+    (prepared address)
     (resume None))
   (StopRequested []
     (resume (stopping))))
@@ -756,7 +809,7 @@
 
 (deff shell-run [program failures]  ; defk にできない: 検の殻の thread の target(framework の入口 — 別の run は Program の中から立てられない)
   {:pre [(: program (| Program EffectBase)) (: failures queue.Queue)] :post [(: % None)] :tags {:context "records" :role "entry"}}
-  "入口の Program を scheduler の下で 1 回走らせ、落ちたら殻の待ち手へ例外を渡すため(待ち受けが開く前に落ちても殻が 30 秒待たない)。"
+  "入口の Program を scheduler の下で 1 回走らせ、落ちたら殻の待ち手へ例外を渡すため(表の用意の告知の前に落ちても殻が 30 秒待たない)。"
   (try
     (run (scheduled program))
     (except [e BaseException]
@@ -766,8 +819,9 @@
 
 (deff start-records-server [config]  ; defk にできない: 入口の run を別の thread で立てる検の殻(framework の入口 — 返す物が開いた口)
   {:pre [(: config RecordsServerConfig)] :post [(: % RunningServer)] :tags {:context "records" :role "entry"}}
-  "入口の Program(serve-records)を別の thread の run で回して口を開き、RunningServer を返す。土台は本番と同じ待ち受け・時計・Await の橋
-   (aiohttp-http-server・async-time-handler・await-handler)で、止めの合図と名乗りだけを shell-control が答える。開けなければ例外を上げる。"
+  "入口の Program(serve-records)を別の thread の run で回して口を開き、表の用意の告知を待って RunningServer を返す。土台は本番と同じ
+   待ち受け・時計・Await の橋(aiohttp-http-server・async-time-handler・await-handler)で、止めの合図と名乗りと告知だけを shell-control が
+   答える。開けない・用意が落ちたなら例外を上げる。"
   (setv opened (queue.Queue)
         ended (threading.Event))
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
