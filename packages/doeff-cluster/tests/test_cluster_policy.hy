@@ -873,3 +873,80 @@
   (var waiting ended)
   (for [at [70 80]]
     (:= waiting (! (beat-without-rewrite waiting ended-row (+ BOOT-1 at))))))
+
+
+;; --- 機体が死んで同じ名の新しい世代が名乗ると、前の世代の process が持っていた名前付きの lease を外す(#3770) ----------
+;; worker が突然止まる(drain しない・lease を返さない)と、子の process は終わっているのに、その process が名乗った担い手
+;; (<job>/<process の世代の名>/…)は盤の lease の行に期限まで残り、同じ名で起き直した worker の新しい process は期限まで lease を取れない。
+;; coordinator は新しい世代(generation-order が NEWER)の名乗りを受けた時、前の世代の最新の報告で process の世代の名を持っていた行の
+;; 担い手を、worker が終わった process の lease を返すのと同じ定義(lease_rules.lease-holder・holder-tokens-prefix・drop-holders)で外す。
+(import doeff_cluster.coordinator.core.cluster_policy [lease-write])
+(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody])
+(import doeff_cluster.shared.core.lease_rules [lease-holder holder-tokens-prefix])
+
+(val LEASE-TTL-MS 30000)
+
+(defk lease-asked [state lock op token now]
+  {:pre [(: state ClusterState) (: lock str) (: op str) (: token str) (: now int)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "lease lock への操作 op を token で 1 つ当てた後の #(状態 答えの ok) を求めるため(期限は LEASE-TTL-MS)。"
+  (val answer (! (lease-write state lock (LeaseBody :op op :token token :permits 1 :ttl-ms LEASE-TTL-MS) now)))
+  #((get answer 0) (. (get answer 2) ok)))
+
+(defk holders-of [state lock]
+  {:pre [(: state ClusterState) (: lock str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "盤の lease lock の行の担い手(token → 期限)を読むため(行が無ければ空)。"
+  (val row (.get state.board (+ "semaphore/" lock)))
+  (if (is row None) {} (get row.value "holders")))
+
+(defk token-of [job instance]
+  {:pre [(: job str) (: instance str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "job の process(世代の名 instance)の子の土台が名乗る最初の token を求めるため(SemaphoreSession.next-token と同じ綴り)。"
+  (+ (holder-tokens-prefix (lease-holder job instance)) "1"))
+
+(val OLD-ROWS [{"name" "w" "phase" "running" "pid" 100 "instance" "1-aaa"}
+               ;; 入れ替えで退いた process(行の名は退いた名・元の名は retiredFrom — 担い手の名は元の名で名乗った)。
+               {"name" "w~retired-0-zzz" "phase" "running" "pid" 99 "instance" "0-zzz" "retiredFrom" "w"}])
+
+(defk old-generation-holding []
+  {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "1 世代目(b1)の atlas が w(と退いた w)の process を走らせ、その process が lease を持っている状態。別の worker の process の lease も在る。"
+  (val first (! (generation-beat (! (declared-w)) "b1" BOOT-1 OLD-ROWS (+ BOOT-1 10))))
+  (setv #(a ok-a) (! (lease-asked first "writer-lock" "claim" (! (token-of "w" "1-aaa")) (+ BOOT-1 20)))
+        #(b ok-b) (! (lease-asked a "retired-lock" "claim" (! (token-of "w" "0-zzz")) (+ BOOT-1 20)))
+        #(c ok-c) (! (lease-asked b "other-lock" "claim" (! (token-of "other" "7-ooo")) (+ BOOT-1 20))))
+  (assert (and ok-a ok-b ok-c))
+  c)
+
+(deftest test-a-new-generation-of-the-same-name-frees-the-leases-the-previous-generation-processes-held
+  ;; 失敗ケース: 突然止まった 1 世代目の process は lease を返さない。2 世代目が同じ名で名乗ると、新しい process は期限の前に取れる
+  ;; (直す前は 1 世代目の担い手が期限 BOOT-1 + 20 + 30000 まで残り、取れなかった)。
+  (val held (! (old-generation-holding)))
+  (val reborn (! (generation-beat held "b2" (+ BOOT-1 3000) [] (+ BOOT-1 4000))))
+  (assert (= (! (holders-of reborn "writer-lock")) {}) (! (holders-of reborn "writer-lock")))
+  (assert (= (! (holders-of reborn "retired-lock")) {}) (! (holders-of reborn "retired-lock")))
+  ;; 外すのは atlas の前の世代の process の担い手だけ(別の worker の process の lease はそのまま)。
+  (assert (= (! (holders-of reborn "other-lock")) (! (holders-of held "other-lock"))))
+  (setv #(_ ok) (! (lease-asked reborn "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
+  (assert ok "新しい世代の process が期限の前に lease を取れる"))
+
+(deftest test-heartbeats-of-the-same-generation-do-not-free-the-leases
+  ;; 誤って外さない側: 同じ世代(同じ boot)の heartbeat は、何度来ても lease に触らない。
+  (val held (! (old-generation-holding)))
+  (val again (! (generation-beat held "b1" BOOT-1 OLD-ROWS (+ BOOT-1 4000))))
+  (assert (= again.board held.board))
+  (setv #(_ ok) (! (lease-asked again "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
+  (assert (not ok) "前の担い手が期限の内なので取れない"))
+
+(deftest test-a-late-heartbeat-of-the-previous-generation-does-not-give-the-freed-lease-back
+  ;; 新しい世代の名乗りの後に、前の世代の heartbeat が遅れて来ても(generation-order が OLDER)外した lease を戻さない。
+  ;; 前の世代の process の延長は lost と答える。
+  (val held (! (old-generation-holding)))
+  (val reborn (! (generation-beat held "b2" (+ BOOT-1 3000) [] (+ BOOT-1 4000))))
+  (val late (! (generation-beat reborn "b1" BOOT-1 OLD-ROWS (+ BOOT-1 4500))))
+  (assert (= (. (get late.workers "atlas") boot) "b2"))
+  (assert (= late.board reborn.board))
+  (setv #(_ renewed) (! (lease-asked late "writer-lock" "renew" (! (token-of "w" "1-aaa")) (+ BOOT-1 4600))))
+  (assert (not renewed) "外した担い手の延長は通らない")
+  (setv #(_ ok) (! (lease-asked late "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
+  (assert ok))

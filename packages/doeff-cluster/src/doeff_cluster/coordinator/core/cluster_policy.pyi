@@ -63,6 +63,9 @@ from doeff_cluster.shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMA
 from doeff_cluster.shared.core.lease_rules import lease_op as lease_op
 from doeff_cluster.shared.core.lease_rules import semaphore_write_refusal as semaphore_write_refusal
 from doeff_cluster.shared.core.lease_rules import semaphore_key as semaphore_key
+from doeff_cluster.shared.core.lease_rules import drop_holders as drop_holders
+from doeff_cluster.shared.core.lease_rules import lease_holder as lease_holder
+from doeff_cluster.shared.core.lease_rules import holder_tokens_prefix as holder_tokens_prefix
 from doeff_cluster.shared.core.board_rules import board_allows as board_allows
 from doeff_cluster.shared.core.board_rules import board_ttl_refusal as board_ttl_refusal
 from doeff import run as run
@@ -187,6 +190,15 @@ def retired_after(previous: WorkerInfo | None, boot: str | None) -> tuple:
     ...
 
 def absorb_boot(state: ClusterState, name: str, boot: str | None) -> ClusterState:
+    ...
+
+def generation_holder_prefixes(report: WorkerReport | None) -> _Program[tuple, object]:
+    ...
+
+def holders_dropped(row: BoardRow, prefixes: tuple) -> _Program[dict | None, object]:
+    ...
+
+def board_without_generation_holders(board: dict, report: WorkerReport | None) -> _Program[dict, object]:
     ...
 
 def load_of(state: ClusterState, placements: dict) -> dict:

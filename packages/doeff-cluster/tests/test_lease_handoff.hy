@@ -13,7 +13,8 @@
 (import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker.intent.worker_model [ReleaseLeases])
-(import doeff_cluster.sim.local [sim-cluster Redeclare ProcessesOf SharedRows])
+(import doeff_cluster.sim.local [sim-cluster Redeclare ProcessesOf SharedRows KillWorker StartWorker])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writers lease-writers-v2 HOLDER-ROW])
 
 ;; 担い手(cluster-semaphore の SemaphoreSession)の既定の TTL(秒)— 外しが効かなければ、新しい版はこの期限まで取れない。
@@ -66,3 +67,35 @@
   (val waited-ms (- (get new-holder "at") old.ended-ms))
   (assert (>= waited-ms 0) #(new-holder old))
   (assert (< waited-ms (* 1000 (/ TTL-SECONDS 3))) #(waited-ms new-holder old)))
+
+
+(defk kill-restart-and-read [wait]
+  {:pre [(: wait float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 旧い世代の process が lease を取るまで待って盤を読み、worker を突然止めて(drain しない・lease を返さない)同じ名で
+   起こし、wait 秒待ってから盤と process の列を読むため。答え = #(止める前の盤の行 後の盤の行 process の列 止めた刻 起きたか)。"
+  (<- (Delay 8.0))
+  (<- before dict (SharedRows HOLDER-ROW))
+  (<- (KillWorker "sim-worker"))
+  (<- killed-at int (now-epoch-ms))
+  (<- started bool (StartWorker "sim-worker"))
+  (<- (Delay wait))
+  (<- after dict (SharedRows HOLDER-ROW))
+  (<- processes tuple (ProcessesOf "writer"))
+  #(before after processes killed-at started))
+
+
+(deftest test-after-a-worker-dies-and-restarts-under-the-same-name-the-new-process-takes-the-lease-without-waiting-for-its-expiry
+  ;; worker が突然止まると、旧い世代の process は lease を返さずに終わる(worker も返さない)。同じ名の新しい世代が名乗った時に
+  ;; coordinator が旧い世代の process の担い手を外すので、新しい process は起きてすぐ lease を取る(直す前は期限まで取れなかった)。
+  (<- answer tuple (sim-cluster (lease-writers lease-sim-foundation) (kill-restart-and-read 25.0)))
+  (setv #(before after processes killed-at started) answer)
+  (assert started)
+  (val old (next (gfor p processes :if (= p.instance (get before HOLDER-ROW "instance")) p)))
+  (assert (is-not old.exit-code None) processes)
+  (val new-holder (get after HOLDER-ROW))
+  (assert (!= (get new-holder "instance") old.instance) #(before after))
+  (val new (next (gfor p processes :if (= p.instance (get new-holder "instance")) p)))
+  (assert (is new.exit-code None) processes)
+  (val waited-ms (- (get new-holder "at") new.started-ms))
+  (assert (>= waited-ms 0) #(new-holder new))
+  (assert (< waited-ms (* 1000 (/ TTL-SECONDS 3))) #(waited-ms new-holder new killed-at)))
