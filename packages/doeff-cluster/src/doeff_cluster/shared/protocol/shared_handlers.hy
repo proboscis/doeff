@@ -8,9 +8,9 @@
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
+(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree])
 (import doeff_hy.wire [parse])
-(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request])
+(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json write-accepted])
 
@@ -44,4 +44,12 @@
     (<- answered dict (answer-json reply.answer))
     ;; 返事の本文を LeaseAnswer に解く(形が違えば Malformed — 業務へ素の dict を渡さない・#2523)。
     (<- answer LeaseAnswer (parse LeaseAnswer answered))
-    (resume answer)))
+    (resume answer))
+  (AwaitLeaseFree [name]
+    ;; 空きの待ちは読み(何度送っても同じ意味)なので、claim と同じく期限まで送り直す。返事は coordinator の待ちの上限までに来る
+    ;; (ClusterTiming の順の検め: 待ちの上限 < client の返事の打ち切り)。
+    (setv #(method path query _) (lease-wait-request name))
+    (<- reply RoutedReply (resent-request cell.route method path options query None options.resend-deadline-seconds options.resend-pause-seconds))
+    (setv cell.route reply.route)
+    (<- answered dict (answer-json reply.answer))
+    (resume (lease-wait-answer answered))))

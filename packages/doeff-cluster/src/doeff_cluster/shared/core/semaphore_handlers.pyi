@@ -19,6 +19,7 @@ from doeff_cluster.shared.intent.semaphore_model import WriteFenced as WriteFenc
 from doeff_cluster.shared.intent.semaphore_model import LeaseStanding as LeaseStanding
 from doeff_cluster.shared.intent.semaphore_model import LeaseOp as LeaseOp
 from doeff_cluster.shared.intent.semaphore_model import LeaseAnswer as LeaseAnswer
+from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
 from doeff_cluster.shared.intent.semaphore_model import STANDBY as STANDBY
 from doeff_cluster.shared.intent.semaphore_model import HELD as HELD
 from doeff_cluster.shared.intent.semaphore_model import LOST as LOST
@@ -33,7 +34,8 @@ def named_semaphore_local(names: dict) -> _Handler:
 class SemaphoreSession:
     holder: str
     ttl_seconds: float
-    poll_seconds: float
+    poll_seconds: float | None
+    retry_seconds: float
     seq: Incomplete
     held: Incomplete
     lost: Incomplete
@@ -41,7 +43,7 @@ class SemaphoreSession:
     expires: Incomplete
     ever_held: Incomplete
 
-    def __init__(self, holder: str, ttl_seconds: float=15.0, poll_seconds: float=0.5) -> None:
+    def __init__(self, holder: str, ttl_seconds: float=15.0, poll_seconds: float | None=0.5, retry_seconds: float=0.5) -> None:
         ...
 
     def next_token(self) -> str:

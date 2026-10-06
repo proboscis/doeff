@@ -37,3 +37,18 @@
    :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "LeaseOp を coordinator の lease の口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。"
   #("POST" (+ "/leases/" (url-quote name :safe "")) {} {"op" op "token" token "permits" permits "ttlMs" ttl-ms}))
+
+
+(deff lease-wait-request [#^ str name]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: name str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
+  "AwaitLeaseFree を coordinator の待ちの口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。
+   timeoutSeconds は付けない — coordinator が自分の待ちの上限(ClusterTiming.watch-max-ms)で返す。"
+  #("GET" "/watch" {"lease" name} None))
+
+
+(deff lease-wait-answer [#^ dict answered]  ; defk にできない: 本番の client と sim の宿が同じ読みをする純粋な判断
+  {:pre [(: answered dict)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "GET /watch?lease=<名> の返事の本文 {\"revision\" … \"changed\" …} を、空きを見たか(changed)にするため。形が違えば ValueError。"
+  (if (isinstance (.get answered "changed") bool)
+      (get answered "changed")
+      (raise (ValueError (.format "lease の待ちの返事の形が違う: {!r}" answered)))))
