@@ -18,6 +18,10 @@
 //!   行の名指す規則を enable に無くても同じ実行で当てるので、列だけで当たらない行を見逃さない(agora-redesign #1999・#2033 — それまでは
 //!   全部の規則で撃っていた・#1998)。
 //!
+//! 既知の一覧を持たない規則(DOEFF206〜209)の critical は、上の 2 つ目と 4 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
+//! 止める(agora-redesign #3834)。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
+//! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
+//!
 //! 子の linter は 1 回ごとに上限(既定 20 秒)を持ち、越えたら止めずに通す(速さが優先)が、黙っては通さない — どの比べの、どの木で、
 //! どの規則を、何秒の上限で打ち切ったかを 1 行で名指す(agora-redesign #2723 — 以前の「終わらなかった」の 1 行は何を確かめずに
 //! 通したかを言わず、宣言の file を変えた commit の DOEFF167 の当たりが気づかれずに main に入った)。repo 全体の比べが打ち切られても、
@@ -141,10 +145,34 @@ pub fn grown_major_warnings(head: &Value, tip: &Value) -> Vec<String> {
         .collect()
 }
 
-/// 純粋: repo 全体の規則の当たりのうち止める物の識別子(辞書順)— 先端(tip)に在って HEAD(head)に無い物と、stage した path(`staged`
+/// 止める当たりの識別子を、HEAD の版に同じ識別子が無い物(新しく増えた当たり)と在る物(既知の一覧を持たない規則の、変えた file の
+/// 既存の当たり)に分けた組(どちらも辞書順)。止める・止めないは変えず、出す文だけを分ける(agora-redesign #3834・cisco-c8 の頼み
+/// 2026-10-07 — 既存の当たりにも「HEAD に無い」と書いていて、作業役が hook の不具合と読んで hook を飛ばしかけた)。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ByHead {
+    pub not_on_head: Vec<String>,
+    pub already_on_head: Vec<String>,
+}
+
+impl ByHead {
+    pub fn is_empty(&self) -> bool {
+        self.not_on_head.is_empty() && self.already_on_head.is_empty()
+    }
+}
+
+/// 純粋: 止める当たりの識別子(blocking)を、HEAD の版の識別子の集合(head)に在るかで分ける — 分ける判定の 1 か所(stage した path に
+/// 当てる列の new_critical と、repo 全体の比べの両方が使う)。
+pub fn split_by_head(head: &BTreeSet<String>, blocking: impl IntoIterator<Item = String>) -> ByHead {
+    let all: BTreeSet<String> = blocking.into_iter().collect();
+    let (already_on_head, not_on_head) = all.into_iter().partition(|id| head.contains(id));
+    ByHead { not_on_head, already_on_head }
+}
+
+/// 純粋: repo 全体の規則の当たりのうち止める物の識別子 — 先端(tip)に在って HEAD(head)に無い物と、stage した path(`staged`
 /// — repo の根からの相対)に在る、基点の差で下げずに止める当たり(baseline::blocks_regardless_of_baseline — 既知の一覧を持たない
-/// DOEFF206〜209 の critical)。後者は HEAD に同じ鍵が在っても止める(細かさは file 単位・agora-redesign #3834)。
-pub fn fresh_whole_repo_hits(head: &Value, tip: &Value, staged: &[String]) -> Vec<String> {
+/// DOEFF206〜209 の critical)。後者は HEAD に同じ鍵が在っても止める(細かさは file 単位・agora-redesign #3834)ので、HEAD に在るかで
+/// 分けて返す(split_by_head)。
+pub fn fresh_whole_repo_hits(head: &Value, tip: &Value, staged: &[String]) -> ByHead {
     let before = report_idents(head);
     let unlisted = violations(tip)
         .filter(|v| {
@@ -153,7 +181,7 @@ pub fn fresh_whole_repo_hits(head: &Value, tip: &Value, staged: &[String]) -> Ve
                 && staged.iter().any(|p| p == relative_to_root(tip, v["path"].as_str().unwrap_or("")))
         })
         .map(|v| violation_identity(tip, v));
-    report_idents(tip).into_iter().filter(|id| !before.contains(id)).chain(unlisted).collect::<BTreeSet<String>>().into_iter().collect()
+    split_by_head(&before, report_idents(tip).into_iter().filter(|id| !before.contains(id)).chain(unlisted))
 }
 
 /// 純粋: 報告の違反の path と根を、from の根から to の根へ付け替える — HEAD の木で走らせた出力を、先端の根で走らせた出力と
@@ -832,9 +860,9 @@ fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String],
 #[derive(Debug, Default)]
 struct Blocking {
     staged: Vec<String>,
-    fresh_critical: Vec<String>,
+    fresh_critical: ByHead,
     grown_warnings: Vec<String>,
-    whole: Vec<String>,
+    whole: ByHead,
     unmeasured: Option<Unmeasured>,
     /// stage した Hy の file のうち linter が歩く範囲の外の物 — 測っていない事を名指すだけで止めない(agora-redesign #2821)。
     out_of_scope: Vec<String>,
@@ -886,9 +914,10 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                 .staged
                 .iter()
                 .map(|line| format!("stage した file の破れ: {}", line))
-                .chain(blocking.fresh_critical.iter().map(|ident| format!("HEAD に無い critical: {}", ident)))
+                .chain(blocking.fresh_critical.not_on_head.iter().map(|ident| format!("HEAD に無い critical: {}", ident)))
                 .chain(blocking.grown_warnings.iter().map(|line| format!("major の warning が HEAD の版より増えた(stage した file の組の数): {}", line)))
-                .chain(blocking.whole.iter().map(|ident| format!("repo 全体の規則の HEAD に無い当たり: {}", ident)))
+                .chain(blocking.whole.not_on_head.iter().map(|ident| format!("repo 全体の規則の HEAD に無い当たり: {}", ident)))
+                .chain(already_on_head_lines(&blocking))
                 .chain(blocking.unmeasured.iter().map(unmeasured_line))
                 .chain(blocking.out_of_scope.iter().map(|path| format!("対象の外(linter が歩く範囲の外 — 層の規則はこの file を測っていない): {}", path)))
                 .collect();
@@ -906,6 +935,20 @@ pub fn run(options: &CommitHookOptions) -> u8 {
         eprintln!("{}{}", PREFIX, line);
     }
     assessment.code
+}
+
+/// 純粋: HEAD の版にも同じ識別子が在るのに止める当たり(既知の一覧を持たない規則の、変えた file の既存の当たり)の行と、在れば直し方の
+/// 案内を 1 行。
+fn already_on_head_lines(blocking: &Blocking) -> Vec<String> {
+    let hits: Vec<String> = blocking
+        .fresh_critical
+        .already_on_head
+        .iter()
+        .chain(blocking.whole.already_on_head.iter())
+        .map(|ident| format!("変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): {}", ident))
+        .collect();
+    let guide = (!hits.is_empty()).then(|| "この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)".to_string());
+    hits.into_iter().chain(guide).collect()
 }
 
 fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
@@ -971,7 +1014,10 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
         let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, quick, &extra, &paths), options.timeout), "stage した file ")?;
         blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
-        blocking.fresh_critical = tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        // 子の linter が基点の file を読むのと同じ綴り(baseline::baseline_identities)で HEAD の版の識別子を読み、止める当たりを分ける。
+        let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("HEAD の版の報告を読めない: {}", reason)))?;
+        blocking.fresh_critical =
+            split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
         blocking.grown_warnings = grown_major_warnings(&base, &tip);
         blocking.out_of_scope = out_of_scope_of(&tip);
     }
@@ -988,7 +1034,7 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
 }
 
 /// repo 全体の比べ — 先端の木の当たりのうち HEAD の木に無い物と、stage した path の基点の差で下げない当たり(fresh_whole_repo_hits)。HEAD の木の結果は置き場から読めれば測らない(head_whole_report)。
-fn whole_repo_hits(options: &CommitHookOptions, tree: Option<&Path>, whole: &[String], tip_root: &Path, staged: &[String]) -> Result<Vec<String>, Stop> {
+fn whole_repo_hits(options: &CommitHookOptions, tree: Option<&Path>, whole: &[String], tip_root: &Path, staged: &[String]) -> Result<ByHead, Stop> {
     let head = match tree {
         Some(t) => head_whole_report(options, t, whole, tip_root)?,
         None => empty_report(),
@@ -1184,13 +1230,13 @@ mod tests {
             v("new-error", "error", "major"),
             v("new-warning", "warning", "major"),
         ]});
-        assert_eq!(fresh_whole_repo_hits(&head, &tip, &[]), ids(&["new-critical", "new-error"]));
+        assert_eq!(fresh_whole_repo_hits(&head, &tip, &[]), ByHead { not_on_head: ids(&["new-critical", "new-error"]), already_on_head: vec![] });
         // 鍵の無い違反は根からの相対 path で比べる(先端と HEAD の木で根が違っても同じ識別子)。
         let keyless = |root: &str| json!({ "root": root, "violations": [
             { "severity": "error", "level": "major", "path": format!("{}/x.py", root), "rule": "DOEFF016", "message": "m" }
         ]});
         assert!(fresh_whole_repo_hits(&keyless("/h"), &keyless("/r"), &[]).is_empty());
-        assert_eq!(fresh_whole_repo_hits(&empty_report(), &keyless("/r"), &[]), ids(&["x.py::DOEFF016::m"]));
+        assert_eq!(fresh_whole_repo_hits(&empty_report(), &keyless("/r"), &[]).not_on_head, ids(&["x.py::DOEFF016::m"]));
     }
 
     /// agora-redesign #3834: 既知の一覧を持たない規則(DOEFF206〜209)の critical は、stage した path に在れば HEAD に同じ鍵が在っても止める。
@@ -1203,7 +1249,11 @@ mod tests {
             hit("DOEFF209", "b.hy", "b.hy::DOEFF209::poll::Delay::periodic"),
             hit("DOEFF163", "a.hy", "a.hy::DOEFF163::queue"),
         ]});
-        assert_eq!(fresh_whole_repo_hits(&all, &all, &ids(&["a.hy"])), ids(&["a.hy::DOEFF209::poll::Delay::periodic"]));
+        // HEAD にも同じ鍵が在る当たりなので「HEAD に在る」側に分ける(文が「HEAD に無い」にならない・cisco-c8 の頼み 2026-10-07)。
+        assert_eq!(
+            fresh_whole_repo_hits(&all, &all, &ids(&["a.hy"])),
+            ByHead { not_on_head: vec![], already_on_head: ids(&["a.hy::DOEFF209::poll::Delay::periodic"]) }
+        );
         assert!(fresh_whole_repo_hits(&all, &all, &ids(&["c.hy"])).is_empty());
     }
 

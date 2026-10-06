@@ -306,9 +306,8 @@ fn split_rules_keeps_the_doeff2_rules_that_do_not_ask_jev() {
     }
 }
 
-/// 規則 rule だけを有効にし、:business-fakes を宣言し、当たりを持つ file `app/queue/wait.hy`(中身 text)を基点に commit した repo。
-/// その file に註を 1 行足して stage した状態で返す。
-fn repo_with_an_old_hit(rule: &str, text: &str) -> tempfile::TempDir {
+/// 規則 rule だけを有効にし、:business-fakes を宣言した repo(まだ commit しない)。
+fn repo_enabling_only(rule: &str) -> tempfile::TempDir {
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "pyproject.toml", &format!("[tool.doeff-linter]\nenable = [\"{}\"]\n\n[tool.doeff-linter.commit_hook]\ntimeout_s = 120\n", rule));
@@ -317,12 +316,73 @@ fn repo_with_an_old_hit(rule: &str, text: &str) -> tempfile::TempDir {
         "architecture.hy",
         &ARCHITECTURE.replace(":foundation foundation", ":foundation foundation\n  :business-fakes {:simulation [\"app/sim/**\"] :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.queue\"]}"),
     );
+    dir
+}
+
+/// 規則 rule だけを有効にし、:business-fakes を宣言し、当たりを持つ file `app/queue/wait.hy`(中身 text)を基点に commit した repo。
+/// その file に註を 1 行足して stage した状態で返す。
+fn repo_with_an_old_hit(rule: &str, text: &str) -> tempfile::TempDir {
+    let dir = repo_enabling_only(rule);
+    let root = dir.path();
     write(root, "app/queue/wait.hy", text);
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "当たりを持つ基点"]);
     write(root, "app/queue/wait.hy", &format!(";; 註を足す\n{}", text));
     git(root, &["add", "app/queue/wait.hy"]);
     dir
+}
+
+/// 規則 rule だけを有効にし、:business-fakes を宣言した基点を commit した repo に、当たりを持つ file `app/queue/wait.hy`(中身 text)を
+/// 新しく足して stage した状態で返す(HEAD に同じ鍵が無い当たり)。
+fn repo_with_a_new_hit(rule: &str, text: &str) -> tempfile::TempDir {
+    let dir = repo_enabling_only(rule);
+    let root = dir.path();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "当たりの無い基点"]);
+    write(root, "app/queue/wait.hy", text);
+    git(root, &["add", "app/queue/wait.hy"]);
+    dir
+}
+
+const RECORD_WAIT: &str = "(import doeff_records.effects [WatchChanges])\n(defk wait-for [cursor left]\n  (WatchChanges #(\"message\") cursor :timeout left))\n";
+const POLLING_LOOP: &str = "(defk poll []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n";
+/// HEAD にも同じ鍵が在るのに止める当たりの行の頭と、直し方の案内の行(agora-redesign #3834・cisco-c8 の頼み 2026-10-07)。
+const ALREADY_ON_HEAD: &str = "変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): ";
+const FIX_IT_IN_THE_SAME_CHANGE: &str = "この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)";
+
+/// 失敗ケース(agora-redesign #3834・cisco-c8 の頼み 2026-10-07): HEAD にも同じ鍵が在る当たりで止めた時に「HEAD に無い」と書くと、
+/// 作業役が hook の不具合と読んで hook を飛ばしかける。stage した path に当てる規則(DOEFF208)と repo 全体の比べ(DOEFF209)の両方で、
+/// 既存の当たりは「変えた file の既存の当たり」と書き、直し方の案内を 1 行足し、「HEAD に無い」と書かない。
+#[test]
+fn an_old_hit_that_blocks_is_named_as_already_on_head() {
+    for (rule, text, key) in [
+        ("DOEFF208", RECORD_WAIT, "app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"),
+        ("DOEFF209", POLLING_LOOP, "app/queue/wait.hy::DOEFF209::poll::Delay::periodic"),
+    ] {
+        let dir = repo_with_an_old_hit(rule, text);
+        let (code, stderr) = hook(dir.path(), &[]);
+        assert_eq!(code, 1, "{}", stderr);
+        assert!(stderr.contains(&format!("{}{}", ALREADY_ON_HEAD, key)), "{}", stderr);
+        assert!(stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
+        assert!(!stderr.contains("HEAD に無い"), "{}", stderr);
+    }
+}
+
+/// 失敗ケース(同上の対): HEAD に同じ鍵が無い当たり(新しく足した file の当たり)は今までどおり「HEAD に無い」と書き、既存の当たりの
+/// 行と案内は出さない。
+#[test]
+fn a_new_hit_that_blocks_is_still_named_as_not_on_head() {
+    for (rule, text, line) in [
+        ("DOEFF208", RECORD_WAIT, "HEAD に無い critical: app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"),
+        ("DOEFF209", POLLING_LOOP, "repo 全体の規則の HEAD に無い当たり: app/queue/wait.hy::DOEFF209::poll::Delay::periodic"),
+    ] {
+        let dir = repo_with_a_new_hit(rule, text);
+        let (code, stderr) = hook(dir.path(), &[]);
+        assert_eq!(code, 1, "{}", stderr);
+        assert!(stderr.contains(line), "{}", stderr);
+        assert!(!stderr.contains(ALREADY_ON_HEAD), "{}", stderr);
+        assert!(!stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
+    }
 }
 
 /// 当たりの在る file の stage を外し、当たりの無い file だけを stage する。
@@ -337,12 +397,11 @@ fn stage_only_an_untouched_file(root: &Path) {
 /// 止まらない(file 単位)。
 #[test]
 fn a_staged_file_with_an_old_record_wait_blocks_and_an_untouched_one_does_not() {
-    let wait = "(import doeff_records.effects [WatchChanges])\n(defk wait-for [cursor left]\n  (WatchChanges #(\"message\") cursor :timeout left))\n";
-    let dir = repo_with_an_old_hit("DOEFF208", wait);
+    let dir = repo_with_an_old_hit("DOEFF208", RECORD_WAIT);
     let root = dir.path();
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("HEAD に無い critical: app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"), "{}", stderr);
+    assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF208::wait-for::WatchChanges", ALREADY_ON_HEAD)), "{}", stderr);
     stage_only_an_untouched_file(root);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 0, "{}", stderr);
@@ -353,12 +412,11 @@ fn a_staged_file_with_an_old_record_wait_blocks_and_an_untouched_one_does_not() 
 /// 打ち切った時は今までどおり通し、測れなかった事を名指す。
 #[test]
 fn a_staged_file_with_an_old_polling_loop_blocks_and_an_untouched_one_does_not() {
-    let poll = "(defk poll []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n";
-    let dir = repo_with_an_old_hit("DOEFF209", poll);
+    let dir = repo_with_an_old_hit("DOEFF209", POLLING_LOOP);
     let root = dir.path();
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: app/queue/wait.hy::DOEFF209::poll::Delay::periodic"), "{}", stderr);
+    assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF209::poll::Delay::periodic", ALREADY_ON_HEAD)), "{}", stderr);
     let (code, stderr) = hook(root, &["--commit-hook-timeout-s", "0"]);
     assert_eq!(code, 0, "{}", stderr);
     assert!(stderr.contains("測れなかった"), "{}", stderr);
