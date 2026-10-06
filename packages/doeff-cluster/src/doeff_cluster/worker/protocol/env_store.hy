@@ -69,7 +69,8 @@
 (defrecord EnvSettings
   "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(root は state/roots の下)・
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
-   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・
+   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・uv-cache = 準備の uv の子の
+   cache の dir(UV_CACHE_DIR・prune もこの dir — 値は main の --uv-cache・起動の script が DOEFF_UV_CACHE_DIR を渡す・#3858)・
    roots-cap-bytes = roots の合計の上限(越えた時だけ固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
    (割った時は root を消さずに準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
    上限・tool = 準備の process の入口・cgroup-dir = worker の container の cgroup(v2)の dir(先の組みの前に memory.current と memory.max を
@@ -81,6 +82,7 @@
   (#^ str platform)
   (#^ str code-prepare)
   (#^ int roots-cap-bytes)
+  (#^ str uv-cache)
   (setv #^ str repo-keys "")
   (setv #^ str uv "uv")
   (setv #^ int min-free-bytes 0)
@@ -175,8 +177,8 @@
   (<- known tuple (known-roots settings))
   (<- body dict (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) settings.platform root known settings.min-free-bytes))
   (<- (file-done (WriteText request (json.dumps body :ensure-ascii False))))
-  (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state settings.repo-keys settings.code-prepare
-                               settings.uv progress))
+  (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state settings.uv-cache settings.repo-keys
+                               settings.code-prepare settings.uv progress))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
   (<- started (StartProcess :argv argv :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
@@ -432,7 +434,7 @@
   (if (and (< free settings.min-free-bytes) (is pid None) (not preparing)
            (or (= prune.started-ms 0) (>= (- now-ms prune.started-ms) PRUNE-EVERY-MS)))
       (do (<- started (StartProcess :argv #(settings.uv "cache" "prune") :env-mode EnvMode.EXTEND
-                                    :env #((EnvEntry :name "UV_CACHE_DIR" :value (+ settings.state "/uv-cache"))) :process-group True))
+                                    :env #((EnvEntry :name "UV_CACHE_DIR" :value settings.uv-cache)) :process-group True))
           (PruneState :pid (if (isinstance started ProcessNotStarted) None started.pid) :started-ms now-ms))
       (PruneState :pid pid :started-ms prune.started-ms)))
 

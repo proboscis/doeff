@@ -202,7 +202,7 @@
   ;; 入口 10: 旧い --labels(置き場所の label)で起こした worker は argparse の error で止まり、理由を stderr に出す。
   (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
                              "--name" "w" "--task-reserve" "0" "--labels" "kind=k3s" "--repo" "." "--state-dir" "/nonexistent"
-                             "--env-roots-cap" "0" "--env-min-free" "0" "--code-store" "off"]
+                             "--env-roots-cap" "0" "--env-min-free" "0" "--code-store" "off" "--uv-cache" "/nonexistent/uv-cache"]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)
   (assert (in "旧い --labels は受け付けない" done.stderr) done.stderr))
@@ -218,7 +218,7 @@
   (assert (in "--task-reserve" missing.stderr) missing.stderr)
   (val over (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
                              "--name" "w" "--provides" "net" "--capacity" "2" "--task-reserve" "3" "--repo" "." "--state-dir" "/nonexistent"
-                             "--env-roots-cap" "0" "--env-min-free" "0" "--code-store" "off"]
+                             "--env-roots-cap" "0" "--env-min-free" "0" "--code-store" "off" "--uv-cache" "/nonexistent/uv-cache"]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= over.returncode 2) over.stderr)
   (assert (in "--task-reserve 3 は 0 以上 --capacity 2 以下で名乗る" over.stderr) over.stderr))

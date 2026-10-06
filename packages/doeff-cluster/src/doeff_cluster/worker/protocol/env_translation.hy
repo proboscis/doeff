@@ -9,7 +9,8 @@
 ;;;   file system     StatPath・ReadText・ReadBytes・WriteText・AppendText・MakeDirectory・ListDirectory・WalkTree・RenamePath・
 ;;;                   RemoveTree・AcquireLock・ReleaseLock・ReadDiskFree — 本番 = os-file-handler・模擬 = memory-file-handler
 ;;; 設定は Ask で読む:
-;;;   runtime-env.state         worker の state dir(mirrors/・wheels/・uv-cache/・python/・locks/・probe/ を置く)
+;;;   runtime-env.state         worker の state dir(mirrors/・wheels/・python/・locks/・probe/ を置く)
+;;;   runtime-env.uv-cache      uv の子の cache の dir(UV_CACHE_DIR — worker の --uv-cache・起動の script の DOEFF_UV_CACHE_DIR・既定は state の下の uv-cache)
 ;;;   runtime-env.repo-keys     鍵の表 = URL → deploy key の file(空文字 = 鍵なし)。URL を断る表ではない — 表に無い URL は宣言の綴りのまま
 ;;;                             鍵なしで clone する。宣言の url は同じ repo の別の綴り(ssh と https)でも表の項目に引き当て、clone と deploy key は
 ;;;                             表の綴りで引く(listed-url)
@@ -19,7 +20,7 @@
 ;;;   runtime-env.notes         準備の記録の行を足す file(入口の既定 /dev/stderr)
 ;;;
 ;;; git の子の環境は env-mode EXTEND(親を継いで足す)で、足すのは git-environment の 2 つだけ。uv の子は EXTEND に env-drop UV-DROP(呼び手の
-;;; venv と uv の設定を持ち込まない)を添え、cache と Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
+;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
 ;;; process の間の錠を持つ。mirror は URL ごと、native の wheel はキーごとに file の錠(AcquireLock)で排他にする。
 ;;; 展開は git archive と tar、同じ commit の root からの複製は cp -al(hardlink)の後に持ち越さない物(.venv・__pycache__・完成マーカー)を消す。
 (require doeff-hy.macros [defk deff defhandler <- val var])
@@ -132,11 +133,11 @@
   (CommandResult :code outcome.exit-code :stdout outcome.stdout :stderr (+ outcome.stderr outcome.start-error)))
 
 
-(defk uv-environment [state-dir]
-  {:pre [(: state-dir str)] :post [(: % tuple)]}
-  "uv の子の環境へ足す変数を作るため: 共有の cache と Python を state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。
+(defk uv-environment [state-dir uv-cache]
+  {:pre [(: state-dir str) (: uv-cache str)] :post [(: % tuple)]}
+  "uv の子の環境へ足す変数を作るため: 共有の cache は uv-cache の dir・Python は state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。
    変数の定義点は native_wheel.uv-environment の 1 つ — 起動の script が doeff-vm の wheel を組む時も同じ環境で組む。"
-  (tuple (gfor v (uv-variables state-dir) (EnvEntry :name v.name :value v.value))))
+  (tuple (gfor v (uv-variables state-dir uv-cache) (EnvEntry :name v.name :value v.value))))
 
 
 (defk oom-kills-now []
@@ -365,8 +366,8 @@
           (if wheels (posixpath.join target (get wheels 0)) None))))
 
 
-(defk wheel-of [package source-dir target state-dir uv]
-  {:pre [(: package str) (: source-dir str) (: target str) (: state-dir str) (: uv str)]
+(defk wheel-of [package source-dir target state-dir uv-cache uv]
+  {:pre [(: package str) (: source-dir str) (: target str) (: state-dir str) (: uv-cache str) (: uv str)]
    :post [(: % (| WheelReady EnvFailure))]}
   "キーの dir(target)の native の wheel を用意する(在ればそのまま・無ければ source-dir から build して置く)。
    signal での終了(OOM の kill 等)は一時、compiler の誤りは恒久の native-build-failed。"
@@ -375,7 +376,7 @@
       (WheelReady :path existing :built False)
       (do (val tmp (wheel-tmp target))
           (<- (remove-if-present tmp))
-          (<- env tuple (uv-environment state-dir))
+          (<- env tuple (uv-environment state-dir uv-cache))
           (<- built CommandResult (uv-command #(uv "build" "--wheel" "--out-dir" tmp source-dir) source-dir env))
           (<- made (| str None) (wheel-in tmp))
           (if (and (= built.code 0) (is-not made None))
@@ -538,7 +539,7 @@
 
 (defk asked-text [key]
   {:pre [(: key str)] :post [(: % str)]}
-  "文字列の設定(runtime-env.state・code-prepare・uv・progress・notes)を読むため。Ask の答えは object なので、ここで str と確かめる
+  "文字列の設定(runtime-env.state・uv-cache・code-prepare・uv・progress・notes)を読むため。Ask の答えは object なので、ここで str と確かめる
    (違う型が来たら、使う所ではなく読んだ所で落ちる)。"
   (<- value str (Ask key))
   value)
@@ -554,8 +555,9 @@
 ;; --- handler ------------------------------------------------------------------------------
 
 (defhandler env-translation
-  ;; 設定は Ask(runtime-env.*)で読む。state dir・許可表・道具の path はセッションで 1 回読む。
+  ;; 設定は Ask(runtime-env.*)で読む。state dir・uv の cache の dir・許可表・道具の path はセッションで 1 回読む。
   (session val state-dir (! (asked-text "runtime-env.state")))
+  (session val uv-cache (! (asked-text "runtime-env.uv-cache")))
   (session val repo-keys (! (asked-repo-keys)))
   (session val code-prepare (! (asked-text "runtime-env.code-prepare")))
   (session val uv (! (asked-text "runtime-env.uv")))
@@ -629,14 +631,14 @@
     (val target (wheel-dir state-dir package key))
     (<- wheel (| WheelReady EnvFailure)
         (locked (wheel-lock state-dir key)
-                (wheel-of package source-dir target state-dir uv)))
+                (wheel-of package source-dir target state-dir uv-cache uv)))
     ;; 使った印(掃除は 7 日使われない wheel の dir を消す — env_upkeep.WHEEL-UNUSED-SECONDS)。
     (when (isinstance wheel WheelReady)
       (<- (write-replacing (posixpath.join target WHEEL-USED) "")))
     (resume wheel))
 
   (SyncProject [project-dir python groups no-install]
-    (<- env tuple (uv-environment state-dir))
+    (<- env tuple (uv-environment state-dir uv-cache))
     ;; lock はそのまま使う(--frozen)。lock の中身は宣言の lock-sha256 で縛ってあり、確かめは宣言の側に在る。--locked は lock が
     ;; pyproject と合うかを解き直すので、入れない組(dev など)の git の依存まで取りに行き、worker が読めない private の repo が
     ;; 在ると準備が全部止まる(#2730 — 2026-10-02 の本番)。
@@ -653,7 +655,7 @@
             (resume failure))))
 
   (InstallWheels [project-dir wheels]
-    (<- env tuple (uv-environment state-dir))
+    (<- env tuple (uv-environment state-dir uv-cache))
     (<- result CommandResult (uv-command (+ #(uv "pip" "install" "--no-deps" "--python" (posixpath.join project-dir ".venv" "bin" "python"))
                                             (tuple wheels))
                                          project-dir env))
@@ -695,14 +697,14 @@
   (CompileTrees [project-dir trees entries]
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
     ;; 無い物だけを焼く(#3858 — 前の root からの引き継ぎと、その差の一覧は持たない)。
-    (<- env tuple (uv-environment state-dir))
+    (<- env tuple (uv-environment state-dir uv-cache))
     (<- args tuple (compile-argv uv code-prepare project-dir trees entries))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
     (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees project-dir))
     (resume compiled))
 
   (ProbeImports [project-dir roots]
-    (<- env tuple (uv-environment state-dir))
+    (<- env tuple (uv-environment state-dir uv-cache))
     (<- name str (digest16 project-dir))
     (val empty (posixpath.join state-dir "probe" name))
     (<- (remove-if-present empty))

@@ -3,7 +3,7 @@
 ;;; 送る名 ENV-TOOL はこの入口の名(旧い path の doeff_cluster.env_handlers は #2113 で消した — 同じ commit の worker が送る名と揃う):
 ;;;
 ;;;   hy -m doeff_cluster.worker.entry.env_tool --request <要求の JSON> --result <答えの JSON> --state <state dir>
-;;;      --repo-keys <鍵の表の JSON> --code-prepare <worker の code_prepare.hy> [--uv uv] [--progress <印の file>]
+;;;      --uv-cache <uv の cache の dir> --repo-keys <鍵の表の JSON> --code-prepare <worker の code_prepare.hy> [--uv uv] [--progress <印の file>]
 (require doeff-hy.macros [defk deff val <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
@@ -53,6 +53,7 @@
   (.add-argument parser "--request" :required True)
   (.add-argument parser "--result" :required True)
   (.add-argument parser "--state" :required True)
+  (.add-argument parser "--uv-cache" :required True)
   (.add-argument parser "--repo-keys" :default "")
   (.add-argument parser "--code-prepare" :required True)
   (.add-argument parser "--uv" :default "uv")
@@ -60,7 +61,7 @@
   (setv args (.parse-args parser))
   ;; 渡された file は本物の file の答え手(os-file-handler)の下で読む。
   (setv keys (if args.repo-keys (run (with-handlers [os-file-handler] (json-file args.repo-keys))) {}))
-  (setv settings {"runtime-env.state" args.state "runtime-env.repo-keys" keys
+  (setv settings {"runtime-env.state" args.state "runtime-env.uv-cache" args.uv-cache "runtime-env.repo-keys" keys
                   "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
                   "runtime-env.progress" args.progress "runtime-env.notes" "/dev/stderr"})
   ;; 要求の JSON を書いた刻を準備の起こしの刻として要求に添える(印の startupSeconds — #3676)。
