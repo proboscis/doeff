@@ -27,6 +27,7 @@ class JobSpec:
     handoff: bool = False
     ready_instance: str | None = None
     handoff_abandoned: bool = False
+    retired_ms: int | None = None
     detached: bool = False
     runtime_env: str | None = None
     env_key: str | None = None
