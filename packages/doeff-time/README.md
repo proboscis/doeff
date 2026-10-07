@@ -12,6 +12,13 @@ Provider-agnostic time effects for `doeff`.
   `Wait(task)` answers `program`'s value, or raises its failure
 - `SetTime(time: datetime)` (for simulation handlers, `time` must be timezone-aware)
 
+## Conversions
+
+- `epoch_ms_of(at: datetime) -> int` — timezone-aware time → epoch milliseconds, floored by integer
+  `timedelta` division (no float on the way). This is the one rounding for every stamp that is laid
+  next to another stamp: two places rounding the same instant differently (round vs floor) make a
+  write at 329.6 ms look 1 ms later than a read at 329.9 ms.
+
 ## Handlers
 
 - `async_time_handler()` for `asyncio` runtimes
