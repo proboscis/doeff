@@ -304,6 +304,8 @@ pub enum Explain {
     EffectMismatch { mismatch: super::signatures::EffectMismatch },
     /// DOEFF130: 翻訳の層の handler が業務の intent を出す(層の名は設定から)。
     TranslationIntent { intent: super::signatures::TranslationIntent, handler_layer: String, intent_layer: String },
+    /// DOEFF174: 業務の層の定義が下の層の効果を出すか、その package の handler を被せる(層の名・下の層の module の宣言)。
+    LowerLayerUse { found: super::signatures::LowerLayerUse, layer: String },
     /// DOEFF121〜125: 臭いの規則(形の照らし)。
     Smell { smell: super::smells::Smell },
     /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
@@ -781,6 +783,17 @@ impl<'a> Narrator<'a> {
                 format!(
                     "層 {} の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計・file・process・Ask …)へ出し直す翻訳で、業務の流れを持たない。{} は層 {} の業務の intent なので、それを出すと翻訳の handler が業務の判断と流れを抱え込み、責務の境界が崩れる。import した関数を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。intent を出す流れは層 core の program に置く。",
                     handler_layer, intent.effect(), intent_layer
+                ),
+            ),
+            Explain::LowerLayerUse { found, layer } => (
+                match (&found.kind, found.via()) {
+                    (super::signatures::LowerLayerKind::Handler, _) => format!("定義 {}(層 {})が下の層の handler {} を被せている", found.definition, layer, found.name()),
+                    (_, Some(via)) => format!("定義 {}(層 {})が {} を経由して、下の層の効果 {} を出している", found.definition, layer, via, found.name()),
+                    (_, None) => format!("定義 {}(層 {})が下の層の効果 {} を出している", found.definition, layer, found.name()),
+                },
+                format!(
+                    [removed]
+                    found.qualified
                 ),
             ),
             Explain::BareDefkCall { call } => (

@@ -1314,6 +1314,161 @@ fn reach_intents(
     chain.pop();
 }
 
+// --- DOEFF174: 業務の層は下の層の効果と handler を直に使わない ------------------------------------------
+
+/// DOEFF174 の当たりの種類(閉じた集合)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LowerLayerKind {
+    /// 下の層の効果を出す(実行する呼びから辿った defk の綴り — 直に実行していれば空)。
+    Effect { chain: Vec<String> },
+    /// 下の層の package の handler を with_handlers / WithHandler で被せる。
+    Handler,
+}
+
+/// DOEFF174 の破れ 1 つ — 業務の層の定義が使う下の層の効果か handler 1 つと、その位置。範囲は byte。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LowerLayerUse {
+    /// 定義の綴り。
+    pub definition: String,
+    /// 効果か handler の module まで含めた名(mangle 済み)。
+    pub qualified: String,
+    pub kind: LowerLayerKind,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl LowerLayerUse {
+    /// 効果か handler の綴り(module を外した最後の区切り)。
+    pub fn name(&self) -> &str {
+        last_segment(&self.qualified)
+    }
+
+    /// 経由の道(`a → b`)— 直に実行する効果と handler は None。
+    pub fn via(&self) -> Option<String> {
+        match &self.kind {
+            LowerLayerKind::Effect { chain } if !chain.is_empty() => Some(chain.join(" → ")),
+            _ => None,
+        }
+    }
+}
+
+/// 下の層の効果と handler を探す定義の頭。
+const LOWER_LAYER_DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defp", "defhandler"];
+
+/// handler を被せる呼びの頭(module を外した最後の区切り・mangle 済み)— 列を取る形と 1 つを取る形。
+const HANDLER_LIST_HEADS: &[&str] = &["with_handlers"];
+const HANDLER_ONE_HEADS: &[&str] = &["with_handler", "WithHandler"];
+
+/// 1 file の最上位の定義(defk・deff・defn・defp・defhandler)ごとに、下の層の効果を出す所と下の層の handler を被せる所を読む。
+/// `is_effect` は実行する呼びの頭(module まで含めた名)が下の層の効果か、`is_handler` は被せる handler の名が下の層の package の物かを
+/// 答える。効果は実行する呼びの頭が repo の defk なら `max_depth` の深さまで辿る(DOEFF130 と同じ到達)。handler は被せる列の要素の
+/// 呼びの頭か記号(`#*` で展開する記号も)の名で判じる — 値として受けた handler(`opened.handlers` の欄の読み・引数)は名が静的に
+/// 決まらないので数えない。定義ごと・名ごとに本文の順で最初の 1 つを出す。
+pub fn lower_layer_uses(
+    world: &World,
+    rel: &str,
+    source: &str,
+    is_effect: &dyn Fn(&str) -> bool,
+    is_handler: &dyn Fn(&str) -> bool,
+    max_depth: usize,
+) -> Vec<LowerLayerUse> {
+    let forms = Reader::new(source, 0, source.len()).read_all();
+    let module = module_of(rel);
+    let bindings = form_bindings(&forms, source, &module);
+    let reader = FileReader {
+        hy: Hy { src: source },
+        lines: LineIndex::new(source),
+        scope: Scope {
+            module: &module,
+            bindings: &bindings,
+        },
+        path: rel.to_string(),
+    };
+    let mut out = Vec::new();
+    for form in top_definitions(&reader.hy, &forms) {
+        let Some(items) = live(form) else { continue };
+        if !items.first().and_then(|h| reader.hy.symbol(h)).is_some_and(|h| LOWER_LAYER_DEFINITION_HEADS.contains(&h)) {
+            continue;
+        }
+        let Some(name) = items.get(1).and_then(|n| definition_name(n).0).filter(|n| matches!(n.node, Node::Symbol)) else {
+            continue;
+        };
+        let definition = reader.hy.text(name).to_string();
+        let body = &items[2..];
+        let mut found: Vec<LowerLayerUse> = Vec::new();
+        let mut sites = Vec::new();
+        for item in body {
+            collect_sites(&reader, item, Flags::default(), &mut sites);
+        }
+        for site in sites {
+            let mut reached = Vec::new();
+            reach_intents(world, &site.callee, is_effect, max_depth, &mut BTreeSet::new(), &mut Vec::new(), &mut reached);
+            for (qualified, chain) in reached {
+                if found.iter().any(|f| f.qualified == qualified) {
+                    continue;
+                }
+                found.push(LowerLayerUse {
+                    definition: definition.clone(),
+                    qualified,
+                    kind: LowerLayerKind::Effect { chain },
+                    start: site.head.0,
+                    end: site.head.1,
+                });
+            }
+        }
+        let mut handlers = Vec::new();
+        for item in body {
+            installed_handlers(&reader, item, &mut handlers);
+        }
+        for (qualified, span) in handlers {
+            if !is_handler(&qualified) || found.iter().any(|f| f.qualified == qualified) {
+                continue;
+            }
+            found.push(LowerLayerUse { definition: definition.clone(), qualified, kind: LowerLayerKind::Handler, start: span.0, end: span.1 });
+        }
+        found.sort_by_key(|f| f.start);
+        out.extend(found);
+    }
+    out
+}
+
+/// form の木の中で、with_handlers の列と with_handler / WithHandler の 1 つ目に置いた handler の名(module まで含めた名)と位置を集める。
+/// 列の要素は呼びなら頭、記号ならその記号、`#*` の展開なら中の記号 — それ以外(欄の読み・式)は名が決まらないので集めない。
+fn installed_handlers(reader: &FileReader, form: &Form, out: &mut Vec<(String, (usize, usize))>) {
+    if let Some(items) = live(form) {
+        let head = items.first().and_then(|h| reader.hy.symbol(h)).map(|h| reader.scope.qualify(h));
+        let installed: Vec<&Form> = match head.as_deref().map(last_segment) {
+            Some(h) if HANDLER_LIST_HEADS.contains(&h) => items.get(1).and_then(|list| list.bracket_items()).map(|l| l.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect()).unwrap_or_default(),
+            Some(h) if HANDLER_ONE_HEADS.contains(&h) => items.get(1).copied().into_iter().collect(),
+            _ => Vec::new(),
+        };
+        for handler in installed {
+            let named = match &handler.node {
+                Node::Prefixed { inner: Some(inner), .. } => Some(inner.as_ref()),
+                _ => Some(handler),
+            }
+            .and_then(|h| match call_head(&reader.hy, h) {
+                Some(_) => live(h).and_then(|i| i.first().copied()),
+                None => Some(h),
+            })
+            .filter(|h| matches!(h.node, Node::Symbol));
+            if let Some(symbol) = named {
+                out.push((reader.scope.qualify(reader.hy.text(symbol)), (symbol.span.start, symbol.span.end)));
+            }
+        }
+    }
+    match &form.node {
+        Node::Seq { items, .. } => items.iter().filter(|i| !matches!(i.node, Node::Discarded)).for_each(|i| installed_handlers(reader, i, out)),
+        Node::Prefixed { prefix, inner: Some(inner) }
+            if !matches!(prefix, doeff_indexer::hy_index::reader::Prefix::Quote | doeff_indexer::hy_index::reader::Prefix::Quasiquote) =>
+        {
+            installed_handlers(reader, inner, out)
+        }
+        Node::Annotated { target: Some(target), .. } => installed_handlers(reader, target, out),
+        _ => {}
+    }
+}
+
 // --- 1 file の見出しと束縛 -----------------------------------------------------------------
 
 /// 1 file の見出しと束縛を読み、読みの道具(reader・form の列)と組で `then` に渡す(表は `World::build` で、この file の同じ中身を

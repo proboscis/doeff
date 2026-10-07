@@ -280,6 +280,12 @@ impl Setup {
                 ProjectRule::DefkCalledBare => self.settings.definitions.is_some(),
                 ProjectRule::EffectsDisagreeWithInference => self.settings.definitions.is_some(),
                 ProjectRule::TranslationEmitsIntent => self.settings.layers.is_some() && self.settings.translation.is_some(),
+                // DOEFF174 は業務の層と :lower-layer-modules の宣言の両方が在る repo だけ(無ければ母集団が空 — 判じていない)。
+                ProjectRule::LowerLayerInDomain => {
+                    self.settings.layers.is_some()
+                        && self.settings.translation.as_ref().is_some_and(|t| !t.domain_layers.is_empty())
+                        && self.settings.architecture.as_ref().and_then(|a| a.business_fakes.as_ref()).is_some_and(|b| !b.lower_layer_modules.is_empty())
+                }
                 ProjectRule::JsonValueOutsideWire => self.settings.architecture.is_some(),
                 ProjectRule::WorldHandlerNamedOutsideList | ProjectRule::WorldHandlerMisplaced => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty())
