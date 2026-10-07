@@ -12,10 +12,11 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Watcher WatchRefusal
-                                                       WatchStep])
+                                                       WatchStep HeartbeatReply])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.coordinator.protocol.replies [reply-json])
-(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged])
+(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged same-view])
 (import dataclasses [replace])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.sim.local [sim-cluster send-request ClientLink SimLink SimWorker ReadCoordinator DrainWorker StopCoordinator])
@@ -28,6 +29,9 @@
 
 (val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+;; 名指しの待ちが他の worker の drain で起きない事を見る筋書きの worker 3 台 — 2 台だと、もう 1 台を drain すると名指した worker の job が
+;; 他へ移せなくなり、返事に「途絶しても動かし続けてよい」印(keep-when-cut-off)が立つ(名指した worker の本物の変化 — 起きるのが正しい)。
+(val THREE-WORKERS (+ TWO-WORKERS #((SimWorker :name "w3" :provides (frozenset ["cluster-net"]) :task-reserve 0))))
 ;; 系が落ち着くまで(beacon が置かれ、readiness の window 5 秒が埋まる)待つ秒。
 (val SETTLE-SECONDS 12.0)
 ;; 起こし直しを待たせる worker の設定(終わった process を起こし直す要求で coordinator を起こさない)。
@@ -114,7 +118,7 @@
    O の drain の刻 H の drain の刻 最初の版)。"
   (<- view dict (settled-view))
   (val holder (get (get (get view "placements") "beacon") "worker"))
-  (val other (if (= holder "w1") "w2" "w1"))
+  (val other (if (= holder "w1") "w2" "w1"))  ; 残る 3 台目が job の移し先に成れる(H の返事は変わらない)
   (val revision (get view "revision"))
   (<- first Task (Spawn (watch-once {"after" (str revision) "timeoutSeconds" "4" "worker" holder})))
   (<- (Delay 1.0))
@@ -131,7 +135,7 @@
 
 
 (deftest test-a-worker-scoped-watch-wakes-only-for-its-own-changes
-  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (scoped-watches) :workers TWO-WORKERS))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (scoped-watches) :workers THREE-WORKERS))
   (val first (get seen 0 0))
   (val first-at (get seen 0 1))
   (val second (get seen 1 0))
@@ -296,3 +300,23 @@
       (<- judged WatchStep (settle-watch watcher seen now (ClusterTiming)))
       (assert (is judged.answer None) judged)
       (assert (is judged.watcher watcher) judged))))
+
+
+;; --- 名指しの待ちの見え方は、worker が受け取る返事の全部の欄で比べる(#3871 の単位 5)-----------------------------------------
+
+(defn view-with [#^ dict changes]
+  "worker w の見え方(heartbeat の返事)を、job の欄 changes だけ替えて作る(検の部品)。"
+  (HeartbeatReply :jobs #((replace (JobSpec "beacon" "m" #() "rev" :handoff True) #** changes)) :tasks #() :warm #()
+                  :timing (ClusterTiming) :draining False :superseded False :formats #() :revision 0))
+
+
+(deftest test-a-named-watch-sees-a-change-only-in-fields-the-spec-equality-skips
+  ;; 失敗ケース: JobSpec の = は ready-instance・handoff-abandoned・hold-version・keep-when-cut-off などを比べない(worker が process を
+  ;; 起こし直すかの判断のため)。名指しの待ちがこの = で見え方を比べると、入れ替えの新の世代が Ready になった(旧を止める合図)だけの
+  ;; 変化で worker を起こさず、worker は次の heartbeat(本番 2.5 秒)まで旧を止めない。見え方はこれらの欄も含めて比べる。
+  (val before (view-with {}))
+  (for [changes [{"ready_instance" "w-p2"} {"handoff_abandoned" True} {"hold_version" True} {"keep_when_cut_off" True}]]
+    (<- same bool (same-view before (view-with changes)))
+    (assert (not same) changes))
+  (<- unchanged bool (same-view before (view-with {})))
+  (assert unchanged))
