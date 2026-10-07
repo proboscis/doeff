@@ -16,15 +16,19 @@
 
 
 ;; 子 process へ継ぐ worker の環境変数の許可表(実行環境の job — 2026-09-26)。これ以外(PYTHON*・HY_*・UV_* の他・LD_*・VIRTUAL_ENV・
-;; 資格を運ぶ変数)は継がない。宣言の env-vars と worker が組む DOEFF_WORKER_*・DOEFF_RUNTIME_ENV* を足す。LC_* は名を前もって知らない
+;; 資格を運ぶ変数)は継がない。worker の build の保存先(Rust の wheel の DOEFF_WHEEL_CACHE・Hy の bytecode の DOEFF_HY_CODE_STORE — 値は
+;; 起動の script の 1 か所)と cargo / rustup の場所は継ぐ: 子の uv sync が worker と同じ wheel と bytecode を使い、doeff-vm を組み直さない
+;; (#3972 — 継がなかった時、job の子の uv sync が 5 分半)。DOEFF_ の名は宣言の env-vars に書けない(予約の接頭辞)ので worker が継ぐ。宣言の env-vars と worker が組む DOEFF_WORKER_*・DOEFF_RUNTIME_ENV* を足す。LC_* は名を前もって知らない
 ;; 一族なので頭で拾う(CHILD-ENV-PREFIXES — ReadEnvironment の prefixes に渡せる形)。
 (setv CHILD-ENV-ALLOWED (frozenset #("PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TZ" "TMPDIR" "TERM"
-                                     "SSL_CERT_FILE" "SSL_CERT_DIR" "UV_CACHE_DIR" "UV_PYTHON_INSTALL_DIR")))
+                                     "SSL_CERT_FILE" "SSL_CERT_DIR" "UV_CACHE_DIR" "UV_PYTHON_INSTALL_DIR"
+                                     "DOEFF_WHEEL_CACHE" "DOEFF_HY_CODE_STORE" "CARGO_HOME" "RUSTUP_HOME")))
 (setv CHILD-ENV-PREFIXES #("LC_"))
 
 
 (defk child-environment [base extra declared worker]
-  {:pre [(: base dict) (: extra dict) (: declared dict) (: worker dict)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  {:pre [(: base (get dict #(str str))) (: extra (get dict #(str str))) (: declared (get dict #(str str))) (: worker (get dict #(str str)))]
+   :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
   "実行環境の job の子の環境変数を組むため: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
    → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。"
   (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v)

@@ -12,7 +12,7 @@ from doeff_cluster.worker.intent.worker_model import CodeLayout as CodeLayout
 CHILD_ENV_ALLOWED: frozenset[str]
 CHILD_ENV_PREFIXES: tuple[str, ...]
 
-def child_environment(base: dict, extra: dict, declared: dict, worker: dict) -> _Program[dict, object]:
+def child_environment(base: dict[str, str], extra: dict[str, str], declared: dict[str, str], worker: dict[str, str]) -> _Program[dict[str, str], object]:
     ...
 
 def env_project_dir(root: str, declared: dict) -> _Program[str, object]:
