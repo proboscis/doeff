@@ -247,7 +247,11 @@
 ;; 模擬の世界の時間の設定の既定の比: :timing を渡さない筋書きは、本番の既定の窓を全部この比で延ばした設定(scaled-timing)で走る。
 ;; heartbeat と待ちの送り直しは coordinator の本物の歩なので(#3865)、仮想の時間を長く回す筋書きの歩の数がこの比でほぼ反比例に減る。
 ;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
-(val SIM-TIMING-RATIO 200)
+;; 200 → 350(#3871 の単位 5・cisco-c8 の決定 2026-10-07): worker の代役が本番と同じく heartbeat ごとに周を 1 回まわすようになり
+;; (前は静かな周を眠り heartbeat を受付の列に預けた)、仮想の 1 日を回す日次の検証の歩が 158,366 → 317,374 に増えた。周 1 回を
+;; 軽くした後(呼び鈴を task なしで競わせる・代役の読み直しを 1 つ省く — 271,329)も上限 170,000 を越えたので、heartbeat の周の数を
+;; 減らす比を足した。測った比: 300 = 187,158(越える)・350 = 163,384・400 = 145,061。上限に入る最小の 350 を採る。
+(val SIM-TIMING-RATIO 350)
 
 
 ;; --- 公開の値 --------------------------------------------------------------------------------------------
@@ -1824,8 +1828,9 @@
           (<- tasks tuple (task-specs (.get reply "tasks" []) (Path "/sim/tasks" worker.name)))
           (val warm (tuple (gfor row (.get reply "warm" []) (warm-env-of-row row (current-platform)))))
           (val ids (sfor t (.get reply "tasks" []) (get t "id")))
-          (<- known HostTruth (live-truth worker.name boot))
-          (<- fetched dict (accepted-programs link (sorted (sfor s (+ jobs tasks) :if s.program s.program)) known.programs))
+          ;; 取った Program は送る前に読んだ真実(before)で足りる(取った Program を書くのはこの宿の heartbeat だけ・世代の確かめは
+          ;; 後の書きの change-live-truth がする — 静かな周で世界へ問いを 1 つ減らす・#3871 の単位 5)。
+          (<- fetched dict (accepted-programs link (sorted (sfor s (+ jobs tasks) :if s.program s.program)) before.programs))
           ;; 返事を待つ間に他の task が宿の真実を書く — 書く時に読み直す(その間に世代が終わっていれば抜ける)。読みと書きは世界への問い 1 つ。
           (val timing (.get reply "timing"))
           (val echo (dfor t (.get reply "tasks" []) :if (.get t "detached") (get t "id") (dict t)))
