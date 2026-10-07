@@ -8,10 +8,10 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import datetime [datetime])
 (import dataclasses [replace])
-(import doeff_time [GetTime])
+(import doeff_time [GetTime epoch-ms-of])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_cluster.shared.core.clock [now-epoch-ms epoch-ms-of])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes

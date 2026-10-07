@@ -25,6 +25,7 @@ from doeff_time.effects.time import schedule_at as schedule_at
 from doeff_time.effects.time import set_time as set_time
 from doeff_time.effects.time import wait_until as wait_until
 from doeff_time.effects.time import wait_within as wait_within
+from doeff_time.epoch_ms import epoch_ms_of as epoch_ms_of
 from doeff_time.handlers.async_time import async_time_handler as async_time_handler
 from doeff_time.handlers.sim_time import sim_time_handler as sim_time_handler
 from doeff_time.handlers.sync_time import sync_time_handler as sync_time_handler

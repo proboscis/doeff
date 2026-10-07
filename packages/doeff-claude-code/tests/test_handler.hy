@@ -3,6 +3,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])
+(import datetime [datetime timezone])
 (import json)
 (import os)
 (import os.path)
@@ -14,7 +15,7 @@
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [await-handler listen-handler slog-discard-handler])
 (import doeff_core_effects.scheduler [CreateExternalPromise])
-(import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler sync-time-handler])
+(import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler epoch-ms-of sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
@@ -24,7 +25,8 @@
 (import doeff_claude_code.argv [launch-key transcript-path])
 (import doeff_claude_code.process [ClaudeProcess])
 (import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost Doorbell claude-code-handler wait-until])
+(import doeff_claude_code.handler [CLI-TIMING-LOG ClaudeCodeHost Doorbell SessionRuntime claude-code-handler elapsed-ms note-reused
+                                   wait-until wall-elapsed-ms])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
                               reply-prompt sleep-prompt])
@@ -424,6 +426,34 @@
           (repr #(thought thought-reply)))
   (assert (< (.get quick "after_stream_start_ms") 200) (repr quick))
   (assert (<= (.get thought "after_stream_start_ms") (.get thought "since_launch_ms")) (repr thought)))
+
+
+;; 同じ秒の中の 2 つの刻(#3855 の日次の赤の形): CLI へ書き始めた刻と、その後に答えが返った刻。
+(val WRITTEN-AT (datetime 2026 10 7 3 0 0 329600 :tzinfo timezone.utc))
+(val ANSWERED-AT (datetime 2026 10 7 3 0 0 329900 :tzinfo timezone.utc))
+
+(deftest test-a-written-stamp-is-not-seen-after-a-later-stamp-in-the-same-second
+  ;; 計時の行の壁の時刻の欄は、行を並べる側と同じ doeff-time の epoch-ms-of(床へ)で綴る(#3855): 329.6 ms に CLI へ書いた行
+  ;; (reused)の wall_ms は、その後の 329.9 ms を epoch-ms-of で綴った刻より後に見えず、2 つの壁の時刻の差の欄(wall-elapsed-ms)は
+  ;; 2 つの刻の欄の差と同じ。失敗ケース = 変更前は書いた刻を四捨五入して 330・後の刻は床で 329 と綴られ、順が逆に見えた。
+  (val runtime (SessionRuntime "sid" (ClaudeHome "/h/.claude" {}) "/w"))
+  (<- heard (with_handlers [slog-discard-handler listen-handler]
+              (Listen (note-reused runtime 1 0.0 0.0 WRITTEN-AT) :types #(SlogEffect))))
+  (val written (. (get (get heard 1) 0) kwargs))
+  (val answered (epoch-ms-of ANSWERED-AT))
+  (assert (= (.get written "event") "reused") (repr written))
+  (assert (<= (.get written "wall_ms") answered) (repr #(written answered)))
+  (<- gap (wall-elapsed-ms WRITTEN-AT ANSWERED-AT))
+  (assert (= gap (- answered (.get written "wall_ms"))) (repr #(gap written answered))))
+
+
+(deftest test-the-elapsed-fields-of-adjacent-intervals-add-up-to-the-whole
+  ;; 経過の欄(GetMonotonic の 2 つの読みの差)は、読みをそれぞれミリ秒へ床へ丸めてから引く(#3855): 続く 2 つの区間の和が通しの区間と
+  ;; 同じ。失敗ケース = 変更前は差を四捨五入したので、0.4 ms ずつの 2 つの区間が 0 + 0、通しの 0.8 ms が 1 になった。
+  (<- first (elapsed-ms 10.0004 10.0008))
+  (<- second (elapsed-ms 10.0008 10.0012))
+  (<- whole (elapsed-ms 10.0004 10.0012))
+  (assert (= (+ first second) whole) (repr #(first second whole))))
 
 
 ;; --- 入力の前に事前起動して待たせる process(ClaudeWarmSession)の、最初の入力の前の行と片づけ ------------------------------------
