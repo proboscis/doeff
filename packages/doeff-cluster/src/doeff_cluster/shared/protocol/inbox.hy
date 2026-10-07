@@ -42,10 +42,11 @@
 
 (defk requests-of [raws]
   {:pre [(: raws list)] :post [(: % (get tuple #(Request ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
-  "受付の箱が並べた生の要求の列を、並びのまま Request の列にするため(NextRequests の答え)。"
+  "受付の箱が並べた生の要求の列を、並びのまま Request の列にするため(NextRequests の答え)。箱が取りの刻に測った並びの ms も運ぶ。"
   (var requests #())
   (for [raw raws]
-    (<- request Request (http-request raw.method raw.path raw.query raw.body :slot raw.slot :actor raw.actor :peer raw.peer))
+    (<- request Request (http-request raw.method raw.path raw.query raw.body :slot raw.slot :actor raw.actor :peer raw.peer
+                                      :queued-ms raw.queued-ms))
     (:= requests (+ requests #(request))))
   requests)
 
