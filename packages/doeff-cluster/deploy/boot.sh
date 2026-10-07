@@ -389,13 +389,14 @@ if [ -z "${WORKER_TASK_RESERVE:-}" ]; then
 fi
 # 実行環境の root の置き場の 2 つの量(#3732 — 掃除の下限を disk 全体の割合から絶対の量へ。既定の値はここの 1 か所で、worker の
 # 入口は必ずの引数として受ける)。台ごとに変える時は Deployment の env に GiB の整数で書く:
-#   WORKER_ENV_ROOTS_GIB    roots の合計の上限(既定 20)— 越えた時だけ、固定(走っている job・宣言の job・準備中・温める表)でも
+#   WORKER_ENV_ROOTS_GIB    roots の合計の上限(既定 20)— 越えた時は、固定(走っている job・宣言の job・準備中・温める表)でも
 #                           project ごとの新しい 2 つ(今の版と戻し先の版)でもない root を、最後に使った古い順に消す。合計は root ごとの
 #                           大きさの和で、root どうしが hardlink で共有する木と .pyc を重ねて数える(実の使用量より大きく出る)。
 #                           2026-10-06 の実測で root 1 つは重ねて数えて 0.19〜0.25 GB(zeus の service worker の業務の root)— 専用の
 #                           service worker(/work が共有の USB の SSD の hostPath)は 1(root 4 本分)で足りる。
-#   WORKER_ENV_MIN_FREE_GIB 共有の disk の空きの最低(既定 25)— 割った時は root を消さずに準備を disk-full で断り、heartbeat で
-#                           exhausted を名乗る(coordinator は準備済みでない env の task を置かない)。
+#   WORKER_ENV_MIN_FREE_GIB 共有の disk の空きの最低(既定 25)— 割った時も同じ候補の root を古い順に、空きが最低へ戻るまで消す
+#                           (#4051)。戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る(coordinator は準備済みでない
+#                           env の task を置かない)。
 env_roots_gib=${WORKER_ENV_ROOTS_GIB:-20}
 env_min_free_gib=${WORKER_ENV_MIN_FREE_GIB:-25}
 for amount in "WORKER_ENV_ROOTS_GIB=$env_roots_gib" "WORKER_ENV_MIN_FREE_GIB=$env_min_free_gib"; do
