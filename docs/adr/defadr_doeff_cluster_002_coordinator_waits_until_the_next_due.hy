@@ -29,7 +29,7 @@
 (val NOW-PLUS-ONE-ROSTER
   {"cluster_policy.hy" 0
    "api_policy.hy" 0
-   "wake_policy.hy" 1})   ; rollout-due の Rollout の歩の刻の下限(R5 — #3868 で消す)
+   "wake_policy.hy" 0})   ; rollout-due の Rollout の歩の刻の下限は #3868 で消した(R5)
 
 
 (defadr ADR-DOE-CLUSTER-002
@@ -42,7 +42,10 @@
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy"
+          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_queue.hy"
+          "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy"
+          "packages/doeff-cluster/src/doeff_cluster/foundation/kube_client.hy"
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem
     [(fact
@@ -67,7 +70,7 @@
      (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない — #3865 の見直しの追記)。")
      (rule R3 "期限の関数の答えは閉じた型 DueAt(刻)・DueNow(今すぐ — 今の刻で判断すれば状態が変わる)・DueNever(状態がこのままなら時刻では変わらない)。数の now + 1 を返さない。落ち着いた状態(要求の無い歩をもう 1 歩進めても変わらない)では DueNow を返さない。")
      (rule R4 "要求を受けずに状態を変えた歩の後は、待たずにもう 1 歩進める(after-step)。要求を受けた歩の後は、次に起きる刻まで待つ — 要求で変わった状態が落ち着いていなければ期限の関数が DueNow を返す(R3)ので、要求ごとに空の歩を回さない(2026-10-07 の直し A・cisco-c8 の可。前は要求を受けた歩の後も必ずもう 1 歩回していた)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
-     (rule R5 "Rollout の進行中に Kubernetes の Deployment と node を読む所は、期限ではなく周期で見に行く形(Rollout の歩の間隔の下限 ROLLOUT-TICK-MS)として rollout-due に名を付けて残す。Kubernetes の watch に替える件(agora-redesign #3868)で消す。読みの結果が待ちを起こす変更も #3868。Rollout の歩は前の Rollout の歩から ROLLOUT-TICK-MS 経った歩でだけ回るので、rollout-due は前の Rollout の歩より後の期限から求め、Rollout の歩を回せる最初の刻より早くは答えない(期限の刻の歩が Rollout の歩を回せない時も期限を落とさない)。")
+     (rule R5 "Rollout の相手の Kubernetes の Deployment は時間で読みに行かない(agora-redesign #3868 — 以前の Rollout の歩の間隔の下限 ROLLOUT-TICK-MS の 1 秒ごとの読みと、台数を持つ相手の 10 秒ごとの読み直しは消した)。coordinator は Rollout が観測を要る Deployment を list の後の watch で見張り(FollowDeployments・foundation/kube_client の follow)、見張りが変化を受け渡した時に受付の箱を起こす(外の出来事 — R1)。node の label の読みは調停ループの外で走り、読み終えた時に受付の箱を起こす(読み直しの期限は node-reread-due に残る — Node の watch は agora-redesign #4070)。Rollout の歩は毎歩回るので、rollout-due は now より後の期限だけを返す。成功した Deployment への書きは、その書きの後の観測が届くまで出し直さない(rollout_policy.action-due — 見張りが伝える前の古い観測で同じ書きを重ねない。1 秒の間隔がこれを隠していた)。")
      (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")
      (rule R7 "模擬だけの物(worker の代役が静かな拍を眠る事と、眠る前に預ける heartbeat)は受け手の層(模擬の受付の列 coordinator/protocol/request_queue.hy)に置く。列は預けた heartbeat をその刻に普通の heartbeat の要求として調停ループへ渡し、調停ループは本番と同じ要求だけを受ける(調停ループに模擬の材料を渡す effect を持たない — 前の IdleNextRequests・IdleTaken は消した)。")]
   :laws
@@ -92,7 +95,7 @@
                      "packages/doeff-cluster/tests/test_quiet_due_placement_rollout.hy(入れ替え・Rollout の段)"
                      "packages/doeff-cluster/tests/test_due_answer.hy(置いた task・待っている task)"
                      "packages/doeff-cluster/tests/test_next_wake.hy(待ちの期限)"
-                     "packages/doeff-cluster/tests/test_due_boundaries.hy(readiness・止まり・Deployment と node の読み直し)"]
+                     "packages/doeff-cluster/tests/test_due_boundaries.hy(readiness・止まり・node の読み直し)"]
        :wiring "配線済み(2026-10-07・単位 1b)")
      (law an-unsettled-loop-fails-loudly
        :statement "for_all 調停ループの歩の列: 続けて DueNow の歩の数 > UNSETTLED-STEP-LIMIT ⇒ CoordinatorUnsettled(文は前後の状態で違う欄の名を含む)"
@@ -108,6 +111,15 @@
        :enforced-by ["packages/doeff-cluster/tests/test_coordinator_idle_wait.hy"
                      "packages/doeff-cluster/tests/test_idle_skip.hy::test-a-quiet-system-steps-only-for-requests-and-deadlines"]
        :wiring "配線済み(2026-10-07・単位 2b)")
+     (law a-rollout-follows-its-deployments-by-events
+       :statement "for_all Rollout が Deployment の変化を待つ区間 I: I の中で coordinator が Kubernetes の Deployment を読みに行く数 = 0(見張りの始めの list と変化の出来事だけ)∧ Deployment が変わった刻 t に Rollout の処理ステージが進むなら、その刻は t(1 秒の格子に丸めない)"
+       :counterexamples
+         [(counterexample "Rollout の進行中は 1 秒ごとに Deployment を読みに行く(ROLLOUT-TICK-MS)— 静かな 20 秒に 19 回読み、Pod が揃った刻 …635370 ではなく次の格子 …636000 に StoppingOld へ進む(#3868 の失敗ケース 44bff9355)")
+          (counterexample "成功した台数の書きの直後、見張りが結果を伝える前の古い観測で同じ書きを毎歩出し直す — 1 秒の間隔を消すと調停ループが落ち着かない(101 歩で CoordinatorUnsettled)")]
+       :enforced-by ["packages/doeff-cluster/tests/test_rollout_kube_events.hy"
+                     "packages/doeff-cluster/tests/test_kube_client_watch.hy"
+                     "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-written-deployment-action-waits-for-an-observation-after-the-write"]
+       :wiring "配線済み(2026-10-08・#3868 の単位 2)")
      (law a-sleeping-stand-in-changes-no-decision
        :statement "for_all 筋書き: 期限だけで起きる走りと、余計に起こす走り(coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい(worker の代役は本番と同じ待ちで周の間を待つ — agora-redesign #3871 の単位 5。前の形は代役が静かな拍を眠り、預けた heartbeat を列がその刻に渡した)"
        :counterexamples
@@ -126,7 +138,7 @@
        (assert (= (run (sweep-due expired 200 timing)) (DueNow)) "期限の過ぎた行の掃除は今すぐ"))
      (deftest test-adr-doe-cluster-002-no-number-now-plus-one
        ;; 針: 期限の関数の file に、数の (+ now 1) を期限として書く所は台帳を超えない(新設は赤・削り忘れも赤 — R3)。
-       ;; wake_policy の 1 つは Rollout の歩の刻の下限(max (+ now 1) …)で、R5 の周期の答え(DueAt)の中。#3868 で消す。
+       ;; wake_policy の Rollout の歩の刻の下限(max (+ now 1) …)は #3868 で消した(R5)。
        (val repo-root (. (Path __file__) parent parent parent))
        (val counts (dfor name NOW-PLUS-ONE-ROSTER
                          name (.count (.read-text (/ repo-root CORE name) :encoding "utf-8") "(+ now 1)")))

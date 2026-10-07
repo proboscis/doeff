@@ -53,9 +53,7 @@
 (import doeff_cluster.coordinator.core.warm_policy [warm-write warm-read])
 (import doeff_cluster.coordinator.core.program_policy [program-write program-read sweep-programs])
 
-(setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")
-(setv ROLLOUT-TICK-MS 1000)       ; Rollout の歩の間隔の下限(coordinator-step と wake_policy.rollout-due が読む)
 
 
 (defk settle [before after actor now timing]
@@ -172,16 +170,16 @@
           (TargetView :ready (get verdict "state") :stopped stopped :spec-replicas (if job job.replicas None)
                       :reason (if stopped "止まっている" (get verdict "reason"))))
       (do (setv obs (.row state.observations.deployments (+ target.namespace "/" target.name))
-                ;; 新しい読めた観測だけを判じに使う。無い・読めなかった・古い観測は Unknown(台数を変えない)。
+                ;; 読めた観測だけを判じに使う。無い・読めなかった観測は Unknown(台数を変えない)。観測は Deployment の見張りが変化の
+                ;; たびに書き直し、見張りが届かない間は読めなかった観測になる(#3868)ので、時刻で古いと数えない。
                 fresh (match obs
-                        (DeploymentSeen :reading reading :at at) :if (<= (- now at) OBSERVATION-STALE-MS) reading
+                        (DeploymentSeen :reading reading) reading
                         _ None))
           (when (is fresh None)
             (return (TargetView :ready "Unknown" :stopped None :spec-replicas None
                                 :reason (match obs
                                           None "まだ観測していない"
-                                          (DeploymentUnreadable :error error) error
-                                          _ "観測が古い"))))
+                                          (DeploymentUnreadable :error error) error))))
           (setv dry target.dry-run
                 simulated (.get (or status.simulated {}) (target-key target))
                 want (if (and dry (is-not simulated None)) simulated fresh.spec-replicas)
@@ -213,36 +211,14 @@
       None))
 
 
-(defn #^ int deployment-reread-from [#^ (| DeploymentSeen DeploymentUnreadable None) seen]  ; defk にできない: coordinator の純粋な判断(deployments-to-observe)が呼ぶ
-  "台数を持つ Rollout の相手の Deployment の観測 seen を読み直す最初の刻(読んだ刻 + 10 秒 + 1 ms・観測が無ければ 10 秒 + 1 ms)。
-   deployments-to-observe の境の定義点 — 次に起きる刻(wake_policy.rollout-due・#3064)も同じ値を読む。"
-  (+ (if (is seen None) 0 seen.at) 10000 1))
-
-
-(defn #^ list deployments-to-observe [#^ ClusterState state #^ int now]
-  "読むべき Deployment の「ns/名」: 進行中の Rollout の相手は毎拍、台数を持つ(Observing / Complete の)相手は 10 秒ごと。"
-  (setv keys [])
-  (for [r (.values state.rollouts)]
-    (when (not-in r.status.phase TERMINAL-PHASES)
-      (for [t (rollout-targets r.spec)]
-        (when (= t.kind "Deployment")
-          (.append keys (+ t.namespace "/" t.name))))))
-  (for [key (deployment-owners state.rollouts)]
-    (setv seen (.row state.observations.deployments key))
-    (when (>= now (deployment-reread-from seen))
-      (.append keys key)))
-  (list (dict.fromkeys keys)))
-
-
-(defk deployment-reread-due [state now]
-  {:pre [(: state ClusterState) (: now int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "状態がこのままで deployments-to-observe が台数の持ち主の Deployment を新しく返し始める最初の刻(deployment-reread-from の now より後の
-   最小)を知るため(静かな区間の次の期限・#3064)。None = 読み直す持ち主が無い。"
-  (min (gfor key (deployment-owners state.rollouts)
-             :setv due (deployment-reread-from (.row state.observations.deployments key))
-             :if (> due now)
-             due)
-       :default None))
+(defk deployments-to-follow [state]
+  {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "Rollout の判断が観測を要る Deployment の「ns/名」を知るため(見張る相手 — FollowDeployments・#3868): 進行中の Rollout の相手と、
+   台数を持つ(Observing / Complete の)Rollout の相手。時刻で選ばない — 観測は見張りが変化のたびに書き直す。"
+  (val moving (tuple (gfor r (.values state.rollouts) :if (not-in r.status.phase TERMINAL-PHASES)
+                           t (rollout-targets r.spec) :if (= t.kind "Deployment")
+                           (+ t.namespace "/" t.name))))
+  (tuple (dict.fromkeys (+ moving (tuple (deployment-owners state.rollouts))))))
 
 
 (defk plan-rollouts [state now timing [naming (ClusterNaming)]]
@@ -258,8 +234,15 @@
       (setv #(stepped acts) (rollout-step spec status (target-view state spec.from-target status now timing)
                                           (target-view state spec.to-target status now timing) now))
       (setv (get rollouts name) (replace r :status stepped))
-      ;; 失敗が続く action は間を空けて出す(action-due — 1 秒から倍々・上限 60 秒)。
-      (.extend actions (gfor a acts :if (action-due stepped a now) (| a {"rollout" name})))))
+      ;; 失敗が続く action は間を空けて出し(action-due — 1 秒から倍々・上限 60 秒)、成功した Deployment への書きは、その書きの後の
+      ;; 観測が届くまで出し直さない(#3868)。
+      (.extend actions (gfor a acts
+                             :setv target (.get a "target")
+                             :setv observed (if (and (isinstance target RolloutTarget) (= target.kind "Deployment"))
+                                                (.row state.observations.deployments (+ target.namespace "/" target.name))
+                                                None)
+                             :if (action-due stepped a now observed)
+                             (| a {"rollout" name})))))
   ;; 台数の持ち主と食い違い。進行中の Rollout が扱っている Deployment は、台数が動くのが意図どおりなので数えない。
   ;; 持ち主でなくなった(後の Rollout へ移った・進行中の Rollout が扱い始めた)Rollout の食い違いは消す。
   ;; Observing の Rollout は旧を止め終えて台数を持つ側なので、ここでは「進行中」に数えない(2026-09-24 の実弾: 数えていたので

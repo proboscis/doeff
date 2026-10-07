@@ -720,6 +720,8 @@
     {
       "allow": [
         "doeff-cluster-kube-model",
+        "doeff-cluster-clock",
+        "doeff-cluster-shared-protocol",
         "doeff-hy-json-value",
         "doeff-hy-frozen"
       ],

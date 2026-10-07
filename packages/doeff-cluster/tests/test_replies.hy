@@ -171,7 +171,8 @@
 (import doeff [with_handlers])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
+(import doeff_core_effects.handlers [slog-discard-handler])
 
 (val DEPLOYMENT-TO-DEPLOYMENT {"from" {"kind" "Deployment" "namespace" "prod" "name" "old"}
                                 "to" {"kind" "Deployment" "namespace" "prod" "name" "new" "replicas" 1}})
@@ -197,7 +198,9 @@
   (assert (< (get created 1) 300) created)
   (<- unread str (rollout-observed-json (get created 0) 1000))
   (assert (= unread "{\"Deployment:prod/old\": null, \"Deployment:prod/new\": null}") unread)
-  (<- ticked ClusterState (with_handlers [(kube-memory kube)] (rollout-tick (get created 0) T (ClusterNaming) 5000)))
+  ;; 無い Deployment を見張れない 1 行(coordinator の報告)は捨てる — この検は観測の形だけを見る。
+  (<- ticked ClusterState (with_handlers [slog-discard-handler (kube-memory kube (MemoryFollows))]
+                                         (rollout-tick (get created 0) T (ClusterNaming) 5000)))
   (<- observed str (rollout-observed-json ticked 5000))
   (assert (= observed
              (+ "{\"Deployment:prod/old\": {\"specReplicas\": 2, \"replicas\": 2, \"readyReplicas\": 1, \"availableReplicas\": 1, "
