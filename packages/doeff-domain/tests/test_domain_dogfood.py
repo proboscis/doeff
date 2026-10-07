@@ -44,6 +44,7 @@ DOGFOOD_DOMAIN_NAMES = [
     "doeff-outcome",
     "doeff-file",
     "doeff-http-server",
+    "doeff-ws-client",
     "doeff-sql",
     "doeff-process",
     "doeff-warm-process",

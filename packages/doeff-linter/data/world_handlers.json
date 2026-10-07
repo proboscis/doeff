@@ -69,6 +69,20 @@
    "why": "aiohttp で listen する"
   },
   {
+   "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-client",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ(installer — 被せる実物は下)"
+  },
+  {
+   "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-link-handler",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ"
+  },
+  {
    "handler": "doeff_core_effects.clickhouse_http_sql:clickhouse-http-sql-handler",
    "touches": [
     "http",

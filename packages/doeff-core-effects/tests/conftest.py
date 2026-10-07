@@ -67,6 +67,8 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     from stack_dump_contract_handlers import INTERPRETERS as STACK_DUMP_INTERPRETERS
     from stop_contract_handlers import INTERPRETERS as STOP_INTERPRETERS
     from warm_contract_handlers import INTERPRETERS as WARM_INTERPRETERS
+    from ws_client_contract_handlers import INTERPRETERS as WS_CLIENT_INTERPRETERS
+    from ws_client_contract_handlers import REQUIRES as WS_CLIENT_REQUIRES
 
     compositions: dict[str, Callable[[Program], Program]] = {
         PLAIN: lambda program: program,
@@ -80,8 +82,9 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         **RANDOM_INTERPRETERS,
         **STACK_DUMP_INTERPRETERS,
         **WARM_INTERPRETERS,
+        **WS_CLIENT_INTERPRETERS,
     }
-    required = HTTP_SERVER_REQUIRES.get(doeff_interpreter_name)
+    required = {**HTTP_SERVER_REQUIRES, **WS_CLIENT_REQUIRES}.get(doeff_interpreter_name)
     if required is not None and importlib.util.find_spec(required) is None:
         pytest.skip(f"解釈器 {doeff_interpreter_name} は {required} が要る")
     compose = compositions[doeff_interpreter_name]
