@@ -3,19 +3,15 @@
 ;; - 調停ループは、期限の無い静かな状態では受付を期限なし(timeout None)で待つ。
 ;; - 期限は、その刻ちょうどに起きる(worker の最後の連絡が 300 ms の時、沈黙の判断は 10301 ms — 1 秒の格子の 11000 ms ではない)。
 ;; - 壁の時計の模擬でも、要求の来ない間は受け口から取らない。
-;; - 模擬の受付の列は、worker の代役が預けた仮の heartbeat を、その刻に普通の heartbeat の要求として渡す(調停ループは本番と同じ
-;;   要求しか受けない)。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import datetime [timedelta])
 (import doeff [run with-handlers])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_events [MemoryBroker])
-(import doeff_core_effects.scheduler [CreatePromise Promise])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming ProvisionalBeat])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming])
 (import doeff_cluster.coordinator.core.program [run-coordinator])
 (import doeff_cluster.coordinator.core.program :as coordinator-program)
 (import doeff_cluster.shared.intent.due_model [DueNow])
@@ -24,10 +20,9 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue RestBell queued-requests deposit-beats])
 (import doeff_cluster.sim.local [wall-sim-cluster ClientLink SimLink SimWorker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
-(import tests.clock_fixtures [clock-at clock-ms])
+(import tests.clock_fixtures [clock-ms])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [quitters])
 
@@ -111,15 +106,18 @@
 ;; --- 模擬の環境(壁の時計)— 要求の無い間の起きの数 ----------------------------------------------------------------
 
 (val QUIET-SECONDS 3.0)
+;; 起動の流れ(宣言・最初の heartbeat・quitter が盤へ書いて 3 拍で抜ける・その刈り取り)が済むまでの秒。worker は周期で起きないので、
+;; 起動の流れは worker の刻みに引き延ばされず、約 4 秒で済む。
+(val SETTLE-SECONDS 5.0)
 (val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
-(val RESTING-TICK-SECONDS 10.0)
 (val RESTING-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 
 (defk takes-while-quiet [seconds]
   {:pre [(: seconds float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 起動の後 1 秒置き、要求の来ない seconds 秒の間に coordinator が受け口から取った回数(歩の数)を読むため。"
-  (<- (Delay 1.0))
+  "筋書き: 起動の流れが済むまで SETTLE-SECONDS 置き、要求の来ない seconds 秒の間に coordinator が受け口から取った回数(歩の数)を
+   読むため。"
+  (<- (Delay SETTLE-SECONDS))
   (<- link SimLink (ClientLink))
   (val before link.queue.takes)
   (<- (Delay seconds))
@@ -127,33 +125,12 @@
 
 
 (deftest test-a-quiet-coordinator-does-not-wake-on-the-wall-clock
-  ;; worker 1 台・拍 10 秒(この 3 秒の間に heartbeat は来ない)・要求の無い 3 秒: coordinator は起きない(歩 0)。
+  ;; worker 1 台(比で延ばした世界 — heartbeat の間隔は 3 秒より長く、この間に heartbeat は来ない)・要求の無い 3 秒: coordinator は
+  ;; 起きない(歩 0)。
   ;; 直す前は 1 秒ごとに起きる(3 秒で 3 歩 前後)。
   (<- taken int (wall-sim-cluster :notice-broker (MemoryBroker) (quitters sim-foundation) (takes-while-quiet QUIET-SECONDS)
-                                  :workers RESTING-WORKERS :policy RESTING-POLICY :tick-seconds RESTING-TICK-SECONDS))
+                                  :workers RESTING-WORKERS :policy RESTING-POLICY))
   (assert (= taken 0) taken))
-
-
-;; --- 模擬の受付の列 — 預けた仮の heartbeat を、その刻に要求として渡す ---------------------------------------------------
-
-(defk hand-over-a-deposit [queue at]
-  {:pre [(: queue RequestQueue) (: at int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "worker w1 の代役が刻 at の仮の heartbeat を列に預け、取り手が受付を期限なしで待つ。取りの起きた刻と、取った要求の path・送り手を
-   返すため。"
-  (val request (! (heartbeat-of "w1")))
-  (<- promise Promise (CreatePromise))
-  (<- (deposit-beats queue "w1" #((ProvisionalBeat :at at :request request :name "w1")) (RestBell promise)))
-  (<- batch list (NextRequests None))
-  (<- woke int (now-epoch-ms))
-  #(woke (lfor r batch #(r.path r.actor))))
-
-
-(deftest test-the-sim-queue-hands-a-deposited-beat-over-at-its-instant
-  ;; 期限なしで待つ取り手は、預けた仮の heartbeat の刻(2500 ms)に起き、その heartbeat を普通の要求として受ける。直す前の列は、期限なしの
-  ;; 待ちを受けられない(待ちの秒を数として比べる)。
-  (val queue (RequestQueue))
-  (<- seen tuple ((sim-time-handler :clock (! (clock-at 0))) (with-handlers [(queued-requests queue)] (hand-over-a-deposit queue 2500))))
-  (assert (= seen #(2500 [#("/heartbeat" "w1")])) seen))
 
 
 ;; --- 落ち着かない調停ループは名指して落ちる ----------------------------------------------------------------------------------

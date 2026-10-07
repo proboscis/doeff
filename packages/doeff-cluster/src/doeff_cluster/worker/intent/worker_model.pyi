@@ -425,7 +425,6 @@ class AwaitNextTick(EffectBase[None]):
     policy: WorkerPolicy
     changed: Future[bool] | None
     wakes: WakeSet
-    state: WorkerState
     stopping: bool = False
 
 @dataclass(frozen=True)

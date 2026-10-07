@@ -14,6 +14,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker Redeclare ProcessesOf])
 (import doeff_cluster.worker.intent.worker_model [DesiredUnreadable])
 (import doeff_cluster.worker.protocol.declared [DeclaredReplyMalformed declared-reply-of-json])
@@ -89,12 +90,22 @@
 
 
 (deftest test-a-draining-worker-does-not-start-the-new-version-even-when-preparing-is-instant
-  ;; 失敗ケース A0(#3684): A と同じで準備 0 秒。直す前は drain 中の worker が版 2 を次の拍で起こした。
+  ;; 失敗ケース A0(#3684): A と同じで準備 0 秒。直す前は drain 中の worker が版 2 を次の拍で起こした。worker は周期で起きず
+  ;; すぐ起きるので(#3871 の単位 5)、drain の移し替え(移し先の版 1 が Ready になって drain 中の旧を止める)は宣言し直しの前の
+  ;; 0.1 秒で済む — 旧が版 2 の起きるまで動く順は A だけが断言する。ここは、drain 中の worker に新しい process が起きず、移し先で版 2
+  ;; だけが動いている事を断言する。止まりの刻を試すので本番の時間の設定(:timing)で回す(比で延ばした世界では、移し先の版 1 を版 2 が
+  ;; Ready になった後の heartbeat — 延ばした間隔 500 秒 — まで止めない)。
   (<- workers tuple (handoff-workers 0.0))
-  (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) (handoff-beacons sim-foundation)
+  (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (handoff-beacons sim-foundation)
                                   (drain-then-redeclare 10.0 120.0 (handoff-beacons-v2 sim-foundation) 0.0 25.0)
                                   :workers workers))
-  (<- (assert-the-drained-worker-kept-the-old-version seen)))
+  (assert (= (get seen.answer "status") 200) seen.answer)
+  (val old (get seen.before 0))
+  (assert (= (lfor p seen.after :if (and (= p.worker seen.host) (>= p.started-ms seen.drained-at)) p) []) seen.after)
+  (val live (lfor p seen.after :if (is p.exit-code None) p))
+  (assert (= (len live) 1) seen.after)
+  (assert (!= (. (get live 0) worker) seen.host) live)
+  (assert (!= (. (get live 0) spec-hash) old.spec-hash) #(old live)))
 
 
 (deftest test-an-unmovable-job-keeps-its-old-version-until-the-drain-expires-then-is-replaced

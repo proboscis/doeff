@@ -113,7 +113,7 @@ from doeff_core_effects.stop_signal_effects import StopRequested
 from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler
 from doeff_time import async_time_handler
 from doeff_cluster.shared.intent.due_model import DueAt
-from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy, WorkerState
+from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy
 from doeff_cluster.worker.protocol.tick_pauses import tick_pauses
 
 @do
@@ -122,7 +122,7 @@ def body():
     print('ready', flush=True)
     started = time.monotonic()
     due = DueAt(at=int(time.time() * 1000) + 60000)
-    yield AwaitNextTick(WorkerPolicy(), None, WakeSet(due=due, bells=(), exits=()), WorkerState())
+    yield AwaitNextTick(WorkerPolicy(), None, WakeSet(due=due, bells=(), exits=()))
     reason = yield StopRequested()
     print(f'{reason} {time.monotonic() - started:.3f}', flush=True)
 

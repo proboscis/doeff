@@ -1,8 +1,8 @@
-;; coordinator は要求の無い間、次の期限か要求か停止の合図まで受付を 1 本で待つ(#3865)。worker の代役(模擬の時計の下の宿)は静かな拍を
-;; 一度に眠り、預けた heartbeat は受付の列がその刻に普通の要求として渡す(#2790・#3865 の案 4)。
+;; coordinator は要求の無い間、次の期限か要求か停止の合図まで受付を 1 本で待つ(#3865)。worker の代役は本番と同じ待ち(期限・呼び鈴・
+;; 止めの合図の早い 1 つ — #3871 の単位 5)で周の間を待つ。
 ;;
-;; - 同値: 同じ筋書きを、期限だけで起きる走り(既定 — 宿は静かな拍を眠る)と、余計に起こす走り(宿は 1 拍ずつ打ち、coordinator を
-;;   1 秒ごとに外の出来事で起こす — 前の 1 秒の拍と同じ起き方)で回すと、耐久の状態の変わり目の列(判断とその刻)・置き場の最後の
+;; - 同値: 同じ筋書きを、期限だけで起きる走り(既定)と、余計に起こす走り(coordinator を 1 秒ごとに外の出来事で起こす — 前の 1 秒の
+;;   拍と同じ起き方)で回すと、耐久の状態の変わり目の列(判断とその刻)・置き場の最後の
 ;;   状態・筋書きの答えが一致する。比べる時は生存の印(counter の aliveMs・worker の lastSeenMs)を外す — 印は歩の刻に書くので、
 ;;   起きる回数で違ってよい(眠る間は印を書かない・#3865 の決定)。
 ;; - 期限だけで起きる走りの coordinator の歩は、余計に起こす走りより少ない(1 秒の格子で起きない)。
@@ -40,9 +40,7 @@
 (val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
 
-;; 仮想の長い時間を回す使い手の検と同じ worker の設定(拍 10 秒・起こし直しは待たせる)— 要求の無い時間が長い。
-;; 宿の刻み(sim-cluster の :tick-seconds・秒)。worker の代役は起きた刻から 10 秒ごとに拍を打つ。
-(val QUIET-TICK-SECONDS 10.0)
+;; 仮想の長い時間を回す使い手の検と同じ worker の設定(起こし直しは待たせる)— 要求の無い時間が長い。
 (val QUIET-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 (val EXTRA-WAKE-SECONDS 1.0)   ; 余計に起こす走りの、coordinator を外の出来事で起こす間隔(前の 1 秒の拍)
@@ -50,17 +48,13 @@
 
 (defrecord Trace
   "1 回の走りの読み: deltas = coordinator の置き場への書きの列(書いた順)・steps = 置き場へ書いた歩の記録(CoordinatorStep の tuple —
-   刻と書きの列)・final = 走りが終わった後の置き場の鍵の表・answer = 筋書きの答え・takes = coordinator の歩の数・deposits = worker の宿が
-   heartbeat を預けた回数(起こされた宿は預け直すので、宿の起きた回数の物差し)・heard-wakes = 列が積んだ heartbeat の返事が最後の返事と
-   違って宿を起こした回数。"
+   刻と書きの列)・final = 走りが終わった後の置き場の鍵の表・answer = 筋書きの答え・takes = coordinator の歩の数。"
   (#^ list deltas)
   (#^ (get tuple #(CoordinatorStep ...)) steps)
   ;; 置き場の鍵の表をそのまま持つ(置き場の口 load の答えの形 — 2 つの走りの最後の状態を丸ごと比べるため)。
   (#^ dict final)
   (#^ (| tuple None) answer)
-  (#^ int takes)
-  (#^ int deposits)
-  (#^ int heard-wakes))
+  (#^ int takes))
 
 
 (defk wake-every [queue seconds]
@@ -76,7 +70,7 @@
 (defk ended-with-takes [scenario extra]
   {:pre [(: scenario Program) (: extra bool)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きを回し(extra なら coordinator を EXTRA-WAKE-SECONDS ごとに起こしながら)、その答えと、終わった時の coordinator の歩の数と、
-   置き場へ書いた歩の記録と、宿の預けの回数と HEARD で起こした回数を返すため。"
+   置き場へ書いた歩の記録を返すため。"
   (<- link SimLink (ClientLink))
   (var waker None)
   (when extra
@@ -86,21 +80,18 @@
   (when (is-not waker None)
     (<- (Cancel waker)))
   (<- steps tuple (CoordinatorSteps))
-  #(answer link.queue.takes steps link.queue.deposits link.queue.heard-wakes))
+  #(answer link.queue.takes steps))
 
 
-(defk trace-of [system scenario every * [workers None] [policy None] [deployments None] [tick-seconds 0.5]]
+(defk trace-of [system scenario every * [workers None] [policy None] [deployments None]]
   {:pre [(: system System) (: scenario Program) (: every bool) (: workers (| tuple None)) (: policy (| WorkerPolicy None))
-         (: deployments (| dict None)) (: tick-seconds float)]
+         (: deployments (| dict None))]
    :post [(: % Trace)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "同じ系と筋書きを、every なら余計に起こす走り(宿は 1 拍ずつ打ち・coordinator を 1 秒ごとに起こす)、偽なら期限だけで起きる走り
-   (宿は静かな拍を眠る)で回し、置き場の書きの列と筋書きの答えと歩の数を返すため。"
+  "同じ系と筋書きを、every なら余計に起こす走り(coordinator を 1 秒ごとに起こす)、偽なら期限だけで起きる走りで回し、置き場の書きの列と筋書きの答えと歩の数を返すため。"
   (val made [])
-  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) system (ended-with-takes scenario every) :workers workers :policy policy :deployments deployments :tick-seconds tick-seconds
-                              :skip-idle (not every)
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) system (ended-with-takes scenario every) :workers workers :policy policy :deployments deployments
                               :store (fn [] (let [store (MemoryWalStore)] (.append made store) store))))
-  (Trace :deltas (. (get made 0) deltas) :steps (get seen 2) :final (.load (get made 0)) :answer (get seen 0) :takes (get seen 1)
-         :deposits (get seen 3) :heard-wakes (get seen 4)))
+  (Trace :deltas (. (get made 0) deltas) :steps (get seen 2) :final (.load (get made 0)) :answer (get seen 0) :takes (get seen 1)))
 
 
 (defk without-alive-marks [kv]
@@ -212,8 +203,8 @@
   ;; worker の死(沈黙 → 移し替え)と coordinator の止まり(止めの合図 → 作り直し)を含む筋書き: 余計に起こす走りと、期限だけで起きる
   ;; 走りで、耐久の状態の変わり目の列(判断とその刻 — worker の沈黙を判じた刻を含む)・置き場の最後の状態・coordinator の一生・
   ;; process の列・盤の行が一致する。期限だけで起きる走りは歩の数が少ない。
-  (<- every Trace (trace-of (quitters sim-foundation) (kill-then-stop) True :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-  (<- skipped Trace (trace-of (quitters sim-foundation) (kill-then-stop) False :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
+  (<- every Trace (trace-of (quitters sim-foundation) (kill-then-stop) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (kill-then-stop) False :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (> (len every.deltas) 10) (len every.deltas))
   (assert (is-not every.answer None) "走りは答えを返している")
   (assert (= (len (get every.answer 0)) 2) every.answer)
@@ -240,8 +231,8 @@
   ;; 余計に起こす走りの起こしの刻ちょうどの出来事(止めの注入)は、どちらの走りでも同じ刻に通る(模擬の列は要求の無いまま返る時に
   ;; 0 秒の Delay をはさむ)— 眠りの割り方(timer の登録の順)によらず、判断の刻と一生が一致する(2026-09-30 のレビューの再現)。
   (for [gaps [#(1.0) #(0.0001 0.9999) #(0.5 0.5) #(0.7)]]
-    (<- every Trace (trace-of (quitters sim-foundation) (stop-at-an-instant gaps) True :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-    (<- skipped Trace (trace-of (quitters sim-foundation) (stop-at-an-instant gaps) False :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
+    (<- every Trace (trace-of (quitters sim-foundation) (stop-at-an-instant gaps) True :workers TWO-WORKERS :policy QUIET-POLICY))
+    (<- skipped Trace (trace-of (quitters sim-foundation) (stop-at-an-instant gaps) False :workers TWO-WORKERS :policy QUIET-POLICY))
     (<- breaches list (same-decisions every skipped))
     (assert (= breaches []) #(gaps breaches))))
 
@@ -255,7 +246,7 @@
   (assert (= breaches []) breaches))
 
 
-(val QUIET-SECONDS 60.0)    ; 出来事の間の静かな区間の長さ(拍 10 秒の worker 2 台に、heartbeat が 6 回ずつ届く長さ)
+(val QUIET-SECONDS 60.0)    ; 出来事の間の静かな区間の長さ(worker 2 台に、heartbeat が間隔ごとに届く長さ)
 
 
 (defk quiet-stretches []
@@ -280,9 +271,9 @@
 
 (deftest test-a-quiet-system-keeps-every-decision-at-the-same-instant
   ;; 余計に起こす走りと、期限だけで起きる走りで、判断とその刻・task の答え・coordinator の一生・process の列・盤の行が一致する。task は
-  ;; lease の内に終わる(眠る宿の預けた heartbeat が、本番と同じ刻に届いて lease を延ばす)。
-  (<- every Trace (trace-of (quitters sim-foundation) (quiet-stretches) True :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-stretches) False :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
+  ;; lease の内に終わる(worker の heartbeat が、本番と同じ刻に届いて lease を延ばす)。
+  (<- every Trace (trace-of (quitters sim-foundation) (quiet-stretches) True :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-stretches) False :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (is-not every.answer None) "走りは答えを返している")
   (assert (isinstance (get every.answer 0) DetachedSucceeded) every.answer)
   (assert (= (len (get every.answer 1)) 2) every.answer)
@@ -299,10 +290,10 @@
 
 
 (deftest test-a-quiet-system-steps-only-for-requests-and-deadlines
-  ;; worker 2 台・拍 10 秒・何も起きない仮想の 5 分: 期限だけで起きる走りの coordinator の歩は、余計に起こす走り(1 秒ごとの起こしだけで
+  ;; worker 2 台・何も起きない仮想の 5 分: 期限だけで起きる走りの coordinator の歩は、余計に起こす走り(1 秒ごとの起こしだけで
   ;; 300 歩)より 300 歩以上少ない — 歩は届いた要求(heartbeat と名指しの待ち)と期限の分だけ。反例: 1 秒の格子で起きる作りは差が 0。
-  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 5) False :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-  (<- every Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 5) True :workers TWO-WORKERS :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
+  (<- skipped Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 5) False :workers TWO-WORKERS :policy QUIET-POLICY))
+  (<- every Trace (trace-of (quitters sim-foundation) (quiet-for-minutes 5) True :workers TWO-WORKERS :policy QUIET-POLICY))
   (assert (>= (- every.takes skipped.takes) 300) #(skipped.takes every.takes)))
 
 
@@ -428,76 +419,3 @@
     (<- at dict (place-tasks due quiet {} timing))
     (assert (= before settled) #(name "期限の 1 ms 前に変わった" before))
     (assert (!= at settled) #(name "期限の刻に変わらない" at))))
-
-
-;; --- 要求の刻と重なった、眠る宿の heartbeat(#2850 の続き・#3865)------------------------------------------------------------
-;; 眠っている worker の宿が預けた heartbeat の刻に、別の要求がちょうど届くと、前は宿を起こして本物の heartbeat を送らせた(起きた宿は先の
-;; 拍を試し直して預け直す — 使い手の模擬の検の 1 本で歩数 1,203,544 → 1,492,965)。今は宿を起こさず、列がその刻に heartbeat を要求と
-;; して積み、返事が最後の返事と同じなら宿は眠ったまま写す。違う時だけ宿を起こし、宿はその刻のまま、列が受けた返事で動く(送らない —
-;; 同じ刻の heartbeat を 2 度受けさせない)。
-;; - worker 1 台(拍 10 秒 — heartbeat は拍の刻 x0 秒)に、読みの要求を 10 秒ごとに 20 回、拍の刻ちょうど(x0 秒)と 0.1 秒後(x0.1 秒)に
-;;   送る。どちらも余計に起こす走りと判断の変わり目・置き場の最後の状態・筋書きの答えが一致し、重なった走りの宿の預けの回数は、ずらした
-;;   走りより多くない。反例 — 重なった刻に宿を起こす形は、重なるたびに宿が預け直して赤。
-;; - 拍の刻ちょうどに、その worker へ置く task を投げる: 返事が変わるので宿を起こし(HEARD)、余計に起こす走りと同じ刻に task を走らせる。
-;;   今の worker は名指しの待ち(/watch)で coordinator の変化を待つので、同じ歩で待ちも答え、宿はその刻に起きる。HEARD は待ちに頼らない
-;;   明示の道として残し、ここではその道を通った上で判断が同じことを見る。起きた宿が送らずに列の返事を読む(take-heard)ので、同じ刻の
-;;   heartbeat は 2 度届かない。
-(val ONE-WORKER #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
-
-
-(defk wait-until-offset [offset]
-  {:pre [(: offset float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書きの部品: 起動の刻を含む 10 秒の区切りの頭から数えた秒 offset の刻まで眠るため(worker の拍の刻 x0 秒に揃えて要求を送る)。"
-  (<- started int (now-epoch-ms))
-  (val origin (- started (% started 10000)))
-  (<- now int (now-epoch-ms))
-  (<- (Delay (/ (- (+ origin (int (* 1000 offset))) now) 1000.0)))
-  None)
-
-
-(defk reads-on [offsets]
-  {:pre [(: offsets tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 10 秒の区切りの頭から数えた秒 offsets の刻ちょうどに読みの要求を 1 件ずつ送り、終わりの一生を読むため。"
-  (<- started int (now-epoch-ms))
-  (val origin (- started (% started 10000)))
-  (for [offset offsets]
-    (<- now int (now-epoch-ms))
-    (<- (Delay (/ (- (+ origin (int (* 1000 offset))) now) 1000.0)))
-    (<- (ReadCoordinator "/state")))
-  (<- runs tuple (CoordinatorRuns))
-  runs)
-
-
-(deftest test-a-request-on-a-resting-workers-beat-takes-the-beat-without-waking-the-worker
-  (var deposits {})
-  (for [first [20.0 20.1]]
-    (val scenario (fn [] (reads-on (tuple (gfor k (range 20) (+ first (* 10.0 k)))))))
-    (<- every Trace (trace-of (quitters sim-foundation) (scenario) True :workers ONE-WORKER :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-    (<- skipped Trace (trace-of (quitters sim-foundation) (scenario) False :workers ONE-WORKER :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-    (assert (is-not every.answer None) "走りは答えを返している")
-    (<- breaches list (same-decisions every skipped))
-    (assert (= breaches []) #(first breaches))
-    (:= deposits (| deposits {first skipped.deposits})))
-  (assert (<= (get deposits 20.0) (get deposits 20.1)) deposits))
-
-
-(defk task-on-a-beat [offset]
-  {:pre [(: offset float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 10 秒の区切りの頭から数えた秒 offset の刻ちょうど(worker の拍の刻)に、worker へ置く切り離した task(10 秒眠る)を投げ、
-   答えを待って 30 秒の静かな区間をおき、task の答えと一生を読むため。"
-  (<- (wait-until-offset offset))
-  (<- (submit-detached-task (slow-task sim-task-foundation 10.0) :key "on-beat" :needs NET :name "on-beat" :lease-seconds 60.0))
-  (<- answer DetachedAwaited (AwaitDetached "on-beat" :timeout-seconds 120.0))
-  (<- (Delay 30.0))
-  (<- runs tuple (CoordinatorRuns))
-  #(answer runs))
-
-
-(deftest test-a-task-placed-on-a-resting-workers-beat-runs-at-the-same-tick
-  (<- every Trace (trace-of (quitters sim-foundation) (task-on-a-beat 60.0) True :workers ONE-WORKER :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-  (<- skipped Trace (trace-of (quitters sim-foundation) (task-on-a-beat 60.0) False :workers ONE-WORKER :policy QUIET-POLICY :tick-seconds QUIET-TICK-SECONDS))
-  (assert (isinstance (get every.answer 0) DetachedSucceeded) every.answer)
-  (<- breaches list (same-decisions every skipped))
-  (assert (= breaches []) breaches)
-  ;; 返事が変わった拍を受けて、宿をその刻に起こした(この道を通った)。
-  (assert (> skipped.heard-wakes 0) skipped.heard-wakes))

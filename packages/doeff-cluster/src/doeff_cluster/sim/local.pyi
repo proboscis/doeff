@@ -17,7 +17,7 @@ runtime_env_model.pyi と同じ形)。
 - 入口 sim-cluster・wall-sim-cluster は筋書きの答えの型をそのまま返す(defk は呼ぶと Program を返す)。
 - 仕組みの名のうち、他の module(doeff-cluster の検・業務の側の模擬)が import する物(SimChild・SimParts・SimExit・HostTruth・
   PartsOf・HostTruthOf・EndProcess と、coordinator-answers・host-answers・run-context-of・send-request・sim-process・
-  process-outside・ended-process・heartbeat・settle-beats・note-watch)も宣言する。外から使われない仕組み(SimPlan・PlanOf ほかの世界の effect と
+  process-outside・ended-process・heartbeat・note-watch・host-wakes)も宣言する。外から使われない仕組み(SimPlan・PlanOf ほかの世界の effect と
   筋の組み立て)は宣言しない。
 
 型の宣言がまだ無い doeff-cluster の Hy の module(coordinator/entry/handler_sets の RequestQueue・MemoryWalStore・shared/intent/run_context の
@@ -44,9 +44,9 @@ from doeff_cluster.coordinator.intent.cluster_model import ClusterState
 from doeff_cluster.shared.intent.job_model import JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure, RuntimeEnv
 from doeff_cluster.shared.intent.service_model import System
-from doeff_cluster.worker.intent.worker_model import WorkerPolicy
+from doeff_cluster.worker.intent.worker_model import WakeSet, WorkerPolicy
 from doeff_core_effects.process_effects import EnvEntry
-from doeff_core_effects.scheduler import Promise, Task
+from doeff_core_effects.scheduler import Future, Promise, Task
 from doeff_events import ArmedTimer, MemoryBroker
 from doeff_hy.json_value import JsonValue
 from doeff_vm import WithHandler
@@ -119,7 +119,6 @@ NO_STATE_FILE: str
 SIM_URL: str
 SIM_START_MS: int
 SIM_TIMING_RATIO: int
-SIM_TICK_SECONDS: float
 DECLARE_ACTOR: str
 CLIENT_NAME: str
 TASK_POLL_SECONDS: float
@@ -437,8 +436,8 @@ class SimExit:
 @dataclass(frozen=True, kw_only=True)
 class HostTruth:
     """worker の宿 1 つの真実(世界の session に在る)。processes・probes・statuses・last_desired・last_warm・task_echo は
-    worker_model の観測の値(型の宣言が無い — 読まずに運ぶ)。rest_bell は静かな拍を眠る宿の呼び鈴(request_queue.RestBell —
-    型の宣言が無い・読まずに運ぶ — #2850)。"""
+    worker_model の観測の値(型の宣言が無い — 読まずに運ぶ)。wake_bell・stop_bell は周の間の待ちを起こす宿の呼び鈴と止めの
+    呼び鈴・ticks は宣言を読んだ周の数(#3871 の単位 5)。"""
 
     boot: str
     boot_at: int
@@ -469,8 +468,9 @@ class HostTruth:
     stalled_until_ms: int = 0
     keep_fence_ms: int = ...
     sent_stopping: bool = False
-    rest_bell: object | None = None
-    rest_reach: int = ...
+    wake_bell: Promise[object] | None = None
+    stop_bell: Promise[object] | None = None
+    ticks: int = 0
     warm_children: tuple[object, ...] = ()
 
 @dataclass(frozen=True, kw_only=True)
@@ -514,10 +514,12 @@ def sim_process(
 ) -> Program[None, object]: ...
 def ended_process(log: tuple[SimProcess, ...], job: str) -> Program[SimProcess | None, object]: ...
 def heartbeat(worker: SimWorker, boot: str, stopping: bool, plan: object, parts: SimParts) -> Program[object, object]: ...
-def settle_beats(worker: SimWorker, boot: str, sent: tuple[object, ...]) -> Program[None, object]: ...
 def note_watch(
     name: str, boot: str, after: int, reading: _WatchReadingView
 ) -> Program[bool, object]: ...
+def host_wakes(
+    worker: SimWorker, truth: HostTruth, now: int, bell: Future[object] | None
+) -> Program[WakeSet, object]: ...
 
 # --- 入口 ---------------------------------------------------------------------------------------------
 
@@ -535,8 +537,6 @@ def sim_cluster(
     store: Callable[[], _WalStoreView] | None = None,
     deployments: dict[str, dict[str, int]] | None = None,
     runtime_env: RuntimeEnv | None = None,
-    skip_idle: bool = True,
-    tick_seconds: float = 0.5,
     notice_broker: MemoryBroker,
 ) -> Program[_Answer, object]: ...
 def wall_sim_cluster(
@@ -552,6 +552,5 @@ def wall_sim_cluster(
     store: Callable[[], _WalStoreView] | None = None,
     deployments: dict[str, dict[str, int]] | None = None,
     runtime_env: RuntimeEnv | None = None,
-    tick_seconds: float = 0.5,
     notice_broker: MemoryBroker,
 ) -> Program[_Answer, object]: ...
