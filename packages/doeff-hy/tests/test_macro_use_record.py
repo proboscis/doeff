@@ -36,9 +36,65 @@ MACROS = """\
 (defmacro hands [] (by-argument consts))
 (defmacro unused [] 100)
 (defmacro check [x] 0)
+(import {pkg}.tables :as tables)
+(import {pkg}.fakeext [Thing])
+(import {pkg}.contexts [MODE])
+(setv HY-TABLE {{"a" 1}})
+(setv (get HY-TABLE "b") 2)
+(setv HY-OTHER {{"z" 0}})
+(defn hy-look [k] (get HY-TABLE k))
+(defmacro looks [] (tables.lookup "a"))
+(defmacro hy-looks [] (hy-look "a"))
+(defmacro thing [] (do Thing 1))
+(defmacro mode [] (do (.get MODE) 1))
 """
 
 CONSTS = "(setv OFFSET 1)\n(setv HIDDEN 5)\n"
+
+#: macro が展開の時に読む大域の表(Python の module)。TABLE は top-level の文と、import の時に呼ぶ登録の関数で行が足される。
+#: OTHER と unrelated は閉包から辿られない。
+TABLES = """\
+TABLE = {"a": 1}
+TABLE["b"] = 2
+OTHER = {"z": 0}
+
+
+def _register():
+    TABLE["c"] = 3
+
+
+_register()
+
+
+def lookup(k):
+    return TABLE[k]
+
+
+def unrelated():
+    return OTHER
+"""
+
+#: 拡張の module の写し(Python の source から作るが、__file__ を .so に向ける — 記録の側からは source の無い拡張の module に見える)。
+FAKEEXT = """\
+import pathlib
+
+
+class Thing:
+    KIND = "a"
+
+    def run(self):
+        return 1
+
+
+__file__ = str(pathlib.Path(__file__).with_name("fakeext.cpython-test.so"))
+"""
+
+CONTEXTS = """\
+from contextvars import ContextVar
+
+MODE = ContextVar("mode", default="plain")
+LATER = 1
+"""
 
 #: 使う側の module(名 → source)。user = used だけを名指して require する・shadowed = macro の module の全部を require し、
 #: 自分の関数 shadow を呼ぶ(後から macro の module に同じ名の macro が足されると、展開が変わる)。
@@ -49,6 +105,10 @@ USERS = {
     "hander": "(require {pkg}.macros [hands])\n(setv value (hands))\n",
     "chooser": "(require {pkg}.macros [used])\n(defn run [check] (check (used)))\n(setv value (run (fn [x] x)))\n",
     "shadowed": "(require {pkg}.macros *)\n(defn shadow [x] x)\n(setv value (shadow (used)))\n",
+    "looker": "(require {pkg}.macros [looks])\n(setv value (looks))\n",
+    "hylooker": "(require {pkg}.macros [hy-looks])\n(setv value (hy-looks))\n",
+    "thinger": "(require {pkg}.macros [thing])\n(setv value (thing))\n",
+    "moder": "(require {pkg}.macros [mode])\n(setv value (mode))\n",
 }
 
 
@@ -66,6 +126,22 @@ class Tree:
     @property
     def consts(self) -> Path:
         return self.directory / "consts.hy"
+
+    @property
+    def tables(self) -> Path:
+        return self.directory / "tables.py"
+
+    @property
+    def fakeext(self) -> Path:
+        return self.directory / "fakeext.py"
+
+    @property
+    def fakeext_binary(self) -> Path:
+        return self.directory / "fakeext.cpython-test.so"
+
+    @property
+    def contexts(self) -> Path:
+        return self.directory / "contexts.py"
 
     def forget(self) -> None:
         """検の package の module を sys.modules から外す(次の実行と同じく、次に macro の module を読み直させる)。"""
@@ -100,6 +176,10 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Tree]:
     (directory / "__init__.py").write_text("", encoding="utf-8")
     (directory / "macros.hy").write_text(MACROS.format(pkg=package), encoding="utf-8")
     (directory / "consts.hy").write_text(CONSTS, encoding="utf-8")
+    (directory / "tables.py").write_text(TABLES, encoding="utf-8")
+    (directory / "fakeext.py").write_text(FAKEEXT, encoding="utf-8")
+    (directory / "fakeext.cpython-test.so").write_bytes(b"binary one")
+    (directory / "contexts.py").write_text(CONTEXTS, encoding="utf-8")
     for name, text in USERS.items():
         (directory / f"{name}.hy").write_text(text.format(pkg=package), encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -197,6 +277,112 @@ def test_a_function_named_like_an_unrequired_macro_keeps_the_record_current(tree
     # あっても入らないので、記録は作った直後に今のまま。
     record = tree.record("chooser")
     assert tree.is_current(record), "選んで require していない macro と同じ名の関数の呼び出しで古いと判じた"
+
+
+# ---- 辿れない値を file の全体でなく狭く覆う(agora-redesign #3938)-------------------------------------------------------
+# 冷えるべき時(直す前から緑でよい — 直した後も緑であることが要)。
+
+
+def test_a_changed_table_the_macro_reads_is_stale(tree: Tree) -> None:
+    record = tree.record("looker")
+    _replace(tree.tables, 'TABLE = {"a": 1}', 'TABLE = {"a": 10}')
+    assert not tree.is_current(record), "macro が読む大域の表の中身を替えたのに古いと判じない"
+
+
+def test_a_changed_top_level_row_of_the_table_is_stale(tree: Tree) -> None:
+    record = tree.record("looker")
+    _replace(tree.tables, 'TABLE["b"] = 2', 'TABLE["b"] = 20')
+    assert not tree.is_current(record), "top-level の文で表に足す行を替えたのに古いと判じない"
+
+
+def test_a_changed_row_added_by_a_registering_function_is_stale(tree: Tree) -> None:
+    # 閉包から辿られない関数(import の時に呼ぶ登録)の中で表に足す行。
+    record = tree.record("looker")
+    _replace(tree.tables, 'TABLE["c"] = 3', 'TABLE["c"] = 30')
+    assert not tree.is_current(record), "import の時に呼ぶ関数が表に足す行を替えたのに古いと判じない"
+
+
+def test_a_changed_hy_table_the_macro_reads_is_stale(tree: Tree) -> None:
+    record = tree.record("hylooker")
+    _replace(tree.macros, '(setv HY-TABLE {"a" 1})', '(setv HY-TABLE {"a" 10})')
+    assert not tree.is_current(record), "macro が読む Hy の大域の表の中身を替えたのに古いと判じない"
+
+
+def test_a_changed_top_level_row_of_the_hy_table_is_stale(tree: Tree) -> None:
+    record = tree.record("hylooker")
+    _replace(tree.macros, '(setv (get HY-TABLE "b") 2)', '(setv (get HY-TABLE "b") 20)')
+    assert not tree.is_current(record), "top-level の文で Hy の表に足す行を替えたのに古いと判じない"
+
+
+def test_a_new_public_attribute_of_an_extension_class_is_stale(tree: Tree) -> None:
+    # 直す前は赤: 拡張の module の class は .so の file の sha256 で覆っていたので、公開の形が変わっても .so が同じなら古くないと判じた
+    # (ここでは .so の写しの中身を替えずに class の属性を足す)。
+    record = tree.record("thinger")
+    _replace(tree.fakeext, '    KIND = "a"\n', '    KIND = "a"\n    EXTRA = 1\n')
+    assert not tree.is_current(record), "拡張の class の公開の属性が増えたのに古いと判じない"
+
+
+def test_a_removed_public_attribute_of_an_extension_class_is_stale(tree: Tree) -> None:
+    # 直す前は赤(上と同じ訳 — .so の写しの中身は替えない)。
+    record = tree.record("thinger")
+    _replace(tree.fakeext, "    def run(self):\n        return 1\n", "    pass\n")
+    assert not tree.is_current(record), "拡張の class の公開の属性が減ったのに古いと判じない"
+
+
+def test_a_changed_default_of_a_context_variable_is_stale(tree: Tree) -> None:
+    # 直す前は赤: ContextVar は読む関数の module(macros.hy)の file で覆っていたので、定義した module で既定値を替えても古くない。
+    record = tree.record("moder")
+    _replace(tree.contexts, 'default="plain"', 'default="fancy!"')
+    assert not tree.is_current(record), "ContextVar の既定値を替えたのに古いと判じない"
+
+
+# 冷えなくてよい時(直す前は赤)。
+
+
+def test_a_changed_unrelated_function_beside_the_table_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: 表(dict)を辿ると、その module(tables.py)の file の sha256 で覆っていた。
+    record = tree.record("looker")
+    _replace(tree.tables, "    return OTHER\n", "    return OTHER, 1\n")
+    assert tree.is_current(record), "閉包から辿られない関数を替えただけで古いと判じた"
+
+
+def test_a_changed_unrelated_global_beside_the_table_keeps_the_record_current(tree: Tree) -> None:
+    record = tree.record("looker")
+    _replace(tree.tables, 'OTHER = {"z": 0}', 'OTHER = {"z": 100}')
+    assert tree.is_current(record), "閉包から辿られない別の大域を替えただけで古いと判じた"
+
+
+def test_a_changed_unused_macro_beside_a_hy_table_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: Hy の表(macros.hy の HY-TABLE)を辿ると macros.hy の file の sha256 で覆っていた。
+    record = tree.record("hylooker")
+    _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
+    assert tree.is_current(record), "表を名で引く macro の module の別の行を替えただけで古いと判じた"
+
+
+def test_a_changed_unrelated_hy_global_beside_a_hy_table_keeps_the_record_current(tree: Tree) -> None:
+    record = tree.record("hylooker")
+    _replace(tree.macros, '(setv HY-OTHER {"z" 0})', '(setv HY-OTHER {"z" 100})')
+    assert tree.is_current(record), "表を名で引く macro の module の別の大域を替えただけで古いと判じた"
+
+
+def test_a_changed_binary_of_an_extension_with_the_same_shape_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: 拡張の module の class は .so の file の sha256 で覆っていた。
+    record = tree.record("thinger")
+    tree.fakeext_binary.write_bytes(b"binary two, rebuilt")
+    assert tree.is_current(record), "公開の形が同じ拡張の .so の中身だけが変わって古いと判じた"
+
+
+def test_a_changed_unrelated_line_beside_a_context_variable_keeps_the_record_current(tree: Tree) -> None:
+    record = tree.record("moder")
+    _replace(tree.contexts, "LATER = 1", "LATER = 100")
+    assert tree.is_current(record), "ContextVar の module の別の行を替えただけで古いと判じた"
+
+
+def test_a_changed_unused_macro_beside_a_context_variable_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: ContextVar は読む関数の module(macros.hy)の file で覆っていた。
+    record = tree.record("moder")
+    _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
+    assert tree.is_current(record), "ContextVar を読む macro の module の別の行を替えただけで古いと判じた"
 
 
 # ---- 実物の doeff_hy の macro(doeff_hy を一時の dir に写し、別の process で記録を作って照らす)------------------------------
@@ -335,3 +521,71 @@ def test_a_changed_defk_makes_the_record_of_a_defk_user_stale(real_tree: RealTre
         '"Define a kleisli function (@do decorator, changed)',
     )
     assert real_tree.run("check")["current"] is False, "使った defk を替えたのに古いと判じない"
+
+
+#: defk・val・<- だけを使う module。
+REAL_DEFK_USER = """\
+(require doeff-hy.macros [defk <- val])
+
+(val base 1)
+
+(defk step [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "judgment"}}
+  "1 を足す。"
+  (+ n base))
+
+(defk job [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "entry"}}
+  "束ね。"
+  (<- a (step n))
+  a)
+"""
+
+#: 閉包から辿られない、展開に効かない関数(file の末尾に足す)。
+UNREACHED_PY = "\n\ndef _unreached_probe() -> int:\n    return 1\n"
+UNREACHED_HY = "\n(defn _unreached-probe [] 1)\n"
+
+
+def _append(path: Path, text: str) -> None:
+    """file の末尾に文を足す。"""
+    path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
+
+
+def test_an_unreached_function_in_binding_forms_and_static_view_keeps_a_defk_user_current(
+    real_tree: RealTree,
+) -> None:
+    # 直す前は赤(agora の Hy の module 414 個のほぼ全部が pin を上げるたびに作り直された): binding_forms の大域の dict・
+    # dataclass の欄の名 vars の読み・kwdefaults の dict・static_view の ContextVar を辿ると、その module の file の sha256 で
+    # 覆っていた。
+    (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
+    real_tree.run("record")
+    _append(real_tree.lib / "doeff_hy" / "binding_forms.py", UNREACHED_PY)
+    _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
+    assert real_tree.run("check")["current"] is True, (
+        "binding_forms と static_view に辿られない関数を足しただけで defk・val の使い手を古いと判じた"
+    )
+
+
+def test_an_unreached_function_in_clause_endings_keeps_a_defhandler_user_current(
+    real_tree: RealTree,
+) -> None:
+    # 直す前は赤: defhandler が読む clause_endings.hy の表(NAMED-RESUMPTION)を辿ると clause_endings.hy の file で覆っていた。
+    real_tree.run("record")
+    _append(real_tree.lib / "doeff_hy" / "clause_endings.hy", UNREACHED_HY)
+    _append(real_tree.lib / "doeff_hy" / "binding_forms.py", UNREACHED_PY)
+    _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
+    assert real_tree.run("check")["current"] is True, (
+        "clause_endings・binding_forms・static_view に辿られない関数を足しただけで defhandler の使い手を古いと判じた"
+    )
+
+
+def test_a_changed_table_in_binding_forms_makes_a_defk_user_stale(real_tree: RealTree) -> None:
+    # 冷えるべき時: defk・val が読む binding_forms の表(_KINDS)の行を替えたら古い。
+    (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
+    real_tree.run("record")
+    _replace(
+        real_tree.lib / "doeff_hy" / "binding_forms.py",
+        '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAL, "var": Mutability.VAR}',
+        '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAR, "var": Mutability.VAR, "v": Mutability.VAL}',
+    )
+    assert real_tree.run("check")["current"] is False, "binding_forms の _KINDS を替えたのに古いと判じない"
