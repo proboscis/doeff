@@ -19,11 +19,21 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   module を require して落ちうる — 落ちた時は名だけを入れ、記録の ``files`` にその file の sha256 を置く(照らす時は
   import せずに比べる)。
 - enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
-- 安全側に倒す: 辿れない値(上のどれでもない object・list・dict)がある時は、その値を辿り始めた関数の module の file の sha256 を
-  足す。名で辿れない読み(``globals()``・``vars``・``__dict__``・``sys.modules``・``import_module``・``eval``)を code に持つ
-  関数は、その関数の module の file と、関数が参照する module の file の sha256 を足す。
+- 辿れない値を狭く覆う(agora-redesign #3938):
+  - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
+    (:mod:`doeff_hy_bytecode_guard.bound_source` — 文が読む名と、本体で書き換えうる top-level の関数も辿る)。
+  - frozen の dataclass の値は class と欄の値で、ContextVar は名と既定値で入れる(今の値は実行の状態なので入れない)。
+  - 拡張の module の class(Python の source の無い class)は、.so の file ではなく名と公開の形(基底・属性の名と種類)で覆う。
+  - 関数の kwdefaults(名 → 既定値の dict)は名の順に値で入れる。
+- 安全側に倒す: 大域の名でなく引いた辿れない値(既定値・閉包の cell・組の中・class の値)・source を読めない module の大域は、
+  その module の file の sha256 を足す。名で辿れない読み(:class:`NamespaceRead`)は、大域の名として読むか属性として読むかで分ける:
+  module の名前空間の読み(``globals()`` ・ ``vars`` ・ ``sys.modules`` ・ ``import_module`` ・ ``eval``)を持つ関数は、その関数の
+  module の file と関数が参照する module の file を、object の名前空間の読み(``x.__dict__`` ・ ``__getattribute__``)を持つ関数は、
+  関数が参照する module の file を足す(欄の名 ``x.vars`` は読みではない)。
 """
 
+import contextvars
+import dataclasses
 import dis
 import enum
 import functools
@@ -40,6 +50,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import CodeType, FunctionType, ModuleType
 
+from doeff_hy_bytecode_guard import bound_source
 from doeff_hy_bytecode_guard.records import (
     MACRO_TABLE,
     READER_TABLE,
@@ -512,10 +523,25 @@ def _named_only(module_name: str) -> bool:
     return top in _NAMED_ONLY or top in sys.stdlib_module_names
 
 
-#: 名で辿れない読みの印(code の名の表に出る名)— module の名前空間そのもの・module の表・文字列の式を読む。これを持つ関数は、
-#: その module と、関数が参照する module の file の sha256 で覆う。``getattr`` / ``hasattr`` と文字列の key の読みはここに
-#: 入れない: code の文字列の定数を名として扱い(:attr:`CodeFacts.texts`)、辿った module のその名の属性を入れる。
-_UNTRACEABLE_NAMES = frozenset(
+class NamespaceRead(enum.Enum):
+    """code が名で辿れない読みを持つか、持つならどの広さか。
+
+    - NONE = 持たない。
+    - OBJECT = 渡された object の名前空間の読み(``x.__dict__`` ・ ``__getattribute__`` ・ ``attrgetter`` ・ ``getattr_static``)。
+      読む名は ``getattr(x, "名")`` と同じく code の文字列の定数として覆う(:attr:`CodeFacts.texts`)。関数の module そのものは、
+      MODULE の読み(``globals()`` ・ ``sys.modules`` ・ ``import_module`` …)なしには object として渡せないので、関数が参照する
+      module の file だけで覆う。
+    - MODULE = module の名前空間・module の表・文字列の式の読み(``globals()`` ・ ``vars`` ・ ``sys.modules`` ・ ``eval`` …)—
+      関数の module と、関数が参照する module の file で覆う。
+    """
+
+    NONE = "none"
+    OBJECT = "object"
+    MODULE = "module"
+
+
+#: 大域の名として読むと MODULE の読みになる名(``vars`` は大域の組み込みとして呼ぶ時だけ — 欄の名 ``x.vars`` は読みではない)。
+_MODULE_READ_GLOBALS = frozenset(
     {
         "globals",
         "vars",
@@ -523,16 +549,37 @@ _UNTRACEABLE_NAMES = frozenset(
         "eval",
         "exec",
         "__import__",
-        "__dict__",
-        "__getattribute__",
         "import_module",
         "modules",
         "macroexpand",
         "macroexpand_1",
-        "attrgetter",
-        "getattr_static",
     }
 )
+
+#: 属性として読むと MODULE の読みになる名(``sys.modules`` ・ ``hy.eval`` ・ ``importlib.import_module`` ・ ``f.__globals__``)。
+_MODULE_READ_ATTRIBUTES = frozenset(
+    {
+        "eval",
+        "exec",
+        "__import__",
+        "import_module",
+        "modules",
+        "macroexpand",
+        "macroexpand_1",
+        "__globals__",
+    }
+)
+
+#: 大域の名・属性として読むと OBJECT の読みになる名。
+_OBJECT_READ_GLOBALS = frozenset({"attrgetter", "getattr_static"})
+_OBJECT_READ_ATTRIBUTES = frozenset(
+    {"__dict__", "__getattribute__", "attrgetter", "getattr_static"}
+)
+
+_UNTRACEABLE_NAMES = (
+    _MODULE_READ_GLOBALS | _MODULE_READ_ATTRIBUTES | _OBJECT_READ_GLOBALS | _OBJECT_READ_ATTRIBUTES
+)
+
 
 #: class の中身のうち、振る舞いでない物(行番号・注記・抽象 class の内部の覚え・dataclass の欄の記述)。
 _CLASS_SKIP = frozenset(
@@ -588,7 +635,7 @@ class CodeFacts:
     texts: tuple[str, ...]
     imports: tuple[ImportReference, ...]
     called_modules: tuple[str, ...]
-    untraceable: bool
+    reads: NamespaceRead
 
 
 #: process の中の code の読みの覚え(code object の id → (code・読んだ物) — code を生かしておき id の使い回しを防ぐ)。
@@ -635,8 +682,7 @@ def _code_facts(code: CodeType) -> CodeFacts:
                 {*_called_modules(texts), *(m for inner in nested for m in inner.called_modules)}
             )
         ),
-        untraceable=not _UNTRACEABLE_NAMES.isdisjoint(code.co_names)
-        or any(inner.untraceable for inner in nested),
+        reads=_widest((_namespace_read(code), *(inner.reads for inner in nested))),
     )
     _FACTS[id(code)] = (code, facts)
     return facts
@@ -701,6 +747,103 @@ def _imports(code: CodeType) -> Iterator[ImportReference]:
                     level = 0
             yield ImportReference(code.co_names[unit.arg], level)
         previous = (previous[1], unit)
+
+
+def _opcode(name: str) -> int:
+    """命令の番号(この Python の版に無い命令は -1)。"""
+    return dis.opmap.get(name, -1)
+
+
+#: 名の表の名を大域として読む命令と、引数から名の表の番号を出す右への shift(3.11 から LOAD_GLOBAL は 1 つ・3.12 から LOAD_ATTR は
+#: 1 つ・LOAD_SUPER_ATTR は 2 つ)。
+_GLOBAL_NAME_LOADS: dict[int, int] = {
+    _opcode("LOAD_GLOBAL"): 1 if sys.version_info >= (3, 11) else 0,
+    _opcode("LOAD_NAME"): 0,
+    _opcode("LOAD_FROM_DICT_OR_GLOBALS"): 0,
+    _opcode("IMPORT_FROM"): 0,
+}
+_ATTRIBUTE_NAME_LOADS: dict[int, int] = {
+    _opcode("LOAD_ATTR"): 1 if sys.version_info >= (3, 12) else 0,
+    _opcode("LOAD_METHOD"): 0,
+    _opcode("LOAD_SUPER_ATTR"): 2,
+}
+#: 名の表の名を読みでなく使う命令(書き・消し・import の module の名)— 名で辿れない読みの印の名がこれだけに出れば読みではない。
+_OTHER_NAME_USES = frozenset(
+    {
+        _opcode("STORE_ATTR"),
+        _opcode("DELETE_ATTR"),
+        _opcode("STORE_GLOBAL"),
+        _opcode("DELETE_GLOBAL"),
+        _opcode("STORE_NAME"),
+        _opcode("DELETE_NAME"),
+        _opcode("IMPORT_NAME"),
+    }
+) - {-1}
+
+
+def _namespace_read(code: CodeType) -> NamespaceRead:
+    """code object 1 つ(入れ子は除く)の名で辿れない読みの広さ — 印の名を、大域として読むか属性として読むかで分ける。印の名が
+    分けられる命令のどれにも出ない時(知らない命令の使い)は、安全側に MODULE と判じる。"""
+    marks = _UNTRACEABLE_NAMES.intersection(code.co_names)
+    if not marks:
+        return NamespaceRead.NONE
+    uses = tuple(_name_uses(code))
+    read = _widest(tuple(_mark_read(use) for use in uses if use.name in marks))
+    unexplained = marks - {use.name for use in uses}
+    return NamespaceRead.MODULE if unexplained else read
+
+
+class NameWay(enum.Enum):
+    """名の表の名の使い方(大域の読み・属性の読み・それ以外)。"""
+
+    GLOBAL = "global"
+    ATTRIBUTE = "attribute"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class NameUse:
+    """code の中の名の表の名の使い 1 つ(名と使い方)。"""
+
+    name: str
+    way: NameWay
+
+
+def _name_uses(code: CodeType) -> Iterator[NameUse]:
+    """code の命令のうち、名の表の名を使う物。"""
+    for unit in _units(code):
+        if unit.op in _GLOBAL_NAME_LOADS:
+            yield NameUse(code.co_names[unit.arg >> _GLOBAL_NAME_LOADS[unit.op]], NameWay.GLOBAL)
+        elif unit.op in _ATTRIBUTE_NAME_LOADS:
+            yield NameUse(
+                code.co_names[unit.arg >> _ATTRIBUTE_NAME_LOADS[unit.op]], NameWay.ATTRIBUTE
+            )
+        elif unit.op in _OTHER_NAME_USES:
+            yield NameUse(code.co_names[unit.arg], NameWay.OTHER)
+
+
+def _mark_read(use: NameUse) -> NamespaceRead:
+    """印の名の使い 1 つの読みの広さ。"""
+    match use:
+        case NameUse(way=NameWay.GLOBAL, name=name) if name in _MODULE_READ_GLOBALS:
+            return NamespaceRead.MODULE
+        case NameUse(way=NameWay.GLOBAL, name=name) if name in _OBJECT_READ_GLOBALS:
+            return NamespaceRead.OBJECT
+        case NameUse(way=NameWay.ATTRIBUTE, name=name) if name in _MODULE_READ_ATTRIBUTES:
+            return NamespaceRead.MODULE
+        case NameUse(way=NameWay.ATTRIBUTE, name=name) if name in _OBJECT_READ_ATTRIBUTES:
+            return NamespaceRead.OBJECT
+        case NameUse():
+            return NamespaceRead.NONE
+
+
+def _widest(reads: tuple[NamespaceRead, ...]) -> NamespaceRead:
+    """読みの広さのうち一番広い物。"""
+    if NamespaceRead.MODULE in reads:
+        return NamespaceRead.MODULE
+    if NamespaceRead.OBJECT in reads:
+        return NamespaceRead.OBJECT
+    return NamespaceRead.NONE
 
 
 def _called_modules(texts: tuple[str, ...]) -> Iterator[str]:
@@ -776,6 +919,8 @@ class _Walker:
         self.unimportable: set[str] = set()
         #: import の途中の module に出会ったか(その digest は import の進み具合に依るので覚えない)。
         self._mut_partial = False
+        #: source の文で覆った大域(module の名・大域の名 — 2 度目は印だけ入れる)。
+        self._bound_names: set[tuple[str, str]] = set()
 
     def digest(self) -> str:
         """辿った物の digest(16 進)— 参照した module の、文字列の定数の名の属性を入れ終えてから。"""
@@ -866,7 +1011,10 @@ class _Walker:
         self._texts.update(facts.texts)
         self._feed("function", module_name, function.__qualname__, facts.shape)
         self._value(function.__defaults__, home, facts.names)
-        self._value(function.__kwdefaults__, home, facts.names)
+        # keyword だけの引数の既定値は名 → 値の dict(名の順に入れる — dict のまま入れると辿れない値になる)。
+        for keyword, default in sorted((function.__kwdefaults__ or {}).items()):
+            self._feed("kwdefault", keyword)
+            self._value(default, home, facts.names)
         for cell in function.__closure__ or ():
             try:
                 content = cell.cell_contents
@@ -875,10 +1023,17 @@ class _Walker:
                 continue
             self._value(content, home, facts.names)
         namespace = function.__globals__
+        # 大域の名の在処(関数の大域が module の名前空間そのものの時だけ — 辿れない値を、その名の source の文で覆う)。
+        owner = home if home is not None and vars(home) is namespace else None
         for name in facts.names:
             if name in namespace:
                 self._feed("global", name)
-                self._value(namespace[name], home, facts.names)
+                self._value(
+                    namespace[name],
+                    home,
+                    facts.names,
+                    None if owner is None else GlobalName(owner, name),
+                )
         package = namespace.get("__package__")
         for reference in facts.imports:
             self._lazy_module(
@@ -888,12 +1043,23 @@ class _Walker:
             )
         for called in facts.called_modules:
             self._called_macros(called, facts.texts, home)
-        if facts.untraceable:
-            self._fold(home)
-            for name in facts.names:
-                value = namespace.get(name)
-                if isinstance(value, ModuleType) and not _named_only(value.__name__):
-                    self._fold(value)
+        match facts.reads:
+            case NamespaceRead.MODULE:
+                self._fold(home)
+                self._fold_referenced_modules(namespace, facts.names)
+            case NamespaceRead.OBJECT:
+                self._fold_referenced_modules(namespace, facts.names)
+            case NamespaceRead.NONE:
+                pass
+
+    def _fold_referenced_modules(
+        self, namespace: dict[str, object], names: tuple[str, ...]
+    ) -> None:
+        """関数が大域の名で参照する module の file の sha256 を足す(名で辿れない読みの先になりうる module)。"""
+        for name in names:
+            value = namespace.get(name)
+            if isinstance(value, ModuleType) and not _named_only(value.__name__):
+                self._fold(value)
 
     def outside_value(self, module: ModuleType, value: object) -> None:
         """macro の外で展開の結果を変える値(module の属性)を入れる。"""
@@ -935,8 +1101,15 @@ class _Walker:
                 self._feed("member", name)
                 self._value(value, module, ())
 
-    def _value(self, value: object, home: ModuleType | None, names: tuple[str, ...]) -> None:
-        """値 1 つを入れる(型ごとの規則は module の docstring)。"""
+    def _value(
+        self,
+        value: object,
+        home: ModuleType | None,
+        names: tuple[str, ...],
+        bound: "GlobalName | None" = None,
+    ) -> None:
+        """値 1 つを入れる(型ごとの規則は module の docstring)。bound = 値が module の大域の名で引かれた時の在処(辿れない値を
+        その名の source の文で覆う)。"""
         match value:
             case None | bool() | int() | float() | complex() | str() | bytes():
                 kind = type(value)
@@ -956,10 +1129,14 @@ class _Walker:
             case ModuleType():
                 self._module(value, names)
             case _:
-                self._wrapped_value(value, home, names)
+                self._wrapped_value(value, home, names, bound)
 
     def _wrapped_value(
-        self, value: object, home: ModuleType | None, names: tuple[str, ...]
+        self,
+        value: object,
+        home: ModuleType | None,
+        names: tuple[str, ...],
+        bound: "GlobalName | None",
     ) -> None:
         """関数を包む値(staticmethod・property・partial・bound method)・enum・C の関数・Hy の値・辿れない値を入れる。"""
         match value:
@@ -995,11 +1172,115 @@ class _Walker:
                 kind = type(value)
                 self._feed("hy-value", kind.__qualname__, repr(value))
             case _:
-                # 辿れない値。list と dict もここ — process の中の覚え(doeff_hy.macros の _RESUME_ANALYSIS_CACHE は object の id の
-                # 組を鍵に持つ dict・呼ばれた順を積む list)の中身は実行の途中で変わり、入れると同じ macro の digest が process
-                # ごとに違って照らす度に古いと判じる。初めの中身は source に書いてあるので、持ち主の module の file で覆う。
+                self._state_value(value, home, names, bound)
+
+    def _state_value(
+        self,
+        value: object,
+        home: ModuleType | None,
+        names: tuple[str, ...],
+        bound: "GlobalName | None",
+    ) -> None:
+        """関数を包まない値のうち、中身を値で入れられない物(ContextVar・frozen の dataclass の値・表・辿れない object)。"""
+        match value:
+            case contextvars.ContextVar():
+                # 名と既定値で覆う。今の値は入れない — 実行の状態で、展開の結果を決める表ではない(型検査の展開の印
+                # TYPE_CHECK_EXPANSION が真の間の展開は記録を付けない — loader_hooks)。
+                self._feed("context-variable", value.name)
+                self._context_default(value, home, names)
+            case _ if _frozen_dataclass_instance(value):
+                # frozen の dataclass の値(binding_forms の _TOP・ModuleNames() の既定値など)— class と欄の値で入れる。
+                self._feed("frozen-instance")
+                self._class(type(value))
+                for field in dataclasses.fields(value):
+                    self._feed("field", field.name)
+                    self._value(getattr(value, field.name), home, names)
+            case _ if bound is not None:
+                # 辿れない値を module の大域の名で引いた — その名を束縛し書き換える source の文で覆う。list と dict もここ。
+                # process の中の覚え(doeff_hy.macros の _RESUME_ANALYSIS_CACHE は object の id の組を鍵に持つ dict・呼ばれた順を
+                # 積む list)の中身は実行の途中で変わり、中身を入れると同じ macro の digest が process ごとに違って照らす度に
+                # 古いと判じる。初めの中身と書き換えは source に書いてある。
+                self._feed("opaque", type(value).__module__, type(value).__qualname__)
+                self._bound(bound)
+            case _:
+                # 辿れない値を大域の名でなく引いた(既定値・閉包の cell・組の中・class の値)— 持ち主の module の file で覆う。
                 self._feed("opaque", type(value).__module__, type(value).__qualname__)
                 self._fold(home)
+
+    def _context_default(
+        self,
+        variable: "contextvars.ContextVar[object]",
+        home: ModuleType | None,
+        names: tuple[str, ...],
+    ) -> None:
+        """ContextVar の既定値(空の Context の中で読む — 既定値が無ければ無いことを入れる)。素の値は値で、そうでなければ型の名で
+        入れる。"""
+        try:
+            default = contextvars.Context().run(variable.get)
+        except LookupError:
+            self._feed("no-default")
+            return
+        if _plain(default):
+            self._value(default, home, names)
+        else:
+            kind = type(default)
+            self._feed("default-type", kind.__module__, kind.__qualname__)
+
+    def _bound(self, bound: "GlobalName") -> None:
+        """module の大域 1 つを、その名を束縛し書き換える source の文で覆う(:mod:`doeff_hy_bytecode_guard.bound_source`)。
+        文が読む名は同じ規則で辿り、本体でその名を書き換えうる top-level の定義はその関数か class を辿り、import で束縛する名は
+        import の先の module で辿る。source を読めない・束縛が見つからない・辿れない束縛がある時は、module の file で覆う。"""
+        module, name = bound.module, bound.name
+        self._feed("bound", module.__name__, name)
+        if (module.__name__, name) in self._bound_names:
+            return
+        self._bound_names.add((module.__name__, name))
+        self._note(module)
+        namespace = vars(module)
+        file = namespace.get("__file__")
+        binding = bound_source.binding_of(file, name) if isinstance(file, str) else None
+        if binding is None or binding.unresolved or not (binding.bound or binding.imports):
+            self._fold(module)
+            return
+        for statement in binding.statements:
+            self._feed("statement", statement.text)
+            for load in statement.loads:
+                if load != name and load in namespace:
+                    self._feed("load", load)
+                    self._value(
+                        namespace[load], module, statement.attributes, GlobalName(module, load)
+                    )
+        for mutator in binding.mutators:
+            value = namespace.get(mutator)
+            self._feed("mutator", mutator)
+            if isinstance(value, (FunctionType, type)):
+                self._value(value, module, ())
+            else:
+                self._fold(module)
+        for imported in binding.imports:
+            self._imported_binding(module, imported)
+
+    def _imported_binding(self, module: ModuleType, imported: bound_source.ImportedName) -> None:
+        """import で束縛した大域を、import の先の module の同じ名で辿る(module そのものの import は module の参照として)。"""
+        package = vars(module).get("__package__")
+        target = _import_target(
+            ImportReference(imported.module, imported.level),
+            package if isinstance(package, str) else None,
+        )
+        self._feed("imported", target, imported.name)
+        source = None if not target or _named_only(target) else sys.modules.get(target)
+        if not target:
+            self._fold(module)
+        elif source is None:
+            # 標準 library・Hy 自身(版で覆う)か、読み込まれていない module(import の名が値と合わない)。
+            if not _named_only(target):
+                self._fold(module)
+        elif not imported.name:
+            self._module(source, ())
+        elif imported.name in vars(source):
+            self._value(vars(source)[imported.name], source, (), GlobalName(source, imported.name))
+        else:
+            self._fold(module)
 
     def _class(self, cls: type) -> None:
         """class の基底と中身(method・class の値)を辿る。"""
@@ -1013,7 +1294,7 @@ class _Walker:
         self._note(home)
         self._feed("class", module_name, cls.__qualname__)
         if not _python_source(home):
-            self._fold(home)  # 拡張の module の class(中身を辿れない)
+            self._extension_class(cls, home)
             return
         for base in cls.__bases__:
             self._value(base, home, ())
@@ -1023,6 +1304,18 @@ class _Walker:
                 continue
             self._feed("member", name)
             self._value(members[name], home, ())
+
+    def _extension_class(self, cls: type, home: ModuleType | None) -> None:
+        """拡張の module の class(Python の source の無い class)を、.so の file の全体ではなく名と公開の形で覆う — 基底(同じ
+        規則で辿る)と、属性の名の並びと種類(method・記述子・値 — 素の値はその値・そうでなければ型の名)。"""
+        self._feed("extension-class")
+        for base in cls.__bases__:
+            self._value(base, home, ())
+        members = vars(cls)
+        for name in sorted(members):
+            if name in _CLASS_SKIP:
+                continue
+            self._feed("member", name, *_public_kind(members[name]))
 
     def _module(self, module: ModuleType, names: tuple[str, ...]) -> None:
         """module の参照 — 名と、code の名の表に出る属性(``module.名`` の読み)。package の下の module は file 単位で覆う
@@ -1056,7 +1349,7 @@ class _Walker:
         """module の属性 1 つを入れる(module ごとに 1 度)。"""
         self._attributes[module.__name__].add(name)
         self._feed("attribute", module.__name__, name)
-        self._value(vars(module)[name], module, names)
+        self._value(vars(module)[name], module, names, GlobalName(module, name))
 
     def _compiled(self, value: object, home: ModuleType | None) -> None:
         """C で書かれた関数と記述子 — 名を入れ、標準 library と組み込みでなければその拡張の module の file の sha256 を足す。"""
@@ -1067,6 +1360,45 @@ class _Walker:
             self._fold(home)
         elif not _named_only(owner):
             self._fold(sys.modules.get(owner))
+
+
+@dataclass(frozen=True)
+class GlobalName:
+    """値を引いた module の大域の名(辿れない値をその名の source の文で覆うため)。"""
+
+    module: ModuleType
+    name: str
+
+
+def _frozen_dataclass_instance(value: object) -> bool:
+    """frozen の dataclass の値か(class ではなく)。"""
+    if isinstance(value, type) or not dataclasses.is_dataclass(value):
+        return False
+    params = vars(type(value)).get("__dataclass_params__")
+    return isinstance(params, dataclasses._DataclassParams) and params.frozen
+
+
+def _public_kind(member: object) -> tuple[str, ...]:
+    """拡張の class の属性 1 つの種類(method・記述子・値 — 素の値は値の文・そうでなければ型の名)。"""
+    match member:
+        case (
+            FunctionType()
+            | staticmethod()
+            | classmethod()
+            | types.BuiltinFunctionType()
+            | types.MethodDescriptorType()
+            | types.WrapperDescriptorType()
+            | types.ClassMethodDescriptorType()
+            | types.MethodWrapperType()
+        ):
+            return ("method",)
+        case types.GetSetDescriptorType() | types.MemberDescriptorType() | property():
+            return ("descriptor",)
+        case _ if _plain(member):
+            return ("value", _plain_text(member))
+        case _:
+            kind = type(member)
+            return ("value-type", kind.__module__, kind.__qualname__)
 
 
 def _initializing(module: ModuleType) -> bool:

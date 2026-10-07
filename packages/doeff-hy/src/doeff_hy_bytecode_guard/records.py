@@ -35,7 +35,10 @@ from typing import TypeVar
 #: file が保存先に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
 #: 3 = 展開が依った file 単位から、展開で実際に使った macro 単位の記録へ(macro の関数の code の閉包の digest)。2 の記録は
 #: 形が違うので記録なしと同じに扱われ、1 度 compile し直される(鍵の印を上げない理由は 2 と同じ)。
-RECORD_TAG = "doeff-hy/macro-dependencies/3"
+#: 4 = 閉包の中の辿れない値を file の全体でなく狭く覆う digest(大域の表は名を束縛し書き換える source の文・拡張の class は名と
+#: 公開の形・ContextVar は名と既定値 — agora-redesign #3938)。3 の記録の digest は今の作り方で引き直すと必ず合わないので、上げなくても
+#: 1 度は古いと判じられるが、形の世代を記録の印で分ける(鍵の印を上げない理由は 2 と同じ)。
+RECORD_TAG = "doeff-hy/macro-dependencies/4"
 
 #: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。
 MACRO_TABLE = "_hy_macros"
