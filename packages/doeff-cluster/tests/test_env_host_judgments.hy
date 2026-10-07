@@ -817,3 +817,32 @@
   (assert (= (len other-runs.launches) 1) other-runs.launches)
   (assert (= (get unlimited-seen.report "memoryUnmeasured") [bare]) unlimited-seen.report)
   (assert (in "max" (get (get (get other-notes.lines 0) 1) "reason")) other-notes.lines))
+
+
+;; --- 旧が動いている間の準備の焼きの並べる数(2026-10-08)------------------------------------------------
+
+(defk prepare-with-and-without-jobs [key text other-key other-text]
+  {:pre [(: key str) (: text str) (: other-key str) (: other-text str)] :post [(: % None)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "並べる数を載せた準備(旧い process が動いている間の新しい版)と載せない準備を 1 つずつ頼むため(同時の上限 2 本の内 — 2 本とも起きる)。"
+  (<- (PrepareEnv key text :compile-jobs 2))
+  (<- (PrepareEnv other-key other-text :compile-jobs None))
+  None)
+
+
+(deftest test-the-prepare-request-carries-the-compile-jobs [tmp-path]
+  ;; 失敗ケース(2026-10-08): env-host は準備の頼み(PrepareEnv)の並べる数を、準備の process への頼みの JSON(compileJobs)に載せる。
+  ;; 載せない頼みは null(焼く道具の既定 = cgroup の CPU の上限)。直す前は PrepareEnv にも頼みの JSON にも並べる数が無かった。
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- env RuntimeEnv (declared 1))
+  (<- other RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- other-key str (env-key-of other))
+  (<- other-text str (declared-text other))
+  (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs) (env-host settings)]
+        (prepare-with-and-without-jobs key text other-key other-text)))
+  (assert (= (len runs.launches) 2) runs.launches)
+  (val requests (lfor path runs.launches (json.loads (.read-text (Path path)))))
+  (assert (= (lfor r requests #((+ "env-" (get r "key")) (get r "compileJobs"))) [#(key 2) #(other-key None)]) requests))

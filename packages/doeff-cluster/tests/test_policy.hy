@@ -390,6 +390,28 @@
              #((SignalJob "task/t1" 10 StopStage.TERM (SpecChanged))))))
 
 
+(import doeff_cluster.worker.intent.worker_model [PrepareEnv])
+
+(deftest test-preparing-beside-a-running-old-version-carries-the-policy-compile-jobs
+  ;; 失敗ケース(2026-10-08): recreate の job の旧い process が動いている間の新しい版の準備(replace-step)は、方策の並べる数
+  ;; (WorkerPolicy.compile-jobs-while-replacing)を準備の action に載せる。旧い service と新しい版の bytecode の焼きは同じ Pod の memory の
+  ;; 上限を分け合い、道具の既定の並べる数(cgroup の CPU の上限)では、zeus の測り(MemoryMax 1650M・CPU 400%・並べる数 4)で回収できない
+  ;; anon の最高 1.59GB が旧の 364MB と重なって上限 2Gi にほぼ並ぶ(旧が oom で殺され得る)。旧が動いていない準備(初めて起動する・止め
+  ;; 終えた後)は載せない(None = 道具の既定)。直す前は方策にも準備の action にも欄が無かった。
+  (val policy (replace POLICY :compile-jobs-while-replacing 3))
+  (val beside (! (plan 0 #(R2) (! (world (! (running R1)))) {} policy)))
+  (assert (= (lfor a beside #((type a) a.compile-jobs)) [#(PrepareCode 3)]) beside)
+  (val fresh (! (plan 0 #(R1) (! (world :codes #())) {} policy)))
+  (assert (= (lfor a fresh #((type a) a.compile-jobs)) [#(PrepareCode None)]) fresh)
+  ;; 実行環境の job(root の準備 PrepareEnv)も同じ。
+  (val env-old (JobSpec "e" "jobs.e" #("service") "rev1" :runtime-env "{}" :env-key "k1"))
+  (val env-new (replace env-old :revision "rev2" :env-key "k2"))
+  (val env-beside (! (plan 0 #(env-new) (! (world (! (running env-old)) :codes #((CodeView "env-k1" CodeState.READY "/r/k1")))) {} policy)))
+  (assert (= (lfor a env-beside #((type a) a.key a.compile-jobs)) [#(PrepareEnv "env-k2" 3)]) env-beside)
+  (val env-fresh (! (plan 0 #(env-new) (! (world :codes #())) {} policy)))
+  (assert (= (lfor a env-fresh #((type a) a.key a.compile-jobs)) [#(PrepareEnv "env-k2" None)]) env-fresh))
+
+
 ;; --- 版の据え置き(#3684): drain 中の worker は、drain の間に宣言し直された新しい版を受けない ---------------------------------
 
 (deftest test-a-held-job-takes-no-action-on-a-changed-spec
