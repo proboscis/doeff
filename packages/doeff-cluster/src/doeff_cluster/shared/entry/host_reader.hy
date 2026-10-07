@@ -3,7 +3,7 @@
 ;;;
 ;;; worker が子へ渡した環境変数を読み、Ask HOST-CONTRACT.run-context-key に RunContext(shared/entry/run_context_env の
 ;;; context-from-env)・program-key に Program の path・versions-key にこの process の版(foundation/process_versions)で答える。
-;;; 宣言の :environ(子の環境変数を名で読む Ask)に答えるのは foundation/host_contract の environ-reader のまま(本番の土台は両方を並べる)。
+;;; 宣言の :environ(子の環境変数を名で読む Ask)に答えるのは foundation/host_contract の os-environ-reader(本番の土台は両方を並べる)。
 ;;; host-reader は session val を使うので、その外側に状態の handler(doeff_core_effects.handlers の state)が要る — 土台の組の中で
 ;;; host-reader より外に置く。sim の偽の宿は同じ鍵に同じ型で答える(sim/local.hy)。
 ;;;

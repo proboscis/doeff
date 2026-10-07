@@ -2600,6 +2600,32 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
     );
 }
 
+/// agora-redesign #1536: environ の答え手は名で実 I/O が決まる — この process の os.environ を読む os-environ-reader は目録の env で、
+/// 名簿の外の定義が並べると DOEFF131。渡された値の表だけに答える environ-table-reader は目録に無く、同じ所で並べても当たらない
+/// (模擬の宿が値の表で答える形を誤検出しない)。以前は 1 つの名 environ-reader が既定の引数の時だけ os.environ を読み、目録に載せられなかった。
+#[test]
+fn os_environ_reader_is_a_world_handler_and_the_table_reader_is_not() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/entry/main.hy",
+            tags("billing", "entry")
+                + "(import doeff_cluster.foundation.host_contract [environ-table-reader os-environ-reader])\n\
+                   (defk run [body] (with-handlers [(os-environ-reader)] body))\n\
+                   (defk run-on-table [body] (with-handlers [(environ-table-reader {\"NAME\" \"value\"})] body))\n",
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF131\"]");
+    let (_, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert_eq!(
+        keys(&report, "DOEFF131"),
+        vec!["app/billing/entry/main.hy::DOEFF131::run::world::doeff_cluster.foundation.host_contract:os-environ-reader"],
+        "{}",
+        report
+    );
+}
+
 /// agora-redesign #1144(R6): テストは deftest だけ — :test-forms の綴りの型で選んだ file の、Python の def test_*・module ごとの skip・
 /// pytest の外の check script・deftest の runner を file ごとに 1 件 DOEFF135(critical)で出す。deftest だけの file は当てない。
 #[test]

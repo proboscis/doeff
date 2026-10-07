@@ -6,7 +6,7 @@
 ;;; 返す module の最上位の defk(計画 10.1 — job は自分で scheduled を包まない。本番の土台は scheduler を含み、sim の土台は含まない):
 ;;;
 ;;;   (defk production-foundation [body]
-;;;     (<- answer (scheduled (with-handlers [(state) (environ-reader) host-reader (sync-time-handler) …] body)))
+;;;     (<- answer (scheduled (with-handlers [(state) (os-environ-reader) host-reader (sync-time-handler) …] body)))
 ;;;     answer)
 ;;;   (defk tally-program [foundation step]
 ;;;     (<- total (foundation (tally-body step)))
