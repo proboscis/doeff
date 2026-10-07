@@ -7,14 +7,17 @@
 ;;;                          時計・2026-09-25)。時計(doeff-time の GetTime / Delay)で待つ・延ばす。この handler 自身は I/O をせず、
 ;;;                          保存の handler(shared-http — テストでは fake の盤の上)と doeff-time の時計の handler を外側に要る。
 ;;;
-;;;   lease-fence            書きの effect を、名前付きの lease を持っていて期限まで余裕がある間だけ外へ通す。持っていない・
-;;;                          失った・期限が近い時は外へ出さずに WriteFenced を投げる。問い合わせ(HeldLease)は cluster-semaphore が
-;;;                          手元の記憶から答える(書きごとに保存を読まない)。cluster-semaphore より内側・書きの handler より内側に置く。
+;;;   leases-fence           書きの effect を、その書きが名指す lease の組(書きの effect → lease の名の組の関数で決める — #4072 の D-1)の
+;;;                          全部を持っていて期限まで余裕がある間だけ外へ通す。どれかを持っていない・失った・期限が近い時は外へ出さずに
+;;;                          WriteFenced を投げる。問い合わせ(HeldLease)は cluster-semaphore が手元の記憶から答える(書きごとに保存を
+;;;                          読まない)。cluster-semaphore より内側・書きの handler より内側に置く。
+;;;   lease-fence            同じ柵で、守る lease が固定の名 1 つの形。使い手が leases-fence へ移った後に消す(#4072 の A1 の後)。
 ;;;
 ;;; 置き場 = shared/core・役 program(#2332): scheduler の Semaphore を lease の約束(LeaseOp・HeldLease・LeaseStanding)で
 ;;; 果たす業務の流れで、業務の intent を出す。protocol(受けた intent を汎用の効果へ出し直すだけ — doeff-linter DOEFF130)ではない。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
+(import collections.abc [Callable])
 (import doeff [EffectBase])
 (import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel])
 (import doeff_time [Delay])
@@ -169,6 +172,7 @@
 
 (defhandler lease-fence [#^ str name #^ tuple write-types #^ int margin-ms]
   ;; write-types の effect だけを見る。それ以外は素通し。問い合わせと時計は外側(cluster-semaphore・時計の handler)へ。
+  ;; 消す予定: 使い手が下の leases-fence へ移った後(#4072 の A1 — 使い手の repo を先に替え、最後にこの形を消す)。
   (EffectBase []
     :when (isinstance effect write-types)
     (<- hold (| dict None) (HeldLease name))
@@ -176,6 +180,27 @@
     (setv refusal (fence-verdict hold now margin-ms))
     (when (is-not refusal None)
       (raise (WriteFenced (.format "{} を断った — lease {}: {}" (. (type effect) __name__) name refusal))))
+    (<- answer effect)
+    (resume answer)))
+
+
+(defhandler leases-fence [#^ Callable leases-of #^ tuple write-types #^ int margin-ms]
+  ;; 引数に残す理由: どの書きをどの lease で守るかは組み立ての側の業務の判断で、同じ組に別の名の決め方で並べ得る(Ask で読む設定ではない)。
+  ;; write-types の effect だけを見る。それ以外は素通し。守る lease の名の組は書きの effect から leases-of(書きの effect → lease の名の組を
+  ;; 答える Program — 区画ごとの書きは区画の lease・入口と区画の両方を要る書きは 2 つ、を書き手の側が決める・#4072 の D-1)で決め、組の全部を
+  ;; 持っていて期限まで余裕がある間だけ外へ通す。空の組は守りの無い書きを黙って通す事になるので断る。問い合わせと時計は外側
+  ;; (cluster-semaphore・時計の handler)へ。
+  (EffectBase []
+    :when (isinstance effect write-types)
+    (<- names tuple (leases-of effect))
+    (when (not names)
+      (raise (ValueError (.format "{} を守る lease の名の組が空(leases-of が名を 1 つも答えない)" (. (type effect) __name__)))))
+    (<- now int (now-epoch-ms))
+    (for [name names]
+      (<- hold (| dict None) (HeldLease name))
+      (val refusal (fence-verdict hold now margin-ms))
+      (when (is-not refusal None)
+        (raise (WriteFenced (.format "{} を断った — lease {}: {}" (. (type effect) __name__) name refusal)))))
     (<- answer effect)
     (resume answer)))
 
