@@ -423,10 +423,22 @@ class DeclarationRead:
     jobs: tuple[JobSpec, ...]
     warm: tuple[WarmEnv, ...]
 
+@dataclass(frozen=True, kw_only=True)
+class TickMarks:
+    """拍 1 つで読んだ時刻(epoch ms — 拍の頭・EnvReport の後・ReadDesired の後・最初の ObserveWorld の後・拍の終わり)。"""
+
+    began: int
+    env_reported: int
+    desired_read: int
+    observed: int
+    ended: int
+
 @dataclass(frozen=True)
 class WorkerState:
     declaration: NotYetRead | DeclarationRead = ...
     records: dict[str, JobRecord] = ...
+    last_marks: TickMarks | None = field(default=None, compare=False)
+    last_sent_ms: int | None = field(default=None, compare=False)
 
 # --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
 
