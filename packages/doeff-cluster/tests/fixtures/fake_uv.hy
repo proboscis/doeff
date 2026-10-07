@@ -4,7 +4,8 @@
 ;;;       P/.venv を作る: bin/python は検の interpreter への symlink、site-packages の .pth が検の環境の site-packages を足す
 ;;;       (doeff・hy・cloudpickle を本物のまま使う)。uv.lock の行(名==版)のうち cache に無い物を「download」と数えて log に書く。
 ;;;       行に ` fake-top=名` が在れば、その名の package を site-packages に置く(根の名前の影の反例)。
-;;;   uv build --wheel --out-dir D S        D に空の wheel を置き、log に build と書く
+;;;   uv build --wheel --out-dir D S        S の中身のキーで保存先を引き、無い時だけ組んで log に build と書く(在れば build-stored)。
+;;;                                          D に wheel を置き、env DOEFF_WHEEL_REPORT が在れば組んだかを 1 行の JSON で足す
 ;;;   uv pip install --no-deps --python PY W…   log に書くだけ
 ;;;   uv run --no-sync --frozen --project P CMD ARGS…   P/.venv の python で CMD(hy / python)を exec する
 ;;;
@@ -13,7 +14,7 @@
 ;;; native-build-failed)を書くと、その命令を失敗させる。
 ;;; 命令ごとの処理は defk で、process の入口(下の __main__)が doeff の run で 1 回だけ回す(素の関数を持たない — #2915)。
 (require doeff-hy.macros [defk val])
-(import json os sys zipfile)
+(import hashlib json os shutil sys zipfile)
 (import pathlib [Path])
 (import doeff [run])
 
@@ -84,18 +85,41 @@
   None)
 
 
+(defk source-key [source]
+  {:pre [(: source Path)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "本物の build の口(tools/doeff_cargo_backend.py)の保存先のキーの代わり: source の dir の file の相対 path と中身の hash。"
+  (val digest (hashlib.sha256))
+  (for [path (sorted (gfor p (.rglob source "*") :if (.is-file p) p))]
+    (.update digest (.encode (str (.relative-to path source))))
+    (.update digest (.read-bytes path)))
+  (.hexdigest digest))
+
+
 (defk build [args]
   {:pre [(: args list)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "uv build --wheel の代わり: 出力の dir に空の wheel を置き、log に build と書く。"
+  "uv build --wheel の代わり(本物の build の口と同じ形 — #3860・ADR-DOE-BUILD-001): source の中身のキーで FAKE_UV_DIR の保存先を引き、
+   在れば組まずに出力の dir へ写して log に build-stored と書く。無ければ空の wheel を組んで保存先に置き、log に build と書く。
+   env DOEFF_WHEEL_REPORT が在れば、本物の口と同じく 1 行の JSON {project wheel built} を足す(project = source の dir の名)。"
   (when (= (! (failure)) "native-build-failed")
     (print "error: could not compile `core` (lib) due to 1 previous error" :file sys.stderr)
     (sys.exit 1))
   (val out (Path (! (option args "--out-dir"))))
   (val source (Path (get args -1)))
+  (val name (.format "{}-0-py3-none-any.whl" (.replace source.name "-" "_")))
+  (<- key str (source-key source))
+  (val slot (/ HOME "wheel-store" key))
+  (val built (not (.is-file (/ slot name))))
+  (when built
+    (.mkdir slot :parents True :exist-ok True)
+    (with [z (zipfile.ZipFile (/ slot name) "w")]
+      (.writestr z "EMPTY" "")))
   (.mkdir out :parents True :exist-ok True)
-  (with [z (zipfile.ZipFile (/ out (.format "{}-0-py3-none-any.whl" (.replace source.name "-" "_"))) "w")]
-    (.writestr z "EMPTY" ""))
-  (<- (log-line (.format "build source={}" source)))
+  (shutil.copyfile (/ slot name) (/ out name))
+  (val report (os.environ.get "DOEFF_WHEEL_REPORT"))
+  (when report
+    (with [f (open report "a" :encoding "utf-8")]
+      (.write f (+ (json.dumps {"project" source.name "wheel" (str (/ slot name)) "built" built}) "\n"))))
+  (<- (log-line (.format (if built "build source={}" "build-stored source={}") source)))
   None)
 
 
