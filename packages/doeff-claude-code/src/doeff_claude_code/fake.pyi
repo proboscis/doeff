@@ -42,6 +42,11 @@ from doeff_claude_code.lines import Usage as Usage
 from doeff_claude_code.lines import ModelWindow as ModelWindow
 from doeff_claude_code.lines import merged_windows as merged_windows
 from doeff_claude_code.lines import DeltaKind as DeltaKind
+from doeff_claude_code.lines import RateLimit as RateLimit
+from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
+from doeff_claude_code.lines import RATE_LIMIT_REJECTED as RATE_LIMIT_REJECTED
+from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERROR_RATE_LIMIT
+from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
 from doeff_claude_code.effects import ClaudeInjectInput as ClaudeInjectInput
 from doeff_claude_code.effects import ClaudeInterruptTurn as ClaudeInterruptTurn
@@ -114,6 +119,7 @@ class FakeReply:
     model_windows: tuple[ModelWindow, ...] = ...
     thinking_deltas: int = 0
     tool_input_deltas: int = 0
+    account_limit: AccountLimitHit | None = None
 
     def __post_init__(self) -> None:
         ...
@@ -142,6 +148,7 @@ class FakeTurn:
     last_call_usage: Usage | None
     last_call_model: str | None
     model_windows: tuple[ModelWindow, ...]
+    limit_hit: AccountLimitHit | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -210,6 +217,9 @@ def next_delta_at(turn: FakeTurn) -> _Program[float | None, object]:
     ...
 
 def emit_due_deltas(session: FakeSession, turn: FakeTurn, now: float) -> _Program[None, object]:
+    ...
+
+def emit_limit(session: FakeSession, turn: FakeTurn) -> _Program[None, object]:
     ...
 
 def complete_turn(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[None, object]:

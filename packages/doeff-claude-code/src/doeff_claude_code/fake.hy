@@ -21,7 +21,9 @@
                                   IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
-                                 ModelWindow merged-windows DeltaKind])
+                                 ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
+                                 ASSISTANT-ERROR-RATE-LIMIT])
+(import doeff_claude_code.dialogue [limit-hit-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -74,7 +76,12 @@
    終わりの 3 欄は、本番の状態機械と同じ規則で出した行から数える — 上の層が会話の context の大きさを運ぶ事を確かめるため・#3744)・
    thinking-deltas = 手番の始め(init の後)に出す考えている間の差分の行(PartialMessage・DeltaKind THINKING)の数・tool-input-deltas =
    道具の呼びの行の直前に出す道具の命令の差分の行(DeltaKind TOOL-INPUT)の数(道具を呼ぶ手番だけ — 本物の CLI の
-   --include-partial-messages と同じ種類の行・#3746 (a))。"
+   --include-partial-messages と同じ種類の行・#3746 (a))・
+   account-limit = この手番が口座の限度に当たる筋書き(#3983)。偽の CLI は本物と同じ行 — 拒まれた rate_limit_event の行(window と
+   resets-at が在る時)と、本体の assistant の行の error rate_limit と限度の文(text が在る時)— を終わりの前に出し、終わり(Completed /
+   Failed)の account-limit は出した行から本物の状態機械と同じ規則(dialogue.hy の limit-hit-after)で数える。上の層(doeff-agents の
+   adapter とその上の手番を起こす層)が模擬で「この口座の枠が尽きた」を受け取るため。行に出せない値(窓も文も無い・窓の無い戻る刻)と、process の
+   消える手番(lose — 終わりに欄が無い)は断る。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -100,6 +107,8 @@
   ;; 考えている間の差分の行の数(手番の始め — init の後)と、道具の命令の差分の行の数(道具の呼びの行の直前・道具を呼ぶ手番だけ)。
   (setv #^ int thinking-deltas 0)
   (setv #^ int tool-input-deltas 0)
+  ;; 口座の限度に当たる筋書き(当たらない = None)。
+  (setv #^ (| AccountLimitHit None) account-limit None)
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
@@ -115,7 +124,14 @@
       (raise (ValueError (.format "FakeReply の deltas は本文の字数以下(どの片も空でない): deltas {} / 本文 {} 字"
                                   self.deltas (len self.text)))))
     (when (and (> self.deltas 0) (or (is-not self.fail None) (is-not self.lose None)))
-      (raise (ValueError "FakeReply の deltas は本文で終わる手番だけ(fail・lose の手番は本文を出さない)")))))
+      (raise (ValueError "FakeReply の deltas は本文で終わる手番だけ(fail・lose の手番は本文を出さない)")))
+    (when (is-not self.account-limit None)
+      (when (and (is self.account-limit.window None) (not self.account-limit.text))
+        (raise (ValueError "FakeReply の account-limit は window か text を名乗る(行に出せない値は数えられない)")))
+      (when (and (is self.account-limit.window None) (is-not self.account-limit.resets-at None))
+        (raise (ValueError "FakeReply の account-limit の resets-at は window と一緒に(拒まれた限度の行が運ぶ)")))
+      (when (is-not self.lose None)
+        (raise (ValueError "FakeReply の account-limit は Completed / Failed で終わる手番だけ(lose の終わりに欄が無い)"))))))
 
 
 (defclass [(dataclass :frozen True)] FakeInjection []
@@ -148,7 +164,8 @@
     (setv #^ (get tuple #((get ExternalPromise None) ...)) self.bells #())
     (setv #^ (| Usage None) self.last-call-usage None)
     (setv #^ (| str None) self.last-call-model None)
-    (setv #^ (get tuple #(ModelWindow ...)) self.model-windows #())))
+    (setv #^ (get tuple #(ModelWindow ...)) self.model-windows #())
+    (setv #^ (| AccountLimitHit None) self.limit-hit None)))
 
 
 (defclass FakeSession []
@@ -243,6 +260,7 @@
       (setv turn.last-call-usage said.usage turn.last-call-model said.model)
     (isinstance said TurnResult)
       (setv turn.model-windows (! (merged-windows turn.model-windows said.model-windows))))
+  (setv turn.limit-hit (limit-hit-after turn.limit-hit said))
   (<- (ring-turn turn))
   None)
 
@@ -256,8 +274,11 @@
   "手番を end で閉じるため。process は手番の終わりで降ろさない(次の手番まで生きて待つ)— 消えた process の終わり(BackendLost)だけ
    process が無くなる(訳は付けない — 降ろしたのでなく自分で消えた)。終わりには手番に覚えた本体の最後の呼びと窓を載せる(本番の
    状態機械の ended と同じ — どの終わり方でも同じ 3 欄)。"
-  (setv turn.end (replace end :last-call-usage turn.last-call-usage :last-call-model turn.last-call-model
-                              :model-windows turn.model-windows)
+  (val called (replace end :last-call-usage turn.last-call-usage :last-call-model turn.last-call-model
+                           :model-windows turn.model-windows))
+  (setv turn.end (match called
+                   (| (Completed) (Failed)) (replace called :account-limit turn.limit-hit)
+                   _ called)
         turn.phase "done")
   (when (isinstance end BackendLost) (setv session.alive False))
   (<- (ring-turn turn))
@@ -316,11 +337,24 @@
     (:= due following))
   None)
 
+(defk emit-limit [#^ FakeSession session #^ FakeTurn turn]
+  {:pre [(: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))] :tags {:context "claude-code" :role "foundation"}}
+  "口座の限度に当たる筋書きの手番で、本物の CLI と同じ限度の行を終わりの前に出すため(#3983 — 返事の account-limit): 窓が在れば拒まれた
+   rate_limit_event の行、文が在れば本体の assistant の行の error rate_limit。終わりの account-limit は emit が出した行から数える。"
+  (val limit turn.reply.account-limit)
+  (when (is-not limit None)
+    (when (is-not limit.window None)
+      (<- (emit session turn (RateLimit limit.window :resets-at limit.resets-at :status RATE-LIMIT-REJECTED))))
+    (when limit.text
+      (<- (emit session turn (AssistantMessage :text limit.text :error ASSISTANT-ERROR-RATE-LIMIT)))))
+  None)
+
 (defk complete-turn [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
   {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
   "本文を書き終えた刻に、確定の本文の返事で手番を終える。本文を書く間に足された注入もここで読み、その返事を本文の後に続ける。"
   (<- late (read-injections world session turn))
   (val text (.join " " (+ #(turn.text) late)))
+  (<- (emit-limit session turn))
   (<- (emit-all session turn [(AssistantMessage :text text)
                               (TurnResult "success" False :terminal-reason "completed" :usage turn.reply.usage)]))
   (for [injection turn.injections]
@@ -353,6 +387,7 @@
   (setv reply turn.reply)
   (if (is-not reply.fail None)
       (do
+        (<- (emit-limit session turn))
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "failed" :usage reply.usage)))
         (<- (finish session turn (Failed reply.fail :terminal-reason "failed" :usage reply.usage :cost-usd reply.cost-usd
                                          :input-refs (tuple turn.refs)))))

@@ -9,7 +9,7 @@
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
-                                 InputFate Usage])
+                                 InputFate Usage RateLimit AccountLimitHit RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
                                    SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning
                                    ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
@@ -22,6 +22,8 @@
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))
 (val COST 0.5)
 (val TIMEOUT 120.0)
+;; 口座の限度に当たった手番の筋書きの値(#3983 — 本物の CLI の拒まれた限度の行と限度の文)。
+(val LIMIT (AccountLimitHit :window "five_hour" :resets-at 1791400000 :text "You've hit your session limit · resets 7am (UTC)"))
 
 (defn scripted-reply [#^ str text #^ tuple memory]  ; defk にできない: fake の世界が呼ぶ callback
   "筋書きの返事(本文の語で終わり方を選ぶ): fail / lose / lines / usage / それ以外は 30 秒の道具のあと本文をそのまま返す。"
@@ -33,6 +35,8 @@
     (= text "think") (FakeReply "thought" :think-seconds 5.0)
     (= text "no-receipt") (FakeReply "never" :tool-seconds 30.0 :interrupt-receipt False)
     (= text "deltas") (FakeReply "deltas" :tool-seconds 2.0 :thinking-deltas 3 :tool-input-deltas 2)
+    (= text "limited") (FakeReply "" :fail "limit" :account-limit LIMIT)
+    (= text "limited-done") (FakeReply "partial" :account-limit (AccountLimitHit :text LIMIT.text))
     True (FakeReply text :tool-seconds 30.0)))
 
 (defk on-fake [world program]
@@ -349,3 +353,36 @@
   (assert (= second.session-id sid) (repr second))
   (assert (isinstance status.state TurnRunning) (repr status))
   (assert (isinstance status.transcript TranscriptPresent) (repr status)))
+
+
+(deftest test-an-account-limited-turn-emits-the-limit-lines-and-carries-the-limit-on-its-end
+  ;; #3983: 口座の限度に当たる手番は、本物の CLI と同じ行(rate_limit_event の status rejected・本体の assistant の行の error rate_limit と
+  ;; 限度の文)を出し、終わり(Failed / Completed)の account-limit は出した行から本物の状態機械と同じ規則(dialogue.hy の limit-hit-after)で
+  ;; 数える — 上の層(doeff-agents の adapter とその上の手番を起こす層)が模擬で「枠が尽きた」を受け取れるため。
+  (<- failed TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "limited")))
+  (assert (isinstance failed.end Failed) (repr failed.end))
+  (assert (= failed.end.account-limit LIMIT) (repr failed.end))
+  (assert (= (lfor kind (kinds-of failed.lines RateLimit) #(kind.window kind.resets-at kind.status))
+             [#("five_hour" 1791400000 RATE-LIMIT-REJECTED)])
+          failed.lines)
+  (assert (= (lfor kind (kinds-of failed.lines AssistantMessage) :if kind.error #(kind.error kind.text))
+             [#(ASSISTANT-ERROR-RATE-LIMIT LIMIT.text)])
+          failed.lines)
+  ;; 限度の文だけの手番(拒まれた限度の行なし)は、窓と戻る刻を名乗らない。完了の終わりにも載る。
+  (<- done TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "limited-done")))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (= done.end.account-limit (AccountLimitHit :text LIMIT.text)) (repr done.end))
+  (assert (= (kinds-of done.lines RateLimit) []) done.lines)
+  ;; 限度に当たらない手番の終わりは None のまま。
+  (<- plain TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "fail")))
+  (assert (is plain.end.account-limit None) (repr plain.end)))
+
+
+(deftest test-an-account-limit-must-name-a-window-or-a-text
+  ;; 限度の事実は行から数えるので、行を出せない値(窓も文も無い・窓の無い戻る刻)と、process の消える手番(終わりに欄が無い)は断る。
+  (for [bad [(fn [] (FakeReply "" :fail "x" :account-limit (AccountLimitHit)))
+             (fn [] (FakeReply "" :fail "x" :account-limit (AccountLimitHit :resets-at 1 :text "t")))
+             (fn [] (FakeReply "" :lose "x" :account-limit LIMIT))]]
+    (var refused False)
+    (try (bad) (except [ValueError] (:= refused True)))
+    (assert refused)))

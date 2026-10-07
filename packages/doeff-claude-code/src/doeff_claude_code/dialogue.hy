@@ -341,20 +341,26 @@
    block ごとの行は同じ usage を名乗るので、最後の行で置き換えてよい)。subagent の行は覚えない — 会話の context の大きさは本体の呼びの
    入力の側で数えるため(#3744)。本体の行が error rate_limit(CLI が答えの代わりに出した限度の文)なら、口座の限度に当たった事実に
    その文を足す(#3983 — 限度の種類と戻る刻は拒まれた限度の行から)。"
-  (cond
-    (is-not message.parent-tool-use-id None) (Transition :state state)
-    (= message.error ASSISTANT-ERROR-RATE-LIMIT)
+  (if (is-not message.parent-tool-use-id None)
+      (Transition :state state)
       (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model
-                                  :limit-hit (replace (or state.limit-hit (AccountLimitHit)) :text message.text)))
-    True (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model))))
+                                  :limit-hit (limit-hit-after state.limit-hit message)))))
 
 (defn on-rate-limit [#^ DialogueState state #^ RateLimit limit]
   "rate_limit_event の行: 拒まれた(status rejected)なら、口座の限度に当たった事実に限度の種類と戻る刻を置く(#3983 — 限度の文は
    限度の答えの行から)。許された行は何も変えない。"
-  (if (= limit.status RATE-LIMIT-REJECTED)
-      (Transition :state (replace state :limit-hit (replace (or state.limit-hit (AccountLimitHit)) :window limit.window
-                                                                  :resets-at limit.resets-at)))
-      (Transition :state state)))
+  (Transition :state (replace state :limit-hit (limit-hit-after state.limit-hit limit))))
+
+(defn limit-hit-after [#^ (| AccountLimitHit None) hit kind]  ; defk にできない: 状態機械の defn(on-assistant・on-rate-limit)が値として呼ぶ
+  "行 1 つを読んだ後の、口座の限度に当たった事実(#3983 — 規則の 1 点: 本物の状態機械の on-assistant・on-rate-limit と、偽の CLI
+   fake.hy の emit が同じ規則で数える): 拒まれた rate_limit_event の行は限度の種類と戻る刻を置き、本体の assistant の行の error
+   rate_limit は限度の文を置く。ほかの行は何も変えない(まだ当たっていなければ None のまま)。"
+  (match kind
+    (RateLimit :status status :window window :resets_at resets-at) :if (= status RATE-LIMIT-REJECTED)
+      (replace (or hit (AccountLimitHit)) :window window :resets-at resets-at)
+    (AssistantMessage :parent_tool_use_id None :error error :text text) :if (= error ASSISTANT-ERROR-RATE-LIMIT)
+      (replace (or hit (AccountLimitHit)) :text text)
+    _ hit))
 
 (defk quiet-before-first-input [kind]
   {:pre [(: kind ClaudeLineKind)] :post [(: % bool)] :tags {:context "claude-code" :role "judgment"}}
