@@ -121,6 +121,9 @@ def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) ->
 def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
     ...
 
+def drain_worker(launch: WorkerLaunch, limit_seconds: float) -> _Program[None, object]:
+    ...
+
 def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
     ...
 

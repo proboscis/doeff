@@ -145,6 +145,20 @@ class AwaitQuietWindow(_doeff_effect_base[QuietWindowOpened | QuietWindowMissed]
     timeout_seconds: float
 
 @dataclass(frozen=True, kw_only=True)
+class WorkerDrained:
+    target: str
+
+@dataclass(frozen=True, kw_only=True)
+class WorkerDrainMissed:
+    target: str
+    reason: str
+
+@_doeff_dataclass(frozen=True)
+class AwaitWorkerDrained(_doeff_effect_base[WorkerDrained | WorkerDrainMissed]):
+    launch: WorkerLaunch
+    timeout_seconds: float
+
+@dataclass(frozen=True, kw_only=True)
 class UnverifiedWorkers:
     target: str
     coordinator_commit: str
@@ -166,10 +180,10 @@ class RefusalPoint(StrEnum):
 
 class UpgradeRefused(RuntimeError):
     target: str
-    refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing | QueuedTasksRemain | QuietWindowMissed
+    refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing | QueuedTasksRemain | QuietWindowMissed | WorkerDrainMissed
     point: RefusalPoint
 
-    def __init__(self, target: str, refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing | QueuedTasksRemain | QuietWindowMissed, point: RefusalPoint) -> None:
+    def __init__(self, target: str, refusal: CleanBootRefused | BootRootRefused | UnverifiedWorkers | RollbackRootMissing | QueuedTasksRemain | QuietWindowMissed | WorkerDrainMissed, point: RefusalPoint) -> None:
         ...
 
 @dataclass(frozen=True, kw_only=True)

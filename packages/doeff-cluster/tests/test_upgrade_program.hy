@@ -27,7 +27,8 @@
                                                    ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused UpgradeRefused
                                                    PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
-                                                   RollbackRootMissing QueuedTasksRemain RefusalPoint CoordinatorUpgraded ClusterUpgraded])
+                                                   RollbackRootMissing QueuedTasksRemain RefusalPoint CoordinatorUpgraded ClusterUpgraded
+                                                   AwaitWorkerDrained WorkerDrained WorkerDrainMissed])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-coordinator upgrade-workers])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator CoordinatorRuns StopCoordinator
@@ -431,6 +432,8 @@
     (resume (BootRootBuilt :target target :seconds 0.0 :previous-root-present True)))
   (AwaitQuietWindow [target timeout-seconds]
     (resume (QuietWindowOpened :target target)))
+  (AwaitWorkerDrained [launch timeout-seconds]
+    (resume (WorkerDrained :target launch.name)))
   (PublishDeclarations []
     (resume None))
   (ApplyDeclarations []
@@ -533,6 +536,10 @@
     (:= steps (+ steps #((SwapStep :name "AwaitQuietWindow" :target target))))
     (<- answer (AwaitQuietWindow :target target :timeout-seconds timeout-seconds))
     (resume answer))
+  (AwaitWorkerDrained [launch timeout-seconds]
+    (:= steps (+ steps #((SwapStep :name "AwaitWorkerDrained" :target launch.name))))
+    (<- answer (AwaitWorkerDrained :launch launch :timeout-seconds timeout-seconds))
+    (resume answer))
   (DesireWorker [launch]
     (:= steps (+ steps #((SwapStep :name "DesireWorker" :target launch.name))))
     (<- changes (DesireWorker launch))
@@ -555,10 +562,11 @@
 
 (defk swap-steps [desire target]
   {:pre [(: desire str) (: target str)] :post [(: % (get tuple #(SwapStep ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
-  "worker の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 当て)を、テストが比べる形で作るため。"
+  "worker の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → drain して中の仕事 0 → 当て)を、
+   テストが比べる形で作るため(drain は当てる直前 — #3968)。"
   #((SwapStep :name "ConfirmCleanBoot" :target target) (SwapStep :name "PrepareBootRoot" :target target)
     (SwapStep :name desire :target target) (SwapStep :name "PublishDeclarations" :target None)
-    (SwapStep :name "ApplyDeclarations" :target None)))
+    (SwapStep :name "AwaitWorkerDrained" :target target) (SwapStep :name "ApplyDeclarations" :target None)))
 
 
 ;; coordinator の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 静かな時間帯の待ち → 当て — #3772。
@@ -608,6 +616,34 @@
     (assert (in reason.value (str refused)) (str refused))
     (val log (get seen 1))
     (assert (= log.steps #((SwapStep :name "ConfirmCleanBoot" :target "a") (SwapStep :name "PrepareBootRoot" :target "a"))) log.steps)))
+
+
+(defhandler busy-workers [#^ frozenset busy]
+  ;; 引数に残す理由: 中の仕事が終わらない worker の名の集合はテストごとに違う値(外の世界そのもの)。
+  ;; 当てる直前の drain(AwaitWorkerDrained)に、busy に名のある worker では「上限の内に 0 にならない」と答え、ほかは外側へ渡すため。
+  (AwaitWorkerDrained [launch timeout-seconds]
+    (if (in launch.name busy)
+        (resume (WorkerDrainMissed :target launch.name :reason (.format "{} の中で走っている仕事 turn-1" launch.name)))
+        (do (<- answer (AwaitWorkerDrained :launch launch :timeout-seconds timeout-seconds))
+            (resume answer)))))
+
+
+(deftest test-a-worker-whose-inner-work-does-not-end-is-never-applied
+  ;; 失敗ケース(#3968): a の中で走っている仕事が drain の上限の内に 0 にならない世界では、Program は a の宣言を書いて公開し、
+  ;; 当てる直前に drain を頼み、当てずに(ApplyDeclarations を出さず)UpgradeRefused で a と残った仕事を名指して止まる。drain-worker を
+  ;; upgrade-workers から外すと、ApplyDeclarations が出て赤。
+  (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)
+                                 (busy-workers (frozenset ["a"])) step-recorder]
+                   (recorded-run (upgrade-workers #(TARGET-A TARGET-B) LIMITS))))
+  (val refused (get seen 0))
+  (assert (isinstance refused UpgradeRefused) seen)
+  (assert (= refused.target "a") refused)
+  (assert (= refused.point RefusalPoint.BEFORE-APPLY) refused)
+  (assert (isinstance refused.refusal WorkerDrainMissed) refused.refusal)
+  (assert (in "turn-1" (str refused)) (str refused))
+  (val log (get seen 1))
+  (<- a tuple (swap-steps "DesireWorker" "a"))
+  (assert (= log.steps (cut a 0 -1)) log.steps))
 
 
 (deftest test-a-refused-clean-boot-never-asks-for-the-boot-root

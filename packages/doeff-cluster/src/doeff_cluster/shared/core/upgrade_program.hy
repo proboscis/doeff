@@ -4,8 +4,10 @@
 ;;;
 ;;;   worker ごとに: その worker に置かれた task が終わるのを待つ(V2)→ 空の機体の起動を確かめる(ConfirmCleanBoot — 断られたら
 ;;;                  UpgradeRefused で止まる・単位 5a)→ 入れ替え先の版の自己起動の root を今の保存先に先に準備する(PrepareBootRoot —
-;;;                  V5・断られたら UpgradeRefused で止まる・#3725)→ DesireWorker → PublishDeclarations → ApplyDeclarations →
-;;;                  新しい版で live に戻るのを待つ(V3 — 戻りが来なければ次へ進まない)
+;;;                  V5・断られたら UpgradeRefused で止まる・#3725)→ DesireWorker → PublishDeclarations → その worker を drain し、
+;;;                  worker の中で走っている仕事が 0 になるのを確かめる(AwaitWorkerDrained — 上限の内に 0 にならなければ当てずに
+;;;                  UpgradeRefused で止まる・#3968)→ ApplyDeclarations → 新しい版で live に戻るのを待つ(V3 — 戻りが来なければ
+;;;                  次へ進まない)
 ;;;   coordinator:   待ち行列が空(V4)を待つ → 宣言の内の worker が全部 live で版を読めるのを待ち、その版を確かめた版の組み合わせで照らす
 ;;;                  (V1 — 組み合わせに無い版が 1 つでも在れば断る)→ 空の起動を確かめる → root を準備し(V5)、上げる前の版の root
 ;;;                  (戻し先)が在るかを確かめる → DesireCoordinator → 公開 → 当てる直前の確かめ(状態を読み直す → V1 の照らし →
@@ -40,6 +42,7 @@
                                                    CleanBootPassed CleanBootRefused UpgradeRefused PrepareBootRoot
                                                    BootRootAlreadyPrepared BootRootBuilt BootRootRefused VerifiedVersions
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
+                                                   AwaitWorkerDrained WorkerDrained WorkerDrainMissed
                                                    RollbackRootMissing QueuedTasksRemain RefusalPoint WaitReached WaitExpired
                                                    CoordinatorUpgraded ClusterUpgraded])
 
@@ -292,13 +295,27 @@
     (BootRootRefused) (raise (UpgradeRefused target answer RefusalPoint.BEFORE-DESIRE))))
 
 
+(defk drain-worker [launch limit-seconds]
+  {:pre [(: launch WorkerLaunch) (: limit-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "当てる直前に、入れ替える worker を drain し(新しい仕事を受けない)、worker の中で走っている仕事が終わって 0 になったのを確かめるため
+   (AwaitWorkerDrained — drain の印の置き方と、何を「worker の中で走っている仕事」と数えるかは答え手が決める・#3968。
+   coordinator の task の待ち(条 V2)は長く生きる task の中で回る子の仕事を数えない — 2026-10-07 13:44 に agent-worker-2 を入れ替えた時、
+   task は 0 だったが CLI ホストの中で走っていた利用者のターン 2 つを止めた)。上限の内に 0 にならなければ当てずに
+   UpgradeRefused(WorkerDrainMissed — 残った仕事)で止まる(宣言は書いて公開した・当てていない・走っている仕事は止めない)。"
+  (<- answer (| WorkerDrained WorkerDrainMissed) (AwaitWorkerDrained :launch launch :timeout-seconds limit-seconds))
+  (match answer
+    (WorkerDrained) None
+    (WorkerDrainMissed) (raise (UpgradeRefused launch.name answer RefusalPoint.BEFORE-APPLY))))
+
+
 (defk upgrade-workers [workers limits]
   {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: limits UpgradeLimits)]
    :post [(: % (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)))]
    :tags {:context "doeff-cluster" :role "program"}}
   "worker を 1 つずつ新しい値へ入れ替えるため(条 V2・V3 の待ち — 頭の註)。coordinator は入れ替えない — worker だけを上げる時
    (今の coordinator がその worker の版と組めると確かめた変更)と、upgrade-cluster の前半の両方がこれを通る(#3366)。どの入れ替えも、
-   宣言を書く前に空の機体の起動を確かめ(confirm-clean-boot)、入れ替え先の版の root を保存先に準備する(prepare-boot-root)。
+   宣言を書く前に空の機体の起動を確かめ(confirm-clean-boot)、入れ替え先の版の root を保存先に準備する(prepare-boot-root)。当てる直前に
+   その worker を drain し、中で走っている仕事が 0 になったのを確かめる(drain-worker — 上限は drain-seconds)。
    答え = worker ごとの root の準備の答えを、入れ替えた順に並べた列(実行した側が、worker ごとの秒と戻し先の有無を終わりに出すため)。"
   (var prepared #())
   (for [w workers]
@@ -309,6 +326,7 @@
     (:= prepared (+ prepared #(root)))
     (<- (DesireWorker w))
     (<- (PublishDeclarations))
+    (<- (drain-worker w limits.drain-seconds))
     (<- (ApplyDeclarations))
     (<- (await-until (.format "worker {} が版 {} で live に戻る" w.name w.doeff-commit) (partial back-on w.name w.doeff-commit)
                      (partial worker-line w.name) limits.return-seconds)))

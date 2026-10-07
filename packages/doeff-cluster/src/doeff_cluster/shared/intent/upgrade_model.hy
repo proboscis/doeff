@@ -8,13 +8,15 @@
 ;;;   (<- (ConfirmCleanBoot launch))      ; 入れ替え先の値で、コピーも状態も無い空の機体の起動が通るか(Desire の前に・#3366 の単位 5a)
 ;;;   (<- answer (PrepareBootRoot launch)) ; 入れ替え先の版の自己起動の root を、今の保存先に先に準備する(起動の確認の後・Desire の前に・#3725)
 ;;;   (<- answer (AwaitQuietWindow target seconds)) ; 静かな時間帯を待つ(coordinator の宣言を公開した後・当てる直前に・#3772)
+;;;   (<- answer (AwaitWorkerDrained launch seconds)) ; worker を drain し、中の仕事が 0 になるのを待つ(worker の宣言を公開した後・
+;;;                                       ; 当てる直前に・#3968)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
 ;;; 入れ替えの前の手順が断った時は、UpgradeRefused で対象と断った所(RefusalPoint)を明示して止まる(自動で戻さない): 空の起動か root の
 ;;; 準備が断られた時・確かめた版の組み合わせに無い版の worker が居る時・戻し先の root が無い時は宣言を書く前(宣言を書かず公開もしない)。
-;;; coordinator の当てる直前の確かめ(版の組み合わせの照らし・待ち行列が空・静かな時間帯)が断った時は当てる前(宣言は書いて公開した・
-;;; 当てていない)。
+;;; coordinator の当てる直前の確かめ(版の組み合わせの照らし・待ち行列が空・静かな時間帯)と、worker の当てる直前の drain(中の仕事が
+;;; 上限の内に 0 にならない)が断った時は当てる前(宣言は書いて公開した・当てていない)。
 ;;;
 ;;; worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせ(VerifiedVersions — coordinator の版 X と、X と組めると
 ;;; 手元で確かめた worker の版の集合)で表す(#3772)。
@@ -244,6 +246,33 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
+(defrecord WorkerDrained
+  "worker を drain し、答え手が数える worker の中の仕事が 0 になった(#3968): target = drain した worker の名。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target))
+
+
+(defrecord WorkerDrainMissed
+  "worker を drain したが、上限の内に worker の中の仕事が 0 にならなかった(#3968): target = drain した worker の名・
+   reason = 何が終わらなかったか(答え手が書く文 — 残った仕事を名指す)。AwaitWorkerDrained の答えで、そのまま UpgradeRefused の断りの
+   理由になる(当てる前に断った — 宣言は書いて公開した・走っている仕事は止めない)。"
+  {:tags {:context "doeff-cluster" :role "type"}}
+  (#^ str target)
+  (#^ str reason))
+
+
+(defeffect AwaitWorkerDrained
+  "入れ替える worker を drain し(新しい仕事を受けない状態にする)、worker の中で走っている仕事が終わって 0 になったのを確かめる —
+   汎用の効果で、drain の印の置き方と「worker の中で走っている仕事」の数え方は答え手(配備する側の業務)が決める(#3968 —
+   coordinator の task に数えられない仕事、例えば長く生きる 1 つの task の中で回る子の仕事は、task の待ち(条 V2)では見えない)。
+   版上げの Program は worker の宣言を公開した後、当てる直前に 1 回出す(公開は数分かかり、その間も worker は仕事を受けるので、drain は
+   当てる直前に置く)。答え手は 0 になるか timeout-seconds を越えるまで受け持ってから答える(呼び手は時間で読み直さない)。走っている仕事を
+   止めて 0 にしない。sim = すぐ WorkerDrained。答え = WorkerDrained か WorkerDrainMissed。"
+  {:fields [(: launch WorkerLaunch) (: timeout-seconds float)]
+   :answer (| WorkerDrained WorkerDrainMissed)
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
 (defrecord UnverifiedWorkers
   "coordinator を入れ替える前の条 V1 の照らしで、確かめた版の組み合わせに無い版で動く宣言の内の worker が居た(#3772): target = 何の入れ替えを
    止めたか(\"coordinator\")・coordinator-commit = 入れ替え先の coordinator の版・workers = 組み合わせに無い版で live な宣言の内の worker
@@ -273,16 +302,18 @@
 
 ;; 入れ替えの前の手順が断った所(UpgradeRefused の欄 point — 閉じた語):
 ;;   BEFORE-DESIRE = 宣言を書く前(宣言を書かず公開もしていない — cluster は変わらない)
-;;   BEFORE-APPLY  = coordinator の宣言を書いて公開した後、当てる前(当てていない — 配備する側は Flux を止めたまま扱う・自動では戻さない)
+;;   BEFORE-APPLY  = 宣言を書いて公開した後、当てる前(当てていない — 配備する側は Flux を止めたまま扱う・自動では戻さない)
 (defenum RefusalPoint BEFORE-DESIRE BEFORE-APPLY)
 
 
 (defclass UpgradeRefused [RuntimeError]
   "入れ替えの前の手順が断ったので止まった。target = 何の入れ替えを止めたか・refusal = 拒否の答えそのもの(閉じた和: CleanBootRefused・
-   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing・QueuedTasksRemain・QuietWindowMissed)・
+   BootRootRefused(準備の拒否の理由は閉じた語)・UnverifiedWorkers・RollbackRootMissing・QueuedTasksRemain・QuietWindowMissed・
+   WorkerDrainMissed)・
    point = 断った所(RefusalPoint — 宣言を書く前か、宣言を書いて公開した後で当てる前か)。文も断った所を明示する。自動で戻さない。"
   (defn #^ None __init__ [self #^ str target
-                          #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing QueuedTasksRemain QuietWindowMissed) refusal
+                          #^ (| CleanBootRefused BootRootRefused UnverifiedWorkers RollbackRootMissing QueuedTasksRemain QuietWindowMissed
+                                WorkerDrainMissed) refusal
                           #^ RefusalPoint point]
     ;; defk にできない: 例外の構成子
     (setv what (match refusal
@@ -299,7 +330,9 @@
                  (QueuedTasksRemain :tasks tasks)
                    (.format "{} を当てる前に、待ち行列の task が上限の内に空にならない(queued: {})" target (.join "・" tasks))
                  (QuietWindowMissed :reason reason)
-                   (.format "{} を当てる前に、静かな時間帯が上限の内に来ない({})" target reason)))
+                   (.format "{} を当てる前に、静かな時間帯が上限の内に来ない({})" target reason)
+                 (WorkerDrainMissed :reason reason)
+                   (.format "{} を drain したが、当てる前に中の仕事が上限の内に 0 にならない({})" target reason)))
     (setv where (match point
                   RefusalPoint.BEFORE-DESIRE "宣言は書いていない"
                   RefusalPoint.BEFORE-APPLY "宣言は書いて公開したが、当てていない(自動では戻さない)"))
