@@ -80,6 +80,8 @@ class PartialMessage:
     text_delta: str = ''
     delta: DeltaKind = ...
     thinking_delta: str = ''
+    tool_input_delta: str = ''
+    tool_start: ToolCall | None = None
 
     def __post_init__(self) -> None:
         ...
@@ -132,7 +134,6 @@ class RateLimit:
     utilization: float | None = None
     resets_at: int | None = None
     status: str = ''
-
 RATE_LIMIT_REJECTED: str
 ASSISTANT_ERROR_RATE_LIMIT: str
 
@@ -277,6 +278,9 @@ def classify_lifecycle(record: dict) -> Incomplete:
     ...
 
 def delta_kind_of(delta_type: str) -> _Program[DeltaKind, object]:
+    ...
+
+def tool_start_of(event: dict) -> Incomplete:
     ...
 
 def classify_stream_event(record: dict) -> Incomplete:

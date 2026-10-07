@@ -33,6 +33,9 @@ from doeff_cluster.shared.intent.upgrade_model import AwaitQuietWindow as AwaitQ
 from doeff_cluster.shared.intent.upgrade_model import QuietWindowOpened as QuietWindowOpened
 from doeff_cluster.shared.intent.upgrade_model import QuietWindowMissed as QuietWindowMissed
 from doeff_cluster.shared.intent.upgrade_model import UnverifiedWorkers as UnverifiedWorkers
+from doeff_cluster.shared.intent.upgrade_model import AwaitWorkerDrained as AwaitWorkerDrained
+from doeff_cluster.shared.intent.upgrade_model import WorkerDrained as WorkerDrained
+from doeff_cluster.shared.intent.upgrade_model import WorkerDrainMissed as WorkerDrainMissed
 from doeff_cluster.shared.intent.upgrade_model import RollbackRootMissing as RollbackRootMissing
 from doeff_cluster.shared.intent.upgrade_model import QueuedTasksRemain as QueuedTasksRemain
 from doeff_cluster.shared.intent.upgrade_model import RefusalPoint as RefusalPoint

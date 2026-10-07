@@ -74,7 +74,7 @@ def acquire_lock(path: str) -> _Program[LockHeld | FileFailed, object]:
 def guarded(path: str, action: Callable[[], object]) -> _Program[FileFailed | None, object]:
     ...
 
-def read_file(path: str, binary: bool, limit: int | None) -> _Program[str | bytes | FileFailed, object]:
+def read_file(path: str, binary: bool, limit: int | None, offset: int) -> _Program[str | bytes | FileFailed, object]:
     ...
 
 def _sync(handle: Incomplete) -> Incomplete:
