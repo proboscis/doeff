@@ -184,12 +184,17 @@ class TurnResult:
     input_refs: tuple[str, ...] = ...
     model_windows: tuple[ModelWindow, ...] = ...
     timing: RequestTiming = ...
+STOP_HOOK_FEEDBACK_HEAD: str
+
+@dataclass(frozen=True, kw_only=True)
+class StopHookFeedback:
+    reason: str
 
 @dataclass(frozen=True)
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | TurnResult | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | TurnResult | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:

@@ -46,6 +46,7 @@ from doeff_claude_code.lines import RateLimit as RateLimit
 from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
 from doeff_claude_code.lines import RATE_LIMIT_REJECTED as RATE_LIMIT_REJECTED
 from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERROR_RATE_LIMIT
+from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
 from doeff_claude_code.effects import ClaudeInjectInput as ClaudeInjectInput
@@ -98,6 +99,11 @@ NO_RECEIPT_CAPABILITIES: tuple[str, ...]
 FAKE_TOOL_USE_ID: str
 FAKE_TOOL_NAME: str
 
+@dataclass(frozen=True, kw_only=True)
+class StopHookRejection:
+    answer: str
+    reason: str
+
 @dataclass(frozen=True)
 class FakeReply:
     text: str
@@ -120,6 +126,7 @@ class FakeReply:
     thinking_deltas: int = 0
     tool_input_deltas: int = 0
     account_limit: AccountLimitHit | None = None
+    stop_hook_rejections: tuple[StopHookRejection, ...] = ...
 
     def __post_init__(self) -> None:
         ...
