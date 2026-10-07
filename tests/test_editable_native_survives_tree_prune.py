@@ -63,7 +63,7 @@ def build_editable(wheel_directory, config_settings=None, metadata_directory=Non
 
 
 def _tool_path() -> str:
-    """子の PATH: build の口が読む rustc(保存先の鍵の道具の版)と git の dir と、基本の dir。"""
+    """子の PATH: build の口が組む時に cargo が呼ぶ rustc と git の dir と、基本の dir(保存先の鍵は rustc を読まない — ADR-DOE-BUILD-001 R4 の追補)。"""
     found = [shutil.which(name) for name in ("rustc", "git")]
     assert all(found), f"rustc と git が探し道に要る: {found}"
     return ":".join(dict.fromkeys([*(str(Path(path).parent) for path in found if path), "/usr/bin", "/bin"]))

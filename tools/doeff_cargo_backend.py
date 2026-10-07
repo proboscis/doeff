@@ -13,10 +13,13 @@ uv が入れ直し、uninstall でも消える)。source は作業木の maturin
 その有無を知らず、次の uv sync が組み直さず import が落ちた(tests/test_editable_native_survives_tree_prune.py)。成果物の dir を先に
 探すので、前の形が source の木に残した成果物は使われない。
 
-鍵(_wheel_slot): 組みに効く物の sha256 — tool.uv.cache-keys の file(宣言が無ければ DEFAULT_SOURCE_GLOBS)の中身と相対 path・rustc と
-maturin の版・機体・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と
-作業木の path には依らない — pin を上げて作業木を作り直しても、中身が同じなら同じ鍵。uv も tool.uv.cache-keys の file を見て口を呼ぶ
-ので、この宣言が「uv が組み直しを問う集合」と「保存先の鍵」の 1 つの定義になる。
+鍵(_wheel_slot): 組みに効く物の sha256 — tool.uv.cache-keys の file(宣言が無ければ DEFAULT_SOURCE_GLOBS)の中身と相対 path・maturin の
+版・機体・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と作業木の
+path には依らない — pin を上げて作業木を作り直しても、中身が同じなら同じ鍵。uv も tool.uv.cache-keys の file を見て口を呼ぶので、この
+宣言が「uv が組み直しを問う集合」と「保存先の鍵」の 1 つの定義になる。鍵は子 process を起こさずに作る(ADR-DOE-BUILD-001 R4 の追補 —
+rustc の版を鍵に入れない。鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の
+wheel が在っても鍵を作る所で落ちた — agora-redesign #3850 の 2026-10-07 の zeus の slot の同期。wheel の中身を決めるのは source・Python の
+ABI・機体・組みを変える環境変数・build の設定で、Python へ見せる ABI は C-API なので rustc の版は wheel の外へ出ない)。
 
 保存先(_wheel_slot・_store_wheel): `<置き場>/<package>-<鍵>/<wheel>` と使った印 `.used`(使うたびに置き換えて dir の時刻を進める)。
 置き場 = env DOEFF_WHEEL_CACHE、無ければ `$XDG_CACHE_HOME/doeff-cargo-wheels`(無ければ ~/.cache の下)。並びは doeff-cluster の worker の
@@ -50,12 +53,12 @@ import csv
 import fnmatch
 import glob
 import hashlib
+import importlib.metadata
 import io
 import json
 import os
 import platform
 import shutil
-import subprocess
 import sys
 import sysconfig
 import tempfile
@@ -260,9 +263,9 @@ def _source_files(package: Path) -> list[Path]:
 
 
 def _tool_versions() -> str:
-    """組みに効く道具の版(rustc と maturin)— 道具が替われば同じ source でも wheel を組み直すため。"""
-    rustc = subprocess.run(["rustc", "-V"], capture_output=True, text=True, check=False).stdout.strip()
-    return f"rustc={rustc} maturin={getattr(maturin, '__version__', '?')}"
+    """組みに効く道具の版(maturin — 配布の記録から読み、子 process を起こさない)— maturin が替われば同じ source でも wheel を組み直すため。
+    rustc の版は入れない(頭の註の鍵・ADR-DOE-BUILD-001 R4 の追補)。"""
+    return f"maturin={importlib.metadata.version('maturin')}"
 
 
 def _build_environment() -> str:

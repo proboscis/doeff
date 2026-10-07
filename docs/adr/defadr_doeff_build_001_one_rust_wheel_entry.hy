@@ -150,7 +150,10 @@
        :evidence "agora-redesign #3860 の調べの表・tools/doeff_cargo_backend.py の 2026-10-06 の版の頭の註「editable と sdist は引かない」")
      (fact
        "鍵と保存先を自前で持つ所が 3 系統あった: build の口(中身の hash・$XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/)・doeff-cluster の worker(doeff-vm と doeff-vm-core の git の tree hash・state/wheels/doeff-vm-<鍵>/)・commit の hook の linter(sha と入力の object id・doeff-linter-snapshots)。worker の鍵は Python の版と機体だけを足し、rustc・maturin の版と組みを変える環境変数と作業木の未 commit の変更を見ない。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py・packages/doeff-linter/scripts/linter_snapshot.py")]
+       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py・packages/doeff-linter/scripts/linter_snapshot.py")
+     (fact
+       "2026-10-07 19:47 と 18:5x: zeus の追随の腕(com.masui.land-arm.service)が ai live-plane slot の doeff 074c29efe を uv sync --frozen した時、build の口が保存先の鍵を作るために `rustc -V` を起こし、腕の PATH(dotfiles の cron_management/job_env.sh)に rustc が無いので FileNotFoundError で rc=1 に成った。保存先には同じ source の doeff-vm の wheel が 05:41 から在った。手の shell(~/.cargo/bin が在る)で同じ argv を撃つと rc=0(保存先の wheel を使い 1 秒)。"
+       :evidence "agora-redesign #3850 の 2026-10-07 の slot の同期の調べ(cc3-w56)・R4b")]
   :context
     [(interpretation
        "Rust の source が変わらない版上げで Rust を組み直さない事は、組む所が何か所あっても全部が同じ鍵の同じ保存先を先に引く時だけ保証できる。入口が 2 つあると、片方の鍵が見ない入力(rustc の版・未 commit の変更)で古い wheel を引くか、片方だけが保存先を持たずに毎回組む。build の口は uv sync・uv build・worker の uv build --wheel・起動の script のどれもが必ず通る所なので、入口をここに置けば、呼び手を数えずに全部へ効く。")
@@ -163,6 +166,7 @@
      (rule R2 "editable の hook は保存先の wheel から答える: 組み立ての成果物(native の拡張 module と maturin の include で wheel に入れる物)を source の木に置かず、editable の wheel の中身として venv の site-packages の __editable__.<名>.native/ に入れ(uv の RECORD が持つ)、python-source を路に足し finder を起こす .pth と、package の探し先を 成果物の dir → 作業木の dir にする finder と、dist-info の wheel を返す。訳: 木の git の名簿に無い file を消す写し(dotfiles の remote_check)が source の木の成果物を消しても uv の記録はその有無を知らず、次の uv sync が組み直さず import が落ちた(2026-10-07 04:00 の日次・agora-redesign #3860)。python-source を持たない package は保存先の wheel をそのまま返す。")
      (rule R3 "組み方が maturin だけでない package(doeff-indexer)は、無い時の組み方(Compile)を wheel_from_store・editable_from_store に渡す。自前で保存先・鍵を持たず、build の hook から maturin を直に撃たない。")
      (rule R4 "鍵 = tool.uv.cache-keys の file(宣言が無ければ既定の glob)の中身と相対 path・rustc と maturin の版・機体・組む Python の ABI・組みを変える環境変数・build の設定。wheel に入る file はどれも宣言に並べる(doeff-vm は doeff_vm/ の .py・.pyi・py.typed も)。")
+     (rule R4b "R4 の追補(2026-10-07・agora-redesign #3850・cisco-c8 の可): 鍵の材料から rustc の版を外し、鍵は子 process を起こさずに作る(maturin の版は配布の記録 importlib.metadata から読む)。訳: 鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の wheel が在っても鍵を作る所で落ちた。wheel の中身を決めるのは source・Python の ABI・機体・組みを変える環境変数(RUSTC・RUSTFLAGS・CARGO_PROFILE_* は R4 のとおり鍵に入る)・build の設定で、Python へ見せる ABI は C-API なので rustc の版は wheel の外へ出ない。失敗ケース = tests/test_wheel_store_entry.py の test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process。")
      (rule R5 "保存先 = env DOEFF_WHEEL_CACHE(無ければ $XDG_CACHE_HOME/doeff-cargo-wheels)の <package>-<鍵>/<wheel> と .used。使う前に RECORD の hash で確かめ、壊れていれば名指しの 1 行を出してその wheel を除き組み直す。")
      (rule R6 "移す予定の入口(commit の hook の linter の binary)は台帳 PENDING-ENTRIES に理由つきで置く。台帳に無い新しい入口は赤。入口へ移した・消した変更は同じ commit で台帳の行を削る(残すと赤)。")
      (rule R7 "doeff-cluster の worker(実行環境の準備の EnsureNativeWheel)と起動の script(worker/entry/boot_wheel)は、native の wheel を `uv build --wheel` で入口へ渡すだけにし、自前の鍵(git の tree hash)と置き場を持たない。保存先は入口の DOEFF_WHEEL_CACHE(worker の state/wheels)。入れる wheel は uv build が root の下の --out-dir(native_wheel.wheel_out_dir)に出した file で、どの版の入口でも出る(宣言の古い doeff の root も同じ形で通る)。入口が env DOEFF_WHEEL_REPORT の file に書く 1 行(組んだか)は観測だけで、書かない版の入口では由来を閉じた型の UNREPORTED にし、準備を止めず、組んだ・使ったのどちらにも埋めない — 読みの定義点は native_wheel.reported_built(#3860 の 1 の続き)。")]

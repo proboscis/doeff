@@ -1,7 +1,7 @@
 """Rust の package の wheel の置き場の鍵(tools/doeff_cargo_backend.py の _wheel_slot)を確かめる(agora-redesign #2969)。
 
 置き場は同じ鍵の build で cargo を撃たずに wheel を写して返す(#2364)。鍵に組みを変える物が欠けていると、設定を変えて組んだ wheel や
-ABI の違う Python の wheel を既定の build が黙って引く。ここでは cargo を撃たず、鍵を決める関数を直に呼ぶ。道具の版(rustc を呼ぶ)は
+ABI の違う Python の wheel を既定の build が黙って引く。ここでは cargo を撃たず、鍵を決める関数を直に呼ぶ。道具の版(maturin の版)は
 固定の文字に差し替える — 鍵の材料のうち、ここで確かめない物を揃えるため。
 """
 
@@ -38,7 +38,7 @@ def _backend() -> ModuleType:
 def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
     """道具の版を固定し、置き場を tmp に向け、鍵に入る環境変数を全部外した状態の口。"""
     module = _backend()
-    monkeypatch.setattr(module, "_tool_versions", lambda: "rustc=fixed maturin=fixed")
+    monkeypatch.setattr(module, "_tool_versions", lambda: "maturin=fixed")
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "wheels"))
     for name in (*BUILD_ENV, *PLACE_ENV):
         monkeypatch.delenv(name, raising=False)
