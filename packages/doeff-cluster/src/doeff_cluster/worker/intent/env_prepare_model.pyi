@@ -21,6 +21,7 @@ class PrepareRequest:
     key: str
     platform: str
     root: str
+    compile_jobs: int | None
     known: tuple = ...
     min_free_bytes: int = 0
     launched_ms: int | None = None
@@ -209,6 +210,7 @@ class CompileTrees(EffectBase):
     project_dir: str
     trees: tuple
     entries: tuple
+    jobs: int | None
 
 @dataclass(frozen=True)
 class ProbeImports(EffectBase):

@@ -95,7 +95,7 @@
   (session var failed {})
   (session var timings {})
   (session var checked {})
-  (PrepareCode [revision]
+  (PrepareCode [revision compile-jobs]
     (when (not-in revision pending)
       (val final (+ settings.cache "/" revision))
       (<- found (| TreeCheck None) (tree-check settings revision (.get checked revision)))
@@ -119,7 +119,7 @@
         (<- checks tuple (cache-checks settings checked))
         (:= checked (dfor c checks c.name c))
         (<- script str (prepare-script settings.repo revision :hy-command settings.hy-command :tool settings.tool
-                                       :layout settings.layout))
+                                       :layout settings.layout :compile-jobs compile-jobs))
         (val tmp (.format "{}/.{}.tmp" settings.cache revision))
         (val err (.format "{}/.{}.err" settings.cache revision))
         (<- answer (StartProcess :argv #("sh" "-c" script) :stderr-path err :env-mode EnvMode.EXTEND

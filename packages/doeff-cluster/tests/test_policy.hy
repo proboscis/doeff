@@ -23,7 +23,7 @@
   (ProcessView spec.name spec 1 pid 0))
 
 (deftest test-start-waits-for-code
-  (assert (= (! (plan 0 #(A1) (! (world :codes #())) {} POLICY)) #((PrepareCode "rev1"))))
+  (assert (= (! (plan 0 #(A1) (! (world :codes #())) {} POLICY)) #((PrepareCode "rev1" None))))
   (assert (= (! (plan 0 #(A1) (! (world :codes #((CodeView "rev1" CodeState.PREPARING)))) {} POLICY)) #()))
   (assert (= (! (plan 0 #(A1) (! (world)) {} POLICY)) #((StartJob A1 1 "/c/rev1"))))
   ;; 展開に失敗した版は起動しない。状態表示に理由を出す。
@@ -50,12 +50,13 @@
   (setv #(status) (! (statuses 30999 #(A1) failed {} policy)))
   (assert (= status.phase JobPhase.CODE-FAILED))
   (assert (= status.detail "準備に失敗"))
-  (assert (= (! (plan 31000 #(A1) failed {} policy)) #((PrepareCode "rev1")))))
+  (assert (= (! (plan 31000 #(A1) failed {} policy)) #((PrepareCode "rev1" None)))))
 
 (deftest test-jobs-are-independent
   ;; b だけ版を変えても a の process には何もしない。b は旧を動かしたまま新しい版を準備し、揃ってから b だけを止める。
   (val b2 (replace B1 :revision "rev2"))
-  (assert (= (! (plan 0 #(A1 b2) (! (world (! (running A1 10)) (! (running B1 11)))) {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 0 #(A1 b2) (! (world (! (running A1 10)) (! (running B1 11)))) {} POLICY))
+             #((PrepareCode "rev2" POLICY.compile-jobs-while-replacing))))
   (val ready (! (world (! (running A1 10)) (! (running B1 11)) :codes #(READY1 READY2))))
   (assert (= (! (plan 0 #(A1 b2) ready {} POLICY)) #((SignalJob "b" 11 StopStage.TERM (SpecChanged))))))
 
@@ -249,7 +250,7 @@
 (deftest test-handoff-prepares-new-code-while-the-old-process-keeps-running
   ;; 新のコードが揃うまで旧は止めない(準備だけ進める)。状態には「入れ替えを待つ」を出す。
   (setv w (! (world (! (proc H1 10 "1-old")) :codes #(READY1))))
-  (assert (= (! (plan 0 #(H2) w {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 0 #(H2) w {} POLICY)) #((PrepareCode "rev2" None))))
   (assert (= (! (plan 0 #(H2) (! (world (! (proc H1 10 "1-old")) :codes #(READY1 (CodeView "rev2" CodeState.PREPARING)))) {} POLICY)) #()))
   (setv #(status) (! (statuses 0 #(H2) w {} POLICY)))
   (assert (= status.phase JobPhase.RUNNING))
@@ -301,7 +302,7 @@
   ;; handoff でない job(入口の検めの対象でない素の entry)は、新しい版の木が揃うまで旧を動かしたまま準備だけを出し、揃ったら旧を名から
   ;; 外さずに止める(RetireJob でなく SignalJob — 新を並べず、止め終えてから起動する)。
   (val old (! (proc A1 10 "1-old")))
-  (assert (= (! (plan 0 #(A2) (! (world old)) {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 0 #(A2) (! (world old)) {} POLICY)) #((PrepareCode "rev2" POLICY.compile-jobs-while-replacing))))
   (assert (= (! (plan 0 #(A2) (! (world old :codes #(READY1 READY2))) {} POLICY))
              #((SignalJob "a" 10 StopStage.TERM (SpecChanged))))))
 
@@ -322,14 +323,14 @@
   ;; 失敗ケース: recreate の job の宣言の版が変わり、新しい版の木がまだ無い間は、旧い process を止めずに(SignalJob を出さずに)新しい
   ;; 版の準備だけを出す。準備中・準備に失敗した間も旧は動かしたまま。直す前は先に旧を止めていた(SignalJob … (SpecChanged))。
   (val cold (! (plan 0 #(R2) (! (world (! (running R1)))) {} POLICY)))
-  (assert (= cold #((PrepareCode "rev2"))) cold)
+  (assert (= cold #((PrepareCode "rev2" POLICY.compile-jobs-while-replacing))) cold)
   (val preparing (! (world (! (running R1)) :codes #(READY1 (CodeView "rev2" CodeState.PREPARING)))))
   (assert (= (! (plan 0 #(R2) preparing {} POLICY)) #()))
   ;; 準備に失敗した版は間を置いて作り直す(旧はそのまま)。
   (val policy (replace POLICY :code-retry-ms 30000))
   (val failed (! (world (! (running R1)) :codes #(READY1 (CodeView "rev2" CodeState.FAILED :detail "準備に失敗" :failed-ms 1000)))))
   (assert (= (! (plan 30999 #(R2) failed {} policy)) #()))
-  (assert (= (! (plan 31000 #(R2) failed {} policy)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 31000 #(R2) failed {} policy)) #((PrepareCode "rev2" POLICY.compile-jobs-while-replacing))))
   ;; 状態の報告: 旧は動いている(RUNNING・動いている版は rev1)・新しい版を準備している事が文で分かる。起動の見送りの訳は準備待ち。
   (val status (get (! (statuses 0 #(R2) preparing {} POLICY)) 0))
   (assert (= #(status.phase status.running-revision) #(JobPhase.RUNNING "rev1")) status)
@@ -435,8 +436,8 @@
   (assert (= (replace A1 :hold-version True) A1))
   ;; drain が解けた(印が偽に戻った)周期から、普通の入れ替えへ進む(溜めた物は無い)。handoff も recreate も、まず旧を動かしたまま
   ;; 新しい版を準備し、recreate は新しい版が揃ってから旧を止める。
-  (assert (= (! (plan 1 #(H2) (! (world old-handoff :codes #(READY1))) {} POLICY)) #((PrepareCode "rev2"))))
-  (assert (= (! (plan 1 #(A2) cold-recreate {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 1 #(H2) (! (world old-handoff :codes #(READY1))) {} POLICY)) #((PrepareCode "rev2" None))))
+  (assert (= (! (plan 1 #(A2) cold-recreate {} POLICY)) #((PrepareCode "rev2" POLICY.compile-jobs-while-replacing))))
   (assert (= (! (plan 1 #(A2) old-recreate {} POLICY)) #((SignalJob "a" 10 StopStage.TERM (SpecChanged)))))
   ;; 印の前に止め始めた process は止め終える(据え置くのは止めていない process だけ)。
   (val stopping {"a" (JobRecord "a" :attempts 1 :stopping (JobStop :requested-ms 0 :stage StopStage.TERM :signalled-ms 0 :reason (SpecChanged)))})

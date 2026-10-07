@@ -91,7 +91,7 @@
 (defk preparing-then-sweep [declared]
   {:pre [(: declared str)] :post [(: % None)]}
   "root の準備を 1 本起こし、走っている間に掃除するため。"
-  (<- (PrepareEnv "env-0123456789abcdef01234567" declared))
+  (<- (PrepareEnv "env-0123456789abcdef01234567" declared None))
   (<- (sweep-for (frozenset) SWEEP-SECONDS))
   None)
 

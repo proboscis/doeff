@@ -482,7 +482,7 @@
   (val policy (WorkerPolicy))
   (assert (is-not spec.runtime-env None) spec)
   (val actions (! (plan 0 #(spec) (WorldView #() #()) {} policy :warm #(warm))))
-  (assert (= actions #((PrepareEnv (code-key spec) spec.runtime-env) (PrepareEnv warm.key warm.runtime-env :warm True)))
+  (assert (= actions #((PrepareEnv (code-key spec) spec.runtime-env None) (PrepareEnv warm.key warm.runtime-env None :warm True)))
           "job の準備が先・温める準備が後")
   ;; 準備済みの root には待ちの子を起こし(#3646)、待ちの子も準備済みなら何もしない。
   (val ready (WorldView #((CodeView warm.key CodeState.READY :path "/r")) #()))
@@ -494,7 +494,7 @@
   (val failed (WorldView #((CodeView warm.key CodeState.FAILED :detail "d" :failed-ms 0)) #()))
   (assert (= (! (plan 10 #() failed {} policy :warm #(warm))) #()) "失敗の直後は撃ち直さない")
   (assert (= (! (plan policy.code-retry-ms #() failed {} policy :warm #(warm)))
-             #((PrepareEnv warm.key warm.runtime-env :warm True)))))
+             #((PrepareEnv warm.key warm.runtime-env None :warm True)))))
 
 
 (deftest test-the-worker-pins-running-desired-warm-and-preparing-roots-for-the-sweep

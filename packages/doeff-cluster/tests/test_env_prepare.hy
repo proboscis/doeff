@@ -42,7 +42,7 @@
   (<- key str (env-key env PLATFORM))
   (<- result (| EnvReady EnvFailure)
       (prepare-env (PrepareRequest :env env :key key :platform PLATFORM :root (.format "/state/roots/{}" key)
-                                   :known known :min-free-bytes 1024)))
+                                   :compile-jobs None :known known :min-free-bytes 1024)))
   result)
 
 

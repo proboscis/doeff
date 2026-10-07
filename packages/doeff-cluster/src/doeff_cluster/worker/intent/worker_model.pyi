@@ -241,6 +241,7 @@ class WorkerPolicy:
     restart_backoff_max_ms: int = 60000
     stable_run_ms: int = 60000
     code_retry_ms: int = 30000
+    compile_jobs_while_replacing: int = 2
     wake_gap_seconds: float = 0.1
 
 @dataclass(frozen=True)
@@ -322,11 +323,13 @@ class ProcessStartedMs(EffectBase[int | None]):
 @dataclass(frozen=True)
 class PrepareCode(EffectBase[None]):
     revision: str
+    compile_jobs: int | None
 
 @dataclass(frozen=True)
 class PrepareEnv(EffectBase[None]):
     key: str
     runtime_env: str
+    compile_jobs: int | None
     warm: bool = False
 
 @dataclass(frozen=True)

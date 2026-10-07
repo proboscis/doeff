@@ -256,7 +256,7 @@
   (assert (= (json.loads spec.runtime-env) declared))
   (val policy (WorkerPolicy))
   (val actions (! (plan 0 #(spec) (WorldView #() #()) {} policy)))
-  (assert (= actions #((PrepareEnv (code-key spec) spec.runtime-env))) actions)
+  (assert (= actions #((PrepareEnv (code-key spec) spec.runtime-env None))) actions)
   (val failure (EnvFailure :kind EnvFailureKind.COMMIT-MISSING :detail "push していない" :retryable False))
   (val world (WorldView #((CodeView (code-key spec) CodeState.FAILED :detail "push していない" :failed-ms 0 :failure failure)) #()))
   (val status (get (! (statuses 1 #(spec) world {} policy)) 0))
@@ -265,4 +265,4 @@
   (assert (= #((get row "phase") (get row "failureKind") (get row "retryable")) #("env-failed" "commit-missing" False)) row)
   ;; 今の commit だけの task は今のまま木を展開する
   (val plain (replace spec :revision (* "a" 40) :runtime-env None))
-  (assert (= (! (plan 0 #(plain) (WorldView #() #()) {} policy)) #((PrepareCode (* "a" 40))))))
+  (assert (= (! (plan 0 #(plain) (WorldView #() #()) {} policy)) #((PrepareCode (* "a" 40) None)))))
