@@ -21,7 +21,7 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld DiskUsage StatPath ReadText ReadBytes WriteText WriteBytes
                                          AppendText MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
-                                         CompilePythonSources])
+                                         CompilePythonSources MakeSymlink])
 (import doeff_core_effects.python_bytecode [compile-python-sources])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
@@ -276,6 +276,9 @@
     (resume (compile-python-sources tree items jobs roots)))
   (CopyTree [source target]
     (<- answer (guarded source (fn [] (shutil.copytree source target :symlinks True :dirs-exist-ok True))))
+    (resume answer))
+  (MakeSymlink [path target]
+    (<- answer (guarded path (fn [] (os.symlink target path))))
     (resume answer))
   (RenamePath [source target]
     (<- answer (guarded source (fn [] (os.replace source target))))

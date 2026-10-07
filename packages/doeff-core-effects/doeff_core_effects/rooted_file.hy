@@ -18,7 +18,7 @@
 (import doeff_core_effects.file_effects [FileFailed PathStat LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText
                                          MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
-                                         CompilePythonSources])
+                                         CompilePythonSources MakeSymlink])
 
 ;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree RemoveTree
@@ -96,6 +96,13 @@
   (RenamePath [source target]
     (<- answer (moved root effect))
     (resume answer))
+  (MakeSymlink [path target]
+    ;; link の先が絶対 path なら内側の / から読む先なので外側へ移す(相対の先は link の在る dir から読むので、そのまま — agora-redesign #4036)。
+    (<- outer str (outer-path root path))
+    (<- pointed str (if (.startswith target "/") (outer-path root target) (unchanged target)))
+    (<- answer (MakeSymlink outer pointed))
+    (<- inner ANSWER (inner-answer root answer))
+    (resume inner))
   (ReleaseLock [held]
     (<- path str (outer-path root held.path))
     (<- answer (ReleaseLock (replace held :path path)))
@@ -105,6 +112,12 @@
     (<- answer (replace effect :path path))
     (<- inner ANSWER (inner-answer root answer))
     (resume inner)))
+
+
+(defk unchanged [target]
+  {:pre [(: target str)] :post [(: % str)]}
+  "相対の link の先をそのまま返すため(if の両枝を Program にそろえる)。"
+  target)
 
 
 (defk moved [root request]

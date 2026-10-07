@@ -2,7 +2,7 @@
 ;;; HttpRequest(http_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
 ;;;   os-file-handler      本物の file system(os_file.hy)
 ;;;   memory-file-handler  I/O なし — session の値に持つ file の置き場(memory_file.hy)。本物と同じ所で断る(親の dir が無い・file と dir の
-;;;                        取り違え・中身の在る dir への rename)。symlink は持たない。
+;;;                        取り違え・中身の在る dir への rename)。symlink も持つ(MakeSymlink — agora-redesign #4036)。
 ;;;
 ;;; 失敗は値(FileFailed — path と理由)で答える(例外にしない — 呼び手が型で読む)。成功の答えは effect ごと:
 ;;;   StatPath       path の種類・実の path・大きさ・mtime。答え = PathStat(無い path は kind MISSING — 失敗ではない)。follow-symlinks = False は
@@ -23,8 +23,12 @@
 ;;;                  SourceNotCompiled の tuple
 ;;;   LinkFile       file 1 つにもう 1 つの名を付ける(ハードリンク — 写し先が在れば断る・別の file system へは断る・#2462)。答え = None
 ;;;   CopyTree       dir の中身を target の下へ重ねて写す(target は在ってよい・同じ名は上書き・symlink は symlink のまま)。答え = None
-;;;   RenamePath     path の名を変える(os.replace と同じ — 写し先の file は置き換え・中身の在る dir へは断る)。答え = None
-;;;   RemoveTree     file か dir を中身ごと消す(無ければ断る)。答え = None
+;;;   MakeSymlink    path に target を指す symlink を作る(os.symlink と同じ — path が在れば断る・target は相対なら link の在る dir から読む・
+;;;                  先が無くても作る)。答え = None。dir の中身を別の木へ 1 手で付け替える書き手のため(別名の link を作って RenamePath で
+;;;                  置き換える — agora-redesign #4036)
+;;;   RenamePath     path の名を変える(os.replace と同じ — 写し先の file は置き換え・中身の在る dir へは断る・symlink は辿らずに link 自身を
+;;;                  動かし、置き換える)。答え = None
+;;;   RemoveTree     file か dir を中身ごと消す(無ければ断る・symlink は link だけを消す)。答え = None
 ;;;   AcquireLock    錠の file を排他で取る(取れるまで待つ)。答え = LockHeld
 ;;;   ReleaseLock    取った錠を放す。答え = None
 ;;;   ReadDiskFree   path を含む file system の空き(byte・無い path は在る親で測る — agora-redesign #831)。答え = int
@@ -169,6 +173,12 @@
   (#^ str target))
 
 
+(defclass [(dataclass :frozen True)] MakeSymlink [(get EffectBase (| FileFailed None))]
+  "path に target を指す symlink を作る(頭の註)。"
+  (#^ str path)
+  (#^ str target))
+
+
 (defclass [(dataclass :frozen True)] RenamePath [(get EffectBase (| FileFailed None))]
   "path の名を変える(頭の註)。"
   (#^ str source)
@@ -212,11 +222,18 @@
   (setv #^ (| int None) mode None))
 
 
+(defrecord MemoryLink
+  "memory の置き場の symlink 1 つ(path = link の絶対 path・target = 書いたままの先 — 相対なら link の在る dir から読む)。"
+  (#^ str path)
+  (#^ str target))
+
+
 (defrecord MemoryFiles
-  "memory の置き場の中身(files = file の列・dirs = dir の絶対 path の列 — 根 / は暗に在る・locks = 取られている錠の path・free = ReadDiskFree
-   に答える空きの byte・total = ReadDiskUsage に答える総量の byte)。"
+  "memory の置き場の中身(files = file の列・dirs = dir の絶対 path の列 — 根 / は暗に在る・links = symlink の列・locks = 取られている錠の
+   path・free = ReadDiskFree に答える空きの byte・total = ReadDiskUsage に答える総量の byte)。"
   (setv #^ (get tuple #(MemoryFile ...)) files #())
   (setv #^ (get tuple #(str ...)) dirs #())
+  (setv #^ (get tuple #(MemoryLink ...)) links #())
   (setv #^ (get tuple #(str ...)) locks #())
   (setv #^ int free (** 2 40))
   (setv #^ int total (** 2 41)))
