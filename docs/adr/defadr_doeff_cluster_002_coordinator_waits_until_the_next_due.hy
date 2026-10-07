@@ -109,13 +109,11 @@
                      "packages/doeff-cluster/tests/test_idle_skip.hy::test-a-quiet-system-steps-only-for-requests-and-deadlines"]
        :wiring "配線済み(2026-10-07・単位 2b)")
      (law a-sleeping-stand-in-changes-no-decision
-       :statement "for_all 筋書き: 期限だけで起きる走り(worker の代役は静かな拍を眠り、預けた heartbeat を列がその刻に渡す)と、余計に起こす走り(代役は 1 拍ずつ打ち、coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい"
+       :statement "for_all 筋書き: 期限だけで起きる走りと、余計に起こす走り(coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい(worker の代役は本番と同じ待ちで周の間を待つ — agora-redesign #3871 の単位 5。前の形は代役が静かな拍を眠り、預けた heartbeat を列がその刻に渡した)"
        :counterexamples
          [(counterexample "預けた heartbeat を、起きた時にまとめて調停ループへ渡す — 判断の刻が heartbeat の刻からずれる(前の静かな区間の形はこれを本番の判断で試して隠していた)")]
-       :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy"
-                     "packages/doeff-cluster/tests/test_coordinator_idle_wait.hy::test-the-sim-queue-hands-a-deposited-beat-over-at-its-instant"
-                     "packages/doeff-cluster/tests/test_rest_same_instant.hy"]
-       :wiring "配線済み(2026-10-07・単位 2b)")]
+       :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy"]
+       :wiring "配線済み(2026-10-07・単位 2b。眠る代役と預けの道は単位 5 で消した)")]
   :enforcement
     [(deftest test-adr-doe-cluster-002-due-answers-are-closed
        ;; 期限の関数は、期限の無い状態に DueNever・落ち着いていない状態に DueNow を返す(数の None・now + 1 ではない — R3)。

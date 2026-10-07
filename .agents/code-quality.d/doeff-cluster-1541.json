@@ -1493,7 +1493,6 @@
         "doeff-cluster-watch-policy",
         "doeff-cluster-kube-model",
         "doeff-cluster-worker-heartbeat-rules",
-        "doeff-cluster-worker-quiet-policy",
         "doeff-cluster-worker-tick-pauses",
         "doeff-cluster-run-context",
         "doeff-cluster-run-context-rules",
