@@ -37,11 +37,14 @@
   answer)
 
 
-(defk hold-the-lease [every]
-  {:pre [(: every float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "持ったまま止まる担い手の見本: 準備できたと報告してから(入れ替えの新しい版は旧い版が止まるまで待機)名前付きの lease を取り、取った
-   世代と刻を盤に書き、止められるまで lease を返さずに報告を続ける(止めの合図で終わる時も自分では返さない)。"
+(defk hold-the-lease [every late]
+  {:pre [(: every float) (: late float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "持ったまま止まる担い手の見本: 起き上がりに late 秒かけてから(本番の子が import と起動の間 Ready を報告できない形 — 模擬の子は
+   起きた刻に報告するので、0 だと新の起動・新の Ready・旧の止めが同じ刻に重なり、並んで起きたかを刻で読めない)準備できたと報告し
+   (入れ替えの新しい版は旧い版が止まるまで待機)、名前付きの lease を取り、取った世代と刻を盤に書き、止められるまで lease を返さずに
+   報告を続ける(止めの合図で終わる時も自分では返さない)。"
   (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
+  (<- (Delay late))
   (<- (ReportReady True "待機"))
   (<- lock Semaphore (CreateNamedSemaphore LOCK))
   (<- (AcquireSemaphore lock))
@@ -55,18 +58,18 @@
   beats)
 
 
-(defk lease-writer [foundation every]
-  {:pre [(: foundation Callable) (: every float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+(defk lease-writer [foundation every late]
+  {:pre [(: foundation Callable) (: every float) (: late float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "service: hold-the-lease を土台で包む。"
-  (<- beats int (foundation (hold-the-lease every)))
+  (<- beats int (foundation (hold-the-lease every late)))
   beats)
 
 
 (defsystem lease-writers [#^ Callable foundation]
   "見本の系: 名前付きの lease を持つ service を handoff で入れ替える(版 1)"
-  (writer (lease-writer foundation 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))
+  (writer (lease-writer foundation 1.0 0.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))
 
 
 (defsystem lease-writers-v2 [#^ Callable foundation]
-  "lease-writers の版 2(本体の引数 every を変えた — 入れ替わる)"
-  (writer (lease-writer foundation 2.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))
+  "lease-writers の版 2(本体の引数 every を変えた — 入れ替わる)。起き上がりに 1 秒かかる(新が旧と並んで起きる間を刻で読める)"
+  (writer (lease-writer foundation 2.0 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))

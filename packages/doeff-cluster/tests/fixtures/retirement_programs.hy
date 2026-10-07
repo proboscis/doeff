@@ -45,32 +45,35 @@
   n)
 
 
-(defk ready-beats [ready every]
-  {:pre [(: ready bool) (: every float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "拍ごとに準備できたか(ready)を報告する(止められるまで)。ready が偽の版は、入れ替えの新が Ready にならない形の代役。"
+(defk ready-beats [ready every late]
+  {:pre [(: ready bool) (: every float) (: late float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起き上がりに late 秒かけてから、拍ごとに準備できたか(ready)を報告する(止められるまで)。ready が偽の版は、入れ替えの新が Ready に
+   ならない形の代役。late は本番の子が import と起動の間 Ready を報告できない形 — 模擬の子は起きた刻に報告するので、0 だと旧が「退く」を
+   受ける刻と新の最初の Ready の刻が同じ刻に重なり、前後を刻で読めない。"
+  (<- (Delay late))
   (while True
     (<- (ReportReady ready (if ready "書けた" "準備できない(検の版)")))
     (<- (Delay every)))
   None)
 
 
-(defk retiring-body [prefix ready every]
-  {:pre [(: prefix str) (: ready bool) (: every float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk retiring-body [prefix ready every late]
+  {:pre [(: prefix str) (: ready bool) (: every float) (: late float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
   "退きの知らせの見張りと準備の報告を並べ、止めの合図を待ち、来たら盤の <prefix>/<世代>/stop に刻と理由を書いて終わる。"
   (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
   (<- _notices Task (Spawn (minding-retirement prefix ctx.instance)))
-  (<- _beats Task (Spawn (ready-beats ready every)))
+  (<- _beats Task (Spawn (ready-beats ready every late)))
   (<- reason str (AwaitStop))
   (<- at int (now-epoch-ms))
   (<- (WriteShared (.format "{}/{}/stop" prefix ctx.instance) (OpaqueJson.of {"at" at "reason" reason})))
   reason)
 
 
-(defk retiring-program [foundation prefix ready every]
-  {:pre [(: foundation Callable) (: prefix str) (: ready bool) (: every float)] :post [(: % str)]
+(defk retiring-program [foundation prefix ready every late]
+  {:pre [(: foundation Callable) (: prefix str) (: ready bool) (: every float) (: late float)] :post [(: % str)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "service: retiring-body を土台で包む。"
-  (<- reason str (foundation (retiring-body prefix ready every)))
+  (<- reason str (foundation (retiring-body prefix ready every late)))
   reason)
 
 
@@ -80,23 +83,23 @@
 
 (defsystem retiring-beacons [#^ Callable foundation]
   "見本の系: handoff で入れ替える、退きの知らせを書く service(版 1)"
-  (beacon (retiring-program foundation "retire" True 1.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (beacon (retiring-program foundation "retire" True 1.0 0.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
 
 
 (defsystem retiring-beacons-v2 [#^ Callable foundation]
-  "retiring-beacons の版 2(本体の引数 every を変えた — 入れ替わる)"
-  (beacon (retiring-program foundation "retire" True 2.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  "retiring-beacons の版 2(本体の引数 every を変えた — 入れ替わる)。起き上がりに 1 秒かかる(旧の「退く」と新の Ready の前後を刻で読める)"
+  (beacon (retiring-program foundation "retire" True 2.0 1.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
 
 
 (defsystem retiring-beacons-stuck [#^ Callable foundation]
   "retiring-beacons の版 2'(Ready にならない — 入れ替えは期限で諦められる)"
-  (beacon (retiring-program foundation "retire" False 2.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (beacon (retiring-program foundation "retire" False 2.0 0.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
 
 
 (defsystem retiring-beacons-v3 [#^ Callable foundation]
-  "retiring-beacons の版 3(本体の引数 every を版 2 からも変えた — 諦めの後の宣言し直し)"
-  (beacon (retiring-program foundation "retire" True 3.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  "retiring-beacons の版 3(本体の引数 every を版 2 からも変えた — 諦めの後の宣言し直し)。起き上がりに 1 秒かかる(版 2 と同じ訳)"
+  (beacon (retiring-program foundation "retire" True 3.0 1.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
