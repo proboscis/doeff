@@ -91,7 +91,7 @@ The scheduler primitives are:
 | `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (effect, not method) |
 | `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
-| `CompletePromise(p, value)` | `Promise[T]`, `T` | `None` | Resolve promise successfully |
+| `CompletePromise(p, value, *, yield_to_woken=True)` | `Promise[T]`, `T` | `None` | Resolve promise successfully; with `yield_to_woken=False` the completer keeps its turn |
 | `FailPromise(p, error)` | `Promise[Any]`, exception | `None` | Resolve promise with error |
 | `CreateExternalPromise()` | none | `ExternalPromise[T]` | Allocate externally-completable promise |
 
