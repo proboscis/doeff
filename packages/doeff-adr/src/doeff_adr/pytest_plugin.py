@@ -481,6 +481,14 @@ class DoeffAdrHyFile(pytest.Module):
                 return module
 
     def collect(self) -> Iterable[pytest.Item | pytest.Collector]:
+        """外す一覧(ini の doeff_hy_test_skips)に載れば import せず理由つきの skip の item 1 つ・載らなければ関数ごとの item。
+
+        一覧を読むのはこの 1 か所で、ADR の集め手(doeff_adr_hy_files)と Hy の検の file の集め手(HyTestFile)の両方に効く —
+        以前は HyTestFile だけが読み、ADR の冊を一覧に載せても赤のまま集まった(2026-10-07)。
+        """
+        skipped = _skipped_file_items(self)
+        if skipped is not None:
+            return skipped
         _ = self.obj  # _getobj が記録か通常の import かを決める。
         indexed = self._mut_indexed
         if indexed is None:
@@ -590,6 +598,17 @@ def _hy_test_skip_reason(path: Path, config: pytest.Config) -> str | None:
     return config.stash[_HY_TEST_SKIPS_KEY].reason_for(relative)
 
 
+def _skipped_file_items(collector: DoeffAdrHyFile) -> list[pytest.Item] | None:
+    """外す一覧に載る file なら、import せずに理由つきの skip の item 1 つ(走らせた数の報告に毎回出す — agora-redesign #2591)。
+    載らなければ None。"""
+    reason = _hy_test_skip_reason(collector.path, collector.config)
+    if reason is None:
+        return None
+    skipped = HyScriptItem.from_parent(collector, name=HyScriptItem.NAME)
+    skipped.add_marker(pytest.mark.skip(reason=reason))
+    return [skipped]
+
+
 class HyTestFile(DoeffAdrHyFile):
     """ini の doeff_hy_test_files に当たる Hy の検の file。
 
@@ -598,17 +617,12 @@ class HyTestFile(DoeffAdrHyFile):
     どちらの形かは file を読んだ結果(集めた item が 0 本か)で決め、名や中身の字面では決めない — 字面で決めると、
     deftest を包む別の macro で検を作る file を script と取り違え、検を 1 本も走らせずに緑にする。
 
-    ini の doeff_hy_test_skips に載る file は import せず、理由つきの skip の item 1 つにする(日次を赤にしないために
-    外した file を、走らせた数の報告に毎回出す — agora-redesign #2591)。
+    ini の doeff_hy_test_skips に載る file は import せず、理由つきの skip の item 1 つにする(読むのは親の
+    ``DoeffAdrHyFile.collect`` の 1 か所)。
     """
 
     def collect(self) -> Iterable[pytest.Item | pytest.Collector]:
-        """外す一覧に載れば skip の item 1 つ・test を定義すればその item・定義しなければ script の item 1 つ。"""
-        reason = _hy_test_skip_reason(self.path, self.config)
-        if reason is not None:
-            skipped = HyScriptItem.from_parent(self, name=HyScriptItem.NAME)
-            skipped.add_marker(pytest.mark.skip(reason=reason))
-            return [skipped]
+        """外す一覧に載れば skip の item 1 つ(親)・test を定義すればその item・定義しなければ script の item 1 つ。"""
         collected = list(super().collect())
         return collected or [HyScriptItem.from_parent(self, name=HyScriptItem.NAME)]
 
