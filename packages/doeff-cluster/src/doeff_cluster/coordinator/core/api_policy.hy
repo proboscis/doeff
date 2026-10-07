@@ -260,9 +260,12 @@
           drifted (drift-status owned.status key expected (.row state.observations.deployments key) now))
     (setv (get rollouts name) (replace owned :status drifted))
     (when (and owned.spec.mark-deployment (!= drifted.marked-deployment key))
-      (setv #(ns dep) (.split key "/" 1))
-      (.append actions {"rollout" name "op" "annotate" "namespace" ns "name" dep
-                        "annotations" {naming.owner-annotation (.format "{}/Rollout/{} replicas={}" naming.owner-scope name expected)}})))
+      (setv #(ns dep) (.split key "/" 1)
+            mark {"rollout" name "op" "annotate" "namespace" ns "name" dep
+                  "annotations" {naming.owner-annotation (.format "{}/Rollout/{} replicas={}" naming.owner-scope name expected)}})
+      ;; 印の annotation の失敗も scale と同じ間を空けて出し直す(action-due — 間を空けないと失敗の記録で状態が毎歩変わる・#3868)。
+      (when (action-due drifted mark now None)
+        (.append actions mark))))
   ;; 段が進まなければ状態そのものを返す(reconcile と同じ — stamp が写しを作らずに返す・#1356)。
   #((if (= rollouts state.rollouts) state (replace state :rollouts rollouts)) actions))
 
@@ -273,7 +276,8 @@
 
 (defn #^ ClusterState record-action [#^ ClusterState state #^ dict action #^ bool ok #^ (| str None) error #^ int now
                                      #^ (| int None) [result None]]
-  "実行した action の結果を Rollout の status に残す(dry-run の台数は simulated に)。同じ失敗の繰り返しは数だけ進める。"
+  "実行した action の結果を Rollout の status に残す(dry-run の台数は simulated に)。同じ action の繰り返しは数を進め、at を最後に実行した
+   刻にする(失敗の出し直しの間は最後の失敗から数え、成功した書きは最後の書きの後の観測を待つ — action-due・#3868)。"
   (setv name (get action "rollout") r (.get state.rollouts name))
   (when (is r None) (return state))
   (setv status r.status
@@ -284,7 +288,7 @@
   (setv entry (| what {"ok" ok "error" error "at" now "count" 1}))
   (when (and previous (= (dfor #(k v) (.items previous) :if (not-in k #("at" "count")) k v)
                          (dfor #(k v) (.items entry) :if (not-in k #("at" "count")) k v)))
-    (setv entry (| previous {"count" (+ (.get previous "count" 1) 1)})))
+    (setv entry (| previous {"count" (+ (.get previous "count" 1) 1) "at" now})))
   (setv status (replace status :last-action entry))
   (when (and ok target (= target.kind "Deployment") target.dry-run)
     (setv status (replace status :simulated (| (or status.simulated {}) {(target-key target) (if (is result None) (get action "replicas") result)}))))

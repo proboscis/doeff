@@ -394,14 +394,16 @@
 (defk follow-wait [kube follows timeout-seconds now]
   {:pre [(: kube KubeMemory) (: follows MemoryFollows) (: timeout-seconds (| float None)) (: now int)] :post [(: % (| float None))]
    :tags {:context "coordinator" :role "protocol"}}
-  "模擬の見張りが受付の待ちを縮めた秒を知るため: 伝えていない変化が在れば 0(本番の見張りは変化の刻に受付を起こす)、答えない区間の
-   終わりに伝える物が変わるなら、その刻までの秒と timeout-seconds(None = 期限なし)の短い方、それ以外は timeout-seconds のまま。"
-  (val at (.change-at follows kube now))
+  "模擬の k8s が受付の待ちを縮めた秒を知るため: 見張りが伝えていない変化が在れば 0(本番の見張りは変化の刻に受付を起こす)、答えない
+   区間の終わりに見張りの伝える物が変わるか、区間の中で始めた node の label の読みが答えるなら(本番は読み終えた刻に受付の箱を起こす)、
+   その刻までの秒と timeout-seconds(None = 期限なし)の短い方、それ以外は timeout-seconds のまま。"
+  (val held (and (is-not kube.batches.current None) (is-not kube.stalled-until-ms None) (< now kube.stalled-until-ms)))
+  (val ats (tuple (gfor at #((.change-at follows kube now) (if held kube.stalled-until-ms None)) :if (is-not at None) at)))
   (cond
     (.changes follows kube now) 0.0
-    (is at None) timeout-seconds
-    (is timeout-seconds None) (/ (- at now) 1000.0)
-    True (min timeout-seconds (/ (- at now) 1000.0))))
+    (not ats) timeout-seconds
+    (is timeout-seconds None) (/ (- (min ats) now) 1000.0)
+    True (min timeout-seconds (/ (- (min ats) now) 1000.0))))
 
 
 (defhandler kube-memory [#^ KubeMemory kube #^ MemoryFollows follows]

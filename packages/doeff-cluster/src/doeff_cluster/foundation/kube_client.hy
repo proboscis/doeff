@@ -12,6 +12,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import json)
 (import pathlib [Path])
+(import socket)
+(import ssl)
 (import threading)
 (import typing [Callable])
 (import httpx)
@@ -27,14 +29,27 @@
 (defclass KubeClient []
   "k8s の API の client。token は要求ごとに file から読む(projected token は期限で入れ替わる)。
    fail = 届かない・2xx でない時に、理由の文を渡して投げる例外の型(coordinator の entry が kube_model の KubeUnavailable を渡す)。
-   retry-seconds = 見張りが届かない・断られた後に list し直すまでの秒・watch-seconds = watch の要求の timeoutSeconds。"
+   transport = 検が渡す偽の API(None = Pod の中の本物の API へ、TCP の keepalive を付けて繋ぐ — keepalive-options)。
+   retry-seconds = 見張りが届かない・断られた後に list し直すまでの秒・watch-seconds = watch の要求の timeoutSeconds(server がこの秒で
+   stream を閉じ、見張りは覚えた版から受け直す)。"
   (defn #^ None __init__ [self #^ (get Callable #(#(str) Exception)) fail #^ str [base API-URL] #^ str [sa-dir SA-DIR]
                           #^ float [timeout 5.0] #^ (| httpx.BaseTransport None) [transport None]
-                          #^ float [retry-seconds 10.0] #^ int [watch-seconds 300]]
+                          #^ float [retry-seconds 10.0] #^ int [watch-seconds 60]]
     (setv self.fail fail self.base base self.sa-dir (Path sa-dir) self.timeout timeout
           self.retry-seconds retry-seconds self.watch-seconds watch-seconds
-          self.client (httpx.Client :timeout timeout :verify (str (/ self.sa-dir "ca.crt")) :trust-env False
-                                    :transport transport)))
+          self.client (httpx.Client :timeout timeout :trust-env False
+                                    :transport (if (is transport None)
+                                                   (httpx.HTTPTransport
+                                                     :verify (ssl.create-default-context :cafile (str (/ self.sa-dir "ca.crt")))
+                                                     :socket-options (list (KubeClient.keepalive-options)))
+                                                   transport))))
+
+  (defn [staticmethod] #^ tuple keepalive-options []
+    "本物の API への接続の TCP の keepalive の設定(15 秒黙れば 5 秒ごとに 3 回確かめる — 約 30 秒)。繋がったまま黙った相手(FIN も RST
+     も来ない — API server の node の障害・conntrack の失効)の watch の stream を、読みの打ち切り(watch-seconds + 余白)より早く切れた
+     接続として見つけ、見張りが理由を伝えるため(#3868)。値は Linux の socket の名(coordinator は Pod の中だけで本物の API へ繋ぐ)。"
+    #(#(socket.SOL_SOCKET socket.SO_KEEPALIVE 1) #(socket.IPPROTO_TCP socket.TCP_KEEPIDLE 15)
+      #(socket.IPPROTO_TCP socket.TCP_KEEPINTVL 5) #(socket.IPPROTO_TCP socket.TCP_KEEPCNT 3)))
 
   (defn [staticmethod] #^ bool available [#^ str [sa-dir SA-DIR]]
     (.exists (/ (Path sa-dir) "token")))
