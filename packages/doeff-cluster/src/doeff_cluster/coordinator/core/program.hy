@@ -59,6 +59,13 @@
 ;; k8s の読みが始めてからこの ms 終わらなければ、名指しの 1 行を出す(1 つの読みにつき 1 度 — #2807)。観測が Rollout の判断で古いと
 ;; 読まれる 15 秒(api_policy.OBSERVATION-STALE-MS)より前に名指す。
 (val KUBE-READS-NAMED-MS 10000)
+;; heartbeat の返事の遅れの行の名と閾(2026-10-07 — 名 + 欄 at = 返事を置き終えた時刻(ISO)・worker = 送り手の worker の名・
+;; elapsed-ms = 受付の箱に並んでから返事を置き終えるまでの ms・slowest = いちばん長かった区間の名・slowest-ms = その区間の ms)。
+;; 閾は worker の拍の遅れの線(worker/core/program の TICK-LAG-MS)と同じ 5 秒で、生死の lease(10 秒)の手前で名指す。
+;; 実例: 2026-10-07 13:16〜13:18 JST に worker の heartbeat の往復が 5.8 秒かかり、coordinator の生死の表で live が瞬いたが、
+;; coordinator の log には遅れの行が無く、遅れが coordinator の側か網かを分けられなかった。
+(val HEARTBEAT-LAG-LOG "coordinator: heartbeat の返事の遅れ")
+(val HEARTBEAT-LAG-MS 5000)
 
 
 (defk kube-observations [state now]
