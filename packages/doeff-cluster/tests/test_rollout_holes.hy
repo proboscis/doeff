@@ -10,7 +10,10 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView DeploymentUnreadable])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
+(import doeff_cluster.coordinator.core.api_policy [plan-rollouts record-action resume-after-downtime mark-alive ALIVE-MARK-MS])
+(import doeff_cluster.coordinator.core.wake_policy [rollout-due])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
@@ -106,8 +109,13 @@
                                    "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30
                                    "rollbackTimeoutSeconds" 600 "markDeployment" False "abort" False}))
 (setv STOPPED (TargetView :ready "NotReady" :stopped True :spec-replicas 0 :reason "止まっている"))
+;; Service から Deployment ns/app-a へ移し終えて台数を持ち、Deployment に印の annotation を置く Rollout の spec。
+(val OWNER-SPEC (validate-rollout-spec {"from" {"kind" "Service" "name" "old"}
+                                         "to" {"kind" "Deployment" "namespace" "ns" "name" "app-a" "replicas" 1 "dryRun" False}
+                                         "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30
+                                         "rollbackTimeoutSeconds" 600 "markDeployment" True "abort" False}))
 ;; action-due が書きの後の観測かを読む相手の Deployment の観測 — まだ観測していない(None)。
-(setv NO-OBSERVATION None)
+(val NO-OBSERVATION None)
 
 
 (defk observed-at [at]
@@ -172,14 +180,49 @@
   ;; 成功した同じ書き(相手が Deployment)は、その書きの後の観測が届くまで出し直さない(見張りが書きの結果を伝える前に同じ書きを
   ;; 重ねない — #3868)。書いた刻 1000 の観測(書きより前に届いた物)と観測が無い間は出さず、1001 の観測が届けば出す。
   ;; 相手が Service の書きは coordinator の状態の中の書き(次の判断がすぐ読む)なので、成功の直後もすぐ出す。
-  (setv action {"op" "scale" "target" SPEC.from-target "replicas" 0})
-  (setv written (RolloutStatus :last-action {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" True "at" 1000 "count" 1}))
+  (val action {"op" "scale" "target" SPEC.from-target "replicas" 0})
+  (val written (RolloutStatus :last-action {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" True "at" 1000 "count" 1}))
   (assert (not (action-due written action 1000 (! (observed-at 1000)))))
   (assert (not (action-due written action 9000 NO-OBSERVATION)))
   (assert (action-due written action 1001 (! (observed-at 1001))))
-  (setv service-action {"op" "scale" "target" SPEC.to-target "replicas" 1})
-  (setv service-written (RolloutStatus :last-action {"op" "scale" "target" "Service:new" "replicas" 1 "ok" True "at" 1000 "count" 1}))
+  (val service-action {"op" "scale" "target" SPEC.to-target "replicas" 1})
+  (val service-written (RolloutStatus :last-action {"op" "scale" "target" "Service:new" "replicas" 1 "ok" True "at" 1000 "count" 1}))
   (assert (action-due service-written service-action 1000 NO-OBSERVATION)))
+
+
+(deftest test-a-repeated-action-is-dated-at-its-last-attempt
+  ;; 同じ action を続けて実行した時、lastAction の at は最後に実行した刻(数と一緒に進む — #3868 のレビュー)。出し直しの間は最後の失敗
+  ;; から倍々に数え、成功した書きは最後の書きの後の観測を待つ。at が最初の刻のままだと、間の上限(60 秒)を越えた後と、2 度目の成功の
+  ;; 後は毎歩出し直しになり、調停ループが落ち着かない(Rollout の歩の 1 秒の間隔がこれを隠していた)。
+  (val action {"rollout" "r" "op" "scale" "target" SPEC.from-target "replicas" 0})
+  (val state (ClusterState :rollouts {"r" (RolloutRow :spec SPEC :status (RolloutStatus :phase "StoppingOld" :phase-since-ms 0))}))
+  (val twice (record-action (record-action state action False "403" 1000) action False "403" 3000))
+  (val failed (. (get twice.rollouts "r") status))
+  (assert (= #((get failed.last-action "at") (get failed.last-action "count")) #(3000 2)) failed.last-action)
+  (assert (not (action-due failed action (+ 3000 (retry-delay-ms 2) -1) NO-OBSERVATION)))
+  (assert (action-due failed action (+ 3000 (retry-delay-ms 2)) NO-OBSERVATION))
+  (val written (. (get (. (record-action (record-action state action True None 1000) action True None 5000) rollouts) "r") status))
+  (assert (= (get written.last-action "at") 5000) written.last-action)
+  ;; 2 度目の書き(5000)より前の観測では、3 度目を出さない。
+  (assert (not (action-due written action 6000 (! (observed-at 4000))))))
+
+
+(deftest test-a-failing-annotation-waits-for-the-retry-gap
+  ;; markDeployment の Rollout が台数を持つ Deployment に印の annotation を置けない(403)時、plan-rollouts は失敗の間(1 秒から倍々)を
+  ;; 空けて出し直し、調停ループはその刻に起きる(終わった Rollout でも)。間を空けないと失敗の記録で状態が毎歩変わり、調停ループが
+  ;; 落ち着かない(#3868 のレビュー — 以前は Rollout の歩の 1 秒の間隔が隠していた)。
+  (val state (ClusterState :rollouts {"to-a" (RolloutRow :spec OWNER-SPEC
+                                                          :status (RolloutStatus :phase "Complete" :stopped-old-ms 500 :completed-ms 500))}))
+  (<- first tuple (plan-rollouts state 1000 T))
+  (val marks (lfor a (get first 1) :if (= (get a "op") "annotate") a))
+  (assert (= (len marks) 1) first)
+  (val failed (record-action state (get marks 0) False "403" 1000))
+  (<- early tuple (plan-rollouts failed 1500 T))
+  (<- late tuple (plan-rollouts failed 2000 T))
+  (assert (= (lfor a (get early 1) :if (= (get a "op") "annotate") a) []) early)
+  (assert (= (len (lfor a (get late 1) :if (= (get a "op") "annotate") a)) 1) late)
+  (<- due (| DueAt DueNow DueNever) (rollout-due failed 1000 T (ClusterNaming)))
+  (assert (= due (DueAt :at 2000)) due))
 
 
 (deftest test-a-rollback-that-does-not-finish-is-marked-stuck-and-keeps-the-new

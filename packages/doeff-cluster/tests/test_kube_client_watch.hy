@@ -12,6 +12,7 @@
 (import pathlib [Path])
 (import threading)
 (import time)
+(import certifi)
 (import httpx)
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.foundation.kube_client [KubeClient])
@@ -311,3 +312,14 @@
   (assert (.is-set worked) "work より前に then が呼ばれた")
   ;; then の中で、終わったかを答える関数がもう真を答える。
   (assert (is probe.seen True) probe.seen))
+
+
+(deftest test-the-live-transport-finds-a-silent-peer-by-tcp-keepalive [tmp-path]
+  ;; transport を渡さない(本番の)client は、TCP の keepalive を付けた transport で繋ぐ — 繋がったまま黙った相手(FIN も RST も来ない)の
+  ;; watch の stream を、読みの打ち切り(watch-seconds + 余白)より早く切れた接続として見つけ、見張りが理由を伝える(#3868 のレビュー)。
+  (.write-text (/ tmp-path "token") "test-token" :encoding "utf-8")
+  (.write-bytes (/ tmp-path "ca.crt") (.read-bytes (Path (certifi.where))))
+  (val client (KubeClient RuntimeError :sa-dir (str tmp-path)))
+  ;; httpx は transport の socket の設定を公開の API で見せないので、接続の pool の欄を読む。
+  (assert (= client.client._transport._pool._socket_options (list (KubeClient.keepalive-options)))
+          client.client._transport._pool._socket_options))

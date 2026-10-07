@@ -34,9 +34,10 @@
   (<- nodes (| int None) (node-reread-due state now))
   (var dues (if (is-not nodes None) #(nodes) #()))
   (for [#(_ r) (sorted (.items state.rollouts))]
+    ;; 処理ステージの期限と失敗した action の出し直しの刻。終わった Rollout も、台数の持ち主の印の annotation の出し直しの刻を持つ。
+    (<- phase (| int None) (rollout-phase-due r.spec r.status now))
+    (:= dues (+ dues (if (is-not phase None) #(phase) #())))
     (when (not-in r.status.phase TERMINAL-PHASES)
-      (<- phase (| int None) (rollout-phase-due r.spec r.status now))
-      (:= dues (+ dues (if (is-not phase None) #(phase) #())))
       (for [target (rollout-targets r.spec)]
         (when (= target.kind "Service")
           (<- ready (| int None) (readiness-due state target.name now timing))
