@@ -12,10 +12,10 @@
       READY1 (CodeView "rev1" CodeState.READY "/c/rev1")
       READY2 (CodeView "rev2" CodeState.READY "/c/rev2"))
 
-(defk world [#* processes [codes #(READY1)]]
-  {:pre [(: processes tuple) (: codes tuple)] :post [(: % WorldView)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "観測した世界(コードの展開 codes と子 process の列)を、plan に渡す形で組むため。"
-  (WorldView codes processes))
+(defk world [#* processes [codes #(READY1)] [probes #()]]
+  {:pre [(: processes tuple) (: codes tuple) (: probes tuple)] :post [(: % WorldView)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "観測した世界(コードの展開 codes と子 process の列と入口の検めの答え probes)を、plan に渡す形で組むため。"
+  (WorldView codes processes probes))
 
 (defk running [spec [pid 10]]
   {:pre [(: spec JobSpec) (: pid int)] :post [(: % ProcessView)] :tags {:context "doeff-cluster-test" :role "entry"}}
@@ -300,6 +300,90 @@
   ;; handoff でない job は今までどおり(旧を止めてから新)。
   (assert (= (! (plan 0 #(A2) (! (world (! (proc A1 10 "1-old")) :codes #(READY1 READY2))) {} POLICY))
              #((SignalJob "a" 10 StopStage.TERM (SpecChanged))))))
+
+
+;; --- recreate の入れ替えの順(2026-10-08): 新しい版の準備と入口の検めが済むまで旧い版を止めない ------------------------------
+;; 本番では Pod 1 つの記録の service(recreate)が、宣言の版が変わると先に旧い process を止め(02:45:30)、その後に新しい版の環境の準備
+;; (約 107 秒)と入口の検めを経て起動した(02:47:24)— 約 130 秒書けなかった。handoff と同じく、旧を動かしたまま準備と検めを進め、
+;; 両方が済んでから旧を止める。止め終えた次の周期で新しい版をすぐ起動する。新旧の本体を同時には動かさない(検めは import だけ)。
+
+(import doeff_cluster.worker.intent.worker_model [ProbeEntry ProbeState ProbeView StartHold] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster.worker.core.policy [start-holds JobHold])
+
+;; 入口の検めの対象の service の job(args の先頭が "service")・入れ替えの形は既定の recreate。
+(val R1 (JobSpec "s" "jobs.s" #("service") "rev1"))
+(val R2 (replace R1 :revision "rev2"))
+
+(deftest test-a-recreate-job-prepares-the-new-version-while-the-old-process-keeps-running
+  ;; 失敗ケース: recreate の job の宣言の版が変わり、新しい版の木がまだ無い間は、旧い process を止めずに(SignalJob を出さずに)新しい
+  ;; 版の準備だけを出す。準備中・準備に失敗した間も旧は動かしたまま。直す前は先に旧を止めていた(SignalJob … (SpecChanged))。
+  (val cold (! (plan 0 #(R2) (! (world (! (running R1)))) {} POLICY)))
+  (assert (= cold #((PrepareCode "rev2"))) cold)
+  (val preparing (! (world (! (running R1)) :codes #(READY1 (CodeView "rev2" CodeState.PREPARING)))))
+  (assert (= (! (plan 0 #(R2) preparing {} POLICY)) #()))
+  ;; 準備に失敗した版は間を置いて作り直す(旧はそのまま)。
+  (val policy (replace POLICY :code-retry-ms 30000))
+  (val failed (! (world (! (running R1)) :codes #(READY1 (CodeView "rev2" CodeState.FAILED :detail "準備に失敗" :failed-ms 1000)))))
+  (assert (= (! (plan 30999 #(R2) failed {} policy)) #()))
+  (assert (= (! (plan 31000 #(R2) failed {} policy)) #((PrepareCode "rev2"))))
+  ;; 状態の報告: 旧は動いている(RUNNING・動いている版は rev1)・新しい版を準備している事が文で分かる。起動の見送りの訳は準備待ち。
+  (val status (get (! (statuses 0 #(R2) preparing {} POLICY)) 0))
+  (assert (= #(status.phase status.running-revision) #(JobPhase.RUNNING "rev1")) status)
+  (assert (= status.detail "旧い版を動かしたまま — 新しい版の準備中(新のコード preparing)") status)
+  (assert (= (! (start-holds 0 #(R2) preparing {} POLICY)) #((JobHold :name "s" :hold StartHold.PREPARING))))
+  (val failing (get (! (statuses 30999 #(R2) failed {} policy)) 0))
+  (assert (= failing.detail "旧い版を動かしたまま — 新しい版を準備できない: 準備に失敗") failing)
+  (assert (= (! (start-holds 30999 #(R2) failed {} policy)) #((JobHold :name "s" :hold StartHold.PREPARE-FAILED)))))
+
+(deftest test-a-recreate-job-probes-the-new-entry-before-stopping-the-old-process
+  ;; 失敗ケース: 新しい版の木が揃っても、入口の検めが通るまでは旧を止めない — 検めの action だけを出し、走っている間は待つ。直す前は
+  ;; 旧を止めていた。
+  (val codes #(READY1 READY2))
+  (val unprobed (! (plan 0 #(R2) (! (world (! (running R1)) :codes codes)) {} POLICY)))
+  (assert (= unprobed #((ProbeEntry R2 "/c/rev2"))) unprobed)
+  (val probing (! (world (! (running R1)) :codes codes :probes #((ProbeView (spec-hash R2) ProbeState.RUNNING :started-ms 0)))))
+  (assert (= (! (plan 3000 #(R2) probing {} POLICY)) #()))
+  (val status (get (! (statuses 3000 #(R2) probing {} POLICY)) 0))
+  (assert (= #(status.phase status.running-revision) #(JobPhase.RUNNING "rev1")) status)
+  (assert (= status.detail "旧い版を動かしたまま — 入口の検め中(3 秒・1 回目)") status)
+  (assert (= (! (start-holds 3000 #(R2) probing {} POLICY)) #((JobHold :name "s" :hold StartHold.PROBING)))))
+
+(deftest test-a-recreate-job-keeps-the-old-process-when-the-new-entry-fails-the-probe
+  ;; 失敗ケース: 新しい版の入口を読み込めない(検めが FAILED)間は旧を止めない(書き手の空白を作らない — handoff と同じ)。失敗の理由は
+  ;; 状態の行で見え、code-retry-ms を過ぎたら検めだけをやり直す。直す前は検めの前に旧を止めていた。
+  (val policy (replace POLICY :code-retry-ms 30000))
+  (val broken (! (world (! (running R1)) :codes #(READY1 READY2)
+                        :probes #((ProbeView (spec-hash R2) ProbeState.FAILED :detail "ImportError: x" :failed-ms 1000)))))
+  (val waiting (! (plan 5000 #(R2) broken {} policy)))
+  (assert (= waiting #()) waiting)
+  (val status (get (! (statuses 5000 #(R2) broken {} policy)) 0))
+  (assert (= #(status.phase status.running-revision) #(JobPhase.RUNNING "rev1")) status)
+  (assert (= status.detail "旧い版を動かしたまま — 新の入口を読み込めない: ImportError: x") status)
+  (assert (= (! (start-holds 5000 #(R2) broken {} policy)) #((JobHold :name "s" :hold StartHold.PROBE-FAILED))))
+  (assert (= (! (plan 31000 #(R2) broken {} policy)) #((ProbeEntry R2 "/c/rev2")))))
+
+(deftest test-a-recreate-job-stops-the-old-process-once-the-new-version-is-ready-and-probed
+  ;; 新しい版の木が揃い検めも通ったら旧を止め(SpecChanged)、止め終えた次の周期で待たずに新しい版を起動する(準備と検めは済んでいる)。
+  (val codes #(READY1 READY2))
+  (val probes #((ProbeView (spec-hash R2) ProbeState.PASSED)))
+  (val first {"s" (JobRecord "s" :attempts 1)})
+  (val stop (! (plan 0 #(R2) (! (world (! (running R1)) :codes codes :probes probes)) first POLICY)))
+  (assert (= stop #((SignalJob "s" 10 StopStage.TERM (SpecChanged)))) stop)
+  (val stopping (! (records-after 0 first stop)))
+  (assert (= (! (start-holds 0 #(R2) (! (world (! (running R1)) :codes codes :probes probes)) stopping POLICY))
+             #((JobHold :name "s" :hold None))))
+  (val reap (! (plan 10 #(R2) (! (world (replace (! (running R1)) :exit-code -15) :codes codes :probes probes)) stopping POLICY)))
+  (assert (= reap #((ReapJob "s" 10 Outcome.STOPPED -15))) reap)
+  (val reaped (! (records-after 10 stopping reap)))
+  (assert (= (! (plan 11 #(R2) (! (world :codes codes :probes probes)) reaped POLICY)) #((StartJob R2 2 "/c/rev2")))))
+
+(deftest test-a-recreate-job-that-left-the-declaration-or-a-changed-task-is-stopped-at-once
+  ;; 宣言から消えた job は、新しい版を待たずに今までどおりすぐ止める。task(once)は 1 度だけ走らせる物なので、宣言が変わっても新しい版を
+  ;; 準備せず今までどおりすぐ止める。
+  (assert (= (! (plan 0 #() (! (world (! (running R1)))) {} POLICY)) #((SignalJob "s" 10 StopStage.TERM (Undeclared)))))
+  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+  (assert (= (! (plan 0 #((replace task :revision "rev2")) (! (world (! (running task)))) {} POLICY))
+             #((SignalJob "task/t1" 10 StopStage.TERM (SpecChanged))))))
 
 
 ;; --- 版の据え置き(#3684): drain 中の worker は、drain の間に宣言し直された新しい版を受けない ---------------------------------
