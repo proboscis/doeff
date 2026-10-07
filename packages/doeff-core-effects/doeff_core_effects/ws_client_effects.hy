@@ -6,8 +6,10 @@
 ;;;   scripted-ws-client  I/O なし — 台本の frame の列で答え、送った文を記録する(scripted_ws_client.hy)
 ;;;
 ;;;   WsConnect        url へ繋ぐ(headers = handshake の要求に載せるヘッダーの列 — Authorization 等)。答え = WsConnectOutcome:
-;;;                      WsLink(link・url)                  繋がった。link = 答え手が振る接続の id(以後の effect はこのidで接続を指す)
-;;;                      WsConnectFailed(url・reason・status) 繋がらなかった。status = handshake を断った status(届かなければ None)
+;;;                      WsLink(link・url)                  繋がった。link = 答え手が振る接続の id(以後の effect はこの id で接続を指す)。番号は繋ぎを始めた順(ws-1・ws-2 …)で、
+;;;                                                          断られた繋ぎの番号も戻さない — 同時に進む繋ぎが同じ番号を取らないため(番号は繋ぎを始める前に確保する)
+;;;                      WsConnectFailed(url・reason・status) 繋がらなかった。status = handshake を断った status(届かなければ None)。reason は
+;;;                                                          人と log のための文で、要求のヘッダーの値や url の query を含まない(記録の境界)
 ;;;   WsReceive        id の接続の次の frame を待つ。答え = WsFrame:
 ;;;                      WsText(link・text)                  文字の 1 通
 ;;;                      WsBinary(link・data)                byte の 1 通

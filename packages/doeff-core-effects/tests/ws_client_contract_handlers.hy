@@ -5,13 +5,15 @@
 ;;;                        空いた port — 外の網へ出ない)
 ;;;   scripted-ws-client   fake: scripted-ws-client(I/O なし — 台本)。相手の振る舞いは台本の frame と replies で表す
 ;;;
-;;; 契約の世界(ContractWsWorld の答え — WsWorld): url = 相手の繋ぎ先・dead = 届かない繋ぎ先・install = この解釈器の答え手の installer
-;;; (検が内側の範囲を切って、範囲の終わりの後始末を見るため)。相手の振る舞いは解釈器ごとに同じ形で用意する:
+;;; 契約の世界(ContractWsWorld の答え — WsWorld): url = 相手の繋ぎ先・slow = handshake が SLOW-SECONDS 遅れる繋ぎ先(同時に進む繋ぎの検 —
+;;; 台本では url と同じ振る舞い)・dead = 届かない繋ぎ先・install = この解釈器の答え手の installer(検が内側の範囲を切って、範囲の終わりの
+;;; 後始末を見るため)。相手の振る舞いは解釈器ごとに同じ形で用意する:
 ;;;   * 繋ぐと「hello <X-Contract のヘッダーの値>」の 1 通が届く(契約の Program はヘッダー X-Contract: a を載せる — 台本は "hello a" で答える)
 ;;;   * "bin" に byte の 1 通 PEER-BINARY・"bye" に状態符 PEER-BYE-CODE と理由 PEER-BYE-REASON の閉じ・"hi" に "echo:hi"
+;;; 本物の答え手の client を数える作り手 client-into(作った client を箱へ置く — Cancel された繋ぎの client が閉じている事を検が読む)。
 ;;; 相手が見た閉じ(PeerClosures の答え — PeerClose の列): 本物 = 待ち受けが受けた close frame(届くまで count 件を待つ)・fake = 台本の記録
 ;;; WsSentClose。使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS・REQUIRES)。
-(require doeff-hy.macros [defk defhandler defeffect <- val var])
+(require doeff-hy.macros [defk deff defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import collections.abc [Callable])
@@ -37,15 +39,19 @@
 (val PEER-BYE-CODE 4001)
 (val PEER-BYE-REASON "さようなら")
 (val SCRIPTED-URL "ws://world.test/ws")
+(val SCRIPTED-SLOW "ws://world.test/slow")
 (val SCRIPTED-DEAD "ws://dead.test/ws")
 ;; 相手の 1 つの閉じ・待ち受けの立ち上げを待つ上限(秒)。
 (val PEER-SECONDS 10.0)
+;; 遅い繋ぎ先の handshake の遅れ(秒)— 速い繋ぎがその間に終わり、同時に進む 2 つの繋ぎの形になる。
+(val SLOW-SECONDS 1.0)
 
 
 (defrecord WsWorld
-  "契約の世界: url = 相手の繋ぎ先・dead = 届かない繋ぎ先・install = この解釈器の答え手の installer(引数なしで呼ぶ)。"
+  "契約の世界: url = 相手の繋ぎ先・slow = handshake が遅れる繋ぎ先・dead = 届かない繋ぎ先・install = この解釈器の答え手の installer(引数なしで呼ぶ)。"
   {:tags {:context "ws-client-test" :role "type"}}
   (#^ str url)
+  (#^ str slow)
   (#^ str dead)
   (#^ Callable install))
 
@@ -98,7 +104,11 @@
    closures へ置く。"
   (import aiohttp [web WSMsgType])
   (setv ws (web.WebSocketResponse))
-  (await (.prepare ws request))
+  (try
+    (await (.prepare ws request))
+    ;; 相手(client)が handshake の途中で去った(Cancel で client を閉じた)— 上げずに返す。
+    (except [#(ConnectionResetError RuntimeError)]
+      (return ws)))
   (await (.send-str ws (+ "hello " (.get request.headers HEADER-NAME "-"))))
   (setv reading True)
   (while reading
@@ -116,11 +126,18 @@
   ws)
 
 
+(defn :async #^ object slow-peer [#^ queue.Queue closures #^ object request]  ; defk にできない: aiohttp が要求ごとに呼ぶ callback(待ち受けの loop の coroutine)
+  "遅い繋ぎ先: handshake の答えを SLOW-SECONDS 遅らせてから echo-peer と同じに振る舞う(その間に別の繋ぎが終わる — 同時に進む繋ぎの検)。"
+  (await (asyncio.sleep SLOW-SECONDS))
+  (await (echo-peer closures request)))
+
+
 (defn :async #^ Listening listen [#^ queue.Queue closures]  ; defk にできない: aiohttp の実 I/O(待ち受けの loop の coroutine)
   "待ち受けを 127.0.0.1 の空いた port に立てるため。"
   (import aiohttp [web])
   (setv app (web.Application))
   (.add-route app.router "GET" "/ws" (partial echo-peer closures))
+  (.add-route app.router "GET" "/slow" (partial slow-peer closures))
   (setv runner (web.AppRunner app :access-log None))
   (await (.setup runner))
   (await (.start (web.TCPSite runner "127.0.0.1" 0)))
@@ -154,6 +171,15 @@
   port)
 
 
+(deff client-into [box]  ; defk にできない: aiohttp-ws-client の client-factory として繋ぐ coroutine の中(Program の外)で呼ばれる callback
+  {:pre [(: box queue.Queue)] :post [(: % "aiohttp.ClientSession")] :tags {:context "ws-client-test" :role "foundation"}}
+  "本物の答え手が作る client を数えるため: 既定の作り手(new-client-session)と同じ client を作り、箱へ置いてから渡す(検は後で閉じているかを読む)。"
+  (import doeff_core_effects.aiohttp_ws_client [new-client-session])
+  (setv session (new-client-session))
+  (.put box session)
+  session)
+
+
 (defhandler live-closures [#^ queue.Queue closures]
   ;; 本物の相手が見た閉じ(先頭の説明)。引数に残す理由: 箱は解釈器が待ち受けを立てた時に作る値。
   (PeerClosures [count]
@@ -170,8 +196,8 @@
   (import doeff_core_effects.aiohttp_ws_client [aiohttp-ws-client])
   (<- peer EchoPeer (start-echo-peer))
   (<- dead int (vacant-port))
-  (val world (WsWorld :url (.format "ws://127.0.0.1:{}/ws" peer.listening.port) :dead (.format "ws://127.0.0.1:{}/ws" dead)
-                      :install aiohttp-ws-client))
+  (val world (WsWorld :url (.format "ws://127.0.0.1:{}/ws" peer.listening.port) :slow (.format "ws://127.0.0.1:{}/slow" peer.listening.port)
+                      :dead (.format "ws://127.0.0.1:{}/ws" dead) :install aiohttp-ws-client))
   (var answer None)
   (try
     (<- ran (with_handlers [(await-handler) (state) (contract-ws-world world) (aiohttp-ws-client) (live-closures peer.closures)] program))
@@ -183,13 +209,12 @@
 
 ;; --- fake の相手(台本)---------------------------------------------------------------------------------------------------------
 
-(val SCRIPT (WsScript :endpoints #((ScriptedWsEndpoint :url SCRIPTED-URL
-                                                       :frames #((ScriptedWsText :text GREETING))
-                                                       :replies #((ScriptedWsReply :contains "hi" :frames #((ScriptedWsText :text "echo:hi")))
-                                                                  (ScriptedWsReply :contains "bin" :frames #((ScriptedWsBinary :data PEER-BINARY)))
-                                                                  (ScriptedWsReply :contains "bye"
-                                                                                   :frames #((ScriptedWsClosed :code PEER-BYE-CODE
-                                                                                                               :reason PEER-BYE-REASON))))))))
+;; 相手の振る舞いの台本(先頭の説明)— url と slow の繋ぎ先は同じ振る舞い。
+(val PEER-REPLIES #((ScriptedWsReply :contains "hi" :frames #((ScriptedWsText :text "echo:hi")))
+                    (ScriptedWsReply :contains "bin" :frames #((ScriptedWsBinary :data PEER-BINARY)))
+                    (ScriptedWsReply :contains "bye" :frames #((ScriptedWsClosed :code PEER-BYE-CODE :reason PEER-BYE-REASON)))))
+(val SCRIPT (WsScript :endpoints #((ScriptedWsEndpoint :url SCRIPTED-URL :frames #((ScriptedWsText :text GREETING)) :replies PEER-REPLIES)
+                                   (ScriptedWsEndpoint :url SCRIPTED-SLOW :frames #((ScriptedWsText :text GREETING)) :replies PEER-REPLIES))))
 
 
 (defhandler scripted-closures
@@ -205,7 +230,7 @@
   (scripted-ws-client SCRIPT))
 
 
-(val SCRIPTED-WORLD (WsWorld :url SCRIPTED-URL :dead SCRIPTED-DEAD :install (fn [] (scripted-ws-client SCRIPT))))
+(val SCRIPTED-WORLD (WsWorld :url SCRIPTED-URL :slow SCRIPTED-SLOW :dead SCRIPTED-DEAD :install (fn [] (scripted-ws-client SCRIPT))))
 
 
 (defk under-scripted [program]
