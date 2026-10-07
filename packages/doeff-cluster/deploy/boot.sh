@@ -60,6 +60,10 @@ export DOEFF_HY_CODE_STORE="${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code
 # worker の永続の dir の下。呼び手が値を置けばそれを使う(手元の 1 台の cluster を件ごとに起こすテストは、件をまたいで同じ dir を渡して
 # 依存を件ごとに取り直さない・#3858)。
 export DOEFF_UV_CACHE_DIR="${DOEFF_UV_CACHE_DIR:-$WORK_DIR/state/uv-cache}"
+# Rust の wheel の保存先(build の口が source の中身の鍵で引く dir)。worker は --state-dir から同じ path を導いて自分の uv の子へ渡す
+# (doeff_cluster/shared/core/native_wheel.py の wheels_root — state の下の wheels)。ここでも export して起こす役の process に置き、worker が
+# job の子へ継ぐ(子の uv sync が doeff-vm を組み直さない・#3972)。worker の導く path と食い違わないように呼び手の値で上書きする。
+export DOEFF_WHEEL_CACHE="$WORK_DIR/state/wheels"
 # 知らない役は、展開も準備もせず名指しで断る(worker の起動へ落とさない — 走っている worker の Pod の中で役 prepare を、その役を
 # 知らない版へ向けて撃っても、2 つ目の worker を起こさない)。
 case "$role" in
