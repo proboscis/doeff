@@ -35,6 +35,7 @@ MACROS = """\
 (defmacro peeks [] (by-getattr))
 (defmacro hands [] (by-argument consts))
 (defmacro unused [] 100)
+(defmacro check [x] 0)
 """
 
 CONSTS = "(setv OFFSET 1)\n(setv HIDDEN 5)\n"
@@ -46,6 +47,7 @@ USERS = {
     "reader": "(require {pkg}.macros [reads])\n(setv value (reads))\n",
     "peeker": "(require {pkg}.macros [peeks])\n(setv value (peeks))\n",
     "hander": "(require {pkg}.macros [hands])\n(setv value (hands))\n",
+    "chooser": "(require {pkg}.macros [used])\n(defn run [check] (check (used)))\n(setv value (run (fn [x] x)))\n",
     "shadowed": "(require {pkg}.macros *)\n(defn shadow [x] x)\n(setv value (shadow (used)))\n",
 }
 
@@ -187,3 +189,11 @@ def test_a_line_shift_of_the_macro_module_keeps_the_record_current(tree: Tree) -
     record = tree.record("user")
     tree.macros.write_text("\n" + tree.macros.read_text(encoding="utf-8"), encoding="utf-8")
     assert tree.is_current(record), "行番号がずれただけで古いと判じた"
+
+
+def test_a_function_named_like_an_unrequired_macro_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤(agora の records_turns.hy・intake_requests.hy が import のたびに compile し直された): 名を選んで require した
+    # 使い手が、提供元にある別の macro(check)と同じ名の関数を呼ぶ。名を選んだ require の使い手の表には、提供元に何が
+    # あっても入らないので、記録は作った直後に今のまま。
+    record = tree.record("chooser")
+    assert tree.is_current(record), "選んで require していない macro と同じ名の関数の呼び出しで古いと判じた"
