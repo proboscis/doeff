@@ -1,6 +1,5 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = aiohttp_ws_client.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
@@ -44,16 +43,13 @@ class OpenLink:
     session: aiohttp.ClientSession
     ws: aiohttp.ClientWebSocketResponse
 
+def new_client_session() -> aiohttp.ClientSession:
+    ...
+
 def failure_detail(error: BaseException) -> str:
     ...
 
-def link_of(links: tuple[OpenLink, ...], link: str) -> _Program[OpenLink | None, object]:
-    ...
-
-def without_link(links: tuple[OpenLink, ...], link: str) -> _Program[tuple[OpenLink, ...], object]:
-    ...
-
-def open_link(link: str, url: str, headers: tuple[HttpHeader, ...]) -> OpenLink | WsConnectFailed:
+def open_link(client_factory: Callable, link: str, url: str, headers: tuple[HttpHeader, ...]) -> OpenLink | WsConnectFailed:
     ...
 
 def receive_frame(open: OpenLink) -> WsFrame:
@@ -70,7 +66,9 @@ def close_link(open: OpenLink, code: int, reason: str) -> WsLinkClosed:
 
 def drop_link(open: OpenLink) -> None:
     ...
-aiohttp_ws_link_handler: _Handler
 
-def aiohttp_ws_client() -> Callable[[Program | EffectBase], Program]:
+def aiohttp_ws_link_handler(client_factory: Callable) -> _Handler:
+    ...
+
+def aiohttp_ws_client(*, client_factory: Callable=...) -> Callable[[Program | EffectBase], Program]:
     ...

@@ -2,7 +2,8 @@
 ;;; socket を開かず、台本(WsScript — 繋ぎ先ごとの届く frame の列と、送りに応じて届く frame)で答え、送った文と閉じを記録する。業務を
 ;;; 知らない: 台本の中身は呼び手が渡す。
 ;;;
-;;;   WsConnect        台本に url(url の先頭の最長の一致)が在れば WsLink(id は繋いだ順に ws-1 ・ws-2 …)、無ければ WsConnectFailed(status None)
+;;;   WsConnect        台本に url(url の先頭の最長の一致)が在れば WsLink(id は繋ぎを始めた順に ws-1 ・ws-2 … — 断られた繋ぎの番号も戻さない)、
+;;;                    無ければ WsConnectFailed(status None)
 ;;;   WsReceive        台本の次の frame を答える。尽きたら then-close が在ればその状態符と理由の WsLinkClosed、無ければ状態符なしで
 ;;;                    SCRIPT-EXHAUSTED-REASON の WsLinkClosed(呼び手の Program を永遠に待たせない)。終わった・知らない idは closed-answer
 ;;;   WsSend           送った文を記録し(WsSentText)、台本の replies のうち送った文が含む語の frame の列を届く列の後ろへ足す(sideband の
@@ -94,12 +95,13 @@
   (session var sent #())
   (session var counter 0)
   (WsConnect [url headers]
+    ;; 番号は繋ぎを始める前に確保し、断られても戻さない(本物の答え手と同じ並び — 本物は同時に進む 2 つの繋ぎが同じ番号を取らないため)。
+    (:= counter (+ counter 1))
+    (<- link str (link-name counter))
     (<- endpoint (| ScriptedWsEndpoint None) (endpoint-for script url))
     (match endpoint
       None (resume (WsConnectFailed :url url :reason NOT-IN-SCRIPT-REASON :status None))
-      found (do (:= counter (+ counter 1))
-                (<- link str (link-name counter))
-                (:= links (+ links #((ScriptedLink :link link :url url :endpoint found :pending found.frames))))
+      found (do (:= links (+ links #((ScriptedLink :link link :url url :endpoint found :pending found.frames))))
                 (resume (WsLink :link link :url url)))))
   (WsReceive [link]
     (<- open (| ScriptedLink None) (link-of links link))
