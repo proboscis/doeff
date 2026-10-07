@@ -33,7 +33,8 @@
 (import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence])
 (import doeff_cluster.worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired PublishStatus BootMarks WakeSet WorkerWakes])
+(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable HeartbeatSent ReadDesired PublishStatus BootMarks WakeSet
+                                                 WorkerWakes])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
 (import doeff_cluster.worker.core.worker_due [beat-due fence-due wakes-with])
@@ -80,6 +81,9 @@
           self.keep-fence-ms (. (ClusterTiming) keep-fence-ms)
           ;; 名指しの待ち(GET /watch)で待ってもらう上限(返事の timing の watch_max_ms が上書きする — 最初の返事の前は既定・#3865)。
           self.watch-max-ms (. (ClusterTiming) watch-max-ms)
+          ;; coordinator が生きていると数える窓(返事の timing の lease_ms が上書きする — 最初の返事の前は既定)。送った heartbeat の事実
+          ;; (HeartbeatSent)に載せ、拍の Program が heartbeat の間の遅れの閾にする(#3850)。
+          self.lease-ms (. (ClusterTiming) lease-ms)
           self.task-dir task-dir self.versions (or versions {})
           ;; 詰めた Program の cache(/programs/<sha> から取る — 子 process の言い換えと同じ state dir の programs・改訂 1 の F)。
           self.program-dir (os.path.join (os.path.dirname (os.path.abspath task-dir)) "programs")
@@ -388,6 +392,9 @@
     ;; 名指しの待ちの上限も同じく受け取る(#3865 — coordinator の頭打ちと同じ値で問う)。
     (when (and timing (in "watch_max_ms" timing))
       (setv state.watch-max-ms (int (get timing "watch_max_ms"))))
+    ;; 生存の窓も同じく受け取る(次に送る heartbeat の事実に載せる — #3850)。
+    (when (and timing (in "lease_ms" timing))
+      (setv state.lease-ms (int (get timing "lease_ms"))))
     (<- jobs tuple (declared-job-specs declared))
     (setv state.last-jobs jobs)
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
@@ -439,8 +446,11 @@
   (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken
                        (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping))
                        (- now-ms state.last-ok-ms) state.beat-interval-ms)
+    ;; 送りの事実(#3850): 送る判断の刻・名乗る名・この時に知っている生存の窓(返事が上書きする前の値)。届かず返事が読めない拍も
+    ;; 送りに数える(拍の Program が前の送りとの間を測る)。
+    (val sent (HeartbeatSent :at now-ms :worker state.name :lease-ms state.lease-ms))
     (<- beaten (beat state cell options))
-    (:= desired beaten))
+    (:= desired (replace beaten :sent sent)))
   (val watch state.watch)
   (when (and state.watch-enabled (not watch.running) (not watch.unsupported) (not watch.closing) (not watch.failure)
              (is-not watch.after None))
