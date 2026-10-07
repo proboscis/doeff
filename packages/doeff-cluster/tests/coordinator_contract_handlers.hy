@@ -71,6 +71,11 @@
 (import tests.env_fixtures [LOCK env-of])
 (import tests.program_rows [SAMPLE-RUN])
 (import tests.board_fake [board-handlers])
+(import json)
+(import urllib.parse [urlsplit unquote :as url-unquote])
+(import doeff_cluster.shared.core.lease_rules [lease-full-until])
+(import doeff_cluster.coordinator.core.watch_policy [lease-row])
+(import tests.lease_wait_fake [lease-freed lease-waiters-rung LEASE-FREED-REPLY])
 (import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
@@ -91,10 +96,9 @@
 (val NO-JOBS (system-of "contract-scenarios" #()))
 ;; sim-cluster で coordinator を切る時に止めておく秒(契約の Program の残りより十分長い — 切ったら戻さない)。
 (val SIM-DOWN-SECONDS 3600.0)
-;; cluster-semaphore の担い手の名・lease の期限・空き待ちの間隔。
+;; cluster-semaphore の担い手の名・lease の期限。
 (val SEMAPHORE-HOLDER "worker-a")
 (val SEMAPHORE-TTL-SECONDS 15.0)
-(val SEMAPHORE-POLL-SECONDS 0.5)
 
 
 (defclass [(dataclass :frozen True)] BoardSeen [EffectBase]
@@ -241,18 +245,32 @@
       (raise (httpx.ConnectError REFUSED :request request))))
 
 
-(defhandler coordinator-over-http [#^ MemoryCoordinator coordinator #^ dict line]
-  ;; 引数に残す理由: 真実は MemoryCoordinator と線そのもの(組み立てが 1 つ作って coordinator-side と共有する)。
+(defhandler coordinator-over-http [#^ MemoryCoordinator coordinator #^ dict line #^ dict waiters]
+  ;; 引数に残す理由: 真実は MemoryCoordinator と線そのもの(組み立てが 1 つ作って coordinator-side と共有する)。waiters = lease の空きの
+  ;; 待ちの呼び鈴(名前 → 列)— 組み立てが 1 つ作る。
   ;; coordinator へ送る要求(shared-http が宛先の部品から出す HttpRequest)に、線(line-answer)の答えで同期に答える: 届く間は
   ;; MemoryCoordinator の返事・切れている間は接続できない失敗(HttpFailed の CONNECT-FAILED — 本物の答え手が ConnectError を写す形)。
+  ;; lease の空きの待ち GET /watch?lease=<名> は、本物では判断の外の待ちの係が答えるので、MemoryCoordinator の同期の答えの前に、空くか
+  ;; lease への書きが来るまでここで待つ(lease_wait_fake.hy — 待った後は MemoryCoordinator の同期の答えに通さず、本物と同じ本文で答える)。
   (HttpRequest [method url headers params body]
-    (val request (httpx.Request method url :params params :json body :headers headers))
-    (val answer (try (line-answer coordinator line request)
-                     (except [refused httpx.ConnectError]
-                       (HttpFailed :url url :detail (+ "ConnectError: " (str refused)) :kind HttpFailureKind.CONNECT-FAILED))))
-    (resume (if (isinstance answer HttpFailed)
-                answer
-                (HttpResponse answer.status-code (dict answer.headers) answer.content answer.text url 0.0)))))
+    (val path (. (urlsplit url) path))
+    (val query (or params {}))
+    (if (and (get line "up") (= method "GET") (= path "/watch") (in "lease" query))
+        (do (val name (get query "lease"))
+            (<- now int (now-epoch-ms))
+            (<- (lease-freed waiters name (lease-full-until (lease-row coordinator.state name) now) now))
+            (val freed (json.dumps LEASE-FREED-REPLY))
+            (resume (HttpResponse 200 {} (.encode freed "utf-8") freed url 0.0)))
+        (do (val request (httpx.Request method url :params params :json body :headers headers))
+            (val answer (try (line-answer coordinator line request)
+                             (except [refused httpx.ConnectError]
+                               (HttpFailed :url url :detail (+ "ConnectError: " (str refused)) :kind HttpFailureKind.CONNECT-FAILED))))
+            (val parts (.split (.strip path "/") "/"))
+            (when (and (= method "POST") (= (get parts 0) "leases") (= (len parts) 2))
+              (<- (lease-waiters-rung waiters (url-unquote (get parts 1)))))
+            (resume (if (isinstance answer HttpFailed)
+                        answer
+                        (HttpResponse answer.status-code (dict answer.headers) answer.content answer.text url 0.0)))))))
 
 
 (val CONTRACT-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "c-contract"))
@@ -298,7 +316,7 @@
   (val coordinator (declared-coordinator clock))
   (val line {"up" True})
   (val transport (httpx.MockTransport (partial line-answer coordinator line)))
-  (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line)
+  (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line {})
                              #* (make-handlers transport)] program))
   answer)
 
@@ -334,7 +352,7 @@
   (val worker (RigWorker COORDINATOR task-dir (! (process-versions os.environ)) :transport transport))
   (val sender (TaskSender :revision SENDER-REVISION :versions (! (process-versions os.environ)) :runtime-env env))
   (try
-    (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line)
+    (<- answer (with_handlers [(sim-time-handler :clock clock) (coordinator-side coordinator line) (coordinator-over-http coordinator line {})
                               (remote-cluster (contract-route) CONTRACT-ROUTE sender)]
                  (beside-worker worker program)))
     answer
@@ -387,7 +405,7 @@
 (deff semaphore-session []  ; defk にできない: 組み立ての表(INTERPRETERS)が handler を作る時に呼ぶ Program の外の準備
   {:pre [] :post [(: % SemaphoreSession)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "cluster-semaphore の担い手 1 つの手元の記憶(解釈器を開くたびに新しく作る)。"
-  (SemaphoreSession SEMAPHORE-HOLDER :ttl-seconds SEMAPHORE-TTL-SECONDS :poll-seconds SEMAPHORE-POLL-SECONDS))
+  (SemaphoreSession SEMAPHORE-HOLDER :ttl-seconds SEMAPHORE-TTL-SECONDS))
 
 
 (val INTERPRETERS

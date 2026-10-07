@@ -16,7 +16,8 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
-(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
+(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key lease-full-until])
+(import tests.lease_wait_fake [lease-freed lease-waiters-rung LEASE-FREED-REPLY])
 (import doeff_hy.wire [dump])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
@@ -71,21 +72,33 @@
     _ (BoardReply :status 404 :answer {"ok" False "error" (.format "知らない要求: {} {}" method path)} :written None)))
 
 
-(defhandler board-fake [#^ dict store]
-  ;; 引数に残す理由: 盤は検が中を見る・書き換える dict そのもの(組み立てが 1 つ作って渡す — Ask で運ぶ設定ではない)。
+(defhandler board-fake [#^ dict store #^ dict waiters]
+  ;; 引数に残す理由: 盤は検が中を見る・書き換える dict そのもの(組み立てが 1 つ作って渡す — Ask で運ぶ設定ではない)。waiters = lease の
+  ;; 空きの待ちの呼び鈴(名前 → 列)— 盤と同じく組み立てが 1 つ作る(偽物の外に状態の handler を求めない)。
   ;; 本文は JSON に通した写しで受け、答えも JSON の本文で返す(本物と同じく、書いた・読んだ値が呼び手の object と切り離される)。
+  ;; lease の空きの待ち GET /watch?lease=<名> は、空くか lease への書きが来るまで待って答える(lease_wait_fake.hy)。
   (HttpRequest [method url params body]
     :when (.startswith url BOARD-URL)
     (<- now int (now-epoch-ms))
-    (val wire-body (if (is body None) None (json.loads (json.dumps body))))
-    (<- reply BoardReply (board-reply (dict store) method (. (urlsplit url) path) (or params {}) wire-body now))
-    (when (is-not reply.written None)
-      (.update store {(get reply.written 0) (get reply.written 1)}))
-    (val text (json.dumps reply.answer))
-    (resume (HttpResponse reply.status {} (.encode text "utf-8") text url 0.0))))
+    (val path (. (urlsplit url) path))
+    (val query (or params {}))
+    (if (and (= method "GET") (= path "/watch") (in "lease" query))
+        (do (val name (get query "lease"))
+            (<- (lease-freed waiters name (lease-full-until (.get store (semaphore-key name)) now) now))
+            (val freed (json.dumps LEASE-FREED-REPLY))
+            (resume (HttpResponse 200 {} (.encode freed "utf-8") freed url 0.0)))
+        (do (val wire-body (if (is body None) None (json.loads (json.dumps body))))
+            (<- reply BoardReply (board-reply (dict store) method path query wire-body now))
+            (when (is-not reply.written None)
+              (.update store {(get reply.written 0) (get reply.written 1)}))
+            (val parts (.split (.strip path "/") "/"))
+            (when (and (= method "POST") (= (get parts 0) "leases") (= (len parts) 2))
+              (<- (lease-waiters-rung waiters (url-unquote (get parts 1)))))
+            (val text (json.dumps reply.answer))
+            (resume (HttpResponse reply.status {} (.encode text "utf-8") text url 0.0))))))
 
 
 (deff board-handlers [#^ dict store]  ; defk にできない: 組み立て(Program を走らせる前)が handler の list を作る準備
   {:pre [(: store dict)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "盤 store の上の共有の保存の handler の list(外側が先): fake の盤と、本番と同じ shared-http(宛先 = fake の盤だけ)。"
-  [(board-fake store) (shared-http (RouteCell (CoordinatorRoute :urls #(BOARD-URL) :active 0 :switched-at-ms 0)) BOARD-ROUTE)])
+  [(board-fake store {}) (shared-http (RouteCell (CoordinatorRoute :urls #(BOARD-URL) :active 0 :switched-at-ms 0)) BOARD-ROUTE)])

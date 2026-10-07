@@ -34,7 +34,6 @@ def named_semaphore_local(names: dict) -> _Handler:
 class SemaphoreSession:
     holder: str
     ttl_seconds: float
-    poll_seconds: float | None
     retry_seconds: float
     seq: Incomplete
     held: Incomplete
@@ -43,7 +42,7 @@ class SemaphoreSession:
     expires: Incomplete
     ever_held: Incomplete
 
-    def __init__(self, holder: str, ttl_seconds: float=15.0, poll_seconds: float | None=0.5, retry_seconds: float=0.5) -> None:
+    def __init__(self, holder: str, ttl_seconds: float=15.0, retry_seconds: float=0.5) -> None:
         ...
 
     def next_token(self) -> str:

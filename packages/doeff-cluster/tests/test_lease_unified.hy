@@ -92,8 +92,8 @@
   (val store {})
   (val attempts [])
   (val written [])
-  (val sa (SemaphoreSession "old" :ttl-seconds 45.0 :poll-seconds 0.5))
-  (val sb (SemaphoreSession "new" :ttl-seconds 45.0 :poll-seconds 0.5))
+  (val sa (SemaphoreSession "old" :ttl-seconds 45.0))
+  (val sb (SemaphoreSession "new" :ttl-seconds 45.0))
   #((with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
       (run-all [(fenced-writer sa "a" [(cut-off-at clock 3000) (skewed-clock a-offset)] attempts)
                 (fenced-writer sb "b" [(skewed-clock b-offset)] attempts)]))

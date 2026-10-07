@@ -156,8 +156,8 @@
 (deftest test-cluster-semaphore-excludes-across-workers-and-renews-past-the-ttl
   ;; 2 つの worker が同じ名前を取り合う。持つ時間(20 秒)は TTL(15 秒)より長いので、延長が効かなければ b が割り込む。
   (setv log [] clock (SimClock) store {})
-  (setv sa (SemaphoreSession "worker-a" :ttl-seconds 15.0 :poll-seconds 0.5)
-        sb (SemaphoreSession "worker-b" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sa (SemaphoreSession "worker-a" :ttl-seconds 15.0)
+        sb (SemaphoreSession "worker-b" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
         (run-all [(on-worker sa (named-user "a" log 20 1)) (on-worker sb (named-user "b" log 20 1))])))
   (assert (= (! (max-concurrency log)) 1))
@@ -173,7 +173,7 @@
 (deftest test-cluster-semaphore-takes-over-an-expired-lease-of-a-dead-worker
   ;; 死んだ worker の lease(期限 15 秒)が残っている。期限までは待ち、切れたら取る。
   (setv log [] clock (SimClock) store {(semaphore-key "turn-lock") {"permits" 1 "holders" {"dead/1" 15000}}})
-  (setv sb (SemaphoreSession "worker-b" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sb (SemaphoreSession "worker-b" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
         (on-worker sb (named-user "b" log 1 1))))
   (setv #(b-in b-out) (get (! (intervals log)) "b" 0))
@@ -183,7 +183,7 @@
 (deftest test-cluster-semaphore-reports-a-lost-lease-at-release
   ;; 持っている間に行から token が消えた(期限切れの後に他へ移った形)。返す時に LeaseLost で知らせる。
   (setv log [] clock (SimClock) store {} key (semaphore-key "turn-lock"))
-  (setv sa (SemaphoreSession "worker-a" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sa (SemaphoreSession "worker-a" :ttl-seconds 15.0))
   (defk steal []
     {:pre [] :post [(: % (type None))]}
     (<- (Delay 1))
@@ -292,8 +292,8 @@
   ;; 旧版 A が lease を持って書いている。3 秒目に A から保存へ届かなくなる(延長できない)が、書き先への書きの道は生きている。
   ;; 新版 B は 0 秒から lease を待つ。A は最後に書けた期限(15 秒)の 2 秒前で書けなくなり、B は期限の後に lease を取って書く。
   (setv clock (SimClock) store {} attempts [] written [])
-  (setv sa (SemaphoreSession "old" :ttl-seconds 15.0 :poll-seconds 0.5)
-        sb (SemaphoreSession "new" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sa (SemaphoreSession "old" :ttl-seconds 15.0)
+        sb (SemaphoreSession "new" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (run-all [(fenced-worker sa (lease-writer "a" attempts 1 40000) :cut 3000 :clock clock)
                   (fenced-worker sb (lease-writer "b" attempts 1 40000))])))
@@ -314,7 +314,7 @@
 (deftest test-fence-stops-an-old-holder-as-soon-as-its-renewal-sees-the-lease-taken
   ;; 期限より前でも、延長の係が「行から自分の token が消えた」を見た時点で失ったと分かり、柵が締まる。
   (setv clock (SimClock) store {} attempts [] written [] key (semaphore-key "writer-a"))
-  (setv sa (SemaphoreSession "old" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sa (SemaphoreSession "old" :ttl-seconds 15.0))
   (defk steal []
     {:pre [] :post [(: % (type None))]}
     (<- (Delay 4))
@@ -330,7 +330,7 @@
 
 (deftest test-fence-refuses-writes-before-the-lease-is-taken
   (setv clock (SimClock) store {} attempts [] written [])
-  (setv sa (SemaphoreSession "w" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sa (SemaphoreSession "w" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (fenced-worker sa (lease-writer "a" attempts 1 3000 :acquire False))))
   (assert (= (! (times-of attempts "a" "fenced")) [0 1000 2000]))
@@ -348,7 +348,7 @@
   ;; 保存へ届かない時間が期限より短ければ、延長の係は試し続けて戻った後に延ばす(係が例外で消えない)。
   ;; 途絶の間(期限の余裕の内側)は書けて、戻った後も書ける。
   (setv clock (SimClock) store {} attempts [] written [])
-  (setv sa (SemaphoreSession "w" :ttl-seconds 15.0 :poll-seconds 0.5))
+  (setv sa (SemaphoreSession "w" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
         (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (lease-fence "writer-a" #(FakeWrite) 2000)]
           (lease-writer "a" attempts 1 40000))))
