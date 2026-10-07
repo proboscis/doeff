@@ -27,15 +27,15 @@ _PARSED: dict[str, "ParsedModule"] = {}
 #: 読んだ束縛の覚え(process の中 — (file の path・大域の名) → (読んだ source・束縛))。
 _BINDINGS: dict[tuple[str, str], tuple["ParsedModule", "Binding | None"]] = {}
 
-#: 書き換えない読みとして扱う属性(``名.get(…)`` など — 本体のこれらの読みは書き換えではない)。
+#: 呼んでも値そのものを書き換えない method(``名.get(…)`` など)。結果は名から得た値(中の値を指しうる)として、その行き先を
+#: 同じ規則で遡って判じる。
 _READ_ONLY_METHODS = frozenset(
     {"get", "keys", "values", "items", "copy", "count", "index", "__contains__", "__getitem__"}
 )
 
-#: 書き換えない読みとして扱う組み込みの呼び出し(``len(名)`` など)。
-_READ_ONLY_CALLS = frozenset(
-    {"len", "sorted", "list", "tuple", "set", "frozenset", "dict", "iter", "bool", "isinstance"}
-)
+#: 引数への参照を外へ出さない組み込みの呼び出し(結果は数・真偽 — ``len(名)`` など)。``list`` ・ ``sorted`` などは中の値を
+#: 指す入れ物を返すので入れない(行き先で書き換えられうる)。
+_READ_ONLY_CALLS = frozenset({"len", "bool", "isinstance"})
 
 #: Hy の定義の頭(本体の form ごと文として入れる)と、名を束縛する頭。
 #: (doeff-hy の val・var も、対の左の名を module の大域に束縛する。)
@@ -361,8 +361,9 @@ def _call_time_nodes(
 
 
 def _mutates(node: ast.AST, name: str) -> bool:
-    """節(呼ばれた時に走る本体)がその名を書き換えうるか — ``global`` の宣言か、書き換えない読み(添字の読み・``in`` ・
-    :data:`_READ_ONLY_METHODS` の呼び出し・for の繰り返しの元・:data:`_READ_ONLY_CALLS` の引数)でない名の使い。"""
+    """節(呼ばれた時に走る本体)がその名を書き換えうるか — ``global`` の宣言か、値の行き先が参照を外へ出さない所で終わらない
+    名の使い(:func:`_stays`)。別名(top-level の ``ALIAS = 名``)を通した書き換えは、別名を束縛する文が名に触れる文として入り、
+    その文が束縛する別名を歩みの側が同じ規則で辿るので覆われる。"""
     parents: dict[int, ast.AST] = {}
     for parent in ast.walk(node):
         for child in ast.iter_child_nodes(parent):
@@ -371,38 +372,66 @@ def _mutates(node: ast.AST, name: str) -> bool:
         match inner:
             case ast.Global(names=names) | ast.Nonlocal(names=names) if name in names:
                 return True
-            case ast.Name(id=found) if found == name and not _read_only(
-                inner, parents.get(id(inner))
+            case ast.Name(id=found) if found == name and not (
+                isinstance(inner.ctx, ast.Load) and _stays(inner, parents)
             ):
+                # 名の書き(代入・del)は、global の無い局所の名かもしれないが、安全側に書き換えと数える。
                 return True
     return False
 
 
-def _read_only(name: ast.Name, parent: ast.AST | None) -> bool:
-    """名の使い 1 つが書き換えない読みか。名の書き(代入・del)は、global の無い局所の名かもしれないが、安全側に書き換えと数える。"""
-    return isinstance(name.ctx, ast.Load) and _read_only_use(name, parent)
-
-
-def _read_only_use(name: ast.Name, parent: ast.AST | None) -> bool:
-    """名の読み 1 つが、囲む節から見て書き換えない読みか。"""
+def _stays(value: ast.expr, parents: dict[int, ast.AST]) -> bool:
+    """名から得た値(名の読み・その添字の読み・読むだけの method の結果・属性の読み)の行き先が、参照を外へ出さない所で
+    終わるか。添字の読み・読むだけの method の結果・属性の読み・or / and ・条件式の枝は、その結果を同じ規則で遡る。
+    終わりで読むだけと認めるのは、比較・if / while / 条件式 / assert の test ・ not ・ :data:`_READ_ONLY_CALLS` の引数・
+    値を捨てる式の文だけ。代入の右辺・return ・ yield ・他の呼び出しの引数・for と内包の繰り返しの元(要素が束縛されて
+    書き換えられうる)・添字や属性への書き・読むだけでない method の呼び出しは、書き換えうると数える(安全側)。"""
+    parent = parents.get(id(value))
     match parent:
-        case ast.Subscript(value=value, ctx=ast.Load()) if value is name:
+        case ast.Attribute(value=inner, attr=attribute, ctx=ast.Load()) if inner is value:
+            return _attribute_stays(parent, attribute, parents)
+        case _ if _passes_through(value, parent):
+            return _stays(parent, parents)
+        case _:
+            return _ends_inside(value, parent)
+
+
+def _passes_through(value: ast.expr, parent: ast.AST | None) -> bool:
+    """囲む節が、値(か中の値)をそのまま結果に出すか(添字の読み・or / and ・条件式の枝)。"""
+    match parent:
+        case ast.Subscript(value=inner, ctx=ast.Load()):
+            return inner is value
+        case ast.IfExp(test=test):
+            return test is not value
+        case ast.BoolOp():
             return True
-        case ast.Compare(ops=ops, comparators=comparators):
-            return any(
-                item is name and isinstance(op, (ast.In, ast.NotIn))
-                for op, item in zip(ops, comparators, strict=True)
-            )
-        case ast.Attribute(value=value, attr=attribute, ctx=ast.Load()) if value is name:
-            return attribute in _READ_ONLY_METHODS
-        case (
-            ast.For(iter=iterated) | ast.AsyncFor(iter=iterated) | ast.comprehension(iter=iterated)
-        ):
-            return iterated is name
-        case ast.Call(func=ast.Name(id=called), args=args) if called in _READ_ONLY_CALLS:
-            return any(argument is name for argument in args)
         case _:
             return False
+
+
+def _ends_inside(value: ast.expr, parent: ast.AST | None) -> bool:
+    """囲む節が、値への参照を外へ出さずに使い終わるか(比較・not ・ test ・読むだけの組み込みの引数・捨てる式の文)。"""
+    match parent:
+        case ast.Compare() | ast.UnaryOp(op=ast.Not()) | ast.Expr():
+            return True
+        case (
+            ast.If(test=test) | ast.While(test=test) | ast.Assert(test=test) | ast.IfExp(test=test)
+        ):
+            return test is value
+        case ast.Call(func=ast.Name(id=called), args=args, keywords=()):
+            return called in _READ_ONLY_CALLS and any(argument is value for argument in args)
+        case _:
+            return False
+
+
+def _attribute_stays(attribute: ast.Attribute, name: str, parents: dict[int, ast.AST]) -> bool:
+    """名から得た値の属性の読み — 読むだけの method の呼び出しなら結果を遡り、呼ばない読み(``値.欄``)なら欄の値を遡る。
+    それ以外の method の呼び出し(``.append`` ・ ``.update`` …)は書き換えうる。"""
+    match parents.get(id(attribute)):
+        case ast.Call(func=func) as call if func is attribute:
+            return name in _READ_ONLY_METHODS and _stays(call, parents)
+        case _:
+            return _stays(attribute, parents)
 
 
 # ---- Hy ----------------------------------------------------------------------------------------------------------
