@@ -54,7 +54,7 @@
                                          ListDirectory WalkTree RemoveTree
                                          RenamePath CopyFile CopyTree
                                          AcquireLock ReleaseLock ReadDiskFree
-                                         ReadDiskUsage MeasureTree LinkFile
+                                         ReadDiskUsage MeasureTree LinkFile MakeSymlink
                                          CompilePythonSources ReadMemoryFiles])
 (import doeff_core_effects.os-file [os-file-handler])
 (import doeff_core_effects.memory-file [memory-file-handler])
@@ -269,7 +269,7 @@
   :effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText
             MakeDirectory ListDirectory WalkTree RemoveTree RenamePath
             CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree
-            ReadDiskUsage MeasureTree LinkFile CompilePythonSources
+            ReadDiskUsage MeasureTree LinkFile MakeSymlink CompilePythonSources
             ReadMemoryFiles]
   :handlers [os-file-handler memory-file-handler rooted-file-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
